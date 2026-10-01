@@ -710,12 +710,9 @@ class MainWindow(QMainWindow):
         if place is None:
             self._panel.set_report(report.with_place("坐标附近没有城市记录"))
             return
-        # 偏得远时把距离说出来：那是在提醒「这只是最近的城市」，不是在报误差。
-        suffix = (
-            "（按坐标推断）"
-            if place.distance_km < 50
-            else f"（按坐标推断，最近城市约 {place.distance_km:.0f} 公里外）"
-        )
+        # 标签本身已经写了「（推断）」，内容里不再重复；只有偏得远时才补一句距离，
+        # 那是在提醒「这只是最近的城市」，不是在报误差。
+        suffix = "" if place.distance_km < 50 else f"（最近城市约 {place.distance_km:.0f} 公里外）"
         self._panel.set_report(report.with_place(f"{place.label()}{suffix}"))
 
     def _on_place_failed(
