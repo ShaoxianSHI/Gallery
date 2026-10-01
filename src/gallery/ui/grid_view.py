@@ -9,8 +9,6 @@
 
 from __future__ import annotations
 
-import time
-
 from PySide6.QtCore import (
     QEvent,
     QItemSelectionModel,
@@ -263,7 +261,8 @@ class PhotoGrid(QListView):
         self._laid_out_columns = 0
         self._layout_fix: dict[int, tuple[int, int]] = {}
         self._armed_row = -1
-        self._armed_at = 0.0
+        self._double_click = False
+        self._pending_rename_row = -1
         self.setViewMode(QListView.ViewMode.IconMode)
         self.setResizeMode(QListView.ResizeMode.Adjust)
         self.setMovement(QListView.Movement.Static)
@@ -291,6 +290,12 @@ class PhotoGrid(QListView):
         self._rename_edit = RenameEdit(self.viewport())
         self._rename_edit.committed.connect(self._on_rename_committed)
         self._rename_edit.cancelled.connect(self.cancel_rename)
+
+        # 「再点一次」的等待窗口：等过这么久还没等到第二下，才认定是想改名。
+        self._rename_timer = QTimer(self)
+        self._rename_timer.setSingleShot(True)
+        self._rename_timer.setInterval(QApplication.doubleClickInterval())
+        self._rename_timer.timeout.connect(self._emit_pending_rename)
 
         self._debounce = QTimer(self)
         self._debounce.setSingleShot(True)
@@ -488,6 +493,8 @@ class PhotoGrid(QListView):
 
         照片只选中主干、不选扩展名：直接打字就是在改名字，而 ``.jpg`` 不会被手滑敲掉。
         """
+        self._rename_timer.stop()
+        self._pending_rename_row = -1
         model = self.model()
         if model is None or not index.isValid():
             return False
@@ -504,6 +511,8 @@ class PhotoGrid(QListView):
 
     def cancel_rename(self) -> None:
         """收起输入框，不提交。"""
+        self._rename_timer.stop()
+        self._pending_rename_row = -1
         self._rename_edit.stop()
 
     def is_renaming(self) -> bool:
@@ -517,26 +526,54 @@ class PhotoGrid(QListView):
     # ---- 事件 --------------------------------------------------------------
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
-        """对**已经选中**的格子再点一次就重命名，和访达一致。
+        """第一次点击只是选中；对**已经选中**的格子再点一次才开始重命名。
 
-        靠「同一格、在双击间隔之外再点一次」来区分重命名与双击打开：双击的第二次
-        落下一定在间隔之内，于是它仍然只是打开，不会半路插进来一个输入框。
+        第二次点击不立刻改名，而是按下双击阈值**等一等**：Qt 是在第二次「按下」时
+        判定双击的，而人的两下快慢不一（按下快、抬起慢时，两次抬起的间隔会超过阈值，
+        于是「双击打开」会被误判成「再次点击改名」，照片没打开，倒先弹了个输入框）。
+
+        所以这里改成：等 Qt 先说话。它认成双击就去打开照片（见
+        :meth:`mouseDoubleClickEvent`），一直没等到双击，才是重命名。
         """
         super().mouseReleaseEvent(event)
         if event.button() != Qt.MouseButton.LeftButton:
             return
+        if self._double_click:
+            # 双击的第二下：接下来是抬起，不该被当成「再次点击」。
+            self._double_click = False
+            self._armed_row = -1
+            return
         index = self.indexAt(event.position().toPoint())
         if not index.isValid() or index != self.currentIndex():
+            # 点到别处：改主意了，把刚才那点「再点一次」作废。
             self._armed_row = -1
+            self._rename_timer.stop()
             return
-        now = time.monotonic() * 1000.0
-        interval = float(QApplication.doubleClickInterval())
-        if self._armed_row == index.row() and now - self._armed_at >= interval:
-            self._armed_row = -1
+        if self._armed_row != index.row():
+            self._armed_row = index.row()  # 第一次点击：只选中
+            return
+        self._armed_row = -1
+        self._pending_rename_row = index.row()
+        self._rename_timer.start()
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
+        """打开照片优先于重命名：双击一定要打开，而不是拉出一个输入框。"""
+        self._rename_timer.stop()
+        self._pending_rename_row = -1
+        self._armed_row = -1
+        self._double_click = True
+        super().mouseDoubleClickEvent(event)
+
+    def _emit_pending_rename(self) -> None:
+        """等过了双击阈值仍然没等到第二下 —— 那就当用户确实想改名。"""
+        row = self._pending_rename_row
+        self._pending_rename_row = -1
+        model = self.model()
+        if model is None or not 0 <= row < model.rowCount():
+            return
+        index = model.index(row, 0)
+        if index == self.currentIndex() and not self._rename_edit.is_editing():
             self.rename_requested.emit(index)
-            return
-        self._armed_row = index.row()
-        self._armed_at = now
 
     def wheelEvent(self, event: QWheelEvent) -> None:
         """⌘/Ctrl + 滚轮切换缩略图尺寸；普通滚动交给基类翻页。"""

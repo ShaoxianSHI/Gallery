@@ -11,18 +11,16 @@
 
 from __future__ import annotations
 
-import os
 import time
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtCore import QEvent, QPointF, Qt  # noqa: E402
+from PySide6.QtGui import QMouseEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
@@ -41,11 +39,6 @@ from gallery.ui.rename_edit import RenameEdit  # noqa: E402
 
 #: 等待异步扫描完成的时限。
 SCAN_TIMEOUT_SECONDS = 8.0
-
-
-@pytest.fixture(scope="module")
-def qt_app() -> QApplication:
-    return QApplication.instance() or QApplication([])  # type: ignore[return-value]
 
 
 def make_grid(qt_app: QApplication, tmp_path: Path, names: list[str]) -> PhotoGrid:
@@ -147,52 +140,126 @@ def click_cell(grid: PhotoGrid, row: int) -> None:
     )
 
 
+def send_double_click_press(grid: PhotoGrid, row: int) -> None:
+    """发一次双击的第二次**按下**：Qt 就是靠它判定双击并去打开照片的。"""
+    _send(grid, row, QEvent.Type.MouseButtonDblClick, Qt.MouseButton.LeftButton)
+
+
+def send_release(grid: PhotoGrid, row: int) -> None:
+    """发一次抬起。"""
+    _send(grid, row, QEvent.Type.MouseButtonRelease, Qt.MouseButton.NoButton)
+
+
+def _send(grid: PhotoGrid, row: int, kind: QEvent.Type, buttons: Qt.MouseButton) -> None:
+    viewport = grid.viewport()
+    center = grid.visualRect(grid.model().index(row, 0)).center()
+    QApplication.sendEvent(
+        viewport,
+        QMouseEvent(
+            kind,
+            QPointF(center),
+            QPointF(viewport.mapToGlobal(center)),
+            Qt.MouseButton.LeftButton,
+            buttons,
+            Qt.KeyboardModifier.NoModifier,
+        ),
+    )
+
+
 def test_second_click_on_a_selected_cell_offers_rename(
-    qt_app: QApplication, tmp_path: Path
+    qt_app: QApplication, settle: Callable[[float], None], tmp_path: Path
 ) -> None:
     grid = make_grid(qt_app, tmp_path, ["a.jpg", "b.jpg"])
     requested: list[int] = []
     grid.rename_requested.connect(lambda index: requested.append(index.row()))
+    interval = QApplication.doubleClickInterval() / 1000 + 0.05
 
     click_cell(grid, 0)
     assert grid.currentIndex().row() == 0
     assert requested == [], "第一次点击只是选中"
 
-    time.sleep(QApplication.doubleClickInterval() / 1000 + 0.05)
+    settle(interval)
     click_cell(grid, 0)
+    settle(interval)
 
     assert requested == [0], "对已选中的格子再点一次就该能改名"
 
 
-def test_rapid_second_click_does_not_offer_rename(qt_app: QApplication, tmp_path: Path) -> None:
-    """连着点两下是双击，不能半路插进来一个重命名输入框。
+def test_double_click_wins_over_rename(
+    qt_app: QApplication, settle: Callable[[float], None], tmp_path: Path
+) -> None:
+    """双击打开照片时**绝不能**顺带弹出重命名输入框。
 
-    双击的第二次落下必然在双击阈值之内 —— 判定用的是真实时间，
-    所以两个背靠背的点击无论间隔多短都不会被当成「再次点击」。
+    这是个真缺陷：Qt 按「第二次**按下**」的时机判定双击，而人的手并不稳 ——
+    第二下按下去之后多按了一会儿才抬起（两次抬起的间隔就超过了双击阈值）。
+    两边各判各的，于是这一次操作变成「照片打开了，同时还弹出一个重命名输入框」。
+
+    修法是让双击先说话：第二次点击先等满一个双击阈值，这段时间里 Qt 认成双击，
+    就去打开照片；一直没等到，才当用户确实想改名。
     """
     grid = make_grid(qt_app, tmp_path, ["a.jpg", "b.jpg"])
     requested: list[int] = []
     grid.rename_requested.connect(lambda index: requested.append(index.row()))
+    interval = QApplication.doubleClickInterval() / 1000 + 0.1
 
-    click_cell(grid, 0)
-    click_cell(grid, 0)
-    qt_app.processEvents()
+    click_cell(grid, 0)  # 第一下：选中
+    send_double_click_press(grid, 0)  # 第二下按下 —— Qt 判定为双击，去打开照片
+    settle(interval)  # 手按久了一点才抬起来
+    send_release(grid, 0)
+    settle(interval)
 
-    assert requested == []
-    assert grid.currentIndex().row() == 0, "两次点击都落在同一个格子上"
+    assert requested == [], "双击是打开照片，不是重命名"
 
 
-def test_clicking_another_cell_only_selects_it(qt_app: QApplication, tmp_path: Path) -> None:
-    """点别的格子只是换选中项 —— 只有「对同一格再点一次」才是重命名。"""
+def test_quick_double_click_also_never_renames(
+    qt_app: QApplication, settle: Callable[[float], None], tmp_path: Path
+) -> None:
+    """干脆利落的双击同样只是打开。"""
     grid = make_grid(qt_app, tmp_path, ["a.jpg", "b.jpg"])
     requested: list[int] = []
     grid.rename_requested.connect(lambda index: requested.append(index.row()))
 
     click_cell(grid, 0)
-    time.sleep(QApplication.doubleClickInterval() / 1000 + 0.05)
+    send_double_click_press(grid, 0)
+    send_release(grid, 0)
+    settle(QApplication.doubleClickInterval() / 1000 + 0.1)
+
+    assert requested == []
+
+
+def test_clicking_another_cell_only_selects_it(
+    qt_app: QApplication, settle: Callable[[float], None], tmp_path: Path
+) -> None:
+    """点别的格子只是换选中项 —— 只有「对同一格再点一次」才是重命名。"""
+    grid = make_grid(qt_app, tmp_path, ["a.jpg", "b.jpg"])
+    requested: list[int] = []
+    grid.rename_requested.connect(lambda index: requested.append(index.row()))
+    interval = QApplication.doubleClickInterval() / 1000 + 0.05
+
+    click_cell(grid, 0)
+    settle(interval)
     click_cell(grid, 1)
+    settle(interval)
 
     assert grid.currentIndex().row() == 1
+    assert requested == []
+
+
+def test_pending_rename_is_dropped_when_the_user_changes_mind(
+    qt_app: QApplication, settle: Callable[[float], None], tmp_path: Path
+) -> None:
+    """等双击阈值的那段时间里改主意点别的格子，不该在那边冒出一个输入框。"""
+    grid = make_grid(qt_app, tmp_path, ["a.jpg", "b.jpg"])
+    requested: list[int] = []
+    grid.rename_requested.connect(lambda index: requested.append(index.row()))
+    interval = QApplication.doubleClickInterval() / 1000 + 0.05
+
+    click_cell(grid, 0)
+    settle(interval)
+    click_cell(grid, 0)  # 已经在等双击阈值了
+    click_cell(grid, 1)  # 立刻改主意
+    settle(interval)
+
     assert requested == []
 
 
