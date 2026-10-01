@@ -8,6 +8,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from gallery.core import paths
 from gallery.core.session import (
     MAX_RECENT_ROOTS,
@@ -103,3 +105,35 @@ def test_save_creates_parent_directory(tmp_path: Path) -> None:
     save_session(SessionState(recent_roots=(Path("/照片/一"),)), base=base)
 
     assert paths.app_state_file(base=base).is_file()
+
+
+def test_thumbnail_edge_round_trip(tmp_path: Path) -> None:
+    state = SessionState(thumbnail_edge=288)
+
+    save_session(state, base=tmp_path)
+
+    assert load_session(base=tmp_path).thumbnail_edge == 288
+
+
+def test_thumbnail_edge_defaults_to_none(tmp_path: Path) -> None:
+    assert load_session(base=tmp_path).thumbnail_edge is None
+    assert SessionState().thumbnail_edge is None
+
+
+@pytest.mark.parametrize("bad", [0, -176, "288", 1.5, True, None, [288]])
+def test_invalid_thumbnail_edge_falls_back(tmp_path: Path, bad: object) -> None:
+    file = paths.app_state_file(base=tmp_path)
+    file.parent.mkdir(parents=True)
+    file.write_text(json.dumps({"thumbnail_edge": bad}), encoding="utf-8")
+
+    assert load_session(base=tmp_path).thumbnail_edge is None
+
+
+def test_with_thumbnail_edge_keeps_other_fields(tmp_path: Path) -> None:
+    state = SessionState(recent_roots=(Path("/照片/一"),))
+
+    updated = state.with_thumbnail_edge(112)
+
+    assert updated.thumbnail_edge == 112
+    assert updated.recent_roots == (Path("/照片/一"),)
+    assert state.thumbnail_edge is None  # 原对象不可变

@@ -42,6 +42,8 @@ class SessionState:
 
     recent_roots: tuple[Path, ...] = ()
     window: WindowGeometry | None = None
+    #: 缩略图长边（像素）。界面把它归到最近的档位，非法值一律回退到默认。
+    thumbnail_edge: int | None = None
 
     def with_recent_root(self, root: Path) -> SessionState:
         """把 ``root`` 提到最前面，去重并截断到上限。"""
@@ -51,6 +53,9 @@ class SessionState:
 
     def with_window(self, window: WindowGeometry) -> SessionState:
         return replace(self, window=window)
+
+    def with_thumbnail_edge(self, edge: int | None) -> SessionState:
+        return replace(self, thumbnail_edge=edge)
 
 
 def load_session(*, base: Path | None = None) -> SessionState:
@@ -67,6 +72,7 @@ def load_session(*, base: Path | None = None) -> SessionState:
     return SessionState(
         recent_roots=_parse_roots(data.get("recent_roots")),
         window=_parse_window(data.get("window")),
+        thumbnail_edge=_parse_positive_int(data.get("thumbnail_edge")),
     )
 
 
@@ -80,6 +86,7 @@ def save_session(state: SessionState, *, base: Path | None = None) -> None:
         "version": SESSION_VERSION,
         "recent_roots": [str(path) for path in state.recent_roots],
         "window": _window_to_json(state.window),
+        "thumbnail_edge": state.thumbnail_edge,
     }
     write_text_atomic(
         paths.app_state_file(base=base),
@@ -113,6 +120,13 @@ def _parse_roots(value: object) -> tuple[Path, ...]:
         if len(roots) >= MAX_RECENT_ROOTS:
             break
     return tuple(roots)
+
+
+def _parse_positive_int(value: object) -> int | None:
+    # bool 是 int 的子类，必须显式排除。
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value
 
 
 def _parse_window(value: object) -> WindowGeometry | None:
