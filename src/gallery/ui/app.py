@@ -15,7 +15,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from gallery.core.constants import APP_NAME
-from gallery.core.paths import app_icon_files
+from gallery.core.paths import app_icon_files, augment_external_tool_path
 from gallery.ui.main_window import MainWindow
 
 
@@ -54,6 +54,9 @@ def run(
     session_base: Path | None = None,
 ) -> int:
     """启动界面，返回进程退出码。"""
+    # 在建 QApplication 之前补 PATH：从访达 / Dock 启动时 exiftool 不在系统目录里，
+    # 不补的话主窗口一开就去读元数据，只会一路降级成只读模式。
+    augment_external_tool_path()
     app = create_application(argv)
     window = MainWindow(session_base=session_base, initial_library=library)
     window.show()

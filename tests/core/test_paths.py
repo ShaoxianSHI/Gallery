@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+
+import pytest
 
 from gallery.core import paths
 from gallery.core.constants import (
@@ -104,3 +107,75 @@ def test_app_icon_master_is_the_largest() -> None:
 
     assert master in paths.app_icon_files()
     assert master.name.endswith(f"-{max(APP_ICON_SIZES)}.png")
+
+
+def test_resources_dir_prefers_sys_prefix_when_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """打包之后资源在 ``sys.prefix`` 下，必须优先于 ``__file__`` 推导。
+
+    Nuitka 把 ``gallery`` 编译成 dist 目录里的单个 ``gallery.so``，``__file__``
+    指向一条并不存在的虚拟路径；照它推导会得到一个查不到图标的目录，窗口图标
+    于是静默变空白。
+    """
+    packaged = tmp_path / "prefix" / RESOURCES_DIR_NAME
+    packaged.mkdir(parents=True)
+    monkeypatch.setattr(paths.sys, "prefix", str(tmp_path / "prefix"))
+
+    assert paths.resources_dir() == packaged
+
+
+def test_resources_dir_falls_back_to_the_package(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``sys.prefix`` 下没有这份资源时（源码树 / 虚拟环境），回到包自身的位置。"""
+    monkeypatch.setattr(paths.sys, "prefix", str(Path("/nonexistent-prefix")))
+
+    assert paths.resources_dir().parent.name == "gallery"
+    assert paths.resources_dir().name == RESOURCES_DIR_NAME
+
+
+def test_augment_external_tool_path_adds_missing_dirs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """从访达 / Dock 启动时 PATH 里没有 Homebrew，exiftool 因此找不到。
+
+    这是打包之后必须成立的前提：``.app`` 没有 shell 启动器可以补 PATH。
+    """
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.delenv("HOME", raising=False)
+
+    added = paths.augment_external_tool_path([str(first), str(second)])
+
+    assert added == [str(first), str(second)]
+    assert os.environ["PATH"] == os.pathsep.join(["/usr/bin:/bin", str(first), str(second)])
+
+
+def test_augment_external_tool_path_is_idempotent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """已经能找到 exiftool 的场合（终端里）不该改动 PATH。"""
+    existing = tmp_path / "bin"
+    existing.mkdir()
+    original = os.pathsep.join(["/usr/bin:/bin", str(existing)])
+    monkeypatch.setenv("PATH", original)
+
+    added = paths.augment_external_tool_path([str(existing), str(tmp_path / "missing")])
+
+    assert added == []
+    assert os.environ["PATH"] == original
+
+
+def test_augment_external_tool_path_expands_user(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``~`` 要展开：``EXTRA_TOOL_DIRS`` 里就带着 ``~/.local/bin``。"""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("PATH", "/usr/bin")
+    (tmp_path / ".local" / "bin").mkdir(parents=True)
+
+    added = paths.augment_external_tool_path([str(Path("~/.local/bin"))])
+
+    assert added == [str(tmp_path / ".local" / "bin")]

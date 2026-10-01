@@ -80,27 +80,39 @@ uv run gallery                # 启动
 
 > exiftool 是运行时依赖，仅元数据写回功能需要。缺少它时 Gallery 会降级为只读模式，而不是报错崩溃。
 
-### 应用图标
+### 打包成应用
 
 窗口标题栏左侧那一枚图标由 `src/gallery/resources/` 提供，不需要额外操作。
 
 Dock、访达、`⌘Tab` 里显示的图标来自 `.app` 包，所以想让它们也变成 Gallery 的图标，
-把 Gallery 打包成一个应用包再启动：
+需要先把 Gallery 打包成一个应用包。有两种，产物都在 `dist/Gallery.app`：
 
 ```bash
-uv run python -m gallery.macos_app                   # 生成 dist/Gallery.app
-uv run python -m gallery.macos.app ~/Applications   # 或者直接放到「应用程序」
+# 自包含版：解释器、Python 依赖与 Qt 插件全部编译进包里，拷到别的 Mac 上也能直接跑
+uv sync --group build
+uv run --group build python scripts/build_app.py
+
+# 开发版：一秒生成，不编译；启动器指向本仓库的 .venv
+uv run python -m gallery.macos_app
 ```
 
-双击生成出来的 `Gallery.app` 即可：Dock、访达、窗口标题栏里都是同一枚图标。
+自包含版约 110 MiB，编几分钟（首次还要下载编译缓存）。它需要 macOS 13 或更高版本，
+没装 exiftool 也不影响启动 —— 缺 exiftool 只是退回只读模式。
 
-这个包**不打包 Python 依赖**，它的启动器指向本仓库的 `.venv`，因此只在开发机上有效；
-仓库移动、或 `uv sync` 重建过虚拟环境之后，重新生成一次即可。想换图标，见
+```bash
+uv run --group build python scripts/build_app.py ~/Applications   # 直接放到「应用程序」
+uv run --group build python scripts/build_app.py --dry-run        # 只看将要执行的命令
+```
+
+两种包都能双击启动，Dock、访达、窗口标题栏里都是同一枚图标。想换图标，见
 `src/gallery/resources/README.md`。
 
 从访达 / Dock 启动的进程默认只看得到系统那几个目录，Homebrew 装的 exiftool 不在其中
-（终端里有，因为 shell 会读你的配置文件）。启动器因此会把常见的安装目录补回 `PATH`，
-从 `.app` 启动时元数据依然是完整的。
+（终端里有，因为 shell 会读你的配置文件）。Gallery 因此会在启动时把常见的安装目录补回
+`PATH`，从 `.app` 启动时元数据依然是完整的。
+
+> 自包含版是 ad-hoc 签名的，只在这台机器上直接双击可用。要分发给别人，需要换成自己的
+> 开发者证书签名并做公证（`--macos-sign-identity`）。
 
 ---
 

@@ -26,6 +26,12 @@ dev = [
     "ruff>=0.9",
     "mypy>=1.14",
 ]
+# 打包工具：把源码编译成自包含的 Gallery.app（见 scripts/build_app.py）。
+# 单独成组而不是并进 dev —— 它只在打包时用到，还会拖一堆编译期依赖（clang、
+# 下载辅助工具等），不该拖慢日常的 `uv sync`。
+build = [
+    "nuitka>=2.7",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/gallery"]

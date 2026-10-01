@@ -6,6 +6,12 @@
 
 随包分发的只读资源（目前只有应用图标）由 ``resources_dir`` 定位：它跟着包的
 安装位置走，与用户的库无关。
+
+``augment_external_tool_path`` 解决的是另一件事：**从访达 / Dock 启动的进程只拿到
+系统那几个目录**，Homebrew 装的 exiftool 因此不在 ``PATH`` 里，元数据读不全，还会
+一路降级成只读模式，看起来就像「明明装了 exiftool，Gallery 却说没有」。这里在进程内
+把常见的安装位置补回去 —— 打包成 ``.app``（没有 shell 启动器可以补 ``PATH``）之后
+同样有效。
 """
 
 from __future__ import annotations
@@ -13,7 +19,9 @@ from __future__ import annotations
 import hashlib
 import os
 import sys
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Final
 
 from gallery.core.constants import (
     APP_ICON_BASENAME,
@@ -116,12 +124,60 @@ def external_thumbnail_cache_dir(root: Path, *, base: Path | None = None) -> Pat
     return app_cache_root(base=base) / THUMBNAIL_DIR_NAME / library_digest(root)
 
 
+#: 外部工具（exiftool 等）常见的安装目录。
+#:
+#: 终端里 ``PATH`` 里有它们，是因为登录 shell 读了用户的配置文件；从访达 / Dock
+#: 启动的进程没有这个上下文，只拿到 ``/usr/bin:/bin:/usr/sbin:/sbin``。写死这些
+#: 目录是刻意的：进程内没有别的方式知道第三方包管理器把东西装到了哪。
+EXTRA_TOOL_DIRS: Final = (
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/opt/local/bin",
+    str(Path.home() / ".local" / "bin"),
+)
+
+
+def augment_external_tool_path(dirs: Sequence[str] | None = None) -> list[str]:
+    """把常见的外部工具目录补进本进程的 ``PATH``，返回真正补进去的目录。
+
+    只在「原来没有、现在存在」时才补，因此不会重复，也不会把 ``PATH`` 弄乱。
+    已经能从 ``PATH`` 找到 exiftool 时（本机终端里的情形）什么也不会做。
+
+    :param dirs: 待补的目录；省略则用 :data:`EXTRA_TOOL_DIRS`。测试用它来指定临时目录。
+    """
+    candidates = EXTRA_TOOL_DIRS if dirs is None else tuple(dirs)
+    current = os.environ.get("PATH", "").split(os.pathsep)
+    known = set(current)
+    added: list[str] = []
+    for directory in candidates:
+        expanded = os.path.expanduser(directory)
+        if not expanded or expanded in known:
+            continue
+        if not Path(expanded).is_dir():
+            continue
+        current.append(expanded)
+        known.add(expanded)
+        added.append(expanded)
+    if added:
+        os.environ["PATH"] = os.pathsep.join(current)
+    return added
+
+
 def resources_dir() -> Path:
     """随包分发的只读资源目录（图标等）。
 
     定位方式是包自身的安装位置，而不是当前工作目录：源码树里、``uv sync`` 装出来的
-    虚拟环境里、以及 ``Gallery.app`` 里都指向同一份文件。
+    虚拟环境里、以及打包出来的 ``Gallery.app`` 里都指向同一份文件。
+
+    **两条路径，缺一不可：** Nuitka 把 ``gallery`` 整个编译成 dist 目录下的一个
+    ``gallery.so``，模块的 ``__file__`` 于是指向一个**并不存在**的虚拟路径
+    （``<dist>/gallery/core/paths.py``）—— 按它推导会得到一个不存在的目录。因此先看
+    ``sys.prefix``：standalone 运行时它就是 dist 目录，数据文件正落在那下面。
+    源码树与虚拟环境里 ``sys.prefix`` 下没有这份资源，于是自然落到 ``__file__`` 分支。
     """
+    packaged = Path(sys.prefix) / RESOURCES_DIR_NAME
+    if packaged.is_dir():
+        return packaged
     return Path(__file__).resolve().parents[1] / RESOURCES_DIR_NAME
 
 
@@ -144,12 +200,14 @@ def app_icon_master() -> Path:
 
 
 __all__ = [
+    "EXTRA_TOOL_DIRS",
     "app_cache_root",
     "app_data_base",
     "app_icon_files",
     "app_icon_master",
     "app_state_dir",
     "app_state_file",
+    "augment_external_tool_path",
     "cache_dir",
     "config_dir",
     "config_file",

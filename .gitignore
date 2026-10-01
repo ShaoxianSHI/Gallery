@@ -5,6 +5,8 @@ __pycache__/
 .eggs/
 build/
 dist/
+# Nuitka 编译失败时写在当前目录的崩溃报告，属于本机排查用，不入库
+nuitka-crash-report.xml
 .venv/
 venv/
 .mypy_cache/
