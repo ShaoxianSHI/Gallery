@@ -36,6 +36,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QFrame,
     QListView,
     QStyle,
     QStyledItemDelegate,
@@ -263,6 +264,10 @@ class PhotoGrid(QListView):
         self._armed_row = -1
         self._double_click = False
         self._pending_rename_row = -1
+        # 去掉 QListView 默认的 StyledPanel 边框：那是一圈系统灰的描边，画在视口四周，
+        # 于是整个照片区（最里层）看上去像浮在一块面板上，而不是铺满窗口。大图区那边
+        # 本来就是 NoFrame，这里跟它对齐 —— 底色只有一块，边框不该再分出第二层。
+        self.setFrameShape(QFrame.Shape.NoFrame)
         self.setViewMode(QListView.ViewMode.IconMode)
         self.setResizeMode(QListView.ResizeMode.Adjust)
         self.setMovement(QListView.Movement.Static)

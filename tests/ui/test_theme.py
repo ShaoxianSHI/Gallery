@@ -25,7 +25,7 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QPoint, QPointF, Qt  # noqa: E402
 from PySide6.QtGui import QColor, QImage, QPalette  # noqa: E402
-from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
+from PySide6.QtWidgets import QApplication, QFrame, QWidget  # noqa: E402
 
 from gallery.core.config import prepare_library  # noqa: E402
 from gallery.core.session import BROWSE_MODE_ALBUMS, SessionState, save_session  # noqa: E402
@@ -148,7 +148,73 @@ def _open_detail(qt_app: QApplication, window: MainWindow) -> None:
     qt_app.processEvents()
 
 
+def _edge_colors(image: QImage, window: QWidget, widget: QWidget, *, outward: int = 2) -> set[int]:
+    """控件四周那一圈（内外各若干像素）出现过的颜色。
+
+    ``outward`` 是往外看几像素。框是画在控件**自己**的矩形上的，``QListView`` 那种
+    ``StyledPanel`` 边框就落在视口外面 1 像素，所以默认要往外看；大图区的视口正贴着
+    菜单栏，外侧那几行是菜单栏自己的分隔线（实测 ``#e5e5e5``），那边传 ``outward=0``。
+
+    ``QListView`` 默认那圈灰描边实测是 ``#8e8e8e`` / ``#b6b6b6``，在一整块底色上很显眼。
+    """
+    top_left = widget.mapTo(window, widget.rect().topLeft())
+    x0, y0 = top_left.x(), top_left.y()
+    x1, y1 = x0 + widget.width(), y0 + widget.height()
+    width, height = image.width(), image.height()
+    # 截图最外圈 3 像素是窗口自己的圆角与阴影（实测底行是 #c3c5c7 一类桌面色），
+    # 不是界面画的框 —— 跳过，否则会把窗口边缘当成边框。
+    margin = 3
+    found: set[int] = set()
+
+    def take(x: int, y: int) -> None:
+        if margin <= x < width - margin and margin <= y < height - margin:
+            found.add(image.pixelColor(x, y).rgb())
+
+    for offset in range(-outward, 3):
+        for x in range(x0, x1):
+            take(x, y0 + offset)
+            take(x, y1 + offset)
+        for y in range(y0, y1):
+            take(x0 + offset, y)
+            take(x1 + offset, y)
+    return found
+
+
 # ---- 测试 ---------------------------------------------------------------
+
+
+def test_innermost_layer_has_no_border(qt_app: QApplication, window: MainWindow) -> None:
+    """最里层（照片区 / 网格）四周不能有任何描边或轮廓。
+
+    回归的是那条系统灰边框：``QListView`` 默认带 ``StyledPanel``，会在视口四周画一圈
+    ``#b6b6b6`` 之类的描边，整个照片区看上去像浮在一块面板上，而不是铺满窗口。大图区
+    本来就是 ``NoFrame``，网格要跟它对齐。
+    """
+    try:
+        expected = theme.current_theme().background.rgb()
+        qt_app.processEvents()
+        assert window._grid.frameShape() == QFrame.Shape.NoFrame, (
+            "网格又长出了默认的 StyledPanel 边框"
+        )
+        assert window._detail.frameShape() == QFrame.Shape.NoFrame
+
+        def offenders(found: set[int]) -> list[str]:
+            return [QColor(rgb).name() for rgb in sorted(found - {expected})]
+
+        # 网格页：视口四边都得是统一的底色
+        edges = _edge_colors(window.grab().toImage(), window, window._grid.viewport())
+        assert edges == {expected}, f"网格四周出现了底色以外的颜色：{offenders(edges)}"
+
+        # 大图页：同理
+        _open_detail(qt_app, window)
+        detail_edges = _edge_colors(
+            window.grab().toImage(), window, window._detail.viewport(), outward=0
+        )
+        assert detail_edges == {expected}, (
+            f"大图区四周出现了底色以外的颜色：{offenders(detail_edges)}"
+        )
+    finally:
+        window.close()
 
 
 def test_the_three_layers_paint_one_background(qt_app: QApplication, window: MainWindow) -> None:
