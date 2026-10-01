@@ -23,6 +23,10 @@ htmlcov/
 # 仓库里不放用户的照片，也不放任何大尺寸二进制（见 AGENTS.md）。
 /测试相册/
 
+# ---- 本机协作约定 ----
+# AGENTS.md 是面向 AI agent 的工程规范（含本机开发流程），随本机走，不随仓库分发
+AGENTS.md
+
 # ---- macOS ----
 .DS_Store
 .AppleDouble
