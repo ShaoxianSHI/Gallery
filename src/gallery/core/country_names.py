@@ -206,6 +206,56 @@ COUNTRY_NAMES_ZH: Final[dict[str, str]] = {
 }
 
 
+#: 中国的省级行政区：GeoNames 的英文名 → 中文。
+#: GeoNames 的行政区数据只有英文（``Zhejiang``、``Inner Mongolia``），
+#: 对中文用户来说把「省」显示成拼音没有意义，所以这一份静态映射随代码走。
+#: 键是 GeoNames 的原样写法（注意 ``Shanxi`` 是山西、``Shaanxi`` 是陕西）。
+CHINA_PROVINCES_ZH: Final[dict[str, str]] = {
+    "Anhui": "安徽省",
+    "Beijing": "北京市",
+    "Chongqing": "重庆市",
+    "Fujian": "福建省",
+    "Gansu": "甘肃省",
+    "Guangdong": "广东省",
+    "Guangxi": "广西壮族自治区",
+    "Guizhou": "贵州省",
+    "Hainan": "海南省",
+    "Hebei": "河北省",
+    "Heilongjiang": "黑龙江省",
+    "Henan": "河南省",
+    "Hubei": "湖北省",
+    "Hunan": "湖南省",
+    "Inner Mongolia": "内蒙古自治区",
+    "Jiangsu": "江苏省",
+    "Jiangxi": "江西省",
+    "Jilin": "吉林省",
+    "Liaoning": "辽宁省",
+    "Ningxia": "宁夏回族自治区",
+    "Qinghai": "青海省",
+    "Shaanxi": "陕西省",
+    "Shandong": "山东省",
+    "Shanghai": "上海市",
+    "Shanxi": "山西省",
+    "Sichuan": "四川省",
+    "Tianjin": "天津市",
+    "Tibet": "西藏自治区",
+    "Xinjiang": "新疆维吾尔自治区",
+    "Yunnan": "云南省",
+    "Zhejiang": "浙江省",
+}
+
+
+def admin1_label(country_code: str, name: str) -> str:
+    """行政区（省 / 州）名 → 展示用名称。
+
+    目前只翻译中国的省级行政区；其它国家保持 GeoNames 的原名，
+    我们没有权威译名，硬翻只会更糟。
+    """
+    if country_code.strip().upper() == "CN":
+        return CHINA_PROVINCES_ZH.get(name.strip(), name)
+    return name
+
+
 def country_label(code: str, fallback: str = "") -> str:
     """国家代码 → 展示用名称；表里没有就用 ``fallback``（GeoNames 的英文名）。
 
@@ -215,4 +265,4 @@ def country_label(code: str, fallback: str = "") -> str:
     return COUNTRY_NAMES_ZH.get(normalized) or fallback.strip() or normalized
 
 
-__all__ = ["COUNTRY_NAMES_ZH", "country_label"]
+__all__ = ["CHINA_PROVINCES_ZH", "COUNTRY_NAMES_ZH", "admin1_label", "country_label"]

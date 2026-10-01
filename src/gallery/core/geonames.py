@@ -13,6 +13,7 @@ from __future__ import annotations
 import io
 import logging
 import math
+import re
 import urllib.error
 import urllib.request
 import zipfile
@@ -23,7 +24,7 @@ from typing import Final
 
 from gallery.core import paths
 from gallery.core.atomic import write_text_atomic
-from gallery.core.country_names import country_label
+from gallery.core.country_names import admin1_label, country_label
 from gallery.core.errors import GeoDataError
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,25 @@ DOWNLOAD_TIMEOUT_SECONDS: Final = 60.0
 #: 最近城市超过这个距离就不给结论：说「离这里 800 公里的城市」比不说更糟。
 MAX_DISTANCE_KM: Final = 300.0
 
+#: 行政级别：同一座城市在数据里往往有好几条记录。
+#: PPLC 首都、PPLA* 政府驻地、PPL 一般居民点、PPLX 城市内分区。
+_PLACE_RANK: Final[dict[str, int]] = {
+    "PPLC": 4,
+    "PPLA": 3,
+    "PPLA2": 3,
+    "PPLA3": 3,
+    "PPLA4": 3,
+    "PPL": 2,
+    "PPLX": 1,
+}
+
+#: 在这个半径内，优先取行政级别更高的记录 —— 这是「同一地点的不同粒度」的距离。
+#: 实测：上海市中心最近的是区级条目「黄浦」，巴黎最近的是「Paris 04」，
+#: 东京是「Yoyogi」，纽约是「Financial District」，都不是用户想看到的答案。
+#: 半径不能放大：放到 15 公里时纽约会查成对岸行政级别更高的泽西市，
+#: 那是另一座城市，不是同一个地方的粗粒度说法。
+SAME_PLACE_RADIUS_KM: Final = 5.0
+
 #: 下载用的取数函数签名：URL → 字节。
 Fetcher = Callable[[str], bytes]
 
@@ -55,15 +75,22 @@ Fetcher = Callable[[str], bytes]
 class Place:
     """一次反查的结果。"""
 
+    #: GeoNames 的拉丁名（``Hangzhou``），拿不到中文名时用它。
     city: str
     admin1: str | None
     country: str
     distance_km: float
+    #: 中文名（``杭州``）。GeoNames 的 alternate names 里有就优先用它。
+    local_city: str | None = None
+
+    @property
+    def display_city(self) -> str:
+        return self.local_city or self.city
 
     def label(self) -> str:
-        """展示用文案：``波尔多 · 新亚奎丹 · 法国``（没有的层级自动省略）。"""
+        """展示用文案，由大到小：``中国 · 浙江省 · 杭州``（缺的层级自动省略）。"""
         parts: list[str] = []
-        for part in (self.city, self.admin1, self.country):
+        for part in (self.country, self.admin1, self.display_city):
             if part and part not in parts:
                 parts.append(part)
         return " · ".join(parts)
@@ -72,6 +99,8 @@ class Place:
 @dataclass(frozen=True, slots=True)
 class _City:
     name: str
+    local_name: str | None
+    feature_code: str
     country_code: str
     admin1_code: str
     latitude_rad: float
@@ -128,24 +157,35 @@ class PlaceIndex:
         return cls(cities, admin1, countries)
 
     def nearest(self, latitude: float, longitude: float) -> Place | None:
-        """返回最近的城市；超出 ``max_distance_km`` 或数据库为空时返回 ``None``。"""
+        """返回最近的城市；超出 ``max_distance_km`` 或数据库为空时返回 ``None``。
+
+        同一座城市在数据里有好几条记录（市政府、区、街道），直接取最近的那条
+        会得到「黄浦」「Paris 04」这类答案。所以在最近记录的 3 公里内优先取
+        行政级别最高的那条，同级再比距离 —— 再远就是另一座城市了，不能替换。
+        """
         if not self._cities:
             return None
         latitude_rad = math.radians(latitude)
         longitude_rad = math.radians(longitude)
-        best: _City | None = None
-        best_distance = float("inf")
+        scored: list[tuple[float, int, _City]] = []
+        nearest_distance = float("inf")
         for city in self._cities:
             distance = _haversine_km(latitude_rad, longitude_rad, city)
-            if distance < best_distance:
-                best, best_distance = city, distance
-        if best is None or best_distance > self._max_distance_km:
+            nearest_distance = min(nearest_distance, distance)
+            scored.append((distance, _PLACE_RANK.get(city.feature_code, 0), city))
+        if nearest_distance > self._max_distance_km:
             return None
+        nearby = [item for item in scored if item[0] <= nearest_distance + SAME_PLACE_RADIUS_KM]
+        best_distance, _, best = min(nearby, key=lambda item: (-item[1], item[0]))
         return Place(
             city=best.name,
-            admin1=self._admin1.get(f"{best.country_code}.{best.admin1_code}"),
+            admin1=admin1_label(
+                best.country_code, self._admin1.get(f"{best.country_code}.{best.admin1_code}", "")
+            )
+            or None,
             country=country_label(best.country_code, self._countries.get(best.country_code, "")),
             distance_km=best_distance,
+            local_city=best.local_name,
         )
 
 
@@ -215,6 +255,8 @@ def _parse_cities(path: Path) -> list[_City]:
         cities.append(
             _City(
                 name=fields[1],
+                local_name=pick_chinese_name(fields[3]),
+                feature_code=fields[7].strip().upper(),
                 country_code=fields[8].strip().upper(),
                 admin1_code=fields[10].strip(),
                 latitude=latitude,
@@ -224,6 +266,36 @@ def _parse_cities(path: Path) -> list[_City]:
             )
         )
     return cities
+
+
+#: 纯汉字（不含日文假名、韩文等）。
+_ALL_CJK = re.compile(r"^[\u4e00-\u9fff]+$")
+
+
+def pick_chinese_name(alternates: str) -> str | None:
+    """从 GeoNames 的 alternate names 里挑一个中文名。
+
+    这一列没有语言标签，只能按字形判断，规则是：
+
+    - 整串都是汉字（假名、韩文、拉丁字母一律排除）
+    - 至少两个字（``沪`` 这种单字简称太随意）
+    - 不带「中国 / 中華」前缀（``中国上海``）
+    - 取最短的：``杭州`` 优先于 ``杭州市``；同样长度时取先出现的
+      （``东京`` 与 ``東京`` 都出现时取前一个）
+
+    实测对真实数据的挑选结果：巴黎、东京、北京、杭州、拉萨、悉尼、开罗、波尔多。
+    """
+    candidates: list[str] = []
+    for raw in alternates.split(","):
+        name = raw.strip()
+        if len(name) < 2 or not _ALL_CJK.match(name):
+            continue
+        if "中国" in name or "中華" in name:
+            continue
+        candidates.append(name)
+    if not candidates:
+        return None
+    return min(candidates, key=len)
 
 
 def _parse_admin1(path: Path) -> dict[str, str]:
@@ -264,8 +336,10 @@ __all__ = [
     "DOWNLOAD_TIMEOUT_SECONDS",
     "GEO_DATA_BASE_URL",
     "MAX_DISTANCE_KM",
+    "SAME_PLACE_RADIUS_KM",
     "Place",
     "PlaceIndex",
     "download_data",
     "geo_data_dir",
+    "pick_chinese_name",
 ]
