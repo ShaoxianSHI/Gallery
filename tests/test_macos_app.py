@@ -96,6 +96,25 @@ def test_launcher_execs_the_in_bundle_symlink(
     assert exec_lines == ['exec "$HERE/python" -m gallery "$@"']
 
 
+def test_launcher_restores_the_paths_gui_apps_are_missing(
+    project_root: Path, tmp_path: Path, fake_icns: Path
+) -> None:
+    """从访达 / Dock 启动的进程 PATH 里没有 Homebrew，exiftool 会「凭空消失」。
+
+    启动器必须在启动应用之前把它们补回去，否则 Gallery 会误报没装 exiftool。
+    """
+    destination = build_bundle(tmp_path / "Gallery.app", project_root=project_root, icns=fake_icns)
+    script = (destination / "Contents" / "MacOS" / "Gallery").read_text(encoding="utf-8")
+
+    lines = script.splitlines()
+    fix = next(index for index, line in enumerate(lines) if line.startswith("PATH="))
+    assert lines[fix] == f'PATH="$PATH:{":".join(macos_app.EXTRA_PATH_DIRS)}"'
+    assert lines[fix + 1] == "export PATH"
+    assert fix < lines.index('exec "$HERE/python" -m gallery "$@"')
+    # Homebrew 的前缀必须在其中：exiftool 默认就装在这儿
+    assert "/opt/homebrew/bin" in macos_app.EXTRA_PATH_DIRS
+
+
 def test_rebuild_replaces_previous_bundle(
     project_root: Path, tmp_path: Path, fake_icns: Path
 ) -> None:

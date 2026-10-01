@@ -98,6 +98,10 @@ uv run python -m gallery.macos.app ~/Applications   # 或者直接放到「应�
 仓库移动、或 `uv sync` 重建过虚拟环境之后，重新生成一次即可。想换图标，见
 `src/gallery/resources/README.md`。
 
+从访达 / Dock 启动的进程默认只看得到系统那几个目录，Homebrew 装的 exiftool 不在其中
+（终端里有，因为 shell 会读你的配置文件）。启动器因此会把常见的安装目录补回 `PATH`，
+从 `.app` 启动时元数据依然是完整的。
+
 ---
 
 ## 使用

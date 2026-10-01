@@ -18,6 +18,10 @@
 系统才会把它当成这个应用（直接 ``exec`` 到 ``.venv`` 里的解释器，图标就丢了）。
 代价是此时解释器找不到 ``.venv`` 的 ``pyvenv.cfg``，因此用 CPython 认得的
 ``__PYVENV_LAUNCHER__`` 把前缀指回 ``.venv``。这两件事必须成对出现，缺一不可。
+
+启动器还会补一次 ``PATH``（见 ``EXTRA_PATH_DIRS``）：从访达 / Dock 启动的进程
+只拿到系统目录，Homebrew 装的 exiftool 因此找不到，Gallery 会误报「没有 exiftool」
+并降级成只读模式。
 """
 
 from __future__ import annotations
@@ -69,6 +73,19 @@ ICONSET_ENTRIES: Final = (
 #: 包内最低系统版本，只影响 LaunchServices 的判断。
 MINIMUM_SYSTEM_VERSION: Final = "13.0"
 
+#: 启动时补进 PATH 的常见安装目录。
+#:
+#: 从访达 / Dock 启动的进程只拿到系统那几个目录（``/usr/bin:/bin:/usr/sbin:/sbin``），
+#: Homebrew 装的 exiftool 因此不在 PATH 里 —— 元数据读不全，还会一路降级成只读模式，
+#: 看起来就像「明明装了 exiftool，Gallery 却说没有」。目录写死在这里是刻意的：
+#: 启动器没有登录 shell 的上下文，只能这样把常见的安装位置补回去。
+EXTRA_PATH_DIRS: Final = (
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/opt/local/bin",
+    "$HOME/.local/bin",
+)
+
 _LAUNCHER_TEMPLATE = """#!/bin/sh
 # 由 `uv run python -m gallery.macos_app` 生成，请勿手改：里面的解释器路径是构建时的。
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -79,6 +96,9 @@ if [ ! -x "$HERE/{link}" ]; then
     echo "    uv sync && uv run python -m gallery.macos_app" >&2
     exit 1
 fi
+# 从访达 / Dock 启动时 PATH 只有系统目录，Homebrew 装的 exiftool 就找不到。
+PATH="$PATH:{extra}"
+export PATH
 exec "$HERE/{link}" -m gallery "$@"
 """
 
@@ -196,7 +216,11 @@ def prepare_destination(destination: Path) -> None:
 def write_launcher(path: Path, *, python: Path) -> Path:
     """写出 ``Contents/MacOS/Gallery`` 启动脚本并加上可执行权限。"""
     path.write_text(
-        _LAUNCHER_TEMPLATE.format(python=python, link=PYTHON_LINK_NAME),
+        _LAUNCHER_TEMPLATE.format(
+            python=python,
+            link=PYTHON_LINK_NAME,
+            extra=":".join(EXTRA_PATH_DIRS),
+        ),
         encoding="utf-8",
     )
     path.chmod(0o755)
