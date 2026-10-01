@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from gallery.core.photos import PhotoRef
+from gallery.core.library.photos import PhotoRef
 from gallery.ui.formatting import photo_tooltip
 
 

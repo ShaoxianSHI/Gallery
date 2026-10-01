@@ -26,7 +26,7 @@ README 的路线图原本把「库扫描与索引（SQLite）」列为 M1、「�
 
 `core` 不得导入 Qt，因此解码必须落在 `core`：
 
-- `core.images.decode_rgba(path, max_edge=...)` 返回 `RasterImage(width, height, rgba: bytes)`；
+- `core.media.decode.decode_rgba(path, max_edge=...)` 返回 `RasterImage(width, height, rgba: bytes)`；
 - `ui` 侧用 `QImage(bytes, w, h, w * 4, Format_RGBA8888).copy()` 包装成 Qt 图像。
 
 这条约束的直接收益：解码、缩放、缓存逻辑全部可以在没有事件循环、没有屏幕的环境下用 pytest 覆盖。
@@ -82,7 +82,7 @@ plist 不透明、难以在测试里构造与断言。状态文件损坏时静�
 ### 8. v1 不引入 pytest-qt
 
 Qt 相关的可测逻辑（适配缩放比例、可见区优先级队列）抽成不依赖 Qt 的纯函数模块
-（`ui/zoom.py`、`ui/thumb_queue.py`），用普通 pytest 覆盖。
+（`ui/viewer/zoom.py`、`ui/thumbs/queue.py`），用普通 pytest 覆盖。
 `ui/` 的其余部分是装配代码，靠离屏冒烟脚本验证。新增依赖需要更新 README 并说明理由，
 目前 pytest-qt 带来的价值不值得这笔账。
 

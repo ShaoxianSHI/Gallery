@@ -2,7 +2,7 @@
 
 - 状态：已接受
 - 日期：2026-10-01
-- 相关代码：`src/gallery/core/metadata.py`、`src/gallery/ui/metadata_panel.py`
+- 相关代码：`src/gallery/core/metadata/exif.py`、`src/gallery/ui/panels/metadata.py`
 
 ## 背景
 
@@ -30,7 +30,7 @@ Exif 子 IFD 里，`FNumber` 缺席只有 APEX 的 `ApertureValue`，GPS 是 `(�
 
 ### 2. 只读，v1 不落盘
 
-`core/metadata.py` 不写任何文件；结果由界面按 `(路径, mtime_ns)` 在内存里做 LRU。
+`core/metadata/exif.py` 不写任何文件；结果由界面按 `(路径, mtime_ns)` 在内存里做 LRU。
 `.gallery/` 中不新增任何只有这里才有的数据 —— 持久化留给 M2 的 SQLite 索引，
 那才是它该待的地方。
 
@@ -61,7 +61,7 @@ Exif 子 IFD 里，`FNumber` 缺席只有 APEX 的 `ApertureValue`，GPS 是 `(�
 ## 后果
 
 - 装没装 exiftool，功能都能用，只是信息量不同；这一差异在界面上是可见的。
-- 面板字段表是**集中定义**的（`core/metadata.py` 里的分组规格），
+- 面板字段表是**集中定义**的（`core/metadata/exif.py` 里的分组规格），
   将来加字段只改一处，并有单测覆盖格式化规则。
 - 两个来源的取值形态不同（exiftool 给 `1/500`，Pillow 给 `0.002`），
   格式化函数必须同时接受两种形态，这由测试钉住。

@@ -27,8 +27,12 @@ from PySide6.QtCore import QPoint, QPointF, Qt  # noqa: E402
 from PySide6.QtGui import QColor, QImage, QPalette  # noqa: E402
 from PySide6.QtWidgets import QApplication, QFrame, QWidget  # noqa: E402
 
-from gallery.core.config import prepare_library  # noqa: E402
-from gallery.core.session import BROWSE_MODE_ALBUMS, SessionState, save_session  # noqa: E402
+from gallery.core.library.config import prepare_library  # noqa: E402
+from gallery.core.library.session import (  # noqa: E402
+    BROWSE_MODE_ALBUMS,
+    SessionState,
+    save_session,
+)
 from gallery.ui import theme  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 

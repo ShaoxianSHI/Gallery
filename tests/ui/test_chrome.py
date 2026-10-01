@@ -24,8 +24,12 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import QApplication, QStatusBar  # noqa: E402
 
-from gallery.core.config import prepare_library  # noqa: E402
-from gallery.core.session import BROWSE_MODE_ALBUMS, SessionState, save_session  # noqa: E402
+from gallery.core.library.config import prepare_library  # noqa: E402
+from gallery.core.library.session import (  # noqa: E402
+    BROWSE_MODE_ALBUMS,
+    SessionState,
+    save_session,
+)
 from gallery.ui.main_window import MainWindow  # noqa: E402
 
 #: 等待扫描与首屏布局稳定的时限。

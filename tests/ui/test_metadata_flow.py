@@ -26,10 +26,10 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from gallery.core.config import prepare_library  # noqa: E402
-from gallery.core.metadata import build_report  # noqa: E402
-from gallery.ui import metadata_panel as panel_module  # noqa: E402
+from gallery.core.library.config import prepare_library  # noqa: E402
+from gallery.core.metadata.exif import build_report  # noqa: E402
 from gallery.ui.main_window import METADATA_PREFETCH_RADIUS, MainWindow  # noqa: E402
+from gallery.ui.panels import metadata as panel_module  # noqa: E402
 
 #: 等异步扫描 / 读取完成的时限。注意这是**上限**，不是固定开销 ——
 #: 条件一成立就返回（见 ``tests/ui/conftest.py``）。
@@ -243,7 +243,7 @@ def test_place_lookup_result_is_cached(
     window: MainWindow, timeline: list[str], ready: Callable[[], None]
 ) -> None:
     """推断出的地点要入缓存，否则切回这张照片会「先没地点、再被替换」闪一次。"""
-    from gallery.core.metadata import MetadataReport
+    from gallery.core.metadata.exif import MetadataReport
 
     window._metadata_action.setChecked(True)
     ready()
@@ -475,7 +475,7 @@ def test_opening_a_photo_does_not_show_the_previous_one(
 
 def test_thumbnail_accessor_returns_none_when_missing() -> None:
     """缩略图访问器：没有就返回 None，不要凭空造一张空白图。"""
-    from gallery.ui.models import PhotoListModel
+    from gallery.ui.browser.model import PhotoListModel
 
     model = PhotoListModel()
     assert model.thumbnail_pixmap(Path("/没有/这张照片.jpg")) is None

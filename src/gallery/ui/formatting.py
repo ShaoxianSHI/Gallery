@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from gallery.core.formatting import format_bytes, format_timestamp
-from gallery.core.photos import PhotoRef
+from gallery.core.library.photos import PhotoRef
 
 
 def photo_tooltip(ref: PhotoRef) -> str:

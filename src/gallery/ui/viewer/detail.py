@@ -1,0 +1,410 @@
+"""大图查看。
+
+用 ``QGraphicsView`` 而不是自绘控件：坐标变换、滚动、平滑缩放都是现成的 ——
+``AnchorUnderMouse`` 让缩放围绕光标进行，``ScrollHandDrag`` 直接给出拖拽平移。
+
+这里只负责「显示与变换」。两级加载（先预览、后全分辨率）由主窗口决定，
+因为它才知道当前窗口大小与内存预算。
+"""
+
+from __future__ import annotations
+
+from PySide6.QtCore import (
+    QEasingCurve,
+    QEvent,
+    QPointF,
+    QRectF,
+    Qt,
+    QVariantAnimation,
+    Signal,
+)
+from PySide6.QtGui import (
+    QImage,
+    QKeyEvent,
+    QMouseEvent,
+    QNativeGestureEvent,
+    QPainter,
+    QPixmap,
+    QTransform,
+    QWheelEvent,
+)
+from PySide6.QtWidgets import (
+    QFrame,
+    QGraphicsPixmapItem,
+    QGraphicsScene,
+    QGraphicsView,
+    QLabel,
+    QWidget,
+)
+
+from gallery.ui import theme
+from gallery.ui.viewer.zoom import MAX_FIT_SCALE, MAX_SCALE, ZOOM_STEP, clamp_scale, fit_scale
+
+#: 角落提示的字号。
+OVERLAY_FONT_SIZE = 13
+
+#: 角落提示与视口边缘的距离。
+OVERLAY_MARGIN = 16
+
+#: 回到默认视图的动画时长。再长就显得拖沓，再短就看不出是「平滑」过去的。
+FIT_ANIMATION_MS = 220
+
+#: 判断「已经处于默认视图」的容差：比例用相对误差，位置用屏幕像素 ——
+#: 场景坐标下的偏差在不同缩放下含义完全不同。
+SCALE_EPSILON = 0.002
+CENTER_TOLERANCE_PX = 2.0
+
+
+#: 角标现在只用于「加载失败时说明原因」，不再显示「正在载入」。
+_OVERLAY_STYLE = f"""
+QLabel#detailOverlay {{
+    background: rgba(150, 40, 40, 0.82);
+    color: rgba(255, 255, 255, 0.94);
+    border-radius: 9px;
+    padding: 6px 12px;
+    font-size: {OVERLAY_FONT_SIZE}px;
+}}
+"""
+
+
+class DetailView(QGraphicsView):
+    """单张大图的查看器。"""
+
+    #: 用户要求返回（Esc / 回车）。
+    request_close = Signal()
+    #: 用户要求切换照片：-1 上一张，+1 下一张。
+    request_step = Signal(int)
+    #: 缩放比例变化（用于状态栏显示）。
+    zoom_changed = Signal(float)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._scene = QGraphicsScene(self)
+        self.setScene(self._scene)
+        self._item = QGraphicsPixmapItem()
+        self._item.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
+        self._scene.addItem(self._item)
+        self._pixmap = QPixmap()
+        self._fit_mode = True
+        self._overlay_text = ""
+
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._theme_watcher = theme.ensure_installed()
+        self._theme_watcher.changed.connect(self._apply_theme)
+        self._apply_theme()
+        self.setRenderHints(
+            QPainter.RenderHint.SmoothPixmapTransform | QPainter.RenderHint.Antialiasing
+        )
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
+        self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        self._overlay = QLabel(self)
+        self._overlay.setObjectName("detailOverlay")
+        self._overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._overlay.setWordWrap(True)
+        self._overlay.setStyleSheet(_OVERLAY_STYLE)
+        self._overlay.hide()
+
+        self._animating = False
+        self._anim_from_scale = 1.0
+        self._anim_to_scale = 1.0
+        self._anim_from_center = QPointF()
+        self._anim_to_center = QPointF()
+        self._animation = QVariantAnimation(self)
+        self._animation.setDuration(FIT_ANIMATION_MS)
+        self._animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._animation.valueChanged.connect(self._animation_frame)
+        self._animation.finished.connect(self._animation_finished)
+
+    # ---- 主题 --------------------------------------------------------------
+
+    def _apply_theme(self) -> None:
+        """底色跟着主题走。
+
+        这里以前写死成深色（``#1C1C1E``），于是浅色主题下点开照片会突然变一块黑 ——
+        底色只有一个来源，见 ``ui.theme``。
+        """
+        color = theme.current_theme().background
+        self.setBackgroundBrush(color)
+        self._scene.setBackgroundBrush(color)
+
+    # ---- 状态 --------------------------------------------------------------
+
+    @property
+    def has_image(self) -> bool:
+        return not self._pixmap.isNull()
+
+    @property
+    def current_scale(self) -> float:
+        return float(self.transform().m11())
+
+    @property
+    def is_fitting(self) -> bool:
+        """当前是否为「适应窗口」状态。窗口尺寸变化时据此决定要不要重新适配。"""
+        return self._fit_mode
+
+    @property
+    def image_size(self) -> tuple[int, int]:
+        if self._pixmap.isNull():
+            return (0, 0)
+        return (self._pixmap.width(), self._pixmap.height())
+
+    # ---- 内容 --------------------------------------------------------------
+
+    def set_image(self, image: QImage, *, refit: bool = True) -> None:
+        """显示一张图像。
+
+        :param refit: 是否重新适配窗口。替换图像（预览 → 全分辨率）时传 ``False``，
+            可以保住用户当前的缩放与位置，不会「跳一下」。
+        """
+        self.hide_overlay()
+        self.stop_animation()
+        pixmap = QPixmap.fromImage(image)
+        # 先放开上一张：32MP 照片的全分辨率副本约 128 MB，
+        # 让新旧两张同时存在会把内存峰值直接翻倍。
+        self._item.setPixmap(QPixmap())
+        self._pixmap = QPixmap()
+        self._scene.setSceneRect(QRectF())
+        self._pixmap = pixmap
+        self._item.setPixmap(pixmap)
+        self._scene.setSceneRect(QRectF(pixmap.rect()))
+        if refit or self._fit_mode:
+            self.fit_to_window()
+        else:
+            self._emit_scale()
+
+    def prepare_switch(self) -> None:
+        """切图前的准备：撤掉上一张可能残留的错误提示。
+
+        **刻意不显示任何加载提示**：上一张照片继续留在屏幕上等新图，
+        切图时多一个一闪而过的角标比多等 50ms 更扎眼。
+        """
+        if self._overlay.isVisible():
+            self.hide_overlay()
+
+    def show_error(self, text: str) -> None:
+        """显示加载失败的原因。上一张留在原处，右上角给出说明。"""
+        self._overlay_text = text
+        self._show_overlay()
+
+    def hide_overlay(self) -> None:
+        self._overlay.hide()
+
+    def clear_image(self) -> None:
+        """真正清空画面（切库或没有可显示内容时用），会释放全分辨率副本。"""
+        self.hide_overlay()
+        self.stop_animation()
+        self._pixmap = QPixmap()
+        self._item.setPixmap(QPixmap())
+        self._scene.setSceneRect(QRectF())
+        self.resetTransform()
+
+    def _show_overlay(self) -> None:
+        self._overlay.setText(self._overlay_text)
+        self._overlay.adjustSize()
+        self._overlay.show()
+        self._reposition_overlay()
+
+    # ---- 缩放 --------------------------------------------------------------
+
+    def fit_to_window(self) -> None:
+        if self._pixmap.isNull():
+            return
+        viewport = self.viewport().size()
+        scale = fit_scale(
+            (self._pixmap.width(), self._pixmap.height()),
+            (viewport.width(), viewport.height()),
+        )
+        self._apply_scale(scale, fitting=True)
+
+    def actual_size(self) -> None:
+        if self._pixmap.isNull():
+            return
+        self._apply_scale(1.0, fitting=False)
+
+    def zoom_in(self) -> None:
+        self.zoom_by(ZOOM_STEP)
+
+    def zoom_out(self) -> None:
+        self.zoom_by(1 / ZOOM_STEP)
+
+    def zoom_by(self, factor: float) -> None:
+        """按倍率缩放（围绕光标位置）。"""
+        if self._pixmap.isNull():
+            return
+        self._apply_scale(self.current_scale * factor, fitting=False)
+
+    def _apply_scale(self, scale: float, *, fitting: bool) -> None:
+        self.stop_animation()
+        # 「适应窗口」不能套用手动缩放的上限：小图铺满视口需要的倍数会超过 8 倍
+        # （168 像素的占位缩略图在大窗口里要 12 倍以上），一旦卡住，占位图就只占中间
+        # 一小块，全图到了再「变大一圈」。只有手动放大才受 MAX_SCALE 约束。
+        scale = clamp_scale(scale, maximum=MAX_FIT_SCALE if fitting else MAX_SCALE)
+        self.setTransform(QTransform.fromScale(scale, scale))
+        self._fit_mode = fitting
+        self._emit_scale()
+
+    # ---- 回到默认视图 ------------------------------------------------------
+
+    def fit_scale_value(self) -> float:
+        """当前窗口下「适应窗口」的比例。"""
+        viewport = self.viewport().size()
+        return fit_scale(
+            (self._pixmap.width(), self._pixmap.height()),
+            (viewport.width(), viewport.height()),
+        )
+
+    def animate_to_fit(self) -> None:
+        """平滑回到默认视图：适应窗口并把图片摆回正中。
+
+        直接 setTransform 会「跳」一下，用户会瞬间失去方位感；这里把比例与
+        视口中心一起插值，看得到它是怎么过去的。
+        """
+        if self._pixmap.isNull():
+            return
+        target_scale = self.fit_scale_value()
+        target_center = QPointF(self._pixmap.width() / 2, self._pixmap.height() / 2)
+        start_scale = self.current_scale
+        start_center = self.mapToScene(self.viewport().rect().center())
+        if self._is_default_view(start_scale, start_center, target_scale, target_center):
+            # 已经在那儿了：不播动画，只把状态摆正。
+            self.stop_animation()
+            self._fit_mode = True
+            self._emit_scale()
+            return
+
+        self._anim_from_scale = start_scale
+        self._anim_to_scale = target_scale
+        self._anim_from_center = start_center
+        self._anim_to_center = target_center
+        self._animating = True
+        self._animation.stop()
+        self._animation.setStartValue(0.0)
+        self._animation.setEndValue(1.0)
+        self._animation.start()
+
+    def _is_default_view(
+        self,
+        scale: float,
+        center: QPointF,
+        target_scale: float,
+        target_center: QPointF,
+    ) -> bool:
+        if abs(scale - target_scale) > SCALE_EPSILON:
+            return False
+        tolerance = CENTER_TOLERANCE_PX / max(scale, 1e-6)
+        return (
+            abs(center.x() - target_center.x()) <= tolerance
+            and abs(center.y() - target_center.y()) <= tolerance
+        )
+
+    def _animation_frame(self, value: object) -> None:
+        progress = float(value)  # type: ignore[arg-type]
+        scale = self._anim_from_scale + (self._anim_to_scale - self._anim_from_scale) * progress
+        center = QPointF(
+            self._anim_from_center.x()
+            + (self._anim_to_center.x() - self._anim_from_center.x()) * progress,
+            self._anim_from_center.y()
+            + (self._anim_to_center.y() - self._anim_from_center.y()) * progress,
+        )
+        self.setTransform(QTransform.fromScale(scale, scale))
+        self.centerOn(center)
+        # 状态栏的百分比跟着动画走，而不是结束时才跳一下。
+        self.zoom_changed.emit(scale)
+
+    def _animation_finished(self) -> None:
+        self._animating = False
+        self._fit_mode = True
+        self._emit_scale()
+
+    def stop_animation(self) -> None:
+        if self._animation.state() != QVariantAnimation.State.Stopped:
+            self._animation.stop()
+        self._animating = False
+
+    def _emit_scale(self) -> None:
+        self.zoom_changed.emit(self.current_scale)
+
+    # ---- 事件 --------------------------------------------------------------
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
+        """双击图片：平滑回到默认视图（适应窗口并居中）。"""
+        if event.button() == Qt.MouseButton.LeftButton and not self._pixmap.isNull():
+            self.animate_to_fit()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def wheelEvent(self, event: QWheelEvent) -> None:
+        """⌘/Ctrl + 滚轮缩放；普通滚动交给基类做平移（与 macOS 预览一致）。"""
+        modifiers = event.modifiers()
+        if modifiers & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier):
+            delta = event.angleDelta().y()
+            if delta:
+                self.zoom_by(ZOOM_STEP if delta > 0 else 1 / ZOOM_STEP)
+            event.accept()
+            return
+        super().wheelEvent(event)
+
+    def event(self, event: QEvent) -> bool:
+        # macOS 触控板捏合：原生手势事件不会走 wheelEvent。
+        if (
+            event.type() == QEvent.Type.NativeGesture
+            and isinstance(event, QNativeGestureEvent)
+            and event.gestureType() == Qt.NativeGestureType.ZoomNativeGesture
+        ):
+            self.zoom_by(1.0 + float(event.value()))
+            return True
+        return super().event(event)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        key = event.key()
+        if key in (Qt.Key.Key_Escape, Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.request_close.emit()
+            return
+        if key == Qt.Key.Key_Left:
+            self.request_step.emit(-1)
+            return
+        if key in (Qt.Key.Key_Right, Qt.Key.Key_Space):
+            self.request_step.emit(1)
+            return
+        if key in (Qt.Key.Key_Plus, Qt.Key.Key_Equal):
+            self.zoom_in()
+            return
+        if key == Qt.Key.Key_Minus:
+            self.zoom_out()
+            return
+        if key == Qt.Key.Key_0:
+            self.fit_to_window()
+            return
+        if key == Qt.Key.Key_1:
+            self.actual_size()
+            return
+        super().keyPressEvent(event)
+
+    def resizeEvent(self, event: QEvent) -> None:
+        super().resizeEvent(event)  # type: ignore[arg-type]
+        if self._fit_mode and not self._animating:
+            self.fit_to_window()
+        self._reposition_overlay()
+
+    def _reposition_overlay(self) -> None:
+        """贴到视口右上角；文案过长时换行并限制宽度，不会横穿整张照片。"""
+        area = self.viewport().geometry()
+        self._overlay.setMaximumWidth(max(160, area.width() - 2 * OVERLAY_MARGIN))
+        self._overlay.adjustSize()
+        width = self._overlay.width()
+        x = area.right() - OVERLAY_MARGIN - width + 1
+        self._overlay.move(max(area.left() + OVERLAY_MARGIN, x), area.top() + OVERLAY_MARGIN)
+
+
+__all__ = [
+    "FIT_ANIMATION_MS",
+    "OVERLAY_MARGIN",
+    "DetailView",
+]

@@ -24,18 +24,18 @@ from PySide6.QtGui import QMouseEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from gallery.core.config import prepare_library  # noqa: E402
-from gallery.core.photos import FolderRef, PhotoRef  # noqa: E402
-from gallery.core.session import (  # noqa: E402
+from gallery.core.library.config import prepare_library  # noqa: E402
+from gallery.core.library.photos import FolderRef, PhotoRef  # noqa: E402
+from gallery.core.library.session import (  # noqa: E402
     BROWSE_MODE_ALBUMS,
     BROWSE_MODE_FLAT,
     SessionState,
     save_session,
 )
-from gallery.ui.grid_view import PhotoGrid  # noqa: E402
+from gallery.ui.browser.grid import PhotoGrid  # noqa: E402
+from gallery.ui.browser.model import PhotoListModel  # noqa: E402
+from gallery.ui.browser.rename_edit import RenameEdit  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
-from gallery.ui.models import PhotoListModel  # noqa: E402
-from gallery.ui.rename_edit import RenameEdit  # noqa: E402
 
 #: 等待异步扫描完成的时限。
 SCAN_TIMEOUT_SECONDS = 8.0

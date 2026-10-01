@@ -23,7 +23,7 @@ from PySide6.QtCore import QPoint, Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QToolTip  # noqa: E402
 
-from gallery.core.config import prepare_library  # noqa: E402
+from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 
 #: Qt 离屏环境下弹出悬停提示的唤醒延迟，实测 784ms（Qt 默认那一档）。这几条测试的

@@ -2,7 +2,7 @@
 
 - 状态：已接受
 - 日期：2026-10-01
-- 相关代码：`src/gallery/core/geonames.py`、`src/gallery/ui/main_window.py`
+- 相关代码：`src/gallery/core/places/geonames.py`、`src/gallery/ui/main_window.py`
 
 ## 背景
 

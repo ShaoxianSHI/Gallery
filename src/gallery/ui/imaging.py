@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from PySide6.QtGui import QImage
 
-from gallery.core.images import RasterImage
+from gallery.core.media.decode import RasterImage
 
 #: RGBA8888 每像素字节数。
 _RGBA_BYTES_PER_PIXEL = 4

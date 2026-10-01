@@ -33,15 +33,12 @@ from PySide6.QtWidgets import (
 )
 
 from gallery.core import paths
-from gallery.core.config import prepare_library
 from gallery.core.errors import GalleryError, GeoDataError
-from gallery.core.geonames import PlaceIndex, download_data, geo_data_dir
-from gallery.core.library import Library
-from gallery.core.metadata import MetadataReport, read_metadata
-from gallery.core.photos import FolderRef, GridEntry, PhotoRef
-from gallery.core.rename import RenameResult
-from gallery.core.scanner import ScanReport
-from gallery.core.session import (
+from gallery.core.library.config import prepare_library
+from gallery.core.library.facade import Library
+from gallery.core.library.photos import FolderRef, GridEntry, PhotoRef
+from gallery.core.library.scanner import ScanReport
+from gallery.core.library.session import (
     BROWSE_MODE_ALBUMS,
     BROWSE_MODE_FLAT,
     SessionState,
@@ -49,24 +46,27 @@ from gallery.core.session import (
     load_session,
     save_session,
 )
+from gallery.core.metadata.exif import MetadataReport, read_metadata
+from gallery.core.metadata.rename import RenameResult
+from gallery.core.places.geonames import PlaceIndex, download_data, geo_data_dir
 from gallery.ui import theme
-from gallery.ui.breadcrumb import BreadcrumbBar
-from gallery.ui.detail_view import DetailView
-from gallery.ui.grid_view import PREFETCH_MARGIN, PhotoGrid
-from gallery.ui.imaging import to_qimage
-from gallery.ui.metadata_panel import MetadataPanel
-from gallery.ui.models import PhotoListModel
-from gallery.ui.navigation import breadcrumb_parts, parent_of
-from gallery.ui.tasks import TaskContext, TaskRunner
-from gallery.ui.thumb_sizes import (
+from gallery.ui.browser.grid import PREFETCH_MARGIN, PhotoGrid
+from gallery.ui.browser.model import PhotoListModel
+from gallery.ui.browser.thumb_sizes import (
     THUMBNAIL_SIZES,
     edge_for_index,
     label_for_index,
     nearest_index,
     shifted_index,
 )
-from gallery.ui.thumbnails import ThumbnailPipeline
-from gallery.ui.welcome import WelcomeView
+from gallery.ui.imaging import to_qimage
+from gallery.ui.navigation import breadcrumb_parts, parent_of
+from gallery.ui.panels.breadcrumb import BreadcrumbBar
+from gallery.ui.panels.metadata import MetadataPanel
+from gallery.ui.panels.welcome import WelcomeView
+from gallery.ui.tasks import TaskContext, TaskRunner
+from gallery.ui.thumbs.pipeline import ThumbnailPipeline
+from gallery.ui.viewer.detail import DetailView
 
 logger = logging.getLogger(__name__)
 

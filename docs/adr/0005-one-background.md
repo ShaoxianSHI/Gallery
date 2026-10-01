@@ -2,8 +2,8 @@
 
 - 状态：已接受（第二轮修订：标题栏也交给我们画，底色改用内容区色）
 - 日期：2026-10-05
-- 相关代码：`src/gallery/ui/theme.py`、`main_window.py`、`detail_view.py`、
-  `metadata_panel.py`、`breadcrumb.py`
+- 相关代码：`src/gallery/ui/theme.py`、`main_window.py`、`viewer/detail.py`、
+  `panels/metadata.py`、`panels/breadcrumb.py`
 
 ## 背景
 
@@ -75,7 +75,7 @@
 - 浅色：标题栏那一段、面包屑、网格、大图、元数据面板全是 `#ffffff`；
   深色：全是 `#171717`。真机截图逐点取色验证过，来回切换外观也成立。
 - 大图区与元数据面板在浅色下从黑底浅字变成浅底深字。可读性由派生公式保证，
-  `tests/ui/test_metadata_panel.py` 仍在量渲染出来的像素并卡对比度。
+  `tests/ui/panels/test_metadata.py` 仍在量渲染出来的像素并卡对比度。
 - 想改整体底色只改 `BACKGROUND_ROLE` 一处。
 - 面包屑的路径段按钮显式设为透明，避免在 macOS 上又冒出一排系统按钮色的圆角块。
 - 代价：换主题时要遍历控件树（几百个控件，毫秒级），且此后每个控件都持有显式调色板，
