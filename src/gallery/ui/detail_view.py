@@ -15,7 +15,6 @@ from PySide6.QtCore import (
     QPointF,
     QRectF,
     Qt,
-    QTimer,
     QVariantAnimation,
     Signal,
 )
@@ -50,9 +49,6 @@ OVERLAY_FONT_SIZE = 13
 #: 角落提示与视口边缘的距离。
 OVERLAY_MARGIN = 16
 
-#: 「正在载入」延迟多久才出现。加载很快时它根本不该闪一下 —— 那本身就是一种闪烁。
-LOADING_HINT_DELAY_MS = 150
-
 #: 回到默认视图的动画时长。再长就显得拖沓，再短就看不出是「平滑」过去的。
 FIT_ANIMATION_MS = 220
 
@@ -62,16 +58,14 @@ SCALE_EPSILON = 0.002
 CENTER_TOLERANCE_PX = 2.0
 
 
+#: 角标现在只用于「加载失败时说明原因」，不再显示「正在载入」。
 _OVERLAY_STYLE = f"""
 QLabel#detailOverlay {{
-    background: rgba(0, 0, 0, 0.62);
+    background: rgba(150, 40, 40, 0.82);
     color: rgba(255, 255, 255, 0.94);
     border-radius: 9px;
     padding: 6px 12px;
     font-size: {OVERLAY_FONT_SIZE}px;
-}}
-QLabel#detailOverlay[error="true"] {{
-    background: rgba(150, 40, 40, 0.82);
 }}
 """
 
@@ -117,10 +111,6 @@ class DetailView(QGraphicsView):
         self._overlay.setWordWrap(True)
         self._overlay.setStyleSheet(_OVERLAY_STYLE)
         self._overlay.hide()
-        self._loading_timer = QTimer(self)
-        self._loading_timer.setSingleShot(True)
-        self._loading_timer.setInterval(LOADING_HINT_DELAY_MS)
-        self._loading_timer.timeout.connect(self._show_overlay)
 
         self._animating = False
         self._anim_from_scale = 1.0
@@ -178,31 +168,21 @@ class DetailView(QGraphicsView):
         else:
             self._emit_scale()
 
-    def show_loading(self, text: str = "正在载入…") -> None:
-        """显示「正在载入」。
+    def prepare_switch(self) -> None:
+        """切图前的准备：撤掉上一张可能残留的错误提示。
 
-        **不清空画面**：上一张照片继续留在屏幕上，只是右上角多一个提示。
-        切图时刷一下黑屏比多等一会儿刺眼得多。
+        **刻意不显示任何加载提示**：上一张照片继续留在屏幕上等新图，
+        切图时多一个一闪而过的角标比多等 50ms 更扎眼。
         """
-        self._overlay_text = text
         if self._overlay.isVisible():
-            if not self._overlay.property("error"):
-                # 已经在提示「正在载入」：保持原样，免得提示本身一闪一闪。
-                return
-            # 上一张留下了错误提示：先撤掉，别让旧错误继续挂在屏幕上。
             self.hide_overlay()
-        self._overlay.setProperty("error", False)
-        self._loading_timer.start()
 
     def show_error(self, text: str) -> None:
-        """显示错误。同样不刷黑：上一张留在原处，右上角给出原因。"""
+        """显示加载失败的原因。上一张留在原处，右上角给出说明。"""
         self._overlay_text = text
-        self._overlay.setProperty("error", True)
-        self._loading_timer.stop()
         self._show_overlay()
 
     def hide_overlay(self) -> None:
-        self._loading_timer.stop()
         self._overlay.hide()
 
     def clear_image(self) -> None:
@@ -217,15 +197,8 @@ class DetailView(QGraphicsView):
     def _show_overlay(self) -> None:
         self._overlay.setText(self._overlay_text)
         self._overlay.adjustSize()
-        self._repolish_overlay()
         self._overlay.show()
         self._reposition_overlay()
-
-    def _repolish_overlay(self) -> None:
-        # 动态属性变了要重新套一遍样式表，否则错误态不会变色。
-        style = self._overlay.style()
-        style.unpolish(self._overlay)
-        style.polish(self._overlay)
 
     # ---- 缩放 --------------------------------------------------------------
 
@@ -420,7 +393,6 @@ class DetailView(QGraphicsView):
 __all__ = [
     "BACKGROUND",
     "FIT_ANIMATION_MS",
-    "LOADING_HINT_DELAY_MS",
     "OVERLAY_MARGIN",
     "DetailView",
 ]

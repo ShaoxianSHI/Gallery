@@ -175,3 +175,34 @@ def test_place_lookup_result_is_cached(
     cached = window._cached_metadata(ref)
     assert isinstance(cached, MetadataReport)
     assert any(field.label == "地点（推断）" for group in cached.groups for field in group.fields)
+
+
+def test_switching_photos_shows_no_loading_overlay(
+    window: MainWindow, qt_app: QApplication, timeline: list[str]
+) -> None:
+    """切图时右上角不再出现「正在载入」角标。
+
+    角标只用来在加载失败时说明原因了：切图时多一个一闪而过的提示比多等 50ms 更扎眼。
+    """
+    detail = window._detail
+    window._metadata_action.setChecked(True)
+    _settle(qt_app, 1.0)
+
+    for _ in range(3):
+        window.step_detail(1)
+        _settle(qt_app, 0.03)
+
+    assert not detail._overlay.isVisible(), "切图时不该出现任何角标"
+    assert "正在载入" not in detail._overlay_text
+
+
+def test_failed_photo_still_explains_why(window: MainWindow, qt_app: QApplication) -> None:
+    """删掉载入角标不能连错误提示一起删掉：加载失败仍要说原因。"""
+    detail = window._detail
+    detail.show_error("这个文件解码不了")
+
+    assert detail._overlay.isVisible()
+    assert detail._overlay.text() == "这个文件解码不了"
+
+    detail.prepare_switch()
+    assert not detail._overlay.isVisible(), "切图时上一张的错误提示应当撤掉"

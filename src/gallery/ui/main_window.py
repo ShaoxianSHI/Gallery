@@ -829,7 +829,7 @@ class MainWindow(QMainWindow):
             self._request_full(ref, row, generation)
             return
 
-        self._detail.show_loading()
+        self._detail.prepare_switch()
         max_edge = self._preview_edge()
 
         def work_preview(context: TaskContext) -> object:
