@@ -79,7 +79,11 @@ MAX_LAYOUT_MEMO = 32
 
 
 class PhotoDelegate(QStyledItemDelegate):
-    """把一格画成卡片：圆角底、居中缩略图、底部省略号文件名。"""
+    """把一格画成卡片：居中缩略图、底部省略号文件名。
+
+    底色默认透明，缩略图与文件名直接落在网格背景上；只有选中与相册才铺一层淡色圆角底，
+    好让「选中了哪一张」「哪个是相册」一眼可见。
+    """
 
     #: 缩略图与卡片边缘的间距。
     PADDING = 8
@@ -105,7 +109,6 @@ class PhotoDelegate(QStyledItemDelegate):
 
             painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
             highlight = palette.color(QPalette.ColorRole.Highlight)
-            text_color = palette.color(QPalette.ColorRole.WindowText)
             if selected:
                 background = QColor(highlight)
                 background.setAlpha(90)
@@ -114,13 +117,13 @@ class PhotoDelegate(QStyledItemDelegate):
                 background = QColor(highlight)
                 background.setAlpha(38)
             else:
-                # 浅色方案下白色几乎不可见，深色方案下黑色几乎不可见；
-                # 用文字色的低透明度副本，两种方案下都只是「一层淡淡的底」。
-                background = QColor(text_color)
-                background.setAlpha(18)
+                # 普通照片格子不铺底色：缩略图与文件名直接落在网格背景上。
+                # 选中与相册仍留一层淡淡的底，否则「选中了哪一张」「哪个是相册」都看不出来。
+                background = QColor(0, 0, 0, 0)
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(background)
-            painter.drawRoundedRect(rect, self.RADIUS, self.RADIUS)
+            if background.alpha() > 0:
+                painter.setBrush(background)
+                painter.drawRoundedRect(rect, self.RADIUS, self.RADIUS)
 
             label_rect = QRect(
                 rect.left() + 8,
