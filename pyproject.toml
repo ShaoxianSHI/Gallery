@@ -11,9 +11,6 @@ dependencies = [
     "pillow>=11.0",
     "pillow-heif>=1.0",
     "watchdog>=6.0",
-    # 只在 macOS 上安装：顶部面包屑要的是系统原生毛玻璃（NSVisualEffectView）。
-    # 带平台标记，其他系统上 `uv sync` 才不会因为装不上它而失败；代码里也有降级路径。
-    "pyobjc-framework-cocoa>=10.0; sys_platform == 'darwin'",
 ]
 
 [project.scripts]

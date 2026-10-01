@@ -1,10 +1,6 @@
 """面包屑导航条：库名 ▸ 子目录 ▸ 当前目录。
 
 只在相册模式下显示。除最后一段（当前所在层）外都可以点击跳回。
-
-它是**浮在网格之上**的一层，不是压在照片上面的一行标题：底下是照片，控件只占自己
-那么大一块，宽度永远贴着内容（末尾那个 stretch 是为了让长路径从左侧排开，不是为了
-把整行撑满）。背景走系统毛玻璃；拿不到毛玻璃时退成半透明底色（见 ``ui.vibrancy``）。
 """
 
 from __future__ import annotations
@@ -14,8 +10,6 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QToolButton, QWidget
-
-from gallery.ui.vibrancy import FrostedPanel
 
 #: 分隔符。
 SEPARATOR = "▸"
@@ -31,16 +25,16 @@ QToolButton:hover { text-decoration: underline; }
 """
 
 
-class BreadcrumbBar(FrostedPanel):
+class BreadcrumbBar(QWidget):
     """可点击的路径条。"""
 
     #: 用户点了某一段，要求跳到那里。
     path_requested = Signal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent, name="breadcrumb")
+        super().__init__(parent)
         self._layout = QHBoxLayout(self)
-        self._layout.setContentsMargins(10, 4, 10, 4)
+        self._layout.setContentsMargins(2, 2, 2, 2)
         self._layout.setSpacing(0)
 
     def set_path(self, parts: Sequence[tuple[str, Path]]) -> None:
