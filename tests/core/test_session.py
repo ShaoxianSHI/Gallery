@@ -171,3 +171,33 @@ def test_with_browse_mode_keeps_other_fields() -> None:
     assert updated.browse_mode == BROWSE_MODE_FLAT
     assert updated.thumbnail_edge == 288
     assert state.browse_mode is None
+
+
+def test_metadata_visible_round_trip(tmp_path: Path) -> None:
+    save_session(SessionState(metadata_visible=True), base=tmp_path)
+
+    assert load_session(base=tmp_path).metadata_visible is True
+
+
+def test_metadata_visible_defaults_to_none(tmp_path: Path) -> None:
+    assert load_session(base=tmp_path).metadata_visible is None
+    assert SessionState().metadata_visible is None
+
+
+@pytest.mark.parametrize("bad", ["true", 1, 0, None, [], {}])
+def test_invalid_metadata_visible_falls_back(tmp_path: Path, bad: object) -> None:
+    file = paths.app_state_file(base=tmp_path)
+    file.parent.mkdir(parents=True)
+    file.write_text(json.dumps({"metadata_visible": bad}), encoding="utf-8")
+
+    assert load_session(base=tmp_path).metadata_visible is None
+
+
+def test_with_metadata_visible_keeps_other_fields() -> None:
+    state = SessionState(browse_mode=BROWSE_MODE_ALBUMS)
+
+    updated = state.with_metadata_visible(True)
+
+    assert updated.metadata_visible is True
+    assert updated.browse_mode == BROWSE_MODE_ALBUMS
+    assert state.metadata_visible is None

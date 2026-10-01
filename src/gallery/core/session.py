@@ -55,6 +55,8 @@ class SessionState:
     thumbnail_edge: int | None = None
     #: 上次用的浏览方式；``None`` 表示用界面默认值。
     browse_mode: str | None = None
+    #: 大图右侧的元数据面板是否展开；``None`` 表示用界面默认值（不展开）。
+    metadata_visible: bool | None = None
 
     def with_recent_root(self, root: Path) -> SessionState:
         """把 ``root`` 提到最前面，去重并截断到上限。"""
@@ -70,6 +72,9 @@ class SessionState:
 
     def with_browse_mode(self, mode: str | None) -> SessionState:
         return replace(self, browse_mode=mode)
+
+    def with_metadata_visible(self, visible: bool) -> SessionState:
+        return replace(self, metadata_visible=visible)
 
 
 def load_session(*, base: Path | None = None) -> SessionState:
@@ -88,6 +93,7 @@ def load_session(*, base: Path | None = None) -> SessionState:
         window=_parse_window(data.get("window")),
         thumbnail_edge=_parse_positive_int(data.get("thumbnail_edge")),
         browse_mode=_parse_browse_mode(data.get("browse_mode")),
+        metadata_visible=_parse_bool(data.get("metadata_visible")),
     )
 
 
@@ -103,6 +109,7 @@ def save_session(state: SessionState, *, base: Path | None = None) -> None:
         "window": _window_to_json(state.window),
         "thumbnail_edge": state.thumbnail_edge,
         "browse_mode": state.browse_mode,
+        "metadata_visible": state.metadata_visible,
     }
     write_text_atomic(
         paths.app_state_file(base=base),
@@ -136,6 +143,10 @@ def _parse_roots(value: object) -> tuple[Path, ...]:
         if len(roots) >= MAX_RECENT_ROOTS:
             break
     return tuple(roots)
+
+
+def _parse_bool(value: object) -> bool | None:
+    return value if isinstance(value, bool) else None
 
 
 def _parse_browse_mode(value: object) -> str | None:
