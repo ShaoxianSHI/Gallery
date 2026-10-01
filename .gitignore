@@ -18,6 +18,11 @@ htmlcov/
 .gallery/*
 !.gallery/config.toml
 
+# ---- 本地测试数据 ----
+# 开发时把真实相册放在仓库根目录下就地取用。照片永远不进版本控制：
+# 仓库里不放用户的照片，也不放任何大尺寸二进制（见 AGENTS.md）。
+/测试相册/
+
 # ---- macOS ----
 .DS_Store
 .AppleDouble
