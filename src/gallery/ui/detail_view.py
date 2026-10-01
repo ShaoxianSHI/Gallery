@@ -9,11 +9,21 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import (
+    QEasingCurve,
+    QEvent,
+    QPointF,
+    QRectF,
+    Qt,
+    QTimer,
+    QVariantAnimation,
+    Signal,
+)
 from PySide6.QtGui import (
     QColor,
     QImage,
     QKeyEvent,
+    QMouseEvent,
     QNativeGestureEvent,
     QPainter,
     QPixmap,
@@ -42,6 +52,14 @@ OVERLAY_MARGIN = 16
 
 #: 「正在载入」延迟多久才出现。加载很快时它根本不该闪一下 —— 那本身就是一种闪烁。
 LOADING_HINT_DELAY_MS = 150
+
+#: 回到默认视图的动画时长。再长就显得拖沓，再短就看不出是「平滑」过去的。
+FIT_ANIMATION_MS = 220
+
+#: 判断「已经处于默认视图」的容差：比例用相对误差，位置用屏幕像素 ——
+#: 场景坐标下的偏差在不同缩放下含义完全不同。
+SCALE_EPSILON = 0.002
+CENTER_TOLERANCE_PX = 2.0
 
 
 _OVERLAY_STYLE = f"""
@@ -104,6 +122,17 @@ class DetailView(QGraphicsView):
         self._loading_timer.setInterval(LOADING_HINT_DELAY_MS)
         self._loading_timer.timeout.connect(self._show_overlay)
 
+        self._animating = False
+        self._anim_from_scale = 1.0
+        self._anim_to_scale = 1.0
+        self._anim_from_center = QPointF()
+        self._anim_to_center = QPointF()
+        self._animation = QVariantAnimation(self)
+        self._animation.setDuration(FIT_ANIMATION_MS)
+        self._animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._animation.valueChanged.connect(self._animation_frame)
+        self._animation.finished.connect(self._animation_finished)
+
     # ---- 状态 --------------------------------------------------------------
 
     @property
@@ -134,6 +163,7 @@ class DetailView(QGraphicsView):
             可以保住用户当前的缩放与位置，不会「跳一下」。
         """
         self.hide_overlay()
+        self.stop_animation()
         pixmap = QPixmap.fromImage(image)
         # 先放开上一张：32MP 照片的全分辨率副本约 128 MB，
         # 让新旧两张同时存在会把内存峰值直接翻倍。
@@ -178,6 +208,7 @@ class DetailView(QGraphicsView):
     def clear_image(self) -> None:
         """真正清空画面（切库或没有可显示内容时用），会释放全分辨率副本。"""
         self.hide_overlay()
+        self.stop_animation()
         self._pixmap = QPixmap()
         self._item.setPixmap(QPixmap())
         self._scene.setSceneRect(QRectF())
@@ -226,15 +257,102 @@ class DetailView(QGraphicsView):
         self._apply_scale(self.current_scale * factor, fitting=False)
 
     def _apply_scale(self, scale: float, *, fitting: bool) -> None:
+        self.stop_animation()
         scale = clamp_scale(scale)
         self.setTransform(QTransform.fromScale(scale, scale))
         self._fit_mode = fitting
         self._emit_scale()
 
+    # ---- 回到默认视图 ------------------------------------------------------
+
+    def fit_scale_value(self) -> float:
+        """当前窗口下「适应窗口」的比例。"""
+        viewport = self.viewport().size()
+        return fit_scale(
+            (self._pixmap.width(), self._pixmap.height()),
+            (viewport.width(), viewport.height()),
+        )
+
+    def animate_to_fit(self) -> None:
+        """平滑回到默认视图：适应窗口并把图片摆回正中。
+
+        直接 setTransform 会「跳」一下，用户会瞬间失去方位感；这里把比例与
+        视口中心一起插值，看得到它是怎么过去的。
+        """
+        if self._pixmap.isNull():
+            return
+        target_scale = self.fit_scale_value()
+        target_center = QPointF(self._pixmap.width() / 2, self._pixmap.height() / 2)
+        start_scale = self.current_scale
+        start_center = self.mapToScene(self.viewport().rect().center())
+        if self._is_default_view(start_scale, start_center, target_scale, target_center):
+            # 已经在那儿了：不播动画，只把状态摆正。
+            self.stop_animation()
+            self._fit_mode = True
+            self._emit_scale()
+            return
+
+        self._anim_from_scale = start_scale
+        self._anim_to_scale = target_scale
+        self._anim_from_center = start_center
+        self._anim_to_center = target_center
+        self._animating = True
+        self._animation.stop()
+        self._animation.setStartValue(0.0)
+        self._animation.setEndValue(1.0)
+        self._animation.start()
+
+    def _is_default_view(
+        self,
+        scale: float,
+        center: QPointF,
+        target_scale: float,
+        target_center: QPointF,
+    ) -> bool:
+        if abs(scale - target_scale) > SCALE_EPSILON:
+            return False
+        tolerance = CENTER_TOLERANCE_PX / max(scale, 1e-6)
+        return (
+            abs(center.x() - target_center.x()) <= tolerance
+            and abs(center.y() - target_center.y()) <= tolerance
+        )
+
+    def _animation_frame(self, value: object) -> None:
+        progress = float(value)  # type: ignore[arg-type]
+        scale = self._anim_from_scale + (self._anim_to_scale - self._anim_from_scale) * progress
+        center = QPointF(
+            self._anim_from_center.x()
+            + (self._anim_to_center.x() - self._anim_from_center.x()) * progress,
+            self._anim_from_center.y()
+            + (self._anim_to_center.y() - self._anim_from_center.y()) * progress,
+        )
+        self.setTransform(QTransform.fromScale(scale, scale))
+        self.centerOn(center)
+        # 状态栏的百分比跟着动画走，而不是结束时才跳一下。
+        self.zoom_changed.emit(scale)
+
+    def _animation_finished(self) -> None:
+        self._animating = False
+        self._fit_mode = True
+        self._emit_scale()
+
+    def stop_animation(self) -> None:
+        if self._animation.state() != QVariantAnimation.State.Stopped:
+            self._animation.stop()
+        self._animating = False
+
     def _emit_scale(self) -> None:
         self.zoom_changed.emit(self.current_scale)
 
     # ---- 事件 --------------------------------------------------------------
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
+        """双击图片：平滑回到默认视图（适应窗口并居中）。"""
+        if event.button() == Qt.MouseButton.LeftButton and not self._pixmap.isNull():
+            self.animate_to_fit()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
 
     def wheelEvent(self, event: QWheelEvent) -> None:
         """⌘/Ctrl + 滚轮缩放；普通滚动交给基类做平移（与 macOS 预览一致）。"""
@@ -285,7 +403,7 @@ class DetailView(QGraphicsView):
 
     def resizeEvent(self, event: QEvent) -> None:
         super().resizeEvent(event)  # type: ignore[arg-type]
-        if self._fit_mode:
+        if self._fit_mode and not self._animating:
             self.fit_to_window()
         self._reposition_overlay()
 
@@ -301,6 +419,7 @@ class DetailView(QGraphicsView):
 
 __all__ = [
     "BACKGROUND",
+    "FIT_ANIMATION_MS",
     "LOADING_HINT_DELAY_MS",
     "OVERLAY_MARGIN",
     "DetailView",
