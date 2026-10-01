@@ -38,6 +38,10 @@ from gallery.ui.main_window import MainWindow  # noqa: E402
 #: 等待异步扫描完成的时限。
 SCAN_TIMEOUT_SECONDS = 8.0
 
+#: 第一行至少要铺到视口的这个比例才算「铺满」。剩下的几像素是网格页本来就有的
+#: 左右留白加上滚动条预留，肉眼看不出来；掉一整列则是 15% 以上，界线很清楚。
+FILL_RATIO = 0.95
+
 
 @pytest.fixture(scope="module")
 def qt_app() -> QApplication:
@@ -60,6 +64,19 @@ def make_grid(qt_app: QApplication, tmp_path: Path, count: int, *, width: int = 
     grid.show()
     qt_app.processEvents()
     return grid
+
+
+def row_fill_ratio(grid: PhotoGrid) -> float:
+    """第一行实际铺到了视口宽度的几成。"""
+    model = grid.model()
+    assert model is not None
+    top = grid.visualRect(model.index(0, 0)).top()
+    columns = 0
+    for row in range(model.rowCount()):
+        if grid.visualRect(model.index(row, 0)).top() != top:
+            break
+        columns += 1
+    return columns * grid.gridSize().width() / grid.viewport().width()
 
 
 def test_examiner_ignores_a_partial_row(qt_app: QApplication, tmp_path: Path) -> None:
@@ -136,6 +153,82 @@ def test_albums_mode_startup_keeps_normal_tile_size(
         f"两个相册占满了窗口：格子 {grid.gridSize().width()} / 视口 {grid.viewport().width()}"
     )
     window.close()
+
+
+# ---- 第一行铺不满：右边空出一整列 ------------------------------------------
+
+#: 缺陷现场：刚打开 GUI，进一个相册，照片没有铺满窗口，右边空出一大片；
+#: 放大再缩小一次才铺满。根因是排版时按视口宽算格子，而 Qt 换行用的宽度比视口窄
+#: （纵向滚动条 + 样式默认边距），于是 ``1260 // 6`` 那个格子宽正好卡在 Qt 摆不下
+#: 6 个的边界上，它只摆 5 个 —— 右边整整空出一列。
+
+
+def test_rows_arriving_late_still_fill_the_row(
+    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+) -> None:
+    """条目是扫库时分批塞进来的，**塞进来之后**那一版排版才是对的。
+
+    网格刚摆出来时模型还是空的，那一版格子宽度是照着「什么都没有」算的；等条目到齐，
+    应当重排一次。相册里的照片常常只有一两屏，冒不出滚动条，也就没有别的机会把它纠正回来。
+
+    所以条数取 12 —— 排成两三行、内容装得下，正是那个「没人来纠正」的情形。
+    """
+    grid = PhotoGrid(icon_edge=176)
+    model = PhotoListModel()
+    grid.setModel(model)
+    grid.resize(1260, 800)
+    grid.show()
+    settle(0.3)  # 让初始那一版排版与它的核对都先跑完
+
+    model.append(fake_photos(12, tmp_path))
+    settle(0.3)
+
+    assert row_fill_ratio(grid) >= FILL_RATIO, (
+        f"第一行只铺到 {row_fill_ratio(grid):.0%}，右边空了一大块"
+    )
+    grid.deleteLater()
+
+
+def test_entering_an_album_fills_the_row(
+    qt_app: QApplication,
+    tmp_path: Path,
+    make_photo: Callable[..., Path],
+    settle: Callable[[float], None],
+    wait_for: Callable[..., bool],
+) -> None:
+    """按用户说的那条路复现：打开相册 → 照片铺满窗口。
+
+    照片特意只放十几张：排出来只有两三行、冒不出滚动条，于是「视口不会变化」，
+    也就没有任何东西来把「按空模型算出来的格子宽度」纠正回来 —— 这正是缺陷现场。
+    """
+    root = tmp_path / "测试相册"
+    album = root / "2024-旅行"
+    for index in range(12):
+        make_photo(f"{index}.jpg", directory=album)
+    prepare_library(root)
+    session_base = tmp_path / "session"
+    save_session(
+        SessionState(recent_roots=(root,), thumbnail_edge=176, browse_mode=BROWSE_MODE_ALBUMS),
+        base=session_base,
+    )
+
+    window = MainWindow(session_base=session_base)
+    window.resize(1280, 860)
+    window.show()
+    try:
+        # 先把相册列表扫出来、显示稳定（= 用户看到的启动画面）
+        assert wait_for(lambda: window._model.rowCount() >= 1, timeout=SCAN_TIMEOUT_SECONDS)
+        settle(0.3)
+
+        window.enter_folder(album)
+        assert wait_for(lambda: window._model.rowCount() >= 12, timeout=SCAN_TIMEOUT_SECONDS)
+        settle(0.3)  # 给「核对列数」的定时器留出机会跑完
+
+        assert row_fill_ratio(window._grid) >= FILL_RATIO, (
+            f"第一行只铺到 {row_fill_ratio(window._grid):.0%}，右边空了一大块"
+        )
+    finally:
+        window.close()
 
 
 # ---- 多选：手抖不该变成框选 ------------------------------------------------

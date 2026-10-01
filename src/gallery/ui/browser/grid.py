@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Final
 
 from PySide6.QtCore import (
+    QAbstractItemModel,
     QEvent,
     QItemSelectionModel,
     QModelIndex,
@@ -77,6 +78,9 @@ EDGE_SETTLE_MS = 120
 
 #: 排完版多久之后核对实际列数（等布局彻底落定，避免读到半成品）。
 COLUMN_CHECK_MS = 50
+
+#: **每一列**额外让出的像素，理由见 :meth:`PhotoGrid._cell_size_for`。
+CELL_SLACK = 2
 
 #: Qt 少摆一列时，按实测列数重算所留的安全边距。
 LAYOUT_SAFETY = 40
@@ -360,6 +364,21 @@ class PhotoGrid(QListView):
         # 视口宽度变化（窗口缩放、滚动条出现或消失）都要重算格子宽度。
         self.viewport().installEventFilter(self)
 
+    def setModel(self, model: QAbstractItemModel | None) -> None:  # noqa: N802
+        """装上模型，并盯住「条目到齐」这个时刻。
+
+        「核对实际列数」（:meth:`_examine_columns`）量不出来的时候只可能是因为**条目还没到齐**：
+        扫库是分批往里塞的，网格刚摆出来时模型里一行都没有，等排版跑完再看当然量不准，
+        而过去的办法是「量不准就算了」—— 那次修正再也不会发生，于是右边就一直空着。
+
+        真正决定格子宽度的是视口宽度而不是条目数（见 :meth:`_cell_size_for`），所以这里
+        不用重排版，只需要给核对补一次机会。
+        """
+        super().setModel(model)
+        if model is not None:
+            # 扫描每来一批就重启一次 50ms 的定时器，一屏之内最多多核对一次，代价可以忽略。
+            model.rowsInserted.connect(lambda *_args: self._examiner.start())
+
     # ---- 尺寸档位与自适应排版 ----------------------------------------------
 
     @property
@@ -386,11 +405,33 @@ class PhotoGrid(QListView):
         return fit_columns(available, self._target_edge + GRID_PADDING_X)
 
     def _cell_size_for(self, available: int) -> QSize:
-        """按列数把可用宽度均分给各列，铺满一行。"""
+        """按列数把可用宽度均分给各列，铺满一行。
+
+        **排版宽度不是视口宽度**：Qt 换行时会先扣掉纵向滚动条，再扣掉样式的默认视图边距
+        （实测 macOS 样式下是 16 + 1~6 像素，offscreen 下是 18 + 1~6 像素）。我们过去
+        直接拿视口宽去除，于是 ``1260 // 6 = 210`` 正好卡在 Qt 摆不下 6 个的边界上，
+        它只摆 5 个 —— **右边空出整整一列**，在 1260 宽的窗口里就是 210 像素的空白。
+        「放大再缩小」会重新排一次版、恰好绕开了这个边界，于是又「好了」，但那是碰巧。
+
+        所以这里扣两笔：滚动条预留（见 :meth:`_scrollbar_reserve`）与每列 2 像素的
+        余量（吃掉样式的默认边距，按列数摊开，列越多余量越大，怎么都不会再掉列）。
+        剩下的十几像素就是网格页本来就有的左右留白，看不出来。
+        """
         columns = self._columns_for(available)
         fix = self._layout_fix.get(available)
-        slack = fix[1] if fix is not None else 0
-        return self._cell_size_for_width(max(1, (available - slack) // columns))
+        slack = fix[1] if fix is not None else CELL_SLACK * columns
+        usable = available - self._scrollbar_reserve() - slack
+        return self._cell_size_for_width(max(1, usable // columns))
+
+    def _scrollbar_reserve(self) -> int:
+        """纵向滚动条要从排版宽度里先扣掉一条。
+
+        **无条件扣**：Qt 是等滚动条排过一次版之后就把它的宽度算进去的，管它当刻显不显示
+        （实测内容只有几行、滚动条根本没出现时，换行宽度照样窄了 18 像素）。跟着它的实际
+        状态走就等于猜它什么时候「见过世面」，不如一律按样式给出的宽度扣 —— 代价只是
+        没有滚动条时右边多留十几像素，而少留就会掉一整列。
+        """
+        return self.verticalScrollBar().sizeHint().width()
 
     def _cell_size_for_width(self, cell_width: int) -> QSize:
         edge = max(MIN_EDGE, cell_width - GRID_PADDING_X)
@@ -403,6 +444,10 @@ class PhotoGrid(QListView):
         available = self.viewport().width()
         if available <= 0:
             return
+        if available != self._laid_out_width:
+            # 修正方案是「在这个宽度下量出来的」，换宽度就不再适用。留着它会把别的
+            # 宽度也带偏：旧宽度上量到的「只摆得下 5 列」会一直套用到新的视口上。
+            self._layout_fix.clear()
         columns = self._columns_for(available)
         # 视口宽度变了就必须重排：格子宽度可能恰好没变，但列数是按视口宽度算的，
         # 不重排就会沿用旧列数，右边留下一条空白。
