@@ -14,9 +14,13 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QToolButton, QWidget
 #: 分隔符。
 SEPARATOR = "▸"
 
+#: 路径上每一段都是一个按钮，但按钮不画自己的底色：``background: transparent`` 让它
+#: 融进这一行统一的底色里（见 ``ui.theme``），否则每个路径段都是一块系统按钮色的圆角块，
+#: 在浅色主题下比周围的底色明显深一档。悬停靠下划线示意即可。
 _BUTTON_STYLE = """
 QToolButton {
     border: none;
+    background: transparent;
     padding: 2px 6px;
     color: palette(link);
     font-size: 12px;

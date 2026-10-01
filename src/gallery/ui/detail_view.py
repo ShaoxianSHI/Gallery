@@ -19,7 +19,6 @@ from PySide6.QtCore import (
     Signal,
 )
 from PySide6.QtGui import (
-    QColor,
     QImage,
     QKeyEvent,
     QMouseEvent,
@@ -38,10 +37,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from gallery.ui import theme
 from gallery.ui.zoom import MAX_FIT_SCALE, MAX_SCALE, ZOOM_STEP, clamp_scale, fit_scale
-
-#: 查看区的背景色（接近 macOS 的深色看图背景）。
-BACKGROUND = QColor(28, 28, 30)
 
 #: 角落提示的字号。
 OVERLAY_FONT_SIZE = 13
@@ -93,8 +90,9 @@ class DetailView(QGraphicsView):
 
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setBackgroundBrush(BACKGROUND)
-        self._scene.setBackgroundBrush(BACKGROUND)
+        self._theme_watcher = theme.ensure_installed()
+        self._theme_watcher.changed.connect(self._apply_theme)
+        self._apply_theme()
         self.setRenderHints(
             QPainter.RenderHint.SmoothPixmapTransform | QPainter.RenderHint.Antialiasing
         )
@@ -122,6 +120,18 @@ class DetailView(QGraphicsView):
         self._animation.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._animation.valueChanged.connect(self._animation_frame)
         self._animation.finished.connect(self._animation_finished)
+
+    # ---- 主题 --------------------------------------------------------------
+
+    def _apply_theme(self) -> None:
+        """底色跟着主题走。
+
+        这里以前写死成深色（``#1C1C1E``），于是浅色主题下点开照片会突然变一块黑 ——
+        底色只有一个来源，见 ``ui.theme``。
+        """
+        color = theme.current_theme().background
+        self.setBackgroundBrush(color)
+        self._scene.setBackgroundBrush(color)
 
     # ---- 状态 --------------------------------------------------------------
 
@@ -394,7 +404,6 @@ class DetailView(QGraphicsView):
 
 
 __all__ = [
-    "BACKGROUND",
     "FIT_ANIMATION_MS",
     "OVERLAY_MARGIN",
     "DetailView",

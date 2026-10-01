@@ -1,7 +1,7 @@
 """大图右侧的元数据面板。
 
 推挤式而不是浮层：面板占掉宽度、图片区域缩小并重新适配，因此**任何照片都不会被挡住**。
-背景与图片区同色，看起来像同一个取景器旁边的一块信息板。
+底色与图片区同色（同一份主题，见 ``ui.theme``），看起来像同一个取景器旁边的一块信息板。
 
 值一律可选中复制；底部「显示全部字段」展开来源返回的原始键值 —— 精选字段表覆盖不到的
 东西（制造商注释、ICC 配置等）在那里都能翻到。
@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QColor, QGuiApplication, QPainter, QPalette
+from PySide6.QtGui import QGuiApplication, QPainter
 from PySide6.QtWidgets import (
     QCheckBox,
     QFrame,
@@ -25,7 +25,8 @@ from PySide6.QtWidgets import (
 )
 
 from gallery.core.metadata import MetadataGroup, MetadataReport
-from gallery.ui.detail_view import BACKGROUND
+from gallery.ui import theme
+from gallery.ui.theme import AppTheme, rgba
 
 #: 面板宽度。窄了中文标签换行，宽了抢照片的地方。
 PANEL_WIDTH = 300
@@ -36,49 +37,35 @@ LABEL_WIDTH = 84
 #: 「已复制」提示停留多久。
 COPIED_HINT_MS = 1400
 
-#: 面板底色与图片区一致，整块看起来就像取景器旁边的一块信息板。
-PANEL_BACKGROUND = BACKGROUND
 
-#: 面板里的正文颜色。深底浅字，与图片区一致。
-PANEL_TEXT = QColor(236, 236, 238)
+def panel_style(theme: AppTheme) -> str:
+    """面板的文字与按钮样式。底色不在这里 —— 它由 ``paintEvent`` 统一画。
 
-
-def _dark_palette() -> QPalette:
-    """面板用的深色调色板。
-
-    样式表管文字颜色，调色板管底色 —— 两者缺一不可：样式表对普通 QWidget 的背景
-    不生效，而滚动区视口又是按 ``Base`` 角色自己填色的。
+    文字色全部从主题派生：深色主题下是「浅字压深底」，浅色主题下自动变成「深字压浅底」，
+    不必再维护两套写死的字色。
     """
-    palette = QPalette()
-    for role in (QPalette.ColorRole.Window, QPalette.ColorRole.Base, QPalette.ColorRole.Button):
-        palette.setColor(role, PANEL_BACKGROUND)
-    for role in (
-        QPalette.ColorRole.WindowText,
-        QPalette.ColorRole.Text,
-        QPalette.ColorRole.ButtonText,
-    ):
-        palette.setColor(role, PANEL_TEXT)
-    return palette
-
-
-_STYLE = f"""
-#metadataPanel {{ background: {PANEL_BACKGROUND.name()}; }}
-#metadataGroupTitle {{ color: rgba(255,255,255,0.52); font-size: 11px; font-weight: 600; }}
-#metadataLabel {{ color: rgba(255,255,255,0.42); font-size: 12px; }}
-#metadataValue {{ color: rgba(255,255,255,0.92); font-size: 12px; }}
-#metadataNotice {{ color: #ffcf70; font-size: 11px; }}
-#metadataEmpty {{ color: rgba(255,255,255,0.45); font-size: 12px; }}
-#metadataError {{ color: #ff9b8a; font-size: 12px; }}
+    return f"""
+#metadataPanel {{ background: transparent; }}
+#metadataGroupTitle {{
+    color: {rgba(theme.text_at(0.55))};
+    font-size: 11px;
+    font-weight: 600;
+}}
+#metadataLabel {{ color: {rgba(theme.text_at(0.52))}; font-size: 12px; }}
+#metadataValue {{ color: {rgba(theme.text_at(0.92))}; font-size: 12px; }}
+#metadataNotice {{ color: {rgba(theme.notice)}; font-size: 11px; }}
+#metadataEmpty {{ color: {rgba(theme.text_at(0.5))}; font-size: 12px; }}
+#metadataError {{ color: {rgba(theme.error)}; font-size: 12px; }}
 QPushButton#metadataButton {{
-    color: rgba(255,255,255,0.85);
-    background: rgba(255,255,255,0.10);
+    color: {rgba(theme.text_at(0.85))};
+    background: {rgba(theme.text_at(0.10))};
     border: none;
     border-radius: 6px;
     padding: 4px 10px;
     font-size: 11px;
 }}
-QPushButton#metadataButton:hover {{ background: rgba(255,255,255,0.18); }}
-QCheckBox#metadataToggle {{ color: rgba(255,255,255,0.62); font-size: 11px; }}
+QPushButton#metadataButton:hover {{ background: {rgba(theme.text_at(0.18))}; }}
+QCheckBox#metadataToggle {{ color: {rgba(theme.text_at(0.62))}; font-size: 11px; }}
 """
 
 
@@ -89,15 +76,14 @@ class MetadataPanel(QWidget):
         super().__init__(parent)
         self.setObjectName("metadataPanel")
         self.setFixedWidth(PANEL_WIDTH)
-        # 普通 QWidget 不会画样式表里的背景色，必须用调色板 + autoFillBackground，
-        # 否则面板会是系统窗口的白底，配着浅色文字完全看不清。
-        self._dark_palette = _dark_palette()
-        self.setPalette(self._dark_palette)
-        # 样式表里的背景对普通 QWidget 不生效（需要 WA_StyledBackground），而调色板
-        # 又会被样式表接管 —— 实测两者都靠不住，所以底色自己画，见 paintEvent。
+        # 底色不在样式表里：普通 QWidget 的样式表背景要靠 WA_StyledBackground，
+        # 而 macOS 上连调色板也可能被原生样式覆盖 —— 实测两者都靠不住，
+        # 所以底色自己画，见 paintEvent。系统换浅色 / 深色时重新取一次。
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setAutoFillBackground(True)
-        self.setStyleSheet(_STYLE)
+        self._theme_watcher = theme.ensure_installed()
+        self._theme_watcher.changed.connect(self._apply_theme)
+        self._apply_theme()
 
         self._report: MetadataReport | None = None
 
@@ -110,17 +96,13 @@ class MetadataPanel(QWidget):
         self._scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         # 裸声明会级联到所有子控件：让滚动区、内容区与每一行都透明，
-        # 露出面板自己画的深色底，而不是各自按系统调色板填白。
+        # 露出面板自己画的底色，而不是各自按调色板再填一遍。
         self._scroll.setStyleSheet("background: transparent; border: none;")
         self._body = QWidget()
         self._body_layout = QVBoxLayout(self._body)
         self._body_layout.setContentsMargins(0, 0, 0, 0)
         self._body_layout.setSpacing(10)
         self._body_layout.addStretch(1)
-        # 滚动区视口默认按 Base 角色填色，这里让它也吃深色，别在面板里开一块白。
-        self._scroll.setPalette(self._dark_palette)
-        self._scroll.viewport().setPalette(self._dark_palette)
-        self._scroll.viewport().setAutoFillBackground(True)
         self._scroll.setWidget(self._body)
         layout.addWidget(self._scroll, 1)
 
@@ -145,15 +127,22 @@ class MetadataPanel(QWidget):
 
         self.clear()
 
+    # ---- 主题 --------------------------------------------------------------
+
+    def _apply_theme(self) -> None:
+        """按当前主题重画文字与按钮（底色在 ``paintEvent`` 里取，不用重建）。"""
+        self.setStyleSheet(panel_style(theme.current_theme()))
+        self.update()
+
     def paintEvent(self, event: object) -> None:  # noqa: N802 - Qt 命名
         """自己画底色。
 
         样式表背景对普通 QWidget 不生效（除非 ``WA_StyledBackground``），而 macOS 上
-        连调色板也可能被原生样式覆盖 —— 面板是浅底深字还是深底浅字，是能不能看清的
-        分界线，不值得赌样式系统的脾气，直接填。
+        连调色板也可能被原生样式覆盖 —— 面板与照片区是不是同一块底色，是能不能看清
+        的分界线，不值得赌样式系统的脾气，直接填。
         """
         painter = QPainter(self)
-        painter.fillRect(self.rect(), PANEL_BACKGROUND)
+        painter.fillRect(self.rect(), theme.current_theme().background)
 
     # ---- 状态 --------------------------------------------------------------
 
@@ -273,8 +262,7 @@ class MetadataPanel(QWidget):
 __all__ = [
     "COPIED_HINT_MS",
     "LABEL_WIDTH",
-    "PANEL_BACKGROUND",
-    "PANEL_TEXT",
     "PANEL_WIDTH",
     "MetadataPanel",
+    "panel_style",
 ]

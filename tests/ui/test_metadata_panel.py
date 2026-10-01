@@ -4,9 +4,12 @@
 
 1. 面板曾经是**系统白底配浅色文字**，几乎看不清 —— 因为普通 ``QWidget`` 不设
    ``WA_StyledBackground`` 就不会画样式表里的背景。所以这里不检查控件树，
-   而是**量渲染出来的像素**：底色要深、文字对比度要够。
+   而是**量渲染出来的像素**：底色必须是窗口统一的那一个，且文字对比度要够。
 2. 换一份内容时旧控件会被 ``deleteLater`` 排队删除，在真正销毁前仍画在原位置，
    于是上一份内容糊在新内容上面。所以这里检查旧文案确实不见了。
+
+面板不再自带一套深色调色板，底色与文字都跟主题走（见 ``ui.theme``），所以
+「正文色」也不能再假定是画面里最亮的那个 —— 浅色主题下恰恰相反。
 
 Qt 的离屏平台让这些断言不需要真实显示器。
 """
@@ -28,13 +31,11 @@ from PySide6.QtGui import QColor, QImage  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLabel, QWidget  # noqa: E402
 
 from gallery.core.metadata import build_report  # noqa: E402
-from gallery.ui.metadata_panel import PANEL_BACKGROUND, MetadataPanel  # noqa: E402
+from gallery.ui import theme  # noqa: E402
+from gallery.ui.metadata_panel import MetadataPanel  # noqa: E402
 
 #: 可读性的最低对比度（WCAG AA 对正文的要求）。
 MIN_CONTRAST = 4.5
-
-#: 底色亮度上限：低于它才算「深色底」。
-MAX_BACKGROUND_LUMINANCE = 60
 
 
 @pytest.fixture(scope="module")
@@ -53,14 +54,15 @@ def contrast_ratio(first: QColor, second: QColor) -> float:
 
 
 def sample_colors(widget: QWidget) -> tuple[QColor, QColor]:
-    """返回 ``(出现最多的颜色, 最亮的颜色)``：前者是底色，后者是文字。"""
+    """返回 ``(底色, 与底色对比最强的颜色)``：前者是铺得最多的，后者当作正文色。"""
     image = widget.grab().toImage().convertToFormat(QImage.Format.Format_RGBA8888)
     counts: Counter[int] = Counter()
     for y in range(0, image.height(), 2):
         for x in range(0, image.width(), 2):
             counts[image.pixelColor(x, y).rgb()] += 1
     ranked = [QColor(rgb) for rgb, _ in counts.most_common(400)]
-    return ranked[0], max(ranked, key=luminance)
+    background = ranked[0]
+    return background, max(ranked, key=lambda color: contrast_ratio(background, color))
 
 
 @pytest.fixture
@@ -74,7 +76,9 @@ def report(tmp_path: Path) -> object:
     )
 
 
-def test_panel_is_dark_with_readable_text(qt_app: QApplication, report: object) -> None:
+def test_panel_matches_the_window_background_with_readable_text(
+    qt_app: QApplication, report: object
+) -> None:
     panel = MetadataPanel()
     panel.resize(300, 420)
     panel.set_report(report)  # type: ignore[arg-type]
@@ -83,13 +87,13 @@ def test_panel_is_dark_with_readable_text(qt_app: QApplication, report: object) 
 
     background, text = sample_colors(panel)
 
-    assert luminance(background) < MAX_BACKGROUND_LUMINANCE, (
-        f"面板底色是 {background.name()}，太亮了：浅底配浅字根本看不清"
+    assert background == theme.current_theme().background, (
+        f"面板底色是 {background.name()}，窗口是 {theme.current_theme().background.name()}"
+        " —— 面板是图片区旁边的一块信息板，不该自己开一块颜色"
     )
     assert contrast_ratio(background, text) >= MIN_CONTRAST, (
         f"底色 {background.name()} 与文字 {text.name()} 的对比度不足"
     )
-    assert luminance(PANEL_BACKGROUND) < MAX_BACKGROUND_LUMINANCE
     panel.deleteLater()
 
 

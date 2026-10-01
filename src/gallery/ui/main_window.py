@@ -49,6 +49,7 @@ from gallery.core.session import (
     load_session,
     save_session,
 )
+from gallery.ui import theme
 from gallery.ui.breadcrumb import BreadcrumbBar
 from gallery.ui.detail_view import DetailView
 from gallery.ui.grid_view import PREFETCH_MARGIN, PhotoGrid
@@ -160,6 +161,10 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Gallery")
         self.resize(1280, 860)
         self.setMinimumSize(720, 480)
+
+        # 先把底色统一好，下面每一个控件都从这一份取色：标题框、面包屑、网格视口、
+        # 大图区与元数据面板从此是同一块底色（见 ui.theme）。
+        theme.ensure_installed()
 
         self._welcome = WelcomeView()
         self._welcome.open_requested.connect(self.choose_folder)
