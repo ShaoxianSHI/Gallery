@@ -24,10 +24,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QApplication, QStatusBar  # noqa: E402
+from PySide6.QtCore import QRect, Qt
+from PySide6.QtWidgets import QApplication, QStatusBar, QWidget  # noqa: E402
 
 from gallery.core.config import prepare_library  # noqa: E402
 from gallery.core.session import BROWSE_MODE_ALBUMS, SessionState, save_session  # noqa: E402
+from gallery.ui.macos_window import TitleBarGlass  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 
 #: 等待扫描与首屏布局稳定的时限。
@@ -122,7 +124,7 @@ def test_breadcrumb_stays_readable_without_vibrancy(
     window = _albums_window(qt_app, tmp_path, make_photo)
     try:
         crumb = window._breadcrumb
-        assert not crumb._vibrancy.attached, "离屏平台下不该挂上系统毛玻璃"
+        assert not crumb.vibrancy_attached, "离屏平台下不该挂上系统毛玻璃"
         style = crumb.styleSheet()
         assert "background: transparent" not in style, (
             f"没有毛玻璃却把底色设成透明，照片会直接糊掉字：{style}"
@@ -130,3 +132,41 @@ def test_breadcrumb_stays_readable_without_vibrancy(
         assert "rgba(" in style, f"降级时应当铺一层半透明底色：{style}"
     finally:
         window.close()
+
+
+def test_no_titlebar_workspace_on_platforms_that_cannot_do_it(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """改不动标题栏的平台（非 macOS、离屏）必须**完全不留痕迹**。
+
+    留半条毛玻璃出来比不改还糟：底下没有照片，只有一块悬空的色块。
+    """
+    window = _albums_window(qt_app, tmp_path, make_photo)
+    try:
+        assert not window._full_size_content, "离屏平台下不该声称改了标题栏"
+        assert not window._title_glass.isVisible(), "改不动标题栏却挂了毛玻璃条"
+        # 面包屑顶边不该多留一个「本来不存在的标题栏」的高度
+        assert window._breadcrumb.geometry().top() == 10, (
+            f"面包屑顶边 {window._breadcrumb.geometry().top()}，不该凭空多出标题栏的边距"
+        )
+    finally:
+        window.close()
+
+
+def test_title_glass_spans_the_whole_width_at_titlebar_height(qt_app: QApplication) -> None:
+    """毛玻璃条要铺满整个窗口宽、高度正好是标题栏那一段，且不吃鼠标事件。"""
+    host = QWidget()
+    glass = TitleBarGlass(host)
+    glass.show()
+    qt_app.processEvents()
+    glass.fit(1180, 28)
+    qt_app.processEvents()
+
+    assert glass.geometry() == QRect(0, 0, 1180, 28)
+    # 纯装饰层：不然顶部一带的照片点不到，也拖不动窗口
+    assert glass.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+    # 贴着窗口上沿，直角
+    assert not glass.vibrancy_attached  # 离屏拿不到系统毛玻璃
+    assert "rgba(" in glass.styleSheet(), "降级时也应当铺半透明底色，不能是全透明"
+    glass.close()
+    host.close()

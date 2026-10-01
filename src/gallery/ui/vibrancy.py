@@ -21,8 +21,9 @@ import logging
 from typing import Any
 
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
-from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QWidget
+
+from gallery.ui.cocoa import is_cocoa, ns_view
 
 logger = logging.getLogger(__name__)
 
@@ -70,20 +71,7 @@ def _appkit() -> dict[str, Any] | None:
 
 def _ns_view(widget: QWidget) -> Any | None:
     """把控件的 ``winId`` 包成 NSView。取不到就返回 ``None``，不做任何猜测。"""
-    try:
-        import objc
-
-        handle = int(widget.winId())
-    except (ImportError, TypeError, ValueError, RuntimeError):
-        return None
-    if handle == 0:
-        return None
-    try:
-        # pyobjc 的 objc_object 是 C 函数，只接受关键字参数。
-        return objc.objc_object(c_void_p=handle)
-    except Exception:  # 原生层什么都可能抛，不能让它掀翻整个窗口
-        logger.debug("包装 NSView 失败", exc_info=True)
-        return None
+    return ns_view(widget)
 
 
 class Vibrancy(QObject):
@@ -101,8 +89,7 @@ class Vibrancy(QObject):
         super().__init__(widget)
         self._widget = widget
         self._corner_radius = corner_radius
-        app = QGuiApplication.instance()
-        self._appkit = _appkit() if app is not None and app.platformName() == "cocoa" else None
+        self._appkit = _appkit() if is_cocoa() else None
         self._effect: Any | None = None
         self._attached = False
         self._sync_pending = False
@@ -191,14 +178,75 @@ class Vibrancy(QObject):
         parent = view.superview()
         if parent is None:
             return
-        # pyobjc 每次访问都新建一个 Python 包装对象，只能用 == 比指针，不能用 is。
-        if effect.superview() != parent:
-            # 控件被换过父视图（切页面、重排布局），毛玻璃得跟着搬家。
-            parent.addSubview_positioned_relativeTo_(effect, self._appkit["below"], view)
+        # 每次都重新插一遍（幂等），不能只在「父视图换了」时才插：
+        # Qt 会在我们挂上之后才把自己的内容视图插进来（实测：标题栏毛玻璃条挂好之后，
+        # Qt 才把内容视图插到它和毛玻璃条之间），那时毛玻璃就被照片盖住了 ——
+        # 层级看着没变（父视图还是同一个），实际画出来毛玻璃在最底下，白挂。
+        parent.addSubview_positioned_relativeTo_(effect, self._appkit["below"], view)
         # view.frame() 就是「相对父视图」的位置与大小，直接用。
         effect.setFrame_(view.frame())
         # 控件隐藏时它的视图会被 Qt 移走，但毛玻璃是我们单独加的，得自己跟着藏。
         effect.setHidden_(not self._widget.isVisible())
 
 
-__all__ = ["CORNER_RADIUS", "Vibrancy"]
+#: 降级用的半透明底色：alpha 190 约 75%，底下的内容透得出轮廓，字也还看得清。
+FROSTED_ALPHA = 190
+
+
+class FrostedPanel(QWidget):
+    """浮在其他内容之上的一块半透明面板。
+
+    能用系统毛玻璃就用（真的把底下的东西糊掉），拿不到就退成半透明底色。
+    两种情况下都不画自己的底色 —— 有底色就把毛玻璃盖住了。
+
+    继承它只需要管内容；底色与降级都在这里统一处理。
+    """
+
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        name: str = "frosted",
+        corner_radius: float = CORNER_RADIUS,
+        mouse_transparent: bool = False,
+    ) -> None:
+        super().__init__(parent)
+        self.setObjectName(name)
+        self._corner_radius = corner_radius
+        if mouse_transparent:
+            # 纯装饰层：别挡住底下内容的鼠标操作。
+            self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._vibrancy = Vibrancy(self, corner_radius=corner_radius)
+        self._vibrancy.attached_changed.connect(self._on_vibrancy_changed)
+        self._apply_background(not self._vibrancy.attached)
+
+    @property
+    def vibrancy_attached(self) -> bool:
+        """现在是不是真的挂着系统毛玻璃。"""
+        return self._vibrancy.attached
+
+    def _on_vibrancy_changed(self, attached: bool) -> None:
+        """毛玻璃是显示时才挂上的，挂上/挂不上都要换一次底色。"""
+        self._apply_background(not attached)
+
+    def _apply_background(self, fallback: bool) -> None:
+        """``fallback`` 为真（毛玻璃不可用）时铺半透明底色，否则保持透明。
+
+        透明是**默认**、半透明是**降级**：顺序反了就会出现「拿不到毛玻璃，于是字直接
+        糊在照片上」—— 那比不好看严重得多，是看不清。
+
+        底色取自当前主题的窗口色：浅色主题下配深色文字、深色主题下配浅色文字，
+        不然降级之后会出现深底黑字。
+        """
+        name = self.objectName()
+        if not fallback:
+            self.setStyleSheet(f"QWidget#{name} {{ background: transparent; }}")
+            return
+        base = self.palette().window().color()
+        self.setStyleSheet(
+            f"QWidget#{name} {{ background: rgba({base.red()}, {base.green()},"
+            f" {base.blue()}, {FROSTED_ALPHA}); border-radius: {self._corner_radius}px; }}"
+        )
+
+
+__all__ = ["CORNER_RADIUS", "FROSTED_ALPHA", "FrostedPanel", "Vibrancy"]

@@ -19,7 +19,7 @@ from functools import partial
 from pathlib import Path
 
 from PySide6.QtCore import QModelIndex, Qt
-from PySide6.QtGui import QAction, QCloseEvent, QImage, QKeySequence
+from PySide6.QtGui import QAction, QCloseEvent, QImage, QKeySequence, QResizeEvent
 from PySide6.QtWidgets import (
     QFileDialog,
     QGridLayout,
@@ -52,6 +52,7 @@ from gallery.ui.breadcrumb import BreadcrumbBar
 from gallery.ui.detail_view import DetailView
 from gallery.ui.grid_view import PREFETCH_MARGIN, PhotoGrid
 from gallery.ui.imaging import to_qimage
+from gallery.ui.macos_window import TitleBarGlass, enable_full_size_content, titlebar_height
 from gallery.ui.metadata_panel import MetadataPanel
 from gallery.ui.models import PhotoListModel
 from gallery.ui.navigation import breadcrumb_parts, parent_of
@@ -171,11 +172,18 @@ class MainWindow(QMainWindow):
 
         self._grid_page = QWidget()
         self._grid_page.setStyleSheet(_BANNER_STYLE)
+        # 让内容顶到窗口最上沿，标题栏那一段改成盖在照片上的毛玻璃。
+        # 非 macOS 上这里是 False，窗口保持系统原样（下面多留的边距也就不会留）。
+        self._full_size_content = enable_full_size_content(self)
+        self._titlebar_height = titlebar_height(self) if self._full_size_content else 0
+
         # 面包屑和网格放进**同一个格子**，靠对齐浮在网格左上角：网格铺满整格，
         # 面包屑只占自己那一小块。用垂直布局做不到 —— 那会给它留一整行高度，
         # 照片照样被顶下去一截，那就还是「压在照片上面的一行标题」。
         grid_layout = QGridLayout(self._grid_page)
-        grid_layout.setContentsMargins(10, 10, 10, 0)
+        # 顶部留出标题栏那么高：面包屑躲开左上角那三个按钮和标题文字，
+        # 不然它会正好压在红黄绿下面。
+        grid_layout.setContentsMargins(10, 10 + self._titlebar_height, 10, 0)
         grid_layout.setSpacing(8)
         grid_layout.addWidget(self._banner, 0, 0)
         grid_layout.addWidget(self._grid, 1, 0)
@@ -203,8 +211,32 @@ class MainWindow(QMainWindow):
         detail_layout.addWidget(self._panel)
         self._stack.addWidget(self._detail_page)
         self.setCentralWidget(self._stack)
+
+        # 标题栏那一段的毛玻璃：盖住照片、垫在红黄绿和标题文字下面。
+        # 非 macOS 上直接不显示，不留任何痕迹。
+        self._title_glass = TitleBarGlass(self._stack)
+        self._title_glass.setVisible(self._full_size_content)
+        self._layout_title_glass()
         # 刻意不建状态栏：底部那一条只是为了放扫描进度、照片尺寸、缩放百分比，
         # 换来的是照片区少 20 来像素。出错信息有横幅，提示性信息一律不留。
+
+    def _layout_title_glass(self) -> None:
+        """把毛玻璃条铺成整个窗口宽、标题栏那么高。"""
+        if not self._full_size_content:
+            return
+        self._title_glass.fit(self._stack.width(), self._titlebar_height)
+
+    def _title_glass_visible(self) -> bool:
+        """全屏时系统不再显示标题栏，这时候留一条毛玻璃只会莫名其妙。"""
+        if not self._full_size_content:
+            return False
+        full_screen = bool(self.windowState() & Qt.WindowState.WindowFullScreen)
+        return not full_screen
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - Qt 的接口名
+        super().resizeEvent(event)
+        self._title_glass.setVisible(self._title_glass_visible())
+        self._layout_title_glass()
 
     def _build_actions(self) -> None:
         self._open_action = QAction("打开文件夹…", self)
