@@ -511,15 +511,16 @@ class MainWindow(QMainWindow):
         self._pipeline.set_window(visible, prefetch)
 
     def _entries_missing_thumbnails(self, rows: Sequence[int]) -> list[GridEntry]:
-        """只挑出还没有缩略图的条目（相册算它的封面）。
+        """只挑出需要取缩略图的条目（相册算它的封面）。
 
-        滚动会让可见窗口反复变化，如果每次都把可见项重新要一遍，就等于每滚一下
-        都把磁盘缓存重读重缩放一次，内存里的 LRU 也形同虚设。
+        两种情况：手里根本没有，或者手里那张是按旧尺寸缩放的。滚动会让可见窗口
+        反复变化，如果每次都把可见项重新要一遍，就等于每滚一下都把磁盘缓存重读
+        重缩放一次，内存里的 LRU 也形同虚设。
         """
         entries: list[GridEntry] = []
         for row in rows:
             entry = self._model.entry_at(row)
-            if entry is not None and not self._model.has_thumbnail(entry.path):
+            if entry is not None and self._model.needs_thumbnail(entry.path):
                 entries.append(entry)
         return entries
 

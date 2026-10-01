@@ -137,12 +137,7 @@ class PhotoDelegate(QStyledItemDelegate):
 
             pixmap = index.data(Qt.ItemDataRole.DecorationRole)
             if isinstance(pixmap, QPixmap) and not pixmap.isNull():
-                size = pixmap.size()
-                painter.drawPixmap(
-                    image_rect.left() + (image_rect.width() - size.width()) // 2,
-                    image_rect.top() + (image_rect.height() - size.height()) // 2,
-                    pixmap,
-                )
+                self._draw_thumbnail(painter, image_rect, pixmap)
                 if is_album:
                     self._draw_album_badge(painter, image_rect)
             elif is_album:
@@ -167,6 +162,24 @@ class PhotoDelegate(QStyledItemDelegate):
                 painter.drawRoundedRect(rect, self.RADIUS, self.RADIUS)
         finally:
             painter.restore()
+
+    def _draw_thumbnail(self, painter: QPainter, rect: QRect, pixmap: QPixmap) -> None:
+        """把缩略图放进取景框。
+
+        尺寸刚切换时手里的图还是按旧边长缩放的，这里就地缩放到新框 —— 于是每一格
+        始终有图、大小也始终对得上，用户看不到「先空框、再一张张弹回来」的过程。
+        尺寸一致时走 1:1 直接绘制，不额外付平滑缩放的代价。
+        """
+        target = pixmap.size().scaled(
+            QSize(self._icon_edge, self._icon_edge), Qt.AspectRatioMode.KeepAspectRatio
+        )
+        x = rect.left() + (rect.width() - target.width()) // 2
+        y = rect.top() + (rect.height() - target.height()) // 2
+        if target == pixmap.size():
+            painter.drawPixmap(x, y, pixmap)
+            return
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        painter.drawPixmap(QRect(x, y, target.width(), target.height()), pixmap)
 
     def _draw_folder_glyph(self, painter: QPainter, rect: QRect, color: QColor) -> None:
         """空相册（或封面还没到时）画一个文件夹，而不是「加载中」的虚线框。"""

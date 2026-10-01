@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import QAbstractListModel, QModelIndex, QObject, QSize, Qt
@@ -36,6 +37,14 @@ DEFAULT_ICON_EDGE = DEFAULT_EDGE
 DEFAULT_PIXMAP_CACHE = 600
 
 
+@dataclass(slots=True)
+class _CachedThumb:
+    """一张已缩放的缩略图，连同它当时是按哪个边长缩放的。"""
+
+    pixmap: QPixmap
+    edge: int
+
+
 class PhotoListModel(QAbstractListModel):
     """一层内容（相册 + 照片）的数据源。"""
 
@@ -49,7 +58,7 @@ class PhotoListModel(QAbstractListModel):
         super().__init__(parent)
         self._entries: list[GridEntry] = []
         self._row_by_path: dict[Path, int] = {}
-        self._pixmaps: OrderedDict[Path, QPixmap] = OrderedDict()
+        self._pixmaps: OrderedDict[Path, _CachedThumb] = OrderedDict()
         self._icon_edge = icon_edge
         self._cache_size = max(1, cache_size)
 
@@ -113,7 +122,7 @@ class PhotoListModel(QAbstractListModel):
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
-        self._pixmaps[path] = pixmap
+        self._pixmaps[path] = _CachedThumb(pixmap=pixmap, edge=self._icon_edge)
         self._pixmaps.move_to_end(path)
         while len(self._pixmaps) > self._cache_size:
             self._pixmaps.popitem(last=False)
@@ -122,17 +131,20 @@ class PhotoListModel(QAbstractListModel):
     def set_icon_edge(self, edge: int) -> None:
         """切换缩略图尺寸。
 
-        内存里缓存的缩略图是按旧尺寸缩放的，尺寸一变就全部作废：丢掉它们，
-        交给视图重新请求 —— 磁盘缓存还在，重读一次很快。
+        **刻意不清空已有缩略图**：清空会让整屏先闪成占位框、再一张张弹回来。
+        旧图由委托按新尺寸缩放显示（略软），新图到了原地替换，用户看不到跳变。
+        哪些条目需要按新尺寸重取，由 :meth:`needs_thumbnail` 回答。
         """
-        if edge == self._icon_edge:
-            return
         self._icon_edge = edge
-        self.clear_thumbnails()
 
     def has_thumbnail(self, path: Path) -> bool:
-        """这个条目当前是否已经有可画的缩略图。"""
+        """这个条目是否有可画的东西（哪怕是按旧尺寸缩放的）。"""
         return path in self._pixmaps
+
+    def needs_thumbnail(self, path: Path) -> bool:
+        """这个条目是否需要（重新）取缩略图：没有，或手里的不是当前尺寸。"""
+        cached = self._pixmaps.get(path)
+        return cached is None or cached.edge != self._icon_edge
 
     def clear_thumbnails(self) -> None:
         """丢掉内存里缓存的缩略图（清空磁盘缓存后调用，让它们重新生成）。"""
@@ -165,7 +177,8 @@ class PhotoListModel(QAbstractListModel):
             return _tooltip(entry)
         if role == int(Qt.ItemDataRole.DecorationRole):
             # 还没有缩略图时返回 None，由委托画占位（相册画文件夹图标），模型不阻塞等待。
-            return self._pixmaps.get(entry.path)
+            cached = self._pixmaps.get(entry.path)
+            return cached.pixmap if cached is not None else None
         if role == ENTRY_ROLE:
             return entry
         if role == PATH_ROLE:
