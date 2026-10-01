@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+from typing import Final
+
 from PySide6.QtCore import (
     QEvent,
     QItemSelectionModel,
@@ -95,6 +97,14 @@ def _drag_threshold() -> int:
     hints = QGuiApplication.styleHints()
     distance = hints.startDragDistance() if hints is not None else 0
     return max(4, distance or _FALLBACK_DRAG_DISTANCE)
+
+
+#: 扩选用的修饰键。Qt 在 macOS 上把 Command 报成 ControlModifier。
+_EXTEND_MODIFIERS: Final = (
+    Qt.KeyboardModifier.ShiftModifier
+    | Qt.KeyboardModifier.ControlModifier
+    | Qt.KeyboardModifier.MetaModifier
+)
 
 
 class PhotoDelegate(QStyledItemDelegate):
@@ -282,10 +292,16 @@ class PhotoGrid(QListView):
         self._armed_row = -1
         self._double_click = False
         self._pending_rename_row = -1
-        # 最近一次左键按下的位置与修饰键：用来把「手抖」和「真的在拖」分开，
-        # 见 mouseMoveEvent。
+        # 最近一次左键按下的位置、修饰键，以及按下那一刻的选中与当前行：
+        # 用来把「手抖」和「真的在拖」分开，并在抬起时按用户的心意重算选择。
         self._press_point: QPoint | None = None
         self._press_extends = False
+        self._press_shift = False
+        self._press_selection: tuple[int, ...] = ()
+        self._press_anchor = -1
+        self._press_target = -1
+        #: 扩选的锚点：最后一次普通点选的行（`⌘` / `⇧` 点都不挪它）。
+        self._range_anchor = -1
         # 去掉 QListView 默认的 StyledPanel 边框：那是一圈系统灰的描边，画在视口四周，
         # 于是整个照片区（最里层）看上去像浮在一块面板上，而不是铺满窗口。大图区那边
         # 本来就是 NoFrame，这里跟它对齐 —— 底色只有一块，边框不该再分出第二层。
@@ -505,6 +521,9 @@ class PhotoGrid(QListView):
             return
         index = model.index(row, 0)
         self.setCurrentIndex(index)
+        # 代码里指定选中（撤销取回、回到网格…）同样算「一次普通点选」：
+        # 接下来用户的第一次 `⇧` 点应该从这一格铺开。
+        self._range_anchor = row
         selection = self.selectionModel()
         if selection is not None:
             selection.select(
@@ -576,23 +595,28 @@ class PhotoGrid(QListView):
     # ---- 事件 --------------------------------------------------------------
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
-        """记下这一下按在哪儿、带着什么修饰键（供 :meth:`mouseMoveEvent` 判断）。"""
-        self._press_point = event.position().toPoint()
-        self._press_extends = bool(
-            event.modifiers()
-            & (
-                Qt.KeyboardModifier.ShiftModifier
-                | Qt.KeyboardModifier.ControlModifier
-                | Qt.KeyboardModifier.MetaModifier
-            )
-        )
+        """记下这一下的来龙去脉（供 mouseMoveEvent / mouseReleaseEvent 判断）。"""
+        point = event.position().toPoint()
+        self._press_point = point
+        modifiers = event.modifiers()
+        self._press_extends = bool(modifiers & _EXTEND_MODIFIERS)
+        self._press_shift = bool(modifiers & Qt.KeyboardModifier.ShiftModifier)
+        self._press_selection = tuple(self.selected_rows())
+        index = self.indexAt(point)
+        self._press_target = index.row() if index.isValid() else -1
+        # 锚点是「上一次**完成**的普通点选」那一格。`⌘` 点只是加一个 / 减一个，
+        # `⇧` 点是从锚点铺开，两者都不挪锚点 —— 否则「点 0 → ⌘点 5 → ⇧点 21」
+        # 会从 5 铺开，把 1~4 漏在区间外（访达是从 0 铺开的）。
+        # 之所以看「完成」而不是「按下」：先按下鼠标、想起要扩选再补上 `⇧`，
+        # 那一格不该被当成新的锚点。
+        self._press_anchor = self._range_anchor
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         """手抖不算拖动，扩选更不算。
 
         图标视图里 Qt 在**按下瞬间**就进入「框选」状态（``DragSelectingState``），
-        之后只要鼠标挪动就开始画橡皮筋 —— 那 10 像素的拖动阈值只管拖拽，不管它。
+        之后只要鼠标挪动就开始画橡皮筋 —— 那 10 像素的拖动距离只管拖拽，不管它。
         后果很具体，而且极其容易撞上：带 `⇧` / `⌘` 点选时手总要抖上一两个像素，
         于是「从 A 扩选到 B 的连续区间」被悄悄换成一个**矩形框选**。网格是分行排的，
         矩形落到屏幕上就变成「每行只选中最边上那一两个格子」—— 隔一个跳一个，
@@ -609,6 +633,40 @@ class PhotoGrid(QListView):
                 return
         super().mouseMoveEvent(event)
 
+    def _reassert_extended_selection(self, target: int, *, shift: bool) -> None:
+        """抬起前把「这一下到底想要什么选择」自己算一遍，不指望基类没越权。
+
+        上一道只是**不让**橡皮筋画起来；这里再兜一层：即便它画了（Qt 的内部状态
+        机不是我们能完全预测的），抬起时也按用户的心意重算一次。带着修饰键点下去
+        的时候，意图其实是毫无歧义的 —— `⇧` 是「锚点到落点的连续区间」，
+        `⌘` 是「落点加一个 / 减一个」。
+
+        之所以要自己算，是因为这一下**只有两种可能的心意**：按区间来，或者按框来。
+        含糊的代价是选中一个「每行几个」的集合，用户按 `⌘⌫` 删掉的却不是自己
+        以为的那几张照片 —— 这种错必须由我们钉死，不能寄望于基类恰好老实。
+
+        落点取**按下时**那一格，而不是抬起时鼠标底下那一格：缩略图还在源源不断
+        到货，网格随时可能重排，等鼠标抬起来，底下的东西已经不是用户刚才瞄准的那个
+        了。按下时选中的正是那一格，重算也该跟它一致。
+        """
+        model = self.model()
+        selection = self.selectionModel()
+        if model is None or selection is None or not 0 <= target < model.rowCount():
+            return
+        rows = set(self._press_selection)
+        anchor = self._press_anchor if self._press_anchor >= 0 else target
+        if shift:
+            low, high = sorted((anchor, target))
+            rows.update(range(low, high + 1))
+        else:
+            rows.symmetric_difference_update({target})  # ⌘ 点：加一个或减一个
+        selection.clearSelection()
+        for row in sorted(rows):
+            selection.select(
+                model.index(row, 0),
+                QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+            )
+
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         """第一次点击只是选中；对**已经选中**的格子再点一次才开始重命名。
 
@@ -620,9 +678,21 @@ class PhotoGrid(QListView):
         :meth:`mouseDoubleClickEvent`），一直没等到双击，才是重命名。
         """
         super().mouseReleaseEvent(event)
-        # 这一次点击结束了，「从哪儿按下」也就过期了：之后的手动悬停不该再被拦。
-        self._press_point = None
-        self._press_extends = False
+        # 这一次点击结束了，「从哪儿按下、带着什么修饰键」也就过期了：
+        # 之后的手动悬停不该再被拦。修饰键按下与抬起时**都**看一眼：
+        # 「先按下鼠标、再补上 ⇧」也是常见手势，只认按下那一刻会漏掉它。
+        modifiers = event.modifiers()
+        press_point, self._press_point = self._press_point, None
+        press_target, self._press_target = self._press_target, -1
+        press_extends, self._press_extends = self._press_extends, False
+        press_shift, self._press_shift = self._press_shift, False
+        extending = press_extends or bool(modifiers & _EXTEND_MODIFIERS)
+        if extending and event.button() == Qt.MouseButton.LeftButton and press_point is not None:
+            shift = press_shift or bool(modifiers & Qt.KeyboardModifier.ShiftModifier)
+            self._reassert_extended_selection(press_target, shift=shift)
+        elif not extending and event.button() == Qt.MouseButton.LeftButton:
+            # 一次完整走完的普通点选：它才是下一次扩选的起点。
+            self._range_anchor = press_target
         if event.button() != Qt.MouseButton.LeftButton:
             return
         if self._double_click:

@@ -288,3 +288,141 @@ def test_a_real_drag_still_rubber_band_selects(qt_app: QApplication, tmp_path: P
     assert len(selected) > 1, "真的拖过这么远，框选却只选中一个格子"
     assert 0 in selected and columns + 1 in selected
     grid.deleteLater()
+
+
+def test_shift_pressed_after_the_button_still_extends_the_range(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """先按下鼠标、再补上 ⇧（很常见的手势）也要算扩选。
+
+    这一下按下时还没有修饰键，基类会以为是在拖动，中途还可能画出一个矩形；
+    抬起时带着 `⇧`，我们就按「锚点到落点的区间」重算 —— 不能指望基类恰好老实。
+    """
+    grid = make_grid(qt_app, tmp_path, count=40)
+    model = grid.model()
+    assert model is not None
+    columns = grid._laid_out_columns
+    grid.selectionModel().clearSelection()
+
+    anchor_point = grid.visualRect(model.index(0, 0)).center()
+    QTest.mouseClick(
+        grid.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, anchor_point
+    )
+    qt_app.processEvents()
+    target_point = grid.visualRect(model.index(2 * columns + 2, 0)).center()
+    # 按下时没有修饰键，并且拖动得足够远：让基类真的走一遍框选逻辑。
+    QTest.mousePress(
+        grid.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, target_point
+    )
+    for step in range(1, 5):
+        QTest.mouseMove(
+            grid.viewport(),
+            QPoint(anchor_point.x(), target_point.y() * step // 4),
+        )
+        qt_app.processEvents()
+    QTest.mouseRelease(
+        grid.viewport(),
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.ShiftModifier,
+        target_point,
+    )
+    qt_app.processEvents()
+
+    assert _selected_rows(grid) == list(range(2 * columns + 3))
+    grid.deleteLater()
+
+
+def test_range_anchors_on_the_last_plain_click_not_the_last_clicked(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """`⌘` 点只是加一个格子，它不该成为下一次 `⇧` 铺开的起点。
+
+    「点 0 → ⌘点 5 → ⇧点 21」应该得到 0..21：从 5 铺开会把 1~4 漏在区间外，
+    而访达是从上一次**普通**点选的 0 铺开的。
+    """
+    grid = make_grid(qt_app, tmp_path, count=40)
+    model = grid.model()
+    assert model is not None
+    columns = grid._laid_out_columns
+    target = 3 * columns + 3
+    grid.selectionModel().clearSelection()
+
+    def click(row: int, modifiers: Qt.KeyboardModifier) -> None:
+        point = grid.visualRect(model.index(row, 0)).center()
+        QTest.mouseClick(grid.viewport(), Qt.MouseButton.LeftButton, modifiers, point)
+        qt_app.processEvents()
+
+    click(0, Qt.KeyboardModifier.NoModifier)
+    click(5, Qt.KeyboardModifier.ControlModifier)
+    assert _selected_rows(grid) == [0, 5]
+    click(target, Qt.KeyboardModifier.ShiftModifier)
+
+    assert _selected_rows(grid) == list(range(target + 1))
+    grid.deleteLater()
+
+
+def test_repeated_shift_clicks_keep_the_same_anchor(qt_app: QApplication, tmp_path: Path) -> None:
+    """连按几次 `⇧`，每一次都从最初那一格铺开（而不是从上一次 `⇧` 的落点）。"""
+    grid = make_grid(qt_app, tmp_path, count=40)
+    model = grid.model()
+    assert model is not None
+    columns = grid._laid_out_columns
+    first, second = 2 * columns + 2, 3 * columns + 3
+    grid.selectionModel().clearSelection()
+
+    def click(row: int, modifiers: Qt.KeyboardModifier) -> None:
+        point = grid.visualRect(model.index(row, 0)).center()
+        QTest.mouseClick(grid.viewport(), Qt.MouseButton.LeftButton, modifiers, point)
+        qt_app.processEvents()
+
+    click(0, Qt.KeyboardModifier.NoModifier)
+    click(first, Qt.KeyboardModifier.ShiftModifier)
+    assert _selected_rows(grid) == list(range(first + 1))
+    click(second, Qt.KeyboardModifier.ShiftModifier)
+
+    assert _selected_rows(grid) == list(range(second + 1))
+    grid.deleteLater()
+
+
+def test_range_is_rebuilt_from_the_press_state_even_if_the_band_won(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """直接钉住「自己算」那一层：不管中间被谁改过，抬起时按锚点重建区间。"""
+    grid = make_grid(qt_app, tmp_path, count=40)
+    model = grid.model()
+    assert model is not None
+    columns = grid._laid_out_columns
+    target = 2 * columns + 2
+
+    grid.select_row(0)
+    # 假装按下时记下的是「只选了 0、当前行 0」，中途基类把选择改成了矩形。
+    grid._press_selection = (0,)
+    grid._press_anchor = 0
+    grid.select_row(target)  # 篡改成「只有落点」
+    selection = grid.selectionModel()
+    assert selection is not None
+    selection.select(model.index(1, 0), selection.SelectionFlag.Select)
+
+    grid._reassert_extended_selection(target, shift=True)
+
+    assert _selected_rows(grid) == list(range(target + 1))
+    grid.deleteLater()
+
+
+def test_command_click_reassert_toggles_one_item(qt_app: QApplication, tmp_path: Path) -> None:
+    """「自己算」那一层对 ⌘ 点同样成立：加一个 / 减一个，不是区间。"""
+    grid = make_grid(qt_app, tmp_path, count=40)
+    model = grid.model()
+    assert model is not None
+    columns = grid._laid_out_columns
+
+    grid.select_row(0)
+    grid._press_selection = (0,)
+    grid._press_anchor = 0
+    grid._reassert_extended_selection(columns + 1, shift=False)
+    assert _selected_rows(grid) == [0, columns + 1]
+
+    grid._press_selection = (0, columns + 1)
+    grid._reassert_extended_selection(columns + 1, shift=False)
+    assert _selected_rows(grid) == [0], "再点一次同一个格子是减掉它"
+    grid.deleteLater()
