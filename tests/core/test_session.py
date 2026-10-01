@@ -12,6 +12,8 @@ import pytest
 
 from gallery.core import paths
 from gallery.core.session import (
+    BROWSE_MODE_ALBUMS,
+    BROWSE_MODE_FLAT,
     MAX_RECENT_ROOTS,
     SessionState,
     WindowGeometry,
@@ -137,3 +139,35 @@ def test_with_thumbnail_edge_keeps_other_fields(tmp_path: Path) -> None:
     assert updated.thumbnail_edge == 112
     assert updated.recent_roots == (Path("/照片/一"),)
     assert state.thumbnail_edge is None  # 原对象不可变
+
+
+def test_browse_mode_round_trip(tmp_path: Path) -> None:
+    state = SessionState(browse_mode=BROWSE_MODE_ALBUMS)
+
+    save_session(state, base=tmp_path)
+
+    assert load_session(base=tmp_path).browse_mode == BROWSE_MODE_ALBUMS
+
+
+def test_browse_mode_defaults_to_none(tmp_path: Path) -> None:
+    assert load_session(base=tmp_path).browse_mode is None
+    assert SessionState().browse_mode is None
+
+
+@pytest.mark.parametrize("bad", ["tree", "", "FLAT", 3, None, ["albums"], True])
+def test_invalid_browse_mode_falls_back(tmp_path: Path, bad: object) -> None:
+    file = paths.app_state_file(base=tmp_path)
+    file.parent.mkdir(parents=True)
+    file.write_text(json.dumps({"browse_mode": bad}), encoding="utf-8")
+
+    assert load_session(base=tmp_path).browse_mode is None
+
+
+def test_with_browse_mode_keeps_other_fields() -> None:
+    state = SessionState(thumbnail_edge=288)
+
+    updated = state.with_browse_mode(BROWSE_MODE_FLAT)
+
+    assert updated.browse_mode == BROWSE_MODE_FLAT
+    assert updated.thumbnail_edge == 288
+    assert state.browse_mode is None

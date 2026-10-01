@@ -83,4 +83,42 @@ class PhotoRef:
         return self.suffix in SUPPORTED_SUFFIXES
 
 
-__all__ = ["SUPPORTED_SUFFIXES", "PhotoRef", "format_label", "is_supported_photo"]
+@dataclass(frozen=True, slots=True)
+class FolderRef:
+    """对子文件夹（相册）的轻量引用。
+
+    相册模式逐层浏览时，同一层里会有文件夹和照片混排；两者都用「路径 + 名称」
+    描述，界面据此画卡片、决定双击是进入相册还是打开照片。
+    """
+
+    path: Path
+    mtime_ns: int
+
+    @classmethod
+    def from_path(cls, path: Path) -> FolderRef:
+        path = Path(path)
+        stat = path.stat()
+        return cls(path=path, mtime_ns=stat.st_mtime_ns)
+
+    @property
+    def name(self) -> str:
+        return self.path.name
+
+    @property
+    def display_name(self) -> str:
+        """文件夹名为空时的兜底（例如根目录）。"""
+        return self.path.name or str(self.path)
+
+
+#: 网格里可能出现的东西：一张照片，或一个相册（子文件夹）。
+type GridEntry = PhotoRef | FolderRef
+
+
+__all__ = [
+    "SUPPORTED_SUFFIXES",
+    "FolderRef",
+    "GridEntry",
+    "PhotoRef",
+    "format_label",
+    "is_supported_photo",
+]

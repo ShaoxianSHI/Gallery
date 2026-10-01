@@ -15,6 +15,7 @@ from gallery.core import paths
 from gallery.core.config import LibraryConfig, save_config
 from gallery.core.errors import LibraryNotAccessibleError
 from gallery.core.library import Library
+from gallery.core.photos import FolderRef
 
 
 def test_open_missing_directory(tmp_path: Path) -> None:
@@ -103,3 +104,52 @@ def test_relative_root_is_resolved_to_absolute(
 
     assert library.root.is_absolute()
     assert library.root == (tmp_path / "库").resolve()
+
+
+def test_iter_entries_lists_one_level(tmp_path: Path, make_photo: Callable[..., Path]) -> None:
+    make_photo("top.jpg")
+    album = tmp_path / "2022-复活节波尔多"
+    make_photo("inside.jpg", directory=album)
+    library = Library.open(tmp_path)
+
+    entries = list(library.iter_entries())
+
+    assert [entry.name for entry in entries] == ["2022-复活节波尔多", "top.jpg"]
+    assert isinstance(entries[0], FolderRef)
+    assert [entry.name for entry in library.iter_entries(album)] == ["inside.jpg"]
+
+
+def test_iter_entries_refuses_to_leave_the_library(tmp_path: Path) -> None:
+    """逐层浏览绝不能走出用户指定的库。"""
+    library_root = tmp_path / "库"
+    library_root.mkdir()
+    outside = tmp_path / "别处"
+    outside.mkdir()
+
+    library = Library.open(library_root)
+
+    with pytest.raises(LibraryNotAccessibleError) as excinfo:
+        list(library.iter_entries(outside))
+    assert "库以外" in excinfo.value.message
+
+
+def test_folder_cover_finds_first_photo(tmp_path: Path, make_photo: Callable[..., Path]) -> None:
+    album = tmp_path / "相册"
+    make_photo("b.jpg", directory=album)
+    album_nested = album / "更深"
+    make_photo("c.jpg", directory=album_nested)
+    library = Library.open(tmp_path)
+
+    cover = library.folder_cover(album)
+
+    assert cover is not None
+    assert cover.path == album / "b.jpg"
+
+
+def test_folder_cover_returns_none_for_empty(tmp_path: Path) -> None:
+    album = tmp_path / "空相册"
+    album.mkdir()
+    library = Library.open(tmp_path)
+
+    assert library.folder_cover(album) is None
+    assert library.folder_cover(tmp_path / "不存在") is None

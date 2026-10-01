@@ -20,7 +20,7 @@ from pathlib import Path
 
 from gallery.core.constants import CONFIG_DIR_NAME
 from gallery.core.errors import LibraryNotAccessibleError
-from gallery.core.photos import PhotoRef, is_supported_photo
+from gallery.core.photos import FolderRef, PhotoRef, is_supported_photo
 
 
 @dataclass(slots=True)
@@ -105,6 +105,64 @@ def iter_photos(
         stack.extend(reversed(subdirectories))
 
 
+def iter_entries(
+    directory: Path,
+    *,
+    should_cancel: Callable[[], bool] | None = None,
+    report: ScanReport | None = None,
+) -> Iterator[FolderRef | PhotoRef]:
+    """列出**一个目录**的内容：子文件夹在前，照片在后，各自按名称排序。
+
+    相册模式逐层展开时用它；平铺模式仍然用 :func:`iter_photos` 一次递归到底。
+    文件夹在前是刻意的：同一层里既有相册又有照片时，相册应该先被看到。
+
+    :raises LibraryNotAccessibleError: 目录不存在或没有读取权限。
+    """
+    directory = Path(directory)
+    if not directory.is_dir():
+        raise LibraryNotAccessibleError(
+            f"打不开这个文件夹：{directory}。它可能已被移动、重命名或删除。",
+            path=directory,
+        )
+    cancelled = should_cancel if should_cancel is not None else _never_cancel
+    listed = _list_dir(directory, report)
+    if listed is None:
+        return
+
+    folders: list[FolderRef] = []
+    photos: list[PhotoRef] = []
+    for entry in sorted(listed, key=_sort_key):
+        if cancelled():
+            return
+        name = entry.name
+        if name.startswith(".") or name == CONFIG_DIR_NAME:
+            continue
+        try:
+            if entry.is_dir(follow_symlinks=False):
+                stat = entry.stat(follow_symlinks=False)
+                folders.append(FolderRef(path=Path(entry.path), mtime_ns=stat.st_mtime_ns))
+                continue
+            if not entry.is_file(follow_symlinks=False):
+                continue
+            if not is_supported_photo(Path(name)):
+                continue
+            stat = entry.stat(follow_symlinks=False)
+        except OSError as exc:
+            _note_file(report, entry.path, exc)
+            continue
+        photos.append(PhotoRef(path=Path(entry.path), size=stat.st_size, mtime_ns=stat.st_mtime_ns))
+
+    # 产出阶段也检查取消：语义与 iter_photos 保持一致 —— 取消就该停下。
+    for folder in folders:
+        if cancelled():
+            return
+        yield folder
+    for photo in photos:
+        if cancelled():
+            return
+        yield photo
+
+
 def _list_dir(directory: Path, report: ScanReport | None) -> list[os.DirEntry[str]] | None:
     try:
         with os.scandir(directory) as scanner:
@@ -132,4 +190,4 @@ def _never_cancel() -> bool:
     return False
 
 
-__all__ = ["ScanReport", "iter_photos"]
+__all__ = ["ScanReport", "iter_entries", "iter_photos"]

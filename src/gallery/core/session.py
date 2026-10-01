@@ -24,6 +24,15 @@ MAX_RECENT_ROOTS: Final = 8
 #: 会话文件格式版本。将来结构变化时用于迁移或丢弃。
 SESSION_VERSION: Final = 1
 
+#: 浏览方式之一：按文件夹逐层进入，子文件夹先以相册形式呈现。
+BROWSE_MODE_ALBUMS: Final = "albums"
+
+#: 浏览方式之一：把整个库（含所有子文件夹）的照片平铺在一起。
+BROWSE_MODE_FLAT: Final = "flat"
+
+#: 允许的浏览方式。
+BROWSE_MODES: Final = (BROWSE_MODE_ALBUMS, BROWSE_MODE_FLAT)
+
 
 @dataclass(frozen=True, slots=True)
 class WindowGeometry:
@@ -44,6 +53,8 @@ class SessionState:
     window: WindowGeometry | None = None
     #: 缩略图长边（像素）。界面把它归到最近的档位，非法值一律回退到默认。
     thumbnail_edge: int | None = None
+    #: 上次用的浏览方式；``None`` 表示用界面默认值。
+    browse_mode: str | None = None
 
     def with_recent_root(self, root: Path) -> SessionState:
         """把 ``root`` 提到最前面，去重并截断到上限。"""
@@ -56,6 +67,9 @@ class SessionState:
 
     def with_thumbnail_edge(self, edge: int | None) -> SessionState:
         return replace(self, thumbnail_edge=edge)
+
+    def with_browse_mode(self, mode: str | None) -> SessionState:
+        return replace(self, browse_mode=mode)
 
 
 def load_session(*, base: Path | None = None) -> SessionState:
@@ -73,6 +87,7 @@ def load_session(*, base: Path | None = None) -> SessionState:
         recent_roots=_parse_roots(data.get("recent_roots")),
         window=_parse_window(data.get("window")),
         thumbnail_edge=_parse_positive_int(data.get("thumbnail_edge")),
+        browse_mode=_parse_browse_mode(data.get("browse_mode")),
     )
 
 
@@ -87,6 +102,7 @@ def save_session(state: SessionState, *, base: Path | None = None) -> None:
         "recent_roots": [str(path) for path in state.recent_roots],
         "window": _window_to_json(state.window),
         "thumbnail_edge": state.thumbnail_edge,
+        "browse_mode": state.browse_mode,
     }
     write_text_atomic(
         paths.app_state_file(base=base),
@@ -122,6 +138,12 @@ def _parse_roots(value: object) -> tuple[Path, ...]:
     return tuple(roots)
 
 
+def _parse_browse_mode(value: object) -> str | None:
+    if isinstance(value, str) and value in BROWSE_MODES:
+        return value
+    return None
+
+
 def _parse_positive_int(value: object) -> int | None:
     # bool 是 int 的子类，必须显式排除。
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
@@ -152,6 +174,9 @@ def _parse_window(value: object) -> WindowGeometry | None:
 
 
 __all__ = [
+    "BROWSE_MODES",
+    "BROWSE_MODE_ALBUMS",
+    "BROWSE_MODE_FLAT",
     "MAX_RECENT_ROOTS",
     "SESSION_VERSION",
     "SessionState",

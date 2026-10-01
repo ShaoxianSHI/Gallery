@@ -62,3 +62,14 @@ def test_app_paths_follow_injected_base(tmp_path: Path) -> None:
 def test_app_data_base_is_platform_specific() -> None:
     base = paths.app_data_base()
     assert base.is_absolute()
+
+
+def test_is_within(tmp_path: Path) -> None:
+    root = tmp_path / "库"
+    inside = root / "相册" / "更深"
+
+    assert paths.is_within(root, root) is True
+    assert paths.is_within(root, inside) is True
+    assert paths.is_within(root, tmp_path / "别处") is False
+    # 前缀相同的兄弟目录不算「在其下」
+    assert paths.is_within(root, tmp_path / "库2") is False

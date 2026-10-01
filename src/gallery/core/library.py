@@ -17,8 +17,8 @@ from gallery.core import paths
 from gallery.core.config import LibraryConfig, load_config
 from gallery.core.errors import LibraryNotAccessibleError
 from gallery.core.images import RasterImage, decode_rgba
-from gallery.core.photos import PhotoRef
-from gallery.core.scanner import ScanReport, iter_photos
+from gallery.core.photos import FolderRef, PhotoRef
+from gallery.core.scanner import ScanReport, iter_entries, iter_photos
 from gallery.core.thumbs import ThumbnailCache
 
 
@@ -122,6 +122,42 @@ class Library:
             should_cancel=should_cancel,
             report=report,
         )
+
+    def iter_entries(
+        self,
+        directory: Path | None = None,
+        *,
+        should_cancel: Callable[[], bool] | None = None,
+        report: ScanReport | None = None,
+    ) -> Iterator[FolderRef | PhotoRef]:
+        """列出某一层的内容（相册在前，照片在后）。
+
+        :param directory: 要列出的目录，默认是库根目录。
+        :raises LibraryNotAccessibleError: 目录不存在，或不在库内 ——
+            逐层浏览绝不能走出用户指定的库。
+        """
+        target = self._root if directory is None else Path(directory)
+        if not paths.is_within(self._root, target):
+            raise LibraryNotAccessibleError(
+                f"不能浏览库以外的文件夹：{target}。",
+                path=target,
+            )
+        return iter_entries(target, should_cancel=should_cancel, report=report)
+
+    def folder_cover(
+        self,
+        folder: Path,
+        *,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> PhotoRef | None:
+        """相册封面：文件夹里（含更深的层级）找到的第一张照片，没有则 ``None``。
+
+        用「找到第一张就停」的搜索做封面：整棵树可能很大，而封面只需要一张。
+        """
+        folder = Path(folder)
+        if not folder.is_dir():
+            return None
+        return next(iter_photos(folder, should_cancel=should_cancel), None)
 
     def thumbnail(self, ref: PhotoRef) -> RasterImage:
         """取缩略图（走缓存）。"""

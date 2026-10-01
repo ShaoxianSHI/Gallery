@@ -67,6 +67,16 @@ def library_digest(root: Path) -> str:
     return hashlib.sha1(resolved.encode("utf-8")).hexdigest()[:16]
 
 
+def is_within(root: Path, candidate: Path) -> bool:
+    """``candidate`` 是否就是 ``root`` 或位于其下（按解析后的绝对路径比较）。
+
+    相册模式允许逐层进入子文件夹，界面因此需要一个「不许走出库」的闸门。
+    """
+    resolved_root = Path(root).resolve()
+    resolved = Path(candidate).resolve()
+    return resolved == resolved_root or resolved_root in resolved.parents
+
+
 def app_data_base() -> Path:
     """当前平台的「应用数据」根目录。"""
     # 先落到局部变量，避免 mypy 按当前平台把 sys.platform 收窄成字面量、
@@ -111,6 +121,7 @@ __all__ = [
     "external_thumbnail_cache_dir",
     "has_config_dir",
     "index_file",
+    "is_within",
     "journal_dir",
     "library_digest",
     "thumbnail_cache_dir",
