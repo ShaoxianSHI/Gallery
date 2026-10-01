@@ -324,3 +324,62 @@ def test_switching_photos_resolves_the_place_before_display(
 
     assert timeline == ["set_report"], f"切图时面板被替换了 {len(timeline)} 次：{timeline}"
     assert queried, "预读时就应当已经发起过地点推断"
+
+
+def test_opening_a_photo_does_not_show_the_previous_one(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """打开一张照片时，屏幕上不能还留着上一张。
+
+    留着它用户会以为点错了文件 —— 看到的是错的照片，比短暂的黑屏更糟。
+    这里先显示这张照片自己的缩略图：尺寸小一点，但至少是对的。
+
+    必须先清掉预览缓存：预读已经把下一张放进去了的话，走的是「命中缓存直接
+    显示」的路径，压根不会经过这里要验证的分支。
+    """
+    from PIL import Image as PilImage
+
+    from gallery.core.config import prepare_library
+
+    root = tmp_path / "两色"
+    root.mkdir()
+    for index, colour in enumerate([(220, 40, 40), (40, 40, 220)]):
+        pil = PilImage.new("RGB", (900, 700), colour)
+        pil.save(root / f"IMG_{index:04d}.jpg")
+        pil.close()
+    prepare_library(root)
+
+    window = MainWindow(session_base=tmp_path / "session", initial_library=root)
+    window.resize(1100, 800)
+    window.show()
+    _settle(qt_app, 2.0)
+    assert window._model.rowCount() == 2
+
+    def centre_colour() -> object:
+        viewport = window._detail.viewport()
+        image = window._detail.grab().toImage()
+        return image.pixelColor(viewport.width() // 2, viewport.height() // 2)
+
+    window._open_detail(window._model.index(0, 0))
+    _settle(qt_app, 1.5)
+    first = centre_colour()
+
+    window.show_grid()
+    _settle(qt_app, 0.5)
+    target = window._model.photo_at(1)
+    window._preview_cache.clear()  # 制造「这张的预览还没有」的情形
+    assert target is not None and target.path not in window._preview_cache
+
+    window._open_detail(window._model.index(1, 0))
+    centre = centre_colour()  # 立刻取，不给解码留时间
+
+    assert centre != first, "切换瞬间画面还是上一张照片的颜色"
+    window.close()
+
+
+def test_thumbnail_accessor_returns_none_when_missing() -> None:
+    """缩略图访问器：没有就返回 None，不要凭空造一张空白图。"""
+    from gallery.ui.models import PhotoListModel
+
+    model = PhotoListModel()
+    assert model.thumbnail_pixmap(Path("/没有/这张照片.jpg")) is None

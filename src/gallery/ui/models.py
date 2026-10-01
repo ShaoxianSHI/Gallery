@@ -141,6 +141,15 @@ class PhotoListModel(QAbstractListModel):
         """这个条目是否有可画的东西（哪怕是按旧尺寸缩放的）。"""
         return path in self._pixmaps
 
+    def thumbnail_pixmap(self, path: Path) -> QPixmap | None:
+        """这张照片已经缓存好的缩略图（没有就返回 ``None``）。
+
+        打开大图时先用它顶上：立刻显示的是**正确那张照片**，只是尺寸小一些 ——
+        比留着上一张照片、或闪一下黑屏都好。
+        """
+        cached = self._pixmaps.get(path)
+        return cached.pixmap if cached is not None else None
+
     def needs_thumbnail(self, path: Path) -> bool:
         """这个条目是否需要（重新）取缩略图：没有，或手里的不是当前尺寸。"""
         cached = self._pixmaps.get(path)

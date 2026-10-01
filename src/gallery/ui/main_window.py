@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QStackedWidget,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -789,6 +790,7 @@ class MainWindow(QMainWindow):
         """回到网格，并让当前照片保持选中。"""
         if self._stack.currentWidget() is self._grid_page:
             return
+        QToolTip.hideText()  # 同 _load_detail：大图上的提示不该挂到网格上
         self._stack.setCurrentWidget(self._grid_page)
         if self._current_row >= 0:
             self._grid.select_row(self._current_row)
@@ -818,6 +820,10 @@ class MainWindow(QMainWindow):
         ref = self._model.photo_at(row)
         if library is None or ref is None:
             return
+        # 网格卡片上的悬停提示是一个**顶层窗口**（macOS 上白底、正好压在照片的
+        # 左上角，里面是文件名与尺寸等元数据）。它已经在屏幕上时切换视图，
+        # 会跟着闪一下才消失 —— 所以切换前先收掉。
+        QToolTip.hideText()
         generation = self._generation
         self._set_status(
             f"{ref.name} · {format_bytes(ref.size)} · {format_timestamp(ref.mtime_ns)}"
@@ -838,6 +844,14 @@ class MainWindow(QMainWindow):
             return
 
         self._detail.prepare_switch()
+        # 画面上此刻还留着**上一张**照片。留着它，用户会以为点错了文件 ——
+        # 看到的是错的照片，比短暂的黑屏更糟。先用这张照片自己的缩略图顶上：
+        # 尺寸小一点，但至少是对的。
+        thumbnail = self._model.thumbnail_pixmap(ref.path)
+        if thumbnail is not None:
+            self._detail.set_image(thumbnail.toImage(), refit=True)
+        else:
+            self._detail.clear_image()
         max_edge = self._preview_edge()
 
         def work_preview(context: TaskContext) -> object:
