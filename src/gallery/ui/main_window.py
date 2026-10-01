@@ -841,6 +841,10 @@ class MainWindow(QMainWindow):
             self._preview_cache.move_to_end(ref.path)
             self._detail.set_image(cached, refit=True)
             self._request_full(ref, row, generation)
+            # 命中也必须继续预读前后：只预读未命中的那一张的话，连续翻图会变成
+            # 「命中 → 不预读 → 下次未命中 → 预读 → 命中」地交替，每隔一张就
+            # 先闪一下缩略图。命中与未命中应当对缓存的处理完全一致。
+            self._prefetch_neighbours(row)
             return
 
         self._detail.prepare_switch()
