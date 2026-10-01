@@ -46,6 +46,7 @@ from gallery.ui.tasks import TaskContext, TaskRunner
 from gallery.ui.thumb_sizes import (
     THUMBNAIL_SIZES,
     describe,
+    describe_actual,
     edge_for_index,
     label_for_index,
     nearest_index,
@@ -134,6 +135,7 @@ class MainWindow(QMainWindow):
         self._grid.activated_index.connect(self._open_detail)
         self._grid.viewport_changed.connect(self._refresh_thumbnail_window)
         self._grid.size_step_requested.connect(self.step_thumbnail_size)
+        self._grid.icon_edge_changed.connect(self._on_grid_edge_changed)
 
         self._banner = QLabel()
         self._banner.setObjectName("banner")
@@ -216,7 +218,7 @@ class MainWindow(QMainWindow):
         self._size_actions: list[QAction] = []
         size_menu = view_menu.addMenu("缩略图大小")
         for index in range(len(THUMBNAIL_SIZES)):
-            action = QAction(f"{label_for_index(index)}（{edge_for_index(index)} 像素）", self)
+            action = QAction(f"{label_for_index(index)}（约 {edge_for_index(index)} 像素）", self)
             action.setCheckable(True)
             action.triggered.connect(
                 lambda _checked=False, target=index: self.set_thumbnail_size(target)
@@ -459,12 +461,19 @@ class MainWindow(QMainWindow):
         self.set_thumbnail_size(target)
 
     def _apply_thumbnail_size(self) -> None:
-        edge = edge_for_index(self._size_index)
-        self._model.set_icon_edge(edge)
-        self._grid.set_icon_edge(edge)
+        """把档位交给网格；实际格子宽度由视口宽度自适应。
+
+        网格算完会通过 ``icon_edge_changed`` 回来，届时再作废并重取缩略图。
+        """
+        self._grid.set_target_edge(edge_for_index(self._size_index))
         self._sync_size_actions()
-        # 内存里的缩略图已按旧尺寸作废，重新请求可见的那一批。
+
+    def _on_grid_edge_changed(self, edge: int) -> None:
+        """网格自适应出新的缩略图尺寸：作废旧图并重取可见的那一批。"""
+        self._model.set_icon_edge(edge)
         self._refresh_thumbnail_window()
+        if self._grid.isVisible():
+            self.statusBar().showMessage(describe_actual(self._size_index, edge), 1500)
 
     def _sync_size_actions(self) -> None:
         for index, action in enumerate(self._size_actions):

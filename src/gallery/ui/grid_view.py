@@ -13,6 +13,7 @@ from PySide6.QtCore import (
     QEvent,
     QItemSelectionModel,
     QModelIndex,
+    QObject,
     QPoint,
     QRect,
     QSize,
@@ -42,9 +43,11 @@ from PySide6.QtWidgets import (
 
 from gallery.ui.thumb_sizes import (
     DEFAULT_EDGE,
+    MIN_EDGE,
     PINCH_THRESHOLD,
     WHEEL_THRESHOLD,
     StepAccumulator,
+    fit_columns,
 )
 
 #: 滚动后延迟多久重算可见区。避免每滚一个像素就重排一次缩略图请求。
@@ -56,6 +59,22 @@ PREFETCH_MARGIN = 1.0
 #: 格子相对缩略图多出来的留白：横向是卡片内边距，纵向还要放下文件名。
 GRID_PADDING_X = 28
 GRID_PADDING_Y = 56
+
+#: 自适应出来的长边与上一次「通知界面重新生成缩略图」的差值小于它时就不折腾：
+#: 差几个像素看不出来，却会让整屏缩略图作废重取。
+EDGE_REFRESH_THRESHOLD = 6
+
+#: 视口停止变化多久之后才真正通知界面重取缩略图（拖动窗口时的防抖）。
+EDGE_SETTLE_MS = 120
+
+#: 排完版多久之后核对实际列数（等布局彻底落定，避免读到半成品）。
+COLUMN_CHECK_MS = 50
+
+#: Qt 少摆一列时，按实测列数重算所留的安全边距。
+LAYOUT_SAFETY = 40
+
+#: 「视口宽度 → 修正方案」的记忆条目上限。
+MAX_LAYOUT_MEMO = 32
 
 
 class PhotoDelegate(QStyledItemDelegate):
@@ -162,10 +181,18 @@ class PhotoGrid(QListView):
     viewport_changed = Signal()
     #: 用户用捏合或 ⌘+滚轮要求换一档缩略图尺寸：正数更大，负数更小。
     size_step_requested = Signal(int)
+    #: 自适应后的实际缩略图长边变了，界面需要按新尺寸重新取一遍缩略图。
+    icon_edge_changed = Signal(int)
 
     def __init__(self, parent: QWidget | None = None, *, icon_edge: int = DEFAULT_EDGE) -> None:
         super().__init__(parent)
-        self._icon_edge = icon_edge
+        self._target_edge = icon_edge
+        self._applied_edge = icon_edge
+        self._emitted_edge = icon_edge
+        self._laying_out = False
+        self._laid_out_width = 0
+        self._laid_out_columns = 0
+        self._layout_fix: dict[int, tuple[int, int]] = {}
         self.setViewMode(QListView.ViewMode.IconMode)
         self.setResizeMode(QListView.ResizeMode.Adjust)
         self.setMovement(QListView.Movement.Static)
@@ -176,7 +203,6 @@ class PhotoGrid(QListView):
         self.setBatchSize(64)
         self.setIconSize(QSize(icon_edge, icon_edge))
         self.setGridSize(QSize(icon_edge + GRID_PADDING_X, icon_edge + GRID_PADDING_Y))
-        self.setSpacing(4)
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
@@ -195,25 +221,131 @@ class PhotoGrid(QListView):
         self._debounce.setInterval(VIEWPORT_DEBOUNCE_MS)
         self._debounce.timeout.connect(self.viewport_changed.emit)
 
-    # ---- 尺寸档位 ----------------------------------------------------------
+        self._examiner = QTimer(self)
+        self._examiner.setSingleShot(True)
+        self._examiner.setInterval(COLUMN_CHECK_MS)
+        self._examiner.timeout.connect(self._examine_columns)
+
+        self._edge_timer = QTimer(self)
+        self._edge_timer.setSingleShot(True)
+        self._edge_timer.setInterval(EDGE_SETTLE_MS)
+        self._edge_timer.timeout.connect(self._emit_edge_change)
+
+        # 视口宽度变化（窗口缩放、滚动条出现或消失）都要重算格子宽度。
+        self.viewport().installEventFilter(self)
+
+    # ---- 尺寸档位与自适应排版 ----------------------------------------------
 
     @property
     def icon_edge(self) -> int:
-        return self._icon_edge
+        """实际生效的缩略图长边（随视口宽度自适应，不一定等于档位目标值）。"""
+        return self._applied_edge
 
-    def set_icon_edge(self, edge: int) -> None:
-        """切换格子尺寸并重新排版，尽量让当前选中的照片留在视野中央。"""
-        if edge == self._icon_edge:
+    @property
+    def target_edge(self) -> int:
+        """当前档位要求的目标长边。"""
+        return self._target_edge
+
+    def set_target_edge(self, edge: int) -> None:
+        """换一档目标尺寸。真正的格子宽度由视口宽度决定，见 :meth:`_recompute_layout`。"""
+        self._target_edge = edge
+        self._layout_fix.clear()
+        self._recompute_layout()
+
+    def _columns_for(self, available: int) -> int:
+        """这个宽度下打算摆几列。"""
+        fix = self._layout_fix.get(available)
+        if fix is not None:
+            return fix[0]
+        return fit_columns(available, self._target_edge + GRID_PADDING_X)
+
+    def _cell_size_for(self, available: int) -> QSize:
+        """按列数把可用宽度均分给各列，铺满一行。"""
+        columns = self._columns_for(available)
+        fix = self._layout_fix.get(available)
+        slack = fix[1] if fix is not None else 0
+        return self._cell_size_for_width(max(1, (available - slack) // columns))
+
+    def _cell_size_for_width(self, cell_width: int) -> QSize:
+        edge = max(MIN_EDGE, cell_width - GRID_PADDING_X)
+        return QSize(edge + GRID_PADDING_X, edge + GRID_PADDING_Y)
+
+    def _recompute_layout(self) -> None:
+        """按当前视口宽度重排，让第一行铺满、右侧不留空白。"""
+        if self._laying_out:
             return
-        self._icon_edge = edge
-        self.setIconSize(QSize(edge, edge))
-        self.setGridSize(QSize(edge + GRID_PADDING_X, edge + GRID_PADDING_Y))
-        self._delegate.set_icon_edge(edge)
-        self.doItemsLayout()
-        index = self.currentIndex()
-        if index.isValid():
-            self.scrollTo(index, QAbstractItemView.ScrollHint.PositionAtCenter)
-        self._debounce.start()
+        available = self.viewport().width()
+        if available <= 0:
+            return
+        columns = self._columns_for(available)
+        # 视口宽度变了就必须重排：格子宽度可能恰好没变，但列数是按视口宽度算的，
+        # 不重排就会沿用旧列数，右边留下一条空白。
+        if available == self._laid_out_width and columns == self._laid_out_columns:
+            return
+        self._apply_cell(self._cell_size_for(available))
+        self._laid_out_width = available
+        self._laid_out_columns = columns
+        self._examiner.start()
+
+    def _examine_columns(self) -> None:
+        """排完版之后核对一次实际列数。
+
+        Qt 的换行宽度与视口宽度并不严格相等（实测在宽窗口下会少摆一列），
+        猜公式不如实测：真少了就按实测列数重算，并留出安全边距保证这次摆得下。
+        """
+        available = self.viewport().width()
+        intended = self._laid_out_columns
+        if available != self._laid_out_width or intended <= 0:
+            return
+        measured = self._first_row_columns()
+        if measured <= 0 or measured >= intended:
+            return
+        if len(self._layout_fix) > MAX_LAYOUT_MEMO:
+            self._layout_fix.clear()
+        self._layout_fix[available] = (measured, LAYOUT_SAFETY)
+        self._apply_cell(self._cell_size_for(available))
+        self._laid_out_columns = measured
+
+    def _first_row_columns(self) -> int:
+        """实际排在第一行的格子数（只采样一行，代价与库大小无关）。"""
+        matrix = self.model()
+        if matrix is None or matrix.rowCount() == 0:
+            return 0
+        top = self.visualRect(matrix.index(0, 0)).top()
+        count = 0
+        for row in range(matrix.rowCount()):
+            if self.visualRect(matrix.index(row, 0)).top() != top:
+                break
+            count += 1
+        return count
+
+    def _apply_cell(self, cell: QSize) -> None:
+        if cell == self.gridSize():
+            return
+        self._laying_out = True
+        try:
+            self._applied_edge = cell.width() - GRID_PADDING_X
+            self._delegate.set_icon_edge(self._applied_edge)
+            self.setIconSize(QSize(self._applied_edge, self._applied_edge))
+            self.setGridSize(cell)
+            self.doItemsLayout()
+            index = self.currentIndex()
+            if index.isValid():
+                self.scrollTo(index, QAbstractItemView.ScrollHint.PositionAtCenter)
+        finally:
+            self._laying_out = False
+        self._schedule_edge_update()
+
+    def _schedule_edge_update(self) -> None:
+        if abs(self._applied_edge - self._emitted_edge) < EDGE_REFRESH_THRESHOLD:
+            return
+        self._edge_timer.start()
+
+    def _emit_edge_change(self) -> None:
+        if self._applied_edge == self._emitted_edge:
+            return
+        self._emitted_edge = self._applied_edge
+        self.icon_edge_changed.emit(self._applied_edge)
 
     # ---- 可见区计算 --------------------------------------------------------
 
@@ -308,10 +440,22 @@ class PhotoGrid(QListView):
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
+        self._recompute_layout()
         self._debounce.start()
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if watched is self.viewport() and event.type() == QEvent.Type.Resize:
+            # 延到事件循环下一轮：视口尺寸变化本身就发生在布局过程中，
+            # 立刻重排会把布局再推进一次。
+            QTimer.singleShot(0, self._recompute_layout)
+        return super().eventFilter(watched, event)
 
 
 __all__ = [
+    "COLUMN_CHECK_MS",
+    "EDGE_REFRESH_THRESHOLD",
+    "EDGE_SETTLE_MS",
+    "LAYOUT_SAFETY",
     "GRID_PADDING_X",
     "GRID_PADDING_Y",
     "PREFETCH_MARGIN",

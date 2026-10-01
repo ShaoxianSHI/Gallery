@@ -16,6 +16,7 @@ from gallery.ui.thumb_sizes import (
     clamp_index,
     describe,
     edge_for_index,
+    fit_columns,
     label_for_index,
     nearest_index,
     shifted_index,
@@ -118,3 +119,45 @@ def test_a_single_mouse_wheel_notch_switches_one_step() -> None:
 
     assert accumulator.feed(WHEEL_THRESHOLD) == 1
     assert accumulator.feed(-WHEEL_THRESHOLD) == -1
+
+
+class TestFitColumns:
+    """一行铺满：列数选得好，右侧就不留空白。"""
+
+    def test_picks_the_column_count_closest_to_the_target(self) -> None:
+        # 1180 // 8 = 147（离 140 差 7），1180 // 9 = 131（差 9）→ 8 列更贴近目标
+        assert fit_columns(1180, 140) == 8
+        # 1198 // 9 = 133（差 7）比 1198 // 8 = 149（差 9）更贴近
+        assert fit_columns(1198, 140) == 9
+
+    def test_slack_is_always_less_than_one_pixel_per_column(self) -> None:
+        for available in range(320, 2600, 7):
+            for target in (140, 204, 316):
+                columns = fit_columns(available, target)
+                cell = available // columns
+                assert columns * cell <= available
+                assert available - columns * cell < columns
+
+    def test_cell_width_stays_near_the_target(self) -> None:
+        for available in range(600, 2600, 13):
+            for target in (140, 204, 316):
+                cell = available // fit_columns(available, target)
+                # 允许多铺一列导致的小幅缩小，也允许少铺一列导致的小幅放大
+                assert target * 0.6 <= cell <= target * 1.6, (available, target, cell)
+
+    def test_degenerate_inputs_fall_back_to_one_column(self) -> None:
+        assert fit_columns(0, 140) == 1
+        assert fit_columns(-100, 140) == 1
+        assert fit_columns(1000, 0) == 1
+
+    def test_never_exceeds_the_column_cap(self) -> None:
+        assert fit_columns(100_000, 140, max_columns=10) <= 10
+
+
+def test_describe_actual_reports_the_measured_size() -> None:
+    from gallery.ui.thumb_sizes import describe_actual
+
+    text = describe_actual(2, 285)
+
+    assert "大" in text
+    assert "285" in text

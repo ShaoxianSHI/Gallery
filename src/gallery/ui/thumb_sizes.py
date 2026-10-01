@@ -34,6 +34,30 @@ PINCH_THRESHOLD: Final = 0.1
 #: ⌘+滚轮的切换阈值：一格传统滚轮是 120，触控板则是一连串小增量。
 WHEEL_THRESHOLD: Final = 120.0
 
+#: 缩略图长边的下限。窗口小到离谱时也不至于缩成看不清的一点。
+MIN_EDGE: Final = 48
+
+#: 列数搜索的上限。超过这个列数再细也只是浪费循环。
+MAX_COLUMNS: Final = 64
+
+
+def fit_columns(available: int, target_cell: int, *, max_columns: int = MAX_COLUMNS) -> int:
+    """算出「一行铺满可用宽度」时该分成几列。
+
+    目标不是死守某个格子宽度，而是在铺满的前提下让格子宽度尽量贴近 ``target_cell``：
+    格子会被拉伸到 ``available // columns``，因此只要列数选得好，右侧就不会留下空白。
+    """
+    if available <= 0 or target_cell <= 0:
+        return 1
+    limit = max(1, min(max_columns, available))
+    best_columns = 1
+    best_delta: int | None = None
+    for columns in range(1, limit + 1):
+        delta = abs(available // columns - target_cell)
+        if best_delta is None or delta < best_delta:
+            best_columns, best_delta = columns, delta
+    return best_columns
+
 
 def clamp_index(index: int) -> int:
     """把档位序号夹到合法范围。"""
@@ -63,8 +87,13 @@ def nearest_index(edge: int | None) -> int:
 
 
 def describe(index: int) -> str:
-    """状态栏提示文案。"""
-    return f"缩略图：{label_for_index(index)}（{edge_for_index(index)} 像素）"
+    """刚切档时的提示：说出档位与目标长边。"""
+    return f"缩略图：{label_for_index(index)}（目标 {edge_for_index(index)} 像素）"
+
+
+def describe_actual(index: int, edge: int) -> str:
+    """自适应排完之后的提示：目标只是目标，实际长边由窗口宽度决定。"""
+    return f"缩略图：{label_for_index(index)} · 实际 {edge} 像素"
 
 
 class StepAccumulator:
@@ -106,6 +135,8 @@ class StepAccumulator:
 __all__ = [
     "DEFAULT_EDGE",
     "DEFAULT_INDEX",
+    "MAX_COLUMNS",
+    "MIN_EDGE",
     "PINCH_THRESHOLD",
     "THUMBNAIL_LABELS",
     "THUMBNAIL_SIZES",
@@ -113,7 +144,9 @@ __all__ = [
     "StepAccumulator",
     "clamp_index",
     "describe",
+    "describe_actual",
     "edge_for_index",
+    "fit_columns",
     "label_for_index",
     "nearest_index",
     "shifted_index",
