@@ -81,8 +81,9 @@ MAX_LAYOUT_MEMO = 32
 class PhotoDelegate(QStyledItemDelegate):
     """把一格画成卡片：居中缩略图、底部省略号文件名。
 
-    底色默认透明，缩略图与文件名直接落在网格背景上；只有选中与相册才铺一层淡色圆角底，
-    好让「选中了哪一张」「哪个是相册」一眼可见。
+    底色一律透明，缩略图与文件名直接落在网格背景上；只有选中才铺一层淡色圆角底，
+    好让「选中了哪一张」一眼可见。相册与照片都不再靠底色区分：相册有自己的封面角标，
+    封面还没到时画的是文件夹图形。
     """
 
     #: 缩略图与卡片边缘的间距。
@@ -109,17 +110,11 @@ class PhotoDelegate(QStyledItemDelegate):
 
             painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
             highlight = palette.color(QPalette.ColorRole.Highlight)
-            if selected:
-                background = QColor(highlight)
-                background.setAlpha(90)
-            elif is_album:
-                # 相册用高亮色淡淡铺一层，一眼能和照片区分开。
-                background = QColor(highlight)
-                background.setAlpha(38)
-            else:
-                # 普通照片格子不铺底色：缩略图与文件名直接落在网格背景上。
-                # 选中与相册仍留一层淡淡的底，否则「选中了哪一张」「哪个是相册」都看不出来。
-                background = QColor(0, 0, 0, 0)
+            # 未选中时不铺底色，照片与相册一视同仁 —— 否则密排时相邻格子的底色
+            # 连成一片，照片本身的边界反而被衬得看不清了。相册靠封面角标和文件夹
+            # 图形区分，不靠底色。
+            background = QColor(highlight)
+            background.setAlpha(90 if selected else 0)
             painter.setPen(Qt.PenStyle.NoPen)
             if background.alpha() > 0:
                 painter.setBrush(background)
