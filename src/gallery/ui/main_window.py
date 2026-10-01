@@ -18,8 +18,8 @@ from collections.abc import Sequence
 from functools import partial
 from pathlib import Path
 
-from PySide6.QtCore import QModelIndex
-from PySide6.QtGui import QAction, QCloseEvent, QImage, QKeySequence
+from PySide6.QtCore import QModelIndex, QPointF, Qt
+from PySide6.QtGui import QAction, QCloseEvent, QImage, QKeySequence, QMouseEvent
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -162,9 +162,11 @@ class MainWindow(QMainWindow):
         self.resize(1280, 860)
         self.setMinimumSize(720, 480)
 
-        # 先把底色统一好，下面每一个控件都从这一份取色：标题框、面包屑、网格视口、
+        # 先把底色统一好，下面每一个控件都从这一份取色：标题栏那一段、面包屑、网格视口、
         # 大图区与元数据面板从此是同一块底色（见 ui.theme）。
         theme.ensure_installed()
+        # 标题栏那一段交给窗口自己画，否则 macOS 会铺一层半透明材质，和下面的底色差一档。
+        theme.unify_title_bar(self)
 
         self._welcome = WelcomeView()
         self._welcome.open_requested.connect(self.choose_folder)
@@ -1227,6 +1229,27 @@ class MainWindow(QMainWindow):
         except OSError as exc:
             # 记不住窗口位置不值得打断用户。
             logger.debug("会话状态写入失败：%s", exc)
+
+    # ---- 窗口 --------------------------------------------------------------
+
+    def _is_title_bar(self, point: QPointF) -> bool:
+        """这一点是不是落在标题栏那一段（窗口顶边与内容区之间）。"""
+        central = self.centralWidget()
+        return central is not None and point.y() < central.geometry().top()
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        """按住标题栏那一段拖动窗口。
+
+        内容铺到标题栏底下之后（见 ``ui.theme.unify_title_bar``），那一条已经是我们的
+        客户区，系统不再代劳拖动，得自己发起。落在标题栏里的按下就交给 ``startSystemMove``；
+        它返回假（平台不支持、或系统其实自己会拖）就照常往下传，不影响别处的点击。
+        """
+        if event.button() == Qt.MouseButton.LeftButton and self._is_title_bar(event.position()):
+            handle = self.windowHandle()
+            if handle is not None and handle.startSystemMove():
+                event.accept()
+                return
+        super().mousePressEvent(event)
 
     # ---- 关闭 --------------------------------------------------------------
 

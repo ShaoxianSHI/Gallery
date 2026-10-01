@@ -1,33 +1,46 @@
 """窗口底色的唯一来源。
 
-窗口里原本套了好几层，各铺各的底色：标题框（菜单栏）与面包屑跟着系统调色板的
-``Window``，网格视口用 ``Base``，大图区与元数据面板则写死成 ``#1C1C1E``。浅色主题下
-前三层是三种相近的浅灰、点开照片却突然变黑；深色主题下则是三四种不同的黑。
+窗口里原本套着好几层，各铺各的底色：标题栏那一段与菜单栏、面包屑跟着系统调色板的
+``Window``（深色下 ``#323232``），网格视口用 ``Base``（``#171717``），大图区与元数据
+面板则写死成 ``#1C1C1E``。于是浅色主题下点开照片会突然变黑，深色主题下则是三四种
+不同的黑。
 
 这里把「整个窗口是一整块底色」收成一份主题：
 
-- **底色只有一个来源**，即 :data:`BACKGROUND_ROLE` 指的那个调色板角色。取 ``Window``
-  而不是 ``Base``，是因为 macOS 的标题栏正是系统给 ``Window`` 的那个颜色 —— 改用
-  ``Base`` 会让标题框那一段比正文浅一个色阶，最显眼的地方反而留着接缝。
-- :func:`apply_theme` 把所有铺底色的角色都指向这一个颜色。于是标题框、面包屑、
-  网格视口、欢迎页一路到照片区自动是同一块底色，系统切浅色 / 深色时一起变。
-- 少数自己画底色的地方（大图区、元数据面板）不再写死颜色，改为从这里取。
+- **底色只有一个来源**，即 :data:`BACKGROUND_ROLE` 指的那个调色板角色。取系统调色板里的
+  ``Base``（内容区色）：浅色下是白，深色下是 ``#171717`` —— 比 ``Window`` 的 ``#323232``
+  深得多，照片才沉得下去。
+- :func:`apply_theme` 把 ``Window`` / ``Base`` / ``AlternateBase`` 三个铺底色的角色都指向
+  这一个颜色，再逐个控件下发（见 :func:`_push_palette`）。
+- 标题栏那一段由 macOS 自己画，而且是一层半透明材质（实测深色下 ``#3b3e3f``、浅色下
+  ``#f2f4f7``，还会随壁纸变），调色板既改不到它、也匹配不准它。所以改成把内容铺到标题栏
+  底下、让标题栏不再画自己的底（见 :func:`unify_title_bar`），那一段于是也成了我们的底色。
+- 少数自己画底色的地方（大图区、元数据面板）不写死颜色，改为从这里取。
 
-要改颜色只改 :data:`BACKGROUND_ROLE` 那一处；要整体换色只改 :func:`apply_theme` 里
-的那次赋值。
+**两个 Qt 上的坑，都在这里绕开**：
+
+1. ``QApplication.setPalette()`` 会把应用调色板标成「显式设置」。此后系统换浅色 / 深色时
+   Qt 不再更新它，表现就是「切到浅色，只有 macOS 画的标题栏变浅了，其余还是黑的」。
+   所以这里**绝不碰应用调色板**，只在控件上下发；系统怎么变，我们照单全收。
+2. 带样式表的控件会被 ``QStyleSheetStyle`` 塞一份「自己的」调色板，应用级的变化到不了
+   它们，所以 :func:`_push_palette` 逐个控件显式设置一遍。
+
+要换底色只改 :data:`BACKGROUND_ROLE` 一处。
 """
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from typing import cast
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication, QWidget
 
 #: 统一底色取自调色板的哪个角色（见模块文档）。
-BACKGROUND_ROLE = QPalette.ColorRole.Window
+#: ``Base`` 是系统的「内容区色」：浅色下是白，深色下是 ``#171717``。
+BACKGROUND_ROLE = QPalette.ColorRole.Base
 
 #: 所有「铺底色」的角色。``Window`` 是窗口与菜单栏，``Base`` 是列表与文本视口，
 #: ``AlternateBase`` 是表格的隔行底色 —— 少改一个，就有一层仍按系统原来的颜色铺。
@@ -86,7 +99,11 @@ def _application(app: QApplication | None = None) -> QApplication:
 
 
 def current_theme(app: QApplication | None = None) -> AppTheme:
-    """按应用当前的调色板算出一份主题。"""
+    """按应用当前的调色板算出一份主题。
+
+    读的必须是**平台刚写进来的**那份应用调色板，所以本模块不调用
+    ``QApplication.setPalette``（那会把这份颜色钉死，见模块文档）。
+    """
     palette = _application(app).palette()
     background = QColor(palette.color(BACKGROUND_ROLE))
     dark = background.lightnessF() < 0.5
@@ -103,10 +120,10 @@ def current_theme(app: QApplication | None = None) -> AppTheme:
 def _push_palette(app: QApplication, palette: QPalette) -> None:
     """把调色板逐个送到窗口里的每个控件。
 
-    ``QApplication.setPalette`` 只影响**继承**调色板的控件。一旦某个控件或它的父控件
-    带着样式表，``QStyleSheetStyle`` 就会给这一支塞一份「自己的」调色板（网格页上就有一份
-    横幅样式），此后应用级的变化再也到不了它们 —— 实测改一次应用调色板，标题框变了、
-    网格那一层还停在原处。所以这里逐个显式设置：换过主题之后，整棵控件树是同一份。
+    样式表是个绕不开的坎：某个控件或它的父控件一旦带着样式表，``QStyleSheetStyle`` 就会
+    给这一支塞一份「自己的」调色板（网格页上就有一份横幅样式），此后连应用级的变化也到
+    不了它们 —— 实测改一次应用调色板，标题栏那一段变了、网格那一层还停在原处。所以逐个
+    显式设置：换过主题之后，整棵控件树是同一份。
     """
     for top in app.topLevelWidgets():
         pending = [top]
@@ -117,19 +134,49 @@ def _push_palette(app: QApplication, palette: QPalette) -> None:
 
 
 def apply_theme(app: QApplication) -> AppTheme:
-    """把所有铺底色的角色指向同一个颜色，返回统一之后的主题。"""
+    """把统一底色下发到所有窗口，返回这一轮的主题。
+
+    刻意**不调用** ``QApplication.setPalette``：那会把应用调色板钉死，系统再换浅色 /
+    深色时 Qt 就不更新它了（见模块文档）。这里只改控件自己的调色板。
+    """
     theme = current_theme(app)
     palette = QPalette(app.palette())
     for role in BACKGROUND_ROLES:
         palette.setColor(role, theme.background)
         palette.setColor(QPalette.ColorGroup.Disabled, role, theme.background)
-    app.setPalette(palette)
     _push_palette(app, palette)
     return theme
 
 
+def unify_title_bar(window: QWidget) -> None:
+    """让标题栏那一段也用窗口自己的底色（只在 macOS 上动手）。
+
+    原生标题栏是一层半透明材质，跟着桌面壁纸走：实测深色下 ``#3b3e3f``、浅色下
+    ``#f2f4f7``，与系统给内容区的颜色（``#323232`` / ``#ececec``）本来就差一档 ——
+    调色板既改不到它，也匹配不准它。
+
+    这两个窗口标志把这层材质去掉（``NoTitleBarBackgroundHint``），并把客户区扩到整个
+    窗口（``ExpandedClientAreaHint``）：那一段于是由窗口自己的底色来画，和下面连成一块。
+
+    两条边界都实测过：
+
+    - 红黄绿三个按钮仍由系统画在最上层，窗口照旧能按标题栏拖动（拖动由
+      :meth:`MainWindow.mousePressEvent` 接管，见那里）；
+    - 内容区会留在安全区内（实测顶部空出 28 点），面包屑不会挤到按钮下面 —— 所以
+      **不要**顺手关掉 ``WA_ContentsMarginsRespectsSafeArea``，那正是它干的活。
+
+    其它平台原样返回：这两个标志在别处含义不同，而这里要解决的只是 macOS 标题栏的颜色。
+    """
+    if sys.platform != "darwin":
+        return
+    flags = window.windowFlags()
+    window.setWindowFlags(
+        flags | Qt.WindowType.ExpandedClientAreaHint | Qt.WindowType.NoTitleBarBackgroundHint
+    )
+
+
 class ThemeWatcher(QObject):
-    """系统换浅色 / 深色时重新统一底色，并通知自己画底色的控件。"""
+    """系统换浅色 / 深色时重新下发底色，并通知自己画底色的控件。"""
 
     #: 底色已经换过一轮。关心颜色的控件连它，然后重读 :func:`current_theme`。
     changed = Signal()
@@ -137,11 +184,13 @@ class ThemeWatcher(QObject):
     def __init__(self, app: QApplication) -> None:
         super().__init__(app)
         self._app = app
-        # apply_theme 自己会再触发一次 paletteChanged；不挡住就绕回来了。
         self._applying = False
-        app.paletteChanged.connect(self._on_palette_changed)
+        app.paletteChanged.connect(self._on_system_theme_changed)
+        # macOS 换外观时还会单独报一次 colorSchemeChanged。两个都接：谁先谁后、是不是
+        # 都发，各平台不一样，少接一个就可能漏掉一整轮。
+        app.styleHints().colorSchemeChanged.connect(self._on_system_theme_changed)
 
-    def _on_palette_changed(self) -> None:
+    def _on_system_theme_changed(self, *_args: object) -> None:
         if self._applying:
             return
         self._applying = True
@@ -153,16 +202,20 @@ class ThemeWatcher(QObject):
 
 
 def ensure_installed(app: QApplication | None = None) -> ThemeWatcher:
-    """装一次主题，返回监听器（幂等）。
+    """装一次主题，并把当前底色重新下发一遍，返回监听器（幂等）。
 
     控件在构造时调它：绕开 ``ui.app.run`` 直接建窗口的测试与脚本，也就拿到同一份底色。
+
+    **每次都要重新下发**，不能因为「监听器已经在了」就早退：调色板是逐控件设的，一个刚建
+    出来的窗口不会自动带上别的窗口里那份 —— 早退的话，新窗口的窗口那层仍是系统原来的
+    ``#efefef``，而它的网格视口已被上一个窗口带着走成了 ``#ffffff``，接缝又回来了。
     """
     application = _application(app)
     watcher = application.findChild(ThemeWatcher)
-    if watcher is not None:
-        return cast(ThemeWatcher, watcher)
+    if watcher is None:
+        watcher = ThemeWatcher(application)
     apply_theme(application)
-    return ThemeWatcher(application)
+    return cast(ThemeWatcher, watcher)
 
 
 __all__ = [
@@ -174,4 +227,5 @@ __all__ = [
     "current_theme",
     "ensure_installed",
     "rgba",
+    "unify_title_bar",
 ]
