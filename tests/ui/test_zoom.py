@@ -6,6 +6,7 @@ import pytest
 
 from gallery.ui.zoom import (
     FIT_MARGIN,
+    MAX_FIT_SCALE,
     MAX_SCALE,
     MIN_SCALE,
     clamp_scale,
@@ -47,10 +48,43 @@ def test_fit_with_degenerate_image(image: tuple[int, int]) -> None:
     assert fit_scale(image, (1000, 1000)) == 1.0
 
 
+def test_fit_is_not_capped_by_the_manual_zoom_limit() -> None:
+    """「适应窗口」不能被手动缩放上限（MAX_SCALE）卡住。
+
+    小图铺满视口需要的倍数天然大于 8：168 像素的缩略图放进 2400×1378 的视口要 12 倍。
+    曾经被卡在 8 倍，于是缩略图缩在中间、全图铺满 —— 打开照片时看到的就是「先小一大截」。
+    """
+    viewport = (2400, 1378)
+    thumbnail = (168, 111)
+
+    scale = fit_scale(thumbnail, viewport)
+
+    assert scale > MAX_SCALE, "小图铺满视口需要超过 8 倍，不该被手动缩放上限卡住"
+    assert scale <= MAX_FIT_SCALE
+    # 铺满：高度方向顶到视口（留出 FIT_MARGIN 的边距）
+    assert thumbnail[1] * scale == pytest.approx(viewport[1] * FIT_MARGIN)
+
+
+def test_placeholder_thumbnail_fills_exactly_like_the_full_image() -> None:
+    """占位缩略图与真正的全图，占的地方必须一样大。
+
+    这是用户能直接看到的那个症状：缓存未命中时先用缩略图顶着，全图到了不该「变大一圈」。
+    """
+    viewport = (2400, 1378)
+    full = (2400, 1600)
+    thumbnail = (168, 112)  # 与全图同比例的缩略图
+
+    placeholder_height = thumbnail[1] * fit_scale(thumbnail, viewport)
+    full_height = full[1] * fit_scale(full, viewport)
+
+    assert placeholder_height == pytest.approx(full_height, rel=0.01)
+
+
 def test_clamp_scale_bounds() -> None:
     assert clamp_scale(0.0001) == MIN_SCALE
     assert clamp_scale(100.0) == MAX_SCALE
     assert clamp_scale(1.0) == 1.0
+    assert clamp_scale(100.0, maximum=None) == 100.0
 
 
 @pytest.mark.parametrize("value", [0.0, -1.0, float("nan")])

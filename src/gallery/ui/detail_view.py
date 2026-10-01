@@ -38,7 +38,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gallery.ui.zoom import ZOOM_STEP, clamp_scale, fit_scale
+from gallery.ui.zoom import MAX_FIT_SCALE, MAX_SCALE, ZOOM_STEP, clamp_scale, fit_scale
 
 #: 查看区的背景色（接近 macOS 的深色看图背景）。
 BACKGROUND = QColor(28, 28, 30)
@@ -231,7 +231,10 @@ class DetailView(QGraphicsView):
 
     def _apply_scale(self, scale: float, *, fitting: bool) -> None:
         self.stop_animation()
-        scale = clamp_scale(scale)
+        # 「适应窗口」不能套用手动缩放的上限：小图铺满视口需要的倍数会超过 8 倍
+        # （168 像素的占位缩略图在大窗口里要 12 倍以上），一旦卡住，占位图就只占中间
+        # 一小块，全图到了再「变大一圈」。只有手动放大才受 MAX_SCALE 约束。
+        scale = clamp_scale(scale, maximum=MAX_FIT_SCALE if fitting else MAX_SCALE)
         self.setTransform(QTransform.fromScale(scale, scale))
         self._fit_mode = fitting
         self._emit_scale()
