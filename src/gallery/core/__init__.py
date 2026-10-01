@@ -4,6 +4,21 @@
 界面层（``gallery.ui``）只能通过本层的公开接口访问文件系统。
 """
 
+from gallery.core.config import LibraryConfig, load_config, prepare_library
 from gallery.core.constants import CONFIG_DIR_NAME, CONFIG_FILE_NAME
+from gallery.core.errors import GalleryError
+from gallery.core.images import RasterImage
+from gallery.core.library import Library
+from gallery.core.photos import PhotoRef
 
-__all__ = ["CONFIG_DIR_NAME", "CONFIG_FILE_NAME"]
+__all__ = [
+    "CONFIG_DIR_NAME",
+    "CONFIG_FILE_NAME",
+    "GalleryError",
+    "Library",
+    "LibraryConfig",
+    "PhotoRef",
+    "RasterImage",
+    "load_config",
+    "prepare_library",
+]
