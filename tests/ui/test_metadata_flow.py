@@ -6,13 +6,16 @@
 
 这里不比对界面像素，而是记录面板每次 ``set_report`` / ``show_loading`` 的时序，
 断言切换过程中没有加载提示。
+
+等待分两种，别混：确认「某事发生了」一律等**条件成立**（实测面板出内容约 56ms、
+预读填满约 107ms，原来无脑等满 1 秒，十倍空转）；确认「某事没发生」才等**固定
+时长** —— 那种时长本身就是断言的一部分，不能提前收工。
 """
 
 from __future__ import annotations
 
 import os
-import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -26,10 +29,14 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from gallery.core.config import prepare_library  # noqa: E402
 from gallery.core.metadata import build_report  # noqa: E402
 from gallery.ui import metadata_panel as panel_module  # noqa: E402
-from gallery.ui.main_window import MainWindow  # noqa: E402
+from gallery.ui.main_window import METADATA_PREFETCH_RADIUS, MainWindow  # noqa: E402
 
-#: 等待异步扫描 / 读取完成的时限。
+#: 等异步扫描 / 读取完成的时限。注意这是**上限**，不是固定开销 ——
+#: 条件一成立就返回（见 ``tests/ui/conftest.py``）。
 READY_TIMEOUT_SECONDS = 8.0
+
+#: 「元数据已读进缓存」的判定：当前这张加上前后预读窗口都填满。
+PREFETCHED_ENTRIES = METADATA_PREFETCH_RADIUS + 1
 
 
 @pytest.fixture(scope="module")
@@ -59,7 +66,12 @@ def timeline(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
 
 @pytest.fixture
-def window(qt_app: QApplication, tmp_path: Path, make_photo: object) -> MainWindow:
+def window(
+    qt_app: QApplication,
+    wait_for: Callable[..., bool],
+    tmp_path: Path,
+    make_photo: object,
+) -> MainWindow:
     root = tmp_path / "库"
     for index in range(6):
         make_photo(f"IMG_{index:04d}.jpg", directory=root)  # type: ignore[operator]
@@ -68,41 +80,61 @@ def window(qt_app: QApplication, tmp_path: Path, make_photo: object) -> MainWind
     window.resize(1200, 800)
     window.show()
 
-    def settle(seconds: float) -> None:
-        deadline = time.monotonic() + seconds
-        while time.monotonic() < deadline:
-            qt_app.processEvents()
-            time.sleep(0.005)
-
-    deadline = time.monotonic() + READY_TIMEOUT_SECONDS
-    while time.monotonic() < deadline and window._model.rowCount() < 6:
-        settle(0.05)
+    assert wait_for(lambda: window._model.rowCount() >= 6, timeout=READY_TIMEOUT_SECONDS), (
+        "照片没能在时限内扫出来，后面几条测的都不是这条路径"
+    )
     window._open_detail(window._model.index(0, 0))
-    settle(0.6)
+    # 等首张真的解码上屏，而不是干等 0.6 秒 —— 这条 fixture 每条测试都要跑一遍。
+    wait_for(lambda: window._detail.has_image, timeout=READY_TIMEOUT_SECONDS)
     yield window  # type: ignore[misc]
     window.close()
 
 
-def _settle(qt_app: QApplication, seconds: float) -> None:
-    deadline = time.monotonic() + seconds
-    while time.monotonic() < deadline:
-        qt_app.processEvents()
-        time.sleep(0.005)
+@pytest.fixture
+def ready(window: MainWindow, wait_for: Callable[..., bool]) -> Callable[[], None]:
+    """展开元数据面板，等首张显示且前后预读窗口填满。
+
+    这是绝大部分测试的起点：先让缓存备好，后面「命中/未命中」的分支才是被测的那个。
+    """
+
+    def _ready() -> None:
+        assert wait_for(
+            lambda: len(window._metadata_cache) >= PREFETCHED_ENTRIES,
+            timeout=READY_TIMEOUT_SECONDS,
+        ), "元数据没能在时限内读完，预读窗口也没填满"
+
+    return _ready
+
+
+def _next_prefetched(window: MainWindow) -> bool:
+    """当前这张的**下一张**是否已经进了缓存。
+
+    翻到最后一张时压根没有下一张，那就算「已经就绪」—— 否则会一路等到超时。
+    """
+    following = window._model.photo_at(window._current_row + 1)
+    return following is None or window._cached_metadata(following) is not None
 
 
 def test_first_open_may_show_loading_hint(
-    window: MainWindow, qt_app: QApplication, timeline: list[str]
+    window: MainWindow,
+    wait_for: Callable[..., bool],
+    timeline: list[str],
+    ready: Callable[[], None],
 ) -> None:
     """用户主动展开面板、面板本来是空的时候，允许一次加载提示。"""
     window._metadata_action.setChecked(True)
-    _settle(qt_app, 1.0)
+    assert wait_for(lambda: "set_report" in timeline, timeout=READY_TIMEOUT_SECONDS), (
+        f"面板应当被换成真实内容：{timeline}"
+    )
 
     assert "show_loading" in timeline, "面板为空时应当有等待提示"
-    assert "set_report" in timeline
 
 
 def test_switching_photos_never_shows_loading_hint(
-    window: MainWindow, qt_app: QApplication, timeline: list[str]
+    window: MainWindow,
+    wait_for: Callable[..., bool],
+    timeline: list[str],
+    ready: Callable[[], None],
 ) -> None:
     """预读命中时来回翻照片不得出现「正在读取元数据…」（命中就是一次到位）。
 
@@ -110,7 +142,7 @@ def test_switching_photos_never_shows_loading_hint(
     显示「正在读取」是**正确**行为（见 test_cache_miss_does_not_show_the_previous_photo）。
     """
     window._metadata_action.setChecked(True)
-    _settle(qt_app, 1.0)  # 先把首张读进来并预读邻居
+    ready()  # 先把首张读进来并预读邻居
     timeline.clear()
 
     for _ in range(5):
@@ -120,15 +152,20 @@ def test_switching_photos_never_shows_loading_hint(
             f"预读应当已经把 {target.name} 备好，否则这条测的不是命中路径"
         )
         window.step_detail(1)
-        # 预读本身是异步的（约 50ms），留出它落地的时间：这是「预读来得及」的
-        # 正常浏览节奏。实测 250ms 一次切换时命中率是 10/10。
-        _settle(qt_app, 0.25)
+        # 预读是异步的（约 50ms）。等「下一张确实进了缓存」而不是干等固定时长：
+        # 这样「切换期间没有加载提示」这条断言覆盖的是**整段真实过程**，
+        # 比等满 250ms 更长、更贴近实际浏览节奏。
+        wait_for(lambda: _next_prefetched(window), timeout=READY_TIMEOUT_SECONDS)
 
     assert "show_loading" not in timeline, f"命中时不该出现加载提示：{timeline}"
 
 
 def test_metadata_cache_miss_does_not_show_the_previous_photo(
-    window: MainWindow, qt_app: QApplication, timeline: list[str]
+    window: MainWindow,
+    settle: Callable[[float], None],
+    wait_for: Callable[..., bool],
+    timeline: list[str],
+    ready: Callable[[], None],
 ) -> None:
     """缓存未命中时，不能把上一张的元数据留在屏幕上。
 
@@ -136,24 +173,29 @@ def test_metadata_cache_miss_does_not_show_the_previous_photo(
     未命中就老实说「正在读取」。
     """
     window._metadata_action.setChecked(True)
-    _settle(qt_app, 1.2)
+    ready()
     window._metadata_cache.clear()
     window.show_grid()
-    _settle(qt_app, 0.5)
+    settle(0.1)
     timeline.clear()
 
     window._open_detail(window._model.index(min(4, window._model.rowCount() - 1), 0))
-    _settle(qt_app, 0.02)  # 刚切换，还没读完
+    settle(0.02)  # 刚切换，还没读完
 
     assert "show_loading" in timeline, (
         f"未命中时应当先显示「正在读取」，而不是留着上一张：{timeline}"
     )
-    _settle(qt_app, 1.2)
-    assert "set_report" in timeline
+    assert wait_for(lambda: "set_report" in timeline, timeout=READY_TIMEOUT_SECONDS), (
+        f"读完了应当换成新照片的内容：{timeline}"
+    )
 
 
 def test_cache_miss_shows_loading_then_the_new_report(
-    window: MainWindow, qt_app: QApplication, timeline: list[str]
+    window: MainWindow,
+    settle: Callable[[float], None],
+    wait_for: Callable[..., bool],
+    timeline: list[str],
+    ready: Callable[[], None],
 ) -> None:
     """缓存未命中：先说「正在读取」，读到了再显示，不冒充上一张。
 
@@ -161,46 +203,50 @@ def test_cache_miss_shows_loading_then_the_new_report(
     元数据，用户会当成当前这张来看 —— 已经改成未命中就说在读。）
     """
     window._metadata_action.setChecked(True)
-    _settle(qt_app, 1.0)
+    ready()
     window._metadata_cache.clear()  # 模拟「没预读到」
     timeline.clear()
 
     window._open_detail(window._model.index(3, 0))
-    _settle(qt_app, 0.02)  # 切换瞬间
+    settle(0.02)  # 切换瞬间
 
     assert timeline == ["show_loading"], f"未命中时应当立刻说明在读：{timeline}"
-    _settle(qt_app, 1.0)
-    assert "set_report" in timeline, "新数据到位后应当显示出来"
+    assert wait_for(lambda: "set_report" in timeline, timeout=READY_TIMEOUT_SECONDS), (
+        f"新数据到位后应当显示出来：{timeline}"
+    )
     ref = window._model.photo_at(window._current_row)
     report = window._panel.report
     assert any(field.value == ref.name for group in report.groups for field in group.fields)
 
 
 def test_metadata_is_not_read_while_the_panel_is_closed(
-    window: MainWindow, qt_app: QApplication, timeline: list[str]
+    window: MainWindow,
+    settle: Callable[[float], None],
+    timeline: list[str],
+    ready: Callable[[], None],
 ) -> None:
     """面板收起时不做任何读取，也不该有面板状态变化。"""
     window._metadata_action.setChecked(True)
-    _settle(qt_app, 1.0)
+    ready()
     window._metadata_action.setChecked(False)
     timeline.clear()
     cached = len(window._metadata_cache)
 
     window.step_detail(1)
-    _settle(qt_app, 0.3)
+    settle(0.3)  # 这里断言的是「没有发生」，等多久本身就是断言的一部分
 
     assert timeline == []
     assert len(window._metadata_cache) == cached, "面板关闭时不该读取元数据"
 
 
 def test_place_lookup_result_is_cached(
-    window: MainWindow, qt_app: QApplication, timeline: list[str]
+    window: MainWindow, timeline: list[str], ready: Callable[[], None]
 ) -> None:
     """推断出的地点要入缓存，否则切回这张照片会「先没地点、再被替换」闪一次。"""
-    from gallery.core.metadata import MetadataReport, build_report
+    from gallery.core.metadata import MetadataReport
 
     window._metadata_action.setChecked(True)
-    _settle(qt_app, 1.0)
+    ready()
     ref = window._model.photo_at(window._current_row)
     base = build_report({}, path=ref.path, size=ref.size, mtime_ns=ref.mtime_ns, source="exiftool")
 
@@ -218,7 +264,9 @@ def test_place_lookup_result_is_cached(
 
 
 def test_switching_photos_shows_no_loading_overlay(
-    window: MainWindow, qt_app: QApplication, timeline: list[str]
+    window: MainWindow,
+    settle: Callable[[float], None],
+    ready: Callable[[], None],
 ) -> None:
     """切图时右上角不再出现「正在载入」角标。
 
@@ -226,17 +274,17 @@ def test_switching_photos_shows_no_loading_overlay(
     """
     detail = window._detail
     window._metadata_action.setChecked(True)
-    _settle(qt_app, 1.0)
+    ready()
 
     for _ in range(3):
         window.step_detail(1)
-        _settle(qt_app, 0.03)
+        settle(0.03)  # 断言的是「切换瞬间没有角标」，等多久本身是被测的一部分
 
     assert not detail._overlay.isVisible(), "切图时不该出现任何角标"
     assert "正在载入" not in detail._overlay_text
 
 
-def test_failed_photo_still_explains_why(window: MainWindow, qt_app: QApplication) -> None:
+def test_failed_photo_still_explains_why(window: MainWindow) -> None:
     """删掉载入角标不能连错误提示一起删掉：加载失败仍要说原因。"""
     detail = window._detail
     detail.show_error("这个文件解码不了")
@@ -250,8 +298,9 @@ def test_failed_photo_still_explains_why(window: MainWindow, qt_app: QApplicatio
 
 def test_cached_photo_still_gets_its_place(
     window: MainWindow,
-    qt_app: QApplication,
+    wait_for: Callable[..., bool],
     monkeypatch: pytest.MonkeyPatch,
+    ready: Callable[[], None],
     tmp_path: Path,
 ) -> None:
     """命中缓存也必须推断地点 —— 预读只读元数据，缓存里本来没有地点。
@@ -261,7 +310,7 @@ def test_cached_photo_still_gets_its_place(
     """
 
     window._metadata_action.setChecked(True)
-    _settle(qt_app, 1.0)
+    ready()
     ref = window._model.photo_at(window._current_row)
 
     # 造一份带坐标的元数据，并用一个假索引替代真实城市库（测试不联网）。
@@ -291,7 +340,9 @@ def test_cached_photo_still_gets_its_place(
     monkeypatch.setattr(type(window), "_place_index_saved", lambda *args, **kwargs: None)
 
     window._open_detail(window._model.index(0, 0))
-    _settle(qt_app, 0.5)
+    # 等「地点反查真的发生过」而不是干等：这是条正向断言，有明确条件可等。
+    # 万一超时，下面那条断言会因为 looked_up 为空而报出来。
+    wait_for(lambda: bool(looked_up), timeout=READY_TIMEOUT_SECONDS)
 
     assert looked_up == [(pytest.approx(44.8378), pytest.approx(-0.5792))], (
         "命中缓存时也应当按坐标推断地点"
@@ -300,9 +351,10 @@ def test_cached_photo_still_gets_its_place(
 
 def test_switching_photos_resolves_the_place_before_display(
     window: MainWindow,
-    qt_app: QApplication,
+    wait_for: Callable[..., bool],
     timeline: list[str],
     monkeypatch: pytest.MonkeyPatch,
+    ready: Callable[[], None],
 ) -> None:
     """切到一张照片时，地点必须已经查好，一次显示到位。
 
@@ -311,9 +363,7 @@ def test_switching_photos_resolves_the_place_before_display(
     预读时就应该把地点一起查完并入缓存。
     """
     window._metadata_action.setChecked(True)
-    _settle(qt_app, 1.0)
-
-    from gallery.core.metadata import build_report
+    ready()
 
     queried: list[tuple[float, float]] = []
 
@@ -345,10 +395,13 @@ def test_switching_photos_resolves_the_place_before_display(
             source="exiftool",
         )
         window._on_metadata_prefetched(ref, report)
-    _settle(qt_app, 0.8)
 
     # 预读过的照片，缓存里就该已经带上地点（即使结果是「附近没有记录」）
     prefetched = window._model.photo_at(row + 1)
+    wait_for(
+        lambda: getattr(window._cached_metadata(prefetched), "place_resolved", False),
+        timeout=READY_TIMEOUT_SECONDS,
+    )
     cached = window._cached_metadata(prefetched)
     assert cached is not None
     assert cached.place_resolved, "预读时就应当把地点推断完入缓存"
@@ -359,14 +412,17 @@ def test_switching_photos_resolves_the_place_before_display(
     # 现在切过去：面板只应当被替换一次
     timeline.clear()
     window._open_detail(window._model.index(row + 1, 0))
-    _settle(qt_app, 0.5)
+    wait_for(lambda: bool(timeline), timeout=READY_TIMEOUT_SECONDS)
 
     assert timeline == ["set_report"], f"切图时面板被替换了 {len(timeline)} 次：{timeline}"
     assert queried, "预读时就应当已经发起过地点推断"
 
 
 def test_opening_a_photo_does_not_show_the_previous_one(
-    qt_app: QApplication, tmp_path: Path
+    qt_app: QApplication,
+    settle: Callable[[float], None],
+    wait_for: Callable[..., bool],
+    tmp_path: Path,
 ) -> None:
     """打开一张照片时，屏幕上不能还留着上一张。
 
@@ -377,8 +433,6 @@ def test_opening_a_photo_does_not_show_the_previous_one(
     显示」的路径，压根不会经过这里要验证的分支。
     """
     from PIL import Image as PilImage
-
-    from gallery.core.config import prepare_library
 
     root = tmp_path / "两色"
     root.mkdir()
@@ -391,8 +445,9 @@ def test_opening_a_photo_does_not_show_the_previous_one(
     window = MainWindow(session_base=tmp_path / "session", initial_library=root)
     window.resize(1100, 800)
     window.show()
-    _settle(qt_app, 2.0)
-    assert window._model.rowCount() == 2
+    assert wait_for(lambda: window._model.rowCount() == 2, timeout=READY_TIMEOUT_SECONDS), (
+        "两张照片没能在时限内扫出来"
+    )
 
     def centre_colour() -> object:
         viewport = window._detail.viewport()
@@ -400,11 +455,13 @@ def test_opening_a_photo_does_not_show_the_previous_one(
         return image.pixelColor(viewport.width() // 2, viewport.height() // 2)
 
     window._open_detail(window._model.index(0, 0))
-    _settle(qt_app, 1.5)
+    # 等第一张真的解码上屏再取色，否则取到的是还没画出来的空画面。
+    wait_for(lambda: window._detail.has_image, timeout=READY_TIMEOUT_SECONDS)
+    settle(0.1)  # 让最后一帧真的刷到 viewport 上
     first = centre_colour()
 
     window.show_grid()
-    _settle(qt_app, 0.5)
+    settle(0.1)
     target = window._model.photo_at(1)
     window._preview_cache.clear()  # 制造「这张的预览还没有」的情形
     assert target is not None and target.path not in window._preview_cache
