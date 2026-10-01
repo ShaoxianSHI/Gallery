@@ -49,11 +49,16 @@ class ImageDecodeError(GalleryError):
     """文件是支持的格式，但解码失败（损坏、截断、缺少解码器）。"""
 
 
+class MetadataError(GalleryError):
+    """元数据读取失败（exiftool 缺席且降级也失败、输出无法解析、超时）。"""
+
+
 __all__ = [
     "ConfigError",
     "GalleryError",
     "ImageDecodeError",
     "LibraryError",
     "LibraryNotAccessibleError",
+    "MetadataError",
     "UnsupportedFormatError",
 ]
