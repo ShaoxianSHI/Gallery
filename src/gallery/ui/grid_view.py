@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from gallery.ui.models import ALBUM_ROLE
 from gallery.ui.thumb_sizes import (
     DEFAULT_EDGE,
     MIN_EDGE,
@@ -99,17 +100,22 @@ class PhotoDelegate(QStyledItemDelegate):
         try:
             rect = option.rect.adjusted(3, 3, -3, -3)
             selected = bool(option.state & QStyle.StateFlag.State_Selected)
+            is_album = bool(index.data(ALBUM_ROLE))
             palette = option.palette
 
             painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
             highlight = palette.color(QPalette.ColorRole.Highlight)
+            text_color = palette.color(QPalette.ColorRole.WindowText)
             if selected:
                 background = QColor(highlight)
                 background.setAlpha(90)
+            elif is_album:
+                # 相册用高亮色淡淡铺一层，一眼能和照片区分开。
+                background = QColor(highlight)
+                background.setAlpha(38)
             else:
                 # 浅色方案下白色几乎不可见，深色方案下黑色几乎不可见；
                 # 用文字色的低透明度副本，两种方案下都只是「一层淡淡的底」。
-                text_color = palette.color(QPalette.ColorRole.WindowText)
                 background = QColor(text_color)
                 background.setAlpha(18)
             painter.setPen(Qt.PenStyle.NoPen)
@@ -137,6 +143,10 @@ class PhotoDelegate(QStyledItemDelegate):
                     image_rect.top() + (image_rect.height() - size.height()) // 2,
                     pixmap,
                 )
+                if is_album:
+                    self._draw_album_badge(painter, image_rect)
+            elif is_album:
+                self._draw_folder_glyph(painter, image_rect, highlight)
             else:
                 self._draw_placeholder(painter, image_rect, palette)
 
@@ -157,6 +167,37 @@ class PhotoDelegate(QStyledItemDelegate):
                 painter.drawRoundedRect(rect, self.RADIUS, self.RADIUS)
         finally:
             painter.restore()
+
+    def _draw_folder_glyph(self, painter: QPainter, rect: QRect, color: QColor) -> None:
+        """空相册（或封面还没到时）画一个文件夹，而不是「加载中」的虚线框。"""
+        box = rect.adjusted(
+            rect.width() // 5, rect.height() // 3, -rect.width() // 5, -rect.height() // 3
+        )
+        if box.width() < 24 or box.height() < 18:
+            box = rect.adjusted(8, 8, -8, -8)
+        tab_width = max(14, box.width() // 3)
+        tab = QRect(
+            box.left(), box.top() - max(4, box.height() // 6), tab_width, max(6, box.height() // 4)
+        )
+        fill = QColor(color)
+        fill.setAlpha(200)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(fill)
+        painter.drawRoundedRect(tab, 3, 3)
+        painter.drawRoundedRect(box, 4, 4)
+
+    def _draw_album_badge(self, painter: QPainter, rect: QRect) -> None:
+        """有封面的相册：左上角盖一个「相册」小标签。"""
+        text = "相册"
+        metrics = painter.fontMetrics()
+        width = metrics.horizontalAdvance(text) + 12
+        height = metrics.height() + 4
+        badge = QRect(rect.left() + 4, rect.top() + 4, width, height)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 150))
+        painter.drawRoundedRect(badge, 6, 6)
+        painter.setPen(QColor(255, 255, 255, 235))
+        painter.drawText(badge, int(Qt.AlignmentFlag.AlignCenter), text)
 
     def _draw_placeholder(self, painter: QPainter, rect: QRect, palette: QPalette) -> None:
         """还没有缩略图时的占位：一个淡色空框，而不是空白或转圈。"""

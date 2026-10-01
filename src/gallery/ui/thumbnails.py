@@ -15,7 +15,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Signal
 
 from gallery.core.library import Library
-from gallery.core.photos import PhotoRef
+from gallery.core.photos import GridEntry, PhotoRef
 from gallery.ui.imaging import to_qimage
 from gallery.ui.tasks import TaskContext, TaskRunner
 from gallery.ui.thumb_queue import ThumbnailQueue
@@ -37,18 +37,22 @@ class ThumbnailPipeline(QObject):
         self._refs: dict[Path, PhotoRef] = {}
         self._inflight: dict[Path, int] = {}
         self._failed: set[Path] = set()
+        self._empty: set[Path] = set()
         self._generation = 0
         # 在途任务不超过线程数，保证线程池永远满载，同时让「可见」优先级真正生效。
         self._max_inflight = max(1, runner.thread_count)
 
-    def set_window(self, visible: Sequence[PhotoRef], prefetch: Sequence[PhotoRef] = ()) -> None:
-        """声明当前窗口：``visible`` 先出图，``prefetch`` 次之，其余请求全部丢弃。"""
+    def set_window(self, visible: Sequence[GridEntry], prefetch: Sequence[GridEntry] = ()) -> None:
+        """声明当前窗口：``visible`` 先出图，``prefetch`` 次之，其余请求全部丢弃。
+
+        条目既可能是照片，也可能是相册；相册的缩略图取它内部的第一张照片当封面。
+        """
         self._queue.set_window(
-            [ref.path for ref in visible],
-            prefetch=[ref.path for ref in prefetch],
+            [entry.path for entry in visible],
+            prefetch=[entry.path for entry in prefetch],
         )
-        for ref in (*visible, *prefetch):
-            self._refs[ref.path] = ref
+        for entry in (*visible, *prefetch):
+            self._refs[entry.path] = entry
         self._dispatch()
 
     def shutdown(self) -> None:
@@ -59,6 +63,8 @@ class ThumbnailPipeline(QObject):
         self._inflight.clear()
         self._queue.clear()
         self._refs.clear()
+        self._failed.clear()
+        self._empty.clear()
 
     def _dispatch(self) -> None:
         while len(self._inflight) < self._max_inflight:
@@ -67,40 +73,53 @@ class ThumbnailPipeline(QObject):
                 return
             # 同一张照片不能重复投递：窗口会随滚动反复刷新，而已在解码的路径
             # 仍然会出现在新的可见窗口里。
-            if path in self._inflight or path in self._failed:
+            if path in self._inflight or path in self._failed or path in self._empty:
                 continue
             ref = self._refs.get(path)
             if ref is None:
                 continue
             self._start(ref)
 
-    def _start(self, ref: PhotoRef) -> None:
+    def _start(self, entry: GridEntry) -> None:
         library = self._library
         generation = self._generation
 
         def work(context: TaskContext) -> object:
             if context.is_cancelled():
                 return None
+            if isinstance(entry, PhotoRef):
+                ref = entry
+            else:
+                # 相册：拿里面找到的第一张照片当封面；空相册返回 None。
+                ref = library.folder_cover(entry.path, should_cancel=context.is_cancelled)
+                if ref is None:
+                    return None
             return to_qimage(library.thumbnail(ref))
 
         job_id = self._runner.submit(
             work,
-            on_result=partial(self._on_result, ref, generation),
-            on_error=partial(self._on_error, ref, generation),
+            on_result=partial(self._on_result, entry, generation),
+            on_error=partial(self._on_error, entry, generation),
         )
-        self._inflight[ref.path] = job_id
+        self._inflight[entry.path] = job_id
 
-    def _on_result(self, ref: PhotoRef, generation: int, result: object) -> None:
-        self._inflight.pop(ref.path, None)
-        if generation == self._generation and result is not None:
-            self.ready.emit(ref.path, result)
+    def _on_result(self, entry: GridEntry, generation: int, result: object) -> None:
+        self._inflight.pop(entry.path, None)
+        if generation != self._generation:
+            self._dispatch()
+            return
+        if result is None:
+            # 空相册没有封面：记下来别再反复问，界面会画文件夹图标。
+            self._empty.add(entry.path)
+        else:
+            self.ready.emit(entry.path, result)
         self._dispatch()
 
-    def _on_error(self, ref: PhotoRef, generation: int, message: str) -> None:
-        self._inflight.pop(ref.path, None)
+    def _on_error(self, entry: GridEntry, generation: int, message: str) -> None:
+        self._inflight.pop(entry.path, None)
         if generation == self._generation:
-            self._failed.add(ref.path)
-            self.failed.emit(ref.path, message)
+            self._failed.add(entry.path)
+            self.failed.emit(entry.path, message)
         self._dispatch()
 
 

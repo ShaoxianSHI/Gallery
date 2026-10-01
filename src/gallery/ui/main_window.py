@@ -34,14 +34,23 @@ from gallery.core import paths
 from gallery.core.config import prepare_library
 from gallery.core.errors import GalleryError
 from gallery.core.library import Library
-from gallery.core.photos import PhotoRef
+from gallery.core.photos import FolderRef, GridEntry, PhotoRef
 from gallery.core.scanner import ScanReport
-from gallery.core.session import SessionState, WindowGeometry, load_session, save_session
+from gallery.core.session import (
+    BROWSE_MODE_ALBUMS,
+    BROWSE_MODE_FLAT,
+    SessionState,
+    WindowGeometry,
+    load_session,
+    save_session,
+)
+from gallery.ui.breadcrumb import BreadcrumbBar
 from gallery.ui.detail_view import DetailView
 from gallery.ui.formatting import format_bytes, format_timestamp
 from gallery.ui.grid_view import PREFETCH_MARGIN, PhotoGrid
 from gallery.ui.imaging import to_qimage
 from gallery.ui.models import PhotoListModel
+from gallery.ui.navigation import breadcrumb_parts, parent_of
 from gallery.ui.tasks import TaskContext, TaskRunner
 from gallery.ui.thumb_sizes import (
     THUMBNAIL_SIZES,
@@ -106,6 +115,8 @@ class MainWindow(QMainWindow):
         self._thumbnail_failures = 0
 
         self._size_index = nearest_index(self._session.thumbnail_edge)
+        self._browse_mode: str = self._session.browse_mode or BROWSE_MODE_FLAT
+        self._current_dir: Path | None = None
         self._model = PhotoListModel(self, icon_edge=edge_for_index(self._size_index))
         self._build_ui()
         self._build_actions()
@@ -132,7 +143,7 @@ class MainWindow(QMainWindow):
 
         self._grid = PhotoGrid(icon_edge=edge_for_index(self._size_index))
         self._grid.setModel(self._model)
-        self._grid.activated_index.connect(self._open_detail)
+        self._grid.activated_index.connect(self._on_entry_activated)
         self._grid.viewport_changed.connect(self._refresh_thumbnail_window)
         self._grid.size_step_requested.connect(self.step_thumbnail_size)
         self._grid.icon_edge_changed.connect(self._on_grid_edge_changed)
@@ -142,11 +153,15 @@ class MainWindow(QMainWindow):
         self._banner.setWordWrap(True)
         self._banner.hide()
 
+        self._breadcrumb = BreadcrumbBar()
+        self._breadcrumb.path_requested.connect(self._on_breadcrumb_requested)
+
         self._grid_page = QWidget()
         self._grid_page.setStyleSheet(_BANNER_STYLE)
         grid_layout = QVBoxLayout(self._grid_page)
         grid_layout.setContentsMargins(10, 10, 10, 0)
         grid_layout.setSpacing(8)
+        grid_layout.addWidget(self._breadcrumb)
         grid_layout.addWidget(self._banner)
         grid_layout.addWidget(self._grid, 1)
 
@@ -191,6 +206,18 @@ class MainWindow(QMainWindow):
         self._zoom_out_action.setShortcut(QKeySequence.StandardKey.ZoomOut)
         self._zoom_out_action.triggered.connect(self._detail.zoom_out)
 
+        self._up_action = QAction("上一级", self)
+        self._up_action.setShortcut(QKeySequence("Ctrl+Up"))
+        self._up_action.triggered.connect(self.go_up)
+
+        self._albums_action = QAction("相册（按文件夹）", self)
+        self._albums_action.setCheckable(True)
+        self._albums_action.triggered.connect(lambda: self.set_browse_mode(BROWSE_MODE_ALBUMS))
+
+        self._flat_action = QAction("全部照片", self)
+        self._flat_action.setCheckable(True)
+        self._flat_action.triggered.connect(lambda: self.set_browse_mode(BROWSE_MODE_FLAT))
+
         self._clear_cache_action = QAction("清空缩略图缓存", self)
         self._clear_cache_action.triggered.connect(self.clear_thumbnail_cache)
 
@@ -208,6 +235,11 @@ class MainWindow(QMainWindow):
 
         view_menu = self.menuBar().addMenu("视图")
         view_menu.addAction(self._back_action)
+        view_menu.addAction(self._up_action)
+        view_menu.addSeparator()
+        browse_menu = view_menu.addMenu("浏览方式")
+        browse_menu.addAction(self._albums_action)
+        browse_menu.addAction(self._flat_action)
         view_menu.addSeparator()
         view_menu.addAction(self._fit_action)
         view_menu.addAction(self._actual_action)
@@ -230,6 +262,7 @@ class MainWindow(QMainWindow):
         toolbar.setMovable(False)
         toolbar.addAction(self._open_action)
         toolbar.addAction(self._back_action)
+        toolbar.addAction(self._up_action)
         toolbar.addSeparator()
         toolbar.addAction(self._fit_action)
         toolbar.addAction(self._actual_action)
@@ -333,6 +366,9 @@ class MainWindow(QMainWindow):
         self._banner.hide()
         # 切库时真正清空大图区，别让上一个库的全分辨率副本一直占着内存。
         self._detail.clear_image()
+        self._current_dir = library.root
+        self._update_breadcrumb()
+        self._update_mode_actions()
         self.setWindowTitle(f"{library.display_name} — Gallery")
         self._stack.setCurrentWidget(self._grid_page)
         self._update_action_states()
@@ -355,9 +391,43 @@ class MainWindow(QMainWindow):
     # ---- 扫描 --------------------------------------------------------------
 
     def _start_scan(self) -> None:
+        """按当前浏览方式列出内容：平铺模式递归整库，相册模式只列当前一层。"""
         library = self._library
         if library is None:
             return
+        if self._browse_mode == BROWSE_MODE_ALBUMS:
+            self._start_level_scan(library)
+        else:
+            self._start_flat_scan(library)
+
+    def _start_level_scan(self, library: Library) -> None:
+        """相册模式：列出当前层（相册在前，照片在后）。"""
+        generation = self._generation
+        report = ScanReport()
+        directory = self._current_dir or library.root
+
+        def work(context: TaskContext) -> object:
+            batch: list[GridEntry] = []
+            for entry in library.iter_entries(
+                directory, should_cancel=context.is_cancelled, report=report
+            ):
+                batch.append(entry)
+                if len(batch) >= SCAN_BATCH_SIZE:
+                    context.progress(tuple(batch))
+                    batch = []
+            if batch:
+                context.progress(tuple(batch))
+            return report
+
+        self._set_status("正在读取这一层…")
+        self._scan_job = self._runner.submit(
+            work,
+            on_progress=partial(self._on_scan_batch, generation),
+            on_result=partial(self._on_scan_done, generation),
+            on_error=partial(self._on_scan_failed, generation),
+        )
+
+    def _start_flat_scan(self, library: Library) -> None:
         generation = self._generation
         report = ScanReport()
 
@@ -385,23 +455,38 @@ class MainWindow(QMainWindow):
             return
         batch = payload if isinstance(payload, tuple) else ()
         self._model.append(batch)
-        self._set_status(f"已发现 {self._model.rowCount()} 张照片…")
+        albums, photos = self._model.counts()
+        if self._browse_mode == BROWSE_MODE_ALBUMS:
+            self._set_status(f"已发现 {albums} 个相册 · {photos} 张照片…")
+        else:
+            self._set_status(f"已发现 {photos} 张照片…")
         self._refresh_thumbnail_window()
 
     def _on_scan_done(self, generation: int, payload: object) -> None:
         if generation != self._generation:
             return
         self._scan_job = None
-        count = self._model.rowCount()
         report = payload if isinstance(payload, ScanReport) else ScanReport()
-        if count == 0:
-            self._set_status("这个文件夹里没有找到支持的照片")
-            self._show_banner("没有找到可显示的照片。支持 JPEG、PNG、HEIC、TIFF、GIF、WebP、BMP。")
-        elif report.has_issues:
-            self._set_status(f"{count} 张照片")
-            self._show_banner(f"部分内容没能读取：{report.summary}")
+        albums, photos = self._model.counts()
+        if albums or photos:
+            if self._browse_mode == BROWSE_MODE_ALBUMS:
+                self._set_status(f"{albums} 个相册 · {photos} 张照片")
+            else:
+                self._set_status(f"{photos} 张照片")
+        elif self._browse_mode == BROWSE_MODE_ALBUMS:
+            self._set_status("这个文件夹是空的")
         else:
-            self._set_status(f"{count} 张照片")
+            self._set_status("这个文件夹里没有找到支持的照片")
+
+        if report.has_issues:
+            self._show_banner(f"部分内容没能读取：{report.summary}")
+        elif not albums and not photos:
+            if self._browse_mode == BROWSE_MODE_ALBUMS:
+                self._show_banner("这个文件夹里既没有子文件夹，也没有可显示的照片。")
+            else:
+                self._show_banner(
+                    "没有找到可显示的照片。支持 JPEG、PNG、HEIC、TIFF、GIF、WebP、BMP。"
+                )
         self._refresh_thumbnail_window()
 
     def _on_scan_failed(self, generation: int, message: str) -> None:
@@ -419,24 +504,24 @@ class MainWindow(QMainWindow):
         visible_rows = self._grid.visible_rows()
         prefetch_rows = self._grid.visible_rows(margin_ratio=PREFETCH_MARGIN)
         visible_set = set(visible_rows)
-        visible = self._refs_missing_thumbnails(visible_rows)
-        prefetch = self._refs_missing_thumbnails(
+        visible = self._entries_missing_thumbnails(visible_rows)
+        prefetch = self._entries_missing_thumbnails(
             [row for row in prefetch_rows if row not in visible_set]
         )
         self._pipeline.set_window(visible, prefetch)
 
-    def _refs_missing_thumbnails(self, rows: Sequence[int]) -> list[PhotoRef]:
-        """只挑出还没有缩略图的照片。
+    def _entries_missing_thumbnails(self, rows: Sequence[int]) -> list[GridEntry]:
+        """只挑出还没有缩略图的条目（相册算它的封面）。
 
         滚动会让可见窗口反复变化，如果每次都把可见项重新要一遍，就等于每滚一下
         都把磁盘缓存重读重缩放一次，内存里的 LRU 也形同虚设。
         """
-        refs: list[PhotoRef] = []
+        entries: list[GridEntry] = []
         for row in rows:
-            ref = self._model.ref_at(row)
-            if ref is not None and not self._model.has_thumbnail(ref.path):
-                refs.append(ref)
-        return refs
+            entry = self._model.entry_at(row)
+            if entry is not None and not self._model.has_thumbnail(entry.path):
+                entries.append(entry)
+        return entries
 
     def _on_thumbnail_ready(self, path: object, image: object) -> None:
         if isinstance(path, Path) and isinstance(image, QImage):
@@ -492,9 +577,17 @@ class MainWindow(QMainWindow):
 
     # ---- 大图 --------------------------------------------------------------
 
+    def _on_entry_activated(self, index: QModelIndex) -> None:
+        """双击一个格子：相册就进去，照片就打开大图。"""
+        entry = self._model.entry_at(index.row())
+        if isinstance(entry, FolderRef):
+            self.enter_folder(entry.path)
+        else:
+            self._open_detail(index)
+
     def _open_detail(self, index: QModelIndex) -> None:
         row = index.row()
-        if self._model.ref_at(row) is None:
+        if self._model.photo_at(row) is None:
             return
         self._current_row = row
         self._stack.setCurrentWidget(self._detail)
@@ -515,16 +608,24 @@ class MainWindow(QMainWindow):
         self._refresh_thumbnail_window()
 
     def step_detail(self, delta: int) -> None:
-        """上一张 / 下一张。"""
-        row = self._current_row + delta
-        if not 0 <= row < self._model.rowCount():
+        """上一张 / 下一张。相册模式下会跳过相册格子。"""
+        row = self._neighbour_photo_row(self._current_row, delta)
+        if row is None:
             return
         self._current_row = row
         self._load_detail(row)
 
+    def _neighbour_photo_row(self, start: int, delta: int) -> int | None:
+        row = start + delta
+        while 0 <= row < self._model.rowCount():
+            if self._model.photo_at(row) is not None:
+                return row
+            row += delta
+        return None
+
     def _load_detail(self, row: int) -> None:
         library = self._library
-        ref = self._model.ref_at(row)
+        ref = self._model.photo_at(row)
         if library is None or ref is None:
             return
         generation = self._generation
@@ -607,7 +708,7 @@ class MainWindow(QMainWindow):
         generation = self._generation
         max_edge = self._preview_edge()
         for neighbour in (row - 1, row + 1):
-            ref = self._model.ref_at(neighbour)
+            ref = self._model.photo_at(neighbour)
             if ref is None or ref.path in self._preview_cache:
                 continue
 
@@ -676,6 +777,7 @@ class MainWindow(QMainWindow):
         self._show_banner(f"已清除 {removed} 个缩略图缓存文件。")
 
     def _update_action_states(self) -> None:
+        self._update_navigation_actions()
         in_detail = self._stack.currentWidget() is self._detail
         for action in (
             self._back_action,
@@ -686,6 +788,84 @@ class MainWindow(QMainWindow):
         ):
             action.setEnabled(in_detail)
         self._clear_cache_action.setEnabled(self._library is not None)
+
+    # ---- 浏览方式与相册导航 ------------------------------------------------
+
+    def set_browse_mode(self, mode: str) -> None:
+        """切换「相册（逐层进入）」与「全部照片（整库平铺）」。"""
+        if mode == self._browse_mode:
+            self._update_mode_actions()
+            return
+        self._browse_mode = mode
+        self._session = self._session.with_browse_mode(mode)
+        self._save_session()
+        self._update_mode_actions()
+        if self._library is not None:
+            self._reload_level()
+
+    def enter_folder(self, directory: Path) -> None:
+        """进入一个相册（子文件夹）。库以外的路径一律拒绝。"""
+        library = self._library
+        if library is None:
+            return
+        target = Path(directory)
+        if not paths.is_within(library.root, target):
+            return
+        self._current_dir = target
+        self._reload_level()
+
+    def go_up(self) -> None:
+        """回到上一层；已经在库根就什么也不做。"""
+        library = self._library
+        if library is None or self._browse_mode != BROWSE_MODE_ALBUMS:
+            return
+        current = self._current_dir or library.root
+        parent = parent_of(library.root, current)
+        if parent is not None:
+            self.enter_folder(parent)
+
+    def _on_breadcrumb_requested(self, directory: object) -> None:
+        if isinstance(directory, Path):
+            self.enter_folder(directory)
+
+    def _reload_level(self) -> None:
+        """重新列出当前层（切模式、进入或返回相册时都走这里）。"""
+        if self._scan_job is not None:
+            self._runner.cancel(self._scan_job)
+            self._scan_job = None
+        # 换代：让已经在路上的旧结果作废。
+        self._generation += 1
+        self._model.clear()
+        self._preview_cache.clear()
+        self._current_row = -1
+        self._detail.clear_image()
+        self._banner.hide()
+        self._stack.setCurrentWidget(self._grid_page)
+        self._update_breadcrumb()
+        self._update_action_states()
+        self._start_scan()
+
+    def _update_breadcrumb(self) -> None:
+        library = self._library
+        if library is None or self._browse_mode != BROWSE_MODE_ALBUMS:
+            self._breadcrumb.hide()
+            return
+        self._breadcrumb.set_path(breadcrumb_parts(library.root, self._current_dir or library.root))
+        self._breadcrumb.show()
+
+    def _update_mode_actions(self) -> None:
+        albums = self._browse_mode == BROWSE_MODE_ALBUMS
+        self._albums_action.setChecked(albums)
+        self._flat_action.setChecked(not albums)
+
+    def _update_navigation_actions(self) -> None:
+        library = self._library
+        can_go_up = (
+            library is not None
+            and self._browse_mode == BROWSE_MODE_ALBUMS
+            and parent_of(library.root, self._current_dir or library.root) is not None
+        )
+        self._up_action.setEnabled(can_go_up)
 
     # ---- 会话 --------------------------------------------------------------
 
