@@ -43,6 +43,14 @@ from gallery.ui.grid_view import PREFETCH_MARGIN, PhotoGrid
 from gallery.ui.imaging import to_qimage
 from gallery.ui.models import PhotoListModel
 from gallery.ui.tasks import TaskContext, TaskRunner
+from gallery.ui.thumb_sizes import (
+    THUMBNAIL_SIZES,
+    describe,
+    edge_for_index,
+    label_for_index,
+    nearest_index,
+    shifted_index,
+)
 from gallery.ui.thumbnails import ThumbnailPipeline
 from gallery.ui.welcome import WelcomeView
 
@@ -96,10 +104,12 @@ class MainWindow(QMainWindow):
         self._preview_cache: OrderedDict[Path, QImage] = OrderedDict()
         self._thumbnail_failures = 0
 
-        self._model = PhotoListModel(self)
+        self._size_index = nearest_index(self._session.thumbnail_edge)
+        self._model = PhotoListModel(self, icon_edge=edge_for_index(self._size_index))
         self._build_ui()
         self._build_actions()
         self._restore_session()
+        self._sync_size_actions()
         self._update_action_states()
 
         if initial_library is not None:
@@ -119,10 +129,11 @@ class MainWindow(QMainWindow):
         self._welcome.open_requested.connect(self.choose_folder)
         self._welcome.recent_requested.connect(self._on_recent_requested)
 
-        self._grid = PhotoGrid()
+        self._grid = PhotoGrid(icon_edge=edge_for_index(self._size_index))
         self._grid.setModel(self._model)
         self._grid.activated_index.connect(self._open_detail)
         self._grid.viewport_changed.connect(self._refresh_thumbnail_window)
+        self._grid.size_step_requested.connect(self.step_thumbnail_size)
 
         self._banner = QLabel()
         self._banner.setObjectName("banner")
@@ -201,6 +212,17 @@ class MainWindow(QMainWindow):
         view_menu.addSeparator()
         view_menu.addAction(self._zoom_in_action)
         view_menu.addAction(self._zoom_out_action)
+        view_menu.addSeparator()
+        self._size_actions: list[QAction] = []
+        size_menu = view_menu.addMenu("缩略图大小")
+        for index in range(len(THUMBNAIL_SIZES)):
+            action = QAction(f"{label_for_index(index)}（{edge_for_index(index)} 像素）", self)
+            action.setCheckable(True)
+            action.triggered.connect(
+                lambda _checked=False, target=index: self.set_thumbnail_size(target)
+            )
+            size_menu.addAction(action)
+            self._size_actions.append(action)
 
         toolbar = self.addToolBar("主工具栏")
         toolbar.setMovable(False)
@@ -392,22 +414,65 @@ class MainWindow(QMainWindow):
             return
         visible_rows = self._grid.visible_rows()
         prefetch_rows = self._grid.visible_rows(margin_ratio=PREFETCH_MARGIN)
-        visible = self._refs_for(visible_rows)
         visible_set = set(visible_rows)
-        prefetch = self._refs_for([row for row in prefetch_rows if row not in visible_set])
+        visible = self._refs_missing_thumbnails(visible_rows)
+        prefetch = self._refs_missing_thumbnails(
+            [row for row in prefetch_rows if row not in visible_set]
+        )
         self._pipeline.set_window(visible, prefetch)
 
-    def _refs_for(self, rows: Sequence[int]) -> list[PhotoRef]:
+    def _refs_missing_thumbnails(self, rows: Sequence[int]) -> list[PhotoRef]:
+        """只挑出还没有缩略图的照片。
+
+        滚动会让可见窗口反复变化，如果每次都把可见项重新要一遍，就等于每滚一下
+        都把磁盘缓存重读重缩放一次，内存里的 LRU 也形同虚设。
+        """
         refs: list[PhotoRef] = []
         for row in rows:
             ref = self._model.ref_at(row)
-            if ref is not None:
+            if ref is not None and not self._model.has_thumbnail(ref.path):
                 refs.append(ref)
         return refs
 
     def _on_thumbnail_ready(self, path: object, image: object) -> None:
         if isinstance(path, Path) and isinstance(image, QImage):
             self._model.set_thumbnail(path, image)
+
+    # ---- 缩略图尺寸 --------------------------------------------------------
+
+    def set_thumbnail_size(self, index: int) -> None:
+        """直接切到某一档（菜单用）。"""
+        if index == self._size_index:
+            return
+        self._size_index = index
+        self._apply_thumbnail_size()
+        self.statusBar().showMessage(describe(self._size_index), 1500)
+        self._remember_thumbnail_size()
+
+    def step_thumbnail_size(self, step: int) -> None:
+        """按档位加减一档（捏合或 ⌘+滚轮用）。"""
+        target = shifted_index(self._size_index, step)
+        if target == self._size_index:
+            limit = "已经是最小尺寸" if step < 0 else "已经是最大尺寸"
+            self.statusBar().showMessage(limit, 1200)
+            return
+        self.set_thumbnail_size(target)
+
+    def _apply_thumbnail_size(self) -> None:
+        edge = edge_for_index(self._size_index)
+        self._model.set_icon_edge(edge)
+        self._grid.set_icon_edge(edge)
+        self._sync_size_actions()
+        # 内存里的缩略图已按旧尺寸作废，重新请求可见的那一批。
+        self._refresh_thumbnail_window()
+
+    def _sync_size_actions(self) -> None:
+        for index, action in enumerate(self._size_actions):
+            action.setChecked(index == self._size_index)
+
+    def _remember_thumbnail_size(self) -> None:
+        self._session = self._session.with_thumbnail_edge(edge_for_index(self._size_index))
+        self._save_session()
 
     def _on_thumbnail_failed(self, path: object, message: str) -> None:
         self._thumbnail_failures += 1

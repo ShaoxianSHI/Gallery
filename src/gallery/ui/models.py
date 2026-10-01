@@ -18,6 +18,7 @@ from PySide6.QtGui import QImage, QPixmap
 
 from gallery.core.photos import PhotoRef
 from gallery.ui.formatting import photo_tooltip
+from gallery.ui.thumb_sizes import DEFAULT_EDGE
 
 #: 取 ``PhotoRef`` 的自定义角色。
 PHOTO_ROLE = int(Qt.ItemDataRole.UserRole) + 1
@@ -25,8 +26,8 @@ PHOTO_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 #: 取路径字符串的自定义角色（拖放、调试用）。
 PATH_ROLE = int(Qt.ItemDataRole.UserRole) + 2
 
-#: 缩略图在格子里的边长（正方形内容区）。
-DEFAULT_ICON_EDGE = 176
+#: 默认缩略图边长，与档位定义（``ui.thumb_sizes``）同源。
+DEFAULT_ICON_EDGE = DEFAULT_EDGE
 
 #: 内存中最多保留多少张已缩放的缩略图。按 176px 估算约 30 MB。
 DEFAULT_PIXMAP_CACHE = 600
@@ -133,6 +134,21 @@ class PhotoListModel(QAbstractListModel):
         if role == int(Qt.ItemDataRole.TextAlignmentRole):
             return int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
         return None
+
+    def set_icon_edge(self, edge: int) -> None:
+        """切换缩略图尺寸。
+
+        内存里缓存的缩略图是按旧尺寸缩放的，尺寸一变就全部作废：丢掉它们，
+        交给视图重新请求 —— 磁盘缓存还在，重读一次很快。
+        """
+        if edge == self._icon_edge:
+            return
+        self._icon_edge = edge
+        self.clear_thumbnails()
+
+    def has_thumbnail(self, path: Path) -> bool:
+        """这张照片当前是否已经有可画的缩略图。"""
+        return path in self._pixmaps
 
     def clear_thumbnails(self) -> None:
         """丢掉内存里缓存的缩略图（清空磁盘缓存后调用，让它们重新生成）。"""
