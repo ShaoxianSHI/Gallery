@@ -53,9 +53,14 @@ class MetadataError(GalleryError):
     """元数据读取失败（exiftool 缺席且降级也失败、输出无法解析、超时）。"""
 
 
+class GeoDataError(GalleryError):
+    """城市数据下载或写入失败（网络不通、压缩包损坏、缓存目录不可写）。"""
+
+
 __all__ = [
     "ConfigError",
     "GalleryError",
+    "GeoDataError",
     "ImageDecodeError",
     "LibraryError",
     "LibraryNotAccessibleError",
