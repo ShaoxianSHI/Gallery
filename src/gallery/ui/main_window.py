@@ -18,17 +18,17 @@ from collections.abc import Sequence
 from functools import partial
 from pathlib import Path
 
-from PySide6.QtCore import QModelIndex
+from PySide6.QtCore import QModelIndex, Qt
 from PySide6.QtGui import QAction, QCloseEvent, QImage, QKeySequence
 from PySide6.QtWidgets import (
     QFileDialog,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QMainWindow,
     QMessageBox,
     QStackedWidget,
     QToolTip,
-    QVBoxLayout,
     QWidget,
 )
 
@@ -50,7 +50,6 @@ from gallery.core.session import (
 )
 from gallery.ui.breadcrumb import BreadcrumbBar
 from gallery.ui.detail_view import DetailView
-from gallery.ui.formatting import format_bytes, format_timestamp
 from gallery.ui.grid_view import PREFETCH_MARGIN, PhotoGrid
 from gallery.ui.imaging import to_qimage
 from gallery.ui.metadata_panel import MetadataPanel
@@ -59,8 +58,6 @@ from gallery.ui.navigation import breadcrumb_parts, parent_of
 from gallery.ui.tasks import TaskContext, TaskRunner
 from gallery.ui.thumb_sizes import (
     THUMBNAIL_SIZES,
-    describe,
-    describe_actual,
     edge_for_index,
     label_for_index,
     nearest_index,
@@ -174,17 +171,24 @@ class MainWindow(QMainWindow):
 
         self._grid_page = QWidget()
         self._grid_page.setStyleSheet(_BANNER_STYLE)
-        grid_layout = QVBoxLayout(self._grid_page)
+        # 面包屑和网格放进**同一个格子**，靠对齐浮在网格左上角：网格铺满整格，
+        # 面包屑只占自己那一小块。用垂直布局做不到 —— 那会给它留一整行高度，
+        # 照片照样被顶下去一截，那就还是「压在照片上面的一行标题」。
+        grid_layout = QGridLayout(self._grid_page)
         grid_layout.setContentsMargins(10, 10, 10, 0)
         grid_layout.setSpacing(8)
-        grid_layout.addWidget(self._breadcrumb)
-        grid_layout.addWidget(self._banner)
-        grid_layout.addWidget(self._grid, 1)
+        grid_layout.addWidget(self._banner, 0, 0)
+        grid_layout.addWidget(self._grid, 1, 0)
+        grid_layout.addWidget(
+            self._breadcrumb,
+            1,
+            0,
+            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft,
+        )
 
         self._detail = DetailView()
         self._detail.request_close.connect(self.show_grid)
         self._detail.request_step.connect(self.step_detail)
-        self._detail.zoom_changed.connect(self._on_zoom_changed)
 
         self._stack = QStackedWidget()
         self._stack.addWidget(self._welcome)
@@ -199,11 +203,8 @@ class MainWindow(QMainWindow):
         detail_layout.addWidget(self._panel)
         self._stack.addWidget(self._detail_page)
         self.setCentralWidget(self._stack)
-
-        self._status_left = QLabel()
-        self._status_right = QLabel()
-        self.statusBar().addWidget(self._status_left)
-        self.statusBar().addPermanentWidget(self._status_right)
+        # 刻意不建状态栏：底部那一条只是为了放扫描进度、照片尺寸、缩放百分比，
+        # 换来的是照片区少 20 来像素。出错信息有横幅，提示性信息一律不留。
 
     def _build_actions(self) -> None:
         self._open_action = QAction("打开文件夹…", self)
@@ -443,7 +444,6 @@ class MainWindow(QMainWindow):
                 context.progress(tuple(batch))
             return report
 
-        self._set_status("正在读取这一层…")
         self._scan_job = self._runner.submit(
             work,
             on_progress=partial(self._on_scan_batch, generation),
@@ -466,7 +466,6 @@ class MainWindow(QMainWindow):
                 context.progress(tuple(batch))
             return report
 
-        self._set_status("正在扫描…")
         self._scan_job = self._runner.submit(
             work,
             on_progress=partial(self._on_scan_batch, generation),
@@ -479,11 +478,6 @@ class MainWindow(QMainWindow):
             return
         batch = payload if isinstance(payload, tuple) else ()
         self._model.append(batch)
-        albums, photos = self._model.counts()
-        if self._browse_mode == BROWSE_MODE_ALBUMS:
-            self._set_status(f"已发现 {albums} 个相册 · {photos} 张照片…")
-        else:
-            self._set_status(f"已发现 {photos} 张照片…")
         self._refresh_thumbnail_window()
 
     def _on_scan_done(self, generation: int, payload: object) -> None:
@@ -492,16 +486,7 @@ class MainWindow(QMainWindow):
         self._scan_job = None
         report = payload if isinstance(payload, ScanReport) else ScanReport()
         albums, photos = self._model.counts()
-        if albums or photos:
-            if self._browse_mode == BROWSE_MODE_ALBUMS:
-                self._set_status(f"{albums} 个相册 · {photos} 张照片")
-            else:
-                self._set_status(f"{photos} 张照片")
-        elif self._browse_mode == BROWSE_MODE_ALBUMS:
-            self._set_status("这个文件夹是空的")
-        else:
-            self._set_status("这个文件夹里没有找到支持的照片")
-
+        # 「扫了多少张」原本在状态条上，条子没了就不报了；出问题才值得打断用户。
         if report.has_issues:
             self._show_banner(f"部分内容没能读取：{report.summary}")
         elif not albums and not photos:
@@ -517,8 +502,7 @@ class MainWindow(QMainWindow):
         if generation != self._generation:
             return
         self._scan_job = None
-        self._set_status("扫描失败")
-        self._show_banner(message)
+        self._show_banner(f"扫描失败：{message}")
 
     # ---- 缩略图 ------------------------------------------------------------
 
@@ -560,16 +544,13 @@ class MainWindow(QMainWindow):
             return
         self._size_index = index
         self._apply_thumbnail_size()
-        self.statusBar().showMessage(describe(self._size_index), 1500)
         self._remember_thumbnail_size()
 
     def step_thumbnail_size(self, step: int) -> None:
         """按档位加减一档（捏合或 ⌘+滚轮用）。"""
         target = shifted_index(self._size_index, step)
         if target == self._size_index:
-            limit = "已经是最小尺寸" if step < 0 else "已经是最大尺寸"
-            self.statusBar().showMessage(limit, 1200)
-            return
+            return  # 已经在头尾：以前会提示「已经是最大尺寸」，随状态条一起去掉
         self.set_thumbnail_size(target)
 
     def _apply_thumbnail_size(self) -> None:
@@ -584,8 +565,6 @@ class MainWindow(QMainWindow):
         """网格自适应出新的缩略图尺寸：作废旧图并重取可见的那一批。"""
         self._model.set_icon_edge(edge)
         self._refresh_thumbnail_window()
-        if self._grid.isVisible():
-            self.statusBar().showMessage(describe_actual(self._size_index, edge), 1500)
 
     def _sync_size_actions(self) -> None:
         for index, action in enumerate(self._size_actions):
@@ -787,8 +766,6 @@ class MainWindow(QMainWindow):
         self._stack.setCurrentWidget(self._grid_page)
         if self._current_row >= 0:
             self._grid.select_row(self._current_row)
-        # 缩放百分比只在大图下有意义，回到网格就清掉。
-        self._status_right.clear()
         self._update_action_states()
         self._refresh_thumbnail_window()
 
@@ -826,9 +803,6 @@ class MainWindow(QMainWindow):
         self._model.set_tooltips_enabled(False)
         QToolTip.hideText()
         generation = self._generation
-        self._set_status(
-            f"{ref.name} · {format_bytes(ref.size)} · {format_timestamp(ref.mtime_ns)}"
-        )
 
         if self._detail_job is not None:
             # 上一张的解码已经没有意义了，早点让它停下来。
@@ -908,8 +882,8 @@ class MainWindow(QMainWindow):
     def _on_detail_failed(self, ref: PhotoRef, row: int, generation: int, message: str) -> None:
         if generation != self._generation or row != self._current_row:
             return
+        # 原因直接画在大图区里（show_error），不需要状态条再报一遍。
         self._detail.show_error(message)
-        self._set_status(ref.name, right="无法显示")
 
     def _cached_metadata(self, ref: PhotoRef) -> MetadataReport | None:
         """缓存里有没有这张照片的元数据；文件改过（大小 / 修改时间）就当没有。"""
@@ -1004,12 +978,7 @@ class MainWindow(QMainWindow):
         edge = int(max(viewport.width(), viewport.height()) * ratio * PREVIEW_EDGE_FACTOR)
         return max(MIN_PREVIEW_EDGE, min(MAX_PREVIEW_EDGE, edge))
 
-    # ---- 状态与提示 --------------------------------------------------------
-
-    def _set_status(self, left: str, right: str | None = None) -> None:
-        self._status_left.setText(left)
-        if right is not None:
-            self._status_right.setText(right)
+    # ---- 提示 --------------------------------------------------------------
 
     def _show_banner(self, text: str) -> None:
         self._banner.setText(text)
@@ -1017,12 +986,6 @@ class MainWindow(QMainWindow):
 
     def _report_error(self, message: str) -> None:
         QMessageBox.critical(self, "Gallery", message)
-
-    def _on_zoom_changed(self, scale: float) -> None:
-        if self._stack.currentWidget() is self._detail_page:
-            width, height = self._detail.image_size
-            if width and height:
-                self._status_right.setText(f"{width} × {height} · {scale * 100:.0f}%")
 
     def clear_thumbnail_cache(self) -> None:
         """清空当前库的缩略图缓存（只删缓存目录里的文件）。"""
