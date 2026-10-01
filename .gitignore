@@ -1,0 +1,32 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ---- Gallery 运行时数据 ----
+# .gallery/ 里除 config.toml 外的内容都是可重建的缓存/日志，不入版本控制
+.gallery/*
+!.gallery/config.toml
+
+# ---- macOS ----
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# ---- 编辑器 ----
+.idea/
+.vscode/
+*.swp
