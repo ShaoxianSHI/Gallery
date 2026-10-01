@@ -35,9 +35,22 @@ def _register_heif_support() -> bool:
     return True
 
 
+def _prepare_pillow() -> None:
+    """在任何工作线程启动之前跑完 Pillow 的初始化。
+
+    ``Image.open`` / ``Image.save`` 会惰性导入解码器，而那个「初始化过没有」的全局
+    标志不是线程安全的：多个解码线程同时第一次用到 Pillow 时会并发走进导入逻辑，
+    实测**直接段错误**（不是抛异常，是整个进程挂掉），而不是偶尔报个错。
+    在导入本模块时（主线程）先初始化一遍即可根除。
+    """
+    Image.init()
+
+
 #: HEIC/HEIF 支持是否可用（依赖 pillow-heif 提供的解码插件）。
 #: 在导入时确定一次，之后不再变化，属于能力探测而非可变状态。
 HEIF_SUPPORT: Final = _register_heif_support()
+
+_prepare_pillow()
 
 
 @dataclass(frozen=True, slots=True)

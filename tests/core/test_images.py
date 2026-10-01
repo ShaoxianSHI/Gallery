@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
+import textwrap
 from collections.abc import Callable
 from pathlib import Path
 
@@ -112,3 +115,86 @@ def test_heic_decodes_when_supported(tmp_path: Path) -> None:
     raster = decode_rgba(path)
 
     assert raster.size == (32, 24)
+
+
+def _run_fresh_python(script: str, *args: str) -> subprocess.CompletedProcess[bytes]:
+    """在全新解释器里跑一段脚本：Pillow 的初始化状态必须从头观察才准。"""
+    return subprocess.run(
+        [sys.executable, "-c", textwrap.dedent(script), *args],
+        capture_output=True,
+        timeout=180,
+        check=False,
+    )
+
+
+def test_pillow_is_initialized_at_import_time() -> None:
+    """导入 core.images 时就要把 Pillow 初始化完。
+
+    ``Image.open`` / ``Image.save`` 会惰性导入解码器，而那个「初始化过没有」的全局
+    标志不是线程安全的：多个解码线程同时第一次用到 Pillow 时实测会**段错误**
+    （不是抛异常，是整个进程挂掉）。这里在全新进程里检查那个标志，因此不受
+    测试会话里先前已经用过 Pillow 的影响。
+    """
+    completed = _run_fresh_python(
+        """
+        import gallery.core.images  # noqa: F401 - 导入本身就是要验证的行为
+        from PIL import Image
+
+        print("initialized =", getattr(Image, "_initialized", 0))
+        raise SystemExit(0 if getattr(Image, "_initialized", 0) >= 1 else 1)
+        """
+    )
+
+    assert completed.returncode == 0, (
+        "导入 core.images 之后 Pillow 仍未初始化，多线程首次使用时可能段错误："
+        f"{completed.stdout.decode()}{completed.stderr.decode()}"
+    )
+
+
+def test_concurrent_first_use_of_pillow_does_not_crash(
+    tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """八个线程同时第一次用 Pillow 不能崩。
+
+    段错误会带走整个进程，所以放到子进程里跑：真崩了也只是退出码非零，测试会话
+    本身不受影响。图片由父进程先造好 —— 子进程里 Pillow 的第一次使用就发生在
+    并发线程里，这正是会崩的那个时刻。线程用屏障对齐起跑。
+    """
+    library_root = tmp_path / "库"
+    for index in range(16):
+        make_photo(f"IMG_{index:04d}.jpg", directory=library_root)
+
+    completed = _run_fresh_python(
+        """
+        import sys, threading
+        from gallery.core.library import Library
+
+        library = Library.open(sys.argv[1])
+        refs = list(library.iter_photos())
+        barrier = threading.Barrier(8)
+        failures = []
+
+        def work(chunk):
+            barrier.wait()
+            try:
+                for ref in chunk:
+                    library.thumbnail(ref)
+            except BaseException as exc:  # noqa: BLE001 - 子进程里如实回报
+                failures.append(repr(exc))
+
+        threads = [threading.Thread(target=work, args=(refs[i::8],)) for i in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        print("FAILURES" if failures else "OK")
+        sys.exit(1 if failures else 0)
+        """,
+        str(library_root),
+    )
+
+    assert completed.returncode == 0, (
+        f"并发缩略图崩了（退出码 {completed.returncode}）："
+        f"{completed.stderr.decode('utf-8', 'replace')[-1500:]}"
+    )
+    assert b"OK" in completed.stdout
