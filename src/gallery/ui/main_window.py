@@ -76,6 +76,12 @@ SCAN_BATCH_SIZE = 64
 #: 大图预览在内存里保留几张（当前张前后各一张，切图才不会白屏）。
 PREVIEW_CACHE_SIZE = 3
 
+#: 元数据缓存条数。翻图时命中缓存就直接显示，没有中间态。
+METADATA_CACHE_SIZE = 128
+
+#: 预读前后各几张的元数据。一次读取约 50ms，预读了就等于切图时零等待。
+METADATA_PREFETCH_RADIUS = 2
+
 #: 预览图相对视口长边的倍率：留出余量，缩放一点也不会糊。
 PREVIEW_EDGE_FACTOR = 1.5
 
@@ -119,6 +125,7 @@ class MainWindow(QMainWindow):
         self._place_job: int | None = None
         self._place_index: PlaceIndex | None = None
         self._preview_cache: OrderedDict[Path, QImage] = OrderedDict()
+        self._metadata_cache: OrderedDict[Path, tuple[int, int, MetadataReport]] = OrderedDict()
         self._thumbnail_failures = 0
 
         self._size_index = nearest_index(self._session.thumbnail_edge)
@@ -381,6 +388,7 @@ class MainWindow(QMainWindow):
         self._thumbnail_failures = 0
         self._current_row = -1
         self._preview_cache.clear()
+        self._metadata_cache.clear()
         self._model.clear()
 
         self._pipeline = ThumbnailPipeline(library, self._runner, self)
@@ -622,7 +630,12 @@ class MainWindow(QMainWindow):
             self._place_job = None
 
     def _load_metadata(self) -> None:
-        """读当前这张照片的元数据；面板没展开就什么都不做。"""
+        """读当前这张照片的元数据；面板没展开就什么都不做。
+
+        切图时**不改面板**：命中缓存就同步显示（真正的「直接显示」），没命中时
+        也保留现有内容等新结果换上去 —— 每次切图都先清空再显示「正在读取元数据…」
+        会闪一下，观感很差。加载提示只出现在面板本来就是空的时候。
+        """
         self._cancel_metadata_job()
         if not self._panel.isVisible():
             return
@@ -632,7 +645,13 @@ class MainWindow(QMainWindow):
             self._panel.clear()
             return
         generation = self._generation
-        self._panel.show_loading(ref.name)
+        cached = self._cached_metadata(ref)
+        if cached is not None:
+            self._panel.set_report(cached)
+            self._prefetch_metadata(row)
+            return
+        if self._panel.report is None:
+            self._panel.show_loading(ref.name)  # 面板本来就是空的，给个提示
 
         def work(context: TaskContext) -> object:
             if context.is_cancelled():
@@ -646,11 +665,16 @@ class MainWindow(QMainWindow):
         )
 
     def _on_metadata_ready(self, row: int, generation: int, payload: object) -> None:
+        if not isinstance(payload, MetadataReport):
+            return
+        ref = self._model.photo_at(row)
+        if ref is not None:
+            self._cache_metadata(ref, payload)
         if generation != self._generation or row != self._current_row:
-            return  # 用户已经翻到别处了，丢弃这份迟到的结果
-        if isinstance(payload, MetadataReport):
-            self._panel.set_report(payload)
-            self._maybe_lookup_place(payload, row, generation)
+            return  # 用户已经翻到别处了，这份结果只进缓存，不上屏
+        self._panel.set_report(payload)
+        self._prefetch_metadata(row)
+        self._maybe_lookup_place(payload, row, generation)
 
     def _on_metadata_failed(self, row: int, generation: int, message: str) -> None:
         if generation != self._generation or row != self._current_row:
@@ -708,18 +732,32 @@ class MainWindow(QMainWindow):
         if isinstance(index, PlaceIndex):
             self._place_index = index
         if place is None:
-            self._panel.set_report(report.with_place("坐标附近没有城市记录"))
+            self._place_index_saved(report, row, generation, "坐标附近没有城市记录")
             return
         # 标签本身已经写了「（推断）」，内容里不再重复；只有偏得远时才补一句距离，
         # 那是在提醒「这只是最近的城市」，不是在报误差。
         suffix = "" if place.distance_km < 50 else f"（最近城市约 {place.distance_km:.0f} 公里外）"
-        self._panel.set_report(report.with_place(f"{place.label()}{suffix}"))
+        self._place_index_saved(report, row, generation, f"{place.label()}{suffix}")
+
+    def _place_index_saved(
+        self, report: MetadataReport, row: int, generation: int, text: str
+    ) -> None:
+        """把推断出来的地点并进报告：上屏并入缓存。
+
+        入缓存是为了让「切回这张照片」一次显示到位 —— 否则又要先显示一遍没有地点的
+        报告、再被反查结果替换一次，等于自己制造一次闪烁。
+        """
+        enriched = report.with_place(text)
+        ref = self._model.photo_at(row)
+        if ref is not None:
+            self._cache_metadata(ref, enriched)
+        if self._is_current_photo(row, generation):
+            self._panel.set_report(enriched)
 
     def _on_place_failed(
         self, report: MetadataReport, row: int, generation: int, message: str
     ) -> None:
-        if self._is_current_photo(row, generation):
-            self._panel.set_report(report.with_place(f"未能推断地点：{message}"))
+        self._place_index_saved(report, row, generation, f"未能推断地点：{message}")
 
     def _on_entry_activated(self, index: QModelIndex) -> None:
         """双击一个格子：相册就进去，照片就打开大图。"""
@@ -845,6 +883,53 @@ class MainWindow(QMainWindow):
             return
         self._detail.show_error(message)
         self._set_status(ref.name, right="无法显示")
+
+    def _cached_metadata(self, ref: PhotoRef) -> MetadataReport | None:
+        """缓存里有没有这张照片的元数据；文件改过（大小 / 修改时间）就当没有。"""
+        entry = self._metadata_cache.get(ref.path)
+        if entry is None or entry[0] != ref.size or entry[1] != ref.mtime_ns:
+            return None
+        self._metadata_cache.move_to_end(ref.path)
+        return entry[2]
+
+    def _cache_metadata(self, ref: PhotoRef, report: MetadataReport) -> None:
+        self._metadata_cache[ref.path] = (ref.size, ref.mtime_ns, report)
+        self._metadata_cache.move_to_end(ref.path)
+        while len(self._metadata_cache) > METADATA_CACHE_SIZE:
+            self._metadata_cache.popitem(last=False)
+
+    def _prefetch_metadata(self, row: int) -> None:
+        """预读附近几张的元数据，让翻照片时直接显示、没有中间态。
+
+        一次读取约 50ms：预读了，切过去就是 0ms；不预读则每次切图都要等，
+        只能靠「保留旧内容」顶着 —— 那会把上一张的地点显示给当前照片，是错数据。
+        """
+        if not self._panel.isVisible():
+            return
+        for offset in range(-METADATA_PREFETCH_RADIUS, METADATA_PREFETCH_RADIUS + 1):
+            if offset == 0:
+                continue
+            ref = self._model.photo_at(row + offset)
+            if ref is None or self._cached_metadata(ref) is not None:
+                continue
+
+            def work(context: TaskContext, target: PhotoRef = ref) -> object:
+                if context.is_cancelled():
+                    return None
+                return read_metadata(target.path)
+
+            self._runner.submit(
+                work,
+                on_result=partial(self._on_metadata_prefetched, ref),
+                on_error=partial(self._on_metadata_prefetch_failed, ref),
+            )
+
+    def _on_metadata_prefetched(self, ref: PhotoRef, payload: object) -> None:
+        if isinstance(payload, MetadataReport):
+            self._cache_metadata(ref, payload)
+
+    def _on_metadata_prefetch_failed(self, ref: PhotoRef, message: str) -> None:
+        logger.info("预读元数据失败：%s（%s）", ref.name, message)
 
     def _prefetch_neighbours(self, row: int) -> None:
         """预取前后各一张的预览，让连续翻图不白屏。"""
@@ -983,6 +1068,7 @@ class MainWindow(QMainWindow):
         self._generation += 1
         self._model.clear()
         self._preview_cache.clear()
+        self._metadata_cache.clear()
         self._current_row = -1
         self._detail.clear_image()
         self._panel.clear()
