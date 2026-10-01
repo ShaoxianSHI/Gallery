@@ -24,6 +24,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from gallery.core.config import prepare_library  # noqa: E402
+from gallery.core.metadata import build_report  # noqa: E402
 from gallery.ui import metadata_panel as panel_module  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 
@@ -206,3 +207,53 @@ def test_failed_photo_still_explains_why(window: MainWindow, qt_app: QApplicatio
 
     detail.prepare_switch()
     assert not detail._overlay.isVisible(), "切图时上一张的错误提示应当撤掉"
+
+
+def test_cached_photo_still_gets_its_place(
+    window: MainWindow,
+    qt_app: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """命中缓存也必须推断地点 —— 预读只读元数据，缓存里本来没有地点。
+
+    这是真实缺陷：命中缓存的分支直接 return，漏掉了地点反查，于是凡是落在预读
+    窗口（前后各 2 张）内的照片，带坐标却不显示推断地点。
+    """
+
+    window._metadata_action.setChecked(True)
+    _settle(qt_app, 1.0)
+    ref = window._model.photo_at(window._current_row)
+
+    # 造一份带坐标的元数据，并用一个假索引替代真实城市库（测试不联网）。
+    report = build_report(
+        {
+            "EXIF:GPSLatitude": "44.83780",
+            "EXIF:GPSLatitudeRef": "North",
+            "EXIF:GPSLongitude": "0.57920",
+            "EXIF:GPSLongitudeRef": "West",
+        },
+        path=ref.path,
+        size=ref.size,
+        mtime_ns=ref.mtime_ns,
+        source="exiftool",
+    )
+    assert report.latitude is not None
+    window._cache_metadata(ref, report)  # 预读缓存里就是这种「还没有地点」的报告
+
+    looked_up: list[tuple[float, float]] = []
+
+    class FakeIndex:
+        def nearest(self, latitude: float, longitude: float) -> object:
+            looked_up.append((latitude, longitude))
+            return None
+
+    monkeypatch.setattr(window, "_place_index", FakeIndex())
+    monkeypatch.setattr(type(window), "_place_index_saved", lambda *args, **kwargs: None)
+
+    window._open_detail(window._model.index(0, 0))
+    _settle(qt_app, 0.5)
+
+    assert looked_up == [(pytest.approx(44.8378), pytest.approx(-0.5792))], (
+        "命中缓存时也应当按坐标推断地点"
+    )

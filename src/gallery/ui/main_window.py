@@ -649,6 +649,9 @@ class MainWindow(QMainWindow):
         if cached is not None:
             self._panel.set_report(cached)
             self._prefetch_metadata(row)
+            # 缓存里的报告可能还没推断过地点（预读只读元数据）：命中缓存不等于
+            # 「地点已经查过」，漏了这一步，带坐标的照片会永远不显示地点。
+            self._maybe_lookup_place(cached, row, generation)
             return
         if self._panel.report is None:
             self._panel.show_loading(ref.name)  # 面板本来就是空的，给个提示
@@ -689,8 +692,8 @@ class MainWindow(QMainWindow):
         """
         if not self._panel.isVisible() or report.latitude is None or report.longitude is None:
             return
-        if report.place_from_file:
-            return
+        if report.place_from_file or report.place_resolved:
+            return  # 文件里写了地点，或已经推断过一次（含「没有记录」这种结论）
         self._panel.set_report(report.with_place("正在查询最近的城市…"))
         latitude, longitude = report.latitude, report.longitude
         index = self._place_index

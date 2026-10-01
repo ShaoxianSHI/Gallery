@@ -6,6 +6,7 @@ exiftool 路径用**假的可执行脚本**验证：测试既不需要本机装�
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import stat
@@ -596,3 +597,54 @@ def test_degrees_to_decimal_rejects_garbage(value: str) -> None:
     from gallery.core.metadata import _degrees_to_decimal
 
     assert _degrees_to_decimal(value) is None
+
+
+class TestPlaceResolvedFlag:
+    """必须区分「还没推断过」与「推断过但没有结果」。"""
+
+    def test_fresh_report_is_not_resolved(self, tmp_path: Path) -> None:
+        report = build_report(
+            {"EXIF:GPSLatitude": "44.83780", "EXIF:GPSLatitudeRef": "North"},
+            path=tmp_path / "a.jpg",
+            size=1,
+            mtime_ns=0,
+            source="exiftool",
+        )
+
+        assert report.place_resolved is False
+
+    def test_with_place_marks_it_resolved(self, tmp_path: Path) -> None:
+        report = build_report(
+            {"EXIF:GPSLatitude": "44.83780", "EXIF:GPSLatitudeRef": "North"},
+            path=tmp_path / "a.jpg",
+            size=1,
+            mtime_ns=0,
+            source="exiftool",
+        )
+
+        assert report.with_place("波尔多").place_resolved is True
+
+    def test_negative_result_also_counts_as_resolved(self, tmp_path: Path) -> None:
+        """「附近没有记录」也是结论，不该反复重试。"""
+        report = build_report(
+            {"EXIF:GPSLatitude": "44.83780", "EXIF:GPSLatitudeRef": "North"},
+            path=tmp_path / "a.jpg",
+            size=1,
+            mtime_ns=0,
+            source="exiftool",
+        )
+
+        assert report.with_place("坐标附近没有城市记录").place_resolved is True
+
+    def test_copy_keeps_the_flag(self, tmp_path: Path) -> None:
+        """dataclasses.replace 造出的新报告不能把标记弄丢。"""
+        report = build_report(
+            {"EXIF:GPSLatitude": "44.83780", "EXIF:GPSLatitudeRef": "North"},
+            path=tmp_path / "a.jpg",
+            size=1,
+            mtime_ns=0,
+            source="exiftool",
+        )
+        resolved = report.with_place("波尔多")
+
+        assert dataclasses.replace(resolved).place_resolved is True

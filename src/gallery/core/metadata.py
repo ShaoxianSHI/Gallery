@@ -69,6 +69,12 @@ class MetadataReport:
     longitude: float | None = None
     #: 文件里写的地点名（IPTC/XMP）。有它就不再按坐标推断，免得给出两个说法。
     place_from_file: str | None = None
+    #: 推断地点是否已经查过了。
+    #:
+    #: 必须区分「没查」与「查了但没有结果」：没有记录、失败都会给出结论，只有
+    #: 还没查过的报告才需要再查一次。少了这个标记，命中缓存的路径就会把
+    #: 「尚未推断」当成「推断不出」，于是带坐标的照片永远不显示地点。
+    place_resolved: bool = False
 
     @property
     def is_complete(self) -> bool:
@@ -92,7 +98,7 @@ class MetadataReport:
                 groups.append(group)
         if not inserted:
             groups.append(MetadataGroup(title="位置", fields=(field,)))
-        return replace(self, groups=tuple(groups))
+        return replace(self, groups=tuple(groups), place_resolved=True)
 
     def as_text(self) -> str:
         """纯文本形式，用于「复制全部」。"""
