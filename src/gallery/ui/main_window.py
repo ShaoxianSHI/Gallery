@@ -122,7 +122,6 @@ class MainWindow(QMainWindow):
         self._detail_job: int | None = None
         self._current_row = -1
         self._metadata_job: int | None = None
-        self._place_job: int | None = None
         self._place_index: PlaceIndex | None = None
         self._preview_cache: OrderedDict[Path, QImage] = OrderedDict()
         self._metadata_cache: OrderedDict[Path, tuple[int, int, MetadataReport]] = OrderedDict()
@@ -625,9 +624,6 @@ class MainWindow(QMainWindow):
         if self._metadata_job is not None:
             self._runner.cancel(self._metadata_job)
             self._metadata_job = None
-        if self._place_job is not None:
-            self._runner.cancel(self._place_job)
-            self._place_job = None
 
     def _load_metadata(self) -> None:
         """读当前这张照片的元数据；面板没展开就什么都不做。
@@ -651,7 +647,7 @@ class MainWindow(QMainWindow):
             self._prefetch_metadata(row)
             # 缓存里的报告可能还没推断过地点（预读只读元数据）：命中缓存不等于
             # 「地点已经查过」，漏了这一步，带坐标的照片会永远不显示地点。
-            self._maybe_lookup_place(cached, row, generation)
+            self._maybe_lookup_place(ref, cached, generation, announce=False)
             return
         if self._panel.report is None:
             self._panel.show_loading(ref.name)  # 面板本来就是空的，给个提示
@@ -677,24 +673,35 @@ class MainWindow(QMainWindow):
             return  # 用户已经翻到别处了，这份结果只进缓存，不上屏
         self._panel.set_report(payload)
         self._prefetch_metadata(row)
-        self._maybe_lookup_place(payload, row, generation)
+        self._maybe_lookup_place(ref, payload, generation, announce=True)
 
     def _on_metadata_failed(self, row: int, generation: int, message: str) -> None:
         if generation != self._generation or row != self._current_row:
             return
         self._panel.show_error(message)
 
-    def _maybe_lookup_place(self, report: MetadataReport, row: int, generation: int) -> None:
-        """有坐标、且文件里没写地点时，按坐标反查最近的 city。
+    def _maybe_lookup_place(
+        self,
+        ref: PhotoRef,
+        report: MetadataReport,
+        generation: int,
+        *,
+        announce: bool,
+    ) -> None:
+        """按坐标推断最近的 city，结果一律入缓存。
 
-        反查要下载城市数据（约 3.3 MB），所以只在真的用得上时才做；文件里已经写了
-        地点就不查 —— 免得给出两个可能互相矛盾的说法。
+        ``announce`` 为真时才在面板上显示中间状态（「正在查询…」「正在下载…」）。
+        预读与缓存命中都传 ``False``：那时候面板上显示的是当前这张照片，
+        拿别的照片的中间状态去替换它，用户只会看到内容闪一下。
         """
-        if not self._panel.isVisible() or report.latitude is None or report.longitude is None:
+        if report.latitude is None or report.longitude is None:
             return
         if report.place_from_file or report.place_resolved:
             return  # 文件里写了地点，或已经推断过一次（含「没有记录」这种结论）
-        self._panel.set_report(report.with_place("正在查询最近的城市…"))
+        if not self._panel.isVisible():
+            return
+        if announce:
+            self._panel.set_report(report.with_place("正在查询最近的城市…"))
         latitude, longitude = report.latitude, report.longitude
         index = self._place_index
 
@@ -708,59 +715,57 @@ class MainWindow(QMainWindow):
                 raise GeoDataError("城市数据不可用，无法按坐标推断地点。")
             return (loaded, loaded.nearest(latitude, longitude))
 
-        self._place_job = self._runner.submit(
+        # 不取消进行中的地点查询：它只往缓存里写，切走了也仍然有用，
+        # 切回来时反而能一次显示到位。
+        self._runner.submit(
             work,
-            on_progress=partial(self._on_place_progress, report, row, generation),
-            on_result=partial(self._on_place_ready, report, row, generation),
-            on_error=partial(self._on_place_failed, report, row, generation),
+            on_progress=partial(self._on_place_progress, ref, report, generation),
+            on_result=partial(self._on_place_ready, ref, report, generation),
+            on_error=partial(self._on_place_failed, ref, report, generation),
         )
 
-    def _is_current_photo(self, row: int, generation: int) -> bool:
-        return generation == self._generation and row == self._current_row
+    def _is_current_photo(self, ref: PhotoRef, generation: int) -> bool:
+        """这张照片是不是当前显示的那张（换代过就不算）。"""
+        if generation != self._generation:
+            return False
+        current = self._model.photo_at(self._current_row)
+        return current is not None and current.path == ref.path
 
     def _on_place_progress(
-        self, report: MetadataReport, row: int, generation: int, payload: object
+        self, ref: PhotoRef, report: MetadataReport, generation: int, payload: object
     ) -> None:
-        if self._is_current_photo(row, generation) and isinstance(payload, str):
+        if isinstance(payload, str) and self._is_current_photo(ref, generation):
             self._panel.set_report(report.with_place(payload))
 
     def _on_place_ready(
-        self, report: MetadataReport, row: int, generation: int, payload: object
+        self, ref: PhotoRef, report: MetadataReport, generation: int, payload: object
     ) -> None:
-        if not self._is_current_photo(row, generation):
-            return
         if not isinstance(payload, tuple) or len(payload) != 2:
             return
         index, place = payload
         if isinstance(index, PlaceIndex):
             self._place_index = index
         if place is None:
-            self._place_index_saved(report, row, generation, "坐标附近没有城市记录")
+            self._place_index_saved(ref, report, generation, "坐标附近没有城市记录")
             return
         # 标签本身已经写了「（推断）」，内容里不再重复；只有偏得远时才补一句距离，
         # 那是在提醒「这只是最近的城市」，不是在报误差。
         suffix = "" if place.distance_km < 50 else f"（最近城市约 {place.distance_km:.0f} 公里外）"
-        self._place_index_saved(report, row, generation, f"{place.label()}{suffix}")
+        self._place_index_saved(ref, report, generation, f"{place.label()}{suffix}")
 
     def _place_index_saved(
-        self, report: MetadataReport, row: int, generation: int, text: str
+        self, ref: PhotoRef, report: MetadataReport, generation: int, text: str
     ) -> None:
-        """把推断出来的地点并进报告：上屏并入缓存。
-
-        入缓存是为了让「切回这张照片」一次显示到位 —— 否则又要先显示一遍没有地点的
-        报告、再被反查结果替换一次，等于自己制造一次闪烁。
-        """
+        """推断结果入缓存，并且只在这张正是当前照片时才上屏。"""
         enriched = report.with_place(text)
-        ref = self._model.photo_at(row)
-        if ref is not None:
-            self._cache_metadata(ref, enriched)
-        if self._is_current_photo(row, generation):
+        self._cache_metadata(ref, enriched)
+        if self._is_current_photo(ref, generation):
             self._panel.set_report(enriched)
 
     def _on_place_failed(
-        self, report: MetadataReport, row: int, generation: int, message: str
+        self, ref: PhotoRef, report: MetadataReport, generation: int, message: str
     ) -> None:
-        self._place_index_saved(report, row, generation, f"未能推断地点：{message}")
+        self._place_index_saved(ref, report, generation, f"未能推断地点：{message}")
 
     def _on_entry_activated(self, index: QModelIndex) -> None:
         """双击一个格子：相册就进去，照片就打开大图。"""
@@ -928,8 +933,15 @@ class MainWindow(QMainWindow):
             )
 
     def _on_metadata_prefetched(self, ref: PhotoRef, payload: object) -> None:
+        """预读结果入缓存，顺带把地点也推断好。
+
+        地点必须在这里查完：否则切到这张照片时缓存里只有坐标，面板要先显示一遍
+        没有地点的版本、再被反查结果替换 —— 那正是「切换照片时地点闪一下」的来源。
+        入缓存的应当是可以一次显示到位的完整报告。
+        """
         if isinstance(payload, MetadataReport):
             self._cache_metadata(ref, payload)
+            self._maybe_lookup_place(ref, payload, self._generation, announce=False)
 
     def _on_metadata_prefetch_failed(self, ref: PhotoRef, message: str) -> None:
         logger.info("预读元数据失败：%s（%s）", ref.name, message)

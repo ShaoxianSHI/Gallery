@@ -165,7 +165,7 @@ def test_place_lookup_result_is_cached(
     ref = window._model.photo_at(window._current_row)
     base = build_report({}, path=ref.path, size=ref.size, mtime_ns=ref.mtime_ns, source="exiftool")
 
-    window._place_index_saved(base, window._current_row, window._generation, "法国 · 波尔多")
+    window._place_index_saved(ref, base, window._generation, "法国 · 波尔多")
 
     report = window._panel.report
     assert any(
@@ -257,3 +257,70 @@ def test_cached_photo_still_gets_its_place(
     assert looked_up == [(pytest.approx(44.8378), pytest.approx(-0.5792))], (
         "命中缓存时也应当按坐标推断地点"
     )
+
+
+def test_switching_photos_resolves_the_place_before_display(
+    window: MainWindow,
+    qt_app: QApplication,
+    timeline: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """切到一张照片时，地点必须已经查好，一次显示到位。
+
+    这是真实缺陷：地点原先是在切过去之后才查的，于是面板先显示一遍没有地点的
+    版本、再被「正在查询…」和结果替换 —— 用户看到的就是地点闪一下。
+    预读时就应该把地点一起查完并入缓存。
+    """
+    window._metadata_action.setChecked(True)
+    _settle(qt_app, 1.0)
+
+    from gallery.core.metadata import build_report
+
+    queried: list[tuple[float, float]] = []
+
+    class FakeIndex:
+        """只回答「查到了没有」，不碰真实城市库（测试不联网、不读磁盘）。"""
+
+        def nearest(self, latitude: float, longitude: float) -> object:
+            queried.append((latitude, longitude))
+            return None  # 「附近没有记录」也是结论，同样应当入缓存
+
+    monkeypatch.setattr(window, "_place_index", FakeIndex())
+
+    # 预读旁边几张，每张都带坐标
+    row = window._current_row
+    for offset in range(-2, 3):
+        ref = window._model.photo_at(row + offset)
+        if ref is None:
+            continue
+        report = build_report(
+            {
+                "EXIF:GPSLatitude": "30.27390",
+                "EXIF:GPSLatitudeRef": "North",
+                "EXIF:GPSLongitude": "120.16139",
+                "EXIF:GPSLongitudeRef": "East",
+            },
+            path=ref.path,
+            size=ref.size,
+            mtime_ns=ref.mtime_ns,
+            source="exiftool",
+        )
+        window._on_metadata_prefetched(ref, report)
+    _settle(qt_app, 0.8)
+
+    # 预读过的照片，缓存里就该已经带上地点（即使结果是「附近没有记录」）
+    prefetched = window._model.photo_at(row + 1)
+    cached = window._cached_metadata(prefetched)
+    assert cached is not None
+    assert cached.place_resolved, "预读时就应当把地点推断完入缓存"
+    assert any(
+        field.label == "地点（推断）" for group in cached.groups for field in group.fields
+    ), "缓存里应当已经带着地点，切换时才能一次显示到位"
+
+    # 现在切过去：面板只应当被替换一次
+    timeline.clear()
+    window._open_detail(window._model.index(row + 1, 0))
+    _settle(qt_app, 0.5)
+
+    assert timeline == ["set_report"], f"切图时面板被替换了 {len(timeline)} 次：{timeline}"
+    assert queried, "预读时就应当已经发起过地点推断"
