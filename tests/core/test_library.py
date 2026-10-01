@@ -90,3 +90,16 @@ def test_display_name(tmp_path: Path, make_photo: Callable[..., Path]) -> None:
     make_photo("a.jpg", directory=root)
 
     assert Library.open(root).display_name == "2024-京都"
+
+
+def test_relative_root_is_resolved_to_absolute(
+    tmp_path: Path, make_photo: Callable[..., Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """命令行可以传相对路径，但记进会话的必须是绝对路径。"""
+    make_photo("a.jpg", directory=tmp_path / "库")
+    monkeypatch.chdir(tmp_path)
+
+    library = Library.open(Path("库"))
+
+    assert library.root.is_absolute()
+    assert library.root == (tmp_path / "库").resolve()

@@ -54,7 +54,9 @@ class Library:
         :param cache_base: 系统级缓存根目录，测试用；``None`` 表示走平台默认位置。
         :raises LibraryNotAccessibleError: 目录不存在或没有读取权限。
         """
-        root = Path(root).expanduser()
+        # 统一解析成绝对路径：命令行允许传相对路径（gallery 2025-苏州），
+        # 而库路径会被记进会话、算进缓存摘要，相对路径换个工作目录就失效了。
+        root = Path(root).expanduser().resolve()
         if not root.exists():
             raise LibraryNotAccessibleError(
                 f"打不开这个文件夹：{root}。它可能已被移动、重命名或删除。",
