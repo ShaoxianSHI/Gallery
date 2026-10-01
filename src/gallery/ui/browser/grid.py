@@ -23,6 +23,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QColor,
+    QGuiApplication,
     QKeyEvent,
     QMouseEvent,
     QNativeGestureEvent,
@@ -80,6 +81,20 @@ LAYOUT_SAFETY = 40
 
 #: 「视口宽度 → 修正方案」的记忆条目上限。
 MAX_LAYOUT_MEMO = 32
+
+#: 拖动距离的兜底值。正常情况取平台自己的数字（见 :func:`_drag_threshold`）。
+_FALLBACK_DRAG_DISTANCE = 10
+
+
+def _drag_threshold() -> int:
+    """鼠标按下后挪多远才算「拖动」。
+
+    用平台自己的数字（macOS 上是 10 像素），不写死常量：手抖的幅度因设备、指针
+    与人而异，平台比我们清楚。实在问不到时给一个保守的下限。
+    """
+    hints = QGuiApplication.styleHints()
+    distance = hints.startDragDistance() if hints is not None else 0
+    return max(4, distance or _FALLBACK_DRAG_DISTANCE)
 
 
 class PhotoDelegate(QStyledItemDelegate):
@@ -267,6 +282,10 @@ class PhotoGrid(QListView):
         self._armed_row = -1
         self._double_click = False
         self._pending_rename_row = -1
+        # 最近一次左键按下的位置与修饰键：用来把「手抖」和「真的在拖」分开，
+        # 见 mouseMoveEvent。
+        self._press_point: QPoint | None = None
+        self._press_extends = False
         # 去掉 QListView 默认的 StyledPanel 边框：那是一圈系统灰的描边，画在视口四周，
         # 于是整个照片区（最里层）看上去像浮在一块面板上，而不是铺满窗口。大图区那边
         # 本来就是 NoFrame，这里跟它对齐 —— 底色只有一块，边框不该再分出第二层。
@@ -556,6 +575,40 @@ class PhotoGrid(QListView):
 
     # ---- 事件 --------------------------------------------------------------
 
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        """记下这一下按在哪儿、带着什么修饰键（供 :meth:`mouseMoveEvent` 判断）。"""
+        self._press_point = event.position().toPoint()
+        self._press_extends = bool(
+            event.modifiers()
+            & (
+                Qt.KeyboardModifier.ShiftModifier
+                | Qt.KeyboardModifier.ControlModifier
+                | Qt.KeyboardModifier.MetaModifier
+            )
+        )
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        """手抖不算拖动，扩选更不算。
+
+        图标视图里 Qt 在**按下瞬间**就进入「框选」状态（``DragSelectingState``），
+        之后只要鼠标挪动就开始画橡皮筋 —— 那 10 像素的拖动阈值只管拖拽，不管它。
+        后果很具体，而且极其容易撞上：带 `⇧` / `⌘` 点选时手总要抖上一两个像素，
+        于是「从 A 扩选到 B 的连续区间」被悄悄换成一个**矩形框选**。网格是分行排的，
+        矩形落到屏幕上就变成「每行只选中最边上那一两个格子」—— 隔一个跳一个，
+        正是「多选看起来有点奇怪」的那种奇怪。
+
+        所以挡掉两种误判：带修饰键的一律当扩选（想框选就空着手拖），
+        空着手也要挪够平台自己的拖动距离，才把事件交给基类去框选。
+        """
+        point = self._press_point
+        if point is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            moved = (event.position().toPoint() - point).manhattanLength()
+            if self._press_extends or moved < _drag_threshold():
+                event.accept()
+                return
+        super().mouseMoveEvent(event)
+
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         """第一次点击只是选中；对**已经选中**的格子再点一次才开始重命名。
 
@@ -567,6 +620,9 @@ class PhotoGrid(QListView):
         :meth:`mouseDoubleClickEvent`），一直没等到双击，才是重命名。
         """
         super().mouseReleaseEvent(event)
+        # 这一次点击结束了，「从哪儿按下」也就过期了：之后的手动悬停不该再被拦。
+        self._press_point = None
+        self._press_extends = False
         if event.button() != Qt.MouseButton.LeftButton:
             return
         if self._double_click:

@@ -20,6 +20,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtCore import QPoint, Qt  # noqa: E402
+from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from gallery.core.library.config import prepare_library  # noqa: E402
@@ -134,3 +136,155 @@ def test_albums_mode_startup_keeps_normal_tile_size(
         f"两个相册占满了窗口：格子 {grid.gridSize().width()} / 视口 {grid.viewport().width()}"
     )
     window.close()
+
+
+# ---- 多选：手抖不该变成框选 ------------------------------------------------
+
+
+def _selected_rows(grid: PhotoGrid) -> list[int]:
+    selection = grid.selectionModel()
+    assert selection is not None
+    return sorted(index.row() for index in selection.selectedIndexes())
+
+
+def _click_with_drift(
+    qt_app: QApplication,
+    grid: PhotoGrid,
+    *,
+    modifiers: Qt.KeyboardModifier,
+    anchor: int,
+    target: int,
+    drift: int,
+) -> list[int]:
+    """点选 ``anchor``，再带着修饰键点 ``target``，中途把鼠标挪 ``drift`` 像素。
+
+    那一两像素的位移是真人点选时的常态：手在动。按下与抬起之间只要发生移动，
+    图标视图就会改用橡皮筋框选，把「A 到 B 的连续区间」换成一个矩形。
+    """
+    model = grid.model()
+    assert model is not None
+    grid.selectionModel().clearSelection()
+    first = grid.visualRect(model.index(anchor, 0)).center()
+    second = grid.visualRect(model.index(target, 0)).center()
+    QTest.mouseClick(
+        grid.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, first
+    )
+    qt_app.processEvents()
+    QTest.mousePress(grid.viewport(), Qt.MouseButton.LeftButton, modifiers, second)
+    for step in range(1, drift + 1):
+        QTest.mouseMove(grid.viewport(), second + QPoint(step, 0))
+        qt_app.processEvents()
+    QTest.mouseRelease(
+        grid.viewport(),
+        Qt.MouseButton.LeftButton,
+        modifiers,
+        second + QPoint(drift, 0),
+    )
+    qt_app.processEvents()
+    return _selected_rows(grid)
+
+
+@pytest.mark.parametrize("drift", [0, 1, 2, 4, 9])
+def test_shift_click_selects_the_whole_range_however_the_hand_drifts(
+    qt_app: QApplication, tmp_path: Path, drift: int
+) -> None:
+    """⇧ 点选是「从 A 到 B 的连续区间」，不是橡皮筋框出来的矩形。
+
+    缺陷现场：第一行第一个 →（手抖两像素）⇧ 第三行第三个，选中的却是每行最边上
+    的那一两个格子 —— 网格分行排，矩形落到屏幕上就是「隔一个跳一个」。
+    """
+    grid = make_grid(qt_app, tmp_path, count=40)
+    columns = grid._laid_out_columns
+    assert columns >= 3, "这个缺陷要三列以上才看得出来"
+    target = 2 * columns + 2  # 第三行的第三个
+
+    selected = _click_with_drift(
+        qt_app,
+        grid,
+        modifiers=Qt.KeyboardModifier.ShiftModifier,
+        anchor=0,
+        target=target,
+        drift=drift,
+    )
+
+    assert selected == list(range(target + 1))
+    grid.deleteLater()
+
+
+def test_command_click_toggles_one_item_however_the_hand_drifts(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """⌘ 点选是「加一个 / 减一个」，同样不该被手抖变成框选。"""
+    grid = make_grid(qt_app, tmp_path, count=40)
+    columns = grid._laid_out_columns
+
+    selected = _click_with_drift(
+        qt_app,
+        grid,
+        modifiers=Qt.KeyboardModifier.ControlModifier,
+        anchor=0,
+        target=columns + 1,
+        drift=3,
+    )
+
+    assert selected == [0, columns + 1]
+    grid.deleteLater()
+
+
+def test_plain_click_selects_only_that_item_however_the_hand_drifts(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """挪动不足拖动距离就还算「点」，不该中途改主意成框选。"""
+    grid = make_grid(qt_app, tmp_path, count=40)
+    model = grid.model()
+    assert model is not None
+    grid.selectionModel().clearSelection()
+
+    point = grid.visualRect(model.index(2, 0)).center()
+    drift = 9  # 平台自己的拖动距离是 10
+    QTest.mousePress(
+        grid.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, point
+    )
+    QTest.mouseMove(grid.viewport(), point + QPoint(drift, 1))
+    qt_app.processEvents()
+    QTest.mouseRelease(
+        grid.viewport(),
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+        point + QPoint(drift, 1),
+    )
+    qt_app.processEvents()
+
+    assert _selected_rows(grid) == [2]
+    grid.deleteLater()
+
+
+def test_a_real_drag_still_rubber_band_selects(qt_app: QApplication, tmp_path: Path) -> None:
+    """空着手拖过一整行仍然是框选 —— 上一条不能把功能一起干掉。"""
+    grid = make_grid(qt_app, tmp_path, count=40)
+    model = grid.model()
+    assert model is not None
+    columns = grid._laid_out_columns
+    grid.selectionModel().clearSelection()
+
+    start = grid.visualRect(model.index(0, 0)).center()
+    end = grid.visualRect(model.index(columns + 1, 0)).center()
+    QTest.mousePress(
+        grid.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, start
+    )
+    for step in range(1, 6):
+        position = QPoint(
+            start.x() + (end.x() - start.x()) * step // 5,
+            start.y() + (end.y() - start.y()) * step // 5,
+        )
+        QTest.mouseMove(grid.viewport(), position)
+        qt_app.processEvents()
+    QTest.mouseRelease(
+        grid.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, end
+    )
+    qt_app.processEvents()
+
+    selected = _selected_rows(grid)
+    assert len(selected) > 1, "真的拖过这么远，框选却只选中一个格子"
+    assert 0 in selected and columns + 1 in selected
+    grid.deleteLater()
