@@ -117,6 +117,13 @@ uv run gallery                # 启动
 - 元数据优先由 [exiftool](https://exiftool.org/) 读取（`brew install exiftool`），
   它同时覆盖 EXIF / IPTC / XMP。**没装也能用**：Gallery 会退回 Pillow 读取基础 EXIF，
   并在面板顶部说明少了什么 —— 只是读不到 IPTC / XMP 与制造商注释。
+- 照片带 GPS 坐标时，会**按坐标推断地点**显示在「位置」里，例如
+  「Bordeaux · New Aquitaine · 法国（按坐标推断）」。这是**离线**反查：用的是
+  GeoNames 公开城市数据（首次使用下载约 3.3 MB，缓存在
+  `~/Library/Application Support/Gallery/cache/geo/`，删掉会自动重下），
+  **你的坐标不会发送到任何服务器**。文件里本来就写了地点（Lightroom 等导出的
+  `City` / `Country`）时以文件为准，不再推断。推断结果一律标注「按坐标推断」，
+  它与照片自带的元数据不是一个可信级别。
 
 **已知限制**：RAW（CR2/CR3/NEF/ARW/DNG）尚不支持；GIF 只显示第一帧；文件夹的增删改需要重新打开库
 才能反映（实时监听还在计划中）。

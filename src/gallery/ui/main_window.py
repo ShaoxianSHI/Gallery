@@ -33,7 +33,8 @@ from PySide6.QtWidgets import (
 
 from gallery.core import paths
 from gallery.core.config import prepare_library
-from gallery.core.errors import GalleryError
+from gallery.core.errors import GalleryError, GeoDataError
+from gallery.core.geonames import PlaceIndex, download_data, geo_data_dir
 from gallery.core.library import Library
 from gallery.core.metadata import MetadataReport, read_metadata
 from gallery.core.photos import FolderRef, GridEntry, PhotoRef
@@ -115,6 +116,8 @@ class MainWindow(QMainWindow):
         self._detail_job: int | None = None
         self._current_row = -1
         self._metadata_job: int | None = None
+        self._place_job: int | None = None
+        self._place_index: PlaceIndex | None = None
         self._preview_cache: OrderedDict[Path, QImage] = OrderedDict()
         self._thumbnail_failures = 0
 
@@ -614,6 +617,9 @@ class MainWindow(QMainWindow):
         if self._metadata_job is not None:
             self._runner.cancel(self._metadata_job)
             self._metadata_job = None
+        if self._place_job is not None:
+            self._runner.cancel(self._place_job)
+            self._place_job = None
 
     def _load_metadata(self) -> None:
         """读当前这张照片的元数据；面板没展开就什么都不做。"""
@@ -644,11 +650,79 @@ class MainWindow(QMainWindow):
             return  # 用户已经翻到别处了，丢弃这份迟到的结果
         if isinstance(payload, MetadataReport):
             self._panel.set_report(payload)
+            self._maybe_lookup_place(payload, row, generation)
 
     def _on_metadata_failed(self, row: int, generation: int, message: str) -> None:
         if generation != self._generation or row != self._current_row:
             return
         self._panel.show_error(message)
+
+    def _maybe_lookup_place(self, report: MetadataReport, row: int, generation: int) -> None:
+        """有坐标、且文件里没写地点时，按坐标反查最近的 city。
+
+        反查要下载城市数据（约 3.3 MB），所以只在真的用得上时才做；文件里已经写了
+        地点就不查 —— 免得给出两个可能互相矛盾的说法。
+        """
+        if not self._panel.isVisible() or report.latitude is None or report.longitude is None:
+            return
+        if report.place_from_file:
+            return
+        self._panel.set_report(report.with_place("正在查询最近的城市…"))
+        latitude, longitude = report.latitude, report.longitude
+        index = self._place_index
+
+        def work(context: TaskContext) -> object:
+            directory = geo_data_dir()
+            if not PlaceIndex.data_present(directory):
+                context.progress("正在下载城市数据（约 3.3 MB）…")
+                download_data(directory)
+            loaded = index if index is not None else PlaceIndex.load(directory)
+            if loaded is None:
+                raise GeoDataError("城市数据不可用，无法按坐标推断地点。")
+            return (loaded, loaded.nearest(latitude, longitude))
+
+        self._place_job = self._runner.submit(
+            work,
+            on_progress=partial(self._on_place_progress, report, row, generation),
+            on_result=partial(self._on_place_ready, report, row, generation),
+            on_error=partial(self._on_place_failed, report, row, generation),
+        )
+
+    def _is_current_photo(self, row: int, generation: int) -> bool:
+        return generation == self._generation and row == self._current_row
+
+    def _on_place_progress(
+        self, report: MetadataReport, row: int, generation: int, payload: object
+    ) -> None:
+        if self._is_current_photo(row, generation) and isinstance(payload, str):
+            self._panel.set_report(report.with_place(payload))
+
+    def _on_place_ready(
+        self, report: MetadataReport, row: int, generation: int, payload: object
+    ) -> None:
+        if not self._is_current_photo(row, generation):
+            return
+        if not isinstance(payload, tuple) or len(payload) != 2:
+            return
+        index, place = payload
+        if isinstance(index, PlaceIndex):
+            self._place_index = index
+        if place is None:
+            self._panel.set_report(report.with_place("坐标附近没有城市记录"))
+            return
+        # 偏得远时把距离说出来：那是在提醒「这只是最近的城市」，不是在报误差。
+        suffix = (
+            "（按坐标推断）"
+            if place.distance_km < 50
+            else f"（按坐标推断，最近城市约 {place.distance_km:.0f} 公里外）"
+        )
+        self._panel.set_report(report.with_place(f"{place.label()}{suffix}"))
+
+    def _on_place_failed(
+        self, report: MetadataReport, row: int, generation: int, message: str
+    ) -> None:
+        if self._is_current_photo(row, generation):
+            self._panel.set_report(report.with_place(f"未能推断地点：{message}"))
 
     def _on_entry_activated(self, index: QModelIndex) -> None:
         """双击一个格子：相册就进去，照片就打开大图。"""
