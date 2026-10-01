@@ -22,6 +22,7 @@ from PySide6.QtCore import QModelIndex
 from PySide6.QtGui import QAction, QCloseEvent, QImage, QKeySequence
 from PySide6.QtWidgets import (
     QFileDialog,
+    QHBoxLayout,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -34,6 +35,7 @@ from gallery.core import paths
 from gallery.core.config import prepare_library
 from gallery.core.errors import GalleryError
 from gallery.core.library import Library
+from gallery.core.metadata import MetadataReport, read_metadata
 from gallery.core.photos import FolderRef, GridEntry, PhotoRef
 from gallery.core.scanner import ScanReport
 from gallery.core.session import (
@@ -49,6 +51,7 @@ from gallery.ui.detail_view import DetailView
 from gallery.ui.formatting import format_bytes, format_timestamp
 from gallery.ui.grid_view import PREFETCH_MARGIN, PhotoGrid
 from gallery.ui.imaging import to_qimage
+from gallery.ui.metadata_panel import MetadataPanel
 from gallery.ui.models import PhotoListModel
 from gallery.ui.navigation import breadcrumb_parts, parent_of
 from gallery.ui.tasks import TaskContext, TaskRunner
@@ -111,6 +114,7 @@ class MainWindow(QMainWindow):
         self._scan_job: int | None = None
         self._detail_job: int | None = None
         self._current_row = -1
+        self._metadata_job: int | None = None
         self._preview_cache: OrderedDict[Path, QImage] = OrderedDict()
         self._thumbnail_failures = 0
 
@@ -121,6 +125,8 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._build_actions()
         self._restore_session()
+        self._metadata_action.setChecked(bool(self._session.metadata_visible))
+        self._panel.setVisible(bool(self._session.metadata_visible))
         self._sync_size_actions()
         self._update_action_states()
 
@@ -173,7 +179,15 @@ class MainWindow(QMainWindow):
         self._stack = QStackedWidget()
         self._stack.addWidget(self._welcome)
         self._stack.addWidget(self._grid_page)
-        self._stack.addWidget(self._detail)
+        self._panel = MetadataPanel()
+        self._panel.hide()
+        self._detail_page = QWidget()
+        detail_layout = QHBoxLayout(self._detail_page)
+        detail_layout.setContentsMargins(0, 0, 0, 0)
+        detail_layout.setSpacing(0)
+        detail_layout.addWidget(self._detail, 1)
+        detail_layout.addWidget(self._panel)
+        self._stack.addWidget(self._detail_page)
         self.setCentralWidget(self._stack)
 
         self._status_left = QLabel()
@@ -218,6 +232,11 @@ class MainWindow(QMainWindow):
         self._flat_action.setCheckable(True)
         self._flat_action.triggered.connect(lambda: self.set_browse_mode(BROWSE_MODE_FLAT))
 
+        self._metadata_action = QAction("显示元数据信息", self)
+        self._metadata_action.setCheckable(True)
+        self._metadata_action.setShortcut(QKeySequence("Ctrl+I"))
+        self._metadata_action.toggled.connect(self.toggle_metadata)
+
         self._clear_cache_action = QAction("清空缩略图缓存", self)
         self._clear_cache_action.triggered.connect(self.clear_thumbnail_cache)
 
@@ -246,6 +265,8 @@ class MainWindow(QMainWindow):
         view_menu.addSeparator()
         view_menu.addAction(self._zoom_in_action)
         view_menu.addAction(self._zoom_out_action)
+        view_menu.addSeparator()
+        view_menu.addAction(self._metadata_action)
         view_menu.addSeparator()
         self._size_actions: list[QAction] = []
         size_menu = view_menu.addMenu("缩略图大小")
@@ -366,6 +387,7 @@ class MainWindow(QMainWindow):
         self._banner.hide()
         # 切库时真正清空大图区，别让上一个库的全分辨率副本一直占着内存。
         self._detail.clear_image()
+        self._panel.clear()
         self._current_dir = library.root
         self._update_breadcrumb()
         self._update_mode_actions()
@@ -578,6 +600,56 @@ class MainWindow(QMainWindow):
 
     # ---- 大图 --------------------------------------------------------------
 
+    def toggle_metadata(self, visible: bool) -> None:
+        """⌘I：展开 / 收起右侧的元数据面板，并把选择记进会话。"""
+        self._panel.setVisible(visible)
+        self._session = self._session.with_metadata_visible(visible)
+        self._save_session()
+        if visible:
+            self._load_metadata()
+        else:
+            self._cancel_metadata_job()
+
+    def _cancel_metadata_job(self) -> None:
+        if self._metadata_job is not None:
+            self._runner.cancel(self._metadata_job)
+            self._metadata_job = None
+
+    def _load_metadata(self) -> None:
+        """读当前这张照片的元数据；面板没展开就什么都不做。"""
+        self._cancel_metadata_job()
+        if not self._panel.isVisible():
+            return
+        row = self._current_row
+        ref = self._model.photo_at(row)
+        if ref is None:
+            self._panel.clear()
+            return
+        generation = self._generation
+        self._panel.show_loading(ref.name)
+
+        def work(context: TaskContext) -> object:
+            if context.is_cancelled():
+                return None
+            return read_metadata(ref.path)
+
+        self._metadata_job = self._runner.submit(
+            work,
+            on_result=partial(self._on_metadata_ready, row, generation),
+            on_error=partial(self._on_metadata_failed, row, generation),
+        )
+
+    def _on_metadata_ready(self, row: int, generation: int, payload: object) -> None:
+        if generation != self._generation or row != self._current_row:
+            return  # 用户已经翻到别处了，丢弃这份迟到的结果
+        if isinstance(payload, MetadataReport):
+            self._panel.set_report(payload)
+
+    def _on_metadata_failed(self, row: int, generation: int, message: str) -> None:
+        if generation != self._generation or row != self._current_row:
+            return
+        self._panel.show_error(message)
+
     def _on_entry_activated(self, index: QModelIndex) -> None:
         """双击一个格子：相册就进去，照片就打开大图。"""
         entry = self._model.entry_at(index.row())
@@ -591,7 +663,7 @@ class MainWindow(QMainWindow):
         if self._model.photo_at(row) is None:
             return
         self._current_row = row
-        self._stack.setCurrentWidget(self._detail)
+        self._stack.setCurrentWidget(self._detail_page)
         self._detail.setFocus()
         self._update_action_states()
         self._load_detail(row)
@@ -638,6 +710,8 @@ class MainWindow(QMainWindow):
             # 上一张的解码已经没有意义了，早点让它停下来。
             self._runner.cancel(self._detail_job)
             self._detail_job = None
+        if self._panel.isVisible():
+            self._load_metadata()
 
         cached = self._preview_cache.get(ref.path)
         if cached is not None:
@@ -755,7 +829,7 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, "Gallery", message)
 
     def _on_zoom_changed(self, scale: float) -> None:
-        if self._stack.currentWidget() is self._detail:
+        if self._stack.currentWidget() is self._detail_page:
             width, height = self._detail.image_size
             if width and height:
                 self._status_right.setText(f"{width} × {height} · {scale * 100:.0f}%")
@@ -779,7 +853,7 @@ class MainWindow(QMainWindow):
 
     def _update_action_states(self) -> None:
         self._update_navigation_actions()
-        in_detail = self._stack.currentWidget() is self._detail
+        in_detail = self._stack.currentWidget() is self._detail_page
         for action in (
             self._back_action,
             self._fit_action,
@@ -840,6 +914,7 @@ class MainWindow(QMainWindow):
         self._preview_cache.clear()
         self._current_row = -1
         self._detail.clear_image()
+        self._panel.clear()
         self._banner.hide()
         self._stack.setCurrentWidget(self._grid_page)
         self._update_breadcrumb()
