@@ -390,3 +390,209 @@ class TestDegenerateValues:
     def test_zero_exposure_bias_is_kept(self, tmp_path: Path) -> None:
         """0 EV 是合法且有意义的取值，不能当成缺失。"""
         assert report_of({"EXIF:ExposureCompensation": "0"}, tmp_path)["曝光补偿"] == "0 EV"
+
+
+class TestPlaceFields:
+    """地点相关：文件里写的、以及按坐标推断的，必须分得清。"""
+
+    def test_coordinates_are_parsed_as_decimals(self, tmp_path: Path) -> None:
+        report = build_report(
+            {
+                "EXIF:GPSLatitude": "44.83780",
+                "EXIF:GPSLatitudeRef": "N",
+                "EXIF:GPSLongitude": "0.57920",
+                "EXIF:GPSLongitudeRef": "W",
+            },
+            path=tmp_path / "a.jpg",
+            size=1,
+            mtime_ns=0,
+            source="exiftool",
+        )
+
+        assert report.latitude == pytest.approx(44.8378)
+        assert report.longitude == pytest.approx(-0.5792)
+
+    def test_southern_and_western_hemispheres_are_negative(self, tmp_path: Path) -> None:
+        report = build_report(
+            {
+                "EXIF:GPSLatitude": "33.86880",
+                "EXIF:GPSLatitudeRef": "S",
+                "EXIF:GPSLongitude": "151.20930",
+                "EXIF:GPSLongitudeRef": "E",
+            },
+            path=tmp_path / "a.jpg",
+            size=1,
+            mtime_ns=0,
+            source="exiftool",
+        )
+
+        assert report.latitude == pytest.approx(-33.8688)
+        assert report.longitude == pytest.approx(151.2093)
+
+    def test_missing_coordinates_stay_none(self, tmp_path: Path) -> None:
+        report = build_report(
+            {"EXIF:Make": "Canon"}, path=tmp_path / "a.jpg", size=1, mtime_ns=0, source="exiftool"
+        )
+
+        assert report.latitude is None and report.longitude is None
+
+    def test_place_written_in_the_file_is_shown_without_guessing(self, tmp_path: Path) -> None:
+        report = build_report(
+            {
+                "XMP-photoshop:City": "Bordeaux",
+                "XMP-photoshop:State": "Nouvelle-Aquitaine",
+                "XMP-photoshop:Country": "France",
+                "EXIF:GPSLatitude": "44.83780",
+                "EXIF:GPSLatitudeRef": "N",
+                "EXIF:GPSLongitude": "0.57920",
+                "EXIF:GPSLongitudeRef": "W",
+            },
+            path=tmp_path / "a.jpg",
+            size=1,
+            mtime_ns=0,
+            source="exiftool",
+        )
+
+        assert report.place_from_file == "Bordeaux · Nouvelle-Aquitaine · France"
+        fields = field_map(report.groups)
+        assert fields["地点"] == "Bordeaux"
+        assert fields["省 / 州"] == "Nouvelle-Aquitaine"
+        assert fields["国家"] == "France"
+
+    def test_no_place_in_file_means_nothing_to_show(self, tmp_path: Path) -> None:
+        report = build_report(
+            {"EXIF:GPSLatitude": "44.83780", "EXIF:GPSLatitudeRef": "N"},
+            path=tmp_path / "a.jpg",
+            size=1,
+            mtime_ns=0,
+            source="exiftool",
+        )
+
+        assert report.place_from_file is None
+
+    def test_inferred_place_is_labelled_as_inferred(self, tmp_path: Path) -> None:
+        report = build_report(
+            {
+                "EXIF:GPSLatitude": "44.83780",
+                "EXIF:GPSLatitudeRef": "N",
+                "EXIF:GPSLongitude": "0.57920",
+                "EXIF:GPSLongitudeRef": "W",
+            },
+            path=tmp_path / "a.jpg",
+            size=1,
+            mtime_ns=0,
+            source="exiftool",
+        )
+
+        updated = report.with_place("Bordeaux · 新亚奎丹 · 法国（按坐标推断）")
+
+        fields = field_map(updated.groups)
+        assert fields["地点（推断）"] == "Bordeaux · 新亚奎丹 · 法国（按坐标推断）"
+        # 推断的那行必须排在最前面，且原报告不被改动
+        position = next(group for group in updated.groups if group.title == "位置")
+        assert position.fields[0].label == "地点（推断）"
+        assert "地点（推断）" not in field_map(report.groups)
+        assert "地点（推断）" in updated.as_text()
+
+    def test_inferred_place_creates_position_group_when_missing(self, tmp_path: Path) -> None:
+        report = build_report(
+            {"EXIF:Make": "Canon"}, path=tmp_path / "a.jpg", size=1, mtime_ns=0, source="exiftool"
+        )
+
+        updated = report.with_place("某地（按坐标推断）")
+
+        assert "位置" in [group.title for group in updated.groups]
+
+
+class TestRealExifToolOutput:
+    """用 exiftool 对真实照片的实际输出核对字段映射。
+
+    这一组是补真实缺陷：先前只用十进制坐标做测试，而 exiftool 默认给的是
+    度分秒（``44 deg 50' 16.04"``）配 ``North`` 这种长半球名 —— 结果坐标解析
+    失败、按坐标反查整个不工作。带单位的零值（``0.0 mm``）与零值时间戳同理。
+    """
+
+    #: 取自 exiftool 13.55 对一张真实照片的输出（只留相关字段）。
+    REAL = {
+        "EXIF:Make": "--",
+        "EXIF:Model": "--",
+        "EXIF:DateTimeOriginal": "2022:04:16 20:52:02",
+        "EXIF:ExposureTime": 1,
+        "EXIF:FNumber": 0,
+        "EXIF:ApertureValue": 1.9,
+        "EXIF:ISO": 0,
+        "EXIF:ExposureCompensation": 0,
+        "EXIF:FocalLength": "0.0 mm",
+        "EXIF:FocalLengthIn35mmFormat": "25 mm",
+        "EXIF:Flash": "No Flash",
+        "EXIF:MeteringMode": "Center-weighted average",
+        "EXIF:Orientation": "Horizontal (normal)",
+        "EXIF:WhiteBalance": "Auto",
+        "EXIF:ColorSpace": "sRGB",
+        "EXIF:ExifImageWidth": 4640,
+        "EXIF:ExifImageHeight": 3472,
+        "EXIF:GPSLatitude": "44 deg 50' 16.04\"",
+        "EXIF:GPSLatitudeRef": "North",
+        "EXIF:GPSLongitude": "0 deg 34' 45.05\"",
+        "EXIF:GPSLongitudeRef": "West",
+        "EXIF:GPSTimeStamp": "00:00:00",
+        "Composite:GPSDateTime": "00:00:00 00:00:00Z",
+    }
+
+    def report(self, tmp_path: Path) -> object:
+        return build_report(
+            self.REAL,
+            path=tmp_path / "真实照片.jpg",
+            size=6 * 1024**2,
+            mtime_ns=0,
+            source="exiftool",
+        )
+
+    def test_degrees_minutes_seconds_are_parsed(self, tmp_path: Path) -> None:
+        report = self.report(tmp_path)
+
+        assert report.latitude == pytest.approx(44.8378, abs=1e-4)  # type: ignore[attr-defined]
+        assert report.longitude == pytest.approx(-0.5792, abs=1e-4)  # type: ignore[attr-defined]
+
+    def test_coordinates_are_shown_as_decimals(self, tmp_path: Path) -> None:
+        assert field_map(self.report(tmp_path).groups)["坐标"] == "44.83779° N，0.57918° W"  # type: ignore[attr-defined]
+
+    def test_degenerate_values_are_hidden(self, tmp_path: Path) -> None:
+        fields = field_map(self.report(tmp_path).groups)  # type: ignore[attr-defined]
+
+        assert "相机" not in fields  # Make/Model 都是 "--"
+        assert "ISO" not in fields  # 0
+        assert "焦距" not in fields  # "0.0 mm"
+        assert "定位时间" not in fields  # 00:00:00 00:00:00Z
+        assert fields["光圈"] == "f/1.9"  # FNumber=0 退回 APEX 1.9
+        assert fields["35mm 等效"] == "25 mm"
+        assert fields["闪光灯"] == "No Flash"
+
+    def test_no_place_name_in_this_file(self, tmp_path: Path) -> None:
+        report = self.report(tmp_path)
+
+        assert report.place_from_file is None  # type: ignore[attr-defined]
+        assert "地点" not in field_map(report.groups)  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("44.83779", 44.83779),
+        ("44 deg 50' 16.04\"", 44.8378),
+        ("44°50'16.04\"", 44.8378),
+        ("-33 deg 52' 8.0\"", -33.8689),
+        ("44 deg 50'", 44.8333),
+    ],
+)
+def test_degrees_to_decimal_accepts_both_shapes(value: str, expected: float) -> None:
+    from gallery.core.metadata import _degrees_to_decimal
+
+    assert _degrees_to_decimal(value) == pytest.approx(expected, abs=1e-4)
+
+
+@pytest.mark.parametrize("value", ["", "不是坐标", "44 deg 99' 99\""])
+def test_degrees_to_decimal_rejects_garbage(value: str) -> None:
+    from gallery.core.metadata import _degrees_to_decimal
+
+    assert _degrees_to_decimal(value) is None

@@ -13,10 +13,11 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Final, Protocol
 
@@ -63,11 +64,35 @@ class MetadataReport:
     source: str
     #: 降级或异常时的说明，没有则为 ``None``。
     notice: str | None = None
+    #: 十进制度的坐标（有 GPS 时才有），供离线反查用。
+    latitude: float | None = None
+    longitude: float | None = None
+    #: 文件里写的地点名（IPTC/XMP）。有它就不再按坐标推断，免得给出两个说法。
+    place_from_file: str | None = None
 
     @property
     def is_complete(self) -> bool:
         """是否拿到了完整信息（只有 exiftool 路径才算）。"""
         return self.source == "exiftool"
+
+    def with_place(self, place: str) -> MetadataReport:
+        """把推断出来的地点插进「位置」组的最前面。
+
+        标签是「地点（推断）」而不是「地点」：文件里写的和软件推的不是一个可信级别，
+        混在一起用户会以为那是照片自带的元数据。
+        """
+        field = MetadataField(label="地点（推断）", value=place)
+        groups: list[MetadataGroup] = []
+        inserted = False
+        for group in self.groups:
+            if group.title == "位置":
+                groups.append(MetadataGroup(title=group.title, fields=(field, *group.fields)))
+                inserted = True
+            else:
+                groups.append(group)
+        if not inserted:
+            groups.append(MetadataGroup(title="位置", fields=(field,)))
+        return replace(self, groups=tuple(groups))
 
     def as_text(self) -> str:
         """纯文本形式，用于「复制全部」。"""
@@ -229,6 +254,7 @@ def build_report(
 ) -> MetadataReport:
     """把来源的原始键值整理成分组报告（纯函数，测试直接喂字典）。"""
     normalized = {key: _stringify(value) for key, value in raw.items()}
+    latitude, longitude = _coordinates_decimal(normalized)
     groups: list[MetadataGroup] = []
     for title, specs in _CURATED_GROUPS:
         fields: list[MetadataField] = []
@@ -248,6 +274,9 @@ def build_report(
         all_fields=all_fields,
         source=source,
         notice=notice,
+        latitude=latitude,
+        longitude=longitude,
+        place_from_file=_place_from_file(normalized),
     )
 
 
@@ -274,18 +303,25 @@ def _first(raw: Mapping[str, str], *keys: str) -> str | None:
     return None
 
 
+def _leading_number(value: str) -> float | None:
+    """取字符串开头的数字：``"0.0 mm"`` → 0.0，``"25 mm"`` → 25.0，``"1/500"`` → 1.0。"""
+    match = re.match(r"\s*(-?\d+(?:\.\d+)?)", value)
+    return float(match.group(1)) if match else None
+
+
 def _positive(value: str | None) -> str | None:
     """这类字段里 0（或负数）等于「没记录」。
 
-    实测有导出工具把 FNumber / FocalLength / ISO 一律填 0，显示成 f/0.0、0 mm、
-    ISO 0 只会让人以为软件坏了。非数字的值（``1/500``、``35.0 mm``）原样保留。
+    实测有导出工具把 FNumber / FocalLength / ISO 一律填 0，而且焦距还带着单位
+    （``0.0 mm``）；显示成 f/0.0、0.0 mm、ISO 0 只会让人以为软件坏了。
+    取不到数字的值（``1/500``）原样保留。
     """
     if value is None:
         return None
-    try:
-        return value if float(value) > 0 else None
-    except ValueError:
+    number = _leading_number(value)
+    if number is None:
         return value
+    return value if number > 0 else None
 
 
 def _camera(raw: Mapping[str, str]) -> str | None:
@@ -389,18 +425,81 @@ def _equivalent_focal_length(raw: Mapping[str, str]) -> str | None:
     return _positive(_first(raw, "EXIF:FocalLengthIn35mmFormat"))
 
 
+def _coordinates_decimal(raw: Mapping[str, str]) -> tuple[float | None, float | None]:
+    """把 ``GPSLatitude`` / ``GPSLongitude``（带半球标记）解析成十进制度。"""
+    latitude = _axis_decimal(raw, "EXIF:GPSLatitude", "EXIF:GPSLatitudeRef", negative={"S"})
+    longitude = _axis_decimal(raw, "EXIF:GPSLongitude", "EXIF:GPSLongitudeRef", negative={"W"})
+    if latitude is None or longitude is None:
+        return (None, None)
+    return (latitude, longitude)
+
+
+def _axis_decimal(
+    raw: Mapping[str, str], value_key: str, ref_key: str, *, negative: set[str]
+) -> float | None:
+    value = _first(raw, value_key)
+    if value is None:
+        return None
+    decimal = _degrees_to_decimal(value)
+    if decimal is None:
+        return None
+    # exiftool 给的是 "North"/"West"，Pillow 给的是 "N"/"W"，取首字母统一处理。
+    hemisphere = (_first(raw, ref_key) or "").strip().upper()[:1]
+    return -abs(decimal) if hemisphere in negative else abs(decimal)
+
+
+_DEGREE_NUMBER = re.compile(r"(\d+(?:\.\d+)?)")
+
+
+def _degrees_to_decimal(value: str) -> float | None:
+    """``44.83779`` 与 ``44 deg 50' 16.04"`` 都要认。
+
+    exiftool 默认输出的就是度分秒（``44 deg 50' 16.04"``），只认十进制会让
+    坐标解析失败、连带反查功能整个不工作。
+    """
+    text = value.strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        pass
+    numbers = _DEGREE_NUMBER.findall(text)
+    if not numbers:
+        return None
+    degrees = float(numbers[0])
+    minutes = float(numbers[1]) if len(numbers) > 1 else 0.0
+    seconds = float(numbers[2]) if len(numbers) > 2 else 0.0
+    if minutes >= 60 or seconds >= 60:
+        return None  # 不像度分秒，别硬算
+    sign = -1.0 if text.startswith("-") else 1.0
+    return sign * (degrees + minutes / 60 + seconds / 3600)
+
+
+def _place_from_file(raw: Mapping[str, str]) -> str | None:
+    """文件里写的地点名（IPTC/XMP）。相机原图通常没有，Lightroom 导出常有。"""
+    parts = [
+        _first(raw, "XMP-photoshop:City", "IPTC:City"),
+        _first(raw, "XMP-photoshop:State", "IPTC:Province-State"),
+        _first(raw, "XMP-photoshop:Country", "IPTC:Country-PrimaryLocationName"),
+    ]
+    kept: list[str] = []
+    for part in parts:
+        if part and part not in kept:
+            kept.append(part)
+    return " · ".join(kept) if kept else None
+
+
 def _coordinates(raw: Mapping[str, str]) -> str | None:
-    latitude = _first(raw, "EXIF:GPSLatitude")
-    longitude = _first(raw, "EXIF:GPSLongitude")
+    """统一显示成十进制：度分秒是给机器看的，复制出去也没法直接粘进地图。"""
+    latitude, longitude = _coordinates_decimal(raw)
     if latitude is None and longitude is None:
         return None
     parts: list[str] = []
     if latitude is not None:
-        suffix = _first(raw, "EXIF:GPSLatitudeRef") or ""
-        parts.append(f"{latitude}° {suffix}".strip())
+        parts.append(f"{abs(latitude):.5f}° {'N' if latitude >= 0 else 'S'}")
     if longitude is not None:
-        suffix = _first(raw, "EXIF:GPSLongitudeRef") or ""
-        parts.append(f"{longitude}° {suffix}".strip())
+        parts.append(f"{abs(longitude):.5f}° {'E' if longitude >= 0 else 'W'}")
     return "，".join(parts)
 
 
@@ -417,6 +516,8 @@ def _gps_time(raw: Mapping[str, str]) -> str | None:
     value = _first(raw, "EXIF:GPSDateTime", "Composite:GPSDateTime")
     if value is None:
         return None
+    if value.startswith("00:00:00") or value.startswith("0000:00:00"):
+        return None  # 导出工具填的零值，显示出来只是噪音
     return value.replace(":", "-", 2)
 
 
@@ -477,6 +578,10 @@ _CURATED_GROUPS: Final[tuple[tuple[str, tuple[_FieldSpec, ...]], ...]] = (
     (
         "位置",
         (
+            _FieldSpec("地点", _pick("XMP-photoshop:City", "IPTC:City")),
+            _FieldSpec("子地点", _pick("XMP-iptcCore:Location", "IPTC:Sub-location")),
+            _FieldSpec("省 / 州", _pick("XMP-photoshop:State", "IPTC:Province-State")),
+            _FieldSpec("国家", _pick("XMP-photoshop:Country", "IPTC:Country-PrimaryLocationName")),
             _FieldSpec("坐标", _coordinates),
             _FieldSpec("海拔", _altitude),
             _FieldSpec("定位时间", _gps_time),
