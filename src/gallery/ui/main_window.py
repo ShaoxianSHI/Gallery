@@ -289,17 +289,8 @@ class MainWindow(QMainWindow):
             size_menu.addAction(action)
             self._size_actions.append(action)
 
-        toolbar = self.addToolBar("主工具栏")
-        toolbar.setMovable(False)
-        toolbar.addAction(self._open_action)
-        toolbar.addAction(self._back_action)
-        toolbar.addAction(self._up_action)
-        toolbar.addSeparator()
-        toolbar.addAction(self._fit_action)
-        toolbar.addAction(self._actual_action)
-        toolbar.addAction(self._zoom_in_action)
-        toolbar.addAction(self._zoom_out_action)
-
+        # 不加工具栏：这些命令在 macOS 顶部菜单里都有，快捷键也照常生效，
+        # 界面上再重复一遍只会挤掉照片。
         self._rebuild_recent_menu()
 
     def _restore_session(self) -> None:
