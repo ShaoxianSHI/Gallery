@@ -351,6 +351,11 @@ class PhotoGrid(QListView):
         intended = self._laid_out_columns
         if available != self._laid_out_width or intended <= 0:
             return
+        matrix = self.model()
+        if matrix is None or matrix.rowCount() < intended:
+            # 条目还不够摆满一行时，「第一行的格子数」其实等于条目总数，
+            # 拿它当列数会把两个相册撑成整屏。这种时候根本量不出真实列数。
+            return
         measured = self._first_row_columns()
         if measured <= 0 or measured >= intended:
             return
