@@ -104,22 +104,62 @@ def test_first_open_may_show_loading_hint(
 def test_switching_photos_never_shows_loading_hint(
     window: MainWindow, qt_app: QApplication, timeline: list[str]
 ) -> None:
-    """来回翻照片时不得再出现「正在读取元数据…」。"""
+    """预读命中时来回翻照片不得出现「正在读取元数据…」（命中就是一次到位）。
+
+    每一步都先确认目标确实已在缓存里 —— 那是「命中」这条路径的前提。没命中时
+    显示「正在读取」是**正确**行为（见 test_cache_miss_does_not_show_the_previous_photo）。
+    """
     window._metadata_action.setChecked(True)
     _settle(qt_app, 1.0)  # 先把首张读进来并预读邻居
     timeline.clear()
 
     for _ in range(5):
+        target = window._model.photo_at(window._current_row + 1)
+        assert target is not None
+        assert window._cached_metadata(target) is not None, (
+            f"预读应当已经把 {target.name} 备好，否则这条测的不是命中路径"
+        )
         window.step_detail(1)
-        _settle(qt_app, 0.03)  # 远小于一次读取（约 50ms），模拟快速翻图
+        # 预读本身是异步的（约 50ms），留出它落地的时间：这是「预读来得及」的
+        # 正常浏览节奏。实测 250ms 一次切换时命中率是 10/10。
+        _settle(qt_app, 0.25)
 
-    assert "show_loading" not in timeline, f"切图时又闪出了加载提示：{timeline}"
+    assert "show_loading" not in timeline, f"命中时不该出现加载提示：{timeline}"
 
 
-def test_switching_keeps_panel_content_until_new_data_arrives(
+def test_metadata_cache_miss_does_not_show_the_previous_photo(
     window: MainWindow, qt_app: QApplication, timeline: list[str]
 ) -> None:
-    """缓存未命中时也不能先清空：保留原有内容，等新结果一次换上去。"""
+    """缓存未命中时，不能把上一张的元数据留在屏幕上。
+
+    那是错的照片的元数据，用户会当成当前这张来看 —— 比多等 50ms 糟糕得多。
+    未命中就老实说「正在读取」。
+    """
+    window._metadata_action.setChecked(True)
+    _settle(qt_app, 1.2)
+    window._metadata_cache.clear()
+    window.show_grid()
+    _settle(qt_app, 0.5)
+    timeline.clear()
+
+    window._open_detail(window._model.index(min(4, window._model.rowCount() - 1), 0))
+    _settle(qt_app, 0.02)  # 刚切换，还没读完
+
+    assert "show_loading" in timeline, (
+        f"未命中时应当先显示「正在读取」，而不是留着上一张：{timeline}"
+    )
+    _settle(qt_app, 1.2)
+    assert "set_report" in timeline
+
+
+def test_cache_miss_shows_loading_then_the_new_report(
+    window: MainWindow, qt_app: QApplication, timeline: list[str]
+) -> None:
+    """缓存未命中：先说「正在读取」，读到了再显示，不冒充上一张。
+
+    （早先的实现是「保留上一张的内容等新结果换上去」，那样屏幕上停留的是**错的**
+    元数据，用户会当成当前这张来看 —— 已经改成未命中就说在读。）
+    """
     window._metadata_action.setChecked(True)
     _settle(qt_app, 1.0)
     window._metadata_cache.clear()  # 模拟「没预读到」
@@ -128,8 +168,7 @@ def test_switching_keeps_panel_content_until_new_data_arrives(
     window._open_detail(window._model.index(3, 0))
     _settle(qt_app, 0.02)  # 切换瞬间
 
-    assert "show_loading" not in timeline
-    assert timeline == [], "切换瞬间既不该清空也不该改内容"
+    assert timeline == ["show_loading"], f"未命中时应当立刻说明在读：{timeline}"
     _settle(qt_app, 1.0)
     assert "set_report" in timeline, "新数据到位后应当显示出来"
     ref = window._model.photo_at(window._current_row)

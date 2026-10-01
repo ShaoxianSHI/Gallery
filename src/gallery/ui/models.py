@@ -59,6 +59,7 @@ class PhotoListModel(QAbstractListModel):
         self._entries: list[GridEntry] = []
         self._row_by_path: dict[Path, int] = {}
         self._pixmaps: OrderedDict[Path, _CachedThumb] = OrderedDict()
+        self._tooltips_enabled = True
         self._icon_edge = icon_edge
         self._cache_size = max(1, cache_size)
 
@@ -137,6 +138,17 @@ class PhotoListModel(QAbstractListModel):
         """
         self._icon_edge = edge
 
+    def set_tooltips_enabled(self, enabled: bool) -> None:
+        """网格不在屏幕上时关掉悬停提示，回来时再打开。"""
+        if enabled == self._tooltips_enabled:
+            return
+        self._tooltips_enabled = enabled
+        if not self._entries:
+            return
+        top_left = self.index(0, 0)
+        bottom_right = self.index(len(self._entries) - 1, 0)
+        self.dataChanged.emit(top_left, bottom_right, [int(Qt.ItemDataRole.ToolTipRole)])
+
     def has_thumbnail(self, path: Path) -> bool:
         """这个条目是否有可画的东西（哪怕是按旧尺寸缩放的）。"""
         return path in self._pixmaps
@@ -183,7 +195,9 @@ class PhotoListModel(QAbstractListModel):
         if role == int(Qt.ItemDataRole.DisplayRole):
             return entry.name
         if role == int(Qt.ItemDataRole.ToolTipRole):
-            return _tooltip(entry)
+            # 大图打开时不提供提示：Qt 已经排好的悬停定时器醒来问不到内容，
+            # 就不会在照片上凭空闪出一个小窗（见 MainWindow._load_detail）。
+            return _tooltip(entry) if self._tooltips_enabled else ""
         if role == int(Qt.ItemDataRole.DecorationRole):
             # 还没有缩略图时返回 None，由委托画占位（相册画文件夹图标），模型不阻塞等待。
             cached = self._pixmaps.get(entry.path)

@@ -629,9 +629,9 @@ class MainWindow(QMainWindow):
     def _load_metadata(self) -> None:
         """读当前这张照片的元数据；面板没展开就什么都不做。
 
-        切图时**不改面板**：命中缓存就同步显示（真正的「直接显示」），没命中时
-        也保留现有内容等新结果换上去 —— 每次切图都先清空再显示「正在读取元数据…」
-        会闪一下，观感很差。加载提示只出现在面板本来就是空的时候。
+        命中缓存就同步显示（真正的「直接显示」）；没命中就老实说「正在读取」，
+        **不要把上一张的元数据留在屏幕上** —— 那是错的照片的元数据，用户会当成
+        当前这张的信息看，比多等 50ms 糟糕得多。
         """
         self._cancel_metadata_job()
         if not self._panel.isVisible():
@@ -650,8 +650,8 @@ class MainWindow(QMainWindow):
             # 「地点已经查过」，漏了这一步，带坐标的照片会永远不显示地点。
             self._maybe_lookup_place(ref, cached, generation, announce=False)
             return
-        if self._panel.report is None:
-            self._panel.show_loading(ref.name)  # 面板本来就是空的，给个提示
+        # 未命中：先说在读，不要让上一张的元数据冒充当前这张。
+        self._panel.show_loading(ref.name)
 
         def work(context: TaskContext) -> object:
             if context.is_cancelled():
@@ -790,6 +790,8 @@ class MainWindow(QMainWindow):
         """回到网格，并让当前照片保持选中。"""
         if self._stack.currentWidget() is self._grid_page:
             return
+        # 回到网格，把悬停提示还回去
+        self._model.set_tooltips_enabled(True)
         QToolTip.hideText()  # 同 _load_detail：大图上的提示不该挂到网格上
         self._stack.setCurrentWidget(self._grid_page)
         if self._current_row >= 0:
@@ -820,9 +822,17 @@ class MainWindow(QMainWindow):
         ref = self._model.photo_at(row)
         if library is None or ref is None:
             return
-        # 网格卡片上的悬停提示是一个**顶层窗口**（macOS 上白底、正好压在照片的
-        # 左上角，里面是文件名与尺寸等元数据）。它已经在屏幕上时切换视图，
-        # 会跟着闪一下才消失 —— 所以切换前先收掉。
+        # 网格卡片的悬停提示是一个**顶层窗口**（macOS 上白底、正好压在照片的左上角，
+        # 内容是文件名与尺寸等元数据）。切图时它会闪，甚至闪两次：
+        #
+        #   1. 已经弹出来的那一个 —— ``hideText()`` 收掉；
+        #   2. 还没到显示时间的那一个 —— Qt 已经排好了定时器，而 ``hideText()``
+        #      **只隐藏窗口、不取消定时器**，它照样会在切换过程中弹出来。
+        #
+        # 所以要连根拔：让网格不再提供提示内容（PySide6 没有暴露
+        # QWidget.setToolTipsEnabled，只能从数据侧断掉），再收当前窗口。
+        # 定时器醒来问网格要提示，拿到空的，就什么都不会显示。
+        self._model.set_tooltips_enabled(False)
         QToolTip.hideText()
         generation = self._generation
         self._set_status(
