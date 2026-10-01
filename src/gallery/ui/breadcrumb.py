@@ -71,6 +71,8 @@ class BreadcrumbBar(QWidget):
             item = self._layout.takeAt(0)
             widget = item.widget() if item is not None else None
             if widget is not None:
+                # 同 metadata_panel：先摘出控件树，否则旧的一段会残留在原位置。
+                widget.setParent(None)
                 widget.deleteLater()
 
 
