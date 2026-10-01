@@ -126,6 +126,40 @@ class PhotoListModel(QAbstractListModel):
 
     # ---- 数据装载 ----------------------------------------------------------
 
+    def remove_rows(self, rows: Sequence[int]) -> list[GridEntry]:
+        """删掉若干行，返回被删掉的条目（按它们的原顺序）。
+
+        删除是就地摘行而不是重扫：整屏闪回占位框、再一张张弹回来太蠢。内存里缓存的
+        缩略图也一起丢掉 —— 那些路径上已经没有文件了。
+        """
+        targets = sorted({row for row in rows if 0 <= row < len(self._entries)}, reverse=True)
+        removed: list[GridEntry] = []
+        for row in targets:
+            entry = self._entries[row]
+            self.beginRemoveRows(QModelIndex(), row, row)
+            del self._entries[row]
+            self.endRemoveRows()
+            self._row_by_path.pop(entry.path, None)
+            self._pixmaps.pop(entry.path, None)
+            removed.append(entry)
+        removed.reverse()  # 还原成它们在网格里的先后顺序
+        self._reindex()
+        return removed
+
+    def insert_entry(self, entry: GridEntry) -> int:
+        """把一条**取回来的**条目插回它该在的行，返回那一行的行号。
+
+        撤销删除之后用：按「同一目录内（相册在前，名字）」插到正确的位置，与扫描器的
+        排序一致（见 ``scanner``）。一个兄弟节点都不在屏幕上时（用户把它们都删了）
+        就追加到末尾 —— 顺序在下一次扫描时自然归位，不值得为它重扫整层。
+        """
+        row = self._insert_position(entry)
+        self.beginInsertRows(QModelIndex(), row, row)
+        self._entries.insert(row, entry)
+        self.endInsertRows()
+        self._reindex()
+        return row
+
     def append(self, entries: Sequence[GridEntry]) -> None:
         """追加一批条目（扫描是流式的，界面不等整层扫完就能出图）。"""
         if not entries:
@@ -246,9 +280,29 @@ class PhotoListModel(QAbstractListModel):
             return int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
         return None
 
+    def _insert_position(self, entry: GridEntry) -> int:
+        """这条条目该插在第几行：同目录里排在它后面的第一行，或末尾。"""
+        key = _sort_key(entry)
+        position = len(self._entries)
+        for row, other in enumerate(self._entries):
+            if other.path.parent != entry.path.parent:
+                continue  # 不是兄弟节点，插在它前后都不对
+            if _sort_key(other) < key:
+                position = row + 1
+        return position
+
+    def _reindex(self) -> None:
+        """删行 / 插行之后行号全变了，重建路径到行号的映射。"""
+        self._row_by_path = {entry.path: row for row, entry in enumerate(self._entries)}
+
     def _notify_row(self, row: int) -> None:
         index = self.index(row, 0)
         self.dataChanged.emit(index, index, [int(Qt.ItemDataRole.DecorationRole)])
+
+
+def _sort_key(entry: GridEntry) -> tuple[int, str]:
+    """网格里的排序键：相册在前，同一类按名字。"""
+    return (0 if isinstance(entry, FolderRef) else 1, entry.name.casefold())
 
 
 def _tooltip(entry: GridEntry) -> str:

@@ -281,7 +281,9 @@ class PhotoGrid(QListView):
         self.setBatchSize(64)
         self.setIconSize(QSize(icon_edge, icon_edge))
         self.setGridSize(QSize(icon_edge + GRID_PADDING_X, icon_edge + GRID_PADDING_Y))
-        self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        # 多选：⌘⌫ 一次把选中的若干项移进废纸篓（见 ADR 0008）。重命名仍然是单条的 ——
+        # 批量改名一次改错就是几十张照片找不到，理由见 ADR 0004。
+        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -493,6 +495,22 @@ class PhotoGrid(QListView):
             )
         if ensure_visible:
             self.scrollTo(index, QAbstractItemView.ScrollHint.EnsureVisible)
+
+    def selected_rows(self) -> list[int]:
+        """当前选中的行号（升序）。
+
+        删除要按这个顺序取条目，但摘行要**从后往前**（见
+        ``PhotoListModel.remove_rows``）—— 前面的行被摘掉之后，后面的行号就变了。
+        """
+        selection = self.selectionModel()
+        if selection is None:
+            row = self.current_row()
+            return [row] if row >= 0 else []
+        rows = {index.row() for index in selection.selectedIndexes()}
+        if not rows:
+            row = self.current_row()
+            return [row] if row >= 0 else []
+        return sorted(rows)
 
     # ---- 行内重命名 --------------------------------------------------------
 

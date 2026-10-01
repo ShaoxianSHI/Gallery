@@ -9,8 +9,9 @@
   照片从库里凭空消失。
 - **不能以「.」开头**：扫描时以点开头的条目会被跳过（见 ``scanner.iter_entries``），
   改完名字照片就从 Gallery 里「不见了」，而它明明还在硬盘上。
-- **每一步都记账**：成功、失败、撤销都写进配置目录下的 ``journal/``（见 ``core.journal``），
-  撤销就是照着最后一条记录改回去。
+- **每一步都记账**：成功、失败、撤销都写进配置目录下的 ``journal/``（见 ``core.journal``）。
+  撤销就是照着最后一条记录改回去；「该撤哪一条」由 ``metadata.undo`` 那一摞共用的栈决定
+  （改名与移到废纸篓共用同一个 ⌘Z，见 ADR 0008）。
 
 本模块不弹窗、不问「要不要继续」：被拒绝就抛 :class:`~gallery.core.errors.RenameError`，
 由界面决定怎么告诉用户。
@@ -32,7 +33,6 @@ from gallery.core.metadata.journal import (
     RESULT_OK,
     WriteRecord,
     append_record,
-    read_records,
 )
 
 #: 单个文件名的字节上限（APFS / HFS+ 都是 255 字节，与字符数无关）。
@@ -140,16 +140,15 @@ def rename_entry(root: Path, entry: GridEntry, new_name: str) -> RenameResult:
     )
 
 
-def undo_last_rename(root: Path) -> RenameResult | None:
-    """撤销最近一次还没有被撤销过的改名。
+def undo_rename_record(root: Path, record: WriteRecord) -> RenameResult:
+    """把一条改名记录改回去。
 
-    :return: 撤销成功后的新引用；没有可撤销的记录时返回 ``None``。
+    「哪一条该撤」由 :mod:`gallery.core.metadata.undo` 照着日志重放决定，本模块只管
+    干活 —— 撤销栈不再藏在各自的模块里，改名与删除才能共用同一个 ⌘Z。
+
     :raises RenameError: 记录在，但文件已经不在原处（或原处被别的文件占了）。
     """
     root = Path(root)
-    record = _last_undoable(root)
-    if record is None:
-        return None
     source, target = record.target, record.source  # 反过来改回去
     if not source.exists():
         raise RenameError(
@@ -232,22 +231,6 @@ def _reference(path: Path, *, is_dir: bool) -> GridEntry:
     return PhotoRef.from_path(path)
 
 
-def _last_undoable(root: Path) -> WriteRecord | None:
-    """找出最近一次「还没被撤销过」的成功改名。
-
-    用一个栈重放日志：改名压栈，撤销弹栈。弹空了就说明能撤销的都撤销过了。
-    """
-    pending: list[WriteRecord] = []
-    for record in read_records(root):
-        if not record.succeeded:
-            continue
-        if record.action == ACTION_RENAME:
-            pending.append(record)
-        elif record.action == ACTION_UNDO and pending:
-            pending.pop()
-    return pending[-1] if pending else None
-
-
 def _log(root: Path, record: WriteRecord) -> bool:
     return append_record(root, record)
 
@@ -260,4 +243,4 @@ def _os_reason(exc: OSError) -> str:
     return f"{reason}。它可能正在被其他程序使用。"
 
 
-__all__ = ["MAX_NAME_BYTES", "RenameResult", "rename_entry", "undo_last_rename", "validate_name"]
+__all__ = ["MAX_NAME_BYTES", "RenameResult", "rename_entry", "undo_rename_record", "validate_name"]

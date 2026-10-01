@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 
 from gallery.core import paths
@@ -21,7 +21,9 @@ from gallery.core.library.photos import FolderRef, GridEntry, PhotoRef
 from gallery.core.library.scanner import ScanReport, iter_entries, iter_photos
 from gallery.core.media.decode import RasterImage, decode_rgba
 from gallery.core.media.thumbs import ThumbnailCache
-from gallery.core.metadata.rename import RenameResult, rename_entry, undo_last_rename
+from gallery.core.metadata.rename import RenameResult, rename_entry
+from gallery.core.metadata.trash import TrashResult, trash_entries
+from gallery.core.metadata.undo import UndoResult, next_undo_label, undo_last_write
 
 
 class Library:
@@ -195,12 +197,24 @@ class Library:
             self._relocate_thumbnail(result.previous, result.entry)
         return result
 
-    def undo_last_rename(self) -> RenameResult | None:
-        """撤销最近一次改名；没有可撤销的记录时返回 ``None``。"""
-        result = undo_last_rename(self._root)
-        if result is not None:
-            self._relocate_thumbnail(result.previous, result.entry)
+    def move_to_trash(self, entries: Sequence[GridEntry]) -> TrashResult:
+        """把照片或相册移进系统废纸篓（界面上就是「删除」）。
+
+        规矩与红线见 ``core.trash`` 与 ADR 0008：**不销毁文件**，同卷内只是一次改名。
+        缩略图缓存刻意留着不删 —— 照片还在，撤销回来时直接命中，不必重新解码。
+        """
+        return trash_entries(self._root, entries)
+
+    def undo_last_write(self) -> UndoResult | None:
+        """撤销最近一次写操作（改名或移到废纸篓）；没有可撤销的记录时返回 ``None``。"""
+        result = undo_last_write(self._root)
+        if result is not None and result.replaced is not None:
+            self._relocate_thumbnail(result.replaced, result.entries[0])
         return result
+
+    def next_undo_label(self) -> str | None:
+        """下一次撤销会撤掉什么（「重命名」/「移到废纸篓」），用于菜单文案。"""
+        return next_undo_label(self._root)
 
     def _relocate_thumbnail(self, previous: GridEntry, entry: GridEntry) -> None:
         """改名不改变像素，但缓存 key 含路径 —— 不挪就会留下永远命不中的孤儿条目。"""

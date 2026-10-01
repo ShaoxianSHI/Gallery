@@ -27,7 +27,8 @@ from gallery.core.metadata.journal import (
     RESULT_OK,
     read_records,
 )
-from gallery.core.metadata.rename import rename_entry, undo_last_rename, validate_name
+from gallery.core.metadata.rename import rename_entry, validate_name
+from gallery.core.metadata.undo import undo_last_write
 
 #: 冒充「另一张同名照片」的内容。改名绝不能把它盖掉。
 _PLACEHOLDER = "占位内容".encode()
@@ -206,6 +207,7 @@ def test_rejected_rename_touches_nothing_and_logs_nothing(tmp_path: Path, photo:
 
 
 # ---- 日志与撤销 -------------------------------------------------------------
+# 撤销只有一个入口（metadata.undo 那一摞共用的栈，⌘Z 走它），所以这里也用它。
 
 
 def test_successful_rename_is_recorded(tmp_path: Path, photo: PhotoRef) -> None:
@@ -225,13 +227,14 @@ def test_successful_rename_is_recorded(tmp_path: Path, photo: PhotoRef) -> None:
 def test_undo_restores_the_original_name(tmp_path: Path, photo: PhotoRef) -> None:
     rename_entry(tmp_path, photo, "海边日落")
 
-    result = undo_last_rename(tmp_path)
+    result = undo_last_write(tmp_path)
 
     assert result is not None
-    assert result.entry.name == "IMG_0001.jpg"
-    assert result.entry.path.exists()
+    assert result.action == ACTION_RENAME
+    assert result.entries[0].name == "IMG_0001.jpg"
+    assert result.entries[0].path.exists()
     assert not (tmp_path / "海边日落.jpg").exists()
-    # 撤销本身也要记账：否则重放日志会以为这两次改动还欠着一次撤销。
+    # 撤销本身也要记账：否则重放日志会以为这次改动还欠一次撤销。
     assert read_records(tmp_path)[-1].action == ACTION_UNDO
 
 
@@ -240,7 +243,7 @@ def test_undo_restores_the_original_album(tmp_path: Path) -> None:
     (album.path / "照片.jpg").write_bytes(b"x")
     rename_entry(tmp_path, album, "新相册名")
 
-    undo_last_rename(tmp_path)
+    undo_last_write(tmp_path)
 
     assert (tmp_path / "2025 苏州" / "照片.jpg").exists()
     assert not (tmp_path / "新相册名").exists()
@@ -253,8 +256,8 @@ def test_undo_unwinds_in_reverse_order(tmp_path: Path) -> None:
     rename_entry(tmp_path, first, "甲改")
     rename_entry(tmp_path, second, "乙改")
 
-    undo_last_rename(tmp_path)
-    undo_last_rename(tmp_path)
+    undo_last_write(tmp_path)
+    undo_last_write(tmp_path)
 
     assert (tmp_path / "甲").is_dir()
     assert (tmp_path / "乙").is_dir()
@@ -262,15 +265,15 @@ def test_undo_unwinds_in_reverse_order(tmp_path: Path) -> None:
     assert not (tmp_path / "乙改").exists()
 
 
-def test_undo_without_any_rename_returns_none(tmp_path: Path) -> None:
-    assert undo_last_rename(tmp_path) is None
+def test_undo_without_any_write_returns_none(tmp_path: Path) -> None:
+    assert undo_last_write(tmp_path) is None
 
 
 def test_undo_twice_returns_none_the_second_time(tmp_path: Path, photo: PhotoRef) -> None:
     """同一次改名不能被撤销两次。"""
     rename_entry(tmp_path, photo, "海边日落")
-    assert undo_last_rename(tmp_path) is not None
-    assert undo_last_rename(tmp_path) is None
+    assert undo_last_write(tmp_path) is not None
+    assert undo_last_write(tmp_path) is None
 
 
 def test_undo_refuses_when_the_original_name_is_taken(tmp_path: Path, photo: PhotoRef) -> None:
@@ -278,7 +281,7 @@ def test_undo_refuses_when_the_original_name_is_taken(tmp_path: Path, photo: Pho
     (tmp_path / "IMG_0001.jpg").write_bytes(_PLACEHOLDER)
 
     with pytest.raises(RenameError) as caught:
-        undo_last_rename(tmp_path)
+        undo_last_write(tmp_path)
 
     assert "撤销不了" in caught.value.message
     assert (tmp_path / "海边日落.jpg").exists()
@@ -289,7 +292,7 @@ def test_undo_refuses_when_the_file_is_gone(tmp_path: Path, photo: PhotoRef) -> 
     (tmp_path / "海边日落.jpg").unlink()
 
     with pytest.raises(RenameError) as caught:
-        undo_last_rename(tmp_path)
+        undo_last_write(tmp_path)
 
     assert "撤销不了" in caught.value.message
 
@@ -299,7 +302,7 @@ def test_failed_rename_is_not_undoable(tmp_path: Path, photo: PhotoRef) -> None:
     with pytest.raises(RenameError):
         rename_entry(tmp_path, photo, "海边.jpg")
 
-    assert undo_last_rename(tmp_path) is None
+    assert undo_last_write(tmp_path) is None
 
 
 # ---- 日志文件本身 -----------------------------------------------------------
@@ -364,7 +367,7 @@ def test_library_rename_and_undo(tmp_path: Path, make_photo: Callable[..., Path]
     # 改完还能立刻再取到缩略图（缓存被挪到了新键上，没有重新解码）
     assert library.thumbnail(result.entry).width > 0
 
-    undone = library.undo_last_rename()
+    undone = library.undo_last_write()
     assert undone is not None
-    assert undone.entry.name == "海边.jpg"
+    assert undone.entries[0].name == "海边.jpg"
     assert picture.exists()

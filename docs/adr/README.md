@@ -12,3 +12,4 @@
 | [0005](0005-one-background.md) | 整个窗口共用一块底色，跟随系统主题 | 已接受 |
 | [0006](0006-package-layout.md) | 按领域把 core 与 ui 分成子包 | 已接受 |
 | [0007](0007-nuitka-standalone-bundle.md) | 用 Nuitka 编译出自包含的 Gallery.app | 已接受 |
+| [0008](0008-delete-to-trash.md) | 删除 = 移到系统废纸篓，日志记账，随时可撤销（含对红线 1 的第二次豁免） | 已接受 |

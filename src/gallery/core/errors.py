@@ -61,8 +61,13 @@ class RenameError(GalleryError):
     """重命名被拒绝或失败（名字非法、目标已存在、权限不足、撤销条件不满足）。"""
 
 
+class DeleteError(GalleryError):
+    """移到废纸篓被拒绝或失败（越权、废纸篓不可用、恢复时原位置已被占用）。"""
+
+
 __all__ = [
     "ConfigError",
+    "DeleteError",
     "GalleryError",
     "GeoDataError",
     "ImageDecodeError",

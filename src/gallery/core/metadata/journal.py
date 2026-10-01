@@ -1,7 +1,7 @@
 """写操作日志。
 
 凡是**会改动用户文件**的操作都要在这里留一条记录：改了什么、从哪到哪、什么时候、
-结果如何。记录既是给用户看的历史，也是回滚的依据 —— ``rename.undo_last_rename``
+结果如何。记录既是给用户看的历史，也是回滚的依据 —— ``undo.undo_last_write``
 读的就是它。
 
 日志是追加写的 JSONL：配置目录下 ``journal/YYYY-MM-DD.jsonl``，一行一条。追加写中途崩溃
@@ -28,6 +28,12 @@ ACTION_RENAME: Final = "rename"
 #: 日志里的动作名：把一次改名改回去。
 ACTION_UNDO: Final = "undo"
 
+#: 日志里的动作名：把一项移进系统废纸篓（Gallery 语境里的「删除」，见 ADR 0008）。
+ACTION_TRASH: Final = "trash"
+
+#: 日志里的动作名：把一项从废纸篓里取回来（撤销删除）。
+ACTION_RESTORE: Final = "restore"
+
 #: 操作成功。
 RESULT_OK: Final = "ok"
 
@@ -44,11 +50,12 @@ def _now() -> str:
 class WriteRecord:
     """一条写操作记录。"""
 
-    #: :data:`ACTION_RENAME` 或 :data:`ACTION_UNDO`。
+    #: :data:`ACTION_RENAME`、:data:`ACTION_UNDO`、:data:`ACTION_TRASH` 或
+    #: :data:`ACTION_RESTORE`。
     action: str
     #: 改之前的路径。
     source: Path
-    #: 改之后的路径。
+    #: 改之后的路径。删除动作里是它在废纸篓中的位置。
     target: Path
     #: :data:`RESULT_OK` 或 :data:`RESULT_FAILED`。
     result: str
@@ -58,6 +65,11 @@ class WriteRecord:
     is_dir: bool = False
     #: 记录产生的时间。
     timestamp: str = field(default_factory=_now)
+    #: 同一次操作里多项共享的编号（批量删除）。单条操作为 ``None``。
+    #:
+    #: 撤销按「一次操作」为单位，而记账按「一项」为单位：批量删十张要写十条记录
+    #: （其中可能有的成功、有的失败），但用户只该按一次 ⌘Z（见 ``undo.undo_last_write``）。
+    batch: str | None = None
 
     @property
     def succeeded(self) -> bool:
@@ -73,6 +85,7 @@ class WriteRecord:
                 "is_dir": self.is_dir,
                 "result": self.result,
                 "message": self.message,
+                "batch": self.batch,
             },
             ensure_ascii=False,
         )
@@ -91,6 +104,7 @@ class WriteRecord:
         if not isinstance(source, str) or not isinstance(target, str):
             return None
         message = data.get("message")
+        batch = data.get("batch")
         return cls(
             action=str(data.get("action", ACTION_RENAME)),
             source=Path(source),
@@ -99,6 +113,7 @@ class WriteRecord:
             message=message if isinstance(message, str) else None,
             is_dir=bool(data.get("is_dir", False)),
             timestamp=str(data.get("timestamp", "")),
+            batch=batch if isinstance(batch, str) and batch else None,
         )
 
 
@@ -153,6 +168,8 @@ def read_records(root: Path) -> list[WriteRecord]:
 
 __all__ = [
     "ACTION_RENAME",
+    "ACTION_RESTORE",
+    "ACTION_TRASH",
     "ACTION_UNDO",
     "RESULT_FAILED",
     "RESULT_OK",

@@ -360,7 +360,7 @@ def test_undo_puts_the_name_back(
         qt_app.processEvents()
         assert (tmp_path / "海边日落.jpg").exists()
 
-        window.undo_rename()
+        window.undo_last_write()
         qt_app.processEvents()
 
         assert picture.exists()

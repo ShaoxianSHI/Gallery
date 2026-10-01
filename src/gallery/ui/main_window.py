@@ -47,7 +47,10 @@ from gallery.core.library.session import (
     save_session,
 )
 from gallery.core.metadata.exif import MetadataReport, read_metadata
+from gallery.core.metadata.journal import ACTION_RENAME
 from gallery.core.metadata.rename import RenameResult
+from gallery.core.metadata.trash import Failure, TrashResult
+from gallery.core.metadata.undo import UndoResult
 from gallery.core.places.geonames import PlaceIndex, download_data, geo_data_dir
 from gallery.ui import theme
 from gallery.ui.browser.grid import PREFETCH_MARGIN, PhotoGrid
@@ -110,6 +113,69 @@ def _rename_banner(result: RenameResult) -> str:
     return f"已重命名为「{result.entry.name}」{note}。"
 
 
+def _undo_note(journaled: bool) -> str:
+    return "" if journaled else "，但没能记下操作日志"
+
+
+def _trash_banner(result: TrashResult) -> str:
+    """移到废纸篓之后的那行提示。
+
+    三件事必须说清楚：动了多少、能不能撤销、没成的那些为什么没成。
+    废纸篓本身是第二层保险，但用户不该靠猜。
+    """
+    moved = result.moved
+    if not moved:
+        return f"没有移走任何东西：{_first_reason(result.failures)}{_undo_note(result.journaled)}。"
+    if any(isinstance(entry, FolderRef) for entry in moved):
+        head = f"已把相册「{_album_name(moved)}」和里面的内容移到废纸篓"
+    elif len(moved) == 1:
+        head = f"已把「{moved[0].name}」移到废纸篓"
+    else:
+        head = f"已把 {len(moved)} 项移到废纸篓"
+    if result.failures:
+        head += f"，但 {len(result.failures)} 项没移走：{_first_reason(result.failures)}"
+    # 不能一边说「⌘Z 可以撤销」一边说「撤销不了」，所以这两半是一起给的。
+    hint = "⌘Z 可以撤销。" if result.journaled else "⌘Z 撤销不了：没能记下操作日志。"
+    return f"{head}。{hint}"
+
+
+def _undo_banner(result: UndoResult) -> str:
+    """撤销之后的那行提示。"""
+    note = _undo_note(result.journaled)
+    if result.action == ACTION_RENAME:
+        return f"已撤销，恢复为「{result.entries[0].name}」{note}。"
+    restored = result.entries
+    if not restored:
+        return f"没能取回来：{_first_reason(result.failures)}{note}。"
+    if len(restored) == 1:
+        head = f"已从废纸篓取回「{restored[0].name}」"
+    else:
+        head = f"已从废纸篓取回 {len(restored)} 项"
+    if result.failures:
+        head += f"，但 {len(result.failures)} 项没取回来：{_first_reason(result.failures)}"
+    return f"{head}{note}。"
+
+
+def _album_name(entries: Sequence[GridEntry]) -> str:
+    """一批条目里的相册名（可能混着照片，取第一个相册的）。"""
+    for entry in entries:
+        if isinstance(entry, FolderRef):
+            return entry.display_name
+    return ""
+
+
+def _first_reason(failures: Sequence[Failure]) -> str:
+    """失败原因的摘要。
+
+    只有一项时要点名道姓 —— 用户得知道该去看哪张照片；多项时横幅只有一行容身之地，
+    只给第一条，完整列表在日志里。
+    """
+    if not failures:
+        return "原因不明"
+    head = f"「{failures[0].name}」" if len(failures) == 1 else "其中一项"
+    return f"{head}：{failures[0].message.rstrip('。')}"
+
+
 class MainWindow(QMainWindow):
     """应用主窗口。"""
 
@@ -136,6 +202,9 @@ class MainWindow(QMainWindow):
         self._preview_cache: OrderedDict[Path, QImage] = OrderedDict()
         self._metadata_cache: OrderedDict[Path, tuple[int, int, MetadataReport]] = OrderedDict()
         self._thumbnail_failures = 0
+        # 下一次 ⌘Z 会撤掉什么。日志只有写操作才会变，所以只在这几处刷新它 ——
+        # 每次选中变化都重放一遍日志的话，用方向键翻图时白白读文件。
+        self._undo_label: str | None = None
 
         self._size_index = nearest_index(self._session.thumbnail_edge)
         self._browse_mode: str = self._session.browse_mode or BROWSE_MODE_FLAT
@@ -181,11 +250,14 @@ class MainWindow(QMainWindow):
         self._grid.rename_requested.connect(self._on_rename_requested)
         self._grid.rename_committed.connect(self._on_rename_committed)
         self._grid.rename_active_changed.connect(self._on_rename_active_changed)
-        # 「重命名」能不能用，取决于当前有没有选中一个格子。
+        # 「重命名」「移到废纸篓」能不能用，取决于当前有没有选中东西。
         selection_model = self._grid.selectionModel()
         if selection_model is not None:
             selection_model.currentChanged.connect(
                 lambda _current, _previous: self._update_action_states()
+            )
+            selection_model.selectionChanged.connect(
+                lambda _selected, _deselected: self._update_action_states()
             )
 
         self._banner = QLabel()
@@ -277,9 +349,18 @@ class MainWindow(QMainWindow):
         self._rename_action.setShortcut(QKeySequence("Ctrl+R"))
         self._rename_action.triggered.connect(self.rename_current_entry)
 
-        self._undo_rename_action = QAction("撤销重命名", self)
-        self._undo_rename_action.setShortcut(QKeySequence.StandardKey.Undo)
-        self._undo_rename_action.triggered.connect(self.undo_rename)
+        # ⌘⌫：与访达一致，直接把选中的若干项移进废纸篓，不弹确认框（见 ADR 0008）。
+        # Qt 在 macOS 上把 Command 写作 Ctrl；StandardKey.Delete 指的是前向删除键
+        # （⌘⌦），不是访达那个「移到废纸篓」的 ⌘⌫，所以这里显式写出来。
+        self._trash_action = QAction("移到废纸篓", self)
+        self._trash_action.setShortcut(QKeySequence("Ctrl+Backspace"))
+        self._trash_action.triggered.connect(self.trash_selected)
+
+        # ⌘Z 撤的是这一摞里的栈顶，改名与移到废纸篓共用（core.metadata.undo）。
+        # 文案跟着栈顶变，用户按之前就知道会撤掉什么。
+        self._undo_action = QAction("撤销", self)
+        self._undo_action.setShortcut(QKeySequence.StandardKey.Undo)
+        self._undo_action.triggered.connect(self.undo_last_write)
 
         self._quit_action = QAction("退出 Gallery", self)
         self._quit_action.setShortcut(QKeySequence.StandardKey.Quit)
@@ -290,7 +371,8 @@ class MainWindow(QMainWindow):
         self._recent_menu = file_menu.addMenu("最近打开")
         file_menu.addSeparator()
         file_menu.addAction(self._rename_action)
-        file_menu.addAction(self._undo_rename_action)
+        file_menu.addAction(self._trash_action)
+        file_menu.addAction(self._undo_action)
         file_menu.addSeparator()
         file_menu.addAction(self._clear_cache_action)
         file_menu.addSeparator()
@@ -390,7 +472,8 @@ class MainWindow(QMainWindow):
             "（随时可删，删除后会自动重建）\n"
             "· 缓存到系统目录：照片文件夹保持一个字节都不写入\n\n"
             "无论选哪个，Gallery 都不会移动或修改你的照片；"
-            "唯一会改到文件名的操作，是你自己触发的那次重命名。"
+            "只有你自己触发的重命名（⌘R）和移到废纸篓（⌘⌫）会动文件，"
+            "两者都能用 ⌘Z 撤销。"
         )
         in_library = box.addButton("在库中缓存（推荐）", QMessageBox.ButtonRole.AcceptRole)
         system_cache = box.addButton("缓存到系统目录", QMessageBox.ButtonRole.ActionRole)
@@ -412,6 +495,8 @@ class MainWindow(QMainWindow):
         self._library = library
         self._generation += 1
         self._thumbnail_failures = 0
+        # 换一个库就是换一摞撤销栈，菜单里的「撤销」要立刻跟着换。
+        self._refresh_undo_label()
         self._current_row = -1
         self._preview_cache.clear()
         self._metadata_cache.clear()
@@ -790,7 +875,7 @@ class MainWindow(QMainWindow):
         self._update_action_states()
         self._load_detail(row)
 
-    # ---- 重命名（唯一会改动用户文件的入口）----------------------------------
+    # ---- 重命名与移到废纸篓（仅有的两个会动用户文件的入口）--------------------
 
     def rename_current_entry(self) -> None:
         """对当前选中的格子开始重命名（菜单 / ⌘R 走这里）。"""
@@ -818,24 +903,107 @@ class MainWindow(QMainWindow):
             self._show_banner(exc.message)
             return
         self._apply_rename(result, row)
+        self._refresh_undo_label()
 
-    def undo_rename(self) -> None:
-        """撤销最近一次改名（⌘Z）。"""
+    # ---- 移到废纸篓（界面上就是「删除」，见 ADR 0008）------------------------
+
+    def trash_selected(self) -> None:
+        """⌘⌫：把选中的照片 / 相册移进系统废纸篓。
+
+        不弹确认框，理由和访达一样：废纸篓本身就是那层保险，⌘Z 再是一层；
+        弹窗只会让「整理一批照片」变成一连串的确认。做完立刻用横幅说清楚。
+        """
+        library = self._library
+        if library is None or self._stack.currentWidget() is not self._grid_page:
+            return
+        if self._grid.is_renaming():
+            return  # 键盘正在行内输入框里，删掉正在编辑的那一张只会让人以为见鬼了
+        rows = self._grid.selected_rows()
+        entries = [entry for entry in (self._model.entry_at(row) for row in rows) if entry]
+        if not entries:
+            return
+        try:
+            result = library.move_to_trash(entries)
+        except GalleryError as exc:
+            logger.info("移到废纸篓失败：%s", exc.detail or exc.message)
+            self._show_banner(exc.message)
+            return
+        self._forget_trashed(result.moved)
+        # 只摘真正移走的那些行：批量里失败的那几张还得留在网格上。
+        moved_paths = {entry.path for entry in result.moved}
+        removed = [row for row in rows if self._is_row_moved(row, moved_paths)]
+        self._model.remove_rows(removed)
+        self._select_after_removal(removed)
+        self._show_banner(_trash_banner(result))
+        self._refresh_undo_label()
+        self._refresh_thumbnail_window()
+
+    def _is_row_moved(self, row: int, moved_paths: set[Path]) -> bool:
+        entry = self._model.entry_at(row)
+        return entry is not None and entry.path in moved_paths
+
+    def _forget_trashed(self, entries: Sequence[GridEntry]) -> None:
+        """丢掉内存里按路径索引的缓存。
+
+        磁盘上的缩略图缓存**留着**：照片还在废纸篓里，撤销回来时直接命中，
+        不必重新解码（这与改名的处理相反，见 ``Library.move_to_trash``）。
+        """
+        for entry in entries:
+            self._preview_cache.pop(entry.path, None)
+            self._metadata_cache.pop(entry.path, None)
+
+    def _select_after_removal(self, removed: Sequence[int]) -> None:
+        """摘掉几行之后，把选中落到原来那一带（访达是选中后一个）。"""
+        if not removed:
+            return
+        target = min(removed)
+        if target >= self._model.rowCount():
+            target = self._model.rowCount() - 1
+        if target >= 0:
+            self._grid.select_row(target, ensure_visible=False)
+
+    # ---- 撤销 --------------------------------------------------------------
+
+    def undo_last_write(self) -> None:
+        """⌘Z：撤销最近一次写操作 —— 改回去，或者从废纸篓取回来。"""
         library = self._library
         if library is None:
             return
         try:
-            result = library.undo_last_rename()
+            result = library.undo_last_write()
         except GalleryError as exc:
-            logger.info("撤销重命名失败：%s", exc.detail or exc.message)
+            logger.info("撤销失败：%s", exc.detail or exc.message)
             self._show_banner(exc.message)
+            self._refresh_undo_label()
             return
         if result is None:
-            self._show_banner("没有可撤销的改名。")
+            self._show_banner("没有可撤销的操作。")
             return
-        # 撤销之前，这一行挂在改完名的新路径上 —— 要按它找行号。
-        row = self._model.row_of_path(result.previous.path)
-        self._apply_rename(result, row, banner=f"已撤销，恢复为「{result.entry.name}」。")
+        if result.action == ACTION_RENAME and result.replaced is not None:
+            # 撤销之前，这一行挂在改完名的新路径上 —— 要按它找行号。
+            row = self._model.row_of_path(result.replaced.path)
+            self._apply_rename(
+                RenameResult(
+                    entry=result.entries[0],
+                    previous=result.replaced,
+                    renamed=True,
+                    journaled=result.journaled,
+                ),
+                row,
+                banner=_undo_banner(result),
+            )
+        else:
+            self._apply_restore(result)
+            self._show_banner(_undo_banner(result))
+        self._refresh_undo_label()
+
+    def _apply_restore(self, result: UndoResult) -> None:
+        """把撤销删除取回来的条目插回网格（顺序与扫描一致，见 model.insert_entry）。"""
+        if not result.entries:
+            return
+        rows = [self._model.insert_entry(entry) for entry in result.entries]
+        self._grid.select_row(min(rows), ensure_visible=False)
+        self._refresh_thumbnail_window()
 
     def _apply_rename(self, result: RenameResult, row: int, *, banner: str | None = None) -> None:
         """把一次改名（或撤销）同步进模型与各级缓存。"""
@@ -1111,9 +1279,27 @@ class MainWindow(QMainWindow):
         ):
             action.setEnabled(in_detail)
         self._clear_cache_action.setEnabled(self._library is not None)
-        # 重命名只对网格里的一个格子有意义：大图页、没选中东西时都不该可用。
+        # 重命名与移到废纸篓只对网格里的选中项有意义：大图页、没选中东西时都不该可用。
+        # 改名的过程中也不启用 —— 那时键盘归输入框，⌘⌫ 不该把正在编辑的那张删掉。
         in_grid = self._stack.currentWidget() is self._grid_page
-        self._rename_action.setEnabled(in_grid and self._grid.currentIndex().isValid())
+        idle = not self._grid.is_renaming()
+        has_current = self._grid.currentIndex().isValid()
+        self._rename_action.setEnabled(in_grid and has_current and idle)
+        self._trash_action.setEnabled(in_grid and bool(self._grid.selected_rows()) and idle)
+        self._update_undo_action()
+
+    def _update_undo_action(self) -> None:
+        """「撤销」的文案跟着这摞的栈顶变，栈空时禁用。"""
+        self._undo_action.setText(
+            "撤销" if self._undo_label is None else f"撤销 {self._undo_label}"
+        )
+        self._undo_action.setEnabled(self._undo_label is not None)
+
+    def _refresh_undo_label(self) -> None:
+        """重新问一次 core：下一次 ⌘Z 会撤掉什么。"""
+        library = self._library
+        self._undo_label = library.next_undo_label() if library is not None else None
+        self._update_undo_action()
 
     # ---- 浏览方式与相册导航 ------------------------------------------------
 
