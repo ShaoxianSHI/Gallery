@@ -331,6 +331,8 @@ class MainWindow(QMainWindow):
         self._pipeline.failed.connect(self._on_thumbnail_failed)
 
         self._banner.hide()
+        # 切库时真正清空大图区，别让上一个库的全分辨率副本一直占着内存。
+        self._detail.clear_image()
         self.setWindowTitle(f"{library.display_name} — Gallery")
         self._stack.setCurrentWidget(self._grid_page)
         self._update_action_states()
@@ -542,7 +544,7 @@ class MainWindow(QMainWindow):
             self._request_full(ref, row, generation)
             return
 
-        self._detail.show_message("正在载入…")
+        self._detail.show_loading()
         max_edge = self._preview_edge()
 
         def work_preview(context: TaskContext) -> object:
@@ -594,7 +596,7 @@ class MainWindow(QMainWindow):
     def _on_detail_failed(self, ref: PhotoRef, row: int, generation: int, message: str) -> None:
         if generation != self._generation or row != self._current_row:
             return
-        self._detail.show_message(message)
+        self._detail.show_error(message)
         self._set_status(ref.name, right="无法显示")
 
     def _prefetch_neighbours(self, row: int) -> None:

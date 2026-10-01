@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QRectF, Qt, Signal
+from PySide6.QtCore import QEvent, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QColor,
     QImage,
@@ -34,8 +34,28 @@ from gallery.ui.zoom import ZOOM_STEP, clamp_scale, fit_scale
 #: 查看区的背景色（接近 macOS 的深色看图背景）。
 BACKGROUND = QColor(28, 28, 30)
 
-#: 「正在载入」提示的字号。
-MESSAGE_FONT_SIZE = 15
+#: 角落提示的字号。
+OVERLAY_FONT_SIZE = 13
+
+#: 角落提示与视口边缘的距离。
+OVERLAY_MARGIN = 16
+
+#: 「正在载入」延迟多久才出现。加载很快时它根本不该闪一下 —— 那本身就是一种闪烁。
+LOADING_HINT_DELAY_MS = 150
+
+
+_OVERLAY_STYLE = f"""
+QLabel#detailOverlay {{
+    background: rgba(0, 0, 0, 0.62);
+    color: rgba(255, 255, 255, 0.94);
+    border-radius: 9px;
+    padding: 6px 12px;
+    font-size: {OVERLAY_FONT_SIZE}px;
+}}
+QLabel#detailOverlay[error="true"] {{
+    background: rgba(150, 40, 40, 0.82);
+}}
+"""
 
 
 class DetailView(QGraphicsView):
@@ -57,6 +77,7 @@ class DetailView(QGraphicsView):
         self._scene.addItem(self._item)
         self._pixmap = QPixmap()
         self._fit_mode = True
+        self._overlay_text = ""
 
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -72,13 +93,16 @@ class DetailView(QGraphicsView):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
-        self._message = QLabel(self)
-        self._message.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._message.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        self._message.setStyleSheet(
-            f"color: rgba(255,255,255,0.75); font-size: {MESSAGE_FONT_SIZE}px;"
-        )
-        self._message.hide()
+        self._overlay = QLabel(self)
+        self._overlay.setObjectName("detailOverlay")
+        self._overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._overlay.setWordWrap(True)
+        self._overlay.setStyleSheet(_OVERLAY_STYLE)
+        self._overlay.hide()
+        self._loading_timer = QTimer(self)
+        self._loading_timer.setSingleShot(True)
+        self._loading_timer.setInterval(LOADING_HINT_DELAY_MS)
+        self._loading_timer.timeout.connect(self._show_overlay)
 
     # ---- 状态 --------------------------------------------------------------
 
@@ -109,7 +133,7 @@ class DetailView(QGraphicsView):
         :param refit: 是否重新适配窗口。替换图像（预览 → 全分辨率）时传 ``False``，
             可以保住用户当前的缩放与位置，不会「跳一下」。
         """
-        self._message.hide()
+        self.hide_overlay()
         pixmap = QPixmap.fromImage(image)
         # 先放开上一张：32MP 照片的全分辨率副本约 128 MB，
         # 让新旧两张同时存在会把内存峰值直接翻倍。
@@ -124,18 +148,53 @@ class DetailView(QGraphicsView):
         else:
             self._emit_scale()
 
-    def show_message(self, text: str) -> None:
-        """清空画面并显示一句提示（例如「正在载入…」或错误说明）。"""
+    def show_loading(self, text: str = "正在载入…") -> None:
+        """显示「正在载入」。
+
+        **不清空画面**：上一张照片继续留在屏幕上，只是右上角多一个提示。
+        切图时刷一下黑屏比多等一会儿刺眼得多。
+        """
+        self._overlay_text = text
+        if self._overlay.isVisible():
+            if not self._overlay.property("error"):
+                # 已经在提示「正在载入」：保持原样，免得提示本身一闪一闪。
+                return
+            # 上一张留下了错误提示：先撤掉，别让旧错误继续挂在屏幕上。
+            self.hide_overlay()
+        self._overlay.setProperty("error", False)
+        self._loading_timer.start()
+
+    def show_error(self, text: str) -> None:
+        """显示错误。同样不刷黑：上一张留在原处，右上角给出原因。"""
+        self._overlay_text = text
+        self._overlay.setProperty("error", True)
+        self._loading_timer.stop()
+        self._show_overlay()
+
+    def hide_overlay(self) -> None:
+        self._loading_timer.stop()
+        self._overlay.hide()
+
+    def clear_image(self) -> None:
+        """真正清空画面（切库或没有可显示内容时用），会释放全分辨率副本。"""
+        self.hide_overlay()
         self._pixmap = QPixmap()
         self._item.setPixmap(QPixmap())
         self._scene.setSceneRect(QRectF())
         self.resetTransform()
-        self._message.setText(text)
-        self._message.show()
-        self._reposition_message()
 
-    def clear(self) -> None:
-        self.show_message("")
+    def _show_overlay(self) -> None:
+        self._overlay.setText(self._overlay_text)
+        self._overlay.adjustSize()
+        self._repolish_overlay()
+        self._overlay.show()
+        self._reposition_overlay()
+
+    def _repolish_overlay(self) -> None:
+        # 动态属性变了要重新套一遍样式表，否则错误态不会变色。
+        style = self._overlay.style()
+        style.unpolish(self._overlay)
+        style.polish(self._overlay)
 
     # ---- 缩放 --------------------------------------------------------------
 
@@ -228,10 +287,21 @@ class DetailView(QGraphicsView):
         super().resizeEvent(event)  # type: ignore[arg-type]
         if self._fit_mode:
             self.fit_to_window()
-        self._reposition_message()
+        self._reposition_overlay()
 
-    def _reposition_message(self) -> None:
-        self._message.setGeometry(self.viewport().rect())
+    def _reposition_overlay(self) -> None:
+        """贴到视口右上角；文案过长时换行并限制宽度，不会横穿整张照片。"""
+        area = self.viewport().geometry()
+        self._overlay.setMaximumWidth(max(160, area.width() - 2 * OVERLAY_MARGIN))
+        self._overlay.adjustSize()
+        width = self._overlay.width()
+        x = area.right() - OVERLAY_MARGIN - width + 1
+        self._overlay.move(max(area.left() + OVERLAY_MARGIN, x), area.top() + OVERLAY_MARGIN)
 
 
-__all__ = ["BACKGROUND", "DetailView"]
+__all__ = [
+    "BACKGROUND",
+    "LOADING_HINT_DELAY_MS",
+    "OVERLAY_MARGIN",
+    "DetailView",
+]
