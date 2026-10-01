@@ -12,7 +12,6 @@
 from __future__ import annotations
 
 import os
-import time
 from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
@@ -32,20 +31,20 @@ from gallery.core.session import BROWSE_MODE_ALBUMS, SessionState, save_session 
 from gallery.ui import theme  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 
-#: 等待扫描与首屏布局稳定的时限。
+#: 等待扫描与首屏布局稳定的时限（只是上限，条件一成立就返回）。
 READY_TIMEOUT_SECONDS = 8.0
 
 #: 取样点离右边多远。相册只有两个，右边整片是空的，取到的就是底色本身。
 SAMPLE_FROM_RIGHT = 24
 
 
-@pytest.fixture(scope="module")
-def qt_app() -> QApplication:
-    return QApplication.instance() or QApplication([])  # type: ignore[return-value]
-
-
 @pytest.fixture
-def window(qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]) -> MainWindow:
+def window(
+    qt_app: QApplication,
+    wait_for: Callable[..., bool],
+    tmp_path: Path,
+    make_photo: Callable[..., Path],
+) -> MainWindow:
     """开一个相册模式的窗口：根目录下放两个相册，路径条与网格都可见。"""
     root = tmp_path / "库"
     for album in ("2022-复活节波尔多", "2023-京都"):
@@ -62,12 +61,10 @@ def window(qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
     window.resize(1200, 800)
     window.show()
 
-    deadline = time.monotonic() + READY_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
-        qt_app.processEvents()
-        if window._model.rowCount() >= 2 and window._breadcrumb.isVisible():
-            break
-        time.sleep(0.01)
+    wait_for(
+        lambda: window._model.rowCount() >= 2 and window._breadcrumb.isVisible(),
+        timeout=READY_TIMEOUT_SECONDS,
+    )
     return window
 
 
