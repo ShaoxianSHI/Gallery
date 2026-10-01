@@ -30,6 +30,15 @@ INDEX_FILE_NAME: Final = "index.db"
 #: 应用在系统目录（macOS 为 ``~/Library/Application Support``）下的目录名。
 APP_NAME: Final = "Gallery"
 
+#: 随包分发的只读资源目录名，位于 ``src/gallery/`` 内（目前只有应用图标）。
+RESOURCES_DIR_NAME: Final = "resources"
+
+#: 应用图标各档 PNG 的文件名主干，实际文件名是 ``<主干>-<边长>.png``。
+APP_ICON_BASENAME: Final = "gallery-icon"
+
+#: 应用图标提供的边长档位（像素）。最大的一档同时是生成 ``.icns`` 的来源。
+APP_ICON_SIZES: Final = (16, 32, 64, 256, 1024)
+
 #: 缩略图生成算法的版本号。解码方式、缩放滤镜或输出格式变化时递增；
 #: 缓存 key 包含它，因此递增会让整批旧缩略图自动失效。
 THUMBNAIL_SPEC_VERSION: Final = 1
@@ -44,6 +53,8 @@ DEFAULT_MAX_CACHE_BYTES: Final = 2 * 1024**3
 GRID_TILE_EDGE: Final = 200
 
 __all__ = [
+    "APP_ICON_BASENAME",
+    "APP_ICON_SIZES",
     "APP_NAME",
     "CACHE_DIR_NAME",
     "CONFIG_DIR_NAME",
@@ -53,6 +64,7 @@ __all__ = [
     "GRID_TILE_EDGE",
     "INDEX_FILE_NAME",
     "JOURNAL_DIR_NAME",
+    "RESOURCES_DIR_NAME",
     "THUMBNAIL_DIR_NAME",
     "THUMBNAIL_SPEC_VERSION",
 ]

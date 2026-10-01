@@ -11,9 +11,30 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import cast
 
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
+from gallery.core.constants import APP_NAME
+from gallery.core.paths import app_icon_files
 from gallery.ui.main_window import MainWindow
+
+
+def apply_app_branding(app: QApplication) -> None:
+    """给应用安上名字与图标。
+
+    图标是窗口标题栏左侧那一枚（``⌘Tab``、访达里的那一枚属于 ``.app`` 包，
+    见 ``gallery.macos_app``）。资源缺失时静默跳过：图标不该让应用起不来。
+    """
+    app.setApplicationName(APP_NAME)
+    app.setApplicationDisplayName(APP_NAME)
+    app.setOrganizationName(APP_NAME)
+
+    icon = QIcon()
+    for path in app_icon_files():
+        if path.is_file():
+            icon.addFile(str(path))
+    if not icon.isNull():
+        app.setWindowIcon(icon)
 
 
 def create_application(argv: Sequence[str] | None = None) -> QApplication:
@@ -22,9 +43,7 @@ def create_application(argv: Sequence[str] | None = None) -> QApplication:
     if existing is not None:
         return cast(QApplication, existing)
     app = QApplication(list(argv) if argv is not None else list(sys.argv))
-    app.setApplicationName("Gallery")
-    app.setApplicationDisplayName("Gallery")
-    app.setOrganizationName("Gallery")
+    apply_app_branding(app)
     return app
 
 
@@ -41,4 +60,4 @@ def run(
     return app.exec()
 
 
-__all__ = ["create_application", "run"]
+__all__ = ["apply_app_branding", "create_application", "run"]

@@ -3,6 +3,9 @@
 这里的函数都是**纯函数**：不创建目录、不读取文件、不检查存在性
 （唯一的例外是 ``has_config_dir``，它只回答一个是非问题）。
 落盘由调用方显式触发，这样「什么时候会写用户的目录」在代码里始终是可见的。
+
+随包分发的只读资源（目前只有应用图标）由 ``resources_dir`` 定位：它跟着包的
+安装位置走，与用户的库无关。
 """
 
 from __future__ import annotations
@@ -13,12 +16,15 @@ import sys
 from pathlib import Path
 
 from gallery.core.constants import (
+    APP_ICON_BASENAME,
+    APP_ICON_SIZES,
     APP_NAME,
     CACHE_DIR_NAME,
     CONFIG_DIR_NAME,
     CONFIG_FILE_NAME,
     INDEX_FILE_NAME,
     JOURNAL_DIR_NAME,
+    RESOURCES_DIR_NAME,
     THUMBNAIL_DIR_NAME,
 )
 
@@ -110,9 +116,38 @@ def external_thumbnail_cache_dir(root: Path, *, base: Path | None = None) -> Pat
     return app_cache_root(base=base) / THUMBNAIL_DIR_NAME / library_digest(root)
 
 
+def resources_dir() -> Path:
+    """随包分发的只读资源目录（图标等）。
+
+    定位方式是包自身的安装位置，而不是当前工作目录：源码树里、``uv sync`` 装出来的
+    虚拟环境里、以及 ``Gallery.app`` 里都指向同一份文件。
+    """
+    return Path(__file__).resolve().parents[1] / RESOURCES_DIR_NAME
+
+
+def icon_file(edge: int) -> Path:
+    """应用图标某一档边长的 PNG。"""
+    return resources_dir() / f"{APP_ICON_BASENAME}-{edge}.png"
+
+
+def app_icon_files() -> list[Path]:
+    """应用图标的全部档位（从小到大）。
+
+    交给 ``QIcon`` 时它会按需要的边长挑最接近的一档，小尺寸才不会糊。
+    """
+    return [icon_file(edge) for edge in APP_ICON_SIZES]
+
+
+def app_icon_master() -> Path:
+    """最大边长的那档图标，``.icns`` 由它缩放生成。"""
+    return icon_file(max(APP_ICON_SIZES))
+
+
 __all__ = [
     "app_cache_root",
     "app_data_base",
+    "app_icon_files",
+    "app_icon_master",
     "app_state_dir",
     "app_state_file",
     "cache_dir",
@@ -120,9 +155,11 @@ __all__ = [
     "config_file",
     "external_thumbnail_cache_dir",
     "has_config_dir",
+    "icon_file",
     "index_file",
     "is_within",
     "journal_dir",
     "library_digest",
+    "resources_dir",
     "thumbnail_cache_dir",
 ]

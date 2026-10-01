@@ -5,7 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from gallery.core import paths
-from gallery.core.constants import CONFIG_DIR_NAME
+from gallery.core.constants import (
+    APP_ICON_BASENAME,
+    APP_ICON_SIZES,
+    CONFIG_DIR_NAME,
+    RESOURCES_DIR_NAME,
+)
 
 
 def test_paths_live_under_config_dir(tmp_path: Path) -> None:
@@ -73,3 +78,29 @@ def test_is_within(tmp_path: Path) -> None:
     assert paths.is_within(root, tmp_path / "别处") is False
     # 前缀相同的兄弟目录不算「在其下」
     assert paths.is_within(root, tmp_path / "库2") is False
+
+
+def test_resources_dir_follows_the_package() -> None:
+    """资源跟着包走，而不是当前工作目录：从别处启动也找得到。"""
+    resources = paths.resources_dir()
+
+    assert resources.is_absolute()
+    assert resources.name == RESOURCES_DIR_NAME
+    assert resources.parent.name == "gallery"
+
+
+def test_app_icon_files_are_committed_and_ordered() -> None:
+    """图标各档必须真的在仓库里，否则窗口图标会静默变成空白。"""
+    files = paths.app_icon_files()
+
+    assert [path.name for path in files] == [
+        f"{APP_ICON_BASENAME}-{edge}.png" for edge in APP_ICON_SIZES
+    ]
+    assert all(path.is_file() for path in files)
+
+
+def test_app_icon_master_is_the_largest() -> None:
+    master = paths.app_icon_master()
+
+    assert master in paths.app_icon_files()
+    assert master.name.endswith(f"-{max(APP_ICON_SIZES)}.png")

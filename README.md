@@ -80,6 +80,24 @@ uv run gallery                # 启动
 
 > exiftool 是运行时依赖，仅元数据写回功能需要。缺少它时 Gallery 会降级为只读模式，而不是报错崩溃。
 
+### 应用图标
+
+窗口标题栏左侧那一枚图标由 `src/gallery/resources/` 提供，不需要额外操作。
+
+Dock、访达、`⌘Tab` 里显示的图标来自 `.app` 包，所以想让它们也变成 Gallery 的图标，
+把 Gallery 打包成一个应用包再启动：
+
+```bash
+uv run python -m gallery.macos_app                   # 生成 dist/Gallery.app
+uv run python -m gallery.macos.app ~/Applications   # 或者直接放到「应用程序」
+```
+
+双击生成出来的 `Gallery.app` 即可：Dock、访达、窗口标题栏里都是同一枚图标。
+
+这个包**不打包 Python 依赖**，它的启动器指向本仓库的 `.venv`，因此只在开发机上有效；
+仓库移动、或 `uv sync` 重建过虚拟环境之后，重新生成一次即可。想换图标，见
+`src/gallery/resources/README.md`。
+
 ---
 
 ## 使用
