@@ -180,6 +180,7 @@ class MainWindow(QMainWindow):
         self._grid.icon_edge_changed.connect(self._on_grid_edge_changed)
         self._grid.rename_requested.connect(self._on_rename_requested)
         self._grid.rename_committed.connect(self._on_rename_committed)
+        self._grid.rename_active_changed.connect(self._on_rename_active_changed)
         # 「重命名」能不能用，取决于当前有没有选中一个格子。
         selection_model = self._grid.selectionModel()
         if selection_model is not None:
@@ -249,8 +250,11 @@ class MainWindow(QMainWindow):
         self._zoom_out_action.setShortcut(QKeySequence.StandardKey.ZoomOut)
         self._zoom_out_action.triggered.connect(self._detail.zoom_out)
 
+        # 回上一层用 Esc：⌘↑ 在 macOS 上已经被占着，我们抢不到。
+        # Esc 在大图页是「返回网格」，在网格页才是「上一级」——同一时刻只有一个主人
+        # （见 _update_navigation_actions），两处不会互相抢键。
         self._up_action = QAction("上一级", self)
-        self._up_action.setShortcut(QKeySequence("Ctrl+Up"))
+        self._up_action.setShortcut(QKeySequence("Esc"))
         self._up_action.triggered.connect(self.go_up)
 
         self._albums_action = QAction("相册（按文件夹）", self)
@@ -798,6 +802,10 @@ class MainWindow(QMainWindow):
         """再次点击已选中的格子：进入行内重命名。"""
         self._grid.begin_rename(index)
 
+    def _on_rename_active_changed(self, _active: bool) -> None:
+        """改名的这段时间里 Esc 是「取消改名」，菜单里的「上一级」也跟着让开。"""
+        self._update_action_states()
+
     def _on_rename_committed(self, row: int, text: str) -> None:
         entry = self._model.entry_at(row)
         library = self._library
@@ -1181,8 +1189,14 @@ class MainWindow(QMainWindow):
 
     def _update_navigation_actions(self) -> None:
         library = self._library
+        # 「上一级」只在网格页启用：大图页的 Esc 是「返回网格」，两个动作共用一个 Esc，
+        # 必须有一个是关着的，否则同一按键落到谁身上说不准。改名的过程中也不启用 ——
+        # 那时 Esc 是输入框的「取消改名」（输入框还会先抢一次按键，见 RenameEdit.event）。
+        in_grid = self._stack.currentWidget() is self._grid_page
         can_go_up = (
-            library is not None
+            in_grid
+            and not self._grid.is_renaming()
+            and library is not None
             and self._browse_mode == BROWSE_MODE_ALBUMS
             and parent_of(library.root, self._current_dir or library.root) is not None
         )

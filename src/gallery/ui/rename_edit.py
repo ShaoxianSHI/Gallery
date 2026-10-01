@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QRect, Qt, Signal
-from PySide6.QtGui import QFocusEvent, QKeyEvent
+from PySide6.QtCore import QEvent, QRect, Qt, Signal
+from PySide6.QtGui import QFocusEvent, QKeyEvent, QShortcutEvent
 from PySide6.QtWidgets import QLineEdit, QWidget
 
 
@@ -55,6 +55,15 @@ class RenameEdit(QLineEdit):
         return self.isVisible()
 
     # ---- 事件 --------------------------------------------------------------
+
+    def event(self, event: QEvent) -> bool:
+        # 窗口把 Esc 绑成了「上一级」，所以这里先把 Esc 抢过来：Qt 会先问焦点控件要不要
+        # 接管这次按键（ShortcutOverride），接管了就当成普通按键交给 keyPressEvent，
+        # 不会走 QAction —— 否则改到一半按 Esc 会跳出上一层，输入框里的字也白打了。
+        if isinstance(event, QShortcutEvent) and event.key() == Qt.Key.Key_Escape:
+            event.accept()
+            return True
+        return super().event(event)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):

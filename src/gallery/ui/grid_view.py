@@ -251,6 +251,9 @@ class PhotoGrid(QListView):
     rename_requested = Signal(QModelIndex)
     #: 行内编辑确认了新名字：``(行号, 新名字)``。
     rename_committed = Signal(int, str)
+    #: 行内重命名开始了（``True``）或收起来了（``False``）。
+    #: 改名的这段时间 Esc 归输入框（取消），窗口据此把「上一级」让开。
+    rename_active_changed = Signal(bool)
 
     def __init__(self, parent: QWidget | None = None, *, icon_edge: int = DEFAULT_EDGE) -> None:
         super().__init__(parent)
@@ -512,18 +515,23 @@ class PhotoGrid(QListView):
         rect.setTop(rect.top() - 3)
         rect.setHeight(rect.height() + 6)
         self._rename_edit.start(rect, text, keep_suffix=not index.data(ALBUM_ROLE))
+        self.rename_active_changed.emit(True)
         return True
 
     def cancel_rename(self) -> None:
         """收起输入框，不提交。"""
         self._rename_timer.stop()
         self._pending_rename_row = -1
+        was_editing = self._rename_edit.is_editing()
         self._rename_edit.stop()
+        if was_editing:
+            self.rename_active_changed.emit(False)
 
     def is_renaming(self) -> bool:
         return self._rename_edit.is_editing()
 
     def _on_rename_committed(self, text: str) -> None:
+        self.rename_active_changed.emit(False)
         row = self.current_row()
         if row >= 0:
             self.rename_committed.emit(row, text)
