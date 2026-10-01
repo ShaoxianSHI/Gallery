@@ -90,6 +90,40 @@ class PhotoListModel(QAbstractListModel):
     def row_of_index(self, index: QModelIndex) -> int:
         return index.row() if index.isValid() else -1
 
+    def row_of_path(self, path: Path) -> int:
+        """某个路径当前在第几行，没有就返回 ``-1``。"""
+        return self._row_by_path.get(Path(path), -1)
+
+    # ---- 原地更新 ----------------------------------------------------------
+
+    def replace_entry(self, row: int, entry: GridEntry) -> bool:
+        """把某一行换成新的条目引用（重命名后路径变了）。返回是否替换成功。
+
+        刻意**不重新扫描**：改个名字而已，让整屏闪回占位框再一张张弹回来太蠢。
+        已经缩放好的缩略图顺手搬到新键上，于是这一格连闪都不闪。
+        """
+        if not 0 <= row < len(self._entries):
+            return False
+        previous = self._entries[row]
+        self._row_by_path.pop(previous.path, None)
+        self._entries[row] = entry
+        self._row_by_path[entry.path] = row
+        cached = self._pixmaps.pop(previous.path, None)
+        if cached is not None:
+            self._pixmaps[entry.path] = cached
+            self._pixmaps.move_to_end(entry.path)
+        index = self.index(row, 0)
+        self.dataChanged.emit(
+            index,
+            index,
+            [
+                int(Qt.ItemDataRole.DisplayRole),
+                int(Qt.ItemDataRole.ToolTipRole),
+                int(Qt.ItemDataRole.DecorationRole),
+            ],
+        )
+        return True
+
     # ---- 数据装载 ----------------------------------------------------------
 
     def append(self, entries: Sequence[GridEntry]) -> None:

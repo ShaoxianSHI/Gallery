@@ -67,7 +67,9 @@ class WelcomeView(QWidget):
         layout.addWidget(self._open_button, alignment=Qt.AlignmentFlag.AlignCenter)
 
         layout.addSpacing(6)
-        hint = QLabel("不会移动、重命名或修改你的照片。首次打开时会先询问缓存目录放在哪里。")
+        hint = QLabel(
+            "不会移动或修改你的照片（改文件名只有你自己动手时才会发生）。首次打开时会先询问缓存目录放在哪里。"
+        )
         hint.setObjectName("welcomeHint")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(hint)

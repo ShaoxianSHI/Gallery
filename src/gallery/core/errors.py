@@ -57,6 +57,10 @@ class GeoDataError(GalleryError):
     """城市数据下载或写入失败（网络不通、压缩包损坏、缓存目录不可写）。"""
 
 
+class RenameError(GalleryError):
+    """重命名被拒绝或失败（名字非法、目标已存在、权限不足、撤销条件不满足）。"""
+
+
 __all__ = [
     "ConfigError",
     "GalleryError",
@@ -65,5 +69,6 @@ __all__ = [
     "LibraryError",
     "LibraryNotAccessibleError",
     "MetadataError",
+    "RenameError",
     "UnsupportedFormatError",
 ]

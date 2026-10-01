@@ -39,6 +39,7 @@ from gallery.core.geonames import PlaceIndex, download_data, geo_data_dir
 from gallery.core.library import Library
 from gallery.core.metadata import MetadataReport, read_metadata
 from gallery.core.photos import FolderRef, GridEntry, PhotoRef
+from gallery.core.rename import RenameResult
 from gallery.core.scanner import ScanReport
 from gallery.core.session import (
     BROWSE_MODE_ALBUMS,
@@ -96,6 +97,16 @@ QLabel#banner {
     color: palette(text);
 }
 """
+
+
+def _rename_banner(result: RenameResult) -> str:
+    """改名之后的那行提示。
+
+    记账失败必须说出来：这时 ⌘Z 撤销不了，用户只能自己去访达里改回来，
+    让他以为「随时能撤销」比不告诉他更糟。
+    """
+    note = "" if result.journaled else "，但没能记下操作日志，⌘Z 撤销不了"
+    return f"已重命名为「{result.entry.name}」{note}。"
 
 
 class MainWindow(QMainWindow):
@@ -160,6 +171,14 @@ class MainWindow(QMainWindow):
         self._grid.viewport_changed.connect(self._refresh_thumbnail_window)
         self._grid.size_step_requested.connect(self.step_thumbnail_size)
         self._grid.icon_edge_changed.connect(self._on_grid_edge_changed)
+        self._grid.rename_requested.connect(self._on_rename_requested)
+        self._grid.rename_committed.connect(self._on_rename_committed)
+        # 「重命名」能不能用，取决于当前有没有选中一个格子。
+        selection_model = self._grid.selectionModel()
+        if selection_model is not None:
+            selection_model.currentChanged.connect(
+                lambda _current, _previous: self._update_action_states()
+            )
 
         self._banner = QLabel()
         self._banner.setObjectName("banner")
@@ -243,6 +262,14 @@ class MainWindow(QMainWindow):
         self._clear_cache_action = QAction("清空缩略图缓存", self)
         self._clear_cache_action.triggered.connect(self.clear_thumbnail_cache)
 
+        self._rename_action = QAction("重命名…", self)
+        self._rename_action.setShortcut(QKeySequence("Ctrl+R"))
+        self._rename_action.triggered.connect(self.rename_current_entry)
+
+        self._undo_rename_action = QAction("撤销重命名", self)
+        self._undo_rename_action.setShortcut(QKeySequence.StandardKey.Undo)
+        self._undo_rename_action.triggered.connect(self.undo_rename)
+
         self._quit_action = QAction("退出 Gallery", self)
         self._quit_action.setShortcut(QKeySequence.StandardKey.Quit)
         self._quit_action.triggered.connect(self.close)
@@ -250,6 +277,9 @@ class MainWindow(QMainWindow):
         file_menu = self.menuBar().addMenu("文件")
         file_menu.addAction(self._open_action)
         self._recent_menu = file_menu.addMenu("最近打开")
+        file_menu.addSeparator()
+        file_menu.addAction(self._rename_action)
+        file_menu.addAction(self._undo_rename_action)
         file_menu.addSeparator()
         file_menu.addAction(self._clear_cache_action)
         file_menu.addSeparator()
@@ -348,7 +378,8 @@ class MainWindow(QMainWindow):
             f"· 在库中缓存：在照片文件夹里创建 {paths.config_dir(root).name} 目录"
             "（随时可删，删除后会自动重建）\n"
             "· 缓存到系统目录：照片文件夹保持一个字节都不写入\n\n"
-            "无论选哪个，Gallery 都不会移动、重命名或修改你的照片。"
+            "无论选哪个，Gallery 都不会移动或修改你的照片；"
+            "唯一会改到文件名的操作，是你自己触发的那次重命名。"
         )
         in_library = box.addButton("在库中缓存（推荐）", QMessageBox.ButtonRole.AcceptRole)
         system_cache = box.addButton("缓存到系统目录", QMessageBox.ButtonRole.ActionRole)
@@ -748,6 +779,63 @@ class MainWindow(QMainWindow):
         self._update_action_states()
         self._load_detail(row)
 
+    # ---- 重命名（唯一会改动用户文件的入口）----------------------------------
+
+    def rename_current_entry(self) -> None:
+        """对当前选中的格子开始重命名（菜单 / ⌘R 走这里）。"""
+        index = self._grid.currentIndex()
+        if index.isValid():
+            self._grid.begin_rename(index)
+
+    def _on_rename_requested(self, index: QModelIndex) -> None:
+        """再次点击已选中的格子：进入行内重命名。"""
+        self._grid.begin_rename(index)
+
+    def _on_rename_committed(self, row: int, text: str) -> None:
+        entry = self._model.entry_at(row)
+        library = self._library
+        if entry is None or library is None:
+            return
+        try:
+            result = library.rename_entry(entry, text)
+        except GalleryError as exc:
+            logger.info("重命名失败：%s", exc.detail or exc.message)
+            self._show_banner(exc.message)
+            return
+        self._apply_rename(result, row)
+
+    def undo_rename(self) -> None:
+        """撤销最近一次改名（⌘Z）。"""
+        library = self._library
+        if library is None:
+            return
+        try:
+            result = library.undo_last_rename()
+        except GalleryError as exc:
+            logger.info("撤销重命名失败：%s", exc.detail or exc.message)
+            self._show_banner(exc.message)
+            return
+        if result is None:
+            self._show_banner("没有可撤销的改名。")
+            return
+        # 撤销之前，这一行挂在改完名的新路径上 —— 要按它找行号。
+        row = self._model.row_of_path(result.previous.path)
+        self._apply_rename(result, row, banner=f"已撤销，恢复为「{result.entry.name}」。")
+
+    def _apply_rename(self, result: RenameResult, row: int, *, banner: str | None = None) -> None:
+        """把一次改名（或撤销）同步进模型与各级缓存。"""
+        stale = result.previous.path
+        self._preview_cache.pop(stale, None)
+        self._metadata_cache.pop(stale, None)
+        if not result.renamed:
+            self._grid.select_row(row, ensure_visible=False)
+            return
+        if row >= 0 and self._model.replace_entry(row, result.entry):
+            self._grid.select_row(row, ensure_visible=False)
+        else:
+            self._reload_level()
+        self._show_banner(banner or _rename_banner(result))
+
     def show_grid(self) -> None:
         """回到网格，并让当前照片保持选中。"""
         if self._stack.currentWidget() is self._grid_page:
@@ -1008,6 +1096,9 @@ class MainWindow(QMainWindow):
         ):
             action.setEnabled(in_detail)
         self._clear_cache_action.setEnabled(self._library is not None)
+        # 重命名只对网格里的一个格子有意义：大图页、没选中东西时都不该可用。
+        in_grid = self._stack.currentWidget() is self._grid_page
+        self._rename_action.setEnabled(in_grid and self._grid.currentIndex().isValid())
 
     # ---- 浏览方式与相册导航 ------------------------------------------------
 
@@ -1055,6 +1146,7 @@ class MainWindow(QMainWindow):
             self._scan_job = None
         # 换代：让已经在路上的旧结果作废。
         self._generation += 1
+        self._grid.cancel_rename()
         self._model.clear()
         self._preview_cache.clear()
         self._metadata_cache.clear()

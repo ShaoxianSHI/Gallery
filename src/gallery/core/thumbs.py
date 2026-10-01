@@ -79,6 +79,30 @@ class ThumbnailCache:
         self._write_entry(digest, raster)
         return raster
 
+    def relocate(self, old: PhotoRef, new: PhotoRef) -> bool:
+        """把 ``old`` 的缓存条目挪到 ``new`` 的键上（照片改名后调用）。
+
+        缓存 key 含绝对路径，改名后旧条目永远不会再被命中，却会一直占着空间直到被淘汰。
+        挪一下既省掉重新解码，也让「清空缩略图缓存」不必背这个锅。
+        撤销改名时反向调用一次即可。返回是否真的挪动了条目。
+        """
+        moved = False
+        for suffix in _ENTRY_SUFFIXES:
+            source = self._entry_path(self._key(old), suffix)
+            if not source.is_file():
+                continue
+            destination = self._entry_path(self._key(new), suffix)
+            try:
+                if destination.exists():
+                    # 新键下已经有（多半是同一张照片之前被复制过），旧的直接丢。
+                    source.unlink()
+                else:
+                    source.rename(destination)
+            except OSError:
+                continue  # 缓存挪不动只是慢一点，不影响正确性
+            moved = True
+        return moved
+
     def clear(self) -> int:
         """删除缓存目录中的全部缩略图，返回删除的条目数。
 

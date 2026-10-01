@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import time
+
 from PySide6.QtCore import (
     QEvent,
     QItemSelectionModel,
@@ -24,6 +26,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import (
     QColor,
     QKeyEvent,
+    QMouseEvent,
     QNativeGestureEvent,
     QPainter,
     QPalette,
@@ -34,6 +37,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QListView,
     QStyle,
     QStyledItemDelegate,
@@ -42,6 +46,7 @@ from PySide6.QtWidgets import (
 )
 
 from gallery.ui.models import ALBUM_ROLE
+from gallery.ui.rename_edit import RenameEdit
 from gallery.ui.thumb_sizes import (
     DEFAULT_EDGE,
     MIN_EDGE,
@@ -100,6 +105,19 @@ class PhotoDelegate(QStyledItemDelegate):
     def set_icon_edge(self, edge: int) -> None:
         self._icon_edge = edge
 
+    def label_rect(self, rect: QRect) -> QRect:
+        """文件名那一行的位置。
+
+        绘制与行内重命名的输入框共用这一份算法：输入框必须正好盖住名字，
+        否则用户会看到「框在别处、字在这儿」。
+        """
+        return QRect(
+            rect.left() + 8,
+            rect.bottom() - self.LABEL_HEIGHT,
+            rect.width() - 16,
+            self.LABEL_HEIGHT,
+        )
+
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
         painter.save()
         try:
@@ -120,12 +138,7 @@ class PhotoDelegate(QStyledItemDelegate):
                 painter.setBrush(background)
                 painter.drawRoundedRect(rect, self.RADIUS, self.RADIUS)
 
-            label_rect = QRect(
-                rect.left() + 8,
-                rect.bottom() - self.LABEL_HEIGHT,
-                rect.width() - 16,
-                self.LABEL_HEIGHT,
-            )
+            label_rect = self.label_rect(rect)
             image_rect = rect.adjusted(
                 self.PADDING,
                 self.PADDING,
@@ -235,6 +248,10 @@ class PhotoGrid(QListView):
     size_step_requested = Signal(int)
     #: 自适应后的实际缩略图长边变了，界面需要按新尺寸重新取一遍缩略图。
     icon_edge_changed = Signal(int)
+    #: 用户再次点击了已经选中的格子：可以开始重命名了。
+    rename_requested = Signal(QModelIndex)
+    #: 行内编辑确认了新名字：``(行号, 新名字)``。
+    rename_committed = Signal(int, str)
 
     def __init__(self, parent: QWidget | None = None, *, icon_edge: int = DEFAULT_EDGE) -> None:
         super().__init__(parent)
@@ -245,6 +262,8 @@ class PhotoGrid(QListView):
         self._laid_out_width = 0
         self._laid_out_columns = 0
         self._layout_fix: dict[int, tuple[int, int]] = {}
+        self._armed_row = -1
+        self._armed_at = 0.0
         self.setViewMode(QListView.ViewMode.IconMode)
         self.setResizeMode(QListView.ResizeMode.Adjust)
         self.setMovement(QListView.Movement.Static)
@@ -267,6 +286,11 @@ class PhotoGrid(QListView):
 
         self.doubleClicked.connect(self.activated_index.emit)
         self.activated.connect(self.activated_index.emit)
+
+        # 行内重命名的输入框：挂在视口上，跟着格子一起滚。
+        self._rename_edit = RenameEdit(self.viewport())
+        self._rename_edit.committed.connect(self._on_rename_committed)
+        self._rename_edit.cancelled.connect(self.cancel_rename)
 
         self._debounce = QTimer(self)
         self._debounce.setSingleShot(True)
@@ -457,7 +481,62 @@ class PhotoGrid(QListView):
         if ensure_visible:
             self.scrollTo(index, QAbstractItemView.ScrollHint.EnsureVisible)
 
+    # ---- 行内重命名 --------------------------------------------------------
+
+    def begin_rename(self, index: QModelIndex) -> bool:
+        """在 ``index`` 的文件名位置开始行内重命名。返回是否真的开始了。
+
+        照片只选中主干、不选扩展名：直接打字就是在改名字，而 ``.jpg`` 不会被手滑敲掉。
+        """
+        model = self.model()
+        if model is None or not index.isValid():
+            return False
+        text = str(model.data(index, int(Qt.ItemDataRole.DisplayRole)) or "")
+        if not text:
+            return False
+        cell = self.visualRect(index).adjusted(3, 3, -3, -3)
+        rect = self._delegate.label_rect(cell)
+        # 比标签高一圈：输入框贴着 20px 的标签会显得挤，也不好点。
+        rect.setTop(rect.top() - 3)
+        rect.setHeight(rect.height() + 6)
+        self._rename_edit.start(rect, text, keep_suffix=not index.data(ALBUM_ROLE))
+        return True
+
+    def cancel_rename(self) -> None:
+        """收起输入框，不提交。"""
+        self._rename_edit.stop()
+
+    def is_renaming(self) -> bool:
+        return self._rename_edit.is_editing()
+
+    def _on_rename_committed(self, text: str) -> None:
+        row = self.current_row()
+        if row >= 0:
+            self.rename_committed.emit(row, text)
+
     # ---- 事件 --------------------------------------------------------------
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        """对**已经选中**的格子再点一次就重命名，和访达一致。
+
+        靠「同一格、在双击间隔之外再点一次」来区分重命名与双击打开：双击的第二次
+        落下一定在间隔之内，于是它仍然只是打开，不会半路插进来一个输入框。
+        """
+        super().mouseReleaseEvent(event)
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+        index = self.indexAt(event.position().toPoint())
+        if not index.isValid() or index != self.currentIndex():
+            self._armed_row = -1
+            return
+        now = time.monotonic() * 1000.0
+        interval = float(QApplication.doubleClickInterval())
+        if self._armed_row == index.row() and now - self._armed_at >= interval:
+            self._armed_row = -1
+            self.rename_requested.emit(index)
+            return
+        self._armed_row = index.row()
+        self._armed_at = now
 
     def wheelEvent(self, event: QWheelEvent) -> None:
         """⌘/Ctrl + 滚轮切换缩略图尺寸；普通滚动交给基类翻页。"""
@@ -492,6 +571,10 @@ class PhotoGrid(QListView):
         super().keyPressEvent(event)
 
     def scrollContentsBy(self, dx: int, dy: int) -> None:
+        # 输入框是视口的子控件，不会自己跟着格子滚 —— 手动挪同样的距离，
+        # 它就始终盖在那个名字上（滚出视口也会被视口裁掉，不会浮到别处）。
+        if self._rename_edit.is_editing():
+            self._rename_edit.move(self._rename_edit.pos() - QPoint(dx, dy))
         super().scrollContentsBy(dx, dy)
         self._debounce.start()
 

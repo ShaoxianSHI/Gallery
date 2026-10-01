@@ -17,7 +17,8 @@ from gallery.core import paths
 from gallery.core.config import LibraryConfig, load_config
 from gallery.core.errors import LibraryNotAccessibleError
 from gallery.core.images import RasterImage, decode_rgba
-from gallery.core.photos import FolderRef, PhotoRef
+from gallery.core.photos import FolderRef, GridEntry, PhotoRef
+from gallery.core.rename import RenameResult, rename_entry, undo_last_rename
 from gallery.core.scanner import ScanReport, iter_entries, iter_photos
 from gallery.core.thumbs import ThumbnailCache
 
@@ -180,6 +181,30 @@ class Library:
     def clear_cache(self) -> int:
         """清空本库的缩略图缓存，返回删除的条目数。"""
         return self._thumbnails.clear()
+
+    # ---- 写操作（唯一会改动用户文件的一类）------------------------------------
+
+    def rename_entry(self, entry: GridEntry, new_name: str) -> RenameResult:
+        """给照片或相册改名，并把它的缩略图缓存挪到新路径。
+
+        这是少数会动用户文件的操作，规矩与红线见 ``core.rename`` 和 ADR 0004。
+        """
+        result = rename_entry(self._root, entry, new_name)
+        if result.renamed:
+            self._relocate_thumbnail(result.previous, result.entry)
+        return result
+
+    def undo_last_rename(self) -> RenameResult | None:
+        """撤销最近一次改名；没有可撤销的记录时返回 ``None``。"""
+        result = undo_last_rename(self._root)
+        if result is not None:
+            self._relocate_thumbnail(result.previous, result.entry)
+        return result
+
+    def _relocate_thumbnail(self, previous: GridEntry, entry: GridEntry) -> None:
+        """改名不改变像素，但缓存 key 含路径 —— 不挪就会留下永远命不中的孤儿条目。"""
+        if isinstance(previous, PhotoRef) and isinstance(entry, PhotoRef):
+            self._thumbnails.relocate(previous, entry)
 
 
 __all__ = ["Library"]
