@@ -26,6 +26,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QColor,
+    QContextMenuEvent,
     QGuiApplication,
     QKeyEvent,
     QMouseEvent,
@@ -299,6 +300,9 @@ class PhotoGrid(QListView):
     #: 行内重命名开始了（``True``）或收起来了（``False``）。
     #: 改名的这段时间 Esc 归输入框（取消），窗口据此把「上一级」让开。
     rename_active_changed = Signal(bool)
+    #: 用户在网格上按了右键：参数是**该作用于哪一行**，``-1`` 表示落在空白处。
+    #: 视图负责把选择摆正（见 :meth:`select_for_context`），菜单由窗口拼。
+    context_requested = Signal(int)
 
     def __init__(self, parent: QWidget | None = None, *, icon_edge: int = DEFAULT_EDGE) -> None:
         super().__init__(parent)
@@ -611,6 +615,47 @@ class PhotoGrid(QListView):
             return [row] if row >= 0 else []
         return sorted(rows)
 
+    def select_for_context(self, row: int) -> int:
+        """右键之前的选区修正。返回菜单该作用于哪一行（``-1`` = 空白处）。
+
+        ``QListView`` 默认的 ``contextMenuEvent`` **不会**选中光标下的项，于是原生菜单里
+        「右键 A、命令却作用在原来选中的 B 上」是 Qt 的默认行为。规则定死成三种
+        （ADR 0014 决策 2）：
+
+        | 落点 | 选区 |
+        |------|------|
+        | 未选中的那一格 | 清掉旧的，只选它 |
+        | 已经选中的一格 | **不动** —— 多选保持原样，菜单作用于整个选择 |
+        | 空白处 | 清掉选区（与访达一致），菜单里只会有视图级命令 |
+
+        刻意**不挪扩选锚点**（``_range_anchor``）：那是「上一次完成的普通左键点选」，
+        挪了它，「右键 A → ⇧ 点 D」就会从 A 铺开，而访达是从上一次左键那格铺开的。
+        改选区与改锚点必须是两件事（对照 :meth:`select_row`，那里两件事是一起的）。
+
+        空白处**连当前项一起清掉**：只清选区的话，「重命名」的可用性判据里那个
+        ``current_row`` 仍然是有效的，用户会拿到一个作用在看不见的东西上的按钮。
+        """
+        self._armed_row = -1
+        self._rename_timer.stop()
+        if row < 0:
+            self.clearSelection()
+            self.setCurrentIndex(QModelIndex())
+            return -1
+        model = self.model()
+        selection = self.selectionModel()
+        if model is None or selection is None or not 0 <= row < model.rowCount():
+            return -1
+        if row in self.selected_rows():
+            return row  # 已经在选中里：整份选择就是作用对象，一个格子都不动
+        index = model.index(row, 0)
+        self.setCurrentIndex(index)
+        selection.select(
+            index,
+            QItemSelectionModel.SelectionFlag.ClearAndSelect
+            | QItemSelectionModel.SelectionFlag.Rows,
+        )
+        return row
+
     # ---- 行内重命名 --------------------------------------------------------
 
     def begin_rename(self, index: QModelIndex) -> bool:
@@ -808,6 +853,23 @@ class PhotoGrid(QListView):
         index = model.index(row, 0)
         if index == self.currentIndex() and not self._rename_edit.is_editing():
             self.rename_requested.emit(index)
+
+    def contextMenuEvent(self, event: QContextMenuEvent) -> None:
+        """右键：先把选区摆正，再把「这一下落在哪」告诉窗口。
+
+        视图只回答落点，菜单由 ``MainWindow`` 拼（``ui.menus``）—— 视图不该知道
+        「重命名为」是什么，也不该知道分组为什么删不掉。
+
+        行内改名进行中**不弹菜单**：那时键盘归输入框，右键也归它（与 ``trash_selected``
+        里的同一道守卫同源，见 ADR 0014）。
+        """
+        if self._rename_edit.is_editing():
+            event.accept()
+            return
+        index = self.indexAt(event.pos())
+        row = self.select_for_context(index.row() if index.isValid() else -1)
+        self.context_requested.emit(row)
+        event.accept()
 
     def wheelEvent(self, event: QWheelEvent) -> None:
         """⌘/Ctrl + 滚轮切换缩略图尺寸；普通滚动交给基类翻页。"""

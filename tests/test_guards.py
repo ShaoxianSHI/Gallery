@@ -49,6 +49,22 @@ def _opens_files(path: Path) -> bool:
     )
 
 
+def _full_imports(path: Path) -> set[str]:
+    """导入的**完整**模块名（含点号后缀）。
+
+    文档字符串里提到 ``gallery.core`` 不算导入 —— 只有真的 import 才算数，
+    否则模块文档里解释一句「本该走 core 的门面」就会把守护测试弄红。
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            modules.add(node.module)
+    return modules
+
+
 def test_core_package_exists() -> None:
     assert CORE_ROOT.is_dir(), f"核心层目录缺失：{CORE_ROOT}"
 
@@ -84,9 +100,25 @@ def test_ui_does_not_open_files(path: Path) -> None:
     assert not _opens_files(path), f"{path} 直接调用了 open()，请改为调用 gallery.core"
 
 
+#: 右键菜单那两个模块。它们是纯展示：菜单该复用的是已有的动作，而不是自己去取数据
+#: （ADR 0014）。它们一旦开始 import core，就说明「菜单」与「命令」两件事粘在一起了。
+PRESENTATION_ONLY_UI = ("menus.py", "desktop.py")
+
+
 def test_config_dir_name_is_exact() -> None:
     """配置目录名一旦拼错（如 .galley），用户的配置会被劈成两份。"""
     assert CONFIG_DIR_NAME == ".gallery"
+
+
+def test_menu_modules_do_not_reach_into_core() -> None:
+    """菜单拼装与访达调用都不许直接依赖 core（ADR 0014）。"""
+    offenders = [
+        path.name
+        for path in _iter_python_files(UI_ROOT)
+        if path.name in PRESENTATION_ONLY_UI
+        and any(module.startswith("gallery.core") for module in _full_imports(path))
+    ]
+    assert not offenders, f"{offenders} 直接依赖了 core；请让 MainWindow 把需要的东西递进来"
 
 
 def test_config_dir_name_has_single_source() -> None:

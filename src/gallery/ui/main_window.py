@@ -66,7 +66,7 @@ from gallery.core.metadata.undo import UndoResult
 from gallery.core.places.countries import place_label
 from gallery.core.places.dataset import is_real_coordinate
 from gallery.core.places.resolver import LazyPlaceResolver
-from gallery.ui import theme
+from gallery.ui import desktop, theme
 from gallery.ui.browser.grid import PREFETCH_MARGIN, PhotoGrid
 from gallery.ui.browser.model import PhotoListModel
 from gallery.ui.browser.thumb_sizes import (
@@ -77,6 +77,7 @@ from gallery.ui.browser.thumb_sizes import (
     shifted_index,
 )
 from gallery.ui.imaging import to_qimage
+from gallery.ui.menus import MenuActions, TargetKind, build_menu
 from gallery.ui.navigation import breadcrumb_parts, parent_of
 from gallery.ui.panels.breadcrumb import BreadcrumbBar
 from gallery.ui.panels.metadata import MetadataPanel
@@ -193,6 +194,15 @@ def _album_name(entries: Sequence[GridEntry]) -> str:
     return ""
 
 
+def _context_kind(entry: GridEntry) -> TargetKind:
+    """这一格是照片、相册还是分组 —— 右键菜单据此拼不同的一份（ADR 0014）。"""
+    if isinstance(entry, GroupRef):
+        return TargetKind.GROUP
+    if isinstance(entry, FolderRef):
+        return TargetKind.ALBUM
+    return TargetKind.PHOTO
+
+
 def _first_reason(failures: Sequence[Failure]) -> str:
     """失败原因的摘要。
 
@@ -261,6 +271,8 @@ class MainWindow(QMainWindow):
         self._detail_job: int | None = None
         self._current_row = -1
         self._metadata_job: int | None = None
+        #: 「复制元数据」现读元数据用的那次任务（面板的读取消了就没人要那份结果）。
+        self._metadata_copy_job: int | None = None
         #: 分组 / 排序与元数据面板共用的地点反查器（按坐标），首次用时才加载城市数据。
         self._place_resolver: LazyPlaceResolver | None = None
         #: 打开库时那一遍「全库解析地点」的任务（ADR 0010）。
@@ -342,6 +354,7 @@ class MainWindow(QMainWindow):
         self._grid.rename_requested.connect(self._on_rename_requested)
         self._grid.rename_committed.connect(self._on_rename_committed)
         self._grid.rename_active_changed.connect(self._on_rename_active_changed)
+        self._grid.context_requested.connect(self._show_context_menu)
         # 「重命名」「移到废纸篓」能不能用，取决于当前有没有选中东西。
         selection_model = self._grid.selectionModel()
         if selection_model is not None:
@@ -449,10 +462,36 @@ class MainWindow(QMainWindow):
         self._trash_action.triggered.connect(self.trash_selected)
 
         # ⌘Z 撤的是这一摞里的栈顶，改名与移到废纸篓共用（core.metadata.undo）。
-        # 文案跟着栈顶变，用户按之前就知道会撤掉什么。
+        # 文案跟着栈顶变，用户按之前就知道会撤掉什么。它住在「编辑」菜单里 ——
+        # 那是 macOS 放撤销的标准位置，见 ADR 0014 决策 5。
         self._undo_action = QAction("撤销", self)
         self._undo_action.setShortcut(QKeySequence.StandardKey.Undo)
         self._undo_action.triggered.connect(self.undo_last_write)
+
+        # ---- 右键菜单新增的那几条（见 ADR 0014）--------------------------------
+        # 「打开」刻意不给快捷键：⌘O 已经是「打开文件夹…」，而网格里本来就能用
+        # 双击 / 回车打开（见 PhotoGrid.keyPressEvent）。
+        self._open_entry_action = QAction("打开", self)
+        self._open_entry_action.triggered.connect(self.open_current_entry)
+
+        self._reveal_action = QAction("在访达中显示", self)
+        self._reveal_action.triggered.connect(self.reveal_selection)
+
+        # ⇧⌘C 与访达一致。注意 Qt 在 macOS 上把 Command 写作 Ctrl，不要手动换键。
+        self._copy_path_action = QAction("拷贝路径", self)
+        self._copy_path_action.setShortcut(QKeySequence("Ctrl+Shift+C"))
+        self._copy_path_action.triggered.connect(self.copy_selected_paths)
+
+        self._select_all_action = QAction("全选", self)
+        self._select_all_action.setShortcut(QKeySequence.StandardKey.SelectAll)
+        self._select_all_action.triggered.connect(self.select_all_entries)
+
+        # 只活在右键菜单里的两条：它们离不开「当前这一张」，放进菜单栏反而没处可用。
+        self._copy_metadata_action = QAction("复制元数据", self)
+        self._copy_metadata_action.triggered.connect(self.copy_current_metadata)
+
+        self._copy_group_action = QAction("复制分组条件", self)
+        self._copy_group_action.triggered.connect(self.copy_current_group)
 
         self._quit_action = QAction("退出 Gallery", self)
         self._quit_action.setShortcut(QKeySequence.StandardKey.Quit)
@@ -464,11 +503,19 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction(self._rename_action)
         file_menu.addAction(self._trash_action)
-        file_menu.addAction(self._undo_action)
         file_menu.addSeparator()
         file_menu.addAction(self._clear_cache_action)
         file_menu.addSeparator()
         file_menu.addAction(self._quit_action)
+
+        # 「编辑」：全选、拷贝路径、撤销 —— 与 macOS 的摆放一致（ADR 0014 决策 5）。
+        # ⌘Z 从「文件」搬过来了：撤销是编辑动作，放在文件菜单里会让 ⌘Z 与
+        # 「打开 / 移到废纸篓」这些会动文件的命令混在一起。
+        edit_menu = self.menuBar().addMenu("编辑")
+        edit_menu.addAction(self._select_all_action)
+        edit_menu.addAction(self._copy_path_action)
+        edit_menu.addSeparator()
+        edit_menu.addAction(self._undo_action)
 
         view_menu = self.menuBar().addMenu("视图")
         view_menu.addAction(self._back_action)
@@ -1566,6 +1613,9 @@ class MainWindow(QMainWindow):
         if self._metadata_job is not None:
             self._runner.cancel(self._metadata_job)
             self._metadata_job = None
+        if self._metadata_copy_job is not None:
+            self._runner.cancel(self._metadata_copy_job)
+            self._metadata_copy_job = None
 
     def _load_metadata(self) -> None:
         """读当前这张照片的元数据；面板没展开就什么都不做。
@@ -1737,6 +1787,155 @@ class MainWindow(QMainWindow):
         self._update_action_states()
         self._load_detail(row)
 
+    # ---- 右键菜单（见 ADR 0014）----------------------------------------------
+
+    def _show_context_menu(self, row: int) -> None:
+        """网格上的一次右键：拼菜单、弹出来、用完即弃。"""
+        menu = self.context_menu_for(row)
+        if menu is None:
+            return
+        menu.exec(self._grid.cursor().pos())
+        menu.deleteLater()
+
+    def context_menu_for(self, row: int) -> QMenu | None:
+        """这一下该弹什么菜单。**只拼不弹**，测试因此可以直接调它看内容。
+
+        拼之前先刷新一次动作的可用性：「上一级」退不退得回去、「重命名」会不会被分组
+        挡掉，判据都依赖**此刻**的选区与层级（见 :meth:`_update_action_states`）。
+        拿几十毫秒前的状态来拼菜单，用户会看到一个与界面不一致的灰度。
+
+        ``None`` 表示这次右键不该有菜单（不在网格页、行号已经过期）。
+        """
+        if self._stack.currentWidget() is not self._grid_page:
+            return None
+        entry = self._model.entry_at(row) if row >= 0 else None
+        if row >= 0 and entry is None:
+            # 扫描还在流式上屏时，模型可能已经往前挪过：宁可不弹，也不弹一份错的。
+            return None
+        self._update_action_states()
+        kind = TargetKind.BLANK if entry is None else _context_kind(entry)
+        return build_menu(
+            self._menu_actions(),
+            kind,
+            multiple=len(self._grid.selected_rows()) > 1,
+        )
+
+    def _menu_actions(self) -> MenuActions:
+        """把菜单要用的动作收成一包（``ui.menus`` 只认这个，不认窗口）。"""
+        return MenuActions(
+            open_entry=self._open_entry_action,
+            reveal=self._reveal_action,
+            copy_path=self._copy_path_action,
+            rename=self._rename_action,
+            trash=self._trash_action,
+            metadata=self._metadata_action,
+            copy_metadata=self._copy_metadata_action,
+            copy_group=self._copy_group_action,
+            select_all=self._select_all_action,
+            up=self._up_action,
+            group_choices=tuple(self._group_actions.values()),
+            sort_choices=tuple(self._sort_actions.values()),
+            descending=self._descending_action,
+            size_choices=tuple(self._size_actions),
+        )
+
+    def open_current_entry(self) -> None:
+        """「打开」：照片开大图，相册与分组进去 —— 与双击是同一件事。"""
+        index = self._grid.currentIndex()
+        if index.isValid():
+            self._on_entry_activated(index)
+
+    def reveal_selection(self) -> None:
+        """「在访达中显示」：在访达里把选中的东西选出来（见 ``ui.desktop``）。"""
+        paths = self._selected_paths()
+        if not paths:
+            self._show_banner("分组不是磁盘上的文件夹，访达里没有对应的东西。")
+            return
+        self._show_banner(desktop.reveal_in_finder(paths))
+
+    def copy_selected_paths(self) -> None:
+        """「拷贝路径」⇧⌘C：与访达一样，一行一个。"""
+        paths = self._selected_paths()
+        if not paths:
+            return
+        desktop.copy_to_clipboard(desktop.format_paths(paths))
+        head = "已拷贝 1 个路径。" if len(paths) == 1 else f"已拷贝 {len(paths)} 个路径。"
+        self._show_banner(head)
+
+    def select_all_entries(self) -> None:
+        """⌘A：全选当前这一层的所有格子（相册、照片、分组卡片都算）。"""
+        if self._stack.currentWidget() is not self._grid_page:
+            return
+        self._grid.selectAll()
+        self._update_action_states()
+
+    def copy_current_metadata(self) -> None:
+        """「复制元数据」：把当前这张的元数据拷成文本。
+
+        缓存里没有就**现读一次** —— 这条命令在面板没展开时也可用，而那时多半没有缓存
+        可用。读一次约 50ms，走后台线程，完成时用横幅说一声。
+        """
+        ref = self._model.photo_at(self._grid.current_row())
+        if ref is None:
+            return
+        cached = self._cached_metadata(ref)
+        if cached is not None:
+            self._put_metadata_on_clipboard(cached, ref)
+            return
+        generation = self._generation
+
+        def work(context: TaskContext) -> object:
+            if context.is_cancelled():
+                return None
+            return read_metadata(ref.path)
+
+        self._metadata_copy_job = self._runner.submit(
+            work,
+            on_result=partial(self._on_metadata_copied, ref, generation),
+            on_error=self._on_metadata_copy_failed,
+        )
+
+    def _on_metadata_copied(self, ref: PhotoRef, generation: int, payload: object) -> None:
+        self._metadata_copy_job = None
+        if not isinstance(payload, MetadataReport) or generation != self._generation:
+            return  # 已经换库了：这份元数据不该再跑到界面上
+        self._cache_metadata(ref, payload)
+        self._put_metadata_on_clipboard(payload, ref)
+
+    def _on_metadata_copy_failed(self, message: str) -> None:
+        self._metadata_copy_job = None
+        logger.info("复制用的元数据读取失败：%s", message)
+        self._show_banner(f"没能读出元数据：{message.rstrip('。')}")
+
+    def _put_metadata_on_clipboard(self, report: MetadataReport, ref: PhotoRef) -> None:
+        desktop.copy_to_clipboard(report.as_text())
+        self._show_banner(f"已复制「{ref.name}」的元数据。")
+
+    def copy_current_group(self) -> None:
+        """「复制分组条件」：把这个组是怎么分出来的抄走。
+
+        组卡片本身只是磁盘上那批照片的一个切面，粘到别处也得说得出它是哪一组。
+        """
+        group = self._model.group_at(self._grid.current_row())
+        if group is None:
+            return
+        facet = group_facet(group.facet)
+        field = facet.label if facet is not None else group.facet
+        desktop.copy_to_clipboard(f"按「{field}」分组：{group.label} · {group.count} 张")
+        self._show_banner(f"已复制分组条件：按「{field}」分组。")
+
+    def _selected_entries(self) -> list[GridEntry]:
+        """当前选中的格子对应的条目（按网格顺序）。"""
+        return [
+            entry
+            for entry in (self._model.entry_at(row) for row in self._grid.selected_rows())
+            if entry is not None
+        ]
+
+    def _selected_paths(self) -> list[Path]:
+        """选中项在磁盘上的路径。**分组卡片没有路径**（它不是磁盘上的东西），跳过。"""
+        return [entry.path for entry in self._selected_entries() if not isinstance(entry, GroupRef)]
+
     # ---- 重命名与移到废纸篓（仅有的两个会动用户文件的入口）--------------------
 
     def rename_current_entry(self) -> None:
@@ -1788,7 +1987,7 @@ class MainWindow(QMainWindow):
         if self._grid.is_renaming():
             return  # 键盘正在行内输入框里，删掉正在编辑的那一张只会让人以为见鬼了
         rows = self._grid.selected_rows()
-        entries = [entry for entry in (self._model.entry_at(row) for row in rows) if entry]
+        entries = self._selected_entries()
         if not entries:
             return
         groups = [entry for entry in entries if isinstance(entry, GroupRef)]
@@ -2170,6 +2369,17 @@ class MainWindow(QMainWindow):
         self._trash_action.setEnabled(
             in_grid and bool(self._grid.selected_rows()) and idle and file_only
         )
+        # 右键新增的那几条（ADR 0014）：可用性一律按「此刻选中了什么」算，
+        # 菜单栏上的 ⌘A / ⇧⌘C 与右键菜单里的同一份动作因此永远说同一句话。
+        entries = self._selected_entries() if in_grid else []
+        paths = [entry.path for entry in entries if not isinstance(entry, GroupRef)]
+        current = self._model.entry_at(current_row) if current_row >= 0 else None
+        self._select_all_action.setEnabled(in_grid and self._model.rowCount() > 0)
+        self._copy_path_action.setEnabled(bool(paths))
+        self._reveal_action.setEnabled(bool(paths))
+        self._open_entry_action.setEnabled(current is not None)
+        self._copy_metadata_action.setEnabled(isinstance(current, PhotoRef))
+        self._copy_group_action.setEnabled(isinstance(current, GroupRef))
         self._update_undo_action()
 
     def _update_undo_action(self) -> None:
