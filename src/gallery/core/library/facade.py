@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from gallery.core import paths
 from gallery.core.errors import LibraryNotAccessibleError
@@ -23,10 +24,13 @@ from gallery.core.library.scanner import ScanReport, iter_entries, iter_photos
 from gallery.core.media.decode import RasterImage, decode_rgba
 from gallery.core.media.thumbs import ThumbnailCache
 from gallery.core.metadata.batch import BatchMetadataSource, read_facets
-from gallery.core.metadata.facets import PhotoFacets
+from gallery.core.metadata.facets import PhotoFacets, with_resolved_place
 from gallery.core.metadata.rename import RenameResult, rename_entry
 from gallery.core.metadata.trash import TrashResult, trash_entries
 from gallery.core.metadata.undo import UndoResult, next_undo_label, undo_last_write
+
+if TYPE_CHECKING:
+    from gallery.core.places.resolver import PlaceResolver, Status
 
 
 class Library:
@@ -205,14 +209,22 @@ class Library:
         *,
         should_cancel: Callable[[], bool] | None = None,
         on_progress: Callable[[int, int], None] | None = None,
+        status: Status | None = None,
         source: BatchMetadataSource | None = None,
+        resolver: PlaceResolver | None = None,
     ) -> dict[Path, PhotoFacets]:
         """取这些照片的分组 / 排序字段，**只读**。
 
         先查缓存，只对没命中或已改过（大小 / 修改时间变了）的那些去真读 EXIF；
         读到的新结果顺手写进索引，于是下一次切换分组字段几乎立刻完成。
 
+        **地点**：相机原图几乎不写 IPTC / XMP 地点，只写 GPS。给了 ``resolver``
+        就会按坐标离线反查一次，把国家 / 省州 / 城市补齐（文件里写了就以文件为准），
+        结论同样进索引，所以只反查一次。没给 ``resolver`` 就只认文件里写的地点 ——
+        地点那三栏会显示成「未知」，而不是悄悄替用户联网查点什么。
+
         :param source: 替换默认的 exiftool 批量来源（测试用）。
+        :param status: 反查要下载城市数据时，用它把进度说给界面听。
         :raises MetadataError: 主来源整体失败（例如 exiftool 跑不起来）。
         """
         index = self.facet_index
@@ -227,8 +239,23 @@ class Library:
                     None if on_progress is None else _offset_progress(len(cached), on_progress)
                 ),
             )
+            if resolver is not None:
+                fresh = {
+                    path: _resolved(facets, resolver, status) for path, facets in fresh.items()
+                }
             index.store([(ref, fresh[ref.path]) for ref in missing if ref.path in fresh])
             cached.update(fresh)
+        elif resolver is not None:
+            # 缓存里可能还留着「有坐标、没地点」的旧行（第一次分组时城市数据还没下好，
+            # 或者照片是后来才补上 GPS 的）。既然反查器在手，就顺手把它们补上 ——
+            # 补完写回索引，于是这类照片不会被永久钉在「未知」上。
+            pending = [(path, facets) for path, facets in cached.items() if _needs_place(facets)]
+            for path, facets in pending:
+                if should_cancel is not None and should_cancel():
+                    break
+                cached[path] = _resolved(facets, resolver, status)
+            if pending:
+                index.store([(ref, cached[ref.path]) for ref in refs if ref.path in cached])
         return cached
 
     def close_index(self) -> None:
@@ -272,6 +299,25 @@ class Library:
         """改名不改变像素，但缓存 key 含路径 —— 不挪就会留下永远命不中的孤儿条目。"""
         if isinstance(previous, PhotoRef) and isinstance(entry, PhotoRef):
             self._thumbnails.relocate(previous, entry)
+
+
+def _needs_place(facets: PhotoFacets) -> bool:
+    """有没有坐标、却还有地点字段是空的 —— 那种行值得再反查一次。
+
+    判据是「**还缺**」而不是「完全没有」：文件里只写了城市、省州还是空的，
+    那就仍然该用反查补上（``with_resolved_place`` 一个字段一个字段地补）。
+    """
+    if facets.latitude is None or facets.longitude is None:
+        return False
+    return facets.city is None or facets.region is None or facets.country is None
+
+
+def _resolved(facets: PhotoFacets, resolver: PlaceResolver, status: Status | None) -> PhotoFacets:
+    """按坐标补地点。查不到就原样返回（那是结论，不是错误）。"""
+    if not _needs_place(facets):
+        return facets
+    place = resolver.place_for(facets.latitude, facets.longitude, status=status)  # type: ignore[arg-type]
+    return with_resolved_place(facets, place)
 
 
 def _offset_progress(

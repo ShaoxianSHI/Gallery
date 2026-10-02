@@ -20,15 +20,22 @@ from __future__ import annotations
 import datetime
 import re
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Final, Literal
+from typing import TYPE_CHECKING, Final, Literal
 
 from gallery.core.errors import MetadataError
 from gallery.core.library.photos import PhotoRef
+
+if TYPE_CHECKING:
+    # ResolvedPlace 住在 places 域：facets 只按结构用它，运行期不 import，
+    # 两个域因此不必互相依赖（geodata 的加载 / 下载是 places 的事）。
+    from gallery.core.places.resolver import ResolvedPlace
+
 from gallery.core.metadata.exif import (
     MetadataSource,
     camera_name,
+    coordinates_decimal,
     first_value,
     leading_number,
     positive_value,
@@ -133,6 +140,12 @@ class PhotoFacets:
     region: str | None = None
     country: str | None = None
     keywords: tuple[str, ...] = ()
+    #: 十进制度坐标。**只用来离线反查地点**（见 ``core.places``），不做别的用途。
+    latitude: float | None = None
+    longitude: float | None = None
+    #: 地点是不是**按坐标推断**的（文件里没写）。与元数据面板的「地点（推断）」
+    #: 是同一个可信级别：界面上要能说清这组是推出来的，不是文件自带的。
+    place_inferred: bool = False
     #: 光圈 f 值（如 2.8）。0 与负数等价于「没记录」，已按此归一。
     aperture: float | None = None
     #: 快门时间（秒，如 0.0005）。**秒数越小越快**，界面文案会写反，排序不会。
@@ -167,6 +180,13 @@ WANTED_TAGS: Final[tuple[str, ...]] = (
     "EXIF:ExifImageHeight",
     "File:ImageWidth",
     "File:ImageHeight",
+    # 坐标：**国家 / 省州 / 城市这三个字段绝大多数照片靠它**。相机原图通常不写
+    # IPTC / XMP 地点（Lightroom 导出才写），只写 GPS —— 漏了这几行，于是每张照片
+    # 的地点字段都是空的，分组出来一片「未知」。
+    "EXIF:GPSLatitude",
+    "EXIF:GPSLatitudeRef",
+    "EXIF:GPSLongitude",
+    "EXIF:GPSLongitudeRef",
     "IPTC:City",
     "IPTC:Province-State",
     "IPTC:Country-PrimaryLocationName",
@@ -203,6 +223,7 @@ def extract(raw: Mapping[str, object]) -> PhotoFacets:
     """
     values = {key: value for key, value in raw.items() if key != "SourceFile"}
     text = {key: _as_text(value) for key, value in values.items()}
+    latitude, longitude = coordinates_decimal(text)
     when = parse_capture_time(
         first_value(text, "EXIF:DateTimeOriginal", "EXIF:CreateDate", "EXIF:DateTimeDigitized")
     )
@@ -219,6 +240,8 @@ def extract(raw: Mapping[str, object]) -> PhotoFacets:
         region=first_value(text, "XMP-photoshop:State", "IPTC:Province-State"),
         country=first_value(text, "XMP-photoshop:Country", "IPTC:Country-PrimaryLocationName"),
         keywords=_keywords(values),
+        latitude=latitude,
+        longitude=longitude,
         aperture=_number(text, "EXIF:FNumber", "EXIF:Aperture"),
         shutter=_shutter_seconds(text),
         iso=_number(text, "EXIF:ISO", "EXIF:ISOSpeedRatings"),
@@ -661,6 +684,34 @@ def needs_metadata(facets: Sequence[Facet | None]) -> bool:
     return any(facet is not None and facet.id not in FILE_FACET_IDS for facet in facets)
 
 
+def with_resolved_place(facets: PhotoFacets, place: ResolvedPlace | None) -> PhotoFacets:
+    """用反查出来的地点补齐缺的那些字段，并记下这是**推断**来的。
+
+    三条规矩：
+
+    - **文件里写了就以文件为准**，反查只填空缺（Lightroom 导出的地点通常比反查准）；
+    - **一个字段一个字段补**，文件里只写了国家时，城市可以来自反查；
+    - 补过就置 ``place_inferred``，界面据此说明「这组是推出来的」。
+    """
+    if place is None:
+        return facets
+    city = facets.city or place.city
+    region = facets.region or place.region
+    country = facets.country or place.country
+    if (city, region, country) == (facets.city, facets.region, facets.country):
+        return facets  # 反查什么都没补上，不必说成「推断」
+    # 补了**任意一个**字段就是推断：文件写了城市、反查补的国家同样不是文件自带的。
+    pairs = ((facets.city, city), (facets.region, region), (facets.country, country))
+    inferred = any(before is None and after is not None for before, after in pairs)
+    return replace(
+        facets,
+        city=city,
+        region=region,
+        country=country,
+        place_inferred=facets.place_inferred or inferred,
+    )
+
+
 def input_for(ref: PhotoRef, facets: PhotoFacets, root: Path) -> FacetInput:
     """组装取值上下文。"""
     return FacetInput(ref=ref, facets=facets, root=Path(root))
@@ -729,5 +780,6 @@ __all__ = [
     "needs_metadata",
     "parse_capture_time",
     "read_many",
+    "with_resolved_place",
     "sort_facet",
 ]

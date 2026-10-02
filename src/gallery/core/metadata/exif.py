@@ -260,7 +260,7 @@ def build_report(
 ) -> MetadataReport:
     """把来源的原始键值整理成分组报告（纯函数，测试直接喂字典）。"""
     normalized = {key: _stringify(value) for key, value in raw.items()}
-    latitude, longitude = _coordinates_decimal(normalized)
+    latitude, longitude = coordinates_decimal(normalized)
     groups: list[MetadataGroup] = []
     for title, specs in _CURATED_GROUPS:
         fields: list[MetadataField] = []
@@ -439,7 +439,7 @@ def _equivalent_focal_length(raw: Mapping[str, str]) -> str | None:
     return positive_value(first_value(raw, "EXIF:FocalLengthIn35mmFormat"))
 
 
-def _coordinates_decimal(raw: Mapping[str, str]) -> tuple[float | None, float | None]:
+def coordinates_decimal(raw: Mapping[str, str]) -> tuple[float | None, float | None]:
     """把 ``GPSLatitude`` / ``GPSLongitude``（带半球标记）解析成十进制度。"""
     latitude = _axis_decimal(raw, "EXIF:GPSLatitude", "EXIF:GPSLatitudeRef", negative={"S"})
     longitude = _axis_decimal(raw, "EXIF:GPSLongitude", "EXIF:GPSLongitudeRef", negative={"W"})
@@ -506,7 +506,7 @@ def _place_from_file(raw: Mapping[str, str]) -> str | None:
 
 def _coordinates(raw: Mapping[str, str]) -> str | None:
     """统一显示成十进制：度分秒是给机器看的，复制出去也没法直接粘进地图。"""
-    latitude, longitude = _coordinates_decimal(raw)
+    latitude, longitude = coordinates_decimal(raw)
     if latitude is None and longitude is None:
         return None
     parts: list[str] = []
@@ -797,6 +797,7 @@ __all__ = [
     "PillowSource",
     "build_report",
     "camera_name",
+    "coordinates_decimal",
     "first_value",
     "leading_number",
     "positive_value",

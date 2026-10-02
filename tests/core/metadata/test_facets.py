@@ -27,6 +27,7 @@ from gallery.core.metadata.facets import (
     FILE_FACET_IDS,
     GROUP_FACETS,
     SORT_FACETS,
+    WANTED_TAGS,
     PhotoFacets,
     extract,
     group_facet,
@@ -34,7 +35,9 @@ from gallery.core.metadata.facets import (
     needs_metadata,
     parse_capture_time,
     sort_facet,
+    with_resolved_place,
 )
+from gallery.core.places.resolver import ResolvedPlace
 
 #: 主 IFD 里的标签（写入文件时也要用，见 tests/conftest.py 的 make_photo）。
 TAG_MAKE = 0x010F
@@ -135,6 +138,84 @@ def test_extract_of_empty_mapping_is_all_unknown() -> None:
     facets = extract({})
 
     assert facets == PhotoFacets()
+
+
+# ---- 坐标 ---------------------------------------------------------------------------
+
+
+def test_extract_reads_gps_coordinates() -> None:
+    """相机原图几乎只写 GPS、不写 IPTC 地点：读不到坐标就分不出国家（见 WANTED_TAGS）。"""
+    raw = {
+        "EXIF:GPSLatitude": "34 deg 12' 54.34\"",
+        "EXIF:GPSLatitudeRef": "North",
+        "EXIF:GPSLongitude": "108 deg 57' 52.44\"",
+        "EXIF:GPSLongitudeRef": "East",
+    }
+
+    facets = extract(raw)
+
+    assert facets.latitude == pytest.approx(34.215, abs=0.001)
+    assert facets.longitude == pytest.approx(108.965, abs=0.001)
+
+
+def test_extract_honours_the_hemisphere() -> None:
+    raw = {
+        "EXIF:GPSLatitude": "48.8",
+        "EXIF:GPSLatitudeRef": "South",
+        "EXIF:GPSLongitude": "2.3",
+        "EXIF:GPSLongitudeRef": "West",
+    }
+
+    facets = extract(raw)
+
+    assert facets.latitude == pytest.approx(-48.8)
+    assert facets.longitude == pytest.approx(-2.3)
+
+
+def test_gps_tags_are_requested() -> None:
+    """回归测试：漏掉这几行，每张照片的地点字段就都是空的。"""
+    for tag in ("EXIF:GPSLatitude", "EXIF:GPSLongitude", "EXIF:GPSLatitudeRef"):
+        assert tag in WANTED_TAGS
+
+
+# ---- 按坐标补地点 ---------------------------------------------------------------------
+
+
+def test_resolved_place_fills_the_empty_fields() -> None:
+    facets = PhotoFacets(latitude=34.2, longitude=108.9)
+
+    filled = with_resolved_place(
+        facets, ResolvedPlace(city="西安", region="陕西省", country="中国")
+    )
+
+    assert (filled.city, filled.region, filled.country) == ("西安", "陕西省", "中国")
+    assert filled.place_inferred is True
+    assert filled.latitude == 34.2  # 坐标照旧留着
+
+
+def test_place_written_in_the_file_wins() -> None:
+    """Lightroom 导出的地点比反查准，文件里写了就以文件为准。"""
+    facets = PhotoFacets(city="Bordeaux", latitude=48.8, longitude=2.3)
+
+    filled = with_resolved_place(facets, ResolvedPlace(city="Paris", country="France"))
+
+    assert filled.city == "Bordeaux"
+    assert filled.country == "France"  # 缺的照补
+    assert filled.place_inferred is True
+
+
+def test_a_fully_written_place_is_not_called_inferred() -> None:
+    facets = PhotoFacets(city="巴黎", region="法兰西岛", country="法国")
+
+    filled = with_resolved_place(facets, ResolvedPlace(city="巴黎", country="法国"))
+
+    assert filled.place_inferred is False
+
+
+def test_no_answer_leaves_the_facets_alone() -> None:
+    facets = PhotoFacets(latitude=0.0, longitude=0.0)
+
+    assert with_resolved_place(facets, None) is facets
 
 
 # ---- 拍摄时间解析 --------------------------------------------------------------------

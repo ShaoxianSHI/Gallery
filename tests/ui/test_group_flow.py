@@ -32,6 +32,7 @@ from gallery.core.library.session import (  # noqa: E402
     save_session,
 )
 from gallery.core.metadata import batch  # noqa: E402
+from gallery.core.places.resolver import LazyPlaceResolver, ResolvedPlace  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 
 #: 等待后台扫描 / 元数据读取的时限。
@@ -44,6 +45,47 @@ DATES = {
     "去年十二月.jpg": "2023:12:16 10:00:00",
     "没有时间.jpg": None,
 }
+
+#: 照片自带的 GPS（相机原图通常只写坐标、不写 IPTC 地点）。
+GPS: dict[str, dict[str, str]] = {
+    "三月.jpg": {
+        "EXIF:GPSLatitude": "34.215",
+        "EXIF:GPSLatitudeRef": "North",
+        "EXIF:GPSLongitude": "108.965",
+        "EXIF:GPSLongitudeRef": "East",
+    },
+    "四月.jpg": {
+        "EXIF:GPSLatitude": "48.805",
+        "EXIF:GPSLatitudeRef": "North",
+        "EXIF:GPSLongitude": "2.120",
+        "EXIF:GPSLongitudeRef": "East",
+    },
+    "去年十二月.jpg": {
+        "EXIF:GPSLatitude": "48.805",
+        "EXIF:GPSLatitudeRef": "North",
+        "EXIF:GPSLongitude": "2.120",
+        "EXIF:GPSLongitudeRef": "East",
+    },
+}
+
+
+@pytest.fixture
+def fake_places(monkeypatch: pytest.MonkeyPatch) -> Callable[[], int]:
+    """把地点反查换成假的：按「西经度 < 40 是西安，否则巴黎」回答，并数着问了几次。"""
+    calls = {"count": 0}
+
+    def place_for(
+        self: object, latitude: float, longitude: float, *, status: object = None
+    ) -> ResolvedPlace:
+        calls["count"] += 1
+        if latitude > 40:
+            return ResolvedPlace(city="巴黎", region="法兰西岛", country="法国")
+        return ResolvedPlace(city="西安", region="陕西省", country="中国")
+
+    # 只换掉「按坐标查」这一步：解析器的其余行为（缓存、数据加载）都是真的，
+    # 但测试因此不联网、也不依赖本机有没有下过 GeoNames 数据。
+    monkeypatch.setattr(LazyPlaceResolver, "place_for", place_for)
+    return lambda: calls["count"]
 
 
 @pytest.fixture
@@ -60,8 +102,11 @@ def fake_facet_source(monkeypatch: pytest.MonkeyPatch) -> Callable[[], list[Path
         for path in paths:
             asked.append(Path(path))
             # 与 exiftool 一致：能读到的文件都有一条记录，哪怕里面只有 SourceFile。
+            raw: dict[str, object] = dict(GPS.get(Path(path).name, {}))
             when = DATES.get(Path(path).name)
-            yield Path(path), ({"EXIF:DateTimeOriginal": when} if when else {})
+            if when:
+                raw["EXIF:DateTimeOriginal"] = when
+            yield Path(path), raw
 
     monkeypatch.setattr(batch.ExifToolBatchSource, "read_many", read_many, raising=True)
     return lambda: list(asked)
@@ -247,6 +292,65 @@ def test_groups_are_remembered_across_restarts(
     _settle(qt_app, again, groups=True)
     assert [group.label for group in _groups(again)] == ["2024 年", "2023 年", "时间未知"]
     again.close()
+
+
+def test_grouping_by_country_resolves_places_from_gps(
+    qt_app: QApplication,
+    tmp_path: Path,
+    make_photo: Callable[..., Path],
+    fake_facet_source: object,
+    fake_places: Callable[[], int],
+) -> None:
+    """相机原图只写 GPS、不写 IPTC 地点 —— 分组必须能用坐标反查出国家。"""
+    root = _library(tmp_path, make_photo, ["三月.jpg", "四月.jpg", "去年十二月.jpg"])
+    window = _open(qt_app, root, session_base=tmp_path / "状态", group_facet="country")
+    _settle(qt_app, window, groups=True)
+
+    # 国家之间按名称升序（时间类分组才是新 → 旧）
+    assert [(group.label, group.count) for group in _groups(window)] == [
+        ("中国", 1),
+        ("法国", 2),
+    ]
+    # 每张带坐标的照片问一次（按坐标去重是解析器内部的事，core 那边单独钉住）。
+    assert fake_places() == 3
+    window.close()
+
+
+def test_grouping_by_place_tells_the_user_it_is_inferred(
+    qt_app: QApplication,
+    tmp_path: Path,
+    make_photo: Callable[..., Path],
+    fake_facet_source: object,
+    fake_places: Callable[[], int],
+) -> None:
+    """推断出来的地点必须说清楚 —— 与元数据面板的「地点（推断）」同一可信级别。"""
+    root = _library(tmp_path, make_photo, ["三月.jpg"])
+    window = _open(qt_app, root, session_base=tmp_path / "状态", group_facet="city")
+    _settle(qt_app, window, groups=True)
+
+    assert window._banner.isVisible()
+    assert "推断" in window._banner.text()
+    window.close()
+
+
+def test_photos_without_gps_land_in_the_unknown_group(
+    qt_app: QApplication,
+    tmp_path: Path,
+    make_photo: Callable[..., Path],
+    fake_facet_source: object,
+    fake_places: Callable[[], int],
+) -> None:
+    """没有坐标也没有文件地点的照片归到「国家未知」，而不是被编一个国家。"""
+    root = _library(tmp_path, make_photo, ["三月.jpg", "没有时间.jpg"])
+    window = _open(qt_app, root, session_base=tmp_path / "状态", group_facet="country")
+    _settle(qt_app, window, groups=True)
+
+    assert [(group.label, group.count) for group in _groups(window)] == [
+        ("中国", 1),
+        ("国家未知", 1),
+    ]
+    assert fake_places() == 1  # 没有坐标的那张不必问
+    window.close()
 
 
 # ---- 进入与退出分组 --------------------------------------------------------------------

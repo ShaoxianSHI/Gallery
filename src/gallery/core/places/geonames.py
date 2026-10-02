@@ -17,7 +17,7 @@ import re
 import urllib.error
 import urllib.request
 import zipfile
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -69,6 +69,17 @@ SAME_PLACE_RADIUS_KM: Final = 5.0
 
 #: 下载用的取数函数签名：URL → 字节。
 Fetcher = Callable[[str], bytes]
+
+#: 粗网格的格子边长（度）。约 555 公里。
+#:
+#: 一次反查原本要把 3.4 万座城市全扫一遍（11ms），分组时一次要给几千张照片查，
+#: 那样光反查就要一分钟。粗网格把候选缩到查询点周围 ±2 格（≥ 1100 公里），
+#: 而 :data:`MAX_DISTANCE_KM` 只有 300 公里 —— **任何会被采纳的答案必然落在窗口里**，
+#: 所以结果与全扫逐字一致，只是快了两个数量级。
+GRID_CELL_DEGREES: Final = 5.0
+
+#: 窗口半径（格数）。
+GRID_RADIUS: Final = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +135,7 @@ class PlaceIndex:
         self._admin1 = admin1
         self._countries = countries
         self._max_distance_km = max_distance_km
+        self._grid = _build_grid(self._cities)
 
     @property
     def city_count(self) -> int:
@@ -156,6 +168,20 @@ class PlaceIndex:
             return None
         return cls(cities, admin1, countries)
 
+    def _candidates(self, latitude: float, longitude: float) -> Iterable[_City]:
+        """查询点附近粗网格里的那些城市（见 :data:`GRID_CELL_DEGREES`）。"""
+        cell_latitude = math.floor(latitude / GRID_CELL_DEGREES)
+        cell_longitude = math.floor(longitude / GRID_CELL_DEGREES)
+        picked: list[_City] = []
+        for offset_latitude in range(-GRID_RADIUS, GRID_RADIUS + 1):
+            for offset_longitude in range(-GRID_RADIUS, GRID_RADIUS + 1):
+                bucket = self._grid.get(
+                    (cell_latitude + offset_latitude, cell_longitude + offset_longitude)
+                )
+                if bucket:
+                    picked.extend(self._cities[index] for index in bucket)
+        return picked
+
     def nearest(self, latitude: float, longitude: float) -> Place | None:
         """返回最近的城市；超出 ``max_distance_km`` 或数据库为空时返回 ``None``。
 
@@ -169,7 +195,7 @@ class PlaceIndex:
         longitude_rad = math.radians(longitude)
         scored: list[tuple[float, int, _City]] = []
         nearest_distance = float("inf")
-        for city in self._cities:
+        for city in self._candidates(latitude, longitude):
             distance = _haversine_km(latitude_rad, longitude_rad, city)
             nearest_distance = min(nearest_distance, distance)
             scored.append((distance, _PLACE_RANK.get(city.feature_code, 0), city))
@@ -318,6 +344,18 @@ def _parse_countries(path: Path) -> dict[str, str]:
     return mapping
 
 
+def _build_grid(cities: Sequence[_City]) -> dict[tuple[int, int], list[int]]:
+    """经纬度 → 城市下标。一座城市只落在一个格子里，查的时候看周围几格。"""
+    grid: dict[tuple[int, int], list[int]] = {}
+    for index, city in enumerate(cities):
+        key = (
+            math.floor(city.latitude / GRID_CELL_DEGREES),
+            math.floor(city.longitude / GRID_CELL_DEGREES),
+        )
+        grid.setdefault(key, []).append(index)
+    return grid
+
+
 def _haversine_km(latitude_rad: float, longitude_rad: float, city: _City) -> float:
     delta_latitude = city.latitude_rad - latitude_rad
     delta_longitude = city.longitude_rad - longitude_rad
@@ -330,6 +368,7 @@ def _haversine_km(latitude_rad: float, longitude_rad: float, city: _City) -> flo
 
 __all__ = [
     "ADMIN1_FILE",
+    "GRID_CELL_DEGREES",
     "CITIES_ARCHIVE",
     "CITIES_FILE",
     "COUNTRIES_FILE",

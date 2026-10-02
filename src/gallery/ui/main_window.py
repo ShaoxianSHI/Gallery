@@ -63,6 +63,7 @@ from gallery.core.metadata.rename import RenameResult
 from gallery.core.metadata.trash import Failure, TrashResult
 from gallery.core.metadata.undo import UndoResult
 from gallery.core.places.geonames import PlaceIndex, download_data, geo_data_dir
+from gallery.core.places.resolver import LazyPlaceResolver
 from gallery.ui import theme
 from gallery.ui.browser.grid import PREFETCH_MARGIN, PhotoGrid
 from gallery.ui.browser.model import PhotoListModel
@@ -216,6 +217,10 @@ class MainWindow(QMainWindow):
         self._current_row = -1
         self._metadata_job: int | None = None
         self._place_index: PlaceIndex | None = None
+        #: 分组 / 排序用的地点反查器（按坐标）。与元数据面板共用同一份城市数据。
+        self._place_resolver: LazyPlaceResolver | None = None
+        #: 横幅上正占着「地点是推断出来的」这句。
+        self._inferred_note = False
         self._preview_cache: OrderedDict[Path, QImage] = OrderedDict()
         self._metadata_cache: OrderedDict[Path, tuple[int, int, MetadataReport]] = OrderedDict()
         self._thumbnail_failures = 0
@@ -638,15 +643,20 @@ class MainWindow(QMainWindow):
             return
         generation = self._generation
         self._progress_notice = True
+        self._inferred_note = False
         self._show_banner(
             f"正在读取 {len(refs)} 张照片的元数据，用于{'分组' if self._group_facet else '排序'}…"
         )
+
+        resolver = self._facet_place_resolver()
 
         def work(context: TaskContext) -> object:
             return library.photo_facets(
                 refs,
                 should_cancel=context.is_cancelled,
                 on_progress=lambda done, total: context.progress((done, total)),
+                status=lambda text: context.progress(text),
+                resolver=resolver,
             )
 
         self._facet_job = self._runner.submit(
@@ -655,6 +665,25 @@ class MainWindow(QMainWindow):
             on_result=partial(self._on_facets_ready, generation),
             on_error=partial(self._on_facets_failed, generation),
         )
+
+    #: 按坐标推断出来的地点说明。
+    _INFERRED_PLACE_NOTE = (
+        "地点是按照片里的坐标离线推断的（文件里没写地点），"
+        "GeoNames 公开城市数据，你的坐标不会发送到任何服务器。"
+    )
+
+    def _note_inferred_places(self) -> None:
+        """按地点分组且用到了推断结果时，把这件事说清楚。
+
+        与元数据面板的「地点（推断）」同一个可信级别：文件里写的地点和软件推出来
+        的不是一回事，混在一起用户会以为那是照片自带的元数据。
+        """
+        if self._group_facet not in {"country", "region", "city"}:
+            return
+        inferred = any(facets.place_inferred for facets in self._facet_values.values())
+        self._inferred_note = inferred
+        if inferred:
+            self._show_banner(self._INFERRED_PLACE_NOTE)
 
     def _clear_progress_notice(self) -> None:
         """收掉「正在读取元数据…」那条 —— **只收自己那一条**：扫描出问题时那条横幅
@@ -696,8 +725,23 @@ class MainWindow(QMainWindow):
             self._runner.cancel(self._facet_job)
             self._facet_job = None
 
+    def _facet_place_resolver(self) -> LazyPlaceResolver:
+        """给分组 / 排序用的地点反查器；面板那边加载过索引就直接复用。"""
+        # 面板那边已经加载过索引就直接复用，省一次读 8.5 MB 城市表。
+        needs = self._place_resolver is None or (
+            self._place_index is not None and not self._place_resolver.ready
+        )
+        if needs:
+            self._place_resolver = LazyPlaceResolver(self._place_index)
+        return self._place_resolver
+
     def _on_facet_progress(self, generation: int, payload: object) -> None:
-        if generation != self._generation or not isinstance(payload, tuple):
+        if generation != self._generation:
+            return
+        if isinstance(payload, str):
+            self._show_banner(payload)  # 「正在下载城市数据…」这类说明
+            return
+        if not isinstance(payload, tuple):
             return
         done, total = payload if len(payload) == 2 else (0, 0)
         if isinstance(done, int) and isinstance(total, int) and total:
@@ -708,8 +752,12 @@ class MainWindow(QMainWindow):
             return
         self._facet_job = None
         self._facet_values = payload if isinstance(payload, dict) else {}
+        if self._place_resolver is not None and self._place_resolver.ready:
+            # 城市数据这回加载过了，面板那边就不用再加载一遍。
+            self._place_index = self._place_resolver.index
         self._clear_progress_notice()
         self._apply_ordering()
+        self._note_inferred_places()
 
     def _on_facets_failed(self, generation: int, message: str) -> None:
         if generation != self._generation:
@@ -1815,6 +1863,7 @@ class MainWindow(QMainWindow):
         self._level_notice = False
         self._progress_notice = False
         self._scan_issue = False
+        self._inferred_note = False
         self._current_row = -1
         self._detail.clear_image()
         self._panel.clear()

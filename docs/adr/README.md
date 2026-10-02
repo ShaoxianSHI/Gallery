@@ -13,4 +13,4 @@
 | [0006](0006-package-layout.md) | 按领域把 core 与 ui 分成子包 | 已接受 |
 | [0007](0007-nuitka-standalone-bundle.md) | 用 Nuitka 编译出自包含的 Gallery.app | 已接受 |
 | [0008](0008-delete-to-trash.md) | 删除 = 移到系统废纸篓，日志记账，随时可撤销（含对红线 1 的第二次豁免） | 已接受 |
-| [0009](0009-metadata-grouping-and-sorting.md) | 按元数据分组与排序：组卡片、批量读取、facet 索引 | 已接受 |
+| [0009](0009-metadata-grouping-and-sorting.md) | 按元数据分组与排序：组卡片、批量读取、facet 索引、坐标反查地点 | 已接受 |

@@ -28,7 +28,7 @@ from gallery.core.metadata.facets import PhotoFacets
 logger = logging.getLogger(__name__)
 
 #: 表结构版本。改动表结构就 +1；旧表会被整表丢掉重建（缓存不值得迁移）。
-SCHEMA_VERSION: Final = 1
+SCHEMA_VERSION: Final = 2
 
 #: 一次 ``UPSERT`` 最多写多少行。太大则一条语句过长，太小则语句条数多。
 WRITE_CHUNK: Final = 500
@@ -48,6 +48,9 @@ CREATE TABLE IF NOT EXISTS facets (
     region     TEXT,
     country    TEXT,
     keywords   TEXT,
+    latitude   REAL,
+    longitude  REAL,
+    inferred   INTEGER NOT NULL DEFAULT 0,
     aperture   REAL,
     shutter    REAL,
     iso        REAL,
@@ -58,7 +61,8 @@ CREATE TABLE IF NOT EXISTS facets (
 
 _COLUMNS: Final[str] = (
     "path, size, mtime_ns, captured, year, month, day, camera, lens, "
-    "city, region, country, keywords, aperture, shutter, iso, focal, pixels"
+    "city, region, country, keywords, latitude, longitude, inferred, "
+    "aperture, shutter, iso, focal, pixels"
 )
 
 #: 关键词在库里用一个分隔符存 —— 关键词本身可能含逗号，不能用逗号拼回去。
@@ -178,6 +182,9 @@ class FacetIndex:
                 facets.region,
                 facets.country,
                 _KEYWORD_SEPARATOR.join(facets.keywords),
+                facets.latitude,
+                facets.longitude,
+                1 if facets.place_inferred else 0,
                 facets.aperture,
                 facets.shutter,
                 facets.iso,
@@ -280,6 +287,9 @@ def _row_to_facets(values: Sequence[object]) -> PhotoFacets | None:
         region,
         country,
         keywords,
+        latitude,
+        longitude,
+        inferred,
         aperture,
         shutter,
         iso,
@@ -298,6 +308,9 @@ def _row_to_facets(values: Sequence[object]) -> PhotoFacets | None:
         region=_optional_str(region),
         country=_optional_str(country),
         keywords=words,
+        latitude=_optional_float(latitude),
+        longitude=_optional_float(longitude),
+        place_inferred=bool(inferred),
         aperture=_optional_float(aperture),
         shutter=_optional_float(shutter),
         iso=_optional_float(iso),
@@ -318,6 +331,9 @@ def _facets_to_row(facets: PhotoFacets) -> tuple[object, ...]:
         facets.region,
         facets.country,
         _KEYWORD_SEPARATOR.join(facets.keywords),
+        facets.latitude,
+        facets.longitude,
+        1 if facets.place_inferred else 0,
         facets.aperture,
         facets.shutter,
         facets.iso,

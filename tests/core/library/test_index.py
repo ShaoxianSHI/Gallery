@@ -24,6 +24,9 @@ FULL = PhotoFacets(
     region="Nouvelle-Aquitaine",
     country="France",
     keywords=("旅行", "海边"),
+    latitude=34.215,
+    longitude=108.965,
+    place_inferred=True,
     aperture=2.8,
     shutter=0.005,
     iso=400,
@@ -43,6 +46,20 @@ def test_round_trip_keeps_every_field(tmp_path: Path) -> None:
     index.store([(ref, FULL)])
 
     assert index.lookup([ref]) == {ref.path: FULL}
+    index.close()
+
+
+def test_coordinates_and_inferred_flag_survive_a_round_trip(tmp_path: Path) -> None:
+    """地点是从坐标推出来的，索引里必须连同「这是推断的」一起记住。"""
+    index = FacetIndex(tmp_path / "index.db")
+    ref = _ref(tmp_path)
+
+    index.store([(ref, FULL)])
+
+    got = index.lookup([ref])[ref.path]
+    assert got.latitude == 34.215
+    assert got.longitude == 108.965
+    assert got.place_inferred is True
     index.close()
 
 
