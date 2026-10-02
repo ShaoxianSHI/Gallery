@@ -206,6 +206,10 @@ WANTED_TAGS: Final[tuple[str, ...]] = (
     "XMP-photoshop:State",
     "XMP-photoshop:Country",
     "XMP:Subject",
+    # ``_keywords`` 认 Dublin Core 的 ``dc:subject``（Lightroom / Capture One 把它当
+    # 主要的关键词字段），不列在这里它就永远收不到 —— 键在读取端、没在请求端，
+    # 是一条走不到的路。
+    "XMP-dc:Subject",
 )
 
 #: IPTC 的关键词字段可能是数组或用分号分隔的字符串。
@@ -600,6 +604,11 @@ _FACETS: Final[tuple[Facet, ...]] = (
         "关键词",
         "text",
         group=_keyword_group,
+        # 关键词只住在 IPTC / XMP 里（``WANTED_TAGS`` 的那三行），Pillow 读不出来。
+        # 不标这一条，没装 exiftool 时菜单里那条「关键词」会照常可点，而点下去
+        # 满屏都是「无关键词」—— 用户以为是自己没写关键词，其实是没有工具去读。
+        # 国家 / 省州 / 城市同理（它们靠的是 GPS 与反查，同属「没 exiftool 就没数」那一类）。
+        needs_exiftool=True,
         empty_label="无关键词",
     ),
     _facet(

@@ -7,22 +7,26 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
 from gallery.core.library.photos import PhotoRef
+from gallery.core.metadata.exif import _read_with_pillow
 from gallery.core.metadata.facets import (
     FACET_APERTURE,
     FACET_CAMERA,
     FACET_CAPTURED,
     FACET_CITY,
+    FACET_COUNTRY,
     FACET_FOLDER,
     FACET_FORMAT,
     FACET_ISO,
     FACET_KEYWORD,
     FACET_MONTH,
     FACET_NAME,
+    FACET_REGION,
     FACET_SIZE,
     FILE_FACET_IDS,
     GROUP_FACETS,
@@ -303,10 +307,39 @@ def test_keyword_is_not_sortable() -> None:
 
 
 def test_place_fields_need_exiftool() -> None:
-    """没装 exiftool 时界面据此把国家 / 省州 / 城市 / 关键词置灰。"""
+    """没装 exiftool 时界面据此把国家 / 省州 / 城市 / 关键词置灰。
+
+    **关键词也别漏**：它只住在 IPTC / XMP（``WANTED_TAGS`` 里的 ``IPTC:Keywords``、
+    ``XMP:Subject``、``XMP-dc:Subject``），Pillow 读不出来。不标这一条，菜单里那条
+    「按关键词分组」就仍然可点，而点下去满屏都是「无关键词」—— 用户会以为是自己
+    没给照片写关键词。
+    """
     assert group_facet(FACET_CITY).needs_exiftool
+    assert group_facet(FACET_COUNTRY).needs_exiftool
+    assert group_facet(FACET_REGION).needs_exiftool
+    assert group_facet(FACET_KEYWORD).needs_exiftool
     assert not group_facet(FACET_CAMERA).needs_exiftool
     assert not sort_facet(FACET_CAPTURED).needs_exiftool
+
+
+def test_keywords_really_do_come_from_exiftool_only(
+    tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """上一条的前提：降级来源（Pillow）根本给不出关键词。
+
+    ``_read_with_pillow`` 只产出 ``EXIF:`` 前缀的键，而关键词读的是
+    ``IPTC:Keywords`` / ``XMP:Subject`` / ``XMP-dc:Subject``。这条测试把那个前提
+    钉住 —— 将来若有人把关键词挪到某个基础 EXIF 标签上，就得回来改 ``needs_exiftool``，
+    否则菜单会继续说「缺 exiftool 就用不了」，而其实已经能用了。
+    """
+    keyword_keys = {"IPTC:Keywords", "XMP:Subject", "XMP-dc:Subject"}
+    # 关键词读的键都得在 WANTED_TAGS 里，否则 exiftool 那一路也读不到。
+    assert keyword_keys <= set(WANTED_TAGS)
+
+    raw = _read_with_pillow(make_photo("一张.jpg", size=(8, 8)))
+    assert not (set(raw) & keyword_keys)
+    assert all(key.startswith("EXIF:") for key in raw)
+    assert extract(raw).keywords == ()
 
 
 def test_needs_metadata_is_false_for_file_only_fields() -> None:

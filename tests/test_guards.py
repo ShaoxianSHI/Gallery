@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from typing import Final
 
 import pytest
 
@@ -28,41 +29,69 @@ def _iter_python_files(root: Path) -> list[Path]:
     return sorted(p for p in root.rglob("*.py") if "__pycache__" not in p.parts)
 
 
-def _imported_modules(path: Path) -> list[str]:
-    """返回文件中的顶层导入模块名（静态解析，不执行代码）。"""
+def _imported_modules(path: Path, *, full: bool = False) -> list[str]:
+    """文件里导入的模块名（静态解析，不执行代码）。
+
+    :param full: 保留点号后的全部（``gallery.ui.main_window``）；否则只取**第一段**
+        （``gallery``、``PySide6``）—— 大多数检查问的是「有没有碰某个第三方库」，
+        那一层就够。
+    """
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     modules: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            modules.extend(alias.name.split(".")[0] for alias in node.names)
+            names = (alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-            modules.append(node.module.split(".")[0])
+            names = iter((node.module,))
+        else:
+            continue
+        modules.extend(name if full else name.split(".")[0] for name in names)
     return modules
+
+
+#: 界面层**允许**调用的 ``.open(...)``：它们不是「打开一个文件」，而是走 core 的门面。
+#:
+#: 白名单而不是黑名单：``Path.open()``、``os.open()``、``io.open()``、``codecs.open``
+#: 乃至内置 ``open`` 的别名都要挡住，靠枚举「已知的坏形态」总会漏掉一种。
+#: 而 ``Library.open()`` 是这个项目里**唯一**正当的「打开」——它校验并打开一个库，
+#: 不碰用户的任何一个文件。
+ALLOWED_METHOD_OPENS: Final = frozenset({"Library.open", "cls.open", "type(self).open"})
+
+
+def _call_target(func: ast.expr) -> str | None:
+    """把调用目标写成 ``A.b.c``；不是「名字 + 属性」链时返回 ``None``。"""
+    parts: list[str] = []
+    node: ast.expr = func
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return None
+    parts.append(node.id)
+    return ".".join(reversed(parts))
 
 
 def _opens_files(path: Path) -> bool:
-    """文件里是否直接调用了内置 ``open()``（静态解析）。"""
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    return any(
-        isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "open"
-        for node in ast.walk(tree)
-    )
+    """文件里是否直接打开了文件（静态解析）。
 
-
-def _full_imports(path: Path) -> set[str]:
-    """导入的**完整**模块名（含点号后缀）。
-
-    文档字符串里提到 ``gallery.core`` 不算导入 —— 只有真的 import 才算数，
-    否则模块文档里解释一句「本该走 core 的门面」就会把守护测试弄红。
+    挡住内置 ``open()``、``Path.open()``、``os.open`` / ``io.open`` / ``codecs.open``
+    与 ``exec``：界面层只许走 ``core`` 的门面，自己开一个口子就等于把
+    「哪些操作会碰用户的文件」变成不可审计。唯一放行的是
+    :data:`ALLOWED_METHOD_OPENS`。
     """
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    modules: set[str] = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            modules.update(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-            modules.add(node.module)
-    return modules
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Name) and node.func.id in ("open", "exec"):
+            return True
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "open"
+            and _call_target(node.func) not in ALLOWED_METHOD_OPENS
+        ):
+            return True
+    return False
 
 
 def test_core_package_exists() -> None:
@@ -82,8 +111,13 @@ def test_core_does_not_import_qt(path: Path) -> None:
 
 @pytest.mark.parametrize("path", _iter_python_files(CORE_ROOT), ids=lambda p: p.name)
 def test_core_does_not_import_ui(path: Path) -> None:
-    """分层是单向的：core 不允许反向依赖界面。"""
-    offenders = [m for m in _imported_modules(path) if m == "gallery.ui"]
+    """分层是单向的：core 不允许反向依赖界面。
+
+    **必须问完整模块名**：``_imported_modules`` 默认只给第一段，拿它去比
+    ``"gallery.ui"`` 永远比不中 —— 那这条测试就成了一道永远为绿的灯，而它守的
+    恰恰是 AGENTS.md 那条「core 不得反向依赖界面」。
+    """
+    offenders = [m for m in _imported_modules(path, full=True) if m.startswith("gallery.ui")]
     assert not offenders, f"{path} 反向依赖了界面层：{offenders}"
 
 
@@ -116,7 +150,7 @@ def test_menu_modules_do_not_reach_into_core() -> None:
         path.name
         for path in _iter_python_files(UI_ROOT)
         if path.name in PRESENTATION_ONLY_UI
-        and any(module.startswith("gallery.core") for module in _full_imports(path))
+        and any(module.startswith("gallery.core") for module in _imported_modules(path, full=True))
     ]
     assert not offenders, f"{offenders} 直接依赖了 core；请让 MainWindow 把需要的东西递进来"
 
