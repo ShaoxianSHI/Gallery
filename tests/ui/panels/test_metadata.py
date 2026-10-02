@@ -110,3 +110,70 @@ def test_switching_report_leaves_no_stale_labels(qt_app: QApplication, report: o
     assert not any("尚未打开照片" in text for text in remaining)
     assert any("相机" in text for text in remaining)
     panel.deleteLater()
+
+
+def test_switching_report_hides_widgets_before_they_leave_the_panel(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """换内容时，被移走的控件必须**先藏起来**。
+
+    ``_fill`` 换内容时会把旧控件 ``setParent(None)`` 摘出控件树再排队删除。这件事本身是
+    需要的，但顺序错了就是缺陷：**Qt 会把一个本来可见的控件在摘成顶层窗口时顺手显示出
+    来**，于是面板的位置上弹出一个个白色小窗（macOS 上还带标题栏），里面是上一份元数据
+    —— 用户看到的正是「打开照片时照片的位置上闪一下的小白窗」。打开第一张要走「尚未打开 →
+    正在读取 → 出结果」三次重绘，所以会闪两次；⌘I 关着时不走这条路径，也就看不到。
+
+    离屏环境复现不出那个窗口本身（Qt 在离屏下不会真的把它显示出来），所以这里断言的是
+    **成因**而不是症状：**控件离开面板的那一刻必须已经不可见**。这条与平台无关，坏代码
+    必红。
+    """
+    panel = MetadataPanel()
+    panel.resize(300, 420)
+    panel.show()
+    panel.set_report(
+        build_report(
+            {"EXIF:Make": "Canon"},
+            path=tmp_path / "IMG_0001.JPG",
+            size=1024,
+            mtime_ns=0,
+            source="exiftool",
+        )
+    )
+    qt_app.processEvents()
+
+    # 给面板里的每个控件套一层 setParent 探针：记下它离开控件树的那一刻是否还看得见。
+    seen_visible: list[bool] = []
+    kept: list[object] = []
+    for widget in panel._body.findChildren(QWidget):
+        original = widget.setParent
+
+        def spy(
+            parent: object = None,
+            *args: object,
+            _widget: QWidget = widget,
+            _original: object = original,
+            **kwargs: object,
+        ) -> object:
+            if parent is None:
+                seen_visible.append(_widget.isVisible())
+            return _original(parent, *args, **kwargs)  # type: ignore[operator]
+
+        widget.setParent = spy  # type: ignore[method-assign]
+        kept.append(spy)
+
+    panel.set_report(
+        build_report(
+            {"EXIF:Model": "Canon EOS R6"},
+            path=tmp_path / "IMG_0002.JPG",
+            size=2048,
+            mtime_ns=0,
+            source="exiftool",
+        )
+    )
+
+    assert seen_visible, "探针一个控件也没抓到 —— 这条测试就成了一句空话"
+    assert not any(seen_visible), (
+        f"有 {sum(seen_visible)} 个控件是**可见着**离开面板的：Qt 会把它们一个个变成独立"
+        "的小窗口弹出来（就是那个闪一下的白色小窗）"
+    )
+    panel.deleteLater()
