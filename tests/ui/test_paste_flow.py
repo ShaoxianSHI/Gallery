@@ -162,14 +162,12 @@ def test_paste_sits_under_copy_path(qt_app: QApplication, window: MainWindow) ->
     assert labels.index("粘贴") < labels.index("重命名…")
 
 
-def test_the_album_menu_paste_is_the_shortcut_one_targeted_at_that_album(
-    qt_app: QApplication, window: MainWindow
-) -> None:
-    """相册菜单里那一条**就是菜单栏那个 ⌘V**，目标却换成了右键按着的那个相册。
+def test_the_album_menu_paste_is_the_shortcut_one(qt_app: QApplication, window: MainWindow) -> None:
+    """相册菜单里那一条**就是菜单栏那个 ⌘V** —— 同一枚动作，同一个槽。
 
-    两件事一起说，因为它们是一件事的两面：既然是**同一枚动作**，那一行就照常写着 ⌘V，
-    而菜单开着时按 ⌘V 与点它走的是同一个槽 —— 界面上写着什么，按下去就是什么，
-    不会出现「写着 ⌘V、按下去却粘到别处」的分裂（ADR 0018 决策 7）。
+    于是那一行照常写着 ⌘V，菜单开着时按 ⌘V 与点它必然落在同一个目录上，不会有
+    「写着 ⌘V、按下去却粘到别处」的分裂（ADR 0018 决策 7）。粘到哪里由选区说了算
+    （见下面那条），右键这一格本来就会把它选中。
     """
     desktop.copy_files_to_clipboard([window._library.root / "京都" / "一张.jpg"])
     row = window._model.row_of_path(window._library.root / "奈良")
@@ -181,32 +179,74 @@ def test_the_album_menu_paste_is_the_shortcut_one_targeted_at_that_album(
     action = next(item for item in menu.actions() if item.text() == "粘贴")
     assert action is window._paste_action, "不是另做一份动作，就是菜单栏那个 ⌘V"
     assert action.shortcut() == QKeySequence("Ctrl+V")
-    # 目标不在动作上（那一枚是共用的），在窗口上按落点挂着的那一个：
-    assert window._paste_album_target == window._library.root / "奈良"
-    assert window._paste_album_target != window._library.root, "落进库根就是「同级」"
 
 
-def test_the_shortcut_goes_back_to_the_current_level_once_the_menu_is_gone(
+# ---- 粘到哪里：只看选区（ADR 0018 决策 7）-------------------------------------
+
+
+def test_the_shortcut_follows_a_selected_album(
     qt_app: QApplication, window: MainWindow, root: Path
 ) -> None:
-    """菜单关掉之后 ⌘V 照旧粘进**当前这一层** —— 上一次右键不该把下一次 ⌘V 带跑。
+    """**选中一个相册，按 ⌘V → 粘进那个相册**（用户明确要求的判据）。
 
-    目标是用一次就摘掉的（见 :meth:`MainWindow.paste_into_current_folder`），所以右键过
-    一个相册、没点那一行就 ``⎋`` 关掉菜单，之后按 ⌘V 落点仍是这一层。
+    这一条与「是不是右键菜单」无关：左键点中一个相册、直接按 ⌘V，一样要粘进去。
+    停在库根时按旧行为会落进库根（也就是与相册**同级**的地方），那正是要改掉的那种事。
     """
     (root / "奈良" / "待粘.jpg").write_bytes((root / "京都" / "一张.jpg").read_bytes())
     desktop.copy_files_to_clipboard([root / "奈良" / "待粘.jpg"])
     row = window._model.row_of_path(root / "京都")
     assert row >= 0
-    assert window.context_menu_for(row) is not None
-    assert window._paste_album_target == root / "京都"
+    window._grid.select_for_context(row)
 
-    # 菜单关掉：``_show_context_menu`` 收工时清空（这里直接模拟那一步）。
-    window._paste_album_target = None
+    assert window._paste_target() == root / "京都"
     _paste_and_wait(qt_app, window)
 
-    assert (root / "待粘.jpg").is_file(), "⌘V 粘进当前这一层（停在库根就是库根）"
-    assert not (root / "京都" / "待粘.jpg").exists()
+    assert (root / "京都" / "待粘.jpg").is_file(), "必须落在选中的那个相册里"
+    assert not (root / "待粘.jpg").exists(), "不能落在与相册同级的库根里"
+
+
+def test_the_shortcut_stays_on_the_current_level_when_no_album_is_selected(
+    qt_app: QApplication, window: MainWindow, root: Path
+) -> None:
+    """**没选中相册（或选的不是相册）时，⌘V 粘进当前这一层** —— 与相册那一半对称。
+
+    选中的是照片、或者什么都没选，都算「没选中相册」：照片不改变粘到哪，
+    「就粘到我现在看着的这一层里」才是这条命令积累起来的习惯。
+    """
+    (root / "奈良" / "待粘.jpg").write_bytes((root / "京都" / "一张.jpg").read_bytes())
+    desktop.copy_files_to_clipboard([root / "奈良" / "待粘.jpg"])
+    window._grid.select_for_context(-1)
+    assert window._paste_target() == root, "什么都没选 → 当前这一层（停在库根就是库根）"
+
+    _enter(qt_app, window, root / "京都")
+    photo = window._model.row_of_path(root / "京都" / "一张.jpg")
+    assert photo >= 0
+    window._grid.select_for_context(photo)
+    assert window._paste_target() == root / "京都", "选中的是照片 → 仍是当前这一层"
+
+    _paste_and_wait(qt_app, window)
+    assert (root / "京都" / "待粘.jpg").is_file()
+
+
+def test_several_albums_selected_fall_back_to_the_current_level(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """选了**不止一个**相册：粘进当前这一层 —— 粘进哪一个说不清。
+
+    这一层里照片与相册卡片是混着摆的，所以「多选」还可能是照片 + 相册。两种都说不出
+    「粘进哪一个相册」，于是照旧粘进当前这一层，不被一次多选悄悄改掉。
+    """
+    desktop.copy_files_to_clipboard([window._library.root / "京都" / "一张.jpg"])
+    first = window._model.row_of_path(window._library.root / "京都")
+    second = window._model.row_of_path(window._library.root / "奈良")
+    assert first >= 0 and second >= 0
+    _select_rows(window, (first, second))
+
+    assert window._paste_target() == root_of(window)
+
+
+def root_of(window: MainWindow) -> Path:
+    return window._library.root if window._library is not None else Path()
 
 
 def test_pasting_on_an_album_lands_inside_it(
@@ -214,12 +254,13 @@ def test_pasting_on_an_album_lands_inside_it(
 ) -> None:
     """停在库根时右键「奈良」再粘贴 → 落进**奈良**，不是落进它所在的库根。
 
-    这正是「粘到相册内部，而不是同级」：旧行为一律粘进 ``_paste_target()``（当前这一层），
-    停在库根时就是库的顶层，于是多出一堆散片照片。
+    右键会先把那一格选中（``select_for_context``），于是菜单里那一条与 ⌘V 看到的是
+    同一个选区、同一个目录 —— 这正是「粘到相册内部，而不是同级」。
     """
     desktop.copy_files_to_clipboard([root / "京都" / "一张.jpg"])
     row = window._model.row_of_path(root / "奈良")
     assert row >= 0
+    window._grid.select_for_context(row)
     menu = window.context_menu_for(row)
     assert menu is not None
 
@@ -245,6 +286,7 @@ def test_pasting_on_a_nested_album_lands_inside_that_album(
     desktop.copy_files_to_clipboard([root / "奈良" / "待粘.jpg"])
     row = window._model.row_of_path(nested)
     assert row >= 0
+    window._grid.select_for_context(row)
     menu = window.context_menu_for(row)
     assert menu is not None
 

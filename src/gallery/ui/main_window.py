@@ -431,14 +431,6 @@ class MainWindow(QMainWindow):
         #: 见 ADR 0018 / 0019）。**三者同时只允许一个**：它们会争同一个目标名字，
         #: 后到的会把先到的盖掉 —— 那是这个项目最不能出现的一种事。
         self._write_job: int | None = None
-        #: 此刻右键菜单里那条「粘贴」要粘进的**相册**（ADR 0018 决策 7）。``None`` 就是
-        #: 粘进当前这一层（⌘V 平时那一套）。
-        #:
-        #: 拼菜单时按落点挂上、**用一次就摘掉**（见 :meth:`_context_paste` 与
-        #: :meth:`paste_into_current_folder`）——菜单是模态的，一次只弹一份，所以这个值
-        #: 至多只活到下一次粘贴；「用一次就摘」是为了连这一点残余都不留：上一次右键不该
-        #: 带走下一次 ⌘V。
-        self._paste_album_target: Path | None = None
         #: 分组 / 排序与元数据面板共用的地点反查器（按坐标），首次用时才加载城市数据。
         self._place_resolver: LazyPlaceResolver | None = None
         #: 打开库时那一遍「全库解析地点」的任务（ADR 0010）。
@@ -710,10 +702,10 @@ class MainWindow(QMainWindow):
         # ⌘V 与访达一致：把剪贴板里的文件**复制**进当前这一层的目录（ADR 0018）。
         # 它是这三个写操作里唯一不进撤销栈的 —— 撤销粘贴就是删文件（红线 1）。
         #
-        # **相册菜单里那一条也是它**（ADR 0018 决策 7）：右键一个相册时目标换成那个相册
-        # 内部（访达的「粘贴项目」），那一行因此照常写着 ⌘V，而且**按 ⌘V 与点它走的是同一个
-        # 动作、同一个槽** —— 界面上写着什么，按下去就是什么，不会有两处说法。目标挂在
-        # :attr:`_paste_album_target` 上，拼菜单时按落点定、用一次就作废。
+        # **相册菜单里那一条也是它**（ADR 0018 决策 7）：那一行因此照常写着 ⌘V，而且
+        # **按 ⌘V 与点它走的是同一个动作、同一个槽** —— 界面上写着什么，按下去就是什么，
+        # 不会有两处说法。粘到哪里由 :meth:`_paste_target` 说了算（选中一个相册就粘进那个
+        # 相册，否则粘进当前这一层），右键那一格本来就会把它选中。
         self._paste_action = QAction("粘贴", self)
         self._paste_action.setShortcut(QKeySequence("Ctrl+V"))
         self._paste_action.triggered.connect(self.paste_into_current_folder)
@@ -2087,17 +2079,14 @@ class MainWindow(QMainWindow):
     def _show_context_menu(self, row: int) -> None:
         """网格上的一次右键：拼菜单、弹出来、用完即弃。
 
-        菜单关掉就把「粘进哪个相册」摘掉：那一行上的 ⌘V 与菜单栏里的 ⌘V 是**同一枚动作**，
-        两者只在「此刻弹着的是哪份菜单」这一点上有差别（ADR 0018 决策 7）。菜单一关就没有
-        「这一下」了，下一次按 ⌘V 应当照旧粘进当前这一层。
+        粘到哪里不看菜单本身，看**选区**（:meth:`_paste_target`）—— 右键那一格会先把它
+        选中（``context_menu_for`` 之前网格已经 ``select_for_context`` 过了），所以点那一行
+        与按 ⌘V 落在同一个目录上，不需要谁替菜单记着「这一下按的是哪个相册」。
         """
         menu = self.context_menu_for(row)
         if menu is None:
             return
-        try:
-            menu.exec(self._grid.cursor().pos())
-        finally:
-            self._paste_album_target = None
+        menu.exec(self._grid.cursor().pos())
         menu.deleteLater()
 
     def context_menu_for(self, row: int) -> QMenu | None:
@@ -2189,24 +2178,18 @@ class MainWindow(QMainWindow):
 
         前两处递进去的**是同一枚动作**（:attr:`_paste_action`，菜单栏那个 ⌘V）—— 因此空白处
         与相册那两份菜单里那一行都照常写着 ⌘V，而且**点它与按 ⌘V 是同一件事**，不可能出现
-        「写着 ⌘V、按下去却是另一个地方」的分裂。两者只在目标上分岔：相册那一次把目标挂到
-        :attr:`_paste_album_target`（访达的「粘贴项目」：按在哪个文件夹上就粘进哪个文件夹），
-        空白处与平时的 ⌘V 则由 :meth:`_paste_target` 按当前这一层算。
+        「写着 ⌘V、按下去却是另一个地方」的分裂。粘到哪里一律由 :meth:`_paste_target` 算：
+        这一格被右键选中着，它就是那个相册（访达的「粘贴项目」：按在哪个文件夹上就粘进哪个
+        文件夹）；空白处那一次选区是空的，于是粘进当前这一层。
 
         其余落点一律不出现，按的是用户给的取向：按在一张照片上时「粘到哪」说不清（这一格
         未必属于当前这一层），多选相册时「粘进哪一个」说不清。⌘V 一直都在 —— **菜单摆不摆
-        它，与快捷键怎么用是两回事**。
-
-        顺带把 :attr:`_paste_album_target` 清掉：拼空白处 / 照片那几份菜单就意味着「不是
-        粘进某个相册」，上一次右键不该把这一次的 ⌘V 带跑。
+        它，与快捷键怎么用是两回事**（⌘V 粘到哪里照样按选区算，见 :meth:`_paste_target`）。
         """
-        self._paste_album_target = None
         if kind is TargetKind.ALBUM and not multiple and isinstance(entry, FolderRef):
-            # 目标就是那个文件夹本身，不必再问「这里有没有可粘的目录」—— 它就在那儿。
             # 剪贴板里没有文件则整条不出现（ADR 0018 决策 6）。
             if not desktop.read_files_from_clipboard():
                 return None
-            self._paste_album_target = entry.path
             return self._paste_action
         if kind is TargetKind.BLANK and self._can_paste():
             return self._paste_action
@@ -2315,7 +2298,23 @@ class MainWindow(QMainWindow):
     # ---- 粘贴（见 ADR 0018）--------------------------------------------------
 
     def _paste_target(self) -> Path | None:
-        """⌘V 要粘进哪个文件夹 —— **一律按磁盘上的真实位置算**（ADR 0018 决策 1）。
+        """⌘V 要粘进哪个文件夹 —— **先看选区，再看这一层**（ADR 0018 决策 1、决策 7）。
+
+        | 选区 | 粘到哪里 |
+        |---|---|
+        | **恰好选中一个相册** | **那个相册内部**（访达的「粘贴项目」） |
+        | 其余 —— 没选中、选中照片或分组卡片、选了不止一个 | 当前这一层 |
+
+        「**恰好**一个」是刻意的：这一层里照片与相册卡片是**混着摆**的（一个文件夹下面既
+        可以有照片也可以有子文件夹），选区里可能同时有照片与相册、也可能是好几个相册 ——
+        那都说不出「粘进哪一个相册」。此时照旧粘进当前这一层：那是用户在这条命令上积累起来
+        的习惯，不该被一次多选悄悄改掉。
+
+        右键某个相册时菜单里那一条「粘贴」也是它（ADR 0018 决策 7），而右键**会先把那一格
+        选中**（``select_for_context``，ADR 0014 决策 2）—— 于是点那一行与按 ⌘V 天然落在
+        同一个目录上，不必有谁替谁记着「这一下按的是哪个相册」。
+
+        没选中相册时的那一层，判据仍然**按磁盘上的真实位置**算：
 
         - **相册模式**：当前这一层的文件夹，停在顶层时就是库根；
         - **全部照片**：整层是平铺的，唯一说得清的目录是库根；
@@ -2324,15 +2323,29 @@ class MainWindow(QMainWindow):
           其余情况就是当前这一层自己对应的目录（见 :meth:`_level_directory`）。
 
         分组里那一条正是用户要的「不同分组如果是同一个相册，还是算同一目录」：判据是
-        磁盘上的位置，不是分组本身 —— 按相机和按年份各开一张卡片，只要底下是同一个
+        磁盘上的位置，不是分组本身 —— 按相机和按年份各开一张卡片，只要底下都是同一个
         京都，粘进去的就是同一个京都。
-
-        **只管 ⌘V 与空白处那一条**。右键某个相册时粘到的是**那个相册内部**，不走这里
-        （ADR 0018 决策 7），那条路的目标是拼菜单时按落点定的（见 :meth:`_context_paste`）。
         """
+        album = self._selected_album()
+        if album is not None:
+            return album
         if self._group_view is not None:
             return _shared_parent(self._group_view.photos)
         return self._level_directory()
+
+    def _selected_album(self) -> Path | None:
+        """选区里**恰好是一个相册**时返回它，否则 ``None``（判据见 :meth:`_paste_target`）。
+
+        **只认网格页的选区**：大图页上「选中」的是正在看的那一张（``_selected_entries``
+        那边就换过人了，ADR 0021），那一格不是用户选出来的，不该把 ⌘V 带去别处。
+        """
+        if self._stack.currentWidget() is not self._grid_page:
+            return None
+        entries = self._selected_entries()
+        if len(entries) != 1:
+            return None
+        entry = entries[0]
+        return entry.path if isinstance(entry, FolderRef) else None
 
     def _level_directory(self) -> Path | None:
         """当前这一层对应的磁盘目录，**没有就返回 ``None``**。
@@ -2370,17 +2383,12 @@ class MainWindow(QMainWindow):
     def paste_into_current_folder(self) -> None:
         """「粘贴」⌘V：把剪贴板里的文件**复制**进当前这一层的目录（ADR 0018）。
 
-        **目标由「此刻弹着的是哪份右键菜单」决定**（ADR 0018 决策 7）：右键一个相册时
-        :attr:`_paste_album_target` 上挂着那个相册（访达的「粘贴项目」），点那一条与按 ⌘V
-        走的是同一个动作、同一个槽，因此菜单上写着 ⌘V，按下去就是那一行说的事；
-        没有菜单（或者按的是空白处那一行）时就是当前这一层。
-
-        **用一次就摘掉**：上一次右键不该把下一次 ⌘V 带跑 —— 菜单关掉之后 ⌘V 应当照旧
-        粘进当前这一层，那才是用户在这条命令上积累起来的习惯。
+        **粘到哪里只看选区**（:meth:`_paste_target`，ADR 0018 决策 7）：选中了一个相册就
+        粘进那个相册内部（访达的「粘贴项目」，右键那一格已经把它选中了），否则粘进当前
+        这一层。菜单里那一条「粘贴」也是这个动作，因此那一行写着 ⌘V，而菜单开着时按 ⌘V
+        与点它必然落在同一个目录上。
         """
-        album = self._paste_album_target
-        self._paste_album_target = None
-        target = album if album is not None else self._paste_target()
+        target = self._paste_target()
         if target is None:
             self._show_banner("这里没有可以粘贴进去的文件夹。")
             return
