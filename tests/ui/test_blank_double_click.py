@@ -37,7 +37,7 @@ from gallery.core.library.session import (  # noqa: E402
     save_session,
 )
 from gallery.ui.browser.grid import PhotoGrid  # noqa: E402
-from gallery.ui.main_window import MainWindow  # noqa: E402
+from gallery.ui.main_window import _NO_PARENT_NOTICE, MainWindow  # noqa: E402
 
 #: 等待扫描 / 分组排完的时限。
 SCAN_TIMEOUT_SECONDS = 8.0
@@ -297,7 +297,7 @@ def test_blank_double_click_at_the_library_root_explains_itself(
         double_click_blank(window, qt_app)
 
         assert window._current_dir == library, "已经在库根，不能再往上"
-        assert window._banner.text() == "已经是最外面一层了，没有上一级可退。"
+        assert window._banner.text() == _NO_PARENT_NOTICE
     finally:
         window.close()
 
@@ -322,7 +322,9 @@ def test_blank_double_click_does_nothing_while_renaming(
         window._on_background_activated()
 
         assert window._current_dir == library / "海边"
-        assert window._banner.isHidden() is True, "改名的过程中不该说「退不动了」"
+        # 断的是**那句话**，不是「横幅必须空着」：横幅是全局共享的，此刻上面完全
+        # 可能正有后台任务的进度（打开库时那一遍地点解析），那不是「退不动了」。
+        assert _NO_PARENT_NOTICE not in window._banner.text(), "改名的过程中不该说「退不动了」"
         assert picture.exists()
     finally:
         window.close()

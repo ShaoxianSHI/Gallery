@@ -198,6 +198,55 @@ def test_a_lookup_that_could_not_happen_is_not_remembered(
     assert resolver.queried
 
 
+def test_work_is_announced_only_when_there_is_work(library_with_gps: Library) -> None:
+    """``on_work`` 是界面「该不该报进度」的唯一依据：空跑时它必须一声不吭。
+
+    不这样的话，每打开一次已经解析过的库，横幅都会闪一句「正在解析照片的地点…」——
+    说一件根本没发生的事。
+    """
+    announced: list[int] = []
+    library_with_gps.resolve_places(
+        resolver=FakeResolver(), on_work=lambda count: announced.append(count)
+    )
+    assert announced == [len(PHOTOS)]  # 第一次：有活，四张都要读
+
+    again: list[int] = []
+    library_with_gps.resolve_places(
+        resolver=FakeResolver(), on_work=lambda count: again.append(count)
+    )
+    assert again == []  # 第二次：全是空跑，一声不吭
+
+
+def test_the_announcement_happens_before_the_photo_is_resolved(
+    library_with_gps: Library,
+) -> None:
+    """顺序有讲究：得先说「要干活了」，反查时那条「正在下载城市数据…」才有地方显示。"""
+    events: list[str] = []
+
+    def status(text: str) -> None:
+        events.append("status")
+
+    def on_work(count: int) -> None:
+        events.append("work")
+
+    class Talkative(FakeResolver):
+        def place_for(
+            self, latitude: float, longitude: float, *, status: object = None
+        ) -> ResolvedPlace | None:
+            answer = super().place_for(latitude, longitude, status=status)
+            events.append("place")
+            return answer
+
+    library_with_gps.resolve_places(
+        resolver=Talkative(),
+        on_work=on_work,
+        status=status,  # type: ignore[arg-type]
+    )
+
+    assert events[0] == "work"
+    assert events.index("work") < events.index("place")
+
+
 def test_cancellation_stops_the_pass(library_with_gps: Library) -> None:
     """切库之后不该还在后台反查。"""
     calls = {"count": 0}

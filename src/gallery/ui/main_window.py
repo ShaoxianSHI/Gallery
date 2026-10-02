@@ -244,10 +244,11 @@ class MainWindow(QMainWindow):
         self._place_resolver: LazyPlaceResolver | None = None
         #: 打开库时那一遍「全库解析地点」的任务（ADR 0010）。
         self._place_job: int | None = None
-        #: 已经跑过（或正在跑）那一遍的库根。一个库里只跑一次，重开软件会再检查一遍。
-        self._place_pass_root: Path | None = None
-        #: 横幅上正占着「正在解析地点…」这条进度。
-        self._place_notice = False
+        #: 本次运行已经起过那一遍的库。**是集合不是单个**：来回切库不该把同一个库
+        #: 再起一遍空跑（后来才加进来的照片由面板那条兜底路补，见 ``_maybe_lookup_place``）。
+        self._place_pass_roots: set[Path] = set()
+        #: 横幅上属于本任务的那句话（``None`` = 不占着横幅）。
+        self._place_notice_text: str | None = None
         self._preview_cache: OrderedDict[Path, QImage] = OrderedDict()
         self._metadata_cache: OrderedDict[Path, tuple[int, int, MetadataReport]] = OrderedDict()
         self._thumbnail_failures = 0
@@ -924,7 +925,7 @@ class MainWindow(QMainWindow):
         self._staged = [] if self._ordering_active() else None
         self._level_notice = False
         self._progress_notice = False
-        self._place_notice = False
+        self._place_notice_text = None
         self._scan_issue = False
         self._update_breadcrumb()
         self._update_mode_actions()
@@ -1091,7 +1092,8 @@ class MainWindow(QMainWindow):
         两处各算一次就必然漂（面板写着杭州、分组写着 Bordeaux）。打开时算一遍存进
         索引，之后两处都只读它 —— 详见 ADR 0010。
 
-        一个库里只跑一次：``_place_pass_root`` 记着跑过哪个库，换库才重来。
+        一个库里只跑一次：``_place_pass_roots`` 记着起过哪些库，换库才重来，
+        来回切回同一个库也不再起。
         扫描本身出问题时不抢横幅 —— 那句「哪些内容没读到」比进度重要。
 
         **本层正在读元数据时先让着**：那一遍读的就是同一批照片的 EXIF，
@@ -1100,24 +1102,25 @@ class MainWindow(QMainWindow):
         library = self._library
         if (
             library is None
-            or self._place_pass_root == library.root
+            or library.root in self._place_pass_roots
             or self._scan_issue
             or self._facet_job is not None
         ):
             return
-        self._place_pass_root = library.root
+        self._place_pass_roots.add(library.root)
         resolver = self._place_lookup()
 
         def work(context: TaskContext) -> object:
             return library.resolve_places(
                 should_cancel=context.is_cancelled,
+                on_work=lambda count: context.progress(("work", count)),
                 on_progress=lambda done, total: context.progress(done),
                 status=lambda text: context.progress(text),
                 resolver=resolver,
             )
 
-        self._place_notice = True
-        self._show_banner("正在解析照片的地点…")
+        # **横幅不在这儿亮**：这一遍多半是空跑（库里都算过了），先亮等于在说一件
+        # 没有发生的事。等 worker 真的找到活干，由 ``_on_place_pass_work`` 再说。
         self._place_job = self._runner.submit(
             work,
             on_progress=self._on_place_pass_progress,
@@ -1126,13 +1129,22 @@ class MainWindow(QMainWindow):
         )
 
     def _on_place_pass_progress(self, payload: object) -> None:
-        if not self._place_notice or self._scan_issue:
+        if isinstance(payload, tuple) and len(payload) == 2 and payload[0] == "work":
+            self._on_place_pass_work(payload[1])
+            return
+        if self._place_notice_text is None or self._scan_issue:
             return
         if isinstance(payload, str):
-            self._show_banner(payload)  # 「正在下载城市数据…」这类说明
+            self._show_place_notice(payload)  # 「正在下载城市数据…」这类说明
             return
         if isinstance(payload, int) and payload > 0:
-            self._show_banner(f"正在解析照片的地点…已处理 {payload} 张")
+            self._show_place_notice(f"正在解析照片的地点…已处理 {payload} 张")
+
+    def _on_place_pass_work(self, count: object) -> None:
+        """真的找到活干了才亮横幅：空跑的库不该让用户看见「正在解析…」。"""
+        if self._scan_issue or not isinstance(count, int):
+            return
+        self._show_place_notice(f"正在解析 {count} 张照片的地点…")
 
     def _on_place_pass_done(self, payload: object) -> None:
         self._place_job = None
@@ -1146,12 +1158,26 @@ class MainWindow(QMainWindow):
         # 解析失败不影响浏览：分组与面板都会在自己要用的时候再试一次。
         logger.info("解析地点失败：%s", message)
 
+    def _show_place_notice(self, text: str) -> None:
+        """进度消息**不许抢**横幅：上面正有别人的话就等它说完。
+
+        抢了会怎样：用户刚丢掉三张照片，横幅上「已把 3 项移到废纸篓」被后台进度顶掉，
+        那条确认就此消失。这条横幅是全局共享的，谁都能写 —— 所以后台的进度是
+        **最没有资格**占着它的那一个。
+        """
+        current = self._banner.text() if self._banner.isVisible() else ""
+        if current and current != self._place_notice_text:
+            return  # 上面有更要紧的话（「哪些内容没读到」「已把 3 项移到废纸篓」…）
+        self._place_notice_text = text
+        self._show_banner(text)
+
     def _clear_place_notice(self) -> None:
-        """收掉「正在解析地点…」那条 —— **只收自己那一条**。"""
-        if not self._place_notice:
+        """收掉自己那一条 —— **而且只在自己还占着的时候收**。"""
+        if self._place_notice_text is None:
             return
-        self._place_notice = False
-        self._banner.hide()
+        if self._banner.isVisible() and self._banner.text() == self._place_notice_text:
+            self._banner.hide()
+        self._place_notice_text = None
 
     def _cancel_place_pass(self) -> None:
         """作废在途的全库解析（切库、关窗时）。"""
@@ -1970,7 +1996,7 @@ class MainWindow(QMainWindow):
         self._level_notice = False
         self._progress_notice = False
         # 换层只把横幅收掉，**不打断**全库解析：它是整个库的事，与当前在哪一层无关。
-        self._place_notice = False
+        self._place_notice_text = None
         self._scan_issue = False
         self._current_row = -1
         self._detail.clear_image()

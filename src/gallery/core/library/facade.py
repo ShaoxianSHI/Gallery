@@ -327,6 +327,7 @@ class Library:
         self,
         *,
         should_cancel: Callable[[], bool] | None = None,
+        on_work: Callable[[int], None] | None = None,
         on_progress: Callable[[int, int], None] | None = None,
         status: Status | None = None,
         resolver: PlaceResolver | None = None,
@@ -343,8 +344,11 @@ class Library:
         - 没有坐标的行同样跳过 —— 它永远没得反查；
         - 文件被改过的行按 ``(大小, 修改时间)`` 判为过期，重读一次（可能刚补上 GPS）。
 
-        顺带的好处是这一遍把整库的 facet 都填上了，于是按年份、相机分组也是立刻完成。
+        顺带的好处是这一遍把整库的 facet 都填上了，于是按年份、相机分组也变成立刻完成。
 
+        :param on_work: ``(这次要处理多少张)``，**只在真的找到活干时叫一次**。
+            库已经解析过时这一遍是空跑，界面靠它判断该不该报进度 ——
+            「正在解析…」这句话只在真有活的时候出现（否则它在说一件没发生的事）。
         :param on_progress: ``(已扫过, 总数)``。边扫边数，所以**总数通常是 0**
             （表示还不知道）；界面据此只报已处理多少。
         :param status: 反查要下载城市数据时，用它把进度说给界面听。
@@ -352,6 +356,15 @@ class Library:
         index = self.facet_index
         scanned = 0
         resolved = 0
+        announced = False
+
+        def announce(count: int) -> None:
+            nonlocal announced
+            if not announced:
+                announced = True
+                if on_work is not None:
+                    on_work(count)
+
         batch: list[PhotoRef] = []
         for ref in self.iter_photos(should_cancel=should_cancel):
             scanned += 1
@@ -367,6 +380,7 @@ class Library:
                 status=status,
                 source=source,
                 should_cancel=should_cancel,
+                on_work=announce,
             )
             batch.clear()
             if on_progress is not None:
@@ -379,6 +393,7 @@ class Library:
                 status=status,
                 source=source,
                 should_cancel=should_cancel,
+                on_work=announce,
             )
         if on_progress is not None:
             on_progress(scanned, scanned)  # 没有总数时最后补一次收尾
@@ -479,15 +494,19 @@ def _resolve_batch(
     status: Status | None,
     source: BatchMetadataSource | None,
     should_cancel: Callable[[], bool] | None,
+    on_work: Callable[[int], None] | None = None,
 ) -> int:
     """把这一批里「还没有地点结论」的照片补齐，返回反查了几张。
 
     已有结论的行直接跳过，**连 EXIF 都不读** —— 这是第二次运行几乎不要钱的原因。
+    ``on_work`` 在这一批真有活干时叫（上层只会在第一次时往外说）。
     """
     cached = index.lookup(refs)
     todo = [ref for ref in refs if _needs_lookup(cached.get(ref.path))]
     if not todo:
         return 0
+    if on_work is not None:
+        on_work(len(todo))
     fresh = read_facets(
         [ref.path for ref in todo],
         source=source,

@@ -131,7 +131,7 @@ def fake_facet_source(monkeypatch: pytest.MonkeyPatch) -> Callable[[], list[Path
 
 def _library(tmp_path: Path, make_photo: Callable[..., Path], names: Sequence[str]) -> Path:
     root = tmp_path / "照片"
-    root.mkdir(exist_ok=True)
+    root.mkdir(parents=True, exist_ok=True)
     for name in names:
         make_photo(name, directory=root)
     prepare_library(root)
@@ -407,6 +407,106 @@ def test_reopening_the_same_library_does_not_resolve_again(
 
     assert fake_places() == first
     again.close()
+
+
+def _banners_while_busy(qt_app: QApplication, window: MainWindow) -> list[str]:
+    """转事件循环直到后台活干完，把横幅上出现过的每一句记下来。"""
+    seen: list[str] = []
+    deadline = time.monotonic() + WAIT_SECONDS
+    while time.monotonic() < deadline:
+        qt_app.processEvents()
+        if (
+            window._banner.isVisible()
+            and window._banner.text()
+            and (not seen or seen[-1] != window._banner.text())
+        ):
+            seen.append(window._banner.text())
+        if window._scan_job is None and window._facet_job is None and window._place_job is None:
+            qt_app.processEvents()
+            return seen
+        time.sleep(0.01)
+    return seen
+
+
+def test_an_already_resolved_library_shows_no_banner(
+    qt_app: QApplication,
+    tmp_path: Path,
+    make_photo: Callable[..., Path],
+    fake_facet_source: object,
+    fake_places: Callable[[], int],
+) -> None:
+    """空跑就**一声不吭**：横幅不许说「正在解析…」，因为根本没有东西在解析。
+
+    那句话原本每次打开都闪一下，看着像又在重算一遍 —— 用户没法分辨是又在干活，
+    还是软件出了毛病。
+    """
+    root = _library(tmp_path, make_photo, ["三月.jpg", "四月.jpg"])
+    first = _open(qt_app, root, session_base=tmp_path / "状态")
+    _settle(qt_app, first)
+    first.close()
+
+    again = _open(qt_app, root, session_base=tmp_path / "状态", remember=False)
+    seen = _banners_while_busy(qt_app, again)
+
+    assert seen == [], f"库里都解析过了，不该再报进度：{seen}"
+    again.close()
+
+
+def test_switching_back_and_forth_does_not_start_it_twice(
+    qt_app: QApplication,
+    tmp_path: Path,
+    make_photo: Callable[..., Path],
+    fake_facet_source: object,
+    fake_places: Callable[[], int],
+) -> None:
+    """同一个会话里 A → B → A：回到 A 不该把那一遍再起一次。
+
+    记账要是只记「上一个库」，切回来就会起一遍空跑 —— 白占一个后台线程，
+    还会让用户以为软件在反复重算。
+    """
+    first_root = _library(tmp_path / "一", make_photo, ["三月.jpg", "四月.jpg"])
+    second_root = _library(tmp_path / "二", make_photo, ["五月.jpg"])
+    window = _open(qt_app, first_root, session_base=tmp_path / "状态")
+    _settle(qt_app, window)
+    assert first_root in window._place_pass_roots
+
+    assert window.open_library(second_root)
+    _settle(qt_app, window)
+    assert second_root in window._place_pass_roots
+
+    assert window.open_library(first_root)
+    _settle(qt_app, window)
+
+    # 两个库都记着 → 切回 A 不会再起一遍
+    assert first_root in window._place_pass_roots
+    assert window._place_job is None
+    window.close()
+
+
+def test_the_pass_does_not_steal_the_banner_from_someone_else(
+    qt_app: QApplication,
+    tmp_path: Path,
+    make_photo: Callable[..., Path],
+    fake_facet_source: object,
+    fake_places: Callable[[], int],
+) -> None:
+    """后台进度不许顶掉用户刚做完的事的确认。
+
+    横幅是全局共享的一条，谁都能写；而「已把 3 项移到废纸篓」这种确认比后台进度
+    重要得多 —— 顶掉了用户就再也看不到自己刚才做了什么。
+    """
+    root = _library(tmp_path, make_photo, ["三月.jpg", "四月.jpg", "去年十二月.jpg"])
+    window = _open(qt_app, root, session_base=tmp_path / "状态")
+    _settle(qt_app, window)
+
+    # 任务进行中，横幅上已经有别人的话了
+    window._banner.setText("已把 3 项移到废纸篓")
+    window._banner.show()
+    window._place_notice_text = None
+    window._on_place_pass_work(3)
+
+    assert window._banner.text() == "已把 3 项移到废纸篓", "后台进度不该抢别人的话"
+    window.close()
 
 
 # ---- 进入与退出分组 --------------------------------------------------------------------
