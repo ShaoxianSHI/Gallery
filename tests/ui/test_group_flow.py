@@ -124,6 +124,36 @@ def _settle(qt_app: QApplication, window: MainWindow, *, groups: bool = False) -
     qt_app.processEvents()
 
 
+def _watch_until_settled(
+    qt_app: QApplication, window: MainWindow, ready: Callable[[], bool]
+) -> list[tuple[str, ...]]:
+    """一边转事件循环一边记录网格上出现过哪些条目（按出现顺序去重）。"""
+    seen = _watch_names(qt_app, window, ready)
+    return [tuple(type(name).__name__ for name in step) for step in seen]
+
+
+def _watch_names(
+    qt_app: QApplication, window: MainWindow, ready: Callable[[], bool]
+) -> list[tuple[str, ...]]:
+    """同上，但记录**条目名字**：顺序对不对，只有名字能说明白。"""
+    seen: list[tuple[str, ...]] = []
+    deadline = time.monotonic() + WAIT_SECONDS
+    while time.monotonic() < deadline:
+        qt_app.processEvents()
+        snapshot = tuple(entry.name for entry in window._model.entries())
+        if not seen or seen[-1] != snapshot:
+            seen.append(snapshot)
+        if window._scan_job is None and window._facet_job is None and ready():
+            break
+        time.sleep(0.005)
+    qt_app.processEvents()
+    return list(dict.fromkeys(seen))
+
+
+def _names(window: MainWindow) -> list[str]:
+    return [entry.name for entry in window._model.entries()]
+
+
 def _labels(window: MainWindow) -> list[str]:
     return [entry.name for entry in window._model.entries()]
 
@@ -346,6 +376,84 @@ def test_sorting_by_file_name_never_touches_exiftool(
 
     assert _labels(window) == ["a.jpg", "b.jpg"]
     assert fake_facet_source() == []
+    window.close()
+
+
+# ---- 不许先闪一下再换内容 ------------------------------------------------------------
+
+
+def test_entering_an_album_never_shows_the_ungrouped_photos_first(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path], fake_facet_source: object
+) -> None:
+    """这一条是回归测试：曾经点进相册先出一屏照片、下一秒它们全变成组卡片。
+
+    修法是「要重排就先攒着」：网格要么是空的（横幅说明正在读元数据），要么直接
+    就是最终的组卡片 —— **中间那一屏错误的顺序不该出现**。
+    """
+    root = tmp_path / "照片"
+    album = root / "子相册"
+    album.mkdir(parents=True)
+    for name in ("三月.jpg", "四月.jpg", "去年十二月.jpg"):
+        make_photo(name, directory=album)
+    prepare_library(root)
+    window = _open(
+        qt_app,
+        root,
+        session_base=tmp_path / "状态",
+        browse_mode=BROWSE_MODE_ALBUMS,
+        group_facet="captured_year",
+    )
+    _settle(qt_app, window, groups=True)
+    row = next(
+        index for index, entry in enumerate(window._model.entries()) if entry.name == "子相册"
+    )
+
+    window._on_entry_activated(window._model.index(row, 0))
+    seen = _watch_until_settled(qt_app, window, lambda: window._model.group_count() > 0)
+
+    assert not any("PhotoRef" in step for step in seen)  # 一帧都不许出现未分组的照片
+    assert window._model.group_count() == 2
+    window.close()
+
+
+def test_default_order_still_streams_photos_in(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path], fake_facet_source: object
+) -> None:
+    """默认顺序不需要重排 therefore 边扫边出图 —— 大库的首屏手感不能为了防闪屏丢掉。"""
+    root = _library(tmp_path, make_photo, list(DATES))
+    window = _open(qt_app, root, session_base=tmp_path / "状态")
+
+    assert window._ordering_active() is False
+    assert window._staged is None  # 不攒：模型里的条目就是这一层的全部
+    _settle(qt_app, window)
+    assert window._model.photo_at(0) is not None
+    window.close()
+
+
+def test_entering_a_group_also_waits_for_the_metadata_sort(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path], fake_facet_source: object
+) -> None:
+    """进组之后再换排序字段，同样不能先闪一屏旧顺序。"""
+    root = _library(tmp_path, make_photo, ["三月.jpg", "四月.jpg", "去年十二月.jpg"])
+    window = _open(qt_app, root, session_base=tmp_path / "状态", group_facet="captured_year")
+    _settle(qt_app, window, groups=True)
+    window.enter_group(next(group for group in _groups(window) if group.label == "2024 年"))
+    _settle(qt_app, window)
+    before = _names(window)
+    assert before == ["三月.jpg", "四月.jpg"]  # 默认按名字
+
+    window.set_sort_facet("captured")  # 三月（03-16）在四月（04-16）之前
+    _settle(qt_app, window)
+    assert _names(window) == ["三月.jpg", "四月.jpg"]
+
+    window.set_sort_descending(True)
+    seen = _watch_names(qt_app, window, lambda: window._model.rowCount() > 0)
+
+    # 三月（2024-03）在四月（2024-04）之前；逆序就该反过来。
+    assert _names(window) == ["四月.jpg", "三月.jpg"]
+    # 关键在这一行：**旧顺序一帧都不许出现**。曾经这里会先摆一屏三月/四月，
+    # 下一秒才换成四月/三月 —— 那一下闪得最明显。
+    assert seen == [(), ("四月.jpg", "三月.jpg")]
     window.close()
 
 

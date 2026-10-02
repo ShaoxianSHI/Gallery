@@ -235,6 +235,9 @@ class MainWindow(QMainWindow):
         #: 本层照片的分组 / 排序字段快照（按路径索引）。
         self._facet_values: dict[Path, PhotoFacets] = {}
         self._facet_job: int | None = None
+        #: 这一层还没摆上屏的条目。要重排时先攒在这里，顺序定下来再一次给出去；
+        #: ``None`` 表示「模型就是当前这一层的全部」，可以边扫边出图。
+        self._staged: list[GridEntry] | None = None
         self._exiftool_available: bool | None = None  # 探测一次就够
         self._model = PhotoListModel(self, icon_edge=edge_for_index(self._size_index))
         self._build_ui()
@@ -575,6 +578,17 @@ class MainWindow(QMainWindow):
     def _current_group_facet(self) -> Facet | None:
         return group_facet(self._group_facet)
 
+    def _ordering_active(self) -> bool:
+        """这一层要不要在最后统一重排一次。
+
+        默认顺序（相册在前、按名称）**不需要**：扫描本来就是这个顺序，边扫边出图
+        才是大库该有的手感。选了分组或某个排序字段才需要重排。
+        """
+        if self._group_view is not None:
+            # 组里已经是照片了，再分组进不去也出不来，只剩组内排序。
+            return sort_facet(self._sort_facet) is not None
+        return self._group_facet is not None or self._sort_facet is not None
+
     def _needs_facet_read(self) -> bool:
         """当前的选择是否必须真去读 EXIF 才能算出顺序。"""
         group = None if self._group_view is not None else self._current_group_facet()
@@ -610,7 +624,9 @@ class MainWindow(QMainWindow):
         if library is None or not self._needs_facet_read():
             self._apply_ordering()
             return
-        refs = [entry for entry in self._model.entries() if isinstance(entry, PhotoRef)]
+        # 暂存优先：要重排时这一层的照片还没上屏，模型里当然一条也没有。
+        entries = self._staged if self._staged is not None else self._model.entries()
+        refs = [entry for entry in entries if isinstance(entry, PhotoRef)]
         if not refs:
             self._apply_ordering()
             return
@@ -662,16 +678,18 @@ class MainWindow(QMainWindow):
         self._apply_ordering()
 
     def _apply_ordering(self) -> None:
-        """把当前这一层按分组 / 排序重新排一遍。"""
+        """把当前这一层按分组 / 排序重排一次，然后一次性摆到网格上。"""
         if self._stack.currentWidget() is not self._grid_page:
             return
         library = self._library
         if library is None:
             return
-        albums = [entry for entry in self._model.entries() if isinstance(entry, FolderRef)]
-        photos = [entry for entry in self._model.entries() if isinstance(entry, PhotoRef)]
-        if not photos and not albums:
-            return
+        # 暂存的优先：那一层还没上屏，顺序就是这里算出来的。
+        staged = self._staged
+        entries = staged if staged is not None else list(self._model.entries())
+        self._staged = None
+        albums = [entry for entry in entries if isinstance(entry, FolderRef)]
+        photos = [entry for entry in entries if isinstance(entry, PhotoRef)]
         # 相册卡片永远排在前面：先看文件夹、再看按元数据归拢出来的组，是既有心智。
         order = self._current_order()
         # 已经在分组里面了：那一层全是照片，再分一次组毫无意义（进去就出不来）。
@@ -684,6 +702,8 @@ class MainWindow(QMainWindow):
             ]
         else:
             ordered = [*albums, *sort_photos(photos, order=order, root=library.root, values=values)]
+        if staged is None and ordered == list(self._model.entries()):
+            return  # 什么都没攒、顺序也没变：让整屏重画一次毫无意义
         selected = self._grid.selected_rows()
         anchor = self._model.photo_at(self._grid.current_row())
         self._model.reorder(ordered)
@@ -798,6 +818,7 @@ class MainWindow(QMainWindow):
         self._detail.clear_image()
         self._panel.clear()
         self._current_dir = library.root
+        self._staged = [] if self._ordering_active() else None
         self._update_breadcrumb()
         self._update_mode_actions()
         self.setWindowTitle(f"{library.display_name} — Gallery")
@@ -869,7 +890,11 @@ class MainWindow(QMainWindow):
         """分组视图的照片进网格，然后按「扫描完成」那一套收尾。"""
         if generation != self._generation:
             return
-        self._model.append(payload if isinstance(payload, tuple) else ())
+        entries = payload if isinstance(payload, tuple) else ()
+        if self._staged is None:
+            self._model.append(entries)
+        else:
+            self._staged.extend(entries)
         self._on_scan_done(generation, ScanReport())
 
     def _start_level_scan(self, library: Library) -> None:
@@ -924,6 +949,12 @@ class MainWindow(QMainWindow):
         if generation != self._generation:
             return
         batch = payload if isinstance(payload, tuple) else ()
+        if self._staged is not None:
+            # 要重排就先攒着：**边扫边出图在这里等于闪一下** —— 用户先看到一屏
+            # 未分组的照片，下一秒它们全变成组卡片，看起来像界面自己乱了。
+            # 攒到顺序定下来再一次给出去，中间那段宁可留白（横幅会说明在读什么）。
+            self._staged.extend(batch)
+            return
         self._model.append(batch)
         self._refresh_thumbnail_window()
 
@@ -953,6 +984,9 @@ class MainWindow(QMainWindow):
             return
         self._scan_job = None
         self._show_banner(f"扫描失败：{message}")
+        # 已经攒到的条目照常摆出来（按当前能算出来的顺序）：扫到一半失败时给用户
+        # 一屏能看的东西，比给一屏空白加一句「扫描失败」有用。
+        self._apply_ordering()
 
     # ---- 缩略图 ------------------------------------------------------------
 
@@ -1731,6 +1765,7 @@ class MainWindow(QMainWindow):
         self._model.clear()
         self._preview_cache.clear()
         self._metadata_cache.clear()
+        self._staged = [] if self._ordering_active() else None
         self._current_row = -1
         self._detail.clear_image()
         self._panel.clear()
