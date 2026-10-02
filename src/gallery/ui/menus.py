@@ -13,7 +13,8 @@
 视图已经把它选上了，``_update_action_states`` 自然会把它们关掉（它判据是「选区里有
 没有 ``GroupRef``」）。本模块只负责在菜单末尾补一条说明文字。
 
-**外观两件事**：一份样式表，四个落点共用（:func:`apply_style`）；快捷键按列自己画
+**外观两件事**：一份样式表，四个落点共用（:func:`apply_style`；分隔线的颜色也在那份
+样式表里，见 :data:`MENU_SEPARATOR_MIX_DARK`）；快捷键按列自己画
 （:class:`ShortcutColumnMenu`）—— 样式表一挂上去，Qt 就不再给快捷键算位置了，它会把
 快捷键紧跟在文字后面（见 :func:`prepare`）。macOS 样式自己画的那圈圆角
 实测约 5 像素、每行只有 18 像素高，菜单挤得像 Windows 的。放大它们只能靠样式表 ——
@@ -116,14 +117,58 @@ MENU_ITEM_PADDING = "5px 12px 5px 0px"
 #: （用户原话：保持一致比较美观）。
 MENU_CHECK_GUTTER = 19
 
+#: 分隔线本身多粗（像素），以及它上下各留多少空地（像素）。
+#:
+#: **两个都得写**：只给 ``background`` 的话那 12 像素会整块被填上（``QMenu::separator``
+#: 的默认高度就是 12），深色下一道线看着像一条灰色的带子；只给 ``height: 1px`` 而不给
+#: ``margin``，线就贴住上下两行，菜单还会凭空矮 11 像素（实测 132 → 121）。
+#:
+#: 留白取 5，与 :data:`MENU_ITEM_PADDING` 的上下内边距一致，于是线与文字的呼吸是对齐的。
+MENU_SEPARATOR_HEIGHT = 1
+MENU_SEPARATOR_MARGIN = 5
+
+#: 分隔线是「正文色压在底色上」的透明度，深浅各一个。
+#:
+#: **不给这条规则，深色下那条线等于没画**：它由系统样式画，取的是**应用调色板**里偏暗
+#: 的一档 —— 浅色下是 ``#aaaaaa``（一眼看得见），深色下是 ``#0f0f0f``，**比底色
+#: ``#171717`` 还深**（实测线落在 y129~130，上下一片全是底色）。
+#:
+#: | | 透明度 | 合成后（实测） |
+#: |---|---|---|
+#: | 深色 | 0.2 | ``#171717`` → ``#454545``（比底色亮 46 一档，一眼看得见） |
+#: | 浅色 | 0.333 | ``#ffffff`` → ``#ababab``（系统那条是 ``#aaaaaa``，差一档，看不出来） |
+#:
+#: 深浅两个值不能合成一个：按同一个差值去定，浅色下要的是 ``#cccccc``（比系统那条淡），
+#: 深色下就变成 ``#6c6c6c``（比访达那种 ``#454545`` 亮得刺眼）。这里的深色值是照着访达
+#: 深色菜单里那条线取的。
+MENU_SEPARATOR_MIX_DARK = 0.2
+MENU_SEPARATOR_MIX_LIGHT = 0.333
+
+
+def separator_color(background: QColor, text: QColor) -> str:
+    """分隔线那一档颜色，写成样式表认的 ``rgba(...)``（见 :data:`MENU_SEPARATOR_MIX_DARK`）。
+
+    深浅的判据是底色的明度，与 :attr:`gallery.ui.theme.AppTheme.is_dark` 同一个。
+    """
+    mix = MENU_SEPARATOR_MIX_DARK if background.lightnessF() < 0.5 else MENU_SEPARATOR_MIX_LIGHT
+    color = QColor(text)
+    color.setAlphaF(mix)
+    return rgba(color)
+
 
 def style_sheet(
-    background: QColor, highlight: QColor, *, check_gutter: int = 0, own_arrow: bool = False
+    background: QColor,
+    highlight: QColor,
+    text: QColor,
+    *,
+    check_gutter: int = 0,
+    own_arrow: bool = False,
 ) -> str:
     """给弹出菜单的那份样式表。
 
-    两个颜色都必须由调用方给**调色板里的原值**：底色是「一整块底色」那块（``Window``
-    角色），高亮是系统强调色（``Highlight`` 角色）。理由见模块文档那一段 ——
+    三个颜色都必须由调用方给**调色板里的原值**：底色是「一整块底色」那块（``Window``
+    角色），高亮是系统强调色（``Highlight`` 角色），正文色是 ``WindowText`` 角色 ——
+    分隔线的颜色由它按透明度压出来（见 :func:`separator_color`）。理由见模块文档那一段 ——
     样式表里的 ``palette(...)`` 取的是**应用**调色板，不是逐控件下发的那份。
 
     ``check_gutter`` 是「这一列对勾原本会被预留的宽度」，只有**菜单里没有可勾选项**时才
@@ -148,6 +193,14 @@ def style_sheet(
         f"QMenu::item:hover {{ background: {rgba(highlight)}; }}\n"
         f"QMenu::item:selected {{ background: {rgba(highlight)}; "
         f"border-radius: {MENU_HIGHLIGHT_RADIUS}px; }}\n"
+        # 分隔线。**这条是深色下唯一看得见的那条线**：不给它，颜色由系统样式从应用
+        # 调色板里挑一档偏暗的（深色下 #0f0f0f，比底色还深），于是等于没画。
+        #
+        # 它带 margin —— 与高亮带那条禁令不冲突：那条禁的是**带状态**的规则里写 margin
+        # （每悬停一次换一次盒子，文字跟着挪），这里的状态与悬停无关。
+        f"QMenu::separator {{ height: {MENU_SEPARATOR_HEIGHT}px; "
+        f"margin: {MENU_SEPARATOR_MARGIN}px 0px; "
+        f"background: {separator_color(background, text)}; }}\n"
         + (f"QMenu::item {{ padding-left: {check_gutter}px; }}" if check_gutter else "")
         + (
             "\nQMenu::right-arrow { width: 0; height: 0; }"
@@ -435,13 +488,15 @@ def apply_style(menu: QMenu) -> None:
     下发到菜单上（``MainWindow.context_menu_for``），于是这里读到的底色就是「一整块
     底色」那块，而高亮色是系统给的强调色 —— 也就是说这份样式表用的是系统自己那套配色，
     深浅色自动跟随（理由见模块文档那一段：样式表里的 ``palette(...)`` 取的是应用调色板，
-    不是这份逐控件下发的）。
+    不是这份逐控件下发的）。分隔线的颜色由底色与正文色配出来（见 :func:`separator_color`），
+    因此深浅两套也跟着一起变。
 
     子菜单那份样式发不发得下去，理由见 :func:`_owned_menus`（不继承、也不是子控件）。
     """
     palette = menu.palette()
     background = palette.color(QPalette.ColorRole.Window)
     highlight = palette.color(QPalette.ColorRole.Highlight)
+    text = palette.color(QPalette.ColorRole.WindowText)
     # 没有可勾选项的菜单要自己补上那一列，样式表因此**逐个菜单**算 —— 子菜单里是
     # 「排序 / 分组 / 缩略图大小」那些单选项，它们有勾、就不补。
     for current in _owned_menus(menu):
@@ -451,6 +506,7 @@ def apply_style(menu: QMenu) -> None:
             style_sheet(
                 background,
                 highlight,
+                text,
                 check_gutter=0 if has_checkable else MENU_CHECK_GUTTER,
                 own_arrow=owns_arrows,
             )
@@ -630,6 +686,10 @@ __all__ = [
     "MENU_ARROW_DRAWN_HEIGHT",
     "MENU_ARROW_DRAWN_WIDTH",
     "MENU_ARROW_SIZE",
+    "MENU_SEPARATOR_HEIGHT",
+    "MENU_SEPARATOR_MARGIN",
+    "MENU_SEPARATOR_MIX_DARK",
+    "MENU_SEPARATOR_MIX_LIGHT",
     "MODIFIER_ORDER",
     "SHORTCUT_LABEL_GAP",
     "MENU_INSET",
@@ -642,6 +702,7 @@ __all__ = [
     "build_group_menu",
     "build_menu",
     "build_photo_menu",
+    "separator_color",
     "style_sheet",
     "ShortcutColumnMenu",
     "ShortcutColumns",

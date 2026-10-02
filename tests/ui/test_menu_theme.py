@@ -164,13 +164,116 @@ def test_context_menu_has_hover_highlight(qt_app: QApplication, window: MainWind
     assert "QMenu::item:hover" in sheet
     assert "QMenu::item:selected" in sheet
     assert sheet.count(highlight) >= 2, "两条规则都得用调色板里的高亮色"
-    # 高亮带是内缩的圆角带。**不许写 margin**：margin 属于盒子模型，写在 :selected 里
-    # 等于每悬停一次换一次盒子，文字会跟着挪位置（用户实测）。内缩由菜单自身的内边距
-    # 决定，与状态无关。
+    # 高亮带是内缩的圆角带。**带状态的规则里不许写 margin**：margin 属于盒子模型，
+    # 写在 :selected 里等于每悬停一次就换一次盒子，文字会跟着挪位置（用户实测）。内缩
+    # 由菜单自身的内边距决定，与状态无关。
     assert f"border-radius: {menus.MENU_HIGHLIGHT_RADIUS}px" in sheet
-    assert "margin" not in sheet
+    # 只查那两条带状态的规则，不查整份：分隔线那条带 margin 是故意要的（那里没有
+    # 状态，见 ``ui.menus`` 里 MENU_SEPARATOR_HEIGHT 那段）。
+    assert "margin" not in _state_rules(sheet)
     # 内缩的那一处在菜单上，**四边同值**：只留左右的话，高亮带会顶着面板上下两条边
     assert f"padding: {menus.MENU_INSET}px" in sheet
+
+
+def _state_rules(sheet: str) -> str:
+    """样式表里那两条**带状态**的规则（悬停 / 当前项）。
+
+    拆出来单独断言，而不是对整份样式表搜 ``margin``：分隔线那条规则带 margin 是
+    故意要的（见 ``ui.menus``），而「高亮带不许有 margin」这条禁令针对的是
+    **会随悬停换盒子**的那两条。
+    """
+    return "\n".join(line for line in sheet.splitlines() if ":hover" in line or ":selected" in line)
+
+
+def test_separator_color_follows_the_theme() -> None:
+    """分隔线的颜色深浅两套：深色下要**提亮到看得见**，浅色下维持原来的浓度。
+
+    深色下那条线原本由系统样式画，取的是**应用调色板**里偏暗的一档（实测 ``#0f0f0f``），
+    比底色 ``#171717`` 还深，等于没画。浅色下它本来是 ``#aaaaaa``、看得见，所以那个值
+    照抄（实测合成出来是 ``#ababab``，差一档，看不出来）—— 不顺手改浅色的观感。
+    """
+    dark = QColor("#171717")
+    light = QColor("#ffffff")
+
+    dark_line = _line_on(dark, menus.separator_color(dark, QColor("#ffffff")))
+    light_line = _line_on(light, menus.separator_color(light, QColor("#000000")))
+
+    # 深色：至少要提亮一档（32/255），再低就回到「那条线不存在」的状态
+    assert dark_line.value() - dark.value() >= 32, f"深色下那条线还是太暗：{dark_line.name()}"
+    # 浅色：与系统原来那条（#aaaaaa）基本一致
+    assert abs(light_line.value() - 0xAA) <= 2, f"浅色下改过头了：{light_line.name()}"
+
+
+def _line_on(background: QColor, rule_color: str) -> QColor:
+    """把样式表里那个 ``rgba(...)`` 压到实底色上，算出真正画出来的那一档颜色。"""
+    channels = rule_color[rule_color.index("(") + 1 : rule_color.index(")")].split(",")
+    red, green, blue = (int(float(channel)) for channel in channels[:3])
+    alpha = float(channels[3])
+    return QColor(
+        round(red * alpha + background.red() * (1 - alpha)),
+        round(green * alpha + background.green() * (1 - alpha)),
+        round(blue * alpha + background.blue() * (1 - alpha)),
+    )
+
+
+def test_dark_separator_is_a_line_you_can_see(qt_app: QApplication, window: MainWindow) -> None:
+    """深色下右键菜单里的分隔线必须**看得见，而且是线**（用户报的就是它基本看不见）。
+
+    **真的抓一张图来看**，而不是只读样式表：只读样式表的话，将来谁把 ``height``
+    删掉测试还是绿的 —— 而那一栏 12 像素会整块填上，看着像一条灰色的带子（见
+    ``ui.menus`` 里 MENU_SEPARATOR_HEIGHT 那段）。
+    """
+    original = QPalette(qt_app.palette())
+    background = QColor("#171717")
+    try:
+        flipped = QPalette(original)
+        flipped.setColor(QPalette.ColorRole.Base, background)
+        flipped.setColor(QPalette.ColorRole.Window, background)
+        flipped.setColor(QPalette.ColorRole.WindowText, QColor("#ffffff"))
+        qt_app.setPalette(flipped)
+        theme.apply_theme(qt_app)
+
+        window._stack.setCurrentWidget(window._grid_page)
+        row = window._model.row_of_path(window._library.root / "一张.jpg")
+        assert row >= 0
+        menu = window.context_menu_for(row)
+
+        assert menu is not None
+        menu.popup(QPoint(60, 60))
+        try:
+            color, thickness = _painted_separator(menu, background)
+        finally:
+            menu.close()
+    finally:
+        qt_app.setPalette(original)
+        theme.apply_theme(qt_app)
+
+    assert thickness == menus.MENU_SEPARATOR_HEIGHT, f"分隔线厚了：{thickness} 像素"
+    assert color.value() - background.value() >= 32, f"深色下那条线还是太暗：{color.name()}"
+
+
+def _painted_separator(menu: QMenu, background: QColor) -> tuple[QColor, int]:
+    """菜单中间那一列上，分隔线真正画出来的那一段：颜色与厚度（像素）。
+
+    厚度数的是「不是底色的行数」：只看颜色的话，上面那两种坏法（整块填上、根本没画）
+    都会漏过去。取中间一列是为了躲开两端的圆角。
+    """
+    separator = next(action for action in menu.actions() if action.isSeparator())
+    rect = menu.actionGeometry(separator)
+    image = menu.grab().toImage()
+    # 抓图按设备像素给（Retina 上是两倍），几何却是逻辑像素，两边要按倍率对起来。
+    scale = image.devicePixelRatio()
+    x = image.width() // 2
+    top, bottom = round(rect.top() * scale), round(rect.bottom() * scale)
+    painted = [
+        y
+        for y in range(top, min(bottom + 1, image.height()))
+        if image.pixelColor(x, y).rgb() != background.rgb()
+    ]
+    assert painted, f"分隔线整块都是底色（{background.name()}），等于没画"
+    # 上下都得留出空地，否则线会贴住两行文字
+    assert rect.height() > len(painted) * scale
+    return image.pixelColor(x, painted[0]), round(len(painted) / scale)
 
 
 def test_split_shortcut_separates_modifiers_from_the_key() -> None:
@@ -436,6 +539,8 @@ def test_submenus_get_the_same_look(qt_app: QApplication, window: MainWindow) ->
     assert len({submenu.styleSheet() for submenu in owned}) == 1
     for submenu in owned:
         assert gutter not in submenu.styleSheet()
+    # 分隔线的规则也得在（「排序」里那道就靠它，深色下才看得见）
+    assert "QMenu::separator" in menu.styleSheet()
 
 
 def test_menu_bar_menus_are_left_native(window: MainWindow) -> None:
