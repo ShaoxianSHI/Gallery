@@ -760,11 +760,16 @@ def build_group_menu(actions: MenuActions) -> QMenu:
     也不出现 —— 它作用的是**剪贴板**，与这一组无关（ADR 0018 决策 3）。至于「显示
     元数据信息」与「复制元数据」：面板讲的是**一张**照片，组里哪一张都没有理由被指定
     （ADR 0014 决策 4 挡下来的那半条仍然成立）。
+
+    「移到废纸篓」**前面单独隔一道**：它是本组里唯一会动文件的一条，前头那几条无论点
+    哪一个都只是把东西递出去（访达、剪贴板、别的相册，原件都在原地）。照片菜单里它紧
+    挨着上一条是因为那里夹着「粘贴」，位置本来就是让给粘贴的。
     """
     menu = ShortcutColumnMenu()
     _add_open(menu, actions)
     menu.addSeparator()
     _add_file_operations(menu, actions)
+    menu.addSeparator()
     menu.addAction(actions.trash)
     menu.addSeparator()
     menu.addAction(actions.copy_group)

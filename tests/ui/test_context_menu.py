@@ -351,6 +351,9 @@ def test_group_menu_acts_on_the_photos_inside(qt_app: QApplication, window: Main
 
     **仍然没有**「重命名」（改的是卡片，而它不是磁盘上的东西，ADR 0004）与「粘贴」
     （它作用的是剪贴板，与这一组无关）；开头结尾是分组自己的两条。
+
+    「移到废纸篓」**前面单独隔一道**：它是这张菜单里唯一会动文件的一条，前面几条点哪
+    一个都只是把东西递出去（原件仍在原地）。
     """
     photo = PhotoRef(path=window._library.root / "京都" / PHOTO_NAMES[0], size=1, mtime_ns=1)
     group = GroupRef(facet="camera", key="canon", label="Canon EOS R5", photos=(photo,))
@@ -369,6 +372,7 @@ def test_group_menu_acts_on_the_photos_inside(qt_app: QApplication, window: Main
         "拷贝路径",
         "复制到相册",
         "移动到相册",
+        "",
         "移到废纸篓",
         "",
         "复制分组条件",
