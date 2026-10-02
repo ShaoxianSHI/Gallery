@@ -46,3 +46,6 @@ AGENTS.md
 .idea/
 .vscode/
 *.swp
+
+# 开发工作区：AGENTS.md 要求改动都在 worktree 里做，主工作区停在 main
+.worktrees/
