@@ -228,6 +228,40 @@ def test_the_shortcut_stays_on_the_current_level_when_no_album_is_selected(
     assert (root / "京都" / "待粘.jpg").is_file()
 
 
+def test_clearing_the_selection_goes_back_to_the_current_level(
+    qt_app: QApplication, window: MainWindow, root: Path
+) -> None:
+    """**点空白取消选中之后，⌘V 立刻回到当前这一层** —— 不粘进刚才那个相册。
+
+    用户报过的那个症状。真正的问题不在「选中状态没被清掉」（选区确实空了），而在
+    ``PhotoGrid.selected_rows()``：选区为空时它会**退回当前项**（网格刚打开时 Qt 可能顺手
+    把第 0 行设成当前项），而普通左键点空白处只清选区、**不清当前项** —— 于是那一层看起来
+    仍选着那个相册。
+
+    因此这里**只清选区、留着当前项**，正是「左键点空白」留下的那个状态（``clearSelection()``
+    与那一下等价，比模拟鼠标点击确定得多）。
+    """
+    desktop.copy_files_to_clipboard([root / "京都" / "一张.jpg"])
+    row = window._model.row_of_path(root / "京都")
+    assert row >= 0
+    window._grid.select_for_context(row)
+    assert window._paste_target() == root / "京都"
+
+    selection = window._grid.selectionModel()
+    assert selection is not None
+    selection.clearSelection()
+    qt_app.processEvents()
+    # 先把那个状态摆出来：选区空了，当前项还指着刚才那个相册。
+    assert selection.selectedIndexes() == []
+    assert window._grid.current_row() == row
+
+    assert window._paste_target() == root, "选区一空就应当回到当前这一层"
+
+    _paste_and_wait(qt_app, window)
+    assert (root / "一张.jpg").is_file(), "落在当前这一层（库根），不是京都里"
+    assert not (root / "京都" / "一张 2.jpg").exists()
+
+
 def test_several_albums_selected_fall_back_to_the_current_level(
     qt_app: QApplication, window: MainWindow
 ) -> None:

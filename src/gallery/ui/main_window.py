@@ -2336,15 +2336,25 @@ class MainWindow(QMainWindow):
     def _selected_album(self) -> Path | None:
         """选区里**恰好是一个相册**时返回它，否则 ``None``（判据见 :meth:`_paste_target`）。
 
+        **直接读选区，不走 :meth:`PhotoGrid.selected_rows`** —— 那一位在选区为空时会
+        **退回当前项**（网格刚打开时 Qt 可能顺手把第 0 行设成当前项，见 ``selected_rows``
+        的注释），而普通左键点空白处只清选区、**不清当前项**（``select_for_context``
+        才两样一起清，那是右键走的路）。于是「选中过相册 → 点空白取消选中」在那一层看起来
+        仍选着那个相册，⌘V 就会照旧粘进一个用户已经取消选择的目录 —— 粘文件进用户没选的
+        地方是这个功能里最坏的一种错，代价远大于反过来（没粘到他以为的地方，他看得见）。
+
         **只认网格页的选区**：大图页上「选中」的是正在看的那一张（``_selected_entries``
         那边就换过人了，ADR 0021），那一格不是用户选出来的，不该把 ⌘V 带去别处。
         """
         if self._stack.currentWidget() is not self._grid_page:
             return None
-        entries = self._selected_entries()
-        if len(entries) != 1:
+        selection = self._grid.selectionModel()
+        if selection is None:
             return None
-        entry = entries[0]
+        rows = sorted({index.row() for index in selection.selectedIndexes()})
+        if len(rows) != 1:
+            return None
+        entry = self._model.entry_at(rows[0])
         return entry.path if isinstance(entry, FolderRef) else None
 
     def _level_directory(self) -> Path | None:
