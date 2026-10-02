@@ -343,11 +343,14 @@ def test_album_menu_has_no_metadata_items(qt_app: QApplication, window: MainWind
     ]
 
 
-def test_group_menu_disables_writes_and_explains(qt_app: QApplication, window: MainWindow) -> None:
-    """分组卡片：改名与删除置灰，并在末尾说明为什么。
+def test_group_menu_acts_on_the_photos_inside(qt_app: QApplication, window: MainWindow) -> None:
+    """分组卡片：中间那一段与「多选照片」**逐字相同**（ADR 0020）。
 
-    这也是 ADR 0014 决策 4 —— README 原本承诺「按下去也会说明为什么」，而置灰之后
-    那个按钮根本按不到，说法必须与实现一致。
+    摊平之后就是一组照片，所以「在访达中显示 / 拷贝 / 拷贝路径 / 复制到相册 / 移动到相册 /
+    移到废纸篓」一条都不用改自己的实现，也不用分叉文案。
+
+    **仍然没有**「重命名」（改的是卡片，而它不是磁盘上的东西，ADR 0004）与「粘贴」
+    （它作用的是剪贴板，与这一组无关）；开头结尾是分组自己的两条。
     """
     photo = PhotoRef(path=window._library.root / "京都" / PHOTO_NAMES[0], size=1, mtime_ns=1)
     group = GroupRef(facet="camera", key="canon", label="Canon EOS R5", photos=(photo,))
@@ -358,7 +361,18 @@ def test_group_menu_disables_writes_and_explains(qt_app: QApplication, window: M
     menu = _context_at(window, 0)
 
     assert menu is not None
-    assert _texts(menu) == ["打开", "复制分组条件"]
+    assert _texts(menu) == [
+        "打开",
+        "",
+        "在访达中显示",
+        "拷贝",
+        "拷贝路径",
+        "复制到相册",
+        "移动到相册",
+        "移到废纸篓",
+        "",
+        "复制分组条件",
+    ]
 
 
 def test_multi_selection_hides_single_item_actions(
@@ -554,18 +568,19 @@ def test_copy_works_for_an_album_folder(qt_app: QApplication, window: MainWindow
     ]
 
 
-def test_copy_skips_group_cards(qt_app: QApplication, window: MainWindow) -> None:
-    """分组卡片不是磁盘上的东西（ADR 0014 决策 4）：既不拷贝，剪贴板也不该被动。"""
+def test_copy_covers_the_photos_of_a_group_card(qt_app: QApplication, window: MainWindow) -> None:
+    """⌘C 作用于**组里的照片**：卡片不是磁盘上的东西，它代表的那批照片是（ADR 0020）。"""
     group = GroupRef(facet="camera", key="canon", label="Canon", photos=(_photo(window),))
     window._model.reorder([group])
     qt_app.processEvents()
     _select(window._grid, window._model, (0,))
-    QGuiApplication.clipboard().setText("原样")
 
     window.copy_selected_files()
 
-    assert QGuiApplication.clipboard().text() == "原样"
-    assert window._copy_action.isEnabled() is False, "⌘C 同样不该对分组卡片可用"
+    assert [url.toLocalFile() for url in QGuiApplication.clipboard().mimeData().urls()] == [
+        str(window._library.root / "京都" / PHOTO_NAMES[0])
+    ]
+    assert window._copy_action.isEnabled() is True, "⌘C 与菜单里的那一行说的是同一件事"
 
 
 def test_copy_lives_in_the_edit_menu_too(qt_app: QApplication, window: MainWindow) -> None:
@@ -604,8 +619,17 @@ def test_reveal_selection_hands_paths_to_desktop(
     assert seen == [[window._library.root / "京都" / PHOTO_NAMES[0]]]
 
 
-def test_reveal_on_group_says_why_not(qt_app: QApplication, window: MainWindow) -> None:
-    """分组没有路径：要说清楚为什么访达里找不到对应的东西，而不是静默不动。"""
+def test_reveal_on_a_group_reveals_its_photos(
+    qt_app: QApplication, window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """⌘⏎ 对分组卡片摊平：那批照片在访达里实实在在地摆着（ADR 0020）。"""
+    seen: list[list[Path]] = []
+
+    def fake_reveal(paths: Sequence[Path]) -> str:
+        seen.append([Path(path) for path in paths])
+        return "已在访达中显示。"
+
+    monkeypatch.setattr(desktop, "reveal_in_finder", fake_reveal)
     group = GroupRef(facet="camera", key="canon", label="Canon", photos=(_photo(window),))
     window._model.reorder([group])
     qt_app.processEvents()
@@ -613,8 +637,8 @@ def test_reveal_on_group_says_why_not(qt_app: QApplication, window: MainWindow) 
 
     window.reveal_selection()
 
-    assert window._banner.isVisible()
-    assert "分组不是磁盘上的文件夹" in window._banner.text()
+    assert seen == [[window._library.root / "京都" / PHOTO_NAMES[0]]]
+    assert window._reveal_action.isEnabled() is True
 
 
 def test_reveal_says_command_return_and_the_key_really_opens_finder(
@@ -841,18 +865,28 @@ def test_copy_group_condition(qt_app: QApplication, window: MainWindow) -> None:
     assert QGuiApplication.clipboard().text() == "按「相机」分组：Canon EOS R5 · 2 张"
 
 
-def test_copy_paths_skips_group_cards(qt_app: QApplication, window: MainWindow) -> None:
-    """分组卡片没有路径，混进拷贝路径里会直接抛 ``AttributeError``。"""
-    group = GroupRef(facet="camera", key="canon", label="Canon", photos=(_photo(window),))
-    window._model.reorder([group])
+def test_copy_paths_covers_the_photos_of_a_group_card(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """⇧⌘C 对分组卡片摊平，而且**一张照片只出现一次**（ADR 0020）。
+
+    去重是必要的：组卡片与它的一张组员被一起选中时，那张照片只该算一次 —— 否则粘到
+    别处会多出一张「一张 2.jpg」。
+    """
+    member = _photo(window)
+    other = PhotoRef(path=window._library.root / "京都" / PHOTO_NAMES[1], size=1, mtime_ns=1)
+    group = GroupRef(facet="camera", key="canon", label="Canon", photos=(member,))
+    # 第 1 行就是那张组员本人：选区里它出现两次（一次作为组员、一次作为一格）。
+    window._model.reorder([group, member, other])
     qt_app.processEvents()
-    _select(window._grid, window._model, (0,))
-    QGuiApplication.clipboard().setText("原样")
+    _select(window._grid, window._model, (0, 1, 2))
 
     window.copy_selected_paths()
 
-    # 一个格子都没得拷 → 剪贴板一个字节都不该动。
-    assert QGuiApplication.clipboard().text() == "原样"
+    assert QGuiApplication.clipboard().text().splitlines() == [
+        str(window._library.root / "京都" / PHOTO_NAMES[0]),
+        str(window._library.root / "京都" / PHOTO_NAMES[1]),
+    ]
 
 
 # ---- 大图页的右键菜单（ADR 0021）--------------------------------------------

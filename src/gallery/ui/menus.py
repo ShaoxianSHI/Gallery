@@ -9,9 +9,9 @@
 它从菜单栏里**搬走**，菜单栏上那一项就没了。要复用子菜单就复用里面的 ``QAction``，
 子菜单自己现建。
 
-分组卡片上那两项（重命名 / 移到废纸篓）的置灰也不在这里做：右键点中分组时，
-视图已经把它选上了，``_update_action_states`` 自然会把它们关掉（它判据是「选区里有
-没有 ``GroupRef``」）。本模块只负责在菜单末尾补一条说明文字。
+分组卡片的菜单里**没有「重命名」这一行**（改的是卡片，而它不是磁盘上的东西，ADR 0004）；
+「移到废纸篓」那一行则在——那张卡片摊平之后就是一组照片，删得动的是照片（ADR 0020）。
+两件事都在 ``MainWindow._update_action_states`` 那里算，本模块不碰置灰。
 
 **外观两件事**：一份样式表，各落点共用（:func:`apply_style`；分隔线的颜色也在那份
 样式表里，见 :data:`MENU_SEPARATOR_MIX_DARK`）；快捷键按列自己画
@@ -750,16 +750,50 @@ def build_album_menu(actions: MenuActions, *, multiple: bool) -> QMenu:
 
 
 def build_group_menu(actions: MenuActions) -> QMenu:
-    """分组卡片：**只有打开与复制分组条件**。
+    """分组卡片：打开它、把**它代表的那批照片**交出去、复制分组条件（ADR 0020）。
 
-    「重命名」与「移到废纸篓」在这里干脆**不出现**（ADR 0014 决策 4 曾是「置灰 + 一行
-    说明」，后按用户意见收窄成不出现）。分组不是磁盘上的东西，这两条永远不可用；菜单里
-    摆两个点不动的条目，再加一句解释为什么点不动，等于把一个功能缺失讲了三遍。
+    中间那一段与「多选照片」**逐字相同**：分组卡片摊平之后就是一组照片（摊平在
+    ``MainWindow`` 一处做，见 ``_selected_paths``），因此这六条命令一条都不用改自己的
+    实现，文案也不必分叉。
+
+    「重命名」仍然**不出现**（ADR 0004 一次只改一条，而分组没有名字可改），「粘贴」
+    也不出现 —— 它作用的是**剪贴板**，与这一组无关（ADR 0018 决策 3）。至于「显示
+    元数据信息」与「复制元数据」：面板讲的是**一张**照片，组里哪一张都没有理由被指定
+    （ADR 0014 决策 4 挡下来的那半条仍然成立）。
     """
     menu = ShortcutColumnMenu()
     _add_open(menu, actions)
+    menu.addSeparator()
+    _add_file_operations(menu, actions)
+    menu.addAction(actions.trash)
+    menu.addSeparator()
     menu.addAction(actions.copy_group)
     return menu
+
+
+def _add_file_operations(
+    menu: ShortcutColumnMenu, actions: MenuActions, *, album_targets: bool = True
+) -> None:
+    """「把选区交出去」那一族：在访达中显示、拷贝、拷贝路径、两个「到相册」。
+
+    照片、多选照片、大图页与分组这四张菜单共用这一段，顺序也共用
+    （ADR 0017 / 0018 / 0019）—— 同一族的事在几张菜单里必须长得一样，否则用户得记
+    几遍（分组那一摊见 ADR 0020）。
+
+    ``album_targets=False`` 是相册菜单：搬的是**照片**，把相册整个搬走会牵动整棵子树
+    （ADR 0019 决策 5）。
+
+    两个相册清单是 ``None`` 时那两条干脆不出现（库里一个相册都没有），不是置灰：
+    空子菜单点开是个空框（ADR 0019 决策 7）。
+    """
+    menu.addAction(actions.reveal)
+    menu.addAction(actions.copy)
+    menu.addAction(actions.copy_path)
+    if album_targets:
+        if actions.copy_to_album is not None:
+            menu.addMenu(actions.copy_to_album)
+        if actions.move_to_album is not None:
+            menu.addMenu(actions.move_to_album)
 
 
 def build_background_menu(actions: MenuActions) -> QMenu:
@@ -886,14 +920,7 @@ def _add_open_and_reveal(
             _add_open(menu, actions)
         if default_app:
             menu.addAction(actions.open_default)
-    menu.addAction(actions.reveal)
-    menu.addAction(actions.copy)
-    menu.addAction(actions.copy_path)
-    if album_targets:
-        if actions.copy_to_album is not None:
-            menu.addMenu(actions.copy_to_album)
-        if actions.move_to_album is not None:
-            menu.addMenu(actions.move_to_album)
+    _add_file_operations(menu, actions, album_targets=album_targets)
     if actions.paste is not None:
         menu.addAction(actions.paste)
     menu.addSeparator()

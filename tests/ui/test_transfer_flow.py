@@ -407,8 +407,12 @@ def test_moving_into_the_album_it_is_already_in(qt_app: QApplication, window: Ma
     assert "本来就在「京都」里" in window._banner.text()
 
 
-def test_a_group_card_says_it_is_not_a_file(qt_app: QApplication, window: MainWindow) -> None:
-    """分组卡片不是磁盘上的东西，搬不动 —— 如实说，别静默跳过。"""
+def test_a_group_card_moves_the_photos_inside(qt_app: QApplication, window: MainWindow) -> None:
+    """分组卡片摊平成组员再搬（ADR 0020）：搬的是**照片**，不是它所在的目录。
+
+    ADR 0019 决策 5 挡的是「搬相册」那一半（一次牵动整棵子树），摊平出来的一律是
+    ``photos``，所以那半条依然成立。
+    """
     photo = window._library.root / "京都" / "一张.jpg"
     group = GroupRef(
         facet="camera",
@@ -422,8 +426,9 @@ def test_a_group_card_says_it_is_not_a_file(qt_app: QApplication, window: MainWi
 
     window._transfer_selected(window._library.root / "奈良", move=True)
 
-    assert photo.exists()
-    assert "分组不是磁盘上的文件" in window._banner.text()
+    assert _wait(qt_app, lambda: window._write_job is None)
+    assert (window._library.root / "奈良" / "一张.jpg").exists()
+    assert not photo.exists()
 
 
 def test_paste_and_copy_do_not_run_at_the_same_time(

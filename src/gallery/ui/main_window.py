@@ -161,10 +161,16 @@ QLabel#banner {
 """
 
 
-#: 选中分组卡片时对「改名 / 删除」的统一解释。两件事共用一句话，省得用户以为是两个毛病。
+#: 选中分组卡片而要改的却是**卡片本身**时的那句解释（ADR 0020）。
+#:
+#: 摊平之后（``_selected_paths``）只有「改名」还会走到这里：组里的照片是真的能拷、能搬、
+#: 能进废纸篓的，而「把这个卡片改名 / 删掉这个卡片」依然做不到 —— 它不是磁盘上的东西。
 _GROUP_NOT_FILE_ACTION = (
     "分组不是磁盘上的文件，改不了名也删不掉。双击进入分组后选中里面的照片再操作。"
 )
+
+#: 摊平之后一个路径都没剩下（正常情况下不会：组卡片必带至少一张照片）。
+_NOTHING_SELECTED = "没有可处理的东西。"
 
 
 def _rename_banner(result: RenameResult) -> str:
@@ -197,6 +203,30 @@ def _shared_parent(photos: Sequence[PhotoRef]) -> Path | None:
         return parents.pop()
     resolved = {parent.resolve() for parent in parents}
     return resolved.pop() if len(resolved) == 1 else None
+
+
+def _flattened_entries(entries: Sequence[GridEntry]) -> list[GridEntry]:
+    """把选区里的**分组卡片换成组员**，其余条目原样保留（按路径去重、保持网格顺序）。
+
+    分组是元数据切出来的一个切面，不是磁盘上的东西，而它代表的那批照片实实在在躺在
+    磁盘上 —— 所以凡是「对选区里的东西做点什么」的命令，都该作用在摊平之后的结果上
+    （ADR 0020）。摊平的**只有分组卡片**：相册保持相册（整棵子树进废纸篓、整个文件夹
+    拷走，那本来就是「对这个相册做什么」）。
+
+    去重是必要的：同一张照片既被单独选中、又被它所在的组一起选中时只该算一次
+    （否则粘贴会在同一个目录里造出一张「一张 2」）。
+
+    摊平只发生在**命令的对象**上，**不动选区** —— 用户右键的是一张卡片，界面上仍然是
+    一张卡片被选着，撤销与重选都还照旧。
+    """
+    flat: list[GridEntry] = []
+    seen: set[Path] = set()
+    for entry in entries:
+        for item in entry.photos if isinstance(entry, GroupRef) else (entry,):
+            if item.path not in seen:
+                seen.add(item.path)
+                flat.append(item)
+    return flat
 
 
 def _paste_banner(result: PasteResult, target_name: str) -> str:
@@ -2168,10 +2198,15 @@ class MainWindow(QMainWindow):
             self._show_banner(message)
 
     def reveal_selection(self) -> None:
-        """「在访达中显示」：在访达里把选中的东西选出来（见 ``ui.desktop``）。"""
+        """「在访达中显示」：在访达里把选中的东西选出来（见 ``ui.desktop``）。
+
+        选中的**分组卡片**摊平成它的组员（ADR 0020）：卡片自己没有路径，而它代表的
+        那批照片在访达里实实在在地摆着 —— 这正是用户右键一张「Canon · 128 张」时
+        想看到的东西。
+        """
         paths = self._selected_paths()
         if not paths:
-            self._show_banner("分组不是磁盘上的文件夹，访达里没有对应的东西。")
+            self._show_banner(_NOTHING_SELECTED)
             return
         self._show_banner(desktop.reveal_in_finder(paths))
 
@@ -2307,6 +2342,9 @@ class MainWindow(QMainWindow):
         ``Library`` 方法，以及横幅里说的是「复制」还是「移动」。**一次搬几百 MB**，
         所以都走后台线程（与 ⌘V 同一道闸门，见 :attr:`_write_job`）。
 
+        选中的**分组卡片**摊平成它的组员（ADR 0020）：搬的是照片，不是它所在的目录 ——
+        所以 ADR 0019 决策 5 挡的那一半（不搬相册、一次只动照片）仍然成立。
+
         移走的东西由监听器（ADR 0013）自己从这一层里摘掉：这里刻意不重扫 ——
         重扫会把网格清空，选中与滚动位置全丢，而监听器已经把该做的做完了。
         """
@@ -2315,7 +2353,7 @@ class MainWindow(QMainWindow):
             return
         sources = self._selected_paths()
         if not sources:
-            self._show_banner(_GROUP_NOT_FILE_ACTION)
+            self._show_banner(_NOTHING_SELECTED)
             return
         if self._write_job is not None:
             self._show_banner("上一次操作还没结束。")
@@ -2445,8 +2483,17 @@ class MainWindow(QMainWindow):
         return self._grid.current_row()
 
     def _selected_paths(self) -> list[Path]:
-        """选中项在磁盘上的路径。**分组卡片没有路径**（它不是磁盘上的东西），跳过。"""
-        return [entry.path for entry in self._selected_entries() if not isinstance(entry, GroupRef)]
+        """命令要作用在磁盘上的哪一串东西（按网格顺序，已去重）。
+
+        **分组卡片在这里摊平成它的组员**（ADR 0020）：卡片不是磁盘上的东西，它代表的
+        那批照片是。「在访达中显示」「拷贝」「拷贝路径」「复制到相册」「移动到相册」
+        「移到废纸篓」因此一条都不用改 —— 它们要的一直是路径，只是这一串现在可能来自
+        一张分组卡片。
+
+        摊平只发生在**命令的对象**上，不动选区：用户右键的是一张卡片，界面上仍然是
+        一张卡片被选着。
+        """
+        return [entry.path for entry in _flattened_entries(self._selected_entries())]
 
     # ---- 重命名与移到废纸篓（仅有的两个会动用户文件的入口）--------------------
 
@@ -2490,6 +2537,9 @@ class MainWindow(QMainWindow):
     def trash_selected(self) -> None:
         """⌘⌫：把选中的照片 / 相册移进系统废纸篓。
 
+        选中的**分组卡片**摊平成它的组员（ADR 0020）：删不掉的是那张卡片，删得掉的是
+        它代表的那批照片 —— 与「进去全选再删」得到的是同一件事，只是少了一趟。
+
         不弹确认框，理由和访达一样：废纸篓本身就是那层保险，⌘Z 再是一层；
         弹窗只会让「整理一批照片」变成一连串的确认。做完立刻用横幅说清楚。
 
@@ -2505,15 +2555,11 @@ class MainWindow(QMainWindow):
         in_detail = self._stack.currentWidget() is self._detail_page
         if not in_detail and self._stack.currentWidget() is not self._grid_page:
             return
-        # 大图页作用的是正在看的那一张，网格页是整个选区（见 _selected_entries）。
+        # 大图页作用的是正在看的那一张，网格页是整个选区（见 _selected_entries）；
+        # 网格上的分组卡片摊平之后是它那批组员（ADR 0020）—— 大图页上不会遇到卡片。
         rows = [self._current_row] if in_detail else self._grid.selected_rows()
-        entries = self._selected_entries()
+        entries = _flattened_entries(self._selected_entries())
         if not entries:
-            return
-        groups = [entry for entry in entries if isinstance(entry, GroupRef)]
-        if groups:
-            # 静默跳过等于「按了没反应」。分组不是磁盘上的东西，删不掉。
-            self._show_banner(_GROUP_NOT_FILE_ACTION)
             return
         try:
             result = library.move_to_trash(entries)
@@ -2556,8 +2602,18 @@ class MainWindow(QMainWindow):
         self._load_detail(row)
 
     def _is_row_moved(self, row: int, moved_paths: set[Path]) -> bool:
+        """这一行是不是已经不在磁盘上了。
+
+        分组卡片没有路径可比：它整组都进了废纸篓才算「这一行没了」（ADR 0020 决策 4），
+        只走了一部分的话卡片留着，张数下一次列这一层时更新 —— 与在分组视图里删掉组内
+        几张照片时完全一样。
+        """
         entry = self._model.entry_at(row)
-        return entry is not None and entry.path in moved_paths
+        if entry is None:
+            return False
+        if isinstance(entry, GroupRef):
+            return bool(entry.photos) and all(photo.path in moved_paths for photo in entry.photos)
+        return entry.path in moved_paths
 
     def _forget_trashed(self, entries: Sequence[GridEntry]) -> None:
         """丢掉内存里按路径索引的缓存。
@@ -2924,8 +2980,8 @@ class MainWindow(QMainWindow):
         idle = not self._grid.is_renaming()
         entries = self._selected_entries()
         focus_row = self._focus_row()
-        # 分组卡片不是磁盘上的东西：选中它时改名与删除都不可用，按下去也没有
-        # 「只处理照片」这种含糊的半截行为（见 ADR 0009）。网格页要连**当前项**一起算
+        # 「改名」只对磁盘上的**某一个**东西成立：分组卡片不是磁盘上的东西，改不了名，
+        # 一次也只改一条（见 ADR 0009 与 ADR 0004）。网格页要连**当前项**一起算
         # —— 它可能不在选区里；大图页指向的必然是正在看的那张照片，看它就够了。
         considered: tuple[int, ...] = (
             (*self._grid.selected_rows(), self._grid.current_row())
@@ -2935,11 +2991,15 @@ class MainWindow(QMainWindow):
         file_only = not any(
             isinstance(self._model.entry_at(row), GroupRef) for row in considered if row >= 0
         )
+        # 「移到废纸篓」与「拷贝」一族作用于**摊平之后**的选区：选中一张分组卡片就是
+        # 选中它代表的那批组员（ADR 0020），与「进去全选再删」是同一件事。大图页上是
+        # 正在看的那一张，摊平对它没有影响。
+        flat = _flattened_entries(entries)
         self._rename_action.setEnabled(in_grid and focus_row >= 0 and idle and file_only)
-        self._trash_action.setEnabled(bool(entries) and idle and file_only)
+        self._trash_action.setEnabled(bool(flat) and idle)
         # 右键新增的那几条（ADR 0014）：可用性一律按「此刻作用于谁」算，
         # 菜单栏上的 ⌘A / ⇧⌘C 与右键菜单里的同一份动作因此永远说同一句话。
-        paths = [entry.path for entry in entries if not isinstance(entry, GroupRef)]
+        paths = [entry.path for entry in flat]
         current = self._model.entry_at(focus_row) if focus_row >= 0 else None
         self._select_all_action.setEnabled(in_grid and self._model.rowCount() > 0)
         self._copy_path_action.setEnabled(bool(paths))
