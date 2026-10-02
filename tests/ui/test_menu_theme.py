@@ -33,6 +33,7 @@ from PySide6.QtGui import (  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMenu  # noqa: E402
 
 from gallery.core.library.config import prepare_library  # noqa: E402
+from gallery.core.library.session import BROWSE_MODE_ALBUMS  # noqa: E402
 from gallery.ui import menus, theme  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.theme import rgba  # noqa: E402
@@ -55,6 +56,11 @@ def window(qt_app: QApplication, tmp_path: Path) -> Iterator[MainWindow]:
     root = tmp_path / "照片"
     root.mkdir()
     Image.new("RGB", (64, 48), (200, 120, 40)).save(root / "一张.jpg")
+    # 还要有一个子文件夹：没有它就取不到「相册」那一种落点（用户正是看着相册菜单说
+    # 「在访达中显示」和 ⇧ 几乎同一条 x 的）。
+    album = root / "京都"
+    album.mkdir()
+    Image.new("RGB", (64, 48), (10, 160, 90)).save(album / "另一张.jpg")
     prepare_library(root)
     instance = MainWindow(session_base=tmp_path / "状态", initial_library=root)
     _wait_for_scan(qt_app, instance)
@@ -255,7 +261,8 @@ def test_menus_reserve_room_for_the_shortcut_columns(
 ) -> None:
     """菜单要为快捷键列块**预留宽度**：它不在条目文字里，Qt 不会替它腾地方。
 
-    不预留就压在标签上（实测菜单宽 143、列块要画到 x≈100，而「在访达中显示」一直伸到 98）。
+    不预留就压在标签上（实测空白处菜单自然宽 124，列块左沿 62，而「缩略图大小」的文字
+    一直伸到 90）。
     """
     window._stack.setCurrentWidget(window._grid_page)
     row = window._model.row_of_path(window._library.root / "一张.jpg")
@@ -266,19 +273,79 @@ def test_menus_reserve_room_for_the_shortcut_columns(
     assert menu is not None
     menu.popup(QPoint(60, 60))
     try:
-        widest_label = max(
-            QFontMetrics(menu.font()).horizontalAdvance(action.text())
-            for action in menu.actions()
-            if not action.isSeparator()
-        )
-        columns = menus.ShortcutColumns.measure(
-            [action.shortcut() for action in menu.actions() if not action.shortcut().isEmpty()],
-            QFontMetrics(menu.font()),
-        )
-        needed = widest_label + menus.MENU_INSET + columns.width + menus.SHORTCUT_RIGHT_INSET
+        needed = _needed_width(menu)
         assert menu.width() >= needed
     finally:
         menu.close()
+
+
+@pytest.mark.parametrize("kind", ["photo", "album", "blank"])
+def test_shortcut_columns_start_after_the_longest_label(
+    qt_app: QApplication, window: MainWindow, kind: str
+) -> None:
+    """三列要排在**最长那条文字的右侧**，且留出固定的间距。
+
+    这一段以前只有 0.5~2 像素：相册菜单里「在访达中显示」和下面 ⇧ 所在那列几乎同一条
+    x，看着像串成一片。留白取 :data:`menus.SHORTCUT_LABEL_GAP`，与原生菜单一致。
+    """
+    window._stack.setCurrentWidget(window._grid_page)
+    row = _row_for(window, kind)
+    assert row is not None
+
+    menu = window.context_menu_for(row)
+
+    assert menu is not None
+    metrics = QFontMetrics(menu.font())
+    rows = [a for a in menu.actions() if not a.isSeparator()]
+    columns = menus.ShortcutColumns.measure(
+        [a.shortcut() for a in rows if not a.shortcut().isEmpty()], metrics
+    )
+    rect = menu.actionGeometry(rows[0])
+    key_rect, modifier_rects = columns.cells(rect.right(), rect.top(), rect.height())
+    block_left = min([key_rect.left(), *[r.left() for r in modifier_rects.values()]])
+    label_start = menus.MENU_INSET + menus.MENU_CHECK_GUTTER
+    label_end = label_start + max(metrics.horizontalAdvance(a.text()) for a in rows)
+
+    assert block_left >= label_end + menus.SHORTCUT_LABEL_GAP
+
+
+def _needed_width(menu: QMenu) -> int:
+    """菜单至少要有多宽才装得下「最长标签 + 间距 + 列块」。"""
+    metrics = QFontMetrics(menu.font())
+    rows = [action for action in menu.actions() if not action.isSeparator()]
+    labels = max(metrics.horizontalAdvance(action.text()) for action in rows)
+    columns = menus.ShortcutColumns.measure(
+        [action.shortcut() for action in rows if not action.shortcut().isEmpty()], metrics
+    )
+    return int(
+        menus.MENU_INSET
+        + menus.MENU_CHECK_GUTTER
+        + labels
+        + menus.SHORTCUT_LABEL_GAP
+        + columns.width
+        + menus.SHORTCUT_RIGHT_INSET
+        + menus.MENU_INSET
+    )
+
+
+def _row_for(window: MainWindow, kind: str) -> int | None:
+    """三种落点各挑一行：照片 / 相册 / 空白处。"""
+    if kind == "blank":
+        return -1
+    window._grid.select_for_context(-1)
+    if kind == "photo":
+        row = window._model.row_of_path(window._library.root / "一张.jpg")
+    else:
+        window.set_browse_mode(BROWSE_MODE_ALBUMS)
+        deadline = time.monotonic() + SCAN_TIMEOUT_SECONDS
+        while time.monotonic() < deadline:
+            QApplication.processEvents()
+            if window._model.row_of_path(window._library.root / "京都") >= 0:
+                break
+            time.sleep(0.01)
+        QApplication.processEvents()
+        row = window._model.row_of_path(window._library.root / "京都")
+    return row if row >= 0 else None
 
 
 def test_qt_no_longer_draws_the_shortcut_column_itself(

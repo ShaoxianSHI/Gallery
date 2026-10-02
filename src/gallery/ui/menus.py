@@ -192,6 +192,11 @@ _MODIFIER_PROBE = {
 SHORTCUT_GAP = 3
 SHORTCUT_RIGHT_INSET = 12
 
+#: 列块与**最长那条标签**之间的留白（像素）。不给的话两块会贴在一起：相册菜单里
+#: 「在访达中显示」那一行的文字右缘与 ⇧ 所在那列只差十几个像素，看着像串成一片。
+#: 原生菜单在这一段是很宽的，这里取 20。
+SHORTCUT_LABEL_GAP = 20
+
 
 def _modifier_glyph(modifier: Qt.KeyboardModifier) -> str:
     """一个修饰符在系统写法下的符号（``⌘`` / ``⇧`` / ``⌥`` / ``⌃``）。"""
@@ -300,7 +305,7 @@ class ShortcutColumnMenu(QMenu):
             return
         metrics = QFontMetrics(self.font())
         columns = ShortcutColumns.measure([action.shortcut() for action in entries], metrics)
-        align = int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        align = int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
         for action in entries:
             rect = self.actionGeometry(action)
             modifiers, key_text = split_shortcut(action.shortcut())
@@ -335,9 +340,23 @@ class ShortcutColumnMenu(QMenu):
             for action in self.actions()
             if not action.isSeparator()
         )
-        has_check = any(action.isCheckable() for action in self.actions())
-        left = MENU_INSET + (MENU_CHECK_GUTTER if has_check else 0)
-        self.setMinimumWidth(int(labels + left + columns.width + SHORTCUT_RIGHT_INSET + MENU_INSET))
+        # 文字左边距恒为 MENU_INSET + MENU_CHECK_GUTTER：有可勾选项时那 19 像素是 Qt
+        # 自己给对勾留的，没有时是样式表补的（见 style_sheet 的 check_gutter）——
+        # **两种情况都得算**，只算一种的话列块会贴着文字（实测空白处菜单只差 2 像素）。
+        left = MENU_INSET + MENU_CHECK_GUTTER
+        # 这一段必须是**最小宽度**：标签越长菜单越宽，而列块是钉在右沿上的，宽度不够
+        # 它就会压到标签上（实测空白处菜单自然宽 124，列块左沿 62，而「缩略图大小」
+        # 的文字一直伸到 90 —— 两者几乎同一条 x）。
+        self.setMinimumWidth(
+            int(
+                labels
+                + SHORTCUT_LABEL_GAP
+                + left
+                + columns.width
+                + SHORTCUT_RIGHT_INSET
+                + MENU_INSET
+            )
+        )
 
 
 def apply_style(menu: QMenu) -> None:
@@ -537,6 +556,7 @@ __all__ = [
     "MENU_HIGHLIGHT_RADIUS",
     "MENU_ARROW_SIZE",
     "MODIFIER_ORDER",
+    "SHORTCUT_LABEL_GAP",
     "MENU_INSET",
     "MENU_ITEM_PADDING",
     "MenuActions",
