@@ -62,16 +62,24 @@ def sort_photos(
     facets = values if values is not None else {}
     if order.facet is None:
         return sorted(photos, key=lambda ref: ref.name.casefold())
-    known: list[PhotoRef] = []
+    # **每张照片的排序值只算一次。** 原本分两步：分区循环里问一遍「有没有值」，
+    # 排的时候在 key 里再问一遍 —— 也就是每张两次。`facet.sort` 要组装
+    # ``FacetInput``、查一次映射、取一次字段（拍摄时间还要 ``parse_capture_time``），
+    # 五万张的库每次重排就多付五万遍（实测 3000 张 = 6000 次调用）。
+    #
+    # 所以分区的时候顺手把值**摘出来揣着**，排序直接用它。文件名一起揣上，
+    # 「同值按文件名兜底」那条也跟着不用再查。
+    known: list[tuple[SortValue, str, PhotoRef]] = []
     unknown: list[PhotoRef] = []
     for ref in photos:
-        (unknown if order.value(ref, root, facets) is None else known).append(ref)
-    known.sort(
-        key=lambda ref: (order.value(ref, root, facets), ref.name.casefold()),
-        reverse=order.descending,
-    )
+        value = order.value(ref, root, facets)
+        if value is None:
+            unknown.append(ref)
+        else:
+            known.append((value, ref.name.casefold(), ref))
+    known.sort(key=lambda item: (item[0], item[1]), reverse=order.descending)
     unknown.sort(key=lambda ref: ref.name.casefold())
-    return known + unknown
+    return [ref for _, _, ref in known] + unknown
 
 
 def build_groups(

@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -213,3 +215,37 @@ def test_empty_input_produces_nothing(tmp_path: Path) -> None:
     assert facet is not None
 
     assert build_groups([], facet=facet, root=tmp_path) == []
+
+
+def test_the_sort_value_is_computed_once_per_photo(tmp_path: Path) -> None:
+    """**每张照片的排序值只算一次。**
+
+    ``facet.sort`` 要组装 ``FacetInput``、查映射、取字段（拍摄时间还要
+    ``parse_capture_time``）。原本分区循环问一遍「有没有值」、排序的 key 再问一遍
+    —— 五万张的库每次重排就多付五万遍，而重排在换排序字段、监听来了一批新照片时
+    都会发生。
+    """
+    photos = [
+        PhotoRef(path=tmp_path / f"{index:04d}.jpg", size=1, mtime_ns=index) for index in range(50)
+    ]
+    values = {
+        photo.path: PhotoFacets(captured_at=datetime(2024, 1, 1) + timedelta(days=index))
+        for index, photo in enumerate(photos)
+    }
+    calls = {"n": 0}
+
+    class Counted(SortOrder):
+        def value(
+            self,
+            ref: PhotoRef,
+            root: Path,
+            values: Mapping[Path, PhotoFacets],  # noqa: ARG002 - 只是转发
+        ) -> object:
+            calls["n"] += 1
+            return super().value(ref, root, values)
+
+    order = Counted(facet=sort_facet(FACET_CAPTURED), descending=False)
+
+    sort_photos(photos, order=order, root=tmp_path, values=values)
+
+    assert calls["n"] == len(photos), f"每张该算一次，实际算了 {calls['n']} 次"

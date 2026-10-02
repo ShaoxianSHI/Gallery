@@ -30,7 +30,6 @@ from pathlib import Path
 from stat import S_ISDIR, S_ISREG
 
 from gallery.core.cancellation import never_cancel
-from gallery.core.constants import CONFIG_DIR_NAME
 from gallery.core.errors import LibraryNotAccessibleError
 from gallery.core.library.photos import FolderRef, GridEntry, PhotoRef, is_supported_photo
 
@@ -77,11 +76,7 @@ def iter_photos(
     :raises LibraryNotAccessibleError: 根目录不存在、不是目录或没有读取权限。
     """
     root = Path(root)
-    if not root.is_dir():
-        raise LibraryNotAccessibleError(
-            f"打不开这个文件夹：{root}。它可能已被移动、重命名或删除。",
-            path=root,
-        )
+    _require_directory(root)
 
     cancelled = should_cancel or never_cancel
     stack: list[Path] = [root]
@@ -97,7 +92,7 @@ def iter_photos(
             if cancelled():
                 return
             name = entry.name
-            if name.startswith(".") or name == CONFIG_DIR_NAME:
+            if _is_hidden_name(name):
                 continue
             try:
                 if entry.is_dir(follow_symlinks=False):
@@ -131,11 +126,7 @@ def iter_entries(
     :raises LibraryNotAccessibleError: 目录不存在或没有读取权限。
     """
     directory = Path(directory)
-    if not directory.is_dir():
-        raise LibraryNotAccessibleError(
-            f"打不开这个文件夹：{directory}。它可能已被移动、重命名或删除。",
-            path=directory,
-        )
+    _require_directory(directory)
     cancelled = should_cancel or never_cancel
     listed = _list_dir(directory, report)
     if listed is None:
@@ -147,7 +138,7 @@ def iter_entries(
         if cancelled():
             return
         name = entry.name
-        if name.startswith(".") or name == CONFIG_DIR_NAME:
+        if _is_hidden_name(name):
             continue
         try:
             if entry.is_dir(follow_symlinks=False):
@@ -201,11 +192,7 @@ def iter_albums(
     :raises LibraryNotAccessibleError: 根目录不存在、不是目录或没有读取权限。
     """
     root = Path(root)
-    if not root.is_dir():
-        raise LibraryNotAccessibleError(
-            f"打不开这个文件夹：{root}。它可能已被移动、重命名或删除。",
-            path=root,
-        )
+    _require_directory(root)
     cancelled = should_cancel or never_cancel
     found: list[FolderRef] = []
     stack: list[Path] = [root]
@@ -221,7 +208,7 @@ def iter_albums(
             if cancelled():
                 return
             name = entry.name
-            if name.startswith(".") or name == CONFIG_DIR_NAME:
+            if _is_hidden_name(name):
                 continue
             try:
                 if not entry.is_dir(follow_symlinks=False):
@@ -262,7 +249,7 @@ def is_visible_path(root: Path, path: Path) -> bool:
         relative = Path(path).resolve().relative_to(Path(root).resolve())
     except (OSError, ValueError):
         return False
-    return all(not part.startswith(".") and part != CONFIG_DIR_NAME for part in relative.parts)
+    return not any(_is_hidden_name(part) for part in relative.parts)
 
 
 def describe_entry(root: Path, path: Path) -> GridEntry | None:
@@ -289,6 +276,29 @@ def describe_entry(root: Path, path: Path) -> GridEntry | None:
     if not is_supported_photo(target):
         return None
     return PhotoRef(path=target, size=info.st_size, mtime_ns=info.st_mtime_ns)
+
+
+def _require_directory(path: Path) -> None:
+    """不是目录（或压根不存在）就抛 —— 那句话曾经被抄了四份。"""
+    if not Path(path).is_dir():
+        raise LibraryNotAccessibleError(
+            f"打不开这个文件夹：{path}。它可能已被移动、重命名或删除。",
+            path=Path(path),
+        )
+
+
+def _is_hidden_name(name: str) -> bool:
+    """这个名字扫描看不见：``.gitignore``、``._`` 资源分叉、``.Trash``、配置目录。
+
+    **配置目录已经被这条盖住了**：它的名字本来就以点开头（见
+    :data:`gallery.core.constants.CONFIG_DIR_NAME`）。判据里再写一遍
+    ``or name == CONFIG_DIR_NAME`` 看着像多一道保险，其实是死的 —— 而这种
+    「看着多余其实多余」的分支，久了就会有人以为它有用。
+
+    「跳过什么只有一份」是本模块的立身之本（:func:`is_visible_path` 与三个遍历函数
+    问的是同一件事），所以这条规则也只在这里写一次。
+    """
+    return name.startswith(".")
 
 
 def _list_dir(directory: Path, report: ScanReport | None) -> list[os.DirEntry[str]] | None:
