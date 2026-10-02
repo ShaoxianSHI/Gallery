@@ -920,7 +920,13 @@ class PhotoGrid(QListView):
         if watched is self.viewport() and event.type() == QEvent.Type.Resize:
             # 延到事件循环下一轮：视口尺寸变化本身就发生在布局过程中，
             # 立刻重排会把布局再推进一次。
-            QTimer.singleShot(0, self._recompute_layout)
+            #
+            # 第三个参数（context）是**必须**的：没有它，这个 0 毫秒的定时器与本对象
+            # 毫无关系，于是「收到 resize 事件 → 同一轮里窗口被关掉/换库」这种再平常
+            # 不过的时序，会让它照常触发并去调一个已经析构的 ``_recompute_layout``，
+            # 换来一个 ``Internal C++ object already deleted``。给了 context，Qt 会在
+            # 接收方析构时自动取消它。
+            QTimer.singleShot(0, self, self._recompute_layout)
         return super().eventFilter(watched, event)
 
 
