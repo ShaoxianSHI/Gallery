@@ -31,6 +31,7 @@ from PySide6.QtGui import (
     QNativeGestureEvent,
     QPainter,
     QPixmap,
+    QResizeEvent,
     QTransform,
     QWheelEvent,
 )
@@ -413,8 +414,8 @@ class DetailView(QGraphicsView):
             return
         super().keyPressEvent(event)
 
-    def resizeEvent(self, event: QEvent) -> None:
-        super().resizeEvent(event)  # type: ignore[arg-type]
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
         if self._fit_mode and not self._animating:
             self.fit_to_window()
         self._reposition_overlay()

@@ -31,7 +31,7 @@ SUBTITLE_ALPHA = 0.88
 SECONDARY_ALPHA = 0.82
 
 
-def welcome_style(theme: AppTheme) -> str:
+def welcome_style(app_theme: AppTheme) -> str:
     """欢迎页的文字样式。底色不在这里 —— 它由窗口统一铺好。
 
     文字色全部从主题派生：深色下是「浅字压深底」，浅色下自动变成「深字压浅底」，
@@ -39,9 +39,9 @@ def welcome_style(theme: AppTheme) -> str:
     """
     return f"""
 #welcomeTitle {{ font-size: 30px; font-weight: 600; }}
-#welcomeSubtitle {{ font-size: 14px; color: {rgba(theme.text_at(SUBTITLE_ALPHA))}; }}
-#welcomeHint {{ font-size: 12px; color: {rgba(theme.text_at(SECONDARY_ALPHA))}; }}
-#recentTitle {{ font-size: 12px; color: {rgba(theme.text_at(SECONDARY_ALPHA))}; }}
+#welcomeSubtitle {{ font-size: 14px; color: {rgba(app_theme.text_at(SUBTITLE_ALPHA))}; }}
+#welcomeHint {{ font-size: 12px; color: {rgba(app_theme.text_at(SECONDARY_ALPHA))}; }}
+#recentTitle {{ font-size: 12px; color: {rgba(app_theme.text_at(SECONDARY_ALPHA))}; }}
 QPushButton#openButton {{ font-size: 15px; padding: 8px 22px; }}
 QPushButton#recentButton {{
     font-size: 13px;

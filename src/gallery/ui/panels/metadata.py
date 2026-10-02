@@ -39,7 +39,7 @@ LABEL_WIDTH = 84
 COPIED_HINT_MS = 1400
 
 
-def panel_style(theme: AppTheme) -> str:
+def panel_style(app_theme: AppTheme) -> str:
     """面板的文字与按钮样式。底色不在这里 —— 它由 ``paintEvent`` 统一画。
 
     文字色全部从主题派生：深色主题下是「浅字压深底」，浅色主题下自动变成「深字压浅底」，
@@ -48,25 +48,25 @@ def panel_style(theme: AppTheme) -> str:
     return f"""
 #metadataPanel {{ background: transparent; }}
 #metadataGroupTitle {{
-    color: {rgba(theme.text_at(0.55))};
+    color: {rgba(app_theme.text_at(0.55))};
     font-size: 11px;
     font-weight: 600;
 }}
-#metadataLabel {{ color: {rgba(theme.text_at(0.52))}; font-size: 12px; }}
-#metadataValue {{ color: {rgba(theme.text_at(0.92))}; font-size: 12px; }}
-#metadataNotice {{ color: {rgba(theme.notice)}; font-size: 11px; }}
-#metadataEmpty {{ color: {rgba(theme.text_at(0.5))}; font-size: 12px; }}
-#metadataError {{ color: {rgba(theme.error)}; font-size: 12px; }}
+#metadataLabel {{ color: {rgba(app_theme.text_at(0.52))}; font-size: 12px; }}
+#metadataValue {{ color: {rgba(app_theme.text_at(0.92))}; font-size: 12px; }}
+#metadataNotice {{ color: {rgba(app_theme.notice)}; font-size: 11px; }}
+#metadataEmpty {{ color: {rgba(app_theme.text_at(0.5))}; font-size: 12px; }}
+#metadataError {{ color: {rgba(app_theme.error)}; font-size: 12px; }}
 QPushButton#metadataButton {{
-    color: {rgba(theme.text_at(0.85))};
-    background: {rgba(theme.text_at(0.10))};
+    color: {rgba(app_theme.text_at(0.85))};
+    background: {rgba(app_theme.text_at(0.10))};
     border: none;
     border-radius: 6px;
     padding: 4px 10px;
     font-size: 11px;
 }}
-QPushButton#metadataButton:hover {{ background: {rgba(theme.text_at(0.18))}; }}
-QCheckBox#metadataToggle {{ color: {rgba(theme.text_at(0.62))}; font-size: 11px; }}
+QPushButton#metadataButton:hover {{ background: {rgba(app_theme.text_at(0.18))}; }}
+QCheckBox#metadataToggle {{ color: {rgba(app_theme.text_at(0.62))}; font-size: 11px; }}
 """
 
 

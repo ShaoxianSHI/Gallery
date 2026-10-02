@@ -41,6 +41,18 @@ class ScaledThumbnail:
     edge: int
 
 
+@dataclass(slots=True)
+class _JobId:
+    """装一次 job_id 的小盒子。
+
+    ``TaskRunner.submit`` 要先拿到回调，回调又要知道自己是谁 ——
+    那时 ``job_id`` 还不存在。用一个只装一次的盒子把 id 递进去，
+    提交返回后立刻填上。回调据此确认「回来的这个结果确实是我那一次」。
+    """
+
+    value: int | None = None
+
+
 class ThumbnailPipeline(QObject):
     """按窗口优先级把缩略图喂给界面。"""
 
@@ -145,15 +157,30 @@ class ThumbnailPipeline(QObject):
             # 缩放在这里做（工作线程），界面线程只留一次 QPixmap.fromImage。
             return ScaledThumbnail(to_scaled_qimage(library.thumbnail(ref), edge), edge)
 
+        job_id_holder = _JobId()
         job_id = self._runner.submit(
             work,
-            on_result=partial(self._on_result, entry, generation),
-            on_error=partial(self._on_error, entry, generation),
+            on_result=partial(self._on_result, entry, generation, job_id_holder),
+            on_error=partial(self._on_error, entry, generation, job_id_holder),
         )
+        # ``submit`` 要先拿得到回调，回调又要知道自己是谁 —— 用一个只装一次的
+        # 小盒子把 job_id 递进去（:class:`_JobId`）。拿到之后立刻写进 ``_inflight``。
+        job_id_holder.value = job_id
         self._inflight[entry.path] = job_id
 
-    def _on_result(self, entry: GridEntry, generation: int, result: object) -> None:
-        self._inflight.pop(entry.path, None)
+    def _release(self, entry: GridEntry, holder: _JobId) -> None:
+        """收尾时把这一格从「在途」里摘出去 —— **只摘自己那一次**。
+
+        ``shutdown()`` 会清空 ``_inflight`` 并换代。旧一代的任务若晚回来还照着
+        老写法无条件 ``pop(entry.path)``，摘掉的就是**新一代**为同一格登记的那一条：
+        ``_inflight`` 于是少数了（超过 ``_max_inflight`` 也不会再补），
+        而 ``cancel()`` 更是再也够不着那个真正在跑的新任务。
+        """
+        if holder.value is not None and self._inflight.get(entry.path) == holder.value:
+            del self._inflight[entry.path]
+
+    def _on_result(self, entry: GridEntry, generation: int, holder: _JobId, result: object) -> None:
+        self._release(entry, holder)
         if generation != self._generation:
             self._dispatch()
             return
@@ -164,8 +191,8 @@ class ThumbnailPipeline(QObject):
             self.ready.emit(entry.path, result.image, result.edge)
         self._dispatch()
 
-    def _on_error(self, entry: GridEntry, generation: int, message: str) -> None:
-        self._inflight.pop(entry.path, None)
+    def _on_error(self, entry: GridEntry, generation: int, holder: _JobId, message: str) -> None:
+        self._release(entry, holder)
         if generation == self._generation:
             self._failed.add(entry.path)
             self.failed.emit(entry.path, message)
