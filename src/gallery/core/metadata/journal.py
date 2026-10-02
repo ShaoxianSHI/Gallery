@@ -36,10 +36,16 @@ ACTION_RESTORE: Final = "restore"
 
 #: 日志里的动作名：把剪贴板里的文件**复制**进某个目录（``core.metadata.paste``、ADR 0018）。
 #:
-#: **它不在撤销栈里**（``undo._PUSH_ACTIONS`` 只收改名与移到废纸篓）：粘进来的是**新
-#: 文件**，撤销一次粘贴就是删文件，而删除在这个项目里只允许用户亲手触发（红线 1）。
+#: **它不在撤销栈里**（``undo._PUSH_ACTIONS`` 收的是改名、移到废纸篓与移动到相册）：粘进来
+#: 的是**新文件**，撤销一次粘贴就是删文件，而删除在这个项目里只允许用户亲手触发（红线 1）。
 #: 这一条只是**记录** —— 粘了些什么、从哪来、什么时候、结果如何。
 ACTION_PASTE: Final = "paste"
+
+#: 日志里的动作名：把一项**移动**进另一个相册（``core.metadata.transfer``、ADR 0019）。
+#:
+#: 它**在**撤销栈里：撤销一次移动仍然是一次移动 —— 东西一直都在，只是回到原来待着的地方
+#: （与撤销粘贴正好相反，那一次是删除，红线 1 不允许）。
+ACTION_MOVE: Final = "move"
 
 #: 操作成功。
 RESULT_OK: Final = "ok"
@@ -57,8 +63,8 @@ def _now() -> str:
 class WriteRecord:
     """一条写操作记录。"""
 
-    #: :data:`ACTION_RENAME`、:data:`ACTION_UNDO`、:data:`ACTION_TRASH` 或
-    #: :data:`ACTION_RESTORE`。
+    #: :data:`ACTION_RENAME`、:data:`ACTION_MOVE`、:data:`ACTION_PASTE`、
+    #: :data:`ACTION_TRASH`、:data:`ACTION_RESTORE` 或 :data:`ACTION_UNDO`。
     action: str
     #: 改之前的路径。
     source: Path
@@ -174,6 +180,8 @@ def read_records(root: Path) -> list[WriteRecord]:
 
 
 __all__ = [
+    "ACTION_MOVE",
+    "ACTION_PASTE",
     "ACTION_RENAME",
     "ACTION_RESTORE",
     "ACTION_TRASH",

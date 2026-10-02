@@ -303,6 +303,8 @@ def test_photo_menu_items(qt_app: QApplication, window: MainWindow) -> None:
         "在访达中显示",
         "拷贝",
         "拷贝路径",
+        "复制到相册",
+        "移动到相册",
         "",
         "重命名…",
         "移到废纸篓",
@@ -319,6 +321,9 @@ def test_album_menu_has_no_metadata_items(qt_app: QApplication, window: MainWind
 
     后一条是刻意不给的：相册是文件夹，让系统用默认应用打开它就是让访达打开它 ——
     那与上面那行「打开」是同一件事，菜单里摆两行等于把一件事说两遍（ADR 0014 决策 7）。
+
+    同样**没有**「复制到相册 / 移动到相册」：那两条搬的是照片，搬相册会动到整棵子树
+    （ADR 0019 决策 5）。
     """
     _show_albums(qt_app, window)
     row = window._model.row_of_path(window._library.root / "京都")
@@ -359,7 +364,11 @@ def test_group_menu_disables_writes_and_explains(qt_app: QApplication, window: M
 def test_multi_selection_hides_single_item_actions(
     qt_app: QApplication, window: MainWindow
 ) -> None:
-    """多选：只作用在「某一个东西」上的命令全部藏起来（ADR 0004 与菜单设计）。"""
+    """多选：只作用在「某一个东西」上的命令全部藏起来（ADR 0004 与菜单设计）。
+
+    「复制到相册」「移动到相册」**多选时仍然留着** —— 它们作用于整个选择，说的正是
+    「把这一堆东西挪到那儿去」，正是多选最想干的事（ADR 0019）。
+    """
     _enter_album(qt_app, window)
     assert window._model.rowCount() == len(PHOTO_NAMES)
     _select(window._grid, window._model, (0, 1))
@@ -371,6 +380,8 @@ def test_multi_selection_hides_single_item_actions(
         "在访达中显示",
         "拷贝",
         "拷贝路径",
+        "复制到相册",
+        "移动到相册",
         "",
         "移到废纸篓",
         "",

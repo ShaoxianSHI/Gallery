@@ -34,9 +34,7 @@ from gallery.core.metadata.journal import (
     WriteRecord,
     append_record,
 )
-
-#: 单个文件名的字节上限（APFS / HFS+ 都是 255 字节，与字符数无关）。
-MAX_NAME_BYTES: Final = 255
+from gallery.core.metadata.naming import MAX_NAME_BYTES
 
 #: 名字里绝对不能出现的字符：路径分隔符、路径两端、其他平台的分隔符。
 _FORBIDDEN_CHARS: Final = ("/", "\\")
@@ -252,4 +250,4 @@ def _os_reason(exc: OSError) -> str:
     return f"{reason}。它可能正在被其他程序使用。"
 
 
-__all__ = ["MAX_NAME_BYTES", "RenameResult", "rename_entry", "undo_rename_record", "validate_name"]
+__all__ = ["RenameResult", "rename_entry", "undo_rename_record", "validate_name"]

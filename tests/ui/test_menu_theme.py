@@ -578,6 +578,9 @@ def test_submenu_arrow_moves_into_the_key_column(qt_app: QApplication, window: M
     落在字母列（129~141）右边，看着是另一个不相干的东西。所以带子菜单的那张菜单要**关掉**
     Qt 画的那一个（``::right-arrow`` 尺寸给 0 之后完全不画），改由
     ``ShortcutColumnMenu`` 画进字母列。
+
+    照片菜单自 ADR 0019 起**也有**子菜单行了（「复制到相册」「移动到相册」），于是它与
+    空白处那张一样，箭头归我们自己画 —— 全软件的箭头落在同一列上。
     """
     window._stack.setCurrentWidget(window._grid_page)
 
@@ -592,9 +595,14 @@ def test_submenu_arrow_moves_into_the_key_column(qt_app: QApplication, window: M
     assert row >= 0
     photo = window.context_menu_for(row)
     assert photo is not None
-    assert not photo.has_submenu_arrows(), "照片菜单没有子菜单行，箭头仍归 Qt 画"
-    assert not photo.owns_submenu_arrows()
-    assert f"width: {menus.MENU_ARROW_SIZE}px" in photo.styleSheet()
+    assert photo.has_submenu_arrows(), "照片菜单有「复制到相册 / 移动到相册」两个子菜单行"
+    assert photo.owns_submenu_arrows()
+    assert "QMenu::right-arrow { width: 0; height: 0; }" in photo.styleSheet()
+    # 那两行没有快捷键，``key_cell`` 返回 None，正是 ``_paint_arrow`` 接手的那些行。
+    assert {a.text() for a in photo.actions() if a.menu() is not None} == {
+        "复制到相册",
+        "移动到相册",
+    }
 
 
 def test_menus_without_checkable_items_keep_the_text_column(

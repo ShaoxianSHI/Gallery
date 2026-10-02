@@ -66,9 +66,10 @@ from gallery.core.metadata.facets import (
     needs_metadata,
     sort_facet,
 )
-from gallery.core.metadata.journal import ACTION_RENAME
+from gallery.core.metadata.journal import ACTION_MOVE, ACTION_RENAME
 from gallery.core.metadata.paste import PasteResult
 from gallery.core.metadata.rename import RenameResult
+from gallery.core.metadata.transfer import MoveResult
 from gallery.core.metadata.trash import Failure, TrashResult
 from gallery.core.metadata.undo import UndoResult
 from gallery.core.places.countries import place_label
@@ -223,6 +224,38 @@ def _paste_banner(result: PasteResult, target_name: str) -> str:
     return "；".join(parts) + "。"
 
 
+def _transfer_banner(result: MoveResult | PasteResult, target_name: str, verb: str) -> str:
+    """「复制到相册 / 移动到相册」之后的那行提示（ADR 0019）。
+
+    与 :func:`_paste_banner` 一套说法：动了哪些、跳过了哪些、为什么没成、能不能撤销。
+    **改了名的要单独点出来** —— 目标相册里本来就有同名时按访达的规矩改叫「一张 2.jpg」，
+    不说清楚的话用户会以为程序认错了文件。
+
+    移动比粘贴多一句「⌘Z 可以撤销」：这是用户敢用它的前提（红线 1，见 ADR 0019 决策 3）。
+    """
+    moved = result.moved if isinstance(result, MoveResult) else result.pasted
+    parts: list[str] = []
+    if moved:
+        head = f"已{verb} {len(moved)} 项到「{target_name}」"
+        renamed = [item for item in moved if item.renamed]
+        if len(renamed) == 1:
+            head += f"（「{renamed[0].source.name}」改名为「{renamed[0].created.name}」）"
+        elif renamed:
+            head += f"（其中 {len(renamed)} 项改了名，免得覆盖已有的）"
+        parts.append(head)
+    if result.skipped:
+        parts.append(f"{len(result.skipped)} 项本来就在「{target_name}」里")
+    if result.failures:
+        first = result.failures[0]
+        more = f"，共 {len(result.failures)} 项" if len(result.failures) > 1 else ""
+        parts.append(f"{first.name} 没{verb}成{more}：{first.message.rstrip('。')}")
+    if not result.journaled:
+        parts.append("没能记下操作日志")
+    if isinstance(result, MoveResult) and result.journaled:
+        parts.append("⌘Z 可以撤销")
+    return "；".join(parts) + "。"
+
+
 def _trash_banner(result: TrashResult) -> str:
     """移到废纸篓之后的那行提示。
 
@@ -250,6 +283,13 @@ def _undo_banner(result: UndoResult) -> str:
     note = _undo_note(result.journaled)
     if result.action == ACTION_RENAME:
         return f"已撤销，恢复为「{result.entries[0].name}」{note}。"
+    if result.action == ACTION_MOVE:
+        # 撤销移动没有 entries：挪回来的东西**不一定在当前这一层**（用户在哪个相册
+        # 点的移动，撤回来时人就站在哪儿），所以界面不知道该往网格里插哪一行 ——
+        # 交给监听器（ADR 0013）去发现，横幅只说发生了什么。
+        if result.failures:
+            return f"没能挪回去：{_first_reason(result.failures)}{note}。"
+        return f"已撤销，照片已挪回原来的相册{note}。"
     restored = result.entries
     if not restored:
         return f"没能取回来：{_first_reason(result.failures)}{note}。"
@@ -353,7 +393,10 @@ class MainWindow(QMainWindow):
         self._metadata_copy_job: int | None = None
         #: 「粘贴」那一次复制（ADR 0018）。**同时只允许一个**：两个任务会争同一个
         #: 目标名字，后到的会把先到的盖掉。
-        self._paste_job: int | None = None
+        #: 会往某个目录里**落文件**的后台任务（⌘V 粘贴、复制到相册、移动到相册，
+        #: 见 ADR 0018 / 0019）。**三者同时只允许一个**：它们会争同一个目标名字，
+        #: 后到的会把先到的盖掉 —— 那是这个项目最不能出现的一种事。
+        self._write_job: int | None = None
         #: 分组 / 排序与元数据面板共用的地点反查器（按坐标），首次用时才加载城市数据。
         self._place_resolver: LazyPlaceResolver | None = None
         #: 打开库时那一遍「全库解析地点」的任务（ADR 0010）。
@@ -2020,12 +2063,22 @@ class MainWindow(QMainWindow):
 
     def _menu_actions(self) -> MenuActions:
         """把菜单要用的动作收成一包（``ui.menus`` 只认这个，不认窗口）。"""
+        copy_to_album = self._album_picker("复制到相册")
+        move_to_album = self._album_picker("移动到相册")
+        if copy_to_album is not None:
+            copy_to_album.triggered.connect(self._on_album_chosen_for_copy)
+        if move_to_album is not None:
+            move_to_album.triggered.connect(self._on_album_chosen_for_move)
         return MenuActions(
             open_entry=self._open_entry_action,
             open_default=self._open_default_action,
             reveal=self._reveal_action,
             copy=self._copy_action,
             copy_path=self._copy_path_action,
+            # 两个相册清单：库里一个相册都没有时压根不出现（空子菜单是个空框，
+            # 与 ADR 0014 决策 4 同一个取向）。每次弹出现建，所以连的是这一份的信号。
+            copy_to_album=copy_to_album,
+            move_to_album=move_to_album,
             # 「粘贴」此刻粘不了就传 ``None``：菜单里干脆不出现，而不是摆一条永远
             # 点不动的（与 ADR 0014 决策 4 同一个取向）。
             paste=self._paste_action if self._can_paste() else None,
@@ -2139,31 +2192,110 @@ class MainWindow(QMainWindow):
         if not sources:
             self._show_banner("剪贴板里没有可粘贴的文件。")
             return
-        if self._paste_job is not None:
-            # 两次粘贴同时跑会争同一个名字（各自先看「一张 2.jpg」在不在），后到的
-            # 那个会把先到的盖掉 —— 那是这个项目最不能出现的一种事。
-            self._show_banner("上一次粘贴还没结束。")
+        if self._write_job is not None:
+            # 两次写入同时跑会争同一个名字（各自先看「一张 2.jpg」在不在），后到的
+            # 那个会把先到的盖掉 —— 那是这个项目最不能出现的一种事。粘贴、复制到相册、
+            # 移动到相册共用这一道闸门。
+            self._show_banner("上一次操作还没结束。")
             return
 
         def work(context: TaskContext) -> object:
             return library.copy_into(target, sources, should_cancel=context.is_cancelled)
 
         self._show_banner(f"正在把 {len(sources)} 项粘贴到「{target.name}」…")
-        self._paste_job = self._runner.submit(
+        self._write_job = self._runner.submit(
             work,
             on_result=partial(self._on_paste_done, target),
             on_error=self._on_paste_failed,
         )
 
     def _on_paste_done(self, target: Path, payload: object) -> None:
-        self._paste_job = None
+        self._write_job = None
         if isinstance(payload, PasteResult):
             self._show_banner(_paste_banner(payload, target.name))
 
     def _on_paste_failed(self, message: str) -> None:
-        self._paste_job = None
+        self._write_job = None
         logger.info("粘贴失败：%s", message)
         self._show_banner(f"没能粘贴：{message.rstrip('。')}")
+
+    # ---- 复制到相册 / 移动到相册（ADR 0019）------------------------------------
+
+    def _on_album_chosen_for_copy(self, action: QAction) -> None:
+        """用户在「复制到相册」里挑了一个相册。目标路径由子菜单挂在 ``action.data()`` 上。"""
+        target = action.data()
+        if isinstance(target, Path):
+            self._transfer_selected(target, move=False)
+
+    def _on_album_chosen_for_move(self, action: QAction) -> None:
+        """用户在「移动到相册」里挑了一个相册。"""
+        target = action.data()
+        if isinstance(target, Path):
+            self._transfer_selected(target, move=True)
+
+    def _album_picker(self, title: str) -> QMenu | None:
+        """现建一份相册清单子菜单；**库里一个相册都没有就返回 ``None``**。
+
+        清单是**每次弹出时现列**的：用户在访达里新建一个相册，下一次右键就能选到，
+        不必重开软件。列全库（不是只列当前这一层）是用户定的取向 —— 见 ADR 0019 决策 1。
+
+        目标相册里若恰好有一张正要移动的照片，那次操作会被如实记成「它已经在那个相册
+        里了」。与粘贴同一条规矩（ADR 0018 决策 2），因此不必在这里把它藏起来。
+        """
+        library = self._library
+        if library is None:
+            return None
+        albums = [(library.album_label(folder.path), folder.path) for folder in library.albums()]
+        if not albums:
+            return None
+        return menus.build_album_picker(title, albums)
+
+    def _transfer_selected(self, target: Path, *, move: bool) -> None:
+        """把选中的照片**复制**或**移动**进 ``target``。
+
+        两者共用这一段：源、后台任务、横幅、失败处理全都一样，差别只在调哪个
+        ``Library`` 方法，以及横幅里说的是「复制」还是「移动」。**一次搬几百 MB**，
+        所以都走后台线程（与 ⌘V 同一道闸门，见 :attr:`_write_job`）。
+
+        移走的东西由监听器（ADR 0013）自己从这一层里摘掉：这里刻意不重扫 ——
+        重扫会把网格清空，选中与滚动位置全丢，而监听器已经把该做的做完了。
+        """
+        library = self._library
+        if library is None:
+            return
+        sources = self._selected_paths()
+        if not sources:
+            self._show_banner(_GROUP_NOT_FILE_ACTION)
+            return
+        if self._write_job is not None:
+            self._show_banner("上一次操作还没结束。")
+            return
+        verb = "移动" if move else "复制"
+
+        def work(context: TaskContext) -> object:
+            if move:
+                return library.move_into(target, sources, should_cancel=context.is_cancelled)
+            return library.copy_into(target, sources, should_cancel=context.is_cancelled)
+
+        self._show_banner(f"正在把 {len(sources)} 项{verb}到「{target.name}」…")
+        self._write_job = self._runner.submit(
+            work,
+            on_result=partial(self._on_transfer_done, target, verb),
+            on_error=partial(self._on_transfer_failed, verb),
+        )
+
+    def _on_transfer_done(self, target: Path, verb: str, payload: object) -> None:
+        self._write_job = None
+        if isinstance(payload, MoveResult):
+            self._show_banner(_transfer_banner(payload, target.name, verb))
+            self._refresh_undo_label()
+        elif isinstance(payload, PasteResult):
+            self._show_banner(_transfer_banner(payload, target.name, verb))
+
+    def _on_transfer_failed(self, verb: str, message: str) -> None:
+        self._write_job = None
+        logger.info("%s到相册失败：%s", verb, message)
+        self._show_banner(f"没能{verb}：{message.rstrip('。')}")
 
     def _on_clipboard_changed(self) -> None:
         """剪贴板变了就重算一次 ⌘V 的可用性（只算这一条，不动别的）。"""

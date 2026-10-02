@@ -21,7 +21,12 @@ from gallery.core.errors import LibraryNotAccessibleError
 from gallery.core.library.config import LibraryConfig, load_config
 from gallery.core.library.index import FacetIndex
 from gallery.core.library.photos import FolderRef, GridEntry, PhotoRef
-from gallery.core.library.scanner import ScanReport, iter_entries, iter_photos
+from gallery.core.library.scanner import (
+    ScanReport,
+    iter_albums,
+    iter_entries,
+    iter_photos,
+)
 from gallery.core.library.watcher import LibraryChange, LibraryWatcher
 from gallery.core.media.decode import RasterImage, decode_rgba
 from gallery.core.media.thumbs import ThumbnailCache
@@ -33,6 +38,7 @@ from gallery.core.metadata.facets import (
 )
 from gallery.core.metadata.paste import PasteResult, copy_into
 from gallery.core.metadata.rename import RenameResult, rename_entry
+from gallery.core.metadata.transfer import MoveResult, move_into
 from gallery.core.metadata.trash import TrashResult, trash_entries
 from gallery.core.metadata.undo import UndoResult, next_undo_label, undo_last_write
 from gallery.core.places.dataset import is_real_coordinate
@@ -180,6 +186,28 @@ class Library:
                 path=target,
             )
         return iter_entries(target, should_cancel=should_cancel, report=report)
+
+    def albums(self, *, report: ScanReport | None = None) -> list[FolderRef]:
+        """库里**全部**的相册，按相对路径排序 —— 「复制到相册 / 移动到相册」的目标清单。
+
+        只读，一次列完而不是流式：菜单要的是一张完整的清单（用户是照着它挑的，缺一半
+        比慢一点糟糕得多），而一个相册目录的规模最多是几千项，列一次约几毫秒。
+
+        菜单**每次弹出时现列**，因此用户在访达里新建的相册立刻就能选到，不必重开软件。
+        """
+        return list(iter_albums(self._root, report=report))
+
+    def album_label(self, folder: Path) -> str:
+        """相册在菜单里显示的名字：相对库根的路径（``2025/苏州``）。
+
+        顶层相册就是它自己的名字。**用相对路径而不是单纯的名字**是必须的：两个不同
+        的年份下面各有一个「苏州」，菜单里光写「苏州」用户分不清自己要挪到哪去。
+        """
+        target = Path(folder)
+        try:
+            return target.resolve().relative_to(self._root.resolve()).as_posix() or target.name
+        except (OSError, ValueError):
+            return target.name
 
     def folder_cover(
         self,
@@ -469,7 +497,7 @@ class Library:
         *,
         should_cancel: Callable[[], bool] | None = None,
     ) -> PasteResult:
-        """把 ``sources`` **复制**进 ``target``（界面上就是「粘贴」⌘V）。
+        """把 ``sources`` **复制**进 ``target``（界面上是「粘贴」⌘V 与「复制到相册」）。
 
         规矩与红线见 ``core.paste`` 与 ADR 0018：**只增不改**（源文件一个字节不动）、
         **绝不覆盖**（同名就按访达的办法改叫「一张 2.jpg」）、**不在撤销栈里**
@@ -478,8 +506,23 @@ class Library:
         """
         return copy_into(self._root, target, sources, should_cancel=should_cancel)
 
+    def move_into(
+        self,
+        target: Path,
+        sources: Sequence[Path],
+        *,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> MoveResult:
+        """把 ``sources`` **移动**进 ``target``（界面上就是「移动到相册」）。
+
+        规矩与红线见 ``core.transfer`` 与 ADR 0019：这是唯一会让用户的文件**离开原处**
+        的操作，因此只在用户亲手点了菜单项时才发生，且**进撤销栈** —— ⌘Z 把它挪回原来的
+        相册（撤销一次移动仍然是一次移动，不是删除）。与粘贴一样**绝不覆盖**。
+        """
+        return move_into(self._root, target, sources, should_cancel=should_cancel)
+
     def undo_last_write(self) -> UndoResult | None:
-        """撤销最近一次写操作（改名或移到废纸篓）；没有可撤销的记录时返回 ``None``。"""
+        """撤销最近一次写操作（改名、移到废纸篓或移动到相册）；没有可撤销的记录时返回 ``None``。"""
         result = undo_last_write(self._root)
         if result is not None and result.replaced is not None:
             self._relocate_thumbnail(result.replaced, result.entries[0])

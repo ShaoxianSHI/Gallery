@@ -1,11 +1,13 @@
-"""一摞统一的撤销栈：改回去，或者从废纸篓取回来。
+"""一摞统一的撤销栈：改回去、从废纸篓取回来，或者挪回原来的相册。
 
-⌘Z 只有一摞待撤销的写操作，改名（ADR 0004）和移到废纸篓（ADR 0008）都在里面，
-栈顶是最近一次：
+⌘Z 只有一摞待撤销的写操作，改名（ADR 0004）、移到废纸篓（ADR 0008）与移动到相册
+（ADR 0019）都在里面，栈顶是最近一次：
 
 .. code-block:: text
 
-    改名 A → 删 B → ⌘Z（取回 B）→ ⌘Z（还原 A 的名字）
+    改名 A → 删 B → 移动 C 到京都 → ⌘Z（C 回原处）→ ⌘Z（取回 B）→ ⌘Z（还原 A 的名字）
+
+**粘贴（ADR 0018）不在里面**：撤销一次粘贴是删文件，而删除只允许用户亲手触发（红线 1）。
 
 这摞栈**不存内存里**，它是照着 ``journal/`` 里的记录重放出来的：写操作压栈、
 撤销弹栈，弹空了就没有可撤销的了。好处是关掉软件再打开，⌘Z 照样管用，而且撤销
@@ -23,8 +25,9 @@ from pathlib import Path
 from typing import Final
 
 from gallery.core.library.photos import GridEntry
-from gallery.core.metadata import rename, trash
+from gallery.core.metadata import rename, transfer, trash
 from gallery.core.metadata.journal import (
+    ACTION_MOVE,
     ACTION_RENAME,
     ACTION_RESTORE,
     ACTION_TRASH,
@@ -34,13 +37,17 @@ from gallery.core.metadata.journal import (
 )
 
 #: 压栈的动作：用户做过的写操作。
-_PUSH_ACTIONS: Final = frozenset({ACTION_RENAME, ACTION_TRASH})
+_PUSH_ACTIONS: Final = frozenset({ACTION_RENAME, ACTION_TRASH, ACTION_MOVE})
 
 #: 弹栈的动作：这些写操作被撤销掉了。
 _POP_ACTIONS: Final = frozenset({ACTION_UNDO, ACTION_RESTORE})
 
 #: 菜单里显示的文案。
-_LABELS: Final[dict[str, str]] = {ACTION_RENAME: "重命名", ACTION_TRASH: "移到废纸篓"}
+_LABELS: Final[dict[str, str]] = {
+    ACTION_RENAME: "重命名",
+    ACTION_TRASH: "移到废纸篓",
+    ACTION_MOVE: "移动到相册",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,7 +62,10 @@ class UndoResult:
     #: 撤销改名时被替换掉的那一行。撤销删除时为 ``None`` —— 那一行本来就不在网格里。
     replaced: GridEntry | None = None
     #: 没能撤销的部分（废纸篓里已经没有它、原位置被占用……）。
-    failures: tuple[trash.Failure, ...] = ()
+    #:
+    #: 两种形状：取回废纸篓报的是 ``name``，撤销移动报的是 ``source`` —— 后者多带一个
+    #: 完整路径，横幅要能说出「它现在不在哪儿了」。两者都有 ``name`` 与 ``message``。
+    failures: tuple[trash.Failure | transfer.Failure, ...] = ()
     #: 是否记下了这次撤销。为 ``False`` 时界面应说明再按一次 ⌘Z 撤不掉更多了。
     journaled: bool = True
 
@@ -105,6 +115,8 @@ def undo_last_write(root: Path) -> UndoResult | None:
     run = runs[-1]
     if run[0].action == ACTION_RENAME:
         return _undo_rename(root, run[0])
+    if run[0].action == ACTION_MOVE:
+        return _undo_move(root, run)
     return _undo_delete(root, run)
 
 
@@ -114,6 +126,21 @@ def _undo_rename(root: Path, record: WriteRecord) -> UndoResult:
         action=ACTION_RENAME,
         entries=(result.entry,),
         replaced=result.previous,
+        journaled=result.journaled,
+    )
+
+
+def _undo_move(root: Path, run: Sequence[WriteRecord]) -> UndoResult:
+    """把移动过的东西挪回原来的相册（ADR 0019）。
+
+    网格该显示什么交给界面去重扫：挪回来的东西**可能不在当前这一层**（用户在别的
+    相册里点的移动，撤回来时人在第三个相册），所以这里不替界面决定插到哪一行。
+    """
+    result = transfer.undo_move_records(root, run)
+    return UndoResult(
+        action=ACTION_MOVE,
+        entries=(),
+        failures=result.failures,
         journaled=result.journaled,
     )
 

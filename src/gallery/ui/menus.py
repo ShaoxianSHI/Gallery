@@ -33,9 +33,10 @@ macOS 样式画**，底色会掉回系统菜单色（浅色 ``#ececec``）。所
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QPointF, QRect, Qt
@@ -645,6 +646,11 @@ class MenuActions:
     copy: QAction
     #: 「拷贝路径」⇧⌘C。
     copy_path: QAction
+    #: 「复制到相册」子菜单（ADR 0019）。**此刻没有可选的相册就是 ``None``**，
+    #: 菜单里干脆不出现这一条 —— 空子菜单点开是个空框，不如不出现。
+    copy_to_album: QMenu | None
+    #: 「移动到相册」子菜单（同上）。
+    move_to_album: QMenu | None
     #: 「粘贴」⌘V。**此刻粘不了就是 ``None``**，菜单里干脆不出现这一条（不是置灰）：
     #: 要么这里没有可粘进去的文件夹，要么剪贴板里没有文件 —— 见 ADR 0018。
     paste: QAction | None
@@ -680,7 +686,7 @@ def build_photo_menu(actions: MenuActions, *, multiple: bool) -> QMenu:
     ADR 0004 明确排除的、拷谁的元数据同样说不清。其余几条作用于整个选择。
     """
     menu = ShortcutColumnMenu()
-    _add_open_and_reveal(menu, actions, multiple=multiple, default_app=True)
+    _add_open_and_reveal(menu, actions, multiple=multiple, default_app=True, album_targets=True)
     menu.addSeparator()
     menu.addAction(actions.metadata)
     if not multiple:
@@ -777,8 +783,12 @@ def _add_open_and_reveal(
     *,
     multiple: bool,
     default_app: bool = False,
-) -> None:
-    """照片与相册共用的上半截：打开 → 在访达中显示 → 拷贝 → 拷贝路径 → 粘贴 → 重命名 → 废纸篓。
+    album_targets: bool = False,
+) -> QMenu:
+    """照片与相册共用的上半截。
+
+    顺序是：打开 → 在访达中显示 → 拷贝 → 拷贝路径 → 复制到相册 → 移动到相册 → 粘贴 →
+    重命名 → 移到废纸篓。
 
     最右那一列里挨着的三枚回车不是一回事：「打开」的是**只画不生效**的 ↵ 提示
     （见 :meth:`ShortcutColumnMenu.show_key`），「在默认应用中打开」的 ⇧⏎ 与
@@ -788,12 +798,22 @@ def _add_open_and_reveal(
     ``default_app`` 只给照片菜单开：相册是文件夹，让系统用默认应用打开它就是让访达打开
     它，那与「打开」是同一件事，菜单里摆两行等于把一件事说两遍（见 ADR 0014 决策 7）。
 
+    ``album_targets`` 也只给照片菜单开：「移动到相册」搬的是**照片**，用户要的就是这个
+    （ADR 0019 决策 1）。搬相册本身是另一笔账 —— 一次动辄整棵子树，照片数量与耗时都不可
+    预计，而且红线下批量整理是要被排除的（ADR 0019 决策 5）。因此相册菜单里不出现这两条，
+    想挪相册请去访达。
+
     中间只留一道分隔线：多选时「打开」与「重命名」都不出现，若在那里各插一道，
-    「拷贝路径」与「移到废纸篓」之间就会多出一道谁也看不懂的空档。
+    「复制到相册」与「移到废纸篓」之间就会多出一道谁也看不懂的空档。
 
     **「拷贝」排在「拷贝路径」上面、「粘贴」排在它下面**（ADR 0017 / 0018）：三个挨在
     一起是访达的那一组。拷贝与拷贝路径作用于整个选择，多选时都留着；**「粘贴」不作用
     于选择**（它粘的是剪贴板），粘不了时压根不出现。
+
+    **「复制到相册」「移动到相册」摆在「拷贝路径」正下方、「粘贴」上面**（ADR 0019）：
+    三者都是「把这一堆东西放到别处去」，挨在一起才是一族；它们作用于整个选择，
+    多选时同样留着。库里一个相册都没有时传进来的是 ``None``，那两条干脆不出现 ——
+    空子菜单点开是个空框。
     """
     if not multiple:
         _add_open(menu, actions)
@@ -802,12 +822,39 @@ def _add_open_and_reveal(
     menu.addAction(actions.reveal)
     menu.addAction(actions.copy)
     menu.addAction(actions.copy_path)
+    if album_targets:
+        if actions.copy_to_album is not None:
+            menu.addMenu(actions.copy_to_album)
+        if actions.move_to_album is not None:
+            menu.addMenu(actions.move_to_album)
     if actions.paste is not None:
         menu.addAction(actions.paste)
     menu.addSeparator()
     if not multiple:
         menu.addAction(actions.rename)
     menu.addAction(actions.trash)
+    return menu
+
+
+def build_album_picker(title: str, albums: Sequence[tuple[str, Path]]) -> QMenu:
+    """「复制到相册 / 移动到相册」的子菜单：相册清单（ADR 0019）。
+
+    一项一个相册，标签是**相对库根的路径**（``2025/苏州``）—— 只写名字的话，两个年份
+    下面各有一个「苏州」，用户分不清自己要挪到哪去。目标路径挂在 ``QAction.data()`` 上，
+    由 ``MainWindow`` 在被触发时取走，因此这个模块仍然不关心「移动」具体怎么做。
+
+    **用完即弃**：调用方每次拼菜单都现建一份，所以用户在访达里新建的相册立刻可选，
+    菜单里也不会留着上一次的旧清单。
+
+    :param albums: ``(标签, 路径)`` 一一对应，已排好序。空清单请不要调它 ——
+        空子菜单点开是个空框，``MainWindow`` 会在那种情况下干脆不建这条菜单。
+    """
+    menu = QMenu(title)
+    menu.setToolTipsVisible(True)
+    for label, path in albums:
+        action = menu.addAction(label)
+        action.setData(path)
+    return menu
 
 
 def _submenu(title: str, actions: tuple[QAction, ...], *, split_before: int = 0) -> QMenu:
@@ -841,6 +888,7 @@ __all__ = [
     "TargetKind",
     "apply_style",
     "build_album_menu",
+    "build_album_picker",
     "build_background_menu",
     "build_group_menu",
     "build_menu",

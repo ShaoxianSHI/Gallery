@@ -113,7 +113,7 @@ def _texts(menu: QMenu) -> list[str]:
 
 def _paste_and_wait(qt_app: QApplication, window: MainWindow) -> str:
     window.paste_into_current_folder()
-    assert _wait(qt_app, lambda: window._paste_job is None), "粘贴没有在时限内结束"
+    assert _wait(qt_app, lambda: window._write_job is None), "粘贴没有在时限内结束"
     return window._banner.text()
 
 
@@ -359,7 +359,7 @@ def test_a_second_paste_does_not_race_the_first(
     assert started.wait(WAIT_SECONDS), "第一次粘贴没有开始"
     window.paste_into_current_folder()
 
-    assert window._banner.text() == "上一次粘贴还没结束。"
+    assert window._banner.text() == "上一次操作还没结束。"
     release.set()
-    assert _wait(qt_app, lambda: window._paste_job is None)
+    assert _wait(qt_app, lambda: window._write_job is None)
     assert sorted(p.name for p in (root / "奈良").iterdir()) == ["一张.jpg"]
