@@ -31,6 +31,7 @@ from gallery.core.metadata.facets import (
     mark_place_resolved,
     with_resolved_place,
 )
+from gallery.core.metadata.paste import PasteResult, copy_into
 from gallery.core.metadata.rename import RenameResult, rename_entry
 from gallery.core.metadata.trash import TrashResult, trash_entries
 from gallery.core.metadata.undo import UndoResult, next_undo_label, undo_last_write
@@ -460,6 +461,22 @@ class Library:
         缩略图缓存刻意留着不删 —— 照片还在，撤销回来时直接命中，不必重新解码。
         """
         return trash_entries(self._root, entries)
+
+    def copy_into(
+        self,
+        target: Path,
+        sources: Sequence[Path],
+        *,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> PasteResult:
+        """把 ``sources`` **复制**进 ``target``（界面上就是「粘贴」⌘V）。
+
+        规矩与红线见 ``core.paste`` 与 ADR 0018：**只增不改**（源文件一个字节不动）、
+        **绝不覆盖**（同名就按访达的办法改叫「一张 2.jpg」）、**不在撤销栈里**
+        （撤销粘贴就是删文件）。新粘进来的文件由监听器（ADR 0013）自己发现并上屏，
+        这里刻意不去动界面那一层。
+        """
+        return copy_into(self._root, target, sources, should_cancel=should_cancel)
 
     def undo_last_write(self) -> UndoResult | None:
         """撤销最近一次写操作（改名或移到废纸篓）；没有可撤销的记录时返回 ``None``。"""

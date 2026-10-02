@@ -602,6 +602,9 @@ class MenuActions:
     copy: QAction
     #: 「拷贝路径」⇧⌘C。
     copy_path: QAction
+    #: 「粘贴」⌘V。**此刻粘不了就是 ``None``**，菜单里干脆不出现这一条（不是置灰）：
+    #: 要么这里没有可粘进去的文件夹，要么剪贴板里没有文件 —— 见 ADR 0018。
+    paste: QAction | None
     #: 「重命名…」⌘R（单选才有）。
     rename: QAction
     #: 「移到废纸篓」⌘⌫。
@@ -726,19 +729,22 @@ def _add_open(menu: ShortcutColumnMenu, actions: MenuActions) -> None:
 
 
 def _add_open_and_reveal(menu: ShortcutColumnMenu, actions: MenuActions, *, multiple: bool) -> None:
-    """照片与相册共用的上半截：打开 → 在访达中显示 → 拷贝 → 拷贝路径 → 重命名 → 废纸篓。
+    """照片与相册共用的上半截：打开 → 在访达中显示 → 拷贝 → 拷贝路径 → 粘贴 → 重命名 → 废纸篓。
 
     中间只留一道分隔线：多选时「打开」与「重命名」都不出现，若在那里各插一道，
     「拷贝路径」与「移到废纸篓」之间就会多出一道谁也看不懂的空档。
 
-    **「拷贝」排在「拷贝路径」上面**（ADR 0017）：一个放文件、一个放路径文字，与访达
-    菜单里的先后一致。两条都作用于整个选择，多选时都留着。
+    **「拷贝」排在「拷贝路径」上面、「粘贴」排在它下面**（ADR 0017 / 0018）：三个挨在
+    一起是访达的那一组。拷贝与拷贝路径作用于整个选择，多选时都留着；**「粘贴」不作用
+    于选择**（它粘的是剪贴板），粘不了时压根不出现。
     """
     if not multiple:
         _add_open(menu, actions)
     menu.addAction(actions.reveal)
     menu.addAction(actions.copy)
     menu.addAction(actions.copy_path)
+    if actions.paste is not None:
+        menu.addAction(actions.paste)
     menu.addSeparator()
     if not multiple:
         menu.addAction(actions.rename)

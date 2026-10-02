@@ -13,6 +13,9 @@
 - **往剪贴板里放文件是做得到的，不必引 pyobjc**（见 :func:`copy_files_to_clipboard` 与
   ADR 0017）。这里原先写着「访达认可的文件引用类型 Qt 放不进去」，那句话是错的：实测
   ``QMimeData.setUrls`` 写的两个公开类型与访达自己 ⌘C 时写的完全一样。
+- **读剪贴板里的文件**（:func:`read_files_from_clipboard`）是同一套类型的反向那一步，
+  供「粘贴」⌘V 用（ADR 0018）。**不做粘进剪贴板**（那是 ⌘V 要管的事，落在
+  ``core.metadata.paste``，界面不碰文件系统）。
 - **不碰元数据、不碰原图像素**。所有文件访问仍然只经过 ``gallery.core`` 的门面
   （见 ``core.library.facade``）。放进剪贴板的是一个**路径引用**：不读像素、不写文件。
 """
@@ -70,6 +73,21 @@ def copy_files_to_clipboard(paths: Sequence[Path]) -> str:
     return f"已拷贝 {len(targets)} 项到剪贴板。"
 
 
+def read_files_from_clipboard() -> list[Path]:
+    """剪贴板里那些**是文件**的路径；剪贴板里没有文件就当空的。
+
+    Gallery 自己拷的与访达拷的都读得到（两边写的是同一种剪贴板类型，见 ADR 0017）。
+    **只认本地文件**：从浏览器里拷过来的 ``https://…`` 不是文件，粘不成任何东西。
+
+    读一次约 1 微秒（Qt 自己缓存着 mime 数据，实测 200 次 0.2 ms），所以
+    「现在能不能粘」可以随时问，不必替它省。
+    """
+    data = QGuiApplication.clipboard().mimeData()
+    if data is None:
+        return []
+    return [Path(url.toLocalFile()) for url in data.urls() if url.isLocalFile()]
+
+
 def format_paths(paths: Sequence[Path]) -> str:
     """若干条路径 → 剪贴板里的文本，一行一个。
 
@@ -105,5 +123,6 @@ __all__ = [
     "copy_files_to_clipboard",
     "copy_to_clipboard",
     "format_paths",
+    "read_files_from_clipboard",
     "reveal_in_finder",
 ]

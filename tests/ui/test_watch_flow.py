@@ -169,6 +169,38 @@ def test_a_photo_dropped_in_shows_up_without_reopening(
         window.close()
 
 
+def test_a_new_photo_lands_in_the_current_album_behind_a_symlink(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """库根带软链接时，丢进来的照片也要落到**当前这一层**的网格上。
+
+    监听器报回来的是**解析过**的真路径（watchdog 就这么给，macOS 上 ``/var`` 链到
+    ``/private/var``）。当前这一层若存着调用方给的原写法，「是不是在这一层」就永远
+    说不成 —— 照片确实落到了磁盘上，网格却当没看见，而且不报错。
+    """
+    real = tmp_path / "真实"
+    album = real / "京都"
+    album.mkdir(parents=True)
+    touch(make_photo("原来那张.jpg", directory=album), 0)
+    link = tmp_path / "链接"
+    link.symlink_to(real, target_is_directory=True)
+    window, watcher = open_window(qt_app, link, browse_mode=BROWSE_MODE_ALBUMS)
+    try:
+        # 用**软链接那种写法**进相册：用户从自己链过去的目录打开库时就是这样。
+        window.enter_folder(link / "京都")
+        assert wait_until(qt_app, lambda: window._scan_job is None)
+        qt_app.processEvents()
+        assert window._current_dir == album.resolve()
+
+        newcomer = make_photo("刚丢进来.jpg", directory=album)
+        touch(newcomer, 1)
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.ADDED, newcomer))
+
+        assert names(window) == ["原来那张.jpg", "刚丢进来.jpg"]
+    finally:
+        window.close()
+
+
 def test_a_new_photo_lands_in_its_sorted_place_not_at_the_end(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
 ) -> None:

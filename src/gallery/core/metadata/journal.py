@@ -34,6 +34,13 @@ ACTION_TRASH: Final = "trash"
 #: 日志里的动作名：把一项从废纸篓里取回来（撤销删除）。
 ACTION_RESTORE: Final = "restore"
 
+#: 日志里的动作名：把剪贴板里的文件**复制**进某个目录（``core.metadata.paste``、ADR 0018）。
+#:
+#: **它不在撤销栈里**（``undo._PUSH_ACTIONS`` 只收改名与移到废纸篓）：粘进来的是**新
+#: 文件**，撤销一次粘贴就是删文件，而删除在这个项目里只允许用户亲手触发（红线 1）。
+#: 这一条只是**记录** —— 粘了些什么、从哪来、什么时候、结果如何。
+ACTION_PASTE: Final = "paste"
+
 #: 操作成功。
 RESULT_OK: Final = "ok"
 

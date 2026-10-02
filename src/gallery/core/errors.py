@@ -61,6 +61,10 @@ class DeleteError(GalleryError):
     """移到废纸篓被拒绝或失败（越权、废纸篓不可用、恢复时原位置已被占用）。"""
 
 
+class PasteError(GalleryError):
+    """粘贴被拒绝（目标不是一个文件夹）。逐项的成败不走异常，落在 ``paste.PasteResult``。"""
+
+
 __all__ = [
     "ConfigError",
     "DeleteError",
@@ -69,6 +73,7 @@ __all__ = [
     "LibraryError",
     "LibraryNotAccessibleError",
     "MetadataError",
+    "PasteError",
     "RenameError",
     "UnsupportedFormatError",
 ]

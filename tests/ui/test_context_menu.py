@@ -55,6 +55,19 @@ def qt_app() -> QApplication:
     return QApplication.instance() or QApplication([])  # type: ignore[return-value]
 
 
+@pytest.fixture(autouse=True)
+def empty_clipboard(qt_app: QApplication) -> Iterator[None]:
+    """每条用例都从「剪贴板是空的」开始。
+
+    照片与相册菜单里有没有「粘贴」这一条，取决于剪贴板里有没有文件（ADR 0018），
+    而剪贴板是**进程级**的、会被同一个 worker 上跑完的用例留下来。不摆这一下，下面
+    「菜单里有什么」的断言就成了执行顺序的函数。
+    """
+    QGuiApplication.clipboard().clear()
+    yield
+    QGuiApplication.clipboard().clear()
+
+
 def _select(view: PhotoGrid, model: PhotoListModel, rows: Sequence[int]) -> None:
     """按代码选中若干行（不带任何修饰键，等价于用户按住 ⌘ 连点）。
 

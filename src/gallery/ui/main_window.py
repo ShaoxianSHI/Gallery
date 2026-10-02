@@ -20,7 +20,14 @@ from functools import partial
 from pathlib import Path
 
 from PySide6.QtCore import QModelIndex, QPointF, Qt
-from PySide6.QtGui import QAction, QCloseEvent, QImage, QKeySequence, QMouseEvent
+from PySide6.QtGui import (
+    QAction,
+    QCloseEvent,
+    QGuiApplication,
+    QImage,
+    QKeySequence,
+    QMouseEvent,
+)
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -60,6 +67,7 @@ from gallery.core.metadata.facets import (
     sort_facet,
 )
 from gallery.core.metadata.journal import ACTION_RENAME
+from gallery.core.metadata.paste import PasteResult
 from gallery.core.metadata.rename import RenameResult
 from gallery.core.metadata.trash import Failure, TrashResult
 from gallery.core.metadata.undo import UndoResult
@@ -152,6 +160,50 @@ def _rename_banner(result: RenameResult) -> str:
 
 def _undo_note(journaled: bool) -> str:
     return "" if journaled else "，但没能记下操作日志"
+
+
+def _shared_parent(photos: Sequence[PhotoRef]) -> Path | None:
+    """这组照片是不是**全都在同一个相册**里；是就返回那个相册，不是就返回 ``None``。
+
+    分组是元数据切出来的视图，本身不是文件夹：只有当它底下碰巧只有一个相册时，
+    才有「粘到哪去」这个问题可言（见 ADR 0018 决策 1）。
+
+    先比字面路径（绝大多数情况一步就够），实在不止一个才去解析真实位置 ——
+    ``/private/var/…`` 与 ``/var/…`` 说的是同一个文件夹，但解析是要碰磁盘的。
+    """
+    if not photos:
+        return None
+    parents = {photo.path.parent for photo in photos}
+    if len(parents) == 1:
+        return parents.pop()
+    resolved = {parent.resolve() for parent in parents}
+    return resolved.pop() if len(resolved) == 1 else None
+
+
+def _paste_banner(result: PasteResult, target_name: str) -> str:
+    """粘贴之后的那行提示：三件事都要说清 —— 粘了哪些、跳过了哪些、为什么没成。
+
+    **改了名的要单独点出来**（用户要求的是「不覆盖」，而系统给出的新名字得让他看见，
+    否则相册里凭空多出一张「一张 2.jpg」会让人以为程序认错了文件）。
+    """
+    parts: list[str] = []
+    if result.pasted:
+        head = f"已粘贴 {len(result.pasted)} 项到「{target_name}」"
+        renamed = [item for item in result.pasted if item.renamed]
+        if len(renamed) == 1:
+            head += f"（「{renamed[0].source.name}」改名为「{renamed[0].created.name}」）"
+        elif renamed:
+            head += f"（其中 {len(renamed)} 项改了名，免得覆盖已有的）"
+        parts.append(head)
+    if result.skipped:
+        parts.append(f"{len(result.skipped)} 项本来就在「{target_name}」里")
+    if result.failures:
+        first = result.failures[0]
+        more = f"，共 {len(result.failures)} 项" if len(result.failures) > 1 else ""
+        parts.append(f"{first.source.name} 没粘成{more}：{first.message.rstrip('。')}")
+    if not result.journaled:
+        parts.append("没能记下操作日志")
+    return "；".join(parts) + "。"
 
 
 def _trash_banner(result: TrashResult) -> str:
@@ -282,6 +334,9 @@ class MainWindow(QMainWindow):
         self._metadata_job: int | None = None
         #: 「复制元数据」现读元数据用的那次任务（面板的读取消了就没人要那份结果）。
         self._metadata_copy_job: int | None = None
+        #: 「粘贴」那一次复制（ADR 0018）。**同时只允许一个**：两个任务会争同一个
+        #: 目标名字，后到的会把先到的盖掉。
+        self._paste_job: int | None = None
         #: 分组 / 排序与元数据面板共用的地点反查器（按坐标），首次用时才加载城市数据。
         self._place_resolver: LazyPlaceResolver | None = None
         #: 打开库时那一遍「全库解析地点」的任务（ADR 0010）。
@@ -502,6 +557,17 @@ class MainWindow(QMainWindow):
         self._copy_path_action.setShortcut(QKeySequence("Ctrl+Shift+C"))
         self._copy_path_action.triggered.connect(self.copy_selected_paths)
 
+        # ⌘V 与访达一致：把剪贴板里的文件**复制**进当前这一层的目录（ADR 0018）。
+        # 它是这三个写操作里唯一不进撤销栈的 —— 撤销粘贴就是删文件（红线 1）。
+        self._paste_action = QAction("粘贴", self)
+        self._paste_action.setShortcut(QKeySequence("Ctrl+V"))
+        self._paste_action.triggered.connect(self.paste_into_current_folder)
+        # 剪贴板一变就重算 ⌘V：在访达里 ⌘C 之后切回 Gallery 直接按 ⌘V，得有反应
+        # （不然它还停在「剪贴板是空的」那一次算出来的置灰上）。连接随窗口析构自动
+        # 摘掉，见 ``closeEvent`` 那段注释。
+        self._clipboard = QGuiApplication.clipboard()
+        self._clipboard.dataChanged.connect(self._on_clipboard_changed)
+
         self._select_all_action = QAction("全选", self)
         self._select_all_action.setShortcut(QKeySequence.StandardKey.SelectAll)
         self._select_all_action.triggered.connect(self.select_all_entries)
@@ -528,13 +594,14 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction(self._quit_action)
 
-        # 「编辑」：全选、拷贝、拷贝路径、撤销 —— 与 macOS 的摆放一致（ADR 0014 决策 5）。
-        # ⌘Z 从「文件」搬过来了：撤销是编辑动作，放在文件菜单里会让 ⌘Z 与
-        # 「打开 / 移到废纸篓」这些会动文件的命令混在一起。
+        # 「编辑」：全选、拷贝、拷贝路径、粘贴、撤销 —— 与 macOS 的摆放一致
+        # （ADR 0014 决策 5）。⌘Z 从「文件」搬过来了：撤销是编辑动作，放在文件菜单里
+        # 会让 ⌘Z 与「打开 / 移到废纸篓」这些会动文件的命令混在一起。
         edit_menu = self.menuBar().addMenu("编辑")
         edit_menu.addAction(self._select_all_action)
         edit_menu.addAction(self._copy_action)
         edit_menu.addAction(self._copy_path_action)
+        edit_menu.addAction(self._paste_action)
         edit_menu.addSeparator()
         edit_menu.addAction(self._undo_action)
 
@@ -1901,6 +1968,9 @@ class MainWindow(QMainWindow):
             reveal=self._reveal_action,
             copy=self._copy_action,
             copy_path=self._copy_path_action,
+            # 「粘贴」此刻粘不了就传 ``None``：菜单里干脆不出现，而不是摆一条永远
+            # 点不动的（与 ADR 0014 决策 4 同一个取向）。
+            paste=self._paste_action if self._can_paste() else None,
             rename=self._rename_action,
             trash=self._trash_action,
             metadata=self._metadata_action,
@@ -1947,6 +2017,84 @@ class MainWindow(QMainWindow):
         if not paths:
             return
         self._show_banner(desktop.copy_files_to_clipboard(paths))
+
+    # ---- 粘贴（见 ADR 0018）--------------------------------------------------
+
+    def _paste_target(self) -> Path | None:
+        """「粘贴」要粘进哪个文件夹 —— **一律按磁盘上的真实位置算**（ADR 0018）。
+
+        - **相册模式**：当前这一层的文件夹，停在顶层时就是库根；
+        - **全部照片**：整层是平铺的，唯一说得清的目录是库根；
+        - **分组里**：分组不是文件夹，**只有当这一组照片本来就都在同一个相册里**，
+          那个相册才算它的目录；散在多个相册里的组没有可粘的地方（于是菜单里干脆
+          不出现「粘贴」）。
+
+        最后这一条正是用户要的「不同分组如果是同一个相册，还是算同一目录」：判据是
+        磁盘上的位置，不是分组本身 —— 按相机和按年份各开一张卡片，只要底下是同一个
+        京都，粘进去的就是同一个京都。
+        """
+        library = self._library
+        if library is None:
+            return None
+        if self._group_view is not None:
+            return _shared_parent(self._group_view.photos)
+        if self._browse_mode == BROWSE_MODE_ALBUMS:
+            return self._current_dir or library.root
+        return library.root
+
+    def _can_paste(self) -> bool:
+        """此刻按 ⌘V 有没有用：得有可粘的目录，剪贴板里也得**真有文件**。
+
+        读剪贴板约 1 微秒（实测 200 次 0.2ms），因此随时问得起，不必替它省。
+        """
+        return self._paste_target() is not None and bool(desktop.read_files_from_clipboard())
+
+    def paste_into_current_folder(self) -> None:
+        """「粘贴」⌘V：把剪贴板里的文件**复制**进当前这一层的目录（ADR 0018）。
+
+        复制在后台线程上跑（大照片一个几百 MB，挡住界面就是卡住），完成后横幅说清
+        粘了哪些、跳过了哪些、为什么失败。**新粘进来的照片由监听器自己发现并上屏**
+        （ADR 0013），这里不去重扫这一层 —— 重扫会把网格清空，选中与滚动位置全丢。
+        """
+        library = self._library
+        target = self._paste_target()
+        if library is None or target is None:
+            self._show_banner("这里没有可以粘贴进去的文件夹。")
+            return
+        sources = desktop.read_files_from_clipboard()
+        if not sources:
+            self._show_banner("剪贴板里没有可粘贴的文件。")
+            return
+        if self._paste_job is not None:
+            # 两次粘贴同时跑会争同一个名字（各自先看「一张 2.jpg」在不在），后到的
+            # 那个会把先到的盖掉 —— 那是这个项目最不能出现的一种事。
+            self._show_banner("上一次粘贴还没结束。")
+            return
+
+        def work(context: TaskContext) -> object:
+            return library.copy_into(target, sources, should_cancel=context.is_cancelled)
+
+        self._show_banner(f"正在把 {len(sources)} 项粘贴到「{target.name}」…")
+        self._paste_job = self._runner.submit(
+            work,
+            on_result=partial(self._on_paste_done, target),
+            on_error=self._on_paste_failed,
+        )
+
+    def _on_paste_done(self, target: Path, payload: object) -> None:
+        self._paste_job = None
+        if isinstance(payload, PasteResult):
+            self._show_banner(_paste_banner(payload, target.name))
+
+    def _on_paste_failed(self, message: str) -> None:
+        self._paste_job = None
+        logger.info("粘贴失败：%s", message)
+        self._show_banner(f"没能粘贴：{message.rstrip('。')}")
+
+    def _on_clipboard_changed(self) -> None:
+        """剪贴板变了就重算一次 ⌘V 的可用性（只算这一条，不动别的）。"""
+        in_grid = self._stack.currentWidget() is self._grid_page
+        self._paste_action.setEnabled(in_grid and self._can_paste())
 
     def select_all_entries(self) -> None:
         """⌘A：全选当前这一层的所有格子（相册、照片、分组卡片都算）。"""
@@ -2483,6 +2631,9 @@ class MainWindow(QMainWindow):
         self._select_all_action.setEnabled(in_grid and self._model.rowCount() > 0)
         self._copy_path_action.setEnabled(bool(paths))
         self._copy_action.setEnabled(bool(paths))
+        # ⌘V 与选区无关：只看「当前这一层有没有可粘的目录」与「剪贴板里有没有文件」。
+        # 粘不了时它同时也不会出现在右键菜单里（见 ``_menu_actions``）。
+        self._paste_action.setEnabled(in_grid and self._can_paste())
         self._reveal_action.setEnabled(bool(paths))
         self._open_entry_action.setEnabled(current is not None)
         self._copy_metadata_action.setEnabled(isinstance(current, PhotoRef))
@@ -2518,14 +2669,21 @@ class MainWindow(QMainWindow):
             self._reload_level()
 
     def enter_folder(self, directory: Path) -> None:
-        """进入一个相册（子文件夹）。库以外的路径一律拒绝。"""
+        """进入一个相册（子文件夹）。库以外的路径一律拒绝。
+
+        **存进去的是解析过的路径**（与 ``Library.root``、扫描出来的条目、监听器报回来的
+        变化同一套写法）。少了这一步，路径里带软链接的库（``/var`` → ``/private/var``、
+        用户自己链过去的目录）会安静地出毛病：监听器报回来的是真路径，而当前这一层
+        存的是原写法，于是「是不是在当前这一层」永远说不成 —— 访达里丢进去一张照片，
+        网格当没看见（ADR 0018 的粘贴同样栽在这里，网格里长不出新照片）。
+        """
         library = self._library
         if library is None:
             return
         target = Path(directory)
         if not paths.is_within(library.root, target):
             return
-        self._current_dir = target
+        self._current_dir = target.resolve()
         self._group_view = None
         self._reload_level()
 
@@ -2706,6 +2864,10 @@ class MainWindow(QMainWindow):
         self._runner.cancel_all()
         if not self._runner.wait_for_done():
             logger.warning("仍有后台任务未结束，已放弃等待")
+        # 剪贴板那个连接**不显式断开**：PySide 会在接收者析构时自动摘掉（实测过，
+        # 窗口销毁后再动剪贴板不会回调）。显式 disconnect 反而每次关窗都报一次
+        # 「Failed to disconnect」—— 那个 bound method 已经不是当初连上去的那一个了。
+        # 关窗到析构之间剪贴板若真的变了，回调只会动那条 QAction，窗口此时已不可见。
         super().closeEvent(event)
 
 

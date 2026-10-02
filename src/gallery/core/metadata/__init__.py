@@ -1,12 +1,14 @@
-"""元数据读取（单张 / 批量），以及写回用户文件所需的三样东西：journal、重命名、移到废纸篓。
+"""元数据读取（单张 / 批量），以及写用户文件所需的几样东西：journal、改名、移到废纸篓、粘贴。
 
 读取是只读的：单张走 :mod:`~gallery.core.metadata.exif`，成批（分组与排序要用）走
 :mod:`~gallery.core.metadata.batch`，两边共用 :mod:`~gallery.core.metadata.facets` 里
-「可分组 / 可排序字段」的那一份取值规则。真正改动用户文件的只有
-:mod:`~gallery.core.metadata.rename`（改名）与 :mod:`~gallery.core.metadata.trash`
-（移到系统废纸篓），两者都必须经由 :mod:`~gallery.core.metadata.journal` 留下可回滚
-记录，并由 :mod:`~gallery.core.metadata.undo` 这一摞共用的栈提供 ⌘Z。
-详见 ``docs/adr/0004-rename-on-disk.md`` 与 ``docs/adr/0008-delete-to-trash.md``。
+「可分组 / 可排序字段」的那一份取值规则。真正改动用户文件的只有三样：
+:mod:`~gallery.core.metadata.rename`（改名）、:mod:`~gallery.core.metadata.trash`
+（移到系统废纸篓）与 :mod:`~gallery.core.metadata.paste`（把剪贴板里的文件复制进当前
+这一层的目录）。三者都必须经由 :mod:`~gallery.core.metadata.journal` 留下记录，而其中
+只有前两者进 :mod:`~gallery.core.metadata.undo` 那一摞共用的栈提供 ⌘Z —— 撤销一次
+粘贴就是删文件（红线 1，见 ADR 0018）。详见 ``docs/adr/0004-rename-on-disk.md``、
+``docs/adr/0008-delete-to-trash.md`` 与 ``docs/adr/0018-paste-into-current-folder.md``。
 """
 
 from gallery.core.metadata.batch import (
@@ -34,6 +36,13 @@ from gallery.core.metadata.facets import (
     sort_facet,
 )
 from gallery.core.metadata.journal import WriteRecord, append_record, read_records
+from gallery.core.metadata.paste import (
+    Failure,
+    PastedFile,
+    PasteResult,
+    Skipped,
+    copy_into,
+)
 from gallery.core.metadata.rename import (
     RenameResult,
     rename_entry,
@@ -56,8 +65,12 @@ __all__ = [
     "ExifToolBatchSource",
     "ExifToolReader",
     "Facet",
+    "Failure",
     "PhotoFacets",
+    "PasteResult",
+    "PastedFile",
     "PillowBatchSource",
+    "Skipped",
     "MetadataField",
     "MetadataGroup",
     "MetadataReport",
@@ -69,6 +82,7 @@ __all__ = [
     "WriteRecord",
     "append_record",
     "build_report",
+    "copy_into",
     "extract",
     "group_facet",
     "move_to_trash",
