@@ -26,10 +26,11 @@ macOS 样式画**，底色会掉回系统菜单色（浅色 ``#ececec``）。所
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from enum import Enum
 
-from PySide6.QtGui import QAction, QColor, QPalette
+from PySide6.QtGui import QAction, QColor, QFontMetrics, QKeySequence, QPalette
 from PySide6.QtWidgets import QMenu
 
 from gallery.ui.theme import rgba
@@ -66,14 +67,21 @@ MENU_INSET = 8
 #: :data:`MENU_INSET` 在菜单自身上决定 —— 与状态无关，文字就永远不动。
 MENU_HIGHLIGHT_RADIUS = 5
 
+#: 子菜单右箭头的大小（像素，正方形）。Qt 默认给的那一个偏大（实测约 8.5 宽），
+#: 缩一档更像访达里的样子。
+MENU_ARROW_SIZE = 8
+
 #: 菜单项的内边距（上 右 下 左，像素）。行高由此从 18 变成 26。
 #:
-#: 左边写 **0**：文字的左沿交给 :data:`MENU_INSET` 与样式自带的边距共同决定，
+#: 左右都写 **0**：文字的左沿交给 :data:`MENU_INSET` 与样式自带的边距共同决定，
 #: 这里再叠一层会把文字推到 47 像素那么远（原生只有 18.5）。
 #:
-#: 右边给得宽不是随手写的：样式表的 padding 是**替换**样式自己的边距的，不是叠加。
-#: 给窄了，右边那一列快捷键（⌘R / ⌘⌫）就会被挤出菜单。
-MENU_ITEM_PADDING = "5px 38px 5px 0px"
+#: 右边曾经写 38，是以为要自己给快捷键腾地方。实测**那是纯空地**：样式表模式下 Qt 把
+#: 快捷键画在文字后面（右沿恒为 78.5，与右内边距毫无关系），腾出来的 38 像素只是让菜单
+#: 变宽、右侧多出一片空白。快捷键改成右对齐那一列之后（见 :func:`with_native_shortcuts`），
+#: 那一列由 Qt 自己按最宽的那条快捷键算好，右内边距自然该是 0 —— 实测此时快捷键右沿正好
+#: 落在内容右沿上，也就是离面板边缘 :data:`MENU_INSET` 那么远。
+MENU_ITEM_PADDING = "5px 0px 5px 0px"
 
 #: **没有可勾选项的菜单**要补的左内边距（像素），用来让文字列与照片菜单对齐。
 #:
@@ -105,6 +113,7 @@ def style_sheet(background: QColor, highlight: QColor, *, check_gutter: int = 0)
         f"QMenu {{ border-radius: {MENU_CORNER_RADIUS}px; "
         f"background: {rgba(background)}; padding: {MENU_INSET}px; }}\n"
         f"QMenu::item {{ padding: {MENU_ITEM_PADDING}; }}\n"
+        f"QMenu::right-arrow {{ width: {MENU_ARROW_SIZE}px; height: {MENU_ARROW_SIZE}px; }}\n"
         # 悬停 / 当前项的高亮带。**不加这两行，菜单就完全没有高亮**：样式表一旦挂上，
         # 系统样式那份高亮就不再画了（实测原生菜单按方向键会点亮 #548fff，加了样式表
         # 之后按 ↓ 两次所有行仍是 #ffffff），用户就看不出鼠标在哪一行。
@@ -118,6 +127,78 @@ def style_sheet(background: QColor, highlight: QColor, *, check_gutter: int = 0)
     )
 
 
+def _owned_menus(menu: QMenu) -> Iterator[QMenu]:
+    """这个菜单**自己**拥有的那一串菜单：它，加上它的各级子菜单。
+
+    **必须认所有权**：``QAction`` 是全局复用的（菜单栏与右键菜单共用同一份），
+    ``some_action.menu()`` 可能指向别处的菜单。判据是「这个子菜单的 ``menuAction()``
+    是不是当前这条 action」—— 只有那样它才真的长在这个菜单里。否则会把「视图」菜单
+    下的排序 / 分组 / 缩略图大小一并算进来，而它们并不属于这次右键。
+
+    **子菜单也不是它的子控件**（实测 ``QMenu.addMenu(另一个 QMenu)`` 不给后者设父对象，
+    ``findChildren`` 找不到它，``sub.styleSheet()`` 是空的），所以只能顺着 action 找。
+    """
+    seen: set[int] = set()
+    pending = [menu]
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        yield current
+        for action in current.actions():
+            submenu = action.menu()
+            if submenu is not None and submenu.menuAction() is action:
+                pending.append(submenu)
+
+
+def with_native_shortcuts(menu: QMenu) -> Callable[[], None]:
+    """把快捷键排成 macOS 那一列（右对齐），返回还原函数。
+
+    为什么不能就这么放着：样式表一挂到 ``QMenu`` 上，Qt 就不再给快捷键算制表位列了 ——
+    它被画在文字后面（实测右沿恒为 78.5，与右内边距毫无关系），而原生菜单里它是贴着右沿的
+    （实测右沿 123.5 / 菜单宽 124）。调 QSS 的任何一条都改不动它（``padding-right``、
+    ``::indicator`` 都试过）。
+
+    正路是 Qt 为这件事留的口子：``setShortcutVisibleInContextMenu(False)`` 关掉它自动画的
+    那一列，再把「标签 + 制表符 + 快捷键」写进条目文字 —— 文字里带制表符时，Qt 会把后半段
+    排到那一列上，拿到的还是系统写法（``⌘R`` / ``⌘⌫`` / ``⇧⌘C`` / ``⎋``）。
+
+    **还要补空格**：那一列是**左对齐**的（实测所有快捷键都从同一个 x 起），不补的话右缘会
+    按字宽参差 12 像素。按字宽差补上空格之后实测降到 5.5 像素，代价是零（那一列的宽度本来就
+    由最宽的那条决定，补空格不会让菜单变宽）。
+
+    动作本身没动（``shortcut`` 还在，按键照常触发），改的只是**这一次弹出期间**的显示。
+    而菜单栏与右键菜单共用同一批 ``QAction``，所以调用方必须在菜单关掉之后还原 ——
+    不还原的话菜单栏上会出现「拷贝路径⇧⌘C」再加上它自己画的那一列。
+
+    .. note:: 这里返回的是**还原函数**：``menu.exec()`` 是阻塞的，调用方在它返回之后立刻
+        ``restore()``（放在 ``finally`` 里），异常路径也不会漏。
+    """
+    saved: list[tuple[QAction, str, bool]] = []
+    for current in _owned_menus(menu):
+        metrics = QFontMetrics(current.font())
+        space = max(1, metrics.horizontalAdvance(" "))
+        entries = [
+            (action, action.shortcut().toString(QKeySequence.SequenceFormat.NativeText))
+            for action in current.actions()
+            if not action.isSeparator() and not action.shortcut().isEmpty()
+        ]
+        widest = max((metrics.horizontalAdvance(text) for _, text in entries), default=0)
+        for action, text in entries:
+            saved.append((action, action.text(), action.isShortcutVisibleInContextMenu()))
+            action.setShortcutVisibleInContextMenu(False)
+            padding = " " * max(0, round((widest - metrics.horizontalAdvance(text)) / space))
+            action.setText(f"{action.text()}\t{padding}{text}")
+
+    def restore() -> None:
+        for action, text, visible in saved:
+            action.setText(text)
+            action.setShortcutVisibleInContextMenu(visible)
+
+    return restore
+
+
 def apply_style(menu: QMenu) -> None:
     """给菜单与它的子菜单上同一份样式表。
 
@@ -127,15 +208,7 @@ def apply_style(menu: QMenu) -> None:
     深浅色自动跟随（理由见模块文档那一段：样式表里的 ``palette(...)`` 取的是应用调色板，
     不是这份逐控件下发的）。
 
-    **子菜单既不从父菜单继承样式表，也不是它的子控件**（实测
-    ``QMenu.addMenu(另一个 QMenu)`` 不会给后者设父对象，``findChildren`` 找不到它，
-    ``sub.styleSheet()`` 是空的）。而空白处那份菜单带三个子菜单，所以这里顺着
-    ``action.menu()`` 递归下去，一层都不漏。
-
-    递归时**必须认所有权**：``QAction`` 是全局复用的（菜单栏与右键菜单共用同一份），
-    ``some_action.menu()`` 可能指向别处的菜单。判据是「这个子菜单的 ``menuAction()``
-    是不是当前这条 action」—— 只有那样它才真的长在这个菜单里。否则会把「视图」菜单
-    下的排序 / 分组 / 缩略图大小一并改掉，而它们并不属于这次右键。
+    子菜单那份样式发不发得下去，理由见 :func:`_owned_menus`（不继承、也不是子控件）。
     """
     palette = menu.palette()
     background = palette.color(QPalette.ColorRole.Window)
@@ -146,19 +219,9 @@ def apply_style(menu: QMenu) -> None:
         gutter: style_sheet(background, highlight, check_gutter=gutter)
         for gutter in (0, MENU_CHECK_GUTTER)
     }
-    seen: set[int] = set()
-    pending = [menu]
-    while pending:
-        current = pending.pop()
-        if id(current) in seen:
-            continue
-        seen.add(id(current))
+    for current in _owned_menus(menu):
         has_checkable = any(action.isCheckable() for action in current.actions())
         current.setStyleSheet(sheets[0 if has_checkable else MENU_CHECK_GUTTER])
-        for action in current.actions():
-            submenu = action.menu()
-            if submenu is not None and submenu.menuAction() is action:
-                pending.append(submenu)
 
 
 class TargetKind(Enum):
@@ -313,6 +376,7 @@ __all__ = [
     "MENU_CHECK_GUTTER",
     "MENU_CORNER_RADIUS",
     "MENU_HIGHLIGHT_RADIUS",
+    "MENU_ARROW_SIZE",
     "MENU_INSET",
     "MENU_ITEM_PADDING",
     "MenuActions",
@@ -324,4 +388,5 @@ __all__ = [
     "build_menu",
     "build_photo_menu",
     "style_sheet",
+    "with_native_shortcuts",
 ]

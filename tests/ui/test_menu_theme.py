@@ -23,7 +23,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PIL import Image  # noqa: E402
-from PySide6.QtGui import QColor, QPalette  # noqa: E402
+from PySide6.QtGui import QColor, QKeySequence, QPalette  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMenu  # noqa: E402
 
 from gallery.core.library.config import prepare_library  # noqa: E402
@@ -159,6 +159,53 @@ def test_context_menu_has_hover_highlight(qt_app: QApplication, window: MainWind
     assert "margin" not in sheet
     # 内缩的那一处在菜单上，**四边同值**：只留左右的话，高亮带会顶着面板上下两条边
     assert f"padding: {menus.MENU_INSET}px" in sheet
+
+
+def test_shortcuts_become_a_right_aligned_column(qt_app: QApplication, window: MainWindow) -> None:
+    """快捷键要排成右对齐的一列，菜单关掉后原样还原。
+
+    样式表模式下 Qt 不再给快捷键算制表位列（它被画在文字后面，右沿恒为 78.5），QSS 的
+    ``padding-right`` / ``::indicator`` 都调不动；正路是关掉自动绘制、把「标签 + 制表符 +
+    快捷键」写进文字，让 Qt 自己排那一列（见 ``menus.with_native_shortcuts``）。
+
+    动作是菜单栏与右键菜单**共用**的，所以必须还原 —— 否则菜单栏上会出现「拷贝路径⇧⌘C」
+    再加上它自己画的那一列。
+    """
+    window._stack.setCurrentWidget(window._grid_page)
+    row = window._model.row_of_path(window._library.root / "一张.jpg")
+    assert row >= 0
+
+    menu = window.context_menu_for(row)
+    assert menu is not None
+    original = {id(a): a.text() for a in menu.actions()}
+    flagged = {id(a): a.isShortcutVisibleInContextMenu() for a in menu.actions()}
+    with_shortcut = [a for a in menu.actions() if not a.shortcut().isEmpty()]
+    assert with_shortcut, "这张菜单上至少有一条带快捷键"
+
+    restore = menus.with_native_shortcuts(menu)
+    try:
+        for action in with_shortcut:
+            native = action.shortcut().toString(QKeySequence.SequenceFormat.NativeText)
+            assert "\t" in action.text()
+            assert action.text().endswith(native)
+            assert not action.isShortcutVisibleInContextMenu()
+    finally:
+        restore()
+
+    for action in menu.actions():
+        assert action.text() == original[id(action)]
+        assert action.isShortcutVisibleInContextMenu() == flagged[id(action)]
+
+
+def test_submenu_arrow_is_shrunk(qt_app: QApplication, window: MainWindow) -> None:
+    """子菜单的右箭头缩一档（Qt 默认给的偏大）。"""
+    window._stack.setCurrentWidget(window._grid_page)
+
+    menu = window.context_menu_for(-1)
+
+    assert menu is not None
+    assert f"width: {menus.MENU_ARROW_SIZE}px" in menu.styleSheet()
+    assert f"height: {menus.MENU_ARROW_SIZE}px" in menu.styleSheet()
 
 
 def test_menus_without_checkable_items_keep_the_text_column(
