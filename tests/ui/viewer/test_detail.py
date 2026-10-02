@@ -19,7 +19,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtGui import QImage  # noqa: E402
+from PySide6.QtCore import QPoint  # noqa: E402
+from PySide6.QtGui import QContextMenuEvent, QImage  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from gallery.ui.viewer.detail import DetailView  # noqa: E402
@@ -104,5 +105,63 @@ def test_manual_zoom_is_still_capped(qt_app: QApplication) -> None:
         for _ in range(60):
             view.zoom_in()
         assert view.current_scale == pytest.approx(MAX_SCALE)
+    finally:
+        view.close()
+
+
+# ---- 右键（ADR 0019）--------------------------------------------------------
+
+
+def _right_click(view: DetailView, *, pos: QPoint, global_pos: QPoint) -> None:
+    """把一个右键事件按真实路径递进去：**给视口**，由 ``QAbstractScrollArea`` 转给视图。
+
+    直接调 ``contextMenuEvent`` 也能过，但那样测的是「方法存在」；真实路径才是
+    「用户在照片上按右键，窗口那边收到了位置」（实测这一段是通的，见 ADR 0019）。
+
+    ``pos`` 与 ``globalPos`` 刻意给成两个不同的点 —— 传错哪一个正是这里要防的事。
+    """
+    event = QContextMenuEvent(QContextMenuEvent.Reason.Mouse, pos, global_pos)
+    QApplication.sendEvent(view.viewport(), event)
+
+
+def test_right_click_reports_where_it_happened(qt_app: QApplication) -> None:
+    """右键照片 → 窗口收到的是**屏幕坐标**（``QMenu.exec`` 直接吃它）。
+
+    传视口坐标的话菜单会贴在大图左上角，而这一条就是钉住「传的是哪一个」。
+    """
+    view = DetailView()
+    view.resize(800, 600)
+    view.show()
+    qt_app.processEvents()
+    seen: list[QPoint] = []
+    view.context_requested.connect(seen.append)
+    try:
+        view.set_image(_image(FULL_SIZE))
+        _right_click(view, pos=QPoint(40, 30), global_pos=QPoint(400, 300))
+
+        assert seen == [QPoint(400, 300)], "传的是屏幕坐标，不是视口坐标"
+    finally:
+        view.close()
+
+
+def test_right_click_without_an_image_says_nothing(qt_app: QApplication) -> None:
+    """画面上还什么都没有时（正在解码 / 上一次解码失败）不弹菜单。
+
+    菜单里每一条命令的对象都还不存在，摆出来只会让人以为按了没用。
+    """
+    view = DetailView()
+    view.resize(800, 600)
+    view.show()
+    qt_app.processEvents()
+    seen: list[QPoint] = []
+    view.context_requested.connect(seen.append)
+    try:
+        _right_click(view, pos=QPoint(40, 30), global_pos=QPoint(400, 300))
+        assert view.has_image is False
+        assert seen == []
+
+        view.set_image(_image(FULL_SIZE))
+        _right_click(view, pos=QPoint(40, 30), global_pos=QPoint(400, 300))
+        assert len(seen) == 1
     finally:
         view.close()

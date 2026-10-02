@@ -5,6 +5,10 @@
 
 这里只负责「显示与变换」。两级加载（先预览、后全分辨率）由主窗口决定，
 因为它才知道当前窗口大小与内存预算。
+
+**右键不在这里拼菜单**：视图只报「用户在照片上按了右键、在这个位置」
+（:attr:`DetailView.context_requested`），菜单由 ``MainWindow`` 按网格同一套流程拼
+（ADR 0019）—— 与 :class:`~gallery.ui.browser.grid.PhotoGrid` 一个分工。
 """
 
 from __future__ import annotations
@@ -12,6 +16,7 @@ from __future__ import annotations
 from PySide6.QtCore import (
     QEasingCurve,
     QEvent,
+    QPoint,
     QPointF,
     QRectF,
     Qt,
@@ -19,6 +24,7 @@ from PySide6.QtCore import (
     Signal,
 )
 from PySide6.QtGui import (
+    QContextMenuEvent,
     QImage,
     QKeyEvent,
     QMouseEvent,
@@ -76,6 +82,8 @@ class DetailView(QGraphicsView):
     request_step = Signal(int)
     #: 缩放比例变化（用于状态栏显示）。
     zoom_changed = Signal(float)
+    #: 用户在照片上按了右键。位置是**窗口坐标**（``QMenu.exec`` 直接吃它）。
+    context_requested = Signal(QPoint)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -339,6 +347,24 @@ class DetailView(QGraphicsView):
             event.accept()
             return
         super().mouseDoubleClickEvent(event)
+
+    def contextMenuEvent(self, event: QContextMenuEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
+        """右键照片：把位置告诉窗口，菜单由 ``MainWindow`` 拼（ADR 0019）。
+
+        与网格那侧同一个分工：视图只回答「这一下落在哪」，**菜单里有什么**它不该知道 ——
+        「重命名为」是什么、分组为什么删不掉，这些都在 ``ui.menus`` 里。
+
+        传的是 ``globalPos`` 而不是 ``pos``：``QMenu.exec`` 要的是屏幕坐标，事件里的
+        ``pos`` 相对视口，传过去菜单会贴在大图的左上角。
+
+        **画面上什么都没有时也不弹**：``has_image`` 为假时那不是一张照片，菜单里每一条
+        命令的对象都不存在（照片可能正在解码，或上一次解码失败了）。
+        """
+        if self._pixmap.isNull():
+            event.accept()
+            return
+        self.context_requested.emit(event.globalPos())
+        event.accept()
 
     def wheelEvent(self, event: QWheelEvent) -> None:
         """⌘/Ctrl + 滚轮缩放；普通滚动交给基类做平移（与 macOS 预览一致）。"""

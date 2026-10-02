@@ -842,3 +842,207 @@ def test_copy_paths_skips_group_cards(qt_app: QApplication, window: MainWindow) 
 
     # 一个格子都没得拷 → 剪贴板一个字节都不该动。
     assert QGuiApplication.clipboard().text() == "原样"
+
+
+# ---- 大图页的右键菜单（ADR 0019）--------------------------------------------
+
+
+def wait_until(qt_app: QApplication, predicate: Callable[[], bool]) -> bool:
+    deadline = time.monotonic() + WAIT_SECONDS
+    while time.monotonic() < deadline:
+        qt_app.processEvents()
+        if predicate():
+            return True
+        time.sleep(0.02)
+    qt_app.processEvents()
+    return predicate()
+
+
+def _open_detail(qt_app: QApplication, window: MainWindow, name: str) -> int:
+    """打开某张照片的大图，等预览落屏，返回它的行号。
+
+    **必须等解码**再往下走：画面还空着的时候右键根本不会有菜单（``DetailView`` 按
+    ``has_image`` 挡着），菜单内容与作用对象也就无从断言。
+    """
+    _enter_album(qt_app, window)
+    row = window._model.row_of_path(window._library.root / "京都" / name)
+    assert row >= 0
+    window._open_detail(window._model.index(row, 0))
+    assert wait_until(qt_app, lambda: window._detail.has_image), f"「{name}」没有在时限内显示出来"
+    return row
+
+
+def test_detail_menu_is_the_photo_menu_with_close_on_top(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """大图页：与网格里单张照片那份逐行一致，只把最上面的「打开」换成「退出」。
+
+    差的不止第一行：「粘贴」整条没有（那一页没有「当前这一层」可粘），其余一行不差。
+    """
+    _open_detail(qt_app, window, PHOTO_NAMES[0])
+
+    menu = window.detail_context_menu()
+
+    assert menu is not None
+    assert _texts(menu) == [
+        "退出",
+        "在默认应用中打开",
+        "在访达中显示",
+        "拷贝",
+        "拷贝路径",
+        "",
+        "重命名…",
+        "移到废纸篓",
+        "",
+        "显示元数据信息",
+        "复制元数据",
+    ]
+
+
+def test_detail_menu_says_escape_on_the_close_row(qt_app: QApplication, window: MainWindow) -> None:
+    """「退出」那一行最右列写着 ``⎋``，界面上的字面就钉死成**那个符号**。
+
+    与网格那张菜单的「打开 ↵」是同一件事的两面（``ShortcutColumnMenu.show_key``）：
+    只画不生效的那枚提示，也让用户知道退出不必去菜单栏里找。
+    """
+    _open_detail(qt_app, window, PHOTO_NAMES[0])
+
+    menu = window.detail_context_menu()
+
+    assert menu is not None
+    assert _texts(menu)[0] == "退出"
+    assert _key_hint(menu, "退出") == menus.CLOSE_KEY_HINT
+    assert menus.CLOSE_KEY_HINT == "⎋"
+    assert len(menus.CLOSE_KEY_HINT) == 1, "是一个符号，不是「Esc」三个字母"
+
+    # 提示没变成真快捷键：大图页上的 Esc 归 DetailView，两个动作抢同一个键，
+    # 谁先触发全看加载顺序（见 ``CLOSE_KEY_HINT`` 那段）。
+    assert window._close_entry_action.shortcut().isEmpty()
+    assert "打开" not in _texts(menu)
+
+
+def test_detail_menu_has_no_paste_even_when_the_clipboard_has_files(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """剪贴板里**真有文件**时大图页也不摆「粘贴」—— 粘到哪还没有答案（ADR 0018）。
+
+    这一条得先把剪贴板摆满再断言：默认那个 fixture 是空的，而网格那张菜单里
+    「粘贴」出不出现完全取决于剪贴板，断言就成了执行顺序的函数。
+    """
+    _open_detail(qt_app, window, PHOTO_NAMES[0])
+    desktop.copy_files_to_clipboard([window._library.root / "京都" / PHOTO_NAMES[1]])
+    assert window._can_paste() is True, "剪贴板里已经有文件，这一页却不粘"
+
+    menu = window.detail_context_menu()
+
+    assert menu is not None
+    assert "粘贴" not in _texts(menu)
+
+
+def test_detail_menu_is_enabled_for_the_viewed_photo(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """菜单里那些行该亮就亮，「重命名…」**摆着但置灰**。
+
+    置灰是因为行内改名的输入框在网格里，而大图页的改名字段还没有 —— ADR 0019 明确
+    先把菜单摆好、后端另一步接。一条亮着却不接线的行，点下去什么也不发生，比灰着更糟。
+    """
+    _open_detail(qt_app, window, PHOTO_NAMES[0])
+
+    menu = window.detail_context_menu()
+
+    assert menu is not None
+    for label in ("退出", "在默认应用中打开", "在访达中显示", "拷贝", "拷贝路径", "移到废纸篓"):
+        assert _enabled(menu, label), f"「{label}」这张照片上有对象，就该亮着"
+    assert _enabled(menu, "重命名…") is False
+    assert window._trash_action.isEnabled() is True, "⌘⌫ 在大图页同样删得动这一张"
+
+
+def test_detail_menu_acts_on_the_photo_you_are_looking_at(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """翻过图之后，菜单作用的是**正在看的那一张**，不是网格选区里那张。
+
+    网格的选区停在大图打开时的第一张，而用户已经翻到第二张了 —— 命令作用到看不见的
+    照片上，是这一页最容易出的错（ADR 0019）。
+    """
+    _open_detail(qt_app, window, PHOTO_NAMES[0])
+    # 双击进入大图时网格仍停在那格上（``_open_detail`` 自己不改选区，这里补上真实那一步）。
+    window._grid.select_row(
+        window._model.row_of_path(window._library.root / "京都" / PHOTO_NAMES[0])
+    )
+    window.step_detail(1)
+    assert wait_until(qt_app, lambda: window._current_row == 1)
+
+    window.copy_selected_paths()
+
+    assert QGuiApplication.clipboard().text() == str(window._library.root / "京都" / PHOTO_NAMES[1])
+    assert window._grid.selected_rows() == [0], "网格的选区一动不动，这正是要防的那种错"
+
+
+def test_no_detail_menu_outside_the_viewer(window: MainWindow) -> None:
+    """不在大图页时就没有这份菜单（网格那一份归 ``context_menu_for`` 管）。"""
+    assert window.detail_context_menu() is None
+
+
+def test_trashing_the_photo_you_are_looking_at_shows_the_next_one(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """大图页里 ⌘⌫：删掉正在看的那张，**接着看下一张**，不退回网格。
+
+    这是 ADR 0019 里那笔当时算过的账：删完之后人得留在一个说得清的地方，而看照片时
+    最顺手的动作就是「这张不要，下一张」。
+    """
+    row = _open_detail(qt_app, window, PHOTO_NAMES[0])
+    first = window._library.root / "京都" / PHOTO_NAMES[0]
+    second = window._library.root / "京都" / PHOTO_NAMES[1]
+
+    window.trash_selected()
+    qt_app.processEvents()
+
+    assert not first.exists(), "照片应当真的移进了废纸篓"
+    assert window._stack.currentWidget() is window._detail_page, "不该退回网格"
+    # 摘掉第 0 行之后，「下一张」正好顶在同一个行号上（见 _select_after_removal）。
+    assert window._model.rowCount() == 1
+    shown = window._model.photo_at(window._current_row)
+    assert shown is not None and shown.path == second
+    assert window._current_row == row
+    assert window._detail.has_image is True
+    # 网格与大图从此指着同一格：⌘Z 取回来的照片要插回它原来的位置。
+    assert window._grid.selected_rows() == [row]
+
+
+def test_trashing_the_last_photo_you_are_looking_at_falls_back_to_the_previous_one(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """正在看的是这一层的**最后一张**：没有下一张就看上一张，同样不退回网格。
+
+    与「没有照片可看才退回网格」是两件事（见下一条），别混成一条规则。
+    """
+    _open_detail(qt_app, window, PHOTO_NAMES[1])
+
+    window.trash_selected()
+    qt_app.processEvents()
+
+    assert window._stack.currentWidget() is window._detail_page
+    shown = window._model.photo_at(window._current_row)
+    assert shown is not None and shown.path.name == PHOTO_NAMES[0]
+
+
+def test_trashing_the_last_photo_falls_back_to_the_grid(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """这一层再没有照片可看时退回网格 —— 显示一张已经不在的照片说不过去。"""
+    _enter_album(qt_app, window)
+    # 先从网格上删掉一张，让这一层只剩一张。
+    _select(window._grid, window._model, (1,))
+    window.trash_selected()
+    qt_app.processEvents()
+    assert window._model.rowCount() == 1
+
+    _open_detail(qt_app, window, PHOTO_NAMES[0])
+    window.trash_selected()
+    qt_app.processEvents()
+
+    assert window._stack.currentWidget() is window._grid_page
+    assert window._model.rowCount() == 0

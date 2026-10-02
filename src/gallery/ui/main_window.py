@@ -19,7 +19,7 @@ from collections.abc import Callable, Iterable, Sequence
 from functools import partial
 from pathlib import Path
 
-from PySide6.QtCore import QModelIndex, QPointF, Qt
+from PySide6.QtCore import QModelIndex, QPoint, QPointF, Qt
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
@@ -477,6 +477,8 @@ class MainWindow(QMainWindow):
         self._detail = DetailView()
         self._detail.request_close.connect(self.show_grid)
         self._detail.request_step.connect(self.step_detail)
+        # 大图页上的右键：视图只报位置，菜单在这一侧拼（与网格同一个流程，见 ADR 0019）。
+        self._detail.context_requested.connect(self._show_detail_context_menu)
 
         self._stack = QStackedWidget()
         self._stack.addWidget(self._welcome)
@@ -568,6 +570,12 @@ class MainWindow(QMainWindow):
         # （ShortcutColumnMenu.show_key），这个共用的 QAction 一个字节都没动。
         self._open_entry_action = QAction("打开", self)
         self._open_entry_action.triggered.connect(self.open_current_entry)
+
+        # 「退出」只活在**大图页的右键菜单**里（ADR 0019），是那张菜单的第一行。
+        # 与「打开」一样**不给真快捷键**：大图页上的 Esc 归 DetailView.keyPressEvent，
+        # 菜单里那枚 ⎋ 是 ui.menus 挂在这一次菜单上的提示，只画不生效。
+        self._close_entry_action = QAction("退出", self)
+        self._close_entry_action.triggered.connect(self.show_grid)
 
         # ⇧⏎：与 ⌘⏎ 同一个思路再加一层 —— ⏎ 归「打开」、⌘⏎ 归「在访达中显示」，
         # ⇧⏎ 就归「在默认应用中打开」。三个「打开」因此挨着摆，菜单里画的也是同一列。
@@ -2005,6 +2013,40 @@ class MainWindow(QMainWindow):
             kind,
             multiple=len(self._grid.selected_rows()) > 1,
         )
+        return self._dressed_menu(menu)
+
+    def _show_detail_context_menu(self, position: QPoint) -> None:
+        """大图页上的一次右键：拼菜单、弹出来、用完即弃（与网格同一套流程）。
+
+        位置是 ``DetailView`` 报的窗口坐标 —— 视图只回答「按在了哪」，菜单归这一侧拼
+        （ADR 0019）。菜单用完即弃：它里面那份 ``QAction`` 是共用的，但这份菜单本身不是。
+        """
+        menu = self.detail_context_menu()
+        if menu is None:
+            return
+        menu.exec(position)
+        menu.deleteLater()
+
+    def detail_context_menu(self) -> QMenu | None:
+        """大图页该弹什么菜单。**只拼不弹**，与 :meth:`context_menu_for` 一个规矩。
+
+        判据只有一条：现在在大图页，且**确实在看一张照片**。加载失败、画面还空着的时候
+        右键一下也不该有菜单 —— 里面每一条命令的对象都还不存在。
+        """
+        if self._stack.currentWidget() is not self._detail_page:
+            return None
+        if self._model.photo_at(self._current_row) is None:
+            return None
+        # 与网格那一侧同样先刷新一次可用性：菜单里那些行共享同一份 QAction，灰度得是
+        # 「此刻」的灰度，而不是进大图页时算的那一份。
+        self._update_action_states()
+        return self._dressed_menu(build_menu(self._menu_actions(), TargetKind.DETAIL))
+
+    def _dressed_menu(self, menu: QMenu) -> QMenu:
+        """刚拼好的菜单在下发之前要做的那几件事：底色、圆角行距、快捷键那一列。
+
+        网格与大图页共用同一段 —— 两边拼出来的菜单长得不一样，用起来却必须是同一个软件。
+        """
         # 菜单的底色取自调色板的 ``Window`` 角色，而它默认来自系统（浅色 ``#ececec``），
         # 于是按一次右键就掉出整块底色之外。菜单是**这一下**才建的，此后不会再有一次
         # 主题下发，所以直接照抄窗口那份统一调色板（``ui.theme`` 逐控件下发的那份）。
@@ -2022,6 +2064,7 @@ class MainWindow(QMainWindow):
         """把菜单要用的动作收成一包（``ui.menus`` 只认这个，不认窗口）。"""
         return MenuActions(
             open_entry=self._open_entry_action,
+            close_entry=self._close_entry_action,
             open_default=self._open_default_action,
             reveal=self._reveal_action,
             copy=self._copy_action,
@@ -2055,8 +2098,11 @@ class MainWindow(QMainWindow):
         用 ``photo_at`` 而不是「取当前项再判断类型」：分组卡片与相册在这条命令上没有
         意义（相册是文件夹，让系统在访达里打开它是「打开」自己的活），这一层直接挡住，
         免得拼错一次就在这里抛 ``AttributeError``。
+
+        行的来源是 :meth:`_focus_row` 而不是网格的当前项：大图页上看的可能已经是翻过去的
+        那一张（ADR 0019），照着网格的当前项会把上一张交给默认应用打开。
         """
-        ref = self._model.photo_at(self._grid.current_row())
+        ref = self._model.photo_at(self._focus_row())
         if ref is None:
             return
         # 成功时没有话可说（那个应用自己会弹到前台），只有失败才上横幅。
@@ -2182,8 +2228,10 @@ class MainWindow(QMainWindow):
 
         缓存里没有就**现读一次** —— 这条命令在面板没展开时也可用，而那时多半没有缓存
         可用。读一次约 50ms，走后台线程，完成时用横幅说一声。
+
+        大图页上拷的是**正在看的那一张**（ADR 0019），所以行的来源是 :meth:`_focus_row`。
         """
-        ref = self._model.photo_at(self._grid.current_row())
+        ref = self._model.photo_at(self._focus_row())
         if ref is None:
             return
         cached = self._cached_metadata(ref)
@@ -2233,12 +2281,32 @@ class MainWindow(QMainWindow):
         self._show_banner(f"已复制分组条件：按「{field}」分组。")
 
     def _selected_entries(self) -> list[GridEntry]:
-        """当前选中的格子对应的条目（按网格顺序）。"""
+        """「此刻这些命令作用于谁」—— 网格页是整个选区，大图页是正在看的那一张。
+
+        **大图页不能问网格的选区**：翻图（``←`` / ``→``）只动 ``_current_row``，网格的选区
+        停在打开大图的那一格。于是在大图页里问选区，「在访达中显示」「拷贝路径」这些
+        命令作用到的会是一张**屏幕上根本没有**的照片 —— 用户看到的与菜单要做的事正好相反
+        （ADR 0019）。
+        """
+        if self._stack.currentWidget() is self._detail_page:
+            row = self._current_row
+            entry = self._model.entry_at(row) if row >= 0 else None
+            return [] if entry is None else [entry]
         return [
             entry
             for entry in (self._model.entry_at(row) for row in self._grid.selected_rows())
             if entry is not None
         ]
+
+    def _focus_row(self) -> int:
+        """「当前这一格」的行号：网格页是当前项，大图页是正在看的那一张（ADR 0019）。
+
+        与 :meth:`_selected_entries` 同一个分叉，理由也一样：网格的当前项停在大图打开时的
+        那一格，翻过图之后它就过期了。
+        """
+        if self._stack.currentWidget() is self._detail_page:
+            return self._current_row
+        return self._grid.current_row()
 
     def _selected_paths(self) -> list[Path]:
         """选中项在磁盘上的路径。**分组卡片没有路径**（它不是磁盘上的东西），跳过。"""
@@ -2288,13 +2356,21 @@ class MainWindow(QMainWindow):
 
         不弹确认框，理由和访达一样：废纸篓本身就是那层保险，⌘Z 再是一层；
         弹窗只会让「整理一批照片」变成一连串的确认。做完立刻用横幅说清楚。
+
+        **大图页上也删得动**（ADR 0019），删的是**正在看的那一张**：删掉之后不退回网格，
+        而是接着看下一张 —— 看照片时最顺手的动作就是「这张不要，下一张」（见
+        :meth:`_show_next_after_trash`）。网格那一侧的行为一个字没改。
         """
         library = self._library
-        if library is None or self._stack.currentWidget() is not self._grid_page:
+        if library is None:
             return
         if self._grid.is_renaming():
             return  # 键盘正在行内输入框里，删掉正在编辑的那一张只会让人以为见鬼了
-        rows = self._grid.selected_rows()
+        in_detail = self._stack.currentWidget() is self._detail_page
+        if not in_detail and self._stack.currentWidget() is not self._grid_page:
+            return
+        # 大图页作用的是正在看的那一张，网格页是整个选区（见 _selected_entries）。
+        rows = [self._current_row] if in_detail else self._grid.selected_rows()
         entries = self._selected_entries()
         if not entries:
             return
@@ -2317,9 +2393,31 @@ class MainWindow(QMainWindow):
         removed = [row for row in rows if self._is_row_moved(row, moved_paths)]
         self._model.remove_rows(removed)
         self._select_after_removal(removed)
+        if in_detail:
+            self._show_next_after_trash()
         self._show_banner(_trash_banner(result))
         self._refresh_undo_label()
         self._refresh_thumbnail_window()
+
+    def _show_next_after_trash(self) -> None:
+        """删掉正在看的那一张之后，接着看下一张（ADR 0019）。
+
+        落在哪一格由 ``_select_after_removal`` 决定 —— 原来那格的位置，没了就是最后一格 ——
+        对「看下一张」来说正好。两种情况之外只能退回网格：
+
+        - 那一格是**相册**或分组卡片（大图页删掉的是这一层的最后一张照片，而这一层里还有相册）；
+        - 整层**一张照片都不剩了**：已经没有可看的，网格是唯一说得清的地方。
+
+        留在大图页显示一张已经不存在的照片，比退回网格更糟。
+        """
+        row = self._grid.current_row()
+        # 网格的选区已经落到下一格：大图页与网格从此必须指着同一格（``_current_row`` 与
+        # 网格当前项对不上时，⌘Z 取回来的照片会插到别处去）。
+        self._current_row = row
+        if self._model.photo_at(row) is None:
+            self.show_grid()
+            return
+        self._load_detail(row)
 
     def _is_row_moved(self, row: int, moved_paths: set[Path]) -> bool:
         entry = self._model.entry_at(row)
@@ -2681,42 +2779,52 @@ class MainWindow(QMainWindow):
         ):
             action.setEnabled(in_detail)
         self._clear_cache_action.setEnabled(self._library is not None)
-        # 重命名与移到废纸篓只对网格里的选中项有意义：大图页、没选中东西时都不该可用。
-        # 改名的过程中也不启用 —— 那时键盘归输入框，⌘⌫ 不该把正在编辑的那张删掉。
+        # 重命名只对网格里的选中项有意义：它的输入框就摆在那儿。改名的过程中也不启用 ——
+        # 那时键盘归输入框，⌘⌫ 不该把正在编辑的那张删掉。**大图页的重命名行因此是灰的**
+        # （ADR 0019：菜单先把位置摆好，改名的 UI 与后端另一步接）。
+        #
+        # 移到废纸篓两边都成立：大图页删的是正在看的那一张（``_selected_entries`` 认这一页）。
         in_grid = self._stack.currentWidget() is self._grid_page
         idle = not self._grid.is_renaming()
-        current_row = self._grid.current_row()
+        entries = self._selected_entries()
+        focus_row = self._focus_row()
         # 分组卡片不是磁盘上的东西：选中它时改名与删除都不可用，按下去也没有
-        # 「只处理照片」这种含糊的半截行为（见 ADR 0009）。
+        # 「只处理照片」这种含糊的半截行为（见 ADR 0009）。网格页要连**当前项**一起算
+        # —— 它可能不在选区里；大图页指向的必然是正在看的那张照片，看它就够了。
+        considered: tuple[int, ...] = (
+            (*self._grid.selected_rows(), self._grid.current_row())
+            if in_grid
+            else (self._current_row,)
+        )
         file_only = not any(
-            isinstance(self._model.entry_at(row), GroupRef)
-            for row in (*self._grid.selected_rows(), current_row)
-            if row >= 0
+            isinstance(self._model.entry_at(row), GroupRef) for row in considered if row >= 0
         )
-        self._rename_action.setEnabled(in_grid and current_row >= 0 and idle and file_only)
-        self._trash_action.setEnabled(
-            in_grid and bool(self._grid.selected_rows()) and idle and file_only
-        )
-        # 右键新增的那几条（ADR 0014）：可用性一律按「此刻选中了什么」算，
+        self._rename_action.setEnabled(in_grid and focus_row >= 0 and idle and file_only)
+        self._trash_action.setEnabled(bool(entries) and idle and file_only)
+        # 右键新增的那几条（ADR 0014）：可用性一律按「此刻作用于谁」算，
         # 菜单栏上的 ⌘A / ⇧⌘C 与右键菜单里的同一份动作因此永远说同一句话。
-        entries = self._selected_entries() if in_grid else []
         paths = [entry.path for entry in entries if not isinstance(entry, GroupRef)]
-        current = self._model.entry_at(current_row) if current_row >= 0 else None
+        current = self._model.entry_at(focus_row) if focus_row >= 0 else None
         self._select_all_action.setEnabled(in_grid and self._model.rowCount() > 0)
         self._copy_path_action.setEnabled(bool(paths))
         self._copy_action.setEnabled(bool(paths))
         # ⌘V 与选区无关：只看「当前这一层有没有可粘的目录」与「剪贴板里有没有文件」。
-        # 粘不了时它同时也不会出现在右键菜单里（见 ``_menu_actions``）。
+        # 粘不了时它同时也不会出现在右键菜单里（见 ``_menu_actions``）。**大图页不粘**：
+        # 那一页根本没有「当前这一层」，粘到哪要另说（ADR 0019）。
         self._paste_action.setEnabled(in_grid and self._can_paste())
         # ⌘⏎ 与改名输入框抢键：改到一半键盘归输入框（与 rename / trash 同一个 ``idle``），
         # 不然「敲完名字顺手 ⌘⏎」会变成把访达叫起来。
         self._reveal_action.setEnabled(bool(paths) and idle)
         self._open_entry_action.setEnabled(current is not None)
-        # ⇧⏎ 与 ⌘⏎ 同一套判据，只是更窄一层：只在网格里、当前那一格是**照片**、且没在改
-        # 名字时才可用。相册与分组卡片这一条不出现（见 ``open_current_in_default_app``）。
-        self._open_default_action.setEnabled(in_grid and idle and isinstance(current, PhotoRef))
+        # ⇧⏎ 与 ⌘⏎ 同一套判据，只是更窄一层：当前这一格得是**照片**、且没在改名字。
+        # 相册与分组卡片这一条不出现（见 ``open_current_in_default_app``）。**大图页上也可用**
+        # （ADR 0019）：菜单里那一条亮着，按下去就该是那一行说的事 —— 顺带说一句，这会改掉
+        # 「大图下按 ⇧⏎ 是回车」这个原先的巧合：现在 ⇧⏎ 交给系统，``Esc`` / ``⏎`` 才是退出。
+        self._open_default_action.setEnabled(idle and isinstance(current, PhotoRef))
         self._copy_metadata_action.setEnabled(isinstance(current, PhotoRef))
-        self._copy_group_action.setEnabled(isinstance(current, GroupRef))
+        self._copy_group_action.setEnabled(in_grid and isinstance(current, GroupRef))
+        # 「退出」只出现在大图页的右键菜单里（ADR 0019），所以它也只在那儿可用。
+        self._close_entry_action.setEnabled(in_detail)
         self._update_undo_action()
 
     def _update_undo_action(self) -> None:

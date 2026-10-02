@@ -1,4 +1,4 @@
-"""右键菜单：网格的四种落点各拼各的（见 ADR 0014）。
+"""右键菜单：网格的四种落点各拼各的（见 ADR 0014），大图页是第五种（见 ADR 0019）。
 
 **菜单在这里拼，`QAction` 在别处。** 菜单每次弹出时现建、用完即弃，但它用的都是菜单栏里
 那一份 ``QAction`` —— 这样快捷键文字（⌘R / ⌘⌫ / ⌘I）与置灰状态只有一处逻辑
@@ -13,7 +13,7 @@
 视图已经把它选上了，``_update_action_states`` 自然会把它们关掉（它判据是「选区里有
 没有 ``GroupRef``」）。本模块只负责在菜单末尾补一条说明文字。
 
-**外观两件事**：一份样式表，四个落点共用（:func:`apply_style`；分隔线的颜色也在那份
+**外观两件事**：一份样式表，各落点共用（:func:`apply_style`；分隔线的颜色也在那份
 样式表里，见 :data:`MENU_SEPARATOR_MIX_DARK`）；快捷键按列自己画
 （:class:`ShortcutColumnMenu`）—— 样式表一挂上去，Qt 就不再给快捷键算位置了，它会把
 快捷键紧跟在文字后面（见 :func:`prepare`）。macOS 样式自己画的那圈圆角
@@ -34,7 +34,7 @@ macOS 样式画**，底色会掉回系统菜单色（浅色 ``#ececec``）。所
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Any
 
@@ -296,6 +296,11 @@ def _native(key: Qt.Key | int) -> str:
 #: 取值不写死，直接问 Qt 要（见 :func:`_native`）：符号是平台约定的，而 ``Qt.Key_Return``
 #: 在 macOS 上正是 ``↵``，自己查表迟早认错（:func:`_modifier_glyph` 那段记的就是这个）。
 OPEN_KEY_HINT = _native(Qt.Key_Return)
+
+#: 「退出」那一行在最右列上写的键位提示，同样**只画不生效**（见
+#: :meth:`ShortcutColumnMenu.show_key`）。大图页上 ``Esc`` 早由 ``DetailView.keyPressEvent``
+#: 接走了，所以这枚提示不能变成真快捷键 —— 两个动作抢同一个键，Qt 里谁先被按下全看加载顺序。
+CLOSE_KEY_HINT = _native(Qt.Key_Escape)
 
 
 def split_shortcut(shortcut: QKeySequence) -> tuple[frozenset[Qt.KeyboardModifier], str]:
@@ -624,6 +629,8 @@ class TargetKind(Enum):
     GROUP = "group"
     #: 网格的空白处：不作用于任何条目。
     BLANK = "blank"
+    #: 大图页里正看着的那张照片（ADR 0019）。菜单与网格那张几乎一样，只把第一行换掉。
+    DETAIL = "detail"
 
 
 @dataclass(frozen=True, slots=True)
@@ -636,6 +643,9 @@ class MenuActions:
 
     #: 「打开」：照片开大图、相册与分组进去。
     open_entry: QAction
+    #: 「退出」：大图页退回网格（只在 :func:`build_detail_menu` 里出现，ADR 0019）。
+    #: 与「打开」一样**不给真快捷键** —— 大图页上的 ``Esc`` 归 ``DetailView``，这里只挂提示。
+    close_entry: QAction
     #: 「在默认应用中打开」⇧⏎（真快捷键，见 ADR 0014 决策 7）。**只有照片菜单用它**：
     #: 相册是文件夹，让系统用默认应用打开它就是让访达打开它，那是「打开」自己的活。
     open_default: QAction
@@ -688,6 +698,34 @@ def build_photo_menu(actions: MenuActions, *, multiple: bool) -> QMenu:
     return menu
 
 
+def build_detail_menu(actions: MenuActions) -> QMenu:
+    """大图页里正看着的那一张（ADR 0019）。
+
+    **与网格里单张照片那份逐行一致，只把最上面的「打开」换成「退出」**：照片已经开着，
+    「打开」没有对象，而「退出」正是这里唯一该有的第一行。用户按在照片上的直觉与在缩略图上
+    一模一样，菜单因此不该另起一套说法。
+
+    差的不止一行，所以要说清楚：
+
+    - **没有「粘贴」**：粘的是剪贴板，与「正在看哪一张」无关，而大图页上没有任何一层目录的
+      概念（网格里那一层可能被换掉）。要做它得先回答「粘到哪」，那是另一笔账（ADR 0018）。
+    - **写操作作用在正在看的那一张上**：判据由 ``MainWindow._selected_entries`` 给（大图页
+      看 ``_current_row``，翻过图之后网格的选区早就不是这一张了）。
+    - **「重命名…」摆着但置灰**：行内改名的输入框在网格里，大图页的改名字段还没有（ADR 0019）。
+    """
+    menu = ShortcutColumnMenu()
+    # 「粘贴」整条没有：把剪贴板里的文件复制进去要回答「粘到哪一层」，而大图页没有层
+    # （那一层随时可能被换掉）。于是这里换一份**不带粘贴**的动作包，行序仍与照片菜单共用
+    # 同一个拼装出口（``replace`` 出来的 ``QAction`` 还是菜单栏那几份，一个都没新建）。
+    _add_open_and_reveal(
+        menu, replace(actions, paste=None), multiple=False, default_app=True, closing=True
+    )
+    menu.addSeparator()
+    menu.addAction(actions.metadata)
+    menu.addAction(actions.copy_metadata)
+    return menu
+
+
 def build_album_menu(actions: MenuActions, *, multiple: bool) -> QMenu:
     """相册（多选相册时同样没有「打开」与「重命名」）。"""
     menu = ShortcutColumnMenu()
@@ -735,6 +773,8 @@ def build_menu(actions: MenuActions, kind: TargetKind, *, multiple: bool = False
     """按落点挑一份菜单。**只拼不弹**，测试因此可以直接调它看内容。"""
     if kind is TargetKind.PHOTO:
         return build_photo_menu(actions, multiple=multiple)
+    if kind is TargetKind.DETAIL:
+        return build_detail_menu(actions)
     if kind is TargetKind.ALBUM:
         return build_album_menu(actions, multiple=multiple)
     if kind is TargetKind.GROUP:
@@ -771,12 +811,23 @@ def _add_open(menu: ShortcutColumnMenu, actions: MenuActions) -> None:
     menu.show_key(actions.open_entry, OPEN_KEY_HINT)
 
 
+def _add_close(menu: ShortcutColumnMenu, actions: MenuActions) -> None:
+    """「退出」那一行，并在最右列挂上 ``Esc`` 这枚提示（ADR 0019）。
+
+    与 :func:`_add_open` 完全对称：换掉的只是「这一下做完之后人在哪儿」，键位提示同样
+    只画不生效（大图页上的 ``Esc`` 由 ``DetailView`` 接走了，见 :data:`CLOSE_KEY_HINT`）。
+    """
+    menu.addAction(actions.close_entry)
+    menu.show_key(actions.close_entry, CLOSE_KEY_HINT)
+
+
 def _add_open_and_reveal(
     menu: ShortcutColumnMenu,
     actions: MenuActions,
     *,
     multiple: bool,
     default_app: bool = False,
+    closing: bool = False,
 ) -> None:
     """照片与相册共用的上半截：打开 → 在访达中显示 → 拷贝 → 拷贝路径 → 粘贴 → 重命名 → 废纸篓。
 
@@ -788,15 +839,22 @@ def _add_open_and_reveal(
     ``default_app`` 只给照片菜单开：相册是文件夹，让系统用默认应用打开它就是让访达打开
     它，那与「打开」是同一件事，菜单里摆两行等于把一件事说两遍（见 ADR 0014 决策 7）。
 
+    ``closing`` 只给大图页开：第一行换成「退出」，其余一行不差（ADR 0019）。**它不是另写
+    一张菜单**，正是为了让两处的行序只有这一份 —— 改一条命令时不必记得改两个地方。
+
     中间只留一道分隔线：多选时「打开」与「重命名」都不出现，若在那里各插一道，
     「拷贝路径」与「移到废纸篓」之间就会多出一道谁也看不懂的空档。
 
     **「拷贝」排在「拷贝路径」上面、「粘贴」排在它下面**（ADR 0017 / 0018）：三个挨在
     一起是访达的那一组。拷贝与拷贝路径作用于整个选择，多选时都留着；**「粘贴」不作用
-    于选择**（它粘的是剪贴板），粘不了时压根不出现。
+    于选择**（它粘的是剪贴板），粘不了时压根不出现 —— 大图页则由 :func:`build_detail_menu`
+    整条不摆（那里连「当前这一层」都没有）。
     """
     if not multiple:
-        _add_open(menu, actions)
+        if closing:
+            _add_close(menu, actions)
+        else:
+            _add_open(menu, actions)
         if default_app:
             menu.addAction(actions.open_default)
     menu.addAction(actions.reveal)
@@ -822,6 +880,7 @@ def _submenu(title: str, actions: tuple[QAction, ...], *, split_before: int = 0)
 
 
 __all__ = [
+    "CLOSE_KEY_HINT",
     "MENU_CHECK_GUTTER",
     "MENU_CORNER_RADIUS",
     "MENU_HIGHLIGHT_RADIUS",
@@ -842,6 +901,7 @@ __all__ = [
     "apply_style",
     "build_album_menu",
     "build_background_menu",
+    "build_detail_menu",
     "build_group_menu",
     "build_menu",
     "build_photo_menu",
