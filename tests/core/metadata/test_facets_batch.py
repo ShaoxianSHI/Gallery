@@ -16,6 +16,7 @@ import pytest
 
 from gallery.core.errors import MetadataError
 from gallery.core.metadata.batch import (
+    PROGRESS_STEP,
     ExifToolBatchSource,
     PillowBatchSource,
     read_facets,
@@ -86,6 +87,44 @@ def test_read_facets_extracts_values(tmp_path: Path) -> None:
         captured_at=result[paths[0]].captured_at, year=2024, month=5, day=16
     )
     assert result[paths[2]].year == 2023
+
+
+@pytest.mark.parametrize("total", [0, 1, 7, 400, 401, 800, 5000])
+def test_progress_always_lands_on_the_total(tmp_path: Path, total: int) -> None:
+    """**收尾一定落在「读完了」上**，与总数能不能被档位整除无关。
+
+    进度是按 :data:`PROGRESS_STEP` 报的（理由见那个常量），所以总数是 5000 时
+    最后一次整档报的是 4800 —— 不补一次，进度条就停在 4800/5000，看着像卡住了。
+    那一档之后剩下的那些、以及压根没读出来的那些，都不会再有回调。
+    """
+    paths = _paths(tmp_path, total)
+    source = FakeSource({f"{index:03d}.jpg": {"EXIF:ISO": "100"} for index in range(total)})
+    seen: list[tuple[int, int]] = []
+
+    read_facets(paths, source=source, on_progress=lambda done, all_: seen.append((done, all_)))
+
+    if total == 0:
+        assert seen == [], "没有照片就不该报进度"
+        return
+    assert seen[0] == (1, total), "第一张立刻报一次，横幅要马上活过来"
+    assert seen[-1] == (total, total)
+    assert all(done <= all_ for done, all_ in seen), "进度不能越过总数"
+    assert seen == sorted(seen), "进度必须单调"
+
+
+def test_progress_is_not_reported_once_per_photo(tmp_path: Path) -> None:
+    """**不按张报**：每一次都是跨线程的 Qt 信号，五千张就是五千次投递。
+
+    粒度见 :data:`PROGRESS_STEP`（与一次 exiftool 子进程对齐）：横幅本来就一跳一跳的。
+    """
+    paths = _paths(tmp_path, 2000)
+    source = FakeSource({f"{index:03d}.jpg": {"EXIF:ISO": "100"} for index in range(2000)})
+    seen: list[tuple[int, int]] = []
+
+    read_facets(paths, source=source, on_progress=lambda done, all_: seen.append((done, all_)))
+
+    assert len(seen) <= 2000 // PROGRESS_STEP + 2, f"2000 张报了 {len(seen)} 次，太细了"
+    assert seen[-1] == (2000, 2000)
 
 
 def test_read_facets_reports_progress_to_the_end(tmp_path: Path) -> None:

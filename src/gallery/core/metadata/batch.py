@@ -39,6 +39,14 @@ BATCH_SIZE: Final = 400
 #: 轮询间隔：够细才叫得动取消，粗了又白费 CPU。
 POLL_SECONDS: Final = 0.05
 
+#: 报进度的粒度（张）。
+#:
+#: 与 :data:`BATCH_SIZE` 对齐 —— 用户看见的「正在读取元数据…x / y」本来就该一跳一跳的，
+#: 而这一跳正好对应一次 exiftool 子进程。**每张照片报一次是错的**：界面那一次回调是
+#: 跨线程的 Qt 信号（见 ``facade._offset_progress`` 接到 ``MainWindow._on_facet_progress``），
+#: 五千张照片就是五千次信号投递，而那条横幅本来一屏都装不下那么多中间态。
+PROGRESS_STEP: Final = BATCH_SIZE
+
 
 class BatchMetadataSource(Protocol):
     """批量来源：默认是 exiftool，测试注入假实现。"""
@@ -96,18 +104,25 @@ class ExifToolBatchSource:
     ) -> Iterator[tuple[Path, Mapping[str, object] | None]]:
         # 路径先转绝对：exiftool 回填的 SourceFile 就是我们给它的字面量，
         # 相对路径在不同工作目录下会认不出自己。
+        #
+        # **每张照片只解析一次。** ``Path.resolve()`` 会走一整条 ``realpath`` 的系统调用
+        # 链（解析每一段符号链接），而归位时 ``_normalized`` 又要对两边各做一次
+        # ``realpath``。这里原本把 ``resolve()`` 写了两遍（拼 argv 一遍、按 SourceFile
+        # 归位又一遍），于是同一张照片在一批里要走四条 realpath —— 五千张照片就是两万次。
+        # 解析一次，argv 与归位共用。
+        resolved = [Path(path).resolve() for path in batch]
         argv = [self._executable, "-j", "-G", "-sort", "-charset", "utf8", "-q"]
         for tag in WANTED_TAGS:
             argv.append(f"-{tag}")
-        argv.extend(str(Path(path).resolve()) for path in batch)
+        argv.extend(str(path) for path in resolved)
         payload = self._run(argv, should_cancel=should_cancel)
         if payload is None:
             return
         by_source = _by_source_file(payload)
-        for path in batch:
+        for original, absolute in zip(batch, resolved, strict=True):
             # exiftool 对能读的文件一定会给一条记录（哪怕里面只有 SourceFile）；
             # 完全没提到的那些（权限不足、坏文件）才是「压根没读出来」。
-            yield Path(path), by_source.get(_normalized(Path(path).resolve()))
+            yield Path(original), by_source.get(_normalized(absolute))
 
     def _run(self, argv: Sequence[str], *, should_cancel: Callable[[], bool]) -> str | None:
         """跑一次 exiftool，返回它的 stdout；取消或失败返回 ``None``。"""
@@ -237,15 +252,21 @@ def read_facets(
     result: dict[Path, PhotoFacets] = {}
     total = len(paths)
     done = 0
-    for path, raw in chosen.read_many(paths, should_cancel=should_cancel):
+    reported = 0
+    for done, (path, raw) in enumerate(
+        chosen.read_many(paths, should_cancel=should_cancel), start=1
+    ):
         if raw is not None:
             # 读到但字段全空也要给出一份空快照：它就是「这张照片没有拍摄时间」。
             result[Path(path)] = extract(raw)
-        done += 1
-        if on_progress is not None:
+        # **按 :data:`PROGRESS_STEP` 报，不按张报**（理由见那个常量的注释）：
+        # 第一张立刻报一次（横幅要马上活过来），之后每满一档报一次。
+        if on_progress is not None and (done == 1 or done // PROGRESS_STEP != reported):
             on_progress(done, total)
-    if on_progress is not None and done < total:
-        # 读不出来的那些不会再有回调，不补一次的话进度条会永远停在中间。
+            reported = done // PROGRESS_STEP
+    if on_progress is not None and reported * PROGRESS_STEP != total:
+        # 收尾一定落在「读完了」上，不管上一次报的是第几张：进度条停在 4800/5000
+        # 就像卡住了。读不出来的那些不会再有回调，所以这一次是必需的，不是锦上添花。
         on_progress(total, total)
     return result
 
