@@ -39,7 +39,6 @@ from gallery.ui import desktop  # noqa: E402
 from gallery.ui.browser.grid import PhotoGrid  # noqa: E402
 from gallery.ui.browser.model import PhotoListModel  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
-from gallery.ui.menus import GROUP_NOT_FILE_HINT  # noqa: E402
 
 #: 等待后台扫描 / 元数据读取 / 地点解析跑完的时限。
 WAIT_SECONDS = 10.0
@@ -309,10 +308,7 @@ def test_group_menu_disables_writes_and_explains(qt_app: QApplication, window: M
     menu = _context_at(window, 0)
 
     assert menu is not None
-    assert _texts(menu)[:2] == ["打开", "复制分组条件"]
-    assert not _enabled(menu, "重命名…")
-    assert not _enabled(menu, "移到废纸篓")
-    assert _texts(menu)[-1] == GROUP_NOT_FILE_HINT
+    assert _texts(menu) == ["打开", "复制分组条件"]
 
 
 def test_multi_selection_hides_single_item_actions(

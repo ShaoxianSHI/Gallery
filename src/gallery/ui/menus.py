@@ -34,9 +34,6 @@ from PySide6.QtWidgets import QMenu
 
 from gallery.ui.theme import rgba
 
-#: 分组卡片为什么不能改名 / 不能删。放在菜单末尾当一句说明。
-GROUP_NOT_FILE_HINT = "分组不是磁盘上的文件夹，改不了名也删不掉。"
-
 #: 弹出菜单的圆角（像素）。macOS 样式自己画的那圈实测约 5，放大一档。
 MENU_CORNER_RADIUS = 8
 
@@ -216,27 +213,16 @@ def build_album_menu(actions: MenuActions, *, multiple: bool) -> QMenu:
 
 
 def build_group_menu(actions: MenuActions) -> QMenu:
-    """分组卡片。
+    """分组卡片：**只有打开与复制分组条件**。
 
-    「重命名」与「移到废纸篓」会由 ``_update_action_states`` 置灰（选区里有 ``GroupRef``
-    就关掉），这里在菜单末尾补一句说明，免得置灰看起来像是功能缺失。
+    「重命名」与「移到废纸篓」在这里干脆**不出现**（ADR 0014 决策 4 曾是「置灰 + 一行
+    说明」，后按用户意见收窄成不出现）。分组不是磁盘上的东西，这两条永远不可用；菜单里
+    摆两个点不动的条目，再加一句解释为什么点不动，等于把一个功能缺失讲了三遍。
     """
     menu = QMenu()
     menu.addAction(actions.open_entry)
     menu.addAction(actions.copy_group)
-    menu.addSeparator()
-    menu.addAction(actions.rename)
-    menu.addAction(actions.trash)
-    menu.addSeparator()
-    menu.addAction(_hint_action(GROUP_NOT_FILE_HINT, menu))
     return menu
-
-
-def _hint_action(text: str, parent: QMenu) -> QAction:
-    """一条不可点的说明文字。"""
-    hint = QAction(text, parent)
-    hint.setEnabled(False)
-    return hint
 
 
 def build_background_menu(actions: MenuActions) -> QMenu:
@@ -300,7 +286,6 @@ def _submenu(title: str, actions: tuple[QAction, ...], *, split_before: int = 0)
 
 
 __all__ = [
-    "GROUP_NOT_FILE_HINT",
     "MENU_CORNER_RADIUS",
     "MENU_HIGHLIGHT_RADIUS",
     "MENU_INSET",
