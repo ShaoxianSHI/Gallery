@@ -162,13 +162,14 @@ def test_paste_sits_under_copy_path(qt_app: QApplication, window: MainWindow) ->
     assert labels.index("粘贴") < labels.index("重命名…")
 
 
-def test_the_album_menu_paste_carries_that_album_as_its_target(
+def test_the_album_menu_paste_is_the_shortcut_one_targeted_at_that_album(
     qt_app: QApplication, window: MainWindow
 ) -> None:
-    """相册菜单里那一条，目标是**右键按着的那个相册**，且**不带快捷键**。
+    """相册菜单里那一条**就是菜单栏那个 ⌘V**，目标却换成了右键按着的那个相册。
 
-    ⌘V 归菜单栏那一条，说的却是「粘进当前这一层」—— 停在库根时那是库根，与这一条不是
-    一回事，不能让一枚键指两处。
+    两件事一起说，因为它们是一件事的两面：既然是**同一枚动作**，那一行就照常写着 ⌘V，
+    而菜单开着时按 ⌘V 与点它走的是同一个槽 —— 界面上写着什么，按下去就是什么，
+    不会出现「写着 ⌘V、按下去却粘到别处」的分裂（ADR 0018 决策 7）。
     """
     desktop.copy_files_to_clipboard([window._library.root / "京都" / "一张.jpg"])
     row = window._model.row_of_path(window._library.root / "奈良")
@@ -178,11 +179,34 @@ def test_the_album_menu_paste_carries_that_album_as_its_target(
 
     assert menu is not None
     action = next(item for item in menu.actions() if item.text() == "粘贴")
-    assert action is window._paste_into_album_action
-    assert action.data() == window._library.root / "奈良"
-    assert action.data() != window._library.root, "落进库根就是「同级」，不是用户要的"
-    assert action.shortcut().isEmpty()
-    assert window._paste_action.shortcut() == QKeySequence("Ctrl+V")
+    assert action is window._paste_action, "不是另做一份动作，就是菜单栏那个 ⌘V"
+    assert action.shortcut() == QKeySequence("Ctrl+V")
+    # 目标不在动作上（那一枚是共用的），在窗口上按落点挂着的那一个：
+    assert window._paste_album_target == window._library.root / "奈良"
+    assert window._paste_album_target != window._library.root, "落进库根就是「同级」"
+
+
+def test_the_shortcut_goes_back_to_the_current_level_once_the_menu_is_gone(
+    qt_app: QApplication, window: MainWindow, root: Path
+) -> None:
+    """菜单关掉之后 ⌘V 照旧粘进**当前这一层** —— 上一次右键不该把下一次 ⌘V 带跑。
+
+    目标是用一次就摘掉的（见 :meth:`MainWindow.paste_into_current_folder`），所以右键过
+    一个相册、没点那一行就 ``⎋`` 关掉菜单，之后按 ⌘V 落点仍是这一层。
+    """
+    (root / "奈良" / "待粘.jpg").write_bytes((root / "京都" / "一张.jpg").read_bytes())
+    desktop.copy_files_to_clipboard([root / "奈良" / "待粘.jpg"])
+    row = window._model.row_of_path(root / "京都")
+    assert row >= 0
+    assert window.context_menu_for(row) is not None
+    assert window._paste_album_target == root / "京都"
+
+    # 菜单关掉：``_show_context_menu`` 收工时清空（这里直接模拟那一步）。
+    window._paste_album_target = None
+    _paste_and_wait(qt_app, window)
+
+    assert (root / "待粘.jpg").is_file(), "⌘V 粘进当前这一层（停在库根就是库根）"
+    assert not (root / "京都" / "待粘.jpg").exists()
 
 
 def test_pasting_on_an_album_lands_inside_it(

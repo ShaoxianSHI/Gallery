@@ -471,6 +471,27 @@ def test_album_menu_has_no_metadata_items(qt_app: QApplication, window: MainWind
     ]
 
 
+def test_album_menu_shows_the_paste_shortcut(qt_app: QApplication, window: MainWindow) -> None:
+    """相册菜单里「粘贴」那一行最右列写着 **⌘V**（用户明确要求补上）。
+
+    那一行**就是菜单栏那个 ⌘V**（ADR 0018 决策 7），所以这枚键不是画的装饰：菜单开着时
+    按 ⌘V 与点它走的是同一个动作、同一个槽，粘进的**都是这个相册内部**。用户要的是
+    「右键这个相册就粘进这个相册」，键位得说同一句话。
+    """
+    _show_albums(qt_app, window)
+    desktop.copy_files_to_clipboard([window._library.root / "京都" / PHOTO_NAMES[1]])
+    row = window._model.row_of_path(window._library.root / "京都")
+    assert row >= 0
+
+    menu = _context_at(window, row)
+
+    assert menu is not None
+    modifiers, key_text = _key_cell(menu, "粘贴")
+    assert key_text == "V"
+    assert Qt.KeyboardModifier.ControlModifier in modifiers
+    assert next(a for a in menu.actions() if a.text() == "粘贴") is window._paste_action
+
+
 def test_group_menu_acts_on_the_photos_inside(qt_app: QApplication, window: MainWindow) -> None:
     """分组卡片：中间那一段与「多选照片」**逐字相同**（ADR 0020）。
 
