@@ -8,8 +8,11 @@
 ``QProcess.startDetached``。这是权衡的结果，不是随手写的：进程起不来就降级成打开所在文件夹，
 并在界面上如实说明做了什么（见 ADR 0014 决策 3）。
 
-刻意只放这三件事：
+刻意只放这四件事：
 
+- **把文件交给系统默认的应用打开**（:func:`open_with_default_app`）与**在访达里把它挑出来**
+  （:func:`reveal_in_finder`）是同一件事的两头：一个交给别的程序看，一个留在访达里。
+  前者用 ``QDesktopServices`` 就够，不另起进程；后者不行，原因见上面那段。
 - **往剪贴板里放文件是做得到的，不必引 pyobjc**（见 :func:`copy_files_to_clipboard` 与
   ADR 0017）。这里原先写着「访达认可的文件引用类型 Qt 放不进去」，那句话是错的：实测
   ``QMimeData.setUrls`` 写的两个公开类型与访达自己 ⌘C 时写的完全一样。
@@ -96,6 +99,25 @@ def format_paths(paths: Sequence[Path]) -> str:
     return "\n".join(str(path) for path in paths)
 
 
+def open_with_default_app(path: Path) -> str | None:
+    """用系统为这类文件设定的**默认应用**打开它，返回一句需要说出口的话（成功时没有）。
+
+    与 :func:`reveal_in_finder` 相反的那一头：那个把文件**留在访达里挑出来**，这个把它
+    **交给别的程序**（预览、Photoshop…）。同样只读：打开成什么样是那个程序自己的事，
+    Gallery 既不读像素也不写文件。
+
+    **成功时不说话**（``None``）：那个应用自己会弹到前台，那就是反馈，横幅不必再抢一句。
+    失败必须说一句 —— 静默不动会被当成程序卡住了。
+
+    **没有「打开方式…」那种选应用的版本**：那会改掉系统对这个类型的默认设置，那是改
+    用户系统设置的事，不该由 Gallery 的一个菜单项顺手做掉。要换关联程序请去访达。
+    """
+    target = Path(path)
+    if QDesktopServices.openUrl(QUrl.fromLocalFile(str(target))):
+        return None
+    return f"没能用默认应用打开「{target.name}」，请检查它是否还在原处。"
+
+
 def reveal_in_finder(paths: Sequence[Path]) -> str:
     """在访达里选中并露出这些路径，返回一句说清**实际做了什么**的中文文案。
 
@@ -123,6 +145,7 @@ __all__ = [
     "copy_files_to_clipboard",
     "copy_to_clipboard",
     "format_paths",
+    "open_with_default_app",
     "read_files_from_clipboard",
     "reveal_in_finder",
 ]

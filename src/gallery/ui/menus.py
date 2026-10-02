@@ -596,6 +596,9 @@ class MenuActions:
 
     #: 「打开」：照片开大图、相册与分组进去。
     open_entry: QAction
+    #: 「在默认应用中打开」⇧⏎（真快捷键，见 ADR 0014 决策 7）。**只有照片菜单用它**：
+    #: 相册是文件夹，让系统用默认应用打开它就是让访达打开它，那是「打开」自己的活。
+    open_default: QAction
     #: 「在访达中显示」⌘⏎（真快捷键，见 ADR 0014 决策 6）。
     reveal: QAction
     #: 「拷贝」⌘C（文件本身，访达语义，见 ADR 0017）。
@@ -632,12 +635,12 @@ class MenuActions:
 def build_photo_menu(actions: MenuActions, *, multiple: bool) -> QMenu:
     """照片（含多选照片）。
 
-    ``multiple`` 时藏掉「打开」「重命名」「复制元数据」：它们都只对**某一个**东西成立
-    ——打开哪一张说不清、批量改名是 ADR 0004 明确排除的、拷谁的元数据同样说不清。
-    其余几条作用于整个选择。
+    ``multiple`` 时藏掉「打开」「在默认应用中打开」「重命名」「复制元数据」：它们都只对
+    **某一个**东西成立 ——打开哪一张说不清、交给哪个应用打开同样说不清、批量改名是
+    ADR 0004 明确排除的、拷谁的元数据同样说不清。其余几条作用于整个选择。
     """
     menu = ShortcutColumnMenu()
-    _add_open_and_reveal(menu, actions, multiple=multiple)
+    _add_open_and_reveal(menu, actions, multiple=multiple, default_app=True)
     menu.addSeparator()
     menu.addAction(actions.metadata)
     if not multiple:
@@ -728,12 +731,22 @@ def _add_open(menu: ShortcutColumnMenu, actions: MenuActions) -> None:
     menu.show_key(actions.open_entry, OPEN_KEY_HINT)
 
 
-def _add_open_and_reveal(menu: ShortcutColumnMenu, actions: MenuActions, *, multiple: bool) -> None:
+def _add_open_and_reveal(
+    menu: ShortcutColumnMenu,
+    actions: MenuActions,
+    *,
+    multiple: bool,
+    default_app: bool = False,
+) -> None:
     """照片与相册共用的上半截：打开 → 在访达中显示 → 拷贝 → 拷贝路径 → 粘贴 → 重命名 → 废纸篓。
 
-    最右那一列里挨着的两枚键位不是一回事：「打开」的是**只画不生效**的 ↵ 提示
-    （见 :meth:`ShortcutColumnMenu.show_key`），「在访达中显示」的是**真快捷键** ⌘⏎ ——
-    画它们的是同一个出口（:meth:`ShortcutColumnMenu.key_cell`），用户看到的却分得清哪个能按。
+    最右那一列里挨着的三枚回车不是一回事：「打开」的是**只画不生效**的 ↵ 提示
+    （见 :meth:`ShortcutColumnMenu.show_key`），「在默认应用中打开」的 ⇧⏎ 与
+    「在访达中显示」的 ⌘⏎ 是**真快捷键** —— 画它们的是同一个出口
+    （:meth:`ShortcutColumnMenu.key_cell`），用户看到的却分得清哪个能按。
+
+    ``default_app`` 只给照片菜单开：相册是文件夹，让系统用默认应用打开它就是让访达打开
+    它，那与「打开」是同一件事，菜单里摆两行等于把一件事说两遍（见 ADR 0014 决策 7）。
 
     中间只留一道分隔线：多选时「打开」与「重命名」都不出现，若在那里各插一道，
     「拷贝路径」与「移到废纸篓」之间就会多出一道谁也看不懂的空档。
@@ -744,6 +757,8 @@ def _add_open_and_reveal(menu: ShortcutColumnMenu, actions: MenuActions, *, mult
     """
     if not multiple:
         _add_open(menu, actions)
+        if default_app:
+            menu.addAction(actions.open_default)
     menu.addAction(actions.reveal)
     menu.addAction(actions.copy)
     menu.addAction(actions.copy_path)

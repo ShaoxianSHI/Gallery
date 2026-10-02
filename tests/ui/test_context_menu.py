@@ -6,9 +6,10 @@
    这一段用裸网格测：它与窗口、与库都没有关系，测窗口只会把因果搅浑。
 2. **菜单内容** —— 四种落点各拼出什么。走真实的 ``MainWindow.context_menu_for``，
    因为置灰是 ``_update_action_states`` 算出来的，只有连着窗口才是真的。
-3. **新命令** —— 拷贝 ⌘C、拷贝路径、全选、复制分组条件、在访达中显示。
+3. **新命令** —— 拷贝 ⌘C、拷贝路径、全选、复制分组条件、在访达中显示、在默认应用中打开。
 
-「在访达中显示」在这里**必须换掉**：真跑它会把访达叫起来，那是测试机上真实的副作用。
+「在访达中显示」与「在默认应用中打开」在这里**必须换掉**：真跑会把访达与别的程序叫起来，
+那是测试机上真实的副作用。
 """
 
 from __future__ import annotations
@@ -288,7 +289,7 @@ def _key_hint(menu: QMenu, label: str) -> str:
 
 
 def test_photo_menu_items(qt_app: QApplication, window: MainWindow) -> None:
-    """照片：访达 / 拷贝 / 拷贝路径挨在一起，写操作单列一段，元数据收在最后。"""
+    """照片：三个「打开」挨在最上面，写操作单列一段，元数据收在最后。"""
     _enter_album(qt_app, window)
     row = window._model.row_of_path(window._library.root / "京都" / PHOTO_NAMES[0])
     assert row >= 0
@@ -298,6 +299,7 @@ def test_photo_menu_items(qt_app: QApplication, window: MainWindow) -> None:
     assert menu is not None
     assert _texts(menu) == [
         "打开",
+        "在默认应用中打开",
         "在访达中显示",
         "拷贝",
         "拷贝路径",
@@ -313,7 +315,11 @@ def test_photo_menu_items(qt_app: QApplication, window: MainWindow) -> None:
 
 
 def test_album_menu_has_no_metadata_items(qt_app: QApplication, window: MainWindow) -> None:
-    """相册：没有元数据那两条（目录不是照片），其余与照片同形。"""
+    """相册：没有元数据那两条，也没有「在默认应用中打开」（目录不是照片）。
+
+    后一条是刻意不给的：相册是文件夹，让系统用默认应用打开它就是让访达打开它 ——
+    那与上面那行「打开」是同一件事，菜单里摆两行等于把一件事说两遍（ADR 0014 决策 7）。
+    """
     _show_albums(qt_app, window)
     row = window._model.row_of_path(window._library.root / "京都")
     assert row >= 0
@@ -659,6 +665,147 @@ def test_reveal_shortcut_yields_to_the_rename_editor(
 
     # 收尾：Esc 取消，测试不该顺手把 tmp 里的照片真改了名。
     QTest.keyClick(window._grid._rename_edit, Qt.Key.Key_Escape)
+
+
+def _record_default_app(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
+    """把「用默认应用打开」换成记录用的假实现，返回收路径的那个列表。"""
+    seen: list[Path] = []
+
+    def fake_open(path: Path) -> str | None:
+        seen.append(Path(path))
+        return None
+
+    monkeypatch.setattr(desktop, "open_with_default_app", fake_open)
+    return seen
+
+
+def test_open_default_app_is_shift_return_and_the_key_really_opens_it(
+    qt_app: QApplication,
+    window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """「在默认应用中打开」是 ⇧⏎，而且这条**要能真的按出来**，不是只写在菜单上的字。
+
+    ⏎ 归「打开」、⌘⏎ 归「在访达中显示」，每一层加一个修饰符，于是三个「打开」挨着摆、
+    画的也是同一列，用户才认得出是同一族键。
+
+    按键这一段不能省：``QAction`` 的快捷键只有被 ``addAction`` 加进某个控件之后才会注册进
+    Qt 的快捷键表，而右键菜单是用完即弃的 —— 只挂菜单的话，菜单上写着 ⇧⏎、按下去没反应。
+    """
+    seen = _record_default_app(monkeypatch)
+    _enter_album(qt_app, window)
+    row = window._model.row_of_path(window._library.root / "京都" / PHOTO_NAMES[0])
+    assert row >= 0
+    menu = _context_at(window, row)
+
+    # 显示的那一半：⇧ 与 ↵ 各占一列，键位就是「打开」那一行的同一个符号。
+    assert menu is not None
+    modifiers, key_text = _key_cell(menu, "在默认应用中打开")
+    assert modifiers == frozenset({Qt.KeyboardModifier.ShiftModifier})
+    assert key_text == menus.OPEN_KEY_HINT == "↵"
+
+    # 生效的那一半：真的按一次 ⇧⏎。
+    window._grid.setFocus()
+    QTest.keyClick(window._grid, Qt.Key.Key_Return, Qt.KeyboardModifier.ShiftModifier)
+    qt_app.processEvents()
+
+    assert seen == [window._library.root / "京都" / PHOTO_NAMES[0]]
+    assert window._open_default_action.shortcut() == QKeySequence("Shift+Return")
+
+
+def test_open_default_app_is_silent_when_it_works_and_speaks_when_it_fails(
+    qt_app: QApplication,
+    window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """打开成功时横幅一个字都不说；系统不接时必须说出来。
+
+    安静的那一半是故意的：那个应用自己会弹到前台，横幅再抢一句只是噪音；而静默**失败**
+    会被当成程序卡住了。
+    """
+    _enter_album(qt_app, window)
+    _select(window._grid, window._model, (0,))
+
+    monkeypatch.setattr(desktop, "open_with_default_app", lambda path: None)
+    window.open_current_in_default_app()
+    assert window._banner.isVisible() is False
+
+    monkeypatch.setattr(
+        desktop,
+        "open_with_default_app",
+        lambda path: f"没能用默认应用打开「{Path(path).name}」，请检查它是否还在原处。",
+    )
+    window.open_current_in_default_app()
+
+    assert window._banner.isVisible()
+    assert PHOTO_NAMES[0] in window._banner.text()
+
+
+def test_open_default_app_skips_group_cards_and_does_not_fall_back_to_open(
+    qt_app: QApplication,
+    window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """选中分组卡片时：这一条不可用，⇧⏎ 也不该偷偷变成「在 Gallery 里打开」。
+
+    后半句是网格那一侧的判据（``PhotoGrid.keyPressEvent``）：⇧⏎ 属于窗口级的动作，
+    不可用时按键会落到网格上，而网格只把**不带修饰符**的回车当成「打开」。要让用户以为
+    「换个地方打开」最后打开的还是 Gallery，不如什么都不做。
+    """
+    seen = _record_default_app(monkeypatch)
+    group = GroupRef(facet="camera", key="canon", label="Canon", photos=(_photo(window),))
+    window._model.reorder([group])
+    qt_app.processEvents()
+    _select(window._grid, window._model, (0,))
+    assert window._open_default_action.isEnabled() is False
+
+    window._grid.setFocus()
+    QTest.keyClick(window._grid, Qt.Key.Key_Return, Qt.KeyboardModifier.ShiftModifier)
+    qt_app.processEvents()
+
+    assert seen == []
+    # 判据是「有没有真的把组打开」而不是「还在不在网格页」：进组同样会把网格重新列一遍
+    # （``_reload_level``），看着页面没变，其实在 GroupRef 上白跑了一趟。
+    assert window._group_view is None, "不该退回「打开」把组打开"
+
+
+def test_open_default_app_yields_to_the_rename_editor(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """改到一半那一下归输入框：⇧⏎ 不该顺手把别的程序叫起来。
+
+    与 ⌘⏎ 同一个理由 —— 窗口级快捷键在按键到达控件之前就被 Qt 取走了，不置灰的话
+    「敲完名字顺手 ⇧⏎」提交不了改名，只会弹出一个预览。
+    """
+    _enter_album(qt_app, window)
+    _select(window._grid, window._model, (0,))
+    assert window._open_default_action.isEnabled() is True
+
+    window.rename_current_entry()
+
+    assert window._grid._rename_edit.is_editing()
+    assert window._open_default_action.isEnabled() is False
+
+    # 收尾：Esc 取消，测试不该顺手把 tmp 里的照片真改了名。
+    QTest.keyClick(window._grid._rename_edit, Qt.Key.Key_Escape)
+
+
+def test_bare_return_still_opens_in_gallery_after_the_shift_guard(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """加了「带修饰符就不算打开」这条判据之后，**光秃秃的 ⏎ 必须照旧打开大图**。
+
+    判据写在网格的 ``keyPressEvent`` 上，方向很容易写反 —— 写成「有修饰符才算打开」的话，
+    整个软件最常用的那个键就没了。
+    """
+    _enter_album(qt_app, window)
+    _select(window._grid, window._model, (0,))
+
+    window._grid.setFocus()
+    QTest.keyClick(window._grid, Qt.Key.Key_Return)
+    qt_app.processEvents()
+
+    assert window._stack.currentWidget() is window._detail_page
 
 
 def test_select_all_selects_whole_level(qt_app: QApplication, window: MainWindow) -> None:

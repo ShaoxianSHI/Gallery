@@ -896,7 +896,12 @@ class PhotoGrid(QListView):
         return super().event(event)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
-        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+        # **带修饰符的回车不是「打开」**：⌘⏎ 归「在访达中显示」、⇧⏎ 归「在默认应用中打开」
+        # （两条都是窗口级 QAction，见 ADR 0014 决策 6 / 7）。它们按下时 Qt 先取走，按键根本
+        # 走不到这里；但它们**不可用**时（选中的是分组卡片、正在改名字）按下去是走得到的 ——
+        # 那时要是照旧当成「打开」，用户以为打开去了默认应用，其实打开的仍是 Gallery。
+        # 宁可什么都不做。
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and not event.modifiers():
             index = self.currentIndex()
             if index.isValid():
                 self.activated_index.emit(index)

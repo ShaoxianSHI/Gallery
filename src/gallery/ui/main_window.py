@@ -543,6 +543,17 @@ class MainWindow(QMainWindow):
         self._open_entry_action = QAction("打开", self)
         self._open_entry_action.triggered.connect(self.open_current_entry)
 
+        # ⇧⏎：与 ⌘⏎ 同一个思路再加一层 —— ⏎ 归「打开」、⌘⏎ 归「在访达中显示」，
+        # ⇧⏎ 就归「在默认应用中打开」。三个「打开」因此挨着摆，菜单里画的也是同一列。
+        #
+        # 与「打开」一样**只活在右键菜单里**：它离不开「当前这一张」，而菜单栏上放一个
+        # 没有选区可依的命令没有意义（见下面 ``_copy_metadata_action`` 那段）。
+        self._open_default_action = QAction("在默认应用中打开", self)
+        self._open_default_action.setShortcut(QKeySequence("Shift+Return"))
+        self._open_default_action.triggered.connect(self.open_current_in_default_app)
+        # 同样**必须挂到窗口上**才按得出来（理由见 ``_reveal_action`` 那段）。
+        self.addAction(self._open_default_action)
+
         # ⌘⏎：⏎ 归「打开」自己（网格里已经处理了），加上 ⌘ 正好空出来一条，与访达把
         # ⌘C / ⇧⌘C 让给拷贝是一个思路。这条**只作用在网格里**（置灰判据见
         # ``_update_action_states``），所以 ⌘⏎ 在大图页按下去仍然只是回车。
@@ -1975,6 +1986,7 @@ class MainWindow(QMainWindow):
         """把菜单要用的动作收成一包（``ui.menus`` 只认这个，不认窗口）。"""
         return MenuActions(
             open_entry=self._open_entry_action,
+            open_default=self._open_default_action,
             reveal=self._reveal_action,
             copy=self._copy_action,
             copy_path=self._copy_path_action,
@@ -1999,6 +2011,22 @@ class MainWindow(QMainWindow):
         index = self._grid.currentIndex()
         if index.isValid():
             self._on_entry_activated(index)
+
+    def open_current_in_default_app(self) -> None:
+        """「在默认应用中打开」⇧⏎：交给系统为这类文件设定的默认应用（见 ``ui.desktop``）。
+
+        作用于**当前这一张**，多选时说不清打开哪一张，因此菜单里那一行压根不出现。
+        用 ``photo_at`` 而不是「取当前项再判断类型」：分组卡片与相册在这条命令上没有
+        意义（相册是文件夹，让系统在访达里打开它是「打开」自己的活），这一层直接挡住，
+        免得拼错一次就在这里抛 ``AttributeError``。
+        """
+        ref = self._model.photo_at(self._grid.current_row())
+        if ref is None:
+            return
+        # 成功时没有话可说（那个应用自己会弹到前台），只有失败才上横幅。
+        message = desktop.open_with_default_app(ref.path)
+        if message is not None:
+            self._show_banner(message)
 
     def reveal_selection(self) -> None:
         """「在访达中显示」：在访达里把选中的东西选出来（见 ``ui.desktop``）。"""
@@ -2648,6 +2676,9 @@ class MainWindow(QMainWindow):
         # 不然「敲完名字顺手 ⌘⏎」会变成把访达叫起来。
         self._reveal_action.setEnabled(bool(paths) and idle)
         self._open_entry_action.setEnabled(current is not None)
+        # ⇧⏎ 与 ⌘⏎ 同一套判据，只是更窄一层：只在网格里、当前那一格是**照片**、且没在改
+        # 名字时才可用。相册与分组卡片这一条不出现（见 ``open_current_in_default_app``）。
+        self._open_default_action.setEnabled(in_grid and idle and isinstance(current, PhotoRef))
         self._copy_metadata_action.setEnabled(isinstance(current, PhotoRef))
         self._copy_group_action.setEnabled(isinstance(current, GroupRef))
         self._update_undo_action()
