@@ -72,3 +72,16 @@ testpaths = ["tests"]
 #
 # 调试单个用例时想要串行、想要完整报错栈：`-n 0`（或 `-p no:xdist`）。
 addopts = "-q --dist loadfile -n auto"
+
+# 线程里逃出去的异常一律**当失败**。
+#
+# 监听线程、去抖定时器、解码 worker 全是后台线程：一个在那边逃出去的异常，界面上的
+# 表现往往只是「某张图一直不出来」或者「关窗时崩一下」，在这里它只是一条
+# warning —— 也就是说**默认配置下没人会看见它**。升成 error 之后，守护测试
+# `test_a_batch_arriving_after_the_bridge_is_gone_is_dropped_quietly` 那类「不许
+# 有异常逃出去」的用例才真的是在守着。
+#
+# 已验证：后台线程 `raise` 且主线程 `join` 过 → 用例变红。（不 `join` 不会红 ——
+# 那条警告要等 pytest 收尾时由那个异常对象触发，线程还活着就收不到。
+# 探针里记得 join，不然会误以为这条规则是摆设。）
+filterwarnings = ["error::pytest.PytestUnhandledThreadExceptionWarning"]

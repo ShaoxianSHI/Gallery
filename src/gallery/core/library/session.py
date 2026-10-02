@@ -29,7 +29,8 @@ MAX_RECENT_ROOTS: Final = 8
 #: 想按拍摄时间排的，「排序」菜单里有那一项，读一次元数据即可切过去。
 DEFAULT_SORT_FACET: Final = FACET_MODIFIED
 
-#: 会话文件格式版本。将来结构变化时用于迁移或丢弃。
+#: 会话文件格式版本。**读的时候要认它**，不然将来结构一变，一份 v1 的老文件会被
+#: 当成 v2 解析出一个半懂不懂的状态 —— 那正是这个字段当初写下来要防的事。
 SESSION_VERSION: Final = 1
 
 #: 浏览方式之一：按文件夹逐层进入，子文件夹先以相册形式呈现。
@@ -115,7 +116,7 @@ class SessionState:
 
 
 def load_session(*, base: Path | None = None) -> SessionState:
-    """读取会话状态；任何异常都返回默认值。"""
+    """读取会话状态；读不出来、结构不对或是别的版本，都返回默认值。"""
     raw = read_text_or_none(paths.app_state_file(base=base))
     if raw is None:
         return SessionState()
@@ -124,6 +125,11 @@ def load_session(*, base: Path | None = None) -> SessionState:
     except (json.JSONDecodeError, ValueError):
         return SessionState()
     if not isinstance(data, dict):
+        return SessionState()
+    # 认版本号：这个键过去只写不读，于是「用于迁移或丢弃」那句话是空的 ——
+    # 一份结构不同的老文件会被照新结构解析出一个半懂不懂的状态。
+    # 眼下只有 v1，所以不认识的一律当作「读不出来」，退回默认。
+    if data.get("version", SESSION_VERSION) != SESSION_VERSION:
         return SessionState()
     return SessionState(
         recent_roots=_parse_roots(data.get("recent_roots")),

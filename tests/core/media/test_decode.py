@@ -163,7 +163,7 @@ def _run_fresh_python(script: str, *args: str) -> subprocess.CompletedProcess[by
 
 
 def test_pillow_is_initialized_at_import_time() -> None:
-    """导入 core.images 时就要把 Pillow 初始化完。
+    """导入 core.media.decode 时就要把 Pillow 初始化完。
 
     ``Image.open`` / ``Image.save`` 会惰性导入解码器，而那个「初始化过没有」的全局
     标志不是线程安全的：多个解码线程同时第一次用到 Pillow 时实测会**段错误**
@@ -181,7 +181,7 @@ def test_pillow_is_initialized_at_import_time() -> None:
     )
 
     assert completed.returncode == 0, (
-        "导入 core.images 之后 Pillow 仍未初始化，多线程首次使用时可能段错误："
+        "导入 core.media.decode 之后 Pillow 仍未初始化，多线程首次使用时可能段错误："
         f"{completed.stdout.decode()}{completed.stderr.decode()}"
     )
 

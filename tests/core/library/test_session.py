@@ -16,6 +16,7 @@ from gallery.core.library.session import (
     BROWSE_MODE_FLAT,
     DEFAULT_SORT_FACET,
     MAX_RECENT_ROOTS,
+    SESSION_VERSION,
     SessionState,
     WindowGeometry,
     load_session,
@@ -247,3 +248,30 @@ def test_with_ordering_keeps_other_fields() -> None:
     assert updated.browse_mode == BROWSE_MODE_FLAT
     assert state.group_facet is None
     assert state.sort_facet is None
+
+
+def test_a_file_from_another_version_is_not_parsed_as_this_one(tmp_path: Path) -> None:
+    """**版本号要真的被读** —— 它当初写下来的理由就是「用于迁移或丢弃」。
+
+    过去 ``SESSION_VERSION`` 只写不读，于是一份结构不同的老文件会被照当前结构
+    解析出一个半懂不懂的状态：字段名对不上就默默用默认值，看起来像「上次的界面
+    设置自己丢了」，而真相是这份文件根本不是这一版写的。
+    """
+    path = paths.app_state_file(base=tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "version": SESSION_VERSION + 1,
+                "recent_roots": [str(tmp_path / "别的版本的库")],
+                "sort_facet": "captured",
+                "browse_mode": "albums",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    state = load_session(base=tmp_path)
+
+    assert state.recent_roots == ()
+    assert state.sort_facet != "captured"

@@ -279,3 +279,21 @@ def test_open_for_library_and_external_cache(tmp_path: Path) -> None:
     assert outside.path is not None and "系统缓存" in str(outside.path)
     inside.close()
     outside.close()
+
+
+def test_after_close_the_index_no_longer_holds_a_path(tmp_path: Path) -> None:
+    """**关掉之后不该还能被偷偷重新打开。**
+
+    过去 ``close()`` 只把 ``_connection`` 置空、``_path`` 留着，于是下一次
+    ``store`` 会在「已经关掉」的状态上重新 ``connect`` 同一个文件 —— 在多数平台上
+    这会成功（SQLite 自己管着自己的生命周期），所以它一直没人发现，但它意味着
+    「关掉」其实没说清：数据去哪了、还写不写，都不确定。
+    """
+    index = FacetIndex(tmp_path / "index.db")
+    index.store([(_ref(tmp_path, "一张.jpg"), FULL)])
+    assert index.persistent
+
+    index.close()
+
+    assert not index.persistent
+    assert index.path is None, "路径还在，就会有人重新连上它"

@@ -29,20 +29,17 @@ class GalleryError(Exception):
         return self.message
 
 
-class LibraryError(GalleryError):
-    """库本身不可用（不存在、不是目录、没有读取权限）。"""
+class LibraryNotAccessibleError(GalleryError):
+    """库根目录不存在、不是目录，或无法读取。
 
-
-class LibraryNotAccessibleError(LibraryError):
-    """库根目录不存在、不是目录，或无法读取。"""
+    **中间那层 ``LibraryError`` 已删**：它只有这一个子类，全仓库没有一处按它
+    ``except`` 或拿它做类型判断 —— 一个从不作为「父类契约」被使用的基类，
+    留着只会让人以为「捕获 ``LibraryError``」是一条真实的退路。
+    """
 
 
 class ConfigError(GalleryError):
     """``config.toml`` 缺失以外的配置问题（语法错误、字段类型或取值非法）。"""
-
-
-class UnsupportedFormatError(GalleryError):
-    """文件扩展名不在支持列表内。"""
 
 
 class ImageDecodeError(GalleryError):
@@ -92,11 +89,9 @@ __all__ = [
     "DeleteError",
     "GalleryError",
     "ImageDecodeError",
-    "LibraryError",
     "LibraryNotAccessibleError",
     "MetadataError",
     "PasteError",
     "RenameError",
     "TransferError",
-    "UnsupportedFormatError",
 ]

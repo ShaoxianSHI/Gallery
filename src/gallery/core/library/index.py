@@ -118,10 +118,22 @@ class FacetIndex:
         return self._connection is not None and self._path is not None
 
     def close(self) -> None:
+        """关掉连接。**连带把 ``_path`` 一起清掉**。
+
+        过去只清了 ``_connection``，于是 ``_open`` 里那两句 ``_path is None`` 的
+        分支有一半永远走不到：文件路径还在，下次 ``store`` 会在关掉的状态上重新
+        ``sqlite3.connect`` 同一个文件 —— 在多数平台上这会成功（SQLite 自己管着
+        自己的生命周期），但它是「已经关掉的东西被偷偷重新打开」，只有代码路径对了
+        才谈得上别的。
+
+        顺带把内存那一份也放掉，免得关了还占着。
+        """
         with self._lock:
             if self._connection is not None:
                 self._connection.close()
                 self._connection = None
+            self._path = None
+            self._memory.clear()
 
     def _open(self) -> None:
         if self._path is None:
@@ -223,6 +235,11 @@ class FacetIndex:
 
         照片被移走 / 改名之后，它那一行不会自己消失。索引是缓存，所以这纯属省空间，
         失败也不影响功能 —— 因此不抛异常。
+
+        **目前唯一的调用者是它自己的测试。** 留着是因为「清掉已经不存在的照片那一行」
+        是索引该有的完整能力，而删掉接口再想加回来时，多半又要重新设计一遍签名。
+        等到有人真拿它去清一轮（``forget_paths`` 那条路，或下次做完整重建）时，
+        那个调用者会自然出现。
         """
         keep = {str(path) for path in live}
         with self._lock:
