@@ -351,7 +351,7 @@ def test_every_menu_is_split_into_the_same_four_groups(
             ["重命名…", *write],
             ["显示元数据信息", "复制元数据"],
         ],
-        "多选照片": [[*look], copy, write, ["显示元数据信息"]],
+        "多选照片": [[*look], copy, write],
         "大图": [
             ["退出", "在默认应用中打开", *look],
             copy,
@@ -518,6 +518,10 @@ def test_multi_selection_hides_single_item_actions(
     **藏掉的只是那一行，组块与分隔线原样留着**（ADR 0023 决策 2）：于是第一组只剩
     「在访达中显示」、第三组只剩「移到废纸篓」，而用户在单选与多选之间切换时看到的是
     同一组块 —— 分隔线的位置不跳。
+
+    唯独**第四组整组消失**（连同它前面那道分隔线）：「显示元数据信息」与「复制元数据」
+    讲的都是**这一张**照片（面板显示的是光标那一格），选区里另外那一张没有被指定的
+    理由。早先只藏了后者、把前者留着，那是在同一段里用两套判据。
     """
     _enter_album(qt_app, window)
     assert window._model.rowCount() == len(PHOTO_NAMES)
@@ -535,8 +539,6 @@ def test_multi_selection_hides_single_item_actions(
         "移动到相册",
         "",
         "移到废纸篓",
-        "",
-        "显示元数据信息",
     ]
 
 
