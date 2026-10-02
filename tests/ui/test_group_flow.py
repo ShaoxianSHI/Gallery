@@ -138,6 +138,25 @@ def _library(tmp_path: Path, make_photo: Callable[..., Path], names: Sequence[st
     return root
 
 
+#: 测试里的修改时间基准（2023-11-14 前后）。具体值无所谓，只要先后是确定的。
+MTIME_BASE = 1_700_000_000.0
+
+
+def _touch(path: Path, step: float) -> None:
+    """把照片的修改时间钉到 :data:`MTIME_BASE` + ``step``。
+
+    默认排序按**修改时间**（``DEFAULT_SORT_FACET``），于是未分组的顺序不能靠
+    「谁先被创建」：文件系统给的是真实时间，那不是断言能说清楚的东西。
+    """
+    os.utime(path, (MTIME_BASE + step, MTIME_BASE + step))
+
+
+def _touch_all(root: Path, names: Sequence[str]) -> None:
+    """按**给定顺序**给这些照片钉修改时间（第几个就是第几个时间点）。"""
+    for step, name in enumerate(names):
+        _touch(root / name, float(step))
+
+
 def _open(
     qt_app: QApplication,
     root: Path,
@@ -260,10 +279,11 @@ def test_grouping_turns_the_level_into_group_cards(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path], fake_facet_source: object
 ) -> None:
     root = _library(tmp_path, make_photo, list(DATES))
+    _touch_all(root, sorted(DATES))  # 默认排序按修改时间，钉死这一层未分组的顺序
     window = _open(qt_app, root, session_base=tmp_path / "状态")
     _settle(qt_app, window)
-    # 还没分组时这一层按**拍摄时间**排（默认排序字段），没写时间的沉到最后
-    assert _labels(window) == ["去年十二月.jpg", "三月.jpg", "四月.jpg", "没有时间.jpg"]
+    # 还没分组时这一层就是那四张照片，顺序按钉好的修改时间
+    assert _labels(window) == sorted(DATES)
 
     window.set_group_facet("captured_month")
     _settle(qt_app, window, groups=True)
@@ -376,7 +396,7 @@ def test_opening_a_library_resolves_places_for_the_whole_library(
     window = _open(qt_app, root, session_base=tmp_path / "状态")
     _settle(qt_app, window)
 
-    # 没有分组，就是普通的三张照片（默认按拍摄时间排）
+    # 没有分组，就是普通的三张照片（默认按修改时间排）
     assert sorted(_labels(window)) == sorted(["三月.jpg", "四月.jpg", "去年十二月.jpg"])
     stored = window._library.cached_facets(
         [PhotoRef.from_path(root / name) for name in ("三月.jpg", "四月.jpg", "去年十二月.jpg")]
@@ -440,7 +460,7 @@ def test_an_already_resolved_library_shows_no_banner(
     """空跑就**一声不吭**：横幅不许说「正在解析…」，因为根本没有东西在解析。
 
     那句话原本每次打开都闪一下，看着像又在重算一遍 —— 用户没法分辨是又在干活，
-    还是软件出了毛病。默认排序（按拍摄时间）也一样：索引里已经有的那一遍直接排序，
+    还是软件出了毛病。换成按拍摄时间排序也一样：索引里已经有的那一遍直接排序，
     不起后台线程、不报「正在读取元数据」。
     """
     root = _library(tmp_path, make_photo, ["三月.jpg", "四月.jpg"])
@@ -567,21 +587,38 @@ def test_breadcrumb_shows_the_group_name(
 # ---- 排序 ----------------------------------------------------------------------------
 
 
-def test_photos_are_sorted_by_capture_time_without_asking(
+def test_photos_are_sorted_by_modified_time_without_asking(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path], fake_facet_source: object
 ) -> None:
-    """默认排序就是按拍摄时间：没打开过排序菜单的人也该按时间看照片。
+    """默认排序就是按修改时间：没打开过排序菜单的人也该按时间看照片。
 
-    没写拍摄时间的沉到最后（ADR 0009 决策 5），菜单也要把这一项勾上 —— 否则菜单
-    与实际状态对不上，用户会以为软件没听他的话。
+    菜单也要把这一项勾上 —— 否则菜单与实际状态对不上，用户会以为软件没听他的话。
     """
     root = _library(tmp_path, make_photo, list(DATES))
+    # 故意按与拍摄时间、与文件名都不同的顺序钉修改时间：默认排的确实是它
+    _touch_all(root, ["三月.jpg", "没有时间.jpg", "四月.jpg", "去年十二月.jpg"])
     window = _open(qt_app, root, session_base=tmp_path / "状态")
     _settle(qt_app, window)
 
-    assert _labels(window) == ["去年十二月.jpg", "三月.jpg", "四月.jpg", "没有时间.jpg"]
-    assert window._sort_actions["captured"].isChecked()
+    assert _labels(window) == ["三月.jpg", "没有时间.jpg", "四月.jpg", "去年十二月.jpg"]
+    assert window._sort_actions["modified"].isChecked()
     assert window._descending_action.isEnabled() is True
+    window.close()
+
+
+def test_the_default_sort_needs_no_metadata_read(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path], fake_facet_source: object
+) -> None:
+    """默认排序只看文件本身：打开库不必等 exiftool，也就不必报那一屏进度。
+
+    没有 exiftool 的人（以及不想为一屏照片等几秒的人）拿到的是同一个首屏。
+    """
+    root = _library(tmp_path, make_photo, ["三月.jpg", "四月.jpg"])
+    window = _open(qt_app, root, session_base=tmp_path / "状态")
+    _settle(qt_app, window)
+
+    assert window._needs_facet_read() is False
+    assert _labels(window) == ["三月.jpg", "四月.jpg"]
     window.close()
 
 
@@ -603,8 +640,7 @@ def test_there_is_no_sorting_off_option(
     window.set_sort_facet(None)
     _settle(qt_app, window)
 
-    assert window._sort_actions["captured"].isChecked()
-    assert _labels(window) == ["去年十二月.jpg", "三月.jpg", "四月.jpg", "没有时间.jpg"]
+    assert window._sort_actions["modified"].isChecked()
     window.close()
 
 
@@ -746,20 +782,25 @@ def test_entering_an_album_never_shows_the_ungrouped_photos_first(
     window.close()
 
 
-def test_a_level_is_never_shown_before_its_order_is_ready(
+def test_switching_the_sort_never_shows_the_old_order_first(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path], fake_facet_source: object
 ) -> None:
-    """每一层都先攒后摆：中间那一屏按扫描顺序排的照片一帧都不许出现。
+    """换排序字段同样先攒后摆：旧顺序一帧都不许出现。
 
-    按拍摄时间排出来是「去年十二月 → 三月 → 四月」，按扫描（名称）顺序则是
-    「三月 → 四月 → 去年十二月」—— 两边不一样，所以这一条真的在看「有没有闪」。
+    钉出来的修改时间顺序是「三月 → 去年十二月 → 四月」，按拍摄时间则是
+    「去年十二月 → 三月 → 四月」—— 两边不一样，所以这一条真的在看「有没有闪」。
+    断言里数的是帧：重排期间网格要么是空的，要么直接就是排好的那一版。
     """
     root = _library(tmp_path, make_photo, ["三月.jpg", "四月.jpg", "去年十二月.jpg"])
+    _touch_all(root, ["三月.jpg", "去年十二月.jpg", "四月.jpg"])
     window = _open(qt_app, root, session_base=tmp_path / "状态")
+    _settle(qt_app, window)
+    assert _names(window) == ["三月.jpg", "去年十二月.jpg", "四月.jpg"]
 
-    assert window._staged == []  # 扫出来的一律先攒着，等顺序定下来
+    window.set_sort_facet("captured")
     seen = _watch_names(qt_app, window, lambda: window._model.rowCount() > 0)
 
+    assert _names(window) == ["去年十二月.jpg", "三月.jpg", "四月.jpg"]
     assert seen == [(), ("去年十二月.jpg", "三月.jpg", "四月.jpg")]
     window.close()
 
@@ -769,12 +810,15 @@ def test_entering_a_group_also_waits_for_the_metadata_sort(
 ) -> None:
     """进组之后再换排序字段，同样不能先闪一屏旧顺序。"""
     root = _library(tmp_path, make_photo, ["三月.jpg", "四月.jpg", "去年十二月.jpg"])
+    # 默认排序（修改时间）下这一组是「四月 → 三月」，与按拍摄时间排**反过来** ——
+    # 换字段才有东西可换，「不许闪一屏旧顺序」才真的被测到。
+    _touch_all(root, ["去年十二月.jpg", "四月.jpg", "三月.jpg"])
     window = _open(qt_app, root, session_base=tmp_path / "状态", group_facet="captured_year")
     _settle(qt_app, window, groups=True)
     window.enter_group(next(group for group in _groups(window) if group.label == "2024 年"))
     _settle(qt_app, window)
     before = _names(window)
-    assert before == ["三月.jpg", "四月.jpg"]  # 默认按名字
+    assert before == ["四月.jpg", "三月.jpg"]  # 组内按当前的排序字段（修改时间）
 
     window.set_sort_facet("captured")  # 三月（03-16）在四月（04-16）之前
     _settle(qt_app, window)

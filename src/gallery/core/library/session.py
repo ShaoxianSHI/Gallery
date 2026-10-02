@@ -17,15 +17,17 @@ from typing import Final
 
 from gallery.core import paths
 from gallery.core.atomic import read_text_or_none, write_text_atomic
-from gallery.core.metadata.facets import FACET_CAPTURED, group_facet, sort_facet
+from gallery.core.metadata.facets import FACET_MODIFIED, group_facet, sort_facet
 
 #: 最多记住几个最近打开的库。
 MAX_RECENT_ROOTS: Final = 8
 
-#: 排序字段的**界面默认值**：用户从没选过排序字段时，按拍摄时间排。
+#: 排序字段的**界面默认值**：用户从没选过排序字段时，按修改时间排。
 #:
-#: 照片是按时间发生的事，不是按文件名发生的事 —— 打开一个库想看的就是「什么时候拍的」。
-DEFAULT_SORT_FACET: Final = FACET_CAPTURED
+#: 时间才是照片之间最实在的那条线索，而**文件自己就带着它** —— 不必等 exiftool，
+#: 打开一个库就能立刻排好顺序（``FILE_FACET_IDS`` 里的字段才做得到这一点）。
+#: 想按拍摄时间排的，「排序」菜单里有那一项，读一次元数据即可切过去。
+DEFAULT_SORT_FACET: Final = FACET_MODIFIED
 
 #: 会话文件格式版本。将来结构变化时用于迁移或丢弃。
 SESSION_VERSION: Final = 1
@@ -203,7 +205,7 @@ def _parse_sort_facet(value: object) -> str | None:
     """排序字段 id；没存过或来路不明都当「没选过」，由 :data:`DEFAULT_SORT_FACET` 接手。
 
     曾经有一版把「明确不排序」记成哨兵 ``"none"``，那一项后来从菜单里删掉了 ——
-    读到它按「没选过」处理即可，用户下次打开就是默认的拍摄时间。
+    读到它按「没选过」处理即可，用户下次打开就是默认排序字段。
     """
     if isinstance(value, str) and sort_facet(value) is not None:
         return value

@@ -208,8 +208,11 @@ def test_with_metadata_visible_keeps_other_fields() -> None:
 
 
 def test_no_sort_facet_means_the_default_one() -> None:
-    """从没选过排序字段：按拍摄时间排（``DEFAULT_SORT_FACET``）。"""
-    assert SessionState().resolved_sort_facet() == DEFAULT_SORT_FACET == "captured"
+    """从没选过排序字段：按修改时间排（``DEFAULT_SORT_FACET``）。
+
+    默认字段是「只看文件本身就能拿到」的那一档：打开库不必等 exiftool。
+    """
+    assert SessionState().resolved_sort_facet() == DEFAULT_SORT_FACET == "modified"
 
 
 @pytest.mark.parametrize("bad", ["没有这个字段", "keyword", "", 3, None, ["captured"], "none"])
@@ -217,7 +220,7 @@ def test_never_chosen_and_bogus_ids_fall_back_to_the_default(tmp_path: Path, bad
     """会话里没这一项、来路不明、或是早先那个「不排序」哨兵 —— 一律当「没选过」。
 
     菜单里没有「不排序」了，于是默认值就是唯一的退路：任何不是真排序字段的值都
-    回到按拍摄时间排，而不是让界面去认一个已经不存在的选择。
+    回到按修改时间排，而不是让界面去认一个已经不存在的选择。
     """
     file = paths.app_state_file(base=tmp_path)
     file.parent.mkdir(parents=True)

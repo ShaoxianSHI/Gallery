@@ -132,6 +132,19 @@ def names(window: MainWindow) -> list[str]:
     return [entry.name for entry in window._model.entries()]
 
 
+#: 测试里的修改时间基准（2023-11-14 前后）。具体值无所谓，只要先后是确定的。
+MTIME_BASE = 1_700_000_000.0
+
+
+def touch(path: Path, step: float) -> None:
+    """把照片的修改时间钉到 :data:`MTIME_BASE` + ``step``。
+
+    默认排序按**修改时间**（``DEFAULT_SORT_FACET``），于是顺序不能靠「谁先被创建」：
+    文件系统给的是真实时间，那不是断言能说清楚的东西。
+    """
+    os.utime(path, (MTIME_BASE + step, MTIME_BASE + step))
+
+
 # ---- 新增 ---------------------------------------------------------------------
 
 
@@ -139,16 +152,17 @@ def test_a_photo_dropped_in_shows_up_without_reopening(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
 ) -> None:
     """访达里丢进来一张照片：网格上立刻多一格，不用重开库。"""
-    make_photo("原来那张.jpg")
+    touch(make_photo("原来那张.jpg"), 0)
     window, watcher = open_window(qt_app, tmp_path)
     try:
         newcomer = make_photo("刚丢进来.jpg")
+        touch(newcomer, 1)
 
         deliver(qt_app, window, watcher, LibraryChange(ChangeKind.ADDED, newcomer))
 
         assert window._model.rowCount() == 2
-        # 网格按名字排（相册在前、同类按名称）：「刚」排在「原」前面。
-        assert names(window) == ["刚丢进来.jpg", "原来那张.jpg"]
+        # 默认按修改时间排：先在的那张在前。
+        assert names(window) == ["原来那张.jpg", "刚丢进来.jpg"]
     finally:
         window.close()
 
@@ -156,12 +170,13 @@ def test_a_photo_dropped_in_shows_up_without_reopening(
 def test_a_new_photo_lands_in_its_sorted_place_not_at_the_end(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
 ) -> None:
-    """插在正确的位置：名字排中间的照片就该待在中间。"""
-    for name in ("a.jpg", "c.jpg"):
-        make_photo(name)
+    """插在正确的位置：排在中间的照片就该待在中间，而不是追加到末尾。"""
+    for step, name in enumerate(("a.jpg", "c.jpg")):
+        touch(make_photo(name), float(step))
     window, watcher = open_window(qt_app, tmp_path)
     try:
         middle = make_photo("b.jpg")
+        touch(middle, 0.5)  # 比 a 新、比 c 旧
 
         deliver(qt_app, window, watcher, LibraryChange(ChangeKind.ADDED, middle))
 
@@ -173,13 +188,14 @@ def test_a_new_photo_lands_in_its_sorted_place_not_at_the_end(
 def test_in_flat_mode_a_photo_from_a_subfolder_is_sorted_among_all(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
 ) -> None:
-    """平铺模式整棵子树都摆在屏幕上：新照片按名字插进整层，而不是追加到末尾。"""
-    make_photo("b.jpg", directory=tmp_path / "旅行")
-    make_photo("d.jpg")
+    """平铺模式整棵子树都摆在屏幕上：新照片插进整层的正确位置，而不是追加到末尾。"""
+    touch(make_photo("b.jpg", directory=tmp_path / "旅行"), 0)
+    touch(make_photo("d.jpg"), 1)
     window, watcher = open_window(qt_app, tmp_path, browse_mode=BROWSE_MODE_FLAT)
     try:
         assert names(window) == ["b.jpg", "d.jpg"]
         nested = make_photo("c.jpg", directory=tmp_path / "旅行")
+        touch(nested, 0.5)
 
         deliver(qt_app, window, watcher, LibraryChange(ChangeKind.ADDED, nested))
 
