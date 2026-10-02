@@ -20,6 +20,10 @@
 实测约 5 像素、每行只有 18 像素高，菜单挤得像 Windows 的。放大它们只能靠样式表 ——
 Qt 没有「菜单圆角」「菜单行高」这样的度量可以改。
 
+最右那一列除了快捷键，还能挂**只画不生效**的键位提示（:meth:`ShortcutColumnMenu.show_key`，
+「打开」行的 :data:`OPEN_KEY_HINT` 就是一枚）。那仍然不违反「不改别人的动作」这条规矩：
+提示只落在**这一次弹出**的这份菜单上，用完即弃，那一份共用的 ``QAction`` 一个字节都没动。
+
 这里有一个必须记住的副作用（实测）：**只要给 ``QMenu`` 加了样式表，面板就不再由
 macOS 样式画**，底色会掉回系统菜单色（浅色 ``#ececec``）。所以样式表里必须把底色
 **写死成窗口那块底色**，否则刚统一好的「一整块底色」会在按下菜单的那一刻又破功。
@@ -32,6 +36,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any
 
 from PySide6.QtCore import QPointF, QRect, Qt
 from PySide6.QtGui import (
@@ -268,6 +273,14 @@ SHORTCUT_RIGHT_INSET = 12
 #: 原生菜单在这一段是很宽的，这里取 20。
 SHORTCUT_LABEL_GAP = 20
 
+#: 「打开」那一行在最右列上写的键位提示（**只画不生效**，见
+#: :meth:`ShortcutColumnMenu.show_key`）。
+#:
+#: 写「回车」而不是 Qt 自己的 ``↵``：那一列里其余的字样（⌘ / ⇧ / ⌫ / ⎋）是平台约定，
+#: 没有对应的中文，而回车是这套界面里唯一一条**用户自己知道怎么按**的键 —— 网格里回车
+#: 本来就开着当前项（``PhotoGrid.keyPressEvent``），菜单此前一个字都没写，用户不知道这件事。
+OPEN_KEY_HINT = "回车"
+
 
 def _modifier_glyph(modifier: Qt.KeyboardModifier) -> str:
     """一个修饰符在系统写法下的符号（``⌘`` / ``⇧`` / ``⌥`` / ``⌃``）。"""
@@ -312,7 +325,20 @@ class ShortcutColumns:
 
     @classmethod
     def measure(cls, shortcuts: Iterable[QKeySequence], metrics: QFontMetrics) -> ShortcutColumns:
-        parts = [split_shortcut(shortcut) for shortcut in shortcuts]
+        return cls.measure_parts((split_shortcut(s) for s in shortcuts), metrics)
+
+    @classmethod
+    def measure_parts(
+        cls,
+        parts: Iterable[tuple[frozenset[Qt.KeyboardModifier], str]],
+        metrics: QFontMetrics,
+    ) -> ShortcutColumns:
+        """按**已经拆开**的「修饰符 + 键位」量一次（拆法见 :func:`split_shortcut`）。
+
+        :meth:`measure` 只认 ``QKeySequence``，而菜单里还可能有只挂了一枚提示、**压根没有
+        快捷键**的行（见 :meth:`ShortcutColumnMenu.show_key`）—— 那些量不到，只能从这里进。
+        """
+        parts = list(parts)
         return cls(
             key_width=max(
                 (metrics.horizontalAdvance(key_text) for _, key_text in parts if key_text),
@@ -363,7 +389,43 @@ class ShortcutColumnMenu(QMenu):
     画之前得先给这一块**预留宽度**（见 :meth:`reserve_shortcut_columns`）：快捷键不在条目
     文字里，Qt 不会替它腾地方，不预留就压在标签上（实测菜单宽 143、列块要画到 x≈100，
     而「在访达中显示」一直伸到 98；预留之后 218）。
+
+    那一列里还可能有**只画不生效**的提示（见 :meth:`show_key`）：它一样要占位置、一样要
+    参与量列宽，只是不来自 ``QAction``。
     """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        #: 只画不生效的键位提示：动作 → 那一列要写的字。**不挂在动作上**，所以共用同一份
+        #: ``QAction`` 的菜单栏那边看不到它（见 :meth:`show_key`）。
+        self._key_hints: dict[QAction, str] = {}
+
+    def show_key(self, action: QAction, text: str) -> None:
+        """给某一行挂一枚**只画不生效**的键位提示，画在最右那一列（见 :data:`OPEN_KEY_HINT`）。
+
+        **刻意不去 ``setShortcut``**：``QAction`` 是菜单栏与右键菜单共用的，挂在动作上
+        就成了整个窗口的快捷键 —— 而回车网格自己已经处理了（``PhotoGrid.keyPressEvent``），
+        再抢一遍就要和它打架。菜单是**用完即弃**的，提示挂在这一次的那份菜单上，正合适。
+
+        因此那一行**没有** ``QAction`` 快捷键，:func:`prepare` 也就没什么要关的 ——
+        Qt 本来就不会画它（它画的是 ``QAction`` 上的快捷键），两个版本不会重叠。
+        """
+        self._key_hints[action] = text
+
+    def key_cell(self, action: QAction) -> tuple[frozenset[Qt.KeyboardModifier], str] | None:
+        """这一行要画进最右列的内容：修饰符集合 + 键位文字。没有就返回 ``None``。
+
+        带快捷键的按快捷键拆；只挂了一枚提示的没有修饰符，键位就是提示本身。
+        """
+        hint = self._key_hints.get(action)
+        if hint is not None:
+            return frozenset(), hint
+        modifiers, key_text = split_shortcut(action.shortcut())
+        return (modifiers, key_text) if key_text else None
+
+    def key_cells(self) -> list[tuple[frozenset[Qt.KeyboardModifier], str]]:
+        """整张菜单里要画进最右列的内容（分隔线与空白行自然被滤掉）。"""
+        return [cell for cell in map(self.key_cell, self.actions()) if cell is not None]
 
     def has_submenu_arrows(self) -> bool:
         """这张菜单里有没有子菜单行。"""
@@ -372,31 +434,29 @@ class ShortcutColumnMenu(QMenu):
     def owns_submenu_arrows(self) -> bool:
         """子菜单的右箭头是否**由我们画**。
 
-        两个条件缺一不可：有子菜单行（有箭头可画），**而且**这张菜单里有快捷键（字母列
-        存在，箭头才有地方对齐）。只满足前一个就自己画是不行的 —— :func:`apply_style` 会在
-        同一个判断上把 Qt 那个关掉，结果箭头谁也不画，整块消失。
+        两个条件缺一不可：有子菜单行（有箭头可画），**而且**这张菜单里最右列确实有东西
+        （字母列存在，箭头才有地方对齐）。只满足前一个就自己画是不行的 —— :func:`apply_style`
+        会在同一个判断上把 Qt 那个关掉，结果箭头谁也不画，整块消失。
         """
-        return self.has_submenu_arrows() and any(
-            not action.isSeparator() and not action.shortcut().isEmpty()
-            for action in self.actions()
-        )
+        return self.has_submenu_arrows() and bool(self.key_cells())
 
     def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         super().paintEvent(event)
         rows = [action for action in self.actions() if not action.isSeparator()]
-        entries = [action for action in rows if not action.shortcut().isEmpty()]
         metrics = QFontMetrics(self.font())
-        if not entries:
+        cells = self.key_cells()
+        if not cells:
             return
-        columns = ShortcutColumns.measure([action.shortcut() for action in entries], metrics)
+        columns = ShortcutColumns.measure_parts(cells, metrics)
         align = int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
         for action in rows:
-            if action.shortcut().isEmpty():
+            cell = self.key_cell(action)
+            if cell is None:
                 if self.owns_submenu_arrows() and action.menu() is not None:
                     self._paint_arrow(action, columns, metrics)
                 continue
+            modifiers, key_text = cell
             rect = self.actionGeometry(action)
-            modifiers, key_text = split_shortcut(action.shortcut())
             key_rect, modifier_rects = columns.cells(rect.right(), rect.top(), rect.height())
             if action is self.activeAction():
                 role = QPalette.ColorRole.HighlightedText
@@ -447,16 +507,12 @@ class ShortcutColumnMenu(QMenu):
         painter.end()
 
     def reserve_shortcut_columns(self) -> None:
-        """把菜单撑到「最长标签 + 快捷键列块」那么宽（没有快捷键就什么也不做）。"""
-        entries = [
-            action
-            for action in self.actions()
-            if not action.isSeparator() and not action.shortcut().isEmpty()
-        ]
-        if not entries:
+        """把菜单撑到「最长标签 + 最右列」那么宽（那一列空着就什么也不做）。"""
+        cells = self.key_cells()
+        if not cells:
             return
         metrics = QFontMetrics(self.font())
-        columns = ShortcutColumns.measure([action.shortcut() for action in entries], metrics)
+        columns = ShortcutColumns.measure_parts(cells, metrics)
         labels = max(
             metrics.horizontalAdvance(action.text())
             for action in self.actions()
@@ -598,7 +654,7 @@ def build_group_menu(actions: MenuActions) -> QMenu:
     摆两个点不动的条目，再加一句解释为什么点不动，等于把一个功能缺失讲了三遍。
     """
     menu = ShortcutColumnMenu()
-    menu.addAction(actions.open_entry)
+    _add_open(menu, actions)
     menu.addAction(actions.copy_group)
     return menu
 
@@ -654,7 +710,18 @@ def prepare(menu: QMenu) -> None:
             current.reserve_shortcut_columns()
 
 
-def _add_open_and_reveal(menu: QMenu, actions: MenuActions, *, multiple: bool) -> None:
+def _add_open(menu: ShortcutColumnMenu, actions: MenuActions) -> None:
+    """「打开」那一行，并在最右列挂上**回车**这枚提示。
+
+    三个落点（照片 / 相册 / 分组）都从这里走，所以提示也是**每一级都有**：开大图、进相册、
+    进分组都是同一个键，不必按落点去记两套。多选时这一行压根不出现（见
+    :func:`_add_open_and_reveal`），自然也没有提示可挂。
+    """
+    menu.addAction(actions.open_entry)
+    menu.show_key(actions.open_entry, OPEN_KEY_HINT)
+
+
+def _add_open_and_reveal(menu: ShortcutColumnMenu, actions: MenuActions, *, multiple: bool) -> None:
     """照片与相册共用的上半截：打开 → 在访达中显示 → 拷贝 → 拷贝路径 → 重命名 → 废纸篓。
 
     中间只留一道分隔线：多选时「打开」与「重命名」都不出现，若在那里各插一道，
@@ -664,7 +731,7 @@ def _add_open_and_reveal(menu: QMenu, actions: MenuActions, *, multiple: bool) -
     菜单里的先后一致。两条都作用于整个选择，多选时都留着。
     """
     if not multiple:
-        menu.addAction(actions.open_entry)
+        _add_open(menu, actions)
     menu.addAction(actions.reveal)
     menu.addAction(actions.copy)
     menu.addAction(actions.copy_path)
@@ -697,6 +764,7 @@ __all__ = [
     "MENU_SEPARATOR_MIX_DARK",
     "MENU_SEPARATOR_MIX_LIGHT",
     "MODIFIER_ORDER",
+    "OPEN_KEY_HINT",
     "SHORTCUT_LABEL_GAP",
     "MENU_INSET",
     "MENU_ITEM_PADDING",

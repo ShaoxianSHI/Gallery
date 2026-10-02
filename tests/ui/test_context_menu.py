@@ -35,7 +35,10 @@ from gallery.core.library.session import (  # noqa: E402
     SessionState,
     save_session,
 )
-from gallery.ui import desktop  # noqa: E402
+from gallery.ui import (
+    desktop,  # noqa: E402
+    menus,  # noqa: E402
+)
 from gallery.ui.browser.grid import PhotoGrid  # noqa: E402
 from gallery.ui.browser.model import PhotoListModel  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
@@ -250,6 +253,21 @@ def _enabled(menu: QMenu, label: str) -> bool:
     raise AssertionError(f"菜单里没有「{label}」，实际有：{_texts(menu)}")
 
 
+def _key_hint(menu: QMenu, label: str) -> str:
+    """那一行最右列上写着什么（空字符串 = 那一列什么都没有）。
+
+    走 :meth:`menus.ShortcutColumnMenu.key_cell`：快捷键与提示在这一列里是同一个出口，
+    拼菜单的地方也不该分出两条路来（见 ``ui.menus`` 里 ``show_key``）。
+    """
+    assert isinstance(menu, menus.ShortcutColumnMenu)
+    action = next(a for a in menu.actions() if a.text() == label)
+    cell = menu.key_cell(action)
+    assert cell is not None, f"「{label}」那一列是空的"
+    modifiers, text = cell
+    assert not modifiers, f"「{label}」不该带修饰符，实际有：{sorted(str(m) for m in modifiers)}"
+    return text
+
+
 def test_photo_menu_items(qt_app: QApplication, window: MainWindow) -> None:
     """照片：访达 / 拷贝 / 拷贝路径挨在一起，写操作单列一段，元数据收在最后。"""
     _enter_album(qt_app, window)
@@ -352,6 +370,71 @@ def test_background_menu_has_no_file_actions(window: MainWindow) -> None:
 def test_outdated_row_yields_no_menu(window: MainWindow) -> None:
     """行号过期（扫描正在流式上屏）时宁可不弹，也不弹一份错的。"""
     assert window.context_menu_for(9999) is None
+
+
+def test_open_says_return_on_every_level_that_has_it(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """「打开」出现在哪一级，最右列就都要写着**回车**。
+
+    网格里回车本来就开着当前项（``PhotoGrid.keyPressEvent``），而照片 / 相册 / 分组这三张
+    菜单此前一个字都没写 —— 用户对着「打开」不知道还能这么按。开大图、进相册、进分组是
+    同一个键，所以三处是同一句提示，不是各写各的。
+
+    **这枚提示只画不生效**（``ShortcutColumnMenu.show_key``），所以那个共用的 ``QAction``
+    上的快捷键仍然必须空着：挂上去它就成了整个窗口的回车，与网格自己的处理打架。
+    """
+    # 相册要在**库根**看（进了京都就只剩照片），所以这一段排在进相册之前 —— 换浏览方式
+    # 不会退回上一层，顺序写反了相册那一行就找不到（实测 row -1）。
+    _show_albums(qt_app, window)
+    album_row = window._model.row_of_path(window._library.root / "京都")
+    assert album_row >= 0
+    album = _context_at(window, album_row)
+    assert album is not None
+
+    assert _texts(album)[0] == "打开"
+    assert _key_hint(album, "打开") == menus.OPEN_KEY_HINT
+
+    _enter_album(qt_app, window)
+    photo_row = window._model.row_of_path(window._library.root / "京都" / PHOTO_NAMES[0])
+    assert photo_row >= 0
+    photo = _context_at(window, photo_row)
+    assert photo is not None
+
+    assert _texts(photo)[0] == "打开"
+    assert _key_hint(photo, "打开") == menus.OPEN_KEY_HINT
+
+    photo_ref = _photo(window)
+    window._model.reorder(
+        [GroupRef(facet="camera", key="canon", label="Canon EOS R5", photos=(photo_ref,))]
+    )
+    qt_app.processEvents()
+    _select(window._grid, window._model, (0,))
+    group = _context_at(window, 0)
+    assert group is not None
+
+    assert _texts(group)[0] == "打开"
+    assert _key_hint(group, "打开") == menus.OPEN_KEY_HINT
+
+    # 界面上的字面就钉死成「回车」：常量与它对不上时，宁可这里红一次。
+    assert menus.OPEN_KEY_HINT == "回车"
+
+    # 提示挂在这一次弹出的菜单上，共用的动作一个字节都没动：三张菜单用的都是**同一个**
+    # ``QAction``，所以查这一处就够（挂上去它就成了整个窗口的回车）。
+    assert window._open_entry_action.shortcut().isEmpty(), "「打开」不该被真的注册成回车"
+
+
+def test_multi_selection_has_no_open_row_to_hint(qt_app: QApplication, window: MainWindow) -> None:
+    """多选时「打开」整行都不出现，那枚提示也跟着没 —— 打开哪一张说不清。"""
+    _enter_album(qt_app, window)
+    _select(window._grid, window._model, (0, 1))
+
+    menu = _context_at(window, 0)
+
+    assert menu is not None
+    assert "打开" not in _texts(menu)
+    assert isinstance(menu, menus.ShortcutColumnMenu)
+    assert menus.OPEN_KEY_HINT not in [text for _, text in menu.key_cells()]
 
 
 # ---- 命令 -------------------------------------------------------------------

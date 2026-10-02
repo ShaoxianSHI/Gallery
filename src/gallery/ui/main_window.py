@@ -480,8 +480,11 @@ class MainWindow(QMainWindow):
         self._undo_action.triggered.connect(self.undo_last_write)
 
         # ---- 右键菜单新增的那几条（见 ADR 0014）--------------------------------
-        # 「打开」刻意不给快捷键：⌘O 已经是「打开文件夹…」，而网格里本来就能用
-        # 双击 / 回车打开（见 PhotoGrid.keyPressEvent）。
+        # 「打开」刻意不给**真**快捷键：⌘O 已经是「打开文件夹…」，而回车网格自己已经处理
+        # 了（见 PhotoGrid.keyPressEvent），抢过来只会和它打架。
+        #
+        # 菜单里那枚「回车」是 ui.menus 挂在**这一次弹出的菜单**上的提示，只画不生效
+        # （ShortcutColumnMenu.show_key），这个共用的 QAction 一个字节都没动。
         self._open_entry_action = QAction("打开", self)
         self._open_entry_action.triggered.connect(self.open_current_entry)
 

@@ -25,6 +25,7 @@ pytest.importorskip("PySide6")
 from PIL import Image  # noqa: E402
 from PySide6.QtCore import QPoint, Qt  # noqa: E402
 from PySide6.QtGui import (  # noqa: E402
+    QAction,
     QColor,
     QFontMetrics,
     QKeySequence,
@@ -382,6 +383,59 @@ def test_menus_reserve_room_for_the_shortcut_columns(
         menu.close()
 
 
+@pytest.mark.parametrize("kind", ["photo", "album"])
+def test_open_hint_is_really_painted_in_the_key_column(
+    qt_app: QApplication, window: MainWindow, kind: str
+) -> None:
+    """「打开」那一行的最右列里**真的有字** —— 那不是 ``QAction`` 的快捷键，是我们自己画的。
+
+    抓一张图来数墨迹，而不是只查 ``key_cells()``：只查的话，将来谁把 ``paintEvent`` 里
+    画提示的那一段删掉，测试还是绿的，而菜单上就只剩一个空位置 —— 用户看到的正是
+    「快捷键图标没出来」。
+
+    顺带钉住**画在对的位置**：墨迹必须落在这一行的键位列里，且不越出这一行的上下边
+    （越出去就压到隔壁行上去了）。
+    """
+    window._stack.setCurrentWidget(window._grid_page)
+    row = _row_for(window, kind)
+    assert row is not None
+
+    menu = window.context_menu_for(row)
+
+    assert menu is not None
+    assert isinstance(menu, menus.ShortcutColumnMenu)
+    open_row = next(action for action in menu.actions() if action.text() == "打开")
+    menu.popup(QPoint(60, 60))
+    try:
+        ink = _ink_in(menu, open_row)
+    finally:
+        menu.close()
+
+    assert ink, f"「打开」那一行的最右列是空的（{menus.OPEN_KEY_HINT} 没画出来）"
+
+
+def _ink_in(menu: QMenu, action: QAction) -> int:
+    """「这一行的键位列」里画出来多少墨迹（像素）。
+
+    位置按 :meth:`menus.ShortcutColumnMenu.cells` 算 —— 那正是 ``paintEvent`` 用的那套
+    几何。抓图按设备像素给（Retina 上是两倍），几何却是逻辑像素，两边要按倍率对起来。
+    """
+    assert isinstance(menu, menus.ShortcutColumnMenu)
+    background = menu.palette().color(QPalette.ColorRole.Window).rgb()
+    metrics = QFontMetrics(menu.font())
+    columns = menus.ShortcutColumns.measure_parts(menu.key_cells(), metrics)
+    rect = menu.actionGeometry(action)
+    key_rect, _ = columns.cells(rect.right(), rect.top(), rect.height())
+    image = menu.grab().toImage()
+    scale = image.devicePixelRatio()
+    return sum(
+        1
+        for y in range(round(key_rect.top() * scale), round(key_rect.bottom() * scale) + 1)
+        for x in range(round(key_rect.left() * scale), round(key_rect.right() * scale) + 1)
+        if image.pixelColor(x, y).rgb() != background
+    )
+
+
 @pytest.mark.parametrize("kind", ["photo", "album", "blank"])
 def test_shortcut_columns_start_after_the_longest_label(
     qt_app: QApplication, window: MainWindow, kind: str
@@ -398,11 +452,12 @@ def test_shortcut_columns_start_after_the_longest_label(
     menu = window.context_menu_for(row)
 
     assert menu is not None
+    assert isinstance(menu, menus.ShortcutColumnMenu)
     metrics = QFontMetrics(menu.font())
     rows = [a for a in menu.actions() if not a.isSeparator()]
-    columns = menus.ShortcutColumns.measure(
-        [a.shortcut() for a in rows if not a.shortcut().isEmpty()], metrics
-    )
+    # 按**真正要画出来的内容**量，而不是只量快捷键：「打开」那枚提示也在这一列里，
+    # 漏掉它，这一列就会按最窄的那个键（C / ⎋）去算，然后压到「回车」上。
+    columns = menus.ShortcutColumns.measure_parts(menu.key_cells(), metrics)
     rect = menu.actionGeometry(rows[0])
     key_rect, modifier_rects = columns.cells(rect.right(), rect.top(), rect.height())
     block_left = min([key_rect.left(), *[r.left() for r in modifier_rects.values()]])
@@ -413,13 +468,17 @@ def test_shortcut_columns_start_after_the_longest_label(
 
 
 def _needed_width(menu: QMenu) -> int:
-    """菜单至少要有多宽才装得下「最长标签 + 间距 + 列块」。"""
+    """菜单至少要有多宽才装得下「最长标签 + 间距 + 最右列」。
+
+    最右列按 :meth:`menus.ShortcutColumnMenu.key_cells` 数，**不能只数快捷键** ——
+    「打开」那枚只画不生效的提示也在那一列里（见 ``ui.menus`` 里 ``show_key``），漏掉它
+    这条断言就会放过「菜单不够宽、把提示压到标签上」这种坏法。
+    """
+    assert isinstance(menu, menus.ShortcutColumnMenu)
     metrics = QFontMetrics(menu.font())
     rows = [action for action in menu.actions() if not action.isSeparator()]
     labels = max(metrics.horizontalAdvance(action.text()) for action in rows)
-    columns = menus.ShortcutColumns.measure(
-        [action.shortcut() for action in rows if not action.shortcut().isEmpty()], metrics
-    )
+    columns = menus.ShortcutColumns.measure_parts(menu.key_cells(), metrics)
     return int(
         menus.MENU_INSET
         + menus.MENU_CHECK_GUTTER
