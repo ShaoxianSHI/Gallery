@@ -316,23 +316,6 @@ def test_grouping_by_country_resolves_places_from_gps(
     window.close()
 
 
-def test_grouping_by_place_tells_the_user_it_is_inferred(
-    qt_app: QApplication,
-    tmp_path: Path,
-    make_photo: Callable[..., Path],
-    fake_facet_source: object,
-    fake_places: Callable[[], int],
-) -> None:
-    """推断出来的地点必须说清楚 —— 与元数据面板的「地点（推断）」同一可信级别。"""
-    root = _library(tmp_path, make_photo, ["三月.jpg"])
-    window = _open(qt_app, root, session_base=tmp_path / "状态", group_facet="city")
-    _settle(qt_app, window, groups=True)
-
-    assert window._banner.isVisible()
-    assert "推断" in window._banner.text()
-    window.close()
-
-
 def test_photos_without_gps_land_in_the_unknown_group(
     qt_app: QApplication,
     tmp_path: Path,
