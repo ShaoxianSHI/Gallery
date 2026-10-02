@@ -127,6 +127,60 @@ def test_transparent_png_is_stored_losslessly(cache: ThumbnailCache, tmp_path: P
     assert raster.rgba[:4] == bytes((0, 0, 0, 0))
 
 
+def test_a_palette_png_keeps_its_transparency_across_cache_hits(
+    cache: ThumbnailCache, tmp_path: Path
+) -> None:
+    """调色板 PNG 的透明**不能只在第一次看的时候对**。
+
+    判据过去只看 ``getbands()`` 里有没有 ``A``，于是这种图被当成不透明：第一次
+    ``get()`` 返回的确实是透明的（当场 convert 出来的），但它按 JPEG 存了盘，
+    于是**第二次之后**缓存命中返回的就是不透明的了 —— 错的是写进磁盘的那一份，
+    退出重开也一样。
+    """
+    from PIL import Image
+
+    path = tmp_path / "调色板.png"
+    image = Image.new("P", (64, 32))
+    image.putpalette([0, 0, 0] * 256)
+    image.save(path, format="PNG", transparency=0)
+    image.close()
+    ref = PhotoRef.from_path(path)
+
+    first = cache.get(ref)
+    second = cache.get(ref)  # 命中缓存
+
+    assert first.has_alpha is True
+    assert entries(cache)[0].suffix == ".png", "带透明就该存 PNG，否则透明像素变成黑色"
+    assert first.rgba[:4] == second.rgba[:4] == bytes((0, 0, 0, 0))
+
+
+def test_a_rename_does_not_make_the_cache_rescan_itself(
+    cache: ThumbnailCache, counted_scans: list[int], make_photo: Callable[..., Path]
+) -> None:
+    """改名只是把条目挪个位置，**字节数没变**：记账不该因此作废。
+
+    作废的代价是下一次写入时 ``_over_limit()`` 答不出、于是付一次全目录扫描
+    （ADR 0015 正是把那一次扫描从热路径上拿掉的）。只有「目标已存在、旧的被丢掉」
+    那一步才真的少了字节。
+    """
+    path = make_photo("一张.jpg", size=(120, 90))
+    ref = PhotoRef.from_path(path)
+    cache.get(ref)
+    cache.get(ref)
+    scans_before = len(counted_scans)
+
+    # 真改一次名（大小与修改时间随之而来），再告诉缓存挪一下。
+    renamed = path.with_name("两张.jpg")
+    path.rename(renamed)
+
+    assert cache.relocate(ref, PhotoRef.from_path(renamed)) is True
+
+    assert cache._total_bytes is not None, "纯改名不该作废记账"
+    # 挪完之后再取一张：不该因此多付一次全目录扫描。
+    cache.get(PhotoRef.from_path(make_photo("另一张.jpg", size=(120, 90))))
+    assert len(counted_scans) == scans_before
+
+
 def test_corrupt_entry_is_regenerated(
     cache: ThumbnailCache, make_photo: Callable[..., Path]
 ) -> None:

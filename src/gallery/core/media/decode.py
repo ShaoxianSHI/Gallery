@@ -71,6 +71,37 @@ class RasterImage:
     def nbytes(self) -> int:
         return len(self.rgba)
 
+    @classmethod
+    def from_pil(cls, image: Image.Image, *, has_alpha: bool) -> RasterImage:
+        """把一张 PIL 图像转成 RGBA8888 并拷成 ``bytes``。
+
+        转换出来的那张中间图随即被关掉：它可能是整幅全分辨率的缓冲区，不关就是
+        一次内存泄漏。**收尾只在这一处**，两条解码路径（直接解码、读缓存条目）
+        共用它 —— 那段「convert → tobytes → finally close」不该有两份。
+        """
+        rgba = image.convert("RGBA")
+        try:
+            return cls(
+                width=rgba.width,
+                height=rgba.height,
+                rgba=rgba.tobytes(),
+                has_alpha=has_alpha,
+            )
+        finally:
+            rgba.close()
+
+
+def has_transparency(image: Image.Image) -> bool:
+    """这张图有没有需要保留的透明。
+
+    **不能只看 ``getbands()`` 里有没有 ``A``**：调色板（模式 ``P``）的 PNG 把透明
+    记在 ``info["transparency"]`` 里，``getbands()`` 返回的是 ``('P',)`` ——
+    少了这一条，那些图会被当成不透明：``convert("RGBA")`` 明明给出了 alpha 通道，
+    我们却判成没有，于是缩略图按 JPEG 存盘，透明像素**永久**变成黑色背景
+    （不是显示问题，是写进缓存之后再也回不来）。
+    """
+    return "A" in image.getbands() or "transparency" in image.info
+
 
 def decode_rgba(path: Path, *, max_edge: int | None = None, use_draft: bool = False) -> RasterImage:
     """解码 ``path`` 为 RGBA 像素。
@@ -88,21 +119,12 @@ def decode_rgba(path: Path, *, max_edge: int | None = None, use_draft: bool = Fa
                 and (image.format or "").upper() in {"JPEG", "MPO"}
             ):
                 image.draft("RGB", (max_edge, max_edge))
+            # ``exif_transpose`` 无论转不转都返回一张新图（不转时是 copy），因此
+            # 下一行的 ``thumbnail`` 改的是它自己，不会动到 ``image`` 的像素。
             oriented = ImageOps.exif_transpose(image)
             if max_edge is not None and max(oriented.size) > max_edge:
-                oriented = oriented.copy()
                 oriented.thumbnail((max_edge, max_edge), Image.Resampling.LANCZOS)
-            has_alpha = "A" in oriented.getbands()
-            rgba = oriented.convert("RGBA")
-            try:
-                return RasterImage(
-                    width=rgba.width,
-                    height=rgba.height,
-                    rgba=rgba.tobytes(),
-                    has_alpha=has_alpha,
-                )
-            finally:
-                rgba.close()
+            return RasterImage.from_pil(oriented, has_alpha=has_transparency(oriented))
     except UnidentifiedImageError as exc:
         raise ImageDecodeError(_unidentified_message(path), path=path, detail=str(exc)) from exc
     except Image.DecompressionBombError as exc:
@@ -134,4 +156,4 @@ def _unidentified_message(path: Path) -> str:
     return f"这不是一张能识别的图片：{path.name}。文件内容可能与扩展名不符。"
 
 
-__all__ = ["HEIF_SUPPORT", "RasterImage", "decode_rgba"]
+__all__ = ["HEIF_SUPPORT", "RasterImage", "decode_rgba", "has_transparency"]

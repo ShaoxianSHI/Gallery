@@ -338,3 +338,30 @@ def test_bundled_database_has_no_province_for_direct_ly_runned_places() -> None:
     assert index.nearest(31.2304, 121.4737).label() == "中国 · 上海"  # type: ignore[union-attr]
     assert index.nearest(22.3823, 114.1891).label() == "中国 · 香港"  # type: ignore[union-attr]
     assert index.nearest(22.1560, 113.5580).label() == "中国 · 澳门"  # type: ignore[union-attr]
+
+
+def test_a_population_column_that_int_rejects_does_not_break_the_whole_file(
+    tmp_path: Path,
+) -> None:
+    """人口列里出现 ``str.isdigit()`` 说行、``int()`` 却拒绝的字符（``"²"``）时，
+    丢的是**这一条**，不是整份城市库。
+
+    守卫与转换说的必须是同一件事：``"²".isdigit()`` 为真而 ``int("²")`` 抛
+    ``ValueError``，于是「看起来像数字」的那一步放行了，真去转的那一步炸了。
+    炸出来的地方是 :meth:`PlaceIndex.load` 的 ``try`` **之外**，一路抛到地点分组
+    —— 而那份文件的承诺是「读不到或损坏时返回 ``None``」。
+    """
+    body = (
+        "浙江省\t杭州\t中国\t30.29\t120.16\t²\n"  # isdigit() 为真，int() 抛
+        "浙江省\t宁波\t中国\t29.87\t121.55\t500000\n"  # 正常的一条，必须还在
+    )
+    path = tmp_path / "p.tsv.gz"
+    path.write_bytes(gzip.compress(body.encode("utf-8"), 9))
+
+    index = PlaceIndex.load(path)  # 过去在这里抛 ValueError
+
+    # 这一行**照常留下**（人口当 0，与同文件里已有的那条规矩一致）——
+    # 丢的只是那个读不出来的数字，不是这座城市。
+    assert index is not None and index.city_count == 2
+    assert index.nearest(29.87, 121.55) == Place("宁波", "浙江省", "中国", 0.0)
+    assert index.nearest(30.29, 120.16) == Place("杭州", "浙江省", "中国", 0.0)

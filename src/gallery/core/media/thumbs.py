@@ -17,11 +17,12 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import io
 from pathlib import Path
 
-from PIL import Image, UnidentifiedImageError
+from PIL import Image
 
 from gallery.core.atomic import write_bytes_atomic
 from gallery.core.constants import (
@@ -106,14 +107,13 @@ class ThumbnailCache:
             try:
                 if destination.exists():
                     # 新键下已经有（多半是同一张照片之前被复制过），旧的直接丢。
+                    # 字节数因此变了，记账得作废 —— 这是本函数唯一会让记账失准的分支。
                     source.unlink()
+                    self._total_bytes = None
                 else:
                     source.rename(destination)
             except OSError:
                 continue  # 缓存挪不动只是慢一点，不影响正确性
-            # 挪走不改变字节数，但「目标已存在所以删掉源」那一步会。改名是用户
-            # 亲手触发的罕见操作，直接作废记账、下次问的时候重数一遍最省心。
-            self._total_bytes = None
             moved = True
         return moved
 
@@ -192,20 +192,17 @@ class ThumbnailCache:
             return None
         try:
             with Image.open(entry) as image:
-                rgba = image.convert("RGBA")
-                try:
-                    return RasterImage(
-                        width=rgba.width,
-                        height=rgba.height,
-                        rgba=rgba.tobytes(),
-                        # 只有带透明的源图才会被写成 PNG（见 _write_entry）。
-                        has_alpha=entry.suffix == ".png",
-                    )
-                finally:
-                    rgba.close()
-        except (OSError, ValueError, UnidentifiedImageError):
-            # 缓存坏了不是错误，删掉重生成即可。
-            entry.unlink(missing_ok=True)
+                return RasterImage.from_pil(
+                    image,
+                    # 只有带透明的源图才会被写成 PNG（见 _write_entry）。
+                    has_alpha=entry.suffix == ".png",
+                )
+        except (OSError, ValueError):
+            # 缓存坏了不是错误，删掉重生成即可 —— 但**删本身也可能失败**（只读的
+            # 条目或只读的目录），而本模块的承诺是「缓存出问题最多让看图慢一点，
+            # 绝不失败」。清不掉就留着：下次照样读不出来、再走这一遍，仅此而已。
+            with contextlib.suppress(OSError):
+                entry.unlink(missing_ok=True)
             return None
 
     def _write_entry(self, digest: str, image: RasterImage) -> None:

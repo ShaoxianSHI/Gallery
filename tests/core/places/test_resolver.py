@@ -138,6 +138,34 @@ def test_loading_reports_status_once(tmp_path: Path) -> None:
     assert statuses == ["正在加载城市库…"]
 
 
+def test_an_unusable_database_is_tried_only_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """城市库读不出来时，**整轮只试一次** —— 不是每张照片一次。
+
+    曾经这里是「缓存未命中就再读一次」：于是城市库缺失（安装损坏）时，300 张照片
+    就是 300 次重读重解析那份 ~380 KB 的 gzip、300 条一模一样的警告、300 次往
+    横幅里写「正在加载城市库…��。那个文件要么在要么不在，同一个进程里它不会
+    自己变好，再试多少次都一样。
+    """
+    loads: list[Path | None] = []
+    original = PlaceIndex.load
+
+    def counting(path: Path | None = None) -> PlaceIndex | None:
+        loads.append(path)
+        return original(path)
+
+    monkeypatch.setattr(PlaceIndex, "load", staticmethod(counting))
+    statuses: list[str] = []
+    resolver = LazyPlaceResolver(path=tmp_path / "没有这个文件")
+
+    for step in range(20):
+        resolver.place_for(LATITUDE + step * 0.01, LONGITUDE, status=statuses.append)
+
+    assert len(loads) == 1, f"20 个不同坐标只该试一次，实际试了 {len(loads)} 次"
+    assert statuses == ["正在加载城市库…"], "进度提示也不该一遍一遍刷"
+
+
 def test_null_island_coordinates_are_refused(tmp_path: Path) -> None:
     """相机定不到 GPS 时填 0：那不是位置，不该被当成「附近没有城市」记进索引。"""
     index = FakeIndex(_place())

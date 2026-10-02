@@ -77,8 +77,8 @@ class LazyPlaceResolver:
         self._path = path
         #: 同一批照片常常共用一个坐标（一次旅行几百张），反查过一次就别再问。
         self._cache: dict[tuple[float, float], ResolvedPlace | None] = {}
-        #: 数据这一轮是否可用；``False`` 时不缓存「查不到」，等下次有机会再试。
-        self._usable = index is not None
+        #: 城市库这一轮**试过没有**。试过且失败就不再试第二次。
+        self._load_attempted = index is not None
 
     @property
     def index(self) -> PlaceIndex | None:
@@ -111,16 +111,23 @@ class LazyPlaceResolver:
         return result
 
     def _ensure_index(self, *, status: Status | None) -> PlaceIndex | None:
+        """城市库**最多试一次**。
+
+        试过一次还没成就不再试：城市库是随包分发的只读文件，它要么在、要么不在，
+        同一个进程里它不会自己变好。曾经这里是「缓存未命中就再读一次」，于是
+        城市库缺失时每张照片都要重读重解析一遍那份 ~380 KB 的 gzip、写一条一样的
+        警告、还往横幅里写一次「正在加载城市库…」—— 300 张照片就是 300 遍。
+        真想重试就换一个 ``LazyPlaceResolver``，而它本来就只在窗口打开时造一次。
+        """
         if self._index is not None:
             return self._index
+        if self._load_attempted:
+            return None
+        self._load_attempted = True
         if status is not None:
             status("正在加载城市库…")
-        index = PlaceIndex.load(self._path)
-        if index is None:
-            return None
-        self._index = index
-        self._usable = True
-        return index
+        self._index = PlaceIndex.load(self._path)
+        return self._index
 
 
 def _to_resolved(place: Place | None) -> ResolvedPlace | None:

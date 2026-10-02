@@ -183,7 +183,13 @@ class PlaceIndex:
 
 
 def _parse(text: str) -> Iterable[_City]:
-    """解析城市库。跳过注释行与坏行 —— 缺一列就丢这一条，不让整份文件作废。"""
+    """解析城市库。跳过注释行与坏行 —— 缺一列就丢这一条，不让整份文件作废。
+
+    **坏行必须是「丢掉这一条」而不是「抛出去」**：这一段的调用方
+    :meth:`PlaceIndex.load` 只把读文件与解压包在 ``try`` 里，解析在它外面；而它
+    的承诺是「文件缺失或损坏时返回 ``None``」。一个坏行若能一路抛出来，整个地点
+    分组就会崩在一个字都读不出来的坏数据上。
+    """
     for line in text.splitlines():
         if not line or line.startswith("#"):
             continue
@@ -204,12 +210,25 @@ def _parse(text: str) -> Iterable[_City]:
             region=region or None,
             city=city,
             country=country,
-            population=int(population) if population.isdigit() else 0,
+            population=_population(population),
             latitude_rad=math.radians(lat),
             longitude_rad=math.radians(lon),
             latitude=lat,
             longitude=lon,
         )
+
+
+def _population(raw: str) -> int:
+    """人口列 → 整数；读不出来就算 ``0``（它只用来在同坐标的多条记录里挑大的那条）。
+
+    **不能用 ``str.isdigit()`` 当判据**：它对上标数字（``"²".isdigit()`` 为真）
+    也返回 ``True``，而 ``int("²")`` 抛 ``ValueError`` —— 守卫与转换说的不是同一件事，
+    于是一条坏行能把整个城市库顶掉。直接转换、接住异常，判据与转换始终是同一次。
+    """
+    try:
+        return int(raw)
+    except ValueError:
+        return 0
 
 
 def _build_grid(cities: Sequence[_City]) -> dict[tuple[int, int], list[int]]:

@@ -78,6 +78,25 @@ def test_png_alpha_is_reported(tmp_path: Path) -> None:
     assert decode_rgba(path).has_alpha is True
 
 
+def test_palette_png_transparency_is_reported_too(tmp_path: Path) -> None:
+    """**调色板**（模式 ``P``）的 PNG 把透明记在 ``info["transparency"]`` 里。
+
+    只看 ``getbands()`` 里有没有 ``A`` 的话，这种图会被判成不透明 ——
+    ``convert("RGBA")`` 明明给出了 alpha 通道，我们却说它没有，于是缩略图按 JPEG
+    存盘，透明像素**写进缓存之后**再也回不来了（不是显示问题）。
+    """
+    path = tmp_path / "调色板透明.png"
+    image = Image.new("P", (16, 16))
+    image.putpalette([0, 0, 0] * 256)
+    image.save(path, format="PNG", transparency=0)
+    image.close()
+
+    raster = decode_rgba(path)
+
+    assert raster.has_alpha is True
+    assert raster.rgba[:4] == bytes((0, 0, 0, 0)), "透明像素必须原样带出来"
+
+
 def test_unidentified_content_reports_name(tmp_path: Path) -> None:
     path = tmp_path / "假照片.jpg"
     path.write_text("这不是图片", encoding="utf-8")
