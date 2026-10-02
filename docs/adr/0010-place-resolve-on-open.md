@@ -1,7 +1,7 @@
 # ADR 0010：第一次打开库就把地点解析一遍存进索引
 
 - 状态：已接受
-- 日期：2026-10-09
+- 日期：2026-10-02
 - 相关 ADR：0003（离线反查）、0009（分组与排序）
 - 相关代码：`src/gallery/core/library/facade.py`、`src/gallery/core/library/index.py`、
   `src/gallery/ui/main_window.py`
