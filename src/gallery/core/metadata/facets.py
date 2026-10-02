@@ -24,7 +24,6 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, Literal
 
-from gallery.core.errors import MetadataError
 from gallery.core.library.photos import PhotoRef
 
 if TYPE_CHECKING:
@@ -33,7 +32,7 @@ if TYPE_CHECKING:
     from gallery.core.places.resolver import ResolvedPlace
 
 from gallery.core.metadata.exif import (
-    MetadataSource,
+    as_text,
     camera_name,
     coordinates_decimal,
     first_value,
@@ -234,7 +233,7 @@ def extract(raw: Mapping[str, object]) -> PhotoFacets:
     等于给自己埋一个「某个字段类型一变就静默失效」的坑。
     """
     values = {key: value for key, value in raw.items() if key != "SourceFile"}
-    text = {key: _as_text(value) for key, value in values.items()}
+    text = {key: as_text(value) for key, value in values.items()}
     latitude, longitude = coordinates_decimal(text)
     when = parse_capture_time(
         first_value(text, "EXIF:DateTimeOriginal", "EXIF:CreateDate", "EXIF:DateTimeDigitized")
@@ -351,15 +350,6 @@ def _shutter_seconds(values: Mapping[str, str]) -> float | None:
     else:
         seconds = leading_number(value) or 0.0
     return seconds if seconds > 0 else None
-
-
-def _as_text(value: object) -> str:
-    """原始值 → 字符串（数组按顿号连接，与元数据面板同一套写法）。"""
-    if isinstance(value, (list, tuple)):
-        return "、".join(_as_text(item) for item in value)
-    if isinstance(value, bytes):
-        return value.decode("utf-8", "replace")
-    return str(value)
 
 
 def _keywords(values: Mapping[str, object]) -> tuple[str, ...]:
@@ -743,29 +733,6 @@ def input_for(ref: PhotoRef, facets: PhotoFacets, root: Path) -> FacetInput:
     return FacetInput(ref=ref, facets=facets, root=Path(root))
 
 
-def read_many(
-    source: MetadataSource,
-    paths: Sequence[Path],
-    *,
-    should_cancel: Callable[[], bool] | None = None,
-) -> dict[Path, PhotoFacets]:
-    """从来源批量读取一组照片的 facet 值（逐张降级路径用）。
-
-    批量快路径见 ``core.metadata.batch``；这里是同一份提取规则的薄封装，
-    给「没有 exiftool，只能逐张读」的场合用。
-    """
-    result: dict[Path, PhotoFacets] = {}
-    for path in paths:
-        if should_cancel is not None and should_cancel():
-            break
-        try:
-            raw = source.read(path)
-        except MetadataError:
-            continue
-        result[Path(path)] = extract(raw)
-    return result
-
-
 __all__ = [
     "FACET_APERTURE",
     "FACET_CAMERA",
@@ -806,7 +773,6 @@ __all__ = [
     "mark_place_resolved",
     "needs_metadata",
     "parse_capture_time",
-    "read_many",
     "with_resolved_place",
     "sort_facet",
 ]

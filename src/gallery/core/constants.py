@@ -21,7 +21,7 @@ CACHE_DIR_NAME: Final = "cache"
 #: 缩略图缓存目录名（位于 ``.gallery/cache/`` 内）。
 THUMBNAIL_DIR_NAME: Final = "thumbs"
 
-#: 元数据写回日志目录名（M5 使用，先占位）。
+#: 写操作日志目录名（``.gallery/journal/``）：每一次会动用户文件的操作都往里记一笔。
 JOURNAL_DIR_NAME: Final = "journal"
 
 #: SQLite 索引文件名。分组 / 排序读的元数据快照存在这里（见 ADR 0009）。

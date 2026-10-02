@@ -60,7 +60,7 @@ def thumbnail_cache_dir(root: Path) -> Path:
 
 
 def journal_dir(root: Path) -> Path:
-    """元数据写回日志目录（M5 才会真正写入）。"""
+    """写操作日志目录：改名、移到废纸篓、粘贴、移动到相册、新建相册各留一条。"""
     return config_dir(root) / JOURNAL_DIR_NAME
 
 

@@ -259,7 +259,7 @@ def build_report(
     notice: str | None = None,
 ) -> MetadataReport:
     """把来源的原始键值整理成分组报告（纯函数，测试直接喂字典）。"""
-    normalized = {key: _stringify(value) for key, value in raw.items()}
+    normalized = {key: as_text(value) for key, value in raw.items()}
     latitude, longitude = coordinates_decimal(normalized)
     groups: list[MetadataGroup] = []
     for title, specs in _CURATED_GROUPS:
@@ -289,9 +289,15 @@ def build_report(
 # ---- 取值与格式化 ----------------------------------------------------------------
 
 
-def _stringify(value: object) -> str:
+def as_text(value: object) -> str:
+    """原始字段值 → 字符串（数组按顿号连接，字节按 UTF-8 解，解不出就替换）。
+
+    **分组 / 排序与元数据面板读的是同一批字段**，因此两处对同一个值必须说出同一句
+    话：这份实现在 :mod:`gallery.core.metadata.facets` 里也用（``_as_text`` 早已是它
+    的一份抄写），抄来抄去只会各自漂移。
+    """
     if isinstance(value, (list, tuple)):
-        return "、".join(_stringify(item) for item in value)
+        return "、".join(as_text(item) for item in value)
     if isinstance(value, bytes):
         return value.decode("utf-8", "replace")
     return str(value)
@@ -786,6 +792,7 @@ def _gps_decimal(value: object, ref: object) -> float | None:
 
 
 __all__ = [
+    "as_text",
     "EXIFTOOL_EXECUTABLE",
     "EXIFTOOL_TIMEOUT_SECONDS",
     "ExifToolReader",

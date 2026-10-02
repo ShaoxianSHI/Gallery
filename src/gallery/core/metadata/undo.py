@@ -25,7 +25,6 @@ from pathlib import Path
 from typing import Final
 
 from gallery.core.library.photos import GridEntry
-from gallery.core.metadata import rename, transfer, trash
 from gallery.core.metadata.journal import (
     ACTION_MOVE,
     ACTION_RENAME,
@@ -35,6 +34,11 @@ from gallery.core.metadata.journal import (
     WriteRecord,
     read_records,
 )
+from gallery.core.metadata.rename import undo_rename_record
+from gallery.core.metadata.transfer import Failure as TransferFailure
+from gallery.core.metadata.transfer import undo_move_records
+from gallery.core.metadata.trash import Failure as TrashFailure
+from gallery.core.metadata.trash import restore_entries
 
 #: 压栈的动作：用户做过的写操作。
 _PUSH_ACTIONS: Final = frozenset({ACTION_RENAME, ACTION_TRASH, ACTION_MOVE})
@@ -65,7 +69,7 @@ class UndoResult:
     #:
     #: 两种形状：取回废纸篓报的是 ``name``，撤销移动报的是 ``source`` —— 后者多带一个
     #: 完整路径，横幅要能说出「它现在不在哪儿了」。两者都有 ``name`` 与 ``message``。
-    failures: tuple[trash.Failure | transfer.Failure, ...] = ()
+    failures: tuple[TrashFailure | TransferFailure, ...] = ()
     #: 是否记下了这次撤销。为 ``False`` 时界面应说明再按一次 ⌘Z 撤不掉更多了。
     journaled: bool = True
 
@@ -121,7 +125,7 @@ def undo_last_write(root: Path) -> UndoResult | None:
 
 
 def _undo_rename(root: Path, record: WriteRecord) -> UndoResult:
-    result = rename.undo_rename_record(root, record)
+    result = undo_rename_record(root, record)
     return UndoResult(
         action=ACTION_RENAME,
         entries=(result.entry,),
@@ -136,7 +140,7 @@ def _undo_move(root: Path, run: Sequence[WriteRecord]) -> UndoResult:
     网格该显示什么交给界面去重扫：挪回来的东西**可能不在当前这一层**（用户在别的
     相册里点的移动，撤回来时人在第三个相册），所以这里不替界面决定插到哪一行。
     """
-    result = transfer.undo_move_records(root, run)
+    result = undo_move_records(root, run)
     return UndoResult(
         action=ACTION_MOVE,
         entries=(),
@@ -146,7 +150,7 @@ def _undo_move(root: Path, run: Sequence[WriteRecord]) -> UndoResult:
 
 
 def _undo_delete(root: Path, run: Sequence[WriteRecord]) -> UndoResult:
-    result = trash.restore_entries(root, run)
+    result = restore_entries(root, run)
     return UndoResult(
         action=ACTION_TRASH,
         entries=result.restored,
@@ -155,8 +159,16 @@ def _undo_delete(root: Path, run: Sequence[WriteRecord]) -> UndoResult:
     )
 
 
-def _pop(runs: list[list[WriteRecord]], record: WriteRecord) -> None:
-    """把 ``record`` 撤销掉的那几条从栈上摘下来。"""
+def _pop(runs: list[list[WriteRecord]], record: WriteRecord) -> bool:
+    """把 ``record`` 撤销掉的那几条从栈上摘下来。
+
+    返回是否摘到了。**对不上就什么都不做**：这时那一条撤销记的不是「栈顶那一摞
+    里的某一条」，而是某一条更早的、或者已经被用户从磁盘上动过的记录。曾经这里
+    有一句「退一步」的兜底（``runs.pop()``）—— 那等于**一次撤销都没做**就把
+    栈顶那一摞扔了：用户刚做的那件事从此再也撤不掉，而菜单上的「撤销」会安安静静
+    地指向更早的一次操作。宁可什么都不摘，让下一次 ⌘Z 仍然指向那一摞；真要追，
+    看日志比默默吞掉强。
+    """
     for run_index in range(len(runs) - 1, -1, -1):
         run = runs[run_index]
         for index in range(len(run) - 1, -1, -1):
@@ -164,10 +176,8 @@ def _pop(runs: list[list[WriteRecord]], record: WriteRecord) -> None:
                 del run[index]
                 if not run:
                     runs.pop(run_index)
-                return
-    if runs:
-        # 对不上就退一步：老日志或路径被用户动过的情况下，至少别撤错一摞里的东西。
-        runs.pop()
+                return True
+    return False
 
 
 def undo_label(action: str) -> str:

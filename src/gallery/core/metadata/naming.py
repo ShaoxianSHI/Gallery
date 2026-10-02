@@ -55,33 +55,40 @@ def clean_name(name: str, *, error: type[GalleryError]) -> str:
     return cleaned
 
 
-def split_suffix(name: str) -> tuple[str, str]:
+def split_suffix(name: str, *, whole: bool = False) -> tuple[str, str]:
     """``一张.jpg`` → ``("一张", ".jpg")``；``京都`` → ``("京都", "")``。
 
     以点开头且没有第二个点的（``.DS_Store`` 这种隐藏文件）整体算名字，不拆后缀。
+
+    :param whole: 整个名字都不拆（``京都.2024`` → ``("京都.2024", "")``）。
+        **相册用这一档**：文件夹没有扩展名，访达给同名文件夹起名时是在整个名字
+        后面加编号（``京都.2024`` → ``京都.2024 2``），不是 ``京都 2.2024``。
     """
+    if whole:
+        return name, ""
     stem, dot, suffix = name.rpartition(".")
     if not dot or not stem:
         return name, ""
     return stem, f".{suffix}"
 
 
-def free_name_in(directory: Path, name: str) -> str | None:
+def free_name_in(directory: Path, name: str, *, whole: bool = False) -> str | None:
     """``directory`` 里**还没有**的那个名字：``一张.jpg`` → ``一张 2.jpg`` → ``一张 3.jpg``。
 
     这是访达自己的规矩，实测得来：在访达里对同一个文件连按两次「复制项目」，中文系统
     给出的正是 ``一张 2.jpg`` / ``一张 3.jpg``，文件夹同理（``京都`` → ``京都 2``）。
-    Gallery 的粘贴与移动都照它来，用户不用换一套心智模型。
+    Gallery 的粘贴、移动到相册与移进废纸篓都照它来，用户不用换一套心智模型。
 
     **绝不覆盖**已有的东西：那些可能是用户自己放进去的、还没处理的文件。
 
+    :param whole: 传给 :func:`split_suffix`（相册那种没有扩展名的，整体算名字）。
     :return: 空着的那个名字；``None`` 表示「加编号也还是太长」—— 光靠加数字缩短不了
         名字，那就如实说不行，而不是截断用户文件名（那会造出一个他认不出的照片）。
     """
     folder = Path(directory)
     if not (folder / name).exists():
         return name
-    stem, suffix = split_suffix(name)
+    stem, suffix = split_suffix(name, whole=whole)
     number = FIRST_DUPLICATE_NUMBER
     while True:
         candidate = f"{stem} {number}{suffix}"

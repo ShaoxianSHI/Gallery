@@ -78,9 +78,11 @@ class PasteError(GalleryError):
 
 
 class TransferError(GalleryError):
-    """移动到相册被拒绝或失败（目标不是一个相册、撤销时原位置已被占用）。
+    """移动到相册整体被拒绝或失败（例如目标不是一个文件夹）。
 
-    逐项的成败不走异常，落在 ``transfer.MoveResult`` 里。
+    逐项的成败不走异常：正向的落在 ``transfer.MoveResult``，撤销的落在
+    ``transfer.UndoMoveResult.failures`` —— 包括「原位置已经被别的文件占了」那种，
+    它是**一项**没成，不是整次操作失败。
     """
 
 

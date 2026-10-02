@@ -57,7 +57,7 @@ ACTION_CREATE: Final = "create"
 #: 操作成功。
 RESULT_OK: Final = "ok"
 
-#: 操作失败（文件已经改名，但后续步骤出错，或压根没改成）。
+#: 操作失败（压根没改成；或者改到一半出错，已经写下去的那部分如实地记在这里）。
 RESULT_FAILED: Final = "failed"
 
 

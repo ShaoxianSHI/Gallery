@@ -36,12 +36,10 @@ from gallery.core.metadata.journal import (
     WriteRecord,
     append_record,
 )
+from gallery.core.metadata.naming import free_name_in
 
 #: 访达用来放「本卷回收站」的目录名（外接盘、U 盘上）。
 _VOLUME_TRASH_DIR: Final = ".Trashes"
-
-#: 废纸篓里重名时的编号上限。访达的做法是加「 2」「 3」，我们不与它抢同一个名字。
-_MAX_NAME_ATTEMPTS: Final = 999
 
 
 @dataclass(frozen=True, slots=True)
@@ -320,19 +318,24 @@ def _guard(root: Path, source: Path) -> None:
 
 
 def _free_name(candidate: Path, *, is_dir: bool) -> Path:
-    """废纸篓里已经有同名东西时另起一个名字，绝不覆盖。"""
+    """废纸篓里已经有同名东西时另起一个名字，绝不覆盖。
+
+    **「不覆盖」这条规矩归 :mod:`gallery.core.metadata.naming` 管**（它的模块文档
+    写着「只有一份实现，否则日后三份会各自漂移」），这里只交代本地的一件事：
+    目录**没有扩展名可拆**，所以整体算名字（``京都.2024`` → ``京都.2024 2``）。
+    曾经这里自己写了一遍加编号的循环，于是它已经与粘贴那套漂开了：数到 999 就
+    放弃、也压根不管 255 字节的上限 —— 超长的名字要走到 ``rename`` 才炸，
+    报一句与真正原因无关的话。
+    """
     if not candidate.exists():
         return candidate
-    parent = candidate.parent
-    if is_dir:
-        stem, suffix = candidate.name, ""
-    else:
-        stem, suffix = candidate.stem, candidate.suffix
-    for index in range(2, _MAX_NAME_ATTEMPTS + 1):
-        alternative = parent / f"{stem} {index}{suffix}"
-        if not alternative.exists():
-            return alternative
-    raise DeleteError(f"废纸篓里已经有太多叫「{candidate.name}」的东西了。", path=candidate)
+    free = free_name_in(candidate.parent, candidate.name, whole=is_dir)
+    if free is None:
+        raise DeleteError(
+            f"「{candidate.name}」这个名字太长，废纸篓里加编号也放不下了。",
+            path=candidate,
+        )
+    return candidate.parent / free
 
 
 def _new_batch_id() -> str:
