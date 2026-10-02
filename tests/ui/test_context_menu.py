@@ -746,12 +746,24 @@ def test_copy_works_for_an_album_folder(qt_app: QApplication, window: MainWindow
     ]
 
 
+def _settle_actions(qt_app: QApplication) -> None:
+    """等动作可用性重算完 —— 它现在**攒一轮**再算（见 MainWindow 的连接处）。
+
+    选区变化只把重算**排到这一轮事件循环结束时**：一次用户动作 Qt 会连发
+    ``currentChanged`` 与 ``selectionChanged``，而全量重算里包含一次同步的
+    剪贴板读，框里拖选三百行不该做三百遍。所以断言任何一枚动作的亮/灰之前，
+    先把这一轮转完 —— 否则读到的是上一轮的答案。
+    """
+    qt_app.processEvents()
+
+
 def test_copy_covers_the_photos_of_a_group_card(qt_app: QApplication, window: MainWindow) -> None:
     """⌘C 作用于**组里的照片**：卡片不是磁盘上的东西，它代表的那批照片是（ADR 0020）。"""
     group = GroupRef(facet="camera", key="canon", label="Canon", photos=(_photo(window),))
     window._model.reorder([group])
     qt_app.processEvents()
     _select(window._grid, window._model, (0,))
+    _settle_actions(qt_app)
 
     window.copy_selected_files()
 
@@ -812,6 +824,7 @@ def test_reveal_on_a_group_reveals_its_photos(
     window._model.reorder([group])
     qt_app.processEvents()
     _select(window._grid, window._model, (0,))
+    _settle_actions(qt_app)
 
     window.reveal_selection()
 
@@ -869,9 +882,11 @@ def test_reveal_shortcut_yields_to_the_rename_editor(
     """
     _enter_album(qt_app, window)
     _select(window._grid, window._model, (0,))
+    _settle_actions(qt_app)
     assert window._reveal_action.isEnabled() is True
 
     window.rename_current_entry()
+    _settle_actions(qt_app)
 
     assert window._grid._rename_edit.is_editing()
     assert window._reveal_action.isEnabled() is False
@@ -992,6 +1007,7 @@ def test_open_default_app_yields_to_the_rename_editor(
     """
     _enter_album(qt_app, window)
     _select(window._grid, window._model, (0,))
+    _settle_actions(qt_app)
     assert window._open_default_action.isEnabled() is True
 
     window.rename_current_entry()

@@ -27,7 +27,7 @@ from collections.abc import Callable, Iterable, Sequence
 from functools import partial
 from pathlib import Path
 
-from PySide6.QtCore import QModelIndex, QPoint, QPointF, Qt
+from PySide6.QtCore import QModelIndex, QPoint, QPointF, Qt, QTimer
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
@@ -428,6 +428,9 @@ class MainWindow(QMainWindow):
         self._pipeline: ThumbnailPipeline | None = None
         self._generation = 0
         self._scan_job: int | None = None
+        #: 选区变化后**攒一轮**再全量重算动作可用性（0ms 单次；理由见连接处）。
+        #: 同步清掉是为了关窗时不留一个还排着队的定时器。
+        self._action_states_timer = QTimer(self)
         self._detail_job: int | None = None
         self._current_row = -1
         self._metadata_job: int | None = None
@@ -533,14 +536,21 @@ class MainWindow(QMainWindow):
         self._grid.rename_active_changed.connect(self._on_rename_active_changed)
         self._grid.context_requested.connect(self._show_context_menu)
         # 「重命名」「移到废纸篓」能不能用，取决于当前有没有选中东西。
+        #
+        # **只接 `selectionChanged`，并且攒一轮再算。** Qt 一次用户动作会先发
+        # `currentChanged` 再发 `selectionChanged`（点一格、Shift 连选一段都是），
+        # 两条都接就是同一个动作算两遍。而一次算就是十八枚动作全量重算，
+        # 其中 ⌘V 那一条还要**同步读一次系统剪贴板** —— 框里拖选三百行，
+        # 就是几百次全量重算加几百次剪贴板往返，全在主线程上。
+        #
+        # 那个 0 毫秒的定时器把一串连发攒成一次：它不是「等一会儿再算」，而是
+        # 「这一轮事件循环转完就算」，所以用户感觉不到延迟。
         selection_model = self._grid.selectionModel()
         if selection_model is not None:
-            selection_model.currentChanged.connect(
-                lambda _current, _previous: self._update_action_states()
-            )
-            selection_model.selectionChanged.connect(
-                lambda _selected, _deselected: self._update_action_states()
-            )
+            selection_model.selectionChanged.connect(self._schedule_action_states)
+        self._action_states_timer.setSingleShot(True)
+        self._action_states_timer.setInterval(0)
+        self._action_states_timer.timeout.connect(self._update_action_states)
 
         self._banner = QLabel()
         self._banner.setObjectName("banner")
@@ -2217,8 +2227,12 @@ class MainWindow(QMainWindow):
         ``paste`` 由 :meth:`_context_paste` 按**这一下的落点**算好递进来（照片那一处压根不递），
         摆在第几段由每张菜单自己决定（``ui.menus``）。
         """
-        copy_to_album = self._album_picker("复制到相册")
-        move_to_album = self._album_picker("移动到相册")
+        # 两个相册清单**共用同一次遍历**：``_album_targets`` 递归走一遍整棵目录树，
+        # 拼两个子菜单却走两遍就是白翻一倍。库里一个相册都没有时两份都不出现（空子菜单
+        # 是个空框，与 ADR 0014 决策 4 同一个取向）。
+        albums = self._album_targets()
+        copy_to_album = self._album_picker("复制到相册", albums)
+        move_to_album = self._album_picker("移动到相册", albums)
         if copy_to_album is not None:
             copy_to_album.triggered.connect(self._on_album_chosen_for_copy)
         if move_to_album is not None:
@@ -2528,22 +2542,34 @@ class MainWindow(QMainWindow):
         if isinstance(target, Path):
             self._transfer_selected(target, move=True)
 
-    def _album_picker(self, title: str) -> QMenu | None:
-        """现建一份相册清单子菜单；**库里一个相册都没有就返回 ``None``**。
+    def _album_picker(self, title: str, albums: Sequence[tuple[str, Path]]) -> QMenu | None:
+        """拿现成的相册清单拼一个子菜单；**清单为空就返回 ``None``**。
 
-        清单是**每次弹出时现列**的：用户在访达里新建一个相册，下一次右键就能选到，
-        不必重开软件。列全库（不是只列当前这一层）是用户定的取向 —— 见 ADR 0019 决策 1。
+        清单由调用方**每次弹出时现列**（:meth:`_album_targets`）：用户在访达里新建一个
+        相册，下一次右键就能选到，不必重开软件。列全库（不是只列当前这一层）是用户定的
+        取向 —— 见 ADR 0019 决策 1。
+
+        清单是**参数而不是在这里现列**，是因为一次右键要拼两个这样的子菜单：
+        现列就是走两遍整棵目录树。列一遍、两个子菜单共用，那才是 ADR 0019 说的
+        「每次弹出时现列」。
 
         目标相册里若恰好有一张正要移动的照片，那次操作会被如实记成「它已经在那个相册
         里了」。与粘贴同一条规矩（ADR 0018 决策 2），因此不必在这里把它藏起来。
         """
-        library = self._library
-        if library is None:
-            return None
-        albums = [(library.album_label(folder.path), folder.path) for folder in library.albums()]
         if not albums:
             return None
         return menus.build_album_picker(title, albums)
+
+    def _album_targets(self) -> tuple[tuple[str, Path], ...]:
+        """递归列出全库相册，标签是相对路径（``2025/苏州``）。
+
+        两个年份下面各有一个「苏州」时，光写名字用户分不清要挪到哪去，所以标签用
+        相对路径（见 :meth:`gallery.core.library.facade.Library.album_label`）。
+        """
+        library = self._library
+        if library is None:
+            return ()
+        return tuple((library.album_label(folder.path), folder.path) for folder in library.albums())
 
     def _transfer_selected(self, target: Path, *, move: bool) -> None:
         """把选中的照片**复制**或**移动**进 ``target``。
@@ -3236,6 +3262,10 @@ class MainWindow(QMainWindow):
         # 「退出」只出现在大图页的右键菜单里（ADR 0021），所以它也只在那儿可用。
         self._close_entry_action.setEnabled(in_detail)
         self._update_undo_action()
+
+    def _schedule_action_states(self, *_args: object) -> None:
+        """选区变了：把全量重算**攒到这一轮事件循环结束时**做一次。"""
+        self._action_states_timer.start()
 
     def _update_undo_action(self) -> None:
         """「撤销」的文案跟着这摞的栈顶变，栈空时禁用。"""
