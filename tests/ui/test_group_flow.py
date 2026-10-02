@@ -769,7 +769,11 @@ def test_entering_an_album_never_shows_the_ungrouped_photos_first(
         browse_mode=BROWSE_MODE_ALBUMS,
         group_facet="captured_year",
     )
-    _settle(qt_app, window, groups=True)
+    # 这里停在库根的相册模式，网格上是一张相册卡片，**一个组都没有** —— 分组只作用在
+    # 照片上，照片要等点进相册之后才出现。所以此处只能等「活干完了」，不能等组：
+    # `groups=True` 在这里是永远等不到的条件，会白白空转满 10 秒（这一条曾占掉整轮
+    # 套件三成的时间）。组由下面 `_watch_until_settled` 那一行负责等。
+    _settle(qt_app, window)
     row = next(
         index for index, entry in enumerate(window._model.entries()) if entry.name == "子相册"
     )

@@ -35,11 +35,24 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 #: 轮询间隔。够密才抓得住一闪而过的东西，又不至于把 CPU 跑满。
 POLL_SECONDS = 0.005
 
+#: 测试里的双击阈值（毫秒）。生产上它跟着系统走，macOS 是 500ms。
+#:
+#: 值得单独调小的原因：行内重命名的定时器**就是照它设的间隔**（``PhotoGrid`` 构造时读
+#: ``QApplication.doubleClickInterval()``），于是测「第二次点击到底算不算改名」的用例也
+#: 只能照同一个值去等 —— 每个这样的用例要在事件循环里空转一秒上下，一整个
+#: ``test_rename_flow.py`` 有三分之一的时间是在等它。
+#:
+#: 调小它并没有削弱这些用例：它们发的是**显式**的 ``MouseButtonDblClick`` 事件，不靠
+#: Qt 自己按时间判定双击；被测的「定时器按双击阈值走」这件事在 40ms 下照样成立，
+#: 而用例额外留的余量是绝对的 50/100ms，相对余量反而更宽了。
+DOUBLE_CLICK_INTERVAL_MS = 40
+
 
 @pytest.fixture(scope="module")
 def qt_app() -> Iterator[QApplication]:
     """整个模块共用一个 ``QApplication``：它不能被反复创建与销毁。"""
     app = QApplication.instance() or QApplication([])
+    QApplication.setDoubleClickInterval(DOUBLE_CLICK_INTERVAL_MS)
     yield app  # type: ignore[misc]
 
 
