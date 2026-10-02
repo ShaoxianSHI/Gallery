@@ -20,7 +20,14 @@ from functools import partial
 from pathlib import Path
 
 from PySide6.QtCore import QModelIndex, QPointF, Qt
-from PySide6.QtGui import QAction, QCloseEvent, QImage, QKeySequence, QMouseEvent
+from PySide6.QtGui import (
+    QAction,
+    QCloseEvent,
+    QImage,
+    QKeySequence,
+    QMouseEvent,
+    QPalette,
+)
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -66,7 +73,7 @@ from gallery.core.metadata.undo import UndoResult
 from gallery.core.places.countries import place_label
 from gallery.core.places.dataset import is_real_coordinate
 from gallery.core.places.resolver import LazyPlaceResolver
-from gallery.ui import desktop, theme
+from gallery.ui import desktop, menus, theme
 from gallery.ui.browser.grid import PREFETCH_MARGIN, PhotoGrid
 from gallery.ui.browser.model import PhotoListModel
 from gallery.ui.browser.thumb_sizes import (
@@ -1833,6 +1840,10 @@ class MainWindow(QMainWindow):
         # 主题下发，所以直接照抄窗口那份统一调色板（``ui.theme`` 逐控件下发的那份）。
         # 系统随后换浅色 / 深色也不影响它：下一次右键建的就是一个新的。
         menu.setPalette(self.palette())
+        # 圆角与行距：macOS 样式给的那圈约 5 像素、每行 18 像素高，太挤，只能用样式表改。
+        # 而样式表一上，面板就不再由系统画、底色会掉回系统菜单色，所以底色必须显式写进
+        # 样式表（见 ``ui.menus`` 模块文档）。
+        menus.apply_style(menu, self.palette().color(QPalette.ColorRole.Window))
         return menu
 
     def _menu_actions(self) -> MenuActions:

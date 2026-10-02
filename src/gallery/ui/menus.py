@@ -12,6 +12,16 @@
 分组卡片上那两项（重命名 / 移到废纸篓）的置灰也不在这里做：右键点中分组时，
 视图已经把它选上了，``_update_action_states`` 自然会把它们关掉（它判据是「选区里有
 没有 ``GroupRef``」）。本模块只负责在菜单末尾补一条说明文字。
+
+**外观：一份样式表，四个落点共用**（:func:`apply_style`）。macOS 样式自己画的那圈圆角
+实测约 5 像素、每行只有 18 像素高，菜单挤得像 Windows 的。放大它们只能靠样式表 ——
+Qt 没有「菜单圆角」「菜单行高」这样的度量可以改。
+
+这里有一个必须记住的副作用（实测）：**只要给 ``QMenu`` 加了样式表，面板就不再由
+macOS 样式画**，底色会掉回系统菜单色（浅色 ``#ececec``）。所以样式表里必须把底色
+**写死成窗口那块底色**，否则刚统一好的「一整块底色」会在按下菜单的那一刻又破功。
+样式表里写 ``palette(window)`` 也不行：它取的是**应用**调色板，不是我们逐控件下发的
+那份，颜色会差一档。
 """
 
 from __future__ import annotations
@@ -19,11 +29,63 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QColor
 from PySide6.QtWidgets import QMenu
+
+from gallery.ui.theme import rgba
 
 #: 分组卡片为什么不能改名 / 不能删。放在菜单末尾当一句说明，而不是让用户按了才知道。
 GROUP_NOT_FILE_HINT = "分组不是磁盘上的文件夹，改不了名也删不掉。"
+
+#: 弹出菜单的圆角（像素）。macOS 样式自己画的那圈实测约 5，放大一档。
+MENU_CORNER_RADIUS = 8
+
+#: 菜单项的内边距（上 右 下 左，像素）。行高由此从 18 变成 26。
+#:
+#: 右边给得宽不是随手写的：样式表的 padding 是**替换**样式自己的边距的，不是叠加。
+#: 给窄了，右边那一列快捷键（⌘R / ⌘⌫）就会被挤出菜单 —— 实测原生右边留 47 像素，
+#: 这里留 25 像素，正好还在。
+MENU_ITEM_PADDING = "5px 38px 5px 28px"
+
+
+def style_sheet(background: QColor) -> str:
+    """给弹出菜单的那份样式表。
+
+    ``background`` 必须由调用方给出**窗口那块底色**（调色板的 ``Window`` 角色），
+    理由见模块文档那一段。
+    """
+    return (
+        f"QMenu {{ border-radius: {MENU_CORNER_RADIUS}px; background: {rgba(background)}; }}\n"
+        f"QMenu::item {{ padding: {MENU_ITEM_PADDING}; }}"
+    )
+
+
+def apply_style(menu: QMenu, background: QColor) -> None:
+    """给菜单与它的子菜单上同一份样式表。
+
+    **子菜单既不从父菜单继承样式表，也不是它的子控件**（实测
+    ``QMenu.addMenu(另一个 QMenu)`` 不会给后者设父对象，``findChildren`` 找不到它，
+    ``sub.styleSheet()`` 是空的）。而空白处那份菜单带三个子菜单，所以这里顺着
+    ``action.menu()`` 递归下去，一层都不漏。
+
+    递归时**必须认所有权**：``QAction`` 是全局复用的（菜单栏与右键菜单共用同一份），
+    ``some_action.menu()`` 可能指向别处的菜单。判据是「这个子菜单的 ``menuAction()``
+    是不是当前这条 action」—— 只有那样它才真的长在这个菜单里。否则会把「视图」菜单
+    下的排序 / 分组 / 缩略图大小一并改掉，而它们并不属于这次右键。
+    """
+    sheet = style_sheet(background)
+    seen: set[int] = set()
+    pending = [menu]
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        current.setStyleSheet(sheet)
+        for action in current.actions():
+            submenu = action.menu()
+            if submenu is not None and submenu.menuAction() is action:
+                pending.append(submenu)
 
 
 class TargetKind(Enum):
@@ -191,11 +253,15 @@ def _hint_action(text: str, parent: QMenu) -> QAction:
 
 __all__ = [
     "GROUP_NOT_FILE_HINT",
+    "MENU_CORNER_RADIUS",
+    "MENU_ITEM_PADDING",
     "MenuActions",
     "TargetKind",
+    "apply_style",
     "build_album_menu",
     "build_background_menu",
     "build_group_menu",
     "build_menu",
     "build_photo_menu",
+    "style_sheet",
 ]

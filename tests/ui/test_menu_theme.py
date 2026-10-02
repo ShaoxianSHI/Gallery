@@ -27,8 +27,9 @@ from PySide6.QtGui import QColor, QPalette  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMenu  # noqa: E402
 
 from gallery.core.library.config import prepare_library  # noqa: E402
-from gallery.ui import theme  # noqa: E402
+from gallery.ui import menus, theme  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
+from gallery.ui.theme import rgba  # noqa: E402
 
 #: 「假装系统换成了深色」用的底色。真深色下 Qt 给的是别的值，这里要的是
 #: 「换一个和当前不同的值」，具体是哪个数与这条测试无关。
@@ -109,6 +110,62 @@ def test_context_menu_shares_window_background(qt_app: QApplication, window: Mai
 
     assert menu is not None
     assert _background(menu) == window.palette().color(QPalette.ColorRole.Window).name()
+
+
+def test_context_menu_carries_our_look(qt_app: QApplication, window: MainWindow) -> None:
+    """圆角与行距在样式表里，而**底色必须一起写进去**。
+
+    这是实测出来的坑：给 ``QMenu`` 加了样式表之后，面板就不再由 macOS 样式画，
+    底色会掉回系统菜单色（浅色 ``#ececec``）。样式表里若不写底色，上一条测试
+    断言的「与窗口同色」就会当场作废 —— 两条必须一起成立。
+    """
+    window._stack.setCurrentWidget(window._grid_page)
+    row = window._model.row_of_path(window._library.root / "一张.jpg")
+    assert row >= 0
+
+    menu = window.context_menu_for(row)
+
+    assert menu is not None
+    sheet = menu.styleSheet()
+    assert f"border-radius: {menus.MENU_CORNER_RADIUS}px" in sheet
+    assert menus.MENU_ITEM_PADDING in sheet
+    assert rgba(window.palette().color(QPalette.ColorRole.Window)) in sheet
+
+
+def test_submenus_get_the_same_look(qt_app: QApplication, window: MainWindow) -> None:
+    """空白处那份菜单带三个子菜单：子菜单不继承样式表，也不是子控件，得显式发。"""
+    window._stack.setCurrentWidget(window._grid_page)
+
+    menu = window.context_menu_for(-1)
+
+    assert menu is not None
+    owned = [
+        action.menu()
+        for action in menu.actions()
+        if action.menu() is not None and action.menu().menuAction() is action
+    ]
+    assert [sub.title() for sub in owned] == ["分组", "排序", "缩略图大小"]
+    for submenu in owned:
+        assert submenu.styleSheet() == menu.styleSheet()
+
+
+def test_menu_bar_menus_are_left_native(window: MainWindow) -> None:
+    """菜单栏那边**不该**被右键菜单的样式波及。
+
+    ``QAction`` 是全局复用的，``some_action.menu()`` 可能指向菜单栏里的子菜单；
+    递归时若不认「这个子菜单的 ``menuAction()`` 是不是当前这条 action」，
+    「视图 → 排序 / 分组 / 缩略图大小」会被顺带改掉 —— 它们并不属于这次右键。
+    """
+    window._stack.setCurrentWidget(window._grid_page)
+    row = window._model.row_of_path(window._library.root / "一张.jpg")
+    assert row >= 0
+    assert window.context_menu_for(row) is not None
+
+    for title in ("文件", "编辑", "视图"):
+        assert _bar_menu(window, title).styleSheet() == ""
+    view = _bar_menu(window, "视图")
+    for title in ("浏览方式", "分组", "排序", "缩略图大小"):
+        assert _submenu(view, title).styleSheet() == ""
 
 
 def test_menu_bar_menus_follow_theme_change(qt_app: QApplication, window: MainWindow) -> None:
