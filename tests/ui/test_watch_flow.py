@@ -1,0 +1,719 @@
+"""实时监听的界面流程（README 路线图 M4，ADR 0013）。
+
+用户真正会经历的那些事：在访达里丢进来一张照片、从访达删掉一张、在访达里改个名、
+用别的工具改完 EXIF 再回来 —— **都不用重开 Gallery**。这一组测试就把监听器换成假的，
+好让这条链同步跑完：真等文件系统通知，那是一场耐力赛。
+
+假监听器仍然经过真正的桥（:class:`~gallery.ui.watch.WatchBridge`）与排队连接，
+所以「回调在别的线程上到达」这件事本身也是被测到的。
+"""
+
+from __future__ import annotations
+
+import os
+import time
+from collections.abc import Callable
+from pathlib import Path
+
+import pytest
+
+pytest.importorskip("PySide6")
+
+from PySide6.QtGui import QImage  # noqa: E402
+from PySide6.QtWidgets import QApplication  # noqa: E402
+
+from gallery.core.library.config import prepare_library  # noqa: E402
+from gallery.core.library.photos import FolderRef, PhotoRef  # noqa: E402
+from gallery.core.library.session import (  # noqa: E402
+    BROWSE_MODE_ALBUMS,
+    BROWSE_MODE_FLAT,
+    SessionState,
+    save_session,
+)
+from gallery.core.library.watcher import (  # noqa: E402
+    ChangeKind,
+    LibraryChange,
+)
+from gallery.core.metadata.exif import MetadataReport  # noqa: E402
+from gallery.core.metadata.facets import PhotoFacets  # noqa: E402
+from gallery.ui.main_window import WATCH_ECHO_TTL, MainWindow  # noqa: E402
+
+#: 等待异步扫描 / 缩略图完成的时限。
+WAIT_SECONDS = 8.0
+
+
+class FakeWatcher:
+    """假的监听器：记下自己有没有被启动，并能随时塞一批变化进来。"""
+
+    def __init__(self) -> None:
+        self.running = False
+        self.emit: Callable[[tuple[LibraryChange, ...]], None] | None = None
+
+    def start(self) -> None:
+        self.running = True
+
+    def stop(self) -> None:
+        self.running = False
+
+    def push(self, *changes: LibraryChange) -> None:
+        """送一批变化进界面（等价于 watchdog 那边收到了这些事件）。"""
+        assert self.emit is not None, "监听还没开始"
+        self.emit(changes)
+
+
+def make_starter(captured: list[FakeWatcher]):  # type: ignore[no-untyped-def]
+    """造一个注入给窗口的「开监听」方式，并把它造出来的假监听器记下来。"""
+
+    def starter(_library, on_change, _on_error=None):  # type: ignore[no-untyped-def]
+        watcher = FakeWatcher()
+        watcher.emit = on_change
+        captured.append(watcher)
+        return watcher
+
+    return starter
+
+
+def open_window(
+    qt_app: QApplication,
+    root: Path,
+    *,
+    browse_mode: str = BROWSE_MODE_FLAT,
+) -> tuple[MainWindow, FakeWatcher]:
+    # 会话状态写在库外：放在库里面，相册模式下它自己就会变成一个相册卡片。
+    session_base = root.parent / f"{root.name}-状态"
+    save_session(
+        SessionState(recent_roots=(root,), browse_mode=browse_mode),
+        base=session_base,
+    )
+    prepare_library(root)  # 没有配置目录时那个模态框在测试里没人点
+    watchers: list[FakeWatcher] = []
+    window = MainWindow(
+        session_base=session_base,
+        initial_library=root,
+        watch_starter=make_starter(watchers),
+    )
+    window.resize(900, 600)
+    window.show()
+    qt_app.processEvents()
+    assert wait_until(qt_app, lambda: window._model.rowCount() > 0), "扫描没有在时限内完成"
+    assert watchers, "打开库就该开始监听"
+    return window, watchers[0]
+
+
+def wait_until(qt_app: QApplication, predicate: Callable[[], bool]) -> bool:
+    deadline = time.monotonic() + WAIT_SECONDS
+    while time.monotonic() < deadline:
+        qt_app.processEvents()
+        if predicate():
+            return True
+        time.sleep(POLL_SECONDS)
+    qt_app.processEvents()
+    return predicate()
+
+
+POLL_SECONDS = 0.01
+
+
+def deliver(
+    qt_app: QApplication, window: MainWindow, watcher: FakeWatcher, *changes: LibraryChange
+):
+    """送一批变化，并等界面把它处理完（排队连接要转一下事件循环）。"""
+    watcher.push(*changes)
+    qt_app.processEvents()
+
+
+def row_of(window: MainWindow, path: Path) -> int:
+    row = window._model.row_of_path(path)
+    assert row >= 0, f"{path.name} 不在网格里"
+    return row
+
+
+def names(window: MainWindow) -> list[str]:
+    return [entry.name for entry in window._model.entries()]
+
+
+# ---- 新增 ---------------------------------------------------------------------
+
+
+def test_a_photo_dropped_in_shows_up_without_reopening(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """访达里丢进来一张照片：网格上立刻多一格，不用重开库。"""
+    make_photo("原来那张.jpg")
+    window, watcher = open_window(qt_app, tmp_path)
+    try:
+        newcomer = make_photo("刚丢进来.jpg")
+
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.ADDED, newcomer))
+
+        assert window._model.rowCount() == 2
+        # 网格按名字排（相册在前、同类按名称）：「刚」排在「原」前面。
+        assert names(window) == ["刚丢进来.jpg", "原来那张.jpg"]
+    finally:
+        window.close()
+
+
+def test_a_new_photo_lands_in_its_sorted_place_not_at_the_end(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """插在正确的位置：名字排中间的照片就该待在中间。"""
+    for name in ("a.jpg", "c.jpg"):
+        make_photo(name)
+    window, watcher = open_window(qt_app, tmp_path)
+    try:
+        middle = make_photo("b.jpg")
+
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.ADDED, middle))
+
+        assert names(window) == ["a.jpg", "b.jpg", "c.jpg"]
+    finally:
+        window.close()
+
+
+def test_in_flat_mode_a_photo_from_a_subfolder_is_sorted_among_all(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """平铺模式整棵子树都摆在屏幕上：新照片按名字插进整层，而不是追加到末尾。"""
+    make_photo("b.jpg", directory=tmp_path / "旅行")
+    make_photo("d.jpg")
+    window, watcher = open_window(qt_app, tmp_path, browse_mode=BROWSE_MODE_FLAT)
+    try:
+        assert names(window) == ["b.jpg", "d.jpg"]
+        nested = make_photo("c.jpg", directory=tmp_path / "旅行")
+
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.ADDED, nested))
+
+        assert names(window) == ["b.jpg", "c.jpg", "d.jpg"]
+    finally:
+        window.close()
+
+
+def test_a_new_album_shows_up_in_the_album_level(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """相册模式：新建的文件夹要变成相册卡片（相册永远排在照片前面）。"""
+    make_photo("散着的一张.jpg")
+    window, watcher = open_window(qt_app, tmp_path, browse_mode=BROWSE_MODE_ALBUMS)
+    try:
+        (tmp_path / "2025 苏州").mkdir()
+        (tmp_path / "2025 苏州" / "一张.jpg").write_bytes(b"x")
+
+        deliver(
+            qt_app,
+            window,
+            watcher,
+            LibraryChange(ChangeKind.ADDED, tmp_path / "2025 苏州", is_dir=True),
+        )
+
+        assert isinstance(window._model.entry_at(0), FolderRef)
+        assert names(window) == ["2025 苏州", "散着的一张.jpg"]
+    finally:
+        window.close()
+
+
+def test_the_new_photo_really_gets_a_thumbnail(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """新格子不能停在占位框上：缩略图流水线得给它补一张。"""
+    make_photo("一张.jpg")
+    window, watcher = open_window(qt_app, tmp_path)
+    try:
+        newcomer = make_photo("新的.jpg")
+
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.ADDED, newcomer))
+
+        assert wait_until(qt_app, lambda: window._model.has_thumbnail(newcomer))
+    finally:
+        window.close()
+
+
+def test_a_batch_of_photos_arrives_in_one_go(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """访达拷 500 张是一次拷贝：界面一次性接住，不必一张张闪。"""
+    make_photo("a.jpg")
+    window, watcher = open_window(qt_app, tmp_path)
+    try:
+        copied = [make_photo(f"拷进来 {index}.jpg") for index in range(20)]
+
+        deliver(
+            qt_app,
+            window,
+            watcher,
+            *(LibraryChange(ChangeKind.ADDED, path) for path in copied),
+        )
+
+        assert window._model.rowCount() == 21
+    finally:
+        window.close()
+
+
+# ---- 删除 ---------------------------------------------------------------------
+
+
+def test_a_photo_deleted_outside_disappears_from_the_grid(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    keep = make_photo("留下.jpg")
+    doomed = make_photo("没了.jpg")
+    window, watcher = open_window(qt_app, tmp_path)
+    try:
+        window._grid.select_row(row_of(window, doomed))
+
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.REMOVED, doomed))
+
+        assert window._model.rowCount() == 1
+        assert names(window) == ["留下.jpg"]
+        assert window._model.row_of_path(keep) >= 0
+    finally:
+        window.close()
+
+
+def test_deleting_the_selected_photo_moves_the_selection(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """删掉选中那一格之后，选中要落到邻近的行，而不是「什么都没有选中」。"""
+    for name in ("a.jpg", "b.jpg", "c.jpg"):
+        make_photo(name)
+    doomed = tmp_path / "b.jpg"
+    window, watcher = open_window(qt_app, tmp_path)
+    try:
+        window._grid.select_row(row_of(window, doomed))
+
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.REMOVED, doomed))
+
+        assert window._grid.current_row() >= 0
+    finally:
+        window.close()
+
+
+def test_a_whole_album_deleted_takes_every_row_with_it(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    make_photo("散着的.jpg")
+    (tmp_path / "相册").mkdir()
+    window, watcher = open_window(qt_app, tmp_path, browse_mode=BROWSE_MODE_ALBUMS)
+    try:
+        assert window._model.rowCount() == 2
+
+        deliver(
+            qt_app,
+            window,
+            watcher,
+            LibraryChange(ChangeKind.REMOVED, tmp_path / "相册", is_dir=True),
+        )
+
+        assert names(window) == ["散着的.jpg"]
+    finally:
+        window.close()
+
+
+def test_a_deleted_photo_leaves_no_row_in_the_metadata_index(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """索引以绝对路径为主键：照片没了那一行得跟着走，否则它会永远留在那儿（ADR 0013）。"""
+    doomed = make_photo("没了.jpg")
+    window, watcher = open_window(qt_app, tmp_path)
+    try:
+        library = window._library
+        assert library is not None
+        index = library.facet_index
+        index.store([(PhotoRef.from_path(doomed), _facets())])
+        assert index.lookup([PhotoRef.from_path(doomed)])
+
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.REMOVED, doomed))
+
+        assert index.lookup([PhotoRef.from_path(doomed)]) == {}
+    finally:
+        window.close()
+
+
+def test_a_gone_photo_keeps_no_thumbnail_in_memory(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """那几份按路径索引的内存缓存也要丢：路径上已经没有文件了。"""
+    doomed = make_photo("没了.jpg")
+    window, watcher = open_window(qt_app, tmp_path)
+    try:
+        assert wait_until(qt_app, lambda: window._model.has_thumbnail(doomed))
+        window._preview_cache[doomed] = window._preview_cache.get(doomed) or _image()  # type: ignore[assignment]
+
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.REMOVED, doomed))
+
+        assert not window._model.has_thumbnail(doomed)
+        assert doomed not in window._preview_cache
+        assert doomed not in window._metadata_cache
+    finally:
+        window.close()
+
+
+# ---- 改名与内容变化 ------------------------------------------------------------
+
+
+def test_renaming_outside_keeps_the_row_and_the_selection(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """访达里改个名：那一格原地换掉，选中还在 —— 不是「删一张再加一张」。"""
+    before = make_photo("旧名.jpg")
+    after = tmp_path / "新名.jpg"
+    window, watcher = open_window(qt_app, tmp_path)
+    try:
+        window._grid.select_row(row_of(window, before))
+        before.rename(after)
+
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.MOVED, before, dest_path=after))
+
+        assert window._model.rowCount() == 1
+        assert names(window) == ["新名.jpg"]
+        assert window._model.row_of_path(before) == -1
+        assert window._grid.current_row() == row_of(window, after)
+    finally:
+        window.close()
+
+
+def test_moving_a_photo_into_another_album_shows_it_here_only(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """从子文件夹拖到当前层：当前层多一格（在这一层里它就是新出现的）。"""
+    source = make_photo("挪上来.jpg", directory=tmp_path / "另一处")
+    destination = tmp_path / "挪上来.jpg"
+    window, watcher = open_window(qt_app, tmp_path, browse_mode=BROWSE_MODE_ALBUMS)
+    try:
+        assert window._model.rowCount() == 1, "相册模式下只有「另一处」这个相册"
+        source.rename(destination)
+
+        deliver(
+            qt_app,
+            window,
+            watcher,
+            LibraryChange(ChangeKind.MOVED, source, dest_path=destination),
+        )
+
+        assert names(window) == ["另一处", "挪上来.jpg"]
+    finally:
+        window.close()
+
+
+def test_moving_a_photo_out_of_this_level_takes_its_row(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    gone = make_photo("挪走了.jpg")
+    window, watcher = open_window(qt_app, tmp_path, browse_mode=BROWSE_MODE_ALBUMS)
+    try:
+        away = tmp_path / "别的库" / "挪走了.jpg"
+        away.parent.mkdir(parents=True, exist_ok=True)
+        gone.rename(away)
+
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.REMOVED, gone))
+
+        assert window._model.rowCount() == 0
+    finally:
+        window.close()
+
+
+def test_a_photo_changed_elsewhere_refreshes_its_row(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """外部工具覆盖写了一张照片：网格上的引用不能还挂着旧的大小与修改时间。"""
+    picture = make_photo("被改过.jpg", size=(64, 48))
+    window, watcher = open_window(qt_app, tmp_path)
+    try:
+        before = window._model.entry_at(row_of(window, picture))
+        assert isinstance(before, PhotoRef)
+        picture.write_bytes(picture.read_bytes() + b"\x00" * 32)  # 外部工具覆盖写了一次
+        _touch(picture)
+
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.MODIFIED, picture))
+
+        after = window._model.entry_at(row_of(window, picture))
+        assert isinstance(after, PhotoRef)
+        assert after.mtime_ns != before.mtime_ns or after.size != before.size
+    finally:
+        window.close()
+
+
+def test_a_changed_photo_forgets_the_stale_caches(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """手里那份预览与元数据不再作数：否则面板显示的还是旧值。"""
+    picture = make_photo("被改过.jpg")
+    window, watcher = open_window(qt_app, tmp_path)
+    try:
+        window._metadata_cache[picture] = (0, 0, _metadata())  # type: ignore[assignment]
+        assert wait_until(qt_app, lambda: window._model.has_thumbnail(picture))
+
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.MODIFIED, picture))
+
+        assert picture not in window._metadata_cache
+        assert not window._model.has_thumbnail(picture)
+    finally:
+        window.close()
+
+
+def test_an_empty_level_says_so_again(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """删到一张不剩时，那句「这里是空的」要回来。"""
+    only = make_photo("唯一一张.jpg")
+    window, watcher = open_window(qt_app, tmp_path)
+    try:
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.REMOVED, only))
+
+        assert "没有找到可显示的照片" in window._banner.text()
+    finally:
+        window.close()
+
+
+def test_a_change_that_arrives_while_a_new_photo_fills_the_level(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """扫到一半又来了变化：先记下来，扫完再补 —— 宁可晚半秒，不要插错位置。"""
+    make_photo("a.jpg")
+    window, watcher = open_window(qt_app, tmp_path)
+    try:
+        newcomer = make_photo("b.jpg")
+        window._scan_job = 999  # 假装还有一次扫描在途
+        try:
+            deliver(qt_app, window, watcher, LibraryChange(ChangeKind.ADDED, newcomer))
+            assert window._model.rowCount() == 1, "扫描在途时不插行"
+            assert window._watch_pending is not None, "这批变化要攒着，不是丢掉"
+            assert window._watch_pending[0].path == newcomer
+        finally:
+            window._scan_job = None
+    finally:
+        window.close()
+
+
+def test_changes_that_had_to_wait_are_applied_later(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """攒下来的那批变化不是丢掉，是等条件合适时补上（ADR 0013）。
+
+    这一条专门钉住「补」：之前只测了「先攒着」，攒着的东西没人兑现的话，
+    用户看到的就永远是那张少了照片的旧网格。
+    """
+    make_photo("a.jpg")
+    window, watcher = open_window(qt_app, tmp_path)
+    try:
+        newcomer = make_photo("b.jpg")
+        window._scan_job = 999  # 假装还有一次扫描在途
+        try:
+            deliver(qt_app, window, watcher, LibraryChange(ChangeKind.ADDED, newcomer))
+            assert window._model.rowCount() == 1
+        finally:
+            window._scan_job = None
+
+        window._flush_pending_watch()
+
+        assert window._model.rowCount() == 2
+        assert window._watch_pending is None
+    finally:
+        window.close()
+
+
+def test_changes_that_arrive_in_the_detail_view_wait_for_the_grid(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """正看着大图时磁盘变了：网格该改，但要等回到网格时再改（大图页没有网格可改）。"""
+    picture = make_photo("一张.jpg")
+    window, watcher = open_window(qt_app, tmp_path)
+    try:
+        window._grid.select_row(row_of(window, picture))
+        window._open_detail(window._model.index(row_of(window, picture), 0))
+        qt_app.processEvents()
+        newcomer = make_photo("刚来的.jpg")
+
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.ADDED, newcomer))
+        assert window._model.rowCount() == 1, "大图页上不动网格"
+        assert window._watch_pending is not None
+
+        window.show_grid()
+        qt_app.processEvents()
+
+        assert window._model.rowCount() == 2
+    finally:
+        window.close()
+
+
+# ---- 自家写操作的回声 -----------------------------------------------------------
+
+
+def test_renaming_here_is_not_applied_twice(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """监听器会把自家的改名原样报回来；同一件事不应用第二遍（ADR 0013）。"""
+    picture = make_photo("原名.jpg")
+    window, watcher = open_window(qt_app, tmp_path)
+    try:
+        window._grid.select_row(row_of(window, picture))
+        window._grid.begin_rename(window._grid.currentIndex())
+        qt_app.processEvents()
+        window._on_rename_committed(window._grid.current_row(), "改成它.jpg")
+        renamed = tmp_path / "改成它.jpg"
+        assert renamed.exists()
+
+        # 监听器随后报上来的回声：路径已经换过、文件也在，不该把那一格搞乱。
+        deliver(
+            qt_app,
+            window,
+            watcher,
+            LibraryChange(ChangeKind.MOVED, picture, dest_path=renamed),
+        )
+
+        assert names(window) == ["改成它.jpg"]
+        assert window._model.row_of_path(picture) == -1
+    finally:
+        window.close()
+
+
+def test_trashing_here_is_not_applied_twice(
+    qt_app: QApplication,
+    tmp_path: Path,
+    fake_trash: Path,
+    make_photo: Callable[..., Path],
+) -> None:
+    """删掉之后监听器报「这个路径不见了」：那一格已经摘过，不必再摘一次。"""
+    picture = make_photo("删掉.jpg")
+    window, watcher = open_window(qt_app, tmp_path)
+    try:
+        window._grid.select_row(row_of(window, picture))
+        window.trash_selected()
+        qt_app.processEvents()
+        assert window._model.rowCount() == 0
+
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.REMOVED, picture))
+
+        assert window._model.rowCount() == 0
+        assert "已把「删掉.jpg」移到废纸篓" in window._banner.text()
+    finally:
+        window.close()
+
+
+def test_restoring_from_the_trash_is_not_inserted_twice(
+    qt_app: QApplication,
+    tmp_path: Path,
+    fake_trash: Path,
+    make_photo: Callable[..., Path],
+) -> None:
+    """取回来的照片，监听器随后也会报「新增」：同一个路径只该有一行。"""
+    picture = make_photo("取回.jpg")
+    window, watcher = open_window(qt_app, tmp_path)
+    try:
+        window._grid.select_row(row_of(window, picture))
+        window.trash_selected()
+        qt_app.processEvents()
+
+        window.undo_last_write()
+        qt_app.processEvents()
+
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.ADDED, picture))
+
+        assert window._model.rowCount() == 1
+        assert names(window) == ["取回.jpg"]
+    finally:
+        window.close()
+
+
+def test_a_genuinely_new_file_with_the_same_name_is_not_swallowed(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """回声只在短时间内有效：之后用户真的新建一个同名文件，必须正常显示。"""
+    picture = make_photo("同名.jpg")
+    window, watcher = open_window(qt_app, tmp_path)
+    try:
+        window._note_self_write(picture)
+        assert picture in window._watch_echoes, "自家写操作要留个回声记号"
+        window._watch_echoes = {  # 把记号的时间戳推到过去，等于让它过期
+            path: recorded - WATCH_ECHO_TTL - 1 for path, recorded in window._watch_echoes.items()
+        }
+
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.REMOVED, picture))
+
+        assert window._model.rowCount() == 0
+    finally:
+        window.close()
+
+
+# ---- 生命周期 -----------------------------------------------------------------
+
+
+def test_closing_the_window_stops_the_watch(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """漏停的后果不是「多一个线程」，而是那个线程会往已销毁的窗口发信号。"""
+    make_photo("一张.jpg")
+    window, watcher = open_window(qt_app, tmp_path)
+    try:
+        assert watcher.running is True
+    finally:
+        window.close()
+
+    assert watcher.running is False
+
+
+def test_switching_libraries_stops_the_old_watch(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """换库之后，上一个库的监听必须已经停掉。"""
+    first = tmp_path / "第一个库"
+    second = tmp_path / "第二个库"
+    first.mkdir()
+    second.mkdir()
+    make_photo("一张.jpg", directory=first)
+    make_photo("两张.jpg", directory=second)
+    prepare_library(first)
+    prepare_library(second)
+
+    watchers: list[FakeWatcher] = []
+    window = MainWindow(
+        session_base=tmp_path / "状态",
+        initial_library=first,
+        watch_starter=make_starter(watchers),
+    )
+    try:
+        assert wait_until(qt_app, lambda: len(watchers) == 1)
+
+        window.open_library(second)
+        assert wait_until(qt_app, lambda: len(watchers) == 2)
+
+        assert watchers[0].running is False
+        assert watchers[1].running is True
+    finally:
+        window.close()
+
+
+def test_changes_after_closing_the_library_are_ignored(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """没有库了就没有「当前这一层」：晚到的一批变化必须被安静地丢掉。"""
+    make_photo("一张.jpg")
+    window, watcher = open_window(qt_app, tmp_path)
+    try:
+        window.close()
+
+        watcher.push(LibraryChange(ChangeKind.ADDED, tmp_path / "迟到的.jpg"))
+
+        assert window._library is None
+    finally:
+        window.close()
+
+
+# ---- 小工具 -------------------------------------------------------------------
+
+
+def _touch(path: Path) -> None:
+    """把修改时间往后推：内容变了，mtime 也必须跟着变（索引的新鲜度就看它）。"""
+    stamp = path.stat().st_mtime_ns + 10**9
+    os.utime(path, ns=(stamp, stamp))
+
+
+def _facets() -> PhotoFacets:
+    return PhotoFacets(year=2024)
+
+
+def _metadata() -> MetadataReport:
+    return MetadataReport(path=Path("x.jpg"), groups=(), all_fields=(), source="exiftool")
+
+
+def _image() -> QImage:
+    return QImage(4, 4, QImage.Format.Format_RGB32)

@@ -13,8 +13,9 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections import OrderedDict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from functools import partial
 from pathlib import Path
 
@@ -38,7 +39,7 @@ from gallery.core.library.config import prepare_library
 from gallery.core.library.facade import Library, PlacePass
 from gallery.core.library.groups import SortOrder, build_groups, sort_photos
 from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
-from gallery.core.library.scanner import ScanReport
+from gallery.core.library.scanner import ScanReport, describe_entry
 from gallery.core.library.session import (
     BROWSE_MODE_ALBUMS,
     BROWSE_MODE_FLAT,
@@ -47,6 +48,7 @@ from gallery.core.library.session import (
     load_session,
     save_session,
 )
+from gallery.core.library.watcher import ChangeKind, LibraryChange, summarize
 from gallery.core.metadata.exif import ExifToolReader, MetadataReport, read_metadata
 from gallery.core.metadata.facets import (
     GROUP_FACETS,
@@ -82,6 +84,7 @@ from gallery.ui.panels.welcome import WelcomeView
 from gallery.ui.tasks import TaskContext, TaskRunner
 from gallery.ui.thumbs.pipeline import ThumbnailPipeline
 from gallery.ui.viewer.detail import DetailView
+from gallery.ui.watch import WatchBridge, WatchStarter, start_watch
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +106,11 @@ PREVIEW_EDGE_FACTOR = 1.5
 #: 预览图长边的上下限（像素）。
 MIN_PREVIEW_EDGE = 512
 MAX_PREVIEW_EDGE = 4096
+
+#: 自家写操作（改名 / 移到废纸篓 / 撤销）之后，监听器报回来的同一件事在这段时间内
+#: 不再重复应用。给的是**够用**的时间而不是「等下一个事件」：漏掉一次回声会让同一行
+#: 被改两遍，过期之后用户真的在访达里新建一个同名文件又该正常显示（ADR 0013）。
+WATCH_ECHO_TTL = 2.0
 
 _BANNER_STYLE = """
 QLabel#banner {
@@ -227,12 +235,24 @@ class MainWindow(QMainWindow):
         *,
         session_base: Path | None = None,
         initial_library: Path | None = None,
+        watch_starter: WatchStarter | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._session_base = session_base
         self._session: SessionState = load_session(base=session_base)
         self._runner = TaskRunner(self)
+        #: 外部文件变化 → 网格。回调在 watchdog 的线程上到达，必须用排队连接接。
+        self._watch = WatchBridge(self, starter=watch_starter or start_watch)
+        self._watch.changed.connect(self._on_watch_changed, Qt.ConnectionType.QueuedConnection)
+        self._watch.failed.connect(self._on_watch_failed, Qt.ConnectionType.QueuedConnection)
+        #: 自家刚写过的路径与它们的过期时刻（见 ``WATCH_ECHO_TTL``）。
+        self._watch_echoes: dict[Path, float] = {}
+        #: 攒着没落地的变化（当时扫描在途、条目还在暂存区，或人正在大图页）。
+        #: 条件合适时补做，见 :meth:`_flush_pending_watch`。
+        self._watch_pending: tuple[LibraryChange, ...] | None = None
+        #: 分组视图里来了新照片：重新分组之后要回到哪个组（ADR 0013）。
+        self._pending_group: str | None = None
 
         self._library: Library | None = None
         self._pipeline: ThumbnailPipeline | None = None
@@ -787,6 +807,10 @@ class MainWindow(QMainWindow):
         finally:
             # 顺序定下来了，这才有资格回答「这一层是不是空的」。
             self._update_level_notice()
+            # 分组视图里来了新照片时，这里是重新分组之后回到原处的地方（ADR 0013）。
+            self._maybe_reenter_group()
+            # 暂存区到这里才清空：攒着的变化从这一刻起才能安全地落到网格上。
+            self._flush_pending_watch()
 
     def _reorder_level(self, library: Library) -> None:
         # 暂存的优先：那一层还没上屏，顺序就是这里算出来的。
@@ -934,9 +958,15 @@ class MainWindow(QMainWindow):
         self._stack.setCurrentWidget(self._grid_page)
         self._update_action_states()
         self._remember(library.root)
+        self._watch.start(library)
         self._start_scan()
 
     def _teardown_library(self) -> None:
+        # 监听器第一刀：它还在跑的时候，下面就把库和索引都拆了。
+        self._watch.stop()
+        self._watch_echoes.clear()
+        self._watch_pending = None
+        self._pending_group = None
         self._cancel_facet_job()
         self._cancel_place_pass()
         if self._scan_job is not None:
@@ -1080,6 +1110,12 @@ class MainWindow(QMainWindow):
         # 「这一层空不空」**不在这里判断**：要重排时条目还攒着没上屏（见 _staged），
         # 那时模型里一条也没有，照着它判断就会把一屏相册 / 组卡片误报成「空」。
         # 真正该由最终内容决定，所以交给 _apply_ordering → _update_level_notice。
+        if self._watch_pending:
+            # 扫描在途时收到过外部变化：流式扫描没法在半路上改（会插到旧位置、会插重）。
+            # 干脆重来这一层，几十毫秒的事。
+            self._watch_pending = None
+            self._reload_level()
+            return
         self._refresh_thumbnail_window()
         self._start_facet_read()
         self._maybe_start_place_pass()
@@ -1195,6 +1231,245 @@ class MainWindow(QMainWindow):
         # 已经攒到的条目照常摆出来（按当前能算出来的顺序）：扫到一半失败时给用户
         # 一屏能看的东西，比给一屏空白加一句「扫描失败」有用。
         self._apply_ordering()
+
+    # ---- 实时监听（ADR 0013）------------------------------------------------
+
+    def _on_watch_changed(self, payload: object) -> None:
+        """把一批外部变化落到当前这一层上（**主线程**：排队连接搬过来的）。"""
+        library = self._library
+        if library is None or not isinstance(payload, tuple):
+            return
+        changes = tuple(
+            change
+            for change in payload
+            if isinstance(change, LibraryChange) and not self._is_echo(change)
+        )
+        if not changes:
+            return
+        logger.info("磁盘上有变化：%s", summarize(changes))
+        if self._defer_watch_until_idle():
+            waiting = self._watch_pending or ()
+            self._watch_pending = (*waiting, *changes)
+            return
+        self._apply_watch_changes(library, changes)
+
+    def _defer_watch_until_idle(self) -> bool:
+        """现在还不能就地改网格吗？回答「是」，这批变化就该先攒着。
+
+        三种时候不能就地改：扫描还在流式上屏、条目还攒在暂存区等着定顺序、
+        人正看着大图（前两种会插到旧位置、会插重，第三种会重排不动）。
+        """
+        return (
+            self._scan_job is not None
+            or self._staged is not None
+            or self._stack.currentWidget() is not self._grid_page
+        )
+
+    def _flush_pending_watch(self) -> None:
+        """把之前攒下的变化补上：重排一结束、或者人回到网格，都是合适的时候。"""
+        changes, self._watch_pending = self._watch_pending, None
+        if changes is None:
+            return
+        library = self._library
+        if library is None:
+            return
+        if self._defer_watch_until_idle():
+            self._watch_pending = changes  # 还是不行，继续等
+            return
+        self._apply_watch_changes(library, changes)
+
+    def _on_watch_failed(self, message: str) -> None:
+        """监听本身出问题不该挡住浏览，但界面从此不是最新的，得说出来。"""
+        logger.info("文件监听出错：%s", message)
+        self._show_banner(f"{message}（界面暂时不会自动更新，重新打开这个库即可恢复）")
+
+    def _apply_watch_changes(self, library: Library, changes: Sequence[LibraryChange]) -> None:
+        """按当前这一层的形状，把一批变化落到网格、内存缓存与索引上。"""
+        added: list[GridEntry] = []
+        gone: list[Path] = []
+        #: 内存里缓存作废的路径（改名、内容变了、照片没了）。
+        stale: set[Path] = set()
+        #: 内部变了、封面可能要重找的相册。
+        covers: set[Path] = set()
+
+        for change in changes:
+            if change.kind is ChangeKind.MOVED and change.dest_path is not None:
+                self._apply_watch_move(change, added, gone, stale)
+                continue
+            if change.kind is ChangeKind.REMOVED:
+                if self._is_on_current_level(change.path):
+                    gone.append(change.path)
+                    stale.add(change.path)
+                else:
+                    covers.update(self._album_covering(change.path))
+                continue
+            entry = describe_entry(library.root, change.path)
+            if entry is None:
+                continue  # 已经不在了，或者压根不是照片：这一条什么也做不了
+            if change.kind is ChangeKind.MODIFIED:
+                stale.add(change.path)
+                if self._is_on_current_level(change.path):
+                    row = self._model.row_of_path(change.path)
+                    if row >= 0:
+                        # 换一份新的引用，让这一行不再挂着旧的大小与修改时间。
+                        self._model.replace_entry(row, entry)
+                        continue
+                covers.update(self._album_covering(change.path))
+                continue
+            if self._is_on_current_level(change.path):
+                added.append(entry)
+            else:
+                covers.update(self._album_covering(change.path))
+
+        rows = sorted(row for path in gone if (row := self._model.row_of_path(path)) >= 0)
+        if rows:
+            self._model.remove_paths(gone)
+            library.forget_paths(gone)  # 索引里的孤儿行：照片不在了，那一行也不该留着
+            self._select_after_removal(rows)
+        if added:
+            whole_level = self._group_view is not None or self._browse_mode == BROWSE_MODE_FLAT
+            for entry in added:
+                self._model.insert_entry(entry, whole_level=whole_level)
+        if stale:
+            self._forget_caches(stale)
+        if covers:
+            self._refresh_album_covers(covers)
+
+        if added or gone:
+            if self._group_view is not None and any(not isinstance(e, FolderRef) for e in added):
+                # 组里的成员是上一次分组算出来的快照，新照片该不该进这个组只能重算。
+                self._reenter_group_later(self._group_view.key)
+                return
+            if self._ordering_active() or self._group_view is not None:
+                # 新照片要读一次 EXIF 才排得对；其余照片命中索引，不会重读。
+                self._start_facet_read()
+        # 「这一层空不空」由它自己判断是加提示还是收提示（扫描出问题时它会让位）。
+        self._update_level_notice()
+        self._refresh_thumbnail_window()
+
+    def _apply_watch_move(
+        self,
+        change: LibraryChange,
+        added: list[GridEntry],
+        gone: list[Path],
+        stale: set[Path],
+    ) -> None:
+        """外部改名 / 移动：两端都在当前层就原地换那一格，否则一端加、一端删。"""
+        library = self._library
+        destination = change.dest_path
+        if library is None or destination is None:
+            return
+        entry = describe_entry(library.root, destination)
+        source_here = self._is_on_current_level(change.path)
+        destination_here = self._is_on_current_level(destination)
+        if source_here and destination_here:
+            stale.update(change.touches)
+            row = self._model.row_of_path(change.path)
+            if row >= 0:
+                if entry is None:
+                    gone.append(change.path)  # 改着改着没了
+                else:
+                    self._model.replace_entry(row, entry)
+            elif entry is not None:
+                # 屏幕上没有它（旧名字不在这一层里）：新位置在这一层，就当新来的。
+                added.append(entry)
+            return
+        if destination_here and entry is not None:
+            added.append(entry)
+        if source_here:
+            gone.append(change.path)
+
+    def _is_on_current_level(self, path: Path) -> bool:
+        """这个路径是不是当前这一层直接摆出来的一条。"""
+        library = self._library
+        if library is None:
+            return False
+        if self._group_view is not None or self._browse_mode == BROWSE_MODE_FLAT:
+            return True  # 平铺与分组：整棵子树都摆在屏幕上
+        return path.parent == (self._current_dir or library.root)
+
+    def _album_covering(self, path: Path) -> tuple[Path, ...]:
+        """变化发生在某个相册**内部**时，找出当前这一层里代表它的那个相册。
+
+        相册的封面是「里面第一张照片」，所以往相册里丢一张新照片可能会换封面 ——
+        这种情况下要把那一格已经画好的封面作废，让缩略图流水线重新去找一次。
+        """
+        library = self._library
+        if library is None or self._browse_mode != BROWSE_MODE_ALBUMS:
+            return ()
+        current = self._current_dir or library.root
+        try:
+            relative = path.relative_to(current)
+        except ValueError:
+            return ()
+        if len(relative.parts) < 2:
+            return ()  # 就是这一层上的东西，不走这条路
+        album = current / relative.parts[0]
+        return (album,) if self._model.row_of_path(album) >= 0 else ()
+
+    def _refresh_album_covers(self, albums: Iterable[Path]) -> None:
+        """相册内容变了：让封面重新找一次。"""
+        stale = {album for album in albums if self._model.row_of_path(album) >= 0}
+        if stale:
+            self._forget_caches(stale)
+
+    def _forget_caches(self, paths: Iterable[Path]) -> None:
+        """丢掉按路径索引的内存缓存（路径上已经没有文件，或者文件已经不是那个文件了）。
+
+        磁盘上的缩略图缓存**不用动**：它的键含路径与 ``(大小, 修改时间)``，文件一改
+        键就自然对不上，下次会重新解码（见 ``media.thumbs``）。
+        """
+        wanted = {Path(path) for path in paths}
+        for path in wanted:
+            self._preview_cache.pop(path, None)
+            self._metadata_cache.pop(path, None)
+        self._model.forget_thumbnails(wanted)
+        if self._pipeline is not None:
+            self._pipeline.forget(wanted)
+        self._reload_open_photo(wanted)
+
+    def _reload_open_photo(self, stale: set[Path]) -> None:
+        """正看着的那张被改了，就重新载入它 —— 否则大图区与面板显示的还是旧值。"""
+        if self._stack.currentWidget() is not self._detail_page or self._current_row < 0:
+            return
+        row = min(self._current_row, self._model.rowCount() - 1)
+        photo = self._model.photo_at(row)
+        if photo is not None and photo.path in stale:
+            self._current_row = row
+            self._load_detail(row)
+
+    def _reenter_group_later(self, key: str) -> None:
+        """分组视图里来了新照片：整个库重新分组一次，之后再回到同一个组。
+
+        否则组卡片上的张数会一直停在快照那一刻，用户看不出这个组已经变了。
+        """
+        self._pending_group = key
+        self._group_view = None
+        self._reload_level()
+
+    def _maybe_reenter_group(self) -> None:
+        """重排之后回到刚才那个组（它不在了就留在这一层，由横幅说明为什么）。"""
+        key, self._pending_group = self._pending_group, None
+        if key is None:
+            return
+        for entry in self._model.entries():
+            if isinstance(entry, GroupRef) and entry.key == key:
+                self.enter_group(entry)
+                return
+
+    def _note_self_write(self, *paths: Path) -> None:
+        """记下自家刚动过的路径：监听器随后报上来的同一件事不重复应用（ADR 0013）。"""
+        deadline = time.monotonic() + WATCH_ECHO_TTL
+        for path in paths:
+            self._watch_echoes[Path(path)] = deadline
+
+    def _is_echo(self, change: LibraryChange) -> bool:
+        """这次变化是不是自家写操作的回声。"""
+        now = time.monotonic()
+        for path, deadline in list(self._watch_echoes.items()):
+            if deadline <= now:
+                del self._watch_echoes[path]
+        return any(path in self._watch_echoes for path in change.touches)
 
     # ---- 缩略图 ------------------------------------------------------------
 
@@ -1528,6 +1803,8 @@ class MainWindow(QMainWindow):
             self._show_banner(exc.message)
             return
         self._forget_trashed(result.moved)
+        # 监听器随后会把「这些路径不见了」报回来；这里已经摘过行了，不必再摘一次。
+        self._note_self_write(*(entry.path for entry in result.moved))
         # 只摘真正移走的那些行：批量里失败的那几张还得留在网格上。
         moved_paths = {entry.path for entry in result.moved}
         removed = [row for row in rows if self._is_row_moved(row, moved_paths)]
@@ -1605,6 +1882,7 @@ class MainWindow(QMainWindow):
         """
         if not result.entries:
             return
+        self._note_self_write(*(entry.path for entry in result.entries))
         for entry in result.entries:
             self._model.insert_entry(entry)
         self._apply_ordering()
@@ -1619,6 +1897,7 @@ class MainWindow(QMainWindow):
         stale = result.previous.path
         self._preview_cache.pop(stale, None)
         self._metadata_cache.pop(stale, None)
+        self._note_self_write(stale, result.entry.path)
         if not result.renamed:
             self._grid.select_row(row, ensure_visible=False)
             return
@@ -1635,6 +1914,8 @@ class MainWindow(QMainWindow):
         self._stack.setCurrentWidget(self._grid_page)
         if self._current_row >= 0:
             self._grid.select_row(self._current_row)
+        # 在大图页时攒下的外部变化：这里才是网格能改的地方（ADR 0013）。
+        self._flush_pending_watch()
         self._update_action_states()
         self._refresh_thumbnail_window()
 

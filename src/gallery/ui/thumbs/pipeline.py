@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from functools import partial
 from pathlib import Path
 
@@ -68,6 +68,17 @@ class ThumbnailPipeline(QObject):
         self._refs.clear()
         self._failed.clear()
         self._empty.clear()
+
+    def forget(self, paths: Iterable[Path]) -> None:
+        """这些路径上的文件变了：忘掉「读不出来 / 是空相册」的结论。
+
+        那两个集合是**记忆**，为的是别对同一个坏文件反复重试；但文件被外部工具替换
+        之后记忆就过期了 —— 不清掉，那一格会永远停在占位图上（ADR 0012）。
+        """
+        for path in paths:
+            target = Path(path)
+            self._failed.discard(target)
+            self._empty.discard(target)
 
     def _dispatch(self) -> None:
         while len(self._inflight) < self._max_inflight:

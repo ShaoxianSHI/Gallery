@@ -6,6 +6,10 @@
 
 缩略图在这里被缩放到图标尺寸再缓存 —— 一次平滑缩放，换来每次重绘都省下的一次缩放。
 
+**实时监听靠这里的插行 / 摘行**：磁盘上多一张少一张，界面就地改一格，不重扫整层
+（ADR 0013）。因此同一个路径在网格上只可能有一行 —— :meth:`insert_entry` 与
+:meth:`append` 都会先看看它在不在。
+
 **刻意不提供悬停提示**：格子底下的文件名已经说清了是哪一张，其余信息（格式、大小、
 时间、坐标、拍摄参数）在大图右侧的元数据面板里（⌘I）随时能看，对着一屏照片时再悬停
 反而晃眼。这个提示曾经有过，是按「可有可无」删掉的。
@@ -21,7 +25,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -174,17 +178,53 @@ class PhotoListModel(QAbstractListModel):
         self._reindex()
         return removed
 
-    def insert_entry(self, entry: GridEntry) -> int:
+    def remove_paths(self, paths: Iterable[Path]) -> list[GridEntry]:
+        """按路径摘掉若干行，返回被摘掉的条目（按网格里的先后顺序）。
+
+        实时监听用：磁盘上少了一个文件，界面上就该少一格，不必重扫整层（ADR 0013）。
+        分组卡片不会经这条路被摘掉 —— 它的行号不走 ``_row_by_path``；组里少掉的那张
+        会在重排时自然消失。
+        """
+        wanted = {Path(path) for path in paths}
+        rows = sorted({row for path, row in self._row_by_path.items() if path in wanted})
+        return self.remove_rows(rows)
+
+    def forget_thumbnails(self, paths: Iterable[Path]) -> None:
+        """这些路径上的文件变了，手里那张缩略图不再作数。
+
+        只清「确实缓存过」的：没缓存过的路径不发信号，免得平白让整屏重画。
+        """
+        rows: set[int] = set()
+        for path in {Path(item) for item in paths}:
+            if self._pixmaps.pop(path, None) is None:
+                continue
+            row = self._row_by_path.get(path)
+            if row is not None:
+                rows.add(row)
+            rows.update(self._group_rows_by_cover.get(path, ()))
+        for row in sorted(rows):
+            self._notify_row(row)
+
+    def insert_entry(self, entry: GridEntry, *, whole_level: bool = False) -> int:
         """把一条**取回来的**条目插回它该在的行，返回那一行的行号。
 
         撤销删除之后用：按「同一目录内（相册在前，名字）」插到正确的位置，与扫描器的
         排序一致（见 ``scanner``）。一个兄弟节点都不在屏幕上时（用户把它们都删了）
         就追加到末尾 —— 顺序在下一次扫描时自然归位，不值得为它重扫整层。
+
+        :param whole_level: 这一层不是同一个目录时（平铺模式、分组视图）置 ``True``：
+            「兄弟节点」这个前提在那儿不成立，位置要在整层里按名字找。监听往平铺层里
+            插一张照片必须用它，否则它会被追加到末尾，和旁边的照片错位（ADR 0013）。
         """
         if isinstance(entry, GroupRef):
             # 撤销删除取回的是磁盘上的东西，不会有分组卡片从这里回来。
             return -1
-        row = self._insert_position(entry)
+        existing = self._row_by_path.get(entry.path, -1)
+        if existing >= 0:
+            # 同一个路径在网格上只可能有一行：监听报上来的新增与撤销取回可能撞上同一张，
+            # 与其让两份引用打架，不如告诉调用方「它已经在第几行」。
+            return existing
+        row = self._insert_position(entry, whole_level=whole_level)
         self.beginInsertRows(QModelIndex(), row, row)
         self._entries.insert(row, entry)
         self.endInsertRows()
@@ -192,12 +232,23 @@ class PhotoListModel(QAbstractListModel):
         return row
 
     def append(self, entries: Sequence[GridEntry]) -> None:
-        """追加一批条目（扫描是流式的，界面不等整层扫完就能出图）。"""
-        if not entries:
+        """追加一批条目（扫描是流式的，界面不等整层扫完就能出图）。
+
+        已经在屏幕上的路径会被跳过：扫描还在流式上屏时用户又丢进来一张照片，那张会由
+        监听单独插进来（ADR 0013），两处都收下就会出现两格同一张照片。
+        """
+        known = set(self._row_by_path)
+        fresh: list[GridEntry] = []
+        for entry in entries:
+            if isinstance(entry, GroupRef) or entry.path in known:
+                continue
+            known.add(entry.path)  # 同一批里的重复也要挡住
+            fresh.append(entry)
+        if not fresh:
             return
         start = len(self._entries)
-        self.beginInsertRows(QModelIndex(), start, start + len(entries) - 1)
-        for offset, entry in enumerate(entries):
+        self.beginInsertRows(QModelIndex(), start, start + len(fresh) - 1)
+        for offset, entry in enumerate(fresh):
             self._track(entry, start + offset)
             self._entries.append(entry)
         self.endInsertRows()
@@ -319,19 +370,26 @@ class PhotoListModel(QAbstractListModel):
             return int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
         return None
 
-    def _insert_position(self, entry: GridEntry) -> int:
-        """这条条目该插在第几行：同目录里排在它后面的第一行，或末尾。
+    def _insert_position(self, entry: GridEntry, *, whole_level: bool = False) -> int:
+        """这条条目该插在第几行：排在它后面的第一行，或末尾。
 
-        已经有分组 / 排序时改按当前顺序插（``order_key``）：撤销删除取回一张照片，
-        它该落回自己在新顺序里的位置，而不是扫描顺序里的位置。
+        默认只看**同一个目录**里的邻居（相册在前、同类按名字，与扫描一致）；整层不是
+        一个目录时（平铺模式、分组视图）传 ``whole_level=True``，这时在整层里按同一
+        把尺子找位置。
+
+        已经有分组 / 排序时改由调用方重排整层（见 :meth:`insert_entry` 的说明）——
+        那时「排在哪里」要由排出来的顺序说了算，按名字猜没有意义。
         """
         key = _sort_key(entry)
         position = len(self._entries)
         for row, other in enumerate(self._entries):
-            if isinstance(other, GroupRef) or other.path.parent != entry.path.parent:
-                continue  # 组卡片不是兄弟节点；不相邻的目录插在它前后都不对
-            if _sort_key(other) < key:
-                position = row + 1
+            if isinstance(other, GroupRef):
+                continue  # 组卡片不是兄弟节点
+            if not whole_level and other.path.parent != entry.path.parent:
+                continue  # 不相邻的目录插在它前后都不对
+            if _sort_key(other) > key:
+                return row  # 第一个排在它后面的那一行，就是它该待的位置
+            position = row + 1
         return position
 
     def _reindex(self) -> None:
