@@ -48,7 +48,8 @@ APP_ICON_SIZES: Final = (16, 32, 64, 256, 1024)
 
 #: 缩略图生成算法的版本号。解码方式、缩放滤镜或输出格式变化时递增；
 #: 缓存 key 包含它，因此递增会让整批旧缩略图自动失效。
-THUMBNAIL_SPEC_VERSION: Final = 1
+#: 2 = 缓存 JPEG 从 q85 + optimize + 4:4:4 改成 q82 + 4:2:0（见 ADR 0015）。
+THUMBNAIL_SPEC_VERSION: Final = 2
 
 #: 缩略图长边默认像素数。
 DEFAULT_THUMBNAIL_MAX_EDGE: Final = 512
