@@ -1,4 +1,4 @@
-"""ISO 国家代码 → 中文名。
+"""地名展示用名称：国家代码 → 中文名，以及三段地点的拼装。
 
 GeoNames 的 ``countryInfo.txt`` 只有英文国名，而这是个中文界面的软件。
 城市名保持 GeoNames 原名（要中文城市名得额外下载 100 MB+ 的 alternateNames，
@@ -265,4 +265,24 @@ def country_label(code: str, fallback: str = "") -> str:
     return COUNTRY_NAMES_ZH.get(normalized) or fallback.strip() or normalized
 
 
-__all__ = ["CHINA_PROVINCES_ZH", "COUNTRY_NAMES_ZH", "admin1_label", "country_label"]
+def place_label(city: str | None, region: str | None, country: str | None) -> str:
+    """三段地点 → 一句展示文案：``中国 · 浙江省 · 杭州``（缺的层级自动省略）。
+
+    **索引里存的就是这三列**，元数据面板从库里读出来之后要用同一个函数拼成一句话。
+    两处各拼一次，早晚会漂成「面板写着杭州、分组写着 Bordeaux」——
+    同一个反查结论（ADR 0010），只该有一种说法。
+    """
+    parts: list[str] = []
+    for part in (country, region, city):
+        if part and part not in parts:
+            parts.append(part)
+    return " · ".join(parts)
+
+
+__all__ = [
+    "CHINA_PROVINCES_ZH",
+    "COUNTRY_NAMES_ZH",
+    "admin1_label",
+    "country_label",
+    "place_label",
+]

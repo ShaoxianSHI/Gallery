@@ -32,6 +32,7 @@ from gallery.core.metadata.facets import (
     extract,
     group_facet,
     input_for,
+    mark_place_resolved,
     needs_metadata,
     parse_capture_time,
     sort_facet,
@@ -213,9 +214,40 @@ def test_a_fully_written_place_is_not_called_inferred() -> None:
 
 
 def test_no_answer_leaves_the_facets_alone() -> None:
+    """查不到就一个字段也不改 —— 那三列仍然是「文件里没写」。"""
     facets = PhotoFacets(latitude=0.0, longitude=0.0)
 
     assert with_resolved_place(facets, None) is facets
+
+
+def test_the_distance_to_the_city_is_kept() -> None:
+    """距离要留下来：面板靠它提醒「这只是最近的城市」。"""
+    facets = PhotoFacets(latitude=0.0, longitude=0.0)
+
+    filled = with_resolved_place(
+        facets, ResolvedPlace(city="假市", country="假国", distance_km=182.4)
+    )
+
+    assert filled.place_distance_km == 182.4
+
+
+def test_marking_a_lookup_as_done() -> None:
+    """「查过了」是单独的一步：补字段与记结论是两件事。"""
+    facets = PhotoFacets(latitude=34.2, longitude=108.9)
+
+    marked = mark_place_resolved(facets)
+
+    assert marked.place_checked is True
+    assert facets.place_checked is False  # 原对象不动
+
+
+def test_a_lookup_that_could_not_happen_is_not_marked() -> None:
+    """数据没下好时那次**不算**结论，否则这些照片会被永久钉在「未知」上。"""
+    facets = PhotoFacets(latitude=34.2, longitude=108.9, place_checked=True)
+
+    unmarked = mark_place_resolved(facets, usable=False)
+
+    assert unmarked.place_checked is False
 
 
 # ---- 拍摄时间解析 --------------------------------------------------------------------

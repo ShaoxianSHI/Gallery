@@ -38,14 +38,20 @@ PARIS_GPS = {
 class FakeResolver:
     """按「西安」/「巴黎」两处坐标给出固定答案，并数着被问了几次。"""
 
-    def __init__(self, answer: ResolvedPlace | None = None) -> None:
+    def __init__(self, answer: ResolvedPlace | None = None, *, ready: bool = True) -> None:
         self.answer = answer or ResolvedPlace(city="西安", region="陕西省", country="中国")
+        #: 会不会说「数据可用」。假反查器当然永远可用，除非测试专门要「这次没查成」。
+        self._ready = ready
         self.calls = 0
+
+    @property
+    def ready(self) -> bool:
+        return self._ready
 
     def place_for(self, latitude: float, longitude: float, *, status: object = None):
         self.calls += 1
         if latitude > 40:  # 巴黎
-            return ResolvedPlace(city="巴黎", region="法兰西岛", country="法国")
+            return ResolvedPlace(city="巴黎", region="法兰西岛", country="法国", distance_km=1.0)
         return self.answer
 
 

@@ -37,6 +37,8 @@ class ResolvedPlace:
     city: str | None = None
     region: str | None = None
     country: str | None = None
+    #: 坐标离最近城市有多远（公里）。面板要靠它说清「这只是最近的城市」。
+    distance_km: float | None = None
 
 
 class PlaceResolver(Protocol):
@@ -46,6 +48,18 @@ class PlaceResolver(Protocol):
         self, latitude: float, longitude: float, *, status: Status | None = None
     ) -> ResolvedPlace | None:
         """查不到（附近没有城市记录）返回 ``None``；数据不可用时也返回 ``None``。"""
+        ...
+
+    @property
+    def ready(self) -> bool:
+        """数据是否可用 —— **用来区分「查了没有」与「没查成」**。
+
+        两种情况 :meth:`place_for` 都返回 ``None``，但含义完全不同：数据齐了还查不到，
+        那是一条结论，可以记进索引；数据还没下好或下载失败，这次根本没查成，
+        记下来就等于把「未知」永久钉死（见 ADR 0010）。调用方在
+        :meth:`place_for` **返回之后**问这个属性，那时的值才是这次查询的真实情况
+        （懒加载在这一步已经试过了）。
+        """
         ...
 
 
@@ -126,7 +140,12 @@ def _to_resolved(place: Place | None) -> ResolvedPlace | None:
     return (
         None
         if place is None
-        else ResolvedPlace(city=place.display_city, region=place.admin1, country=place.country)
+        else ResolvedPlace(
+            city=place.display_city,
+            region=place.admin1,
+            country=place.country,
+            distance_km=place.distance_km,
+        )
     )
 
 

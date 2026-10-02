@@ -49,7 +49,10 @@ def _settle(qt_app, window: MainWindow) -> None:
     deadline = time.monotonic() + WAIT_SECONDS
     while time.monotonic() < deadline:
         qt_app.processEvents()
-        if window._scan_job is None and window._facet_job is None:
+        settled = (
+            window._scan_job is None and window._facet_job is None and window._place_job is None
+        )
+        if settled:
             qt_app.processEvents()
             return
         time.sleep(0.01)

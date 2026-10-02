@@ -59,7 +59,7 @@ def test_place_comes_from_the_index() -> None:
 
     place = resolver.place_for(LATITUDE, LONGITUDE)
 
-    assert place == ResolvedPlace(city="上海", region="Shanghai", country="China")
+    assert place == ResolvedPlace(city="上海", region="Shanghai", country="China", distance_km=1.2)
     assert resolver.ready
 
 
@@ -125,7 +125,9 @@ def test_missing_data_is_downloaded_once_and_announced(tmp_path: Path) -> None:
     place = resolver.place_for(LATITUDE, LONGITUDE, status=statuses.append)
 
     assert statuses and "下载" in statuses[0]
-    assert place == ResolvedPlace(city="假市", region="假省", country="中国")
+    # 距离由真实索引算出来，这里只断言「有」—— 面板要靠它提醒「这只是最近的城市」。
+    assert place is not None and place.distance_km is not None
+    assert (place.city, place.region, place.country) == ("假市", "假省", "中国")
     assert resolver.ready
 
     # 第二次不该再下载。
@@ -186,6 +188,7 @@ def test_cached_data_is_used_without_downloading(tmp_path: Path) -> None:
     resolver = LazyPlaceResolver(None, directory=directory, fetch=never)
 
     # 国家名走内置映射（core.places.countries），与数据文件里写的无关。
-    assert resolver.place_for(LATITUDE, LONGITUDE) == ResolvedPlace(
-        city="旧市", region="旧省", country="中国"
-    )
+    place = resolver.place_for(LATITUDE, LONGITUDE)
+    assert place is not None
+    assert (place.city, place.region, place.country) == ("旧市", "旧省", "中国")
+    assert place.distance_km is not None

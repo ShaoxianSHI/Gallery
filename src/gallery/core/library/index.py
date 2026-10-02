@@ -28,7 +28,7 @@ from gallery.core.metadata.facets import PhotoFacets
 logger = logging.getLogger(__name__)
 
 #: 表结构版本。改动表结构就 +1；旧表会被整表丢掉重建（缓存不值得迁移）。
-SCHEMA_VERSION: Final = 2
+SCHEMA_VERSION: Final = 3
 
 #: 一次 ``UPSERT`` 最多写多少行。太大则一条语句过长，太小则语句条数多。
 WRITE_CHUNK: Final = 500
@@ -51,6 +51,8 @@ CREATE TABLE IF NOT EXISTS facets (
     latitude   REAL,
     longitude  REAL,
     inferred   INTEGER NOT NULL DEFAULT 0,
+    place_ok   INTEGER NOT NULL DEFAULT 0,
+    place_km   REAL,
     aperture   REAL,
     shutter    REAL,
     iso        REAL,
@@ -62,7 +64,7 @@ CREATE TABLE IF NOT EXISTS facets (
 _COLUMNS: Final[str] = (
     "path, size, mtime_ns, captured, year, month, day, camera, lens, "
     "city, region, country, keywords, latitude, longitude, inferred, "
-    "aperture, shutter, iso, focal, pixels"
+    "place_ok, place_km, aperture, shutter, iso, focal, pixels"
 )
 
 #: 关键词在库里用一个分隔符存 —— 关键词本身可能含逗号，不能用逗号拼回去。
@@ -185,6 +187,8 @@ class FacetIndex:
                 facets.latitude,
                 facets.longitude,
                 1 if facets.place_inferred else 0,
+                1 if facets.place_checked else 0,
+                facets.place_distance_km,
                 facets.aperture,
                 facets.shutter,
                 facets.iso,
@@ -290,6 +294,8 @@ def _row_to_facets(values: Sequence[object]) -> PhotoFacets | None:
         latitude,
         longitude,
         inferred,
+        place_ok,
+        place_km,
         aperture,
         shutter,
         iso,
@@ -311,6 +317,8 @@ def _row_to_facets(values: Sequence[object]) -> PhotoFacets | None:
         latitude=_optional_float(latitude),
         longitude=_optional_float(longitude),
         place_inferred=bool(inferred),
+        place_checked=bool(place_ok),
+        place_distance_km=_optional_float(place_km),
         aperture=_optional_float(aperture),
         shutter=_optional_float(shutter),
         iso=_optional_float(iso),
@@ -334,6 +342,8 @@ def _facets_to_row(facets: PhotoFacets) -> tuple[object, ...]:
         facets.latitude,
         facets.longitude,
         1 if facets.place_inferred else 0,
+        1 if facets.place_checked else 0,
+        facets.place_distance_km,
         facets.aperture,
         facets.shutter,
         facets.iso,

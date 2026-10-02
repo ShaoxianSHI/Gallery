@@ -24,7 +24,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from gallery.core.library.config import prepare_library  # noqa: E402
-from gallery.core.library.photos import GroupRef  # noqa: E402
+from gallery.core.library.photos import GroupRef, PhotoRef  # noqa: E402
 from gallery.core.library.session import (  # noqa: E402
     BROWSE_MODE_ALBUMS,
     SessionState,
@@ -71,20 +71,37 @@ GPS: dict[str, dict[str, str]] = {
 
 @pytest.fixture
 def fake_places(monkeypatch: pytest.MonkeyPatch) -> Callable[[], int]:
-    """把地点反查换成假的：按「西经度 < 40 是西安，否则巴黎」回答，并数着问了几次。"""
+    """把地点反查换成假的：按「纬度 > 40 是巴黎，否则西安」回答，并数着问了几次。
+
+    **假实现连「按坐标缓存」一起照搬**：真解析器（``core.places.resolver``）问过一次
+    的坐标就不再问，而分组与打开时那一遍解析会拿到同一批照片 —— 不缓存的话，
+    计数里混进去的全是这份假实现独有的重复，问不出「到底问了几次」。
+    """
     calls = {"count": 0}
+    memo: dict[tuple[float, float], ResolvedPlace] = {}
 
     def place_for(
         self: object, latitude: float, longitude: float, *, status: object = None
     ) -> ResolvedPlace:
+        key = (round(latitude, 4), round(longitude, 4))
+        if key in memo:
+            return memo[key]
         calls["count"] += 1
-        if latitude > 40:
-            return ResolvedPlace(city="巴黎", region="法兰西岛", country="法国")
-        return ResolvedPlace(city="西安", region="陕西省", country="中国")
+        answer = (
+            ResolvedPlace(city="巴黎", region="法兰西岛", country="法国")
+            if latitude > 40
+            else ResolvedPlace(city="西安", region="陕西省", country="中国")
+        )
+        memo[key] = answer
+        return answer
 
-    # 只换掉「按坐标查」这一步：解析器的其余行为（缓存、数据加载）都是真的，
+    # 只换掉「按坐标查」这一步：解析器的其余行为（数据加载）都是真的，
     # 但测试因此不联网、也不依赖本机有没有下过 GeoNames 数据。
+    #
+    # ``ready`` 一并改成真：真解析器是在 ``place_for`` 里加载数据、加载完才 ready 的，
+    # 而这里这一步整个被换掉了，不改的话索引会把每一行都记成「这次没查成」。
     monkeypatch.setattr(LazyPlaceResolver, "place_for", place_for)
+    monkeypatch.setattr(LazyPlaceResolver, "ready", property(lambda _self: True))
     return lambda: calls["count"]
 
 
@@ -156,11 +173,13 @@ def _open(
 
 
 def _settle(qt_app: QApplication, window: MainWindow, *, groups: bool = False) -> None:
-    """转到「扫描结束、元数据读完、顺序已经排好」为止。"""
+    """转到「扫描结束、元数据读完、地点解析完、顺序已经排好」为止。"""
     deadline = time.monotonic() + WAIT_SECONDS
     while time.monotonic() < deadline:
         qt_app.processEvents()
-        settled = window._scan_job is None and window._facet_job is None
+        settled = (
+            window._scan_job is None and window._facet_job is None and window._place_job is None
+        )
         if settled and (not groups or window._model.group_count() > 0):
             # 再转一圈，确认没有迟到的一批（扫描是流式的）。
             qt_app.processEvents()
@@ -311,8 +330,9 @@ def test_grouping_by_country_resolves_places_from_gps(
         ("中国", 1),
         ("法国", 2),
     ]
-    # 每张带坐标的照片问一次（按坐标去重是解析器内部的事，core 那边单独钉住）。
-    assert fake_places() == 3
+    # 问的是**几个不同的坐标**，不是几张照片：三月在西安，另外两张在同一个巴黎坐标上
+    # （解析器按坐标缓存，core 那边单独钉住）。分组那一遍与打开时的整库解析共用结论。
+    assert fake_places() == 2
     window.close()
 
 
@@ -334,6 +354,59 @@ def test_photos_without_gps_land_in_the_unknown_group(
     ]
     assert fake_places() == 1  # 没有坐标的那张不必问
     window.close()
+
+
+# ---- 打开库时把地点解析一遍（ADR 0010）-------------------------------------------------
+
+
+def test_opening_a_library_resolves_places_for_the_whole_library(
+    qt_app: QApplication,
+    tmp_path: Path,
+    make_photo: Callable[..., Path],
+    fake_facet_source: object,
+    fake_places: Callable[[], int],
+) -> None:
+    """**不用**先选分组：打开库就跑一遍，之后索引里就有结论了。
+
+    这是这一版改动的全部意义：以前地点要等用户手动分组才落库，面板只能自己临时算。
+    """
+    root = _library(tmp_path, make_photo, ["三月.jpg", "四月.jpg", "去年十二月.jpg"])
+    window = _open(qt_app, root, session_base=tmp_path / "状态")
+    _settle(qt_app, window)
+
+    # 没有分组，就是普通的三张照片（默认按文件名排序）
+    assert sorted(_labels(window)) == sorted(["三月.jpg", "四月.jpg", "去年十二月.jpg"])
+    stored = window._library.cached_facets(
+        [PhotoRef.from_path(root / name) for name in ("三月.jpg", "四月.jpg", "去年十二月.jpg")]
+    )
+    assert {row.country for row in stored.values()} == {"中国", "法国"}
+    assert all(row.place_checked for row in stored.values())
+    window.close()
+
+
+def test_reopening_the_same_library_does_not_resolve_again(
+    qt_app: QApplication,
+    tmp_path: Path,
+    make_photo: Callable[..., Path],
+    fake_facet_source: object,
+    fake_places: Callable[[], int],
+) -> None:
+    """关掉再打开同一个库：结论还在索引里，一次反查都不必再来。
+
+    「每开一次库就重算一遍整库」是这套缓存最怕的毛病。
+    """
+    root = _library(tmp_path, make_photo, ["三月.jpg", "四月.jpg"])
+    window = _open(qt_app, root, session_base=tmp_path / "状态")
+    _settle(qt_app, window)
+    first = fake_places()
+    assert first > 0
+    window.close()
+
+    again = _open(qt_app, root, session_base=tmp_path / "状态", remember=False)
+    _settle(qt_app, again)
+
+    assert fake_places() == first
+    again.close()
 
 
 # ---- 进入与退出分组 --------------------------------------------------------------------
@@ -453,16 +526,21 @@ def test_sorting_by_file_name_never_touches_exiftool(
     make_photo: Callable[..., Path],
     fake_facet_source: Callable[[], list[Path]],
 ) -> None:
-    """按文件名排序是纯算的，不该为了它去起 exiftool。"""
+    """按文件名排序是纯算的，切换到它不该**新增**一次 EXIF 读取。
+
+    比的是增量而不是零：打开库时那一遍地点解析会读一遍整个库（ADR 0010），
+    那次读取与排序字段无关。
+    """
     root = _library(tmp_path, make_photo, ["b.jpg", "a.jpg"])
     window = _open(qt_app, root, session_base=tmp_path / "状态")
     _settle(qt_app, window)
+    before = fake_facet_source()
 
     window.set_sort_facet("name")
     _settle(qt_app, window)
 
     assert _labels(window) == ["a.jpg", "b.jpg"]
-    assert fake_facet_source() == []
+    assert fake_facet_source() == before
     window.close()
 
 

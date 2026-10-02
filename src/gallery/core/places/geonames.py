@@ -25,7 +25,7 @@ from typing import Final
 from gallery.core import paths
 from gallery.core.atomic import write_text_atomic
 from gallery.core.errors import GeoDataError
-from gallery.core.places.countries import admin1_label, country_label
+from gallery.core.places.countries import admin1_label, country_label, place_label
 
 logger = logging.getLogger(__name__)
 
@@ -100,11 +100,7 @@ class Place:
 
     def label(self) -> str:
         """展示用文案，由大到小：``中国 · 浙江省 · 杭州``（缺的层级自动省略）。"""
-        parts: list[str] = []
-        for part in (self.country, self.admin1, self.display_city):
-            if part and part not in parts:
-                parts.append(part)
-        return " · ".join(parts)
+        return place_label(self.display_city, self.admin1, self.country)
 
 
 @dataclass(frozen=True, slots=True)

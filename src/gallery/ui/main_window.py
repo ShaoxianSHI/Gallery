@@ -33,9 +33,9 @@ from PySide6.QtWidgets import (
 )
 
 from gallery.core import paths
-from gallery.core.errors import GalleryError, GeoDataError
+from gallery.core.errors import GalleryError
 from gallery.core.library.config import prepare_library
-from gallery.core.library.facade import Library
+from gallery.core.library.facade import Library, PlacePass
 from gallery.core.library.groups import SortOrder, build_groups, sort_photos
 from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
 from gallery.core.library.scanner import ScanReport
@@ -61,7 +61,7 @@ from gallery.core.metadata.journal import ACTION_RENAME
 from gallery.core.metadata.rename import RenameResult
 from gallery.core.metadata.trash import Failure, TrashResult
 from gallery.core.metadata.undo import UndoResult
-from gallery.core.places.geonames import PlaceIndex, download_data, geo_data_dir
+from gallery.core.places.countries import place_label
 from gallery.core.places.resolver import LazyPlaceResolver
 from gallery.ui import theme, tooltips
 from gallery.ui.browser.grid import PREFETCH_MARGIN, PhotoGrid
@@ -196,6 +196,28 @@ def _first_reason(failures: Sequence[Failure]) -> str:
     return f"{head}：{failures[0].message.rstrip('。')}"
 
 
+#: 离最近的城市超过这么多公里，就在地点后面补一句距离。
+#:
+#: 标签本身已经写了「（推断）」，内容里不再重复；只有偏得远时才补 —— 那是在提醒
+#: 「这只是最近的城市」，不是在报误差。
+PLACE_DISTANCE_NOTICE_KM = 50.0
+
+
+def _place_text(facets: PhotoFacets) -> str:
+    """索引里那一行的地点 → 面板上显示的一句话。
+
+    拼装用 ``places.place_label``，与反查结果自己的 ``Place.label()`` 是同一个函数 ——
+    面板和分组显示的必须是同一个说法（ADR 0010）。
+    """
+    label = place_label(facets.city, facets.region, facets.country)
+    if not label:
+        return "坐标附近没有城市记录"
+    distance = facets.place_distance_km
+    if distance is None or distance < PLACE_DISTANCE_NOTICE_KM:
+        return label
+    return f"{label}（最近城市约 {distance:.0f} 公里外）"
+
+
 class MainWindow(QMainWindow):
     """应用主窗口。"""
 
@@ -218,9 +240,14 @@ class MainWindow(QMainWindow):
         self._detail_job: int | None = None
         self._current_row = -1
         self._metadata_job: int | None = None
-        self._place_index: PlaceIndex | None = None
-        #: 分组 / 排序用的地点反查器（按坐标）。与元数据面板共用同一份城市数据。
+        #: 分组 / 排序与元数据面板共用的地点反查器（按坐标），首次用时才加载城市数据。
         self._place_resolver: LazyPlaceResolver | None = None
+        #: 打开库时那一遍「全库解析地点」的任务（ADR 0010）。
+        self._place_job: int | None = None
+        #: 已经跑过（或正在跑）那一遍的库根。一个库里只跑一次，重开软件会再检查一遍。
+        self._place_pass_root: Path | None = None
+        #: 横幅上正占着「正在解析地点…」这条进度。
+        self._place_notice = False
         self._preview_cache: OrderedDict[Path, QImage] = OrderedDict()
         self._metadata_cache: OrderedDict[Path, tuple[int, int, MetadataReport]] = OrderedDict()
         self._thumbnail_failures = 0
@@ -667,7 +694,7 @@ class MainWindow(QMainWindow):
             f"正在读取 {len(refs)} 张照片的元数据，用于{'分组' if self._group_facet else '排序'}…"
         )
 
-        resolver = self._facet_place_resolver()
+        resolver = self._place_lookup()
 
         def work(context: TaskContext) -> object:
             return library.photo_facets(
@@ -725,14 +752,14 @@ class MainWindow(QMainWindow):
             self._runner.cancel(self._facet_job)
             self._facet_job = None
 
-    def _facet_place_resolver(self) -> LazyPlaceResolver:
-        """给分组 / 排序用的地点反查器；面板那边加载过索引就直接复用。"""
-        # 面板那边已经加载过索引就直接复用，省一次读 8.5 MB 城市表。
-        needs = self._place_resolver is None or (
-            self._place_index is not None and not self._place_resolver.ready
-        )
-        if needs:
-            self._place_resolver = LazyPlaceResolver(self._place_index)
+    def _place_lookup(self) -> LazyPlaceResolver:
+        """共用的地点反查器：分组、元数据面板、打开库时那一遍都用这一个。
+
+        城市数据（解压后约 8.5 MB）只该读一次，所以三条路径共用同一个实例 ——
+        反查器自己缓存着加载好的索引与查过的坐标。
+        """
+        if self._place_resolver is None:
+            self._place_resolver = LazyPlaceResolver()
         return self._place_resolver
 
     def _on_facet_progress(self, generation: int, payload: object) -> None:
@@ -752,11 +779,10 @@ class MainWindow(QMainWindow):
             return
         self._facet_job = None
         self._facet_values = payload if isinstance(payload, dict) else {}
-        if self._place_resolver is not None and self._place_resolver.ready:
-            # 城市数据这回加载过了，面板那边就不用再加载一遍。
-            self._place_index = self._place_resolver.index
         self._clear_progress_notice()
         self._apply_ordering()
+        # 这一层读完了，才轮到整库那一遍（见 _maybe_start_place_pass 里的理由）。
+        self._maybe_start_place_pass()
 
     def _on_facets_failed(self, generation: int, message: str) -> None:
         if generation != self._generation:
@@ -764,6 +790,7 @@ class MainWindow(QMainWindow):
         self._facet_job = None
         self._show_banner(f"读取元数据失败，按默认顺序显示：{message}")
         self._apply_ordering()
+        self._maybe_start_place_pass()
 
     def _apply_ordering(self) -> None:
         """把当前这一层按分组 / 排序重排一次，然后一次性摆到网格上。"""
@@ -916,6 +943,7 @@ class MainWindow(QMainWindow):
         self._staged = [] if self._ordering_active() else None
         self._level_notice = False
         self._progress_notice = False
+        self._place_notice = False
         self._scan_issue = False
         self._update_breadcrumb()
         self._update_mode_actions()
@@ -927,6 +955,7 @@ class MainWindow(QMainWindow):
 
     def _teardown_library(self) -> None:
         self._cancel_facet_job()
+        self._cancel_place_pass()
         if self._scan_job is not None:
             self._runner.cancel(self._scan_job)
             self._scan_job = None
@@ -1070,6 +1099,84 @@ class MainWindow(QMainWindow):
         # 真正该由最终内容决定，所以交给 _apply_ordering → _update_level_notice。
         self._refresh_thumbnail_window()
         self._start_facet_read()
+        self._maybe_start_place_pass()
+
+    # ---- 打开库时把地点解析一遍（ADR 0010）------------------------------------
+
+    def _maybe_start_place_pass(self) -> None:
+        """第一次打开一个库时，在后台把整库的地点算出来存进索引。
+
+        **为什么是打开时而不是等用户去分组**：分组与元数据面板要的是同一份反查结论，
+        两处各算一次就必然漂（面板写着杭州、分组写着 Bordeaux）。打开时算一遍存进
+        索引，之后两处都只读它 —— 详见 ADR 0010。
+
+        一个库里只跑一次：``_place_pass_root`` 记着跑过哪个库，换库才重来。
+        扫描本身出问题时不抢横幅 —— 那句「哪些内容没读到」比进度重要。
+
+        **本层正在读元数据时先让着**：那一遍读的就是同一批照片的 EXIF，
+        两边同时跑等于把同一件事做两遍。等它结束再开始（见 ``_on_facets_ready``）。
+        """
+        library = self._library
+        if (
+            library is None
+            or self._place_pass_root == library.root
+            or self._scan_issue
+            or self._facet_job is not None
+        ):
+            return
+        self._place_pass_root = library.root
+        resolver = self._place_lookup()
+
+        def work(context: TaskContext) -> object:
+            return library.resolve_places(
+                should_cancel=context.is_cancelled,
+                on_progress=lambda done, total: context.progress(done),
+                status=lambda text: context.progress(text),
+                resolver=resolver,
+            )
+
+        self._place_notice = True
+        self._show_banner("正在解析照片的地点…")
+        self._place_job = self._runner.submit(
+            work,
+            on_progress=self._on_place_pass_progress,
+            on_result=self._on_place_pass_done,
+            on_error=self._on_place_pass_failed,
+        )
+
+    def _on_place_pass_progress(self, payload: object) -> None:
+        if not self._place_notice or self._scan_issue:
+            return
+        if isinstance(payload, str):
+            self._show_banner(payload)  # 「正在下载城市数据…」这类说明
+            return
+        if isinstance(payload, int) and payload > 0:
+            self._show_banner(f"正在解析照片的地点…已处理 {payload} 张")
+
+    def _on_place_pass_done(self, payload: object) -> None:
+        self._place_job = None
+        self._clear_place_notice()
+        result = payload if isinstance(payload, PlacePass) else PlacePass()
+        logger.info("地点解析完成：扫过 %d 张，反查 %d 张", result.scanned, result.resolved)
+
+    def _on_place_pass_failed(self, message: str) -> None:
+        self._place_job = None
+        self._clear_place_notice()
+        # 解析失败不影响浏览：分组与面板都会在自己要用的时候再试一次。
+        logger.info("解析地点失败：%s", message)
+
+    def _clear_place_notice(self) -> None:
+        """收掉「正在解析地点…」那条 —— **只收自己那一条**。"""
+        if not self._place_notice:
+            return
+        self._place_notice = False
+        self._banner.hide()
+
+    def _cancel_place_pass(self) -> None:
+        """作废在途的全库解析（切库、关窗时）。"""
+        if self._place_job is not None:
+            self._runner.cancel(self._place_job)
+            self._place_job = None
 
     def _on_scan_failed(self, generation: int, message: str) -> None:
         if generation != self._generation:
@@ -1240,7 +1347,13 @@ class MainWindow(QMainWindow):
         *,
         announce: bool,
     ) -> None:
-        """按坐标推断最近的 city，结果一律入缓存。
+        """按坐标给出地点：**先读索引**，索引里没有才现场反查一次。
+
+        打开库时那一遍已经把结论存进索引了（ADR 0010），所以绝大多数照片在这里是
+        一次同步的读缓存就显示到位，不必起后台任务、也不必等下载城市数据。
+        现场反查只兜两种情况：打开时那一遍还没轮到它，或者后来才加进库的照片。
+        那条路走 ``Library.resolve_photo_place``：用面板手里已经读到的坐标去查，
+        **查完并回索引** —— 面板临时算出来的东西不会只留在内存里。
 
         ``announce`` 为真时才在面板上显示中间状态（「正在查询…」「正在下载…」）。
         预读与缓存命中都传 ``False``：那时候面板上显示的是当前这张照片，
@@ -1252,22 +1365,29 @@ class MainWindow(QMainWindow):
             return  # 文件里写了地点，或已经推断过一次（含「没有记录」这种结论）
         if not self._panel.isVisible():
             return
+        library = self._library
+        if library is None:
+            return
+        # 索引里已经有结论就直接显示：这是绝大多数照片走的那条路。
+        stored = library.cached_facets([ref]).get(ref.path)
+        if stored is not None and stored.place_checked:
+            self._show_place(ref, report, generation, _place_text(stored))
+            return
         if announce:
             self._panel.set_report(report.with_place("正在查询最近的城市…"))
+        resolver = self._place_lookup()
         latitude, longitude = report.latitude, report.longitude
-        index = self._place_index
 
         def work(context: TaskContext) -> object:
-            directory = geo_data_dir()
-            if not PlaceIndex.data_present(directory):
-                context.progress("正在下载城市数据（约 3.3 MB）…")
-                download_data(directory)
-            loaded = index if index is not None else PlaceIndex.load(directory)
-            if loaded is None:
-                raise GeoDataError("城市数据不可用，无法按坐标推断地点。")
-            return (loaded, loaded.nearest(latitude, longitude))
+            return library.resolve_photo_place(
+                ref,
+                latitude,
+                longitude,
+                resolver=resolver,
+                status=lambda text: context.progress(text),
+            )
 
-        # 不取消进行中的地点查询：它只往缓存里写，切走了也仍然有用，
+        # 不取消进行中的地点查询：它只往索引里写，切走了也仍然有用，
         # 切回来时反而能一次显示到位。
         self._runner.submit(
             work,
@@ -1292,23 +1412,16 @@ class MainWindow(QMainWindow):
     def _on_place_ready(
         self, ref: PhotoRef, report: MetadataReport, generation: int, payload: object
     ) -> None:
-        if not isinstance(payload, tuple) or len(payload) != 2:
+        """``Library.resolve_photo_place`` 的结论：直接拿来显示。"""
+        if not isinstance(payload, PhotoFacets):
+            self._show_place(ref, report, generation, "未能推断地点：没有读到坐标")
             return
-        index, place = payload
-        if isinstance(index, PlaceIndex):
-            self._place_index = index
-        if place is None:
-            self._place_index_saved(ref, report, generation, "坐标附近没有城市记录")
-            return
-        # 标签本身已经写了「（推断）」，内容里不再重复；只有偏得远时才补一句距离，
-        # 那是在提醒「这只是最近的城市」，不是在报误差。
-        suffix = "" if place.distance_km < 50 else f"（最近城市约 {place.distance_km:.0f} 公里外）"
-        self._place_index_saved(ref, report, generation, f"{place.label()}{suffix}")
+        self._show_place(ref, report, generation, _place_text(payload))
 
-    def _place_index_saved(
+    def _show_place(
         self, ref: PhotoRef, report: MetadataReport, generation: int, text: str
     ) -> None:
-        """推断结果入缓存，并且只在这张正是当前照片时才上屏。"""
+        """把地点插进面板、入缓存，并且只在这张正是当前照片时才上屏。"""
         enriched = report.with_place(text)
         self._cache_metadata(ref, enriched)
         if self._is_current_photo(ref, generation):
@@ -1317,7 +1430,7 @@ class MainWindow(QMainWindow):
     def _on_place_failed(
         self, ref: PhotoRef, report: MetadataReport, generation: int, message: str
     ) -> None:
-        self._place_index_saved(ref, report, generation, f"未能推断地点：{message}")
+        self._show_place(ref, report, generation, f"未能推断地点：{message}")
 
     def _on_entry_activated(self, index: QModelIndex) -> None:
         """双击一个格子：相册或分组就进去，照片就打开大图。"""
@@ -1888,6 +2001,8 @@ class MainWindow(QMainWindow):
         self._staged = [] if self._ordering_active() else None
         self._level_notice = False
         self._progress_notice = False
+        # 换层只把横幅收掉，**不打断**全库解析：它是整个库的事，与当前在哪一层无关。
+        self._place_notice = False
         self._scan_issue = False
         self._current_row = -1
         self._detail.clear_image()

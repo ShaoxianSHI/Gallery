@@ -27,6 +27,8 @@ FULL = PhotoFacets(
     latitude=34.215,
     longitude=108.965,
     place_inferred=True,
+    place_checked=True,
+    place_distance_km=2.4,
     aperture=2.8,
     shutter=0.005,
     iso=400,
@@ -60,6 +62,32 @@ def test_coordinates_and_inferred_flag_survive_a_round_trip(tmp_path: Path) -> N
     assert got.latitude == 34.215
     assert got.longitude == 108.965
     assert got.place_inferred is True
+    assert got.place_checked is True
+    assert got.place_distance_km == 2.4
+    index.close()
+
+
+def test_an_unresolved_row_says_so(tmp_path: Path) -> None:
+    """「没查过」和「查了但查不到」必须分得开，否则每开一次库就重算一遍。"""
+    index = FacetIndex(tmp_path / "index.db")
+    ref = _ref(tmp_path)
+
+    index.store([(ref, PhotoFacets(latitude=34.215, longitude=108.965))])
+
+    got = index.lookup([ref])[ref.path]
+    assert got.place_checked is False
+    assert got.place_distance_km is None
+    index.close()
+
+
+def test_a_checked_row_with_no_city_keeps_the_flag(tmp_path: Path) -> None:
+    """附近没有城市也是结论：三列留空，但别再问一次。"""
+    index = FacetIndex(tmp_path / "index.db")
+    ref = _ref(tmp_path)
+
+    index.store([(ref, PhotoFacets(latitude=0.0, longitude=0.0, place_checked=True))])
+
+    assert index.lookup([ref])[ref.path].place_checked is True
     index.close()
 
 

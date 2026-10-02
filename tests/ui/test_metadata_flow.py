@@ -28,6 +28,8 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.metadata.exif import build_report  # noqa: E402
+from gallery.core.metadata.facets import PhotoFacets  # noqa: E402
+from gallery.core.places.resolver import ResolvedPlace  # noqa: E402
 from gallery.ui.main_window import METADATA_PREFETCH_RADIUS, MainWindow  # noqa: E402
 from gallery.ui.panels import metadata as panel_module  # noqa: E402
 
@@ -37,6 +39,28 @@ READY_TIMEOUT_SECONDS = 8.0
 
 #: 「元数据已读进缓存」的判定：当前这张加上前后预读窗口都填满。
 PREFETCHED_ENTRIES = METADATA_PREFETCH_RADIUS + 1
+
+
+class FakeResolver:
+    """假反查器：记下被问过的坐标，一律回答「附近没有记录」。
+
+    只实现 ``core.places.resolver.PlaceResolver`` 的形状（``place_for`` + ``ready``），
+    因此测试不联网、也不读磁盘上的城市库。回答「没有记录」而不是某个城市，是刻意的：
+    「查了但查不到」与「压根没查」的区别正是这一版要守住的东西。
+    """
+
+    def __init__(self) -> None:
+        self.queried: list[tuple[float, float]] = []
+
+    @property
+    def ready(self) -> bool:
+        return True
+
+    def place_for(
+        self, latitude: float, longitude: float, *, status: object = None
+    ) -> ResolvedPlace | None:
+        self.queried.append((latitude, longitude))
+        return None
 
 
 @pytest.fixture(scope="module")
@@ -250,7 +274,7 @@ def test_place_lookup_result_is_cached(
     ref = window._model.photo_at(window._current_row)
     base = build_report({}, path=ref.path, size=ref.size, mtime_ns=ref.mtime_ns, source="exiftool")
 
-    window._place_index_saved(ref, base, window._generation, "法国 · 波尔多")
+    window._show_place(ref, base, window._generation, "法国 · 波尔多")
 
     report = window._panel.report
     assert any(
@@ -296,6 +320,75 @@ def test_failed_photo_still_explains_why(window: MainWindow) -> None:
     assert not detail._overlay.isVisible(), "切图时上一张的错误提示应当撤掉"
 
 
+def test_the_panel_reads_the_place_out_of_the_index(
+    window: MainWindow,
+    wait_for: Callable[..., bool],
+    monkeypatch: pytest.MonkeyPatch,
+    ready: Callable[[], None],
+) -> None:
+    """索引里已经有结论时，面板**直接读它**，一次反查都不发起（ADR 0010）。
+
+    打开库时那一遍已经算过并存进索引了，面板再算一次就是同一张照片两套说法。
+    """
+    window._metadata_action.setChecked(True)
+    ready()
+    ref = window._model.photo_at(window._current_row)
+    window._library.facet_index.store(
+        [
+            (
+                ref,
+                PhotoFacets(
+                    city="杭州",
+                    region="浙江省",
+                    country="中国",
+                    latitude=30.27,
+                    longitude=120.16,
+                    place_checked=True,
+                    place_inferred=True,
+                    place_distance_km=120.0,
+                ),
+            )
+        ]
+    )
+    window._cache_metadata(
+        ref,
+        build_report(
+            {
+                "EXIF:GPSLatitude": "30.27390",
+                "EXIF:GPSLatitudeRef": "North",
+                "EXIF:GPSLongitude": "120.16139",
+                "EXIF:GPSLongitudeRef": "East",
+            },
+            path=ref.path,
+            size=ref.size,
+            mtime_ns=ref.mtime_ns,
+            source="exiftool",
+        ),
+    )
+    resolver = FakeResolver()
+    monkeypatch.setattr(window, "_place_lookup", lambda: resolver)
+
+    window._open_detail(window._model.index(0, 0))
+    wait_for(
+        lambda: any(
+            field.label == "地点（推断）"
+            for group in (window._panel.report.groups if window._panel.report else ())
+            for field in group.fields
+        ),
+        timeout=READY_TIMEOUT_SECONDS,
+    )
+
+    assert resolver.queried == [], "索引里已经有结论，不该再发起反查"
+    values = [
+        field.value
+        for group in (window._panel.report.groups if window._panel.report else ())
+        for field in group.fields
+        if field.label == "地点（推断）"
+    ]
+    # 与分组同一份结论、同一句话：``中国 · 浙江省 · 杭州``，偏得远时补一句距离。
+    assert values == ["中国 · 浙江省 · 杭州（最近城市约 120 公里外）"]
+
+
 def test_cached_photo_still_gets_its_place(
     window: MainWindow,
     wait_for: Callable[..., bool],
@@ -308,12 +401,11 @@ def test_cached_photo_still_gets_its_place(
     这是真实缺陷：命中缓存的分支直接 return，漏掉了地点反查，于是凡是落在预读
     窗口（前后各 2 张）内的照片，带坐标却不显示推断地点。
     """
-
     window._metadata_action.setChecked(True)
     ready()
     ref = window._model.photo_at(window._current_row)
 
-    # 造一份带坐标的元数据，并用一个假索引替代真实城市库（测试不联网）。
+    # 造一份带坐标的元数据，并用一个假反查器替代真实城市库（测试不联网）。
     report = build_report(
         {
             "EXIF:GPSLatitude": "44.83780",
@@ -329,22 +421,15 @@ def test_cached_photo_still_gets_its_place(
     assert report.latitude is not None
     window._cache_metadata(ref, report)  # 预读缓存里就是这种「还没有地点」的报告
 
-    looked_up: list[tuple[float, float]] = []
-
-    class FakeIndex:
-        def nearest(self, latitude: float, longitude: float) -> object:
-            looked_up.append((latitude, longitude))
-            return None
-
-    monkeypatch.setattr(window, "_place_index", FakeIndex())
-    monkeypatch.setattr(type(window), "_place_index_saved", lambda *args, **kwargs: None)
+    resolver = FakeResolver()
+    monkeypatch.setattr(window, "_place_lookup", lambda: resolver)
 
     window._open_detail(window._model.index(0, 0))
     # 等「地点反查真的发生过」而不是干等：这是条正向断言，有明确条件可等。
-    # 万一超时，下面那条断言会因为 looked_up 为空而报出来。
-    wait_for(lambda: bool(looked_up), timeout=READY_TIMEOUT_SECONDS)
+    # 万一超时，下面那条断言会因为 queried 为空而报出来。
+    wait_for(lambda: bool(resolver.queried), timeout=READY_TIMEOUT_SECONDS)
 
-    assert looked_up == [(pytest.approx(44.8378), pytest.approx(-0.5792))], (
+    assert resolver.queried == [(pytest.approx(44.8378), pytest.approx(-0.5792))], (
         "命中缓存时也应当按坐标推断地点"
     )
 
@@ -365,16 +450,8 @@ def test_switching_photos_resolves_the_place_before_display(
     window._metadata_action.setChecked(True)
     ready()
 
-    queried: list[tuple[float, float]] = []
-
-    class FakeIndex:
-        """只回答「查到了没有」，不碰真实城市库（测试不联网、不读磁盘）。"""
-
-        def nearest(self, latitude: float, longitude: float) -> object:
-            queried.append((latitude, longitude))
-            return None  # 「附近没有记录」也是结论，同样应当入缓存
-
-    monkeypatch.setattr(window, "_place_index", FakeIndex())
+    resolver = FakeResolver()
+    monkeypatch.setattr(window, "_place_lookup", lambda: resolver)
 
     # 预读旁边几张，每张都带坐标
     row = window._current_row
@@ -415,7 +492,7 @@ def test_switching_photos_resolves_the_place_before_display(
     wait_for(lambda: bool(timeline), timeout=READY_TIMEOUT_SECONDS)
 
     assert timeline == ["set_report"], f"切图时面板被替换了 {len(timeline)} 次：{timeline}"
-    assert queried, "预读时就应当已经发起过地点推断"
+    assert resolver.queried, "预读时就应当已经发起过地点推断"
 
 
 def test_opening_a_photo_does_not_show_the_previous_one(

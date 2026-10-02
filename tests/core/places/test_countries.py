@@ -1,4 +1,8 @@
-"""``gallery.core.places.countries`` 的测试：国家代码到中文名，且永不返回空串。"""
+"""``gallery.core.places.countries`` 的测试：国家代码到中文名，且永不返回空串。
+
+末尾还有 :func:`place_label` —— 索引里那三列拼成一句话的规则，面板与反查结果
+共用同一个函数（ADR 0010），两处说法不许漂。
+"""
 
 from __future__ import annotations
 
@@ -9,6 +13,7 @@ from gallery.core.places.countries import (
     COUNTRY_NAMES_ZH,
     admin1_label,
     country_label,
+    place_label,
 )
 
 
@@ -64,3 +69,26 @@ def test_other_countries_keep_geonames_names() -> None:
 def test_admin1_label_is_forgiving_about_case_and_spaces() -> None:
     assert admin1_label("CN", " Zhejiang ") == "浙江省"
     assert admin1_label("CN", "表里没有的名字") == "表里没有的名字"
+
+
+# ---- 三段地点拼成一句话 ---------------------------------------------------------------
+
+
+def test_place_label_goes_from_big_to_small() -> None:
+    assert place_label("杭州", "浙江省", "中国") == "中国 · 浙江省 · 杭州"
+
+
+def test_place_label_skips_what_is_missing() -> None:
+    """缺哪层就省掉哪层，绝不留下空洞的「中国 ·  · 杭州」。"""
+    assert place_label("杭州", None, "中国") == "中国 · 杭州"
+    assert place_label(None, None, "法国") == "法国"
+    assert place_label("Bordeaux", None, "France") == "France · Bordeaux"
+
+
+def test_place_label_is_empty_only_when_nothing_is_known() -> None:
+    assert place_label(None, None, None) == ""
+
+
+def test_place_label_does_not_repeat_a_name() -> None:
+    """香港这种「市」与「区」同名的层级，重复一遍反而更难读。"""
+    assert place_label("香港", "香港", "中国") == "中国 · 香港"

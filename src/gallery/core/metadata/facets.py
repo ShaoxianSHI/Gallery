@@ -149,6 +149,15 @@ class PhotoFacets:
     #: 级别不同。界面上不再为此弹提示（元数据面板有自己的「地点（推断）」标注，
     #: 分组这边只需要能查、能排序），所以这个标记只留在数据里。
     place_inferred: bool = False
+    #: 按坐标反查过了没有。
+    #:
+    #: 与「查到了什么」分开记，因为**查不到也是结论**：附近 300 公里没有城市，
+    #: 每次都重查一遍既慢又可能因为城市数据刚好下好而给出不一样的答案。
+    #: 数据没下好 / 下载失败那次不算（见 ``mark_place_resolved``）——
+    #: 那不是结论，只是这次没查成，记下来会把「未知」永久钉死（ADR 0010）。
+    place_checked: bool = False
+    #: 坐标离反查出来的城市有多远（公里）。界面靠它说清「这只是最近的城市」。
+    place_distance_km: float | None = None
     #: 光圈 f 值（如 2.8）。0 与负数等价于「没记录」，已按此归一。
     aperture: float | None = None
     #: 快门时间（秒，如 0.0005）。**秒数越小越快**，界面文案会写反，排序不会。
@@ -694,15 +703,17 @@ def with_resolved_place(facets: PhotoFacets, place: ResolvedPlace | None) -> Pho
 
     - **文件里写了就以文件为准**，反查只填空缺（Lightroom 导出的地点通常比反查准）；
     - **一个字段一个字段补**，文件里只写了国家时，城市可以来自反查；
-    - 补过就置 ``place_inferred``，界面据此说明「这组是推出来的」。
+    - 补过就置 ``place_inferred``，界面据此说明「这组是推出来的」；
+    - 距离一并记下：面板要靠它提醒「这只是最近的城市」。
+
+    **是否记「查过了」不归这里管**，那是 :func:`mark_place_resolved` 的事 ——
+    本函数只管「答案是什么」，不管「这次查询算不算数」。
     """
     if place is None:
         return facets
     city = facets.city or place.city
     region = facets.region or place.region
     country = facets.country or place.country
-    if (city, region, country) == (facets.city, facets.region, facets.country):
-        return facets  # 反查什么都没补上，不必说成「推断」
     # 补了**任意一个**字段就是推断：文件写了城市、反查补的国家同样不是文件自带的。
     pairs = ((facets.city, city), (facets.region, region), (facets.country, country))
     inferred = any(before is None and after is not None for before, after in pairs)
@@ -712,7 +723,19 @@ def with_resolved_place(facets: PhotoFacets, place: ResolvedPlace | None) -> Pho
         region=region,
         country=country,
         place_inferred=facets.place_inferred or inferred,
+        place_distance_km=facets.place_distance_km or place.distance_km,
     )
+
+
+def mark_place_resolved(facets: PhotoFacets, *, usable: bool = True) -> PhotoFacets:
+    """记下「已经按坐标反查过一次」，让索引不必为同一张照片反复反查。
+
+    :param usable: 反查器当时的数据是不是可用。**不可用就别记**：城市数据还没下好、
+        或下载失败时 ``place_for`` 也返回 ``None``，但那不是「附近没有城市」的结论，
+        记下来等于把这张照片永久钉在「未知」上（下次数据到位了也不会再问）。
+        见 :class:`gallery.core.places.resolver.PlaceResolver`。
+    """
+    return facets if facets.place_checked == usable else replace(facets, place_checked=usable)
 
 
 def input_for(ref: PhotoRef, facets: PhotoFacets, root: Path) -> FacetInput:
@@ -780,6 +803,7 @@ __all__ = [
     "extract",
     "group_facet",
     "input_for",
+    "mark_place_resolved",
     "needs_metadata",
     "parse_capture_time",
     "read_many",

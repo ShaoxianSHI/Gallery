@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable, Iterator, Sequence
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from gallery.core import paths
 from gallery.core.errors import LibraryNotAccessibleError
@@ -24,13 +25,33 @@ from gallery.core.library.scanner import ScanReport, iter_entries, iter_photos
 from gallery.core.media.decode import RasterImage, decode_rgba
 from gallery.core.media.thumbs import ThumbnailCache
 from gallery.core.metadata.batch import BatchMetadataSource, read_facets
-from gallery.core.metadata.facets import PhotoFacets, with_resolved_place
+from gallery.core.metadata.facets import (
+    PhotoFacets,
+    mark_place_resolved,
+    with_resolved_place,
+)
 from gallery.core.metadata.rename import RenameResult, rename_entry
 from gallery.core.metadata.trash import TrashResult, trash_entries
 from gallery.core.metadata.undo import UndoResult, next_undo_label, undo_last_write
 
 if TYPE_CHECKING:
     from gallery.core.places.resolver import PlaceResolver, Status
+
+#: 解析地点时一次处理多少张照片。
+#:
+#: 与 exiftool 自己的批次（``batch.BATCH_SIZE``）对齐：攒满一批正好起一次子进程，
+#: 进度也能一跳一跳地报，既不空转也不刷屏。
+PLACE_PASS_BATCH: Final = 400
+
+
+@dataclass(frozen=True, slots=True)
+class PlacePass:
+    """跑完一遍 :meth:`Library.resolve_places` 的结果。"""
+
+    #: 扫过多少张照片。
+    scanned: int = 0
+    #: 其中有几张真的反查了坐标。
+    resolved: int = 0
 
 
 class Library:
@@ -246,17 +267,122 @@ class Library:
             index.store([(ref, fresh[ref.path]) for ref in missing if ref.path in fresh])
             cached.update(fresh)
         elif resolver is not None:
-            # 缓存里可能还留着「有坐标、没地点」的旧行（第一次分组时城市数据还没下好，
-            # 或者照片是后来才补上 GPS 的）。既然反查器在手，就顺手把它们补上 ——
+            # 缓存里可能还留着「有坐标、没结论」的旧行（打开库时的那一遍还没跑到它，
+            # 或者城市数据是后来才下好的）。既然反查器在手，就顺手把它们补上 ——
             # 补完写回索引，于是这类照片不会被永久钉在「未知」上。
-            pending = [(path, facets) for path, facets in cached.items() if _needs_place(facets)]
-            for path, facets in pending:
+            pending = [path for path, facets in cached.items() if _needs_lookup(facets)]
+            for path in pending:
                 if should_cancel is not None and should_cancel():
                     break
-                cached[path] = _resolved(facets, resolver, status)
+                cached[path] = _resolved(cached[path], resolver, status)
             if pending:
                 index.store([(ref, cached[ref.path]) for ref in refs if ref.path in cached])
         return cached
+
+    def cached_facets(self, refs: Sequence[PhotoRef]) -> dict[Path, PhotoFacets]:
+        """索引里**仍然有效**的那些（没读过的、文件被改过的都不算）。
+
+        元数据面板靠它显示地点：结论已经在库里就直接显示，不必在面板上再查一遍
+        （ADR 0010）。纯读缓存，不碰 EXIF，因此可以放在主线程上调用。
+        """
+        return self.facet_index.lookup(refs)
+
+    def resolve_photo_place(
+        self,
+        ref: PhotoRef,
+        latitude: float,
+        longitude: float,
+        *,
+        resolver: PlaceResolver,
+        status: Status | None = None,
+    ) -> PhotoFacets:
+        """按坐标反查**这一张**的地点，并把结论并回索引。
+
+        坐标由调用方给出（元数据面板手里已经读到了），所以不必再读一次 EXIF。
+        这是 :meth:`resolve_places` 之外的兜底：打开时那一遍还没轮到这张照片，
+        或者它是后来才加进库的（ADR 0010）。
+
+        **只并进已有的那一行，不新写一行**：索引里还存着拍摄时间、相机那些字段，
+        写半行会挡住以后那次完整的 EXIF 读取（那一行会被当成「已经读过了」）。
+        没有有效行就只返回结论，等整库那一遍来补。
+        """
+        place = resolver.place_for(latitude, longitude, status=status)
+        index = self.facet_index
+        known = index.lookup([ref]).get(ref.path)
+        if known is None:
+            return mark_place_resolved(
+                with_resolved_place(
+                    replace(PhotoFacets(), latitude=latitude, longitude=longitude), place
+                ),
+                usable=resolver.ready,
+            )
+        merged = mark_place_resolved(
+            with_resolved_place(replace(known, latitude=latitude, longitude=longitude), place),
+            usable=resolver.ready,
+        )
+        index.store([(ref, merged)])
+        return merged
+
+    def resolve_places(
+        self,
+        *,
+        should_cancel: Callable[[], bool] | None = None,
+        on_progress: Callable[[int, int], None] | None = None,
+        status: Status | None = None,
+        resolver: PlaceResolver | None = None,
+        source: BatchMetadataSource | None = None,
+    ) -> PlacePass:
+        """把整个库里还没有地点结论的照片补齐，**只读照片、只写自己的缓存**。
+
+        第一次打开一个库就跑一遍（ADR 0010），跑完之后按国家 / 省州 / 城市分组与
+        元数据面板里的地点都直接读索引，不必各自再算一遍。
+
+        幂等，而且第二次几乎不要钱：
+
+        - 已有结论的行（有坐标且 ``place_checked``）**连 EXIF 都不读**；
+        - 没有坐标的行同样跳过 —— 它永远没得反查；
+        - 文件被改过的行按 ``(大小, 修改时间)`` 判为过期，重读一次（可能刚补上 GPS）。
+
+        顺带的好处是这一遍把整库的 facet 都填上了，于是按年份、相机分组也是立刻完成。
+
+        :param on_progress: ``(已扫过, 总数)``。边扫边数，所以**总数通常是 0**
+            （表示还不知道）；界面据此只报已处理多少。
+        :param status: 反查要下载城市数据时，用它把进度说给界面听。
+        """
+        index = self.facet_index
+        scanned = 0
+        resolved = 0
+        batch: list[PhotoRef] = []
+        for ref in self.iter_photos(should_cancel=should_cancel):
+            scanned += 1
+            batch.append(ref)
+            if len(batch) < PLACE_PASS_BATCH:
+                continue
+            if should_cancel is not None and should_cancel():
+                break
+            resolved += _resolve_batch(
+                index,
+                batch,
+                resolver=resolver,
+                status=status,
+                source=source,
+                should_cancel=should_cancel,
+            )
+            batch.clear()
+            if on_progress is not None:
+                on_progress(scanned, 0)
+        if batch and not (should_cancel is not None and should_cancel()):
+            resolved += _resolve_batch(
+                index,
+                batch,
+                resolver=resolver,
+                status=status,
+                source=source,
+                should_cancel=should_cancel,
+            )
+        if on_progress is not None:
+            on_progress(scanned, scanned)  # 没有总数时最后补一次收尾
+        return PlacePass(scanned=scanned, resolved=resolved)
 
     def close_index(self) -> None:
         """关掉索引连接（切库 / 关窗）。"""
@@ -301,23 +427,84 @@ class Library:
             self._thumbnails.relocate(previous, entry)
 
 
+def _has_coordinates(facets: PhotoFacets) -> bool:
+    return facets.latitude is not None and facets.longitude is not None
+
+
 def _needs_place(facets: PhotoFacets) -> bool:
     """有没有坐标、却还有地点字段是空的 —— 那种行值得再反查一次。
 
     判据是「**还缺**」而不是「完全没有」：文件里只写了城市、省州还是空的，
     那就仍然该用反查补上（``with_resolved_place`` 一个字段一个字段地补）。
     """
-    if facets.latitude is None or facets.longitude is None:
+    if not _has_coordinates(facets):
         return False
     return facets.city is None or facets.region is None or facets.country is None
 
 
+def _needs_lookup(facets: PhotoFacets | None) -> bool:
+    """这一行还有没有反查的余地（索引里那一遍要不要理它）。
+
+    四种情况，从头到尾都要说清楚，少一种就会出现「每开一次库就重算一遍」：
+
+    - 没有有效行（从没读过，或文件被改过）→ 要读 EXIF；
+    - 有坐标但没查过 → 要反查；
+    - 没坐标 → **永远**没得反查，别为它起一次 EXIF；
+    - 查过 → 已经有结论了（哪怕结论是「附近没有城市」），不再问。
+    """
+    if facets is None:
+        return True
+    if not _has_coordinates(facets):
+        return False
+    return not facets.place_checked
+
+
 def _resolved(facets: PhotoFacets, resolver: PlaceResolver, status: Status | None) -> PhotoFacets:
-    """按坐标补地点。查不到就原样返回（那是结论，不是错误）。"""
+    """按坐标补地点，并记下「这次查过了」。
+
+    查不到就原样返回地点字段 —— 那是结论，不是错误。数据没下好时反查器会说自己
+    没准备好（``ready`` 为假），那就**不记**：这次没查成，下次还得再来一遍。
+    """
     if not _needs_place(facets):
         return facets
     place = resolver.place_for(facets.latitude, facets.longitude, status=status)  # type: ignore[arg-type]
-    return with_resolved_place(facets, place)
+    return mark_place_resolved(with_resolved_place(facets, place), usable=resolver.ready)
+
+
+def _resolve_batch(
+    index: FacetIndex,
+    refs: Sequence[PhotoRef],
+    *,
+    resolver: PlaceResolver | None,
+    status: Status | None,
+    source: BatchMetadataSource | None,
+    should_cancel: Callable[[], bool] | None,
+) -> int:
+    """把这一批里「还没有地点结论」的照片补齐，返回反查了几张。
+
+    已有结论的行直接跳过，**连 EXIF 都不读** —— 这是第二次运行几乎不要钱的原因。
+    """
+    cached = index.lookup(refs)
+    todo = [ref for ref in refs if _needs_lookup(cached.get(ref.path))]
+    if not todo:
+        return 0
+    fresh = read_facets(
+        [ref.path for ref in todo],
+        source=source,
+        should_cancel=should_cancel,
+    )
+    resolved = 0
+    rows: list[tuple[PhotoRef, PhotoFacets]] = []
+    for ref in todo:
+        facets = fresh.get(ref.path)
+        if facets is None:
+            continue  # 压根没读出来：下次还要再试，不进索引
+        if resolver is not None and _needs_place(facets):
+            facets = _resolved(facets, resolver, status)
+            resolved += 1
+        rows.append((ref, facets))
+    index.store(rows)
+    return resolved
 
 
 def _offset_progress(
@@ -331,4 +518,4 @@ def _offset_progress(
     return report
 
 
-__all__ = ["Library"]
+__all__ = ["PLACE_PASS_BATCH", "Library", "PlacePass"]
