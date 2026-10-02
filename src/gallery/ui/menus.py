@@ -29,7 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-from PySide6.QtGui import QAction, QColor
+from PySide6.QtGui import QAction, QColor, QPalette
 from PySide6.QtWidgets import QMenu
 
 from gallery.ui.theme import rgba
@@ -58,6 +58,13 @@ MENU_CORNER_RADIUS = 8
 #: 与访达菜单的比例接近。
 MENU_ITEM_INSET = 10
 
+#: 高亮带的圆角（像素）。访达里的高亮是一条内缩的圆角带，不是顶到两边的方块。
+MENU_HIGHLIGHT_RADIUS = 5
+
+#: 高亮带左右各缩进多少（像素）。顶到两边会显得像一块色斑，内缩之后才像访达菜单里
+#: 那种「浮在面板上的一条」。
+MENU_HIGHLIGHT_MARGIN = 6
+
 #: 菜单项的内边距（上 右 下 左，像素）。行高由此从 18 变成 26。
 #:
 #: 左边写 **0**：文字的左沿交给 :data:`MENU_ITEM_INSET` 与样式自带的边距共同决定，
@@ -68,21 +75,37 @@ MENU_ITEM_INSET = 10
 MENU_ITEM_PADDING = "5px 38px 5px 0px"
 
 
-def style_sheet(background: QColor) -> str:
+def style_sheet(background: QColor, highlight: QColor) -> str:
     """给弹出菜单的那份样式表。
 
-    ``background`` 必须由调用方给出**窗口那块底色**（调色板的 ``Window`` 角色），
-    理由见模块文档那一段。
+    两个颜色都必须由调用方给**调色板里的原值**：底色是「一整块底色」那块（``Window``
+    角色），高亮是系统强调色（``Highlight`` 角色）。理由见模块文档那一段 ——
+    样式表里的 ``palette(...)`` 取的是**应用**调色板，不是逐控件下发的那份。
     """
     return (
         f"QMenu {{ border-radius: {MENU_CORNER_RADIUS}px; "
         f"background: {rgba(background)}; padding-left: {MENU_ITEM_INSET}px; }}\n"
-        f"QMenu::item {{ padding: {MENU_ITEM_PADDING}; }}"
+        f"QMenu::item {{ padding: {MENU_ITEM_PADDING}; }}\n"
+        # 悬停 / 当前项的高亮带。**不加这两行，菜单就完全没有高亮**：样式表一旦挂上，
+        # 系统样式那份高亮就不再画了（实测原生菜单按方向键会点亮 #548fff，加了样式表
+        # 之后按 ↓ 两次所有行仍是 #ffffff），用户就看不出鼠标在哪一行。
+        #
+        # 只改底色、不改字色：那一行若是置灰的（比如分组卡片末尾的说明文字），
+        # 高亮之下仍要保持灰字，不能看着能点。
+        f"QMenu::item:hover {{ background: {rgba(highlight)}; }}\n"
+        f"QMenu::item:selected {{ background: {rgba(highlight)}; "
+        f"border-radius: {MENU_HIGHLIGHT_RADIUS}px; margin: 1px {MENU_HIGHLIGHT_MARGIN}px; }}"
     )
 
 
-def apply_style(menu: QMenu, background: QColor) -> None:
+def apply_style(menu: QMenu) -> None:
     """给菜单与它的子菜单上同一份样式表。
+
+    两个颜色都**从菜单自己的调色板读**，不另外传进来：调用方刚把窗口那份统一调色板
+    下发到菜单上（``MainWindow.context_menu_for``），于是这里读到的底色就是「一整块
+    底色」那块，而高亮色是系统给的强调色 —— 也就是说这份样式表用的是系统自己那套配色，
+    深浅色自动跟随（理由见模块文档那一段：样式表里的 ``palette(...)`` 取的是应用调色板，
+    不是这份逐控件下发的）。
 
     **子菜单既不从父菜单继承样式表，也不是它的子控件**（实测
     ``QMenu.addMenu(另一个 QMenu)`` 不会给后者设父对象，``findChildren`` 找不到它，
@@ -94,7 +117,11 @@ def apply_style(menu: QMenu, background: QColor) -> None:
     是不是当前这条 action」—— 只有那样它才真的长在这个菜单里。否则会把「视图」菜单
     下的排序 / 分组 / 缩略图大小一并改掉，而它们并不属于这次右键。
     """
-    sheet = style_sheet(background)
+    palette = menu.palette()
+    sheet = style_sheet(
+        palette.color(QPalette.ColorRole.Window),
+        palette.color(QPalette.ColorRole.Highlight),
+    )
     seen: set[int] = set()
     pending = [menu]
     while pending:
@@ -275,6 +302,8 @@ def _hint_action(text: str, parent: QMenu) -> QAction:
 __all__ = [
     "GROUP_NOT_FILE_HINT",
     "MENU_CORNER_RADIUS",
+    "MENU_HIGHLIGHT_MARGIN",
+    "MENU_HIGHLIGHT_RADIUS",
     "MENU_ITEM_INSET",
     "MENU_ITEM_PADDING",
     "MenuActions",

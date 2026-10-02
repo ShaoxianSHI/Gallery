@@ -133,6 +133,30 @@ def test_context_menu_carries_our_look(qt_app: QApplication, window: MainWindow)
     assert rgba(window.palette().color(QPalette.ColorRole.Window)) in sheet
 
 
+def test_context_menu_has_hover_highlight(qt_app: QApplication, window: MainWindow) -> None:
+    """菜单必须有悬停 / 当前项的高亮带。
+
+    实测过的坑：只要给 ``QMenu`` 挂了样式表，系统样式那份高亮就**不再画**了 ——
+    原生菜单按方向键会把当前行点亮成强调色，加了样式表之后按 ↓ 两次所有行仍是底色，
+    用户根本看不出鼠标在哪一行。所以这两条规则是补回来的，不能删。
+    """
+    window._stack.setCurrentWidget(window._grid_page)
+    row = window._model.row_of_path(window._library.root / "一张.jpg")
+    assert row >= 0
+
+    menu = window.context_menu_for(row)
+
+    assert menu is not None
+    sheet = menu.styleSheet()
+    highlight = rgba(menu.palette().color(QPalette.ColorRole.Highlight))
+    assert "QMenu::item:hover" in sheet
+    assert "QMenu::item:selected" in sheet
+    assert sheet.count(highlight) >= 2, "两条规则都得用调色板里的高亮色"
+    # 高亮带是内缩的圆角带，不是顶到两边的方块
+    assert f"border-radius: {menus.MENU_HIGHLIGHT_RADIUS}px" in sheet
+    assert f"margin: 1px {menus.MENU_HIGHLIGHT_MARGIN}px" in sheet
+
+
 def test_submenus_get_the_same_look(qt_app: QApplication, window: MainWindow) -> None:
     """空白处那份菜单带三个子菜单：子菜单不继承样式表，也不是子控件，得显式发。"""
     window._stack.setCurrentWidget(window._grid_page)

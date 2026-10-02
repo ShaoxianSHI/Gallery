@@ -20,14 +20,7 @@ from functools import partial
 from pathlib import Path
 
 from PySide6.QtCore import QModelIndex, QPointF, Qt
-from PySide6.QtGui import (
-    QAction,
-    QCloseEvent,
-    QImage,
-    QKeySequence,
-    QMouseEvent,
-    QPalette,
-)
+from PySide6.QtGui import QAction, QCloseEvent, QImage, QKeySequence, QMouseEvent
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -1840,7 +1833,7 @@ class MainWindow(QMainWindow):
         # 圆角与行距：macOS 样式给的那圈约 5 像素、每行 18 像素高，太挤，只能用样式表改。
         # 而样式表一上，面板就不再由系统画、底色会掉回系统菜单色，所以底色必须显式写进
         # 样式表（见 ``ui.menus`` 模块文档）。
-        menus.apply_style(menu, self.palette().color(QPalette.ColorRole.Window))
+        menus.apply_style(menu)
         return menu
 
     def _menu_actions(self) -> MenuActions:
