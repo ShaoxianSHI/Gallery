@@ -4,7 +4,12 @@
 详见 ``docs/adr/0003-offline-place-lookup.md``。
 """
 
-from gallery.core.places.countries import admin1_label, country_label, place_label
+from gallery.core.places.countries import (
+    admin1_label,
+    country_label,
+    place_label,
+    uses_chinese_names,
+)
 from gallery.core.places.geonames import Place, PlaceIndex, download_data, geo_data_dir
 
 __all__ = [
@@ -15,4 +20,5 @@ __all__ = [
     "download_data",
     "geo_data_dir",
     "place_label",
+    "uses_chinese_names",
 ]

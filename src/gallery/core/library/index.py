@@ -28,7 +28,12 @@ from gallery.core.metadata.facets import PhotoFacets
 logger = logging.getLogger(__name__)
 
 #: 表结构版本。改动表结构就 +1；旧表会被整表丢掉重建（缓存不值得迁移）。
-SCHEMA_VERSION: Final = 3
+#:
+#: 4：地点改用当地语言（只译中国，ADR 0011）。**表结构没变**，但存进去的城市名、
+#: 国名变了 —— 不升版本的话，老库里那些「波尔多 / 法国」会永远留在索引里，
+#: 新扫的照片却是「Bordeaux / France」，同一个库里新老混排且再也刷不掉
+#: （``place_ok`` 记着「已经查过了」）。
+SCHEMA_VERSION: Final = 4
 
 #: 一次 ``UPSERT`` 最多写多少行。太大则一条语句过长，太小则语句条数多。
 WRITE_CHUNK: Final = 500

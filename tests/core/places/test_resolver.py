@@ -32,8 +32,13 @@ class FakeIndex:
         return self.answer
 
 
-def _place(city: str = "上海") -> Place:
-    return Place(city=city, admin1="Shanghai", country="China", distance_km=1.2, local_city="上海")
+def _place(city: str = "Shanghai") -> Place:
+    """一个**已经贴好标签**的中国城市（标签是 :mod:`core.places.geonames` 做的）。
+
+    解析器自己不做翻译，只把 :class:`Place` 的字段抄进 :class:`ResolvedPlace`，
+    所以这里得给出一份真实的结论，否则测试就在断言一个没人会产出的形状。
+    """
+    return Place(city=city, admin1="上海市", country="中国", distance_km=1.2, local_city="上海")
 
 
 def _fake_fetch(payloads: dict[str, bytes]) -> object:
@@ -59,7 +64,7 @@ def test_place_comes_from_the_index() -> None:
 
     place = resolver.place_for(LATITUDE, LONGITUDE)
 
-    assert place == ResolvedPlace(city="上海", region="Shanghai", country="China", distance_km=1.2)
+    assert place == ResolvedPlace(city="上海", region="上海市", country="中国", distance_km=1.2)
     assert resolver.ready
 
 
@@ -191,4 +196,37 @@ def test_cached_data_is_used_without_downloading(tmp_path: Path) -> None:
     place = resolver.place_for(LATITUDE, LONGITUDE)
     assert place is not None
     assert (place.city, place.region, place.country) == ("旧市", "旧省", "中国")
+    assert place.distance_km is not None
+
+
+def test_a_non_chinese_place_keeps_the_names_from_the_data_files(tmp_path: Path) -> None:
+    """端到端走一遍真实的索引：法国的照片从头到尾都是法文／原名（ADR 0011）。
+
+    数据文件里**故意给了汉字名**（「Bordeaux,波尔多」）—— 那正是以前会被拿去用的那个，
+    现在必须原样留在 GeoNames 的写法上。
+    """
+    directory = tmp_path / "geo"
+    directory.mkdir(parents=True)
+    (directory / CITIES_FILE).write_text(
+        "12345\tBordeaux\tBordeaux\tBordeaux,波尔多\t44.84\t-0.58\tP\tPPLA\tFR\t\t75\t\n",
+        encoding="utf-8",
+    )
+    (directory / ADMIN1_FILE).write_text("FR.75\tNouvelle-Aquitaine\n", encoding="utf-8")
+    (directory / COUNTRIES_FILE).write_text(
+        "FR\tFRA\t250\tFR\tFrance\tParis\t\t\tEU\t.fr\n", "utf-8"
+    )
+
+    def never(_url: str) -> bytes:
+        raise AssertionError("数据都齐了，不该联网")
+
+    resolver = LazyPlaceResolver(None, directory=directory, fetch=never)
+
+    place = resolver.place_for(44.8378, -0.5792)
+
+    assert place is not None
+    assert (place.city, place.region, place.country) == (
+        "Bordeaux",
+        "Nouvelle-Aquitaine",
+        "France",
+    )
     assert place.distance_km is not None

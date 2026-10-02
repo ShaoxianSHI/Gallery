@@ -1,4 +1,4 @@
-"""``gallery.core.places.countries`` 的测试：国家代码到中文名，且永不返回空串。
+"""``gallery.core.places.countries`` 的测试：**只把中国译成中文，其余保持原名**（ADR 0011）。
 
 末尾还有 :func:`place_label` —— 索引里那三列拼成一句话的规则，面板与反查结果
 共用同一个函数（ADR 0010），两处说法不许漂。
@@ -9,20 +9,39 @@ from __future__ import annotations
 import pytest
 
 from gallery.core.places.countries import (
+    CHINA_COUNTRY_CODE,
     CHINA_PROVINCES_ZH,
     COUNTRY_NAMES_ZH,
     admin1_label,
     country_label,
     place_label,
+    uses_chinese_names,
 )
+
+
+@pytest.mark.parametrize("code", ["CN", "cn", " cn "])
+def test_china_is_shown_in_chinese(code: str) -> None:
+    assert country_label(code) == "中国"
+    assert country_label(code, "China") == "中国"  # 数据文件里写什么都不影响
 
 
 @pytest.mark.parametrize(
-    ("code", "expected"),
-    [("FR", "法国"), ("JP", "日本"), ("US", "美国"), ("CN", "中国"), ("ES", "西班牙")],
+    ("code", "geonames_name"),
+    [
+        ("FR", "France"),
+        ("JP", "Japan"),
+        ("US", "United States"),
+        ("ES", "Spain"),
+        ("HK", "Hong Kong"),
+        ("TW", "Taiwan"),
+    ],
 )
-def test_known_codes_map_to_chinese(code: str, expected: str) -> None:
-    assert country_label(code) == expected
+def test_non_china_countries_keep_geonames_names(code: str, geonames_name: str) -> None:
+    """没有权威译名就不硬翻：法国的 France 就该写 France。
+
+    连中国香港 / 台湾也不特殊处理 —— 它们不是 ``CN``，规则只认国家代码。
+    """
+    assert country_label(code, geonames_name) == geonames_name
 
 
 def test_unknown_code_falls_back_to_geonames_english_name() -> None:
@@ -35,12 +54,20 @@ def test_unknown_code_without_fallback_returns_the_code() -> None:
     assert country_label("ZZ", "   ") == "ZZ"
 
 
-def test_lookup_is_forgiving_about_case_and_spaces() -> None:
-    assert country_label(" fr ") == "法国"
+def test_only_china_uses_chinese_names() -> None:
+    """国家、省州、城市三层共用的那一条判断，别的国家一律不是。"""
+    assert uses_chinese_names("CN") is True
+    assert uses_chinese_names(" cn ") is True
+    for code in ("FR", "US", "JP", "HK", "TW", "ZZ", ""):
+        assert uses_chinese_names(code) is False, code
 
 
-def test_table_is_well_formed() -> None:
-    assert len(COUNTRY_NAMES_ZH) >= 100
+def test_country_table_holds_only_china() -> None:
+    """译名表曾经有 190 国，现在只留中国 —— 剩下的那些译名没有权威来源。
+
+    这条测试拦住的是「顺手又加回去」：要加别的国家，先问依据在哪（ADR 0011）。
+    """
+    assert set(COUNTRY_NAMES_ZH) == {CHINA_COUNTRY_CODE}
     for code, name in COUNTRY_NAMES_ZH.items():
         assert len(code) == 2 and code.isupper(), code
         assert name.strip() == name and name, code
@@ -81,7 +108,7 @@ def test_place_label_goes_from_big_to_small() -> None:
 def test_place_label_skips_what_is_missing() -> None:
     """缺哪层就省掉哪层，绝不留下空洞的「中国 ·  · 杭州」。"""
     assert place_label("杭州", None, "中国") == "中国 · 杭州"
-    assert place_label(None, None, "法国") == "法国"
+    assert place_label(None, None, "France") == "France"
     assert place_label("Bordeaux", None, "France") == "France · Bordeaux"
 
 

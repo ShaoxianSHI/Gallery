@@ -129,11 +129,13 @@ def test_nearest_returns_city_with_admin_hierarchy(data_dir: Path) -> None:
 
     assert place is not None
     assert place.city == "Bordeaux"
-    assert place.local_city == "波尔多"  # alternate names 里有中文就用它
+    # 非中国：一律保持 GeoNames 原名。alternate names 里的「波尔多」是别人写的译名，
+    # 用上去就是替用户把他的相册翻译了（ADR 0011）。
+    assert place.local_city is None
     assert place.admin1 == "Nouvelle-Aquitaine"
-    assert place.country == "法国"  # 国家名走中文映射
+    assert place.country == "France"
     assert place.distance_km < 5
-    assert place.label() == "法国 · Nouvelle-Aquitaine · 波尔多"  # 国家 → 省 → 市
+    assert place.label() == "France · Nouvelle-Aquitaine · Bordeaux"  # 国家 → 省 → 市
 
 
 def test_nearest_picks_the_closest_city(data_dir: Path) -> None:
@@ -144,7 +146,7 @@ def test_nearest_picks_the_closest_city(data_dir: Path) -> None:
 
     assert place is not None
     assert place.city == "Bilbao"
-    assert place.country == "西班牙"
+    assert place.country == "Spain"
 
 
 def test_nearest_gives_up_when_far_away(data_dir: Path) -> None:
@@ -156,7 +158,7 @@ def test_nearest_gives_up_when_far_away(data_dir: Path) -> None:
 
 
 def test_chinese_city_and_province(data_dir: Path) -> None:
-    """中国的省市都要显示中文：城市来自 alternate names，省份来自静态映射。"""
+    """中国的省市显示中文：城市来自 alternate names，省份来自静态映射。"""
     index = PlaceIndex.load(data_dir)
     assert index is not None
 
@@ -171,15 +173,16 @@ def test_chinese_city_and_province(data_dir: Path) -> None:
 
 
 def test_label_is_ordered_from_country_to_city() -> None:
-    assert Place("Bordeaux", "Nouvelle-Aquitaine", "法国", 1.0, "波尔多").label() == (
-        "法国 · Nouvelle-Aquitaine · 波尔多"
+    assert Place("Bordeaux", "Nouvelle-Aquitaine", "France", 1.0).label() == (
+        "France · Nouvelle-Aquitaine · Bordeaux"
     )
+    assert Place("Hangzhou", "浙江省", "中国", 1.0, "杭州").label() == "中国 · 浙江省 · 杭州"
 
 
 def test_label_skips_missing_parts_and_duplicates() -> None:
-    assert Place("Bordeaux", None, "法国", 1.0).label() == "法国 · Bordeaux"
-    assert Place("Monaco", "Monaco", "摩纳哥", 0.5).label() == "摩纳哥 · Monaco"
-    assert Place("Nowhere", None, "法国", 1.0, "无名").label() == "法国 · 无名"
+    assert Place("Bordeaux", None, "France", 1.0).label() == "France · Bordeaux"
+    assert Place("Monaco", "Monaco", "Monaco", 0.5).label() == "Monaco"
+    assert Place("Nowhere", None, "中国", 1.0, "无名").label() == "中国 · 无名"
 
 
 @pytest.mark.parametrize(
@@ -189,12 +192,13 @@ def test_label_skips_missing_parts_and_duplicates() -> None:
         ("Shanghai,上海,上海市,中国上海,沪", "上海"),  # 排除单字简称与国家前缀
         ("Tokyo,东京,東京", "东京"),  # 同长度取先出现的
         ("Lhasa,ラサ市,拉萨,拉萨市,拉薩", "拉萨"),  # 假名不算汉字
-        ("Paris,巴黎", "巴黎"),
+        ("Paris,巴黎", "巴黎"),  # 挑得出，但法国城市不会用（见下面的 country 门）
         ("Bordeaux,Burdigala", None),  # 没有汉字就没有
         ("Somewhere,中", None),  # 单字不要
     ],
 )
 def test_pick_chinese_name(alternates: str, expected: str | None) -> None:
+    """这是个纯字符串函数；**用不用得上由调用方的国家判断决定**，见下面那条。"""
     assert pick_chinese_name(alternates) == expected
 
 
@@ -370,6 +374,9 @@ class TestSameplaceGranularity:
         assert place is not None
         assert place.city == "New York City"
         assert place.admin1 == "New York"
+        # 数据里给纽约写了汉字名「纽约」，但那是中国的写法，美国这边用不上（ADR 0011）。
+        assert place.local_city is None
+        assert place.label() == "United States · New York · New York City"
 
     def test_a_different_city_is_not_substituted_for_a_nearer_one(self, index: PlaceIndex) -> None:
         """泽西市行政级别更高但隔着一条河，不能顶替离得更近的纽约。"""

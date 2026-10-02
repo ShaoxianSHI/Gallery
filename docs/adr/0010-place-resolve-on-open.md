@@ -2,7 +2,7 @@
 
 - 状态：已接受
 - 日期：2026-10-02
-- 相关 ADR：0003（离线反查）、0009（分组与排序）
+- 相关 ADR：0003（离线反查）、0009（分组与排序）、0011（地点语言规则）
 - 相关代码：`src/gallery/core/library/facade.py`、`src/gallery/core/library/index.py`、
   `src/gallery/ui/main_window.py`
 

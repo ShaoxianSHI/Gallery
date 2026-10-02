@@ -25,7 +25,12 @@ from typing import Final
 from gallery.core import paths
 from gallery.core.atomic import write_text_atomic
 from gallery.core.errors import GeoDataError
-from gallery.core.places.countries import admin1_label, country_label, place_label
+from gallery.core.places.countries import (
+    admin1_label,
+    country_label,
+    place_label,
+    uses_chinese_names,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -86,26 +91,34 @@ GRID_RADIUS: Final = 2
 class Place:
     """一次反查的结果。"""
 
-    #: GeoNames 的拉丁名（``Hangzhou``），拿不到中文名时用它。
+    #: GeoNames 的城市名（``Hangzhou`` / ``Bordeaux``），**原样保留**。
+    #: 界面上该显示哪一个请读 :attr:`display_city`，别直接拿这一列去拼文案。
     city: str
     admin1: str | None
     country: str
     distance_km: float
-    #: 中文名（``杭州``）。GeoNames 的 alternate names 里有就优先用它。
+    #: 本地语言的城市名（``杭州``）。**只有中国的城市会有**，见
+    #: :func:`gallery.core.places.countries.uses_chinese_names` 与 ADR 0011。
     local_city: str | None = None
 
     @property
     def display_city(self) -> str:
+        """界面上该显示的城市名：中国城市取中文，其余取 GeoNames 原名（ADR 0011）。"""
         return self.local_city or self.city
 
     def label(self) -> str:
-        """展示用文案，由大到小：``中国 · 浙江省 · 杭州``（缺的层级自动省略）。"""
+        """展示用文案，由大到小：``中国 · 浙江省 · 杭州``（缺的层级自动省略）。
+
+        非中国的地点保持原样：``France · Nouvelle-Aquitaine · Bordeaux``（ADR 0011）。
+        """
         return place_label(self.display_city, self.admin1, self.country)
 
 
 @dataclass(frozen=True, slots=True)
 class _City:
     name: str
+    #: 中文名。**只有中国城市会填**（ADR 0011），其余国家恒为 ``None`` ——
+    #: alternate names 里的「纽约」「巴黎」是别人写下的译名，不该替用户决定。
     local_name: str | None
     feature_code: str
     country_code: str
@@ -274,12 +287,17 @@ def _parse_cities(path: Path) -> list[_City]:
             longitude = float(fields[5])
         except ValueError:
             continue
+        country_code = fields[8].strip().upper()
         cities.append(
             _City(
                 name=fields[1],
-                local_name=pick_chinese_name(fields[3]),
+                # 只有中国的城市去 alternate names 里找中文名：那些汉字（纽约、巴黎）
+                # 是别人替这座城写的译名，用上去等于替用户把他的相册翻译了（ADR 0011）。
+                local_name=pick_chinese_name(fields[3])
+                if uses_chinese_names(country_code)
+                else None,
                 feature_code=fields[7].strip().upper(),
-                country_code=fields[8].strip().upper(),
+                country_code=country_code,
                 admin1_code=fields[10].strip(),
                 latitude=latitude,
                 longitude=longitude,
@@ -297,15 +315,19 @@ _ALL_CJK = re.compile(r"^[\u4e00-\u9fff]+$")
 def pick_chinese_name(alternates: str) -> str | None:
     """从 GeoNames 的 alternate names 里挑一个中文名。
 
+    **只看字符串本身，不看它在哪个国家** —— 调用方
+    （:func:`_parse_cities`）负责先用 :func:`uses_chinese_names` 把非中国的城市挡掉。
+
     这一列没有语言标签，只能按字形判断，规则是：
 
     - 整串都是汉字（假名、韩文、拉丁字母一律排除）
     - 至少两个字（``沪`` 这种单字简称太随意）
     - 不带「中国 / 中華」前缀（``中国上海``）
     - 取最短的：``杭州`` 优先于 ``杭州市``；同样长度时取先出现的
-      （``东京`` 与 ``東京`` 都出现时取前一个）
+      （``拉萨`` 与 ``拉薩`` 都出现时取前一个）
 
-    实测对真实数据的挑选结果：巴黎、东京、北京、杭州、拉萨、悉尼、开罗、波尔多。
+    规则本身与国家无关，但结果只会用在中国城市上：实测对真实数据的挑选结果里
+    属于中国的有北京、杭州、拉萨（另一些如巴黎、东京、波尔多不再被采用）。
     """
     candidates: list[str] = []
     for raw in alternates.split(","):

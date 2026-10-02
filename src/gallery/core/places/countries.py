@@ -1,208 +1,32 @@
-"""地名展示用名称：国家代码 → 中文名，以及三段地点的拼装。
+"""地名展示用名称：**中国的地点用中文，其余一律用 GeoNames 原名**。
 
-GeoNames 的 ``countryInfo.txt`` 只有英文国名，而这是个中文界面的软件。
-城市名保持 GeoNames 原名（要中文城市名得额外下载 100 MB+ 的 alternateNames，
-不划算），国家名则用这份随代码走的静态映射 —— 它只有几 KB，且几乎不变。
+这是一条规则，不是一张翻译表（ADR 0011）。曾经这里放着 190 个国家的译名，
+城市名也从 alternate names 里随手取汉字，拼出来是「法国 · Nouvelle-Aquitaine · 波尔多」
+这种一层一个语种的东西；而用户在自己的照片上要的恰恰是认得出自己拍过的地方。
 
-表里没有的代码一律回退到 GeoNames 给的英文名，绝不显示空白或代码本身。
+于是判断只剩一条：国家是不是 ``CN``。国家、省州、城市三层共用它 ——
+``France · Nouvelle-Aquitaine · Bordeaux`` 与 ``United States · New York · New York City``
+保持原样，``中国 · 浙江省 · 杭州`` 才译。没有权威译名就不硬翻，
+这是省州层早就遵守的规矩，现在国家层也守同一条。
+
+**文件里自带的城市 / 国家名（EXIF、IPTC、XMP）不经过这里**：我们照抄，
+绝不翻译、绝不回写（见 ADR 0011 第 4 节）。本模块只管我们反查出来的结论。
 """
 
 from __future__ import annotations
 
 from typing import Final
 
-#: ISO 3166-1 alpha-2 → 中文名。覆盖常见拍照地，未收录的回退英文名。
+#: 地点用中文显示的国家。**中国的名字本来就是中文**，翻成 ``China`` 反倒多余。
+CHINA_COUNTRY_CODE: Final = "CN"
+
+#: ISO 3166-1 alpha-2 → 中文名。
+#:
+#: 曾经是一张 190 国的表，现在只剩中国 —— 其余条目不是「暂时没用」，
+#: 而是**不该有**：那些译名没有权威来源，是我们自己造的，用户在自己的照片上
+#: 认不出自己拍过的地方。要加回来先找得到依据（ADR 0011 第 2 节）。
 COUNTRY_NAMES_ZH: Final[dict[str, str]] = {
-    "AD": "安道尔",
-    "AE": "阿联酋",
-    "AF": "阿富汗",
-    "AG": "安提瓜和巴布达",
-    "AL": "阿尔巴尼亚",
-    "AM": "亚美尼亚",
-    "AO": "安哥拉",
-    "AR": "阿根廷",
-    "AT": "奥地利",
-    "AU": "澳大利亚",
-    "AZ": "阿塞拜疆",
-    "BA": "波黑",
-    "BB": "巴巴多斯",
-    "BD": "孟加拉国",
-    "BE": "比利时",
-    "BF": "布基纳法索",
-    "BG": "保加利亚",
-    "BH": "巴林",
-    "BI": "布隆迪",
-    "BJ": "贝宁",
-    "BN": "文莱",
-    "BO": "玻利维亚",
-    "BR": "巴西",
-    "BS": "巴哈马",
-    "BT": "不丹",
-    "BW": "博茨瓦纳",
-    "BY": "白俄罗斯",
-    "BZ": "伯利兹",
-    "CA": "加拿大",
-    "CD": "刚果（金）",
-    "CF": "中非",
-    "CG": "刚果（布）",
-    "CH": "瑞士",
-    "CI": "科特迪瓦",
-    "CL": "智利",
-    "CM": "喀麦隆",
     "CN": "中国",
-    "CO": "哥伦比亚",
-    "CR": "哥斯达黎加",
-    "CU": "古巴",
-    "CV": "佛得角",
-    "CY": "塞浦路斯",
-    "CZ": "捷克",
-    "DE": "德国",
-    "DJ": "吉布提",
-    "DK": "丹麦",
-    "DO": "多米尼加",
-    "DZ": "阿尔及利亚",
-    "EC": "厄瓜多尔",
-    "EE": "爱沙尼亚",
-    "EG": "埃及",
-    "ER": "厄立特里亚",
-    "ES": "西班牙",
-    "ET": "埃塞俄比亚",
-    "FI": "芬兰",
-    "FJ": "斐济",
-    "FM": "密克罗尼西亚",
-    "FO": "法罗群岛",
-    "FR": "法国",
-    "GA": "加蓬",
-    "GB": "英国",
-    "GD": "格林纳达",
-    "GE": "格鲁吉亚",
-    "GH": "加纳",
-    "GI": "直布罗陀",
-    "GL": "格陵兰",
-    "GM": "冈比亚",
-    "GN": "几内亚",
-    "GR": "希腊",
-    "GT": "危地马拉",
-    "GU": "关岛",
-    "GY": "圭亚那",
-    "HK": "中国香港",
-    "HN": "洪都拉斯",
-    "HR": "克罗地亚",
-    "HT": "海地",
-    "HU": "匈牙利",
-    "ID": "印度尼西亚",
-    "IE": "爱尔兰",
-    "IL": "以色列",
-    "IM": "马恩岛",
-    "IN": "印度",
-    "IQ": "伊拉克",
-    "IR": "伊朗",
-    "IS": "冰岛",
-    "IT": "意大利",
-    "JM": "牙买加",
-    "JO": "约旦",
-    "JP": "日本",
-    "KE": "肯尼亚",
-    "KG": "吉尔吉斯斯坦",
-    "KH": "柬埔寨",
-    "KP": "朝鲜",
-    "KR": "韩国",
-    "KW": "科威特",
-    "KZ": "哈萨克斯坦",
-    "LA": "老挝",
-    "LB": "黎巴嫩",
-    "LI": "列支敦士登",
-    "LK": "斯里兰卡",
-    "LR": "利比里亚",
-    "LS": "莱索托",
-    "LT": "立陶宛",
-    "LU": "卢森堡",
-    "LV": "拉脱维亚",
-    "LY": "利比亚",
-    "MA": "摩洛哥",
-    "MC": "摩纳哥",
-    "MD": "摩尔多瓦",
-    "ME": "黑山",
-    "MG": "马达加斯加",
-    "MK": "北马其顿",
-    "ML": "马里",
-    "MM": "缅甸",
-    "MN": "蒙古",
-    "MO": "中国澳门",
-    "MT": "马耳他",
-    "MU": "毛里求斯",
-    "MV": "马尔代夫",
-    "MW": "马拉维",
-    "MX": "墨西哥",
-    "MY": "马来西亚",
-    "MZ": "莫桑比克",
-    "NA": "纳米比亚",
-    "NC": "新喀里多尼亚",
-    "NE": "尼日尔",
-    "NG": "尼日利亚",
-    "NI": "尼加拉瓜",
-    "NL": "荷兰",
-    "NO": "挪威",
-    "NP": "尼泊尔",
-    "NZ": "新西兰",
-    "OM": "阿曼",
-    "PA": "巴拿马",
-    "PE": "秘鲁",
-    "PF": "法属波利尼西亚",
-    "PG": "巴布亚新几内亚",
-    "PH": "菲律宾",
-    "PK": "巴基斯坦",
-    "PL": "波兰",
-    "PR": "波多黎各",
-    "PS": "巴勒斯坦",
-    "PT": "葡萄牙",
-    "PY": "巴拉圭",
-    "QA": "卡塔尔",
-    "RE": "留尼汪",
-    "RO": "罗马尼亚",
-    "RS": "塞尔维亚",
-    "RU": "俄罗斯",
-    "RW": "卢旺达",
-    "SA": "沙特阿拉伯",
-    "SC": "塞舌尔",
-    "SD": "苏丹",
-    "SE": "瑞典",
-    "SG": "新加坡",
-    "SI": "斯洛文尼亚",
-    "SK": "斯洛伐克",
-    "SL": "塞拉利昂",
-    "SM": "圣马力诺",
-    "SN": "塞内加尔",
-    "SO": "索马里",
-    "SR": "苏里南",
-    "SS": "南苏丹",
-    "SV": "萨尔瓦多",
-    "SY": "叙利亚",
-    "SZ": "斯威士兰",
-    "TD": "乍得",
-    "TG": "多哥",
-    "TH": "泰国",
-    "TJ": "塔吉克斯坦",
-    "TM": "土库曼斯坦",
-    "TN": "突尼斯",
-    "TO": "汤加",
-    "TR": "土耳其",
-    "TT": "特立尼达和多巴哥",
-    "TW": "中国台湾",
-    "TZ": "坦桑尼亚",
-    "UA": "乌克兰",
-    "UG": "乌干达",
-    "US": "美国",
-    "UY": "乌拉圭",
-    "UZ": "乌兹别克斯坦",
-    "VA": "梵蒂冈",
-    "VE": "委内瑞拉",
-    "VG": "英属维尔京群岛",
-    "VN": "越南",
-    "YE": "也门",
-    "ZA": "南非",
-    "ZM": "赞比亚",
-    "ZW": "津巴布韦",
 }
 
 
@@ -245,24 +69,40 @@ CHINA_PROVINCES_ZH: Final[dict[str, str]] = {
 }
 
 
+def uses_chinese_names(country_code: str) -> bool:
+    """这个国家的地点是否用中文显示。
+
+    **三层共用这一条判断**（国家、省州、城市），否则又会拼出「一层一个语种」的话：
+    国家中文、省州法文、城市中文（ADR 0011）。调用点在解析城市数据时
+    （见 :mod:`gallery.core.places.geonames`），那里已经拿到了国家代码。
+    """
+    return country_code.strip().upper() == CHINA_COUNTRY_CODE
+
+
 def admin1_label(country_code: str, name: str) -> str:
     """行政区（省 / 州）名 → 展示用名称。
 
-    目前只翻译中国的省级行政区；其它国家保持 GeoNames 的原名，
-    我们没有权威译名，硬翻只会更糟。
+    只有中国的省级行政区查这张表；其它国家保持 GeoNames 的原名
+    （``Nouvelle-Aquitaine``、``California``），我们没有权威译名，硬翻只会更糟。
     """
-    if country_code.strip().upper() == "CN":
+    if uses_chinese_names(country_code):
         return CHINA_PROVINCES_ZH.get(name.strip(), name)
     return name
 
 
 def country_label(code: str, fallback: str = "") -> str:
-    """国家代码 → 展示用名称；表里没有就用 ``fallback``（GeoNames 的英文名）。
+    """国家代码 → 展示用名称：**只有中国翻成中文，其余一律用 ``fallback``**。
 
-    两者都没有时返回代码本身，总之不返回空串 —— 界面上一行空白比显示 ``FR`` 更糟。
+    ``fallback`` 是 GeoNames 给的原名（``France``、``Japan``、``United States``）——
+    那本来就是用户认得的名字，不需要我们再加工一次（ADR 0011）。
+    连 ``fallback`` 都没有时返回代码本身，总之不返回空串：
+    界面上一行空白比显示 ``FR`` 更糟。
     """
     normalized = code.strip().upper()
-    return COUNTRY_NAMES_ZH.get(normalized) or fallback.strip() or normalized
+    translated = COUNTRY_NAMES_ZH.get(normalized)
+    if translated is not None:
+        return translated
+    return fallback.strip() or normalized
 
 
 def place_label(city: str | None, region: str | None, country: str | None) -> str:
@@ -271,6 +111,9 @@ def place_label(city: str | None, region: str | None, country: str | None) -> st
     **索引里存的就是这三列**，元数据面板从库里读出来之后要用同一个函数拼成一句话。
     两处各拼一次，早晚会漂成「面板写着杭州、分组写着 Bordeaux」——
     同一个反查结论（ADR 0010），只该有一种说法。
+
+    这里**不做任何翻译**：三段名字用什么语言，在写入索引之前就定好了
+    （见 :func:`admin1_label` 与 :func:`country_label`）。
     """
     parts: list[str] = []
     for part in (country, region, city):
@@ -280,9 +123,11 @@ def place_label(city: str | None, region: str | None, country: str | None) -> st
 
 
 __all__ = [
+    "CHINA_COUNTRY_CODE",
     "CHINA_PROVINCES_ZH",
     "COUNTRY_NAMES_ZH",
     "admin1_label",
     "country_label",
     "place_label",
+    "uses_chinese_names",
 ]
