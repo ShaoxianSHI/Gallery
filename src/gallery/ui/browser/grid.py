@@ -48,7 +48,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gallery.ui.browser.model import ALBUM_ROLE
+from gallery.ui.browser.model import ALBUM_ROLE, GROUP_COUNT_ROLE, GROUP_ROLE
 from gallery.ui.browser.rename_edit import RenameEdit
 from gallery.ui.browser.thumb_sizes import (
     DEFAULT_EDGE,
@@ -152,6 +152,7 @@ class PhotoDelegate(QStyledItemDelegate):
             rect = option.rect.adjusted(3, 3, -3, -3)
             selected = bool(option.state & QStyle.StateFlag.State_Selected)
             is_album = bool(index.data(ALBUM_ROLE))
+            is_group = bool(index.data(GROUP_ROLE))
             palette = option.palette
 
             painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -179,7 +180,9 @@ class PhotoDelegate(QStyledItemDelegate):
                 self._draw_thumbnail(painter, image_rect, pixmap)
                 if is_album:
                     self._draw_album_badge(painter, image_rect)
-            elif is_album:
+                elif is_group:
+                    self._draw_group_badge(painter, image_rect, str(index.data(GROUP_COUNT_ROLE)))
+            elif is_album or is_group:
                 self._draw_folder_glyph(painter, image_rect, highlight)
             else:
                 self._draw_placeholder(painter, image_rect, palette)
@@ -238,9 +241,20 @@ class PhotoDelegate(QStyledItemDelegate):
         painter.drawRoundedRect(tab, 3, 3)
         painter.drawRoundedRect(box, 4, 4)
 
+    def _draw_group_badge(self, painter: QPainter, rect: QRect, count: str) -> None:
+        """分组卡片：封面左上角盖一个张数徽标（相册盖的是「相册」两个字）。
+
+        用封面而不是文件夹图形当分组卡片的正脸 —— 组里照片长什么样比「这里有一堆」
+        更值得看一眼；封面还没到时才退回文件夹图形。
+        """
+        self._draw_badge(painter, rect, count)
+
     def _draw_album_badge(self, painter: QPainter, rect: QRect) -> None:
         """有封面的相册：左上角盖一个「相册」小标签。"""
-        text = "相册"
+        self._draw_badge(painter, rect, "相册")
+
+    def _draw_badge(self, painter: QPainter, rect: QRect, text: str) -> None:
+        """在取景框左上角盖一个小标签。"""
         metrics = painter.fontMetrics()
         width = metrics.horizontalAdvance(text) + 12
         height = metrics.height() + 4

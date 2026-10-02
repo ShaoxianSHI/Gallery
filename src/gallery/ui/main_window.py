@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 from collections import OrderedDict
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from functools import partial
 from pathlib import Path
 
@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QStackedWidget,
     QToolTip,
@@ -36,7 +37,8 @@ from gallery.core import paths
 from gallery.core.errors import GalleryError, GeoDataError
 from gallery.core.library.config import prepare_library
 from gallery.core.library.facade import Library
-from gallery.core.library.photos import FolderRef, GridEntry, PhotoRef
+from gallery.core.library.groups import SortOrder, build_groups, sort_photos
+from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
 from gallery.core.library.scanner import ScanReport
 from gallery.core.library.session import (
     BROWSE_MODE_ALBUMS,
@@ -46,7 +48,16 @@ from gallery.core.library.session import (
     load_session,
     save_session,
 )
-from gallery.core.metadata.exif import MetadataReport, read_metadata
+from gallery.core.metadata.exif import ExifToolReader, MetadataReport, read_metadata
+from gallery.core.metadata.facets import (
+    GROUP_FACETS,
+    SORT_FACETS,
+    Facet,
+    PhotoFacets,
+    group_facet,
+    needs_metadata,
+    sort_facet,
+)
 from gallery.core.metadata.journal import ACTION_RENAME
 from gallery.core.metadata.rename import RenameResult
 from gallery.core.metadata.trash import Failure, TrashResult
@@ -101,6 +112,12 @@ QLabel#banner {
     color: palette(text);
 }
 """
+
+
+#: 选中分组卡片时对「改名 / 删除」的统一解释。两件事共用一句话，省得用户以为是两个毛病。
+_GROUP_NOT_FILE_ACTION = (
+    "分组不是磁盘上的文件，改不了名也删不掉。双击进入分组后选中里面的照片再操作。"
+)
 
 
 def _rename_banner(result: RenameResult) -> str:
@@ -209,10 +226,21 @@ class MainWindow(QMainWindow):
         self._size_index = nearest_index(self._session.thumbnail_edge)
         self._browse_mode: str = self._session.browse_mode or BROWSE_MODE_FLAT
         self._current_dir: Path | None = None
+        # 分组 / 排序（见 ADR 0009）：字段 id 存进会话，下次打开沿用。
+        self._group_facet: str | None = self._session.group_facet
+        self._sort_facet: str | None = self._session.sort_facet
+        self._sort_descending: bool = bool(self._session.sort_descending)
+        #: 已经进入的分组（它不是磁盘上的目录，只是这一层的一个筛选项）。
+        self._group_view: GroupRef | None = None
+        #: 本层照片的分组 / 排序字段快照（按路径索引）。
+        self._facet_values: dict[Path, PhotoFacets] = {}
+        self._facet_job: int | None = None
+        self._exiftool_available: bool | None = None  # 探测一次就够
         self._model = PhotoListModel(self, icon_edge=edge_for_index(self._size_index))
         self._build_ui()
         self._build_actions()
         self._restore_session()
+        self._sync_order_actions()
         self._metadata_action.setChecked(bool(self._session.metadata_visible))
         self._panel.setVisible(bool(self._session.metadata_visible))
         self._sync_size_actions()
@@ -385,6 +413,7 @@ class MainWindow(QMainWindow):
         browse_menu = view_menu.addMenu("浏览方式")
         browse_menu.addAction(self._albums_action)
         browse_menu.addAction(self._flat_action)
+        self._build_order_menus(view_menu)
         view_menu.addSeparator()
         view_menu.addAction(self._fit_action)
         view_menu.addAction(self._actual_action)
@@ -408,6 +437,263 @@ class MainWindow(QMainWindow):
         # 不加工具栏：这些命令在 macOS 顶部菜单里都有，快捷键也照常生效，
         # 界面上再重复一遍只会挤掉照片。
         self._rebuild_recent_menu()
+
+    # ---- 分组与排序（见 ADR 0009）--------------------------------------------
+
+    def _build_order_menus(self, view_menu: QMenu) -> None:
+        """「视图 → 分组 / 排序」两个子菜单。
+
+        放菜单而不是窗口上的控件：这个项目一直刻意不加工具栏，照片区那点高度不该
+        拿来放两个下拉。
+        """
+        group_menu = view_menu.addMenu("分组")
+        group_menu.setToolTipsVisible(True)
+        self._group_actions: dict[str | None, QAction] = {
+            None: self._order_choice(group_menu, "不分组", None, self.set_group_facet)
+        }
+        for facet in GROUP_FACETS:
+            self._group_actions[facet.id] = self._order_choice(
+                group_menu,
+                facet.label,
+                facet.id,
+                self.set_group_facet,
+                unavailable=self._unavailable_hint(facet),
+            )
+
+        sort_menu = view_menu.addMenu("排序")
+        sort_menu.setToolTipsVisible(True)
+        self._sort_actions: dict[str | None, QAction] = {
+            None: self._order_choice(
+                sort_menu, "默认（相册在前，按名称）", None, self.set_sort_facet
+            )
+        }
+        for facet in SORT_FACETS:
+            self._sort_actions[facet.id] = self._order_choice(
+                sort_menu,
+                facet.label,
+                facet.id,
+                self.set_sort_facet,
+                unavailable=self._unavailable_hint(facet),
+            )
+        sort_menu.addSeparator()
+        self._descending_action = QAction("逆序（新在前 / 大在前）", self)
+        self._descending_action.setCheckable(True)
+        self._descending_action.toggled.connect(self.set_sort_descending)
+        sort_menu.addAction(self._descending_action)
+
+    def _order_choice(
+        self,
+        menu: QMenu,
+        label: str,
+        facet_id: str | None,
+        handler: Callable[[str | None], None],
+        *,
+        unavailable: str | None = None,
+    ) -> QAction:
+        """菜单里的一个单选项。``unavailable`` 非空时置灰并说明原因。"""
+        action = QAction(label, self)
+        action.setCheckable(True)
+        if unavailable is not None:
+            action.setEnabled(False)
+            action.setToolTip(unavailable)
+        else:
+            action.triggered.connect(lambda _checked=False, target=facet_id: handler(target))
+        menu.addAction(action)
+        return action
+
+    def _unavailable_hint(self, facet: Facet) -> str | None:
+        """没装 exiftool 时，只有 exiftool 读得到的那些字段要**明说**为什么用不了。
+
+        降级可以，假装没降级不行（见 ``core.metadata.exif``）：让用户分出一个
+        「全都没有」的组，比一开始就告诉他「这个字段要装 exiftool」糟糕得多。
+        """
+        if not facet.needs_exiftool or self._has_exiftool:
+            return None
+        return "需要 exiftool 才能读取这个字段。安装后即可使用：brew install exiftool"
+
+    @property
+    def _has_exiftool(self) -> bool:
+        """exiftool 现在能不能用。启动时探一次，之后不再反复起进程去问。"""
+        if self._exiftool_available is None:
+            self._exiftool_available = ExifToolReader().available()
+        return self._exiftool_available
+
+    def set_group_facet(self, facet_id: str | None) -> None:
+        """切换分组字段（菜单用）。"""
+        if facet_id is not None and group_facet(facet_id) is None:
+            return  # 非法 id：会话文件里的旧值也可能走到这里，静默忽略
+        if facet_id == self._group_facet:
+            self._sync_order_actions()
+            return
+        self._group_facet = facet_id
+        self._remember_ordering()
+        self._sync_order_actions()
+        # 换分组字段等于换了一组组卡片，原来进入的那个组已经不存在了。
+        self._group_view = None
+        self._reload_level()
+
+    def set_sort_facet(self, facet_id: str | None) -> None:
+        """切换排序字段（菜单用）。组内排序也跟着换 —— 这正是它的用处。"""
+        if facet_id is not None and sort_facet(facet_id) is None:
+            return  # 非法 id
+        if facet_id == self._sort_facet:
+            self._sync_order_actions()
+            return
+        self._sort_facet = facet_id
+        self._remember_ordering()
+        self._sync_order_actions()
+        self._reload_level()
+
+    def set_sort_descending(self, descending: bool) -> None:
+        """切换正序 / 逆序。只重排当前这一层，不必重新读元数据。"""
+        if descending == self._sort_descending:
+            return
+        self._sort_descending = descending
+        self._remember_ordering()
+        self._sync_order_actions()
+        self._reload_level()
+
+    def _remember_ordering(self) -> None:
+        self._session = self._session.with_ordering(
+            self._group_facet, self._sort_facet, self._sort_descending
+        )
+        self._save_session()
+
+    def _sync_order_actions(self) -> None:
+        """让菜单的勾选状态跟着实际选择走（含从会话恢复出来的选择）。"""
+        for facet_id, action in self._group_actions.items():
+            action.setChecked(facet_id == self._group_facet)
+        for facet_id, action in self._sort_actions.items():
+            action.setChecked(facet_id == self._sort_facet)
+        self._descending_action.setChecked(self._sort_descending)
+        # 没有排序字段时「逆序」没有意义（默认顺序是相册在前、名称升序）。
+        self._descending_action.setEnabled(self._sort_facet is not None)
+
+    def _current_order(self) -> SortOrder:
+        return SortOrder(facet=sort_facet(self._sort_facet), descending=self._sort_descending)
+
+    def _current_group_facet(self) -> Facet | None:
+        return group_facet(self._group_facet)
+
+    def _needs_facet_read(self) -> bool:
+        """当前的选择是否必须真去读 EXIF 才能算出顺序。"""
+        group = None if self._group_view is not None else self._current_group_facet()
+        return needs_metadata((group, sort_facet(self._sort_facet)))
+
+    # ---- 进入与退出分组 ------------------------------------------------------
+
+    def enter_group(self, group: GroupRef) -> None:
+        """进入一个分组（双击组卡片）。
+
+        分组不是磁盘上的目录，因此不走 ``enter_folder``：它记不住路径，退出时
+        直接回到进来之前的那一层。
+        """
+        self._group_view = group
+        self._reload_level()
+
+    def _leave_group(self) -> None:
+        if self._group_view is None:
+            return
+        self._group_view = None
+        self._reload_level()
+
+    # ---- 读取本层元数据并重排 ------------------------------------------------
+
+    def _start_facet_read(self) -> None:
+        """按当前选择给这一层补齐元数据，然后重排。
+
+        只有真的要读 EXIF 的字段才会走到这里（按文件名排序之类是纯算的）。
+        读过一次的结果落进索引（``core.library.index``），所以第二次换分组字段
+        几乎立刻完成。
+        """
+        library = self._library
+        if library is None or not self._needs_facet_read():
+            self._apply_ordering()
+            return
+        refs = [entry for entry in self._model.entries() if isinstance(entry, PhotoRef)]
+        if not refs:
+            self._apply_ordering()
+            return
+        generation = self._generation
+        self._show_banner(
+            f"正在读取 {len(refs)} 张照片的元数据，用于{'分组' if self._group_facet else '排序'}…"
+        )
+
+        def work(context: TaskContext) -> object:
+            return library.photo_facets(
+                refs,
+                should_cancel=context.is_cancelled,
+                on_progress=lambda done, total: context.progress((done, total)),
+            )
+
+        self._facet_job = self._runner.submit(
+            work,
+            on_progress=partial(self._on_facet_progress, generation),
+            on_result=partial(self._on_facets_ready, generation),
+            on_error=partial(self._on_facets_failed, generation),
+        )
+
+    def _cancel_facet_job(self) -> None:
+        """作废在途的元数据读取（换库、换层、换分组字段时）。"""
+        if self._facet_job is not None:
+            self._runner.cancel(self._facet_job)
+            self._facet_job = None
+
+    def _on_facet_progress(self, generation: int, payload: object) -> None:
+        if generation != self._generation or not isinstance(payload, tuple):
+            return
+        done, total = payload if len(payload) == 2 else (0, 0)
+        if isinstance(done, int) and isinstance(total, int) and total:
+            self._show_banner(f"正在读取元数据…{done} / {total}")
+
+    def _on_facets_ready(self, generation: int, payload: object) -> None:
+        if generation != self._generation:
+            return
+        self._facet_job = None
+        self._facet_values = payload if isinstance(payload, dict) else {}
+        self._banner.hide()
+        self._apply_ordering()
+
+    def _on_facets_failed(self, generation: int, message: str) -> None:
+        if generation != self._generation:
+            return
+        self._facet_job = None
+        self._show_banner(f"读取元数据失败，按默认顺序显示：{message}")
+        self._apply_ordering()
+
+    def _apply_ordering(self) -> None:
+        """把当前这一层按分组 / 排序重新排一遍。"""
+        if self._stack.currentWidget() is not self._grid_page:
+            return
+        library = self._library
+        if library is None:
+            return
+        albums = [entry for entry in self._model.entries() if isinstance(entry, FolderRef)]
+        photos = [entry for entry in self._model.entries() if isinstance(entry, PhotoRef)]
+        if not photos and not albums:
+            return
+        # 相册卡片永远排在前面：先看文件夹、再看按元数据归拢出来的组，是既有心智。
+        order = self._current_order()
+        # 已经在分组里面了：那一层全是照片，再分一次组毫无意义（进去就出不来）。
+        group = None if self._group_view is not None else self._current_group_facet()
+        values = self._facet_values
+        if group is not None:
+            ordered: list[GridEntry] = [
+                *albums,
+                *build_groups(photos, facet=group, order=order, root=library.root, values=values),
+            ]
+        else:
+            ordered = [*albums, *sort_photos(photos, order=order, root=library.root, values=values)]
+        selected = self._grid.selected_rows()
+        anchor = self._model.photo_at(self._grid.current_row())
+        self._model.reorder(ordered)
+        if anchor is not None:
+            row = self._model.row_of_path(anchor.path)
+            if row >= 0:
+                self._grid.select_row(row, ensure_visible=False)
+        elif selected:
+            self._grid.select_row(min(selected), ensure_visible=False)
+        self._refresh_thumbnail_window()
 
     def _restore_session(self) -> None:
         self._welcome.set_recent(self._session.recent_roots)
@@ -500,6 +786,7 @@ class MainWindow(QMainWindow):
         self._current_row = -1
         self._preview_cache.clear()
         self._metadata_cache.clear()
+        self._facet_values = {}
         self._model.clear()
 
         self._pipeline = ThumbnailPipeline(library, self._runner, self)
@@ -520,6 +807,7 @@ class MainWindow(QMainWindow):
         self._start_scan()
 
     def _teardown_library(self) -> None:
+        self._cancel_facet_job()
         if self._scan_job is not None:
             self._runner.cancel(self._scan_job)
             self._scan_job = None
@@ -530,19 +818,59 @@ class MainWindow(QMainWindow):
             self._pipeline.shutdown()
             self._pipeline.deleteLater()
             self._pipeline = None
+        if self._library is not None:
+            self._library.close_index()
         self._library = None
+        self._group_view = None
+        self._facet_values = {}
 
     # ---- 扫描 --------------------------------------------------------------
 
     def _start_scan(self) -> None:
-        """按当前浏览方式列出内容：平铺模式递归整库，相册模式只列当前一层。"""
+        """按当前浏览方式列出内容：平铺模式递归整库，相册模式只列当前一层。
+
+        已经进入某个分组时不再扫盘 —— 这一组是上一次分组算出来的，直接铺开即可。
+        """
         library = self._library
         if library is None:
             return
-        if self._browse_mode == BROWSE_MODE_ALBUMS:
+        if self._group_view is not None:
+            self._start_group_listing(library)
+        elif self._browse_mode == BROWSE_MODE_ALBUMS:
             self._start_level_scan(library)
         else:
             self._start_flat_scan(library)
+
+    def _start_group_listing(self, library: Library) -> None:
+        """分组视图：铺开这个组里的照片，并按当前排序排好。"""
+        generation = self._generation
+        group = self._group_view
+        assert group is not None  # 只在 _group_view 非空时调用
+        photos = list(group.photos)
+        if not photos:
+            return
+        ordered = sort_photos(
+            photos,
+            order=self._current_order(),
+            root=library.root,
+            values=self._facet_values,
+        )
+
+        def work(context: TaskContext) -> object:
+            return tuple(ordered)
+
+        self._scan_job = self._runner.submit(
+            work,
+            on_result=partial(self._on_group_listed, generation),
+            on_error=partial(self._on_scan_failed, generation),
+        )
+
+    def _on_group_listed(self, generation: int, payload: object) -> None:
+        """分组视图的照片进网格，然后按「扫描完成」那一套收尾。"""
+        if generation != self._generation:
+            return
+        self._model.append(payload if isinstance(payload, tuple) else ())
+        self._on_scan_done(generation, ScanReport())
 
     def _start_level_scan(self, library: Library) -> None:
         """相册模式：列出当前层（相册在前，照片在后）。"""
@@ -609,13 +937,16 @@ class MainWindow(QMainWindow):
         if report.has_issues:
             self._show_banner(f"部分内容没能读取：{report.summary}")
         elif not albums and not photos:
-            if self._browse_mode == BROWSE_MODE_ALBUMS:
+            if self._group_view is not None:
+                self._show_banner("这个分组里没有照片了。")
+            elif self._browse_mode == BROWSE_MODE_ALBUMS:
                 self._show_banner("这个文件夹里既没有子文件夹，也没有可显示的照片。")
             else:
                 self._show_banner(
                     "没有找到可显示的照片。支持 JPEG、PNG、HEIC、TIFF、GIF、WebP、BMP。"
                 )
         self._refresh_thumbnail_window()
+        self._start_facet_read()
 
     def _on_scan_failed(self, generation: int, message: str) -> None:
         if generation != self._generation:
@@ -638,7 +969,7 @@ class MainWindow(QMainWindow):
         self._pipeline.set_window(visible, prefetch)
 
     def _entries_missing_thumbnails(self, rows: Sequence[int]) -> list[GridEntry]:
-        """只挑出需要取缩略图的条目（相册算它的封面）。
+        """只挑出需要取缩略图的条目（相册与分组卡片算它们的封面）。
 
         两种情况：手里根本没有，或者手里那张是按旧尺寸缩放的。滚动会让可见窗口
         反复变化，如果每次都把可见项重新要一遍，就等于每滚一下都把磁盘缓存重读
@@ -647,7 +978,11 @@ class MainWindow(QMainWindow):
         entries: list[GridEntry] = []
         for row in rows:
             entry = self._model.entry_at(row)
-            if entry is not None and self._model.needs_thumbnail(entry.path):
+            if entry is None:
+                continue
+            cover = entry.cover if isinstance(entry, GroupRef) else None
+            path = cover.path if cover is not None else entry.path
+            if self._model.needs_thumbnail(path):
                 entries.append(entry)
         return entries
 
@@ -858,10 +1193,12 @@ class MainWindow(QMainWindow):
         self._place_index_saved(ref, report, generation, f"未能推断地点：{message}")
 
     def _on_entry_activated(self, index: QModelIndex) -> None:
-        """双击一个格子：相册就进去，照片就打开大图。"""
+        """双击一个格子：相册或分组就进去，照片就打开大图。"""
         entry = self._model.entry_at(index.row())
         if isinstance(entry, FolderRef):
             self.enter_folder(entry.path)
+        elif isinstance(entry, GroupRef):
+            self.enter_group(entry)
         else:
             self._open_detail(index)
 
@@ -880,11 +1217,18 @@ class MainWindow(QMainWindow):
     def rename_current_entry(self) -> None:
         """对当前选中的格子开始重命名（菜单 / ⌘R 走这里）。"""
         index = self._grid.currentIndex()
-        if index.isValid():
-            self._grid.begin_rename(index)
+        if not index.isValid():
+            return
+        if self._model.group_at(index.row()) is not None:
+            self._show_banner(_GROUP_NOT_FILE_ACTION)
+            return
+        self._grid.begin_rename(index)
 
     def _on_rename_requested(self, index: QModelIndex) -> None:
         """再次点击已选中的格子：进入行内重命名。"""
+        if self._model.group_at(index.row()) is not None:
+            self._show_banner(_GROUP_NOT_FILE_ACTION)
+            return
         self._grid.begin_rename(index)
 
     def _on_rename_active_changed(self, _active: bool) -> None:
@@ -921,6 +1265,11 @@ class MainWindow(QMainWindow):
         rows = self._grid.selected_rows()
         entries = [entry for entry in (self._model.entry_at(row) for row in rows) if entry]
         if not entries:
+            return
+        groups = [entry for entry in entries if isinstance(entry, GroupRef)]
+        if groups:
+            # 静默跳过等于「按了没反应」。分组不是磁盘上的东西，删不掉。
+            self._show_banner(_GROUP_NOT_FILE_ACTION)
             return
         try:
             result = library.move_to_trash(entries)
@@ -998,11 +1347,21 @@ class MainWindow(QMainWindow):
         self._refresh_undo_label()
 
     def _apply_restore(self, result: UndoResult) -> None:
-        """把撤销删除取回来的条目插回网格（顺序与扫描一致，见 model.insert_entry）。"""
+        """把撤销删除取回来的条目放回网格，然后按当前分组 / 排序重排一次。
+
+        重排而不是就地插行：一张照片取回来之后该落在哪，取决于当前的排序字段与方向
+        （逆序时光标插到「最后一个更大值之后」恰恰是错的位置）。整层重排一次是
+        几十微秒的事，而它给出的位置一定是对的。
+        """
         if not result.entries:
             return
-        rows = [self._model.insert_entry(entry) for entry in result.entries]
-        self._grid.select_row(min(rows), ensure_visible=False)
+        for entry in result.entries:
+            self._model.insert_entry(entry)
+        self._apply_ordering()
+        restored = [self._model.row_of_path(entry.path) for entry in result.entries]
+        first = min((row for row in restored if row >= 0), default=-1)
+        if first >= 0:
+            self._grid.select_row(first, ensure_visible=False)
         self._refresh_thumbnail_window()
 
     def _apply_rename(self, result: RenameResult, row: int, *, banner: str | None = None) -> None:
@@ -1283,9 +1642,18 @@ class MainWindow(QMainWindow):
         # 改名的过程中也不启用 —— 那时键盘归输入框，⌘⌫ 不该把正在编辑的那张删掉。
         in_grid = self._stack.currentWidget() is self._grid_page
         idle = not self._grid.is_renaming()
-        has_current = self._grid.currentIndex().isValid()
-        self._rename_action.setEnabled(in_grid and has_current and idle)
-        self._trash_action.setEnabled(in_grid and bool(self._grid.selected_rows()) and idle)
+        current_row = self._grid.current_row()
+        # 分组卡片不是磁盘上的东西：选中它时改名与删除都不可用，按下去也没有
+        # 「只处理照片」这种含糊的半截行为（见 ADR 0009）。
+        file_only = not any(
+            isinstance(self._model.entry_at(row), GroupRef)
+            for row in (*self._grid.selected_rows(), current_row)
+            if row >= 0
+        )
+        self._rename_action.setEnabled(in_grid and current_row >= 0 and idle and file_only)
+        self._trash_action.setEnabled(
+            in_grid and bool(self._grid.selected_rows()) and idle and file_only
+        )
         self._update_undo_action()
 
     def _update_undo_action(self) -> None:
@@ -1309,6 +1677,7 @@ class MainWindow(QMainWindow):
             self._update_mode_actions()
             return
         self._browse_mode = mode
+        self._group_view = None
         self._session = self._session.with_browse_mode(mode)
         self._save_session()
         self._update_mode_actions()
@@ -1324,12 +1693,21 @@ class MainWindow(QMainWindow):
         if not paths.is_within(library.root, target):
             return
         self._current_dir = target
+        self._group_view = None
         self._reload_level()
 
     def go_up(self) -> None:
-        """回到上一层；已经在库根就什么也不做。"""
+        """回到上一层：正在分组里就退回那一层分组，否则按相册逐层往上。
+
+        分组比文件夹深一级（它是文件夹之上的一个视图），所以先退它。
+        """
         library = self._library
-        if library is None or self._browse_mode != BROWSE_MODE_ALBUMS:
+        if library is None:
+            return
+        if self._group_view is not None:
+            self._leave_group()
+            return
+        if self._browse_mode != BROWSE_MODE_ALBUMS:
             return
         current = self._current_dir or library.root
         parent = parent_of(library.root, current)
@@ -1348,6 +1726,8 @@ class MainWindow(QMainWindow):
         # 换代：让已经在路上的旧结果作废。
         self._generation += 1
         self._grid.cancel_rename()
+        self._cancel_facet_job()
+        self._facet_values = {}
         self._model.clear()
         self._preview_cache.clear()
         self._metadata_cache.clear()
@@ -1362,10 +1742,19 @@ class MainWindow(QMainWindow):
 
     def _update_breadcrumb(self) -> None:
         library = self._library
-        if library is None or self._browse_mode != BROWSE_MODE_ALBUMS:
+        # 平铺模式下平时不显示面包屑，但**分组里必须显示**：那里没有文件夹可指，
+        # 只有一条「库名 ▸ 2024 年 5 月」才说得出自己在哪。
+        in_albums = self._browse_mode == BROWSE_MODE_ALBUMS
+        if library is None or (not in_albums and self._group_view is None):
             self._breadcrumb.hide()
             return
-        self._breadcrumb.set_path(breadcrumb_parts(library.root, self._current_dir or library.root))
+        parts = (
+            breadcrumb_parts(library.root, self._current_dir or library.root)
+            if in_albums
+            else [(library.display_name, library.root)]
+        )
+        group = self._group_view.label if self._group_view is not None else None
+        self._breadcrumb.set_path(parts, group=group)
         self._breadcrumb.show()
 
     def _update_mode_actions(self) -> None:
@@ -1379,12 +1768,18 @@ class MainWindow(QMainWindow):
         # 必须有一个是关着的，否则同一按键落到谁身上说不准。改名的过程中也不启用 ——
         # 那时 Esc 是输入框的「取消改名」（输入框还会先抢一次按键，见 RenameEdit.event）。
         in_grid = self._stack.currentWidget() is self._grid_page
+        in_group = self._group_view is not None
         can_go_up = (
             in_grid
             and not self._grid.is_renaming()
             and library is not None
-            and self._browse_mode == BROWSE_MODE_ALBUMS
-            and parent_of(library.root, self._current_dir or library.root) is not None
+            and (
+                in_group
+                or (
+                    self._browse_mode == BROWSE_MODE_ALBUMS
+                    and parent_of(library.root, self._current_dir or library.root) is not None
+                )
+            )
         )
         self._up_action.setEnabled(can_go_up)
 

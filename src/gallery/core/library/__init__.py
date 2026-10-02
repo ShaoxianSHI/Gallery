@@ -1,7 +1,8 @@
-"""「库」：对外门面、目录扫描、条目模型、库配置与会话状态。
+"""「库」：对外门面、目录扫描、条目模型、分组与排序、索引、库配置与会话状态。
 
 界面层通常只需要 :class:`Library` 与 :func:`prepare_library`；只有需要自己遍历
-目录（相册封面、逐层列举）时才直接用 :mod:`~gallery.core.library.scanner`。
+目录（相册封面、逐层列举）时才直接用 :mod:`~gallery.core.library.scanner`，需要自己
+排顺序（网格重排、测试）时才用 :mod:`~gallery.core.library.groups`。
 内部模块一律从具体子模块导入，避免与本文件的再导出互相绕圈。
 """
 
@@ -12,9 +13,11 @@ from gallery.core.library.config import (
     save_config,
 )
 from gallery.core.library.facade import Library
+from gallery.core.library.groups import SortOrder, build_groups, sort_photos
 from gallery.core.library.photos import (
     FolderRef,
     GridEntry,
+    GroupRef,
     PhotoRef,
     format_label,
     is_supported_photo,
@@ -23,9 +26,13 @@ from gallery.core.library.photos import (
 __all__ = [
     "FolderRef",
     "GridEntry",
+    "GroupRef",
     "Library",
     "LibraryConfig",
     "PhotoRef",
+    "SortOrder",
+    "build_groups",
+    "sort_photos",
     "format_label",
     "is_supported_photo",
     "load_config",

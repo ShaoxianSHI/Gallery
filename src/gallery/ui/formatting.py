@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from gallery.core.formatting import format_bytes, format_timestamp
-from gallery.core.library.photos import PhotoRef
+from gallery.core.library.photos import GroupRef, PhotoRef
 
 
 def photo_tooltip(ref: PhotoRef) -> str:
@@ -22,4 +22,17 @@ def photo_tooltip(ref: PhotoRef) -> str:
     )
 
 
-__all__ = ["format_bytes", "format_timestamp", "photo_tooltip"]
+def group_tooltip(group: GroupRef) -> str:
+    """分组卡片上的悬停提示：叫什么、有多少张、双击会怎样。"""
+    cover = group.cover
+    return "\n".join(
+        (
+            group.label,
+            f"{group.count} 张照片",
+            "双击进入这个分组",
+            f"封面：{cover.name}" if cover is not None else "",
+        )
+    ).rstrip("\n")
+
+
+__all__ = ["format_bytes", "format_timestamp", "group_tooltip", "photo_tooltip"]

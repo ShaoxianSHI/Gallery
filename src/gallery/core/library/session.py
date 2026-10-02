@@ -17,6 +17,7 @@ from typing import Final
 
 from gallery.core import paths
 from gallery.core.atomic import read_text_or_none, write_text_atomic
+from gallery.core.metadata.facets import group_facet, sort_facet
 
 #: 最多记住几个最近打开的库。
 MAX_RECENT_ROOTS: Final = 8
@@ -57,6 +58,12 @@ class SessionState:
     browse_mode: str | None = None
     #: 大图右侧的元数据面板是否展开；``None`` 表示用界面默认值（不展开）。
     metadata_visible: bool | None = None
+    #: 上次用的分组字段（见 ``metadata.facets``）；``None`` 表示不分组。
+    group_facet: str | None = None
+    #: 上次用的排序字段；``None`` 表示保持扫描顺序。
+    sort_facet: str | None = None
+    #: 排序是否逆序；``None`` 表示用界面默认值（正序）。
+    sort_descending: bool | None = None
 
     def with_recent_root(self, root: Path) -> SessionState:
         """把 ``root`` 提到最前面，去重并截断到上限。"""
@@ -76,6 +83,17 @@ class SessionState:
     def with_metadata_visible(self, visible: bool) -> SessionState:
         return replace(self, metadata_visible=visible)
 
+    def with_ordering(
+        self, group_facet: str | None, sort_facet: str | None, descending: bool
+    ) -> SessionState:
+        """记下分组 / 排序选择（见 ADR 0009）。"""
+        return replace(
+            self,
+            group_facet=group_facet,
+            sort_facet=sort_facet,
+            sort_descending=descending,
+        )
+
 
 def load_session(*, base: Path | None = None) -> SessionState:
     """读取会话状态；任何异常都返回默认值。"""
@@ -94,6 +112,11 @@ def load_session(*, base: Path | None = None) -> SessionState:
         thumbnail_edge=_parse_positive_int(data.get("thumbnail_edge")),
         browse_mode=_parse_browse_mode(data.get("browse_mode")),
         metadata_visible=_parse_bool(data.get("metadata_visible")),
+        # 字段 id 要对着真实字段表校验：会话文件是旧版本留下的、或者被人手改过时，
+        # 一个来路不明的 id 会让界面在别处炸出 KeyError。
+        group_facet=_parse_group_facet(data.get("group_facet")),
+        sort_facet=_parse_sort_facet(data.get("sort_facet")),
+        sort_descending=_parse_bool(data.get("sort_descending")),
     )
 
 
@@ -110,6 +133,9 @@ def save_session(state: SessionState, *, base: Path | None = None) -> None:
         "thumbnail_edge": state.thumbnail_edge,
         "browse_mode": state.browse_mode,
         "metadata_visible": state.metadata_visible,
+        "group_facet": state.group_facet,
+        "sort_facet": state.sort_facet,
+        "sort_descending": state.sort_descending,
     }
     write_text_atomic(
         paths.app_state_file(base=base),
@@ -147,6 +173,20 @@ def _parse_roots(value: object) -> tuple[Path, ...]:
 
 def _parse_bool(value: object) -> bool | None:
     return value if isinstance(value, bool) else None
+
+
+def _parse_group_facet(value: object) -> str | None:
+    """合法的分组字段 id，否则 ``None``（不分组）。"""
+    if not isinstance(value, str):
+        return None
+    return value if group_facet(value) is not None else None
+
+
+def _parse_sort_facet(value: object) -> str | None:
+    """合法的排序字段 id，否则 ``None``（保持扫描顺序）。"""
+    if not isinstance(value, str):
+        return None
+    return value if sort_facet(value) is not None else None
 
 
 def _parse_browse_mode(value: object) -> str | None:

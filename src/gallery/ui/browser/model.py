@@ -17,9 +17,9 @@ from pathlib import Path
 from PySide6.QtCore import QAbstractListModel, QModelIndex, QObject, QSize, Qt
 from PySide6.QtGui import QImage, QPixmap
 
-from gallery.core.library.photos import FolderRef, GridEntry, PhotoRef
+from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
 from gallery.ui.browser.thumb_sizes import DEFAULT_EDGE
-from gallery.ui.formatting import photo_tooltip
+from gallery.ui.formatting import group_tooltip, photo_tooltip
 
 #: 取条目本身（``PhotoRef`` 或 ``FolderRef``）的角色。
 ENTRY_ROLE = int(Qt.ItemDataRole.UserRole) + 1
@@ -27,8 +27,14 @@ ENTRY_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 #: 取路径字符串的角色（调试用）。
 PATH_ROLE = int(Qt.ItemDataRole.UserRole) + 2
 
-#: 这个格子是不是相册。
+#: 这个格子是不是相册（子文件夹）。
 ALBUM_ROLE = int(Qt.ItemDataRole.UserRole) + 3
+
+#: 这个格子是不是分组卡片（按元数据归拢的一堆照片）。
+GROUP_ROLE = int(Qt.ItemDataRole.UserRole) + 4
+
+#: 分组卡片里有多少张照片（给委托画徽标）。
+GROUP_COUNT_ROLE = int(Qt.ItemDataRole.UserRole) + 5
 
 #: 默认缩略图边长，与档位定义（``ui.thumb_sizes``）同源。
 DEFAULT_ICON_EDGE = DEFAULT_EDGE
@@ -58,6 +64,9 @@ class PhotoListModel(QAbstractListModel):
         super().__init__(parent)
         self._entries: list[GridEntry] = []
         self._row_by_path: dict[Path, int] = {}
+        #: 组卡片按**封面照片**索引。按关键词分组时一张照片可以当好几个组的封面，
+        #: 所以这里是路径 → 多个行号，而 ``_row_by_path`` 是路径 → 一个行号。
+        self._group_rows_by_cover: dict[Path, list[int]] = {}
         self._pixmaps: OrderedDict[Path, _CachedThumb] = OrderedDict()
         self._tooltips_enabled = True
         self._icon_edge = icon_edge
@@ -83,9 +92,18 @@ class PhotoListModel(QAbstractListModel):
         return entry if isinstance(entry, PhotoRef) else None
 
     def counts(self) -> tuple[int, int]:
-        """``(相册数, 照片数)``。"""
+        """``(相册数, 照片数)``。分组卡片既不是相册也不是照片，不计入。"""
         albums = sum(1 for entry in self._entries if isinstance(entry, FolderRef))
-        return albums, len(self._entries) - albums
+        groups = sum(1 for entry in self._entries if isinstance(entry, GroupRef))
+        return albums, len(self._entries) - albums - groups
+
+    def group_at(self, row: int) -> GroupRef | None:
+        """第 ``row`` 行如果是分组卡片就返回它。"""
+        entry = self.entry_at(row)
+        return entry if isinstance(entry, GroupRef) else None
+
+    def group_count(self) -> int:
+        return sum(1 for entry in self._entries if isinstance(entry, GroupRef))
 
     def row_of_index(self, index: QModelIndex) -> int:
         return index.row() if index.isValid() else -1
@@ -102,7 +120,7 @@ class PhotoListModel(QAbstractListModel):
         刻意**不重新扫描**：改个名字而已，让整屏闪回占位框再一张张弹回来太蠢。
         已经缩放好的缩略图顺手搬到新键上，于是这一格连闪都不闪。
         """
-        if not 0 <= row < len(self._entries):
+        if not 0 <= row < len(self._entries) or isinstance(entry, GroupRef):
             return False
         previous = self._entries[row]
         self._row_by_path.pop(previous.path, None)
@@ -139,8 +157,10 @@ class PhotoListModel(QAbstractListModel):
             self.beginRemoveRows(QModelIndex(), row, row)
             del self._entries[row]
             self.endRemoveRows()
-            self._row_by_path.pop(entry.path, None)
-            self._pixmaps.pop(entry.path, None)
+            if not isinstance(entry, GroupRef):
+                # 分组卡片的封面照片还在组里活着，缩略图不能跟着这一行一起丢。
+                self._row_by_path.pop(entry.path, None)
+                self._pixmaps.pop(entry.path, None)
             removed.append(entry)
         removed.reverse()  # 还原成它们在网格里的先后顺序
         self._reindex()
@@ -153,6 +173,9 @@ class PhotoListModel(QAbstractListModel):
         排序一致（见 ``scanner``）。一个兄弟节点都不在屏幕上时（用户把它们都删了）
         就追加到末尾 —— 顺序在下一次扫描时自然归位，不值得为它重扫整层。
         """
+        if isinstance(entry, GroupRef):
+            # 撤销删除取回的是磁盘上的东西，不会有分组卡片从这里回来。
+            return -1
         row = self._insert_position(entry)
         self.beginInsertRows(QModelIndex(), row, row)
         self._entries.insert(row, entry)
@@ -167,7 +190,7 @@ class PhotoListModel(QAbstractListModel):
         start = len(self._entries)
         self.beginInsertRows(QModelIndex(), start, start + len(entries) - 1)
         for offset, entry in enumerate(entries):
-            self._row_by_path[entry.path] = start + offset
+            self._track(entry, start + offset)
             self._entries.append(entry)
         self.endInsertRows()
 
@@ -175,13 +198,27 @@ class PhotoListModel(QAbstractListModel):
         self.beginResetModel()
         self._entries.clear()
         self._row_by_path.clear()
+        self._group_rows_by_cover.clear()
         self._pixmaps.clear()
         self.endResetModel()
 
+    def reorder(self, entries: Sequence[GridEntry]) -> None:
+        """把这一层按新顺序重排（分组 / 排序之后调用）。
+
+        **刻意不清缩略图缓存**：重排只是同一批照片换了位置，缓存按路径索引，清掉等于
+        让整屏缩略图从磁盘缓存重读重缩放一遍。行的内容变了，于是发一次 reset 让视图
+        整体重画 —— 这一次重排换来的是排完版之后不再有格子错位。
+        """
+        self.beginResetModel()
+        self._entries = list(entries)
+        self._reindex()
+        self.endResetModel()
+
     def set_thumbnail(self, path: Path, image: QImage) -> None:
-        """回填一张缩略图（相册的缩略图就是它的封面）。必须从主线程调用。"""
+        """回填一张缩略图（相册与分组卡片的缩略图就是它们的封面）。必须从主线程调用。"""
         row = self._row_by_path.get(path)
-        if row is None:
+        group_rows = self._group_rows_by_cover.get(path, ())
+        if row is None and not group_rows:
             return  # 条目已经被换层清掉了，直接丢弃
         pixmap = QPixmap.fromImage(image)
         if pixmap.width() > self._icon_edge or pixmap.height() > self._icon_edge:
@@ -195,7 +232,10 @@ class PhotoListModel(QAbstractListModel):
         self._pixmaps.move_to_end(path)
         while len(self._pixmaps) > self._cache_size:
             self._pixmaps.popitem(last=False)
-        self._notify_row(row)
+        if row is not None:
+            self._notify_row(row)
+        for group_row in group_rows:
+            self._notify_row(group_row)
 
     def set_icon_edge(self, edge: int) -> None:
         """切换缩略图尺寸。
@@ -267,33 +307,53 @@ class PhotoListModel(QAbstractListModel):
             # 就不会在照片上凭空闪出一个小窗（见 MainWindow._load_detail）。
             return _tooltip(entry) if self._tooltips_enabled else ""
         if role == int(Qt.ItemDataRole.DecorationRole):
-            # 还没有缩略图时返回 None，由委托画占位（相册画文件夹图标），模型不阻塞等待。
-            cached = self._pixmaps.get(entry.path)
+            # 还没有缩略图时返回 None，由委托画占位（相册与分组画文件夹图标），
+            # 模型不阻塞等待。组卡片的封面就是组内第一张照片。
+            cached = self._pixmaps.get(_cover_of(entry))
             return cached.pixmap if cached is not None else None
         if role == ENTRY_ROLE:
             return entry
         if role == PATH_ROLE:
-            return str(entry.path)
+            return str(entry.path) if not isinstance(entry, GroupRef) else str(entry.key)
         if role == ALBUM_ROLE:
             return isinstance(entry, FolderRef)
+        if role == GROUP_ROLE:
+            return isinstance(entry, GroupRef)
+        if role == GROUP_COUNT_ROLE:
+            return f"{entry.count} 张" if isinstance(entry, GroupRef) else None
         if role == int(Qt.ItemDataRole.TextAlignmentRole):
             return int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
         return None
 
     def _insert_position(self, entry: GridEntry) -> int:
-        """这条条目该插在第几行：同目录里排在它后面的第一行，或末尾。"""
+        """这条条目该插在第几行：同目录里排在它后面的第一行，或末尾。
+
+        已经有分组 / 排序时改按当前顺序插（``order_key``）：撤销删除取回一张照片，
+        它该落回自己在新顺序里的位置，而不是扫描顺序里的位置。
+        """
         key = _sort_key(entry)
         position = len(self._entries)
         for row, other in enumerate(self._entries):
-            if other.path.parent != entry.path.parent:
-                continue  # 不是兄弟节点，插在它前后都不对
+            if isinstance(other, GroupRef) or other.path.parent != entry.path.parent:
+                continue  # 组卡片不是兄弟节点；不相邻的目录插在它前后都不对
             if _sort_key(other) < key:
                 position = row + 1
         return position
 
     def _reindex(self) -> None:
         """删行 / 插行之后行号全变了，重建路径到行号的映射。"""
-        self._row_by_path = {entry.path: row for row, entry in enumerate(self._entries)}
+        self._row_by_path = {}
+        self._group_rows_by_cover = {}
+        for row, entry in enumerate(self._entries):
+            self._track(entry, row)
+
+    def _track(self, entry: GridEntry, row: int) -> None:
+        """把一条条目登记到行号索引里。"""
+        if isinstance(entry, GroupRef):
+            cover = _cover_of(entry)
+            self._group_rows_by_cover.setdefault(cover, []).append(row)
+        else:
+            self._row_by_path[entry.path] = row
 
     def _notify_row(self, row: int) -> None:
         index = self.index(row, 0)
@@ -305,9 +365,19 @@ def _sort_key(entry: GridEntry) -> tuple[int, str]:
     return (0 if isinstance(entry, FolderRef) else 1, entry.name.casefold())
 
 
+def _cover_of(entry: GridEntry) -> Path:
+    """这一格画哪张照片当封面：分组卡片用组内第一张，其余就是它自己。"""
+    if isinstance(entry, GroupRef):
+        cover = entry.cover
+        return cover.path if cover is not None else entry.path
+    return entry.path
+
+
 def _tooltip(entry: GridEntry) -> str:
     if isinstance(entry, PhotoRef):
         return photo_tooltip(entry)
+    if isinstance(entry, GroupRef):
+        return group_tooltip(entry)
     return "\n".join((entry.display_name, "相册", str(entry.path)))
 
 
@@ -316,6 +386,8 @@ __all__ = [
     "DEFAULT_ICON_EDGE",
     "DEFAULT_PIXMAP_CACHE",
     "ENTRY_ROLE",
+    "GROUP_COUNT_ROLE",
+    "GROUP_ROLE",
     "PATH_ROLE",
     "PhotoListModel",
 ]

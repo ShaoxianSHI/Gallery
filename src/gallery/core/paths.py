@@ -30,6 +30,7 @@ from gallery.core.constants import (
     CACHE_DIR_NAME,
     CONFIG_DIR_NAME,
     CONFIG_FILE_NAME,
+    INDEX_CACHE_DIR_NAME,
     INDEX_FILE_NAME,
     JOURNAL_DIR_NAME,
     RESOURCES_DIR_NAME,
@@ -63,8 +64,17 @@ def journal_dir(root: Path) -> Path:
 
 
 def index_file(root: Path) -> Path:
-    """SQLite 索引文件（M2 才会真正写入）。"""
+    """SQLite 索引文件：分组 / 排序用的元数据快照（见 ADR 0009）。"""
     return config_dir(root) / INDEX_FILE_NAME
+
+
+def external_index_file(root: Path, *, base: Path | None = None) -> Path:
+    """库外索引文件：``<app cache>/index/<库路径摘要>.db``。
+
+    用户在开场对话框里选「缓存到系统目录」时用它 —— 那个承诺是**照片文件夹一个字节都
+    不写入**，索引当然也得跟着走。
+    """
+    return app_cache_root(base=base) / INDEX_CACHE_DIR_NAME / f"{library_digest(root)}.db"
 
 
 def has_config_dir(root: Path) -> bool:
@@ -211,6 +221,7 @@ __all__ = [
     "cache_dir",
     "config_dir",
     "config_file",
+    "external_index_file",
     "external_thumbnail_cache_dir",
     "has_config_dir",
     "icon_file",

@@ -15,7 +15,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Signal
 
 from gallery.core.library.facade import Library
-from gallery.core.library.photos import GridEntry, PhotoRef
+from gallery.core.library.photos import GridEntry, GroupRef, PhotoRef
 from gallery.ui.imaging import to_qimage
 from gallery.ui.tasks import TaskContext, TaskRunner
 from gallery.ui.thumbs.queue import ThumbnailQueue
@@ -45,14 +45,17 @@ class ThumbnailPipeline(QObject):
     def set_window(self, visible: Sequence[GridEntry], prefetch: Sequence[GridEntry] = ()) -> None:
         """声明当前窗口：``visible`` 先出图，``prefetch`` 次之，其余请求全部丢弃。
 
-        条目既可能是照片，也可能是相册；相册的缩略图取它内部的第一张照片当封面。
+        条目可能是照片、相册或分组卡片：相册的封面要现去找，分组卡片的封面早就知道
+        （组内第一张）。三者在这里都被归一成「一条路径 + 一个能出图的引用」。
         """
+        targets = [target for entry in visible if (target := _thumbnail_target(entry))]
+        ahead = [target for entry in prefetch if (target := _thumbnail_target(entry))]
         self._queue.set_window(
-            [entry.path for entry in visible],
-            prefetch=[entry.path for entry in prefetch],
+            [target.path for target in targets],
+            prefetch=[target.path for target in ahead],
         )
-        for entry in (*visible, *prefetch):
-            self._refs[entry.path] = entry
+        for target in (*targets, *ahead):
+            self._refs[target.path] = target
         self._dispatch()
 
     def shutdown(self) -> None:
@@ -121,6 +124,18 @@ class ThumbnailPipeline(QObject):
             self._failed.add(entry.path)
             self.failed.emit(entry.path, message)
         self._dispatch()
+
+
+def _thumbnail_target(entry: GridEntry) -> GridEntry | None:
+    """这一格要显示谁的缩略图。
+
+    分组卡片在这里就换成它组内第一张照片：封面不是现场去找的，于是它和普通照片
+    走完全一样的解码与缓存路径（同一张照片当好几个组的封面时也只解码一次）。
+    空分组返回 ``None`` —— 没有封面可画，界面会画文件夹图形。
+    """
+    if isinstance(entry, GroupRef):
+        return entry.cover
+    return entry
 
 
 __all__ = ["ThumbnailPipeline"]

@@ -11,7 +11,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from PIL import Image
+from PIL import ExifTags, Image
 
 #: EXIF 中 Orientation 标签的编号。
 EXIF_ORIENTATION_TAG = 0x0112
@@ -42,6 +42,9 @@ def make_photo(tmp_path: Path) -> Callable[..., Path]:
     """返回一个「造照片」的工厂：``make_photo("a.jpg", size=(40, 20))``。
 
     默认在 ``tmp_path`` 下生成，保证每个测试都在自己的临时目录里工作。
+
+    ``exif`` / ``exif_ifd`` 可以往文件里写真的 EXIF（主 IFD 与 Exif 子 IFD，
+    键用标签编号）。分组与排序的测试需要它们 —— 那种照片得带拍摄时间才分得开。
     """
     counter = itertools.count()
 
@@ -54,6 +57,8 @@ def make_photo(tmp_path: Path) -> Callable[..., Path]:
         orientation: int | None = None,
         directory: Path | None = None,
         data: bytes | None = None,
+        exif: dict[int, object] | None = None,
+        exif_ifd: dict[int, object] | None = None,
     ) -> Path:
         target_dir = tmp_path if directory is None else directory
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -65,12 +70,18 @@ def make_photo(tmp_path: Path) -> Callable[..., Path]:
             path = target_dir / f"{path.stem}-{next(counter)}{path.suffix}"
         image = Image.new(mode, size, color)
         try:
-            if orientation is None:
+            if orientation is None and not exif and not exif_ifd:
                 image.save(path)
             else:
-                exif = image.getexif()
-                exif[EXIF_ORIENTATION_TAG] = orientation
-                image.save(path, exif=exif)
+                tags = image.getexif()
+                if orientation is not None:
+                    tags[EXIF_ORIENTATION_TAG] = orientation
+                for tag_id, value in (exif or {}).items():
+                    tags[tag_id] = value
+                # DateTimeOriginal、ISO 这些住在 Exif 子 IFD 里，编号与主 IFD 不同。
+                for tag_id, value in (exif_ifd or {}).items():
+                    tags.get_ifd(ExifTags.IFD.Exif)[tag_id] = value
+                image.save(path, exif=tags)
         finally:
             image.close()
         return path

@@ -24,8 +24,11 @@ THUMBNAIL_DIR_NAME: Final = "thumbs"
 #: 元数据写回日志目录名（M5 使用，先占位）。
 JOURNAL_DIR_NAME: Final = "journal"
 
-#: SQLite 索引文件名（M2 使用，先占位）。
+#: SQLite 索引文件名。分组 / 排序读的元数据快照存在这里（见 ADR 0009）。
 INDEX_FILE_NAME: Final = "index.db"
+
+#: 库外缓存（用户拒绝在库里创建配置目录时）存放索引的子目录名。
+INDEX_CACHE_DIR_NAME: Final = "index"
 
 #: 应用在系统目录（macOS 为 ``~/Library/Application Support``）下的目录名。
 APP_NAME: Final = "Gallery"
@@ -62,6 +65,7 @@ __all__ = [
     "DEFAULT_MAX_CACHE_BYTES",
     "DEFAULT_THUMBNAIL_MAX_EDGE",
     "GRID_TILE_EDGE",
+    "INDEX_CACHE_DIR_NAME",
     "INDEX_FILE_NAME",
     "JOURNAL_DIR_NAME",
     "RESOURCES_DIR_NAME",

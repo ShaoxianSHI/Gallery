@@ -110,14 +110,53 @@ class FolderRef:
         return self.path.name or str(self.path)
 
 
-#: 网格里可能出现的东西：一张照片，或一个相册（子文件夹）。
-type GridEntry = PhotoRef | FolderRef
+@dataclass(frozen=True, slots=True)
+class GroupRef:
+    """一个分组卡片：按元数据字段把一堆照片归到一起（见 ``library.groups``）。
+
+    形态与 :class:`FolderRef` 一致 —— 网格只认「这一格画成什么、双击做什么」，
+    所以分组在界面里就是一个能双击进去的卡片，而不是另一套交互。
+
+    它**不是磁盘上的东西**：不可改名、不可移到废纸篓，操作只在进入之后对照片本身进行。
+    """
+
+    #: 分组字段的 id（``facets.Facet.id``）。
+    facet: str
+    #: 稳定的组标识（``"2024-05"``），用于比较与导航。
+    key: str
+    #: 界面上显示的组名（``"2024 年 5 月"``）。
+    label: str
+    #: 组内的照片，**已按当前排序排好**。
+    photos: tuple[PhotoRef, ...]
+
+    @property
+    def name(self) -> str:
+        """网格里的显示名。"""
+        return self.label
+
+    @property
+    def count(self) -> int:
+        return len(self.photos)
+
+    @property
+    def cover(self) -> PhotoRef | None:
+        """封面：组内第一张（已经排好序，也就是「这一组的代表」）。"""
+        return self.photos[0] if self.photos else None
+
+    @property
+    def display_name(self) -> str:
+        return self.label
+
+
+#: 网格里可能出现的东西：一张照片，一个相册（子文件夹），或一个分组。
+type GridEntry = PhotoRef | FolderRef | GroupRef
 
 
 __all__ = [
     "SUPPORTED_SUFFIXES",
     "FolderRef",
     "GridEntry",
+    "GroupRef",
     "PhotoRef",
     "format_label",
     "is_supported_photo",

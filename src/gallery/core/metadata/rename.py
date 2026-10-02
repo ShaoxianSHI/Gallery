@@ -25,7 +25,7 @@ from typing import Final
 
 from gallery.core import paths
 from gallery.core.errors import RenameError
-from gallery.core.library.photos import FolderRef, GridEntry, PhotoRef
+from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
 from gallery.core.metadata.journal import (
     ACTION_RENAME,
     ACTION_UNDO,
@@ -89,6 +89,15 @@ def rename_entry(root: Path, entry: GridEntry, new_name: str) -> RenameResult:
     :raises RenameError: 名字不合法、目标已被占用、越权操作，或系统拒绝了这次改名。
     """
     root = Path(root)
+    if isinstance(entry, GroupRef):
+        # 分组不是磁盘上的东西，改名没有对象。界面已经拦了一道，这里是第二道：
+        # 漏了也必须是句说人话的错，而不是在别处炸出一个 AttributeError。
+        cover = entry.cover
+        raise RenameError(
+            f"「{entry.label}」是一个分组，不是磁盘上的文件，改不了名。"
+            "双击进入分组后选中里面的照片再改名。",
+            path=cover.path if cover is not None else None,
+        )
     source = Path(entry.path)
     target = source.with_name(validate_name(new_name, entry))
     if target == source:
@@ -217,7 +226,7 @@ def _keep_suffix(entry: PhotoRef, cleaned: str) -> str:
     return cleaned
 
 
-def _relocated(entry: GridEntry, target: Path) -> GridEntry:
+def _relocated(entry: PhotoRef | FolderRef, target: Path) -> GridEntry:
     """把引用改指到新路径，大小与修改时间沿用原值（改名不改内容）。"""
     if isinstance(entry, FolderRef):
         return FolderRef(path=target, mtime_ns=entry.mtime_ns)

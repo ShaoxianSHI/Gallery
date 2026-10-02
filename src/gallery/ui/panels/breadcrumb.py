@@ -41,19 +41,29 @@ class BreadcrumbBar(QWidget):
         self._layout.setContentsMargins(2, 2, 2, 2)
         self._layout.setSpacing(0)
 
-    def set_path(self, parts: Sequence[tuple[str, Path]]) -> None:
-        """重建整条路径。``parts`` 由 ``ui.navigation.breadcrumb_parts`` 给出。"""
+    def set_path(self, parts: Sequence[tuple[str, Path]], *, group: str | None = None) -> None:
+        """重建整条路径。``parts`` 由 ``ui.navigation.breadcrumb_parts`` 给出。
+
+        ``group`` 是当前进入的分组名（见 ADR 0009）。它**不是磁盘上的目录**，因此
+        只能显示、点不动 —— 放在最后一段，视觉上也正好是「当前所在的位置」。
+        """
         self._clear()
         for index, (label, path) in enumerate(parts):
             if index:
-                separator = QLabel(SEPARATOR)
-                separator.setStyleSheet("color: palette(mid); font-size: 11px;")
-                self._layout.addWidget(separator)
+                self._layout.addWidget(self._separator())
             if index == len(parts) - 1:
                 self._layout.addWidget(self._current_label(label, path))
             else:
                 self._layout.addWidget(self._segment_button(label, path))
+        if group:
+            self._layout.addWidget(self._separator())
+            self._layout.addWidget(self._group_label(group))
         self._layout.addStretch(1)
+
+    def _separator(self) -> QLabel:
+        separator = QLabel(SEPARATOR)
+        separator.setStyleSheet("color: palette(mid); font-size: 11px;")
+        return separator
 
     def _segment_button(self, label: str, path: Path) -> QToolButton:
         button = QToolButton()
@@ -67,6 +77,13 @@ class BreadcrumbBar(QWidget):
     def _current_label(self, label: str, path: Path) -> QLabel:
         widget = QLabel(label)
         widget.setToolTip(str(path))
+        widget.setStyleSheet("font-size: 12px; font-weight: 600; padding: 2px 6px;")
+        return widget
+
+    def _group_label(self, label: str) -> QLabel:
+        """分组名：和当前目录一样的重体，只是不可点（点它没有对应的目录可回）。"""
+        widget = QLabel(label)
+        widget.setToolTip("当前分组（Esc 返回上一层）")
         widget.setStyleSheet("font-size: 12px; font-weight: 600; padding: 2px 6px;")
         return widget
 

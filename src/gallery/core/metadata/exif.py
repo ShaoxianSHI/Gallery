@@ -297,8 +297,12 @@ def _stringify(value: object) -> str:
     return str(value)
 
 
-def _first(raw: Mapping[str, str], *keys: str) -> str | None:
-    """按顺序取第一个有内容的值。"""
+def first_value(raw: Mapping[str, str], *keys: str) -> str | None:
+    """按顺序取第一个有内容的值。
+
+    与 :func:`camera_name` 等取值函数一样对外公开：``facets`` 要从同一批原始键值里
+    抽分组与排序用的字段，规则必须只有这一份，否则两边迟早对不上。
+    """
     for key in keys:
         value = raw.get(key)
         if value is None:
@@ -309,13 +313,13 @@ def _first(raw: Mapping[str, str], *keys: str) -> str | None:
     return None
 
 
-def _leading_number(value: str) -> float | None:
+def leading_number(value: str) -> float | None:
     """取字符串开头的数字：``"0.0 mm"`` → 0.0，``"25 mm"`` → 25.0，``"1/500"`` → 1.0。"""
     match = re.match(r"\s*(-?\d+(?:\.\d+)?)", value)
     return float(match.group(1)) if match else None
 
 
-def _positive(value: str | None) -> str | None:
+def positive_value(value: str | None) -> str | None:
     """这类字段里 0（或负数）等于「没记录」。
 
     实测有导出工具把 FNumber / FocalLength / ISO 一律填 0，而且焦距还带着单位
@@ -324,15 +328,15 @@ def _positive(value: str | None) -> str | None:
     """
     if value is None:
         return None
-    number = _leading_number(value)
+    number = leading_number(value)
     if number is None:
         return value
     return value if number > 0 else None
 
 
-def _camera(raw: Mapping[str, str]) -> str | None:
-    make = _first(raw, "EXIF:Make")
-    model = _first(raw, "EXIF:Model")
+def camera_name(raw: Mapping[str, str]) -> str | None:
+    make = first_value(raw, "EXIF:Make")
+    model = first_value(raw, "EXIF:Model")
     if make and model:
         # 「Canon」+「Canon EOS R6」不该重复写成「Canon Canon EOS R6」
         return model if model.lower().startswith(make.lower()) else f"{make} {model}"
@@ -340,7 +344,7 @@ def _camera(raw: Mapping[str, str]) -> str | None:
 
 
 def _shooting_time(raw: Mapping[str, str]) -> str | None:
-    value = _first(
+    value = first_value(
         raw,
         "EXIF:DateTimeOriginal",
         "EXIF:CreateDate",
@@ -350,7 +354,7 @@ def _shooting_time(raw: Mapping[str, str]) -> str | None:
     if value is None:
         return None
     text = value.replace(":", "-", 2)  # 2022:04:16 20:52:02 → 2022-04-16 20:52:02
-    offset = _first(raw, "EXIF:OffsetTimeOriginal", "EXIF:OffsetTime")
+    offset = first_value(raw, "EXIF:OffsetTimeOriginal", "EXIF:OffsetTime")
     return f"{text} {offset}" if offset else text
 
 
@@ -370,18 +374,18 @@ def _fraction_text(value: str) -> str:
 
 
 def _exposure_time(raw: Mapping[str, str]) -> str | None:
-    value = _positive(_first(raw, "EXIF:ExposureTime", "EXIF:ShutterSpeedValue"))
+    value = positive_value(first_value(raw, "EXIF:ExposureTime", "EXIF:ShutterSpeedValue"))
     if value is None:
         return None
     return f"{_fraction_text(value)} 秒"
 
 
 def _aperture(raw: Mapping[str, str]) -> str | None:
-    value = _positive(_first(raw, "EXIF:FNumber", "EXIF:Aperture"))
+    value = positive_value(first_value(raw, "EXIF:FNumber", "EXIF:Aperture"))
     if value is not None:
         return value if value.lower().startswith("f/") else f"f/{value}"
     # FNumber 缺失或被填成 0 时退回 APEX 光圈值：f = 2^(AV/2)
-    apex = _positive(_first(raw, "EXIF:ApertureValue", "EXIF:MaxApertureValue"))
+    apex = positive_value(first_value(raw, "EXIF:ApertureValue", "EXIF:MaxApertureValue"))
     if apex is None:
         return None
     try:
@@ -391,7 +395,7 @@ def _aperture(raw: Mapping[str, str]) -> str | None:
 
 
 def _exposure_bias(raw: Mapping[str, str]) -> str | None:
-    value = _first(raw, "EXIF:ExposureCompensation", "EXIF:ExposureBiasValue")
+    value = first_value(raw, "EXIF:ExposureCompensation", "EXIF:ExposureBiasValue")
     if value is None:
         return None
     if "ev" in value.lower():
@@ -404,7 +408,7 @@ def _exposure_bias(raw: Mapping[str, str]) -> str | None:
 
 
 def _focal_length(raw: Mapping[str, str]) -> str | None:
-    value = _positive(_first(raw, "EXIF:FocalLength"))
+    value = positive_value(first_value(raw, "EXIF:FocalLength"))
     if value is None:
         return None
     if "mm" in value:
@@ -416,19 +420,23 @@ def _focal_length(raw: Mapping[str, str]) -> str | None:
 
 
 def _pixel_size(raw: Mapping[str, str]) -> str | None:
-    width = _positive(_first(raw, "EXIF:ExifImageWidth", "File:ImageWidth", "EXIF:ImageWidth"))
-    height = _positive(_first(raw, "EXIF:ExifImageHeight", "File:ImageHeight", "EXIF:ImageLength"))
+    width = positive_value(
+        first_value(raw, "EXIF:ExifImageWidth", "File:ImageWidth", "EXIF:ImageWidth")
+    )
+    height = positive_value(
+        first_value(raw, "EXIF:ExifImageHeight", "File:ImageHeight", "EXIF:ImageLength")
+    )
     if width and height:
         return f"{width} × {height}"
     return None
 
 
 def _iso(raw: Mapping[str, str]) -> str | None:
-    return _positive(_first(raw, "EXIF:ISO", "EXIF:ISOSpeedRatings"))
+    return positive_value(first_value(raw, "EXIF:ISO", "EXIF:ISOSpeedRatings"))
 
 
 def _equivalent_focal_length(raw: Mapping[str, str]) -> str | None:
-    return _positive(_first(raw, "EXIF:FocalLengthIn35mmFormat"))
+    return positive_value(first_value(raw, "EXIF:FocalLengthIn35mmFormat"))
 
 
 def _coordinates_decimal(raw: Mapping[str, str]) -> tuple[float | None, float | None]:
@@ -443,14 +451,14 @@ def _coordinates_decimal(raw: Mapping[str, str]) -> tuple[float | None, float | 
 def _axis_decimal(
     raw: Mapping[str, str], value_key: str, ref_key: str, *, negative: set[str]
 ) -> float | None:
-    value = _first(raw, value_key)
+    value = first_value(raw, value_key)
     if value is None:
         return None
     decimal = _degrees_to_decimal(value)
     if decimal is None:
         return None
     # exiftool 给的是 "North"/"West"，Pillow 给的是 "N"/"W"，取首字母统一处理。
-    hemisphere = (_first(raw, ref_key) or "").strip().upper()[:1]
+    hemisphere = (first_value(raw, ref_key) or "").strip().upper()[:1]
     return -abs(decimal) if hemisphere in negative else abs(decimal)
 
 
@@ -485,9 +493,9 @@ def _degrees_to_decimal(value: str) -> float | None:
 def _place_from_file(raw: Mapping[str, str]) -> str | None:
     """文件里写的地点名（IPTC/XMP）。相机原图通常没有，Lightroom 导出常有。"""
     parts = [
-        _first(raw, "XMP-photoshop:City", "IPTC:City"),
-        _first(raw, "XMP-photoshop:State", "IPTC:Province-State"),
-        _first(raw, "XMP-photoshop:Country", "IPTC:Country-PrimaryLocationName"),
+        first_value(raw, "XMP-photoshop:City", "IPTC:City"),
+        first_value(raw, "XMP-photoshop:State", "IPTC:Province-State"),
+        first_value(raw, "XMP-photoshop:Country", "IPTC:Country-PrimaryLocationName"),
     ]
     kept: list[str] = []
     for part in parts:
@@ -510,16 +518,16 @@ def _coordinates(raw: Mapping[str, str]) -> str | None:
 
 
 def _altitude(raw: Mapping[str, str]) -> str | None:
-    value = _first(raw, "EXIF:GPSAltitude")
+    value = first_value(raw, "EXIF:GPSAltitude")
     if value is None:
         return None
     text = value if value.endswith("m") else f"{value} m"
-    below = _first(raw, "EXIF:GPSAltitudeRef") or ""
+    below = first_value(raw, "EXIF:GPSAltitudeRef") or ""
     return f"-{text}" if "below" in below.lower() else text
 
 
 def _gps_time(raw: Mapping[str, str]) -> str | None:
-    value = _first(raw, "EXIF:GPSDateTime", "Composite:GPSDateTime")
+    value = first_value(raw, "EXIF:GPSDateTime", "Composite:GPSDateTime")
     if value is None:
         return None
     if value.startswith("00:00:00") or value.startswith("0000:00:00"):
@@ -528,22 +536,22 @@ def _gps_time(raw: Mapping[str, str]) -> str | None:
 
 
 def _color_space(raw: Mapping[str, str]) -> str | None:
-    value = _first(raw, "EXIF:ColorSpace")
+    value = first_value(raw, "EXIF:ColorSpace")
     if value is None:
         return None
     return {"1": "sRGB", "65535": "未校准（Uncalibrated）"}.get(value, value)
 
 
 def _keywords(raw: Mapping[str, str]) -> str | None:
-    return _first(raw, "IPTC:Keywords", "XMP:Subject", "XMP-dc:Subject", "PDF:Keywords")
+    return first_value(raw, "IPTC:Keywords", "XMP:Subject", "XMP-dc:Subject", "PDF:Keywords")
 
 
 def _creator(raw: Mapping[str, str]) -> str | None:
-    return _first(raw, "IPTC:By-line", "XMP-dc:Creator", "EXIF:Artist")
+    return first_value(raw, "IPTC:By-line", "XMP-dc:Creator", "EXIF:Artist")
 
 
 def _copyright(raw: Mapping[str, str]) -> str | None:
-    return _first(raw, "EXIF:Copyright", "IPTC:CopyrightNotice", "XMP-dc:Rights")
+    return first_value(raw, "EXIF:Copyright", "IPTC:CopyrightNotice", "XMP-dc:Rights")
 
 
 @dataclass(frozen=True, slots=True)
@@ -556,7 +564,7 @@ class _FieldSpec:
 
 def _pick(*keys: str) -> Callable[[Mapping[str, str]], str | None]:
     def read(raw: Mapping[str, str]) -> str | None:
-        return _first(raw, *keys)
+        return first_value(raw, *keys)
 
     return read
 
@@ -565,7 +573,7 @@ _CURATED_GROUPS: Final[tuple[tuple[str, tuple[_FieldSpec, ...]], ...]] = (
     (
         "拍摄信息",
         (
-            _FieldSpec("相机", _camera),
+            _FieldSpec("相机", camera_name),
             _FieldSpec("镜头", _pick("EXIF:LensModel", "EXIF:LensID", "EXIF:Lens")),
             _FieldSpec("拍摄时间", _shooting_time),
             _FieldSpec("曝光时间", _exposure_time),
@@ -677,6 +685,28 @@ _PILLOW_ENUMS: Final[dict[str, dict[int, str]]] = {
 }
 
 
+class PillowSource:
+    """降级来源：只用 Pillow 读基础 EXIF，不起子进程。
+
+    与 :class:`ExifToolReader` 同形，因此可以被注入替换。批量读取分组 / 排序字段时
+    缺 exiftool 也走这里（见 ``core.metadata.batch``）：逐张用 Pillow 读反而比
+    每张起一个子进程快得多，只是拿不到 IPTC / XMP。
+    """
+
+    def available(self) -> bool:
+        return True
+
+    def read(self, path: Path) -> Mapping[str, object]:
+        try:
+            return _read_with_pillow(Path(path))
+        except (OSError, ValueError, SyntaxError) as exc:
+            raise MetadataError(
+                f"读不出这个文件的基本信息：{Path(path).name}（{exc}）。",
+                path=Path(path),
+                detail=str(exc),
+            ) from exc
+
+
 def _read_with_pillow(path: Path) -> dict[str, object]:
     """降级路径：读出能读到的 EXIF（含 GPS 与 Exif 子 IFD）。"""
     with Image.open(path) as image:
@@ -764,6 +794,11 @@ __all__ = [
     "MetadataGroup",
     "MetadataReport",
     "MetadataSource",
+    "PillowSource",
     "build_report",
+    "camera_name",
+    "first_value",
+    "leading_number",
+    "positive_value",
     "read_metadata",
 ]
