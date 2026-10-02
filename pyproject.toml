@@ -23,6 +23,8 @@ build-backend = "hatchling.build"
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    # 让测试默认并行跑：串行一轮 19s，分进程并行约 5s（见 addopts 处的说明）。
+    "pytest-xdist>=3.6",
     "ruff>=0.9",
     "mypy>=1.14",
 ]
@@ -52,4 +54,14 @@ warn_unreachable = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+# 默认分进程并行（`uv run pytest` 就是并行的，不必额外记参数）。
+#
+#   -n auto        进程数跟核心数走。实测一轮 20s → 4.8s。
+#   --dist loadfile 一个测试文件整体交给同一个 worker，且保持文件内的声明顺序。
+#                  选它而不是更快的 worksteal（4.1s）是有意的：界面测试里
+#                  `qt_app` 是模块级 fixture，每个用例还有 `qt_teardown` 收尾，
+#                  让一个文件待在同一个进程里，执行模型与串行时完全一致。
+#                  那 0.7s 换「刚修完进程收尾崩溃之后执行模型不变」，值。
+#
+# 调试单个用例时想要串行、想要完整报错栈：`-n 0`（或 `-p no:xdist`）。
+addopts = "-q --dist loadfile -n auto"
