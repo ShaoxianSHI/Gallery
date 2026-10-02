@@ -4,8 +4,8 @@
 右下角总有一大片空白，一个格子都没有。访达里双击空白处是「往上走」，
 这里沿用同一个手势：**双击没有格子的地方就退回上一层**（在分组里则是退出分组）。
 
-退不回去时（已经在库根、或者在「全部照片」这种没有上一层的视图里）说一句为什么，
-不做「按了没反应」——空白双击是个明确的意图，忽略它等于让用户猜自己是不是点歪了。
+退不回去时（已经在库根、或者在「全部照片」这种没有上一层的视图里）安静地什么都不做：
+到了头本身是一个合法状态，不该为它弹一句话。
 
 反过来也有一条硬边界：**双击打开的那一下不能被自己当成双击空白处**。打开相册 /
 进入分组是同步的（模型当场清空、版面重排），落点必须在交给基类之前问清楚 ——
@@ -37,7 +37,7 @@ from gallery.core.library.session import (  # noqa: E402
     save_session,
 )
 from gallery.ui.browser.grid import PhotoGrid  # noqa: E402
-from gallery.ui.main_window import _NO_PARENT_NOTICE, MainWindow  # noqa: E402
+from gallery.ui.main_window import MainWindow  # noqa: E402
 
 #: 等待扫描 / 分组排完的时限。
 SCAN_TIMEOUT_SECONDS = 8.0
@@ -284,10 +284,10 @@ def test_blank_double_click_leaves_a_group(
         window.close()
 
 
-def test_blank_double_click_at_the_library_root_explains_itself(
+def test_blank_double_click_at_the_library_root_says_nothing(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
 ) -> None:
-    """已经退不动了就说清楚为什么，不做「按了没反应」。"""
+    """已经退不动时就安静地什么都不做，不为「到了头」弹一句话。"""
     library = tmp_path / "库"
     make_photo("IMG_0001.jpg", directory=library / "山巅")
     window = open_window(qt_app, library)
@@ -297,7 +297,7 @@ def test_blank_double_click_at_the_library_root_explains_itself(
         double_click_blank(window, qt_app)
 
         assert window._current_dir == library, "已经在库根，不能再往上"
-        assert window._banner.text() == _NO_PARENT_NOTICE
+        assert not window._banner.isVisible(), "退不动时不该弹提示"
     finally:
         window.close()
 
@@ -305,9 +305,9 @@ def test_blank_double_click_at_the_library_root_explains_itself(
 def test_blank_double_click_does_nothing_while_renaming(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
 ) -> None:
-    """改到一半：这一下归改名，不能顺手把人带走，更不能说「退不动了」。
+    """改到一半：这一下归改名，不能顺手把人带走。
 
-    那句话在改名的过程中是**错的** —— 明明退得回去，只是这一刻归输入框。
+    退不回去的时候是安静的，改名过程中同样不打扰 —— 这一下根本不是「往上走」的意图。
     """
     library = tmp_path / "库"
     picture = make_photo("IMG_0001.jpg", directory=library / "海边")
@@ -322,9 +322,6 @@ def test_blank_double_click_does_nothing_while_renaming(
         window._on_background_activated()
 
         assert window._current_dir == library / "海边"
-        # 断的是**那句话**，不是「横幅必须空着」：横幅是全局共享的，此刻上面完全
-        # 可能正有后台任务的进度（打开库时那一遍地点解析），那不是「退不动了」。
-        assert _NO_PARENT_NOTICE not in window._banner.text(), "改名的过程中不该说「退不动了」"
         assert picture.exists()
     finally:
         window.close()

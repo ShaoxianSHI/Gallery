@@ -136,9 +136,6 @@ _GROUP_NOT_FILE_ACTION = (
     "分组不是磁盘上的文件，改不了名也删不掉。双击进入分组后选中里面的照片再操作。"
 )
 
-#: 双击了空白处却已经退不动时的那句话。什么都不做等于「按了没反应」。
-_NO_PARENT_NOTICE = "已经是最外面一层了，没有上一级可退。"
-
 
 def _rename_banner(result: RenameResult) -> str:
     """改名之后的那行提示。
@@ -2484,16 +2481,14 @@ class MainWindow(QMainWindow):
         """双击了网格里没有格子的地方：退回上一层，与 `Esc` 是同一件事。
 
         这一层空着（空相册、空分组）时尤其需要它 —— 屏幕上根本没有可双击的东西，
-        而这正是最想立刻退出去的时候。退不回去时说一句为什么，不做「按了没反应」。
+        而这正是最想立刻退出去的时候。已经退不动时就安静地什么都不做：到了头本来就是
+        一个合法状态，不该为它弹一句话提醒。
         """
         if self._grid.is_renaming():
-            # 改到一半：这一下先归输入框。既不把人带走，也不能说「退不动了」——
-            # 明明退得回去，只是这一刻不归这一下管。
+            # 改到一半：这一下先归输入框。既不把人带走，也不打扰他。
             return
         if self._can_go_up():
             self.go_up()
-            return
-        self._show_banner(_NO_PARENT_NOTICE)
 
     def _on_breadcrumb_requested(self, directory: object) -> None:
         if isinstance(directory, Path):
