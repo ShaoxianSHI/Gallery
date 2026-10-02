@@ -128,6 +128,7 @@ def test_context_menu_carries_our_look(qt_app: QApplication, window: MainWindow)
     assert menu is not None
     sheet = menu.styleSheet()
     assert f"border-radius: {menus.MENU_CORNER_RADIUS}px" in sheet
+    assert f"padding-left: {menus.MENU_ITEM_INSET}px" in sheet
     assert menus.MENU_ITEM_PADDING in sheet
     assert rgba(window.palette().color(QPalette.ColorRole.Window)) in sheet
 

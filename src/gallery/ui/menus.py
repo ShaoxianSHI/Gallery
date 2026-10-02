@@ -40,12 +40,32 @@ GROUP_NOT_FILE_HINT = "分组不是磁盘上的文件夹，改不了名也删不
 #: 弹出菜单的圆角（像素）。macOS 样式自己画的那圈实测约 5，放大一档。
 MENU_CORNER_RADIUS = 8
 
+#: 菜单自己那一圈左内边距（像素）—— **对勾的位置就是它说了算**。
+#:
+#: 这里面有一处实测出来的分工，值得说清楚（全部是逻辑像素，抓图是 Retina 的两倍，
+#: 读的时候要除掉倍率，否则每个数字都会大一倍）：
+#:
+#: | 改哪个 | 文字左沿 | 对勾左沿 |
+#: |--------|----------|----------|
+#: | ``QMenu::item`` 的左内边距 | **跟着动**（1:1） | 不动 |
+#: | ``QMenu`` 自己的左内边距 | 跟着动（1:1） | **跟着动**（1:1） |
+#:
+#: 而 ``QMenu::indicator`` 的 margin 只加宽那一列、把文字推远，**对勾纹丝不动** ——
+#: 所以想让对勾离开边缘，只有 ``MENU_ITEM_INSET`` 这一个杠杆。
+#:
+#: 10 的来历：原生菜单里对勾几乎贴着边缘（0.5 逻辑像素），实测用户一眼就觉得挤；
+#: 取 10 之后对勾落在 11.5、文字落在 29.5（原生文字 18.5），对勾与文字之间留 18 像素，
+#: 与访达菜单的比例接近。
+MENU_ITEM_INSET = 10
+
 #: 菜单项的内边距（上 右 下 左，像素）。行高由此从 18 变成 26。
 #:
+#: 左边写 **0**：文字的左沿交给 :data:`MENU_ITEM_INSET` 与样式自带的边距共同决定，
+#: 这里再叠一层会把文字推到 47 像素那么远（原生只有 18.5）。
+#:
 #: 右边给得宽不是随手写的：样式表的 padding 是**替换**样式自己的边距的，不是叠加。
-#: 给窄了，右边那一列快捷键（⌘R / ⌘⌫）就会被挤出菜单 —— 实测原生右边留 47 像素，
-#: 这里留 25 像素，正好还在。
-MENU_ITEM_PADDING = "5px 38px 5px 28px"
+#: 给窄了，右边那一列快捷键（⌘R / ⌘⌫）就会被挤出菜单。
+MENU_ITEM_PADDING = "5px 38px 5px 0px"
 
 
 def style_sheet(background: QColor) -> str:
@@ -55,7 +75,8 @@ def style_sheet(background: QColor) -> str:
     理由见模块文档那一段。
     """
     return (
-        f"QMenu {{ border-radius: {MENU_CORNER_RADIUS}px; background: {rgba(background)}; }}\n"
+        f"QMenu {{ border-radius: {MENU_CORNER_RADIUS}px; "
+        f"background: {rgba(background)}; padding-left: {MENU_ITEM_INSET}px; }}\n"
         f"QMenu::item {{ padding: {MENU_ITEM_PADDING}; }}"
     )
 
@@ -254,6 +275,7 @@ def _hint_action(text: str, parent: QMenu) -> QAction:
 __all__ = [
     "GROUP_NOT_FILE_HINT",
     "MENU_CORNER_RADIUS",
+    "MENU_ITEM_INSET",
     "MENU_ITEM_PADDING",
     "MenuActions",
     "TargetKind",
