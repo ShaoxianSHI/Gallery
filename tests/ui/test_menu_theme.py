@@ -152,9 +152,14 @@ def test_context_menu_has_hover_highlight(qt_app: QApplication, window: MainWind
     assert "QMenu::item:hover" in sheet
     assert "QMenu::item:selected" in sheet
     assert sheet.count(highlight) >= 2, "两条规则都得用调色板里的高亮色"
-    # 高亮带是内缩的圆角带，不是顶到两边的方块
+    # 高亮带是内缩的圆角带。**不许写 margin**：margin 属于盒子模型，写在 :selected 里
+    # 等于每悬停一次换一次盒子，文字会跟着挪位置（用户实测）。内缩由菜单自身的内边距
+    # 决定，与状态无关。
     assert f"border-radius: {menus.MENU_HIGHLIGHT_RADIUS}px" in sheet
-    assert f"margin: 1px {menus.MENU_HIGHLIGHT_MARGIN}px" in sheet
+    assert "margin" not in sheet
+    # 内缩的那一处在菜单上，左右一样宽
+    assert f"padding-left: {menus.MENU_ITEM_INSET}px" in sheet
+    assert f"padding-right: {menus.MENU_ITEM_INSET}px" in sheet
 
 
 def test_submenus_get_the_same_look(qt_app: QApplication, window: MainWindow) -> None:

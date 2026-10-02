@@ -53,17 +53,20 @@ MENU_CORNER_RADIUS = 8
 #: 而 ``QMenu::indicator`` 的 margin 只加宽那一列、把文字推远，**对勾纹丝不动** ——
 #: 所以想让对勾离开边缘，只有 ``MENU_ITEM_INSET`` 这一个杠杆。
 #:
-#: 10 的来历：原生菜单里对勾几乎贴着边缘（0.5 逻辑像素），实测用户一眼就觉得挤；
-#: 取 10 之后对勾落在 11.5、文字落在 29.5（原生文字 18.5），对勾与文字之间留 18 像素，
-#: 与访达菜单的比例接近。
-MENU_ITEM_INSET = 10
+#: 它同时决定两件事：**高亮带离菜单边缘多远**（菜单自己的左右内边距），以及
+#: **对勾离边缘多远**（对勾跟着左内边距走，文字亦然）。
+#:
+#: 8 的来历：原生菜单里对勾几乎贴着边缘（0.5 逻辑像素），用户一眼就觉得挤；而高亮带
+#: 若再靠 margin 内缩 6 像素，带子与面板之间就有 16 像素，被说成「离得太远」。改成
+#: 靠这一处内缩之后，带子左右各留 8 像素、对勾落在 9.5、文字落在 27.5（原生 18.5）。
+MENU_ITEM_INSET = 8
 
 #: 高亮带的圆角（像素）。访达里的高亮是一条内缩的圆角带，不是顶到两边的方块。
+#:
+#: **只有圆角，没有 margin**：``margin`` 是盒子模型的一部分，写在 ``:selected`` 里等于
+#: 每悬停一次就换一次盒子，文字会跟着挪位置（用户实测）。高亮带离边缘多远，改由
+#: :data:`MENU_ITEM_INSET` 在菜单自身上决定 —— 与状态无关，文字就永远不动。
 MENU_HIGHLIGHT_RADIUS = 5
-
-#: 高亮带左右各缩进多少（像素）。顶到两边会显得像一块色斑，内缩之后才像访达菜单里
-#: 那种「浮在面板上的一条」。
-MENU_HIGHLIGHT_MARGIN = 6
 
 #: 菜单项的内边距（上 右 下 左，像素）。行高由此从 18 变成 26。
 #:
@@ -84,7 +87,8 @@ def style_sheet(background: QColor, highlight: QColor) -> str:
     """
     return (
         f"QMenu {{ border-radius: {MENU_CORNER_RADIUS}px; "
-        f"background: {rgba(background)}; padding-left: {MENU_ITEM_INSET}px; }}\n"
+        f"background: {rgba(background)}; padding-left: {MENU_ITEM_INSET}px; "
+        f"padding-right: {MENU_ITEM_INSET}px; }}\n"
         f"QMenu::item {{ padding: {MENU_ITEM_PADDING}; }}\n"
         # 悬停 / 当前项的高亮带。**不加这两行，菜单就完全没有高亮**：样式表一旦挂上，
         # 系统样式那份高亮就不再画了（实测原生菜单按方向键会点亮 #548fff，加了样式表
@@ -94,7 +98,7 @@ def style_sheet(background: QColor, highlight: QColor) -> str:
         # 高亮之下仍要保持灰字，不能看着能点。
         f"QMenu::item:hover {{ background: {rgba(highlight)}; }}\n"
         f"QMenu::item:selected {{ background: {rgba(highlight)}; "
-        f"border-radius: {MENU_HIGHLIGHT_RADIUS}px; margin: 1px {MENU_HIGHLIGHT_MARGIN}px; }}"
+        f"border-radius: {MENU_HIGHLIGHT_RADIUS}px; }}"
     )
 
 
@@ -302,7 +306,6 @@ def _hint_action(text: str, parent: QMenu) -> QAction:
 __all__ = [
     "GROUP_NOT_FILE_HINT",
     "MENU_CORNER_RADIUS",
-    "MENU_HIGHLIGHT_MARGIN",
     "MENU_HIGHLIGHT_RADIUS",
     "MENU_ITEM_INSET",
     "MENU_ITEM_PADDING",
