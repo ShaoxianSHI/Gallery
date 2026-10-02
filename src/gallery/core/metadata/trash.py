@@ -190,7 +190,7 @@ def trash_entries(
         try:
             trashed = move_to_trash(source)
         except DeleteError as exc:
-            _log(
+            append_record(
                 root,
                 WriteRecord(
                     action=ACTION_TRASH,
@@ -204,7 +204,7 @@ def trash_entries(
             )
             failures.append(Failure(name=entry.name, message=exc.message))
             continue
-        journaled &= _log(
+        journaled &= append_record(
             root,
             WriteRecord(
                 action=ACTION_TRASH,
@@ -233,7 +233,7 @@ def restore_entries(root: Path, records: Sequence[WriteRecord]) -> RestoreResult
             entry = _restore_one(record)
         except (DeleteError, OSError) as exc:
             message = exc.message if isinstance(exc, DeleteError) else _os_reason(exc)
-            journaled &= _log(
+            journaled &= append_record(
                 root,
                 WriteRecord(
                     action=ACTION_RESTORE,
@@ -247,7 +247,7 @@ def restore_entries(root: Path, records: Sequence[WriteRecord]) -> RestoreResult
             )
             failures.append(Failure(name=record.source.name, message=message))
             continue
-        journaled &= _log(
+        journaled &= append_record(
             root,
             WriteRecord(
                 action=ACTION_RESTORE,
@@ -338,10 +338,6 @@ def _free_name(candidate: Path, *, is_dir: bool) -> Path:
 def _new_batch_id() -> str:
     """一次批量操作的编号。重放日志时靠它把一批记录归成一个撤销单元。"""
     return uuid4().hex[:12]
-
-
-def _log(root: Path, record: WriteRecord) -> bool:
-    return append_record(root, record)
 
 
 def _os_reason(exc: OSError) -> str:

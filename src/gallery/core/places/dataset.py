@@ -94,15 +94,6 @@ def is_real_coordinate(latitude: float, longitude: float) -> bool:
     return not (latitude == 0.0 and longitude == 0.0)
 
 
-def is_null_island_record(city: _City) -> bool:
-    """城市库里坐标为 ``(0, 0)`` 的那几条 —— 源数据的坏行，不该留在库里。
-
-    生成期已把它们丢掉（见 ``scripts/build_places_db.py``）；这里再挡一道，
-    是因为**解析的是随包分发的文件**，万一它来自别的来源，不该悄悄给出一个地名。
-    """
-    return not is_real_coordinate(city.latitude, city.longitude)
-
-
 class PlaceIndex:
     """城市索引。加载一次，之后可以反复按坐标查最近城市。"""
 

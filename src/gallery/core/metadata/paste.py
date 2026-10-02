@@ -132,7 +132,7 @@ def copy_into(
         if _same_directory(source.parent, destination):
             skipped.append(Skipped(source=source, message=f"已经在「{destination.name}」里了。"))
             continue
-        if source.is_dir() and _is_within(source, destination):
+        if source.is_dir() and paths.is_within(source, destination):
             failures.append(
                 Failure(source=source, message="不能把文件夹粘进它自己或它自己的子目录。")
             )
@@ -186,7 +186,7 @@ def _copy_one(root: Path, destination: Path, source: Path, batch: str) -> _Outco
         message = _copy_error_message(error)
         return _Outcome(
             failure=Failure(source=source, message=message),
-            journaled=_log(
+            journaled=append_record(
                 root,
                 WriteRecord(
                     action=ACTION_PASTE,
@@ -201,7 +201,7 @@ def _copy_one(root: Path, destination: Path, source: Path, batch: str) -> _Outco
         )
     return _Outcome(
         item=PastedFile(source=source, created=created),
-        journaled=_log(
+        journaled=append_record(
             root,
             WriteRecord(
                 action=ACTION_PASTE,
@@ -255,16 +255,9 @@ def _same_directory(left: Path, right: Path) -> bool:
         return left == right
 
 
-def _is_within(outer: Path, inner: Path) -> bool:
-    return paths.is_within(outer.resolve(), inner.resolve())
-
-
 def _never_cancel() -> bool:
+    """``should_cancel`` 省略时的替身：永远说「没取消」。"""
     return False
-
-
-def _log(root: Path, record: WriteRecord) -> bool:
-    return append_record(root, record)
 
 
 __all__ = [

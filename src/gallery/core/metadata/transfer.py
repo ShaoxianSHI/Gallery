@@ -156,7 +156,7 @@ def move_into(
         if _same_directory(source.parent, destination):
             skipped.append(Skipped(source=source, message=f"它已经在「{destination.name}」里了。"))
             continue
-        if source.is_dir() and _is_within(source, destination):
+        if source.is_dir() and paths.is_within(source, destination):
             failures.append(
                 Failure(source=source, message="不能把相册移进它自己或它自己的子相册。")
             )
@@ -172,7 +172,7 @@ def move_into(
             _move(source, created)
         except OSError as error:
             message = _move_error_message(error)
-            journaled &= _log(
+            journaled &= append_record(
                 root,
                 WriteRecord(
                     action=ACTION_MOVE,
@@ -186,7 +186,7 @@ def move_into(
             )
             failures.append(Failure(source=source, message=message))
             continue
-        journaled &= _log(
+        journaled &= append_record(
             root,
             WriteRecord(
                 action=ACTION_MOVE,
@@ -222,7 +222,7 @@ def undo_move_records(root: Path, records: Sequence[WriteRecord]) -> UndoMoveRes
         current, original = record.target, record.source
         if not current.exists():
             message = f"「{current.name}」已经不在「{current.parent.name}」里了，可能已经被你移走。"
-            journaled &= _log(
+            journaled &= append_record(
                 root,
                 WriteRecord(
                     action=ACTION_UNDO,
@@ -238,7 +238,7 @@ def undo_move_records(root: Path, records: Sequence[WriteRecord]) -> UndoMoveRes
             continue
         if original.exists():
             message = f"「{original.name}」这个位置已经有别的文件了。"
-            journaled &= _log(
+            journaled &= append_record(
                 root,
                 WriteRecord(
                     action=ACTION_UNDO,
@@ -256,7 +256,7 @@ def undo_move_records(root: Path, records: Sequence[WriteRecord]) -> UndoMoveRes
             _move(current, original)
         except OSError as error:
             message = _move_error_message(error)
-            journaled &= _log(
+            journaled &= append_record(
                 root,
                 WriteRecord(
                     action=ACTION_UNDO,
@@ -270,7 +270,7 @@ def undo_move_records(root: Path, records: Sequence[WriteRecord]) -> UndoMoveRes
             )
             failures.append(Failure(source=current, message=message))
             continue
-        journaled &= _log(
+        journaled &= append_record(
             root,
             WriteRecord(
                 action=ACTION_UNDO,
@@ -321,16 +321,9 @@ def _same_directory(left: Path, right: Path) -> bool:
         return left == right
 
 
-def _is_within(outer: Path, inner: Path) -> bool:
-    return paths.is_within(outer.resolve(), inner.resolve())
-
-
 def _never_cancel() -> bool:
+    """``should_cancel`` 省略时的替身：永远说「没取消」。"""
     return False
-
-
-def _log(root: Path, record: WriteRecord) -> bool:
-    return append_record(root, record)
 
 
 __all__ = [

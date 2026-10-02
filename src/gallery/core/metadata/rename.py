@@ -98,7 +98,7 @@ def rename_entry(root: Path, entry: GridEntry, new_name: str) -> RenameResult:
         # 同一目录内的改名是原子的：要么名字换成了，要么什么都没发生。
         source.rename(target)
     except OSError as exc:
-        _log(
+        append_record(
             root,
             WriteRecord(
                 action=ACTION_RENAME,
@@ -114,7 +114,7 @@ def rename_entry(root: Path, entry: GridEntry, new_name: str) -> RenameResult:
             path=source,
             detail=repr(exc),
         ) from exc
-    logged = _log(
+    logged = append_record(
         root,
         WriteRecord(
             action=ACTION_RENAME,
@@ -163,7 +163,7 @@ def undo_rename_record(root: Path, record: WriteRecord) -> RenameResult:
             path=source,
             detail=repr(exc),
         ) from exc
-    _log(
+    append_record(
         root,
         WriteRecord(
             action=ACTION_UNDO,
@@ -222,10 +222,6 @@ def _reference(path: Path, *, is_dir: bool) -> GridEntry:
     if is_dir:
         return FolderRef.from_path(path)
     return PhotoRef.from_path(path)
-
-
-def _log(root: Path, record: WriteRecord) -> bool:
-    return append_record(root, record)
 
 
 def _os_reason(exc: OSError) -> str:
