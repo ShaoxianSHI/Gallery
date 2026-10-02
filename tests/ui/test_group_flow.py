@@ -237,7 +237,7 @@ def test_menus_expose_group_and_sort_fields(qt_app: QApplication, tmp_path: Path
 
     assert set(group_menu) >= {"captured_month", "captured_year", "camera", "keyword"}
     assert set(sort_menu) >= {None, "name", "size", "captured"}
-    assert window._descending_action.text() == "逆序（新在前 / 大在前）"
+    assert window._descending_action.text() == "逆序"
     window.close()
 
 

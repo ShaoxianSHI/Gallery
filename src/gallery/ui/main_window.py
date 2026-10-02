@@ -519,7 +519,7 @@ class MainWindow(QMainWindow):
                 unavailable=self._unavailable_hint(facet),
             )
         sort_menu.addSeparator()
-        self._descending_action = QAction("逆序（新在前 / 大在前）", self)
+        self._descending_action = QAction("逆序", self)
         self._descending_action.setCheckable(True)
         self._descending_action.toggled.connect(self.set_sort_descending)
         sort_menu.addAction(self._descending_action)
@@ -929,7 +929,7 @@ class MainWindow(QMainWindow):
         self._scan_issue = False
         self._update_breadcrumb()
         self._update_mode_actions()
-        self.setWindowTitle(f"{library.display_name} — Gallery")
+        self.setWindowTitle(library.display_name)
         self._stack.setCurrentWidget(self._grid_page)
         self._update_action_states()
         self._remember(library.root)
