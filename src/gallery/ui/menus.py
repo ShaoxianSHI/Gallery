@@ -241,7 +241,8 @@ def _owned_menus(menu: QMenu) -> Iterator[QMenu]:
                 pending.append(submenu)
 
 
-#: 修饰符的列序，**从右往左**：⌘ 最靠近字母，然后 ⇧、⌥、⌃ —— 与原生菜单一致。
+#: 修饰符**在一行里的排列顺序**，也是填列的顺序：⌘ 最靠近字母，然后 ⇧、⌥、⌃ ——
+#: 与原生菜单一致（访达的 ⇧⌘C 读作左 ⇧ 右 ⌘）。
 #:
 #: 注意第一个是 ``ControlModifier``：**macOS 上 Qt 把 Ctrl 译成 Command**（⌘R / ⌘⌫ /
 #: ⇧⌘C 都是这么显示的），而 ``MetaModifier`` 才是控制键 ⌃。弄反的话画出来的是 ⌃R。
@@ -318,10 +319,13 @@ def split_shortcut(shortcut: QKeySequence) -> tuple[frozenset[Qt.KeyboardModifie
 
 @dataclass(frozen=True, slots=True)
 class ShortcutColumns:
-    """快捷键那几列的尺寸：字母一列 + 四种修饰符各一列，**整个菜单共用同一套列宽**。
+    """快捷键那几列的尺寸：字母一列 + 各种修饰符各一列，**整个菜单共用同一套列宽**。
 
-    这正是「三个列各自对齐」的由来：列宽只按整个菜单里最宽的量一次，所有行都按它摆 ——
-    ⇧⌘C 的 ⇧ 与 ⌥ 落在同一列上，⌘R / ⌘⌫ / ⌘I 的 ⌘ 也落在同一列上，字母则一律贴着右沿。
+    列宽只按整个菜单里最宽的量一次，所有行都按它摆 —— ⌘R / ⌘⌫ / ⌘I 的 ⌘ 落在同一列上，
+    ⇧⌘C 的 ⇧ 与 ⌥ 也落在同一列上，字母则一律贴着右沿。
+
+    **符号落在哪一列，是按这一行用到的修饰符「从里往外依次填」决定的**（见 :meth:`cells`）：
+    位置不是每个修饰符钉死的，只有那一组列本身钉死。
     """
 
     key_width: int
@@ -366,20 +370,52 @@ class ShortcutColumns:
             + SHORTCUT_GAP * (len(self.modifier_widths) + 1)
         )
 
-    def cells(self, right: int, top: int, height: int) -> tuple[QRect, dict[Qt.Key, QRect]]:
-        """这一行里各格的矩形：先字母，再各修饰符（从右往左），**每格都按右对齐画**。
+    def key_rect(self, right: int, top: int, height: int) -> QRect:
+        """字母那一格（最右，**所有行共用同一列**）。"""
+        return QRect(right - SHORTCUT_RIGHT_INSET - self.key_width, top, self.key_width, height)
 
-        右对齐而不是按字宽推位置：同一列里的字形宽窄不同（C / R / I / ⌫），按字宽推必然
-        参差，而右对齐时 Qt 把文字贴到格子右沿，一像素不差。
+    def slot_rects(self, right: int, top: int, height: int) -> list[QRect]:
+        """这一整块里的每一格：**先字母，再各修饰符列，从右往左**。
+
+        这几格的**位置对所有行都是同一套**，钉死的也是它们 —— 每一行落到哪一格由
+        :meth:`cells` 决定。菜单要给整块留宽时也用它（见 :meth:`width`）。
         """
-        key_rect = QRect(right - SHORTCUT_RIGHT_INSET - self.key_width, top, self.key_width, height)
-        rects: dict[Qt.KeyboardModifier, QRect] = {}
-        edge = key_rect.left() - SHORTCUT_GAP
-        for modifier, width in self.modifier_widths.items():
+        rects = [self.key_rect(right, top, height)]
+        edge = rects[0].left() - SHORTCUT_GAP
+        for width in self.modifier_widths.values():
             edge -= width
-            rects[modifier] = QRect(edge, top, width, height)
+            rects.append(QRect(edge, top, width, height))
             edge -= SHORTCUT_GAP
-        return key_rect, rects
+        return rects
+
+    def cells(
+        self,
+        modifiers: frozenset[Qt.KeyboardModifier],
+        right: int,
+        top: int,
+        height: int,
+    ) -> tuple[QRect, dict[Qt.KeyboardModifier, QRect]]:
+        """这一行里各格的矩形：字母一格，外加这一行用到的修饰符。
+
+        **修饰符从字母那一侧往里依次填**（填的顺序是 :data:`MODIFIER_ORDER`：⌘ 最靠里，
+        然后 ⇧、⌥、⌃），而不是「每个修饰符占自己那一列」。于是：
+
+        - ``⌘C`` 与 ``⇧⏎`` 的修饰符**都贴在字母旁边** —— 它们各只有一个修饰符，
+          孤零零地待在外侧那一列，中间隔着一格空白，看着像多出来一列；
+        - ``⇧⌘C`` 两个都要，⌘ 靠里、⇧ 退到外一格，仍然列列对齐。
+
+        代价是同一张菜单里同一个符号可能出现在两列上（照片菜单：``⇧⏎`` 的 ⇧ 与 ``⇧⌘C``
+        的 ⇧）。这与访达那种「整个键组贴着右沿」的排法是同一件事，而菜单栏那一侧仍是
+        原生的右对齐。
+
+        每格都按右对齐画而不是按字宽推位置：同一列里的字形宽窄不同（C / R / I / ⌫），
+        按字宽推必然参差，而右对齐时 Qt 把文字贴到格子右沿，一像素不差。
+        """
+        rects = self.slot_rects(right, top, height)
+        placed: dict[Qt.KeyboardModifier, QRect] = {}
+        for index, modifier in enumerate(bit for bit in MODIFIER_ORDER if bit in modifiers):
+            placed[modifier] = rects[index + 1]
+        return rects[0], placed
 
 
 class ShortcutColumnMenu(QMenu):
@@ -389,6 +425,9 @@ class ShortcutColumnMenu(QMenu):
     实测无论有没有 ``QMenu::item`` 规则、右内边距取多少，它都紧跟在文字后面（右沿恒为
     78.5），而原生菜单里它贴着右沿。``setShortcut`` 一直都在设，问题是出在**画**的那一步，
     QSS 调不动，只能自己画。
+
+    **哪一行落到哪一列**由 :meth:`ShortcutColumns.cells` 决定：这一行用到的修饰符从字母
+    那一侧往里依次填（见那里的说明）。
 
     画之前得先给这一块**预留宽度**（见 :meth:`reserve_shortcut_columns`）：快捷键不在条目
     文字里，Qt 不会替它腾地方，不预留就压在标签上（实测菜单宽 143、列块要画到 x≈100，
@@ -461,7 +500,9 @@ class ShortcutColumnMenu(QMenu):
                 continue
             modifiers, key_text = cell
             rect = self.actionGeometry(action)
-            key_rect, modifier_rects = columns.cells(rect.right(), rect.top(), rect.height())
+            key_rect, modifier_rects = columns.cells(
+                modifiers, rect.right(), rect.top(), rect.height()
+            )
             if action is self.activeAction():
                 role = QPalette.ColorRole.HighlightedText
             elif action.isEnabled():
@@ -471,9 +512,8 @@ class ShortcutColumnMenu(QMenu):
             painter = QPainter(self)
             painter.setPen(self.palette().color(role))
             painter.drawText(key_rect, align, key_text)
-            for modifier in modifier_rects:
-                if modifier in modifiers:
-                    painter.drawText(modifier_rects[modifier], align, _modifier_glyph(modifier))
+            for modifier, modifier_rect in modifier_rects.items():
+                painter.drawText(modifier_rect, align, _modifier_glyph(modifier))
             painter.end()
 
     def _paint_arrow(
@@ -486,7 +526,7 @@ class ShortcutColumnMenu(QMenu):
         所以是关掉 Qt 那个（``::right-arrow`` 尺寸给 0 就完全不画）改由我们画。
         """
         rect = self.actionGeometry(action)
-        key_rect, _ = columns.cells(rect.right(), rect.top(), rect.height())
+        key_rect = columns.key_rect(rect.right(), rect.top(), rect.height())
         center = key_rect.center()
         half_width = MENU_ARROW_DRAWN_WIDTH / 2
         half_height = MENU_ARROW_DRAWN_HEIGHT / 2

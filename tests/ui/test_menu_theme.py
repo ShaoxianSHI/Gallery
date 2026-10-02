@@ -23,7 +23,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PIL import Image  # noqa: E402
-from PySide6.QtCore import QPoint, Qt  # noqa: E402
+from PySide6.QtCore import QPoint, QRect, Qt  # noqa: E402
 from PySide6.QtGui import (  # noqa: E402
     QAction,
     QColor,
@@ -303,6 +303,9 @@ def test_each_shortcut_column_lines_up(qt_app: QApplication, window: MainWindow)
 
     列宽只按整个菜单量一次，所有行都按它摆（见 ``menus.ShortcutColumns``）。早先试着在
     条目文字里补空格来对齐，位移只有请求的 2/3 且不线性，永远差几像素。
+
+    **对齐的是「那一组列」**（:meth:`menus.ShortcutColumns.slot_rects`），不是每个符号：
+    符号落哪一格是逐行定的，见 ``test_a_lone_modifier_hugs_the_key``。
     """
     window._stack.setCurrentWidget(window._grid_page)
     row = window._model.row_of_path(window._library.root / "一张.jpg")
@@ -324,7 +327,7 @@ def test_each_shortcut_column_lines_up(qt_app: QApplication, window: MainWindow)
     key_rights, command_columns = [], []
     for shortcut in shortcuts:
         modifiers, _ = menus.split_shortcut(shortcut)
-        key_rect, modifier_rects = columns.cells(right, top, height)
+        key_rect, modifier_rects = columns.cells(modifiers, right, top, height)
         key_rights.append(key_rect.right())
         if Qt.KeyboardModifier.ControlModifier in modifiers:
             command_columns.append(modifier_rects[Qt.KeyboardModifier.ControlModifier])
@@ -332,14 +335,47 @@ def test_each_shortcut_column_lines_up(qt_app: QApplication, window: MainWindow)
     assert len(set(key_rights)) == 1, "字母列右沿在每一行上都该一样"
     assert command_columns
     assert len({rect.left() for rect in command_columns}) == 1, "⌘ 该在同一列上"
-    assert len(
-        {
-            rect.left()
-            for rect in [
-                columns.cells(right, top, height)[1][bit] for bit in columns.modifier_widths
-            ]
-        }
-    ) == len(columns.modifier_widths)
+    assert len({rect.left() for rect in columns.slot_rects(right, top, height)}) == 1 + len(
+        columns.modifier_widths
+    )
+
+
+def test_a_lone_modifier_hugs_the_key(qt_app: QApplication, window: MainWindow) -> None:
+    """**只有一个**修饰符的那一行，它占内侧那一列，不占自己那一列。
+
+    照片菜单里「在默认应用中打开」的 ``⇧⏎`` 就是这么一行（用户原话：shift 应该在第二列）。
+    若按「每个修饰符钉死一列」来画，它的 ⇧ 会落到 ⌘ 的外侧，中间隔着一格空白 —— 看着像
+    凭空多出来一列，而同一行紧挨着的 ``⌘⏎`` 的 ⌘ 却贴在字母旁边。
+
+    与之相对，``⇧⌘C`` 两个修饰符都要，各占一格、依次往外排（访达的读法）。
+    """
+    window._stack.setCurrentWidget(window._grid_page)
+    row = window._model.row_of_path(window._library.root / "一张.jpg")
+    assert row >= 0
+
+    menu = window.context_menu_for(row)
+
+    assert menu is not None
+    assert isinstance(menu, menus.ShortcutColumnMenu)
+    shift = Qt.KeyboardModifier.ShiftModifier
+    command = Qt.KeyboardModifier.ControlModifier
+    default_app = next(a for a in menu.actions() if a.text() == "在默认应用中打开")
+    assert default_app.shortcut() == QKeySequence("Shift+Return"), "前提：这一行只有一个修饰符"
+
+    metrics = QFontMetrics(menu.font())
+    columns = menus.ShortcutColumns.measure_parts(menu.key_cells(), metrics)
+
+    def at(action: QAction) -> dict[Qt.KeyboardModifier, QRect]:
+        """这一行真正画出来的修饰符格（几何与 ``paintEvent`` 里算的是同一套）。"""
+        rect = menu.actionGeometry(action)
+        return columns.cells(menu.key_cell(action)[0], rect.right(), rect.top(), rect.height())[1]
+
+    command_row = next(a for a in menu.actions() if a.text() == "拷贝路径")
+
+    assert at(default_app)[shift].left() == at(command_row)[command].left(), "⇧⏎ 的 ⇧ 该与 ⌘ 同一列"
+    assert at(command_row)[shift].left() < at(command_row)[command].left(), (
+        "⇧⌘C 的 ⇧ 该退到外一格，两个修饰符各占一格"
+    )
 
 
 def test_only_the_modifiers_a_menu_uses_get_a_column(
@@ -417,7 +453,7 @@ def test_open_hint_is_really_painted_in_the_key_column(
 def _ink_in(menu: QMenu, action: QAction) -> int:
     """「这一行的键位列」里画出来多少墨迹（像素）。
 
-    位置按 :meth:`menus.ShortcutColumnMenu.cells` 算 —— 那正是 ``paintEvent`` 用的那套
+    位置按 :meth:`menus.ShortcutColumnMenu.key_rect` 算 —— 那正是 ``paintEvent`` 用的那套
     几何。抓图按设备像素给（Retina 上是两倍），几何却是逻辑像素，两边要按倍率对起来。
     """
     assert isinstance(menu, menus.ShortcutColumnMenu)
@@ -425,7 +461,7 @@ def _ink_in(menu: QMenu, action: QAction) -> int:
     metrics = QFontMetrics(menu.font())
     columns = menus.ShortcutColumns.measure_parts(menu.key_cells(), metrics)
     rect = menu.actionGeometry(action)
-    key_rect, _ = columns.cells(rect.right(), rect.top(), rect.height())
+    key_rect = columns.key_rect(rect.right(), rect.top(), rect.height())
     image = menu.grab().toImage()
     scale = image.devicePixelRatio()
     return sum(
@@ -459,8 +495,11 @@ def test_shortcut_columns_start_after_the_longest_label(
     # 漏掉它，这一列就会按最窄的那个键（C / ⎋）去算，然后压到那枚提示上。
     columns = menus.ShortcutColumns.measure_parts(menu.key_cells(), metrics)
     rect = menu.actionGeometry(rows[0])
-    key_rect, modifier_rects = columns.cells(rect.right(), rect.top(), rect.height())
-    block_left = min([key_rect.left(), *[r.left() for r in modifier_rects.values()]])
+    # 整块列最左一条：按 slot_rects 算而不是按某一行 —— 逐行填列之后，不同行用到的
+    # 修饰符格数不同（见 ``ShortcutColumns.cells``）。
+    block_left = min(
+        rect_.left() for rect_ in columns.slot_rects(rect.right(), rect.top(), rect.height())
+    )
     label_start = menus.MENU_INSET + menus.MENU_CHECK_GUTTER
     label_end = label_start + max(metrics.horizontalAdvance(a.text()) for a in rows)
 
