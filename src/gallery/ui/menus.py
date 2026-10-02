@@ -538,6 +538,8 @@ class MenuActions:
     open_entry: QAction
     #: 「在访达中显示」。
     reveal: QAction
+    #: 「拷贝」⌘C（文件本身，访达语义，见 ADR 0017）。
+    copy: QAction
     #: 「拷贝路径」⇧⌘C。
     copy_path: QAction
     #: 「重命名…」⌘R（单选才有）。
@@ -653,14 +655,18 @@ def prepare(menu: QMenu) -> None:
 
 
 def _add_open_and_reveal(menu: QMenu, actions: MenuActions, *, multiple: bool) -> None:
-    """照片与相册共用的上半截：打开 → 在访达中显示 → 拷贝路径 → 重命名 → 废纸篓。
+    """照片与相册共用的上半截：打开 → 在访达中显示 → 拷贝 → 拷贝路径 → 重命名 → 废纸篓。
 
     中间只留一道分隔线：多选时「打开」与「重命名」都不出现，若在那里各插一道，
     「拷贝路径」与「移到废纸篓」之间就会多出一道谁也看不懂的空档。
+
+    **「拷贝」排在「拷贝路径」上面**（ADR 0017）：一个放文件、一个放路径文字，与访达
+    菜单里的先后一致。两条都作用于整个选择，多选时都留着。
     """
     if not multiple:
         menu.addAction(actions.open_entry)
     menu.addAction(actions.reveal)
+    menu.addAction(actions.copy)
     menu.addAction(actions.copy_path)
     menu.addSeparator()
     if not multiple:

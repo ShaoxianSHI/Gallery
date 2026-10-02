@@ -6,7 +6,7 @@
    这一段用裸网格测：它与窗口、与库都没有关系，测窗口只会把因果搅浑。
 2. **菜单内容** —— 四种落点各拼出什么。走真实的 ``MainWindow.context_menu_for``，
    因为置灰是 ``_update_action_states`` 算出来的，只有连着窗口才是真的。
-3. **新命令** —— 拷贝路径、全选、复制分组条件、在访达中显示。
+3. **新命令** —— 拷贝 ⌘C、拷贝路径、全选、复制分组条件、在访达中显示。
 
 「在访达中显示」在这里**必须换掉**：真跑它会把访达叫起来，那是测试机上真实的副作用。
 """
@@ -25,7 +25,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QItemSelectionModel  # noqa: E402
-from PySide6.QtGui import QContextMenuEvent, QGuiApplication  # noqa: E402
+from PySide6.QtGui import QContextMenuEvent, QGuiApplication, QKeySequence  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMenu  # noqa: E402
 
 from gallery.core.library.config import prepare_library  # noqa: E402
@@ -251,7 +251,7 @@ def _enabled(menu: QMenu, label: str) -> bool:
 
 
 def test_photo_menu_items(qt_app: QApplication, window: MainWindow) -> None:
-    """照片：访达 / 拷贝路径挨在一起，写操作单列一段，元数据收在最后。"""
+    """照片：访达 / 拷贝 / 拷贝路径挨在一起，写操作单列一段，元数据收在最后。"""
     _enter_album(qt_app, window)
     row = window._model.row_of_path(window._library.root / "京都" / PHOTO_NAMES[0])
     assert row >= 0
@@ -262,6 +262,7 @@ def test_photo_menu_items(qt_app: QApplication, window: MainWindow) -> None:
     assert _texts(menu) == [
         "打开",
         "在访达中显示",
+        "拷贝",
         "拷贝路径",
         "",
         "重命名…",
@@ -286,6 +287,7 @@ def test_album_menu_has_no_metadata_items(qt_app: QApplication, window: MainWind
     assert _texts(menu) == [
         "打开",
         "在访达中显示",
+        "拷贝",
         "拷贝路径",
         "",
         "重命名…",
@@ -324,6 +326,7 @@ def test_multi_selection_hides_single_item_actions(
     assert menu is not None
     assert _texts(menu) == [
         "在访达中显示",
+        "拷贝",
         "拷贝路径",
         "",
         "移到废纸篓",
@@ -365,6 +368,92 @@ def test_copy_paths_puts_one_per_line(qt_app: QApplication, window: MainWindow) 
         str(window._library.root / "京都" / PHOTO_NAMES[0]),
         str(window._library.root / "京都" / PHOTO_NAMES[1]),
     ]
+
+
+def test_copy_puts_the_files_themselves_on_the_clipboard(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """⌘C 放的是**文件**（ADR 0017），不是路径文字、也不是像素。
+
+    与访达一致：在访达里 ⌘V 得到一份拷贝。为此剪贴板里必须有**文件 URL** ——
+    纯文本的剪贴板粘到访达里什么也不会发生，下面把 ⇧⌘C 那条拿来对照。
+
+    **别去断言 ``clipboard().text()`` 是空的**：Qt 在 macOS 上会从 uri-list 自己合成一份
+    文字（实测 ``file:///…``），那是平台行为，不是我们放的。
+    """
+    _enter_album(qt_app, window)
+    _select(window._grid, window._model, (0, 1))
+
+    window.copy_selected_files()
+
+    clipboard = QGuiApplication.clipboard()
+    assert [url.toLocalFile() for url in clipboard.mimeData().urls()] == [
+        str(window._library.root / "京都" / PHOTO_NAMES[0]),
+        str(window._library.root / "京都" / PHOTO_NAMES[1]),
+    ]
+    assert window._banner.isVisible()
+    assert window._banner.text() == "已拷贝 2 项到剪贴板。"
+
+    # 对照：「拷贝路径」放的是纯文本，剪贴板里一个文件也没有。
+    QGuiApplication.clipboard().setText("原样")
+    window.copy_selected_paths()
+    assert QGuiApplication.clipboard().mimeData().urls() == []
+
+
+def test_copy_names_the_single_file_it_copied(qt_app: QApplication, window: MainWindow) -> None:
+    """只拷一个时把**文件名**说出来：横幅要说明做了什么，而不是只报一个数字。"""
+    _enter_album(qt_app, window)
+    _select(window._grid, window._model, (0,))
+
+    window.copy_selected_files()
+
+    assert [url.toLocalFile() for url in QGuiApplication.clipboard().mimeData().urls()] == [
+        str(window._library.root / "京都" / PHOTO_NAMES[0])
+    ]
+    assert window._banner.text() == f"已拷贝「{PHOTO_NAMES[0]}」到剪贴板。"
+
+
+def test_copy_works_for_an_album_folder(qt_app: QApplication, window: MainWindow) -> None:
+    """相册是文件夹，访达拷文件夹是同一件事，因此它也照拷不误。"""
+    _show_albums(qt_app, window)
+    row = window._model.row_of_path(window._library.root / "京都")
+    assert row >= 0
+    _select(window._grid, window._model, (row,))
+
+    window.copy_selected_files()
+
+    assert [url.toLocalFile() for url in QGuiApplication.clipboard().mimeData().urls()] == [
+        str(window._library.root / "京都")
+    ]
+
+
+def test_copy_skips_group_cards(qt_app: QApplication, window: MainWindow) -> None:
+    """分组卡片不是磁盘上的东西（ADR 0014 决策 4）：既不拷贝，剪贴板也不该被动。"""
+    group = GroupRef(facet="camera", key="canon", label="Canon", photos=(_photo(window),))
+    window._model.reorder([group])
+    qt_app.processEvents()
+    _select(window._grid, window._model, (0,))
+    QGuiApplication.clipboard().setText("原样")
+
+    window.copy_selected_files()
+
+    assert QGuiApplication.clipboard().text() == "原样"
+    assert window._copy_action.isEnabled() is False, "⌘C 同样不该对分组卡片可用"
+
+
+def test_copy_lives_in_the_edit_menu_too(qt_app: QApplication, window: MainWindow) -> None:
+    """只活在右键菜单里的命令是发现不了的（ADR 0014 决策 5），⌘C 与 ⇧⌘C 挨着摆。"""
+    edit = next(
+        action.menu()
+        for action in window.menuBar().actions()
+        if action.text() == "编辑" and action.menu() is not None
+    )
+
+    assert edit is not None
+    labels = [action.text() for action in edit.actions()]
+    assert "拷贝" in labels
+    assert labels.index("拷贝") < labels.index("拷贝路径")
+    assert window._copy_action.shortcut() == QKeySequence("Ctrl+C")
 
 
 def test_reveal_selection_hands_paths_to_desktop(

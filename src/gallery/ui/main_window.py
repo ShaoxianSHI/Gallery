@@ -488,6 +488,12 @@ class MainWindow(QMainWindow):
         self._reveal_action = QAction("在访达中显示", self)
         self._reveal_action.triggered.connect(self.reveal_selection)
 
+        # ⌘C 与访达一致：往剪贴板里放的是**文件本身**，访达里 ⌘V 得到一份拷贝
+        # （ADR 0017）。注意放的是路径引用，不读像素、不写文件。
+        self._copy_action = QAction("拷贝", self)
+        self._copy_action.setShortcut(QKeySequence("Ctrl+C"))
+        self._copy_action.triggered.connect(self.copy_selected_files)
+
         # ⇧⌘C 与访达一致。注意 Qt 在 macOS 上把 Command 写作 Ctrl，不要手动换键。
         self._copy_path_action = QAction("拷贝路径", self)
         self._copy_path_action.setShortcut(QKeySequence("Ctrl+Shift+C"))
@@ -519,11 +525,12 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction(self._quit_action)
 
-        # 「编辑」：全选、拷贝路径、撤销 —— 与 macOS 的摆放一致（ADR 0014 决策 5）。
+        # 「编辑」：全选、拷贝、拷贝路径、撤销 —— 与 macOS 的摆放一致（ADR 0014 决策 5）。
         # ⌘Z 从「文件」搬过来了：撤销是编辑动作，放在文件菜单里会让 ⌘Z 与
         # 「打开 / 移到废纸篓」这些会动文件的命令混在一起。
         edit_menu = self.menuBar().addMenu("编辑")
         edit_menu.addAction(self._select_all_action)
+        edit_menu.addAction(self._copy_action)
         edit_menu.addAction(self._copy_path_action)
         edit_menu.addSeparator()
         edit_menu.addAction(self._undo_action)
@@ -1889,6 +1896,7 @@ class MainWindow(QMainWindow):
         return MenuActions(
             open_entry=self._open_entry_action,
             reveal=self._reveal_action,
+            copy=self._copy_action,
             copy_path=self._copy_path_action,
             rename=self._rename_action,
             trash=self._trash_action,
@@ -1925,6 +1933,17 @@ class MainWindow(QMainWindow):
         desktop.copy_to_clipboard(desktop.format_paths(paths))
         head = "已拷贝 1 个路径。" if len(paths) == 1 else f"已拷贝 {len(paths)} 个路径。"
         self._show_banner(head)
+
+    def copy_selected_files(self) -> None:
+        """「拷贝」⌘C：把选中的**文件**放进剪贴板，访达里 ⌘V 得到一份拷贝（ADR 0017）。
+
+        与「拷贝路径」一样作用于整个选择，相册（文件夹）也算。**一个字节都不碰原文件**：
+        放进剪贴板的是路径引用，粘出来的那一份由访达去写，不在 Gallery 的地盘上。
+        """
+        paths = self._selected_paths()
+        if not paths:
+            return
+        self._show_banner(desktop.copy_files_to_clipboard(paths))
 
     def select_all_entries(self) -> None:
         """⌘A：全选当前这一层的所有格子（相册、照片、分组卡片都算）。"""
@@ -2460,6 +2479,7 @@ class MainWindow(QMainWindow):
         current = self._model.entry_at(current_row) if current_row >= 0 else None
         self._select_all_action.setEnabled(in_grid and self._model.rowCount() > 0)
         self._copy_path_action.setEnabled(bool(paths))
+        self._copy_action.setEnabled(bool(paths))
         self._reveal_action.setEnabled(bool(paths))
         self._open_entry_action.setEnabled(current is not None)
         self._copy_metadata_action.setEnabled(isinstance(current, PhotoRef))
