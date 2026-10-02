@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QImage
+from PySide6.QtGui import QImage, QPixmap
 
 from gallery.core.media.decode import RasterImage
 
@@ -38,9 +38,25 @@ def to_scaled_qimage(raster: RasterImage, edge: int) -> QImage:
 
     :param edge: 目标长边；``<= 0`` 表示不缩放，按原尺寸交出去。
     """
-    image = _wrap(raster)
+    return _scale(_wrap(raster), edge)
+
+
+def scale_pixmap(pixmap: QPixmap, edge: int) -> QPixmap:
+    """把 ``QPixmap`` 缩到长边不超过 ``edge``（只缩不放），并包装成 Qt 图像。
+
+    **「只缩不放、保持比例、平滑」这三条曾经各写一遍**：这里、``browser.model``
+    换档位时的那次兜底、``browser.grid`` 绘制时的就地缩放。三处各写一份的后果
+    不只是多几行 —— 将来要换缩放算法（比如给 Retina 路径换 ``FastTransformation``）
+    得改三处，而其中两处**在主线程上**，那正是 ADR 0015 决策 3 当初要搬走的那类活。
+    """
+    return _scale(pixmap, edge)
+
+
+def _scale(image: QPixmap, edge: int) -> QPixmap:
+    """缩放的唯一实现：只缩不放、保持比例、平滑。``QImage`` 与 ``QPixmap`` 同名方法。"""
     if edge <= 0 or (image.width() <= edge and image.height() <= edge):
-        # 原图本来就够小 —— 不放大。交出去的那张必须拥有自己的内存。
+        # 原图本来就够小 —— 不放大。交出去的那张必须拥有自己的内存
+        # （``QImage(bytes, …)`` 不复制缓冲区，Python 侧一回收画面就花屏）。
         return image.copy()
     return image.scaled(
         edge,

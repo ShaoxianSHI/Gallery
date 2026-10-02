@@ -212,6 +212,12 @@ class PhotoDelegate(QStyledItemDelegate):
         尺寸刚切换时手里的图还是按旧边长缩放的，这里就地缩放到新框 —— 于是每一格
         始终有图、大小也始终对得上，用户看不到「先空框、再一张张弹回来」的过程。
         尺寸一致时走 1:1 直接绘制，不额外付平滑缩放的代价。
+
+        **这里刻意不走 :func:`gallery.ui.imaging.scale_pixmap`。** 那两处（后台线程
+        出图、模型换档位）是把缩略图**缩成一张新的位图存起来**，缩放是一次性的
+        预处理；这里是在**绘制时**按目标矩形画 —— 用的是 ``QPainter`` 的
+        ``SmoothPixmapTransform``，不额外产出中间位图（那才是每次重绘一张的代价）。
+        两件事看起来像，实则不是同一件事，硬凑成一份只会把「缓存」和「画」搅在一起。
         """
         target = pixmap.size().scaled(
             QSize(self._icon_edge, self._icon_edge), Qt.AspectRatioMode.KeepAspectRatio
@@ -715,7 +721,7 @@ class PhotoGrid(QListView):
 
     # ---- 事件 --------------------------------------------------------------
 
-    def mousePressEvent(self, event: QMouseEvent) -> None:
+    def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         """记下这一下的来龙去脉（供 mouseMoveEvent / mouseReleaseEvent 判断）。"""
         point = event.position().toPoint()
         self._press_point = point
@@ -733,7 +739,7 @@ class PhotoGrid(QListView):
         self._press_anchor = self._range_anchor
         super().mousePressEvent(event)
 
-    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         """手抖不算拖动，扩选更不算。
 
         图标视图里 Qt 在**按下瞬间**就进入「框选」状态（``DragSelectingState``），
@@ -788,7 +794,7 @@ class PhotoGrid(QListView):
                 QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
             )
 
-    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         """第一次点击只是选中；对**已经选中**的格子再点一次才开始重命名。
 
         第二次点击不立刻改名，而是按下双击阈值**等一等**：Qt 是在第二次「按下」时
@@ -834,7 +840,7 @@ class PhotoGrid(QListView):
         self._pending_rename_row = index.row()
         self._rename_timer.start()
 
-    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         """双击一定要打开照片，而不是拉出一个输入框；落在空白处就退回上一层。
 
         「双击空白处往回退」是访达里用惯了的手势，而在逐层进入的浏览方式里
@@ -869,7 +875,7 @@ class PhotoGrid(QListView):
         if index == self.currentIndex() and not self._rename_edit.is_editing():
             self.rename_requested.emit(index)
 
-    def contextMenuEvent(self, event: QContextMenuEvent) -> None:
+    def contextMenuEvent(self, event: QContextMenuEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         """右键：先把选区摆正，再把「这一下落在哪」告诉窗口。
 
         视图只回答落点，菜单由 ``MainWindow`` 拼（``ui.menus``）—— 视图不该知道
@@ -886,7 +892,7 @@ class PhotoGrid(QListView):
         self.context_requested.emit(row)
         event.accept()
 
-    def wheelEvent(self, event: QWheelEvent) -> None:
+    def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         """⌘/Ctrl + 滚轮切换缩略图尺寸；普通滚动交给基类翻页。"""
         modifiers = event.modifiers()
         if modifiers & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier):
@@ -910,7 +916,7 @@ class PhotoGrid(QListView):
             return True
         return super().event(event)
 
-    def keyPressEvent(self, event: QKeyEvent) -> None:
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         # **带修饰符的回车不是「打开」**：⌘⏎ 归「在访达中显示」、⇧⏎ 归「在默认应用中打开」
         # （两条都是窗口级 QAction，见 ADR 0014 决策 6 / 7）。它们按下时 Qt 先取走，按键根本
         # 走不到这里；但它们**不可用**时（选中的是分组卡片、正在改名字）按下去是走得到的 ——
@@ -923,7 +929,7 @@ class PhotoGrid(QListView):
             return
         super().keyPressEvent(event)
 
-    def scrollContentsBy(self, dx: int, dy: int) -> None:
+    def scrollContentsBy(self, dx: int, dy: int) -> None:  # noqa: N802 - 名字是 Qt 定的
         # 输入框是视口的子控件，不会自己跟着格子滚 —— 手动挪同样的距离，
         # 它就始终盖在那个名字上（滚出视口也会被视口裁掉，不会浮到别处）。
         if self._rename_edit.is_editing():
@@ -931,12 +937,12 @@ class PhotoGrid(QListView):
         super().scrollContentsBy(dx, dy)
         self._debounce.start()
 
-    def resizeEvent(self, event: QResizeEvent) -> None:
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         super().resizeEvent(event)
         self._recompute_layout()
         self._debounce.start()
 
-    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 - 名字是 Qt 定的
         if watched is self.viewport() and event.type() == QEvent.Type.Resize:
             # 延到事件循环下一轮：视口尺寸变化本身就发生在布局过程中，
             # 立刻重排会把布局再推进一次。
@@ -954,9 +960,9 @@ __all__ = [
     "COLUMN_CHECK_MS",
     "EDGE_REFRESH_THRESHOLD",
     "EDGE_SETTLE_MS",
-    "LAYOUT_SAFETY",
     "GRID_PADDING_X",
     "GRID_PADDING_Y",
+    "LAYOUT_SAFETY",
     "PREFETCH_MARGIN",
     "VIEWPORT_DEBOUNCE_MS",
     "PhotoDelegate",

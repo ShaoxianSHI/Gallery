@@ -65,7 +65,7 @@ class RenameEdit(QLineEdit):
             return True
         return super().event(event)
 
-    def keyPressEvent(self, event: QKeyEvent) -> None:
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             self._commit()
             event.accept()
@@ -76,7 +76,7 @@ class RenameEdit(QLineEdit):
             return
         super().keyPressEvent(event)
 
-    def focusOutEvent(self, event: QFocusEvent | None) -> None:
+    def focusOutEvent(self, event: QFocusEvent | None) -> None:  # noqa: N802 - 名字是 Qt 定的
         # 点到别处就提交，和访达一样；比默默丢掉用户敲的字友好。
         super().focusOutEvent(event)
         self._commit()

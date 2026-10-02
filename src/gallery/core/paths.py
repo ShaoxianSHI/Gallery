@@ -238,8 +238,8 @@ __all__ = [
     "index_file",
     "is_within",
     "journal_dir",
-    "places_db_file",
     "library_digest",
+    "places_db_file",
     "resources_dir",
     "thumbnail_cache_dir",
 ]

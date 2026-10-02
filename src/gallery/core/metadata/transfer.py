@@ -324,8 +324,8 @@ def _same_directory(left: Path, right: Path) -> bool:
 
 __all__ = [
     "Failure",
-    "MovedItem",
     "MoveResult",
+    "MovedItem",
     "Skipped",
     "UndoMoveResult",
     "move_into",

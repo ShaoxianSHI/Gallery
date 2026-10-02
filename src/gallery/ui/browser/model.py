@@ -34,6 +34,7 @@ from PySide6.QtGui import QImage, QPixmap
 
 from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
 from gallery.ui.browser.thumb_sizes import DEFAULT_EDGE
+from gallery.ui.imaging import scale_pixmap
 
 #: 取条目本身（``PhotoRef`` 或 ``FolderRef``）的角色。
 ENTRY_ROLE = int(Qt.ItemDataRole.UserRole) + 1
@@ -300,13 +301,7 @@ class PhotoListModel(QAbstractListModel):
             sized = edge
         else:
             sized = self._icon_edge
-            if pixmap.width() > sized or pixmap.height() > sized:
-                pixmap = pixmap.scaled(
-                    sized,
-                    sized,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
-                )
+            pixmap = scale_pixmap(pixmap, sized)
         self._pixmaps[path] = _CachedThumb(pixmap=pixmap, edge=sized)
         self._pixmaps.move_to_end(path)
         while len(self._pixmaps) > self._cache_size:

@@ -792,7 +792,6 @@ def _gps_decimal(value: object, ref: object) -> float | None:
 
 
 __all__ = [
-    "as_text",
     "EXIFTOOL_EXECUTABLE",
     "EXIFTOOL_TIMEOUT_SECONDS",
     "ExifToolReader",
@@ -802,6 +801,7 @@ __all__ = [
     "MetadataReport",
     "MetadataSource",
     "PillowSource",
+    "as_text",
     "build_report",
     "camera_name",
     "coordinates_decimal",

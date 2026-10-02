@@ -341,7 +341,7 @@ class DetailView(QGraphicsView):
 
     # ---- 事件 --------------------------------------------------------------
 
-    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         """双击图片：平滑回到默认视图（适应窗口并居中）。"""
         if event.button() == Qt.MouseButton.LeftButton and not self._pixmap.isNull():
             self.animate_to_fit()
@@ -367,7 +367,7 @@ class DetailView(QGraphicsView):
         self.context_requested.emit(event.globalPos())
         event.accept()
 
-    def wheelEvent(self, event: QWheelEvent) -> None:
+    def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         """⌘/Ctrl + 滚轮缩放；普通滚动交给基类做平移（与 macOS 预览一致）。"""
         modifiers = event.modifiers()
         if modifiers & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier):
@@ -389,7 +389,7 @@ class DetailView(QGraphicsView):
             return True
         return super().event(event)
 
-    def keyPressEvent(self, event: QKeyEvent) -> None:
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         key = event.key()
         if key in (Qt.Key.Key_Escape, Qt.Key.Key_Return, Qt.Key.Key_Enter):
             self.request_close.emit()
@@ -414,7 +414,7 @@ class DetailView(QGraphicsView):
             return
         super().keyPressEvent(event)
 
-    def resizeEvent(self, event: QResizeEvent) -> None:
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         super().resizeEvent(event)
         if self._fit_mode and not self._animating:
             self.fit_to_window()

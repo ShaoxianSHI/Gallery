@@ -33,10 +33,10 @@ __all__ = [
     "PhotoRef",
     "SortOrder",
     "build_groups",
-    "sort_photos",
     "format_label",
     "is_supported_photo",
     "load_config",
     "prepare_library",
     "save_config",
+    "sort_photos",
 ]

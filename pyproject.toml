@@ -44,7 +44,14 @@ target-version = "py312"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM"]
+# "N" 只为一件事：N802 命中的是 **Qt 覆写的方法名**（mousePressEvent、closeEvent…）。
+#   本项目里 N802 只有这���个意思，所以打开它 —— 将来新写一个 Qt 覆写却忘了写
+#   noqa，会当场被拦下，而不必等 reviewer 逐个看。
+# "RUF022"：__all__ 按 isort 风格排序。排序过的清单让「少了谁」一眼看得出来
+#   （menus.__all__ 就长期漏着它对外最要紧的 prepare）。
+# 不开 "RUF" 整组：RUF001/002/003 是「易混淆的 Unicode 字符」，而这个仓库的
+#   注释与文案全是中文，一开就是一万多条。
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF022"]
 
 [tool.mypy]
 python_version = "3.12"

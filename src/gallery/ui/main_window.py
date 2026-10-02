@@ -3552,7 +3552,7 @@ class MainWindow(QMainWindow):
         central = self.centralWidget()
         return central is not None and point.y() < central.geometry().top()
 
-    def mousePressEvent(self, event: QMouseEvent) -> None:
+    def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         """按住标题栏那一段拖动窗口。
 
         内容铺到标题栏底下之后（见 ``ui.theme.unify_title_bar``），那一条已经是我们的
@@ -3568,7 +3568,7 @@ class MainWindow(QMainWindow):
 
     # ---- 关闭 --------------------------------------------------------------
 
-    def closeEvent(self, event: QCloseEvent) -> None:
+    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         self._save_session()
         self._teardown_library()
         self._runner.cancel_all()

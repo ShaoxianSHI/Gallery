@@ -304,6 +304,16 @@ SHORTCUT_RIGHT_INSET = 12
 SHORTCUT_LABEL_GAP = 20
 
 
+def _text_role(action: QAction, active: QAction | None) -> QPalette.ColorRole:
+    """这一行的文字该用哪一档颜色 —— 悬停 / 正常 / 置灰。
+
+    原本在 :meth:`ShortcutColumnMenu.paintEvent` 与 :meth:`_paint_arrow` 里各写一遍。
+    """
+    if action is active:
+        return QPalette.ColorRole.HighlightedText
+    return QPalette.ColorRole.Text if action.isEnabled() else QPalette.ColorRole.PlaceholderText
+
+
 def _modifier_glyph(modifier: Qt.KeyboardModifier) -> str:
     """一个修饰符在系统写法下的符号（``⌘`` / ``⇧`` / ``⌥`` / ``⌃``）。"""
     text = QKeySequence(_MODIFIER_PROBE[modifier]).toString(QKeySequence.SequenceFormat.NativeText)
@@ -526,53 +536,59 @@ class ShortcutColumnMenu(QMenu):
             return
         columns = ShortcutColumns.measure_parts(cells, metrics)
         align = int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
-        for action in rows:
-            cell = self.key_cell(action)
-            if cell is None:
-                if self.owns_submenu_arrows() and action.menu() is not None:
-                    self._paint_arrow(action, columns, metrics)
-                continue
-            modifiers, key_text = cell
-            rect = self.actionGeometry(action)
-            key_rect, modifier_rects = columns.cells(
-                modifiers, rect.right(), rect.top(), rect.height()
-            )
-            if action is self.activeAction():
-                role = QPalette.ColorRole.HighlightedText
-            elif action.isEnabled():
-                role = QPalette.ColorRole.Text
-            else:
-                role = QPalette.ColorRole.PlaceholderText
-            painter = QPainter(self)
-            painter.setPen(self.palette().color(role))
-            painter.drawText(key_rect, align, key_text)
-            for modifier, modifier_rect in modifier_rects.items():
-                painter.drawText(modifier_rect, align, _modifier_glyph(modifier))
+        # 这三样**与哪一行无关**，却原来在循环里一遍遍重算：
+        # ``owns_submenu_arrows()`` 一路走到 ``key_cells()`` 与 ``split_shortcut()``，
+        # 也就是每个 action 都要做一次平台字符串转换（``QKeySequence.toString``）；
+        # ``activeAction()`` 同理，而它一悬停就变。
+        # 一次 ``QPainter`` 覆盖整个菜单，而不是一行一个（每行都要重新问一次设备、
+        # 重新置一次变换）。
+        owns_arrows = self.owns_submenu_arrows()
+        active = self.activeAction()
+        palette = self.palette()
+        painter = QPainter(self)
+        try:
+            for action in rows:
+                cell = self.key_cell(action)
+                if cell is None:
+                    if owns_arrows and action.menu() is not None:
+                        self._paint_arrow(action, columns, painter, palette, active)
+                    continue
+                modifiers, key_text = cell
+                rect = self.actionGeometry(action)
+                key_rect, modifier_rects = columns.cells(
+                    modifiers, rect.right(), rect.top(), rect.height()
+                )
+                painter.setPen(palette.color(_text_role(action, active)))
+                painter.drawText(key_rect, align, key_text)
+                for modifier, modifier_rect in modifier_rects.items():
+                    painter.drawText(modifier_rect, align, _modifier_glyph(modifier))
+        finally:
             painter.end()
 
     def _paint_arrow(
-        self, action: QAction, columns: ShortcutColumns, metrics: QFontMetrics
+        self,
+        action: QAction,
+        columns: ShortcutColumns,
+        painter: QPainter,
+        palette: QPalette,
+        active: QAction | None,
     ) -> None:
         """子菜单的右箭头画在**字母列**上 —— 原生菜单里它与快捷键的键位是同一列。
 
         不画在 Qt 那个位置（行右沿内侧约 5 像素）：那在字母列右边，两者看着是两个不相干
         的东西。QSS 挪不动它（``padding-right`` 从 12 加到 28，实测箭头仍在 x=148~151.5），
         所以是关掉 Qt 那个（``::right-arrow`` 尺寸给 0 就完全不画）改由我们画。
+
+        ``painter`` / ``palette`` / ``active`` 由 :meth:`paintEvent` 递进来：这个菜单
+        一次绘制只建一个 ``QPainter``、只取一次调色板、只问一次当前项。
         """
         rect = self.actionGeometry(action)
         key_rect = columns.key_rect(rect.right(), rect.top(), rect.height())
         center = key_rect.center()
         half_width = MENU_ARROW_DRAWN_WIDTH / 2
         half_height = MENU_ARROW_DRAWN_HEIGHT / 2
-        if action is self.activeAction():
-            role = QPalette.ColorRole.HighlightedText
-        elif action.isEnabled():
-            role = QPalette.ColorRole.Text
-        else:
-            role = QPalette.ColorRole.PlaceholderText
-        painter = QPainter(self)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(self.palette().color(role))
+        painter.setBrush(palette.color(_text_role(action, active)))
         painter.drawPolygon(
             QPolygonF(
                 [
@@ -1094,12 +1110,14 @@ def _submenu(title: str, actions: tuple[QAction, ...], *, split_before: int = 0)
 
 __all__ = [
     "CLOSE_KEY_HINT",
-    "MENU_CHECK_GUTTER",
-    "MENU_CORNER_RADIUS",
-    "MENU_HIGHLIGHT_RADIUS",
     "MENU_ARROW_DRAWN_HEIGHT",
     "MENU_ARROW_DRAWN_WIDTH",
     "MENU_ARROW_SIZE",
+    "MENU_CHECK_GUTTER",
+    "MENU_CORNER_RADIUS",
+    "MENU_HIGHLIGHT_RADIUS",
+    "MENU_INSET",
+    "MENU_ITEM_PADDING",
     "MENU_SEPARATOR_HEIGHT",
     "MENU_SEPARATOR_MARGIN",
     "MENU_SEPARATOR_MIX_DARK",
@@ -1107,9 +1125,9 @@ __all__ = [
     "MODIFIER_ORDER",
     "OPEN_KEY_HINT",
     "SHORTCUT_LABEL_GAP",
-    "MENU_INSET",
-    "MENU_ITEM_PADDING",
     "MenuActions",
+    "ShortcutColumnMenu",
+    "ShortcutColumns",
     "TargetKind",
     "apply_style",
     "build_album_menu",
@@ -1119,8 +1137,12 @@ __all__ = [
     "build_group_menu",
     "build_menu",
     "build_photo_menu",
+    # ``prepare`` 是这个模块对外的入口之一（``MainWindow`` 与测试都调它接管快捷键列），
+    # 过去一直漏在 ``__all__`` 外 —— 一份公开接口漏掉自己最要紧的那个函数。
+    "prepare",
     "separator_color",
+    # 「一条快捷键怎么拆成修饰符 + 键位」也是这个模块对外的约定（:class:`ShortcutColumns`
+    # 按它量宽度），一起交出去，免得外面只能靠猜。
+    "split_shortcut",
     "style_sheet",
-    "ShortcutColumnMenu",
-    "ShortcutColumns",
 ]
