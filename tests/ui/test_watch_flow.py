@@ -634,6 +634,63 @@ def test_a_genuinely_new_file_with_the_same_name_is_not_swallowed(
         window.close()
 
 
+# ---- 分组视图 -----------------------------------------------------------------
+
+
+def _enter_folder_group(qt_app: QApplication, window: MainWindow) -> str:
+    """按文件夹分组（这条规则不用读 EXIF，测试里跑得动），并进入第一个组。"""
+    window.set_group_facet("folder")
+    assert wait_until(qt_app, lambda: window._model.group_count() > 0), "分组没有出现"
+    group = window._model.group_at(0)
+    assert group is not None
+    window.enter_group(group)
+    # 进入分组后照片是异步铺上来的：等到真有行数了才算进了这个组。
+    assert wait_until(qt_app, lambda: window._group_view is not None and window._model.rowCount())
+    return group.key
+
+
+def test_a_photo_deleted_inside_a_group_leaves_the_group(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """组里的照片被删了：那一格立刻消失，组卡片上的张数也跟着走。"""
+    doomed = make_photo("没了.jpg")
+    make_photo("还在.jpg")
+    window, watcher = open_window(qt_app, tmp_path)
+    try:
+        _enter_folder_group(qt_app, window)
+        assert window._model.rowCount() == 2
+
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.REMOVED, doomed))
+
+        assert window._model.row_of_path(doomed) == -1
+        assert window._model.rowCount() == 1
+    finally:
+        window.close()
+
+
+def test_a_photo_added_inside_a_group_regroups_and_comes_back(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """组里的成员是上一次分组算出来的快照：新照片要重新分组才归位。
+
+    做的是「整个库重新分组一次，再回到同一个组」，而不是让组卡片自己长出新成员 ——
+    后者得在每次分组时都维护一份反向索引，代价与出错面都不是这里该付的。
+    """
+    make_photo("一张.jpg")
+    make_photo("两张.jpg")
+    window, watcher = open_window(qt_app, tmp_path)
+    try:
+        key = _enter_folder_group(qt_app, window)
+        newcomer = make_photo("刚来的.jpg")
+
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.ADDED, newcomer))
+
+        assert wait_until(qt_app, lambda: window._model.row_of_path(newcomer) >= 0)
+        assert window._group_view is not None and window._group_view.key == key
+    finally:
+        window.close()
+
+
 # ---- 生命周期 -----------------------------------------------------------------
 
 
