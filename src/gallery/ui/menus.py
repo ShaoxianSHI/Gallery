@@ -34,13 +34,17 @@ from PySide6.QtWidgets import QMenu
 
 from gallery.ui.theme import rgba
 
-#: 分组卡片为什么不能改名 / 不能删。放在菜单末尾当一句说明，而不是让用户按了才知道。
+#: 分组卡片为什么不能改名 / 不能删。放在菜单末尾当一句说明。
 GROUP_NOT_FILE_HINT = "分组不是磁盘上的文件夹，改不了名也删不掉。"
 
 #: 弹出菜单的圆角（像素）。macOS 样式自己画的那圈实测约 5，放大一档。
 MENU_CORNER_RADIUS = 8
 
-#: 菜单自己那一圈左内边距（像素）—— **对勾的位置就是它说了算**。
+#: 菜单面板那一圈内缩，四边同值（像素）。
+#:
+#: 它是高亮带与面板边缘之间那圈留白：**高亮带就是 item 矩形**，而 item 矩形被这圈内缩
+#: 框在面板中间，上下左右一样宽。只留左右的话，高亮带会顶着面板上下两条边，像贴上去的
+#: 一块色斑（用户原话）。这圈留白与悬停状态无关，所以文字永远不会被带着挪位。
 #:
 #: 这里面有一处实测出来的分工，值得说清楚（全部是逻辑像素，抓图是 Retina 的两倍，
 #: 读的时候要除掉倍率，否则每个数字都会大一倍）：
@@ -51,26 +55,23 @@ MENU_CORNER_RADIUS = 8
 #: | ``QMenu`` 自己的左内边距 | 跟着动（1:1） | **跟着动**（1:1） |
 #:
 #: 而 ``QMenu::indicator`` 的 margin 只加宽那一列、把文字推远，**对勾纹丝不动** ——
-#: 所以想让对勾离开边缘，只有 ``MENU_ITEM_INSET`` 这一个杠杆。
-#:
-#: 它同时决定两件事：**高亮带离菜单边缘多远**（菜单自己的左右内边距），以及
-#: **对勾离边缘多远**（对勾跟着左内边距走，文字亦然）。
+#: 所以想让对勾离开边缘，只有这一处内缩可用。
 #:
 #: 8 的来历：原生菜单里对勾几乎贴着边缘（0.5 逻辑像素），用户一眼就觉得挤；而高亮带
 #: 若再靠 margin 内缩 6 像素，带子与面板之间就有 16 像素，被说成「离得太远」。改成
-#: 靠这一处内缩之后，带子左右各留 8 像素、对勾落在 9.5、文字落在 27.5（原生 18.5）。
-MENU_ITEM_INSET = 8
+#: 靠这一处内缩之后，带子四边各留 8 像素、对勾落在 9.5、文字落在 27.5（原生 18.5）。
+MENU_INSET = 8
 
 #: 高亮带的圆角（像素）。访达里的高亮是一条内缩的圆角带，不是顶到两边的方块。
 #:
 #: **只有圆角，没有 margin**：``margin`` 是盒子模型的一部分，写在 ``:selected`` 里等于
 #: 每悬停一次就换一次盒子，文字会跟着挪位置（用户实测）。高亮带离边缘多远，改由
-#: :data:`MENU_ITEM_INSET` 在菜单自身上决定 —— 与状态无关，文字就永远不动。
+#: :data:`MENU_INSET` 在菜单自身上决定 —— 与状态无关，文字就永远不动。
 MENU_HIGHLIGHT_RADIUS = 5
 
 #: 菜单项的内边距（上 右 下 左，像素）。行高由此从 18 变成 26。
 #:
-#: 左边写 **0**：文字的左沿交给 :data:`MENU_ITEM_INSET` 与样式自带的边距共同决定，
+#: 左边写 **0**：文字的左沿交给 :data:`MENU_INSET` 与样式自带的边距共同决定，
 #: 这里再叠一层会把文字推到 47 像素那么远（原生只有 18.5）。
 #:
 #: 右边给得宽不是随手写的：样式表的 padding 是**替换**样式自己的边距的，不是叠加。
@@ -87,8 +88,7 @@ def style_sheet(background: QColor, highlight: QColor) -> str:
     """
     return (
         f"QMenu {{ border-radius: {MENU_CORNER_RADIUS}px; "
-        f"background: {rgba(background)}; padding-left: {MENU_ITEM_INSET}px; "
-        f"padding-right: {MENU_ITEM_INSET}px; }}\n"
+        f"background: {rgba(background)}; padding: {MENU_INSET}px; }}\n"
         f"QMenu::item {{ padding: {MENU_ITEM_PADDING}; }}\n"
         # 悬停 / 当前项的高亮带。**不加这两行，菜单就完全没有高亮**：样式表一旦挂上，
         # 系统样式那份高亮就不再画了（实测原生菜单按方向键会点亮 #548fff，加了样式表
@@ -232,6 +232,13 @@ def build_group_menu(actions: MenuActions) -> QMenu:
     return menu
 
 
+def _hint_action(text: str, parent: QMenu) -> QAction:
+    """一条不可点的说明文字。"""
+    hint = QAction(text, parent)
+    hint.setEnabled(False)
+    return hint
+
+
 def build_background_menu(actions: MenuActions) -> QMenu:
     """网格空白处：只有视图级命令，一条会动文件的都没有。
 
@@ -292,22 +299,11 @@ def _submenu(title: str, actions: tuple[QAction, ...], *, split_before: int = 0)
     return menu
 
 
-def _hint_action(text: str, parent: QMenu) -> QAction:
-    """一条不可点的说明文字。
-
-    置灰是唯一能表达「这里有话要说，但你按不了」的办法 —— 加个分隔线再放一行灰字，
-    用户知道这不是个坏掉的按钮。
-    """
-    hint = QAction(text, parent)
-    hint.setEnabled(False)
-    return hint
-
-
 __all__ = [
     "GROUP_NOT_FILE_HINT",
     "MENU_CORNER_RADIUS",
     "MENU_HIGHLIGHT_RADIUS",
-    "MENU_ITEM_INSET",
+    "MENU_INSET",
     "MENU_ITEM_PADDING",
     "MenuActions",
     "TargetKind",

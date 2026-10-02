@@ -128,7 +128,7 @@ def test_context_menu_carries_our_look(qt_app: QApplication, window: MainWindow)
     assert menu is not None
     sheet = menu.styleSheet()
     assert f"border-radius: {menus.MENU_CORNER_RADIUS}px" in sheet
-    assert f"padding-left: {menus.MENU_ITEM_INSET}px" in sheet
+    assert f"padding: {menus.MENU_INSET}px" in sheet
     assert menus.MENU_ITEM_PADDING in sheet
     assert rgba(window.palette().color(QPalette.ColorRole.Window)) in sheet
 
@@ -157,9 +157,8 @@ def test_context_menu_has_hover_highlight(qt_app: QApplication, window: MainWind
     # 决定，与状态无关。
     assert f"border-radius: {menus.MENU_HIGHLIGHT_RADIUS}px" in sheet
     assert "margin" not in sheet
-    # 内缩的那一处在菜单上，左右一样宽
-    assert f"padding-left: {menus.MENU_ITEM_INSET}px" in sheet
-    assert f"padding-right: {menus.MENU_ITEM_INSET}px" in sheet
+    # 内缩的那一处在菜单上，**四边同值**：只留左右的话，高亮带会顶着面板上下两条边
+    assert f"padding: {menus.MENU_INSET}px" in sheet
 
 
 def test_submenus_get_the_same_look(qt_app: QApplication, window: MainWindow) -> None:
