@@ -302,8 +302,9 @@ class MainWindow(QMainWindow):
         #: 本层照片的分组 / 排序字段快照（按路径索引）。
         self._facet_values: dict[Path, PhotoFacets] = {}
         self._facet_job: int | None = None
-        #: 这一层还没摆上屏的条目。要重排时先攒在这里，顺序定下来再一次给出去；
-        #: ``None`` 表示「模型就是当前这一层的全部」，可以边扫边出图。
+        #: 这一层还没摆上屏的条目。扫出来的一律先攒在这里，顺序定下来再一次给出去
+        #: （见 ADR 0009 决策 6）；``None`` 表示「模型就是当前这一层的全部」，
+        #: 也就是这一层已经排好、正在被人看。
         self._staged: list[GridEntry] | None = None
         #: 横幅上正占着「这一层什么都没有」这句话；有了内容要把它收回去。
         self._level_notice = False
@@ -582,11 +583,10 @@ class MainWindow(QMainWindow):
 
         sort_menu = view_menu.addMenu("排序")
         sort_menu.setToolTipsVisible(True)
-        self._sort_actions: dict[str | None, QAction] = {
-            None: self._order_choice(
-                sort_menu, "不排序（相册在前，按名称）", None, self.set_sort_facet
-            )
-        }
+        # 菜单里**没有「不排序」**：扫描顺序是内部实现（相册在前、按名称），把它摆成一个
+        # 选项等于承认「不按任何字段排」也是用户的正当选择 —— 那条路只会让人在两种
+        # 看不懂的顺序之间来回试。真的要按名字看，「文件名」那一项摆在那儿。
+        self._sort_actions: dict[str, QAction] = {}
         for facet in SORT_FACETS:
             self._sort_actions[facet.id] = self._order_choice(
                 sort_menu,
@@ -654,8 +654,8 @@ class MainWindow(QMainWindow):
 
     def set_sort_facet(self, facet_id: str | None) -> None:
         """切换排序字段（菜单用）。组内排序也跟着换 —— 这正是它的用处。"""
-        if facet_id is not None and sort_facet(facet_id) is None:
-            return  # 非法 id
+        if facet_id is None or sort_facet(facet_id) is None:
+            return  # 没有「不排序」这个选择；非法 id 只可能来自旧会话，静默忽略
         if facet_id == self._sort_facet:
             self._sync_order_actions()
             return
@@ -686,26 +686,12 @@ class MainWindow(QMainWindow):
         for facet_id, action in self._sort_actions.items():
             action.setChecked(facet_id == self._sort_facet)
         self._descending_action.setChecked(self._sort_descending)
-        # 不排序时「逆序」没有意义（那个顺序就是相册在前、名称升序）。
-        self._descending_action.setEnabled(self._sort_facet is not None)
 
     def _current_order(self) -> SortOrder:
         return SortOrder(facet=sort_facet(self._sort_facet), descending=self._sort_descending)
 
     def _current_group_facet(self) -> Facet | None:
         return group_facet(self._group_facet)
-
-    def _ordering_active(self) -> bool:
-        """这一层要不要在最后统一重排一次。
-
-        不排序时**不需要**：扫描本来就是那个顺序（相册在前、按名称），边扫边出图
-        才是大库该有的手感。选了分组或某个排序字段才需要重排 —— 默认的按拍摄时间排
-        也一样要攒，所以这一条现在是常态而不是例外。
-        """
-        if self._group_view is not None:
-            # 组里已经是照片了，再分组进不去也出不来，只剩组内排序。
-            return sort_facet(self._sort_facet) is not None
-        return self._group_facet is not None or self._sort_facet is not None
 
     def _needs_facet_read(self) -> bool:
         """当前的选择是否必须真去读 EXIF 才能算出顺序。"""
@@ -742,7 +728,7 @@ class MainWindow(QMainWindow):
         if library is None or not self._needs_facet_read():
             self._apply_ordering()
             return
-        # 暂存优先：要重排时这一层的照片还没上屏，模型里当然一条也没有。
+        # 暂存优先：刚扫完的这一层还在暂存区里，模型上一条也没有。
         entries = self._staged if self._staged is not None else self._model.entries()
         refs = [entry for entry in entries if isinstance(entry, PhotoRef)]
         if not refs:
@@ -1014,7 +1000,8 @@ class MainWindow(QMainWindow):
         self._detail.clear_image()
         self._panel.clear()
         self._current_dir = library.root
-        self._staged = [] if self._ordering_active() else None
+        # 每一层都要重排（排序字段总是有的），所以扫出来的一律先攒着，等顺序定下来。
+        self._staged = []
         self._level_notice = False
         self._progress_notice = False
         self._place_notice_text = None
@@ -1157,9 +1144,10 @@ class MainWindow(QMainWindow):
             return
         batch = payload if isinstance(payload, tuple) else ()
         if self._staged is not None:
-            # 要重排就先攒着：**边扫边出图在这里等于闪一下** —— 用户先看到一屏
-            # 未分组的照片，下一秒它们全变成组卡片，看起来像界面自己乱了。
-            # 攒到顺序定下来再一次给出去，中间那段宁可留白（横幅会说明在读什么）。
+            # 扫描期间一律先攒着：**边扫边出图在这里等于闪一下** —— 用户先看到一屏按
+            # 扫描顺序排的照片，下一秒它们全变成排好序的（甚至全变成组卡片），看起来
+            # 像界面自己乱了。攒到顺序定下来再一次给出去，中间那段宁可留白
+            # （横幅会说明在读什么）。
             self._staged.extend(batch)
             return
         self._model.append(batch)
@@ -1407,9 +1395,8 @@ class MainWindow(QMainWindow):
                 # 组里的成员是上一次分组算出来的快照，新照片该不该进这个组只能重算。
                 self._reenter_group_later(self._group_view.key)
                 return
-            if self._ordering_active() or self._group_view is not None:
-                # 新照片要读一次 EXIF 才排得对；其余照片命中索引，不会重读。
-                self._start_facet_read()
+            # 新照片要读一次 EXIF 才排得对；其余照片命中索引，不会重读。
+            self._start_facet_read()
         # 「这一层空不空」由它自己判断是加提示还是收提示（扫描出问题时它会让位）。
         self._update_level_notice()
         self._refresh_thumbnail_window()
@@ -2512,7 +2499,7 @@ class MainWindow(QMainWindow):
         self._model.clear()
         self._preview_cache.clear()
         self._metadata_cache.clear()
-        self._staged = [] if self._ordering_active() else None
+        self._staged = []  # 换层要重扫，攒着，别先摆一屏旧顺序
         self._level_notice = False
         self._progress_notice = False
         # 换层只把横幅收掉，**不打断**全库解析：它是整个库的事，与当前在哪一层无关。

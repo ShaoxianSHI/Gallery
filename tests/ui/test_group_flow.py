@@ -27,7 +27,6 @@ from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.library.photos import GroupRef, PhotoRef  # noqa: E402
 from gallery.core.library.session import (  # noqa: E402
     BROWSE_MODE_ALBUMS,
-    SORT_FACET_NONE,
     SessionState,
     load_session,
     save_session,
@@ -237,7 +236,8 @@ def test_menus_expose_group_and_sort_fields(qt_app: QApplication, tmp_path: Path
     sort_menu = window._sort_actions
 
     assert set(group_menu) >= {"captured_month", "captured_year", "camera", "keyword"}
-    assert set(sort_menu) >= {None, "name", "size", "captured"}
+    assert set(sort_menu) >= {"name", "size", "captured"}
+    assert None not in sort_menu  # 没有「不排序」：网格永远按某个字段排
     assert window._descending_action.text() == "逆序"
     window.close()
 
@@ -376,7 +376,7 @@ def test_opening_a_library_resolves_places_for_the_whole_library(
     window = _open(qt_app, root, session_base=tmp_path / "状态")
     _settle(qt_app, window)
 
-    # 没有分组，就是普通的三张照片（默认按文件名排序）
+    # 没有分组，就是普通的三张照片（默认按拍摄时间排）
     assert sorted(_labels(window)) == sorted(["三月.jpg", "四月.jpg", "去年十二月.jpg"])
     stored = window._library.cached_facets(
         [PhotoRef.from_path(root / name) for name in ("三月.jpg", "四月.jpg", "去年十二月.jpg")]
@@ -581,21 +581,42 @@ def test_photos_are_sorted_by_capture_time_without_asking(
 
     assert _labels(window) == ["去年十二月.jpg", "三月.jpg", "四月.jpg", "没有时间.jpg"]
     assert window._sort_actions["captured"].isChecked()
-    assert window._sort_actions[None].isChecked() is False
     assert window._descending_action.isEnabled() is True
     window.close()
 
 
-def test_choosing_no_sorting_is_remembered_across_restarts(
+def test_there_is_no_sorting_off_option(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path], fake_facet_source: object
 ) -> None:
-    """显式选了「不排序」的人不该每次开软件都被默认值拽回按时间排。"""
+    """「不排序」这一项没了：网格永远按某个字段排。
+
+    摆着它等于承认「不按任何字段排」也是正当选择，那条路只会让人在两种看不懂的
+    顺序之间来回试；真想按名字看，「文件名」那一项摆在那儿。
+    """
+    root = _library(tmp_path, make_photo, list(DATES))
+    window = _open(qt_app, root, session_base=tmp_path / "状态")
+    _settle(qt_app, window)
+
+    assert None not in window._sort_actions
+    assert not any("不排序" in action.text() for action in window._sort_actions.values())
+    # 点了也换不成：窗口手上永远有一个排序字段
+    window.set_sort_facet(None)
+    _settle(qt_app, window)
+
+    assert window._sort_actions["captured"].isChecked()
+    assert _labels(window) == ["去年十二月.jpg", "三月.jpg", "四月.jpg", "没有时间.jpg"]
+    window.close()
+
+
+def test_the_chosen_sort_facet_is_remembered_across_restarts(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path], fake_facet_source: object
+) -> None:
     root = _library(tmp_path, make_photo, list(DATES))
     session_base = tmp_path / "状态"
     window = _open(qt_app, root, session_base=session_base)
     _settle(qt_app, window)
 
-    window.set_sort_facet(None)  # 菜单第一项「不排序（相册在前，按名称）」
+    window.set_sort_facet("name")
     _settle(qt_app, window)
     assert _labels(window) == sorted(DATES)
     window.close()
@@ -603,7 +624,7 @@ def test_choosing_no_sorting_is_remembered_across_restarts(
     again = _open(qt_app, root, session_base=session_base, remember=False)
     _settle(qt_app, again)
 
-    assert again._sort_actions[None].isChecked()
+    assert again._sort_actions["name"].isChecked()
     assert _labels(again) == sorted(DATES)
     again.close()
 
@@ -725,21 +746,21 @@ def test_entering_an_album_never_shows_the_ungrouped_photos_first(
     window.close()
 
 
-def test_the_unsorted_level_still_streams_photos_in(
+def test_a_level_is_never_shown_before_its_order_is_ready(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path], fake_facet_source: object
 ) -> None:
-    """选了「不排序」的一层不需要重排，因此边扫边出图 —— 大库的首屏手感不能为了防闪屏丢掉。
+    """每一层都先攒后摆：中间那一屏按扫描顺序排的照片一帧都不许出现。
 
-    默认排序（按拍摄时间）要攒，这是防闪屏的代价；显式选「不排序」的人换回的就是
-    边扫边出图，这条路必须还在。
+    按拍摄时间排出来是「去年十二月 → 三月 → 四月」，按扫描（名称）顺序则是
+    「三月 → 四月 → 去年十二月」—— 两边不一样，所以这一条真的在看「有没有闪」。
     """
-    root = _library(tmp_path, make_photo, list(DATES))
-    window = _open(qt_app, root, session_base=tmp_path / "状态", sort_facet=SORT_FACET_NONE)
+    root = _library(tmp_path, make_photo, ["三月.jpg", "四月.jpg", "去年十二月.jpg"])
+    window = _open(qt_app, root, session_base=tmp_path / "状态")
 
-    assert window._ordering_active() is False
-    assert window._staged is None  # 不攒：模型里的条目就是这一层的全部
-    _settle(qt_app, window)
-    assert window._model.photo_at(0) is not None
+    assert window._staged == []  # 扫出来的一律先攒着，等顺序定下来
+    seen = _watch_names(qt_app, window, lambda: window._model.rowCount() > 0)
+
+    assert seen == [(), ("去年十二月.jpg", "三月.jpg", "四月.jpg")]
     window.close()
 
 

@@ -16,7 +16,6 @@ from gallery.core.library.session import (
     BROWSE_MODE_FLAT,
     DEFAULT_SORT_FACET,
     MAX_RECENT_ROOTS,
-    SORT_FACET_NONE,
     SessionState,
     WindowGeometry,
     load_session,
@@ -213,12 +212,12 @@ def test_no_sort_facet_means_the_default_one() -> None:
     assert SessionState().resolved_sort_facet() == DEFAULT_SORT_FACET == "captured"
 
 
-@pytest.mark.parametrize("bad", ["没有这个字段", "keyword", "", 3, None, ["captured"]])
+@pytest.mark.parametrize("bad", ["没有这个字段", "keyword", "", 3, None, ["captured"], "none"])
 def test_never_chosen_and_bogus_ids_fall_back_to_the_default(tmp_path: Path, bad: object) -> None:
-    """老的会话文件里那一项是 ``null``（那时表示「不排序」）—— 一律当「没选过」。
+    """会话里没这一项、来路不明、或是早先那个「不排序」哨兵 —— 一律当「没选过」。
 
-    分不清「没选过」与「选了不排序」的场合一律偏向默认值：新排序对所有人都生效，
-    真想不排序的人重新点一次即可（那次会记成 ``SORT_FACET_NONE``）。
+    菜单里没有「不排序」了，于是默认值就是唯一的退路：任何不是真排序字段的值都
+    回到按拍摄时间排，而不是让界面去认一个已经不存在的选择。
     """
     file = paths.app_state_file(base=tmp_path)
     file.parent.mkdir(parents=True)
@@ -231,17 +230,6 @@ def test_the_chosen_sort_facet_is_remembered(tmp_path: Path) -> None:
     save_session(SessionState(sort_facet="iso"), base=tmp_path)
 
     assert load_session(base=tmp_path).resolved_sort_facet() == "iso"
-
-
-def test_choosing_no_sorting_survives_a_restart(tmp_path: Path) -> None:
-    """显式选了「不排序」就不能被下一次启动的默认值拽回去 —— 那正是哨兵存在的理由。"""
-    state = SessionState().with_ordering(None, None, False)
-
-    assert state.sort_facet == SORT_FACET_NONE  # 界面上传的是 None，会话里记的是哨兵
-
-    save_session(state, base=tmp_path)
-
-    assert load_session(base=tmp_path).resolved_sort_facet() is None
 
 
 def test_with_ordering_keeps_other_fields() -> None:
