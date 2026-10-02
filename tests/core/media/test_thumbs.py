@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -27,6 +27,43 @@ def entries(cache: ThumbnailCache) -> list[Path]:
 @pytest.fixture
 def cache(tmp_path: Path) -> ThumbnailCache:
     return ThumbnailCache(tmp_path / "cache" / "thumbs", max_edge=64)
+
+
+@pytest.fixture
+def counted_scans(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[int]]:
+    """数一数 ``_entries()``（也就是「真的去列一遍目录」）被调了几次。"""
+    calls: list[int] = []
+    original = ThumbnailCache._entries
+
+    def counting(self: ThumbnailCache) -> list[tuple[Path, int, float]]:
+        calls.append(1)
+        return original(self)
+
+    monkeypatch.setattr(ThumbnailCache, "_entries", counting)
+    yield calls
+
+
+def jpeg_sampling_factors(data: bytes) -> list[int]:
+    """从 JPEG 的 SOF0 段里读出各颜色分量的采样因子。
+
+    4:2:0 存下来的图是 ``[0x22, 0x11, 0x11]``（第一个分量取 2×2 的块，另两个各 1×1），
+    4:4:4 是 ``[0x11, 0x11, 0x11]``。这是「到底有没有用色度抽样」唯一可靠的判据 ——
+    比断言常量值有意义，因为它验的是真正落到磁盘上的那串字节。
+    """
+    index = 2  # 跳过 SOI
+    while index < len(data) - 1:
+        if data[index] != 0xFF:
+            raise AssertionError("不是预期的 JPEG 段结构")
+        marker = data[index + 1]
+        index += 2
+        if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
+            continue
+        length = int.from_bytes(data[index : index + 2], "big")
+        if marker == 0xC0:  # SOF0
+            count = data[index + 7]
+            return [data[index + 9 + 3 * component] for component in range(count)]
+        index += length
+    raise AssertionError("JPEG 里找不到 SOF0 段")
 
 
 def test_generates_and_stores(cache: ThumbnailCache, make_photo: Callable[..., Path]) -> None:
@@ -182,3 +219,108 @@ def test_cache_can_be_deleted_and_rebuilt(
     second = cache.get(ref)
 
     assert (first.width, first.height, first.rgba) == (second.width, second.height, second.rgba)
+
+
+# ---- 总量记账（ADR 0015）----------------------------------------------------
+
+
+def test_writes_do_not_rescan_the_directory(
+    tmp_path: Path, make_photo: Callable[..., Path], counted_scans: list[int]
+) -> None:
+    """上限宽松时，写再多张也只该数一次目录。
+
+    这条钉住的是「记账替代数目录」：旧实现每 64 张就 ``iterdir()`` 一次，代价随
+    缓存线性增长，在 2 GiB 上限下每张要白付近 10 ms。
+    """
+    refs = [PhotoRef.from_path(make_photo(f"{index}.jpg")) for index in range(12)]
+    generous = ThumbnailCache(tmp_path / "thumbs", max_edge=64, max_bytes=64 * 1024 * 1024)
+
+    for ref in refs:
+        generous.get(ref)
+
+    assert len(entries(generous)) == 12
+    assert len(counted_scans) == 1  # 只有播种那一次
+
+
+def test_unlimited_cache_never_scans(
+    tmp_path: Path, make_photo: Callable[..., Path], counted_scans: list[int]
+) -> None:
+    """上限为 0 = 不限制，那就一次目录都不该数。"""
+    unlimited = ThumbnailCache(tmp_path / "thumbs", max_edge=64, max_bytes=0)
+
+    for index in range(5):
+        unlimited.get(PhotoRef.from_path(make_photo(f"{index}.jpg")))
+
+    assert len(counted_scans) == 0
+
+
+def test_accounting_reseeds_on_a_fresh_instance(
+    tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """**重启后记账归零，上限必须照样生效** —— 这是播种那一次扫描的理由。
+
+    记账只活在内存里；新进程拿到的第一个对象是空的。它必须自己去数一遍目录，
+    否则会以为缓存是空的，2 GiB 上限形同虚设、缓存无限涨。
+    """
+    refs = [PhotoRef.from_path(make_photo(f"{index}.jpg")) for index in range(8)]
+    directory = tmp_path / "thumbs"
+    # 上一个进程写了 4 张就退出了。
+    warm = ThumbnailCache(directory, max_edge=64, max_bytes=64 * 1024 * 1024)
+    for ref in refs[:4]:
+        warm.get(ref)
+    one_entry = entries(warm)[0].stat().st_size
+
+    # 模拟重启：全新实例，记账是空的，上限只够留两条。
+    reopened = ThumbnailCache(directory, max_edge=64, max_bytes=one_entry * 2)
+    assert reopened._total_bytes is None
+
+    # 接着写另外 4 张（全新照片，必然未命中，才会真的往目录里落盘）。
+    for ref in refs[4:]:
+        reopened.get(ref)
+
+    assert reopened._total_bytes is not None  # 已经播种
+    assert reopened.total_bytes() <= one_entry * 2
+    assert len(entries(reopened)) < 8  # 确实淘汰过，而不是放任它涨
+
+
+def test_accounting_stays_in_step_with_the_directory(
+    tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """记账不能越走越偏：它必须和「真的数一遍」始终一致。"""
+    refs = [PhotoRef.from_path(make_photo(f"{index}.jpg")) for index in range(8)]
+    cache = ThumbnailCache(tmp_path / "thumbs", max_edge=64, max_bytes=4 * 1024)
+    for ref in refs:
+        cache.get(ref)
+
+    tracked = cache._total_bytes
+    assert tracked is not None
+    assert cache.total_bytes() == tracked
+
+
+def test_clear_resets_the_accounting(
+    cache: ThumbnailCache, make_photo: Callable[..., Path]
+) -> None:
+    for index in range(4):
+        cache.get(PhotoRef.from_path(make_photo(f"{index}.jpg")))
+
+    assert cache.clear() == 4
+    assert cache._total_bytes == 0
+
+
+# ---- 编码规格（ADR 0015）----------------------------------------------------
+
+
+def test_thumbnail_jpeg_uses_chroma_subsampling(
+    cache: ThumbnailCache, make_photo: Callable[..., Path]
+) -> None:
+    """缓存里的 JPEG 必须是 4:2:0。
+
+    钉的是「**显式**写出来」这件事：不写的话这个值是由 libjpeg 的默认行为决定的
+    （在 q82/q85 上它恰好也是 4:2:0），一旦换版本或换质量就可能悄悄变掉。验的是
+    真正落到磁盘上的字节，不是常量值（ADR 0015）。
+    """
+    cache.get(PhotoRef.from_path(make_photo("a.jpg", size=(400, 200))))
+
+    factors = jpeg_sampling_factors(entries(cache)[0].read_bytes())
+
+    assert factors == [0x22, 0x11, 0x11]

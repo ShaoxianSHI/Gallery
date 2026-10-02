@@ -9,6 +9,10 @@
 照片被外部工具改写（mtime/size 变化）或缩略图规格升级时，旧条目自动不再命中。
 
 带透明通道的源图存 PNG（否则透明区域会变黑），其余存 JPEG 以省空间。
+
+**总量靠记账而不是靠数目录**（见 ``_total_bytes`` 与 ADR 0015）：「缓存有多大了」
+这个问题一旦靠 ``iterdir()`` 来答，每写一张图就付一次 O(条目数)，在默认 2 GiB 上限
+下每张要付掉近 10 ms —— 比编码加落盘还贵一倍，而且缓存越大越贵、从不收敛。
 """
 
 from __future__ import annotations
@@ -28,11 +32,13 @@ from gallery.core.constants import (
 from gallery.core.library.photos import PhotoRef
 from gallery.core.media.decode import RasterImage, decode_rgba
 
-#: 缓存 JPEG 的质量。缩略图不需要更高质量，85 在体积与观感上最划算。
-JPEG_QUALITY = 85
+#: 缓存 JPEG 的质量。缩略图不需要更高质量，82 在体积与观感上最划算
+#: （相对 85 省 7.6% 体积，PSNR 只掉 0.7 dB，而它最多只显示成 288 逻辑像素）。
+JPEG_QUALITY = 82
 
-#: 每写入多少次检查一次缓存上限。避免每张图都去列目录。
-_LIMIT_CHECK_INTERVAL = 64
+#: 缓存 JPEG 的色度抽样。**显式写出来而不是靠默认值**：libjpeg 在这个质量下本来就
+#: 选 4:2:0，写出来只是让「用哪一档色度抽样」成为代码里的一行承诺（ADR 0015）。
+JPEG_SUBSAMPLING = "4:2:0"
 
 #: 触发淘汰后把总量压到上限的这个比例，避免在阈值附近反复淘汰。
 _EVICT_TARGET_RATIO = 0.9
@@ -55,7 +61,12 @@ class ThumbnailCache:
         self._max_edge = max_edge
         self._spec_version = spec_version
         self._max_bytes = max_bytes
-        self._writes_since_check = 0
+        #: 记账下来的缓存总量。``None`` = 还没数过（必须真的扫一遍目录）。
+        #:
+        #: **第一次必须播种**：进程重启后计数归零，不扫一遍就会以为缓存是空的，
+        #: 上限彻底失效、缓存无限涨。之后每写成功一张 ``+= len(data)``，
+        #: 只有真的越过上限时才去扫，扫完用结果重置，计数不会越走越偏。
+        self._total_bytes: int | None = None
 
     @property
     def directory(self) -> Path:
@@ -100,6 +111,9 @@ class ThumbnailCache:
                     source.rename(destination)
             except OSError:
                 continue  # 缓存挪不动只是慢一点，不影响正确性
+            # 挪走不改变字节数，但「目标已存在所以删掉源」那一步会。改名是用户
+            # 亲手触发的罕见操作，直接作废记账、下次问的时候重数一遍最省心。
+            self._total_bytes = None
             moved = True
         return moved
 
@@ -115,18 +129,25 @@ class ThumbnailCache:
             except OSError:
                 continue
             removed += 1
+        self._total_bytes = 0
         return removed
 
     def total_bytes(self) -> int:
-        """当前缓存占用的字节数。"""
-        return sum(size for _, size, _ in self._entries())
+        """当前缓存占用的字节数（真的数一遍，顺手把记账纠正成准数）。"""
+        total = sum(size for _, size, _ in self._entries())
+        self._total_bytes = total
+        return total
 
     def enforce_limit(self) -> int:
-        """按修改时间从旧到新淘汰，直到低于上限。返回删除的条目数。"""
+        """按修改时间从旧到新淘汰，直到低于上限。返回删除的条目数。
+
+        扫描结果会写回记账，于是下一次「是否超限」的判断又是从准数出发。
+        """
         if self._max_bytes <= 0:
             return 0
         entries = self._entries()
         total = sum(size for _, size, _ in entries)
+        self._total_bytes = total
         if total <= self._max_bytes:
             return 0
         target = int(self._max_bytes * _EVICT_TARGET_RATIO)
@@ -140,7 +161,16 @@ class ThumbnailCache:
                 continue
             total -= size
             removed += 1
+        self._total_bytes = total
         return removed
+
+    def _over_limit(self) -> bool:
+        """记着账就能答的问题；只有「还没数过」才需要真的去数一遍。"""
+        if self._max_bytes <= 0:
+            return False
+        if self._total_bytes is None:
+            return True  # 未知 → 当作超限，逼着 enforce_limit 去数一遍并播种
+        return self._total_bytes > self._max_bytes
 
     def _key(self, ref: PhotoRef) -> str:
         raw = "\x00".join(
@@ -185,9 +215,11 @@ class ThumbnailCache:
         except OSError:
             # 缓存写不进去只意味着下次还得重新解码，不影响正确性。
             return
-        self._writes_since_check += 1
-        if self._writes_since_check >= _LIMIT_CHECK_INTERVAL:
-            self._writes_since_check = 0
+        if self._total_bytes is not None:
+            self._total_bytes += len(data)
+        if self._over_limit():
+            # 只有真的越过上限才付一次全目录扫描。扫描完 enforce_limit 会把记账
+            # 重置成准数，于是下一次超限判断又回到 O(1) 的整数比较。
             self.enforce_limit()
 
     def _entries(self) -> list[tuple[Path, int, float]]:
@@ -209,7 +241,12 @@ class ThumbnailCache:
 
 
 def _encode(image: RasterImage) -> tuple[bytes, str]:
-    """把像素编码成缓存文件内容，返回 ``(数据, 扩展名)``。"""
+    """把像素编码成缓存文件内容，返回 ``(数据, 扩展名)``。
+
+    JPEG 这条路刻意**不**开 ``optimize``：它会额外跑一遍哈夫曼表搜索，对一张
+    512 px 的缩略图来说，编码时间翻倍（0.84 → 0.36 ms）换来的体积只少 2%。
+    真正的大头是质量从 85 降到 82 —— 那个既省时间也省体积（ADR 0015）。
+    """
     buffer = io.BytesIO()
     raster = Image.frombytes("RGBA", (image.width, image.height), image.rgba)
     try:
@@ -218,7 +255,13 @@ def _encode(image: RasterImage) -> tuple[bytes, str]:
             return buffer.getvalue(), ".png"
         rgb = raster.convert("RGB")
         try:
-            rgb.save(buffer, format="JPEG", quality=JPEG_QUALITY, optimize=True)
+            rgb.save(
+                buffer,
+                format="JPEG",
+                quality=JPEG_QUALITY,
+                optimize=False,
+                subsampling=JPEG_SUBSAMPLING,
+            )
         finally:
             rgb.close()
         return buffer.getvalue(), ".jpg"
@@ -226,4 +269,4 @@ def _encode(image: RasterImage) -> tuple[bytes, str]:
         raster.close()
 
 
-__all__ = ["JPEG_QUALITY", "ThumbnailCache"]
+__all__ = ["JPEG_QUALITY", "JPEG_SUBSAMPLING", "ThumbnailCache"]
