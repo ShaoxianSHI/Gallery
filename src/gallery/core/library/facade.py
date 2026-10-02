@@ -33,6 +33,7 @@ from gallery.core.metadata.facets import (
 from gallery.core.metadata.rename import RenameResult, rename_entry
 from gallery.core.metadata.trash import TrashResult, trash_entries
 from gallery.core.metadata.undo import UndoResult, next_undo_label, undo_last_write
+from gallery.core.places.dataset import is_real_coordinate
 
 if TYPE_CHECKING:
     from gallery.core.places.resolver import PlaceResolver, Status
@@ -443,7 +444,15 @@ class Library:
 
 
 def _has_coordinates(facets: PhotoFacets) -> bool:
-    return facets.latitude is not None and facets.longitude is not None
+    """这张照片有没有一个**能用来反查**的坐标。
+
+    经纬度同时为 0 不算：那是相机定不到 GPS 时的占位写法（见
+    :func:`gallery.core.places.dataset.is_real_coordinate`）。否则这些照片每开一次库
+    都会被送去反查一次，而每次都会得到同一个来自几内亚湾的错答案。
+    """
+    if facets.latitude is None or facets.longitude is None:
+        return False
+    return is_real_coordinate(facets.latitude, facets.longitude)
 
 
 def _needs_place(facets: PhotoFacets) -> bool:

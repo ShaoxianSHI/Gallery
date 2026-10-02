@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from gallery.core.places.dataset import Place, PlaceIndex
+from gallery.core.places.dataset import Place, PlaceIndex, is_real_coordinate
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +95,10 @@ class LazyPlaceResolver:
     ) -> ResolvedPlace | None:
         # 约 11 米的粒度（4 位小数）：消费级 GPS 的抖动就在这个量级，同一次拍摄
         # 的几十张照片坐标几乎相同；不同城市相差以公里计，不会被这个粒度抹平。
+        if not is_real_coordinate(latitude, longitude):
+            # 定不到 GPS 的相机填的是 0 而不是空。把它当成「附近没有城市」记下来，
+            # 等于给这些照片永久钉上一个来自几内亚湾的结论。
+            return None
         key = (round(latitude, 4), round(longitude, 4))
         if key in self._cache:
             return self._cache[key]

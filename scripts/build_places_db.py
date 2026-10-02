@@ -112,6 +112,20 @@ FALLBACK_MAX_KM: Final = 300.0
 
 EARTH_RADIUS_KM: Final = 6371.0
 
+#: 坐标为 ``(0, 0)`` 的行一律丢掉。
+#:
+#: 那个点在几内亚湾里，世上并不存在 —— 源数据里有十几条这样的坏行（哈尔滨、大庆、
+#: 廊坊……），都是「坐标坏了的区县」被贴上了最近城市的名字。它们只会给出一个**自信的
+#: 错答案**：相机在定不到 GPS 时填的 0 恰好会命中它们，于是所有坏照片都显示成哈尔滨。
+#: 那些城市本身另有坐标正确的记录，丢掉零损失。
+#:
+#: 只判两个同时为零 —— 纬度 0 是赤道、经度 0 是本初子午线，都是真实位置。
+NULL_ISLAND: Final = (0.0, 0.0)
+
+
+def _is_null_island(latitude: float, longitude: float) -> bool:
+    return (latitude, longitude) == NULL_ISLAND
+
 
 def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     p1, p2 = math.radians(lat1), math.radians(lat2)
@@ -327,14 +341,23 @@ def _state_exists(countries: dict[str, Any], code: str, state_name: str) -> bool
 def _dedupe(
     rows: list[tuple[str, str, str, float, float, int]],
 ) -> list[tuple[str, str, str, float, float, int]]:
-    """同名同坐标只留一条。源数据里有 328 组同名同城的重复记录。"""
+    """同名同坐标只留一条，并丢掉坐标为 ``(0, 0)`` 的坏行（见 :data:`NULL_ISLAND`）。
+
+    源数据里有 328 组同名同城的重复记录。
+    """
     seen: set[tuple[str, str, float, float]] = set()
     out = []
+    dropped_null_island = 0
     for row in rows:
+        if _is_null_island(row[3], row[4]):
+            dropped_null_island += 1
+            continue
         key = (row[0], row[1], round(row[3], 3), round(row[4], 3))
         if key not in seen:
             seen.add(key)
             out.append(row)
+    if dropped_null_island:
+        print(f"丢弃坐标为 (0,0) 的坏行 {dropped_null_island} 条（见 NULL_ISLAND）")
     return out
 
 

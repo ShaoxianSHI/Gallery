@@ -62,6 +62,7 @@ from gallery.core.metadata.rename import RenameResult
 from gallery.core.metadata.trash import Failure, TrashResult
 from gallery.core.metadata.undo import UndoResult
 from gallery.core.places.countries import place_label
+from gallery.core.places.dataset import is_real_coordinate
 from gallery.core.places.resolver import LazyPlaceResolver
 from gallery.ui import theme
 from gallery.ui.browser.grid import PREFETCH_MARGIN, PhotoGrid
@@ -1368,6 +1369,8 @@ class MainWindow(QMainWindow):
         """
         if report.latitude is None or report.longitude is None:
             return
+        if not is_real_coordinate(report.latitude, report.longitude):
+            return  # 坐标是 (0,0)：那是「没定到 GPS」的占位写法，没有地点可言
         if report.place_from_file or report.place_resolved:
             return  # 文件里写了地点，或已经推断过一次（含「没有记录」这种结论）
         if not self._panel.isVisible():

@@ -96,16 +96,20 @@ def test_different_coordinates_are_looked_up_separately() -> None:
     assert index.calls == 2
 
 
+#: 南太平洋上一片什么都没有的海域（**不是 (0,0)**：那个坐标另有含义，见 is_real_coordinate）
+NOWHERE = (-58.0, -140.0)
+
+
 def test_nowhere_is_remembered_as_a_conclusion() -> None:
     """附近没有城市记录是结论，会记下来 —— 不必每次都重算一遍。"""
     index = FakeIndex(None)
     resolver = LazyPlaceResolver(index)  # type: ignore[arg-type]
 
-    resolver.place_for(0.0, 0.0)
-    resolver.place_for(0.0, 0.0)
+    resolver.place_for(*NOWHERE)
+    resolver.place_for(*NOWHERE)
 
     assert index.calls == 1
-    assert resolver.place_for(0.0, 0.0) is None
+    assert resolver.place_for(*NOWHERE) is None
 
 
 def test_missing_database_does_not_poison_the_cache(tmp_path: Path) -> None:
@@ -132,6 +136,15 @@ def test_loading_reports_status_once(tmp_path: Path) -> None:
     resolver.place_for(LATITUDE + 0.01, LONGITUDE, status=statuses.append)
 
     assert statuses == ["正在加载城市库…"]
+
+
+def test_null_island_coordinates_are_refused(tmp_path: Path) -> None:
+    """相机定不到 GPS 时填 0：那不是位置，不该被当成「附近没有城市」记进索引。"""
+    index = FakeIndex(_place())
+    resolver = LazyPlaceResolver(index)  # type: ignore[arg-type]
+
+    assert resolver.place_for(0.0, 0.0) is None
+    assert index.calls == 0, "坐标无效时不该去查索引"
 
 
 def test_existing_index_is_reused_for_the_panel() -> None:

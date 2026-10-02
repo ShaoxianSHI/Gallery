@@ -22,6 +22,7 @@ from gallery.core.places.dataset import (
     _City,
     _haversine_km,
     _parse,
+    is_real_coordinate,
 )
 
 
@@ -159,6 +160,51 @@ def test_same_point_prefers_the_bigger_city() -> None:
     place = index.nearest(31.2304, 121.4737)
 
     assert place is not None and place.city == "上海"
+
+
+# ---- 坐标为 (0, 0) ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize(("latitude", "longitude"), [(0.0, 0.0), (-0.0, 0.0)])
+def test_null_island_query_gives_no_answer(latitude: float, longitude: float) -> None:
+    """相机定不到 GPS 时填的是 0，不是空。
+
+    那是几内亚湾里一个不存在的点。拿它反查会得到一个**自信的错答案** ——
+    源数据里恰好有一条坐标为 (0,0) 的记录，于是所有坏照片都会显示成同一个地名。
+    """
+    index = PlaceIndex([_city("假市", 0.0, 0.0), _city("真市", 31.23, 121.47)])
+
+    assert index.nearest(latitude, longitude) is None
+
+
+@pytest.mark.parametrize(
+    ("latitude", "longitude"),
+    [
+        (-0.1807, -78.4678),  # 赤道上的基多
+        (51.4779, 0.0015),  # 本初子午线
+        (0.0, 116.3913),  # 只有纬度是 0
+        (39.9042, 0.0),  # 只有经度是 0
+    ],
+)
+def test_equator_and_prime_meridian_are_real_places(latitude: float, longitude: float) -> None:
+    """**只判两个同时为零**：赤道与本初子午线都是真实存在的位置，不能误伤。"""
+    index = PlaceIndex([_city("赤道上的", -0.18, -78.47), _city("本初子午线上的", 51.48, 0.0)])
+
+    assert is_real_coordinate(latitude, longitude) is True
+    # 没被当成 (0,0) 挡掉：赤道上的那座查得到，另一处则是「附近没有城市」
+    assert index.nearest(-0.18, -78.47) is not None
+
+
+def test_records_at_null_island_are_dropped_when_parsing(tmp_path: Path) -> None:
+    """生成期已经丢掉了，但解析的是随包分发的文件，不该悄悄收下坏行。"""
+    body = "广东省\t坏行\t中国\t0.0000\t0.0000\t100\n浙江省\t杭州\t中国\t30.2900\t120.1600\t100\n"
+    path = tmp_path / "p.tsv.gz"
+    path.write_bytes(gzip.compress(body.encode("utf-8"), 9))
+
+    index = PlaceIndex.load(path)
+
+    assert index is not None and index.city_count == 1
+    assert index.nearest(0.0, 0.0) is None
 
 
 def test_empty_index_answers_nothing() -> None:
