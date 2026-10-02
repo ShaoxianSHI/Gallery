@@ -37,6 +37,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from gallery.core import paths
+from gallery.core.cancellation import never_cancel
 from gallery.core.errors import PasteError
 from gallery.core.metadata.journal import (
     ACTION_PASTE,
@@ -117,7 +118,7 @@ def copy_into(
     if not destination.is_dir():
         raise PasteError(f"「{destination.name}」不是一个文件夹。")
 
-    cancelled = should_cancel if should_cancel is not None else _never_cancel
+    cancelled = should_cancel or never_cancel
     batch = uuid4().hex[:12]
     pasted: list[PastedFile] = []
     skipped: list[Skipped] = []
@@ -253,11 +254,6 @@ def _same_directory(left: Path, right: Path) -> bool:
         return left.resolve() == right.resolve()
     except OSError:
         return left == right
-
-
-def _never_cancel() -> bool:
-    """``should_cancel`` 省略时的替身：永远说「没取消」。"""
-    return False
 
 
 __all__ = [

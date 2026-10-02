@@ -24,6 +24,7 @@ from watchdog.events import (
     DirCreatedEvent,
     DirDeletedEvent,
     DirModifiedEvent,
+    DirMovedEvent,
     FileCreatedEvent,
     FileDeletedEvent,
     FileModifiedEvent,
@@ -303,6 +304,57 @@ def test_paths_the_scanner_never_shows_are_never_reported(tmp_path: Path, name: 
     watcher.flush()
 
     assert batches == []
+
+
+@pytest.mark.parametrize("name", ["读我.txt", "raw.cr2", ".DS_Store"])
+def test_moving_one_in_from_outside_reports_nothing_either(tmp_path: Path, name: str) -> None:
+    """从访达拖一个扫描看不见的文件进库，同样不该惊动网格。
+
+    移进来的那条路（``_moved_change`` 里「只有目的端在库内」那一支）过去漏了扩展名
+    过滤：同一个 ``读我.txt``，在库里新建会被滤掉，从外面拖进来却报成「新增」，
+    界面于是为一件根本不会出现在网格里的东西白忙一趟。
+    """
+    outside = tmp_path.parent / f"{tmp_path.name}-外面"
+    outside.mkdir(exist_ok=True)
+    source = outside / name
+    source.write_bytes(b"x")
+    watcher, observer, batches = make_watcher(tmp_path)
+    watcher.start()
+
+    send(observer, FileMovedEvent(str(source), str(tmp_path / name)))
+    watcher.flush()
+
+    assert batches == []
+
+
+@pytest.mark.parametrize("name", ["读我.txt", "raw.cr2"])
+def test_renaming_one_inside_the_library_reports_nothing(tmp_path: Path, name: str) -> None:
+    """在库里给这样的文件改个名也一样：改完它照样是扫描看不见的东西。"""
+    target = tmp_path / name
+    target.write_bytes(b"x")
+    renamed = tmp_path / "改过名.txt"
+    watcher, observer, batches = make_watcher(tmp_path)
+    watcher.start()
+
+    send(observer, FileMovedEvent(str(target), str(renamed)))
+    watcher.flush()
+
+    assert batches == []
+
+
+def test_moving_a_photo_in_from_outside_is_reported(tmp_path: Path) -> None:
+    """上面两条的对照：照片拖进来必须照报，否则新照片不会自己从网格里长出来。"""
+    outside = tmp_path.parent / f"{tmp_path.name}-外面"
+    outside.mkdir(exist_ok=True)
+    source = outside / "新来的一张.jpg"
+    source.write_bytes(b"x")
+    watcher, observer, batches = make_watcher(tmp_path)
+    watcher.start()
+
+    send(observer, FileMovedEvent(str(source), str(tmp_path / "新来的一张.jpg")))
+    watcher.flush()
+
+    assert [change.kind for batch in batches for change in batch] == [ChangeKind.ADDED]
 
 
 def test_paths_outside_the_library_are_never_reported(tmp_path: Path) -> None:
@@ -653,12 +705,14 @@ def test_a_recreated_folder_is_reported_as_new(tmp_path: Path) -> None:
 
 
 def test_moving_a_folder_inside_the_library_is_a_move(tmp_path: Path) -> None:
+    """相册改名（目录的移动）照报。**必须发目录事件**：watchdog 对目录给的是
+    ``DirMovedEvent``，扩展名过滤只对文件成立（目录没有扩展名）。"""
     watcher, observer, batches = make_watcher(tmp_path)
     watcher.start()
 
     send(
         observer,
-        FileMovedEvent(str(tmp_path / "相册"), str(tmp_path / "另一处" / "相册")),
+        DirMovedEvent(str(tmp_path / "相册"), str(tmp_path / "另一处" / "相册")),
     )
     watcher.flush()
 
@@ -668,7 +722,7 @@ def test_moving_a_folder_inside_the_library_is_a_move(tmp_path: Path) -> None:
                 ChangeKind.MOVED,
                 tmp_path / "相册",
                 dest_path=tmp_path / "另一处" / "相册",
-                is_dir=False,
+                is_dir=True,
             ),
         )
     ]

@@ -25,6 +25,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Final, Protocol
 
+from gallery.core.cancellation import never_cancel
 from gallery.core.errors import MetadataError
 from gallery.core.metadata.exif import EXIFTOOL_EXECUTABLE, EXIFTOOL_TIMEOUT_SECONDS
 from gallery.core.metadata.facets import WANTED_TAGS, PhotoFacets, extract
@@ -83,7 +84,7 @@ class ExifToolBatchSource:
     def read_many(
         self, paths: Sequence[Path], *, should_cancel: Callable[[], bool] | None = None
     ) -> Iterator[tuple[Path, Mapping[str, object] | None]]:
-        cancelled = should_cancel if should_cancel is not None else _never_cancel
+        cancelled = should_cancel or never_cancel
         for start in range(0, len(paths), self._batch_size):
             if cancelled():
                 return
@@ -169,7 +170,7 @@ class PillowBatchSource:
     def read_many(
         self, paths: Sequence[Path], *, should_cancel: Callable[[], bool] | None = None
     ) -> Iterator[tuple[Path, Mapping[str, object] | None]]:
-        cancelled = should_cancel if should_cancel is not None else _never_cancel
+        cancelled = should_cancel or never_cancel
         for path in paths:
             if cancelled():
                 return
@@ -213,10 +214,6 @@ def _terminate(process: subprocess.Popen[bytes]) -> None:
     except subprocess.TimeoutExpired:  # pragma: no cover - exiftool 通常很配合
         process.kill()
         process.wait(timeout=2)
-
-
-def _never_cancel() -> bool:
-    return False
 
 
 def read_facets(

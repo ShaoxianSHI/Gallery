@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from stat import S_ISDIR, S_ISREG
 
+from gallery.core.cancellation import never_cancel
 from gallery.core.constants import CONFIG_DIR_NAME
 from gallery.core.errors import LibraryNotAccessibleError
 from gallery.core.library.photos import FolderRef, GridEntry, PhotoRef, is_supported_photo
@@ -82,7 +83,7 @@ def iter_photos(
             path=root,
         )
 
-    cancelled = should_cancel if should_cancel is not None else _never_cancel
+    cancelled = should_cancel or never_cancel
     stack: list[Path] = [root]
     while stack:
         if cancelled():
@@ -135,7 +136,7 @@ def iter_entries(
             f"打不开这个文件夹：{directory}。它可能已被移动、重命名或删除。",
             path=directory,
         )
-    cancelled = should_cancel if should_cancel is not None else _never_cancel
+    cancelled = should_cancel or never_cancel
     listed = _list_dir(directory, report)
     if listed is None:
         return
@@ -205,7 +206,7 @@ def iter_albums(
             f"打不开这个文件夹：{root}。它可能已被移动、重命名或删除。",
             path=root,
         )
-    cancelled = should_cancel if should_cancel is not None else _never_cancel
+    cancelled = should_cancel or never_cancel
     found: list[FolderRef] = []
     stack: list[Path] = [root]
     while stack:
@@ -311,10 +312,6 @@ def _note_file(report: ScanReport | None, path: str, exc: OSError) -> None:
 
 def _sort_key(entry: os.DirEntry[str]) -> str:
     return entry.name.lower()
-
-
-def _never_cancel() -> bool:
-    return False
 
 
 __all__ = [

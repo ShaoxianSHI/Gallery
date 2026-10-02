@@ -221,12 +221,21 @@ def _moved_change(root: Path, event: FileSystemMovedEvent) -> LibraryChange | No
 
     两端都在库内 → 改名（界面可以原地换掉那一格）；移进来 → 新增；移出去 → 消失。
     移进移出废纸篓与别的盘走的正是后两条路。
+
+    **「扫描看不见的就不报」这条规矩在这里同样成立**（:func:`_to_change` 里有，
+    从访达拖一个 ``读我.txt`` 进库，或在库里把 ``raw.cr2`` 改个名，都不该惊动网格）。
+    两端都要判：从库外移进来的看的是**目的地**，移出去的那一端网格上马上就没有了，
+    报出来没有意义，因此只看源端是不是照片。
     """
     source = _normalize(root, os.fsdecode(event.src_path))
     destination = _normalize(root, os.fsdecode(event.dest_path))
     here = is_visible_path(root, source)
     there = is_visible_path(root, destination)
     if here and there:
+        if not event.is_directory and not (
+            is_supported_photo(source) and is_supported_photo(destination)
+        ):
+            return None
         return LibraryChange(
             kind=ChangeKind.MOVED,
             path=source,
@@ -234,8 +243,12 @@ def _moved_change(root: Path, event: FileSystemMovedEvent) -> LibraryChange | No
             is_dir=event.is_directory,
         )
     if there:
+        if not event.is_directory and not is_supported_photo(destination):
+            return None
         return LibraryChange(kind=ChangeKind.ADDED, path=destination, is_dir=event.is_directory)
     if here:
+        if not event.is_directory and not is_supported_photo(source):
+            return None
         return LibraryChange(kind=ChangeKind.REMOVED, path=source, is_dir=event.is_directory)
     return None
 

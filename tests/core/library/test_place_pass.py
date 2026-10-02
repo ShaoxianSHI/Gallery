@@ -198,6 +198,100 @@ def test_a_lookup_that_could_not_happen_is_not_remembered(
     assert resolver.queried
 
 
+#: 文件里自己就写全了地点的那一张 —— Lightroom / Google Photos 导出的 XMP 就是这样。
+#: 它与上面几张的关键差别是：**地点根本不需要反查**，于是 ``_resolved`` 那一路走不到。
+FILE_PLACE: dict[str, str] = {
+    **HANGZHOU_GPS,
+    "XMP-photoshop:City": "杭州",
+    "XMP-photoshop:State": "浙江",
+    "XMP-photoshop:Country": "中国",
+}
+
+
+def test_a_photo_whose_place_comes_from_the_file_is_still_only_read_once(
+    tmp_path: Path, make_photo: Callable[..., Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """文件里写全了地点的照片，第二遍也**连 EXIF 都不该再读**。
+
+    幂等靠的是「已经查过了」这个标记，而它过去只在**反查**那条路上被记下。照片自带
+    地点时反查器没什么可补的，标记因此永远记不上 —— 每开一次库就为它重新起一次
+    exiftool，正是 ``resolve_places`` 文档里「第二次几乎不要钱」要防的那件事。
+    """
+    raw: dict[str, dict[str, str]] = {"已标注.jpg": FILE_PLACE}
+
+    def fake_read_many(
+        self: object, paths: Sequence[Path], *, should_cancel: object = None
+    ) -> Iterator[tuple[Path, Mapping[str, object] | None]]:
+        for path in paths:
+            yield Path(path), raw.get(Path(path).name)
+
+    monkeypatch.setattr(batch.ExifToolBatchSource, "read_many", fake_read_many)
+    make_photo("已标注.jpg")
+    library = Library.open(tmp_path)
+    resolver = FakeResolver()
+
+    library.resolve_places(resolver=resolver)
+    row = library.cached_facets(_refs(library))[library.root / "已标注.jpg"]
+    assert (row.city, row.region, row.country) == ("杭州", "浙江", "中国")
+    assert row.place_checked is True
+    assert resolver.queried == []  # 文件写了就以文件为准，不必反查
+
+    def must_not_read(
+        self: object, paths: Sequence[Path], *, should_cancel: object = None
+    ) -> Iterator[tuple[Path, Mapping[str, object] | None]]:
+        raise AssertionError("文件里的地点就是结论，不该再去读 EXIF")
+        yield  # pragma: no cover - 让它是个生成器
+
+    monkeypatch.setattr(batch.ExifToolBatchSource, "read_many", must_not_read)
+    second = FakeResolver()
+
+    assert library.resolve_places(resolver=second).resolved == 0
+    assert second.queried == []
+
+
+def test_a_half_written_place_is_not_a_conclusion(tmp_path: Path) -> None:
+    """地点还缺着（只有国家、没有城市）时**不能**记「查过」。
+
+    记了就是把这张照片永久钉在「未知」上：等城市数据到位了也不会再问一遍
+    （``facets.mark_place_resolved`` 讲的正是这件事）。
+    """
+    (tmp_path / "只写了国家.jpg").write_bytes(b"x")
+    library = Library.open(tmp_path)
+
+    def fake_read_many(
+        self: object, paths: Sequence[Path], *, should_cancel: object = None
+    ) -> Iterator[tuple[Path, Mapping[str, object] | None]]:
+        for path in paths:
+            yield (
+                Path(path),
+                {
+                    "EXIF:GPSLatitude": HANGZHOU_GPS["EXIF:GPSLatitude"],
+                    "EXIF:GPSLatitudeRef": "North",
+                    "EXIF:GPSLongitude": HANGZHOU_GPS["EXIF:GPSLongitude"],
+                    "EXIF:GPSLongitudeRef": "East",
+                    "XMP-photoshop:Country": "中国",
+                },
+            )
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(batch.ExifToolBatchSource, "read_many", fake_read_many)
+        library.resolve_places()  # 没给反查器：城市补不上
+
+    row = library.cached_facets(_refs(library))[library.root / "只写了国家.jpg"]
+    assert row.country == "中国" and row.city is None
+    assert row.place_checked is False, "地点还缺着，不该当成已经查过"
+
+    # 反查器到位之后必须还能补上 —— 这正是上一条断言在守的东西。
+    resolver = FakeResolver()
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(batch.ExifToolBatchSource, "read_many", fake_read_many)
+        library.resolve_places(resolver=resolver)
+
+    assert resolver.queried
+    row = library.cached_facets(_refs(library))[library.root / "只写了国家.jpg"]
+    assert row.city == "杭州" and row.place_checked is True
+
+
 def test_work_is_announced_only_when_there_is_work(library_with_gps: Library) -> None:
     """``on_work`` 是界面「该不该报进度」的唯一依据：空跑时它必须一声不吭。
 

@@ -632,9 +632,21 @@ def _resolve_batch(
         facets = fresh.get(ref.path)
         if facets is None:
             continue  # 压根没读出来：下次还要再试，不进索引
-        if resolver is not None and _needs_place(facets):
-            facets = _resolved(facets, resolver, status)
-            resolved += 1
+        if _needs_place(facets):
+            if resolver is not None:
+                facets = _resolved(facets, resolver, status)
+                resolved += 1
+        elif _has_coordinates(facets):
+            # **文件自己就写全了地点**（Lightroom、Google Photos 导出的 XMP 如此）：
+            # 反查器没什么可补的，于是 :func:`_resolved` 那一路走不到，
+            # ``place_checked`` 也就永远记不上 —— 下一次开库会为同一张照片**再起一次
+            # exiftool**，「第二次几乎不要钱」就成了空话。那份地点同样是结论（而且
+            # 比反查更准），照 ADR 0010「文件里写了就以文件为准」，记下来就是。
+            #
+            # 判据是「**已经齐全**」而不是「查过」：地点还缺着（只有国家、没有城市）
+            # 时**不能**记 —— 那等于把这张照片永久钉在「未知」上，等城市数据到位了
+            # 也不会再问一遍（:func:`mark_place_resolved` 讲的就是这件事）。
+            facets = mark_place_resolved(facets)
         rows.append((ref, facets))
     index.store(rows)
     return resolved
