@@ -32,7 +32,7 @@ from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from enum import Enum
 
-from PySide6.QtCore import QRect, Qt
+from PySide6.QtCore import QPointF, QRect, Qt
 from PySide6.QtGui import (
     QAction,
     QColor,
@@ -41,6 +41,7 @@ from PySide6.QtGui import (
     QPainter,
     QPaintEvent,
     QPalette,
+    QPolygonF,
 )
 from PySide6.QtWidgets import QMenu
 
@@ -82,6 +83,11 @@ MENU_HIGHLIGHT_RADIUS = 5
 #: 缩一档更像访达里的样子。
 MENU_ARROW_SIZE = 8
 
+#: 我们自己画的那个右箭头（三角）有多大。Qt 那个缩到 8 × 8 之后实测墨迹是 3.5 × 9.5，
+#: 这里取同一个大小，画进**字母列**——原生菜单里子菜单箭头与快捷键的键位是同一列。
+MENU_ARROW_DRAWN_WIDTH = 3.5
+MENU_ARROW_DRAWN_HEIGHT = 9.5
+
 #: 菜单项的内边距（上 右 下 左，像素）。行高由此从 18 变成 26。
 #:
 #: 左边写 **0**：文字的左沿交给 :data:`MENU_INSET` 与样式自带的边距共同决定，
@@ -111,7 +117,9 @@ MENU_ITEM_PADDING = "5px 12px 5px 0px"
 MENU_CHECK_GUTTER = 19
 
 
-def style_sheet(background: QColor, highlight: QColor, *, check_gutter: int = 0) -> str:
+def style_sheet(
+    background: QColor, highlight: QColor, *, check_gutter: int = 0, own_arrow: bool = False
+) -> str:
     """给弹出菜单的那份样式表。
 
     两个颜色都必须由调用方给**调色板里的原值**：底色是「一整块底色」那块（``Window``
@@ -121,12 +129,16 @@ def style_sheet(background: QColor, highlight: QColor, *, check_gutter: int = 0)
     ``check_gutter`` 是「这一列对勾原本会被预留的宽度」，只有**菜单里没有可勾选项**时才
     补上（见 :data:`MENU_CHECK_GUTTER`）。它排在最后一条规则，靠覆盖前面那条
     ``QMenu::item`` 的左内边距生效。
+
+    ``own_arrow`` 表示「子菜单的右箭头由我们自己画」（见 :class:`ShortcutColumnMenu`），
+    于是把 Qt 那一个**关掉**。关是能关掉的：``::right-arrow`` 只对 ``width`` / ``height``
+    有反应（实测把 ``padding-right`` 从 12 加到 28，箭头纹丝不动，仍在 x=148~151.5），
+    尺寸给 0 之后它就完全不画了。
     """
     return (
         f"QMenu {{ border-radius: {MENU_CORNER_RADIUS}px; "
         f"background: {rgba(background)}; padding: {MENU_INSET}px; }}\n"
         f"QMenu::item {{ padding: {MENU_ITEM_PADDING}; }}\n"
-        f"QMenu::right-arrow {{ width: {MENU_ARROW_SIZE}px; height: {MENU_ARROW_SIZE}px; }}\n"
         # 悬停 / 当前项的高亮带。**不加这两行，菜单就完全没有高亮**：样式表一旦挂上，
         # 系统样式那份高亮就不再画了（实测原生菜单按方向键会点亮 #548fff，加了样式表
         # 之后按 ↓ 两次所有行仍是 #ffffff），用户就看不出鼠标在哪一行。
@@ -137,6 +149,12 @@ def style_sheet(background: QColor, highlight: QColor, *, check_gutter: int = 0)
         f"QMenu::item:selected {{ background: {rgba(highlight)}; "
         f"border-radius: {MENU_HIGHLIGHT_RADIUS}px; }}\n"
         + (f"QMenu::item {{ padding-left: {check_gutter}px; }}" if check_gutter else "")
+        + (
+            "\nQMenu::right-arrow { width: 0; height: 0; }"
+            if own_arrow
+            else f"\nQMenu::right-arrow {{ width: {MENU_ARROW_SIZE}px; "
+            f"height: {MENU_ARROW_SIZE}px; }}"
+        )
     )
 
 
@@ -294,19 +312,36 @@ class ShortcutColumnMenu(QMenu):
     而「在访达中显示」一直伸到 98；预留之后 218）。
     """
 
+    def has_submenu_arrows(self) -> bool:
+        """这张菜单里有没有子菜单行。"""
+        return any(action.menu() is not None for action in self.actions())
+
+    def owns_submenu_arrows(self) -> bool:
+        """子菜单的右箭头是否**由我们画**。
+
+        两个条件缺一不可：有子菜单行（有箭头可画），**而且**这张菜单里有快捷键（字母列
+        存在，箭头才有地方对齐）。只满足前一个就自己画是不行的 —— :func:`apply_style` 会在
+        同一个判断上把 Qt 那个关掉，结果箭头谁也不画，整块消失。
+        """
+        return self.has_submenu_arrows() and any(
+            not action.isSeparator() and not action.shortcut().isEmpty()
+            for action in self.actions()
+        )
+
     def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         super().paintEvent(event)
-        entries = [
-            action
-            for action in self.actions()
-            if not action.isSeparator() and not action.shortcut().isEmpty()
-        ]
+        rows = [action for action in self.actions() if not action.isSeparator()]
+        entries = [action for action in rows if not action.shortcut().isEmpty()]
+        metrics = QFontMetrics(self.font())
         if not entries:
             return
-        metrics = QFontMetrics(self.font())
         columns = ShortcutColumns.measure([action.shortcut() for action in entries], metrics)
         align = int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
-        for action in entries:
+        for action in rows:
+            if action.shortcut().isEmpty():
+                if self.owns_submenu_arrows() and action.menu() is not None:
+                    self._paint_arrow(action, columns, metrics)
+                continue
             rect = self.actionGeometry(action)
             modifiers, key_text = split_shortcut(action.shortcut())
             key_rect, modifier_rects = columns.cells(rect.right(), rect.top(), rect.height())
@@ -323,6 +358,40 @@ class ShortcutColumnMenu(QMenu):
                 if modifier in modifiers:
                     painter.drawText(modifier_rects[modifier], align, _modifier_glyph(modifier))
             painter.end()
+
+    def _paint_arrow(
+        self, action: QAction, columns: ShortcutColumns, metrics: QFontMetrics
+    ) -> None:
+        """子菜单的右箭头画在**字母列**上 —— 原生菜单里它与快捷键的键位是同一列。
+
+        不画在 Qt 那个位置（行右沿内侧约 5 像素）：那在字母列右边，两者看着是两个不相干
+        的东西。QSS 挪不动它（``padding-right`` 从 12 加到 28，实测箭头仍在 x=148~151.5），
+        所以是关掉 Qt 那个（``::right-arrow`` 尺寸给 0 就完全不画）改由我们画。
+        """
+        rect = self.actionGeometry(action)
+        key_rect, _ = columns.cells(rect.right(), rect.top(), rect.height())
+        center = key_rect.center()
+        half_width = MENU_ARROW_DRAWN_WIDTH / 2
+        half_height = MENU_ARROW_DRAWN_HEIGHT / 2
+        if action is self.activeAction():
+            role = QPalette.ColorRole.HighlightedText
+        elif action.isEnabled():
+            role = QPalette.ColorRole.Text
+        else:
+            role = QPalette.ColorRole.PlaceholderText
+        painter = QPainter(self)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(self.palette().color(role))
+        painter.drawPolygon(
+            QPolygonF(
+                [
+                    QPointF(center.x() - half_width, center.y() - half_height),
+                    QPointF(center.x() + half_width, center.y()),
+                    QPointF(center.x() - half_width, center.y() + half_height),
+                ]
+            )
+        )
+        painter.end()
 
     def reserve_shortcut_columns(self) -> None:
         """把菜单撑到「最长标签 + 快捷键列块」那么宽（没有快捷键就什么也不做）。"""
@@ -375,13 +444,17 @@ def apply_style(menu: QMenu) -> None:
     highlight = palette.color(QPalette.ColorRole.Highlight)
     # 没有可勾选项的菜单要自己补上那一列，样式表因此**逐个菜单**算 —— 子菜单里是
     # 「排序 / 分组 / 缩略图大小」那些单选项，它们有勾、就不补。
-    sheets = {
-        gutter: style_sheet(background, highlight, check_gutter=gutter)
-        for gutter in (0, MENU_CHECK_GUTTER)
-    }
     for current in _owned_menus(menu):
         has_checkable = any(action.isCheckable() for action in current.actions())
-        current.setStyleSheet(sheets[0 if has_checkable else MENU_CHECK_GUTTER])
+        owns_arrows = isinstance(current, ShortcutColumnMenu) and current.owns_submenu_arrows()
+        current.setStyleSheet(
+            style_sheet(
+                background,
+                highlight,
+                check_gutter=0 if has_checkable else MENU_CHECK_GUTTER,
+                own_arrow=owns_arrows,
+            )
+        )
 
 
 class TargetKind(Enum):
@@ -554,6 +627,8 @@ __all__ = [
     "MENU_CHECK_GUTTER",
     "MENU_CORNER_RADIUS",
     "MENU_HIGHLIGHT_RADIUS",
+    "MENU_ARROW_DRAWN_HEIGHT",
+    "MENU_ARROW_DRAWN_WIDTH",
     "MENU_ARROW_SIZE",
     "MODIFIER_ORDER",
     "SHORTCUT_LABEL_GAP",

@@ -370,15 +370,30 @@ def test_qt_no_longer_draws_the_shortcut_column_itself(
         assert not action.shortcut().isEmpty(), "关掉的只是显示，按键还得留着"
 
 
-def test_submenu_arrow_is_shrunk(qt_app: QApplication, window: MainWindow) -> None:
-    """子菜单的右箭头缩一档（Qt 默认给的偏大）。"""
+def test_submenu_arrow_moves_into_the_key_column(qt_app: QApplication, window: MainWindow) -> None:
+    """子菜单的右箭头与快捷键的**字母列**对齐（原生就是这样）。
+
+    QSS 挪不动 Qt 那个箭头 —— 实测 ``padding-right`` 从 12 加到 28，它始终在 x=148~151.5，
+    落在字母列（129~141）右边，看着是另一个不相干的东西。所以带子菜单的那张菜单要**关掉**
+    Qt 画的那一个（``::right-arrow`` 尺寸给 0 之后完全不画），改由
+    ``ShortcutColumnMenu`` 画进字母列。
+    """
     window._stack.setCurrentWidget(window._grid_page)
 
-    menu = window.context_menu_for(-1)
+    blank = window.context_menu_for(-1)
 
-    assert menu is not None
-    assert f"width: {menus.MENU_ARROW_SIZE}px" in menu.styleSheet()
-    assert f"height: {menus.MENU_ARROW_SIZE}px" in menu.styleSheet()
+    assert blank is not None
+    assert blank.has_submenu_arrows()
+    assert blank.owns_submenu_arrows()
+    assert "QMenu::right-arrow { width: 0; height: 0; }" in blank.styleSheet()
+
+    row = window._model.row_of_path(window._library.root / "一张.jpg")
+    assert row >= 0
+    photo = window.context_menu_for(row)
+    assert photo is not None
+    assert not photo.has_submenu_arrows(), "照片菜单没有子菜单行，箭头仍归 Qt 画"
+    assert not photo.owns_submenu_arrows()
+    assert f"width: {menus.MENU_ARROW_SIZE}px" in photo.styleSheet()
 
 
 def test_menus_without_checkable_items_keep_the_text_column(
