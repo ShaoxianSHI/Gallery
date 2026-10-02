@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 #: 表结构版本。改动表结构就 +1；旧表会被整表丢掉重建（缓存不值得迁移）。
 #:
-#: 4 / 5 / 6：地点结论改了几轮（ADR 0011 的语言规则、港澳台、ADR 0012 的自带
+#: 4 / 5 / 6：地点结论改了几轮（ADR 0011 的语言规则、港澳台、ADR 0013 的自带
 #: 城市库）。**表结构始终没变**，但存进去的城市名、省名变了 —— 不升版本的话，
 #: 老库里那些「波尔多 / 法国」「宝安 / 广东省」会永远留在索引里，新扫的照片却
 #: 已经是新说法，同一个库里新老混排且再也刷不掉（``place_ok`` 记着「已经查过了」）。
@@ -244,6 +244,39 @@ class FacetIndex:
             except sqlite3.Error as exc:  # pragma: no cover - 磁盘坏了才会走到
                 logger.info("清理 facet 索引失败：%s", exc)
                 return 0
+
+    def forget(self, paths: Iterable[Path]) -> int:
+        """删掉指定路径的行，返回删掉了几行。
+
+        照片被移走或改名之后，原路径那一行不会自己消失。与 :meth:`prune` 的区别是
+        这里**只删给定的路径**：相册模式下「当前这一层」不等于「整个库」，按层去重
+        会把别的相册的行一起删掉。实时监听得知哪个路径不见了就删哪一个（ADR 0013）。
+
+        它是缓存，删不干净也不影响浏览，因此不抛异常。
+        """
+        keys = {str(path) for path in paths}
+        if not keys:
+            return 0
+        with self._lock:
+            if self._connection is None:
+                stale = [key for key in self._memory if key in keys]
+                for key in stale:
+                    del self._memory[key]
+                return len(stale)
+            removed = 0
+            try:
+                unique = list(keys)
+                for start in range(0, len(unique), 900):
+                    chunk = unique[start : start + 900]
+                    marks = ", ".join("?" * len(chunk))
+                    cursor = self._connection.execute(
+                        f"DELETE FROM facets WHERE path IN ({marks})", chunk
+                    )
+                    removed += max(0, cursor.rowcount)
+                self._connection.commit()
+            except sqlite3.Error as exc:  # pragma: no cover - 磁盘坏了才会走到
+                logger.info("清理 facet 索引失败：%s", exc)
+            return removed
 
     def clear(self) -> None:
         """清空缓存（清空缩略图缓存时一并清掉，避免两边的内容对不上）。"""

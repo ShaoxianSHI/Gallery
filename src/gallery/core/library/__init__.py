@@ -1,8 +1,9 @@
-"""「库」：对外门面、目录扫描、条目模型、分组与排序、索引、库配置与会话状态。
+"""「库」：对外门面、目录扫描、条目模型、分组与排序、索引、文件监听、库配置与会话状态。
 
 界面层通常只需要 :class:`Library` 与 :func:`prepare_library`；只有需要自己遍历
 目录（相册封面、逐层列举）时才直接用 :mod:`~gallery.core.library.scanner`，需要自己
-排顺序（网格重排、测试）时才用 :mod:`~gallery.core.library.groups`。
+排顺序（网格重排、测试）时才用 :mod:`~gallery.core.library.groups`。文件监听经由
+:meth:`Library.watch`，其事件合并规则在 :mod:`~gallery.core.library.watcher`。
 内部模块一律从具体子模块导入，避免与本文件的再导出互相绕圈。
 """
 

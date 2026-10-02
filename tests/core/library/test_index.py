@@ -179,6 +179,42 @@ def test_prune_drops_photos_that_are_gone(tmp_path: Path) -> None:
     index.close()
 
 
+def test_forget_drops_only_the_given_paths(tmp_path: Path) -> None:
+    """实时监听得知哪个路径不见了就删哪个 —— 别的相册的行不能跟着没（ADR 0013）。
+
+    这正是 :meth:`prune` 不适合在相册模式下用的原因：它按「还活着的路径」去重，
+    而「当前这一层」不等于「整个库」。
+    """
+    index = FacetIndex(tmp_path / "index.db")
+    keep, drop = _ref(tmp_path, "keep.jpg"), _ref(tmp_path, "drop.jpg")
+    index.store([(keep, FULL), (drop, FULL)])
+
+    assert index.forget([drop.path]) == 1
+    assert set(index.lookup([keep, drop])) == {keep.path}
+    index.close()
+
+
+def test_forget_of_nothing_or_of_unknown_paths_is_harmless(tmp_path: Path) -> None:
+    index = FacetIndex(tmp_path / "index.db")
+    ref = _ref(tmp_path)
+    index.store([(ref, FULL)])
+
+    assert index.forget([]) == 0
+    assert index.forget([tmp_path / "从没来过.jpg"]) == 0
+    assert set(index.lookup([ref])) == {ref.path}
+    index.close()
+
+
+def test_forget_works_in_memory_mode(tmp_path: Path) -> None:
+    """索引退化成内存时（库所在卷只读）同样要能删。"""
+    index = FacetIndex(None)
+    ref = _ref(tmp_path)
+    index.store([(ref, FULL)])
+
+    assert index.forget([ref.path]) == 1
+    assert index.lookup([ref]) == {}
+
+
 def test_clear_empties_the_index(tmp_path: Path) -> None:
     index = FacetIndex(tmp_path / "index.db")
     ref = _ref(tmp_path)

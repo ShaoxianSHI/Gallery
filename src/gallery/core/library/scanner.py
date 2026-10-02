@@ -9,6 +9,10 @@
 
 符号链接一律跳过（既不进入链接目录也不收录链接文件）：跟随链接可能造成无限递归，
 而 v1 的收益很小。
+
+:func:`is_visible_path` 与 :func:`describe_entry` 回答的是同一个问题的单点版本
+（「这一个路径算不算数 / 它是哪一条」）：实时监听拿到的是一条条事件路径，而不是一次
+目录遍历，于是「跳过什么」的规则必须只有一份，两边各写一遍迟早会漂。
 """
 
 from __future__ import annotations
@@ -17,10 +21,11 @@ import os
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
+from stat import S_ISDIR, S_ISREG
 
 from gallery.core.constants import CONFIG_DIR_NAME
 from gallery.core.errors import LibraryNotAccessibleError
-from gallery.core.library.photos import FolderRef, PhotoRef, is_supported_photo
+from gallery.core.library.photos import FolderRef, GridEntry, PhotoRef, is_supported_photo
 
 
 @dataclass(slots=True)
@@ -163,6 +168,56 @@ def iter_entries(
         yield photo
 
 
+def is_visible_path(root: Path, path: Path) -> bool:
+    """这个路径在**形状上**是不是扫描看得见的那种。
+
+    隐藏项（以 ``.`` 开头，含配置目录与 ``._`` 资源分叉）与配置目录一律不算，
+    另外再加两条：
+
+    - **必须在库内**：逐层浏览与实时监听都不许越出用户指定的文件夹；
+    - **不跟符号链接**：先把路径解析成它真正指向的地方再判断，于是链到库外的目录
+      自动被拒掉 —— 跟进链接既可能走出库，也可能无限递归。
+
+    **扩展名那条不在这里**：目录没有扩展名，这里判不了，所以「不是照片的文件跳过」
+    由调用方各自判（扫描器与监听器都是先问这里，再问
+    :func:`~gallery.core.library.photos.is_supported_photo`）。
+
+    路径已经不存在也照样答得出来（``resolve`` 不用 ``strict=True``）：监听恰恰最常
+    问到这种路径。
+    """
+    try:
+        relative = Path(path).resolve().relative_to(Path(root).resolve())
+    except (OSError, ValueError):
+        return False
+    return all(not part.startswith(".") and part != CONFIG_DIR_NAME for part in relative.parts)
+
+
+def describe_entry(root: Path, path: Path) -> GridEntry | None:
+    """把一个路径变成网格里的一条（``PhotoRef`` 或 ``FolderRef``）。
+
+    供实时监听使用：事件只给出路径，大小与修改时间要现 stat 一次。这里**不读像素、
+    不读 EXIF**，产出与扫描完全同构，因此插进网格的东西和扫出来的没有区别。
+
+    :return: 扫描看不见它、已经不在了、或者压根不是照片时返回 ``None``。
+    """
+    target = Path(path)
+    if not is_visible_path(root, target):
+        return None
+    try:
+        info = target.stat(follow_symlinks=False)
+    except OSError:
+        return None  # 事件送到时文件已经被删掉了
+    # 判类型用 stat 的模式位而不是 ``Path.is_dir``：后者没有 ``follow_symlinks=False``
+    # 参数（3.13 才加），而这里必须判的是链接**本身**而不是它指向的东西。
+    if S_ISDIR(info.st_mode):
+        return FolderRef(path=target, mtime_ns=info.st_mtime_ns)
+    if not S_ISREG(info.st_mode):
+        return None  # 符号链接与其它特殊文件，扫描同样不收
+    if not is_supported_photo(target):
+        return None
+    return PhotoRef(path=target, size=info.st_size, mtime_ns=info.st_mtime_ns)
+
+
 def _list_dir(directory: Path, report: ScanReport | None) -> list[os.DirEntry[str]] | None:
     try:
         with os.scandir(directory) as scanner:
@@ -190,4 +245,4 @@ def _never_cancel() -> bool:
     return False
 
 
-__all__ = ["ScanReport", "iter_entries", "iter_photos"]
+__all__ = ["ScanReport", "describe_entry", "is_visible_path", "iter_entries", "iter_photos"]

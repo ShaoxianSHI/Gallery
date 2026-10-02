@@ -22,6 +22,7 @@ from gallery.core.library.config import LibraryConfig, load_config
 from gallery.core.library.index import FacetIndex
 from gallery.core.library.photos import FolderRef, GridEntry, PhotoRef
 from gallery.core.library.scanner import ScanReport, iter_entries, iter_photos
+from gallery.core.library.watcher import LibraryChange, LibraryWatcher
 from gallery.core.media.decode import RasterImage, decode_rgba
 from gallery.core.media.thumbs import ThumbnailCache
 from gallery.core.metadata.batch import BatchMetadataSource, read_facets
@@ -215,6 +216,40 @@ class Library:
     def clear_cache(self) -> int:
         """清空本库的缩略图缓存，返回删除的条目数。"""
         return self._thumbnails.clear()
+
+    # ---- 实时监听 ------------------------------------------------------------
+
+    def watch(
+        self,
+        *,
+        on_change: Callable[[tuple[LibraryChange, ...]], None],
+        on_error: Callable[[str], None] | None = None,
+    ) -> LibraryWatcher:
+        """开始监听这个库，返回监听器（**调用方负责停它**：切库与关窗时都要停）。
+
+        监听范围跟着库配置的 ``recursive``：用户说不递归，就别去翻他的子文件夹。
+        回调在自己的线程上被调用，界面要用排队连接把它搬回主线程（ADR 0012）。
+
+        监听是纯读的：只 ``stat``，不写不删。
+        """
+        return LibraryWatcher(
+            self._root,
+            recursive=self._config.recursive,
+            on_change=on_change,
+            on_error=on_error,
+        )
+
+    def forget_paths(self, paths: Sequence[Path]) -> int:
+        """把已经不在库里的路径从索引中抹掉，返回删掉了几行。
+
+        照片消失之后索引里那一行不会自己走。**只删给定的路径**：相册模式下
+        「当前这一层」不等于「整个库」，按层去重会误伤别的相册（ADR 0012）。
+
+        索引还没打开时什么也不做：为了删几行去建一个数据库不值得。
+        """
+        if self._index is None or not paths:
+            return 0
+        return self._index.forget(paths)
 
     # ---- 分组 / 排序用的元数据（只读）----------------------------------------
 

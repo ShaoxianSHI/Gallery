@@ -10,7 +10,7 @@ import pytest
 from gallery.core.constants import CONFIG_DIR_NAME
 from gallery.core.errors import LibraryNotAccessibleError
 from gallery.core.library.photos import FolderRef, PhotoRef
-from gallery.core.library.scanner import ScanReport, iter_entries
+from gallery.core.library.scanner import ScanReport, describe_entry, is_visible_path, iter_entries
 
 
 def names(entries: list[FolderRef | PhotoRef]) -> list[str]:
@@ -130,3 +130,77 @@ def test_unreadable_directory_is_reported(tmp_path: Path, monkeypatch: pytest.Mo
     assert list(iter_entries(blocked, report=report)) == []
     assert report.has_issues is True
     assert str(blocked) in report.skipped_dirs[0]
+
+
+# ---- 单个路径：实时监听用的那一条 ---------------------------------------------
+
+
+def test_describe_entry_builds_a_photo_ref(tmp_path: Path, make_photo: Callable[..., Path]) -> None:
+    """实时监听只给得出一个路径，大小与修改时间要现 stat 一次 —— 与扫描同构。"""
+    picture = make_photo("海边.jpg")
+
+    entry = describe_entry(tmp_path, picture)
+
+    assert isinstance(entry, PhotoRef)
+    assert entry.path == picture
+    assert entry.size == picture.stat().st_size
+    assert entry.mtime_ns == picture.stat().st_mtime_ns
+
+
+def test_describe_entry_builds_a_folder_ref(tmp_path: Path) -> None:
+    (tmp_path / "相册").mkdir()
+
+    entry = describe_entry(tmp_path, tmp_path / "相册")
+
+    assert isinstance(entry, FolderRef)
+    assert entry.path == tmp_path / "相册"
+
+
+def test_describe_entry_says_no_for_what_the_scanner_would_skip(
+    tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """不支持的格式、读不出来的东西：网格上本来就不该有它们。"""
+    make_photo("能看的.jpg")
+    (tmp_path / "读我.txt").write_text("不是照片", encoding="utf-8")
+    (tmp_path / "链接.jpg").symlink_to(tmp_path / "能看的.jpg")
+
+    assert describe_entry(tmp_path, tmp_path / "读我.txt") is None
+    assert describe_entry(tmp_path, tmp_path / "早就不在了.jpg") is None
+    # 符号链接：扫描同样不收（跟随可能走出库、也可能无限递归）
+    assert describe_entry(tmp_path, tmp_path / "链接.jpg") is None
+
+
+def test_describe_entry_refuses_to_leave_the_library(
+    tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    outside = make_photo("别的库.jpg", directory=tmp_path.parent / "别的库")
+
+    assert describe_entry(tmp_path, outside) is None
+
+
+def test_is_visible_path_matches_what_the_scan_walks(tmp_path: Path) -> None:
+    """一条规则两处用：扫描看不见的路径，监听也不该报上来。"""
+    seen = {entry.path for entry in iter_entries(tmp_path)}
+    (tmp_path / "相册").mkdir()
+    (tmp_path / ".隐藏").mkdir()
+    (tmp_path / "读我.txt").write_text("x", encoding="utf-8")
+
+    assert is_visible_path(tmp_path, tmp_path / "照片.jpg")
+    assert is_visible_path(tmp_path, tmp_path / "相册")
+    assert is_visible_path(tmp_path, tmp_path / "相册" / "里面.jpg")
+    assert not is_visible_path(tmp_path, tmp_path / ".隐藏" / "a.jpg")
+    assert not is_visible_path(tmp_path, tmp_path / f"{CONFIG_DIR_NAME}" / "index.db")
+    assert not is_visible_path(tmp_path, tmp_path.parent / "别的库" / "a.jpg")
+    # 已经在库内、也不隐藏：它「合规则」，只是此刻不在磁盘上。监听最常问到这种路径。
+    assert is_visible_path(tmp_path, tmp_path / "早就不在了.jpg")
+    assert seen == set()  # 这一层确实只有上面手工造出来的那些非照片
+
+
+def test_is_visible_path_follows_symlinks_to_its_real_place(
+    tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """链到库外的目录不跟：跟进去既可能走出库，也可能无限递归。"""
+    elsewhere = make_photo("目标.jpg", directory=tmp_path.parent / "目标库")
+    (tmp_path / "链接").symlink_to(elsewhere.parent)
+
+    assert is_visible_path(tmp_path, tmp_path / "链接" / "目标.jpg") is False
