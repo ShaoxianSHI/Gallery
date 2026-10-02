@@ -28,7 +28,6 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QStackedWidget,
-    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -64,7 +63,7 @@ from gallery.core.metadata.trash import Failure, TrashResult
 from gallery.core.metadata.undo import UndoResult
 from gallery.core.places.geonames import PlaceIndex, download_data, geo_data_dir
 from gallery.core.places.resolver import LazyPlaceResolver
-from gallery.ui import theme
+from gallery.ui import theme, tooltips
 from gallery.ui.browser.grid import PREFETCH_MARGIN, PhotoGrid
 from gallery.ui.browser.model import PhotoListModel
 from gallery.ui.browser.thumb_sizes import (
@@ -277,6 +276,8 @@ class MainWindow(QMainWindow):
         # 先把底色统一好，下面每一个控件都从这一份取色：标题栏那一段、面包屑、网格视口、
         # 大图区与元数据面板从此是同一块底色（见 ui.theme）。
         theme.ensure_installed()
+        # 悬停提示的总闸：网格卡片那条提示是个顶层小窗，迟到的请求也照弹（见 ui.tooltips）。
+        tooltips.install()
         # 标题栏那一段交给窗口自己画，否则 macOS 会铺一层半透明材质，和下面的底色差一档。
         theme.unify_title_bar(self)
 
@@ -340,6 +341,23 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self._stack)
         # 刻意不建状态栏：底部那一条只是为了放扫描进度、照片尺寸、缩放百分比，
         # 换来的是照片区少 20 来像素。出错信息有横幅，提示性信息一律不留。
+
+    def _show_page(self, page: QWidget) -> None:
+        """换页，并把网格卡片的悬停提示摆到该有的状态上。
+
+        换页只有这一处入口，是为了「提示在网格页开、在大图页关」这条不再靠记性维持：
+        以前 ``_reload_level``（进入相册、进入分组、切浏览方式）会直接换页而不动提示，
+        于是从大图页切一次浏览方式，网格的悬停提示就永久哑了；反过来，只要有一处漏关，
+        迟到的提示事件就会在照片的位置上弹出一个装着卡片元数据的小白窗。
+
+        收掉当前提示放在换页**之前**：那个顶层小窗必须先下台，照片才铺得上去。
+
+        总闸（``ui.tooltips``）是第三道、也是唯一一道不依赖这里的防线：它拦住的是
+        「已经不在屏幕上的控件」，而上面这条治不了迟到的请求。
+        """
+        self._model.set_tooltips_enabled(page is self._grid_page)
+        tooltips.dismiss()
+        self._stack.setCurrentWidget(page)
 
     def _build_actions(self) -> None:
         self._open_action = QAction("打开文件夹…", self)
@@ -902,7 +920,7 @@ class MainWindow(QMainWindow):
         self._update_breadcrumb()
         self._update_mode_actions()
         self.setWindowTitle(f"{library.display_name} — Gallery")
-        self._stack.setCurrentWidget(self._grid_page)
+        self._show_page(self._grid_page)
         self._update_action_states()
         self._remember(library.root)
         self._start_scan()
@@ -1316,7 +1334,7 @@ class MainWindow(QMainWindow):
         if self._model.photo_at(row) is None:
             return
         self._current_row = row
-        self._stack.setCurrentWidget(self._detail_page)
+        self._show_page(self._detail_page)
         self._detail.setFocus()
         self._update_action_states()
         self._load_detail(row)
@@ -1491,10 +1509,7 @@ class MainWindow(QMainWindow):
         """回到网格，并让当前照片保持选中。"""
         if self._stack.currentWidget() is self._grid_page:
             return
-        # 回到网格，把悬停提示还回去
-        self._model.set_tooltips_enabled(True)
-        QToolTip.hideText()  # 同 _load_detail：大图上的提示不该挂到网格上
-        self._stack.setCurrentWidget(self._grid_page)
+        self._show_page(self._grid_page)
         if self._current_row >= 0:
             self._grid.select_row(self._current_row)
         self._update_action_states()
@@ -1524,15 +1539,16 @@ class MainWindow(QMainWindow):
         # 网格卡片的悬停提示是一个**顶层窗口**（macOS 上白底、正好压在照片的左上角，
         # 内容是文件名与尺寸等元数据）。切图时它会闪，甚至闪两次：
         #
-        #   1. 已经弹出来的那一个 —— ``hideText()`` 收掉；
-        #   2. 还没到显示时间的那一个 —— Qt 已经排好了定时器，而 ``hideText()``
+        #   1. 已经弹出来的那一个 —— 收掉；
+        #   2. 还没到显示时间的那一个 —— Qt 已经排好了定时器，而收窗口
         #      **只隐藏窗口、不取消定时器**，它照样会在切换过程中弹出来。
         #
-        # 所以要连根拔：让网格不再提供提示内容（PySide6 没有暴露
-        # QWidget.setToolTipsEnabled，只能从数据侧断掉），再收当前窗口。
-        # 定时器醒来问网格要提示，拿到空的，就什么都不会显示。
+        # 数据侧连根拔：让网格不再提供提示内容（PySide6 没有暴露
+        # QWidget.setToolTipsEnabled，只能从数据侧断掉），定时器醒来问网格要提示，
+        # 拿到空的，就什么都不会显示。迟到的事件由总闸兜住（见 ui.tooltips），
+        # 换页时这两件事已经做过一遍（见 _show_page），这里补的是「翻图不换页」的那条路。
         self._model.set_tooltips_enabled(False)
-        QToolTip.hideText()
+        tooltips.dismiss()
         generation = self._generation
 
         if self._detail_job is not None:
@@ -1877,7 +1893,7 @@ class MainWindow(QMainWindow):
         self._detail.clear_image()
         self._panel.clear()
         self._banner.hide()
-        self._stack.setCurrentWidget(self._grid_page)
+        self._show_page(self._grid_page)
         self._update_breadcrumb()
         self._update_action_states()
         self._start_scan()

@@ -1,9 +1,16 @@
 """切图时不得冒出网格卡片的悬停提示。
 
-Qt 已经排好的悬停定时器**不会**被 ``QToolTip.hideText()`` 取消 —— 它只隐藏已经显示的
-窗口。所以切图后定时器照样醒来并弹出提示，用户看到的就是照片上凭空闪出的小白窗，
-有时还闪两次。办法是让网格在大图打开时不再提供提示内容：定时器醒来问不到东西，
-就不会显示任何东西。
+那一闪是个**顶层窗口**（macOS 上白底），里面是卡片的名字、格式、大小、时间与所在文件夹。
+挡住它要两道防线，各治一类竞态：
+
+1. **数据侧**：大图打开时网格不再提供提示内容（``set_tooltips_enabled(False)``）。
+   治的是「悬停定时器醒来时问网格要内容，网格答得出来」。
+2. **总闸**：``ToolTipGate`` 拦下所有指向**不在屏幕上**的控件的悬停提示事件。治的是
+   「事件迟到」—— Qt 自己不检查目标控件还在不在屏幕上，事件送到了就弹窗（实测：网格页
+   已经换成大图页，事件送到网格视口，提示照弹，里面就是上一张卡片的元数据）。
+
+第 2 条不依赖「每条切图路径都记得关开关」，第 1 条依赖。只留第 1 条时，只要漏掉一次
+（从大图页直接切浏览方式就是一个），照片上就会闪出那张卡片的元数据。
 
 这里的每一处等待都掐在刀刃上：悬停只等到唤醒延迟的一部分（保证定时器还挂着），
 切走之后只再盯住剩下的那一部分加一点余量 —— 原来是无脑等满 1.2 秒，而定时器根本
@@ -19,12 +26,15 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QPoint, Qt  # noqa: E402
+from PySide6.QtCore import QEvent, QPoint, Qt  # noqa: E402
+from PySide6.QtGui import QHelpEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
-from PySide6.QtWidgets import QApplication, QToolTip  # noqa: E402
+from PySide6.QtWidgets import QApplication, QLabel, QToolTip, QWidget  # noqa: E402
 
 from gallery.core.library.config import prepare_library  # noqa: E402
+from gallery.core.library.session import BROWSE_MODE_ALBUMS  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
+from gallery.ui.tooltips import ToolTipGate, install  # noqa: E402
 
 #: Qt 离屏环境下弹出悬停提示的唤醒延迟，实测 784ms（Qt 默认那一档）。这几条测试的
 #: 全部意义就是「定时器还挂着的时候切走」，绕不开这个数。
@@ -170,3 +180,92 @@ def test_model_stops_offering_tooltips_while_in_detail(
     window.show_grid()
     settle(0.1)
     assert window._model.data(index, int(Qt.ItemDataRole.ToolTipRole)), "回到网格应当恢复"
+
+
+# ---- 迟到的事件：总闸（见 ui.tooltips） ---------------------------------------
+#
+# 下面几条不去掐悬停延迟，而是**直接把 ToolTip 事件递给控件** —— 离屏环境下悬停定时器
+# 在切图之后根本不会再响，掐不准也测不准；直接递事件测的正是那一层：**Qt 收到事件就弹窗**。
+# 弹窗与否只看一件事：那个控件当时在不在屏幕上。
+
+
+def ask(widget: QWidget, position: QPoint, qt_app: QApplication) -> bool:
+    """模拟「悬停定时器醒来」：把 ToolTip 事件递给这个控件，返回有没有弹出窗口。"""
+    QToolTip.hideText()
+    qt_app.processEvents()
+    event = QHelpEvent(QEvent.Type.ToolTip, position, widget.mapToGlobal(position))
+    qt_app.sendEvent(widget, event)
+    qt_app.processEvents()
+    shown = QToolTip.isVisible()
+    QToolTip.hideText()
+    return shown
+
+
+@pytest.fixture
+def tooltip_gate(qt_app: QApplication) -> ToolTipGate:
+    """先装总闸。这条直接测它，不该指望别的测试先建过窗口。"""
+    return install()
+
+
+def test_tooltip_never_opens_for_a_widget_that_is_not_on_screen(
+    qt_app: QApplication, tooltip_gate: ToolTipGate
+) -> None:
+    """指向不可见控件的悬停提示事件，不许弹出窗口（总闸的基本保证）。"""
+    widget = QLabel("面板里的一行")
+    widget.setToolTip("IMG_0001.jpg\nJPEG · 2.0 MB")
+    assert not widget.isVisible(), "这个控件必须处在「不在屏幕上」的状态，否则测的不是这条"
+
+    assert not ask(widget, QPoint(1, 1), qt_app), (
+        "不可见的控件也弹出了提示窗口 —— 这就是照片上凭空闪出小白窗的那一下"
+    )
+
+
+def test_detail_page_swallows_the_late_card_tooltip(
+    window: MainWindow, qt_app: QApplication, settle: Callable[[float], None]
+) -> None:
+    """大图页上，迟到的卡片提示事件弹不出窗口（哪怕模型此刻答得出来）。"""
+    window._open_detail(window._model.index(0, 0))
+    settle(0.1)
+    viewport = window._grid.viewport()
+    # 故意让模型照常回答：这条要证明的是**总闸**在起作用，而不是「模型恰好返回了空串」。
+    # 只靠模型那一条时，任何一次漏调 set_tooltips_enabled(False) 都会让提示闪出来。
+    window._model.set_tooltips_enabled(True)
+    position = window._grid.visualRect(window._model.index(0, 0)).center()
+
+    assert not ask(viewport, position, qt_app), (
+        "大图页上仍然弹出了网格卡片的提示 —— 用户看到的就是照片上那个装着元数据的小白窗"
+    )
+
+
+def test_grid_page_tooltips_are_not_blocked(window: MainWindow, qt_app: QApplication) -> None:
+    """总闸只拦「不在屏幕上」的：网格页上的提示必须照常能弹出来。"""
+    window.show_grid()
+    qt_app.processEvents()
+    viewport = window._grid.viewport()
+    position = window._grid.visualRect(window._model.index(0, 0)).center()
+
+    assert ask(viewport, position, qt_app), (
+        "网格页上的提示被总闸拦住了 —— 那是把功能关掉，不是修闪烁"
+    )
+
+
+def test_switching_browse_mode_from_detail_restores_grid_tooltips(
+    window: MainWindow, settle: Callable[[float], None]
+) -> None:
+    """在大图页直接切浏览方式（视图 → 全部照片），网格的提示要还是好的。
+
+    这一条盯的是另一头：**总闸拦住的是「不在屏幕上」的控件，所以提示内容本身必须由
+    代码老老实实开关**。从大图页切浏览方式会直接换回网格页（不经过 show_grid），
+    漏开开关的话提示就永久哑了。
+    """
+    window._open_detail(window._model.index(0, 0))
+    settle(0.1)
+    assert not window._model.data(window._model.index(0, 0), int(Qt.ItemDataRole.ToolTipRole))
+
+    window.set_browse_mode(BROWSE_MODE_ALBUMS)
+    settle(0.1)
+
+    assert window._stack.currentWidget() is window._grid_page, "切浏览方式应当回到网格页"
+    assert window._model.data(window._model.index(0, 0), int(Qt.ItemDataRole.ToolTipRole)), (
+        "回到网格后提示内容还是关着的，悬停就再也弹不出来了"
+    )
