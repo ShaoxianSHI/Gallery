@@ -585,11 +585,30 @@ def test_double_click_on_a_cell_still_opens_it(qt_app: QApplication, tmp_path: P
     _double_click(grid, grid.visualRect(model.index(0, 0)).center())
     qt_app.processEvents()
 
-    # ``activated_index`` 有两条来路（双击，与「已选中的那一项又被激活」），这里只
-    # 关心两件事：打开的是这一格，以及没有顺手去退上一层。
+    # **恰好一次**。这里原先写成集合比较（``{index.row() ...} == {0}``），把
+    # 「双击被算两遍」整个藏了起来 —— 而双击进入相册是**同步**的（模型清空、版面
+    # 重排），第二下会落在**刚进入的那一层**上，可能顺手打开一张无关的照片。
+    # 曾经 ``doubleClicked`` 与 ``activated`` 同时连着 ``activated_index``，
+    # 于是一次双击发两遍。
     assert opened, "双击格子什么也没打开"
-    assert {index.row() for index in opened} == {0}
+    assert [index.row() for index in opened] == [0], f"一次双击应当只激活一格，实际 {opened}"
     assert asked == []
+    grid.deleteLater()
+
+
+def test_return_key_activates_exactly_once(qt_app: QApplication, tmp_path: Path) -> None:
+    """回车激活的也是**一次** —— 同一枚信号，两条来路（双击、回车）都得只发一遍。"""
+    grid = make_grid(qt_app, tmp_path, count=3)
+    model = grid.model()
+    assert model is not None
+    opened: list[QModelIndex] = []
+    grid.activated_index.connect(opened.append)
+    grid.setCurrentIndex(model.index(1, 0))
+
+    QTest.keyClick(grid, Qt.Key.Key_Return)
+    qt_app.processEvents()
+
+    assert [index.row() for index in opened] == [1]
     grid.deleteLater()
 
 

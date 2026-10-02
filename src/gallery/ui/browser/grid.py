@@ -352,7 +352,11 @@ class PhotoGrid(QListView):
         self._pinch_steps = StepAccumulator(PINCH_THRESHOLD)
         self._wheel_steps = StepAccumulator(WHEEL_THRESHOLD)
 
-        self.doubleClicked.connect(self.activated_index.emit)
+        # **只接 ``activated``**。``QAbstractItemView.activated`` 在鼠标双击**和**按
+        # 回车时都会发，所以它一条就够；再接上 ``doubleClicked`` 等于把双击那次算两遍。
+        # 而「算两遍」在这里不是多一次刷新那么简单：进入相册是**同步**的（模型清空、
+        # 重新排版），于是第二次激活落到了**刚进入的那一层**上，可能顺手打开一张
+        # 与刚才点的完全无关的照片。
         self.activated.connect(self.activated_index.emit)
 
         # 行内重命名的输入框：挂在视口上，跟着格子一起滚。
@@ -393,11 +397,22 @@ class PhotoGrid(QListView):
 
         真正决定格子宽度的是视口宽度而不是条目数（见 :meth:`_cell_size_for`），所以这里
         不用重排版，只需要给核对补一次机会。
+
+        换模型时**先摘掉上一个的连接**：``setModel`` 不是只调一次（切库、换浏览方式
+        都会），旧模型若还留着一条指向本控件的连接，它就既不能被回收，也会在
+        旧模型自己发信号时叫醒一个已经不显示它的控件。
         """
+        previous = self.model()
+        if previous is not None:
+            previous.rowsInserted.disconnect(self._on_rows_inserted)
         super().setModel(model)
         if model is not None:
             # 扫描每来一批就重启一次 50ms 的定时器，一屏之内最多多核对一次，代价可以忽略。
-            model.rowsInserted.connect(lambda *_args: self._examiner.start())
+            model.rowsInserted.connect(self._on_rows_inserted)
+
+    def _on_rows_inserted(self, *_args: object) -> None:
+        """模型里多了一批条目 → 给「核对实际列数」补一次机会（定时器 50ms 后触发）。"""
+        self._examiner.start()
 
     # ---- 尺寸档位与自适应排版 ----------------------------------------------
 

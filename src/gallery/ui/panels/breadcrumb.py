@@ -11,6 +11,8 @@ from pathlib import Path
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QToolButton, QWidget
 
+from gallery.ui.panels.layout import clear_layout
+
 #: 分隔符。
 SEPARATOR = "▸"
 
@@ -88,13 +90,9 @@ class BreadcrumbBar(QWidget):
         return widget
 
     def _clear(self) -> None:
-        while self._layout.count():
-            item = self._layout.takeAt(0)
-            widget = item.widget() if item is not None else None
-            if widget is not None:
-                # 同 metadata_panel：先摘出控件树，否则旧的一段会残留在原位置。
-                widget.setParent(None)
-                widget.deleteLater()
+        # 面包屑**每换一次目录就整个重摆**，所以顺序上的那个坑（先藏、再摘）在这里
+        # 一样踩得到 —— 详见 panels.layout 的模块文档。
+        clear_layout(self._layout)
 
 
 __all__ = ["SEPARATOR", "BreadcrumbBar"]

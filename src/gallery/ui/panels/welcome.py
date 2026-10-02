@@ -18,6 +18,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QLabel, QPushButton, QVBoxLayout, QWidget
 
 from gallery.ui import theme
+from gallery.ui.panels.layout import clear_layout
 from gallery.ui.theme import AppTheme, rgba
 
 #: 最多列出几个最近打开的库。
@@ -115,11 +116,7 @@ class WelcomeView(QWidget):
 
     def set_recent(self, roots: Sequence[Path]) -> None:
         """刷新最近打开的库列表。"""
-        while self._recent_layout.count():
-            item = self._recent_layout.takeAt(0)
-            widget = item.widget() if item is not None else None
-            if widget is not None:
-                widget.deleteLater()
+        clear_layout(self._recent_layout)
 
         shown = list(roots)[:MAX_RECENT_SHOWN]
         self._recent_title.setVisible(bool(shown))

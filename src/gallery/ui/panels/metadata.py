@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 
 from gallery.core.metadata.exif import MetadataGroup, MetadataReport
 from gallery.ui import theme
+from gallery.ui.panels.layout import clear_layout
 from gallery.ui.theme import AppTheme, rgba
 
 #: 面板宽度。窄了中文标签换行，宽了抢照片的地方。
@@ -230,26 +231,9 @@ class MetadataPanel(QWidget):
         return label
 
     def _fill(self, widgets: Sequence[QWidget]) -> None:
-        while self._body_layout.count():
-            item = self._body_layout.takeAt(0)
-            widget = item.widget() if item is not None else None
-            if widget is not None:
-                # 「先摘出控件树再排队删除」这件事本身要留着（旧控件不该再挡住新内容），
-                # **但顺序错了**：先摘、后藏，等于把一个本来可见的控件变成**顶层窗口**，
-                # 而 Qt 会顺手把它**显示出来**。于是每换一份元数据，面板原本的位置上就弹出
-                # 几个白色小窗（macOS 上还带标题栏），里面是上一份内容 —— 文件名、格式、
-                # 大小、时间、所在文件夹，正是「在照片的位置闪一下的那个小白窗」。实测：打开
-                # 照片时「正在读取元数据…\nDSC_0001.jpg」、图像组、文件组各自变成独立窗口，
-                # 坐标全都一样，叠在一起看就是一个白窗；打开第一张要经历「尚未打开 →
-                # 正在读取 → 出结果」三次重绘，所以会闪两次。⌘I 关着时不走这条路径，也就看不到。
-                #
-                # **顺序要紧：先藏，再摘。** 藏过之后再摘成顶层控件，Qt 就没有东西可显示，
-                # 那个小窗也就不会存在。只藏不摘则不够：``deleteLater`` 只是排队，事件循环
-                # 真正转一圈之前旧控件一直是面板的隐藏孩子（``processEvents`` 不处理延迟
-                # 删除），它就会混在控件树里被下一次渲染与查询算上。
-                widget.hide()
-                widget.setParent(None)
-                widget.deleteLater()
+        # 「先藏、再摘、再排队删」的三步顺序，理由（以及那个「闪一下的白窗」是怎么来的）
+        # 写在 ``panels.layout`` 里 —— 面包屑与欢迎页同样要拆控件，规矩只有一份。
+        clear_layout(self._body_layout)
         for widget in widgets:
             self._body_layout.addWidget(widget)
         self._body_layout.addStretch(1)
