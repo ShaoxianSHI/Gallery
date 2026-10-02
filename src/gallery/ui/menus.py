@@ -13,7 +13,9 @@
 视图已经把它选上了，``_update_action_states`` 自然会把它们关掉（它判据是「选区里有
 没有 ``GroupRef``」）。本模块只负责在菜单末尾补一条说明文字。
 
-**外观：一份样式表，四个落点共用**（:func:`apply_style`）。macOS 样式自己画的那圈圆角
+**外观两件事**：一份样式表，四个落点共用（:func:`apply_style`）；快捷键按列自己画
+（:class:`ShortcutColumnMenu`）—— 样式表一挂上去，Qt 就不再给快捷键算位置了，它会把
+快捷键紧跟在文字后面（见 :func:`prepare`）。macOS 样式自己画的那圈圆角
 实测约 5 像素、每行只有 18 像素高，菜单挤得像 Windows 的。放大它们只能靠样式表 ——
 Qt 没有「菜单圆角」「菜单行高」这样的度量可以改。
 
@@ -26,12 +28,20 @@ macOS 样式画**，底色会掉回系统菜单色（浅色 ``#ececec``）。所
 
 from __future__ import annotations
 
-import math
-from collections.abc import Callable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from enum import Enum
 
-from PySide6.QtGui import QAction, QColor, QFontMetrics, QKeySequence, QPalette
+from PySide6.QtCore import QRect, Qt
+from PySide6.QtGui import (
+    QAction,
+    QColor,
+    QFontMetrics,
+    QKeySequence,
+    QPainter,
+    QPaintEvent,
+    QPalette,
+)
 from PySide6.QtWidgets import QMenu
 
 from gallery.ui.theme import rgba
@@ -155,55 +165,179 @@ def _owned_menus(menu: QMenu) -> Iterator[QMenu]:
                 pending.append(submenu)
 
 
-def with_native_shortcuts(menu: QMenu) -> Callable[[], None]:
-    """把快捷键排成 macOS 那一列（右对齐），返回还原函数。
+#: 修饰符的列序，**从右往左**：⌘ 最靠近字母，然后 ⇧、⌥、⌃ —— 与原生菜单一致。
+#:
+#: 注意第一个是 ``ControlModifier``：**macOS 上 Qt 把 Ctrl 译成 Command**（⌘R / ⌘⌫ /
+#: ⇧⌘C 都是这么显示的），而 ``MetaModifier`` 才是控制键 ⌃。弄反的话画出来的是 ⌃R。
+MODIFIER_ORDER = (
+    Qt.KeyboardModifier.ControlModifier,
+    Qt.KeyboardModifier.ShiftModifier,
+    Qt.KeyboardModifier.AltModifier,
+    Qt.KeyboardModifier.MetaModifier,
+)
 
-    为什么不能就这么放着：样式表一挂到 ``QMenu`` 上，Qt 就不再给快捷键算制表位列了 ——
-    它被画在文字后面（实测右沿恒为 78.5，与右内边距毫无关系），而原生菜单里它是贴着右沿的
-    （实测右沿 123.5 / 菜单宽 124）。调 QSS 的任何一条都改不动它（``padding-right``、
-    ``::indicator`` 都试过）。
+#: 取修饰符符号的办法：拼一个「该修饰符 + A」让 Qt 自己译，掐掉末尾那个 A。
+#:
+#: **不能自己查表**：符号是平台约定的（macOS 上 Ctrl→⌘、Meta→⌃），而 ``QKeyCombination``
+#: 单独构造修饰符是不带修饰符的（实测 ``QKeyCombination(Key_A, ControlModifier)`` 仍译成
+#: 「A」），所以唯一靠得住的来源就是 Qt 自己的字符串。
+_MODIFIER_PROBE = {
+    Qt.KeyboardModifier.ControlModifier: "Ctrl+A",
+    Qt.KeyboardModifier.ShiftModifier: "Shift+A",
+    Qt.KeyboardModifier.AltModifier: "Alt+A",
+    Qt.KeyboardModifier.MetaModifier: "Meta+A",
+}
 
-    正路是 Qt 为这件事留的口子：``setShortcutVisibleInContextMenu(False)`` 关掉它自动画的
-    那一列，再把「标签 + 制表符 + 快捷键」写进条目文字 —— 文字里带制表符时，Qt 会把后半段
-    排到那一列上，拿到的还是系统写法（``⌘R`` / ``⌘⌫`` / ``⇧⌘C`` / ``⎋``）。
+#: 快捷键各列之间的空隙，以及那一整块离行右沿（也就是高亮带右沿）的留白（像素）。
+SHORTCUT_GAP = 3
+SHORTCUT_RIGHT_INSET = 12
 
-    **还要补空格**：那一列是**左对齐**的（实测所有快捷键都从同一个 x 起），不补的话右缘会
-    按字宽参差 12 像素。按字宽差补上空格之后实测降到 5.5 像素，代价是零（那一列的宽度本来就
-    由最宽的那条决定，补空格不会让菜单变宽）。
 
-    动作本身没动（``shortcut`` 还在，按键照常触发），改的只是**这一次弹出期间**的显示。
-    而菜单栏与右键菜单共用同一批 ``QAction``，所以调用方必须在菜单关掉之后还原 ——
-    不还原的话菜单栏上会出现「拷贝路径⇧⌘C」再加上它自己画的那一列。
+def _modifier_glyph(modifier: Qt.KeyboardModifier) -> str:
+    """一个修饰符在系统写法下的符号（``⌘`` / ``⇧`` / ``⌥`` / ``⌃``）。"""
+    text = QKeySequence(_MODIFIER_PROBE[modifier]).toString(QKeySequence.SequenceFormat.NativeText)
+    return text[:-1] if text.endswith("A") else text
 
-    .. note:: 这里返回的是**还原函数**：``menu.exec()`` 是阻塞的，调用方在它返回之后立刻
-        ``restore()``（放在 ``finally`` 里），异常路径也不会漏。
+
+def _native(key: Qt.Key | int) -> str:
+    """一个键在系统写法下长什么样（``⌫`` / ``⎋`` / ``C``）。"""
+    return QKeySequence(int(key)).toString(QKeySequence.SequenceFormat.NativeText)
+
+
+def split_shortcut(shortcut: QKeySequence) -> tuple[frozenset[Qt.KeyboardModifier], str]:
+    """把快捷键拆成「有哪些修饰符」与「那个键本身」。
+
+    Qt 6 把修饰符与按键合进了同一个 ``QKeyCombination``，但它自己分得很干净
+    （``keyboardModifiers()`` 与 ``key()``），这里不必去解析「⇧⌘C」这样的字符串。
+
+    只认**第一个**组合：菜单里显示的是这一个能按出来的键组，``QKeySequence`` 里其余的
+    是同一快捷键的其他写法（选单键 / 选全键），一并显示只会互相打架。
     """
-    saved: list[tuple[QAction, str, bool]] = []
-    for current in _owned_menus(menu):
-        metrics = QFontMetrics(current.font())
-        space = max(1, metrics.horizontalAdvance(" "))
+    if shortcut.isEmpty() or shortcut.count() == 0:
+        return frozenset(), ""
+    combination = shortcut[0]
+    modifiers = combination.keyboardModifiers().value
+    return (
+        frozenset(bit for bit in MODIFIER_ORDER if modifiers & bit.value),
+        _native(combination.key()),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ShortcutColumns:
+    """快捷键那几列的尺寸：字母一列 + 四种修饰符各一列，**整个菜单共用同一套列宽**。
+
+    这正是「三个列各自对齐」的由来：列宽只按整个菜单里最宽的量一次，所有行都按它摆 ——
+    ⇧⌘C 的 ⇧ 与 ⌥ 落在同一列上，⌘R / ⌘⌫ / ⌘I 的 ⌘ 也落在同一列上，字母则一律贴着右沿。
+    """
+
+    key_width: int
+    modifier_widths: Mapping[Qt.KeyboardModifier, int]
+
+    @classmethod
+    def measure(cls, shortcuts: Iterable[QKeySequence], metrics: QFontMetrics) -> ShortcutColumns:
+        parts = [split_shortcut(shortcut) for shortcut in shortcuts]
+        return cls(
+            key_width=max(
+                (metrics.horizontalAdvance(key_text) for _, key_text in parts if key_text),
+                default=0,
+            ),
+            # **只给这个菜单里真用到的修饰符留列**：空白处那张菜单只有 ⌘ 与无修饰的 ⎋，
+            # 硬留四列就是白占三十几像素。
+            modifier_widths={
+                bit: metrics.horizontalAdvance(_modifier_glyph(bit))
+                for bit in MODIFIER_ORDER
+                if any(bit in present for present, _ in parts)
+            },
+        )
+
+    @property
+    def width(self) -> int:
+        """列块一共占多宽（菜单要为它预留这么多）。"""
+        return (
+            self.key_width
+            + sum(self.modifier_widths.values())
+            + SHORTCUT_GAP * (len(self.modifier_widths) + 1)
+        )
+
+    def cells(self, right: int, top: int, height: int) -> tuple[QRect, dict[Qt.Key, QRect]]:
+        """这一行里各格的矩形：先字母，再各修饰符（从右往左），**每格都按右对齐画**。
+
+        右对齐而不是按字宽推位置：同一列里的字形宽窄不同（C / R / I / ⌫），按字宽推必然
+        参差，而右对齐时 Qt 把文字贴到格子右沿，一像素不差。
+        """
+        key_rect = QRect(right - SHORTCUT_RIGHT_INSET - self.key_width, top, self.key_width, height)
+        rects: dict[Qt.KeyboardModifier, QRect] = {}
+        edge = key_rect.left() - SHORTCUT_GAP
+        for modifier, width in self.modifier_widths.items():
+            edge -= width
+            rects[modifier] = QRect(edge, top, width, height)
+            edge -= SHORTCUT_GAP
+        return key_rect, rects
+
+
+class ShortcutColumnMenu(QMenu):
+    """弹出菜单：快捷键按「字母一列 + 修饰符各占一列」自己画在行右沿。
+
+    **为什么不用 Qt 自己画**：样式表一挂到 ``QMenu`` 上，Qt 就不再给快捷键算位置了 ——
+    实测无论有没有 ``QMenu::item`` 规则、右内边距取多少，它都紧跟在文字后面（右沿恒为
+    78.5），而原生菜单里它贴着右沿。``setShortcut`` 一直都在设，问题是出在**画**的那一步，
+    QSS 调不动，只能自己画。
+
+    画之前得先给这一块**预留宽度**（见 :meth:`reserve_shortcut_columns`）：快捷键不在条目
+    文字里，Qt 不会替它腾地方，不预留就压在标签上（实测菜单宽 143、列块要画到 x≈100，
+    而「在访达中显示」一直伸到 98；预留之后 218）。
+    """
+
+    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
+        super().paintEvent(event)
         entries = [
-            (action, action.shortcut().toString(QKeySequence.SequenceFormat.NativeText))
-            for action in current.actions()
+            action
+            for action in self.actions()
             if not action.isSeparator() and not action.shortcut().isEmpty()
         ]
-        # 按**墨迹宽**而不是字宽来补，而且是**向上**取整：字宽（advance）含字身留白，
-        # 补齐字宽之后露在外面的那几笔仍然参差；向上取整保证宁可多补一格也不欠。
-        # 这几个符号的留白还不一样（⌘R / ⇧⌘C / ⌘I 是 2 像素，⌘⌫ 是 3），于是 ⌘⌫ 会多拿到
-        # 一格 —— 这正是「移到废纸篓那一行看着没对齐」。
-        widest = max((metrics.boundingRect(text).width() for _, text in entries), default=0)
-        for action, text in entries:
-            saved.append((action, action.text(), action.isShortcutVisibleInContextMenu()))
-            action.setShortcutVisibleInContextMenu(False)
-            padding = " " * max(0, math.ceil((widest - metrics.boundingRect(text).width()) / space))
-            action.setText(f"{action.text()}\t{padding}{text}")
+        if not entries:
+            return
+        metrics = QFontMetrics(self.font())
+        columns = ShortcutColumns.measure([action.shortcut() for action in entries], metrics)
+        align = int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        for action in entries:
+            rect = self.actionGeometry(action)
+            modifiers, key_text = split_shortcut(action.shortcut())
+            key_rect, modifier_rects = columns.cells(rect.right(), rect.top(), rect.height())
+            if action is self.activeAction():
+                role = QPalette.ColorRole.HighlightedText
+            elif action.isEnabled():
+                role = QPalette.ColorRole.Text
+            else:
+                role = QPalette.ColorRole.PlaceholderText
+            painter = QPainter(self)
+            painter.setPen(self.palette().color(role))
+            painter.drawText(key_rect, align, key_text)
+            for modifier in modifier_rects:
+                if modifier in modifiers:
+                    painter.drawText(modifier_rects[modifier], align, _modifier_glyph(modifier))
+            painter.end()
 
-    def restore() -> None:
-        for action, text, visible in saved:
-            action.setText(text)
-            action.setShortcutVisibleInContextMenu(visible)
-
-    return restore
+    def reserve_shortcut_columns(self) -> None:
+        """把菜单撑到「最长标签 + 快捷键列块」那么宽（没有快捷键就什么也不做）。"""
+        entries = [
+            action
+            for action in self.actions()
+            if not action.isSeparator() and not action.shortcut().isEmpty()
+        ]
+        if not entries:
+            return
+        metrics = QFontMetrics(self.font())
+        columns = ShortcutColumns.measure([action.shortcut() for action in entries], metrics)
+        labels = max(
+            metrics.horizontalAdvance(action.text())
+            for action in self.actions()
+            if not action.isSeparator()
+        )
+        has_check = any(action.isCheckable() for action in self.actions())
+        left = MENU_INSET + (MENU_CHECK_GUTTER if has_check else 0)
+        self.setMinimumWidth(int(labels + left + columns.width + SHORTCUT_RIGHT_INSET + MENU_INSET))
 
 
 def apply_style(menu: QMenu) -> None:
@@ -289,7 +423,7 @@ def build_photo_menu(actions: MenuActions, *, multiple: bool) -> QMenu:
     ——打开哪一张说不清、批量改名是 ADR 0004 明确排除的、拷谁的元数据同样说不清。
     其余几条作用于整个选择。
     """
-    menu = QMenu()
+    menu = ShortcutColumnMenu()
     _add_open_and_reveal(menu, actions, multiple=multiple)
     menu.addSeparator()
     menu.addAction(actions.metadata)
@@ -300,7 +434,7 @@ def build_photo_menu(actions: MenuActions, *, multiple: bool) -> QMenu:
 
 def build_album_menu(actions: MenuActions, *, multiple: bool) -> QMenu:
     """相册（多选相册时同样没有「打开」与「重命名」）。"""
-    menu = QMenu()
+    menu = ShortcutColumnMenu()
     _add_open_and_reveal(menu, actions, multiple=multiple)
     menu.addAction(actions.trash)
     return menu
@@ -313,7 +447,7 @@ def build_group_menu(actions: MenuActions) -> QMenu:
     说明」，后按用户意见收窄成不出现）。分组不是磁盘上的东西，这两条永远不可用；菜单里
     摆两个点不动的条目，再加一句解释为什么点不动，等于把一个功能缺失讲了三遍。
     """
-    menu = QMenu()
+    menu = ShortcutColumnMenu()
     menu.addAction(actions.open_entry)
     menu.addAction(actions.copy_group)
     return menu
@@ -324,7 +458,7 @@ def build_background_menu(actions: MenuActions) -> QMenu:
 
     子菜单自己建（复用里面的 ``QAction``）——把菜单栏的 ``QMenu`` 直接塞进来会把它搬走。
     """
-    menu = QMenu()
+    menu = ShortcutColumnMenu()
     menu.addAction(actions.select_all)
     menu.addSeparator()
     menu.addMenu(_submenu("分组", actions.group_choices))
@@ -342,7 +476,7 @@ def build_background_menu(actions: MenuActions) -> QMenu:
 
 
 def build_menu(actions: MenuActions, kind: TargetKind, *, multiple: bool = False) -> QMenu:
-    """按落点挑一份菜单。"""
+    """按落点挑一份菜单。**只拼不弹**，测试因此可以直接调它看内容。"""
     if kind is TargetKind.PHOTO:
         return build_photo_menu(actions, multiple=multiple)
     if kind is TargetKind.ALBUM:
@@ -350,6 +484,24 @@ def build_menu(actions: MenuActions, kind: TargetKind, *, multiple: bool = False
     if kind is TargetKind.GROUP:
         return build_group_menu(actions)
     return build_background_menu(actions)
+
+
+def prepare(menu: QMenu) -> None:
+    """接管快捷键：关掉 Qt 自己画的那一列，并给我们的列块预留宽度。
+
+    两件事都得做，缺一不可：
+
+    * **关掉它自己画的**：不关的话 Qt 会把快捷键紧跟在文字后面再画一遍，和我们那几列
+      重叠。这个标志是**长期生效**的（动作是菜单栏与右键菜单共用的），但只影响弹出菜单
+      的显示 —— 菜单栏那边原生的照旧，``shortcut`` 本身也没动，按键照常触发。
+    * **预留宽度**：快捷键不在条目文字里，Qt 不会替它腾地方，不预留就压在标签上。
+    """
+    for current in _owned_menus(menu):
+        for action in current.actions():
+            if not action.isSeparator() and not action.shortcut().isEmpty():
+                action.setShortcutVisibleInContextMenu(False)
+        if isinstance(current, ShortcutColumnMenu):
+            current.reserve_shortcut_columns()
 
 
 def _add_open_and_reveal(menu: QMenu, actions: MenuActions, *, multiple: bool) -> None:
@@ -384,6 +536,7 @@ __all__ = [
     "MENU_CORNER_RADIUS",
     "MENU_HIGHLIGHT_RADIUS",
     "MENU_ARROW_SIZE",
+    "MODIFIER_ORDER",
     "MENU_INSET",
     "MENU_ITEM_PADDING",
     "MenuActions",
@@ -395,5 +548,6 @@ __all__ = [
     "build_menu",
     "build_photo_menu",
     "style_sheet",
-    "with_native_shortcuts",
+    "ShortcutColumnMenu",
+    "ShortcutColumns",
 ]

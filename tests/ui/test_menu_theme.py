@@ -23,7 +23,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PIL import Image  # noqa: E402
-from PySide6.QtGui import QColor, QKeySequence, QPalette  # noqa: E402
+from PySide6.QtCore import QPoint, Qt  # noqa: E402
+from PySide6.QtGui import (  # noqa: E402
+    QColor,
+    QFontMetrics,
+    QKeySequence,
+    QPalette,
+)
 from PySide6.QtWidgets import QApplication, QMenu  # noqa: E402
 
 from gallery.core.library.config import prepare_library  # noqa: E402
@@ -161,40 +167,140 @@ def test_context_menu_has_hover_highlight(qt_app: QApplication, window: MainWind
     assert f"padding: {menus.MENU_INSET}px" in sheet
 
 
-def test_shortcuts_become_a_right_aligned_column(qt_app: QApplication, window: MainWindow) -> None:
-    """快捷键要排成右对齐的一列，菜单关掉后原样还原。
+def test_split_shortcut_separates_modifiers_from_the_key() -> None:
+    """修饰符与键要分得开：靠的是 QKeyCombination，不是去解析「⇧⌘C」这种字符串。
 
-    样式表模式下 Qt 不再给快捷键算制表位列（它被画在文字后面，右沿恒为 78.5），QSS 的
-    ``padding-right`` / ``::indicator`` 都调不动；正路是关掉自动绘制、把「标签 + 制表符 +
-    快捷键」写进文字，让 Qt 自己排那一列（见 ``menus.with_native_shortcuts``）。
+    **注意第一个修饰符是 ``ControlModifier``**：macOS 上 Qt 把 Ctrl 译成 Command
+    （菜单里显示的一直是 ⌘R / ⌘⌫ / ⇧⌘C），而 ``MetaModifier`` 才是控制键 ⌃。认反了
+    画出来就是 ⌃R。
+    """
+    modifiers, key = menus.split_shortcut(QKeySequence("Ctrl+Shift+C"))
 
-    动作是菜单栏与右键菜单**共用**的，所以必须还原 —— 否则菜单栏上会出现「拷贝路径⇧⌘C」
-    再加上它自己画的那一列。
+    assert modifiers == frozenset(
+        {Qt.KeyboardModifier.ControlModifier, Qt.KeyboardModifier.ShiftModifier}
+    )
+    assert key == "C"
+    assert menus.split_shortcut(QKeySequence("Ctrl+Backspace")) == (
+        frozenset({Qt.KeyboardModifier.ControlModifier}),
+        "⌫",
+    )
+    assert menus.split_shortcut(QKeySequence("Esc")) == (frozenset(), "⎋")
+    assert menus.split_shortcut(QKeySequence()) == (frozenset(), "")
+
+
+def test_each_shortcut_column_lines_up(qt_app: QApplication, window: MainWindow) -> None:
+    """「三个列各自对齐」：同一列在所有行上是同一段 x，字母列一律贴右沿。
+
+    列宽只按整个菜单量一次，所有行都按它摆（见 ``menus.ShortcutColumns``）。早先试着在
+    条目文字里补空格来对齐，位移只有请求的 2/3 且不线性，永远差几像素。
     """
     window._stack.setCurrentWidget(window._grid_page)
     row = window._model.row_of_path(window._library.root / "一张.jpg")
     assert row >= 0
 
     menu = window.context_menu_for(row)
+
     assert menu is not None
-    original = {id(a): a.text() for a in menu.actions()}
-    flagged = {id(a): a.isShortcutVisibleInContextMenu() for a in menu.actions()}
-    with_shortcut = [a for a in menu.actions() if not a.shortcut().isEmpty()]
-    assert with_shortcut, "这张菜单上至少有一条带快捷键"
+    metrics = QFontMetrics(menu.font())
+    shortcuts = [
+        action.shortcut()
+        for action in menu.actions()
+        if not action.isSeparator() and not action.shortcut().isEmpty()
+    ]
+    assert len(shortcuts) >= 3
+    columns = menus.ShortcutColumns.measure(shortcuts, metrics)
+    right, top, height = 400, 0, 26
 
-    restore = menus.with_native_shortcuts(menu)
+    key_rights, command_columns = [], []
+    for shortcut in shortcuts:
+        modifiers, _ = menus.split_shortcut(shortcut)
+        key_rect, modifier_rects = columns.cells(right, top, height)
+        key_rights.append(key_rect.right())
+        if Qt.KeyboardModifier.ControlModifier in modifiers:
+            command_columns.append(modifier_rects[Qt.KeyboardModifier.ControlModifier])
+
+    assert len(set(key_rights)) == 1, "字母列右沿在每一行上都该一样"
+    assert command_columns
+    assert len({rect.left() for rect in command_columns}) == 1, "⌘ 该在同一列上"
+    assert len(
+        {
+            rect.left()
+            for rect in [
+                columns.cells(right, top, height)[1][bit] for bit in columns.modifier_widths
+            ]
+        }
+    ) == len(columns.modifier_widths)
+
+
+def test_only_the_modifiers_a_menu_uses_get_a_column(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """只给用到的修饰符留列。空白处那张菜单只有 ⌘A 与无修饰的 ⎋，硬留四列是白占像素。"""
+    window._stack.setCurrentWidget(window._grid_page)
+
+    menu = window.context_menu_for(-1)
+
+    assert menu is not None
+    metrics = QFontMetrics(menu.font())
+    columns = menus.ShortcutColumns.measure(
+        [action.shortcut() for action in menu.actions() if not action.shortcut().isEmpty()],
+        metrics,
+    )
+
+    assert set(columns.modifier_widths) == {Qt.KeyboardModifier.ControlModifier}
+
+
+def test_menus_reserve_room_for_the_shortcut_columns(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """菜单要为快捷键列块**预留宽度**：它不在条目文字里，Qt 不会替它腾地方。
+
+    不预留就压在标签上（实测菜单宽 143、列块要画到 x≈100，而「在访达中显示」一直伸到 98）。
+    """
+    window._stack.setCurrentWidget(window._grid_page)
+    row = window._model.row_of_path(window._library.root / "一张.jpg")
+    assert row >= 0
+
+    menu = window.context_menu_for(row)
+
+    assert menu is not None
+    menu.popup(QPoint(60, 60))
     try:
-        for action in with_shortcut:
-            native = action.shortcut().toString(QKeySequence.SequenceFormat.NativeText)
-            assert "\t" in action.text()
-            assert action.text().endswith(native)
-            assert not action.isShortcutVisibleInContextMenu()
+        widest_label = max(
+            QFontMetrics(menu.font()).horizontalAdvance(action.text())
+            for action in menu.actions()
+            if not action.isSeparator()
+        )
+        columns = menus.ShortcutColumns.measure(
+            [action.shortcut() for action in menu.actions() if not action.shortcut().isEmpty()],
+            QFontMetrics(menu.font()),
+        )
+        needed = widest_label + menus.MENU_INSET + columns.width + menus.SHORTCUT_RIGHT_INSET
+        assert menu.width() >= needed
     finally:
-        restore()
+        menu.close()
 
-    for action in menu.actions():
-        assert action.text() == original[id(action)]
-        assert action.isShortcutVisibleInContextMenu() == flagged[id(action)]
+
+def test_qt_no_longer_draws_the_shortcut_column_itself(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """我们自己画快捷键，就得先关掉 Qt 画的那一版，否则两者重叠。
+
+    这个标志是**长期生效**的（动作与菜单栏共用），但只影响弹出菜单：菜单栏那边原生的照旧，
+    ``shortcut`` 本身也没动，按键照常触发。
+    """
+    window._stack.setCurrentWidget(window._grid_page)
+    row = window._model.row_of_path(window._library.root / "一张.jpg")
+    assert row >= 0
+
+    menu = window.context_menu_for(row)
+
+    assert menu is not None
+    with_shortcut = [a for a in menu.actions() if not a.shortcut().isEmpty()]
+    assert with_shortcut
+    for action in with_shortcut:
+        assert not action.isShortcutVisibleInContextMenu()
+        assert not action.shortcut().isEmpty(), "关掉的只是显示，按键还得留着"
 
 
 def test_submenu_arrow_is_shrunk(qt_app: QApplication, window: MainWindow) -> None:

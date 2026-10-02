@@ -1846,15 +1846,8 @@ class MainWindow(QMainWindow):
         menu = self.context_menu_for(row)
         if menu is None:
             return
-        # 快捷键改成右对齐的一列（样式表模式下 Qt 不再给快捷键算那一列，见 ui.menus）。
-        # 它暂时改的是菜单栏与右键菜单**共用**的那批 QAction，所以菜单一关就要还原 ——
-        # 不还原的话，菜单栏上会出现「拷贝路径⇧⌘C」再加上它自己画的那一列。
-        restore = menus.with_native_shortcuts(menu)
-        try:
-            menu.exec(self._grid.cursor().pos())
-        finally:
-            restore()
-            menu.deleteLater()
+        menu.exec(self._grid.cursor().pos())
+        menu.deleteLater()
 
     def context_menu_for(self, row: int) -> QMenu | None:
         """这一下该弹什么菜单。**只拼不弹**，测试因此可以直接调它看内容。
@@ -1887,6 +1880,8 @@ class MainWindow(QMainWindow):
         # 而样式表一上，面板就不再由系统画、底色会掉回系统菜单色，所以底色必须显式写进
         # 样式表（见 ``ui.menus`` 模块文档）。
         menus.apply_style(menu)
+        # 快捷键那一列我们自己画（按字母 / 修饰符分列），得先跟 Qt 约好别重复画。
+        menus.prepare(menu)
         return menu
 
     def _menu_actions(self) -> MenuActions:
