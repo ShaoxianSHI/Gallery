@@ -8,7 +8,7 @@
 
 **右键不在这里拼菜单**：视图只报「用户在照片上按了右键、在这个位置」
 （:attr:`DetailView.context_requested`），菜单由 ``MainWindow`` 按网格同一套流程拼
-（ADR 0019）—— 与 :class:`~gallery.ui.browser.grid.PhotoGrid` 一个分工。
+（ADR 0021）—— 与 :class:`~gallery.ui.browser.grid.PhotoGrid` 一个分工。
 """
 
 from __future__ import annotations
@@ -349,7 +349,7 @@ class DetailView(QGraphicsView):
         super().mouseDoubleClickEvent(event)
 
     def contextMenuEvent(self, event: QContextMenuEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
-        """右键照片：把位置告诉窗口，菜单由 ``MainWindow`` 拼（ADR 0019）。
+        """右键照片：把位置告诉窗口，菜单由 ``MainWindow`` 拼（ADR 0021）。
 
         与网格那侧同一个分工：视图只回答「这一下落在哪」，**菜单里有什么**它不该知道 ——
         「重命名为」是什么、分组为什么删不掉，这些都在 ``ui.menus`` 里。

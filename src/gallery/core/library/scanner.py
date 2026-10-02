@@ -10,6 +10,12 @@
 符号链接一律跳过（既不进入链接目录也不收录链接文件）：跟随链接可能造成无限递归，
 而 v1 的收益很小。
 
+三个遍历函数各管一件事，**可见性规则完全一致**（隐藏项、配置目录、符号链接都不算）：
+
+- :func:`iter_photos` 递归收照片，「全部照片」那个平铺视图用；
+- :func:`iter_entries` 列**一层**的内容，相册模式逐层展开用；
+- :func:`iter_albums` 递归收文件夹，「复制到相册 / 移动到相册」挑目标用（ADR 0019）。
+
 :func:`is_visible_path` 与 :func:`describe_entry` 回答的是同一个问题的单点版本
 （「这一个路径算不算数 / 它是哪一条」）：实时监听拿到的是一条条事件路径，而不是一次
 目录遍历，于是「跳过什么」的规则必须只有一份，两边各写一遍迟早会漂。
@@ -168,6 +174,72 @@ def iter_entries(
         yield photo
 
 
+def iter_albums(
+    root: Path,
+    *,
+    should_cancel: Callable[[], bool] | None = None,
+    report: ScanReport | None = None,
+) -> Iterator[FolderRef]:
+    """递归列出 ``root`` 下的**每一个**文件夹（相册），按相对路径排序。
+
+    给「复制到相册 / 移动到相册」当目标清单用（见 ADR 0019）：用户要的是「挑一个相册」，
+    而不是「只能挑这一层看得见的那几个」—— 深层相册里的照片同样可能要被挪到别处。
+
+    产出顺序是**路径序**：一个相册紧接着它自己的子相册（``京都`` → ``京都/大阪`` →
+    ``京都/宇治`` → ``奈良``）。这是按**每一段**逐级比较排出来的，不是字符串整体排序
+    （后者会把 ``京都2`` 插到 ``京都`` 的子树中间去），也不是深度优先的先序（那会让
+    「京都」的所有子相册散落在整棵树的各处，菜单读起来像随机排列）。
+
+    可见性规则与 :func:`iter_entries` 完全一致：隐藏项、配置目录与符号链接一律不算。
+    **不跟随符号链接**：跟进去既可能走出库，也可能无限递归。
+
+    ``recursive`` 配置在这里**不生效**：它管的是「全部照片」平铺视图要不要扎进子目录，
+    而逐层浏览任何时候都能进到子相册去（见 :func:`iter_entries`）。用户把照片移进一个
+    子相册，那个相册在相册视图里立刻就看得见，不该因为他当初选了「不递归」就挑不了它。
+
+    :raises LibraryNotAccessibleError: 根目录不存在、不是目录或没有读取权限。
+    """
+    root = Path(root)
+    if not root.is_dir():
+        raise LibraryNotAccessibleError(
+            f"打不开这个文件夹：{root}。它可能已被移动、重命名或删除。",
+            path=root,
+        )
+    cancelled = should_cancel if should_cancel is not None else _never_cancel
+    found: list[FolderRef] = []
+    stack: list[Path] = [root]
+    while stack:
+        if cancelled():
+            return
+        directory = stack.pop()
+        entries = _list_dir(directory, report)
+        if entries is None:
+            continue
+        subdirectories: list[Path] = []
+        for entry in sorted(entries, key=_sort_key):
+            if cancelled():
+                return
+            name = entry.name
+            if name.startswith(".") or name == CONFIG_DIR_NAME:
+                continue
+            try:
+                if not entry.is_dir(follow_symlinks=False):
+                    continue
+                stat = entry.stat(follow_symlinks=False)
+            except OSError as exc:
+                _note_dir(report, Path(entry.path), exc)
+                continue
+            subdirectories.append(Path(entry.path))
+            found.append(FolderRef(path=Path(entry.path), mtime_ns=stat.st_mtime_ns))
+        stack.extend(reversed(subdirectories))
+    yield from sorted(found, key=_album_sort_key)
+
+
+def _album_sort_key(folder: FolderRef) -> tuple[str, ...]:
+    """相册的路径序：按**每一段**比，于是父相册后面紧跟着它自己的子树。"""
+    return folder.path.parts
+
+
 def is_visible_path(root: Path, path: Path) -> bool:
     """这个路径在**形状上**是不是扫描看得见的那种。
 
@@ -245,4 +317,11 @@ def _never_cancel() -> bool:
     return False
 
 
-__all__ = ["ScanReport", "describe_entry", "is_visible_path", "iter_entries", "iter_photos"]
+__all__ = [
+    "ScanReport",
+    "describe_entry",
+    "is_visible_path",
+    "iter_albums",
+    "iter_entries",
+    "iter_photos",
+]

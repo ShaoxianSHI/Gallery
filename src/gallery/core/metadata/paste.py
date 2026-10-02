@@ -1,4 +1,8 @@
-"""把剪贴板里的文件**复制**进当前这一层的目录（见 ADR 0018）。
+"""把文件**复制**进某个目录（界面上是「粘贴」⌘V，见 ADR 0018）。
+
+源既可以是剪贴板里的东西（⌘V），也可以是网格里选中的照片（「复制到相册」，
+见 ADR 0019）—— 两者是同一个动作：把若干项变成目标目录里的新文件。因此它们共用
+:func:`copy_into`，也共用 ``journal`` 里的 ``action=paste`` 那一种记录。
 
 这是第三个会往用户目录里写东西的操作，前两个是改名（ADR 0004）与移到废纸篓
 （ADR 0008），但它与它们有一处根本不同，写在这里免得日后有人照着前两个的规矩套错：
@@ -30,7 +34,6 @@ import shutil
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final
 from uuid import uuid4
 
 from gallery.core import paths
@@ -42,10 +45,7 @@ from gallery.core.metadata.journal import (
     WriteRecord,
     append_record,
 )
-from gallery.core.metadata.rename import MAX_NAME_BYTES
-
-#: 改名的编号从 2 起（与访达一致：原名是第一个，``名字 2`` 才是第二个）。
-_FIRST_DUPLICATE_NUMBER: Final = 2
+from gallery.core.metadata.naming import free_name_in
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,7 +167,7 @@ class _Outcome:
 
 def _copy_one(root: Path, destination: Path, source: Path, batch: str) -> _Outcome:
     """把一项复制进 ``destination``。"""
-    name = _free_name(destination, source.name)
+    name = free_name_in(destination, source.name)
     if name is None:
         return _Outcome(
             failure=Failure(source=source, message="这个名字太长，再加编号也放不下了。")
@@ -213,32 +213,6 @@ def _copy_one(root: Path, destination: Path, source: Path, batch: str) -> _Outco
             ),
         ),
     )
-
-
-def _free_name(destination: Path, name: str) -> str | None:
-    """目标目录里**还没有**的那个名字：``一张.jpg`` → ``一张 2.jpg`` → ``一张 3.jpg``。
-
-    ``None`` 表示「加编号也还是太长」—— 光靠加数字缩短不了名字，那就如实说不行。
-    """
-    if not (destination / name).exists():
-        return name
-    stem, suffix = _split_suffix(name)
-    number = _FIRST_DUPLICATE_NUMBER
-    while True:
-        candidate = f"{stem} {number}{suffix}"
-        if len(candidate.encode()) > MAX_NAME_BYTES:
-            return None
-        if not (destination / candidate).exists():
-            return candidate
-        number += 1
-
-
-def _split_suffix(name: str) -> tuple[str, str]:
-    """``一张.jpg`` → ``("一张", ".jpg")``；``京都`` → ``("京都", "")``。"""
-    stem, dot, suffix = name.rpartition(".")
-    if not dot or not stem:  # 没有后缀，或者是个「.隐藏文件」这种以点开头的名字
-        return name, ""
-    return stem, f".{suffix}"
 
 
 def _remove_partial(created: Path, is_dir: bool) -> None:

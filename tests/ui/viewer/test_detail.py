@@ -109,14 +109,14 @@ def test_manual_zoom_is_still_capped(qt_app: QApplication) -> None:
         view.close()
 
 
-# ---- 右键（ADR 0019）--------------------------------------------------------
+# ---- 右键（ADR 0021）--------------------------------------------------------
 
 
 def _right_click(view: DetailView, *, pos: QPoint, global_pos: QPoint) -> None:
     """把一个右键事件按真实路径递进去：**给视口**，由 ``QAbstractScrollArea`` 转给视图。
 
     直接调 ``contextMenuEvent`` 也能过，但那样测的是「方法存在」；真实路径才是
-    「用户在照片上按右键，窗口那边收到了位置」（实测这一段是通的，见 ADR 0019）。
+    「用户在照片上按右键，窗口那边收到了位置」（实测这一段是通的，见 ADR 0021）。
 
     ``pos`` 与 ``globalPos`` 刻意给成两个不同的点 —— 传错哪一个正是这里要防的事。
     """

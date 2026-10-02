@@ -10,6 +10,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from gallery.core import paths
 from gallery.core.errors import LibraryNotAccessibleError
@@ -153,3 +154,86 @@ def test_folder_cover_returns_none_for_empty(tmp_path: Path) -> None:
 
     assert library.folder_cover(album) is None
     assert library.folder_cover(tmp_path / "不存在") is None
+
+
+# ---- 全部相册（ADR 0019：复制到相册 / 移动到相册的目标清单）------------------
+
+
+def test_albums_lists_every_album_recursively(tmp_path: Path) -> None:
+    """列**全库**的相册，不是只列当前这一层 —— 用户要能挑到深层相册。"""
+    for name in ("京都", "京都/奈良", "京都/奈良/东大寺", "2025/苏州"):
+        (tmp_path / name).mkdir(parents=True)
+    make_photo_in(tmp_path, "京都/a.jpg")
+    library = Library.open(tmp_path)
+
+    assert [library.album_label(f.path) for f in library.albums()] == [
+        "2025",
+        "2025/苏州",
+        "京都",
+        "京都/奈良",
+        "京都/奈良/东大寺",
+    ]
+
+
+def test_albums_order_keeps_a_parent_next_to_its_children(tmp_path: Path) -> None:
+    """按**完整路径**排，不按深度优先的先序。
+
+    先序会让「京都」的所有子相册散落在整棵树的各处，菜单读起来像随机排列。
+    """
+    for name in ("京都", "京都/大阪", "京都/宇治", "奈良"):
+        (tmp_path / name).mkdir(parents=True)
+    library = Library.open(tmp_path)
+
+    assert [library.album_label(f.path) for f in library.albums()] == [
+        "京都",
+        "京都/大阪",
+        "京都/宇治",
+        "奈良",
+    ]
+
+
+def test_albums_skips_hidden_and_config_directories(tmp_path: Path) -> None:
+    """隐藏项与配置目录不算相册 —— 否则用户会看见一个「.gallery」可往里挪照片。"""
+    for name in ("京都", ".隐藏相册", ".gallery/cache"):
+        (tmp_path / name).mkdir(parents=True)
+    library = Library.open(tmp_path)
+
+    assert [library.album_label(f.path) for f in library.albums()] == ["京都"]
+
+
+def test_albums_does_not_follow_symlinks(tmp_path: Path) -> None:
+    """不跟符号链接：跟进去既可能走出库，也可能无限递归。"""
+    (tmp_path / "京都").mkdir()
+    (tmp_path / "链接").symlink_to(tmp_path / "京都")
+    library = Library.open(tmp_path)
+
+    assert [library.album_label(f.path) for f in library.albums()] == ["京都"]
+
+
+def test_albums_is_empty_for_a_flat_library(tmp_path: Path) -> None:
+    """一个相册都没有时返回空清单（界面据此干脆不建那两条菜单）。"""
+    make_photo_in(tmp_path, "散着的一张.jpg")
+    library = Library.open(tmp_path)
+
+    assert library.albums() == []
+
+
+def test_album_label_uses_the_relative_path(tmp_path: Path) -> None:
+    """标签是相对库根的路径：两个年份下各有一个「苏州」，只写名字分不清。"""
+    (tmp_path / "2024").mkdir()
+    (tmp_path / "2024/苏州").mkdir()
+    (tmp_path / "2025").mkdir()
+    (tmp_path / "2025/苏州").mkdir()
+    library = Library.open(tmp_path)
+
+    assert library.album_label(tmp_path / "2024" / "苏州") == "2024/苏州"
+    assert library.album_label(tmp_path / "2025" / "苏州") == "2025/苏州"
+    assert library.album_label(tmp_path / "2025") == "2025"
+
+
+def make_photo_in(root: Path, name: str) -> Path:
+    """在 ``root`` 下造一张最小的合法 JPEG（不引 exiftool，不进版本控制）。"""
+    path = root / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (4, 3), (10, 20, 30)).save(path)
+    return path

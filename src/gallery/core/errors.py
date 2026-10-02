@@ -65,6 +65,13 @@ class PasteError(GalleryError):
     """粘贴被拒绝（目标不是一个文件夹）。逐项的成败不走异常，落在 ``paste.PasteResult``。"""
 
 
+class TransferError(GalleryError):
+    """移动到相册被拒绝或失败（目标不是一个相册、撤销时原位置已被占用）。
+
+    逐项的成败不走异常，落在 ``transfer.MoveResult`` 里。
+    """
+
+
 __all__ = [
     "ConfigError",
     "DeleteError",
@@ -75,5 +82,6 @@ __all__ = [
     "MetadataError",
     "PasteError",
     "RenameError",
+    "TransferError",
     "UnsupportedFormatError",
 ]

@@ -303,6 +303,8 @@ def test_photo_menu_items(qt_app: QApplication, window: MainWindow) -> None:
         "在访达中显示",
         "拷贝",
         "拷贝路径",
+        "复制到相册",
+        "移动到相册",
         "",
         "重命名…",
         "移到废纸篓",
@@ -319,6 +321,9 @@ def test_album_menu_has_no_metadata_items(qt_app: QApplication, window: MainWind
 
     后一条是刻意不给的：相册是文件夹，让系统用默认应用打开它就是让访达打开它 ——
     那与上面那行「打开」是同一件事，菜单里摆两行等于把一件事说两遍（ADR 0014 决策 7）。
+
+    同样**没有**「复制到相册 / 移动到相册」：那两条搬的是照片，搬相册会动到整棵子树
+    （ADR 0019 决策 5）。
     """
     _show_albums(qt_app, window)
     row = window._model.row_of_path(window._library.root / "京都")
@@ -359,7 +364,11 @@ def test_group_menu_disables_writes_and_explains(qt_app: QApplication, window: M
 def test_multi_selection_hides_single_item_actions(
     qt_app: QApplication, window: MainWindow
 ) -> None:
-    """多选：只作用在「某一个东西」上的命令全部藏起来（ADR 0004 与菜单设计）。"""
+    """多选：只作用在「某一个东西」上的命令全部藏起来（ADR 0004 与菜单设计）。
+
+    「复制到相册」「移动到相册」**多选时仍然留着** —— 它们作用于整个选择，说的正是
+    「把这一堆东西挪到那儿去」，正是多选最想干的事（ADR 0019）。
+    """
     _enter_album(qt_app, window)
     assert window._model.rowCount() == len(PHOTO_NAMES)
     _select(window._grid, window._model, (0, 1))
@@ -371,6 +380,8 @@ def test_multi_selection_hides_single_item_actions(
         "在访达中显示",
         "拷贝",
         "拷贝路径",
+        "复制到相册",
+        "移动到相册",
         "",
         "移到废纸篓",
         "",
@@ -844,7 +855,7 @@ def test_copy_paths_skips_group_cards(qt_app: QApplication, window: MainWindow) 
     assert QGuiApplication.clipboard().text() == "原样"
 
 
-# ---- 大图页的右键菜单（ADR 0019）--------------------------------------------
+# ---- 大图页的右键菜单（ADR 0021）--------------------------------------------
 
 
 def wait_until(qt_app: QApplication, predicate: Callable[[], bool]) -> bool:
@@ -890,6 +901,8 @@ def test_detail_menu_is_the_photo_menu_with_close_on_top(
         "在访达中显示",
         "拷贝",
         "拷贝路径",
+        "复制到相册",
+        "移动到相册",
         "",
         "重命名…",
         "移到废纸篓",
@@ -897,6 +910,34 @@ def test_detail_menu_is_the_photo_menu_with_close_on_top(
         "显示元数据信息",
         "复制元数据",
     ]
+
+
+def test_detail_menu_differs_from_the_photo_menu_only_on_the_first_row(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """与网格那张**逐行对照**：只差第一行与「粘贴」，其余一模一样。
+
+    这条比「把行抄一遍」更能防退化：将来网格那张加了命令，这张忘了加，这里就红了。
+    """
+    _enter_album(qt_app, window)
+    # 先把剪贴板摆满：网格那张菜单的「粘贴」取决于剪贴板（ADR 0018），空剪贴板下
+    # 这一条压根不出现，两张菜单就少了一次有意义的对照。
+    desktop.copy_files_to_clipboard([window._library.root / "京都" / PHOTO_NAMES[1]])
+    row = window._model.row_of_path(window._library.root / "京都" / PHOTO_NAMES[0])
+    assert row >= 0
+    photo = _context_at(window, row)
+    assert photo is not None
+    photo_texts = _texts(photo)
+    assert photo_texts[0] == "打开"
+    assert "粘贴" in photo_texts
+
+    _open_detail(qt_app, window, PHOTO_NAMES[0])
+    menu = window.detail_context_menu()
+    assert menu is not None
+    detail_texts = _texts(menu)
+
+    assert detail_texts[0] == "退出"
+    assert detail_texts == ["退出", *(text for text in photo_texts[1:] if text != "粘贴")]
 
 
 def test_detail_menu_says_escape_on_the_close_row(qt_app: QApplication, window: MainWindow) -> None:
@@ -944,7 +985,7 @@ def test_detail_menu_is_enabled_for_the_viewed_photo(
 ) -> None:
     """菜单里那些行该亮就亮，「重命名…」**摆着但置灰**。
 
-    置灰是因为行内改名的输入框在网格里，而大图页的改名字段还没有 —— ADR 0019 明确
+    置灰是因为行内改名的输入框在网格里，而大图页的改名字段还没有 —— ADR 0021 明确
     先把菜单摆好、后端另一步接。一条亮着却不接线的行，点下去什么也不发生，比灰着更糟。
     """
     _open_detail(qt_app, window, PHOTO_NAMES[0])
@@ -964,7 +1005,7 @@ def test_detail_menu_acts_on_the_photo_you_are_looking_at(
     """翻过图之后，菜单作用的是**正在看的那一张**，不是网格选区里那张。
 
     网格的选区停在大图打开时的第一张，而用户已经翻到第二张了 —— 命令作用到看不见的
-    照片上，是这一页最容易出的错（ADR 0019）。
+    照片上，是这一页最容易出的错（ADR 0021）。
     """
     _open_detail(qt_app, window, PHOTO_NAMES[0])
     # 双击进入大图时网格仍停在那格上（``_open_detail`` 自己不改选区，这里补上真实那一步）。
@@ -990,7 +1031,7 @@ def test_trashing_the_photo_you_are_looking_at_shows_the_next_one(
 ) -> None:
     """大图页里 ⌘⌫：删掉正在看的那张，**接着看下一张**，不退回网格。
 
-    这是 ADR 0019 里那笔当时算过的账：删完之后人得留在一个说得清的地方，而看照片时
+    这是 ADR 0021 里那笔当时算过的账：删完之后人得留在一个说得清的地方，而看照片时
     最顺手的动作就是「这张不要，下一张」。
     """
     row = _open_detail(qt_app, window, PHOTO_NAMES[0])
