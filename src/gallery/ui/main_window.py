@@ -69,6 +69,7 @@ from gallery.core.metadata.facets import (
 from gallery.core.metadata.journal import ACTION_MOVE, ACTION_RENAME
 from gallery.core.metadata.paste import PasteResult
 from gallery.core.metadata.rename import RenameResult
+from gallery.core.metadata.transfer import Failure as TransferFailure
 from gallery.core.metadata.transfer import MoveResult
 from gallery.core.metadata.trash import Failure, TrashResult
 from gallery.core.metadata.undo import UndoResult
@@ -319,11 +320,14 @@ def _context_kind(entry: GridEntry) -> TargetKind:
     return TargetKind.PHOTO
 
 
-def _first_reason(failures: Sequence[Failure]) -> str:
+def _first_reason(failures: Sequence[Failure | TransferFailure]) -> str:
     """失败原因的摘要。
 
     只有一项时要点名道姓 —— 用户得知道该去看哪张照片；多项时横幅只有一行容身之地，
     只给第一条，完整列表在日志里。
+
+    两种失败形状（取回废纸篓报的 ``name``、撤销移动报的 ``source``）放在一个列表里看是
+    安全的：``transfer.Failure.name`` 就是 ``source.name``，两条路拼出来的句子一样。
     """
     if not failures:
         return "原因不明"
