@@ -26,6 +26,7 @@ macOS 样式画**，底色会掉回系统菜单色（浅色 ``#ececec``）。所
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from enum import Enum
@@ -186,11 +187,15 @@ def with_native_shortcuts(menu: QMenu) -> Callable[[], None]:
             for action in current.actions()
             if not action.isSeparator() and not action.shortcut().isEmpty()
         ]
-        widest = max((metrics.horizontalAdvance(text) for _, text in entries), default=0)
+        # 按**墨迹宽**而不是字宽来补，而且是**向上**取整：字宽（advance）含字身留白，
+        # 补齐字宽之后露在外面的那几笔仍然参差；向上取整保证宁可多补一格也不欠。
+        # 这几个符号的留白还不一样（⌘R / ⇧⌘C / ⌘I 是 2 像素，⌘⌫ 是 3），于是 ⌘⌫ 会多拿到
+        # 一格 —— 这正是「移到废纸篓那一行看着没对齐」。
+        widest = max((metrics.boundingRect(text).width() for _, text in entries), default=0)
         for action, text in entries:
             saved.append((action, action.text(), action.isShortcutVisibleInContextMenu()))
             action.setShortcutVisibleInContextMenu(False)
-            padding = " " * max(0, round((widest - metrics.horizontalAdvance(text)) / space))
+            padding = " " * max(0, math.ceil((widest - metrics.boundingRect(text).width()) / space))
             action.setText(f"{action.text()}\t{padding}{text}")
 
     def restore() -> None:
