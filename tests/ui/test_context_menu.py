@@ -390,11 +390,26 @@ def test_multi_selection_hides_single_item_actions(
 
 
 def test_background_menu_has_no_file_actions(window: MainWindow) -> None:
-    """空白处：一条会动文件的都没有，只有视图级命令。"""
+    """空白处：「新建相册」在最上面，其余仍是视图级命令。
+
+    新建相册是这条菜单里**唯一会动磁盘**的一条（ADR 0022），而它属于「只增不改」那一类
+    —— 建出来的是空文件夹，绝不覆盖任何东西。真正危险的那几条（重命名、移到废纸篓、
+    在访达中显示）依然一条都不在这儿。
+    """
     menu = _context_on_blank(window)
 
     assert menu is not None
-    assert _texts(menu) == ["全选", "", "分组", "排序", "缩略图大小", "", "上一级"]
+    assert _texts(menu) == [
+        "新建相册",
+        "",
+        "全选",
+        "",
+        "分组",
+        "排序",
+        "缩略图大小",
+        "",
+        "上一级",
+    ]
     forbidden = {"重命名…", "移到废纸篓", "在访达中显示"}
     for action in menu.actions():
         submenu = action.menu()

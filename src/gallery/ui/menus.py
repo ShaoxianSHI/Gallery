@@ -654,6 +654,9 @@ class MenuActions:
     #: 「粘贴」⌘V。**此刻粘不了就是 ``None``**，菜单里干脆不出现这一条（不是置灰）：
     #: 要么这里没有可粘进去的文件夹，要么剪贴板里没有文件 —— 见 ADR 0018。
     paste: QAction | None
+    #: 「新建相册」⇧⌘N（ADR 0022）。**只有空白处那张菜单用它**（那是「没有选中任何东西」
+    #: 的落点）；此刻建不了就是 ``None`` —— 与「粘贴」同一个取向。
+    new_album: QAction | None
     #: 「重命名…」⌘R（单选才有）。
     rename: QAction
     #: 「移到废纸篓」⌘⌫。
@@ -716,11 +719,21 @@ def build_group_menu(actions: MenuActions) -> QMenu:
 
 
 def build_background_menu(actions: MenuActions) -> QMenu:
-    """网格空白处：只有视图级命令，一条会动文件的都没有。
+    """网格空白处：「新建相册」在最上面，其余仍是视图级命令。
+
+    **「新建相册」摆在最上面**（ADR 0022 决策 1），与访达一致：空白处右键的第一条就是
+    「新建文件夹」，下面才轮到全选、粘贴、排序那些。它是这张菜单里**唯一会动磁盘**的
+    一条 —— 与「粘贴」同属「只增不改」那一类，绝不会覆盖用户已有的东西。
+
+    建不了时压根不出现（传进来的是 ``None``）：分组视图里那一层不是文件夹，
+    而摆一条永远点不动的条目等于把一个功能缺失讲三遍（ADR 0014 决策 4）。
 
     子菜单自己建（复用里面的 ``QAction``）——把菜单栏的 ``QMenu`` 直接塞进来会把它搬走。
     """
     menu = ShortcutColumnMenu()
+    if actions.new_album is not None:
+        menu.addAction(actions.new_album)
+        menu.addSeparator()
     menu.addAction(actions.select_all)
     menu.addSeparator()
     menu.addMenu(_submenu("分组", actions.group_choices))

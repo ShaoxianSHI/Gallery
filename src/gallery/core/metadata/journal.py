@@ -47,6 +47,13 @@ ACTION_PASTE: Final = "paste"
 #: （与撤销粘贴正好相反，那一次是删除，红线 1 不允许）。
 ACTION_MOVE: Final = "move"
 
+#: 日志里的动作名：新建一个相册（``core.metadata.album``、ADR 0022）。
+#:
+#: 与 :data:`ACTION_PASTE` 同属「只增不改」那一类，**同样不在撤销栈里**：撤销一次新建
+#: 就是删掉一个文件夹，而删除在这个项目里只允许用户在界面上亲手触发（红线 1）。
+#: 紧接着那一次改名（用户给新相册起名）照旧记账、照旧可 ``⌘Z`` 撤销。
+ACTION_CREATE: Final = "create"
+
 #: 操作成功。
 RESULT_OK: Final = "ok"
 
@@ -64,7 +71,8 @@ class WriteRecord:
     """一条写操作记录。"""
 
     #: :data:`ACTION_RENAME`、:data:`ACTION_MOVE`、:data:`ACTION_PASTE`、
-    #: :data:`ACTION_TRASH`、:data:`ACTION_RESTORE` 或 :data:`ACTION_UNDO`。
+    #: :data:`ACTION_TRASH`、:data:`ACTION_RESTORE`、:data:`ACTION_CREATE`
+    #: 或 :data:`ACTION_UNDO`。
     action: str
     #: 改之前的路径。
     source: Path
@@ -180,6 +188,7 @@ def read_records(root: Path) -> list[WriteRecord]:
 
 
 __all__ = [
+    "ACTION_CREATE",
     "ACTION_MOVE",
     "ACTION_PASTE",
     "ACTION_RENAME",

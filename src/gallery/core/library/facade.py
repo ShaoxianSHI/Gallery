@@ -30,6 +30,7 @@ from gallery.core.library.scanner import (
 from gallery.core.library.watcher import LibraryChange, LibraryWatcher
 from gallery.core.media.decode import RasterImage, decode_rgba
 from gallery.core.media.thumbs import ThumbnailCache
+from gallery.core.metadata.album import DEFAULT_ALBUM_NAME, CreatedAlbum, create_album
 from gallery.core.metadata.batch import BatchMetadataSource, read_facets
 from gallery.core.metadata.facets import (
     PhotoFacets,
@@ -520,6 +521,15 @@ class Library:
         相册（撤销一次移动仍然是一次移动，不是删除）。与粘贴一样**绝不覆盖**。
         """
         return move_into(self._root, target, sources, should_cancel=should_cancel)
+
+    def create_album(self, parent: Path, name: str = DEFAULT_ALBUM_NAME) -> CreatedAlbum:
+        """在 ``parent`` 里新建一个空相册（界面上是「新建相册」⇧⌘N）。
+
+        规矩与红线见 ``core.metadata.album`` 与 ADR 0022：只增不改、绝不覆盖（同名改叫
+        「新建相册 2」）、**不进撤销栈**（撤销就是删文件夹，红线 1 不允许），但记账。
+        新建出来的是**普通的空文件夹**，用户往里丢什么、怎么整理，Gallery 都不管。
+        """
+        return create_album(self._root, parent, name)
 
     def undo_last_write(self) -> UndoResult | None:
         """撤销最近一次写操作（改名、移到废纸篓或移动到相册）；没有可撤销的记录时返回 ``None``。"""

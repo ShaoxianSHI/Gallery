@@ -381,7 +381,8 @@ def test_a_lone_modifier_hugs_the_key(qt_app: QApplication, window: MainWindow) 
 def test_only_the_modifiers_a_menu_uses_get_a_column(
     qt_app: QApplication, window: MainWindow
 ) -> None:
-    """只给用到的修饰符留列。空白处那张菜单只有 ⌘A 与无修饰的 ⎋，硬留四列是白占像素。"""
+    """只给用到的修饰符留列。空白处那张菜单只有 ⌘A、⇧⌘N 与无修饰的 ⎋，
+    硬留四列是白占像素。"""
     window._stack.setCurrentWidget(window._grid_page)
 
     menu = window.context_menu_for(-1)
@@ -393,7 +394,10 @@ def test_only_the_modifiers_a_menu_uses_get_a_column(
         metrics,
     )
 
-    assert set(columns.modifier_widths) == {Qt.KeyboardModifier.ControlModifier}
+    assert set(columns.modifier_widths) == {
+        Qt.KeyboardModifier.ControlModifier,
+        Qt.KeyboardModifier.ShiftModifier,
+    }
 
 
 def test_menus_reserve_room_for_the_shortcut_columns(

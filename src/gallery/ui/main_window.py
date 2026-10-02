@@ -589,6 +589,16 @@ class MainWindow(QMainWindow):
         self._clear_cache_action = QAction("清空缩略图缓存", self)
         self._clear_cache_action.triggered.connect(self.clear_thumbnail_cache)
 
+        # ⇧⌘N：与访达一致，在当前这一层里建一个相册（ADR 0022）。建完立刻进行内重命名，
+        # 因此**不进后台线程** —— 那是一次 mkdir，不是搬几百兆的复制。
+        self._new_album_action = QAction("新建相册", self)
+        self._new_album_action.setShortcut(QKeySequence("Ctrl+Shift+N"))
+        self._new_album_action.triggered.connect(self.create_album)
+        # **必须挂到窗口上**（理由见 ``_reveal_action`` 那段）：QAction 的快捷键只有在
+        # 它被加进某个控件之后才注册进 Qt 的快捷键表，而右键菜单是用完即弃的。
+        # 挂窗口不会让它冒到菜单栏里 —— 菜单栏只画被塞进某个 ``QMenu`` 的动作。
+        self.addAction(self._new_album_action)
+
         self._rename_action = QAction("重命名…", self)
         self._rename_action.setShortcut(QKeySequence("Ctrl+R"))
         self._rename_action.triggered.connect(self.rename_current_entry)
@@ -681,6 +691,7 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self._open_action)
         self._recent_menu = file_menu.addMenu("最近打开")
         file_menu.addSeparator()
+        file_menu.addAction(self._new_album_action)
         file_menu.addAction(self._rename_action)
         file_menu.addAction(self._trash_action)
         file_menu.addSeparator()
@@ -2079,6 +2090,9 @@ class MainWindow(QMainWindow):
             reveal=self._reveal_action,
             copy=self._copy_action,
             copy_path=self._copy_path_action,
+            # 「新建相册」只在空白处那张菜单里（ADR 0022 决策 1），而建不了时不出现 ——
+            # 与「粘贴」同一个取向。此时它的快捷键 ⇧⌘N 由 ``_update_action_states`` 置灰。
+            new_album=self._new_album_action if self._can_create_album() else None,
             # 两个相册清单：库里一个相册都没有时压根不出现（空子菜单是个空框，
             # 与 ADR 0014 决策 4 同一个取向）。每次弹出现建，所以连的是这一份的信号。
             copy_to_album=copy_to_album,
@@ -2158,20 +2172,42 @@ class MainWindow(QMainWindow):
         - **全部照片**：整层是平铺的，唯一说得清的目录是库根；
         - **分组里**：分组不是文件夹，**只有当这一组照片本来就都在同一个相册里**，
           那个相册才算它的目录；散在多个相册里的组没有可粘的地方（于是菜单里干脆
-          不出现「粘贴」）。
+          不出现「粘贴」）。其余情况就是当前这一层自己对应的目录（见
+          :meth:`_level_directory`）。
 
-        最后这一条正是用户要的「不同分组如果是同一个相册，还是算同一目录」：判据是
+        分组里那一条正是用户要的「不同分组如果是同一个相册，还是算同一目录」：判据是
         磁盘上的位置，不是分组本身 —— 按相机和按年份各开一张卡片，只要底下是同一个
         京都，粘进去的就是同一个京都。
         """
-        library = self._library
-        if library is None:
-            return None
         if self._group_view is not None:
             return _shared_parent(self._group_view.photos)
+        return self._level_directory()
+
+    def _level_directory(self) -> Path | None:
+        """当前这一层对应的磁盘目录，**没有就返回 ``None``**。
+
+        - **相册模式**：当前这一层的文件夹，停在顶层时就是库根；
+        - **全部照片**：整层是平铺的，唯一说得清的目录是库根；
+        - **分组里**：``None`` —— 分组不是文件夹，而且那一层网格上摆的**全是照片**，
+          新建出来的相册卡片插进去就是个错位的东西（ADR 0022 决策 1）。粘贴在分组里
+          还有一条更宽松的路（见 :meth:`_paste_target`），新建相册没有。
+
+        「粘到哪去」与「建到哪去」共用这一个判据，因此两处永远不会说出两个答案。
+        """
+        library = self._library
+        if library is None or self._group_view is not None:
+            return None
         if self._browse_mode == BROWSE_MODE_ALBUMS:
             return self._current_dir or library.root
         return library.root
+
+    def _can_create_album(self) -> bool:
+        """此刻建不建得了相册：得有「当前这一层」这个目录。
+
+        与 :meth:`_can_paste` 同一取向 —— 建不了就不出现，而不是摆一条点不动的
+        （ADR 0014 决策 4）。
+        """
+        return self._level_directory() is not None
 
     def _can_paste(self) -> bool:
         """此刻按 ⌘V 有没有用：得有可粘的目录，剪贴板里也得**真有文件**。
@@ -2222,6 +2258,59 @@ class MainWindow(QMainWindow):
         self._write_job = None
         logger.info("粘贴失败：%s", message)
         self._show_banner(f"没能粘贴：{message.rstrip('。')}")
+
+    # ---- 新建相册（见 ADR 0022）----------------------------------------------
+
+    def create_album(self) -> None:
+        """「新建相册」⇧⌘N：在当前这一层建一个空相册，**建完立刻进行内重命名**。
+
+        三步，与访达那条一模一样：建出来 → 插进网格并选中 → 行内重命名的输入框摆到
+        那一行上，光标已经在等用户起名。
+
+        **为什么不等监听器（ADR 0013）**：监听要等文件系统事件跑一趟，而行内重命名
+        必须马上有那一格可改 —— 等它就等于用户看着光标在空气里闪几十毫秒。所以这里
+        自己插进模型，同时把这一个路径记进「自家写操作」集合，稍后监听器报上来的同一
+        件事不会被重复应用（与改名、删除那几处完全一致）。
+
+        **不走后台线程**：那是一次 ``mkdir``，不搬数据。粘贴一次几百 MB 才需要。
+
+        建出来的是**普通的空文件夹**，不往里放任何东西 —— 照片怎么进去、怎么整理，
+        用户说了算。紧接着那一次改名是普通改名：记账，``⌘Z`` 能撤。
+        """
+        library = self._library
+        target = self._level_directory()
+        if library is None or target is None:
+            self._show_banner("这里没有可以新建相册的文件夹。")
+            return
+        if self._grid.is_renaming():
+            # 键盘正在另一个行内输入框里：新建会让两个输入框同时活着，先做完手上这个。
+            return
+        try:
+            created = library.create_album(target)
+        except GalleryError as exc:
+            logger.info("新建相册失败：%s", exc.detail or exc.message)
+            self._show_banner(exc.message)
+            return
+        self._note_self_write(created.path)
+        row = self._model.insert_entry(
+            created.album,
+            whole_level=self._group_view is not None or self._browse_mode == BROWSE_MODE_FLAT,
+        )
+        if row < 0:
+            # 插不进去（理论上不会：这一层里还没有同一个路径）。宁可重扫一次，
+            # 也不能让磁盘上多了一个文件夹而界面上看不见。
+            self._reload_level()
+            self._show_banner(f"已新建相册「{created.name}」。")
+            return
+        self._grid.select_row(row)
+        # 空文件夹里建了相册之后，「这一层是空的」那句提示就该收起来了（它判据是
+        # 「网格上有没有条目」）。监听器不会替我们做这件事：自家写的那次已经被摘掉。
+        self._update_level_notice()
+        self._refresh_thumbnail_window()
+        if not created.journaled:
+            # 文件夹已经在手上了，缺的只是一条历史。如实说，别让用户以为「随时可查」。
+            self._show_banner("没能记下操作日志。")
+        self._grid.begin_rename(self._model.index(row, 0))
 
     # ---- 复制到相册 / 移动到相册（ADR 0019）------------------------------------
 
@@ -2844,6 +2933,10 @@ class MainWindow(QMainWindow):
         # ⌘V 与选区无关：只看「当前这一层有没有可粘的目录」与「剪贴板里有没有文件」。
         # 粘不了时它同时也不会出现在右键菜单里（见 ``_menu_actions``）。
         self._paste_action.setEnabled(in_grid and self._can_paste())
+        # ⇧⌘N 与选区无关：只看「当前这一层有没有这个目录」（ADR 0022 决策 1）。
+        # 分组里没有 —— 那一层摆的全是照片，插一张相册卡片进去是错位的；
+        # 改到一半也不行，与改名 / 删除同一个 ``idle``：那时键盘归输入框。
+        self._new_album_action.setEnabled(in_grid and idle and self._can_create_album())
         # ⌘⏎ 与改名输入框抢键：改到一半键盘归输入框（与 rename / trash 同一个 ``idle``），
         # 不然「敲完名字顺手 ⌘⏎」会变成把访达叫起来。
         self._reveal_action.setEnabled(bool(paths) and idle)

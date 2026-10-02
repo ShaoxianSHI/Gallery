@@ -1,18 +1,27 @@
-"""元数据读取（单张 / 批量），以及写用户文件所需的几样东西：journal、改名、移到废纸篓、粘贴、移动。
+"""元数据读取（单张 / 批量），以及写用户文件所需的几样东西：
+journal、改名、移到废纸篓、粘贴、移动、新建相册。
 
 读取是只读的：单张走 :mod:`~gallery.core.metadata.exif`，成批（分组与排序要用）走
 :mod:`~gallery.core.metadata.batch`，两边共用 :mod:`~gallery.core.metadata.facets` 里
-「可分组 / 可排序字段」的那一份取值规则。真正改动用户文件的只有四样：
+「可分组 / 可排序字段」的那一份取值规则。真正改动用户文件的只有五样：
 :mod:`~gallery.core.metadata.rename`（改名）、:mod:`~gallery.core.metadata.trash`
-（移到系统废纸篓）、:mod:`~gallery.core.metadata.paste`（把文件**复制**进某个目录）与
-:mod:`~gallery.core.metadata.transfer`（把文件**移动**进某个相册）。四者都必须经由
-:mod:`~gallery.core.metadata.journal` 留下记录，而只有前两样与移动进
+（移到系统废纸篓）、:mod:`~gallery.core.metadata.paste`（把文件**复制**进某个目录）、
+:mod:`~gallery.core.metadata.transfer`（把文件**移动**进某个相册）与
+:mod:`~gallery.core.metadata.album`（在某一层里新建一个空相册）。五者都必须经由
+:mod:`~gallery.core.metadata.journal` 留下记录，而只有改名、移到废纸篓与移动进
 :mod:`~gallery.core.metadata.undo` 那一摞共用的栈提供 ⌘Z —— 撤销一次粘贴就是删文件
-（红线 1，见 ADR 0018），撤销一次移动仍然只是一次移动，所以移动是能撤的（ADR 0019）。
+（红线 1，见 ADR 0018），撤销一次移动仍然只是一次移动，所以移动是能撤的（ADR 0019）；
+撤销一次新建相册是删掉一个文件夹，同样不是用户亲手删的，于是不行（ADR 0022）。
 详见 ``docs/adr/0004-rename-on-disk.md``、``docs/adr/0008-delete-to-trash.md``、
-``docs/adr/0018-paste-into-current-folder.md`` 与 ``docs/adr/0019-copy-move-to-album.md``。
+``docs/adr/0018-paste-into-current-folder.md``、``docs/adr/0019-copy-move-to-album.md``
+与 ``docs/adr/0022-new-album.md``。
 """
 
+from gallery.core.metadata.album import (
+    DEFAULT_ALBUM_NAME,
+    CreatedAlbum,
+    create_album,
+)
 from gallery.core.metadata.batch import (
     BatchMetadataSource,
     ExifToolBatchSource,
@@ -38,7 +47,7 @@ from gallery.core.metadata.facets import (
     sort_facet,
 )
 from gallery.core.metadata.journal import WriteRecord, append_record, read_records
-from gallery.core.metadata.naming import MAX_NAME_BYTES, free_name_in
+from gallery.core.metadata.naming import MAX_NAME_BYTES, clean_name, free_name_in
 from gallery.core.metadata.paste import (
     Failure,
     PastedFile,
@@ -69,10 +78,12 @@ from gallery.core.metadata.trash import (
 from gallery.core.metadata.undo import UndoResult, next_undo_label, undo_last_write
 
 __all__ = [
+    "DEFAULT_ALBUM_NAME",
     "GROUP_FACETS",
     "MAX_NAME_BYTES",
     "SORT_FACETS",
     "BatchMetadataSource",
+    "CreatedAlbum",
     "ExifToolBatchSource",
     "ExifToolReader",
     "Facet",
@@ -96,7 +107,9 @@ __all__ = [
     "WriteRecord",
     "append_record",
     "build_report",
+    "clean_name",
     "copy_into",
+    "create_album",
     "extract",
     "free_name_in",
     "group_facet",

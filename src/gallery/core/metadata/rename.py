@@ -21,7 +21,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final
 
 from gallery.core import paths
 from gallery.core.errors import RenameError
@@ -34,10 +33,7 @@ from gallery.core.metadata.journal import (
     WriteRecord,
     append_record,
 )
-from gallery.core.metadata.naming import MAX_NAME_BYTES
-
-#: 名字里绝对不能出现的字符：路径分隔符、路径两端、其他平台的分隔符。
-_FORBIDDEN_CHARS: Final = ("/", "\\")
+from gallery.core.metadata.naming import clean_name
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,24 +54,14 @@ class RenameResult:
 def validate_name(name: str, entry: GridEntry) -> str:
     """把用户输入变成一个可以直接用的文件名，不合法就抛异常。
 
-    对照片会做两件事：没写扩展名的补回原来的扩展名（Finder 的习惯），
-    写了别的扩展名的直接拒绝。
+    与条目类型无关的那一半（空、以点开头、带分隔符、超长）在
+    :func:`~gallery.core.metadata.naming.clean_name` 里，**只有一份实现** —— 新建相册
+    （ADR 0022）也判这同一套规矩。这里只补上照片特有的一条：
+
+    - 没写扩展名的**补回原来的扩展名**（访达的习惯）；
+    - 写了别的扩展名的**直接拒绝** —— 改了扩展名，这个文件就不再是 Gallery 认得的照片。
     """
-    cleaned = name.strip()
-    if not cleaned:
-        raise RenameError("新名字不能为空。")
-    if cleaned in (".", ".."):
-        raise RenameError(f"「{cleaned}」是保留名字，不能用。")
-    if cleaned.startswith("."):
-        raise RenameError("名字不能以「.」开头：以点开头的文件不会出现在 Gallery 里。")
-    for char in _FORBIDDEN_CHARS:
-        if char in cleaned:
-            raise RenameError("名字里不能带「/」：改名只改名字，不会移动文件。")
-    if any(ord(char) < 32 or ord(char) == 127 for char in cleaned):
-        raise RenameError("名字里不能有控制字符（回车、Tab 等）。")
-    size = len(cleaned.encode("utf-8"))
-    if size > MAX_NAME_BYTES:
-        raise RenameError(f"名字太长了（{size} 字节）：单个文件名最多 {MAX_NAME_BYTES} 字节。")
+    cleaned = clean_name(name, error=RenameError)
     if isinstance(entry, PhotoRef):
         cleaned = _keep_suffix(entry, cleaned)
     return cleaned

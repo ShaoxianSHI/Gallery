@@ -61,6 +61,18 @@ class DeleteError(GalleryError):
     """移到废纸篓被拒绝或失败（越权、废纸篓不可用、恢复时原位置已被占用）。"""
 
 
+class AlbumError(GalleryError):
+    """新建相册被拒绝或失败（目标不是一个文件夹、名字非法、没有写权限）。
+
+    建出来的东西落在 ``album.CreatedAlbum`` 里：它只回答「建没建得成」，
+    没有逐项的成败可言（与粘贴、移动到相册不同，那两个结果里有一堆条目）。
+
+    名字非法那一条与改名的判据、文案是**同一份实现**
+    （:func:`gallery.core.metadata.naming.clean_name`），只是抛出的类型不同 ——
+    两个入口的失败类型各自说得清自己做了什么。
+    """
+
+
 class PasteError(GalleryError):
     """粘贴被拒绝（目标不是一个文件夹）。逐项的成败不走异常，落在 ``paste.PasteResult``。"""
 
@@ -73,6 +85,7 @@ class TransferError(GalleryError):
 
 
 __all__ = [
+    "AlbumError",
     "ConfigError",
     "DeleteError",
     "GalleryError",
