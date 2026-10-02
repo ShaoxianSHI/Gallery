@@ -125,6 +125,15 @@ class PhotoListModel(QAbstractListModel):
         """某个路径当前在第几行，没有就返回 ``-1``。"""
         return self._row_by_path.get(Path(path), -1)
 
+    def shows_path(self, path: Path) -> bool:
+        """这一层里还有没有这个东西：作为条目本身，或者作为某个分组卡片的封面。
+
+        「在途的缩略图结果还该不该认」只应由这一处说了算：成功回填与失败上报是同一件事
+        的两面，用同一个判据才不会一边丢、一边当成故障报给用户。
+        """
+        target = Path(path)
+        return target in self._row_by_path or target in self._group_rows_by_cover
+
     # ---- 原地更新 ----------------------------------------------------------
 
     def replace_entry(self, row: int, entry: GridEntry) -> bool:
@@ -282,10 +291,10 @@ class PhotoListModel(QAbstractListModel):
             边长与当前档位对不上时 :meth:`needs_thumbnail` 会说还需要，于是
             切档瞬间在途的结果会自己被重取顶替，不会把格子填歪。
         """
+        if not self.shows_path(path):
+            return  # 条目已经被换层清掉了，直接丢弃
         row = self._row_by_path.get(path)
         group_rows = self._group_rows_by_cover.get(path, ())
-        if row is None and not group_rows:
-            return  # 条目已经被换层清掉了，直接丢弃
         pixmap = QPixmap.fromImage(image)
         if edge > 0:
             sized = edge

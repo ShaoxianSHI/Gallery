@@ -17,7 +17,7 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtGui import QImage  # noqa: E402
 
-from gallery.core.library.photos import PhotoRef  # noqa: E402
+from gallery.core.library.photos import GroupRef, PhotoRef  # noqa: E402
 from gallery.ui.browser.model import PhotoListModel  # noqa: E402
 
 
@@ -84,3 +84,29 @@ def test_zero_edge_does_not_enlarge(model: PhotoListModel) -> None:
     pixmap = model.thumbnail_pixmap(path)
     assert pixmap is not None
     assert (pixmap.width(), pixmap.height()) == (64, 64)
+
+
+# ---- 「还在这一层吗」：在途结果的成败该用同一个判据 ------------------------------
+
+
+def test_a_photo_on_this_level_is_still_shown(model: PhotoListModel) -> None:
+    assert model.shows_path(Path("/库/一张.jpg")) is True
+
+
+def test_a_path_that_left_this_level_is_not_shown(model: PhotoListModel) -> None:
+    """改名 / 移走 / 删掉之后，旧路径就不在这一层了。
+
+    这是缩略图流水线的在途结果该被丢掉的依据：解码读的是旧路径，文件已经不在了，
+    失败是必然的，而那**不是**「文件损坏」—— 成功回填与失败上报都必须按这一条判断。
+    """
+    assert model.shows_path(Path("/库/旧名.jpg")) is False
+
+
+def test_a_group_card_cover_counts_as_shown(qt_app) -> None:  # type: ignore[no-untyped-def]
+    """分组卡片的封面不在 ``_row_by_path`` 里，但它照样在屏幕上，不能当成「不在了」。"""
+    del qt_app
+    photo = PhotoRef(path=Path("/库/封面.jpg"), size=100, mtime_ns=1)
+    model = PhotoListModel(icon_edge=176)
+    model.reorder([GroupRef(facet="camera", key="canon", label="Canon", photos=(photo,))])
+
+    assert model.shows_path(Path("/库/封面.jpg")) is True

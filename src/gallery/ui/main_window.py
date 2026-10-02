@@ -113,6 +113,16 @@ MAX_PREVIEW_EDGE = 4096
 #: 被改两遍，过期之后用户真的在访达里新建一个同名文件又该正常显示（ADR 0013）。
 WATCH_ECHO_TTL = 2.0
 
+#: 用户触发了一条横幅之后，后台消息让位这么久（秒）。
+#:
+#: 横幅只有一个槽，而用户刚做的事与后台的收尾常常同时发生：把照片移到废纸篓之后，
+#: 网格会立刻去给留下来的那些行要缩略图，于是「刚被自家动过、这一刻读不到」的那一张
+#: 解码失败会**迟一步**报上来，把「1 张没移走」整句盖掉。改名与撤销同理。
+#:
+#: 代价是用户刚操作完的两秒里，真正的解码失败不冒头；两秒后照常报，而那正是用户
+#: 手上正有别的动静（滚动、切库）的时候，横幅会再被刷一次。
+BANNER_STICKY_SECONDS = 2.0
+
 _BANNER_STYLE = """
 QLabel#banner {
     background: rgba(255, 176, 32, 0.16);
@@ -255,6 +265,8 @@ class MainWindow(QMainWindow):
         self._watch.failed.connect(self._on_watch_failed, Qt.ConnectionType.QueuedConnection)
         #: 自家刚写过的路径与它们的过期时刻（见 ``WATCH_ECHO_TTL``）。
         self._watch_echoes: dict[Path, float] = {}
+        #: 用户触发的那条横幅要让后台消息让位到什么时候（见 BANNER_STICKY_SECONDS）。
+        self._banner_sticky_until = 0.0
         #: 攒着没落地的变化（当时扫描在途、条目还在暂存区，或人正在大图页）。
         #: 条件合适时补做，见 :meth:`_flush_pending_watch`。
         self._watch_pending: tuple[LibraryChange, ...] | None = None
@@ -1253,12 +1265,16 @@ class MainWindow(QMainWindow):
         抢了会怎样：用户刚丢掉三张照片，横幅上「已把 3 项移到废纸篓」被后台进度顶掉，
         那条确认就此消失。这条横幅是全局共享的，谁都能写 —— 所以后台的进度是
         **最没有资格**占着它的那一个。
+
+        两道判据：上面已经有别人的话（比文字），或者刚刚有用户动作（比时间，
+        见 :data:`BANNER_STICKY_SECONDS`）。后者能挡住「用户动作的那句话说完之后、
+        进度才姗姗来迟」这种情形。
         """
         current = self._banner.text() if self._banner.isVisible() else ""
         if current and current != self._place_notice_text:
             return  # 上面有更要紧的话（「哪些内容没读到」「已把 3 项移到废纸篓」…）
-        self._place_notice_text = text
-        self._show_banner(text)
+        if self._show_banner(text, background=True):
+            self._place_notice_text = text
 
     def _clear_place_notice(self) -> None:
         """收掉自己那一条 —— **而且只在自己还占着的时候收**。"""
@@ -1522,6 +1538,14 @@ class MainWindow(QMainWindow):
                 del self._watch_echoes[path]
         return any(path in self._watch_echoes for path in change.touches)
 
+    def _was_self_written(self, path: Path) -> bool:
+        """这个路径是不是自家刚刚写过的（改名 / 移到废纸篓 / 撤销）。"""
+        now = time.monotonic()
+        for known, deadline in list(self._watch_echoes.items()):
+            if deadline <= now:
+                del self._watch_echoes[known]
+        return path in self._watch_echoes
+
     # ---- 缩略图 ------------------------------------------------------------
 
     def _refresh_thumbnail_window(self) -> None:
@@ -1599,9 +1623,31 @@ class MainWindow(QMainWindow):
         self._save_session()
 
     def _on_thumbnail_failed(self, path: object, message: str) -> None:
+        # 两类失败不是「照片坏了」，是用户自己（或自家代码）刚刚造成的，丢掉：
+        #
+        # 1. **这一格已经不在当前这一层** —— 用户刚改名 / 移走 / 删掉 / 换了库。
+        #    成功的回填早就在模型里按这个判据丢掉了（``PhotoListModel.set_thumbnail``），
+        #    失败这一侧原先却没有对称的判据。
+        # 2. **这个路径是自家刚写过的** —— 在途的那次解码读的就是它，而文件被改名 /
+        #    移走的那一瞬间它确实读不到，失败是必然的。这类失败是**并发**的产物：
+        #    解码开始时文件还在、失败报上来时它又回来了（撤销改名就是这样），
+        #    照片其实好得很。
+        #
+        # 不丢的话，用户看到的是：刚改完名（或刚撤销）成功，横幅立刻变成
+        # 「文件可能已损坏」—— 把一次成功的操作说成了数据损坏，最坏的一种假警报。
+        if isinstance(path, Path) and (
+            not self._model.shows_path(path) or self._was_self_written(path)
+        ):
+            logger.info("缩略图失败，但这一格已经不在（或刚被自家改过），丢弃：%s", message)
+            if self._pipeline is not None:
+                # 别把它记成「这文件读不出来」：照片是好的，下次窗口刷新该重取就重取。
+                self._pipeline.forget([path])
+            return
         self._thumbnail_failures += 1
         logger.info("缩略图失败：%s", message)
-        self._show_banner(f"有 {self._thumbnail_failures} 张照片无法显示缩略图：{message}")
+        self._show_banner(
+            f"有 {self._thumbnail_failures} 张照片无法显示缩略图：{message}", background=True
+        )
 
     # ---- 大图 --------------------------------------------------------------
 
@@ -2340,9 +2386,29 @@ class MainWindow(QMainWindow):
 
     # ---- 提示 --------------------------------------------------------------
 
-    def _show_banner(self, text: str) -> None:
+    def _show_banner(self, text: str, *, background: bool = False) -> bool:
+        """显示横幅，返回这条消息是否真的上了屏。
+
+        ``background=True`` 是**后台**消息（缩略图解码失败、地点解析进度）：它们不许盖掉
+        用户刚刚触发的那条说明，理由与时长见 :data:`BANNER_STICKY_SECONDS`。用户自己做的事
+        要能说清楚，这是第一位的；而「某张照片读不出来」「正在解析地点」这种话，等一会儿
+        再说并不会让人误判。
+        """
+        now = time.monotonic()
+        if background and now < self._banner_sticky_until:
+            logger.debug("后台消息先让着用户动作，过一会儿再报：%s", text)
+            return False
+        if not background:
+            self._banner_sticky_until = now + BANNER_STICKY_SECONDS
         self._banner.setText(text)
         self._banner.show()
+        return True
+
+    def _clear_banner(self) -> None:
+        """把横幅收干净（目前只有测试用：它是全局共享的一个槽）。"""
+        self._banner_sticky_until = 0.0
+        self._place_notice_text = None
+        self._banner.hide()
 
     def _report_error(self, message: str) -> None:
         QMessageBox.critical(self, "Gallery", message)
