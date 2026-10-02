@@ -20,7 +20,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QPoint, Qt  # noqa: E402
+from PySide6.QtCore import QModelIndex, QPoint, Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
@@ -518,4 +518,96 @@ def test_command_click_reassert_toggles_one_item(qt_app: QApplication, tmp_path:
     grid._press_selection = (0, columns + 1)
     grid._reassert_extended_selection(columns + 1, shift=False)
     assert _selected_rows(grid) == [0], "再点一次同一个格子是减掉它"
+    grid.deleteLater()
+
+
+# ---- 双击空白处：这一下落在格子还是空白 ----------------------------------------
+
+
+def _blank_point(grid: PhotoGrid) -> QPoint:
+    """网格里一个不属于任何格子的点。
+
+    **采样而不是算**：留白、滚动条、样式的默认边距都不在我们手里，但「这一点落在
+    哪个格子上」视图自己能回答，问它比照着排版公式推可靠。
+    """
+    rect = grid.viewport().rect()
+    for y in range(2, rect.height() - 2, 6):
+        for x in range(2, rect.width() - 2, 6):
+            point = QPoint(x, y)
+            if not grid.indexAt(point).isValid():
+                return point
+    raise AssertionError("整个视口都被格子铺满了，没有空白可双击")
+
+
+def _double_click(grid: PhotoGrid, point: QPoint) -> None:
+    """在 ``point`` 上双击一次：先点一下，再补上双击的那一下。
+
+    刻意不发「孤零零一个双击事件」：那样发出来的双击与真实手势的按下状态对不上，
+    落在格子上的那一版本基类会当成没有前一次按下 —— 什么也不打开（空白处那半边
+    却照常触发，看着就像功能只在空白处存在）。真人双击总是「按下、抬起、再按下、
+    抬起」，照着它发事件，测的才是界面真会收到的那一串。
+    """
+    viewport = grid.viewport()
+    QTest.mouseClick(viewport, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, point)
+    QTest.mouseDClick(
+        viewport, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, point, 20
+    )
+
+
+def test_double_click_on_blank_asks_to_go_up(qt_app: QApplication, tmp_path: Path) -> None:
+    """双击没有格子的地方，视图要把「这一下不在任何格子上」说出来。
+
+    照片常常铺不满一屏（相册里只有十几张，右下角一整片空白），而「回上一层」
+    在逐层进入的浏览里恰恰是最高频的动作之一。视图只负责回答落在哪儿，
+    退不退得回去由窗口判断（分组要退，库根退不了）。
+    """
+    grid = make_grid(qt_app, tmp_path, count=3)
+    asked: list[bool] = []
+    grid.background_activated.connect(lambda: asked.append(True))
+
+    _double_click(grid, _blank_point(grid))
+    qt_app.processEvents()
+
+    assert asked == [True]
+    grid.deleteLater()
+
+
+def test_double_click_on_a_cell_still_opens_it(qt_app: QApplication, tmp_path: Path) -> None:
+    """双击格子仍然是打开照片 —— 新加的那一条绝不能顺手把上一层也退了。"""
+    grid = make_grid(qt_app, tmp_path, count=3)
+    model = grid.model()
+    assert model is not None
+    opened: list[QModelIndex] = []
+    asked: list[bool] = []
+    grid.activated_index.connect(opened.append)
+    grid.background_activated.connect(lambda: asked.append(True))
+
+    _double_click(grid, grid.visualRect(model.index(0, 0)).center())
+    qt_app.processEvents()
+
+    # ``activated_index`` 有两条来路（双击，与「已选中的那一项又被激活」），这里只
+    # 关心两件事：打开的是这一格，以及没有顺手去退上一层。
+    assert opened, "双击格子什么也没打开"
+    assert {index.row() for index in opened} == {0}
+    assert asked == []
+    grid.deleteLater()
+
+
+def test_an_empty_level_is_blank_everywhere(qt_app: QApplication) -> None:
+    """这一层一格都没有时（空相册、空分组），界面上到处都是空白。
+
+    这正是最想立刻退出去的情形，屏幕上却没有可双击的东西 —— 空白双击必须管用。
+    """
+    grid = PhotoGrid(icon_edge=176)
+    grid.setModel(PhotoListModel())
+    grid.resize(800, 600)
+    grid.show()
+    qt_app.processEvents()
+    asked: list[bool] = []
+    grid.background_activated.connect(lambda: asked.append(True))
+
+    _double_click(grid, grid.viewport().rect().center())
+    qt_app.processEvents()
+
+    assert asked == [True]
     grid.deleteLater()

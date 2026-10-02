@@ -120,6 +120,9 @@ _GROUP_NOT_FILE_ACTION = (
     "分组不是磁盘上的文件，改不了名也删不掉。双击进入分组后选中里面的照片再操作。"
 )
 
+#: 双击了空白处却已经退不动时的那句话。什么都不做等于「按了没反应」。
+_NO_PARENT_NOTICE = "已经是最外面一层了，没有上一级可退。"
+
 
 def _rename_banner(result: RenameResult) -> str:
     """改名之后的那行提示。
@@ -284,6 +287,7 @@ class MainWindow(QMainWindow):
         self._grid = PhotoGrid(icon_edge=edge_for_index(self._size_index))
         self._grid.setModel(self._model)
         self._grid.activated_index.connect(self._on_entry_activated)
+        self._grid.background_activated.connect(self._on_background_activated)
         self._grid.viewport_changed.connect(self._refresh_thumbnail_window)
         self._grid.size_step_requested.connect(self.step_thumbnail_size)
         self._grid.icon_edge_changed.connect(self._on_grid_edge_changed)
@@ -1819,6 +1823,35 @@ class MainWindow(QMainWindow):
         if parent is not None:
             self.enter_folder(parent)
 
+    def _can_go_up(self) -> bool:
+        """现在退不退得回去。菜单里的「上一级」与双击空白处都问它。
+
+        判据与 :meth:`go_up` 一致，否则菜单灰着、双击却退了回去（或者反过来）。
+        """
+        library = self._library
+        if library is None or self._grid.is_renaming():
+            return False
+        if self._group_view is not None:
+            return True
+        if self._browse_mode != BROWSE_MODE_ALBUMS:
+            return False
+        return parent_of(library.root, self._current_dir or library.root) is not None
+
+    def _on_background_activated(self) -> None:
+        """双击了网格里没有格子的地方：退回上一层，与 `Esc` 是同一件事。
+
+        这一层空着（空相册、空分组）时尤其需要它 —— 屏幕上根本没有可双击的东西，
+        而这正是最想立刻退出去的时候。退不回去时说一句为什么，不做「按了没反应」。
+        """
+        if self._grid.is_renaming():
+            # 改到一半：这一下先归输入框。既不把人带走，也不能说「退不动了」——
+            # 明明退得回去，只是这一刻不归这一下管。
+            return
+        if self._can_go_up():
+            self.go_up()
+            return
+        self._show_banner(_NO_PARENT_NOTICE)
+
     def _on_breadcrumb_requested(self, directory: object) -> None:
         if isinstance(directory, Path):
             self.enter_folder(directory)
@@ -1872,25 +1905,11 @@ class MainWindow(QMainWindow):
         self._flat_action.setChecked(not albums)
 
     def _update_navigation_actions(self) -> None:
-        library = self._library
         # 「上一级」只在网格页启用：大图页的 Esc 是「返回网格」，两个动作共用一个 Esc，
         # 必须有一个是关着的，否则同一按键落到谁身上说不准。改名的过程中也不启用 ——
         # 那时 Esc 是输入框的「取消改名」（输入框还会先抢一次按键，见 RenameEdit.event）。
         in_grid = self._stack.currentWidget() is self._grid_page
-        in_group = self._group_view is not None
-        can_go_up = (
-            in_grid
-            and not self._grid.is_renaming()
-            and library is not None
-            and (
-                in_group
-                or (
-                    self._browse_mode == BROWSE_MODE_ALBUMS
-                    and parent_of(library.root, self._current_dir or library.root) is not None
-                )
-            )
-        )
-        self._up_action.setEnabled(can_go_up)
+        self._up_action.setEnabled(in_grid and self._can_go_up())
 
     # ---- 会话 --------------------------------------------------------------
 

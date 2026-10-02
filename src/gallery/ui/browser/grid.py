@@ -284,6 +284,8 @@ class PhotoGrid(QListView):
 
     #: 用户双击或按回车选中了一张照片。
     activated_index = Signal(QModelIndex)
+    #: 用户双击了**没有格子**的空白处：窗口据此退回上一层（见 MainWindow.go_up）。
+    background_activated = Signal()
     #: 可见区域可能变了（滚动、缩放、插入新行），需要重算缩略图窗口。
     viewport_changed = Signal()
     #: 用户用捏合或 ⌘+滚轮要求换一档缩略图尺寸：正数更大，负数更小。
@@ -773,12 +775,22 @@ class PhotoGrid(QListView):
         self._rename_timer.start()
 
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
-        """打开照片优先于重命名：双击一定要打开，而不是拉出一个输入框。"""
+        """双击一定要打开照片，而不是拉出一个输入框；落在空白处就退回上一层。
+
+        「双击空白处往回退」是访达里用惯了的手势，而在逐层进入的浏览方式里
+        「上一层」是最高频的动作之一（照片没铺满一屏时，右下角总有一大片空白）。
+        视图只负责回答「这一下落在格子还是空白」，要不要退、能不能退由窗口判断
+        （分组要退，库根退不了）。
+        """
         self._rename_timer.stop()
         self._pending_rename_row = -1
         self._armed_row = -1
         self._double_click = True
         super().mouseDoubleClickEvent(event)
+        if not self.indexAt(event.position().toPoint()).isValid():
+            # 这一层连一格都没有时，界面上到处都是空白，双击自然会走到这里 ——
+            # 正是最需要「双击空白处退出去」的情形：空相册、空分组。
+            self.background_activated.emit()
 
     def _emit_pending_rename(self) -> None:
         """等过了双击阈值仍然没等到第二下 —— 那就当用户确实想改名。"""
