@@ -237,6 +237,9 @@ def test_failed_items_stay_on_the_grid(
         )
         select_rows(window, row_of(window, keep), lost_row)
 
+        # 留下来的那一行指向一个不存在的文件，解码它必然失败，而那条失败会在**之后**
+        # 才报上来，与「没移走」抢同一个横幅。让后台消息给用户动作让位是产品该保证的事
+        # （BANNER_STICKY_SECONDS），这条用例就照真实时序跑，不替它绕。
         window.trash_selected()
         qt_app_process(window)
 

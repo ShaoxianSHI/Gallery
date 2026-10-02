@@ -398,6 +398,12 @@ def test_rename_action_is_disabled_without_a_selection(
     make_photo("IMG_0001.jpg", directory=tmp_path)
     window = open_window(qt_app, tmp_path)
     try:
+        # 「刚打开时没有选中」不是一个可以依赖的状态：行插进来的那一轮事件循环里，
+        # 网格可能顺手把第 0 行设成当前项（访达也是这么做的）。要测「没选中就不能改名」，
+        # 就得**真的**把选中清掉，而不是拿开头的默认状态去赌时序
+        # （`tests/ui/test_trash_flow.py` 里的 `clear_selection` 记着同一条）。
+        window._grid.select_for_context(-1)
+
         assert window._rename_action.isEnabled() is False
         window._grid.select_row(0)
         qt_app.processEvents()

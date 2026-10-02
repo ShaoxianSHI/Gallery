@@ -71,15 +71,23 @@ def _destroy_top_level_widgets(app: QApplication) -> None:
     **用例全绿、最后进程 SIGSEGV**（退出码 139，汇总行都来不及打印）——这正是这套
     测试「有一定概率随机不通过」的来源，而且随机性只来自时序，与被测代码无关。
 
-    所以收尾必须**在 QApplication 还完整活着的时候做**：``close()`` 触发 ``closeEvent``
-    （停监听、停后台任务），``deleteLater()`` 排队删除 C++ 对象，再由
-    ``sendPostedEvents`` 把队列抽干。顺序不能换，``deleteLater`` 只是排队。
+    所以收尾必须**在 QApplication 还完整活着的时候做**，而且顺序是有讲究的：
+
+    1. ``close()`` 触发 ``closeEvent``（停监听、停后台任务）；
+    2. **先转一圈事件循环**，把还排着的普通事件与 0 毫秒定时器跑掉。这一步不能省 ——
+       布局里那些「延到下一轮重排」的单次定时器如果留着，控件删掉之后它们照样会触发，
+       去调一个已经析构的方法，换来一个 ``Internal C++ object already deleted``；
+    3. ``deleteLater()`` 排队删除 C++ 对象（它只是排队，不删）；
+    4. ``sendPostedEvents`` 把队列抽干，这一步对象才真的没了。
+
+    顺序反过来（先删后转）就是第 2 步那个坑；少了第 4 步则整轮收尾等于没做。
     """
     for widget in list(app.topLevelWidgets()):
         widget.close()
+    app.processEvents()  # 先让排队的回调在对象还活着的时候跑完
+    for widget in list(app.topLevelWidgets()):
         widget.deleteLater()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-    app.processEvents()
 
 
 @pytest.fixture

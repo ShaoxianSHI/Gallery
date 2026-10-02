@@ -297,6 +297,12 @@ def test_blank_double_click_at_the_library_root_says_nothing(
         double_click_blank(window, qt_app)
 
         assert window._current_dir == library, "已经在库根，不能再往上"
+        # 横幅是全局共享的一个槽：「正在解析地点…」这种后台进度也会往里写（那是正常的，
+        # 见 BANNER_STICKY_SECONDS）。这里要验的是**自己**没有为「退不动」弹话，所以先
+        # 等地点解析那一趟收工，再把横幅收干净，然后才双击空白。
+        wait_until(window, qt_app, lambda: window._place_job is None)
+        window._clear_banner()
+        double_click_blank(window, qt_app)
         assert not window._banner.isVisible(), "退不动时不该弹提示"
     finally:
         window.close()
