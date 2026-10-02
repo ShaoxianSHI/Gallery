@@ -375,7 +375,7 @@ def test_outdated_row_yields_no_menu(window: MainWindow) -> None:
 def test_open_says_return_on_every_level_that_has_it(
     qt_app: QApplication, window: MainWindow
 ) -> None:
-    """「打开」出现在哪一级，最右列就都要写着**回车**。
+    """「打开」出现在哪一级，最右列就都要写着回车那个符号（``↵``）。
 
     网格里回车本来就开着当前项（``PhotoGrid.keyPressEvent``），而照片 / 相册 / 分组这三张
     菜单此前一个字都没写 —— 用户对着「打开」不知道还能这么按。开大图、进相册、进分组是
@@ -416,8 +416,10 @@ def test_open_says_return_on_every_level_that_has_it(
     assert _texts(group)[0] == "打开"
     assert _key_hint(group, "打开") == menus.OPEN_KEY_HINT
 
-    # 界面上的字面就钉死成「回车」：常量与它对不上时，宁可这里红一次。
-    assert menus.OPEN_KEY_HINT == "回车"
+    # 界面上的字面就钉死成**那个符号**：常量是从 Qt 要来的（``QKeySequence(Qt.Key_Return)``），
+    # 万一它在别的平台上译成了别的字样，这里红一次总比菜单上写着「回车」两个字强。
+    assert menus.OPEN_KEY_HINT == "↵"
+    assert len(menus.OPEN_KEY_HINT) == 1, "是一个符号，不是「回车」两个字"
 
     # 提示挂在这一次弹出的菜单上，共用的动作一个字节都没动：三张菜单用的都是**同一个**
     # ``QAction``，所以查这一处就够（挂上去它就成了整个窗口的回车）。

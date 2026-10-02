@@ -456,7 +456,7 @@ def test_shortcut_columns_start_after_the_longest_label(
     metrics = QFontMetrics(menu.font())
     rows = [a for a in menu.actions() if not a.isSeparator()]
     # 按**真正要画出来的内容**量，而不是只量快捷键：「打开」那枚提示也在这一列里，
-    # 漏掉它，这一列就会按最窄的那个键（C / ⎋）去算，然后压到「回车」上。
+    # 漏掉它，这一列就会按最窄的那个键（C / ⎋）去算，然后压到那枚提示上。
     columns = menus.ShortcutColumns.measure_parts(menu.key_cells(), metrics)
     rect = menu.actionGeometry(rows[0])
     key_rect, modifier_rects = columns.cells(rect.right(), rect.top(), rect.height())

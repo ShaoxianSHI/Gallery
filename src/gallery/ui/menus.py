@@ -273,14 +273,6 @@ SHORTCUT_RIGHT_INSET = 12
 #: 原生菜单在这一段是很宽的，这里取 20。
 SHORTCUT_LABEL_GAP = 20
 
-#: 「打开」那一行在最右列上写的键位提示（**只画不生效**，见
-#: :meth:`ShortcutColumnMenu.show_key`）。
-#:
-#: 写「回车」而不是 Qt 自己的 ``↵``：那一列里其余的字样（⌘ / ⇧ / ⌫ / ⎋）是平台约定，
-#: 没有对应的中文，而回车是这套界面里唯一一条**用户自己知道怎么按**的键 —— 网格里回车
-#: 本来就开着当前项（``PhotoGrid.keyPressEvent``），菜单此前一个字都没写，用户不知道这件事。
-OPEN_KEY_HINT = "回车"
-
 
 def _modifier_glyph(modifier: Qt.KeyboardModifier) -> str:
     """一个修饰符在系统写法下的符号（``⌘`` / ``⇧`` / ``⌥`` / ``⌃``）。"""
@@ -291,6 +283,18 @@ def _modifier_glyph(modifier: Qt.KeyboardModifier) -> str:
 def _native(key: Qt.Key | int) -> str:
     """一个键在系统写法下长什么样（``⌫`` / ``⎋`` / ``C``）。"""
     return QKeySequence(int(key)).toString(QKeySequence.SequenceFormat.NativeText)
+
+
+#: 「打开」那一行在最右列上写的键位提示（**只画不生效**，见
+#: :meth:`ShortcutColumnMenu.show_key`）。
+#:
+#: **是 ``↵`` 这个符号，不是「回车」两个字**：那一列里其余的字样（⌘ / ⇧ / ⌫ / ⎋）都是
+#: 平台约定的符号，没有哪一条写成汉字 —— 写成「回车」既对不齐，又把一个键撑成两个字的
+#: 宽，整列跟着宽一截（用户原话：要的是那个符号）。
+#:
+#: 取值不写死，直接问 Qt 要（见 :func:`_native`）：符号是平台约定的，而 ``Qt.Key_Return``
+#: 在 macOS 上正是 ``↵``，自己查表迟早认错（:func:`_modifier_glyph` 那段记的就是这个）。
+OPEN_KEY_HINT = _native(Qt.Key_Return)
 
 
 def split_shortcut(shortcut: QKeySequence) -> tuple[frozenset[Qt.KeyboardModifier], str]:
