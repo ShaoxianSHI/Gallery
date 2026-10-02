@@ -211,7 +211,7 @@ def test_a_non_chinese_place_keeps_the_names_from_the_data_files(tmp_path: Path)
         "12345\tBordeaux\tBordeaux\tBordeaux,波尔多\t44.84\t-0.58\tP\tPPLA\tFR\t\t75\t\n",
         encoding="utf-8",
     )
-    (directory / ADMIN1_FILE).write_text("FR.75\tNouvelle-Aquitaine\n", encoding="utf-8")
+    (directory / ADMIN1_FILE).write_text("FR.75\tNew Aquitaine\n", encoding="utf-8")
     (directory / COUNTRIES_FILE).write_text(
         "FR\tFRA\t250\tFR\tFrance\tParis\t\t\tEU\t.fr\n", "utf-8"
     )
@@ -226,7 +226,7 @@ def test_a_non_chinese_place_keeps_the_names_from_the_data_files(tmp_path: Path)
     assert place is not None
     assert (place.city, place.region, place.country) == (
         "Bordeaux",
-        "Nouvelle-Aquitaine",
+        "New Aquitaine",
         "France",
     )
     assert place.distance_km is not None

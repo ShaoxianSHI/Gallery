@@ -97,19 +97,20 @@ class Place:
     admin1: str | None
     country: str
     distance_km: float
-    #: 本地语言的城市名（``杭州``）。**只有中国的城市会有**，见
+    #: 本地语言的城市名（``杭州`` / ``沙田``）。**只有中国大陆与港澳台的城市会有**，见
     #: :func:`gallery.core.places.countries.uses_chinese_names` 与 ADR 0011。
     local_city: str | None = None
 
     @property
     def display_city(self) -> str:
-        """界面上该显示的城市名：中国城市取中文，其余取 GeoNames 原名（ADR 0011）。"""
+        """界面上该显示的城市名：国内取中文，其余取 GeoNames 原名（ADR 0011）。"""
         return self.local_city or self.city
 
     def label(self) -> str:
         """展示用文案，由大到小：``中国 · 浙江省 · 杭州``（缺的层级自动省略）。
 
-        非中国的地点保持原样：``France · Nouvelle-Aquitaine · Bordeaux``（ADR 0011）。
+        港澳没有省级那层，显示成 ``中国 · 沙田``；境外保持原样：
+        ``France · New Aquitaine · Bordeaux``（ADR 0011）。
         """
         return place_label(self.display_city, self.admin1, self.country)
 
@@ -117,7 +118,7 @@ class Place:
 @dataclass(frozen=True, slots=True)
 class _City:
     name: str
-    #: 中文名。**只有中国城市会填**（ADR 0011），其余国家恒为 ``None`` ——
+    #: 中文名。**只有中国大陆与港澳台的城市会填**（ADR 0011），其余国家恒为 ``None`` ——
     #: alternate names 里的「纽约」「巴黎」是别人写下的译名，不该替用户决定。
     local_name: str | None
     feature_code: str
@@ -291,7 +292,7 @@ def _parse_cities(path: Path) -> list[_City]:
         cities.append(
             _City(
                 name=fields[1],
-                # 只有中国的城市去 alternate names 里找中文名：那些汉字（纽约、巴黎）
+                # 只给国内的城市去 alternate names 里找汉字名：别国的那些（纽约、巴黎）
                 # 是别人替这座城写的译名，用上去等于替用户把他的相册翻译了（ADR 0011）。
                 local_name=pick_chinese_name(fields[3])
                 if uses_chinese_names(country_code)
@@ -316,7 +317,7 @@ def pick_chinese_name(alternates: str) -> str | None:
     """从 GeoNames 的 alternate names 里挑一个中文名。
 
     **只看字符串本身，不看它在哪个国家** —— 调用方
-    （:func:`_parse_cities`）负责先用 :func:`uses_chinese_names` 把非中国的城市挡掉。
+    （:func:`_parse_cities`）负责先用 :func:`uses_chinese_names` 把境外的城市挡掉。
 
     这一列没有语言标签，只能按字形判断，规则是：
 
@@ -326,8 +327,12 @@ def pick_chinese_name(alternates: str) -> str | None:
     - 取最短的：``杭州`` 优先于 ``杭州市``；同样长度时取先出现的
       （``拉萨`` 与 ``拉薩`` 都出现时取前一个）
 
-    规则本身与国家无关，但结果只会用在中国城市上：实测对真实数据的挑选结果里
-    属于中国的有北京、杭州、拉萨（另一些如巴黎、东京、波尔多不再被采用）。
+    规则本身与国家无关，但结果只会用在境内城市上：实测对真实数据的挑选结果里
+    属于境内的有北京、杭州、拉萨、沙田（另一些如巴黎、东京、波尔多不再被采用）。
+
+    **不区分简繁**：港澳台在 GeoNames 里的汉字名多为繁体（``荃灣``、``屯門``、
+    ``澳門``）。转换要引入简繁对照表，这里不做 —— 繁体在简体中文读者那里一样认得出，
+    认不出的那个字本来也不影响他认出自己拍过的地方。
     """
     candidates: list[str] = []
     for raw in alternates.split(","):

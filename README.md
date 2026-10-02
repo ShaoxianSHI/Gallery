@@ -199,13 +199,14 @@ uv run --group build python scripts/build_app.py --dry-run        # 只看将要
   它同时覆盖 EXIF / IPTC / XMP。**没装也能用**：Gallery 会退回 Pillow 读取基础 EXIF，
   并在面板顶部说明少了什么 —— 只是读不到 IPTC / XMP 与制造商注释。
 - 照片带 GPS 坐标时，会**按坐标推断地点**显示在「位置」里，例如
-  「Bordeaux · Nouvelle-Aquitaine · France（按坐标推断）」。这是**离线**反查：用的是
+  「Bordeaux · New Aquitaine · France（按坐标推断）」。这是**离线**反查：用的是
   GeoNames 公开城市数据（首次使用下载约 3.3 MB，缓存在
   `~/Library/Application Support/Gallery/cache/geo/`，删掉会自动重下），
   **你的坐标不会发送到任何服务器**。文件里本来就写了地点（Lightroom 等导出的
   `City` / `Country`）时以文件为准，不再推断。推断结果一律标注「按坐标推断」，
   它与照片自带的元数据不是一个可信级别。
-- 地点名**一律用当地语言**：在中国的显示成「中国 · 浙江省 · 杭州」，
+- 地点名**一律用当地语言**：在国内的显示成中文（「中国 · 浙江省 · 杭州」；
+  香港、澳门不设「省」那层，显示成「中国 · 沙田」；台湾的省级显示「台湾」），
   在别国就保持 GeoNames 的原名（上面那个 Bordeaux 就是例子），不翻成中文 ——
   用户在自己的照片上认得出自己拍过的地方，比认一份我们替他翻的清单更有用。
   文件里自带的地点名同样原样显示，一个字都不改。

@@ -76,7 +76,7 @@ TOULOUSE = city_line("Toulouse", 43.6045, 1.4442, "FR", "76", 500000)
 
 ADMIN1_TEXT = "\n".join(
     [
-        "FR.75\tNouvelle-Aquitaine\tNouvelle-Aquitaine\t1",
+        "FR.75\tNew Aquitaine\tNew Aquitaine\t1",
         "FR.76\tOccitanie\tOccitanie\t2",
         "ES.59\tBasque Country\tBasque Country\t3",
         "CN.02\tZhejiang\tZhejiang\t4",
@@ -132,10 +132,10 @@ def test_nearest_returns_city_with_admin_hierarchy(data_dir: Path) -> None:
     # 非中国：一律保持 GeoNames 原名。alternate names 里的「波尔多」是别人写的译名，
     # 用上去就是替用户把他的相册翻译了（ADR 0011）。
     assert place.local_city is None
-    assert place.admin1 == "Nouvelle-Aquitaine"
+    assert place.admin1 == "New Aquitaine"
     assert place.country == "France"
     assert place.distance_km < 5
-    assert place.label() == "France · Nouvelle-Aquitaine · Bordeaux"  # 国家 → 省 → 市
+    assert place.label() == "France · New Aquitaine · Bordeaux"  # 国家 → 省 → 市
 
 
 def test_nearest_picks_the_closest_city(data_dir: Path) -> None:
@@ -173,8 +173,8 @@ def test_chinese_city_and_province(data_dir: Path) -> None:
 
 
 def test_label_is_ordered_from_country_to_city() -> None:
-    assert Place("Bordeaux", "Nouvelle-Aquitaine", "France", 1.0).label() == (
-        "France · Nouvelle-Aquitaine · Bordeaux"
+    assert Place("Bordeaux", "New Aquitaine", "France", 1.0).label() == (
+        "France · New Aquitaine · Bordeaux"
     )
     assert Place("Hangzhou", "浙江省", "中国", 1.0, "杭州").label() == "中国 · 浙江省 · 杭州"
 
@@ -394,3 +394,107 @@ class TestSameplaceGranularity:
         assert place is not None
         assert place.city == "Suzhou"
         assert place.label() == "中国 · 江苏省 · 苏州"
+
+
+class TestDomesticPlaces:
+    """港澳台的照片也显示中文，但层级各按自己的样子（ADR 0011）。
+
+    记录抄自真实的 GeoNames 数据：港澳在数据里的「省级」是**区**（``Sha Tin``、
+    ``Nossa Senhora de Fátima``），台湾的省级是**历史旧名**（``Takao`` = 高雄旧称）。
+    """
+
+    SHA_TIN = city_line(
+        "Sha Tin", 22.3823, 114.1891, "HK", "NST", 645000, alternates="Sha Tin,Shatin,沙田"
+    )
+    YUEN_LONG = city_line(
+        "Yuen Long",
+        22.4445,
+        114.0222,
+        "HK",
+        "NYL",
+        345000,
+        alternates="Yuen Long,Yuenlong,元朗,元朗墟",
+    )
+    MACAU = city_line(
+        "Macau", 22.1987, 113.5439, "MO", "02", 343000, alternates="Macau,Macao,Macau SAR,澳門,澳门"
+    )
+    KAOHSIUNG = city_line(
+        "Kaohsiung",
+        22.6153,
+        120.3014,
+        "TW",
+        "02",
+        2750000,
+        alternates="Kaohsiung,Takao,高雄,高雄市",
+    )
+    TAIPEI = city_line(
+        "Taipei", 25.0375, 121.5735, "TW", "03", 2600000, alternates="Taipei,Taipei City,臺北,台北"
+    )
+
+    @pytest.fixture
+    def index(self, tmp_path: Path) -> PlaceIndex:
+        directory = tmp_path / "geo"
+        directory.mkdir()
+        (directory / CITIES_FILE).write_text(
+            "\n".join([self.SHA_TIN, self.YUEN_LONG, self.MACAU, self.KAOHSIUNG, self.TAIPEI]),
+            encoding="utf-8",
+        )
+        (directory / ADMIN1_FILE).write_text(
+            "HK.NST\tSha Tin\nHK.NYL\tYuen Long\nMO.02\tIlhas\nTW.02\tTakao\nTW.03\tTaipei\n",
+            encoding="utf-8",
+        )
+        (directory / COUNTRIES_FILE).write_text(
+            "HK\tHKG\t344\tHK\tHong Kong\tVictoria\nMO\tMAC\t446\tMO\tMacao\tVictoria\n"
+            "TW\tTWN\t158\tTW\tTaiwan\tTaipei\n",
+            encoding="utf-8",
+        )
+        loaded = PlaceIndex.load(directory)
+        assert loaded is not None
+        return loaded
+
+    def test_hong_kong_skips_the_province_layer(self, index: PlaceIndex) -> None:
+        """香港没有「省」：GeoNames 给的 Sha Tin 是**区**，挂上去就成了「中国 · 沙田区 · 沙田」。"""
+        place = index.nearest(22.3823, 114.1891)
+
+        assert place is not None
+        assert place.admin1 is None
+        assert place.country == "中国"
+        assert place.local_city == "沙田"
+        assert place.label() == "中国 · 沙田"
+
+    def test_macao_skips_the_province_layer(self, index: PlaceIndex) -> None:
+        """澳门给的是堂区（``Nossa Senhora de Fátima``），同样不是省。"""
+        place = index.nearest(22.1987, 113.5439)
+
+        assert place is not None
+        assert place.admin1 is None
+        assert place.country == "中国"
+        assert place.label() == "中国 · 澳門"  # 繁体：数据里它排在「澳门」前面
+
+    def test_taiwan_shows_one_province_name_not_a_historical_one(self, index: PlaceIndex) -> None:
+        """高雄的省级在数据里是 ``Takao``（旧称）—— 照搬出来是「中国 · Takao · 高雄」。"""
+        place = index.nearest(22.6153, 120.3014)
+
+        assert place is not None
+        assert place.admin1 == "台湾"
+        assert place.country == "中国"
+        assert place.label() == "中国 · 台湾 · 高雄"
+
+    def test_taipei_picks_one_of_the_two_chinese_spellings(self, index: PlaceIndex) -> None:
+        """台北 / 臺北 都是汉字名，取哪个都对 —— 不做简繁转换（繁体一样认得出）。"""
+        place = index.nearest(25.0375, 121.5735)
+
+        assert place is not None
+        assert place.admin1 == "台湾"
+        assert place.local_city in {"臺北", "台北"}
+        assert place.label() == f"中国 · 台湾 · {place.display_city}"
+
+    def test_all_four_share_one_country_name(self, index: PlaceIndex) -> None:
+        """按国家分组时，大陆、香港、澳门、台湾落进同一组：它们在 GeoNames 里
+        是四个国家代码，在本软件里只算一个国家。"""
+        countries = {
+            index.nearest(22.3823, 114.1891),
+            index.nearest(22.1987, 113.5439),
+            index.nearest(22.6153, 120.3014),
+        }
+        assert {place.country for place in countries if place is not None} == {"中国"}
