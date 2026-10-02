@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import os
 from collections import Counter
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -36,12 +35,6 @@ from gallery.ui.panels.metadata import MetadataPanel  # noqa: E402
 
 #: 可读性的最低对比度（WCAG AA 对正文的要求）。
 MIN_CONTRAST = 4.5
-
-
-@pytest.fixture(scope="module")
-def qt_app() -> Iterator[QApplication]:
-    app = QApplication.instance() or QApplication([])
-    yield app  # type: ignore[misc]
 
 
 def luminance(color: QColor) -> float:

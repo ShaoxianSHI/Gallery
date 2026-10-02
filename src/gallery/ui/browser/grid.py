@@ -625,16 +625,24 @@ class PhotoGrid(QListView):
 
         删除要按这个顺序取条目，但摘行要**从后往前**（见
         ``PhotoListModel.remove_rows``）—— 前面的行被摘掉之后，后面的行号就变了。
+
+        **选区为空时会退回当前项**（网格刚打开时 Qt 可能顺手把第 0 行设成当前项）。
+        这个兜底对「删除」「拷贝」这类命令是对的：它们总得作用于点什么。但它
+        **不是**「谁被选中了」的答案 —— 判可见性（⌘V 粘到哪里）或判右键落点时
+        要问的是真选区，见 :meth:`genuinely_selected_rows`。
         """
+        rows = self.genuinely_selected_rows()
+        if rows:
+            return rows
+        row = self.current_row()
+        return [row] if row >= 0 else []
+
+    def genuinely_selected_rows(self) -> list[int]:
+        """**真选区**，没有当前项兜底（见 :meth:`selected_rows` 末尾那段）。"""
         selection = self.selectionModel()
         if selection is None:
-            row = self.current_row()
-            return [row] if row >= 0 else []
-        rows = {index.row() for index in selection.selectedIndexes()}
-        if not rows:
-            row = self.current_row()
-            return [row] if row >= 0 else []
-        return sorted(rows)
+            return []
+        return sorted({index.row() for index in selection.selectedIndexes()})
 
     def select_for_context(self, row: int) -> int:
         """右键之前的选区修正。返回菜单该作用于哪一行（``-1`` = 空白处）。
@@ -655,6 +663,12 @@ class PhotoGrid(QListView):
 
         空白处**连当前项一起清掉**：只清选区的话，「重命名」的可用性判据里那个
         ``current_row`` 仍然是有效的，用户会拿到一个作用在看不见的东西上的按钮。
+
+        「已经选中」问的是**真选区**（:meth:`genuinely_selected_rows`）而不是
+        :meth:`selected_rows`。后者在选区为空时会退回当前项，于是「Qt 顺手把第 0 行
+        设成了当前项、但谁也没选中」这个状态会被误判成「它已经选中了」而直接返回 ——
+        结果一个格子都没选中，菜单却摆出来了，而菜单里每一条命令读的都是真选区：
+        用户看到的是「右键了京都」，实际作用的是「什么都没选」。
         """
         self._armed_row = -1
         self._rename_timer.stop()
@@ -666,7 +680,7 @@ class PhotoGrid(QListView):
         selection = self.selectionModel()
         if model is None or selection is None or not 0 <= row < model.rowCount():
             return -1
-        if row in self.selected_rows():
+        if row in self.genuinely_selected_rows():
             return row  # 已经在选中里：整份选择就是作用对象，一个格子都不动
         index = model.index(row, 0)
         self.setCurrentIndex(index)

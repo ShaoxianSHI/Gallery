@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -98,12 +97,6 @@ def build_palette(background_hex: str, text_hex: str) -> QPalette:
     palette.setColor(QPalette.ColorRole.WindowText, text)
     palette.setColor(QPalette.ColorRole.Mid, QColor("#5f5f5f"))  # 深色下的真实取值
     return palette
-
-
-@pytest.fixture
-def qt_app() -> Iterator[QApplication]:
-    app = QApplication.instance() or QApplication([])
-    yield app  # type: ignore[misc]
 
 
 @pytest.mark.parametrize(("background_hex", "text_hex"), THEMES)

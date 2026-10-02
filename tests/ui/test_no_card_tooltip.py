@@ -35,12 +35,6 @@ PHOTO_COUNT = 3
 READY_TIMEOUT_SECONDS = 8.0
 
 
-@pytest.fixture(scope="module")
-def qt_app() -> Iterator[QApplication]:
-    app = QApplication.instance() or QApplication([])
-    yield app  # type: ignore[misc]
-
-
 @pytest.fixture
 def window(
     qt_app: QApplication,

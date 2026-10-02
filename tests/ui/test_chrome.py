@@ -36,11 +36,6 @@ from gallery.ui.main_window import MainWindow  # noqa: E402
 READY_TIMEOUT_SECONDS = 8.0
 
 
-@pytest.fixture(scope="module")
-def qt_app() -> QApplication:
-    return QApplication.instance() or QApplication([])  # type: ignore[return-value]
-
-
 def _albums_window(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
 ) -> MainWindow:

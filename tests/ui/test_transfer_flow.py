@@ -43,11 +43,6 @@ from gallery.ui.main_window import MainWindow  # noqa: E402
 WAIT_SECONDS = 8.0
 
 
-@pytest.fixture(scope="module")
-def qt_app() -> QApplication:
-    return QApplication.instance() or QApplication([])  # type: ignore[return-value]
-
-
 @pytest.fixture(autouse=True)
 def empty_clipboard(qt_app: QApplication) -> Iterator[None]:
     """每条用例都从「剪贴板是空的」开始。

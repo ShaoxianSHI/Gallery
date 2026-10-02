@@ -49,11 +49,6 @@ WAIT_SECONDS = 8.0
 DEFAULT_NAME = "新建相册"
 
 
-@pytest.fixture(scope="module")
-def qt_app() -> QApplication:
-    return QApplication.instance() or QApplication([])  # type: ignore[return-value]
-
-
 @pytest.fixture
 def root(tmp_path: Path) -> Path:
     """一个库：``京都`` 两张照片，``奈良`` 空着。"""

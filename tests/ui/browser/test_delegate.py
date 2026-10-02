@@ -14,7 +14,6 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -38,12 +37,6 @@ from gallery.ui.browser.model import PhotoListModel  # noqa: E402
 
 #: 取样用的缩略图边长。小一点就跑得快，格子结构完全一样。
 ICON_EDGE = 96
-
-
-@pytest.fixture(scope="module")
-def qt_app() -> Iterator[QApplication]:
-    app = QApplication.instance() or QApplication([])
-    yield app  # type: ignore[misc]
 
 
 @pytest.fixture

@@ -28,11 +28,6 @@ from gallery.ui.browser.model import PhotoListModel  # noqa: E402
 ICON_EDGE = 176
 
 
-@pytest.fixture(scope="module")
-def qt_app() -> QApplication:
-    return QApplication.instance() or QApplication([])  # type: ignore[return-value]
-
-
 def _paint(model: PhotoListModel, row: int, edge: int = ICON_EDGE) -> QPixmap:
     """把第 ``row`` 行按当前尺寸画到一张离屏图上，返回它。"""
     size = QSize(edge + GRID_PADDING_X, edge + GRID_PADDING_Y)

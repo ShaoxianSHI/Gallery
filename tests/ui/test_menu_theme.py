@@ -47,11 +47,6 @@ FLIPPED_BACKGROUND = QColor(23, 23, 23)
 SCAN_TIMEOUT_SECONDS = 10.0
 
 
-@pytest.fixture(scope="module")
-def qt_app() -> QApplication:
-    return QApplication.instance() or QApplication([])  # type: ignore[return-value]
-
-
 @pytest.fixture
 def window(qt_app: QApplication, tmp_path: Path) -> Iterator[MainWindow]:
     root = tmp_path / "照片"

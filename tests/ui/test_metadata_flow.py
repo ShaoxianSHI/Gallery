@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -61,12 +61,6 @@ class FakeResolver:
     ) -> ResolvedPlace | None:
         self.queried.append((latitude, longitude))
         return None
-
-
-@pytest.fixture(scope="module")
-def qt_app() -> Iterator[QApplication]:
-    app = QApplication.instance() or QApplication([])
-    yield app  # type: ignore[misc]
 
 
 @pytest.fixture

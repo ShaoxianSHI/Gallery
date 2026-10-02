@@ -46,11 +46,6 @@ from gallery.ui.main_window import MainWindow  # noqa: E402
 WAIT_SECONDS = 8.0
 
 
-@pytest.fixture(scope="module")
-def qt_app() -> QApplication:
-    return QApplication.instance() or QApplication([])  # type: ignore[return-value]
-
-
 @pytest.fixture(autouse=True)
 def empty_clipboard(qt_app: QApplication) -> Iterator[None]:
     """每条用例都从「剪贴板是空的」开始。
@@ -90,7 +85,19 @@ def _open(qt_app: QApplication, root: Path, *, browse_mode: str = BROWSE_MODE_AL
     instance = MainWindow(session_base=session_base, initial_library=root)
     instance.resize(900, 600)
     instance.show()
+    # **等扫描真正收工，不是「屏幕上已经有东西了」。** 原来这里只等
+    # ``rowCount() > 0``：第一条一到就返回，于是用例开始选中的时候扫描还在跑，
+    # 收尾那一下 ``_apply_ordering`` 会重排整个模型并**把选区收掉**。
+    # 机器一忙（并行跑测试时正是这样）就偶发：粘到了与相册同级的地方。
+    #
+    # 「这一层排好了」的唯一判据是 ``_scan_job is None``（同 test_context_menu /
+    # test_group_flow / test_blank_double_click 用的都是它），顺带把分组用的
+    # facet 读取也算进去 —— 那一遍会再排一次。
     assert _wait(qt_app, lambda: instance._model.rowCount() > 0), "扫描没有在时限内完成"
+    assert _wait(
+        qt_app,
+        lambda: instance._scan_job is None and instance._facet_job is None,
+    ), "这一层没有在时限内排好"
     return instance
 
 

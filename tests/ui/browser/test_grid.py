@@ -43,11 +43,6 @@ SCAN_TIMEOUT_SECONDS = 8.0
 FILL_RATIO = 0.95
 
 
-@pytest.fixture(scope="module")
-def qt_app() -> QApplication:
-    return QApplication.instance() or QApplication([])  # type: ignore[return-value]
-
-
 def fake_photos(count: int, tmp_path: Path) -> list[PhotoRef]:
     return [
         PhotoRef(path=tmp_path / f"IMG_{index:04d}.jpg", size=1024, mtime_ns=index)
@@ -658,4 +653,59 @@ def test_an_empty_level_is_blank_everywhere(qt_app: QApplication) -> None:
     qt_app.processEvents()
 
     assert asked == [True]
+    grid.deleteLater()
+
+
+def test_right_clicking_the_current_item_actually_selects_it(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """右键「当前项」必须**真的选中它**，哪怕谁也没选中过。
+
+    缺陷现场：``select_for_context`` 判「已经选中了吗」问的是 ``selected_rows()``，
+    而那个函数在选区为空时会**退回当前项**。于是网格刚打开、Qt 顺手把第 0 行设成
+    当前项（而选区还是空的）这个状态会被误判成「它已经选中了」而直接返回 ——
+    一个格子都没选中，右键菜单却照常摆出来。
+
+    而菜单里每一条命令读的都是**真选区**（⌘V 粘到哪里就看它，ADR 0018 决策 7），
+    于是用户看到的是「右键了京都」，实际作用的是「什么都没选」：粘到了与相册同级的
+    库根里。粘文件进用户没选的地方是这个功能里最坏的一种错。
+
+    这条同时是那条偶发失败的根因（机器一忙，扫描还在跑，那个状态就出现了）。
+    """
+    grid = make_grid(qt_app, tmp_path, count=3)
+    model = grid.model()
+    assert model is not None
+    selection = grid.selectionModel()
+    assert selection is not None
+
+    grid.setCurrentIndex(model.index(0, 0))
+    selection.clearSelection()  # 只留当前项，选区空着
+    qt_app.processEvents()
+    assert grid.genuinely_selected_rows() == [], "前置条件：此刻一个都没选中"
+    assert grid.selected_rows() == [0], "但 selected_rows() 会拿当前项兜底"
+
+    assert grid.select_for_context(0) == 0
+
+    assert grid.genuinely_selected_rows() == [0], "右键过的那一格必须真的被选中"
+    grid.deleteLater()
+
+
+def test_right_click_inside_an_existing_multi_selection_keeps_it(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """**已经在选区里时一个格子都不动**（ADR 0014 决策 2）—— 上面那条的对照。"""
+    grid = make_grid(qt_app, tmp_path, count=3)
+    model = grid.model()
+    assert model is not None
+    selection = grid.selectionModel()
+    assert selection is not None
+    flags = selection.SelectionFlag.Select | selection.SelectionFlag.Rows
+    selection.select(model.index(0, 0), flags)
+    selection.select(model.index(2, 0), flags)
+    qt_app.processEvents()
+    before = grid.genuinely_selected_rows()
+
+    assert grid.select_for_context(2) == 2
+
+    assert grid.genuinely_selected_rows() == before, "整份多选必须原样保留"
     grid.deleteLater()

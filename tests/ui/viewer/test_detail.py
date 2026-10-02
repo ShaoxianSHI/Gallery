@@ -34,11 +34,6 @@ FULL_SIZE = (2400, 1600)
 THUMBNAIL_SIZE = (168, 112)
 
 
-@pytest.fixture(scope="module")
-def qt_app() -> QApplication:
-    return QApplication.instance() or QApplication([])  # type: ignore[return-value]
-
-
 def _displayed_size(view: DetailView) -> tuple[float, float]:
     width, height = view.image_size
     scale = view.current_scale
