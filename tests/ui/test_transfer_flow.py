@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -27,6 +27,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import QItemSelectionModel  # noqa: E402
 from PySide6.QtGui import QGuiApplication  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMenu  # noqa: E402
+from waiting import DEFAULT_TIMEOUT_SECONDS, wait_until
 
 from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.library.facade import Library  # noqa: E402
@@ -40,7 +41,6 @@ from gallery.ui import desktop  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 
 #: 等待异步扫描 / 复制 / 移动完成的时限。
-WAIT_SECONDS = 8.0
 
 
 @pytest.fixture(autouse=True)
@@ -99,24 +99,13 @@ def _open(qt_app: QApplication, root: Path) -> MainWindow:
     instance = MainWindow(session_base=session_base, initial_library=root)
     instance.resize(900, 600)
     instance.show()
-    assert _wait(qt_app, lambda: instance._model.rowCount() > 0), "扫描没有在时限内完成"
+    assert wait_until(qt_app, lambda: instance._model.rowCount() > 0), "扫描没有在时限内完成"
     return instance
-
-
-def _wait(qt_app: QApplication, predicate: Callable[[], bool]) -> bool:
-    deadline = time.monotonic() + WAIT_SECONDS
-    while time.monotonic() < deadline:
-        qt_app.processEvents()
-        if predicate():
-            return True
-        time.sleep(0.02)
-    qt_app.processEvents()
-    return predicate()
 
 
 def _enter(qt_app: QApplication, window: MainWindow, folder: Path) -> None:
     window.enter_folder(folder)
-    assert _wait(qt_app, lambda: window._scan_job is None), "这一层没有列完"
+    assert wait_until(qt_app, lambda: window._scan_job is None), "这一层没有列完"
 
 
 def _texts(menu: QMenu) -> list[str]:
@@ -263,7 +252,7 @@ def test_no_album_means_no_menu_at_all(qt_app: QApplication, flat_window: MainWi
 def test_album_menu_does_not_offer_them(qt_app: QApplication, window: MainWindow) -> None:
     """相册菜单里没有这两条：搬相册会动到整棵子树，是另一笔账（ADR 0019 决策 5）。"""
     window.set_browse_mode(BROWSE_MODE_ALBUMS)
-    assert _wait(qt_app, lambda: window._model.rowCount() > 0)
+    assert wait_until(qt_app, lambda: window._model.rowCount() > 0)
     row = window._model.row_of_path(window._library.root / "京都")
     assert row >= 0
     window._grid.select_row(row)
@@ -329,7 +318,7 @@ def test_copying_puts_a_copy_in_the_target(qt_app: QApplication, window: MainWin
 
     window._transfer_selected(window._library.root / "奈良", move=False)
 
-    assert _wait(qt_app, lambda: window._write_job is None), "复制没有在时限内结束"
+    assert wait_until(qt_app, lambda: window._write_job is None), "复制没有在时限内结束"
     copied = window._library.root / "奈良" / "一张.jpg"
     assert copied.read_bytes() == before
     assert source.exists(), "复制不是移动：源必须还在原地"
@@ -345,7 +334,7 @@ def test_moving_takes_the_photo_out_of_the_source_album(
 
     window._transfer_selected(window._library.root / "奈良", move=True)
 
-    assert _wait(qt_app, lambda: window._write_job is None), "移动没有在时限内结束"
+    assert wait_until(qt_app, lambda: window._write_job is None), "移动没有在时限内结束"
     assert (window._library.root / "奈良" / "一张.jpg").exists()
     assert not (window._library.root / "京都" / "一张.jpg").exists()
     assert "已移动 1 项到「奈良」" in window._banner.text()
@@ -357,7 +346,7 @@ def test_the_banner_says_it_can_be_undone(qt_app: QApplication, window: MainWind
     _select_photo(window, "一张.jpg")
 
     window._transfer_selected(window._library.root / "奈良", move=True)
-    assert _wait(qt_app, lambda: window._write_job is None)
+    assert wait_until(qt_app, lambda: window._write_job is None)
 
     assert "⌘Z 可以撤销" in window._banner.text()
 
@@ -368,7 +357,7 @@ def test_a_move_can_actually_be_undone(qt_app: QApplication, window: MainWindow)
     _select_photo(window, "一张.jpg")
 
     window._transfer_selected(window._library.root / "奈良", move=True)
-    assert _wait(qt_app, lambda: window._write_job is None)
+    assert wait_until(qt_app, lambda: window._write_job is None)
 
     window.undo_last_write()
 
@@ -383,7 +372,7 @@ def test_the_undo_label_mentions_the_move(qt_app: QApplication, window: MainWind
     _select_photo(window, "一张.jpg")
 
     window._transfer_selected(window._library.root / "奈良", move=True)
-    assert _wait(qt_app, lambda: window._write_job is None)
+    assert wait_until(qt_app, lambda: window._write_job is None)
 
     window._refresh_undo_label()
     assert "移动到相册" in window._undo_action.text()
@@ -398,7 +387,7 @@ def test_picking_from_the_submenu_runs_the_move(qt_app: QApplication, window: Ma
 
     _album_item(_submenu(menu, "移动到相册"), "奈良").trigger()
 
-    assert _wait(qt_app, lambda: window._write_job is None), "移动没有在时限内结束"
+    assert wait_until(qt_app, lambda: window._write_job is None), "移动没有在时限内结束"
     assert (window._library.root / "奈良" / "一张.jpg").exists()
     assert not (window._library.root / "京都" / "一张.jpg").exists()
 
@@ -411,7 +400,7 @@ def test_moving_the_whole_selection(qt_app: QApplication, window: MainWindow) ->
 
     window._transfer_selected(window._library.root / "奈良", move=True)
 
-    assert _wait(qt_app, lambda: window._write_job is None)
+    assert wait_until(qt_app, lambda: window._write_job is None)
     assert sorted(p.name for p in (window._library.root / "奈良").iterdir()) == [
         "一张.jpg",
         "另一张.jpg",
@@ -430,7 +419,7 @@ def test_nothing_is_overwritten_in_the_target(qt_app: QApplication, window: Main
 
     window._transfer_selected(window._library.root / "奈良", move=True)
 
-    assert _wait(qt_app, lambda: window._write_job is None)
+    assert wait_until(qt_app, lambda: window._write_job is None)
     assert (window._library.root / "奈良" / "一张 2.jpg").exists()
     assert taken.read_bytes() == before, "目标里原有的那个文件不能被覆盖"
     assert "改名为「一张 2.jpg」" in window._banner.text()
@@ -443,7 +432,7 @@ def test_moving_into_the_album_it_is_already_in(qt_app: QApplication, window: Ma
 
     window._transfer_selected(window._library.root / "京都", move=True)
 
-    assert _wait(qt_app, lambda: window._write_job is None)
+    assert wait_until(qt_app, lambda: window._write_job is None)
     assert (window._library.root / "京都" / "一张.jpg").exists()
     assert "本来就在「京都」里" in window._banner.text()
 
@@ -467,7 +456,7 @@ def test_a_group_card_moves_the_photos_inside(qt_app: QApplication, window: Main
 
     window._transfer_selected(window._library.root / "奈良", move=True)
 
-    assert _wait(qt_app, lambda: window._write_job is None)
+    assert wait_until(qt_app, lambda: window._write_job is None)
     assert (window._library.root / "奈良" / "一张.jpg").exists()
     assert not photo.exists()
 
@@ -482,7 +471,7 @@ def test_paste_and_copy_do_not_run_at_the_same_time(
 
     def slow_move(self, target, sources, *, should_cancel=None):  # noqa: ANN001, ANN202
         started.set()
-        release.wait(WAIT_SECONDS)
+        release.wait(DEFAULT_TIMEOUT_SECONDS)
         return real(self, target, sources, should_cancel=should_cancel)
 
     monkey = Library.move_into
@@ -492,7 +481,7 @@ def test_paste_and_copy_do_not_run_at_the_same_time(
         _select_photo(window, "一张.jpg")
 
         window._transfer_selected(window._library.root / "奈良", move=True)
-        assert started.wait(WAIT_SECONDS), "第一次移动没有开始"
+        assert started.wait(DEFAULT_TIMEOUT_SECONDS), "第一次移动没有开始"
         window._transfer_selected(window._library.root / "奈良", move=False)
 
         assert window._banner.text() == "上一次操作还没结束。"
@@ -500,7 +489,7 @@ def test_paste_and_copy_do_not_run_at_the_same_time(
         Library.move_into = monkey  # type: ignore[method-assign]
         release.set()
 
-    assert _wait(qt_app, lambda: window._write_job is None)
+    assert wait_until(qt_app, lambda: window._write_job is None)
 
 
 def test_config_directory_is_never_offered(tmp_path: Path) -> None:

@@ -24,10 +24,12 @@ import os
 import pathlib
 import time
 from collections.abc import Callable, Iterator
+from functools import partial
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest  # noqa: E402
+from waiting import wait_until  # noqa: E402
 
 pytest.importorskip("PySide6")
 
@@ -124,19 +126,13 @@ def settle(qt_app: QApplication) -> Callable[[float], None]:
 
 @pytest.fixture
 def wait_for(qt_app: QApplication) -> Callable[..., bool]:
-    """转到 ``predicate()`` 成立为止，返回它是否真的成立过。"""
+    """转到 ``predicate()`` 成立为止，返回它是否真的成立过。
 
-    def _wait_for(predicate: Callable[[], bool], *, timeout: float) -> bool:
-        deadline = time.monotonic() + timeout
-        while True:
-            qt_app.processEvents()
-            if predicate():
-                return True
-            if time.monotonic() >= deadline:
-                return False
-            time.sleep(POLL_SECONDS)
-
-    return _wait_for
+    是 :func:`waiting.wait_until` 的 fixture 形态（用它就得在签名里写 ``timeout=``），
+    而 ``waiting`` 那个是普通函数、按位置传 ``qt_app``。**只有一份轮询循环**，
+    否则改了一处不会改到另一处。
+    """
+    return partial(wait_until, qt_app)
 
 
 def test_no_test_module_shadows_the_shared_fixtures() -> None:
@@ -166,3 +162,38 @@ def test_no_test_module_shadows_the_shared_fixtures() -> None:
         "这些模块重定义了共享 fixture，共享的那一份（含双击阈值、等待助手的正确实现）"
         f"就白写了：{offenders}"
     )
+
+
+def test_no_test_module_reimplements_the_wait_helper() -> None:
+    """等待助手**只有 :mod:`waiting` 里的两份**，任何测试模块都不许再自己写。
+
+    曾经散着 8 份轮询循环（``wait_until`` / ``_wait`` / ``_wait_for_scan`` /
+    ``wait_rows``），``WAIT_SECONDS`` 与 ``SCAN_TIMEOUT_SECONDS`` 各自定了两个不同的
+    值，轮询间隔也有 0.02 与 0.005 两档。问题不在慢 —— 在于**同一件事有 8 份写法**：
+    改一处不会改到其余七处，而「该等多久才算超时」这种数字一旦各处不同，偶发失败
+    就很难归因（改好一处，另七处还在按旧数字等）。
+
+    这条守护让「轮询循环只有一份」从约定变成红灯。
+    """
+    reserved = {"wait_until", "_wait", "wait_for_pending", "_wait_for_scan", "wait_rows"}
+    offenders: list[str] = []
+    for path in sorted(pathlib.Path(__file__).resolve().parent.rglob("test_*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef) and node.name in reserved:
+                offenders.append(f"{path.name}:{node.lineno} {node.name}")
+    assert not offenders, (
+        f"这些模块自己写了一份等待助手，请用 waiting.wait_until / waiting.wait_for_level："
+        f"{offenders}"
+    )
+
+
+def test_the_polling_interval_is_defined_once() -> None:
+    """轮询间隔与默认超时也只有一份 —— 两个数字在八处各写一遍时，偶发失败没法归因。"""
+    offenders: list[str] = []
+    for path in sorted(pathlib.Path(__file__).resolve().parent.rglob("test_*.py")):
+        text = path.read_text(encoding="utf-8")
+        for name in ("POLL_SECONDS", "WAIT_SECONDS", "SCAN_TIMEOUT_SECONDS"):
+            if name in text:
+                offenders.append(f"{path.name}: {name}")
+    assert not offenders, f"这些模块自己定义了超时/间隔常数，请用 waiting 里的：{offenders}"

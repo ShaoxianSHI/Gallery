@@ -9,7 +9,6 @@
 
 from __future__ import annotations
 
-import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -20,6 +19,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import QItemSelectionModel, QModelIndex  # noqa: E402
 from PySide6.QtGui import QKeySequence  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
+from waiting import wait_until
 
 from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.library.photos import FolderRef, PhotoRef  # noqa: E402
@@ -32,7 +32,6 @@ from gallery.core.library.session import (  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 
 #: 等待异步扫描 / 缩略图完成的时限。
-WAIT_SECONDS = 8.0
 
 
 def open_window(
@@ -52,17 +51,6 @@ def open_window(
     if not wait_until(qt_app, lambda: window._model.rowCount() > 0):
         raise AssertionError("扫描没有在时限内完成")
     return window
-
-
-def wait_until(qt_app: QApplication, predicate: Callable[[], bool]) -> bool:
-    deadline = time.monotonic() + WAIT_SECONDS
-    while time.monotonic() < deadline:
-        qt_app.processEvents()
-        if predicate():
-            return True
-        time.sleep(0.02)
-    qt_app.processEvents()
-    return predicate()
 
 
 def select_rows(window: MainWindow, *rows: int) -> None:

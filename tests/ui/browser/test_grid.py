@@ -23,6 +23,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import QModelIndex, QPoint, Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
+from waiting import DEFAULT_TIMEOUT_SECONDS
 
 from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.library.photos import FolderRef, PhotoRef  # noqa: E402
@@ -36,7 +37,6 @@ from gallery.ui.browser.model import PhotoListModel  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 
 #: 等待异步扫描完成的时限。
-SCAN_TIMEOUT_SECONDS = 8.0
 
 #: 第一行至少要铺到视口的这个比例才算「铺满」。剩下的几像素是网格页本来就有的
 #: 左右留白加上滚动条预留，肉眼看不出来；掉一整列则是 15% 以上，界线很清楚。
@@ -127,7 +127,7 @@ def test_albums_mode_startup_keeps_normal_tile_size(
     window.resize(1200, 800)
     window.show()
 
-    deadline = time.monotonic() + SCAN_TIMEOUT_SECONDS
+    deadline = time.monotonic() + DEFAULT_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         qt_app.processEvents()
         if window._model.rowCount() >= 2 and window._grid._laid_out_columns:
@@ -212,11 +212,11 @@ def test_entering_an_album_fills_the_row(
     window.show()
     try:
         # 先把相册列表扫出来、显示稳定（= 用户看到的启动画面）
-        assert wait_for(lambda: window._model.rowCount() >= 1, timeout=SCAN_TIMEOUT_SECONDS)
+        assert wait_for(lambda: window._model.rowCount() >= 1, timeout=DEFAULT_TIMEOUT_SECONDS)
         settle(0.3)
 
         window.enter_folder(album)
-        assert wait_for(lambda: window._model.rowCount() >= 12, timeout=SCAN_TIMEOUT_SECONDS)
+        assert wait_for(lambda: window._model.rowCount() >= 12, timeout=DEFAULT_TIMEOUT_SECONDS)
         settle(0.3)  # 给「核对列数」的定时器留出机会跑完
 
         assert row_fill_ratio(window._grid) >= FILL_RATIO, (

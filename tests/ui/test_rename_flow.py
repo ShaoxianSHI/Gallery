@@ -23,6 +23,7 @@ from PySide6.QtCore import QEvent, QPointF, Qt  # noqa: E402
 from PySide6.QtGui import QMouseEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
+from waiting import DEFAULT_TIMEOUT_SECONDS
 
 from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.library.photos import FolderRef, PhotoRef  # noqa: E402
@@ -38,7 +39,6 @@ from gallery.ui.browser.rename_edit import RenameEdit  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 
 #: 等待异步扫描完成的时限。
-SCAN_TIMEOUT_SECONDS = 8.0
 
 
 def make_grid(qt_app: QApplication, tmp_path: Path, names: list[str]) -> PhotoGrid:
@@ -293,7 +293,7 @@ def open_window(
     window.resize(900, 600)
     window.show()
     qt_app.processEvents()
-    deadline = time.monotonic() + SCAN_TIMEOUT_SECONDS
+    deadline = time.monotonic() + DEFAULT_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         qt_app.processEvents()
         if window._model.rowCount() > 0:

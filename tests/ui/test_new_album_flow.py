@@ -17,8 +17,7 @@
 from __future__ import annotations
 
 import shutil
-import time
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -30,6 +29,7 @@ from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtGui import QKeySequence  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMenu  # noqa: E402
+from waiting import wait_until
 
 from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.library.photos import FolderRef, GroupRef, PhotoRef  # noqa: E402
@@ -43,7 +43,6 @@ from gallery.core.metadata.journal import ACTION_CREATE, ACTION_RENAME, read_rec
 from gallery.ui.main_window import MainWindow  # noqa: E402
 
 #: 等待异步扫描完成的时限。
-WAIT_SECONDS = 8.0
 
 #: 新建出来的相册默认叫什么。
 DEFAULT_NAME = "新建相册"
@@ -74,7 +73,7 @@ def _open(qt_app: QApplication, root: Path, *, browse_mode: str = BROWSE_MODE_AL
     instance = MainWindow(session_base=session_base, initial_library=root)
     instance.resize(900, 600)
     instance.show()
-    assert _wait(qt_app, lambda: instance._model.rowCount() > 0), "扫描没有在时限内完成"
+    assert wait_until(qt_app, lambda: instance._model.rowCount() > 0), "扫描没有在时限内完成"
     return instance
 
 
@@ -90,22 +89,9 @@ def _texts(menu: QMenu) -> list[str]:
     return [action.text() for action in menu.actions()]
 
 
-def _wait(
-    qt_app: QApplication, predicate: Callable[[], bool], timeout: float = WAIT_SECONDS
-) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        qt_app.processEvents()
-        if predicate():
-            return True
-        time.sleep(0.02)
-    qt_app.processEvents()
-    return predicate()
-
-
 def _enter(qt_app: QApplication, window: MainWindow, folder: Path) -> None:
     window.enter_folder(folder)
-    assert _wait(qt_app, lambda: window._scan_job is None), "这一层没有列完"
+    assert wait_until(qt_app, lambda: window._scan_job is None), "这一层没有列完"
 
 
 def _commit_editor(qt_app: QApplication, window: MainWindow, name: str) -> None:
@@ -197,7 +183,7 @@ def test_all_photos_mode_builds_in_the_library_root(
 ) -> None:
     """「全部照片」是平铺的，唯一说得清的目录是库根（与粘贴同一判据）。"""
     window.set_browse_mode(BROWSE_MODE_FLAT)
-    assert _wait(qt_app, lambda: window._scan_job is None)
+    assert wait_until(qt_app, lambda: window._scan_job is None)
 
     window.create_album()
 
@@ -334,7 +320,7 @@ def test_the_watcher_does_not_add_a_second_row(
     window.create_album()
     qt_app.processEvents()
     # 给监听器留出跑一趟的时间（它有合并去抖，见 ADR 0013）。
-    assert _wait(qt_app, lambda: window._model.rowCount() > before, timeout=2.0)
+    assert wait_until(qt_app, lambda: window._model.rowCount() > before, timeout=2.0)
 
     assert window._model.rowCount() == before + 1
     assert window._model.row_of_path(root / DEFAULT_NAME) >= 0

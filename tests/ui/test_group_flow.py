@@ -23,6 +23,7 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QItemSelectionModel  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
+from waiting import DEFAULT_TIMEOUT_SECONDS
 
 from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.library.photos import GroupRef, PhotoRef  # noqa: E402
@@ -37,7 +38,6 @@ from gallery.core.places.resolver import LazyPlaceResolver, ResolvedPlace  # noq
 from gallery.ui.main_window import MainWindow, _flattened_entries  # noqa: E402
 
 #: 等待后台扫描 / 元数据读取的时限。
-WAIT_SECONDS = 10.0
 
 #: 测试库里每张照片的拍摄时间（按文件名对应）。
 DATES = {
@@ -211,7 +211,7 @@ def _select_rows(window: MainWindow, *rows: int) -> None:
 
 def _settle(qt_app: QApplication, window: MainWindow, *, groups: bool = False) -> None:
     """转到「扫描结束、元数据读完、地点解析完、顺序已经排好」为止。"""
-    deadline = time.monotonic() + WAIT_SECONDS
+    deadline = time.monotonic() + DEFAULT_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         qt_app.processEvents()
         settled = (
@@ -238,7 +238,7 @@ def _watch_names(
 ) -> list[tuple[str, ...]]:
     """同上，但记录**条目名字**：顺序对不对，只有名字能说明白。"""
     seen: list[tuple[str, ...]] = []
-    deadline = time.monotonic() + WAIT_SECONDS
+    deadline = time.monotonic() + DEFAULT_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         qt_app.processEvents()
         snapshot = tuple(entry.name for entry in window._model.entries())
@@ -452,7 +452,7 @@ def test_reopening_the_same_library_does_not_resolve_again(
 def _banners_while_busy(qt_app: QApplication, window: MainWindow) -> list[str]:
     """转事件循环直到后台活干完，把横幅上出现过的每一句记下来。"""
     seen: list[str] = []
-    deadline = time.monotonic() + WAIT_SECONDS
+    deadline = time.monotonic() + DEFAULT_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         qt_app.processEvents()
         if (

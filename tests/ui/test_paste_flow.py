@@ -18,8 +18,7 @@
 from __future__ import annotations
 
 import threading
-import time
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -29,6 +28,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import QItemSelectionModel  # noqa: E402
 from PySide6.QtGui import QGuiApplication, QKeySequence  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMenu  # noqa: E402
+from waiting import DEFAULT_TIMEOUT_SECONDS, wait_until
 
 from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.library.facade import Library  # noqa: E402
@@ -43,7 +43,6 @@ from gallery.ui import desktop  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 
 #: 等待异步扫描 / 粘贴完成的时限。
-WAIT_SECONDS = 8.0
 
 
 @pytest.fixture(autouse=True)
@@ -93,28 +92,17 @@ def _open(qt_app: QApplication, root: Path, *, browse_mode: str = BROWSE_MODE_AL
     # 「这一层排好了」的唯一判据是 ``_scan_job is None``（同 test_context_menu /
     # test_group_flow / test_blank_double_click 用的都是它），顺带把分组用的
     # facet 读取也算进去 —— 那一遍会再排一次。
-    assert _wait(qt_app, lambda: instance._model.rowCount() > 0), "扫描没有在时限内完成"
-    assert _wait(
+    assert wait_until(qt_app, lambda: instance._model.rowCount() > 0), "扫描没有在时限内完成"
+    assert wait_until(
         qt_app,
         lambda: instance._scan_job is None and instance._facet_job is None,
     ), "这一层没有在时限内排好"
     return instance
 
 
-def _wait(qt_app: QApplication, predicate: Callable[[], bool]) -> bool:
-    deadline = time.monotonic() + WAIT_SECONDS
-    while time.monotonic() < deadline:
-        qt_app.processEvents()
-        if predicate():
-            return True
-        time.sleep(0.02)
-    qt_app.processEvents()
-    return predicate()
-
-
 def _enter(qt_app: QApplication, window: MainWindow, folder: Path) -> None:
     window.enter_folder(folder)
-    assert _wait(qt_app, lambda: window._scan_job is None), "这一层没有列完"
+    assert wait_until(qt_app, lambda: window._scan_job is None), "这一层没有列完"
 
 
 def _texts(menu: QMenu) -> list[str]:
@@ -123,7 +111,7 @@ def _texts(menu: QMenu) -> list[str]:
 
 def _paste_and_wait(qt_app: QApplication, window: MainWindow) -> str:
     window.paste_into_current_folder()
-    assert _wait(qt_app, lambda: window._write_job is None), "粘贴没有在时限内结束"
+    assert wait_until(qt_app, lambda: window._write_job is None), "粘贴没有在时限内结束"
     return window._banner.text()
 
 
@@ -131,7 +119,7 @@ def _trigger_paste(qt_app: QApplication, window: MainWindow, menu: QMenu) -> str
     """点菜单里那一条「粘贴」，等它把文件落完。"""
     action = next(item for item in menu.actions() if item.text() == "粘贴")
     action.trigger()
-    assert _wait(qt_app, lambda: window._write_job is None), "粘贴没有在时限内结束"
+    assert wait_until(qt_app, lambda: window._write_job is None), "粘贴没有在时限内结束"
     return window._banner.text()
 
 
@@ -586,7 +574,7 @@ def test_all_photos_pastes_into_the_library_root(
 ) -> None:
     """「全部照片」是平铺的，唯一说得清的目录是库根。"""
     window.set_browse_mode(BROWSE_MODE_FLAT)
-    assert _wait(qt_app, lambda: window._scan_job is None)
+    assert wait_until(qt_app, lambda: window._scan_job is None)
     desktop.copy_files_to_clipboard([root / "京都" / "一张.jpg"])
 
     assert window._paste_target() == window._library.root
@@ -610,7 +598,7 @@ def test_new_file_shows_up_in_the_grid(
 
     _paste_and_wait(qt_app, window)
 
-    assert _wait(qt_app, lambda: window._model.rowCount() == before + 1)
+    assert wait_until(qt_app, lambda: window._model.rowCount() == before + 1)
     assert window._model.row_of_path(root / "奈良" / "一张.jpg") >= 0
 
 
@@ -652,7 +640,7 @@ def test_a_second_paste_does_not_race_the_first(
 
     def slow_copy(self, target, sources, *, should_cancel=None):  # noqa: ANN001, ANN202
         started.set()
-        release.wait(WAIT_SECONDS)
+        release.wait(DEFAULT_TIMEOUT_SECONDS)
         return real(self, target, sources, should_cancel=should_cancel)
 
     monkeypatch.setattr(Library, "copy_into", slow_copy)
@@ -660,10 +648,10 @@ def test_a_second_paste_does_not_race_the_first(
     _enter(qt_app, window, root / "奈良")
 
     window.paste_into_current_folder()
-    assert started.wait(WAIT_SECONDS), "第一次粘贴没有开始"
+    assert started.wait(DEFAULT_TIMEOUT_SECONDS), "第一次粘贴没有开始"
     window.paste_into_current_folder()
 
     assert window._banner.text() == "上一次操作还没结束。"
     release.set()
-    assert _wait(qt_app, lambda: window._write_job is None)
+    assert wait_until(qt_app, lambda: window._write_job is None)
     assert sorted(p.name for p in (root / "奈良").iterdir()) == ["一张.jpg"]

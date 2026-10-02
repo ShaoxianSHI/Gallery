@@ -12,7 +12,6 @@
 from __future__ import annotations
 
 import os
-import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -32,6 +31,7 @@ from PySide6.QtGui import (  # noqa: E402
     QPalette,
 )
 from PySide6.QtWidgets import QApplication, QMenu  # noqa: E402
+from waiting import wait_until
 
 from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.library.session import BROWSE_MODE_ALBUMS  # noqa: E402
@@ -44,7 +44,6 @@ from gallery.ui.theme import rgba  # noqa: E402
 FLIPPED_BACKGROUND = QColor(23, 23, 23)
 
 #: 等待扫描完成的时限。
-SCAN_TIMEOUT_SECONDS = 10.0
 
 
 @pytest.fixture
@@ -59,20 +58,11 @@ def window(qt_app: QApplication, tmp_path: Path) -> Iterator[MainWindow]:
     Image.new("RGB", (64, 48), (10, 160, 90)).save(album / "另一张.jpg")
     prepare_library(root)
     instance = MainWindow(session_base=tmp_path / "状态", initial_library=root)
-    _wait_for_scan(qt_app, instance)
+    assert wait_until(
+        qt_app, lambda: instance._scan_job is None and instance._model.rowCount() > 0
+    ), "扫描没有在时限内完成"
     yield instance
     instance.close()
-
-
-def _wait_for_scan(qt_app: QApplication, window: MainWindow) -> None:
-    """转到扫描结束：网格里一个格子都没有时，右键菜单那几条无从断言。"""
-    deadline = time.monotonic() + SCAN_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
-        qt_app.processEvents()
-        if window._scan_job is None and window._model.rowCount() > 0:
-            return
-        time.sleep(0.01)
-    qt_app.processEvents()
 
 
 def _bar_menu(window: MainWindow, title: str) -> QMenu:
@@ -432,7 +422,7 @@ def test_open_hint_is_really_painted_in_the_key_column(
     （越出去就压到隔壁行上去了）。
     """
     window._stack.setCurrentWidget(window._grid_page)
-    row = _row_for(window, kind)
+    row = _row_for(qt_app, window, kind)
     assert row is not None
 
     menu = window.context_menu_for(row)
@@ -481,7 +471,7 @@ def test_shortcut_columns_start_after_the_longest_label(
     x，看着像串成一片。留白取 :data:`menus.SHORTCUT_LABEL_GAP`，与原生菜单一致。
     """
     window._stack.setCurrentWidget(window._grid_page)
-    row = _row_for(window, kind)
+    row = _row_for(qt_app, window, kind)
     assert row is not None
 
     menu = window.context_menu_for(row)
@@ -528,7 +518,7 @@ def _needed_width(menu: QMenu) -> int:
     )
 
 
-def _row_for(window: MainWindow, kind: str) -> int | None:
+def _row_for(qt_app: QApplication, window: MainWindow, kind: str) -> int | None:
     """三种落点各挑一行：照片 / 相册 / 空白处。"""
     if kind == "blank":
         return -1
@@ -537,13 +527,10 @@ def _row_for(window: MainWindow, kind: str) -> int | None:
         row = window._model.row_of_path(window._library.root / "一张.jpg")
     else:
         window.set_browse_mode(BROWSE_MODE_ALBUMS)
-        deadline = time.monotonic() + SCAN_TIMEOUT_SECONDS
-        while time.monotonic() < deadline:
-            QApplication.processEvents()
-            if window._model.row_of_path(window._library.root / "京都") >= 0:
-                break
-            time.sleep(0.01)
-        QApplication.processEvents()
+        target = window._library.root / "京都"
+        assert wait_until(qt_app, lambda: window._model.row_of_path(target) >= 0), (
+            "相册模式没有在时限内列出「京都」"
+        )
         row = window._model.row_of_path(window._library.root / "京都")
     return row if row >= 0 else None
 

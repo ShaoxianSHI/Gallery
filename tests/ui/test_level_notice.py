@@ -18,6 +18,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
+from waiting import DEFAULT_TIMEOUT_SECONDS
+
 from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.library.scanner import ScanReport  # noqa: E402
 from gallery.core.library.session import (  # noqa: E402
@@ -28,7 +30,6 @@ from gallery.core.library.session import (  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 
 #: 等待后台扫描 / 元数据读取的时限。
-WAIT_SECONDS = 10.0
 
 
 def _open(
@@ -46,7 +47,7 @@ def _open(
 
 
 def _settle(qt_app, window: MainWindow) -> None:
-    deadline = time.monotonic() + WAIT_SECONDS
+    deadline = time.monotonic() + DEFAULT_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         qt_app.processEvents()
         settled = (

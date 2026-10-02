@@ -29,6 +29,7 @@ from PySide6.QtCore import QItemSelectionModel, Qt  # noqa: E402
 from PySide6.QtGui import QContextMenuEvent, QGuiApplication, QKeySequence  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMenu  # noqa: E402
+from waiting import DEFAULT_TIMEOUT_SECONDS, wait_until
 
 from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.library.photos import GroupRef, PhotoRef  # noqa: E402
@@ -46,7 +47,6 @@ from gallery.ui.browser.model import PhotoListModel  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 
 #: 等待后台扫描 / 元数据读取 / 地点解析跑完的时限。
-WAIT_SECONDS = 10.0
 
 #: 测试库里的两张照片，按扫描顺序（相册内按名称）。
 PHOTO_NAMES = ("一张.jpg", "另一张.jpg")
@@ -172,7 +172,7 @@ def test_context_menu_event_reports_the_row(qt_app: QApplication) -> None:
 
 
 def _settle(qt_app: QApplication, window: MainWindow) -> None:
-    deadline = time.monotonic() + WAIT_SECONDS
+    deadline = time.monotonic() + DEFAULT_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         qt_app.processEvents()
         if window._scan_job is None and window._facet_job is None and window._place_job is None:
@@ -1079,17 +1079,6 @@ def test_copy_paths_covers_the_photos_of_a_group_card(
 
 
 # ---- 大图页的右键菜单（ADR 0021）--------------------------------------------
-
-
-def wait_until(qt_app: QApplication, predicate: Callable[[], bool]) -> bool:
-    deadline = time.monotonic() + WAIT_SECONDS
-    while time.monotonic() < deadline:
-        qt_app.processEvents()
-        if predicate():
-            return True
-        time.sleep(0.02)
-    qt_app.processEvents()
-    return predicate()
 
 
 def _open_detail(qt_app: QApplication, window: MainWindow, name: str) -> int:

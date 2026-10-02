@@ -27,6 +27,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import QPoint, Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
+from waiting import wait_for_level
 
 from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.library.photos import GroupRef  # noqa: E402
@@ -40,7 +41,6 @@ from gallery.ui.browser.grid import PhotoGrid  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 
 #: 等待扫描 / 分组排完的时限。
-SCAN_TIMEOUT_SECONDS = 8.0
 
 #: 分组字段：按「所在文件夹」分。这一档只看路径，不读 EXIF，
 #: 于是这些测试既不依赖本机装了 exiftool，也不必再造一个假的批量读取器。
@@ -74,22 +74,8 @@ def open_window(
     window = MainWindow(session_base=session_base, initial_library=root)
     window.resize(900, 600)
     window.show()
-    wait_until(window, qt_app, lambda: window._scan_job is None and window._facet_job is None)
+    wait_for_level(window, qt_app, lambda: window._scan_job is None and window._facet_job is None)
     return window
-
-
-def wait_until(
-    window: MainWindow, qt_app: QApplication, ready: Callable[[], bool], *, what: str = "这一层"
-) -> None:
-    """转到 ``ready()`` 成立为止（扫描与排序都在后台线程上）。"""
-    deadline = time.monotonic() + SCAN_TIMEOUT_SECONDS
-    while True:
-        qt_app.processEvents()
-        if ready():
-            return
-        if time.monotonic() >= deadline:
-            raise AssertionError(f"{what}没有在时限内就绪（当前 {window._model.rowCount()} 行）")
-        time.sleep(0.02)
 
 
 def settle(qt_app: QApplication, seconds: float = 0.3) -> None:
@@ -146,10 +132,10 @@ def test_blank_double_click_walks_out_of_an_album(
     window = open_window(qt_app, library)
     try:
         window.enter_folder(library / "海边")
-        wait_until(window, qt_app, lambda: window._model.rowCount() == 2, what="相册内")
+        wait_for_level(window, qt_app, lambda: window._model.rowCount() == 2, what="相册内")
 
         double_click_blank(window, qt_app)
-        wait_until(window, qt_app, lambda: window._model.rowCount() == 2, what="退回后的这一层")
+        wait_for_level(window, qt_app, lambda: window._model.rowCount() == 2, what="退回后的这一层")
 
         assert window._current_dir == library
         assert {entry.name for entry in window._model.entries()} == {"海边", "山巅"}
@@ -171,12 +157,12 @@ def test_blank_double_click_walks_out_of_an_empty_album(
     window = open_window(qt_app, library)
     try:
         window.enter_folder(library / "空的")
-        wait_until(window, qt_app, lambda: window._scan_job is None)
+        wait_for_level(window, qt_app, lambda: window._scan_job is None)
         assert window._model.rowCount() == 0
 
         double_click(window._grid, window._grid.viewport().rect().center())
         qt_app.processEvents()
-        wait_until(window, qt_app, lambda: window._model.rowCount() == 2)
+        wait_for_level(window, qt_app, lambda: window._model.rowCount() == 2)
 
         assert window._current_dir == library
         assert {entry.name for entry in window._model.entries()} == {"空的", "山巅"}
@@ -210,20 +196,20 @@ def test_double_clicking_an_album_card_enters_it_and_stays_there(
         target = library / name
 
         double_click(window._grid, center)
-        wait_until(window, qt_app, lambda: window._current_dir == target, what=name)
+        wait_for_level(window, qt_app, lambda: window._current_dir == target, what=name)
         # 再转几圈事件循环：退回去同样是同步的，多给它几次机会照样看得见。
         settle(qt_app)
         assert window._current_dir == target, f"双击「{name}」刚进去就被弹回来了"
 
         # 退回去，等这一层真的列完（``_current_dir`` 是同步设好的，条目还在路上）。
         window.go_up()
-        wait_until(
+        wait_for_level(
             window,
             qt_app,
             lambda: window._current_dir == library and window._scan_job is None,
             what="退回根",
         )
-        wait_until(window, qt_app, lambda: window._model.rowCount() == 2, what="根层列完")
+        wait_for_level(window, qt_app, lambda: window._model.rowCount() == 2, what="根层列完")
 
     try:
         assert window._model.rowCount() == 2
@@ -242,13 +228,13 @@ def test_double_clicking_a_group_card_enters_it_and_stays_there(
     make_photo("IMG_0002.jpg", directory=library / "山巅")
     window = open_window(qt_app, library, browse_mode=BROWSE_MODE_FLAT, group_facet=FOLDER_FACET)
     try:
-        wait_until(window, qt_app, lambda: window._model.group_count() == 2, what="分组")
+        wait_for_level(window, qt_app, lambda: window._model.group_count() == 2, what="分组")
         target = window._model.group_at(0)
         assert isinstance(target, GroupRef)
         center = window._grid.visualRect(window._model.index(0, 0)).center()
 
         double_click(window._grid, center)
-        wait_until(window, qt_app, lambda: window._group_view is not None, what="进组")
+        wait_for_level(window, qt_app, lambda: window._group_view is not None, what="进组")
         settle(qt_app)
 
         assert window._group_view is target, "双击组卡片刚进去就被弹回来了"
@@ -268,15 +254,17 @@ def test_blank_double_click_leaves_a_group(
     make_photo("IMG_0002.jpg", directory=library / "山巅")
     window = open_window(qt_app, library, browse_mode=BROWSE_MODE_FLAT, group_facet=FOLDER_FACET)
     try:
-        wait_until(window, qt_app, lambda: window._model.group_count() == 2, what="分组")
+        wait_for_level(window, qt_app, lambda: window._model.group_count() == 2, what="分组")
         target = window._model.group_at(0)
         assert isinstance(target, GroupRef)
         window.enter_group(target)
-        wait_until(window, qt_app, lambda: window._scan_job is None, what="组内")
+        wait_for_level(window, qt_app, lambda: window._scan_job is None, what="组内")
         assert window._group_view is target
 
         double_click_blank(window, qt_app)
-        wait_until(window, qt_app, lambda: window._model.group_count() == 2, what="退出分组之后")
+        wait_for_level(
+            window, qt_app, lambda: window._model.group_count() == 2, what="退出分组之后"
+        )
 
         assert window._group_view is None
         assert sorted(entry.name for entry in window._model.entries()) == ["山巅", "海边"]
@@ -300,7 +288,7 @@ def test_blank_double_click_at_the_library_root_says_nothing(
         # 横幅是全局共享的一个槽：「正在解析地点…」这种后台进度也会往里写（那是正常的，
         # 见 BANNER_STICKY_SECONDS）。这里要验的是**自己**没有为「退不动」弹话，所以先
         # 等地点解析那一趟收工，再把横幅收干净，然后才双击空白。
-        wait_until(window, qt_app, lambda: window._place_job is None)
+        wait_for_level(window, qt_app, lambda: window._place_job is None)
         window._clear_banner()
         double_click_blank(window, qt_app)
         assert not window._banner.isVisible(), "退不动时不该弹提示"
@@ -320,7 +308,7 @@ def test_blank_double_click_does_nothing_while_renaming(
     window = open_window(qt_app, library)
     try:
         window.enter_folder(library / "海边")
-        wait_until(window, qt_app, lambda: window._model.rowCount() == 1, what="相册内")
+        wait_for_level(window, qt_app, lambda: window._model.rowCount() == 1, what="相册内")
         window._grid.select_row(0)
         window.rename_current_entry()
         assert window._grid.is_renaming()
@@ -342,7 +330,7 @@ def test_double_clicking_a_photo_still_opens_the_big_view(
     window = open_window(qt_app, library)
     try:
         window.enter_folder(library / "海边")
-        wait_until(window, qt_app, lambda: window._model.rowCount() == 1, what="相册内")
+        wait_for_level(window, qt_app, lambda: window._model.rowCount() == 1, what="相册内")
         center = window._grid.visualRect(window._model.index(0, 0)).center()
 
         double_click(window._grid, center)

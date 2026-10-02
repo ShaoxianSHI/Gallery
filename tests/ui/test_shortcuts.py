@@ -12,7 +12,6 @@
 
 from __future__ import annotations
 
-import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -24,6 +23,7 @@ from PySide6.QtCore import QCoreApplication, Qt  # noqa: E402
 from PySide6.QtGui import QKeySequence, QShortcutEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
+from waiting import wait_for_level
 
 from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.library.session import (  # noqa: E402
@@ -35,7 +35,6 @@ from gallery.ui.browser.rename_edit import RenameEdit  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 
 #: 等待扫描完成的时限。
-SCAN_TIMEOUT_SECONDS = 8.0
 
 
 def open_window(qt_app: QApplication, root: Path) -> MainWindow:
@@ -55,20 +54,8 @@ def open_window(qt_app: QApplication, root: Path) -> MainWindow:
     window = MainWindow(session_base=session_base, initial_library=root)
     window.resize(900, 600)
     window.show()
-    wait_rows(window, qt_app, expected=1)
+    wait_for_level(window, qt_app, lambda: window._model.rowCount() == 1, what="扫描")
     return window
-
-
-def wait_rows(window: MainWindow, qt_app: QApplication, *, expected: int) -> None:
-    """转到当前层扫完（行数等于 ``expected``）为止。"""
-    deadline = time.monotonic() + SCAN_TIMEOUT_SECONDS
-    while True:
-        qt_app.processEvents()
-        if window._model.rowCount() == expected:
-            return
-        if time.monotonic() >= deadline:
-            raise AssertionError(f"扫描没有在时限内完成（当前 {window._model.rowCount()} 行）")
-        time.sleep(0.02)
 
 
 def test_go_up_is_bound_to_escape(qt_app: QApplication, tmp_path: Path) -> None:
@@ -90,7 +77,7 @@ def test_escape_leaves_the_detail_view_first(
     window = open_window(qt_app, library)
     try:
         window.enter_folder(library / "海边")
-        wait_rows(window, qt_app, expected=1)
+        wait_for_level(window, qt_app, lambda: window._model.rowCount() == 1, what="扫描")
         window._grid.select_row(0)
         window._open_detail(window._grid.currentIndex())
 
@@ -116,11 +103,11 @@ def test_escape_walks_up_one_level_at_a_time(
     window = open_window(qt_app, library)
     try:
         window.enter_folder(library / "海边")
-        wait_rows(window, qt_app, expected=1)
+        wait_for_level(window, qt_app, lambda: window._model.rowCount() == 1, what="扫描")
 
         QTest.keyClick(window, Qt.Key.Key_Escape)
         qt_app.processEvents()
-        wait_rows(window, qt_app, expected=1)
+        wait_for_level(window, qt_app, lambda: window._model.rowCount() == 1, what="扫描")
 
         assert window._current_dir == library
         assert window._up_action.isEnabled() is False
@@ -142,7 +129,7 @@ def test_escape_cancels_rename_instead_of_going_up(
     window = open_window(qt_app, library)
     try:
         window.enter_folder(library / "海边")
-        wait_rows(window, qt_app, expected=1)
+        wait_for_level(window, qt_app, lambda: window._model.rowCount() == 1, what="扫描")
         window._grid.select_row(0)
         window.rename_current_entry()
         editor = window._grid._rename_edit
