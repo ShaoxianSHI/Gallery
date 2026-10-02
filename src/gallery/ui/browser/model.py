@@ -5,6 +5,17 @@
 （``viewport_changed``），结果由 :meth:`set_thumbnail` 回填，所以 ``data()`` 永不阻塞。
 
 缩略图在这里被缩放到图标尺寸再缓存 —— 一次平滑缩放，换来每次重绘都省下的一次缩放。
+
+**刻意不提供悬停提示**：格子底下的文件名已经说清了是哪一张，其余信息（格式、大小、
+时间、坐标、拍摄参数）在大图右侧的元数据面板里（⌘I）随时能看，对着一屏照片时再悬停
+反而晃眼。这个提示曾经有过，是按「可有可无」删掉的。
+
+顺带留一句，免得有人重查一遍：删它**不是因为它坏**。当年「打开照片时照片的位置上闪出
+一个装着元数据的白色小窗」查下来是元数据面板换内容时把旧控件 ``setParent(None)`` 摘成
+了顶层窗口（见 :meth:`gallery.ui.panels.metadata.MetadataPanel._fill` 的注释），与悬停
+提示无关。不过顺带一提，Qt 在这里确实有两处真实的毛刺，留个记录：悬停是在鼠标停下那一刻
+就排好的，而 ``QToolTip.hideText()`` 不取消已排好的定时器；Qt 收到 ``ToolTip`` 事件时也不
+检查目标控件还在不在屏幕上（实测把事件递给已经不可见的控件，它照弹）。
 """
 
 from __future__ import annotations
@@ -19,7 +30,6 @@ from PySide6.QtGui import QImage, QPixmap
 
 from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
 from gallery.ui.browser.thumb_sizes import DEFAULT_EDGE
-from gallery.ui.formatting import group_tooltip, photo_tooltip
 
 #: 取条目本身（``PhotoRef`` 或 ``FolderRef``）的角色。
 ENTRY_ROLE = int(Qt.ItemDataRole.UserRole) + 1
@@ -68,7 +78,6 @@ class PhotoListModel(QAbstractListModel):
         #: 所以这里是路径 → 多个行号，而 ``_row_by_path`` 是路径 → 一个行号。
         self._group_rows_by_cover: dict[Path, list[int]] = {}
         self._pixmaps: OrderedDict[Path, _CachedThumb] = OrderedDict()
-        self._tooltips_enabled = True
         self._icon_edge = icon_edge
         self._cache_size = max(1, cache_size)
 
@@ -136,7 +145,6 @@ class PhotoListModel(QAbstractListModel):
             index,
             [
                 int(Qt.ItemDataRole.DisplayRole),
-                int(Qt.ItemDataRole.ToolTipRole),
                 int(Qt.ItemDataRole.DecorationRole),
             ],
         )
@@ -246,17 +254,6 @@ class PhotoListModel(QAbstractListModel):
         """
         self._icon_edge = edge
 
-    def set_tooltips_enabled(self, enabled: bool) -> None:
-        """网格不在屏幕上时关掉悬停提示，回来时再打开。"""
-        if enabled == self._tooltips_enabled:
-            return
-        self._tooltips_enabled = enabled
-        if not self._entries:
-            return
-        top_left = self.index(0, 0)
-        bottom_right = self.index(len(self._entries) - 1, 0)
-        self.dataChanged.emit(top_left, bottom_right, [int(Qt.ItemDataRole.ToolTipRole)])
-
     def has_thumbnail(self, path: Path) -> bool:
         """这个条目是否有可画的东西（哪怕是按旧尺寸缩放的）。"""
         return path in self._pixmaps
@@ -302,10 +299,7 @@ class PhotoListModel(QAbstractListModel):
         entry = self._entries[row]
         if role == int(Qt.ItemDataRole.DisplayRole):
             return entry.name
-        if role == int(Qt.ItemDataRole.ToolTipRole):
-            # 大图打开时不提供提示：Qt 已经排好的悬停定时器醒来问不到内容，
-            # 就不会在照片上凭空闪出一个小窗（见 MainWindow._load_detail）。
-            return _tooltip(entry) if self._tooltips_enabled else ""
+        # ToolTipRole 刻意不答：卡片不提供悬停提示，理由见模块文档那一段。
         if role == int(Qt.ItemDataRole.DecorationRole):
             # 还没有缩略图时返回 None，由委托画占位（相册与分组画文件夹图标），
             # 模型不阻塞等待。组卡片的封面就是组内第一张照片。
@@ -371,14 +365,6 @@ def _cover_of(entry: GridEntry) -> Path:
         cover = entry.cover
         return cover.path if cover is not None else entry.path
     return entry.path
-
-
-def _tooltip(entry: GridEntry) -> str:
-    if isinstance(entry, PhotoRef):
-        return photo_tooltip(entry)
-    if isinstance(entry, GroupRef):
-        return group_tooltip(entry)
-    return "\n".join((entry.display_name, "相册", str(entry.path)))
 
 
 __all__ = [

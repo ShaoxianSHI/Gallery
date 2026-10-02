@@ -69,17 +69,6 @@ def test_group_roles_describe_the_card(tmp_path: Path, model: PhotoListModel) ->
     assert model.data(index, ALBUM_ROLE) is False
 
 
-def test_group_tooltip_explains_what_a_click_does(tmp_path: Path, model: PhotoListModel) -> None:
-    group = _group("captured_month", "2024-05", "2024 年 5 月", (_photo(tmp_path, "a.jpg"),))
-    model.reorder([group])
-
-    tooltip = str(model.data(model.index(0, 0), int(Qt.ItemDataRole.ToolTipRole)))
-
-    assert "2024 年 5 月" in tooltip
-    assert "1 张照片" in tooltip
-    assert "双击进入这个分组" in tooltip
-
-
 def test_cover_thumbnail_lights_up_every_group_that_uses_it(
     tmp_path: Path, model: PhotoListModel
 ) -> None:

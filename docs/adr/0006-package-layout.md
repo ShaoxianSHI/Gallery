@@ -30,7 +30,7 @@ core/
 
 ui/
 ├── app.py  main_window.py  theme.py  tasks.py  imaging.py
-├── navigation.py  formatting.py                                  ← 跨区域共享
+├── navigation.py                                                   ← 跨区域共享
 ├── browser/   grid(model rename_edit thumb_sizes)
 ├── viewer/    detail(zoom)
 ├── panels/    breadcrumb(metadata welcome)
