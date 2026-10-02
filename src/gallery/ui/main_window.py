@@ -549,6 +549,14 @@ class MainWindow(QMainWindow):
         # 不加工具栏：这些命令在 macOS 顶部菜单里都有，快捷键也照常生效，
         # 界面上再重复一遍只会挤掉照片。
         self._rebuild_recent_menu()
+        # 补发一次底色。菜单栏里这些 QMenu 是**此刻**才建出来的，而统一底色是在
+        # ``_build_ui`` 里下发的（见 ``ui.theme``）—— 那时它们还不存在，于是各自
+        # 用着系统菜单色（浅色 ``#ececec`` / 深色 ``#2b2b2b``），与窗口的纯色底差
+        # 一档。按下菜单的那一瞬，割裂就是这么来的。
+        #
+        # 它们是菜单栏的子控件，重新下发就会走到它们；而这一发也让之后每一次
+        # 系统换浅色 / 深色时，它们的底色跟着窗口一起变。
+        theme.ensure_installed()
 
     # ---- 分组与排序（见 ADR 0009）--------------------------------------------
 
@@ -1826,11 +1834,17 @@ class MainWindow(QMainWindow):
             return None
         self._update_action_states()
         kind = TargetKind.BLANK if entry is None else _context_kind(entry)
-        return build_menu(
+        menu = build_menu(
             self._menu_actions(),
             kind,
             multiple=len(self._grid.selected_rows()) > 1,
         )
+        # 菜单的底色取自调色板的 ``Window`` 角色，而它默认来自系统（浅色 ``#ececec``），
+        # 于是按一次右键就掉出整块底色之外。菜单是**这一下**才建的，此后不会再有一次
+        # 主题下发，所以直接照抄窗口那份统一调色板（``ui.theme`` 逐控件下发的那份）。
+        # 系统随后换浅色 / 深色也不影响它：下一次右键建的就是一个新的。
+        menu.setPalette(self.palette())
+        return menu
 
     def _menu_actions(self) -> MenuActions:
         """把菜单要用的动作收成一包（``ui.menus`` 只认这个，不认窗口）。"""
