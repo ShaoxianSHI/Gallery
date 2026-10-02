@@ -206,9 +206,12 @@ class Library:
         """
         target = Path(folder)
         try:
-            return target.resolve().relative_to(self._root.resolve()).as_posix() or target.name
+            relative = target.resolve().relative_to(self._root.resolve())
         except (OSError, ValueError):
             return target.name
+        # ``relative_to`` 对「就是它自己」给出 ``Path('.')``，写出来是 "." ——
+        # 菜单里一个孤零零的点。库根没有相对路径可写，那就写它自己的名字。
+        return relative.as_posix() if relative.parts else target.name
 
     def folder_cover(
         self,
@@ -269,7 +272,7 @@ class Library:
             on_error=on_error,
         )
 
-    def forget_paths(self, paths: Sequence[Path]) -> int:
+    def forget_paths(self, gone: Sequence[Path]) -> int:
         """把已经不在库里的路径从索引中抹掉，返回删掉了几行。
 
         照片消失之后索引里那一行不会自己走。**只删给定的路径**：相册模式下
@@ -277,9 +280,9 @@ class Library:
 
         索引还没打开时什么也不做：为了删几行去建一个数据库不值得。
         """
-        if self._index is None or not paths:
+        if self._index is None or not gone:
             return 0
-        return self._index.forget(paths)
+        return self._index.forget(gone)
 
     # ---- 分组 / 排序用的元数据（只读）----------------------------------------
 
@@ -332,17 +335,28 @@ class Library:
                 }
             index.store([(ref, fresh[ref.path]) for ref in missing if ref.path in fresh])
             cached.update(fresh)
-        elif resolver is not None:
+        if resolver is not None:
             # 缓存里可能还留着「有坐标、没结论」的旧行（打开库时的那一遍还没跑到它，
             # 或者城市数据是后来才下好的）。既然反查器在手，就顺手把它们补上 ——
             # 补完写回索引，于是这类照片不会被永久钉在「未知」上。
+            #
+            # **两件事与上面那一段是并行的，不是二选一。** 曾经这里是 ``elif``，
+            # 于是「这一批里有任何一张没缓存过」就整段跳过 —— 而那恰恰是最常见的
+            # 情形（打开一个库，总有新照片）：旧行永远补不上，直到哪一次恰好全命中。
+            # 两个分支各干各的：上面读新的，这里补旧的。
+            by_path = {ref.path: ref for ref in refs}
             pending = [path for path, facets in cached.items() if _needs_lookup(facets)]
+            resolved: list[tuple[PhotoRef, PhotoFacets]] = []
             for path in pending:
                 if should_cancel is not None and should_cancel():
                     break
-                cached[path] = _resolved(cached[path], resolver, status)
-            if pending:
-                index.store([(ref, cached[ref.path]) for ref in refs if ref.path in cached])
+                facets = _resolved(cached[path], resolver, status)
+                cached[path] = facets
+                resolved.append((by_path[path], facets))
+            # **只写回真正改动过的那几行。** 曾经这里把 ``cached`` 里**每一行**都
+            # UPSERT 一遍 —— 五万张照片的库里哪怕只有一行待补，也是五万次 UPDATE。
+            if resolved:
+                index.store(resolved)
         return cached
 
     def cached_facets(self, refs: Sequence[PhotoRef]) -> dict[Path, PhotoFacets]:

@@ -148,6 +148,43 @@ def test_old_rows_are_filled_in_later(gps_library: Library) -> None:
     assert gps_library.facet_index.lookup(refs)[gps_library.root / "西安.jpg"].city == "西安"
 
 
+def test_old_rows_are_also_filled_in_when_something_new_arrives(
+    gps_library: Library, make_photo: Callable[..., Path]
+) -> None:
+    """**「补旧行」与「读新照片」必须同时发生**，不是二选一。
+
+    缺陷现场：那一段过去挂在 ``elif`` 上，于是「这一批里只要有任何一张没缓存过」
+    就整段跳过 —— 而那恰恰是最常见的情形（打开一个库，总有后来才加进来的照片）。
+    旧行于是永远补不上地点，要一直等到哪一次恰好全部命中缓存。
+
+    同一批里：两张旧行（有坐标、没结论）+ 一张全新的照片。
+    """
+    old = [gps_library.root / "西安.jpg", gps_library.root / "巴黎.jpg"]
+    gps_library.photo_facets([PhotoRef.from_path(path) for path in old])  # 不给反查器
+
+    make_photo("新来的.jpg")
+    raw = dict.fromkeys(("西安.jpg", "巴黎.jpg", "新来的.jpg"), GPS)
+
+    def fake_read_many(
+        self: object, paths: Sequence[Path], *, should_cancel: object = None
+    ) -> Iterator[tuple[Path, Mapping[str, object] | None]]:
+        for path in paths:
+            yield Path(path), raw.get(Path(path).name)
+
+    resolver = FakeResolver()
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(batch.ExifToolBatchSource, "read_many", fake_read_many)
+        filled = gps_library.photo_facets(_refs(gps_library), resolver=resolver)
+
+    assert filled[gps_library.root / "西安.jpg"].city == "西安", "旧行必须同时被补上"
+    assert filled[gps_library.root / "巴黎.jpg"].city == "巴黎"
+    assert filled[gps_library.root / "新来的.jpg"].city == "西安", "新行也照常读"
+    assert resolver.calls >= 2
+    # 补完要写回索引，否则下一次开库又要重来一遍。
+    stored = gps_library.facet_index.lookup(_refs(gps_library))
+    assert stored[gps_library.root / "西安.jpg"].place_checked is True
+
+
 def test_a_photo_without_coordinates_is_never_asked(gps_library: Library) -> None:
     resolver = FakeResolver()
 

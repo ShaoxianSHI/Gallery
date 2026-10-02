@@ -237,3 +237,21 @@ def make_photo_in(root: Path, name: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     Image.new("RGB", (4, 3), (10, 20, 30)).save(path)
     return path
+
+
+def test_album_label_never_renders_the_root_as_a_dot(
+    tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """库根本身在菜单里要显示成**它自己的名字**，不是一个孤零零的「.」。
+
+    ``relative_to(库根, 库根)`` 给的是 ``Path('.')``，写出来就是 "."；而那句
+    ``or target.name`` 永远轮不到（``relative_to`` 从不给出空路径）。
+    """
+    root = tmp_path / "照片"
+    (root / "京都").mkdir(parents=True)
+    make_photo("一张.jpg", directory=root / "京都")
+    library = Library.open(root)
+
+    assert library.album_label(root) == "照片"
+    assert library.album_label(root / "京都") == "京都"
+    assert library.album_label(root / "京都" / "内") == "京都/内"

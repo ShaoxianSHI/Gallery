@@ -245,7 +245,7 @@ class FacetIndex:
                 logger.info("清理 facet 索引失败：%s", exc)
                 return 0
 
-    def forget(self, paths: Iterable[Path]) -> int:
+    def forget(self, gone: Iterable[Path]) -> int:
         """删掉指定路径的行，返回删掉了几行。
 
         照片被移走或改名之后，原路径那一行不会自己消失。与 :meth:`prune` 的区别是
@@ -254,7 +254,7 @@ class FacetIndex:
 
         它是缓存，删不干净也不影响浏览，因此不抛异常。
         """
-        keys = {str(path) for path in paths}
+        keys = {str(path) for path in gone}
         if not keys:
             return 0
         with self._lock:
