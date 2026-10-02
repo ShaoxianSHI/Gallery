@@ -21,6 +21,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtCore import QItemSelectionModel  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from gallery.core.library.config import prepare_library  # noqa: E402
@@ -33,7 +34,7 @@ from gallery.core.library.session import (  # noqa: E402
 )
 from gallery.core.metadata import batch  # noqa: E402
 from gallery.core.places.resolver import LazyPlaceResolver, ResolvedPlace  # noqa: E402
-from gallery.ui.main_window import MainWindow  # noqa: E402
+from gallery.ui.main_window import MainWindow, _flattened_entries  # noqa: E402
 
 #: 等待后台扫描 / 元数据读取的时限。
 WAIT_SECONDS = 10.0
@@ -189,6 +190,23 @@ def _open(
     window.show()
     qt_app.processEvents()
     return window
+
+
+def _select_rows(window: MainWindow, *rows: int) -> None:
+    """按代码选中若干行（等价于用户按住 ⌘ 连点）。
+
+    **先设当前项再选**：``setCurrentIndex`` 会把选区收成那一格，顺序反了多选就只剩一格
+    （与 ``tests/ui/test_context_menu.py`` 里那个同名助手是同一件事）。
+    """
+    window._grid.setCurrentIndex(window._model.index(rows[0], 0))
+    selection = window._grid.selectionModel()
+    assert selection is not None
+    selection.clearSelection()
+    for row in rows:
+        selection.select(
+            window._model.index(row, 0),
+            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+        )
 
 
 def _settle(qt_app: QApplication, window: MainWindow, *, groups: bool = False) -> None:
@@ -839,28 +857,73 @@ def test_entering_a_group_also_waits_for_the_metadata_sort(
     window.close()
 
 
-# ---- 分组卡片不能改名 / 不能删 --------------------------------------------------------
+# ---- 分组卡片不能改名，但它的组员能被删（ADR 0020）--------------------------------
 
 
 def test_group_cards_refuse_rename_and_trash(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path], fake_facet_source: object
 ) -> None:
-    """分组不是磁盘上的东西：不能静默跳过，要说清楚为什么按了没反应。"""
+    """改不了名的是**那张卡片**；删得掉的是它代表的那批照片。
+
+    摊平只发生在命令的对象上：⌘R 按下去仍然要说清为什么（改的是卡片，而卡片不是磁盘上
+    的东西，ADR 0004），⌘⌫ 则把组里的照片整组送进废纸篓 —— 与「进去全选再删」是同一件事。
+    """
     root = _library(tmp_path, make_photo, list(DATES))
     window = _open(qt_app, root, session_base=tmp_path / "状态", group_facet="captured_year")
     _settle(qt_app, window, groups=True)
     window._grid.select_row(0)
     window._update_action_states()
+    target = _groups(window)[0]
 
     assert window._rename_action.isEnabled() is False
-    assert window._trash_action.isEnabled() is False
-
+    assert window._trash_action.isEnabled() is True
     window.rename_current_entry()
     assert "分组" in window._banner.text()
+
     window.trash_selected()
-    assert "分组" in window._banner.text()
-    assert _groups(window)  # 一张都没少
+    _settle(qt_app, window)
+
+    assert not any(photo.path.exists() for photo in target.photos), "组里的照片一张都不该剩"
+    # 组空了，那张卡片也就没有意义了：它代表的就是「这些照片」（ADR 0020 决策 4）。
+    assert all(group.key != target.key for group in _groups(window))
     window.close()
+
+
+def test_a_group_card_acts_on_all_of_its_photos(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path], fake_facet_source: object
+) -> None:
+    """选中卡片就是选中它代表的**全部**组员 —— 摊平摊的是整张卡片。
+
+    分组的一层里只有相册与组卡片，照片被分组吃掉了（``_reorder_level``），所以
+    「只删组里一部分」在这条路上压根不存在；部分删除只可能发生在**进组之后**选了几张
+    （见下一条用例），那里的卡片照旧留着。
+    """
+    root = _library(tmp_path, make_photo, list(DATES))
+    window = _open(qt_app, root, session_base=tmp_path / "状态", group_facet="captured_year")
+    _settle(qt_app, window, groups=True)
+    year = next(group for group in _groups(window) if group.label == "2024 年")
+    assert len(year.photos) == 2
+    window._grid.select_row(0)
+    window._update_action_states()
+
+    assert window._trash_action.isEnabled() is True
+    assert sorted(window._selected_paths()) == sorted(photo.path for photo in year.photos), (
+        "⌘⌫ 要作用的是整组，不该只挑其中几张"
+    )
+    window.close()
+
+
+def test_flattening_never_counts_one_photo_twice() -> None:
+    """同一张照片既是组员、又被单独选中时只算一次。
+
+    去重不是洁癖：同一个路径递两遍，第二次要么在废纸篓那里报成一次「没移走」，要么
+    在粘贴时造出一张「一张 2.jpg」。
+    """
+    photo = PhotoRef(path=Path("/库/一张.jpg"), size=1, mtime_ns=1)
+    group = GroupRef(facet="camera", key="canon", label="Canon", photos=(photo,))
+
+    assert _flattened_entries([group, photo]) == [photo]
+    assert _flattened_entries([photo, group]) == [photo]
 
 
 def test_group_cards_are_kept_when_photos_inside_are_deleted(
