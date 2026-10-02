@@ -593,6 +593,35 @@ def test_double_click_on_a_cell_still_opens_it(qt_app: QApplication, tmp_path: P
     grid.deleteLater()
 
 
+def test_entering_a_folder_on_double_click_is_not_read_as_blank(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """回归：双击打开是**同步**的，判据必须在它之前问。
+
+    缺陷现场：双击相册卡片先进去，紧接着又被当成「双击空白处」弹回来 ——
+    刚进去的相册（模型已清空、版面已重排）在那一点底下什么都不剩，
+    于是「这一下落在空白上」在打开**之后**才被问出来。屏幕上只剩一闪。
+    这里照着真实的打开动作接一个「当场清空模型」的处理函数，把它钉死。
+    """
+    grid = make_grid(qt_app, tmp_path, count=3)
+    model = grid.model()
+    assert model is not None
+    asked: list[bool] = []
+    grid.background_activated.connect(lambda: asked.append(True))
+
+    def enter(index: QModelIndex) -> None:
+        del index
+        model.clear()  # enter_folder / enter_group 就是这么干的：同步换层
+
+    grid.activated_index.connect(enter)
+    _double_click(grid, grid.visualRect(model.index(0, 0)).center())
+    qt_app.processEvents()
+
+    assert model.rowCount() == 0, "这一条要真的换层，否则测不到打开造成的那次重排"
+    assert asked == [], "双击打开的那一下又被当成了双击空白处"
+    grid.deleteLater()
+
+
 def test_an_empty_level_is_blank_everywhere(qt_app: QApplication) -> None:
     """这一层一格都没有时（空相册、空分组），界面上到处都是空白。
 

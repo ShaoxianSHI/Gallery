@@ -781,13 +781,19 @@ class PhotoGrid(QListView):
         「上一层」是最高频的动作之一（照片没铺满一屏时，右下角总有一大片空白）。
         视图只负责回答「这一下落在格子还是空白」，要不要退、能不能退由窗口判断
         （分组要退，库根退不了）。
+
+        **落点必须在交给基类之前问**：``super()`` 会双击打开，而打开相册 / 进入分组
+        是**同步**的 —— 模型当场清空、版面重排。那之后再问「这一点底下还有没有格子」，
+        问到的已经是新的一层：刚点开的相册被自己当成空白，又立刻退了回去，
+        屏幕上只剩一闪。
         """
         self._rename_timer.stop()
         self._pending_rename_row = -1
         self._armed_row = -1
         self._double_click = True
+        on_blank = not self.indexAt(event.position().toPoint()).isValid()
         super().mouseDoubleClickEvent(event)
-        if not self.indexAt(event.position().toPoint()).isValid():
+        if on_blank:
             # 这一层连一格都没有时，界面上到处都是空白，双击自然会走到这里 ——
             # 正是最需要「双击空白处退出去」的情形：空相册、空分组。
             self.background_activated.emit()

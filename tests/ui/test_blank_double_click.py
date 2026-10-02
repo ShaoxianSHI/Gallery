@@ -7,6 +7,10 @@
 退不回去时（已经在库根、或者在「全部照片」这种没有上一层的视图里）说一句为什么，
 不做「按了没反应」——空白双击是个明确的意图，忽略它等于让用户猜自己是不是点歪了。
 
+反过来也有一条硬边界：**双击打开的那一下不能被自己当成双击空白处**。打开相册 /
+进入分组是同步的（模型当场清空、版面重排），落点必须在交给基类之前问清楚 ——
+否则刚点开的相册会被立刻弹回来，屏幕上只剩一闪。文件末尾有钉这一条的两条测试。
+
 全部用离屏 Qt，照片都是 ``tmp_path`` 里当场造的。
 """
 
@@ -88,6 +92,18 @@ def wait_until(
         time.sleep(0.02)
 
 
+def settle(qt_app: QApplication, seconds: float = 0.3) -> None:
+    """转一会儿事件循环，不看任何条件。
+
+    用来「再给几圈机会」：想抓的是**不该发生**的那一下（双击进去又被弹回来），
+    它同步发生、绝不会在下一轮之前溜掉 —— 但多转几圈才不会漏。
+    """
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        qt_app.processEvents()
+        time.sleep(0.01)
+
+
 def _blank_point(grid: PhotoGrid) -> QPoint:
     """网格里一个不属于任何格子的点（采样找，不去猜排版留白）。"""
     rect = grid.viewport().rect()
@@ -164,6 +180,81 @@ def test_blank_double_click_walks_out_of_an_empty_album(
 
         assert window._current_dir == library
         assert {entry.name for entry in window._model.entries()} == {"空的", "山巅"}
+    finally:
+        window.close()
+
+
+# ---- 回归：双击进去的那一下不能又被当成「双击空白处」 --------------------------------
+
+
+def test_double_clicking_an_album_card_enters_it_and_stays_there(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """双击相册卡片要真的进得去，而且留在里面。
+
+    缺陷现场：点开相册（模型当场清空、版面重排）之后才去问「这一点底下还有没有格子」，
+    问到的已经是新的一层，于是刚进去又被「双击空白处」弹回来，屏幕上只剩一闪。
+    与相册里有没有照片无关：空相册同样要进得去。
+    """
+    library = tmp_path / "库"
+    make_photo("IMG_0001.jpg", directory=library / "海边")
+    (library / "空的").mkdir(parents=True)
+    window = open_window(qt_app, library)
+
+    def enter_by_double_click(name: str) -> None:
+        """双击根层上叫 ``name`` 的那张卡片，然后确认**留在里面**。"""
+        row = next(
+            index for index, entry in enumerate(window._model.entries()) if entry.name == name
+        )
+        center = window._grid.visualRect(window._model.index(row, 0)).center()
+        target = library / name
+
+        double_click(window._grid, center)
+        wait_until(window, qt_app, lambda: window._current_dir == target, what=name)
+        # 再转几圈事件循环：退回去同样是同步的，多给它几次机会照样看得见。
+        settle(qt_app)
+        assert window._current_dir == target, f"双击「{name}」刚进去就被弹回来了"
+
+        # 退回去，等这一层真的列完（``_current_dir`` 是同步设好的，条目还在路上）。
+        window.go_up()
+        wait_until(
+            window,
+            qt_app,
+            lambda: window._current_dir == library and window._scan_job is None,
+            what="退回根",
+        )
+        wait_until(window, qt_app, lambda: window._model.rowCount() == 2, what="根层列完")
+
+    try:
+        assert window._model.rowCount() == 2
+        enter_by_double_click("海边")
+        enter_by_double_click("空的")
+    finally:
+        window.close()
+
+
+def test_double_clicking_a_group_card_enters_it_and_stays_there(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """组卡片同理：双击要留在组里，而不是进一半就被空白双击弹出去。"""
+    library = tmp_path / "库"
+    make_photo("IMG_0001.jpg", directory=library / "海边")
+    make_photo("IMG_0002.jpg", directory=library / "山巅")
+    window = open_window(qt_app, library, browse_mode=BROWSE_MODE_FLAT, group_facet=FOLDER_FACET)
+    try:
+        wait_until(window, qt_app, lambda: window._model.group_count() == 2, what="分组")
+        target = window._model.group_at(0)
+        assert isinstance(target, GroupRef)
+        center = window._grid.visualRect(window._model.index(0, 0)).center()
+
+        double_click(window._grid, center)
+        wait_until(window, qt_app, lambda: window._group_view is not None, what="进组")
+        settle(qt_app)
+
+        assert window._group_view is target, "双击组卡片刚进去就被弹回来了"
+        assert [entry.name for entry in window._model.entries()] == [
+            photo.name for photo in target.photos
+        ]
     finally:
         window.close()
 
