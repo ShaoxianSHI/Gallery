@@ -261,6 +261,17 @@ def _texts(menu: QMenu) -> list[str]:
     return [action.text() for action in menu.actions()]
 
 
+def _blocks(menu: QMenu) -> list[list[str]]:
+    """按分隔线把菜单切成块 —— 一块就是 ADR 0023 说的一个组。"""
+    blocks: list[list[str]] = [[]]
+    for action in menu.actions():
+        if action.isSeparator():
+            blocks.append([])
+            continue
+        blocks[-1].append(action.text())
+    return blocks
+
+
 def _enabled(menu: QMenu, label: str) -> bool:
     for action in menu.actions():
         if action.text() == label:
@@ -288,8 +299,85 @@ def _key_hint(menu: QMenu, label: str) -> str:
     return text
 
 
+def test_every_menu_is_split_into_the_same_four_groups(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """五张菜单共用同四个组（ADR 0023）：看一眼 · 拿进拿出 · 会动文件 · 它是什么。
+
+    分组按「这道命令到底动什么」，**不按落点**：用户在照片上、在分组卡片上、在大图上
+    看到的是同一组块，缺哪几条一眼就知道那张菜单少了什么。
+
+    空白处那张不在其中 —— 它一条会动文件的都没有，只有视图级命令（另有一条 ADR 0022
+    的「新建相册」）。
+    """
+    # 顺序有讲究：换浏览方式只在「真的是换了」时才重列一层，所以相册那张要在进相册之前拼；
+    # 大图页拼完得先退回网格，右键菜单才拼得出来（见 ``context_menu_for``）。
+    _show_albums(qt_app, window)
+    album_row = window._model.row_of_path(window._library.root / "京都")
+    assert album_row >= 0
+    album = _context_at(window, album_row)
+
+    _enter_album(qt_app, window)
+    photo_row = window._model.row_of_path(window._library.root / "京都" / PHOTO_NAMES[0])
+    assert photo_row >= 0
+    photo = _context_at(window, photo_row)
+    _select(window._grid, window._model, (0, 1))
+    multi = _context_at(window, 0)
+
+    _open_detail(qt_app, window, PHOTO_NAMES[0])
+    detail = window.detail_context_menu()
+    window.show_grid()
+    qt_app.processEvents()
+
+    member = _photo(window)
+    window._model.reorder(
+        [GroupRef(facet="camera", key="canon", label="Canon EOS R5", photos=(member,))]
+    )
+    qt_app.processEvents()
+    group = _context_at(window, 0)
+
+    look = ["在访达中显示"]
+    copy = ["拷贝", "拷贝路径", "复制到相册", "移动到相册"]
+    write = ["移到废纸篓"]
+    expected = {
+        "照片": [
+            ["打开", "在默认应用中打开", *look],
+            copy,
+            ["重命名…", *write],
+            ["显示元数据信息", "复制元数据"],
+        ],
+        "多选照片": [[*look], copy, write, ["显示元数据信息"]],
+        "大图": [
+            ["退出", "在默认应用中打开", *look],
+            copy,
+            ["重命名…", *write],
+            ["显示元数据信息", "复制元数据"],
+        ],
+        "相册": [["打开", *look], ["拷贝", "拷贝路径"], ["重命名…", *write]],
+        "分组卡片": [["打开", *look], copy, write, ["复制分组条件"]],
+    }
+    menus = {
+        "照片": photo,
+        "多选照片": multi,
+        "大图": detail,
+        "相册": album,
+        "分组卡片": group,
+    }
+
+    for name, built in menus.items():
+        assert built is not None, f"{name}菜单没拼出来"
+        blocks = _blocks(built)
+        assert blocks == expected[name], f"{name}菜单的分组与 ADR 0023 不一致"
+        # 组内不隔、组间必隔：所以既不该有两道挨着的分隔线，也不该在末尾留一道。
+        assert all(block for block in blocks), f"{name}菜单里有一道空的组块"
+
+
 def test_photo_menu_items(qt_app: QApplication, window: MainWindow) -> None:
-    """照片：三个「打开」挨在最上面，写操作单列一段，元数据收在最后。"""
+    """照片：四组各占一段（ADR 0023）。
+
+    分组按「这道命令到底动什么」：看一眼 · 拿进拿出 · 会动文件 · 它是什么。
+    「会动文件」单独一段、离前面那几条远一点 —— 它俩是仅有的两个会改用户文件的入口。
+    """
     _enter_album(qt_app, window)
     row = window._model.row_of_path(window._library.root / "京都" / PHOTO_NAMES[0])
     assert row >= 0
@@ -301,6 +389,7 @@ def test_photo_menu_items(qt_app: QApplication, window: MainWindow) -> None:
         "打开",
         "在默认应用中打开",
         "在访达中显示",
+        "",
         "拷贝",
         "拷贝路径",
         "复制到相册",
@@ -332,9 +421,11 @@ def test_album_menu_has_no_metadata_items(qt_app: QApplication, window: MainWind
     menu = _context_at(window, row)
 
     assert menu is not None
+    # 少的只是那两条：四组与分隔线的位置和照片菜单一样（ADR 0023）。
     assert _texts(menu) == [
         "打开",
         "在访达中显示",
+        "",
         "拷贝",
         "拷贝路径",
         "",
@@ -366,8 +457,8 @@ def test_group_menu_acts_on_the_photos_inside(qt_app: QApplication, window: Main
     assert menu is not None
     assert _texts(menu) == [
         "打开",
-        "",
         "在访达中显示",
+        "",
         "拷贝",
         "拷贝路径",
         "复制到相册",
@@ -386,6 +477,10 @@ def test_multi_selection_hides_single_item_actions(
 
     「复制到相册」「移动到相册」**多选时仍然留着** —— 它们作用于整个选择，说的正是
     「把这一堆东西挪到那儿去」，正是多选最想干的事（ADR 0019）。
+
+    **藏掉的只是那一行，组块与分隔线原样留着**（ADR 0023 决策 2）：于是第一组只剩
+    「在访达中显示」、第三组只剩「移到废纸篓」，而用户在单选与多选之间切换时看到的是
+    同一组块 —— 分隔线的位置不跳。
     """
     _enter_album(qt_app, window)
     assert window._model.rowCount() == len(PHOTO_NAMES)
@@ -396,6 +491,7 @@ def test_multi_selection_hides_single_item_actions(
     assert menu is not None
     assert _texts(menu) == [
         "在访达中显示",
+        "",
         "拷贝",
         "拷贝路径",
         "复制到相册",
@@ -952,6 +1048,7 @@ def test_detail_menu_is_the_photo_menu_with_close_on_top(
         "退出",
         "在默认应用中打开",
         "在访达中显示",
+        "",
         "拷贝",
         "拷贝路径",
         "复制到相册",

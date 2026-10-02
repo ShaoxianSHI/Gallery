@@ -9,6 +9,25 @@
 它从菜单栏里**搬走**，菜单栏上那一项就没了。要复用子菜单就复用里面的 ``QAction``，
 子菜单自己现建。
 
+**五张菜单共用同四个组**（ADR 0023）：组与组之间一道分隔线，组内不隔。四组按「这道命令
+到底动什么」分，不按它是照片还是相册 ——
+
+=============  ==========================================================
+组             里面是什么
+=============  ==========================================================
+看一眼          打开 · 在默认应用中打开 · 在访达中显示
+拿进拿出        拷贝 · 拷贝路径 · 复制到相册 · 移动到相册 · 粘贴
+会动文件        重命名… · 移到废纸篓
+它是什么        显示元数据信息 · 复制元数据
+=============  ==========================================================
+
+「会动文件」单独成组、离前面那几条远一点，是这张表唯一带风险的取舍：它俩是本项目里
+仅有的两个会改用户文件的入口（红线 1），其余各条按错了原件都还在原地。
+
+**某一组在某张菜单里整组都不出现时，那道分隔线也不出现**（否则菜单末尾挂一道空档）。
+但**组内少几行时分隔线照旧** —— 多选时第一组只剩「在访达中显示」，分隔线留着，用户在
+单选与多选之间切换时看到的是同一组块。
+
 分组卡片的菜单里**没有「重命名」这一行**（改的是卡片，而它不是磁盘上的东西，ADR 0004）；
 「移到废纸篓」那一行则在——那张卡片摊平之后就是一组照片，删得动的是照片（ADR 0020）。
 两件事都在 ``MainWindow._update_action_states`` 那里算，本模块不碰置灰。
@@ -694,16 +713,22 @@ class MenuActions:
 def build_photo_menu(actions: MenuActions, *, multiple: bool) -> QMenu:
     """照片（含多选照片）。
 
-    ``multiple`` 时藏掉「打开」「在默认应用中打开」「重命名」「复制元数据」：它们都只对
+    四个组：看一眼 · 拿进拿出 · 会动文件 · 它是什么（ADR 0023）。组与组之间一道分隔线，
+    别的菜单也是这四组，只是各有各缺哪几条。
+
+    ``multiple`` 时藏掉「打开」「在默认中的应用打开」「重命名」「复制元数据」：它们都只对
     **某一个**东西成立 ——打开哪一张说不清、交给哪个应用打开同样说不清、批量改名是
-    ADR 0004 明确排除的、拷谁的元数据同样说不清。其余几条作用于整个选择。
+    ADR 0004 明确排除的、拷谁的元数据同样说不清。其余几条作用于整个选择；**藏掉的只是
+    那一行，组块与分隔线原样留着**（见 ADR 0023 决策 2）。
     """
     menu = ShortcutColumnMenu()
-    _add_open_and_reveal(menu, actions, multiple=multiple, default_app=True, album_targets=True)
+    _add_look_group(menu, actions, multiple=multiple, default_app=True)
     menu.addSeparator()
-    menu.addAction(actions.metadata)
-    if not multiple:
-        menu.addAction(actions.copy_metadata)
+    _add_copy_group(menu, actions, album_targets=True)
+    menu.addSeparator()
+    _add_write_group(menu, actions, multiple=multiple)
+    menu.addSeparator()
+    _add_metadata_group(menu, actions, multiple=multiple)
     return menu
 
 
@@ -729,26 +754,29 @@ def build_detail_menu(actions: MenuActions) -> QMenu:
     menu = ShortcutColumnMenu()
     # 「粘贴」整条没有：把剪贴板里的文件复制进去要回答「粘到哪一层」，而大图页没有层
     # （那一层随时可能被换掉）。于是这里换一份**不带粘贴**的动作包，行序仍与照片菜单共用
-    # 同一个拼装出口（``replace`` 出来的 ``QAction`` 还是菜单栏那几份，一个都没新建）。
-    _add_open_and_reveal(
-        menu,
-        replace(actions, paste=None),
-        multiple=False,
-        default_app=True,
-        closing=True,
-        album_targets=True,
-    )
+    # 同一组出口（``replace`` 出来的 ``QAction`` 还是菜单栏那几份，一个都没新建）。
+    clipboard = replace(actions, paste=None)
+    _add_look_group(menu, clipboard, multiple=False, default_app=True, closing=True)
     menu.addSeparator()
-    menu.addAction(actions.metadata)
-    menu.addAction(actions.copy_metadata)
+    _add_copy_group(menu, clipboard, album_targets=True)
+    menu.addSeparator()
+    _add_write_group(menu, actions, multiple=False)
+    menu.addSeparator()
+    _add_metadata_group(menu, actions, multiple=False)
     return menu
 
 
 def build_album_menu(actions: MenuActions, *, multiple: bool) -> QMenu:
-    """相册（多选相册时同样没有「打开」与「重命名」）。"""
+    """相册（多选相册时同样没有「打开」与「重命名」）。
+
+    四组的分法与照片菜单一致（ADR 0023），少的只是那几条本来就不给相册的命令。
+    """
     menu = ShortcutColumnMenu()
-    _add_open_and_reveal(menu, actions, multiple=multiple)
-    menu.addAction(actions.trash)
+    _add_look_group(menu, actions, multiple=multiple)
+    menu.addSeparator()
+    _add_copy_group(menu, actions, album_targets=False)
+    menu.addSeparator()
+    _add_write_group(menu, actions, multiple=multiple)
     return menu
 
 
@@ -762,46 +790,18 @@ def build_group_menu(actions: MenuActions) -> QMenu:
     「重命名」仍然**不出现**（ADR 0004 一次只改一条，而分组没有名字可改），「粘贴」
     也不出现 —— 它作用的是**剪贴板**，与这一组无关（ADR 0018 决策 3）。至于「显示
     元数据信息」与「复制元数据」：面板讲的是**一张**照片，组里哪一张都没有理由被指定
-    （ADR 0014 决策 4 挡下来的那半条仍然成立）。
-
-    「移到废纸篓」**前面单独隔一道**：它是本组里唯一会动文件的一条，前头那几条无论点
-    哪一个都只是把东西递出去（访达、剪贴板、别的相册，原件都在原地）。照片菜单里它紧
-    挨着上一条是因为那里夹着「粘贴」，位置本来就是让给粘贴的。
+    （ADR 0014 决策 4 挡下来的那半条仍然成立）。于是第四组在这里是空的，一整组都
+    不出现（见 ADR 0023 决策 2）。
     """
     menu = ShortcutColumnMenu()
-    _add_open(menu, actions)
+    _add_look_group(menu, actions, multiple=False)
     menu.addSeparator()
-    _add_file_operations(menu, actions)
+    _add_copy_group(menu, actions)
     menu.addSeparator()
-    menu.addAction(actions.trash)
+    _add_write_group(menu, actions, multiple=False, rename=False)
     menu.addSeparator()
     menu.addAction(actions.copy_group)
     return menu
-
-
-def _add_file_operations(
-    menu: ShortcutColumnMenu, actions: MenuActions, *, album_targets: bool = True
-) -> None:
-    """「把选区交出去」那一族：在访达中显示、拷贝、拷贝路径、两个「到相册」。
-
-    照片、多选照片、大图页与分组这四张菜单共用这一段，顺序也共用
-    （ADR 0017 / 0018 / 0019）—— 同一族的事在几张菜单里必须长得一样，否则用户得记
-    几遍（分组那一摊见 ADR 0020）。
-
-    ``album_targets=False`` 是相册菜单：搬的是**照片**，把相册整个搬走会牵动整棵子树
-    （ADR 0019 决策 5）。
-
-    两个相册清单是 ``None`` 时那两条干脆不出现（库里一个相册都没有），不是置灰：
-    空子菜单点开是个空框（ADR 0019 决策 7）。
-    """
-    menu.addAction(actions.reveal)
-    menu.addAction(actions.copy)
-    menu.addAction(actions.copy_path)
-    if album_targets:
-        if actions.copy_to_album is not None:
-            menu.addMenu(actions.copy_to_album)
-        if actions.move_to_album is not None:
-            menu.addMenu(actions.move_to_album)
 
 
 def build_background_menu(actions: MenuActions) -> QMenu:
@@ -888,38 +888,48 @@ def _add_close(menu: ShortcutColumnMenu, actions: MenuActions) -> None:
     menu.show_key(actions.close_entry, CLOSE_KEY_HINT)
 
 
-def _add_open_and_reveal(
+def _add_look_group(
     menu: ShortcutColumnMenu,
     actions: MenuActions,
     *,
     multiple: bool,
     default_app: bool = False,
     closing: bool = False,
-    album_targets: bool = False,
-) -> QMenu:
-    """照片与相册共用的上半截。
+) -> None:
+    """第一组「看一眼」：打开 · 在默认应用中打开 · 在访达中显示（ADR 0023）。
 
-    顺序是：打开（或退出）→ 在默认应用中打开 → 在访达中显示 → 拷贝 → 拷贝路径 →
-    复制到相册 → 移动到相册 → 粘贴 → 重命名 → 移到废纸篓。
+    三条都是**把东西摆到眼前**，而且一个字节都不改：Gallery 里开大图、交给系统默认
+    应用、在访达里挑出来。放在同一组是因为它们的代价相同 —— 按错了什么也没发生。
 
     最右那一列里挨着的三枚回车不是一回事：「打开」的是**只画不生效**的 ↵ 提示
     （见 :meth:`ShortcutColumnMenu.show_key`），「在默认应用中打开」的 ⇧⏎ 与
     「在访达中显示」的 ⌘⏎ 是**真快捷键** —— 画它们的是同一个出口
     （:meth:`ShortcutColumnMenu.key_cell`），用户看到的却分得清哪个能按。
 
-    ``default_app`` 只给照片菜单开：相册是文件夹，让系统用默认应用打开它就是让访达打开
-    它，那与「打开」是同一件事，菜单里摆两行等于把一件事说两遍（见 ADR 0014 决策 7）。
+    ``default_app`` 只给照片与大图页开：相册是文件夹，让系统用默认应用打开它就是让
+    访达打开它，那与「打开」是同一件事，菜单里摆两行等于把一件事说两遍（ADR 0014
+    决策 7）。分组卡片那一行不出现同理：那批照片一次有 128 张，说不清打开哪一张。
 
-    ``closing`` 只给大图页开：第一行换成「退出」，其余一行不差（ADR 0021）。**它不是另写
-    一张菜单**，正是为了让两处的行序只有这一份 —— 改一条命令时不必记得改两个地方。
+    ``closing`` 只给大图页开：第一行换成「退出」，其余一行不差（ADR 0021）。**它不是
+    另写一张菜单**，正是为了让两处的行序只有这一份。
 
-    ``album_targets`` 照片菜单与大图页都开：「移动到相册」搬的是**照片**，用户要的就是
-    这个（ADR 0019 决策 1）。搬相册本身是另一笔账 —— 一次动辄整棵子树，照片数量与耗时都不可
-    预计，而且红线下批量整理是要被排除的（ADR 0019 决策 5）。因此相册菜单里不出现这两条，
-    想挪相册请去访达。
+    多选时第一行压根不出现（打开哪一张说不清），这一组只剩「在访达中显示」一行，
+    **分隔线照旧**（见 ADR 0023 决策 2）。
+    """
+    if not multiple:
+        if closing:
+            _add_close(menu, actions)
+        else:
+            _add_open(menu, actions)
+        if default_app:
+            menu.addAction(actions.open_default)
+    menu.addAction(actions.reveal)
 
-    中间只留一道分隔线：多选时「打开」与「重命名」都不出现，若在那里各插一道，
-    「复制到相册」与「移到废纸篓」之间就会多出一道谁也看不懂的空档。
+
+def _add_copy_group(
+    menu: ShortcutColumnMenu, actions: MenuActions, *, album_targets: bool = True
+) -> None:
+    """第二组「拿进拿出」：拷贝 · 拷贝路径 · 复制到相册 · 移动到相册 · 粘贴。
 
     **「拷贝」排在「拷贝路径」上面、「粘贴」排在它下面**（ADR 0017 / 0018）：三个挨在
     一起是访达的那一组。拷贝与拷贝路径作用于整个选择，多选时都留着；**「粘贴」不作用
@@ -929,23 +939,53 @@ def _add_open_and_reveal(
     **「复制到相册」「移动到相册」摆在「拷贝路径」正下方、「粘贴」上面**（ADR 0019）：
     三者都是「把这一堆东西放到别处去」，挨在一起才是一族；它们作用于整个选择，
     多选时同样留着。库里一个相册都没有时传进来的是 ``None``，那两条干脆不出现 ——
-    空子菜单点开是个空框。
+    空子菜单点开是个空框（ADR 0019 决策 7）。
+
+    ``album_targets=False`` 是相册菜单：搬的是**照片**，把相册整个搬走会牵动整棵子树
+    （ADR 0019 决策 5）。
     """
-    if not multiple:
-        if closing:
-            _add_close(menu, actions)
-        else:
-            _add_open(menu, actions)
-        if default_app:
-            menu.addAction(actions.open_default)
-    _add_file_operations(menu, actions, album_targets=album_targets)
+    menu.addAction(actions.copy)
+    menu.addAction(actions.copy_path)
+    if album_targets:
+        if actions.copy_to_album is not None:
+            menu.addMenu(actions.copy_to_album)
+        if actions.move_to_album is not None:
+            menu.addMenu(actions.move_to_album)
     if actions.paste is not None:
         menu.addAction(actions.paste)
-    menu.addSeparator()
-    if not multiple:
+
+
+def _add_write_group(
+    menu: ShortcutColumnMenu, actions: MenuActions, *, multiple: bool, rename: bool = True
+) -> None:
+    """第三组「会动文件」：重命名… · 移到废纸篓（ADR 0023）。
+
+    这一组里的每一条都会改磁盘上的东西（红线 1 说的就是它们两个入口），所以它单独
+    成组、离前面那几条「只是把东西摆出去 / 递出去」的远一点。
+
+    **「重命名」只在单选时出现**：批量改名是 ADR 0004 明确排除的。多选时这一组只剩
+    「移到废纸篓」一行，**分隔线照旧**（见 ADR 0023 决策 2）。
+
+    ``rename=False`` 是分组卡片：改的是卡片，而卡片不是磁盘上的东西，没有名字可改；
+    删得掉的是它代表的那批照片（ADR 0020）。于是那一组只剩「移到废纸篓」，分隔线照旧。
+    """
+    if rename and not multiple:
         menu.addAction(actions.rename)
     menu.addAction(actions.trash)
-    return menu
+
+
+def _add_metadata_group(menu: ShortcutColumnMenu, actions: MenuActions, *, multiple: bool) -> None:
+    """第四组「它是什么」：显示元数据信息 · 复制元数据（ADR 0023）。
+
+    两条都是**只读**的问答，摆在最后 —— 它们与前面三组都不是一族，混进去只会让
+    「要动手的那几条」变得不那么显眼。
+
+    「复制元数据」只在单选时出现：拷谁的元数据说不清（ADR 0014 决策 2）。相册与分组
+    卡片上两条都不出现：面板讲的是**一张**照片，组里哪一张都没有理由被指定。
+    """
+    menu.addAction(actions.metadata)
+    if not multiple:
+        menu.addAction(actions.copy_metadata)
 
 
 def build_album_picker(title: str, albums: Sequence[tuple[str, Path]]) -> QMenu:
