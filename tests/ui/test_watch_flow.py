@@ -19,6 +19,7 @@ import pytest
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtCore import QCoreApplication, QEvent  # noqa: E402
 from PySide6.QtGui import QImage  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
@@ -37,6 +38,7 @@ from gallery.core.library.watcher import (  # noqa: E402
 from gallery.core.metadata.exif import MetadataReport  # noqa: E402
 from gallery.core.metadata.facets import PhotoFacets  # noqa: E402
 from gallery.ui.main_window import WATCH_ECHO_TTL, MainWindow  # noqa: E402
+from gallery.ui.watch import WatchBridge  # noqa: E402
 
 #: 等待异步扫描 / 缩略图完成的时限。
 WAIT_SECONDS = 8.0
@@ -722,6 +724,26 @@ def test_closing_the_window_stops_the_watch(
         window.close()
 
     assert watcher.running is False
+
+
+def test_a_batch_arriving_after_the_bridge_is_gone_is_dropped_quietly(
+    qt_app: QApplication,
+) -> None:
+    """桥已经没了的时候来一批变化：安静丢掉，不许把异常抛进监听线程。
+
+    关窗与切库都会和去抖定时器撞上：``stop()`` 取消得了还没到期的那个定时器，拦不住
+    **已经开跑**的那一个。这一条钉的正是那个缝 —— 抛出去的 ``RuntimeError`` 会顺着
+    监听线程一路逃出去（测试里表现为 ``PytestUnhandledThreadExceptionWarning``，
+    产品里就是一个没人接的线程异常）。
+    """
+    bridge = WatchBridge()
+    bridge.deleteLater()
+    # ``processEvents`` 不抽 DeferredDelete 队列，必须显式抽 —— 否则 C++ 对象其实还在。
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    qt_app.processEvents()
+
+    bridge._on_change((LibraryChange(ChangeKind.ADDED, Path("/tmp/x.jpg")),))  # noqa: SLF001
+    bridge._on_failed("出事了")  # noqa: SLF001
 
 
 def test_switching_libraries_stops_the_old_watch(

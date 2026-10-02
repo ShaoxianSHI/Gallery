@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Signal, SignalInstance
 
 from gallery.core.library.facade import Library
 from gallery.core.library.watcher import LibraryChange, LibraryWatcher
@@ -85,10 +85,28 @@ class WatchBridge(QObject):
 
     def _on_change(self, changes: ChangeBatch) -> None:
         # 发在 watchdog 的线程上；接的人必须用排队连接（也就是回到主线程）。
-        self.changed.emit(changes)
+        self._emit(self.changed, changes)
 
     def _on_failed(self, message: str) -> None:
-        self.failed.emit(message)
+        self._emit(self.failed, message)
+
+    @staticmethod
+    def _emit(signal: SignalInstance, *args: object) -> None:
+        """发信号，并容忍「接收方已经没了」。
+
+        关窗与切库都可能和去抖定时器撞上：``stop()`` 取消得了还没到期的那个定时器，
+        却拦不住**已经开跑**的那一个 —— 它照样会走到这里，而此时这个 ``WatchBridge``
+        的 C++ 对象可能已经被销毁（这正是监听器头文件里那句「回调期间销毁监听器是
+        最容易被忽略的一种」在界面这一侧的翻版）。发信号会因此抛 ``RuntimeError``，
+        它若顺着监听线程一路抛出去，就是一个没人接的线程异常。
+
+        处理办法与 :meth:`gallery.ui.tasks._Job._emit` 一致：记一条 debug 就够了 ——
+        这一批变化本来就随那个窗口一起作废了，没有人需要知道。
+        """
+        try:
+            signal.emit(*args)
+        except RuntimeError:
+            logger.debug("监听到文件变化时接收方已销毁，这一批作废")
 
 
 __all__ = ["ChangeBatch", "WatchBridge", "WatchStarter", "start_watch"]
