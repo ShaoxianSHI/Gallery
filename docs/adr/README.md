@@ -16,3 +16,4 @@
 | [0009](0009-metadata-grouping-and-sorting.md) | 按元数据分组与排序：组卡片、批量读取、facet 索引、坐标反查地点 | 已接受 |
 | [0010](0010-place-resolve-on-open.md) | 第一次打开库就把地点解析一遍存进索引，面板与分组共用同一份结论 | 已接受 |
 | [0011](0011-place-names-chinese-only-in-china.md) | 地点一律用当地语言，只把国内（含港澳台）译成中文 | 已接受 |
+| [0012](0012-bundled-places-database.md) | 地点数据改成随包分发的一份城市库，运行时不再下载也不再猜 | 已接受 |

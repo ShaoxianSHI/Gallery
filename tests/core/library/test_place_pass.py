@@ -220,7 +220,7 @@ def test_work_is_announced_only_when_there_is_work(library_with_gps: Library) ->
 def test_the_announcement_happens_before_the_photo_is_resolved(
     library_with_gps: Library,
 ) -> None:
-    """顺序有讲究：得先说「要干活了」，反查时那条「正在下载城市数据…」才有地方显示。"""
+    """顺序有讲究：得先说「要干活了」，反查时那条「正在加载城市库…」才有地方显示。"""
     events: list[str] = []
 
     def status(text: str) -> None:

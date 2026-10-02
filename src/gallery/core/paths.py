@@ -33,6 +33,7 @@ from gallery.core.constants import (
     INDEX_CACHE_DIR_NAME,
     INDEX_FILE_NAME,
     JOURNAL_DIR_NAME,
+    PLACES_DB_FILENAME,
     RESOURCES_DIR_NAME,
     THUMBNAIL_DIR_NAME,
 )
@@ -196,6 +197,15 @@ def icon_file(edge: int) -> Path:
     return resources_dir() / f"{APP_ICON_BASENAME}-{edge}.png"
 
 
+def places_db_file() -> Path:
+    """随包分发的城市库（``places.tsv.gz``），按坐标反查地点用的全部数据。
+
+    与图标走同一个定位方式，因此源码树、虚拟环境、打包出来的 ``Gallery.app``
+    读到的都是同一份。详见 ``resources/README.md``。
+    """
+    return resources_dir() / PLACES_DB_FILENAME
+
+
 def app_icon_files() -> list[Path]:
     """应用图标的全部档位（从小到大）。
 
@@ -228,6 +238,7 @@ __all__ = [
     "index_file",
     "is_within",
     "journal_dir",
+    "places_db_file",
     "library_digest",
     "resources_dir",
     "thumbnail_cache_dir",

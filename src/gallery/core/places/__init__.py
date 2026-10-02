@@ -1,24 +1,14 @@
-"""离线地名查询：GeoNames 数据下载、建索引与倒查最近的城市。
+"""离线地名查询：读随包分发的城市库，按坐标找最近的城市。
 
-纯离线运行，不联网查；:func:`download_data` 是一次性的数据获取，
-详见 ``docs/adr/0003-offline-place-lookup.md``。
+纯离线运行，**不联网也不下载** —— 数据在 ``resources/places.tsv.gz`` 里，
+由 ``scripts/build_places_db.py`` 生成，详见 ``docs/adr/0012-bundled-places-database.md``。
 """
 
-from gallery.core.places.countries import (
-    admin1_label,
-    country_label,
-    place_label,
-    uses_chinese_names,
-)
-from gallery.core.places.geonames import Place, PlaceIndex, download_data, geo_data_dir
+from gallery.core.places.countries import place_label
+from gallery.core.places.dataset import Place, PlaceIndex
 
 __all__ = [
     "Place",
     "PlaceIndex",
-    "admin1_label",
-    "country_label",
-    "download_data",
-    "geo_data_dir",
     "place_label",
-    "uses_chinese_names",
 ]

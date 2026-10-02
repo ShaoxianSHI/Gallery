@@ -1,4 +1,27 @@
-# 应用图标资源
+# 应用资源
+
+## `places.tsv.gz` —— 自带的城市库
+
+按 GPS 坐标反查地点用的**全部**数据，随应用一起分发：运行时不联网、不下载。
+
+| 项 | 值 |
+|---|---|
+| 记录数 | 21,236 条 |
+| 压缩后 | 约 378 KB |
+| 列 | `region`（省/州）、`city`（城市）、`country`（国家）、`latitude`、`longitude`、`population` |
+| 格式 | UTF-8 TSV，开头三行是 `#` 注释 |
+| 生成 | `uv run python scripts/build_places_db.py` |
+| 来源 | [dr5hn/countries-states-cities-database](https://github.com/dr5hn/countries-states-cities-database)（ODbL-1.0，需署名） |
+
+**列里就是显示用的名字** —— 名字在生成期就定好了（国内中文、境外当地写法），
+运行时只做最近邻查询，不再翻译、不再判断层级归属。`region` 为空表示这个地方没有
+省级那一层（直辖市、香港、澳门）。
+
+**不要手改这个文件**：它是生成产物，下次跑脚本会被覆盖。要改请改
+`scripts/build_places_db.py`，那里的 docstring 记着这份源数据的几处坑
+（直辖市不是城市记录、港澳登记了两次、`parent_id` 只有中国有，等等）。
+
+## `gallery-icon-*.png` —— 应用图标
 
 `gallery-icon-<边长>.png` 是应用图标，界面标题栏、`Gallery.app` 的 Dock 图标都用它。
 

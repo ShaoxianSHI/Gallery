@@ -33,8 +33,12 @@ INDEX_CACHE_DIR_NAME: Final = "index"
 #: 应用在系统目录（macOS 为 ``~/Library/Application Support``）下的目录名。
 APP_NAME: Final = "Gallery"
 
-#: 随包分发的只读资源目录名，位于 ``src/gallery/`` 内（目前只有应用图标）。
+#: 随包分发的只读资源目录名，位于 ``src/gallery/`` 内（应用图标、自带的城市库）。
 RESOURCES_DIR_NAME: Final = "resources"
+
+#: 自带的城市库文件名（gzip 压缩的 TSV），按 GPS 坐标反查地点用的全部数据。
+#: 由 ``scripts/build_places_db.py`` 生成，详见 ``resources/README.md``。
+PLACES_DB_FILENAME: Final = "places.tsv.gz"
 
 #: 应用图标各档 PNG 的文件名主干，实际文件名是 ``<主干>-<边长>.png``。
 APP_ICON_BASENAME: Final = "gallery-icon"
@@ -68,6 +72,7 @@ __all__ = [
     "INDEX_CACHE_DIR_NAME",
     "INDEX_FILE_NAME",
     "JOURNAL_DIR_NAME",
+    "PLACES_DB_FILENAME",
     "RESOURCES_DIR_NAME",
     "THUMBNAIL_DIR_NAME",
     "THUMBNAIL_SPEC_VERSION",

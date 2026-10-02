@@ -1,19 +1,21 @@
 """``gallery.core.places.resolver`` 的测试。
 
-这个解析器干三件事：**用到才加载数据**、**必要时先下载并把进度说出来**、
-**同一坐标只查一次**。第三条不是微优化 —— 一次旅行的几百张照片共用一个坐标，
-逐张反查就是几百次全表扫。
+这个解析器只干两件事：**用到才加载城市库**、**同一坐标只查一次**。第二条不是微优化 ——
+一次旅行的几百张照片共用一个坐标，逐张反查就是几百次全表扫。
 
-不联网：下载走注入的假取数函数，数据用 ``tmp_path`` 现场造。
+这里不再有下载：城市库随应用分发。加载失败要**如实降级**而不是崩掉，
+见 :func:`test_missing_database_does_not_poison_the_cache`。
 """
 
 from __future__ import annotations
 
-import io
-import zipfile
+import gzip
+import time
 from pathlib import Path
 
-from gallery.core.places.geonames import ADMIN1_FILE, CITIES_FILE, COUNTRIES_FILE, Place
+import pytest
+
+from gallery.core.places.dataset import Place, PlaceIndex
 from gallery.core.places.resolver import LazyPlaceResolver, ResolvedPlace
 
 #: 假城市的坐标。
@@ -32,35 +34,19 @@ class FakeIndex:
         return self.answer
 
 
-def _place(city: str = "Shanghai") -> Place:
-    """一个**已经贴好标签**的中国城市（标签是 :mod:`core.places.geonames` 做的）。
-
-    解析器自己不做翻译，只把 :class:`Place` 的字段抄进 :class:`ResolvedPlace`，
-    所以这里得给出一份真实的结论，否则测试就在断言一个没人会产出的形状。
-    """
-    return Place(city=city, admin1="上海市", country="中国", distance_km=1.2, local_city="上海")
+def _place(city: str = "上海") -> Place:
+    """一个**已经贴好标签**的城市（标签是城市库生成期做的，解析器不碰）。"""
+    return Place(city=city, region="上海市", country="中国", distance_km=1.2)
 
 
-def _fake_fetch(payloads: dict[str, bytes]) -> object:
-    def fetch(url: str) -> bytes:
-        for name, data in payloads.items():
-            if url.endswith(name):
-                return data
-        raise AssertionError(f"不该去取 {url}")
-
-    return fetch
-
-
-def _cities_zip() -> bytes:
-    line = "12345\t假市\t假市\t\t31.23\t121.47\tP\tPPL\tCN\t\t00\t\n"
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w") as archive:
-        archive.writestr(CITIES_FILE, line)
-    return buffer.getvalue()
+def _db(path: Path, *, city: str = "杭州") -> Path:
+    body = f"上海市\t{city}\t中国\t30.2300\t121.4700\t1000\n"
+    path.write_bytes(gzip.compress(body.encode("utf-8"), 9))
+    return path
 
 
 def test_place_comes_from_the_index() -> None:
-    resolver = LazyPlaceResolver(FakeIndex(_place()), download=False)  # type: ignore[arg-type]
+    resolver = LazyPlaceResolver(FakeIndex(_place()))  # type: ignore[arg-type]
 
     place = resolver.place_for(LATITUDE, LONGITUDE)
 
@@ -68,10 +54,20 @@ def test_place_comes_from_the_index() -> None:
     assert resolver.ready
 
 
+def test_place_is_loaded_from_the_given_file(tmp_path: Path) -> None:
+    resolver = LazyPlaceResolver(path=_db(tmp_path / "p.tsv.gz"))
+
+    # 查询点正好落在那条记录上，距离算出来是 0（这里走的是真索引，不是假实现）
+    assert resolver.place_for(30.23, 121.47) == ResolvedPlace(
+        city="杭州", region="上海市", country="中国", distance_km=0.0
+    )
+    assert resolver.ready
+
+
 def test_same_coordinates_are_looked_up_once() -> None:
     """一次旅行的几百张照片共用一个坐标 —— 反查也该只做一次。"""
     index = FakeIndex(_place())
-    resolver = LazyPlaceResolver(index, download=False)  # type: ignore[arg-type]
+    resolver = LazyPlaceResolver(index)  # type: ignore[arg-type]
 
     for _ in range(50):
         resolver.place_for(LATITUDE, LONGITUDE)
@@ -82,7 +78,7 @@ def test_same_coordinates_are_looked_up_once() -> None:
 def test_coordinates_one_metre_apart_share_the_answer() -> None:
     """照片的 GPS 抖动在米级，不该因此多查一次。"""
     index = FakeIndex(_place())
-    resolver = LazyPlaceResolver(index, download=False)  # type: ignore[arg-type]
+    resolver = LazyPlaceResolver(index)  # type: ignore[arg-type]
 
     resolver.place_for(31.230400, 121.473700)
     resolver.place_for(31.230405, 121.473710)  # 相距约 1.5 米
@@ -92,7 +88,7 @@ def test_coordinates_one_metre_apart_share_the_answer() -> None:
 
 def test_different_coordinates_are_looked_up_separately() -> None:
     index = FakeIndex(_place())
-    resolver = LazyPlaceResolver(index, download=False)  # type: ignore[arg-type]
+    resolver = LazyPlaceResolver(index)  # type: ignore[arg-type]
 
     resolver.place_for(31.23, 121.47)
     resolver.place_for(48.85, 2.35)  # 另一座城市
@@ -103,7 +99,7 @@ def test_different_coordinates_are_looked_up_separately() -> None:
 def test_nowhere_is_remembered_as_a_conclusion() -> None:
     """附近没有城市记录是结论，会记下来 —— 不必每次都重算一遍。"""
     index = FakeIndex(None)
-    resolver = LazyPlaceResolver(index, download=False)  # type: ignore[arg-type]
+    resolver = LazyPlaceResolver(index)  # type: ignore[arg-type]
 
     resolver.place_for(0.0, 0.0)
     resolver.place_for(0.0, 0.0)
@@ -112,121 +108,69 @@ def test_nowhere_is_remembered_as_a_conclusion() -> None:
     assert resolver.place_for(0.0, 0.0) is None
 
 
-def test_missing_data_is_downloaded_once_and_announced(tmp_path: Path) -> None:
-    """数据没就绪时当场下载，并且**说出**自己在下 —— 悄悄联网是不行的。"""
-    statuses: list[str] = []
-    resolver = LazyPlaceResolver(
-        None,
-        directory=tmp_path / "geo",
-        fetch=_fake_fetch(
-            {
-                "cities15000.zip": _cities_zip(),
-                ADMIN1_FILE: "CN.00\t假省\n".encode(),
-                COUNTRIES_FILE: "CN\t\t\t中国\n".encode(),
-            }
-        ),  # type: ignore[arg-type]
-    )
+def test_missing_database_does_not_poison_the_cache(tmp_path: Path) -> None:
+    """城市库读不出来时**不缓存「查不到」**。
 
-    place = resolver.place_for(LATITUDE, LONGITUDE, status=statuses.append)
+    这与「附近没有城市」必须分开：前者是**这次没查成**（安装坏了），记下来等于把
+    这些照片永久钉在「未知」上。``ready`` 正是用来区分这两者的（ADR 0010 第 3 节）。
+    """
+    resolver = LazyPlaceResolver(path=tmp_path / "没有这个文件")
 
-    assert statuses and "下载" in statuses[0]
-    # 距离由真实索引算出来，这里只断言「有」—— 面板要靠它提醒「这只是最近的城市」。
-    assert place is not None and place.distance_km is not None
-    assert (place.city, place.region, place.country) == ("假市", "假省", "中国")
-    assert resolver.ready
-
-    # 第二次不该再下载。
-    resolver.place_for(LATITUDE + 1, LONGITUDE)
-    assert statuses.count(statuses[0]) == 1
-
-
-def test_failed_download_does_not_poison_the_cache(tmp_path: Path) -> None:
-    """下载失败时**不缓存**「查不到」：这次没数据、下次有了，不该还停在未知。"""
-    statuses: list[str] = []
-    resolver = LazyPlaceResolver(
-        None,
-        directory=tmp_path / "geo",
-        fetch=lambda url: (_ for _ in ()).throw(OSError("没网")),
-    )
-
-    assert resolver.place_for(LATITUDE, LONGITUDE, status=statuses.append) is None
+    assert resolver.place_for(LATITUDE, LONGITUDE) is None
     assert resolver.ready is False
-    assert statuses and "下载" in statuses[0]
 
-    # 数据后来到位了：换个解析器应当能给出结论。
-    late = LazyPlaceResolver(
-        None,
-        directory=tmp_path / "geo",
-        fetch=_fake_fetch(
-            {
-                "cities15000.zip": _cities_zip(),
-                ADMIN1_FILE: "CN.00\t假省\n".encode(),
-                COUNTRIES_FILE: "CN\t\t\t中国\n".encode(),
-            }
-        ),
-    )
-    assert late.place_for(LATITUDE, LONGITUDE) is not None
+    # 文件后来到位了：换个解析器应当能给出结论。
+    assert LazyPlaceResolver(path=_db(tmp_path / "p.tsv.gz")).place_for(LATITUDE, LONGITUDE)
+
+
+def test_loading_reports_status_once(tmp_path: Path) -> None:
+    """加载要说一声：这是唯一会拖慢地点分组的一步，用户不该对着空白等。"""
+    statuses: list[str] = []
+    resolver = LazyPlaceResolver(path=_db(tmp_path / "p.tsv.gz"))
+
+    resolver.place_for(LATITUDE, LONGITUDE, status=statuses.append)
+    resolver.place_for(LATITUDE + 0.01, LONGITUDE, status=statuses.append)
+
+    assert statuses == ["正在加载城市库…"]
 
 
 def test_existing_index_is_reused_for_the_panel() -> None:
-    """面板已经加载过索引时，分组这边不该再读一遍 8.5 MB 城市表。"""
+    """面板已经加载过索引时，分组这边不该再读一遍城市库。"""
     index = FakeIndex(_place())
 
-    resolver = LazyPlaceResolver(index, download=False)  # type: ignore[arg-type]
+    resolver = LazyPlaceResolver(index)  # type: ignore[arg-type]
 
     assert resolver.index is index
 
 
-def test_cached_data_is_used_without_downloading(tmp_path: Path) -> None:
-    """数据已经在缓存里就别再下 —— ``fetch`` 一旦被调用这个测试就红。"""
-    directory = tmp_path / "geo"
-    directory.mkdir(parents=True)
-    (directory / CITIES_FILE).write_text(
-        "12345\t旧市\t旧市\t\t31.23\t121.47\tP\tPPL\tCN\t\t00\t\n", encoding="utf-8"
-    )
-    (directory / ADMIN1_FILE).write_text("CN.00\t旧省\n", encoding="utf-8")
-    (directory / COUNTRIES_FILE).write_text("CN\t\t\t旧国\n", encoding="utf-8")
+@pytest.mark.parametrize("payload", [b"", b"\x1f\x8b\x08", "不是 gzip".encode()])
+def test_unreadable_database_falls_back_to_no_place(tmp_path: Path, payload: bytes) -> None:
+    """装坏了就降级为「不显示地点」，其余功能照常 —— 不抛异常，也不联网。"""
+    broken = tmp_path / "broken.tsv.gz"
+    broken.write_bytes(payload)
 
-    def never(_url: str) -> bytes:
-        raise AssertionError("数据都齐了，不该联网")
+    resolver = LazyPlaceResolver(path=broken)
 
-    resolver = LazyPlaceResolver(None, directory=directory, fetch=never)
+    assert resolver.place_for(LATITUDE, LONGITUDE) is None
+    assert resolver.ready is False
 
-    # 国家名走内置映射（core.places.countries），与数据文件里写的无关。
-    place = resolver.place_for(LATITUDE, LONGITUDE)
+
+def test_real_database_answers() -> None:
+    """端到端跑一遍真正随包分发的那份：松岗的照片要归属到深圳，不是「松岗」。"""
+    resolver = LazyPlaceResolver()
+
+    place = resolver.place_for(22.7787, 113.8454)
+
     assert place is not None
-    assert (place.city, place.region, place.country) == ("旧市", "旧省", "中国")
+    assert (place.city, place.region, place.country) == ("深圳", "广东省", "中国")
     assert place.distance_km is not None
 
 
-def test_a_non_chinese_place_keeps_the_names_from_the_data_files(tmp_path: Path) -> None:
-    """端到端走一遍真实的索引：法国的照片从头到尾都是法文／原名（ADR 0011）。
+def test_real_database_loads_quickly() -> None:
+    """两万条 gzip 要在可接受的时间内读完 —— 它挡在地点分组前面。"""
+    started = time.perf_counter()
+    index = PlaceIndex.load()
+    elapsed = time.perf_counter() - started
 
-    数据文件里**故意给了汉字名**（「Bordeaux,波尔多」）—— 那正是以前会被拿去用的那个，
-    现在必须原样留在 GeoNames 的写法上。
-    """
-    directory = tmp_path / "geo"
-    directory.mkdir(parents=True)
-    (directory / CITIES_FILE).write_text(
-        "12345\tBordeaux\tBordeaux\tBordeaux,波尔多\t44.84\t-0.58\tP\tPPLA\tFR\t\t75\t\n",
-        encoding="utf-8",
-    )
-    (directory / ADMIN1_FILE).write_text("FR.75\tNew Aquitaine\n", encoding="utf-8")
-    (directory / COUNTRIES_FILE).write_text(
-        "FR\tFRA\t250\tFR\tFrance\tParis\t\t\tEU\t.fr\n", "utf-8"
-    )
-
-    def never(_url: str) -> bytes:
-        raise AssertionError("数据都齐了，不该联网")
-
-    resolver = LazyPlaceResolver(None, directory=directory, fetch=never)
-
-    place = resolver.place_for(44.8378, -0.5792)
-
-    assert place is not None
-    assert (place.city, place.region, place.country) == (
-        "Bordeaux",
-        "New Aquitaine",
-        "France",
-    )
-    assert place.distance_km is not None
+    assert index is not None and index.city_count > 10_000
+    assert elapsed < 5.0, f"加载城市库用了 {elapsed:.1f} 秒，太慢了"

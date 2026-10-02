@@ -737,7 +737,7 @@ class MainWindow(QMainWindow):
     def _place_lookup(self) -> LazyPlaceResolver:
         """共用的地点反查器：分组、元数据面板、打开库时那一遍都用这一个。
 
-        城市数据（解压后约 8.5 MB）只该读一次，所以三条路径共用同一个实例 ——
+        城市库（解压后约 1.2 MB）只该读一次，所以三条路径共用同一个实例 ——
         反查器自己缓存着加载好的索引与查过的坐标。
         """
         if self._place_resolver is None:
@@ -748,7 +748,7 @@ class MainWindow(QMainWindow):
         if generation != self._generation:
             return
         if isinstance(payload, str):
-            self._show_banner(payload)  # 「正在下载城市数据…」这类说明
+            self._show_banner(payload)  # 「正在加载城市库…」这类说明
             return
         if not isinstance(payload, tuple):
             return
@@ -1135,7 +1135,7 @@ class MainWindow(QMainWindow):
         if self._place_notice_text is None or self._scan_issue:
             return
         if isinstance(payload, str):
-            self._show_place_notice(payload)  # 「正在下载城市数据…」这类说明
+            self._show_place_notice(payload)  # 「正在加载城市库…」这类说明
             return
         if isinstance(payload, int) and payload > 0:
             self._show_place_notice(f"正在解析照片的地点…已处理 {payload} 张")
@@ -1357,12 +1357,12 @@ class MainWindow(QMainWindow):
         """按坐标给出地点：**先读索引**，索引里没有才现场反查一次。
 
         打开库时那一遍已经把结论存进索引了（ADR 0010），所以绝大多数照片在这里是
-        一次同步的读缓存就显示到位，不必起后台任务、也不必等下载城市数据。
+        一次同步的读缓存就显示到位，不必起后台任务。
         现场反查只兜两种情况：打开时那一遍还没轮到它，或者后来才加进库的照片。
         那条路走 ``Library.resolve_photo_place``：用面板手里已经读到的坐标去查，
         **查完并回索引** —— 面板临时算出来的东西不会只留在内存里。
 
-        ``announce`` 为真时才在面板上显示中间状态（「正在查询…」「正在下载…」）。
+        ``announce`` 为真时才在面板上显示中间状态（「正在查询…」「正在加载城市库…」）。
         预读与缓存命中都传 ``False``：那时候面板上显示的是当前这张照片，
         拿别的照片的中间状态去替换它，用户只会看到内容闪一下。
         """

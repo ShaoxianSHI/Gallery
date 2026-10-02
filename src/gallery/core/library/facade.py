@@ -245,7 +245,7 @@ class Library:
         地点那三栏会显示成「未知」，而不是悄悄替用户联网查点什么。
 
         :param source: 替换默认的 exiftool 批量来源（测试用）。
-        :param status: 反查要下载城市数据时，用它把进度说给界面听。
+        :param status: 首次加载城市库时，用它把进度说给界面听。
         :raises MetadataError: 主来源整体失败（例如 exiftool 跑不起来）。
         """
         index = self.facet_index
@@ -351,7 +351,7 @@ class Library:
             「正在解析…」这句话只在真有活的时候出现（否则它在说一件没发生的事）。
         :param on_progress: ``(已扫过, 总数)``。边扫边数，所以**总数通常是 0**
             （表示还不知道）；界面据此只报已处理多少。
-        :param status: 反查要下载城市数据时，用它把进度说给界面听。
+        :param status: 首次加载城市库时，用它把进度说给界面听。
         """
         index = self.facet_index
         scanned = 0
