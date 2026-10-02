@@ -596,7 +596,7 @@ class MenuActions:
 
     #: 「打开」：照片开大图、相册与分组进去。
     open_entry: QAction
-    #: 「在访达中显示」。
+    #: 「在访达中显示」⌘⏎（真快捷键，见 ADR 0014 决策 6）。
     reveal: QAction
     #: 「拷贝」⌘C（文件本身，访达语义，见 ADR 0017）。
     copy: QAction
@@ -730,6 +730,10 @@ def _add_open(menu: ShortcutColumnMenu, actions: MenuActions) -> None:
 
 def _add_open_and_reveal(menu: ShortcutColumnMenu, actions: MenuActions, *, multiple: bool) -> None:
     """照片与相册共用的上半截：打开 → 在访达中显示 → 拷贝 → 拷贝路径 → 粘贴 → 重命名 → 废纸篓。
+
+    最右那一列里挨着的两枚键位不是一回事：「打开」的是**只画不生效**的 ↵ 提示
+    （见 :meth:`ShortcutColumnMenu.show_key`），「在访达中显示」的是**真快捷键** ⌘⏎ ——
+    画它们的是同一个出口（:meth:`ShortcutColumnMenu.key_cell`），用户看到的却分得清哪个能按。
 
     中间只留一道分隔线：多选时「打开」与「重命名」都不出现，若在那里各插一道，
     「拷贝路径」与「移到废纸篓」之间就会多出一道谁也看不懂的空档。

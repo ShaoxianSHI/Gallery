@@ -24,8 +24,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QItemSelectionModel  # noqa: E402
+from PySide6.QtCore import QItemSelectionModel, Qt  # noqa: E402
 from PySide6.QtGui import QContextMenuEvent, QGuiApplication, QKeySequence  # noqa: E402
+from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMenu  # noqa: E402
 
 from gallery.core.library.config import prepare_library  # noqa: E402
@@ -266,8 +267,8 @@ def _enabled(menu: QMenu, label: str) -> bool:
     raise AssertionError(f"菜单里没有「{label}」，实际有：{_texts(menu)}")
 
 
-def _key_hint(menu: QMenu, label: str) -> str:
-    """那一行最右列上写着什么（空字符串 = 那一列什么都没有）。
+def _key_cell(menu: QMenu, label: str) -> tuple[frozenset[Qt.KeyboardModifier], str]:
+    """那一行最右列上的内容：有哪些修饰符 + 键位文字（没有这一列就报错）。
 
     走 :meth:`menus.ShortcutColumnMenu.key_cell`：快捷键与提示在这一列里是同一个出口，
     拼菜单的地方也不该分出两条路来（见 ``ui.menus`` 里 ``show_key``）。
@@ -276,7 +277,12 @@ def _key_hint(menu: QMenu, label: str) -> str:
     action = next(a for a in menu.actions() if a.text() == label)
     cell = menu.key_cell(action)
     assert cell is not None, f"「{label}」那一列是空的"
-    modifiers, text = cell
+    return cell
+
+
+def _key_hint(menu: QMenu, label: str) -> str:
+    """那一行最右列上写着什么，且**不带修饰符**（空字符串 = 那一列什么都没有）。"""
+    modifiers, text = _key_cell(menu, label)
     assert not modifiers, f"「{label}」不该带修饰符，实际有：{sorted(str(m) for m in modifiers)}"
     return text
 
@@ -440,7 +446,11 @@ def test_open_says_return_on_every_level_that_has_it(
 
 
 def test_multi_selection_has_no_open_row_to_hint(qt_app: QApplication, window: MainWindow) -> None:
-    """多选时「打开」整行都不出现，那枚提示也跟着没 —— 打开哪一张说不清。"""
+    """多选时「打开」整行都不出现，那枚提示也跟着没 —— 打开哪一张说不清。
+
+    这里查的是**那一列里不带修饰符的** ↵：提示是只画不生效的（``show_key``），按定义就没有
+    修饰符，而「在访达中显示」的 ⌘⏎ 是真快捷键 —— 多选时它照旧在，不该被这条断言捎带砍掉。
+    """
     _enter_album(qt_app, window)
     _select(window._grid, window._model, (0, 1))
 
@@ -449,7 +459,9 @@ def test_multi_selection_has_no_open_row_to_hint(qt_app: QApplication, window: M
     assert menu is not None
     assert "打开" not in _texts(menu)
     assert isinstance(menu, menus.ShortcutColumnMenu)
-    assert menus.OPEN_KEY_HINT not in [text for _, text in menu.key_cells()]
+    bare = [text for modifiers, text in menu.key_cells() if not modifiers]
+    assert menus.OPEN_KEY_HINT not in bare
+    assert _key_cell(menu, "在访达中显示")[1] == menus.OPEN_KEY_HINT
 
 
 # ---- 命令 -------------------------------------------------------------------
@@ -586,6 +598,67 @@ def test_reveal_on_group_says_why_not(qt_app: QApplication, window: MainWindow) 
 
     assert window._banner.isVisible()
     assert "分组不是磁盘上的文件夹" in window._banner.text()
+
+
+def test_reveal_says_command_return_and_the_key_really_opens_finder(
+    qt_app: QApplication,
+    window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """「在访达中显示」是 ⌘⏎，而且这条**要能真的按出来**，不是只写在菜单上的字。
+
+    ⏎ 归「打开」（网格自己处理，见 ``PhotoGrid.keyPressEvent``），所以这条要的是
+    「加 ⌘ 的回车」—— 回车行与 ⌘ 回车行挨着，画的是同一列，用户才认得出是同一族键。
+
+    按键这一段不能省：``QAction`` 的快捷键只有被 ``addAction`` 加进某个控件之后才会注册进
+    Qt 的快捷键表，而右键菜单是用完即弃的 —— 只挂菜单的话，菜单上写着 ⌘⏎、按下去没反应。
+    """
+    seen: list[list[Path]] = []
+
+    def fake_reveal(paths: Sequence[Path]) -> str:
+        seen.append([Path(path) for path in paths])
+        return "已在访达中显示。"
+
+    monkeypatch.setattr(desktop, "reveal_in_finder", fake_reveal)
+    _enter_album(qt_app, window)
+    row = window._model.row_of_path(window._library.root / "京都" / PHOTO_NAMES[0])
+    assert row >= 0
+    menu = _context_at(window, row)
+
+    # 显示的那一半：⌘ 与 ↵ 各占一列，键位就是「打开」那一行的同一个符号。
+    assert menu is not None
+    modifiers, key_text = _key_cell(menu, "在访达中显示")
+    assert modifiers == frozenset({Qt.KeyboardModifier.ControlModifier})
+    assert key_text == menus.OPEN_KEY_HINT == "↵"
+
+    # 生效的那一半：真的按一次 ⌘⏎。
+    window._grid.setFocus()
+    QTest.keyClick(window._grid, Qt.Key.Key_Return, Qt.KeyboardModifier.ControlModifier)
+    qt_app.processEvents()
+
+    assert seen == [[window._library.root / "京都" / PHOTO_NAMES[0]]]
+    assert window._reveal_action.shortcut() == QKeySequence("Ctrl+Return")
+
+
+def test_reveal_shortcut_yields_to_the_rename_editor(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """改到一半那一下归输入框：⌘⏎ 不该顺手把访达叫起来。
+
+    窗口级快捷键在按键到达控件之前就被 Qt 取走了，所以这里必须**主动置灰**，
+    否则「敲完名字顺手 ⌘⏎」提交不了改名，只会弹出一个访达。
+    """
+    _enter_album(qt_app, window)
+    _select(window._grid, window._model, (0,))
+    assert window._reveal_action.isEnabled() is True
+
+    window.rename_current_entry()
+
+    assert window._grid._rename_edit.is_editing()
+    assert window._reveal_action.isEnabled() is False
+
+    # 收尾：Esc 取消，测试不该顺手把 tmp 里的照片真改了名。
+    QTest.keyClick(window._grid._rename_edit, Qt.Key.Key_Escape)
 
 
 def test_select_all_selects_whole_level(qt_app: QApplication, window: MainWindow) -> None:

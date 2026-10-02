@@ -543,8 +543,18 @@ class MainWindow(QMainWindow):
         self._open_entry_action = QAction("打开", self)
         self._open_entry_action.triggered.connect(self.open_current_entry)
 
+        # ⌘⏎：⏎ 归「打开」自己（网格里已经处理了），加上 ⌘ 正好空出来一条，与访达把
+        # ⌘C / ⇧⌘C 让给拷贝是一个思路。这条**只作用在网格里**（置灰判据见
+        # ``_update_action_states``），所以 ⌘⏎ 在大图页按下去仍然只是回车。
         self._reveal_action = QAction("在访达中显示", self)
+        self._reveal_action.setShortcut(QKeySequence("Ctrl+Return"))
         self._reveal_action.triggered.connect(self.reveal_selection)
+        # **必须挂到窗口上**（``QWidget.addAction``）这个快捷键才真的按得出来：QAction 的
+        # 快捷键只有在它被加进某个控件之后才注册进 Qt 的快捷键表，光给它一个 QAction 父对象
+        # 不算数（实测：那样按 ⌘⏎ 什么都不发生）。而右键菜单是用完即弃的，靠它注册等于没注册。
+        #
+        # 挂窗口**不会**让它冒到菜单栏里：菜单栏只画被塞进某个 ``QMenu`` 的动作。
+        self.addAction(self._reveal_action)
 
         # ⌘C 与访达一致：往剪贴板里放的是**文件本身**，访达里 ⌘V 得到一份拷贝
         # （ADR 0017）。注意放的是路径引用，不读像素、不写文件。
@@ -2634,7 +2644,9 @@ class MainWindow(QMainWindow):
         # ⌘V 与选区无关：只看「当前这一层有没有可粘的目录」与「剪贴板里有没有文件」。
         # 粘不了时它同时也不会出现在右键菜单里（见 ``_menu_actions``）。
         self._paste_action.setEnabled(in_grid and self._can_paste())
-        self._reveal_action.setEnabled(bool(paths))
+        # ⌘⏎ 与改名输入框抢键：改到一半键盘归输入框（与 rename / trash 同一个 ``idle``），
+        # 不然「敲完名字顺手 ⌘⏎」会变成把访达叫起来。
+        self._reveal_action.setEnabled(bool(paths) and idle)
         self._open_entry_action.setEnabled(current is not None)
         self._copy_metadata_action.setEnabled(isinstance(current, PhotoRef))
         self._copy_group_action.setEnabled(isinstance(current, GroupRef))
