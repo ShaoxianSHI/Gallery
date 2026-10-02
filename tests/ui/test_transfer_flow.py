@@ -283,6 +283,48 @@ def test_album_menu_does_not_offer_them(qt_app: QApplication, window: MainWindow
 # ---- 真的搬 ------------------------------------------------------------------
 
 
+def test_switching_libraries_mid_transfer_does_not_leave_a_phantom_undo(
+    qt_app: QApplication, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """搬一半换库：闸门必须跟着收，否则横幅骗人说「⌘Z 可以撤销」。
+
+    缺陷现场：⌘V 复制几百 MB 跑到一半，用户用「文件 → 打开文件夹…」切了另一个库。
+    换库时 `_teardown_library` 忘了取消写操作闸门，于是那次复制接着在**旧库**上跑完；
+    收尾时 `_on_transfer_done` 拿着**新库**去问「下一次 ⌘Z 撤什么」—— 记录明明
+    记在旧库的 journal 里，界面上却一条都撤不掉。
+    """
+    from PIL import Image
+
+    other = tmp_path / "另一个库"
+    (other / "京都").mkdir(parents=True)
+    Image.new("RGB", (16, 12), (1, 2, 3)).save(other / "京都" / "一张.jpg")
+    prepare_library(other)
+    started = threading.Event()
+    real_copy_into = Library.copy_into
+
+    def slow_copy(self: Library, *args: object, **kwargs: object) -> object:
+        started.set()
+        # 让任务真的跨过「提交 → 换库 → 收尾」这三步，别靠时间碰运气。
+        for _ in range(40):
+            qt_app.processEvents()
+            if window._library is not None and window._library.root == other:
+                break
+            time.sleep(0.005)
+        return real_copy_into(self, *args, **kwargs)
+
+    monkeypatch.setattr(Library, "copy_into", slow_copy)
+    _enter(qt_app, window, window._library.root / "京都")
+    _select_photo(window, "一张.jpg")
+
+    window._transfer_selected(window._library.root / "奈良", move=False)
+    assert started.wait(5.0), "复制没有起步"
+    assert window.open_library(other) is True
+
+    assert window._write_job is None, "换库时写操作闸门必须收掉，否则旧库的那次会接着跑"
+    assert window._library is not None and window._library.root == other
+    window.deleteLater()
+
+
 def test_copying_puts_a_copy_in_the_target(qt_app: QApplication, window: MainWindow) -> None:
     """「复制到相册」：目标里多一份，**原处一个字节都没动**。"""
     _enter(qt_app, window, window._library.root / "京都")

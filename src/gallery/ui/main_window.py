@@ -6,8 +6,16 @@
 三个「不许」在这里具体落地：
 
 - 不自己读原图：一切像素都来自 ``gallery.core``（经 ``Library`` 门面）。
-- 不阻塞主线程：扫描、预览、全分辨率解码都在 ``TaskRunner`` 的线程池里。
-- 不偷偷写盘：唯一的写操作是用户在弹出的对话框里同意后的 ``prepare_library``。
+- 不偷偷写盘：**每一次写操作都来自用户在菜单或快捷键里亲手触发的那一下** ——
+  改名（⌘R）、移到废纸篓（⌘⌫）、粘贴（⌘V）、复制 / 移动到相册、新建相册
+  （⇧⌘N）、撤销（⌘Z），另加开场对话框里同意后的 ``prepare_library``。
+  每一条都有对应的 ADR，没有一个是后台整理、脚本改名或「顺便改改」（红线 1）。
+- 不阻塞主线程：**大件**都在 ``TaskRunner`` 的线程池里 —— 扫描、分组用的元数据批量
+  读取、缩略图与全分辨率解码、粘贴与复制 / 移动（一次几百 MB）。
+  留在主线程上的是**小件**，刻意如此：``mkdir`` 建一个空文件夹（ADR 0022 决策 6）、
+  会话记忆与窗口几何的落盘。**移到废纸篓、撤销一次跨卷移动、清空缩略图缓存也在
+  主线程上** —— 它们平时是毫秒级的（同一卷内只是一次改名），但用户对着一个几 GB 的
+  相册按 ⌘⌫ 时会卡住，那一档的取舍是「不打断界面反馈」而不是「不卡」。
 """
 
 from __future__ import annotations
@@ -425,11 +433,11 @@ class MainWindow(QMainWindow):
         self._metadata_job: int | None = None
         #: 「复制元数据」现读元数据用的那次任务（面板的读取消了就没人要那份结果）。
         self._metadata_copy_job: int | None = None
-        #: 「粘贴」那一次复制（ADR 0018）。**同时只允许一个**：两个任务会争同一个
-        #: 目标名字，后到的会把先到的盖掉。
         #: 会往某个目录里**落文件**的后台任务（⌘V 粘贴、复制到相册、移动到相册，
         #: 见 ADR 0018 / 0019）。**三者同时只允许一个**：它们会争同一个目标名字，
         #: 后到的会把先到的盖掉 —— 那是这个项目最不能出现的一种事。
+        #: 切库时必须取消（见 ``_teardown_library``），否则它会拿旧库的记录去问新库
+        #: 「下一次 ⌘Z 撤什么」，于是记录明明记了、界面上却撤不掉。
         self._write_job: int | None = None
         #: 分组 / 排序与元数据面板共用的地点反查器（按坐标），首次用时才加载城市数据。
         self._place_resolver: LazyPlaceResolver | None = None
@@ -1267,6 +1275,14 @@ class MainWindow(QMainWindow):
         self._level_key = None
         self._cancel_facet_job()
         self._cancel_place_pass()
+        # **写操作闸门也要收。** 搬几百 MB 的那一个 ⌘V / 「移动到相册」是在旧库的
+        # ``Library`` 上跑的；不取消它就让它接着跑，而 ``self._library`` 此时已经指向
+        # 新库了 —— 收尾时 ``_on_transfer_done`` 会去问**新库**「下一次 ⌘Z 撤什么」，
+        # 于是那条记录明明记在旧库里、界面上却一个都撤不掉。用户在横幅里看到的
+        # 恰恰是「⌘Z 可以撤销」，按下去什么也没发生。
+        if self._write_job is not None:
+            self._runner.cancel(self._write_job)
+            self._write_job = None
         if self._scan_job is not None:
             self._runner.cancel(self._scan_job)
             self._scan_job = None
