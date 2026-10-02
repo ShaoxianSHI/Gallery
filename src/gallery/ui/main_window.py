@@ -739,6 +739,16 @@ class MainWindow(QMainWindow):
             self._apply_ordering()
             return
         generation = self._generation
+
+        # **索引里全都有就直接排**：这一层读过一次之后每次回到它都是这个样子，纯粹是
+        # 一次查表加一次排序。起后台线程、报「正在读取 N 张照片的元数据」都是在说一件
+        # 没发生的事 —— 用户没法分辨是又在干活还是软件出了毛病（同 ``_maybe_start_place_pass``）。
+        cached = library.cached_facets(refs)
+        if len(cached) == len(refs):
+            self._facet_values = cached
+            self._apply_ordering()
+            return
+
         self._progress_notice = True
         self._show_banner(
             f"正在读取 {len(refs)} 张照片的元数据，用于{'分组' if self._group_facet else '排序'}…"
