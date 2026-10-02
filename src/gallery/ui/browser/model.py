@@ -273,21 +273,32 @@ class PhotoListModel(QAbstractListModel):
         self._reindex()
         self.endResetModel()
 
-    def set_thumbnail(self, path: Path, image: QImage) -> None:
-        """回填一张缩略图（相册与分组卡片的缩略图就是它们的封面）。必须从主线程调用。"""
+    def set_thumbnail(self, path: Path, image: QImage, edge: int = 0) -> None:
+        """回填一张缩略图（相册与分组卡片的缩略图就是它们的封面）。必须从主线程调用。
+
+        :param edge: 这张图是按哪个长边缩好的（流水线在工作线程里缩的，见 ADR 0015）。
+            ``0`` 表示没缩过 —— 这时退回按当前 :attr:`icon_edge` 在这里缩一次，
+            好让这个方法被直接调用时也依然正确。**记账用的就是这个值**：传进来的
+            边长与当前档位对不上时 :meth:`needs_thumbnail` 会说还需要，于是
+            切档瞬间在途的结果会自己被重取顶替，不会把格子填歪。
+        """
         row = self._row_by_path.get(path)
         group_rows = self._group_rows_by_cover.get(path, ())
         if row is None and not group_rows:
             return  # 条目已经被换层清掉了，直接丢弃
         pixmap = QPixmap.fromImage(image)
-        if pixmap.width() > self._icon_edge or pixmap.height() > self._icon_edge:
-            pixmap = pixmap.scaled(
-                self._icon_edge,
-                self._icon_edge,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-        self._pixmaps[path] = _CachedThumb(pixmap=pixmap, edge=self._icon_edge)
+        if edge > 0:
+            sized = edge
+        else:
+            sized = self._icon_edge
+            if pixmap.width() > sized or pixmap.height() > sized:
+                pixmap = pixmap.scaled(
+                    sized,
+                    sized,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+        self._pixmaps[path] = _CachedThumb(pixmap=pixmap, edge=sized)
         self._pixmaps.move_to_end(path)
         while len(self._pixmaps) > self._cache_size:
             self._pixmaps.popitem(last=False)

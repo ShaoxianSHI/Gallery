@@ -1537,7 +1537,9 @@ class MainWindow(QMainWindow):
         prefetch = self._entries_missing_thumbnails(
             [row for row in prefetch_rows if row not in visible_set]
         )
-        self._pipeline.set_window(visible, prefetch)
+        # 把当前档位一起交给流水线：缩放在工作线程里做，界面线程只留一次
+        # QPixmap.fromImage（ADR 0015）。
+        self._pipeline.set_window(visible, prefetch, target_edge=self._model.icon_size.width())
 
     def _entries_missing_thumbnails(self, rows: Sequence[int]) -> list[GridEntry]:
         """只挑出需要取缩略图的条目（相册与分组卡片算它们的封面）。
@@ -1557,9 +1559,9 @@ class MainWindow(QMainWindow):
                 entries.append(entry)
         return entries
 
-    def _on_thumbnail_ready(self, path: object, image: object) -> None:
+    def _on_thumbnail_ready(self, path: object, image: object, edge: int = 0) -> None:
         if isinstance(path, Path) and isinstance(image, QImage):
-            self._model.set_thumbnail(path, image)
+            self._model.set_thumbnail(path, image, edge)
 
     # ---- 缩略图尺寸 --------------------------------------------------------
 
