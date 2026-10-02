@@ -161,6 +161,28 @@ def test_context_menu_has_hover_highlight(qt_app: QApplication, window: MainWind
     assert f"padding: {menus.MENU_INSET}px" in sheet
 
 
+def test_menus_without_checkable_items_keep_the_text_column(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """没有可勾选项的菜单，文字也要与照片菜单对齐。
+
+    Qt 只在菜单里**存在可勾选项**时才预留那一列对勾宽度（实测 19 像素），整列文字
+    跟着右移：照片菜单文字在 28，相册 / 分组 / 空白处只有 9。菜单里根本没有对勾可画，
+    留着那列空白没有道理，但文字忽左忽右更难看 —— 所以统一补上，全软件的文字列对齐。
+    """
+    window._stack.setCurrentWidget(window._grid_page)
+    row = window._model.row_of_path(window._library.root / "一张.jpg")
+    assert row >= 0
+
+    photo = window.context_menu_for(row)
+    blank = window.context_menu_for(-1)
+
+    assert photo is not None and blank is not None
+    gutter = f"padding-left: {menus.MENU_CHECK_GUTTER}px"
+    assert gutter not in photo.styleSheet(), "照片菜单有可勾选项，那一列本来就预留了"
+    assert gutter in blank.styleSheet(), "空白处菜单没有可勾选项，必须自己补上那一列"
+
+
 def test_submenus_get_the_same_look(qt_app: QApplication, window: MainWindow) -> None:
     """空白处那份菜单带三个子菜单：子菜单不继承样式表，也不是子控件，得显式发。"""
     window._stack.setCurrentWidget(window._grid_page)
@@ -174,8 +196,11 @@ def test_submenus_get_the_same_look(qt_app: QApplication, window: MainWindow) ->
         if action.menu() is not None and action.menu().menuAction() is action
     ]
     assert [sub.title() for sub in owned] == ["分组", "排序", "缩略图大小"]
+    # 三份子菜单彼此同一份样式；它们里面全是单选项（有勾），所以都不补那一列
+    gutter = f"padding-left: {menus.MENU_CHECK_GUTTER}px"
+    assert len({submenu.styleSheet() for submenu in owned}) == 1
     for submenu in owned:
-        assert submenu.styleSheet() == menu.styleSheet()
+        assert gutter not in submenu.styleSheet()
 
 
 def test_menu_bar_menus_are_left_native(window: MainWindow) -> None:

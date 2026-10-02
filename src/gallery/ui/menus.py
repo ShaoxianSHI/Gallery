@@ -75,13 +75,31 @@ MENU_HIGHLIGHT_RADIUS = 5
 #: 给窄了，右边那一列快捷键（⌘R / ⌘⌫）就会被挤出菜单。
 MENU_ITEM_PADDING = "5px 38px 5px 0px"
 
+#: **没有可勾选项的菜单**要补的左内边距（像素），用来让文字列与照片菜单对齐。
+#:
+#: Qt 只在菜单里**存在可勾选项**时才预留那一列对勾宽度，于是整列文字跟着右移：
+#:
+#: | 菜单 | 有没有可勾选项 | 文字左沿（实测） |
+#: |------|----------------|----------------|
+#: | 照片 | 有（「显示元数据信息」） | 28 |
+#: | 相册 / 分组 / 空白处 | 没有 | 9 |
+#:
+#: 差的就是那一列，约 19 像素。菜单里根本没有对勾可画，留着这列空白没有道理，但文字
+#: 忽左忽右更难看 —— 所以没有可勾选项的菜单统一补上这么多，让**全软件的文字列对齐**
+#: （用户原话：保持一致比较美观）。
+MENU_CHECK_GUTTER = 19
 
-def style_sheet(background: QColor, highlight: QColor) -> str:
+
+def style_sheet(background: QColor, highlight: QColor, *, check_gutter: int = 0) -> str:
     """给弹出菜单的那份样式表。
 
     两个颜色都必须由调用方给**调色板里的原值**：底色是「一整块底色」那块（``Window``
     角色），高亮是系统强调色（``Highlight`` 角色）。理由见模块文档那一段 ——
     样式表里的 ``palette(...)`` 取的是**应用**调色板，不是逐控件下发的那份。
+
+    ``check_gutter`` 是「这一列对勾原本会被预留的宽度」，只有**菜单里没有可勾选项**时才
+    补上（见 :data:`MENU_CHECK_GUTTER`）。它排在最后一条规则，靠覆盖前面那条
+    ``QMenu::item`` 的左内边距生效。
     """
     return (
         f"QMenu {{ border-radius: {MENU_CORNER_RADIUS}px; "
@@ -95,7 +113,8 @@ def style_sheet(background: QColor, highlight: QColor) -> str:
         # 高亮之下仍要保持灰字，不能看着能点。
         f"QMenu::item:hover {{ background: {rgba(highlight)}; }}\n"
         f"QMenu::item:selected {{ background: {rgba(highlight)}; "
-        f"border-radius: {MENU_HIGHLIGHT_RADIUS}px; }}"
+        f"border-radius: {MENU_HIGHLIGHT_RADIUS}px; }}\n"
+        + (f"QMenu::item {{ padding-left: {check_gutter}px; }}" if check_gutter else "")
     )
 
 
@@ -119,10 +138,14 @@ def apply_style(menu: QMenu) -> None:
     下的排序 / 分组 / 缩略图大小一并改掉，而它们并不属于这次右键。
     """
     palette = menu.palette()
-    sheet = style_sheet(
-        palette.color(QPalette.ColorRole.Window),
-        palette.color(QPalette.ColorRole.Highlight),
-    )
+    background = palette.color(QPalette.ColorRole.Window)
+    highlight = palette.color(QPalette.ColorRole.Highlight)
+    # 没有可勾选项的菜单要自己补上那一列，样式表因此**逐个菜单**算 —— 子菜单里是
+    # 「排序 / 分组 / 缩略图大小」那些单选项，它们有勾、就不补。
+    sheets = {
+        gutter: style_sheet(background, highlight, check_gutter=gutter)
+        for gutter in (0, MENU_CHECK_GUTTER)
+    }
     seen: set[int] = set()
     pending = [menu]
     while pending:
@@ -130,7 +153,8 @@ def apply_style(menu: QMenu) -> None:
         if id(current) in seen:
             continue
         seen.add(id(current))
-        current.setStyleSheet(sheet)
+        has_checkable = any(action.isCheckable() for action in current.actions())
+        current.setStyleSheet(sheets[0 if has_checkable else MENU_CHECK_GUTTER])
         for action in current.actions():
             submenu = action.menu()
             if submenu is not None and submenu.menuAction() is action:
@@ -286,6 +310,7 @@ def _submenu(title: str, actions: tuple[QAction, ...], *, split_before: int = 0)
 
 
 __all__ = [
+    "MENU_CHECK_GUTTER",
     "MENU_CORNER_RADIUS",
     "MENU_HIGHLIGHT_RADIUS",
     "MENU_INSET",
