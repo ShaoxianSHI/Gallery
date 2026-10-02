@@ -238,6 +238,12 @@ class MainWindow(QMainWindow):
         #: 这一层还没摆上屏的条目。要重排时先攒在这里，顺序定下来再一次给出去；
         #: ``None`` 表示「模型就是当前这一层的全部」，可以边扫边出图。
         self._staged: list[GridEntry] | None = None
+        #: 横幅上正占着「这一层什么都没有」这句话；有了内容要把它收回去。
+        self._level_notice = False
+        #: 横幅上正占着「正在读取元数据…」这条进度。
+        self._progress_notice = False
+        #: 扫描本身出过问题（跳过的目录 / 读不了的文件）。它比「这里是空的」更该说。
+        self._scan_issue = False
         self._exiftool_available: bool | None = None  # 探测一次就够
         self._model = PhotoListModel(self, icon_edge=edge_for_index(self._size_index))
         self._build_ui()
@@ -631,6 +637,7 @@ class MainWindow(QMainWindow):
             self._apply_ordering()
             return
         generation = self._generation
+        self._progress_notice = True
         self._show_banner(
             f"正在读取 {len(refs)} 张照片的元数据，用于{'分组' if self._group_facet else '排序'}…"
         )
@@ -648,6 +655,40 @@ class MainWindow(QMainWindow):
             on_result=partial(self._on_facets_ready, generation),
             on_error=partial(self._on_facets_failed, generation),
         )
+
+    def _clear_progress_notice(self) -> None:
+        """收掉「正在读取元数据…」那条 —— **只收自己那一条**：扫描出问题时那条横幅
+        比进度重要得多，不能顺手一起藏了。"""
+        if not self._progress_notice:
+            return
+        self._progress_notice = False
+        self._banner.hide()
+
+    def _update_level_notice(self) -> None:
+        """这一层什么都没有时说一声；有了内容就把这句收回去。
+
+        **判据是「网格上有没有条目」，不是「有没有相册 / 照片」**：分组会把照片换成
+        一张张组卡片，只数相册和照片会把一屏组卡片（甚至一屏相册）误判成空 ——
+        那正是这条提示曾经出现的地方。
+        """
+        if self._library is None:
+            return
+        if self._scan_issue:
+            # 扫描出过问题时横幅归它：那句（哪些内容没读到）比「这里是空的」更该说，
+            # 而这里也不许把它收掉 —— 收了等于把用户真正需要知道的事藏起来。
+            return
+        if self._model.rowCount():
+            if self._level_notice:
+                self._level_notice = False
+                self._banner.hide()
+            return
+        self._level_notice = True
+        if self._group_view is not None:
+            self._show_banner("这个分组里没有照片了。")
+        elif self._browse_mode == BROWSE_MODE_ALBUMS:
+            self._show_banner("这个文件夹里既没有子文件夹，也没有可显示的照片。")
+        else:
+            self._show_banner("没有找到可显示的照片。支持 JPEG、PNG、HEIC、TIFF、GIF、WebP、BMP。")
 
     def _cancel_facet_job(self) -> None:
         """作废在途的元数据读取（换库、换层、换分组字段时）。"""
@@ -667,7 +708,7 @@ class MainWindow(QMainWindow):
             return
         self._facet_job = None
         self._facet_values = payload if isinstance(payload, dict) else {}
-        self._banner.hide()
+        self._clear_progress_notice()
         self._apply_ordering()
 
     def _on_facets_failed(self, generation: int, message: str) -> None:
@@ -684,6 +725,13 @@ class MainWindow(QMainWindow):
         library = self._library
         if library is None:
             return
+        try:
+            self._reorder_level(library)
+        finally:
+            # 顺序定下来了，这才有资格回答「这一层是不是空的」。
+            self._update_level_notice()
+
+    def _reorder_level(self, library: Library) -> None:
         # 暂存的优先：那一层还没上屏，顺序就是这里算出来的。
         staged = self._staged
         entries = staged if staged is not None else list(self._model.entries())
@@ -819,6 +867,9 @@ class MainWindow(QMainWindow):
         self._panel.clear()
         self._current_dir = library.root
         self._staged = [] if self._ordering_active() else None
+        self._level_notice = False
+        self._progress_notice = False
+        self._scan_issue = False
         self._update_breadcrumb()
         self._update_mode_actions()
         self.setWindowTitle(f"{library.display_name} — Gallery")
@@ -963,19 +1014,13 @@ class MainWindow(QMainWindow):
             return
         self._scan_job = None
         report = payload if isinstance(payload, ScanReport) else ScanReport()
-        albums, photos = self._model.counts()
         # 「扫了多少张」原本在状态条上，条子没了就不报了；出问题才值得打断用户。
         if report.has_issues:
+            self._scan_issue = True
             self._show_banner(f"部分内容没能读取：{report.summary}")
-        elif not albums and not photos:
-            if self._group_view is not None:
-                self._show_banner("这个分组里没有照片了。")
-            elif self._browse_mode == BROWSE_MODE_ALBUMS:
-                self._show_banner("这个文件夹里既没有子文件夹，也没有可显示的照片。")
-            else:
-                self._show_banner(
-                    "没有找到可显示的照片。支持 JPEG、PNG、HEIC、TIFF、GIF、WebP、BMP。"
-                )
+        # 「这一层空不空」**不在这里判断**：要重排时条目还攒着没上屏（见 _staged），
+        # 那时模型里一条也没有，照着它判断就会把一屏相册 / 组卡片误报成「空」。
+        # 真正该由最终内容决定，所以交给 _apply_ordering → _update_level_notice。
         self._refresh_thumbnail_window()
         self._start_facet_read()
 
@@ -983,6 +1028,7 @@ class MainWindow(QMainWindow):
         if generation != self._generation:
             return
         self._scan_job = None
+        self._scan_issue = True
         self._show_banner(f"扫描失败：{message}")
         # 已经攒到的条目照常摆出来（按当前能算出来的顺序）：扫到一半失败时给用户
         # 一屏能看的东西，比给一屏空白加一句「扫描失败」有用。
@@ -1766,6 +1812,9 @@ class MainWindow(QMainWindow):
         self._preview_cache.clear()
         self._metadata_cache.clear()
         self._staged = [] if self._ordering_active() else None
+        self._level_notice = False
+        self._progress_notice = False
+        self._scan_issue = False
         self._current_row = -1
         self._detail.clear_image()
         self._panel.clear()
