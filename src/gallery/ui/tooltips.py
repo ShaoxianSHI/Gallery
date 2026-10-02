@@ -39,8 +39,7 @@ class ToolTipGate(QObject):
     """
 
     def __init__(self, app: QApplication) -> None:
-        super().__init__(app)
-        self._app = app
+        super().__init__(app)  # 挂在 QApplication 下，生命周期与它一致
         app.installEventFilter(self)
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # noqa: N802 - Qt 命名
