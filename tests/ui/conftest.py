@@ -19,7 +19,9 @@
 
 from __future__ import annotations
 
+import ast
 import os
+import pathlib
 import time
 from collections.abc import Callable, Iterator
 
@@ -135,3 +137,32 @@ def wait_for(qt_app: QApplication) -> Callable[..., bool]:
             time.sleep(POLL_SECONDS)
 
     return _wait_for
+
+
+def test_no_test_module_shadows_the_shared_fixtures() -> None:
+    """**测试模块不许自己再定义一份共享 fixture。**
+
+    曾经 14 个模块各自写了一份 ``qt_app``，里面少了 conftest 那句
+    ``QApplication.setDoubleClickInterval(40)`` —— 于是它们全部悄悄跑在系统默认的
+    500ms 双击阈值上，而**测试照常全绿**：没人看得见少掉的那一句，直到某个用例
+    开始按机器负载偶发变红。
+
+    同类的还有各写一份的等待助手（``wait_until`` / ``_wait``，8 份）与
+    ``WAIT_SECONDS``（两个不同的值）。它们的问题不是慢，是**同一件事有 8 份写法**，
+    改一处不会改到其余七处。
+
+    这条守护让「共享 fixture 只有一份」这件事从约定变成红灯。
+    """
+    reserved = {"qt_app", "wait_for", "make_grid"}
+    offenders: list[str] = []
+    for path in sorted(pathlib.Path(__file__).resolve().parent.rglob("test_*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef) and node.name in reserved:
+                has_fixture = any("fixture" in ast.dump(d) for d in node.decorator_list)
+                if has_fixture:
+                    offenders.append(f"{path.name}:{node.lineno} {node.name}")
+    assert not offenders, (
+        "这些模块重定义了共享 fixture，共享的那一份（含双击阈值、等待助手的正确实现）"
+        f"就白写了：{offenders}"
+    )
