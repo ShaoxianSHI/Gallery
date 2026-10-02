@@ -89,6 +89,22 @@ def test_unidentified_content_reports_name(tmp_path: Path) -> None:
     assert excinfo.value.path == path
 
 
+def test_a_missing_file_is_not_reported_as_corrupt(tmp_path: Path) -> None:
+    """「文件不在了」与「文件坏了」必须说成两句话。
+
+    混成一句会吓人：用户刚把照片移走或删掉时，一次迟到的解码失败若报成「可能已损坏」，
+    一次成功的移动就被说成了数据损坏，用户很可能去抢救根本没坏的文件。
+    """
+    gone = tmp_path / "已经移走.jpg"
+
+    with pytest.raises(ImageDecodeError) as excinfo:
+        decode_rgba(gone)
+
+    assert "已经移走.jpg" in excinfo.value.message
+    assert "不在原处" in excinfo.value.message
+    assert "损坏" not in excinfo.value.message
+
+
 def test_truncated_file_is_reported(make_photo: Callable[..., Path]) -> None:
     path = make_photo("truncated.jpg", size=(128, 128))
     data = path.read_bytes()

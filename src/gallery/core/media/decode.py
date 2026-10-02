@@ -111,6 +111,15 @@ def decode_rgba(path: Path, *, max_edge: int | None = None, use_draft: bool = Fa
             path=path,
             detail=str(exc),
         ) from exc
+    except FileNotFoundError as exc:
+        # 「文件不在了」与「文件坏了」是两件事，混成一句话会吓人：用户刚把照片移到
+        # 别处（或删掉）时，一次迟到的解码失败会告诉他「文件可能已损坏」——
+        # 于是一次成功的移动被说成了数据损坏，用户很可能就此去抢救根本没坏的文件。
+        raise ImageDecodeError(
+            f"无法解码 {path.name}：文件已经不在原处。",
+            path=path,
+            detail=str(exc),
+        ) from exc
     except (OSError, ValueError) as exc:
         raise ImageDecodeError(
             f"无法解码 {path.name}：文件可能已损坏或被截断。",
