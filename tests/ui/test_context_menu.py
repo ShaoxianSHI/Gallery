@@ -307,11 +307,16 @@ def test_every_menu_is_split_into_the_same_four_groups(
     分组按「这道命令到底动什么」，**不按落点**：用户在照片上、在分组卡片上、在大图上
     看到的是同一组块，缺哪几条一眼就知道那张菜单少了什么。
 
-    空白处那张不在其中 —— 它一条会动文件的都没有，只有视图级命令（另有一条 ADR 0022
-    的「新建相册」）。
+    **剪贴板先摆满**，「粘贴」在哪儿才看得见：它只出现在**相册**那一份的「拿进拿出」组里
+    （ADR 0018 决策 7 —— 按在照片上「粘到哪」说不清）。空剪贴板下这一条压根不出现，
+    那样的对照等于把四组的形状少钉了一条。
+
+    空白处那张不在其中 —— 它的第一组是「新建相册」与「粘贴」两条（ADR 0022 / 0018），
+    后面才是视图级命令。
     """
     # 顺序有讲究：换浏览方式只在「真的是换了」时才重列一层，所以相册那张要在进相册之前拼；
     # 大图页拼完得先退回网格，右键菜单才拼得出来（见 ``context_menu_for``）。
+    desktop.copy_files_to_clipboard([window._library.root / "京都" / PHOTO_NAMES[1]])
     _show_albums(qt_app, window)
     album_row = window._model.row_of_path(window._library.root / "京都")
     assert album_row >= 0
@@ -353,7 +358,7 @@ def test_every_menu_is_split_into_the_same_four_groups(
             ["重命名…", *write],
             ["显示元数据信息", "复制元数据"],
         ],
-        "相册": [["打开", *look], ["拷贝", "拷贝路径"], ["重命名…", *write]],
+        "相册": [["打开", *look], ["拷贝", "拷贝路径", "粘贴"], ["重命名…", *write]],
         "分组卡片": [["打开", *look], copy, write, ["复制分组条件"]],
     }
     menus = {
@@ -377,6 +382,9 @@ def test_photo_menu_items(qt_app: QApplication, window: MainWindow) -> None:
 
     分组按「这道命令到底动什么」：看一眼 · 拿进拿出 · 会动文件 · 它是什么。
     「会动文件」单独一段、离前面那几条远一点 —— 它俩是仅有的两个会改用户文件的入口。
+
+    **「拿进拿出」那一段里没有「粘贴」**，而这一条与剪贴板里有没有文件无关（另见
+    :func:`test_photo_menu_has_no_paste_even_with_files`）。
     """
     _enter_album(qt_app, window)
     row = window._model.row_of_path(window._library.root / "京都" / PHOTO_NAMES[0])
@@ -403,6 +411,35 @@ def test_photo_menu_items(qt_app: QApplication, window: MainWindow) -> None:
     ]
     assert _enabled(menu, "重命名…")
     assert _enabled(menu, "移到废纸篓")
+
+
+def test_photo_menu_has_no_paste_even_with_files(qt_app: QApplication, window: MainWindow) -> None:
+    """按在照片上（单选与多选都是）**不摆「粘贴」**，剪贴板摆满了也不摆（ADR 0018 决策 7）。
+
+    用户明确要求的：这一格未必属于当前这一层（全部照片、分组那几屏都是各相册混在
+    一起的），摆出来只会让人猜「粘到哪」。**⌘V 照旧能用**（它粘进当前这一层）——
+    菜单摆不摆与快捷键怎么用是两回事。少的是「拿进拿出」那一段里的**一行**，
+    其余几行与段的位置原样留着（ADR 0023 决策 2）。
+    """
+    _enter_album(qt_app, window)
+    desktop.copy_files_to_clipboard([window._library.root / "京都" / PHOTO_NAMES[1]])
+    first = window._model.row_of_path(window._library.root / "京都" / PHOTO_NAMES[0])
+    assert first >= 0
+
+    single = _context_at(window, first)
+    assert single is not None
+    assert "粘贴" not in _texts(single)
+    assert "移动到相册" in _texts(single)
+
+    assert window._model.rowCount() >= 2
+    _select(window._grid, window._model, (first, first + 1))
+    multiple = _context_at(window, first)
+    assert multiple is not None
+    assert "粘贴" not in _texts(multiple)
+
+    # 同一时刻 ⌘V 仍然是通的。
+    assert window._can_paste() is True
+    assert window._paste_action.isEnabled() is True
 
 
 def test_album_menu_has_no_metadata_items(qt_app: QApplication, window: MainWindow) -> None:
@@ -506,9 +543,12 @@ def test_multi_selection_hides_single_item_actions(
 def test_background_menu_has_no_file_actions(window: MainWindow) -> None:
     """空白处：「新建相册」在最上面，其余仍是视图级命令。
 
-    新建相册是这条菜单里**唯一会动磁盘**的一条（ADR 0022），而它属于「只增不改」那一类
-    —— 建出来的是空文件夹，绝不覆盖任何东西。真正危险的那几条（重命名、移到废纸篓、
-    在访达中显示）依然一条都不在这儿。
+    剪贴板空着时「新建相册」是这条菜单里**唯一会动磁盘**的一条（ADR 0022），而它属于
+    「只增不改」那一类 —— 建出来的是空文件夹，绝不覆盖任何东西。真正危险的那几条
+    （重命名、移到废纸篓、在访达中显示）依然一条都不在这儿。
+
+    「粘贴」是**唯一**会出现在这里的另一个文件操作，剪贴板里有文件时它会挨在「新建相册」
+    下面（ADR 0018 决策 7），见 ``tests/ui/test_paste_flow.py``。
     """
     menu = _context_on_blank(window)
 
@@ -524,7 +564,7 @@ def test_background_menu_has_no_file_actions(window: MainWindow) -> None:
         "",
         "上一级",
     ]
-    forbidden = {"重命名…", "移到废纸篓", "在访达中显示"}
+    forbidden = {"重命名…", "移到废纸篓", "在访达中显示", "粘贴"}
     for action in menu.actions():
         submenu = action.menu()
         if submenu is not None:
@@ -1065,13 +1105,15 @@ def test_detail_menu_is_the_photo_menu_with_close_on_top(
 def test_detail_menu_differs_from_the_photo_menu_only_on_the_first_row(
     qt_app: QApplication, window: MainWindow
 ) -> None:
-    """与网格那张**逐行对照**：只差第一行与「粘贴」，其余一模一样。
+    """与网格那张**逐行对照**：只差第一行，其余一模一样。
 
     这条比「把行抄一遍」更能防退化：将来网格那张加了命令，这张忘了加，这里就红了。
+
+    剪贴板先摆满，免得两张菜单的内容取决于执行顺序 —— 「粘贴」只出现在**相册**与
+    **空白处**那两张里（ADR 0018 决策 7），照片与这一张都不摆，所以这里两边的行序
+    本来就应当一字不差。
     """
     _enter_album(qt_app, window)
-    # 先把剪贴板摆满：网格那张菜单的「粘贴」取决于剪贴板（ADR 0018），空剪贴板下
-    # 这一条压根不出现，两张菜单就少了一次有意义的对照。
     desktop.copy_files_to_clipboard([window._library.root / "京都" / PHOTO_NAMES[1]])
     row = window._model.row_of_path(window._library.root / "京都" / PHOTO_NAMES[0])
     assert row >= 0
@@ -1079,7 +1121,7 @@ def test_detail_menu_differs_from_the_photo_menu_only_on_the_first_row(
     assert photo is not None
     photo_texts = _texts(photo)
     assert photo_texts[0] == "打开"
-    assert "粘贴" in photo_texts
+    assert "粘贴" not in photo_texts, "按在照片上不摆这一条（ADR 0018 决策 7）"
 
     _open_detail(qt_app, window, PHOTO_NAMES[0])
     menu = window.detail_context_menu()
@@ -1087,7 +1129,7 @@ def test_detail_menu_differs_from_the_photo_menu_only_on_the_first_row(
     detail_texts = _texts(menu)
 
     assert detail_texts[0] == "退出"
-    assert detail_texts == ["退出", *(text for text in photo_texts[1:] if text != "粘贴")]
+    assert detail_texts == ["退出", *photo_texts[1:]]
 
 
 def test_detail_menu_says_escape_on_the_close_row(qt_app: QApplication, window: MainWindow) -> None:

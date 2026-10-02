@@ -173,10 +173,15 @@ def _album_item(menu: QMenu, label: str):
 
 
 def test_both_sit_under_copy_path(qt_app: QApplication, window: MainWindow) -> None:
-    """摆在「拷贝路径」正下方、「粘贴」上面（用户指定的位置，ADR 0019）。"""
+    """紧挨在「拷贝路径」正下方（用户指定的位置，ADR 0019）。
+
+    下面**不再是**「粘贴」——按在照片上不摆那一条了（ADR 0018 决策 7），这一张菜单里
+    「把东西放到别处去」只剩这两条。
+    """
     _enter(qt_app, window, window._library.root / "京都")
     row = _select_photo(window, "一张.jpg")
-    # 剪贴板里得有文件，「粘贴」才会出现在菜单里（ADR 0018 决策 6）。
+    # 剪贴板里得有文件，相册那一份菜单里的「粘贴」才会出现（ADR 0018 决策 6）——
+    # 照片这一份与剪贴板无关了，粘不粘都摆。
     desktop.copy_files_to_clipboard([window._library.root / "京都" / "另一张.jpg"])
 
     menu = window.context_menu_for(row)
@@ -186,8 +191,7 @@ def test_both_sit_under_copy_path(qt_app: QApplication, window: MainWindow) -> N
     assert labels.index("拷贝") < labels.index("拷贝路径")
     assert labels.index("复制到相册") == labels.index("拷贝路径") + 1
     assert labels.index("移动到相册") == labels.index("复制到相册") + 1
-    # 三条「把东西放到别处去」挨成一族，粘贴在它们下面。
-    assert labels.index("移动到相册") < labels.index("粘贴")
+    assert "粘贴" not in labels
 
 
 def test_both_are_submenus_not_plain_rows(qt_app: QApplication, window: MainWindow) -> None:
