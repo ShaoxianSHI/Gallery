@@ -293,8 +293,9 @@ class MainWindow(QMainWindow):
         self._browse_mode: str = self._session.browse_mode or BROWSE_MODE_FLAT
         self._current_dir: Path | None = None
         # 分组 / 排序（见 ADR 0009）：字段 id 存进会话，下次打开沿用。
+        # 从没选过排序字段的人（会话里那一项是空的）按默认排序字段走，见 session 模块。
         self._group_facet: str | None = self._session.group_facet
-        self._sort_facet: str | None = self._session.sort_facet
+        self._sort_facet: str | None = self._session.resolved_sort_facet()
         self._sort_descending: bool = bool(self._session.sort_descending)
         #: 已经进入的分组（它不是磁盘上的目录，只是这一层的一个筛选项）。
         self._group_view: GroupRef | None = None
@@ -575,7 +576,7 @@ class MainWindow(QMainWindow):
         sort_menu.setToolTipsVisible(True)
         self._sort_actions: dict[str | None, QAction] = {
             None: self._order_choice(
-                sort_menu, "默认（相册在前，按名称）", None, self.set_sort_facet
+                sort_menu, "不排序（相册在前，按名称）", None, self.set_sort_facet
             )
         }
         for facet in SORT_FACETS:
@@ -677,7 +678,7 @@ class MainWindow(QMainWindow):
         for facet_id, action in self._sort_actions.items():
             action.setChecked(facet_id == self._sort_facet)
         self._descending_action.setChecked(self._sort_descending)
-        # 没有排序字段时「逆序」没有意义（默认顺序是相册在前、名称升序）。
+        # 不排序时「逆序」没有意义（那个顺序就是相册在前、名称升序）。
         self._descending_action.setEnabled(self._sort_facet is not None)
 
     def _current_order(self) -> SortOrder:
@@ -689,8 +690,9 @@ class MainWindow(QMainWindow):
     def _ordering_active(self) -> bool:
         """这一层要不要在最后统一重排一次。
 
-        默认顺序（相册在前、按名称）**不需要**：扫描本来就是这个顺序，边扫边出图
-        才是大库该有的手感。选了分组或某个排序字段才需要重排。
+        不排序时**不需要**：扫描本来就是那个顺序（相册在前、按名称），边扫边出图
+        才是大库该有的手感。选了分组或某个排序字段才需要重排 —— 默认的按拍摄时间排
+        也一样要攒，所以这一条现在是常态而不是例外。
         """
         if self._group_view is not None:
             # 组里已经是照片了，再分组进不去也出不来，只剩组内排序。
@@ -740,9 +742,9 @@ class MainWindow(QMainWindow):
             return
         generation = self._generation
 
-        # **索引里全都有就直接排**：这一层读过一次之后每次回到它都是这个样子，纯粹是
-        # 一次查表加一次排序。起后台线程、报「正在读取 N 张照片的元数据」都是在说一件
-        # 没发生的事 —— 用户没法分辨是又在干活还是软件出了毛病（同 ``_maybe_start_place_pass``）。
+        # **索引里全都有就直接排**：这正是「第二次打开这个库」的样子，纯粹是一次查表加
+        # 一次排序。起后台线程、报「正在读取 N 张照片的元数据」都是在说一件没发生的事 ——
+        # 用户没法分辨是又在干活还是软件出了毛病（同 ``_maybe_start_place_pass`` 的理由）。
         cached = library.cached_facets(refs)
         if len(cached) == len(refs):
             self._facet_values = cached

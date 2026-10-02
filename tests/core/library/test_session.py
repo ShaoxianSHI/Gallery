@@ -14,7 +14,9 @@ from gallery.core import paths
 from gallery.core.library.session import (
     BROWSE_MODE_ALBUMS,
     BROWSE_MODE_FLAT,
+    DEFAULT_SORT_FACET,
     MAX_RECENT_ROOTS,
+    SORT_FACET_NONE,
     SessionState,
     WindowGeometry,
     load_session,
@@ -201,3 +203,56 @@ def test_with_metadata_visible_keeps_other_fields() -> None:
     assert updated.metadata_visible is True
     assert updated.browse_mode == BROWSE_MODE_ALBUMS
     assert state.metadata_visible is None
+
+
+# ---- 排序字段与它的默认值 ------------------------------------------------------------
+
+
+def test_no_sort_facet_means_the_default_one() -> None:
+    """从没选过排序字段：按拍摄时间排（``DEFAULT_SORT_FACET``）。"""
+    assert SessionState().resolved_sort_facet() == DEFAULT_SORT_FACET == "captured"
+
+
+@pytest.mark.parametrize("bad", ["没有这个字段", "keyword", "", 3, None, ["captured"]])
+def test_never_chosen_and_bogus_ids_fall_back_to_the_default(tmp_path: Path, bad: object) -> None:
+    """老的会话文件里那一项是 ``null``（那时表示「不排序」）—— 一律当「没选过」。
+
+    分不清「没选过」与「选了不排序」的场合一律偏向默认值：新排序对所有人都生效，
+    真想不排序的人重新点一次即可（那次会记成 ``SORT_FACET_NONE``）。
+    """
+    file = paths.app_state_file(base=tmp_path)
+    file.parent.mkdir(parents=True)
+    file.write_text(json.dumps({"sort_facet": bad}), encoding="utf-8")
+
+    assert load_session(base=tmp_path).resolved_sort_facet() == DEFAULT_SORT_FACET
+
+
+def test_the_chosen_sort_facet_is_remembered(tmp_path: Path) -> None:
+    save_session(SessionState(sort_facet="iso"), base=tmp_path)
+
+    assert load_session(base=tmp_path).resolved_sort_facet() == "iso"
+
+
+def test_choosing_no_sorting_survives_a_restart(tmp_path: Path) -> None:
+    """显式选了「不排序」就不能被下一次启动的默认值拽回去 —— 那正是哨兵存在的理由。"""
+    state = SessionState().with_ordering(None, None, False)
+
+    assert state.sort_facet == SORT_FACET_NONE  # 界面上传的是 None，会话里记的是哨兵
+
+    save_session(state, base=tmp_path)
+
+    assert load_session(base=tmp_path).resolved_sort_facet() is None
+
+
+def test_with_ordering_keeps_other_fields() -> None:
+    state = SessionState(thumbnail_edge=288, browse_mode=BROWSE_MODE_FLAT)
+
+    updated = state.with_ordering("captured_year", "captured", True)
+
+    assert updated.group_facet == "captured_year"
+    assert updated.sort_facet == "captured"
+    assert updated.sort_descending is True
+    assert updated.thumbnail_edge == 288
+    assert updated.browse_mode == BROWSE_MODE_FLAT
+    assert state.group_facet is None
+    assert state.sort_facet is None

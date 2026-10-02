@@ -17,10 +17,22 @@ from typing import Final
 
 from gallery.core import paths
 from gallery.core.atomic import read_text_or_none, write_text_atomic
-from gallery.core.metadata.facets import group_facet, sort_facet
+from gallery.core.metadata.facets import FACET_CAPTURED, group_facet, sort_facet
 
 #: 最多记住几个最近打开的库。
 MAX_RECENT_ROOTS: Final = 8
+
+#: 排序字段的**界面默认值**：用户从没选过排序字段时，按拍摄时间排。
+#:
+#: 照片是按时间发生的事，不是按文件名发生的事 —— 打开一个库想看的就是「什么时候拍的」。
+DEFAULT_SORT_FACET: Final = FACET_CAPTURED
+
+#: 会话里表示「明确不按任何字段排」（相册在前、同层按名称）的哨兵。
+#:
+#: 之所以要一个哨兵：``sort_facet`` 为 ``None`` 已经占了「没选过，用界面默认值」这个
+#: 意思，而界面默认值现在是拍摄时间。用户的显式选择必须能表达出来，否则每次重开软件
+#: 都会被默认值拽回去 —— 他选的就白选了。
+SORT_FACET_NONE: Final = "none"
 
 #: 会话文件格式版本。将来结构变化时用于迁移或丢弃。
 SESSION_VERSION: Final = 1
@@ -60,7 +72,8 @@ class SessionState:
     metadata_visible: bool | None = None
     #: 上次用的分组字段（见 ``metadata.facets``）；``None`` 表示不分组。
     group_facet: str | None = None
-    #: 上次用的排序字段；``None`` 表示保持扫描顺序。
+    #: 上次用的排序字段；``None`` 表示**没选过**（由 :meth:`resolved_sort_facet` 交回
+    #: :data:`DEFAULT_SORT_FACET`），:data:`SORT_FACET_NONE` 表示明确不按任何字段排。
     sort_facet: str | None = None
     #: 排序是否逆序；``None`` 表示用界面默认值（正序）。
     sort_descending: bool | None = None
@@ -90,9 +103,20 @@ class SessionState:
         return replace(
             self,
             group_facet=group_facet,
-            sort_facet=sort_facet,
+            # 界面上「不排序」传的就是 ``None``，但会话里必须与「没选过」分开记，
+            # 否则这次选择会被下一次启动的默认值覆盖掉。
+            sort_facet=sort_facet if sort_facet is not None else SORT_FACET_NONE,
             sort_descending=descending,
         )
+
+    def resolved_sort_facet(self) -> str | None:
+        """这一档真正该用的排序字段 id；``None`` 表示不按任何字段排（相册在前、按名称）。
+
+        没选过（:attr:`sort_facet` 为 ``None``）就交回 :data:`DEFAULT_SORT_FACET`。
+        """
+        if self.sort_facet == SORT_FACET_NONE:
+            return None
+        return self.sort_facet or DEFAULT_SORT_FACET
 
 
 def load_session(*, base: Path | None = None) -> SessionState:
@@ -183,10 +207,17 @@ def _parse_group_facet(value: object) -> str | None:
 
 
 def _parse_sort_facet(value: object) -> str | None:
-    """合法的排序字段 id，否则 ``None``（保持扫描顺序）。"""
-    if not isinstance(value, str):
-        return None
-    return value if sort_facet(value) is not None else None
+    """排序字段 id；没存过或来路不明都当「没选过」（交回界面默认值）。
+
+    老的会话文件里这个键一律是 ``null`` —— 那时它表示「不排序」，如今它表示
+    「没选过」。分不清这两者的场合一律按「没选过」处理：新默认值对所有人都生效，
+    真想不排序的用户重新点一次即可（那次会记成 :data:`SORT_FACET_NONE`）。
+    """
+    if value == SORT_FACET_NONE:
+        return SORT_FACET_NONE
+    if isinstance(value, str) and sort_facet(value) is not None:
+        return value
+    return None
 
 
 def _parse_browse_mode(value: object) -> str | None:
@@ -228,8 +259,10 @@ __all__ = [
     "BROWSE_MODES",
     "BROWSE_MODE_ALBUMS",
     "BROWSE_MODE_FLAT",
+    "DEFAULT_SORT_FACET",
     "MAX_RECENT_ROOTS",
     "SESSION_VERSION",
+    "SORT_FACET_NONE",
     "SessionState",
     "WindowGeometry",
     "load_session",
