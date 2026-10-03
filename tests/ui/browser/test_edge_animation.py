@@ -586,3 +586,38 @@ def test_the_layout_is_exactly_the_same_whether_or_not_it_animates(
     assert animated._first_row_columns() == plain._first_row_columns()
     assert animated.icon_edge == plain.icon_edge
     assert animated.verticalScrollBar().value() == plain.verticalScrollBar().value()
+
+
+def test_the_scroll_never_goes_backwards_while_recentering(
+    qt_app: QApplication,
+    tmp_path: Path,
+    settle: Callable[[float], None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """深层选中项要重试好几轮，重试期间滚动条不能抢动画的方向盘。
+
+    抢了的话画面会先窜到终点、下一帧又被动画按回「起点→终点」的插值上 —— 看着
+    就是闪一下。实测轨迹是 ``0 → 4272 → 6098 → 1835 → … → 6098``，那一次倒退就是它。
+    """
+    grid = make_grid(qt_app, tmp_path, 200)
+    grid.select_row(80, ensure_visible=False)
+    settle(SETTLE_SECONDS)
+
+    # 数一数重试真的发生了 —— 否则「不倒退」可能只是因为压根没重试。
+    calls: list[int] = []
+    real = grid._center_on_row
+
+    def counted(row: int, columns: int, *, attempts_left: int = 0) -> bool:
+        calls.append(attempts_left)
+        return real(row, columns, attempts_left=attempts_left)
+
+    monkeypatch.setattr(grid, "_center_on_row", counted)
+
+    grid.set_target_edge(THUMBNAIL_SIZES[2])
+    samples = scroll_samples(grid, settle)
+
+    assert len(calls) > 1, f"只排了一轮 {calls}，这测试就没测到东西"
+    pairs = list(zip(samples, samples[1:], strict=False))
+    backwards = [(a, b) for a, b in pairs if b < a]
+    assert not backwards, f"滚动倒退了：{backwards}"
+    assert len(set(samples)) > 3, f"只取到 {sorted(set(samples))}，这是一次跳变不是过渡"

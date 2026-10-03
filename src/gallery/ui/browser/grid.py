@@ -829,15 +829,22 @@ class PhotoGrid(QListView):
         bar = self.verticalScrollBar()
         wanted = top + cell_height // 2 - self.viewport().height() // 2
         target = max(bar.minimum(), min(bar.maximum(), wanted))
-        # 自己发起的滚动不算「用户滚了」：``scrollContentsBy`` 会拿这个标志去判断
-        # 要不要叫停正在跑的过渡（见 :meth:`_on_transition_step`）。
-        self._driving_scroll = True
-        try:
-            bar.setValue(target)
-        finally:
-            self._driving_scroll = False
         # 过渡每帧都重读 ``_scroll_to``，所以这里改了它下一帧就跟着走。
         self._scroll_to = target
+        if self._transition_anim.state() == QAbstractAnimation.State.Running:
+            # **只改目的地，不动滚动条。** 这一段就是 :meth:`_retry_center` 回来时跑的，
+            # 那时过渡正在滚：抢方向盘把滚动条直接按到终点，下一帧动画又把它按回
+            # 「起点→终点」的插值上 —— 画面先窜出去再被拽回来，看着就是闪一下。
+            # （实测轨迹：0 → 4272 → 6098 → 1835 → … → 6098，中间那一下倒退就是它。）
+            pass
+        else:
+            # 自己发起的滚动不算「用户滚了」：``scrollContentsBy`` 会拿这个标志去判断
+            # 要不要叫停正在跑的过渡（见 :meth:`_on_transition_step`）。
+            self._driving_scroll = True
+            try:
+                bar.setValue(target)
+            finally:
+                self._driving_scroll = False
         if target == wanted:
             return True
         if attempts_left > 0:
