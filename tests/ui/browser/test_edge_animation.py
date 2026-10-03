@@ -181,6 +181,59 @@ def test_two_steps_in_a_row_do_not_jump_to_the_discarded_size(
     assert grid.icon_edge < before, "而且该是用户最后要的那一档"
 
 
+#: 20 条配 1200×800 的网格：大档下内容比视口高、小档下比视口矮 —— 正好是
+#: 「切档把滚动条挤没了」那个场景。下面两条用例都靠这个前提。
+SHORT_LEVEL = 20
+
+
+def test_the_scrollbar_disappearing_does_not_cut_the_transition_short(
+    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+) -> None:
+    """切档之后滚动条消失（视口于是自己宽出一个滚动条的宽度）时，动画照跑。
+
+    这是「相册层没有动画」的成因：那一层本来就短，**缩小一档就短过视口**，
+    滚动条一收回去就送来一个 ``resizeEvent``。那个 resize 是这次切档自己的后果，
+    不是用户拽了窗口 —— 当成后者而落位，动画会在自己发出去几毫秒之后被自己掐掉，
+    于是「照片那层有动画、相册那层没有」。相册层本来也正是短的那一层。
+    """
+    grid = make_grid(qt_app, tmp_path, SHORT_LEVEL)
+    settle(SETTLE_SECONDS)
+    grid.set_target_edge(THUMBNAIL_SIZES[2])
+    settle(SETTLE_SECONDS)
+    bar = grid.verticalScrollBar()
+    assert bar.maximum() > 0, "前提没摆出来：大档下内容应当比视口高、滚动条在"
+
+    start = grid._delegate.draw_edge
+    grid.set_target_edge(THUMBNAIL_SIZES[0])
+    samples = samples_while_animating(grid, settle)
+
+    assert bar.maximum() == 0, "前提没摆出来：小档下内容应当比视口矮、滚动条收走"
+    assert max(samples) == start, "第 0 帧必须还是旧尺寸，不许先闪到终点再长回来"
+    assert len(set(samples)) > 3, f"只取到 {sorted(set(samples))}，这是一次跳变不是动画"
+    assert samples == sorted(samples, reverse=True), f"缩回去不该中途回头：{samples}"
+    assert samples[-1] == float(grid.icon_edge), "最后一帧必须正好落在新尺寸上"
+
+
+def test_dragging_the_window_during_the_transition_still_ends_it(
+    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+) -> None:
+    """真的把窗口拖宽拖窄，仍然立刻落位 —— 那是用户在拽，不许继续放动画。
+
+    与上一条成对：视口宽度变了一定要分得出「滚动条在开关」与「用户拖了窗口」，
+    放行前者的那个判据不许把后者一起放过去。
+    """
+    grid = make_grid(qt_app, tmp_path, 40)
+    settle(SETTLE_SECONDS)
+    grid.set_target_edge(THUMBNAIL_SIZES[2])
+    assert grid._transition_anim.state() == QAbstractAnimation.State.Running, "前提：过渡在跑"
+
+    grid.resize(grid.width() + 300, grid.height())
+    settle(SLICE_SECONDS)
+
+    assert grid._transition_anim.state() == QAbstractAnimation.State.Stopped
+    assert grid._delegate.draw_edge == float(grid.icon_edge), "拖窗口就该直接落位"
+
+
 def test_the_delegate_draws_at_the_animated_size_but_keeps_its_geometry(
     qt_app: QApplication,
 ) -> None:
