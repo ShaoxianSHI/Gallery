@@ -150,6 +150,49 @@ def test_albums_mode_startup_keeps_normal_tile_size(
     window.close()
 
 
+# ---- 换层：上一层的一切痕迹都不留 ------------------------------------------
+
+
+def test_a_new_level_starts_without_a_selection(qt_app: QApplication, tmp_path: Path) -> None:
+    """选区、当前项、扩选锚点三样都得清 —— 它们记的都是**上一层**的行号。"""
+    grid = make_grid(qt_app, tmp_path, count=6)
+    grid.select_row(4)
+    qt_app.processEvents()
+    assert grid.genuinely_selected_rows() == [4], "前置条件：那一格是选中的"
+
+    grid.reset_for_new_level()
+    qt_app.processEvents()
+
+    assert grid.genuinely_selected_rows() == [], "换层之后谁也不该选中"
+    assert grid.current_row() == -1, "当前项也要清：菜单的可用性判据读的是它"
+    assert grid._range_anchor == -1, "扩选锚点记的是上一层的行号，得一起作废"
+    grid.deleteLater()
+
+
+def test_a_shift_click_after_a_level_change_selects_only_that_cell(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """换层之后第一次 `⇧` 点，就是「点了哪一格」，不是「从某一格铺到哪一格」。
+
+    留着上一层点过的锚点时，从第 4 行 `⇧` 点第 1 行会选出 1~4 —— 用户要的是第 1 格。
+    """
+    grid = make_grid(qt_app, tmp_path, count=6)
+    grid.select_row(4)
+    grid.reset_for_new_level()
+    qt_app.processEvents()
+
+    QTest.mouseClick(
+        grid.viewport(),
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.ShiftModifier,
+        grid.visualRect(grid.model().index(1, 0)).center(),
+    )
+    qt_app.processEvents()
+
+    assert grid.genuinely_selected_rows() == [1]
+    grid.deleteLater()
+
+
 # ---- 第一行铺不满：右边空出一整列 ------------------------------------------
 
 #: 缺陷现场：刚打开 GUI，进一个相册，照片没有铺满窗口，右边空出一大片；

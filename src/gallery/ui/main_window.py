@@ -139,13 +139,6 @@ MAX_PREVIEW_EDGE = 4096
 #: 被改两遍，过期之后用户真的在访达里新建一个同名文件又该正常显示（ADR 0013）。
 WATCH_ECHO_TTL = 2.0
 
-#: 最多记住几层「上一次停在哪一格」。超出了就把最久没去的那一层挤掉（先进先出）。
-#:
-#: 只在这一轮运行里活着，进/library 就清空：它是「我刚才在哪儿」，不是用户的数据。
-#: 给它一个上限是因为层数不封顶 —— 挨个相册翻一遍、每翻一次换一个分组字段，
-#: 攒起来能攒出很多条，而绝大多数一辈子不会被再想起。
-MAX_LEVEL_FOCUS = 256
-
 #: 用户触发了一条横幅之后，后台消息让位这么久（秒）。
 #:
 #: 横幅只有一个槽，而用户刚做的事与后台的收尾常常同时发生：把照片移到废纸篓之后，
@@ -231,6 +224,8 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._watch_pending: tuple[LibraryChange, ...] | None = None
         #: 分组视图里来了新照片：重新分组之后要回到哪个组（ADR 0013）。
         self._pending_group: str | None = None
+        #: 回到那个组时该选中哪一格（那一趟是软件自己绕出去的，见 :meth:`_reenter_group_later`）。
+        self._pending_focus: EntryKey | None = None
 
         self._library: Library | None = None
         self._pipeline: ThumbnailPipeline | None = None
@@ -276,12 +271,11 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._sort_descending: bool = bool(self._session.sort_descending)
         #: 已经进入的分组（它不是磁盘上的目录，只是这一层的一个筛选项）。
         self._group_view: GroupRef | None = None
-        #: 每一层上一次停在哪儿：层标识 → 那一格的标识（见 :meth:`_remember_level_focus`）。
-        self._level_focus: dict[LevelKey, EntryKey] = {}
-        #: 模型里现在摆着的到底是哪一层。换层时用它来把「停过的地方」记到**对的那一层**名下
-        #: —— ``enter_folder`` / ``enter_group`` 都是先改状态再重载，光看当前状态会记错。
+        #: 模型里此刻摆着的是哪一层。换层时用它分清「换了一层」（重新进入，选区清空）与
+        #: 「还是这一层，重排一遍」（跟着停着的那一格走）—— ``enter_folder`` /
+        #: ``enter_group`` 都是先改状态再重载，所以只能事后比一比，见 :meth:`_arm_focus`。
         self._level_key: LevelKey | None = None
-        #: 这一层第一次排好时该选中的一格（``None`` = 这一层没什么可摆出来的）。
+        #: 这一层第一次排好时该选中的一格（``None`` = 谁也不选，见 :meth:`_arm_focus`）。
         self._focus: EntryKey | None = None
         #: 上面那一格摆出来了吗。一层只摆一次，免得跟用户后来的点选抢当前项。
         self._focus_restored = False
@@ -782,14 +776,17 @@ class MainWindow(WriteOpsMixin, QMainWindow):
 
     # ---- 进入与退出分组 ------------------------------------------------------
 
-    def enter_group(self, group: GroupRef) -> None:
+    def enter_group(self, group: GroupRef, *, focus: EntryKey | None = None) -> None:
         """进入一个分组（双击组卡片）。
 
         分组不是磁盘上的目录，因此不走 ``enter_folder``：它记不住路径，退出时
         直接回到进来之前的那一层。
+
+        :param focus: 到了这一层选中哪一格。只有软件自己为了重新分组绕出去再回来时
+            才给（见 :meth:`_reenter_group_later`）；用户点进来的一律谁也不选。
         """
         self._group_view = group
-        self._reload_level()
+        self._reload_level(focus=focus)
 
     def _leave_group(self) -> None:
         group = self._group_view
@@ -945,8 +942,8 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         finally:
             # 顺序定下来了，这才有资格回答「这一层是不是空的」。
             self._update_level_notice()
-            # 也才找得到那一层上一次停着的格子：组卡片本身就是重排出来的。
-            self._restore_level_focus()
+            # 也才找得到「退上去时该停住的那一格」：组卡片本身就是重排出来的。
+            self._restore_focus()
             # 分组视图里来了新照片时，这里是重新分组之后回到原处的地方（ADR 0013）。
             self._maybe_reenter_group()
             # 暂存区到这里才清空：攒着的变化从这一刻起才能安全地落到网格上。
@@ -1087,7 +1084,7 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._detail.clear_image()
         self._panel.clear()
         self._current_dir = library.root
-        self._arm_level_focus()  # 打开库走的是自己那一套，不经过 _reload_level
+        self._arm_focus()  # 打开库走的是自己那一套，不经过 _reload_level
         # 每一层都要重排（排序字段总是有的），所以扫出来的一律先攒着，等顺序定下来。
         self._staged = []
         self._level_notice = False
@@ -1110,9 +1107,13 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._watch_echoes.clear()
         self._watch_pending = None
         self._pending_group = None
-        # 「刚才停在哪一层、那一层停在哪一格」是**这个库的**记忆：换库就得跟着一起走，
-        # 不然新库的某一层会按上一个库的路径去选中一格（分组视图同理，它清在函数末尾）。
-        self._level_focus.clear()
+        self._pending_focus = None
+        # 「到了这一层该选中哪一格」是**上一个库**留下的：换库就得跟着一起走，
+        # 不然新库的那一层会按上一个库的路径去选中一格（那一格多半在新库里根本不存在，
+        # 于是只是白找一趟；更糟的是它要是在新库里也碰巧存在，选中的就是另一张照片）。
+        # 「现在摆的是哪一层」同样属于上一个库：不作废的话，新库的第一层会被当成
+        # 「还是刚才那一层」，于是把上一库的选中原样搬过来。
+        self._focus = None
         self._level_key = None
         self._cancel_facet_job()
         self._cancel_place_pass()
@@ -1601,19 +1602,25 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         """分组视图里来了新照片：整个库重新分组一次，之后再回到同一个组。
 
         否则组卡片上的张数会一直停在快照那一刻，用户看不出这个组已经变了。
+
+        **这一趟不是用户自己退出去的**，所以停着的那一格要记下来，等回到同一个组时
+        重新选中 —— 不然库里只是多了一张照片，人正在看的那张就被甩掉了（与「换排序
+        跟着照片走」同一取向，见 :meth:`_arm_focus`）。
         """
         self._pending_group = key
+        self._pending_focus = self._shown_entry_key()
         self._group_view = None
         self._reload_level()
 
     def _maybe_reenter_group(self) -> None:
         """重排之后回到刚才那个组（它不在了就留在这一层，由横幅说明为什么）。"""
         key, self._pending_group = self._pending_group, None
+        focus, self._pending_focus = self._pending_focus, None
         if key is None:
             return
         for entry in self._model.entries():
             if isinstance(entry, GroupRef) and entry.key == key:
-                self.enter_group(entry)
+                self.enter_group(entry, focus=focus)
                 return
 
     def _note_self_write(self, *paths: Path) -> None:
@@ -2622,6 +2629,9 @@ class MainWindow(WriteOpsMixin, QMainWindow):
 
         退上去时**把刚离开的那一级留在选中状态**：从相册退回去选中的是那个相册卡片，
         从分组退回去选中的是那张组卡片（访达里退上一层就是这个样子）。
+
+        只此一处例外。再**点进去**是另一次浏览：那一层不记着自己上一次停在哪一格，
+        网格上不会留着上一次的选中（见 :meth:`_arm_focus`）。
         """
         library = self._library
         if library is None:
@@ -2670,20 +2680,25 @@ class MainWindow(WriteOpsMixin, QMainWindow):
     def _reload_level(self, *, focus: EntryKey | None = None) -> None:
         """重新列出当前层（切模式、进入或返回相册时都走这里）。
 
-        :param focus: 到了这一层要选中哪一格（``None`` = 用这一层自己记着的那一条）。
+        :param focus: 到了这一层要选中哪一格。**只有往上一层退才会给**（那个相册 / 那个组），
+            其余由 :meth:`_arm_focus` 自己判断：还是这一层就跟着停着的那一格走，换了层
+            就谁也不选。
         """
         if self._scan_job is not None:
             self._runner.cancel(self._scan_job)
             self._scan_job = None
-        # 先把「这一层停过的地方」记下来，再动网格：模型一清就再也问不出当前项了。
-        self._remember_level_focus()
-        self._arm_level_focus(focus)
+        self._arm_focus(focus)
         # 换代：让已经在路上的旧结果作废。
         self._generation += 1
         self._grid.cancel_rename()
         self._cancel_facet_job()
         self._facet_values = {}
         self._model.clear()
+        # 网格先清干净，不靠模型 reset 的副作用：这一层可能一个格子都没有（空相册），
+        # 而「谁也没选中」正是要摆出来给人看的一个状态。当前项留着的话，⌘R / ⌘⌫ 的可用性
+        # 判据里它仍然算数 —— 菜单亮着，作用的对象却不存在。该恢复的那一格由
+        # :meth:`_restore_focus` 在这一层排好之后重新选中。
+        self._grid.reset_for_new_level()
         self._preview_cache.clear()
         self._metadata_cache.clear()
         self._staged = []  # 换层要重扫，攒着，别先摆一屏旧顺序
@@ -2701,58 +2716,64 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._update_action_states()
         self._start_scan()
 
-    # ---- 记住每一层停在哪里 --------------------------------------------------
+    # ---- 到了这一层该选中哪一格 ----------------------------------------------
     #
-    # 两件不一样的事，都靠标识（见 ``ui.navigation``）而不是行号 —— 重扫、重排、换排序
-    # 之后行号就变了，标识没变：
+    # 三种情形，三种答案：
     #
-    # - ``_focus``：**到了这一层，选中这一格**。往上一层退时给的（那个相册 / 那个组）。
-    #   它回答的是「上一级该选中谁」，只在这一层第一次排好时用一次。
-    # - ``_level_focus``：**这一层上一次停在哪一格**。回答的是「再进这一层时停在哪」。
+    # - **往上一层退**（``go_up`` / ``_leave_group`` 显式给出）：网格上仍停着刚离开的
+    #   那个相册 / 那个组。不然每退一级都要重新找一遍自己刚才在哪儿。
+    # - **还是这一层，重排一遍**（换排序 / 换分组 / 正序逆序 / 扫描在途时决定重来）：
+    #   停着的那一格还在，跟着它走 —— 是同一批照片换了个位置，不该把人甩掉。
+    # - **换了层**（进入相册 / 进入分组 / 切浏览方式，含退上去之后再点进去）：
+    #   **谁也不选**。文件浏览里「重新进入一层」是一次新的浏览：把上一次的选择留着，
+    #   用户看到的是上一趟留下的高亮，而随手一个 ⌘⌫ 删掉的是他这一趟并没有指过的
+    #   东西 —— 选中框画在那儿，看着却像「我已经选好了」。
+    #
+    # 三者都靠**标识**而不是行号（重扫、重排、换排序之后行号就变了，标识没变），标识由
+    # ``ui.navigation`` 的纯函数算（见 ``tests/ui/test_navigation.py``）。哪一条属于哪一
+    # 种情形不靠调用方记得传参，而是比一比**层标识**—— 见 :meth:`_arm_focus`。
+
+    def _arm_focus(self, focus: EntryKey | None = None) -> None:
+        """记下到了新的一层该选中哪一格。
+
+        :param focus: 显式指定（往上一层退时给的那个相册 / 那个组）。不给就是让这里自己
+            判断：**还是刚才那一层**就把停着的那一格记下来跟着它走，**换了层**就谁也不选。
+
+        判断靠比层标识（见 ``navigation.level_key``）：``enter_folder`` / ``enter_group``
+        都是先改状态再重载，所以问「现在在哪一层」得到的是**新的**那一层 —— 正好拿来
+        和 ``self._level_key``（模型里此刻摆着的那一层）比。
+
+        **顺序要紧**：先把「还是同一层吗」问完，再把 ``self._level_key`` 换成新的那一层。
+        反过来的话，两边永远相等，于是「换了层就什么都不记」这条永远轮不到执行 ——
+        剩下的全靠「记下来的那一格在新的一层里恰好不存在」蒙对。
+        """
+        remembered = self._shown_entry_key()
+        self._level_key = self._current_level_key()
+        self._focus = focus if focus is not None else remembered
+        self._focus_restored = False
 
     def _current_level_key(self) -> LevelKey:
         """当前这一层的标识（见 ``navigation.level_key``）。"""
         group = None if self._group_view is None else (self._group_view.facet, self._group_view.key)
         return level_key(self._browse_mode, self._current_dir, group=group)
 
-    def _remember_level_focus(self) -> None:
-        """把当前这一层停在哪儿的那一格记下来，供下次回到这一层时选中。
-
-        记的是**模型里此刻摆着的那一层**：``enter_folder`` / ``enter_group`` 都是先改状态
-        再重载，到这里时它们早已改完了，所以不能问「现在在哪一层」，得问「刚才摆的是哪一层」。
-
-        手上没有当前项就什么都不做（不覆盖已经记着的那一条）：空相册、空分组、
-        扫描还没上屏时都会走到这里，把上一次的好位置抹掉没有任何好处。
-        """
-        key, self._level_key = self._level_key, None
+    def _shown_entry_key(self) -> EntryKey | None:
+        """网格上此刻停着的那一格是谁；不是同一层（或者压根没有）就是 ``None``。"""
+        if self._level_key is None or self._level_key != self._current_level_key():
+            return None
         entry = self._model.entry_at(self._grid.current_row())
-        if key is None or entry is None:
-            return
-        self._level_focus.pop(key, None)  # 重新插到末尾：dict 按插入顺序迭代，挤的是最久没去的那层
-        self._level_focus[key] = entry_key(entry)
-        while len(self._level_focus) > MAX_LEVEL_FOCUS:
-            self._level_focus.pop(next(iter(self._level_focus)))
+        return None if entry is None else entry_key(entry)
 
-    def _arm_level_focus(self, focus: EntryKey | None = None) -> None:
-        """记下新的一层是哪儿、到了该选中哪一格。
-
-        没给 ``focus``（不是「退上去」，只是重新列出这一层）就用这一层自己记着的那一条 ——
-        于是再进同一个相册时，上一次看的那张照片仍然选中。
-        """
-        self._level_key = self._current_level_key()
-        self._focus = focus if focus is not None else self._level_focus.get(self._level_key)
-        self._focus_restored = False
-
-    def _restore_level_focus(self) -> None:
+    def _restore_focus(self) -> None:
         """这一层排好之后，把该选中的一格选中。
 
         **每一层只摆一次**：摆完之后就是用户自己的选择了，后台再重排一次（监听器来了
         新照片、换排序）不该把它拽回去 —— 那种重排由 ``_reorder_level`` 的锚点负责。
 
-        找不到就什么都不选：那一条多半已经改名、移走或删掉了，界面此时也说不清该选谁，
+        找不到就什么都不选：那一格多半已经被改名、移走或删掉了，界面此时也说不清该选谁，
         与其挑一个错的，不如让这一层从零开始。
         """
-        if self._focus_restored or self._level_key is None:
+        if self._focus_restored:
             return
         self._focus_restored = True
         key, self._focus = self._focus, None

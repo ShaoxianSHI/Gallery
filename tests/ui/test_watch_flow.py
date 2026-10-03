@@ -726,6 +726,34 @@ def test_a_photo_added_inside_a_group_regroups_and_comes_back(
         window.close()
 
 
+def test_regrouping_to_come_back_keeps_the_photo_you_were_on(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """这一趟是软件自己绕出去的：库里只多了一张照片，不该把人正在看的那张甩掉。
+
+    与「重新进入一层不留选中」是同一件事的两面：那一条说的是**用户自己退出去再点进来**，
+    这一条说的是软件为了重新分组绕了一圈又回来 —— 用户从头到尾没离开过。
+    """
+    make_photo("一张.jpg")
+    make_photo("两张.jpg")
+    window, watcher = open_window(qt_app, tmp_path)
+    try:
+        _enter_folder_group(qt_app, window)
+        looking_at = window._model.photo_at(0)
+        assert looking_at is not None
+        window._grid.select_row(0)
+
+        newcomer = make_photo("刚来的.jpg")
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.ADDED, newcomer))
+
+        assert wait_until(qt_app, lambda: window._model.rowCount() == 3)
+        row = window._model.row_of_path(looking_at.path)
+        assert row >= 0, "刚才在看的那张还在组里"
+        assert window._grid.genuinely_selected_rows() == [row], "绕一圈回来仍停在同一张上"
+    finally:
+        window.close()
+
+
 # ---- 生命周期 -----------------------------------------------------------------
 
 

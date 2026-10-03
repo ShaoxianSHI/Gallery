@@ -675,6 +675,29 @@ class PhotoGrid(QListView):
             return []
         return sorted({index.row() for index in selection.selectedIndexes()})
 
+    def clear_current(self) -> None:
+        """把「谁也没选中」做成一个明确的状态：选区与当前项一起清掉。
+
+        **当前项要一起清**，不能只清选区：``⌘R`` / ``⌘⌫`` 的可用性判据读的是
+        ``current_row``，留着它就会出现「菜单亮着、作用的对象在屏幕上不存在」
+        （同一个道理见 :meth:`select_for_context` 末尾那段）。
+
+        扩选锚点（``_range_anchor``）**不在这里动**：右键空白处也要用它，见
+        :meth:`reset_for_new_level`。
+        """
+        self.clearSelection()
+        self.setCurrentIndex(QModelIndex())
+
+    def reset_for_new_level(self) -> None:
+        """换层：这一层从零开始，网格上不留上一层的一切痕迹。
+
+        除了 :meth:`clear_current`，还要作废**扩选锚点**：它记的是**上一层**的行号，
+        换层之后那一行指着的是别的东西 —— 留着它，下一次 `⇧` 点会从一层之隔的那一格
+        铺开，选出一段用户并没有要过的区间。
+        """
+        self.clear_current()
+        self._range_anchor = -1
+
     def select_for_context(self, row: int) -> int:
         """右键之前的选区修正。返回菜单该作用于哪一行（``-1`` = 空白处）。
 
@@ -694,6 +717,7 @@ class PhotoGrid(QListView):
 
         空白处**连当前项一起清掉**：只清选区的话，「重命名」的可用性判据里那个
         ``current_row`` 仍然是有效的，用户会拿到一个作用在看不见的东西上的按钮。
+        扩选锚点**留着** —— 右键不是一次点选，理由见上面那段。
 
         「已经选中」问的是**真选区**（:meth:`genuinely_selected_rows`）而不是
         :meth:`selected_rows`。后者在选区为空时会退回当前项，于是「Qt 顺手把第 0 行
@@ -704,8 +728,7 @@ class PhotoGrid(QListView):
         self._armed_row = -1
         self._rename_timer.stop()
         if row < 0:
-            self.clearSelection()
-            self.setCurrentIndex(QModelIndex())
+            self.clear_current()
             return -1
         model = self.model()
         selection = self.selectionModel()
