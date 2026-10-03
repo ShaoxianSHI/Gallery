@@ -135,6 +135,13 @@ class GridTransition:
     old_cell: QSize
     new_columns: int
     new_cell: QSize
+    #: 旧画面整体要跟着挪多少像素（内容坐标）。
+    #:
+    #: 旧画面是相对**旧滚动位置**画出来的，而换档之后滚动条一开始就落在别处
+    #: （内容锚定，见 :meth:`PhotoGrid._anchored_scroll_value`）—— 不补这一笔，
+    #: 第 0 帧画的就是「旧画面 + 新滚动位置」，整幅画会挪到屏幕外面去（或者闪到
+    #: 相册的别的段落）。
+    scroll_shift: int = 0
 
     @property
     def reflows(self) -> bool:
@@ -156,12 +163,30 @@ class GridTransition:
         """第 ``row`` 格相对**最终位置**要往回挪多少，才能落在第 ``t`` 帧。
 
         ``t=0`` 给回旧位置，``t=1`` 给 0。坐标是**内容坐标**：视图的滚动平移由 Qt
-        统一叠在上面，所以这一段位移与滚动过渡天然可交换，不用互相知道对方。
+        统一叠在上面（这一段的纵向还要再加上 :attr:`scroll_shift`，见那里）。
         """
         old = self._position(self.old_columns, self.old_cell, row)
         new = self._position(self.new_columns, self.new_cell, row)
         k = 1.0 - t
-        return QPoint(round((old.x() - new.x()) * k), round((old.y() - new.y()) * k))
+        return QPoint(
+            round((old.x() - new.x()) * k),
+            round((old.y() - new.y()) * k) + round(self.scroll_shift * k),
+        )
+
+
+@dataclass(frozen=True)
+class _ScrollAnchor:
+    """换几何**之前**，视口正中那一格：行号，以及它当时在屏幕上的纵向位置。
+
+    **两个都要。** 行号用来算它换完之后落在第几行（列数一变，行号就变了），屏幕
+    位置用来把它摆回原处 —— 只把它摆到视口正中会多挪最多半格，那也是一跳。
+
+    它是过渡第 0 帧的依据（见 :meth:`PhotoGrid._anchored_scroll_value`）：滚动位置是
+    **内容坐标**，而格子高矮与每行张数一变，同一个像素值指的就是另一批照片了。
+    """
+
+    row: int
+    screen_y: int
 
 
 def _drag_threshold() -> int:
@@ -798,7 +823,11 @@ class PhotoGrid(QListView):
         if columns <= 0:
             return
         self._transition = GridTransition(
-            self._transition.old_columns, self._transition.old_cell, columns, cell
+            self._transition.old_columns,
+            self._transition.old_cell,
+            columns,
+            cell,
+            self._transition.scroll_shift,
         )
 
     def _refresh_scroll_goal(self) -> None:
@@ -833,6 +862,10 @@ class PhotoGrid(QListView):
         列数都不该看见滚动条自己走。唯一会动的场合是**列数真的变了**（:attr:`GridTransition.reflows`）
         —— 那时「第 31 行」已经是另一批照片了，停在原来的像素上等于换了一张照片，
         所以把用户正看着的那一格摆到正中（见 :meth:`_focus_row`）。
+
+        换行时过渡的**起点**也要跟着换算法：从「原来看着的那一格还在原处」出发，
+        而不是照搬旧的像素值（见 :meth:`_anchored_scroll_value`）—— 后者会让第 0 帧
+        闪到相册的别的段落上去。
         """
         # 动画起点是「上一帧画出来」的那一档，不是几何尺寸：上一次过渡可能还没跑完，
         # 那时两者不等。从中间值接着走，用户连点两档才不会看见它先倒退回去。
@@ -844,16 +877,25 @@ class PhotoGrid(QListView):
         scroll_from = self.verticalScrollBar().value()
         old_columns = self._first_row_columns()
         old_cell = self.gridSize()
-        anchor = self._anchor_row()
+        anchor = self._anchor()
         self._apply_geometry(cell, scroll_from)
         new_columns = self._first_row_columns()
+        scroll_shift = 0
         if old_columns > 0 and new_columns > 0 and old_columns != new_columns:
             # **只在真的换行时居中。** 这一条是踩过坑的：Qt 会顺手把当前项设成第 0 行，
             # 无条件按它居中就等于「每 resize 一次（**包括后台横幅出现/消失带来的自动
             # resize**）都把整屏拽回顶部」。
-            self._center_on_row(self._focus_row(anchor), new_columns)
+            #
+            # 换行之后 ``scroll_from`` 也不能再当过渡的起点了：同一个像素值指的是另一
+            # 批照片（见 :meth:`_anchored_scroll_value`），照搬会让滚动条一上来就跳到
+            # 另一个相对位置上（内容锚定之后它才是连续的）。
+            anchored = self._anchored_scroll_value(anchor, new_columns)
+            if anchored is not None:
+                scroll_shift = anchored - scroll_from
+                scroll_from = anchored
+            self._center_on_row(self._focus_row(anchor.row), new_columns)
         self._transition = (
-            GridTransition(old_columns, old_cell, new_columns, cell)
+            GridTransition(old_columns, old_cell, new_columns, cell, scroll_shift)
             if old_columns > 0 and new_columns > 0
             else None
         )
@@ -879,6 +921,10 @@ class PhotoGrid(QListView):
         比拖得略卡要紧得多。
         """
         self._laying_out = True
+        # 布局期间 Qt 因为范围变小而夹一下当前位置，是**布局的副作用**，不是「用户
+        # 滚了」—— 不挡住的话 :meth:`scrollContentsBy` 会把正在跑的过渡当成被打断，
+        # 于是连按两档那种情形会从「直接落位」变成「又起一段新动画」。
+        self._driving_scroll = True
         try:
             self._applied_edge = cell.width() - GRID_PADDING_X
             self._delegate.set_icon_edge(self._applied_edge)
@@ -887,6 +933,7 @@ class PhotoGrid(QListView):
             self._layout_everything()
         finally:
             self._laying_out = False
+            self._driving_scroll = False
         self._restore_scroll(scroll)
 
     def _restore_scroll(self, value: int) -> None:
@@ -910,15 +957,41 @@ class PhotoGrid(QListView):
         finally:
             self._driving_scroll = False
 
-    def _anchor_row(self) -> int:
-        """视口正中那一格的行号 —— 用户这一刻在看的东西；量不出来时给 ``-1``。
+    def _anchor(self) -> _ScrollAnchor:
+        """视口正中那一格：行号 + 它这一刻在屏幕上的纵向位置。
 
-        **必须在改几何之前问**：改完之后「正中」已经指到另一格了。用 ``indexAt``
-        采样一个点，代价与库的大小无关。
+        **必须在改几何之前问**：改完之后「正中」已经指到另一格、格子高矮也变了。
+        用 ``indexAt`` 采样一个点，代价与库的大小无关；量不出来时给行号 ``-1``。
         """
         middle = QPoint(self.viewport().width() // 2, self.viewport().height() // 2)
         index = self.indexAt(middle)
-        return index.row() if index.isValid() else -1
+        if not index.isValid():
+            return _ScrollAnchor(-1, middle.y())
+        return _ScrollAnchor(index.row(), self.visualRect(index).center().y())
+
+    def _anchored_scroll_value(self, anchor: _ScrollAnchor, columns: int) -> int | None:
+        """把 ``anchor`` 那一格摆回它换几何之前所在的位置时，滚动条该在的值。
+
+        这是过渡**第 0 帧**要落的地方。滚动位置是内容坐标，而格子高矮与每行张数一变，
+        同一个像素值指的就是**另一批照片**了 —— 照搬旧的像素值，第 0 帧就落在别处：
+        末尾放大一档时滚动条一上来从 100% 跳到 46%，逻辑上「屏上正中的那一格」也从
+        第 795 张变成第 366 张（实测），然后才一路滑回来 —— 「先闪一下再滚」。缩小
+        方向同样会闪，只是方向相反。按内容锚定之后，第 0 帧还是原来那一片。
+
+        画面本身要与它配合：滚动条挪了位置，旧画面就得跟着挪（见
+        :attr:`GridTransition.scroll_shift`），否则第 0 帧画出来的会是「旧画面 +
+        新滚动位置」，整幅画挪到屏幕外面去。
+
+        量不出那一格（``row < 0``）时返回 ``None`` —— 调用方退回像素值，总比不问
+        青红皂白算一个强。
+        """
+        if anchor.row < 0 or columns <= 0:
+            return None
+        # 列数变了，但「这一格在哪一行」是确定的；格子高度也已经是新值。
+        top = (anchor.row // columns) * self.gridSize().height()
+        target = top + self.gridSize().height() // 2 - anchor.screen_y
+        bar = self.verticalScrollBar()
+        return max(bar.minimum(), min(bar.maximum(), target))
 
     def _focus_row(self, anchor_row: int) -> int:
         """换了行之后该把哪一格摆到正中。

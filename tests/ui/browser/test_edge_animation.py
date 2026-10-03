@@ -591,9 +591,9 @@ def test_the_layout_is_exactly_the_same_whether_or_not_it_animates(
 def test_the_scroll_glides_from_where_it_was_to_where_the_selection_is(
     qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
 ) -> None:
-    """在相册底部选中接近末尾的一格再放大：从原处一路滑到选中项，中间不许倒退。
+    """选中项在屏外时放大：从「原来看着的那一片」一路滑到选中项，中间不许倒退。
 
-    这是整套东西最难的一个场景，三处曾经各错一次：
+    这是整套东西最难的一个场景，几处曾经各错一次：
 
     - Batched 布局的滚动条范围刚切完只有一小块，当前位置被 Qt **当场夹**到那里 ——
       用户在底部，整屏却瞬间弹回顶部（实测 800 张时 28680 → 4272）。
@@ -601,20 +601,36 @@ def test_the_scroll_glides_from_where_it_was_to_where_the_selection_is(
       「重试几轮」在 800 张以上一次都没等到。
     - 范围终于够了之后，滚动条被直接按到终点，下一帧动画又按回插值上（闪一下）。
 
-    现在靠 :meth:`grid._layout_everything` 把范围同步算对，第一帧就是「旧位置 +
-    旧布局」，之后一路滑过去。
+    现在靠 :meth:`grid._layout_everything` 把范围同步算对，第一帧就是「原来那一片」，
+    之后一路滑过去。
+
+    **起点得是「原来那一片」，不是原来那个像素值**：格子高矮与每行张数都变了，
+    同一个数在新布局里指的是另一批照片（见
+    :meth:`grid._anchored_scroll_value`）。所以这里量的是**正中那一格的位置**。
     """
     grid = make_grid(qt_app, tmp_path, 800)
-    grid.verticalScrollBar().setValue(grid.verticalScrollBar().maximum())
     settle(SETTLE_SECONDS)
-    grid.select_row(795, ensure_visible=False)
+    grid.select_row(795, ensure_visible=False)  # 选中它（Qt 会顺手把它滚进视野）
     settle(SETTLE_SECONDS)
-    start = grid.verticalScrollBar().value()
+    bar = grid.verticalScrollBar()
+    bar.setValue(bar.maximum() // 2)  # 自己滚回中段：选中项于是落到屏外
+    settle(SETTLE_SECONDS)
+    selected = grid.visualRect(grid.model().index(795, 0))
+    assert selected.top() > grid.viewport().height(), "选中项该在屏外，测的不是这个场景"
+
+    middle = QPoint(grid.viewport().width() // 2, grid.viewport().height() // 2)
+    anchor = grid.indexAt(middle)
+    assert anchor.isValid() and anchor.row() < 700, "视图该还在相册中段"
+    anchor_y = grid.visualRect(anchor).center().y()
 
     grid.set_target_edge(THUMBNAIL_SIZES[2])
-    samples = scroll_samples(grid, settle)
 
-    assert samples[0] == start, f"第 0 帧就该在原处 {start}，实际 {samples[0]}"
+    first_rect = grid.visualRect(anchor)
+    assert abs(first_rect.center().y() - anchor_y) <= 1, (
+        f"第 0 帧该还停在原处（y={anchor_y}），实际 y={first_rect.center().y()}"
+    )
+
+    samples = scroll_samples(grid, settle)
     pairs = list(zip(samples, samples[1:], strict=False))
     backwards = [(a, b) for a, b in pairs if b < a]
     assert not backwards, f"滚动倒退了：{backwards}"
@@ -622,8 +638,7 @@ def test_the_scroll_glides_from_where_it_was_to_where_the_selection_is(
 
     # 终点必须是「选中项在正中」，而不是「够得着的最远处」。
     cell_rect = grid.visualRect(grid.model().index(795, 0))
-    middle = grid.viewport().height() // 2
-    assert abs(cell_rect.center().y() - middle) <= 1
+    assert abs(cell_rect.center().y() - grid.viewport().height() // 2) <= 1
 
 
 def test_the_scrollbar_range_is_already_right_at_the_moment_of_the_change(
@@ -865,3 +880,53 @@ def test_the_column_check_never_aborts_a_running_transition(
     assert abs(cell_rect.center().y() - middle) <= 1, (
         f"选中项停在了 y={cell_rect.center().y()}，视口正中是 {middle}"
     )
+
+
+def test_a_level_change_never_flashes_to_another_part_of_the_album(
+    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+) -> None:
+    """换档的**第 0 帧**必须还是用户原来看着的那一片。
+
+    滚动位置是内容坐标，而换档同时改了格子高矮与每行的张数 —— 照搬旧的像素值当
+    过渡起点，同一个数在新布局里指的就是**另一批照片**：选中相册末尾那一张再放大
+    一档，第 0 帧先闪到相册中间，然后才一路滚回末尾（实测第 795 张从 y=469 变成
+    y=34244）。缩小同样会闪，方向相反（实测 -6214 像素）—— 这就是
+    「放大会先往上跳、缩小会先往下跳」。
+
+    **判据是「原来那一片还在不在屏上」**，不是滚动条那个数字：数字照搬过去了，
+    画面却翻到了别的段落，这正是那个缺陷。
+    """
+    for at_bottom in (True, False):
+        for target in (THUMBNAIL_SIZES[2], THUMBNAIL_SIZES[0]):
+            where = "视图在底部" if at_bottom else "视图在相册中间"
+            grid = make_grid(qt_app, tmp_path, 800)
+            settle(SETTLE_SECONDS)
+            last = grid.model().rowCount() - 1
+            grid.select_row(last, ensure_visible=False)
+            bar = grid.verticalScrollBar()
+            bar.setValue(bar.maximum() if at_bottom else bar.maximum() // 2)
+            settle(SETTLE_SECONDS)
+
+            middle = QPoint(grid.viewport().width() // 2, grid.viewport().height() // 2)
+            anchor = grid.indexAt(middle)
+            assert anchor.isValid(), f"{where}：视口正中什么都没有，测的不是这个场景"
+            before = set(grid.visible_rows())
+            assert len(before) > 4, f"{where}：一张都看不见，测的不是这个场景"
+
+            grid.set_target_edge(target)
+
+            first = set(grid.visible_rows())
+            # 取样密度跟着格子大小走（大格取样点少），所以按**少的那一边**算占比：
+            # 全都在，就是 100%。
+            kept = len(before & first) / min(len(before), len(first))
+            assert kept > 0.5, (
+                f"{where}、切到 {target} 像素：首帧只剩 {kept:.0%} 是原来那一片"
+                f"（{sorted(before)[:4]}… → {sorted(first)[:4]}…）"
+            )
+            rect = grid.visualRect(anchor)
+            assert rect.isValid() and 0 <= rect.center().y() < grid.viewport().height(), (
+                f"{where}、切到 {target} 像素：首帧里刚才正中的第 {anchor.row()} 张"
+                f"已经不在屏上了（{rect}）"
+            )
+            settle(SETTLE_SECONDS)
+            grid.close()
