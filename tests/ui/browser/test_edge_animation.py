@@ -33,20 +33,31 @@ pytest.importorskip("PySide6")
 from grid_helpers import fake_photos, make_grid  # noqa: E402
 from PySide6.QtCore import (  # noqa: E402
     QAbstractAnimation,
+    QEasingCurve,
     QPoint,
     QRect,
     QSize,
     Qt,
 )
-from PySide6.QtGui import QColor, QImage, QPainter, QPixmap  # noqa: E402
+from PySide6.QtGui import (  # noqa: E402
+    QColor,
+    QImage,
+    QPainter,
+    QPalette,
+    QPixmap,
+)
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
+    QStyle,
     QStyleOptionViewItem,
+    QVBoxLayout,
+    QWidget,
 )
 
 from gallery.core.library.photos import PhotoRef  # noqa: E402
 from gallery.ui.browser.grid import (  # noqa: E402
+    EDGE_ANIMATION_CURVE,
     EDGE_ANIMATION_MIN_DELTA,
     EDGE_ANIMATION_MS,
     GRID_PADDING_X,
@@ -88,6 +99,34 @@ def test_the_thumbnail_grows_through_the_intermediate_sizes(
     assert samples[-1] == float(grid.icon_edge), "最后一帧必须正好落在新尺寸上"
     assert len(set(samples)) > 3, f"只取到 {sorted(set(samples))}，这是一次跳变不是动画"
     assert min(samples) < max(samples), "尺寸得是单调长过去的"
+
+
+def test_the_easing_starts_and_ends_gently(
+    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+) -> None:
+    """缓动曲线**两头都缓**：头几帧不许一上来就冲掉一大截。
+
+    这是「格子的位置一下就跳到位」最直接的一条成因。用 ``OutCubic`` 时，160ms 里
+    第一帧（约 16ms，即时间轴 10%）就已经走完了 **27%** 的路程 —— 位置那一段总位移
+    大，第一帧那一下在画面上就是一跳；而剩下的时间里它几乎钉着不动（尾部 25% 的
+    时间只走 1.6%），看着像卡住。对称曲线两头都从 0 速度起步。
+
+    两条断言各管一半：**曲线本身**（与机器快慢无关），以及**这个控件真的用了它**
+    （把曲线接回 ``OutCubic`` 也照样红）。
+    """
+    curve = QEasingCurve(EDGE_ANIMATION_CURVE)
+    assert curve.valueForProgress(0.1) <= 0.05, (
+        f"时间轴走到 10% 就已经走完 {curve.valueForProgress(0.1):.1%} 的路程，第一帧就是一跳"
+    )
+    assert curve.valueForProgress(0.9) >= 0.95, (
+        f"时间轴走到 90% 才走完 {curve.valueForProgress(0.9):.1%}，尾巴太长"
+    )
+
+    grid = make_grid(qt_app, tmp_path, 40)
+    settle(SETTLE_SECONDS)
+    assert grid._transition_anim.easingCurve().type() == EDGE_ANIMATION_CURVE, (
+        "网格没有用上面这条曲线"
+    )
 
 
 def test_the_geometry_snaps_while_only_the_painting_moves(
@@ -402,6 +441,9 @@ def test_new_rows_arriving_during_the_transition_end_it(
 #: 渲染用的那张卡片的缩略图颜色。
 COVER = QColor(200, 40, 40)
 
+#: 卡片自身相对格子的内缩（``PhotoDelegate.paint`` 里的 ``adjusted(3, 3, -3, -3)``）。
+CARD_INSET = 3
+
 
 def _painted_top(
     model: PhotoListModel,
@@ -411,13 +453,19 @@ def _painted_top(
     t: float,
     canvas: QSize,
 ) -> int:
-    """把第 ``row`` 行按过渡的第 ``t`` 帧画到全白画布上，返回卡片顶边所在的行。
+    """把第 ``row`` 行按过渡的第 ``t`` 帧画到全白画布上，返回照片顶边所在的行。
 
     直接走 :meth:`PhotoDelegate.paint`，量到的就是**真的画在哪儿** —— 只查
     :attr:`PhotoDelegate.cell_offset` 的话，「绘制压根没用这个偏移」这种改动
     根本不会有测试变红。
+
+    绘制尺寸也要跟着 ``t`` 拨（就像真的动画那样）：卡片与照片是同一条过渡的两半，
+    只拨一半就不是动画里的那一帧了。
     """
     delegate = PhotoDelegate(icon_edge=cell.width() - GRID_PADDING_X)
+    old_edge = transition.old_cell.width() - GRID_PADDING_X
+    new_edge = cell.width() - GRID_PADDING_X
+    delegate.set_draw_edge(old_edge + (new_edge - old_edge) * t)
     delegate.set_transition(transition, t)
     painted = QPixmap(canvas)
     painted.fill(QColor(255, 255, 255))
@@ -435,6 +483,54 @@ def _painted_top(
             if image.pixelColor(x, y) == COVER:
                 return y
     return -1
+
+
+def _painted_card_rect(
+    model: PhotoListModel,
+    row: int,
+    cell: QSize,
+    transition: GridTransition,
+    t: float,
+    canvas: QSize,
+) -> QRect:
+    """把选中状态的第 ``row`` 行画到画布上，返回**卡片自己**占的那块矩形。
+
+    量的是选中描边（2 像素、不透明的高亮色）的包围盒。选它是因为它**就是卡片矩形**
+    本身画出来的东西（``paint`` 末尾那句 ``drawRoundedRect(rect, …)``），而不是照片
+    —— 照片在卡片里居中，量照片量不出卡片有没有跟着一起长。
+    """
+    delegate = PhotoDelegate(icon_edge=cell.width() - GRID_PADDING_X)
+    old_edge = transition.old_cell.width() - GRID_PADDING_X
+    new_edge = cell.width() - GRID_PADDING_X
+    delegate.set_draw_edge(old_edge + (new_edge - old_edge) * t)
+    delegate.set_transition(transition, t)
+    option = QStyleOptionViewItem()
+    option.rect = QRect(0, 0, cell.width(), cell.height())
+    option.palette = QApplication.palette()
+    option.state = QStyle.StateFlag.State_Selected
+
+    painted = QPixmap(canvas)
+    painted.fill(QColor(255, 255, 255))
+    painter = QPainter(painted)
+    try:
+        delegate.paint(painter, option, model.index(row, 0))
+    finally:
+        painter.end()
+
+    stroke = QApplication.palette().color(QPalette.ColorRole.Highlight)
+    image = painted.toImage()
+    hits = [
+        (x, y)
+        for y in range(image.height())
+        for x in range(image.width())
+        if image.pixelColor(x, y) == stroke
+    ]
+    assert hits, "没找到选中描边，测试没搭对"
+    xs = [x for x, _ in hits]
+    ys = [y for _, y in hits]
+    bounds = QRect(min(xs), min(ys), max(xs) - min(xs) + 1, max(ys) - min(ys) + 1)
+    # 描边宽 2 像素、骑在矩形边界上（内外各占一像素），所以量到的包围盒比卡片大一圈。
+    return bounds.adjusted(1, 1, -1, -1)
 
 
 def test_the_card_really_is_drawn_along_the_way(tmp_path: Path, qt_app: QApplication) -> None:
@@ -460,6 +556,43 @@ def test_the_card_really_is_drawn_along_the_way(tmp_path: Path, qt_app: QApplica
     # 量的是**差值**：卡片自身有内边距，画在哪儿不等于格子左上角在哪儿。
     assert start - end == 440, f"起点该在旧位置上（差一整个旧行高），实际差 {start - end}"
     assert middle - end == 220, f"中间帧没在中间：{middle - end}"
+
+
+def test_the_card_itself_grows_with_the_photo(tmp_path: Path, qt_app: QApplication) -> None:
+    """整张卡片（不是只有里面的照片）在切档途中**长大**。
+
+    这一条盯的是「位置一下就跳到位、缩放还在慢慢长」的另一半：卡片自己的矩形一开始
+    就是终态尺寸的话，画面上就是格子已经站好了、只有照片在框里慢慢长。所以第 0 帧
+    的卡片必须**正好是切换前那一格的大小**，最后一帧正好是新那一格。
+
+    用旧实现（``option.rect`` 只 ``translate`` 平移、尺寸不插值）这条必红：第 0 帧
+    量到的就是新尺寸。
+    """
+    del qt_app
+    photos = [PhotoRef(path=tmp_path / f"P{i}.jpg", size=10, mtime_ns=i) for i in range(8)]
+    model = PhotoListModel()
+    model.append(photos)
+
+    # 2 列 → 4 列、格子同时变大：位置与尺寸两头都在动。
+    old_cell, new_cell = QSize(300, 320), QSize(180, 200)
+    transition = GridTransition(2, old_cell, 4, new_cell)
+    canvas, row = QSize(760, 1000), 4
+
+    start = _painted_card_rect(model, row, new_cell, transition, 0.0, canvas)
+    middle = _painted_card_rect(model, row, new_cell, transition, 0.5, canvas)
+    end = _painted_card_rect(model, row, new_cell, transition, 1.0, canvas)
+
+    assert end.size() == QSize(
+        new_cell.width() - 2 * CARD_INSET, new_cell.height() - 2 * CARD_INSET
+    ), f"最后一帧该是新的格子大小，量到 {end.size()}"
+    assert start.size() == QSize(
+        old_cell.width() - 2 * CARD_INSET, old_cell.height() - 2 * CARD_INSET
+    ), f"第 0 帧该正好是切换前那一格的大小，量到 {start.size()}"
+    # 中间帧真的在中间（留 2 像素给取整）。
+    half = (start.width() + end.width()) / 2
+    assert abs(middle.width() - half) <= 2, f"中间帧宽 {middle.width()}，两头的中点是 {half}"
+    # 位置同样是「起点在旧位置上」。
+    assert start.top() - end.top() == 440, f"第 0 帧不在旧位置上：差 {start.top() - end.top()}"
 
 
 def test_the_transition_uses_the_measured_columns_not_the_intended_ones(
@@ -930,3 +1063,199 @@ def test_a_level_change_never_flashes_to_another_part_of_the_album(
             )
             settle(SETTLE_SECONDS)
             grid.close()
+
+
+# ---- 滚动条自己开关带来的那次 resize ---------------------------------------
+
+
+def hosted_grid(
+    qt_app: QApplication, tmp_path: Path, count: int, *, width: int = 1100, height: int = 700
+) -> tuple[QWidget, PhotoGrid]:
+    """把网格放进一个**真的布局**里（像窗口里那样），返回 ``(容器, 网格)``。
+
+    与 :func:`make_grid` 的顶层网格是两种环境，而这件事在这里是要紧的：网格放在布局里
+    时，Qt 会因为纵向滚动条的开关**把网格控件自己的宽度改掉一条滚动条的宽度**，于是多
+    送来一个 ``resizeEvent``；顶层网格的宽度由平台摆布，收不到同样的事件。
+    切档把内容高度推过视口高度时就会出现这一下 —— 相册层（内容短）尤其容易撞上。
+    """
+    holder = QWidget()
+    layout = QVBoxLayout(holder)
+    grid = PhotoGrid(icon_edge=176)
+    model = PhotoListModel()
+    model.append(fake_photos(count, tmp_path))
+    grid.setModel(model)
+    layout.addWidget(grid, 1)
+    holder.resize(width, height)
+    holder.show()
+    qt_app.processEvents()
+    # 再摆一次：布局第一轮是按 sizeHint 摆的，这一步之后网格才真的铺满容器。
+    holder.resize(width, height)
+    qt_app.processEvents()
+    return holder, grid
+
+
+def test_toggling_the_scrollbar_does_not_change_the_cell_size(
+    qt_app: QApplication,
+    tmp_path: Path,
+    settle: Callable[[float], None],
+    wait_for: Callable[..., bool],
+) -> None:
+    """滚动条自己开关，**不许**改变这一档的格子尺寸与列数。
+
+    排版宽度里那条滚动条是**无条件**扣的（见 :meth:`PhotoGrid._scrollbar_reserve`），
+    所以它露不露头都不该影响版面。拿当刻的 ``viewport().width()`` 去排的话，同一个窗口
+    会因为「滚动条恰好露不露头」算出不同的列数（实测 1100 宽、12 个条目下大档是
+    4 列 268 像素对 3 列 352）—— 切档把内容推过视口高度的那一刻，版面就自己重排一次，
+    那一次既是一跳（位置与尺寸都当场换掉），又会把正在跑的过渡掐掉。
+    """
+    holder, grid = hosted_grid(qt_app, tmp_path, 12)
+    settle(SETTLE_SECONDS)
+    bar = grid.verticalScrollBar()
+    assert bar.isVisible(), "前提没摆出来：这一层开头应当有滚动条"
+
+    grid.set_target_edge(THUMBNAIL_SIZES[0])
+    settled_cell = grid.gridSize()
+    settled_columns = grid._laid_out_columns
+    # 缩小一档之后内容比视口矮了，滚动条该收回去 —— 这正是会送来 resizeEvent 的那一下。
+    assert wait_for(lambda: not bar.isVisible(), timeout=1.0), (
+        "前提没摆出来：缩小一档之后滚动条应当收回去"
+    )
+    settle(SETTLE_SECONDS)
+
+    assert grid.gridSize() == settled_cell, (
+        f"滚动条开关把格子从 {settled_cell} 改成了 {grid.gridSize()}"
+    )
+    assert grid._laid_out_columns == settled_columns, "滚动条开关把列数也改了"
+    holder.close()
+
+
+def test_toggling_the_scrollbar_does_not_cut_the_transition_short(
+    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+) -> None:
+    """缩小一档让滚动条收回去时，过渡照旧跑完，而不是当场落位。
+
+    这是「相册层没有切档动画」的成因：那一层本来就短，缩小一档就短过视口，滚动条
+    一收回去视口就宽出一条滚动条。排版宽度要是直接取当刻的视口宽度，这一次切档就会
+    再触发一次重排（列数与格宽都变），而那次重排会把正在跑的过渡判成「局面变了」
+    而落位 —— 动画在自己发出去几毫秒之后被自己掐掉，画面上只剩「啪一下跳过去」。
+    """
+    holder, grid = hosted_grid(qt_app, tmp_path, 12)
+    settle(SETTLE_SECONDS)
+    bar = grid.verticalScrollBar()
+    assert bar.isVisible(), "前提没摆出来：这一层开头应当有滚动条"
+
+    model = grid.model()
+    assert model is not None
+    row = 11  # 旧布局里在最后一行，缩档时位移与尺寸都动得最多
+    start = grid._delegate.cell_rect(grid.visualRect(model.index(row, 0)), row)
+
+    grid.set_target_edge(THUMBNAIL_SIZES[0])
+    assert grid._transition_anim.state() == QAbstractAnimation.State.Running, "过渡该在跑"
+
+    samples: list[QSize] = []
+    for _ in range(int(SETTLE_SECONDS / SLICE_SECONDS)):
+        settle(SLICE_SECONDS)
+        rect = grid._delegate.cell_rect(grid.visualRect(model.index(row, 0)), row)
+        samples.append(rect.size())
+
+    assert not bar.isVisible(), "前提没摆出来：缩小一档之后滚动条应当收回去"
+
+    settled = grid._delegate.cell_rect(grid.visualRect(model.index(row, 0)), row)
+    assert samples[0] == start.size(), f"第 0 帧该还是旧尺寸，取到 {samples[0]}"
+    assert samples[-1] == settled.size(), "最后一帧该正好落在新尺寸上"
+    assert len(set(samples)) > 3, (
+        f"整段时间里只量到 {len(set(samples))} 种尺寸，过渡被滚动条开关掐掉了"
+    )
+    assert samples == sorted(samples, key=lambda size: size.width(), reverse=True), (
+        f"尺寸该一路缩下去，实际 {samples}"
+    )
+    holder.close()
+
+
+def test_a_real_window_resize_still_ends_the_transition(
+    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+) -> None:
+    """真的把窗口拖宽拖窄，仍然立刻落位 —— 那是用户在拽，不许继续放动画。
+
+    与上一条成对：``resizeEvent`` 里不再无条件落位之后，「拖窗口」这条仍然要成立 ——
+    它靠的是 :meth:`PhotoGrid._recompute_layout` 发现宽度真变了、走 :meth:`PhotoGrid._set_cell`
+    自己收尾。
+    """
+    holder, grid = hosted_grid(qt_app, tmp_path, 40)
+    settle(SETTLE_SECONDS)
+
+    grid.set_target_edge(THUMBNAIL_SIZES[2])
+    assert grid._transition_anim.state() == QAbstractAnimation.State.Running, "前提：过渡在跑"
+
+    holder.resize(holder.width() + 300, holder.height())
+    settle(SLICE_SECONDS)
+
+    assert grid._transition_anim.state() == QAbstractAnimation.State.Stopped
+    assert grid._delegate.draw_edge == float(grid.icon_edge), "拖窗口就该直接落位"
+    holder.close()
+
+
+def test_the_column_check_does_not_flash_the_frame_to_the_final_size(
+    qt_app: QApplication,
+    tmp_path: Path,
+    settle: Callable[[float], None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """核对列数那次修正**不许**让绘制尺寸闪到终点再被动画拽回来。
+
+    修正是靠 :meth:`PhotoGrid._apply_geometry` 做的，而它顺手会把绘制尺寸对齐到新几何
+    —— 对一条刚起头的过渡来说那是**终点**。不按动画自己的 ``t`` 摆回去，紧接着画出去
+    的那一帧就会先长到位、再缩回去（肉眼是「闪一下」）。
+    """
+    grid = make_grid(qt_app, tmp_path, 400)
+    settle(SETTLE_SECONDS)
+    grid.select_row(300, ensure_visible=False)
+    settle(SETTLE_SECONDS)
+    grid.set_target_edge(THUMBNAIL_SIZES[2])
+    assert grid._laid_out_columns >= 2, "列数太少，测的不是这个场景"
+    settle(EDGE_ANIMATION_MS / 1000 / 3)  # 过渡跑到三分之一就撞上核对
+
+    monkeypatch.setattr(grid, "_first_row_columns", lambda: grid._laid_out_columns - 1)
+    expected = grid._delegate.draw_edge
+    grid._examine_columns()
+    monkeypatch.undo()
+
+    assert grid._transition_anim.state() == QAbstractAnimation.State.Running, "前提：过渡还在跑"
+    assert expected != float(grid.icon_edge), "前提：这一帧本来还没长到终点"
+    assert grid._delegate.draw_edge == pytest.approx(expected), (
+        f"核对之后绘制尺寸变成了 {grid._delegate.draw_edge}，本该还停在动画的那一帧（{expected}）"
+    )
+
+
+def test_a_resize_that_does_not_change_the_layout_does_not_kill_the_transition(
+    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+) -> None:
+    """只改高度的那种 resize（横幅出现/消失）不该掐掉切档过渡。
+
+    横幅是网格上面的兄弟控件，它一出现就把网格挤矮一截 —— 版面**宽度**一点没变，
+    列数、格宽也都照旧。这种 resize 与「用户把窗口拽窄了」不是一回事：后者要落位，
+    前者只是视口矮了几十像素，过渡照跑完全没问题。
+
+    与相册层那条是同一类毛病：**切档之外的杂事不该把动画掐掉**。
+    """
+    grid = make_grid(qt_app, tmp_path, 40)
+    settle(SETTLE_SECONDS)
+
+    grid.set_target_edge(THUMBNAIL_SIZES[2])
+    settle(SLICE_SECONDS)
+    assert grid._transition_anim.state() == QAbstractAnimation.State.Running, "前提：过渡在跑"
+    before = grid._delegate.draw_edge
+
+    # 只矮 40 像素：宽度没变，版面用不着重排，滚动条范围只会变大（不会把位置夹掉）。
+    grid.resize(grid.width(), grid.height() - 40)
+    settle(SLICE_SECONDS)
+
+    assert grid._transition_anim.state() == QAbstractAnimation.State.Running, (
+        "只改高度的 resize 把过渡掐掉了"
+    )
+    assert grid._delegate.draw_edge != float(grid.icon_edge), (
+        f"画面被直接拨到了终点（{grid._delegate.draw_edge}），过渡没了"
+    )
+    assert grid._delegate.draw_edge > before, (
+        f"过渡该继续往大处长（{before} → {grid._delegate.draw_edge}）"
+    )

@@ -82,12 +82,20 @@ EDGE_REFRESH_THRESHOLD = 6
 #: 视口停止变化多久之后才真正通知界面重取缩略图（拖动窗口时的防抖）。
 EDGE_SETTLE_MS = 120
 
-#: 切档时缩略图「长过去/缩回去」的时长（毫秒）。
+#: 切档时格子「长过去/缩回去」的时长（毫秒）。
 #:
-#: 只驱动**绘制**尺寸，不驱动几何也不驱动缩略图请求 —— 理由见
-#: :meth:`PhotoGrid._animate_draw_edge`。够短就不会让人觉得界面在等它，
+#: 只驱动**画面**（格子画在哪、画多大），不驱动几何也不驱动缩略图请求 ——
+#: 理由见 :meth:`PhotoGrid._start_transition`。够短就不会让人觉得界面在等它，
 #: 够长才看得出是动画而不是跳变。
 EDGE_ANIMATION_MS = 160
+
+#: 切档过渡的缓动曲线：**两端都缓**的对称曲线。
+#:
+#: 以前用的是 ``OutCubic``（一上来就冲、尾巴几乎不动）：160ms 里第一帧（约 16ms）
+#: 就已经走完了 27% 的路程。位置那一段的总位移大，第一帧那一下于是在画面上就是
+#: **一跳**，而剩下 80ms 里它几乎钉着不动 —— 这正是「格子的位置一下就跳到位」。
+#: 对称曲线两头都从 0 速度起步，第一帧只挪千分之几，起手与收手都看不出接缝。
+EDGE_ANIMATION_CURVE = QEasingCurve.Type.InOutCubic
 
 #: 边长差小于这个值就不动画：差几个像素肉眼看不出来，却白付一次全视口重绘。
 #:
@@ -117,13 +125,13 @@ class GridTransition:
 
     **只描述画面，不描述逻辑状态**：逻辑几何（``gridSize``、列数、``visualRect``、
     ``indexAt``）在切换那一刻就已经是最终值了，Qt 全程不知道有过过渡。过渡只决定
-    「这一格画在哪儿」。
+    「这一格画在哪儿、画多大」（见 :meth:`frame_rect`）。
 
     **为什么不用逐帧重排**：Batched 布局一批只排 64 条，但显式的
     ``doItemsLayout`` 会强制**全量**排版，几万条目时单次就是几十毫秒 —— 60 帧根本
     装不下。而这套网格的全部设计（批量布局 + 按可见区取缩略图）就是为了扛大库，
-    逐帧全量重排等于把它要消灭的东西又请回来。绘制时平移则是 O(可见格数)，
-    一次额外的 ``QPoint`` 加法。
+    逐帧全量重排等于把它要消灭的东西又请回来。绘制时改一块矩形则是 O(可见格数)，
+    几次整数加法。
 
     **两端的列数都是量出来的，不是算出来的**（见 :meth:`PhotoGrid._first_row_columns`）。
     Qt 实际摆几列受样式边距影响，:meth:`PhotoGrid._columns_for` 给的是「打算摆几列」，
@@ -172,6 +180,29 @@ class GridTransition:
             round((old.x() - new.x()) * k),
             round((old.y() - new.y()) * k) + round(self.scroll_shift * k),
         )
+
+    def frame_rect(self, final: QRect, row: int, t: float) -> QRect:
+        """第 ``row`` 格在第 ``t`` 帧该画成的那块矩形（``final`` 是 Qt 给的终态）。
+
+        **位置与尺寸一起插**，两条都从「旧几何里的那一格」出发、到 ``final`` 为止。
+        这一点是这个方案的全部要害：只插位置的话，卡片（选中底、占位虚线框、角标、
+        文件名）在切换那一刻就已经是**新尺寸**、只有照片在长 —— 画面上就是「格子
+        一下就跳到位、缩放还在慢慢长」，两样各走各的（见
+        :meth:`PhotoDelegate.cell_rect`）。
+
+        尺寸长到 ``final.size()`` 而不是 :attr:`new_cell`：``final`` 才是 Qt 真正
+        排出来的那一格，用它收尾，最后一帧与逻辑几何分毫不差（两者在样式边距上
+        可能差一两个像素）。
+
+        因为 :meth:`_position` 在两个布局里都按 ``row % columns`` 定位，``t=0``
+        画出来的就是**旧布局**里的那一格、``t=1`` 是 Qt 排好的终态：两端各自与
+        切换前/切换后的那一帧完全一致，中间没有混血帧。
+        """
+        size = QSize(
+            round(self.old_cell.width() + (final.width() - self.old_cell.width()) * t),
+            round(self.old_cell.height() + (final.height() - self.old_cell.height()) * t),
+        )
+        return QRect(final.topLeft() + self.offset(row, t), size)
 
 
 @dataclass(frozen=True)
@@ -239,7 +270,7 @@ class PhotoDelegate(QStyledItemDelegate):
         super().__init__(parent)
         self._icon_edge = icon_edge
         #: **画出来**的边长。与 :attr:`_icon_edge` 分开存，是因为切档动画要把它取成
-        #: 小数并逐帧变化，而几何尺寸必须一直是整数（见 :meth:`PhotoGrid._animate_draw_edge`）。
+        #: 小数并逐帧变化，而几何尺寸必须一直是整数（见 :meth:`PhotoGrid._start_transition`）。
         #: 两者相等是常态，只有动画跑的那 160ms 里不等。
         self._draw_edge = float(icon_edge)
         #: 切档过渡：这一帧相对最终位置往回挪多少。``None`` 表示不偏移（常态）。
@@ -266,23 +297,35 @@ class PhotoDelegate(QStyledItemDelegate):
         self._draw_edge = max(1.0, edge)
 
     def set_transition(self, transition: GridTransition | None, t: float) -> None:
-        """这一帧该画在哪儿（传 ``None`` 表示不偏移）。
+        """这一帧该画在哪、画多大（传 ``None`` 表示不偏移、就是 Qt 给的那一格）。
 
-        与 :meth:`set_draw_edge` 是同一个 ``t`` 的两半：一半决定格子画在哪儿，
-        一半决定缩略图画多大。分成两个动画就会是两个时钟，早晚差一帧 ——
+        与 :meth:`set_draw_edge` 是同一个 ``t`` 的两半：一半决定格子画成什么样，
+        一半决定里面的照片画多大。分成两个动画就会是两个时钟，早晚差一帧 ——
         那一帧里缩略图已经变了尺寸、格子却还没到位。
         """
         self._transition = transition
         self._t = t if transition is not None else 1.0
 
     def cell_offset(self, row: int) -> QPoint:
-        """第 ``row`` 格相对 :meth:`option.rect` 的额外位移。
+        """第 ``row`` 格相对 ``option.rect`` 的额外位移。
 
-        没有过渡时是原点，调用方不必分情况。
+        没有过渡时是原点，调用方不必分情况。**位置只是这一帧的一半** ——
+        整格的矩形见 :meth:`cell_rect`。
         """
         if self._transition is None:
             return QPoint()
         return self._transition.offset(row, self._t)
+
+    def cell_rect(self, rect: QRect, row: int) -> QRect:
+        """Qt 给的那一格在这一帧该画成什么样（没有过渡时原样返回）。
+
+        **位置与尺寸一起换**。只换位置（平移一下）的话，卡片的框、选中底、角标与
+        文件名在切换那一刻就已经是新尺寸，只有照片在长 —— 用户看到的是「格子一下
+        就跳到位、缩放还在慢慢长」。整格一起插值，卡片才是一个整体在长大。
+        """
+        if self._transition is None:
+            return rect
+        return self._transition.frame_rect(rect, row, self._t)
 
     def label_rect(self, rect: QRect) -> QRect:
         """文件名那一行的位置。
@@ -300,11 +343,11 @@ class PhotoDelegate(QStyledItemDelegate):
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
         painter.save()
         try:
-            rect = option.rect.adjusted(3, 3, -3, -3)
-            # 切档过渡：这一格暂时不画在 Qt 给的最终位置上，而是画在「旧位置与最终
-            # 位置之间」的那一帧。整张卡片（底色、缩略图、角标、名字）一起挪 ——
-            # 只挪缩略图的话，边框与名字会在原地等着，画面是散的。
-            rect.translate(self.cell_offset(index.row()))
+            # 切档过渡：这一格暂时不按 Qt 给的那一格画，而是画在「旧布局与最终布局
+            # 之间」的那一帧 —— 连**大小**一起。整张卡片（底色、缩略图、角标、名字）
+            # 一起挪、一起长：只挪位置的话框与名字会在原地等着，只长照片的话卡片
+            # 看着已经到位了、只有照片在慢慢长，两种都是散的画面。
+            rect = self.cell_rect(option.rect, index.row()).adjusted(3, 3, -3, -3)
             selected = bool(option.state & QStyle.StateFlag.State_Selected)
             is_album = bool(index.data(ALBUM_ROLE))
             is_group = bool(index.data(GROUP_ROLE))
@@ -332,11 +375,14 @@ class PhotoDelegate(QStyledItemDelegate):
 
             pixmap = index.data(Qt.ItemDataRole.DecorationRole)
             if isinstance(pixmap, QPixmap) and not pixmap.isNull():
-                self._draw_thumbnail(painter, image_rect, pixmap)
+                # 照片落的那一块算一次、两处共用：缩略图按它画，角标也钉在**它的**
+                # 左上角（见 :meth:`_draw_badge`）。
+                photo = self.target_rect(image_rect, pixmap)
+                self._draw_thumbnail(painter, photo, pixmap)
                 if is_album:
-                    self._draw_album_badge(painter, image_rect)
+                    self._draw_album_badge(painter, photo)
                 elif is_group:
-                    self._draw_group_badge(painter, image_rect, str(index.data(GROUP_COUNT_ROLE)))
+                    self._draw_group_badge(painter, photo, str(index.data(GROUP_COUNT_ROLE)))
             elif is_album or is_group:
                 self._draw_folder_glyph(painter, image_rect, highlight)
             else:
@@ -379,8 +425,8 @@ class PhotoDelegate(QStyledItemDelegate):
             target.height(),
         )
 
-    def _draw_thumbnail(self, painter: QPainter, rect: QRect, pixmap: QPixmap) -> None:
-        """把缩略图放进取景框，四个角按 :attr:`THUMB_RADIUS` 裁圆。
+    def _draw_thumbnail(self, painter: QPainter, target: QRect, pixmap: QPixmap) -> None:
+        """把缩略图画进 ``target``（就是照片自己那一块），四个角按 :attr:`THUMB_RADIUS` 裁圆。
 
         尺寸刚切换时手里的图还是按旧边长缩放的，这里就地缩放到新框 —— 于是每一格
         始终有图、大小也始终对得上，用户看不到「先空框、再一张张弹回来」的过程。
@@ -397,7 +443,6 @@ class PhotoDelegate(QStyledItemDelegate):
         Qt 上它**还是锯齿的**（实测抠出来的四个角只有 0 与 255 两档 alpha）。``paint``
         里已经开了 ``Antialiasing``，clip 出来的边于是是渐变的，肉眼看不出锯齿。
         """
-        target = self.target_rect(rect, pixmap)
         clip = QPainterPath()
         clip.addRoundedRect(target, self.THUMB_RADIUS, self.THUMB_RADIUS)
         painter.save()
@@ -429,24 +474,30 @@ class PhotoDelegate(QStyledItemDelegate):
         painter.drawRoundedRect(tab, 3, 3)
         painter.drawRoundedRect(box, 4, 4)
 
-    def _draw_group_badge(self, painter: QPainter, rect: QRect, count: str) -> None:
+    def _draw_group_badge(self, painter: QPainter, photo: QRect, count: str) -> None:
         """分组卡片：封面左上角盖一个张数徽标（相册盖的是「相册」两个字）。
 
         用封面而不是文件夹图形当分组卡片的正脸 —— 组里照片长什么样比「这里有一堆」
         更值得看一眼；封面还没到时才退回文件夹图形。
         """
-        self._draw_badge(painter, rect, count)
+        self._draw_badge(painter, photo, count)
 
-    def _draw_album_badge(self, painter: QPainter, rect: QRect) -> None:
-        """有封面的相册：左上角盖一个「相册」小标签。"""
-        self._draw_badge(painter, rect, "相册")
+    def _draw_album_badge(self, painter: QPainter, photo: QRect) -> None:
+        """有封面的相册：封面左上角盖一个「相册」小标签。"""
+        self._draw_badge(painter, photo, "相册")
 
-    def _draw_badge(self, painter: QPainter, rect: QRect, text: str) -> None:
-        """在取景框左上角盖一个小标签。"""
+    def _draw_badge(self, painter: QPainter, photo: QRect, text: str) -> None:
+        """在**照片的**左上角盖一个小标签。
+
+        钉照片而不是钉取景框（那圈留白的内边界）：切档时取景框的背景与留白不属于
+        任何一张图，钉在上面的话角标在切换那一刻就已经站在终态上，只有照片还在
+        长 —— 它是「格子的位置一下就跳到位」那份观感里最容易被看见的一处。钉在
+        照片上，角标就跟着照片一起挪、一起长。
+        """
         metrics = painter.fontMetrics()
         width = metrics.horizontalAdvance(text) + 12
         height = metrics.height() + 4
-        badge = QRect(rect.left() + 4, rect.top() + 4, width, height)
+        badge = QRect(photo.left() + 4, photo.top() + 4, width, height)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor(0, 0, 0, 150))
         painter.drawRoundedRect(badge, 6, 6)
@@ -598,7 +649,7 @@ class PhotoGrid(QListView):
         self._transition_anim = QVariantAnimation(self)
         self._transition_anim.setStartValue(0.0)
         self._transition_anim.setEndValue(1.0)
-        self._transition_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._transition_anim.setEasingCurve(EDGE_ANIMATION_CURVE)
         self._transition_anim.setDuration(EDGE_ANIMATION_MS)
         self._transition_anim.valueChanged.connect(self._on_transition_step)
         self._transition_anim.finished.connect(self._settle_transition)
@@ -663,7 +714,7 @@ class PhotoGrid(QListView):
         self._examiner.start()
         bar = self.verticalScrollBar()
         if bar.value() > 0:
-            self._apply_geometry(self._cell_size_for(self.viewport().width()), bar.value())
+            self._apply_geometry(self._cell_size_for(self._layout_width()), bar.value())
 
     def _on_model_reset(self, *_args: object) -> None:
         """模型整体重置（换层、换排序）→ 旧的 arm 作废。
@@ -716,6 +767,9 @@ class PhotoGrid(QListView):
         所以这里扣两笔：滚动条预留（见 :meth:`_scrollbar_reserve`）与每列 2 像素的
         余量（吃掉样式的默认边距，按列数摊开，列越多余量越大，怎么都不会再掉列）。
         剩下的十几像素就是网格页本来就有的左右留白，看不出来。
+
+        ``available`` 由 :meth:`_layout_width` 给 —— 它已经把「滚动条那一条」按
+        「滚动条在」的一版扣过一次了，所以**开关滚动条不会改变这个宽度**。
         """
         columns = self._columns_for(available)
         fix = self._layout_fix.get(available)
@@ -732,6 +786,29 @@ class PhotoGrid(QListView):
         没有滚动条时右边多留十几像素，而少留就会掉一整列。
         """
         return self.verticalScrollBar().sizeHint().width()
+
+    def _layout_width(self) -> int:
+        """排版用的视口宽度：**按「滚动条在」的那一版算**，不管它此刻在不在。
+
+        滚动条会随内容高矮自己开关，而切档恰好会把它推过临界点（缩小一档，内容就比
+        视口矮了）。它在时视口窄一条、不在时宽一条 —— 直接拿 ``viewport().width()``
+        去排版，同一个窗口会因为「滚动条恰好露不露头」算出不同的列数与格宽（实测
+        1100 宽、12 个条目下，小档 8 列 131 像素对 8 列 133，大档更是 4 列 268 对
+        3 列 352）。
+
+        那次重排是**切档自己的后果**，却是一个货真价实的宽度变化：它会把正在跑的
+        过渡按新几何重算一遍（见 :meth:`_set_cell`），画面上就是动画刚发出去几毫秒
+        就被自己掐掉 —— 内容短的那一层（相册层，缩小一档就短过视口）于是永远看不
+        到切档动画。按「滚动条在」的那一版算，开关滚动条就不再改变排版宽度，那次
+        重排根本不会发生。
+
+        代价与 :meth:`_scrollbar_reserve` 那里说好的是一致的：滚动条不在时右边多留
+        十几像素。
+        """
+        width = self.viewport().width()
+        if self.verticalScrollBar().isVisible():
+            return width
+        return width - self._scrollbar_reserve()
 
     def _cell_size_for_width(self, cell_width: int) -> QSize:
         edge = max(MIN_EDGE, cell_width - GRID_PADDING_X)
@@ -757,7 +834,7 @@ class PhotoGrid(QListView):
         """
         if self._laying_out:
             return
-        available = self.viewport().width()
+        available = self._layout_width()
         if available <= 0:
             return
         if available != self._laid_out_width:
@@ -787,8 +864,14 @@ class PhotoGrid(QListView):
         （越远的行偏得越多，屏上那几格会被画到视口外面去），那一趟滚动也会停在
         一个偏移了几千像素的地方（见 :meth:`_rebuild_transition` 与
         :meth:`_refresh_scroll_goal`）。
+
+        改完之后**必须把这一帧按动画自己的 ``t`` 重新摆一遍**：:meth:`_apply_geometry`
+        里那句 ``set_icon_edge`` 顺手把绘制尺寸对齐到了**新**几何，对一条刚起头的
+        过渡来说那是终点。不摆回去，紧接着画出去的那一帧会先闪到终点、再被动画拽
+        回来（肉眼是「先长到位、又缩回去」）。这里是同步的，中间没有一轮事件循环，
+        所以这一帧根本来不及画出去。
         """
-        available = self.viewport().width()
+        available = self._layout_width()
         intended = self._laid_out_columns
         if available != self._laid_out_width or intended <= 0:
             return
@@ -808,14 +891,19 @@ class PhotoGrid(QListView):
         self._laid_out_columns = measured
         self._rebuild_transition(cell)
         self._refresh_scroll_goal()
+        if self._transition_anim.state() != QAbstractAnimation.State.Stopped:
+            self._paint_transition_frame(float(self._transition_anim.currentValue()))
 
     def _rebuild_transition(self, cell: QSize) -> None:
         """几何变了之后，把过渡里记的那套「新布局」也换成实测的那一套。
 
-        过渡只描述「这一格从旧位飞到新位画在哪儿」（见 :class:`GridTransition`），
-        委托拿它算出来的位移是**相对当前逻辑位置**的。逻辑位置已经按新几何排好了，
+        过渡描述的是「这一格从旧布局画到新布局」（见 :class:`GridTransition`），
+        委托拿它算出来的矩形是**相对当前逻辑布局**的。逻辑布局已经按新几何排好了，
         过渡里还留着旧几何的话，差得可不止一两个像素：格子高度差 30 像素时，第 100
-        行的位移就差三千像素 —— 屏上那几格会被画到视口外面去。
+        格的位移就差三千像素 —— 屏上那几格会被画到视口外面去。
+
+        **旧端（:attr:`GridTransition.old_columns` / ``old_cell``）原样留着**：
+        那是这一趟飞行的起点，与刚改完的几何无关。
         """
         if self._transition is None:
             return
@@ -1100,11 +1188,11 @@ class PhotoGrid(QListView):
     def _start_transition(self, drawn_edge: float, scroll_from: int, *, animate: bool) -> None:
         """发一次切档过渡（``animate`` 为假就直接落位）。
 
-        **过渡只碰「画在哪儿」，三样东西一律一步到位，而且这是刻意的**：
+        **过渡只碰「画成什么样」，三样东西一律一步到位，而且这是刻意的**：
 
         - :attr:`_applied_edge` 与 ``gridSize`` —— 它们一动，Batched 布局就得整个
-          重排一次。格子从旧位飞到新位是靠委托侧平移画出来的（见 :class:`GridTransition`），
-          不是靠真的重排。
+          重排一次。格子从旧布局飞到新布局是靠委托侧**另画一块矩形**画出来的
+          （位置与尺寸一起插，见 :meth:`GridTransition.frame_rect`），不是靠真的重排。
         - ``icon_edge_changed`` —— 那是**重新取缩略图**的信号。若跟着动画走，
           一次切档会按几十个中间尺寸各要一遍缩略图，
           :mod:`gallery.ui.browser.thumb_sizes` 里那条「离散档位 ⇒ 一张照片在磁盘上
@@ -1137,11 +1225,20 @@ class PhotoGrid(QListView):
 
         # 先把第 0 帧摆出来再启动：:meth:`PhotoDelegate.set_icon_edge` 已经把绘制
         # 尺寸对齐到了新几何，中间那一帧不该露出来（动画启动时也会发一次 t=0）。
-        self._on_transition_step(0.0)
+        self._paint_transition_frame(0.0)
         self._transition_anim.start()
 
     def _on_transition_step(self, t: float) -> None:
-        """一帧的 ``t``：格子画在哪儿、缩略图画多大、纵向滚到哪儿，三件事一起。"""
+        """动画每一帧回调：把这一帧摆出来。"""
+        self._paint_transition_frame(t)
+
+    def _paint_transition_frame(self, t: float) -> None:
+        """把第 ``t`` 帧摆出来：格子画在哪、画多大，缩略图画多大，纵向滚到哪。
+
+        **与动画时钟分开是有意的**：几何在过渡途中被改掉时（核对列数，见
+        :meth:`_examine_columns`），改几何那一步会把绘制尺寸对齐到新几何 ——
+        那时要能按动画自己的 ``t`` 把这一帧重新摆一遍，而不是等下一帧。
+        """
         self._delegate.set_draw_edge(self._edge_from + (self._edge_to - self._edge_from) * t)
         self._delegate.set_transition(self._transition, t)
         self._driving_scroll = True
@@ -1676,9 +1773,15 @@ class PhotoGrid(QListView):
 
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         super().resizeEvent(event)
-        # 过渡进行中拖窗口：它的两端是按旧视口量出来的，拖到一半那两个「旧」已经不
-        # 算了。落位即可 —— 接下来 :meth:`_recompute_layout` 会按新宽度重排。
-        self._cancel_transition()
+        # **这里刻意不 ``_cancel_transition()``。** 真的拖窗口会让排版宽度变，接下来
+        # :meth:`_recompute_layout` 走到 :meth:`_set_cell` 时自己就落位了（``animate``
+        # 为假）—— 与在这里先落位是同一件事。
+        #
+        # 而**不是**拖窗口的那种 resize 必须放行：改几何的杂事不止拖窗口一件 ——
+        # 横幅出现/消失会把网格挤矮几十像素（宽度一点没变），切档让滚动条开关时也会
+        # 冒出同类的噪声。那种 resize 改不动版面（:meth:`_layout_width` 只认宽度，
+        # 见那里），:meth:`_recompute_layout` 会直接返回 —— 过渡本来就该原样跑完。
+        # 一律落位的话，动画会在自己发出去几毫秒之后被这些杂事掐掉。
         self._recompute_layout()
         self._debounce.start()
 
@@ -1698,6 +1801,7 @@ class PhotoGrid(QListView):
 
 __all__ = [
     "COLUMN_CHECK_MS",
+    "EDGE_ANIMATION_CURVE",
     "EDGE_ANIMATION_MIN_DELTA",
     "EDGE_ANIMATION_MS",
     "EDGE_REFRESH_THRESHOLD",
