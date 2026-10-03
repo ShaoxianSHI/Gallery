@@ -542,6 +542,9 @@ class ShortcutColumnMenu(QMenu):
         # ``activeAction()`` 同理，而它一悬停就变。
         # 一次 ``QPainter`` 覆盖整个菜单，而不是一行一个（每行都要重新问一次设备、
         # 重新置一次变换）。
+        #
+        # **它因此也是整张菜单唯一的笔**：中途 ``end()`` 掉，后面的行就全成了哑的（见
+        # :meth:`_paint_arrow`），而症状只是「有几行没画」—— 所以收尾只在这一处。
         owns_arrows = self.owns_submenu_arrows()
         active = self.activeAction()
         palette = self.palette()
@@ -581,6 +584,14 @@ class ShortcutColumnMenu(QMenu):
 
         ``painter`` / ``palette`` / ``active`` 由 :meth:`paintEvent` 递进来：这个菜单
         一次绘制只建一个 ``QPainter``、只取一次调色板、只问一次当前项。
+
+        **这里不许 ``painter.end()``** —— 那支笔是 :meth:`paintEvent` 的，收尾归它的
+        ``finally``（它建它收）。这里一收，后面所有行就都画不出来了：``QPainter`` 一旦
+        ``end()``，``setPen`` / ``drawText`` / ``drawPolygon`` 全部静默失效（只在 stderr
+        留一句 ``QPainter::setPen: Painter not active``，界面上看不出来）。实测那正是
+        「排序 / 缩略图大小 / 移动到相册没有右箭头」的成因：同一张菜单里**第一个**子菜单
+        行（分组 / 复制到相册）画得出箭头，它之后的每一行都画不出 —— 连排在它们后面的
+        快捷键（⌘R / ⌘⌫ / ⌘I / ⎋）也一起没了。
         """
         rect = self.actionGeometry(action)
         key_rect = columns.key_rect(rect.right(), rect.top(), rect.height())
@@ -598,7 +609,6 @@ class ShortcutColumnMenu(QMenu):
                 ]
             )
         )
-        painter.end()
 
     def reserve_shortcut_columns(self) -> None:
         """把菜单撑到「最长标签 + 最右列」那么宽（那一列空着就什么也不做）。"""

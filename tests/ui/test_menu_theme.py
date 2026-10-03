@@ -22,7 +22,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PIL import Image  # noqa: E402
-from PySide6.QtCore import QPoint, QRect, Qt  # noqa: E402
+from PySide6.QtCore import QItemSelectionModel, QPoint, QRect, Qt  # noqa: E402
 from PySide6.QtGui import (  # noqa: E402
     QAction,
     QColor,
@@ -34,6 +34,7 @@ from PySide6.QtWidgets import QApplication, QMenu  # noqa: E402
 from waiting import wait_until
 
 from gallery.core.library.config import prepare_library  # noqa: E402
+from gallery.core.library.photos import GroupRef, PhotoRef  # noqa: E402
 from gallery.core.library.session import BROWSE_MODE_ALBUMS  # noqa: E402
 from gallery.ui import menus, theme  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
@@ -589,6 +590,87 @@ def test_submenu_arrow_moves_into_the_key_column(qt_app: QApplication, window: M
         "复制到相册",
         "移动到相册",
     }
+
+
+def _menu_to_paint(qt_app: QApplication, window: MainWindow, kind: str) -> QMenu:
+    """按落点拼出那张菜单（**已经**上过样式、接过快捷键，与真实弹出时同一份）。"""
+    window._stack.setCurrentWidget(window._grid_page)
+    if kind == "blank":
+        menu = window.context_menu_for(-1)
+    elif kind == "multi":
+        window._grid.setCurrentIndex(window._model.index(0, 0))
+        selection = window._grid.selectionModel()
+        assert selection is not None
+        selection.clearSelection()
+        for row in (0, 1):
+            selection.select(
+                window._model.index(row, 0),
+                QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+            )
+        assert window._grid.select_for_context(1) == 1
+        assert len(window._grid.selected_rows()) > 1, "多选这张菜单得先选中两行以上"
+        menu = window.context_menu_for(1)
+    elif kind == "group":
+        member = PhotoRef(path=window._library.root / "一张.jpg", size=1, mtime_ns=1)
+        window._model.reorder(
+            [GroupRef(facet="camera", key="canon", label="Canon EOS R5", photos=(member,))]
+        )
+        qt_app.processEvents()
+        assert window._grid.select_for_context(0) == 0
+        menu = window.context_menu_for(0)
+    elif kind == "detail":
+        row = window._model.row_of_path(window._library.root / "一张.jpg")
+        assert row >= 0
+        window._open_detail(window._model.index(row, 0))
+        assert wait_until(qt_app, lambda: window._detail.has_image), "大图没有在时限内显示出来"
+        menu = window.detail_context_menu()
+    else:
+        row = window._model.row_of_path(window._library.root / "一张.jpg")
+        assert row >= 0
+        menu = window.context_menu_for(row)
+    assert menu is not None, f"「{kind}」这一下压根没拼出菜单来"
+    return menu
+
+
+@pytest.mark.parametrize("kind", ["blank", "photo", "multi", "group", "detail"])
+def test_every_row_that_owns_ink_really_paints_it(
+    qt_app: QApplication, window: MainWindow, kind: str
+) -> None:
+    """**每一行该有的墨迹都得真的有** —— 子菜单的右箭头与快捷键是同一支笔画出来的。
+
+    这条钉的是「画出来了」而不是「打算画」：上面那条只查样式表与开关，看不见笔是不是
+    真的落到屏幕上。它漏过一次 —— ``_paint_arrow`` 里留着一次 ``painter.end()``，于是**第一
+    个**子菜单行（分组 / 复制到相册）画得出箭头，它之后的每一行都画不出，症状正是用户报的
+    「排序 / 缩略图大小 / 移动到相册没有右箭头」；排在后面的快捷键（⌘R / ⌘⌫ / ⌘I / ⎋）
+    也一起消失。而 Qt 只在 stderr 留一句 ``QPainter::setPen: Painter not active``，界面上
+    完全看不出来，测试也就一路绿灯。
+
+    所以这里**数墨迹**（见 :func:`_ink_in`），而且是**逐行**数：坏法是「从第几行往后全没了」，
+    只查第一行或只查标志位都抓不住。
+
+    快捷键一并查：它们与箭头走同一个出口、同一支笔，箭头丢在哪一行它们就从哪一行开始丢。
+    """
+    menu = _menu_to_paint(qt_app, window, kind)
+    assert isinstance(menu, menus.ShortcutColumnMenu)
+
+    menu.popup(QPoint(60, 60))
+    try:
+        # 高亮带会把整行涂满颜色，于是「这一行本该有墨迹」就变成了永远为真 —— 那时这把
+        # 尺子就废了。弹在菜单左上角（菜单自己内容的内缩处）不会点亮任何一行。
+        assert menu.activeAction() is None, "有行被高亮了，数墨迹就数不出箭头了"
+        # 没有子菜单、也没有快捷键/提示的那些行，那一列本来就该空着（「复制元数据」之类）。
+        painted = [
+            action
+            for action in menu.actions()
+            if not action.isSeparator()
+            and (action.menu() is not None or menu.key_cell(action) is not None)
+        ]
+        missing = [action.text() for action in painted if _ink_in(menu, action) == 0]
+    finally:
+        menu.close()
+
+    assert painted, f"「{kind}」这张菜单里一行该有墨迹的都没有，测的就不是它了"
+    assert not missing, f"「{kind}」这几行的最右列是空的：{missing}"
 
 
 def test_menus_without_checkable_items_keep_the_text_column(
