@@ -3340,14 +3340,28 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         if height <= 0:
             self._search_field.hide()
             return
-        field_height = min(SEARCH_FIELD_HEIGHT, height - 4)
+        # 胶囊只摆进**真正空着的那一段**，也就是内容区让出来的那 ``top`` 点 ——
+        # 不按 ``height`` 摆。那一行的高度带着 28 点这个下限（ADR 0025），而内容区
+        # 在安全区不足 28 点的平台上从 22 点就开始，两者对不齐。
+        #
+        # 标题文字不画自己的底色，对不齐只是标题与胶囊不同高，什么也看不出来；
+        # **胶囊是要画的**，越界就是一块带边框的底色压在照片区的顶边上（实测守护测试
+        # ``test_innermost_layer_has_no_border`` 就是这么抓到的：它量到大图区上边缘
+        # 出现了 397 个非底色像素）。
+        free = min(height, top) if top > 0 else height
+        field_height = min(SEARCH_FIELD_HEIGHT, free - 4)
         self._search_field.setGeometry(
             self.width() - SEARCH_FIELD_WIDTH - SEARCH_FIELD_MARGIN_RIGHT,
-            (height - field_height) // 2,
+            (free - field_height) // 2,
             SEARCH_FIELD_WIDTH,
             field_height,
         )
         self._search_field.show()
+        # **要抬一次**：窗口布局跑完之后，中央控件与菜单栏会被抬到「最后创建的子控件」
+        # 之上（实测它们就是这么盖住了胶囊），而胶囊是要画出来的 —— 被盖住就等于窗口上
+        # 根本没有那个东西。``show()`` 对已经可见的控件不再发 ``showEvent``，所以抬的动作
+        # 得写在这里，缩放窗口时也一并生效。
+        self._search_field.raise_()
 
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         super().showEvent(event)

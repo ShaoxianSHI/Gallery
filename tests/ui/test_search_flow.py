@@ -26,7 +26,7 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QEvent, QPointF, Qt  # noqa: E402
 from PySide6.QtGui import QMouseEvent  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 from waiting import DEFAULT_TIMEOUT_SECONDS  # noqa: E402
 
 from gallery.core.library.config import prepare_library  # noqa: E402
@@ -38,7 +38,14 @@ from gallery.core.library.session import (  # noqa: E402
 )
 from gallery.core.metadata import batch  # noqa: E402
 from gallery.core.places.resolver import LazyPlaceResolver, ResolvedPlace  # noqa: E402
+from gallery.ui import theme  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
+from gallery.ui.search_field import (  # noqa: E402
+    HEIGHT,
+    WIDTH,
+    SearchField,
+    magnifier,
+)
 
 #: 测试库里每张照片的相机（按文件名对应）。没给的就是没写相机。
 CAMERAS = {"海边-01.jpg": "Canon EOS R5", "山.jpg": "Sony A7"}
@@ -152,6 +159,98 @@ def _search(qt_app: QApplication, window: MainWindow, text: str) -> None:
 
 
 # ---- 胶囊本身 ---------------------------------------------------------------------
+
+
+# ---- 胶囊长什么样 -------------------------------------------------------------------
+
+
+def test_the_capsule_paints_its_own_edge(qt_app: QApplication) -> None:
+    """胶囊得**看得见**：底色与边框都要真的画出来。
+
+    样式表挂在普通 ``QWidget`` 上时，底色与边框**一条都不会画** —— Qt 只给 ``QFrame``
+    那一族自动画样式背景（实测：胶囊整个透明，在白色窗口上等于不存在）。
+    """
+    window = QWidget()
+    window.resize(400, 60)
+    window.setStyleSheet("background: white;")
+    field = SearchField(window)
+    field.setGeometry(20, 10, WIDTH, HEIGHT)
+    window.show()
+    qt_app.processEvents()
+
+    image = window.grab().toImage()
+    border = image.pixelColor(20, 20)
+    inside = image.pixelColor(120, 20)
+    assert border != inside, "胶囊的边框没画出来"
+    assert inside != image.pixelColor(380, 20), "胶囊的底色与窗口底色一样，等于看不见"
+    window.close()
+
+
+def test_the_capsule_has_round_ends(qt_app: QApplication) -> None:
+    """两个角是**圆的**：最上一行两端那几个像素不该有东西，否则是个方框。"""
+    window = QWidget()
+    window.resize(400, 60)
+    window.setStyleSheet("background: white;")
+    field = SearchField(window)
+    field.setGeometry(20, 10, WIDTH, HEIGHT)
+    window.show()
+    qt_app.processEvents()
+
+    image = window.grab().toImage()
+    painted = [x for x in range(20, 20 + WIDTH) if image.pixelColor(x, 10).name() != "#ffffff"]
+
+    assert painted, "胶囊顶边整条都没画"
+    assert min(painted) > 20, "左端是方的"
+    assert max(painted) < 20 + WIDTH - 1, "右端是方的"
+    window.close()
+
+
+def test_the_capsule_stays_inside_the_title_bar_strip(qt_app: QApplication, tmp_path: Path) -> None:
+    """胶囊不许压到内容上。
+
+    标题栏那一条的高度带着 28 点这个下限（ADR 0025），而内容区在安全区不足的平台上
+    从更矮的地方就开始（实测 22）—— 胶囊要是照那条的高度摆，就会盖住照片区的顶边。
+    这条曾经真的发生过，是被 ``test_innermost_layer_has_no_border`` 抓到的
+    （它量到大图区上边缘出现了几百个非底色像素）。
+    """
+    window = MainWindow(session_base=tmp_path / "会话")
+    window.show()
+    qt_app.processEvents()
+
+    bottom = window._search_field.geometry().bottom()
+    assert bottom <= window.centralWidget().geometry().top(), (
+        f"胶囊一直伸到第 {bottom} 行，内容从第 {window.centralWidget().geometry().top()} 行开始"
+    )
+    window.close()
+
+
+@pytest.mark.parametrize("ratio", [1.0, 2.0])
+def test_the_magnifier_fits_inside_its_canvas(qt_app: QApplication, ratio: float) -> None:
+    """放大镜要完整，还要**在画布之内**。
+
+    两条曾经踩过的坑各钉一条：
+
+    - 笔是画在路径**两侧**的，画到画布边上会被裁掉（手柄的尖少一截）；
+    - ``QPainter`` 按设备像素比缩放它拿到的坐标，拿设备像素画上去在 Retina 上就是
+      放大一倍 —— 13 点的画布里只剩手柄的尖（不透明像素只剩右下角一个）。
+
+    ``ratio=2`` 那一条正是 Retina 屏上的样子。
+    """
+    pixmap = magnifier(theme.current_theme(), ratio)
+    image = pixmap.toImage()
+    lit = [
+        (x, y)
+        for y in range(image.height())
+        for x in range(image.width())
+        if image.pixelColor(x, y).alpha() > 8
+    ]
+
+    assert len(lit) > 20, "放大镜几乎没画出来（按设备像素画进画布就是这样）"
+    xs = [x for x, _ in lit]
+    ys = [y for _, y in lit]
+    assert min(xs) >= 1 and min(ys) >= 1, "图形顶到了画布的第一行 / 第一列"
+    assert max(xs) <= image.width() - 2, "图形被右边缘裁掉了"
+    assert max(ys) <= image.height() - 2, "图形被下边缘裁掉了"
 
 
 def test_the_field_list_appears_after_a_hash(qt_app: QApplication, tmp_path: Path) -> None:

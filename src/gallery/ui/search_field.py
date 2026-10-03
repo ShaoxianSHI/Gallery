@@ -15,13 +15,15 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QPoint, Qt, Signal
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import (
     QCursor,
     QFocusEvent,
     QKeyEvent,
     QPainter,
+    QPen,
     QPixmap,
+    QResizeEvent,
     QShortcutEvent,
 )
 from PySide6.QtWidgets import (
@@ -56,6 +58,13 @@ MARGIN_RIGHT = 12
 
 #: 放大镜直径（点）。
 ICON_EDGE = 13
+
+#: 画之前往里收多少（点）。**不是可有可无的余量**：笔宽画在路径两侧，收少了就会被
+#: 画布裁掉（见 :func:`magnifier`）。
+ICON_INSET = 1.6
+
+#: 放大镜那两笔的粗细（点）。
+_ICON_STROKE = 1.4
 
 #: 输入区里那一列的字号，与标题文字（13 点）差一档 —— 它是次要控件。
 _FONT_PX = 12
@@ -125,21 +134,27 @@ class SearchEdit(QLineEdit):
         self._owner.edit_ended()
 
 
-def search_field_style(app_theme: AppTheme, *, focused: bool) -> str:
+def search_field_style(app_theme: AppTheme, *, focused: bool, radius: int = 0) -> str:
     """胶囊长什么样。
 
     底色与改名的输入框**同一个函数派生**（见 ``rename_edit.field_background``）：
     它也是一块输入面，两处各派生一次早晚会差一档，而那时没人说得清是哪一档。
 
     聚焦时边框换成调色板的 ``Highlight`` —— 与系统、与网格里那一处选区永远一致，
-    不挑一个「看着顺眼的蓝」。
+    不挑一个「看着顺手的蓝」。
+
+    ``radius`` 是**圆角半径，由摆它的那一处按实际高度给过来**（默认 = 一半高度，
+    也就是正圆）。写死不成立：胶囊的高度跟着窗口让出来的那一条走（实测安全区不足
+    28 点时是 18），而 Qt 样式表里半径一旦超过高度的一半就整个不画 —— 胶囊于是变成
+    一个方框（实测：18 高配 11 半径，四角是方的）。
     """
     border = "palette(highlight)" if focused else rgba(app_theme.text_at(0.28))
+    corner = max(0, radius or HEIGHT // 2)
     return f"""
     QWidget#searchField {{
         background: {rgba(field_background(app_theme))};
         border: 1px solid {border};
-        border-radius: {HEIGHT // 2}px;
+        border-radius: {corner}px;
     }}
     QLabel#searchIcon {{ background: transparent; }}
     QLineEdit#searchEdit {{
@@ -175,27 +190,34 @@ def magnifier(app_theme: AppTheme, ratio: float) -> QPixmap:
 
     一个圆加一根柄，两条路径 —— 换成图标文件就要多一份要打包、要适配深浅两档的资源，
     而它永远是同一个形状。
+
+    **坐标一律用逻辑像素**，只有画布尺寸乘上 :paramref:`ratio`。``QPainter`` 会按设备
+    像素比缩放它收到的那套坐标，于是拿设备像素画上去，在 Retina 上就是放大了一倍 ——
+    画布只有 13 点、图形却按 26 点画，结果只剩手柄的尖落在画布里（实测：不透明像素
+    只剩右下角一个）。
+
+    这与 :data:`ICON_INSET` 是两件事：**收圈**挡住笔宽被裁，**用逻辑坐标**挡住整张图
+    被放大。
     """
-    edge = ICON_EDGE * max(1.0, ratio)
-    pixmap = QPixmap(int(edge), int(edge))
+    pixmap = QPixmap(round(ICON_EDGE * ratio), round(ICON_EDGE * ratio))
     pixmap.setDevicePixelRatio(ratio)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    pen = painter.pen()
-    pen.setColor(app_theme.text_at(0.55))
-    pen.setWidthF(1.3 * ratio)
+    pen = QPen(app_theme.text_at(0.6))
+    pen.setWidthF(_ICON_STROKE)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
     painter.setPen(pen)
-    radius = edge * 0.32
-    center = edge * 0.42
-    painter.drawEllipse(
-        int(center - radius), int(center - radius), int(radius * 2), int(radius * 2)
-    )
+    usable = ICON_EDGE - 2 * ICON_INSET
+    radius = usable * 0.33
+    center = ICON_INSET + usable * 0.4
+    # 用 ``QRectF`` 那个重载：``drawEllipse(QPointF, w, h)`` 在 PySide6 里绑到的
+    # 不是「左上角 + 宽高」（实测圆被画到 0..8 而不是 2..9）。
+    painter.drawEllipse(QRectF(center - radius, center - radius, radius * 2, radius * 2))
+    # 手柄从圆环的 45 度方向出发，走到那个内缩过的角上 —— 与圆环连得上，也不顶边。
     painter.drawLine(
-        int(center + radius * 0.75),
-        int(center + radius * 0.75),
-        int(edge - 1),
-        int(edge - 1),
+        QPointF(center + radius * 0.72, center + radius * 0.72),
+        QPointF(ICON_EDGE - ICON_INSET, ICON_EDGE - ICON_INSET),
     )
     painter.end()
     return pixmap
@@ -219,7 +241,15 @@ class SearchField(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("searchField")
-        self.setFixedSize(WIDTH, HEIGHT)
+        # **只定死宽度**：它要贴着窗口右边，宽度是设计的一部分。高度交给摆它的那一处
+        # （``MainWindow._layout_title_bar``）—— ``setFixedSize`` 会把高度也钉死，
+        # 于是窗口给不出 :data:`HEIGHT` 点时 ``setGeometry`` 改不动，胶囊就压到了
+        # 照片区顶边上（守护测试 ``test_innermost_layer_has_no_border`` 量到了那一块）。
+        self.setFixedWidth(WIDTH)
+        self.resize(WIDTH, HEIGHT)
+        # **没有它，样式表里的底色与边框一条都不会画**：Qt 只给 QFrame 那一族自动画
+        # 样式背景，普通 QWidget 得自己声明（实测：胶囊整个透明，窗口底色上什么都没有）。
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
         self._icon = QLabel(self)
         self._icon.setObjectName("searchIcon")
@@ -426,7 +456,9 @@ class SearchField(QWidget):
     def _apply_theme(self) -> None:
         """换过浅色 / 深色之后重新下发一次颜色（与 ``panels.welcome`` 同一个做法）。"""
         app_theme = theme.current_theme()
-        self.setStyleSheet(search_field_style(app_theme, focused=self._focused))
+        self.setStyleSheet(
+            search_field_style(app_theme, focused=self._focused, radius=self.height() // 2)
+        )
         self._popup.setStyleSheet(popup_style(app_theme))
         self._icon.setPixmap(magnifier(app_theme, self.devicePixelRatioF()))
 
@@ -437,6 +469,13 @@ class SearchField(QWidget):
         self._focused = True
         self._apply_theme()
         self.editing_changed.emit(True)
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
+        # 圆角半径按**当前高度**算（见 :func:`search_field_style`）：胶囊的高度由
+        # ``MainWindow._layout_title_bar`` 按窗口让出来的那一条给，而 Qt 样式表里
+        # 半径一旦超过高度的一半就不画 —— 高度一变就得把样式重下一次。
+        super().resizeEvent(event)
+        self._apply_theme()
 
     def focusInEvent(self, event: QFocusEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         super().focusInEvent(event)
