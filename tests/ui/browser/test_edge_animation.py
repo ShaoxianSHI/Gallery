@@ -665,3 +665,37 @@ def test_two_quick_level_changes_still_end_centered_on_the_selection(
     cell_rect = grid.visualRect(grid.model().index(80, 0))
     middle = grid.viewport().height() // 2
     assert abs(cell_rect.center().y() - middle) <= 1, f"选中项在 y={cell_rect.center().y()}"
+
+
+def test_resizing_the_window_never_recenters(
+    qt_app: QApplication,
+    tmp_path: Path,
+    settle: Callable[[float], None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """拖窗口（以及横幅出现/消失带来的自动 resize）不该把视图拽到选中项那里。
+
+    这条是踩过坑的：``_apply_cell`` 也会在视口大小变化时被调到，而 Qt 会顺手把当前项
+    设成第 0 行 —— 居中一旦挂在 ``_apply_cell`` 上无条件跑，**每 resize 一次就回一次
+    顶部**。而横幅是会自己弹的（地点解析、缩略图加载、检索索引），于是用户根本没碰
+    窗口，视图也会被拽走。
+    """
+    grid = make_grid(qt_app, tmp_path, 400)
+    grid.select_row(300, ensure_visible=False)
+    settle(SETTLE_SECONDS)
+
+    calls: list[int] = []
+    real = grid._center_on_row
+
+    def counted(row: int, columns: int) -> None:
+        calls.append(row)
+        real(row, columns)
+
+    monkeypatch.setattr(grid, "_center_on_row", counted)
+
+    grid.resize(1100, 800)
+    settle(SETTLE_SECONDS)
+    grid.resize(1300, 800)
+    settle(SETTLE_SECONDS)
+
+    assert calls == [], f"拖窗口不该居中，却调了 {calls} 次"

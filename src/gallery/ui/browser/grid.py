@@ -789,7 +789,12 @@ class PhotoGrid(QListView):
             self._laying_out = False
         new_columns = self._first_row_columns()
         index = self.currentIndex()
-        if index.isValid():
+        if index.isValid() and full_layout:
+            # **只在切档时居中。** 这一条是踩过坑的：``_apply_cell`` 还会在拖窗口、
+            # 视口大小变化时被调到，而 Qt 会顺手把当前项设成第 0 行 —— 于是每 resize
+            # 一次（**包括后台横幅出现/消失带来的自动 resize**）就把整屏拽回顶部。
+            #
+            # 拖窗口时用户要的是「还在看的那一片还在」，不是「回到选中项」。
             self._center_on_row(index.row(), new_columns)
         self._transition = (
             GridTransition(old_columns, old_cell, new_columns, cell)
