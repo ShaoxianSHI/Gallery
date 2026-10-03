@@ -6,6 +6,11 @@
 2. **``TitleBar`` 自己**：显示、过长省略、编辑的提交与取消。
 3. **窗口上的行为**：标题写什么、``⌘R`` 落在哪一格、改完名磁盘与标题栏是不是都变了。
 
+另有一段落在最后：**两处的改名输入框必须是同一个外观**。用户在网格里改缩略图名时看到的
+那个输入框，与标题栏里那一个必须是同一样东西（ADR 0025 决策 5）—— 圆角、底色、
+高亮都只有一份。它们仍在这里而不是另开一个 ``test_rename_edit.py``，是因为这条断言要
+的正是「两页看起来一样」，拆开就没有对象可断言了。
+
 第3 块里每条写操作都对着 ``tmp_path`` 里的副本，并且断言 journal 里记了一笔
 （红线 4：任何写回都必须可回滚）。
 
@@ -38,6 +43,7 @@ from gallery.core.library.session import (  # noqa: E402
 )
 from gallery.core.metadata.journal import ACTION_RENAME, read_records  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
+from gallery.ui.rename_edit import RADIUS, RenameEdit  # noqa: E402
 from gallery.ui.title_bar import (  # noqa: E402
     HEIGHT,
     MAX_EDITOR_WIDTH,
@@ -406,3 +412,42 @@ def test_undo_puts_both_the_name_and_the_title_back(
     assert window._title_bar.current_text == PHOTO
     assert window._model.entry_at(window._current_row).name == PHOTO
     assert "已撤销" in window._banner.text()
+
+
+# ---- 4. 两处的输入框是同一个外观 --------------------------------------------
+
+
+def test_the_round_corners_and_the_highlight_live_on_the_shared_editor(
+    qt_app: QApplication,
+) -> None:
+    """样式挂在 :class:`RenameEdit` 自己身上 —— 两处摆的是同一个控件。
+
+    **高亮那一行最要紧**：它写死过一次（拿链接色当选区底色），深色下那一片比正文还沉，
+    「主干已经选中了」反而看不出来。走调色板的 ``Highlight``，就永远与系统一致 ——
+    网格那一处本来就是系统样式。
+    """
+    style = RenameEdit().styleSheet()
+
+    assert f"border-radius: {RADIUS}px" in style, "圆角写在共享样式里，两处才一起圆"
+    assert "palette(highlight)" in style, "选区底色走调色板，不要写死"
+    assert "palette(highlighted-text)" in style, "选区里的字要走配对的那个颜色，否则读不出来"
+
+
+def test_the_grid_editor_and_the_title_bar_one_look_the_same(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """网格里那个与大图页标题栏里那个，外观一模一样。
+
+    这正是用户看到的那件事：缩略图上改名是大图页改名的同一样东西，不该一个方框一个圆角。
+    """
+    window._grid.select_row(0)
+    qt_app.processEvents()
+    assert window._grid.begin_rename(window._grid.currentIndex()) is True
+    grid_style = window._grid._rename_edit.styleSheet()
+    QTest.keyClick(window._grid._rename_edit, Qt.Key.Key_Escape)
+
+    _open_detail(qt_app, window)
+    window.rename_current_entry()
+
+    assert isinstance(_editor(window), RenameEdit)
+    assert _editor(window).styleSheet() == grid_style

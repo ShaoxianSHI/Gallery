@@ -5,8 +5,8 @@
 正中显示当前这一层的名字，网格页是相册名、大图页是正在看的那张照片的文件名。
 
 **显示与编辑共用同一个字体、同一个位置**，因此 ``⌘R`` 之后看不出是换了控件：回车提交、
-``Esc`` 取消、点到别处也提交，语义与网格里那个输入框逐字相同 —— 它们本来就是同一个
-:class:`~gallery.ui.rename_edit.RenameEdit`（ADR 0025）。
+``Esc`` 取消、点到别处也提交，语义**与外观**都与网格里那个输入框逐字相同 —— 它们本来就是
+同一个 :class:`~gallery.ui.rename_edit.RenameEdit`，样式挂在那个类上（ADR 0025 决策 5）。
 
 三个与布局有关的数都在这一份里（ADR 0025 决策 5）：
 
@@ -22,12 +22,12 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QRect, Qt, Signal
-from PySide6.QtGui import QColor, QFontMetrics, QResizeEvent
+from PySide6.QtGui import QFontMetrics, QResizeEvent
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
 from gallery.ui import theme
 from gallery.ui.rename_edit import RenameEdit
-from gallery.ui.theme import AppTheme, rgba
+from gallery.ui.theme import rgba
 
 #: 标题栏那一条的高度（点）。macOS 的标题栏是 28 点，而
 #: ``WA_ContentsMarginsRespectsSafeArea`` 正好把内容区顶出这么多（见 ``theme.unify_title_bar``）——
@@ -69,37 +69,6 @@ def editor_rect(area: QRect, text: str, metrics: QFontMetrics) -> QRect:
     return QRect(x, area.y() + (area.height() - height) // 2, width, height)
 
 
-def _field_background(app_theme: AppTheme) -> QColor:
-    """输入框的底色：比窗口那块底色「浮」一点点。
-
-    底色只有一个来源（ADR 0005），所以这里是从它派生的，不写死任何颜色：
-    深色下提亮一点、浅色下压暗一点，两种主题下都是「一块微微凸起的面」。
-    """
-    color = QColor(app_theme.background)
-    return color.lighter(118) if app_theme.is_dark else color.darker(106)
-
-
-def title_editor_style(app_theme: AppTheme) -> str:
-    """输入框的样式表。
-
-    系统那个 macOS 样式画出来的是一个带立体边框的输入控件，摆在 28 点高的标题栏里显得笨重；
-    这里改成一块微微凸起的面：与窗口同一套底色与字色（见 :func:`_field_background`），
-    字号也跟标题一致，于是显示与编辑之间的切换看不出来。
-    """
-    return f"""
-    QLineEdit#titleEditor {{
-        background: {rgba(_field_background(app_theme))};
-        color: {rgba(app_theme.text)};
-        border: 1px solid {rgba(app_theme.text_at(0.28))};
-        border-radius: 5px;
-        padding: 0 8px;
-        font-size: 13px;
-        selection-background-color: {rgba(app_theme.link)};
-        selection-color: {rgba(app_theme.text)};
-    }}
-    """
-
-
 class TitleBar(QWidget):
     """窗口顶边那一条：显示当前这一层的名字，``⌘R`` 时原地改成输入框。
 
@@ -125,8 +94,6 @@ class TitleBar(QWidget):
         # 与网格那一个**同一个类**（ADR 0025 决策 5）：语义只有一份，
         # 显示与编辑之间的切换因此看不出换了控件。
         self._editor = RenameEdit(self)
-        self._editor.setObjectName("titleEditor")
-        self._editor.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._editor.committed.connect(self._on_committed)
         self._editor.cancelled.connect(self._on_cancelled)
         self._editor.hide()
@@ -146,12 +113,15 @@ class TitleBar(QWidget):
     # ---- 外观 --------------------------------------------------------------
 
     def _apply_theme(self) -> None:
-        """换过浅色 / 深色之后重新下发一次颜色（见 ``panels.welcome`` 同一个做法）。"""
+        """换过浅色 / 深色之后重新下发一次颜色（见 ``panels.welcome`` 同一个做法）。
+
+        **只管那行字。** 输入框的样子由 :class:`~gallery.ui.rename_edit.RenameEdit` 自己管
+        —— 网格里那一个是同一个类，于是两处的圆角、高亮永远一致（ADR 0025 决策 5）。
+        """
         app_theme = theme.current_theme()
         self._label.setStyleSheet(
             f"color: {rgba(app_theme.text)}; font-size: 13px; background: transparent;"
         )
-        self._editor.setStyleSheet(title_editor_style(app_theme))
 
     def _set_mouse_transparent(self, transparent: bool) -> None:
         """不在编辑时对鼠标透明。
@@ -247,5 +217,4 @@ __all__ = [
     "TRAFFIC_LIGHTS_WIDTH",
     "TitleBar",
     "editor_rect",
-    "title_editor_style",
 ]
