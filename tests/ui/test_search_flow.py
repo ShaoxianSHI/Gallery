@@ -498,15 +498,43 @@ def test_the_candidate_list_does_not_stick_out_past_the_capsule(
     """列表的右沿**不许越过胶囊的右沿**。
 
     宽度曾经是 :data:`WIDTH` 而左沿又照着胶囊往右挪了十八点，于是右边整整探出去
-    十八点 —— 一份挂在输入框底下、比输入框还宽的列表看着是漏的。现在左右沿都与胶囊齐。
+    十八点 —— 一份挂在输入框底下、比输入框还宽的列表看着是漏的。
+
+    现在左沿让开多少、宽度就收多少，于是右沿**正正**压在胶囊右沿上（不是「不超过」，
+    是「一样宽到同一处」）。只断言「不超过」的话，把列表缩成一条窄缝也能过。
     """
     window = _open_candidates(qt_app, tmp_path, "#")
     field = window._search_field
     popup = field._popup
 
-    assert popup.geometry().left() == field.x(), "列表左沿应当与胶囊左沿齐"
-    assert popup.geometry().right() <= field.geometry().right(), (
-        f"列表右沿 {popup.geometry().right()} 超出了胶囊右沿 {field.geometry().right()}"
+    assert popup.geometry().right() == field.geometry().right(), (
+        f"列表右沿 {popup.geometry().right()}，胶囊右沿 {field.geometry().right()}"
+        f"（左沿 {popup.geometry().left()}，胶囊左沿 {field.x()}，宽 {popup.width()}）"
+    )
+    window.close()
+
+
+def test_the_candidate_list_follows_the_capsule_layout(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """胶囊左边多出一截，列表的左沿要**跟着挪那么多**。
+
+    这条盯的是「让开的那一段是**量出来的**，不是写死的常数」（见
+    ``SearchField._popup_left``）：写死的话这里不会红，而换过放大镜之后两个 ``#``
+    就对不齐了 —— 那一档 8 点内边距不变，挪的是框，框挪多少全看输入框那一侧有多宽。
+    """
+    window = _open_candidates(qt_app, tmp_path, "#")
+    field = window._search_field
+    before = field._popup.geometry().left()
+
+    field._icon.setFixedWidth(field._icon.width() + 12)
+    field.layout().activate()
+    field._edit.setText("#相机")
+    qt_app.processEvents()
+
+    after = field._popup.geometry().left()
+    assert after - before == 12, (
+        f"放大镜宽了 12 点，列表左沿只挪了 {after - before} 点 —— 让开的那一段写死了？"
     )
     window.close()
 

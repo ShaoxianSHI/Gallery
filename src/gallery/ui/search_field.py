@@ -488,14 +488,12 @@ class SearchField(QWidget):
             rows + POPUP_LIST_INSET * 2,
             max(0, self._host.height() - anchor.y()),
         )
-        # **左右沿都与胶囊齐**（宽度就是 :data:`WIDTH`）：一份挂在输入框底下的列表
-        # 比输入框还宽出去一截，看着是漏的。窄到放不下时宁可让列表贴着窗口左边 ——
-        # 那只在窗口小到胶囊都快看不见时才发生。
-        left = min(
-            self.mapTo(self._host, QPoint(0, 0)).x(),
-            max(0, self._host.width() - WIDTH),
-        )
-        self._popup.setGeometry(left, anchor.y(), WIDTH, height)
+        # 左沿让开的那一段由 :meth:`_popup_left` 算，**右沿仍与胶囊齐** —— 宽度跟着
+        # 左移一起收窄，于是「# 与输入框对齐」与「不许越过右边」两件事都成立。
+        # 窗口窄到放不下时宁可让列表贴着窗口左边（那时右沿也已经顶到窗口边了）。
+        field_left = self.mapTo(self._host, QPoint(0, 0)).x()
+        left = min(self._popup_left(), max(0, self._host.width() - WIDTH))
+        self._popup.setGeometry(left, anchor.y(), WIDTH - max(0, left - field_left), height)
         items = self._candidate_items()
         if items:
             self._popup.setCurrentItem(items[0])
@@ -503,22 +501,34 @@ class SearchField(QWidget):
         self._popup.show()
 
     def _item_padding(self) -> int:
-        """候选那一行的文字离行矩形左沿多远 —— **让列表里那个 ``#`` 与输入框里那个对齐**。
+        """**固定就是菜单那一档**（:data:`POPUP_LIST_ITEM_PAD`）——这里不再算什么。
 
-        两边各自让开多少是量出来的，不是一个凭空定的数：
+        这一段原本是照着「文字要与输入框里那个字对齐」算出来的（实测 17 点），于是
+        列表里那个 ``#`` 前面空着一大片。那一片有**一半是白给的**：菜单那一档 8 点是
+        给「左边留了对勾 gutter」那份样式定的，列表没有对勾，要那么多内边距没有道理。
 
-        - 胶囊那边：左边距 + 放大镜宽度 + 布局间距（实测 25 点，见 :meth:`_text_inset`）；
-        - 列表那边：边框 + 内边距（:data:`POPUP_LIST_INSET`，实测 7 点）
-          再加 Qt 自己那一小段（:data:`_ITEM_TEXT_BASELINE`，实测 1 点）。
-
-        差就是要给行内边距的那一份。
-
-        **原来那一档 8 点是白让的**：列表的左沿当时又照着胶囊往右挪了十八点，两处一叠，
-        列表里那个 ``#`` 比输入框里那个**往右错开八点** —— 用户报的正是「下栏框中 ``#``
-        前面有留白」。现在左沿不再挪（左右沿都与胶囊齐，见 :meth:`_fill_popup`），
-        让路的活整个交给这里。
+        现在让路的活整个交给**框的位置**（见 :meth:`_popup_left`）：框往右挪这么多、
+        宽度跟着收窄，``#`` 仍然落在输入框里那个正下方，而框内的留白回到菜单那一档。
         """
-        return max(0, self._text_inset() - POPUP_LIST_INSET - _ITEM_TEXT_BASELINE)
+        return POPUP_LIST_ITEM_PAD
+
+    def _popup_left(self) -> int:
+        """候选列表的左沿（**宿主**坐标）—— 让列表里那个 ``#`` 落在输入框里那个正下方。
+
+        「列表里那个 ``#`` 离自己左沿多远」是三段加起来：
+
+        - 边框 + 内边距（:data:`POPUP_LIST_INSET`，实测 7 点）；
+        - 行内边距（:meth:`_item_padding`，8 点）；
+        - Qt 在这两段**之前**自己让开的一小段（:data:`_ITEM_TEXT_BASELINE`，实测 1 点）。
+
+        拿它与输入框里那个字的内缩（:meth:`_text_inset`）一减，就是框该往右让开的那
+        一段。**现量而不是写死**：输入框那一侧是「左边距 + 放大镜 + 间距」三样加起来的，
+        任一样动了写死的数就不作数，而两个 ``#`` 错开几点用户一眼看得见。
+
+        宽度跟着这一段一起收（见 :meth:`_fill_popup`），所以右沿仍旧压在胶囊右沿上。
+        """
+        inset = POPUP_LIST_INSET + self._item_padding() + _ITEM_TEXT_BASELINE
+        return self.mapTo(self._host, QPoint(0, 0)).x() + max(0, self._text_inset() - inset)
 
     def _text_inset(self) -> int:
         """输入框里那个字离**胶囊左沿**多远（点）。
