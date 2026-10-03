@@ -6,8 +6,11 @@
 
 1. Pillow 打开文件是**惰性**的，真正的解码发生在 ``load()`` / ``thumbnail()`` / ``tobytes()``；
    因此所有解码相关的异常都要包成 ``ImageDecodeError``，而不是让它裸奔到界面。
-2. 竖拍照片带 EXIF Orientation，必须用 ``ImageOps.exif_transpose`` 摆正，否则界面里全是躺着的。
-   这**只影响内存中的像素**，绝不写回文件。
+2. 竖拍照片带方向标记，必须摆正，否则界面里全是躺着的。这**只影响内存中的像素**，
+   绝不写回文件。**注意别用 ``ImageOps.exif_transpose``**：它只读 EXIF 标签，而
+   ``pillow-heif`` 在解码 HEIF 时会把那个标签重置成 1、把真值挪进
+   ``info["original_orientation"]`` —— 于是经它摆正的竖拍 HEIC 全都是躺着的（ADR 0027 决策 5）。
+   方向由 :func:`~gallery.core.media.edit.orientation_of` 读，那两个来源都认。
 3. ``Image.draft`` 能让 JPEG 按 1/2、1/4、1/8 直接解码，做缩略图和适配窗口的大图预览时
    能快一个量级；它必须在任何解码动作之前调用。
 4. ``Image.thumbnail`` 只缩不放，所以这里不需要额外判断是否要放大。
@@ -21,9 +24,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import Image, UnidentifiedImageError
 
 from gallery.core.errors import ImageDecodeError
+from gallery.core.media.edit import EditStep, apply_steps, orientation_of
 
 
 def _register_heif_support() -> bool:
@@ -78,8 +82,12 @@ class RasterImage:
         转换出来的那张中间图随即被关掉：它可能是整幅全分辨率的缓冲区，不关就是
         一次内存泄漏。**收尾只在这一处**，两条解码路径（直接解码、读缓存条目）
         共用它 —— 那段「convert → tobytes → finally close」不该有两份。
+
+        **已经是 RGBA 的图不转换。** ``convert("RGBA")`` 对一张 RGBA 图仍然会整幅复制，
+        而编辑草稿那一路（见 :func:`decode_rgba` 的 ``steps``）本来就已经是 RGBA ——
+        多这一次复制，全分辨率时就是多 128 MB 的峰值。
         """
-        rgba = image.convert("RGBA")
+        rgba = image if image.mode == "RGBA" else image.convert("RGBA")
         try:
             return cls(
                 width=rgba.width,
@@ -88,7 +96,8 @@ class RasterImage:
                 has_alpha=has_alpha,
             )
         finally:
-            rgba.close()
+            if rgba is not image:
+                rgba.close()
 
 
 def has_transparency(image: Image.Image) -> bool:
@@ -103,11 +112,46 @@ def has_transparency(image: Image.Image) -> bool:
     return "A" in image.getbands() or "transparency" in image.info
 
 
-def decode_rgba(path: Path, *, max_edge: int | None = None, use_draft: bool = False) -> RasterImage:
+#: 存着的方向 → 摆正它要做的变换。1（正常）是恒等，单独处理。
+_TRANSPOSE_BY_ORIENTATION: Final[dict[int, Image.Transpose]] = {
+    2: Image.Transpose.FLIP_LEFT_RIGHT,
+    3: Image.Transpose.ROTATE_180,
+    4: Image.Transpose.FLIP_TOP_BOTTOM,
+    5: Image.Transpose.TRANSPOSE,
+    6: Image.Transpose.ROTATE_270,
+    7: Image.Transpose.TRANSVERSE,
+    8: Image.Transpose.ROTATE_90,
+}
+
+
+def upright(image: Image.Image) -> Image.Image:
+    """按存着的方向把图摆正。方向不是 1 时返回**新图**，``image`` 本身不动。
+
+    方向由 :func:`~gallery.core.media.edit.orientation_of` 读：EXIF 标签与
+    ``info["original_orientation"]`` 两个来源都认，后者是 ``pillow-heif`` 藏起 HEIF
+    方向的地方（见模块文档那条坑）。
+
+    方向本来就是 1 时**原样返回同一个对象**而不是复制一份：那正是绝大多数照片，
+    而一次全分辨率复制对一张 32 MP 的照片就是 128 MB。
+    """
+    method = _TRANSPOSE_BY_ORIENTATION.get(orientation_of(image))
+    return image if method is None else image.transpose(method)
+
+
+def decode_rgba(
+    path: Path,
+    *,
+    max_edge: int | None = None,
+    use_draft: bool = False,
+    steps: tuple[EditStep, ...] = (),
+) -> RasterImage:
     """解码 ``path`` 为 RGBA 像素。
 
     :param max_edge: 若给出，长边会被缩放到不超过该值（只缩不放）。
     :param use_draft: 允许 JPEG 走 DCT 缩放快速解码。仅在 ``max_edge`` 远小于原图时有意义。
+    :param steps: 编辑草稿（ADR 0027）。**在摆正之后、缩放之前**施加：草稿记的是
+        「用户看着的那张图」上的坐标，而那一���正是摆正后的图；放到缩放之后虽然像素
+        一样，但多一份全分辨率缓冲 —— 32 MP 的照片那是 128 MB。
     :raises ImageDecodeError: 文件损坏、被截断，或格式不受支持。
     """
     path = Path(path)
@@ -119,12 +163,19 @@ def decode_rgba(path: Path, *, max_edge: int | None = None, use_draft: bool = Fa
                 and (image.format or "").upper() in {"JPEG", "MPO"}
             ):
                 image.draft("RGB", (max_edge, max_edge))
-            # ``exif_transpose`` 无论转不转都返回一张新图（不转时是 copy），因此
-            # 下一行的 ``thumbnail`` 改的是它自己，不会动到 ``image`` 的像素。
-            oriented = ImageOps.exif_transpose(image)
-            if max_edge is not None and max(oriented.size) > max_edge:
-                oriented.thumbnail((max_edge, max_edge), Image.Resampling.LANCZOS)
-            return RasterImage.from_pil(oriented, has_alpha=has_transparency(oriented))
+            # ``exif_transpose`` 无论转不转都返回一张新图，因此下面这一步改的是它
+            # 自己，不会动到 ``image`` 的像素 —— 而草稿要叠加在摆正**之后**。
+            oriented = upright(image)
+            edited = apply_steps(oriented, steps)
+            try:
+                if max_edge is not None and max(edited.size) > max_edge:
+                    edited.thumbnail((max_edge, max_edge), Image.Resampling.LANCZOS)
+                return RasterImage.from_pil(edited, has_alpha=has_transparency(edited))
+            finally:
+                if edited is not oriented:
+                    edited.close()
+                if oriented is not image:
+                    oriented.close()
     except UnidentifiedImageError as exc:
         raise ImageDecodeError(_unidentified_message(path), path=path, detail=str(exc)) from exc
     except Image.DecompressionBombError as exc:
@@ -156,4 +207,4 @@ def _unidentified_message(path: Path) -> str:
     return f"这不是一张能识别的图片：{path.name}。文件内容可能与扩展名不符。"
 
 
-__all__ = ["HEIF_SUPPORT", "RasterImage", "decode_rgba", "has_transparency"]
+__all__ = ["HEIF_SUPPORT", "RasterImage", "decode_rgba", "has_transparency", "upright"]

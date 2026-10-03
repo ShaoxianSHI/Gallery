@@ -17,9 +17,15 @@
 =============  ==========================================================
 看一眼          打开 · 在默认应用中打开 · 在访达中显示
 拿进拿出        拷贝 · 拷贝路径 · 复制到相册 · 移动到相册 · 粘贴
+改一改          左转 · 右转 · 左右镜像 · 裁剪 · 保存编辑后的副本（ADR 0027）
 会动文件        重命名… · 移到废纸篓
 它是什么        显示元数据信息 · 复制元数据（分组卡片：复制分组条件）
 =============  ==========================================================
+
+「改一改」是 **ADR 0023 那四个组之后的第五组**（决策增补）：它改的是**照片本身**
+（旋转 / 镜像 / 裁剪），与其它四组都不是一族 —— 别的组要么只是把东西摆出来，
+要么动的是文件名与文件位置。它插在「会动文件」**之前**，因为那两条的红线更重
+（红线 1 管的就是它们两个入口）。
 
 **某一行在某个落点上不出现**是常事（「粘贴」按落点定，见 ADR 0018 决策 7），缺了行但
 **段还在** —— 分隔线照旧，段的位置不跳。
@@ -63,6 +69,21 @@ class TargetKind(Enum):
     BLANK = "blank"
     #: 大图页里正看着的那张照片（ADR 0021）。菜单与网格那张几乎一样，只把第一行换掉。
     DETAIL = "detail"
+
+
+@dataclass(frozen=True, slots=True)
+class EditActions:
+    """「改一改」那一组的五枚动作（ADR 0027）。
+
+    它们与标题栏上那四枚图标是**同一批 ``QAction``**（见 ``MainWindow._build_actions``）：
+    图标上不写快捷键、菜单里写，两处说的必然是同一件事。
+    """
+
+    rotate_left: QAction
+    rotate_right: QAction
+    mirror: QAction
+    crop: QAction
+    save: QAction
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,6 +131,9 @@ class MenuActions:
     rename: QAction
     #: 「移到废纸篓」⌘⌫。
     trash: QAction
+    #: 「改一改」那一组（ADR 0027）。**只在 :func:`build_detail_menu` 里出现** ——
+    #: 网格页是多选，编辑还没有那一套预览与逐张撤销（ADR 0027 决策 3）。
+    edit: EditActions | None
     #: 「显示元数据信息」⌘I（勾选态，跟着面板开合）。
     metadata: QAction
     #: 「复制元数据」。
@@ -191,6 +215,14 @@ def build_detail_menu(actions: MenuActions) -> QMenu:
     menu.addSeparator()
     _add_copy_group(menu, clipboard, album_targets=True)
     menu.addSeparator()
+    # 「改一改」**整段出现 / 整段消失**：传进来的是 ``None`` 就说明此刻没什么可改，
+    # 而一个空段前面挂一道线比少一段更糟（与 ADR 0023 决策 2 同一条理由）。
+    #
+    # 上面那道分隔线是本来就有的（「拿进拿出」与「会动文件」之间），**这里不重复加** ——
+    # 两道挨着的分隔线会多出一个空块，而空块正是 ADR 0023 那条守护要挡的东西。
+    if actions.edit is not None:
+        _add_edit_group(menu, actions.edit)
+        menu.addSeparator()
     _add_write_group(menu, actions, multiple=False)
     # 与照片菜单同一份出口，因此那一行永远在（大图页不存在多选这件事）。
     _add_metadata_group(menu, actions, multiple=False)
@@ -416,6 +448,19 @@ def _add_write_group(
     menu.addAction(actions.trash)
 
 
+def _add_edit_group(menu: ShortcutColumnMenu, edit: EditActions) -> None:
+    """第五组「改一改」：左转 · 右转 · 镜像 · 裁剪 · 保存副本（ADR 0027 决策增补）。
+
+    **「保存编辑后的副本」压轴**：它是那一组里唯一会往磁盘上写东西的，而那五枚里
+    前四枚一个字节都不写（草稿只在内存里）。排在前头会让用户以为转一下就存了。
+    """
+    menu.addAction(edit.rotate_left)
+    menu.addAction(edit.rotate_right)
+    menu.addAction(edit.mirror)
+    menu.addAction(edit.crop)
+    menu.addAction(edit.save)
+
+
 def _add_metadata_group(menu: ShortcutColumnMenu, actions: MenuActions, *, multiple: bool) -> None:
     """第四组「它是什么」：显示元数据信息 · 复制元数据（ADR 0023）。
 
@@ -481,6 +526,7 @@ def _submenu(title: str, actions: tuple[QAction, ...], *, split_before: int = 0)
 __all__ = [
     "CLOSE_KEY_HINT",
     "OPEN_KEY_HINT",
+    "EditActions",
     "MenuActions",
     "TargetKind",
     "build_album_menu",
