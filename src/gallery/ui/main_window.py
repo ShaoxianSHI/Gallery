@@ -471,7 +471,7 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._undo_action.setShortcut(QKeySequence.StandardKey.Undo)
         self._undo_action.triggered.connect(self.undo_last_write)
 
-        # ---- 右键菜单新增的那几条（见 ADR 0014）--------------------------------
+        # ---- 菜单栏与快捷键（见 ADR 0014）--------------------------------
         # 「打开」刻意不给**真**快捷键：⌘O 已经是「打开文件夹…」，而回车网格自己已经处理
         # 了（见 PhotoGrid.keyPressEvent），抢过来只会和它打架。
         #
@@ -1714,7 +1714,7 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             f"有 {self._thumbnail_failures} 张照片无法显示缩略图：{message}", background=True
         )
 
-    # ---- 大图 --------------------------------------------------------------
+    # ---- 元数据面板、地点与进入
 
     def toggle_metadata(self, visible: bool) -> None:
         """⌘I：展开 / 收起右侧的元数据面板，并把选择记进会话。"""
@@ -2129,11 +2129,7 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             return
         self._show_banner(desktop.copy_files_to_clipboard(paths))
 
-    # ---- 粘贴（见 ADR 0018）--------------------------------------------------
-
-    # ---- 新建相册（见 ADR 0022）----------------------------------------------
-
-    # ---- 复制到相册 / 移动到相册（ADR 0019）------------------------------------
+    # ---- 右键菜单里的只读命令（见 ADR 0014）
 
     def _on_clipboard_changed(self) -> None:
         """剪贴板变了就重算一次 ⌘V 的可用性（只算这一条，不动别的）。"""
@@ -2204,11 +2200,7 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         desktop.copy_to_clipboard(f"按「{field}」分组：{group.label} · {group.count} 张")
         self._show_banner(f"已复制分组条件：按「{field}」分组。")
 
-    # ---- 重命名与移到废纸篓（仅有的两个会动用户文件的入口）--------------------
-
-    # ---- 移到废纸篓（界面上就是「删除」，见 ADR 0008）------------------------
-
-    # ---- 撤销 --------------------------------------------------------------
+    # ---- 大图（见 ADR 0021）
 
     def show_grid(self) -> None:
         """回到网格，并让当前照片保持选中。"""
