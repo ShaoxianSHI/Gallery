@@ -36,7 +36,7 @@ from PySide6.QtGui import (
     QPalette,
     QPolygonF,
 )
-from PySide6.QtWidgets import QMenu
+from PySide6.QtWidgets import QMenu, QWidget
 
 from gallery.ui.theme import rgba
 
@@ -71,6 +71,43 @@ def separator_color(background: QColor, text: QColor) -> str:
     color = QColor(text)
     color.setAlphaF(mix)
     return rgba(color)
+
+
+def popup_list_style(list_widget: QWidget) -> str:
+    """弹出列表（搜索框的候选列表）用的样式表 —— **与弹出菜单同一套颜色**。
+
+    四个角色与 :func:`style_sheet` 取自同一个地方（控件自己的调色板，见模块文档头一条），
+    于是候选列表与右键菜单是同一种底色、同一种悬停高亮、同一种圆角：用户从菜单移到
+    搜索框，看到的不是「另一种东西」。
+
+    **列表不是菜单**，因此不共用那一整份样式表：菜单的行有快捷键列、有分隔线、有子菜单
+    箭头（``ShortcutColumnMenu`` 自己画那几笔），列表两样都没有。这里复用的只是**颜色**
+    与圆角那一层，行的内边距另给。
+
+    :param list_widget: 那个列表本身。颜色从**它自己的**调色板读（系统换浅色 / 深色时
+        :mod:`gallery.ui.theme` 会逐控件下发），所以调用方只要把控件给过来。
+    """
+    palette = list_widget.palette()
+    background = palette.color(QPalette.ColorRole.Window)
+    highlight = palette.color(QPalette.ColorRole.Highlight)
+    text = palette.color(QPalette.ColorRole.WindowText)
+    highlighted_text = palette.color(QPalette.ColorRole.HighlightedText)
+    edge = QColor(text)
+    edge.setAlphaF(MENU_SEPARATOR_MIX_LIGHT)  # 边框与菜单的分隔线同一档
+    return (
+        f"QTreeWidget#searchPopup {{ background: {rgba(background)}; "
+        f"border: 1px solid {rgba(edge)}; "
+        f"border-radius: {MENU_CORNER_RADIUS}px; padding: {MENU_INSET - 2}px; }}\n"
+        f"QTreeWidget#searchPopup::item {{ padding: 3px 8px; color: {rgba(text)}; }}\n"
+        # 悬停与选中**合成一条规则**：候选列表是「鼠标移到哪一行就高亮哪一行」
+        # （``search_field.CandidateList.mouseMoveEvent`` 把那一行设成当前项），
+        # 两者本是同一件事。少写一条的症状是列表完全不亮 —— 挂了样式表之后 Qt 不再
+        # 按 ``State_MouseOver`` 自己去挑高亮色（与 :func:`style_sheet` 里那条菜单的
+        # 注释是同一件事）。
+        f"QTreeWidget#searchPopup::item:hover, "
+        f"QTreeWidget#searchPopup::item:selected {{ background: {rgba(highlight)}; "
+        f"color: {rgba(highlighted_text)}; border-radius: {MENU_HIGHLIGHT_RADIUS}px; }}"
+    )
 
 
 def style_sheet(
@@ -585,6 +622,7 @@ __all__ = [
     "ShortcutColumnMenu",
     "ShortcutColumns",
     "apply_style",
+    "popup_list_style",
     "prepare",
     "separator_color",
     "split_shortcut",

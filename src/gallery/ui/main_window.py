@@ -118,6 +118,7 @@ from gallery.ui.search_field import WIDTH as SEARCH_FIELD_WIDTH
 from gallery.ui.search_field import SearchField
 from gallery.ui.tasks import TaskContext, TaskRunner
 from gallery.ui.thumbs.pipeline import ThumbnailPipeline
+from gallery.ui.title_bar import EXTRA_PADDING as TITLE_BAR_EXTRA
 from gallery.ui.title_bar import HEIGHT as TITLE_BAR_HEIGHT
 from gallery.ui.title_bar import TitleBar
 from gallery.ui.viewer.detail import DetailView
@@ -436,6 +437,12 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         detail_layout.addWidget(self._panel)
         self._stack.addWidget(self._detail_page)
         self.setCentralWidget(self._stack)
+        # 内容区往下让出 :data:`TITLE_BAR_EXTRA`（标题栏那一条加高的那一段）。
+        # **不是把那一段画在内容上，而是真的给它腾出地方**：加边距之后三页的内容
+        # 都从 ``安全区 + EXTRA`` 开始，胶囊与标题文字因此可以摆在多出来的那一段里，
+        # 不会像之前那样压住照片区的顶边（ADR 0026 决策 8）。
+        if self._owns_title_bar:
+            self._stack.setContentsMargins(0, TITLE_BAR_EXTRA, 0, 0)
 
         # 搜索框**最后建**：它要压在中央控件之上（候选列表画在窗口内容那一段，
         # 而 Qt 按创建顺序叠兄弟控件 —— 先建的那个被后建的盖住）。
@@ -3332,27 +3339,26 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         """
         if not self._owns_title_bar:
             return
-        central = self.centralWidget()
-        top = central.geometry().top() if central is not None else 0
-        height = 0 if self.isFullScreen() else max(top, TITLE_BAR_HEIGHT)
-        self._title_bar.setGeometry(0, 0, self.width(), height)
-        self._title_bar.setVisible(height > 0)
-        if height <= 0:
+        if self.isFullScreen():
+            # 全屏时系统自己也不画标题栏，这一整条跟着收起来（ADR 0025 决策 2）：
+            # 高度给 0，于是它与胶囊都不会盖在照片上。
+            self._title_bar.setGeometry(0, 0, self.width(), 0)
+            self._title_bar.hide()
             self._search_field.hide()
             return
-        # 胶囊只摆进**真正空着的那一段**，也就是内容区让出来的那 ``top`` 点 ——
-        # 不按 ``height`` 摆。那一行的高度带着 28 点这个下限（ADR 0025），而内容区
-        # 在安全区不足 28 点的平台上从 22 点就开始，两者对不齐。
-        #
-        # 标题文字不画自己的底色，对不齐只是标题与胶囊不同高，什么也看不出来；
-        # **胶囊是要画的**，越界就是一块带边框的底色压在照片区的顶边上（实测守护测试
-        # ``test_innermost_layer_has_no_border`` 就是这么抓到的：它量到大图区上边缘
-        # 出现了 397 个非底色像素）。
-        free = min(height, top) if top > 0 else height
-        field_height = min(SEARCH_FIELD_HEIGHT, free - 4)
+        central = self.centralWidget()
+        top = central.geometry().top() if central is not None else 0
+        # 安全区之外**再加** :data:`TITLE_BAR_EXTRA`：中央控件已经用同样的边距把三页
+        # 往下推了（见 ``_build_ui``），于是多出来的那一段是真的空出来的，不是盖在
+        # 内容上的 —— 胶囊是画的，压上去就等于在照片区顶边摆了一块底色。
+        height = max(top + TITLE_BAR_EXTRA, TITLE_BAR_HEIGHT)
+        self._title_bar.setGeometry(0, 0, self.width(), height)
+        self._title_bar.setVisible(True)
+        # 胶囊摆在**这一条**里：内容区从 ``top + EXTRA`` 开始，两者首尾相接。
+        field_height = min(SEARCH_FIELD_HEIGHT, height - 4)
         self._search_field.setGeometry(
             self.width() - SEARCH_FIELD_WIDTH - SEARCH_FIELD_MARGIN_RIGHT,
-            (free - field_height) // 2,
+            (height - field_height) // 2,
             SEARCH_FIELD_WIDTH,
             field_height,
         )

@@ -148,6 +148,27 @@ def apply_theme(app: QApplication) -> AppTheme:
     return theme
 
 
+def push_palette(widget: QWidget, *, app: QApplication | None = None) -> None:
+    """把当前主题的调色板下发到**一棵**控件树上（:func:`apply_theme` 面向整个应用那一份的单棵版）。
+
+    **为什么需要它**：:func:`apply_theme` 走的是「此刻已经存在的顶层控件」，而有些控件是
+    之后才建的 —— 搜索框的候选列表就是一个（它在 ``_build_ui`` 的最后一步建，主题早就
+    下发过了）。不补这一下，它就一直用系统默认那一档颜色：于是候选列表与右键菜单
+    明明「取自同一个地方」，取到的却不是同一份（实测列表 ``#ffffff``、菜单 ``#efefef``）。
+    """
+    instance = _application(app) if app is None else app
+    theme = current_theme(instance)
+    palette = QPalette(instance.palette())
+    for role in BACKGROUND_ROLES:
+        palette.setColor(role, theme.background)
+        palette.setColor(QPalette.ColorGroup.Disabled, role, theme.background)
+    pending = [widget]
+    while pending:
+        current = pending.pop()
+        current.setPalette(palette)
+        pending.extend(child for child in current.children() if isinstance(child, QWidget))
+
+
 def unify_title_bar(window: QWidget) -> bool:
     """让标题栏那一段也用窗口自己的底色，返回**那一段是不是已经归我们了**（只在 macOS 上动手）。
 

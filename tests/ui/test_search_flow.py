@@ -25,8 +25,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QEvent, QPointF, Qt  # noqa: E402
-from PySide6.QtGui import QMouseEvent  # noqa: E402
-from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
+from PySide6.QtGui import QMouseEvent, QPalette  # noqa: E402
+from PySide6.QtWidgets import QApplication, QMenu, QWidget  # noqa: E402
 from waiting import DEFAULT_TIMEOUT_SECONDS  # noqa: E402
 
 from gallery.core.library.config import prepare_library  # noqa: E402
@@ -42,10 +42,13 @@ from gallery.ui import theme  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.search_field import (  # noqa: E402
     HEIGHT,
+    MARGIN_RIGHT,
     WIDTH,
     SearchField,
     magnifier,
 )
+from gallery.ui.theme import rgba  # noqa: E402
+from gallery.ui.title_bar import EXTRA_PADDING as TITLE_BAR_EXTRA  # noqa: E402
 
 #: 测试库里每张照片的相机（按文件名对应）。没给的就是没写相机。
 CAMERAS = {"海边-01.jpg": "Canon EOS R5", "山.jpg": "Sony A7"}
@@ -205,21 +208,146 @@ def test_the_capsule_has_round_ends(qt_app: QApplication) -> None:
     window.close()
 
 
+def _content_top(window: MainWindow) -> int:
+    """内容区**真正**从窗口第几行开始。
+
+    中央控件自己的矩形顶边是安全区让出来的那一段，而标题栏比它高出的那一点是靠
+    ``_stack`` 的上边距腾出来的（ADR 0026 决策 8）—— 只看中央控件的顶边会以为
+    标题栏仍然是那么高。
+    """
+    return window.centralWidget().geometry().top() + window._stack.contentsMargins().top()
+
+
 def test_the_capsule_stays_inside_the_title_bar_strip(qt_app: QApplication, tmp_path: Path) -> None:
     """胶囊不许压到内容上。
 
-    标题栏那一条的高度带着 28 点这个下限（ADR 0025），而内容区在安全区不足的平台上
-    从更矮的地方就开始（实测 22）—— 胶囊要是照那条的高度摆，就会盖住照片区的顶边。
-    这条曾经真的发生过，是被 ``test_innermost_layer_has_no_border`` 抓到的
-    （它量到大图区上边缘出现了几百个非底色像素）。
+    标题栏那一条比安全区高（``title_bar.EXTRA_PADDING``），高出来的那一段**必须
+    同时把内容区也往下推**—— 不推就是拿胶囊的底色去盖照片区的顶边。这条曾经真的
+    发生过，是被 ``test_innermost_layer_has_no_border`` 抓到的（它量到大图区上边缘
+    出现了几百个非底色像素）。
     """
     window = MainWindow(session_base=tmp_path / "会话")
     window.show()
     qt_app.processEvents()
 
-    bottom = window._search_field.geometry().bottom()
-    assert bottom <= window.centralWidget().geometry().top(), (
-        f"胶囊一直伸到第 {bottom} 行，内容从第 {window.centralWidget().geometry().top()} 行开始"
+    field = window._search_field
+    content = _content_top(window)
+    assert field.geometry().bottom() <= content, (
+        f"胶囊一直伸到第 {field.geometry().bottom()} 行，内容从第 {content} 行开始"
+    )
+    window.close()
+
+
+def test_the_title_bar_is_taller_than_the_safe_area(qt_app: QApplication, tmp_path: Path) -> None:
+    """标题栏要**比安全区高**，胶囊的上边框才离窗口顶边有距离。
+
+    28 点的安全区里塞一个 22 点的胶囊，上下各剩 3 点 —— 看上去像浮在边沿上。
+    """
+    window = MainWindow(session_base=tmp_path / "会话")
+    window.show()
+    qt_app.processEvents()
+
+    safe_area = window.centralWidget().geometry().top()
+    strip = window._title_bar.geometry().height()
+    assert strip == safe_area + TITLE_BAR_EXTRA, (
+        f"标题栏 {strip} 点 = 安全区 {safe_area} + {TITLE_BAR_EXTRA}"
+    )
+    # 胶囊的上边框离窗口顶边：整除会少一点，所以按「至少一半的余量」判。
+    assert window._search_field.geometry().top() >= strip // 2 - window._search_field.height() // 2
+    window.close()
+
+
+def test_the_capsule_keeps_a_wide_gap_to_the_window_edge(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """胶囊离窗口右边要留够 —— 12 点太贴边，看着像被窗口挤出去。"""
+    window = MainWindow(session_base=tmp_path / "会话")
+    window.resize(1000, 600)
+    window.show()
+    qt_app.processEvents()
+
+    field = window._search_field.geometry()
+    assert MARGIN_RIGHT >= 16, f"右边距只有 {MARGIN_RIGHT} 点"
+    assert window.width() - (field.x() + field.width()) == MARGIN_RIGHT
+    window.close()
+
+
+def test_hovering_a_candidate_highlights_it(qt_app: QApplication, tmp_path: Path) -> None:
+    """鼠标移到哪一行，那一行就高亮。
+
+    **高亮落在「当前项」上**：挂了样式表之后 Qt 不再按 ``State_MouseOver`` 自己去挑高亮
+    色（与 ``menu_style.style_sheet`` 里那条菜单的注释是同一件事），所以「当前项」那一份
+    高亮得由我们自己点亮 —— 而点亮它的只能是悬停本身，否则鼠标移上去毫无反应。
+
+    接在**视口**上：滚动区域的视口是 Qt 自己的控件，落在它身上的事件不会再回到视图的
+    ``mouseMoveEvent``（实测那次移动完全没反应）。
+    """
+    window = MainWindow(session_base=tmp_path / "会话")
+    window.show()
+    qt_app.processEvents()
+    field = window._search_field
+    field.focus_search()
+    qt_app.processEvents()
+    field._edit.setText("#")
+    qt_app.processEvents()
+    popup = field._popup
+    assert popup.currentItem() is popup.topLevelItem(0)
+
+    _move_mouse_over(popup, row=3)
+
+    assert popup.currentItem() is popup.topLevelItem(3), "鼠标移过去了，那一行却不是当前的"
+    window.close()
+
+
+def _move_mouse_over(popup: object, *, row: int) -> None:
+    """把一次 ``MouseMove`` 发到候选列表的视口上（等价于鼠标移到第 ``row`` 行）。"""
+    center = popup.visualItemRect(popup.topLevelItem(row)).center()  # type: ignore[attr-defined]
+    QApplication.sendEvent(
+        popup.viewport(),  # type: ignore[attr-defined]
+        QMouseEvent(
+            QEvent.Type.MouseMove,
+            QPointF(center),
+            QPointF(center),
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+        ),
+    )
+
+
+def test_the_candidate_list_takes_its_colors_from_the_menu_side(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """候选列表与右键菜单**同一套颜色**：四个角色都要一样。
+
+    两边各自派生一遍的话，早晚会差一档 —— 而「搜索框里那个下拉框比菜单深一点」
+    正是那种没人说得清、却一眼看得出的差别（ADR 0024：菜单怎么画是同一层的事）。
+    """
+    window = MainWindow(session_base=tmp_path / "会话")
+    window.show()
+    qt_app.processEvents()
+    menu = QMenu(window)
+    menu.addAction("一项")
+    window._dressed_menu(menu)  # 与右键菜单完全相同的那一套：调色板 + 样式表
+    qt_app.processEvents()
+    window._search_field.focus_search()
+    qt_app.processEvents()
+    window._search_field._edit.setText("#")
+    qt_app.processEvents()
+
+    menu_palette = menu.palette()
+    list_palette = window._search_field._popup.palette()
+    for role in (
+        QPalette.ColorRole.Window,
+        QPalette.ColorRole.Highlight,
+        QPalette.ColorRole.WindowText,
+        QPalette.ColorRole.HighlightedText,
+    ):
+        assert list_palette.color(role) == menu_palette.color(role), f"{role.name} 两边不一样"
+    # 高亮色真的进了候选列表的样式表（不是「调色板一样但样式表没用它」）。
+    assert (
+        rgba(menu_palette.color(QPalette.ColorRole.Highlight))
+        in window._search_field._popup.styleSheet()
     )
     window.close()
 

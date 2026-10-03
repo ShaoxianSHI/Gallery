@@ -34,6 +34,15 @@ from gallery.ui.theme import rgba
 #: 两边对得上，下面那一片才真是「摆在那一条上」而不是盖在内容上。
 HEIGHT = 28
 
+#: 在安全区那一段之上**再加**这么多点（ADR 0026 决策 8）。
+#:
+#: 28 点是系统给的高度，胶囊放进去上下各剩 3 点 —— 它的上边框几乎贴着窗口顶边，
+#: 看上去像浮在边沿上。加高这一条要**同时把内容区也往下推同样的点数**
+#: （``MainWindow`` 给中央控件加同样的上边距），否则多出来的那一段就是盖在照片上的：
+#: 那一段不是画的（标题文字不铺底色），但胶囊是画的，它一越界就压在照片区顶边上
+#: （守护测试 ``test_innermost_layer_has_no_border`` 量过那一块）。
+EXTRA_PADDING = 12
+
 #: 输入框宽度：比文字宽一点（两侧各留 :data:`EDITOR_PADDING`），但不窄到放不下几个字、
 #: 不宽到横穿整个窗口。
 MIN_EDITOR_WIDTH = 260
@@ -242,6 +251,7 @@ class TitleBar(QWidget):
 
 __all__ = [
     "EDITOR_PADDING",
+    "EXTRA_PADDING",
     "HEIGHT",
     "MAX_EDITOR_WIDTH",
     "MIN_EDITOR_WIDTH",

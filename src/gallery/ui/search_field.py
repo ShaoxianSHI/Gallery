@@ -15,11 +15,14 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt, Signal
+from typing import cast
+
+from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import (
     QCursor,
     QFocusEvent,
     QKeyEvent,
+    QMouseEvent,
     QPainter,
     QPen,
     QPixmap,
@@ -44,17 +47,19 @@ from gallery.core.library.search import (
     suggestions,
 )
 from gallery.ui import theme
+from gallery.ui.menu_style import popup_list_style
 from gallery.ui.rename_edit import field_background
 from gallery.ui.theme import AppTheme, rgba
 
 #: 胶囊多宽。够放下「搜索照片…」与十来个字，又不至于从标题正中伸到交通灯那边。
 WIDTH = 208
 
-#: 胶囊多高。比标题栏（28 点）矮一点，上下留白，不贴着窗口顶边。
+#: 胶囊多高。比标题栏（见 ``title_bar.HEIGHT``）矮一点，上下留白，不贴着窗口顶边。
 HEIGHT = 22
 
-#: 胶囊离窗口右边多远。
-MARGIN_RIGHT = 12
+#: 胶囊离窗口右边多远。与左边交通灯那一段（78 点）不对称是刻意的：那边系统自己画着
+#: 三个按钮，胶囊是后来加的，靠边会显得被挤出去，于是留宽一点。
+MARGIN_RIGHT = 18
 
 #: 放大镜直径（点）。
 ICON_EDGE = 13
@@ -168,21 +173,17 @@ def search_field_style(app_theme: AppTheme, *, focused: bool, radius: int = 0) -
     """
 
 
-def popup_style(app_theme: AppTheme) -> str:
-    """候选列表长什么样。与菜单同源（同一块底色、同一档文字）。"""
-    return f"""
-    QTreeWidget#searchPopup {{
-        background: {rgba(field_background(app_theme))};
-        border: 1px solid {rgba(app_theme.text_at(0.28))};
-        border-radius: 6px;
-        font-size: {_FONT_PX}px;
-    }}
-    QTreeWidget#searchPopup::item {{ padding: 3px 6px; color: {rgba(app_theme.text)}; }}
-    QTreeWidget#searchPopup::item:selected {{
-        background: {rgba(app_theme.text_at(0.14))};
-        color: {rgba(app_theme.text)};
-    }}
+def popup_style(list_widget: QTreeWidget) -> str:
+    """候选列表长什么样 —— **样式表由 :mod:`gallery.ui.menu_style` 生成**。
+
+    颜色不在这儿定：那是「菜单怎么长什么样」那一层的活（ADR 0024），而用户要的是
+    候选列表与右键菜单**看起来是同一种东西**。两份各自派生一遍，早晚差一档。
+
+    这里只补列表自己的字号（菜单那一档偏大，列表窄）。
     """
+    return (
+        f"{popup_list_style(list_widget)}\nQTreeWidget#searchPopup {{ font-size: {_FONT_PX}px; }}"
+    )
 
 
 def magnifier(app_theme: AppTheme, ratio: float) -> QPixmap:
@@ -221,6 +222,41 @@ def magnifier(app_theme: AppTheme, ratio: float) -> QPixmap:
     )
     painter.end()
     return pixmap
+
+
+class CandidateList(QTreeWidget):
+    """候选列表：**鼠标移到哪一行，那一行就高亮**（菜单也是这么做的）。
+
+    为什么自己接一次移动而不是只靠样式表的 ``::item:hover``：
+
+    - 挂了样式表之后 Qt 不再按 ``State_MouseOver`` 自己去挑高亮色（与
+      :func:`gallery.ui.menu_style.style_sheet` 里那条菜单的注释是同一件事），
+      而「当前项」那一份高亮它是照画的；
+    - 把悬停的那一行设成**当前项**，顺带让鼠标与键盘说同一句话：点它就补全它
+      （``itemClicked`` 取的是当前项），不必有两套「选中」。
+
+    **装在视口上而不是覆写 ``mouseMoveEvent``**：滚动区域的视口是 Qt 自己的控件，
+    落在它身上的事件不会再回到视图的 ``mouseMoveEvent`` 上（实测那次移动完全没反应）。
+    要接就得接在视口上（:meth:`eventFilter`），这是滚动区域里唯一稳的地方。
+
+    **不抢焦点**：整份列表 ``NoFocus``，按键都留给输入框（见 :class:`SearchField`）。
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        # 鼠标跟踪：不开的话根本收不到 ``MouseMove``，那一次悬停就没有反应。
+        self.setMouseTracking(True)
+        self.viewport().setMouseTracking(True)
+        self.viewport().installEventFilter(self)
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 - Qt 定的
+        """视口上的移动 = 悬停即当前项。鼠标不在任何一行上时**保持原样**。"""
+        if watched is self.viewport() and event.type() == QEvent.Type.MouseMove:
+            move = cast(QMouseEvent, event)
+            item = self.itemAt(move.position().toPoint())
+            if item is not None and self.currentItem() is not item:
+                self.setCurrentItem(item)
+        return super().eventFilter(watched, event)
 
 
 class SearchField(QWidget):
@@ -274,7 +310,7 @@ class SearchField(QWidget):
         #   ``QCompleter`` 为此加了 ``WA_ShowWithoutActivating``，实测照样被
         #   ``focusOutEvent`` 打断）。挂在窗口上的普通子控件不吃焦点，所有按键留在输入框里。
         self._host = self if parent is None else parent
-        self._popup = QTreeWidget(self._host)
+        self._popup = CandidateList(self._host)
         self._popup.setObjectName("searchPopup")
         self._popup.setFrameShape(QFrame.Shape.NoFrame)
         self._popup.setRootIsDecorated(False)
@@ -459,7 +495,11 @@ class SearchField(QWidget):
         self.setStyleSheet(
             search_field_style(app_theme, focused=self._focused, radius=self.height() // 2)
         )
-        self._popup.setStyleSheet(popup_style(app_theme))
+        # 候选列表是**建好之后**才存在的（``_build_ui`` 的最后一步），主题早就下发过了，
+        # 于是它一直拿着系统默认那一档颜色。先把调色板补给它，再按「取自同一个地方」
+        # 的规矩生成样式表（见 ``theme.push_palette`` 与 ``popup_style``）。
+        theme.push_palette(self._popup)
+        self._popup.setStyleSheet(popup_style(self._popup))
         self._icon.setPixmap(magnifier(app_theme, self.devicePixelRatioF()))
 
     def focus_gained(self) -> None:
@@ -491,6 +531,7 @@ __all__ = [
     "HEIGHT",
     "MARGIN_RIGHT",
     "WIDTH",
+    "CandidateList",
     "SearchEdit",
     "SearchField",
     "popup_style",
