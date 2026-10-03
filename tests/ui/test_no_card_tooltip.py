@@ -24,15 +24,13 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
+from waiting import DEFAULT_TIMEOUT_SECONDS
 
 from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 
 #: 网格里摆几张，够问「提示还在不在」。
 PHOTO_COUNT = 3
-
-#: 等窗口里的照片全部扫出来的时限。
-READY_TIMEOUT_SECONDS = 8.0
 
 
 @pytest.fixture
@@ -48,7 +46,9 @@ def window(
     prepare_library(root)
     window = MainWindow(session_base=tmp_path / "session", initial_library=root)
     window.show()
-    assert wait_for(lambda: window._model.rowCount() >= PHOTO_COUNT, timeout=READY_TIMEOUT_SECONDS)
+    assert wait_for(
+        lambda: window._model.rowCount() >= PHOTO_COUNT, timeout=DEFAULT_TIMEOUT_SECONDS
+    )
     yield window  # type: ignore[misc]
     window.close()
 

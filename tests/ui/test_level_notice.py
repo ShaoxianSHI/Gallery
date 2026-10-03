@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import os
-import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -18,7 +17,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from waiting import DEFAULT_TIMEOUT_SECONDS
+from waiting import wait_for_idle
 
 from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.library.scanner import ScanReport  # noqa: E402
@@ -47,17 +46,12 @@ def _open(
 
 
 def _settle(qt_app, window: MainWindow) -> None:
-    deadline = time.monotonic() + DEFAULT_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
-        qt_app.processEvents()
-        settled = (
-            window._scan_job is None and window._facet_job is None and window._place_job is None
-        )
-        if settled:
-            qt_app.processEvents()
-            return
-        time.sleep(0.01)
-    qt_app.processEvents()
+    """等扫描、分组、地点那一遍收工。
+
+    判据与轮询循环都在 :mod:`waiting` 里（五个模块共用同一份，见那里的
+    :func:`waiting.wait_for_idle`）—— 不成立**直接抛**，而不是超时也返回。
+    """
+    wait_for_idle(qt_app, window, what="扫描、分组与地点解析")
 
 
 def _banner(window: MainWindow) -> str:

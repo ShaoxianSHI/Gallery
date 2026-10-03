@@ -20,7 +20,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from grid_helpers import fake_photos, make_grid  # noqa: E402
+from grid_helpers import fake_photos, make_grid, settle_grid  # noqa: E402
 from PySide6.QtCore import QModelIndex, QPoint, Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
@@ -116,11 +116,9 @@ def test_albums_mode_startup_keeps_normal_tile_size(
         if window._model.rowCount() >= 2 and window._grid._laid_out_columns:
             break
         time.sleep(0.01)
-    # 让「核对列数」的定时器有机会跑起来（真有缺陷时就是它把格子撑大的）
-    deadline = time.monotonic() + 0.5
-    while time.monotonic() < deadline:
-        qt_app.processEvents()
-        time.sleep(0.01)
+    # 让「核对列数」的定时器有机会跑起来（真有缺陷时就是它把格子撑大的）。
+    # 等条件而不是转满 0.5 秒：那个定时器是 COLUMN_CHECK_MS = 50ms，0.5s 是它的十倍。
+    settle_grid(qt_app, window._grid)
 
     grid = window._grid
     assert window._browse_mode == BROWSE_MODE_ALBUMS
@@ -199,10 +197,10 @@ def test_rows_arriving_late_still_fill_the_row(
     grid.setModel(model)
     grid.resize(1260, 800)
     grid.show()
-    settle(0.3)  # 让初始那一版排版与它的核对都先跑完
+    settle_grid(qt_app, grid)  # 让初始那一版排版与它的核对都先跑完
 
     model.append(fake_photos(12, tmp_path))
-    settle(0.3)
+    settle_grid(qt_app, grid)
 
     assert row_fill_ratio(grid) >= FILL_RATIO, (
         f"第一行只铺到 {row_fill_ratio(grid):.0%}，右边空了一大块"
@@ -239,11 +237,11 @@ def test_entering_an_album_fills_the_row(
     try:
         # 先把相册列表扫出来、显示稳定（= 用户看到的启动画面）
         assert wait_for(lambda: window._model.rowCount() >= 1, timeout=DEFAULT_TIMEOUT_SECONDS)
-        settle(0.3)
+        settle_grid(qt_app, window._grid)
 
         window.enter_folder(album)
         assert wait_for(lambda: window._model.rowCount() >= 12, timeout=DEFAULT_TIMEOUT_SECONDS)
-        settle(0.3)  # 给「核对列数」的定时器留出机会跑完
+        settle_grid(qt_app, window._grid)  # 给「核对列数」的定时器留出机会跑完
 
         assert row_fill_ratio(window._grid) >= FILL_RATIO, (
             f"第一行只铺到 {row_fill_ratio(window._grid):.0%}，右边空了一大块"

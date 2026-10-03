@@ -14,7 +14,6 @@
 from __future__ import annotations
 
 import os
-import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 
@@ -32,7 +31,7 @@ from PySide6.QtWidgets import (  # noqa: E402
     QToolButton,
     QWidget,
 )
-from waiting import DEFAULT_TIMEOUT_SECONDS  # noqa: E402
+from waiting import wait_for_idle  # noqa: E402
 
 from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.library.photos import GroupRef, PhotoRef  # noqa: E402
@@ -134,21 +133,11 @@ def _settle(qt_app: QApplication, window: MainWindow, *, index: bool = True) -> 
     ``index=False`` 用于**故意不等索引那一遍**的用例：它们要看的正是
     「索引还没建好时用户提交了条件」那条路。
     """
-    deadline = time.monotonic() + DEFAULT_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
-        qt_app.processEvents()
-        idle = (
-            window._scan_job is None
-            and window._facet_job is None
-            and window._place_job is None
-            and window._search_job is None
-        )
-        idle = idle and (not index or window._index_job is None)
-        if idle and window._staged is None:
-            qt_app.processEvents()
-            return
-        time.sleep(0.01)
-    qt_app.processEvents()
+    # 除了 :func:`waiting.BACKGROUND_JOBS` 那三个，检索这一遍（``_search_job``）
+    # 与尚未提交的暂存选择（``_staged``）也要收工 —— 它们同样按「是 ``None``
+    # 算收工」判，所以一并交给 :func:`waiting.wait_for_idle`。不成立**直接抛**。
+    also = ("_search_job", "_staged", "_index_job") if index else ("_search_job", "_staged")
+    wait_for_idle(qt_app, window, also=also, what="检索、排序与索引")
 
 
 def _names(window: MainWindow) -> list[str]:

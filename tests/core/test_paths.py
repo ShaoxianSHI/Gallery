@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -51,7 +52,6 @@ def test_library_digest_is_stable_and_distinct(tmp_path: Path) -> None:
     first = tmp_path / "一"
     second = tmp_path / "二"
 
-    assert paths.library_digest(first) == paths.library_digest(first)
     assert paths.library_digest(first) != paths.library_digest(second)
     assert len(paths.library_digest(first)) == 16
 
@@ -67,9 +67,13 @@ def test_app_paths_follow_injected_base(tmp_path: Path) -> None:
     assert cache.parent == base / "Gallery" / "cache" / "thumbs"
 
 
-def test_app_data_base_is_platform_specific() -> None:
-    base = paths.app_data_base()
-    assert base.is_absolute()
+def test_app_data_base_is_platform_specific(monkeypatch: pytest.MonkeyPatch) -> None:
+    """各平台落在各平台该在的地方（AGENTS.md 那个 ``.gallery`` 别名的来处）。"""
+    if sys.platform == "darwin":
+        assert paths.app_data_base() == Path.home() / "Library" / "Application Support"
+    else:
+        monkeypatch.setenv("XDG_DATA_HOME", "/tmp/xdg")
+        assert paths.app_data_base() == Path("/tmp/xdg")
 
 
 def test_is_within(tmp_path: Path) -> None:

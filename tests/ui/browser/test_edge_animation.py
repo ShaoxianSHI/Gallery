@@ -16,6 +16,19 @@
 
 代价是有 160ms 画面几何 ≠ 逻辑几何。这条不一致由「任何交互都立刻落位」兜底
 （见 :func:`grid._cancel_transition`），所以也测它。
+
+**这一整个文件不靠真实时钟等动画。** 160ms 一段、三十多段，就是这个文件曾经吃掉
+整个测试套件 95% 墙钟时间的原因（实测本文件 37s / 全套 38s）。换成两个确定的办法：
+
+- :func:`grid_helpers.settle_grid` —— 等**条件**（过渡停了、三个防抖定时器都发过了）
+  而不是等够多少秒。造好网格之后最长的那个定时器 120ms 就到头，原来一律睡 0.46s。
+- :func:`grid_helpers.drive_transition` / :func:`grid_helpers.step_transition` ——
+  直接拨 ``QVariantAnimation`` 的时钟，一帧不差地落在同一批进度上。于是「取到几帧」
+  与「撞在哪一段时序上」都不再取决于机器有多快。
+
+唯一还留着的固定等待是 Qt **自己**那次推迟重排，它不是网格的定时器，
+:data:`grid_helpers.QT_DEFERRED_RELAYOUT_SECONDS` 那一处 —— 见
+:func:`test_dragging_the_window_never_lets_the_scroll_position_go`。
 """
 
 from __future__ import annotations
@@ -30,7 +43,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from grid_helpers import fake_photos, make_grid  # noqa: E402
+from grid_helpers import (  # noqa: E402
+    QT_DEFERRED_RELAYOUT_SECONDS,
+    drive_transition,
+    fake_photos,
+    make_grid,
+    settle_grid,
+    step_transition,
+)
 from PySide6.QtCore import (  # noqa: E402
     QAbstractAnimation,
     QCoreApplication,
@@ -77,32 +97,22 @@ from gallery.ui.browser.thumb_sizes import (  # noqa: E402
     THUMBNAIL_SIZES,
 )
 
-#: 每一步转多少秒。分片是为了在动画跑到一半时取样，而不是一口跑到结束。
+#: 转一小会儿事件循环用的时长。**只用在「必须等满，否则测不到」的地方** ——
+#: 一次拖动过程中的每一轮，或者捏合限速窗口（:func:`test_a_slow_pinch_still_switches_every_time`）。
+#: 其余一律等条件，见模块开头。
 SLICE_SECONDS = 0.02
-
-#: 跑完动画 + 去抖要多少秒。动画比去抖长，所以这个余量是实的。
-SETTLE_SECONDS = EDGE_ANIMATION_MS / 1000 + 0.3
-
-
-def samples_while_animating(grid: PhotoGrid, settle: Callable[[float], None]) -> list[float]:
-    """跑完一次动画，把期间 :attr:`PhotoDelegate.draw_edge` 的取值按顺序记下来。"""
-    seen: list[float] = []
-    for _ in range(int(SETTLE_SECONDS / SLICE_SECONDS)):
-        settle(SLICE_SECONDS)
-        seen.append(grid._delegate.draw_edge)
-    return seen
 
 
 def test_the_thumbnail_grows_through_the_intermediate_sizes(
-    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+    qt_app: QApplication, tmp_path: Path
 ) -> None:
     """切档之后，绘制尺寸确实**路过**中间值，而不是直接跳到终点。"""
     grid = make_grid(qt_app, tmp_path, 40)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
     start = grid._delegate.draw_edge
 
     grid.set_target_edge(THUMBNAIL_SIZES[2])
-    samples = samples_while_animating(grid, settle)
+    samples = drive_transition(grid, lambda: grid._delegate.draw_edge)
 
     assert min(samples) == start, "第一帧必须还是旧尺寸"
     assert samples[-1] == float(grid.icon_edge), "最后一帧必须正好落在新尺寸上"
@@ -110,9 +120,7 @@ def test_the_thumbnail_grows_through_the_intermediate_sizes(
     assert min(samples) < max(samples), "尺寸得是单调长过去的"
 
 
-def test_the_easing_starts_and_ends_gently(
-    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
-) -> None:
+def test_the_easing_starts_and_ends_gently(qt_app: QApplication, tmp_path: Path) -> None:
     """缓动曲线**两头都缓**：头几帧不许一上来就冲掉一大截。
 
     这是「格子的位置一下就跳到位」最直接的一条成因。用 ``OutCubic`` 时，160ms 里
@@ -131,19 +139,19 @@ def test_the_easing_starts_and_ends_gently(
         f"时间轴走到 90% 才走完 {curve.valueForProgress(0.9):.1%}，尾巴太长"
     )
 
+    # 曲线是构造时就挂上去的，等它跑起来等不出更多东西来。
     grid = make_grid(qt_app, tmp_path, 40)
-    settle(SETTLE_SECONDS)
     assert grid._transition_anim.easingCurve().type() == EDGE_ANIMATION_CURVE, (
         "网格没有用上面这条曲线"
     )
 
 
 def test_the_geometry_snaps_while_only_the_painting_moves(
-    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+    qt_app: QApplication, tmp_path: Path
 ) -> None:
     """切档的那一刻几何就已经到位，动画期间它一步都不许再动。"""
     grid = make_grid(qt_app, tmp_path, 40)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
     before_cell = grid.gridSize()
 
     grid.set_target_edge(THUMBNAIL_SIZES[2])
@@ -154,13 +162,13 @@ def test_the_geometry_snaps_while_only_the_painting_moves(
     assert grid._delegate.draw_edge != settled_edge, "绘制尺寸这时应该还在旧尺寸上"
 
     # 动画跑到一半再量一次：几何必须纹丝不动。
-    settle(EDGE_ANIMATION_MS / 1000 / 2)
+    step_transition(grid, 0.5)
     assert grid.icon_edge == settled_edge
     assert grid.gridSize().width() - GRID_PADDING_X == settled_edge
 
 
 def test_the_animation_never_reaches_the_thumbnail_pipeline(
-    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+    qt_app: QApplication, tmp_path: Path, wait_for: Callable[..., bool]
 ) -> None:
     """``icon_edge_changed`` 只发最终边长这一个整数 —— 流水线看不到中间值。
 
@@ -168,37 +176,40 @@ def test_the_animation_never_reaches_the_thumbnail_pipeline(
     各解码一遍，而磁盘上的缓存键也跟着多几十种。
     """
     grid = make_grid(qt_app, tmp_path, 40)
-    settle(SETTLE_SECONDS)  # 让建好网格时那一次去抖先走完
     emitted: list[int] = []
     grid.icon_edge_changed.connect(emitted.append)
+    # 建网格时那一次「重新取缩略图」的通知由 ``_edge_timer`` 发出（120ms，见
+    # :func:`grid_helpers.grid_is_laid_out`），得先等它发过并清空 —— 不然它会
+    # 落进下面这个列表，把「只发一次」变成「发两次」。
+    assert wait_for(lambda: bool(emitted), timeout=2.0), "建网格时那一次通知没来，前提没摆出来"
+    emitted.clear()
 
     grid.set_target_edge(THUMBNAIL_SIZES[2])
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
+    # 通知与动画并行地发（动画 160ms、通知 120ms），这里等它真的来了。
+    assert wait_for(lambda: bool(emitted), timeout=2.0), "最终边长的通知压根没发出来"
 
     assert emitted == [grid.icon_edge], f"只该发一次最终边长，实际发了 {emitted}"
     assert all(isinstance(value, int) for value in emitted)
 
 
-def test_resizing_the_window_does_not_animate(
-    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
-) -> None:
+def test_resizing_the_window_does_not_animate(qt_app: QApplication, tmp_path: Path) -> None:
     """拖窗口是连续事件，不能每变一次宽度就放一次动画。"""
     grid = make_grid(qt_app, tmp_path, 40)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
 
+    # ``resizeEvent`` 是**同步**送达的（``QWidget::resize`` 直接发，不排队），所以这里
+    # 不需要转事件循环 —— 转了反而会掩盖「这件事其实是立刻发生的」。
     grid.resize(900, 800)
-    settle(SLICE_SECONDS)
 
     assert grid._transition_anim.state() == QAbstractAnimation.State.Stopped
     assert grid._delegate.draw_edge == float(grid.icon_edge), "窗口一变就该直接落位"
 
 
-def test_a_change_too_small_to_see_does_not_animate(
-    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
-) -> None:
+def test_a_change_too_small_to_see_does_not_animate(qt_app: QApplication, tmp_path: Path) -> None:
     """差几个像素肉眼看不见，却要付一整轮全视口重绘 —— 直接落位。"""
     grid = make_grid(qt_app, tmp_path, 40)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
     cell = grid.gridSize()
 
     grid._set_cell(
@@ -210,7 +221,7 @@ def test_a_change_too_small_to_see_does_not_animate(
 
 
 def test_two_steps_in_a_row_do_not_jump_to_the_discarded_size(
-    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+    qt_app: QApplication, tmp_path: Path
 ) -> None:
     """连点两档时不接第二段过渡 —— 画面会先蹿去用户已经放弃的那一档。
 
@@ -218,7 +229,7 @@ def test_two_steps_in_a_row_do_not_jump_to_the_discarded_size(
     直接落到最终那档，反而更贴近连按两下的人想要的结果。
     """
     grid = make_grid(qt_app, tmp_path, 40)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
     before = grid._delegate.draw_edge
 
     grid.set_target_edge(THUMBNAIL_SIZES[2])
@@ -252,13 +263,9 @@ def test_the_delegate_draws_at_the_animated_size_but_keeps_its_geometry(
 # ---- 纵向滚动 ------------------------------------------------------------
 
 
-def scroll_samples(grid: PhotoGrid, settle: Callable[[float], None]) -> list[int]:
+def scroll_samples(grid: PhotoGrid) -> list[int]:
     """跑完一次过渡，把期间纵向滚动位置的取值按顺序记下来。"""
-    seen: list[int] = []
-    for _ in range(int(SETTLE_SECONDS / SLICE_SECONDS)):
-        settle(SLICE_SECONDS)
-        seen.append(grid.verticalScrollBar().value())
-    return seen
+    return drive_transition(grid, lambda: grid.verticalScrollBar().value())
 
 
 def scrollable_grid(qt_app: QApplication, tmp_path: Path, row: int = 20) -> PhotoGrid:
@@ -274,14 +281,14 @@ def scrollable_grid(qt_app: QApplication, tmp_path: Path, row: int = 20) -> Phot
 
 
 def test_the_grid_scrolls_into_place_instead_of_jumping(
-    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+    qt_app: QApplication, tmp_path: Path
 ) -> None:
     """纵向滚动也是一段过渡 —— 它跳的是整屏高度，比缩略图那一下明显得多。"""
     grid = scrollable_grid(qt_app, tmp_path)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
 
     grid.set_target_edge(THUMBNAIL_SIZES[2])
-    samples = scroll_samples(grid, settle)
+    samples = scroll_samples(grid)
 
     assert len(set(samples)) > 3, f"只取到 {sorted(set(samples))}，这是一次跳变不是过渡"
     assert samples == sorted(samples), f"回退了一下：{samples}"
@@ -296,7 +303,7 @@ def test_the_grid_scrolls_into_place_instead_of_jumping(
 
 
 def test_a_scroll_start_beyond_the_new_range_is_clamped(
-    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+    qt_app: QApplication, tmp_path: Path
 ) -> None:
     """交给动画的滚动起点必须落在滚动条自己的范围里。
 
@@ -305,7 +312,7 @@ def test_a_scroll_start_beyond_the_new_range_is_clamped(
     取到的值永远合法），所以只能直接查 ``_start_transition`` 存下来的那个起点。
     """
     grid = scrollable_grid(qt_app, tmp_path)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
     grid.set_target_edge(THUMBNAIL_SIZES[2])  # 过渡正在跑
     assert grid._transition_anim.state() == QAbstractAnimation.State.Running
 
@@ -315,38 +322,33 @@ def test_a_scroll_start_beyond_the_new_range_is_clamped(
     assert grid._scroll_from <= bar.maximum()
 
 
-def test_a_scroll_of_your_own_cancels_the_transition(
-    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
-) -> None:
+def test_a_scroll_of_your_own_cancels_the_transition(qt_app: QApplication, tmp_path: Path) -> None:
     """过渡跑着的时候用户自己滚了，动画必须立刻让位，而且**尊重他滚到的那儿**。
 
     不让位的话，动画会一边往终点走、一边被这次滚动推着改终点，最后落到一个谁也
     没指定的位置上。而收尾时要是把滚动拽回 ``_scroll_to``，用户刚滚的地方就白滚了。
     """
     grid = scrollable_grid(qt_app, tmp_path)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
 
     grid.set_target_edge(THUMBNAIL_SIZES[2])
     assert grid._transition_anim.state() == QAbstractAnimation.State.Running
 
     bar = grid.verticalScrollBar()
     chosen = bar.value() - 40
+    # ``setValue`` 同步走进 ``scrollContentsBy`` → ``_cancel_transition``，不用转事件循环。
     bar.setValue(chosen)
-    settle(SLICE_SECONDS)
 
     assert grid._transition_anim.state() == QAbstractAnimation.State.Stopped
     assert bar.value() == chosen, "用户滚到哪儿就得留在哪儿"
 
 
-def test_resizing_does_not_scroll_the_grid_around(
-    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
-) -> None:
+def test_resizing_does_not_scroll_the_grid_around(qt_app: QApplication, tmp_path: Path) -> None:
     """拖窗口是连续事件，不能每变一次宽度就放一次滚动过渡。"""
     grid = scrollable_grid(qt_app, tmp_path)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
 
     grid.resize(900, 800)
-    settle(SLICE_SECONDS)
 
     assert grid._transition_anim.state() == QAbstractAnimation.State.Stopped
 
@@ -355,7 +357,7 @@ def test_resizing_does_not_scroll_the_grid_around(
 
 
 def test_a_reflow_moves_the_cells_and_their_offsets_differ_per_row(
-    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+    qt_app: QApplication, tmp_path: Path
 ) -> None:
     """换行重排时每一格的位移不同，插值得按行算而不是整屏平移一个数。
 
@@ -363,7 +365,7 @@ def test_a_reflow_moves_the_cells_and_their_offsets_differ_per_row(
     而换行的那几格要跨一整行。
     """
     grid = scrollable_grid(qt_app, tmp_path)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
 
     grid.set_target_edge(THUMBNAIL_SIZES[2])
     transition = grid._transition
@@ -376,7 +378,7 @@ def test_a_reflow_moves_the_cells_and_their_offsets_differ_per_row(
 
 
 def test_the_first_frame_lands_exactly_where_the_cells_used_to_be(
-    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+    qt_app: QApplication, tmp_path: Path
 ) -> None:
     """第 0 帧必须**正好**是切换前的位置，一个像素都不许差。
 
@@ -384,7 +386,7 @@ def test_the_first_frame_lands_exactly_where_the_cells_used_to_be(
     漂移」那个很难查的毛病。逐行比对，漂 1 像素也照样红。
     """
     grid = scrollable_grid(qt_app, tmp_path)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
     model = grid.model()
     assert model is not None
     before = [grid.visualRect(model.index(row, 0)).topLeft() for row in range(24)]
@@ -399,31 +401,31 @@ def test_the_first_frame_lands_exactly_where_the_cells_used_to_be(
 
 
 def test_the_last_frame_is_the_final_layout_and_then_nothing(
-    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+    qt_app: QApplication, tmp_path: Path
 ) -> None:
     """跑完之后画面与逻辑几何完全重合，过渡状态清干净。"""
     grid = scrollable_grid(qt_app, tmp_path)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
 
     grid.set_target_edge(THUMBNAIL_SIZES[2])
-    settle(SETTLE_SECONDS)
+    step_transition(grid, 1.0)
 
     assert grid._transition is None
     assert grid._delegate.cell_offset(0) == QPoint()
 
 
 def test_a_press_during_the_transition_makes_the_picture_agree_again(
-    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+    qt_app: QApplication, tmp_path: Path
 ) -> None:
     """过渡中按一下 —— 画面立刻落位，命中才对得上画出来的那一格。
 
     不这么做的话，那一按会选中「画得好看的那一格」之外的另一格。
     """
     grid = scrollable_grid(qt_app, tmp_path)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
 
     grid.set_target_edge(THUMBNAIL_SIZES[2])
-    settle(SLICE_SECONDS)
+    step_transition(grid, 1 / 3)  # 停在途中，按钮按的是「正在飞」的那一帧
     assert grid._transition is not None
 
     QTest.mouseClick(grid.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(20, 20))
@@ -434,11 +436,11 @@ def test_a_press_during_the_transition_makes_the_picture_agree_again(
 
 
 def test_new_rows_arriving_during_the_transition_end_it(
-    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+    qt_app: QApplication, tmp_path: Path
 ) -> None:
     """插进来的新行没有「旧位置」可言，过渡必须作废。"""
     grid = scrollable_grid(qt_app, tmp_path)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
     grid.set_target_edge(THUMBNAIL_SIZES[2])
     assert grid._transition is not None
 
@@ -607,7 +609,6 @@ def test_the_card_itself_grows_with_the_photo(tmp_path: Path, qt_app: QApplicati
 def test_the_transition_uses_the_measured_columns_not_the_intended_ones(
     qt_app: QApplication,
     tmp_path: Path,
-    settle: Callable[[float], None],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """两端必须用**量出来**的列数，不能用「打算摆几列」。
@@ -617,7 +618,7 @@ def test_the_transition_uses_the_measured_columns_not_the_intended_ones(
     —— 那个量级的毛病很难看出是哪来的。
     """
     grid = scrollable_grid(qt_app, tmp_path)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)  # 等列数核对（COLUMN_CHECK_MS）跑完，落定之后才量
     measured = grid._first_row_columns()
     assert measured == grid._laid_out_columns, "这个场景本来就该两者一致，否则测的不是它"
 
@@ -643,9 +644,7 @@ def test_the_transition_uses_the_measured_columns_not_the_intended_ones(
 # ---- 切档后把选中项摆到正中 ------------------------------------------------
 
 
-def test_a_selection_far_down_still_gets_centered(
-    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
-) -> None:
+def test_a_selection_far_down_still_gets_centered(qt_app: QApplication, tmp_path: Path) -> None:
     """选中项在第 80 行（远超 Batched 那一批）也要摆到正中。
 
     这是换成自己算的原因：``scrollTo`` 要问 Qt 问 ``visualRect``，而 Batched 布局
@@ -654,10 +653,10 @@ def test_a_selection_far_down_still_gets_centered(
     """
     grid = make_grid(qt_app, tmp_path, 200)
     grid.select_row(80, ensure_visible=False)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
 
     grid.set_target_edge(THUMBNAIL_SIZES[2])
-    settle(SETTLE_SECONDS)
+    step_transition(grid, 1.0)
 
     assert grid.current_row() == 80, "选中项本身不该被动过"
     cell_rect = grid.visualRect(grid.model().index(80, 0))
@@ -667,7 +666,7 @@ def test_a_selection_far_down_still_gets_centered(
 
 
 def test_a_selection_on_the_last_row_is_centered_not_pinned_to_the_end(
-    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+    qt_app: QApplication, tmp_path: Path
 ) -> None:
     """内容比视口短时，「摆到正中」算出来是个负数 —— 必须夹到范围里。
 
@@ -677,10 +676,10 @@ def test_a_selection_on_the_last_row_is_centered_not_pinned_to_the_end(
     """
     grid = make_grid(qt_app, tmp_path, 200)
     grid.select_row(0, ensure_visible=False)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
 
     grid.set_target_edge(THUMBNAIL_SIZES[2])
-    settle(SETTLE_SECONDS)
+    step_transition(grid, 1.0)
 
     bar = grid.verticalScrollBar()
     assert grid._scroll_to == bar.minimum(), f"目标值 {grid._scroll_to} 越界了"
@@ -689,15 +688,15 @@ def test_a_selection_on_the_last_row_is_centered_not_pinned_to_the_end(
 
 
 def test_a_selection_on_the_last_row_is_not_pushed_off_screen(
-    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+    qt_app: QApplication, tmp_path: Path
 ) -> None:
     """末行选不中时，夹到下界就好 —— 别把它硬按到屏幕外面。"""
     grid = make_grid(qt_app, tmp_path, 6)
     grid.select_row(5, ensure_visible=False)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
 
     grid.set_target_edge(THUMBNAIL_SIZES[2])
-    settle(SETTLE_SECONDS)
+    step_transition(grid, 1.0)
 
     bar = grid.verticalScrollBar()
     assert grid._scroll_to <= bar.maximum(), "目标值越界了"
@@ -705,7 +704,7 @@ def test_a_selection_on_the_last_row_is_not_pushed_off_screen(
 
 
 def test_the_layout_is_exactly_the_same_whether_or_not_it_animates(
-    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+    qt_app: QApplication, tmp_path: Path
 ) -> None:
     """**动画只改「画在哪儿」，不改变任何布局结果。**
 
@@ -714,15 +713,17 @@ def test_the_layout_is_exactly_the_same_whether_or_not_it_animates(
     A/B 手法，也意味着修布局缺陷（比如 :func:`grid._center_on_row`）与动画无关。
     """
     animated = scrollable_grid(qt_app, tmp_path)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, animated)
     animated.set_target_edge(THUMBNAIL_SIZES[2])
-    settle(SETTLE_SECONDS)
+    step_transition(animated, 1.0)
 
     plain = scrollable_grid(qt_app, tmp_path)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, plain)
     plain._transition_anim.setDuration(0)  # 0 毫秒 = 立即落位，等于没有过渡
     plain.set_target_edge(THUMBNAIL_SIZES[2])
-    settle(SETTLE_SECONDS)
+    # 时长为 0 的动画得等它自己那一趟 0ms 定时器，这里只能等条件 ——
+    # 拨时钟是按 160ms 拨的，而那个动画的时长是 0。
+    settle_grid(qt_app, plain)
 
     assert animated.gridSize() == plain.gridSize()
     assert animated._first_row_columns() == plain._first_row_columns()
@@ -731,7 +732,7 @@ def test_the_layout_is_exactly_the_same_whether_or_not_it_animates(
 
 
 def test_the_scroll_glides_from_where_it_was_to_where_the_selection_is(
-    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+    qt_app: QApplication, tmp_path: Path
 ) -> None:
     """选中项在屏外时放大：从「原来看着的那一片」一路滑到选中项，中间不许倒退。
 
@@ -751,12 +752,12 @@ def test_the_scroll_glides_from_where_it_was_to_where_the_selection_is(
     :meth:`grid._anchored_scroll_value`）。所以这里量的是**正中那一格的位置**。
     """
     grid = make_grid(qt_app, tmp_path, 800)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
     grid.select_row(795, ensure_visible=False)  # 选中它（Qt 会顺手把它滚进视野）
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
     bar = grid.verticalScrollBar()
     bar.setValue(bar.maximum() // 2)  # 自己滚回中段：选中项于是落到屏外
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
     selected = grid.visualRect(grid.model().index(795, 0))
     assert selected.top() > grid.viewport().height(), "选中项该在屏外，测的不是这个场景"
 
@@ -772,7 +773,7 @@ def test_the_scroll_glides_from_where_it_was_to_where_the_selection_is(
         f"第 0 帧该还停在原处（y={anchor_y}），实际 y={first_rect.center().y()}"
     )
 
-    samples = scroll_samples(grid, settle)
+    samples = scroll_samples(grid)
     pairs = list(zip(samples, samples[1:], strict=False))
     backwards = [(a, b) for a, b in pairs if b < a]
     assert not backwards, f"滚动倒退了：{backwards}"
@@ -784,7 +785,7 @@ def test_the_scroll_glides_from_where_it_was_to_where_the_selection_is(
 
 
 def test_the_scrollbar_range_is_already_right_at_the_moment_of_the_change(
-    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+    qt_app: QApplication, tmp_path: Path
 ) -> None:
     """切档刚做完，滚动条范围就该覆盖全部条目 —— 那一刻它也是画给用户看的。
 
@@ -792,7 +793,7 @@ def test_the_scrollbar_range_is_already_right_at_the_moment_of_the_change(
     下面时会被摆到「够得着的最远处」，离正中还差着一大截（实测 3000 张差 232602）。
     """
     grid = make_grid(qt_app, tmp_path, 800)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
 
     grid.set_target_edge(THUMBNAIL_SIZES[2])
 
@@ -803,7 +804,7 @@ def test_the_scrollbar_range_is_already_right_at_the_moment_of_the_change(
 
 
 def test_two_quick_level_changes_still_end_centered_on_the_selection(
-    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+    qt_app: QApplication, tmp_path: Path
 ) -> None:
     """连按两下换档（上一段过渡还没跑完就又来一下），终点仍是选中项在正中。
 
@@ -813,11 +814,11 @@ def test_two_quick_level_changes_still_end_centered_on_the_selection(
     """
     grid = make_grid(qt_app, tmp_path, 200)
     grid.select_row(80, ensure_visible=False)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
 
     grid.set_target_edge(THUMBNAIL_SIZES[2])
-    grid.set_target_edge(THUMBNAIL_SIZES[0])
-    settle(SETTLE_SECONDS)
+    grid.set_target_edge(THUMBNAIL_SIZES[0])  # 第二段根本不会跑起来，直接落位
+    settle_grid(qt_app, grid)
 
     cell_rect = grid.visualRect(grid.model().index(80, 0))
     middle = grid.viewport().height() // 2
@@ -827,7 +828,6 @@ def test_two_quick_level_changes_still_end_centered_on_the_selection(
 def test_resizing_the_window_never_recenters(
     qt_app: QApplication,
     tmp_path: Path,
-    settle: Callable[[float], None],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """拖窗口（以及横幅出现/消失带来的自动 resize）不该把视图拽到选中项那里。
@@ -839,7 +839,7 @@ def test_resizing_the_window_never_recenters(
     """
     grid = make_grid(qt_app, tmp_path, 400)
     grid.select_row(300, ensure_visible=False)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
 
     calls: list[int] = []
     real = grid._center_on_row
@@ -851,9 +851,9 @@ def test_resizing_the_window_never_recenters(
     monkeypatch.setattr(grid, "_center_on_row", counted)
 
     grid.resize(1100, 800)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
     grid.resize(1300, 800)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
 
     assert calls == [], f"拖窗口不该居中，却调了 {calls} 次"
 
@@ -876,13 +876,14 @@ def test_dragging_the_window_never_lets_the_scroll_position_go(
     全量排版会在同一帧内把它摆回来，于是从外面看像没跳过）。而位置真丢
     的那一次根本没有恢复 —— 那时 :meth:`grid._recompute_layout` 判「格子尺寸没变」
     直接返回，夹取来自 Qt 自己那次**推迟 100ms** 的重排（``ResizeMode.Adjust``），
-    所以末尾还得等够 100ms 再看一眼。
+    所以末尾还得等过 :data:`grid_helpers.QT_DEFERRED_RELAYOUT_SECONDS` 再看一眼 ——
+    **那是 Qt 内部的定时器，:func:`grid_helpers.settle_grid` 等不到它**。
     """
     grid = make_grid(qt_app, tmp_path, 400)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
     bar = grid.verticalScrollBar()
     bar.setValue(bar.maximum() // 2)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
     start = bar.value()
     columns = grid._first_row_columns()
     assert columns >= 2, "列数太少，测的不是这个场景"
@@ -903,7 +904,7 @@ def test_dragging_the_window_never_lets_the_scroll_position_go(
             seen.append(bar.value())
             ranges.append((bar.maximum(), full_range()))
         settle(SLICE_SECONDS)
-    settle(SETTLE_SECONDS)  # 连 Qt 那个 100ms 的延迟重排也跑掉
+    settle(QT_DEFERRED_RELAYOUT_SECONDS)  # 连 Qt 那个延迟重排也跑掉
     seen.append(bar.value())
     ranges.append((bar.maximum(), full_range()))
 
@@ -926,19 +927,22 @@ def test_new_photos_arriving_do_not_lose_the_scroll_position(
     排完第一批的那一刻只剩一小块，正看到中间的人当场被夹（实测 400 张的库
     6970 → 1620）。这条走的是 ``rowsInserted`` 这个入口，与拖窗口那条不是同一个，
     所以单独盯一次。
+
+    同上：那次重排是 Qt 内部的定时器，只能靠
+    :data:`grid_helpers.QT_DEFERRED_RELAYOUT_SECONDS` 等它落地。
     """
     grid = make_grid(qt_app, tmp_path, 400)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
     bar = grid.verticalScrollBar()
     bar.setValue(bar.maximum() // 2)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
     start = bar.value()
     columns = grid._first_row_columns()
     assert start > 0 and columns >= 2, "没滚下去 / 列数太少，测的不是这个场景"
 
     for step in range(3):
         grid.model().append(fake_photos(200, tmp_path / f"新来的{step}"))
-        settle(SETTLE_SECONDS)
+        settle(QT_DEFERRED_RELAYOUT_SECONDS)
         assert bar.value() == start, (
             f"第 {step} 批新条目进来之后位置从 {start} 变成了 {bar.value()}"
         )
@@ -949,7 +953,7 @@ def test_new_photos_arriving_do_not_lose_the_scroll_position(
 
 
 def test_changing_the_thumbnail_size_keeps_the_cell_the_user_is_looking_at(
-    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+    qt_app: QApplication, tmp_path: Path
 ) -> None:
     """换档（列数真的变了）时，摆在正中的是**用户正看着的那一格**。
 
@@ -961,11 +965,11 @@ def test_changing_the_thumbnail_size_keeps_the_cell_the_user_is_looking_at(
     本来就没有可比性。
     """
     grid = make_grid(qt_app, tmp_path, 400)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
     grid.clear_current()  # 显式摆出前置条件：谁也没选中（不留 Qt 顺手设的当前项）
     bar = grid.verticalScrollBar()
     bar.setValue(bar.maximum() // 2)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
 
     middle = QPoint(grid.viewport().width() // 2, grid.viewport().height() // 2)
     anchor = grid.indexAt(middle).row()
@@ -973,7 +977,7 @@ def test_changing_the_thumbnail_size_keeps_the_cell_the_user_is_looking_at(
     before_columns = grid._first_row_columns()
 
     grid.set_target_edge(THUMBNAIL_SIZES[2])
-    settle(SETTLE_SECONDS)
+    step_transition(grid, 1.0)
 
     after_columns = grid._first_row_columns()
     assert after_columns != before_columns, "这一档没换行，测的不是这个场景"
@@ -988,7 +992,6 @@ def test_changing_the_thumbnail_size_keeps_the_cell_the_user_is_looking_at(
 def test_the_column_check_never_aborts_a_running_transition(
     qt_app: QApplication,
     tmp_path: Path,
-    settle: Callable[[float], None],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """「核对实际列数」引发的那次修正，不许把正在跑的过渡打断在半路。
@@ -1001,12 +1004,12 @@ def test_the_column_check_never_aborts_a_running_transition(
     修正该做的只有一件事：按实测列数把格子重新均分一遍，位置照旧。
     """
     grid = make_grid(qt_app, tmp_path, 400)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
     grid.select_row(300, ensure_visible=False)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
     grid.set_target_edge(THUMBNAIL_SIZES[2])
     assert grid._laid_out_columns >= 2, "列数太少，测的不是这个场景"
-    settle(EDGE_ANIMATION_MS / 1000 / 3)  # 过渡跑到三分之一就撞上核对
+    step_transition(grid, 1 / 3)  # 过渡跑到三分之一就撞上核对
 
     # 装作「Qt 实际少摆得下一列」：这正是核对要修正的情形。必须**少**于当前列数，
     # 否则 `_examine_columns` 会判「量出来的没少」而什么都不做，这个用例就空了。
@@ -1015,7 +1018,7 @@ def test_the_column_check_never_aborts_a_running_transition(
     grid._examine_columns()
     monkeypatch.undo()
     assert grid._laid_out_columns == corrected, "修正没发生，测的不是这个场景"
-    settle(SETTLE_SECONDS)
+    step_transition(grid, 1.0)  # 剩下的那三分之二照跑
 
     cell_rect = grid.visualRect(grid.model().index(300, 0))
     middle = grid.viewport().height() // 2
@@ -1025,7 +1028,7 @@ def test_the_column_check_never_aborts_a_running_transition(
 
 
 def test_a_level_change_never_flashes_to_another_part_of_the_album(
-    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+    qt_app: QApplication, tmp_path: Path
 ) -> None:
     """换档的**第 0 帧**必须还是用户原来看着的那一片。
 
@@ -1037,17 +1040,19 @@ def test_a_level_change_never_flashes_to_another_part_of_the_album(
 
     **判据是「原来那一片还在不在屏上」**，不是滚动条那个数字：数字照搬过去了，
     画面却翻到了别的段落，这正是那个缺陷。
+
+    四个组合都只取**第 0 帧**就断言，所以整段过渡一次都不用等。
     """
     for at_bottom in (True, False):
         for target in (THUMBNAIL_SIZES[2], THUMBNAIL_SIZES[0]):
             where = "视图在底部" if at_bottom else "视图在相册中间"
             grid = make_grid(qt_app, tmp_path, 800)
-            settle(SETTLE_SECONDS)
+            settle_grid(qt_app, grid)
             last = grid.model().rowCount() - 1
             grid.select_row(last, ensure_visible=False)
             bar = grid.verticalScrollBar()
             bar.setValue(bar.maximum() if at_bottom else bar.maximum() // 2)
-            settle(SETTLE_SECONDS)
+            settle_grid(qt_app, grid)
 
             middle = QPoint(grid.viewport().width() // 2, grid.viewport().height() // 2)
             anchor = grid.indexAt(middle)
@@ -1070,7 +1075,6 @@ def test_a_level_change_never_flashes_to_another_part_of_the_album(
                 f"{where}、切到 {target} 像素：首帧里刚才正中的第 {anchor.row()} 张"
                 f"已经不在屏上了（{rect}）"
             )
-            settle(SETTLE_SECONDS)
             grid.close()
 
 
@@ -1106,7 +1110,6 @@ def hosted_grid(
 def test_toggling_the_scrollbar_does_not_change_the_cell_size(
     qt_app: QApplication,
     tmp_path: Path,
-    settle: Callable[[float], None],
     wait_for: Callable[..., bool],
 ) -> None:
     """滚动条自己开关，**不许**改变这一档的格子尺寸与列数。
@@ -1118,7 +1121,7 @@ def test_toggling_the_scrollbar_does_not_change_the_cell_size(
     那一次既是一跳（位置与尺寸都当场换掉），又会把正在跑的过渡掐掉。
     """
     holder, grid = hosted_grid(qt_app, tmp_path, 12)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
     bar = grid.verticalScrollBar()
     assert bar.isVisible(), "前提没摆出来：这一层开头应当有滚动条"
 
@@ -1129,7 +1132,7 @@ def test_toggling_the_scrollbar_does_not_change_the_cell_size(
     assert wait_for(lambda: not bar.isVisible(), timeout=1.0), (
         "前提没摆出来：缩小一档之后滚动条应当收回去"
     )
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
 
     assert grid.gridSize() == settled_cell, (
         f"滚动条开关把格子从 {settled_cell} 改成了 {grid.gridSize()}"
@@ -1139,7 +1142,7 @@ def test_toggling_the_scrollbar_does_not_change_the_cell_size(
 
 
 def test_toggling_the_scrollbar_does_not_cut_the_transition_short(
-    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+    qt_app: QApplication, tmp_path: Path
 ) -> None:
     """缩小一档让滚动条收回去时，过渡照旧跑完，而不是当场落位。
 
@@ -1149,7 +1152,7 @@ def test_toggling_the_scrollbar_does_not_cut_the_transition_short(
     而落位 —— 动画在自己发出去几毫秒之后被自己掐掉，画面上只剩「啪一下跳过去」。
     """
     holder, grid = hosted_grid(qt_app, tmp_path, 12)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
     bar = grid.verticalScrollBar()
     assert bar.isVisible(), "前提没摆出来：这一层开头应当有滚动条"
 
@@ -1161,11 +1164,14 @@ def test_toggling_the_scrollbar_does_not_cut_the_transition_short(
     grid.set_target_edge(THUMBNAIL_SIZES[0])
     assert grid._transition_anim.state() == QAbstractAnimation.State.Running, "过渡该在跑"
 
-    samples: list[QSize] = []
-    for _ in range(int(SETTLE_SECONDS / SLICE_SECONDS)):
-        settle(SLICE_SECONDS)
-        rect = grid._delegate.cell_rect(grid.visualRect(model.index(row, 0)), row)
-        samples.append(rect.size())
+    # ``spin`` 让排着的事件在帧与帧之间送达 —— 滚动条开关带来的那次 ``resizeEvent``
+    # 就在那里面。不转事件循环的话这条用例会**空转绿**：掐它的那个事件压根没送到，
+    # 于是「过没有渡被掐掉」与「掐它的来了没有」都无从谈起。
+    samples = drive_transition(
+        grid,
+        lambda: grid._delegate.cell_rect(grid.visualRect(model.index(row, 0)), row).size(),
+        spin=qt_app.processEvents,
+    )
 
     assert not bar.isVisible(), "前提没摆出来：缩小一档之后滚动条应当收回去"
 
@@ -1182,7 +1188,7 @@ def test_toggling_the_scrollbar_does_not_cut_the_transition_short(
 
 
 def test_a_real_window_resize_still_ends_the_transition(
-    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+    qt_app: QApplication, tmp_path: Path
 ) -> None:
     """真的把窗口拖宽拖窄，仍然立刻落位 —— 那是用户在拽，不许继续放动画。
 
@@ -1191,13 +1197,12 @@ def test_a_real_window_resize_still_ends_the_transition(
     自己收尾。
     """
     holder, grid = hosted_grid(qt_app, tmp_path, 40)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
 
     grid.set_target_edge(THUMBNAIL_SIZES[2])
     assert grid._transition_anim.state() == QAbstractAnimation.State.Running, "前提：过渡在跑"
 
-    holder.resize(holder.width() + 300, holder.height())
-    settle(SLICE_SECONDS)
+    holder.resize(holder.width() + 300, holder.height())  # resizeEvent 同步送达
 
     assert grid._transition_anim.state() == QAbstractAnimation.State.Stopped
     assert grid._delegate.draw_edge == float(grid.icon_edge), "拖窗口就该直接落位"
@@ -1207,7 +1212,6 @@ def test_a_real_window_resize_still_ends_the_transition(
 def test_the_column_check_does_not_flash_the_frame_to_the_final_size(
     qt_app: QApplication,
     tmp_path: Path,
-    settle: Callable[[float], None],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """核对列数那次修正**不许**让绘制尺寸闪到终点再被动画拽回来。
@@ -1217,12 +1221,12 @@ def test_the_column_check_does_not_flash_the_frame_to_the_final_size(
     的那一帧就会先长到位、再缩回去（肉眼是「闪一下」）。
     """
     grid = make_grid(qt_app, tmp_path, 400)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
     grid.select_row(300, ensure_visible=False)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
     grid.set_target_edge(THUMBNAIL_SIZES[2])
     assert grid._laid_out_columns >= 2, "列数太少，测的不是这个场景"
-    settle(EDGE_ANIMATION_MS / 1000 / 3)  # 过渡跑到三分之一就撞上核对
+    step_transition(grid, 1 / 3)  # 过渡跑到三分之一就撞上核对
 
     monkeypatch.setattr(grid, "_first_row_columns", lambda: grid._laid_out_columns - 1)
     expected = grid._delegate.draw_edge
@@ -1237,7 +1241,7 @@ def test_the_column_check_does_not_flash_the_frame_to_the_final_size(
 
 
 def test_a_resize_that_does_not_change_the_layout_does_not_kill_the_transition(
-    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+    qt_app: QApplication, tmp_path: Path
 ) -> None:
     """只改高度的那种 resize（横幅出现/消失）不该掐掉切档过渡。
 
@@ -1246,25 +1250,30 @@ def test_a_resize_that_does_not_change_the_layout_does_not_kill_the_transition(
     前者只是视口矮了几十像素，过渡照跑完全没问题。
 
     与相册层那条是同一类毛病：**切档之外的杂事不该把动画掐掉**。
+
+    「还在往大处长」这一条是把时钟往前拨一格来量的（而不是等真实时间过去），
+    所以它是「同一段动画确实继续推进了」，而不是「这段时间恰好够」。
     """
     grid = make_grid(qt_app, tmp_path, 40)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
 
     grid.set_target_edge(THUMBNAIL_SIZES[2])
-    settle(SLICE_SECONDS)
+    step_transition(grid, 0.25)
     assert grid._transition_anim.state() == QAbstractAnimation.State.Running, "前提：过渡在跑"
     before = grid._delegate.draw_edge
 
     # 只矮 40 像素：宽度没变，版面用不着重排，滚动条范围只会变大（不会把位置夹掉）。
     grid.resize(grid.width(), grid.height() - 40)
-    settle(SLICE_SECONDS)
 
     assert grid._transition_anim.state() == QAbstractAnimation.State.Running, (
         "只改高度的 resize 把过渡掐掉了"
     )
+    assert grid._delegate.draw_edge == before, "画面不该被这一步动过"
     assert grid._delegate.draw_edge != float(grid.icon_edge), (
         f"画面被直接拨到了终点（{grid._delegate.draw_edge}），过渡没了"
     )
+
+    step_transition(grid, 0.75)
     assert grid._delegate.draw_edge > before, (
         f"过渡该继续往大处长（{before} → {grid._delegate.draw_edge}）"
     )
@@ -1336,15 +1345,13 @@ def test_a_slow_pinch_still_switches_every_time(
     assert steps == [1, 1, 1]
 
 
-def test_the_wheel_is_not_rate_limited(
-    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
-) -> None:
+def test_the_wheel_is_not_rate_limited(qt_app: QApplication, tmp_path: Path) -> None:
     """⌘+滚轮**不**限速：那一格一格是用户明确的意图，限速只会让它变迟钝。
 
     连按的那几下由 MainWindow 排队补上（见 ``tests/ui/test_shortcuts.py``）。
     """
     grid = make_grid(qt_app, tmp_path, 40)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
     steps: list[int] = []
     grid.size_step_requested.connect(steps.append)
 
@@ -1367,54 +1374,53 @@ def test_the_wheel_is_not_rate_limited(
 
 
 def test_transition_ended_is_emitted_once_per_started_transition(
-    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+    qt_app: QApplication, tmp_path: Path
 ) -> None:
     """「可以安排下一件事了」这个信号，每发出去一段过渡就正好发一次。
 
     少发了会卡住（等着的切档永远不执行），多发了会把一下按成两下。
     """
     grid = make_grid(qt_app, tmp_path, 40)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
     ended: list[bool] = []
     grid.transition_ended.connect(lambda: ended.append(True))
 
     grid.set_target_edge(THUMBNAIL_SIZES[2])
     assert grid.is_transitioning, "前提：过渡真的跑起来了"
 
-    settle(SETTLE_SECONDS)
+    step_transition(grid, 1.0)
 
     assert not grid.is_transitioning
     assert len(ended) == 1
 
 
 def test_transition_ended_is_emitted_even_when_the_user_interrupts(
-    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+    qt_app: QApplication, tmp_path: Path
 ) -> None:
     """用户中途滚一下就把过渡掐了 —— 动画的 ``finished`` 不会来，那个信号也得发。
 
     不发的话，排在后面等着的那一次切档就永远卡住了：用户滚一下，缩略图就再也不动了。
     """
     grid = make_grid(qt_app, tmp_path, 40)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
     ended: list[bool] = []
     grid.transition_ended.connect(lambda: ended.append(True))
 
     grid.set_target_edge(THUMBNAIL_SIZES[2])
-    settle(SLICE_SECONDS)
+    step_transition(grid, 1 / 3)
     assert grid._transition_anim.state() == QAbstractAnimation.State.Running, "前提：过渡在跑"
 
     bar = grid.verticalScrollBar()
-    bar.setValue(min(bar.maximum(), bar.value() + 60))  # 用户自己滚一下
-    settle(SLICE_SECONDS)
+    bar.setValue(min(bar.maximum(), bar.value() + 60))  # 用户自己滚一下（同步送达）
 
     assert grid._transition_anim.state() == QAbstractAnimation.State.Stopped
     assert len(ended) == 1, "被掐断的那一趟也要报一声结束"
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
     assert len(ended) == 1, "多发会让排队的切档一次变两下"
 
 
 def test_a_transition_that_never_ran_does_not_report_itself_as_ended(
-    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+    qt_app: QApplication, tmp_path: Path
 ) -> None:
     """同步落位的那一段不算「跑起来过」。
 
@@ -1423,7 +1429,7 @@ def test_a_transition_that_never_ran_does_not_report_itself_as_ended(
     上一段动画其实还在跑。
     """
     grid = make_grid(qt_app, tmp_path, 40)
-    settle(SETTLE_SECONDS)
+    settle_grid(qt_app, grid)
     ended: list[bool] = []
     grid.transition_ended.connect(lambda: ended.append(True))
     cell = grid.gridSize()

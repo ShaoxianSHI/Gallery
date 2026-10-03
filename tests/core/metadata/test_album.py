@@ -16,24 +16,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from PIL import Image
 
 from gallery.core.errors import AlbumError
 from gallery.core.metadata.album import DEFAULT_ALBUM_NAME, create_album
 from gallery.core.metadata.journal import ACTION_CREATE, RESULT_OK, read_records
 from gallery.core.metadata.undo import next_undo_label, undo_last_write
-
-
-@pytest.fixture
-def library(tmp_path: Path) -> Path:
-    """一个「库」：``京都`` 里有两张照片，``奈良`` 是**空的**（建相册的地方）。"""
-    root = tmp_path / "照片"
-    (root / "京都").mkdir(parents=True)
-    (root / "奈良").mkdir()
-    for name in ("一张.jpg", "另一张.jpg"):
-        Image.new("RGB", (8, 6), (200, 120, 40)).save(root / "京都" / name)
-    (root / ".gallery").mkdir()
-    return root
+from gallery.core.paths import config_dir
 
 
 def _listing(directory: Path) -> list[str]:
@@ -142,12 +130,13 @@ def test_refuses_a_target_outside_the_library(library: Path, tmp_path: Path) -> 
 
 
 def test_refuses_to_build_inside_the_config_directory(library: Path) -> None:
-    """.gallery/ 是 Gallery 自己的东西，不能被当成一层往里建相册。"""
+    """配置目录是 Gallery 自己的东西，不能被当成一层往里建相册。"""
+    inside = config_dir(library)
     with pytest.raises(AlbumError) as caught:
-        create_album(library, library / ".gallery")
+        create_album(library, inside)
 
     assert "配置目录" in caught.value.message
-    assert _listing(library / ".gallery") == []
+    assert _listing(inside) == []
 
 
 @pytest.mark.parametrize(

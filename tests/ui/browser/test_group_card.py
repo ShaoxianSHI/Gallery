@@ -3,6 +3,12 @@
 组卡片和相册卡片同形（ADR 0009），只是左上角的角标从「相册」两个字换成了张数。
 所以这里测的是「真的画得出来，且画的是那一格」—— 用离屏平台把委托画进一张
 QPixmap，再看结果，不是靠读代码确认。
+
+**数像素必须数在指定的那一块上。** 卡片底下那一行文件名也是深色的，整张图一起数
+的话「角标画出来了」这种断言**永远为真** —— 曾经两条用例（徽标、文件夹图形）都是
+这么写的：把 :meth:`PhotoDelegate._draw_group_badge` 与
+:meth:`PhotoDelegate._draw_folder_glyph` 整个打成空实现，量出来的深色像素一像素
+都没少，全是那行字。
 """
 
 from __future__ import annotations
@@ -22,17 +28,20 @@ from PySide6.QtWidgets import QApplication, QStyleOptionViewItem  # noqa: E402
 
 from gallery.core.library.photos import GroupRef, PhotoRef  # noqa: E402
 from gallery.ui.browser.grid import GRID_PADDING_X, GRID_PADDING_Y, PhotoDelegate  # noqa: E402
-from gallery.ui.browser.model import PhotoListModel  # noqa: E402
+from gallery.ui.browser.model import GROUP_COUNT_ROLE, PhotoListModel  # noqa: E402
 
 #: 缩略图边长，与网格默认档位一致。
 ICON_EDGE = 176
+
+#: 画布底色。没画到的地方就是这个色，所以「非底色」＝「真的画了东西」。
+CANVAS = QColor(255, 255, 255)
 
 
 def _paint(model: PhotoListModel, row: int, edge: int = ICON_EDGE) -> QPixmap:
     """把第 ``row`` 行按当前尺寸画到一张离屏图上，返回它。"""
     size = QSize(edge + GRID_PADDING_X, edge + GRID_PADDING_Y)
     pixmap = QPixmap(size)
-    pixmap.fill(QColor(255, 255, 255))
+    pixmap.fill(CANVAS)
     painter = QPainter(pixmap)
     try:
         option = QStyleOptionViewItem()
@@ -44,14 +53,44 @@ def _paint(model: PhotoListModel, row: int, edge: int = ICON_EDGE) -> QPixmap:
     return pixmap
 
 
-def _dark_pixels(pixmap: QPixmap) -> int:
+def _card(painted: QPixmap) -> QRect:
+    """卡片本身（``paint`` 里那个 ``adjusted(3, 3, -3, -3)``）。"""
+    return QRect(0, 0, painted.width(), painted.height()).adjusted(3, 3, -3, -3)
+
+
+def _frame(painted: QPixmap) -> QRect:
+    """卡片里的**取景框**：封面、角标、文件夹图形都画在这里，文件名那条不在。
+
+    照 :meth:`PhotoDelegate.paint` 的算法算，而不是抄一份数：``PADDING`` 与
+    ``LABEL_HEIGHT`` 哪天变了，这里跟着变。
+    """
+    return _card(painted).adjusted(
+        PhotoDelegate.PADDING,
+        PhotoDelegate.PADDING,
+        -PhotoDelegate.PADDING,
+        -(PhotoDelegate.PADDING + PhotoDelegate.LABEL_HEIGHT),
+    )
+
+
+def _badge_block(painted: QPixmap) -> QRect:
+    """角标待着的那一小块：取景框左上角往里 4 像素（见 :meth:`_draw_badge`）。"""
+    frame = _frame(painted)
+    return QRect(frame.left() + 4, frame.top() + 4, 44, 44)
+
+
+def _count(pixmap: QPixmap, rect: QRect, *, darker_than: int | None = None) -> int:
+    """数 ``rect`` 里符合条件的像素：给了 ``darker_than`` 数深色，否则数非底色。"""
     image = pixmap.toImage()
-    dark = 0
-    for y in range(image.height()):
-        for x in range(image.width()):
-            if image.pixelColor(x, y).lightness() < 90:
-                dark += 1
-    return dark
+    return sum(
+        1
+        for y in range(max(0, rect.top()), min(image.height(), rect.bottom()))
+        for x in range(max(0, rect.left()), min(image.width(), rect.right()))
+        if (
+            image.pixelColor(x, y).lightness() < darker_than
+            if darker_than is not None
+            else image.pixelColor(x, y) != CANVAS
+        )
+    )
 
 
 def _group_model(tmp_path: Path, photos: tuple[PhotoRef, ...]) -> PhotoListModel:
@@ -66,7 +105,7 @@ def test_group_card_with_cover_paints_the_cover_and_the_badge(
     tmp_path: Path, qt_app: QApplication
 ) -> None:
     del qt_app  # QPixmap 要有一个 QGuiApplication 才活得下来
-    """有封面时画封面，并在左上角盖一个「N 张」的徽标。"""
+    """有封面时画封面，并在取景框左上角盖一个「N 张」的徽标。"""
     photo = PhotoRef(path=tmp_path / "封面.jpg", size=10, mtime_ns=1)
     model = _group_model(tmp_path, (photo,))
     cover = QImage(64, 64, QImage.Format.Format_RGB32)
@@ -79,7 +118,12 @@ def test_group_card_with_cover_paints_the_cover_and_the_badge(
     # 封面是红色的一整块：取景框中央应当是它。
     centre = painted.toImage().pixelColor(painted.width() // 2, painted.height() // 2)
     assert centre.red() > centre.blue()
-    assert _dark_pixels(painted) > 0  # 徽标那一小块深色
+
+    # **只数角标那一小块。** 这个红封面的亮度正好落在 120（``(200+40)/2``），
+    # 不算「深色」，所以数出来的就是徽标自己的墨 —— 把徽标整个关掉是 0。
+    assert _count(painted, _badge_block(painted), darker_than=120) > 0, (
+        "取景框左上角那一小块没有徽标 —— 角标压根没画，或者没钉在框角上"
+    )
 
 
 def test_group_card_without_cover_still_paints(tmp_path: Path, qt_app: QApplication) -> None:
@@ -91,18 +135,23 @@ def test_group_card_without_cover_still_paints(tmp_path: Path, qt_app: QApplicat
     painted = _paint(model, 0)
 
     assert not painted.isNull()
-    assert _dark_pixels(painted) > 0
+    # 数的是**取景框里非底色的像素**：文件名那一行不在框里，所以这一次量到的
+    # 就是图形本身。把 :meth:`PhotoDelegate._draw_folder_glyph` 打成空实现是 0。
+    assert _count(painted, _frame(painted)) > 0, "封面没到时取景框是空白的 —— 文件夹图形没画"
 
 
 def test_badge_text_is_the_photo_count(tmp_path: Path, qt_app: QApplication) -> None:
     del qt_app
+    """角标上写的是**张数**，卡片底下那一行才是组标签 —— 两者别搞混。"""
     photos = tuple(
         PhotoRef(path=tmp_path / f"{index}.jpg", size=10, mtime_ns=1) for index in range(3)
     )
     model = PhotoListModel(icon_edge=ICON_EDGE)
     model.reorder([GroupRef(facet="keyword", key="海边", label="海边", photos=photos)])
+    index = model.index(0, 0)
 
-    assert model.data(model.index(0, 0), int(Qt.ItemDataRole.DisplayRole)) == "海边"
+    assert model.data(index, GROUP_COUNT_ROLE) == "3 张", "角标写的不是张数"
+    assert model.data(index, Qt.ItemDataRole.DisplayRole) == "海边", "卡片底下那一行不是组标签"
 
 
 #: 两种封面形状：一竖一横。取景框角是同一个点，照片角则跟着封面形状跑。
@@ -145,15 +194,7 @@ def _group_card_with_cover(
     cover.fill(LIGHT_COVER)
     model.set_thumbnail(photo.path, cover)
     painted = _paint(model, 0)
-    option = QStyleOptionViewItem()
-    option.rect = QRect(0, 0, painted.width(), painted.height())
-    frame = option.rect.adjusted(3, 3, -3, -3).adjusted(
-        PhotoDelegate.PADDING,
-        PhotoDelegate.PADDING,
-        -PhotoDelegate.PADDING,
-        -(PhotoDelegate.PADDING + PhotoDelegate.LABEL_HEIGHT),
-    )
-    return painted, frame
+    return painted, _frame(painted)
 
 
 def test_the_badge_keeps_the_same_corner_whatever_the_cover_shape(

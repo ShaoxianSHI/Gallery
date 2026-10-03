@@ -34,18 +34,6 @@ from gallery.core.metadata.transfer import move_into
 from gallery.core.metadata.undo import next_undo_label, undo_last_write
 
 
-@pytest.fixture
-def library(tmp_path: Path) -> Path:
-    """一个「库」：``京都`` 里有两张照片，``奈良`` 是**空的**（挪过去的地方）。"""
-    root = tmp_path / "照片"
-    (root / "京都").mkdir(parents=True)
-    (root / "奈良").mkdir()
-    for name in ("一张.jpg", "另一张.jpg"):
-        Image.new("RGB", (8, 6), (200, 120, 40)).save(root / "京都" / name)
-    (root / ".gallery").mkdir()
-    return root
-
-
 def _move(root: Path, target: Path, *sources: Path):
     return move_into(root, target, sources)
 

@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -76,18 +75,6 @@ def open_window(
     window.show()
     wait_for_level(window, qt_app, lambda: window._scan_job is None and window._facet_job is None)
     return window
-
-
-def settle(qt_app: QApplication, seconds: float = 0.3) -> None:
-    """转一会儿事件循环，不看任何条件。
-
-    用来「再给几圈机会」：想抓的是**不该发生**的那一下（双击进去又被弹回来），
-    它同步发生、绝不会在下一轮之前溜掉 —— 但多转几圈才不会漏。
-    """
-    deadline = time.monotonic() + seconds
-    while time.monotonic() < deadline:
-        qt_app.processEvents()
-        time.sleep(0.01)
 
 
 def _blank_point(grid: PhotoGrid) -> QPoint:
@@ -174,7 +161,10 @@ def test_blank_double_click_walks_out_of_an_empty_album(
 
 
 def test_double_clicking_an_album_card_enters_it_and_stays_there(
-    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+    qt_app: QApplication,
+    tmp_path: Path,
+    make_photo: Callable[..., Path],
+    settle: Callable[[float], None],
 ) -> None:
     """双击相册卡片要真的进得去，而且留在里面。
 
@@ -198,7 +188,7 @@ def test_double_clicking_an_album_card_enters_it_and_stays_there(
         double_click(window._grid, center)
         wait_for_level(window, qt_app, lambda: window._current_dir == target, what=name)
         # 再转几圈事件循环：退回去同样是同步的，多给它几次机会照样看得见。
-        settle(qt_app)
+        settle(0.3)  # 多给它几圈机会
         assert window._current_dir == target, f"双击「{name}」刚进去就被弹回来了"
 
         # 退回去，等这一层真的列完（``_current_dir`` 是同步设好的，条目还在路上）。
@@ -220,7 +210,10 @@ def test_double_clicking_an_album_card_enters_it_and_stays_there(
 
 
 def test_double_clicking_a_group_card_enters_it_and_stays_there(
-    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+    qt_app: QApplication,
+    tmp_path: Path,
+    make_photo: Callable[..., Path],
+    settle: Callable[[float], None],
 ) -> None:
     """组卡片同理：双击要留在组里，而不是进一半就被空白双击弹出去。"""
     library = tmp_path / "库"
@@ -235,7 +228,7 @@ def test_double_clicking_a_group_card_enters_it_and_stays_there(
 
         double_click(window._grid, center)
         wait_for_level(window, qt_app, lambda: window._group_view is not None, what="进组")
-        settle(qt_app)
+        settle(0.3)  # 多给它几圈机会
 
         assert window._group_view is target, "双击组卡片刚进去就被弹回来了"
         assert [entry.name for entry in window._model.entries()] == [

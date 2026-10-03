@@ -7,13 +7,14 @@ exiftool 路径用**假的可执行脚本**验证：测试既不需要本机装�
 from __future__ import annotations
 
 import dataclasses
+import io
 import json
-import os
 import stat
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from gallery.core.errors import MetadataError
 from gallery.core.metadata.exif import (
@@ -352,12 +353,43 @@ def test_pillow_gps_ignores_garbage() -> None:
     assert _gps_fields({2: (1.0, 2.0)}) == {}
 
 
-def test_pillow_path_imports_without_exiftool() -> None:
-    """降级路径只用 Pillow 与标准库，不依赖任何外部命令。"""
-    import gallery.core.metadata.exif as module
+def test_the_degraded_path_works_without_exiftool(tmp_path: Path) -> None:
+    """**没有 exiftool 也能读**：降级路径只用 Pillow 与标准库，不依赖任何外部命令。
 
-    assert module.EXIFTOOL_EXECUTABLE == "exiftool"
-    assert os.path.sep in str(Path("a/b"))
+    原来是两条改不动的断言（重述 ``EXIFTOOL_EXECUTABLE`` 的字面量、以及
+    ``os.path.sep in str(Path("a/b"))`` 这种标准库恒真式）—— 名字说「不依赖 exiftool」，
+    断言里却没有一处碰到 exiftool，于是降级路径里悄悄多了一个子进程，这条照样绿。
+
+    （顺带一提：那条常量是 ``ExifToolReader.__init__`` 的**默认参数**，在类定义时就
+    固化了，所以改模块属性根本影响不到它 —— 也就是说「把 exiftool 指到别处」这种
+    做法在这套代码上是走不通的，来源只能从参数进来。）
+
+    现在真的让来源「不可用」，再走一遍完整读取：读得到 EXIF、并且**如实说明这是基础
+    信息**（那句提示是降级时给用户看的，不许悄悄消失）。来源是注入进去的，所以本机
+    装没装 exiftool 都一样。
+    """
+    photo = tmp_path / "IMG_0001.jpg"
+    photo.write_bytes(_jpeg_with_exif())
+
+    missing = ExifToolReader(executable=str(tmp_path / "没有这个命令"))
+    report = read_metadata(photo, source=missing)
+
+    assert report.source == "pillow", f"没有 exiftool 时该降级到 Pillow，实际 {report.source}"
+    assert field_map(report.groups), "降级之后也该读得出 EXIF，而不是空报告"
+    assert report.notice and "exiftool" in report.notice, (
+        f"降级要如实告诉用户，不许悄悄给一份缩水的信息：{report.notice!r}"
+    )
+
+
+def _jpeg_with_exif() -> bytes:
+    """一张 8×6 的 JPEG + 一段最小 EXIF（厂商与型号），用 Pillow 现造。"""
+    image = Image.new("RGB", (8, 6), (10, 20, 30))
+    exif = image.getexif()
+    exif[0x010F] = "Gallery"  # Make
+    exif[0x0110] = "Test Camera"  # Model
+    buffer = io.BytesIO()
+    image.save(buffer, format="JPEG", exif=exif)
+    return buffer.getvalue()
 
 
 class TestDegenerateValues:

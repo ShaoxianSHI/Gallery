@@ -9,6 +9,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from gallery.core import paths
 from gallery.core.library.index import SCHEMA_VERSION, FacetIndex
 from gallery.core.library.photos import PhotoRef
 from gallery.core.metadata.facets import PhotoFacets
@@ -275,7 +276,7 @@ def test_open_for_library_and_external_cache(tmp_path: Path) -> None:
     inside = FacetIndex.open(tmp_path, in_library=True)
     outside = FacetIndex.open(tmp_path, in_library=False, base=tmp_path / "系统缓存")
 
-    assert inside.path == tmp_path / ".gallery" / "index.db"
+    assert inside.path == paths.config_dir(tmp_path) / "index.db"
     assert outside.path is not None and "系统缓存" in str(outside.path)
     inside.close()
     outside.close()

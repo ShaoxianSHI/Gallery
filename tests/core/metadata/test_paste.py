@@ -30,22 +30,7 @@ from gallery.core.metadata.journal import (
 )
 from gallery.core.metadata.paste import copy_into
 from gallery.core.metadata.undo import next_undo_label, undo_last_write
-
-
-@pytest.fixture
-def library(tmp_path: Path) -> Path:
-    """一个「库」：``京都`` 里有两张照片，``奈良`` 是**空的**（粘进去的地方）。
-
-    ``奈良`` 刻意空着：同名的那些用例要自己先把占位的文件摆进去，才测得到
-    「不覆盖」那一步。
-    """
-    root = tmp_path / "照片"
-    (root / "京都").mkdir(parents=True)
-    (root / "奈良").mkdir()
-    for name in ("一张.jpg", "另一张.jpg"):
-        Image.new("RGB", (8, 6), (200, 120, 40)).save(root / "京都" / name)
-    (root / ".gallery").mkdir()
-    return root
+from gallery.core.paths import config_dir
 
 
 def _paste(root: Path, target: Path, *sources: Path):
@@ -103,7 +88,7 @@ def test_same_folder_check_survives_a_different_spelling(tmp_path: Path) -> None
     Image.new("RGB", (8, 6), (1, 2, 3)).save(real / "京都" / "一张.jpg")
     link = tmp_path / "链接"
     link.symlink_to(real, target_is_directory=True)
-    (tmp_path / ".gallery").mkdir()
+    config_dir(tmp_path).mkdir()
 
     result = copy_into(real, link / "京都", (link / "京都" / "一张.jpg",))
 

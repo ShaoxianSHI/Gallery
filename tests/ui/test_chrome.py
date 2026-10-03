@@ -23,6 +23,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import QApplication, QStatusBar  # noqa: E402
+from waiting import DEFAULT_TIMEOUT_SECONDS
 
 from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.library.session import (  # noqa: E402
@@ -31,9 +32,6 @@ from gallery.core.library.session import (  # noqa: E402
     save_session,
 )
 from gallery.ui.main_window import MainWindow  # noqa: E402
-
-#: 等待扫描与首屏布局稳定的时限。
-READY_TIMEOUT_SECONDS = 8.0
 
 
 def _albums_window(
@@ -55,7 +53,7 @@ def _albums_window(
     window.resize(1200, 800)
     window.show()
 
-    deadline = time.monotonic() + READY_TIMEOUT_SECONDS
+    deadline = time.monotonic() + DEFAULT_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         qt_app.processEvents()
         if window._model.rowCount() >= 2 and window._breadcrumb.isVisible():

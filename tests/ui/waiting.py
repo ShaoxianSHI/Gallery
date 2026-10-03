@@ -7,12 +7,14 @@
 定了两个不同的值），外加 conftest 里一份 fixture 形态的 ``wait_for``。问题不在慢，
 在于**同一件事有 8 份写法**：改一处不会改到其余七处。
 
-两种形态各自对应一件事：
+三种形态各自对应一件事：
 
 - :func:`wait_until` —— 答一个是非问题（「到了吗」），不成立就返回 ``False``，
   由用例自己决定怎么报。
 - :func:`wait_for_level` —— 专等「这一层排好了」，不成立**直接抛**并把当前行数
   写进消息（那一层还没排好时看到的现象就是「模型里一个格子都没有」）。
+- :func:`wait_for_idle` —— 专等「MainWindow 背后那几个后台任务收工」，不成立
+  **直接抛**。
 """
 
 from __future__ import annotations
@@ -30,6 +32,13 @@ POLL_SECONDS = 0.005
 
 #: 默认超时（秒）。够跑完一次完整扫描与排序。
 DEFAULT_TIMEOUT_SECONDS = 8.0
+
+#: 「MainWindow 背后那一遍收工了」要看的后台任务。
+#:
+#: **只有一份的理由**：这三条曾散在五个测试模块里各写一遍轮询循环（合计 114 处调用），
+#: 而它们全都**超时静默返回** —— 扫描卡住与扫描成功在返回值上完全一样，于是失败被
+#: 推迟到后面某条莫名其妙的断言上。任务名以后要改（比如某一遍换了实现），改一处就够。
+BACKGROUND_JOBS = ("_scan_job", "_facet_job", "_place_job")
 
 
 def wait_until(
@@ -72,4 +81,42 @@ def wait_for_level(
         raise AssertionError(f"{what}没有在时限内就绪（当前 {rows()} 行）")
 
 
-__all__ = ["DEFAULT_TIMEOUT_SECONDS", "POLL_SECONDS", "wait_for_level", "wait_until"]
+def window_is_idle(window: object, *, also: tuple[str, ...] = ()) -> bool:
+    """``window`` 背后那几个后台任务是不是都收工了（``None`` 即收工）。
+
+    ``also`` 放这一条**额外**也要等的任务名，同样按「是 ``None`` 算收工」判 ——
+    检索索引（``_index_job``）与尚未提交的暂存选择（``_staged``）都落在这条路上。
+    """
+    return all(getattr(window, name, None) is None for name in (*BACKGROUND_JOBS, *also))
+
+
+def wait_for_idle(
+    qt_app: QApplication,
+    window: object,
+    *,
+    also: tuple[str, ...] = (),
+    what: str = "后台那一遍",
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+) -> None:
+    """等 :func:`window_is_idle` 成立。**没等到就直接抛**。
+
+    不抛是这里最要紧的一件事：这些调用点原本**超时也返回**，于是「扫描卡死」与
+    「扫描完成」在返回值上是一回事 —— 卡住时用例会带着一个空模型继续往下走，最后
+    报出来的是某条不相干的断言，超时上限设了多少秒根本看不出来。
+    """
+    if not wait_until(qt_app, lambda: window_is_idle(window, also=also), timeout=timeout):
+        pending = [name for name in (*BACKGROUND_JOBS, *also) if getattr(window, name, None)]
+        raise AssertionError(f"{what}没有在 {timeout:g} 秒内收工（还挂着：{pending}）")
+    # 再转一圈再交差：扫描是流式的，判定成立的那一刻可能还有最后一批在路上。
+    qt_app.processEvents()
+
+
+__all__ = [
+    "BACKGROUND_JOBS",
+    "DEFAULT_TIMEOUT_SECONDS",
+    "POLL_SECONDS",
+    "wait_for_idle",
+    "wait_for_level",
+    "wait_until",
+    "window_is_idle",
+]

@@ -133,14 +133,24 @@ def test_a_photo_and_an_album_are_both_recognized_by_path() -> None:
     刻意不分「是照片还是相册」：一个路径要么是文件要么是目录，不可能是两者，
     而多加一段只会让改名之后对不上（改了名的还是同一条东西，只是路径变了）。
     """
-    assert entry_key(_photo("/照片/库/海边/IMG_1.jpg")) == entry_key(
-        _photo("/照片/库/海边/IMG_1.jpg")
-    )
-    assert entry_key(_album("/照片/库/海边")) == entry_key(_album("/照片/库/海边"))
     assert entry_key(_photo("/照片/库/海边/IMG_1.jpg")) != entry_key(
         _photo("/照片/库/海边/IMG_2.jpg")
     )
     assert entry_key(_album("/照片/库/海边")) != entry_key(_album("/照片/库/山巅"))
+
+
+def test_the_key_is_the_whole_path_and_nothing_else() -> None:
+    """键就是路径本身：父目录与文件名合起来是**全部**依据，两段都不能少看。
+
+    「同一个表达式与自己相等」证明不了什么（:func:`entry_key` 是纯函数），所以这条
+    给的是能红的两种改法：只比文件名（同名文件放在别的目录里就会撞车）、
+    或者只比父目录（同一目录里的两张照片会撞车）。
+    """
+    assert entry_key(_photo("/照片/库/IMG_1.jpg")) != entry_key(
+        _photo("/照片/库/海边/IMG_1.jpg")
+    ), "只比了父目录或文件名 —— 同名的东西会撞车"
+    # 尾斜杠指的是同一个目录，所以键相同（这一条挡「把路径字符串原样当键」）。
+    assert entry_key(_album("/照片/库/海边/")) == entry_key(_album("/照片/库/海边"))
 
 
 def test_a_group_is_told_apart_by_facet_as_well_as_key() -> None:

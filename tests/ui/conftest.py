@@ -147,9 +147,14 @@ def test_no_test_module_shadows_the_shared_fixtures() -> None:
     ``WAIT_SECONDS``（两个不同的值）。它们的问题不是慢，是**同一件事有 8 份写法**，
     改一处不会改到其余七处。
 
+    ``settle`` 也在名单里：``test_blank_double_click`` 曾自己写了一个同名的
+    ``settle(qt_app, seconds)``。它不报错、也不冲突（没有用例把 ``settle`` 写成
+    参数），于是那半边「共享的那一份」被顶掉了，而顶掉这件事**完全看不出来** ——
+    与 ``qt_app`` 那次一模一样的形状，只是更安静。
+
     这条守护让「共享 fixture 只有一份」这件事从约定变成红灯。
     """
-    reserved = {"qt_app", "wait_for", "make_grid"}
+    reserved = {"qt_app", "wait_for", "settle", "make_grid"}
     offenders: list[str] = []
     for path in sorted(pathlib.Path(__file__).resolve().parent.rglob("test_*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -164,8 +169,24 @@ def test_no_test_module_shadows_the_shared_fixtures() -> None:
     )
 
 
+def _spins_the_loop_itself(node: ast.FunctionDef) -> bool:
+    """这个函数**自己**转事件循环并且自己掐时间 —— 那就是自己写了一份轮询循环。
+
+    判据是「同时出现 ``processEvents`` 与（``monotonic`` 或 ``sleep``）」：这两样
+    一起才有轮询的样子。只有 ``processEvents`` 的多半是在收尾（转一圈就跑），
+    只有 ``monotonic`` 的多半是在量时长。
+    """
+    calls = {
+        call.func.attr
+        for call in ast.walk(node)
+        if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+    }
+    names = {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+    return "processEvents" in calls and bool({"sleep", "monotonic"} & (calls | names))
+
+
 def test_no_test_module_reimplements_the_wait_helper() -> None:
-    """等待助手**只有 :mod:`waiting` 里的两份**，任何测试模块都不许再自己写。
+    """等待助手**只有 :mod:`waiting` 里的那几份**，任何测试模块都不许再自己写循环。
 
     曾经散着 8 份轮询循环（``wait_until`` / ``_wait`` / ``_wait_for_scan`` /
     ``wait_rows``），``WAIT_SECONDS`` 与 ``SCAN_TIMEOUT_SECONDS`` 各自定了两个不同的
@@ -173,27 +194,57 @@ def test_no_test_module_reimplements_the_wait_helper() -> None:
     改一处不会改到其余七处，而「该等多久才算超时」这种数字一旦各处不同，偶发失败
     就很难归因（改好一处，另七处还在按旧数字等）。
 
-    这条守护让「轮询循环只有一份」从约定变成红灯。
+    ``_settle`` 是第二轮清出来的：五个模块各有一份「等 MainWindow 背后那几个后台任务
+    收工」（合计 114 处调用），写法一模一样，而且**全都超时静默返回** —— 扫描卡住与
+    扫描完成在返回值上完全一样。判据与轮询现在都在 :mod:`waiting` 里
+    （:func:`waiting.window_is_idle` / :func:`waiting.wait_for_idle`），不成立直接抛。
+
+    **只拦「自己转循环」的**（见 :func:`_spins_the_loop_itself`），不按名字一刀切：
+    那几个模块仍保留着同名的一行包装（``groups=True`` / ``index=False`` 之类的额外
+    条件确实各不相同），但循环与判据都是 :mod:`waiting` 的 —— 把这种包装也拦掉，
+    等于逼着 114 处调用点各自把 ``what=`` 抄一遍，那是另一种「同一件事多种写法」。
     """
-    reserved = {"wait_until", "_wait", "wait_for_pending", "_wait_for_scan", "wait_rows"}
+    reserved = {
+        "wait_until",
+        "_wait",
+        "_settle",
+        "wait_for_pending",
+        "_wait_for_scan",
+        "wait_rows",
+        "wait_for_idle",
+    }
     offenders: list[str] = []
     for path in sorted(pathlib.Path(__file__).resolve().parent.rglob("test_*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in tree.body:
-            if isinstance(node, ast.FunctionDef) and node.name in reserved:
+            if (
+                isinstance(node, ast.FunctionDef)
+                and node.name in reserved
+                and _spins_the_loop_itself(node)
+            ):
                 offenders.append(f"{path.name}:{node.lineno} {node.name}")
     assert not offenders, (
-        f"这些模块自己写了一份等待助手，请用 waiting.wait_until / waiting.wait_for_level："
-        f"{offenders}"
+        f"这些模块自己写了一份轮询循环，请用 waiting.wait_until / waiting.wait_for_level /"
+        f" waiting.wait_for_idle：{offenders}"
     )
 
 
 def test_the_polling_interval_is_defined_once() -> None:
-    """轮询间隔与默认超时也只有一份 —— 两个数字在八处各写一遍时，偶发失败没法归因。"""
+    """轮询间隔与默认超时也只有一份 —— 两个数字在八处各写一遍时，偶发失败没法归因。
+
+    ``READY_TIMEOUT_SECONDS`` 是第二轮清出来的：四个模块各自把它定义成 ``8.0``，
+    恰好等于 :data:`waiting.DEFAULT_TIMEOUT_SECONDS` —— 同一件事两份定义，改了
+    :mod:`waiting` 里那份，四处静悄悄地继续按旧数字等。
+    """
     offenders: list[str] = []
     for path in sorted(pathlib.Path(__file__).resolve().parent.rglob("test_*.py")):
         text = path.read_text(encoding="utf-8")
-        for name in ("POLL_SECONDS", "WAIT_SECONDS", "SCAN_TIMEOUT_SECONDS"):
+        for name in (
+            "POLL_SECONDS",
+            "WAIT_SECONDS",
+            "SCAN_TIMEOUT_SECONDS",
+            "READY_TIMEOUT_SECONDS",
+        ):
             if name in text:
                 offenders.append(f"{path.name}: {name}")
     assert not offenders, f"这些模块自己定义了超时/间隔常数，请用 waiting 里的：{offenders}"

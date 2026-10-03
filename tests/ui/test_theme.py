@@ -26,6 +26,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import QPoint, QPointF, Qt  # noqa: E402
 from PySide6.QtGui import QColor, QImage, QPalette  # noqa: E402
 from PySide6.QtWidgets import QApplication, QFrame, QWidget  # noqa: E402
+from waiting import DEFAULT_TIMEOUT_SECONDS
 
 from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.library.session import (  # noqa: E402
@@ -35,9 +36,6 @@ from gallery.core.library.session import (  # noqa: E402
 )
 from gallery.ui import theme  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
-
-#: 等待扫描与首屏布局稳定的时限（只是上限，条件一成立就返回）。
-READY_TIMEOUT_SECONDS = 8.0
 
 #: 取样点离右边多远。相册只有两个，右边整片是空的，取到的就是底色本身。
 SAMPLE_FROM_RIGHT = 24
@@ -107,7 +105,7 @@ def window(
 
     wait_for(
         lambda: window._model.rowCount() >= 2 and window._breadcrumb.isVisible(),
-        timeout=READY_TIMEOUT_SECONDS,
+        timeout=DEFAULT_TIMEOUT_SECONDS,
     )
     return window
 

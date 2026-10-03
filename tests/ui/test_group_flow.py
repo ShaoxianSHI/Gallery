@@ -23,7 +23,7 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QItemSelectionModel  # noqa: E402
 from PySide6.QtWidgets import QApplication, QToolButton  # noqa: E402
-from waiting import DEFAULT_TIMEOUT_SECONDS
+from waiting import DEFAULT_TIMEOUT_SECONDS, wait_until, window_is_idle
 
 from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.library.photos import GroupRef, PhotoRef  # noqa: E402
@@ -211,19 +211,18 @@ def _select_rows(window: MainWindow, *rows: int) -> None:
 
 
 def _settle(qt_app: QApplication, window: MainWindow, *, groups: bool = False) -> None:
-    """转到「扫描结束、元数据读完、地点解析完、顺序已经排好」为止。"""
-    deadline = time.monotonic() + DEFAULT_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
-        qt_app.processEvents()
-        settled = (
-            window._scan_job is None and window._facet_job is None and window._place_job is None
-        )
-        if settled and (not groups or window._model.group_count() > 0):
-            # 再转一圈，确认没有迟到的一批（扫描是流式的）。
-            qt_app.processEvents()
-            return
-        time.sleep(0.02)
-    qt_app.processEvents()
+    """转到「扫描结束、元数据读完、地点解析完、顺序已经排好」为止。
+
+    「三个后台任务都收工」那部分在 :mod:`waiting` 里，五个模块共用同一份
+    （:func:`waiting.window_is_idle`）；轮询循环也只有那一个
+    （:func:`waiting.wait_until`）。不成立**直接抛** —— 原来这里是超时也返回，
+    扫描卡住与扫描成功长得一模一样。
+    """
+    assert wait_until(
+        qt_app,
+        lambda: window_is_idle(window) and (not groups or window._model.group_count() > 0),
+    ), "扫描、分组与地点解析没有在时限内收工"
+    qt_app.processEvents()  # 扫描是流式的，再转一圈确认没有迟到的一批
 
 
 def _watch_until_settled(

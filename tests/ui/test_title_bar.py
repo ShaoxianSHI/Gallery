@@ -21,7 +21,6 @@
 
 from __future__ import annotations
 
-import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -33,7 +32,7 @@ from PySide6.QtCore import QRect, Qt  # noqa: E402
 from PySide6.QtGui import QFontMetrics  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
-from waiting import DEFAULT_TIMEOUT_SECONDS, wait_until  # noqa: E402
+from waiting import wait_for_idle, wait_until  # noqa: E402
 
 from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.library.session import (  # noqa: E402
@@ -215,15 +214,12 @@ def test_nothing_to_rename_means_no_editor(qt_app: QApplication) -> None:
 
 
 def _settle(qt_app: QApplication, window: MainWindow) -> None:
-    """等扫描、分组、地点那一遍都收工（那几个任务都在后台线程上）。"""
-    deadline = time.monotonic() + DEFAULT_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
-        qt_app.processEvents()
-        if window._scan_job is None and window._facet_job is None and window._place_job is None:
-            qt_app.processEvents()
-            return
-        time.sleep(0.02)
-    qt_app.processEvents()
+    """等扫描、分组、地点那一遍都收工（那几个任务都在后台线程上）。
+
+    判据与轮询循环都在 :mod:`waiting` 里（五个模块共用同一份，见那里的
+    :func:`waiting.wait_for_idle`）—— 不成立**直接抛**，而不是超时也返回。
+    """
+    wait_for_idle(qt_app, window, what="扫描、分组与地点解析")
 
 
 @pytest.fixture

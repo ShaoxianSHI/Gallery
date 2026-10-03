@@ -139,10 +139,21 @@ def test_nearest_returns_the_closest_city() -> None:
 
 
 def test_nearest_gives_up_when_far_away() -> None:
-    """最近的记录在几百公里外就不给结论：说了反而更误导。"""
+    """最近的记录在几百公里外就不给结论：说了反而更误导。
+
+    查询点必须**是真实坐标**：``(0, 0)`` 是「没有位置」的占位写法，会在
+    :func:`dataset.is_real_coordinate` 那一步就短路返回 ``None`` —— 压根到不了
+    距离比较那一段。（用 ``(0, 0)`` 断言 ``None`` 与下面那条 Null Island 的用例
+    完全重复，看着绿着，什么也没守住。）
+    """
     index = PlaceIndex([_city("悉尼", -33.87, 151.21)])
 
-    assert index.nearest(0.0, 0.0) is None
+    assert index.nearest(0.0, 120.0) is None, "隔着半个地球还给结论，那是在编地名"
+
+    # 同一个查询点，把城市挪到窗口以内就该有结论 —— 这才说明「给不给」取决于
+    # 距离，而不是恰好什么别的。
+    near = PlaceIndex([_city("近处的城", 0.0, 119.0)])
+    assert near.nearest(0.0, 120.0) is not None, "窗口以内却也不给结论，白白丢掉一条记录"
 
 
 def test_same_point_prefers_the_bigger_city() -> None:

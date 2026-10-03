@@ -175,13 +175,30 @@ def test_null_island_coordinates_are_refused(tmp_path: Path) -> None:
     assert index.calls == 0, "坐标无效时不该去查索引"
 
 
-def test_existing_index_is_reused_for_the_panel() -> None:
-    """面板已经加载过索引时，分组这边不该再读一遍城市库。"""
+def test_existing_index_is_reused_for_the_panel(monkeypatch: pytest.MonkeyPatch) -> None:
+    """面板已经加载过索引时，分组这边**一次城市库都不该再读**。
+
+    原来是 ``assert resolver.index is index`` —— 构造函数里刚存进去的那一个，
+    不成立的可能性为零，于是 docstring 承诺的「不再读一遍」没有任何东西在看着：
+    把 :func:`PlaceIndex.load` 整个换成会抛的实现，这条照样绿。
+
+    现在把 ``PlaceIndex.load`` 打成会炸的桩再走一遍完整查询：读得到结论就说明
+    走的是手上那个索引。（桩必须会炸而不是返回 ``None``：``None`` 会被当成
+    「库读不到」而正常降级，那样就证明不了任何事。）
+    """
     index = FakeIndex(_place())
 
+    def exploding_load(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("已经有索引了，不该再去读城市库")
+
+    monkeypatch.setattr(PlaceIndex, "load", staticmethod(exploding_load))
+
     resolver = LazyPlaceResolver(index)  # type: ignore[arg-type]
+    place = resolver.place_for(LATITUDE, LONGITUDE)
 
     assert resolver.index is index
+    assert place is not None and place.city == "上海", "没有去读城市库，那结论从哪来"
+    assert index.calls == 1
 
 
 @pytest.mark.parametrize("payload", [b"", b"\x1f\x8b\x08", "不是 gzip".encode()])

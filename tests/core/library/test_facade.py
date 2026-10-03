@@ -193,9 +193,11 @@ def test_albums_order_keeps_a_parent_next_to_its_children(tmp_path: Path) -> Non
 
 
 def test_albums_skips_hidden_and_config_directories(tmp_path: Path) -> None:
-    """隐藏项与配置目录不算相册 —— 否则用户会看见一个「.gallery」可往里挪照片。"""
-    for name in ("京都", ".隐藏相册", ".gallery/cache"):
-        (tmp_path / name).mkdir(parents=True)
+    """隐藏项与配置目录不算相册 —— 否则用户会看见一个配置目录可往里挪照片。"""
+    # 配置目录名走常量（``paths.config_dir`` 的那个来源），不在这里再写一遍字面量。
+    config_cache = str(paths.config_dir(tmp_path) / "cache")
+    for name in ("京都", ".隐藏相册", config_cache):
+        (tmp_path / name).mkdir(parents=True, exist_ok=True)
     library = Library.open(tmp_path)
 
     assert [library.album_label(f.path) for f in library.albums()] == ["京都"]

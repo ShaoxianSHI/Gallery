@@ -29,6 +29,7 @@ from PySide6.QtGui import QGuiApplication  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMenu  # noqa: E402
 from waiting import DEFAULT_TIMEOUT_SECONDS, wait_until
 
+from gallery.core.constants import CONFIG_DIR_NAME  # noqa: E402
 from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.library.facade import Library  # noqa: E402
 from gallery.core.library.photos import GroupRef, PhotoRef  # noqa: E402
@@ -37,6 +38,7 @@ from gallery.core.library.session import (  # noqa: E402
     SessionState,
     save_session,
 )
+from gallery.core.paths import config_dir  # noqa: E402
 from gallery.ui import desktop  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 
@@ -503,10 +505,12 @@ def test_config_directory_is_never_offered(tmp_path: Path) -> None:
     (library_root / "京都").mkdir(parents=True)
     Image.new("RGB", (4, 3), (1, 1, 1)).save(library_root / "京都" / "a.jpg")
     prepare_library(library_root)
-    assert (library_root / ".gallery").is_dir()
+    assert config_dir(library_root).is_dir()
 
     opened = Library.open(library_root)
 
     labels = [opened.album_label(f.path) for f in opened.albums()]
     assert labels == ["京都"]
-    assert not any(".gallery" in label for label in labels)
+    assert not any(CONFIG_DIR_NAME in label for label in labels), (
+        f"配置目录名漏进了相册标签里：{labels}"
+    )

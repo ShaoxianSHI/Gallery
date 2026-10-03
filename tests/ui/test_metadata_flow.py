@@ -25,6 +25,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
+from waiting import DEFAULT_TIMEOUT_SECONDS
 
 from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.metadata.exif import build_report  # noqa: E402
@@ -32,10 +33,6 @@ from gallery.core.metadata.facets import PhotoFacets  # noqa: E402
 from gallery.core.places.resolver import ResolvedPlace  # noqa: E402
 from gallery.ui.main_window import METADATA_PREFETCH_RADIUS, MainWindow  # noqa: E402
 from gallery.ui.panels import metadata as panel_module  # noqa: E402
-
-#: 等异步扫描 / 读取完成的时限。注意这是**上限**，不是固定开销 ——
-#: 条件一成立就返回（见 ``tests/ui/conftest.py``）。
-READY_TIMEOUT_SECONDS = 8.0
 
 #: 「元数据已读进缓存」的判定：当前这张加上前后预读窗口都填满。
 PREFETCHED_ENTRIES = METADATA_PREFETCH_RADIUS + 1
@@ -98,12 +95,12 @@ def window(
     window.resize(1200, 800)
     window.show()
 
-    assert wait_for(lambda: window._model.rowCount() >= 6, timeout=READY_TIMEOUT_SECONDS), (
+    assert wait_for(lambda: window._model.rowCount() >= 6, timeout=DEFAULT_TIMEOUT_SECONDS), (
         "照片没能在时限内扫出来，后面几条测的都不是这条路径"
     )
     window._open_detail(window._model.index(0, 0))
     # 等首张真的解码上屏，而不是干等 0.6 秒 —— 这条 fixture 每条测试都要跑一遍。
-    wait_for(lambda: window._detail.has_image, timeout=READY_TIMEOUT_SECONDS)
+    wait_for(lambda: window._detail.has_image, timeout=DEFAULT_TIMEOUT_SECONDS)
     yield window  # type: ignore[misc]
     window.close()
 
@@ -118,7 +115,7 @@ def ready(window: MainWindow, wait_for: Callable[..., bool]) -> Callable[[], Non
     def _ready() -> None:
         assert wait_for(
             lambda: len(window._metadata_cache) >= PREFETCHED_ENTRIES,
-            timeout=READY_TIMEOUT_SECONDS,
+            timeout=DEFAULT_TIMEOUT_SECONDS,
         ), "元数据没能在时限内读完，预读窗口也没填满"
 
     return _ready
@@ -141,7 +138,7 @@ def test_first_open_may_show_loading_hint(
 ) -> None:
     """用户主动展开面板、面板本来是空的时候，允许一次加载提示。"""
     window._metadata_action.setChecked(True)
-    assert wait_for(lambda: "set_report" in timeline, timeout=READY_TIMEOUT_SECONDS), (
+    assert wait_for(lambda: "set_report" in timeline, timeout=DEFAULT_TIMEOUT_SECONDS), (
         f"面板应当被换成真实内容：{timeline}"
     )
 
@@ -173,7 +170,7 @@ def test_switching_photos_never_shows_loading_hint(
         # 预读是异步的（约 50ms）。等「下一张确实进了缓存」而不是干等固定时长：
         # 这样「切换期间没有加载提示」这条断言覆盖的是**整段真实过程**，
         # 比等满 250ms 更长、更贴近实际浏览节奏。
-        wait_for(lambda: _next_prefetched(window), timeout=READY_TIMEOUT_SECONDS)
+        wait_for(lambda: _next_prefetched(window), timeout=DEFAULT_TIMEOUT_SECONDS)
 
     assert "show_loading" not in timeline, f"命中时不该出现加载提示：{timeline}"
 
@@ -203,7 +200,7 @@ def test_metadata_cache_miss_does_not_show_the_previous_photo(
     assert "show_loading" in timeline, (
         f"未命中时应当先显示「正在读取」，而不是留着上一张：{timeline}"
     )
-    assert wait_for(lambda: "set_report" in timeline, timeout=READY_TIMEOUT_SECONDS), (
+    assert wait_for(lambda: "set_report" in timeline, timeout=DEFAULT_TIMEOUT_SECONDS), (
         f"读完了应当换成新照片的内容：{timeline}"
     )
 
@@ -229,7 +226,7 @@ def test_cache_miss_shows_loading_then_the_new_report(
     settle(0.02)  # 切换瞬间
 
     assert timeline == ["show_loading"], f"未命中时应当立刻说明在读：{timeline}"
-    assert wait_for(lambda: "set_report" in timeline, timeout=READY_TIMEOUT_SECONDS), (
+    assert wait_for(lambda: "set_report" in timeline, timeout=DEFAULT_TIMEOUT_SECONDS), (
         f"新数据到位后应当显示出来：{timeline}"
     )
     ref = window._model.photo_at(window._current_row)
@@ -369,7 +366,7 @@ def test_the_panel_reads_the_place_out_of_the_index(
             for group in (window._panel.report.groups if window._panel.report else ())
             for field in group.fields
         ),
-        timeout=READY_TIMEOUT_SECONDS,
+        timeout=DEFAULT_TIMEOUT_SECONDS,
     )
 
     assert resolver.queried == [], "索引里已经有结论，不该再发起反查"
@@ -421,7 +418,7 @@ def test_cached_photo_still_gets_its_place(
     window._open_detail(window._model.index(0, 0))
     # 等「地点反查真的发生过」而不是干等：这是条正向断言，有明确条件可等。
     # 万一超时，下面那条断言会因为 queried 为空而报出来。
-    wait_for(lambda: bool(resolver.queried), timeout=READY_TIMEOUT_SECONDS)
+    wait_for(lambda: bool(resolver.queried), timeout=DEFAULT_TIMEOUT_SECONDS)
 
     assert resolver.queried == [(pytest.approx(44.8378), pytest.approx(-0.5792))], (
         "命中缓存时也应当按坐标推断地点"
@@ -471,7 +468,7 @@ def test_switching_photos_resolves_the_place_before_display(
     prefetched = window._model.photo_at(row + 1)
     wait_for(
         lambda: getattr(window._cached_metadata(prefetched), "place_resolved", False),
-        timeout=READY_TIMEOUT_SECONDS,
+        timeout=DEFAULT_TIMEOUT_SECONDS,
     )
     cached = window._cached_metadata(prefetched)
     assert cached is not None
@@ -483,7 +480,7 @@ def test_switching_photos_resolves_the_place_before_display(
     # 现在切过去：面板只应当被替换一次
     timeline.clear()
     window._open_detail(window._model.index(row + 1, 0))
-    wait_for(lambda: bool(timeline), timeout=READY_TIMEOUT_SECONDS)
+    wait_for(lambda: bool(timeline), timeout=DEFAULT_TIMEOUT_SECONDS)
 
     assert timeline == ["set_report"], f"切图时面板被替换了 {len(timeline)} 次：{timeline}"
     assert resolver.queried, "预读时就应当已经发起过地点推断"
@@ -516,7 +513,7 @@ def test_opening_a_photo_does_not_show_the_previous_one(
     window = MainWindow(session_base=tmp_path / "session", initial_library=root)
     window.resize(1100, 800)
     window.show()
-    assert wait_for(lambda: window._model.rowCount() == 2, timeout=READY_TIMEOUT_SECONDS), (
+    assert wait_for(lambda: window._model.rowCount() == 2, timeout=DEFAULT_TIMEOUT_SECONDS), (
         "两张照片没能在时限内扫出来"
     )
 
@@ -527,7 +524,7 @@ def test_opening_a_photo_does_not_show_the_previous_one(
 
     window._open_detail(window._model.index(0, 0))
     # 等第一张真的解码上屏再取色，否则取到的是还没画出来的空画面。
-    wait_for(lambda: window._detail.has_image, timeout=READY_TIMEOUT_SECONDS)
+    wait_for(lambda: window._detail.has_image, timeout=DEFAULT_TIMEOUT_SECONDS)
     settle(0.1)  # 让最后一帧真的刷到 viewport 上
     first = centre_colour()
 

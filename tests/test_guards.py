@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import ast
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Final
 
 import pytest
@@ -168,6 +168,64 @@ def test_config_dir_name_has_single_source() -> None:
         if path != allowed and CONFIG_DIR_NAME in path.read_text(encoding="utf-8")
     ]
     assert not offenders, f"以下文件硬编码了 {CONFIG_DIR_NAME}，请改为导入常量：{offenders}"
+
+
+def _docstring_nodes(tree: ast.Module) -> set[int]:
+    """所有文档字符串的 ``id()``：模块、类、函数的第一条字符串语句。
+
+    文档里**提到**配置目录名是在解释规矩（``conftest.py`` 那句「测试里也不该硬编码
+    ``.gallery`` 字面量」就是），不该被自己这条守护当成违规。真正要拦的是拿它当
+    **值**用的那些。
+    """
+    found: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            first = node.body[0] if node.body else None
+            if (
+                isinstance(first, ast.Expr)
+                and isinstance(first.value, ast.Constant)
+                and isinstance(first.value.value, str)
+            ):
+                found.add(id(first.value))
+    return found
+
+
+def test_tests_do_not_hardcode_the_config_dir_name_either() -> None:
+    """**测试也不许硬编码配置目录名** —— 用 ``paths.config_dir`` 或导入常量。
+
+    这条是被三份一模一样的 ``library`` fixture 逼出来的：它们各自抄了一份
+    ``tests/core/metadata/conftest.py`` 里已有的 fixture，三份里都写着
+    ``(root / ".gallery").mkdir()`` —— 而那份 conftest 的文档偏偏写着「测试里也不该
+    硬编码 ``.gallery`` 字面量」。上面的 :func:`test_config_dir_name_has_single_source`
+    只扫 ``src/``，于是那句话没有任何东西在看着。
+
+    为什么值得单开一条：常量改名时（哪怕是拼错成 ``.galley``），写死字面量的测试
+    会在一个**与改名无关的目录**里凭空造出一个配置目录，然后照样全绿 ——
+    测试自己也劈成了两份。
+
+    **只认「当值用」**：文档字符串里提到它是在解释规矩，不算违规；打包标识符
+    ``com.shaoxianshi.gallery`` 里那截也不是路径段。判据是这个字符串按路径切开之后
+    有没有哪一段**正好等于**配置目录名。
+    """
+    guard = Path(__file__).resolve()
+    offenders: list[str] = []
+    for path in _iter_python_files(guard.parent):
+        if path == guard:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        docstrings = _docstring_nodes(tree)
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and id(node) not in docstrings
+                and CONFIG_DIR_NAME in PurePosixPath(node.value).parts
+            ):
+                offenders.append(f"{path.relative_to(guard.parent)}:{node.lineno}")
+    assert not offenders, (
+        f"以下测试把 {CONFIG_DIR_NAME} 当值用（不是当值用就没事），"
+        f"请改用 paths.config_dir() 或导入常量：{offenders}"
+    )
 
 
 #: ``Library`` 上那几个**真的会改用户文件**的方法（红线 1）。

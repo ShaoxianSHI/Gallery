@@ -22,6 +22,7 @@ import pytest
 pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
+from waiting import DEFAULT_TIMEOUT_SECONDS
 
 from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.library.photos import PhotoRef  # noqa: E402
@@ -51,7 +52,9 @@ def _first_path(window: MainWindow, wait_for: Callable[..., bool]) -> Path:
 
     扫描在后台线程上：只转一圈事件循环并不等于列完了，模型里可能还一行都没有。
     """
-    assert wait_for(lambda: window._model.rowCount() > 0, timeout=8.0), "这一层没有在时限内列出来"
+    assert wait_for(lambda: window._model.rowCount() > 0, timeout=DEFAULT_TIMEOUT_SECONDS), (
+        "这一层没有在时限内列出来"
+    )
     entry = window._model.entry_at(0)
     assert entry is not None
     return entry.path

@@ -16,6 +16,8 @@ import pytest
 
 pytest.importorskip("PySide6")
 
+from waiting import DEFAULT_TIMEOUT_SECONDS
+
 from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.library.facade import Library  # noqa: E402
 from gallery.core.library.photos import PhotoRef  # noqa: E402
@@ -59,7 +61,7 @@ def test_the_image_is_already_scaled_when_it_arrives(
 
     thumbs.set_window([photo], target_edge=64)
 
-    assert wait_for(lambda: bool(got), timeout=8.0)
+    assert wait_for(lambda: bool(got), timeout=DEFAULT_TIMEOUT_SECONDS)
     _, image, edge = got[0]
     assert edge == 64
     assert max(image.width(), image.height()) == 64  # type: ignore[attr-defined]
@@ -78,7 +80,7 @@ def test_the_reported_edge_is_the_one_it_was_submitted_with(
     thumbs.set_window([photo], target_edge=64)
     thumbs.set_window([photo], target_edge=288)  # 切档
 
-    assert wait_for(lambda: bool(got), timeout=8.0)
+    assert wait_for(lambda: bool(got), timeout=DEFAULT_TIMEOUT_SECONDS)
     _, _, edge = got[0]
     assert edge == 64
     runner.wait_for_done(2000)
@@ -94,7 +96,7 @@ def test_no_target_edge_means_no_scaling(
 
     thumbs.set_window([photo])
 
-    assert wait_for(lambda: bool(got), timeout=8.0)
+    assert wait_for(lambda: bool(got), timeout=DEFAULT_TIMEOUT_SECONDS)
     _, image, edge = got[0]
     assert edge == 0
     assert max(image.width(), image.height()) == 512  # type: ignore[attr-defined]

@@ -512,10 +512,8 @@ def test_the_callback_runs_off_the_main_thread(tmp_path: Path) -> None:
     assert threads[0] != threading.get_ident()
 
 
-@pytest.mark.parametrize("factory_name", ["start_watch"])
-def test_watching_does_not_write_anything(tmp_path: Path, factory_name: str) -> None:
+def test_watching_does_not_write_anything(tmp_path: Path) -> None:
     """监听是纯读的：跑一遍之后库里一个字节都不该多出来。"""
-    del factory_name
     (tmp_path / "a.jpg").write_bytes(b"x")
     before = sorted(path.name for path in tmp_path.iterdir())
 
@@ -759,7 +757,8 @@ def test_the_watcher_can_be_driven_from_any_thread(tmp_path: Path) -> None:
     assert len(batches) == 1
 
 
-def test_the_factory_is_only_used_once(tmp_path: Path) -> None:
+def test_each_start_builds_a_new_observer(tmp_path: Path) -> None:
+    """停了再起要重新造一个观察者 —— 造一个就停掉的那个没人再会去停它。"""
     calls: list[int] = []
     observer = FakeObserver()
 
