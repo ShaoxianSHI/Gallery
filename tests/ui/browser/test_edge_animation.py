@@ -699,3 +699,36 @@ def test_resizing_the_window_never_recenters(
     settle(SETTLE_SECONDS)
 
     assert calls == [], f"拖窗口不该居中，却调了 {calls} 次"
+
+
+def test_dragging_the_window_keeps_the_scroll_position(
+    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+) -> None:
+    """拖窗口时滚动条不许跳 —— **哪怕列数根本没变**。
+
+    格子宽度每帧都变一点点（``usable // columns`` 跟着视口宽度走），于是拖动过程中
+    :meth:`grid._apply_cell` 每帧都跑；每跑一次 Batched 布局，Qt 就按「已排版的那
+    一批」重算滚动条范围，把当前位置夹到那一批的末尾。宽度一增一减、夹到的位置也
+    一增一减 —— 滚动条就在两个值之间来回跳。
+
+    实测修复前：400 张的库从 5930 掉到 1290；2000 张的从 31010 掉到 1300。
+    两处的列数全程都是 7，一次都没变过。
+    """
+    grid = make_grid(qt_app, tmp_path, 400)
+    settle(SETTLE_SECONDS)
+    bar = grid.verticalScrollBar()
+    bar.setValue(bar.maximum() // 2)
+    settle(SETTLE_SECONDS)
+    start = bar.value()
+    columns = grid._first_row_columns()
+    assert columns >= 2, "列数太少，测的不是这个场景"
+
+    seen: list[int] = []
+    for offset in (12, -12) * 6:
+        grid.resize(1200 + offset, 800)
+        settle(SLICE_SECONDS)
+        seen.append(bar.value())
+
+    assert grid._first_row_columns() == columns, "这个用例要的就是列数不变"
+    drift = max(abs(value - start) for value in seen)
+    assert drift <= 40, f"滚动位置漂了 {drift} 像素：{sorted(set(seen))}"

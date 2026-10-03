@@ -785,6 +785,7 @@ class PhotoGrid(QListView):
                 self._layout_everything()
             else:
                 self.doItemsLayout()
+                self._keep_scroll_at(scroll_from)
         finally:
             self._laying_out = False
         new_columns = self._first_row_columns()
@@ -803,6 +804,37 @@ class PhotoGrid(QListView):
         )
         self._schedule_edge_update()
         self._start_transition(drawn_edge, scroll_from, animate=animate)
+
+    def _keep_scroll_at(self, value: int) -> None:
+        """布局把滚动位置夹掉了就摆回去。
+
+        **为什么拖窗口时每一帧都要管。** 格子宽度每帧都变一点点
+        （``usable // columns`` 跟着视口宽度走），所以拖动过程中
+        :meth:`_apply_cell` **每帧都会跑**；每跑一次 Batched 布局，Qt 就按
+        「已排版的那一批」重算一遍滚动条范围，把当前位置夹到那一批的末尾。宽度一增
+        一减、夹到的位置也就一增一减 —— 滚动条就在两个值之间来回跳，**哪怕列数根本没
+        变**。
+
+        实测：400 张的库滚动到 5930，拖窄窗口的瞬间掉到 1520。
+
+        摆回去之前得先让范围对：范围本身就是那个「一小块」时，滚动条压根不许停在
+        外面（见 :meth:`_layout_everything` 里的实测表）。所以必要时要付一次全量
+        排版 —— 但只在**真的被夹了**时才付，位置没动就直接返回。实测拖窄 20 像素
+        一分钱不丢。
+
+        代价要说清楚：大库里拖窗口时，只要位置被夹，每一帧都是一次全量排版
+        （30000 张约 40ms）。换来的是滚动条不再乱跳；不换的话，滚动条乱跳比拖得
+        略卡糟糕得多。
+        """
+        bar = self.verticalScrollBar()
+        if bar.value() == value:
+            return
+        self._layout_everything()
+        self._driving_scroll = True
+        try:
+            bar.setValue(value)
+        finally:
+            self._driving_scroll = False
 
     def _layout_everything(self) -> None:
         """把**全部**条目排一遍版。只在切档这一下用（见 :meth:`_apply_cell` 的 ``full_layout``）。
