@@ -114,6 +114,7 @@ from gallery.ui.panels.metadata import MetadataPanel
 from gallery.ui.panels.welcome import WelcomeView
 from gallery.ui.search_field import HEIGHT as SEARCH_FIELD_HEIGHT
 from gallery.ui.search_field import MARGIN_RIGHT as SEARCH_FIELD_MARGIN_RIGHT
+from gallery.ui.search_field import TEXT_ALIGN_DROP as SEARCH_FIELD_TEXT_ALIGN_DROP
 from gallery.ui.search_field import WIDTH as SEARCH_FIELD_WIDTH
 from gallery.ui.search_field import SearchField
 from gallery.ui.tasks import TaskContext, TaskRunner
@@ -3511,10 +3512,14 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._title_bar.setGeometry(0, 0, self.width(), height)
         self._title_bar.setVisible(True)
         # 胶囊摆在**这一条**里：内容区从 ``top + EXTRA`` 开始，两者首尾相接。
+        #
+        # 再往下挪 :data:`SEARCH_FIELD_TEXT_ALIGN_DROP` 那一格：中线是**格子**的中线，
+        # 而眼睛看的是标题那行字的墨迹 —— 截图量过两者的中线，差多少、往哪边差，
+        # 都写在 ``search_field.TEXT_ALIGN_DROP`` 那里了。
         field_height = min(SEARCH_FIELD_HEIGHT, height - 4)
         self._search_field.setGeometry(
             self.width() - SEARCH_FIELD_WIDTH - SEARCH_FIELD_MARGIN_RIGHT,
-            (height - field_height) // 2,
+            (height - field_height) // 2 + SEARCH_FIELD_TEXT_ALIGN_DROP,
             SEARCH_FIELD_WIDTH,
             field_height,
         )
