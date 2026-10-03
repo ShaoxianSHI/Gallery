@@ -33,8 +33,10 @@ pytest.importorskip("PySide6")
 from grid_helpers import fake_photos, make_grid  # noqa: E402
 from PySide6.QtCore import (  # noqa: E402
     QAbstractAnimation,
+    QCoreApplication,
     QEasingCurve,
     QPoint,
+    QPointF,
     QRect,
     QSize,
     Qt,
@@ -42,9 +44,12 @@ from PySide6.QtCore import (  # noqa: E402
 from PySide6.QtGui import (  # noqa: E402
     QColor,
     QImage,
+    QNativeGestureEvent,
     QPainter,
     QPalette,
     QPixmap,
+    QPointingDevice,
+    QWheelEvent,
 )
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
@@ -66,7 +71,11 @@ from gallery.ui.browser.grid import (  # noqa: E402
     PhotoGrid,
 )
 from gallery.ui.browser.model import PhotoListModel  # noqa: E402
-from gallery.ui.browser.thumb_sizes import THUMBNAIL_SIZES  # noqa: E402
+from gallery.ui.browser.thumb_sizes import (  # noqa: E402
+    MIN_PINCH_INTERVAL_MS,
+    PINCH_THRESHOLD,
+    THUMBNAIL_SIZES,
+)
 
 #: 每一步转多少秒。分片是为了在动画跑到一半时取样，而不是一口跑到结束。
 SLICE_SECONDS = 0.02
@@ -1259,3 +1268,170 @@ def test_a_resize_that_does_not_change_the_layout_does_not_kill_the_transition(
     assert grid._delegate.draw_edge > before, (
         f"过渡该继续往大处长（{before} → {grid._delegate.draw_edge}）"
     )
+
+
+# ---- 捏合限速与「过渡结束了」 ----------------------------------------------
+
+
+def _pinch(grid: PhotoGrid, value: float, device: QPointingDevice) -> None:
+    """送一个合成的原生捏合手势事件 —— 与 macOS 上 Qt 转发的那个同一种。
+
+    真的双指没法在测试里做，而 ``PhotoGrid.event`` 只认
+    ``QEvent.NativeGesture`` + ``ZoomNativeGesture``；构造出来的事件在它眼里与平台
+    发过来的没有区别。
+    """
+    event = QNativeGestureEvent(
+        Qt.NativeGestureType.ZoomNativeGesture,
+        device,
+        2,
+        QPoint(0, 0),
+        QPoint(0, 0),
+        QPoint(0, 0),
+        value,
+        QPoint(0, 0),
+    )
+    QCoreApplication.sendEvent(grid, event)
+
+
+def test_the_pinch_interval_is_never_shorter_than_the_animation() -> None:
+    """限速的全部意义是「让上一段过渡跑完」，比动画短就等于没限。
+
+    这条不是凑数：限速一旦短过动画，手势快起来切档仍然快于动画，而网格照旧是
+    「上一段没跑完就直接落位」—— 症状与没做限速一模一样。
+    """
+    assert MIN_PINCH_INTERVAL_MS >= EDGE_ANIMATION_MS
+
+
+def test_a_fast_pinch_switches_only_once(qt_app: QApplication, tmp_path: Path) -> None:
+    """手快时连着来的捏合只切一档，多的那几下丢掉。
+
+    丢掉的判据是**上一次切档的时刻**，不是上一次事件 —— 快到每 16ms 来一个事件时，
+    「离上一次事件 16ms」根本不是判据。
+    """
+    grid = make_grid(qt_app, tmp_path, 40)
+    device = QPointingDevice()
+    steps: list[int] = []
+    grid.size_step_requested.connect(steps.append)
+
+    _pinch(grid, PINCH_THRESHOLD, device)
+    for _ in range(5):  # 连着来，全都在限速窗口内
+        _pinch(grid, PINCH_THRESHOLD, device)
+
+    assert steps == [1], "间隔内的捏合该丢掉：一次切档都发不出去的画面只是一闪"
+
+
+def test_a_slow_pinch_still_switches_every_time(
+    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+) -> None:
+    """限速不能把慢捏也一起限掉 —— 慢捏本来就该一档一档地过去。"""
+    grid = make_grid(qt_app, tmp_path, 40)
+    device = QPointingDevice()
+    steps: list[int] = []
+    grid.size_step_requested.connect(steps.append)
+
+    for _ in range(3):
+        _pinch(grid, PINCH_THRESHOLD, device)
+        settle(MIN_PINCH_INTERVAL_MS / 1000 + 0.02)
+
+    assert steps == [1, 1, 1]
+
+
+def test_the_wheel_is_not_rate_limited(
+    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+) -> None:
+    """⌘+滚轮**不**限速：那一格一格是用户明确的意图，限速只会让它变迟钝。
+
+    连按的那几下由 MainWindow 排队补上（见 ``tests/ui/test_shortcuts.py``）。
+    """
+    grid = make_grid(qt_app, tmp_path, 40)
+    settle(SETTLE_SECONDS)
+    steps: list[int] = []
+    grid.size_step_requested.connect(steps.append)
+
+    for _ in range(3):
+        QTest.keyClick(grid, Qt.Key.Key_Up, Qt.KeyboardModifier.ControlModifier)
+        grid.wheelEvent(
+            QWheelEvent(
+                QPointF(10.0, 10.0),
+                QPointF(10.0, 10.0),
+                QPoint(0, 0),
+                QPoint(0, 120),
+                Qt.MouseButton.NoButton,
+                Qt.KeyboardModifier.ControlModifier,
+                Qt.ScrollPhase.NoScrollPhase,
+                False,
+            )
+        )
+
+    assert steps == [1, 1, 1]
+
+
+def test_transition_ended_is_emitted_once_per_started_transition(
+    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+) -> None:
+    """「可以安排下一件事了」这个信号，每发出去一段过渡就正好发一次。
+
+    少发了会卡住（等着的切档永远不执行），多发了会把一下按成两下。
+    """
+    grid = make_grid(qt_app, tmp_path, 40)
+    settle(SETTLE_SECONDS)
+    ended: list[bool] = []
+    grid.transition_ended.connect(lambda: ended.append(True))
+
+    grid.set_target_edge(THUMBNAIL_SIZES[2])
+    assert grid.is_transitioning, "前提：过渡真的跑起来了"
+
+    settle(SETTLE_SECONDS)
+
+    assert not grid.is_transitioning
+    assert len(ended) == 1
+
+
+def test_transition_ended_is_emitted_even_when_the_user_interrupts(
+    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+) -> None:
+    """用户中途滚一下就把过渡掐了 —— 动画的 ``finished`` 不会来，那个信号也得发。
+
+    不发的话，排在后面等着的那一次切档就永远卡住了：用户滚一下，缩略图就再也不动了。
+    """
+    grid = make_grid(qt_app, tmp_path, 40)
+    settle(SETTLE_SECONDS)
+    ended: list[bool] = []
+    grid.transition_ended.connect(lambda: ended.append(True))
+
+    grid.set_target_edge(THUMBNAIL_SIZES[2])
+    settle(SLICE_SECONDS)
+    assert grid._transition_anim.state() == QAbstractAnimation.State.Running, "前提：过渡在跑"
+
+    bar = grid.verticalScrollBar()
+    bar.setValue(min(bar.maximum(), bar.value() + 60))  # 用户自己滚一下
+    settle(SLICE_SECONDS)
+
+    assert grid._transition_anim.state() == QAbstractAnimation.State.Stopped
+    assert len(ended) == 1, "被掐断的那一趟也要报一声结束"
+    settle(SETTLE_SECONDS)
+    assert len(ended) == 1, "多发会让排队的切档一次变两下"
+
+
+def test_a_transition_that_never_ran_does_not_report_itself_as_ended(
+    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+) -> None:
+    """同步落位的那一段不算「跑起来过」。
+
+    差几个像素、拖窗口、以及 :meth:`PhotoGrid.set_target_edge` 之外的各种重排都会走到
+    同步落位。它们要是也发这个信号，排队等着的那一下就会被提前叫醒 —— 而那一次的
+    上一段动画其实还在跑。
+    """
+    grid = make_grid(qt_app, tmp_path, 40)
+    settle(SETTLE_SECONDS)
+    ended: list[bool] = []
+    grid.transition_ended.connect(lambda: ended.append(True))
+    cell = grid.gridSize()
+
+    grid._set_cell(
+        QSize(cell.width() + EDGE_ANIMATION_MIN_DELTA - 2, cell.height() + 3), animate=True
+    )
+
+    assert grid._transition_anim.state() == QAbstractAnimation.State.Stopped
+    assert not grid.is_transitioning
+    assert ended == [], "没跑起来过的过渡不该报结束"

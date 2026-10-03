@@ -325,6 +325,9 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         #: 不在大图页时窗口顶边那一行显示的名字（ADR 0025 决策 4）。
         self._library_title = "Gallery"
         self._model = PhotoListModel(self, icon_edge=edge_for_index(self._size_index))
+        #: 「等上一段切档动画跑完再执行」的档数，见 :meth:`step_thumbnail_size`。
+        #: 0 = 没有排着的。方向相反的连按会互相抵掉（连按 ⇧⌘↑ 再 ⇧⌘↓ 等于没按）。
+        self._pending_size_step = 0
         self._build_ui()
         self._build_actions()
         self._restore_session()
@@ -378,6 +381,7 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._grid.background_activated.connect(self._on_background_activated)
         self._grid.viewport_changed.connect(self._refresh_thumbnail_window)
         self._grid.size_step_requested.connect(self.step_thumbnail_size)
+        self._grid.transition_ended.connect(self._run_pending_size_step)
         self._grid.icon_edge_changed.connect(self._on_grid_edge_changed)
         self._grid.rename_requested.connect(self._on_rename_requested)
         self._grid.rename_committed.connect(self._on_rename_committed)
@@ -2140,7 +2144,13 @@ class MainWindow(WriteOpsMixin, QMainWindow):
     # ---- 缩略图尺寸 --------------------------------------------------------
 
     def set_thumbnail_size(self, index: int) -> None:
-        """直接切到某一档（菜单用）。"""
+        """直接切到某一档（菜单用，也是排队那一步执行时用的）。
+
+        **明确选了一档，排着的那些就都作废。** 否则「动画期间按了 ⇧⌘↑（正好在顶上，
+        本来什么也不该发生），接着又从菜单点了某一档」会让那一下在动画结束后才生效 ——
+        用户看到的是自己刚点完，尺寸又自己动了一下。
+        """
+        self._pending_size_step = 0
         if index == self._size_index:
             return
         self._size_index = index
@@ -2148,11 +2158,50 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._remember_thumbnail_size()
 
     def step_thumbnail_size(self, step: int) -> None:
-        """按档位加减一档（捏合或 ⌘+滚轮用）。"""
+        """按档位加减一档（捏合、⌘+滚轮、⇧⌘↑ / ⇧⌘↓ 用）。
+
+        **上一段切档动画还在跑就排着，不丢。** 连按两下时第二下若立刻执行，网格那边
+        判「上一段没跑完」就不接第二段、直接一步落位（见
+        ``grid.PhotoGrid._start_transition``），画面上是一次跳变 —— 快起来一帧动画都
+        看不见。排着等它跑完，两下就都是看得见的动画。
+
+        **捏合为什么不走这条路**：捏合已经由 ``thumb_sizes.RateLimitedAccumulator``
+        限速过了（间隔不足直接丢掉）。捏合的意图本来就是连续的，多出来的那几下是同
+        一个意图的重复表达；而快捷键与 ⌘+滚轮是**每一下都独立的意图**，丢掉一下就是
+        丢了一次明确的操作 —— 所以这两条排队，那一条丢弃。
+
+        菜单里直接点某一档（:meth:`set_thumbnail_size`）不排队：那是明确选了终值，
+        等一等反而不对劲，它维持原来「直接落到用户选的那一档」的行为，并且会把
+        排着的那些作废。
+
+        **排不排队的判据是「算上已经排着的那些之后，这一下还会不会换档」**，而不是
+        「当前在不在头尾」：顶部那一档上按 ⇧⌘↑ 要是正好抵销掉排着的那一档缩小，
+        少了这一句，「先 ⇧⌘↓ 再 ⇧⌘↑」会变成真的一次缩小；而抵销掉之后它也不该
+        凭空排一档上去。
+        """
+        if self._grid.is_transitioning:
+            effective = shifted_index(self._size_index, self._pending_size_step)
+            if shifted_index(effective, step) != effective:
+                self._pending_size_step += step
+            return
         target = shifted_index(self._size_index, step)
         if target == self._size_index:
             return  # 已经在头尾：以前会提示「已经是最大尺寸」，随状态条一起去掉
         self.set_thumbnail_size(target)
+
+    def _run_pending_size_step(self) -> None:
+        """上一段切档动画结束了：把排着的那一下执行掉（网格发来 :attr:`transition_ended`）。
+
+        排队的档数在 :meth:`step_thumbnail_size` 里是**累加**出来的，所以这里一次
+        ``shifted_index`` 就跨到头：连按三下 ⇧⌘↓ 要能一下到最小，不是慢慢挪。
+
+        **先清空再执行**：执行途中会再起一段新的过渡，它结束时会再叫回来一次这个槽。
+        不先清空就会一次调用套一次调用地往下钻。队列被自己抵成 0（先放大又缩小）
+        或者越界夹住时，这里什么也不做 —— 网格也就不会为此起一段动画。
+        """
+        step, self._pending_size_step = self._pending_size_step, 0
+        if step:
+            self.step_thumbnail_size(step)
 
     def _apply_thumbnail_size(self) -> None:
         """把档位交给网格；实际格子宽度由视口宽度自适应。

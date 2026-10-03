@@ -26,7 +26,7 @@ from PySide6.QtCore import QCoreApplication, Qt  # noqa: E402
 from PySide6.QtGui import QKeySequence, QShortcutEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
-from waiting import wait_for_level
+from waiting import wait_for_level, wait_until
 
 from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.library.session import (  # noqa: E402
@@ -184,6 +184,16 @@ def _enter_seaside(
     return window
 
 
+def _wait_for_no_transition(qt_app: QApplication, window: MainWindow) -> None:
+    """转到网格那段切档过渡跑完。
+
+    连按两下时第二下是**排在**第一段动画后面的（见
+    ``main_window.MainWindow.step_thumbnail_size``），所以「一按挪一档」这个用例得自己
+    把上一段等掉 —— 一句 ``processEvents()`` 转不满那 160ms。
+    """
+    wait_until(qt_app, lambda: not window._grid.is_transitioning)
+
+
 def test_thumbnail_size_moves_one_step_per_keystroke(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
 ) -> None:
@@ -191,6 +201,8 @@ def test_thumbnail_size_moves_one_step_per_keystroke(
 
     这里发的是**真按键事件**（走 Qt 的快捷键表），而不是直接调槽 —— 只 ``setShortcut``
     而没 ``addAction`` 的那种错，按键发过去什么都不会发生，测试却是绿的。
+
+    两下之间要等上一段过渡跑完：连按会排队而不是丢（见下一条用例），用例自己得等。
     """
     window = _enter_seaside(qt_app, tmp_path, make_photo)
     try:
@@ -204,11 +216,93 @@ def test_thumbnail_size_moves_one_step_per_keystroke(
         assert window._grid.target_edge == THUMBNAIL_SIZES[DEFAULT_INDEX + 1]
         assert window._size_actions[DEFAULT_INDEX + 1].isChecked()
 
+        _wait_for_no_transition(qt_app, window)
         QTest.keyClick(window, *_ZOOM_OUT)
         qt_app.processEvents()
         assert window._size_index == DEFAULT_INDEX
         assert window._grid.target_edge == THUMBNAIL_SIZES[DEFAULT_INDEX]
         assert window._size_actions[DEFAULT_INDEX].isChecked()
+    finally:
+        window.close()
+
+
+def test_the_second_keystroke_waits_for_the_first_animation(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """连按两下：第二下排在第一段动画**后面**，而不是把第一段掐掉。
+
+    不排就会变成一步落位（网格那边「上一段没跑完就不接第二段」），画面上是一次跳变
+    —— 快按时一帧动画都看不见。排着之后两下都是看得见的动画。
+    """
+    window = _enter_seaside(qt_app, tmp_path, make_photo)
+    try:
+        window.set_thumbnail_size(len(THUMBNAIL_SIZES) - 1)  # 先到顶那一档
+        _wait_for_no_transition(qt_app, window)
+
+        QTest.keyClick(window, *_ZOOM_OUT)  # 大 → 中：过渡跑起来
+        qt_app.processEvents()
+        assert window._grid.is_transitioning, "前提：第一下应当起一段过渡"
+        assert window._size_index == len(THUMBNAIL_SIZES) - 2
+
+        QTest.keyClick(window, *_ZOOM_OUT)  # 排着
+        qt_app.processEvents()
+        assert window._size_index == len(THUMBNAIL_SIZES) - 2, "第二下不能立刻跳档"
+        assert window._pending_size_step == -1
+
+        _wait_for_no_transition(qt_app, window)
+        _wait_for_no_transition(qt_app, window)  # 排着的那一下自己又起了一段
+        assert window._size_index == len(THUMBNAIL_SIZES) - 3, "排着的那一下最后要兑现"
+        assert window._pending_size_step == 0, "兑现过就该把排队清空"
+    finally:
+        window.close()
+
+
+def test_keystrokes_in_opposite_directions_during_one_animation_cancel_out(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """动画期间 ⇧⌘↑ 再 ⇧⌘↓ 等于没按 —— 排队的档数是**累加**出来的。
+
+    累加而不是记最后一档：连按三下同方向要能一次跨到头（见下一条），而反方向的连按
+    是真的互相抵销。
+    """
+    window = _enter_seaside(qt_app, tmp_path, make_photo)
+    try:
+        QTest.keyClick(window, *_ZOOM_IN)  # 中 → 大：过渡跑起来
+        qt_app.processEvents()
+
+        QTest.keyClick(window, *_ZOOM_OUT)
+        QTest.keyClick(window, *_ZOOM_IN)
+        qt_app.processEvents()
+        assert window._pending_size_step == 0, "一去一回抵销了"
+
+        _wait_for_no_transition(qt_app, window)
+        assert window._size_index == DEFAULT_INDEX + 1, "该留在第一下要的那一档"
+    finally:
+        window.close()
+
+
+def test_three_keystrokes_in_one_direction_reach_the_end(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """连按三下要能一次跨到头档，不是「一下一下慢慢挪」。
+
+    这是「排队而不是丢」的意义：丢掉的每一下都是一次明确的操作。
+    """
+    window = _enter_seaside(qt_app, tmp_path, make_photo)
+    try:
+        window.set_thumbnail_size(len(THUMBNAIL_SIZES) - 1)  # 先到顶那一档
+        _wait_for_no_transition(qt_app, window)
+
+        for _ in range(3):
+            QTest.keyClick(window, *_ZOOM_OUT)
+        qt_app.processEvents()
+        # 第一下立刻执行（大 → 中）。第二下排着；第三下算上排着的已经没得可缩了，
+        # 抵在最小档上 —— 判据是「算上排着的那些之后还会不会换档」，所以只有 -1。
+        assert window._pending_size_step == -1, "第二下要排着，不能只当没听见"
+
+        _wait_for_no_transition(qt_app, window)
+        _wait_for_no_transition(qt_app, window)
+        assert window._size_index == 0, "到头就停住"
     finally:
         window.close()
 

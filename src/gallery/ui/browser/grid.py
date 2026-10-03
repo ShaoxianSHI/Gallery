@@ -58,8 +58,10 @@ from gallery.ui.browser.model import ALBUM_ROLE, GROUP_COUNT_ROLE, GROUP_ROLE
 from gallery.ui.browser.thumb_sizes import (
     DEFAULT_EDGE,
     MIN_EDGE,
+    MIN_PINCH_INTERVAL_MS,
     PINCH_THRESHOLD,
     WHEEL_THRESHOLD,
+    RateLimitedAccumulator,
     StepAccumulator,
     fit_columns,
 )
@@ -539,6 +541,13 @@ class PhotoGrid(QListView):
     viewport_changed = Signal()
     #: 用户用捏合或 ⌘+滚轮要求换一档缩略图尺寸：正数更大，负数更小。
     size_step_requested = Signal(int)
+    #: 一段切档过渡结束了 —— 跑完了，或者被用户打断（见 :attr:`is_transitioning`）。
+    #:
+    #: **每发出去一次过渡就正好发一次**，所以拿它当「可以安排下一件事了」的信号是
+    #: 靠得住的：不会多发（同步落位的那一段不发），也不会漏发（被 :meth:`_cancel_transition`
+    #: 掐断时 ``finished`` 根本不会来，但它照样发 —— 否则排队等着的那一次切档就永远
+    #: 卡在那里了）。
+    transition_ended = Signal()
     #: 自适应后的实际缩略图长边变了，界面需要按新尺寸重新取一遍缩略图。
     icon_edge_changed = Signal(int)
     #: 用户再次点击了已经选中的格子：可以开始重命名了。
@@ -609,7 +618,11 @@ class PhotoGrid(QListView):
         self._delegate = PhotoDelegate(self, icon_edge=icon_edge)
         self.setItemDelegate(self._delegate)
         # 捏合与滚轮都是连续事件，必须攒够一个阈值才切一档，否则会一路跳到底。
-        self._pinch_steps = StepAccumulator(PINCH_THRESHOLD)
+        # 捏合另外还套一道最小间隔：手势快时切档比动画还快，于是每一次切档都把上
+        # 一次的动画掐断，快起来一帧也看不见（理由见 thumb_sizes 里的同名常量）。
+        # ⌘+滚轮**不**限速 —— 那一格一格的滚动是用户明确的意图，去限速只会迟钝；
+        # 连按的那几下改由 MainWindow 排队（见 main_window.MainWindow.step_thumbnail_size）。
+        self._pinch_steps = RateLimitedAccumulator(PINCH_THRESHOLD, MIN_PINCH_INTERVAL_MS)
         self._wheel_steps = StepAccumulator(WHEEL_THRESHOLD)
 
         # **只接 ``activated``**。``QAbstractItemView.activated`` 在鼠标双击**和**按
@@ -660,6 +673,11 @@ class PhotoGrid(QListView):
         self._transition_anim.finished.connect(self._settle_transition)
         #: 过渡进行中：旧布局的两端尺寸（内容坐标），以及要插值到的那一头。
         self._transition: GridTransition | None = None
+        #: 「有一段过渡**真的跑起来了**」—— 与 ``_transition_anim.state()`` 不是一回事：
+        #: 同步落位的那一段也会走一遍动画对象（只是 :meth:`_settle_transition` 立刻就把它
+        #: 收了），但它不算「跑起来了」，也就不该发 :attr:`transition_ended`。发信号的那一
+        #: 趟由 :meth:`_settle_transition` 负责，见那里的注释。
+        self._transition_running = False
         self._edge_from = 0.0
         self._edge_to = 0.0
         self._scroll_from = 0
@@ -746,6 +764,16 @@ class PhotoGrid(QListView):
     def target_edge(self) -> int:
         """当前档位要求的目标长边。"""
         return self._target_edge
+
+    @property
+    def is_transitioning(self) -> bool:
+        """正有一段切档过渡在跑（网格此刻画的不是逻辑几何）。
+
+        问它的是「下一次切档能不能立刻动手」：不能的话（:meth:`_start_transition` 会
+        直接落位）那一下就该先排着，等 :attr:`transition_ended` 再来（见
+        ``main_window.MainWindow.step_thumbnail_size``）。
+        """
+        return self._transition_anim.state() != QAbstractAnimation.State.Stopped
 
     def set_target_edge(self, edge: int) -> None:
         """换一档目标尺寸。真正的格子宽度由视口宽度决定，见 :meth:`_recompute_layout`。"""
@@ -1231,6 +1259,7 @@ class PhotoGrid(QListView):
         # 先把第 0 帧摆出来再启动：:meth:`PhotoDelegate.set_icon_edge` 已经把绘制
         # 尺寸对齐到了新几何，中间那一帧不该露出来（动画启动时也会发一次 t=0）。
         self._paint_transition_frame(0.0)
+        self._transition_running = True
         self._transition_anim.start()
 
     def _on_transition_step(self, t: float) -> None:
@@ -1267,6 +1296,11 @@ class PhotoGrid(QListView):
 
         **取消也走这里。** 中途被叫停时不该停在半空 —— 那些格子用的还是旧布局算
         出来的位置，而逻辑几何早就是终值了；停在半空等于画面在说一件假话。
+
+        :attr:`transition_ended` 也在这里发（**只发真正跑起来过的那一段**），所以
+        「跑完」与「被掐断」是同一个出口。掐断时动画的 ``finished`` 根本不会来，
+        改由 :meth:`_cancel_transition` 走到这里来补 —— 排队等着的那一次切档因此
+        不会因为用户中途滚了一下就永远卡住。
         """
         if restore_scroll:
             self._driving_scroll = True
@@ -1278,6 +1312,12 @@ class PhotoGrid(QListView):
         self._delegate.set_transition(None, 1.0)
         self._delegate.set_draw_edge(float(self._applied_edge))
         self.viewport().update()
+        # **放在最后发**：上面全是收尾动作，排队等着的那一次切档（见
+        # ``main_window.MainWindow.step_thumbnail_size``）被这个信号叫醒时，看到的必须
+        # 已经是「彻底落位」的网格，而不是收尾做了一半的中间态。
+        if self._transition_running:
+            self._transition_running = False
+            self.transition_ended.emit()
 
     def _cancel_transition(self) -> None:
         """用户动了，或者局面已经变了 —— 过渡立刻落位。
