@@ -1198,10 +1198,10 @@ def test_detail_menu_has_no_paste_even_when_the_clipboard_has_files(
 def test_detail_menu_is_enabled_for_the_viewed_photo(
     qt_app: QApplication, window: MainWindow
 ) -> None:
-    """菜单里那些行该亮就亮，「重命名…」**摆着但置灰**。
+    """菜单里那些行该亮就亮，「重命名…」**也亮**（ADR 0025 接上了 ADR 0021 留下的那一行）。
 
-    置灰是因为行内改名的输入框在网格里，而大图页的改名字段还没有 —— ADR 0021 明确
-    先把菜单摆好、后端另一步接。一条亮着却不接线的行，点下去什么也不发生，比灰着更糟。
+    它亮着是因为真的有对象：改的是正在看的那一张，改名的字段是窗口标题栏那一行。
+    ADR 0021 当初把它置灰，是因为那时大图页的改名字段确实还没有 —— 灰着比亮着不接线好。
     """
     _open_detail(qt_app, window, PHOTO_NAMES[0])
 
@@ -1210,7 +1210,7 @@ def test_detail_menu_is_enabled_for_the_viewed_photo(
     assert menu is not None
     for label in ("退出", "在默认应用中打开", "在访达中显示", "拷贝", "拷贝路径", "移到废纸篓"):
         assert _enabled(menu, label), f"「{label}」这张照片上有对象，就该亮着"
-    assert _enabled(menu, "重命名…") is False
+    assert _enabled(menu, "重命名…") is True
     assert window._trash_action.isEnabled() is True, "⌘⌫ 在大图页同样删得动这一张"
 
 

@@ -35,8 +35,8 @@ from gallery.core.library.session import (  # noqa: E402
 )
 from gallery.ui.browser.grid import PhotoGrid  # noqa: E402
 from gallery.ui.browser.model import PhotoListModel  # noqa: E402
-from gallery.ui.browser.rename_edit import RenameEdit  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
+from gallery.ui.rename_edit import RenameEdit  # noqa: E402
 
 #: 等待异步扫描完成的时限。
 

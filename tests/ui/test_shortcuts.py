@@ -31,8 +31,8 @@ from gallery.core.library.session import (  # noqa: E402
     SessionState,
     save_session,
 )
-from gallery.ui.browser.rename_edit import RenameEdit  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
+from gallery.ui.rename_edit import RenameEdit  # noqa: E402
 
 #: 等待扫描完成的时限。
 

@@ -50,7 +50,6 @@ from PySide6.QtWidgets import (
 )
 
 from gallery.ui.browser.model import ALBUM_ROLE, GROUP_COUNT_ROLE, GROUP_ROLE
-from gallery.ui.browser.rename_edit import RenameEdit
 from gallery.ui.browser.thumb_sizes import (
     DEFAULT_EDGE,
     MIN_EDGE,
@@ -59,6 +58,7 @@ from gallery.ui.browser.thumb_sizes import (
     StepAccumulator,
     fit_columns,
 )
+from gallery.ui.rename_edit import RenameEdit
 
 #: 滚动后延迟多久重算可见区。避免每滚一个像素就重排一次缩略图请求。
 VIEWPORT_DEBOUNCE_MS = 60

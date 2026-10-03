@@ -148,8 +148,8 @@ def apply_theme(app: QApplication) -> AppTheme:
     return theme
 
 
-def unify_title_bar(window: QWidget) -> None:
-    """让标题栏那一段也用窗口自己的底色（只在 macOS 上动手）。
+def unify_title_bar(window: QWidget) -> bool:
+    """让标题栏那一段也用窗口自己的底色，返回**那一段是不是已经归我们了**（只在 macOS 上动手）。
 
     原生标题栏是一层半透明材质，跟着桌面壁纸走：实测深色下 ``#3b3e3f``、浅色下
     ``#f2f4f7``，与系统给内容区的颜色（``#323232`` / ``#ececec``）本来就差一档 ——
@@ -165,14 +165,17 @@ def unify_title_bar(window: QWidget) -> None:
     - 内容区会留在安全区内（实测顶部空出 28 点），面包屑不会挤到按钮下面 —— 所以
       **不要**顺手关掉 ``WA_ContentsMarginsRespectsSafeArea``，那正是它干的活。
 
-    其它平台原样返回：这两个标志在别处含义不同，而这里要解决的只是 macOS 标题栏的颜色。
+    其它平台返回 ``False`` 原样放过：这两个标志在别处含义不同，而这里要解决的只是 macOS
+    标题栏的颜色。返回值是给 :class:`~gallery.ui.title_bar.TitleBar` 用的 —— 那一段既然
+    归我们了，**标题文字也该由我们自己画**（ADR 0025 决策 2），别处照旧 ``setWindowTitle``。
     """
     if sys.platform != "darwin":
-        return
+        return False
     flags = window.windowFlags()
     window.setWindowFlags(
         flags | Qt.WindowType.ExpandedClientAreaHint | Qt.WindowType.NoTitleBarBackgroundHint
     )
+    return True
 
 
 class ThemeWatcher(QObject):

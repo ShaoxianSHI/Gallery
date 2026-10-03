@@ -35,6 +35,8 @@ from PySide6.QtGui import (
     QImage,
     QKeySequence,
     QMouseEvent,
+    QResizeEvent,
+    QShowEvent,
 )
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -105,6 +107,8 @@ from gallery.ui.panels.metadata import MetadataPanel
 from gallery.ui.panels.welcome import WelcomeView
 from gallery.ui.tasks import TaskContext, TaskRunner
 from gallery.ui.thumbs.pipeline import ThumbnailPipeline
+from gallery.ui.title_bar import HEIGHT as TITLE_BAR_HEIGHT
+from gallery.ui.title_bar import TitleBar
 from gallery.ui.viewer.detail import DetailView
 from gallery.ui.watch import WatchBridge, WatchStarter, start_watch
 from gallery.ui.write_ops import NOTHING_SELECTED, WriteOpsMixin, flattened_entries
@@ -295,6 +299,11 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         #: 扫描本身出过问题（跳过的目录 / 读不了的文件）。它比「这里是空的」更该说。
         self._scan_issue = False
         self._exiftool_available: bool | None = None  # 探测一次就够
+        #: 窗口顶边那一条是不是已经归我们了（见 ``theme.unify_title_bar``）。
+        #: 没归我们（例如 Linux）就照旧用 ``setWindowTitle``，不摆 ``TitleBar``。
+        self._owns_title_bar = False
+        #: 不在大图页时窗口顶边那一行显示的名字（ADR 0025 决策 4）。
+        self._library_title = "Gallery"
         self._model = PhotoListModel(self, icon_edge=edge_for_index(self._size_index))
         self._build_ui()
         self._build_actions()
@@ -314,7 +323,6 @@ class MainWindow(WriteOpsMixin, QMainWindow):
     # ---- 构建界面 ----------------------------------------------------------
 
     def _build_ui(self) -> None:
-        self.setWindowTitle("Gallery")
         self.resize(1280, 860)
         self.setMinimumSize(720, 480)
 
@@ -322,7 +330,23 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         # 大图区与元数据面板从此是同一块底色（见 ui.theme）。
         theme.ensure_installed()
         # 标题栏那一段交给窗口自己画，否则 macOS 会铺一层半透明材质，和下面的底色差一档。
-        theme.unify_title_bar(self)
+        # 它同时回答「那一段归不归我们」：归了就得连**标题文字**也自己画，否则系统那份
+        # 会与 TitleBar 叠在同一处（ADR 0025 决策 1）。
+        self._owns_title_bar = theme.unify_title_bar(self)
+
+        self._title_bar = TitleBar(self)
+        self._title_bar.rename_committed.connect(self._on_title_rename_committed)
+        self._title_bar.rename_cancelled.connect(self._title_bar.stop_edit)
+        # 改到一半 Esc 归输入框、会动文件的命令一起让开 —— 与网格那个输入框同一件事
+        # （网格那边是 ``rename_active_changed``，这里是对应的另一半，ADR 0025 决策 6）。
+        self._title_bar.edit_active_changed.connect(self._on_rename_active_changed)
+        if self._owns_title_bar:
+            # 标题文字改由 ``TitleBar`` 画，系统那份必须空着 ——
+            # 两份标题叠在同一处是最难看的失败方式（ADR 0025 决策 1）。
+            self.setWindowTitle("")
+        # 位置与「现在在哪一页」都还没定下来（``_layout_title_bar`` / ``showEvent``），
+        # 这里只是别让它在窗口还没建好时就抢着显示：``_refresh_title`` 问的是页面栈。
+        self._title_bar.hide()
 
         self._welcome = WelcomeView()
         self._welcome.open_requested.connect(self.choose_folder)
@@ -392,6 +416,8 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         detail_layout.addWidget(self._panel)
         self._stack.addWidget(self._detail_page)
         self.setCentralWidget(self._stack)
+        # 标题栏那一行第一次有话可说：还没打开库，所以是「Gallery」（ADR 0025 决策 4）。
+        self._refresh_title()
         # 刻意不建状态栏：底部那一条只是为了放扫描进度、照片尺寸、缩放百分比，
         # 换来的是照片区少 20 来像素。出错信息有横幅，提示性信息一律不留。
 
@@ -1070,8 +1096,9 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._scan_issue = False
         self._update_breadcrumb()
         self._update_mode_actions()
-        self.setWindowTitle(library.display_name)
+        self._library_title = library.display_name
         self._stack.setCurrentWidget(self._grid_page)
+        self._refresh_title()  # 换库之后标题栏回到相册名（ADR 0025 决策 4）
         self._update_action_states()
         self._remember(library.root)
         self._watch.start(library)
@@ -2204,6 +2231,7 @@ class MainWindow(WriteOpsMixin, QMainWindow):
 
     def show_grid(self) -> None:
         """回到网格，并让当前照片保持选中。"""
+        self._title_bar.stop_edit()  # 切页时把改到一半的名字收起来（ADR 0025）
         if self._stack.currentWidget() is self._grid_page:
             return
         self._stack.setCurrentWidget(self._grid_page)
@@ -2211,6 +2239,7 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             self._grid.select_row(self._current_row)
         # 在大图页时攒下的外部变化：这里才是网格能改的地方（ADR 0013）。
         self._flush_pending_watch()
+        self._refresh_title()
         self._update_action_states()
         self._refresh_thumbnail_window()
 
@@ -2235,6 +2264,9 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         ref = self._model.photo_at(row)
         if library is None or ref is None:
             return
+        # 标题栏那一行从此是这张照片的文件名（ADR 0025 决策 4）。放在这里而不是各调用处：
+        # 翻图、打开、删掉一张之后接着看下一张，走的都是这一段。
+        self._refresh_title()
         generation = self._generation
 
         if self._detail_job is not None:
@@ -2459,23 +2491,27 @@ class MainWindow(WriteOpsMixin, QMainWindow):
 
     def _update_action_states(self) -> None:
         self._update_navigation_actions()
-        in_detail = self._stack.currentWidget() is self._detail_page
+        in_detail = self._in_detail_page()
+        in_grid = self._stack.currentWidget() is self._grid_page
+        # 改名的过程中别启用别的会动文件的命令 —— 那时键盘归输入框，⌘⌫ 不该把正在编辑的
+        # 那张删掉。**两个输入框都算**：网格那个与标题栏那个（ADR 0025 决策 6）。
+        idle = not self._grid.is_renaming() and not self._title_bar.is_editing()
         for action in (
-            self._back_action,
             self._fit_action,
             self._actual_action,
             self._zoom_in_action,
             self._zoom_out_action,
         ):
             action.setEnabled(in_detail)
+        # 「退出」也是 Esc，所以改到一半要把它关掉：那一刻 Esc 是输入框的「取消改名」，
+        # 与「上一级」在网格页上的让位是同一条理由（见 ``_update_navigation_actions``）。
+        self._back_action.setEnabled(in_detail and idle)
         self._clear_cache_action.setEnabled(self._library is not None)
-        # 重命名只对网格里的选中项有意义：它的输入框就摆在那儿。改名的过程中也不启用 ——
-        # 那时键盘归输入框，⌘⌫ 不该把正在编辑的那张删掉。**大图页的重命名行因此是灰的**
-        # （ADR 0021：菜单先把位置摆好，改名的 UI 与后端另一步接）。
-        #
+        # 「改名」落在哪儿：大图页改的是窗口标题栏那一行（ADR 0025），网格里是行内编辑。
+        # 没有标题栏那一段的平台上（见 ``theme.unify_title_bar``）大图页没有改名字段，
+        # 那一侧仍旧是网格的事。
+        renaming_here = in_grid or (in_detail and self._title_bar.isVisible())
         # 移到废纸篓两边都成立：大图页删的是正在看的那一张（``_selected_entries`` 认这一页）。
-        in_grid = self._stack.currentWidget() is self._grid_page
-        idle = not self._grid.is_renaming()
         entries = self._selected_entries()
         focus_row = self._focus_row()
         # 「改名」只对磁盘上的**某一个**东西成立：分组卡片不是磁盘上的东西，改不了名，
@@ -2493,7 +2529,7 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         # 选中它代表的那批组员（ADR 0020），与「进去全选再删」是同一件事。大图页上是
         # 正在看的那一张，摊平对它没有影响。
         flat = flattened_entries(entries)
-        self._rename_action.setEnabled(in_grid and focus_row >= 0 and idle and file_only)
+        self._rename_action.setEnabled(renaming_here and focus_row >= 0 and idle and file_only)
         self._trash_action.setEnabled(bool(flat) and idle)
         # 右键新增的那几条（ADR 0014）：可用性一律按「此刻作用于谁」算，
         # 菜单栏上的 ⌘A / ⇧⌘C 与右键菜单里的同一份动作因此永远说同一句话。
@@ -2762,8 +2798,10 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         # 「上一级」只在网格页启用：大图页的 Esc 是「返回网格」，两个动作共用一个 Esc，
         # 必须有一个是关着的，否则同一按键落到谁身上说不准。改名的过程中也不启用 ——
         # 那时 Esc 是输入框的「取消改名」（输入框还会先抢一次按键，见 RenameEdit.event）。
+        # **两个输入框都算**（ADR 0025 决策 6）。
         in_grid = self._stack.currentWidget() is self._grid_page
-        self._up_action.setEnabled(in_grid and self._can_go_up())
+        idle = not self._grid.is_renaming() and not self._title_bar.is_editing()
+        self._up_action.setEnabled(in_grid and idle and self._can_go_up())
 
     # ---- 会话 --------------------------------------------------------------
 
@@ -2820,6 +2858,9 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         内容铺到标题栏底下之后（见 ``ui.theme.unify_title_bar``），那一条已经是我们的
         客户区，系统不再代劳拖动，得自己发起。落在标题栏里的按下就交给 ``startSystemMove``；
         它返回假（平台不支持、或系统其实自己会拖）就照常往下传，不影响别处的点击。
+
+        **不用先问 ``TitleBar`` 在不在那儿**：不在编辑时它对鼠标是透明的（编辑时要摘掉，
+        否则输入框收不到点击），按下照旧落到窗口自己身上。
         """
         if event.button() == Qt.MouseButton.LeftButton and self._is_title_bar(event.position()):
             handle = self.windowHandle()
@@ -2827,6 +2868,59 @@ class MainWindow(WriteOpsMixin, QMainWindow):
                 event.accept()
                 return
         super().mousePressEvent(event)
+
+    # ---- 标题栏（见 ADR 0025）-----------------------------------------------
+
+    def _in_detail_page(self) -> bool:
+        """现在是不是大图页。「此刻作用于谁」的判据都问它（ADR 0021 决策 3）。"""
+        return self._stack.currentWidget() is self._detail_page
+
+    def _refresh_title(self) -> None:
+        """窗口顶边那一行显示什么：**大图页是正在看的那张照片的文件名，其余是相册名**。
+
+        判据只有这一段 —— 「现在在哪一页 + 那一格是谁」—— 于是翻图、退回网格、改名
+        （含 ``⌘Z`` 撤回）、换库走的都是同一段算术，不会有一处忘了更新而标题还写着旧名
+        （那恰恰是用户正盯着改的名字）。
+        """
+        photo = self._model.photo_at(self._current_row) if self._in_detail_page() else None
+        name = photo.name if photo is not None else self._library_title
+        if self._owns_title_bar:
+            self._title_bar.set_text(name)
+        else:
+            # 标题栏那一段不归我们（例如 Linux），照旧交给系统画（ADR 0025 决策 2）。
+            self.setWindowTitle(name)
+
+    def _layout_title_bar(self) -> None:
+        """把 ``TitleBar`` 摆在窗口顶边那一条上。
+
+        那一条的高度是**安全区**顶出来的那 28 点（见 ``theme.unify_title_bar``），不写死。
+        全屏时系统自己也不画标题栏，安全区让位，于是这一条跟着收起来 —— 否则它会盖在
+        照片上面（ADR 0025 决策 2）。
+        """
+        if not self._owns_title_bar:
+            return
+        central = self.centralWidget()
+        top = central.geometry().top() if central is not None else 0
+        height = 0 if self.isFullScreen() else max(top, TITLE_BAR_HEIGHT)
+        self._title_bar.setGeometry(0, 0, self.width(), height)
+        self._title_bar.setVisible(height > 0)
+
+    def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
+        super().showEvent(event)
+        self._layout_title_bar()
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
+        super().resizeEvent(event)
+        self._layout_title_bar()
+
+    def _on_title_rename_committed(self, text: str) -> None:
+        """标题栏里确认了一个新名字。
+
+        **与网格那个输入框走同一个写操作入口**（``write_ops._on_rename_committed``），
+        因此记账、横幅、撤销、监听器回声一样都不少 —— 换的只是「在哪一行上改」
+        （红线 1、ADR 0025 决策 3）。
+        """
+        self._on_rename_committed(self._focus_row(), text)
 
     # ---- 关闭 --------------------------------------------------------------
 

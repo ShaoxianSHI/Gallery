@@ -35,6 +35,7 @@
 ``_preview_cache`` / ``_metadata_cache``  写完要把受影响的缓存条目丢掉
 ``_show_banner`` / ``_reload_level`` / ``_update_action_states``  写完的收尾
 ``_note_self_write`` / ``_refresh_thumbnail_window`` / ``_update_level_notice``  同上
+``_title_bar`` / ``_refresh_title``  大图页的改名落在窗口标题栏那一行（ADR 0025）
 ======================  ==========================================================
 """
 
@@ -451,7 +452,17 @@ class WriteOpsMixin:
         return [entry.path for entry in flattened_entries(self._selected_entries())]
 
     def rename_current_entry(self) -> None:
-        """对当前选中的格子开始重命名（菜单 / ⌘R 走这里）。"""
+        """菜单 / ⌘R：**大图页改窗口标题栏那一行，网格里仍是就地的行内编辑**（ADR 0025 决策 3）。
+
+        两处改的**是同一个写操作入口**（``_on_rename_committed``），换的只是「在哪一行上改」——
+        所以记账、横幅、撤销、监听器回声在两边一样都不少。
+        """
+        if self._stack.currentWidget() is self._detail_page:
+            # 没有标题栏那一段的平台上大图页没有改名字段，动作那边也是关着的（见
+            # ``_update_action_states``）；这里只是不让一个看不见的输入框把键盘吃掉。
+            if self._title_bar.isVisible():
+                self._title_bar.begin_edit()
+            return
         index = self._grid.currentIndex()
         if not index.isValid():
             return
@@ -651,6 +662,9 @@ class WriteOpsMixin:
             self._grid.select_row(row, ensure_visible=False)
         else:
             self._reload_level()
+        # 大图页上标题栏那一行显示的就是这个名字 —— 改完不刷新的话，用户盯着标题栏
+        # 改完却看到旧名字（⌘Z 撤回时同理，ADR 0025 决策 4）。
+        self._refresh_title()
         self._show_banner(banner or banners.rename_banner(result))
 
 
