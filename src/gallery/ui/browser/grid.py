@@ -14,6 +14,7 @@ from typing import Final
 from PySide6.QtCore import (
     QAbstractItemModel,
     QEasingCurve,
+    QElapsedTimer,
     QEvent,
     QItemSelectionModel,
     QModelIndex,
@@ -53,6 +54,10 @@ from PySide6.QtWidgets import (
 )
 
 from gallery.ui.browser.model import ALBUM_ROLE, GROUP_COUNT_ROLE, GROUP_ROLE
+from gallery.ui.browser.scroll_kinetics import (
+    MAX_STEP_RATIO,
+    ScrollKinetics,
+)
 from gallery.ui.browser.thumb_sizes import (
     DEFAULT_EDGE,
     MIN_EDGE,
@@ -95,6 +100,12 @@ EDGE_ANIMATION_MIN_DELTA = 6
 
 #: 排完版多久之后核对实际列数（等布局彻底落定，避免读到半成品）。
 COLUMN_CHECK_MS = 50
+
+#: 滚动惯性走一步的间隔（毫秒）。约 60 帧：再密只是多烧 CPU，肉眼看不出差别。
+#:
+#: 手感本身**不在**这个数上，在 :data:`CATCH_UP_SECONDS`（见
+#: :mod:`gallery.ui.browser.scroll_kinetics`）—— 调帧间隔等于调顺滑度，两者别混。
+MOMENTUM_FRAME_MS = 16
 
 #: **每一列**额外让出的像素，理由见 :meth:`PhotoGrid._cell_size_for`。
 CELL_SLACK = 2
@@ -450,6 +461,22 @@ class PhotoGrid(QListView):
         self._pinch_steps = StepAccumulator(PINCH_THRESHOLD)
         self._wheel_steps = StepAccumulator(WHEEL_THRESHOLD)
 
+        # 滚动惯性：滚轮增量**只**往「目标」上加，实际位置由下面这根 16 毫秒的定时器
+        # 按指数逼近追过去（算术在 :mod:`gallery.ui.browser.scroll_kinetics`，那里还
+        # 记着为什么不用 Qt 自己的 QScroller）。基类那份「当帧就跳过去」的处理因此
+        # 不再走 wheelEvent 的普通分支。
+        self._momentum = ScrollKinetics()
+        self._momentum_clock = QElapsedTimer()
+        self._momentum_timer = QTimer(self)
+        self._momentum_timer.setInterval(MOMENTUM_FRAME_MS)
+        # 精确定时器：粗定时器会把间隔往上调，用得越久帧率掉得越明显。
+        self._momentum_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._momentum_timer.timeout.connect(self._advance_momentum)
+        #: 这一帧的滚动位置是不是**我们自己**写的。靠它分辨「惯性在动」与「别人在动」——
+        #: 方向键、``scrollTo``、拖滑块、换层重排都走 :meth:`_on_scroll_moved` 让路。
+        self._driving_scroll = False
+        self.verticalScrollBar().valueChanged.connect(self._on_scroll_moved)
+
         # **只接 ``activated``**。``QAbstractItemView.activated`` 在鼠标双击**和**按
         # 回车时都会发，所以它一条就够；再接上 ``doubleClicked`` 等于把双击那次算两遍。
         # 而「算两遍」在这里不是多一次刷新那么简单：进入相册是**同步**的（模型清空、
@@ -531,8 +558,13 @@ class PhotoGrid(QListView):
 
         这一层随后多半会 :meth:`select_row` 把该选中的那一格摆出来，那时会重新 arm 上
         （见 :attr:`_armed_row`），所以「退上去之后停在刚离开的那一格」仍然是可改名的。
+
+        **正在滑行的惯性也在这一条里收掉**：摆上来的是另一批条目，上一段滑行要去的
+        那个位置属于上一层。滚动条通常会因换层而归零、顺带把惯性停下来，但那一层
+        复位与否取决于新内容够不够高，不该让它替这条决定兜底。
         """
         self._armed_row = -1
+        self._stop_momentum()
 
     # ---- 尺寸档位与自适应排版 ----------------------------------------------
 
@@ -1113,15 +1145,91 @@ class PhotoGrid(QListView):
         event.accept()
 
     def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
-        """⌘/Ctrl + 滚轮切换缩略图尺寸；普通滚动交给基类翻页。"""
+        """⌘/Ctrl + 滚轮切换缩略图尺寸；普通滚动交给惯性滑过去（见 :meth:`_feed_momentum`）。"""
         modifiers = event.modifiers()
         if modifiers & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier):
+            # 换档之后行的高度变了，刚才那段滑行要去的那个位置已经不存在 —— 先收掉。
+            self._stop_momentum()
             steps = self._wheel_steps.feed(float(event.angleDelta().y()))
             if steps:
                 self.size_step_requested.emit(1 if steps > 0 else -1)
             event.accept()
             return
-        super().wheelEvent(event)
+        self._feed_momentum(event)
+        event.accept()
+
+    # ---- 滚动惯性 ----------------------------------------------------------
+
+    def _feed_momentum(self, event: QWheelEvent) -> None:
+        """把滚轮/触控板的增量交给惯性，而不是让基类当帧跳过去。
+
+        **增量由我们自己换算**，所以「一格滚轮走多远」从此是一个钉死的契约
+        （:data:`WHEEL_NOTCH_PIXELS`），不再是「基类碰巧怎么算的」。
+
+        正负号按 Qt 的约定：``angleDelta`` 与 ``pixelDelta`` 为正表示「向上滚」，
+        也就是内容往上走、滚动条的数值**变小**（``QAbstractScrollArea`` 自己的
+        ``wheelEvent`` 就是这么减的）。所以这里取负。
+        """
+        if event.hasPixelDelta():
+            delta = -float(event.pixelDelta().y())
+        else:
+            delta = -event.angleDelta().y() / 8.0
+        if event.inverted():
+            delta = -delta
+        if delta == 0.0:
+            return  # 横向滚轮：横向滚动条本来就是关的，没有可去的地方
+        self._scroll_by(delta)
+
+    def _scroll_by(self, delta: float) -> None:
+        """往目标上加一段距离，并保证有表在走。
+
+        **只在表还没跑的时候才重新锚定**：正滑着的时候用户又滚了一格，
+        正在飞的那一段必须留着 —— 连滚两格要连着走完，而不是第二格把第一格顶掉。
+        """
+        if not self._momentum_timer.isActive():
+            self._momentum.reanchor(float(self.verticalScrollBar().value()))
+            self._momentum_clock.start()
+        self._momentum.feed(delta)
+        self._momentum_timer.start()
+
+    def _advance_momentum(self) -> None:
+        """一帧：把实际位置往目标推一推，写进滚动条。"""
+        bar = self.verticalScrollBar()
+        # 范围先夹一次：内容变高/变矮、模型清空重排，都会在滑行途中改掉上下限，
+        # 朝着一个已经不存在的位置滑是滑不到头的。
+        self._momentum.clamp_target(float(bar.minimum()), float(bar.maximum()))
+        value = self._momentum.advance(
+            self._momentum_clock.restart() / 1000.0,
+            max_step=max(1.0, self.viewport().height() * MAX_STEP_RATIO),
+        )
+        settled = value is None
+        if settled:
+            # 到位了，但**仍然要把最终位置写下去**：``advance`` 是在停表那一刻
+            # 才把浮点位置对齐到目标的，不写就是差一个像素收尾（实测停在 14 而不是 15）。
+            value = self._momentum.value
+        self._driving_scroll = True
+        try:
+            bar.setValue(round(value))
+        finally:
+            self._driving_scroll = False
+        if settled:
+            self._momentum_timer.stop()
+
+    def _on_scroll_moved(self, value: int) -> None:
+        """滚动条被**别人**动了：让路，从这儿重新开始。
+
+        方向键、``scrollTo``、拖滑块、换层重排都走这条路。忘了让路的后果不是
+        「抖一下」，而是用户明明按了方向键、画面还在替上一段滑行往回追。
+        """
+        if self._driving_scroll:
+            return
+        self._momentum_timer.stop()
+        self._momentum.reanchor(float(value))
+
+    def _stop_momentum(self) -> None:
+        """停表并把目标重新锚到当前位置，不留一段「还没走完的路」。"""
+        self._momentum_timer.stop()
+        self._momentum.reanchor(float(self.verticalScrollBar().value()))
 
     def event(self, event: QEvent) -> bool:
         # macOS 触控板捏合：原生手势事件不会走 wheelEvent。
@@ -1132,6 +1240,8 @@ class PhotoGrid(QListView):
         ):
             steps = self._pinch_steps.feed(float(event.value()))
             if steps:
+                # 与 ⌘+滚轮 同理：捏合换档会改掉行高，先让惯性让路。
+                self._stop_momentum()
                 self.size_step_requested.emit(1 if steps > 0 else -1)
             return True
         return super().event(event)
@@ -1196,6 +1306,7 @@ __all__ = [
     "GRID_PADDING_X",
     "GRID_PADDING_Y",
     "LAYOUT_SAFETY",
+    "MOMENTUM_FRAME_MS",
     "PREFETCH_MARGIN",
     "VIEWPORT_DEBOUNCE_MS",
     "PhotoDelegate",
