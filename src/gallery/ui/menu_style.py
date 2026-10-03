@@ -53,6 +53,18 @@ MENU_ARROW_DRAWN_HEIGHT = 9.5
 
 MENU_ITEM_PADDING = "5px 12px 5px 0px"
 
+#: 弹出列表那一圈的边框宽度（点）。**样式表那边写、摆位置那边算**，所以立成常数
+#: 而不是散落在 f-string 里的一个字面量 —— 两处差一像素，用户就看见两个「#」错开。
+POPUP_LIST_BORDER = 1
+
+#: 弹出列表的行内边距：比菜单那一档（:data:`MENU_INSET`）少 2 —— 列表只有两列、
+#: 没有对勾要避让，多留一档只会显得比菜单还松。
+POPUP_LIST_PADDING = MENU_INSET - 2
+
+#: 弹出列表里第一列文字离**列表左沿**多远（点）= 边框 + 内边距。
+#: ``search_field`` 摆这份列表的左沿时按它往回退（见 ``SearchField._popup_left``）。
+POPUP_LIST_INSET = POPUP_LIST_BORDER + POPUP_LIST_PADDING
+
 MENU_CHECK_GUTTER = 19
 
 MENU_SEPARATOR_HEIGHT = 1
@@ -96,8 +108,8 @@ def popup_list_style(list_widget: QWidget) -> str:
     edge.setAlphaF(MENU_SEPARATOR_MIX_LIGHT)  # 边框与菜单的分隔线同一档
     return (
         f"QTreeWidget#searchPopup {{ background: {rgba(background)}; "
-        f"border: 1px solid {rgba(edge)}; "
-        f"border-radius: {MENU_CORNER_RADIUS}px; padding: {MENU_INSET - 2}px; }}\n"
+        f"border: {POPUP_LIST_BORDER}px solid {rgba(edge)}; "
+        f"border-radius: {MENU_CORNER_RADIUS}px; padding: {POPUP_LIST_PADDING}px; }}\n"
         f"QTreeWidget#searchPopup::item {{ padding: 3px 8px; color: {rgba(text)}; }}\n"
         # 悬停与选中**合成一条规则**：候选列表是「鼠标移到哪一行就高亮哪一行」
         # （``search_field.CandidateList.mouseMoveEvent`` 把那一行设成当前项），
@@ -616,6 +628,9 @@ __all__ = [
     "MENU_SEPARATOR_MIX_LIGHT",
     "MODIFIER_ORDER",
     "OPEN_KEY_HINT",
+    "POPUP_LIST_BORDER",
+    "POPUP_LIST_INSET",
+    "POPUP_LIST_PADDING",
     "SHORTCUT_GAP",
     "SHORTCUT_LABEL_GAP",
     "SHORTCUT_RIGHT_INSET",
