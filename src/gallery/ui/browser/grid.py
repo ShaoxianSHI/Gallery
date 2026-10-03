@@ -322,6 +322,9 @@ class PhotoGrid(QListView):
         self._armed_row = -1
         self._double_click = False
         self._pending_rename_row = -1
+        #: 「当前正处在一次行内重命名里」——与 ``_rename_edit.is_editing()`` 是两件事，
+        #: 别拿后者顶替：见 :meth:`_end_rename_session` 末尾那段。
+        self._rename_active = False
         # 最近一次左键按下的位置、修饰键，以及按下那一刻的选中与当前行：
         # 用来把「手抖」和「真的在拖」分开，并在抬起时按用户的心意重算选择。
         self._press_point: QPoint | None = None
@@ -712,6 +715,7 @@ class PhotoGrid(QListView):
         rect.setTop(rect.top() - 3)
         rect.setHeight(rect.height() + 6)
         self._rename_edit.start(rect, text, keep_suffix=not index.data(ALBUM_ROLE))
+        self._rename_active = True
         self.rename_active_changed.emit(True)
         return True
 
@@ -719,19 +723,35 @@ class PhotoGrid(QListView):
         """收起输入框，不提交。"""
         self._rename_timer.stop()
         self._pending_rename_row = -1
-        was_editing = self._rename_edit.is_editing()
         self._rename_edit.stop()
-        if was_editing:
-            self.rename_active_changed.emit(False)
+        self._end_rename_session()
 
     def is_renaming(self) -> bool:
         return self._rename_edit.is_editing()
 
     def _on_rename_committed(self, text: str) -> None:
-        self.rename_active_changed.emit(False)
+        self._end_rename_session()
         row = self.current_row()
         if row >= 0:
             self.rename_committed.emit(row, text)
+
+    def _end_rename_session(self) -> None:
+        """一次行内重命名结束了（提交、Esc 取消，或外部强制收起）。
+
+        **这里不能靠「输入框现在还看得见吗」来判断有没有东西要收尾。**
+        用户按 Esc 时走的是 ``RenameEdit._cancel``：它先 ``hide()``、**再**发
+        ``cancelled``。等这个槽跑起来时输入框早就藏好了，于是一个「之前确实正在改名、
+        现在收起来了」的事实被读成了「什么都没在改」——「输入框收起来了」那条信号
+        压根没发出去，菜单里 ⌘R / ⌘⌫ / ⇧⌘N / ⌘⏎ 于是**永远留在禁用态**。
+        症状很怪：照片明明还选着，别的命令都亮着，唯独「重命名…」再按 ⌘R 没反应。
+
+        所以 session 状态由这里自己记：``begin_rename`` 开，``_end_rename_session`` 关，
+        与输入框的可见性解耦。守卫仍留着 —— 外部强制收起一个没在改的名字时不该广播。
+        """
+        if not self._rename_active:
+            return
+        self._rename_active = False
+        self.rename_active_changed.emit(False)
 
     # ---- 事件 --------------------------------------------------------------
 

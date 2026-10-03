@@ -412,6 +412,109 @@ def test_rename_action_is_disabled_without_a_selection(
         window.close()
 
 
+def test_escape_cancels_and_leaves_rename_usable_again(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """Esc 取消之后仍然是选中的那一格，于是 ⌘R 必须还能再进一次重命名。
+
+    这是个真缺陷，而且症状很怪：**第一次** ⌘R 好好地能进，Esc 之后第二次却彻底没反应，
+    菜单里的「重命名…」也一起变灰 —— 照片明明还选着，别的命令（拷贝、废纸篓）都还亮着。
+    灰掉的只有「重命名」这一条，正好是 :meth:`MainWindow._update_action_states` 里那个
+    ``idle`` 判据：改名的这段时间它禁用，收起来之后**必须**有人把它点回亮。
+
+    而「Esc 取消」这条路上没人点。``RenameEdit._cancel`` 先 ``hide()`` 再发
+    ``cancelled``，网格那边的 ``cancel_rename`` 到场时输入框**早已藏好**，于是它读到的
+    ``was_editing`` 是 False，「输入框收起来了」这条信号压根没发出去。
+    （回车提交那条路没事：``_on_rename_committed`` 是无条件发那条信号的。）
+
+    钉的是窗口这一侧的接线：输入框自己没问题，坏掉的是「输入框收起来 → 窗口把菜单
+    点回亮」。断言也只从窗口看 —— 输入框自己那条 Esc 用例（``test_escape_cancels``）
+    一直是对的。
+    """
+    make_photo("IMG_0001.jpg", directory=tmp_path)
+    window = open_window(qt_app, tmp_path)
+    try:
+        window._grid.select_row(0)
+        qt_app.processEvents()
+
+        window.rename_current_entry()  # 第一次 ⌘R
+        editor = window._grid._rename_edit
+        assert editor.is_editing() is True
+        assert window._rename_action.isEnabled() is False, "改名的这段时间不该抢 ⌘R"
+
+        QTest.keyClick(editor, Qt.Key.Key_Escape)
+        qt_app.processEvents()
+        assert editor.is_editing() is False
+
+        # 前置条件摆出来：选中的确实还是那一格，且它确实是一张照片（不是分组卡片）。
+        assert window._grid.currentIndex().row() == 0
+        assert window._grid.selected_rows() == [0]
+        assert window._grid.current_row() == 0
+
+        assert window._rename_action.isEnabled() is True, (
+            "Esc 之后「重命名…」必须重新可用，否则 ⌘R 没反应"
+        )
+        window._rename_action.trigger()  # 第二次 ⌘R 走的就是这条 QAction
+        assert window._grid._rename_edit.is_editing() is True, "第二次 ⌘R 该能进重命名"
+    finally:
+        window.close()
+
+
+def test_escape_leaves_the_other_actions_usable_too(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """与上一条同一根因，但看的是另一侧：Esc 之后 ⌘⌫ / ⇧⌘N / ⌘⏎ 也得一起回来。
+
+    ``idle`` 是这几条动作**共用**的判据，所以 Esc 之后一起失灵，只是「重命名」
+    最先被用户撞上而已 —— 把这一条钉住，才能说明修的是那条接线而不是某一条动作。
+    """
+    make_photo("IMG_0001.jpg", directory=tmp_path)
+    window = open_window(qt_app, tmp_path)
+    try:
+        window._grid.select_row(0)
+        qt_app.processEvents()
+        window.rename_current_entry()
+
+        QTest.keyClick(window._grid._rename_edit, Qt.Key.Key_Escape)
+        qt_app.processEvents()
+
+        assert window._grid.is_renaming() is False
+        for action in (
+            window._rename_action,
+            window._trash_action,
+            window._new_album_action,
+            window._reveal_action,
+        ):
+            assert action.isEnabled() is True, f"Esc 之后 {action.text()} 该重新可用"
+    finally:
+        window.close()
+
+
+def test_switching_away_still_restores_the_actions(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """外部强制收起那条路（切层 / 切页）一直是好的 —— 别把 Esc 也修坏。
+
+    ``MainWindow`` 自己在 :meth:`cancel_rename` 之前就调 :meth:`_update_action_states`，
+    所以那条路没经过网格的 ``cancel_rename``。这条守住两侧的行为差异。
+    """
+    make_photo("IMG_0001.jpg", directory=tmp_path)
+    window = open_window(qt_app, tmp_path)
+    try:
+        window._grid.select_row(0)
+        qt_app.processEvents()
+        window.rename_current_entry()
+        assert window._rename_action.isEnabled() is False
+
+        window._grid.cancel_rename()
+        qt_app.processEvents()
+
+        assert window._grid.is_renaming() is False
+        assert window._rename_action.isEnabled() is True
+    finally:
+        window.close()
+
+
 # ---- 模型 -------------------------------------------------------------------
 
 
