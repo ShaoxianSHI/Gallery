@@ -9,7 +9,6 @@
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from typing import Final
 
@@ -65,22 +64,6 @@ from gallery.ui.browser.thumb_sizes import (
     fit_columns,
 )
 from gallery.ui.rename_edit import RenameEdit
-
-# ---- 临时对照开关（诊断用，定位完就删）------------------------------------
-#
-# 一路排查下来始终无法在离屏环境复现用户看到的跳变。与其继续猜，不如把两处**能
-# 主动制造跳变**的行为拆开，让用户直接对照：
-#
-# - ``GALLERY_NO_CENTER=1``：换档时不再把选中项摆到正中。加它之前，切档时滚动条
-#   几乎不动（``scrollTo`` 受 Batched 限制多半是空操作）；加了它之后，每次换档
-#   必定滚到选中项 —— 相册底部放大一下就是几万像素。**这是全程唯一会主动制造大跳
-#   变的新增行为，也是最大的嫌疑。**
-# - ``GALLERY_NO_TRANSITION=1``：整个切档过渡关掉（不动画绘制、不插值位置、
-#   不插值滚动）。用来分辨「跳的是动画」还是「跳的是最终位置」。
-#
-# 两者都只读环境变量，删掉这个块与那两处 if 就完全复原。
-_NO_CENTER = os.environ.get("GALLERY_NO_CENTER") == "1"
-_NO_TRANSITION = os.environ.get("GALLERY_NO_TRANSITION") == "1"
 
 #: 滚动后延迟多久重算可见区。避免每滚一个像素就重排一次缩略图请求。
 VIEWPORT_DEBOUNCE_MS = 60
@@ -864,7 +847,7 @@ class PhotoGrid(QListView):
         anchor = self._anchor_row()
         self._apply_geometry(cell, scroll_from)
         new_columns = self._first_row_columns()
-        if old_columns > 0 and new_columns > 0 and old_columns != new_columns and not _NO_CENTER:
+        if old_columns > 0 and new_columns > 0 and old_columns != new_columns:
             # **只在真的换行时居中。** 这一条是踩过坑的：Qt 会顺手把当前项设成第 0 行，
             # 无条件按它居中就等于「每 resize 一次（**包括后台横幅出现/消失带来的自动
             # resize**）都把整屏拽回顶部」。
@@ -1065,8 +1048,6 @@ class PhotoGrid(QListView):
         # 旧布局已经不是这一段的旧布局了，拿它当起点，画面会先蹿去用户已经放弃的
         # 那一档。直接落位反而更贴近他要的结果。
         # （读状态必须在 ``stop()`` 之前 —— 停掉之后它当然永远是 ``Stopped``。）
-        if _NO_TRANSITION:  # 临时对照开关
-            animate = False
         still_running = self._transition_anim.state() != QAbstractAnimation.State.Stopped
         self._transition_anim.stop()
         self._edge_from = drawn_edge
