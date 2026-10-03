@@ -13,6 +13,7 @@ from typing import Final
 
 from PySide6.QtCore import (
     QAbstractItemModel,
+    QEasingCurve,
     QEvent,
     QItemSelectionModel,
     QModelIndex,
@@ -22,6 +23,7 @@ from PySide6.QtCore import (
     QSize,
     Qt,
     QTimer,
+    QVariantAnimation,
     Signal,
 )
 from PySide6.QtGui import (
@@ -77,6 +79,19 @@ EDGE_REFRESH_THRESHOLD = 6
 
 #: 视口停止变化多久之后才真正通知界面重取缩略图（拖动窗口时的防抖）。
 EDGE_SETTLE_MS = 120
+
+#: 切档时缩略图「长过去/缩回去」的时长（毫秒）。
+#:
+#: 只驱动**绘制**尺寸，不驱动几何也不驱动缩略图请求 —— 理由见
+#: :meth:`PhotoGrid._animate_draw_edge`。够短就不会让人觉得界面在等它，
+#: 够长才看得出是动画而不是跳变。
+EDGE_ANIMATION_MS = 160
+
+#: 边长差小于这个值就不动画：差几个像素肉眼看不出来，却白付一次全视口重绘。
+#:
+#: 与 :data:`EDGE_REFRESH_THRESHOLD` 是两回事 —— 那个管的是「要不要重新取缩略图」
+#: （代价在磁盘与解码），这个管的是「要不要重绘一帧」（代价在屏幕）。
+EDGE_ANIMATION_MIN_DELTA = 6
 
 #: 排完版多久之后核对实际列数（等布局彻底落定，避免读到半成品）。
 COLUMN_CHECK_MS = 50
@@ -143,9 +158,29 @@ class PhotoDelegate(QStyledItemDelegate):
     def __init__(self, parent: QWidget | None = None, *, icon_edge: int = DEFAULT_EDGE) -> None:
         super().__init__(parent)
         self._icon_edge = icon_edge
+        #: **画出来**的边长。与 :attr:`_icon_edge` 分开存，是因为切档动画要把它取成
+        #: 小数并逐帧变化，而几何尺寸必须一直是整数（见 :meth:`PhotoGrid._animate_draw_edge`）。
+        #: 两者相等是常态，只有动画跑的那 160ms 里不等。
+        self._draw_edge = float(icon_edge)
 
     def set_icon_edge(self, edge: int) -> None:
+        """几何尺寸变了 —— 绘制尺寸先跟它对齐。
+
+        动画是在 :meth:`PhotoGrid._apply_cell` 里、在几何定下来**之后**另行发起的：
+        它会把 :meth:`draw_edge` 立刻拨回旧尺寸再往新尺寸走（那里拨这一下是刻意的，
+        免得中间漏出一帧新尺寸）。所以这里「顺手对齐」不会把动画的起点吃掉。
+        """
         self._icon_edge = edge
+        self._draw_edge = float(edge)
+
+    @property
+    def draw_edge(self) -> float:
+        """当前**画出来**的缩略图长边。动画期间是小数且逐帧变化。"""
+        return self._draw_edge
+
+    def set_draw_edge(self, edge: float) -> None:
+        """只改绘制尺寸，不碰几何。见 :attr:`draw_edge`。"""
+        self._draw_edge = max(1.0, edge)
 
     def label_rect(self, rect: QRect) -> QRect:
         """文件名那一行的位置。
@@ -224,10 +259,13 @@ class PhotoDelegate(QStyledItemDelegate):
 
         绘制与测试共用这一份：几何只有一处算法，测试量角时不必再复刻一遍魔数
         （与 :meth:`label_rect` 同一个道理）。
+
+        用的是 :attr:`draw_edge` 而不是几何边长 —— 这正是切档动画能动的那一处。
+        **取整**是有意的：动画一帧跨好几个像素，亚像素坐标肉眼看不出来，却会让
+        ``QSize`` / ``QRect`` 的整数契约在整条绘制路径上到处漏小数。
         """
-        target = pixmap.size().scaled(
-            QSize(self._icon_edge, self._icon_edge), Qt.AspectRatioMode.KeepAspectRatio
-        )
+        edge = round(self._draw_edge)
+        target = pixmap.size().scaled(QSize(edge, edge), Qt.AspectRatioMode.KeepAspectRatio)
         return QRect(
             rect.left() + (rect.width() - target.width()) // 2,
             rect.top() + (rect.height() - target.height()) // 2,
@@ -445,6 +483,13 @@ class PhotoGrid(QListView):
         self._edge_timer.setInterval(EDGE_SETTLE_MS)
         self._edge_timer.timeout.connect(self._emit_edge_change)
 
+        # 切档时让缩略图「长过去」而不是跳过去。它只驱动 delegate 的**绘制**尺寸，
+        # 几何与缩略图请求仍然一步到位 —— 理由见 :meth:`_animate_draw_edge`。
+        self._draw_animation = QVariantAnimation(self)
+        self._draw_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._draw_animation.setDuration(EDGE_ANIMATION_MS)
+        self._draw_animation.valueChanged.connect(self._on_draw_edge_step)
+
         # 视口宽度变化（窗口缩放、滚动条出现或消失）都要重算格子宽度。
         self.viewport().installEventFilter(self)
 
@@ -505,7 +550,7 @@ class PhotoGrid(QListView):
         """换一档目标尺寸。真正的格子宽度由视口宽度决定，见 :meth:`_recompute_layout`。"""
         self._target_edge = edge
         self._layout_fix.clear()
-        self._recompute_layout()
+        self._recompute_layout(animate=True)
 
     def _columns_for(self, available: int) -> int:
         """这个宽度下打算摆几列。"""
@@ -547,8 +592,12 @@ class PhotoGrid(QListView):
         edge = max(MIN_EDGE, cell_width - GRID_PADDING_X)
         return QSize(edge + GRID_PADDING_X, edge + GRID_PADDING_Y)
 
-    def _recompute_layout(self) -> None:
-        """按当前视口宽度重排，让第一行铺满、右侧不留空白。"""
+    def _recompute_layout(self, *, animate: bool = False) -> None:
+        """按当前视口宽度重排，让第一行铺满、右侧不留空白。
+
+        ``animate`` 只有「用户切了一档」那条路径会传 ``True``：拖窗口是连续事件，
+        每一次宽度变化都放一次动画等于动画永远在跑，界面反而变成一直在重绘。
+        """
         if self._laying_out:
             return
         available = self.viewport().width()
@@ -563,7 +612,7 @@ class PhotoGrid(QListView):
         # 不重排就会沿用旧列数，右边留下一条空白。
         if available == self._laid_out_width and columns == self._laid_out_columns:
             return
-        self._apply_cell(self._cell_size_for(available))
+        self._apply_cell(self._cell_size_for(available), animate=animate)
         self._laid_out_width = available
         self._laid_out_columns = columns
         self._examiner.start()
@@ -605,9 +654,12 @@ class PhotoGrid(QListView):
             count += 1
         return count
 
-    def _apply_cell(self, cell: QSize) -> None:
+    def _apply_cell(self, cell: QSize, *, animate: bool = False) -> None:
         if cell == self.gridSize():
             return
+        # 动画起点是「上一帧画出来」的那一档，不是几何尺寸：上一次动画可能还没跑完，
+        # 那时两者不等。从中间值接着走，用户连点两档才不会看见它先倒退回去。
+        drawn_edge = self._delegate.draw_edge
         self._laying_out = True
         try:
             self._applied_edge = cell.width() - GRID_PADDING_X
@@ -621,6 +673,37 @@ class PhotoGrid(QListView):
         finally:
             self._laying_out = False
         self._schedule_edge_update()
+        self._animate_draw_edge(drawn_edge, animate=animate)
+
+    def _animate_draw_edge(self, start: float, *, animate: bool) -> None:
+        """让缩略图从 ``start`` 平滑长到新边长（``animate`` 为假就直接落位）。
+
+        **动画只碰绘制尺寸**，另外三样一律不碰，而且这是刻意的：
+
+        - :attr:`_applied_edge` 与 ``gridSize`` —— 它们一动，Batched 布局就得整个
+          重排一次；每帧动一次的话，几万条目的库会直接卡住。格子之间「跳过去」
+          是这条方案付的代价（真正逐格平移得上 :class:`QGraphicsView`，见 ADR）。
+        - ``icon_edge_changed`` —— 那是**重新取缩略图**的信号。若跟着动画走，
+          一次切档会按几十个中间尺寸各要一遍缩略图，
+          :mod:`gallery.ui.browser.thumb_sizes` 里那条「离散档位 ⇒ 一张照片在磁盘上
+          只有几份缓存」的不变量当场作废。所以重取仍由 ``_schedule_edge_update``
+          按新边长发一次，与动画并行而不受它影响。
+        """
+        end = float(self._applied_edge)
+        self._draw_animation.stop()
+        if not animate or abs(end - start) < EDGE_ANIMATION_MIN_DELTA:
+            self._delegate.set_draw_edge(end)
+            return
+        # 先把绘制尺寸拨回起点再启动：:meth:`PhotoDelegate.set_icon_edge` 已经把
+        # 它对齐到了新几何，中间那一帧不该露出来（动画会在启动时立刻发回起点值）。
+        self._delegate.set_draw_edge(start)
+        self._draw_animation.setStartValue(start)
+        self._draw_animation.setEndValue(end)
+        self._draw_animation.start()
+
+    def _on_draw_edge_step(self, value: float) -> None:
+        self._delegate.set_draw_edge(value)
+        self.viewport().update()
 
     def _schedule_edge_update(self) -> None:
         if abs(self._applied_edge - self._emitted_edge) < EDGE_REFRESH_THRESHOLD:
@@ -1106,6 +1189,8 @@ class PhotoGrid(QListView):
 
 __all__ = [
     "COLUMN_CHECK_MS",
+    "EDGE_ANIMATION_MIN_DELTA",
+    "EDGE_ANIMATION_MS",
     "EDGE_REFRESH_THRESHOLD",
     "EDGE_SETTLE_MS",
     "GRID_PADDING_X",

@@ -20,13 +20,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
+from grid_helpers import fake_photos, make_grid  # noqa: E402
 from PySide6.QtCore import QModelIndex, QPoint, Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 from waiting import DEFAULT_TIMEOUT_SECONDS
 
 from gallery.core.library.config import prepare_library  # noqa: E402
-from gallery.core.library.photos import FolderRef, PhotoRef  # noqa: E402
+from gallery.core.library.photos import FolderRef  # noqa: E402
 from gallery.core.library.session import (  # noqa: E402
     BROWSE_MODE_ALBUMS,
     SessionState,
@@ -41,24 +42,6 @@ from gallery.ui.main_window import MainWindow  # noqa: E402
 #: 第一行至少要铺到视口的这个比例才算「铺满」。剩下的几像素是网格页本来就有的
 #: 左右留白加上滚动条预留，肉眼看不出来；掉一整列则是 15% 以上，界线很清楚。
 FILL_RATIO = 0.95
-
-
-def fake_photos(count: int, tmp_path: Path) -> list[PhotoRef]:
-    return [
-        PhotoRef(path=tmp_path / f"IMG_{index:04d}.jpg", size=1024, mtime_ns=index)
-        for index in range(count)
-    ]
-
-
-def make_grid(qt_app: QApplication, tmp_path: Path, count: int, *, width: int = 1200) -> PhotoGrid:
-    grid = PhotoGrid(icon_edge=176)
-    model = PhotoListModel()
-    model.append(fake_photos(count, tmp_path))
-    grid.setModel(model)
-    grid.resize(width, 800)
-    grid.show()
-    qt_app.processEvents()
-    return grid
 
 
 def row_fill_ratio(grid: PhotoGrid) -> float:
