@@ -490,6 +490,17 @@ class PhotoGrid(QListView):
         self._draw_animation.setDuration(EDGE_ANIMATION_MS)
         self._draw_animation.valueChanged.connect(self._on_draw_edge_step)
 
+        # 切档时纵向滚动也是跳的，单独给它一段过渡（它只滚动、不重排，几乎不要钱）。
+        # 取消逻辑集中在 :meth:`scrollContentsBy`，不必逐处列举。
+        self._scroll_animation = QVariantAnimation(self)
+        self._scroll_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._scroll_animation.setDuration(EDGE_ANIMATION_MS)
+        self._scroll_animation.valueChanged.connect(self._on_scroll_step)
+        #: 「这一次滚动是那条过渡动画自己发起的」。**不是**它发起的滚动都要停掉过渡，
+        #: 而判断这件事只有一个可靠的地方 —— :meth:`scrollContentsBy`，所有滚动
+        #: （滚轮、方向键、拖滚动条、``EnsureVisible``）都从那里过。
+        self._driving_scroll = False
+
         # 视口宽度变化（窗口缩放、滚动条出现或消失）都要重算格子宽度。
         self.viewport().installEventFilter(self)
 
@@ -660,6 +671,9 @@ class PhotoGrid(QListView):
         # 动画起点是「上一帧画出来」的那一档，不是几何尺寸：上一次动画可能还没跑完，
         # 那时两者不等。从中间值接着走，用户连点两档才不会看见它先倒退回去。
         drawn_edge = self._delegate.draw_edge
+        # 滚动起点同理，必须在**改布局之前**读：``doItemsLayout`` 与滚动条范围
+        # 变化都可能顺手把它挪走，那时读到的已经不是一个干净的起点。
+        scroll_from = self.verticalScrollBar().value()
         self._laying_out = True
         try:
             self._applied_edge = cell.width() - GRID_PADDING_X
@@ -669,11 +683,50 @@ class PhotoGrid(QListView):
             self.doItemsLayout()
             index = self.currentIndex()
             if index.isValid():
+                # **只对已排版的那一批条目有效。** Batched 布局一批只排 64 条，
+                # 超出批次的行 ``visualRect`` 返回 ``QRect(-1, -1, 0, 0)``，
+                # ``scrollTo`` 于是静默什么都不做。实测当前项在第 8、20 行时会滚，
+                # 在第 80 行时不动。
+                #
+                # 这不是缺陷：用户滚到远处去翻看时当前项本就在屏外，这时候**不该**
+                # 把他拽回选中项。行为正好是「附近的选中项重新摆正，远处的不管」。
                 self.scrollTo(index, QAbstractItemView.ScrollHint.PositionAtCenter)
         finally:
             self._laying_out = False
         self._schedule_edge_update()
         self._animate_draw_edge(drawn_edge, animate=animate)
+        self._animate_scroll(scroll_from, animate=animate)
+
+    def _animate_scroll(self, start: int, *, animate: bool) -> None:
+        """把纵向滚动从 ``start`` 平滑移到当前位置（滚动条范围已随新布局变了）。
+
+        切档时 :meth:`_apply_cell` 会 ``scrollTo`` 把选中项摆到中间，整屏于是纵向
+        「跳」一下。**这一下比缩略图那一下明显得多** —— 跳的是整屏高度，不是一格。
+
+        它之所以便宜，是因为它只滚动、不碰任何几何：``scrollTo`` 会做多少布局工作，
+        这里一个字节都不重复。范围变了要**夹一下起点**：切到大缩略图时列数变少、
+        总高度跟着变矮，旧位置可能已经超出新范围，不夹的话插值中途会被
+        ``maximum()`` 削平 —— 于是动画先平一段再动，比不动画还难看。
+
+        任何**不是**这条动画发起的滚动都会在 :meth:`scrollContentsBy` 里把它停掉，
+        所以用户滚一下、方向键走一格、拖一下滚动条，动画都立刻让位。
+        """
+        self._scroll_animation.stop()
+        bar = self.verticalScrollBar()
+        end = bar.value()
+        start = min(start, bar.maximum())
+        if not animate or end == start:
+            return
+        self._scroll_animation.setStartValue(float(start))
+        self._scroll_animation.setEndValue(float(end))
+        self._scroll_animation.start()
+
+    def _on_scroll_step(self, value: float) -> None:
+        self._driving_scroll = True
+        try:
+            self.verticalScrollBar().setValue(round(value))
+        finally:
+            self._driving_scroll = False
 
     def _animate_draw_edge(self, start: float, *, animate: bool) -> None:
         """让缩略图从 ``start`` 平滑长到新边长（``animate`` 为假就直接落位）。
@@ -1166,6 +1219,14 @@ class PhotoGrid(QListView):
         if self._rename_edit.is_editing():
             self._rename_edit.move(self._rename_edit.pos() - QPoint(dx, dy))
         super().scrollContentsBy(dx, dy)
+        if not self._driving_scroll:
+            # 用户自己滚了（滚轮、方向键、拖滚动条、``EnsureVisible``…）：过渡立刻让位。
+            # 不这么做的话，动画会一边往终点走、一边被这些滚动推着改终点 —— 最后落到
+            # 一个谁也没指定的位置上。
+            self._scroll_animation.stop()
+        # ``_debounce`` 是单次的，这里每次都 ``start`` 恰好起到了合并的作用：切档过渡
+        # 期间它被反复重启，于是只在整段动画结束约一帧之后才发一次 ``viewport_changed``。
+        # 可见区在那 160ms 里并没有真的变多少，算一次就够。
         self._debounce.start()
 
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - 名字是 Qt 定的

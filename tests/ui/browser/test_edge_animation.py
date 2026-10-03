@@ -29,7 +29,7 @@ pytest.importorskip("PySide6")
 from grid_helpers import make_grid  # noqa: E402
 from PySide6.QtCore import QAbstractAnimation, QPoint, QRect, QSize  # noqa: E402
 from PySide6.QtGui import QPixmap  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import QAbstractItemView, QApplication  # noqa: E402
 
 from gallery.ui.browser.grid import (  # noqa: E402
     EDGE_ANIMATION_MIN_DELTA,
@@ -181,3 +181,102 @@ def test_the_delegate_draws_at_the_animated_size_but_keeps_its_geometry(
     assert delegate.target_rect(rect, pixmap).width() == 232
     # 几何一步都没动：格子还是原来那么大。
     assert delegate.sizeHint(None, None) == hint  # type: ignore[arg-type]
+
+
+# ---- 纵向滚动 ------------------------------------------------------------
+
+
+def scroll_samples(grid: PhotoGrid, settle: Callable[[float], None]) -> list[int]:
+    """跑完一次过渡，把期间纵向滚动位置的取值按顺序记下来。"""
+    seen: list[int] = []
+    for _ in range(int(SETTLE_SECONDS / SLICE_SECONDS)):
+        settle(SLICE_SECONDS)
+        seen.append(grid.verticalScrollBar().value())
+    return seen
+
+
+def scrollable_grid(qt_app: QApplication, tmp_path: Path, row: int = 20) -> PhotoGrid:
+    """造一个「当前项就在屏内、但快到下沿」的网格 —— 切档时 ``scrollTo`` 必定要挪一大段。
+
+    **当前项必须在 ``scrollTo`` 已经排过版的那批里**（Batched 布局默认一批 64 条）。
+    超出批次时 ``visualRect`` 返回 ``QRect(-1, -1, 0, 0)``，``scrollTo`` 静默什么都不做
+    —— 那是既有限制，见 ``_apply_cell`` 里的说明，不是这里要测的东西。
+    """
+    grid = make_grid(qt_app, tmp_path, 200)
+    grid.select_row(row, ensure_visible=False)
+    return grid
+
+
+def test_the_grid_scrolls_into_place_instead_of_jumping(
+    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+) -> None:
+    """纵向滚动也是一段过渡 —— 它跳的是整屏高度，比缩略图那一下明显得多。"""
+    grid = scrollable_grid(qt_app, tmp_path)
+    settle(SETTLE_SECONDS)
+
+    grid.set_target_edge(THUMBNAIL_SIZES[2])
+    samples = scroll_samples(grid, settle)
+
+    assert len(set(samples)) > 3, f"只取到 {sorted(set(samples))}，这是一次跳变不是过渡"
+    assert samples == sorted(samples), f"回退了一下：{samples}"
+
+    # 终点**独立地问一次 Qt**，不读 ``endValue``（那是被测代码自己的输出，拿它当
+    # 期望值就是自己验自己）。过渡已跑完、布局已定，``PositionAtCenter`` 是绝对
+    # 定位，再要一次拿到的就是它认可的位置。
+    grid.scrollTo(grid.currentIndex(), QAbstractItemView.ScrollHint.PositionAtCenter)
+    settle(SLICE_SECONDS)
+    assert grid.verticalScrollBar().value() == samples[-1], "没落在 scrollTo 认可的位置上"
+
+
+def test_a_scroll_start_beyond_the_new_range_is_clamped(
+    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+) -> None:
+    """交给动画的起点必须落在滚动条自己的范围里。
+
+    列数变多时内容变矮、旧位置超出新范围，不夹的话插值中途会被 ``maximum()`` 削平 ——
+    动画先平一段再动，比不动画还难看。而这个毛病**从取样里看不出来**（Qt 会替你夹，
+    取到的值永远合法），所以只能直接查喂给动画的那个起点。
+    """
+    grid = scrollable_grid(qt_app, tmp_path)
+    settle(SETTLE_SECONDS)
+    grid.set_target_edge(THUMBNAIL_SIZES[2])
+    settle(SETTLE_SECONDS)
+
+    bar = grid.verticalScrollBar()
+    grid._animate_scroll(bar.maximum() + 5000, animate=True)
+
+    assert float(grid._scroll_animation.startValue()) <= bar.maximum()
+    assert grid._scroll_animation.state() == QAbstractAnimation.State.Running
+
+
+def test_a_scroll_of_your_own_cancels_the_transition(
+    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+) -> None:
+    """过渡跑着的时候用户自己滚了，动画必须立刻让位。
+
+    不让位的话，动画会一边往终点走、一边被这次滚动推着改终点，最后落到一个谁也
+    没指定的位置上。
+    """
+    grid = scrollable_grid(qt_app, tmp_path)
+    settle(SETTLE_SECONDS)
+
+    grid.set_target_edge(THUMBNAIL_SIZES[2])
+    assert grid._scroll_animation.state() == QAbstractAnimation.State.Running
+
+    grid.verticalScrollBar().setValue(grid.verticalScrollBar().value() - 40)
+    settle(SLICE_SECONDS)
+
+    assert grid._scroll_animation.state() == QAbstractAnimation.State.Stopped
+
+
+def test_resizing_does_not_scroll_the_grid_around(
+    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+) -> None:
+    """拖窗口是连续事件，不能每变一次宽度就放一次滚动过渡。"""
+    grid = scrollable_grid(qt_app, tmp_path)
+    settle(SETTLE_SECONDS)
+
+    grid.resize(900, 800)
+    settle(SLICE_SECONDS)
+
+    assert grid._scroll_animation.state() == QAbstractAnimation.State.Stopped
