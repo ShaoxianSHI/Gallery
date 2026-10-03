@@ -29,6 +29,7 @@ from PySide6.QtGui import QMouseEvent, QPalette  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
     QMenu,
+    QToolButton,
     QWidget,
 )
 from waiting import DEFAULT_TIMEOUT_SECONDS  # noqa: E402
@@ -633,6 +634,37 @@ def test_the_breadcrumb_says_the_search_spans_the_library(
     window.go_up()  # 撤掉那一条条件
     _settle(qt_app, window)
     assert _trail(window) == ["照片", "旅行", "2024"], "撤光条件就该回到原来那一层"
+    window.close()
+
+
+def test_the_library_name_stays_a_link_while_searching(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """检索时点库名就该退回相册浏览。
+
+    当前所在是「搜索结果」那一段，不是库名 —— 于是库名与路径上的其它段一样该能点。
+    把它画成不可点的当前层，用户就只剩「把条件一条条撤光」这一条路走得回去。
+    """
+    root = _library(tmp_path, make_photo)
+    window = _open(qt_app, root, tmp_path / "会话", browse_mode=BROWSE_MODE_ALBUMS)
+    _settle(qt_app, window)
+    window.enter_folder(root / "旅行" / "2024")
+    _settle(qt_app, window)
+    _search(qt_app, window, "山")
+    _settle(qt_app, window)
+
+    links = [b for b in window._breadcrumb.findChildren(QToolButton) if b.text() == "照片"]
+    assert len(links) == 1, "检索时库名也该是可点的链接（当前所在是「搜索结果」）"
+
+    links[0].click()
+    _settle(qt_app, window)
+
+    assert window._conditions == [], "点库名就是退出检索"
+    assert window._current_dir == root
+    assert _trail(window) == ["照片"]
+    assert sorted(_names(window)) == ["旅行", "海边-01.jpg", "海边-02.jpg"], (
+        "回到的是库根那一层（相册卡片 + 散着的照片），不是检索结果"
+    )
     window.close()
 
 

@@ -22,7 +22,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QItemSelectionModel  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import QApplication, QToolButton  # noqa: E402
 from waiting import DEFAULT_TIMEOUT_SECONDS
 
 from gallery.core.library.config import prepare_library  # noqa: E402
@@ -600,6 +600,91 @@ def test_breadcrumb_shows_the_group_name(
     _settle(qt_app, window)
 
     assert window._breadcrumb.isHidden() is False
+    window.close()
+
+
+def _crumb_segments(window: MainWindow) -> list[tuple[str, str]]:
+    """面包屑上每一段：``(文字, 是按钮还是标签)``。"""
+    out: list[tuple[str, str]] = []
+    for index in range(window._breadcrumb._layout.count()):
+        item = window._breadcrumb._layout.itemAt(index)
+        widget = item.widget() if item else None
+        if widget is not None:
+            out.append((widget.text(), "按钮" if isinstance(widget, QToolButton) else "标签"))
+    return out
+
+
+def _album_with_a_group(
+    qt_app: QApplication,
+    tmp_path: Path,
+    make_photo: Callable[..., Path],
+) -> MainWindow:
+    """开一个相册模式的窗口，停在「旅行」这一层里的「2024 年」那一组里。"""
+    root = tmp_path / "照片"
+    make_photo("三月.jpg", directory=root / "旅行")
+    prepare_library(root)
+    window = _open(
+        qt_app,
+        root,
+        session_base=tmp_path / "状态",
+        browse_mode=BROWSE_MODE_ALBUMS,
+        group_facet="captured_year",
+    )
+    _settle(qt_app, window)
+    window.enter_folder(root / "旅行")
+    _settle(qt_app, window, groups=True)
+    window.enter_group(next(group for group in _groups(window) if group.label == "2024 年"))
+    _settle(qt_app, window)
+    return window
+
+
+def test_the_album_stays_a_link_while_a_group_of_it_is_open(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path], fake_facet_source: object
+) -> None:
+    """相册底下开着分组时，面包屑上的**相册那一段仍然要能点回去**。
+
+    当前所在的是那一组，不是相册 —— 面包屑若把最后一段路径当成「当前所在」，
+    相册就被画成不可点的粗体标签，用户只能按 `Esc` 退出去。
+    """
+    window = _album_with_a_group(qt_app, tmp_path, make_photo)
+
+    assert _crumb_segments(window) == [
+        ("照片", "按钮"),
+        ("▸", "标签"),
+        ("旅行", "按钮"),
+        ("▸", "标签"),
+        ("2024 年", "标签"),
+    ], "当前所在是那一组：路径上的每一段都该是可点的链接"
+    window.close()
+
+
+def test_clicking_the_album_leaves_the_group_and_lands_on_that_album(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path], fake_facet_source: object
+) -> None:
+    """点面包屑上的相册：既退出了那一组，也回到了那个相册本身。"""
+    root = tmp_path / "照片"
+    make_photo("三月.jpg", directory=root / "旅行")
+    prepare_library(root)
+    window = _open(
+        qt_app,
+        root,
+        session_base=tmp_path / "状态",
+        browse_mode=BROWSE_MODE_ALBUMS,
+        group_facet="captured_year",
+    )
+    _settle(qt_app, window)
+    window.enter_folder(root / "旅行")
+    _settle(qt_app, window, groups=True)
+    at_album = _labels(window)
+    window.enter_group(next(group for group in _groups(window) if group.label == "2024 年"))
+    _settle(qt_app, window)
+
+    window._on_breadcrumb_requested(root / "旅行")
+    _settle(qt_app, window)
+
+    assert window._group_view is None, "点相册就是回到相册这一层，不该还留在组里"
+    assert window._current_dir == root / "旅行"
+    assert _labels(window) == at_album, "回到的是相册那一层本身"
     window.close()
 
 

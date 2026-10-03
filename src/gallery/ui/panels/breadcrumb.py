@@ -3,7 +3,9 @@
 平时只在相册模式下显示；**有筛选条件时一律显示** —— 平铺模式下那里没有文件夹可指，
 而条件总得有个地方摆。
 
-路径段除最后一段（当前所在层）外都可以点击跳回；右端那几枚条件胶囊**点文字是改**
+路径段都可以点击跳回，**只有「当前所在」那一段点不动** —— 而当前所在是路径**后面**
+跟着的那一段：开着分组时是组名，检索时是「搜索结果」，都不是路径段本身
+（见 :meth:`BreadcrumbBar.set_path`）。右端那几枚条件胶囊**点文字是改**
 （把它放回搜索框）、**点右端那个 ✕ 才是撤掉**。
 """
 
@@ -157,12 +159,19 @@ class BreadcrumbBar(QWidget):
 
         ``editing`` 是「正在输入框里改」的那一条的序号（没有就 ``None``）—— 它要看起来
         与别的胶囊不一样，否则用户按回车会突然发现多了一条而不是「原来那条被改了」。
+
+        **「当前所在」是路径后面跟着的那一段，不是路径自己最后一段。** 开着分组时
+        当前所在是那一组（「照片 ▸ 旅行 ▸ 2024 年」里，``旅行`` 只是走到组里的路），
+        检索时是「搜索结果」。于是这两种情况下路径上的每一段都是**可点的** ——
+        把相册画成不可点的当前层，用户就只能按 `Esc` 退，而 `Esc` 一次只退一层。
         """
         self._clear()
+        # 「当前所在」落在路径上，仅当后面既没有分组也没有搜索结果可指。
+        current = None if (group or conditions) else len(parts) - 1
         for index, (label, path) in enumerate(parts):
             if index:
                 self._layout.addWidget(self._separator())
-            if index == len(parts) - 1:
+            if index == current:
                 self._layout.addWidget(self._current_label(label, path))
             else:
                 self._layout.addWidget(self._segment_button(label, path))
