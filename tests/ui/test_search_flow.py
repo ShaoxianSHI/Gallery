@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (  # noqa: E402
 from waiting import DEFAULT_TIMEOUT_SECONDS  # noqa: E402
 
 from gallery.core.library.config import prepare_library  # noqa: E402
+from gallery.core.library.photos import GroupRef, PhotoRef  # noqa: E402
 from gallery.core.library.session import (  # noqa: E402
     BROWSE_MODE_ALBUMS,
     BROWSE_MODE_FLAT,
@@ -632,6 +633,35 @@ def test_the_breadcrumb_says_the_search_spans_the_library(
     window.go_up()  # 撤掉那一条条件
     _settle(qt_app, window)
     assert _trail(window) == ["照片", "旅行", "2024"], "撤光条件就该回到原来那一层"
+    window.close()
+
+
+def test_the_breadcrumb_drops_the_group_while_searching(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """检索时那一组也不报 —— 与文件夹同一个理由。
+
+    「照片 ▸ 2024 年 5 月 ▸ 搜索结果（3）」读起来是「这一组里搜到 3 张」，而检索横跨
+    整库。实测过一个**空组**：里面搜出 3 张全库照片，面包屑却还写着那个组。
+    撤光条件之后要回到原来那一组（分组状态留着，不是丢了）。
+    """
+    root = _library(tmp_path, make_photo)
+    window = _open(qt_app, root, tmp_path / "会话", browse_mode=BROWSE_MODE_ALBUMS)
+    _settle(qt_app, window)
+    photo = PhotoRef(path=root / "旅行" / "2024" / "山.jpg", size=1, mtime_ns=1)
+    window.enter_group(GroupRef(facet="camera", key="canon", label="Canon", photos=(photo,)))
+    _settle(qt_app, window)
+    assert _trail(window) == ["照片", "Canon"]
+
+    _search(qt_app, window, "jpg")
+    _settle(qt_app, window)
+
+    assert _trail(window) == ["照片", "搜索结果（3）", "文件名：jpg ✕"]
+    assert len(_names(window)) == 3, "这一组里只有一张，搜出来的却是全库三张"
+    window.go_up()  # 撤掉那一条条件
+    _settle(qt_app, window)
+    assert _trail(window) == ["照片", "Canon"], "撤光条件就该回到原来那一组"
+    assert window._group_view is not None
     window.close()
 
 

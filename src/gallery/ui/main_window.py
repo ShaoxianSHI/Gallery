@@ -3252,6 +3252,10 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             return self._model.row_of_path(Path(key[1]))
         return row_of_entry_key(self._model.entries(), key)
 
+    def _group_view_label(self) -> str | None:
+        """当前所在分组的显示名（没在分组里就是 ``None``）。"""
+        return None if self._group_view is None else self._group_view.label
+
     def _update_breadcrumb(self) -> None:
         library = self._library
         # 平铺模式下平时不显示面包屑，但**分组里必须显示**：那里没有文件夹可指，
@@ -3265,12 +3269,17 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             self._breadcrumb.hide()
             return
         if conditions:
-            # **检索时只报库名，不报当前文件夹**。检索横跨整个库（ADR 0026 决策 1），
-            # 于是在 `旅行/2024` 里搜到 4 张时，那一行若是「照片 ▸ 旅行 ▸ 2024 ▸
-            # 搜索结果（4）」，读起来就是「在这个文件夹里搜到 4 张」—— 而实际这 4 张
-            # 大半在别处。那是这一行在说一件不存在的事，比什么都不说更坏。
+            # **检索时只报库名：既不报当前文件夹，也不报当前那一组**。检索横跨整个库
+            # （ADR 0026 决策 1），于是那一行若是「照片 ▸ 旅行 ▸ 2024 ▸ 搜索结果（4）」，
+            # 读起来就是「在这个文件夹里搜到 4 张」；带着组名更糟 —— 「照片 ▸ 2024 年 5 月
+            # ▸ 搜索结果（3）」读起来是「这一组里搜到 3 张」，而那 3 张大半在别的组、别的
+            # 相册（实测：一个**空组**里搜出 3 张全库照片，面包屑还写着那个组）。
             #
-            # 范围要收窄自己加一条「#相册 …」，那一条就明明白白写在右端。
+            # 那一行在说一件不存在的事，比什么都不说更坏。范围要收窄自己加一条
+            # 「#相册 …」，那一条就明明白白写在右端。
+            #
+            # ``_group_view`` 与 ``_current_dir`` **都留着**：撤光条件之后要回到原来
+            # 那一组、那一层去（见 ``_start_scan``：条件为空时才轮到分组那条路）。
             parts = [(library.display_name, library.root)]
         else:
             parts = (
@@ -3278,7 +3287,8 @@ class MainWindow(WriteOpsMixin, QMainWindow):
                 if in_albums
                 else [(library.display_name, library.root)]
             )
-        group = self._group_view.label if self._group_view is not None else None
+        # 分组那一段同理：条件还在的时候它说的不是检索范围，而是「我进来过哪一组」。
+        group = None if conditions else self._group_view_label()
         editing = self._editing_condition if conditions else None
         self._breadcrumb.set_path(
             parts,
