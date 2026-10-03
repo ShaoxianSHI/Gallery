@@ -63,6 +63,7 @@ from gallery.core.library.search import (
     SearchCondition,
     make_condition,
     parse_input,
+    unusable_reason,
 )
 from gallery.core.library.session import (
     BROWSE_MODE_ALBUMS,
@@ -1503,12 +1504,15 @@ class MainWindow(WriteOpsMixin, QMainWindow):
 
         只说「值写坏了」的那一种（``#ISO abc``）：还在挑字段（``#相机``）不是毛病，
         空串也不是 —— 每一句多余的提示都在教用户忽略横幅。
+
+        **具体理由由 :func:`gallery.core.library.search.unusable_reason` 说**：横幅是
+        用户唯一能看见的反馈，而「要一个值」对 ``2024～2023`` 与 ``2024-13`` 是同一句话 ——
+        两种毛病要改的地方不一样。
         """
         if not isinstance(parsed, ParsedInput) or parsed.selecting or parsed.field is None:
             return
-        field = parsed.field
         self._show_banner(
-            f"「{field.label}」这一栏要一个值，例如 {field.hint or '关键词'}。"
+            f"「{parsed.field.label}」{unusable_reason(parsed.field, parsed.value)}"
             "不支持的说法不会变成一条筛选条件。"
         )
 

@@ -34,6 +34,7 @@ from gallery.core.library.search import (
     relative_folder_path,
     rows_to_refs,
     suggestions,
+    unusable_reason,
 )
 from gallery.core.metadata.facets import (
     FACET_CAMERA,
@@ -166,6 +167,126 @@ def test_dates_become_a_range() -> None:
     assert condition is not None and condition.comparator == "between"
     low, _, high = condition.value.partition("|")
     assert float(low) < float(high)
+
+
+# ---- 区间 ---------------------------------------------------------------------------
+
+
+def _bounds(condition: SearchCondition) -> tuple[float, float]:
+    """一条 ``between`` 条件 → 那两个 epoch 秒。"""
+    assert condition.comparator == "between"
+    low, _, high = condition.value.partition("|")
+    return float(low), float(high)
+
+
+def _epoch(year: int, month: int = 1, day: int = 1) -> float:
+    return datetime.datetime(year, month, day).timestamp()  # noqa: DTZ001 - 与库里的算法一致
+
+
+def test_a_range_takes_both_ends_at_their_own_granularity() -> None:
+    """``2023～2024`` 是「2023 与 2024 两年」，不是「2023 年 1 月 1 日到 2024 年 1 月 1 日」。
+
+    两端各含自己那一整段，与裸值是同一套语义 —— 于是「去年夏天」写成
+    ``2023-06 ～ 2023-08``，右边含的是 8 月 31 日那一整天。
+    """
+    years = _condition("#拍摄时间 2023～2024")
+    months = _condition("#拍摄时间 2023-06 ～ 2023-08")
+
+    assert years is not None and _bounds(years) == (_epoch(2023, 1, 1), _epoch(2025, 1, 1))
+    assert months is not None and _bounds(months) == (_epoch(2023, 6, 1), _epoch(2023, 9, 1))
+
+
+@pytest.mark.parametrize(
+    "typed",
+    [
+        "#拍摄时间 2023～2024",
+        "#拍摄时间 2023 ～ 2024",
+        "#拍摄时间  2023～2024 ",
+        "#拍摄时间 2023 ～2024",
+    ],
+)
+def test_spaces_around_the_separator_do_not_matter(typed: str) -> None:
+    """``～`` 前后有没有空格是用户手指的事，不是语义的事。"""
+    condition = _condition(typed)
+
+    assert condition is not None
+    assert _bounds(condition) == (_epoch(2023, 1, 1), _epoch(2025, 1, 1))
+
+
+def test_a_range_reaches_the_modified_time_too() -> None:
+    """``#修改时间`` 走同一个解析器，只是落库时把秒换成纳秒 —— 那一步值得单独钉一次。"""
+    condition = _condition("#修改时间 2023～2024")
+
+    assert condition is not None and condition.comparator == "between"
+    sql, values = build_query([condition])
+    assert "p.mtime_ns" in sql
+    # 纳秒 = 秒 × 1e9，否则「2023 年改过的照片」会一条都查不到。
+    assert values == [_epoch(2023, 1, 1) * 1e9, _epoch(2025, 1, 1) * 1e9]
+
+
+def test_a_range_can_be_put_back_into_the_box() -> None:
+    """胶囊放回搜索框再敲一遍，得到的是**同一条** —— 两端的空格也算进原文。"""
+    condition = _condition("#拍摄时间 2023 ～ 2024")
+
+    assert condition is not None
+    again = _condition(condition.as_input)
+    assert again is not None
+    assert (again.field.id, again.value) == (condition.field.id, condition.value)
+
+
+@pytest.mark.parametrize(
+    "typed",
+    [
+        "#拍摄时间 2024～2023",  # 写反了
+        "#拍摄时间 2024～2024",  # 两端同一段：那不是一段区间
+        "#拍摄时间 2023～",  # 缺一端
+        "#拍摄时间 ～2023",
+        "#拍摄时间 >2023～2024",  # 区间里不认比较符
+        "#拍摄时间 2023～2024～2025",  # 三个分隔符
+        "#拍摄时间 2023~2024",  # 半角波浪线不是那个波浪线
+    ],
+)
+def test_a_range_is_refused_rather_than_half_honoured(typed: str) -> None:
+    """宁可提交不了，也不要收下一条意思不明的条件。
+
+    收下了会怎样：``2024～2023`` 生成的 SQL 是 ``>= 大的 AND < 小的``，于是**安静地
+    返回 0 条** —— 与「条件太严」长得一模一样，正是最该避免的那种假答案。
+    """
+    assert _condition(typed) is None
+
+
+def test_a_day_that_does_not_exist_is_refused_rather_than_raised() -> None:
+    """``2023-02-30`` 光看「日 ≤ 31」是过得去的，真去造日期才会炸。
+
+    炸出去的地方是界面上的回车（:func:`make_condition` 是在槽里调用的），于是用户只看到
+    「按了回车什么也没发生」。解析不了就是解析不了，不该是一段栈。
+    """
+    for typed in ("#拍摄时间 2023-02-30", "#拍摄时间 2023-02-29", "#拍摄时间 2023-04-31"):
+        assert _condition(typed) is None, typed
+    # 平年的 2 月 29 日不存在，闰年的那一张存在 —— 别把这个判反了。
+    assert _condition("#拍摄时间 2024-02-29") is not None
+
+
+# ---- 横幅上那句话 -----------------------------------------------------------------
+
+
+def test_a_reversed_range_says_which_end_is_wrong() -> None:
+    """横幅是用户唯一能看见的反馈，「要一个值」对两种毛病说的是同一句话。"""
+    field = match_field("拍摄时间")
+    assert field is not None
+
+    assert "起始要写在前面" in unusable_reason(field, "2024～2023")
+    assert "起始要写在前面" not in unusable_reason(field, "2024-13")
+
+
+def test_the_date_hint_names_the_range_syntax() -> None:
+    """日期那一族做不出更细的理由，于是至少把能写什么说出来（其余各栏照旧用 hint）。"""
+    field = match_field("拍摄时间")
+    iso = match_field("ISO")
+    assert field is not None and iso is not None
+
+    assert "2023～2024" in unusable_reason(field, "瞎写")
+    assert "1600" in unusable_reason(iso, "abc")
 
 
 def test_an_album_is_normalised() -> None:
@@ -377,6 +498,31 @@ def test_a_capture_date_finds_the_photos_taken_then(tmp_path: Path, make_photo) 
     # 带比较符时取的是**那一段之外**：`>2023` 是「晚于 2023 年年底」，于是落在 2024 年的
     # 那张被选中，2023 年那张不是 —— 这条钉住的是比较符那一支，不是区间那一支。
     assert _names(library.search_photos([_condition("#拍摄时间 >2023")]).refs) == ["山.jpg"]  # type: ignore[list-item]
+
+
+def test_a_capture_range_spans_both_ends_of_the_years_it_names(tmp_path: Path, make_photo) -> None:
+    """``2023～2024`` 在真库上要真的把那两年都圈进来 —— 两端各含自己那一整段。"""
+    library = _library(tmp_path, make_photo)
+    library.index_photos()
+    by_name = {ref.name: ref for ref in library.iter_photos()}
+    library.facet_index.store(
+        [
+            (by_name["海边-01.jpg"], _taken_in(2022, 12, 31)),
+            (by_name["海边-02.jpg"], _taken_in(2023, 1, 1)),
+            (by_name["海边-03.jpg"], _taken_in(2024, 12, 31)),
+            (by_name["山.jpg"], _taken_in(2025, 1, 1)),
+        ]
+    )
+
+    # 头一年元旦与末一年年底都**在**区间里，紧挨着的那两天不在。
+    assert _names(library.search_photos([_condition("#拍摄时间 2023～2024")]).refs) == [  # type: ignore[list-item]
+        "海边-02.jpg",
+        "海边-03.jpg",
+    ]
+    # 缩到月，两头仍各含整月。
+    assert _names(library.search_photos([_condition("#拍摄时间 2024-11 ～ 2024-12")]).refs) == [  # type: ignore[list-item]
+        "海边-03.jpg"
+    ]
 
 
 #: 每种 ``kind`` 取一个**能解析成功**的样例值：守护测试要的是把每个字段都真的查一遍，

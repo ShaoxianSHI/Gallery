@@ -59,6 +59,13 @@ type SearchKind = Literal["name", "album", "format", "text", "size", "number", "
 #: 条件的比较方式。空串是「等于」，于是相等那一档不必另写一份 SQL。
 COMPARATORS: Final = ("", "=", ">", ">=", "<", "<=")
 
+#: 一段区间两端之间的分隔符：``2023～2024``。
+#:
+#: **全角，而且只认这一个**。日期本身就带半角连字符（``2023-05``），多认几种分隔符只会
+#: 让「为什么这条没生效」更难猜 —— 用户敲了半角 ``~`` 却没生效时，没人会去猜是全角的问题。
+#: 两侧的空格由 :func:`_period` 各自 ``strip`` 掉，于是 ``2023 ～ 2024`` 一样认。
+RANGE_SEPARATOR: Final = "～"
+
 
 @dataclass(frozen=True, slots=True)
 class SearchField:
@@ -295,6 +302,27 @@ def make_condition(parsed: ParsedInput) -> SearchCondition | None:
     return _condition(parsed.field, parsed.value)
 
 
+def unusable_reason(field: SearchField, value: str) -> str:
+    """这句话为什么变不成一条条件 —— 界面横幅照它说一句中文（不套「要一个值」那种话）。
+
+    :func:`make_condition` 返回 ``None`` 时界面唯一能说的话就是这一句，所以**说得具体
+    是这里唯一的指望**：``2024～2023`` 与 ``2024-13`` 要改的地方完全不一样，而用户看得见
+    的只有横幅。日期这一族因此说得比别的字段细，其余各栏用一句通用的话。
+
+    **判据与 :func:`_is_reversed` 共用同一处**（「什么算写反了」不该有两份定义）。
+    """
+    if field.kind == "datetime":
+        pieces = value.split(RANGE_SEPARATOR)
+        if len(pieces) == 2 and _is_reversed(*pieces):
+            left, right = (piece.strip() for piece in pieces)
+            return f"的区间写反了：「{left}」在「{right}」后面，起始要写在前面。"
+        return (
+            "要一个日期：2024、2024-05、2024-05-16；"
+            f"要一段区间就写成 2023{RANGE_SEPARATOR}2024（{RANGE_SEPARATOR} 前后可以有空格）。"
+        )
+    return f"这一栏要一个值，例如 {field.hint or '关键词'}。"
+
+
 def _condition(field: SearchField, text: str) -> SearchCondition | None:
     value = text.strip()
     if not value:
@@ -376,29 +404,35 @@ def _parse_size(text: str) -> tuple[str, str] | None:
 
 
 def _parse_datetime(text: str) -> tuple[str, str] | None:
-    """``2024`` / ``2024-05`` / ``2024-05-16`` → 那一段的时间区间。
+    """``2024`` / ``2024-05`` / ``2024-05-16`` / ``2023～2024`` → 那一段的时间区间。
 
     **不带比较符时取的是「那一段之内」**：``#拍摄时间 2024`` 是「2024 年拍的」，
     而不是「大于 2024」。带 ``>`` / ``<`` 时才取它的一侧。
+
+    ``2023～2024`` 是**两端各含自己那一整段**：左边从 2023 年元旦起，右边到 2024 年
+    12 月 31 日为止 —— 与裸值是同一套语义，于是 ``2023～2024`` 就是「2023 与 2024 两年」，
+    而 ``2023-05 ～ 2023-08`` 是那三个月。``～`` 前后的空格无所谓。
+
+    **区间里不认比较符**（``>2023～2024`` 提交不了）：要单边就用 ``>`` / ``<``，
+    一句话里塞两个比较符说的是两件不同的事。
     """
+    pieces = text.split(RANGE_SEPARATOR)
+    if len(pieces) > 2:
+        return None
+    if len(pieces) == 2:
+        # 「什么算写反了」只有 :func:`_is_reversed` 一处定义 —— 界面要靠它说那句话，
+        # 这里要靠它收下条件；两边各判一次，迟早判成两样。
+        if _is_reversed(*pieces):
+            return None
+        low, high = _period(pieces[0]), _period(pieces[1])
+        if low is None or high is None:  # pragma: no cover - _is_reversed 已经排除过
+            return None
+        return "between", f"{low[0].timestamp()}|{high[1].timestamp()}"
     comparator, body = _split_comparator(text)
-    match = _DATE.match(body.strip())
-    if match is None:
+    period = _period(body)
+    if period is None:
         return None
-    year = int(match.group(1))
-    month = int(match.group(2)) if match.group(2) else None
-    day = int(match.group(3)) if match.group(3) else None
-    if month is not None and not 1 <= month <= 12:
-        return None
-    if day is not None and not 1 <= day <= 31:
-        return None
-    start = datetime.datetime(year, month or 1, day or 1)  # noqa: DTZ001 - 按本机时间
-    if day is not None:
-        stop = start + datetime.timedelta(days=1)
-    elif month is not None:
-        stop = _add_months(start, 1)
-    else:
-        stop = _add_months(start, 12)
+    start, stop = period
     if comparator in ("", "="):
         return "between", f"{start.timestamp()}|{stop.timestamp()}"
     if comparator == ">":
@@ -408,6 +442,49 @@ def _parse_datetime(text: str) -> tuple[str, str] | None:
     if comparator == "<":
         return "<", _number_text(start.timestamp())
     return "<=", _number_text(stop.timestamp())
+
+
+def _period(text: str) -> tuple[datetime.datetime, datetime.datetime] | None:
+    """一段日期 → 它那一段的起止（左闭右开）。写不成一个日期就是 ``None``。
+
+    **只写了哪几级，段就有多长**：``2024`` 是一整年、``2024-05`` 是一整个月、
+    ``2024-05-16`` 是那一天 —— 于是「那一段之内」这句话有确定的落点。
+
+    **不存在的日子返回 ``None`` 而不是抛**：``2023-02-30``（或平年里的 2 月 29 日）
+    光看「1 <= 日 <= 31」是过得去的，真去造 ``datetime`` 才会炸，而炸出去的地方是
+    界面上的回车 —— 那时候用户只看到「按了回车什么也没发生」。
+    """
+    match = _DATE.match(text.strip())
+    if match is None:
+        return None
+    year = int(match.group(1))
+    month = int(match.group(2)) if match.group(2) else None
+    day = int(match.group(3)) if match.group(3) else None
+    if month is not None and not 1 <= month <= 12:
+        return None
+    if day is not None and not 1 <= day <= 31:
+        return None
+    try:
+        start = datetime.datetime(year, month or 1, day or 1)  # noqa: DTZ001 - 按本机时间
+    except ValueError:
+        return None
+    if day is not None:
+        stop = start + datetime.timedelta(days=1)
+    elif month is not None:
+        stop = _add_months(start, 1)
+    else:
+        stop = _add_months(start, 12)
+    return start, stop
+
+
+def _is_reversed(left: str, right: str) -> bool:
+    """区间两端是不是写反了（写不成日期的那一种不算「反了」，那是另一种毛病）。
+
+    界面要靠它说一句人话（见 :func:`unusable_reason`），而判据只有这一处 ——
+    两边各判一次，迟早会把「什么算反了」判成两样。
+    """
+    low, high = _period(left), _period(right)
+    return low is not None and high is not None and low[0] >= high[0]
 
 
 def _split_comparator(text: str) -> tuple[str, str]:
@@ -556,6 +633,7 @@ def relative_folder_path(root: Path, path: Path) -> str:
 __all__ = [
     "COMPARATORS",
     "DEFAULT_FIELD",
+    "RANGE_SEPARATOR",
     "RESULT_LIMIT",
     "SEARCH_FIELDS",
     "ParsedInput",
@@ -572,4 +650,5 @@ __all__ = [
     "relative_folder_path",
     "rows_to_refs",
     "suggestions",
+    "unusable_reason",
 ]
