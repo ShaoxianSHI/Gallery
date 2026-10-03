@@ -375,14 +375,14 @@ class PhotoDelegate(QStyledItemDelegate):
 
             pixmap = index.data(Qt.ItemDataRole.DecorationRole)
             if isinstance(pixmap, QPixmap) and not pixmap.isNull():
-                # 照片落的那一块算一次、两处共用：缩略图按它画，角标也钉在**它的**
-                # 左上角（见 :meth:`_draw_badge`）。
+                # 照片落的那一块算一次：缩略图按它画（角标仍钉取景框角，见
+                # :meth:`_draw_badge`）。
                 photo = self.target_rect(image_rect, pixmap)
                 self._draw_thumbnail(painter, photo, pixmap)
                 if is_album:
-                    self._draw_album_badge(painter, photo)
+                    self._draw_album_badge(painter, image_rect)
                 elif is_group:
-                    self._draw_group_badge(painter, photo, str(index.data(GROUP_COUNT_ROLE)))
+                    self._draw_group_badge(painter, image_rect, str(index.data(GROUP_COUNT_ROLE)))
             elif is_album or is_group:
                 self._draw_folder_glyph(painter, image_rect, highlight)
             else:
@@ -474,30 +474,35 @@ class PhotoDelegate(QStyledItemDelegate):
         painter.drawRoundedRect(tab, 3, 3)
         painter.drawRoundedRect(box, 4, 4)
 
-    def _draw_group_badge(self, painter: QPainter, photo: QRect, count: str) -> None:
-        """分组卡片：封面左上角盖一个张数徽标（相册盖的是「相册」两个字）。
+    def _draw_group_badge(self, painter: QPainter, frame: QRect, count: str) -> None:
+        """分组卡片：左上角盖一个张数徽标（相册盖的是「相册」两个字）。
 
         用封面而不是文件夹图形当分组卡片的正脸 —— 组里照片长什么样比「这里有一堆」
         更值得看一眼；封面还没到时才退回文件夹图形。
         """
-        self._draw_badge(painter, photo, count)
+        self._draw_badge(painter, frame, count)
 
-    def _draw_album_badge(self, painter: QPainter, photo: QRect) -> None:
-        """有封面的相册：封面左上角盖一个「相册」小标签。"""
-        self._draw_badge(painter, photo, "相册")
+    def _draw_album_badge(self, painter: QPainter, frame: QRect) -> None:
+        """有封面的相册：左上角盖一个「相册」小标签。"""
+        self._draw_badge(painter, frame, "相册")
 
-    def _draw_badge(self, painter: QPainter, photo: QRect, text: str) -> None:
-        """在**照片的**左上角盖一个小标签。
+    def _draw_badge(self, painter: QPainter, frame: QRect, text: str) -> None:
+        """在**取景框**左上角盖一个小标签。
 
-        钉照片而不是钉取景框（那圈留白的内边界）：切档时取景框的背景与留白不属于
-        任何一张图，钉在上面的话角标在切换那一刻就已经站在终态上，只有照片还在
-        长 —— 它是「格子的位置一下就跳到位」那份观感里最容易被看见的一处。钉在
-        照片上，角标就跟着照片一起挪、一起长。
+        钉取景框而不是钉照片：照片在框里按比例居中，横竖封面的左边缘因此落在不同的
+        横坐标上；跟着照片走，一屏卡片的角标就参差不齐了。钉框角则**所有卡片都在同
+        一处**，密排时整齐。
+
+        代价是封面不是正方形时角标会落在照片之外的留白上（横封面在照片上方、竖封面
+        在照片左边）—— 这是为了整齐认下的取舍。
+
+        与切档过渡无关：取景框的矩形本身跟着动画插值（见
+        :meth:`PhotoDelegate.cell_rect`），所以钉框角的角标照样跟着卡片一起挪、一起长。
         """
         metrics = painter.fontMetrics()
         width = metrics.horizontalAdvance(text) + 12
         height = metrics.height() + 4
-        badge = QRect(photo.left() + 4, photo.top() + 4, width, height)
+        badge = QRect(frame.left() + 4, frame.top() + 4, width, height)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor(0, 0, 0, 150))
         painter.drawRoundedRect(badge, 6, 6)

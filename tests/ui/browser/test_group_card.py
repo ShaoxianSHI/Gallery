@@ -105,10 +105,10 @@ def test_badge_text_is_the_photo_count(tmp_path: Path, qt_app: QApplication) -> 
     assert model.data(model.index(0, 0), int(Qt.ItemDataRole.DisplayRole)) == "海边"
 
 
-#: 窄条封面（高瘦）：取景框里左右会留出一大片背景，角标钉在哪一角一看就分得出来。
-NARROW_COVER = QSize(20, 60)
+#: 两种封面形状：一竖一横。取景框角是同一个点，照片角则跟着封面形状跑。
+COVER_SHAPES = ((20, 60), (60, 20))
 
-#: 封面颜色取**亮**色：暗色会被 :func:`_dark_pixels` 一起数进去，量角标就量不准了。
+#: 封面颜色取**亮**色：暗色会被一起数进「角标」里，量角标就量不准了。
 LIGHT_COVER = QColor(240, 232, 220)
 
 #: 「这个像素算角标」的亮度上限。角标底是 ``QColor(0, 0, 0, 150)`` 压在浅色封面上，
@@ -116,63 +116,69 @@ LIGHT_COVER = QColor(240, 232, 220)
 BADGE_LIGHTNESS = 120
 
 
-def badge_columns(pixmap: QPixmap, *, top: int, bottom: int) -> list[int]:
-    """``top``~``bottom`` 那几行里所有「算角标」的像素的横坐标。
+def badge_corner(pixmap: QPixmap, frame: QRect) -> tuple[int, int]:
+    """角标左上角在图里的 ``(x, y)``。
 
-    必须限定行范围：卡片底下还有一行文件名，那串字也是深色的，一起数进来就量不出角标
-    在哪一角了。
+    只在**取景框顶部那一条**里找：卡片底下还有一行文件名，那串字也是深色的，一起数
+    进来就量不出角标在哪一角了。横封面的照片本来就在框的中间偏下，竖封面的照片会顶
+    到框外，所以那一条里除了角标没有别的深色东西。
     """
     image = pixmap.toImage()
-    return [
-        x
-        for y in range(max(0, top), min(image.height(), bottom))
+    bottom = min(image.height(), frame.top() + 40)
+    hits = [
+        (x, y)
+        for y in range(max(0, frame.top() - 2), bottom)
         for x in range(image.width())
         if image.pixelColor(x, y).lightness() < BADGE_LIGHTNESS
     ]
+    assert hits, f"取景框左上角那一条（y={frame.top()}~{bottom}）里没有角标 —— 它不在框角上"
+    return min(x for x, _ in hits), min(y for _, y in hits)
 
 
-def test_the_badge_sits_on_the_photo_not_on_the_frame(tmp_path: Path, qt_app: QApplication) -> None:
-    """角标钉在**照片**的左上角，不是取景框（那圈留白）的左上角。
-
-    钉取景框的话，切档那一刻角标就已经站在终态上、只有照片还在长 —— 「格子的位置一下
-    就跳到位」那份观感里最显眼的一处就是它（角标只在相册/分组卡片上有）。钉照片上，
-    它才跟着照片一起挪、一起长。
-
-    用窄封面来量：照片居中之后左边留着一大片背景，两种钉法的横坐标差着几十像素。
-    """
-    del qt_app  # QPixmap 要有一个 QGuiApplication 才活得下来
-    photo = PhotoRef(path=tmp_path / "封面.jpg", size=10, mtime_ns=1)
+def _group_card_with_cover(
+    tmp_path: Path, shape: tuple[int, int], name: str
+) -> tuple[QPixmap, QRect]:
+    """画一张有封面的分组卡片，返回 ``(画面, 取景框)``。"""
+    photo = PhotoRef(path=tmp_path / name, size=10, mtime_ns=1)
     model = _group_model(tmp_path, (photo,))
-    cover = QImage(NARROW_COVER, QImage.Format.Format_RGB32)
+    cover = QImage(QSize(*shape), QImage.Format.Format_RGB32)
     cover.fill(LIGHT_COVER)
     model.set_thumbnail(photo.path, cover)
-
     painted = _paint(model, 0)
-    assert painted is not None and not painted.isNull()
-
-    pixmap = model.thumbnail_pixmap(photo.path)
-    assert pixmap is not None
     option = QStyleOptionViewItem()
     option.rect = QRect(0, 0, painted.width(), painted.height())
-    delegate = PhotoDelegate(icon_edge=ICON_EDGE)
-    image_rect = option.rect.adjusted(3, 3, -3, -3).adjusted(
+    frame = option.rect.adjusted(3, 3, -3, -3).adjusted(
         PhotoDelegate.PADDING,
         PhotoDelegate.PADDING,
         -PhotoDelegate.PADDING,
         -(PhotoDelegate.PADDING + PhotoDelegate.LABEL_HEIGHT),
     )
-    photo_rect = delegate.target_rect(image_rect, pixmap)
-    assert photo_rect.width() < image_rect.width() // 2, (
-        f"前提没摆出来：封面该是窄的，照片 {photo_rect} 对取景框 {image_rect}"
-    )
+    return painted, frame
 
-    # 只看照片顶部那一条：角标就钉在那里，而文件名在卡片底部（也是一片深色）。
-    columns = badge_columns(painted, top=photo_rect.top(), bottom=photo_rect.top() + 34)
-    assert columns, "没找到角标，测试没搭对"
-    left = min(columns)
-    assert left >= photo_rect.left(), (
-        f"角标从 x={left} 起，而照片从 x={photo_rect.left()} 起 —— 它钉在取景框角上了"
+
+def test_the_badge_keeps_the_same_corner_whatever_the_cover_shape(
+    tmp_path: Path, qt_app: QApplication
+) -> None:
+    """角标钉在**取景框**左上角：封面是横是竖，它都落在同一处。
+
+    照片在取景框里按比例居中，横封面的左边缘与竖封面的左边缘差着几十像素 —— 角标
+    跟着照片走的话，一屏卡片的角标就参差不齐了（这是当初钉框角的理由）。所以这条
+    同时盯两件事：两种封面量出来的角标**必须重合**，而且就在框角 ``+4`` 那里。
+
+    钉回照片角这条必红：两种形状量出来的横坐标会差开。
+    """
+    del qt_app  # QPixmap 要有一个 QGuiApplication 才活得下来
+    corners = []
+    for index, shape in enumerate(COVER_SHAPES):
+        painted, frame = _group_card_with_cover(tmp_path, shape, f"封面{index}.jpg")
+        corners.append((badge_corner(painted, frame), frame))
+
+    (first, first_frame), (second, second_frame) = corners
+    assert first == second, (
+        f"封面 {COVER_SHAPES[0]} 的角标在 {first}，{COVER_SHAPES[1]} 的在 {second} —— "
+        "它跟着封面的形状跑了（那是钉照片角）"
     )
-    assert left <= photo_rect.left() + 12, (
-        f"角标从 x={left} 起，照片左边在 x={photo_rect.left()} —— 它没钉在照片角上"
+    assert first == (first_frame.left() + 4, first_frame.top() + 4), (
+        f"角标在 {first}，取景框角在 {first_frame.topLeft()} —— 它没钉在框角上"
     )
+    assert second_frame.topLeft() == first_frame.topLeft(), "两格的取景框本来就该在同一处"
