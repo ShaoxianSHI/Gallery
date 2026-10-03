@@ -1,17 +1,21 @@
-"""切档动画的回归测试。
+"""切档过渡的回归测试。
 
-动画的**全部意义**就是「别跳变」，所以这里量的是它有没有真的走过中间值 ——
+过渡的**全部意义**就是「别跳变」，所以这里量的是它有没有真的走过中间值 ——
 只断言首尾两端的话，一个「什么都不做、只是把两个端点各画一次」的实现也能全绿。
 
 更要紧的是它**不许**做的事，那才是这个方案的全部约束所在（理由写在
-:func:`grid._animate_draw_edge` 的文档里）：
+:func:`grid._start_transition` 的文档里）：
 
-- 几何（``gridSize`` / :attr:`PhotoGrid.icon_edge`）**一步到位**。跟着动画走就意味着
-  每帧一次全量 ``doItemsLayout``，几万条目的库会直接卡住。
-- ``icon_edge_changed`` 只能发**最终**的整数边长。跟着动画走等于按几十个中间尺寸
-  各要一遍缩略图，:mod:`gallery.ui.browser.thumb_sizes` 那条「离散档位 ⇒ 缓存组合
+- 几何（``gridSize`` / :attr:`PhotoGrid.icon_edge` / ``visualRect``）**一步到位**。
+  跟着过渡走就意味着每帧一次全量 ``doItemsLayout``，几万条目的库会直接卡住；
+  格子从旧位飞到新位是**委托侧画的时候平移**出来的，不是真的重排。
+- ``icon_edge_changed`` 只能发**最终**的整数边长。跟着过渡走等于按几十个中间尺寸
+  各要一遍缩略图，:mod:`gallery.ui.browser.thumb_sizes` 里那条「离散档位 ⇒ 缓存组合
   稳定」的不变量当场作废。
-- 拖窗口**不**放动画。那是连续事件，每次宽度变化放一次就是永远在重绘。
+- 拖窗口**不**放过渡。那是连续事件，每次宽度变化放一次就是永远在重绘。
+
+代价是有 160ms 画面几何 ≠ 逻辑几何。这条不一致由「任何交互都立刻落位」兜底
+（见 :func:`grid._cancel_transition`），所以也测它。
 """
 
 from __future__ import annotations
@@ -27,17 +31,31 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from grid_helpers import make_grid  # noqa: E402
-from PySide6.QtCore import QAbstractAnimation, QPoint, QRect, QSize  # noqa: E402
-from PySide6.QtGui import QPixmap  # noqa: E402
-from PySide6.QtWidgets import QAbstractItemView, QApplication  # noqa: E402
+from PySide6.QtCore import (  # noqa: E402
+    QAbstractAnimation,
+    QPoint,
+    QRect,
+    QSize,
+    Qt,
+)
+from PySide6.QtGui import QColor, QImage, QPainter, QPixmap  # noqa: E402
+from PySide6.QtTest import QTest  # noqa: E402
+from PySide6.QtWidgets import (  # noqa: E402
+    QAbstractItemView,
+    QApplication,
+    QStyleOptionViewItem,
+)
 
+from gallery.core.library.photos import PhotoRef  # noqa: E402
 from gallery.ui.browser.grid import (  # noqa: E402
     EDGE_ANIMATION_MIN_DELTA,
     EDGE_ANIMATION_MS,
     GRID_PADDING_X,
+    GridTransition,
     PhotoDelegate,
     PhotoGrid,
 )
+from gallery.ui.browser.model import PhotoListModel  # noqa: E402
 from gallery.ui.browser.thumb_sizes import THUMBNAIL_SIZES  # noqa: E402
 
 #: 每一步转多少秒。分片是为了在动画跑到一半时取样，而不是一口跑到结束。
@@ -124,7 +142,7 @@ def test_resizing_the_window_does_not_animate(
     grid.resize(900, 800)
     settle(SLICE_SECONDS)
 
-    assert grid._draw_animation.state() == QAbstractAnimation.State.Stopped
+    assert grid._transition_anim.state() == QAbstractAnimation.State.Stopped
     assert grid._delegate.draw_edge == float(grid.icon_edge), "窗口一变就该直接落位"
 
 
@@ -140,17 +158,17 @@ def test_a_change_too_small_to_see_does_not_animate(
         QSize(cell.width() + EDGE_ANIMATION_MIN_DELTA - 2, cell.height() + 3), animate=True
     )
 
-    assert grid._draw_animation.state() == QAbstractAnimation.State.Stopped
+    assert grid._transition_anim.state() == QAbstractAnimation.State.Stopped
     assert grid._delegate.draw_edge == float(grid.icon_edge)
 
 
 def test_two_steps_in_a_row_do_not_jump_to_the_discarded_size(
     qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
 ) -> None:
-    """连点两档时，绘制尺寸从**当前**那一帧接着走，不先跳去被放弃的那一档。
+    """连点两档时不接第二段过渡 —— 画面会先蹿去用户已经放弃的那一档。
 
-    动画起点取的是「上一帧画出来的」尺寸而不是几何尺寸，就是为这个场景：上一段
-    动画多半还没跑完，两个值不等。
+    上一段没跑完时，它的「旧布局」已经不是这一段的旧布局了，拿它当起点就是往回跳。
+    直接落到最终那档，反而更贴近连按两下的人想要的结果。
     """
     grid = make_grid(qt_app, tmp_path, 40)
     settle(SETTLE_SECONDS)
@@ -159,8 +177,9 @@ def test_two_steps_in_a_row_do_not_jump_to_the_discarded_size(
     grid.set_target_edge(THUMBNAIL_SIZES[2])
     grid.set_target_edge(THUMBNAIL_SIZES[0])
 
-    assert grid._delegate.draw_edge == before, "不该先跳去中间那一档"
-    assert grid.icon_edge < float(before), "几何一步到位，直接变成最小的��一档"
+    assert grid._transition_anim.state() == QAbstractAnimation.State.Stopped
+    assert grid._delegate.draw_edge == float(grid.icon_edge), "该直接落在最终那一档"
+    assert grid.icon_edge < before, "而且该是用户最后要的那一档"
 
 
 def test_the_delegate_draws_at_the_animated_size_but_keeps_its_geometry(
@@ -231,22 +250,21 @@ def test_the_grid_scrolls_into_place_instead_of_jumping(
 def test_a_scroll_start_beyond_the_new_range_is_clamped(
     qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
 ) -> None:
-    """交给动画的起点必须落在滚动条自己的范围里。
+    """交给动画的滚动起点必须落在滚动条自己的范围里。
 
     列数变多时内容变矮、旧位置超出新范围，不夹的话插值中途会被 ``maximum()`` 削平 ——
     动画先平一段再动，比不动画还难看。而这个毛病**从取样里看不出来**（Qt 会替你夹，
-    取到的值永远合法），所以只能直接查喂给动画的那个起点。
+    取到的值永远合法），所以只能直接查 ``_start_transition`` 存下来的那个起点。
     """
     grid = scrollable_grid(qt_app, tmp_path)
     settle(SETTLE_SECONDS)
-    grid.set_target_edge(THUMBNAIL_SIZES[2])
-    settle(SETTLE_SECONDS)
+    grid.set_target_edge(THUMBNAIL_SIZES[2])  # 过渡正在跑
+    assert grid._transition_anim.state() == QAbstractAnimation.State.Running
 
     bar = grid.verticalScrollBar()
-    grid._animate_scroll(bar.maximum() + 5000, animate=True)
+    grid._start_transition(grid._delegate.draw_edge, bar.maximum() + 5000, animate=True)
 
-    assert float(grid._scroll_animation.startValue()) <= bar.maximum()
-    assert grid._scroll_animation.state() == QAbstractAnimation.State.Running
+    assert grid._scroll_from <= bar.maximum()
 
 
 def test_a_scroll_of_your_own_cancels_the_transition(
@@ -261,12 +279,12 @@ def test_a_scroll_of_your_own_cancels_the_transition(
     settle(SETTLE_SECONDS)
 
     grid.set_target_edge(THUMBNAIL_SIZES[2])
-    assert grid._scroll_animation.state() == QAbstractAnimation.State.Running
+    assert grid._transition_anim.state() == QAbstractAnimation.State.Running
 
     grid.verticalScrollBar().setValue(grid.verticalScrollBar().value() - 40)
     settle(SLICE_SECONDS)
 
-    assert grid._scroll_animation.state() == QAbstractAnimation.State.Stopped
+    assert grid._transition_anim.state() == QAbstractAnimation.State.Stopped
 
 
 def test_resizing_does_not_scroll_the_grid_around(
@@ -279,4 +297,199 @@ def test_resizing_does_not_scroll_the_grid_around(
     grid.resize(900, 800)
     settle(SLICE_SECONDS)
 
-    assert grid._scroll_animation.state() == QAbstractAnimation.State.Stopped
+    assert grid._transition_anim.state() == QAbstractAnimation.State.Stopped
+
+
+# ---- 格子的位置插值 --------------------------------------------------------
+
+
+def test_a_reflow_moves_the_cells_and_their_offsets_differ_per_row(
+    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+) -> None:
+    """换行重排时每一格的位移不同，插值得按行算而不是整屏平移一个数。
+
+    用 6 列 → 4 列这个真实场景：同一行的第 0 格只往右挪，第 1 格往右上，
+    而换行的那几格要跨一整行。
+    """
+    grid = scrollable_grid(qt_app, tmp_path)
+    settle(SETTLE_SECONDS)
+
+    grid.set_target_edge(THUMBNAIL_SIZES[2])
+    transition = grid._transition
+    assert transition is not None
+    assert transition.reflows, "6 列变 4 列就是重排"
+
+    offsets = {row: transition.offset(row, 0.0) for row in range(0, 24)}
+    assert len(set(offsets.values())) > 1, "整屏平移一个数那是错的，位移逐行都不同"
+    assert offsets[1] != offsets[5], "同一行里的两格横向位移也不一样"
+
+
+def test_the_first_frame_lands_exactly_where_the_cells_used_to_be(
+    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+) -> None:
+    """第 0 帧必须**正好**是切换前的位置，一个像素都不许差。
+
+    两端的列数是量出来的（不是按公式算的），所以这条同时也在盯着「量错了就整体
+    漂移」那个很难查的毛病。逐行比对，漂 1 像素也照样红。
+    """
+    grid = scrollable_grid(qt_app, tmp_path)
+    settle(SETTLE_SECONDS)
+    model = grid.model()
+    assert model is not None
+    before = [grid.visualRect(model.index(row, 0)).topLeft() for row in range(24)]
+
+    grid.set_target_edge(THUMBNAIL_SIZES[2])
+    transition = grid._transition
+    assert transition is not None
+
+    for row, was in enumerate(before):
+        painted = grid.visualRect(model.index(row, 0)).topLeft() + transition.offset(row, 0.0)
+        assert painted == was, f"第 {row} 格第 0 帧画在了 {painted}，原来在 {was}"
+
+
+def test_the_last_frame_is_the_final_layout_and_then_nothing(
+    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+) -> None:
+    """跑完之后画面与逻辑几何完全重合，过渡状态清干净。"""
+    grid = scrollable_grid(qt_app, tmp_path)
+    settle(SETTLE_SECONDS)
+
+    grid.set_target_edge(THUMBNAIL_SIZES[2])
+    settle(SETTLE_SECONDS)
+
+    assert grid._transition is None
+    assert grid._delegate.cell_offset(0) == QPoint()
+
+
+def test_a_press_during_the_transition_makes_the_picture_agree_again(
+    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+) -> None:
+    """过渡中按一下 —— 画面立刻落位，命中才对得上画出来的那一格。
+
+    不这么做的话，那一按会选中「画得好看的那一格」之外的另一格。
+    """
+    grid = scrollable_grid(qt_app, tmp_path)
+    settle(SETTLE_SECONDS)
+
+    grid.set_target_edge(THUMBNAIL_SIZES[2])
+    settle(SLICE_SECONDS)
+    assert grid._transition is not None
+
+    QTest.mouseClick(grid.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(20, 20))
+
+    assert grid._transition is None
+    assert grid._transition_anim.state() == QAbstractAnimation.State.Stopped
+    assert grid._delegate.draw_edge == float(grid.icon_edge)
+
+
+def test_new_rows_arriving_during_the_transition_end_it(
+    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+) -> None:
+    """插进来的新行没有「旧位置」可言，过渡必须作废。"""
+    grid = scrollable_grid(qt_app, tmp_path)
+    settle(SETTLE_SECONDS)
+    grid.set_target_edge(THUMBNAIL_SIZES[2])
+    assert grid._transition is not None
+
+    grid.model().append([PhotoRef(path=tmp_path / "NEW.jpg", size=1024, mtime_ns=99)])
+
+    assert grid._transition is None
+
+
+#: 渲染用的那张卡片的缩略图颜色。
+COVER = QColor(200, 40, 40)
+
+
+def _painted_top(
+    model: PhotoListModel,
+    row: int,
+    cell: QSize,
+    transition: GridTransition,
+    t: float,
+    canvas: QSize,
+) -> int:
+    """把第 ``row`` 行按过渡的第 ``t`` 帧画到全白画布上，返回卡片顶边所在的行。
+
+    直接走 :meth:`PhotoDelegate.paint`，量到的就是**真的画在哪儿** —— 只查
+    :attr:`PhotoDelegate.cell_offset` 的话，「绘制压根没用这个偏移」这种改动
+    根本不会有测试变红。
+    """
+    delegate = PhotoDelegate(icon_edge=cell.width() - GRID_PADDING_X)
+    delegate.set_transition(transition, t)
+    painted = QPixmap(canvas)
+    painted.fill(QColor(255, 255, 255))
+    painter = QPainter(painted)
+    try:
+        option = QStyleOptionViewItem()
+        option.rect = QRect(0, 0, cell.width(), cell.height())
+        delegate.paint(painter, option, model.index(row, 0))
+    finally:
+        painter.end()
+
+    image = painted.toImage()
+    for y in range(image.height()):
+        for x in range(image.width()):
+            if image.pixelColor(x, y) == COVER:
+                return y
+    return -1
+
+
+def test_the_card_really_is_drawn_along_the_way(tmp_path: Path, qt_app: QApplication) -> None:
+    """整张卡片跟着插值走，不是只有缩略图在动、边框在原地等着。"""
+    del qt_app  # QPixmap 要有一个 QGuiApplication 才活得下来
+    photos = [PhotoRef(path=tmp_path / f"P{i}.jpg", size=10, mtime_ns=i) for i in range(8)]
+    model = PhotoListModel()
+    model.append(photos)
+    cover = QImage(64, 64, QImage.Format.Format_RGB32)
+    cover.fill(COVER)
+    for photo in photos:
+        model.set_thumbnail(photo.path, cover)
+
+    # 2 列 → 4 列：第 4 格从第 2 行挪到第 1 行，纵向正好差一个旧行高，横向还在画布里。
+    transition = GridTransition(2, QSize(300, 320), 4, QSize(180, 200))
+    cell, canvas, row = QSize(180, 200), QSize(400, 800), 4
+
+    start = _painted_top(model, row, cell, transition, 0.0, canvas)
+    middle = _painted_top(model, row, cell, transition, 0.5, canvas)
+    end = _painted_top(model, row, cell, transition, 1.0, canvas)
+
+    assert end != -1, "没画出来，测试没搭对"
+    # 量的是**差值**：卡片自身有内边距，画在哪儿不等于格子左上角在哪儿。
+    assert start - end == 440, f"起点该在旧位置上（差一整个旧行高），实际差 {start - end}"
+    assert middle - end == 220, f"中间帧没在中间：{middle - end}"
+
+
+def test_the_transition_uses_the_measured_columns_not_the_intended_ones(
+    qt_app: QApplication,
+    tmp_path: Path,
+    settle: Callable[[float], None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """两端必须用**量出来**的列数，不能用「打算摆几列」。
+
+    ``_columns_for`` 给的是打算摆几列，Qt 实际摆出来的可能差一列（样式边距吃掉的
+    那一列，靠 ``_layout_fix`` 事后修正）。用错的那一个，每格会整体漂一整列的位移
+    —— 那个量级的毛病很难看出是哪来的。
+    """
+    grid = scrollable_grid(qt_app, tmp_path)
+    settle(SETTLE_SECONDS)
+    measured = grid._first_row_columns()
+    assert measured == grid._laid_out_columns, "这个场景本来就该两者一致，否则测的不是它"
+
+    real = grid._first_row_columns
+    calls: list[int] = []
+
+    def faked() -> int:
+        value = real()
+        calls.append(value)
+        return value - 1 if len(calls) == 1 else value
+
+    monkeypatch.setattr(grid, "_first_row_columns", faked)
+
+    grid.set_target_edge(THUMBNAIL_SIZES[2])
+
+    transition = grid._transition
+    assert transition is not None
+    assert len(calls) == 2, f"该只量两次（改布局的前/后），实际量了 {len(calls)} 次"
+    assert transition.old_columns == calls[0] - 1, "旧端该用第一次量到的那个值"
+    assert transition.new_columns == calls[1], "新端该用第二次量到的那个值"

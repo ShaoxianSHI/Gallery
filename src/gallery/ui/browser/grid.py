@@ -9,9 +9,11 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Final
 
 from PySide6.QtCore import (
+    QAbstractAnimation,
     QAbstractItemModel,
     QEasingCurve,
     QEvent,
@@ -109,6 +111,59 @@ MAX_LAYOUT_MEMO = 32
 _FALLBACK_DRAG_DISTANCE = 10
 
 
+@dataclass(frozen=True)
+class GridTransition:
+    """换一档时，每一格从旧布局飞到新布局的那段位移。
+
+    **只描述画面，不描述逻辑状态**：逻辑几何（``gridSize``、列数、``visualRect``、
+    ``indexAt``）在切换那一刻就已经是最终值了，Qt 全程不知道有过过渡。过渡只决定
+    「这一格画在哪儿」。
+
+    **为什么不用逐帧重排**：Batched 布局一批只排 64 条，但显式的
+    ``doItemsLayout`` 会强制**全量**排版，几万条目时单次就是几十毫秒 —— 60 帧根本
+    装不下。而这套网格的全部设计（批量布局 + 按可见区取缩略图）就是为了扛大库，
+    逐帧全量重排等于把它要消灭的东西又请回来。绘制时平移则是 O(可见格数)，
+    一次额外的 ``QPoint`` 加法。
+
+    **两端的列数都是量出来的，不是算出来的**（见 :meth:`PhotoGrid._first_row_columns`）。
+    Qt 实际摆几列受样式边距影响，:meth:`PhotoGrid._columns_for` 给的是「打算摆几列」，
+    两者隔着一次 :meth:`PhotoGrid._examine_columns` 的修正。用错的那一个，
+    每格会整体漂移一点 —— 用错多少就漂多少，很难看出是哪来的。
+    """
+
+    old_columns: int
+    old_cell: QSize
+    new_columns: int
+    new_cell: QSize
+
+    @property
+    def reflows(self) -> bool:
+        """列数变了 —— 有格子从上一行挪到下一行，光缩放救不回来。
+
+        **只看列数，不看格子大小**：格子大小差几个像素时那一列一列都在原地挪，
+        肉眼根本看不出来，却要白付一整轮全视口重绘（那正是
+        :data:`EDGE_ANIMATION_MIN_DELTA` 管的事，在 :meth:`PhotoGrid._start_transition`
+        里与它合取）。
+        """
+        return self.old_columns != self.new_columns
+
+    @staticmethod
+    def _position(columns: int, cell: QSize, row: int) -> QPoint:
+        """第 ``row`` 格在「``columns`` 列、每格 ``cell``」这套布局里的左上角。"""
+        return QPoint((row % columns) * cell.width(), (row // columns) * cell.height())
+
+    def offset(self, row: int, t: float) -> QPoint:
+        """第 ``row`` 格相对**最终位置**要往回挪多少，才能落在第 ``t`` 帧。
+
+        ``t=0`` 给回旧位置，``t=1`` 给 0。坐标是**内容坐标**：视图的滚动平移由 Qt
+        统一叠在上面，所以这一段位移与滚动过渡天然可交换，不用互相知道对方。
+        """
+        old = self._position(self.old_columns, self.old_cell, row)
+        new = self._position(self.new_columns, self.new_cell, row)
+        k = 1.0 - t
+        return QPoint(round((old.x() - new.x()) * k), round((old.y() - new.y()) * k))
+
+
 def _drag_threshold() -> int:
     """鼠标按下后挪多远才算「拖动」。
 
@@ -162,6 +217,9 @@ class PhotoDelegate(QStyledItemDelegate):
         #: 小数并逐帧变化，而几何尺寸必须一直是整数（见 :meth:`PhotoGrid._animate_draw_edge`）。
         #: 两者相等是常态，只有动画跑的那 160ms 里不等。
         self._draw_edge = float(icon_edge)
+        #: 切档过渡：这一帧相对最终位置往回挪多少。``None`` 表示不偏移（常态）。
+        self._transition: GridTransition | None = None
+        self._t = 1.0
 
     def set_icon_edge(self, edge: int) -> None:
         """几何尺寸变了 —— 绘制尺寸先跟它对齐。
@@ -182,6 +240,25 @@ class PhotoDelegate(QStyledItemDelegate):
         """只改绘制尺寸，不碰几何。见 :attr:`draw_edge`。"""
         self._draw_edge = max(1.0, edge)
 
+    def set_transition(self, transition: GridTransition | None, t: float) -> None:
+        """这一帧该画在哪儿（传 ``None`` 表示不偏移）。
+
+        与 :meth:`set_draw_edge` 是同一个 ``t`` 的两半：一半决定格子画在哪儿，
+        一半决定缩略图画多大。分成两个动画就会是两个时钟，早晚差一帧 ——
+        那一帧里缩略图已经变了尺寸、格子却还没到位。
+        """
+        self._transition = transition
+        self._t = t if transition is not None else 1.0
+
+    def cell_offset(self, row: int) -> QPoint:
+        """第 ``row`` 格相对 :meth:`option.rect` 的额外位移。
+
+        没有过渡时是原点，调用方不必分情况。
+        """
+        if self._transition is None:
+            return QPoint()
+        return self._transition.offset(row, self._t)
+
     def label_rect(self, rect: QRect) -> QRect:
         """文件名那一行的位置。
 
@@ -199,6 +276,10 @@ class PhotoDelegate(QStyledItemDelegate):
         painter.save()
         try:
             rect = option.rect.adjusted(3, 3, -3, -3)
+            # 切档过渡：这一格暂时不画在 Qt 给的最终位置上，而是画在「旧位置与最终
+            # 位置之间」的那一帧。整张卡片（底色、缩略图、角标、名字）一起挪 ——
+            # 只挪缩略图的话，边框与名字会在原地等着，画面是散的。
+            rect.translate(self.cell_offset(index.row()))
             selected = bool(option.state & QStyle.StateFlag.State_Selected)
             is_album = bool(index.data(ALBUM_ROLE))
             is_group = bool(index.data(GROUP_ROLE))
@@ -483,19 +564,25 @@ class PhotoGrid(QListView):
         self._edge_timer.setInterval(EDGE_SETTLE_MS)
         self._edge_timer.timeout.connect(self._emit_edge_change)
 
-        # 切档时让缩略图「长过去」而不是跳过去。它只驱动 delegate 的**绘制**尺寸，
-        # 几何与缩略图请求仍然一步到位 —— 理由见 :meth:`_animate_draw_edge`。
-        self._draw_animation = QVariantAnimation(self)
-        self._draw_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
-        self._draw_animation.setDuration(EDGE_ANIMATION_MS)
-        self._draw_animation.valueChanged.connect(self._on_draw_edge_step)
-
-        # 切档时纵向滚动也是跳的，单独给它一段过渡（它只滚动、不重排，几乎不要钱）。
-        # 取消逻辑集中在 :meth:`scrollContentsBy`，不必逐处列举。
-        self._scroll_animation = QVariantAnimation(self)
-        self._scroll_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
-        self._scroll_animation.setDuration(EDGE_ANIMATION_MS)
-        self._scroll_animation.valueChanged.connect(self._on_scroll_step)
+        # 切档过渡。**一个动画、三件事**，因为它们必须是同一个 ``t``：格子画在哪儿
+        # （委托侧，见 :class:`GridTransition`）、缩略图画多大、纵向滚到哪儿。
+        # 拆成三个动画就是三个时钟，早晚差一帧 —— 那一帧里缩略图已经变了尺寸、
+        # 格子却还在路上。
+        #
+        # 几何与缩略图请求仍然一步到位，理由见 :meth:`_start_transition`。
+        self._transition_anim = QVariantAnimation(self)
+        self._transition_anim.setStartValue(0.0)
+        self._transition_anim.setEndValue(1.0)
+        self._transition_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._transition_anim.setDuration(EDGE_ANIMATION_MS)
+        self._transition_anim.valueChanged.connect(self._on_transition_step)
+        self._transition_anim.finished.connect(self._settle_transition)
+        #: 过渡进行中：旧布局的两端尺寸（内容坐标），以及要插值到的那一头。
+        self._transition: GridTransition | None = None
+        self._edge_from = 0.0
+        self._edge_to = 0.0
+        self._scroll_from = 0
+        self._scroll_to = 0
         #: 「这一次滚动是那条过渡动画自己发起的」。**不是**它发起的滚动都要停掉过渡，
         #: 而判断这件事只有一个可靠的地方 —— :meth:`scrollContentsBy`，所有滚动
         #: （滚轮、方向键、拖滚动条、``EnsureVisible``）都从那里过。
@@ -530,6 +617,9 @@ class PhotoGrid(QListView):
 
     def _on_rows_inserted(self, *_args: object) -> None:
         """模型里多了一批条目 → 给「核对实际列数」补一次机会（定时器 50ms 后触发）。"""
+        # 插进来的新行没有「旧位置」可言：:class:`GridTransition` 算得出老行要去哪，
+        # 算不出一个从来没在这套旧布局里待过的行该从哪来。所以过渡作废。
+        self._cancel_transition()
         self._examiner.start()
 
     def _on_model_reset(self, *_args: object) -> None:
@@ -544,6 +634,7 @@ class PhotoGrid(QListView):
         （见 :attr:`_armed_row`），所以「退上去之后停在刚离开的那一格」仍然是可改名的。
         """
         self._armed_row = -1
+        self._cancel_transition()
 
     # ---- 尺寸档位与自适应排版 ----------------------------------------------
 
@@ -608,6 +699,10 @@ class PhotoGrid(QListView):
 
         ``animate`` 只有「用户切了一档」那条路径会传 ``True``：拖窗口是连续事件，
         每一次宽度变化都放一次动画等于动画永远在跑，界面反而变成一直在重绘。
+
+        这里**不**取消正在跑的过渡：连按两档要能正常地接第二段（见
+        :meth:`_start_transition`）。视口变了但格子没变的场合，
+        旧布局其实一点没动，过渡照旧是对的；真的变了，:meth:`_apply_cell` 自己会收尾。
         """
         if self._laying_out:
             return
@@ -668,12 +763,16 @@ class PhotoGrid(QListView):
     def _apply_cell(self, cell: QSize, *, animate: bool = False) -> None:
         if cell == self.gridSize():
             return
-        # 动画起点是「上一帧画出来」的那一档，不是几何尺寸：上一次动画可能还没跑完，
+        # 动画起点是「上一帧画出来」的那一档，不是几何尺寸：上一次过渡可能还没跑完，
         # 那时两者不等。从中间值接着走，用户连点两档才不会看见它先倒退回去。
         drawn_edge = self._delegate.draw_edge
         # 滚动起点同理，必须在**改布局之前**读：``doItemsLayout`` 与滚动条范围
         # 变化都可能顺手把它挪走，那时读到的已经不是一个干净的起点。
         scroll_from = self.verticalScrollBar().value()
+        # 旧布局的两端**量出来**（理由见 :class:`GridTransition`），必须在改布局之前 ——
+        # 改完之后量到的就是新布局了，那这段位移就成了零。
+        old_columns = self._first_row_columns()
+        old_cell = self.gridSize()
         self._laying_out = True
         try:
             self._applied_edge = cell.width() - GRID_PADDING_X
@@ -693,70 +792,96 @@ class PhotoGrid(QListView):
                 self.scrollTo(index, QAbstractItemView.ScrollHint.PositionAtCenter)
         finally:
             self._laying_out = False
+        new_columns = self._first_row_columns()
+        self._transition = (
+            GridTransition(old_columns, old_cell, new_columns, cell)
+            if old_columns > 0 and new_columns > 0
+            else None
+        )
         self._schedule_edge_update()
-        self._animate_draw_edge(drawn_edge, animate=animate)
-        self._animate_scroll(scroll_from, animate=animate)
+        self._start_transition(drawn_edge, scroll_from, animate=animate)
 
-    def _animate_scroll(self, start: int, *, animate: bool) -> None:
-        """把纵向滚动从 ``start`` 平滑移到当前位置（滚动条范围已随新布局变了）。
+    def _start_transition(self, drawn_edge: float, scroll_from: int, *, animate: bool) -> None:
+        """发一次切档过渡（``animate`` 为假就直接落位）。
 
-        切档时 :meth:`_apply_cell` 会 ``scrollTo`` 把选中项摆到中间，整屏于是纵向
-        「跳」一下。**这一下比缩略图那一下明显得多** —— 跳的是整屏高度，不是一格。
-
-        它之所以便宜，是因为它只滚动、不碰任何几何：``scrollTo`` 会做多少布局工作，
-        这里一个字节都不重复。范围变了要**夹一下起点**：切到大缩略图时列数变少、
-        总高度跟着变矮，旧位置可能已经超出新范围，不夹的话插值中途会被
-        ``maximum()`` 削平 —— 于是动画先平一段再动，比不动画还难看。
-
-        任何**不是**这条动画发起的滚动都会在 :meth:`scrollContentsBy` 里把它停掉，
-        所以用户滚一下、方向键走一格、拖一下滚动条，动画都立刻让位。
-        """
-        self._scroll_animation.stop()
-        bar = self.verticalScrollBar()
-        end = bar.value()
-        start = min(start, bar.maximum())
-        if not animate or end == start:
-            return
-        self._scroll_animation.setStartValue(float(start))
-        self._scroll_animation.setEndValue(float(end))
-        self._scroll_animation.start()
-
-    def _on_scroll_step(self, value: float) -> None:
-        self._driving_scroll = True
-        try:
-            self.verticalScrollBar().setValue(round(value))
-        finally:
-            self._driving_scroll = False
-
-    def _animate_draw_edge(self, start: float, *, animate: bool) -> None:
-        """让缩略图从 ``start`` 平滑长到新边长（``animate`` 为假就直接落位）。
-
-        **动画只碰绘制尺寸**，另外三样一律不碰，而且这是刻意的：
+        **过渡只碰「画在哪儿」，三样东西一律一步到位，而且这是刻意的**：
 
         - :attr:`_applied_edge` 与 ``gridSize`` —— 它们一动，Batched 布局就得整个
-          重排一次；每帧动一次的话，几万条目的库会直接卡住。格子之间「跳过去」
-          是这条方案付的代价（真正逐格平移得上 :class:`QGraphicsView`，见 ADR）。
+          重排一次。格子从旧位飞到新位是靠委托侧平移画出来的（见 :class:`GridTransition`），
+          不是靠真的重排。
         - ``icon_edge_changed`` —— 那是**重新取缩略图**的信号。若跟着动画走，
           一次切档会按几十个中间尺寸各要一遍缩略图，
           :mod:`gallery.ui.browser.thumb_sizes` 里那条「离散档位 ⇒ 一张照片在磁盘上
           只有几份缓存」的不变量当场作废。所以重取仍由 ``_schedule_edge_update``
-          按新边长发一次，与动画并行而不受它影响。
-        """
-        end = float(self._applied_edge)
-        self._draw_animation.stop()
-        if not animate or abs(end - start) < EDGE_ANIMATION_MIN_DELTA:
-            self._delegate.set_draw_edge(end)
-            return
-        # 先把绘制尺寸拨回起点再启动：:meth:`PhotoDelegate.set_icon_edge` 已经把
-        # 它对齐到了新几何，中间那一帧不该露出来（动画会在启动时立刻发回起点值）。
-        self._delegate.set_draw_edge(start)
-        self._draw_animation.setStartValue(start)
-        self._draw_animation.setEndValue(end)
-        self._draw_animation.start()
+          按新边长发一次，与过渡并行而不受它影响。
+        - ``visualRect`` / ``indexAt`` —— 它们是逻辑几何，全程都是终值。代价是过渡
+          那 160ms 里**画面与逻辑不完全一致**，由「任何交互都立刻落位」来兜
+          （见 :meth:`_cancel_transition`）。
 
-    def _on_draw_edge_step(self, value: float) -> None:
-        self._delegate.set_draw_edge(value)
+        滚动起点要**夹进新范围**：列数变多时内容变矮，旧位置可能已经超出新范围，
+        不夹的话插值中途会被 ``maximum()`` 削平 —— 于是先平一段再动，比不动还难看。
+        """
+        # 上一段过渡还没跑完又换了一档（连按两下的手势）就**不接第二段**：上一段的
+        # 旧布局已经不是这一段的旧布局了，拿它当起点，画面会先蹿去用户已经放弃的
+        # 那一档。直接落位反而更贴近他要的结果。
+        # （读状态必须在 ``stop()`` 之前 —— 停掉之后它当然永远是 ``Stopped``。）
+        still_running = self._transition_anim.state() != QAbstractAnimation.State.Stopped
+        self._transition_anim.stop()
+        self._edge_from = drawn_edge
+        self._edge_to = float(self._applied_edge)
+        bar = self.verticalScrollBar()
+        self._scroll_from = min(scroll_from, bar.maximum())
+        self._scroll_to = bar.value()
+
+        reflows = self._transition is not None and self._transition.reflows
+        grows = abs(self._edge_to - self._edge_from) >= EDGE_ANIMATION_MIN_DELTA
+        if not animate or still_running or not (reflows or grows):
+            self._settle_transition()
+            return
+
+        # 先把第 0 帧摆出来再启动：:meth:`PhotoDelegate.set_icon_edge` 已经把绘制
+        # 尺寸对齐到了新几何，中间那一帧不该露出来（动画启动时也会发一次 t=0）。
+        self._on_transition_step(0.0)
+        self._transition_anim.start()
+
+    def _on_transition_step(self, t: float) -> None:
+        """一帧的 ``t``：格子画在哪儿、缩略图画多大、纵向滚到哪儿，三件事一起。"""
+        self._delegate.set_draw_edge(self._edge_from + (self._edge_to - self._edge_from) * t)
+        self._delegate.set_transition(self._transition, t)
+        self._driving_scroll = True
+        try:
+            self.verticalScrollBar().setValue(
+                round(self._scroll_from + (self._scroll_to - self._scroll_from) * t)
+            )
+        finally:
+            self._driving_scroll = False
         self.viewport().update()
+
+    def _settle_transition(self) -> None:
+        """过渡收尾：画面回到「就是逻辑几何」，绘制尺寸与几何对齐。
+
+        **取消也走这里。** 中途被叫停时不该停在半空 —— 那些格子用的还是旧布局算
+        出来的位置，而逻辑几何早就是终值了；停在半空等于画面在说一件假话。
+        """
+        self._transition = None
+        self._delegate.set_transition(None, 1.0)
+        self._delegate.set_draw_edge(float(self._applied_edge))
+        self.viewport().update()
+
+    def _cancel_transition(self) -> None:
+        """用户动了，或者局面已经变了 —— 过渡立刻落位。
+
+        调用点是 :meth:`scrollContentsBy` 与各处鼠标/键盘入口。**按下就取消**
+        而不是「让它跑完、期间点哪儿算哪儿」是有意的：那 160ms 里画面位置与
+        ``visualRect`` / ``indexAt`` 不一致，一次点击会落在**画得好看的那一格**、
+        却选中**逻辑上的另一格**。与其在命中测试上做一套反向映射（又是一处每帧
+        都要对得上的算术），不如让那一刻的画面先归位 —— 点击落在哪就是哪，
+        而 160ms 的余下部分少一帧动画没人会数。
+        """
+        if self._transition_anim.state() == QAbstractAnimation.State.Stopped:
+            return
+        self._transition_anim.stop()
+        self._settle_transition()
 
     def _schedule_edge_update(self) -> None:
         if abs(self._applied_edge - self._emitted_edge) < EDGE_REFRESH_THRESHOLD:
@@ -937,6 +1062,10 @@ class PhotoGrid(QListView):
         """
         self._rename_timer.stop()
         self._pending_rename_row = -1
+        # 下面要用 ``visualRect`` 给输入框定位，而过渡进行中画面位置与它不一致。
+        # 让过渡先落位，输入框于是照着一张「它算得出来」的图摆 —— 比起再加一段
+        # 偏移换算（又是一处每帧都要对得上的算术），先归位简单得多。
+        self._cancel_transition()
         model = self.model()
         if model is None or not index.isValid():
             return False
@@ -996,6 +1125,9 @@ class PhotoGrid(QListView):
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         """记下这一下的来龙去脉（供 mouseMoveEvent / mouseReleaseEvent 判断）。"""
+        # 过渡进行中画面位置与 ``indexAt`` 不一致（理由见 :meth:`_cancel_transition`），
+        # 于是这一按先让过渡落位，下面的命中才对得上画出来的那一格。
+        self._cancel_transition()
         point = event.position().toPoint()
         self._press_point = point
         modifiers = event.modifiers()
@@ -1223,7 +1355,7 @@ class PhotoGrid(QListView):
             # 用户自己滚了（滚轮、方向键、拖滚动条、``EnsureVisible``…）：过渡立刻让位。
             # 不这么做的话，动画会一边往终点走、一边被这些滚动推着改终点 —— 最后落到
             # 一个谁也没指定的位置上。
-            self._scroll_animation.stop()
+            self._cancel_transition()
         # ``_debounce`` 是单次的，这里每次都 ``start`` 恰好起到了合并的作用：切档过渡
         # 期间它被反复重启，于是只在整段动画结束约一帧之后才发一次 ``viewport_changed``。
         # 可见区在那 160ms 里并没有真的变多少，算一次就够。
@@ -1231,6 +1363,9 @@ class PhotoGrid(QListView):
 
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         super().resizeEvent(event)
+        # 过渡进行中拖窗口：它的两端是按旧视口量出来的，拖到一半那两个「旧」已经不
+        # 算了。落位即可 —— 接下来 :meth:`_recompute_layout` 会按新宽度重排。
+        self._cancel_transition()
         self._recompute_layout()
         self._debounce.start()
 
