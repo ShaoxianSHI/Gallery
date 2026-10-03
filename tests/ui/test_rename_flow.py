@@ -23,7 +23,7 @@ from PySide6.QtCore import QEvent, QPointF, Qt  # noqa: E402
 from PySide6.QtGui import QMouseEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
-from waiting import DEFAULT_TIMEOUT_SECONDS
+from waiting import DEFAULT_TIMEOUT_SECONDS, wait_for_level
 
 from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.library.photos import FolderRef, PhotoRef  # noqa: E402
@@ -344,6 +344,121 @@ def test_the_first_click_after_opening_still_only_selects(
     assert grid.genuinely_selected_rows() == [0]
 
 
+# ---- 除了左键，还有哪些路把某一格「选中」了 ----------------------------------
+#
+# 三条都是同一个症状：界面上那一格是**选中**的（画着选中框，⌘R 也亮着），点它一下
+# 却没有反应，非要点第二下。根因是同一个：``_armed_row`` 只认「上次完成的普通左键
+# 点选」，于是凡是没走左键的选中路径，那一格对它都是没 arm 过的。
+
+
+def test_a_programmatically_selected_cell_can_be_renamed_by_one_click(
+    qt_app: QApplication, settle: Callable[[float], None], tmp_path: Path
+) -> None:
+    """``select_row`` 选中的那一格，点一下就该改名 —— 不该要点两下。
+
+    这一条是底下两条（大图返回、返回上级）的共同机制：两条都靠
+    ``MainWindow._restore_level_focus`` / ``show_grid`` 调 ``select_row`` 把该选中的
+    那一格摆出来。选区是真的（``sel`` 里有它）、当前项也是它，用户看到的就是一个
+    选中的格子 —— 于是「再点一下改名」必须认它。
+    """
+    grid = make_grid(qt_app, tmp_path, ["a.jpg", "b.jpg", "c.jpg"])
+    requested: list[int] = []
+    grid.rename_requested.connect(lambda index: requested.append(index.row()))
+    interval = QApplication.doubleClickInterval() / 1000 + 0.05
+
+    grid.select_row(1)
+    settle(0.05)
+    assert grid.genuinely_selected_rows() == [1], "前置条件：它真的是选中的"
+
+    click_cell(grid, 1)
+    settle(interval)
+
+    assert requested == [1]
+
+
+def test_a_cell_reached_with_the_arrow_keys_can_be_renamed_by_one_click(
+    qt_app: QApplication, settle: Callable[[float], None], tmp_path: Path
+) -> None:
+    """方向键挪过去的那一格，点一下就该改名。
+
+    网格要挤到一行放不下才会换行，方向键才有的可挪 —— 所以这里摆 12 张并把视口收窄。
+    """
+    grid = make_grid(qt_app, tmp_path, [f"p{n:02d}.jpg" for n in range(12)])
+    grid.resize(520, 420)
+    settle(0.1)
+    requested: list[int] = []
+    grid.rename_requested.connect(lambda index: requested.append(index.row()))
+    interval = QApplication.doubleClickInterval() / 1000 + 0.05
+
+    QTest.keyClick(grid.viewport(), Qt.Key.Key_Down)
+    settle(0.1)
+    row = grid.current_row()
+    assert row != 0, "前置条件：方向键真的挪动了当前项（视口得窄到能换行）"
+    assert grid.genuinely_selected_rows() == [row], "前置条件：方向键也把选区挪过去了"
+
+    click_cell(grid, row)
+    settle(interval)
+
+    assert requested == [row]
+
+
+def test_an_arrow_key_that_does_not_move_the_cursor_arms_nothing(
+    qt_app: QApplication, settle: Callable[[float], None], tmp_path: Path
+) -> None:
+    """方向键没挪动当前项时**不许** arm —— 守住「刚打开时随手点一下只是选中」。
+
+    方向键那一路是「当前项变了就 arm」。可要是无条件 arm，按一个按不动的方向键
+    （已经在第 0 行还按 ↑）就会把 Qt 顺手设的那个当前项 arm 上，于是打开应用后随手
+    点一下照片直接弹输入框。这条钉的是那个「不许」。
+    """
+    grid = make_grid(qt_app, tmp_path, ["a.jpg", "b.jpg"])
+    settle(0.1)
+    requested: list[int] = []
+    grid.rename_requested.connect(lambda index: requested.append(index.row()))
+    interval = QApplication.doubleClickInterval() / 1000 + 0.05
+
+    assert grid.current_row() == 0 and grid.genuinely_selected_rows() == []
+    QTest.keyClick(grid.viewport(), Qt.Key.Key_Up)  # 已经在最上面，挪不动
+    settle(0.1)
+    assert grid.current_row() == 0
+
+    click_cell(grid, 0)
+    settle(interval)
+
+    assert requested == [], "没挪动过的那一格不该被 arm"
+
+
+def test_changing_the_level_drops_the_armed_cell(
+    qt_app: QApplication, settle: Callable[[float], None], tmp_path: Path
+) -> None:
+    """换一层之后，旧的那一格就不再「再点一下改名」了。
+
+    这是上面几条的反面，也是同一个状态机上的另一个洞：``_armed_row`` 记的是**行号**，
+    而换一层（``PhotoListModel.clear``）摆上去的是**另一批条目**。旧行号若还留着，
+    用户在新一层里点那一格，第一下就直接改名 —— 而他什么都没指过。
+    """
+    grid = make_grid(qt_app, tmp_path, ["a.jpg", "b.jpg", "c.jpg", "d.jpg"])
+    settle(0.1)
+    requested: list[int] = []
+    grid.rename_requested.connect(lambda index: requested.append(index.row()))
+    interval = QApplication.doubleClickInterval() / 1000 + 0.05
+
+    grid.begin_rename(grid.model().index(2, 0))  # arm 第 2 格
+    grid.cancel_rename()
+    settle(0.05)
+    assert grid._armed_row == 2, "前置条件：确实 arm 上了"
+
+    model = grid.model()
+    model.clear()  # 换一层：整体重置
+    model.append([PhotoRef(path=tmp_path / f"n{n}.jpg", size=1, mtime_ns=1) for n in range(4)])
+    settle(0.1)
+
+    click_cell(grid, 2)
+    settle(interval)
+
+    assert requested == [], "新一层里的第一下点击只能选中"
+
+
 def test_clicking_a_different_cell_after_escape_still_only_selects(
     qt_app: QApplication, settle: Callable[[float], None], tmp_path: Path
 ) -> None:
@@ -369,9 +484,16 @@ def test_clicking_a_different_cell_after_escape_still_only_selects(
 
 
 def open_window(
-    qt_app: QApplication, root: Path, *, browse_mode: str = BROWSE_MODE_FLAT
+    qt_app: QApplication,
+    root: Path,
+    *,
+    browse_mode: str = BROWSE_MODE_FLAT,
+    session_base: Path | None = None,
 ) -> MainWindow:
-    session_base = root / "状态"
+    # 会话目录默认**放在库里**：相册浏览模式下它自己就是一个文件夹，会在网格上多出一张
+    # 相册卡片，于是行数对不上（与 ``tests/ui/test_level_focus.py`` 同一个理由，那里把它
+    # 放在 ``root.parent``）。要按相册数行的用例得自己把它挪到库外。
+    session_base = root / "状态" if session_base is None else session_base
     save_session(
         SessionState(recent_roots=(root,), browse_mode=browse_mode),
         base=session_base,
@@ -610,12 +732,75 @@ def test_click_after_escape_renames_again_in_the_window(
         assert editor.is_editing() is False
 
         click_cell(window._grid, row)
-        deadline = time.monotonic() + DEFAULT_TIMEOUT_SECONDS
-        while time.monotonic() < deadline and not window._grid.is_renaming():
-            qt_app.processEvents()
-            time.sleep(0.005)
 
-        assert window._grid.is_renaming() is True, "Esc 之后左键点那一格就该再进重命名"
+        assert wait_for_renaming(window, qt_app) is True, "Esc 之后左键点那一格就该再进重命名"
+    finally:
+        window.close()
+
+
+def wait_for_renaming(window: MainWindow, qt_app: QApplication) -> bool:
+    """转到「已经进了行内重命名」为止（要等双击阈值那个定时器）。"""
+    deadline = time.monotonic() + DEFAULT_TIMEOUT_SECONDS
+    while time.monotonic() < deadline and not window._grid.is_renaming():
+        qt_app.processEvents()
+        time.sleep(0.005)
+    return window._grid.is_renaming()
+
+
+def test_click_after_going_up_a_level_renames(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """返回上一级之后，点那个被重新选中的相册就该改名。
+
+    「退上去时上一层停在刚离开的那一格」是刻意做的（见 ``test_level_focus.py``）：
+    不然每退一级都要重新找一遍刚才在的那个相册。用户看到它是选中的，
+    点一下却要等第二下才改名 —— 于是「记住了停在哪」这件事白记了一半。
+    """
+    library = tmp_path / "库"
+    make_photo("IMG_0001.jpg", directory=library / "海边")
+    make_photo("IMG_0001.jpg", directory=library / "山巅")
+    window = open_window(
+        qt_app, library, browse_mode=BROWSE_MODE_ALBUMS, session_base=tmp_path / "状态"
+    )
+    try:
+        window.enter_folder(library / "海边")
+        wait_for_level(window, qt_app, lambda: window._model.rowCount() == 1, what="相册内")
+        window.go_up()
+        wait_for_level(window, qt_app, lambda: window._model.rowCount() == 2, what="退回后的这一层")
+        row = window._grid.current_row()
+        assert row >= 0, "退回来时该停在刚离开的那个相册上"
+        assert window._grid.genuinely_selected_rows() == [row], "前置条件：它真的是选中的"
+
+        click_cell(window._grid, row)
+
+        assert wait_for_renaming(window, qt_app) is True, "返回上级之后点一下就该改名"
+    finally:
+        window.close()
+
+
+def test_click_after_leaving_the_photo_renames(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """从大图退回网格之后，点那张照片就该改名。
+
+    与上一条同一个机制（都走 ``show_grid`` → ``select_row``），但换了个入口：
+    大图是看照片时最常待的地方，退回来顺手改个名是很自然的一下。
+    """
+    make_photo("IMG_0001.jpg", directory=tmp_path)
+    window = open_window(qt_app, tmp_path)
+    try:
+        window._grid.select_for_context(-1)
+        window._grid.select_row(0)
+        qt_app.processEvents()
+        window.open_current_entry()  # 进大图
+        window.show_grid()  # 退回网格（Esc / ⌘↑ 都走这里）
+        row = window._grid.current_row()
+        assert row == 0
+        assert window._grid.genuinely_selected_rows() == [0], "前置条件：照片仍然选着"
+
+        click_cell(window._grid, row)
+
+        assert wait_for_renaming(window, qt_app) is True, "大图退回之后点一下就该改名"
     finally:
         window.close()
 

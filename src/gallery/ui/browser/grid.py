@@ -423,14 +423,29 @@ class PhotoGrid(QListView):
         previous = self.model()
         if previous is not None:
             previous.rowsInserted.disconnect(self._on_rows_inserted)
+            previous.modelReset.disconnect(self._on_model_reset)
         super().setModel(model)
         if model is not None:
             # 扫描每来一批就重启一次 50ms 的定时器，一屏之内最多多核对一次，代价可以忽略。
             model.rowsInserted.connect(self._on_rows_inserted)
+            model.modelReset.connect(self._on_model_reset)
 
     def _on_rows_inserted(self, *_args: object) -> None:
         """模型里多了一批条目 → 给「核对实际列数」补一次机会（定时器 50ms 后触发）。"""
         self._examiner.start()
+
+    def _on_model_reset(self, *_args: object) -> None:
+        """模型整体重置（换层、换排序）→ 旧的 arm 作废。
+
+        ``_armed_row`` 记的是**行号**，而重置之后摆上来的是**另一批条目**：换层
+        （``MainWindow`` 的 ``_model.clear()``）与换排序（``PhotoListModel.reorder``）
+        都会走到这里。留着旧行号，用户在新一层里点那一格，第一下就直接改名 ——
+        而他这一层里什么都没指过。
+
+        这一层随后多半会 :meth:`select_row` 把该选中的那一格摆出来，那时会重新 arm 上
+        （见 :attr:`_armed_row`），所以「退上去之后停在刚离开的那一格」仍然是可改名的。
+        """
+        self._armed_row = -1
 
     # ---- 尺寸档位与自适应排版 ----------------------------------------------
 
@@ -622,6 +637,10 @@ class PhotoGrid(QListView):
         # 代码里指定选中（撤销取回、回到网格…）同样算「一次普通点选」：
         # 接下来用户的第一次 `⇧` 点应该从这一格铺开。
         self._range_anchor = row
+        # 同理，「再点一下就是改名」也得认它：大图页退回来（``show_grid``）、往上退一层
+        # （``_restore_level_focus``）、撤销把照片取回来的那一格，界面上都是**选中**的，
+        # ⌘R 也亮着 —— 用户点它一下就该改名，不该因为「不是用左键选的」而要点第二下。
+        self._armed_row = row
         selection = self.selectionModel()
         if selection is not None:
             selection.select(
@@ -976,7 +995,18 @@ class PhotoGrid(QListView):
             if index.isValid():
                 self.activated_index.emit(index)
             return
+        before = self.currentIndex()
         super().keyPressEvent(event)
+        # 方向键挪动当前项时，Qt 会把选区一起挪过去 —— 挪到的那一格在界面上就是**选中**的
+        # （画着选中框、⌘R 亮着），所以「再点一下就是改名」也得认它，与 ``select_row``
+        # 同一个道理。用户用键盘走过来之后不该反过来要点两下才改得了名。
+        #
+        # 只在**真的挪动了**当前项时才 arm：按一个按不动的方向键（在第 0 行还按 ↑）
+        # 什么也没发生，那一格并不是用户指过的，无条件 arm 会把「刚打开时 Qt 顺手设的
+        # 那个当前项」也 arm 上 —— 于是打开应用随手点一下照片就直接弹输入框。
+        index = self.currentIndex()
+        if index.isValid() and index != before:
+            self._armed_row = index.row()
 
     def scrollContentsBy(self, dx: int, dy: int) -> None:  # noqa: N802 - 名字是 Qt 定的
         # 输入框是视口的子控件，不会自己跟着格子滚 —— 手动挪同样的距离，

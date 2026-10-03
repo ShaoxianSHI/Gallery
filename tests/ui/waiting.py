@@ -67,7 +67,7 @@ def wait_for_level(
     一个格子都没有，用例于是拿到 ``-1`` 然后一路错下去。把它写进消息里，比让人
     回头去猜省事得多。
     """
-    rows = getattr(getattr(window, "_model", None), "rowCount", lambda: "?")()
+    rows = getattr(getattr(window, "_model", None), "rowCount", lambda: "?")
     if not wait_until(qt_app, ready, timeout=timeout):
         raise AssertionError(f"{what}没有在时限内就绪（当前 {rows()} 行）")
 
