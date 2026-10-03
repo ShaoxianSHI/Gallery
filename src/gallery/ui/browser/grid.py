@@ -745,8 +745,12 @@ class PhotoGrid(QListView):
         cell = self.visualRect(index).adjusted(3, 3, -3, -3)
         rect = self._delegate.label_rect(cell)
         # 比标签高一圈：输入框贴着 20px 的标签会显得挤，也不好点。
+        #
+        # **只往上长那 3 点。** ``cell`` 就是选中时铺的那层淡色底的边界（``PhotoDelegate.paint``
+        # 用的是同一个矩形），名字那一行的下沿正好贴着它。``QRect.setTop`` 自己就会把高度补上
+        # （底边不动），所以**不能再补一句 setHeight** —— 那句补的正是往下那半圈，于是输入框的
+        # 下半截挂在选中框外面，看着像错位（有了圆角边框之后尤其明显）。
         rect.setTop(rect.top() - 3)
-        rect.setHeight(rect.height() + 6)
         self._rename_edit.start(rect, text, keep_suffix=not index.data(ALBUM_ROLE))
         self._rename_active = True
         self._armed_row = index.row()

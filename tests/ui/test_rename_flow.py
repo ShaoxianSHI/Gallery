@@ -275,6 +275,28 @@ def test_editor_covers_the_file_name(qt_app: QApplication, tmp_path: Path) -> No
     assert editor.geometry().bottom() >= grid.visualRect(index).bottom() - 30
 
 
+def test_editor_stays_inside_the_selected_cell(qt_app: QApplication, tmp_path: Path) -> None:
+    """输入框不许越出那一格的选中框 —— 下半截挂在框外看着像错位。
+
+    ``adjusted(3, 3, -3, -3)`` 是选中时铺的那层淡色底的边界，``PhotoDelegate.paint`` 与
+    ``begin_rename`` 用的是同一个矩形；名字那一行的下沿正好贴着它，所以输入框只能往上长，
+    往下长就越界了。输入框有了圆角边框之后这一点尤其显眼（ADR 0025）。
+    """
+    grid = make_grid(qt_app, tmp_path, ["a.jpg"])
+    index = grid.model().index(0, 0)
+    selected = grid.visualRect(index).adjusted(3, 3, -3, -3)
+
+    assert grid.begin_rename(index) is True
+    editor = grid._rename_edit
+
+    assert selected.contains(editor.geometry()), (
+        f"输入框 {editor.geometry()} 越出了选中框 {selected}"
+    )
+    assert editor.geometry().intersects(selected.adjusted(0, -6, 0, 0)), (
+        "仍然要盖住名字那一行：往上一挪就不能把名字露出去"
+    )
+
+
 # ---- 「再点一次改名」的成立条件 ----------------------------------------------
 
 
