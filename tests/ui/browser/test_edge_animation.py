@@ -30,7 +30,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from grid_helpers import make_grid  # noqa: E402
+from grid_helpers import fake_photos, make_grid  # noqa: E402
 from PySide6.QtCore import (  # noqa: E402
     QAbstractAnimation,
     QPoint,
@@ -153,7 +153,7 @@ def test_a_change_too_small_to_see_does_not_animate(
     settle(SETTLE_SECONDS)
     cell = grid.gridSize()
 
-    grid._apply_cell(
+    grid._set_cell(
         QSize(cell.width() + EDGE_ANIMATION_MIN_DELTA - 2, cell.height() + 3), animate=True
     )
 
@@ -218,7 +218,7 @@ def scrollable_grid(qt_app: QApplication, tmp_path: Path, row: int = 20) -> Phot
 
     **当前项必须在 ``scrollTo`` 已经排过版的那批里**（Batched 布局默认一批 64 条）。
     超出批次时 ``visualRect`` 返回 ``QRect(-1, -1, 0, 0)``，``scrollTo`` 静默什么都不做
-    —— 那是既有限制，见 ``_apply_cell`` 里的说明，不是这里要测的东西。
+    —— 那是既有限制，见 ``_set_cell`` 里的说明，不是这里要测的东西。
     """
     grid = make_grid(qt_app, tmp_path, 200)
     grid.select_row(row, ensure_visible=False)
@@ -675,8 +675,8 @@ def test_resizing_the_window_never_recenters(
 ) -> None:
     """拖窗口（以及横幅出现/消失带来的自动 resize）不该把视图拽到选中项那里。
 
-    这条是踩过坑的：``_apply_cell`` 也会在视口大小变化时被调到，而 Qt 会顺手把当前项
-    设成第 0 行 —— 居中一旦挂在 ``_apply_cell`` 上无条件跑，**每 resize 一次就回一次
+    这条是踩过坑的：几何变化也会在视口大小变化时被调到，而 Qt 会顺手把当前项
+    设成第 0 行 —— 居中一旦挂在几何变化上无条件跑，**每 resize 一次就回一次
     顶部**。而横幅是会自己弹的（地点解析、缩略图加载、检索索引），于是用户根本没碰
     窗口，视图也会被拽走。
     """
@@ -701,18 +701,25 @@ def test_resizing_the_window_never_recenters(
     assert calls == [], f"拖窗口不该居中，却调了 {calls} 次"
 
 
-def test_dragging_the_window_keeps_the_scroll_position(
+def test_dragging_the_window_never_lets_the_scroll_position_go(
     qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
 ) -> None:
-    """拖窗口时滚动条不许跳 —— **哪怕列数根本没变**。
+    """拖窗口时滚动条不许跳 —— **哪怕列数根本没变**，而且每一帧都不许跳。
 
     格子宽度每帧都变一点点（``usable // columns`` 跟着视口宽度走），于是拖动过程中
-    :meth:`grid._apply_cell` 每帧都跑；每跑一次 Batched 布局，Qt 就按「已排版的那
+    :meth:`grid._set_cell` 每帧都跑；每跑一次 Batched 布局，Qt 就按「已排版的那
     一批」重算滚动条范围，把当前位置夹到那一批的末尾。宽度一增一减、夹到的位置也
     一增一减 —— 滚动条就在两个值之间来回跳。
 
     实测修复前：400 张的库从 5930 掉到 1290；2000 张的从 31010 掉到 1300。
     两处的列数全程都是 7，一次都没变过。
+
+    **为什么每一轮事件循环都量一次**：夹取与恢复发生在同一帧内的先后两步，
+    只在 ``resize`` 之后量一次的话，恰好量不到那一段被夹住的时刻（旧实现里
+    全量排版会在同一帧内把它摆回来，于是从外面看像没跳过）。而位置真丢
+    的那一次根本没有恢复 —— 那时 :meth:`grid._recompute_layout` 判「格子尺寸没变」
+    直接返回，夹取来自 Qt 自己那次**推迟 100ms** 的重排（``ResizeMode.Adjust``），
+    所以末尾还得等够 100ms 再看一眼。
     """
     grid = make_grid(qt_app, tmp_path, 400)
     settle(SETTLE_SECONDS)
@@ -723,12 +730,138 @@ def test_dragging_the_window_keeps_the_scroll_position(
     columns = grid._first_row_columns()
     assert columns >= 2, "列数太少，测的不是这个场景"
 
+    def full_range() -> int:
+        """此刻这个几何下滚动条范围该有的样子（全量排版之后 Qt 算的就是它）。"""
+        rows = -(-grid.model().rowCount() // columns)
+        return rows * grid.gridSize().height() - grid.viewport().height()
+
     seen: list[int] = []
-    for offset in (12, -12) * 6:
+    ranges: list[tuple[int, int]] = []  # (实测 maximum, 该有的 maximum)
+    # 相邻两档里有**格子尺寸没变**的那些（1204 与 1200 都是 192 宽）：
+    # 旧实现里那几帧连几何都不会改，位置就是在那几帧被 Qt 自己那次延迟重排夹走的。
+    for offset in (8, 4, 0, -4, -8, 0, 8, 4, 0, -4):
         grid.resize(1200 + offset, 800)
+        for _ in range(4):  # 拖动的每一轮事件循环
+            qt_app.processEvents()
+            seen.append(bar.value())
+            ranges.append((bar.maximum(), full_range()))
         settle(SLICE_SECONDS)
-        seen.append(bar.value())
+    settle(SETTLE_SECONDS)  # 连 Qt 那个 100ms 的延迟重排也跑掉
+    seen.append(bar.value())
+    ranges.append((bar.maximum(), full_range()))
 
     assert grid._first_row_columns() == columns, "这个用例要的就是列数不变"
     drift = max(abs(value - start) for value in seen)
-    assert drift <= 40, f"滚动位置漂了 {drift} 像素：{sorted(set(seen))}"
+    assert drift == 0, f"滚动位置在拖动过程中动了 {drift} 像素：{sorted(set(seen))}"
+    collapsed = sorted({actual for actual, expected in ranges if actual != expected})
+    assert not collapsed, (
+        f"滚动条范围缩到了 {collapsed}（该有的大小见 {sorted({e for _, e in ranges})}）"
+        "—— 范围只覆盖了已排版的那一批，位置就是被它夹掉的"
+    )
+
+
+def test_new_photos_arriving_do_not_lose_the_scroll_position(
+    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+) -> None:
+    """扫描 / 监听往模型里加条目时，滚动位置同样不许被夹走。
+
+    加条目会让 Qt 排一次**自己的**延迟重排，而它每次都从第 0 条重新排起 —— 范围在
+    排完第一批的那一刻只剩一小块，正看到中间的人当场被夹（实测 400 张的库
+    6970 → 1620）。这条走的是 ``rowsInserted`` 这个入口，与拖窗口那条不是同一个，
+    所以单独盯一次。
+    """
+    grid = make_grid(qt_app, tmp_path, 400)
+    settle(SETTLE_SECONDS)
+    bar = grid.verticalScrollBar()
+    bar.setValue(bar.maximum() // 2)
+    settle(SETTLE_SECONDS)
+    start = bar.value()
+    columns = grid._first_row_columns()
+    assert start > 0 and columns >= 2, "没滚下去 / 列数太少，测的不是这个场景"
+
+    for step in range(3):
+        grid.model().append(fake_photos(200, tmp_path / f"新来的{step}"))
+        settle(SETTLE_SECONDS)
+        assert bar.value() == start, (
+            f"第 {step} 批新条目进来之后位置从 {start} 变成了 {bar.value()}"
+        )
+
+    rows = -(-grid.model().rowCount() // columns)
+    expected = rows * grid.gridSize().height() - grid.viewport().height()
+    assert bar.maximum() == expected, f"范围 {bar.maximum()}，正确应为 {expected}"
+
+
+def test_changing_the_thumbnail_size_keeps_the_cell_the_user_is_looking_at(
+    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+) -> None:
+    """换档（列数真的变了）时，摆在正中的是**用户正看着的那一格**。
+
+    以前这里取的是 :meth:`currentIndex`，而 Qt 在模型重置/重排之后会顺手把当前项
+    设成第 0 行 —— 于是在相册中间放大一档，整屏就弹回相册顶部。没有真选区时该依据
+    的是「视口正中那一格」，它才是用户那一刻在看的东西。
+
+    只比**纵向**：列数一换，那一格自己就从一行里的第 3 个挪到了第 1 个，横向位置
+    本来就没有可比性。
+    """
+    grid = make_grid(qt_app, tmp_path, 400)
+    settle(SETTLE_SECONDS)
+    grid.clear_current()  # 显式摆出前置条件：谁也没选中（不留 Qt 顺手设的当前项）
+    bar = grid.verticalScrollBar()
+    bar.setValue(bar.maximum() // 2)
+    settle(SETTLE_SECONDS)
+
+    middle = QPoint(grid.viewport().width() // 2, grid.viewport().height() // 2)
+    anchor = grid.indexAt(middle).row()
+    assert anchor > 0, f"没滚到相册中间（正中是第 {anchor} 格），测的不是这个场景"
+    before_columns = grid._first_row_columns()
+
+    grid.set_target_edge(THUMBNAIL_SIZES[2])
+    settle(SETTLE_SECONDS)
+
+    after_columns = grid._first_row_columns()
+    assert after_columns != before_columns, "这一档没换行，测的不是这个场景"
+    rect = grid.visualRect(grid.model().index(anchor, 0))
+    assert rect.isValid(), f"第 {anchor} 格被甩出视口了"
+    middle_y = grid.viewport().height() // 2
+    assert abs(rect.center().y() - middle_y) <= 1, (
+        f"用户正看着的第 {anchor} 格停在了 y={rect.center().y()}，视口正中是 {middle_y}"
+    )
+
+
+def test_the_column_check_never_aborts_a_running_transition(
+    qt_app: QApplication,
+    tmp_path: Path,
+    settle: Callable[[float], None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """「核对实际列数」引发的那次修正，不许把正在跑的过渡打断在半路。
+
+    这次修正紧接着切档发生（:data:`grid.COLUMN_CHECK_MS` = 50ms，而过渡是 160ms），
+    所以它正撞在过渡动画上 —— 它一「落位」，那一趟要滑到选中项的滚动就停在了半路，
+    选中项再也没被摆到正中。修正自己也会真的发生：macOS 的样式下 Qt 在宽窗口里
+    就是会少摆一列。
+
+    修正该做的只有一件事：按实测列数把格子重新均分一遍，位置照旧。
+    """
+    grid = make_grid(qt_app, tmp_path, 400)
+    settle(SETTLE_SECONDS)
+    grid.select_row(300, ensure_visible=False)
+    settle(SETTLE_SECONDS)
+    grid.set_target_edge(THUMBNAIL_SIZES[2])
+    assert grid._laid_out_columns >= 2, "列数太少，测的不是这个场景"
+    settle(EDGE_ANIMATION_MS / 1000 / 3)  # 过渡跑到三分之一就撞上核对
+
+    # 装作「Qt 实际少摆得下一列」：这正是核对要修正的情形。必须**少**于当前列数，
+    # 否则 `_examine_columns` 会判「量出来的没少」而什么都不做，这个用例就空了。
+    monkeypatch.setattr(grid, "_first_row_columns", lambda: grid._laid_out_columns - 1)
+    corrected = grid._laid_out_columns - 1
+    grid._examine_columns()
+    monkeypatch.undo()
+    assert grid._laid_out_columns == corrected, "修正没发生，测的不是这个场景"
+    settle(SETTLE_SECONDS)
+
+    cell_rect = grid.visualRect(grid.model().index(300, 0))
+    middle = grid.viewport().height() // 2
+    assert abs(cell_rect.center().y() - middle) <= 1, (
+        f"选中项停在了 y={cell_rect.center().y()}，视口正中是 {middle}"
+    )

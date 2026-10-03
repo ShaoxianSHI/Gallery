@@ -241,7 +241,7 @@ class PhotoDelegate(QStyledItemDelegate):
     def set_icon_edge(self, edge: int) -> None:
         """几何尺寸变了 —— 绘制尺寸先跟它对齐。
 
-        动画是在 :meth:`PhotoGrid._apply_cell` 里、在几何定下来**之后**另行发起的：
+        动画是在 :meth:`PhotoGrid._set_cell` 里、在几何定下来**之后**另行发起的：
         它会把 :meth:`draw_edge` 立刻拨回旧尺寸再往新尺寸走（那里拨这一下是刻意的，
         免得中间漏出一帧新尺寸）。所以这里「顺手对齐」不会把动画的起点吃掉。
         """
@@ -600,6 +600,9 @@ class PhotoGrid(QListView):
         self._edge_to = 0.0
         self._scroll_from = 0
         self._scroll_to = 0
+        #: 这一趟过渡正把第几行摆到正中（``-1`` = 这一趟不是为了居中）。
+        #: 几何在过渡途中被改掉时（见 :meth:`_examine_columns`），要靠它把终点重算一遍。
+        self._centered_row = -1
         #: 「这一次滚动是那条过渡动画自己发起的」。**不是**它发起的滚动都要停掉过渡，
         #: 而判断这件事只有一个可靠的地方 —— :meth:`scrollContentsBy`，所有滚动
         #: （滚轮、方向键、拖滚动条、``EnsureVisible``）都从那里过。
@@ -633,11 +636,26 @@ class PhotoGrid(QListView):
             model.modelReset.connect(self._on_model_reset)
 
     def _on_rows_inserted(self, *_args: object) -> None:
-        """模型里多了一批条目 → 给「核对实际列数」补一次机会（定时器 50ms 后触发）。"""
+        """模型里多了一批条目（扫描、监听、粘贴取回…）。
+
+        两件事：
+
+        - 给「核对实际列数」补一次机会（条目不够一行时那次核对量不出真实列数，
+          见 :meth:`setModel`）。
+        - **已经滚下去过的话，顺手把这次插入引起的重排接管掉。** Qt 会为插入排一次
+          延迟重排，而它每次都从第 0 条重新排起 —— 滚动条范围在排完第一批的那一刻
+          只剩一小块，正看到中间的人当场被夹回顶部（实测 400 张的库 6970 → 1620）。
+          走一遍正常的重排路径（:meth:`_apply_geometry`）就把那次延迟重排取消掉了，
+          范围一次算全、位置原样留住。停在最顶上时（扫库的常态）不花这笔钱：
+          范围小一点也夹不掉谁，反正本来就该是 0。
+        """
         # 插进来的新行没有「旧位置」可言：:class:`GridTransition` 算得出老行要去哪，
         # 算不出一个从来没在这套旧布局里待过的行该从哪来。所以过渡作废。
         self._cancel_transition()
         self._examiner.start()
+        bar = self.verticalScrollBar()
+        if bar.value() > 0:
+            self._apply_geometry(self._cell_size_for(self.viewport().width()), bar.value())
 
     def _on_model_reset(self, *_args: object) -> None:
         """模型整体重置（换层、换排序）→ 旧的 arm 作废。
@@ -669,9 +687,7 @@ class PhotoGrid(QListView):
         """换一档目标尺寸。真正的格子宽度由视口宽度决定，见 :meth:`_recompute_layout`。"""
         self._target_edge = edge
         self._layout_fix.clear()
-        # ``full_layout``：切档要把全部条目排一遍，滚动条范围才立刻是对的 ——
-        # 理由见 :meth:`_layout_everything`。拖窗口那条路径不能开，见那里。
-        self._recompute_layout(animate=True, full_layout=True)
+        self._recompute_layout(animate=True)
 
     def _columns_for(self, available: int) -> int:
         """这个宽度下打算摆几列。"""
@@ -713,7 +729,7 @@ class PhotoGrid(QListView):
         edge = max(MIN_EDGE, cell_width - GRID_PADDING_X)
         return QSize(edge + GRID_PADDING_X, edge + GRID_PADDING_Y)
 
-    def _recompute_layout(self, *, animate: bool = False, full_layout: bool = False) -> None:
+    def _recompute_layout(self, *, animate: bool = False) -> None:
         """按当前视口宽度重排，让第一行铺满、右侧不留空白。
 
         ``animate`` 只有「用户切了一档」那条路径会传 ``True``：拖窗口是连续事件，
@@ -721,7 +737,15 @@ class PhotoGrid(QListView):
 
         这里**不**取消正在跑的过渡：连按两档要能正常地接第二段（见
         :meth:`_start_transition`）。视口变了但格子没变的场合，
-        旧布局其实一点没动，过渡照旧是对的；真的变了，:meth:`_apply_cell` 自己会收尾。
+        旧布局其实一点没动，过渡照旧是对的；真的变了，:meth:`_set_cell` 自己会收尾。
+
+        **宽度变了就一定要走一趟 :meth:`_set_cell`，哪怕算出来的格子尺寸一模一样。**
+        Qt 的 ``ResizeMode.Adjust`` 每次宽度变化都会排一次它自己的延迟重排，而那次
+        重排会把滚动条范围缩回一批、顺手夹掉当前位置 —— 它与我们的 ``_first_row_columns``
+        之类的调用谁先谁后全看时序，夹完了没人摆回来，位置就永久地丢了（实测拖窗口时
+        从 6970 掉到 1620 就是这么来的）。这一趟会把它取消掉（``doItemsLayout`` 会
+        ``interruptDelayedItemsLayout``），所以格子尺寸没变时它省下的是 Qt 那次重排，
+        不是白跑。
         """
         if self._laying_out:
             return
@@ -737,7 +761,7 @@ class PhotoGrid(QListView):
         # 不重排就会沿用旧列数，右边留下一条空白。
         if available == self._laid_out_width and columns == self._laid_out_columns:
             return
-        self._apply_cell(self._cell_size_for(available), animate=animate, full_layout=full_layout)
+        self._set_cell(self._cell_size_for(available), animate=animate)
         self._laid_out_width = available
         self._laid_out_columns = columns
         self._examiner.start()
@@ -747,6 +771,14 @@ class PhotoGrid(QListView):
 
         Qt 的换行宽度与视口宽度并不严格相等（实测在宽窗口下会少摆一列），
         猜公式不如实测：真少了就按实测列数重算，并留出安全边距保证这次摆得下。
+
+        **修正不当成一次换档**（走 :meth:`_apply_geometry` 而不是 :meth:`_set_cell`）：
+        列数并没有变（Qt 本来就只摆了这么多，我们只是把一行的宽度重新均分一下），
+        没有什么要重新定位的。但格子高度确实变了，所以正跑着的过渡要跟着改：
+        它的「新布局」与滚动终点都是按旧格高算出来的，不重算就会按错的位置去画
+        （越远的行偏得越多，屏上那几格会被画到视口外面去），那一趟滚动也会停在
+        一个偏移了几千像素的地方（见 :meth:`_rebuild_transition` 与
+        :meth:`_refresh_scroll_goal`）。
         """
         available = self.viewport().width()
         intended = self._laid_out_columns
@@ -763,8 +795,40 @@ class PhotoGrid(QListView):
         if len(self._layout_fix) > MAX_LAYOUT_MEMO:
             self._layout_fix.clear()
         self._layout_fix[available] = (measured, LAYOUT_SAFETY)
-        self._apply_cell(self._cell_size_for(available))
+        cell = self._cell_size_for(available)
+        self._apply_geometry(cell, self.verticalScrollBar().value())
         self._laid_out_columns = measured
+        self._rebuild_transition(cell)
+        self._refresh_scroll_goal()
+
+    def _rebuild_transition(self, cell: QSize) -> None:
+        """几何变了之后，把过渡里记的那套「新布局」也换成实测的那一套。
+
+        过渡只描述「这一格从旧位飞到新位画在哪儿」（见 :class:`GridTransition`），
+        委托拿它算出来的位移是**相对当前逻辑位置**的。逻辑位置已经按新几何排好了，
+        过渡里还留着旧几何的话，差得可不止一两个像素：格子高度差 30 像素时，第 100
+        行的位移就差三千像素 —— 屏上那几格会被画到视口外面去。
+        """
+        if self._transition is None:
+            return
+        columns = self._first_row_columns()
+        if columns <= 0:
+            return
+        self._transition = GridTransition(
+            self._transition.old_columns, self._transition.old_cell, columns, cell
+        )
+
+    def _refresh_scroll_goal(self) -> None:
+        """过渡正滑向某个位置时，按新几何把那个位置重算一遍。
+
+        只在「动画还在跑、而且确实在滑向某处、而且那处是一次居中」时才有事可做：
+        ``_scroll_from == _scroll_to`` 说明这一趟只是原地重画，没有终点可修正。
+        """
+        if self._transition_anim.state() == QAbstractAnimation.State.Stopped:
+            return
+        if self._centered_row < 0 or self._scroll_to == self._scroll_from:
+            return
+        self._scroll_to = self._centered_scroll_value(self._centered_row, self._laid_out_columns)
 
     def _first_row_columns(self) -> int:
         """实际排在第一行的格子数（只采样一行，代价与库大小无关）。"""
@@ -779,41 +843,32 @@ class PhotoGrid(QListView):
             count += 1
         return count
 
-    def _apply_cell(self, cell: QSize, *, animate: bool = False, full_layout: bool = False) -> None:
-        if cell == self.gridSize():
-            return
+    def _set_cell(self, cell: QSize, *, animate: bool = False) -> None:
+        """换一次格子尺寸：改几何、全量重排、位置留在原处，**换了行才重新定位**。
+
+        滚动位置在几何变化前后**一格都不动**，这是整件事的底线：拖窗口、换档、核对
+        列数都不该看见滚动条自己走。唯一会动的场合是**列数真的变了**（:attr:`GridTransition.reflows`）
+        —— 那时「第 31 行」已经是另一批照片了，停在原来的像素上等于换了一张照片，
+        所以把用户正看着的那一格摆到正中（见 :meth:`_focus_row`）。
+        """
         # 动画起点是「上一帧画出来」的那一档，不是几何尺寸：上一次过渡可能还没跑完，
         # 那时两者不等。从中间值接着走，用户连点两档才不会看见它先倒退回去。
         drawn_edge = self._delegate.draw_edge
-        # 滚动起点同理，必须在**改布局之前**读：``doItemsLayout`` 与滚动条范围
-        # 变化都可能顺手把它挪走，那时读到的已经不是一个干净的起点。
+        # 下面三件事都必须在**改几何之前**读，而且顺序有讲究：
+        # ``_first_row_columns``（走 ``visualRect``）会把 Qt 排着的那趟延迟重排当场
+        # 排掉，而那次重排会把滚动位置夹到「已排版的那一批」的末尾 —— 位置要先读，
+        # 读到的才是用户真正在的地方。
         scroll_from = self.verticalScrollBar().value()
-        # 旧布局的两端**量出来**（理由见 :class:`GridTransition`），必须在改布局之前 ——
-        # 改完之后量到的就是新布局了，那段位移就成了零。
         old_columns = self._first_row_columns()
         old_cell = self.gridSize()
-        self._laying_out = True
-        try:
-            self._applied_edge = cell.width() - GRID_PADDING_X
-            self._delegate.set_icon_edge(self._applied_edge)
-            self.setIconSize(QSize(self._applied_edge, self._applied_edge))
-            self.setGridSize(cell)
-            if full_layout:
-                self._layout_everything()
-            else:
-                self.doItemsLayout()
-                self._keep_scroll_at(scroll_from)
-        finally:
-            self._laying_out = False
+        anchor = self._anchor_row()
+        self._apply_geometry(cell, scroll_from)
         new_columns = self._first_row_columns()
-        index = self.currentIndex()
-        if index.isValid() and full_layout and not _NO_CENTER:  # 临时对照开关
-            # **只在切档时居中。** 这一条是踩过坑的：``_apply_cell`` 还会在拖窗口、
-            # 视口大小变化时被调到，而 Qt 会顺手把当前项设成第 0 行 —— 于是每 resize
-            # 一次（**包括后台横幅出现/消失带来的自动 resize**）就把整屏拽回顶部。
-            #
-            # 拖窗口时用户要的是「还在看的那一片还在」，不是「回到选中项」。
-            self._center_on_row(index.row(), new_columns)
+        if old_columns > 0 and new_columns > 0 and old_columns != new_columns and not _NO_CENTER:
+            # **只在真的换行时居中。** 这一条是踩过坑的：Qt 会顺手把当前项设成第 0 行，
+            # 无条件按它居中就等于「每 resize 一次（**包括后台横幅出现/消失带来的自动
+            # resize**）都把整屏拽回顶部」。
+            self._center_on_row(self._focus_row(anchor), new_columns)
         self._transition = (
             GridTransition(old_columns, old_cell, new_columns, cell)
             if old_columns > 0 and new_columns > 0
@@ -822,42 +877,88 @@ class PhotoGrid(QListView):
         self._schedule_edge_update()
         self._start_transition(drawn_edge, scroll_from, animate=animate)
 
-    def _keep_scroll_at(self, value: int) -> None:
-        """布局把滚动位置夹掉了就摆回去。
+    def _apply_geometry(self, cell: QSize, scroll: int) -> None:
+        """设定格子几何、**全量**排一遍版，再把滚动位置摆回 ``scroll``。
 
-        **为什么拖窗口时每一帧都要管。** 格子宽度每帧都变一点点
-        （``usable // columns`` 跟着视口宽度走），所以拖动过程中
-        :meth:`_apply_cell` **每帧都会跑**；每跑一次 Batched 布局，Qt 就按
-        「已排版的那一批」重算一遍滚动条范围，把当前位置夹到那一批的末尾。宽度一增
-        一减、夹到的位置也就一增一减 —— 滚动条就在两个值之间来回跳，**哪怕列数根本没
-        变**。
+        ``scroll`` 由调用方在改几何**之前**读出来（见 :meth:`_set_cell` 里的顺序说明）。
 
-        实测：400 张的库滚动到 5930，拖窄窗口的瞬间掉到 1520。
+        **为什么必须全量排版（:meth:`_layout_everything`）而不是 Batched。**
+        Batched 的滚动条范围只按「已经排过的那一批」算（``contentsSize`` 就是最后
+        一条排过的条目的右下角），而每次重排都从第 0 条重新开始 —— 于是范围在排完
+        第一批的那一刻缩成一小块（400 张、6 列时是 1620），而 Qt 会在范围变小的瞬间
+        **当场把当前位置夹进去**。全量排版之后范围当场就是终值，夹取无从发生；这也
+        正是拖窗口时滚动条不再一帧一跳的原因。
 
-        摆回去之前得先让范围对：范围本身就是那个「一小块」时，滚动条压根不许停在
-        外面（见 :meth:`_layout_everything` 里的实测表）。所以必要时要付一次全量
-        排版 —— 但只在**真的被夹了**时才付，位置没动就直接返回。实测拖窄 20 像素
-        一分钱不丢。
+        代价要说清楚：拖窗口时每一帧都是一次全量排版（量级见
+        :meth:`_layout_everything` 的实测表：几万张也就几十毫秒）。以前只在「发现
+        位置被夹了」时才付这笔钱，但它付得并不少 —— 被夹几乎是每一帧的事（只要视图
+        不是停在最顶上），还白搭一次 Batched 排版；换来的是滚动条不再乱跳，而不跳
+        比拖得略卡要紧得多。
+        """
+        self._laying_out = True
+        try:
+            self._applied_edge = cell.width() - GRID_PADDING_X
+            self._delegate.set_icon_edge(self._applied_edge)
+            self.setIconSize(QSize(self._applied_edge, self._applied_edge))
+            self.setGridSize(cell)
+            self._layout_everything()
+        finally:
+            self._laying_out = False
+        self._restore_scroll(scroll)
 
-        代价要说清楚：大库里拖窗口时，只要位置被夹，每一帧都是一次全量排版
-        （30000 张约 40ms）。换来的是滚动条不再乱跳；不换的话，滚动条乱跳比拖得
-        略卡糟糕得多。
+    def _restore_scroll(self, value: int) -> None:
+        """把滚动位置摆回 ``value``。
+
+        布局每跑一次都会按新几何重算范围，而 Qt 在范围变小时当场把当前位置夹进去。
+        范围在全量排版之后已经是对的，所以这里摆回去就是「同一处内容仍在同一处」；
+        位置没动时直接返回（绝大多数帧都是这样，一次赋值而已）。
+
+        超出新范围时会被 ``setValue`` 夹住 —— 那是内容真的变短了（末行摆不到窗口
+        中间去），该夹。
         """
         bar = self.verticalScrollBar()
         if bar.value() == value:
             return
-        self._layout_everything()
+        # 自己发起的滚动不算「用户滚了」：``scrollContentsBy`` 会拿这个标志去判断
+        # 要不要叫停正在跑的过渡（见 :meth:`_on_transition_step`）。
         self._driving_scroll = True
         try:
             bar.setValue(value)
         finally:
             self._driving_scroll = False
 
+    def _anchor_row(self) -> int:
+        """视口正中那一格的行号 —— 用户这一刻在看的东西；量不出来时给 ``-1``。
+
+        **必须在改几何之前问**：改完之后「正中」已经指到另一格了。用 ``indexAt``
+        采样一个点，代价与库的大小无关。
+        """
+        middle = QPoint(self.viewport().width() // 2, self.viewport().height() // 2)
+        index = self.indexAt(middle)
+        return index.row() if index.isValid() else -1
+
+    def _focus_row(self, anchor_row: int) -> int:
+        """换了行之后该把哪一格摆到正中。
+
+        有真选区时是当前项（选区里那个带焦点的格子，方向键与 ⇧ 扩选都照它走）；
+        没有真选区时是换行之前视口正中那一格。**不能退回 ``currentIndex()``**：
+        Qt 在模型重置与每一次重排之后都会把当前项顺手设成第 0 行，照着它居中，就等于
+        「在相册中间放大一档 → 整屏弹回相册顶部」。``anchor_row`` 才是用户那一刻
+        真正在看的东西。
+        """
+        if self.genuinely_selected_rows():
+            row = self.current_row()
+            if row >= 0:
+                return row
+        if anchor_row >= 0:
+            return anchor_row
+        return self.current_row()
+
     def _layout_everything(self) -> None:
-        """把**全部**条目排一遍版。只在切档这一下用（见 :meth:`_apply_cell` 的 ``full_layout``）。
+        """把**全部**条目排一遍版。每一次几何变化都用它（见 :meth:`_apply_geometry`）。
 
         **为什么不能继续用 Batched。** Batched 布局的滚动条范围只覆盖已排版的那一批，
-        于是刚切完那一刻范围小得离谱。实测切到大档（4 列、格高 317）之后：
+        于是刚排完第一批那一刻范围小得离谱。实测切到大档（4 列、格高 317）之后：
 
         ===============  ================  ====================
         条目             刚切完的 maximum   正确的满范围
@@ -880,8 +981,11 @@ class PhotoGrid(QListView):
         40.4ms，线性，约每张 1.3 微秒。它还比 Qt 自己那次**延迟**的全量排版便宜得多
         （3000 张：6.6ms 对 131ms，20 倍 —— 那个延迟路径要反复重排）。
 
-        **为什么只在这一下用**：拖窗口时 :meth:`_apply_cell` 一秒要被调几十次，
-        每次全量排版会让大库彻底卡死。平时滚动仍然必须是 Batched —— 那才是它的意义。
+        **为什么每一帧都付得起**：范围不准的代价不是「少滚一点」，而是「位置被当场
+        夹走」—— 而夹取几乎每一帧都会发生（只要视图不是停在最顶上），所以以前那套
+        「先 Batched 排一批、发现被夹了再全量补一遍」并没有省下什么，反而多付了一趟
+        Batched。平时**滚动**仍然完全不重排，Batched 在那里才有意义 ——
+        这也是为什么排完还要把它设回去。
         """
         self.setLayoutMode(QListView.LayoutMode.SinglePass)
         try:
@@ -889,14 +993,10 @@ class PhotoGrid(QListView):
         finally:
             self.setLayoutMode(QListView.LayoutMode.Batched)
 
-    def _center_on_row(self, row: int, columns: int) -> None:
-        """把第 ``row`` 行摆到视口正中间（``columns`` 是当前这套布局实际的列数）。
+    def _centered_scroll_value(self, row: int, columns: int) -> int:
+        """把第 ``row`` 行摆到正中时滚动条该在的值（夹进范围）。
 
-        **不用 ``scrollTo(PositionAtCenter)``。** 那个方法要问 Qt 问 ``visualRect``，
-        而 Batched 布局下超出已排版那一批的行 ``visualRect`` 返回
-        ``QRect(-1, -1, 0, 0)``，于是 ``scrollTo`` 静默什么都不做。
-
-        这里自己算。格子在「``columns`` 列、每格 ``cell``」里的位置本来就是确定的
+        格子在「``columns`` 列、每格 ``cell``」里的位置本来就是确定的
         （:class:`GridTransition` 用的是同一条算术），算出来夹进滚动条范围即可，
         **与那一行有没有被排版过无关**。
 
@@ -913,7 +1013,21 @@ class PhotoGrid(QListView):
         top = (row // columns) * cell_height
         bar = self.verticalScrollBar()
         target = top + cell_height // 2 - self.viewport().height() // 2
-        target = max(bar.minimum(), min(bar.maximum(), target))
+        return max(bar.minimum(), min(bar.maximum(), target))
+
+    def _center_on_row(self, row: int, columns: int) -> None:
+        """把第 ``row`` 行摆到视口正中间（``columns`` 是当前这套布局实际的列数）。
+
+        **不用 ``scrollTo(PositionAtCenter)``。** 那个方法要问 Qt 问 ``visualRect``，
+        而 Batched 布局下超出已排版那一批的行 ``visualRect`` 返回
+        ``QRect(-1, -1, 0, 0)``，于是 ``scrollTo`` 静默什么都不做。
+
+        记下 ``row``（:attr:`_centered_row`）：几何要是被改掉（见
+        :meth:`_examine_columns`），这一趟的终点得按新几何重算，否则就会停在
+        一个按旧格高算出来的位置上。
+        """
+        self._centered_row = row
+        target = self._centered_scroll_value(row, columns)
         # 过渡每帧都重读 ``_scroll_to``，而 :meth:`_start_transition` 紧接着就拿
         # 滚动条的当前位置当终点 —— 所以这里**必须**真的把滚动条摆过去，哪怕上一段
         # 过渡还在跑（连按两档）。下面 :meth:`_start_transition` 会判「不接第二段」
@@ -923,7 +1037,7 @@ class PhotoGrid(QListView):
         # 要不要叫停正在跑的过渡（见 :meth:`_on_transition_step`）。
         self._driving_scroll = True
         try:
-            bar.setValue(target)
+            self.verticalScrollBar().setValue(target)
         finally:
             self._driving_scroll = False
 
@@ -1023,6 +1137,8 @@ class PhotoGrid(QListView):
         """
         if self._transition_anim.state() == QAbstractAnimation.State.Stopped:
             return
+        # 这一趟是用户自己接手结束的：它要居中的那一行不再是目标了。
+        self._centered_row = -1
         self._transition_anim.stop()
         self._settle_transition(restore_scroll=False)
 
