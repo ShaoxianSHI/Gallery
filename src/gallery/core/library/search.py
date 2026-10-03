@@ -102,12 +102,18 @@ def _field(
 #: 候选列表的顺序即这里面的顺序。**不打乱 ``GROUP_FACET_IDS`` / ``SORT_FACET_IDS``
 #: 的既有顺序**（字段与分组排序看到的是同一套字段，不该在这里另排一遍），
 #: 只把「不读 EXIF、立刻出结果」的四个提到最前面：文件名、相册、文件格式、文件大小。
+#:
+#: ``column`` 写的是 **SQL 里的列名**，不是 ``PhotoFacets`` 上的属性名 —— 两者只在
+#: 拍摄时间这一项上不一样（属性叫 ``captured_at``，列叫 ``captured``）。写错的后果
+#: **不会在解析与生成 SQL 时露出来**：SQLite 直到执行才说 ``no such column``，而那条
+#: 错误被 :meth:`FacetIndex.search` 包成了「检索没能完成」—— 界面上表现为「一条都搜不到」。
+#: ``tests/core/library/test_search.py`` 里那条列名守护就是为这件事准备的。
 SEARCH_FIELDS: Final[tuple[SearchField, ...]] = (
     _field(FACET_NAME, "文件名", "name", "p.name"),
     _field(FACET_FOLDER, "相册", "album", "p.folder", hint="含子相册"),
     _field(FACET_FORMAT, "文件格式", "format", "p.suffix", hint="jpg 或 JPEG"),
     _field(FACET_SIZE, "文件大小", "size", "p.size", hint="5MB 或 >10MB"),
-    _field(FACET_CAPTURED, "拍摄时间", "datetime", "f.captured_at", hint="2024 / 2024-05"),
+    _field(FACET_CAPTURED, "拍摄时间", "datetime", "f.captured", hint="2024 / 2024-05"),
     _field(FACET_CAMERA, "相机", "text", "f.camera"),
     _field(FACET_LENS, "镜头", "text", "f.lens"),
     _field(FACET_COUNTRY, "国家", "text", "f.country"),
@@ -484,7 +490,7 @@ def _clause(condition: SearchCondition) -> tuple[str, list[object]]:
     文件格式        ``= '.jpg'``
     文本一族        ``LIKE '%q%'``
     大小 / 数值     比较式（等于是空比较符）
-    时间            区间；``f.captured_at`` 是秒，``p.mtime_ns`` 是纳秒
+    时间            区间；``f.captured`` 是秒，``p.mtime_ns`` 是纳秒
     ==============  ==========================================================
     """
     field = condition.field

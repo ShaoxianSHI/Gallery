@@ -9,8 +9,11 @@
 
 from __future__ import annotations
 
+import datetime
+import sqlite3
 from collections.abc import Callable
 from pathlib import Path
+from typing import Final
 
 import pytest
 
@@ -334,6 +337,80 @@ def test_metadata_conditions_use_the_facet_rows(tmp_path: Path, make_photo) -> N
     assert _names(library.search_photos([_condition("#相机 sony")]).refs) == ["山.jpg"]  # type: ignore[list-item]
     assert _names(library.search_photos([_condition("#城市 杭州")]).refs) == ["海边-01.jpg"]  # type: ignore[list-item]
     assert _names(library.search_photos([_condition("#ISO >400")]).refs) == ["海边-01.jpg"]  # type: ignore[list-item]
+
+
+def _taken_in(year: int, month: int, day: int) -> PhotoFacets:
+    """一张在某年某月某日中午拍的照片的 facet 快照。
+
+    时间取**中午**而不是零点：零点正好压在区间的边界上，``>=`` 与 ``<`` 差一秒就会
+    少算它一张 —— 那种失败与真正的缺陷长得一模一样，排查起来白费时间。
+    """
+    moment = datetime.datetime(year, month, day, 12, 0)  # noqa: DTZ001 - 与库里的算法一致
+    return PhotoFacets(captured_at=moment.timestamp(), year=year, month=month, day=day)
+
+
+def test_a_capture_date_finds_the_photos_taken_then(tmp_path: Path, make_photo) -> None:
+    """``#拍摄时间`` 要在真库上查得对 —— 这一族从来没被真库执行过，列名写错也不会红。
+
+    曾经的故障：字段表里把这一项的列写成了 ``f.captured_at``（那是 ``PhotoFacets`` 上的
+    **属性名**，不是列名），于是每一种写法都在执行时报 ``no such column``，界面表现成
+    「一条都搜不出来」。解析与生成 SQL 那两层照样全绿。
+    """
+    library = _library(tmp_path, make_photo)
+    library.index_photos()
+    by_name = {ref.name: ref for ref in library.iter_photos()}
+    library.facet_index.store(
+        [
+            (by_name["海边-01.jpg"], _taken_in(2023, 5, 16)),
+            (by_name["山.jpg"], _taken_in(2024, 5, 16)),
+        ]
+    )
+
+    assert _names(library.search_photos([_condition("#拍摄时间 2023")]).refs) == [  # type: ignore[list-item]
+        "海边-01.jpg"
+    ]
+    assert _names(library.search_photos([_condition("#拍摄时间 2023-05-16")]).refs) == [  # type: ignore[list-item]
+        "海边-01.jpg"
+    ]
+    # 那天没有照片 —— 区间要真的是一段，不是一个「大概在那前后」。
+    assert _names(library.search_photos([_condition("#拍摄时间 2023-05-17")]).refs) == []  # type: ignore[list-item]
+    # 带比较符时取的是**那一段之外**：`>2023` 是「晚于 2023 年年底」，于是落在 2024 年的
+    # 那张被选中，2023 年那张不是 —— 这条钉住的是比较符那一支，不是区间那一支。
+    assert _names(library.search_photos([_condition("#拍摄时间 >2023")]).refs) == ["山.jpg"]  # type: ignore[list-item]
+
+
+#: 每种 ``kind`` 取一个**能解析成功**的样例值：守护测试要的是把每个字段都真的查一遍，
+#: 而值写坏了就只会得到「解析不出来」，那个 ``None`` 断的是另一件事。
+_SAMPLE_VALUE: Final[dict[str, str]] = {
+    "name": "海边",
+    "album": "旅行",
+    "format": "jpg",
+    "text": "Canon",
+    "size": "5MB",
+    "number": "1",
+    "datetime": "2024",
+}
+
+
+def test_every_searchable_field_survives_the_real_schema(tmp_path: Path, make_photo) -> None:
+    """每个可搜字段都拿真 schema 执行一遍 —— **守护**。
+
+    ``SEARCH_FIELDS`` 里那些列名是手写的，抄成 ``PhotoFacets`` 上的属性名不会有任何人
+    看出来（只有拍摄时间这一项两者还不一样），而错列名要等 SQLite 执行才说
+    ``no such column``。所以这里不问「查得对不对」，只问「这句 SQL 能不能跑」。
+    """
+    library = _library(tmp_path, make_photo)
+    library.index_photos()
+    database = library.facet_index.path
+    assert database is not None
+
+    with sqlite3.connect(database) as connection:
+        for field in SEARCH_FIELDS:
+            condition = _condition(f"#{field.label} {_SAMPLE_VALUE[field.kind]}")
+            assert condition is not None, field.label
+            sql, values = build_query([condition])
+            # 列名不对时这里抛的正是 `no such column: …`，读得懂。
+            connection.execute(sql, values).fetchall()
 
 
 def test_conditions_narrow_each_other(tmp_path: Path, make_photo) -> None:
