@@ -588,36 +588,80 @@ def test_the_layout_is_exactly_the_same_whether_or_not_it_animates(
     assert animated.verticalScrollBar().value() == plain.verticalScrollBar().value()
 
 
-def test_the_scroll_never_goes_backwards_while_recentering(
-    qt_app: QApplication,
-    tmp_path: Path,
-    settle: Callable[[float], None],
-    monkeypatch: pytest.MonkeyPatch,
+def test_the_scroll_glides_from_where_it_was_to_where_the_selection_is(
+    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
 ) -> None:
-    """深层选中项要重试好几轮，重试期间滚动条不能抢动画的方向盘。
+    """在相册底部选中接近末尾的一格再放大：从原处一路滑到选中项，中间不许倒退。
 
-    抢了的话画面会先窜到终点、下一帧又被动画按回「起点→终点」的插值上 —— 看着
-    就是闪一下。实测轨迹是 ``0 → 4272 → 6098 → 1835 → … → 6098``，那一次倒退就是它。
+    这是整套东西最难的一个场景，三处曾经各错一次：
+
+    - Batched 布局的滚动条范围刚切完只有一小块，当前位置被 Qt **当场夹**到那里 ——
+      用户在底部，整屏却瞬间弹回顶部（实测 800 张时 28680 → 4272）。
+    - 范围要 12ms（200 张）/ 37ms（800 张）/ 131ms（3000 张）才涨到位，早期的
+      「重试几轮」在 800 张以上一次都没等到。
+    - 范围终于够了之后，滚动条被直接按到终点，下一帧动画又按回插值上（闪一下）。
+
+    现在靠 :meth:`grid._layout_everything` 把范围同步算对，第一帧就是「旧位置 +
+    旧布局」，之后一路滑过去。
+    """
+    grid = make_grid(qt_app, tmp_path, 800)
+    grid.verticalScrollBar().setValue(grid.verticalScrollBar().maximum())
+    settle(SETTLE_SECONDS)
+    grid.select_row(795, ensure_visible=False)
+    settle(SETTLE_SECONDS)
+    start = grid.verticalScrollBar().value()
+
+    grid.set_target_edge(THUMBNAIL_SIZES[2])
+    samples = scroll_samples(grid, settle)
+
+    assert samples[0] == start, f"第 0 帧就该在原处 {start}，实际 {samples[0]}"
+    pairs = list(zip(samples, samples[1:], strict=False))
+    backwards = [(a, b) for a, b in pairs if b < a]
+    assert not backwards, f"滚动倒退了：{backwards}"
+    assert len(set(samples)) > 5, f"只取到 {sorted(set(samples))}，这是一次跳变不是过渡"
+
+    # 终点必须是「选中项在正中」，而不是「够得着的最远处」。
+    cell_rect = grid.visualRect(grid.model().index(795, 0))
+    middle = grid.viewport().height() // 2
+    assert abs(cell_rect.center().y() - middle) <= 1
+
+
+def test_the_scrollbar_range_is_already_right_at_the_moment_of_the_change(
+    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+) -> None:
+    """切档刚做完，滚动条范围就该覆盖全部条目 —— 那一刻它也是画给用户看的。
+
+    范围不对的话，夹取与「摆到正中」两件事都只能算到那一小块以内，于是选中项在
+    下面时会被摆到「够得着的最远处」，离正中还差着一大截（实测 3000 张差 232602）。
+    """
+    grid = make_grid(qt_app, tmp_path, 800)
+    settle(SETTLE_SECONDS)
+
+    grid.set_target_edge(THUMBNAIL_SIZES[2])
+
+    bar = grid.verticalScrollBar()
+    rows = -(-800 // grid._first_row_columns())
+    expected = rows * grid.gridSize().height() - grid.viewport().height()
+    assert bar.maximum() == expected, f"范围 {bar.maximum()}，正确应为 {expected}"
+
+
+def test_two_quick_level_changes_still_end_centered_on_the_selection(
+    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+) -> None:
+    """连按两下换档（上一段过渡还没跑完就又来一下），终点仍是选中项在正中。
+
+    上一段过渡还在跑的时候第二次 :meth:`grid._center_on_row` 是会被调到的。这条
+    盯着它**照样要把滚动条摆过去** —— 摆过去就是第二档的居中位置，紧接着
+    :meth:`grid._start_transition` 判「不接第二段」而落位，落到的正是那儿。
     """
     grid = make_grid(qt_app, tmp_path, 200)
     grid.select_row(80, ensure_visible=False)
     settle(SETTLE_SECONDS)
 
-    # 数一数重试真的发生了 —— 否则「不倒退」可能只是因为压根没重试。
-    calls: list[int] = []
-    real = grid._center_on_row
-
-    def counted(row: int, columns: int, *, attempts_left: int = 0) -> bool:
-        calls.append(attempts_left)
-        return real(row, columns, attempts_left=attempts_left)
-
-    monkeypatch.setattr(grid, "_center_on_row", counted)
-
     grid.set_target_edge(THUMBNAIL_SIZES[2])
-    samples = scroll_samples(grid, settle)
+    grid.set_target_edge(THUMBNAIL_SIZES[0])
+    settle(SETTLE_SECONDS)
 
-    assert len(calls) > 1, f"只排了一轮 {calls}，这测试就没测到东西"
-    pairs = list(zip(samples, samples[1:], strict=False))
-    backwards = [(a, b) for a, b in pairs if b < a]
-    assert not backwards, f"滚动倒退了：{backwards}"
-    assert len(set(samples)) > 3, f"只取到 {sorted(set(samples))}，这是一次跳变不是过渡"
+    cell_rect = grid.visualRect(grid.model().index(80, 0))
+    middle = grid.viewport().height() // 2
+    assert abs(cell_rect.center().y() - middle) <= 1, f"选中项在 y={cell_rect.center().y()}"
