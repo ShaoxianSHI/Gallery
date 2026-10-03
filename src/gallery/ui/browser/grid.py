@@ -129,14 +129,16 @@ class PhotoDelegate(QStyledItemDelegate):
     LABEL_HEIGHT = 20
     #: 选中时那层淡色底 / 描边的圆角半径。
     RADIUS = 10
-    #: 缩略图自身的圆角半径。与 macOS 照片一致（3 pt），**只轻微柔化**：密排时一屏
-    #: 全是照片，圆角的作用是别让它们看着像一堆直角矩形，而不是把角啃掉一块。
+    #: 缩略图自身的圆角半径。**只轻微柔化**：密排时一屏全是照片，圆角的作用是别让它们
+    #: 看着像一堆直角矩形，而不是把角啃掉一块。
     #:
+    #: 比 macOS 照片那个 3 pt 略大一点（``docs/调研报告-功能与外观.md`` 里的 token 表
+    #: 记的是 3），仍在这个量级：再大就压过照片本身的形状了。
     #: 刻意不跟 :attr:`RADIUS` 取成同一个值 —— 10 落在照片上是另一个量级的观感，
     #: 而且那个值说的是「选中框」，与「照片」不是一回事。
     #: 占位虚线框（:meth:`_draw_placeholder`）用的是同一个值：那是同一张卡片的框在
     #: 「图还没到」时的样子，两处不圆角一致，缩略图一落地那一格就换了形状。
-    THUMB_RADIUS = 3
+    THUMB_RADIUS = 5
 
     def __init__(self, parent: QWidget | None = None, *, icon_edge: int = DEFAULT_EDGE) -> None:
         super().__init__(parent)
