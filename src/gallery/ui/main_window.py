@@ -74,17 +74,15 @@ from gallery.core.metadata.facets import (
     needs_metadata,
     sort_facet,
 )
-from gallery.core.metadata.failures import Failure
-from gallery.core.metadata.journal import ACTION_MOVE, ACTION_RENAME
+from gallery.core.metadata.journal import ACTION_RENAME
 from gallery.core.metadata.paste import PasteResult
 from gallery.core.metadata.rename import RenameResult
 from gallery.core.metadata.transfer import MoveResult
-from gallery.core.metadata.trash import TrashResult
 from gallery.core.metadata.undo import UndoResult
 from gallery.core.places.countries import place_label
 from gallery.core.places.dataset import is_real_coordinate
 from gallery.core.places.resolver import LazyPlaceResolver
-from gallery.ui import desktop, menu_style, menus, theme
+from gallery.ui import banners, desktop, menu_style, menus, theme
 from gallery.ui.browser.grid import PREFETCH_MARGIN, PhotoGrid
 from gallery.ui.browser.model import PhotoListModel
 from gallery.ui.browser.thumb_sizes import (
@@ -181,20 +179,6 @@ _GROUP_NOT_FILE_ACTION = (
 _NOTHING_SELECTED = "没有可处理的东西。"
 
 
-def _rename_banner(result: RenameResult) -> str:
-    """改名之后的那行提示。
-
-    记账失败必须说出来：这时 ⌘Z 撤销不了，用户只能自己去访达里改回来，
-    让他以为「随时能撤销」比不告诉他更糟。
-    """
-    note = "" if result.journaled else "，但没能记下操作日志，⌘Z 撤销不了"
-    return f"已重命名为「{result.entry.name}」{note}。"
-
-
-def _undo_note(journaled: bool) -> str:
-    return "" if journaled else "，但没能记下操作日志"
-
-
 def _shared_parent(photos: Sequence[PhotoRef]) -> Path | None:
     """这组照片是不是**全都在同一个相册**里；是就返回那个相册，不是就返回 ``None``。
 
@@ -237,118 +221,6 @@ def _flattened_entries(entries: Sequence[GridEntry]) -> list[GridEntry]:
     return flat
 
 
-def _paste_banner(result: PasteResult, target_name: str) -> str:
-    """粘贴之后的那行提示：三件事都要说清 —— 粘了哪些、跳过了哪些、为什么没成。
-
-    **改了名的要单独点出来**（用户要求的是「不覆盖」，而系统给出的新名字得让他看见，
-    否则相册里凭空多出一张「一张 2.jpg」会让人以为程序认错了文件）。
-    """
-    parts: list[str] = []
-    if result.pasted:
-        head = f"已粘贴 {len(result.pasted)} 项到「{target_name}」"
-        renamed = [item for item in result.pasted if item.renamed]
-        if len(renamed) == 1:
-            head += f"（「{renamed[0].source.name}」改名为「{renamed[0].created.name}」）"
-        elif renamed:
-            head += f"（其中 {len(renamed)} 项改了名，免得覆盖已有的）"
-        parts.append(head)
-    if result.skipped:
-        parts.append(f"{len(result.skipped)} 项本来就在「{target_name}」里")
-    if result.failures:
-        first = result.failures[0]
-        more = f"，共 {len(result.failures)} 项" if len(result.failures) > 1 else ""
-        parts.append(f"{first.source.name} 没粘成{more}：{first.message.rstrip('。')}")
-    if not result.journaled:
-        parts.append("没能记下操作日志")
-    return "；".join(parts) + "。"
-
-
-def _transfer_banner(result: MoveResult | PasteResult, target_name: str, verb: str) -> str:
-    """「复制到相册 / 移动到相册」之后的那行提示（ADR 0019）。
-
-    与 :func:`_paste_banner` 一套说法：动了哪些、跳过了哪些、为什么没成、能不能撤销。
-    **改了名的要单独点出来** —— 目标相册里本来就有同名时按访达的规矩改叫「一张 2.jpg」，
-    不说清楚的话用户会以为程序认错了文件。
-
-    移动比粘贴多一句「⌘Z 可以撤销」：这是用户敢用它的前提（红线 1，见 ADR 0019 决策 3）。
-    """
-    moved = result.moved if isinstance(result, MoveResult) else result.pasted
-    parts: list[str] = []
-    if moved:
-        head = f"已{verb} {len(moved)} 项到「{target_name}」"
-        renamed = [item for item in moved if item.renamed]
-        if len(renamed) == 1:
-            head += f"（「{renamed[0].source.name}」改名为「{renamed[0].created.name}」）"
-        elif renamed:
-            head += f"（其中 {len(renamed)} 项改了名，免得覆盖已有的）"
-        parts.append(head)
-    if result.skipped:
-        parts.append(f"{len(result.skipped)} 项本来就在「{target_name}」里")
-    if result.failures:
-        first = result.failures[0]
-        more = f"，共 {len(result.failures)} 项" if len(result.failures) > 1 else ""
-        parts.append(f"{first.name} 没{verb}成{more}：{first.message.rstrip('。')}")
-    if not result.journaled:
-        parts.append("没能记下操作日志")
-    if isinstance(result, MoveResult) and result.journaled:
-        parts.append("⌘Z 可以撤销")
-    return "；".join(parts) + "。"
-
-
-def _trash_banner(result: TrashResult) -> str:
-    """移到废纸篓之后的那行提示。
-
-    三件事必须说清楚：动了多少、能不能撤销、没成的那些为什么没成。
-    废纸篓本身是第二层保险，但用户不该靠猜。
-    """
-    moved = result.moved
-    if not moved:
-        return f"没有移走任何东西：{_first_reason(result.failures)}{_undo_note(result.journaled)}。"
-    if any(isinstance(entry, FolderRef) for entry in moved):
-        head = f"已把相册「{_album_name(moved)}」和里面的内容移到废纸篓"
-    elif len(moved) == 1:
-        head = f"已把「{moved[0].name}」移到废纸篓"
-    else:
-        head = f"已把 {len(moved)} 项移到废纸篓"
-    if result.failures:
-        head += f"，但 {len(result.failures)} 项没移走：{_first_reason(result.failures)}"
-    # 不能一边说「⌘Z 可以撤销」一边说「撤销不了」，所以这两半是一起给的。
-    hint = "⌘Z 可以撤销。" if result.journaled else "⌘Z 撤销不了：没能记下操作日志。"
-    return f"{head}。{hint}"
-
-
-def _undo_banner(result: UndoResult) -> str:
-    """撤销之后的那行提示。"""
-    note = _undo_note(result.journaled)
-    if result.action == ACTION_RENAME:
-        return f"已撤销，恢复为「{result.entries[0].name}」{note}。"
-    if result.action == ACTION_MOVE:
-        # 撤销移动没有 entries：挪回来的东西**不一定在当前这一层**（用户在哪个相册
-        # 点的移动，撤回来时人就站在哪儿），所以界面不知道该往网格里插哪一行 ——
-        # 交给监听器（ADR 0013）去发现，横幅只说发生了什么。
-        if result.failures:
-            return f"没能挪回去：{_first_reason(result.failures)}{note}。"
-        return f"已撤销，照片已挪回原来的相册{note}。"
-    restored = result.entries
-    if not restored:
-        return f"没能取回来：{_first_reason(result.failures)}{note}。"
-    if len(restored) == 1:
-        head = f"已从废纸篓取回「{restored[0].name}」"
-    else:
-        head = f"已从废纸篓取回 {len(restored)} 项"
-    if result.failures:
-        head += f"，但 {len(result.failures)} 项没取回来：{_first_reason(result.failures)}"
-    return f"{head}{note}。"
-
-
-def _album_name(entries: Sequence[GridEntry]) -> str:
-    """一批条目里的相册名（可能混着照片，取第一个相册的）。"""
-    for entry in entries:
-        if isinstance(entry, FolderRef):
-            return entry.display_name
-    return ""
-
-
 def _context_kind(entry: GridEntry) -> TargetKind:
     """这一格是照片、相册还是分组 —— 右键菜单据此拼不同的一份（ADR 0014）。"""
     if isinstance(entry, GroupRef):
@@ -356,23 +228,6 @@ def _context_kind(entry: GridEntry) -> TargetKind:
     if isinstance(entry, FolderRef):
         return TargetKind.ALBUM
     return TargetKind.PHOTO
-
-
-def _first_reason(failures: Sequence[Failure]) -> str:
-    """失败原因的摘要。
-
-    只有一项时要点名道姓 —— 用户得知道该去看哪张照片；多项时横幅只有一行容身之地，
-    只给第一条，完整列表在日志里。
-
-    **三个模块报回来的失败项是同一个类型**（``metadata.failures.Failure``），所以粘贴、
-    移动、移到废纸篓三条路的横幅在这里合流，不需要分形状。统一之前这里是
-    ``Failure | TransferFailure``，而 ``paste.Failure`` 连 ``.name`` 都没有 ——
-    同一个函数名，两种形状，第三种半套。
-    """
-    if not failures:
-        return "原因不明"
-    head = f"「{failures[0].name}」" if len(failures) == 1 else "其中一项"
-    return f"{head}：{failures[0].message.rstrip('。')}"
 
 
 #: 离最近的城市超过这么多公里，就在地点后面补一句距离。
@@ -2470,7 +2325,7 @@ class MainWindow(QMainWindow):
     def _on_paste_done(self, target: Path, payload: object) -> None:
         self._write_job = None
         if isinstance(payload, PasteResult):
-            self._show_banner(_paste_banner(payload, target.name))
+            self._show_banner(banners.paste_banner(payload, target.name))
 
     def _on_paste_failed(self, message: str) -> None:
         self._write_job = None
@@ -2613,10 +2468,10 @@ class MainWindow(QMainWindow):
     def _on_transfer_done(self, target: Path, verb: str, payload: object) -> None:
         self._write_job = None
         if isinstance(payload, MoveResult):
-            self._show_banner(_transfer_banner(payload, target.name, verb))
+            self._show_banner(banners.transfer_banner(payload, target.name, verb))
             self._refresh_undo_label()
         elif isinstance(payload, PasteResult):
-            self._show_banner(_transfer_banner(payload, target.name, verb))
+            self._show_banner(banners.transfer_banner(payload, target.name, verb))
 
     def _on_transfer_failed(self, verb: str, message: str) -> None:
         self._write_job = None
@@ -2815,7 +2670,7 @@ class MainWindow(QMainWindow):
         self._select_after_removal(removed)
         if in_detail:
             self._show_next_after_trash()
-        self._show_banner(_trash_banner(result))
+        self._show_banner(banners.trash_banner(result))
         self._refresh_undo_label()
         self._refresh_thumbnail_window()
 
@@ -2901,11 +2756,11 @@ class MainWindow(QMainWindow):
                     journaled=result.journaled,
                 ),
                 row,
-                banner=_undo_banner(result),
+                banner=banners.undo_banner(result),
             )
         else:
             self._apply_restore(result)
-            self._show_banner(_undo_banner(result))
+            self._show_banner(banners.undo_banner(result))
         self._refresh_undo_label()
 
     def _apply_restore(self, result: UndoResult) -> None:
@@ -2940,7 +2795,7 @@ class MainWindow(QMainWindow):
             self._grid.select_row(row, ensure_visible=False)
         else:
             self._reload_level()
-        self._show_banner(banner or _rename_banner(result))
+        self._show_banner(banner or banners.rename_banner(result))
 
     def show_grid(self) -> None:
         """回到网格，并让当前照片保持选中。"""
