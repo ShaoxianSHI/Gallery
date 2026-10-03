@@ -134,9 +134,13 @@ def test_ui_does_not_open_files(path: Path) -> None:
     assert not _opens_files(path), f"{path} 直接调用了 open()，请改为调用 gallery.core"
 
 
-#: 右键菜单那两个模块。它们是纯展示：菜单该复用的是已有的动作，而不是自己去取数据
+#: 菜单那三个模块。它们是纯展示：菜单该复用的是已有的动作，而不是自己去取数据
 #: （ADR 0014）。它们一旦开始 import core，就说明「菜单」与「命令」两件事粘在一起了。
-PRESENTATION_ONLY_UI = ("menus.py", "desktop.py")
+#:
+#: ``menu_style``（菜单长什么样）与 ``menus``（菜单里有什么）原本是一个 1148 行的文件，
+#: 按 ADR 0006 的判据「改了它会不会牵连另一个包」拆开之后，规则反而更好守了：
+#: 一个只画的模块，比一个既画又拼的模块更明显地不该去碰 core。
+PRESENTATION_ONLY_UI = ("menus.py", "menu_style.py", "desktop.py")
 
 
 def test_config_dir_name_is_exact() -> None:

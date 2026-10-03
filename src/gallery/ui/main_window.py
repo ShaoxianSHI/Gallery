@@ -84,7 +84,7 @@ from gallery.core.metadata.undo import UndoResult
 from gallery.core.places.countries import place_label
 from gallery.core.places.dataset import is_real_coordinate
 from gallery.core.places.resolver import LazyPlaceResolver
-from gallery.ui import desktop, menus, theme
+from gallery.ui import desktop, menu_style, menus, theme
 from gallery.ui.browser.grid import PREFETCH_MARGIN, PhotoGrid
 from gallery.ui.browser.model import PhotoListModel
 from gallery.ui.browser.thumb_sizes import (
@@ -2187,9 +2187,9 @@ class MainWindow(QMainWindow):
         # 圆角与行距：macOS 样式给的那圈约 5 像素、每行 18 像素高，太挤，只能用样式表改。
         # 而样式表一上，面板就不再由系统画、底色会掉回系统菜单色，所以底色必须显式写进
         # 样式表（见 ``ui.menus`` 模块文档）。
-        menus.apply_style(menu)
+        menu_style.apply_style(menu)
         # 快捷键那一列我们自己画（按字母 / 修饰符分列），得先跟 Qt 约好别重复画。
-        menus.prepare(menu)
+        menu_style.prepare(menu)
         return menu
 
     def _context_paste(

@@ -7,6 +7,9 @@
 
 这里钉住两件事：菜单栏里的菜单（含子菜单）与右键菜单都拿到窗口那份调色板，且系统
 换浅色 / 深色时菜单栏里的菜单会跟着一起变。
+
+**菜单的「长什么样」全在这一份**（``gallery.ui.menu_style``）：样式表、快捷键列、
+子菜单箭头、以及「菜单里该有哪些条目」那半在 ``gallery.ui.menus``。
 """
 
 from __future__ import annotations
@@ -36,7 +39,7 @@ from waiting import wait_until
 from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.library.photos import GroupRef, PhotoRef  # noqa: E402
 from gallery.core.library.session import BROWSE_MODE_ALBUMS  # noqa: E402
-from gallery.ui import menus, theme  # noqa: E402
+from gallery.ui import menu_style, theme  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.theme import rgba  # noqa: E402
 
@@ -126,9 +129,9 @@ def test_context_menu_carries_our_look(qt_app: QApplication, window: MainWindow)
 
     assert menu is not None
     sheet = menu.styleSheet()
-    assert f"border-radius: {menus.MENU_CORNER_RADIUS}px" in sheet
-    assert f"padding: {menus.MENU_INSET}px" in sheet
-    assert menus.MENU_ITEM_PADDING in sheet
+    assert f"border-radius: {menu_style.MENU_CORNER_RADIUS}px" in sheet
+    assert f"padding: {menu_style.MENU_INSET}px" in sheet
+    assert menu_style.MENU_ITEM_PADDING in sheet
     assert rgba(window.palette().color(QPalette.ColorRole.Window)) in sheet
 
 
@@ -154,12 +157,12 @@ def test_context_menu_has_hover_highlight(qt_app: QApplication, window: MainWind
     # 高亮带是内缩的圆角带。**带状态的规则里不许写 margin**：margin 属于盒子模型，
     # 写在 :selected 里等于每悬停一次就换一次盒子，文字会跟着挪位置（用户实测）。内缩
     # 由菜单自身的内边距决定，与状态无关。
-    assert f"border-radius: {menus.MENU_HIGHLIGHT_RADIUS}px" in sheet
+    assert f"border-radius: {menu_style.MENU_HIGHLIGHT_RADIUS}px" in sheet
     # 只查那两条带状态的规则，不查整份：分隔线那条带 margin 是故意要的（那里没有
     # 状态，见 ``ui.menus`` 里 MENU_SEPARATOR_HEIGHT 那段）。
     assert "margin" not in _state_rules(sheet)
     # 内缩的那一处在菜单上，**四边同值**：只留左右的话，高亮带会顶着面板上下两条边
-    assert f"padding: {menus.MENU_INSET}px" in sheet
+    assert f"padding: {menu_style.MENU_INSET}px" in sheet
 
 
 def _state_rules(sheet: str) -> str:
@@ -182,8 +185,8 @@ def test_separator_color_follows_the_theme() -> None:
     dark = QColor("#171717")
     light = QColor("#ffffff")
 
-    dark_line = _line_on(dark, menus.separator_color(dark, QColor("#ffffff")))
-    light_line = _line_on(light, menus.separator_color(light, QColor("#000000")))
+    dark_line = _line_on(dark, menu_style.separator_color(dark, QColor("#ffffff")))
+    light_line = _line_on(light, menu_style.separator_color(light, QColor("#000000")))
 
     # 深色：至少要提亮一档（32/255），再低就回到「那条线不存在」的状态
     assert dark_line.value() - dark.value() >= 32, f"深色下那条线还是太暗：{dark_line.name()}"
@@ -235,7 +238,7 @@ def test_dark_separator_is_a_line_you_can_see(qt_app: QApplication, window: Main
         qt_app.setPalette(original)
         theme.apply_theme(qt_app)
 
-    assert thickness == menus.MENU_SEPARATOR_HEIGHT, f"分隔线厚了：{thickness} 像素"
+    assert thickness == menu_style.MENU_SEPARATOR_HEIGHT, f"分隔线厚了：{thickness} 像素"
     assert color.value() - background.value() >= 32, f"深色下那条线还是太暗：{color.name()}"
 
 
@@ -270,27 +273,27 @@ def test_split_shortcut_separates_modifiers_from_the_key() -> None:
     （菜单里显示的一直是 ⌘R / ⌘⌫ / ⇧⌘C），而 ``MetaModifier`` 才是控制键 ⌃。认反了
     画出来就是 ⌃R。
     """
-    modifiers, key = menus.split_shortcut(QKeySequence("Ctrl+Shift+C"))
+    modifiers, key = menu_style.split_shortcut(QKeySequence("Ctrl+Shift+C"))
 
     assert modifiers == frozenset(
         {Qt.KeyboardModifier.ControlModifier, Qt.KeyboardModifier.ShiftModifier}
     )
     assert key == "C"
-    assert menus.split_shortcut(QKeySequence("Ctrl+Backspace")) == (
+    assert menu_style.split_shortcut(QKeySequence("Ctrl+Backspace")) == (
         frozenset({Qt.KeyboardModifier.ControlModifier}),
         "⌫",
     )
-    assert menus.split_shortcut(QKeySequence("Esc")) == (frozenset(), "⎋")
-    assert menus.split_shortcut(QKeySequence()) == (frozenset(), "")
+    assert menu_style.split_shortcut(QKeySequence("Esc")) == (frozenset(), "⎋")
+    assert menu_style.split_shortcut(QKeySequence()) == (frozenset(), "")
 
 
 def test_each_shortcut_column_lines_up(qt_app: QApplication, window: MainWindow) -> None:
     """「三个列各自对齐」：同一列在所有行上是同一段 x，字母列一律贴右沿。
 
-    列宽只按整个菜单量一次，所有行都按它摆（见 ``menus.ShortcutColumns``）。早先试着在
+    列宽只按整个菜单量一次，所有行都按它摆（见 ``menu_style.ShortcutColumns``）。早先试着在
     条目文字里补空格来对齐，位移只有请求的 2/3 且不线性，永远差几像素。
 
-    **对齐的是「那一组列」**（:meth:`menus.ShortcutColumns.slot_rects`），不是每个符号：
+    **对齐的是「那一组列」**（:meth:`menu_style.ShortcutColumns.slot_rects`），不是每个符号：
     符号落哪一格是逐行定的，见 ``test_a_lone_modifier_hugs_the_key``。
     """
     window._stack.setCurrentWidget(window._grid_page)
@@ -307,12 +310,12 @@ def test_each_shortcut_column_lines_up(qt_app: QApplication, window: MainWindow)
         if not action.isSeparator() and not action.shortcut().isEmpty()
     ]
     assert len(shortcuts) >= 3
-    columns = menus.ShortcutColumns.measure(shortcuts, metrics)
+    columns = menu_style.ShortcutColumns.measure(shortcuts, metrics)
     right, top, height = 400, 0, 26
 
     key_rights, command_columns = [], []
     for shortcut in shortcuts:
-        modifiers, _ = menus.split_shortcut(shortcut)
+        modifiers, _ = menu_style.split_shortcut(shortcut)
         key_rect, modifier_rects = columns.cells(modifiers, right, top, height)
         key_rights.append(key_rect.right())
         if Qt.KeyboardModifier.ControlModifier in modifiers:
@@ -342,14 +345,14 @@ def test_a_lone_modifier_hugs_the_key(qt_app: QApplication, window: MainWindow) 
     menu = window.context_menu_for(row)
 
     assert menu is not None
-    assert isinstance(menu, menus.ShortcutColumnMenu)
+    assert isinstance(menu, menu_style.ShortcutColumnMenu)
     shift = Qt.KeyboardModifier.ShiftModifier
     command = Qt.KeyboardModifier.ControlModifier
     default_app = next(a for a in menu.actions() if a.text() == "在默认应用中打开")
     assert default_app.shortcut() == QKeySequence("Shift+Return"), "前提：这一行只有一个修饰符"
 
     metrics = QFontMetrics(menu.font())
-    columns = menus.ShortcutColumns.measure_parts(menu.key_cells(), metrics)
+    columns = menu_style.ShortcutColumns.measure_parts(menu.key_cells(), metrics)
 
     def at(action: QAction) -> dict[Qt.KeyboardModifier, QRect]:
         """这一行真正画出来的修饰符格（几何与 ``paintEvent`` 里算的是同一套）。"""
@@ -375,7 +378,7 @@ def test_only_the_modifiers_a_menu_uses_get_a_column(
 
     assert menu is not None
     metrics = QFontMetrics(menu.font())
-    columns = menus.ShortcutColumns.measure(
+    columns = menu_style.ShortcutColumns.measure(
         [action.shortcut() for action in menu.actions() if not action.shortcut().isEmpty()],
         metrics,
     )
@@ -429,7 +432,7 @@ def test_open_hint_is_really_painted_in_the_key_column(
     menu = window.context_menu_for(row)
 
     assert menu is not None
-    assert isinstance(menu, menus.ShortcutColumnMenu)
+    assert isinstance(menu, menu_style.ShortcutColumnMenu)
     open_row = next(action for action in menu.actions() if action.text() == "打开")
     menu.popup(QPoint(60, 60))
     try:
@@ -437,19 +440,19 @@ def test_open_hint_is_really_painted_in_the_key_column(
     finally:
         menu.close()
 
-    assert ink, f"「打开」那一行的最右列是空的（{menus.OPEN_KEY_HINT} 没画出来）"
+    assert ink, f"「打开」那一行的最右列是空的（{menu_style.OPEN_KEY_HINT} 没画出来）"
 
 
 def _ink_in(menu: QMenu, action: QAction) -> int:
     """「这一行的键位列」里画出来多少墨迹（像素）。
 
-    位置按 :meth:`menus.ShortcutColumnMenu.key_rect` 算 —— 那正是 ``paintEvent`` 用的那套
+    位置按 :meth:`menu_style.ShortcutColumnMenu.key_rect` 算 —— 那正是 ``paintEvent`` 用的那套
     几何。抓图按设备像素给（Retina 上是两倍），几何却是逻辑像素，两边要按倍率对起来。
     """
-    assert isinstance(menu, menus.ShortcutColumnMenu)
+    assert isinstance(menu, menu_style.ShortcutColumnMenu)
     background = menu.palette().color(QPalette.ColorRole.Window).rgb()
     metrics = QFontMetrics(menu.font())
-    columns = menus.ShortcutColumns.measure_parts(menu.key_cells(), metrics)
+    columns = menu_style.ShortcutColumns.measure_parts(menu.key_cells(), metrics)
     rect = menu.actionGeometry(action)
     key_rect = columns.key_rect(rect.right(), rect.top(), rect.height())
     image = menu.grab().toImage()
@@ -469,7 +472,7 @@ def test_shortcut_columns_start_after_the_longest_label(
     """三列要排在**最长那条文字的右侧**，且留出固定的间距。
 
     这一段以前只有 0.5~2 像素：相册菜单里「在访达中显示」和下面 ⇧ 所在那列几乎同一条
-    x，看着像串成一片。留白取 :data:`menus.SHORTCUT_LABEL_GAP`，与原生菜单一致。
+    x，看着像串成一片。留白取 :data:`menu_style.SHORTCUT_LABEL_GAP`，与原生菜单一致。
     """
     window._stack.setCurrentWidget(window._grid_page)
     row = _row_for(qt_app, window, kind)
@@ -478,44 +481,44 @@ def test_shortcut_columns_start_after_the_longest_label(
     menu = window.context_menu_for(row)
 
     assert menu is not None
-    assert isinstance(menu, menus.ShortcutColumnMenu)
+    assert isinstance(menu, menu_style.ShortcutColumnMenu)
     metrics = QFontMetrics(menu.font())
     rows = [a for a in menu.actions() if not a.isSeparator()]
     # 按**真正要画出来的内容**量，而不是只量快捷键：「打开」那枚提示也在这一列里，
     # 漏掉它，这一列就会按最窄的那个键（C / ⎋）去算，然后压到那枚提示上。
-    columns = menus.ShortcutColumns.measure_parts(menu.key_cells(), metrics)
+    columns = menu_style.ShortcutColumns.measure_parts(menu.key_cells(), metrics)
     rect = menu.actionGeometry(rows[0])
     # 整块列最左一条：按 slot_rects 算而不是按某一行 —— 逐行填列之后，不同行用到的
     # 修饰符格数不同（见 ``ShortcutColumns.cells``）。
     block_left = min(
         rect_.left() for rect_ in columns.slot_rects(rect.right(), rect.top(), rect.height())
     )
-    label_start = menus.MENU_INSET + menus.MENU_CHECK_GUTTER
+    label_start = menu_style.MENU_INSET + menu_style.MENU_CHECK_GUTTER
     label_end = label_start + max(metrics.horizontalAdvance(a.text()) for a in rows)
 
-    assert block_left >= label_end + menus.SHORTCUT_LABEL_GAP
+    assert block_left >= label_end + menu_style.SHORTCUT_LABEL_GAP
 
 
 def _needed_width(menu: QMenu) -> int:
     """菜单至少要有多宽才装得下「最长标签 + 间距 + 最右列」。
 
-    最右列按 :meth:`menus.ShortcutColumnMenu.key_cells` 数，**不能只数快捷键** ——
+    最右列按 :meth:`menu_style.ShortcutColumnMenu.key_cells` 数，**不能只数快捷键** ——
     「打开」那枚只画不生效的提示也在那一列里（见 ``ui.menus`` 里 ``show_key``），漏掉它
     这条断言就会放过「菜单不够宽、把提示压到标签上」这种坏法。
     """
-    assert isinstance(menu, menus.ShortcutColumnMenu)
+    assert isinstance(menu, menu_style.ShortcutColumnMenu)
     metrics = QFontMetrics(menu.font())
     rows = [action for action in menu.actions() if not action.isSeparator()]
     labels = max(metrics.horizontalAdvance(action.text()) for action in rows)
-    columns = menus.ShortcutColumns.measure_parts(menu.key_cells(), metrics)
+    columns = menu_style.ShortcutColumns.measure_parts(menu.key_cells(), metrics)
     return int(
-        menus.MENU_INSET
-        + menus.MENU_CHECK_GUTTER
+        menu_style.MENU_INSET
+        + menu_style.MENU_CHECK_GUTTER
         + labels
-        + menus.SHORTCUT_LABEL_GAP
+        + menu_style.SHORTCUT_LABEL_GAP
         + columns.width
-        + menus.SHORTCUT_RIGHT_INSET
-        + menus.MENU_INSET
+        + menu_style.SHORTCUT_RIGHT_INSET
+        + menu_style.MENU_INSET
     )
 
 
@@ -690,7 +693,7 @@ def test_menus_without_checkable_items_keep_the_text_column(
     blank = window.context_menu_for(-1)
 
     assert photo is not None and blank is not None
-    gutter = f"padding-left: {menus.MENU_CHECK_GUTTER}px"
+    gutter = f"padding-left: {menu_style.MENU_CHECK_GUTTER}px"
     assert gutter not in photo.styleSheet(), "照片菜单有可勾选项，那一列本来就预留了"
     assert gutter in blank.styleSheet(), "空白处菜单没有可勾选项，必须自己补上那一列"
 
@@ -709,7 +712,7 @@ def test_submenus_get_the_same_look(qt_app: QApplication, window: MainWindow) ->
     ]
     assert [sub.title() for sub in owned] == ["分组", "排序", "缩略图大小"]
     # 三份子菜单彼此同一份样式；它们里面全是单选项（有勾），所以都不补那一列
-    gutter = f"padding-left: {menus.MENU_CHECK_GUTTER}px"
+    gutter = f"padding-left: {menu_style.MENU_CHECK_GUTTER}px"
     assert len({submenu.styleSheet() for submenu in owned}) == 1
     for submenu in owned:
         assert gutter not in submenu.styleSheet()
