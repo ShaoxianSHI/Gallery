@@ -101,8 +101,16 @@ def _open(qt_app: QApplication, root: Path, *, browse_mode: str = BROWSE_MODE_AL
 
 
 def _enter(qt_app: QApplication, window: MainWindow, folder: Path) -> None:
+    """进相册并**等这一层彻底排好**。
+
+    只等 ``_scan_job is None`` 不够：读元数据那一遍（``_facet_job``）会再排一次，
+    而下面那些用例紧跟着就取 ``rowCount()`` 当基准并在等「多了一行」—— 撞上那次
+    重排，行数会跳一下再回来，断言就成了在赌时序。
+    """
     window.enter_folder(folder)
-    assert wait_until(qt_app, lambda: window._scan_job is None), "这一层没有列完"
+    assert wait_until(qt_app, lambda: window._scan_job is None and window._facet_job is None), (
+        "这一层没有排好"
+    )
 
 
 def _texts(menu: QMenu) -> list[str]:

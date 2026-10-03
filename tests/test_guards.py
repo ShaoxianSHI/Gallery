@@ -168,3 +168,60 @@ def test_config_dir_name_has_single_source() -> None:
         if path != allowed and CONFIG_DIR_NAME in path.read_text(encoding="utf-8")
     ]
     assert not offenders, f"以下文件硬编码了 {CONFIG_DIR_NAME}，请改为导入常量：{offenders}"
+
+
+#: ``Library`` 上那几个**真的会改用户文件**的方法（红线 1）。
+#:
+#: 界面上每一个调用点都应当在 ``ui/write_ops.py`` 里 —— 那一整个文件就是为了让
+#: 「界面上会动用户文件的地方」变成一句可以 grep 的话，而不是散在三千行装配代码里
+#: 只能靠人记。
+WRITE_METHODS_ON_LIBRARY = (
+    "rename_entry",
+    "move_to_trash",
+    "restore_entries",
+    "copy_into",
+    "move_into",
+    "create_album",
+    "undo_last_write",
+)
+
+#: 唯一一个「只组装、不写」的例外：它负责挑目标目录（见 ``_paste_target``）。
+WRITE_OPS_MODULE = "write_ops.py"
+
+
+def test_only_write_ops_calls_the_methods_that_change_user_files() -> None:
+    """**界面上改用户文件的地方，只许在 ``ui/write_ops.py`` 里**（红线 1）。
+
+    以前这些调用散在 ``main_window.py`` 的各个段落里，于是红线 1 的第一句
+    「绝不删除、移动用户照片」在代码里只能靠人记 —— 没有一处能一眼看全。
+    把它们收进 ``write_ops.py`` 之后，这句话变成了一条守护测试。
+
+    注意判据是**方法名**而不是「文件在不在 ui/ 下」：读元数据、清缓存那些调用
+    当然可以在别处，动的不是用户文件。
+    """
+    offenders: list[str] = []
+    for path in _iter_python_files(UI_ROOT):
+        text = path.read_text(encoding="utf-8")
+        for method in WRITE_METHODS_ON_LIBRARY:
+            if f".{method}(" not in text:
+                continue
+            if path.name == WRITE_OPS_MODULE:
+                continue
+            for number, line in enumerate(text.splitlines(), start=1):
+                if f".{method}(" in line and not line.lstrip().startswith("#"):
+                    offenders.append(f"{path.name}:{number} .{method}(")
+    assert not offenders, f"界面上改用户文件的调用只许出现在 ui/{WRITE_OPS_MODULE}：{offenders}"
+
+
+def test_write_ops_does_not_touch_the_file_system_itself() -> None:
+    """**写操作那一半自己也不碰文件** —— 它只决定「什么时候调」，不决定「怎么动」。
+
+    真正的写发生在 ``core/metadata/*`` 里，那里必记 journal、可 ⌘Z 撤销（红线 4）。
+    这一层要是开始自己 ``open()`` / ``os.replace`` / ``shutil.move``，
+    「每一次写都留了可回滚记录」这条就漏了一个地方 —— 而那正是最不能漏的地方。
+
+    判据复用 :func:`_opens_files`（只放行 ``Library.open``），与
+    :func:`test_ui_does_not_open_files` 用的是同一份。
+    """
+    path = UI_ROOT / WRITE_OPS_MODULE
+    assert not _opens_files(path), f"{WRITE_OPS_MODULE} 自己打开文件了；写操作一律走 core"

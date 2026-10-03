@@ -35,7 +35,8 @@ from gallery.core.library.session import (  # noqa: E402
 )
 from gallery.core.metadata import batch  # noqa: E402
 from gallery.core.places.resolver import LazyPlaceResolver, ResolvedPlace  # noqa: E402
-from gallery.ui.main_window import MainWindow, _flattened_entries  # noqa: E402
+from gallery.ui.main_window import MainWindow  # noqa: E402
+from gallery.ui.write_ops import flattened_entries  # noqa: E402
 
 #: 等待后台扫描 / 元数据读取的时限。
 
@@ -922,8 +923,8 @@ def test_flattening_never_counts_one_photo_twice() -> None:
     photo = PhotoRef(path=Path("/库/一张.jpg"), size=1, mtime_ns=1)
     group = GroupRef(facet="camera", key="canon", label="Canon", photos=(photo,))
 
-    assert _flattened_entries([group, photo]) == [photo]
-    assert _flattened_entries([photo, group]) == [photo]
+    assert flattened_entries([group, photo]) == [photo]
+    assert flattened_entries([photo, group]) == [photo]
 
 
 def test_group_cards_are_kept_when_photos_inside_are_deleted(
