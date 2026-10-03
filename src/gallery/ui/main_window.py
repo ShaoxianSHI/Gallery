@@ -486,6 +486,31 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._zoom_out_action.setShortcut(QKeySequence.StandardKey.ZoomOut)
         self._zoom_out_action.triggered.connect(self._detail.zoom_out)
 
+        # ⇧⌘↑ / ⇧⌘↓：缩略图放大 / 缩小**一档**。捏合与 ⌘+滚轮已经能做同一件事，
+        # 但那两条要手正好搭在触控板上；这两条给的是键盘那一路，握着鼠标也能一档一档挪。
+        #
+        # 为什么不挂 ⌘↑ / ⌘↓：上面那条「上一级」的注释已经说明 ⌘↑ 在 macOS 上被占着。
+        # 而 ⌘+ / ⌘- 归大图的缩放（StandardKey.ZoomIn/ZoomOut），网格里换档不能去抢它 ——
+        # 两者动的是**不同的东西**（照片的缩放倍率 vs 缩略图的档位）。
+        self._thumb_zoom_in_action = QAction("放大缩略图", self)
+        self._thumb_zoom_in_action.setShortcut(QKeySequence("Ctrl+Shift+Up"))
+        # ``triggered`` 递过来的是 checked（一个 bool），不是档数，所以要包一层。
+        self._thumb_zoom_in_action.triggered.connect(
+            lambda _checked=False: self.step_thumbnail_size(1)
+        )
+
+        self._thumb_zoom_out_action = QAction("缩小缩略图", self)
+        self._thumb_zoom_out_action.setShortcut(QKeySequence("Ctrl+Shift+Down"))
+        self._thumb_zoom_out_action.triggered.connect(
+            lambda _checked=False: self.step_thumbnail_size(-1)
+        )
+        # **显式挂到窗口上**（与 ``_new_album_action`` / ``_reveal_action`` 同一个做法）：
+        # QAction 只有被加进某个控件才会注册进 Qt 的快捷键表。它们同时进了「视图」菜单
+        # （见下面那两行 ``view_menu.addAction``），本来也能注册 —— 但快捷键的归属不该
+        # 取决于「那一份菜单还在不在」，挂在窗口上才是它自己的保证。
+        self.addAction(self._thumb_zoom_in_action)
+        self.addAction(self._thumb_zoom_out_action)
+
         # 回上一层用 Esc：⌘↑ 在 macOS 上已经被占着，我们抢不到。
         # Esc 在大图页是「返回网格」，在网格页才是「上一级」——同一时刻只有一个主人
         # （见 _update_navigation_actions），两处不会互相抢键。
@@ -680,6 +705,10 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         view_menu.addSeparator()
         view_menu.addAction(self._metadata_action)
         view_menu.addSeparator()
+        # 「放大 / 缩小缩略图」与「缩略图大小」是同一件事的两种说法：前两条挪一档，
+        # 子菜单直接挑一档。挨着摆，用户按 ⇧⌘↑ 时不用先想「这条在哪一栏」。
+        view_menu.addAction(self._thumb_zoom_in_action)
+        view_menu.addAction(self._thumb_zoom_out_action)
         self._size_actions: list[QAction] = []
         size_menu = view_menu.addMenu("缩略图大小")
         for index in range(len(THUMBNAIL_SIZES)):
@@ -2941,6 +2970,11 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             self._zoom_out_action,
         ):
             action.setEnabled(in_detail)
+        # 缩略图那两条正好反过来，只在网格页亮着：大图页里 ⌘+ / ⌘- 才是缩放，
+        # 而 ⇧⌘↑ ⇧⌘↓ 在那一页没有对应的意思（照片那边只有倍率，没有「档」）。
+        # 改到一半也不亮：换档会重排网格，把正在编辑的那一格从输入框底下挪走。
+        for action in (self._thumb_zoom_in_action, self._thumb_zoom_out_action):
+            action.setEnabled(in_grid and idle)
         # 「退出」也是 Esc，所以改到一半要把它关掉：那一刻 Esc 是输入框的「取消改名」，
         # 与「上一级」在网格页上的让位是同一条理由（见 ``_update_navigation_actions``）。
         self._back_action.setEnabled(in_detail and idle)

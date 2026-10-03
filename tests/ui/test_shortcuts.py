@@ -1,11 +1,14 @@
-"""快捷键的分工：Esc 一层层往外退。
+"""快捷键的分工。
 
-「上一级」原来是 ⌘↑，但 macOS 上那个键已经被占着，于是改成 Esc。Esc 同时还管着
-「大图页回网格」和「行内重命名取消」，所以这里把三者的边界钉死：
+**Esc 一层层往外退。** 「上一级」原来是 ⌘↑，但 macOS 上那个键已经被占着，于是改成 Esc。
+Esc 同时还管着「大图页回网格」和「行内重命名取消」，所以这里把三者的边界钉死：
 
 1. Esc 在大图页回网格、在网格页回上一层，两个动作同一时刻只有一个可用；
 2. 改到一半按 Esc 只取消改名，不会顺手跳到上一层；
 3. 连按 Esc，目录会一层层退到库根，到根上就不再动了。
+
+**缩略图一档一档挪：⇧⌘↑ / ⇧⌘↓。** 捏合与 ⌘+滚轮要手搭在触控板上，这两条给的是键盘那一路。
+它们只作用在**网格**上：大图页里 ⌘+ / ⌘- 才是缩放，那边只有倍率、没有「档」。
 
 全部用离屏 Qt，照片都是 ``tmp_path`` 里当场造的。
 """
@@ -31,8 +34,16 @@ from gallery.core.library.session import (  # noqa: E402
     SessionState,
     save_session,
 )
+from gallery.ui.browser.thumb_sizes import DEFAULT_INDEX, THUMBNAIL_SIZES  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.rename_edit import RenameEdit  # noqa: E402
+
+#: ⇧⌘↑ / ⇧⌘↓。Qt 在 macOS 上把 Command 写作 Ctrl，不要手动换成 Meta。
+_ZOOM_IN = Qt.Key.Key_Up, Qt.KeyboardModifier.ShiftModifier | Qt.KeyboardModifier.ControlModifier
+_ZOOM_OUT = (
+    Qt.Key.Key_Down,
+    Qt.KeyboardModifier.ShiftModifier | Qt.KeyboardModifier.ControlModifier,
+)
 
 #: 等待扫描完成的时限。
 
@@ -156,3 +167,136 @@ def test_rename_editor_claims_escape_from_the_window(qt_app: QApplication) -> No
     QCoreApplication.sendEvent(editor, override)
 
     assert override.isAccepted() is True
+
+
+# ---- 缩略图一档一档挪（⇧⌘↑ / ⇧⌘↓）-------------------------------------------
+
+
+def _enter_seaside(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> MainWindow:
+    """开一个只放了一张照片的窗口，并进到那一层。"""
+    library = tmp_path / "库"
+    make_photo("IMG_0001.jpg", directory=library / "海边")
+    window = open_window(qt_app, library)
+    window.enter_folder(library / "海边")
+    wait_for_level(window, qt_app, lambda: window._model.rowCount() == 1, what="扫描")
+    return window
+
+
+def test_thumbnail_size_moves_one_step_per_keystroke(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """⇧⌘↑ / ⇧⌘↓ 一按挪一档，网格的档位目标与菜单勾选一起跟着变。
+
+    这里发的是**真按键事件**（走 Qt 的快捷键表），而不是直接调槽 —— 只 ``setShortcut``
+    而没 ``addAction`` 的那种错，按键发过去什么都不会发生，测试却是绿的。
+    """
+    window = _enter_seaside(qt_app, tmp_path, make_photo)
+    try:
+        assert window._size_index == DEFAULT_INDEX
+        assert window._thumb_zoom_in_action.shortcut() == QKeySequence("Ctrl+Shift+Up")
+        assert window._thumb_zoom_out_action.shortcut() == QKeySequence("Ctrl+Shift+Down")
+
+        QTest.keyClick(window, *_ZOOM_IN)
+        qt_app.processEvents()
+        assert window._size_index == DEFAULT_INDEX + 1
+        assert window._grid.target_edge == THUMBNAIL_SIZES[DEFAULT_INDEX + 1]
+        assert window._size_actions[DEFAULT_INDEX + 1].isChecked()
+
+        QTest.keyClick(window, *_ZOOM_OUT)
+        qt_app.processEvents()
+        assert window._size_index == DEFAULT_INDEX
+        assert window._grid.target_edge == THUMBNAIL_SIZES[DEFAULT_INDEX]
+        assert window._size_actions[DEFAULT_INDEX].isChecked()
+    finally:
+        window.close()
+
+
+def test_thumbnail_size_stops_at_both_ends(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """头尾各顶一下：越界就停住，不越界、不回绕（与 ``shifted_index`` 同一个判据）。"""
+    window = _enter_seaside(qt_app, tmp_path, make_photo)
+    try:
+        window.set_thumbnail_size(len(THUMBNAIL_SIZES) - 1)
+        QTest.keyClick(window, *_ZOOM_IN)
+        qt_app.processEvents()
+
+        assert window._size_index == len(THUMBNAIL_SIZES) - 1, "到顶就该停住"
+        assert window._grid.target_edge == THUMBNAIL_SIZES[-1]
+
+        window.set_thumbnail_size(0)
+        QTest.keyClick(window, *_ZOOM_OUT)
+        qt_app.processEvents()
+
+        assert window._size_index == 0, "到底就该停住"
+        assert window._grid.target_edge == THUMBNAIL_SIZES[0]
+    finally:
+        window.close()
+
+
+def test_thumbnail_size_keys_are_off_in_the_detail_page(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """大图页里这两条是关着的：那边按 ⇧⌘↑ 该归大图的缩放，而不是悄悄换缩略图档位。"""
+    window = _enter_seaside(qt_app, tmp_path, make_photo)
+    try:
+        window._grid.select_row(0)
+        window._open_detail(window._grid.currentIndex())
+        qt_app.processEvents()
+
+        assert window._stack.currentWidget() is window._detail_page
+        assert window._thumb_zoom_in_action.isEnabled() is False
+        assert window._thumb_zoom_out_action.isEnabled() is False
+        assert window._zoom_in_action.isEnabled() is True, "大图页自己的 ⌘+ 才是亮的那个"
+
+        QTest.keyClick(window, *_ZOOM_IN)
+        qt_app.processEvents()
+
+        assert window._size_index == DEFAULT_INDEX, "关着的动作按下去什么也不该发生"
+    finally:
+        window.close()
+
+
+def test_thumbnail_size_keys_are_on_in_the_grid_page(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """与上一条正好相反：回到网格页这两条就亮，且真的挂在窗口上。"""
+    window = _enter_seaside(qt_app, tmp_path, make_photo)
+    try:
+        window._grid.select_row(0)
+        window._open_detail(window._grid.currentIndex())
+        window.show_grid()
+        qt_app.processEvents()
+
+        assert window._thumb_zoom_in_action.isEnabled() is True
+        assert window._thumb_zoom_out_action.isEnabled() is True
+        # **挂在窗口上**：注册不该只靠「它们碰巧也在菜单里」。抽掉这两行，下面那条
+        # 按键测试在菜单还在的情况下仍然会绿 —— 所以这条断言才是真正盯着它的。
+        assert window._thumb_zoom_in_action in window.actions()
+        assert window._thumb_zoom_out_action in window.actions()
+    finally:
+        window.close()
+
+
+def test_thumbnail_size_keys_live_next_to_the_size_submenu(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """菜单里也得看得见：挨着「缩略图大小」摆，用户按 ⇧⌘↑ 时不用先想它在哪一栏。"""
+    window = _enter_seaside(qt_app, tmp_path, make_photo)
+    try:
+        view_menu = next(
+            action.menu()
+            for action in window.menuBar().actions()
+            if action.text() == "视图" and action.menu() is not None
+        )
+
+        labels = [action.text() for action in view_menu.actions()]
+        assert labels.count("放大缩略图") == 1
+        assert labels.count("缩小缩略图") == 1
+        # 「缩略图大小」子菜单在「视图」里只出现一次（右键菜单那一份是现搭的，不在这里）。
+        assert labels.count("缩略图大小") == 1
+        assert labels.index("缩小缩略图") < labels.index("缩略图大小")
+    finally:
+        window.close()
