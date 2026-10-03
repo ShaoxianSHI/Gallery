@@ -85,7 +85,7 @@ EDGE_SETTLE_MS = 120
 #: 切档时缩略图「长过去/缩回去」的时长（毫秒）。
 #:
 #: 只驱动**绘制**尺寸，不驱动几何也不驱动缩略图请求 —— 理由见
-#: :meth:`PhotoGrid._start_transition`。够短就不会让人觉得界面在等它，
+#: :meth:`PhotoGrid._animate_draw_edge`。够短就不会让人觉得界面在等它，
 #: 够长才看得出是动画而不是跳变。
 EDGE_ANIMATION_MS = 160
 
@@ -239,7 +239,7 @@ class PhotoDelegate(QStyledItemDelegate):
         super().__init__(parent)
         self._icon_edge = icon_edge
         #: **画出来**的边长。与 :attr:`_icon_edge` 分开存，是因为切档动画要把它取成
-        #: 小数并逐帧变化，而几何尺寸必须一直是整数（见 :meth:`PhotoGrid._start_transition`）。
+        #: 小数并逐帧变化，而几何尺寸必须一直是整数（见 :meth:`PhotoGrid._animate_draw_edge`）。
         #: 两者相等是常态，只有动画跑的那 160ms 里不等。
         self._draw_edge = float(icon_edge)
         #: 切档过渡：这一帧相对最终位置往回挪多少。``None`` 表示不偏移（常态）。
@@ -252,10 +252,6 @@ class PhotoDelegate(QStyledItemDelegate):
         动画是在 :meth:`PhotoGrid._set_cell` 里、在几何定下来**之后**另行发起的：
         它会把 :meth:`draw_edge` 立刻拨回旧尺寸再往新尺寸走（那里拨这一下是刻意的，
         免得中间漏出一帧新尺寸）。所以这里「顺手对齐」不会把动画的起点吃掉。
-
-        **动画已经在跑的时候会被拨回来**：几何中途又变了（滚动条开关带来的那次
-        重排），此时这里对齐的是**终点**，于是那一帧本该是动画的中间值 —— 谁在
-        拨回去见 :meth:`PhotoGrid._reaim_transition`。
         """
         self._icon_edge = edge
         self._draw_edge = float(edge)
@@ -789,10 +785,8 @@ class PhotoGrid(QListView):
         没有什么要重新定位的。但格子高度确实变了，所以正跑着的过渡要跟着改：
         它的「新布局」与滚动终点都是按旧格高算出来的，不重算就会按错的位置去画
         （越远的行偏得越多，屏上那几格会被画到视口外面去），那一趟滚动也会停在
-        一个偏移了几千像素的地方（见 :meth:`_reaim_transition`）。
-
-        这条定时器是在过渡发出去 50ms 之后才响的，正落在动画正中间 —— 所以它同样
-        走「重新瞄一次」那条路，而不是落位（理由见 :meth:`_reaim_transition`）。
+        一个偏移了几千像素的地方（见 :meth:`_rebuild_transition` 与
+        :meth:`_refresh_scroll_goal`）。
         """
         available = self.viewport().width()
         intended = self._laid_out_columns
@@ -812,7 +806,8 @@ class PhotoGrid(QListView):
         cell = self._cell_size_for(available)
         self._apply_geometry(cell, self.verticalScrollBar().value())
         self._laid_out_columns = measured
-        self._reaim_transition(cell)
+        self._rebuild_transition(cell)
+        self._refresh_scroll_goal()
 
     def _rebuild_transition(self, cell: QSize) -> None:
         """几何变了之后，把过渡里记的那套「新布局」也换成实测的那一套。
@@ -871,10 +866,6 @@ class PhotoGrid(QListView):
         换行时过渡的**起点**也要跟着换算法：从「原来看着的那一格还在原处」出发，
         而不是照搬旧的像素值（见 :meth:`_anchored_scroll_value`）—— 后者会让第 0 帧
         闪到相册的别的段落上去。
-
-        **动画途中被叫进来时（``animate`` 为假而动画还在跑），这一趟不是新的**：
-        只是把落点改成新的几何，起点仍旧是起飞时那套（见 ``flying`` 那一段）。
-        动画本身不重开，由 :meth:`_start_transition` 转交给 :meth:`_reaim_transition`。
         """
         # 动画起点是「上一帧画出来」的那一档，不是几何尺寸：上一次过渡可能还没跑完，
         # 那时两者不等。从中间值接着走，用户连点两档才不会看见它先倒退回去。
@@ -887,27 +878,9 @@ class PhotoGrid(QListView):
         old_columns = self._first_row_columns()
         old_cell = self.gridSize()
         anchor = self._anchor()
-        # 动画还在跑 ⇒ 这次换几何是**同一趟飞行的续**，不是新的一趟（``animate`` 为假
-        # 只可能是滚动条开关 / 视口变化带来的重排，见 :meth:`_recompute_layout`）。
-        #
-        # 那种情况下「旧布局」指的是格子**起飞时**的那一套，而上面读到的
-        # ``old_columns`` / ``old_cell`` **已经是上一段改完的值了**。拿它当旧布局，
-        # 每一格就会从「上一帧」出发 —— 那不是飞行，是原地钉住：画面上表现为
-        # 位置啪地跳到位、只剩缩放在动（相册层与照片层都会这样，只要切档让内容
-        # 高度跨过视口高度、滚动条因此开关了一次）。
-        #
-        # **真**换档（``animate=True``，用户又切了一档）不继承：那时「当前几何」
-        # 就是新一趟该出发的位置。
-        flying = (
-            self._transition
-            if not animate and self._transition_anim.state() == QAbstractAnimation.State.Running
-            else None
-        )
         self._apply_geometry(cell, scroll_from)
         new_columns = self._first_row_columns()
-        # 旧画面整体要跟着挪的那一笔（见 :attr:`GridTransition.scroll_shift`）。
-        # 续上一趟时**沿用它**：下面那次重新锚定（只在真的换行时才会发生）才覆盖它。
-        scroll_shift = flying.scroll_shift if flying else 0
+        scroll_shift = 0
         if old_columns > 0 and new_columns > 0 and old_columns != new_columns:
             # **只在真的换行时居中。** 这一条是踩过坑的：Qt 会顺手把当前项设成第 0 行，
             # 无条件按它居中就等于「每 resize 一次（**包括后台横幅出现/消失带来的自动
@@ -922,13 +895,7 @@ class PhotoGrid(QListView):
                 scroll_from = anchored
             self._center_on_row(self._focus_row(anchor.row), new_columns)
         self._transition = (
-            GridTransition(
-                flying.old_columns if flying else old_columns,
-                flying.old_cell if flying else old_cell,
-                new_columns,
-                cell,
-                scroll_shift,
-            )
+            GridTransition(old_columns, old_cell, new_columns, cell, scroll_shift)
             if old_columns > 0 and new_columns > 0
             else None
         )
@@ -1149,23 +1116,12 @@ class PhotoGrid(QListView):
 
         滚动起点要**夹进新范围**：列数变多时内容变矮，旧位置可能已经超出新范围，
         不夹的话插值中途会被 ``maximum()`` 削平 —— 于是先平一段再动，比不动还难看。
-
-        ``animate`` 是「这次几何变化该不该由用户看着它长过去」，它顺带把两种
-        「几何在动画途中又被改掉」分了开（理由见 :meth:`_reaim_transition`）：
-        **真**（``True``，用户又切了一档）与**假**（``False``，滚动条出现/消失带来的
-        那次重排）。后者不落位，只是重新瞄一次。
         """
         # 上一段过渡还没跑完又换了一档（连按两下的手势）就**不接第二段**：上一段的
         # 旧布局已经不是这一段的旧布局了，拿它当起点，画面会先蹿去用户已经放弃的
         # 那一档。直接落位反而更贴近他要的结果。
         # （读状态必须在 ``stop()`` 之前 —— 停掉之后它当然永远是 ``Stopped``。）
         still_running = self._transition_anim.state() != QAbstractAnimation.State.Stopped
-        if still_running and not animate:
-            # 动画正跑着几何却被改掉：按新几何重新瞄一次，动画继续（理由见
-            # :meth:`_reaim_transition`）。**不碰时钟** —— 下面那行 ``stop()`` 与
-            # 它之后的起点、终点、滚动起终点都不能走。
-            self._reaim_transition(self.gridSize())
-            return
         self._transition_anim.stop()
         self._edge_from = drawn_edge
         self._edge_to = float(self._applied_edge)
@@ -1183,38 +1139,6 @@ class PhotoGrid(QListView):
         # 尺寸对齐到了新几何，中间那一帧不该露出来（动画启动时也会发一次 t=0）。
         self._on_transition_step(0.0)
         self._transition_anim.start()
-
-    def _reaim_transition(self, cell: QSize) -> None:
-        """动画正跑着几何又被改掉：按新几何**重新瞄一次**，动画照跑。
-
-        与 :meth:`_examine_columns` 是同一件事、同一套理由 —— 过渡里记着的「新布局」
-        与滚动终点都是按旧几何算出来的，不重算就会按错的位置去画（越远的行偏得越多），
-        那一趟滚动也会停在一个偏移了几千像素的地方。
-
-        **这条路的由来**：视口宽度会因为**纵向滚动条的出现与消失**自己变，而那恰恰是
-        切档自己的后果 —— 缩小一档之后内容比视口矮了，滚动条就收回去，视口当场宽出
-        一个滚动条的宽度。那不是用户拽窗口，可在 :meth:`resizeEvent` 眼里两者长得
-        一模一样，一律落位。于是动画在自己发出去几毫秒之后被自己掐掉：相册层尤其
-        明显（那一层本来就短，缩一档就短过视口），表现就是「照片那层有动画、相册那层
-        没有」。所以 :meth:`resizeEvent` 把那种 resize 交给这里，而不是落位。
-
-        **只换终点，不换起点，也不动时钟**：动画是从当前那一帧接着走的，于是画面连续；
-        终点换成新的实际边长，是因为几何已经以它为准了（收尾时
-        :meth:`_settle_transition` 落的也是同一个数）。
-
-        最后那一下「把绘制尺寸按动画自己的 t 拨回去」是必须的：改几何时
-        :meth:`_apply_geometry` 会调 :meth:`PhotoDelegate.set_icon_edge`，它顺手把绘制
-        尺寸对齐到了**新**几何 —— 对一条刚起头的过渡来说那是终点，于是第 0 帧之后
-        紧跟着的那一帧会先闪到终点、再被动画拽回来（肉眼是「先缩到位、又长回去」）。
-        这里是同步的，中间没有一轮事件循环，所以这一帧根本来不及画出去。
-        """
-        if self._transition_anim.state() == QAbstractAnimation.State.Stopped:
-            return
-        self._edge_to = float(self._applied_edge)
-        self._rebuild_transition(cell)
-        self._refresh_scroll_goal()
-        t = float(self._transition_anim.currentValue())
-        self._delegate.set_draw_edge(self._edge_from + (self._edge_to - self._edge_from) * t)
 
     def _on_transition_step(self, t: float) -> None:
         """一帧的 ``t``：格子画在哪儿、缩略图画多大、纵向滚到哪儿，三件事一起。"""
@@ -1754,15 +1678,7 @@ class PhotoGrid(QListView):
         super().resizeEvent(event)
         # 过渡进行中拖窗口：它的两端是按旧视口量出来的，拖到一半那两个「旧」已经不
         # 算了。落位即可 —— 接下来 :meth:`_recompute_layout` 会按新宽度重排。
-        #
-        # **但「滚动条的出现与消失」不是用户在拖窗口。** 切档之后内容比视口矮了，
-        # 滚动条就收回去、视口当场宽出一个滚动条的宽度 —— 那是这次切档自己的后果，
-        # 却是 :meth:`resizeEvent` 收到的一个货真价实的 resize。那种若也落位，动画
-        # 会在自己发出去几毫秒之后被自己掐掉，于是内容短的那一层（相册层，缩一档
-        # 就短过视口）永远看不到切档动画。判据就是宽度差：差出一条滚动条的宽度以内
-        # 是滚动条在开关，再大就是用户真的把窗口拽了。
-        if abs(self.viewport().width() - self._laid_out_width) > self._scrollbar_reserve():
-            self._cancel_transition()
+        self._cancel_transition()
         self._recompute_layout()
         self._debounce.start()
 
