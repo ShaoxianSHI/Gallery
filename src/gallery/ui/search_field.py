@@ -47,7 +47,11 @@ from gallery.core.library.search import (
     suggestions,
 )
 from gallery.ui import theme
-from gallery.ui.menu_style import POPUP_LIST_INSET, popup_list_style
+from gallery.ui.menu_style import (
+    POPUP_LIST_INSET,
+    POPUP_LIST_ITEM_PAD,
+    popup_list_style,
+)
 from gallery.ui.rename_edit import field_background
 from gallery.ui.theme import AppTheme, rgba
 
@@ -82,6 +86,16 @@ _ICON_STROKE = 1.4
 
 #: 输入区里那一列的字号，与标题文字（13 点）差一档 —— 它是次要控件。
 _FONT_PX = 12
+
+#: 候选那一行在行内边距为 0 时，文字**笔尖**离视口左沿还有多远（点）。
+#:
+#: **不是 0**：Qt 画 ``::item`` 的文字之前自己还要让开一小段，QSS 的 ``padding`` 是在
+#: 这一段**之后**才叠加上去的（实测 1 点）。
+#:
+#: 它跟着 Qt 版本与系统样式变，所以只能量过写死 —— 写错的后果由
+#: ``test_the_candidate_hash_lines_up_with_the_typed_one`` 那条像素对拍兜着（它量的是
+#: 两个字真正画在哪，不是控件在哪）。
+_ITEM_TEXT_BASELINE = 1
 
 
 class SearchEdit(QLineEdit):
@@ -179,16 +193,19 @@ def search_field_style(app_theme: AppTheme, *, focused: bool, radius: int = 0) -
     """
 
 
-def popup_style(list_widget: QTreeWidget) -> str:
+def popup_style(list_widget: QTreeWidget, *, item_padding: int = POPUP_LIST_ITEM_PAD) -> str:
     """候选列表长什么样 —— **样式表由 :mod:`gallery.ui.menu_style` 生成**。
 
     颜色不在这儿定：那是「菜单怎么长什么样」那一层的活（ADR 0024），而用户要的是
     候选列表与右键菜单**看起来是同一种东西**。两份各自派生一遍，早晚差一档。
 
-    这里只补列表自己的字号（菜单那一档偏大，列表窄）。
+    这里只补两样：列表自己的字号（菜单那一档偏大，列表窄）与行内边距
+    （:paramref:`item_padding` —— 它要让列表里那个 ``#`` 与输入框里那个对齐，
+    见 :meth:`SearchField._item_padding`）。
     """
     return (
-        f"{popup_list_style(list_widget)}\nQTreeWidget#searchPopup {{ font-size: {_FONT_PX}px; }}"
+        f"{popup_list_style(list_widget, item_padding=item_padding)}\n"
+        f"QTreeWidget#searchPopup {{ font-size: {_FONT_PX}px; }}"
     )
 
 
@@ -452,19 +469,15 @@ class SearchField(QWidget):
         """列一遍候选。**没有候选就不弹**：一个空框只是把界面弄花，不会帮上任何人。"""
         self._popup.clear()
         for field in fields:
-            item = QTreeWidgetItem([f"#{field.label}", field.hint])
-            item.setTextAlignment(1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            item.setToolTip(1, field.hint)
-            self._popup.addTopLevelItem(item)
+            # **只一列**：这份列表原本还带一句灰字提示（「5MB 或 >10MB」），但那一列
+            # 从来没被画出来过（``QTreeWidgetItem`` 带着两列的值构造、再 ``add``，
+            # 树却不会长出第 2 列），界面上一直只是每行右边一片空白。去掉更干净 ——
+            # 核心里那份 ``hint`` 仍然留着，错误横幅还要用（见 ``MainWindow``）。
+            self._popup.addTopLevelItem(QTreeWidgetItem([f"#{field.label}"]))
         if not fields:
             self._close_popup()
             return
-        # 两列的宽度**写死**而不是 ``adjustSize`` 说了算：提示那一句长短不一
-        # （「2024 / 2024-05」比「含子相册」长），按内容缩的话列表宽度会跟着跳。
-        self._popup.setColumnWidth(0, WIDTH - 112)
-        self._popup.setColumnWidth(1, 106)
-        # 位置换算到**窗口**坐标（列表是胶囊的兄弟，见 __init__ 那段），
-        # 并夹在窗口以内 —— 全屏或贴着底边时它不许跑到屏幕外面去。
+        # 位置换算到**窗口**坐标（列表是胶囊的兄弟，见 __init__ 那段）。
         anchor = self.mapTo(self._host, QPoint(0, self.height() + 2))
         # 高**按行高算**，不按「行数 × 一个写死的数」：写死的那个数（曾经是 26）
         # 并不是这一档字号下真正的行高（实测 23），于是最下面多出一截空白 ——
@@ -475,32 +488,54 @@ class SearchField(QWidget):
             rows + POPUP_LIST_INSET * 2,
             max(0, self._host.height() - anchor.y()),
         )
-        self._popup.setGeometry(
-            min(self._popup_left(), max(0, self._host.width() - WIDTH)),
-            anchor.y(),
-            WIDTH,
-            height,
+        # **左右沿都与胶囊齐**（宽度就是 :data:`WIDTH`）：一份挂在输入框底下的列表
+        # 比输入框还宽出去一截，看着是漏的。窄到放不下时宁可让列表贴着窗口左边 ——
+        # 那只在窗口小到胶囊都快看不见时才发生。
+        left = min(
+            self.mapTo(self._host, QPoint(0, 0)).x(),
+            max(0, self._host.width() - WIDTH),
         )
+        self._popup.setGeometry(left, anchor.y(), WIDTH, height)
         items = self._candidate_items()
         if items:
             self._popup.setCurrentItem(items[0])
         self._popup.raise_()
         self._popup.show()
 
-    def _popup_left(self) -> int:
-        """候选列表的左沿（**宿主**坐标）—— 让列表里那个「#」与输入框里那个对齐。
+    def _item_padding(self) -> int:
+        """候选那一行的文字离行矩形左沿多远 —— **让列表里那个 ``#`` 与输入框里那个对齐**。
 
-        胶囊左边那一段是放大镜，文本从 :meth:`_edit.contentsRect` 那一处起算，
-        比胶囊左沿往右二十点上下；而列表自己还有一圈边框与内边距（:data:`POPUP_LIST_INSET`）。
-        两边一减才是列表该让开的那一段，**写成常数就等着某天差开**（实测：按常数写，
-        两个「#」正好错开 18 点，而那一段是放大镜的宽度 + 布局间距 + 那一圈内边距，
-        任一处动了，常数就不作数了）。
+        两边各自让开多少是量出来的，不是一个凭空定的数：
 
-        宽度夹在窗口以内由调用方管（见 :meth:`_fill_popup`）—— 窗口窄到放不下时，
-        与其让两个「#」错开，不如让列表贴着窗口右边。
+        - 胶囊那边：左边距 + 放大镜宽度 + 布局间距（实测 25 点，见 :meth:`_text_inset`）；
+        - 列表那边：边框 + 内边距（:data:`POPUP_LIST_INSET`，实测 7 点）
+          再加 Qt 自己那一小段（:data:`_ITEM_TEXT_BASELINE`，实测 1 点）。
+
+        差就是要给行内边距的那一份。
+
+        **原来那一档 8 点是白让的**：列表的左沿当时又照着胶囊往右挪了十八点，两处一叠，
+        列表里那个 ``#`` 比输入框里那个**往右错开八点** —— 用户报的正是「下栏框中 ``#``
+        前面有留白」。现在左沿不再挪（左右沿都与胶囊齐，见 :meth:`_fill_popup`），
+        让路的活整个交给这里。
         """
-        text_left = self._edit.mapTo(self._host, self._edit.contentsRect().topLeft())
-        return text_left.x() - POPUP_LIST_INSET
+        return max(0, self._text_inset() - POPUP_LIST_INSET - _ITEM_TEXT_BASELINE)
+
+    def _text_inset(self) -> int:
+        """输入框里那个字离**胶囊左沿**多远（点）。
+
+        :meth:`_item_padding` 的另一半。**现量而不是写死**：这一段是「左边距 + 放大镜
+        + 间距」三样加起来，任一样动了（换个放大镜尺寸、改个内边距），写死的那个数
+        就不作数 —— 而两个 ``#`` 错开几点是用户一眼看得见的。
+
+        ``layout().activate()`` 是为了布局还没跑过的时候也问得到（``__init__`` 里
+        :meth:`_apply_theme` 跑在布局之前，那一次量出来的值会在随后的 ``resizeEvent``
+        里被重新算掉）。
+        """
+        layout = self.layout()
+        if layout is not None:
+            layout.activate()
+        corner = self._edit.contentsRect().topLeft()
+        return corner.x() + self._edit.mapTo(self, corner).x()
 
     def _close_popup(self) -> None:
         if self._popup.isVisible():
@@ -538,7 +573,7 @@ class SearchField(QWidget):
         # 于是它一直拿着系统默认那一档颜色。先把调色板补给它，再按「取自同一个地方」
         # 的规矩生成样式表（见 ``theme.push_palette`` 与 ``popup_style``）。
         theme.push_palette(self._popup)
-        self._popup.setStyleSheet(popup_style(self._popup))
+        self._popup.setStyleSheet(popup_style(self._popup, item_padding=self._item_padding()))
         self._icon.setPixmap(magnifier(app_theme, self.devicePixelRatioF()))
 
     def focus_gained(self) -> None:

@@ -403,17 +403,58 @@ def test_typing_a_field_name_narrows_the_list(qt_app: QApplication, tmp_path: Pa
     window.close()
 
 
-def _hash_columns(field: SearchField, host: QWidget) -> tuple[int, int]:
-    """输入框里那个 ``#`` 与候选列表里那一列的 ``#`` 各自的横坐标（**宿主**坐标）。
+def _first_ink(
+    image: object, box: tuple[int, int, int, int], scale: float, background: float
+) -> int:
+    """``box`` = (左, 上, 右, 下) 内第一个「不是底色」的像素的 x（**逻辑**坐标）。
 
-    两边都是「那个字真正起笔的地方」：输入框看 :meth:`QLineEdit.contentsRect` 的左沿，
-    列表看第一行视觉矩形的左沿 —— 看控件的左沿只会量到胶囊边与列表边框，量不到字。
+    **像素级**的量法，而且是唯一靠得住的一种：控件的 ``mapTo`` / ``contentsRect``
+    量得到「行矩形在哪」，量不到「Qt 实际把那个字画在哪」—— 中间隔着行内边距、
+    委托自己的边距与字形左侧的边距（实测合起来十点上下，量控件一律量不到）。
     """
-    edit = field._edit
-    typed = edit.mapTo(host, edit.contentsRect().topLeft()).x()
+    left, top, right, bottom = box
+    for x in range(int(left), int(right)):
+        for y in range(int(top), int(bottom)):
+            pixel = image.pixelColor(round(x * scale), round(y * scale)).lightnessF()  # type: ignore[attr-defined]
+            if abs(pixel - background) > 0.06:
+                return x
+    return -1
+
+
+def _hash_columns(field: SearchField, host: QWidget) -> tuple[int, int]:
+    """输入框里那个 ``#`` 与候选列表里那个 ``#`` 各自的横坐标（**宿主**逻辑坐标）。
+
+    量的是**画出来的像素**，不是控件的矩形：Qt 画 ``::item`` 的文字之前自己还会让开
+    一段（委托的边距），QSS 的 ``padding`` 是在那之后才叠上去的 —— 只看控件位置，
+    永远看不到这段（这一条当初就栽在这儿：控件量出来是齐的，界面上仍然错开八点）。
+
+    列表量的是**没被选中**的那一行：选中行整行铺着高亮色，它比文字更靠左，量它
+    量到的是高亮的圆角。深浅色都成立，所以底色参考点取同一行右侧的空白处。
+    """
+    image = host.grab().toImage()
+    scale = image.devicePixelRatio() or 1.0
     popup = field._popup
-    first = popup.topLevelItem(0)
-    listed = popup.viewport().mapTo(host, QPointF(0, 0)).x() + popup.visualItemRect(first).left()
+    box = popup.geometry()
+    # ``visualItemRect`` 给的是**视口**坐标，换到窗口坐标要加视口的左上角而不是列表的 ——
+    # 两者差着一整圈边框与内边距（:data:`POPUP_LIST_INSET`）。加错了量到的是上一行
+    # 高亮的下沿（实测偏七点，量出来「差 20」，真实差 2）。
+    view = popup.viewport().mapTo(host, QPointF(0, 0))
+    row = popup.visualItemRect(popup.topLevelItem(1)).translated(view.toPoint())
+    background = image.pixelColor(  # type: ignore[attr-defined]
+        round((box.right() - 6) * scale), round((row.top() + 4) * scale)
+    ).lightnessF()
+    listed = _first_ink(
+        image,
+        (view.x() + 1, row.top() + 4, box.right() - 4, row.bottom() - 3),
+        scale,
+        background,
+    )
+    typed = _first_ink(
+        image,
+        (field.x() + 22, field.y() + 6, field.x() + 80, field.y() + 18),
+        scale,
+        background,
+    )
     return typed, listed
 
 
@@ -432,18 +473,62 @@ def test_the_candidate_hash_lines_up_with_the_typed_one(
 ) -> None:
     """列表里那个 ``#`` 要与输入框里正打着的那个落在**同一条竖线**上。
 
-    胶囊左边那一段是放大镜，文本从它右边起算，而列表原来是照着胶囊的左沿摆的 ——
-    于是两个 ``#`` 错开十八点（实测）。那十八点是放大镜宽度 + 布局间距 + 列表自己
-    那一圈内边距，所以**不能写成常数**：这里量的是两个真字的位置。
+    胶囊左边那一段是放大镜，文本从它右边起算；而列表里那个 ``#`` 前面还要再让开
+    边框、内边距与行内边距。**这一条是像素对拍**（见 :func:`_hash_columns` 为什么要
+    量像素）—— 控件位置量出来是齐的，界面上仍然可以差着八点，那八点就出在这中间。
+
+    :data:`~gallery.ui.search_field._ITEM_TEXT_BASELINE` 那个量出来的常数由这条盯着：
+    哪天真变了，先变红的是它。
     """
     window = _open_candidates(qt_app, tmp_path, "#")
     assert window._search_field.popup_visible()
 
     typed, listed = _hash_columns(window._search_field, window)
 
+    assert listed > 0 and typed > 0, "两个「#」有一个没量到（列表只有一行时换一行）"
     assert abs(listed - typed) <= 1, (
         f"两个「#」错开 {listed - typed} 点（输入框 {typed}，列表 {listed}）"
     )
+    window.close()
+
+
+def test_the_candidate_list_does_not_stick_out_past_the_capsule(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """列表的右沿**不许越过胶囊的右沿**。
+
+    宽度曾经是 :data:`WIDTH` 而左沿又照着胶囊往右挪了十八点，于是右边整整探出去
+    十八点 —— 一份挂在输入框底下、比输入框还宽的列表看着是漏的。现在左右沿都与胶囊齐。
+    """
+    window = _open_candidates(qt_app, tmp_path, "#")
+    field = window._search_field
+    popup = field._popup
+
+    assert popup.geometry().left() == field.x(), "列表左沿应当与胶囊左沿齐"
+    assert popup.geometry().right() <= field.geometry().right(), (
+        f"列表右沿 {popup.geometry().right()} 超出了胶囊右沿 {field.geometry().right()}"
+    )
+    window.close()
+
+
+def test_the_candidate_list_shows_only_the_field_names(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """候选只有一列：``#相机``，右边的灰字提示已经去掉。
+
+    那一列其实**从来没被画出来过**：``QTreeWidgetItem`` 带着两列的值构造、再 ``add``，
+    树并不会长出第 2 列，于是值一直搁在 item 自己身上，界面只是每行右边一片空白 ——
+    留着它等于留一片空白。核心里那份 ``hint`` 仍然在：错误横幅还要用它给例子。
+
+    **断言的是 item 自己有几列，不是树有几列**：树上永远只有 1 列（正因为如此那一列
+    才没画出来），断言它等于什么都没盯着 —— 把 ``field.hint`` 加回来，这条仍然是绿的。
+    """
+    window = _open_candidates(qt_app, tmp_path, "#")
+    popup = window._search_field._popup
+
+    widths = {popup.topLevelItem(row).columnCount() for row in range(popup.topLevelItemCount())}
+    assert widths == {1}, f"候选每行仍带着多于一列的数据：列数有 {sorted(widths)}，提示那列又回来了"
+    assert popup.topLevelItem(0).text(0).startswith("#")
     window.close()
 
 

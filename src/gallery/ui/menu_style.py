@@ -62,8 +62,17 @@ POPUP_LIST_BORDER = 1
 POPUP_LIST_PADDING = MENU_INSET - 2
 
 #: 弹出列表里第一列文字离**列表左沿**多远（点）= 边框 + 内边距。
-#: ``search_field`` 摆这份列表的左沿时按它往回退（见 ``SearchField._popup_left``）。
+#: 行里那一行文字还要再让开 :data:`POPUP_LIST_ITEM_PAD`，两者加起来才是字真正落下的
+#: 位置（见 ``gallery.ui.search_field.SearchField._item_padding``）。
 POPUP_LIST_INSET = POPUP_LIST_BORDER + POPUP_LIST_PADDING
+
+#: 弹出列表那一行**文字**离行矩形左沿多远（点）。
+#:
+#: **这一份决定候选列表里那个「#」落在哪**：Qt 画 ``::item`` 的文字是从行矩形左沿起算、
+#: 再让开这一个内边距的。菜单那一档是给「左边留了对勾 gutter」的菜单定的，列表没有对勾，
+#: 这份要按「文字要与输入框里那个字对齐」重算（见
+#: ``gallery.ui.search_field.SearchField._item_padding``）。
+POPUP_LIST_ITEM_PAD = 8
 
 MENU_CHECK_GUTTER = 19
 
@@ -85,7 +94,7 @@ def separator_color(background: QColor, text: QColor) -> str:
     return rgba(color)
 
 
-def popup_list_style(list_widget: QWidget) -> str:
+def popup_list_style(list_widget: QWidget, *, item_padding: int = POPUP_LIST_ITEM_PAD) -> str:
     """弹出列表（搜索框的候选列表）用的样式表 —— **与弹出菜单同一套颜色**。
 
     四个角色与 :func:`style_sheet` 取自同一个地方（控件自己的调色板，见模块文档头一条），
@@ -98,6 +107,9 @@ def popup_list_style(list_widget: QWidget) -> str:
 
     :param list_widget: 那个列表本身。颜色从**它自己的**调色板读（系统换浅色 / 深色时
         :mod:`gallery.ui.theme` 会逐控件下发），所以调用方只要把控件给过来。
+    :param item_padding: 行里**文字**离行矩形左沿多远（见 :data:`POPUP_LIST_ITEM_PAD`）。
+        默认那一档是给「文字靠左」用的；搜索框要「文字与输入框里那个字对齐」，于是它把
+        自己量出来的那个数给过来 —— **QSS 调不出像素级的对齐，这里是唯一的一处入口**。
     """
     palette = list_widget.palette()
     background = palette.color(QPalette.ColorRole.Window)
@@ -110,7 +122,7 @@ def popup_list_style(list_widget: QWidget) -> str:
         f"QTreeWidget#searchPopup {{ background: {rgba(background)}; "
         f"border: {POPUP_LIST_BORDER}px solid {rgba(edge)}; "
         f"border-radius: {MENU_CORNER_RADIUS}px; padding: {POPUP_LIST_PADDING}px; }}\n"
-        f"QTreeWidget#searchPopup::item {{ padding: 3px 8px; color: {rgba(text)}; }}\n"
+        f"QTreeWidget#searchPopup::item {{ padding: 3px {item_padding}px; color: {rgba(text)}; }}\n"
         # 悬停与选中**合成一条规则**：候选列表是「鼠标移到哪一行就高亮哪一行」
         # （``search_field.CandidateList.mouseMoveEvent`` 把那一行设成当前项），
         # 两者本是同一件事。少写一条的症状是列表完全不亮 —— 挂了样式表之后 Qt 不再
@@ -630,6 +642,7 @@ __all__ = [
     "OPEN_KEY_HINT",
     "POPUP_LIST_BORDER",
     "POPUP_LIST_INSET",
+    "POPUP_LIST_ITEM_PAD",
     "POPUP_LIST_PADDING",
     "SHORTCUT_GAP",
     "SHORTCUT_LABEL_GAP",
