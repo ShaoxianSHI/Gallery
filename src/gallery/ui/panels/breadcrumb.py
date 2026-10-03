@@ -90,7 +90,8 @@ class ChipButton(QToolButton):
         super().__init__(parent)
         self.setObjectName("searchChip")
         self.setText(f"{text} {DISMISS_MARK}")
-        self.setToolTip(f"点一下改这一条：{text}（点右侧的 {DISMISS_MARK} 撤掉）")
+        # **不挂提示**：这一行本来就写得清清楚楚（条件 + 一个 ✕），鼠标停在上面再弹
+        # 一句「点一下改这一条」，读的是屏幕上已经有的东西，还要用户移开鼠标才看得完。
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.clicked.connect(self.edited)
 
