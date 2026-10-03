@@ -336,6 +336,16 @@ class SearchField(QWidget):
         self._edit.setFocus(Qt.FocusReason.ShortcutFocusReason)
         self._edit.selectAll()
 
+    def load(self, text: str) -> None:
+        """把一条已有的筛选条件**放回输入框**接着改（面包屑上点一枚胶囊时）。
+
+        **整串选中**：用户多半是改值（``#相机 Canon`` → ``#相机 Sony``），选中一按就换，
+        不用先把光标挪到末尾去删。什么也不改直接按回车，那就是「没改」。
+        """
+        self._close_popup()
+        self._edit.setText(text)
+        self.focus_search()
+
     def is_editing(self) -> bool:
         return self._edit.hasFocus()
 

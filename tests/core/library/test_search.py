@@ -182,6 +182,36 @@ def test_a_format_is_normalised_to_a_suffix() -> None:
 # ---- SQL ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize(
+    ("typed", "restored"),
+    [
+        ("海边", "海边"),
+        ("#相机 Canon", "#相机 Canon"),
+        ("#ISO >800", "#ISO >800"),
+        ("#相册 旅行/", "#相册 旅行"),
+        ("#省/州 浙江", "#省/州 浙江"),
+    ],
+)
+def test_a_condition_can_be_put_back_into_the_box(typed: str, restored: str) -> None:
+    """胶囊放回搜索框时要**带字段前缀**。
+
+    只放值的话用户看到的是「旅行」，不知道这一条是按哪个字段筛的 —— 而改条件多半正是
+    要换字段，那才是这个交互的主要用法。
+
+    顺带钉住字段名**不带空格**这条：搜索框按第一个空格把字段名与值分开，「#省 / 州 浙江」
+    会把「省」当成字段名而认不出，于是那一条悄悄变成按文件名搜（候选列表里补全出来的
+    是没有空格的那个写法）。
+    """
+    condition = _condition(typed)
+
+    assert condition is not None
+    assert condition.as_input == restored
+    # 放回去再敲一遍，得到的是**同一条**条件（改不动的那部分真的没变）。
+    again = _condition(restored)
+    assert again is not None
+    assert (again.field.id, again.value) == (condition.field.id, condition.value)
+
+
 def test_conditions_are_combined_with_and() -> None:
     sql, values = build_query([_condition("海边"), _condition("#相机 Canon")])  # type: ignore[list-item]
 

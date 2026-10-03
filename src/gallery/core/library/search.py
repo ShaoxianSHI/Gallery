@@ -111,7 +111,10 @@ SEARCH_FIELDS: Final[tuple[SearchField, ...]] = (
     _field(FACET_CAMERA, "相机", "text", "f.camera"),
     _field(FACET_LENS, "镜头", "text", "f.lens"),
     _field(FACET_COUNTRY, "国家", "text", "f.country"),
-    _field(FACET_REGION, "省 / 州", "text", "f.region"),
+    # **标签里不许有空格**：字段名是拿来敲的（「#省/州 浙江」），而搜索框把 ``#`` 与
+    # 之间的那一段当字段名 —— 名字里带空格的话，放回输入框时会按空格切开，认不回来。
+    # 分组与元数据面板那边仍写「省 / 州」，那是给人看的文案，不是拿来敲的。
+    _field(FACET_REGION, "省/州", "text", "f.region"),
     _field(FACET_CITY, "城市", "text", "f.city"),
     _field(FACET_KEYWORD, "关键词", "text", "f.keywords"),
     _field(FACET_APERTURE, "光圈", "number", "f.aperture", hint="1.8 或 < 2"),
@@ -185,6 +188,18 @@ class SearchCondition:
         return f"{self.field.label}：{self.text}"
 
     @property
+    def as_input(self) -> str:
+        """能把它还原成搜索框里那一串的样子（``#相机 Canon`` / ``海边``）。
+
+        **要带上字段前缀**：只把值放回去的话，用户在输入框里看到的是「旅行」——
+        不知道这一条是按哪个字段筛的，而改条件多半正是要换字段（那是这个交互的主要用法）。
+        默认字段（文件名）不带前缀，与它当初是怎么敲进来的一致。
+        """
+        if self.field.id == DEFAULT_FIELD.id:
+            return self.text
+        return f"#{self.field.label} {self.text}"
+
+    @property
     def identity(self) -> tuple[str, str]:
         """这一层标识里用的那份身份（字段 + 原文，见 ``ui.navigation.level_key``）。"""
         return (self.field.id, self.text)
@@ -221,7 +236,7 @@ def parse_input(raw: str) -> ParsedInput | None:
 def match_field(text: str) -> SearchField | None:
     """候选列表里匹配一个字段名：id（``#camera``）与中文名（``#相机``）都认。
 
-    比较时**去掉空格**，于是「省 / 州」与「省/州」是同一个。
+    比较时**去掉空格**，于是「省/州」与「省 / 州」（面板那边的写法）是同一个。
     """
     needle = _compact(text)
     if not needle:
@@ -409,7 +424,7 @@ def _number_text(number: float) -> str:
 
 
 def _compact(text: str) -> str:
-    """比较字段名时去掉所有空白，于是「省 / 州」与「省/州」等价。"""
+    """比较字段名时去掉所有空白，于是「省/州」与「省 / 州」等价。"""
     return "".join(text.split()).casefold()
 
 

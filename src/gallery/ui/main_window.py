@@ -308,6 +308,8 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         # ---- 搜索（ADR 0026）-------------------------------------------------
         #: 已生效的筛选条件，按录入顺序。**空列表 = 不在搜索**（普通的一层）。
         self._conditions: list[SearchCondition] = []
+        #: 正在搜索框里改的是第几条条件（``None`` = 没在改）。改完回车**就地替换**它。
+        self._editing_condition: int | None = None
         #: 上一次检索命中了多少张（面包屑上那个「搜索结果（128）」；``None`` = 还没查过）。
         self._search_total: int | None = None
         self._search_job: int | None = None
@@ -406,6 +408,7 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._breadcrumb = BreadcrumbBar()
         self._breadcrumb.path_requested.connect(self._on_breadcrumb_requested)
         self._breadcrumb.condition_removed.connect(self._on_condition_removed)
+        self._breadcrumb.condition_edited.connect(self._on_condition_edited)
         # 标题文字与 ⌘R 的输入框都要给右上角那块让出来，否则长相册名会从它底下穿过去。
         self._title_bar.reserve_right(SEARCH_FIELD_WIDTH + 2 * SEARCH_FIELD_MARGIN_RIGHT)
 
@@ -1216,6 +1219,7 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         # 条件是**临时的**（ADR 0026 决策 9）：换库之后还留着上一座库的那几枚胶囊，
         # 用户看到的检索结果属于一个已经关掉的文件夹。
         self._conditions.clear()
+        self._editing_condition = None
         self._search_total = None
 
     # ---- 扫描 --------------------------------------------------------------
@@ -1432,9 +1436,16 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         - 只敲了字段名（``#相机``）—— 那是补全，不是条件；
         - 值写坏了（``#ISO abc``）—— **这一种要说一句话**，用户以为条件生效了。
         """
+        editing = self._editing_condition
         parsed = parse_input(raw)
         condition = None if parsed is None else make_condition(parsed)
         if condition is None:
+            # **正在改的那一条被清空后回车 = 撤掉它**。这时输入框是空的，按回车没有别的
+            # 意思，而「把这条删了」正是用户清空它想要的结果 —— 于是撤掉这一条，
+            # 免得「点一下胶囊就没了」那种意外（改与撤必须是两个动作）。
+            if parsed is None and editing is not None:
+                self._on_condition_removed(editing)
+                return
             self._warn_unusable_input(parsed)
             return
         if self._library is None:
@@ -1443,7 +1454,13 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             # 不如说一句「还没有库可搜」。
             self._show_banner("先打开一个照片文件夹，再搜索。")
             return
-        self._conditions.append(condition)
+        if editing is not None and 0 <= editing < len(self._conditions):
+            # **就地替换**：改一条条件的结果仍然是那一条，位置也不变 —— 换成「删掉旧的、
+            # 追加一条新的」的话，面包屑上的顺序会跳，用户看着像是多了一条。
+            self._conditions[editing] = condition
+        else:
+            self._conditions.append(condition)
+        self._editing_condition = None
         self._warn_metadata_without_exiftool(condition)
         self._apply_conditions()
 
@@ -1475,18 +1492,49 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         )
 
     def _on_search_dismissed(self) -> None:
-        """搜索框里按 Esc 且里面是空的：与 ``Esc`` 走同一条路（撤一条条件 / 返回上一层）。"""
+        """搜索框里按 Esc 且里面是空的。
+
+        正在改某一条的时候，``Esc`` 是**放弃这一次改动**（那一条原样留着）——
+        否则「改到一半想溜」与「撤掉一条」是同一下，用户没法中途反悔。
+        """
+        if self._editing_condition is not None:
+            self._cancel_condition_edit()
+            return
         self.go_up()
 
     def _on_search_active_changed(self, _active: bool) -> None:
         """正在输入时别的命令让开 —— 与两个改名输入框同一件事（键盘归输入框）。"""
         self._update_action_states()
 
+    def _on_condition_edited(self, position: int) -> None:
+        """点面包屑上第 ``position`` 枚胶囊：把它放回输入框接着改。
+
+        **不是就地改**：胶囊上改不了字（要打字），所以把原文放回搜索框，由用户敲完回车
+        （:meth:`_on_search_submitted` 里就地替换那一条）。按钮上会标出「正在改这一条」。
+        """
+        if not 0 <= position < len(self._conditions):
+            return
+        self._editing_condition = position
+        self._search_field.load(self._conditions[position].as_input)
+        self._update_breadcrumb()
+
+    def _cancel_condition_edit(self) -> None:
+        """放弃这一次改动：胶囊原样留着，输入框清空。"""
+        self._editing_condition = None
+        self._search_field.stop_edit()
+        self._update_breadcrumb()
+
     def _on_condition_removed(self, position: int) -> None:
-        """点掉了面包屑上第 ``position`` 枚条件胶囊。"""
+        """撤掉第 ``position`` 枚条件胶囊（点它右端的 ✕，或改到一半清空后回车）。"""
         if not 0 <= position < len(self._conditions):
             return
         del self._conditions[position]
+        # 序号会往前挪一位 —— 不跟着挪，正在改的那一条就变成了**另一条**。
+        editing = self._editing_condition
+        if editing == position:
+            self._editing_condition = None
+        elif editing is not None and editing > position:
+            self._editing_condition = editing - 1
         self._apply_conditions()
 
     def clear_search_conditions(self) -> None:
@@ -1494,6 +1542,7 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         if not self._conditions:
             return
         self._conditions.clear()
+        self._editing_condition = None
         self._apply_conditions()
 
     def focus_search(self) -> None:
@@ -2985,6 +3034,7 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         # 检索是横跨整个库的一层（ADR 0026 决策 1），换浏览方式时留着它等于把两个
         # 互不相干的概念叠在一起：用户看到的照片既不是「整库平铺」也不是「这一层」。
         self._conditions.clear()
+        self._editing_condition = None
         self._search_total = None
         self._session = self._session.with_browse_mode(mode)
         self._save_session()
@@ -3017,6 +3067,7 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._current_dir = target.resolve()
         self._group_view = None
         self._conditions.clear()
+        self._editing_condition = None
         self._search_total = None
         self._reload_level(focus=focus)
 
@@ -3038,6 +3089,7 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             return
         if self._conditions:
             self._conditions.pop()
+            self._editing_condition = None
             self._apply_conditions()
             return
         if self._group_view is not None:
@@ -3218,11 +3270,13 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             else [(library.display_name, library.root)]
         )
         group = self._group_view.label if self._group_view is not None else None
+        editing = self._editing_condition if conditions else None
         self._breadcrumb.set_path(
             parts,
             group=group,
             conditions=conditions,
             result_count=self._search_total if conditions else None,
+            editing=editing,
         )
         self._breadcrumb.show()
 

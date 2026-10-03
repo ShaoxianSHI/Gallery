@@ -40,6 +40,7 @@ from gallery.core.metadata import batch  # noqa: E402
 from gallery.core.places.resolver import LazyPlaceResolver, ResolvedPlace  # noqa: E402
 from gallery.ui import theme  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
+from gallery.ui.panels.breadcrumb import ChipButton  # noqa: E402
 from gallery.ui.search_field import (  # noqa: E402
     HEIGHT,
     MARGIN_RIGHT,
@@ -442,11 +443,11 @@ def test_clicking_a_candidate_completes_it(qt_app: QApplication, tmp_path: Path)
     qt_app.processEvents()
     field._edit.setText("#省")
     qt_app.processEvents()
-    assert field.visible_fields() == ["#省 / 州"]
+    assert field.visible_fields() == ["#省/州"]
 
     _click_candidate(field)
 
-    assert field.text() == "#省 / 州 "
+    assert field.text() == "#省/州 "
     assert not field.popup_visible()
     assert field._edit.hasFocus() is True
     window.close()
@@ -566,6 +567,136 @@ def test_clicking_the_dismiss_mark_removes_that_condition(
 
     assert _chips(window) == ["相册：旅行"]
     assert _names(window) == ["山.jpg"]
+    window.close()
+
+
+def _chip_buttons(window: MainWindow) -> list[ChipButton]:
+    """面包屑上那些条件胶囊（**每次重画都是新对象**，所以别把引用存过一轮）。"""
+    return window._breadcrumb.findChildren(ChipButton)
+
+
+def _click_chip(window: MainWindow, row: int, *, at_mark: bool = False) -> None:
+    """点第 ``row`` 枚胶囊：``at_mark=True`` 点右端那个 ✕，否则点文字。
+
+    两处**必须真的落在不同的热区**上：分界是按字体度量算的（见
+    ``ChipButton._hits_mark``），点歪了就分不出「改」与「撤掉」，而那正是这条交互的全部。
+    """
+    chip = _chip_buttons(window)[row]
+    x = chip.width() - 4 if at_mark else 10
+    QApplication.sendEvent(
+        chip,
+        QMouseEvent(
+            QEvent.Type.MouseButtonPress,
+            QPointF(x, chip.height() / 2),
+            QPointF(x, chip.height() / 2),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        ),
+    )
+
+
+def test_clicking_a_chip_puts_it_back_into_the_box(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """点胶囊上的**文字**是「改」：放回输入框接着敲。
+
+    改一条条件的结果是**那一条**，不是「删掉旧的、冒出一条新的」—— 这一点由下面那条
+    用例看着顺序。
+    """
+    root = _library(tmp_path, make_photo)
+    window = _open(qt_app, root, tmp_path / "会话")
+    _settle(qt_app, window)
+    _search(qt_app, window, "#相册 旅行")
+
+    _click_chip(window, 0)
+
+    assert window._search_field.text() == "#相册 旅行"
+    assert _chips(window) == ["相册：旅行"], "刚点了一下，那一条就没了"
+    assert window._editing_condition == 0
+    window.close()
+
+
+def test_submitting_while_editing_replaces_that_chip_in_place(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """改完回车是**就地替换**：位置不变，条目数不变。"""
+    root = _library(tmp_path, make_photo)
+    window = _open(qt_app, root, tmp_path / "会话")
+    _settle(qt_app, window)
+    _search(qt_app, window, "海边")
+    _search(qt_app, window, "#相册 旅行")
+
+    _click_chip(window, 1)
+    _search(qt_app, window, "#相册 家庭")
+
+    assert _chips(window) == ["文件名：海边", "相册：家庭"]
+    assert window._editing_condition is None
+    assert _names(window) == []
+    window.close()
+
+
+def test_clicking_the_mark_still_removes_that_condition(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """点右端那个 ✕ 才是撤掉 —— 与点文字是两个动作，两处都要能按预期走。"""
+    root = _library(tmp_path, make_photo)
+    window = _open(qt_app, root, tmp_path / "会话")
+    _settle(qt_app, window)
+    _search(qt_app, window, "海边")
+    _search(qt_app, window, "#相册 旅行")
+
+    _click_chip(window, 0, at_mark=True)
+    _settle(qt_app, window)
+
+    assert _chips(window) == ["相册：旅行"]
+    assert _names(window) == ["山.jpg"]
+    window.close()
+
+
+def test_clearing_the_box_and_pressing_enter_removes_the_edited_condition(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """改到一半把输入框清空再回车 = **撤掉这一条**。
+
+    「点一下胶囊就没了」是不能有的意外（改与撤必须是两个动作）；而清空之后回车在输入框
+    里本来就没有别的意思，于是把它定成撤掉，删除另有明路。
+    """
+    root = _library(tmp_path, make_photo)
+    window = _open(qt_app, root, tmp_path / "会话")
+    _settle(qt_app, window)
+    _search(qt_app, window, "海边")
+    _search(qt_app, window, "#相册 旅行")
+
+    _click_chip(window, 0)
+    window._search_field._edit.clear()
+    window._search_field.submit()
+    _settle(qt_app, window)
+
+    assert _chips(window) == ["相册：旅行"]
+    window.close()
+
+
+def test_escape_while_editing_keeps_the_condition(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """改到一半按 Esc 是**放弃这一次改动**，那一条原样留着。
+
+    不然「改到一半想溜」与「撤掉一条」是同一下，用户没法中途反悔。
+    """
+    root = _library(tmp_path, make_photo)
+    window = _open(qt_app, root, tmp_path / "会话")
+    _settle(qt_app, window)
+    _search(qt_app, window, "海边")
+
+    _click_chip(window, 0)
+    window._search_field._edit.setText("#相册 旅行")
+    window._search_field.dismissed.emit()
+    qt_app.processEvents()
+
+    assert _chips(window) == ["文件名：海边"]
+    assert window._search_field.text() == ""
+    assert window._editing_condition is None
     window.close()
 
 
