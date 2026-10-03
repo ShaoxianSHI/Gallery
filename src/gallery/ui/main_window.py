@@ -3264,11 +3264,20 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         if library is None or (not in_albums and self._group_view is None and not conditions):
             self._breadcrumb.hide()
             return
-        parts = (
-            breadcrumb_parts(library.root, self._current_dir or library.root)
-            if in_albums
-            else [(library.display_name, library.root)]
-        )
+        if conditions:
+            # **检索时只报库名，不报当前文件夹**。检索横跨整个库（ADR 0026 决策 1），
+            # 于是在 `旅行/2024` 里搜到 4 张时，那一行若是「照片 ▸ 旅行 ▸ 2024 ▸
+            # 搜索结果（4）」，读起来就是「在这个文件夹里搜到 4 张」—— 而实际这 4 张
+            # 大半在别处。那是这一行在说一件不存在的事，比什么都不说更坏。
+            #
+            # 范围要收窄自己加一条「#相册 …」，那一条就明明白白写在右端。
+            parts = [(library.display_name, library.root)]
+        else:
+            parts = (
+                breadcrumb_parts(library.root, self._current_dir or library.root)
+                if in_albums
+                else [(library.display_name, library.root)]
+            )
         group = self._group_view.label if self._group_view is not None else None
         editing = self._editing_condition if conditions else None
         self._breadcrumb.set_path(

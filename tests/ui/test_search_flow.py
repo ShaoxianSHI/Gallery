@@ -26,7 +26,11 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QEvent, QPointF, Qt  # noqa: E402
 from PySide6.QtGui import QMouseEvent, QPalette  # noqa: E402
-from PySide6.QtWidgets import QApplication, QMenu, QWidget  # noqa: E402
+from PySide6.QtWidgets import (  # noqa: E402
+    QApplication,
+    QMenu,
+    QWidget,
+)
 from waiting import DEFAULT_TIMEOUT_SECONDS  # noqa: E402
 
 from gallery.core.library.config import prepare_library  # noqa: E402
@@ -594,6 +598,54 @@ def _click_chip(window: MainWindow, row: int, *, at_mark: bool = False) -> None:
             Qt.KeyboardModifier.NoModifier,
         ),
     )
+
+
+def test_the_breadcrumb_says_the_search_spans_the_library(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """检索时面包屑**只报库名**，不报当前所在的文件夹。
+
+    在 `旅行/2024` 里搜，命中的是整个库（ADR 0026 决策 1）—— 于是那一行若还留着
+    「旅行 ▸ 2024」，读起来就是「在这个文件夹里搜到 4 张」，而实际大半在别处。
+    那是在说一件不存在的事。撤光条件之后文件夹自己回来。
+    """
+    root = _library(tmp_path, make_photo)
+    window = _open(qt_app, root, tmp_path / "会话", browse_mode=BROWSE_MODE_ALBUMS)
+    _settle(qt_app, window)
+    window.enter_folder(root / "旅行" / "2024")
+    _settle(qt_app, window)
+    assert _trail(window) == ["照片", "旅行", "2024"]
+
+    _search(qt_app, window, "山")
+    _settle(qt_app, window)
+
+    assert _trail(window) == ["照片", "搜索结果（1）", "文件名：山 ✕"]
+    assert _names(window) == ["山.jpg"]
+    window.close()
+
+    window = _open(qt_app, root, tmp_path / "会话", browse_mode=BROWSE_MODE_ALBUMS)
+    _settle(qt_app, window)
+    window.enter_folder(root / "旅行" / "2024")
+    _settle(qt_app, window)
+    _search(qt_app, window, "山")
+    _settle(qt_app, window)
+    window.go_up()  # 撤掉那一条条件
+    _settle(qt_app, window)
+    assert _trail(window) == ["照片", "旅行", "2024"], "撤光条件就该回到原来那一层"
+    window.close()
+
+
+def _trail(window: MainWindow) -> list[str]:
+    """面包屑那一行的全部文字，**按摆放顺序**（``findChildren`` 就是布局里的先后）。
+
+    分隔符不算。条件胶囊也是按钮，一并在这里 —— 判据只有一条：那一行上写着什么。
+    """
+    parts: list[str] = []
+    for widget in window._breadcrumb.findChildren(QWidget):
+        text = widget.text().strip() if hasattr(widget, "text") else ""
+        if text and text != "▸":
+            parts.append(text)
+    return parts
 
 
 def test_clicking_a_chip_puts_it_back_into_the_box(

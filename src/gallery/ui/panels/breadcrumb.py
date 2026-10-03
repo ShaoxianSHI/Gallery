@@ -181,7 +181,7 @@ class BreadcrumbBar(QWidget):
         """「搜索结果」那一段。命中数写在里面，**被截断时用户看得见**。"""
         text = "搜索结果" if result_count is None else f"搜索结果（{result_count}）"
         widget = QLabel(text)
-        widget.setToolTip("正在看检索出来的照片（Esc 逐条撤销条件）")
+        widget.setToolTip("整个库里检索出来的照片（不是只在某一个文件夹里）；Esc 逐条撤销条件")
         widget.setStyleSheet("font-size: 12px; font-weight: 600; padding: 2px 6px;")
         return widget
 
