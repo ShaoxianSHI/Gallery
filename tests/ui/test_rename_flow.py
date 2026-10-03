@@ -275,6 +275,96 @@ def test_editor_covers_the_file_name(qt_app: QApplication, tmp_path: Path) -> No
     assert editor.geometry().bottom() >= grid.visualRect(index).bottom() - 30
 
 
+# ---- 「再点一次改名」的成立条件 ----------------------------------------------
+
+
+def test_clicking_again_after_escape_offers_rename(
+    qt_app: QApplication, settle: Callable[[float], None], tmp_path: Path
+) -> None:
+    """⌘R → Esc 之后，再点那一格就该能改名 —— 用户看到的仍然是选中态。
+
+    这是上一条 Esc 修复的**另一半**，症状是：⌘R 能进，Esc 也退得出来，可左键再点
+    那一格毫无反应，非要点第二下。
+
+    根因不在 Esc 上，在 :attr:`PhotoGrid._armed_row` 的记法上：它答的是「这一格
+    **再点一下**是不是改名」，却只由「上次完成的普通左键点选」维护。于是**凡是
+    不是用左键选中那一格的路径**，这一格对它就是没 arm 过的 —— 刚打开时 Qt 顺手设的
+    当前项、代码里的 ``select_row``、⌘R 本身，都算。用户看见的是高亮着的选中态，
+    代码看见的是「从来没点过这一格」，于是这次点击被当成「第一次：只选中」。
+
+    前置条件摆出来：**这一格从来没有被左键点过**（``armed`` 还是 -1、真选区是空的），
+    网格刚打开就是这个样子。于是接下来那次点击之所以能改名，只可能是因为 ⌘R 这一路
+    把它 arm 上 —— 换成「点两下」那条老路本来就会过，与本次修复无关。
+    """
+    grid = make_grid(qt_app, tmp_path, ["a.jpg", "b.jpg"])
+    requested: list[int] = []
+    grid.rename_requested.connect(lambda index: requested.append(index.row()))
+    interval = QApplication.doubleClickInterval() / 1000 + 0.05
+
+    assert grid.genuinely_selected_rows() == [], "谁也没选中"
+    assert grid._armed_row == -1, "还没点过，这一格没被 arm 过"
+
+    grid.begin_rename(grid.currentIndex())  # ⌘R
+    settle(0.05)
+    assert grid.is_renaming() is True
+    QTest.keyClick(grid._rename_edit, Qt.Key.Key_Escape)  # Esc
+    settle(0.05)
+    assert grid.is_renaming() is False
+
+    row = grid.current_row()
+    assert row == 0, "Esc 不该动当前项"
+
+    click_cell(grid, row)
+    settle(interval)
+
+    assert requested == [row], "Esc 之后那一格仍然选着，再点一次就该改名"
+
+
+def test_the_first_click_after_opening_still_only_selects(
+    qt_app: QApplication, settle: Callable[[float], None], tmp_path: Path
+) -> None:
+    """反过来也得守住：刚打开时第一下点击只能选中，不能一碰就弹出输入框。
+
+    这是上面那条修复的红线。Qt 在行插进来的那一轮事件循环里会把第 0 行设成当前项，
+    用户看到的已经是一个高亮的格子；若把判据写成「点当前项就是改名」，那么**打开
+    应用后随手点一下照片就直接改名**了 —— 连选中都不选中。
+    """
+    grid = make_grid(qt_app, tmp_path, ["a.jpg", "b.jpg"])
+    requested: list[int] = []
+    grid.rename_requested.connect(lambda index: requested.append(index.row()))
+    interval = QApplication.doubleClickInterval() / 1000 + 0.05
+
+    assert grid.current_row() == 0, "Qt 顺手把第 0 行设成了当前项"
+    assert grid.genuinely_selected_rows() == [], "谁也没选中"
+
+    click_cell(grid, 0)
+    settle(interval)
+
+    assert requested == [], "第一次点击只是选中"
+    assert grid.genuinely_selected_rows() == [0]
+
+
+def test_clicking_a_different_cell_after_escape_still_only_selects(
+    qt_app: QApplication, settle: Callable[[float], None], tmp_path: Path
+) -> None:
+    """Esc 之后点**别的**格子仍然是「只是换选中」—— arm 只认正在改的那一格。"""
+    grid = make_grid(qt_app, tmp_path, ["a.jpg", "b.jpg"])
+    requested: list[int] = []
+    grid.rename_requested.connect(lambda index: requested.append(index.row()))
+    interval = QApplication.doubleClickInterval() / 1000 + 0.05
+
+    grid.begin_rename(grid.currentIndex())  # ⌘R 作用在第 0 行
+    settle(0.05)
+    QTest.keyClick(grid._rename_edit, Qt.Key.Key_Escape)
+    settle(0.05)
+
+    click_cell(grid, 1)  # 改主意了，点另一张
+    settle(interval)
+
+    assert requested == [], "点别的格子只是换选中"
+    assert grid.current_row() == 1
+
+
 # ---- 端到端 -----------------------------------------------------------------
 
 
@@ -486,6 +576,46 @@ def test_escape_leaves_the_other_actions_usable_too(
             window._reveal_action,
         ):
             assert action.isEnabled() is True, f"Esc 之后 {action.text()} 该重新可用"
+    finally:
+        window.close()
+
+
+def test_click_after_escape_renames_again_in_the_window(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """端到端：⌘R → Esc → 左键点那一格 → 真的又进了重命名。
+
+    与同文件里那条 ``test_escape_cancels_and_leaves_rename_usable_again`` 是同一个
+    「Esc 之后还能不能改名」的两种入口（键盘与鼠标）。分开钉是因为它们断的地方不同：
+    ⌘R 走的是 QAction 的可用性，左键走的是网格里那个「再点一次」的判据 ——
+    后者与 Esc 无关，改名一开始就是坏的，只是要走到「⌘R → Esc」这条路上才显形。
+    """
+    make_photo("IMG_0001.jpg", directory=tmp_path)
+    window = open_window(qt_app, tmp_path)
+    try:
+        # 「刚打开时当前项是第 0 行」不是一个可以依赖的状态（行插进来的那一轮事件
+        # 循环里，Qt 可能顺手设，也可能没设 —— 串行单跑时它总是设的，并行下就未必）。
+        # 所以显式摆出来，跟 `test_rename_action_is_disabled_without_a_selection` 一样。
+        window._grid.select_for_context(-1)
+        window._grid.select_row(0)
+        qt_app.processEvents()
+        row = window._grid.current_row()
+        assert row == 0
+
+        window.rename_current_entry()  # ⌘R
+        editor = window._grid._rename_edit
+        assert editor.is_editing() is True
+        QTest.keyClick(editor, Qt.Key.Key_Escape)  # Esc
+        qt_app.processEvents()
+        assert editor.is_editing() is False
+
+        click_cell(window._grid, row)
+        deadline = time.monotonic() + DEFAULT_TIMEOUT_SECONDS
+        while time.monotonic() < deadline and not window._grid.is_renaming():
+            qt_app.processEvents()
+            time.sleep(0.005)
+
+        assert window._grid.is_renaming() is True, "Esc 之后左键点那一格就该再进重命名"
     finally:
         window.close()
 

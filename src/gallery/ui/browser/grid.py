@@ -319,6 +319,15 @@ class PhotoGrid(QListView):
         self._laid_out_width = 0
         self._laid_out_columns = 0
         self._layout_fix: dict[int, tuple[int, int]] = {}
+        #: 「这一格已经处在『再点一下就是改名』的状态」——**不等于「它被选中了」**。
+        #:
+        #: 「选中」是界面状态，「arm」是**交互状态**：得是用户自己指过的那一格，
+        #: 否则刚打开应用时随手点一下高亮着的照片就会直接弹输入框。所以它不能由
+        #: 「当前项是不是这一格」推出来，得有人明确记下：普通左键点选的抬起
+        #: （:meth:`mouseReleaseEvent`）与开始改名（:meth:`begin_rename`）。
+        #:
+        #: 两条路径缺一不可 —— 只认左键，⌘R 进来又 Esc 出去的那一格就永远没 arm 过，
+        #: 用户再点它会毫无反应（它看上去明明一直选着）。
         self._armed_row = -1
         self._double_click = False
         self._pending_rename_row = -1
@@ -700,6 +709,11 @@ class PhotoGrid(QListView):
         """在 ``index`` 的文件名位置开始行内重命名。返回是否真的开始了。
 
         照片只选中主干、不选扩展名：直接打字就是在改名字，而 ``.jpg`` 不会被手滑敲掉。
+
+        **顺带把这一格 arm 上**，这样「⌘R 进去 → Esc / 回车出来 → 再点它一下」与
+        「连点两下」是同一件事。理由见 :attr:`_armed_row` 那一行：用户此刻正在处置的
+        就是这一格，它也正是当前项；不 arm 的话，这次点击会被当成「第一次：只选中」，
+        用户就得点第二下 —— 可屏幕上明明一直高亮着那一格。
         """
         self._rename_timer.stop()
         self._pending_rename_row = -1
@@ -716,6 +730,7 @@ class PhotoGrid(QListView):
         rect.setHeight(rect.height() + 6)
         self._rename_edit.start(rect, text, keep_suffix=not index.data(ALBUM_ROLE))
         self._rename_active = True
+        self._armed_row = index.row()
         self.rename_active_changed.emit(True)
         return True
 
