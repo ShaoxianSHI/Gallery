@@ -158,11 +158,136 @@ def test_context_menu_has_hover_highlight(qt_app: QApplication, window: MainWind
     # 写在 :selected 里等于每悬停一次就换一次盒子，文字会跟着挪位置（用户实测）。内缩
     # 由菜单自身的内边距决定，与状态无关。
     assert f"border-radius: {menu_style.MENU_HIGHLIGHT_RADIUS}px" in sheet
+    # 两条带状态的规则都**要换上高亮那一档字色**：只给底色的话，浅色下是黑字压蓝底
+    # （下面 :func:`test_the_selected_row_wears_the_highlighted_text` 量的是画出来的那一档）。
+    highlighted_text = rgba(menu.palette().color(QPalette.ColorRole.HighlightedText))
+    assert _state_rules(sheet).count(highlighted_text) >= 2, "悬停与当前项都要给字色"
     # 只查那两条带状态的规则，不查整份：分隔线那条带 margin 是故意要的（那里没有
     # 状态，见 ``ui.menus`` 里 MENU_SEPARATOR_HEIGHT 那段）。
     assert "margin" not in _state_rules(sheet)
     # 内缩的那一处在菜单上，**四边同值**：只留左右的话，高亮带会顶着面板上下两条边
     assert f"padding: {menu_style.MENU_INSET}px" in sheet
+
+
+def test_the_selected_row_wears_the_highlighted_text(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """浅色下选中那一行的**条目文字**得跟着高亮一起变浅（用户报的就是它）。
+
+    坑在 Qt 上：样式表一挂上去，``QMenu::item`` 就归 ``QStyleSheetStyle`` 画，而它**不再按
+    ``State_Selected`` 去挑 ``HighlightedText``** —— 选中行与未选中行一律是正文色。深色下
+    两者本来就都是浅字，看不出来；浅色下就成了黑字压蓝底，而我们自己画的快捷键列早就按
+    ``_text_role`` 换成了 ``HighlightedText``，于是那一行左半边白、右半边黑。
+
+    **真的抓一张图去量**：只查样式表里有没有 ``color``，将来谁把它删掉、或写成一个 Qt 根本
+    不认的值，测试都还是绿的 —— 而坏法恰好是「看着没变、画出来是黑的」。
+    """
+    original = QPalette(qt_app.palette())
+    try:
+        flipped = _light_palette(original)
+        qt_app.setPalette(flipped)
+        theme.apply_theme(qt_app)
+
+        window._stack.setCurrentWidget(window._grid_page)
+        row = window._model.row_of_path(window._library.root / "一张.jpg")
+        assert row >= 0
+        # 右键之前网格会先把那一格选中（``_show_context_menu`` 走的正是这条），
+        # 「拷贝路径」这一类命令才可用 —— 前置条件摆出来，不拿默认值去赌。
+        assert window._grid.select_for_context(row) == row
+        assert window._grid.selected_rows() == [row]
+        menu = window.context_menu_for(row)
+        assert menu is not None
+        menu.popup(QPoint(60, 60))
+        try:
+            selected = _enabled_action(menu, "拷贝路径")
+            menu.setActiveAction(selected)
+            qt_app.processEvents()
+            assert menu.activeAction() is selected, "前提：那一行真的被点亮了"
+            selected_background, selected_ink = _label_ink(menu, selected)
+            plain_background, plain_ink = _label_ink(menu, _enabled_action(menu, "重命名…"))
+        finally:
+            menu.close()
+    finally:
+        qt_app.setPalette(original)
+        theme.apply_theme(qt_app)
+
+    palette = flipped
+    highlight = palette.color(QPalette.ColorRole.Highlight)
+    highlighted_text = palette.color(QPalette.ColorRole.HighlightedText)
+    text = palette.color(QPalette.ColorRole.WindowText)
+    assert selected_background.rgb() == highlight.rgb(), (
+        f"前提：那一行铺的是高亮色，实测 {selected_background.name()}"
+    )
+    assert plain_background != selected_background, "参照行没有被点亮，这一对就没得比"
+    # 字色离哪一档更近，就说明这一行实际用的是哪一档 —— 不用写死阈值。
+    assert _closer(selected_ink, highlighted_text, text), (
+        f"选中行的字还是 {selected_ink.name()}（压在高亮底上），该是 "
+        f"{highlighted_text.name()} —— 用户报的就是黑字压蓝底"
+    )
+    assert _closer(plain_ink, text, highlighted_text), (
+        f"没被点中的那一行也变成了 {plain_ink.name()}，那是反过来的毛病"
+    )
+
+
+def _light_palette(original: QPalette) -> QPalette:
+    """一份**浅色**的调色板：白底、深字，配上系统那套高亮色。
+
+    存在的理由是这条测试要测的就是浅色下的坏法，而跑测试的机器此刻是深是浅不能假定。
+    """
+    flipped = QPalette(original)
+    for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive):
+        flipped.setColor(group, QPalette.ColorRole.Base, QColor("#ffffff"))
+        flipped.setColor(group, QPalette.ColorRole.Window, QColor("#ffffff"))
+        flipped.setColor(group, QPalette.ColorRole.Text, QColor("#000000"))
+        flipped.setColor(group, QPalette.ColorRole.WindowText, QColor("#000000"))
+        flipped.setColor(group, QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
+    return flipped
+
+
+def _closer(ink: QColor, one: QColor, other: QColor) -> bool:
+    """``ink`` 是更接近 ``one`` 那一档的颜色吗（抗锯齿的边缘像素不算）。"""
+    return abs(ink.lightness() - one.lightness()) < abs(ink.lightness() - other.lightness())
+
+
+def _enabled_action(menu: QMenu, text: str) -> QAction:
+    """那张菜单里文字为 ``text``、且此刻可点的那一行（置灰行测不到高亮）。"""
+    action = next((a for a in menu.actions() if a.text() == text and a.isEnabled()), None)
+    assert action is not None, f"菜单里没有可点的「{text}」这一行"
+    return action
+
+
+def _label_ink(menu: QMenu, action: QAction) -> tuple[QColor, QColor]:
+    """这一行**标签**上铺的底色与画出来的字色。
+
+    取样范围是标签本身（菜单内缩 + 那一列对勾宽，右边刚好到文字末尾），因此右沿那列
+    我们自己画的快捷键不掺进来 —— 这一条要盯的是 Qt 画的那一半。
+
+    底色取「这一块里最多的那个颜色」，字色取「离它最远的那一档」：抗锯齿的边缘像素于是
+    自动被排除，剩下的就是笔画真正的颜色。远近按 ``lightness()``（HSL 的明度）量，不用
+    ``value()`` —— 高亮那一档蓝的 ``value()`` 高达 198，白字与它只差 57，按那条线量就
+    白字也成不了「字」。
+    """
+    image = menu.grab().toImage()
+    scale = image.devicePixelRatio()
+    rect = menu.actionGeometry(action)
+    metrics = QFontMetrics(menu.font())
+    left = round((menu_style.MENU_INSET + menu_style.MENU_CHECK_GUTTER) * scale)
+    right = left + round(metrics.horizontalAdvance(action.text()) * scale)
+    top, bottom = round(rect.top() * scale), round(rect.bottom() * scale)
+    colors: dict[str, int] = {}
+    for y in range(top, bottom + 1):
+        for x in range(left, right + 1):
+            name = image.pixelColor(x, y).name()
+            colors[name] = colors.get(name, 0) + 1
+    assert colors, f"「{action.text()}」那一行一个像素都没抓到"
+    background = QColor(max(colors, key=lambda name: colors[name]))
+    marks = [
+        QColor(name)
+        for name in colors
+        if abs(QColor(name).lightness() - background.lightness()) > 60
+    ]
+    assert marks, f"「{action.text()}」那一行没画出字来（只有底色 {background.name()}）"
+    return background, max(marks, key=lambda color: abs(color.lightness() - background.lightness()))
 
 
 def _state_rules(sheet: str) -> str:

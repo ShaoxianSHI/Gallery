@@ -77,15 +77,17 @@ def style_sheet(
     background: QColor,
     highlight: QColor,
     text: QColor,
+    highlighted_text: QColor,
     *,
     check_gutter: int = 0,
     own_arrow: bool = False,
 ) -> str:
     """给弹出菜单的那份样式表。
 
-    三个颜色都必须由调用方给**调色板里的原值**：底色是「一整块底色」那块（``Window``
-    角色），高亮是系统强调色（``Highlight`` 角色），正文色是 ``WindowText`` 角色 ——
-    分隔线的颜色由它按透明度压出来（见 :func:`separator_color`）。理由见模块文档那一段 ——
+    四个颜色都必须由调用方给**调色板里的原值**：底色是「一整块底色」那块（``Window``
+    角色），高亮是系统强调色（``Highlight`` 角色），正文色是 ``WindowText`` 角色，
+    高亮之下那一档字色是 ``HighlightedText`` —— 分隔线的颜色由正文色按透明度压出来
+    （见 :func:`separator_color`）。理由见模块文档那一段 ——
     样式表里的 ``palette(...)`` 取的是**应用**调色板，不是逐控件下发的那份。
 
     ``check_gutter`` 是「这一列对勾原本会被预留的宽度」，只有**菜单里没有可勾选项**时才
@@ -105,10 +107,18 @@ def style_sheet(
         # 系统样式那份高亮就不再画了（实测原生菜单按方向键会点亮 #548fff，加了样式表
         # 之后按 ↓ 两次所有行仍是 #ffffff），用户就看不出鼠标在哪一行。
         #
-        # 只改底色、不改字色：那一行若是置灰的（比如分组卡片末尾的说明文字），
-        # 高亮之下仍要保持灰字，不能看着能点。
-        f"QMenu::item:hover {{ background: {rgba(highlight)}; }}\n"
+        # 字色**也要跟着换**，否则浅色下是黑字压蓝底：挂了样式表之后 Qt 不再按
+        # ``State_Selected`` 去挑 ``HighlightedText``（实测未选中行与选中行都是 #000000，
+        # 而调色板里的 ``HighlightedText`` 是 #ffffff）。我们自己画的快捷键列早就是按
+        # ``_text_role`` 跟着换的，于是那一行左半边白、右半边黑 —— 用户报的就是这个。
+        #
+        # 置灰的行不受影响：**Qt 压根不点亮它们**（实测 ``setActiveAction`` 直接把置灰行
+        # 拒掉，鼠标悬过去底色也仍是原来的白色），所以这里不必再补一条 ``:disabled``
+        # 把字色按回去 —— 那条规则永远不会被命中。
+        f"QMenu::item:hover {{ background: {rgba(highlight)}; "
+        f"color: {rgba(highlighted_text)}; }}\n"
         f"QMenu::item:selected {{ background: {rgba(highlight)}; "
+        f"color: {rgba(highlighted_text)}; "
         f"border-radius: {MENU_HIGHLIGHT_RADIUS}px; }}\n"
         # 分隔线。**这条是深色下唯一看得见的那条线**：不给它，颜色由系统样式从应用
         # 调色板里挑一档偏暗的（深色下 #0f0f0f，比底色还深），于是等于没画。
@@ -177,6 +187,10 @@ def _text_role(action: QAction, active: QAction | None) -> QPalette.ColorRole:
     """这一行的文字该用哪一档颜色 —— 悬停 / 正常 / 置灰。
 
     原本在 :meth:`ShortcutColumnMenu.paintEvent` 与 :meth:`_paint_arrow` 里各写一遍。
+
+    选中时那一档**必须与样式表里 ``:selected`` 的字色同源**（都是 ``HighlightedText``，
+    见 :func:`style_sheet`）：一行左半边是 Qt 画的条目文字、右半边是我们自己画的快捷键，
+    两边不同色就是「一半白一半黑」那一眼。
     """
     if action is active:
         return QPalette.ColorRole.HighlightedText
@@ -500,12 +514,12 @@ class ShortcutColumnMenu(QMenu):
 def apply_style(menu: QMenu) -> None:
     """给菜单与它的子菜单上同一份样式表。
 
-    两个颜色都**从菜单自己的调色板读**，不另外传进来：调用方刚把窗口那份统一调色板
+    四个颜色都**从菜单自己的调色板读**，不另外传进来：调用方刚把窗口那份统一调色板
     下发到菜单上（``MainWindow.context_menu_for``），于是这里读到的底色就是「一整块
     底色」那块，而高亮色是系统给的强调色 —— 也就是说这份样式表用的是系统自己那套配色，
     深浅色自动跟随（理由见模块文档那一段：样式表里的 ``palette(...)`` 取的是应用调色板，
     不是这份逐控件下发的）。分隔线的颜色由底色与正文色配出来（见 :func:`separator_color`），
-    因此深浅两套也跟着一起变。
+    高亮之下那一档字色则直接取配对的那个 ``HighlightedText``，因此深浅两套也跟着一起变。
 
     子菜单那份样式发不发得下去，理由见 :func:`_owned_menus`（不继承、也不是子控件）。
     """
@@ -513,6 +527,7 @@ def apply_style(menu: QMenu) -> None:
     background = palette.color(QPalette.ColorRole.Window)
     highlight = palette.color(QPalette.ColorRole.Highlight)
     text = palette.color(QPalette.ColorRole.WindowText)
+    highlighted_text = palette.color(QPalette.ColorRole.HighlightedText)
     # 没有可勾选项的菜单要自己补上那一列，样式表因此**逐个菜单**算 —— 子菜单里是
     # 「排序 / 分组 / 缩略图大小」那些单选项，它们有勾、就不补。
     for current in _owned_menus(menu):
@@ -523,6 +538,7 @@ def apply_style(menu: QMenu) -> None:
                 background,
                 highlight,
                 text,
+                highlighted_text,
                 check_gutter=0 if has_checkable else MENU_CHECK_GUTTER,
                 own_arrow=owns_arrows,
             )
