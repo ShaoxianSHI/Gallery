@@ -23,6 +23,7 @@ from gallery.core.library.index import FacetIndex
 from gallery.core.library.photos import PhotoRef
 from gallery.core.library.search import (
     DEFAULT_FIELD,
+    HALF_WIDTH_RANGE_SEPARATOR,
     SEARCH_FIELDS,
     SearchCondition,
     build_count_query,
@@ -191,9 +192,12 @@ def test_a_range_takes_both_ends_at_their_own_granularity() -> None:
     """
     years = _condition("#拍摄时间 2023～2024")
     months = _condition("#拍摄时间 2023-06 ～ 2023-08")
+    half_width = _condition("#拍摄时间 2023-06~2023-08")
 
     assert years is not None and _bounds(years) == (_epoch(2023, 1, 1), _epoch(2025, 1, 1))
     assert months is not None and _bounds(months) == (_epoch(2023, 6, 1), _epoch(2023, 9, 1))
+    # 半角与全角落在同一段上，不是两套各自为政的语义。
+    assert half_width is not None and _bounds(half_width) == _bounds(months)
 
 
 @pytest.mark.parametrize(
@@ -203,13 +207,21 @@ def test_a_range_takes_both_ends_at_their_own_granularity() -> None:
         "#拍摄时间 2023 ～ 2024",
         "#拍摄时间  2023～2024 ",
         "#拍摄时间 2023 ～2024",
+        # **半角也认**：英文键盘敲出来的就是它，而当初只认全角，于是这一条被判成
+        # 「不是个日期」，报错了还不说是哪一种写法不对 —— 判据反过来了：日期语法里
+        # 根本不会出现波浪号，多认一种不产生歧义，少认一种只是把用户挡在门外。
+        "#拍摄时间 2023~2024",
+        "#拍摄时间 2023 ~ 2024",
     ],
 )
-def test_spaces_around_the_separator_do_not_matter(typed: str) -> None:
-    """``～`` 前后有没有空格是用户手指的事，不是语义的事。"""
+def test_spaces_and_width_around_the_separator_do_not_matter(typed: str) -> None:
+    """分隔符两侧有没有空格、是全角还是半角，都是用户手指的事，不是语义的事。
+
+    两种写法必须落在**同一个区间**上：分开认就意味着有两套「什么算对」，迟早对不上。
+    """
     condition = _condition(typed)
 
-    assert condition is not None
+    assert condition is not None, typed
     assert _bounds(condition) == (_epoch(2023, 1, 1), _epoch(2025, 1, 1))
 
 
@@ -243,7 +255,8 @@ def test_a_range_can_be_put_back_into_the_box() -> None:
         "#拍摄时间 ～2023",
         "#拍摄时间 >2023～2024",  # 区间里不认比较符
         "#拍摄时间 2023～2024～2025",  # 三个分隔符
-        "#拍摄时间 2023~2024",  # 半角波浪线不是那个波浪线
+        "#拍摄时间 2023~2024~2025",  # 半角也一样数
+        "#拍摄时间 2023~",  # 缺一端（半角）
     ],
 )
 def test_a_range_is_refused_rather_than_half_honoured(typed: str) -> None:
@@ -276,7 +289,20 @@ def test_a_reversed_range_says_which_end_is_wrong() -> None:
     assert field is not None
 
     assert "起始要写在前面" in unusable_reason(field, "2024～2023")
+    # 半角写法走的是同一条路 —— 横幅那句话也得是同一句，不能一半认一半不认。
+    assert "起始要写在前面" in unusable_reason(field, "2024~2023")
     assert "起始要写在前面" not in unusable_reason(field, "2024-13")
+
+
+def test_the_date_hint_says_that_the_half_width_separator_works_too() -> None:
+    """当初挡住人的正是这件事：报错只说「要一个日期」，半个字没提是哪一种写法不对。
+
+    于是横幅里明说两种分隔符都认 —— 这句话本身就是这次改动的全部意义。
+    """
+    field = match_field("拍摄时间")
+    assert field is not None
+
+    assert HALF_WIDTH_RANGE_SEPARATOR in unusable_reason(field, "瞎写")
 
 
 def test_the_date_hint_names_the_range_syntax() -> None:
@@ -516,6 +542,11 @@ def test_a_capture_range_spans_both_ends_of_the_years_it_names(tmp_path: Path, m
 
     # 头一年元旦与末一年年底都**在**区间里，紧挨着的那两天不在。
     assert _names(library.search_photos([_condition("#拍摄时间 2023～2024")]).refs) == [  # type: ignore[list-item]
+        "海边-02.jpg",
+        "海边-03.jpg",
+    ]
+    # 半角写法在真库上要查到**同一批**照片 —— 两种写法不是两套语义。
+    assert _names(library.search_photos([_condition("#拍摄时间 2023~2024")]).refs) == [  # type: ignore[list-item]
         "海边-02.jpg",
         "海边-03.jpg",
     ]

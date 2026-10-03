@@ -59,12 +59,19 @@ type SearchKind = Literal["name", "album", "format", "text", "size", "number", "
 #: 条件的比较方式。空串是「等于」，于是相等那一档不必另写一份 SQL。
 COMPARATORS: Final = ("", "=", ">", ">=", "<", "<=")
 
-#: 一段区间两端之间的分隔符：``2023～2024``。
+#: 一段区间两端之间的分隔符：**认全角与半角两种**，文档与提示里一律摆全角那一个。
 #:
-#: **全角，而且只认这一个**。日期本身就带半角连字符（``2023-05``），多认几种分隔符只会
-#: 让「为什么这条没生效」更难猜 —— 用户敲了半角 ``~`` 却没生效时，没人会去猜是全角的问题。
-#: 两侧的空格由 :func:`_period` 各自 ``strip`` 掉，于是 ``2023 ～ 2024`` 一样认。
+#: 当初只认全角，理由是「日期本身就带半角连字符，多认几种只会让『为什么这条没生效』更难猜，
+#: 而没人会去猜是自己敲错了全角还是半角」。这条规则当场就撞了 —— 英文键盘敲出来的正是半角
+#: ``~``，而报错里没有半个字提到是哪一种，于是那句话等于没写。**判据反过来了**：
+#: 日期语法里根本不会出现波浪号，多认一种写法不产生歧义，少认一种却只是把用户挡在门外。
+#:
+#: 两侧的空格由 :func:`_period` 各自 ``strip`` 掉，于是 ``2023 ～ 2024`` 与 ``2023 ~ 2024``
+#: 一样认。
 RANGE_SEPARATOR: Final = "～"
+
+#: 半角那一个。**不是另一种语义，是同一种语义的另一种键盘**（见 :data:`RANGE_SEPARATOR`）。
+HALF_WIDTH_RANGE_SEPARATOR: Final = "~"
 
 
 @dataclass(frozen=True, slots=True)
@@ -312,13 +319,14 @@ def unusable_reason(field: SearchField, value: str) -> str:
     **判据与 :func:`_is_reversed` 共用同一处**（「什么算写反了」不该有两份定义）。
     """
     if field.kind == "datetime":
-        pieces = value.split(RANGE_SEPARATOR)
+        pieces = _split_range(value)
         if len(pieces) == 2 and _is_reversed(*pieces):
             left, right = (piece.strip() for piece in pieces)
             return f"的区间写反了：「{left}」在「{right}」后面，起始要写在前面。"
         return (
             "要一个日期：2024、2024-05、2024-05-16；"
-            f"要一段区间就写成 2023{RANGE_SEPARATOR}2024（{RANGE_SEPARATOR} 前后可以有空格）。"
+            f"要一段区间就写成 2023{RANGE_SEPARATOR}2024"
+            f"（{RANGE_SEPARATOR} 前后可以有空格，{HALF_WIDTH_RANGE_SEPARATOR} 也认）。"
         )
     return f"这一栏要一个值，例如 {field.hint or '关键词'}。"
 
@@ -411,12 +419,13 @@ def _parse_datetime(text: str) -> tuple[str, str] | None:
 
     ``2023～2024`` 是**两端各含自己那一整段**：左边从 2023 年元旦起，右边到 2024 年
     12 月 31 日为止 —— 与裸值是同一套语义，于是 ``2023～2024`` 就是「2023 与 2024 两年」，
-    而 ``2023-05 ～ 2023-08`` 是那三个月。``～`` 前后的空格无所谓。
+    而 ``2023-05 ～ 2023-08`` 是那三个月。分隔符两侧的空格与全角半角都无所谓
+    （见 :data:`RANGE_SEPARATOR`）。
 
     **区间里不认比较符**（``>2023～2024`` 提交不了）：要单边就用 ``>`` / ``<``，
     一句话里塞两个比较符说的是两件不同的事。
     """
-    pieces = text.split(RANGE_SEPARATOR)
+    pieces = _split_range(text)
     if len(pieces) > 2:
         return None
     if len(pieces) == 2:
@@ -442,6 +451,15 @@ def _parse_datetime(text: str) -> tuple[str, str] | None:
     if comparator == "<":
         return "<", _number_text(start.timestamp())
     return "<=", _number_text(stop.timestamp())
+
+
+def _split_range(text: str) -> list[str]:
+    """按区间分隔符切成两端；没有分隔符就是一个元素（那就是「裸值」那一条路）。
+
+    **全角与半角先归一**：``2023~2024`` 与 ``2023～2024`` 是同一个意思，而切分这件事
+    有两个调用方（解析条件、给横幅找理由）—— 各切各的，迟早一边认一种写法。
+    """
+    return text.replace(HALF_WIDTH_RANGE_SEPARATOR, RANGE_SEPARATOR).split(RANGE_SEPARATOR)
 
 
 def _period(text: str) -> tuple[datetime.datetime, datetime.datetime] | None:
@@ -633,6 +651,7 @@ def relative_folder_path(root: Path, path: Path) -> str:
 __all__ = [
     "COMPARATORS",
     "DEFAULT_FIELD",
+    "HALF_WIDTH_RANGE_SEPARATOR",
     "RANGE_SEPARATOR",
     "RESULT_LIMIT",
     "SEARCH_FIELDS",
