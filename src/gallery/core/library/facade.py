@@ -30,11 +30,9 @@ from gallery.core.library.scanner import (
 from gallery.core.library.search import RESULT_LIMIT, SearchCondition, SearchOutcome
 from gallery.core.library.watcher import LibraryChange, LibraryWatcher
 from gallery.core.media.decode import RasterImage, decode_rgba
-from gallery.core.media.edit import EditStep
 from gallery.core.media.thumbs import ThumbnailCache
 from gallery.core.metadata.album import DEFAULT_ALBUM_NAME, CreatedAlbum, create_album
 from gallery.core.metadata.batch import BatchMetadataSource, read_facets
-from gallery.core.metadata.export import ExportResult, export_edited_copy
 from gallery.core.metadata.facets import (
     PhotoFacets,
     mark_place_resolved,
@@ -239,24 +237,19 @@ class Library:
         """取缩略图（走缓存）。"""
         return self._thumbnails.get(ref)
 
-    def preview(
-        self, ref: PhotoRef, *, max_edge: int, steps: tuple[EditStep, ...] = ()
-    ) -> RasterImage:
+    def preview(self, ref: PhotoRef, *, max_edge: int) -> RasterImage:
         """取用于「适配窗口」的预览图，不落盘。
 
         与缩略图不同，预览的尺寸随窗口变化，缓存它只会把缓存撑爆。
-
-        ``steps`` 是编辑草稿（ADR 0027）：**缩略图缓存不带它** —— 网格里那一格画的
-        始终是原图，未保存的编辑只在大图页叠加（ADR 0027 决策 5）。
         """
-        return decode_rgba(ref.path, max_edge=max_edge, use_draft=True, steps=steps)
+        return decode_rgba(ref.path, max_edge=max_edge, use_draft=True)
 
-    def full(self, ref: PhotoRef, *, steps: tuple[EditStep, ...] = ()) -> RasterImage:
+    def full(self, ref: PhotoRef) -> RasterImage:
         """取全分辨率像素，用于 100% 查看。
 
         调用方必须自己控制内存：12MP 照片的 RGBA 约 48 MB。
         """
-        return decode_rgba(ref.path, steps=steps)
+        return decode_rgba(ref.path)
 
     def clear_cache(self) -> int:
         """清空本库的缩略图缓存，返回删除的条目数。"""
@@ -588,14 +581,6 @@ class Library:
         if result.renamed:
             self._relocate_thumbnail(result.previous, result.entry)
         return result
-
-    def save_edited_copy(self, ref: PhotoRef, steps: tuple[EditStep, ...]) -> ExportResult:
-        """把 ``ref`` 按 ``steps`` 另存成一份新文件（界面上是 ⌘S，ADR 0027）。
-
-        与其它写操作一样**只增不改**：源文件一个字节都不动，产物落在同一目录里。
-        因此它不在撤销栈里 —— 撤销一次另存就是删文件，而删除只允许用户亲手触发（红线 1）。
-        """
-        return export_edited_copy(self._root, ref.path, steps)
 
     def move_to_trash(self, entries: Sequence[GridEntry]) -> TrashResult:
         """把照片或相册移进系统废纸篓（界面上就是「删除」）。

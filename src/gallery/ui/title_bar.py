@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QRect, Qt, Signal
 from PySide6.QtGui import QFontMetrics, QResizeEvent
-from PySide6.QtWidgets import QLabel, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
 from gallery.ui import theme
 from gallery.ui.rename_edit import RenameEdit
@@ -55,26 +55,6 @@ EDITOR_MARGIN_V = 3
 #: 左上角那三个按钮（红黄绿）占着的一段。它们画在最上层，标题与输入框都不该压上去。
 TRAFFIC_LIGHTS_WIDTH = 78
 
-#: 红绿灯那一段与标题文字之间的距离（点）。
-#:
-#: **那一行的排版只有一份，全在这一节里**：红绿灯 → 标题 → 图标 → 搜索胶囊。
-#: 逐处写死数字的话，改一次视觉就要翻三个文件，而其中一处忘了改没人看得出来。
-TRAFFIC_LIGHTS_GAP = 6
-
-#: 标题文字与右边的图标组之间留多远（点）。图标组是**跟着文件名走的**（ADR 0027 决策 7），
-#: 于是这一段才是真的「缝」，而不是一个固定的位置。
-TEXT_TO_ICONS_GAP = 12
-
-#: 图标组与搜索胶囊之间留多远（点）。两个独立控件的分界，看不出是一组就该分开。
-ICONS_TO_SEARCH_GAP = 14
-
-#: 文件名右边那个「有未保存的编辑」的标记。**一个字，不是图形** —— 它紧贴着名字，
-#: 一个实心小点在那里读起来像噪点，而字读起来就是「这里有变化」。
-UNSAVED_MARK = " 未保存"
-
-#: 标记与文件名之间留多远（点）。名字与标记是一件事，要贴；与图标组不是。
-UNSAVED_MARK_GAP = 4
-
 #: 再窄也留这么宽 —— 窄到这一步的窗口本来就没法看，输入框挤一点也比看不见强。
 FALLBACK_WIDTH = 120
 
@@ -86,26 +66,20 @@ def editor_rect(
     *,
     left: int = TRAFFIC_LIGHTS_WIDTH,
     right: int = 0,
-    aligned_left: bool = False,
 ) -> QRect:
     """输入框摆在 ``area``（标题栏那一条）的哪儿。
 
-    **跟显示用的那行字走同一个 ``aligned_left``**（ADR 0027 决策 7）：显示时靠左而输入框
-    居中的话，``⌘R`` 按下去会看见输入框「跳」到中间 —— 那一下比居中本身更难看。
-
-    居中时以文字为中心（系统标题本来就是居中的）；靠左时从 ``left`` 起摆。
+    **以文字为中心**：系统标题本来就是居中的，输入框若不居中，``⌘R`` 之后那一下「跳」看得见。
     宽度跟着文字走但有上下限；标题栏窄到摆不下时先让开左边那一份（macOS 上是左上角
     那三个按钮），再让开右边那一份（右上角的搜索胶囊，ADR 0026 决策 8）。
 
     纯函数：它只管算术，因此能被单独测（``tests/ui/test_title_bar.py``），不必造一个真窗口。
     """
     wanted = metrics.horizontalAdvance(text) + 2 * EDITOR_PADDING
-    # 先让开那三个按钮：宽度不超过「标题栏减去左右两段」时，怎么摆都压不到它们。
+    # 先让开那三个按钮：宽度不超过「标题栏减去左右两段」时，居中摆放自然就压不到它们。
     room = max(area.width() - left - right, FALLBACK_WIDTH)
     width = min(max(wanted, MIN_EDITOR_WIDTH), MAX_EDITOR_WIDTH, room)
     height = max(area.height() - 2 * EDITOR_MARGIN_V, 1)
-    if aligned_left:
-        return QRect(area.x() + left, area.y() + (area.height() - height) // 2, width, height)
     x = max(area.x() + (area.width() - width) // 2, area.x() + left)
     if x + width > area.right() + 1 - right:  # 窄窗口下别把右边顶出去
         x = max(area.right() + 1 - right - width, area.x())
@@ -135,33 +109,20 @@ class TitleBar(QWidget):
         #: 右边那一段被别的东西占着多宽（右上角的搜索胶囊，ADR 0026 决策 8）。
         #: 标题文字与 ``⌘R`` 的输入框都要给它让出来 —— 否则一个长名字会从胶囊底下穿过去。
         self._right_reserved = 0
-        #: 标题是靠左还是居中。**大图页靠左、网格页居中**（ADR 0027 决策 7）：大图页
-        #: 左边空着、右边挤着搜索胶囊与图标，居中的名字看着像被两边夹在中间。
-        self._aligned_left = False
-        #: 那行字摆好之后占着的一段（图标组据此接在文件名右边，见 :meth:`text_right`）。
-        self._text_rect = QRect()
         self._label = QLabel(self)
-        # 标签**不进任何布局**，位置由 :meth:`_update_label` 自己摆。
-        #
-        # 原来靠 ``QHBoxLayout`` 两侧各加一个 stretch 来居中，而左对齐那一档根本不是
-        # 「换个对齐」那么简单：图标组要贴在**省略之后**的文件名右边，那得先知道文字
-        # 实际占了多宽。手摆的算术两种对齐共用一份，而 ``editor_rect`` 早就是纯算术了
-        # —— 输入框那一半一直走的就是这条路。
         self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # 「这一张有未保存的编辑」那个点：**单独的控件，不拼进那行字**。拼进去的话
-        # ``⌘R`` 的输入框会以「DSC_0123.jpg ●」起手，用户会以为文件名里真有个点。
-        self._marker = QLabel(self)
-        self._marker.setText(UNSAVED_MARK)
-        self._marker.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._marker.hide()
-        #: 这一张有没有未保存的编辑（编辑期间标记临时藏起来，靠它恢复）。
-        self._unsaved = False
         # 与网格那一个**同一个类**（ADR 0025 决策 5）：语义只有一份，
         # 显示与编辑之间的切换因此看不出换了控件。
         self._editor = RenameEdit(self)
         self._editor.committed.connect(self._on_committed)
         self._editor.cancelled.connect(self._on_cancelled)
         self._editor.hide()
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addStretch(1)
+        layout.addWidget(self._label)
+        layout.addStretch(1)
 
         # 不画底色：整块窗口是一整块底色（ADR 0005），这一条露出的就是窗口自己的底。
         self._set_mouse_transparent(True)
@@ -180,10 +141,6 @@ class TitleBar(QWidget):
         app_theme = theme.current_theme()
         self._label.setStyleSheet(
             f"color: {rgba(app_theme.text)}; font-size: 13px; background: transparent;"
-        )
-        # 标记比正文淡一档：它是提醒，不是标题的一部分。
-        self._marker.setStyleSheet(
-            f"color: {rgba(app_theme.text_at(0.55))}; font-size: 13px; background: transparent;"
         )
 
     def _set_mouse_transparent(self, transparent: bool) -> None:
@@ -215,8 +172,6 @@ class TitleBar(QWidget):
         if not self._text:
             return
         self._label.hide()
-        # 编辑时收起那一串提醒，别让它留在输入框旁边 —— 收起时按 :attr:`_unsaved` 恢复。
-        self._marker.hide()
         self._set_mouse_transparent(False)
         self._editor.start(self._place_editor(), self._text, keep_suffix=True)
         self._editor.raise_()
@@ -229,7 +184,6 @@ class TitleBar(QWidget):
         if was_editing:
             self._set_mouse_transparent(True)
             self._label.show()
-            self._marker.setVisible(self._unsaved)
             self._update_label()  # 收起之后回到「正在显示的名字」，不保留敲了一半的字
             self.edit_active_changed.emit(False)
 
@@ -250,56 +204,6 @@ class TitleBar(QWidget):
         if self._editor.is_editing():
             self._editor.setGeometry(self._place_editor())
 
-    def set_unsaved(self, unsaved: bool) -> None:
-        """这一张有没有未保存的编辑（文件名的右边挂一个「未保存」）。
-
-        **它是提醒，不是状态本身**：草稿在 :mod:`gallery.ui.edit_drafts` 里，
-        这一层只负责把「有」这个事实显示出来。状态存成字段而不是每次去问
-        ``isVisible``，是为了 ``⌘R`` 期间标记被藏起来之后还能原样恢复。
-        """
-        if unsaved == self._unsaved:
-            return
-        self._unsaved = unsaved
-        self._marker.setVisible(unsaved and not self.is_editing())
-        self._update_label()
-
-    def reserve_right_hint(self) -> int:
-        """右边那一段被占着多宽 —— 只给**别的控件**摆位时算边界用。
-
-        与 :meth:`reserve_right` 分开：那一处是「告诉标题你占多宽」，这一处是「我要摆
-        在你右边，别压过来」。同一份宽度换个方向问，免得两边各记一个数。
-        """
-        return self._right_reserved
-
-    def set_aligned_left(self, aligned: bool) -> None:
-        """这一行靠左摆还是居中摆。**大图页靠左，其余居中**（ADR 0027 决策 7）。"""
-        if aligned == self._aligned_left:
-            return
-        self._aligned_left = aligned
-        self._update_label()
-        if self._editor.is_editing():
-            self._editor.setGeometry(self._place_editor())
-
-    @property
-    def aligned_left(self) -> bool:
-        return self._aligned_left
-
-    def _marker_width(self) -> int:
-        """那个标记占多宽（不显示时是 0）。"""
-        if not self._marker.isVisible():
-            return 0
-        self._marker.adjustSize()
-        return self._marker.width() + UNSAVED_MARK_GAP
-
-    def text_right(self) -> int:
-        """那行字的右沿（窗口坐标）—— 图标组就接在它右边 :data:`TEXT_TO_ICONS_GAP` 处。
-
-        **它在窗口坐标里**：图标组是 ``MainWindow`` 的子控件而不是本控件的子控件
-        （``WA_TransparentForMouseEvents`` 会连子控件一起罩住，见 ``viewer.toolbar``），
-        两边不在同一个坐标系里。
-        """
-        return self._text_rect.right() + 1
-
     # ---- 内部 --------------------------------------------------------------
 
     def _place_editor(self) -> QRect:
@@ -308,35 +212,19 @@ class TitleBar(QWidget):
             self.rect(),
             self._text,
             QFontMetrics(self._editor.font()),
-            left=TRAFFIC_LIGHTS_WIDTH + TRAFFIC_LIGHTS_GAP,
+            left=TRAFFIC_LIGHTS_WIDTH,
             right=self._right_reserved,
-            aligned_left=self._aligned_left,
         )
 
     def _update_label(self) -> None:
-        """刷新那行字，并把它**摆好**。
+        """刷新那行字：太长时中间省略，全文挂在提示气泡上。
 
-        太长时中间省略，全文挂在提示气泡上（省略与系统标题一个做法 ``ElideMiddle`` ——
-        文件名里最有信息量的是后半段）。摆完之后 :meth:`text_right` 才答得出问题，
-        图标组才知道该接在哪儿。
+        省略与系统标题一个做法（``ElideMiddle``）—— 文件名里最有信息量的是后半段。
         """
-        left = TRAFFIC_LIGHTS_WIDTH + TRAFFIC_LIGHTS_GAP
-        available = max(self.width() - left - self._right_reserved, FALLBACK_WIDTH)
+        available = max(self.width() - TRAFFIC_LIGHTS_WIDTH - self._right_reserved, FALLBACK_WIDTH)
         metrics = QFontMetrics(self._label.font())
         self._label.setText(metrics.elidedText(self._text, Qt.TextElideMode.ElideMiddle, available))
         self.setToolTip(self._text)
-        self._label.adjustSize()
-        width = self._label.width() + self._marker_width()
-        if self._aligned_left:
-            x = self.x() + left
-        else:
-            x = max(self.x() + (self.width() - width) // 2, self.x() + left)
-        self._label.move(x, self.y() + (self.height() - self._label.height()) // 2)
-        self._marker.move(
-            x + self._label.width() + UNSAVED_MARK_GAP,
-            self.y() + (self.height() - self._marker.height()) // 2,
-        )
-        self._text_rect = QRect(x, self.y(), width, self.height())
 
     def _on_committed(self, text: str) -> None:
         """输入框提交：交出去的是名字本身，改不改由外面说了算（红线 1）。"""
@@ -365,13 +253,9 @@ __all__ = [
     "EDITOR_PADDING",
     "EXTRA_PADDING",
     "HEIGHT",
-    "ICONS_TO_SEARCH_GAP",
     "MAX_EDITOR_WIDTH",
     "MIN_EDITOR_WIDTH",
-    "TEXT_TO_ICONS_GAP",
-    "TRAFFIC_LIGHTS_GAP",
     "TRAFFIC_LIGHTS_WIDTH",
-    "UNSAVED_MARK",
     "TitleBar",
     "editor_rect",
 ]

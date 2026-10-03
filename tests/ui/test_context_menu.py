@@ -296,10 +296,6 @@ def test_every_menu_is_split_into_the_same_four_groups(
 ) -> None:
     """五张菜单共用同四个组（ADR 0023）：看一眼 · 拿进拿出 · 会动文件 · 它是什么。
 
-    **大图那张多一整组「改一改」**（ADR 0027 决策增补）—— 旋转、镜像、裁剪改的是照片
-    本身，与那四组都不是一族。它也**只在那一页出现**：网格页是多选，而编辑还没有批量
-    那一套预览与逐张撤销（ADR 0027 决策 3）。
-
     分组按「这道命令到底动什么」，**不按落点**：用户在照片上、在分组卡片上、在大图上
     看到的是同一组块，缺哪几条一眼就知道那张菜单少了什么。
 
@@ -351,7 +347,6 @@ def test_every_menu_is_split_into_the_same_four_groups(
         "大图": [
             ["退出", "在默认应用中打开", *look],
             copy,
-            ["向左转 90°", "向右转 90°", "左右镜像", "裁剪…", "保存编辑后的副本"],
             ["重命名…", *write],
             ["显示元数据信息", "复制元数据"],
         ],
@@ -1119,12 +1114,6 @@ def test_detail_menu_is_the_photo_menu_with_close_on_top(
         "复制到相册",
         "移动到相册",
         "",
-        "向左转 90°",
-        "向右转 90°",
-        "左右镜像",
-        "裁剪…",
-        "保存编辑后的副本",
-        "",
         "重命名…",
         "移到废纸篓",
         "",
@@ -1136,16 +1125,13 @@ def test_detail_menu_is_the_photo_menu_with_close_on_top(
 def test_detail_menu_differs_from_the_photo_menu_only_on_the_first_row(
     qt_app: QApplication, window: MainWindow
 ) -> None:
-    """与网格那张**逐行对照**：网格有的每一行，大图那张都有、一字不差。
+    """与网格那张**逐行对照**：只差第一行，其余一模一样。
 
     这条比「把行抄一遍」更能防退化：将来网格那张加了命令，这张忘了加，这里就红了。
 
     剪贴板先摆满，免得两张菜单的内容取决于执行顺序 —— 「粘贴」只出现在**相册**与
     **空白处**那两张里（ADR 0018 决策 7），照片与这一张都不摆，所以这里两边的行序
     本来就应当一字不差。
-
-    **大图那张多的那一整段是「改一改」**（ADR 0027 决策增补）：网格页不摆它，
-    因为那一页是多选而编辑还没有批量那一套。比对之前先把那段摘掉。
     """
     _enter_album(qt_app, window)
     desktop.copy_files_to_clipboard([window._library.root / "京都" / PHOTO_NAMES[1]])
@@ -1163,30 +1149,7 @@ def test_detail_menu_differs_from_the_photo_menu_only_on_the_first_row(
     detail_texts = _texts(menu)
 
     assert detail_texts[0] == "退出"
-    assert _without_edit_group(detail_texts) == ["退出", *photo_texts[1:]]
-    assert _edit_rows(detail_texts) == [
-        "",
-        "向左转 90°",
-        "向右转 90°",
-        "左右镜像",
-        "裁剪…",
-        "保存编辑后的副本",
-    ]
-
-
-def _edit_rows(texts: list[str]) -> list[str]:
-    """把「改一改」那一段（连同它前面那道分隔线）摘出来。"""
-    marker = "向左转 90°"
-    start = texts.index(marker) - 1
-    end = texts.index("保存编辑后的副本") + 1
-    return texts[start:end]
-
-
-def _without_edit_group(texts: list[str]) -> list[str]:
-    """去掉「改一改」那一段之后剩下的行。"""
-    start = texts.index("向左转 90°") - 1  # 连同它前面那道分隔线
-    end = texts.index("保存编辑后的副本") + 1
-    return [*texts[:start], *texts[end:]]
+    assert detail_texts == ["退出", *photo_texts[1:]]
 
 
 def test_detail_menu_says_escape_on_the_close_row(qt_app: QApplication, window: MainWindow) -> None:

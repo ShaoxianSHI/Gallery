@@ -27,7 +27,7 @@ from collections.abc import Callable, Iterable, Sequence
 from functools import partial
 from pathlib import Path
 
-from PySide6.QtCore import QModelIndex, QPoint, QPointF, QRectF, Qt, QTimer
+from PySide6.QtCore import QModelIndex, QPoint, QPointF, Qt, QTimer
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
@@ -74,7 +74,6 @@ from gallery.core.library.session import (
     save_session,
 )
 from gallery.core.library.watcher import ChangeKind, LibraryChange, summarize
-from gallery.core.media.edit import Crop, EditStep, Mirror, Rotate, is_crop_big_enough
 from gallery.core.metadata.exif import ExifToolReader, MetadataReport, read_metadata
 from gallery.core.metadata.facets import (
     GROUP_FACETS,
@@ -98,9 +97,8 @@ from gallery.ui.browser.thumb_sizes import (
     nearest_index,
     shifted_index,
 )
-from gallery.ui.edit_drafts import EditDrafts
 from gallery.ui.imaging import to_qimage
-from gallery.ui.menus import EditActions, MenuActions, TargetKind, build_menu
+from gallery.ui.menus import MenuActions, TargetKind, build_menu
 from gallery.ui.navigation import (
     ENTRY_KIND_PATH,
     EntryKey,
@@ -124,29 +122,12 @@ from gallery.ui.tasks import TaskContext, TaskRunner
 from gallery.ui.thumbs.pipeline import ThumbnailPipeline
 from gallery.ui.title_bar import EXTRA_PADDING as TITLE_BAR_EXTRA
 from gallery.ui.title_bar import HEIGHT as TITLE_BAR_HEIGHT
-from gallery.ui.title_bar import ICONS_TO_SEARCH_GAP, TEXT_TO_ICONS_GAP, TitleBar
-from gallery.ui.viewer.crop import CropOverlay
+from gallery.ui.title_bar import TitleBar
 from gallery.ui.viewer.detail import DetailView
-from gallery.ui.viewer.toolbar import EditToolbar
 from gallery.ui.watch import WatchBridge, WatchStarter, start_watch
 from gallery.ui.write_ops import NOTHING_SELECTED, WriteOpsMixin, flattened_entries
 
 logger = logging.getLogger(__name__)
-
-
-#: 裁到太小时的解释。**说出是哪两条下限**，用户才知道往哪个方向拖。
-CROP_TOO_SMALL = "裁得太小了，剩下的看不出是什么。"
-
-#: 关窗 / 换库时那句「有未保存的编辑」。
-UNSAVED_CONFIRM = "有 {count} 张照片有未保存的编辑（⌘S 存成新文件）。要放弃吗？"
-
-
-def _ratio(value: float, extent: float) -> float:
-    """像素 → 归一化比例，夹在 0–1 里（框的边界可能正好压在照片边上）。"""
-    if extent <= 0:
-        return 0.0
-    return max(0.0, min(value / extent, 1.0))
-
 
 #: 扫描时每积累多少张就送回主线程一次（流式出图，不等整库扫完）。
 SCAN_BATCH_SIZE = 64
@@ -345,9 +326,6 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._owns_title_bar = False
         #: 不在大图页时窗口顶边那一行显示的名字（ADR 0025 决策 4）。
         self._library_title = "Gallery"
-        #: 会话内的编辑草稿（ADR 0027）。**只在内存里**：原文件一个字节都没动，
-        #: ⌘S 才把它变成一份新文件。关窗时会问一句。
-        self._drafts = EditDrafts()
         self._model = PhotoListModel(self, icon_edge=edge_for_index(self._size_index))
         #: 「等上一段切档动画跑完再执行」的档数，见 :meth:`step_thumbnail_size`。
         #: 0 = 没有排着的。方向相反的连按会互相抵掉（连按 ⇧⌘↑ 再 ⇧⌘↓ 等于没按）。
@@ -394,12 +372,6 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         # 位置与「现在在哪一页」都还没定下来（``_layout_title_bar`` / ``showEvent``），
         # 这里只是别让它在窗口还没建好时就抢着显示：``_refresh_title`` 问的是页面栈。
         self._title_bar.hide()
-
-        # 图标组**是窗口的子控件，不是 TitleBar 的** —— 后者整块对鼠标透明
-        # （不然标题栏拖不动窗口），而那个标志会连子控件一起罩住（见 ``viewer.toolbar``）。
-        # 建在 TitleBar 之后，因此叠在它上面。
-        self._edit_toolbar = EditToolbar(self)
-        self._edit_toolbar.action_requested.connect(self._on_edit_action)
 
         self._welcome = WelcomeView()
         self._welcome.open_requested.connect(self.choose_folder)
@@ -456,9 +428,6 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         grid_layout.addWidget(self._grid, 1)
 
         self._detail = DetailView()
-        self._crop_overlay = CropOverlay(self._detail.viewport())
-        self._crop_overlay.committed.connect(self._on_crop_committed)
-        self._crop_overlay.cancelled.connect(self.cancel_crop)
         self._detail.request_close.connect(self.show_grid)
         self._detail.request_step.connect(self.step_detail)
         # 大图页上的右键：视图只报位置，菜单在这一侧拼（与网格同一个流程，见 ADR 0021）。
@@ -502,29 +471,6 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._open_action = QAction("打开文件夹…", self)
         self._open_action.setShortcut(QKeySequence.StandardKey.Open)
         self._open_action.triggered.connect(self.choose_folder)
-
-        # ---- 编辑（ADR 0027）------------------------------------------------
-        # 与标题栏上那四枚图标是**同一批** ``QAction``：菜单里写着「⌘⌥←」而图标旁边
-        # 不写，两处不可能对不上号（同 ``ui.menus`` 那条规矩）。
-        self._rotate_left_action = QAction("向左转 90°", self)
-        self._rotate_left_action.setShortcut(QKeySequence("Ctrl+Alt+Left"))
-        self._rotate_left_action.triggered.connect(lambda: self._apply_edit_step(Rotate(90)))
-
-        self._rotate_right_action = QAction("向右转 90°", self)
-        self._rotate_right_action.setShortcut(QKeySequence("Ctrl+Alt+Right"))
-        self._rotate_right_action.triggered.connect(lambda: self._apply_edit_step(Rotate(270)))
-
-        self._mirror_action = QAction("左右镜像", self)
-        self._mirror_action.setShortcut(QKeySequence("Ctrl+Alt+H"))
-        self._mirror_action.triggered.connect(lambda: self._apply_edit_step(Mirror()))
-
-        self._crop_action = QAction("裁剪…", self)
-        self._crop_action.setShortcut(QKeySequence("Ctrl+Alt+C"))
-        self._crop_action.triggered.connect(self.begin_crop)
-
-        self._save_edit_action = QAction("保存编辑后的副本", self)
-        self._save_edit_action.setShortcut(QKeySequence.StandardKey.Save)
-        self._save_edit_action.triggered.connect(self.save_edited_draft)
 
         self._back_action = QAction("返回网格", self)
         self._back_action.setShortcut(QKeySequence("Esc"))
@@ -745,14 +691,6 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         edit_menu.addAction(self._copy_action)
         edit_menu.addAction(self._copy_path_action)
         edit_menu.addAction(self._paste_action)
-        edit_menu.addSeparator()
-        # 编辑那几条单独一段：它们改的是**照片本身**（大图页里正在看的那一张），
-        # 与上面那些「把东西搬进搬出」的不是一个概念（ADR 0027 决策 8）。
-        edit_menu.addAction(self._rotate_left_action)
-        edit_menu.addAction(self._rotate_right_action)
-        edit_menu.addAction(self._mirror_action)
-        edit_menu.addAction(self._crop_action)
-        edit_menu.addAction(self._save_edit_action)
         edit_menu.addSeparator()
         edit_menu.addAction(self._undo_action)
 
@@ -1177,10 +1115,6 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             缓存一律放到系统目录，避免用户刚打开软件就被问问题。
         """
         root = Path(root)
-        # 换库之前先问一句草稿：它们只在内存里，而新库里再没有这些照片可以存了。
-        # ``silent`` 那条是启动时自动恢复上次的库，那时压根还没有草稿。
-        if not silent and not self._confirm_discard_drafts():
-            return False
         try:
             cache_in_library = self._resolve_cache_location(root, silent=silent)
         except GalleryError as exc:
@@ -1239,8 +1173,6 @@ class MainWindow(WriteOpsMixin, QMainWindow):
 
     def _activate_library(self, library: Library) -> None:
         self._teardown_library()
-        # 换库等于换一批照片，旧库那份草稿再也存不出去了（路径不在新库里）。
-        self._drafts.clear_all()
         self._library = library
         self._generation += 1
         self._thumbnail_failures = 0
@@ -2670,17 +2602,6 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             paste=paste,
             rename=self._rename_action,
             trash=self._trash_action,
-            # 「改一改」**只在大图页出现**（ADR 0027 决策 3）：网格页是多选，
-            # 而编辑还没有批量那一套预览与逐张撤销。
-            edit=EditActions(
-                rotate_left=self._rotate_left_action,
-                rotate_right=self._rotate_right_action,
-                mirror=self._mirror_action,
-                crop=self._crop_action,
-                save=self._save_edit_action,
-            )
-            if self._in_detail_page()
-            else None,
             metadata=self._metadata_action,
             copy_metadata=self._copy_metadata_action,
             copy_group=self._copy_group_action,
@@ -2821,136 +2742,6 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         desktop.copy_to_clipboard(f"按「{field}」分组：{group.label} · {group.count} 张")
         self._show_banner(f"已复制分组条件：按「{field}」分组。")
 
-    # ---- 编辑（见 ADR 0027）-------------------------------------------------
-
-    def _on_edit_action(self, action: str) -> None:
-        """图标组报来一枚。按名字分派到对应的那一步。
-
-        **图标与菜单共用同一批 ``QAction``**（见 ``_build_actions``），因此这里只接
-        图标那一路；菜单那一路走各自 ``QAction`` 的 ``triggered``，落到同样的方法上。
-        """
-        handlers = {
-            "rotate_left": lambda: self._apply_edit_step(Rotate(90)),
-            "rotate_right": lambda: self._apply_edit_step(Rotate(270)),
-            "mirror": lambda: self._apply_edit_step(Mirror()),
-            "crop": self.begin_crop,
-        }
-        handler = handlers.get(action)
-        if handler is not None:
-            handler()
-
-    def _apply_edit_step(self, step: EditStep) -> None:
-        """往正在看的那一张的草稿里加一步，然后重画。"""
-        ref = self._editable_photo()
-        if ref is None:
-            return
-        self._drafts.add(ref.path, step)
-        self._reload_edited(ref.path)
-
-    def _editable_photo(self) -> PhotoRef | None:
-        """此刻能编辑的是哪一张 —— **只认大图页正在看的那一张**。
-
-        裁剪进行中不算：那一档的框是按「已经叠加了草稿」的坐标系定的，中途再转一下
-        框就落到别处去了（ADR 0027 决策 6）。
-        """
-        if self._crop_overlay.isVisible():
-            return None
-        return self._current_detail_photo()
-
-    def _current_detail_photo(self) -> PhotoRef | None:
-        """大图页上正看着的那一张，且画面上确实有图。
-
-        **与 :meth:`_editable_photo` 分开是必须的**：裁剪那一步提交时浮层还没收起来
-        （信号先发、再 ``finish``），若这里也按「裁一半不算」答，就变成用户回车之后
-        什么也没发生。
-        """
-        if not self._in_detail_page() or self._current_row < 0:
-            return None
-        ref = self._model.photo_at(self._current_row)
-        if ref is None or not self._detail.has_image:
-            return None
-        return ref
-
-    def _reload_edited(self, path: Path) -> None:
-        """草稿变了：重画大图页。
-
-        **网格缩略图不动** —— 未保存的编辑只在大图页叠加（ADR 0027 决策 5）。跟着动的
-        代价是每次编辑都要重解码一张缩略图，而那一格画的是原文件：用户退回去看到
-        「它没转过」恰好说明「还没存」。
-        """
-        ref = self._editable_photo()
-        if ref is None or ref.path != path:
-            return
-        self._load_detail(self._current_row)
-        # 菜单与 ⌘S 那一行的可用性跟着草稿变：「撤销 左转 90°」与「保存编辑后的副本」
-        # 都是这一刻才成立的（前者问的是草稿栈，后者问的是这一张有没有草稿）。
-        self._update_undo_action()
-        self._update_action_states()
-
-    def begin_crop(self) -> None:
-        """⌘⌥C：进入裁剪模式。**这时还没有改草稿** —— 回车才改，Esc 就当没来过。"""
-        ref = self._editable_photo()
-        if ref is None:
-            return
-        size = self._detail.image_size
-        if size == (0, 0):
-            return
-        # 画面上那张图是**草稿叠加之后**的，而草稿可能已经有一次裁剪 —— 那次的框
-        # 要照原样摆回去，用户改的正是它。
-        last = self._last_crop(ref)
-        bounds = QRectF(0, 0, float(size[0]), float(size[1]))
-        self._crop_overlay.begin(bounds, last)
-        self._update_action_states()
-
-    def _last_crop(self, ref: PhotoRef) -> QRectF | None:
-        """草稿里最后一次裁剪换算回**当前画面**上的矩形（没有就是 ``None``）。"""
-        steps = self._drafts.steps(ref.path)
-        size = self._detail.image_size
-        width, height = (float(size[0]), float(size[1])) if size != (0, 0) else (1.0, 1.0)
-        crop = next((step for step in reversed(steps) if isinstance(step, Crop)), None)
-        if crop is None:
-            return None
-        x0, y0, x1, y1 = crop.rect
-        return QRectF(x0 * width, y0 * height, (x1 - x0) * width, (y1 - y0) * height)
-
-    def _on_crop_committed(self, left: float, top: float, right: float, bottom: float) -> None:
-        """裁剪定下来了：换成归一化坐标记进草稿。
-
-        **存的是比例而不是像素**，因此大图页与另存那一路算出的是同一个框
-        （见 ``core.media.edit.Crop``）。
-
-        收浮层放在**这一档自己**里而不是留给发信号的地方：那一层是先 ``emit`` 再
-        ``finish``，于是回调跑到时浮层还「可见」，任何「裁一半就不算可编辑」的判据
-        都会把这一次提交挡掉（用户回车之后什么也没发生）。放在这里，模式在���一个
-        出口上收掉，与是谁发起的无关。
-        """
-        self._crop_overlay.finish()
-        ref = self._current_detail_photo()
-        size = self._detail.image_size
-        if ref is None or size == (0, 0):
-            self.cancel_crop()
-            return
-        width, height = float(size[0]), float(size[1])
-        rect = (
-            _ratio(left, width),
-            _ratio(top, height),
-            _ratio(right, width),
-            _ratio(bottom, height),
-        )
-        if not is_crop_big_enough(rect, (int(width), int(height))):
-            self._show_banner(CROP_TOO_SMALL)
-            self._refresh_title()
-            return
-        self._drafts.add(ref.path, Crop(rect))
-        self._refresh_title()
-        self._load_detail(self._current_row)
-        self._update_action_states()
-
-    def cancel_crop(self) -> None:
-        """Esc：收起浮层。**草稿一个字节都没动过**，因此什么都不用还原。"""
-        self._crop_overlay.finish()
-        self._update_action_states()
-
     # ---- 大图（见 ADR 0021）
 
     def show_grid(self) -> None:
@@ -2992,9 +2783,6 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         # 翻图、打开、删掉一张之后接着看下一张，走的都是这一段。
         self._refresh_title()
         generation = self._generation
-        # **在后台任务起之前取一份**：草稿是内存里的一份引用，取到任务里再问的话，
-        # 用户连点两下旋转就会有两个任务带着不同的草稿去解码同一张图。
-        steps = self._drafts.steps(ref.path)
 
         if self._detail_job is not None:
             # 上一张的解码已经没有意义了，早点让它停下来。
@@ -3004,12 +2792,10 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             self._load_metadata()
 
         cached = self._preview_cache.get(ref.path)
-        if cached is not None and not steps:
-            # 有草稿时不走缓存：那份缓存是**未编辑**的那一版，拿它上屏等于编辑没生效。
-            # 草稿一存就清，代价是重新解码一次（一次预览解码几十毫秒）。
+        if cached is not None:
             self._preview_cache.move_to_end(ref.path)
             self._detail.set_image(cached, refit=True)
-            self._request_full(ref, row, generation, steps)
+            self._request_full(ref, row, generation)
             # 命中也必须继续预读前后：只预读未命中的那一张的话，连续翻图会变成
             # 「命中 → 不预读 → 下次未命中 → 预读 → 命中」地交替，每隔一张就
             # 先闪一下缩略图。命中与未命中应当对缓存的处理完全一致。
@@ -3030,38 +2816,25 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         def work_preview(context: TaskContext) -> object:
             if context.is_cancelled():
                 return None
-            return to_qimage(library.preview(ref, max_edge=max_edge, steps=steps))
+            return to_qimage(library.preview(ref, max_edge=max_edge))
 
         self._detail_job = self._runner.submit(
             work_preview,
-            on_result=partial(self._on_preview_ready, ref, row, generation, steps),
+            on_result=partial(self._on_preview_ready, ref, row, generation),
             on_error=partial(self._on_detail_failed, ref, row, generation),
         )
         self._prefetch_neighbours(row)
 
-    def _on_preview_ready(
-        self,
-        ref: PhotoRef,
-        row: int,
-        generation: int,
-        steps: tuple[EditStep, ...],
-        payload: object,
-    ) -> None:
+    def _on_preview_ready(self, ref: PhotoRef, row: int, generation: int, payload: object) -> None:
         if generation != self._generation or row != self._current_row:
             return  # 用户已经翻到别处了，丢弃这张迟到的图
         if not isinstance(payload, QImage):
             return
         self._cache_preview(ref.path, payload)
         self._detail.set_image(payload, refit=True)
-        self._request_full(ref, row, generation, steps)
+        self._request_full(ref, row, generation)
 
-    def _request_full(
-        self,
-        ref: PhotoRef,
-        row: int,
-        generation: int,
-        steps: tuple[EditStep, ...],
-    ) -> None:
+    def _request_full(self, ref: PhotoRef, row: int, generation: int) -> None:
         """后台解码全分辨率图像，用于 100% 查看。"""
         library = self._library
         if library is None:
@@ -3070,7 +2843,7 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         def work_full(context: TaskContext) -> object:
             if context.is_cancelled():
                 return None
-            return to_qimage(library.full(ref, steps=steps))
+            return to_qimage(library.full(ref))
 
         self._detail_job = self._runner.submit(
             work_full,
@@ -3259,21 +3032,6 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         # 「退出」也是 Esc，所以改到一半要把它关掉：那一刻 Esc 是输入框的「取消改名」，
         # 与「上一级」在网格页上的让位是同一条理由（见 ``_update_navigation_actions``）。
         self._back_action.setEnabled(in_detail and idle)
-        # 编辑那几条只在大图页亮着，且要**画面上确实有图**（解码失败时用户按的是
-        # 「旋转一张看不见的照片」）。裁一半时全灭：那一档的坐标系会被下一次旋转改掉
-        # （见 ``_editable_photo``）。
-        editable = in_detail and self._detail.has_image and not self._crop_overlay.isVisible()
-        for action in (
-            self._rotate_left_action,
-            self._rotate_right_action,
-            self._mirror_action,
-            self._crop_action,
-        ):
-            action.setEnabled(editable)
-        self._save_edit_action.setEnabled(
-            editable and self._current_photo_has_draft() and self._write_job is None
-        )
-        self._edit_toolbar.set_enabled_actions(editable)
         self._clear_cache_action.setEnabled(self._library is not None)
         # 「清除搜索条件」**整条出现 / 消失**，不是置灰（ADR 0014 决策 4）：
         # 没有条件时它压根没有对象，摆一个灰着的「清除」只会让人去猜在清什么。
@@ -3340,25 +3098,17 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._action_states_timer.start()
 
     def _update_undo_action(self) -> None:
-        """「撤销」的文案跟着**当前最上面那一项**变，一项都没有时禁用。
-
-        **编辑草稿优先于写操作**（ADR 0027 决策 7）：它更「当下」—— 刚转了一下就按 ⌘Z，
-        想撤的显然是那一下。编辑那一摞只在内存里，因此它不参与 ``core`` 的重放。
-        """
-        label = self._drafts.undo_label() or self._undo_label
-        self._undo_action.setText("撤销" if label is None else f"撤销 {label}")
-        self._undo_action.setEnabled(label is not None)
+        """「撤销」的文案跟着这摞的栈顶变，栈空时禁用。"""
+        self._undo_action.setText(
+            "撤销" if self._undo_label is None else f"撤销 {self._undo_label}"
+        )
+        self._undo_action.setEnabled(self._undo_label is not None)
 
     def _refresh_undo_label(self) -> None:
-        """重新问一次 core：下一次 ⌘Z 会撤掉什么（编辑那一半不问 core）。"""
+        """重新问一次 core：下一次 ⌘Z 会撤掉什么。"""
         library = self._library
         self._undo_label = library.next_undo_label() if library is not None else None
         self._update_undo_action()
-
-    def _current_photo_has_draft(self) -> bool:
-        """正在看的那一张有没有未保存的编辑（⌘S 的可用性只看这一条）。"""
-        ref = self._model.photo_at(self._current_row) if self._in_detail_page() else None
-        return ref is not None and self._drafts.has(ref.path)
 
     # ---- 浏览方式与相册导航 ------------------------------------------------
 
@@ -3734,10 +3484,6 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         name = photo.name if photo is not None else self._library_title
         if self._owns_title_bar:
             self._title_bar.set_text(name)
-            # 大图页靠左，其余居中（ADR 0027 决策 7）。判据只有「现在在哪一页」，
-            # 因此它与标题写什么一样只有这一处说了算。
-            self._title_bar.set_aligned_left(self._in_detail_page())
-            self._title_bar.set_unsaved(photo is not None and self._drafts.has(photo.path))
         else:
             # 标题栏那一段不归我们（例如 Linux），照旧交给系统画（ADR 0025 决策 2）。
             self.setWindowTitle(name)
@@ -3753,7 +3499,6 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         自己居中，胶囊要贴右边，两者抢同一份布局反而互相挪（ADR 0026 决策 8）。
         """
         if not self._owns_title_bar:
-            self._edit_toolbar.hide()
             return
         if self.isFullScreen():
             # 全屏时系统自己也不画标题栏，这一整条跟着收起来（ADR 0025 决策 2）：
@@ -3761,7 +3506,6 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             self._title_bar.setGeometry(0, 0, self.width(), 0)
             self._title_bar.hide()
             self._search_field.hide()
-            self._edit_toolbar.hide()
             return
         central = self.centralWidget()
         top = central.geometry().top() if central is not None else 0
@@ -3789,33 +3533,6 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         # 根本没有那个东西。``show()`` 对已经可见的控件不再发 ``showEvent``，所以抬的动作
         # 得写在这里，缩放窗口时也一并生效。
         self._search_field.raise_()
-        self._layout_edit_toolbar(height)
-
-    def _layout_edit_toolbar(self, height: int) -> None:
-        """图标组摆在文件名的右边（ADR 0027 决策 7）。
-
-        **位置跟着文件名走**：那一行上文件名有多长只有 ``TitleBar`` 知道（它才是做
-        省略的那一个），于是它报右沿、我们报宽度，两者之间留 :data:`TEXT_TO_ICONS_GAP`。
-        窗口一缩放就重摆一次 —— 与胶囊同一套做法。
-
-        大图页之外不摆：那四枚图标在网格页没有对象（看的是一层缩略图，不是某一张）。
-        """
-        showing = self._in_detail_page() and self._title_bar.isVisible()
-        if not showing:
-            self._edit_toolbar.hide()
-            return
-        width = self._edit_toolbar.content_width()
-        x = self._title_bar.text_right() + TEXT_TO_ICONS_GAP
-        # 右边是搜索胶囊那一段：挤不下就不摆，而不是压在胶囊底下（那里本来还有间距）。
-        limit = self.width() - self._title_bar.reserve_right_hint() - ICONS_TO_SEARCH_GAP
-        if x + width > limit:
-            self._edit_toolbar.hide()
-            return
-        edge = self._edit_toolbar.sizeHint().height()
-        self._edit_toolbar.setGeometry(x, max((height - edge) // 2, 0), width, edge)
-        self._edit_toolbar.set_enabled_actions(self._detail.has_image)
-        self._edit_toolbar.show()
-        self._edit_toolbar.raise_()
 
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         super().showEvent(event)
@@ -3836,32 +3553,7 @@ class MainWindow(WriteOpsMixin, QMainWindow):
 
     # ---- 关闭 --------------------------------------------------------------
 
-    def _confirm_discard_drafts(self) -> bool:
-        """有未保存的编辑时问一句。**关窗与换库都问**（ADR 0027 决策 10）。
-
-        这一处必须弹窗而不是只在横幅上提一句：草稿只在内存里，关掉就没了 ——
-        横幅会被下一次操作顶掉，而用户丢掉的可能是十分钟的活。
-        """
-        count = self._drafts.count()
-        if count == 0:
-            return True
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Icon.Question)
-        box.setWindowTitle("还有没保存的编辑")
-        box.setText(UNSAVED_CONFIRM.format(count=count))
-        box.setStandardButtons(QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard)
-        box.setDefaultButton(QMessageBox.StandardButton.Save)
-        answer = box.exec()
-        if answer != QMessageBox.StandardButton.Save:
-            return True
-        # 「保存」：先把这一张存掉，存不成就不放行 —— 放行等于替他做了放弃的决定。
-        self.save_edited_draft()
-        return self._drafts.count() == 0
-
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
-        if not self._confirm_discard_drafts():
-            event.ignore()
-            return
         self._save_session()
         self._teardown_library()
         self._runner.cancel_all()
@@ -3874,4 +3566,4 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         super().closeEvent(event)
 
 
-__all__ = ["CROP_TOO_SMALL", "UNSAVED_CONFIRM", "MainWindow"]
+__all__ = ["MainWindow"]

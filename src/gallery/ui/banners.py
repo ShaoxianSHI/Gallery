@@ -18,8 +18,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from gallery.core.library.photos import FolderRef, GridEntry
-from gallery.core.media.edit import EditStep, Mirror, Rotate
-from gallery.core.metadata.export import ExportResult
 from gallery.core.metadata.failures import Failure
 from gallery.core.metadata.journal import ACTION_MOVE, ACTION_RENAME
 from gallery.core.metadata.paste import PasteResult
@@ -147,32 +145,6 @@ def undo_banner(result: UndoResult) -> str:
     return f"{head}{note}。"
 
 
-def edit_step_label(step: EditStep) -> str:
-    """一步编辑的中文名。``⌘Z`` 的菜单文案与「已撤销…」横幅共用这一份。
-
-    **逆 / 顺时针在这里翻成人话**：``core`` 那边记的是逆时针度数（与 Pillow 的
-    ``Transpose`` 一致），而用户看到的是「左转 / 右转」。这一层就是那一次翻译。
-    """
-    if isinstance(step, Rotate):
-        return {90: "左转 90°", 180: "转 180°", 270: "右转 90°"}[step.degrees]
-    if isinstance(step, Mirror):
-        return "左右镜像"
-    return "裁剪"
-
-
-def draft_saved(result: ExportResult) -> str:
-    """另存副本之后的那行提示。
-
-    **只说存成了什么，不解释走的是哪条技术路线**（像素原样保留还是重新编码）：
-    那两句差别太大，横幅只有一行容身之地，塞满技术细节之后「存到哪儿了」反而看不见。
-
-    唯独元信息不完整这件事必须说出来 —— 没装 exiftool 时 IPTC / XMP 拿不到，
-    而用户要的正是「编辑前后元信息一致」（ADR 0027 决策 9）。
-    """
-    note = "，但没装 exiftool，元信息只保留了一部分" if result.degraded else ""
-    return f"已保存为「{result.created.name}」{note}。"
-
-
 def first_reason(failures: Sequence[Failure]) -> str:
     """失败原因的摘要。
 
@@ -200,8 +172,6 @@ def album_name(entries: Sequence[GridEntry]) -> str:
 
 __all__ = [
     "album_name",
-    "draft_saved",
-    "edit_step_label",
     "first_reason",
     "paste_banner",
     "rename_banner",

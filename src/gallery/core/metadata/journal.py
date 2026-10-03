@@ -54,13 +54,6 @@ ACTION_MOVE: Final = "move"
 #: 紧接着那一次改名（用户给新相册起名）照旧记账、照旧可 ``⌘Z`` 撤销。
 ACTION_CREATE: Final = "create"
 
-#: 日志里的动作名：把编辑草稿**另存**成一份新文件（``core.metadata.export``、ADR 0027）。
-#:
-#: 与 :data:`ACTION_PASTE` / :data:`ACTION_CREATE` 同属「只增不改」那一类，因此
-#: **不在撤销栈里**：撤销一次另存就是删掉那个副本，而删除在这个项目里只允许用户在
-#: 界面上亲手触发（红线 1）。原文件一个字节都没动，所以也没有「把它改回来」这回事。
-ACTION_EXPORT: Final = "export"
-
 #: 操作成功。
 RESULT_OK: Final = "ok"
 
@@ -201,7 +194,6 @@ def read_records(root: Path) -> list[WriteRecord]:
 
 __all__ = [
     "ACTION_CREATE",
-    "ACTION_EXPORT",
     "ACTION_MOVE",
     "ACTION_PASTE",
     "ACTION_RENAME",

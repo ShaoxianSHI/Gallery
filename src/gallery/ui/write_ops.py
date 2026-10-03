@@ -11,7 +11,6 @@
 - **新建相册**（ADR 0022）。
 - **复制到相册 / 移动到相册**（ADR 0019）。
 - **改名**（ADR 0004）与**移到废纸篓**（ADR 0008）—— 仅有的两个直接改原件的入口。
-- **保存编辑后的副本**⌘S（ADR 0027）—— 原文件一个字节不动，只是在旁边多出一份新文件。
 - **撤销**（⌘Z）：改回去，或者从废纸篓取回来。
 - 以及它们共用的那一个前置问题：「**现在动的是哪些东西**」。
 
@@ -37,7 +36,6 @@
 ``_show_banner`` / ``_reload_level`` / ``_update_action_states``  写完的收尾
 ``_note_self_write`` / ``_refresh_thumbnail_window`` / ``_update_level_notice``  同上
 ``_title_bar`` / ``_refresh_title``  大图页的改名落在窗口标题栏那一行（ADR 0025）
-``_drafts``          会话内的编辑草稿：⌘Z 先撤它，⌘S 把它存成副本
 ======================  ==========================================================
 """
 
@@ -599,62 +597,8 @@ class WriteOpsMixin:
         if target >= 0:
             self._grid.select_row(target, ensure_visible=False)
 
-    def save_edited_draft(self) -> None:
-        """⌘S：把正在看的那一张按草稿**另存成一份新文件**（ADR 0027）。
-
-        方法名与 ``Library.save_edited_copy`` **故意不一样**：守护测试是按调用点的名字
-        扫 ``ui/`` 的（见 ``tests/test_guards.py``），窗口上若也起一个同名方法，
-        它自己那一处调用就会算成违规 —— 名字重名换来的是一条永远红的守护。
-
-        这是本文件里最后一个会写用户文件的入口，规矩与粘贴一样（红线 1）：只增不改、
-        绝不覆盖、记账但不可撤销。
-
-        **存完就把这一张的草稿清掉** —— 副本已经存在磁盘上，草稿留着只会让用户以为
-        还有东西没存（而再按一次 ⌘S 就会多出一份 `-edited 2`）。
-        """
-        library = self._library
-        ref = self._model.photo_at(self._current_row) if self._in_detail_page() else None
-        if library is None or ref is None:
-            return
-        steps = self._drafts.steps(ref.path)
-        if not steps:
-            self._show_banner("这张还没有改动。")
-            return
-        try:
-            result = library.save_edited_copy(ref, steps)
-        except GalleryError as exc:
-            logger.info("另存副本失败：%s", exc.detail or exc.message)
-            self._show_banner(exc.message)
-            return
-        self._note_self_write(result.created)
-        row = self._model.insert_entry(
-            PhotoRef.from_path(result.created),
-            whole_level=self._group_view is not None or self._browse_mode == BROWSE_MODE_FLAT,
-        )
-        if row >= 0:
-            self._grid.select_row(row, ensure_visible=False)
-        self._drafts.clear(ref.path)
-        self._refresh_title()
-        self._refresh_thumbnail_window()
-        self._show_banner(banners.draft_saved(result))
-
     def undo_last_write(self) -> None:
-        """⌘Z：**先撤编辑草稿，没有草稿才撤写操作**（改名 / 移到废纸篓 / 移动到相册）。
-
-        编辑优先是因为它更「当下」：用户刚在大图页转了一下就按 ⌘Z，想撤的显然是那一下，
-        而不是几分钟前那次改名。
-
-        **编辑那一半不写 journal。** 它没碰任何磁盘上的东西（草稿只在内存里，
-        ADR 0027），所以「撤销栈靠 journal 重放」那套机制一个字都不用改；两者共用一枚
-        快捷键，靠的只是这一处的先后。
-        """
-        undone = self._drafts.undo_last()
-        if undone is not None:
-            path, step = undone
-            self._reload_edited(path)
-            self._show_banner(f"已撤销{banners.edit_step_label(step)}。")
-            self._refresh_undo_label()
-            return
+        """⌘Z：撤销最近一次写操作 —— 改回去，或者从废纸篓取回来。"""
         library = self._library
         if library is None:
             return

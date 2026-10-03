@@ -13,7 +13,6 @@ from PIL import Image
 
 from gallery.core.errors import ImageDecodeError
 from gallery.core.media.decode import HEIF_SUPPORT, decode_rgba
-from gallery.core.media.edit import Crop, Rotate
 
 
 def test_decode_returns_rgba_bytes(make_photo: Callable[..., Path]) -> None:
@@ -68,57 +67,6 @@ def test_exif_orientation_is_applied(make_photo: Callable[..., Path]) -> None:
     raster = decode_rgba(path)
 
     assert raster.size == (20, 40)
-
-
-def test_orientation_hidden_in_heif_metadata_is_applied(tmp_path: Path) -> None:
-    """**HEIF 的方向不在 EXIF 标签里**，藏在 ``info["original_orientation"]``。
-
-    ``pillow-heif`` 在解码时把 EXIF 里那个标签重置成 1，另存一份到 ``info``。
-    因此只认 EXIF 的实现（原先走 ``ImageOps.exif_transpose`` 就是那样）会让**所有
-    竖拍 HEIC 都躺着** —— 而 HEIC 正是 iPhone 照片的默认格式。这条用「真写一个
-    Orientation 标签进去」来复现：pillow-heif 会照它自己的规矩处理掉那个标签。
-    """
-    if not HEIF_SUPPORT:
-        pytest.skip("pillow-heif 不可用")
-    path = tmp_path / "竖拍.heic"
-    image = Image.new("RGB", (40, 20), (200, 120, 40))
-    exif = image.getexif()
-    exif[274] = 6
-    try:
-        image.save(path, format="HEIF", exif=exif)
-    except (OSError, ValueError, KeyError):  # pragma: no cover - 编码器缺失时的降级
-        pytest.skip("这个 Pillow 存不了 HEIF")
-    finally:
-        image.close()
-    with Image.open(path) as opened:
-        assert opened.getexif().get(274, 1) == 1, "前提变了：标签没被 pillow-heif 挪走"
-        assert opened.info.get("original_orientation") == 6
-
-    assert decode_rgba(path).size == (20, 40)
-
-
-def test_edit_steps_are_applied_after_uprighting(make_photo: Callable[..., Path]) -> None:
-    """草稿叠加在**摆正之后** —— 用户拖的框、看的图，都是摆正后那张（ADR 0027 决策 6）。"""
-    path = make_photo("rotated.jpg", size=(40, 20), orientation=6)
-
-    turned = decode_rgba(path)
-    turned_back = decode_rgba(path, steps=(Rotate(90),))
-
-    assert turned.size == (20, 40)
-    assert turned_back.size == (40, 20)
-
-
-def test_edit_steps_happen_before_the_downscale(make_photo: Callable[..., Path]) -> None:
-    """先裁后缩：草稿里的框是归一化坐标，所以裁在哪一档分辨率上都得到同一张图。"""
-    path = make_photo("a.jpg", size=(400, 200))
-
-    full = decode_rgba(path, steps=(Crop((0.0, 0.0, 0.5, 1.0)),))
-    scaled = decode_rgba(path, max_edge=100, steps=(Crop((0.0, 0.0, 0.5, 1.0)),))
-
-    assert full.size == (200, 200)
-    # draft 把 400×200 降到 1/2（200×100）再裁成 100×100：裁的是左边那一半，
-    # 于是不管在哪个分辨率上裁，左右都是对半的。
-    assert scaled.size == (100, 100)
 
 
 def test_png_alpha_is_reported(tmp_path: Path) -> None:

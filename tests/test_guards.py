@@ -241,9 +241,6 @@ WRITE_METHODS_ON_LIBRARY = (
     "move_into",
     "create_album",
     "undo_last_write",
-    # 「保存编辑后的副本」⌘S（ADR 0027）：原文件一个字节不动，但它**确实往用户的目录里
-    # 写了一个新文件**，因此与其它几个入口一样，调用点只许出现在 ``write_ops.py`` 里。
-    "save_edited_copy",
 )
 
 #: 唯一一个「只组装、不写」的例外：它负责挑目标目录（见 ``_paste_target``）。
