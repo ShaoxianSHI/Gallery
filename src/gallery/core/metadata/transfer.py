@@ -36,6 +36,12 @@ from uuid import uuid4
 from gallery.core import paths
 from gallery.core.cancellation import never_cancel
 from gallery.core.errors import TransferError
+from gallery.core.metadata.failures import (
+    SOURCE_GONE,
+    Failure,
+    os_reason,
+    same_directory,
+)
 from gallery.core.metadata.journal import (
     ACTION_MOVE,
     ACTION_UNDO,
@@ -68,23 +74,6 @@ class Skipped:
 
     source: Path
     message: str
-
-
-@dataclass(frozen=True, slots=True)
-class Failure:
-    """想移没移成的一项，以及失败的原因。"""
-
-    source: Path
-    message: str
-
-    @property
-    def name(self) -> str:
-        """出问题的那个名字。
-
-        与 :class:`gallery.core.metadata.trash.Failure` 的 ``name`` 同名同义，界面拼横幅
-        时可以把两种失败一视同仁（``main_window._first_reason``）。
-        """
-        return self.source.name
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,27 +141,25 @@ def move_into(
     for raw_source in sources:
         source = Path(raw_source)
         if not source.exists():
-            failures.append(Failure(source=source, message="它已经不在原来的位置了。"))
+            failures.append(Failure.at(source, message=SOURCE_GONE))
             continue
-        if _same_directory(source.parent, destination):
+        if same_directory(source.parent, destination):
             skipped.append(Skipped(source=source, message=f"它已经在「{destination.name}」里了。"))
             continue
         if source.is_dir() and paths.is_within(source, destination):
-            failures.append(
-                Failure(source=source, message="不能把相册移进它自己或它自己的子相册。")
-            )
+            failures.append(Failure.at(source, message="不能把相册移进它自己或它自己的子相册。"))
             continue
         if cancelled():
             break
         name = free_name_in(destination, source.name)
         if name is None:
-            failures.append(Failure(source=source, message="这个名字太长，再加编号也放不下了。"))
+            failures.append(Failure.at(source, message="这个名字太长，再加编号也放不下了。"))
             continue
         created = destination / name
         try:
             _move(source, created)
         except OSError as error:
-            message = _move_error_message(error)
+            message = os_reason(error, action="移动")
             journaled &= append_record(
                 root,
                 WriteRecord(
@@ -185,7 +172,7 @@ def move_into(
                     batch=batch,
                 ),
             )
-            failures.append(Failure(source=source, message=message))
+            failures.append(Failure.at(source, message=message))
             continue
         journaled &= append_record(
             root,
@@ -235,7 +222,7 @@ def undo_move_records(root: Path, records: Sequence[WriteRecord]) -> UndoMoveRes
                     batch=record.batch,
                 ),
             )
-            failures.append(Failure(source=current, message=message))
+            failures.append(Failure.at(current, message=message))
             continue
         if original.exists():
             message = f"「{original.name}」这个位置已经有别的文件了。"
@@ -251,12 +238,12 @@ def undo_move_records(root: Path, records: Sequence[WriteRecord]) -> UndoMoveRes
                     batch=record.batch,
                 ),
             )
-            failures.append(Failure(source=current, message=message))
+            failures.append(Failure.at(current, message=message))
             continue
         try:
             _move(current, original)
         except OSError as error:
-            message = _move_error_message(error)
+            message = os_reason(error, action="移动")
             journaled &= append_record(
                 root,
                 WriteRecord(
@@ -269,7 +256,7 @@ def undo_move_records(root: Path, records: Sequence[WriteRecord]) -> UndoMoveRes
                     batch=record.batch,
                 ),
             )
-            failures.append(Failure(source=current, message=message))
+            failures.append(Failure.at(current, message=message))
             continue
         journaled &= append_record(
             root,
@@ -295,31 +282,6 @@ def _move(source: Path, target: Path) -> None:
             raise
         # shutil.move 自己就是「先拷贝、成功之后再删源」，跨卷失败时源文件分毫未动。
         shutil.move(str(source), str(target))
-
-
-def _move_error_message(error: OSError) -> str:
-    """一句说清为什么没移成的中文。"""
-    reason = error.strerror or str(error)
-    if error.errno == errno.ENOSPC or "No space left" in reason or "磁盘空间不足" in reason:
-        return "磁盘空间不足。"
-    if error.errno in (errno.EACCES, errno.EPERM) or isinstance(error, PermissionError):
-        return "没有权限写进这个相册。"
-    if error.errno == errno.ENOENT:
-        return "它已经不在原来的位置了。"
-    return f"移动失败：{reason}。"
-
-
-def _same_directory(left: Path, right: Path) -> bool:
-    """两个路径是不是同一个文件夹（**按磁盘上的真实位置**比，不比字面写法）。
-
-    与 ``paste._same_directory`` 同理：界面上拿到的是 ``/var/…``，别处报来的是
-    ``/private/var/…``，不解析就比不相等，于是「它已经在那个相册里了」判不出来，
-    会把照片原地又「移动」一次（平白多出一份「一张 2.jpg」）。
-    """
-    try:
-        return left.resolve() == right.resolve()
-    except OSError:
-        return left == right
 
 
 __all__ = [

@@ -28,6 +28,7 @@ from uuid import uuid4
 from gallery.core import paths
 from gallery.core.errors import DeleteError
 from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
+from gallery.core.metadata.failures import Failure, os_reason
 from gallery.core.metadata.journal import (
     ACTION_RESTORE,
     ACTION_TRASH,
@@ -40,16 +41,6 @@ from gallery.core.metadata.naming import free_name_in
 
 #: 访达用来放「本卷回收站」的目录名（外接盘、U 盘上）。
 _VOLUME_TRASH_DIR: Final = ".Trashes"
-
-
-@dataclass(frozen=True, slots=True)
-class Failure:
-    """一项没成的操作，连同给用户看的原因。"""
-
-    #: 出问题的条目名。
-    name: str
-    #: 原因（中文，能指向下一步动作）。
-    message: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,13 +109,14 @@ def move_to_trash(entry_path: Path) -> Path:
     :raises DeleteError: 废纸篓不可用、系统拒绝了移动。
     """
     source = Path(entry_path)
+    is_dir = source.is_dir()
     try:
         directory = trash_dir_for(source)
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         target = _free_name(directory / source.name, is_dir=source.is_dir())
     except OSError as exc:
         raise DeleteError(
-            f"没法使用废纸篓：{_os_reason(exc)}",
+            f"没法使用废纸篓：{os_reason(exc, is_dir=True)}",
             path=source,
             detail=repr(exc),
         ) from exc
@@ -133,7 +125,7 @@ def move_to_trash(entry_path: Path) -> Path:
     except OSError as exc:
         if exc.errno != errno.EXDEV:
             raise DeleteError(
-                f"移不到废纸篓：{_os_reason(exc)}",
+                f"移不到废纸篓：{os_reason(exc, is_dir=is_dir)}",
                 path=source,
                 detail=repr(exc),
             ) from exc
@@ -142,7 +134,7 @@ def move_to_trash(entry_path: Path) -> Path:
             shutil.move(str(source), str(target))
         except OSError as copy_exc:
             raise DeleteError(
-                f"移不到废纸篓：{_os_reason(copy_exc)}",
+                f"移不到废纸篓：{os_reason(copy_exc, is_dir=is_dir)}",
                 path=source,
                 detail=repr(copy_exc),
             ) from copy_exc
@@ -178,6 +170,7 @@ def trash_entries(
             # 界面已经拦过一道；真漏到这里也要**如实说**，不能悄悄少删一个。
             failures.append(
                 Failure(
+                    # 分组没有路径 —— 它不是磁盘上的东西（photos.GroupRef），移不走。
                     name=entry.name,
                     message="分组不是磁盘上的东西，移不走；双击进入分组后选中里面的照片再删。",
                 )
@@ -200,7 +193,7 @@ def trash_entries(
                     batch=batch,
                 ),
             )
-            failures.append(Failure(name=entry.name, message=exc.message))
+            failures.append(Failure.at(source, exc.message))
             continue
         journaled &= append_record(
             root,
@@ -230,7 +223,11 @@ def restore_entries(root: Path, records: Sequence[WriteRecord]) -> RestoreResult
         try:
             entry = _restore_one(record)
         except (DeleteError, OSError) as exc:
-            message = exc.message if isinstance(exc, DeleteError) else _os_reason(exc)
+            message = (
+                exc.message
+                if isinstance(exc, DeleteError)
+                else os_reason(exc, is_dir=record.is_dir)
+            )
             journaled &= append_record(
                 root,
                 WriteRecord(
@@ -243,7 +240,7 @@ def restore_entries(root: Path, records: Sequence[WriteRecord]) -> RestoreResult
                     batch=record.batch,
                 ),
             )
-            failures.append(Failure(name=record.source.name, message=message))
+            failures.append(Failure.at(record.source, message))
             continue
         journaled &= append_record(
             root,
@@ -283,12 +280,13 @@ def _restore_one(record: WriteRecord) -> GridEntry:
 
 def _move(source: Path, target: Path) -> None:
     """同卷内改名；跨卷才拷贝 + 删除。"""
+    is_dir = source.is_dir()
     try:
         source.rename(target)
     except OSError as exc:
         if exc.errno != errno.EXDEV:
             raise DeleteError(
-                _os_reason(exc),
+                os_reason(exc, is_dir=is_dir),
                 path=source,
                 detail=repr(exc),
             ) from exc
@@ -296,7 +294,7 @@ def _move(source: Path, target: Path) -> None:
             shutil.move(str(source), str(target))
         except OSError as move_exc:
             raise DeleteError(
-                _os_reason(move_exc),
+                os_reason(move_exc, is_dir=is_dir),
                 path=source,
                 detail=repr(move_exc),
             ) from move_exc
@@ -341,18 +339,6 @@ def _free_name(candidate: Path, *, is_dir: bool) -> Path:
 def _new_batch_id() -> str:
     """一次批量操作的编号。重放日志时靠它把一批记录归成一个撤销单元。"""
     return uuid4().hex[:12]
-
-
-def _os_reason(exc: OSError) -> str:
-    """把系统错误翻译成用户看得懂的一句话。"""
-    if exc.errno == errno.ENOSPC:
-        return "磁盘满了。"
-    if exc.errno == errno.ENOENT:
-        return "它已经不在原来的位置了，可能已经被别的东西移走了。"
-    reason = exc.strerror or exc.__class__.__name__
-    if exc.errno in (errno.EACCES, errno.EPERM):
-        return f"没有权限（{reason}）。请检查「系统设置 → 隐私与安全性 → 文件与文件夹」的授权。"
-    return f"{reason}。它可能正在被其他程序使用。"
 
 
 __all__ = [

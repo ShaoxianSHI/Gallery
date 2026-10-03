@@ -214,7 +214,7 @@ def test_a_half_written_file_is_cleaned_up(library: Path, monkeypatch) -> None: 
     result = _paste(library, library / "奈良", source)
 
     assert result.pasted == ()
-    assert "磁盘空间不足" in result.failures[0].message
+    assert "磁盘满" in result.failures[0].message
     assert sorted(p.name for p in (library / "奈良").iterdir()) == []
     assert source.exists()
 

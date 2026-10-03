@@ -74,12 +74,12 @@ from gallery.core.metadata.facets import (
     needs_metadata,
     sort_facet,
 )
+from gallery.core.metadata.failures import Failure
 from gallery.core.metadata.journal import ACTION_MOVE, ACTION_RENAME
 from gallery.core.metadata.paste import PasteResult
 from gallery.core.metadata.rename import RenameResult
-from gallery.core.metadata.transfer import Failure as TransferFailure
 from gallery.core.metadata.transfer import MoveResult
-from gallery.core.metadata.trash import Failure, TrashResult
+from gallery.core.metadata.trash import TrashResult
 from gallery.core.metadata.undo import UndoResult
 from gallery.core.places.countries import place_label
 from gallery.core.places.dataset import is_real_coordinate
@@ -358,14 +358,16 @@ def _context_kind(entry: GridEntry) -> TargetKind:
     return TargetKind.PHOTO
 
 
-def _first_reason(failures: Sequence[Failure | TransferFailure]) -> str:
+def _first_reason(failures: Sequence[Failure]) -> str:
     """失败原因的摘要。
 
     只有一项时要点名道姓 —— 用户得知道该去看哪张照片；多项时横幅只有一行容身之地，
     只给第一条，完整列表在日志里。
 
-    两种失败形状（取回废纸篓报的 ``name``、撤销移动报的 ``source``）放在一个列表里看是
-    安全的：``transfer.Failure.name`` 就是 ``source.name``，两条路拼出来的句子一样。
+    **三个模块报回来的失败项是同一个类型**（``metadata.failures.Failure``），所以粘贴、
+    移动、移到废纸篓三条路的横幅在这里合流，不需要分形状。统一之前这里是
+    ``Failure | TransferFailure``，而 ``paste.Failure`` 连 ``.name`` 都没有 ——
+    同一个函数名，两种形状，第三种半套。
     """
     if not failures:
         return "原因不明"

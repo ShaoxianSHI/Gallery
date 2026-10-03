@@ -98,7 +98,9 @@ def test_a_failed_cross_volume_trash_leaves_the_original_untouched(
     result = trash_entries(library, [PhotoRef.from_path(source)])
 
     assert result.moved == ()
-    assert [failure.message for failure in result.failures] == ["移不到废纸篓：磁盘满了。"]
+    assert [failure.message for failure in result.failures] == [
+        "移不到废纸篓：磁盘满了，腾出点空间再试。"
+    ]
     assert source.read_bytes() == PAYLOAD, "用户的原件一个字节都不能少"
     (record,) = read_records(library)
     assert not record.succeeded
@@ -136,6 +138,6 @@ def test_a_failed_cross_volume_transfer_keeps_the_original(
     result = move_into(library, library / "奈良", [source])
 
     assert result.moved == ()
-    assert [failure.message for failure in result.failures] == ["磁盘空间不足。"]
+    assert [failure.message for failure in result.failures] == ["磁盘满了，腾出点空间再试。"]
     assert source.read_bytes() == PAYLOAD
     assert not (library / "奈良" / "一张.jpg").exists()

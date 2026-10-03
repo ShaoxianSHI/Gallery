@@ -46,15 +46,10 @@ from gallery.core.metadata.facets import (
     group_facet,
     sort_facet,
 )
+from gallery.core.metadata.failures import Failure
 from gallery.core.metadata.journal import WriteRecord, append_record, read_records
 from gallery.core.metadata.naming import MAX_NAME_BYTES, clean_name, free_name_in
-from gallery.core.metadata.paste import (
-    Failure,
-    PastedFile,
-    PasteResult,
-    Skipped,
-    copy_into,
-)
+from gallery.core.metadata.paste import PastedFile, PasteResult, Skipped, copy_into
 from gallery.core.metadata.rename import (
     RenameResult,
     rename_entry,

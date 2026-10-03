@@ -150,7 +150,7 @@ def test_move_reports_a_missing_source(library: Path) -> None:
     result = _move(library, library / "奈良", library / "京都" / "没有这张.jpg")
 
     assert result.moved == ()
-    assert result.failures[0].message == "它已经不在原来的位置了。"
+    assert result.failures[0].message == "它已经不在原来的位置了，可能刚刚被别的东西移走了。"
 
 
 def test_move_rejects_a_target_that_is_not_a_directory(library: Path) -> None:

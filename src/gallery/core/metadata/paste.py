@@ -39,6 +39,7 @@ from uuid import uuid4
 from gallery.core import paths
 from gallery.core.cancellation import never_cancel
 from gallery.core.errors import PasteError
+from gallery.core.metadata.failures import Failure, os_reason, same_directory
 from gallery.core.metadata.journal import (
     ACTION_PASTE,
     RESULT_FAILED,
@@ -67,14 +68,6 @@ class PastedFile:
 @dataclass(frozen=True, slots=True)
 class Skipped:
     """没有粘的一项，以及**为什么**（这句直接给用户看）。"""
-
-    source: Path
-    message: str
-
-
-@dataclass(frozen=True, slots=True)
-class Failure:
-    """粘失败的一项，以及失败的原因。"""
 
     source: Path
     message: str
@@ -128,15 +121,13 @@ def copy_into(
     for raw_source in sources:
         source = Path(raw_source)
         if not source.exists():
-            failures.append(Failure(source=source, message="源文件已经不在了。"))
+            failures.append(Failure.at(source, message="源文件已经不在了。"))
             continue
-        if _same_directory(source.parent, destination):
+        if same_directory(source.parent, destination):
             skipped.append(Skipped(source=source, message=f"已经在「{destination.name}」里了。"))
             continue
         if source.is_dir() and paths.is_within(source, destination):
-            failures.append(
-                Failure(source=source, message="不能把文件夹粘进它自己或它自己的子目录。")
-            )
+            failures.append(Failure.at(source, message="不能把文件夹粘进它自己或它自己的子目录。"))
             continue
         if cancelled():
             break
@@ -170,9 +161,7 @@ def _copy_one(root: Path, destination: Path, source: Path, batch: str) -> _Outco
     """把一项复制进 ``destination``。"""
     name = free_name_in(destination, source.name)
     if name is None:
-        return _Outcome(
-            failure=Failure(source=source, message="这个名字太长，再加编号也放不下了。")
-        )
+        return _Outcome(failure=Failure.at(source, message="这个名字太长，再加编号也放不下了。"))
     created = destination / name
     try:
         if source.is_dir():
@@ -184,9 +173,9 @@ def _copy_one(root: Path, destination: Path, source: Path, batch: str) -> _Outco
             shutil.copy2(source, created)
     except OSError as error:
         _remove_partial(created, source.is_dir())
-        message = _copy_error_message(error)
+        message = os_reason(error, action="复制")
         return _Outcome(
-            failure=Failure(source=source, message=message),
+            failure=Failure.at(source, message=message),
             journaled=append_record(
                 root,
                 WriteRecord(
@@ -228,32 +217,6 @@ def _remove_partial(created: Path, is_dir: bool) -> None:
             created.unlink(missing_ok=True)
     except OSError:
         pass  # 清不掉就清不掉，如实留着总比假装删了强（横幅会说明没粘成）
-
-
-def _copy_error_message(error: OSError) -> str:
-    """一句说清为什么没粘成的中文。"""
-    if isinstance(error, shutil.SameFileError):
-        return "源和目标是同一个文件。"
-    reason = error.strerror or str(error)
-    if "File name too long" in reason or "文件名太长" in reason:
-        return "名字太长，这个磁盘放不下。"
-    if "No space left" in reason or "磁盘空间不足" in reason:
-        return "磁盘空间不足。"
-    if isinstance(error, PermissionError):
-        return "没有权限写进这个文件夹。"
-    return f"复制失败：{reason}。"
-
-
-def _same_directory(left: Path, right: Path) -> bool:
-    """两个路径是不是同一个文件夹（**按磁盘上的真实位置**比，不比字面写法）。
-
-    访达的剪贴板里可能是 ``/private/var/…`` 这样的写法，而界面上拿到的是 ``/var/…``；
-    不解析就比不相等，于是「已经在同一目录了」这条判断会失效，粘出一堆重复文件。
-    """
-    try:
-        return left.resolve() == right.resolve()
-    except OSError:
-        return left == right
 
 
 __all__ = [

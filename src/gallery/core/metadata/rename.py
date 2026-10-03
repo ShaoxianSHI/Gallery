@@ -26,6 +26,7 @@ from pathlib import Path
 from gallery.core import paths
 from gallery.core.errors import RenameError
 from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
+from gallery.core.metadata.failures import os_reason
 from gallery.core.metadata.journal import (
     ACTION_RENAME,
     ACTION_UNDO,
@@ -106,12 +107,12 @@ def rename_entry(root: Path, entry: GridEntry, new_name: str) -> RenameResult:
                 source=source,
                 target=target,
                 result=RESULT_FAILED,
-                message=_os_reason(exc),
+                message=os_reason(exc, is_dir=is_dir),
                 is_dir=is_dir,
             ),
         )
         raise RenameError(
-            f"改名失败：{_os_reason(exc)}",
+            f"改名失败：{os_reason(exc, is_dir=is_dir)}",
             path=source,
             detail=repr(exc),
         ) from exc
@@ -160,7 +161,7 @@ def undo_rename_record(root: Path, record: WriteRecord) -> RenameResult:
         source.rename(target)
     except OSError as exc:
         raise RenameError(
-            f"撤销失败：{_os_reason(exc)}",
+            f"撤销失败：{os_reason(exc, is_dir=record.is_dir)}",
             path=source,
             detail=repr(exc),
         ) from exc
@@ -223,14 +224,6 @@ def _reference(path: Path, *, is_dir: bool) -> GridEntry:
     if is_dir:
         return FolderRef.from_path(path)
     return PhotoRef.from_path(path)
-
-
-def _os_reason(exc: OSError) -> str:
-    """把系统错误翻译成用户看得懂的一句话。"""
-    reason = exc.strerror or exc.__class__.__name__
-    if isinstance(exc, PermissionError):
-        return f"没有权限（{reason}）。请检查这个文件是否被其他程序占用或只读。"
-    return f"{reason}。它可能正在被其他程序使用。"
 
 
 __all__ = ["RenameResult", "rename_entry", "undo_rename_record", "validate_name"]

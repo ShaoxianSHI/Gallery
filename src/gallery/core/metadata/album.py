@@ -28,7 +28,6 @@ paste / transfer）都在这里，红线 1 与红线 4 要能被一眼看见（�
 
 from __future__ import annotations
 
-import errno
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -36,6 +35,7 @@ from typing import Final
 from gallery.core import paths
 from gallery.core.errors import AlbumError
 from gallery.core.library.photos import FolderRef
+from gallery.core.metadata.failures import os_reason
 from gallery.core.metadata.journal import (
     ACTION_CREATE,
     RESULT_OK,
@@ -100,7 +100,7 @@ def create_album(root: Path, parent: Path, name: str = DEFAULT_ALBUM_NAME) -> Cr
         ) from error
     except OSError as error:
         raise AlbumError(
-            f"没能新建相册：{_os_reason(error)}",
+            f"没能新建相册：{os_reason(error, is_dir=True)}",
             path=created,
             detail=repr(error),
         ) from error
@@ -131,16 +131,6 @@ def _guard(root: Path, destination: Path) -> None:
         raise AlbumError(f"只能在库里的文件夹中新建相册：{destination}。", path=destination)
     if destination == paths.config_dir(root):
         raise AlbumError("这是 Gallery 自己的配置目录，不能往里建相册。", path=destination)
-
-
-def _os_reason(exc: OSError) -> str:
-    """把系统错误翻译成用户看得懂的一句话（与 ``rename._os_reason`` 同一套说法）。"""
-    reason = exc.strerror or exc.__class__.__name__
-    if isinstance(exc, PermissionError):
-        return f"没有权限（{reason}）。请检查这个文件夹是否只读，或位于没有写权限的位置。"
-    if exc.errno == errno.ENOSPC:
-        return "磁盘空间不足。"
-    return f"{reason}。它可能正在被其他程序使用。"
 
 
 __all__ = ["DEFAULT_ALBUM_NAME", "CreatedAlbum", "create_album"]
