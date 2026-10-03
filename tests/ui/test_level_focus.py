@@ -44,8 +44,6 @@ from gallery.core.library.session import (  # noqa: E402
 )
 from gallery.ui.main_window import MainWindow  # noqa: E402
 
-#: 等待扫描 / 排完的时限。
-
 #: 分组字段：按「所在文件夹」分（只看路径，不读 EXIF，见模块文档）。
 FOLDER_FACET = "folder"
 

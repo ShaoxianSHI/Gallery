@@ -107,5 +107,21 @@ def test_discard_and_clear() -> None:
     assert queue.pop_next() is None
 
 
-def test_discard_missing_path_is_harmless() -> None:
-    ThumbnailQueue().discard(Path("/照片/不存在.jpg"))
+def test_discard_only_drops_the_one_that_was_asked_for() -> None:
+    """``discard`` 丢的是**指定的那一个**，其余请求原样留着。
+
+    原来这条只是调了一下、没有任何断言 —— 而 ``discard`` 就是
+    ``dict.pop(path, None)``，在不在场都不可能抛，所以它守不住任何东西。
+    现在摆两条进去，丢一条，断言**另一条还在**：``discard`` 若被改成
+    ``_pending.clear()``（曾经真有过），这条会红。
+    """
+    queue = ThumbnailQueue()
+    kept = Path("/照片/留下的.jpg")
+    queue.add(kept)
+    queue.add(Path("/照片/丢掉的.jpg"))
+
+    queue.discard(kept)
+    assert len(queue) == 1
+
+    queue.discard(Path("/照片/从来不在队列里.jpg"))
+    assert len(queue) == 1, "丢一个不在场的不该动到别的"
