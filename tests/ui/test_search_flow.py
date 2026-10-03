@@ -46,6 +46,7 @@ from gallery.core.metadata import batch  # noqa: E402
 from gallery.core.places.resolver import LazyPlaceResolver, ResolvedPlace  # noqa: E402
 from gallery.ui import theme  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
+from gallery.ui.menu_style import POPUP_LIST_INSET  # noqa: E402
 from gallery.ui.panels.breadcrumb import ChipButton  # noqa: E402
 from gallery.ui.search_field import (  # noqa: E402
     HEIGHT,
@@ -410,6 +411,90 @@ def test_typing_a_field_name_narrows_the_list(qt_app: QApplication, tmp_path: Pa
     window._search_field._edit.setText("#相机")
 
     assert window._search_field.visible_fields() == ["#相机"]
+    window.close()
+
+
+def _hash_columns(field: SearchField, host: QWidget) -> tuple[int, int]:
+    """输入框里那个 ``#`` 与候选列表里那一列的 ``#`` 各自的横坐标（**宿主**坐标）。
+
+    两边都是「那个字真正起笔的地方」：输入框看 :meth:`QLineEdit.contentsRect` 的左沿，
+    列表看第一行视觉矩形的左沿 —— 看控件的左沿只会量到胶囊边与列表边框，量不到字。
+    """
+    edit = field._edit
+    typed = edit.mapTo(host, edit.contentsRect().topLeft()).x()
+    popup = field._popup
+    first = popup.topLevelItem(0)
+    listed = popup.viewport().mapTo(host, QPointF(0, 0)).x() + popup.visualItemRect(first).left()
+    return typed, listed
+
+
+def _open_candidates(qt_app: QApplication, tmp_path: Path, text: str) -> MainWindow:
+    window = MainWindow(session_base=tmp_path / "会话")
+    window.show()
+    qt_app.processEvents()
+    window._search_field.focus_search()
+    window._search_field._edit.setText(text)
+    qt_app.processEvents()
+    return window
+
+
+def test_the_candidate_hash_lines_up_with_the_typed_one(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """列表里那个 ``#`` 要与输入框里正打着的那个落在**同一条竖线**上。
+
+    胶囊左边那一段是放大镜，文本从它右边起算，而列表原来是照着胶囊的左沿摆的 ——
+    于是两个 ``#`` 错开十八点（实测）。那十八点是放大镜宽度 + 布局间距 + 列表自己
+    那一圈内边距，所以**不能写成常数**：这里量的是两个真字的位置。
+    """
+    window = _open_candidates(qt_app, tmp_path, "#")
+    assert window._search_field.popup_visible()
+
+    typed, listed = _hash_columns(window._search_field, window)
+
+    assert abs(listed - typed) <= 1, (
+        f"两个「#」错开 {listed - typed} 点（输入框 {typed}，列表 {listed}）"
+    )
+    window.close()
+
+
+def test_the_candidate_list_is_only_as_tall_as_its_rows(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """列表底下不许留一截空白。
+
+    高度曾经是「行数 × 26」，而那一档字号下真正的行高是 23 —— 每行多算三点，十七条
+    就在最下面攒出四十来点空白（实测 450 高、内容只有 391）。那一块不是留白，是算错的。
+    """
+    window = _open_candidates(qt_app, tmp_path, "#")
+    popup = window._search_field._popup
+    rows = popup.topLevelItemCount()
+    row_height = popup.sizeHintForRow(0)
+    expected = rows * row_height + POPUP_LIST_INSET * 2
+
+    assert popup.height() == expected, (
+        f"列表高 {popup.height()}，{rows} 行内容该是 {expected} —— "
+        f"底下多出（或少了）{popup.height() - expected} 点"
+    )
+    window.close()
+
+
+def test_the_candidate_list_still_fits_a_short_window(qt_app: QApplication, tmp_path: Path) -> None:
+    """窗口矮到放不下时，列表**不许伸到窗口外面去** —— 这条不能被上面那条挤掉。
+
+    高度是「按行高算」与「夹在窗口以内」里取小的那个，所以这一条才成立。
+    """
+    window = _open_candidates(qt_app, tmp_path, "#")
+    window.resize(700, 200)
+    window._search_field.focus_search()
+    window._search_field._edit.setText("#")
+    qt_app.processEvents()
+
+    popup = window._search_field._popup
+    assert popup.isVisible(), "窗口一变矮，列表就该收起来，而不是悬在窗口外面"
+    assert popup.geometry().bottom() <= window.height(), (
+        f"列表底下伸到了第 {popup.geometry().bottom()} 行，窗口只有 {window.height()} 行"
+    )
     window.close()
 
 

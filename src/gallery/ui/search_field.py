@@ -47,7 +47,7 @@ from gallery.core.library.search import (
     suggestions,
 )
 from gallery.ui import theme
-from gallery.ui.menu_style import popup_list_style
+from gallery.ui.menu_style import POPUP_LIST_INSET, popup_list_style
 from gallery.ui.rename_edit import field_background
 from gallery.ui.theme import AppTheme, rgba
 
@@ -73,9 +73,6 @@ _ICON_STROKE = 1.4
 
 #: 输入区里那一列的字号，与标题文字（13 点）差一档 —— 它是次要控件。
 _FONT_PX = 12
-
-#: 候选列表一行多高。与菜单那一档（``menu_style``）看齐，不另立一套。
-_ROW_HEIGHT = 26
 
 
 class SearchEdit(QLineEdit):
@@ -460,9 +457,17 @@ class SearchField(QWidget):
         # 位置换算到**窗口**坐标（列表是胶囊的兄弟，见 __init__ 那段），
         # 并夹在窗口以内 —— 全屏或贴着底边时它不许跑到屏幕外面去。
         anchor = self.mapTo(self._host, QPoint(0, self.height() + 2))
-        height = min(len(fields) * _ROW_HEIGHT + 8, max(0, self._host.height() - anchor.y()))
+        # 高**按行高算**，不按「行数 × 一个写死的数」：写死的那个数（曾经是 26）
+        # 并不是这一档字号下真正的行高（实测 23），于是最下面多出一截空白 ——
+        # 列表看着比它列出来的那些行高出一块，而用户看不出那一块是干什么的。
+        # 上下各留 :data:`POPUP_LIST_INSET`（边框 + 内边距），正好是视口的上下留白。
+        rows = len(fields) * self._popup.sizeHintForRow(0)
+        height = min(
+            rows + POPUP_LIST_INSET * 2,
+            max(0, self._host.height() - anchor.y()),
+        )
         self._popup.setGeometry(
-            min(anchor.x(), max(0, self._host.width() - WIDTH)),
+            min(self._popup_left(), max(0, self._host.width() - WIDTH)),
             anchor.y(),
             WIDTH,
             height,
@@ -472,6 +477,21 @@ class SearchField(QWidget):
             self._popup.setCurrentItem(items[0])
         self._popup.raise_()
         self._popup.show()
+
+    def _popup_left(self) -> int:
+        """候选列表的左沿（**宿主**坐标）—— 让列表里那个「#」与输入框里那个对齐。
+
+        胶囊左边那一段是放大镜，文本从 :meth:`_edit.contentsRect` 那一处起算，
+        比胶囊左沿往右二十点上下；而列表自己还有一圈边框与内边距（:data:`POPUP_LIST_INSET`）。
+        两边一减才是列表该让开的那一段，**写成常数就等着某天差开**（实测：按常数写，
+        两个「#」正好错开 18 点，而那一段是放大镜的宽度 + 布局间距 + 那一圈内边距，
+        任一处动了，常数就不作数了）。
+
+        宽度夹在窗口以内由调用方管（见 :meth:`_fill_popup`）—— 窗口窄到放不下时，
+        与其让两个「#」错开，不如让列表贴着窗口右边。
+        """
+        text_left = self._edit.mapTo(self._host, self._edit.contentsRect().topLeft())
+        return text_left.x() - POPUP_LIST_INSET
 
     def _close_popup(self) -> None:
         if self._popup.isVisible():
