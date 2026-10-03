@@ -110,6 +110,12 @@ MAX_LAYOUT_MEMO = 32
 #: 拖动距离的兜底值。正常情况取平台自己的数字（见 :func:`_drag_threshold`）。
 _FALLBACK_DRAG_DISTANCE = 10
 
+#: 滚动条范围没覆盖到目标位置时，最多再排几轮（见 :meth:`PhotoGrid._retry_center`）。
+#:
+#: 实测 200 张照片切档后要过三轮事件循环范围才涨到位，给 6 轮留一倍余量。
+#: 它是 0 毫秒定时器，正常情况下第 1 轮就到了 —— 这是「够不够」的保险，不是等待。
+CENTER_ATTEMPTS = 6
+
 
 @dataclass(frozen=True)
 class GridTransition:
@@ -780,19 +786,15 @@ class PhotoGrid(QListView):
             self.setIconSize(QSize(self._applied_edge, self._applied_edge))
             self.setGridSize(cell)
             self.doItemsLayout()
-            index = self.currentIndex()
-            if index.isValid():
-                # **只对已排版的那一批条目有效。** Batched 布局一批只排 64 条，
-                # 超出批次的行 ``visualRect`` 返回 ``QRect(-1, -1, 0, 0)``，
-                # ``scrollTo`` 于是静默什么都不做。实测当前项在第 8、20 行时会滚，
-                # 在第 80 行时不动。
-                #
-                # 这不是缺陷：用户滚到远处去翻看时当前项本就在屏外，这时候**不该**
-                # 把他拽回选中项。行为正好是「附近的选中项重新摆正，远处的不管」。
-                self.scrollTo(index, QAbstractItemView.ScrollHint.PositionAtCenter)
         finally:
             self._laying_out = False
         new_columns = self._first_row_columns()
+        index = self.currentIndex()
+        if index.isValid():
+            # 重试几轮：滚动条范围要等 Qt 的延迟排版跑完才覆盖全部内容（见
+            # :meth:`_retry_center`）。少了这个重试，选中项在很下面时会被摆到
+            # 「当前够得着的最远处」，离正中还差一大截。
+            self._center_on_row(index.row(), new_columns, attempts_left=CENTER_ATTEMPTS)
         self._transition = (
             GridTransition(old_columns, old_cell, new_columns, cell)
             if old_columns > 0 and new_columns > 0
@@ -800,6 +802,62 @@ class PhotoGrid(QListView):
         )
         self._schedule_edge_update()
         self._start_transition(drawn_edge, scroll_from, animate=animate)
+
+    def _center_on_row(self, row: int, columns: int, *, attempts_left: int = 0) -> bool:
+        """把第 ``row`` 行摆到视口正中间（``columns`` 是当前这套布局实际的列数）。
+
+        返回「够得着没有」——够不着时会用 ``attempts_left`` 再排一轮（见
+        :meth:`_retry_center`）。
+
+        **不用 ``scrollTo(PositionAtCenter)``。** 那个方法要问 Qt 问 ``visualRect``，
+        而 Batched 布局一批只排 64 条 —— 超出批次的行 ``visualRect`` 返回
+        ``QRect(-1, -1, 0, 0)``，于是 ``scrollTo`` 静默什么都不做。实测当前项在
+        第 8、20 行时会摆正，在第 80 行就一点反应也没有：用户明明选中了它，
+        切一档之后它却被留在屏幕外。
+
+        这里自己算。格子在「``columns`` 列、每格 ``cell``」里的位置本来就是确定
+        的（:class:`GridTransition` 用的是同一条算术），算出来夹进滚动条范围即可，
+        **与那一行有没有被排版过无关**。
+
+        ``columns`` 量不出来时（条目不满一行，见 :meth:`_first_row_columns`）退回
+        :attr:`_laid_out_columns` —— 那时最多只有一行，居中与否其实看不出差别。
+        """
+        if columns <= 0:
+            columns = max(1, self._laid_out_columns)
+        cell_height = self.gridSize().height()
+        top = (row // columns) * cell_height
+        bar = self.verticalScrollBar()
+        wanted = top + cell_height // 2 - self.viewport().height() // 2
+        target = max(bar.minimum(), min(bar.maximum(), wanted))
+        # 自己发起的滚动不算「用户滚了」：``scrollContentsBy`` 会拿这个标志去判断
+        # 要不要叫停正在跑的过渡（见 :meth:`_on_transition_step`）。
+        self._driving_scroll = True
+        try:
+            bar.setValue(target)
+        finally:
+            self._driving_scroll = False
+        # 过渡每帧都重读 ``_scroll_to``，所以这里改了它下一帧就跟着走。
+        self._scroll_to = target
+        if target == wanted:
+            return True
+        if attempts_left > 0:
+            self._retry_center(row, columns, attempts_left - 1)
+        return False
+
+    def _retry_center(self, row: int, columns: int, attempts_left: int) -> None:
+        """范围还没涨到位就再来一轮（Qt 的延迟排版是分几轮跑完的）。
+
+        **为什么需要**：Batched 布局的滚动条范围一开始只覆盖**已排版**的那一批。
+        实测 200 张照片切到大档后，``maximum()`` 刚切完还是 4272（16 行），
+        要等 Qt 把延迟排版跑完才涨到 15050（50 行）—— 中间要过三轮事件循环。
+        在那之前夹进范围，第 80 行只会被摆到 4272，离正中还差着一大截。
+
+        过渡跑着的时候这里改 ``_scroll_to`` 就够了：:meth:`_on_transition_step`
+        每帧重读它。过渡已经结束的话就地落位，也不会更难看。
+        """
+        QTimer.singleShot(
+            0, self, lambda: self._center_on_row(row, columns, attempts_left=attempts_left)
+        )
 
     def _start_transition(self, drawn_edge: float, scroll_from: int, *, animate: bool) -> None:
         """发一次切档过渡（``animate`` 为假就直接落位）。
@@ -857,12 +915,25 @@ class PhotoGrid(QListView):
             self._driving_scroll = False
         self.viewport().update()
 
-    def _settle_transition(self) -> None:
+    def _settle_transition(self, *, restore_scroll: bool = True) -> None:
         """过渡收尾：画面回到「就是逻辑几何」，绘制尺寸与几何对齐。
+
+        ``restore_scroll=False`` 是给「被用户打断」那条路用的：用户自己滚到了某处，
+        就该留在那里，别把他拽回 ``_scroll_to``。
+
+        **要恢复滚动目标**，因为动画可能一步都没走完就被判了落位（时长为 0、
+        或者连按两档）—— 那时滚动条还停在**起点**上。不恢复的话，「关掉动画再跑
+        一遍」这个 A/B 手法会把视图留在一个莫名其妙的位置（实测切档后停在 0）。
 
         **取消也走这里。** 中途被叫停时不该停在半空 —— 那些格子用的还是旧布局算
         出来的位置，而逻辑几何早就是终值了；停在半空等于画面在说一件假话。
         """
+        if restore_scroll:
+            self._driving_scroll = True
+            try:
+                self.verticalScrollBar().setValue(self._scroll_to)
+            finally:
+                self._driving_scroll = False
         self._transition = None
         self._delegate.set_transition(None, 1.0)
         self._delegate.set_draw_edge(float(self._applied_edge))
@@ -877,11 +948,13 @@ class PhotoGrid(QListView):
         却选中**逻辑上的另一格**。与其在命中测试上做一套反向映射（又是一处每帧
         都要对得上的算术），不如让那一刻的画面先归位 —— 点击落在哪就是哪，
         而 160ms 的余下部分少一帧动画没人会数。
+
+        滚动位置**不动**：用户滚到哪儿就留在哪儿。
         """
         if self._transition_anim.state() == QAbstractAnimation.State.Stopped:
             return
         self._transition_anim.stop()
-        self._settle_transition()
+        self._settle_transition(restore_scroll=False)
 
     def _schedule_edge_update(self) -> None:
         if abs(self._applied_edge - self._emitted_edge) < EDGE_REFRESH_THRESHOLD:

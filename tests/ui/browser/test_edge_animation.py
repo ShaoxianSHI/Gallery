@@ -41,7 +41,6 @@ from PySide6.QtCore import (  # noqa: E402
 from PySide6.QtGui import QColor, QImage, QPainter, QPixmap  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
-    QAbstractItemView,
     QApplication,
     QStyleOptionViewItem,
 )
@@ -239,12 +238,13 @@ def test_the_grid_scrolls_into_place_instead_of_jumping(
     assert len(set(samples)) > 3, f"只取到 {sorted(set(samples))}，这是一次跳变不是过渡"
     assert samples == sorted(samples), f"回退了一下：{samples}"
 
-    # 终点**独立地问一次 Qt**，不读 ``endValue``（那是被测代码自己的输出，拿它当
-    # 期望值就是自己验自己）。过渡已跑完、布局已定，``PositionAtCenter`` 是绝对
-    # 定位，再要一次拿到的就是它认可的位置。
-    grid.scrollTo(grid.currentIndex(), QAbstractItemView.ScrollHint.PositionAtCenter)
-    settle(SLICE_SECONDS)
-    assert grid.verticalScrollBar().value() == samples[-1], "没落在 scrollTo 认可的位置上"
+    # 终点直接看**结果**：跑完之后当前项那一行就该在视口正中间。
+    # 不拿 ``scrollTo`` 当基准 —— 那正是被换掉的东西。
+    # 容 1 像素：算中线要除两次（格高、视口高），整数除法落在哪一头就差这一像素，
+    # 肉眼完全看不出来；拿它当严格相等只会得到一条测不出毛病的红。
+    cell_rect = grid.visualRect(grid.model().index(grid.current_row(), 0))
+    middle = grid.viewport().height() // 2
+    assert abs(cell_rect.center().y() - middle) <= 1
 
 
 def test_a_scroll_start_beyond_the_new_range_is_clamped(
@@ -270,10 +270,10 @@ def test_a_scroll_start_beyond_the_new_range_is_clamped(
 def test_a_scroll_of_your_own_cancels_the_transition(
     qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
 ) -> None:
-    """过渡跑着的时候用户自己滚了，动画必须立刻让位。
+    """过渡跑着的时候用户自己滚了，动画必须立刻让位，而且**尊重他滚到的那儿**。
 
     不让位的话，动画会一边往终点走、一边被这次滚动推着改终点，最后落到一个谁也
-    没指定的位置上。
+    没指定的位置上。而收尾时要是把滚动拽回 ``_scroll_to``，用户刚滚的地方就白滚了。
     """
     grid = scrollable_grid(qt_app, tmp_path)
     settle(SETTLE_SECONDS)
@@ -281,10 +281,13 @@ def test_a_scroll_of_your_own_cancels_the_transition(
     grid.set_target_edge(THUMBNAIL_SIZES[2])
     assert grid._transition_anim.state() == QAbstractAnimation.State.Running
 
-    grid.verticalScrollBar().setValue(grid.verticalScrollBar().value() - 40)
+    bar = grid.verticalScrollBar()
+    chosen = bar.value() - 40
+    bar.setValue(chosen)
     settle(SLICE_SECONDS)
 
     assert grid._transition_anim.state() == QAbstractAnimation.State.Stopped
+    assert bar.value() == chosen, "用户滚到哪儿就得留在哪儿"
 
 
 def test_resizing_does_not_scroll_the_grid_around(
@@ -493,3 +496,93 @@ def test_the_transition_uses_the_measured_columns_not_the_intended_ones(
     assert len(calls) == 2, f"该只量两次（改布局的前/后），实际量了 {len(calls)} 次"
     assert transition.old_columns == calls[0] - 1, "旧端该用第一次量到的那个值"
     assert transition.new_columns == calls[1], "新端该用第二次量到的那个值"
+
+
+# ---- 切档后把选中项摆到正中 ------------------------------------------------
+
+
+def test_a_selection_far_down_still_gets_centered(
+    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+) -> None:
+    """选中项在第 80 行（远超 Batched 那一批）也要摆到正中。
+
+    这是换成自己算的原因：``scrollTo`` 要问 Qt 问 ``visualRect``，而 Batched 布局
+    一批只排 64 条，超出批次的行它静默什么都不做 —— 用户明明选中了第 80 行，
+    切一档之后它被留在屏幕外。
+    """
+    grid = make_grid(qt_app, tmp_path, 200)
+    grid.select_row(80, ensure_visible=False)
+    settle(SETTLE_SECONDS)
+
+    grid.set_target_edge(THUMBNAIL_SIZES[2])
+    settle(SETTLE_SECONDS)
+
+    assert grid.current_row() == 80, "选中项本身不该被动过"
+    cell_rect = grid.visualRect(grid.model().index(80, 0))
+    assert cell_rect.isValid(), "选中项得在视口里"
+    middle = grid.viewport().height() // 2
+    assert abs(cell_rect.center().y() - middle) <= 1
+
+
+def test_a_selection_on_the_last_row_is_centered_not_pinned_to_the_end(
+    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+) -> None:
+    """内容比视口短时，「摆到正中」算出来是个负数 —— 必须夹到范围里。
+
+    夹不住的话过渡会照着一个越界的目标插值，末几帧被 Qt 压平：动画先走一段、
+    末段突然不动，看着像卡住了。**滚动条自己也会夹**，所以从 ``value()`` 上完全
+    看不出来 —— 只能查那个目标值本身。
+    """
+    grid = make_grid(qt_app, tmp_path, 200)
+    grid.select_row(0, ensure_visible=False)
+    settle(SETTLE_SECONDS)
+
+    grid.set_target_edge(THUMBNAIL_SIZES[2])
+    settle(SETTLE_SECONDS)
+
+    bar = grid.verticalScrollBar()
+    assert grid._scroll_to == bar.minimum(), f"目标值 {grid._scroll_to} 越界了"
+    assert bar.value() == bar.minimum()
+    assert grid.visualRect(grid.model().index(0, 0)).top() >= 0, "第一行该完整可见"
+
+
+def test_a_selection_on_the_last_row_is_not_pushed_off_screen(
+    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+) -> None:
+    """末行选不中时，夹到下界就好 —— 别把它硬按到屏幕外面。"""
+    grid = make_grid(qt_app, tmp_path, 6)
+    grid.select_row(5, ensure_visible=False)
+    settle(SETTLE_SECONDS)
+
+    grid.set_target_edge(THUMBNAIL_SIZES[2])
+    settle(SETTLE_SECONDS)
+
+    bar = grid.verticalScrollBar()
+    assert grid._scroll_to <= bar.maximum(), "目标值越界了"
+    assert grid.visualRect(grid.model().index(5, 0)).bottom() <= grid.viewport().height()
+
+
+def test_the_layout_is_exactly_the_same_whether_or_not_it_animates(
+    qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
+) -> None:
+    """**动画只改「画在哪儿」，不改变任何布局结果。**
+
+    这条是整件事的地基：几何、列数、每格的逻辑位置在切换那一刻就是终态，动画
+    只是委托 ``paint`` 里多出来的一个偏移。于是「关掉动画比一遍」永远是安全的
+    A/B 手法，也意味着修布局缺陷（比如 :func:`grid._center_on_row`）与动画无关。
+    """
+    animated = scrollable_grid(qt_app, tmp_path)
+    settle(SETTLE_SECONDS)
+    animated.set_target_edge(THUMBNAIL_SIZES[2])
+    settle(SETTLE_SECONDS)
+
+    plain = scrollable_grid(qt_app, tmp_path)
+    settle(SETTLE_SECONDS)
+    plain._transition_anim.setDuration(0)  # 0 毫秒 = 立即落位，等于没有过渡
+    plain.set_target_edge(THUMBNAIL_SIZES[2])
+    settle(SETTLE_SECONDS)
+
+    assert animated.gridSize() == plain.gridSize()
+    assert animated._first_row_columns() == plain._first_row_columns()
+    assert animated.icon_edge == plain.icon_edge
+    assert animated.verticalScrollBar().value() == plain.verticalScrollBar().value()
