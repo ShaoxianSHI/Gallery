@@ -27,6 +27,7 @@ from gallery.core.library.scanner import (
     iter_entries,
     iter_photos,
 )
+from gallery.core.library.search import RESULT_LIMIT, SearchCondition, SearchOutcome
 from gallery.core.library.watcher import LibraryChange, LibraryWatcher
 from gallery.core.media.decode import RasterImage, decode_rgba
 from gallery.core.media.thumbs import ThumbnailCache
@@ -52,6 +53,10 @@ if TYPE_CHECKING:
 #: 与 exiftool 自己的批次（``batch.BATCH_SIZE``）对齐：攒满一批正好起一次子进程，
 #: 进度也能一跳一跳地报，既不空转也不刷屏。
 PLACE_PASS_BATCH: Final = 400
+
+#: 写文件表时一批多少张。太小则语句条数多，太大则一次占用索引锁的时间长 ——
+#: 那一把锁是界面读索引时也要用的（与 :data:`PLACE_PASS_BATCH` 同一个道理）。
+PHOTO_INDEX_BATCH: Final = 2000
 
 
 @dataclass(frozen=True, slots=True)
@@ -366,6 +371,86 @@ class Library:
         （ADR 0010）。纯读缓存，不碰 EXIF，因此可以放在主线程上调用。
         """
         return self.facet_index.lookup(refs)
+
+    # ---- 检索（ADR 0026）-----------------------------------------------------
+
+    def indexed_photos(self) -> int:
+        """索引的文件表里有多少行。**用来回答「还有没有活干」**（见 :meth:`index_photos`）。"""
+        return self.facet_index.count_photos()
+
+    def remember_photos(self, refs: Sequence[PhotoRef]) -> int:
+        """刚变化的那几张立刻写进文件表（监听器那条路，ADR 0013）。
+
+        与 :meth:`index_photos` 同一个写入口，只是**只写这几张**：等整库那一遍
+        跑完再补的话，用户刚放进来的照片在他这次检索里就是不存在的（ADR 0026 决策 5）。
+        """
+        return self.facet_index.store_photos(refs, root=self._root)
+
+    def index_photos(
+        self,
+        *,
+        should_cancel: Callable[[], bool] | None = None,
+        on_work: Callable[[int], None] | None = None,
+        on_progress: Callable[[int], None] | None = None,
+    ) -> int:
+        """把整个库的照片写进索引的文件表，返回新写了多少行。
+
+        **只有真的有活干才起**（文件表一行都没有），与 :meth:`resolve_places`
+        同一个套路（ADR 0010、ADR 0026 决策 5）：打开库时顺手填好，之后每次检索
+        就只是一次查表。否则用户第一次搜索看到的是「一条都没有」，而那不是答案，
+        是索引还没建。
+
+        幂等，第二次几乎不要钱：``(大小, 修改时间)`` 对得上的行根本不写。
+
+        :param on_work: ``(这次要写多少行)``，**只在真的找到活干时叫一次** ——
+            已经建好索引的库这一遍是空跑，界面据此不该报进度。
+        :param on_progress: ``(已扫过)``。总数事先不知道，于是只报已处理。
+        """
+        index = self.facet_index
+        if index.count_photos() > 0:
+            return 0
+        written = 0
+        announced = False
+        scanned = 0
+        batch: list[PhotoRef] = []
+        for ref in self.iter_photos(should_cancel=should_cancel):
+            scanned += 1
+            batch.append(ref)
+            if len(batch) < PHOTO_INDEX_BATCH:
+                continue
+            if should_cancel is not None and should_cancel():
+                break
+            written += index.store_photos(batch, root=self._root)
+            batch.clear()
+            if not announced:
+                announced = True
+                if on_work is not None:
+                    on_work(scanned)
+            if on_progress is not None:
+                on_progress(scanned)
+        if batch and not (should_cancel is not None and should_cancel()):
+            written += index.store_photos(batch, root=self._root)
+        if on_progress is not None:
+            on_progress(scanned)
+        return written
+
+    def search_photos(
+        self, conditions: Sequence[SearchCondition], *, limit: int = RESULT_LIMIT
+    ) -> SearchOutcome:
+        """按这些条件检索**整个库**，只读。
+
+        :raises IndexUnavailableError: 索引没落盘（多半是照片所在的磁盘不允许写缓存），
+            或者 :meth:`index_photos` 那一遍还没跑完 —— 界面据此说清是哪一件，
+            而不是让用户对着一个空结果猜。
+        """
+        outcome = self.facet_index.search(conditions, limit=limit)
+        if len(outcome.refs) < outcome.total:
+            return outcome  # 截断了：总数只能照索引说的报
+        # 没截断时总数可以给准的：**索引里可能留着文件早已被删掉的那些行**
+        # （监听器还没来得及清、或这一遍压根没起过），把它们算进「共 N 张」
+        # 就是在说一件不存在的事。逐条问一次还在不在 —— 结果集顶多几千条。
+        alive = [ref for ref in outcome.refs if ref.path.exists()]
+        return SearchOutcome(refs=alive, total=len(alive))
 
     def resolve_photo_place(
         self,

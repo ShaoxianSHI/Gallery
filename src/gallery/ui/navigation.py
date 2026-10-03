@@ -29,6 +29,10 @@ ENTRY_KIND_PATH = "path"
 #: :data:`EntryKey` 的第一段：分组卡片（按字段 + 组标识认）。
 ENTRY_KIND_GROUP = "group"
 
+#: :data:`LevelKey` 里插在目录层前面的一段：**正在看检索出来的照片**（ADR 0026）。
+#: 它不是目录，因此单立一种，不与相册或分组混用。
+ENTRY_KIND_SEARCH = "search"
+
 
 def breadcrumb_parts(root: Path, current: Path) -> list[tuple[str, Path]]:
     """面包屑：``(显示名, 路径)``，从库根一直到当前层。
@@ -63,6 +67,7 @@ def level_key(
     directory: Path | None = None,
     *,
     group: tuple[str, str] | None = None,
+    conditions: Sequence[tuple[str, str]] = (),
 ) -> LevelKey:
     """当前这一层的标识。
 
@@ -70,12 +75,20 @@ def level_key(
         （前者有相册卡片），于是是两层，不能互相顶掉对方的记忆。
     :param directory: 相册模式下当前所在目录。
     :param group: 正在看的分组，``(字段 id, 组标识)``；不在分组里就传 ``None``。
+    :param conditions: 已生效的筛选条件，每条是 ``(字段 id, 用户敲的原文)``
+        （见 ``core.library.search.SearchCondition.identity``）。**搜索结果是一层**，
+        于是它也得进这个标识：否则「加一条条件」会被当成「还是这一层」，
+        选中那一格的行为就与 ADR 0025 决策 6 说的「换了层就谁也不选」对不上了。
 
     分组那一层要连**它是从哪一层进来的**一起算进去：相册模式下 ``旅行/2024`` 与
     ``家庭/2024`` 都可能按月份分出一个 ``2024-05``，两者是不同的两层，只是碰巧
     组标识相同。只按组标识记，回来时就会串到别的相册里去。
     """
     base: LevelKey = ("flat",) if browse_mode == BROWSE_MODE_FLAT else ("albums", str(directory))
+    if conditions:
+        # 检索是**横跨整个库**的（ADR 0026 决策 1），因此它不属于任何一个目录层：
+        # 底下那些目录各是各的，全算进去只会让两套毫不相干的条件撞出同一个标识。
+        base = (ENTRY_KIND_SEARCH, *base, *conditions)
     if group is None:
         return base
     facet, key = group
@@ -117,6 +130,7 @@ def row_of_entry_key(entries: Sequence[GridEntry], key: EntryKey) -> int:
 __all__ = [
     "ENTRY_KIND_GROUP",
     "ENTRY_KIND_PATH",
+    "ENTRY_KIND_SEARCH",
     "EntryKey",
     "LevelKey",
     "breadcrumb_parts",

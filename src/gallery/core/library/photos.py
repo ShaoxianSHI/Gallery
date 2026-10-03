@@ -47,6 +47,24 @@ def format_label(suffix: str) -> str:
     return _FORMAT_LABELS.get(suffix.lower(), suffix.lstrip(".").upper() or "未知")
 
 
+def normalize_suffix(text: str) -> str | None:
+    """用户敲的那个格式名 → 扩展名（``jpg`` / ``JPEG`` / ``.jpg`` 都认成 ``.jpg``）。
+
+    ``None`` 表示认不出来 —— 与 :func:`format_label` 恰好互逆，把两张表合成一张，
+    于是「格式叫什么」只有一处说了算（搜索的「#文件格式」条件与分组的格式字段共用它）。
+    """
+    cleaned = text.strip().casefold().lstrip(".")
+    if not cleaned:
+        return None
+    suffix = f".{cleaned}"
+    if suffix in SUPPORTED_SUFFIXES:
+        return suffix
+    for known, label in _FORMAT_LABELS.items():
+        if label.casefold() == cleaned.casefold():
+            return known
+    return None
+
+
 def is_supported_photo(path: Path) -> bool:
     """按扩展名判断是否为 v1 支持的照片。不检查文件是否真的能解码。"""
     return Path(path).suffix.lower() in SUPPORTED_SUFFIXES
@@ -160,4 +178,5 @@ __all__ = [
     "PhotoRef",
     "format_label",
     "is_supported_photo",
+    "normalize_suffix",
 ]

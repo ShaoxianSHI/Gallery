@@ -57,6 +57,13 @@ from gallery.core.library.facade import Library, PlacePass
 from gallery.core.library.groups import SortOrder, build_groups, sort_photos
 from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
 from gallery.core.library.scanner import ScanReport, describe_entry
+from gallery.core.library.search import (
+    RESULT_LIMIT,
+    ParsedInput,
+    SearchCondition,
+    make_condition,
+    parse_input,
+)
 from gallery.core.library.session import (
     BROWSE_MODE_ALBUMS,
     BROWSE_MODE_FLAT,
@@ -105,6 +112,10 @@ from gallery.ui.navigation import (
 from gallery.ui.panels.breadcrumb import BreadcrumbBar
 from gallery.ui.panels.metadata import MetadataPanel
 from gallery.ui.panels.welcome import WelcomeView
+from gallery.ui.search_field import HEIGHT as SEARCH_FIELD_HEIGHT
+from gallery.ui.search_field import MARGIN_RIGHT as SEARCH_FIELD_MARGIN_RIGHT
+from gallery.ui.search_field import WIDTH as SEARCH_FIELD_WIDTH
+from gallery.ui.search_field import SearchField
 from gallery.ui.tasks import TaskContext, TaskRunner
 from gallery.ui.thumbs.pipeline import ThumbnailPipeline
 from gallery.ui.title_bar import HEIGHT as TITLE_BAR_HEIGHT
@@ -293,6 +304,18 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         #: 扫描本身出过问题（跳过的目录 / 读不了的文件）。它比「这里是空的」更该说。
         self._scan_issue = False
         self._exiftool_available: bool | None = None  # 探测一次就够
+        # ---- 搜索（ADR 0026）-------------------------------------------------
+        #: 已生效的筛选条件，按录入顺序。**空列表 = 不在搜索**（普通的一层）。
+        self._conditions: list[SearchCondition] = []
+        #: 上一次检索命中了多少张（面包屑上那个「搜索结果（128）」；``None`` = 还没查过）。
+        self._search_total: int | None = None
+        self._search_job: int | None = None
+        #: 「把整库的照片写进索引」那一遍的任务（见 ``_maybe_start_photo_index``）。
+        self._index_job: int | None = None
+        #: 已经起过那一遍的库。**是集合不是单个**：来回切库不该把同一个库再起一遍空跑。
+        self._index_roots: set[Path] = set()
+        #: 横幅上正占着「正在建立检索索引…」这条进度。
+        self._index_notice_text: str | None = None
         #: 窗口顶边那一条是不是已经归我们了（见 ``theme.unify_title_bar``）。
         #: 没归我们（例如 Linux）就照旧用 ``setWindowTitle``，不摆 ``TitleBar``。
         self._owns_title_bar = False
@@ -381,6 +404,9 @@ class MainWindow(WriteOpsMixin, QMainWindow):
 
         self._breadcrumb = BreadcrumbBar()
         self._breadcrumb.path_requested.connect(self._on_breadcrumb_requested)
+        self._breadcrumb.condition_removed.connect(self._on_condition_removed)
+        # 标题文字与 ⌘R 的输入框都要给右上角那块让出来，否则长相册名会从它底下穿过去。
+        self._title_bar.reserve_right(SEARCH_FIELD_WIDTH + 2 * SEARCH_FIELD_MARGIN_RIGHT)
 
         self._grid_page = QWidget()
         self._grid_page.setStyleSheet(_BANNER_STYLE)
@@ -410,6 +436,16 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         detail_layout.addWidget(self._panel)
         self._stack.addWidget(self._detail_page)
         self.setCentralWidget(self._stack)
+
+        # 搜索框**最后建**：它要压在中央控件之上（候选列表画在窗口内容那一段，
+        # 而 Qt 按创建顺序叠兄弟控件 —— 先建的那个被后建的盖住）。
+        # 摆位同样由 ``_layout_title_bar`` 负责，那里先算高度再决定要不要摆它。
+        self._search_field = SearchField(self)
+        self._search_field.submitted.connect(self._on_search_submitted)
+        self._search_field.dismissed.connect(self._on_search_dismissed)
+        self._search_field.editing_changed.connect(self._on_search_active_changed)
+        self._search_field.hide()
+
         # 标题栏那一行第一次有话可说：还没打开库，所以是「Gallery」（ADR 0025 决策 4）。
         self._refresh_title()
         # 刻意不建状态栏：底部那一条只是为了放扫描进度、照片尺寸、缩放百分比，
@@ -572,9 +608,31 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._quit_action.setShortcut(QKeySequence.StandardKey.Quit)
         self._quit_action.triggered.connect(self.close)
 
+        # ⌘F 与访达一致：不是弹一个对话框，是**把光标放进标题栏那个胶囊**。
+        # 检索的那一套全在窗口顶上（ADR 0026），弹窗等于把界面挪到别处去。
+        self._search_action = QAction("搜索…", self)
+        self._search_action.setShortcut(QKeySequence("Ctrl+F"))
+        self._search_action.triggered.connect(self.focus_search)
+        # **必须挂到窗口上**（理由见 ``_reveal_action`` 那段）才按得出来。
+        self.addAction(self._search_action)
+
+        # 条件是临时的，但「我刚才搜的那一串」不该靠记忆留着 —— 一条命令清光它。
+        # 没有条件时整条**不出现**（不是置灰）：菜单里那个位置平时就该是空的。
+        self._clear_search_action = QAction("清除搜索条件", self)
+        self._clear_search_action.triggered.connect(self.clear_search_conditions)
+
         file_menu = self.menuBar().addMenu("文件")
         file_menu.addAction(self._open_action)
         self._recent_menu = file_menu.addMenu("最近打开")
+        file_menu.addSeparator()
+        # 「搜索…」单独成一段：它是窗口顶上那一个胶囊的入口，与「往库里放东西」
+        # （新建相册、改名、移到废纸篓）不是一族。
+        file_menu.addAction(self._search_action)
+        # 「清除搜索条件」没有条件时**整条不出现**（``QAction.setVisible`` 就是
+        # 「不进菜单」），与 ADR 0014 决策 4 那条取向一致：不该出现的一条摆着置灰，
+        # 只会让人以为它此刻还能点什么。
+        self._clear_search_action.setVisible(False)
+        file_menu.addAction(self._clear_search_action)
         file_menu.addSeparator()
         file_menu.addAction(self._new_album_action)
         file_menu.addAction(self._rename_action)
@@ -877,7 +935,11 @@ class MainWindow(WriteOpsMixin, QMainWindow):
                 self._banner.hide()
             return
         self._level_notice = True
-        if self._group_view is not None:
+        if self._conditions:
+            # 检索没命中时**不要说「没有找到可显示的照片，支持 JPEG…」**：
+            # 那个格式清单与此刻发生的事毫无关系，用户会以为自己的文件格式不对。
+            self._show_banner("这些筛选条件下没有照片。")
+        elif self._group_view is not None:
             self._show_banner("这个分组里没有照片了。")
         elif self._browse_mode == BROWSE_MODE_ALBUMS:
             self._show_banner("这个文件夹里既没有子文件夹，也没有可显示的照片。")
@@ -919,8 +981,9 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._facet_values = payload if isinstance(payload, dict) else {}
         self._clear_progress_notice()
         self._apply_ordering()
-        # 这一层读完了，才轮到整库那一遍（见 _maybe_start_place_pass 里的理由）。
+        # 这一层读完了，才轮到整库那两遍（见 _maybe_start_place_pass 里的理由）。
         self._maybe_start_place_pass()
+        self._maybe_start_photo_index()
 
     def _on_facets_failed(self, generation: int, message: str) -> None:
         if generation != self._generation:
@@ -929,6 +992,7 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._show_banner(f"读取元数据失败，按默认顺序显示：{message}")
         self._apply_ordering()
         self._maybe_start_place_pass()
+        self._maybe_start_photo_index()
 
     def _apply_ordering(self) -> None:
         """把当前这一层按分组 / 排序重排一次，然后一次性摆到网格上。"""
@@ -1131,6 +1195,8 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         if self._detail_job is not None:
             self._runner.cancel(self._detail_job)
             self._detail_job = None
+        self._cancel_search()
+        self._cancel_photo_index()
         if self._pipeline is not None:
             self._pipeline.shutdown()
             self._pipeline.deleteLater()
@@ -1140,6 +1206,10 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._library = None
         self._group_view = None
         self._facet_values = {}
+        # 条件是**临时的**（ADR 0026 决策 9）：换库之后还留着上一座库的那几枚胶囊，
+        # 用户看到的检索结果属于一个已经关掉的文件夹。
+        self._conditions.clear()
+        self._search_total = None
 
     # ---- 扫描 --------------------------------------------------------------
 
@@ -1147,11 +1217,17 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         """按当前浏览方式列出内容：平铺模式递归整库，相册模式只列当前一层。
 
         已经进入某个分组时不再扫盘 —— 这一组是上一次分组算出来的，直接铺开即可。
+
+        **有筛选条件时走检索那条路**（ADR 0026 决策 7）：结果是横跨整个库的，
+        与当前在哪一层无关。
         """
         library = self._library
         if library is None:
             return
-        if self._group_view is not None:
+        if self._conditions:
+            # 搜索优先于分组：分组那一族是「这一层里怎么归拢」，而检索结果是**一层**。
+            self._start_search(library)
+        elif self._group_view is not None:
             self._start_group_listing(library)
         elif self._browse_mode == BROWSE_MODE_ALBUMS:
             self._start_level_scan(library)
@@ -1276,6 +1352,257 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._refresh_thumbnail_window()
         self._start_facet_read()
         self._maybe_start_place_pass()
+        self._maybe_start_photo_index()
+
+    # ---- 检索（ADR 0026）------------------------------------------------------
+
+    def _start_search(self, library: Library) -> None:
+        """按已生效的条件检索整个库，把命中的照片攒进这一层。
+
+        **索引没建全时先把它建起来**（ADR 0026 决策 5）：否则用户看到的是「一条都没有」，
+        而那不是答案，是索引还没建。那一遍跑完会自己重跑这次检索（见
+        :meth:`_on_photo_index_done`），所以这一轮什么都不做就算数。
+        """
+        if library.indexed_photos() == 0:
+            self._maybe_start_photo_index()
+            return
+        generation = self._generation
+        conditions = tuple(self._conditions)
+
+        def work(context: TaskContext) -> object:
+            outcome = library.search_photos(conditions, limit=RESULT_LIMIT)
+            refs = outcome.refs
+            # 与扫描一样**分批送回**（``_on_scan_batch`` 直接吃这个形状）：结果可能有几千条，
+            # 攒齐再一次给出去，中间那段宁可留白（横幅会说明在读什么）。
+            for start in range(0, len(refs), SCAN_BATCH_SIZE):
+                context.progress(tuple(refs[start : start + SCAN_BATCH_SIZE]))
+            return outcome.total
+
+        self._search_job = self._runner.submit(
+            work,
+            on_progress=partial(self._on_scan_batch, generation),
+            on_result=partial(self._on_search_done, generation),
+            on_error=partial(self._on_search_failed, generation),
+        )
+
+    def _on_search_done(self, generation: int, payload: object) -> None:
+        """检索完了，**接着走与扫描完全相同的那段收尾**。
+
+        facet 补齐、分组排序、缩略图预取、焦点恢复、空层提示、监听增量，一样都不少
+        （ADR 0026 决策 7）—— 另写一条平行路径才是 bug 的来源。
+        """
+        if generation != self._generation:
+            return
+        self._search_job = None
+        total = payload if isinstance(payload, int) else 0
+        # 命中数变了要刷新面包屑：它就写在那枚「搜索结果（128）」里。
+        if total != self._search_total or self._search_total is None:
+            self._search_total = total
+            self._update_breadcrumb()
+        self._on_scan_done(generation, ScanReport())
+
+    def _on_search_failed(self, generation: int, message: str) -> None:
+        if generation != self._generation:
+            return
+        self._search_job = None
+        self._search_total = 0
+        self._update_breadcrumb()
+        self._show_banner(f"检索没能完成：{message}")
+        self._apply_ordering()  # 把这一层按「没有结果」收尾，界面不至于卡在空白上
+
+    def _cancel_search(self) -> None:
+        """作废在途的检索（换层、换库、关窗时）。"""
+        if self._search_job is not None:
+            self._runner.cancel(self._search_job)
+            self._search_job = None
+
+    def _on_search_submitted(self, raw: str) -> None:
+        """搜索框里回车了：把这一串变成一条条件，然后重新列出这一层。
+
+        三种「提交了但没东西可提交」，各自安静地退开：
+
+        - 空串（回车了两下）；
+        - 只敲了字段名（``#相机``）—— 那是补全，不是条件；
+        - 值写坏了（``#ISO abc``）—— **这一种要说一句话**，用户以为条件生效了。
+        """
+        parsed = parse_input(raw)
+        condition = None if parsed is None else make_condition(parsed)
+        if condition is None:
+            self._warn_unusable_input(parsed)
+            return
+        if self._library is None:
+            # 没有库的时候收下这条条件是**悄悄的**：面包屑那一行压根不显示，
+            # 用户看不见自己敲了什么，换库时它又被清掉 —— 与其这样，
+            # 不如说一句「还没有库可搜」。
+            self._show_banner("先打开一个照片文件夹，再搜索。")
+            return
+        self._conditions.append(condition)
+        self._warn_metadata_without_exiftool(condition)
+        self._apply_conditions()
+
+    def _warn_unusable_input(self, parsed: object) -> None:
+        """没提交成的一条输入，值不值得说一句。
+
+        只说「值写坏了」的那一种（``#ISO abc``）：还在挑字段（``#相机``）不是毛病，
+        空串也不是 —— 每一句多余的提示都在教用户忽略横幅。
+        """
+        if not isinstance(parsed, ParsedInput) or parsed.selecting or parsed.field is None:
+            return
+        field = parsed.field
+        self._show_banner(
+            f"「{field.label}」这一栏要一个值，例如 {field.hint or '关键词'}。"
+            "不支持的说法不会变成一条筛选条件。"
+        )
+
+    def _warn_metadata_without_exiftool(self, condition: SearchCondition) -> None:
+        """提交了一条要读 EXIF 才读得到的条件，而 exiftool 不在。
+
+        与 :meth:`_unavailable_hint` 同一个取向：**降级可以，假装没降级不行**。
+        搜「相机」一条都没有，用户只会以为自己的照片没写过相机。
+        """
+        if not self._has_exiftool or not condition.field.needs_metadata:
+            return
+        self._show_banner(
+            f"没装 exiftool，「{condition.field.label}」这个字段读不出来"
+            "（文件名、相册、格式、大小不受影响）。安装后即可使用：brew install exiftool"
+        )
+
+    def _on_search_dismissed(self) -> None:
+        """搜索框里按 Esc 且里面是空的：与 ``Esc`` 走同一条路（撤一条条件 / 返回上一层）。"""
+        self.go_up()
+
+    def _on_search_active_changed(self, _active: bool) -> None:
+        """正在输入时别的命令让开 —— 与两个改名输入框同一件事（键盘归输入框）。"""
+        self._update_action_states()
+
+    def _on_condition_removed(self, position: int) -> None:
+        """点掉了面包屑上第 ``position`` 枚条件胶囊。"""
+        if not 0 <= position < len(self._conditions):
+            return
+        del self._conditions[position]
+        self._apply_conditions()
+
+    def clear_search_conditions(self) -> None:
+        """「清除搜索条件」：一条不剩，回到普通的一层。"""
+        if not self._conditions:
+            return
+        self._conditions.clear()
+        self._apply_conditions()
+
+    def focus_search(self) -> None:
+        """⌘F：把光标放进标题栏那个胶囊。"""
+        if not self._owns_title_bar:
+            return  # 标题栏不归我们（见 theme.unify_title_bar），那一侧没有搜索框
+        self._search_field.focus_search()
+
+    def _apply_conditions(self) -> None:
+        """条件变了（加一条、撤一条、清空）之后重新列出这一层。"""
+        self._search_total = None
+        self._reload_level()
+
+    # ---- 建立检索索引（ADR 0026 决策 5）---------------------------------------
+
+    def _maybe_start_photo_index(self) -> None:
+        """把整个库的照片写进索引的文件表，**只有真的有活干才起**。
+
+        与 :meth:`_maybe_start_place_pass` 同一个套路（ADR 0010）：打开库时顺手填好，
+        之后每次检索就只是一次查表。第一遍跑完之前检索会「什么都搜不到」——
+        所以这一遍自己会在结束时把在等的检索重跑一次（见 :meth:`_on_photo_index_done`）。
+
+        与地点那一遍**串行**：两边各自要遍历整棵子树，同时跑等于把磁盘读两遍。
+        地点那遍先跑（它要起 exiftool 子进程，更贵）；这一遍等它结束再起。
+        """
+        library = self._library
+        if (
+            library is None
+            or self._index_job is not None
+            or library.root in self._index_roots
+            or self._facet_job is not None
+            or self._place_job is not None
+            or self._scan_issue
+        ):
+            return
+        self._index_roots.add(library.root)
+
+        def work(context: TaskContext) -> object:
+            return library.index_photos(
+                should_cancel=context.is_cancelled,
+                on_work=lambda count: context.progress(("work", count)),
+                on_progress=lambda count: context.progress(count),
+            )
+
+        # 横幅**不在这儿亮**：已经建过索引的库这一遍是空跑，先亮等于在说一件没发生的事
+        # （与 ``_maybe_start_place_pass`` 同一句理由）。
+        self._index_job = self._runner.submit(
+            work,
+            on_progress=self._on_photo_index_progress,
+            on_result=self._on_photo_index_done,
+            on_error=self._on_photo_index_failed,
+        )
+
+    def _on_photo_index_progress(self, payload: object) -> None:
+        if self._index_notice_text is None or self._scan_issue:
+            return
+        if isinstance(payload, tuple) and len(payload) == 2 and payload[0] == "work":
+            self._show_index_notice(f"正在建立检索索引…{payload[1]} 张")
+            return
+        if isinstance(payload, int) and payload > 0:
+            self._show_index_notice(f"正在建立检索索引…已处理 {payload} 张")
+
+    def _on_photo_index_done(self, payload: object) -> None:
+        self._index_job = None
+        self._clear_index_notice()
+        written = payload if isinstance(payload, int) else 0
+        logger.info("检索索引：写入 %d 张", written)
+        # **这里不按代次判断**：这一遍要回答的是「此刻有没有人在等检索」，
+        # 而条件列表才是那一刻的真相。拿提交时的代次来比会漏掉最常见的情形 ——
+        # 用户在索引维护**进行当中**提交了条件，那一下 ``_reload_level`` 已经把代次 +1，
+        # 于是这次检索永远不会被补跑，用户看到的是一个空结果（实测并行下会随机变红）。
+        #
+        # 切库时那一遍会被取消、条件也一并清掉（``_teardown_library``），
+        # 所以「此刻的条件」不可能属于一个已经关掉的文件夹。
+        if self._conditions:
+            self._apply_conditions()
+
+    def _on_photo_index_failed(self, message: str) -> None:
+        self._index_job = None
+        self._clear_index_notice()
+        # 建不了索引不该让浏览整个不可用，只是检索做不了。**把库名从「起过」里拿掉**，
+        # 下次换回这个库还能再试一次 —— 否则一次失败就把这个库的检索永久关掉了。
+        self._forget_indexed_root()
+        logger.info("建立检索索引失败：%s", message)
+        if self._conditions:
+            self._show_banner("这个库没法建立检索索引，搜索暂时用不了。")
+
+    def _cancel_photo_index(self) -> None:
+        """作废在途的索引维护（切库、关窗时）。"""
+        if self._index_job is not None:
+            self._runner.cancel(self._index_job)
+            self._index_job = None
+            # 半途取消等于这一遍**没做完**：记在 ``_index_roots`` 里它就再也起不来了，
+            # 而下一次切回这个库的用户看到的是「搜不到任何东西」。
+            self._forget_indexed_root()
+        self._clear_index_notice()
+
+    def _forget_indexed_root(self) -> None:
+        """把这个库从「索引维护起过」那份名单里拿掉（取消或失败之后）。"""
+        if self._library is not None:
+            self._index_roots.discard(self._library.root)
+
+    def _show_index_notice(self, text: str) -> None:
+        """进度消息不许抢横幅 —— 理由与 :meth:`_show_place_notice` 一模一样。"""
+        current = self._banner.text() if self._banner.isVisible() else ""
+        if current and current != self._index_notice_text:
+            return
+        if self._show_banner(text, background=True):
+            self._index_notice_text = text
+
+    def _clear_index_notice(self) -> None:
+        if self._index_notice_text is None:
+            return
+        if self._banner.isVisible() and self._banner.text() == self._index_notice_text:
+            self._banner.hide()
+        self._index_notice_text = None
 
     # ---- 打开库时把地点解析一遍（ADR 0010）------------------------------------
 
@@ -1345,12 +1672,15 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._clear_place_notice()
         result = payload if isinstance(payload, PlacePass) else PlacePass()
         logger.info("地点解析完成：扫过 %d 张，反查 %d 张", result.scanned, result.resolved)
+        # 地点那一遍腾出了后台，检索索引那一遍接着起（见 _maybe_start_photo_index）。
+        self._maybe_start_photo_index()
 
     def _on_place_pass_failed(self, message: str) -> None:
         self._place_job = None
         self._clear_place_notice()
         # 解析失败不影响浏览：分组与面板都会在自己要用的时候再试一次。
         logger.info("解析地点失败：%s", message)
+        self._maybe_start_photo_index()
 
     def _show_place_notice(self, text: str) -> None:
         """进度消息**不许抢**横幅：上面正有别人的话就等它说完。
@@ -1446,6 +1776,12 @@ class MainWindow(WriteOpsMixin, QMainWindow):
 
     def _apply_watch_changes(self, library: Library, changes: Sequence[LibraryChange]) -> None:
         """按当前这一层的形状，把一批变化落到网格、内存缓存与索引上。"""
+        if self._conditions:
+            # 检索结果是横跨整个库的一层，「当前这一层」的增量逻辑接不上（见
+            # :meth:`_apply_search_changes`）。重跑一次几十毫秒，比在一条平行路径上
+            # 把插 / 删 / 改三条分支都改对便宜得多。
+            self._apply_search_changes(library, changes)
+            return
         added: list[GridEntry] = []
         gone: list[Path] = []
         #: 内存里缓存作废的路径（改名、内容变了、照片没了）。
@@ -1507,6 +1843,37 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._update_level_notice()
         self._refresh_thumbnail_window()
 
+    def _apply_search_changes(self, library: Library, changes: Sequence[LibraryChange]) -> None:
+        """检索这一层的变化：先把索引跟上，再重跑一次检索。
+
+        **索引先跟上，界面后跟上**：重跑时读的就是它，不先更新的话新照片搜不到、
+        删掉的照片还在结果里（那正是 ``search_photos`` 要逐条确认「还在不在」的原因 ——
+        它兜得住残留行，但那是兜底，不是做法）。
+
+        变化落在两层之下时（例如另一个相册里新增一张），**照样重新检索**：条件能不能
+        命中它取决于条件本身，与它在屏幕上可见不可见无关。
+        """
+        gone: list[Path] = []
+        fresh: list[PhotoRef] = []
+        stale: set[Path] = set()
+        for change in changes:
+            for path in (change.path, change.dest_path):
+                if path is None:
+                    continue
+                entry = describe_entry(library.root, path)
+                if isinstance(entry, PhotoRef):
+                    fresh.append(entry)
+                else:
+                    gone.append(path)
+            stale.update(change.touches)
+        if gone:
+            library.forget_paths(gone)
+        if fresh:
+            library.remember_photos(fresh)
+        if stale:
+            self._forget_caches(stale)
+        self._apply_conditions()
+
     def _apply_watch_move(
         self,
         change: LibraryChange,
@@ -1544,6 +1911,8 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         library = self._library
         if library is None:
             return False
+        if self._conditions:
+            return True  # 检索横跨整个库（ADR 0026 决策 1）
         if self._group_view is not None or self._browse_mode == BROWSE_MODE_FLAT:
             return True  # 平铺与分组：整棵子树都摆在屏幕上
         return path.parent == (self._current_dir or library.root)
@@ -2501,8 +2870,14 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         in_detail = self._in_detail_page()
         in_grid = self._stack.currentWidget() is self._grid_page
         # 改名的过程中别启用别的会动文件的命令 —— 那时键盘归输入框，⌘⌫ 不该把正在编辑的
-        # 那张删掉。**两个输入框都算**：网格那个与标题栏那个（ADR 0025 决策 6）。
-        idle = not self._grid.is_renaming() and not self._title_bar.is_editing()
+        # 那张删掉。**两个输入框都算**：网格那个与标题栏那个（ADR 0025 决策 6），
+        # 标题栏右上角的搜索框也是（ADR 0026）—— 那时键盘归它，⌘⌫ 要删的是搜索框
+        # 里刚敲的字。
+        idle = (
+            not self._grid.is_renaming()
+            and not self._title_bar.is_editing()
+            and not self._search_field.is_editing()
+        )
         for action in (
             self._fit_action,
             self._actual_action,
@@ -2514,6 +2889,12 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         # 与「上一级」在网格页上的让位是同一条理由（见 ``_update_navigation_actions``）。
         self._back_action.setEnabled(in_detail and idle)
         self._clear_cache_action.setEnabled(self._library is not None)
+        # 「清除搜索条件」**整条出现 / 消失**，不是置灰（ADR 0014 决策 4）：
+        # 没有条件时它压根没有对象，摆一个灰着的「清除」只会让人去猜在清什么。
+        self._clear_search_action.setVisible(bool(self._conditions))
+        # 搜索框摆在标题栏那一行上（ADR 0026 决策 8），而**那一行只在 macOS 上存在**
+        # （ADR 0025 决策 2）。别的平台上这一条老实置灰，而不是按了没反应。
+        self._search_action.setEnabled(self._owns_title_bar)
         # 「改名」落在哪儿：大图页改的是窗口标题栏那一行（ADR 0025），网格里是行内编辑。
         # 没有标题栏那一段的平台上（见 ``theme.unify_title_bar``）大图页没有改名字段，
         # 那一侧仍旧是网格的事。
@@ -2594,6 +2975,10 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             return
         self._browse_mode = mode
         self._group_view = None
+        # 检索是横跨整个库的一层（ADR 0026 决策 1），换浏览方式时留着它等于把两个
+        # 互不相干的概念叠在一起：用户看到的照片既不是「整库平铺」也不是「这一层」。
+        self._conditions.clear()
+        self._search_total = None
         self._session = self._session.with_browse_mode(mode)
         self._save_session()
         self._update_mode_actions()
@@ -2605,6 +2990,10 @@ class MainWindow(WriteOpsMixin, QMainWindow):
 
         :param focus: 到了这一层该选中哪一格。``Esc`` 往上一层退时传的是「刚离开的那个
             相册」，于是退回去时网格上仍然停在它身上（见 :meth:`go_up`）。
+
+        **进目录就是退出检索**：两者都是「一层」，面包屑上那一段只有一个是当前所在
+        （ADR 0026）。条件不清掉的话，检索会在下一次 ``_start_scan`` 里抢在目录前面 ——
+        用户点开一个相册，看到的却是全库的检索结果。
 
         **存进去的是解析过的路径**（与 ``Library.root``、扫描出来的条目、监听器报回来的
         变化同一套写法）。少了这一步，路径里带软链接的库（``/var`` → ``/private/var``、
@@ -2620,12 +3009,16 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             return
         self._current_dir = target.resolve()
         self._group_view = None
+        self._conditions.clear()
+        self._search_total = None
         self._reload_level(focus=focus)
 
     def go_up(self) -> None:
-        """回到上一层：正在分组里就退回那一层分组，否则按相册逐层往上。
+        """回到上一层：有筛选条件就撤掉最后一条，否则按分组 / 相册往上退。
 
-        分组比文件夹深一级（它是文件夹之上的一个视图），所以先退它。
+        分组比文件夹深一级（它是文件夹之上的一个视图），所以先退它；
+        **筛选条件又深一级**（它跨着整个库，见 ADR 0026 决策 9）—— 与访达
+        「一层一层退」是同一套心智，所以走的是同一个 ``Esc``。
 
         退上去时**把刚离开的那一级留在选中状态**：从相册退回去选中的是那个相册卡片，
         从分组退回去选中的是那张组卡片（访达里退上一层就是这个样子）。
@@ -2635,6 +3028,10 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         """
         library = self._library
         if library is None:
+            return
+        if self._conditions:
+            self._conditions.pop()
+            self._apply_conditions()
             return
         if self._group_view is not None:
             self._leave_group()
@@ -2654,6 +3051,8 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         library = self._library
         if library is None or self._grid.is_renaming():
             return False
+        if self._conditions:
+            return True  # 有得撤：撤一条筛选条件就是「上一层」（与 go_up 同一套判据）
         if self._group_view is not None:
             return True
         if self._browse_mode != BROWSE_MODE_ALBUMS:
@@ -2755,7 +3154,8 @@ class MainWindow(WriteOpsMixin, QMainWindow):
     def _current_level_key(self) -> LevelKey:
         """当前这一层的标识（见 ``navigation.level_key``）。"""
         group = None if self._group_view is None else (self._group_view.facet, self._group_view.key)
-        return level_key(self._browse_mode, self._current_dir, group=group)
+        conditions = [condition.identity for condition in self._conditions]
+        return level_key(self._browse_mode, self._current_dir, group=group, conditions=conditions)
 
     def _shown_entry_key(self) -> EntryKey | None:
         """网格上此刻停着的那一格是谁；不是同一层（或者压根没有）就是 ``None``。"""
@@ -2797,8 +3197,12 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         library = self._library
         # 平铺模式下平时不显示面包屑，但**分组里必须显示**：那里没有文件夹可指，
         # 只有一条「库名 ▸ 2024 年 5 月」才说得出自己在哪。
+        #
+        # **有筛选条件时一律显示**（ADR 0026 决策 9）：条件总得有个地方摆，
+        # 而平铺模式下没有目录可指 —— 那正是「不显示」的理由，于是这里只剩它了。
         in_albums = self._browse_mode == BROWSE_MODE_ALBUMS
-        if library is None or (not in_albums and self._group_view is None):
+        conditions = [condition.chip_text for condition in self._conditions]
+        if library is None or (not in_albums and self._group_view is None and not conditions):
             self._breadcrumb.hide()
             return
         parts = (
@@ -2807,7 +3211,12 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             else [(library.display_name, library.root)]
         )
         group = self._group_view.label if self._group_view is not None else None
-        self._breadcrumb.set_path(parts, group=group)
+        self._breadcrumb.set_path(
+            parts,
+            group=group,
+            conditions=conditions,
+            result_count=self._search_total if conditions else None,
+        )
         self._breadcrumb.show()
 
     def _update_mode_actions(self) -> None:
@@ -2912,11 +3321,14 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             self.setWindowTitle(name)
 
     def _layout_title_bar(self) -> None:
-        """把 ``TitleBar`` 摆在窗口顶边那一条上。
+        """把 ``TitleBar`` 与搜索胶囊摆在窗口顶边那一条上。
 
         那一条的高度是**安全区**顶出来的那 28 点（见 ``theme.unify_title_bar``），不写死。
         全屏时系统自己也不画标题栏，安全区让位，于是这一条跟着收起来 —— 否则它会盖在
         照片上面（ADR 0025 决策 2）。
+
+        **两个控件是摆在一起的，不是一套布局**：``TitleBar`` 那一行由标题文字与改名字段
+        自己居中，胶囊要贴右边，两者抢同一份布局反而互相挪（ADR 0026 决策 8）。
         """
         if not self._owns_title_bar:
             return
@@ -2925,6 +3337,17 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         height = 0 if self.isFullScreen() else max(top, TITLE_BAR_HEIGHT)
         self._title_bar.setGeometry(0, 0, self.width(), height)
         self._title_bar.setVisible(height > 0)
+        if height <= 0:
+            self._search_field.hide()
+            return
+        field_height = min(SEARCH_FIELD_HEIGHT, height - 4)
+        self._search_field.setGeometry(
+            self.width() - SEARCH_FIELD_WIDTH - SEARCH_FIELD_MARGIN_RIGHT,
+            (height - field_height) // 2,
+            SEARCH_FIELD_WIDTH,
+            field_height,
+        )
+        self._search_field.show()
 
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         super().showEvent(event)

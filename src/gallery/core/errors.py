@@ -83,12 +83,22 @@ class TransferError(GalleryError):
     """
 
 
+class IndexUnavailableError(GalleryError):
+    """索引没落盘（库所在卷只读，或用户把缓存放到了库外），于是检索做不了。
+
+    **分组 / 排序那一族在同样情况下照常可用** —— 那是把读到的值揣在内存里算的，
+    不需要索引。于是这里不是「整个功能没了」，而是「这一次检索没法做」，
+    界面据此说清是哪一件（ADR 0026）。
+    """
+
+
 __all__ = [
     "AlbumError",
     "ConfigError",
     "DeleteError",
     "GalleryError",
     "ImageDecodeError",
+    "IndexUnavailableError",
     "LibraryNotAccessibleError",
     "MetadataError",
     "PasteError",

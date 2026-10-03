@@ -50,22 +50,30 @@ TRAFFIC_LIGHTS_WIDTH = 78
 FALLBACK_WIDTH = 120
 
 
-def editor_rect(area: QRect, text: str, metrics: QFontMetrics) -> QRect:
+def editor_rect(
+    area: QRect,
+    text: str,
+    metrics: QFontMetrics,
+    *,
+    left: int = TRAFFIC_LIGHTS_WIDTH,
+    right: int = 0,
+) -> QRect:
     """输入框摆在 ``area``（标题栏那一条）的哪儿。
 
     **以文字为中心**：系统标题本来就是居中的，输入框若不居中，``⌘R`` 之后那一下「跳」看得见。
-    宽度跟着文字走但有上下限；标题栏窄到摆不下时先让开左上角那三个按钮，再让开右边。
+    宽度跟着文字走但有上下限；标题栏窄到摆不下时先让开左边那一份（macOS 上是左上角
+    那三个按钮），再让开右边那一份（右上角的搜索胶囊，ADR 0026 决策 8）。
 
     纯函数：它只管算术，因此能被单独测（``tests/ui/test_title_bar.py``），不必造一个真窗口。
     """
     wanted = metrics.horizontalAdvance(text) + 2 * EDITOR_PADDING
     # 先让开那三个按钮：宽度不超过「标题栏减去左右两段」时，居中摆放自然就压不到它们。
-    room = max(area.width() - 2 * TRAFFIC_LIGHTS_WIDTH, FALLBACK_WIDTH)
+    room = max(area.width() - left - right, FALLBACK_WIDTH)
     width = min(max(wanted, MIN_EDITOR_WIDTH), MAX_EDITOR_WIDTH, room)
     height = max(area.height() - 2 * EDITOR_MARGIN_V, 1)
-    x = max(area.x() + (area.width() - width) // 2, area.x() + TRAFFIC_LIGHTS_WIDTH)
-    if x + width > area.right() + 1:  # 窄窗口下别把右边顶出去
-        x = max(area.right() + 1 - width, area.x())
+    x = max(area.x() + (area.width() - width) // 2, area.x() + left)
+    if x + width > area.right() + 1 - right:  # 窄窗口下别把右边顶出去
+        x = max(area.right() + 1 - right - width, area.x())
     return QRect(x, area.y() + (area.height() - height) // 2, width, height)
 
 
@@ -89,6 +97,9 @@ class TitleBar(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._text = ""
+        #: 右边那一段被别的东西占着多宽（右上角的搜索胶囊，ADR 0026 决策 8）。
+        #: 标题文字与 ``⌘R`` 的输入框都要给它让出来 —— 否则一个长名字会从胶囊底下穿过去。
+        self._right_reserved = 0
         self._label = QLabel(self)
         self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # 与网格那一个**同一个类**（ADR 0025 决策 5）：语义只有一份，
@@ -170,18 +181,38 @@ class TitleBar(QWidget):
     def is_editing(self) -> bool:
         return self._editor.is_editing()
 
+    def reserve_right(self, width: int) -> None:
+        """右边那一段被别的东西占着多宽（搜索胶囊）。
+
+        标题文字与 ``⌘R`` 的输入框都要给它让出来，否则一个长相册名会从胶囊底下穿过去，
+        两块东西叠在一起，谁也读不清。
+        """
+        width = max(0, int(width))
+        if width == self._right_reserved:
+            return
+        self._right_reserved = width
+        self._update_label()
+        if self._editor.is_editing():
+            self._editor.setGeometry(self._place_editor())
+
     # ---- 内部 --------------------------------------------------------------
 
     def _place_editor(self) -> QRect:
         """输入框该在哪儿（见 :func:`editor_rect`）。"""
-        return editor_rect(self.rect(), self._text, QFontMetrics(self._editor.font()))
+        return editor_rect(
+            self.rect(),
+            self._text,
+            QFontMetrics(self._editor.font()),
+            left=TRAFFIC_LIGHTS_WIDTH,
+            right=self._right_reserved,
+        )
 
     def _update_label(self) -> None:
         """刷新那行字：太长时中间省略，全文挂在提示气泡上。
 
         省略与系统标题一个做法（``ElideMiddle``）—— 文件名里最有信息量的是后半段。
         """
-        available = max(self.width() - 2 * TRAFFIC_LIGHTS_WIDTH, FALLBACK_WIDTH)
+        available = max(self.width() - TRAFFIC_LIGHTS_WIDTH - self._right_reserved, FALLBACK_WIDTH)
         metrics = QFontMetrics(self._label.font())
         self._label.setText(metrics.elidedText(self._text, Qt.TextElideMode.ElideMiddle, available))
         self.setToolTip(self._text)

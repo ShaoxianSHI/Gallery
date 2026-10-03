@@ -30,11 +30,14 @@ RADIUS = 5
 PADDING = 8
 
 
-def _field_background(app_theme: AppTheme) -> QColor:
+def field_background(app_theme: AppTheme) -> QColor:
     """输入框的底色：比窗口那块底色「浮」一点点。
 
     底色只有一个来源（ADR 0005），所以这里是从它派生的，不写死任何颜色：
     深色下提亮一点、浅色下压暗一点，两种主题下都是「一块微微凸起的面」。
+
+    **搜索框那个胶囊用的是同一个函数**（``ui.search_field``）：它也是一块输入面，
+    两处各派生一次，早晚会在某个主题下差一档，而那时没人说得清是哪一档。
     """
     color = QColor(app_theme.background)
     return color.lighter(118) if app_theme.is_dark else color.darker(106)
@@ -52,7 +55,7 @@ def rename_edit_style(app_theme: AppTheme) -> str:
     """
     return f"""
     QLineEdit#renameEdit {{
-        background: {rgba(_field_background(app_theme))};
+        background: {rgba(field_background(app_theme))};
         color: {rgba(app_theme.text)};
         border: 1px solid {rgba(app_theme.text_at(0.28))};
         border-radius: {RADIUS}px;
@@ -157,4 +160,4 @@ class RenameEdit(QLineEdit):
         self.cancelled.emit()
 
 
-__all__ = ["PADDING", "RADIUS", "RenameEdit", "rename_edit_style"]
+__all__ = ["PADDING", "RADIUS", "RenameEdit", "field_background", "rename_edit_style"]

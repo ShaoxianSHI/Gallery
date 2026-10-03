@@ -1,11 +1,16 @@
-"""分组 / 排序字段的本地缓存（SQLite）。
+"""分组 / 排序 / 检索用的本地缓存（SQLite）。
 
-**它是缓存，不是数据**：一行一张照片，只存 ``facets`` 抽出那几个可比较的值，
-删掉整张表之后重新读一遍 EXIF 就能恢复到等价状态（红线 5）。唯一的数据仍在照片里。
+**它是缓存，不是数据**：每张照片两行 —— ``facets`` 存从 EXIF 抽出来的可比较值，
+``photos`` 存扫描时就有的东西（路径、大小、修改时间、文件名、所在相册、扩展名）。
+删掉两张表之后重新扫一遍、读一遍 EXIF 就能恢复到等价状态（红线 5）。唯一的数据仍在照片里。
 
 命中判据是 ``(size, mtime_ns)`` 与扫描时一致 —— 文件被改过（元数据写回、外部工具）
 就当没有，重读一次顺手更新。表结构变了就整表重建：``PRAGMA user_version`` 对不上
 说明是老版本留下的，缓存本来就是可以丢的，没有迁移的价值。
+
+**两张表分工不重叠**：``facets`` 只有读过 EXIF 的照片才有行，因此搜索文件名与相册
+必须走 ``photos``（它一行都不缺）；反过来，按元数据搜的时候有没有 facet 行就是
+「这条结论我们到底知不知道」（ADR 0026）。
 
 并发：界面在若干个后台线程里读、后台任务在线程里写，因此连接本身带
 ``check_same_thread=False``，所有访问都由一把锁串起来。操作都很短（几万行的一次
@@ -22,8 +27,17 @@ from pathlib import Path
 from typing import Final
 
 from gallery.core import paths
+from gallery.core.errors import IndexUnavailableError
 from gallery.core.library.photos import PhotoRef
-from gallery.core.metadata.facets import PhotoFacets
+from gallery.core.library.search import (
+    RESULT_LIMIT,
+    SearchCondition,
+    SearchOutcome,
+    build_count_query,
+    build_query,
+    rows_to_refs,
+)
+from gallery.core.metadata.facets import PhotoFacets, relative_folder
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +49,11 @@ logger = logging.getLogger(__name__)
 #: 已经是新说法，同一个库里新老混排且再也刷不掉（``place_ok`` 记着「已经查过了」）。
 SCHEMA_VERSION: Final = 6
 
+#: **后加的 ``photos`` 表没有升版本**（ADR 0026 决策 3）：它是纯新增，语句全部带
+#: ``IF NOT EXISTS``，老库连上来自动多出这张表，一行已读好的 facet 都不用重读。
+#: 为一张新表把整库的 EXIF 重读一遍纯属浪费 —— 缓存本来就该整表重建，但不必每次都重建。
+#: 将来若要**改** ``photos`` 的列，那时才升版本，并在这条注释里写清代价。
+#:
 #: 一次 ``UPSERT`` 最多写多少行。太大则一条语句过长，太小则语句条数多。
 WRITE_CHUNK: Final = 500
 
@@ -63,8 +82,28 @@ CREATE TABLE IF NOT EXISTS facets (
     iso        REAL,
     focal      REAL,
     pixels     REAL
-)
+);
+
+CREATE TABLE IF NOT EXISTS photos (
+    path       TEXT PRIMARY KEY,
+    size       INTEGER NOT NULL,
+    mtime_ns   INTEGER NOT NULL,
+    name       TEXT NOT NULL COLLATE NOCASE,
+    folder     TEXT NOT NULL COLLATE NOCASE,
+    suffix     TEXT NOT NULL COLLATE NOCASE
+);
+
+-- 索引只给**等值与区间**那几类条件：相册与格式是等值（走 photos_folder /
+-- photos_suffix），拍摄时间是区间（走 facets_captured）。文件名与文本字段是子串匹配，
+-- SQLite 的 LIKE 对 '%q%' 一律全表扫 —— 铺再多索引也用不上，那是拿写放大换不存在的好处。
+CREATE INDEX IF NOT EXISTS photos_folder    ON photos(folder);
+CREATE INDEX IF NOT EXISTS photos_suffix    ON photos(suffix);
+CREATE INDEX IF NOT EXISTS facets_captured  ON facets(captured);
 """
+
+_PHOTO_COLUMNS: Final[str] = "path, size, mtime_ns, name, folder, suffix"
+
+_PHOTO_PLACEHOLDERS: Final[str] = ", ".join("?" * len(_PHOTO_COLUMNS.split(",")))
 
 _COLUMNS: Final[str] = (
     "path, size, mtime_ns, captured, year, month, day, camera, lens, "
@@ -151,7 +190,9 @@ class FacetIndex:
             version = connection.execute("PRAGMA user_version").fetchone()[0]
             if version != SCHEMA_VERSION:
                 # 结构对不上就整表重建：缓存没有迁移的价值。
-                connection.executescript("DROP TABLE IF EXISTS facets;")
+                connection.executescript(
+                    "DROP TABLE IF EXISTS facets; DROP TABLE IF EXISTS photos;"
+                )
                 connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             connection.executescript(_SCHEMA)
             connection.commit()
@@ -230,11 +271,91 @@ class FacetIndex:
             self._connection.commit()
         return written
 
+    def store_photos(self, refs: Sequence[PhotoRef], *, root: Path) -> int:
+        """写回一批照片的「文件自带的」那些字段，返回真正写入的行数。
+
+        **只写「库里没有这一行」或「这一行已经过期」的。** 判据与 :meth:`lookup`
+        同源（``(大小, 修改时间)`` 对不上就是过期），因此打开一个库时那一遍遍历
+        对没变过的库几乎不写 —— 整表重写一遍只是白花几百毫秒。
+
+        没落盘（内存模式）时什么都不写：那一份缓存是本次会话读到的 facet 值，
+        文件表留着它也检索不了（见 :meth:`search`）。
+        """
+        if not refs:
+            return 0
+        root = Path(root)
+        rows = [
+            (
+                str(ref.path),
+                ref.size,
+                ref.mtime_ns,
+                ref.path.name,
+                relative_folder(ref.path, root),
+                ref.path.suffix.lower(),
+            )
+            for ref in refs
+        ]
+        # 先问「哪些行已经过期」——这一句自己拿锁，所以**必须在进锁之前问**：
+        # 那把锁不是可重入的，进去之后再问就是自己等自己。
+        known = {
+            key: (size, mtime_ns)
+            for key, size, mtime_ns in self._photo_stamps([row[0] for row in rows])
+        }
+        fresh = [row for row in rows if known.get(row[0]) != (row[1], row[2])]
+        if not fresh:
+            return 0
+        with self._lock:
+            if self._connection is None:
+                return 0
+            statement = (
+                f"INSERT OR REPLACE INTO photos ({_PHOTO_COLUMNS}) VALUES ({_PHOTO_PLACEHOLDERS})"
+            )
+            for start in range(0, len(fresh), WRITE_CHUNK):
+                self._connection.executemany(statement, fresh[start : start + WRITE_CHUNK])
+            self._connection.commit()
+        return len(fresh)
+
+    def count_photos(self) -> int:
+        """文件表里有多少行。**用来回答「打开库时那一遍还有没有活干」**（ADR 0026 决策 5）。"""
+        with self._lock:
+            if self._connection is None:
+                return 0
+            try:
+                return int(self._connection.execute("SELECT COUNT(*) FROM photos").fetchone()[0])
+            except sqlite3.Error:  # pragma: no cover - 磁盘坏了才会走到
+                return 0
+
+    def search(
+        self, conditions: Sequence[SearchCondition], *, limit: int = RESULT_LIMIT
+    ) -> SearchOutcome:
+        """按这些条件检索（SQL 在 :mod:`gallery.core.library.search` 里生成）。
+
+        :raises IndexUnavailableError: 索引没落盘（库所在卷只读）。**分组与排序在
+            同样情况下照常可用** —— 那是把读到的值揣在内存里算的，不需要索引。
+        """
+        if self._connection is None:
+            raise IndexUnavailableError(
+                "这个库没法建立检索索引（多半是照片所在的磁盘不允许写入缓存）。分组与排序仍然可用。"
+            )
+        sql, values = build_query(conditions, limit=limit)
+        count_sql, count_values = build_count_query(conditions)
+        with self._lock:
+            try:
+                rows = self._connection.execute(sql, values).fetchall()
+                total = int(self._connection.execute(count_sql, count_values).fetchone()[0])
+            except sqlite3.Error as exc:
+                logger.info("检索失败：%s", exc)
+                raise IndexUnavailableError("检索没能完成，请再试一次。", detail=str(exc)) from exc
+        return SearchOutcome(refs=rows_to_refs(rows), total=total)
+
     def prune(self, live: Iterable[Path]) -> int:
         """删掉不在这一批里的行，返回删掉了几行。
 
         照片被移走 / 改名之后，它那一行不会自己消失。索引是缓存，所以这纯属省空间，
         失败也不影响功能 —— 因此不抛异常。
+
+        **两张表一起清**：少清一张，过一阵子库里就攒下一堆指向已删文件的行，
+        而检索恰恰会把它们当成命中（``prune`` 只在重建时用，正是攒的时候）。
 
         **目前唯一的调用者是它自己的测试。** 留着是因为「清掉已经不存在的照片那一行」
         是索引该有的完整能力，而删掉接口再想加回来时，多半又要重新设计一遍签名。
@@ -249,17 +370,20 @@ class FacetIndex:
                     del self._memory[key]
                 return len(stale)
             try:
-                known = [
-                    row[0] for row in self._connection.execute("SELECT path FROM facets").fetchall()
-                ]
-                stale = [key for key in known if key not in keep]
-                self._connection.executemany(
-                    "DELETE FROM facets WHERE path = ?", [(key,) for key in stale]
-                )
+                removed = 0
+                for table in ("facets", "photos"):
+                    known = [
+                        row[0] for row in self._connection.execute(f"SELECT path FROM {table}")
+                    ]
+                    stale = [key for key in known if key not in keep]
+                    self._connection.executemany(
+                        f"DELETE FROM {table} WHERE path = ?", [(key,) for key in stale]
+                    )
+                    removed += len(stale)
                 self._connection.commit()
-                return len(stale)
+                return removed
             except sqlite3.Error as exc:  # pragma: no cover - 磁盘坏了才会走到
-                logger.info("清理 facet 索引失败：%s", exc)
+                logger.info("清理索引失败：%s", exc)
                 return 0
 
     def forget(self, gone: Iterable[Path]) -> int:
@@ -268,6 +392,9 @@ class FacetIndex:
         照片被移走或改名之后，原路径那一行不会自己消失。与 :meth:`prune` 的区别是
         这里**只删给定的路径**：相册模式下「当前这一层」不等于「整个库」，按层去重
         会把别的相册的行一起删掉。实时监听得知哪个路径不见了就删哪一个（ADR 0013）。
+
+        **两张表一起删**：留着 ``photos`` 那一行就是给检索留一条假命中 ——
+        文件已经不在了，搜出来的却是一张打不开的缩略图。
 
         它是缓存，删不干净也不影响浏览，因此不抛异常。
         """
@@ -286,28 +413,50 @@ class FacetIndex:
                 for start in range(0, len(unique), 900):
                     chunk = unique[start : start + 900]
                     marks = ", ".join("?" * len(chunk))
-                    cursor = self._connection.execute(
-                        f"DELETE FROM facets WHERE path IN ({marks})", chunk
-                    )
-                    removed += max(0, cursor.rowcount)
+                    for table in ("facets", "photos"):
+                        cursor = self._connection.execute(
+                            f"DELETE FROM {table} WHERE path IN ({marks})", chunk
+                        )
+                        removed += max(0, cursor.rowcount)
                 self._connection.commit()
             except sqlite3.Error as exc:  # pragma: no cover - 磁盘坏了才会走到
-                logger.info("清理 facet 索引失败：%s", exc)
+                logger.info("清理索引失败：%s", exc)
             return removed
 
     def clear(self) -> None:
-        """清空缓存（清空缩略图缓存时一并清掉，避免两边的内容对不上）。"""
+        """清空缓存（清空缩略图缓存时一并清掉，避免两边的内容对不上）。
+
+        **两张表都清**：只清 facet 的话，检索会立刻拿一份刚被丢掉的文件表继续查，
+        而分组那边是从零重建的 —— 两边对不上，用户看到的是「缩略图清了但搜索还在」。
+        """
         with self._lock:
             self._memory.clear()
             if self._connection is None:
                 return
             try:
                 self._connection.execute("DELETE FROM facets")
+                self._connection.execute("DELETE FROM photos")
                 self._connection.commit()
             except sqlite3.Error as exc:  # pragma: no cover
-                logger.info("清空 facet 索引失败：%s", exc)
+                logger.info("清空索引失败：%s", exc)
 
     # ---- 内部 ---------------------------------------------------------------
+
+    def _photo_stamps(self, keys: Sequence[str]) -> list[tuple[str, int, int]]:
+        """按路径取 ``(路径, 大小, 修改时间)``，用来判「这一行是不是已经过期了」。"""
+        with self._lock:
+            if self._connection is None:
+                return []
+            found: list[tuple[str, int, int]] = []
+            unique = list(dict.fromkeys(keys))
+            for start in range(0, len(unique), 900):
+                chunk = unique[start : start + 900]
+                marks = ", ".join("?" * len(chunk))
+                rows = self._connection.execute(
+                    f"SELECT path, size, mtime_ns FROM photos WHERE path IN ({marks})", chunk
+                ).fetchall()
+                found.extend((str(row[0]), int(row[1]), int(row[2])) for row in rows)
+            return found
 
     def _select(self, keys: Sequence[str]) -> list[tuple[str, int, int, tuple[object, ...]]]:
         """按路径取行：``(路径, 大小, 修改时间, 其余字段)``。"""

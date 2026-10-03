@@ -374,17 +374,24 @@ def _keywords(values: Mapping[str, object]) -> tuple[str, ...]:
 # ---- 分组取值 -----------------------------------------------------------------------
 
 
-def _relative_folder(item: FacetInput) -> str:
-    """照片所在文件夹相对库根的位置；就在根下时返回空串。
+def relative_folder(path: Path, root: Path) -> str:
+    """照片所在文件夹相对库根的位置（``旅行/2024``）；就在根下时返回空串。
 
     库外（理论上不该出现）返回绝对路径 —— 宁可显示得啰嗦，也别显示成空的那一档，
     那样所有库外照片会挤进同一个组。
+
+    **搜索的「#相册」条件用的是同一个函数**（ADR 0026）：索引里存的就是这个字符串，
+    两处各写一份迟早算出不一样的写法，于是「#相册 旅行」一条都查不到。
     """
     try:
-        relative = item.ref.path.parent.relative_to(item.root)
+        relative = Path(path).parent.relative_to(Path(root))
     except ValueError:
-        return str(item.ref.path.parent)
-    return "" if str(relative) == "." else str(relative)
+        return str(Path(path).parent)
+    return "" if str(relative) == "." else relative.as_posix()
+
+
+def _relative_folder(item: FacetInput) -> str:
+    return relative_folder(item.ref.path, item.root)
 
 
 def _folder_label(item: FacetInput) -> str:
@@ -782,6 +789,7 @@ __all__ = [
     "mark_place_resolved",
     "needs_metadata",
     "parse_capture_time",
+    "relative_folder",
     "sort_facet",
     "with_resolved_place",
 ]
