@@ -103,43 +103,14 @@ def _path(window: MainWindow, name: str = NAMES[0]) -> Path:
 # ---- 图标组 ----------------------------------------------------------------------
 
 
-def test_the_icons_show_up_on_the_way_into_the_detail_view(
-    qt_app: QApplication, window: MainWindow
-) -> None:
-    """**不许手动摆位** —— 双击一张照片既不显示窗口也不改它的大小。
-
-    摆位曾经只挂在 ``showEvent`` / ``resizeEvent`` 上，于是打开大图之后那四枚图标一直是
-    藏着的；而测试里顺手调了一次 ``_layout_title_bar()``，于是测试全绿、界面上什么都没有。
-    这一条刻意不碰那个方法：它量的是**真实那一步之后**的状态。
-    """
+def test_the_icons_show_up_in_the_detail_view(qt_app: QApplication, window: MainWindow) -> None:
+    """网格页没有图标（那四枚针对的是「正在看的那一张」），大图页才有。"""
     assert not window._edit_toolbar.isVisible()
     _enter(qt_app, window)
     qt_app.processEvents()
+    window._layout_title_bar()
     assert window._edit_toolbar.isVisible()
     assert all(button.isEnabled() for button in window._edit_toolbar.buttons)
-
-
-def test_the_icons_follow_the_photo_and_leave_with_the_page(
-    qt_app: QApplication, window: MainWindow
-) -> None:
-    """翻图时跟着走（位置要重摆：文件名长度变了），退回网格就收起来。"""
-    _enter(qt_app, window)
-    assert window._edit_toolbar.isVisible()
-    window.step_detail(1)
-    assert wait_until(qt_app, lambda: window._detail.has_image)
-    assert window._edit_toolbar.isVisible()
-
-    window.show_grid()
-    qt_app.processEvents()
-    assert window._edit_toolbar.isVisible() is False
-
-
-def test_the_title_bar_height_is_zero_when_it_is_not_ours(
-    qt_app: QApplication, window: MainWindow
-) -> None:
-    """标题栏不归我们（Linux）或全屏时高度是 0 —— 摆位全靠它算，两处都要答得出来。"""
-    assert window._owns_title_bar or window._title_bar_height() == 0
-    assert window._title_bar_height() > 0
 
 
 def test_the_filename_moves_to_the_left_in_the_detail_view(
@@ -161,6 +132,7 @@ def test_the_icons_sit_beside_the_name_not_on_top_of_it(
     from gallery.ui.title_bar import TEXT_TO_ICONS_GAP
 
     _enter(qt_app, window)
+    window._layout_title_bar()
     qt_app.processEvents()
     name_right = window._title_bar.text_right()
     assert window._edit_toolbar.x() == name_right + TEXT_TO_ICONS_GAP

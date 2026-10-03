@@ -3053,7 +3053,6 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             return
         self._cache_preview(ref.path, payload)
         self._detail.set_image(payload, refit=True)
-        self._refresh_edit_affordances()  # 画面上真的有图了，那几枚才该亮
         self._request_full(ref, row, generation, steps)
 
     def _request_full(
@@ -3086,7 +3085,6 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             return
         # refit=False：替换成更清晰的图，但保住用户当前的缩放与位置，画面不跳。
         self._detail.set_image(payload, refit=False)
-        self._refresh_edit_affordances()
 
     def _on_detail_failed(self, ref: PhotoRef, row: int, generation: int, message: str) -> None:
         if generation != self._generation or row != self._current_row:
@@ -3261,7 +3259,21 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         # 「退出」也是 Esc，所以改到一半要把它关掉：那一刻 Esc 是输入框的「取消改名」，
         # 与「上一级」在网格页上的让位是同一条理由（见 ``_update_navigation_actions``）。
         self._back_action.setEnabled(in_detail and idle)
-        self._refresh_edit_affordances()
+        # 编辑那几条只在大图页亮着，且要**画面上确实有图**（解码失败时用户按的是
+        # 「旋转一张看不见的照片」）。裁一半时全灭：那一档的坐标系会被下一次旋转改掉
+        # （见 ``_editable_photo``）。
+        editable = in_detail and self._detail.has_image and not self._crop_overlay.isVisible()
+        for action in (
+            self._rotate_left_action,
+            self._rotate_right_action,
+            self._mirror_action,
+            self._crop_action,
+        ):
+            action.setEnabled(editable)
+        self._save_edit_action.setEnabled(
+            editable and self._current_photo_has_draft() and self._write_job is None
+        )
+        self._edit_toolbar.set_enabled_actions(editable)
         self._clear_cache_action.setEnabled(self._library is not None)
         # 「清除搜索条件」**整条出现 / 消失**，不是置灰（ADR 0014 决策 4）：
         # 没有条件时它压根没有对象，摆一个灰着的「清除」只会让人去猜在清什么。
@@ -3342,29 +3354,6 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         library = self._library
         self._undo_label = library.next_undo_label() if library is not None else None
         self._update_undo_action()
-
-    def _refresh_edit_affordances(self) -> None:
-        """编辑那几枚（图标与菜单同源）与「保存」的可用性。
-
-        **只在「画面上有没有图」变了的那一刻算**（:meth:`_on_preview_ready` /
-        :meth:`_on_full_ready`），不搭全量重算那一趟 —— 全量是十八枚动作一起算，
-        而这里只关心五枚。摆在摆位那一步算是不行的：图标刚摆上去时图还没解出来，
-        于是打开大图之后图标是**亮着但全灰**的（那一档是这一条存在的全部理由）。
-        """
-        editable = (
-            self._in_detail_page() and self._detail.has_image and not self._crop_overlay.isVisible()
-        )
-        for action in (
-            self._rotate_left_action,
-            self._rotate_right_action,
-            self._mirror_action,
-            self._crop_action,
-        ):
-            action.setEnabled(editable)
-        self._save_edit_action.setEnabled(
-            editable and self._current_photo_has_draft() and self._write_job is None
-        )
-        self._edit_toolbar.set_enabled_actions(editable)
 
     def _current_photo_has_draft(self) -> bool:
         """正在看的那一张有没有未保存的编辑（⌘S 的可用性只看这一条）。"""
@@ -3749,53 +3738,37 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             # 因此它与标题写什么一样只有这一处说了算。
             self._title_bar.set_aligned_left(self._in_detail_page())
             self._title_bar.set_unsaved(photo is not None and self._drafts.has(photo.path))
-            # **图标组跟着这一行摆，而不是只跟着窗口的 showEvent / resizeEvent。**
-            # 「双击一张照片打开大图」既不显示窗口也不改它的大小 —— 曾经那条路上
-            # 从不摆，于是打开大图之后那四枚图标一直是藏着的（而测试里手动摆了一次，
-            # 于是测试全绿、界面上什么都没有）。
-            self._layout_edit_toolbar(self._title_bar_height())
         else:
             # 标题栏那一段不归我们（例如 Linux），照旧交给系统画（ADR 0025 决策 2）。
             self.setWindowTitle(name)
 
-    def _title_bar_height(self) -> int:
-        """窗口顶边那一条有多高。
-
-        **安全区**顶出来的那 28 点（见 ``theme.unify_title_bar``），加上
-        :data:`TITLE_BAR_EXTRA` —— 中央控件已经用同样的边距把三页往下推了（见
-        ``_build_ui``），于是多出来的那一段是真的空出来的，不是盖在内容上的。
-
-        标题栏不归我们（例如 Linux）或全屏时是 0（系统不画的那一条也不摆任何东西）。
-        单独抽出来是因为**摆位有两条来路**：窗口显示 / 改大小，以及**换页** ——
-        后者不一定会伴随 resize，不问一次高度就没法摆（那一段曾经就是这么不出现的）。
-        """
-        if not self._owns_title_bar or self.isFullScreen():
-            return 0
-        central = self.centralWidget()
-        top = central.geometry().top() if central is not None else 0
-        return max(top + TITLE_BAR_EXTRA, TITLE_BAR_HEIGHT)
-
     def _layout_title_bar(self) -> None:
-        """把 ``TitleBar``、编辑图标与搜索胶囊摆在窗口顶边那一条上。
+        """把 ``TitleBar`` 与搜索胶囊摆在窗口顶边那一条上。
 
-        **三个控件是各自摆的，不是一套布局**：``TitleBar`` 那一行由标题文字与改名字段
-        自己排，图标跟在文字右边，胶囊贴最右，三者抢同一份布局反而互相挪
-        （ADR 0026 决策 8、ADR 0027 决策 7）。
+        那一条的高度是**安全区**顶出来的那 28 点（见 ``theme.unify_title_bar``），不写死。
+        全屏时系统自己也不画标题栏，安全区让位，于是这一条跟着收起来 —— 否则它会盖在
+        照片上面（ADR 0025 决策 2）。
 
-        只在**窗口显示 / 改大小**时调；换页那一条走 :meth:`_refresh_title`（见那里的说明）。
+        **两个控件是摆在一起的，不是一套布局**：``TitleBar`` 那一行由标题文字与改名字段
+        自己居中，胶囊要贴右边，两者抢同一份布局反而互相挪（ADR 0026 决策 8）。
         """
         if not self._owns_title_bar:
             self._edit_toolbar.hide()
             return
         if self.isFullScreen():
             # 全屏时系统自己也不画标题栏，这一整条跟着收起来（ADR 0025 决策 2）：
-            # 高度给 0，于是它们都不会盖在照片上。
+            # 高度给 0，于是它与胶囊都不会盖在照片上。
             self._title_bar.setGeometry(0, 0, self.width(), 0)
             self._title_bar.hide()
             self._search_field.hide()
             self._edit_toolbar.hide()
             return
-        height = self._title_bar_height()
+        central = self.centralWidget()
+        top = central.geometry().top() if central is not None else 0
+        # 安全区之外**再加** :data:`TITLE_BAR_EXTRA`：中央控件已经用同样的边距把三页
+        # 往下推了（见 ``_build_ui``），于是多出来的那一段是真的空出来的，不是盖在
+        # 内容上的 —— 胶囊是画的，压上去就等于在照片区顶边摆了一块底色。
+        height = max(top + TITLE_BAR_EXTRA, TITLE_BAR_HEIGHT)
         self._title_bar.setGeometry(0, 0, self.width(), height)
         self._title_bar.setVisible(True)
         # 胶囊摆在**这一条**里：内容区从 ``top + EXTRA`` 开始，两者首尾相接。
@@ -3840,6 +3813,7 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             return
         edge = self._edit_toolbar.sizeHint().height()
         self._edit_toolbar.setGeometry(x, max((height - edge) // 2, 0), width, edge)
+        self._edit_toolbar.set_enabled_actions(self._detail.has_image)
         self._edit_toolbar.show()
         self._edit_toolbar.raise_()
 
