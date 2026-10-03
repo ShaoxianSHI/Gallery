@@ -73,6 +73,39 @@ def samples_while_animating(grid: PhotoGrid, settle: Callable[[float], None]) ->
     return seen
 
 
+def layout_x(columns: int, cell: QSize, row: int) -> int:
+    """第 ``row`` 格在「``columns`` 列、每格 ``cell``」里的横向位置。
+
+    与 :meth:`GridTransition._position` 是同一条算术，**故意在这里再写一遍**：
+    测试要拿「按几何算出来的飞行距离」去对照画面，而 ``GridTransition`` 正是被测
+    的那一份，跟着它取基准等于拿被测对象给被测对象作证。
+    """
+    return (row % columns) * cell.width()
+
+
+def painted_left(grid: PhotoGrid, row: int) -> int:
+    """第 ``row`` 格**画面上真正画到的**横向位置。
+
+    量的是 ``visualRect`` 加上委托那一份位移，也就是 ``paint`` 里真正用的那个数 ——
+    格子会不会飞，取决于它，不取决于 :class:`GridTransition` 自己声称什么。
+    """
+    rect = grid.visualRect(grid.model().index(row, 0)).adjusted(3, 3, -3, -3)
+    rect.translate(grid._delegate.cell_offset(row))
+    return rect.left()
+
+
+def flight_samples(
+    grid: PhotoGrid, count: int, settle: Callable[[float], None]
+) -> dict[int, list[int]]:
+    """把这一趟飞行期间每一格的横向位置按顺序记下来（``{行号: [位置, …]}``）。"""
+    seen: dict[int, list[int]] = {row: [] for row in range(count)}
+    for _ in range(int(SETTLE_SECONDS / SLICE_SECONDS)):
+        settle(SLICE_SECONDS)
+        for row in seen:
+            seen[row].append(painted_left(grid, row))
+    return seen
+
+
 def test_the_thumbnail_grows_through_the_intermediate_sizes(
     qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
 ) -> None:
@@ -212,6 +245,67 @@ def test_the_scrollbar_disappearing_does_not_cut_the_transition_short(
     assert len(set(samples)) > 3, f"只取到 {sorted(set(samples))}，这是一次跳变不是动画"
     assert samples == sorted(samples, reverse=True), f"缩回去不该中途回头：{samples}"
     assert samples[-1] == float(grid.icon_edge), "最后一帧必须正好落在新尺寸上"
+
+
+def test_the_cells_still_fly_when_the_scrollbar_disappears(
+    qt_app: QApplication,
+    tmp_path: Path,
+    settle: Callable[[float], None],
+    wait_for: Callable[..., bool],
+) -> None:
+    """滚动条开关带来的那次重排，**不许把格子「起飞时的那套布局」丢掉**。
+
+    丢掉之后那一趟过渡的旧端就变成了刚改完的新几何，于是每一格只从「上一帧」
+    出发 —— 画面上表现为**位置啪地跳到位、只剩缩放在动**。缩放那条动画照跑，
+    所以这个毛病很容易被只看「绘制尺寸有没有走过中间值」的用例放过去。
+
+    触发条件不是「哪一层」，是「切档让内容高度跨过视口高度」：相册层与照片层
+    都会撞上，只要那一层当时的行数恰好在边界附近。
+    """
+    grid = make_grid(qt_app, tmp_path, SHORT_LEVEL)
+    settle(SETTLE_SECONDS)
+    grid.set_target_edge(THUMBNAIL_SIZES[2])
+    settle(SETTLE_SECONDS)
+    bar = grid.verticalScrollBar()
+    assert bar.maximum() > 0, "前提没摆出来：大档下内容应当比视口高、滚动条在"
+    cell_before = grid.gridSize()
+    columns_before = grid._first_row_columns()
+
+    grid.set_target_edge(THUMBNAIL_SIZES[0])
+    # **第 0 帧必须同步取**。滚动条开关带来的那次重排是在**后面**某一轮事件循环里
+    # 才到的（这正是它当初能悄悄改掉飞行起点的缘故），先转一轮事件循环再取就只剩
+    # 「已经落位之后」的样子。
+    starts = [painted_left(grid, row) for row in range(SHORT_LEVEL)]
+    assert wait_for(lambda: bar.maximum() == 0, timeout=1.0), "前提没摆出来：滚动条没被挤走"
+    assert grid._transition_anim.state() == QAbstractAnimation.State.Running, "前提：动画还在跑"
+
+    transition = grid._transition
+    assert transition is not None
+    assert (transition.old_columns, transition.old_cell) == (columns_before, cell_before), (
+        f"飞行起点变成了 {transition.old_columns} 列 {transition.old_cell}，"
+        f"而格子起飞时摆的是 {columns_before} 列 {cell_before}"
+        f" —— 起点被这一次重排覆盖成新几何了，格子于是从上一帧出发，根本不飞"
+    )
+
+    columns_after = grid._first_row_columns()
+    cell_after = grid.gridSize()
+
+    # 逐格对照：**按两套布局算出来该飞多远**，画面上就必须飞多远。
+    #
+    # 基准**从几何直接算**，不看 ``GridTransition`` 自己声称什么 —— 它正是被测的
+    # 那一份，跟着它取基准等于拿被测对象给被测对象作证（栽过：那样写，加了违规
+    # 也照样全绿）。
+    samples = flight_samples(grid, SHORT_LEVEL, settle)
+    for row in range(SHORT_LEVEL):
+        path = [starts[row], *samples[row]]
+        flown = max(path) - min(path)
+        expected = abs(
+            layout_x(columns_before, cell_before, row) - layout_x(columns_after, cell_after, row)
+        )
+        assert abs(flown - expected) <= max(4, expected // 4), (
+            f"第 {row} 格按两套布局该横跨 {expected} 像素，画面上只走了 {flown} 像素"
+            f" —— 飞行起点被覆盖成了新几何"
+        )
 
 
 def test_dragging_the_window_during_the_transition_still_ends_it(

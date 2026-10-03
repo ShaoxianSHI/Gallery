@@ -871,6 +871,10 @@ class PhotoGrid(QListView):
         换行时过渡的**起点**也要跟着换算法：从「原来看着的那一格还在原处」出发，
         而不是照搬旧的像素值（见 :meth:`_anchored_scroll_value`）—— 后者会让第 0 帧
         闪到相册的别的段落上去。
+
+        **动画途中被叫进来时（``animate`` 为假而动画还在跑），这一趟不是新的**：
+        只是把落点改成新的几何，起点仍旧是起飞时那套（见 ``flying`` 那一段）。
+        动画本身不重开，由 :meth:`_start_transition` 转交给 :meth:`_reaim_transition`。
         """
         # 动画起点是「上一帧画出来」的那一档，不是几何尺寸：上一次过渡可能还没跑完，
         # 那时两者不等。从中间值接着走，用户连点两档才不会看见它先倒退回去。
@@ -883,9 +887,27 @@ class PhotoGrid(QListView):
         old_columns = self._first_row_columns()
         old_cell = self.gridSize()
         anchor = self._anchor()
+        # 动画还在跑 ⇒ 这次换几何是**同一趟飞行的续**，不是新的一趟（``animate`` 为假
+        # 只可能是滚动条开关 / 视口变化带来的重排，见 :meth:`_recompute_layout`）。
+        #
+        # 那种情况下「旧布局」指的是格子**起飞时**的那一套，而上面读到的
+        # ``old_columns`` / ``old_cell`` **已经是上一段改完的值了**。拿它当旧布局，
+        # 每一格就会从「上一帧」出发 —— 那不是飞行，是原地钉住：画面上表现为
+        # 位置啪地跳到位、只剩缩放在动（相册层与照片层都会这样，只要切档让内容
+        # 高度跨过视口高度、滚动条因此开关了一次）。
+        #
+        # **真**换档（``animate=True``，用户又切了一档）不继承：那时「当前几何」
+        # 就是新一趟该出发的位置。
+        flying = (
+            self._transition
+            if not animate and self._transition_anim.state() == QAbstractAnimation.State.Running
+            else None
+        )
         self._apply_geometry(cell, scroll_from)
         new_columns = self._first_row_columns()
-        scroll_shift = 0
+        # 旧画面整体要跟着挪的那一笔（见 :attr:`GridTransition.scroll_shift`）。
+        # 续上一趟时**沿用它**：下面那次重新锚定（只在真的换行时才会发生）才覆盖它。
+        scroll_shift = flying.scroll_shift if flying else 0
         if old_columns > 0 and new_columns > 0 and old_columns != new_columns:
             # **只在真的换行时居中。** 这一条是踩过坑的：Qt 会顺手把当前项设成第 0 行，
             # 无条件按它居中就等于「每 resize 一次（**包括后台横幅出现/消失带来的自动
@@ -900,7 +922,13 @@ class PhotoGrid(QListView):
                 scroll_from = anchored
             self._center_on_row(self._focus_row(anchor.row), new_columns)
         self._transition = (
-            GridTransition(old_columns, old_cell, new_columns, cell, scroll_shift)
+            GridTransition(
+                flying.old_columns if flying else old_columns,
+                flying.old_cell if flying else old_cell,
+                new_columns,
+                cell,
+                scroll_shift,
+            )
             if old_columns > 0 and new_columns > 0
             else None
         )
