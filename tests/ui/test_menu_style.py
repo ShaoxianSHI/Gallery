@@ -654,7 +654,7 @@ def test_every_row_that_owns_ink_really_paints_it(
     快捷键一并查：它们与箭头走同一个出口、同一支笔，箭头丢在哪一行它们就从哪一行开始丢。
     """
     menu = _menu_to_paint(qt_app, window, kind)
-    assert isinstance(menu, menus.ShortcutColumnMenu)
+    assert isinstance(menu, menu_style.ShortcutColumnMenu)
 
     menu.popup(QPoint(60, 60))
     try:
