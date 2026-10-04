@@ -52,6 +52,8 @@ class CalendarPage(QWidget):
     cell_requested = Signal(object, str)
     #: 这一层需要的缩略图变了（外面据此向流水线要图）。
     window_changed = Signal()
+    #: 选中的东西变了（外面据此改标题与动作可用性）。
+    selection_changed = Signal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -60,6 +62,8 @@ class CalendarPage(QWidget):
         self._reported: list[PhotoRef] = []
         self._reported_edge = 0
         self._anchor = datetime.date.today()
+        #: 选中的是哪一天。**整页一份**（理由见 :meth:`set_selected`）。
+        self._selected: datetime.date | None = None
         self._today = datetime.date.today()
         self._level = "month"
 
@@ -78,7 +82,10 @@ class CalendarPage(QWidget):
             view = self._views[level]
             view.cell_requested.connect(self.cell_requested)
             view.window_changed.connect(self.window_changed)
+            view.selection_changed.connect(self._on_view_selected)
             self._stack.addWidget(view)
+        #: 页面自己推给各层的那一遍（见 :meth:`_on_view_selected`）—— 那不是「用户选的」。
+        self._pushing_selection = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -157,8 +164,49 @@ class CalendarPage(QWidget):
     def current_view(self) -> LevelView:
         return self._views[self._level]
 
+    def selected_day(self) -> datetime.date | None:
+        """选中的是哪一天（没有选中就是 ``None``）。**三层共用这一份。**"""
+        return self._selected
+
+    def selected_refs(self) -> list[PhotoRef]:
+        return self.current_view().selected_refs()
+
+    def set_selected(self, day: datetime.date | None) -> None:
+        """选中那一天（``None`` = 不选中任何一天）。
+
+        **整页只有这一份**，推给当前那一层照着画：于是「在年视图里点一天 → 切到月视图」
+        仍然是同一天，而不是一层一份、切过去就忘了。
+        """
+        self._selected = day
+        # **只推给当前那一层**：另外两层看不见，推了也是白推；它们各自成为当前层时
+        # 由 `set_level` 补上那一次。
+        self._pushing_selection = True
+        try:
+            self.current_view().set_selected(day)
+        finally:
+            self._pushing_selection = False
+        self.selection_changed.emit(self.selected_refs())
+
+    def _on_view_selected(self) -> None:
+        """某一层说「我选中了某一天」（用户点的那一下）：整页的这一份跟着它走。"""
+        if self._pushing_selection:
+            return  # 页面自己推下去的那一遍，不是用户的动作
+        self.set_selected(self.current_view().selected_day())
+
     def clear_selection(self) -> None:
-        """当前那层不选中任何一天。"""
+        """不选中任何一天（用户动作：会通知外面）。"""
+        self.set_selected(None)
+
+    def _reset_selection(self) -> None:
+        """**静默**地不选中任何一天 —— 外面没人要听「这一页刚露出来」这件事。
+
+        与 :meth:`clear_selection` 只差一个信号，而这个信号在本页**一个接收方都没有**
+        （`grep selection_changed src/` 只有声明与那一发）。曾经在 ``showEvent`` 里发它，
+        那一发足以让整轮界面测试在**下一个**窗口构造时段错误 —— 位置在
+        ``SearchField.__init__``，与这里八竿子打不着：控件还活着的时候就已经被弄坏，
+        要等下一次大分配才崩。
+        """
+        self._selected = None
         self.current_view().clear_selection()
 
     def focus_current_view(self) -> None:
@@ -184,13 +232,29 @@ class CalendarPage(QWidget):
         """
         super().showEvent(event)
         self.focus_current_view()
-        self.clear_selection()
+        self._reset_selection()
 
     def set_level(self, level: str) -> None:
+        """切到另一层。**选中了哪一天，就翻到那一天所在的那一层。**
+
+        「在年视图里点 5 月 16 号 → 按 W」必须看到 5 月 16 号那一周，而不是上周剩下
+        的那几天 —— 所以切层前先把锚点挪到选中的那一天上。三条入口（``Y`` / ``M`` /
+        ``W``、工具条的分段选择器、会话恢复）都走这里，一处就够。
+        """
         if level not in self._views:
             return
+        selected = self._selected
+        if selected is not None:
+            self._anchor = selected
         self._level = level
         self._views[level].set_anchor(self._anchor)
+        # **把选中的那一天交给这一层**（它成为当前层的那一刻）—— 各层只存一份「我该
+        # 画哪一个」，页面才是那一份状态的持有者。
+        self._pushing_selection = True
+        try:
+            self._views[level].set_selected(self._selected)
+        finally:
+            self._pushing_selection = False
         self._stack.setCurrentWidget(self._views[level])
         self._bar.set_level(level)
         self._bar.set_title(level, self._anchor)
@@ -199,17 +263,29 @@ class CalendarPage(QWidget):
         self.level_changed.emit(level)
 
     def step(self, steps: int) -> None:
-        """翻页。年 ± 一年、月 ± 一月、周 ± 七天、日 ± 一天。"""
+        """翻页。年 ± 一年、月 ± 一月、周 ± 七天。"""
         self._anchor = shift(self._level, self._anchor, steps)
         self._views[self._level].set_anchor(self._anchor)
+        self._drop_selection_off_screen()
         self._bar.set_title(self._level, self._anchor)
         self._refresh_window()
 
     def go_today(self) -> None:
         self._anchor = self._today
         self._views[self._level].set_anchor(self._today)
+        self._drop_selection_off_screen()
         self._bar.set_title(self._level, self._today)
         self._refresh_window()
+
+    def _drop_selection_off_screen(self) -> None:
+        """翻到了别的一段日子：选中的那一天不在这儿了，那块高亮就收掉。
+
+        **留着就是指着屏幕外的一天**：年视图里点 5 月 16 号再按 ←，屏幕上是 2023 年，
+        而那一格还指着 2024 年的 5 月 16 号 —— 用户以为改的是他看见的那一张。
+        """
+        selected = self._selected
+        if selected is not None and not self.current_view().covers(selected):
+            self.set_selected(None)
 
     def photo_count(self) -> int:
         """当前这一段里有多少张照片（标题栏与「空日历」提示都用它）。"""

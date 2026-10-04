@@ -21,9 +21,16 @@ from PySide6.QtWidgets import QFrame, QScrollArea, QSizePolicy, QVBoxLayout, QWi
 from gallery.core.library.calendar import WEEKDAY_NAMES, week_index, week_start
 from gallery.core.library.photos import PhotoRef
 from gallery.ui.calendar.base import LevelView, hour_label
-from gallery.ui.calendar.layout import CELL_GAP, HOURS_PER_DAY, cell_rect, row_height
+from gallery.ui.calendar.layout import (
+    CARD_RADIUS,
+    CELL_GAP,
+    HOURS_PER_DAY,
+    cell_rect,
+    row_height,
+)
 from gallery.ui.calendar.painting import (
     begin,
+    dot,
     draw_text,
     fill_rounded,
     font_px,
@@ -66,6 +73,16 @@ class WeekView(LevelView):
         area.setFrameShape(QFrame.Shape.NoFrame)
         area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         area.setStyleSheet("QScrollArea { background: transparent; }")
+        # **滚动区与它那条竖滚动条都不接焦点**：Qt 在鼠标按下时把焦点给「按到的那一层里
+        # 第一个 focusPolicy != NoFocus 的控件」，而这两个默认都是 StrongFocus ——
+        # 于是**在时间轴上点一下（含点那条滚动条）键盘就被抢走**：← / → 变成滚动时间轴，
+        # 日历的「上一周 / 下一周」按多少次都没反应。焦点是这一页自己的（见
+        # ``CalendarPage.focus_current_view``），一律交给 :class:`WeekView` 自己。
+        area.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        area.verticalScrollBar().setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        #: 用户点中的那一格（``(哪一天, 第几个小时)``）—— **点哪一格高亮哪一格**。
+        #: 切层时它原样留着（见 ``CalendarPage.set_level``：选中是哪一天就翻到哪一段）。
+        self._selected_cell: tuple[datetime.date, int] | None = None
         self._header = _TimeHeader(self)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -116,6 +133,36 @@ class WeekView(LevelView):
     def photos_in_hour(self, day: datetime.date, hour: int) -> Sequence[PhotoRef]:
         return self._by_hour.get((day, hour), ())
 
+    # ---- 选中 -------------------------------------------------------------
+    def select_hour(self, day: datetime.date, hour: int) -> None:
+        """点到了某一天某一小时的那一格：高亮**那一格**，并选中那一天。
+
+        **高亮的范围就是用户点到的那一格**（月视图里点一天高亮那一天）：先前是把**整列**
+        24 行全涂一遍 —— 那是「选中一天」而不是「点了一格」，而且退不掉的底色看着像卡住了。
+        一天被选中（从别的层切过来）时，表头那一格里仍有一层淡底，于是「选的是哪一天」
+        还看得出来。
+        """
+        self._selected_cell = (day, hour)
+        self.set_selected(day)
+        self.update()  # 同一天换一格时 `set_selected` 不重画，这里补上
+
+    def selected_cell(self) -> tuple[datetime.date, int] | None:
+        """用户点中的那一格（没有就是 ``None``）。"""
+        return self._selected_cell
+
+    def is_selected_cell(self, day: datetime.date, hour: int) -> bool:
+        """这一格就是用户点中的那一格吗。"""
+        return self._selected_cell == (day, hour)
+
+    def set_selected(self, day: datetime.date | None) -> None:
+        # 换了一天（或收掉选中）之后，那一格的高亮不再属于屏幕上任何东西 —— 跟着走。
+        if self._selected_cell is not None and self._selected_cell[0] != day:
+            self._selected_cell = None
+            self.update()
+        super().set_selected(day)
+        self._header.update()
+        self._grid.update()
+
     def now_row(self) -> float:
         """今天那一格里，「现在」落在第几行（0 = 00:00 那一行的顶）。
 
@@ -131,11 +178,6 @@ class WeekView(LevelView):
     def set_anchor(self, anchor: datetime.date) -> None:
         super().set_anchor(anchor)
         self._reveal_photos()
-
-    def set_selected(self, day: datetime.date) -> None:
-        super().set_selected(day)
-        self._header.update()
-        self._grid.update()
 
     def resizeEvent(self, event: object) -> None:  # noqa: N802 - 名字是 Qt 定的
         super().resizeEvent(event)  # type: ignore[arg-type]
@@ -216,6 +258,8 @@ class _TimeHeader(QWidget):
         for index, day in enumerate(days):
             slot = QRectF(self._view.content_left() + index * column, 0, column, self.height())
             if day == self._view._selected:
+                # **只染表头这一格**：整列 24 行全涂一遍看着像卡住了，而「选的是哪一天」
+                # 这一格说得清 —— 尤其从年 / 月视图切过来时，时间轴上并没有点中的那一格。
                 painter.fillRect(slot.adjusted(1, 0, -1, 0), colors.selection)
             draw_text(
                 painter,
@@ -292,13 +336,17 @@ class _TimeGrid(QWidget):
 
         for index, day in enumerate(days):
             slot = QRectF(left + index * column, 0, column, self.height())
-            if day == self._view._selected:
-                painter.fillRect(slot.adjusted(1, 0, -1, 0), colors.selection)
             for hour in range(HOURS_PER_DAY):
                 photos = self._view.photos_in_hour(day, hour)
-                if photos:
+                # **点中的那一格也要画**（哪怕那一小时没有照片）：用户点的是「这一格」，
+                # 高亮就该跟着这一格走，而不是跟着有没有照片走。
+                if photos or self._view.is_selected_cell(day, hour):
                     self._paint_hour_row(
-                        painter, QRectF(slot.left(), hour * row, slot.width(), row), hour, photos
+                        painter,
+                        QRectF(slot.left(), hour * row, slot.width(), row),
+                        day,
+                        hour,
+                        photos,
                     )
             painter.setPen(colors.outline)
             painter.drawLine(int(slot.left()), 0, int(slot.left()), self.height())
@@ -316,16 +364,28 @@ class _TimeGrid(QWidget):
         painter.end()
 
     def _paint_hour_row(
-        self, painter: QPainter, row: QRectF, hour: int, photos: Sequence[PhotoRef]
+        self,
+        painter: QPainter,
+        row: QRectF,
+        day: datetime.date,
+        hour: int,
+        photos: Sequence[PhotoRef],
     ) -> None:
-        """一行：一张圆角照片铺进那一格，不止一张时右下角写「N 张」。
+        """一行：一格照片（不止一张时右下角写「N 张」），点中的那一格先铺一层选中底色。
 
         **与年 / 月两层同一种画法**：格子就是一张照片，不压渐变、不写标题 ——
         「这一格是几点」左窄条已经写着，而压深的那道渐变原本是给标题垫底的。
+
+        **没有照片也画**：只剩那一层淡底 + 一个占位圆点，于是「我点的是这一格」看得见。
         """
         colors = self._view.colors
         x, y, cell_w, cell_h = cell_rect(row.width(), row.height())
         cell = QRectF(row.left() + x, row.top() + y, cell_w, cell_h)
+        if self._view.is_selected_cell(day, hour):
+            fill_rounded(painter, cell, colors.selection, CARD_RADIUS)
+        if not photos:
+            dot(painter, cell.center(), 2.5, colors.faint)
+            return
         paint_cell_photo(
             painter,
             cell,
@@ -344,10 +404,14 @@ class _TimeGrid(QWidget):
             return
         day = days[index]
         hour = int(point.y() // self._view.row_height())
+        # 键盘归视图自己：**点一下不等于把键盘让给时间轴的滚动区**（理由见 __init__）。
+        self._view.setFocus()
+        # **空白的那一格也选中**（与月视图点空白的一天同一脾气）：那一格点得中，
+        # 高亮就该跟着它走；没有照片就不摊开任何东西。
+        self._view.select_hour(day, hour)
         photos = list(self._view.photos_in_hour(day, hour))
         if not photos:
             return
-        self._view.select_day(day)
         self._view.select_cell(photos, hour_label(day, hour))
 
 

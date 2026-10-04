@@ -236,3 +236,72 @@ def _click_cell(view: object, box: object, index: int) -> None:  # type: ignore[
             Qt.KeyboardModifier.NoModifier,
         )
     )
+
+
+# ---- 选中：点一天高亮那一天 ---------------------------------------------------
+
+
+def _sample(image, cell) -> set[str]:  # type: ignore[no-untyped-def]
+    """一格四周与正中那几个点的颜色 —— 比「是不是底色」稳（描边是抗锯齿的）。"""
+    x, y, w, h = cell.x(), cell.y(), cell.width(), cell.height()
+    points = [
+        (x + w / 2, y + 0.5),
+        (x + 0.5, y + h / 2),
+        (x + w - 0.5, y + h / 2),
+        (x + w / 2, y + h - 0.5),
+        (x + w / 2, y + h / 2),
+    ]
+    return {image.pixelColor(int(px), int(py)).name() for px, py in points}
+
+
+def test_a_picked_day_is_painted_as_selected(
+    page: CalendarPage,
+    qt_app: QApplication,
+) -> None:
+    """年视图里**点一天高亮那一天**。
+
+    从前只有「今天」那一圈：点过的地方什么都不剩，于是「点一下 → 切到月视图 → 再切回来」
+    这一路上，用户选中过哪一天在年视图里根本看不出来。钉的是**画出来的那一屏**：空格子
+    （没有照片）与有照片的格子都要看得出高亮，而**旁边那一天一个字都不许多**。
+    """
+    from PySide6.QtGui import QImage
+
+    view = page.current_view()
+    page.show()
+    qt_app.processEvents()
+    image = QImage(view.size(), QImage.Format.Format_RGBA8888)
+
+    empty = datetime.date(2021, 6, 15)  # fixture 只铺 1 月 1 日到 3 月 1 日
+    with_photo = datetime.date(2021, 1, 5)
+    neighbour = datetime.date(2021, 6, 16)
+    assert not view.photos_of(empty), "前提不成立：空的那一天上有照片"
+    assert view.photos_of(with_photo), "前提不成立：那一天上没有照片"
+
+    view.render(image)
+    before = {day: _sample(image, _cell_of(view, day)) for day in (empty, with_photo)}
+    neighbour_before = _sample(image, _cell_of(view, neighbour))
+
+    view.set_selected(empty)
+    view.render(image)
+    assert _sample(image, _cell_of(view, empty)) != before[empty], "空的那一天没有高亮"
+    assert _sample(image, _cell_of(view, neighbour)) == neighbour_before, "邻居被涂了"
+
+    view.set_selected(with_photo)
+    view.render(image)
+    assert _sample(image, _cell_of(view, with_photo)) != before[with_photo], (
+        "有照片的那一天没有高亮"
+    )
+
+
+def _cell_of(view, day: datetime.date):  # type: ignore[no-untyped-def]
+    """年视图里某一天那一格（12 张小月的矩阵与格子一一对应）。"""
+    for index in range(12):
+        box = view._box(index)
+        for cell_day, cell in zip(
+            month_matrix(datetime.date(view.anchor().year, index + 1, 1)),
+            view._day_cells(box),
+            strict=True,
+        ):
+            if cell_day == day:
+                return cell
+    raise AssertionError(f"年视图上没有 {day} 这一格")

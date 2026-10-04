@@ -142,7 +142,12 @@ class LevelView(QWidget):
         self.update()
 
     def set_selected(self, day: datetime.date | None) -> None:
-        """选中那一天（``None`` = 不选中任何一天）。"""
+        """选中那一天（``None`` = 不选中任何一天）。
+
+        **这一份归 :class:`~gallery.ui.calendar.page.CalendarPage` 管**，三层共用：
+        外面推下来一次，三层各存一份只为了照着画（见
+        :meth:`~gallery.ui.calendar.page.CalendarPage.set_selected`）。
+        """
         self._selected = day
         self.update()
         self.selection_changed.emit(self.selected_refs())
@@ -150,6 +155,18 @@ class LevelView(QWidget):
     def clear_selection(self) -> None:
         """不选中任何一天。"""
         self.set_selected(None)
+
+    def selected_day(self) -> datetime.date | None:
+        """选中的是哪一天（没有选中就是 ``None``）。"""
+        return self._selected
+
+    def covers(self, day: datetime.date) -> bool:
+        """这一天在这一层**自己的**那几天里吗（翻页之后据此收掉选中的高亮）。
+
+        口径就是 :meth:`days`：周视图是周日到周六，月 / 年视图是那一月 / 那一年自己的
+        29–31 天（**不含补位** —— 补位格点不动，也就没有「点中一个邻月的日子」这回事）。
+        """
+        return day in self.days()
 
     # ---- 选取 -------------------------------------------------------------
     def photos_of(self, day: datetime.date) -> Sequence[PhotoRef]:

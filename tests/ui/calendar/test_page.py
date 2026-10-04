@@ -322,8 +322,8 @@ def test_coming_back_to_the_page_leaves_no_day_highlighted(
     """回到日历这一页时，上一次点开的那一格**不再高亮**。
 
     用户点的是某一天，进的是那张照片或那一格 —— 退回来时那一格不在眼前。留着的高亮
-    是一块**点不掉**的底色（周视图点空白格子什么也不会发生：它提前 return 了）。
-    锚点不动：那是用户刚找到的那一段。
+    是一块**点不掉**的底色（那一份高亮曾经是整列 24 行）。锚点不动：那是用户刚找到的
+    那一段。
     """
     ref = _photo("a.jpg")
     page.set_photos([ref], {ref.path: _values(ref, TODAY, 9)})
@@ -483,3 +483,129 @@ def test_the_thumbnails_of_a_burst_all_land(
         page.set_thumbnail(ref.path, image, edge)
 
     assert all(view.photo(ref) is not None for ref in refs)
+
+
+# ---- 选中：点哪一格高亮哪一格、切层以它为锚点 ---------------------------------
+
+
+def _pick_day(page: CalendarPage, day: datetime.date) -> None:
+    """用户点到了那一天（走的是页面那一份选中）。"""
+    page.set_selected(day)
+    assert page.selected_day() == day
+
+
+def test_switching_levels_lands_on_the_day_that_was_picked(page: CalendarPage) -> None:
+    """**选中了哪一天，切层就翻到那一天所在的那一层。**
+
+    「在年视图里点 5 月 16 号 → 按 W」要看到 5 月 16 号那一周，而不是上周剩下那几天。
+    三条入口（``Y`` / ``M`` / ``W``、工具条、会话恢复）都走 :meth:`CalendarPage.set_level`，
+    所以这里一条就钉住了全部。
+    """
+    picked = datetime.date(2021, 5, 16)
+    page.set_level("year")
+    _pick_day(page, picked)
+
+    page.set_level("month")
+    assert page.anchor() == picked
+    assert picked in page.current_view().days(), "切到月视图没有落在那一个月"
+
+    page.set_level("week")
+    assert picked in page.current_view().days(), "切到周视图没有落在那一周"
+
+    page.set_level("year")
+    assert page.anchor() == picked
+
+
+def test_the_picked_day_stays_picked_across_the_levels(page: CalendarPage) -> None:
+    """**整页一份选中**：切到别的层仍然是它（不是一层一份、切过去就忘了）。"""
+    picked = datetime.date(2021, 5, 16)
+    page.set_level("year")
+    _pick_day(page, picked)
+
+    for level in ("month", "week", "year", "week"):
+        page.set_level(level)
+        view = page.current_view()
+        assert page.selected_day() == picked
+        assert view.selected_day() == picked, f"{level} 那一层没拿到选中的那一天"
+
+
+def test_switching_levels_keeps_the_day_in_every_screen(page: CalendarPage) -> None:
+    """切层走的是「选中 → 锚点」这条路，于是**每一层都摆着那一天**。"""
+    page.set_level("year")
+    _pick_day(page, datetime.date(2021, 5, 16))
+    page.set_level("month")  # 切层：锚点跟着选中的那一天走，于是这一屏有那一天
+    assert page.selected_day() == datetime.date(2021, 5, 16)
+    assert datetime.date(2021, 5, 16) in page.current_view().days()
+
+
+def test_paging_away_drops_a_day_that_is_no_longer_on_screen(page: CalendarPage) -> None:
+    """翻到了别的一段日子：选中的那一天不在这儿了，那块高亮就收掉。
+
+    留着就是**指着屏幕外的一天**：年视图里点 5 月 16 号再按 ←，屏幕上是 2020 年，
+    而那一格还指着 2021 年的 5 月 16 号 —— 用户以为改的是他看见的那一张。
+    """
+    page.set_level("year")
+    _pick_day(page, datetime.date(2021, 5, 16))
+    page.step(-1)
+    assert page.anchor().year == 2020
+    assert page.selected_day() is None
+
+
+def test_clicking_a_cell_in_the_week_view_highlights_that_cell(page: CalendarPage) -> None:
+    """周视图里**点哪一格高亮哪一格**，并且那一天被选中（切层时要用）。"""
+    page.set_level("week")
+    view = page.current_view()
+    day, hour = view.days()[2], 14
+    view.select_hour(day, hour)
+
+    assert view.selected_cell() == (day, hour)
+    assert view.is_selected_cell(day, hour)
+    assert not view.is_selected_cell(day, hour + 1)
+    assert view.selected_day() == day
+    assert page.selected_day() == day
+
+
+def test_the_week_view_does_not_paint_the_whole_column(
+    page: CalendarPage,
+    qt_app: QApplication,
+) -> None:
+    """**只涂点中的那一格**，不是选中那一天的全部 24 行。
+
+    从年 / 月视图切过来时（没有点中的那一格），连那一格都不涂，只在表头留一层淡底说
+    「选的是哪一天」。
+    """
+    page.resize(1000, 700)
+    page.show()
+    page.set_level("week")
+    qt_app.processEvents()
+    view = page.current_view()
+    view.select_hour(view.days()[3], 14)
+    qt_app.processEvents()
+
+    selection = view.colors.selection
+    picked = _week_cell_point(view, view.days()[3], 14)
+    same_column_other_hour = _week_cell_point(view, view.days()[3], 2)
+    other_column = _week_cell_point(view, view.days()[0], 14)
+
+    image = _render(view._grid)
+    picked_color = image.pixelColor(int(picked.x()), int(picked.y()))
+    assert picked_color != view.background, "点中的那一格没有涂上选中色"
+    for name, point in (
+        ("同一列的别的钟点", same_column_other_hour),
+        ("别的列", other_column),
+    ):
+        color = image.pixelColor(int(point.x()), int(point.y()))
+        assert color != selection, f"{name}也被涂了 —— 整列都亮着就是旧行为"
+        assert color == view.background, f"{name}不是底色：{color.name()}"
+
+
+def _week_cell_point(view, day: datetime.date, hour: int):  # type: ignore[no-untyped-def]
+    """周视图里某一格正中的点（时间轴内容坐标）。"""
+    from PySide6.QtCore import QPointF
+
+    column = view.column_width()
+    row = view.row_height()
+    return QPointF(
+        view.content_left() + (day - view.days()[0]).days * column + column / 2,
+        hour * row + row / 2,
+    )

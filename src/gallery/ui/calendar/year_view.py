@@ -152,6 +152,12 @@ class YearView(LevelView):
         self, painter: QPainter, cell: QRectF, day: datetime.date, month: datetime.date
     ) -> None:
         colors = self.colors
+        # **点一天就高亮那一天**（月视图里点一天高亮那一天，周视图里点一格高亮那一格）。
+        # 年视图的格子只有二十几像素：底色垫在照片下面看得见空格子，有照片的那几格
+        # 再补一圈描边 —— 两者一起才够认出来。
+        selected = day == self._selected
+        if selected:
+            fill_rounded(painter, cell, colors.selection, _CELL_RADIUS)
         # **补位格只有日期号**：那几格是邻月的日子，摆照片就是把邻月的照片摆进这一张
         # 小月 —— 同一张照片于是还会在它自己那张小月里再出现一次。
         own = in_month(day, month)
@@ -176,14 +182,16 @@ class YearView(LevelView):
                 cell,
                 str(day.day),
                 font_px(_DATE_FONT_PX),
-                colors.muted if own else colors.faint,
+                colors.text if selected else colors.muted if own else colors.faint,
                 Qt.AlignmentFlag.AlignCenter,
                 elide=False,
             )
+        if selected:
+            outline_rounded(painter, cell, colors.accent, 2.0, radius=_CELL_RADIUS)
         # **今天只在它自己那个月的格子里高亮**。小月矩阵含上下月补位，于是 10 月 4 日
         # 在「9 月」那张小月的末尾也会出现一次 —— 两处都圈上就成了两个「今天」，
         # 而用户要回答的问题是「今天在哪」，不是「今天出现了几次」。
-        if own and day == self.today():
+        elif own and day == self.today():
             outline_rounded(painter, cell, colors.accent, 1.6, radius=_CELL_RADIUS)
 
     # ---- 交互 -------------------------------------------------------------

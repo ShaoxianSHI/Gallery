@@ -422,17 +422,26 @@ def test_the_week_view_sits_on_the_hour_of_its_first_photo(
     ), "周视图没有定位到有照片的那几个小时"
 
 
+def _point(view: object, day: datetime.date, hour: float) -> QPoint:
+    """周视图里某一天某一小时那一格的中心（时间轴内容坐标，与滚到哪儿无关）。"""
+    column, row = view.column_width(), view.row_height()  # type: ignore[attr-defined]
+    return QPoint(
+        int(view.content_left() + (day - view.days()[0]).days * column + column / 2),  # type: ignore[attr-defined]
+        int(hour * row + row / 2),
+    )
+
+
 def _click_hour_cell(
     qt_app: QApplication, window: MainWindow, day: datetime.date, hour: int
 ) -> None:
-    """在周视图里点某一天某一小时的那一格（坐标是时间轴内容里的，与滚到哪儿无关）。"""
+    """在周视图里点某一天某一小时的那一格。"""
     view = window._calendar_page.current_view()
-    column, row = view.column_width(), view.row_height()
-    point = QPoint(
-        int(view.content_left() + (day - view.days()[0]).days * column + column / 2),
-        int(hour * row + row / 2),
+    QTest.mouseClick(
+        view._grid,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+        _point(view, day, hour),
     )
-    QTest.mouseClick(view._grid, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, point)
     qt_app.processEvents()
 
 
@@ -492,6 +501,46 @@ def test_coming_back_from_a_photo_leaves_no_day_highlighted(
 
     assert page.current_view()._selected is None
     assert page.anchor() == MARCH
+
+
+def test_clicking_around_the_week_view_never_steals_the_arrows(
+    qt_app: QApplication, calendar_window: MainWindow
+) -> None:
+    """**在周视图里点任何地方都不能把键盘抢走** —— 点格子、点表头、点那条竖滚动条。
+
+    Qt 在鼠标按下时把焦点给「按到的那一层里第一个 focusPolicy != NoFocus 的控件」，
+    而 ``QScrollArea`` 与 ``QScrollBar`` 默认都是 StrongFocus：焦点一落上去，← / → 变成
+    滚动时间轴，日历的「上一周 / 下一周」按多少次都没反应（点一下滚动条就中招）。
+    """
+    window = calendar_window
+    page = window._calendar_page
+    _week_at(qt_app, window, MARCH)
+    view = page.current_view()
+
+    QTest.mouseClick(
+        view._grid,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+        _point(view, MARCH, 10.0),
+    )
+    _settle(qt_app, window)
+    assert window._stack.currentWidget() is window._detail_page, "点那一格没有进大图页"
+    QTest.keyClick(window._detail, Qt.Key.Key_Escape)
+    _settle(qt_app, window)
+
+    bar = view._area.verticalScrollBar()
+    for widget, point, where in (
+        (view._header, QPoint(40, 20), "表头"),
+        (view._grid, _point(view, MARCH, 3.0), "空白的那一格"),
+        (bar, QPoint(bar.width() // 2, int(bar.height() * 0.3)), "竖滚动条"),
+    ):
+        QTest.mouseClick(widget, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, point)
+        _settle(qt_app, window)
+        assert qt_app.focusWidget() is view, f"点了{where}之后焦点被抢走了"
+        before = page.anchor()
+        QTest.keyClick(view, Qt.Key.Key_Right)
+        _settle(qt_app, window)
+        assert page.anchor() == before + datetime.timedelta(days=7), f"点了{where}之后 → 失灵"
 
 
 def test_coming_back_from_a_drill_grid_leaves_the_arrows_working(
