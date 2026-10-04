@@ -355,6 +355,17 @@ class LibraryFlowMixin:
         # 缩略图仓库都是白做（还会把日历那一页已经出好的图扔掉）。
         if self._stack.currentWidget() is not self._calendar_page:
             return
+        # **摊开的那一层更不能喂**：那一层不是「这一层的照片」，而是**日历上一个格子里
+        # 的几张** —— 拿它分桶，等于告诉日历「整个库就这几张」。
+        # 换页发生在摆内容**之后**（`_list_drill_photos` → `setCurrentWidget`，理由见
+        # 那一处），于是上面那条「日历不在前面」在这里还拦不住：
+        # 进网格的那一刻模型被换成那几张，重排立刻走到这里，手上的日历于是整个变成
+        # 那几张 —— 别的格子当场空掉（症状：点开一格再退回来，另外几格变灰了 /
+        # 变黑了；要等退回来之后那一遍重扫把整库重新喂进去才恢复，于是「慢一点
+        # 切到下一周再切回来就好了」）。真正回到整库的那次喂在 `_leave_calendar_drill`
+        # 之后，等重扫扫完。
+        if self._drill_photos is not None:
+            return
         if self._scan_job is not None:  # 还没扫完，等 _on_scan_done
             return
         self._start_calendar_load()

@@ -85,6 +85,58 @@ def test_repeated_anchor_changes_still_land_on_the_first_photo(
     assert view._area.verticalScrollBar().value() > 0, "没有滚到第一张照片所在的那个小时"
 
 
+def test_the_reveal_happens_again_when_the_photos_arrive_after_it(
+    qt_app: QApplication,
+    wait_for: object,
+) -> None:
+    """拍摄时间**晚到**时（真的如此：后台读完才喂桶），定位要补一次。
+
+    定位是 :meth:`WeekView.set_anchor` 排的，而刚切到周视图那一刻桶多半还是空的 ——
+    定位对着空桶跑完，把滚动条按回 0 就不管了：这一周明明有照片、屏幕却停在 00:00。
+    而「看得见哪些」正是按那个滚动位置算的，于是要的那几张压根没人要图（症状：切到
+    某一周时缩略图只剩一片占位灰，切到下一周再切回来才正常）。
+    """
+    view = WeekView(ThumbStore())
+    view.resize(900, 600)
+    view.show()
+    qt_app.processEvents()
+
+    view.set_anchor(ANCHOR)  # 此刻桶还是空的
+    assert wait_for(lambda: not view._reveal.isActive())  # type: ignore[operator]
+    assert view._area.verticalScrollBar().value() == 0
+
+    view.set_buckets(*_buckets([_ref("a.jpg"), _ref("b.jpg")]))  # 照片到了
+
+    assert wait_for(lambda: not view._reveal.isActive())  # type: ignore[operator]
+    assert view._area.verticalScrollBar().value() > 0, "数据晚到，没有补一次定位"
+
+
+def test_a_landed_reveal_is_not_repeated_when_the_buckets_change(
+    qt_app: QApplication,
+    wait_for: object,
+) -> None:
+    """已经定位过的那一次**不该**被数据打回来：用户滚到哪就是哪。
+
+    喂桶在换库、重扫、模型重排时都会来一遍（那一遍扫描的每一步都算一次变化），
+    无条件补一次定位于是把用户正在看的位置一次次拽回第一张照片。
+    """
+    view = WeekView(ThumbStore())
+    view.set_buckets(*_buckets([_ref("a.jpg")]))
+    view.resize(900, 600)
+    view.show()
+    qt_app.processEvents()
+    view.set_anchor(ANCHOR)
+    assert wait_for(lambda: not view._reveal.isActive())  # type: ignore[operator]
+
+    bar = view._area.verticalScrollBar()
+    bar.setValue(max(0, bar.value() - 300))  # 用户自己往上滚了一段
+    where = bar.value()
+    view.set_buckets(*_buckets([_ref("a.jpg"), _ref("b.jpg")]))
+
+    assert wait_for(lambda: not view._reveal.isActive())  # type: ignore[operator]
+    assert bar.value() == where, "已经定位过的那一次被数据拽回去了"
+
+
 def test_a_second_reveal_while_one_is_pending_does_not_lose_it(
     qt_app: QApplication,  # noqa: ARG001
 ) -> None:

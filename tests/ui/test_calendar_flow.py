@@ -200,6 +200,43 @@ def test_several_photos_in_a_cell_are_laid_out_in_a_grid(
     assert window._model.rowCount() == len(NAMES)
 
 
+def _days_total(page: object) -> int:
+    """日历那份桶里一共有几张（跨天加起来）。"""
+    view = page.current_view()  # type: ignore[attr-defined]
+    return sum(
+        len(list(view.photos_of(day)))
+        for day in (MARCH, APRIL, MAY)  # type: ignore[attr-defined]
+    )
+
+
+def test_entering_a_drill_does_not_repoint_the_calendar_at_those_photos(
+    qt_app: QApplication, calendar_window: MainWindow
+) -> None:
+    """摊开的那一层**不是**「这一层的照片」，拿它分桶等于告诉日历整个库就那几张。
+
+    进网格是「先摆内容再换页」（理由见 ``_enter_calendar_drill``），于是换页那一刻
+    日历还在前面，模型却已经被换成那几张 —— 重排立刻把日历重新分桶，整个换掉。
+    于是其余格子当场空掉：症状是「点开一格再退回来，另外几格变灰了 / 变黑了」，
+    而且要等退回来之后那一遍重扫把整库重新喂进去才恢复（真实库扫得久，于是看着像
+    「切到下一周再切回来就好了」）。**这里不扫完就断言**：坏的时候就是那一刻坏。
+    """
+    window = calendar_window
+    page = window._calendar_page
+    photos, label = _cell_of(window, 5)  # 五月那格挤着两张 → 会摊成一层
+    assert len(photos) == 2
+
+    page.current_view().select_cell(photos, label)
+    qt_app.processEvents()
+    assert window._stack.currentWidget() is window._grid_page
+
+    assert _days_total(page) == len(NAMES), "整个日历被换成了摊开的那几张"
+
+    window.go_up()
+    qt_app.processEvents()
+    assert window._stack.currentWidget() is page
+    assert _days_total(page) == len(NAMES), "刚退回来，整库那几张就已经少了"
+
+
 def test_a_scan_in_flight_does_not_land_on_the_drill_layer(
     qt_app: QApplication, calendar_window: MainWindow
 ) -> None:
