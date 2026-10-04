@@ -12,6 +12,7 @@ from __future__ import annotations
 import subprocess
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from typing import Protocol
 
 #: 一次外部调用最多等这么久（秒）。**不是「程序该跑多久」，是「等不到就当它不行」** ——
 #: 界面上的对策是降级到浏览器（见 ``launch.open_google_calendar``），用户等的是
@@ -28,17 +29,18 @@ class CommandResult:
     stderr: str = ""
 
 
-class Runner:
+class Runner(Protocol):
     """跑一条命令。
 
-    做成协议而不是基类：测试传一个函数进去就行，不必继承。
+    **是协议而不是基类**：测试传一个普通函数进去就行，不必继承 —— 而那正是这里真正
+    需要的形状（``tests/core/external/test_launch.py`` 里的 ``FakeRunner`` 就是个函数）。
     """
 
     def __call__(
         self, argv: Sequence[str], *, timeout: float | None = COMMAND_TIMEOUT_SECONDS
     ) -> CommandResult:
         """跑 ``argv`` 并等它结束。**不该抛异常** —— 跑不起来本身就是一种结果。"""
-        raise NotImplementedError
+        ...
 
 
 def subprocess_runner(

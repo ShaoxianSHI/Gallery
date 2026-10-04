@@ -78,6 +78,7 @@ from PySide6.QtWidgets import (
 )
 
 from gallery.core import paths
+from gallery.core.external import launch
 from gallery.core.library.facade import Library
 from gallery.core.library.photos import GridEntry, GroupRef, PhotoRef
 from gallery.core.library.search import SearchCondition
@@ -92,7 +93,7 @@ from gallery.core.library.watcher import LibraryChange
 from gallery.core.metadata.exif import MetadataReport
 from gallery.core.metadata.facets import PhotoFacets
 from gallery.core.places.resolver import LazyPlaceResolver
-from gallery.ui import theme
+from gallery.ui import banners, theme
 from gallery.ui.banner_overlay import BannerOverlay
 from gallery.ui.browser.grid import PhotoGrid
 from gallery.ui.browser.model import PhotoListModel
@@ -103,6 +104,14 @@ from gallery.ui.browser.thumb_sizes import (
     nearest_index,
 )
 from gallery.ui.calendar import CalendarPage
+from gallery.ui.external_button import (
+    BUTTON_GAP,
+    BUTTON_SIZE,
+    ExternalAppsButton,
+    ExternalEntry,
+    button_rect,
+    calendar_icon,
+)
 from gallery.ui.navigation import (
     ENTRY_KIND_PATH,
     EntryKey,
@@ -387,8 +396,9 @@ class MainWindow(
         self._breadcrumb.path_requested.connect(self._on_breadcrumb_requested)
         self._breadcrumb.condition_removed.connect(self._on_condition_removed)
         self._breadcrumb.condition_edited.connect(self._on_condition_edited)
-        # 标题文字与 ⌘R 的输入框都要给右上角那块让出来，否则长相册名会从它底下穿过去。
-        self._title_bar.reserve_right(SEARCH_FIELD_WIDTH + 2 * SEARCH_FIELD_MARGIN_RIGHT)
+        # 右上角那一块（搜索胶囊，页面上还有左边的「用外部应用打开」按钮）要让出多宽，
+        # **不在这里给死** —— 那一块的内容随页面变（按钮只在日历页出现），由
+        # ``_layout_title_bar`` 每次摆的时候按此刻的样子算（ADR 0034）。
 
         # **横幅不进这个布局**（ADR 0029 决策 1）：它在竖排里占一行，于是每一条消息
         # 都把网格往下挤一段。控件本体与摆位在 ``_build_ui`` 的最后一步建。
@@ -438,6 +448,16 @@ class MainWindow(
         # 不会像之前那样压住照片区的顶边（ADR 0026 决策 8）。
         if self._owns_title_bar:
             self._stack.setContentsMargins(0, TITLE_BAR_EXTRA, 0, 0)
+
+        # 「用外部应用打开」按钮摆在搜索胶囊**左边**（ADR 0034）。它也是浮在顶边
+        # 那一行上的一层，与胶囊同一手法：不进布局、摆位由 ``_layout_title_bar`` 算，
+        # 抬一次的理由也一样（Qt 按创建顺序叠兄弟控件）。
+        # **建在搜索框之前**：它俩不重叠，但都压在中央控件之上，顺序与「谁先建谁在
+        # 下层」保持一致，将来要挪位置时不用重排。
+        self._external_button = ExternalAppsButton(self)
+        self._external_button.set_entries(self._external_entries())
+        self._external_button.entry_activated.connect(self._on_external_entry)
+        self._external_button.hide()
 
         # 搜索框**最后建**：它要压在中央控件之上（候选列表画在窗口内容那一段，
         # 而 Qt 按创建顺序叠兄弟控件 —— 先建的那个被后建的盖住）。
@@ -806,6 +826,14 @@ class MainWindow(
         # 按钮就会亮着一条指向别处的路。日历里点照片是直接进大图页，
         # 于是这一页上它们统统关掉（大图页上它们照常按正在看的那一张算）。
         in_calendar = self._stack.currentWidget() is self._calendar_page
+        # 「用外部应用打开」**只在日历页出现**（ADR 0034）：那一页有「哪一层、哪一天」
+        # 可言，别的页上没有对应的东西可开。显隐收在这里，与其余动作的可用性同一个时机
+        # （换页、切层都会走到这儿），于是按钮与那些动作**不会各说各的**。
+        #
+        # **摆位不在这里算**：``_layout_title_bar`` 看见它可见就会把它摆对并让出宽度。
+        self._external_button.setVisible(self._owns_title_bar and in_calendar)
+        self._external_button.refresh()
+        self._layout_title_bar()
         entries = [] if in_calendar else self._selected_entries()
         focus_row = -1 if in_calendar else self._focus_row()
         # 「改名」只对磁盘上的**某一个**东西成立：分组卡片不是磁盘上的东西，改不了名，
@@ -1227,6 +1255,7 @@ class MainWindow(
             self._title_bar.setGeometry(0, 0, self.width(), 0)
             self._title_bar.hide()
             self._search_field.hide()
+            self._external_button.hide()
             return
         central = self.centralWidget()
         top = central.geometry().top() if central is not None else 0
@@ -1242,8 +1271,9 @@ class MainWindow(
         # 而眼睛看的是标题那行字的墨迹 —— 截图量过两者的中线，差多少、往哪边差，
         # 都写在 ``search_field.TEXT_ALIGN_DROP`` 那里了。
         field_height = min(SEARCH_FIELD_HEIGHT, height - 4)
+        search_x = self.width() - SEARCH_FIELD_WIDTH - SEARCH_FIELD_MARGIN_RIGHT
         self._search_field.setGeometry(
-            self.width() - SEARCH_FIELD_WIDTH - SEARCH_FIELD_MARGIN_RIGHT,
+            search_x,
             (height - field_height) // 2 + SEARCH_FIELD_TEXT_ALIGN_DROP,
             SEARCH_FIELD_WIDTH,
             field_height,
@@ -1254,6 +1284,23 @@ class MainWindow(
         # 根本没有那个东西。``show()`` 对已经可见的控件不再发 ``showEvent``，所以抬的动作
         # 得写在这里，缩放窗口时也一并生效。
         self._search_field.raise_()
+
+        # 「用外部应用打开」紧贴胶囊**左边**（ADR 0034）。**不跟胶囊同高**：它比胶囊矮
+        # 一点更像一个图标按钮，而纵向仍然共中线（见 ``button_rect``）—— 两个不同高的
+        # 东西并排站，中线对齐才像同一行里的。
+        #
+        # **摆不摆由 ``_update_action_states`` 说了算**（日历页才有东西可开），这里只管
+        # 在它该在的时候把它摆对 —— 于是显隐与几何各归一处，不互相猜。
+        if self._external_button.isVisible():
+            self._external_button.setGeometry(button_rect(search_x, height))
+            self._external_button.raise_()
+        # 标题文字与 ``⌘R`` 的输入框都要给右上角这一整块让出来：胶囊**加上左边的按钮**
+        # （不加上它的话，一个长相册名会从按钮底下穿过去）。
+        self._title_bar.reserve_right(
+            SEARCH_FIELD_WIDTH
+            + 2 * SEARCH_FIELD_MARGIN_RIGHT
+            + (BUTTON_SIZE + BUTTON_GAP if self._external_button.isVisible() else 0)
+        )
 
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         super().showEvent(event)
@@ -1273,6 +1320,59 @@ class MainWindow(
         （红线 1、ADR 0025 决策 3）。
         """
         self._on_rename_committed(self._focus_row(), text)
+
+        # ---- 用外部应用打开（ADR 0034）------------------------------------
+
+    def _external_entries(self) -> tuple[ExternalEntry, ...]:
+        """下拉框里那几项。**每一项自己判自己此刻该不该出现**（见
+        :attr:`~gallery.ui.external_button.ExternalEntry.enabled`），于是列表不用随
+        页面变化重建，翻页时只 :meth:`~gallery.ui.external_button.ExternalAppsButton.refresh`
+        问一遍就够。
+        """
+        return (
+            ExternalEntry(
+                id="google_calendar",
+                name="Google 日历",
+                icon=calendar_icon(),
+                enabled=lambda: self._stack.currentWidget() is self._calendar_page,
+            ),
+        )
+
+    def _on_external_entry(self, entry: object) -> None:
+        """下拉框里点了哪一项。**按 id 分派**，不在按钮那一侧写死（理由见
+        :class:`~gallery.ui.external_button.ExternalEntry`）。
+        """
+        if isinstance(entry, ExternalEntry) and entry.id == "google_calendar":
+            self._open_google_calendar()
+
+    def _open_google_calendar(self) -> None:
+        """把 Google 日历开到与当前这一页一致的那一层、那一天。
+
+        **日期取「选中的一天，没有选中就取锚点」** ——「有日期选择就用选择的」就落在
+        这一行。周视图把那一天递过去即可：两边的周都从周日起，Google 自己会算出同一周。
+
+        **整个过程进后台线程**：装没装 PWA 要扫一遍应用包，启动了还要等浏览器起来、
+        等窗口出现，实测冷启动一两秒、机器忙时更久。主线程一秒都不该被占着。
+        """
+        page = self._calendar_page
+        level = page.level()
+        day = page.selected_day() or page.anchor()
+        self._runner.submit(
+            lambda _context: launch.open_google_calendar(level, day),
+            on_result=self._on_external_opened,
+            on_error=self._on_external_failed,
+        )
+
+    def _on_external_opened(self, outcome: object) -> None:
+        if not isinstance(outcome, launch.OpenOutcome):
+            return
+        # **说过就走**：开都开完了，用户看的应该是那个窗口而不是这条消息（ADR 0029）。
+        self._show_banner(banners.external_app_opened(outcome, "Google 日历"), auto_hide=True)
+
+    def _on_external_failed(self, message: str) -> None:
+        # 走到这里的是「起进程这一步整个炸了」，而 :mod:`core.external.launch` 自己
+        # 的降级路径不抛异常 —— 那一条已经回来说明了。
+        self._show_banner(f"没能打开 Google 日历：{message}")
 
     # ---- 关闭 --------------------------------------------------------------
 

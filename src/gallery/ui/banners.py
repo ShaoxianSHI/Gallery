@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from gallery.core.external.launch import OpenOutcome
 from gallery.core.library.facade import MetadataWriteOutcome
 from gallery.core.library.photos import FolderRef, GridEntry
 from gallery.core.metadata.failures import Failure
@@ -274,10 +275,29 @@ def album_name(entries: Sequence[GridEntry]) -> str:
     return ""
 
 
+def external_app_opened(outcome: OpenOutcome, name: str) -> str:
+    """「用外部应用打开当前这一页」做完之后的那一句（ADR 0034）。
+
+    **降级必须说出来**：开在应用里还是开在浏览器里，用户看到的完全不是同一回事
+    —— 后者是浏览器里一个网页，标签栏还在，而前者是那个独立窗口。把两者说成同一句
+    话，下次他就知道「有时候会跳出浏览器」不是出了故障。
+
+    **应用名前面留一个空格**：中英混排里裸贴在一起读着挤（「已在Google 日历…」），
+    本仓库的文案也是这么写的（「已把 3 项…」「已拷贝 12 个路径」）。**后面不留** ——
+    名字自己以汉字收尾（「Google 日历」），再隔一个空格就成了「日历 中」。
+    """
+    if outcome.detail:
+        return f"{outcome.detail}。"
+    if outcome.in_app:
+        return f"已在 {name}中打开当前这一页。"
+    return f"已在浏览器中打开 {name}。"
+
+
 __all__ = [
     "album_cover_banner",
     "album_cover_cleared_banner",
     "album_name",
+    "external_app_opened",
     "first_reason",
     "metadata_edit_banner",
     "paste_banner",
