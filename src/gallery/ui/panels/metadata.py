@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -139,12 +140,19 @@ class MetadataPanel(QWidget):
         self._copy_button = QPushButton("复制全部")
         self._copy_button.setObjectName("metadataButton")
         self._copy_button.clicked.connect(self._copy_all)
-        footer_layout.addWidget(self._copy_button)
+        self._place_button = QPushButton("编辑位置")
+        self._place_button.setObjectName("metadataButton")
+        self._place_button.clicked.connect(self.edit_place_requested)
         self._show_all = QCheckBox("显示全部字段")
         self._show_all.setObjectName("metadataToggle")
         self._show_all.toggled.connect(lambda _checked: self._render())
+        footer_layout.addWidget(self._copy_button)
+        footer_layout.addWidget(self._place_button)
         footer_layout.addWidget(self._show_all)
-        footer_layout.addStretch(1)
+        # **三个组件平分整行**，后面不留一段空：面板宽 300，两个按钮比那个勾选框窄，
+        # 剩下的宽度按比例分给它们（``Expanding``），不然右边会空出一小条。
+        for button in (self._copy_button, self._place_button):
+            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         layout.addWidget(self._footer)
 
         self._hint_timer = QTimer(self)
@@ -235,6 +243,12 @@ class MetadataPanel(QWidget):
         """
         self._place_editable = editable
         self._place_reason = reason
+        # 按钮在页脚（不在「位置」那一组里），所以这里也得跟着换：不能用时**置灰**，
+        # 理由放进悬浮提示，而「位置」那一组仍然把这句话写出来（看得见，不必去猜）。
+        self._place_button.setEnabled(editable)
+        self._place_button.setToolTip(
+            reason if not editable else "改坐标或地点，会写回这张照片（⌘Z 可以撤销）"
+        )
         self._render()
 
     @property
@@ -274,7 +288,12 @@ class MetadataPanel(QWidget):
         return container
 
     def _group_title(self, title: str) -> QWidget:
-        """组标题。**「位置」那一行右边多一个按钮**，其余组一个都没有。"""
+        """组标题。只有「位置」那一组例外：不能编辑时把**理由**说在标题右边。
+
+        **「编辑位置」按钮不在这里**（在页脚，和「复制全部」「显示全部字段」一行）——
+        照片**本来就没有位置**的时候，面板上根本没有「位置」那一组，入口也就跟着没了，
+        而那恰恰是最需要补一个位置的时候。
+        """
         row = QWidget()
         layout = QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -283,20 +302,12 @@ class MetadataPanel(QWidget):
         label.setObjectName("metadataGroupTitle")
         layout.addWidget(label)
         layout.addStretch(1)
-        if title != PLACE_GROUP_TITLE:
-            return row
-        if not self._place_editable:
+        if title == PLACE_GROUP_TITLE and not self._place_editable:
             hint = QLabel(self._place_reason or "此处不能编辑")
             hint.setObjectName("metadataNotice")
             hint.setWordWrap(True)
             hint.setToolTip(self._place_reason)
             layout.addWidget(hint, 1)
-            return row
-        button = QPushButton("编辑位置")
-        button.setObjectName("metadataButton")
-        button.setToolTip("改坐标或地点，会写回这张照片（⌘Z 可以撤销）")
-        button.clicked.connect(self.edit_place_requested)
-        layout.addWidget(button)
         return row
 
     def _row(self, label: str, value: str) -> QWidget:

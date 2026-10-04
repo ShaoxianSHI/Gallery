@@ -46,10 +46,12 @@ from gallery.core.library.session import (  # noqa: E402
     SessionState,
     save_session,
 )
+from gallery.core.metadata.exif import build_report  # noqa: E402
 from gallery.core.metadata.journal import read_records  # noqa: E402
 from gallery.core.metadata.place_edit import PlaceEdit, PlaceState  # noqa: E402
 from gallery.core.metadata.writeback import Assignment  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
+from gallery.ui.panels.metadata import MetadataPanel  # noqa: E402
 from gallery.ui.panels.place_edit import PlaceEditDialog  # noqa: E402
 
 PHOTO = "一张.jpg"
@@ -370,12 +372,21 @@ def test_a_refused_write_says_why_and_changes_nothing(
 
 
 def test_the_panel_offers_the_editor(qt_app: QApplication, focused: MainWindow) -> None:
-    """面板「位置」那一组的按钮是同一个入口（点它与 ⇧⌘I 走的是同一条路）。"""
+    """页脚那个按钮是同一个入口（点它与 ⇧⌘I 走的是同一条路）。
+
+    **它摆在页脚，不摆在「位置」那一组里**：照片**本来就没有位置**的时候面板上根本没有
+    「位置」那一组，入口也就跟着没了 —— 而那恰恰是最需要补一个位置的时候。
+    """
     window = focused
     window.toggle_metadata(True)
     wait_until(qt_app, lambda: window._panel.isVisible())
 
-    assert window._panel.place_editable
+    panel = window._panel
+    assert panel.place_editable
+    assert panel._place_button.parentWidget() is panel._footer  # 摆在页脚那一行
+    assert panel._place_button.isEnabled()
+    # 页脚在读到元数据之前是藏着的（那时照片还没选中，几句话说了也没用）。
+    wait_until(qt_app, lambda: not panel._footer.isHidden())
 
 
 # ---- 字段顺序、实时回填、⌘W 与不可缩放 -----------------------------------------
@@ -829,3 +840,84 @@ def test_the_dialog_cannot_be_resized(qt_app: QApplication) -> None:
 
     assert dialog.layout().sizeConstraint() == QLayout.SizeConstraint.SetFixedSize
     assert dialog.minimumSize() == dialog.maximumSize()
+
+
+def test_a_photo_without_any_place_still_has_the_entry_point(
+    qt_app: QApplication, focused: MainWindow
+) -> None:
+    """**照片本来就没有位置时，按钮照样在那儿。**
+
+    之前它摆在「位置」那一组的标题右边，而没有位置的照片压根不会渲染出那一组 ——
+    用户想补一个位置的时候，界面上根本没有入口。
+    """
+    window = focused
+    window.toggle_metadata(True)
+    wait_until(qt_app, lambda: window._panel.isVisible())
+
+    panel = window._panel
+    panel.set_report(
+        build_report(
+            {"EXIF:Model": "Canon EOS R6"},
+            path=Path("/库/一张.jpg"),
+            size=1,
+            mtime_ns=0,
+            source="exiftool",
+        )
+    )
+    qt_app.processEvents()
+
+    assert panel.place_editable
+    assert panel._place_button.isEnabled()
+    assert not panel._footer.isHidden()
+    assert "位置" not in panel.report.as_text()  # 那一组确实不存在
+
+
+def test_the_three_footer_widgets_fill_the_row(qt_app: QApplication) -> None:
+    """复制全部 / 编辑位置 / 显示全部字段**平分整行**，右边不空出一小条。"""
+    panel = _panel(qt_app)
+    row = panel._footer.layout()
+
+    widgets = [row.itemAt(index).widget() for index in range(row.count())]
+
+    assert [widget.text() for widget in widgets] == ["复制全部", "编辑位置", "显示全部字段"]
+    used = sum(widget.width() for widget in widgets)
+    used += row.spacing() * (len(widgets) - 1)
+    margins = panel.layout().contentsMargins()  # 面板自己的左右边距
+    assert used == panel.width() - (margins.left() + margins.right())
+    assert len({widgets[0].width(), widgets[1].width()}) == 1  # 两个按钮一样宽
+
+
+def test_the_button_goes_grey_and_explains_when_it_cannot_be_used(qt_app: QApplication) -> None:
+    """**摆着一个点下去只会报错的按钮，比没有更糟**（ADR 0014 决策 4）。
+
+    不用时置灰并把理由放进悬浮提示，而「位置」那一组仍然把这句话写出来 ——
+    看得见，不必去猜。
+    """
+    panel = _panel(qt_app)
+
+    panel.set_place_editable(False, reason="没有装 exiftool")
+
+    assert not panel._place_button.isEnabled()
+    assert panel._place_button.toolTip() == "没有装 exiftool"
+
+
+def _panel(qt_app: QApplication) -> MetadataPanel:
+    """一个**页脚可见**的面板。
+
+    页脚在读到元数据之前是藏着的，而藏着的控件不参与布局 —— 拿它量宽度量出来的是
+    Qt 的默认值（640），那正是空转绿的一种。
+    """
+    panel = MetadataPanel()
+    panel.show()
+    panel.set_report(
+        build_report(
+            {"EXIF:Model": "Canon EOS R6"},
+            path=Path("/库/一张.jpg"),
+            size=1,
+            mtime_ns=0,
+            source="exiftool",
+        )
+    )
+    qt_app.processEvents()
+    assert not panel._footer.isHidden()
+    return panel
