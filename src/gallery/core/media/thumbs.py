@@ -4,6 +4,9 @@
 缓存文件损坏就删掉重新生成，超过上限就按修改时间淘汰。缓存写不进去（磁盘满、目录只读）
 只应导致「慢一点」，绝不能让看图这件事失败。
 
+**原子写崩在中间留下的 ``.tmp`` 也是缓存条目**：见 :func:`_is_orphan`。认不出它，
+2 GiB 上限就成了假上限（总量算少了、淘汰轮不到它、清空也清不掉）。
+
 缓存 key 覆盖所有会影响像素结果的输入：
 ``(绝对路径, mtime_ns, size, max_edge, spec_version)``。
 照片被外部工具改写（mtime/size 变化）或缩略图规格升级时，旧条目自动不再命中。
@@ -20,8 +23,11 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import io
+import re
+import stat as stat_module
 from collections.abc import Callable
 from pathlib import Path
+from typing import Final
 
 from PIL import Image
 
@@ -33,6 +39,7 @@ from gallery.core.constants import (
 )
 from gallery.core.library.photos import PhotoRef
 from gallery.core.media.decode import RasterImage, decode_rgba
+from gallery.core.paths import resolved_str
 
 #: 缓存 JPEG 的质量。缩略图不需要更高质量，82 在体积与观感上最划算
 #: （相对 85 省 7.6% 体积，PSNR 只掉 0.7 dB，而它最多只显示成 288 逻辑像素）。
@@ -46,6 +53,47 @@ JPEG_SUBSAMPLING = "4:2:0"
 _EVICT_TARGET_RATIO = 0.9
 
 _ENTRY_SUFFIXES = (".jpg", ".png")
+
+#: ``atomic.write_bytes_atomic`` 的临时文件后缀（``tempfile.mkstemp(suffix=...)``）。
+_TMP_SUFFIX = ".tmp"
+
+#: ``mkstemp`` 在 prefix 与 suffix 之间塞的那一串随机字符：固定 8 个，取自
+#: ``tempfile`` 自己的字母表（小写字母 + 数字 + 下划线）。
+_MKTEMP_RANDOM_LEN = 8
+_MKTEMP_RANDOM_PATTERN = "[a-z0-9_]"
+
+#: 「这个文件名是不是本模块自己留下的原子写临时文件」的判据，逐段对上
+#: ``mkstemp(dir=..., prefix=f"{条目名}.", suffix=".tmp")`` 实际会产出的那一串：
+#:
+#:     <40 位十六进制摘要> + (".jpg" | ".png") + "." + <8 个随机字符> + ".tmp"
+#:
+#: **摘要长度从 ``hashlib.sha1()`` 取**，不是写死的数字 —— 换了摘要算法它跟着变，
+#: 不会留下一条「判据说 40 位、实际是 64 位」的静默失效。
+#:
+#: 为什么非要认得这么死：认宽了就会去删用户自己放进来的文件。``clear()`` 的承诺是
+#: 「只删自己认识的条目」，一个叫 ``holiday.jpg.a1b2c3d4.tmp`` 的用户文件不该被删掉；
+#: 而一个 40 位十六进制摘要加上 8 位随机尾巴，用户几乎不可能自己造出来撞上 —— 撞上了
+#: 它也确实只可能是我们崩在 ``mkstemp`` 与 ``os.replace`` 之间留下的。
+_ORPHAN_PATTERN: Final = re.compile(
+    rf"[0-9a-f]{{{hashlib.sha1().digest_size * 2}}}"
+    rf"(?:{'|'.join(re.escape(suffix) for suffix in _ENTRY_SUFFIXES)})"
+    rf"\.{_MKTEMP_RANDOM_PATTERN}{{{_MKTEMP_RANDOM_LEN}}}{re.escape(_TMP_SUFFIX)}"
+)
+
+
+def _is_orphan(name: str) -> bool:
+    """这个文件名是不是一次**崩在半路的原子写**留下的孤儿？
+
+    ``write_bytes_atomic`` 的顺序是 ``mkstemp → 写 → fsync → os.replace``。进程被
+    SIGKILL、机器断电都只能崩在中间，``os.replace`` 没跑到，于是那个临时文件**永远留在
+    缓存目录里**：没人会再来收它，可它实实在在占着磁盘。
+
+    它过去对记账完全隐形（``_entries()`` 只认 ``.jpg`` / ``.png``），于是三件事同时坏掉：
+    ``total_bytes()`` 少算、``enforce_limit()`` 够不着它、``clear()`` 报告「已清空」却把它
+    留下 —— 2 GiB 上限因此不是真的上限，缓存可以一直涨下去。认了它就只是又一条可淘汰
+    的条目，和别的条目走同一套记账、同一次淘汰、同一回删除。
+    """
+    return _ORPHAN_PATTERN.fullmatch(name) is not None
 
 
 class ThumbnailCache:
@@ -124,7 +172,10 @@ class ThumbnailCache:
     def clear(self) -> int:
         """删除缓存目录中的全部缩略图，返回删除的条目数。
 
-        只删自己认识的条目（``.jpg`` / ``.png``），不碰用户放进来的其他文件。
+        只删自己认识的条目（``.jpg`` / ``.png``，以及原子写崩在中间留下的 ``.tmp``
+        孤儿 —— 它们同样是本模块自己造出来的文件，见 :func:`_is_orphan`），不碰用户
+        放进来的其他文件。判据逐段对上 ``mkstemp`` 实际会起的名字，所以用户随手丢进去
+        一个 ``某某.jpg.tmp`` 是不会被误删的。
         """
         removed = 0
         for path, _, _ in self._entries():
@@ -179,7 +230,7 @@ class ThumbnailCache:
     def _key(self, ref: PhotoRef) -> str:
         raw = "\x00".join(
             (
-                str(ref.path.expanduser().resolve()),
+                resolved_str(ref.path),
                 str(ref.mtime_ns),
                 str(ref.size),
                 str(self._max_edge),
@@ -212,7 +263,11 @@ class ThumbnailCache:
     def _write_entry(self, digest: str, image: RasterImage) -> None:
         data, suffix = _encode(image)
         try:
-            write_bytes_atomic(self._entry_path(digest, suffix), data)
+            # durable=False：缓存条目是**可再生的**（源图还在，重解一次就有），为它付一次
+            # fsync 纯属浪费 —— 那是每张图都要等的一次系统调用。换来的是：崩在断电上
+            # 至多留下半截文件，而 :meth:`_read_entry` 对半截文件是能自愈的（PIL 解不开
+            # 就删掉重生成，OSError 与 UnidentifiedImageError 都是 OSError）。
+            write_bytes_atomic(self._entry_path(digest, suffix), data, durable=False)
         except OSError:
             # 缓存写不进去只意味着下次还得重新解码，不影响正确性。
             return
@@ -224,18 +279,29 @@ class ThumbnailCache:
             self.enforce_limit()
 
     def _entries(self) -> list[tuple[Path, int, float]]:
-        """列出缓存条目：``(路径, 字节数, 修改时间)``。"""
+        """列出缓存条目：``(路径, 字节数, 修改时间)``。
+
+        **一次 ``stat()`` 走到底**：``Path.is_file()`` 本身就是一次 ``stat``，
+        紧接着 ``path.stat()`` 又是同一个 inode 的第二次。三千个条目的目录要多付
+        三千次系统调用，而 :meth:`enforce_limit`（每次越过上限写图都会走一遍）
+        正是这条路上最热的一处。
+
+        **孤儿（``.tmp``）也算条目**：见 :func:`_is_orphan`。这里认它，记账、淘汰、
+        清空三处就一起对上了 —— 漏掉任何一处，2 GiB 上限都只是看着像上限。
+        """
         try:
             candidates = list(self._directory.iterdir())
         except OSError:
             return []
         entries: list[tuple[Path, int, float]] = []
         for path in candidates:
-            if not path.is_file() or path.suffix not in _ENTRY_SUFFIXES:
+            if path.suffix not in _ENTRY_SUFFIXES and not _is_orphan(path.name):
                 continue
             try:
                 stat = path.stat()
             except OSError:
+                continue
+            if not stat_module.S_ISREG(stat.st_mode):
                 continue
             entries.append((path, stat.st_size, stat.st_mtime))
         return entries

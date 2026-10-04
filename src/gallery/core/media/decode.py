@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import ExifTags, Image, ImageOps, UnidentifiedImageError
 
 from gallery.core.cancellation import never_cancel
 from gallery.core.errors import ImageDecodeError
@@ -246,9 +246,7 @@ def _decode_now(path: Path, *, max_edge: int | None, use_draft: bool) -> RasterI
                 and (image.format or "").upper() in {"JPEG", "MPO"}
             ):
                 image.draft("RGB", (max_edge, max_edge))
-            # ``exif_transpose`` 无论转不转都返回一张新图（不转时是 copy），因此
-            # 下一行的 ``thumbnail`` 改的是它自己，不会动到 ``image`` 的像素。
-            oriented = ImageOps.exif_transpose(image)
+            oriented = _oriented(image)
             if max_edge is not None and max(oriented.size) > max_edge:
                 oriented.thumbnail((max_edge, max_edge), Image.Resampling.LANCZOS)
             return RasterImage.from_pil(oriented, has_alpha=has_transparency(oriented))
@@ -263,6 +261,35 @@ def _decode_now(path: Path, *, max_edge: int | None, use_draft: bool) -> RasterI
             path=path,
             detail=str(exc),
         ) from exc
+
+
+#: EXIF Orientation 里「不用转」的那几个值（缺省、正常、以及只带镜像标记的 0/1）。
+_NO_ROTATION = frozenset({None, 0, 1})
+
+
+def _oriented(image: Image.Image) -> Image.Image:
+    """按 EXIF Orientation 把图摆正。**转不动时原样返回，不复制。**
+
+    :func:`PIL.ImageOps.exif_transpose` 不管有没有 Orientation 都会返回一张**新图**
+    （不转时是 ``image.copy()``），于是每解一张没标记方向的照片就白白付一次全分辨率
+    拷贝：一张 50MP 的原图那是约 200 MB 的分配 + 一次 memcpy，而大图预览这条路上
+    ``use_draft`` 常常关着，付的就是整幅。
+
+    这里先读一次 Orientation（只解析 APP1 那一段，不触发解码），转不动就直接把
+    原图交出去 —— 下游 ``thumbnail`` 改的就是它自己，而 ``image`` 是我们自己
+    ``open`` 出来的局部对象，由 ``with`` 负责关掉，没有别处共享它。
+
+    转得动的那几张仍然交给 ``exif_transpose``：它顺手把 Orientation 标记摘掉，
+    而「这一格到底摆没摆正」是解码这层的责任，不该留给调用方各自判断。
+    """
+    try:
+        orientation = image.getexif().get(ExifTags.Base.Orientation)
+    except (OSError, ValueError, SyntaxError):
+        # 坏掉的 EXIF 不该让整张照片解不出来（那属于「像素读不出」，由下面统一报）。
+        return image
+    if orientation in _NO_ROTATION:
+        return image
+    return ImageOps.exif_transpose(image)
 
 
 def _bomb_message(path: Path) -> str:

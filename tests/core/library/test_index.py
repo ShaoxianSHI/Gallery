@@ -9,6 +9,8 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from gallery.core import paths
 from gallery.core.library.index import SCHEMA_VERSION, FacetIndex
 from gallery.core.library.photos import PhotoRef
@@ -298,3 +300,107 @@ def test_after_close_the_index_no_longer_holds_a_path(tmp_path: Path) -> None:
 
     assert not index.persistent
     assert index.path is None, "路径还在，就会有人重新连上它"
+
+
+# ---- 提交强度按缓存配（不是按数据配）----------------------------------------
+
+
+def test_the_index_runs_in_wal_with_normal_sync(tmp_path: Path) -> None:
+    """索引是缓存，提交强度就该按缓存配：``WAL`` + ``synchronous=NORMAL``。
+
+    默认设置下每次 ``commit`` 都要 fsync，而存照片是一张张来的 —— 等的是用户的耐心，
+    存的是一份随时可以删掉重扫就回来的东西（红线 5）。因此这里钉的是**真正落到连接上
+    的那两个 pragma 值**，不是「我们调用过 ``PRAGMA ...``」（那可能悄没声地失败）。
+    """
+    index = FacetIndex(tmp_path / "index.db")
+    connection = index._connection
+    assert connection is not None
+
+    journal_mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
+    synchronous = connection.execute("PRAGMA synchronous").fetchone()[0]
+
+    assert journal_mode == "wal"
+    assert synchronous == 1  # NORMAL；FULL 才是 2，那正是要躲开的那份等待
+    index.close()
+
+
+def test_a_relaxed_index_still_round_trips(tmp_path: Path) -> None:
+    """降了持久性不等于降了正确性：读出来必须还是一模一样。"""
+    index = FacetIndex(tmp_path / "index.db")
+    ref = _ref(tmp_path)
+
+    index.store([(ref, FULL)])
+    index.close()
+
+    # 重开一次：WAL 是持久的设置，重连仍然落在同一套设置上，数据也还在。
+    reopened = FacetIndex(tmp_path / "index.db")
+    assert reopened.lookup([ref]) == {ref.path: FULL}
+    reopened.close()
+
+
+def test_wal_leaves_no_side_files_behind_a_clean_close(tmp_path: Path) -> None:
+    """``-wal`` / ``-shm`` 是 ``WAL`` 带来的两个新文件，正常关掉就该被 SQLite 收走。
+
+    缓存目录里多两个文件本身不算事故，但它们**不该在关掉之后还赖着** —— 那说明连接
+    没有正常关闭（而本模块把「关掉之后不再偷偷重开」当成一条承诺，见
+    ``test_after_close_the_index_no_longer_holds_a_path``）。
+    """
+    index = FacetIndex(tmp_path / "index.db")
+    index.store([(_ref(tmp_path), FULL)])
+    assert (tmp_path / "index.db-wal").exists(), "开着 WAL 时就该有这个文件"
+
+    index.close()
+
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["index.db"]
+
+
+def test_a_corrupt_index_degrades_to_memory_instead_of_crashing(tmp_path: Path) -> None:
+    """**加 pragma 不能换来一次崩溃。**
+
+    ``sqlite3.connect`` 是懒的：对着一个不是数据库的文件它照样连上，报错要等到第一条
+    语句。所以新加的 ``PRAGMA journal_mode=WAL`` 有可能成为第一个碰到坏库的地方 ——
+    它必须照样降级成内存模式（本次会话照常用，下次重扫就重建），而不是把异常抛出去。
+    """
+    path = tmp_path / "index.db"
+    path.write_bytes("这不是 SQLite 数据库".encode() * 64)
+    ref = _ref(tmp_path)
+
+    index = FacetIndex(path)
+
+    assert index.persistent is False
+    index.store([(ref, FULL)])
+    assert index.lookup([ref]) == {ref.path: FULL}, "降级之后本次会话照常用"
+
+
+class _VolumeWithoutSharedMemory(sqlite3.Connection):
+    """模拟一个只读 / 不支持共享内存的卷：WAL 那句 pragma 一执行就报错。"""
+
+    def execute(self, sql: str, *args: object) -> object:
+        if sql.startswith("PRAGMA journal_mode"):
+            raise sqlite3.OperationalError("attempt to write a readonly database")
+        return super().execute(sql, *args)
+
+
+def test_a_failure_to_relax_durability_does_not_take_the_index_down(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """pragma 失败**只记一条日志**：那个索引仍然能用。
+
+    最常见的失败是「那个卷只读 / 不支持共享内存」—— WAL 要建 ``-wal`` 与 ``-shm`` 两个
+    文件。这种情况下索引本来就能只读地开着（表已经在了，``CREATE TABLE IF NOT EXISTS``
+    不写盘），不能因为一句 pragma 就把它整个打成内存模式。
+    """
+    real_connect = sqlite3.connect
+
+    def connect(*args: object, **kwargs: object) -> sqlite3.Connection:
+        kwargs["factory"] = _VolumeWithoutSharedMemory
+        return real_connect(*args, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
+    index = FacetIndex(tmp_path / "index.db")
+    ref = _ref(tmp_path)
+
+    assert index.persistent, "pragma 失败不等于索引不可用"
+    index.store([(ref, FULL)])
+    assert index.lookup([ref]) == {ref.path: FULL}
+    index.close()

@@ -122,11 +122,11 @@ class ExifToolBatchSource:
         payload = self._run(argv, should_cancel=should_cancel)
         if payload is None:
             return
-        by_source = _by_source_file(payload)
+        by_source = _BySourceFile(payload)
         for original, absolute in zip(batch, resolved, strict=True):
             # exiftool 对能读的文件一定会给一条记录（哪怕里面只有 SourceFile）；
             # 完全没提到的那些（权限不足、坏文件）才是「压根没读出来」。
-            yield Path(original), by_source.get(_normalized(absolute))
+            yield Path(original), by_source.get(absolute)
 
     def _run(self, argv: Sequence[str], *, should_cancel: Callable[[], bool]) -> str | None:
         """跑一次 exiftool，返回它的 stdout；取消或失败返回 ``None``。"""
@@ -199,25 +199,55 @@ class PillowBatchSource:
                 yield Path(path), None  # 读不出来：下次还要再试，不进索引
 
 
-def _by_source_file(payload: str) -> dict[str, Mapping[str, object]]:
-    """把 exiftool 的 JSON 输出按 ``SourceFile`` 归位。"""
-    try:
-        parsed = json.loads(payload)
-    except json.JSONDecodeError:
-        return {}
-    if not isinstance(parsed, list):
-        return {}
-    result: dict[str, Mapping[str, object]] = {}
-    for item in parsed:
-        if not isinstance(item, dict):
-            continue
-        source = item.get("SourceFile")
-        if isinstance(source, str):
-            result[_normalized(Path(source))] = item
-    return result
+class _BySourceFile:
+    """按 ``SourceFile`` 把 exiftool 的 JSON 输出归位。
+
+    **先用字面量查，查不到才付 ``realpath`` 的钱。** exiftool 把 ``SourceFile``
+    原样回填成我们拼进 argv 的那个字符串，而那个字符串已经是 ``resolve()`` 过的
+    了 —— 于是绝大多数记录一次 ``normcase``（纯字符串操作，零系统调用）就能对上。
+    真的对不上时（exiftool 归一化了写法、或路径里有符号链接）再退回去按
+    ``realpath`` 建一份慢表，**而且只在那种情况下才建**。
+
+    这不是可有可无的优化：``realpath`` 要 ``lstat`` 路径上的每一段，一个五层的
+    库就是五次系统调用。原实现对每张照片做三次（拼 argv 一次、查一次、给回填的
+    ``SourceFile`` 建索引一次），五千张就是一万五千次 —— 比 exiftool 自己跑完
+    那一批还贵。
+    """
+
+    __slots__ = ("_literal", "_resolved")
+
+    def __init__(self, payload: str) -> None:
+        self._resolved: dict[str, Mapping[str, object]] | None = None
+        try:
+            parsed = json.loads(payload)
+        except json.JSONDecodeError:
+            parsed = []
+        self._literal: dict[str, Mapping[str, object]] = {}
+        for item in parsed if isinstance(parsed, list) else []:
+            if not isinstance(item, dict):
+                continue
+            source = item.get("SourceFile")
+            if isinstance(source, str):
+                self._literal[os.path.normcase(source)] = item
+
+    def get(self, path: Path) -> Mapping[str, object] | None:
+        key = os.path.normcase(str(path))
+        record = self._literal.get(key)
+        if record is not None:
+            return record
+        return self._slow().get(key)
+
+    def _slow(self) -> dict[str, Mapping[str, object]]:
+        """第一次真正查不中时才建的那份慢表（建一次就留着）。"""
+        if self._resolved is None:
+            slow: dict[str, Mapping[str, object]] = {}
+            for key, item in self._literal.items():
+                slow[_normalized(key)] = item
+            self._resolved = slow
+        return self._resolved
 
 
-def _normalized(path: Path) -> str:
+def _normalized(path: str | Path) -> str:
     """比路径用的标准写法：解析符号链接、统一分隔符、去掉 ``./``。"""
     try:
         return os.path.normcase(os.path.realpath(path))

@@ -32,6 +32,7 @@ from stat import S_ISDIR, S_ISREG
 from gallery.core.cancellation import never_cancel
 from gallery.core.errors import LibraryNotAccessibleError
 from gallery.core.library.photos import FolderRef, GridEntry, PhotoRef, is_supported_photo
+from gallery.core.paths import resolved
 
 
 @dataclass(slots=True)
@@ -166,6 +167,35 @@ def iter_entries(
         yield photo
 
 
+def has_album(root: Path) -> bool:
+    """``root`` 底下**有没有**相册。
+
+    **只看根目录那一层就够了**，而这不是偷懒，是 :func:`iter_albums` 的定义决定的：
+    它产出的每一个条目都是文件夹，**根目录下任何一个可见子目录自己就是一个相册**
+    ——哪怕它整棵子树里一张照片都没有，那也是一个空相册，仍然是相册。于是
+    「库里有没有相册」与「根目录下有没有可见的子目录」是同一个问题，
+    一次 ``scandir`` 就答完了，根本不需要往下走。
+
+    曾经这里写的是一个广度优先的 ``stack``，而那个 ``stack`` 从头到尾没被压进过东西
+    —— 结果对，只是白摆出一副「要递归」的样子。改成现在这样是为了让读代码的人
+    不必自己重新推一遍这件事。
+
+    **可见性规则与 :func:`iter_albums` 一致**：隐藏项、配置目录与符号链接一律算不得。
+    """
+    entries = _list_dir(Path(root), None)
+    if entries is None:
+        return False
+    for entry in entries:
+        if _is_hidden_name(entry.name):
+            continue
+        try:
+            if entry.is_dir(follow_symlinks=False):
+                return True
+        except OSError:
+            continue  # 列得出来却读不动：当作不是相册，别的条目接着看
+    return False
+
+
 def iter_albums(
     root: Path,
     *,
@@ -244,9 +274,14 @@ def is_visible_path(root: Path, path: Path) -> bool:
 
     路径已经不存在也照样答得出来（``resolve`` 不用 ``strict=True``）：监听恰恰最常
     问到这种路径。
+
+    **两边都走 :func:`~gallery.core.paths.resolved` 那份带记忆的解析。** 这是全项目里
+    最热的一处「同一个问题反复问」：监听器每收到一个文件事件就判一次可见性（一次
+    移动判两次），访达里复制五百张照片就是一千多次。而 ``root`` 整个会话都不变，
+    ``Path.resolve()`` 却每次都要 ``lstat`` 路径上的每一段。
     """
     try:
-        relative = Path(path).resolve().relative_to(Path(root).resolve())
+        relative = resolved(path).relative_to(resolved(root))
     except (OSError, ValueError):
         return False
     return not any(_is_hidden_name(part) for part in relative.parts)
@@ -327,6 +362,7 @@ def _sort_key(entry: os.DirEntry[str]) -> str:
 __all__ = [
     "ScanReport",
     "describe_entry",
+    "has_album",
     "is_visible_path",
     "iter_albums",
     "iter_entries",

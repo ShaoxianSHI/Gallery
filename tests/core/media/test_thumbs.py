@@ -2,16 +2,21 @@
 
 核心不变量只有一句：**缓存可以随时删掉**。所以这里既要验证「命中缓存时不再解码」，
 也要验证「缓存坏了、写不进去、被清空」时软件依然正确。
+
+还有一条容易漏的：**原子写崩在中间留下的 ``.tmp`` 也是缓存**。它过去对记账完全隐形，
+于是 2 GiB 上限不是真的上限（见下面「原子写的孤儿」那一节）。
 """
 
 from __future__ import annotations
 
+import inspect
 import os
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
 
+import gallery.core.atomic as atomic
 import gallery.core.media.thumbs as thumbs
 from gallery.core.errors import ImageDecodeError
 from gallery.core.library.photos import PhotoRef
@@ -22,6 +27,12 @@ def entries(cache: ThumbnailCache) -> list[Path]:
     if not cache.directory.is_dir():
         return []
     return sorted(path for path in cache.directory.iterdir() if path.suffix in {".jpg", ".png"})
+
+
+def orphans(cache: ThumbnailCache) -> list[Path]:
+    if not cache.directory.is_dir():
+        return []
+    return sorted(cache.directory.glob("*.tmp"))
 
 
 @pytest.fixture
@@ -359,6 +370,170 @@ def test_clear_resets_the_accounting(
 
     assert cache.clear() == 4
     assert cache._total_bytes == 0
+
+
+# ---- 原子写的孤儿（崩在 mkstemp 与 os.replace 之间）------------------------
+
+
+def _kill_os_replace(_source: object, _target: object) -> None:
+    """模拟「崩在 ``os.replace`` 之前」。"""
+    raise KeyboardInterrupt
+
+
+def orphan_after_a_crash(
+    cache: ThumbnailCache, make_photo: Callable[..., Path], monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """真的造一个孤儿出来，而不是照着规律手搓一个文件名。
+
+    抛的是 ``KeyboardInterrupt`` 而不是 ``OSError``，这正是关键：``_write_atomic``
+    **只在 ``OSError`` 时**收拾自己的临时文件，而真正的崩溃（SIGKILL、断电、用户强杀）
+    是什么都不收拾的 —— 那些文件就是那样留在缓存目录里的，永远没人来收。
+
+    顺带一提，手搓名字的那条路会**把实现的判据抄进测试**：写错了测试跟着一起错，
+    于是什么都没验到。这里让 ``mkstemp`` 自己起名。
+    """
+    before = {path.name for path in orphans(cache)}
+    ref = PhotoRef.from_path(make_photo("一张.jpg", size=(400, 200)))
+    with monkeypatch.context() as patch:
+        patch.setattr(atomic.os, "replace", _kill_os_replace)
+        with pytest.raises(KeyboardInterrupt):
+            cache.get(ref)
+    # 用「前后差集」而不是「目录里只有一个 .tmp」：有些用例会故意先在目录里摆几个
+    # 长得很像的东西，那几个同样以 .tmp 收尾，不能把它们算成这次崩出来的。
+    left = [path for path in orphans(cache) if path.name not in before]
+    assert len(left) == 1, "崩在 os.replace 之前就该留下且只留下一个新临时文件"
+    return left[0]
+
+
+def test_a_crashed_atomic_write_is_counted_in_the_total(
+    cache: ThumbnailCache, make_photo: Callable[..., Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """孤儿必须算进总量 —— 算少了，2 GiB 上限就只是看着像上限。
+
+    ``total_bytes()`` 过去只看 ``.jpg`` / ``.png``，于是这些崩在原子写中间的半截文件
+    占了多少磁盘完全无人过问：``_over_limit()`` 不会因为它们响，``enforce_limit()``
+    也永远够不着它们，缓存就这么一直涨。
+    """
+    orphan = orphan_after_a_crash(cache, make_photo, monkeypatch)
+
+    assert cache.total_bytes() == orphan.stat().st_size
+
+
+def test_a_crashed_atomic_write_is_evicted(
+    cache: ThumbnailCache, make_photo: Callable[..., Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """孤儿跟别的条目一样可淘汰，而且是**最老的那一批先走**。"""
+    for index in range(2):
+        cache.get(PhotoRef.from_path(make_photo(f"{index}.jpg", size=(400, 200))))
+    orphan = orphan_after_a_crash(cache, make_photo, monkeypatch)
+    # 孤儿的时间戳压到最老：它本来就该先被淘汰（它还不是任何照片的缓存）。
+    os.utime(orphan, (1000, 1000))
+    kept = entries(cache)
+    for offset, entry in enumerate(kept, start=2000):
+        os.utime(entry, (offset, offset))
+    limited = ThumbnailCache(cache.directory, max_edge=64, max_bytes=1)
+
+    removed = limited.enforce_limit()
+
+    assert removed == 3
+    assert limited.total_bytes() == 0
+    assert not orphan.exists()
+
+
+def test_clear_removes_orphans(
+    cache: ThumbnailCache, make_photo: Callable[..., Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """清空缓存必须把孤儿一起清掉，还要**算进报出来的条数**。
+
+    过去 ``clear()`` 报「已清空」却把孤儿原封不动留在那儿：用户点了清空，目录却没有
+    变小，而「清空之后还是这么大」是最难自查的一类问题。
+    """
+    cache.get(PhotoRef.from_path(make_photo("a.jpg", size=(400, 200))))
+    orphan = orphan_after_a_crash(cache, make_photo, monkeypatch)
+
+    removed = cache.clear()
+
+    assert removed == 2
+    assert not orphan.exists()
+    assert list(cache.directory.iterdir()) == []
+
+
+def test_clear_still_spares_lookalikes_the_module_never_named(
+    cache: ThumbnailCache, make_photo: Callable[..., Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**删之前必须认得出「这是自己的东西」**，否则就会删掉用户放进来的文件。
+
+    ``clear()`` 的承诺是「只删自己认识的条目」。下面这些一个个都长得像孤儿，但没有一条
+    是 ``mkstemp(prefix="<40 位摘要><扩展名>.", suffix=".tmp")`` 真的会起出来的名字 ——
+    判据放宽一点，它们就会跟着一起消失。
+    """
+    cache.get(PhotoRef.from_path(make_photo("a.jpg", size=(400, 200))))
+    real = entries(cache)[0]
+    digest = real.name.removesuffix(".jpg")
+    spared = [
+        "用户自己放的.jpg.a1b2c3d4.tmp",  # 摘要不是 40 位十六进制
+        f"{digest}.jpeg.a1b2c3d4.tmp",  # 不是本模块会写的扩展名
+        f"{digest}.jpg.a1b2c3d.tmp",  # 随机段不是 8 个字符
+        f"{digest}.jpg.a1b2c3d4x.tmp",  # 多一个字符
+        f"{digest}.jpg.a1b2c3d4e.tmp",  # 随机段里混进了字母表之外的字符
+        f"{digest.upper()}.jpg.a1b2c3d4.tmp",  # 摘要不是小写
+        f"{digest}.jpg.a1b2c3d4.tmp.part",  # 不是 .tmp 收尾
+    ]
+    cache.directory.mkdir(parents=True, exist_ok=True)
+    for name in spared:
+        (cache.directory / name).write_text("别删我", encoding="utf-8")
+    orphan = orphan_after_a_crash(cache, make_photo, monkeypatch)
+
+    removed = cache.clear()
+
+    assert removed == 2, "一条真条目 + 一条真孤儿"
+    assert not orphan.exists()
+    assert {path.name for path in cache.directory.iterdir()} == set(spared)
+
+
+def test_writing_a_thumbnail_never_fsyncs(
+    cache: ThumbnailCache, make_photo: Callable[..., Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """写缩略图**一次 fsync 都不该有**，而默认档还得是 True。
+
+    缓存条目丢了可以重解一次，为它每次落盘等一次 fsync 纯属白付（那是用户每看一张图
+    都要多等的一下）。但 ``durable`` 的**默认值不能动**：``config.toml`` 与 journal
+    记录全靠它，写坏了就是数据没了（红线 4）。
+    """
+    syncs: list[int] = []
+    real_fsync = os.fsync
+
+    def counting_fsync(fd: int) -> None:
+        syncs.append(fd)
+        real_fsync(fd)
+
+    monkeypatch.setattr(atomic.os, "fsync", counting_fsync)
+    assert inspect.signature(atomic.write_bytes_atomic).parameters["durable"].default is True
+
+    cache.get(PhotoRef.from_path(make_photo("a.jpg", size=(400, 200))))
+
+    assert syncs == [], "缩略图是可再生的，不该付 fsync"
+
+
+def test_a_torn_thumbnail_is_regenerated_without_fsync(
+    cache: ThumbnailCache, make_photo: Callable[..., Path]
+) -> None:
+    """``durable=False`` 之后断电能留下的最坏结果，是半截文件 —— 而半截文件能自愈。
+
+    缩略图缓存是**可再生的**，所以写它时不 fsync（见上一条）。代价是断电可能留下一条
+    内容不全的条目；这一条钉住的是「那份代价真的可接受」：PIL 解不开就删掉重生成
+    （``UnidentifiedImageError`` 也是 ``OSError``）。半截 JPEG 在 PIL 明确报错，
+    不会解出一张少了几道扫描线的图来冒充正常缓存。
+    """
+    ref = PhotoRef.from_path(make_photo("a.jpg", size=(400, 200)))
+    cache.get(ref)
+    entry = entries(cache)[0]
+    entry.write_bytes(entry.read_bytes()[: len(entry.read_bytes()) // 2])
+
+    raster = cache.get(ref)
+
+    assert raster.size == (64, 32)
+    assert entry.read_bytes()[:2] == b"\xff\xd8"
 
 
 # ---- 编码规格（ADR 0015）----------------------------------------------------

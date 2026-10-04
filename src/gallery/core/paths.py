@@ -20,6 +20,7 @@ import hashlib
 import os
 import sys
 from collections.abc import Sequence
+from functools import lru_cache
 from pathlib import Path
 from typing import Final
 
@@ -100,6 +101,50 @@ def is_within(root: Path, candidate: Path) -> bool:
     resolved_root = Path(root).resolve()
     resolved = Path(candidate).resolve()
     return resolved == resolved_root or resolved_root in resolved.parents
+
+
+#: :func:`resolved` 记多少条。够一个中型库一整轮，且不因为翻的库多而一直涨。
+RESOLVED_CACHE_SIZE = 8192
+
+
+@lru_cache(maxsize=RESOLVED_CACHE_SIZE)
+def _resolved_of(raw: str) -> str:
+    return str(Path(raw).expanduser().resolve())
+
+
+def resolved_str(path: Path | str) -> str:
+    """:func:`resolved` 的字符串版，**省掉一次 ``Path`` 对象的往返**。
+
+    要字符串的地方（拼缓存键、算相对路径）直接用它：``str(resolved(p))`` 会先把查表
+    得到的那个字符串重新构造成一个 ``Path``，再转回字符串 —— 那次构造是这条路上一半
+    的开销，而结果原封不动。
+    """
+    return _resolved_of(str(path))
+
+
+def resolved(path: Path | str) -> Path:
+    """:meth:`Path.resolve` 的**带记忆**版本，语义完全一样。
+
+    为什么值得多这一层：``resolve()`` 要 ``lstat`` 路径上的每一段（一个五层的库就是
+    五次系统调用，约 12 µs），而本项目里问的都是**同一个问题反复问**——
+
+    - 缓存键每取一张缩略图就要算一次（屏幕上每一格、日历上每一格，见
+      :mod:`gallery.core.media.thumbs`）；
+    - 监听器每收到一个文件事件就判一次可见性，而库根在整场会话里不变
+      （见 :func:`gallery.core.library.scanner.is_visible_path`）；
+    - 每次弹出右键菜单都要给每个相册算一次相对路径（见
+      :meth:`gallery.core.library.facade.Library.album_label`）。
+
+    这些位置上「重新解析一遍」的答案与上一次逐字相同，于是付的是纯浪费。记一份之后
+    每个不同的路径只算一次，之后都是查表。
+
+    **上限是有的**（:data:`RESOLVED_CACHE_SIZE`），所以长期开着也不会一直涨。
+
+    注意它缓存的是**答案**，不是「文件还在不在」——符号链接或路径本身变了要重新起进程，
+    那本来也不是这个函数该管的事（真正要跟着文件变的判断都带着 ``mtime_ns`` /
+    ``size`` 一起做）。
+    """
+    return Path(_resolved_of(str(path)))
 
 
 def app_data_base() -> Path:
@@ -221,6 +266,7 @@ def app_icon_master() -> Path:
 
 __all__ = [
     "EXTRA_TOOL_DIRS",
+    "RESOLVED_CACHE_SIZE",
     "app_cache_root",
     "app_data_base",
     "app_icon_files",
@@ -240,6 +286,8 @@ __all__ = [
     "journal_dir",
     "library_digest",
     "places_db_file",
+    "resolved",
+    "resolved_str",
     "resources_dir",
     "thumbnail_cache_dir",
 ]

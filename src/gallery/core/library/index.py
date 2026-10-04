@@ -15,6 +15,10 @@
 并发：界面在若干个后台线程里读、后台任务在线程里写，因此连接本身带
 ``check_same_thread=False``，所有访问都由一把锁串起来。操作都很短（几万行的一次
 ``SELECT ... IN`` 与批量 ``UPSERT``），串行不会成为瓶颈。
+
+**提交强度按「缓存」而不是按「数据」配**（见 :func:`_relax_durability`）：
+``journal_mode=WAL`` + ``synchronous=NORMAL``，因为这份东西随时可以删掉重扫，
+为它每次 commit 都 fsync 是白等。
 """
 
 from __future__ import annotations
@@ -193,6 +197,7 @@ class FacetIndex:
             logger.info("facet 索引不可用（%s），改用内存缓存", exc)
             self._path = None
             return
+        _relax_durability(connection)
         try:
             version = connection.execute("PRAGMA user_version").fetchone()[0]
             if version != SCHEMA_VERSION:
@@ -490,6 +495,28 @@ class FacetIndex:
                     (str(row[0]), int(row[1]), int(row[2]), tuple(row[3:])) for row in rows
                 )
             return found
+
+
+def _relax_durability(connection: sqlite3.Connection) -> None:
+    """把提交强度降到「缓存该有的强度」：``journal_mode=WAL`` + ``synchronous=NORMAL``。
+
+    **索引是缓存，不是数据**（红线 5、模块开头那段话）：它没了，重扫一遍库、重读一遍
+    EXIF 就回来了。而默认设置下每次 ``commit`` 都要 ``fsync`` —— 一次提交一次落到盘上的
+    等待。存照片时是一张张来的，等的是用户的耐心，而这份索引随时可以丢：**为一个
+    随时可以重建的东西付满额断电持久性，是白付**。
+
+    ``WAL`` 还顺带把读与写分开：后台线程读的同时不必等写事务提交。
+
+    **失败只记一条日志、绝不致命。** 落到默认设置也只是慢一点，但更常见的是「那个卷
+    是只读的 / 不支持共享内存」—— 那种情况下索引本来就能只读地用着（WAL 需要建
+    ``-wal`` 与 ``-shm`` 两个文件），不能因为一次 pragma 就把它整个打成内存模式。
+    后面那句 ``PRAGMA user_version`` 仍会把真正的坏库降级掉。
+    """
+    try:
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA synchronous=NORMAL")
+    except sqlite3.Error as exc:
+        logger.info("facet 索引沿用默认日志模式（%s）", exc)
 
 
 def _row_to_facets(values: Sequence[object]) -> PhotoFacets | None:

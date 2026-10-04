@@ -32,6 +32,7 @@ from gallery.core.library.photos import (
 )
 from gallery.core.library.scanner import (
     ScanReport,
+    has_album,
     iter_albums,
     iter_entries,
     iter_photos,
@@ -242,6 +243,19 @@ class Library:
         """
         return list(iter_albums(self._root, report=report))
 
+    def has_albums(self) -> bool:
+        """库里**有没有**相册 —— 找到一个就停。
+
+        **只为了「有没有」而问，却把它整列一遍**，那是把右键菜单最贵的一步
+        （3000 个相册约 120 ms 的目录遍历）又付回了构造菜单的那一刻，而用户点开那个
+        子菜单的时机才是真正需要清单的时候。
+
+        判据在 :func:`~gallery.core.library.scanner.has_album`，可见性规则与
+        :func:`~gallery.core.library.scanner.iter_albums` 完全一致（隐藏项、配置目录、
+        符号链接一律不算）—— 这两条必须一起看，否则菜单会出现一个挑了也没用的条目。
+        """
+        return has_album(self._root)
+
     def album_label(self, folder: Path) -> str:
         """相册在菜单里显示的名字：相对库根的路径（``2025/苏州``）。
 
@@ -250,7 +264,11 @@ class Library:
         """
         target = Path(folder)
         try:
-            relative = target.resolve().relative_to(self._root.resolve())
+            # 带记忆的解析（见 :func:`gallery.core.paths.resolved`）：菜单**每次弹出**
+            # 都要给**每个**相册算一遍，而这些路径全都来自同一个已经解析过的库根
+            # （见 ``Library.open``）。两千个相册的库，一次右键就是四千趟 ``lstat``，
+            # 而答案与上一次逐字相同。
+            relative = paths.resolved(target).relative_to(paths.resolved(self._root))
         except (OSError, ValueError):
             return target.name
         # ``relative_to`` 对「就是它自己」给出 ``Path('.')``，写出来是 "." ——
@@ -425,8 +443,22 @@ class Library:
         return decode_rgba(ref.path, should_cancel=should_cancel)
 
     def clear_cache(self) -> int:
-        """清空本库的缩略图缓存，返回删除的条目数。"""
-        return self._thumbnails.clear()
+        """清空本库的缩略图缓存，**连索引一起清**，返回删除的缩略图条目数。
+
+        索引是另一份缓存，但它记的也是「像素之外的东西」，所以「清空缓存」在用户看来
+        是一次操作，在代码里就该是一次操作 —— :meth:`FacetIndex.clear` 的文档写着
+        「清空缩略图缓存时一并清掉，避免两边的内容对不上」，而它原先**一个调用点都没有**，
+        于是「清空缩略图缓存」清掉了图、留下了搜索：用户看到的正是那句
+        「缩略图清了但搜索还在」。
+
+        只清 facet 表是不够的（那样检索会立刻拿一份刚被丢掉的文件表继续查），
+        所以两张表一起清。代价是下一次分组要重新读一遍元数据 —— 那本来就是
+        「缓存没了」的应有之义，而重新读出来的东西与磁盘上完全一致（红线 5）。
+        """
+        removed = self._thumbnails.clear()
+        if self._index is not None:
+            self._index.clear()
+        return removed
 
     # ---- 实时监听 ------------------------------------------------------------
 
