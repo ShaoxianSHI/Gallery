@@ -17,7 +17,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QImage, QKeyEvent
+from PySide6.QtGui import QImage, QKeyEvent, QShowEvent
 from PySide6.QtWidgets import QStackedWidget, QVBoxLayout, QWidget
 
 from gallery.core.library.calendar import LEVELS, group_by_day, group_by_hour, shift
@@ -157,6 +157,35 @@ class CalendarPage(QWidget):
     def current_view(self) -> LevelView:
         return self._views[self._level]
 
+    def clear_selection(self) -> None:
+        """当前那层不选中任何一天。"""
+        self.current_view().clear_selection()
+
+    def focus_current_view(self) -> None:
+        """把键盘焦点交给当前那层。
+
+        **必须点名交给视图，不能指望 Qt 自己挪**：从大图页退回来时 Qt 会把焦点顺着焦点链
+        交给页面上**第一个**能接焦点的控件 —— 周视图里那是那个 ``QScrollArea``，它把
+        ← / → 当成滚动时间轴吃掉了，于是日历的「上一周 / 下一周」按多少次都没反应
+        （症状：点进一张照片再退出来，左右键就废了）。月视图里落到的恰好是视图自己，
+        所以只有周视图犯病。
+        """
+        self.current_view().setFocus()
+
+    def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
+        """这一页重新露出来：把焦点还给当前那层，并把留在这里的「选中」收掉。
+
+        **收掉选中是因为那一格已经摊开了**：用户点的是某一天，进的是那张照片或那一格；
+        退回来时那一格不在眼前，留着的高亮是一块点不掉的底色（周视图里点空白格子什么也
+        不会发生 —— 它提前 return 了 —— 于是它永远留着）。**第一次露出来也一并收掉**：
+        起手那个「选中今天」没有人点过它，而「今天」本来就由蓝字与蓝圆点写着。
+        锚点与滚动位置**不动**：那才是用户刚找到的地方，理由见
+        ``window/calendar_flow._back_to_calendar``。
+        """
+        super().showEvent(event)
+        self.focus_current_view()
+        self.clear_selection()
+
     def set_level(self, level: str) -> None:
         if level not in self._views:
             return
@@ -165,7 +194,7 @@ class CalendarPage(QWidget):
         self._stack.setCurrentWidget(self._views[level])
         self._bar.set_level(level)
         self._bar.set_title(level, self._anchor)
-        self._views[level].setFocus()
+        self.focus_current_view()
         self._refresh_window()
         self.level_changed.emit(level)
 

@@ -234,6 +234,118 @@ def _assert_all_background(
     assert seen == {background.name()}, f"{where}的那几列不是底色：{sorted(seen)}"
 
 
+def test_the_week_header_names_the_column_it_sits_on(
+    page: CalendarPage,
+    monkeypatch: pytest.MonkeyPatch,
+    qt_app: QApplication,
+) -> None:
+    """表头那一列写的就是那一列的星期 —— **第一列是周日，不是周六**。
+
+    :data:`WEEKDAY_NAMES` 是「周日打头」那一套，而 ``date.weekday()`` 是「周一在前」，
+    两者差一天。原先周视图拿后者去索引前者，于是七个名字整体挪了一格：**周六跑到了
+    最前面**，而那一列其实是周日。
+    """
+    from gallery.ui.calendar import time_view as time_view_module
+
+    page.set_level("week")
+    page.resize(1000, 700)
+    page.show()
+    qt_app.processEvents()
+    view = page.current_view()
+
+    labels: list[str] = []
+    original = time_view_module.draw_text
+
+    def record(painter, rect, text, *args, **kwargs):
+        if isinstance(text, str) and text.startswith("周"):
+            labels.append(text)
+        return original(painter, rect, text, *args, **kwargs)
+
+    monkeypatch.setattr(time_view_module, "draw_text", record)
+    view._header.render(QPixmap(view._header.size()))
+
+    assert labels == ["周日", "周一", "周二", "周三", "周四", "周五", "周六"]
+
+
+@pytest.mark.parametrize("level", ["week", "month"])
+def test_a_resized_view_reports_its_window_again(
+    page: CalendarPage,
+    qt_app: QApplication,
+    wait_for: Callable[..., bool],
+    level: str,
+) -> None:
+    """**改窗口大小要重新报一次「看得见哪些」** —— 缩略图就是照这一句去要的。
+
+    没有它就是「周视图的缩略图有一定概率出不来」：拖一下窗口边会多出几个小时的格子，
+    而外面仍然拿着改之前那份清单。多出来的那些没人要图，于是一直空着，直到用户碰巧滚一下
+    或换一层才补上 —— 复现与否全看有没有拖过窗口、有没有滚过。
+
+    **只有周视图真会因此变**：它看得见哪几个小时取决于视口高与行高（行高又是列宽推出来
+    的，所以要改的是**长宽比**）；月视图那 42 格本来就全在屏幕上，年视图要的那一批与几何
+    无关。两层也跟着走同一条路，只是报出去的是同一批。
+    """
+    refs = [_photo(f"p{day}_{hour}.jpg") for day in range(7) for hour in range(24)]
+    page.set_photos(
+        refs,
+        {
+            ref.path: _values(ref, TODAY + datetime.timedelta(days=index // 24), index % 24)
+            for index, ref in enumerate(refs)
+        },
+    )
+    page.set_level(level)
+    page.resize(1000, 700)
+    page.show()
+    qt_app.processEvents()
+
+    reports: list[set[Path]] = []
+    page.window_changed.connect(
+        lambda: reports.append({ref.path for ref in page.current_view().visible_refs()})
+    )
+
+    page.resize(1000, 240)  # 压扁：看得见的少了
+    assert wait_for(lambda: len(reports) >= 1), "改完窗口大小没有重报一次"
+    assert wait_for(lambda: not page.current_view()._geometry_notify.isActive())
+    short = len(page.current_view().visible_refs())
+
+    page.resize(1000, 700)  # 放回去：新露出来的那几个小时
+    assert wait_for(lambda: len(reports) >= 2), "改完窗口大小没有再报一次"
+    visible = {ref.path for ref in page.current_view().visible_refs()}
+    assert not visible - reports[-1], f"{len(visible - reports[-1])} 张看得见却没报出去"
+    if level == "week":
+        assert len(visible) > short, "前提不成立：压扁窗口没有减少看得见的那几格"
+
+
+def test_coming_back_to_the_page_leaves_no_day_highlighted(
+    page: CalendarPage,
+    qt_app: QApplication,
+) -> None:
+    """回到日历这一页时，上一次点开的那一格**不再高亮**。
+
+    用户点的是某一天，进的是那张照片或那一格 —— 退回来时那一格不在眼前。留着的高亮
+    是一块**点不掉**的底色（周视图点空白格子什么也不会发生：它提前 return 了）。
+    锚点不动：那是用户刚找到的那一段。
+    """
+    ref = _photo("a.jpg")
+    page.set_photos([ref], {ref.path: _values(ref, TODAY, 9)})
+    page.set_level("week")
+    page.show()
+    qt_app.processEvents()
+    view = page.current_view()
+    view.select_day(TODAY)
+    assert view._selected == TODAY, "前提不成立：点过的那一天没被选中"
+
+    page.hide()
+    page.show()
+    qt_app.processEvents()
+
+    assert view._selected is None
+    assert page.anchor() == TODAY, "锚点不该被这一次「回来」动过"
+
+
+# 焦点那一条（从大图页退回来时焦点要回到当前那层，← / → 才重新有用）走真实窗口 ——
+# 独立的控件在离屏平台上压根拿不到焦点，见 ``tests/ui/test_calendar_flow.py``。
+
+
 def test_today_is_highlighted_once_in_the_year_view(
     page: CalendarPage,
     monkeypatch: pytest.MonkeyPatch,

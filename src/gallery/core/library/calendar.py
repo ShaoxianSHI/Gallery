@@ -40,21 +40,23 @@ LEVEL_NAMES: Final[Mapping[str, str]] = {"year": "年", "month": "月", "week": 
 #: （2 月 29 日在闰年会被多列一天 —— 年视图里多出来的那一格不会有人去数。）
 _DAYS_IN_YEAR: Final = 366
 
-#: 一周的第一天。中文日历与 Google Calendar（中文界面）都是周一打头。
-#: 一周从周日开始（``date.weekday()`` 里周日是 6，取模后落在最前面）。
+#: 一周的第一天：**周日**。三层日历的列都是周日打头（``date.weekday()`` 里周日是 6，
+#: 取模后落在最前面）。
 _FIRST_WEEKDAY: Final = 6
 
-#: 中文短星期名，索引与 ``date.weekday()`` 一致（周一在前）。
-#: 表头那七列，**从周日开始**。
+#: 中文短星期名。**索引是「周日打头」那一套**（0 = 日 … 6 = 六），与表头那七列、
+#: 与 :func:`week_index` 一致 —— **不是** ``date.weekday()`` 那一套（那一套周一在前，
+#: 0 = 一、6 = 日）。两套差一天，所以**别拿 ``day.weekday()`` 直接索引它**：那样每一列
+#: 的名字都差一天，表头第一列（周日）会写成「周六」。
 #:
-#: 顺序与 ``WEEK_START_WEEKDAY`` 一致（周日在最前、周六在最后），排日历时
-#: 「日一二三四五六」与 ``date.weekday()`` 的 0=周一 差一天 —— 所以任何
-#: 「这一列是第几天」的判据都别直接用 ``weekday()``，问 :data:`WEEKEND_WEEKDAYS`
-#: 或 ``(weekday - WEEK_START_WEEKDAY) % 7``。
+#: 要按 ``date.weekday()`` 问「这是不是周末」，问 :data:`WEEKEND_WEEKDAYS`。
 WEEKDAY_NAMES: Final[tuple[str, ...]] = ("日", "一", "二", "三", "四", "五", "六")
 
-#: 周末是哪两天（``date.weekday()`` 的口径）：周日与周六。
-WEEKEND_WEEKDAYS: Final[frozenset[int]] = frozenset({6, 0})
+#: 周末是哪两天 —— **``date.weekday()`` 的口径**：周六 5、周日 6。
+#:
+#: 早先这里是 ``{6, 0}``，那是从「周日打头」那套数出来的（可 0 在 ``weekday()`` 里是
+#: **周一**）：周视图于是把周一涂成了周末、周六反而没有底色，与表头对不上。
+WEEKEND_WEEKDAYS: Final[frozenset[int]] = frozenset({5, 6})
 
 #: 月视图表头写「星期一」而不是「一」：一列里只有「一」是认不出来的。
 WEEKDAY_HEADERS: Final[tuple[str, ...]] = tuple(f"星期{name}" for name in WEEKDAY_NAMES)
@@ -74,9 +76,9 @@ def days_of(level: str, anchor: datetime.date) -> list[datetime.date]:
     """这一层铺开的那段日子（含补位的邻月日子）。
 
     - 年：366 天，够把 12 张小月都铺满；
-    - 月：6 × 7 = 42 天，从**当月 1 号所在那一周的周一**起算 ——
-      所以月视图第一行总从周一开始，与表头那七个字对得上；
-    - 周：周一到周日七天。
+    - 月：6 × 7 = 42 天，从**当月 1 号所在那一周的周日**起算 ——
+      所以月视图第一行总从周日开始，与表头那七个字对得上；
+    - 周：周日到周六七天。
     """
     if level == "year":
         start = datetime.date(anchor.year, 1, 1)
@@ -100,6 +102,17 @@ def month_matrix(anchor: datetime.date) -> list[datetime.date]:
 def week_start(day: datetime.date) -> datetime.date:
     """这一周的周日（这一周是从周日开始数的）。"""
     return day - datetime.timedelta(days=(day.weekday() - _FIRST_WEEKDAY) % 7)
+
+
+def week_index(day: datetime.date) -> int:
+    """这一天在「周日打头的那一周」里是第几列（周日 0 … 周六 6）。
+
+    表头那一行写哪个星期名、点到了哪一列 —— 都问它。**两套星期口径差一天**：
+    ``date.weekday()`` 是周一 0 … 周日 6，而日历的列是周日 0 … 周六 6。
+    拿前者去索引 :data:`WEEKDAY_NAMES`（周日打头那一套）会**每一列都差一天** ——
+    症状是表头第一列写着「周六」，而那一列其实是周日。
+    """
+    return (day.weekday() - _FIRST_WEEKDAY) % 7
 
 
 def shift(level: str, anchor: datetime.date, steps: int) -> datetime.date:
@@ -258,6 +271,7 @@ __all__ = [
     "month_matrix",
     "shift",
     "title",
+    "week_index",
     "week_number",
     "week_start",
 ]

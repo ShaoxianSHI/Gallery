@@ -234,8 +234,9 @@ class CalendarFlowMixin:
     def _back_to_calendar(self) -> None:
         """把日历那一页摆回前面：**位置不动**（锚点与滚动条都还在那一页的控件里）。
 
-        这里刻意不碰层级与选中：用户刚找到的那一段、那一张，是他的上下文，
-        退出看一眼再回来不该把它清成「今天」。
+        这里刻意不碰层级：用户刚找到的那一段，是他的上下文，退出看一眼再回来不该把它
+        清成「今天」。焦点与那一格残留的高亮**由页面自己的 ``showEvent`` 收拾**
+        （``CalendarPage.showEvent``）—— 从大图页或那一格退回来都要过它，不必两处各写一遍。
         """
         if self._browse_mode != BROWSE_MODE_CALENDAR:
             return

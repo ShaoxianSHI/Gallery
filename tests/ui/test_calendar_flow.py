@@ -22,6 +22,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtCore import QPoint, Qt  # noqa: E402
+from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 from waiting import wait_until, window_is_idle  # noqa: E402
 
@@ -36,16 +38,21 @@ from gallery.core.metadata import batch  # noqa: E402
 from gallery.core.places.resolver import LazyPlaceResolver, ResolvedPlace  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 
-#: 三月一张、四月两张 —— 「一格一张」与「一格多张」两种都要有。
+#: 三月一张（一格一张 → 进大图页）、四月两张（各自一格）、五月两张挤在同一个小时
+#: （一格多张 → 摊成一层网格）。
 DATES = {
     "三月一张.jpg": "2024:03:16 10:00:00",
     "四月一张.jpg": "2024:04:16 09:00:00",
     "四月两张.jpg": "2024:04:16 18:00:00",
+    "五月两张甲.jpg": "2024:05:16 09:00:00",
+    "五月两张乙.jpg": "2024:05:16 09:30:00",
 }
 NAMES = tuple(DATES)
 
 #: 测试里的「今天」：那一天照片最多（月视图打开就看得见东西）。
 APRIL = datetime.date(2024, 4, 16)
+MARCH = datetime.date(2024, 3, 16)
+MAY = datetime.date(2024, 5, 16)
 
 
 @pytest.fixture
@@ -304,7 +311,7 @@ def test_the_week_view_sits_on_the_hour_of_its_first_photo(
     """周视图起手就停在有照片的那几个小时，不是从零点开始让人自己滚。"""
     window = calendar_window
     page = window._calendar_page
-    page.set_today(datetime.date(2024, 3, 16))
+    page.set_today(MARCH)
     page.set_level("week")
     page.go_today()
     assert wait_until(
@@ -312,6 +319,101 @@ def test_the_week_view_sits_on_the_hour_of_its_first_photo(
         lambda: page.current_view()._area.verticalScrollBar().value() > 0,
         timeout=2.0,
     ), "周视图没有定位到有照片的那几个小时"
+
+
+def _click_hour_cell(
+    qt_app: QApplication, window: MainWindow, day: datetime.date, hour: int
+) -> None:
+    """在周视图里点某一天某一小时的那一格（坐标是时间轴内容里的，与滚到哪儿无关）。"""
+    view = window._calendar_page.current_view()
+    column, row = view.column_width(), view.row_height()
+    point = QPoint(
+        int(view.content_left() + (day - view.days()[0]).days * column + column / 2),
+        int(hour * row + row / 2),
+    )
+    QTest.mouseClick(view._grid, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, point)
+    qt_app.processEvents()
+
+
+def _week_at(qt_app: QApplication, window: MainWindow, day: datetime.date) -> None:
+    """切到周视图，并等它把滚动定位完 —— 用户点那一格时它早就落定了。"""
+    page = window._calendar_page
+    page.set_today(day)
+    page.go_today()
+    page.set_level("week")
+    view = page.current_view()
+    assert wait_until(qt_app, lambda: not view._reveal.isActive()), "周视图没有定位完"
+
+
+def test_coming_back_from_a_photo_leaves_the_arrows_working(
+    qt_app: QApplication, calendar_window: MainWindow
+) -> None:
+    """周视图里点进一张照片再退出来，**← / → 要还能翻周**。
+
+    焦点必须点名交给周视图：退回来时 Qt 把焦点顺焦点链交给页面上第一个能接焦点的控件 ——
+    那一页里那是那个 ``QScrollArea``，它把 ← / → 当成滚动时间轴吃掉，于是日历的
+    「上一周 / 下一周」按多少次都没反应。月视图里落到的恰好是视图自己，所以只有周视图犯病。
+    """
+    window = calendar_window
+    page = window._calendar_page
+    _week_at(qt_app, window, MARCH)
+    _click_hour_cell(qt_app, window, MARCH, 10)
+    assert window._stack.currentWidget() is window._detail_page, "点那一格没有进大图页"
+
+    QTest.keyClick(window._detail, Qt.Key.Key_Escape)
+    _settle(qt_app, window)
+    assert window._stack.currentWidget() is page
+
+    view = page.current_view()
+    assert qt_app.focusWidget() is view, f"焦点停在 {type(qt_app.focusWidget()).__name__}"
+    before = page.anchor()
+    QTest.keyClick(view, Qt.Key.Key_Right)
+    assert page.anchor() == before + datetime.timedelta(days=7), "→ 没有翻到下一周"
+    QTest.keyClick(view, Qt.Key.Key_Left)
+    assert page.anchor() == before, "← 没有翻回上一周"
+
+
+def test_coming_back_from_a_photo_leaves_no_day_highlighted(
+    qt_app: QApplication, calendar_window: MainWindow
+) -> None:
+    """退回来时那一格不再高亮（锚点不动 —— 那才是用户刚找到的地方）。
+
+    周视图点空白格子什么也不会发生（它提前 return 了），所以留着的高亮是块**点不掉**的底色。
+    """
+    window = calendar_window
+    page = window._calendar_page
+    _week_at(qt_app, window, MARCH)
+    _click_hour_cell(qt_app, window, MARCH, 10)
+    assert page.current_view()._selected == MARCH, "前提不成立：点过的那一天没被选中"
+
+    QTest.keyClick(window._detail, Qt.Key.Key_Escape)
+    _settle(qt_app, window)
+
+    assert page.current_view()._selected is None
+    assert page.anchor() == MARCH
+
+
+def test_coming_back_from_a_drill_grid_leaves_the_arrows_working(
+    qt_app: QApplication, calendar_window: MainWindow
+) -> None:
+    """一格多张（摊成一层网格）那条路是同一套收拾：焦点、选中。"""
+    window = calendar_window
+    page = window._calendar_page
+    _week_at(qt_app, window, MAY)
+    _click_hour_cell(qt_app, window, MAY, 9)
+    assert window._stack.currentWidget() is window._grid_page, "点那一格没有摊成网格"
+    assert window._model.rowCount() == 2
+
+    window.go_up()
+    _settle(qt_app, window)
+    assert window._stack.currentWidget() is page
+
+    view = page.current_view()
+    assert qt_app.focusWidget() is view, f"焦点停在 {type(qt_app.focusWidget()).__name__}"
+    assert view._selected is None
+    before = page.anchor()
+    QTest.keyClick(view, Qt.Key.Key_Right)
+    assert page.anchor() == before + datetime.timedelta(days=7)
 
 
 def test_the_level_survives_a_reopen(

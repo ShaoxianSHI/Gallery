@@ -18,7 +18,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import QFont, QMouseEvent, QPainter
 from PySide6.QtWidgets import QFrame, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
-from gallery.core.library.calendar import WEEKDAY_NAMES, week_start
+from gallery.core.library.calendar import WEEKDAY_NAMES, week_index, week_start
 from gallery.core.library.photos import PhotoRef
 from gallery.ui.calendar.base import LevelView, hour_label
 from gallery.ui.calendar.layout import CELL_GAP, HOURS_PER_DAY, cell_rect, row_height
@@ -220,7 +220,11 @@ class _TimeHeader(QWidget):
             draw_text(
                 painter,
                 QRectF(slot.left(), 4, slot.width(), 18),
-                f"周{WEEKDAY_NAMES[day.weekday()]}",
+                # **按「周日打头」数出来的列号取名字**，不是 ``day.weekday()``：
+                # :data:`WEEKDAY_NAMES` 是周日 0 … 周六 6，而 ``weekday()`` 是
+                # 周一 0 … 周日 6 —— 直接索引会让七个名字整体差一天，表头第一列
+                # （周日）写成「周六」。
+                f"周{WEEKDAY_NAMES[week_index(day)]}",
                 font_px(_WEEKDAY_FONT_PX),
                 colors.accent if day == self._view.today() else colors.muted,
                 Qt.AlignmentFlag.AlignCenter,

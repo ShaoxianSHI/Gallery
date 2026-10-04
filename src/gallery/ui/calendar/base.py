@@ -13,7 +13,7 @@ from __future__ import annotations
 import datetime
 from collections.abc import Sequence
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import QWidget
 
@@ -29,6 +29,13 @@ from gallery.ui.calendar.colors import CalendarColors
 from gallery.ui.calendar.painting import begin as begin_painter
 from gallery.ui.calendar.thumbs import ThumbStore
 from gallery.ui.theme import AppTheme, current_theme
+
+#: 「几何变了 → 重报一次看得见哪些」的闸门（毫秒）。与网格那一侧同一个数。
+#:
+#: **拖窗口边时 ``resizeEvent`` 连发几十次**，而每一次都要重算一遍「现在看得见哪几张」
+#: 并向流水线报一次 —— 单次定时器的 ``start()`` 在已经跑着的时候会原地续期，于是整段拖动
+#: 只在停下来之后报一次。
+GEOMETRY_DEBOUNCE_MS = 60
 
 
 class LevelView(QWidget):
@@ -52,7 +59,7 @@ class LevelView(QWidget):
         self._by_hour: HourBuckets = {}
         self._anchor = datetime.date.today()
         self._today = datetime.date.today()
-        self._selected = datetime.date.today()
+        self._selected: datetime.date | None = datetime.date.today()
         # 起手就读一次当前主题：控件在构造时还没有被 ``apply_theme`` 走过，
         # 而日历一上来就要有底色（否则第一帧是黑的，下一帧才正常）。
         theme = current_theme()
@@ -60,6 +67,16 @@ class LevelView(QWidget):
         self._background = QColor(theme.background)
         self.setAutoFillBackground(False)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        # 「几何变了要重报一次窗口」的闸门（见 :meth:`resizeEvent`）。
+        #
+        # **做成自己的子定时器**而不是 ``QTimer.singleShot(0, ...)``：后者与本对象毫无
+        # 关系，于是「关窗 / 换库」那一轮里它照样会触发，去调一个已经析构的槽
+        # （同一个道理见 ``browser/grid.py`` 的 ``eventFilter`` 与 ``time_view`` 的
+        # ``_reveal``）。
+        self._geometry_notify = QTimer(self)
+        self._geometry_notify.setSingleShot(True)
+        self._geometry_notify.setInterval(GEOMETRY_DEBOUNCE_MS)
+        self._geometry_notify.timeout.connect(self.window_changed)
 
     # ---- 数据 -------------------------------------------------------------
     @property
@@ -115,17 +132,22 @@ class LevelView(QWidget):
         self._today = today
         self.update()
 
-    def set_selected(self, day: datetime.date) -> None:
+    def set_selected(self, day: datetime.date | None) -> None:
+        """选中那一天（``None`` = 不选中任何一天）。"""
         self._selected = day
         self.update()
         self.selection_changed.emit(self.selected_refs())
+
+    def clear_selection(self) -> None:
+        """不选中任何一天。"""
+        self.set_selected(None)
 
     # ---- 选取 -------------------------------------------------------------
     def photos_of(self, day: datetime.date) -> Sequence[PhotoRef]:
         return self._by_day.get(day, ())
 
     def selected_refs(self) -> list[PhotoRef]:
-        return list(self.photos_of(self._selected))
+        return list(self.photos_of(self._selected)) if self._selected is not None else []
 
     def select_day(self, day: datetime.date) -> None:
         """只改选中，不摊开（周视图点格子时选中那天用的就是它）。"""
@@ -146,6 +168,20 @@ class LevelView(QWidget):
         """这一层要缩略图缩到多长（长边像素）。"""
         return 0
 
+    # ---- 几何 -------------------------------------------------------------
+    def resizeEvent(self, event: object) -> None:  # noqa: N802 - 名字是 Qt 定的
+        """改了几何：**看得见哪些也跟着变了**，于是要重新报一次。
+
+        没有这一步就是「周视图的缩略图有时出不来」：拖一下窗口边会多出几个小时的格子
+        （或换掉整屏的那一批），而外面仍然拿着**改之前**那份清单 —— 多出来的那些没人要图，
+        就一直空着，直到用户碰巧滚一下或换一层才补上。
+
+        **去抖 60 ms**（见 :data:`GEOMETRY_DEBOUNCE_MS`）：拖窗口边时这一串连发几十次，
+        而每一次都要重算一遍「现在看得见哪几张」。
+        """
+        super().resizeEvent(event)  # type: ignore[arg-type]
+        self._geometry_notify.start()
+
     # ---- 绘制 -------------------------------------------------------------
     def begin(self) -> QPainter:
         return begin_painter(self, self._background)
@@ -164,4 +200,4 @@ def hour_label(day: datetime.date, hour: int) -> str:
     return f"{day.month}月{day.day}日 {hour:02d}:00"
 
 
-__all__ = ["LevelView", "day_label", "hour_label"]
+__all__ = ["GEOMETRY_DEBOUNCE_MS", "LevelView", "day_label", "hour_label"]

@@ -17,7 +17,7 @@ import datetime
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QFont, QMouseEvent, QPainter
 
-from gallery.core.library.calendar import WEEKDAY_HEADERS, month_matrix
+from gallery.core.library.calendar import WEEKDAY_HEADERS, month_matrix, week_index
 from gallery.core.library.photos import PhotoRef
 from gallery.ui.calendar.base import LevelView, day_label
 from gallery.ui.calendar.layout import fitted_size
@@ -81,7 +81,10 @@ class MonthView(LevelView):
                 ),
                 label,
                 font_px(_HEAD_FONT_PX),
-                colors.text if index == self._anchor.weekday() else colors.muted,
+                # 「今天那一列」用深色写。**按周日打头的列号问**（与上面那个周末淡底
+                # 同一套），不是 ``today().weekday()`` —— 那一套是周一 0，于是今天在周日
+                # 时高亮的是**周六**那一列。
+                colors.text if index == week_index(self.today()) else colors.muted,
                 Qt.AlignmentFlag.AlignCenter,
             )
         painter.setPen(colors.outline)
