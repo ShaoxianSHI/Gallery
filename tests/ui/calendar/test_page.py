@@ -19,11 +19,13 @@ from gallery.ui.calendar import CalendarPage
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import Qt  # noqa: E402
-from PySide6.QtGui import QImage, QKeyEvent, QPixmap  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtCore import QPointF, Qt  # noqa: E402
+from PySide6.QtGui import QColor, QImage, QKeyEvent, QPixmap  # noqa: E402
+from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
 TODAY = datetime.date(2021, 9, 12)
+#: 那一周的周三。选中它，那一格的高亮就不会落在采样点上（周末那两列上）。
+WEDNESDAY = datetime.date(2021, 9, 15)
 
 
 def _photo(name: str) -> PhotoRef:
@@ -175,6 +177,61 @@ def test_the_week_view_starts_on_sunday(page: CalendarPage) -> None:
     assert len(days) == 7
     assert days[0].weekday() == 6  # 周日
     assert days[-1].weekday() == 5  # 周六
+
+
+def test_no_column_is_tinted_for_the_weekend(
+    page: CalendarPage,
+    qt_app: QApplication,  # noqa: ARG001 - 靠它把布局跑过一遍
+) -> None:
+    """周六周日与其他五天**一模一样**（早年是给那两列掺了 3% 正文色的淡底）。
+
+    钉的是**画出来的那一屏**，不是「某个成员还在不在」：采样点全是空格子正中那一小块
+    （格子里只有左上角的日期与照片，中间没别的东西），所以谁再把那层淡底加回来，
+    无论加在月视图的格子上还是周视图的表头与时间轴上，这一条都会红。
+
+    采样点一律避开**选中的那一格** —— 它本来就有一层选中高亮，与周末无关。
+    """
+    page.resize(900, 600)
+    page.show()
+    qt_app.processEvents()
+
+    page.set_level("month")
+    view = page.current_view()
+    view.select_day(WEDNESDAY)  # 选中落在第三行的周三，于是改看第四行
+    # 第四行的七格：周日 → 周六（一个月视图的第一列就是周日）
+    centers = [view._day_cell(index).center() for index in range(21, 28)]  # type: ignore[attr-defined]
+    _assert_all_background(_render(view), centers, view.background, "月视图")
+
+    page.set_level("week")
+    view = page.current_view()
+    view.select_day(WEDNESDAY)
+    column = view.column_width()  # type: ignore[attr-defined]
+    weekend = [
+        QPointF(view.content_left() + (index + 0.5) * column, 0)  # type: ignore[attr-defined]
+        for index in (0, 6)  # 周日与周六，且都不是选中的周三
+    ]
+    for widget, y, where in (
+        # 网格与表头是两个控件，各画各的；表头高 56，日期号那一行到 50 就没了
+        (view._grid, view.row_height() * 2.5, "周视图的时间轴"),  # type: ignore[attr-defined]
+        (view._header, 53.0, "周视图的表头"),  # type: ignore[attr-defined]
+    ):
+        image = _render(widget)
+        _assert_all_background(
+            image, [QPointF(point.x(), y) for point in weekend], view.background, where
+        )
+
+
+def _render(widget: QWidget) -> QImage:
+    image = QImage(widget.size(), QImage.Format.Format_RGBA8888)
+    widget.render(image)
+    return image
+
+
+def _assert_all_background(
+    image: QImage, points: list[QPointF], background: QColor, where: str
+) -> None:
+    seen = {image.pixelColor(int(p.x()), int(p.y())).name() for p in points}
+    assert seen == {background.name()}, f"{where}的那几列不是底色：{sorted(seen)}"
 
 
 def test_today_is_highlighted_once_in_the_year_view(

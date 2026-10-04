@@ -215,7 +215,6 @@ class _TimeHeader(QWidget):
         column = self._view.column_width()
         for index, day in enumerate(days):
             slot = QRectF(self._view.content_left() + index * column, 0, column, self.height())
-            painter.fillRect(slot, self._view.column_tint(day))
             if day == self._view._selected:
                 painter.fillRect(slot.adjusted(1, 0, -1, 0), colors.selection)
             draw_text(
@@ -289,7 +288,6 @@ class _TimeGrid(QWidget):
 
         for index, day in enumerate(days):
             slot = QRectF(left + index * column, 0, column, self.height())
-            painter.fillRect(slot, self._view.column_tint(day))
             if day == self._view._selected:
                 painter.fillRect(slot.adjusted(1, 0, -1, 0), colors.selection)
             for hour in range(HOURS_PER_DAY):

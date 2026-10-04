@@ -7,7 +7,6 @@
 各色的来历（都写出来，改主题时能顺着看）：
 
 ===================  ==========================================================
-周末列 / 格子底      底色掺 3% 正文色 —— 要看得出来，又不能像选中态那么重
 次级文字（月份名）   正文 70%
 最淡的文字（钟点）   正文 45%
 分隔线               底色掺 8% 正文色；列分隔线 15%
@@ -16,6 +15,9 @@
 强调色 / 蓝圆点      ``AppTheme.link``（系统链接色，浅色下蓝、深色下浅蓝）
 今天时刻线           ``AppTheme.error``（本软件唯一的红）
 ===================  ==========================================================
+
+**没有「周末底色」**：早年是给周六周日两列掺 3% 正文色区分出来的，现在七列一律用
+窗口的底色 —— 少一种颜色要跟着主题走，照片格子之间也只剩表头的星期名与分隔线。
 """
 
 from __future__ import annotations
@@ -46,7 +48,6 @@ class CalendarColors:
     需要盖住什么时才用 :attr:`chip`。
     """
 
-    weekend: QColor
     text: QColor
     muted: QColor
     faint: QColor
@@ -64,7 +65,6 @@ class CalendarColors:
         background, text = theme.background, theme.text
         accent = theme.link
         return cls(
-            weekend=mix(background, text, 0.045),
             text=QColor(text),
             muted=theme.text_at(0.70),
             faint=theme.text_at(0.45),

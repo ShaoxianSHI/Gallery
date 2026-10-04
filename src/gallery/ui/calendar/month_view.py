@@ -1,6 +1,6 @@
 """月视图：7 列 × 6 行，每格**一张照片**。
 
-照 Google Calendar 月视图的骨架（表头七个星期名、周末两列淡底、每格左上角是日期，
+照 Google Calendar 月视图的骨架（表头七个星期名、每格左上角是日期，
 下面是这个月的第一张照片铺满整格），而格子里**只画一张** —— 一格一叠条目看着像
 待办清单，而这里是照片：每天摆一张封面，想看那天全部就点它。
 
@@ -23,9 +23,6 @@ from gallery.ui.calendar.base import LevelView, day_label
 from gallery.ui.calendar.layout import fitted_size
 from gallery.ui.calendar.painting import dot, draw_text, fill_rounded, font_px, paint_cell_photo
 from gallery.ui.calendar.thumbs import ThumbStore
-
-#: 周末是第几列与第几列（一周从周日开始，所以是 0 与 6）。
-_WEEKEND_COLUMNS = frozenset({0, 6})
 
 _HEAD_HEIGHT = 26.0
 _CELL_GAP = 6.0
@@ -73,17 +70,6 @@ class MonthView(LevelView):
         body_top = grid.top() + _HEAD_HEIGHT
         days = month_matrix(self._anchor)
 
-        for index in range(len(days)):
-            if index % 7 in _WEEKEND_COLUMNS:  # 周末两列淡底（周日与周六）
-                painter.fillRect(
-                    QRectF(
-                        grid.left() + index % 7 * grid.width() / 7,
-                        body_top,
-                        grid.width() / 7,
-                        grid.bottom() - body_top,
-                    ),
-                    colors.weekend,
-                )
         for index, label in enumerate(WEEKDAY_HEADERS):
             draw_text(
                 painter,
