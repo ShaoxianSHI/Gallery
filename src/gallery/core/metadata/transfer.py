@@ -50,7 +50,7 @@ from gallery.core.metadata.journal import (
     WriteRecord,
     append_record,
 )
-from gallery.core.metadata.naming import free_name_in
+from gallery.core.metadata.naming import free_name_in, occupied_names
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,11 +125,12 @@ def move_into(
     :param sources: 要移动的路径。界面上给的是网格里选中的照片；理论上也接受文件夹。
     :param should_cancel: 每移一项之前问一次。只在**项与项之间**取消：移一半停下来会让
         用户自己都说不清哪些被移了，那比移完更糟。
-    :raises TransferError: ``target`` 不是目录。
+    :raises TransferError: ``target`` 不是目录，或者它落在库外。
     """
     destination = Path(target)
     if not destination.is_dir():
         raise TransferError(f"「{destination.name}」不是一个相册。")
+    _guard(root, destination)
 
     cancelled = should_cancel or never_cancel
     batch = uuid4().hex[:12]
@@ -137,6 +138,10 @@ def move_into(
     skipped: list[Skipped] = []
     failures: list[Failure] = []
     journaled = True
+    # **目录只扫一次**：加编号的探测原本是「撞一次 stat 一次」，而这一层是逐项循环 ——
+    # 把几百个同名相册移进一个已经有几百个同名相册的目标，探测次数就是两者的乘积。
+    # 理由与偏差见 :func:`~gallery.core.metadata.naming.free_name_in`。
+    taken = occupied_names(destination)
 
     for raw_source in sources:
         source = Path(raw_source)
@@ -151,11 +156,12 @@ def move_into(
             continue
         if cancelled():
             break
-        name = free_name_in(destination, source.name)
+        name = free_name_in(destination, source.name, occupied=taken)
         if name is None:
             failures.append(Failure.at(source, message="这个名字太长，再加编号也放不下了。"))
             continue
         created = destination / name
+        taken.add(name)  # 后一项不许挑到同一个名字
         try:
             _move(source, created)
         except OSError as error:
@@ -282,6 +288,34 @@ def _move(source: Path, target: Path) -> None:
             raise
         # shutil.move 自己就是「先拷贝、成功之后再删源」，跨卷失败时源文件分毫未动。
         shutil.move(str(source), str(target))
+
+
+def _guard(root: Path, destination: Path) -> None:
+    """确认目标相册落在允许的范围内。
+
+    **这里原本一道都没有**，而它是四个写操作里唯一没有的（改名
+    :mod:`~gallery.core.metadata.rename`、移到废纸篓 :mod:`~gallery.core.metadata.trash`、
+    新建相册 :mod:`~gallery.core.metadata.album` 都有）。理由也正是那几个写的那句：
+    网格里根本不会出现库根和配置目录，所以这一道今天**够不到** —— 但它是「让用户的
+    文件离开原处」的那个入口，红线 1 点名的正是它，值得对「库根」「配置目录」多一层
+    保险。
+
+    **源那一侧不查**：界面上给的是网格里选中的照片（必然在库内），而
+    :func:`undo_move_records` 要挪回的地方来自日志里那条移动的原路径。**目标必须查** ——
+    它一旦落到库外，就是把用户的照片搬出了 Gallery 管得着的地方，而那种事没有任何
+    一条后续流程能撤回。
+
+    **库根本身不挡**：守卫要挡的是「跑到库外」，不是「落在库里」。配置文件里写
+    ``rename._guard`` / ``trash._guard`` 挡库根，是因为它们查的是**源**（把库本身
+    改名或删掉，Gallery 就再也找不到照片了）；对目标来说那两件事都不成立。
+    配置目录仍然挡掉 —— 它里面放的每一样都是「只有 Gallery 自己看得见」的缓存，
+    用户的照片粘进去不会变得可见，只会成为下次清理的垃圾（红线 5）。
+    """
+    root = Path(root)
+    if not paths.is_within(root, destination):
+        raise TransferError(f"只能移到库里的相册：{destination}。", path=destination)
+    if destination == paths.config_dir(root):
+        raise TransferError("这是 Gallery 自己的配置目录，不能移东西进去。", path=destination)
 
 
 __all__ = [

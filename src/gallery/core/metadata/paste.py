@@ -47,7 +47,7 @@ from gallery.core.metadata.journal import (
     WriteRecord,
     append_record,
 )
-from gallery.core.metadata.naming import free_name_in
+from gallery.core.metadata.naming import free_name_in, occupied_names
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,11 +105,12 @@ def copy_into(
     :param sources: 剪贴板里的那些路径，可以来自库外（访达里 ⌘C 也算）。
     :param should_cancel: 每粘一项之前问一次。只在**项与项之间**取消：粘到一半停下来会
         留下半截文件，那比粘完更糟。
-    :raises PasteError: ``target`` 不是目录。
+    :raises PasteError: ``target`` 不是目录，或者它落在库外。
     """
     destination = Path(target)
     if not destination.is_dir():
         raise PasteError(f"「{destination.name}」不是一个文件夹。")
+    _guard(root, destination)
 
     cancelled = should_cancel or never_cancel
     batch = uuid4().hex[:12]
@@ -117,6 +118,10 @@ def copy_into(
     skipped: list[Skipped] = []
     failures: list[Failure] = []
     journaled = True
+    # **目录只扫一次**：加编号的探测原本是「撞一次 stat 一次」，而这一层是逐项循环 ——
+    # 把几百张同名照片粘进一个已经有几百张同名照片的目录，探测次数就是两者的乘积。
+    # 理由与偏差见 :func:`~gallery.core.metadata.naming.free_name_in`。
+    taken = occupied_names(destination)
 
     for raw_source in sources:
         source = Path(raw_source)
@@ -131,7 +136,7 @@ def copy_into(
             continue
         if cancelled():
             break
-        outcome = _copy_one(root, destination, source, batch)
+        outcome = _copy_one(root, destination, source, batch, taken)
         journaled = journaled and outcome.journaled
         if outcome.item is not None:
             pasted.append(outcome.item)
@@ -157,12 +162,16 @@ class _Outcome:
     journaled: bool = True
 
 
-def _copy_one(root: Path, destination: Path, source: Path, batch: str) -> _Outcome:
-    """把一项复制进 ``destination``。"""
-    name = free_name_in(destination, source.name)
+def _copy_one(root: Path, destination: Path, source: Path, batch: str, taken: set[str]) -> _Outcome:
+    """把一项复制进 ``destination``。
+
+    ``taken`` 是这一批共用的一份「已经被占掉的名字」，由调用方扫一次目录得到。
+    """
+    name = free_name_in(destination, source.name, occupied=taken)
     if name is None:
         return _Outcome(failure=Failure.at(source, message="这个名字太长，再加编号也放不下了。"))
     created = destination / name
+    taken.add(name)  # 后一项不许挑到同一个名字
     try:
         if source.is_dir():
             # copytree 目标已存在会直接报错（它不做覆盖），半途失败也会自己收尾。
@@ -217,6 +226,31 @@ def _remove_partial(created: Path, is_dir: bool) -> None:
             created.unlink(missing_ok=True)
     except OSError:
         pass  # 清不掉就清不掉，如实留着总比假装删了强（横幅会说明没粘成）
+
+
+def _guard(root: Path, destination: Path) -> None:
+    """粘贴的守卫：**只查目标**。
+
+    与 :func:`~gallery.core.metadata.transfer._guard` 正好相反：源**可以**在库外
+    （访达里 ⌘C 复制进来的就是，见 ADR 0018），那正是这个操作存在的理由之一。
+    目标仍然必须在库内 —— 它才是新文件落地的地方，落下去就由 Gallery 的扫描器、
+    索引与缩略图缓存各接管一份；落到库外则是谁都看不见、谁也不会清理的孤儿文件。
+
+    「不覆盖」不归这里管：那是 :mod:`~gallery.core.metadata.naming` 的活。
+
+    **库根本身是合法的目标**，别把它挡掉：「全部照片」那一条 ⌘V 粘的就是库根
+    （没有选中项时 :meth:`gallery.ui.write_ops.WriteOpsMixin._paste_target` 返回的就是
+    ``library.root``）。这一版守卫一度把库根也拒了，那条命令因此整个失灵 ——
+    守卫要挡的是「**跑到库外**」，不是「落在库里」，两者后果完全不同。
+
+    配置目录仍然挡掉：它里面放的每一样东西都是「只有 Gallery 自己看得见」的缓存，
+    用户往里粘照片不会让照片变得可见，只会让下一次清理把它当成垃圾（红线 5）。
+    """
+    root = Path(root)
+    if not paths.is_within(root, destination):
+        raise PasteError(f"只能粘到库里的文件夹：{destination}。", path=destination)
+    if destination == paths.config_dir(root):
+        raise PasteError("这是 Gallery 自己的配置目录，照片不该粘进去。", path=destination)
 
 
 __all__ = [

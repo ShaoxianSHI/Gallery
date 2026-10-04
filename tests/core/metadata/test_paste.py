@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from gallery.core import paths
 from gallery.core.errors import PasteError
 from gallery.core.metadata.journal import (
     ACTION_PASTE,
@@ -283,3 +284,65 @@ def test_paste_records_do_not_disturb_the_undo_stack(library: Path) -> None:
 
     assert next_undo_label(library) == "重命名"
     assert [r.action for r in read_records(library)] == [ACTION_RENAME, ACTION_PASTE]
+
+
+# ---- 守卫：目标必须落在库里（源可以来自库外）-----------------------------------
+
+
+def test_a_paste_target_outside_the_library_is_refused(library: Path, tmp_path: Path) -> None:
+    """**目标必须在库里**：它才是新文件落地的地方。
+
+    落到库外就是一份谁都看不见、扫描器不收、索引不记、也永远不会有人清理的孤儿文件。
+    """
+    outside = tmp_path / "库外"
+    outside.mkdir()
+    source = tmp_path / "从访达粘来的.jpg"
+    Image.new("RGB", (8, 6), (30, 60, 90)).save(source)
+
+    with pytest.raises(PasteError, match="只能粘到库里的文件夹"):
+        copy_into(library, outside, [source])
+
+    assert not (outside / "从访达粘来的.jpg").exists()
+
+
+def test_a_paste_source_may_live_outside_the_library(library: Path, tmp_path: Path) -> None:
+    """**源可以在库外** —— 那正是这个操作存在的理由（访达里 ⌘C 复制进来的就是）。
+
+    守卫只查目标：要是在源那一侧也挡一道，ADR 0018 的整个意义就没了。
+    """
+    outside = tmp_path / "下载"
+    outside.mkdir()
+    source = outside / "从访达粘来的.jpg"
+    Image.new("RGB", (8, 6), (30, 60, 90)).save(source)
+    target = library / "京都"
+    target.mkdir(exist_ok=True)
+
+    result = copy_into(library, target, [source])
+
+    assert result.pasted and (target / "从访达粘来的.jpg").exists()
+
+
+def test_the_library_root_is_a_legal_paste_target(library: Path, tmp_path: Path) -> None:
+    """**「全部照片」那条 ⌘V 粘的就是库根** —— 守卫一度把它挡掉，那条命令整个失灵。
+
+    钉住它是因为它曾经真的坏过：守卫的立意是「不许跑到库外去」，而库根恰恰是
+    ``_paste_target()`` 在没有选中项时返回的地方。
+    """
+    source = tmp_path / "从访达粘来的.jpg"
+    Image.new("RGB", (8, 6), (30, 60, 90)).save(source)
+
+    result = copy_into(library, library, [source])
+
+    assert result.pasted and (library / "从访达粘来的.jpg").exists()
+
+
+def test_the_config_directory_is_not_a_paste_target(library: Path, tmp_path: Path) -> None:
+    """配置目录里放的每一样都是「只有 Gallery 自己看得见」的缓存。
+
+    用户往里粘照片不会让照片变得可见，只会让下一次清理把它当成垃圾（红线 5）。
+    """
+    source = tmp_path / "从访达粘来的.jpg"
+    Image.new("RGB", (8, 6), (30, 60, 90)).save(source)
+
+    with pytest.raises(PasteError, match="配置目录"):
+        copy_into(library, paths.config_dir(library), [source])

@@ -7,11 +7,13 @@
 **「不覆盖用户已有的文件」这条规矩只有一份实现**，否则日后三份会各自漂移。
 
 本模块只回答「这个名字行不行 / 该用哪个」，**不碰磁盘**：唯一的例外是
-:func:`free_name_in`，它要 ``exists()`` 看一下目标目录（只读）。
+:func:`free_name_in` 与 :func:`occupied_names`，它们只**读**目标目录（``exists()``
+或一次 ``scandir``），从不往用户的文件夹里写任何东西。
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Final
 
@@ -72,7 +74,24 @@ def split_suffix(name: str, *, whole: bool = False) -> tuple[str, str]:
     return stem, f".{suffix}"
 
 
-def free_name_in(directory: Path, name: str, *, whole: bool = False) -> str | None:
+def occupied_names(directory: Path) -> set[str]:
+    """``directory`` 里已经有的那些名字（一次 ``scandir``）。
+
+    交给 :func:`free_name_in` 的 ``occupied`` 用。存在的理由只有一个：
+    **批量操作里，一个目录只该扫一次。** 见 :func:`free_name_in` 的说明。
+    """
+    try:
+        with os.scandir(directory) as entries:
+            return {entry.name for entry in entries}
+    except OSError:
+        # 目录读不了就当作空的：接下来 ``free_name_in`` 会退回去真的去 ``exists()``，
+        # 于是顶多多撞一次上而已，不会覆盖用户已有的东西。
+        return set()
+
+
+def free_name_in(
+    directory: Path, name: str, *, whole: bool = False, occupied: set[str] | None = None
+) -> str | None:
     """``directory`` 里**还没有**的那个名字：``一张.jpg`` → ``一张 2.jpg`` → ``一张 3.jpg``。
 
     这是访达自己的规矩，实测得来：在访达里对同一个文件连按两次「复制项目」，中文系统
@@ -82,11 +101,31 @@ def free_name_in(directory: Path, name: str, *, whole: bool = False) -> str | No
     **绝不覆盖**已有的东西：那些可能是用户自己放进去的、还没处理的文件。
 
     :param whole: 传给 :func:`split_suffix`（相册那种没有扩展名的，整体算名字）。
+    :param occupied: 这个目录里**已经有的名字**（见 :func:`occupied_names`）。
+        给了它就纯查表，一次系统调用都不发；不给就退回逐个 ``exists()``。
+        **批量操作必须传** —— 见下面那段说明。
     :return: 空着的那个名字；``None`` 表示「加编号也还是太长」—— 光靠加数字缩短不了
         名字，那就如实说不行，而不是截断用户文件名（那会造出一个他认不出的照片）。
+
+    **为什么要多这个口。** 加编号的探测是一条「撞一次就 ``stat`` 一次」的循环，而
+    粘贴 / 移动 / 移进废纸篓都是**逐项**调用它的：把 500 张同名照片移进一个已经有
+    400 张同名照片的相册，探测次数是 500 × 400 ≈ 20 万次 ``stat`` —— **平方级**，
+    而且这恰好是「批量整理」这件事最容易碰到的形状。改成一次 ``scandir`` 之后
+    同样的操作是「一次目录扫描 + 500 次查表」。
+
+    **调用方要把选中的名字加回 ``occupied``**，否则后一项会挑到同一个名字。有一处
+    刻意的偏差：复制 / 移动**失败**之后那个名字仍然留在集合里，于是下一项会跳过
+    一个其实空着的编号（拿到「一张 3」而不是「一张 2」）。宁可跳过一个编号 ——
+    它的另一头是「覆盖用户已有的文件」，那条绝对不能出。
     """
     folder = Path(directory)
-    if not (folder / name).exists():
+
+    def taken(candidate: str) -> bool:
+        if occupied is not None:
+            return candidate in occupied
+        return (folder / candidate).exists()
+
+    if not taken(name):
         return name
     stem, suffix = split_suffix(name, whole=whole)
     number = FIRST_DUPLICATE_NUMBER
@@ -94,7 +133,7 @@ def free_name_in(directory: Path, name: str, *, whole: bool = False) -> str | No
         candidate = f"{stem} {number}{suffix}"
         if len(candidate.encode()) > MAX_NAME_BYTES:
             return None
-        if not (folder / candidate).exists():
+        if not taken(candidate):
             return candidate
         number += 1
 
@@ -104,5 +143,6 @@ __all__ = [
     "MAX_NAME_BYTES",
     "clean_name",
     "free_name_in",
+    "occupied_names",
     "split_suffix",
 ]

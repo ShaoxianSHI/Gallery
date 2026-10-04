@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from gallery.core import paths
 from gallery.core.errors import TransferError
 from gallery.core.library.photos import PhotoRef
 from gallery.core.metadata.journal import (
@@ -256,9 +257,11 @@ def test_a_move_is_not_confused_with_a_rename_record(library: Path) -> None:
     assert (library / "京都" / "改个名.jpg").exists()
 
 
-def test_move_reports_failure_for_an_unwritable_target(library: Path, tmp_path: Path) -> None:
+def test_move_reports_failure_for_an_unwritable_target(library: Path) -> None:
     """目标写不进去要如实报中文原因，而不是抛一个栈给用户看。"""
-    locked = tmp_path / "只读相册"
+    # **只读相册必须在库里**：它是一个合法的目标相册，只是写不进去。放在库外的话，
+    # 守卫（``transfer._guard``）会先一步挡下来，压根走不到「写不进去」这条路上。
+    locked = library / "只读相册"
     locked.mkdir()
     os.chmod(locked, stat.S_IRUSR | stat.S_IXUSR)
     try:
@@ -270,3 +273,39 @@ def test_move_reports_failure_for_an_unwritable_target(library: Path, tmp_path: 
     assert result.failures
     assert "没有权限" in result.failures[0].message
     assert (library / "京都" / "一张.jpg").exists(), "没挪成就必须还在原地"
+
+
+# ---- 守卫：目标必须落在库里 -----------------------------------------------------
+
+
+def test_a_target_outside_the_library_is_refused(library: Path, tmp_path: Path) -> None:
+    """**移到库外一律拒绝** —— 那是「把用户的文件搬出 Gallery 管得着的地方」。
+
+    界面上够不到（目标只能从网格里的相册挑），但这是四个写操作里唯一没有过这道闸的
+    一个，而它恰好是红线 1 点名的那个。缺了这道闸，别的入口日后一旦露出来，
+    用户的照片就被搬走了，且没有任何一条后续流程能撤回。
+    """
+    outside = tmp_path / "库外"
+    outside.mkdir()
+
+    with pytest.raises(TransferError, match="只能移到库里的相册"):
+        _move(library, outside, library / "京都" / "一张.jpg")
+
+    assert (library / "京都" / "一张.jpg").exists(), "挡下来了就得还在原地"
+
+
+def test_the_library_root_is_a_legal_target(library: Path) -> None:
+    """**库根本身不挡**：守卫要挡的是「跑到库外」，不是「落在库里」。
+
+    与 ``rename._guard`` / ``trash._guard`` 挡库根的理由不同 —— 那两个查的是**源**
+    （把库本身改名或删掉，Gallery 就再也找不到照片了）；对目标来说那两件事都不成立。
+    """
+    result = _move(library, library, library / "京都" / "一张.jpg")
+
+    assert result.moved and (library / "一张.jpg").exists()
+
+
+def test_the_config_directory_is_not_a_target_album(library: Path) -> None:
+    """配置目录里放东西 = 用户照片目录里多出一份非「只有缓存才有」的数据（红线 5）。"""
+    with pytest.raises(TransferError, match="配置目录"):
+        _move(library, paths.config_dir(library), library / "京都" / "一张.jpg")
