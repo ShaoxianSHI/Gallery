@@ -26,7 +26,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PIL import Image  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtGui import QKeySequence  # noqa: E402
+from PySide6.QtWidgets import (  # noqa: E402
+    QApplication,
+    QDialog,
+    QLabel,
+    QLayout,
+)
 from waiting import wait_for_idle, wait_until  # noqa: E402
 
 from gallery.core.errors import MetadataWriteError  # noqa: E402
@@ -382,3 +388,267 @@ def test_the_panel_offers_the_editor(qt_app: QApplication, focused: MainWindow) 
     wait_until(qt_app, lambda: window._panel.isVisible())
 
     assert window._panel.place_editable
+
+
+# ---- 字段顺序、实时回填、⌘W 与不可缩放 -----------------------------------------
+
+
+class StubResolver:
+    """城市库的替身：按名字给坐标，按坐标给地点。"""
+
+    def __init__(self) -> None:
+        self.by_name = {
+            "苏州": ("苏州", "江苏省", "中国", 31.311, 120.621),
+            "京都": ("京都", "京都府", "日本", 35.021, 135.754),
+        }
+
+    @property
+    def ready(self) -> bool:
+        return True
+
+    def place_for(self, latitude: float, longitude: float, *, status: object = None) -> object:
+        if abs(latitude - 31.311) < 0.5:
+            return _Resolved("苏州", "江苏省", "中国", 2.4)
+        return None
+
+    def place_named(
+        self,
+        name: str,
+        *,
+        region: str | None = None,
+        country: str | None = None,
+        status: object = None,
+    ) -> tuple[object, ...]:
+        found = self.by_name.get(name.strip())
+        if found is None:
+            return ()
+        city, province, nation, latitude, longitude = found
+        return (_Place(city, province, nation, latitude, longitude),)
+
+
+class _Resolved:
+    def __init__(self, city: str, region: str | None, country: str, distance_km: float) -> None:
+        self.city = city
+        self.region = region
+        self.country = country
+        self.distance_km = distance_km
+
+
+class _Place:
+    def __init__(
+        self, city: str, region: str | None, country: str, latitude: float, longitude: float
+    ) -> None:
+        self.city = city
+        self.region = region
+        self.country = country
+        self.latitude = latitude
+        self.longitude = longitude
+
+
+class _StaleAreaResolver(StubResolver):
+    """只有「不按范围查」才找得到 —— 用来钉住上面那条兜底重查。"""
+
+    def place_named(
+        self,
+        name: str,
+        *,
+        region: str | None = None,
+        country: str | None = None,
+        status: object = None,
+    ) -> tuple[object, ...]:
+        if region or country:
+            return ()
+        return super().place_named(name)
+
+
+@pytest.fixture
+def resolver() -> StubResolver:
+    return StubResolver()
+
+
+def _row_positions(dialog: QDialog) -> dict[str, int]:
+    """表单里每个标签的纵坐标 —— 用户看到的就是这个顺序。"""
+    dialog.adjustSize()
+    QApplication.processEvents()
+    positions: dict[str, int] = {}
+    for label in dialog.findChildren(QLabel):
+        if label.text() in {"国家", "省 / 州", "城市", "纬度", "经度"}:
+            positions[label.text()] = label.mapTo(dialog, label.rect().topLeft()).y()
+    return positions
+
+
+def test_the_fields_run_country_province_city(qt_app: QApplication) -> None:
+    """**由大到小**：国家 → 省 / 州 → 城市。读地点就是这么读的。"""
+    dialog = _dialog(None, PlaceState(city="苏州", region="江苏省", country="中国"))
+
+    rows = _row_positions(dialog)
+    assert rows["国家"] < rows["省 / 州"] < rows["城市"] < rows["纬度"] < rows["经度"]
+
+
+def test_typing_a_city_fills_in_the_province_and_the_country(qt_app: QApplication) -> None:
+    """**只敲城市就行**：省与国家自己长出来，而且用的是库里那一带的准确写法。"""
+    dialog = _dialog(None, PlaceState(), resolver=StubResolver())
+
+    dialog._city.setCurrentText("苏州")
+    dialog._refresh()
+
+    assert dialog._region.text() == "江苏省"
+    assert dialog._country.text() == "中国"
+
+
+def test_a_place_updates_the_coordinates_right_away(qt_app: QApplication) -> None:
+    """**地点 → 坐标实时更新**：保存之前就能看见会写进去的是哪一对。"""
+    dialog = _dialog(None, PlaceState(), resolver=StubResolver())
+
+    dialog._city.setCurrentText("苏州")
+    dialog._refresh()
+
+    assert float(dialog._latitude.text()) == pytest.approx(31.311, abs=1e-4)
+    assert float(dialog._longitude.text()) == pytest.approx(120.621, abs=1e-4)
+
+
+def test_coordinates_update_the_place_right_away(qt_app: QApplication) -> None:
+    """**坐标 → 地点实时更新**：把坐标拖到苏州附近，上面三栏自己说出「中国 · 江苏省 · 苏州」。"""
+    dialog = _dialog(None, PlaceState(), resolver=StubResolver())
+
+    dialog._latitude.setText("31.3110")
+    dialog._longitude.setText("120.6210")
+    dialog._refresh()
+
+    assert dialog._city.currentText() == "苏州"
+    assert dialog._region.text() == "江苏省"
+    assert dialog._country.text() == "中国"
+
+
+def test_the_two_directions_do_not_talk_to_each_other(qt_app: QApplication) -> None:
+    """**程序自己填进去的框不再触发下一次回填** —— 否则地名↔坐标会自己打起来。"""
+    dialog = _dialog(
+        None, PlaceState(city="苏州", latitude=31.311, longitude=120.621), resolver=StubResolver()
+    )
+
+    dialog._refresh()
+    dialog._refresh()
+
+    assert dialog._city.currentText() == "苏州"
+    assert float(dialog._latitude.text()) == pytest.approx(31.311, abs=1e-4)
+
+
+def test_a_name_the_database_does_not_know_leaves_everything_alone(qt_app: QApplication) -> None:
+    """查不到就一个字都不填 —— 绝不编一个地名或一个坐标出来。"""
+    dialog = _dialog(
+        None, PlaceState(city="南京", latitude=32.06, longitude=118.79), resolver=StubResolver()
+    )
+
+    dialog._city.setCurrentText("西湖·断桥")
+    dialog._refresh()
+
+    assert dialog._region.text() == ""
+    assert dialog._country.text() == ""
+    assert float(dialog._latitude.text()) == pytest.approx(32.06)
+
+
+def test_changing_the_city_is_not_blocked_by_the_stale_province(qt_app: QApplication) -> None:
+    """照片原本写着「日本 · 京都府 · 京都」，用户敲一个「苏州」进去 ——
+    **按上面那两栏的旧范围去查，当然找不到**。
+
+    那就只按名字再查一遍：查到的结果本来就会把上面两栏改掉，所以「范围」这会儿只是个
+    过期的前提，不该把它当成筛选条件把人挡在门外。
+    """
+    dialog = _dialog(
+        None,
+        PlaceState(city="京都", region="京都府", country="日本"),
+        resolver=_StaleAreaResolver(),
+    )
+
+    dialog._city.setCurrentText("苏州")
+    dialog._refresh()
+
+    assert dialog._country.text() == "中国"
+    assert dialog._region.text() == "江苏省"
+
+
+def test_the_hint_follows_the_side_the_user_just_touched(qt_app: QApplication) -> None:
+    """自动回填把两侧都改了，于是「哪一侧变了」这句话不再有用 ——
+    说明那一行必须说的是**用户刚才那一下**的后果。"""
+    dialog = _dialog(
+        None, PlaceState(city="京都", region="京都府", country="日本"), resolver=StubResolver()
+    )
+
+    dialog._city.setCurrentText("苏州")
+    dialog._refresh()
+    assert "市级精度" in dialog._hint.text()
+
+    dialog._latitude.setText("31.3110")
+    dialog._longitude.setText("120.6210")
+    dialog._refresh()
+    assert "重新推断" in dialog._hint.text()
+
+
+def test_an_unknown_name_says_the_coordinates_stay_put(qt_app: QApplication) -> None:
+    """查不到就**一个字都不填**，而且要说明「坐标不会动」——
+    说「按城市位置写入」是在说一件不会发生的事。"""
+    dialog = _dialog(None, PlaceState(city="南京"), resolver=StubResolver())
+
+    dialog._city.setCurrentText("西湖·断桥")
+    dialog._refresh()
+
+    assert "城市库里没有" in dialog._hint.text()
+    assert "坐标保持原样" in dialog._hint.text()
+
+
+def test_unticking_the_sync_puts_the_original_coordinates_back(qt_app: QApplication) -> None:
+    """关掉那个勾 = 不动坐标，于是**刚自动填进去的那一对要还原回去**。
+
+    框里显示的必须是真正会被写下去的那一份 —— 否则用户看着有坐标、以为会写，其实不会。
+    """
+    state = PlaceState(city="南京", latitude=32.06, longitude=118.79)
+    dialog = _dialog(None, state, resolver=StubResolver())
+    dialog._city.setCurrentText("苏州")
+    dialog._refresh()
+    assert float(dialog._latitude.text()) == pytest.approx(31.311, abs=1e-4)
+
+    dialog._sync.setChecked(False)
+
+    assert float(dialog._latitude.text()) == pytest.approx(32.06, abs=1e-4)
+    assert float(dialog._longitude.text()) == pytest.approx(118.79, abs=1e-4)
+
+
+def test_the_debounced_lookup_really_is_wired_to_typing(qt_app: QApplication) -> None:
+    """改字之后定时器确实会响 —— 上面那几条直接调 ``_refresh``，这里补上「真的连着」。"""
+    dialog = _dialog(None, PlaceState(), resolver=StubResolver())
+    dialog._timer.setInterval(1)
+
+    dialog._city.setCurrentText("苏州")
+
+    wait_until(qt_app, lambda: dialog._country.text() == "中国")
+
+
+def test_cmd_w_closes_the_dialog_without_touching_the_window(
+    qt_app: QApplication,
+) -> None:
+    """⌘W 关的是**这个对话框**。
+
+    不挂这一条的话，⌘W 会一路走到主窗口 —— 在一个模态框里按 ⌘W 结果整个窗口没了，
+    那绝不是按键的人想做的事。
+    """
+    dialog = _dialog(None, PlaceState(city="苏州"))
+
+    close_actions = [
+        action
+        for action in dialog.actions()
+        if action.shortcut() == QKeySequence(QKeySequence.StandardKey.Close)
+    ]
+
+    assert len(close_actions) == 1
+    close_actions[0].trigger()
+    assert dialog.result() == QDialog.DialogCode.Rejected
+
+
+def test_the_dialog_cannot_be_resized(qt_app: QApplication) -> None:
+    """拖一下窗口边不该把提示框拉成一整屏。"""
+    dialog = _dialog(None, PlaceState(city="苏州", region="江苏省", country="中国"))
+    dialog.show()
+    QApplication.processEvents()
+
+    assert dialog.layout().sizeConstraint() == QLayout.SizeConstraint.SetFixedSize
+    assert dialog.minimumSize() == dialog.maximumSize()

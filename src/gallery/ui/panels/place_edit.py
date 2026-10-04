@@ -5,16 +5,28 @@
 ``write_ops`` → :meth:`gallery.core.library.facade.Library.write_place`。按城市库查
 候选走的是 ``core`` 的公开接口，也由它自己去读那份随包分发的只读文件。
 
-**三个框，一个下拉，两个勾**：
+## 字段顺序：国家 → 省 / 州 → 城市
 
-- 城市是**可编辑的下拉**：边打字边从城市库里补全（离线，不联网，见 ADR 0003），
-  选中的时候顺手把省州与国家也填上 —— 用户在输入框里敲「苏州」，结果面板上写着
-  「江苏省 · 苏州」，那是他要的；
-- 坐标能留空。**空 = 不改**，而不是「删掉」：真的只想删坐标而保住地名时，把
-  「清除位置」不勾、把两个框清空即可（那一层语义由 ``core`` 判定，理由见
-  :attr:`~gallery.core.metadata.place_edit.PlaceEdit.clear_coordinates`）；
-- 下面那行说明**随改动实时变**：坐标一动就说「地点会按坐标重新推断」，地名一改就说
-  「坐标会按这座城市的位置写入」—— 后者是**市级精度**，这句话必须先于保存出现在屏幕上。
+**由大到小** —— 读的时候就是这么读的（先国家再省再市），而这三个框里真正用来查的是
+**城市**：城市名在库里是唯一索引，省与国家只是收窄同名城市的条件。所以补全挂在「城市」
+那一栏上，**而它排在最后**：用户从上面往下填，先敲国家再敲省，最后敲城市；城市一敲定，
+上面那两栏**自动补全**（用户也可以只敲城市，另外两栏自己长出来）。
+
+## 两个方向都实时回填
+
+| 用户动了 | 立刻发生 |
+|---|---|
+| 城市 / 省 / 国家 | 在城市库里按名字正查 → 把那个地点的**坐标写进下面两个框** |
+| 纬度 / 经度 | 按坐标反查 → 把**城市 / 省 / 国家写进上面三个框** |
+
+「实时」是防抖 250 毫秒（比人手打字快，又不至于每敲一个字就动一次城市库）。
+
+**回填只覆盖另一侧**，且程序自己写进去的框不再触发连锁 —— 靠一个 ``_programmatic``
+标志挡住（否则「地名 → 坐标 → 地名」会自己打起来）。没查到的**一个字都不填**：查不到就
+是查不到，绝不编一个地名或一个坐标出来。
+
+**「同时按这个地点更新经纬度」不勾时，城市库里查到的坐标不会进那两个框**，而且刚才
+自动填进去的会**还原成照片原本的坐标** —— 那个勾说什么就做什么，用户看得见自己关掉了什么。
 
 界面沿用 ``ui.theme`` 那一份底色与文字色（ADR 0029 起的规矩），系统换深浅色时自己跟。
 """
@@ -24,6 +36,7 @@ from __future__ import annotations
 from typing import Final
 
 from PySide6.QtCore import QStringListModel, Qt, QTimer
+from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -33,6 +46,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QLineEdit,
     QVBoxLayout,
     QWidget,
@@ -45,12 +59,20 @@ from gallery.core.places.resolver import PlaceResolver
 from gallery.ui import theme
 from gallery.ui.theme import AppTheme, rgba
 
-#: 打字之后多久去查一次候选。**250 毫秒**：比人手打字快，又不至于每敲一个字
+#: 打字之后多久去查一次。**250 毫秒**：比人手打字快，又不至于每敲一个字
 #: 就去动一次城市库（那份表有 2 万多条）。
 LOOKUP_DELAY_MS: Final = 250
 
 #: 坐标框里显示几位小数（与写回时的精度一致）。
 COORDINATE_DECIMALS: Final = 6
+
+#: 每个输入框的最小宽度。**不是为了好看**：固定尺寸的对话框宽度由内容算出来，
+#: 而「Gironde」「United States」「120.155070」这些内容算出来的宽度比能读它窄得多。
+FIELD_MIN_WIDTH: Final = 220
+
+#: 说明与错误各留几行的位置。**固定高度是为了对话框不跳**：文案在两句之间换来换去时，
+#: 对话框跟着长高再缩回来，用户看着像它在抖。
+NOTE_LINES: Final = 2
 
 
 def dialog_style(app_theme: AppTheme) -> str:
@@ -95,12 +117,33 @@ class PlaceEditDialog(QDialog):
         self._resolver = resolver
         #: 补全窗口里那一排候选对应的地点（与 ``_completer`` 的模型同序）。
         self._candidates: list[Place] = []
+        #: 程序自己往框里写字时为真 —— 那些 setter 会触发 ``textChanged``，
+        #: 没有这道挡，「地名 → 坐标 → 地名」会自己打起来。
+        self._programmatic = False
+        #: 我们自动填进坐标框的那一对坐标（用来判断「这两个框是不是我们填的」）。
+        self._auto_coordinates: tuple[float, float] | None = None
+        #: 上一次按名字查到了哪一个（``None`` = 没查到）。说明那一行靠它说准话。
+        self._place_hit: Place | None = None
+        #: **查过没有**。区分「查了没查到」与「压根没查」（没有地点库可用时）：
+        #: 前者要如实说「查不到」，后者不能拿「查不到」当理由 —— 那不是查的结果。
+        self._place_searched: bool = False
+        #: 用户**亲手**动的是哪一侧：``"names"`` / ``"coordinates"`` / ``None``。
+        #:
+        #: 自动回填会把两侧都改动，于是「哪一侧变了」这句话在两个方向都成立；说明那一行
+        #: 说的必须是**用户刚才那一下**的后果 —— 「我敲了苏州」与「我把坐标挪到波尔多」
+        #: 接下来发生的事完全不是一回事。
+        self._last_touched: str | None = None
+        #: 上一次查过之后，两侧各自是什么 —— 只有真变了才再去查。
+        self._seen_names: tuple[str, str, str] = ("", "", "")
+        self._seen_coordinates: tuple[float | None, float | None] = (None, None)
         self.setWindowTitle("编辑位置")
         self.setModal(True)
         self._theme_watcher = theme.ensure_installed()
         self._theme_watcher.changed.connect(self._apply_theme)
         self._apply_theme()
         self._build(state, photo_name)
+        self._seen_names = self._names()
+        self._seen_coordinates = self._coordinates()
 
     # ---- 装配 --------------------------------------------------------------
 
@@ -108,6 +151,8 @@ class PlaceEditDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 14, 16, 12)
         layout.setSpacing(10)
+        # **不能改变大小**：用户拖一下窗口边就该是同样大小，而不是把提示框拉成一整屏。
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
 
         title = QLabel(f"编辑「{photo_name}」的位置" if photo_name else "编辑位置")
         title.setObjectName("placeEditTitle")
@@ -116,17 +161,28 @@ class PlaceEditDialog(QDialog):
         form = QFormLayout()
         form.setSpacing(6)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
-        # 定时器**先建**：``setCurrentText`` 会触发 ``currentTextChanged``，而那��
-        # 会去启动它 —— 顺序反了就是「打开对话框时崩一次」。
+
+        # 定时器**先建**：下面的 ``setText`` / ``setCurrentText`` 会触发 ``textChanged``，
+        # 而那会来启动它 —— 顺序反了就是「打开对话框时崩一次」。
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
-        self._timer.timeout.connect(self._refresh_candidates)
+        self._timer.timeout.connect(self._refresh)
+
+        self._country = QLineEdit(state.country or "")
+        self._country.setPlaceholderText("国家")
+        self._country.textChanged.connect(self._on_names_changed)
+        form.addRow("国家", self._country)
+
+        self._region = QLineEdit(state.region or "")
+        self._region.setPlaceholderText("省 / 州")
+        self._region.textChanged.connect(self._on_names_changed)
+        form.addRow("省 / 州", self._region)
 
         self._city = QComboBox()
         self._city.setEditable(True)
         self._city.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-        self._city.setPlaceholderText("城市")
-        self._city.currentTextChanged.connect(self._on_city_changed)
+        self._city.setPlaceholderText("城市（先填城市也行）")
+        self._city.currentTextChanged.connect(self._on_names_changed)
         # 补全是**弹窗**，不是把候选塞进下拉里：下拉里那几行会留在原地，用户改一个字
         # 之后它们就变成了过期的答案。
         self._completer = QCompleter(self)
@@ -137,45 +193,37 @@ class PlaceEditDialog(QDialog):
         self._completer.activated[str].connect(self._on_picked)
         form.addRow("城市", self._city)
 
-        self._region = QLineEdit(state.region or "")
-        self._region.setPlaceholderText("省 / 州")
-        self._region.textChanged.connect(self._update_hint)
-        form.addRow("省 / 州", self._region)
-
-        self._country = QLineEdit(state.country or "")
-        self._country.setPlaceholderText("国家")
-        self._country.textChanged.connect(self._update_hint)
-        form.addRow("国家", self._country)
-
         coordinates = state.coordinates()
         self._latitude = QLineEdit(_format(coordinates[0] if coordinates else None))
         self._latitude.setPlaceholderText("留空表示不改动")
-        self._latitude.textChanged.connect(self._update_hint)
+        self._latitude.textChanged.connect(self._on_coordinates_changed)
         form.addRow("纬度", self._latitude)
         self._longitude = QLineEdit(_format(coordinates[1] if coordinates else None))
         self._longitude.setPlaceholderText("留空表示不改动")
-        self._longitude.textChanged.connect(self._update_hint)
+        self._longitude.textChanged.connect(self._on_coordinates_changed)
         form.addRow("经度", self._longitude)
         layout.addLayout(form)
 
         self._sync = QCheckBox("同时按这个地点更新经纬度")
         self._sync.setChecked(True)
-        self._sync.toggled.connect(self._update_hint)
+        self._sync.toggled.connect(self._on_sync_toggled)
         layout.addWidget(self._sync)
 
         self._clear = QCheckBox("清除位置（坐标与地名一起清空）")
         self._clear.toggled.connect(self._update_enabled)
         layout.addWidget(self._clear)
 
+        line_height = self.fontMetrics().height()
         self._hint = QLabel()
         self._hint.setObjectName("placeEditHint")
         self._hint.setWordWrap(True)
+        self._hint.setFixedHeight(line_height * NOTE_LINES)
         layout.addWidget(self._hint)
 
         self._error = QLabel()
         self._error.setObjectName("placeEditError")
         self._error.setWordWrap(True)
-        self._error.hide()
+        self._error.setFixedHeight(line_height * NOTE_LINES)
         layout.addWidget(self._error)
 
         buttons = QDialogButtonBox(
@@ -190,6 +238,18 @@ class PlaceEditDialog(QDialog):
         row.addWidget(buttons)
         layout.addLayout(row)
 
+        # **⌘W 关闭**（`StandardKey.Close` 在 macOS 上就是它）。不挂这一条的话，⌘W 会
+        # 一路走到主窗口 —— 在一个模态对话框里关掉整个窗口，那不是用户按键时想做的事。
+        close_action = QAction("关闭", self)
+        close_action.setShortcut(QKeySequence.StandardKey.Close)
+        close_action.triggered.connect(self.reject)
+        self.addAction(close_action)
+
+        # 固定尺寸是按 sizeHint 定的，而 sizeHint 由内容算出来 —— 242px 宽的编辑器
+        # 连「United States」都放不下。给每一栏一个下限，宽度就有一个说得过去的下限了。
+        for field in (self._city, self._region, self._country, self._latitude, self._longitude):
+            field.setMinimumWidth(FIELD_MIN_WIDTH)
+
         self._city.setCurrentText(state.city or "")
         self._update_hint()
         self._update_enabled()
@@ -197,28 +257,115 @@ class PlaceEditDialog(QDialog):
     def _apply_theme(self) -> None:
         self.setStyleSheet(dialog_style(theme.current_theme()))
 
-    # ---- 城市库补全 --------------------------------------------------------
+    # ---- 两边的实时回填 ------------------------------------------------------
 
-    def _on_city_changed(self, text: str) -> None:
+    def _on_names_changed(self, *_args: object) -> None:
+        if self._programmatic:
+            return  # 程序自己写进去的，不当成「用户改了」
+        self._last_touched = "names"
         self._update_hint()
         self._timer.start(LOOKUP_DELAY_MS)
 
-    def _refresh_candidates(self) -> None:
-        """按当前敲的字去城市库里找候选。
+    def _on_coordinates_changed(self, *_args: object) -> None:
+        if self._programmatic:
+            return  # 程序自己填进去的：那两个框现在仍然是「我们填的」
+        # 用户亲手改了坐标 —— 从这一刻起它们不再算「我们自动填的那一对」。
+        self._last_touched = "coordinates"
+        self._auto_coordinates = None
+        self._update_hint()
+        self._timer.start(LOOKUP_DELAY_MS)
+
+    def _refresh(self) -> None:
+        """防抖之后真正去查的那一步：两个方向各看一次，只查**真变了**的那一侧。"""
+        names = self._names()
+        if names != self._seen_names and not self._clear.isChecked():
+            self._seen_names = names
+            self._fill_from_names(names)
+        coordinates = self._coordinates()
+        if coordinates != self._seen_coordinates and not self._clear.isChecked():
+            self._seen_coordinates = coordinates
+            self._fill_from_coordinates(coordinates)
+        self._update_hint()
+
+    def _fill_from_names(self, names: tuple[str, str, str]) -> None:
+        """**地点 → 坐标**：城市库里查得到就把它的坐标填进下面两个框。
+
+        顺带把省与国家补上 —— 用户完全可以只敲城市，让上面两栏自己长出来（查到的那个
+        地方带着它们的准确写法，比用户手打的更不容易错）。
+        """
+        city, region, country = names
+        self._place_searched = False
+        if self._resolver is None or not city:
+            self._refresh_candidates(city)
+            return
+        found = self._resolver.place_named(city, region=region or None, country=country or None)
+        if not found and (region or country):
+            # **用户换了城市，而上面两栏还留着上一座城市的省与国家**：按那个旧范围找，
+            # 当然找不到（照片原本写着「日本 · 京都府 · 京都」，敲一个「苏州」进去）。
+            # 这时只按名字找一遍 —— 查到的结果本来就会把上面两栏改掉。
+            found = self._resolver.place_named(city)
+        self._candidates = list(found)
+        self._place_hit = found[0] if found else None
+        self._place_searched = True
+        if not found:
+            self._refresh_candidates(city)
+            return
+        place = found[0]
+        if not self._sync.isChecked():
+            self._refresh_candidates(city)
+            return  # 不勾「同时更新坐标」就不动坐标框 —— 那个勾说什么就做什么
+        self._programmatic = True
+        try:
+            if place.city and place.city != self._city.currentText().strip():
+                self._city.setCurrentText(place.city)
+            if place.region and place.region != self._region.text().strip():
+                self._region.setText(place.region)
+            if place.country and place.country != self._country.text().strip():
+                self._country.setText(place.country)
+            self._latitude.setText(_format(place.latitude))
+            self._longitude.setText(_format(place.longitude))
+        finally:
+            self._programmatic = False
+        self._auto_coordinates = (place.latitude, place.longitude)
+        self._refresh_candidates(city)
+
+    def _fill_from_coordinates(self, coordinates: tuple[float | None, float | None]) -> None:
+        """**坐标 → 地点**：反查出最近的城市，把它写进上面三个框。
+
+        **反查不到就一个字都不填**（附近 300 公里没有城市是常事，尤其是海上）——
+        保留用户已经写着的地名，好过拿一个编出来的替换掉。
+        """
+        latitude, longitude = coordinates
+        if self._resolver is None or latitude is None or longitude is None:
+            return
+        place = self._resolver.place_for(latitude, longitude)
+        if place is None:
+            return
+        self._programmatic = True
+        try:
+            if place.city and place.city != self._city.currentText().strip():
+                self._city.setCurrentText(place.city)
+            if place.region and place.region != self._region.text().strip():
+                self._region.setText(place.region)
+            if place.country and place.country != self._country.text().strip():
+                self._country.setText(place.country)
+        finally:
+            self._programmatic = False
+        self._refresh_candidates(place.city)
+
+    def _refresh_candidates(self, name: str) -> None:
+        """把候选喂给补全窗口。
 
         **离线、不联网**（ADR 0003）：候选只来自随包分发的那份城市库。用户写「西湖 ·
         断桥」不会有候选 —— 那本来也不该有，库里没有任何一条记录能代表那个点。
         """
-        text = self._city.currentText().strip()
+        text = name.strip()
         if self._resolver is None or not text:
             return
-        self._candidates = list(
-            self._resolver.place_named(
-                text,
-                region=self._region.text().strip() or None,
-                country=self._country.text().strip() or None,
-            )
-        )
+        if not self._candidates:
+            self._candidates = list(self._resolver.place_named(text))
+        if not self._candidates:
+            return
         self._completer.setModel(
             QStringListModel(
                 [place_label(item.city, item.region, item.country) for item in self._candidates]
@@ -228,17 +375,43 @@ class PlaceEditDialog(QDialog):
     def _on_picked(self, label: str) -> None:
         """用户从补全里挑了一个：把它那一层的省州与国家也填上（**只在空着时填**）。
 
-        只在空着时填：用户自己写的省州是他的选择，补全不该替他改掉。
+        只在空着时填：用户自己写的省州是他的选择，补全不该替他改掉。挑中之后坐标
+        照常由 ``_refresh`` 那一步填（它已经知道是哪一座城市了）。
         """
         for place in self._candidates:
             if place_label(place.city, place.region, place.country) != label:
                 continue
-            self._city.setCurrentText(place.city)
-            if not self._region.text().strip() and place.region:
-                self._region.setText(place.region)
-            if not self._country.text().strip():
-                self._country.setText(place.country)
+            self._programmatic = True
+            try:
+                self._city.setCurrentText(place.city)
+                if not self._region.text().strip() and place.region:
+                    self._region.setText(place.region)
+                if not self._country.text().strip():
+                    self._country.setText(place.country)
+            finally:
+                self._programmatic = False
+            self._seen_names = self._names()
+            self._fill_from_names(self._names())
             return
+
+    def _on_sync_toggled(self, checked: bool) -> None:
+        """把「同时按这个地点更新经纬度」兑现：关掉就把刚才自动填的坐标**还原回去**。
+
+        否则用户看着框里有一对坐标（是我们填的，他没看见），以为照样会写进去 ——
+        而实际不会。**框里显示的必须是真正会被写下去的那一份。**
+        """
+        if not checked and self._auto_coordinates is not None:
+            current = self._coordinates()
+            if current == self._auto_coordinates:  # 只在「还是我们填的那一对」时才还原
+                original = self._state.coordinates()
+                self._programmatic = True
+                try:
+                    self._latitude.setText(_format(original[0] if original else None))
+                    self._longitude.setText(_format(original[1] if original else None))
+                finally:
+                    self._programmatic = False
+                self._auto_coordinates = None
+        self._update_hint()
 
     # ---- 校验与取值 --------------------------------------------------------
 
@@ -246,9 +419,18 @@ class PlaceEditDialog(QDialog):
         problem = _coordinate_problem(self._latitude.text(), self._longitude.text())
         if problem is not None:
             self._error.setText(problem)
-            self._error.show()
             return
         self.accept()
+
+    def _names(self) -> tuple[str, str, str]:
+        return (
+            self._city.currentText().strip(),
+            self._region.text().strip(),
+            self._country.text().strip(),
+        )
+
+    def _coordinates(self) -> tuple[float | None, float | None]:
+        return (_parse(self._latitude.text()), _parse(self._longitude.text()))
 
     def _coordinates_emptied(self) -> bool:
         """两个坐标框都被清空了，而照片本来是有坐标的。"""
@@ -256,18 +438,14 @@ class PlaceEditDialog(QDialog):
         return had and not self._latitude.text().strip() and not self._longitude.text().strip()
 
     def _coordinates_changed(self) -> bool:
-        current = _parse(self._latitude.text()), _parse(self._longitude.text())
+        current = self._coordinates()
         original = self._state.coordinates()
         if original is None:
             return current != (None, None)
         return current != original
 
     def _names_changed(self) -> bool:
-        return (
-            self._city.currentText().strip() or None,
-            self._region.text().strip() or None,
-            self._country.text().strip() or None,
-        ) != self._state.names()
+        return self._names() != tuple(self._state.names())
 
     def _update_enabled(self) -> None:
         """勾了「清除位置」就把其余控件关掉 —— 那一下删的是全部，留下别的没意义。"""
@@ -285,20 +463,32 @@ class PlaceEditDialog(QDialog):
         if self._coordinates_emptied():
             self._hint.setText("保存后，这张照片的坐标会被删掉，地点保留。⌘Z 可以撤销。")
             return
+        # **按「用户刚才动的是哪一侧」说话，而不是按「哪一侧变了」**：自动回填会把两侧都
+        # 改动，于是两个分支同时成立 —— 「我敲了苏州」与「我把坐标挪到波尔多」接下来
+        # 发生的事完全不是一回事。
+        if self._names_changed() and self._last_touched != "coordinates":
+            if not self._sync.isChecked():
+                self._hint.setText("只改地点，不改坐标。⌘Z 可以撤销。")
+            elif self._place_searched and self._place_hit is None:
+                # 说清「不动」比说「按城市位置写入」诚实：城市库里没有这个名字。
+                self._hint.setText("城市库里没有这个名字，坐标保持原样。")
+            else:
+                self._hint.setText(
+                    "保存后，坐标会按这座城市的位置写入 —— 那是市级精度，不是拍摄点。"
+                )
+            return
         if self._coordinates_changed():
             self._hint.setText("保存后，地点会按新坐标重新推断（离线，最近的城市）。")
             return
-        if self._names_changed() and self._sync.isChecked():
-            self._hint.setText("保存后，坐标会按这座城市的位置写入 —— 那是市级精度，不是拍摄点。")
-            return
-        self._hint.setText("不改动坐标。⌘Z 可以撤销。")
+        self._hint.setText("没有改动。⌘Z 可以撤销。")
 
     def edit(self) -> PlaceEdit:
         """用户填完的那一份。**空 = 那一层不写**（由 ``core`` 判定该不该删）。"""
+        city, region, country = self._names()
         return PlaceEdit(
-            city=self._city.currentText().strip() or None,
-            region=self._region.text().strip() or None,
-            country=self._country.text().strip() or None,
+            city=city or None,
+            region=region or None,
+            country=country or None,
             latitude=_parse(self._latitude.text()),
             longitude=_parse(self._longitude.text()),
             update_coordinates=self._sync.isChecked(),
@@ -342,4 +532,11 @@ def _coordinate_problem(latitude: str, longitude: str) -> str | None:
     return None
 
 
-__all__ = ["COORDINATE_DECIMALS", "LOOKUP_DELAY_MS", "PlaceEditDialog", "dialog_style"]
+__all__ = [
+    "COORDINATE_DECIMALS",
+    "FIELD_MIN_WIDTH",
+    "LOOKUP_DELAY_MS",
+    "NOTE_LINES",
+    "PlaceEditDialog",
+    "dialog_style",
+]
