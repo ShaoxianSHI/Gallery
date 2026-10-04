@@ -21,9 +21,11 @@ from gallery.core.library.facade import MetadataWriteOutcome
 from gallery.core.library.photos import FolderRef, GridEntry
 from gallery.core.metadata.failures import Failure
 from gallery.core.metadata.journal import ACTION_METADATA, ACTION_MOVE, ACTION_RENAME
-from gallery.core.metadata.paste import PasteResult
+from gallery.core.metadata.paste import PastedFile, PasteResult
+from gallery.core.metadata.paste import Skipped as PasteSkipped
 from gallery.core.metadata.rename import RenameResult
-from gallery.core.metadata.transfer import MoveResult
+from gallery.core.metadata.transfer import MovedItem, MoveResult
+from gallery.core.metadata.transfer import Skipped as MoveSkipped
 from gallery.core.metadata.trash import TrashResult
 from gallery.core.metadata.undo import UndoResult
 
@@ -47,56 +49,97 @@ def paste_banner(result: PasteResult, target_name: str) -> str:
 
     **改了名的要单独点出来**（用户要求的是「不覆盖」，而系统给出的新名字得让他看见，
     否则相册里凭空多出一张「一张 2.jpg」会让人以为程序认错了文件）。
+
+    话怎么拼在 :func:`_into_album_parts` 里，与「复制到相册 / 移动到相册」共用同一份。
     """
-    parts: list[str] = []
-    if result.pasted:
-        head = f"已粘贴 {len(result.pasted)} 项到「{target_name}」"
-        renamed = [item for item in result.pasted if item.renamed]
-        if len(renamed) == 1:
-            head += f"（「{renamed[0].source.name}」改名为「{renamed[0].created.name}」）"
-        elif renamed:
-            head += f"（其中 {len(renamed)} 项改了名，免得覆盖已有的）"
-        parts.append(head)
-    if result.skipped:
-        parts.append(f"{len(result.skipped)} 项本来就在「{target_name}」里")
-    if result.failures:
-        first = result.failures[0]
-        more = f"，共 {len(result.failures)} 项" if len(result.failures) > 1 else ""
-        parts.append(f"{first.source.name} 没粘成{more}：{first.message.rstrip('。')}")
-    if not result.journaled:
-        parts.append("没能记下操作日志")
-    return "；".join(parts) + "。"
+    return _banner_line(
+        _into_album_parts(
+            result.pasted,
+            result.skipped,
+            result.failures,
+            journaled=result.journaled,
+            target_name=target_name,
+            done_verb="粘贴",
+            fail_verb="粘",
+        )
+    )
 
 
 def transfer_banner(result: MoveResult | PasteResult, target_name: str, verb: str) -> str:
     """「复制到相册 / 移动到相册」之后的那行提示（ADR 0019）。
 
-    与 :func:`_paste_banner` 一套说法：动了哪些、跳过了哪些、为什么没成、能不能撤销。
+    与 :func:`paste_banner` 一套说法：动了哪些、跳过了哪些、为什么没成、能不能撤销。
     **改了名的要单独点出来** —— 目标相册里本来就有同名时按访达的规矩改叫「一张 2.jpg」，
     不说清楚的话用户会以为程序认错了文件。
 
     移动比粘贴多一句「⌘Z 可以撤销」：这是用户敢用它的前提（红线 1，见 ADR 0019 决策 3）。
+    这是两条路**唯一**刻意不同的地方，其余全部共用 :func:`_into_album_parts`。
     """
     moved = result.moved if isinstance(result, MoveResult) else result.pasted
+    parts = _into_album_parts(
+        moved,
+        result.skipped,
+        result.failures,
+        journaled=result.journaled,
+        target_name=target_name,
+        done_verb=verb,
+        fail_verb=verb,
+    )
+    if isinstance(result, MoveResult) and result.journaled:
+        parts.append("⌘Z 可以撤销")
+    return _banner_line(parts)
+
+
+def _into_album_parts(
+    moved: Sequence[PastedFile | MovedItem],
+    skipped: Sequence[PasteSkipped | MoveSkipped],
+    failures: Sequence[Failure],
+    *,
+    journaled: bool,
+    target_name: str,
+    done_verb: str,
+    fail_verb: str,
+) -> list[str]:
+    """「把若干项搬进某个相册」之后那句话的**唯一一份算法**。
+
+    粘贴（⌘V，ADR 0018）与复制 / 移动到相册（ADR 0019）说的是同一件事，于是按同一套
+    说法报出来：动了哪些、跳过了哪些、为什么没成、记账记上没有。原来这里是两个几乎
+    一样的函数（`transfer_banner` 的文档甚至写着「与 ``_paste_banner`` 一套说法」），
+    各写一遍的后果很具体：改了一句措辞忘了另一句，同一个动作于是有两种说法。
+
+    两处**刻意**不同的地方由参数带进来，而不是各留一份：
+
+    - ``done_verb`` 与 ``fail_verb`` **分成两个**：粘贴那一句是「已**粘贴** 3 项」，
+      失败那句却是「没**粘**成」；复制 / 移动两条路两处用同一个动词。
+    - 失败项一律读 :attr:`Failure.name`。粘贴原先写的是 ``failure.source.name`` ——
+      同一个值（``Failure.at()`` 造出来的 ``name`` 正是从 ``source`` 推的），但直接读
+      ``name`` 才不必赌 ``source`` 不是 ``None``（分组卡片那一种就没有路径）。
+
+    返回**分段**而不是整句，是为了让调用方能在后面追加自己的那一句（移动的「⌘Z 可以
+    撤销」），而不必去拆已经拼好的字符串。
+    """
     parts: list[str] = []
     if moved:
-        head = f"已{verb} {len(moved)} 项到「{target_name}」"
+        head = f"已{done_verb} {len(moved)} 项到「{target_name}」"
         renamed = [item for item in moved if item.renamed]
         if len(renamed) == 1:
             head += f"（「{renamed[0].source.name}」改名为「{renamed[0].created.name}」）"
         elif renamed:
             head += f"（其中 {len(renamed)} 项改了名，免得覆盖已有的）"
         parts.append(head)
-    if result.skipped:
-        parts.append(f"{len(result.skipped)} 项本来就在「{target_name}」里")
-    if result.failures:
-        first = result.failures[0]
-        more = f"，共 {len(result.failures)} 项" if len(result.failures) > 1 else ""
-        parts.append(f"{first.name} 没{verb}成{more}：{first.message.rstrip('。')}")
-    if not result.journaled:
+    if skipped:
+        parts.append(f"{len(skipped)} 项本来就在「{target_name}」里")
+    if failures:
+        first = failures[0]
+        more = f"，共 {len(failures)} 项" if len(failures) > 1 else ""
+        parts.append(f"{first.name} 没{fail_verb}成{more}：{first.message.rstrip('。')}")
+    if not journaled:
         parts.append("没能记下操作日志")
-    if isinstance(result, MoveResult) and result.journaled:
-        parts.append("⌘Z 可以撤销")
+    return parts
+
+
+def _banner_line(parts: list[str]) -> str:
+    """把几段话拼成横幅上那一行：分号隔开，末尾一个句号。"""
     return "；".join(parts) + "。"
 
 

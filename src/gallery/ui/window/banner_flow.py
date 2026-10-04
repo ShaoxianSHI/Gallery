@@ -1,0 +1,121 @@
+"""横幅（ADR 0029）：一句话显示在哪儿、待多久，以及**谁有资格占用它**。
+
+横幅**不进任何布局** —— 出现与消失都不动底下任何一样东西，所以每一条消息都不会把网格
+往下挤一段。它是压在内容上的那一层控件（:mod:`gallery.ui.banner_overlay`），
+摆位是纯函数（``banner_width`` / ``banner_rect`` / ``text_height``），不必造窗口就能测。
+
+这里管的是**窗口这一侧的规矩**：
+
+- :meth:`BannerFlowMixin._show_banner` 返回这条消息是否真的上了屏。``background=True``
+  的是后台消息（缩略图解码失败、地点解析进度），它们不许盖掉用户刚触发的那条说明 ——
+  判据是时间（:data:`BANNER_STICKY_SECONDS`）。**用户自己做的事要能说清楚，这是第一位的**；
+- ``auto_hide=True`` 是「说过就走」，由**调用点点名**：用户做完一件事的确认（已重命名、
+  已移到废纸篓、已复制 N 个路径）说完就没有新内容了；出错、要用户动手处理的那几句一律留下
+  —— 收掉它们等于在用户还没看完时把话收走（决策 3）。
+
+与「后台进度那几族怎么记账」不在这里：那在 :mod:`gallery.ui.window.notice`。
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+
+from PySide6.QtCore import QRect
+from PySide6.QtWidgets import QMessageBox
+
+from gallery.ui.banner_overlay import AUTO_HIDE_SECONDS as BANNER_AUTO_HIDE_SECONDS
+
+logger = logging.getLogger(__name__)
+
+#: 用户触发了一条横幅之后，后台消息让位这么久（秒）。
+#:
+#: 横幅只有一个槽，而用户刚做的事与后台的收尾常常同时发生：把照片移到废纸篓之后，
+#: 网格会立刻去给留下来的那些行要缩略图，于是「刚被自家动过、这一刻读不到」的那一张
+#: 解码失败会**迟一步**报上来，把「1 张没移走」整句盖掉。改名与撤销同理。
+#:
+#: 代价是用户刚操作完的两秒里，真正的解码失败不冒头；两秒后照常报，而那正是用户
+#: 手上正有别的动静（滚动、切库）的时候，横幅会再被刷一次。
+BANNER_STICKY_SECONDS = 2.0
+
+
+class BannerFlowMixin:
+    """横幅那一句怎么上屏、摆在哪、什么时候自己收起来。"""
+
+    # ---- 提示 --------------------------------------------------------------
+    def _show_banner(self, text: str, *, background: bool = False, auto_hide: bool = False) -> bool:
+        """显示横幅，返回这条消息是否真的上了屏。
+
+        ``background=True`` 是**后台**消息（缩略图解码失败、地点解析进度）：它们不许盖掉
+        用户刚刚触发的那条说明，理由与时长见 :data:`BANNER_STICKY_SECONDS`。用户自己做的事
+        要能说清楚，这是第一位的；而「某张照片读不出来」「正在解析地点」这种话，等一会儿
+        再说并不会让人误判。
+
+        ``auto_hide=True`` 是**说过就走**：过 :data:`BANNER_AUTO_HIDE_SECONDS` 秒自己收起来
+        （ADR 0029 决策 3）。判据是「用户看完要不要动手」：
+
+        - **用户做完一件事的确认** —— 「已重命名为…」「已把 3 项移到废纸篓。⌘Z 可以撤销。」
+          「已复制 12 个路径。」—— 说完就没有新内容了，继续压在照片中间只是碍事；
+        - **要用户动手处理的那几句一律留下**：出错、没能做成、「这一层是空的」、
+          后台进度。收掉它们等于在用户还没看完时把话收走。
+        """
+        now = time.monotonic()
+        if background and now < self._banner_sticky_until:
+            logger.debug("后台消息先让着用户动作，过一会儿再报：%s", text)
+            return False
+        if not background:
+            self._banner_sticky_until = now + BANNER_STICKY_SECONDS
+        self._banner.show_message(
+            text,
+            auto_hide_seconds=BANNER_AUTO_HIDE_SECONDS if auto_hide else None,
+        )
+        return True
+
+    def _clear_banner(self) -> None:
+        """把横幅收干净（目前只有测试用：它是全局共享的一个槽）。"""
+        self._banner_sticky_until = 0.0
+        self._place_notice_text = None
+        self._banner.hide()
+
+    # ---- 横幅的摆位（ADR 0029）------------------------------------------------
+
+    def _on_page_changed(self, _index: int) -> None:
+        """换页：横幅要重新摆 —— 大图页上照片区右边让给了元数据面板，居中的位置变了；
+        缩略图窗口也要换成**新页**要的那一批（网格按行、日历按格子）。"""
+        self._layout_banner()
+        self._refresh_thumbnail_window()
+
+    def _banner_area(self) -> QRect:
+        """横幅可以摆的那一片：**内容区减去元数据面板**（面板摆着的那几页才减）。
+
+        中央控件自己已经让开了标题栏那一条（见 ``_build_ui``），所以这里拿它的
+        ``geometry`` 就是照片区那一带，不必再算一遍边距。
+        """
+        central = self.centralWidget()
+        if central is None:
+            return QRect()
+        area = QRect(central.geometry())
+        panel = self._panel
+        if panel is not None and panel.isVisible():
+            # 面板是盖在右边那一段的，不该被横幅压住：居中到照片区里去。
+            area.setRight(panel.geometry().left() - 1)
+        return area
+
+    def _layout_banner(self) -> None:
+        """把横幅摆在内容区**顶边居中**（它在窗口上，不属于任何布局）。
+
+        顶边那一带正好是面包屑所在的那一行（ADR 0029 决策 1）；大图页上照片区右边让给
+        元数据面板，居中的位置也就落在照片区而不是整个窗口（见 :meth:`_banner_area`）。
+
+        窗口改大小、换页、展开收起元数据面板之后都要重摆一次 —— 与 ``_layout_title_bar``
+        同一套时机。
+        """
+        self._banner.reposition(self._banner_area())
+        if self._banner.isVisible():
+            self._banner.raise_()  # 窗口布局跑完之后中央控件会被抬上来
+
+    def _report_error(self, message: str) -> None:
+        QMessageBox.critical(self, "Gallery", message)
+
+
+__all__ = ["BannerFlowMixin"]
