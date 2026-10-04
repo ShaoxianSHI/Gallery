@@ -18,6 +18,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtCore import QRect  # noqa: E402
 from PySide6.QtGui import QIcon  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 from waiting import wait_until  # noqa: E402
@@ -27,7 +28,8 @@ from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.ui import desktop  # noqa: E402
 from gallery.ui.external_button import (  # noqa: E402
     BUTTON_GAP,
-    BUTTON_SIZE,
+    BUTTON_WIDTH,
+    ICON_EDGE,
     ExternalAppsButton,
     ExternalEntry,
     button_rect,
@@ -37,7 +39,8 @@ from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.search_field import MARGIN_RIGHT as SEARCH_FIELD_MARGIN_RIGHT  # noqa: E402
 from gallery.ui.search_field import WIDTH as SEARCH_FIELD_WIDTH  # noqa: E402
 
-SEARCH_X = 800
+#: 搜索胶囊摆好之后的那一块。**按钮是从它往左长出来的**，所以这一块就是唯一的输入。
+FIELD = QRect(300, 7, 208, 22)
 
 
 def _set_anchor(window: MainWindow, day: datetime.date) -> None:
@@ -55,26 +58,30 @@ def _set_anchor(window: MainWindow, day: datetime.date) -> None:
 
 
 def test_button_sits_left_of_the_search_field_with_a_gap() -> None:
-    rect = button_rect(SEARCH_X, 40)
+    rect = button_rect(FIELD)
     # 用 ``left() + width()`` 而不是 ``right()``：后者算的是**最后一个像素的坐标**，
     # 与下一段的起点一比就差一。
-    assert rect.left() + rect.width() + BUTTON_GAP == SEARCH_X
-    assert rect.width() == BUTTON_SIZE
+    assert rect.left() + rect.width() + BUTTON_GAP == FIELD.left()
 
 
-def test_button_is_square() -> None:
-    assert button_rect(SEARCH_X, 40).height() == BUTTON_SIZE
+def test_button_is_exactly_as_tall_as_the_field() -> None:
+    """**从胶囊那一块往左长出来**，于是两者必然同高、同一基线。
 
-
-def test_button_is_centred_in_the_strip() -> None:
-    """两个不同高的东西并排站，中线对齐才像同一行里的。
-
-    **不比 ``center()``**：Qt 那个点落在格子坐标上（22 高的矩形报出来是 19 而不是 20），
-    「上下留白一样多」才是这里要说的那件事。
+    各自拿标题条的高度各算一遍就会歪：胶囊为了字的中线被往下挪了
+    ``TEXT_ALIGN_DROP``，而按钮没挪 —— 肉眼是「歪了一点」。
     """
-    strip = 40
-    rect = button_rect(SEARCH_X, strip)
-    assert rect.y() * 2 + rect.height() == strip
+    rect = button_rect(FIELD)
+    assert rect.height() == FIELD.height()
+    assert rect.top() == FIELD.top()
+
+
+def test_button_is_wide_enough_for_an_icon_and_an_arrow() -> None:
+    """里面放的是**两样东西**（图标 + 下拉箭头），正方形放不下。
+
+    曾经是 22×22 的正方形，屏幕上只剩一个孤零零的三角 —— 视觉检查抓到的症状。
+    """
+    assert button_rect(FIELD).width() > ICON_EDGE
+    assert button_rect(FIELD).width() >= 36
 
 
 # ---- 下拉框（不必造窗口）-----------------------------------------------
@@ -110,6 +117,24 @@ def test_menu_carries_an_icon(qt_app: QApplication) -> None:
 def test_the_button_itself_shows_only_the_icon(qt_app: QApplication) -> None:
     button = ExternalAppsButton()
     assert button.toolButtonStyle().name == "ToolButtonIconOnly"
+
+
+def test_the_button_face_carries_an_icon(qt_app: QApplication) -> None:
+    """**按钮面上要有图标。**
+
+    曾经只给菜单项设了图标而忘了按钮自己，于是 Qt 给空图标画了一个占位方框，
+    屏幕上就是「一个方框 + 一个下拉三角」——视觉检查抓到的症状。
+    """
+    button = ExternalAppsButton()
+    button.set_entries([_entry("google_calendar", "Google 日历", True)])
+    assert button.icon().isNull() is False
+
+
+def test_no_entries_means_no_icon(qt_app: QApplication) -> None:
+    """一条都没有时按钮整个收起来，面上的图标也该收掉，不留一个空方框。"""
+    button = ExternalAppsButton()
+    button.set_entries([_entry("x", "某应用", False)])
+    assert button.icon().isNull() is True
 
 
 def test_unavailable_entries_are_left_out(qt_app: QApplication) -> None:
@@ -259,7 +284,7 @@ def test_title_text_gives_room_for_the_button(window: MainWindow) -> None:
         pytest.skip("这一条标题条在本平台上不存在（只有 macOS 有）")
     assert window._external_button.isVisible()
     assert window._title_bar._right_reserved == (
-        SEARCH_FIELD_WIDTH + 2 * SEARCH_FIELD_MARGIN_RIGHT + BUTTON_SIZE + BUTTON_GAP
+        SEARCH_FIELD_WIDTH + 2 * SEARCH_FIELD_MARGIN_RIGHT + BUTTON_WIDTH + BUTTON_GAP
     )
 
 

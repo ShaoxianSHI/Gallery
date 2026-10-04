@@ -106,7 +106,7 @@ from gallery.ui.browser.thumb_sizes import (
 from gallery.ui.calendar import CalendarPage
 from gallery.ui.external_button import (
     BUTTON_GAP,
-    BUTTON_SIZE,
+    BUTTON_WIDTH,
     ExternalAppsButton,
     ExternalEntry,
     button_rect,
@@ -1291,21 +1291,22 @@ class MainWindow(
         # 得写在这里，缩放窗口时也一并生效。
         self._search_field.raise_()
 
-        # 「用外部应用打开」紧贴胶囊**左边**（ADR 0034）。**不跟胶囊同高**：它比胶囊矮
-        # 一点更像一个图标按钮，而纵向仍然共中线（见 ``button_rect``）—— 两个不同高的
-        # 东西并排站，中线对齐才像同一行里的。
+        # 「用外部应用打开」紧贴胶囊**左边**（ADR 0034）。**从胶囊那一块往左长出来**
+        # （见 ``button_rect``），于是两者必然同高、同一基线 —— 各自拿标题条的高度
+        # 各算一遍的话，胶囊为了字的中线往下挪过 ``TEXT_ALIGN_DROP`` 而按钮没挪，
+        # 肉眼就是「歪了」。
         #
-        # **摆不摆由 ``_update_action_states`` 说了算**（日历页才有东西可开），这里只管
-        # 在它该在的时候把它摆对 —— 于是显隐与几何各归一处，不互相猜。
+        # **摆不摆由 ``_update_action_states`` 说了算**（这一页有东西可开才有），
+        # 这里只管在它该在的时候把它摆对 —— 于是显隐与几何各归一处，不互相猜。
         if self._external_button.isVisible():
-            self._external_button.setGeometry(button_rect(search_x, height))
+            self._external_button.setGeometry(button_rect(self._search_field.geometry()))
             self._external_button.raise_()
         # 标题文字与 ``⌘R`` 的输入框都要给右上角这一整块让出来：胶囊**加上左边的按钮**
         # （不加上它的话，一个长相册名会从按钮底下穿过去）。
         self._title_bar.reserve_right(
             SEARCH_FIELD_WIDTH
             + 2 * SEARCH_FIELD_MARGIN_RIGHT
-            + (BUTTON_SIZE + BUTTON_GAP if self._external_button.isVisible() else 0)
+            + (BUTTON_WIDTH + BUTTON_GAP if self._external_button.isVisible() else 0)
         )
 
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
