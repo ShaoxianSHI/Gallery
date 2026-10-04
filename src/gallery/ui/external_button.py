@@ -24,21 +24,23 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from PySide6.QtCore import QRect, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import (
     QAction,
     QColor,
+    QEnterEvent,
     QIcon,
     QPainter,
+    QPainterPath,
+    QPaintEvent,
     QPen,
     QPixmap,
     QResizeEvent,
 )
-from PySide6.QtWidgets import QMenu, QToolButton
+from PySide6.QtWidgets import QMenu, QToolButton, QWidget
 
 from gallery.ui import theme
 from gallery.ui.rename_edit import field_background
-from gallery.ui.theme import AppTheme, rgba
 
 #: 按钮的**高**跟着搜索胶囊走（不写死，见 :func:`button_rect`），这是它的**宽**。
 #:
@@ -52,6 +54,10 @@ ICON_EDGE = 16
 
 #: 按钮与搜索胶囊之间的缝（点）。
 BUTTON_GAP = 6
+
+#: 右半（箭头那半）的宽度（点）。**固定宽度**：它只放一个箭头，跟着图标一起长宽
+#: 就成了一个空荡荡的方块。
+MENU_EDGE = 18
 
 #: 提示气泡上写的那一句。
 TOOLTIP = "用外部应用打开当前这一页"
@@ -90,30 +96,6 @@ def button_rect(field: QRect, width: int = BUTTON_WIDTH, gap: int = BUTTON_GAP) 
     往下挪了 :data:`~gallery.ui.search_field.TEXT_ALIGN_DROP`，按钮没挪。
     """
     return QRect(field.left() - gap - width, field.top(), width, field.height())
-
-
-def button_style(app_theme: AppTheme, radius: int) -> str:
-    """按钮长什么样 —— **与搜索胶囊同一套视觉语言**。
-
-    底色、边框、圆角全部取自胶囊那一处（``rename_edit.field_background`` 与
-    ``search_field_style`` 是同一份口径）：两个并排的控件各画各的边框与圆角，
-    早晚会在某个主题下差一档，而那时没人说得清是哪一档（ADR 0025）。
-
-    ``radius`` 由摆它的那一处按实际高度给过来（默认 = 一半高度，也就是正圆）。
-    **写死不成立**：胶囊的高度跟着窗口让出来的那一条走（实测安全区不足 28 点时是
-    18），而 Qt 样式表里半径一旦超过高度的一半就不画 —— 按钮于是变成一个方框，
-    正是视觉检查里抓到的第二个症状。
-    """
-    corner = max(0, radius or ICON_EDGE)
-    return f"""
-    QToolButton {{
-        background: {rgba(field_background(app_theme))};
-        border: 1px solid {rgba(app_theme.text_at(0.28))};
-        border-radius: {corner}px;
-        padding: 0px;
-    }}
-    QToolButton:hover {{ border-color: palette(highlight); }}
-    """
 
 
 def drawn_icon(kind: str, size: int = ICON_EDGE) -> QIcon:
@@ -216,48 +198,169 @@ def _draw_folder(size: int, accent: QColor) -> QIcon:
     return QIcon(pixmap)
 
 
-class ExternalAppsButton(QToolButton):
-    """那个图标按钮。点开是一列 :class:`ExternalEntry`。"""
+class _Segment(QToolButton):
+    """分段按钮里那一个。**自己是透明的**，底色、分隔线与箭头都由外层那个容器画。
+
+    ``WA_TranslucentBackground`` 不够 —— QToolButton 自己那一层照样会画底色，于是
+    两段各有各的底，与容器画的那个药丸对不上。
+    """
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setAutoRaise(False)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setStyleSheet("QToolButton { background: transparent; border: none; }")
+
+    def enterEvent(self, event: QEnterEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
+        owner = self.parent()
+        if isinstance(owner, ExternalAppsButton):
+            owner._hovered = self
+            owner.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event: QEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
+        owner = self.parent()
+        if isinstance(owner, ExternalAppsButton) and owner._hovered is self:
+            owner._hovered = None
+            owner.update()
+        super().leaveEvent(event)
+
+
+class ExternalAppsButton(QWidget):
+    """标题条上那个入口。**它是两个按钮**，不是一个。
+
+    - **左半（图标）**：直接打开默认的那一项 —— 绝大多数时候用户要的就是这个，
+      为此先点开菜单再点一次纯属多一步。
+    - **右半（箭头）**：弹出那一列 :class:`ExternalEntry`。
+
+    **这两半是两件不同的事，不是一个按钮的两个部位** —— 所以它们是两个控件，
+    各自接各自的鼠标事件，而不是靠 ``QToolButton`` 的 ``menu-indicator`` 去凑。
+    那个指示器本来就是给「整个按钮都是菜单」用的：图标与箭头挤在一格里，读起来
+    像叠在一起（视觉检查里用户指出来的就是它）。实测两条都成立：给了菜单 Qt 就
+    自己画一个实心三角与我们画的 V 叠在一起；而**只要给 ``::menu-indicator``
+    写任何样式，Qt 那个三角又整个消失**。于是干脆不挂菜单，菜单由我们自己弹。
+
+    容器自己画那一整个药丸（底色、边框、中间那条分隔线、右半的箭头），两个分段
+    都是透明的 —— 于是两段共享同一个圆角轮廓，视觉上是一个药丸而不是两个方块。
+    """
 
     #: 用户选了哪一项（带的是那一项，具体的动作与横幅交给外面）。
     entry_activated = Signal(object)
 
-    def __init__(self, parent: object | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._entries: tuple[ExternalEntry, ...] = ()
-        self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        self.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        # **不 autoRaise**：那一档是「浮在内容上、默认什么都不画」，而我们要的是
-        # 一个看得见的圆角容器 —— 与胶囊并排的那个（视觉检查抓到的第二个症状）。
-        self.setAutoRaise(False)
-        self.setIconSize(QSize(ICON_EDGE, ICON_EDGE))
-        self.setToolTip(TOOLTIP)
+        self._hovered: QWidget | None = None
+
+        self._primary = _Segment(self)
+        self._primary.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self._primary.setIconSize(QSize(ICON_EDGE, ICON_EDGE))
+        self._primary.clicked.connect(self._activate_default)
+
+        self._menu_button = _Segment(self)
+        self._menu_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self._menu_button.setToolTip(TOOLTIP)
+        self._menu_button.clicked.connect(self._popup_menu)
+        #: 菜单自己建好并一直用着，:meth:`refresh` 要的是「同一个菜单反复清空重建」。
+        self._menu = QMenu(self)
+
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setVisible(False)
-        #: 菜单自己建好并一直用着。``InstantPopup`` 本来也会建一个，而
-        #: :meth:`refresh` 要的是「同一个菜单反复清空重建」—— 现取现建就得每次
-        #: 应付「菜单还没有」那一种情况。
-        self._menu = QMenu(self)
-        self.setMenu(self._menu)
         self._watcher = theme.ensure_installed()
         self._watcher.changed.connect(self._apply_theme)
         self._apply_theme()
 
-    def _apply_theme(self) -> None:
-        """换过浅色 / 深色之后重新下发边框与圆角（``SearchField`` 同一个做法）。
-
-        **自绘图标也要重画一遍**：它们是跟着 :attr:`AppTheme.text` 变色的，而
-        :func:`~gallery.ui.external_button.calendar_icon` 每次都现画 —— 换主题时
-        不重画，那两个图标还停在旧主题的颜色上。
-        """
-        self.setStyleSheet(button_style(theme.current_theme(), self.height() // 2))
-        self.refresh()
+    # ---- 几何 --------------------------------------------------------------
 
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         super().resizeEvent(event)
-        # **半径跟着实际高度走**：高度是被 :func:`button_rect` 带着胶囊一起给的，
-        # 而样式表里的半径一旦超过高度的一半就不画（四角会变成方的）。
-        self.setStyleSheet(button_style(theme.current_theme(), self.height() // 2))
+        self._place_segments()
+
+    def _place_segments(self) -> None:
+        """两半分家。**右半固定那么宽**（:data:`MENU_EDGE`）—— 它只放一个箭头，
+        跟着图标走宽了就成了一个空荡荡的方块。"""
+        split = max(self.width() - MENU_EDGE, self.width() // 2)
+        height = self.height()
+        self._primary.setGeometry(0, 0, split, height)
+        self._menu_button.setGeometry(split, 0, self.width() - split, height)
+
+    # ---- 外观 --------------------------------------------------------------
+
+    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
+        """整个药丸：底色 → 悬停的那半提亮 → 边框 → 分隔线 → 箭头。
+
+        **自己画而不是用样式表**：两半要共享一个圆角轮廓、共享一条分隔线，
+        样式表里的 ``border-radius`` 只能各自圆各自的，中间那条线更是没有对应的
+        子控件 —— 而它俩一拼，正好就是 DeepSeek Harness 里那个分段按钮的样子。
+        """
+        app_theme = theme.current_theme()
+        painter = QPainter(self)
+        try:
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            radius = self.height() / 2
+            body = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+
+            path = QPainterPath()
+            path.addRoundedRect(body, radius, radius)
+            painter.fillPath(path, field_background(app_theme))
+
+            # 悬停的那半再凸一点点 —— **只提亮那一半**，于是用户能看出点下去是哪一半。
+            if self._hovered is not None:
+                split_at = self._primary.width()
+                half = QRectF(body)
+                if self._hovered is self._primary:
+                    half.setRight(min(split_at, body.right()))
+                else:
+                    half.setLeft(split_at)
+                hover = QColor(app_theme.background)
+                # **按药丸那条路径裁一下**再填，否则那一块会盖到外侧的两个圆角上，
+                # 悬停时圆角就「长」出去一点 —— 那是像素级的、但一眼看得见。
+                painter.save()
+                painter.setClipPath(path)
+                painter.fillRect(
+                    half, hover.lighter(112) if app_theme.is_dark else hover.darker(104)
+                )
+                painter.restore()
+
+            painter.setPen(QPen(app_theme.text_at(0.28), 1))
+            painter.drawPath(path)
+
+            # 分隔线：顶到边框内侧，与 DeepSeek Harness 那个一样。
+            split = self._primary.width()
+            pen = QPen(app_theme.text_at(0.22), 1)
+            pen.setCapStyle(Qt.PenCapStyle.FlatCap)
+            painter.setPen(pen)
+            painter.drawLine(QPointF(split, 3), QPointF(split, self.height() - 4))
+            self._draw_chevron(painter, app_theme.text_at(0.45))
+        finally:
+            painter.end()
+
+    def _draw_chevron(self, painter: QPainter, color: QColor) -> None:
+        """右半那个向下的箭头。**自己画**：Qt 那个菜单指示器一旦被样式表碰过就没了
+        （见模块文档），而这里要的是「半格里居中的一个小 V」，不是一个实心三角。"""
+        center = self._primary.width() + (self.width() - self._primary.width()) / 2
+        middle = self.height() / 2
+        half = min(3.5, (self.width() - self._primary.width()) / 3)
+        drop = 2.0
+        pen = QPen(color, 1.4)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        left, right = QPointF(center - half, middle - drop / 2), QPointF(center, middle + drop / 2)
+        painter.drawLine(left, right)
+        painter.drawLine(right, QPointF(center + half, middle - drop / 2))
+
+    def _apply_theme(self) -> None:
+        """换过浅色 / 深色之后重画一遍。
+
+        **自绘图标也要重画**：它们跟着 :attr:`AppTheme.text` 变色，而
+        :func:`calendar_icon` 每次都现画 —— 不重画的话它们还停在旧主题的颜色上。
+        """
+        self.refresh()
+        self.update()
+
+    # ---- 内容 --------------------------------------------------------------
 
     def set_entries(self, entries: Sequence[ExternalEntry]) -> None:
         """换掉下拉框里那几项。**不立刻建菜单** —— 建菜单要先问一遍 ``enabled``，
@@ -265,26 +368,38 @@ class ExternalAppsButton(QToolButton):
         self._entries = tuple(entries)
         self.refresh()
 
+    def default_entry(self) -> ExternalEntry | None:
+        """左半那一下打开的是哪一项 —— **第一个此刻可用的**。
+
+        现在每一页只有一项，所以「第一个」就是「那一个」；以后加了第二项，
+        左边仍然是「最常用的那个」，右边的菜单里仍然是全部。
+        """
+        for entry in self._entries:
+            if entry.enabled():
+                return entry
+        return None
+
+    def default_icon(self) -> QIcon:
+        """左半那个图标。**一条都没有时是空图标**（Qt 会画一个占位方框，所以那时
+        整个控件已经被 :meth:`is_available` 收起来了）。"""
+        entry = self.default_entry()
+        return (entry.icon or calendar_icon()) if entry is not None else QIcon()
+
     def refresh(self) -> None:
-        """按此刻的可用性重建菜单。
+        """按此刻的可用性重建菜单与左半的图标。
 
         **每次翻页、切层都要问一遍**：日历那一项在网格页上不该出现，访达那一项在
         没有当前文件夹时也不该出现 —— 摆一个点下去没反应的灰条目只会让人以为坏了。
         """
         self._menu.clear()
-        face: QIcon | None = None
+        self._primary.setIcon(self.default_icon())
         for entry in self._entries:
             if not entry.enabled():
                 continue
-            icon = entry.icon or calendar_icon()
-            # **按钮面上是第一个可用的那一项的图标**。曾经只给菜单项设了图标而忘了
-            # 按钮自己，于是屏幕上是一个方框加一个三角（Qt 给空图标画的占位符）。
-            if face is None:
-                face = icon
-            action = QAction(icon, entry.name, self._menu)
+            action = QAction(entry.icon or calendar_icon(), entry.name, self._menu)
             action.triggered.connect(lambda _checked=False, e=entry: self._activate(e))
             self._menu.addAction(action)
-        self.setIcon(face or QIcon())
+        self._primary.setEnabled(self.default_entry() is not None)
 
     def is_available(self) -> bool:
         """下拉框里此刻**有没有东西**。
@@ -294,6 +409,20 @@ class ExternalAppsButton(QToolButton):
         的图标，用户只会以为坏了。
         """
         return any(entry.enabled() for entry in self._entries)
+
+    def _popup_menu(self) -> None:
+        """右半那一下弹菜单。
+
+        **不把菜单挂到按钮上**：挂了 Qt 就会在那一格里再画一个它自己的菜单三角，
+        与我们画的那个 V 叠在一起（视觉检查里用户指出来的就是它）。不挂就干干净净
+        一个箭头，位置也归我们自己定（贴着那一格的左下角弹出）。
+        """
+        self._menu.popup(self._menu_button.mapToGlobal(QPoint(0, self._menu_button.height())))
+
+    def _activate_default(self) -> None:
+        entry = self.default_entry()
+        if entry is not None:
+            self._activate(entry)
 
     def _activate(self, entry: ExternalEntry) -> None:
         self.entry_activated.emit(entry)
@@ -306,11 +435,11 @@ __all__ = [
     "ICON_EDGE",
     "ICON_FOLDER",
     "ICON_KINDS",
+    "MENU_EDGE",
     "TOOLTIP",
     "ExternalAppsButton",
     "ExternalEntry",
     "button_rect",
-    "button_style",
     "calendar_icon",
     "drawn_icon",
     "folder_icon",

@@ -18,9 +18,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QRect  # noqa: E402
+from PySide6.QtCore import QPoint, QRect  # noqa: E402
 from PySide6.QtGui import QIcon  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import (  # noqa: E402
+    QApplication,  # noqa: E402
+    QMenu,
+    QToolButton,
+)
 from waiting import wait_until  # noqa: E402
 
 from gallery.core.external import launch  # noqa: E402
@@ -30,6 +34,7 @@ from gallery.ui.external_button import (  # noqa: E402
     BUTTON_GAP,
     BUTTON_WIDTH,
     ICON_EDGE,
+    MENU_EDGE,
     ExternalAppsButton,
     ExternalEntry,
     button_rect,
@@ -91,10 +96,14 @@ def _entry(entry_id: str, name: str, enabled: bool) -> ExternalEntry:
     return ExternalEntry(id=entry_id, name=name, icon=None, enabled=lambda: enabled)
 
 
+def _menu(button: ExternalAppsButton) -> QMenu:
+    """那个下拉菜单。**故意取私有成员**：菜单不再挂在按钮上（挂着 Qt 就会自己再画
+    一个菜单三角与我们画的箭头叠在一起），没有一个公开的入口拿得到它。"""
+    return button._menu  # noqa: SLF001 - 本仓库的惯例就是直接摸私有成员
+
+
 def _menu_texts(button: ExternalAppsButton) -> list[str]:
-    menu = button.menu()
-    assert menu is not None
-    return [action.text() for action in menu.actions()]
+    return [action.text() for action in _menu(button).actions()]
 
 
 def test_menu_lists_the_full_name(qt_app: QApplication) -> None:
@@ -107,34 +116,99 @@ def test_menu_carries_an_icon(qt_app: QApplication) -> None:
     """下拉框里是**图标 + 全称**：只有图标的话用户得一个个点过去才知道会发生什么。"""
     button = ExternalAppsButton()
     button.set_entries([_entry("google_calendar", "Google 日历", True)])
-    menu = button.menu()
-    assert menu is not None
-    action = menu.actions()[0]
+    action = _menu(button).actions()[0]
     assert isinstance(action.icon(), QIcon)
     assert not action.icon().isNull()
 
 
-def test_the_button_itself_shows_only_the_icon(qt_app: QApplication) -> None:
+def test_the_left_half_shows_only_the_icon(qt_app: QApplication) -> None:
     button = ExternalAppsButton()
-    assert button.toolButtonStyle().name == "ToolButtonIconOnly"
+    assert button._primary.toolButtonStyle().name == "ToolButtonIconOnly"
 
 
-def test_the_button_face_carries_an_icon(qt_app: QApplication) -> None:
-    """**按钮面上要有图标。**
+def test_the_left_half_carries_an_icon(qt_app: QApplication) -> None:
+    """**左半那个图标要有。**
 
     曾经只给菜单项设了图标而忘了按钮自己，于是 Qt 给空图标画了一个占位方框，
     屏幕上就是「一个方框 + 一个下拉三角」——视觉检查抓到的症状。
     """
     button = ExternalAppsButton()
     button.set_entries([_entry("google_calendar", "Google 日历", True)])
-    assert button.icon().isNull() is False
+    assert button.default_icon().isNull() is False
+    assert button._primary.icon().isNull() is False
 
 
 def test_no_entries_means_no_icon(qt_app: QApplication) -> None:
-    """一条都没有时按钮整个收起来，面上的图标也该收掉，不留一个空方框。"""
+    """一条都没有时按钮整个收起来，左半的图标也该收掉，不留一个空方框。"""
     button = ExternalAppsButton()
     button.set_entries([_entry("x", "某应用", False)])
-    assert button.icon().isNull() is True
+    assert button.default_icon().isNull() is True
+
+
+def test_it_is_two_buttons_side_by_side(qt_app: QApplication) -> None:
+    """**它是两个按钮，不是一个。**
+
+    左半直接打开、右半才下拉 —— 是两件不同的事，各接各的鼠标事件。做成一个按钮的
+    两个部位（``QToolButton`` 的菜单指示器）时，图标与箭头挤在一格里，读起来像叠在
+    一起（视觉检查里用户指出来的就是它）。
+    """
+    button = ExternalAppsButton()
+    button.resize(BUTTON_WIDTH, 22)
+    # **先 show()**：Qt 对一个还没显示过的控件不发 resize 事件，于是两半还是
+    # 默认那个 100×30（同一个坑：`isVisible()` 对子控件也是 False）。
+    button.show()
+    left, right = button._primary.geometry(), button._menu_button.geometry()
+
+    assert left.left() == 0
+    assert left.right() + 1 == right.left(), "两半必须紧挨着，中间不留缝"
+    assert left.height() == right.height() == button.height()
+    assert right.width() == MENU_EDGE
+    assert left.width() > ICON_EDGE, "左半至少要放得下图标"
+
+    # 两半是各自独立的控件，不是同一个按钮的两个部位。
+    assert button._primary is not button._menu_button
+    assert button._primary.parent() is button._menu_button.parent() is button
+
+
+def test_the_right_half_does_not_borrow_qt_menu_indicator(qt_app: QApplication) -> None:
+    """**右半不把菜单挂到按钮上。**
+
+    挂了 Qt 就会在那一格里再画一个它自己的菜单三角，与我们画的那个箭头叠在一起
+    （实测就是这个症状）；而给 ``::menu-indicator`` 写样式去压它，那个三角又会整个
+    消失。干脆两条都不走。
+    """
+    button = ExternalAppsButton()
+    assert button._menu_button.menu() is None
+    assert button._menu_button.popupMode() == QToolButton.ToolButtonPopupMode.DelayedPopup
+
+
+def test_clicking_the_left_half_opens_the_default_entry(qt_app: QApplication) -> None:
+    """左半那一下**直接打开**，不必先弹菜单再点一次。"""
+    entry = _entry("google_calendar", "Google 日历", True)
+    button = ExternalAppsButton()
+    button.set_entries([entry])
+    seen: list[object] = []
+    button.entry_activated.connect(seen.append)
+
+    button._primary.click()
+
+    assert seen == [entry]
+
+
+def test_the_left_half_opens_the_first_available_one(qt_app: QApplication) -> None:
+    """默认那一项是**第一个此刻可用的** —— 现在一页只有一项，以后加了第二项仍然成立。"""
+    off = _entry("finder", "访达", False)
+    on = _entry("google_calendar", "Google 日历", True)
+    button = ExternalAppsButton()
+    button.set_entries([off, on])
+    assert button.default_entry() is on
+
+
+def test_the_left_half_is_disabled_with_nothing_to_open(qt_app: QApplication) -> None:
+    button = ExternalAppsButton()
+    button.set_entries([_entry("x", "某应用", False)])
+    assert button._primary.isEnabled() is False
+    assert button.default_entry() is None
 
 
 def test_unavailable_entries_are_left_out(qt_app: QApplication) -> None:
@@ -168,9 +242,7 @@ def test_choosing_an_entry_reports_which(qt_app: QApplication) -> None:
     button.set_entries([entry])
     seen: list[object] = []
     button.entry_activated.connect(seen.append)
-    menu = button.menu()
-    assert menu is not None
-    menu.actions()[0].trigger()
+    _menu(button).actions()[0].trigger()
     assert seen == [entry]
 
 
@@ -334,3 +406,22 @@ def test_selected_day_wins_over_the_anchor(
     window._open_google_calendar()
     wait_until(QApplication.instance(), lambda: bool(seen))
     assert seen == [("month", datetime.date(2026, 3, 12))]
+
+
+def test_the_menu_opens_from_the_right_half(qt_app: QApplication) -> None:
+    """弹出的位置**由我们定**（右半那一格的左下角）。
+
+    菜单不再挂在按钮上，位置也就随之归我们 —— 挂上去的话 Qt 弹在按钮正下方，
+    而那个位置正压在搜索胶囊上。
+    """
+    button = ExternalAppsButton()
+    button.set_entries([_entry("google_calendar", "Google 日历", True)])
+    button.resize(BUTTON_WIDTH, 22)
+    button.show()
+    expected = button._menu_button.mapToGlobal(QPoint(0, button._menu_button.height()))
+    seen: list[QPoint] = []
+    button._menu.aboutToShow.connect(lambda: seen.append(expected))
+
+    button._menu_button.click()
+
+    assert seen == [expected]
