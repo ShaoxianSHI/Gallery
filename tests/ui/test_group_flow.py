@@ -236,18 +236,48 @@ def _watch_until_settled(
 def _watch_names(
     qt_app: QApplication, window: MainWindow, ready: Callable[[], bool]
 ) -> list[tuple[str, ...]]:
-    """同上，但记录**条目名字**：顺序对不对，只有名字能说明白。"""
+    """同上，但记录**条目名字**：顺序对不对，只有名字能说明白。
+
+    **模型经历的每一版都记下来，靠的是模型自己的通知而不是轮询。**
+    「不许闪一屏旧顺序」是一条否定断言，而轮询只采得到采样之间的状态：换排序是
+    :meth:`MainWindow._reload_level` 同步清空的（清空 → 排好），这两步完全可能落在
+    **同一轮** ``processEvents`` 里 —— 后台那一遍早就跑完时正是如此，并行跑最容易
+    撞上。于是中间那帧空网格整个漏掉，用例既没有真的在数帧，也随机变红
+    （实测 ``test_entering_a_group_also_waits_for_the_metadata_sort`` 32 次里挂 3 次，
+    报出来的是「只看到一帧」，而那一帧还是排好的那一版）。
+
+    ``clear()`` 发 ``modelReset``、``append()`` 发 ``rowsInserted``，挂上去之后一帧
+    不漏；**观察的第一帧**单独先取一次（那一刻模型刚被同步清空，正是要看的空帧）。
+    轮询那次取样仍然留着：改缩略图、改名走的是 ``dataChanged``，不动行数也发不出
+    上面那两个信号，只有轮询才看得见。
+    """
     seen: list[tuple[str, ...]] = []
-    deadline = time.monotonic() + DEFAULT_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
-        qt_app.processEvents()
-        snapshot = tuple(entry.name for entry in window._model.entries())
+    model = window._model
+
+    def record() -> None:
+        snapshot = tuple(entry.name for entry in model.entries())
         if not seen or seen[-1] != snapshot:
             seen.append(snapshot)
-        if window._scan_job is None and window._facet_job is None and ready():
-            break
-        time.sleep(0.005)
-    qt_app.processEvents()
+
+    def on_rows_inserted(*_args: object) -> None:
+        record()
+
+    model.modelReset.connect(record)
+    model.rowsInserted.connect(on_rows_inserted)
+    try:
+        record()  # 观察的第一帧：此刻摆着的东西（换排序同步清空后的空网格）
+        deadline = time.monotonic() + DEFAULT_TIMEOUT_SECONDS
+        while time.monotonic() < deadline:
+            qt_app.processEvents()
+            record()
+            if window._scan_job is None and window._facet_job is None and ready():
+                break
+            time.sleep(0.005)
+        qt_app.processEvents()
+        record()  # 收尾那一趟事件也记上：最后一帧同样不许是旧顺序
+    finally:
+        model.modelReset.disconnect(record)
+        model.rowsInserted.disconnect(on_rows_inserted)
     return list(dict.fromkeys(seen))
 
 
