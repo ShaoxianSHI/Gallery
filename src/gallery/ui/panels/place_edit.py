@@ -218,6 +218,8 @@ class PlaceEditDialog(QDialog):
         layout.addLayout(form)
 
         # 第一行三个键：**复制 / 粘贴 / 清空**，各占三分之一。
+        # **不挂悬浮提示**：三个键的字面意思已经就是它们要做的事，鼠标停在上面再冒出一句
+        # 解释只是把「复制」翻译成「把坐标写进剪贴板」—— 同一件事换个更长的说法。
         # 第二行「取消 / 保存」分别与**粘贴 / 清空**对齐 —— 同一套列网格，因此宽度
         # 与上面那行一模一样，不需要两排手工对齐的推算。
         grid = QGridLayout()
@@ -226,13 +228,10 @@ class PlaceEditDialog(QDialog):
         grid.setVerticalSpacing(6)
 
         self._copy_button = QPushButton("复制")
-        self._copy_button.setToolTip("把坐标（以及三层地名）按固定格式写进剪贴板")
         self._copy_button.clicked.connect(self._on_copy)
         self._paste_button = QPushButton("粘贴")
-        self._paste_button.setToolTip("从剪贴板读坐标与地名填进上面这些框")
         self._paste_button.clicked.connect(self._on_paste)
         self._clear_button = QPushButton("清空")
-        self._clear_button.setToolTip("把这一栏全清空：三层地名与两个坐标")
         self._clear_button.clicked.connect(self._on_clear)
 
         cancel = QPushButton("取消")

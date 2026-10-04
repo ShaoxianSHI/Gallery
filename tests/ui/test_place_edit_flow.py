@@ -674,6 +674,16 @@ def test_no_input_box_has_a_placeholder(qt_app: QApplication) -> None:
     ] == ["", "", "", "", ""]
 
 
+def test_the_transfer_buttons_have_no_tooltip(qt_app: QApplication) -> None:
+    """**不挂悬浮提示。** 三个键的字面意思就是它们要做的事。"""
+    dialog = _dialog(None, PlaceState(city="苏州"))
+
+    assert [
+        button.toolTip()
+        for button in (dialog._copy_button, dialog._paste_button, dialog._clear_button)
+    ] == ["", "", ""]
+
+
 def test_there_is_no_hint_line_left(qt_app: QApplication) -> None:
     """那行「保存后，XXX」已经删掉了 —— 用户不要它。"""
     dialog = _dialog(None, PlaceState(city="苏州"))
