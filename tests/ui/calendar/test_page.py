@@ -122,14 +122,16 @@ def scroll(
     return event
 
 
-def flick(page: CalendarPage, direction: int = 1, *, pixels: bool = True, step: int = 40) -> None:
+def flick(page: CalendarPage, fingers: int = -1, *, pixels: bool = True, step: int = 40) -> None:
     """一次用力的甩动：手指按下 + 两次增量（80 像素，刚够过阈值）。
+
+    ``fingers`` 是**手指往哪边走**：``-1`` 往左（往后一段），``1`` 往右（往前一段）。
 
     ``pixels=False`` 走的是角度增量那份阈值（120），于是每一步要更大一点。
     """
     view = page.current_view()
-    scroll(view, step * direction, phase=Qt.ScrollPhase.ScrollBegin, pixels=pixels)
-    scroll(view, step * direction, pixels=pixels)
+    scroll(view, step * fingers, phase=Qt.ScrollPhase.ScrollBegin, pixels=pixels)
+    scroll(view, step * fingers, pixels=pixels)
 
 
 @pytest.mark.parametrize(
@@ -140,18 +142,22 @@ def flick(page: CalendarPage, direction: int = 1, *, pixels: bool = True, step: 
         ("week", datetime.date(2021, 9, 19)),
     ],
 )
-def test_swiping_the_view_pages_one_period(
+def test_swiping_left_pages_one_period(
     page: CalendarPage, level: str, expected: datetime.date
 ) -> None:
-    """两指往右甩一下 = 往后翻一段（年 ± 一年、月 ± 一月、周 ± 七天），三层都成立。"""
+    """**两指往左甩一下 = 往后翻一段**（年 ± 一年、月 ± 一月、周 ± 七天），三层都成立。
+
+    方向在这一条里是钉住的：那是把那一页纸往左拖的手感，屏幕上的内容跟着走，
+    右边那一份露出来。反过来（「手势 = 同方向的那个按键」）读起来是反的。
+    """
     page.set_level(level)
     flick(page)
     assert page.anchor() == expected
 
 
-def test_swiping_the_other_way_pages_back(page: CalendarPage) -> None:
+def test_swiping_right_pages_back(page: CalendarPage) -> None:
     page.set_level("month")
-    flick(page, -1)
+    flick(page, fingers=1)
     assert page.anchor() == datetime.date(2021, 8, 12)
 
 
@@ -159,7 +165,7 @@ def test_a_nudge_is_not_a_page(page: CalendarPage) -> None:
     """轻轻推一下不该翻（真机上那也就二三十像素）。"""
     page.set_level("month")
     view = page.current_view()
-    scroll(view, 20)
+    scroll(view, -20)
     assert page.anchor() == TODAY
 
 
@@ -172,10 +178,10 @@ def test_one_flick_pages_once_and_the_momentum_after_it_pages_nothing(
     """
     page.set_level("month")
     view = page.current_view()
-    scroll(view, 40, phase=Qt.ScrollPhase.ScrollBegin)
-    scroll(view, 40)  # 80 像素：翻一页
-    scroll(view, 40)  # 还压在右边：不再翻
-    for delta in (60, 40, 20):
+    scroll(view, -40, phase=Qt.ScrollPhase.ScrollBegin)
+    scroll(view, -40)  # 80 像素：翻一页
+    scroll(view, -40)  # 手还压在左边：不再翻
+    for delta in (-60, -40, -20):
         scroll(view, delta, phase=Qt.ScrollPhase.ScrollMomentum)
     assert page.anchor() == datetime.date(2021, 10, 12)
 
@@ -215,7 +221,7 @@ def test_a_device_without_pixel_deltas_still_pages(page: CalendarPage) -> None:
 
 
 def test_a_swipe_is_a_page_turn_in_every_respect(page: CalendarPage) -> None:
-    """甩一下与按 ``→`` 是**同一件事**：收掉屏幕外的高亮、重报缩略图窗口。
+    """甩一下与按方向键是**同一件事**：收掉屏幕外的高亮、重报缩略图窗口。
 
     三个入口共用 :meth:`CalendarPage.step`，这一条钉的是「真接上了」，不是各写一份。
     锚点本身不动 —— ``set_selected`` 只改选中，翻到哪一段是 ``step`` 说了算（规则见
