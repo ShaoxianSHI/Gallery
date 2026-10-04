@@ -880,7 +880,7 @@ class WriteOpsMixin:
         if result is None:
             self._show_banner("没有可撤销的操作。")
             return
-# **这一次撤销之后，「跳回刚删掉的那张」就不作数了**：那一摞栈已经矮了一格。
+        # **这一次撤销之后，「跳回刚删掉的那张」就不作数了**：那一摞栈已经矮了一格。
         # 无论撤的是哪一种（下面三支），这一条都只对紧接着的那一次有效。
         trashed_in_detail, self._detail_trashed = self._detail_trashed, None
         if result.action == ACTION_METADATA:
