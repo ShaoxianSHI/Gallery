@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import textwrap
+import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -12,6 +15,7 @@ import pytest
 from PIL import Image
 
 from gallery.core.errors import ImageDecodeError
+from gallery.core.media import decode as decode_module
 from gallery.core.media.decode import HEIF_SUPPORT, decode_rgba
 
 
@@ -150,6 +154,93 @@ def test_heic_decodes_when_supported(tmp_path: Path) -> None:
     raster = decode_rgba(path)
 
     assert raster.size == (32, 24)
+
+
+# ---- 读不出来 ≠ 挂死 -----------------------------------------------------------
+
+
+def _blocking_photo(tmp_path: Path) -> Path:
+    """造一个 ``open()`` 永远不会返回的 ``.jpg``。
+
+    命名管道是唯一能确定性地造出「内核一直等」的东西：没有写端，读它就永远挂着。
+    云盘上还没下完的占位照片是同一个形状（``open()`` 要等文件提供器把数据拉回来，
+    没有网络就不返回），而那正是本组用例要钉住的情形。
+    """
+    path = tmp_path / "拉不下来.jpg"
+    os.mkfifo(path)
+    return path
+
+
+def test_a_photo_that_never_opens_fails_instead_of_blocking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """核心的那一条：**读不出来必须报错，不许把调用线程永久占住。**
+
+    没有时限的时候，一个工作线程就死在这里（``Image.open`` 不可打断）。占满线程池
+    之后整条缩略图流水线停摆；关窗时 Qt 又要 join 这些线程，于是进程永远退不出去
+    —— 现场是「丢进来一张读不出来的照片，然后连 ⌘Q 都按不动，只能强制退出」。
+    """
+    monkeypatch.setattr(decode_module, "READ_TIMEOUT_SECONDS", 0.5)
+    path = _blocking_photo(tmp_path)
+
+    started = time.monotonic()
+    with pytest.raises(ImageDecodeError) as excinfo:
+        decode_rgba(path, max_edge=256, use_draft=True)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 10, f"等了 {elapsed:.1f} 秒才放弃 —— 那就是没在管它"
+    # 措辞必须让用户知道该做什么：这不是「文件坏了」，等它下完就好。
+    assert "下载" in excinfo.value.message or "占用" in excinfo.value.message
+    assert "损坏" not in excinfo.value.message
+
+
+def test_a_cancelled_read_gives_up_at_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """关窗 / 切库时必须立刻放手 —— 退出不能被一个读不出来的照片拖住。"""
+    monkeypatch.setattr(decode_module, "READ_TIMEOUT_SECONDS", 600.0)
+    path = _blocking_photo(tmp_path)
+    give_up = threading.Event()
+
+    def should_cancel() -> bool:
+        return give_up.is_set()
+
+    give_up.set()
+    started = time.monotonic()
+    with pytest.raises(ImageDecodeError) as excinfo:
+        decode_rgba(path, max_edge=256, use_draft=True, should_cancel=should_cancel)
+
+    assert time.monotonic() - started < 10, "给了取消令牌却还在等读"
+    assert "取消" in excinfo.value.message
+
+
+def test_too_many_stuck_reads_stop_starting_new_ones(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """超时的读收不回来，得有个闸：不然一批下不下来的照片能攒出成百上千个线程。
+
+    这条钉的是**闸本身**：先把计数顶到上限，再看新来的读是不是立刻报错 ——
+    真到了那一步，机器已经读不动了，多等那 20 秒毫无意义。
+    """
+    monkeypatch.setattr(decode_module, "READ_TIMEOUT_SECONDS", 0.2)
+    monkeypatch.setattr(decode_module, "_stuck_reads", decode_module.MAX_STUCK_READS)
+    path = _blocking_photo(tmp_path)
+
+    started = time.monotonic()
+    with pytest.raises(ImageDecodeError):
+        decode_rgba(path, max_edge=256, use_draft=True)
+
+    assert time.monotonic() - started < 5, "闸没起作用：新开了一个读"
+
+
+def test_ordinary_photos_still_decode_through_the_bounded_path(
+    make_photo: Callable[..., Path],
+) -> None:
+    """加了时限不是只对坏文件生效 —— 正常照片照旧解码（且结果一样）。"""
+    path = make_photo("正常.jpg", size=(64, 48))
+
+    raster = decode_rgba(path, max_edge=32)
+
+    assert raster.size == (32, 24)
+    assert raster.nbytes == 32 * 24 * 4
 
 
 def _run_fresh_python(script: str, *args: str) -> subprocess.CompletedProcess[bytes]:

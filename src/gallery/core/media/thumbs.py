@@ -20,6 +20,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import io
+from collections.abc import Callable
 from pathlib import Path
 
 from PIL import Image
@@ -77,9 +78,10 @@ class ThumbnailCache:
     def max_edge(self) -> int:
         return self._max_edge
 
-    def get(self, ref: PhotoRef) -> RasterImage:
+    def get(self, ref: PhotoRef, *, should_cancel: Callable[[], bool] | None = None) -> RasterImage:
         """取缩略图：命中缓存直接读，未命中则解码并落盘。
 
+        :param should_cancel: 解码途中问一句「还要继续吗」（切库、关窗时用）。
         :raises gallery.core.errors.ImageDecodeError: 源图无法解码。
         """
         digest = self._key(ref)
@@ -87,7 +89,9 @@ class ThumbnailCache:
             cached = self._read_entry(self._entry_path(digest, suffix))
             if cached is not None:
                 return cached
-        raster = decode_rgba(ref.path, max_edge=self._max_edge, use_draft=True)
+        raster = decode_rgba(
+            ref.path, max_edge=self._max_edge, use_draft=True, should_cancel=should_cancel
+        )
         self._write_entry(digest, raster)
         return raster
 

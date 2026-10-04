@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Container, Iterator, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
@@ -223,33 +223,51 @@ class Library:
         folder: Path,
         *,
         should_cancel: Callable[[], bool] | None = None,
+        skip: Container[Path] = (),
     ) -> PhotoRef | None:
         """相册封面：文件夹里（含更深的层级）找到的第一张照片，没有则 ``None``。
 
         用「找到第一张就停」的搜索做封面：整棵树可能很大，而封面只需要一张。
+
+        :param skip: 这些照片当过封面却读不出来（云盘上没下完的那些），跳过它们往后找。
+            少了它，一张下到一半的照片会让整张相册卡片一直挂着它 —— 用户看到的是一张
+            永远出不来、也换不掉的黑封面。全部被跳过时返回 ``None``，由界面决定说什么。
         """
         folder = Path(folder)
         if not folder.is_dir():
             return None
-        return next(iter_photos(folder, should_cancel=should_cancel), None)
+        for ref in iter_photos(folder, should_cancel=should_cancel):
+            if ref.path not in skip:
+                return ref
+        return None
 
-    def thumbnail(self, ref: PhotoRef) -> RasterImage:
+    def thumbnail(
+        self, ref: PhotoRef, *, should_cancel: Callable[[], bool] | None = None
+    ) -> RasterImage:
         """取缩略图（走缓存）。"""
-        return self._thumbnails.get(ref)
+        return self._thumbnails.get(ref, should_cancel=should_cancel)
 
-    def preview(self, ref: PhotoRef, *, max_edge: int) -> RasterImage:
+    def preview(
+        self,
+        ref: PhotoRef,
+        *,
+        max_edge: int,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> RasterImage:
         """取用于「适配窗口」的预览图，不落盘。
 
         与缩略图不同，预览的尺寸随窗口变化，缓存它只会把缓存撑爆。
         """
-        return decode_rgba(ref.path, max_edge=max_edge, use_draft=True)
+        return decode_rgba(ref.path, max_edge=max_edge, use_draft=True, should_cancel=should_cancel)
 
-    def full(self, ref: PhotoRef) -> RasterImage:
+    def full(
+        self, ref: PhotoRef, *, should_cancel: Callable[[], bool] | None = None
+    ) -> RasterImage:
         """取全分辨率像素，用于 100% 查看。
 
         调用方必须自己控制内存：12MP 照片的 RGBA 约 48 MB。
         """
-        return decode_rgba(ref.path)
+        return decode_rgba(ref.path, should_cancel=should_cancel)
 
     def clear_cache(self) -> int:
         """清空本库的缩略图缓存，返回删除的条目数。"""

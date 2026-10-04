@@ -11,19 +11,46 @@
 3. ``Image.draft`` 能让 JPEG 按 1/2、1/4、1/8 直接解码，做缩略图和适配窗口的大图预览时
    能快一个量级；它必须在任何解码动作之前调用。
 4. ``Image.thumbnail`` 只缩不放，所以这里不需要额外判断是否要放大。
+5. **``open()`` 与 ``load()`` 可能永远不回来** —— 见 :func:`_within_deadline`。
 
 GIF 只取第一帧；RAW 不支持（见 ADR 0001）。
 """
 
 from __future__ import annotations
 
+import threading
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
+from gallery.core.cancellation import never_cancel
 from gallery.core.errors import ImageDecodeError
+
+#: 读一张照片最多等多久（秒）。
+#:
+#: 给得不算小：50MP 的照片冷解码就要好几秒，云盘上第一次拉下来更慢。超过它就当
+#: 「这张根本读不出来」，报一句**用户可修复**的话（见 :func:`_unreachable_message`），
+#: 而不是继续占着工作线程 —— 那正是「退不出去」的成因（见 :func:`_within_deadline`）。
+READ_TIMEOUT_SECONDS: Final = 20.0
+
+#: 等解码时轮询的间隔（秒）。够细，取消才能立刻生效。
+_READ_POLL_SECONDS: Final = 0.02
+
+#: 同时最多允许有多少个「已经超了时限、只能丢在那儿」的读。
+#:
+#: 超时的那个**收不回来**：它多半正卡在 ``open()`` 里，我们只能丢下它。这个计数是
+#: 那道闸 —— 没有它，一批读不出来的照片就能攒出成百上千个线程把机器拖垮。攒到这个
+#: 数量时不再新开一个，直接报错：真到了那一步机器已经读不动了，多等那 20 秒没有意义。
+MAX_STUCK_READS: Final = 8
+
+#: 已经超了时限、还活着的读的个数。只由 :func:`_within_deadline` 改，且都在锁下改 ——
+#: 它是本模块内部的一个计数，不是用来传递库路径 / 配置的全局状态。
+_stuck_reads = 0
+_stuck_lock = threading.Lock()
 
 
 def _register_heif_support() -> bool:
@@ -103,16 +130,116 @@ def has_transparency(image: Image.Image) -> bool:
     return "A" in image.getbands() or "transparency" in image.info
 
 
-def decode_rgba(path: Path, *, max_edge: int | None = None, use_draft: bool = False) -> RasterImage:
+def decode_rgba(
+    path: Path,
+    *,
+    max_edge: int | None = None,
+    use_draft: bool = False,
+    should_cancel: Callable[[], bool] | None = None,
+) -> RasterImage:
     """解码 ``path`` 为 RGBA 像素。
 
     :param max_edge: 若给出，长边会被缩放到不超过该值（只缩不放）。
     :param use_draft: 允许 JPEG 走 DCT 缩放快速解码。仅在 ``max_edge`` 远小于原图时有意义。
-    :raises ImageDecodeError: 文件损坏、被截断，或格式不受支持。
+    :param should_cancel: 读的过程中问一句「还要继续吗」（切库、关窗时用）。
+    :raises ImageDecodeError: 文件损坏、被截断、读不出来，或格式不受支持。
     """
     path = Path(path)
+    return _within_deadline(
+        path,
+        lambda: _decode_now(path, max_edge=max_edge, use_draft=use_draft),
+        cancelled=should_cancel or never_cancel,
+    )
+
+
+def _within_deadline(
+    path: Path, work: Callable[[], RasterImage], *, cancelled: Callable[[], bool]
+) -> RasterImage:
+    """跑 ``work``，但最多只等 :data:`READ_TIMEOUT_SECONDS`。
+
+    **为什么非得有这一层**：``open()`` 与 ``load()`` 都是**不可打断**的系统调用。
+    云盘里的占位照片（OneDrive 之类）没有下完时，读它会让内核一直等文件提供器把数据
+    拉回来 —— 没有网络就永远不返回。于是一个解码任务会把一个工作线程**永久**占住：
+    占满之后整条缩略图流水线停摆（什么照片都不再出图），关窗时 ``closeEvent`` 等满 2 秒
+    放弃，而 Qt 的线程池在析构时又要 join 这些线程 —— **进程永远退不出去**。
+    现场就是「丢进来一张读不出来的照片，然后连 ⌘Q 都按不动，只能强制退出」。
+
+    做法是把 ``work`` 放到一个**守护线程**上等：到了时限就抛错走人，那个线程留在原地
+    （它多半正卡在 ``open()`` 里）。守护线程不会被 ``threading`` 收尾时 join，因此它不会
+    把进程拖住 —— 这正是「读不出来」与「退不出去」必须在这里一起解决的原因。
+
+    实测开销可以忽略：4000×3000 的 JPEG 冷解码约 45 ms，多开一次线程约 0.3 ms。
+    """
+    global _stuck_reads
+
+    outcome = _Outcome()
+    finished = threading.Event()
+
+    def run() -> None:
+        try:
+            outcome.value = work()
+        except BaseException as exc:  # noqa: BLE001 - 原样转交给调用方
+            outcome.error = exc
+        finally:
+            finished.set()
+
+    with _stuck_lock:
+        if _stuck_reads >= MAX_STUCK_READS:
+            raise ImageDecodeError(_unreachable_message(path), path=path)
+    threading.Thread(target=run, name="gallery-decode", daemon=True).start()
+
+    deadline = time.monotonic() + READ_TIMEOUT_SECONDS
+    while not finished.wait(_READ_POLL_SECONDS):
+        if cancelled():
+            # 结果反正没人要（切库、关窗），立刻放手：继续等下去只会拖慢退出。
+            raise ImageDecodeError(f"已取消读取：{path.name}。", path=path)
+        if time.monotonic() >= deadline:
+            with _stuck_lock:
+                _stuck_reads += 1
+            raise ImageDecodeError(_unreachable_message(path), path=path)
+
+    if outcome.error is not None:
+        raise outcome.error
+    if outcome.value is None:  # pragma: no cover - run() 只会写出这两者之一
+        raise ImageDecodeError(_unreachable_message(path), path=path)
+    return outcome.value
+
+
+class _Outcome:
+    """``run`` 交给等待方的那一份结果：两个字段恰好互斥。"""
+
+    __slots__ = ("error", "value")
+
+    def __init__(self) -> None:
+        self.value: RasterImage | None = None
+        self.error: BaseException | None = None
+
+
+def _decode_now(path: Path, *, max_edge: int | None, use_draft: bool) -> RasterImage:
+    """真正去解码：``open`` → ``draft`` → 摆正 → 缩放 → 取像素。
+
+    这里**没有时限** —— 时限由外面那一层 :func:`_within_deadline` 负责。
+
+    **文件由我们自己打开**，而不是交给 ``Image.open(path)``，因为那样才分得清两件事：
+    我们打不开（没权限 / 云盘占位还没下完 / 已经被移走）与**打开了却读不出像素**
+    （损坏、截断、编码器不认）。前者绝不能被说成「已损坏」—— 用户很可能就此去抢救
+    一个根本没坏的文件（这个仓库一直守着这条，见下面 ``FileNotFoundError`` 那段注释）。
+    顺带的好处是失败时句柄一定被关掉。
+    """
     try:
-        with Image.open(path) as image:
+        stream = path.open("rb")
+    except FileNotFoundError as exc:
+        raise ImageDecodeError(
+            f"无法解码 {path.name}：文件已经不在原处。",
+            path=path,
+            detail=str(exc),
+        ) from exc
+    except OSError as exc:
+        # 打不开：无权限、云盘占位还没下完、把目录当成了文件……
+        raise ImageDecodeError(_unreachable_message(path), path=path, detail=str(exc)) from exc
+
+    try:
+        with stream, Image.open(stream) as image:
             if (
                 use_draft
                 and max_edge is not None
@@ -128,26 +255,30 @@ def decode_rgba(path: Path, *, max_edge: int | None = None, use_draft: bool = Fa
     except UnidentifiedImageError as exc:
         raise ImageDecodeError(_unidentified_message(path), path=path, detail=str(exc)) from exc
     except Image.DecompressionBombError as exc:
-        raise ImageDecodeError(
-            f"这张图片的像素数大到不像照片，出于安全考虑没有打开：{path.name}。",
-            path=path,
-            detail=str(exc),
-        ) from exc
-    except FileNotFoundError as exc:
-        # 「文件不在了」与「文件坏了」是两件事，混成一句话会吓人：用户刚把照片移到
-        # 别处（或删掉）时，一次迟到的解码失败会告诉他「文件可能已损坏」——
-        # 于是一次成功的移动被说成了数据损坏，用户很可能就此去抢救根本没坏的文件。
-        raise ImageDecodeError(
-            f"无法解码 {path.name}：文件已经不在原处。",
-            path=path,
-            detail=str(exc),
-        ) from exc
+        raise ImageDecodeError(_bomb_message(path), path=path, detail=str(exc)) from exc
     except (OSError, ValueError) as exc:
+        # 打开了，但像素读不出来：损坏、截断、编码器不认。
         raise ImageDecodeError(
             f"无法解码 {path.name}：文件可能已损坏或被截断。",
             path=path,
             detail=str(exc),
         ) from exc
+
+
+def _bomb_message(path: Path) -> str:
+    return f"这张图片的像素数大到不像照片，出于安全考虑没有打开：{path.name}。"
+
+
+def _unreachable_message(path: Path) -> str:
+    """读不出内容（多半是没下完）时说的话 —— 必须让用户知道该做什么。
+
+    这与「文件损坏」是**两回事**，措辞也不同：云盘同步中的照片等一会儿就好了，
+    照着「已损坏」去抢救文件只会白忙一场。
+    """
+    return (
+        f"读不出 {path.name}：文件可能还没下载完（云盘同步中的照片），"
+        f"或者正被别的程序占用。等它下载完再打开即可。"
+    )
 
 
 def _unidentified_message(path: Path) -> str:
@@ -156,4 +287,11 @@ def _unidentified_message(path: Path) -> str:
     return f"这不是一张能识别的图片：{path.name}。文件内容可能与扩展名不符。"
 
 
-__all__ = ["HEIF_SUPPORT", "RasterImage", "decode_rgba", "has_transparency"]
+__all__ = [
+    "HEIF_SUPPORT",
+    "MAX_STUCK_READS",
+    "READ_TIMEOUT_SECONDS",
+    "RasterImage",
+    "decode_rgba",
+    "has_transparency",
+]

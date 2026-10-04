@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
 
@@ -25,7 +25,7 @@ from gallery.core.library.facade import Library
 from gallery.core.library.photos import GridEntry, GroupRef, PhotoRef
 from gallery.ui.imaging import to_scaled_qimage
 from gallery.ui.tasks import TaskContext, TaskRunner
-from gallery.ui.thumbs.queue import ThumbnailQueue
+from gallery.ui.thumbs.queue import VISIBLE, ThumbnailQueue
 
 #: ``target_edge`` 的「不缩放」取值，同时也是 :attr:`ThumbnailPipeline.ready`
 #: 第三个参数里表示「这张图没有按某个尺寸缩放过」的值。
@@ -42,15 +42,33 @@ class ScaledThumbnail:
 
 
 @dataclass(slots=True)
-class _JobId:
-    """装一次 job_id 的小盒子。
+class _Job:
+    """装「一次投递」的盒子：它的 job_id，以及**这一格最终用了谁的像素**。
 
     ``TaskRunner.submit`` 要先拿到回调，回调又要知道自己是谁 ——
     那时 ``job_id`` 还不存在。用一个只装一次的盒子把 id 递进去，
     提交返回后立刻填上。回调据此确认「回来的这个结果确实是我那一次」。
+
+    ``cover`` 只对相册有意义：封面是现去找的，失败时要记住「是这一张不行」，
+    下一次才好换下一张当封面（见 :meth:`ThumbnailPipeline._on_error`）。
     """
 
-    value: int | None = None
+    job_id: int | None = None
+    cover: Path | None = None
+
+
+@dataclass(slots=True)
+class _Cover:
+    """一个相册「封面挑到谁」的那份记忆。
+
+    ``skipped`` 是当过封面却读不出来的照片：换封面时跳过它们。少了这份记忆，
+    一张云盘上没下完的照片会让整张相册卡片永远挂着它（用户看到的是一张出不来、
+    也换不掉的黑封面）。``message`` 是最近一次失败的中文说法 —— 整个相册的照片
+    都试完之后正是拿它把原因说出来，否则界面上只剩一个文件夹图形。
+    """
+
+    skipped: set[Path] = field(default_factory=set)
+    message: str = ""
 
 
 class ThumbnailPipeline(QObject):
@@ -70,6 +88,8 @@ class ThumbnailPipeline(QObject):
         self._inflight: dict[Path, int] = {}
         self._failed: set[Path] = set()
         self._empty: set[Path] = set()
+        #: 相册 → 挑封面挑到哪儿了（见 :class:`_Cover`）。
+        self._covers: dict[Path, _Cover] = {}
         self._generation = 0
         #: 当前要缩到多长。在**提交任务时**定格进闭包（见 :meth:`_start`）。
         self._target_edge = NO_EDGE
@@ -111,6 +131,7 @@ class ThumbnailPipeline(QObject):
         self._refs.clear()
         self._failed.clear()
         self._empty.clear()
+        self._covers.clear()
 
     def forget(self, paths: Iterable[Path]) -> None:
         """这些路径上的文件变了：忘掉「读不出来 / 是空相册」的结论。
@@ -122,6 +143,10 @@ class ThumbnailPipeline(QObject):
             target = Path(path)
             self._failed.discard(target)
             self._empty.discard(target)
+            # 「这一张不能当封面」同样会过期：云盘把半截的照片补完之后，
+            # 它又是一个好封面了（见 :class:`_Cover`）。
+            for cover in self._covers.values():
+                cover.skipped.discard(target)
 
     def _dispatch(self) -> None:
         while len(self._inflight) < self._max_inflight:
@@ -151,24 +176,39 @@ class ThumbnailPipeline(QObject):
                 ref = entry
             else:
                 # 相册：拿里面找到的第一张照片当封面；空相册返回 None。
-                ref = library.folder_cover(entry.path, should_cancel=context.is_cancelled)
+                # 当过封面却读不出来的那几张跳过 —— 否则一张云盘上没下完的照片
+                # 会让整张相册卡片一直挂着那张（用户看到的是一张黑的封面）。
+                ref = library.folder_cover(
+                    entry.path,
+                    should_cancel=context.is_cancelled,
+                    skip=self._covers.get(entry.path, _Cover()).skipped,
+                )
                 if ref is None:
                     return None
+                holder.cover = ref.path
             # 缩放在这里做（工作线程），界面线程只留一次 QPixmap.fromImage。
-            return ScaledThumbnail(to_scaled_qimage(library.thumbnail(ref), edge), edge)
+            #
+            # ``should_cancel`` 必须一路传进解码里：一张云盘上还没下完的照片会让
+            # ``open()`` 永远不返回，没有它这个工作线程就被永久占住 —— 占满之后整条
+            # 流水线停摆，而关窗时 Qt 还要 join 它们，于是连 ⌘Q 都退不出去
+            # （理由与做法见 ``core.media.decode._within_deadline``）。
+            return ScaledThumbnail(
+                to_scaled_qimage(library.thumbnail(ref, should_cancel=context.is_cancelled), edge),
+                edge,
+            )
 
-        job_id_holder = _JobId()
+        holder = _Job()
         job_id = self._runner.submit(
             work,
-            on_result=partial(self._on_result, entry, generation, job_id_holder),
-            on_error=partial(self._on_error, entry, generation, job_id_holder),
+            on_result=partial(self._on_result, entry, generation, holder),
+            on_error=partial(self._on_error, entry, generation, holder),
         )
         # ``submit`` 要先拿得到回调，回调又要知道自己是谁 —— 用一个只装一次的
-        # 小盒子把 job_id 递进去（:class:`_JobId`）。拿到之后立刻写进 ``_inflight``。
-        job_id_holder.value = job_id
+        # 小盒子把 job_id 递进去（:class:`_Job`）。拿到之后立刻写进 ``_inflight``。
+        holder.job_id = job_id
         self._inflight[entry.path] = job_id
 
-    def _release(self, entry: GridEntry, holder: _JobId) -> None:
+    def _release(self, entry: GridEntry, holder: _Job) -> None:
         """收尾时把这一格从「在途」里摘出去 —— **只摘自己那一次**。
 
         ``shutdown()`` 会清空 ``_inflight`` 并换代。旧一代的任务若晚回来还照着
@@ -176,10 +216,10 @@ class ThumbnailPipeline(QObject):
         ``_inflight`` 于是少数了（超过 ``_max_inflight`` 也不会再补），
         而 ``cancel()`` 更是再也够不着那个真正在跑的新任务。
         """
-        if holder.value is not None and self._inflight.get(entry.path) == holder.value:
+        if holder.job_id is not None and self._inflight.get(entry.path) == holder.job_id:
             del self._inflight[entry.path]
 
-    def _on_result(self, entry: GridEntry, generation: int, holder: _JobId, result: object) -> None:
+    def _on_result(self, entry: GridEntry, generation: int, holder: _Job, result: object) -> None:
         self._release(entry, holder)
         if generation != self._generation:
             self._dispatch()
@@ -187,13 +227,31 @@ class ThumbnailPipeline(QObject):
         if result is None:
             # 空相册没有封面：记下来别再反复问，界面会画文件夹图标。
             self._empty.add(entry.path)
+            # 但「整个相册都读不出来」长得和空相册一模一样（一个文件夹图形），
+            # 区别只有一句话 —— 那句话得说出来，否则用户只看到一张没有照片的卡片。
+            cover = self._covers.get(entry.path)
+            if cover is not None and cover.message:
+                self.failed.emit(entry.path, cover.message)
         elif isinstance(result, ScaledThumbnail):
             self.ready.emit(entry.path, result.image, result.edge)
         self._dispatch()
 
-    def _on_error(self, entry: GridEntry, generation: int, holder: _JobId, message: str) -> None:
+    def _on_error(self, entry: GridEntry, generation: int, holder: _Job, message: str) -> None:
         self._release(entry, holder)
         if generation == self._generation:
+            if holder.cover is not None and not isinstance(entry, PhotoRef):
+                # 相册的封面读不出来：记下「这一张不行」，**换下一张再试**。
+                # 不这么做，一张云盘上没下完的照片就会让整张相册卡片一直挂着它 ——
+                # 用户看到的是一张永远出不来、也永远换不掉的黑封面。
+                cover = self._covers.setdefault(entry.path, _Cover())
+                cover.skipped.add(holder.cover)
+                cover.message = message
+                # 重新排一次队（这一格本身不记进 ``_failed``：换个封面也许能成）。
+                # 整个相册都试完之后 ``folder_cover`` 会返回 ``None``，那一支见
+                # :meth:`_on_result` —— 于是「都试过了」不会变成无休止的重试。
+                self._queue.add(entry.path, priority=VISIBLE)
+                self._dispatch()
+                return
             self._failed.add(entry.path)
             self.failed.emit(entry.path, message)
         self._dispatch()

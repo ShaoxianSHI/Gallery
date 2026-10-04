@@ -1909,6 +1909,13 @@ class MainWindow(WriteOpsMixin, QMainWindow):
                 continue
             if self._is_on_current_level(change.path):
                 added.append(entry)
+                # 「这一格已经在了」也要当成文件变了：云盘同步中的照片会先以半截的样子
+                # 出现（解码失败，流水线把它记成「读不出来」），等下完了再报一次「创建」。
+                # 那一格如果不换新引用就一直挂着旧的大小与修改时间，而那份「读不出来」的
+                # 记忆也不会清 —— 于是文件明明已经能读了，缩略图却永远回不来。
+                # 这正是「照片放进文件夹之后一直是黑的，重开也没用」的一半原因。
+                if self._model.row_of_path(change.path) >= 0:
+                    stale.add(change.path)
             else:
                 covers.update(self._album_covering(change.path))
 
@@ -2816,7 +2823,11 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         def work_preview(context: TaskContext) -> object:
             if context.is_cancelled():
                 return None
-            return to_qimage(library.preview(ref, max_edge=max_edge))
+            # 取消令牌要传进解码：云盘上没下完的照片会让 ``open()`` 永远不返回，
+            # 关窗时那一个任务就会把退出拖住（见 ``core.media.decode._within_deadline``）。
+            return to_qimage(
+                library.preview(ref, max_edge=max_edge, should_cancel=context.is_cancelled)
+            )
 
         self._detail_job = self._runner.submit(
             work_preview,
@@ -2843,7 +2854,7 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         def work_full(context: TaskContext) -> object:
             if context.is_cancelled():
                 return None
-            return to_qimage(library.full(ref))
+            return to_qimage(library.full(ref, should_cancel=context.is_cancelled))
 
         self._detail_job = self._runner.submit(
             work_full,
@@ -2934,7 +2945,9 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             def work(context: TaskContext, target: PhotoRef = ref) -> object:
                 if context.is_cancelled():
                     return None
-                return to_qimage(library.preview(target, max_edge=max_edge))
+                return to_qimage(
+                    library.preview(target, max_edge=max_edge, should_cancel=context.is_cancelled)
+                )
 
             self._runner.submit(
                 work,
@@ -3556,8 +3569,11 @@ class MainWindow(WriteOpsMixin, QMainWindow):
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         self._save_session()
         self._teardown_library()
-        self._runner.cancel_all()
-        if not self._runner.wait_for_done():
+        # ``abandon`` 而不是「取消 + 等」：排队里还没开始的任务必须丢掉，否则每跑掉
+        # 一个就再等一个（丢进来几百张照片时那是好几分钟）。已经跑起来的那几个靠令牌
+        # 收工 —— 解码中途会问令牌（``core.media.decode``），所以连「云盘上还没下完、
+        # open() 一直不返回」那种也能立刻放手，⌘Q 不会被拖住。
+        if not self._runner.abandon():
             logger.warning("仍有后台任务未结束，已放弃等待")
         # 剪贴板那个连接**不显式断开**：PySide 会在接收者析构时自动摘掉（实测过，
         # 窗口销毁后再动剪贴板不会回调）。显式 disconnect 反而每次关窗都报一次

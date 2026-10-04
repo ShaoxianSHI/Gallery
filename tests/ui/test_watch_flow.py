@@ -262,6 +262,40 @@ def test_the_new_photo_really_gets_a_thumbnail(
         window.close()
 
 
+def test_a_photo_that_finished_downloading_gets_its_thumbnail_back(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """云盘里下到一半的照片补完之后，缩略图**要回来**。
+
+    现场：OneDrive 之类先把照片以半截的样子放进文件夹（解码失败），下载完成后又报
+    一次「创建」—— 同一个路径。这一格如果不换新引用就一直挂着半截时的大小与修改
+    时间，缩略图缓存的 key 永远对不上；那份「这张读不出来」的记忆也不会被清掉。于是
+    文件明明已经能读了，格子却一直停在黑占位图上，重开之前根本不会自己恢复。
+    """
+    make_photo("一张.jpg")
+    window, watcher = open_window(qt_app, tmp_path)
+    try:
+        newcomer = tmp_path / "云盘里的.jpg"
+        half = _jpeg_bytes((200, 30, 30))
+        newcomer.write_bytes(half[: len(half) // 3])
+
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.ADDED, newcomer))
+        assert wait_until(qt_app, lambda: newcomer in window._pipeline._failed, timeout=5), (
+            "半截的照片本该读不出来"
+        )
+
+        # 下完了；同一个路径又报了一次「创建」。
+        newcomer.write_bytes(_jpeg_bytes((30, 200, 30)))
+        _touch(newcomer)
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.ADDED, newcomer))
+
+        assert wait_until(qt_app, lambda: window._model.has_thumbnail(newcomer)), (
+            "文件已经补完了，缩略图却没回来"
+        )
+    finally:
+        window.close()
+
+
 def test_a_batch_of_photos_arrives_in_one_go(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
 ) -> None:
@@ -845,6 +879,26 @@ def _touch(path: Path) -> None:
     """把修改时间往后推：内容变了，mtime 也必须跟着变（索引的新鲜度就看它）。"""
     stamp = path.stat().st_mtime_ns + 10**9
     os.utime(path, ns=(stamp, stamp))
+
+
+def _jpeg_bytes(
+    color: tuple[int, int, int] = (200, 120, 40), size: tuple[int, int] = (64, 48)
+) -> bytes:
+    """现造一张最小合法 JPEG 的字节。
+
+    测试数据一律现场构造（AGENTS.md）：不放真实照片，也不放二进制进仓库。
+    """
+    from io import BytesIO
+
+    from PIL import Image
+
+    buffer = BytesIO()
+    image = Image.new("RGB", size, color)
+    try:
+        image.save(buffer, format="JPEG", quality=90)
+    finally:
+        image.close()
+    return buffer.getvalue()
 
 
 def _facets() -> PhotoFacets:

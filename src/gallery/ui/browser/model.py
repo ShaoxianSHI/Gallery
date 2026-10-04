@@ -231,8 +231,12 @@ class PhotoListModel(QAbstractListModel):
             return -1
         existing = self._row_by_path.get(entry.path, -1)
         if existing >= 0:
-            # 同一个路径在网格上只可能有一行：监听报上来的新增与撤销取回可能撞上同一张，
-            # 与其让两份引用打架，不如告诉调用方「它已经在第几行」。
+            # 同一个路径在网格上只可能有一行：监听报上来的新增与撤销取回可能撞上同一张。
+            # 既然来的是一份**更新的**引用，就顺手把这一行换掉 —— 留着旧的大小与修改
+            # 时间，下一次取缩略图用的缓存 key 会对不上，那一格就再也回不来。
+            # （云盘同步中的照片正是这么卡住的：先以半截的样子出现，补完后又报一次
+            # 「创建」，而这一行还挂着半截时的大小。见 ADR 0013。）
+            self.replace_entry(existing, entry)
             return existing
         row = self._insert_position(entry, whole_level=whole_level)
         self.beginInsertRows(QModelIndex(), row, row)

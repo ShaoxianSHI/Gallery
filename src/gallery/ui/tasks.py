@@ -204,6 +204,23 @@ class TaskRunner(QObject):
         """等待所有任务结束（关窗时调用，避免工作线程访问已销毁的对象）。"""
         return self._pool.waitForDone(timeout_ms)
 
+    def abandon(self, timeout_ms: int = SHUTDOWN_TIMEOUT_MS) -> bool:
+        """关窗要走的一整套：作废 → **丢掉排队积压** → 才等。
+
+        ``cancel_all`` 只动令牌，**排队中还没开始的任务照样会一个个跑起来** ——
+        每一个都可能是一次几秒的解码，或一次要起子进程的元数据读取。于是关窗要多等
+        ``排队的个数 × 每个的时长``：一次丢进来几百张照片时，那已经是好几分钟。
+
+        ``QThreadPool.clear()`` 把它们直接丢掉。它只清**还没开始的**；已经在跑的仍然
+        要靠令牌让它自己停下来 —— 解码那几条已经接上令牌了
+        （见 ``core.media.decode._within_deadline``）。
+
+        :return: 是否在时限内全部收工（为 ``False`` 时调用方该记一条日志）。
+        """
+        self.cancel_all()
+        self._pool.clear()
+        return self.wait_for_done(timeout_ms)
+
     @Slot(int, object)
     def _handle_success(self, job_id: int, result: object) -> None:
         callbacks = self._callbacks.pop(job_id, None)
