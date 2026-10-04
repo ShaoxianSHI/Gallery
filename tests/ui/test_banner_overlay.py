@@ -22,12 +22,13 @@ import pytest  # noqa: E402
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QRect, QSize  # noqa: E402
-from PySide6.QtGui import QFontMetrics  # noqa: E402
+from PySide6.QtGui import QColor, QFontMetrics, QImage  # noqa: E402
 from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
+from gallery.ui import theme  # noqa: E402
 from gallery.ui.banner_overlay import (  # noqa: E402
     AUTO_HIDE_SECONDS,
-    MARGIN_BOTTOM,
+    MARGIN_TOP,
     MAX_WIDTH,
     BannerOverlay,
     banner_rect,
@@ -54,11 +55,20 @@ def test_a_narrow_window_narrows_the_banner_rather_than_overflowing_it() -> None
     assert 0 < width < 320
 
 
-def test_the_banner_sits_centred_and_floats_above_the_bottom_edge() -> None:
+def test_the_banner_sits_centred_on_the_top_edge() -> None:
+    """**横向居中、纵向浮在内容区顶边下方** —— 那一带是面包屑所在的一行（ADR 0029）。"""
     rect = banner_rect(AREA, QSize(400, 30))
     assert rect.width() == 400
     assert rect.left() == AREA.width() // 2 - 200, "应当水平居中"
-    assert rect.bottom() + 1 + MARGIN_BOTTOM == AREA.bottom() + 1, "应当浮在底边上方一点"
+    assert rect.top() == AREA.top() + MARGIN_TOP, "应当贴着顶边"
+    assert rect.bottom() < AREA.bottom(), "压的是面包屑那一带，不是最后一排缩略图"
+
+
+def test_the_banner_does_not_sit_on_the_window_edge() -> None:
+    """不贴边：贴在最上沿会看着像标题栏的一部分，贴最下沿像状态栏（那个刻意不建）。"""
+    rect = banner_rect(AREA, QSize(400, 30))
+    assert rect.top() > AREA.top()
+    assert rect.bottom() + 1 < AREA.bottom() + 1
 
 
 def test_the_banner_never_sticks_out_of_the_area_it_was_given() -> None:
@@ -133,7 +143,54 @@ def test_the_message_is_placed_inside_the_area_it_was_given(
 
     rect = banner.geometry()
     assert area.contains(rect), f"横幅 {rect} 摆到了 {area} 外面"
-    assert rect.bottom() + 1 + MARGIN_BOTTOM == area.bottom() + 1
+    assert rect.top() == area.top() + MARGIN_TOP
+
+
+def _columns_with_ink(image: QImage) -> tuple[int, int]:
+    """图里带字的列，最左与最右各是哪一列。
+
+    判据是「这一列里有没有一个像素**足够接近字色**」—— 不去猜底色是什么（它跟着主题，
+    还掺了 16% 的橙），于是浅色深色两套主题下都是同一份判法。
+    """
+    text = theme.current_theme().text
+
+    def distance(color: QColor) -> int:
+        return (
+            (color.red() - text.red()) ** 2
+            + (color.green() - text.green()) ** 2
+            + (color.blue() - text.blue()) ** 2
+        )
+
+    limit = 60**2
+    columns = [
+        x
+        for x in range(image.width())
+        if min(distance(image.pixelColor(x, y)) for y in range(image.height())) < limit
+    ]
+    return (columns[0], columns[-1]) if columns else (-1, -1)
+
+
+def test_the_words_sit_in_the_middle_of_the_banner(qt_app: QApplication, host: QWidget) -> None:
+    """**字要居中**：横幅的宽度是「装得下就多宽」，左对齐的话窄横幅永远偏在一侧。
+
+    这里**画出来量像素**，而不是只看 ``alignment()`` —— 用户看见的是墨迹落在哪儿，
+    「标志位设了」与「看着是歪的」中间还隔着换行、内边距与几何。
+    """
+    banner = BannerOverlay(host)
+    banner.reposition(QRect(0, 0, 800, 600))
+    banner.show_message("已重命名为「海边日落.jpg」。")
+    qt_app.processEvents()
+
+    width = banner.width()
+    assert width > 0, "横幅不该是零宽"
+    left, right = _columns_with_ink(banner.grab().toImage())
+    assert left >= 0, "一个字都没画出来"
+    # 容忍几像素：量的是**墨迹**，而首尾两个字的左右边距（bearing）本身就不等，
+    # 换行排版还会再添一点零头。左对齐时这个差是上百像素，两者不会混。
+    slack = max(4, width // 40)
+    assert abs(left - (width - 1 - right)) <= slack, (
+        f"字没有居中：左 {left} / 右 {width - 1 - right}（横幅宽 {width}）"
+    )
 
 
 def test_a_message_that_is_only_going_to_be_read_once_leaves_by_itself(

@@ -3044,7 +3044,10 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         return area
 
     def _layout_banner(self) -> None:
-        """把横幅摆在内容区底边居中（它在窗口上，不属于任何布局）。
+        """把横幅摆在内容区**顶边居中**（它在窗口上，不属于任何布局）。
+
+        顶边那一带正好是面包屑所在的那一行（ADR 0029 决策 1）；大图页上照片区右边让给
+        元数据面板，居中的位置也就落在照片区而不是整个窗口（见 :meth:`_banner_area`）。
 
         窗口改大小、换页、展开收起元数据面板之后都要重摆一次 —— 与 ``_layout_title_bar``
         同一套时机。

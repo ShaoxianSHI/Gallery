@@ -26,7 +26,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import QPoint, QPointF, Qt  # noqa: E402
 from PySide6.QtGui import QColor, QImage, QPalette  # noqa: E402
 from PySide6.QtWidgets import QApplication, QFrame, QWidget  # noqa: E402
-from waiting import DEFAULT_TIMEOUT_SECONDS
+from waiting import DEFAULT_TIMEOUT_SECONDS, wait_for_idle
 
 from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.library.session import (  # noqa: E402
@@ -150,6 +150,19 @@ def _open_detail(qt_app: QApplication, window: MainWindow) -> None:
     qt_app.processEvents()
 
 
+def _without_banner(qt_app: QApplication, window: MainWindow) -> None:
+    """量底色之前先把横幅收干净。
+
+    横幅是**浮在内容上面**的一层（ADR 0029），它出现时照片区顶边那一圈是橙色的 ——
+    那既不是边框，也不是「几层各铺各的底色」。这条守护量的是「最里层四周有没有描边」，
+    所以先把时有时无的那一层收掉：**先等后台收工**（否则进度消息会在截图之前又冒出来），
+    再清横幅，最后转一圈让 ``hide()`` 生效。
+    """
+    wait_for_idle(qt_app, window)
+    window._clear_banner()
+    qt_app.processEvents()
+
+
 def _edge_colors(image: QImage, window: QWidget, widget: QWidget, *, outward: int = 2) -> set[int]:
     """控件四周那一圈（内外各若干像素）出现过的颜色。
 
@@ -191,10 +204,13 @@ def test_innermost_layer_has_no_border(qt_app: QApplication, window: MainWindow)
     回归的是那条系统灰边框：``QListView`` 默认带 ``StyledPanel``，会在视口四周画一圈
     ``#b6b6b6`` 之类的描边，整个照片区看上去像浮在一块面板上，而不是铺满窗口。大图区
     本来就是 ``NoFrame``，网格要跟它对齐。
+
+    **先把横幅收干净**（:func:`_without_banner`）：它浮在内容上面，压在照片区顶边时
+    那一圈是橙色的 —— 量的是边框，不能把那一层浮着的东西算进来。
     """
     try:
         expected = theme.current_theme().background.rgb()
-        qt_app.processEvents()
+        _without_banner(qt_app, window)
         assert window._grid.frameShape() == QFrame.Shape.NoFrame, (
             "网格又长出了默认的 StyledPanel 边框"
         )
@@ -209,6 +225,7 @@ def test_innermost_layer_has_no_border(qt_app: QApplication, window: MainWindow)
 
         # 大图页：同理
         _open_detail(qt_app, window)
+        _without_banner(qt_app, window)
         detail_edges = _edge_colors(
             window.grab().toImage(), window, window._detail.viewport(), outward=0
         )

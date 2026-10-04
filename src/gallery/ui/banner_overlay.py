@@ -6,6 +6,10 @@
 ``SearchField`` 同一手法），尺寸与位置自己算：出现与消失都不动底下任何一样东西
 （ADR 0029 决策 1）。
 
+它浮在**内容区的顶边、正好是面包屑那一行**，配色是原来那一对橙色。覆盖在导航信息上
+而不是压在最后一排缩略图上：面包屑过几秒就重新露出来，而用户正在挑的永远是下面那几行
+照片。
+
 **它同时出现在网格页与大图页**，因为它挂在窗口上而不是某一页里：用户正在看大图时
 做的任何一件事（⌘Z 撤销、⌘C 拷贝、⌘⌫ 移走这一张）说的那句话就在**照片上面**，
 不必退回网格才看得见（ADR 0029 决策 2）。
@@ -35,10 +39,14 @@ from gallery.ui.theme import rgba
 #: 两秒里后台消息还在让位，之后到收起来之间还留着几秒，够用户扫一眼。
 AUTO_HIDE_SECONDS = 4.0
 
-#: 离左右、离底边各留多少（点）。压在整个窗口的最底边上会显得像状态栏 —— 而状态栏是
-#: 刻意不建的（见 ``tests/ui/test_chrome.py``），所以它得浮起来一点。
+#: 离左右、离顶边各留多少（点）。
+#:
+#: **横向离窗口边远一点**：窄横幅孤零零地贴着一侧像没摆完，居中才像是刻意摆的。
+#: **纵向离内容区顶边 :data:`MARGIN_TOP` 点** —— 与网格页那一行的上边距一样，于是它
+#: 正好压在面包屑那一行上（ADR 0029 决策 1）。顶边这一带本来就是导航信息，横幅盖住
+#: 几秒、又自己收走，比压住照片下缘更好认（那一带永远是最后一行缩略图）。
 MARGIN_SIDE = 28
-MARGIN_BOTTOM = 26
+MARGIN_TOP = 10
 
 #: 横向最宽多少点。再宽就成了段落，两行以内的提示用不着横穿整个窗口。
 MAX_WIDTH = 560
@@ -49,9 +57,13 @@ PADDING_X = 12
 PADDING_Y = 8
 BORDER = 1
 
-#: 底色留几分透明。**不许再往下调**：它压在照片上，压得越透这行字越难认，而横幅的全部
-#: 职责就是把那句话念清楚。0.9 底下那层照片只剩一点影子，不妨碍读字。
-BACKGROUND_ALPHA = 0.9
+#: 横幅那两个橙色的分量（RGB）。**就是原来那一对** —— 用户每天看惯了它，换成别的颜色
+#: 是把一件已经用过很久的东西改成另一件。
+FILL_RGB = (255, 176, 32)
+#: 底色留 16% 不透明：它盖在照片与缩略图上，压得太实就等于把那一块内容藏起来了。
+FILL_ALPHA = 0.16
+#: 边框留 45% —— 比底色实，才看得出横幅有这么一块边界。
+EDGE_ALPHA = 0.45
 
 
 def banner_width(area: QRect) -> int:
@@ -80,15 +92,16 @@ def text_height(text: str, width: int, metrics: QFontMetrics) -> int:
 
 
 def banner_rect(area: QRect, size: QSize) -> QRect:
-    """把 ``size`` 那么大的一横幅摆在 ``area`` 的哪儿：**水平居中，浮在底边上方**。
+    """把 ``size`` 那么大的一横幅摆在 ``area`` 的哪儿：**水平居中，浮在顶边下方**。
 
-    底边居中而不是顶边：顶边是面包屑与窗口标题那一行的地盘，而照片的视线也从上往下
-    走 —— 压在上面会把刚滚到顶的那几张挡住。
+    顶边而不是底边：上面那一行是面包屑与窗口标题所在地盘，横幅盖住的是**导航信息**，
+    几秒之后自己会让开；而底边那一带永远是最后一行缩略图，压上去的是用户正在挑的照片
+    （ADR 0029 决策 1）。
     """
     width = min(size.width(), max(area.width() - 2 * MARGIN_SIDE, 1))
     height = max(size.height(), 1)
     x = area.x() + max(area.width() - width, 0) // 2
-    y = area.bottom() + 1 - MARGIN_BOTTOM - height
+    y = area.top() + MARGIN_TOP
     return QRect(x, y, width, height)
 
 
@@ -99,6 +112,9 @@ class BannerOverlay(QLabel):
         super().__init__(parent)
         self.setObjectName("banner")
         self.setWordWrap(True)
+        # **文字居中**：横幅的宽度是「装得下就多宽」，不是固定的，于是左对齐的话那句话
+        # 总是偏在一边，一条窄横幅看上去像没摆正（横向、纵向都居中）。
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # 几何完全由外面给（``setGeometry``），别让某个布局顺手改它。
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         # 纯提示，不该吃掉底下那一片的点击与拖动：横幅正压在网格上，
@@ -108,7 +124,8 @@ class BannerOverlay(QLabel):
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self.hide)
-        # 颜色跟着主题走（与 ``TitleBar`` 同一个做法）：这块底色不是自己写死的。
+        # 底色与边框是写死的那一对橙色，只有字色跟着主题走（浅色下深字、深色下浅字），
+        # 所以换过外观之后要重下这一份 —— 与 ``TitleBar`` 同一个做法。
         self._watcher = theme.ensure_installed()
         self._watcher.changed.connect(self._apply_theme)
         self._apply_theme()
@@ -177,24 +194,25 @@ class BannerOverlay(QLabel):
         self.setGeometry(banner_rect(area, QSize(width, height)))
 
     def _apply_theme(self) -> None:
-        """横幅是一块**读字的材料**：底色取窗口那一份（半透），提示色只留一道边。
+        """样式表就是**原来那一份**：浅橙的底 + 深一点的橙边，16% / 45% 两档不透明。
 
-        压在照片上时，底色必须够实 —— 16% 的提示色叠在一张饱和的蓝照片上，底下是什么
-        就决定了这行字好不好认。边框与文字取提示色与正文色，于是「这是一条提示」
-        这一层信息由边和字说，底下透出来的那点照片只当它是一层浅浅的底。
+        底色压得淡是有意的 —— 它盖在照片与缩略图上，压实了就等于把那一块内容藏起来；
+        边框那一档实一些，好让「横幅有这么一块边界」看得出来。
+
+        只有**字色**跟着主题走（原先写的 ``palette(text)`` 在 Qt 样式表里并不成立，
+        实际走的是控件默认色，也就是正文色那一份）。
         """
-        app_theme = theme.current_theme()
-        fill = QColor(app_theme.background)
-        fill.setAlphaF(BACKGROUND_ALPHA)
-        edge = QColor(app_theme.notice)
-        edge.setAlphaF(0.55)
+        fill = QColor(*FILL_RGB)
+        fill.setAlphaF(FILL_ALPHA)
+        edge = QColor(*FILL_RGB)
+        edge.setAlphaF(EDGE_ALPHA)
         self.setStyleSheet(
             f"QLabel#banner {{"
             f"  background: {rgba(fill)};"
             f"  border: {BORDER}px solid {rgba(edge)};"
             f"  border-radius: 6px;"
             f"  padding: {PADDING_Y}px {PADDING_X}px;"
-            f"  color: {rgba(app_theme.text)};"
+            f"  color: {rgba(theme.current_theme().text)};"
             f"}}"
         )
 
@@ -211,10 +229,12 @@ class BannerOverlay(QLabel):
 
 __all__ = [
     "AUTO_HIDE_SECONDS",
-    "BACKGROUND_ALPHA",
     "BORDER",
-    "MARGIN_BOTTOM",
+    "EDGE_ALPHA",
+    "FILL_ALPHA",
+    "FILL_RGB",
     "MARGIN_SIDE",
+    "MARGIN_TOP",
     "MAX_WIDTH",
     "PADDING_X",
     "PADDING_Y",
