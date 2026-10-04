@@ -138,12 +138,12 @@ class MenuActions:
     #: 「取消相册封面」（ADR 0028）。判据与上面那条对称：选中的**恰好是一个**相册、
     #: 而且它真的被指定过封面，否则不出现（用户看得见自己设过，也就没有需要撤销的东西）。
     clear_cover: QAction | None = None
-    #: 「编辑位置…」⇧⌘I（ADR 0030）。**单选一张照片、且改得动时才有**，否则 ``None``
+    #: 「编辑元数据…」⇧⌘I（ADR 0030 / 0032）。**单选一张照片、且改得动时才有**，否则 ``None``
     #: —— 那一行不出现，而不是摆一条点下去只会报错的（ADR 0014 决策 4）。
     #:
     #: 与封面那两条一样**只活在右键菜单里**：它需要一个对话框才说得清，而菜单栏上摆一个
     #: 点了就弹框的条目不如不摆。快捷键 ⇧⌘I 照常有效（``MainWindow`` 把它挂到窗口上）。
-    edit_place: QAction | None = None
+    edit_metadata: QAction | None = None
 
 
 def build_photo_menu(actions: MenuActions, *, multiple: bool) -> QMenu:
@@ -430,13 +430,13 @@ def _add_write_group(
     rename: bool = True,
     place: bool = True,
 ) -> None:
-    """第三组「会动文件」：重命名… · 编辑位置… · 移到废纸篓（ADR 0023 / 0030）。
+    """第三组「会动文件」：重命名… · 编辑元数据… · 移到废纸篓（ADR 0023 / 0030）。
 
     这一组里的每一条都会改磁盘上的东西，所以它单独成组、离前面那几条「只是把东西摆出去 /
-    递出去」的远一点。**「编辑位置」也在这里**：它改的是照片里的字节，与改名、删除是同
+    递出去」的远一点。**「编辑元数据」也在这里**：它改的是照片里的字节，与改名、删除是同
     一族 —— 摆在「它是什么」那一段（只读问答）会让那一段的承诺说谎。
 
-    **前两条都只在单选时出现**：批量改名是 ADR 0004 明确排除的，而位置编辑一次只改一张
+    **前两条都只在单选时出现**：批量改名是 ADR 0004 明确排除的，而元数据编辑一次只改一张
     —— 一次动几百张照片的 GPS 是不可想象的操作。多选时这一组只剩「移到废纸篓」一行，
     **分隔线照旧**（见 ADR 0023 决策 2）。
 
@@ -446,8 +446,8 @@ def _add_write_group(
     """
     if rename and not multiple:
         menu.addAction(actions.rename)
-    if place and not multiple and actions.edit_place is not None:
-        menu.addAction(actions.edit_place)
+    if place and not multiple and actions.edit_metadata is not None:
+        menu.addAction(actions.edit_metadata)
     menu.addAction(actions.trash)
 
 

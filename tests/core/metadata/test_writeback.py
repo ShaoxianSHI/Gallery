@@ -29,6 +29,7 @@ from gallery.core.metadata.journal import (
     read_records,
 )
 from gallery.core.metadata.writeback import (
+    CAPTURE_TIME_TAGS,
     COORDINATE_TAGS,
     PLACE_TAGS,
     WRITABLE_TAGS,
@@ -96,11 +97,18 @@ HANGZHOU = (
 # ---- 白名单：这是「大部分元数据不能编辑」在代码里的形状 ------------------------
 
 
-def test_only_position_tags_are_writable() -> None:
-    """**白名单就是那十三个位置相关的标签**，一个不多。
+def test_only_capture_time_and_position_tags_are_writable() -> None:
+    """**白名单就是位置那十三个加拍摄时间那两个**，一个不多。
 
     「大部分元数据不该可编辑」如果只写在界面上，早晚会有人从别的入口写进去。相机、
-    镜头、拍摄时间、曝光三件套一个都不在清单里 —— 想写它们在这个模块里压根做不到。
+    镜头、曝光三件套一个都不在清单里 —— 想写它们在这个模块里压根做不到。
+
+    **拍摄时间那两个是唯一的新增**（ADR 0032）：它们的加入是一次有意的收窄放宽，
+    判据是「时间是需要人校准的时钟读数，而曝光是机身测出来的量」。
+
+    顺带钉住**文件处理过程那几个日期字段仍然不可写**：``CreateDate`` /
+    ``DateTimeDigitized`` / ``ModifyDate`` 记的是文件什么时候被创建、被数字化、被改写过，
+    改它们等于制造一条没发生过的记录。
     """
     expected = frozenset(
         (
@@ -109,16 +117,33 @@ def test_only_position_tags_are_writable() -> None:
             "EXIF:GPSAltitudeRef",
             "EXIF:GPSDateStamp",
             *PLACE_TAGS,
+            *CAPTURE_TIME_TAGS,
         )
     )
     assert expected == WRITABLE_TAGS
-    for forbidden in ("EXIF:Model", "EXIF:DateTimeOriginal", "EXIF:FNumber", "XMP:Rating"):
+    for forbidden in (
+        "EXIF:Model",
+        "EXIF:FNumber",
+        "XMP:Rating",
+        "EXIF:CreateDate",
+        "EXIF:DateTimeDigitized",
+        "EXIF:ModifyDate",
+    ):
         assert forbidden not in WRITABLE_TAGS
 
 
 @pytest.mark.parametrize(
     "tag",
-    ["EXIF:Make", "EXIF:Model", "EXIF:DateTimeOriginal", "EXIF:ExposureTime", "XMP:Rating"],
+    [
+        "EXIF:Make",
+        "EXIF:Model",
+        "EXIF:ExposureTime",
+        "XMP:Rating",
+        # 文件处理过程那几个日期字段：**改它们等于制造一条没发生过的记录**（ADR 0032）。
+        "EXIF:CreateDate",
+        "EXIF:DateTimeDigitized",
+        "EXIF:ModifyDate",
+    ],
 )
 def test_writing_a_field_outside_the_whitelist_is_refused(
     library: Path, photo: PhotoRef, tag: str
@@ -129,6 +154,34 @@ def test_writing_a_field_outside_the_whitelist_is_refused(
         write_metadata(library, photo, [Assignment(tag, "x")], writer=writer)
 
     assert writer.writes == []  # 连试都没试：它在守卫那一层就被挡下了
+
+
+def test_writing_the_capture_time_goes_through_the_same_guarded_path(
+    library: Path, photo: PhotoRef
+) -> None:
+    """**拍摄时间与坐标走同一条路**：守卫、回读校验、记账、撤销，一个都不少。
+
+    它是后加的白名单条目（ADR 0032），而白名单的价值恰恰在于「加进来之后仍然受同一套
+    规矩管」—— 少了这一条，加进来的两个标签就可能绕过回读校验或者不记账。
+    """
+    writer = FakeWriter(fields={"EXIF:DateTimeOriginal": "2024:05:16 20:52:02"})
+
+    result = write_metadata(
+        library,
+        photo,
+        [
+            Assignment("EXIF:DateTimeOriginal", "2003:07:19 09:12:00"),
+            Assignment("EXIF:OffsetTimeOriginal", "+09:00"),
+        ],
+        writer=writer,
+    )
+
+    assert result.written
+    assert writer.fields["EXIF:DateTimeOriginal"] == "2003:07:19 09:12:00"
+    assert writer.fields["EXIF:OffsetTimeOriginal"] == "+09:00"
+    changes = {(change.tag, change.before, change.after) for change in result.changes}
+    assert ("EXIF:DateTimeOriginal", "2024:05:16 20:52:02", "2003:07:19 09:12:00") in changes
+    assert read_records(library)[-1].changes[0].before == "2024:05:16 20:52:02"
 
 
 def test_a_file_outside_the_library_is_refused(

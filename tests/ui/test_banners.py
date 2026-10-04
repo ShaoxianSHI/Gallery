@@ -10,19 +10,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from gallery.core.library.facade import PlaceWriteOutcome
+import pytest
+
+from gallery.core.library.facade import MetadataWriteOutcome
 from gallery.core.library.photos import FolderRef, PhotoRef
 from gallery.core.metadata.failures import Failure
 from gallery.core.metadata.journal import ACTION_METADATA, ACTION_MOVE, ACTION_RENAME
+from gallery.core.metadata.metadata_edit import MetadataPlan
 from gallery.core.metadata.paste import PastedFile, PasteResult, Skipped
-from gallery.core.metadata.place_edit import PlacePlan
 from gallery.core.metadata.rename import RenameResult
 from gallery.core.metadata.transfer import MovedItem, MoveResult
 from gallery.core.metadata.trash import TrashResult
 from gallery.core.metadata.undo import UndoResult
-from gallery.core.metadata.writeback import Assignment
+from gallery.core.metadata.writeback import CAPTURE_TIME_TAGS, PLACE_TAGS, Assignment
 from gallery.ui import banners
-from gallery.ui.banners import place_banner, undo_banner
+from gallery.ui.banners import metadata_edit_banner, undo_banner
 
 
 def _photo(path: Path) -> PhotoRef:
@@ -193,37 +195,73 @@ def test_clearing_the_cover_says_what_it_fell_back_to() -> None:
     assert banners.album_cover_cleared_banner("京都") == "「京都」恢复用里面的第一张照片当封面。"
 
 
-# ---- 编辑位置（ADR 0030 / 0031）------------------------------------------------
+# ---- 编辑元数据（ADR 0030 / 0031 / 0032）------------------------------------------------
 
 
-def _outcome(*, written: bool = True, journaled: bool = True) -> PlaceWriteOutcome:
-    return PlaceWriteOutcome(
+def _outcome(
+    *,
+    written: bool = True,
+    journaled: bool = True,
+    capture_changed: bool = False,
+    place_changed: bool = True,
+) -> MetadataWriteOutcome:
+    tags = [
+        *(CAPTURE_TIME_TAGS if capture_changed else ()),
+        *(PLACE_TAGS if place_changed else ()),
+    ]
+    return MetadataWriteOutcome(
         entry=PhotoRef(path=Path("/库/一张.jpg"), size=1, mtime_ns=2),
-        plan=PlacePlan(assignments=(Assignment("XMP:City", "杭州"),), city="杭州"),
+        plan=MetadataPlan(assignments=tuple(Assignment(tag, "x") for tag in tags)),
         journaled=journaled,
         written=written,
     )
 
 
-def test_the_place_banner_is_one_line_and_nothing_else() -> None:
+def test_the_metadata_edit_banner_is_one_line_and_nothing_else() -> None:
     """**只有这一句。**
 
     「接下来会发生什么」是对话框里那行小字的事：保存之前就说清了，用户是在知道后果的
     前提下按的保存。横幅再说一遍是重复，而且重复的那一遍还在动作**之后**才到 ——
     那时候它已经不能改变任何决定了。
     """
-    assert place_banner(_outcome(), "一张.jpg") == "已更新「一张.jpg」的位置。⌘Z 可以撤销。"
+    assert metadata_edit_banner(_outcome(), "一张.jpg") == "已更新「一张.jpg」的位置。⌘Z 可以撤销。"
 
 
-def test_place_banner_says_when_it_cannot_be_undone() -> None:
+def test_the_banner_says_when_it_cannot_be_undone() -> None:
     """这一句不是重复：它不是「发生了什么」，而是「你刚才按 ⌘Z 会发生什么」。"""
-    text = place_banner(_outcome(journaled=False), "一张.jpg")
+    text = metadata_edit_banner(_outcome(journaled=False), "一张.jpg")
 
     assert text == "已更新「一张.jpg」的位置。⌘Z 撤销不了：没能记下操作日志。"
 
 
-def test_place_banner_says_nothing_changed_when_nothing_did() -> None:
-    assert place_banner(_outcome(written=False), "一张.jpg") == "「一张.jpg」的位置没有改动。"
+def test_the_banner_says_nothing_changed_when_nothing_did() -> None:
+    assert (
+        metadata_edit_banner(_outcome(written=False), "一张.jpg")
+        == "「一张.jpg」的元数据没有改动。"
+    )
+
+
+@pytest.mark.parametrize(
+    ("capture_changed", "place_changed", "what"),
+    [
+        (True, False, "拍摄时间"),
+        (False, True, "位置"),
+        (True, True, "拍摄时间与位置"),
+    ],
+)
+def test_the_banner_says_which_part_actually_changed(
+    capture_changed: bool, place_changed: bool, what: str
+) -> None:
+    """**说清改了哪一部分**，不是笼统的「已更新元数据」。
+
+    同一个对话框里可以只改时间、只改位置、或者两样都改，而**没改的那一部分照片上一个
+    字节都没动** —— 用户回头翻那张照片时得知道该去核对什么（ADR 0032）。
+    """
+    text = metadata_edit_banner(
+        _outcome(capture_changed=capture_changed, place_changed=place_changed), "一张.jpg"
+    )
+
+    assert text.startswith(f"已更新「一张.jpg」的{what}。")
 
 
 def test_undo_banner_for_a_place_mentions_the_fields_it_refused_to_touch() -> None:

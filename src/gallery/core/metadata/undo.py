@@ -54,7 +54,7 @@ _LABELS: Final[dict[str, str]] = {
     ACTION_RENAME: "重命名",
     ACTION_TRASH: "移到废纸篓",
     ACTION_MOVE: "移动到相册",
-    ACTION_METADATA: "编辑位置",
+    ACTION_METADATA: "编辑元数据",
 }
 
 
@@ -67,7 +67,7 @@ class UndoResult:
     action: str
     #: 撤销之后网格里应该存在的条目：撤销改名是一条，撤销删除可能是一批。
     #:
-    #: 撤销**位置编辑**也是一条 —— 文件还在原地，但大小与修改时间变了，界面手上那条引用
+    #: 撤销**元数据编辑**也是一条 —— 文件还在原地，但大小与修改时间变了，界面手上那条引用
     #: 已经过期（缩略图与索引的键都含它），所以界面要拿这条新引用换掉原来那一行。
     entries: tuple[GridEntry, ...]
     #: 撤销改名时被替换掉的那一行。撤销删除时为 ``None`` —— 那一行本来就不在网格里。

@@ -85,9 +85,9 @@ QCheckBox#metadataToggle {{ color: {rgba(app_theme.text_at(0.62))}; font-size: 1
 class MetadataPanel(QWidget):
     """展示一张照片的元数据。只负责画，读取由主窗口在后台完成。"""
 
-    #: 用户要编辑位置（点了「位置」那一组旁边的按钮）。**这里只发信号** ——
+    #: 用户要编辑元数据（点了页脚那个按钮）。**这里只发信号** ——
     #: 真正写文件的是 ``write_ops``，面板不碰（红线 1 在代码里必须是一句可查的话）。
-    edit_place_requested = Signal()
+    edit_metadata_requested = Signal()
     #: 用户在面板里按了 ← / →：上一张 / 下一张（-1 / +1）。
     #:
     #: **焦点落在面板里也仍然该能换照片。** 网格自己的方向键走的是
@@ -110,9 +110,9 @@ class MetadataPanel(QWidget):
         self._apply_theme()
 
         self._report: MetadataReport | None = None
-        #: 此刻能不能编辑位置（没装 exiftool 时为 ``False``，按钮变成一句说明）。
-        self._place_editable = False
-        self._place_reason = ""
+        #: 此刻能不能编辑元数据（没装 exiftool 时为 ``False``，按钮变成一句说明）。
+        self._metadata_editable = False
+        self._metadata_reason = ""
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 10)
@@ -140,18 +140,18 @@ class MetadataPanel(QWidget):
         self._copy_button = QPushButton("复制全部")
         self._copy_button.setObjectName("metadataButton")
         self._copy_button.clicked.connect(self._copy_all)
-        self._place_button = QPushButton("编辑位置")
-        self._place_button.setObjectName("metadataButton")
-        self._place_button.clicked.connect(self.edit_place_requested)
+        self._edit_button = QPushButton("编辑元数据")
+        self._edit_button.setObjectName("metadataButton")
+        self._edit_button.clicked.connect(self.edit_metadata_requested)
         self._show_all = QCheckBox("显示全部字段")
         self._show_all.setObjectName("metadataToggle")
         self._show_all.toggled.connect(lambda _checked: self._render())
         footer_layout.addWidget(self._copy_button)
-        footer_layout.addWidget(self._place_button)
+        footer_layout.addWidget(self._edit_button)
         footer_layout.addWidget(self._show_all)
         # **三个组件平分整行**，后面不留一段空：面板宽 300，两个按钮比那个勾选框窄，
         # 剩下的宽度按比例分给它们（``Expanding``），不然右边会空出一小条。
-        for button in (self._copy_button, self._place_button):
+        for button in (self._copy_button, self._edit_button):
             button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         layout.addWidget(self._footer)
 
@@ -235,25 +235,25 @@ class MetadataPanel(QWidget):
         self._footer.show()
         self._render()
 
-    def set_place_editable(self, editable: bool, *, reason: str = "") -> None:
-        """「编辑位置」此刻能不能用（没装 exiftool 时不能，理由也由这里给）。
+    def set_metadata_editable(self, editable: bool, *, reason: str = "") -> None:
+        """「编辑元数据」此刻能不能用（没装 exiftool 时不能，理由也由这里给）。
 
         **摆着一个点下去只会报错的按钮，比没有更糟**（ADR 0014 决策 4）—— 所以不能用的
         时候那个位置显示成一句话，说明为什么。
         """
-        self._place_editable = editable
-        self._place_reason = reason
+        self._metadata_editable = editable
+        self._metadata_reason = reason
         # 按钮在页脚（不在「位置」那一组里），所以这里也得跟着换：不能用时**置灰**，
         # 理由放进悬浮提示，而「位置」那一组仍然把这句话写出来（看得见，不必去猜）。
-        self._place_button.setEnabled(editable)
-        self._place_button.setToolTip(
-            reason if not editable else "改坐标或地点，会写回这张照片（⌘Z 可以撤销）"
+        self._edit_button.setEnabled(editable)
+        self._edit_button.setToolTip(
+            reason if not editable else "改拍摄时间或位置，会写回这张照片（⌘Z 可以撤销）"
         )
         self._render()
 
     @property
-    def place_editable(self) -> bool:
-        return self._place_editable
+    def metadata_editable(self) -> bool:
+        return self._metadata_editable
 
     @property
     def report(self) -> MetadataReport | None:
@@ -290,7 +290,7 @@ class MetadataPanel(QWidget):
     def _group_title(self, title: str) -> QWidget:
         """组标题。只有「位置」那一组例外：不能编辑时把**理由**说在标题右边。
 
-        **「编辑位置」按钮不在这里**（在页脚，和「复制全部」「显示全部字段」一行）——
+        **「编辑元数据」按钮不在这里**（在页脚，和「复制全部」「显示全部字段」一行）——
         照片**本来就没有位置**的时候，面板上根本没有「位置」那一组，入口也就跟着没了，
         而那恰恰是最需要补一个位置的时候。
         """
@@ -302,11 +302,11 @@ class MetadataPanel(QWidget):
         label.setObjectName("metadataGroupTitle")
         layout.addWidget(label)
         layout.addStretch(1)
-        if title == PLACE_GROUP_TITLE and not self._place_editable:
-            hint = QLabel(self._place_reason or "此处不能编辑")
+        if title == PLACE_GROUP_TITLE and not self._metadata_editable:
+            hint = QLabel(self._metadata_reason or "此处不能编辑")
             hint.setObjectName("metadataNotice")
             hint.setWordWrap(True)
-            hint.setToolTip(self._place_reason)
+            hint.setToolTip(self._metadata_reason)
             layout.addWidget(hint, 1)
         return row
 

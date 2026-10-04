@@ -3,9 +3,9 @@
 这是本项目里第一个「文件不搬家、内容被改」的操作，所以规矩与改名（ADR 0004）一样重，
 只是多了一条独有的一条：**写完必须校验**。
 
-- **只写白名单里的字段**：:data:`WRITABLE_TAGS` 是唯一来源。位置相关的十三个 tag 之外
-  的一切（相机、镜头、拍摄时间、曝光三件套……）在这个模块里压根不可达 —— 「大部分元数据
-  不该可编辑」因此是**代码里的一条事实**，而不是只写在界面上的一句承诺。
+- **只写白名单里的字段**：:data:`WRITABLE_TAGS` 是唯一来源。位置相关的十三个 tag 与拍摄
+  时间的两个（ADR 0032）之外的一切（相机、镜头、曝光三件套……）在这个模块里压根不可达 ——
+  「大部分元数据不该可编辑」因此是**代码里的一条事实**，而不是只写在界面上的一句承诺。
 - **写之前读原值，写之后读回来比对**：exiftool 退出码为 0 **不代表写成功了**（标签不被
   支持、格式拒绝、只写了一部分时它都可能返回 0）。所以真正的判据是回读：值对不上就
   **按原值写回去**，然后如实报错（红线 3、4）。
@@ -86,8 +86,23 @@ PLACE_TAGS: Final[tuple[str, ...]] = (
     "IPTC:Country-PrimaryLocationName",
 )
 
+#: 拍摄时间的两个标签（ADR 0032）。
+#:
+#: **只写这两个，别的日期字段一个字都不动**：``CreateDate`` / ``DateTimeDigitized`` /
+#: ``ModifyDate`` 记的是**文件处理过程**（什么时候被创建、被数字化、被改写过），与
+#: 「这张照片什么时候拍的」不是一回事 —— 改它们等于制造一条没发生过的记录。
+#:
+#: 偏移**不必跟着时间一起写**：照片没记时区时那个字段压根不存在，「删掉它」是空操作，
+#: :func:`_changes` 会把它跳过。
+CAPTURE_TIME_TAGS: Final[tuple[str, ...]] = (
+    "EXIF:DateTimeOriginal",
+    "EXIF:OffsetTimeOriginal",
+)
+
 #: **可以写回的全部字段**（唯一来源）。加一个 tag 必须同时改这里与对应的守护测试。
-WRITABLE_TAGS: Final[frozenset[str]] = frozenset(COORDINATE_TAGS + STALE_GPS_TAGS + PLACE_TAGS)
+WRITABLE_TAGS: Final[frozenset[str]] = frozenset(
+    COORDINATE_TAGS + STALE_GPS_TAGS + PLACE_TAGS + CAPTURE_TIME_TAGS
+)
 
 #: 坐标比对的容差（度）。exiftool 把十进制度存成度分秒、秒只给两位小数，
 #: 精度约 3e-6 度；取 1e-5（约 1.1 米）既能容忍那点量化误差，又不至于把「差了一条街」
@@ -405,7 +420,7 @@ def _checked(assignments: Sequence[Assignment]) -> tuple[Assignment, ...]:
     for item in assignments:
         if item.tag not in WRITABLE_TAGS:
             raise MetadataWriteError(
-                f"「{item.tag}」不在可以修改的字段里。Gallery 只改坐标与地点。",
+                f"「{item.tag}」不在可以修改的字段里。Gallery 只改拍摄时间与位置。",
                 detail=item.tag,
             )
         unique[item.tag] = item.value
@@ -574,6 +589,7 @@ def _first_line(stderr: str) -> str:
 
 
 __all__ = [
+    "CAPTURE_TIME_TAGS",
     "COORDINATE_TAGS",
     "COORDINATE_TOLERANCE_DEGREES",
     "INSTALL_HINT",

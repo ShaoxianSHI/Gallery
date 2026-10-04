@@ -13,8 +13,9 @@
 - **改名**（ADR 0004）与**移到废纸篓**（ADR 0008）—— 仅有的两个直接改原件的入口。
 - **撤销**（⌘Z）：改回去，或者从废纸篓取回来。
 - **设为相册封面 / 取消相册封面**（ADR 0028）—— 写的是 ``config.toml``，不碰照片。
-- **编辑位置**（坐标与三层地名，ADR 0030 / 0031）—— **本项目里第一个真正改动用户照片
-  内容的入口**：写的是 EXIF / IPTC / XMP。规矩见 ``core.metadata.writeback``。
+- **编辑元数据**（拍摄时间与坐标、三层地名，ADR 0030 / 0031 / 0032）—— **本项目里第一个
+  真正改动用户照片内容的入口**：写的是 EXIF / IPTC / XMP。规矩见
+  ``core.metadata.writeback``。
 - 以及它们共用的那一个前置问题：「**现在动的是哪些东西**」。
 
 **它不碰文件。** 每一个真正的写操作都走 ``self._library`` 上的某个方法
@@ -59,15 +60,17 @@ from PySide6.QtWidgets import QDialog, QMenu
 from gallery.core.errors import GalleryError
 from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
 from gallery.core.library.session import BROWSE_MODE_ALBUMS, BROWSE_MODE_FLAT
+from gallery.core.metadata.capture_time import CaptureTime
 from gallery.core.metadata.exif import MetadataReport, read_metadata
 from gallery.core.metadata.journal import ACTION_METADATA, ACTION_RENAME
+from gallery.core.metadata.metadata_edit import MetadataEdit, MetadataState
 from gallery.core.metadata.paste import PasteResult
-from gallery.core.metadata.place_edit import PlaceEdit, PlaceState
+from gallery.core.metadata.place_edit import PlaceState
 from gallery.core.metadata.rename import RenameResult
 from gallery.core.metadata.transfer import MoveResult
 from gallery.core.metadata.undo import UndoResult
 from gallery.ui import banners, desktop, menus
-from gallery.ui.panels.place_edit import PlaceEditDialog
+from gallery.ui.panels.metadata_edit import MetadataEditDialog
 from gallery.ui.tasks import TaskContext
 
 logger = logging.getLogger(__name__)
@@ -442,19 +445,19 @@ class WriteOpsMixin:
             self._pipeline.forget([album])
         self._refresh_thumbnail_window()
 
-    # ---- 位置编辑（ADR 0030 / 0031）-----------------------------------------
+    # ---- 元数据编辑（ADR 0030 / 0031 / 0032）---------------------------------------
     #
     # **本项目里第一个真正改动用户照片内容的入口。** 其余那些改的是文件名与所在目录，
     # 这一条改的是照片里的字节 —— 于是它比别的都多两件事：写之前要拿到那份元数据
     # （用来填对话框、也是回滚与撤销的依据），写之后要把界面上**所有按
     # 「路径 + 大小 + 修改时间」认照片**的地方一起换掉。
 
-    def place_candidate(self) -> PhotoRef | None:
-        """「编辑位置」此刻作用于哪张照片；不该出现这一条时返回 ``None``。
+    def metadata_edit_candidate(self) -> PhotoRef | None:
+        """「编辑元数据」此刻作用于哪张照片；不该出现这一条时返回 ``None``。
 
         判据与 :meth:`cover_candidate` 同一取向：**恰好是一张照片**（网格页是当前项、
         大图页是正在看的那一张，ADR 0021），且此刻改得动（装了 exiftool）。分组卡片不是
-        磁盘上的东西，说不清「编辑它的位置」指的是哪一张。
+        磁盘上的东西，说不清「编辑它的元数据」指的是哪一张。
         """
         library = self._library
         if library is None or not library.can_write_metadata():
@@ -462,20 +465,20 @@ class WriteOpsMixin:
         entry = self._model.entry_at(self._focus_row())
         return entry if isinstance(entry, PhotoRef) else None
 
-    def edit_place_of_current(self) -> None:
-        """「编辑位置…」：先把元数据读到手，再弹对话框，保存后写回。
+    def edit_metadata_of_current(self) -> None:
+        """「编辑元数据…」：先把元数据读到手，再弹对话框，保存后写回。
 
         面板没展开时多半没有缓存，**现读一次**（与「复制元数据」同一套路）：读一次约
         50ms，走后台线程，读完才弹对话框。**不在这里直接读** —— 那会让界面卡一下，
         而用户点的只是一条命令。
         """
-        ref = self.place_candidate()
+        ref = self.metadata_edit_candidate()
         if ref is None:
-            self._show_banner("这里没有可以编辑位置的照片。")
+            self._show_banner("这里没有可以编辑元数据的照片。")
             return
         cached = self._cached_metadata(ref)
         if cached is not None:
-            self._open_place_editor(ref, cached)
+            self._open_metadata_editor(ref, cached)
             return
         generation = self._generation
 
@@ -496,48 +499,61 @@ class WriteOpsMixin:
         if not isinstance(payload, MetadataReport) or generation != self._generation:
             return  # 已经换库或换照片了：这份元数据不该再跑到界面上
         self._cache_metadata(ref, payload)
-        if self.place_candidate() != ref:
-            self._show_banner("已经换了一张照片，请在它上面重新点一次「编辑位置」。")
+        if self.metadata_edit_candidate() != ref:
+            self._show_banner("已经换了一张照片，请在它上面重新点一次「编辑元数据」。")
             return
-        self._open_place_editor(ref, payload)
+        self._open_metadata_editor(ref, payload)
 
     def _on_metadata_edit_read_failed(self, ref: PhotoRef, generation: int, message: str) -> None:
         self._metadata_copy_job = None
-        logger.info("编辑位置前的元数据读取失败：%s", message)
+        logger.info("编辑元数据前的元数据读取失败：%s", message)
         if generation == self._generation:
-            self._show_banner(f"读不出「{ref.name}」的元数据，改不了它的位置。")
+            self._show_banner(f"读不出「{ref.name}」的元数据，改不了它。")
 
-    def _open_place_editor(self, ref: PhotoRef, report: MetadataReport) -> None:
-        """摆出编辑器。**对话框只产出「用户填的那一份」，写盘在下面那一步。**"""
-        state = PlaceState(
-            city=report.place_city,
-            region=report.place_region,
-            country=report.place_country,
-            latitude=report.latitude,
-            longitude=report.longitude,
+    def _open_metadata_editor(self, ref: PhotoRef, report: MetadataReport) -> None:
+        """摆出编辑器。**对话框只产出「用户填的那一份」，写盘在下面那一步。**
+
+        拍摄时间与位置**一起**从这份报告里取：编辑器是一段（ADR 0032），它的两个输入框
+        都要照片此刻的值填着才算「访达的显示简介」那一种用法。
+        """
+        state = MetadataState(
+            capture=CaptureTime(
+                taken_at=report.captured_at,
+                offset=report.captured_offset,
+            ),
+            place=PlaceState(
+                city=report.place_city,
+                region=report.place_region,
+                country=report.place_country,
+                latitude=report.latitude,
+                longitude=report.longitude,
+            ),
         )
-        dialog = PlaceEditDialog(self, state, resolver=self._place_lookup(), photo_name=ref.name)
+        dialog = MetadataEditDialog(self, state, resolver=self._place_lookup(), photo_name=ref.name)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        self._apply_place_edit(ref, state, dialog.edit())
+        self._apply_metadata_edit(ref, state, dialog.edit())
 
-    def _apply_place_edit(self, ref: PhotoRef, state: PlaceState, edit: PlaceEdit) -> None:
+    def _apply_metadata_edit(self, ref: PhotoRef, state: MetadataState, edit: MetadataEdit) -> None:
         """把编辑结果写回，并让界面上每一处「认照片」的地方都跟上。
 
         **写盘是同步的**：exiftool 一次约 50~200ms，命令本身是「保存」这个动作，
         弹个进度框比直接等它更让人烦。真正的耗时（大图）不在这一步。
+
+        **时间与位置一次写回**（ADR 0032 决策 4）：一个对话框里按一次保存，得到的是
+        一条日志、一下 ⌘Z、一句横幅。
         """
         library = self._library
         if library is None:
             return
         try:
-            outcome = library.write_place(ref, state, edit, resolver=self._place_lookup())
+            outcome = library.write_metadata_edit(ref, state, edit, resolver=self._place_lookup())
         except GalleryError as exc:
-            logger.info("编辑位置失败：%s", exc.detail or exc.message)
+            logger.info("编辑元数据失败：%s", exc.detail or exc.message)
             self._show_banner(exc.message)
             return
         self._after_metadata_write(outcome.entry)
-        self._show_banner(banners.place_banner(outcome, ref.name))
+        self._show_banner(banners.metadata_edit_banner(outcome, ref.name))
         self._refresh_undo_label()
 
     def _after_metadata_write(self, entry: PhotoRef | None) -> None:

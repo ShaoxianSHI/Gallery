@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from gallery.core.library.facade import PlaceWriteOutcome
+from gallery.core.library.facade import MetadataWriteOutcome
 from gallery.core.library.photos import FolderRef, GridEntry
 from gallery.core.metadata.failures import Failure
 from gallery.core.metadata.journal import ACTION_METADATA, ACTION_MOVE, ACTION_RENAME
@@ -171,22 +171,39 @@ def album_cover_cleared_banner(album_name: str) -> str:
     return f"「{album_name}」恢复用里面的第一张照片当封面。"
 
 
-def place_banner(outcome: PlaceWriteOutcome, photo_name: str) -> str:
-    """编辑位置之后的那行提示（ADR 0030 / 0031）。
+def metadata_edit_banner(outcome: MetadataWriteOutcome, photo_name: str) -> str:
+    """编辑元数据之后的那行提示（ADR 0030 / 0031 / 0032）。
 
     **只有这一句。** 「接下来会发生什么」是对话框里的那行小字负责的：保存之前就说清
     「坐标会按这座城市的位置写入」「城市库里没有这个名字，坐标保持原样」，用户是在
     知道后果的前提下按下保存的。横幅再说一遍是重复，而重复的那一遍还是在动作**之后**
     才到 —— 到了那时候它已经不能改变任何决定了。
 
-    横幅只回答两件事：**成了吗**、**能不能撤**。
+    横幅只回答三件事：**改了哪一部分**、**成了吗**、**能不能撤**。
+
+    「改了哪一部分」不是啰嗦：同一个对话框里可以只改时间、只改位置、或者两样都改，
+    而**没改的那一部分照片上一个字节都没动** —— 说笼统的一句「已更新元数据」，用户
+    回头翻那张照片时反而不知道该去核对什么。
     """
     if not outcome.written:
-        return f"「{photo_name}」的位置没有改动。"
+        return f"「{photo_name}」的元数据没有改动。"
+    what = _edited_what(outcome)
     if not outcome.journaled:
         # 这一句不是重复：它不是「发生了什么」，而是「你刚才按 ⌘Z 会发生什么」。
-        return f"已更新「{photo_name}」的位置。⌘Z 撤销不了：没能记下操作日志。"
-    return f"已更新「{photo_name}」的位置。⌘Z 可以撤销。"
+        return f"已更新「{photo_name}」的{what}。⌘Z 撤销不了：没能记下操作日志。"
+    return f"已更新「{photo_name}」的{what}。⌘Z 可以撤销。"
+
+
+def _edited_what(outcome: MetadataWriteOutcome) -> str:
+    """这次动的是拍摄时间、位置、还是两样都动了。"""
+    plan = outcome.plan
+    match (plan.capture_changed, plan.place_changed):
+        case (True, True):
+            return "拍摄时间与位置"
+        case (True, False):
+            return "拍摄时间"
+        case _:
+            return "位置"
 
 
 def first_reason(failures: Sequence[Failure]) -> str:
@@ -219,8 +236,8 @@ __all__ = [
     "album_cover_cleared_banner",
     "album_name",
     "first_reason",
+    "metadata_edit_banner",
     "paste_banner",
-    "place_banner",
     "rename_banner",
     "transfer_banner",
     "trash_banner",

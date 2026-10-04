@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import datetime
 import json
 import re
 import shutil
@@ -78,7 +79,7 @@ class MetadataReport:
     longitude: float | None = None
     #: 文件里写的地点名（IPTC/XMP）。有它就不再按坐标推断，免得给出两个说法。
     place_from_file: str | None = None
-    #: 文件里那三层地点**分开**的值。给「编辑位置」的输入框用（ADR 0031）。
+    #: 文件里那三层地点**分开**的值。给「编辑元数据」的输入框用（ADR 0031）。
     #:
     #: ``place_from_file`` 是拼好的一句话，只够显示；要把三个输入框各自填上，就得知道
     #: 哪一段是城市、哪一段是省。**从那句话里拆是不行的** —— 地名本身就有「 ·
@@ -86,6 +87,14 @@ class MetadataReport:
     place_city: str | None = None
     place_region: str | None = None
     place_country: str | None = None
+    #: 照片记下的**拍摄时间**与**时区偏移**，都已归一（``+08:00``）。给「编辑元数据」的
+    #: 输入框用（ADR 0032）。
+    #:
+    #: **不从「位置」那几个字段里凑，也不从面板显示的那一行反解** —— 面板上显示的是
+    #: ``2022-04-16 20:52:02 +08:00`` 这样拼好的一句，把它拆回两个输入框要写第二套解析，
+    #: 而两套规则早晚会各自漂移。照片没记时区时偏移就是 ``None``，**不按本机时区补**。
+    captured_at: str | None = None
+    captured_offset: str | None = None
     #: 推断地点是否已经查过了。
     #:
     #: 必须区分「没查」与「查了但没有结果」：没有记录、失败都会给出结论，只有
@@ -292,6 +301,7 @@ def build_report(
         MetadataField(label=key, value=value) for key, value in sorted(normalized.items())
     )
     place_city, place_region, place_country = _place_parts(normalized)
+    captured_at, captured_offset = capture_time_parts(normalized)
     return MetadataReport(
         path=path,
         groups=tuple(groups),
@@ -304,6 +314,8 @@ def build_report(
         place_city=place_city,
         place_region=place_region,
         place_country=place_country,
+        captured_at=captured_at,
+        captured_offset=captured_offset,
     )
 
 
@@ -370,18 +382,105 @@ def camera_name(raw: Mapping[str, str]) -> str | None:
     return make or model
 
 
-def _shooting_time(raw: Mapping[str, str]) -> str | None:
-    value = first_value(
-        raw,
-        "EXIF:DateTimeOriginal",
-        "EXIF:CreateDate",
-        "EXIF:DateTimeDigitized",
-        "EXIF:DateTime",
+# ---- 拍摄时间（ADR 0032）--------------------------------------------------------
+#
+# **EXIF 的拍摄时间是墙上时间，不带时区**：`DateTimeOriginal` 存的是「2024:05:16 20:52:02」
+# 这样一串裸的钟点，既不是 UTC，也没有换算。时区在**单独的可选字段** `OffsetTimeOriginal`
+# （EXIF 2.31 才有）里，相机十有八九不写它。
+#
+# 归一化只有一份，就在这里 —— 读报告（``build_report``）与写回时的校验都用它，两边说出的话
+# 不一样的话，面板上显示的时间与写进去的时间就会对不上。
+
+#: 拍摄时间的那几个标签，与 ``_shooting_time`` 取值的顺序一致（面板显示的也就是它）。
+CAPTURE_TIME_FIELDS: Final[tuple[str, ...]] = (
+    "EXIF:DateTimeOriginal",
+    "EXIF:CreateDate",
+    "EXIF:DateTimeDigitized",
+    "EXIF:DateTime",
+)
+
+#: 时区偏移的那两个标签。``OffsetTime`` 是没有 Original 的那些机型的写法。
+OFFSET_TIME_FIELDS: Final[tuple[str, ...]] = ("EXIF:OffsetTimeOriginal", "EXIF:OffsetTime")
+
+#: 分隔符不限（EXIF 用 ``:``，界面与 XMP 用 ``-``），秒可省。
+_DATETIME_TEXT: Final = re.compile(
+    r"(\d{4})[:\-](\d{2})[:\-](\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?"
+)
+
+#: ``+08:00`` / ``-0500``。``Z`` 单独认（那是 UTC，与 ``+00:00`` 同一件事）。
+_OFFSET_TEXT: Final = re.compile(r"([+-])(\d{2}):?(\d{2})")
+
+#: 现实中存在的最大时区偏移是 **+14:00**（Kiribati）。越过它的一定是手滑。
+_MAX_OFFSET_HOURS: Final = 14
+
+
+def normalize_capture_time(text: str | None) -> str | None:
+    """``2024-05-16 20:52:02`` / ``2024:05:16 20:52:02`` → EXIF 的写法；看不懂返回 ``None``。
+
+    **只做「成不合法」的判断，不猜**：``2024-13-01``（十三月）、``2024-02-31`` 这类会原样
+    抛 ``ValueError`` 并被判为看不懂 —— 一个不存在的时间比没有时间糟糕得多，而它偏偏是
+    用户手滑就能敲出来的。
+
+    返回值一律补齐到秒：EXIF 的写法就是 ``YYYY:MM:DD HH:MM:SS``，少了秒会被 exiftool
+    读回来时补上，于是校验会把一次成功的写入判成没写进去。
+    """
+    if not text:
+        return None
+    match = _DATETIME_TEXT.match(text.strip())
+    if match is None:
+        return None
+    year, month, day, hour, minute = (int(part) for part in match.groups()[:5])
+    second = int(match.group(6) or 0)
+    try:
+        datetime.datetime(year, month, day, hour, minute, second)  # noqa: DTZ001 - 只要它不抛
+    except ValueError:
+        return None
+    return f"{year:04d}:{month:02d}:{day:02d} {hour:02d}:{minute:02d}:{second:02d}"
+
+
+def normalize_offset(text: str | None) -> str | None:
+    """``+08:00`` / ``-0500`` / ``Z`` → ``+08:00``；看不懂返回 ``None``。
+
+    ``Z`` 归到 ``+00:00``：它们是同一件事，而留着 ``Z`` 会让「改了没改」这件事比出来的
+    是两个写法。
+    """
+    if not text:
+        return None
+    stripped = text.strip()
+    if stripped.upper() == "Z":
+        return "+00:00"
+    match = _OFFSET_TEXT.fullmatch(stripped)
+    if match is None:
+        return None
+    hours, minutes = int(match.group(2)), int(match.group(3))
+    if minutes > 59 or hours > _MAX_OFFSET_HOURS or (hours == _MAX_OFFSET_HOURS and minutes):
+        return None
+    return f"{'-' if match.group(1) == '-' else '+'}{hours:02d}:{minutes:02d}"
+
+
+def capture_time_parts(raw: Mapping[str, str]) -> tuple[str | None, str | None]:
+    """照片此刻的 ``(拍摄时间, 时区偏移)``，都已归一；没有就是 ``None``。
+
+    给「编辑元数据」的输入框用（ADR 0032）。**取不到就是 ``None``，绝不按本机时区补一个**
+    —— 凭空替用户猜时区，猜错的后果是排序整体偏几个小时（见 ADR 0032 决策 2）。
+    """
+    return (
+        normalize_capture_time(first_value(raw, *CAPTURE_TIME_FIELDS)),
+        normalize_offset(first_value(raw, *OFFSET_TIME_FIELDS)),
     )
+
+
+def _shooting_time(raw: Mapping[str, str]) -> str | None:
+    """面板上那一行「拍摄时间」。**原样显示墙上时间，不换算到本机时区**。
+
+    带得上偏移就跟在后面（``2022-04-16 20:52:02 +08:00``）—— 那正是照片自己记下的说法；
+    换算一遍只会让用户对不上他拍的那张照片。
+    """
+    value = first_value(raw, *CAPTURE_TIME_FIELDS)
     if value is None:
         return None
     text = value.replace(":", "-", 2)  # 2022:04:16 20:52:02 → 2022-04-16 20:52:02
-    offset = first_value(raw, "EXIF:OffsetTimeOriginal", "EXIF:OffsetTime")
+    offset = first_value(raw, *OFFSET_TIME_FIELDS)
     return f"{text} {offset}" if offset else text
 
 
@@ -852,9 +951,11 @@ def _gps_decimal(value: object, ref: object) -> float | None:
 
 
 __all__ = [
+    "CAPTURE_TIME_FIELDS",
     "EXIFTOOL_CHARSET_ARGS",
     "EXIFTOOL_EXECUTABLE",
     "EXIFTOOL_TIMEOUT_SECONDS",
+    "OFFSET_TIME_FIELDS",
     "ExifToolReader",
     "MetadataError",
     "MetadataField",
@@ -865,11 +966,14 @@ __all__ = [
     "as_text",
     "build_report",
     "camera_name",
+    "capture_time_parts",
     "coordinates_decimal",
     "first_value",
     "latitude_decimal",
     "leading_number",
     "longitude_decimal",
+    "normalize_capture_time",
+    "normalize_offset",
     "positive_value",
     "read_metadata",
 ]
