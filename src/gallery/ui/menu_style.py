@@ -74,12 +74,21 @@ POPUP_LIST_INSET = POPUP_LIST_BORDER + POPUP_LIST_PADDING
 #: ``gallery.ui.search_field.SearchField._item_padding``）。
 POPUP_LIST_ITEM_PAD = 8
 
-#: 朴素下拉菜单里**图标**离高亮带左沿多远（点）。
+#: 朴素下拉菜单里，图标那一侧的 ``margin-left``（点）。
 #:
-#: 比候选列表那一档（:data:`POPUP_LIST_ITEM_PAD` = 8）宽一点：列表里左边是一个 ``#``
-#: 字符，它得和输入框里那一个对齐，那是硬要求；菜单里左边是一个十几点的彩色图标，
-#: 8 点太贴边 —— 高亮带一出来，图标几乎压在那条边上（视觉检查里用户指出来的）。
-POPUP_MENU_ICON_INSET = 11
+#: 用户的原话是「icon 距离高亮框的边沿要和 icon 和后面文字的距离差不多」——
+#: 这个数就是照着**真图标量出来的**那个平衡点：13 时两边各约 8.5 点
+#: （实测 M=8 → 6/11，M=18 → 11/6）。Google 日历与访达两个条目量出来一模一样，
+#: 因为它们的图标在自己的画布里都是**左右各留 1 点**。
+#:
+#: **它不是「想要的间距 × 某个系数」，别再照着系数推。** 这里踩过两次：
+#:   - ``QMenu::item`` 的左内边距**只把文字往右推、图标纹丝不动** —— 改它反而把
+#:     右边那段拉得更宽，与目的正好相反（改了半天数字，图标一直贴在左边）。
+#:   - ``QMenu::icon`` 的 ``margin-left`` 才真的移动图标，但**移动多少取决于 Qt 怎么排
+#:     图标列**：拿一个满格的标记图标量是「一半」，拿真图标量又不是。
+#: 所以这个数是量出来的，`test_the_icon_sits_evenly_between_edge_and_text` **逐像素**
+#: 盯着它 —— 那条测试用的标记图标也留 1 点白边，与真图标同一个形状。
+POPUP_MENU_ICON_MARGIN = 13
 
 #: 弹出列表与弹出菜单的字号（点）。**只有这一处。** 搜索框的候选列表与标题条上那个
 #: 下拉菜单是两种控件、两条样式表，用户却在它们之间来回走 —— 字号各存一份的话，
@@ -587,7 +596,7 @@ class ShortcutColumnMenu(QMenu):
 def popup_menu_style(menu: QMenu) -> str:
     """一个**朴素的下拉菜单**该用的样式表 —— 与搜索框的候选列表是同一种东西。
 
-    与 :func:`style_sheet` 的差别有三处，都是「它只有一条两项」换来的：
+    与 :func:`style_sheet` 的差别有这么几处，都是「它只有一条两项」换来的：
 
     - **不预留勾选槽**（``check_gutter=0``）：那一列是给快捷键列与对勾的，
       菜单里没有可勾选项却留一列，左边就空出 19 点（视觉检查里看着像图标旁边
@@ -598,8 +607,10 @@ def popup_menu_style(menu: QMenu) -> str:
     - **高亮那一格也带圆角**：与列表的 ``::item:hover`` 同一档
       （:data:`MENU_HIGHLIGHT_RADIUS`）。
     - **带边框**：见下面那行注释。
+    - **图标两侧留白一样宽**：见 :data:`POPUP_MENU_ICON_MARGIN` —— 那一处要靠
+      ``QMenu::icon``，**不是** ``QMenu::item`` 的左内边距。
 
-    三条都是**覆盖**在 :func:`style_sheet` 后面（同优先级、写在后面者胜），
+    这几处都是**覆盖**在 :func:`style_sheet` 后面（同优先级、写在后面者胜），
     与 ``search_field.popup_style`` 给列表补字号是同一个做法。
     """
     palette = menu.palette()
@@ -622,9 +633,12 @@ def popup_menu_style(menu: QMenu) -> str:
         # 字色**必须自己写**：挂了样式表之后 Qt 不再按调色板给 item 上色，
         # 实测深色下调色板里明明白白是 ``#ffffff``，画出来却是 ``#000000``
         # （近黑底上等于看不见）。候选列表那份同样写死了 ``color``，是同一个坑。
-         + f"\nQMenu::item {{ padding: 3px {POPUP_LIST_ITEM_PAD}px 3px"
-        f" {POPUP_MENU_ICON_INSET}px;"
+        #
+        # 内边距**左右同档**（就是候选列表那一档）：左内边距只管文字，图标那一侧归
+        # 下面那条 ``::icon`` 规则，见 :data:`POPUP_MENU_ICON_MARGIN`。
+        + f"\nQMenu::item {{ padding: 3px {POPUP_LIST_ITEM_PAD}px;"
         f" color: {rgba(text)}; border-radius: {MENU_HIGHLIGHT_RADIUS}px; }}"
+        + f"\nQMenu::icon {{ margin-left: {POPUP_MENU_ICON_MARGIN}px; }}"
     )
 
 
@@ -700,7 +714,7 @@ __all__ = [
     "POPUP_LIST_INSET",
     "POPUP_LIST_ITEM_PAD",
     "POPUP_LIST_PADDING",
-    "POPUP_MENU_ICON_INSET",
+    "POPUP_MENU_ICON_MARGIN",
     "SHORTCUT_GAP",
     "SHORTCUT_LABEL_GAP",
     "SHORTCUT_RIGHT_INSET",

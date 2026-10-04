@@ -40,6 +40,7 @@ from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.library.photos import GroupRef, PhotoRef  # noqa: E402
 from gallery.core.library.session import BROWSE_MODE_ALBUMS  # noqa: E402
 from gallery.ui import menu_style, theme  # noqa: E402
+from gallery.ui.external_button import calendar_icon  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.theme import rgba  # noqa: E402
 
@@ -903,19 +904,12 @@ def test_the_plain_menu_is_sized_like_the_search_popup(qt_app: QApplication) -> 
     assert f"font-size: {menu_style.POPUP_FONT_PX}px" in style
     assert f"border-radius: {menu_style.MENU_HIGHLIGHT_RADIUS}px" in style
     assert f"border: {menu_style.POPUP_LIST_BORDER}px solid" in style
-    # 左边那一段是**图标内缩**、不是列表那一档（列表左边是 `#`，菜单左边是图标）——
-    # 写成 `3px 8px` 两段式的话右边那个数就没人写了，而它正是「图标别贴边」那一条。
-    assert f"padding: 3px {menu_style.POPUP_LIST_ITEM_PAD}px 3px" in style
-    assert f"{menu_style.POPUP_MENU_ICON_INSET}px;" in style
-
-
-def test_the_plain_menu_keeps_its_icon_off_the_highlight_edge(qt_app: QApplication) -> None:
-    """图标到高亮带左沿的距离**比候选列表那一档宽**。
-
-    列表里左边是一个 ``#`` 字符，它要和输入框里那一个对齐（那是硬要求）；菜单里左边
-    是一个十几点的彩色图标，照搬 8 点的话高亮带一出来图标就压在那条边上。
-    """
-    assert menu_style.POPUP_MENU_ICON_INSET > menu_style.POPUP_LIST_ITEM_PAD
+    # 行的内边距**左右同档**（就是候选列表那一档）：左内边距只管文字，图标那一侧
+    # 归下面那条 ``::icon`` 规则 —— 两处各管一半。
+    assert f"padding: 3px {menu_style.POPUP_LIST_ITEM_PAD}px;" in style
+    # 图标那一段靠 ``::icon`` 的 ``margin-left``，**不是** ``QMenu::item`` 的左内边距
+    # （左内边距只推文字，改它等于把右边那段又拉宽）。乘 2 见那条常量的说明。
+    assert f"QMenu::icon {{ margin-left: {menu_style.POPUP_MENU_ICON_MARGIN}px; }}" in style
 
 
 def test_the_plain_menu_spells_out_its_text_colour(qt_app: QApplication) -> None:
@@ -942,3 +936,76 @@ def test_the_search_popup_and_the_plain_menu_share_one_font_size(qt_app: QApplic
     popup = search_field.popup_style(QTreeWidget())
     assert f"font-size: {menu_style.POPUP_FONT_PX}px" in popup
     assert f"font-size: {menu_style.POPUP_FONT_PX}px" in menu_style.popup_menu_style(QMenu())
+
+
+def test_the_icon_sits_evenly_between_edge_and_text(qt_app: QApplication) -> None:
+    """**图标到项矩形左沿的距离 ≈ 图标到文字的距离**（逐像素量渲染结果）。
+
+    用户的原话：「icon 距离高亮框的边距要和 icon 和后面文字的距离差不多」。
+    项矩形就是高亮带画的那一块，所以量它就等于量高亮带。
+
+    这一条**只能靠渲染出来量**：一边由 ``QMenu::icon`` 的 ``margin-left`` 说了算、
+    另一边由 Qt 自己排的图标列说了算，而 ``margin-left`` 到底把图标推多远**取决于
+    Qt 怎么排那一列**（实测：拿点满整张画布的标记量是一个数，拿真图标量是另一个数）。
+    Qt 换了排法，样式表里那个数字不会报错、也不会有别的测试变红，只有这条能发现。
+
+    **用的就是应用自己那个图标**（``calendar_icon()``）：图标墨迹的宽窄直接决定
+    右边那一段有多长，换个形状的标记量出来的就不是同一个东西 —— 这里试过，
+    满格标记的平衡点差着 5 点。装了 PWA 用真图标、没装用自画的那一个，
+    **两条路量出来一样**（四种组合实测都是左右各 8 点），所以这条不依赖本机装了什么。
+
+    **量的是「没高亮」那一张**（黑字压白底）：高亮那张里文字是白的压蓝底，
+    抗锯齿的边缘落在哪一列全看阈值，同一个菜单能差出 3 点来 —— 比这条的容差还大。
+    """
+    menu = QMenu()
+    # 颜色钉死：`Window` / `WindowText` 在系统主题下是什么值不定，量的时候要有确定判据。
+    palette = QPalette(menu.palette())
+    palette.setColor(QPalette.ColorRole.Window, QColor("#f6f6f6"))
+    palette.setColor(QPalette.ColorRole.WindowText, QColor("#000000"))
+    menu.setPalette(palette)
+    menu.setStyleSheet(menu_style.popup_menu_style(menu))
+
+    action = QAction(calendar_icon(), "某项", menu)
+    menu.addAction(action)
+    menu.popup(QPoint(200, 200))
+    for _ in range(4):
+        qt_app.processEvents()
+
+    image = menu.grab().toImage()
+    item = menu.actionGeometry(action)  # 项矩形 = 高亮带画的那一块
+    menu.close()
+
+    def is_background(color: QColor) -> bool:
+        return (
+            abs(color.red() - 246) < 12
+            and abs(color.green() - 246) < 12
+            and abs(color.blue() - 246) < 12
+        )
+
+    def is_text(color: QColor) -> bool:
+        return color.red() + color.green() + color.blue() < 300
+
+    # 图标 = 既不是底色、也不是文字的那些列。文字与图标之间会空几列，据此分段。
+    colored = [
+        x
+        for x in range(item.left(), item.right() + 1)
+        if any(
+            not is_background(image.pixelColor(x, y)) and not is_text(image.pixelColor(x, y))
+            for y in range(item.top(), item.bottom() + 1)
+        )
+    ]
+    icon: list[int] = []
+    for x in colored:
+        if not icon or x - icon[-1] <= 3:
+            icon.append(x)
+        else:
+            break
+    tail = [x for x in colored if x > max(icon)]
+    assert icon and tail, "前提不成立：图标或文字没画出来，这条量不到东西"
+
+    left_gap = min(icon) - item.left()
+    right_gap = min(tail) - max(icon) - 1
+
+    assert abs(left_gap - right_gap) <= 1, (
+        f"图标两边的留白不匀：左边 {left_gap} 点、右边 {right_gap} 点"
+    )
