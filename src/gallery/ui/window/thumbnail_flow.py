@@ -39,6 +39,9 @@ class ThumbnailFlowMixin:
         if self._pipeline is None:
             return
         if self._stack.currentWidget() is self._calendar_page:
+            # 预取那一批**只报手上没有的**：滚动去抖一次就重报一次窗口，而预取是
+            # 「别人家的格子」，不筛的话每滚一下就把它重新解一遍（网格那边就是
+            # `needs_thumbnail` 在干这件事）。
             # 日历要的那一批是「当前层、当前滚到的那几格」，与网格的按行取法不同源，
             # 但**同样交给这一条流水线**（缩放在工作线程里做，ADR 0015）。
             #
@@ -46,7 +49,14 @@ class ThumbnailFlowMixin:
             # 它认得手上的图有没有被换库 / 重扫 / 文件变化清掉；这里只管照着报。
             self._pipeline.set_window(
                 self._calendar_page.current_view().visible_refs(),
-                (),
+                # **相邻一段日子先解着**（低优先级）：翻页是这里最高频的动作，不预取的话
+                # 每一段新日子都是切过去才开始解 —— 第一次看总有一下占位灰，而切走再切
+                # 回来就不灰（图已经在手上）。
+                [
+                    ref
+                    for ref in self._calendar_page.prefetch_refs()
+                    if self._calendar_page.current_view().photo(ref) is None
+                ],
                 target_edge=self._calendar_page.thumbnail_edge(),
             )
             return

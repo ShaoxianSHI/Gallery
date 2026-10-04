@@ -142,6 +142,10 @@ class CalendarPage(QWidget):
     def thumbnail_edge(self) -> int:
         return self.current_view().thumbnail_edge()
 
+    def prefetch_refs(self) -> list[PhotoRef]:
+        """顺手先解的那几张（见 :meth:`LevelView.prefetch_refs`）。"""
+        return self.current_view().prefetch_refs()
+
     def set_thumbnail(self, path: object, image: object, edge: int = 0) -> None:
         """记下一张缩略图，然后**排**一次重画（不是立刻画，见 ``_repaint_timer``）。"""
         if isinstance(path, Path) and isinstance(image, QImage):
