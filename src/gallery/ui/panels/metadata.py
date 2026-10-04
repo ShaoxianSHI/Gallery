@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QGuiApplication, QPainter
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -28,6 +28,11 @@ from gallery.core.metadata.exif import MetadataGroup, MetadataReport
 from gallery.ui import theme
 from gallery.ui.panels.layout import clear_layout
 from gallery.ui.theme import AppTheme, rgba
+
+#: 「位置」那一组标题右边的按钮。**只有这一组有**：坐标与地点是唯一一组「人会想去改」的
+#: 元数据（ADR 0030），其余各组是拍摄事实与文件事实，改了就是改写了证据或字段没有对应的
+#: 输入框 —— 面板上到处摆输入框只会让人以为别的也能改。
+PLACE_GROUP_TITLE = "位置"
 
 #: 面板宽度。窄了中文标签换行，宽了抢照片的地方。
 PANEL_WIDTH = 300
@@ -73,6 +78,10 @@ QCheckBox#metadataToggle {{ color: {rgba(app_theme.text_at(0.62))}; font-size: 1
 class MetadataPanel(QWidget):
     """展示一张照片的元数据。只负责画，读取由主窗口在后台完成。"""
 
+    #: 用户要编辑位置（点了「位置」那一组旁边的按钮）。**这里只发信号** ——
+    #: 真正写文件的是 ``write_ops``，面板不碰（红线 1 在代码里必须是一句可查的话）。
+    edit_place_requested = Signal()
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("metadataPanel")
@@ -87,6 +96,9 @@ class MetadataPanel(QWidget):
         self._apply_theme()
 
         self._report: MetadataReport | None = None
+        #: 此刻能不能编辑位置（没装 exiftool 时为 ``False``，按钮变成一句说明）。
+        self._place_editable = False
+        self._place_reason = ""
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 10)
@@ -169,6 +181,20 @@ class MetadataPanel(QWidget):
         self._footer.show()
         self._render()
 
+    def set_place_editable(self, editable: bool, *, reason: str = "") -> None:
+        """「编辑位置」此刻能不能用（没装 exiftool 时不能，理由也由这里给）。
+
+        **摆着一个点下去只会报错的按钮，比没有更糟**（ADR 0014 决策 4）—— 所以不能用的
+        时候那个位置显示成一句话，说明为什么。
+        """
+        self._place_editable = editable
+        self._place_reason = reason
+        self._render()
+
+    @property
+    def place_editable(self) -> bool:
+        return self._place_editable
+
     @property
     def report(self) -> MetadataReport | None:
         return self._report
@@ -195,13 +221,37 @@ class MetadataPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
 
-        title = QLabel(group.title)
-        title.setObjectName("metadataGroupTitle")
-        layout.addWidget(title)
+        layout.addWidget(self._group_title(group.title))
 
         for field in group.fields:
             layout.addWidget(self._row(field.label, field.value))
         return container
+
+    def _group_title(self, title: str) -> QWidget:
+        """组标题。**「位置」那一行右边多一个按钮**，其余组一个都没有。"""
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        label = QLabel(title)
+        label.setObjectName("metadataGroupTitle")
+        layout.addWidget(label)
+        layout.addStretch(1)
+        if title != PLACE_GROUP_TITLE:
+            return row
+        if not self._place_editable:
+            hint = QLabel(self._place_reason or "此处不能编辑")
+            hint.setObjectName("metadataNotice")
+            hint.setWordWrap(True)
+            hint.setToolTip(self._place_reason)
+            layout.addWidget(hint, 1)
+            return row
+        button = QPushButton("编辑位置")
+        button.setObjectName("metadataButton")
+        button.setToolTip("改坐标或地点，会写回这张照片（⌘Z 可以撤销）")
+        button.clicked.connect(self.edit_place_requested)
+        layout.addWidget(button)
+        return row
 
     def _row(self, label: str, value: str) -> QWidget:
         container = QWidget()

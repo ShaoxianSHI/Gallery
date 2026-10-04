@@ -232,3 +232,32 @@ def test_real_database_loads_quickly() -> None:
 
     assert index is not None and index.city_count > 10_000
     assert elapsed < 5.0, f"加载城市库用了 {elapsed:.1f} 秒，太慢了"
+
+
+# ---- 按名字查（ADR 0031）---------------------------------------------------------
+
+
+def test_place_named_asks_the_index_once_and_caches_it() -> None:
+    class Counting(PlaceIndex):
+        """只数被问了几次 —— 补全是边打字边问的，不缓存就是每敲一个字问一遍。"""
+
+        def __init__(self) -> None:
+            super().__init__([])
+            self.calls: list[str] = []
+
+        def by_name(self, name: str, **kwargs: object) -> tuple[Place, ...]:
+            self.calls.append(name)
+            return ()
+
+    index = Counting()
+    resolver = LazyPlaceResolver(index)
+
+    assert resolver.place_named("杭州") == ()
+    assert resolver.place_named(" 杭州 ") == ()
+    assert index.calls == ["杭州"]
+
+
+def test_place_named_returns_nothing_when_the_database_is_unavailable() -> None:
+    resolver = LazyPlaceResolver(path=Path("不存在.tsv.gz"))
+
+    assert resolver.place_named("杭州") == ()

@@ -47,6 +47,25 @@ class PlaceResolver(Protocol):
         """查不到（附近没有城市记录）返回 ``None``；数据不可用时也返回 ``None``。"""
         ...
 
+    def place_named(
+        self,
+        name: str,
+        *,
+        region: str | None = None,
+        country: str | None = None,
+        status: Status | None = None,
+    ) -> tuple[Place, ...]:
+        """按名字给出这个地点**在哪**（ADR 0031）。
+
+        与 :meth:`place_for` 恰好相反的一路：那一路是「坐标 → 最近的城市」，这一路是
+        「用户写的地名 → 那个地方」，用户编辑地点时用它把坐标补上。
+
+        返回**空元组**表示库里没有这个名字 —— 那不是错误，也不是「没查成」，两者在这里
+        是同一件事：没有就是没有，**绝不编一个坐标出来**。数据不可用时同样返回空元组，
+        调用方据此让坐标保持原样，并把那句话如实说给用户。
+        """
+        ...
+
     @property
     def ready(self) -> bool:
         """城市库是否可用 —— **用来区分「查了没有」与「没查成」**。
@@ -77,6 +96,9 @@ class LazyPlaceResolver:
         self._path = path
         #: 同一批照片常常共用一个坐标（一次旅行几百张），反查过一次就别再问。
         self._cache: dict[tuple[float, float], ResolvedPlace | None] = {}
+        #: 按名字查的结果也照缓存：同一个名字在编辑时会被连着问好几次
+        # （边打字边补全、确定后又算一次坐标）。
+        self._named_cache: dict[tuple[str, str, str], tuple[Place, ...]] = {}
         #: 城市库这一轮**试过没有**。试过且失败就不再试第二次。
         self._load_attempted = index is not None
 
@@ -110,6 +132,30 @@ class LazyPlaceResolver:
         self._cache[key] = result
         return result
 
+    def place_named(
+        self,
+        name: str,
+        *,
+        region: str | None = None,
+        country: str | None = None,
+        status: Status | None = None,
+    ) -> tuple[Place, ...]:
+        """按名字查（见 :meth:`PlaceResolver.place_named`）。
+
+        **与 :meth:`place_for` 共用同一个缓存与同一次加载**：那条路在打开库时把整库跑一遍，
+        这一条路是用户敲字时才问的，两者看到的必须是同一份数据 —— 否则「面板说京都、
+        编辑框查不到」会像是两套说法。
+        """
+        key = (_folded(name), _folded(region), _folded(country))
+        if key in self._named_cache:
+            return self._named_cache[key]
+        index = self._ensure_index(status=status)
+        if index is None:
+            return ()
+        found = index.by_name(name, region=region, country=country)
+        self._named_cache[key] = found
+        return found
+
     def _ensure_index(self, *, status: Status | None) -> PlaceIndex | None:
         """城市库**最多试一次**。
 
@@ -128,6 +174,11 @@ class LazyPlaceResolver:
             status("正在加载城市库…")
         self._index = PlaceIndex.load(self._path)
         return self._index
+
+
+def _folded(text: str | None) -> str:
+    """缓存键用的写法（与 ``dataset`` 里那一份同规则：去空白、忽略大小写）。"""
+    return (text or "").strip().casefold()
 
 
 def _to_resolved(place: Place | None) -> ResolvedPlace | None:

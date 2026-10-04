@@ -54,6 +54,22 @@ ACTION_MOVE: Final = "move"
 #: 紧接着那一次改名（用户给新相册起名）照旧记账、照旧可 ``⌘Z`` 撤销。
 ACTION_CREATE: Final = "create"
 
+#: 日志里的动作名：一次**元数据写回**（坐标 / 地点，见 :mod:`gallery.core.metadata.writeback`、
+#: ADR 0030）。
+#:
+#: **这是本项目里第一次「文件不动、内容动」的操作**：``source`` 与 ``target`` 是同一个路径，
+#: 真正记下来的是 :attr:`WriteRecord.changes` 里那几条字段的原值与新值 —— 撤销靠的就是它
+#: （红线 4：写回前记录原值）。
+ACTION_METADATA: Final = "metadata"
+
+#: 日志里的动作名：把一次元数据写回改回去。
+#:
+#: 与 :data:`ACTION_UNDO_METADATA` 的差别只在这一条会被弹栈：撤销记录说的是「我把这个字段
+#: 写回了原值」，于是 :func:`gallery.core.metadata.undo.pending_undo_runs` 能把当初那几条
+#: 从栈上摘下来。写回**不全等于**原值时（只撤了能撤的那些），记的仍是这个动作名 ——
+#: 冲突的那几个字段留在原处并如实报告，它们对应的写回记录留在栈上，再按一次 ⌘Z 还会试。
+ACTION_UNDO_METADATA: Final = "undo_metadata"
+
 #: 操作成功。
 RESULT_OK: Final = "ok"
 
@@ -67,12 +83,51 @@ def _now() -> str:
 
 
 @dataclass(frozen=True, slots=True)
+class FieldChange:
+    """一个字段被写成了什么、又原来是什么。
+
+    **「原来没有」与「原来是空串」不是一回事，但都用 ``None``**：exiftool 对一个不存在的
+    标签压根不给键，对一个被清空的标签给 ``""``。撤销时两者的动作是一样的（删掉它），
+    所以它们不必区分 —— 真要区分就得在读的那一侧额外判一次，判出来的信息没有用处。
+    """
+
+    #: exiftool 的标签名（``EXIF:GPSLatitude``、``XMP-photoshop:City``……）。
+    tag: str
+    #: 写之前的值。``None`` 表示原来没有这个字段。
+    before: str | None = None
+    #: 写之后的值。``None`` 表示这次把它删掉了。
+    after: str | None = None
+
+    def to_json(self) -> dict[str, str | None]:
+        return {"tag": self.tag, "before": self.before, "after": self.after}
+
+    @classmethod
+    def from_json(cls, payload: object) -> FieldChange | None:
+        """解析一条字段改动；形状不对返回 ``None``（日志不该把程序带崩）。"""
+        if not isinstance(payload, dict):
+            return None
+        tag = payload.get("tag")
+        if not isinstance(tag, str) or not tag:
+            return None
+        return cls(
+            tag=tag,
+            before=_optional_text(payload.get("before")),
+            after=_optional_text(payload.get("after")),
+        )
+
+
+def _optional_text(value: object) -> str | None:
+    """日志里的字段值：非空字符串才是值，空串与别的类型一律当「没有」。"""
+    return value if isinstance(value, str) and value else None
+
+
+@dataclass(frozen=True, slots=True)
 class WriteRecord:
     """一条写操作记录。"""
 
     #: :data:`ACTION_RENAME`、:data:`ACTION_MOVE`、:data:`ACTION_PASTE`、
-    #: :data:`ACTION_TRASH`、:data:`ACTION_RESTORE`、:data:`ACTION_CREATE`
-    #: 或 :data:`ACTION_UNDO`。
+    #: :data:`ACTION_TRASH`、:data:`ACTION_RESTORE`、:data:`ACTION_CREATE`、
+    #: :data:`ACTION_UNDO`、:data:`ACTION_METADATA` 或 :data:`ACTION_UNDO_METADATA`。
     action: str
     #: 改之前的路径。
     source: Path
@@ -91,6 +146,11 @@ class WriteRecord:
     #: 撤销按「一次操作」为单位，而记账按「一项」为单位：批量删十张要写十条记录
     #: （其中可能有的成功、有的失败），但用户只该按一次 ⌘Z（见 ``undo.undo_last_write``）。
     batch: str | None = None
+    #: 元数据写回时逐字段记下的原值与新值（ADR 0030）。其余动作恒为空。
+    #:
+    #: **只有这一种记录带字段级信息**：改名与删除靠 ``source`` / ``target`` 就能还原，
+    #: 而写回动的既不是路径也不是文件集合，只有「哪个标签、从什么变成什么」才说得清。
+    changes: tuple[FieldChange, ...] = ()
 
     @property
     def succeeded(self) -> bool:
@@ -107,6 +167,7 @@ class WriteRecord:
                 "result": self.result,
                 "message": self.message,
                 "batch": self.batch,
+                "changes": [change.to_json() for change in self.changes],
             },
             ensure_ascii=False,
         )
@@ -126,6 +187,16 @@ class WriteRecord:
             return None
         message = data.get("message")
         batch = data.get("batch")
+        raw_changes = data.get("changes")
+        changes: tuple[FieldChange, ...] = ()
+        if isinstance(raw_changes, list):
+            # 坏的一条丢掉而不是整条记录作废：一次写回十来个字段，
+            # 因为其中一条写歪了就把整条撤销凭据丢掉，用户反而再也撤不掉。
+            changes = tuple(
+                change
+                for item in raw_changes
+                if (change := FieldChange.from_json(item)) is not None
+            )
         return cls(
             action=str(data.get("action", ACTION_RENAME)),
             source=Path(source),
@@ -135,6 +206,7 @@ class WriteRecord:
             is_dir=bool(data.get("is_dir", False)),
             timestamp=str(data.get("timestamp", "")),
             batch=batch if isinstance(batch, str) and batch else None,
+            changes=changes,
         )
 
 
@@ -194,14 +266,17 @@ def read_records(root: Path) -> list[WriteRecord]:
 
 __all__ = [
     "ACTION_CREATE",
+    "ACTION_METADATA",
     "ACTION_MOVE",
     "ACTION_PASTE",
     "ACTION_RENAME",
     "ACTION_RESTORE",
     "ACTION_TRASH",
     "ACTION_UNDO",
+    "ACTION_UNDO_METADATA",
     "RESULT_FAILED",
     "RESULT_OK",
+    "FieldChange",
     "WriteRecord",
     "append_record",
     "journal_file",

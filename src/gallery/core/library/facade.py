@@ -48,10 +48,12 @@ from gallery.core.metadata.facets import (
     with_resolved_place,
 )
 from gallery.core.metadata.paste import PasteResult, copy_into
+from gallery.core.metadata.place_edit import PlaceEdit, PlacePlan, PlaceState, plan_place_edit
 from gallery.core.metadata.rename import RenameResult, rename_entry
 from gallery.core.metadata.transfer import MoveResult, move_into
 from gallery.core.metadata.trash import TrashResult, trash_entries
 from gallery.core.metadata.undo import UndoResult, next_undo_label, undo_last_write
+from gallery.core.metadata.writeback import MetadataWriter, write_metadata
 from gallery.core.places.dataset import is_real_coordinate
 
 if TYPE_CHECKING:
@@ -78,6 +80,20 @@ class PlacePass:
     resolved: int = 0
 
 
+@dataclass(frozen=True, slots=True)
+class PlaceWriteOutcome:
+    """:meth:`Library.write_place` 的结果。"""
+
+    #: 写完之后这张照片的引用。文件已经不在时为 ``None``。
+    entry: PhotoRef | None
+    #: 落定的字段与**已经发生的事**（给横幅的那些句子都在 ``plan.notes`` 里）。
+    plan: PlacePlan
+    #: 是否留下了可回滚的日志记录。为 ``False`` 时界面要说明「⌘Z 撤销不了」。
+    journaled: bool = True
+    #: 是否真的动过文件。什么都没改时为 ``False``，此时连日志也没记。
+    written: bool = False
+
+
 class Library:
     """一个已打开的库。"""
 
@@ -88,13 +104,22 @@ class Library:
         thumbnails: ThumbnailCache,
         *,
         cache_in_library: bool,
+        writer: MetadataWriter | None = None,
     ) -> None:
         self._root = root
         self._config = config
         self._thumbnails = thumbnails
         self._cache_in_library = cache_in_library
+        #: 元数据写回的工具（ADR 0030）。``None`` 表示用默认的 exiftool，
+        #: 测试注入假实现 —— 界面据此判断「编辑位置」这一条该不该出现。
+        self._writer = writer
         # 索引只在真的用到分组 / 排序时才打开 —— 打开库本身仍然一个字节都不写。
         self._index: FacetIndex | None = None
+
+    @property
+    def writer(self) -> MetadataWriter | None:
+        """元数据写回工具（界面判断功能可不可用时用 :meth:`can_write_metadata`）。"""
+        return self._writer
 
     @classmethod
     def open(
@@ -715,6 +740,52 @@ class Library:
 
     # ---- 写操作（唯一会改动用户文件的一类）------------------------------------
 
+    def can_write_metadata(self) -> bool:
+        """此刻能不能改照片里的元数据 —— 没装 exiftool 时为 ``False``。
+
+        界面据此**不出现**「编辑位置」那一条，而不是摆一条点下去只会报错的命令
+        （与「粘贴」同一个取向，ADR 0014 决策 4）。
+        """
+        return self._writer is None or self._writer.available()
+
+    def write_place(
+        self,
+        ref: PhotoRef,
+        state: PlaceState,
+        edit: PlaceEdit,
+        *,
+        resolver: PlaceResolver | None = None,
+    ) -> PlaceWriteOutcome:
+        """把用户编辑的位置**写回照片文件**（ADR 0030 / 0031）。
+
+        四步都在这里做完，界面只管「什么时候调」：
+
+        1. :func:`~gallery.core.metadata.place_edit.plan_place_edit` 把「照片此刻的位置」
+           与「用户填完的那一份」翻译成一组字段（含两个方向的联动）；
+        2. :func:`~gallery.core.metadata.writeback.write_metadata` 写盘、**回读校验**、
+           必要时回滚、记账；
+        3. **缩略图缓存换键**：文件的大小与修改时间都变了，而缩略图的键正是
+           ``(路径, mtime, size)``。像素一个字节没动，所以把缓存条目挪到新键上，
+           省掉一次重新解码；
+        4. 返回新的引用 —— **界面必须拿它换掉网格里那一行**，否则那一行挂着的还是旧的
+           大小与修改时间（缓存与索引都按它判新旧）。
+
+        索引那一行**故意什么都不做**：``(大小, 修改时间)`` 对不上就自动作废，下次分组或
+        排序时重读一次就更新了。写回原文件而不是改索引，索引就永远是 EXIF 的投影，
+        两处不可能说两套话。
+
+        :raises MetadataWriteError: 坐标不合法、写盘失败、或**写完校验不过**（已回滚）。
+        """
+        plan = plan_place_edit(state, edit, resolver=resolver)
+        if plan.is_empty:
+            return PlaceWriteOutcome(entry=ref, plan=plan, written=False)
+        result = write_metadata(self._root, ref, plan.assignments, writer=self._writer)
+        if result.entry is not None:
+            self._thumbnails.relocate(ref, result.entry)
+        return PlaceWriteOutcome(
+            entry=result.entry, plan=plan, journaled=result.journaled, written=result.written
+        )
+
     def rename_entry(self, entry: GridEntry, new_name: str) -> RenameResult:
         """给照片或相册改名，并把它的缩略图缓存挪到新路径。
 
@@ -774,8 +845,11 @@ class Library:
         return create_album(self._root, parent, name)
 
     def undo_last_write(self) -> UndoResult | None:
-        """撤销最近一次写操作（改名、移到废纸篓或移动到相册）；没有可撤销的记录时返回 ``None``。"""
-        result = undo_last_write(self._root)
+        """撤销最近一次写操作（改名、移到废纸篓、移动到相册或编辑位置）。
+
+        没有可撤销的记录时返回 ``None``。
+        """
+        result = undo_last_write(self._root, writer=self._writer)
         if result is not None and result.replaced is not None:
             self._relocate_thumbnail(result.replaced, result.entries[0])
         return result
@@ -922,4 +996,4 @@ def _offset_progress(
     return report
 
 
-__all__ = ["PLACE_PASS_BATCH", "Library", "PlacePass"]
+__all__ = ["PLACE_PASS_BATCH", "Library", "PlacePass", "PlaceWriteOutcome"]

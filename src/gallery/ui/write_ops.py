@@ -13,6 +13,8 @@
 - **改名**（ADR 0004）与**移到废纸篓**（ADR 0008）—— 仅有的两个直接改原件的入口。
 - **撤销**（⌘Z）：改回去，或者从废纸篓取回来。
 - **设为相册封面 / 取消相册封面**（ADR 0028）—— 写的是 ``config.toml``，不碰照片。
+- **编辑位置**（坐标与三层地名，ADR 0030 / 0031）—— **本项目里第一个真正改动用户照片
+  内容的入口**：写的是 EXIF / IPTC / XMP。规矩见 ``core.metadata.writeback``。
 - 以及它们共用的那一个前置问题：「**现在动的是哪些东西**」。
 
 **它不碰文件。** 每一个真正的写操作都走 ``self._library`` 上的某个方法
@@ -52,17 +54,20 @@ from pathlib import Path
 
 from PySide6.QtCore import QModelIndex
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QMenu
+from PySide6.QtWidgets import QDialog, QMenu
 
 from gallery.core.errors import GalleryError
 from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
 from gallery.core.library.session import BROWSE_MODE_ALBUMS, BROWSE_MODE_FLAT
-from gallery.core.metadata.journal import ACTION_RENAME
+from gallery.core.metadata.exif import MetadataReport, read_metadata
+from gallery.core.metadata.journal import ACTION_METADATA, ACTION_RENAME
 from gallery.core.metadata.paste import PasteResult
+from gallery.core.metadata.place_edit import PlaceEdit, PlaceState
 from gallery.core.metadata.rename import RenameResult
 from gallery.core.metadata.transfer import MoveResult
 from gallery.core.metadata.undo import UndoResult
 from gallery.ui import banners, desktop, menus
+from gallery.ui.panels.place_edit import PlaceEditDialog
 from gallery.ui.tasks import TaskContext
 
 logger = logging.getLogger(__name__)
@@ -437,6 +442,135 @@ class WriteOpsMixin:
             self._pipeline.forget([album])
         self._refresh_thumbnail_window()
 
+    # ---- 位置编辑（ADR 0030 / 0031）-----------------------------------------
+    #
+    # **本项目里第一个真正改动用户照片内容的入口。** 其余那些改的是文件名与所在目录，
+    # 这一条改的是照片里的字节 —— 于是它比别的都多两件事：写之前要拿到那份元数据
+    # （用来填对话框、也是回滚与撤销的依据），写之后要把界面上**所有按
+    # 「路径 + 大小 + 修改时间」认照片**的地方一起换掉。
+
+    def place_candidate(self) -> PhotoRef | None:
+        """「编辑位置」此刻作用于哪张照片；不该出现这一条时返回 ``None``。
+
+        判据与 :meth:`cover_candidate` 同一取向：**恰好是一张照片**（网格页是当前项、
+        大图页是正在看的那一张，ADR 0021），且此刻改得动（装了 exiftool）。分组卡片不是
+        磁盘上的东西，说不清「编辑它的位置」指的是哪一张。
+        """
+        library = self._library
+        if library is None or not library.can_write_metadata():
+            return None
+        entry = self._model.entry_at(self._focus_row())
+        return entry if isinstance(entry, PhotoRef) else None
+
+    def edit_place_of_current(self) -> None:
+        """「编辑位置…」：先把元数据读到手，再弹对话框，保存后写回。
+
+        面板没展开时多半没有缓存，**现读一次**（与「复制元数据」同一套路）：读一次约
+        50ms，走后台线程，读完才弹对话框。**不在这里直接读** —— 那会让界面卡一下，
+        而用户点的只是一条命令。
+        """
+        ref = self.place_candidate()
+        if ref is None:
+            self._show_banner("这里没有可以编辑位置的照片。")
+            return
+        cached = self._cached_metadata(ref)
+        if cached is not None:
+            self._open_place_editor(ref, cached)
+            return
+        generation = self._generation
+
+        def work(context: TaskContext) -> object:
+            if context.is_cancelled():
+                return None
+            return read_metadata(ref.path)
+
+        self._show_banner(f"正在读取 {ref.name} 的元数据…")
+        self._metadata_copy_job = self._runner.submit(
+            work,
+            on_result=partial(self._on_metadata_read_for_edit, ref, generation),
+            on_error=partial(self._on_metadata_edit_read_failed, ref, generation),
+        )
+
+    def _on_metadata_read_for_edit(self, ref: PhotoRef, generation: int, payload: object) -> None:
+        self._metadata_copy_job = None
+        if not isinstance(payload, MetadataReport) or generation != self._generation:
+            return  # 已经换库或换照片了：这份元数据不该再跑到界面上
+        self._cache_metadata(ref, payload)
+        if self.place_candidate() != ref:
+            self._show_banner("已经换了一张照片，请在它上面重新点一次「编辑位置」。")
+            return
+        self._open_place_editor(ref, payload)
+
+    def _on_metadata_edit_read_failed(self, ref: PhotoRef, generation: int, message: str) -> None:
+        self._metadata_copy_job = None
+        logger.info("编辑位置前的元数据读取失败：%s", message)
+        if generation == self._generation:
+            self._show_banner(f"读不出「{ref.name}」的元数据，改不了它的位置。")
+
+    def _open_place_editor(self, ref: PhotoRef, report: MetadataReport) -> None:
+        """摆出编辑器。**对话框只产出「用户填的那一份」，写盘在下面那一步。**"""
+        state = PlaceState(
+            city=report.place_city,
+            region=report.place_region,
+            country=report.place_country,
+            latitude=report.latitude,
+            longitude=report.longitude,
+        )
+        dialog = PlaceEditDialog(self, state, resolver=self._place_lookup(), photo_name=ref.name)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        self._apply_place_edit(ref, state, dialog.edit())
+
+    def _apply_place_edit(self, ref: PhotoRef, state: PlaceState, edit: PlaceEdit) -> None:
+        """把编辑结果写回，并让界面上每一处「认照片」的地方都跟上。
+
+        **写盘是同步的**：exiftool 一次约 50~200ms，命令本身是「保存」这个动作，
+        弹个进度框比直接等它更让人烦。真正的耗时（大图）不在这一步。
+        """
+        library = self._library
+        if library is None:
+            return
+        try:
+            outcome = library.write_place(ref, state, edit, resolver=self._place_lookup())
+        except GalleryError as exc:
+            logger.info("编辑位置失败：%s", exc.detail or exc.message)
+            self._show_banner(exc.message)
+            return
+        self._after_metadata_write(outcome.entry)
+        self._show_banner(banners.place_banner(outcome, ref.name))
+        self._refresh_undo_label()
+
+    def _after_metadata_write(self, entry: PhotoRef | None) -> None:
+        """写回之后，把界面上认照片的地方全部换一遍。**少任何一件都像「没生效」。**
+
+        按顺序：
+
+        1. **屏蔽监听器回声**（ADR 0013）。不屏蔽的话，那条 MODIFIED 会让监听器把这份
+           缓存整个作废并重取 —— 于是 :meth:`Library.write_place` 里那次
+           ``thumbnails.relocate`` 换键就白做了，要重新解码一遍。
+        2. **丢掉按路径索引的内存缓存**：元数据与整图预览都是拿
+           ``(路径, 大小, 修改时间)`` 当键的，两者都已经过期。
+        3. **换掉网格里那一行的引用**：它还挂着旧的大小与修改时间，于是缩略图与索引
+           都认为这一格没变过。
+        4. **重排**：这一张可能已经不属于当前的分组 / 排序位置了 —— 按城市分组时把
+           坐标改到另一个城市，它就该从这一组里离开。就地插行会插到错位置，所以整层重排
+           （几十微秒，见 :meth:`_apply_restore` 的同一段理由）。
+        """
+        if entry is None:
+            return  # 写完文件已经不在了；这时说什么都是多余的，交给监听器
+        path = entry.path
+        self._note_self_write(path)
+        self._metadata_cache.pop(path, None)
+        self._preview_cache.pop(path, None)
+        row = self._model.row_of_path(path)
+        if row >= 0:
+            self._model.replace_entry(row, entry)
+        # 这一张的元数据快照已经过期：从记忆里摘掉，让下面那一遍只重读它一个。
+        self._facet_values.pop(path, None)
+        self._start_facet_read()
+        if self._panel.isVisible():
+            self._load_metadata()
+
     def _on_album_chosen_for_copy(self, action: QAction) -> None:
         """用户在「复制到相册」里挑了一个相册。目标路径由子菜单挂在 ``action.data()`` 上。"""
         target = action.data()
@@ -746,9 +880,19 @@ class WriteOpsMixin:
         if result is None:
             self._show_banner("没有可撤销的操作。")
             return
-        # **这一次撤销之后，「跳回刚删掉的那张」就不作数了**：那一摞栈已经矮了一格。
-        # 无论撤的是哪一种（下面两支），这一条都只对紧接着的那一次有效。
+# **这一次撤销之后，「跳回刚删掉的那张」就不作数了**：那一摞栈已经矮了一格。
+        # 无论撤的是哪一种（下面三支），这一条都只对紧接着的那一次有效。
         trashed_in_detail, self._detail_trashed = self._detail_trashed, None
+        if result.action == ACTION_METADATA:
+            # 撤销位置编辑：照片回到原样，但**大小与修改时间又变了一次**（撤销本身也是
+            # 一次写回），所以网格里那一行、内存缓存、分组排序全都要跟上 —— 与正向那次
+            # 走的是同一个 ``_after_metadata_write``。**它不是删除**：撤的是字段，
+            # 照片一直在那儿，所以「跳回刚删掉的那张」与它无关。
+            for entry in result.entries:
+                self._after_metadata_write(entry)
+            self._show_banner(banners.undo_banner(result))
+            self._refresh_undo_label()
+            return
         if result.action == ACTION_RENAME and result.replaced is not None:
             # 撤销之前，这一行挂在改完名的新路径上 —— 要按它找行号。
             row = self._model.row_of_path(result.replaced.path)

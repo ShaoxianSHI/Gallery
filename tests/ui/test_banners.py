@@ -10,15 +10,19 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from gallery.core.library.facade import PlaceWriteOutcome
 from gallery.core.library.photos import FolderRef, PhotoRef
 from gallery.core.metadata.failures import Failure
-from gallery.core.metadata.journal import ACTION_MOVE, ACTION_RENAME
+from gallery.core.metadata.journal import ACTION_METADATA, ACTION_MOVE, ACTION_RENAME
 from gallery.core.metadata.paste import PastedFile, PasteResult, Skipped
+from gallery.core.metadata.place_edit import PlacePlan
 from gallery.core.metadata.rename import RenameResult
 from gallery.core.metadata.transfer import MovedItem, MoveResult
 from gallery.core.metadata.trash import TrashResult
 from gallery.core.metadata.undo import UndoResult
+from gallery.core.metadata.writeback import Assignment
 from gallery.ui import banners
+from gallery.ui.banners import place_banner, undo_banner
 
 
 def _photo(path: Path) -> PhotoRef:
@@ -187,3 +191,61 @@ def test_the_cover_banner_never_promises_an_undo() -> None:
 def test_clearing_the_cover_says_what_it_fell_back_to() -> None:
     """取消之后得说清它回到了**什么行为**上 —— 「第一张照片」，而不是「已取消」。"""
     assert banners.album_cover_cleared_banner("京都") == "「京都」恢复用里面的第一张照片当封面。"
+
+
+# ---- 编辑位置（ADR 0030 / 0031）------------------------------------------------
+
+
+def _outcome(
+    *,
+    notes: tuple[str, ...] = (),
+    written: bool = True,
+    journaled: bool = True,
+) -> PlaceWriteOutcome:
+    return PlaceWriteOutcome(
+        entry=PhotoRef(path=Path("/库/一张.jpg"), size=1, mtime_ns=2),
+        plan=PlacePlan(assignments=(Assignment("XMP:City", "杭州"),), city="杭州", notes=notes),
+        journaled=journaled,
+        written=written,
+    )
+
+
+def test_place_banner_says_what_actually_happened() -> None:
+    """横幅上每一条 ``notes`` 都是**已经发生的事**，一句都不能省。
+
+    改完坐标而用户不知道地点被重算了，下次打开就会以为程序记错了。
+    """
+    text = place_banner(
+        _outcome(notes=("地点已按新坐标更新为「中国 · 浙江省 · 杭州」。",)), "一张.jpg"
+    )
+
+    assert text.startswith("已更新「一张.jpg」的位置")
+    assert "地点已按新坐标更新为「中国 · 浙江省 · 杭州」" in text
+
+
+def test_place_banner_says_when_it_cannot_be_undone() -> None:
+    assert "⌘Z 撤销不了" in place_banner(_outcome(journaled=False), "一张.jpg")
+
+
+def test_place_banner_says_nothing_changed_when_nothing_did() -> None:
+    assert place_banner(_outcome(written=False), "一张.jpg") == "「一张.jpg」的位置没有改动。"
+
+
+def test_undo_banner_for_a_place_mentions_the_fields_it_refused_to_touch() -> None:
+    """部分冲突时必须说清「只撤了一部分」—— 否则用户以为照片已经整个回到刚才那样。"""
+    result = UndoResult(
+        action=ACTION_METADATA,
+        entries=(PhotoRef(path=Path("/库/一张.jpg"), size=1, mtime_ns=3),),
+        failures=(Failure(name="XMP:City", message="这一项在 Gallery 之外被改过。"),),
+    )
+
+    assert "只撤销了一部分" in undo_banner(result)
+    assert "1 项" in undo_banner(result)
+
+
+def test_undo_banner_for_a_clean_place_undo_says_it_is_back() -> None:
+    result = UndoResult(
+        action=ACTION_METADATA, entries=(PhotoRef(path=Path("/库/一张.jpg"), size=1, mtime_ns=3),)
+    )
+
+    assert undo_banner(result) == "已撤销，「一张.jpg」的位置恢复原样。"

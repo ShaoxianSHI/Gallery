@@ -17,9 +17,10 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from gallery.core.library.facade import PlaceWriteOutcome
 from gallery.core.library.photos import FolderRef, GridEntry
 from gallery.core.metadata.failures import Failure
-from gallery.core.metadata.journal import ACTION_MOVE, ACTION_RENAME
+from gallery.core.metadata.journal import ACTION_METADATA, ACTION_MOVE, ACTION_RENAME
 from gallery.core.metadata.paste import PasteResult
 from gallery.core.metadata.rename import RenameResult
 from gallery.core.metadata.transfer import MoveResult
@@ -124,6 +125,14 @@ def trash_banner(result: TrashResult) -> str:
 def undo_banner(result: UndoResult) -> str:
     """撤销之后的那行提示。"""
     note = undo_note(result.journaled)
+    if result.action == ACTION_METADATA:
+        # 撤销位置编辑：文件回到原样，但**被别的工具改过的那几个字段留在了那里**。
+        # 那句话必须说 —— 否则用户会以为照片已经整个回到刚才那样了。
+        if result.failures:
+            count = len(result.failures)
+            return f"只撤销了一部分：{count} 项在 Gallery 之外被改过，没有动它们{note}。"
+        name = result.entries[0].name if result.entries else "照片"
+        return f"已撤销，「{name}」的位置恢复原样{note}。"
     if result.action == ACTION_RENAME:
         return f"已撤销，恢复为「{result.entries[0].name}」{note}。"
     if result.action == ACTION_MOVE:
@@ -162,6 +171,25 @@ def album_cover_cleared_banner(album_name: str) -> str:
     return f"「{album_name}」恢复用里面的第一张照片当封面。"
 
 
+def place_banner(outcome: PlaceWriteOutcome, photo_name: str) -> str:
+    """编辑位置之后的那行提示（ADR 0030 / 0031）。
+
+    **``notes`` 里的每一句都要说**：那些不是补充说明，而是**已经发生的事** ——
+    「地点已按新坐标更新为杭州」「坐标已按这座城市的位置写入，它不是照片的具体位置」
+    「城市库里没有这个名字，坐标保持原样」。少说任何一句，用户就只能靠猜：
+    改一个地名之后坐标动了，他不知道那是程序做的，还是自己记错了。
+
+    写回是从不静默的操作（红线 3、4），所以这里从不出现「已完成」三个字了事。
+    """
+    if not outcome.written:
+        return f"「{photo_name}」的位置没有改动。"
+    head = f"已更新「{photo_name}」的位置"
+    parts = [part.rstrip("。") for part in outcome.plan.notes]
+    if not outcome.journaled:
+        parts.append("没能记下操作日志，⌘Z 撤销不了")
+    return "；".join([head, *parts]) + "。"
+
+
 def first_reason(failures: Sequence[Failure]) -> str:
     """失败原因的摘要。
 
@@ -193,6 +221,7 @@ __all__ = [
     "album_name",
     "first_reason",
     "paste_banner",
+    "place_banner",
     "rename_banner",
     "transfer_banner",
     "trash_banner",

@@ -24,8 +24,8 @@
 **某一行在某个落点上不出现**是常事（「粘贴」按落点定，见 ADR 0018 决策 7），缺了行但
 **段还在** —— 分隔线照旧，段的位置不跳。
 
-「会动文件」单独成组、离前面那几条远一点，是这张表唯一带风险的取舍：它俩是本项目里
-仅有的两个会改用户文件的入口（红线 1），其余各条按错了原件都还在原地。
+「会动文件」单独成组、离前面那几条远一点，是这张表唯一带风险的取舍：这一段里的每一条
+都会改用户文件本身（红线 1），其余各条按错了原件都还在原地。
 
 **某一组在某张菜单里整组都不出现时，那道分隔线也不出现**（否则菜单末尾挂一道空档）。
 
@@ -138,6 +138,12 @@ class MenuActions:
     #: 「取消相册封面」（ADR 0028）。判据与上面那条对称：选中的**恰好是一个**相册、
     #: 而且它真的被指定过封面，否则不出现（用户看得见自己设过，也就没有需要撤销的东西）。
     clear_cover: QAction | None = None
+    #: 「编辑位置…」⇧⌘I（ADR 0030）。**单选一张照片、且改得动时才有**，否则 ``None``
+    #: —— 那一行不出现，而不是摆一条点下去只会报错的（ADR 0014 决策 4）。
+    #:
+    #: 与封面那两条一样**只活在右键菜单里**：它需要一个对话框才说得清，而菜单栏上摆一个
+    #: 点了就弹框的条目不如不摆。快捷键 ⇧⌘I 照常有效（``MainWindow`` 把它挂到窗口上）。
+    edit_place: QAction | None = None
 
 
 def build_photo_menu(actions: MenuActions, *, multiple: bool) -> QMenu:
@@ -229,7 +235,7 @@ def build_album_menu(actions: MenuActions, *, multiple: bool) -> QMenu:
     menu.addSeparator()
     _add_copy_group(menu, actions, album_targets=False)
     menu.addSeparator()
-    _add_write_group(menu, actions, multiple=multiple)
+    _add_write_group(menu, actions, multiple=multiple, place=False)
     return menu
 
 
@@ -417,21 +423,31 @@ def _add_copy_group(
 
 
 def _add_write_group(
-    menu: ShortcutColumnMenu, actions: MenuActions, *, multiple: bool, rename: bool = True
+    menu: ShortcutColumnMenu,
+    actions: MenuActions,
+    *,
+    multiple: bool,
+    rename: bool = True,
+    place: bool = True,
 ) -> None:
-    """第三组「会动文件」：重命名… · 移到废纸篓（ADR 0023）。
+    """第三组「会动文件」：重命名… · 编辑位置… · 移到废纸篓（ADR 0023 / 0030）。
 
-    这一组里的每一条都会改磁盘上的东西（红线 1 说的就是它们两个入口），所以它单独
-    成组、离前面那几条「只是把东西摆出去 / 递出去」的远一点。
+    这一组里的每一条都会改磁盘上的东西，所以它单独成组、离前面那几条「只是把东西摆出去 /
+    递出去」的远一点。**「编辑位置」也在这里**：它改的是照片里的字节，与改名、删除是同
+    一族 —— 摆在「它是什么」那一段（只读问答）会让那一段的承诺说谎。
 
-    **「重命名」只在单选时出现**：批量改名是 ADR 0004 明确排除的。多选时这一组只剩
-    「移到废纸篓」一行，**分隔线照旧**（见 ADR 0023 决策 2）。
+    **前两条都只在单选时出现**：批量改名是 ADR 0004 明确排除的，而位置编辑一次只改一张
+    —— 一次动几百张照片的 GPS 是不可想象的操作。多选时这一组只剩「移到废纸篓」一行，
+    **分隔线照旧**（见 ADR 0023 决策 2）。
 
-    ``rename=False`` 是分组卡片：改的是卡片，而卡片不是磁盘上的东西，没有名字可改；
-    删得掉的是它代表的那批照片（ADR 0020）。于是那一组只剩「移到废纸篓」，分隔线照旧。
+    ``rename=False`` / ``place=False`` 是分组卡片与相册：改的是卡片或文件夹，而卡片不是
+    磁盘上的东西、没有名字可改，文件夹也没有位置（ADR 0020）。于是那一组只剩「移到废纸篓」，
+    分隔线照旧。
     """
     if rename and not multiple:
         menu.addAction(actions.rename)
+    if place and not multiple and actions.edit_place is not None:
+        menu.addAction(actions.edit_place)
     menu.addAction(actions.trash)
 
 

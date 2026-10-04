@@ -241,6 +241,9 @@ WRITE_METHODS_ON_LIBRARY = (
     "move_into",
     "create_album",
     "undo_last_write",
+    # 元数据写回（ADR 0030）。它改的是照片**里面**的字节，比改名更重 —— 少了这一行，
+    # 「界面上改用户文件的地方只有一处」就会漏掉整个写回功能。
+    "write_place",
 )
 
 #: 唯一一个「只组装、不写」的例外：它负责挑目标目录（见 ``_paste_target``）。

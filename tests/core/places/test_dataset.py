@@ -87,7 +87,7 @@ def test_parse_reads_the_six_columns(tmp_path: Path) -> None:
     index = PlaceIndex.load(path)
 
     assert index is not None and index.city_count == 1
-    assert index.nearest(30.29, 120.16) == Place("杭州", "浙江省", "中国", 0.0)
+    assert index.nearest(30.29, 120.16) == Place("杭州", "浙江省", "中国", 0.0, 30.29, 120.16)
 
 
 def test_parse_skips_comments_and_bad_rows(tmp_path: Path) -> None:
@@ -374,5 +374,89 @@ def test_a_population_column_that_int_rejects_does_not_break_the_whole_file(
     # 这一行**照常留下**（人口当 0，与同文件里已有的那条规矩一致）——
     # 丢的只是那个读不出来的数字，不是这座城市。
     assert index is not None and index.city_count == 2
-    assert index.nearest(29.87, 121.55) == Place("宁波", "浙江省", "中国", 0.0)
-    assert index.nearest(30.29, 120.16) == Place("杭州", "浙江省", "中国", 0.0)
+    assert index.nearest(29.87, 121.55) == Place("宁波", "浙江省", "中国", 0.0, 29.87, 121.55)
+    assert index.nearest(30.29, 120.16) == Place("杭州", "浙江省", "中国", 0.0, 30.29, 120.16)
+
+
+# ---- 按名字查（ADR 0031）---------------------------------------------------------
+
+
+def _named_index() -> PlaceIndex:
+    """带重名的城市集：同名不同国、同国不同省、以及一个境内一个大城一个小城。"""
+    return PlaceIndex(
+        [
+            _city(
+                "Springfield",
+                37.21,
+                -93.29,
+                region="Missouri",
+                country="United States",
+                population=169_000,
+            ),
+            _city(
+                "Springfield",
+                42.10,
+                -72.59,
+                region="Massachusetts",
+                country="United States",
+                population=155_000,
+            ),
+            _city(
+                "Springfield",
+                39.80,
+                -89.64,
+                region="Illinois",
+                country="United States",
+                population=114_000,
+            ),
+            _city("苏州", 31.30, 120.60, region="江苏省", population=1_000_000),
+            _city("苏州", 31.31, 120.62, region="江苏省", population=2_000_000),
+            _city("苏州", 25.03, 121.53, region="台湾", population=300_000),
+            _city("Bordeaux", 44.84, -0.58, region="Gironde", country="France", population=1),
+        ]
+    )
+
+
+def test_by_name_finds_the_city_and_its_coordinates() -> None:
+    found = _named_index().by_name("Bordeaux")
+
+    assert len(found) == 1
+    assert found[0].country == "France"
+    assert found[0].latitude == pytest.approx(44.84)
+    assert found[0].distance_km == 0.0  # 那一路没有坐标可比，说「离这里多远」没有意义
+
+
+def test_by_name_returns_the_biggest_when_several_share_a_name() -> None:
+    """同名时**按人口降序**返回 —— 与最近邻那一路的消歧同一个理由，城市总比它内部的某个区块人多。"""
+    found = _named_index().by_name("苏州", region="江苏省")
+
+    assert [place.latitude for place in found] == [pytest.approx(31.31), pytest.approx(31.30)]
+
+
+def test_by_name_uses_the_region_or_country_to_narrow_it_down() -> None:
+    index = _named_index()
+
+    assert [p.region for p in index.by_name("Springfield", region="Illinois")] == ["Illinois"]
+    assert all(
+        p.country == "United States" for p in index.by_name("Springfield", country="United States")
+    )
+    assert index.by_name("苏州", region="台湾")[0].region == "台湾"
+
+
+def test_by_name_ignores_case_and_surrounding_spaces() -> None:
+    found = _named_index().by_name("  bordeaux ")
+
+    assert [place.city for place in found] == ["Bordeaux"]
+
+
+def test_by_name_returns_nothing_for_a_name_it_has_never_heard_of() -> None:
+    """**库里没有就是没有** —— 用户写「西湖 · 断桥」不该被配一个坐标。"""
+    assert _named_index().by_name("西湖·断桥") == ()
+    assert _named_index().by_name("") == ()
+    assert _named_index().by_name("苏州", region="不存在省") == ()
+
+
+def test_by_name_honours_the_candidate_limit() -> None:
+    found = _named_index().by_name("Springfield", limit=2)
+
+    assert len(found) == 2

@@ -300,6 +300,8 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._level_notice = False
         #: 横幅上正占着「正在读取元数据…」这条进度。
         self._progress_notice = False
+        #: 进度那条自己写上去的话（收尾时**只收自己那一句**，见 ``_clear_progress_notice``）。
+        self._progress_notice_text: str | None = None
         #: 扫描本身出过问题（跳过的目录 / 读不了的文件）。它比「这里是空的」更该说。
         self._scan_issue = False
         self._exiftool_available: bool | None = None  # 探测一次就够
@@ -429,6 +431,8 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._stack.addWidget(self._grid_page)
         self._panel = MetadataPanel()
         self._panel.hide()
+        # 「编辑位置」那个按钮只发信号（面板不碰文件，红线 1）；写盘在 ``write_ops``。
+        self._panel.edit_place_requested.connect(self.edit_place_of_current)
         self._detail_page = QWidget()
         detail_layout = QHBoxLayout(self._detail_page)
         detail_layout.setContentsMargins(0, 0, 0, 0)
@@ -640,6 +644,14 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         # 只活在右键菜单里的两条：它们离不开「当前这一张」，放进菜单栏反而没处可用。
         self._copy_metadata_action = QAction("复制元数据", self)
         self._copy_metadata_action.triggered.connect(self.copy_current_metadata)
+
+        # 「编辑位置…」⇧⌘I（ADR 0030）：**本项目里第一个改动用户照片内容的命令**。
+        # 与「重命名」一样只对单张照片成立，与「设为相册封面」一样只活在右键菜单里 ——
+        # 但它要一个真快捷键：改位置是一件经常做的事，而访达的照片「简介」也是 ⌘I。
+        self._edit_place_action = QAction("编辑位置…", self)
+        self._edit_place_action.setShortcut(QKeySequence("Ctrl+Shift+I"))
+        self._edit_place_action.triggered.connect(self.edit_place_of_current)
+        self.addAction(self._edit_place_action)
 
         self._copy_group_action = QAction("复制分组条件", self)
         self._copy_group_action.triggered.connect(self.copy_current_group)
@@ -939,8 +951,7 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             self._apply_ordering()
             return
 
-        self._progress_notice = True
-        self._show_banner(
+        self._show_progress_notice(
             f"正在读取 {len(refs)} 张照片的元数据，用于{'分组' if self._group_facet else '排序'}…"
         )
 
@@ -962,13 +973,30 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             on_error=partial(self._on_facets_failed, generation),
         )
 
+    def _show_progress_notice(self, text: str) -> None:
+        """「正在读取元数据…」**让着**用户刚做完的那件事（与 ``_show_place_notice`` 同一套）。
+
+        这不是客气，是一次真实存在的抢话：用户刚编辑完位置，横幅上正写着
+        「已更新……坐标已按「杭州」更新」，紧接着的 facet 重读把它顶掉，读完再收走 ——
+        那句话他就永远看不到了，而它是唯一告诉他「坐标被动过」的地方（ADR 0030）。
+        """
+        if self._show_banner(text, background=True):
+            self._progress_notice = True
+            self._progress_notice_text = text
+
     def _clear_progress_notice(self) -> None:
-        """收掉「正在读取元数据…」那条 —— **只收自己那一条**：扫描出问题时那条横幅
-        比进度重要得多，不能顺手一起藏了。"""
+        """收掉「正在读取元数据…」那条 —— **只在自己还占着的时候收**。
+
+        扫描出问题时那条横幅比进度重要得多（那时它压根没亮）；用户刚做完的动作同理 ——
+        那时候进度压根没抢上去，就更不该由收尾把它一起收走。
+        """
         if not self._progress_notice:
             return
         self._progress_notice = False
-        self._banner.hide()
+        text = self._progress_notice_text
+        self._progress_notice_text = None
+        if text is not None and self._banner.isVisible() and self._banner.text() == text:
+            self._banner.hide()
 
     def _update_level_notice(self) -> None:
         """这一层什么都没有时说一声；有了内容就把这句收回去。
@@ -1019,14 +1047,16 @@ class MainWindow(WriteOpsMixin, QMainWindow):
     def _on_facet_progress(self, generation: int, payload: object) -> None:
         if generation != self._generation:
             return
+        # 每一条都走 ``_show_progress_notice``：记下自己写过的话，收尾才收得掉自己那一句
+        # （其余的情况见 ``_clear_progress_notice`` 与 ADR 0010 决策 6 的同一个理由）。
         if isinstance(payload, str):
-            self._show_banner(payload)  # 「正在加载城市库…」这类说明
+            self._show_progress_notice(payload)  # 「正在加载城市库…」这类说明
             return
         if not isinstance(payload, tuple):
             return
         done, total = payload if len(payload) == 2 else (0, 0)
         if isinstance(done, int) and isinstance(total, int) and total:
-            self._show_banner(f"正在读取元数据…{done} / {total}")
+            self._show_progress_notice(f"正在读取元数据…{done} / {total}")
 
     def _on_facets_ready(self, generation: int, payload: object) -> None:
         if generation != self._generation:
@@ -1201,12 +1231,15 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         # 切库时真正清空大图区，别让上一个库的全分辨率副本一直占着内存。
         self._detail.clear_image()
         self._panel.clear()
+        # 面板上那个「编辑位置」按钮的可用性跟着新库走（没装 exiftool 的库上它不出现）。
+        self._update_place_editable()
         self._current_dir = library.root
         self._arm_focus()  # 打开库走的是自己那一套，不经过 _reload_level
         # 每一层都要重排（排序字段总是有的），所以扫出来的一律先攒着，等顺序定下来。
         self._staged = []
         self._level_notice = False
         self._progress_notice = False
+        self._progress_notice_text = None
         self._place_notice_text = None
         self._scan_issue = False
         self._update_breadcrumb()
@@ -1260,6 +1293,7 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._library = None
         self._group_view = None
         self._facet_values = {}
+        self._update_place_editable()
         # 条件是**临时的**（ADR 0026 决策 9）：换库之后还留着上一座库的那几枚胶囊，
         # 用户看到的检索结果属于一个已经关掉的文件夹。
         self._conditions.clear()
@@ -2288,6 +2322,21 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         else:
             self._cancel_metadata_job()
 
+    def _update_place_editable(self) -> None:
+        """面板上「编辑位置」那一处此刻摆什么。
+
+        **能改就摆按钮，不能改就把那句话摆在那里**（ADR 0014 决策 4）：一个点下去只会
+        报错的按钮，比没有更糟；而只字不提的话，用户会以为 Gallery 压根不管这件事。
+        """
+        library = self._library
+        if library is not None and library.can_write_metadata():
+            self._panel.set_place_editable(True)
+            return
+        self._panel.set_place_editable(
+            False,
+            reason="需要 exiftool 才能修改照片里的位置。安装后即可使用：brew install exiftool",
+        )
+
     def _cancel_metadata_job(self) -> None:
         if self._metadata_job is not None:
             self._runner.cancel(self._metadata_job)
@@ -2637,6 +2686,9 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             # 是同一个前置问题，答案自然也在同一个地方。
             set_cover=self._set_cover_action if self.cover_candidate() is not None else None,
             clear_cover=self._clear_cover_action if self.covered_album() is not None else None,
+            # 「编辑位置」按「此刻有没有一张照片可编辑」算（ADR 0030）：没有对象、
+            # 或者没装 exiftool，这一行都不出现，而不是摆一条点下去只会报错的。
+            edit_place=(self._edit_place_action if self.place_candidate() is not None else None),
         )
 
     def open_current_entry(self) -> None:
@@ -3165,6 +3217,10 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         # 「大图下按 ⇧⏎ 是回车」这个原先的巧合：现在 ⇧⏎ 交给系统，``Esc`` / ``⏎`` 才是退出。
         self._open_default_action.setEnabled(idle and isinstance(current, PhotoRef))
         self._copy_metadata_action.setEnabled(isinstance(current, PhotoRef))
+        # 「编辑位置」在右键菜单里是「不出现」，在菜单栏 / 快捷键这边是「置灰」——
+        # 菜单栏那一处永远摆着（否则 ⇧⌘I 就没地方显示提示了），所以两条判据必须同源：
+        # ``place_candidate``。改到一半也关掉，与改名 / 删除同一个 ``idle``。
+        self._edit_place_action.setEnabled(self.place_candidate() is not None and idle)
         self._copy_group_action.setEnabled(in_grid and isinstance(current, GroupRef))
         # 「退出」只出现在大图页的右键菜单里（ADR 0021），所以它也只在那儿可用。
         self._close_entry_action.setEnabled(in_detail)

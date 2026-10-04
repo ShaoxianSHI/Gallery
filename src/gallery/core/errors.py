@@ -50,6 +50,17 @@ class MetadataError(GalleryError):
     """元数据读取失败（exiftool 缺席且降级也失败、输出无法解析、超时）。"""
 
 
+class MetadataWriteError(GalleryError):
+    """元数据写回被拒绝或失败（越权、格式不支持、exiftool 拒绝、写完校验不过）。
+
+    **抛出来的时候，文件已经回到写之前的样子**（除非 :attr:`GalleryError.detail` 里
+    说明了回滚本身也失败了 —— 那种情况横幅必须照实说，见 ``writeback.write_metadata``）。
+
+    与 :class:`MetadataError` 分开：那条是「读不到」，这条是「改不了」，界面给出的下一步
+    动作完全不同（装 exiftool / 解除只读 / 换个格式），混在一起只能给一句没用的提示。
+    """
+
+
 class RenameError(GalleryError):
     """重命名被拒绝或失败（名字非法、目标已存在、权限不足、撤销条件不满足）。"""
 
@@ -101,6 +112,7 @@ __all__ = [
     "IndexUnavailableError",
     "LibraryNotAccessibleError",
     "MetadataError",
+    "MetadataWriteError",
     "PasteError",
     "RenameError",
     "TransferError",

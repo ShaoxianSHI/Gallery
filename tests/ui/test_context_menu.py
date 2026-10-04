@@ -51,6 +51,17 @@ from gallery.ui.main_window import MainWindow  # noqa: E402
 PHOTO_NAMES = ("一张.jpg", "另一张.jpg")
 
 
+@pytest.fixture
+def exiftool_present(window: MainWindow, monkeypatch: pytest.MonkeyPatch) -> None:
+    """让这个窗口所在的库「改得动元数据」。
+
+    **测试不得依赖本机有没有装 exiftool**（AGENTS）。而「编辑位置…」进不进菜单恰好由它
+    决定（``Library.can_write_metadata``），所以这里把这一句按成「有」—— 真去起
+    exiftool 的那些用例在 ``tests/core/metadata/test_writeback.py`` 里，用假的 writer。
+    """
+    monkeypatch.setattr(window._library, "can_write_metadata", lambda: True)
+
+
 @pytest.fixture(autouse=True)
 def empty_clipboard(qt_app: QApplication) -> Iterator[None]:
     """每条用例都从「剪贴板是空的」开始。
@@ -292,7 +303,7 @@ def _key_hint(menu: QMenu, label: str) -> str:
 
 
 def test_every_menu_is_split_into_the_same_four_groups(
-    qt_app: QApplication, window: MainWindow
+    qt_app: QApplication, window: MainWindow, exiftool_present: None
 ) -> None:
     """五张菜单共用同四个组（ADR 0023）：看一眼 · 拿进拿出 · 会动文件 · 它是什么。
 
@@ -340,14 +351,14 @@ def test_every_menu_is_split_into_the_same_four_groups(
         "照片": [
             ["打开", "在默认应用中打开", *look, "设为相册封面"],
             copy,
-            ["重命名…", *write],
+            ["重命名…", "编辑位置…", *write],
             ["显示元数据信息", "复制元数据"],
         ],
         "多选照片": [[*look], copy, write],
         "大图": [
             ["退出", "在默认应用中打开", *look, "设为相册封面"],
             copy,
-            ["重命名…", *write],
+            ["重命名…", "编辑位置…", *write],
             ["显示元数据信息", "复制元数据"],
         ],
         "相册": [["打开", *look], ["拷贝", "拷贝路径", "粘贴"], ["重命名…", *write]],
@@ -397,12 +408,14 @@ def test_photo_menu_items(qt_app: QApplication, window: MainWindow) -> None:
         "移动到相册",
         "",
         "重命名…",
+        "编辑位置…",
         "移到废纸篓",
         "",
         "显示元数据信息",
         "复制元数据",
     ]
     assert _enabled(menu, "重命名…")
+    assert _enabled(menu, "编辑位置…")
     assert _enabled(menu, "移到废纸篓")
 
 
@@ -1117,6 +1130,7 @@ def test_detail_menu_is_the_photo_menu_with_close_on_top(
         "移动到相册",
         "",
         "重命名…",
+        "编辑位置…",
         "移到废纸篓",
         "",
         "显示元数据信息",
