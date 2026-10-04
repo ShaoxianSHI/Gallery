@@ -26,7 +26,7 @@ from PySide6.QtCore import QPoint, Qt  # noqa: E402
 from PySide6.QtGui import QImage  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
-from waiting import wait_until, window_is_idle  # noqa: E402
+from waiting import wait_for_idle, wait_until, window_is_idle  # noqa: E402
 
 from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.library.session import (  # noqa: E402
@@ -729,3 +729,135 @@ def test_the_level_survives_a_reopen(
         assert reopened._calendar_page.level() == "week"
     finally:
         reopened.close()
+
+
+# ---- 检索与日历的来回（ADR 0026 决策 1）---------------------------------------
+
+
+def _settle_everything(qt_app: QApplication, window: MainWindow) -> None:
+    """连检索那一遍与索引维护一起等到收工（``_settle`` 只管日历那几条链）。"""
+    wait_for_idle(qt_app, window, also=("_search_job", "_index_job", "_staged"))
+
+
+def test_a_search_from_the_calendar_shows_its_results_on_the_grid(
+    qt_app: QApplication, calendar_window: MainWindow
+) -> None:
+    """检索结果横跨整库，所以它**只在网格页上摆**，日历那一页不参与。
+
+    钉住这一半才钉得住另一半：撤掉条件之后回到日历，靠的是「条件没了」，
+    不是「从日历进来的就回去」—— 后者会把 ``Y`` / ``M`` / ``W`` 也一起带走。
+    """
+    window = calendar_window
+    window._on_search_submitted("三月")
+    _settle_everything(qt_app, window)
+    assert window._stack.currentWidget() is window._grid_page, "检索结果没有摆在网格页上"
+    assert window._model.rowCount() == 1
+
+
+def test_clearing_a_search_comes_back_to_the_calendar(
+    qt_app: QApplication, calendar_window: MainWindow
+) -> None:
+    """撤光条件：回日历，**停在原来那一段**。
+
+    撤掉的是那一条条件，不是用户停在哪一周 —— 而浏览方式本来就是日历，
+    屏幕上却摆着「全部照片」：菜单里那个勾与眼前那一页说的不是同一件事。
+    """
+    window = calendar_window
+    page = window._calendar_page
+    page.set_today(MARCH)
+    page.go_today()
+    page.set_level("week")
+    anchor_before = page.anchor()
+    level_before = page.level()
+
+    window._on_search_submitted("三月")
+    _settle_everything(qt_app, window)
+    assert window._stack.currentWidget() is window._grid_page
+
+    window.clear_search_conditions()
+    _settle_everything(qt_app, window)
+
+    assert window._stack.currentWidget() is page, "条件撤光了却停在「全部照片」那一页"
+    assert window._browse_mode == BROWSE_MODE_CALENDAR
+    assert window._calendar_action.isChecked(), "浏览方式还是日历，菜单里的勾却没了"
+    assert page.anchor() == anchor_before, "退回日历时位置被清成了今天"
+    assert page.level() == level_before, "退回日历时连停在哪一层都变了"
+    # 桶里是整库，不是刚才那一格，更不是那一条条件
+    assert _days_total(page) == len(NAMES)
+    assert page.photo_count() == 1  # 三月那张仍停在这段日子里
+
+
+def test_the_last_condition_is_also_removed_with_escape(
+    qt_app: QApplication, calendar_window: MainWindow
+) -> None:
+    """``Esc`` 撤掉最后一条条件是同一件事 —— 也要回日历。
+
+    ``Esc`` 是「上一层」，而条件比任何一层都深（ADR 0026 决策 9）：撤光之后就退到底了，
+    底下那一层就是日历。
+    """
+    window = calendar_window
+    page = window._calendar_page
+    page.set_today(MARCH)
+    page.go_today()
+    anchor_before = page.anchor()
+
+    window._on_search_submitted("三月")
+    _settle_everything(qt_app, window)
+    assert window._stack.currentWidget() is window._grid_page
+
+    window.go_up()
+    _settle_everything(qt_app, window)
+
+    assert not window._conditions
+    assert window._stack.currentWidget() is page, "撤光之后没有退回日历"
+    assert page.anchor() == anchor_before
+
+
+def test_changing_the_order_on_the_calendar_stays_on_the_calendar(
+    qt_app: QApplication, calendar_window: MainWindow
+) -> None:
+    """在日历上换排序，**留在日历**上（与撤条件是同一条规矩）。
+
+    这两处原来是同一个病：换层一律把页面摆成网格页，而浏览方式还是日历。
+    """
+    window = calendar_window
+    page = window._calendar_page
+    page.set_today(MARCH)
+    page.go_today()
+    anchor_before = page.anchor()
+
+    window.set_sort_descending(not window._sort_descending)
+    _settle_everything(qt_app, window)
+
+    assert window._stack.currentWidget() is page, "改一下排序就被甩到「全部照片」那一页"
+    assert page.anchor() == anchor_before
+    assert _days_total(page) == len(NAMES)
+
+
+def test_a_search_from_a_calendar_cell_forgets_that_cell(
+    qt_app: QApplication, calendar_window: MainWindow
+) -> None:
+    """在日历摊开的那一格上检索：那一格**不再是**「上一层」。
+
+    网格页上摆的是横跨整库的结果，不是那一格的几张 —— 留着那份记账，条件撤光之后
+    按 ``Esc`` 会退到那一格去，而屏幕上压根没有那一格（白扫一遍整库，还把用户送到
+    一个他这一趟没去过的层）。
+    """
+    window = calendar_window
+    page = window._calendar_page
+    photos, label = _cell_of(window, 5)  # 五月两张挤在同一个小时 → 摊成一层网格
+    page.current_view().select_cell(photos, label)
+    qt_app.processEvents()
+    assert window._drill_photos is not None, "前置条件：日历那一格没有摊开"
+
+    window._on_search_submitted("三月")
+    _settle_everything(qt_app, window)
+    assert window._drill_photos is None, "网格上摆的是整库结果，却还记着那是日历上的一格"
+
+    window.clear_search_conditions()
+    _settle_everything(qt_app, window)
+    assert window._stack.currentWidget() is page
+    assert not window._can_go_up(), "底下没有一层了，Esc 不该还退得回去"
+    window.go_up()
+    qt_app.processEvents()
+    assert window._stack.currentWidget() is page, "Esc 把人送到一个他没去过的层"

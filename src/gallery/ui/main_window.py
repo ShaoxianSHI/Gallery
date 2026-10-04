@@ -1042,9 +1042,24 @@ class MainWindow(
         self._detail.clear_image()
         self._panel.clear()
         self._banner.hide()
-        self._stack.setCurrentWidget(self._grid_page)
+        # **检索不是日历这一层的一部分**：横跨整库的一层只摆在网格页上，而日历点出来的
+        # 那一格同样是「日历」的一部分 —— 留着它，条件撤光之后按 Esc 会退到那一格，
+        # 而那一格此刻压根不在屏幕上。
+        if self._conditions:
+            self._drill_photos = None
+            self._drill_label = ""
+            self._from_calendar = False
+        # **摆哪一页问的是状态**（浏览方式 + 有没有条件），不是「刚才是从哪儿进来的」：
+        # 在日历上检索、把条件撤掉，回的是日历那一页的**原位置**；换一次排序也一样。
+        # 一律摆成网格页的话，撤光之后停在「全部照片」上，而菜单里的「日历」还勾着 ——
+        # 勾与眼前那一页说的不是同一件事（用户报的就是这个）。
         self._update_breadcrumb()
-        self._update_action_states()
+        if self._shows_calendar_page():
+            # 日历那一页自己收尾（标题、命令可用性、缩略图窗口），位置不动。
+            self._show_calendar()
+        else:
+            self._stack.setCurrentWidget(self._grid_page)
+            self._update_action_states()
         self._start_scan()
 
     # ---- 到了这一层该选中哪一格 ----------------------------------------------
