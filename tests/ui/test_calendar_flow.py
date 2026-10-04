@@ -192,6 +192,39 @@ def test_several_photos_in_a_cell_are_laid_out_in_a_grid(
     assert window._model.rowCount() == len(NAMES)
 
 
+def test_a_scan_in_flight_does_not_land_on_the_drill_layer(
+    qt_app: QApplication, calendar_window: MainWindow
+) -> None:
+    """扫描在途时点一格，那一遍扫描的结果**不许**把这一层换成整库。
+
+    刚切到日历就点一格时正好会这样：日历那一页摆的还是上一次的桶（照片已经能点），
+    而底下那遍整库平铺还在扫。它一回来，这一格的几张就变成整库照片了 ——
+    症状是「点开一格，出来一大片」。
+
+    这里把「在途」摆出来而不是等它真的在途：测试库太小，扫描一瞬间就完了，
+    等不到那一刻；而要验的正是**迟到的那一批**落地时会怎样。
+    """
+    from gallery.core.library.scanner import ScanReport
+
+    window = calendar_window
+    photos, label = _cell_of(window, 4)
+    assert len(photos) == 2
+
+    stale_generation = window._generation
+    window._scan_job = 4242  # 假装整库平铺还在扫
+    window._staged = list(window._model.entries())
+
+    window._calendar_page.current_view().select_cell(photos, label)
+    qt_app.processEvents()
+    assert window._scan_job is None, "下钻时没有把在途的那一遍作废"
+    assert window._model.rowCount() == 2
+
+    # 那一遍「扫完了」，结果迟到：换代之后它就不认这一层了
+    window._on_scan_done(stale_generation, ScanReport())
+    qt_app.processEvents()
+    assert window._model.rowCount() == 2, "迟到的扫描结果把这一格换成了整库"
+
+
 def test_a_drill_grid_shows_which_cell_it_came_from(
     qt_app: QApplication, calendar_window: MainWindow
 ) -> None:

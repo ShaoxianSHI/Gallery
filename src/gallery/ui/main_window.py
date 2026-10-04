@@ -1497,6 +1497,11 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         """
         if self._browse_mode != BROWSE_MODE_CALENDAR or self._library is None:
             return
+        # **日历那一页不在前面时不喂**：模型每次重排都会走到这里（`_apply_ordering`），
+        # 而用户正在看的可能是日历点出来的那一层网格 —— 那时重新分桶、清空日历那份
+        # 缩略图仓库都是白做（还会把日历那一页已经出好的图扔掉）。
+        if self._stack.currentWidget() is not self._calendar_page:
+            return
         if self._scan_job is not None:  # 还没扫完，等 _on_scan_done
             return
         self._start_calendar_load()
@@ -2276,6 +2281,18 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         if self._stack.currentWidget() is not self._grid_page:
             return
         visible_rows = self._grid.visible_rows()
+        # **网格还没重排时，不要把已经排好的请求清掉**（这一处空过一整屏）。
+        #
+        # 刚换成一批照片的那一刻，视图内部的布局还没跟上（`indexAt` 全落空），
+        # 于是「可见行」是空的；而 ``set_window`` 是**整份替换** —— 那一次空窗口
+        # 会把刚排好的几十个请求全丢掉。在途的还会跑完（它不在队列里），
+        # 没跑到的就彻底没了，要等下一次 ``viewport_changed`` 才重新排上。
+        # 从日历点一格进网格正好连着发生两次（换页一次、模型换掉一次），
+        # 于是有几张到几秒的空白，很看运气。
+        #
+        # 模型**真的空了**（空相册、换了空层）时照旧要报空窗口：那一批确实不需要了。
+        if not visible_rows and self._model.rowCount() > 0:
+            return
         prefetch_rows = self._grid.visible_rows(margin_ratio=PREFETCH_MARGIN)
         visible_set = set(visible_rows)
         visible = self._entries_missing_thumbnails(visible_rows)
@@ -3529,8 +3546,19 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         """
         self._drill_photos = photos
         self._drill_label = label
-        self._stack.setCurrentWidget(self._grid_page)
+        # **在途的扫描作废**：这一层不是整库，那一遍扫描的结果落上来会把这一格的几张
+        # 换回整库照片（症状是「点开一格，出来一大片」，而用户没碰任何东西）。
+        # 刚切到日历就点一格时正好会这样 —— 日历那一页摆的还是上一次的桶，
+        # 而整库平铺还在扫。
+        if self._scan_job is not None:
+            self._runner.cancel(self._scan_job)
+            self._scan_job = None
+            self._generation += 1
+            self._staged = []
+        # **先摆内容再换页**：反过来就是换页那一刻拿的还是日历底下那一整库，
+        # 按它算出来的可见行与真正要显示的这一批对不上（多要一批，还都是马上要丢的）。
         self._list_drill_photos(photos)
+        self._stack.setCurrentWidget(self._grid_page)
         self._refresh_title()
         self._update_action_states()
         self._refresh_thumbnail_window()
