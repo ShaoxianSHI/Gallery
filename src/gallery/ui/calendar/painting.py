@@ -120,22 +120,40 @@ def paint_photo(
     painter.restore()
 
 
-def scrim(painter: QPainter, rect: QRectF, color: QColor | str, strength: float = 0.6) -> None:
-    """在 ``rect`` 底部压一道竖直渐变，压深 —— 标签才在深浅照片上都读得出来。
+def paint_cell_photo(
+    painter: QPainter,
+    rect: QRectF,
+    image: QImage | None,
+    *,
+    count: int,
+    chip: QColor | str,
+    text: QColor | str,
+    radius: float = CARD_RADIUS,
+    chip_font_px: int = 10,
+) -> None:
+    """日历里的一格：一张圆角照片，不止一张时右下角写「N 张」。
 
-    一格一步地填（而不是一次 ``QLinearGradient``）是为了能落在已有的 ``clip`` 上：
-    照片已经用圆角裁过了，渐变必须跟着裁，否则会在四角漏出去。
+    **三层（年 / 月 / 周）共用这一份**，不是各画一遍：原先周视图在照片下面压一道
+    黑色渐变再写标题字，于是那一格比同一套界面的另两层多一块颜色，而「这一格是
+    几点」左窄条本来就写着 —— 渐变是在给一个不需要的标签垫底。
+
+    张数写成「N 张」而不是「还有 N 张」：整格里只有一张照片，看的人要问的是
+    「这里一共几张」，不是「除了这张还有几张」。
     """
-    painter.save()
-    painter.setClipRect(rect)
-    height = min(rect.height() * 0.7, 40.0)
-    top = rect.bottom() - height
-    for step in range(int(height)):
-        ratio = step / max(1.0, height - 1)
-        shade = QColor(color)
-        shade.setAlpha(round(shade.alpha() * strength * ratio * ratio))
-        painter.fillRect(QRectF(rect.left(), top + step, rect.width(), 1.4), shade)
-    painter.restore()
+    paint_photo(painter, rect, image, radius=radius)
+    if count <= 1:
+        return
+    badge = QRectF(rect.right() - 34.0, rect.bottom() - 18.0, 30.0, 14.0)
+    fill_rounded(painter, badge, chip, 7)
+    draw_text(
+        painter,
+        badge,
+        f"{count} 张",
+        font_px(chip_font_px),
+        text,
+        Qt.AlignmentFlag.AlignCenter,
+        elide=False,
+    )
 
 
 def dot(painter: QPainter, center: QPointF, radius: float, color: QColor | str) -> None:
@@ -151,6 +169,6 @@ __all__ = [
     "fill_rounded",
     "font_px",
     "outline_rounded",
+    "paint_cell_photo",
     "paint_photo",
-    "scrim",
 ]

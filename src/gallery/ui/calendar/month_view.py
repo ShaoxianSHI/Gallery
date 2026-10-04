@@ -20,24 +20,16 @@ from PySide6.QtGui import QFont, QMouseEvent, QPainter
 from gallery.core.library.calendar import WEEKDAY_HEADERS, month_matrix
 from gallery.core.library.photos import PhotoRef
 from gallery.ui.calendar.base import LevelView, day_label
-from gallery.ui.calendar.layout import CARD_RADIUS, fitted_size
-from gallery.ui.calendar.painting import (
-    dot,
-    draw_text,
-    fill_rounded,
-    font_px,
-    paint_photo,
-)
+from gallery.ui.calendar.layout import fitted_size
+from gallery.ui.calendar.painting import dot, draw_text, fill_rounded, font_px, paint_cell_photo
 from gallery.ui.calendar.thumbs import ThumbStore
 
 _HEAD_HEIGHT = 26.0
 _CELL_GAP = 6.0
 _NUMBER_HEIGHT = 20.0
-_COUNT_CHIP = 34.0
 
 _HEAD_FONT_PX = 11
 _DATE_FONT_PX = 12
-_COUNT_FONT_PX = 10
 
 #: 一张缩略图要缩到多长（一格大约两百多像素宽）。
 THUMB_EDGE = 288
@@ -137,29 +129,24 @@ class MonthView(LevelView):
             cell.height() - _NUMBER_HEIGHT,
         )
         image = self.photo(photos[0])
-        if image is not None:
-            width, height = fitted_size(image.width(), image.height(), area.width(), area.height())
-            fitted = QRectF(
-                area.center().x() - width / 2, area.center().y() - height / 2, width, height
-            )
-            paint_photo(painter, fitted, image, radius=CARD_RADIUS)
-            if len(photos) > 1:
-                chip = QRectF(
-                    fitted.right() - _COUNT_CHIP - 4, fitted.bottom() - 18, _COUNT_CHIP, 14
-                )
-                fill_rounded(painter, chip, colors.chip, 7)
-                draw_text(
-                    painter,
-                    chip,
-                    f"{len(photos)} 张",
-                    font_px(_COUNT_FONT_PX),
-                    colors.text,
-                    Qt.AlignmentFlag.AlignCenter,
-                    elide=False,
-                )
-        else:
+        if image is None:
             # 缩略图还没到：画一个安静的占位（一个居中的小圆点），不留空白
             dot(painter, area.center(), 2.5, colors.faint)
+            return
+        # **按照片自己的比例缩进去再摆**：竖幅照片上下留边、横向照片左右留边，
+        # 与周视图那一格同一种画法（见 ``painting.paint_cell_photo``）。
+        width, height = fitted_size(image.width(), image.height(), area.width(), area.height())
+        fitted = QRectF(
+            area.center().x() - width / 2, area.center().y() - height / 2, width, height
+        )
+        paint_cell_photo(
+            painter,
+            fitted,
+            image,
+            count=len(photos),
+            chip=colors.chip,
+            text=colors.text,
+        )
 
     # ---- 交互 -------------------------------------------------------------
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的

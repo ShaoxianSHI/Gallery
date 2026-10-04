@@ -20,9 +20,15 @@ from PySide6.QtWidgets import QFrame, QScrollArea, QSizePolicy, QVBoxLayout, QWi
 
 from gallery.core.library.calendar import WEEKDAY_NAMES, week_start
 from gallery.core.library.photos import PhotoRef
-from gallery.ui.calendar.base import LevelView, short_title
+from gallery.ui.calendar.base import LevelView, hour_label
 from gallery.ui.calendar.layout import CELL_GAP, HOURS_PER_DAY, cell_rect, row_height
-from gallery.ui.calendar.painting import begin, draw_text, fill_rounded, font_px, paint_photo, scrim
+from gallery.ui.calendar.painting import (
+    begin,
+    draw_text,
+    fill_rounded,
+    font_px,
+    paint_cell_photo,
+)
 from gallery.ui.calendar.thumbs import ThumbStore
 
 #: 左窄条（写钟点）多宽。
@@ -33,9 +39,6 @@ HEADER_HEIGHT = 56.0
 _HOUR_FONT_PX = 10
 _WEEKDAY_FONT_PX = 11
 _DATE_FONT_PX = 15
-_CELL_TITLE_FONT_PX = 11
-_BADGE_FONT_PX = 10
-
 #: 缩略图按一格的大小要（约一百七十像素）。
 THUMB_EDGE = 192
 
@@ -295,36 +298,22 @@ class _TimeGrid(QWidget):
     def _paint_hour_row(
         self, painter: QPainter, row: QRectF, hour: int, photos: Sequence[PhotoRef]
     ) -> None:
-        """一行：一张照片，居中铺进那一格；不止一张时右下角写「还有 N 张」。
+        """一行：一张圆角照片铺进那一格，不止一张时右下角写「N 张」。
 
-        那一格**点下去是这一小时**（不是这张照片）—— 用户问的是「那几点拍了什么」，
-        而照片只是那一小时的代表。
+        **与年 / 月两层同一种画法**：格子就是一张照片，不压渐变、不写标题 ——
+        「这一格是几点」左窄条已经写着，而压深的那道渐变原本是给标题垫底的。
         """
         colors = self._view.colors
         x, y, cell_w, cell_h = cell_rect(row.width(), row.height())
         cell = QRectF(row.left() + x, row.top() + y, cell_w, cell_h)
-        paint_photo(painter, cell, self._view.photo(photos[0]))
-        # 压深的是**文字色**，标签写的是「底色」那一支：深色主题下正好反过来。
-        scrim(painter, cell, colors.text, 0.8)
-        draw_text(
+        paint_cell_photo(
             painter,
-            cell.adjusted(6, 0, -6, 0),
-            f"{hour:02d}:00 · {short_title(photos[0].path)}",
-            font_px(_CELL_TITLE_FONT_PX),
-            colors.on_accent,
+            cell,
+            self._view.photo(photos[0]),
+            count=len(photos),
+            chip=colors.chip,
+            text=colors.text,
         )
-        if len(photos) > 1:
-            badge = QRectF(cell.right() - 56, cell.bottom() - 22, 50, 16)
-            fill_rounded(painter, badge, colors.on_accent, 8)
-            draw_text(
-                painter,
-                badge,
-                f"还有 {len(photos) - 1} 张",
-                font_px(_BADGE_FONT_PX),
-                colors.text,
-                Qt.AlignmentFlag.AlignCenter,
-                elide=False,
-            )
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         point = event.position()
@@ -339,7 +328,7 @@ class _TimeGrid(QWidget):
         if not photos:
             return
         self._view.select_day(day)
-        self._view.select_cell(photos)
+        self._view.select_cell(photos, hour_label(day, hour))
 
 
 __all__ = [
