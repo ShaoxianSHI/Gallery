@@ -242,13 +242,22 @@ class WeekView(LevelView):
             self._reveal_photos()
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 - 名字是 Qt 定的
-        """滚动区的视口或时间轴本体被重新布局了：报一次窗口，定位没落地就补一次。
+        """滚动区的视口或时间轴本体被重新布局了：报一次窗口、补一次定位、**并重画表头**。
 
         **这两个 resize 与 `WeekView.resizeEvent` 是三件不同的事**：整层被摆到新尺寸时
         那个会响；而「这一层本来就在这个尺寸上，只是内部的滚动区 / 时间轴刚被布局出来」
         只有这里看得见 —— 后一种正是切到这一层时最常见的形状（第一次切过去尤其如此）。
+
+        **表头必须在这里重画**（:meth:`_TimeHeader.paintEvent`）：它的七列是按
+        ``column_width()`` 摆的，而那个数取自**时间轴的宽度** —— 竖滚动条一出现 / 一离开，
+        视口就窄掉 / 宽出一条滚动条，列宽跟着变，**而表头自己一个像素都没动**。Qt 只在
+        控件自身尺寸变化时替它重画，于是它会一直停在旧列宽上（症状：表头与时间轴对不齐，
+        往右越差越多，差值正好是滚动条宽度；而 ``grab()`` / ``render()`` 这类探针会
+        强制重画，看不到）。实测把窗口真的显示出来时，表头 5 次重画全部发生在滚动条
+        占位之前（列宽 149.14），而此刻的列宽已经是 147.0 —— 一次都没补上。
         """
         if event.type() == QEvent.Type.Resize:
+            self._header.update()
             self._geometry_notify.start()
             if not self._revealed:
                 self._reveal_photos()

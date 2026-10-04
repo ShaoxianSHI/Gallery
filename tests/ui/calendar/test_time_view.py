@@ -21,6 +21,7 @@ import pytest
 pytest.importorskip("PySide6")
 
 import shiboken6  # noqa: E402
+from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from gallery.core.library.photos import PhotoRef  # noqa: E402
@@ -213,6 +214,43 @@ def test_a_relayout_inside_the_week_reports_the_window_again(
     grid.resize(max(1, grid.width() - 60), grid.height())
 
     assert wait_for(lambda: bool(reports)), "内部几何变了，却没有再报一次窗口"
+
+
+def test_the_header_is_repainted_when_the_viewport_changes_width(
+    qt_app: QApplication,
+    wait_for: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """竖滚动条占位把视口挤窄之后，**表头必须重画** —— 否则它一直停在旧列宽上。
+
+    表头那七列是按 ``column_width()`` 摆的，而那个数取自**时间轴的宽度**：滚动条一出现，
+    视口就窄掉一条滚动条，列宽跟着变，**而表头自己一个像素都没动**。Qt 只在控件自身尺寸
+    变化时替它重画，于是表头停在旧列宽上 —— 症状正是「表头与时间轴对不齐，往右越差越多」，
+    差值累到最后一列就是一条滚动条的宽度（实测 1200 宽的窗口：149.14 vs 147.0）。
+
+    **只能靠「有没有人标脏」来钉**：``grab()`` / ``render()`` 会强制重画，屏幕上那份陈旧
+    像素在像素探针里永远看不见 —— 真机上它是这样被抓到的：表头连续 5 次重画全发生在
+    滚动条占位之前，之后一次都没有。
+    """
+    view = WeekView(ThumbStore())
+    view.set_buckets(*_two_photos())
+    # 起手让滚动条不占位置：视口宽 = 整层宽（= 滚动条还没出现的那一刻）
+    view._area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    view.resize(900, 600)
+    view.show()
+    qt_app.processEvents()
+
+    wide = view.column_width()
+    asked: list[float] = []
+    monkeypatch.setattr(
+        type(view._header), "update", lambda self, *a: asked.append(view.column_width())
+    )
+
+    # 滚动条出现 —— 时间轴跟着视口一起窄掉，列宽变了
+    view._area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+    assert wait_for(lambda: view.column_width() != wide), "滚动条没有改变视口宽度，这一条就白测了"
+    assert asked, "视口窄了，表头却没被要求重画 —— 它会一直停在旧列宽上"
+    assert asked[-1] == view.column_width(), "表头是按**旧**列宽重画的，还是对不齐"
 
 
 def test_a_delivered_thumbnail_asks_the_timeline_to_repaint(
