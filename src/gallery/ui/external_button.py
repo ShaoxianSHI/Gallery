@@ -39,7 +39,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QMenu, QToolButton, QWidget
 
-from gallery.ui import theme
+from gallery.ui import menu_style, theme
 from gallery.ui.rename_edit import field_background
 
 #: 按钮的**高**跟着搜索胶囊走（不写死，见 :func:`button_rect`），这是它的**宽**。
@@ -47,17 +47,34 @@ from gallery.ui.rename_edit import field_background
 #: **不是正方形**：里面放的是「图标 + 下拉箭头」两样东西（与 DeepSeek Harness 那个
 #: 组件同一套画法）。原来那个 22×22 的正方形只画得出一个孤零零的箭头 —— 视觉检查
 #: 抓到的症状就是它：屏幕上是一个方框加一个三角。
-BUTTON_WIDTH = 40
+BUTTON_WIDTH = 36
 
-#: 按钮里那个图标的边长（点）。比高度小一圈，四周才留得住边。
-ICON_EDGE = 16
+#: 圆角（点）。**不是正圆**（正圆就是 11，而它是 22 高的一半）—— 与 DeepSeek
+#: Harness 那个组件一样是「小圆角」，而弹出列表那一层用的是
+#: :data:`~gallery.ui.menu_style.MENU_CORNER_RADIUS`（8）：两者是同一个量级。
+BUTTON_RADIUS = 6
 
-#: 按钮与搜索胶囊之间的缝（点）。
-BUTTON_GAP = 6
+#: 按钮里那个图标的边长（点）。**与搜索框那个放大镜（13）同一档**，于是两个控件
+#: 并排时里面的图形看着一样重（视觉检查：图标给 16 时它比放大镜明显粗一圈）。
+ICON_EDGE = 13
+
+#: 按钮与搜索胶囊之间的缝（点）。比 :data:`BUTTON_GAP` 该有的更宽一点 —— 挤在一起
+#: 读起来像搜索框自带的一个零件，而它是另一样东西。
+BUTTON_GAP = 9
 
 #: 右半（箭头那半）的宽度（点）。**固定宽度**：它只放一个箭头，跟着图标一起长宽
 #: 就成了一个空荡荡的方块。
-MENU_EDGE = 18
+MENU_EDGE = 15
+
+#: 箭头那半个 V 的大小（点）。与 :data:`ICON_EDGE` 同一档，否则它在 22 高的一格里
+#: 显得像一个独立控件而不是「这一格里的一笔」。
+CHEVRON_HALF = 2.8
+CHEVRON_DROP = 1.6
+CHEVRON_WIDTH = 1.2
+
+#: 弹出菜单与按钮之间的缝（点）。**与搜索框那个候选列表一致**
+#: （``search_field`` 里是「字段高度 + 2」）。
+MENU_GAP = 2
 
 #: 提示气泡上写的那一句。
 TOOLTIP = "用外部应用打开当前这一页"
@@ -96,6 +113,20 @@ def button_rect(field: QRect, width: int = BUTTON_WIDTH, gap: int = BUTTON_GAP) 
     往下挪了 :data:`~gallery.ui.search_field.TEXT_ALIGN_DROP`，按钮没挪。
     """
     return QRect(field.left() - gap - width, field.top(), width, field.height())
+
+
+def menu_origin(
+    anchor: QPoint, anchor_width: int, menu_width: int, *, gap: int = MENU_GAP
+) -> QPoint:
+    """弹出菜单摆在哪儿（**纯算术**，不必造窗口就能测）。
+
+    :paramref:`anchor` 是那一格（右半）的**屏幕**坐标左上角；菜单**右缘与它右缘对齐**，
+    上沿离它 :paramref:`gap` 点 —— 与搜索框那个候选列表是同一个距离。
+
+    右对齐而不是左对齐：按钮贴着窗口右上角，菜单若从它的左缘往右铺，整块就跑到搜索框
+    那一侧去了，而用户看的是右半那个箭头。
+    """
+    return QPoint(anchor.x() + anchor_width - menu_width, anchor.y() + gap)
 
 
 def drawn_icon(kind: str, size: int = ICON_EDGE) -> QIcon:
@@ -298,7 +329,7 @@ class ExternalAppsButton(QWidget):
         painter = QPainter(self)
         try:
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            radius = self.height() / 2
+            radius = min(BUTTON_RADIUS, self.height() / 2)
             body = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
 
             path = QPainterPath()
@@ -341,9 +372,9 @@ class ExternalAppsButton(QWidget):
         （见模块文档），而这里要的是「半格里居中的一个小 V」，不是一个实心三角。"""
         center = self._primary.width() + (self.width() - self._primary.width()) / 2
         middle = self.height() / 2
-        half = min(3.5, (self.width() - self._primary.width()) / 3)
-        drop = 2.0
-        pen = QPen(color, 1.4)
+        half = min(CHEVRON_HALF, (self.width() - self._primary.width()) / 3)
+        drop = CHEVRON_DROP
+        pen = QPen(color, CHEVRON_WIDTH)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         painter.setPen(pen)
@@ -356,7 +387,14 @@ class ExternalAppsButton(QWidget):
 
         **自绘图标也要重画**：它们跟着 :attr:`AppTheme.text` 变色，而
         :func:`calendar_icon` 每次都现画 —— 不重画的话它们还停在旧主题的颜色上。
+        菜单那份样式表里写死了颜色，**换主题时不重下发的症状是菜单还是上一套深浅**。
         """
+        # **菜单是「主题下发之后才建的控件」**，与搜索框的候选列表同一个情况：
+        # ``theme.apply_theme`` 只走「那一刻已经存在的顶层控件」，菜单不在里面，
+        # 于是它一直用系统默认那一档颜色 —— 症状是深色下菜单里的字是深灰的
+        # （近黑底上几乎看不见）。``push_palette`` 就是为这一件事存在的。
+        theme.push_palette(self._menu)
+        self._menu.setStyleSheet(menu_style.popup_menu_style(self._menu))
         self.refresh()
         self.update()
 
@@ -414,10 +452,18 @@ class ExternalAppsButton(QWidget):
         """右半那一下弹菜单。
 
         **不把菜单挂到按钮上**：挂了 Qt 就会在那一格里再画一个它自己的菜单三角，
-        与我们画的那个 V 叠在一起（视觉检查里用户指出来的就是它）。不挂就干干净净
-        一个箭头，位置也归我们自己定（贴着那一格的左下角弹出）。
+        与我们画的那个 V 叠在一起（视觉检查里用户指出来的就是它）。
+
+        **位置：右缘与按钮右缘对齐，下沿离按钮 :data:`MENU_GAP` 点。**
+        右对齐是因为按钮贴着窗口右上角 —— 菜单若左对齐，它整个跑到搜索框那一侧去了，
+        而用户看的正是右半那个箭头。``QMenu.popup`` 自己会避开屏幕边缘，所以先摆到
+        理想位置、再让它自己修。
         """
-        self._menu.popup(self._menu_button.mapToGlobal(QPoint(0, self._menu_button.height())))
+        menu = self._menu
+        menu.adjustSize()
+        corner = self._menu_button.mapToGlobal(QPoint(0, self._menu_button.height()))
+        # 屏幕边缘由 ``QMenu.popup`` 自己避开（它拿到位置之后还会按可用区域修一次）。
+        menu.popup(menu_origin(corner, self._menu_button.width(), menu.width()))
 
     def _activate_default(self) -> None:
         entry = self.default_entry()
@@ -443,4 +489,5 @@ __all__ = [
     "calendar_icon",
     "drawn_icon",
     "folder_icon",
+    "menu_origin",
 ]

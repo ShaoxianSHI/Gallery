@@ -74,6 +74,11 @@ POPUP_LIST_INSET = POPUP_LIST_BORDER + POPUP_LIST_PADDING
 #: ``gallery.ui.search_field.SearchField._item_padding``）。
 POPUP_LIST_ITEM_PAD = 8
 
+#: 弹出列表与弹出菜单的字号（点）。**只有这一处。** 搜索框的候选列表与标题条上那个
+#: 下拉菜单是两种控件、两条样式表，用户却在它们之间来回走 —— 字号各存一份的话，
+#: 早晚在一个主题下差一档，而那时没人说得清是哪一档。
+POPUP_FONT_PX = 12
+
 MENU_CHECK_GUTTER = 19
 
 MENU_SEPARATOR_HEIGHT = 1
@@ -570,6 +575,49 @@ class ShortcutColumnMenu(QMenu):
                 + MENU_INSET
             )
         )
+
+
+def popup_menu_style(menu: QMenu) -> str:
+    """一个**朴素的下拉菜单**该用的样式表 —— 与搜索框的候选列表是同一种东西。
+
+    与 :func:`style_sheet` 的差别有三处，都是「它只有一条两项」换来的：
+
+    - **不预留勾选槽**（``check_gutter=0``）：那一列是给快捷键列与对勾的，
+      菜单里没有可勾选项却留一列，左边就空出 19 点（视觉检查里看着像图标旁边
+      还抵着一段空白）。
+    - **字号与行的内边距取候选列表那一档**：见 :data:`POPUP_FONT_PX` 与
+      :data:`POPUP_LIST_ITEM_PAD`。这是「与搜索框一致」最显眼的两处 —— 字号大一号
+      或行内边距宽一点，用户立刻看出这是另一个软件弹的。
+    - **高亮那一格也带圆角**：与列表的 ``::item:hover`` 同一档
+      （:data:`MENU_HIGHLIGHT_RADIUS`）。
+    - **带边框**：见下面那行注释。
+
+    三条都是**覆盖**在 :func:`style_sheet` 后面（同优先级、写在后面者胜），
+    与 ``search_field.popup_style`` 给列表补字号是同一个做法。
+    """
+    palette = menu.palette()
+    text = palette.color(QPalette.ColorRole.WindowText)
+    # 边框与列表那份同一档 —— :func:`style_sheet` 给菜单的**没有边框**（右键菜单
+    # 浮在内容上，不需要），而这一份是「和搜索框那个列表一模一样的浮层」，缺了
+    # 边框，两者在浅色下就差出一条轮廓（视觉检查：白底白底，圆角也因此看不出来）。
+    edge = QColor(text)
+    edge.setAlphaF(MENU_SEPARATOR_MIX_LIGHT)
+    return (
+        style_sheet(
+            palette.color(QPalette.ColorRole.Window),
+            palette.color(QPalette.ColorRole.Highlight),
+            text,
+            palette.color(QPalette.ColorRole.HighlightedText),
+            check_gutter=0,
+        )
+        + f"\nQMenu {{ font-size: {POPUP_FONT_PX}px;"
+        f" border: {POPUP_LIST_BORDER}px solid {rgba(edge)}; }}"
+        # 字色**必须自己写**：挂了样式表之后 Qt 不再按调色板给 item 上色，
+        # 实测深色下调色板里明明白白是 ``#ffffff``，画出来却是 ``#000000``
+        # （近黑底上等于看不见）。候选列表那份同样写死了 ``color``，是同一个坑。
+         + f"\nQMenu::item {{ padding: 3px {POPUP_LIST_ITEM_PAD}px;"
+        f" color: {rgba(text)}; border-radius: {MENU_HIGHLIGHT_RADIUS}px; }}"
+    )
 
 
 def apply_style(menu: QMenu) -> None:

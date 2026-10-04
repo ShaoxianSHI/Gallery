@@ -35,10 +35,12 @@ from gallery.ui.external_button import (  # noqa: E402
     BUTTON_WIDTH,
     ICON_EDGE,
     MENU_EDGE,
+    MENU_GAP,
     ExternalAppsButton,
     ExternalEntry,
     button_rect,
     calendar_icon,
+    menu_origin,
 )
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.search_field import MARGIN_RIGHT as SEARCH_FIELD_MARGIN_RIGHT  # noqa: E402
@@ -408,20 +410,22 @@ def test_selected_day_wins_over_the_anchor(
     assert seen == [("month", datetime.date(2026, 3, 12))]
 
 
-def test_the_menu_opens_from_the_right_half(qt_app: QApplication) -> None:
-    """弹出的位置**由我们定**（右半那一格的左下角）。
+def test_the_menu_hangs_off_the_right_edge_of_the_arrow_half() -> None:
+    """弹出的位置：**右缘与那一格右缘对齐**，上沿离它 :data:`MENU_GAP` 点。
 
-    菜单不再挂在按钮上，位置也就随之归我们 —— 挂上去的话 Qt 弹在按钮正下方，
-    而那个位置正压在搜索胶囊上。
+    **纯算术，不造窗口**（``menu_origin``）。右对齐是这里唯一会写错的地方 —— 左对齐
+    的话菜单整个跑到搜索框那一侧，而用户看的是右半那个箭头。
     """
-    button = ExternalAppsButton()
-    button.set_entries([_entry("google_calendar", "Google 日历", True)])
-    button.resize(BUTTON_WIDTH, 22)
-    button.show()
-    expected = button._menu_button.mapToGlobal(QPoint(0, button._menu_button.height()))
-    seen: list[QPoint] = []
-    button._menu.aboutToShow.connect(lambda: seen.append(expected))
+    anchor = QPoint(1000, 40)  # 右半那一格的屏幕坐标
+    placed = menu_origin(anchor, MENU_EDGE, 133)
 
-    button._menu_button.click()
+    assert placed.x() + 133 == anchor.x() + MENU_EDGE, "右缘没对齐"
+    assert placed.y() == anchor.y() + MENU_GAP
 
-    assert seen == [expected]
+
+def test_the_menu_is_narrower_than_the_button_it_hangs_off() -> None:
+    """菜单比那一格宽时它仍然往左铺（右缘对齐的**方向**不能写反）。"""
+    anchor = QPoint(1000, 40)
+    placed = menu_origin(anchor, MENU_EDGE, 300)
+
+    assert placed.x() < anchor.x()

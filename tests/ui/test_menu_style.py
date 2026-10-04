@@ -33,7 +33,7 @@ from PySide6.QtGui import (  # noqa: E402
     QKeySequence,
     QPalette,
 )
-from PySide6.QtWidgets import QApplication, QMenu  # noqa: E402
+from PySide6.QtWidgets import QApplication, QMenu, QTreeWidget  # noqa: E402
 from waiting import wait_until
 
 from gallery.core.library.config import prepare_library  # noqa: E402
@@ -887,3 +887,46 @@ def test_menu_bar_menus_follow_theme_change(qt_app: QApplication, window: MainWi
     finally:
         qt_app.setPalette(original)
         theme.apply_theme(qt_app)
+
+
+# ---- 「朴素下拉菜单」与搜索框的候选列表必须是同一种东西 -------------------
+
+
+def test_the_plain_menu_is_sized_like_the_search_popup(qt_app: QApplication) -> None:
+    """字号、行内边距、圆角、字色**全部来自同一处常量**。
+
+    这两个控件用户是挨着用的（搜索框就在那个按钮右边），字号或行内边距差一档，
+    一眼就看得出「这是另一个软件弹的」。所以这里断言的不是「像」，是**同一个数**。
+    """
+    style = menu_style.popup_menu_style(QMenu())
+
+    assert f"font-size: {menu_style.POPUP_FONT_PX}px" in style
+    assert f"padding: 3px {menu_style.POPUP_LIST_ITEM_PAD}px" in style
+    assert f"border-radius: {menu_style.MENU_HIGHLIGHT_RADIUS}px" in style
+    assert f"border: {menu_style.POPUP_LIST_BORDER}px solid" in style
+
+
+def test_the_plain_menu_spells_out_its_text_colour(qt_app: QApplication) -> None:
+    """**item 的字色必须写死。**
+
+    挂了样式表之后 Qt 不再按调色板给 item 上色 —— 实测深色下菜单的调色板里
+    ``WindowText`` 明明白白是 ``#ffffff``，画出来却是 ``#000000``（近黑底上等于
+    看不见）。曾经只在 ``:hover`` / ``:selected`` 里写了字色，于是**没被指到的那些行
+    全是黑的**。候选列表那份一直写死了 ``color``，是同一个坑。
+    """
+    style = menu_style.popup_menu_style(QMenu())
+
+    assert f"color: {rgba(QMenu().palette().color(QPalette.ColorRole.WindowText))}" in style
+
+
+def test_the_search_popup_and_the_plain_menu_share_one_font_size(qt_app: QApplication) -> None:
+    """字号只有一处来源：改 ``POPUP_FONT_PX`` 两边一起变。
+
+    各写一个字面量的话，改了其中一处、另一处不会报错也不会变红 —— 只会**看起来
+    不是一套东西**，而那正是这一节要防的。
+    """
+    from gallery.ui import search_field
+
+    popup = search_field.popup_style(QTreeWidget())
+    assert f"font-size: {menu_style.POPUP_FONT_PX}px" in popup
+    assert f"font-size: {menu_style.POPUP_FONT_PX}px" in menu_style.popup_menu_style(QMenu())

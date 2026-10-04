@@ -48,6 +48,7 @@ from gallery.core.library.search import (
 )
 from gallery.ui import theme
 from gallery.ui.menu_style import (
+    POPUP_FONT_PX,
     POPUP_LIST_INSET,
     POPUP_LIST_ITEM_PAD,
     popup_list_style,
@@ -85,7 +86,9 @@ ICON_INSET = 1.6
 _ICON_STROKE = 1.4
 
 #: 输入区里那一列的字号，与标题文字（13 点）差一档 —— 它是次要控件。
-_FONT_PX = 12
+#: **与弹出列表、弹出菜单共用同一个数**（``menu_style.POPUP_FONT_PX``）：那三样东西
+#: 在用户眼里是同一种排版，各存一份的话早晚在一个主题下差一档。
+_FONT_PX = POPUP_FONT_PX
 
 #: 候选那一行在行内边距为 0 时，文字**笔尖**离视口左沿还有多远（点）。
 #:
