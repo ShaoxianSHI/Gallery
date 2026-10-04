@@ -31,6 +31,7 @@ from waiting import DEFAULT_TIMEOUT_SECONDS, wait_for_idle
 from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.library.session import (  # noqa: E402
     BROWSE_MODE_ALBUMS,
+    BROWSE_MODE_CALENDAR,
     SessionState,
     save_session,
 )
@@ -293,6 +294,39 @@ def test_background_follows_the_system_both_ways(
             # 大图页会把路径条收起来，下一轮要采样的仍是网格页。
             window.show_grid()
             qt_app.processEvents()
+    finally:
+        window.close()
+
+
+def test_calendar_page_follows_the_system_theme(
+    qt_app: QApplication, window: MainWindow, appearance: Callable[..., None]
+) -> None:
+    """日历那一页也要跟着系统走 —— 它是唯一自己派一份配色的地方。
+
+    回归的是真实缺陷：``CalendarPage`` 起手拿 ``self.findChild(ThemeWatcher)`` 找监听器，
+    而那个监听器是挂在 ``QApplication`` 上的 —— ``findChild`` 只翻**控件自己的子孙**，
+    于是返回值永远是 ``None``，``changed`` 从来没接上。症状是**系统切到浅色时别处都白了、
+    日历那一页还是黑的**（深色起手时尤其容易看出来）；而重新进出一次日历又正常了，
+    因为那一页是按「当下的调色板」重建配色的。
+
+    量的是**渲染出来的像素**：日历的配色（``CalendarColors``）是一份派生物，
+    「对象换过了」不等于「屏幕上换过了」。
+    """
+    try:
+        window.set_browse_mode(BROWSE_MODE_CALENDAR)
+        qt_app.processEvents()
+        page = window._calendar_page
+        for tag, window_colour, base_colour in (
+            ("浅色", LIGHT_WINDOW, LIGHT_BASE),
+            ("深色", DARK_WINDOW, DARK_BASE),
+            ("再切回浅色", LIGHT_WINDOW, LIGHT_BASE),
+        ):
+            appearance(window=window_colour, base=base_colour)
+            expected = theme.current_theme().background
+            color = _strip_color(page.grab().toImage(), page.height() // 2)
+            assert color == expected, (
+                f"{tag}：日历那一页是 {color.name()}，没跟上系统（该是 {expected.name()}）"
+            )
     finally:
         window.close()
 

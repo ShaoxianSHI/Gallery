@@ -33,7 +33,7 @@ from gallery.ui.calendar.thumbs import ThumbStore
 from gallery.ui.calendar.time_view import WeekView
 from gallery.ui.calendar.toolbar import CalendarBar
 from gallery.ui.calendar.year_view import YearView
-from gallery.ui.theme import AppTheme, ThemeWatcher, current_theme, ensure_installed
+from gallery.ui.theme import AppTheme, current_theme, ensure_installed
 
 #: ``Y`` / ``M`` / ``W`` 三个键。**没有日视图**，所以也没有 ``D``。
 _KEY_LEVELS = {
@@ -100,7 +100,14 @@ class CalendarPage(QWidget):
         layout.addWidget(self._bar)
         layout.addWidget(self._stack, 1)
 
-        ensure_installed()
+        # **收下 ``ensure_installed()`` 返回的那一个监听器，不要自己去找。**
+        # 它挂在 ``QApplication`` 上，而 ``findChild`` 只找**控件自己的子孙** ——
+        # 于是 ``self.findChild(ThemeWatcher)`` 永远是 ``None``，连接从来没发生：
+        # 系统换外观时整块界面跟着走，只有日历停在原来的配色上（症状：切到浅色，
+        # 别处都白了，日历那一页还是黑的，而重新打开这一页又好了）。
+        # 仓库里别处（面包屑、搜索框、大图页…）用的都是这个返回值。
+        self._watcher = ensure_installed()
+        self._watcher.changed.connect(self._on_theme_changed)
         # 「来了一张缩略图 → 重画当前那层」的闸门。**必须闸，不能一张一张画**：
         # 流水线是**一张一张**送图回来的（每一张解码完就发一次 ``ready``），
         # 而 ``update()`` 是立刻排一次整页重绘 —— 于是一整屏几百张缩略图就是几百帧
@@ -114,9 +121,6 @@ class CalendarPage(QWidget):
         self._repaint_timer.setInterval(REPAINT_INTERVAL_MS)
         self._repaint_timer.timeout.connect(self._repaint_current_view)
         self._apply_theme(current_theme())
-        self._watcher = self.findChild(ThemeWatcher)
-        if self._watcher is not None:
-            self._watcher.changed.connect(self._on_theme_changed)
         self.set_level("month")
 
     # ---- 数据 -------------------------------------------------------------
