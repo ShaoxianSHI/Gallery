@@ -24,6 +24,7 @@ import shiboken6  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from gallery.core.library.photos import PhotoRef  # noqa: E402
+from gallery.core.metadata.facets import PhotoFacets  # noqa: E402
 from gallery.ui.calendar.thumbs import ThumbStore  # noqa: E402
 from gallery.ui.calendar.time_view import WeekView  # noqa: E402
 
@@ -269,3 +270,62 @@ def test_the_page_repaints_whatever_draws_the_cells(
     page._repaint_current_view()
 
     assert asked == ["content"], "收到图之后没有让「画格子的那个控件」重画"
+
+
+def test_the_reveal_lands_before_the_first_paint(
+    qt_app: QApplication,
+    wait_for: object,
+) -> None:
+    """定位**当场落位**，不留一帧「还在旧位置」的画面。
+
+    落在 0 ms 定时器上时，第一帧已经按旧位置画出来了，下一轮才跳过去 —— 用户看见的
+    是内容从上面窜下来（周视图里就是「一张图飞快跑下来」）。切过来 / 翻页的这一刻，
+    滚动条的范围其实已经有了，所以先同步试一次。
+    """
+    view = WeekView(ThumbStore())
+    view.set_buckets(*_two_photos())
+    view.resize(900, 600)
+    view.show()
+    qt_app.processEvents()
+    view._area.verticalScrollBar().setValue(0)
+    view._revealed = False
+
+    view.set_anchor(ANCHOR)  # ← 不转事件循环
+
+    assert view._area.verticalScrollBar().value() > 0, "定位没有当场落位，第一帧会画在旧位置上"
+    assert not view._reveal.isActive(), "已经落位了还排着一次多余的定位"
+
+
+def test_switching_levels_reveals_before_returning(
+    qt_app: QApplication,
+) -> None:
+    """切层时**先摆上这一层再定位**：函数返回时滚动条已经在合适的位置。
+
+    （`set_anchor` 早于 `setCurrentWidget` 的话，定位那一刻这一层还没被布局过 ——
+    范围是 0，只能排到下一轮。）
+    """
+    from gallery.ui.calendar.page import CalendarPage
+
+    page = CalendarPage()
+    page.set_today(ANCHOR)
+    page.go_today()
+    refs = [_ref("a.jpg"), _ref("b.jpg")]
+    values = {
+        ref.path: PhotoFacets(
+            captured_at=float(ANCHOR.toordinal() * 86400 + hour * 3600),
+            year=ANCHOR.year,
+            month=ANCHOR.month,
+            day=ANCHOR.day,
+            hour=hour,
+        )
+        for ref, hour in zip(refs, (8, 20), strict=True)
+    }
+    page.set_photos(refs, values)
+    page.resize(900, 600)
+    page.show()
+    qt_app.processEvents()
+
+    page.set_level("week")  # ← 不转事件循环
+
+    view = page.current_view()
+    assert view._area.verticalScrollBar().value() > 0, "切层返回时还停在旧位置上"

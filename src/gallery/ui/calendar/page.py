@@ -267,6 +267,13 @@ class CalendarPage(QWidget):
         if selected is not None:
             self._anchor = selected
         self._level = level
+        # **先把这一层摆上来，再定位**：定位要问滚动条的范围，而那要等这一层真的被布局过
+        # —— 顺序反过来的话这次定位只能排到下一轮，于是**第一帧按旧位置画出来**，用户会
+        # 看见内容窜一下（周视图里就是「一张图飞快跑下来」）。摆上来之后这一次是同步落的。
+        #
+        # 顺带修好一处：`set_anchor` 会发 `window_changed`，而外面那一下是按**当前层**取
+        # 可见区的 —— 摆上来之后再发，报出去的才是这一层要的那一批。
+        self._stack.setCurrentWidget(self._views[level])
         self._views[level].set_anchor(self._anchor)
         # **把选中的那一天交给这一层**（它成为当前层的那一刻）—— 各层只存一份「我该
         # 画哪一个」，页面才是那一份状态的持有者。
@@ -275,7 +282,6 @@ class CalendarPage(QWidget):
             self._views[level].set_selected(self._selected)
         finally:
             self._pushing_selection = False
-        self._stack.setCurrentWidget(self._views[level])
         self._bar.set_level(level)
         self._bar.set_title(level, self._anchor)
         self.focus_current_view()
