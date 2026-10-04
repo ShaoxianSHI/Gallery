@@ -30,6 +30,7 @@
 ======================  ==========================================================
 ``_library``            当前库；没有库时每条命令都直接返回
 ``_runner`` / ``_write_job``  后台写操作与「正在写」那一摊
+``_detail_trashed``     大图页上刚删掉的那一张，⌘Z 之后跳回它（ADR 0021）
 ``_model`` / ``_grid``  网格与模型，写完要同步它们
 ``_pipeline``           缩略图流水线；换封面要让它忘掉对这个相册的记忆
 ``_stack`` / ``_grid_page`` / ``_detail_page``  「现在在网格页还是大图页」决定粘到哪里
@@ -658,7 +659,15 @@ class WriteOpsMixin:
         removed = [row for row in rows if self._is_row_moved(row, moved_paths)]
         self._model.remove_rows(removed)
         self._select_after_removal(removed)
+        # **大图页上删掉的那一张记下来**：⌘Z 之后要跳回它（见 ``_jump_back_to_restored``）。
+        # 网格页上删的不记 —— 撤回来之后留在网格上才是对的。只记**真正移走的**那一张，
+        # 移失败的压根不算删过。
+        self._detail_trashed = None
         if in_detail:
+            self._detail_trashed = next(
+                (entry.path for entry in result.moved if entry.path == entries[0].path),
+                None,
+            )
             self._show_next_after_trash()
         # 确认说过就走；没移走的那些与「⌘Z 撤销不了」要留着（ADR 0029 决策 3）。
         self._show_banner(
@@ -737,6 +746,9 @@ class WriteOpsMixin:
         if result is None:
             self._show_banner("没有可撤销的操作。")
             return
+        # **这一次撤销之后，「跳回刚删掉的那张」就不作数了**：那一摞栈已经矮了一格。
+        # 无论撤的是哪一种（下面两支），这一条都只对紧接着的那一次有效。
+        trashed_in_detail, self._detail_trashed = self._detail_trashed, None
         if result.action == ACTION_RENAME and result.replaced is not None:
             # 撤销之前，这一行挂在改完名的新路径上 —— 要按它找行号。
             row = self._model.row_of_path(result.replaced.path)
@@ -752,11 +764,47 @@ class WriteOpsMixin:
             )
         else:
             self._apply_restore(result)
+            self._jump_back_to_restored(trashed_in_detail, result)
             self._show_banner(
                 banners.undo_banner(result),
                 auto_hide=result.journaled and not result.failures,
             )
         self._refresh_undo_label()
+
+    def _jump_back_to_restored(self, trashed: Path | None, result: UndoResult) -> None:
+        """大图页上删掉一张之后按 ⌘Z：**跳回刚被删掉的那一张**（ADR 0021 的另一半）。
+
+        删掉一张之后界面会接着看下一张（看照片时最顺手的动作就是「这张不要，下一张」），
+        于是撤回来时人正站在**另一张**上；而撤销会整层重排，刚取回来的那张完全可能落在
+        视野之外。「跳回去」才是用户按 ⌘Z 时真正想要的 —— 看回刚才那张。
+
+        两种情形都要接住：
+
+        - **还在大图页**：换到刚取回来的那一张；
+        - **因为这一层空了已经从大图页退回网格**（见 :meth:`_show_next_after_trash`）：
+          重新打开它 —— 删除是在大图页上做的，撤销理应把人放回原处。
+
+        **在网格页上删的不动**：``trashed`` 是 ``None``（见 :meth:`trash_selected`），
+        ⌘Z 在网格上就该留在网格上。取回来的条目里没有那一张（撤的是别的一次操作、
+        或者它已经不在当前这一层）时同样不动 —— 跳到一个不相干的地方比不跳更糟。
+
+        **只对紧接着的那一次撤销有效**：每一次删除都会把 ``_detail_trashed`` 重写一遍
+        （在网格页上删的写成 ``None``），而这一次撤销之后它就被用掉了 —— 于是第二次
+        ⌘Z 撤的是别的一次操作时，不会被上一次留下的那条带跑。
+        """
+        if trashed is None or not any(entry.path == trashed for entry in result.entries):
+            return
+        row = self._model.row_of_path(trashed)
+        if row < 0 or self._model.photo_at(row) is None:
+            return
+        self._current_row = row
+        # 网格与大图从此指着同一格（与 ``_show_next_after_trash`` 那条约定一致）。
+        self._grid.select_row(row, ensure_visible=False)
+        if self._stack.currentWidget() is not self._detail_page:
+            self._stack.setCurrentWidget(self._detail_page)
+            self._detail.setFocus()
+            self._update_action_states()
+        self._load_detail(row)
 
     def _apply_restore(self, result: UndoResult) -> None:
         """把撤销删除取回来的条目放回网格，然后按当前分组 / 排序重排一次。

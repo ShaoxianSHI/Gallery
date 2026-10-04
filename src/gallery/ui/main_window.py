@@ -250,6 +250,11 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         #: 切库时必须取消（见 ``_teardown_library``），否则它会拿旧库的记录去问新库
         #: 「下一次 ⌘Z 撤什么」，于是记录明明记了、界面上却撤不掉。
         self._write_job: int | None = None
+        #: **在大图页上删掉的那一张**（路径；``None`` = 没删过，或已经取回来了）。
+        #: ⌘Z 之后要跳回它（见 ``write_ops._jump_back_to_restored``）：删掉一张之后界面
+        #: 接着看下一张，撤回来时人正站在另一张上，而整层重排还会把刚取回来的那张挪出
+        #: 视野。**只对紧接着的那一次撤销有效**，用过即清（由 ``undo_last_write`` 清）。
+        self._detail_trashed: Path | None = None
         #: 分组 / 排序与元数据面板共用的地点反查器（按坐标），首次用时才加载城市数据。
         self._place_resolver: LazyPlaceResolver | None = None
         #: 打开库时那一遍「全库解析地点」的任务（ADR 0010）。

@@ -287,6 +287,127 @@ def test_thumbnail_cache_survives_so_undo_is_instant(
         window.close()
 
 
+# ---- 大图页上删掉之后按 ⌘Z --------------------------------------------------
+
+
+def _open_detail_of(window: MainWindow, photo: Path) -> int:
+    """选中那张照片并打开大图，返回它的行号。"""
+    row = row_of(window, photo)
+    select_rows(window, row)
+    window.open_current_entry()
+    qt_app_process(window)
+    assert window._stack.currentWidget() is window._detail_page, "没能进大图页"
+    return row
+
+
+def _showing(window: MainWindow) -> str:
+    """大图页上正显示的是哪一张（``""`` = 这一层一张照片都没有）。"""
+    photo = window._model.photo_at(window._current_row)
+    return photo.name if photo is not None else ""
+
+
+def _window_title(window: MainWindow) -> str:
+    """窗口顶边那一行现在显示的名字（大图页是正在看的那张照片的文件名，ADR 0025）。
+
+    **断言它是因为它是「画面上那一格真的换了」的凭据**：``_current_row`` 指对了不等于
+    画面换了 —— 撤销会让整层重排，行号常常**碰巧**又落回刚取回来的那一张，而大图区
+    里仍然是上一张的像素、标题也还写着上一张的名字。真正换画面时 ``_load_detail``
+    会刷新标题栏。
+    """
+    return window._title_bar.current_text if window._owns_title_bar else window.windowTitle()
+
+
+def test_undo_brings_the_deleted_photo_back_into_view(
+    qt_app: QApplication, tmp_path: Path, fake_trash: Path, make_photo: Callable[..., Path]
+) -> None:
+    """**大图页上删掉一张之后按 ⌘Z，要跳回刚删掉的那一张**（ADR 0021）。
+
+    删掉之后界面会接着看下一张（看照片时最顺手的动作就是「这张不要，下一张」），于是
+    撤回来时人正站在**另一张**上；而撤销会整层重排，刚取回来的那张完全可能落在视野
+    之外。看照片时按 ⌘Z，期望是看回刚才那张。
+    """
+    for name in ("a", "b", "c"):
+        make_photo(f"{name}.jpg")
+    window = open_window(qt_app, tmp_path)
+    try:
+        doomed = tmp_path / "b.jpg"
+        _open_detail_of(window, doomed)
+        assert _showing(window) == "b.jpg"
+
+        window.trash_selected()
+        qt_app_process(window)
+        assert _showing(window) == "c.jpg", "删掉一张之后接着看下一张"
+
+        window.undo_last_write()
+        qt_app_process(window)
+
+        assert doomed.exists(), "照片确实从废纸篓取回来了"
+        assert window._stack.currentWidget() is window._detail_page, "撤销不该把人踢回网格"
+        assert _showing(window) == "b.jpg", "⌘Z 之后要回到刚删掉的那一张"
+        assert _window_title(window) == "b.jpg", (
+            "画面上换的必须是刚删掉的那一张 —— 整层重排会让行号碰巧指对，标题不会骗人"
+        )
+        assert window._grid.current_row() == window._current_row, (
+            "网格与大图从此指着同一格（见 _show_next_after_trash 那条约定）"
+        )
+    finally:
+        window.close()
+
+
+def test_undo_reopens_the_photo_when_the_level_emptied_out(
+    qt_app: QApplication, tmp_path: Path, fake_trash: Path, make_photo: Callable[..., Path]
+) -> None:
+    """删掉这一层最后一张时界面退回了网格 —— 撤销要把它**重新打开**。
+
+    删除是在大图页上做的：取回来之后还把人留在网格上，等于让他自己再找一次刚删掉的那张。
+    """
+    only = make_photo("只剩这张.jpg")
+    window = open_window(qt_app, tmp_path)
+    try:
+        _open_detail_of(window, only)
+
+        window.trash_selected()
+        qt_app_process(window)
+        assert window._stack.currentWidget() is window._grid_page, "这一层空了，网格放得出它"
+        assert window._model.rowCount() == 0
+
+        window.undo_last_write()
+        qt_app_process(window)
+
+        assert only.exists()
+        assert window._stack.currentWidget() is window._detail_page, "撤销要放回大图页"
+        assert _showing(window) == "只剩这张.jpg"
+        assert _window_title(window) == "只剩这张.jpg"
+    finally:
+        window.close()
+
+
+def test_undo_from_the_grid_stays_on_the_grid(
+    qt_app: QApplication, tmp_path: Path, fake_trash: Path, make_photo: Callable[..., Path]
+) -> None:
+    """网格页上删的，撤销之后**留在网格**上 —— ⌘Z 不该把人甩进大图页。
+
+    这一条与上面两条是一对：「跳回去」只在删除确实发生在大图页上时才做。
+    """
+    doomed = make_photo("删掉.jpg")
+    keep = make_photo("留下.jpg")
+    window = open_window(qt_app, tmp_path)
+    try:
+        select_rows(window, row_of(window, doomed))
+        window.trash_selected()
+        qt_app_process(window)
+        assert window._stack.currentWidget() is window._grid_page
+
+        window.undo_last_write()
+        qt_app_process(window)
+
+        assert doomed.exists()
+        assert window._stack.currentWidget() is window._grid_page, "网格上按 ⌘Z 该留在网格"
+        assert row_of(window, keep) >= 0
+    finally:
+        window.close()
+
+
 def test_delete_is_refused_while_renaming(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
 ) -> None:
