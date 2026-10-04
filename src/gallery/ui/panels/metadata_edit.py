@@ -107,7 +107,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gallery.core.metadata.capture_time import CAPTURE_TIME_HINT, CaptureTimeEdit
+from gallery.core.metadata.capture_time import CaptureTimeEdit
 from gallery.core.metadata.exif import normalize_capture_time, normalize_offset
 from gallery.core.metadata.metadata_edit import MetadataEdit, MetadataState
 from gallery.core.metadata.place_edit import PlaceEdit
@@ -150,7 +150,6 @@ def dialog_style(app_theme: AppTheme) -> str:
     QDialog {{ background: {rgba(app_theme.background)}; }}
     QLabel {{ color: {rgba(app_theme.text_at(0.92))}; font-size: 12px; }}
     QLabel#metadataEditTitle {{ font-size: 13px; font-weight: 600; }}
-    QLabel#metadataEditHint {{ color: {rgba(app_theme.text_at(0.58))}; font-size: 11px; }}
     QLabel#metadataEditError {{ color: {rgba(app_theme.error)}; font-size: 11px; }}
     QLineEdit, QComboBox {{
         color: {rgba(app_theme.text_at(0.92))};
@@ -228,16 +227,13 @@ class MetadataEditDialog(QDialog):
         self._timer.timeout.connect(self._refresh)
 
         # ---- 拍摄时间（ADR 0032）：最上面两栏 ------------------------------
+        # **下面没有小字提示**：框上的标签已经写着「拍摄时间」「时区」，而这一栏填什么
+        # 本来就是访达「显示简介」那一种用法 —— 用户改自己的照片，不需要被先教育一遍。
+        # 墙上时间不是 UTC 这件事由校验说话：填了 `2024-05-16 20:52:02 +09:00` 它照样收。
         self._taken_at = QLineEdit(_display_time(state.capture.taken_at))
         form.addRow("拍摄时间", self._taken_at)
         self._offset = QLineEdit(state.capture.offset or "")
         form.addRow("时区", self._offset)
-        # **一行小字说清三件事**：墙上时间不是 UTC、留空是不记、改了不动文件名。
-        # 不说第三件的话，用户改完时间看到文件名还是旧的，会以为程序改了一半。
-        hint = QLabel(CAPTURE_TIME_HINT)
-        hint.setObjectName("metadataEditHint")
-        hint.setWordWrap(True)
-        form.addRow(hint)
 
         # **不留占位文字**：左边那一列标签已经写着「国家」「省 / 州」「城市」「纬度」「经度」，
         # 空框里再浮一遍同样的字只是把它说两遍。

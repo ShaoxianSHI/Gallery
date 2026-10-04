@@ -912,19 +912,32 @@ def test_the_error_line_keeps_its_room_even_while_it_is_empty(qt_app: QApplicati
     assert dialog._error.height() >= 2 * dialog.fontMetrics().height()
 
 
-def test_there_is_a_hint_under_the_capture_time(qt_app: QApplication) -> None:
-    """拍摄时间下面**有一行小字**（位置那一段没有 —— 那里没有说不清的东西）。
+def test_the_capture_time_says_nothing_under_it(qt_app: QApplication) -> None:
+    """拍摄时间下面**没有说明行**。
 
-    它说清三件事：**墙上时间不是 UTC**、**留空是不记**、**改时间不动文件名**。第三件
-    不说的话，用户改完看到文件名还是旧的，会以为程序改了一半（ADR 0032）。
+    左边那一列已经写着「拍摄时间」「时区」，而这一栏填什么本来就是访达「显示简介」那一
+    种用法 —— 用户改自己的照片，不需要先被教育一遍。
     """
     dialog = _dialog(None, PlaceState(city="苏州"))
 
-    hints = dialog.findChildren(QLabel, "metadataEditHint")
+    assert not dialog.findChildren(QLabel, "metadataEditHint")
 
-    assert len(hints) == 1
-    assert "不是 UTC" in hints[0].text()
-    assert "不会改文件名" in hints[0].text()
+
+def test_the_time_boxes_sit_above_the_place_boxes(qt_app: QApplication) -> None:
+    """拍摄时间与时区**在最上面两行**，位置那五栏在它们下面。
+
+    顺序与元数据面板里的分组顺序一致，而对话框是那个面板的编辑器 —— 两处反过来会让人
+    在两个界面里找同一栏。
+    """
+    dialog = _dialog(None, PlaceState(city="苏州"), capture=CaptureTime("2024:05:16 20:52:02"))
+    dialog.show()
+    QApplication.processEvents()
+
+    order = (dialog._taken_at, dialog._offset, dialog._country, dialog._region, dialog._city)
+    ys = [field.y() for field in order]
+
+    assert ys == sorted(ys)
+    assert len(set(ys)) == len(ys)  # 五个框各占一行，没有并排
 
 
 def test_copy_then_paste_moves_the_place_to_another_photo(qt_app: QApplication) -> None:

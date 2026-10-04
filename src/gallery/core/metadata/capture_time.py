@@ -48,12 +48,6 @@ from gallery.core.errors import MetadataWriteError
 from gallery.core.metadata.exif import normalize_capture_time, normalize_offset
 from gallery.core.metadata.writeback import CAPTURE_TIME_TAGS, Assignment
 
-#: 输入框里那行小字。**说三件事**：墙上时间不是 UTC、留空是不写、改了不动文件名。
-CAPTURE_TIME_HINT = (
-    "按拍照当地的钟点填写（EXIF 记的是墙上时间，不是 UTC）；"
-    "留空表示照片里不记这一项。改时间不会改文件名。"
-)
-
 #: 与 :data:`writeback.CAPTURE_TIME_TAGS` **同一份**（那边才是可写字段的唯一来源），
 #: 这里只是给两个下标起个名字 —— 免得在赋值处数下标，数错了写的就是另一个字段。
 _TAKEN_AT_TAG, _OFFSET_TAG = CAPTURE_TIME_TAGS
@@ -132,7 +126,6 @@ def _offset(text: str | None) -> str | None:
 
 
 __all__ = [
-    "CAPTURE_TIME_HINT",
     "CaptureTime",
     "CaptureTimeEdit",
     "plan_capture_time_edit",

@@ -34,7 +34,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from gallery.core.metadata.capture_time import (
-    CAPTURE_TIME_HINT,
     CaptureTime,
     CaptureTimeEdit,
     plan_capture_time_edit,
@@ -45,9 +44,6 @@ from gallery.core.metadata.writeback import CAPTURE_TIME_TAGS, Assignment
 
 if TYPE_CHECKING:
     from gallery.core.places.resolver import PlaceResolver
-
-#: 给界面用的那行小字。放在这一层导出是为了让对话框不必认得拍摄时间那些标签。
-CAPTURE_TIME_ADVICE: str = CAPTURE_TIME_HINT
 
 #: 计划里「这次动的是不是拍摄时间」用的那组标签。
 _CAPTURE_TAG_SET = frozenset(CAPTURE_TIME_TAGS)
@@ -127,7 +123,6 @@ def plan_metadata_edit(
 
 
 __all__ = [
-    "CAPTURE_TIME_ADVICE",
     "MetadataEdit",
     "MetadataPlan",
     "MetadataState",
