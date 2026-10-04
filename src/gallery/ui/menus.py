@@ -35,7 +35,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
@@ -491,6 +491,9 @@ def build_album_picker(title: str, albums: Sequence[tuple[str, Path]]) -> QMenu:
     **用完即弃**：调用方每次拼菜单都现建一份，所以用户在访达里新建的相册立刻可选，
     菜单里也不会留着上一次的旧清单。
 
+    清单要花一整趟目录树来列，所以调用方多半会走 :func:`build_lazy_album_picker`
+    （清单挪到用户**真的展开这个子菜单**时再列）—— 那才是右键时的常态。
+
     :param albums: ``(标签, 路径)`` 一一对应，已排好序。空清单请不要调它 ——
         空子菜单点开是个空框，``MainWindow`` 会在那种情况下干脆不建这条菜单。
     """
@@ -500,6 +503,42 @@ def build_album_picker(title: str, albums: Sequence[tuple[str, Path]]) -> QMenu:
         action = menu.addAction(label)
         action.setData(path)
     return menu
+
+
+def build_lazy_album_picker(
+    title: str, supplier: Callable[[], Sequence[tuple[str, Path]]]
+) -> QMenu:
+    """同一个子菜单，但**清单挪到用户真的展开它的时候才列**。
+
+    **为什么值得单开一个。** 列清单是递归走一遍整棵目录树（``iter_albums`` 的
+    ``scandir`` 加上每个相册一次相对路径换算）：3000 个相册约 120 ms，全在**主线程**上，
+    而且是在「用户在照片上右键一下」的那一刻付的 —— 而他未必会去看那两个子菜单里有什么。
+    云盘上更慢，每一层都是一次网络往返。
+
+    **新鲜度一点没丢**：``aboutToShow`` 每次展开都重新问一次，所以用户在访达里新建的
+    相册下一次展开照样能选到（ADR 0019 决策 1 要的就是这个）。倒过来说，
+    「每次弹出时现列」那句承诺也保住了 —— 它说的是**每次展开**现列，不是
+    **构造菜单时**现列。
+
+    展开时一份相册都没有就把自己收起来（``menu.hide()``）：与 :func:`build_album_picker`
+    那条「空清单干脆不建这条菜单」是同一个结果，只是这一刻才知道而已。
+    """
+    menu = QMenu(title)
+    menu.setToolTipsVisible(True)
+    menu.aboutToShow.connect(lambda: _fill_album_picker(menu, supplier))
+    return menu
+
+
+def _fill_album_picker(menu: QMenu, supplier: Callable[[], Sequence[tuple[str, Path]]]) -> None:
+    """展开那一刻把清单填进去（先清掉上一次填的，免得重复）。"""
+    menu.clear()
+    albums = supplier()
+    if not albums:
+        menu.hide()  # 一份相册都没有：空框点开只会让人以为软件坏了
+        return
+    for label, path in albums:
+        action = menu.addAction(label)
+        action.setData(path)
 
 
 def _submenu(title: str, actions: tuple[QAction, ...], *, split_before: int = 0) -> QMenu:
@@ -523,6 +562,7 @@ __all__ = [
     "build_background_menu",
     "build_detail_menu",
     "build_group_menu",
+    "build_lazy_album_picker",
     "build_menu",
     "build_photo_menu",
 ]

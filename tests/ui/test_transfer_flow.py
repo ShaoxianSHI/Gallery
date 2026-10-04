@@ -138,11 +138,18 @@ def _select_rows(window: MainWindow, *rows: int) -> None:
 
 
 def _submenu(menu: QMenu, title: str) -> QMenu:
-    """从菜单里取出标题为 ``title`` 的那个子菜单。"""
+    """从菜单里取出标题为 ``title`` 的那个子菜单，**并按一下展开它**。
+
+    展开是必要的一步，不是多余的：相册清单是在 ``aboutToShow`` 里现列的
+    （见 :func:`gallery.ui.menus.build_lazy_album_picker`）—— 右键的那一刻只建出两个
+    空壳子菜单，用户真的把鼠标移上去才去列清单。这个助手发的就是那一下，于是
+    「用户看到什么」与菜单构造那一刻的状态不再是两件事。
+    """
     for action in menu.actions():
         if action.text() == title:
             found = action.menu()
             assert found is not None
+            found.aboutToShow.emit()
             return found
     raise AssertionError(f"菜单里没有「{title}」，实际有：{_texts(menu)}")
 

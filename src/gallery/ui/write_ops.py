@@ -49,7 +49,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from functools import partial
 from pathlib import Path
 
@@ -599,23 +599,28 @@ class WriteOpsMixin:
         if isinstance(target, Path):
             self._transfer_selected(target, move=True)
 
-    def _album_picker(self, title: str, albums: Sequence[tuple[str, Path]]) -> QMenu | None:
-        """拿现成的相册清单拼一个子菜单；**清单为空就返回 ``None``**。
+    def _album_picker(
+        self, title: str, supplier: Callable[[], Sequence[tuple[str, Path]]]
+    ) -> QMenu:
+        """拿一个「到展开那一刻才现列」的相册子菜单（ADR 0019）。
 
-        清单由调用方**每次弹出时现列**（:meth:`_album_targets`）：用户在访达里新建一个
-        相册，下一次右键就能选到，不必重开软件。列全库（不是只列当前这一层）是用户定的
-        取向 —— 见 ADR 0019 决策 1。
+        **传的是 supplier 而不是清单本身**：列清单要递归走一遍整棵目录树，而那是
+        主线程上的 120 ms（3000 个相册），且付在「右键一下」的那一刻 —— 用户未必会看
+        那两个子菜单。于是清单挪到 ``aboutToShow``，也就是**用户真的展开它**的时候
+        （见 :func:`gallery.ui.menus.build_lazy_album_picker`）。
 
-        清单是**参数而不是在这里现列**，是因为一次右键要拼两个这样的子菜单：
-        现列就是走两遍整棵目录树。列一遍、两个子菜单共用，那才是 ADR 0019 说的
-        「每次弹出时现列」。
+        新鲜度一点没丢：每次展开都重新问一次，用户在访达里新建的相册下一次展开就能选到，
+        不必重开软件 —— ADR 0019 决策 1 要的就是这个。列全库（不是只列当前这一层）
+        也是用户定的取向。
+
+        **两个子菜单各自问一次**，代价是展开其中一个时要把树走两遍（另一个只在自己
+        展开时才走）。这一遍换掉了「右键一下就付一次」，是划算的；而真要连这一遍也省掉，
+        就得给清单加缓存 —— 那会让「访达里新建的相册立刻可选」这条退化成「有时看不到」。
 
         目标相册里若恰好有一张正要移动的照片，那次操作会被如实记成「它已经在那个相册
         里了」。与粘贴同一条规矩（ADR 0018 决策 2），因此不必在这里把它藏起来。
         """
-        if not albums:
-            return None
-        return menus.build_album_picker(title, albums)
+        return menus.build_lazy_album_picker(title, supplier)
 
     def _album_targets(self) -> tuple[tuple[str, Path], ...]:
         """递归列出全库相册，标签是相对路径（``2025/苏州``）。
