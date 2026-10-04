@@ -163,7 +163,7 @@ class WeekView(LevelView):
         """
         self._selected_cell = (day, hour)
         self.set_selected(day)
-        self.update()  # 同一天换一格时 `set_selected` 不重画，这里补上
+        self.repaint_content()  # 同一天换一格时 `set_selected` 不重画，这里补上
 
     def selected_cell(self) -> tuple[datetime.date, int] | None:
         """用户点中的那一格（没有就是 ``None``）。"""
@@ -177,7 +177,7 @@ class WeekView(LevelView):
         # 换了一天（或收掉选中）之后，那一格的高亮不再属于屏幕上任何东西 —— 跟着走。
         if self._selected_cell is not None and self._selected_cell[0] != day:
             self._selected_cell = None
-            self.update()
+            self.repaint_content()
         super().set_selected(day)
         self._header.update()
         self._grid.update()
@@ -290,6 +290,15 @@ class WeekView(LevelView):
                 continue
             refs.append(photos[0])
         return refs
+
+    def repaint_content(self) -> None:
+        """重画**时间轴与表头**——格子是它们画的，不是 ``WeekView`` 自己画的。
+
+        ``WeekView.update()`` 只把自己那一块标脏，画着照片的是里面那个 ``_TimeGrid``。
+        缩略图一张一张回来时走的就是这一次重画：漏了它，图在手上而屏幕上是占位灰。
+        """
+        self._grid.update()
+        self._header.update()
 
     def thumbnail_edge(self) -> int:
         return THUMB_EDGE

@@ -212,3 +212,60 @@ def test_a_relayout_inside_the_week_reports_the_window_again(
     grid.resize(max(1, grid.width() - 60), grid.height())
 
     assert wait_for(lambda: bool(reports)), "内部几何变了，却没有再报一次窗口"
+
+
+def test_a_delivered_thumbnail_asks_the_timeline_to_repaint(
+    qt_app: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """一张缩略图到了，**要让画着格子的那个控件重画** —— 周视图里是时间轴。
+
+    这一条钉的是一个真出现过的症状：图明明已经在仓库里（``photo()`` 不是 ``None``），
+    屏幕上却一直是占位灰，而且**等多久都不变**，一滚动或一换层就出来。
+    原因是那次重画问错了对象 —— ``CalendarPage`` 收到图之后重画的是**这一层**
+    （``WeekView.update()``），而格子是里面那个 ``_TimeGrid`` 画的；月 / 年视图画在
+    自己身上，所以只有周视图犯病（滚动与换层会强制重画那一块，于是「一滑动就出来」）。
+
+    （测试环境里 ``update()`` 本来就不会产生 paint 事件 —— 离屏平台不会 expose 窗口。
+    所以这里钉的是**契约**：画格子的那个控件必须被标脏。）
+    """
+    view = WeekView(ThumbStore())
+    view.resize(900, 600)
+    view.show()
+    qt_app.processEvents()
+    view.set_anchor(ANCHOR)
+    qt_app.processEvents()
+
+    asked: list[str] = []
+    monkeypatch.setattr(type(view._grid), "update", lambda self, *a: asked.append("grid"))
+    monkeypatch.setattr(type(view), "update", lambda self, *a: asked.append("view"))
+
+    view.repaint_content()
+
+    assert "grid" in asked, "没有让时间轴重画 —— 图在手上，屏幕上还是占位灰"
+
+
+def test_the_page_repaints_whatever_draws_the_cells(
+    qt_app: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """页面收到缩略图之后那次重画，走的必须是 :meth:`LevelView.repaint_content`。
+
+    （同上：测试环境看不见 paint 事件，所以钉的是「谁被要求重画」。）
+    """
+    from gallery.ui.calendar.page import CalendarPage
+
+    page = CalendarPage()
+    page.set_today(ANCHOR)
+    page.go_today()
+    page.set_level("week")
+    page.resize(900, 600)
+    page.show()
+    qt_app.processEvents()
+
+    asked: list[str] = []
+    view = page.current_view()
+    monkeypatch.setattr(type(view), "repaint_content", lambda self: asked.append("content"))
+    page._repaint_current_view()
+
+    assert asked == ["content"], "收到图之后没有让「画格子的那个控件」重画"

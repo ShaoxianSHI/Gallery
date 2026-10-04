@@ -104,7 +104,7 @@ class LevelView(QWidget):
         """换一整库的分桶。**不重置选中**：换库时外面会自己把选中清掉。"""
         self._by_day = by_day
         self._by_hour = by_hour
-        self.update()
+        self.repaint_content()
         self.window_changed.emit()
 
     @property
@@ -120,7 +120,7 @@ class LevelView(QWidget):
         """系统换浅色 / 深色：重算配色并重画。"""
         self._colors = CalendarColors.derive(theme)
         self._background = QColor(theme.background)
-        self.update()
+        self.repaint_content()
 
     # ---- 位置 -------------------------------------------------------------
     def anchor(self) -> datetime.date:
@@ -147,7 +147,7 @@ class LevelView(QWidget):
 
     def set_anchor(self, anchor: datetime.date) -> None:
         self._anchor = anchor
-        self.update()
+        self.repaint_content()
         self.window_changed.emit()
 
     def today(self) -> datetime.date:
@@ -156,7 +156,7 @@ class LevelView(QWidget):
 
     def set_today(self, today: datetime.date) -> None:
         self._today = today
-        self.update()
+        self.repaint_content()
 
     def set_selected(self, day: datetime.date | None) -> None:
         """选中那一天（``None`` = 不选中任何一天）。
@@ -166,7 +166,7 @@ class LevelView(QWidget):
         :meth:`~gallery.ui.calendar.page.CalendarPage.set_selected`）。
         """
         self._selected = day
-        self.update()
+        self.repaint_content()
         self.selection_changed.emit(self.selected_refs())
 
     def clear_selection(self) -> None:
@@ -259,6 +259,17 @@ class LevelView(QWidget):
         self._geometry_notify.start()
 
     # ---- 绘制 -------------------------------------------------------------
+    def repaint_content(self) -> None:
+        """让**画着内容的那个控件**重画一次。
+
+        **不是每一层都画在自己身上**：月 / 年视图把格子画在自己身上（``self.update()``
+        就够），而周视图画在时间轴那一个子控件上（见 :meth:`WeekView.repaint_content`）。
+        统一走这一句，外面（``CalendarPage`` 收到缩略图之后那次重画）才不会漏掉周视图 ——
+        漏掉的表现是「图明明已经在手上，屏幕上还是占位灰，**等多久都不变**，一滚动
+        或一换层就出来」（滚动与换层会强制重画那一块）。
+        """
+        self.update()
+
     def begin(self) -> QPainter:
         return begin_painter(self, self._background)
 

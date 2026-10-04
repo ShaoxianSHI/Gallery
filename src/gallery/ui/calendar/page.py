@@ -155,7 +155,12 @@ class CalendarPage(QWidget):
         self._repaint_timer.start()
 
     def _repaint_current_view(self) -> None:
-        self.current_view().update()
+        """一张缩略图到了：**让画着格子的那个控件**重画（不一定是这一层自己）。
+
+        周视图的格子画在时间轴上，不是画在 ``WeekView`` 上（见
+        :meth:`LevelView.repaint_content`）。
+        """
+        self.current_view().repaint_content()
 
     def _forget_reported(self) -> None:
         self._reported = []
