@@ -901,9 +901,21 @@ def test_the_plain_menu_is_sized_like_the_search_popup(qt_app: QApplication) -> 
     style = menu_style.popup_menu_style(QMenu())
 
     assert f"font-size: {menu_style.POPUP_FONT_PX}px" in style
-    assert f"padding: 3px {menu_style.POPUP_LIST_ITEM_PAD}px" in style
     assert f"border-radius: {menu_style.MENU_HIGHLIGHT_RADIUS}px" in style
     assert f"border: {menu_style.POPUP_LIST_BORDER}px solid" in style
+    # 左边那一段是**图标内缩**、不是列表那一档（列表左边是 `#`，菜单左边是图标）——
+    # 写成 `3px 8px` 两段式的话右边那个数就没人写了，而它正是「图标别贴边」那一条。
+    assert f"padding: 3px {menu_style.POPUP_LIST_ITEM_PAD}px 3px" in style
+    assert f"{menu_style.POPUP_MENU_ICON_INSET}px;" in style
+
+
+def test_the_plain_menu_keeps_its_icon_off_the_highlight_edge(qt_app: QApplication) -> None:
+    """图标到高亮带左沿的距离**比候选列表那一档宽**。
+
+    列表里左边是一个 ``#`` 字符，它要和输入框里那一个对齐（那是硬要求）；菜单里左边
+    是一个十几点的彩色图标，照搬 8 点的话高亮带一出来图标就压在那条边上。
+    """
+    assert menu_style.POPUP_MENU_ICON_INSET > menu_style.POPUP_LIST_ITEM_PAD
 
 
 def test_the_plain_menu_spells_out_its_text_colour(qt_app: QApplication) -> None:

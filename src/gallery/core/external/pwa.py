@@ -75,17 +75,35 @@ def find_chrome_pwa(host: str, *, search_dirs: Sequence[Path] = DEFAULT_SEARCH_D
     return _find(host, tuple(search_dirs))
 
 
+#: 访达自己那个图标。**从系统里读，仓库里不放** —— 与 PWA 那个 ``app.icns``
+#: 同一条规矩（ADR 0034 决策 6）：别人的图标不随包分发，但系统里已经有一份现成的，
+#: 用它永远比临摹得像。
+FINDER_ICON = Path("/System/Library/CoreServices/Finder.app/Contents/Resources/Finder.icns")
+
+
 def app_icon(app: Path) -> Path | None:
     """应用包自带图标在哪儿，没有就别画那个图标（而不是画一个错的）。"""
     icon = app / ICON_RELATIVE
     return icon if icon.is_file() else None
 
 
+def finder_icon() -> Path | None:
+    """访达图标在哪儿；取不到（非 macOS）就 ``None``，界面那一层退回自画的轮廓。
+
+    **路径写死是有意的**：访达的位置在 macOS 上是一个长期稳定的约定，而为了它去起
+    ``NSWorkspace`` 要把 AppKit 拖进来 —— 那是一条只在 macOS 上成立的依赖，换来的
+    只是「多一层封装」。
+    """
+    return FINDER_ICON if FINDER_ICON.is_file() else None
+
+
 __all__ = [
     "APPS_DIR_NAME",
     "DEFAULT_SEARCH_DIRS",
+    "FINDER_ICON",
     "ICON_RELATIVE",
     "SHORTCUT_URL_KEY",
     "app_icon",
     "find_chrome_pwa",
+    "finder_icon",
 ]

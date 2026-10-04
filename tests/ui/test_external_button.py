@@ -18,8 +18,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QPoint, QRect  # noqa: E402
-from PySide6.QtGui import QIcon  # noqa: E402
+from PySide6.QtCore import (  # noqa: E402
+    QPoint,
+    QRect,
+    QSize,  # noqa: E402
+)
+from PySide6.QtGui import QColor, QIcon, QImage  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,  # noqa: E402
     QMenu,
@@ -40,6 +44,7 @@ from gallery.ui.external_button import (  # noqa: E402
     ExternalEntry,
     button_rect,
     calendar_icon,
+    folder_icon,
     menu_origin,
 )
 from gallery.ui.main_window import MainWindow  # noqa: E402
@@ -429,3 +434,50 @@ def test_the_menu_is_narrower_than_the_button_it_hangs_off() -> None:
     placed = menu_origin(anchor, MENU_EDGE, 300)
 
     assert placed.x() < anchor.x()
+
+
+def test_folder_icon_uses_the_real_one_when_the_system_has_it(
+    qt_app: QApplication, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """系统里有访达图标就**读它那一份**，不是自己画的那个文件夹轮廓。
+
+    **判据是画出来的颜色**：那份图标整张涂成 `#ff0000`，自画的轮廓是主题那几个灰阶。
+    只断言「不是 None」的话，退回自画那一支照样绿 —— 那正是这条要拦的。
+    （`QIcon` 按内容认格式，所以往一个 `.icns` 名字里写 PNG 是能读出来的。）
+    """
+    import gallery.core.external as external
+
+    art = QImage(16, 16, QImage.Format.Format_ARGB32)
+    art.fill(QColor(255, 0, 0))
+    real = tmp_path / "Finder.icns"
+    assert art.save(str(real))
+    monkeypatch.setattr(external, "finder_icon", lambda: real)
+
+    drawn = folder_icon().pixmap(QSize(ICON_EDGE, ICON_EDGE)).toImage()
+    center = drawn.pixelColor(drawn.width() // 2, drawn.height() // 2)
+
+    assert (center.red(), center.green(), center.blue()) == (255, 0, 0), (
+        "画出来的不是那个图标文件 —— 退回自画那一支了"
+    )
+
+
+def test_folder_icon_falls_back_to_a_drawn_one(
+    qt_app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """取不到系统那一份（非 macOS）就退回自画的轮廓，**而不是一个空图标**。"""
+    import gallery.core.external as external
+
+    monkeypatch.setattr(external, "finder_icon", lambda: None)
+
+    icon = folder_icon()
+    assert not icon.isNull()
+
+
+def test_both_halves_are_wide_enough(qt_app: QApplication) -> None:
+    """两半都要**放得下里面的东西**再留出余量。
+
+    用户提过一次「两个按钮都稍微宽一点」：左半要容得下一个十几点的图标，右半要容得下
+    那个 V —— 卡着图标宽度的话，两样东西都像贴在边上。
+    """
+    assert BUTTON_WIDTH - MENU_EDGE >= ICON_EDGE + 8, "左半给图标留的余量不够"
+    assert MENU_EDGE >= 16, "右半放那个箭头太挤"

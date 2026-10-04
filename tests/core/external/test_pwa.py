@@ -5,6 +5,9 @@ from __future__ import annotations
 import plistlib
 from pathlib import Path
 
+import pytest
+
+from gallery.core.external import pwa
 from gallery.core.external.gcal import HOST
 from gallery.core.external.pwa import ICON_RELATIVE, app_icon, find_chrome_pwa
 
@@ -91,3 +94,25 @@ def test_icon_path_is_the_bundle_one(tmp_path: Path) -> None:
     without = make_app(apps, "没图标", icon=False)
     assert app_icon(with_icon) == with_icon / ICON_RELATIVE
     assert app_icon(without) is None
+
+
+# ---- 访达那个图标：从系统里读，读不到就说读不到 -------------------------
+
+
+def test_finder_icon_is_missing_when_the_system_has_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**非 macOS（或者那个文件被挪走）时返回 ``None``**，而不是一个不存在的路径 ——
+    界面那一层靠这个 ``None`` 决定要不要退回自画的轮廓。"""
+    monkeypatch.setattr(pwa, "FINDER_ICON", tmp_path / "没有这个文件.icns")
+    assert pwa.finder_icon() is None
+
+
+def test_finder_icon_points_at_the_system_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """系统里有就原样给出来 —— **读的是系统那一份，仓库里不放**（ADR 0034 决策 6）。"""
+    fake = tmp_path / "Finder.icns"
+    fake.write_bytes(b"")
+    monkeypatch.setattr(pwa, "FINDER_ICON", fake)
+    assert pwa.finder_icon() == fake

@@ -37,7 +37,7 @@ from gallery.core.external.launch import (
     open_in_app,
     open_in_browser,
 )
-from gallery.core.external.pwa import app_icon, find_chrome_pwa
+from gallery.core.external.pwa import app_icon, find_chrome_pwa, finder_icon
 from gallery.core.external.runner import CommandResult, Runner, subprocess_runner
 
 __all__ = [
@@ -53,6 +53,7 @@ __all__ = [
     "deep_link",
     "find_chrome_pwa",
     "find_pwa_window",
+    "finder_icon",
     "is_pwa_window",
     "list_windows",
     "open_google_calendar",

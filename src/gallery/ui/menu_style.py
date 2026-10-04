@@ -74,6 +74,13 @@ POPUP_LIST_INSET = POPUP_LIST_BORDER + POPUP_LIST_PADDING
 #: ``gallery.ui.search_field.SearchField._item_padding``）。
 POPUP_LIST_ITEM_PAD = 8
 
+#: 朴素下拉菜单里**图标**离高亮带左沿多远（点）。
+#:
+#: 比候选列表那一档（:data:`POPUP_LIST_ITEM_PAD` = 8）宽一点：列表里左边是一个 ``#``
+#: 字符，它得和输入框里那一个对齐，那是硬要求；菜单里左边是一个十几点的彩色图标，
+#: 8 点太贴边 —— 高亮带一出来，图标几乎压在那条边上（视觉检查里用户指出来的）。
+POPUP_MENU_ICON_INSET = 11
+
 #: 弹出列表与弹出菜单的字号（点）。**只有这一处。** 搜索框的候选列表与标题条上那个
 #: 下拉菜单是两种控件、两条样式表，用户却在它们之间来回走 —— 字号各存一份的话，
 #: 早晚在一个主题下差一档，而那时没人说得清是哪一档。
@@ -615,7 +622,8 @@ def popup_menu_style(menu: QMenu) -> str:
         # 字色**必须自己写**：挂了样式表之后 Qt 不再按调色板给 item 上色，
         # 实测深色下调色板里明明白白是 ``#ffffff``，画出来却是 ``#000000``
         # （近黑底上等于看不见）。候选列表那份同样写死了 ``color``，是同一个坑。
-         + f"\nQMenu::item {{ padding: 3px {POPUP_LIST_ITEM_PAD}px;"
+         + f"\nQMenu::item {{ padding: 3px {POPUP_LIST_ITEM_PAD}px 3px"
+        f" {POPUP_MENU_ICON_INSET}px;"
         f" color: {rgba(text)}; border-radius: {MENU_HIGHLIGHT_RADIUS}px; }}"
     )
 
@@ -692,6 +700,7 @@ __all__ = [
     "POPUP_LIST_INSET",
     "POPUP_LIST_ITEM_PAD",
     "POPUP_LIST_PADDING",
+    "POPUP_MENU_ICON_INSET",
     "SHORTCUT_GAP",
     "SHORTCUT_LABEL_GAP",
     "SHORTCUT_RIGHT_INSET",

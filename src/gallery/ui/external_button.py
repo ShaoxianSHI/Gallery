@@ -47,7 +47,7 @@ from gallery.ui.rename_edit import field_background
 #: **不是正方形**：里面放的是「图标 + 下拉箭头」两样东西（与 DeepSeek Harness 那个
 #: 组件同一套画法）。原来那个 22×22 的正方形只画得出一个孤零零的箭头 —— 视觉检查
 #: 抓到的症状就是它：屏幕上是一个方框加一个三角。
-BUTTON_WIDTH = 36
+BUTTON_WIDTH = 44
 
 #: 圆角（点）。**不是正圆**（正圆就是 11，而它是 22 高的一半）—— 与 DeepSeek
 #: Harness 那个组件一样是「小圆角」，而弹出列表那一层用的是
@@ -64,7 +64,7 @@ BUTTON_GAP = 9
 
 #: 右半（箭头那半）的宽度（点）。**固定宽度**：它只放一个箭头，跟着图标一起长宽
 #: 就成了一个空荡荡的方块。
-MENU_EDGE = 15
+MENU_EDGE = 18
 
 #: 箭头那半个 V 的大小（点）。与 :data:`ICON_EDGE` 同一档，否则它在 22 高的一格里
 #: 显得像一个独立控件而不是「这一格里的一笔」。
@@ -130,11 +130,13 @@ def menu_origin(
 
 
 def drawn_icon(kind: str, size: int = ICON_EDGE) -> QIcon:
-    """画一个中性的轮廓（:data:`ICON_KINDS` 之一），跟着主题变色。
+    """画一个**中性的**轮廓（:data:`ICON_KINDS` 之一），跟着主题变色。
 
-    **不冒充任何一个应用**：访达那个「两半脸」的图标与日历应用的品牌色都是别人的
-    商标，仓库里不放、也不临摹（ADR 0034 决策 6）。一个中性的文件夹轮廓足够让人
-    认出「这是个文件夹」。
+    这是**取不到真图标时的那一条退路**（非 macOS、或者那个包被挪走了）。退路要中性：
+    访达那个「两半脸」与日历应用的品牌色都是别人的商标，**仓库里不放也不临摹**
+    （ADR 0034 决策 6）—— 画得像反而更像坏了，用户一眼就认得它们该长什么样。
+    取得到的时候走 :func:`calendar_icon` / :func:`folder_icon`，那条路读的是系统或
+    应用包里现成的那一份，与本函数无关。
     """
     accent = theme.current_theme().text
     if kind == ICON_FOLDER:
@@ -195,7 +197,19 @@ def calendar_icon(size: int = ICON_EDGE) -> QIcon:
 
 
 def folder_icon(size: int = ICON_EDGE) -> QIcon:
-    """访达那一项的图标：一个中性的文件夹轮廓（不临摹访达自己的那个）。"""
+    """访达那一项的图标：**用系统里那个真的**（与日历那一项同一个规矩）。
+
+    取不到（非 macOS、或者那个文件被挪走了）才退回自画的文件夹轮廓 —— 那时**宁可画
+    一个中性的**，也不画一个「像访达但不是」的：用户一眼就认得访达长什么样，画得像
+    反而更像坏了。
+    """
+    from gallery.core.external import finder_icon
+
+    path = finder_icon()
+    if path is not None:
+        icon = QIcon(str(path))
+        if not icon.isNull():
+            return icon
     return drawn_icon(ICON_FOLDER, size)
 
 
