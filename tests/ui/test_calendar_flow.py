@@ -74,10 +74,16 @@ def fake_facet_source(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(batch.ExifToolBatchSource, "read_many", read_many, raising=True)
 
 
-def _open(qt_app: QApplication, root: Path, session_base: Path) -> MainWindow:
-    """开一个停在日历上的窗口。"""
+def _open(
+    qt_app: QApplication, root: Path, session_base: Path, *, group_facet: str | None = None
+) -> MainWindow:
+    """开一个停在日历上的窗口。``group_facet`` 用来复现「用户开着分组进日历」。"""
     save_session(
-        SessionState(recent_roots=(root,), browse_mode=BROWSE_MODE_CALENDAR),
+        SessionState(
+            recent_roots=(root,),
+            browse_mode=BROWSE_MODE_CALENDAR,
+            group_facet=group_facet,
+        ),
         base=session_base,
     )
     window = MainWindow(session_base=session_base, initial_library=root)
@@ -219,6 +225,44 @@ def test_switching_browse_mode_forgets_the_way_back(
     qt_app.processEvents()
     assert window._drill_photos is None
     assert window._from_calendar is False
+
+
+def test_a_group_facet_on_does_not_empty_the_calendar(
+    qt_app: QApplication,
+    tmp_path: Path,
+    make_photo: Callable[..., Path],
+    fake_places: None,
+    fake_facet_source: None,
+) -> None:
+    """开着「按拍摄日期分组」切到日历，日历照样有照片。
+
+    这是真出过的：模型是网格与日历共用的，带着分组时它摆的是一张张**组卡片**，
+    而日历只从模型里挑 ``PhotoRef`` 挑到零张 —— 整层空着，界面上看不出任何原因。
+    分组是网格那一页的事；日历这一页不分组，模型里装整库照片。
+    """
+    root = tmp_path / "照片"
+    root.mkdir(parents=True, exist_ok=True)
+    for name in NAMES:
+        make_photo(name, directory=root)
+    prepare_library(root)
+    session_base = tmp_path / "会话"
+
+    window = _open(qt_app, root, session_base, group_facet="captured_day")
+    page = window._calendar_page
+    page.set_today(APRIL)
+    page.go_today()
+    assert wait_until(
+        qt_app,
+        lambda: window_is_idle(window) and page.photo_count() > 0,
+    ), "开着分组时日历仍然是空的"
+    # 模型里装的是照片，不是组卡片
+    assert window._model.rowCount() == len(NAMES)
+    assert page.photo_count() == 2  # 四月那两张
+
+    # 从日历退出去，网格上那个分组还���用户自己选的
+    window.show_grid()
+    assert wait_until(qt_app, lambda: window_is_idle(window))
+    assert window._model.group_count() > 0
 
 
 def test_the_week_view_sits_on_the_hour_of_its_first_photo(

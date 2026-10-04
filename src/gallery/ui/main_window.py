@@ -168,6 +168,22 @@ WATCH_ECHO_TTL = 2.0
 BANNER_STICKY_SECONDS = 2.0
 
 
+def _photos_on_this_level(entries: Iterable[GridEntry]) -> list[PhotoRef]:
+    """这一层上的照片。**组卡片里面的也算**。
+
+    分组是网格那一页的事，但模型是共用的：某一层恰好摆着组卡片时，只认
+    ``PhotoRef`` 会读到零张 —— 而零张意味着「日历整层空的」，界面上却看不出
+    任何原因。组卡片里正是照片，所以把它们摊平才对。
+    """
+    refs: list[PhotoRef] = []
+    for entry in entries:
+        if isinstance(entry, PhotoRef):
+            refs.append(entry)
+        elif isinstance(entry, GroupRef):
+            refs.extend(entry.photos)
+    return refs
+
+
 def _context_kind(entry: GridEntry) -> TargetKind:
     """这一格是照片、相册还是分组 —— 右键菜单据此拼不同的一份（ADR 0014）。"""
     if isinstance(entry, GroupRef):
@@ -1122,15 +1138,21 @@ class MainWindow(WriteOpsMixin, QMainWindow):
 
         **日历那一页要重排**：它的模型里装着整库，点开一张照片正是靠模型里的行
         进的大图页 —— 模型空着的话，从日历点照片会一点反应都没有。
+
+        **日历在这里喂，不在扫描收工时喂**（这一处曾经是 bug）：模型什么时候摆好
+        是不定的 —— 排序要读元数据时，重排落在那个后台任务回来之后，而不是扫描
+        收工那一刻。于是「扫描完 → 喂日历」会在模型还空着的时候读出零张照片，
+        整层日历从此空着（用户那边看不出任何原因）。跟着模型走就一定对得上。
         """
-        if self._stack.currentWidget() is self._detail_page:
-            return
         library = self._library
         if library is None:
             return
         in_grid = self._stack.currentWidget() is self._grid_page
         try:
-            self._reorder_level(library)
+            # 大图页上不重排（ADR 0025 决策 4）—— 但日历那一页仍然要喂：用户正看着
+            # 某一张，底下那一层摆着整库照片这件事与他在看哪一张无关。
+            if self._stack.currentWidget() is not self._detail_page:
+                self._reorder_level(library)
         finally:
             # 顺序定下来了，这才有资格回答「这一层是不是空的」。
             self._update_level_notice()
@@ -1141,6 +1163,8 @@ class MainWindow(WriteOpsMixin, QMainWindow):
                 self._maybe_reenter_group()
             # 暂存区到这里才清空：攒着的变化从这一刻起才能安全地落到网格上。
             self._flush_pending_watch()
+            # 模型此刻摆着的就是这一层，**这时**喂日历才对得上（见上面那段）。
+            self._feed_calendar()
 
     def _reorder_level(self, library: Library) -> None:
         # 暂存的优先：那一层还没上屏，顺序就是这里算出来的。
@@ -1152,7 +1176,14 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         # 相册卡片永远排在前面：先看文件夹、再看按元数据归拢出来的组，是既有心智。
         order = self._current_order()
         # 已经在分组里面了：那一层全是照片，再分一次组毫无意义（进去就出不来）。
-        group = None if self._group_view is not None else self._current_group_facet()
+        #
+        # **日历那一页也不分组**（修的正是这一处）：日历本身就是按日期归拢的那一层，
+        # 而模型在那一页上要装的是**整库照片** —— 一是点开一张照片要能按行找到它
+        # （大图页是按行工作的），二是日历要把整库按小时分桶。带着分组进日历时，
+        # 模型里摆着的是一张张组卡片，于是日历读到零张照片，整层空着，
+        # 而界面上看不出任何原因（症状：开着「按拍摄日期分组」再切到日历，一片空白）。
+        grouped = self._group_view is not None or self._browse_mode == BROWSE_MODE_CALENDAR
+        group = None if grouped else self._current_group_facet()
         values = self._facet_values
         if group is not None:
             ordered: list[GridEntry] = [
@@ -1503,8 +1534,7 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             self._reload_level()
             return
         self._refresh_thumbnail_window()
-        self._start_facet_read()
-        self._feed_calendar()
+        self._start_facet_read()  # 里面会走到 `_apply_ordering` → 喂日历
         self._maybe_start_place_pass()
         self._maybe_start_photo_index()
 
@@ -3388,7 +3418,12 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         elif was_calendar:
             # 日历那一页底下是**整库**（与「全部照片」同一份内容），回到网格时
             # 那一层直接就是它，不必重扫一遍盘。
+            #
+            # 但**分组要补回去**：日历那一页摆的是没分组的整库照片（它自己就是按
+            # 日期归拢的那一层），而用户菜单里选的那个分组是他自己的选择 ——
+            # 退出日历不该顺手把它取消掉。重排是就地做的（不碰盘）。
             self._stack.setCurrentWidget(self._grid_page)
+            self._apply_ordering()
             self._refresh_title()
             self._update_action_states()
             self._refresh_thumbnail_window()
@@ -3556,8 +3591,7 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         library = self._library
         if library is None:
             return
-        entries = self._model.entries()
-        refs = [entry for entry in entries if isinstance(entry, PhotoRef)]
+        refs = _photos_on_this_level(self._model.entries())
         if not refs:
             return
         cached = library.cached_facets(refs)
