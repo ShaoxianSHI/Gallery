@@ -437,8 +437,7 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._calendar_page = CalendarPage()
         self._calendar_page.photo_requested.connect(self._on_calendar_photo_requested)
         self._calendar_page.level_changed.connect(self._on_calendar_level_changed)
-        # 换层 / 翻页 / 滚动都会改变「现在看得见哪些」，顺带也改变了「这一段有没有照片」
-        # —— 翻到一个空月份时那句提示要冒出来，翻回来时它要收回去。
+        # 换层 / 翻页 / 滚动都会改变「现在看得见哪些」，据此重新要缩略图。
         self._calendar_page.window_changed.connect(self._on_calendar_window_changed)
         self._calendar_page.set_today(datetime.date.today())
 
@@ -1029,20 +1028,16 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         **判据是「网格上有没有条目」，不是「有没有相册 / 照片」**：分组会把照片换成
         一张张组卡片，只数相册和照片会把一屏组卡片（甚至一屏相册）误判成空 ——
         那正是这条提示曾经出现的地方。
+
+        **日历那一页不另说一句**：翻到没有照片的月份是常事，网格上一个空白月
+        本来也不说话，横幅却在这里冒出来，等于把「翻过去了」说成「出问题了」。
+        库里真的什么都没有时，下面那句照旧说 —— 那句话这时候是对的。
         """
         if self._library is None:
             return
         if self._scan_issue:
             # 扫描出过问题时横幅归它：那句（哪些内容没读到）比「这里是空的」更该说，
             # 而这里也不许把它收掉 —— 收了等于把用户真正需要知道的事藏起来。
-            return
-        if self._stack.currentWidget() is self._calendar_page:
-            if self._calendar_page.photo_count():
-                self._level_notice = False
-                self._banner.hide()
-                return
-            self._level_notice = True
-            self._show_banner("这一段日子里没有照片。换个月份或年份看看。")
             return
         if self._model.rowCount():
             if self._level_notice:
@@ -3426,8 +3421,12 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             self._calendar_job = None
 
     def _on_calendar_window_changed(self) -> None:
+        """日历换层 / 翻页 / 滚动：重新向流水线要这一层看得见的那几张。
+
+        **不必再判「这一段有没有照片」**：日历上翻到空月份不再说话（见
+        :meth:`_update_level_notice`），所以这里只剩缩略图这一件事。
+        """
         self._refresh_thumbnail_window()
-        self._update_level_notice()
 
     def _on_calendar_level_changed(self, level: str) -> None:
         """记下日历停在哪一层（进会话，与浏览方式同一个开关）。"""
