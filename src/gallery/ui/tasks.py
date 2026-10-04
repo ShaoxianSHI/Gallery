@@ -18,7 +18,7 @@ import os
 import traceback
 from collections.abc import Callable
 from dataclasses import dataclass
-from threading import Event
+from threading import Event, Lock
 from typing import Any
 
 from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, Signal, SignalInstance, Slot
@@ -100,15 +100,20 @@ class _Job(QRunnable):
         fn: Callable[[TaskContext], Any],
         token: CancellationToken,
         signals: _JobSignals,
+        on_start: Callable[[int], None],
     ) -> None:
         super().__init__()
         self._job_id = job_id
         self._fn = fn
         self._token = token
         self._signals = signals
+        #: 告诉 :class:`TaskRunner`「我已经开跑了」，于是它不再把这一条算作「还在排队」
+        #: （见 :meth:`TaskRunner._forget_never_started`）。
+        self._on_start = on_start
         self.setAutoDelete(True)
 
     def run(self) -> None:  # pragma: no cover - 在工作线程中执行
+        self._on_start(self._job_id)
         context = TaskContext(
             token=self._token,
             emit=lambda payload: self._emit(self._signals.progressed, self._job_id, payload),
@@ -154,6 +159,11 @@ class TaskRunner(QObject):
         self._callbacks: dict[int, _Callbacks] = {}
         self._tokens: dict[int, CancellationToken] = {}
         self._signals: dict[int, _JobSignals] = {}
+        #: 已投递、**还没开跑**的任务号。三个 dict 的条目只在成功 / 失败回调被处理时
+        #: 才摘掉，而 ``QThreadPool.clear()`` 丢掉的那一批**永远不会回报** —— 靠这一份
+        #: 才摘得掉它们（见 :meth:`_forget_never_started`）。
+        self._lock = Lock()
+        self._queued: set[int] = set()
 
     @property
     def thread_count(self) -> int:
@@ -187,7 +197,9 @@ class TaskRunner(QObject):
         # 信号对象必须活到任务结束（它承载着从工作线程发回的事件），
         # 因此由 TaskRunner 持有，直到任务的成功/失败回调被处理。
         self._signals[job_id] = signals
-        self._pool.start(_Job(job_id, fn, token, signals))
+        with self._lock:
+            self._queued.add(job_id)
+        self._pool.start(_Job(job_id, fn, token, signals, self._mark_running))
         return job_id
 
     def cancel(self, job_id: int) -> None:
@@ -204,6 +216,34 @@ class TaskRunner(QObject):
         """等待所有任务结束（关窗时调用，避免工作线程访问已销毁的对象）。"""
         return self._pool.waitForDone(timeout_ms)
 
+    def _mark_running(self, job_id: int) -> None:  # pragma: no cover - 在工作线程中执行
+        with self._lock:
+            self._queued.discard(job_id)
+
+    def _forget_never_started(self) -> None:
+        """把「投递了却一次都没开跑」的那些任务的账摘干净。
+
+        ``_callbacks`` / ``_tokens`` / ``_signals`` 三份都只在
+        :meth:`_handle_success` / :meth:`_handle_failure` 里被 ``pop`` ——
+        而 :meth:`abandon` 里的 ``QThreadPool.clear()`` 把排队中的那些
+        ``QRunnable`` **直接删掉**：它们一个字节都不会跑，也就永远不会回报一次。
+        每一批被丢掉的排队积压于是留下三份条目（回调闭包连着它捕获的一切、
+        取消令牌、以及那个信号对象），关一次窗漏一批。放进几百张照片再关窗就是几百份。
+
+        **只摘「确定没开跑」的**：``_Job.run()`` 的第一件事就是把自己从 ``_queued``
+        里摘掉，所以还留在那里的就是线程池队列里的那些。残留的窗口只有一处 ——
+        Qt 内部从队列里摘走 ``QRunnable`` 到调用 ``run()`` 之间的那几条指令；
+        真撞上了，后果也只是那一格的结果回调不送（而这正是在关窗），
+        **绝不会**变成释放后使用：那个信号对象还被正在跑的 ``_Job`` 攥着。
+        """
+        with self._lock:
+            dropped = tuple(self._queued)
+            self._queued.clear()
+        for job_id in dropped:
+            self._callbacks.pop(job_id, None)
+            self._tokens.pop(job_id, None)
+            self._signals.pop(job_id, None)
+
     def abandon(self, timeout_ms: int = SHUTDOWN_TIMEOUT_MS) -> bool:
         """关窗要走的一整套：作废 → **丢掉排队积压** → 才等。
 
@@ -219,6 +259,8 @@ class TaskRunner(QObject):
         """
         self.cancel_all()
         self._pool.clear()
+        # 被丢掉的那一批不会回报，于是三份账得在这里摘（见 :meth:`_forget_never_started`）。
+        self._forget_never_started()
         return self.wait_for_done(timeout_ms)
 
     @Slot(int, object)

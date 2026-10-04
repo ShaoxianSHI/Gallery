@@ -348,6 +348,11 @@ class SearchField(QWidget):
         self._focused = False
         #: 正在补全字段（补全那一瞬不许把列表重新弹起来，见 :meth:`complete`）。
         self._completing = False
+        #: 上一次**真的**下发过的样式表是哪一份（见 :meth:`_apply_theme`）。
+        #: 起手是「没有」，所以构造时那一次一定会下发。
+        self._applied_theme: AppTheme | None = None
+        self._applied_radius = -1
+        self._applied_focused = False
         self._watcher = theme.ensure_installed()
         self._watcher.changed.connect(self._apply_theme)
         self._apply_theme()
@@ -574,17 +579,36 @@ class SearchField(QWidget):
             self.editing_changed.emit(False)
 
     def _apply_theme(self) -> None:
-        """换过浅色 / 深色之后重新下发一次颜色（与 ``panels.welcome`` 同一个做法）。"""
+        """换过浅色 / 深色之后重新下发一次颜色（与 ``panels.welcome`` 同一个做法）。
+
+        **这一份样式表一个字节都没变就什么都不做。** 再下发一次不是「重新拼一遍字符串」
+        那么轻 —— Qt 会把整棵子树重新 polish 一遍（``repolish``），于是每次焦点进出
+        （:meth:`focus_gained` / :meth:`edit_ended` 都要调它）都要把输入框、放大镜、
+        候选列表那一整棵树走一遍。
+
+        **判据是「样式表的三个输入」**：主题、圆角半径（按胶囊高度算，见
+        :meth:`resizeEvent`）、以及**有没有焦点**（``focused`` 决定边框是不是高亮色）。
+        少了第三个，焦点那一栏就永远不会换色 —— 而症状只是「点进去边框没亮」，
+        不像崩了那么好找。
+        """
         app_theme = theme.current_theme()
-        self.setStyleSheet(
-            search_field_style(app_theme, focused=self._focused, radius=self.height() // 2)
-        )
+        radius = self.height() // 2
+        if (
+            self._applied_theme == app_theme
+            and self._applied_radius == radius
+            and self._applied_focused == self._focused
+        ):
+            return
+        self.setStyleSheet(search_field_style(app_theme, focused=self._focused, radius=radius))
         # 候选列表是**建好之后**才存在的（``_build_ui`` 的最后一步），主题早就下发过了，
         # 于是它一直拿着系统默认那一档颜色。先把调色板补给它，再按「取自同一个地方」
         # 的规矩生成样式表（见 ``theme.push_palette`` 与 ``popup_style``）。
         theme.push_palette(self._popup)
         self._popup.setStyleSheet(popup_style(self._popup, item_padding=self._item_padding()))
         self._icon.setPixmap(magnifier(app_theme, self.devicePixelRatioF()))
+        self._applied_theme = app_theme
+        self._applied_radius = radius
+        self._applied_focused = self._focused
 
     def focus_gained(self) -> None:
         """输入框拿到焦点：边框换成高亮色，并告诉外面「键盘归这里了」。"""

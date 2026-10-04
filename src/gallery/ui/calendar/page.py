@@ -16,7 +16,7 @@ import datetime
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QImage, QKeyEvent
 from PySide6.QtWidgets import QStackedWidget, QVBoxLayout, QWidget
 
@@ -38,6 +38,9 @@ _KEY_LEVELS = {
     Qt.Key.Key_M: "month",
     Qt.Key.Key_W: "week",
 }
+
+#: 「来了一张图，重画一次」那个闸门的间隔（毫秒）。**0 = 下一轮事件循环**。
+REPAINT_INTERVAL_MS = 0
 
 
 class CalendarPage(QWidget):
@@ -84,6 +87,18 @@ class CalendarPage(QWidget):
         layout.addWidget(self._stack, 1)
 
         ensure_installed()
+        # 「来了一张缩略图 → 重画当前那层」的闸门。**必须闸，不能一张一张画**：
+        # 流水线是**一张一张**送图回来的（每一张解码完就发一次 ``ready``），
+        # 而 ``update()`` 是立刻排一次整页重绘 —— 于是一整屏几百张缩略图就是几百帧
+        # 完完整整的年视图重画。实测 300 张照片铺满 2024（405 个有图的格子）时，
+        # 一张一张送是 **1890 ms**，一次全送到只要 **0.1 ms**。
+        #
+        # **用单次定时器而不是数一数**：``start()`` 在已经跑着的时候会原地**续期**，
+        # 于是来一百张就是「事件循环下一轮画一次」，不需要任何计数或阈值。
+        self._repaint_timer = QTimer(self)
+        self._repaint_timer.setSingleShot(True)
+        self._repaint_timer.setInterval(REPAINT_INTERVAL_MS)
+        self._repaint_timer.timeout.connect(self._repaint_current_view)
         self._apply_theme(current_theme())
         self._watcher = self.findChild(ThemeWatcher)
         if self._watcher is not None:
@@ -106,14 +121,18 @@ class CalendarPage(QWidget):
         return self.current_view().thumbnail_edge()
 
     def set_thumbnail(self, path: object, image: object, edge: int = 0) -> None:
+        """记下一张缩略图，然后**排**一次重画（不是立刻画，见 ``_repaint_timer``）。"""
         if isinstance(path, Path) and isinstance(image, QImage):
             self._thumbs.set(path, image, edge)
-            self.current_view().update()
+            self._repaint_timer.start()
 
     def forget_thumbnails(self, paths: Iterable[Path]) -> None:
         self._thumbs.forget(paths)
         # 忘掉的那几张可能正在可见区里，所以「报过了」那份记录同样作废。
         self._forget_reported()
+        self._repaint_timer.start()
+
+    def _repaint_current_view(self) -> None:
         self.current_view().update()
 
     def _forget_reported(self) -> None:
@@ -162,11 +181,6 @@ class CalendarPage(QWidget):
         self._views[self._level].set_anchor(self._today)
         self._bar.set_title(self._level, self._today)
         self._refresh_window()
-
-    def open_day(self, day: datetime.date) -> None:
-        """把某一天整个摊开（年 / 月两层里点到了那一天）。"""
-        self._anchor = day
-        self.set_level("day")
 
     def photo_count(self) -> int:
         """当前这一段里有多少张照片（标题栏与「空日历」提示都用它）。"""
@@ -233,4 +247,4 @@ class CalendarPage(QWidget):
         super().keyPressEvent(event)
 
 
-__all__ = ["CalendarPage"]
+__all__ = ["REPAINT_INTERVAL_MS", "CalendarPage"]

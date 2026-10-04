@@ -15,7 +15,7 @@ import datetime
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QFont, QMouseEvent, QPainter
 
-from gallery.core.library.calendar import WEEKDAY_HEADERS, days_of, month_matrix
+from gallery.core.library.calendar import WEEKDAY_HEADERS, month_matrix
 from gallery.core.library.photos import PhotoRef
 from gallery.ui.calendar.base import LevelView, day_label
 from gallery.ui.calendar.painting import (
@@ -87,20 +87,28 @@ class YearView(LevelView):
     # ---- 绘制 -------------------------------------------------------------
     def paintEvent(self, _event: object) -> None:  # noqa: N802 - 名字是 Qt 定的
         painter = self.begin()
+        # **12 张小月的日期矩阵在这一次绘制里各算一遍**。原先每张算两遍
+        # （数张数一遍 ``days_of``、画格子一遍 ``month_matrix``），而两次都是同一个
+        # 6 × 7 = 42 天的矩阵 —— 一帧于是重建 24 × 42 = 1008 个 ``datetime.date``。
+        # 矩阵在一帧之内不变，算一次就够。
+        year = self._anchor.year
+        matrices = [month_matrix(datetime.date(year, index + 1, 1)) for index in range(12)]
         for index in range(12):
-            self._paint_month(
-                painter, self._box(index), datetime.date(self._anchor.year, index + 1, 1)
-            )
+            self._paint_month(painter, self._box(index), index + 1, matrices[index])
         painter.end()
 
-    def _paint_month(self, painter: QPainter, box: QRectF, month: datetime.date) -> None:
+    def _paint_month(
+        self, painter: QPainter, box: QRectF, month: int, days: list[datetime.date]
+    ) -> None:
         colors = self.colors
-        count = sum(len(self.photos_of(day)) for day in days_of("month", month))
+        # **按整张矩阵数**（含上下月补位的那几天），与原先 ``days_of("month", …)``
+        # 的口径一模一样 —— 那是既有行为，改它就是改界面上写着的那几个数字。
+        count = sum(len(self.photos_of(day)) for day in days)
         title = QRectF(box.left(), box.top(), box.width(), _TITLE_HEIGHT)
         draw_text(
             painter,
             title,
-            f"{month.month}月",
+            f"{month}月",
             font_px(_TITLE_FONT_PX, QFont.Weight.DemiBold),
             colors.text,
         )
@@ -124,8 +132,8 @@ class YearView(LevelView):
                 Qt.AlignmentFlag.AlignCenter,
                 elide=False,
             )
-        for day, cell in zip(month_matrix(month), self._day_cells(box), strict=True):
-            self._paint_day(painter, cell, day, month.month)
+        for day, cell in zip(days, self._day_cells(box), strict=True):
+            self._paint_day(painter, cell, day, month)
 
     def _paint_day(self, painter: QPainter, cell: QRectF, day: datetime.date, month: int) -> None:
         colors = self.colors

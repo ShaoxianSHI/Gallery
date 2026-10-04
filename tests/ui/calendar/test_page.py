@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import datetime
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -249,3 +250,64 @@ def test_window_changed_fires_when_the_level_moves(page: CalendarPage) -> None:
     page.step(1)
     page.go_today()
     assert len(seen) >= 3
+
+
+def _a_year_of_photos(page: CalendarPage, count: int = 40) -> list[PhotoRef]:
+    refs = [_photo(f"burst{index}.jpg") for index in range(count)]
+    page.set_photos(
+        refs,
+        {
+            ref.path: _values(ref, TODAY + datetime.timedelta(days=index % 28), 9)
+            for index, ref in enumerate(refs)
+        },
+    )
+    page.set_level("year")
+    return refs
+
+
+def test_a_burst_of_thumbnails_is_painted_exactly_once(
+    page: CalendarPage,
+    qt_app: QApplication,
+    wait_for: Callable[..., bool],
+) -> None:
+    """**流水线是一张一张送图回来的，页面只许重画一帧。**
+
+    ``ThumbnailPipeline.ready`` 每解码完一张就发一次，于是 ``set_thumbnail`` 会被调
+    好几百次。原先每一次都直接 ``update()``，而 ``update()`` 是立刻排一次整页重绘 ——
+    300 张照片铺满 2024（405 个有图的格子）实测要 **1890 ms**，一次全送到只要
+    **0.1 ms**。单次定时器的 ``start()`` 会原地续期，于是来一百张就是「下一轮画一次」。
+    """
+    _a_year_of_photos(page)
+    view = page.current_view()
+
+    painted: list[int] = []
+    view.update = lambda *args, **kwargs: painted.append(1)  # type: ignore[method-assign]
+
+    image = QImage(48, 48, QImage.Format.Format_RGBA8888)
+    image.fill(0x336699)
+    edge = page.thumbnail_edge()
+    arriving = view.visible_refs()
+    assert len(arriving) >= 30, "前提不成立：这一层几乎没要图"
+    for ref in arriving:
+        page.set_thumbnail(ref.path, image, edge)
+
+    assert painted == [], "还在同一轮里，不该已经画过了"
+    assert wait_for(lambda: painted), "闸门没有落地"
+    qt_app.processEvents()
+    assert len(painted) == 1, f"{len(arriving)} 张图重画了 {len(painted)} 帧"
+
+
+def test_the_thumbnails_of_a_burst_all_land(
+    page: CalendarPage,
+    qt_app: QApplication,  # noqa: ARG001
+) -> None:
+    """合并的是**重画**，不是图本身 —— 每一张都得在手上（`forget` 与换层都靠这个）。"""
+    refs = _a_year_of_photos(page, 5)
+    view = page.current_view()
+    image = QImage(48, 48, QImage.Format.Format_RGBA8888)
+    image.fill(0x336699)
+    edge = page.thumbnail_edge()
+    for ref in refs:
+        page.set_thumbnail(ref.path, image, edge)
+
+    assert all(view.photo(ref) is not None for ref in refs)

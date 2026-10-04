@@ -256,6 +256,8 @@ class MetadataEditDialog(QDialog):
         self._completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self._completer.setFilterMode(Qt.MatchFlag.MatchContains)
         self._completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        #: 候选的模型**建一次**（理由见 :meth:`_refresh_candidates`）。
+        self._candidate_model = QStringListModel(self)
         self._city.setCompleter(self._completer)
         self._completer.activated[str].connect(self._on_picked)
         form.addRow("城市", self._city)
@@ -439,6 +441,10 @@ class MetadataEditDialog(QDialog):
 
         **离线、不联网**（ADR 0003）：候选只来自随包分发的那份城市库。用户写「西湖 ·
         断桥」不会有候选 —— 那本来也不该有，库里没有任何一条记录能代表那个点。
+
+        **模型只建一次**：这一格每 250 毫秒就会走一遍（防抖的那一头），
+        而每次新建一个 ``QStringListModel`` 都要连着重新接一遍
+        ``QCompleter`` 的那一串内部连接 —— 候选列表本身不变，变的只是它背后的那几行。
         """
         text = name.strip()
         if self._resolver is None or len(text) < MIN_LOOKUP_LENGTH:
@@ -447,10 +453,10 @@ class MetadataEditDialog(QDialog):
             self._candidates = list(self._resolver.place_named(text))
         if not self._candidates:
             return
-        self._completer.setModel(
-            QStringListModel(
-                [place_label(item.city, item.region, item.country) for item in self._candidates]
-            )
+        if self._completer.model() is not self._candidate_model:
+            self._completer.setModel(self._candidate_model)
+        self._candidate_model.setStringList(
+            [place_label(item.city, item.region, item.country) for item in self._candidates]
         )
 
     def _on_picked(self, label: str) -> None:
@@ -810,18 +816,29 @@ def _normalize_capture_line(text: str) -> str | None:
     return f"{taken_at} {offset}" if offset else taken_at
 
 
+def _dashed(taken_at: str | None) -> str:
+    """EXIF 的冒号写法 → 界面那种连字符写法（``2024-05-16 20:52:02``）。
+
+    **只换前两个冒号**：``2024:05:16 20:52:02`` 里的第三个冒号在「时:分:秒」中间，
+    一并换掉就成了 ``20-52-02``。``count=2`` 就是这个意思。
+
+    这一份原本在 ``capture_time.CaptureTime`` 的 ``display`` 方法、``_display_capture``、
+    ``_display_time`` 里各写一遍。核心层那个方法没有调用点（界面上摆的是这个对话框里的
+    写法），删掉之后剩下的两处就在这里共用这一份。
+    """
+    return taken_at.replace(":", "-", 2) if taken_at else ""
+
+
 def _display_capture(text: str) -> str:
     """归一后的时间 → 剪贴板与面板那种写法：``2024-05-16 20:52:02 +08:00``。"""
     taken_at, offset = _split_capture(text)
-    if not taken_at:
-        return ""
-    dashed = taken_at.replace(":", "-", 2)
-    return f"{dashed} {offset}" if offset else dashed
+    dashed = _dashed(taken_at)
+    return f"{dashed} {offset}" if dashed and offset else dashed
 
 
 def _display_time(taken_at: str | None) -> str:
     """输入框里那个写法（连字符；EXIF 的冒号只存在于文件里）。"""
-    return taken_at.replace(":", "-", 2) if taken_at else ""
+    return _dashed(taken_at)
 
 
 #: 坐标行里分隔两个数的那些字符。

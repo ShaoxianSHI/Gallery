@@ -49,6 +49,10 @@ PREFETCH_HOURS = 3
 #: 「现在看得见哪几张」并向流水线报一次（网格那边是同样的处理）。
 SCROLL_DEBOUNCE_MS = 80
 
+#: 「滚到第一张照片上方」那个定位延后多久（毫秒）。**0 = 下一轮事件循环** ——
+#: 要等的只是**布局**跑过一遍（滚动条的最大值在那之前还是 0）。
+REVEAL_DELAY_MS = 0
+
 
 class WeekView(LevelView):
     """一周七列；表头固定，时间轴可滚动。"""
@@ -69,7 +73,22 @@ class WeekView(LevelView):
         layout.addWidget(self._header)
         layout.addWidget(area, 1)
         self._area = area
-        self._scrolling = False
+        # 「滚到第一张照片上方」那个定位的闸门（见 :meth:`_reveal_photos`）。
+        #
+        # **做成自己的子定时器，而不是 `QTimer.singleShot(0, self._apply_scroll)`**：
+        # 后者是**两参**形态，这个定时器与本对象毫无关系，于是「按了 `W` → 同一轮里
+        # ⌘Q 关窗」这种再平常不过的时序会让它照常触发，去调一个已经析构的
+        # ``_apply_scroll``，换来一条 ``Internal C++ object already deleted``
+        # （同一个道理与那条注释见 ``browser/grid.py`` 的 ``eventFilter``）。
+        #
+        # 子定时器把「接收方析构时自动取消」这件事变成了**自己的成员**：控件没了它也没了。
+        # 顺带换掉的是那个布尔闩锁 ``_scrolling`` —— 闩锁一旦卡住（那个定时器没跑成）
+        # 就再也解不开，``_reveal_photos`` 会从此次次早退，周视图再也找不到它的第一张照片；
+        # ``isActive()`` 说的是「眼下是不是真的排着一个」，不存在卡住这一说。
+        self._reveal = QTimer(self)
+        self._reveal.setSingleShot(True)
+        self._reveal.setInterval(REVEAL_DELAY_MS)
+        self._reveal.timeout.connect(self._apply_scroll)
         self._scroll_notify = QTimer(self)
         self._scroll_notify.setSingleShot(True)
         self._scroll_notify.setInterval(SCROLL_DEBOUNCE_MS)
@@ -132,14 +151,13 @@ class WeekView(LevelView):
 
         时间轴有 24 行、两千多像素，让用户自己滚过去等于把「这周有照片」这件事藏起来。
         **等一轮布局再定位**：那之前滚动条的最大值还是 0，设了也没用。
+
+        **连着按 ← / → 只定位一次**：``start()`` 在已经排着一个的时候会原地续期，
+        而 :meth:`_apply_scroll` 读的是**此刻**的锚点，于是最后一次说了算。
         """
-        if self._scrolling:
-            return
-        self._scrolling = True
-        QTimer.singleShot(0, self._apply_scroll)
+        self._reveal.start()
 
     def _apply_scroll(self) -> None:
-        self._scrolling = False
         self._sync_grid_height()
         visible = set(self.days())
         hours = [hour for (day, hour) in self._by_hour if day in visible]
@@ -335,6 +353,7 @@ __all__ = [
     "GUTTER",
     "HEADER_HEIGHT",
     "PREFETCH_HOURS",
+    "REVEAL_DELAY_MS",
     "SCROLL_DEBOUNCE_MS",
     "THUMB_EDGE",
     "WeekView",

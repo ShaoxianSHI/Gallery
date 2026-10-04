@@ -7,6 +7,24 @@
 **照片一律按原比例缩放后居中放进去**（:func:`paint_photo`），与网格视图
 :meth:`gallery.ui.browser.grid.Cell.target_rect` 同一手法：格子比例是定的，
 照片不裁、不拉。
+
+## 字体、度量与画笔都记一份
+
+**``paintEvent`` 里不许现造 ``QFont`` / ``QFontMetrics`` / ``QPen``。**
+年视图一帧要写 612 处文字（12 张小月 × (2 个标题 + 7 个表头 + 42 个日期格)），
+而现造一次 ``QFont`` + ``QFontMetrics`` + ``QPen(QColor(...))`` 各是几百纳秒 ——
+乘上 612 就是每帧好几毫秒，而这三种东西整轮里其实**只有个位数的取值**。
+于是这里按 ``(字号, 字重)`` 记字体、按字体记度量、按颜色值记画笔。
+
+**这些缓存不随主题变化**：``QFont()`` 取的是**应用默认字体**，而本仓库从头到尾
+没有调过 ``QApplication.setFont`` —— 浅色 / 深色换的是调色板
+（见 :func:`gallery.ui.theme.apply_theme`），系统默认字体在整个进程里不变。
+真变了的话，:func:`reset_caches` 是留给那个场景的开关。
+
+**只在这条路上用**：三份缓存都由 ``paintEvent`` 读，而那永远在界面线程上。
+
+**缓存里的东西一律只读**：``QFont`` / ``QFontMetrics`` / ``QPen`` 三样都是可变的，
+而 PySide6 按值返回它们 —— 拿到一份就地改，改掉的就是缓存里那一份。
 """
 
 from __future__ import annotations
@@ -16,6 +34,18 @@ from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter, QPainte
 from PySide6.QtWidgets import QWidget
 
 from gallery.ui.calendar.layout import CARD_RADIUS, fitted_size
+
+#: 三份缓存各自的上限。真正用到的取值只有个位数（``year_view`` 里那几个常量），
+#: 上限只为挡住「拿算出来的数当键」那种用法：年视图的日期徽标字号是按格子大小算的，
+#: 拖一次窗口就换一档。它是兜底，不是预期路径。
+_CACHE_LIMIT = 64
+
+#: ``(字号, 字重)`` → 字体。
+_fonts: dict[tuple[int, int], QFont] = {}
+#: 字体 → 度量。``QFont`` 在 PySide6 里按值可哈希，所以等值的字体落在同一格。
+_metrics: dict[QFont, QFontMetrics] = {}
+#: 颜色 → 画笔，见 :func:`_solid_pen`（键为什么是 ``id``，那里写清楚了）。
+_pens: dict[int, tuple[QColor | str, QPen]] = {}
 
 
 def begin(widget: QWidget, background: QColor | str) -> QPainter:
@@ -36,11 +66,71 @@ def font_px(size: int, weight: QFont.Weight = QFont.Weight.Normal) -> QFont:
 
     日历要的是「一个格子多大、文字就多大」那种跟着格子走的关系，而 ``QLabel``
     那种按点定大小的字体跟着屏幕缩放换算，写死了会在 2x 屏上偏小一档。
+
+    **同一个 ``(字号, 字重)`` 永远返回同一个对象**（见模块文档里那份缓存）。
+    代价是**这份对象是共享的：只许直接交给 :func:`draw_text`，不许就地改**。
+    PySide6 的 ``QFont`` 是按值返回的（不像 C++ 那边隐式共享），所以就地改一次
+    就会把缓存里那一份一起改掉，整轮的字号都跟着变。真要改就 ``QFont(font_px(n))``
+    拷一份 —— ``draw_text`` 自己就是那么干的（``QPainter.setFont`` 拷的是值）。
     """
-    font = QFont()
-    font.setPixelSize(size)
-    font.setWeight(weight)
+    key = (int(size), int(weight))
+    font = _fonts.get(key)
+    if font is None:
+        if len(_fonts) >= _CACHE_LIMIT:
+            _fonts.clear()
+        font = QFont()
+        font.setPixelSize(key[0])
+        font.setWeight(weight)
+        _fonts[key] = font
     return font
+
+
+def _font_metrics(font: QFont) -> QFontMetrics:
+    """按字体取度量。**不导出去**：``QFontMetrics`` 是可变的（``setWidth`` 之类），
+    拿到一份去改就会把缓存里那一份一起改了 —— 它只在 :func:`draw_text` 里被读。"""
+    metrics = _metrics.get(font)
+    if metrics is None:
+        if len(_metrics) >= _CACHE_LIMIT:
+            _metrics.clear()
+        metrics = QFontMetrics(font)
+        _metrics[font] = metrics
+    return metrics
+
+
+def _solid_pen(color: QColor | str) -> QPen:
+    """按颜色取一支实心画笔。同样**不导出去**：``QPen`` 是可变的。
+
+    **键为什么是 ``id`` 而不是颜色值**：``QColor`` 在 PySide6 里不可哈希，退而求其次
+    按 ``name(HexArgb)`` 拼字符串当键，那次格式化本身就要 0.3 µs —— 恰好把
+    「造一支笔」省下的时间又花回去了一大半。而传进来的颜色**是稳定的几个对象**：
+    :class:`~gallery.ui.calendar.colors.CalendarColors` 在每次换主题时算一遍，
+    之后每帧都是同一批 ``QColor``，于是按对象身份记就够。
+
+    **这样记为什么安全**：值里存着那个颜色对象**本身**（于是它的 ``id`` 不会被回收后
+    复用给别人），取用时再比一次 ``is`` —— 就算真撞上同一个 ``id``，对不上就重造一支。
+    浅色 / 深色换色时 :func:`~gallery.ui.calendar.colors.CalendarColors.derive`
+    造的是**新对象**，自然落到新键上，不会拿到旧颜色那支笔。
+    """
+    key = id(color)
+    entry = _pens.get(key)
+    if entry is not None and entry[0] is color:
+        return entry[1]
+    if len(_pens) >= _CACHE_LIMIT:
+        _pens.clear()
+    pen = QPen(QColor(color))
+    _pens[key] = (color, pen)
+    return pen
+
+
+def reset_caches() -> None:
+    """把三份缓存清空 —— **只在应用默认字体真的变了时用**。
+
+    本仓库没有调过 ``QApplication.setFont``，所以正常路径上一次都不该调它；
+    留着这个开关是为了「哪天真的变了」时不必再去改这三处的键。
+    """
+    _fonts.clear()
+    _metrics.clear()
+    _pens.clear()
 
 
 def draw_text(
@@ -55,10 +145,10 @@ def draw_text(
 ) -> None:
     """在 ``rect`` 里画一行字；``elide`` 为真时按框宽截断并补省略号。"""
     painter.setFont(font)
-    painter.setPen(QPen(QColor(color)))
+    painter.setPen(_solid_pen(color))
     shown = text
     if elide:
-        shown = QFontMetrics(font).elidedText(
+        shown = _font_metrics(font).elidedText(
             text, Qt.TextElideMode.ElideRight, max(0, int(rect.width()))
         )
     painter.drawText(rect, align, shown)
@@ -171,4 +261,5 @@ __all__ = [
     "outline_rounded",
     "paint_cell_photo",
     "paint_photo",
+    "reset_caches",
 ]

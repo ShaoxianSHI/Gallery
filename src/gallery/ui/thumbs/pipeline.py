@@ -10,6 +10,22 @@
 并重取，所以切档瞬间在途的任务不会把格子填歪。
 
 解码失败的照片会被记住并跳过，避免每次滚动都对同一个坏文件反复重试。
+
+## 哪些账本跟着窗口走，哪些一路留着
+
+只有 ``_refs`` 跟着**当前窗口**走（见 :meth:`ThumbnailPipeline._remember_window`）：
+它唯一的作用是给队列里的路径找条目，而队列每次都整份换掉。
+
+``_failed`` / ``_empty`` / ``_covers`` **一律不清，只在切库时清**（``shutdown``）。
+它们是**「这个文件读不出来」这种结论的记忆**，不是索引：坏文件是**永久**坏的
+（除非用户拿外部工具把它换掉，那时 :meth:`forget` 会把那条结论作废）。
+把它们也按窗口清掉，用户每滚回去一次就要把同一个坏文件重新解码一遍 ——
+而解码一个截断 / 损坏的 JPEG 恰恰是最贵的那一种失败，几百个坏文件的库
+滚一趟就是几百次白费的解码，还要占住线程池把好照片的图挤到后面去。
+几百条路径本身才几十 KB，与它们省下的那些次解码完全不成比例，所以留着。
+
+``_covers`` 多一层理由：它是**相册**的份数，不是照片的 —— 相册数比照片数小几个
+数量级，压根撑不到需要清的分量。
 """
 
 from __future__ import annotations
@@ -117,8 +133,8 @@ class ThumbnailPipeline(QObject):
             [target.path for target in targets],
             prefetch=[target.path for target in ahead],
         )
-        for target in (*targets, *ahead):
-            self._refs[target.path] = target
+        # **``_refs`` 整份换成当前窗口那一份**（理由见 ``_remember_window``）。
+        self._remember_window((*targets, *ahead))
         self._dispatch()
 
     def shutdown(self) -> None:
@@ -147,6 +163,28 @@ class ThumbnailPipeline(QObject):
             # 它又是一个好封面了（见 :class:`_Cover`）。
             for cover in self._covers.values():
                 cover.skipped.discard(target)
+
+    def _remember_window(self, entries: tuple[GridEntry, ...]) -> None:
+        """把 ``_refs`` 换成**当前窗口**那一份。
+
+        **为什么不是一直往后加**：``_refs`` 是「路径 → 能出图的那个引用」的对照表，
+        只有 :meth:`_dispatch` 会查它，而 :meth:`_dispatch` 查的全是**队列里**的路径 ——
+        队列同样每次都整份换成可见 + 预读（``ThumbnailQueue.set_window``）。
+        于是窗外那些条目谁也够不着，却一个都没走：把一个 10 万张的平铺库从头滚到尾，
+        这份表就攒下 10 万条（实测约 5.2 MB）。换层 / 换分组 / 换相册同样不清 ——
+        而那些正是「离开了一会儿又回来」的场景，清掉它们没有任何好处。
+
+        **在途的那几条必须留着**：``_refs`` 同时是 :meth:`_on_error` 换封面那条路
+        （重新排队）回头找条目的地方，``_inflight`` 里的路径正是它下一次要排队的 ——
+        摘掉的话，一张云盘上没下完的照片就会让那张相册卡片永远挂着上一张黑封面，
+        而且 ``cancel()`` 之后再也够不着那个真正在跑的任务。
+        """
+        refs = {entry.path: entry for entry in entries}
+        for path in self._inflight:
+            entry = self._refs.get(path)
+            if entry is not None:
+                refs.setdefault(path, entry)
+        self._refs = refs
 
     def _dispatch(self) -> None:
         while len(self._inflight) < self._max_inflight:

@@ -235,3 +235,74 @@ def test_a_stale_result_does_not_release_the_new_jobs_slot(qt_app, tmp_path: Pat
     assert entry.path not in pipeline._inflight
 
     pipeline.shutdown()
+
+
+# ---- 引用表只跟着窗口走 -------------------------------------------------------
+
+
+def _refs(count: int, prefix: str) -> list[PhotoRef]:
+    """一批**并不存在**的路径 —— 这里的用例要的是记账，不是解码。"""
+    return [
+        PhotoRef(path=Path(f"/nowhere/{prefix}{index}.jpg"), size=1, mtime_ns=0)
+        for index in range(count)
+    ]
+
+
+def test_the_reference_table_forgets_what_left_the_window(
+    pipeline: tuple[ThumbnailPipeline, TaskRunner],
+    wait_for: Callable[..., bool],
+) -> None:
+    """滚走的那些不留着 —— 10 万张的平铺库滚一趟不能攒下 10 万条（实测约 5.2 MB）。
+
+    ``_refs`` 唯一的作用是给**队列里**的路径找条目，而队列每次都整份换成可见 + 预读；
+    窗外那些谁也够不着。原先只往后加、只有切库才清，于是换层 / 换分组 / 换相册都留着。
+    """
+    thumbs, runner = pipeline
+    first = _refs(50, "a")
+    second = _refs(3, "b")
+    thumbs.set_window(first)
+    assert wait_for(lambda: len(first) == len(thumbs._failed)), "前提不成立：第一批没有跑完"
+    runner.wait_for_done(2000)
+
+    thumbs.set_window(second)
+    assert set(thumbs._refs) == {ref.path for ref in second}, "上一扇窗口的条目还在表里"
+
+
+def test_an_in_flight_entry_survives_the_window_rebuild(
+    pipeline: tuple[ThumbnailPipeline, TaskRunner],
+) -> None:
+    """**在途的那几条必须留着** —— 换封面那条路要回头找它的条目。
+
+    ``_on_error`` 在一张相册的封面读不出来时会「换下一张再试」，做法是重新把那个
+    路径排进队列；``_dispatch`` 随即要能在 ``_refs`` 里找到那个条目。滚到一片空白
+    （``set_window([])``）就把在途的摘掉的话，一张云盘上没下完的照片会让整张卡片
+    永远挂着上一张黑封面。
+    """
+    thumbs, _runner = pipeline
+    thumbs.set_window(_refs(4, "c"))
+    running = list(thumbs._inflight)
+    assert running, "前提不成立：一个都没开跑"
+
+    thumbs.set_window([])  # 滚到窗外
+
+    assert set(running) <= set(thumbs._refs), "在途的条目被清掉了 —— 换封面与 cancel 都够不着它"
+
+
+def test_the_bad_file_memory_outlives_the_window(
+    pipeline: tuple[ThumbnailPipeline, TaskRunner],
+    wait_for: Callable[..., bool],
+) -> None:
+    """``_failed`` **跟着整库走，不跟着窗口走** —— 这是有意不动的。
+
+    坏文件是永久坏的（除非 :meth:`ThumbnailPipeline.forget` 收到它变了的消息）。
+    按窗口清掉的话，用户每滚回去一次就把同一个坏文件重新解码一遍 —— 而解码一个
+    截断的 JPEG 恰恰是最贵的那种失败，还要占住线程池把好照片挤到后面。
+    """
+    thumbs, runner = pipeline
+    broken = _refs(2, "d")
+    thumbs.set_window(broken)
+    assert wait_for(lambda: set(thumbs._failed) >= {ref.path for ref in broken})
+
+    thumbs.set_window(_refs(2, "e"))
+    assert {ref.path for ref in broken} <= thumbs._failed, "「这个文件读不出来」的结论被窗口清掉了"
+    runner.wait_for_done(2000)
