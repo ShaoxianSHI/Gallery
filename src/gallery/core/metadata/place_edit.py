@@ -33,9 +33,6 @@ if TYPE_CHECKING:
 #: 判「坐标有没有变」的容差（度）。约 1.1 米 —— 比这更小的改动不值得改一次文件。
 _COORDINATE_EPSILON: Final = 1e-5
 
-#: 反查出来的地点离得多远才值得提醒用户一句「这只是最近的城市」。
-_DISTANCE_HINT_KM: Final = 1.0
-
 
 @dataclass(frozen=True, slots=True)
 class PlaceState:
@@ -100,8 +97,6 @@ class PlacePlan:
     country: str | None = None
     #: 写完之后照片里会有的坐标。
     coordinates: tuple[float, float] | None = None
-    #: 要对用户说的话。每一条都是**已经发生的事**，不是建议 —— 横幅照抄即可。
-    notes: tuple[str, ...] = ()
 
     @property
     def label(self) -> str:
@@ -127,7 +122,6 @@ def plan_place_edit(
     if edit.clear_coordinates:
         return _clearing_coordinates(state, names, names_changed)
     coordinates = _coordinates(state, edit)
-    notes: list[str] = []
     assignments: list[Assignment] = []
     final_names = names
     final_coordinates = coordinates or state.coordinates()
@@ -138,16 +132,13 @@ def plan_place_edit(
     if coordinates is not None:
         assignments.extend(_coordinate_assignments(*coordinates))
         if not names_changed:
-            looked_up, found_names = _lookup_place(coordinates, resolver, notes)
+            looked_up, found_names = _lookup_place(coordinates, resolver)
             if found_names is not None:
                 assignments.extend(looked_up)
                 final_names = found_names
                 names_written = True
-        else:
-            # 两个方向都在同一个对话框里改了：填了的说了算，不去反查覆盖它。
-            notes.append("地名与坐标都是你填的，它们之间的对应关系 Gallery 没有替你调整。")
     elif names_changed:
-        found, found_coordinates = _lookup_coordinates(names, resolver, notes)
+        found, found_coordinates = _lookup_coordinates(names, resolver)
         assignments.extend(found)
         # 正查出来的坐标**优先于**照片里原来那个：用户明确要求「按这个地点改坐标」，
         # 原来的坐标在这条要求里就是要被替换掉的那一个。
@@ -161,7 +152,6 @@ def plan_place_edit(
         region=final_names[1],
         country=final_names[2],
         coordinates=final_coordinates,
-        notes=tuple(notes),
     )
 
 
@@ -170,7 +160,6 @@ def _clearing_coordinates(
 ) -> PlacePlan:
     """「把坐标删掉，但地名留着」——定位漂了、地名没错时用户真正想要的那一下。"""
     assignments: list[Assignment] = [Assignment(tag, "") for tag in COORDINATE_TAGS]
-    notes = ["坐标已从照片里清除，地点保留。"]
     if names_changed:
         assignments.extend(_place_assignments(*names))
     return PlacePlan(
@@ -179,7 +168,6 @@ def _clearing_coordinates(
         region=names[1],
         country=names[2],
         coordinates=state.coordinates(),
-        notes=tuple(notes),
     )
 
 
@@ -250,7 +238,6 @@ def _place_assignments(
 def _lookup_place(
     coordinates: tuple[float, float],
     resolver: PlaceResolver | None,
-    notes: list[str],
 ) -> tuple[list[Assignment], tuple[str | None, str | None, str | None] | None]:
     """坐标 → 地点（反查）。**查不到就什么都不加**，照片里原来的地名原样留着。
 
@@ -263,19 +250,14 @@ def _lookup_place(
         return [], None
     place = resolver.place_for(coordinates[0], coordinates[1])
     if place is None:
-        notes.append("新坐标附近 300 公里没有城市记录，照片里原来的地名没有改动。")
-        return [], None
+        return [], None  # 附近 300 公里没有城市：照片里原来的地名原样留着
     names = (place.city, place.region, place.country)
-    notes.append(f"地点已按新坐标更新为「{place_label(*names)}」。")
-    if place.distance_km is not None and place.distance_km >= _DISTANCE_HINT_KM:
-        notes.append(f"这是离照片位置 {_round_km(place.distance_km)} 公里的最近的城市。")
     return _place_assignments(*names), names
 
 
 def _lookup_coordinates(
     names: tuple[str | None, str | None, str | None],
     resolver: PlaceResolver | None,
-    notes: list[str],
 ) -> tuple[list[Assignment], tuple[float, float] | None]:
     """地点 → 坐标（正查，ADR 0031）。
 
@@ -290,31 +272,10 @@ def _lookup_coordinates(
         return [], None
     found = resolver.place_named(city, region=region, country=country)
     if not found:
-        notes.append(_not_in_database(city))
-        return [], None
+        return [], None  # 库里没有这个名字：只写地名，坐标原样不动
     place = found[0]
-    notes.append(
-        f"坐标已按「{place_label(place.city, place.region, place.country)}」更新 —— "
-        "那是这座城市的位置，不是照片的具体位置。"
-    )
     coordinates = (place.latitude, place.longitude)
     return _coordinate_assignments(*coordinates), coordinates
-
-
-def _not_in_database(name: str) -> str:
-    """城市库里查不到时的说明。
-
-    **顺带说清境外用当地写法**（ADR 0011）：输「京都」查不到，是因为库里那一带写的是
-    ``Kyoto``。不说这一句，用户只会以为这个功能坏了。
-    """
-    return (
-        f"城市库里没有「{name}」，坐标保持原样。境外地点按当地写法收录"
-        "（例如京都写作 Kyoto），也可以直接填经纬度。"
-    )
-
-
-def _round_km(value: float) -> str:
-    return f"{value:.0f}" if value >= 10 else f"{value:.1f}"
 
 
 __all__ = [

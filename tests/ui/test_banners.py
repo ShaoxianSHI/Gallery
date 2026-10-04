@@ -196,35 +196,30 @@ def test_clearing_the_cover_says_what_it_fell_back_to() -> None:
 # ---- 编辑位置（ADR 0030 / 0031）------------------------------------------------
 
 
-def _outcome(
-    *,
-    notes: tuple[str, ...] = (),
-    written: bool = True,
-    journaled: bool = True,
-) -> PlaceWriteOutcome:
+def _outcome(*, written: bool = True, journaled: bool = True) -> PlaceWriteOutcome:
     return PlaceWriteOutcome(
         entry=PhotoRef(path=Path("/库/一张.jpg"), size=1, mtime_ns=2),
-        plan=PlacePlan(assignments=(Assignment("XMP:City", "杭州"),), city="杭州", notes=notes),
+        plan=PlacePlan(assignments=(Assignment("XMP:City", "杭州"),), city="杭州"),
         journaled=journaled,
         written=written,
     )
 
 
-def test_place_banner_says_what_actually_happened() -> None:
-    """横幅上每一条 ``notes`` 都是**已经发生的事**，一句都不能省。
+def test_the_place_banner_is_one_line_and_nothing_else() -> None:
+    """**只有这一句。**
 
-    改完坐标而用户不知道地点被重算了，下次打开就会以为程序记错了。
+    「接下来会发生什么」是对话框里那行小字的事：保存之前就说清了，用户是在知道后果的
+    前提下按的保存。横幅再说一遍是重复，而且重复的那一遍还在动作**之后**才到 ——
+    那时候它已经不能改变任何决定了。
     """
-    text = place_banner(
-        _outcome(notes=("地点已按新坐标更新为「中国 · 浙江省 · 杭州」。",)), "一张.jpg"
-    )
-
-    assert text.startswith("已更新「一张.jpg」的位置")
-    assert "地点已按新坐标更新为「中国 · 浙江省 · 杭州」" in text
+    assert place_banner(_outcome(), "一张.jpg") == "已更新「一张.jpg」的位置。⌘Z 可以撤销。"
 
 
 def test_place_banner_says_when_it_cannot_be_undone() -> None:
-    assert "⌘Z 撤销不了" in place_banner(_outcome(journaled=False), "一张.jpg")
+    """这一句不是重复：它不是「发生了什么」，而是「你刚才按 ⌘Z 会发生什么」。"""
+    text = place_banner(_outcome(journaled=False), "一张.jpg")
+
+    assert text == "已更新「一张.jpg」的位置。⌘Z 撤销不了：没能记下操作日志。"
 
 
 def test_place_banner_says_nothing_changed_when_nothing_did() -> None:
@@ -232,7 +227,7 @@ def test_place_banner_says_nothing_changed_when_nothing_did() -> None:
 
 
 def test_undo_banner_for_a_place_mentions_the_fields_it_refused_to_touch() -> None:
-    """部分冲突时必须说清「只撤了一部分」—— 否则用户以为照片已经整个回到刚才那样。"""
+    """撤销时「只撤了一部分」必须说清 —— 那不是重复，那是用户需要知道的结果。"""
     result = UndoResult(
         action=ACTION_METADATA,
         entries=(PhotoRef(path=Path("/库/一张.jpg"), size=1, mtime_ns=3),),

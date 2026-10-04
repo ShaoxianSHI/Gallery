@@ -292,10 +292,8 @@ def test_writing_updates_the_file_the_row_and_the_banner(
     row = focused._model.row_of_path(root / "京都" / PHOTO)
     assert focused._model.photo_at(row) is not None
     assert focused._undo_action.text() == "撤销 编辑位置"
-    # 横幅把**已经发生的事**说出来：地名与坐标各自被谁改成了什么。
-    assert "已更新" in focused._banner.text()
-    assert "坐标已按" in focused._banner.text()
-    assert "不是照片的具体位置" in focused._banner.text()
+    # 横幅只有一句：「接下来会发生什么」是对话框里那行小字的事，保存之前就说过了。
+    assert focused._banner.text() == "已更新「一张.jpg」的位置。⌘Z 可以撤销。"
 
 
 def test_the_journal_has_the_field_level_record(

@@ -3,9 +3,9 @@
 **反查器是假的**：它只回答「这个坐标最近的城市是什么」「这个名字在哪」，不碰文件、不碰
 城市库 —— 城市库那一半在 ``tests/core/places/test_dataset.py`` 里单独测。
 
-每条用例都盯两件事：**写出去的字段**（有没有写、有没有写全、有没有多写）与
-**要说给用户的话**（``notes``）。后者与前者同样重要：改完坐标而用户不知道地点被重算了，
-下次打开就会以为程序记错了。
+每条用例盯的是**写出去的字段**：有没有写、有没有写全、有没有多写、以及**不该写的
+一个字节都没动**。「哪些字段会被改」就是这一层全部的责任 —— 话由对话框在保存之前说，
+横幅只说「成了吗、能不能撤」。
 """
 
 from __future__ import annotations
@@ -94,8 +94,6 @@ def test_only_coordinates_given_still_fills_in_the_place(library_state: PlaceSta
     assert written["XMP:City"] == "杭州"
     assert written["IPTC:City"] == "杭州"
     assert plan.city == "杭州" and plan.coordinates == (30.2741, 120.1551)
-    assert any("地点已按新坐标更新" in note for note in plan.notes)
-    assert any("3.1 公里" in note for note in plan.notes)  # 「这只是最近的城市」要说出来
 
 
 def test_a_place_given_updates_the_coordinates(library_state: PlaceState) -> None:
@@ -108,13 +106,12 @@ def test_a_place_given_updates_the_coordinates(library_state: PlaceState) -> Non
 
     assert plan.coordinates == (31.311, 120.621)
     assert tags(plan.assignments)["EXIF:GPSLatitude"] == "31.311000"
-    assert any("市级精度" in note or "不是照片的具体位置" in note for note in plan.notes)
 
 
 def test_a_name_the_database_does_not_know_leaves_the_coordinates_alone(
     library_state: PlaceState,
 ) -> None:
-    """**查不到就是查不到**：绝不编一个坐标，只写地名，并说清为什么。"""
+    """**查不到就是查不到**：绝不编一个坐标，只写地名，照片原来的坐标一个字节都不动。"""
     resolver = FakeResolver(by_name={})
 
     plan = plan_place_edit(library_state, PlaceEdit(city="西湖·断桥"), resolver=resolver)
@@ -122,18 +119,7 @@ def test_a_name_the_database_does_not_know_leaves_the_coordinates_alone(
     written = tags(plan.assignments)
     assert set(written) <= set(PLACE_TAGS)
     assert plan.coordinates == library_state.coordinates()
-    assert any("城市库里没有" in note for note in plan.notes)
-
-
-def test_a_name_the_database_does_not_know_is_told_about_foreign_spelling(
-    library_state: PlaceState,
-) -> None:
-    """输「京都」查不到，是因为库里写的是 ``Kyoto``（ADR 0011）—— 不说这句像是功能坏了。"""
-    resolver = FakeResolver(by_name={})
-
-    plan = plan_place_edit(library_state, PlaceEdit(city="京都"), resolver=resolver)
-
-    assert any("Kyoto" in note for note in plan.notes)
+    assert resolver.calls == ["名字 西湖·断桥"]
 
 
 def test_both_given_user_wins_and_nothing_is_looked_up(library_state: PlaceState) -> None:
@@ -227,8 +213,7 @@ def test_no_place_anywhere_nearby_keeps_the_written_name(library_state: PlaceSta
     )
 
     assert plan.city == library_state.city
-    assert set(tags(plan.assignments)) & set(PLACE_TAGS) == set()
-    assert any("没有改动" in note for note in plan.notes)
+    assert set(tags(plan.assignments)) & set(PLACE_TAGS) == set()  # 地名一个字都没写
 
 
 # ---- 不合法的坐标 ---------------------------------------------------------------

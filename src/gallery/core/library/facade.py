@@ -86,7 +86,7 @@ class PlaceWriteOutcome:
 
     #: 写完之后这张照片的引用。文件已经不在时为 ``None``。
     entry: PhotoRef | None
-    #: 落定的字段与**已经发生的事**（给横幅的那些句子都在 ``plan.notes`` 里）。
+    #: 落定的字段与写完之后文件里会有的那份位置。
     plan: PlacePlan
     #: 是否留下了可回滚的日志记录。为 ``False`` 时界面要说明「⌘Z 撤销不了」。
     journaled: bool = True

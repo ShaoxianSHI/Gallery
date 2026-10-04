@@ -174,20 +174,19 @@ def album_cover_cleared_banner(album_name: str) -> str:
 def place_banner(outcome: PlaceWriteOutcome, photo_name: str) -> str:
     """编辑位置之后的那行提示（ADR 0030 / 0031）。
 
-    **``notes`` 里的每一句都要说**：那些不是补充说明，而是**已经发生的事** ——
-    「地点已按新坐标更新为杭州」「坐标已按这座城市的位置写入，它不是照片的具体位置」
-    「城市库里没有这个名字，坐标保持原样」。少说任何一句，用户就只能靠猜：
-    改一个地名之后坐标动了，他不知道那是程序做的，还是自己记错了。
+    **只有这一句。** 「接下来会发生什么」是对话框里的那行小字负责的：保存之前就说清
+    「坐标会按这座城市的位置写入」「城市库里没有这个名字，坐标保持原样」，用户是在
+    知道后果的前提下按下保存的。横幅再说一遍是重复，而重复的那一遍还是在动作**之后**
+    才到 —— 到了那时候它已经不能改变任何决定了。
 
-    写回是从不静默的操作（红线 3、4），所以这里从不出现「已完成」三个字了事。
+    横幅只回答两件事：**成了吗**、**能不能撤**。
     """
     if not outcome.written:
         return f"「{photo_name}」的位置没有改动。"
-    head = f"已更新「{photo_name}」的位置"
-    parts = [part.rstrip("。") for part in outcome.plan.notes]
     if not outcome.journaled:
-        parts.append("没能记下操作日志，⌘Z 撤销不了")
-    return "；".join([head, *parts]) + "。"
+        # 这一句不是重复：它不是「发生了什么」，而是「你刚才按 ⌘Z 会发生什么」。
+        return f"已更新「{photo_name}」的位置。⌘Z 撤销不了：没能记下操作日志。"
+    return f"已更新「{photo_name}」的位置。⌘Z 可以撤销。"
 
 
 def first_reason(failures: Sequence[Failure]) -> str:
