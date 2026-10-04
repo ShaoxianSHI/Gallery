@@ -277,10 +277,14 @@ class WeekView(LevelView):
         self.window_changed.emit()
 
     # ---- 缩略图窗口 -------------------------------------------------------
-    def _band_refs(self, days: Sequence[datetime.date]) -> list[PhotoRef]:
-        """这一条横向的带里，看得见的那几小时的照片（每小时一张）。"""
+    def visible_refs(self) -> list[PhotoRef]:
+        """滚到看得见的那几小时里的照片，每小时一张。
+
+        **上下再多要三小时**：滚动去抖之后才重报窗口，那一段如果正好有照片，
+        用户会看见格子空着再被填上。
+        """
         refs: list[PhotoRef] = []
-        visible = set(days)
+        visible = set(self.days())
         row = self.row_height()
         bar = self._area.verticalScrollBar()
         top = bar.value()
@@ -294,31 +298,6 @@ class WeekView(LevelView):
                 continue
             refs.append(photos[0])
         return refs
-
-    def visible_refs(self) -> list[PhotoRef]:
-        """滚到看得见的那几小时里的照片，每小时一张。
-
-        **上下再多要三小时**：滚动去抖之后才重报窗口，那一段如果正好有照片，
-        用户会看见格子空着再被填上。
-        """
-        return self._band_refs(self.days())
-
-    def prefetch_refs(self) -> list[PhotoRef]:
-        """**相邻那一周**、同一条带里的照片：先解着，按 → / ← 时就不用等。
-
-        不预取的话，每一段新日子都是「切过去才开始解」—— 第一次看总有一下占位灰
-        （真机上一张原图解几百毫秒），而切走再切回来就不灰了（图已经在手上）。
-        预取就是把那个便宜提前拿到；**只多要一条带**（不是整周 168 格），低优先级，
-        解码排在看得见的那几张后面。
-        """
-        anchor = self._anchor
-        return (
-            self._band_refs(
-                [day + datetime.timedelta(days=offset) for day in self.days() for offset in (-7, 7)]
-            )
-            if anchor
-            else []
-        )
 
     def repaint_content(self) -> None:
         """重画**时间轴与表头**——格子是它们画的，不是 ``WeekView`` 自己画的。
