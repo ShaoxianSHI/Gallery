@@ -217,6 +217,14 @@ class PlaceEditDialog(QDialog):
         form.addRow("经度", self._longitude)
         layout.addLayout(form)
 
+        # **报错那一行在按钮上面**：报错说的是上面那几个框里的哪一个不对，放在那儿才找得
+        # 回去；压在「保存」下面时，那块空着的两行垫在最底下，看起来像一大截多余的边。
+        self._error = QLabel()
+        self._error.setObjectName("placeEditError")
+        self._error.setWordWrap(True)
+        self._error.setFixedHeight(self.fontMetrics().height() * ERROR_LINES)
+        layout.addWidget(self._error)
+
         # 第一行三个键：**复制 / 粘贴 / 清空**，各占三分之一。
         # **不挂悬浮提示**：三个键的字面意思已经就是它们要做的事，鼠标停在上面再冒出一句
         # 解释只是把「复制」翻译成「把坐标写进剪贴板」—— 同一件事换个更长的说法。
@@ -253,12 +261,6 @@ class PlaceEditDialog(QDialog):
         for button in (self._copy_button, self._paste_button, self._clear_button, cancel, save):
             button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         layout.addLayout(grid)
-
-        self._error = QLabel()
-        self._error.setObjectName("placeEditError")
-        self._error.setWordWrap(True)
-        self._error.setFixedHeight(self.fontMetrics().height() * ERROR_LINES)
-        layout.addWidget(self._error)
 
         # **⌘W 关闭**（`StandardKey.Close` 在 macOS 上就是它）。不挂这一条的话，⌘W 会
         # 一路走到主窗口 —— 在一个模态对话框里关掉整个窗口，那不是用户按键时想做的事。

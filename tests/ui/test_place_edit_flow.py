@@ -684,6 +684,39 @@ def test_the_transfer_buttons_have_no_tooltip(qt_app: QApplication) -> None:
     ] == ["", "", ""]
 
 
+def test_the_buttons_sit_at_the_bottom_with_no_dangling_space_under_them(
+    qt_app: QApplication,
+) -> None:
+    """**「保存」下面只留布局自己的下边距。**
+
+    报错那一行本来压在按钮下面，而它平时是空的 —— 那块空着的两行垫在最底下，看起来
+    像一大截多余的边（对话框高度还因此虚胖了 30px）。挪到按钮**上面**之后：报错说的是
+    上面那几个框里哪一个不对，放在那儿也才找得回去。
+    """
+    dialog = _dialog(None, PlaceState(city="苏州", region="江苏省", country="中国"))
+    dialog.show()
+    QApplication.processEvents()
+
+    save = dialog.findChild(QPushButton, "saveButton")
+    assert save is not None
+    assert dialog._error.y() < dialog._copy_button.y()  # 报错在按钮上面
+    assert save.y() + save.height() == dialog.height() - dialog.layout().contentsMargins().bottom()
+
+
+def test_the_error_line_keeps_its_room_even_while_it_is_empty(qt_app: QApplication) -> None:
+    """**空着也占着那两行** —— 报错时对话框不跟着长高一截，位置一动就晃眼。"""
+    dialog = _dialog(None, PlaceState(city="苏州"))
+    dialog.show()
+    QApplication.processEvents()
+
+    before = dialog.height()
+    dialog._error.setText("纬度不是一个数字：「30.abc」。可以直接填十进制度，例如 30.27415。")
+    QApplication.processEvents()
+
+    assert dialog.height() == before
+    assert dialog._error.height() >= 2 * dialog.fontMetrics().height()
+
+
 def test_there_is_no_hint_line_left(qt_app: QApplication) -> None:
     """那行「保存后，XXX」已经删掉了 —— 用户不要它。"""
     dialog = _dialog(None, PlaceState(city="苏州"))
