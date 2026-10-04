@@ -36,6 +36,7 @@
 ``_group_view`` / ``_browse_mode`` / ``_current_dir``  当前这一层的判据
 ``_preview_cache`` / ``_metadata_cache``  写完要把受影响的缓存条目丢掉
 ``_show_banner`` / ``_reload_level`` / ``_update_action_states``  写完的收尾
+``_show_banner`` 的 ``auto_hide``          做完的确认说过就走，出了岔子就留着（ADR 0029）
 ``_note_self_write`` / ``_refresh_thumbnail_window`` / ``_update_level_notice``  同上
 ``_title_bar`` / ``_refresh_title``  大图页的改名落在窗口标题栏那一行（ADR 0025）
 ======================  ==========================================================
@@ -263,7 +264,12 @@ class WriteOpsMixin:
     def _on_paste_done(self, target: Path, payload: object) -> None:
         self._write_job = None
         if isinstance(payload, PasteResult):
-            self._show_banner(banners.paste_banner(payload, target.name))
+            # 做完的确认**说过就走**，除非这句话里还有用户要处理的东西：没粘成的那些、
+            # 没能记下的操作日志（判据见 ADR 0029 决策 3）。
+            self._show_banner(
+                banners.paste_banner(payload, target.name),
+                auto_hide=payload.journaled and not payload.failures,
+            )
 
     def _on_paste_failed(self, message: str) -> None:
         self._write_job = None
@@ -309,7 +315,7 @@ class WriteOpsMixin:
             # 插不进去（理论上不会：这一层里还没有同一个路径）。宁可重扫一次，
             # 也不能让磁盘上多了一个文件夹而界面上看不见。
             self._reload_level()
-            self._show_banner(f"已新建相册「{created.name}」。")
+            self._show_banner(f"已新建相册「{created.name}」。", auto_hide=True)
             return
         self._grid.select_row(row)
         # 空文件夹里建了相册之后，「这一层是空的」那句提示就该收起来了（它判据是
@@ -393,7 +399,7 @@ class WriteOpsMixin:
             self._show_banner(exc.message)
             return
         self._refresh_album_cover(album)
-        self._show_banner(banners.album_cover_banner(album.name, photo.name))
+        self._show_banner(banners.album_cover_banner(album.name, photo.name), auto_hide=True)
 
     def clear_album_cover(self) -> None:
         """「取消相册封面」：这个相册回到「里面第一张照片」当封面（ADR 0028 决策 5）。"""
@@ -408,7 +414,7 @@ class WriteOpsMixin:
             self._show_banner(exc.message)
             return
         self._refresh_album_cover(album)
-        self._show_banner(banners.album_cover_cleared_banner(album.name))
+        self._show_banner(banners.album_cover_cleared_banner(album.name), auto_hide=True)
 
     def _refresh_album_cover(self, album: Path) -> None:
         """封面换了人，让那一张相册卡片重新去取图。
@@ -510,11 +516,15 @@ class WriteOpsMixin:
 
     def _on_transfer_done(self, target: Path, verb: str, payload: object) -> None:
         self._write_job = None
+        if not isinstance(payload, (MoveResult, PasteResult)):
+            return
+        # 与粘贴同一判据（ADR 0029 决策 3）：确认说过就走，出了岔子就留着。
+        self._show_banner(
+            banners.transfer_banner(payload, target.name, verb),
+            auto_hide=payload.journaled and not payload.failures,
+        )
         if isinstance(payload, MoveResult):
-            self._show_banner(banners.transfer_banner(payload, target.name, verb))
             self._refresh_undo_label()
-        elif isinstance(payload, PasteResult):
-            self._show_banner(banners.transfer_banner(payload, target.name, verb))
 
     def _on_transfer_failed(self, verb: str, message: str) -> None:
         self._write_job = None
@@ -650,7 +660,11 @@ class WriteOpsMixin:
         self._select_after_removal(removed)
         if in_detail:
             self._show_next_after_trash()
-        self._show_banner(banners.trash_banner(result))
+        # 确认说过就走；没移走的那些与「⌘Z 撤销不了」要留着（ADR 0029 决策 3）。
+        self._show_banner(
+            banners.trash_banner(result),
+            auto_hide=result.journaled and not result.failures,
+        )
         self._refresh_undo_label()
         self._refresh_thumbnail_window()
 
@@ -738,7 +752,10 @@ class WriteOpsMixin:
             )
         else:
             self._apply_restore(result)
-            self._show_banner(banners.undo_banner(result))
+            self._show_banner(
+                banners.undo_banner(result),
+                auto_hide=result.journaled and not result.failures,
+            )
         self._refresh_undo_label()
 
     def _apply_restore(self, result: UndoResult) -> None:
@@ -776,7 +793,9 @@ class WriteOpsMixin:
         # 大图页上标题栏那一行显示的就是这个名字 —— 改完不刷新的话，用户盯着标题栏
         # 改完却看到旧名字（⌘Z 撤回时同理，ADR 0025 决策 4）。
         self._refresh_title()
-        self._show_banner(banner or banners.rename_banner(result))
+        # 记上了才说过就走：没记上时那句话里有一句「⌘Z 撤销不了」，那是用户必须知道的
+        # （ADR 0029 决策 3）。撤销回来时传进来的是撤销那句话，判据一样成立。
+        self._show_banner(banner or banners.rename_banner(result), auto_hide=result.journaled)
 
 
 __all__ = [

@@ -27,7 +27,7 @@ from collections.abc import Callable, Iterable, Sequence
 from functools import partial
 from pathlib import Path
 
-from PySide6.QtCore import QModelIndex, QPoint, QPointF, Qt, QTimer
+from PySide6.QtCore import QModelIndex, QPoint, QPointF, QRect, Qt, QTimer
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
@@ -41,7 +41,6 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
-    QLabel,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -88,6 +87,8 @@ from gallery.core.places.countries import place_label
 from gallery.core.places.dataset import is_real_coordinate
 from gallery.core.places.resolver import LazyPlaceResolver
 from gallery.ui import desktop, menu_style, theme
+from gallery.ui.banner_overlay import AUTO_HIDE_SECONDS as BANNER_AUTO_HIDE_SECONDS
+from gallery.ui.banner_overlay import BannerOverlay
 from gallery.ui.browser.grid import PREFETCH_MARGIN, PhotoGrid
 from gallery.ui.browser.model import PhotoListModel
 from gallery.ui.browser.thumb_sizes import (
@@ -162,16 +163,6 @@ WATCH_ECHO_TTL = 2.0
 #: 代价是用户刚操作完的两秒里，真正的解码失败不冒头；两秒后照常报，而那正是用户
 #: 手上正有别的动静（滚动、切库）的时候，横幅会再被刷一次。
 BANNER_STICKY_SECONDS = 2.0
-
-_BANNER_STYLE = """
-QLabel#banner {
-    background: rgba(255, 176, 32, 0.16);
-    border: 1px solid rgba(255, 176, 32, 0.45);
-    border-radius: 6px;
-    padding: 6px 10px;
-    color: palette(text);
-}
-"""
 
 
 def _context_kind(entry: GridEntry) -> TargetKind:
@@ -406,11 +397,6 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._action_states_timer.setInterval(0)
         self._action_states_timer.timeout.connect(self._update_action_states)
 
-        self._banner = QLabel()
-        self._banner.setObjectName("banner")
-        self._banner.setWordWrap(True)
-        self._banner.hide()
-
         self._breadcrumb = BreadcrumbBar()
         self._breadcrumb.path_requested.connect(self._on_breadcrumb_requested)
         self._breadcrumb.condition_removed.connect(self._on_condition_removed)
@@ -418,13 +404,13 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         # 标题文字与 ⌘R 的输入框都要给右上角那块让出来，否则长相册名会从它底下穿过去。
         self._title_bar.reserve_right(SEARCH_FIELD_WIDTH + 2 * SEARCH_FIELD_MARGIN_RIGHT)
 
+        # **横幅不进这个布局**（ADR 0029 决策 1）：它在竖排里占一行，于是每一条消息
+        # 都把网格往下挤一段。控件本体与摆位在 ``_build_ui`` 的最后一步建。
         self._grid_page = QWidget()
-        self._grid_page.setStyleSheet(_BANNER_STYLE)
         grid_layout = QVBoxLayout(self._grid_page)
         grid_layout.setContentsMargins(10, 10, 10, 0)
         grid_layout.setSpacing(8)
         grid_layout.addWidget(self._breadcrumb)
-        grid_layout.addWidget(self._banner)
         grid_layout.addWidget(self._grid, 1)
 
         self._detail = DetailView()
@@ -462,10 +448,18 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._search_field.editing_changed.connect(self._on_search_active_changed)
         self._search_field.hide()
 
+        # 横幅**也建在最后**：它是压在中央控件之上的一层，与搜索胶囊同一手法（Qt 按创建
+        # 顺序叠兄弟控件，先建的被后建的盖住）。差别是它**不进任何布局** —— 出现与消失
+        # 都不动底下任何一样东西（ADR 0029 决策 1），摆位由 ``_layout_banner`` 负责。
+        self._banner = BannerOverlay(self)
+        # 换页时重新摆：大图页上照片区右边让给元数据面板，居中的位置也就跟着变了。
+        self._stack.currentChanged.connect(self._on_page_changed)
+
         # 标题栏那一行第一次有话可说：还没打开库，所以是「Gallery」（ADR 0025 决策 4）。
         self._refresh_title()
         # 刻意不建状态栏：底部那一条只是为了放扫描进度、照片尺寸、缩放百分比，
-        # 换来的是照片区少 20 来像素。出错信息有横幅，提示性信息一律不留。
+        # 换来的是照片区少 20 来像素。出错信息有横幅，提示性信息一律不留 —— 横幅浮在
+        # 内容上面，压根不占照片区的那一行（ADR 0029 决策 1）。
 
     def _build_actions(self) -> None:
         self._open_action = QAction("打开文件夹…", self)
@@ -2270,7 +2264,9 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._thumbnail_failures += 1
         logger.info("缩略图失败：%s", message)
         self._show_banner(
-            f"有 {self._thumbnail_failures} 张照片无法显示缩略图：{message}", background=True
+            f"有 {self._thumbnail_failures} 张照片无法显示缩略图：{message}",
+            background=True,
+            auto_hide=True,
         )
 
     # ---- 元数据面板、地点与进入
@@ -2280,6 +2276,8 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._panel.setVisible(visible)
         self._session = self._session.with_metadata_visible(visible)
         self._save_session()
+        # 面板一收一放，照片区右边那条边界就变了，横幅的居中位置跟着重摆。
+        self._layout_banner()
         if visible:
             self._load_metadata()
         else:
@@ -2672,7 +2670,7 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         if not paths:
             self._show_banner(NOTHING_SELECTED)
             return
-        self._show_banner(desktop.reveal_in_finder(paths))
+        self._show_banner(desktop.reveal_in_finder(paths), auto_hide=True)
 
     def copy_selected_paths(self) -> None:
         """「拷贝路径」⇧⌘C：与访达一样，一行一个。"""
@@ -2681,7 +2679,7 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             return
         desktop.copy_to_clipboard(desktop.format_paths(paths))
         head = "已拷贝 1 个路径。" if len(paths) == 1 else f"已拷贝 {len(paths)} 个路径。"
-        self._show_banner(head)
+        self._show_banner(head, auto_hide=True)
 
     def copy_selected_files(self) -> None:
         """「拷贝」⌘C：把选中的**文件**放进剪贴板，访达里 ⌘V 得到一份拷贝（ADR 0017）。
@@ -2692,7 +2690,7 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         paths = self._selected_paths()
         if not paths:
             return
-        self._show_banner(desktop.copy_files_to_clipboard(paths))
+        self._show_banner(desktop.copy_files_to_clipboard(paths), auto_hide=True)
 
     # ---- 右键菜单里的只读命令（见 ADR 0014）
 
@@ -2750,7 +2748,7 @@ class MainWindow(WriteOpsMixin, QMainWindow):
 
     def _put_metadata_on_clipboard(self, report: MetadataReport, ref: PhotoRef) -> None:
         desktop.copy_to_clipboard(report.as_text())
-        self._show_banner(f"已复制「{ref.name}」的元数据。")
+        self._show_banner(f"已复制「{ref.name}」的元数据。", auto_hide=True)
 
     def copy_current_group(self) -> None:
         """「复制分组条件」：把这个组是怎么分出来的抄走。
@@ -2763,7 +2761,7 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         facet = group_facet(group.facet)
         field = facet.label if facet is not None else group.facet
         desktop.copy_to_clipboard(f"按「{field}」分组：{group.label} · {group.count} 张")
-        self._show_banner(f"已复制分组条件：按「{field}」分组。")
+        self._show_banner(f"已复制分组条件：按「{field}」分组。", auto_hide=True)
 
     # ---- 大图（见 ADR 0021）
 
@@ -2989,13 +2987,21 @@ class MainWindow(WriteOpsMixin, QMainWindow):
 
     # ---- 提示 --------------------------------------------------------------
 
-    def _show_banner(self, text: str, *, background: bool = False) -> bool:
+    def _show_banner(self, text: str, *, background: bool = False, auto_hide: bool = False) -> bool:
         """显示横幅，返回这条消息是否真的上了屏。
 
         ``background=True`` 是**后台**消息（缩略图解码失败、地点解析进度）：它们不许盖掉
         用户刚刚触发的那条说明，理由与时长见 :data:`BANNER_STICKY_SECONDS`。用户自己做的事
         要能说清楚，这是第一位的；而「某张照片读不出来」「正在解析地点」这种话，等一会儿
         再说并不会让人误判。
+
+        ``auto_hide=True`` 是**说过就走**：过 :data:`BANNER_AUTO_HIDE_SECONDS` 秒自己收起来
+        （ADR 0029 决策 3）。判据是「用户看完要不要动手」：
+
+        - **用户做完一件事的确认** —— 「已重命名为…」「已把 3 项移到废纸篓。⌘Z 可以撤销。」
+          「已复制 12 个路径。」—— 说完就没有新内容了，继续压在照片中间只是碍事；
+        - **要用户动手处理的那几句一律留下**：出错、没能做成、「这一层是空的」、
+          后台进度。收掉它们等于在用户还没看完时把话收走。
         """
         now = time.monotonic()
         if background and now < self._banner_sticky_until:
@@ -3003,8 +3009,10 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             return False
         if not background:
             self._banner_sticky_until = now + BANNER_STICKY_SECONDS
-        self._banner.setText(text)
-        self._banner.show()
+        self._banner.show_message(
+            text,
+            auto_hide_seconds=BANNER_AUTO_HIDE_SECONDS if auto_hide else None,
+        )
         return True
 
     def _clear_banner(self) -> None:
@@ -3012,6 +3020,38 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._banner_sticky_until = 0.0
         self._place_notice_text = None
         self._banner.hide()
+
+    # ---- 横幅的摆位（ADR 0029）------------------------------------------------
+
+    def _on_page_changed(self, _index: int) -> None:
+        """换页：横幅要重新摆 —— 大图页上照片区右边让给了元数据面板，居中的位置变了。"""
+        self._layout_banner()
+
+    def _banner_area(self) -> QRect:
+        """横幅可以摆的那一片：**内容区减去元数据面板**（面板摆着的那几页才减）。
+
+        中央控件自己已经让开了标题栏那一条（见 ``_build_ui``），所以这里拿它的
+        ``geometry`` 就是照片区那一带，不必再算一遍边距。
+        """
+        central = self.centralWidget()
+        if central is None:
+            return QRect()
+        area = QRect(central.geometry())
+        panel = self._panel
+        if panel is not None and panel.isVisible():
+            # 面板是盖在右边那一段的，不该被横幅压住：居中到照片区里去。
+            area.setRight(panel.geometry().left() - 1)
+        return area
+
+    def _layout_banner(self) -> None:
+        """把横幅摆在内容区底边居中（它在窗口上，不属于任何布局）。
+
+        窗口改大小、换页、展开收起元数据面板之后都要重摆一次 —— 与 ``_layout_title_bar``
+        同一套时机。
+        """
+        self._banner.reposition(self._banner_area())
+        if self._banner.isVisible():
+            self._banner.raise_()  # 窗口布局跑完之后中央控件会被抬上来
 
     def _report_error(self, message: str) -> None:
         QMessageBox.critical(self, "Gallery", message)
@@ -3031,7 +3071,7 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         removed = self._library.clear_cache()
         self._model.clear_thumbnails()
         self._refresh_thumbnail_window()
-        self._show_banner(f"已清除 {removed} 个缩略图缓存文件。")
+        self._show_banner(f"已清除 {removed} 个缩略图缓存文件。", auto_hide=True)
 
     def _update_action_states(self) -> None:
         self._update_navigation_actions()
@@ -3566,10 +3606,12 @@ class MainWindow(WriteOpsMixin, QMainWindow):
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         super().showEvent(event)
         self._layout_title_bar()
+        self._layout_banner()
 
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         super().resizeEvent(event)
         self._layout_title_bar()
+        self._layout_banner()
 
     def _on_title_rename_committed(self, text: str) -> None:
         """标题栏里确认了一个新名字。
