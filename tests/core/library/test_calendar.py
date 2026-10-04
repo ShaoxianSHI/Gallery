@@ -9,6 +9,9 @@ import pytest
 
 from gallery.core.library.calendar import (
     LEVELS,
+    WEEKDAY_HEADERS,
+    WEEKDAY_NAMES,
+    WEEKEND_WEEKDAYS,
     capture_day,
     capture_hour,
     count_days,
@@ -17,10 +20,10 @@ from gallery.core.library.calendar import (
     group_by_day,
     group_by_hour,
     is_level,
-    iso_week,
     month_matrix,
     shift,
     title,
+    week_number,
     week_start,
 )
 from gallery.core.library.photos import PhotoRef
@@ -44,21 +47,32 @@ def test_a_year_is_six_hundred_and_sixty_six_days() -> None:
     assert days[0] == datetime.date(2021, 1, 1)
 
 
-def test_a_month_is_six_weeks_starting_on_a_monday() -> None:
+def test_a_month_is_six_weeks_starting_on_a_sunday() -> None:
     days = month_matrix(datetime.date(2021, 9, 12))
     assert len(days) == 42
-    assert days[0].weekday() == 0
+    assert days[0].weekday() == 6  # 周日
     assert datetime.date(2021, 9, 1) in days
     assert datetime.date(2021, 9, 30) in days
-    # 首行要含 8 月 31 日（那个月 1 号是周日）
-    assert days[0] == datetime.date(2021, 8, 30)
+    # 2021 年 9 月 1 号是周三，往前补到那个周日的 8 月 29 日
+    assert days[0] == datetime.date(2021, 8, 29)
 
 
-def test_a_week_starts_on_monday_and_ends_on_sunday() -> None:
+def test_a_week_starts_on_sunday_and_ends_on_saturday() -> None:
     sunday = datetime.date(2021, 9, 12)
-    assert week_start(sunday) == datetime.date(2021, 9, 6)
-    assert days_of("week", sunday)[0] == datetime.date(2021, 9, 6)
-    assert days_of("week", sunday)[-1] == sunday
+    assert week_start(sunday) == sunday
+    assert days_of("week", sunday)[0] == sunday
+    assert days_of("week", sunday)[-1] == datetime.date(2021, 9, 18)
+    # 同一周的任意一天都指向同一个周日
+    assert week_start(datetime.date(2021, 9, 18)) == sunday
+    assert week_start(datetime.date(2021, 9, 15)) == sunday
+
+
+def test_the_weekday_names_run_from_sunday() -> None:
+    assert WEEKDAY_NAMES[0] == "日"
+    assert WEEKDAY_NAMES[-1] == "六"
+    assert WEEKDAY_HEADERS[0] == "星期日"
+    # 周末是周日与周六（``date.weekday()`` 的 6 与 0）
+    assert frozenset({6, 0}) == WEEKEND_WEEKDAYS
 
 
 def test_there_is_no_day_level() -> None:
@@ -75,7 +89,7 @@ def test_there_is_no_day_level() -> None:
         ("month", 1, datetime.date(2021, 10, 12)),
         ("month", -1, datetime.date(2021, 8, 12)),
         ("week", 1, datetime.date(2021, 9, 19)),
-        ("week", -1, datetime.date(2021, 9, 5)),
+        ("week", -1, datetime.date(2021, 9, 5)),  # 9 月 5 日是周日
     ],
 )
 def test_stepping_walks_exactly_one_period(level: str, step: int, expected: datetime.date) -> None:
@@ -103,7 +117,7 @@ def test_stepping_across_a_leap_day() -> None:
     [
         ("year", "2021年"),
         ("month", "2021年9月"),
-        ("week", "2021年9月6日 – 9月12日 · 第 36 周"),
+        ("week", "2021年9月12日 – 9月18日 · 第 38 周"),
     ],
 )
 def test_title_says_which_period_is_on_screen(level: str, expected: str) -> None:
@@ -111,14 +125,22 @@ def test_title_says_which_period_is_on_screen(level: str, expected: str) -> None
 
 
 def test_week_title_does_not_repeat_the_year_it_already_said() -> None:
-    """2021-12-27 那周跨到下一年：后半段只写「1月2日」，不把 2022 再写一遍。"""
-    assert title("week", datetime.date(2021, 12, 29)) == "2021年12月27日 – 1月2日 · 第 52 周"
+    """2021-12-26 那周跨到下一年：后半段只写「1月1日」，不把 2022 再写一遍。"""
+    assert title("week", datetime.date(2021, 12, 29)) == "2021年12月26日 – 1月1日 · 第 53 周"
 
 
-def test_iso_week_numbers_follow_the_calendar() -> None:
-    assert iso_week(datetime.date(2021, 9, 12)) == 36
-    assert iso_week(datetime.date(2021, 1, 4)) == 1  # 含 1 月 4 日的那周是第 1 周
-    assert iso_week(datetime.date(2021, 1, 1)) == 53  # 上一年的第 53 周
+def test_week_numbers_count_the_weeks_that_are_on_screen() -> None:
+    """**第 1 周是含 1 月 1 日的那一周**（日历软件那套），不是 ISO 周号。
+
+    ISO 是「周一为一周之首」，而这里的一周从周日开始；两套口径常常差一格，
+    标题上写着一个数、屏幕上摆着另一周比不写更糟。
+    """
+    assert week_number(datetime.date(2021, 1, 1)) == 1  # 2021-01-01 是周五
+    assert week_number(datetime.date(2021, 1, 3)) == 2  # 同一周的周日仍是第 1 周
+    assert week_number(datetime.date(2021, 1, 4)) == 2  # 下周一进入第 2 周
+    assert week_number(datetime.date(2021, 9, 12)) == 38
+    # 年底不会溢到「第 0 周」
+    assert week_number(datetime.date(2021, 12, 31)) == 53
 
 
 def test_capture_day_reads_the_wall_clock_not_the_epoch() -> None:

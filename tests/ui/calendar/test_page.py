@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from gallery.core.library.calendar import month_matrix
 from gallery.core.library.photos import PhotoRef
 from gallery.core.metadata.facets import PhotoFacets
 from gallery.ui.calendar import CalendarPage
@@ -18,7 +19,7 @@ from gallery.ui.calendar import CalendarPage
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import Qt  # noqa: E402
-from PySide6.QtGui import QImage, QKeyEvent  # noqa: E402
+from PySide6.QtGui import QImage, QKeyEvent, QPixmap  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 TODAY = datetime.date(2021, 9, 12)
@@ -120,7 +121,7 @@ def test_a_burst_of_photos_lands_in_one_hour_cell(page: CalendarPage) -> None:
 
 def test_the_title_follows_the_level_and_the_anchor(page: CalendarPage) -> None:
     page.set_level("week")
-    assert page.current_view().title() == "2021年9月6日 – 9月12日 · 第 36 周"
+    assert page.current_view().title() == "2021年9月12日 – 9月18日 · 第 38 周"
     page.set_level("month")
     assert page.current_view().title() == "2021年9月"
 
@@ -164,6 +165,51 @@ def test_an_hour_cell_hands_over_its_own_photos(page: CalendarPage) -> None:
     assert label == "9月12日 19:00"
     # 同一秒的一批按文件名排（burst1 排在 burst10 前面），所以比集合不比顺序
     assert {ref.path for ref in photos} == {ref.path for ref in burst}
+
+
+def test_the_week_view_starts_on_sunday(page: CalendarPage) -> None:
+    """一周的第一列是周日（10 月 4 日那天，周日 10-03 在它左边一格）。"""
+    page.set_level("week")
+    days = page.current_view().days()
+    assert len(days) == 7
+    assert days[0].weekday() == 6  # 周日
+    assert days[-1].weekday() == 5  # 周六
+
+
+def test_today_is_highlighted_once_in_the_year_view(
+    page: CalendarPage,
+    monkeypatch: pytest.MonkeyPatch,
+    qt_app: QApplication,  # noqa: ARG001
+) -> None:
+    """年视图里 10 月 4 日出现在**两张**小月里（9 月那张的末尾 + 10 月自己那张），
+    但「今天」只该高亮一处 —— 否则那一屏上有两个今天。
+    """
+    import datetime
+
+    from gallery.ui.calendar import year_view as year_view_module
+
+    today = datetime.date(2026, 10, 4)
+    page.set_today(today)
+    page.go_today()  # 锚点跟着「今天」走，否则年视图还停在 fixture 那一年的十月
+    page.set_level("year")
+    view = page.current_view()
+    assert view.anchor().year == 2026
+
+    outlined: list[tuple[datetime.date, int]] = []
+    original = year_view_module.outline_rounded
+
+    def record(painter, rect, color, width, *, radius=0.0):
+        outlined.append((view._anchor, radius))
+        return original(painter, rect, color, width, radius=radius)
+
+    monkeypatch.setattr(year_view_module, "outline_rounded", record)
+    view.resize(1200, 800)
+    view.render(QPixmap(view.size()))
+
+    # 9 月那张小月确实也画到了这一天（补位），但高亮只有一次
+    september = [day for day in month_matrix(datetime.date(2026, 9, 1)) if day == today]
+    assert september, "前提不成立：补位格里没有今天"
+    assert len(outlined) == 1, f"今天被高亮了 {len(outlined)} 次"
 
 
 def test_the_thumbnail_store_accounts_for_the_edge(page: CalendarPage) -> None:

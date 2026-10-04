@@ -41,10 +41,20 @@ LEVEL_NAMES: Final[Mapping[str, str]] = {"year": "年", "month": "月", "week": 
 _DAYS_IN_YEAR: Final = 366
 
 #: 一周的第一天。中文日历与 Google Calendar（中文界面）都是周一打头。
-_FIRST_WEEKDAY: Final = 0  # ``date.weekday()`` 里周一是 0
+#: 一周从周日开始（``date.weekday()`` 里周日是 6，取模后落在最前面）。
+_FIRST_WEEKDAY: Final = 6
 
 #: 中文短星期名，索引与 ``date.weekday()`` 一致（周一在前）。
-WEEKDAY_NAMES: Final[tuple[str, ...]] = ("一", "二", "三", "四", "五", "六", "日")
+#: 表头那七列，**从周日开始**。
+#:
+#: 顺序与 ``WEEK_START_WEEKDAY`` 一致（周日在最前、周六在最后），排日历时
+#: 「日一二三四五六」与 ``date.weekday()`` 的 0=周一 差一天 —— 所以任何
+#: 「这一列是第几天」的判据都别直接用 ``weekday()``，问 :data:`WEEKEND_WEEKDAYS`
+#: 或 ``(weekday - WEEK_START_WEEKDAY) % 7``。
+WEEKDAY_NAMES: Final[tuple[str, ...]] = ("日", "一", "二", "三", "四", "五", "六")
+
+#: 周末是哪两天（``date.weekday()`` 的口径）：周日与周六。
+WEEKEND_WEEKDAYS: Final[frozenset[int]] = frozenset({6, 0})
 
 #: 月视图表头写「星期一」而不是「一」：一列里只有「一」是认不出来的。
 WEEKDAY_HEADERS: Final[tuple[str, ...]] = tuple(f"星期{name}" for name in WEEKDAY_NAMES)
@@ -80,15 +90,15 @@ def days_of(level: str, anchor: datetime.date) -> list[datetime.date]:
 def month_matrix(anchor: datetime.date) -> list[datetime.date]:
     """覆盖整月的那 6 × 7 = 42 天，含上下月补位。
 
-    从**当月 1 号所在那一周的周一**起算，所以第一行总从周一开始，
-    与表头那七个字对得上（``date.weekday()`` 里周一是 0）。
+    从**当月 1 号所在那一周的周日**起算，所以第一行总从周日开始，
+    与表头那七个字对得上。
     """
     start = week_start(datetime.date(anchor.year, anchor.month, 1))
     return [start + datetime.timedelta(days=offset) for offset in range(42)]
 
 
 def week_start(day: datetime.date) -> datetime.date:
-    """这一周的周一。"""
+    """这一周的周日（这一周是从周日开始数的）。"""
     return day - datetime.timedelta(days=(day.weekday() - _FIRST_WEEKDAY) % 7)
 
 
@@ -133,16 +143,26 @@ def title(level: str, anchor: datetime.date) -> str:
     start = week_start(anchor)
     end = start + datetime.timedelta(days=6)
     span = f"{start.year}年{start.month}月{start.day}日 – {end.month}月{end.day}日"
-    return f"{span} · 第 {iso_week(start)} 周"
+    return f"{span} · 第 {week_number(start)} 周"
 
 
 def weekday_name(day: datetime.date) -> str:
     return WEEKDAY_NAMES[day.weekday()]
 
 
-def iso_week(day: datetime.date) -> int:
-    """ISO 8601 周号（周一为一周之首，含 1 月 4 日的那周是第 1 周）。"""
-    return day.isocalendar()[1]
+def week_number(day: datetime.date) -> int:
+    """这一年里的第几周（**按日历上那一周数**：周日到周六）。
+
+    刻意不用 ISO 8601 周号：ISO 是「周一为一周之首」，而这里的一周从周日开始 ——
+    同一个日期在两套口径下常常差一格，标题上写着一个数、屏幕上摆着另一周，
+    那比不写更糟。
+
+    **第 1 周是「含 1 月 1 日的那一周」**：不管 1 月 1 日是星期几，它所在的那一周
+    就是第 1 周（年底同理 —— 12 月 31 日所在的那一周仍是今年最后一周，不会溢到
+    「第 0 周」或「第 54 周」）。这是日历软件惯用的那套。
+    """
+    first_week = week_start(datetime.date(day.year, 1, 1))
+    return (day - first_week).days // 7 + 1
 
 
 def capture_day(facets: PhotoFacets) -> datetime.date | None:
@@ -228,6 +248,7 @@ __all__ = [
     "LEVEL_NAMES",
     "WEEKDAY_HEADERS",
     "WEEKDAY_NAMES",
+    "WEEKEND_WEEKDAYS",
     "DayBuckets",
     "HourBuckets",
     "capture_day",
@@ -238,10 +259,10 @@ __all__ = [
     "group_by_day",
     "group_by_hour",
     "is_level",
-    "iso_week",
     "month_matrix",
     "shift",
     "title",
+    "week_number",
     "week_start",
     "weekday_name",
 ]

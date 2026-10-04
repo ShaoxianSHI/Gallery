@@ -154,7 +154,10 @@ class YearView(LevelView):
                 Qt.AlignmentFlag.AlignCenter,
                 elide=False,
             )
-        if day == self.today():
+        # **今天只在它自己那个月的格子里高亮**。小月矩阵含上下月补位，于是 10 月 4 日
+        # 在「9 月」那张小月的末尾也会出现一次 —— 两处都圈上就成了两个「今天」，
+        # 而用户要回答的问题是「今天在哪」，不是「今天出现了几次」。
+        if day == self.today() and day.month == month:
             outline_rounded(painter, cell, colors.accent, 1.6, radius=_CELL_RADIUS)
 
     # ---- 交互 -------------------------------------------------------------

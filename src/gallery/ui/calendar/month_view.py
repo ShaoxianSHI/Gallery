@@ -24,6 +24,9 @@ from gallery.ui.calendar.layout import fitted_size
 from gallery.ui.calendar.painting import dot, draw_text, fill_rounded, font_px, paint_cell_photo
 from gallery.ui.calendar.thumbs import ThumbStore
 
+#: 周末是第几列与第几列（一周从周日开始，所以是 0 与 6）。
+_WEEKEND_COLUMNS = frozenset({0, 6})
+
 _HEAD_HEIGHT = 26.0
 _CELL_GAP = 6.0
 _NUMBER_HEIGHT = 20.0
@@ -70,7 +73,7 @@ class MonthView(LevelView):
         days = month_matrix(self._anchor)
 
         for index in range(len(days)):
-            if index % 7 >= 5:  # 周末两列淡底
+            if index % 7 in _WEEKEND_COLUMNS:  # 周末两列淡底（周日与周六）
                 painter.fillRect(
                     QRectF(
                         grid.left() + index % 7 * grid.width() / 7,

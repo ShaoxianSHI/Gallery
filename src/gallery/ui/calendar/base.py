@@ -20,6 +20,7 @@ from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import QWidget
 
 from gallery.core.library.calendar import (
+    WEEKEND_WEEKDAYS,
     DayBuckets,
     HourBuckets,
     count_days,
@@ -159,8 +160,12 @@ class LevelView(QWidget):
         return self._thumbs.get(ref.path)
 
     def column_tint(self, day: datetime.date) -> QColor:
-        """周末那一列的底色；不是周末就用窗口自己的底（等于不涂）。"""
-        return self._colors.weekend if day.weekday() >= 5 else self._background
+        """周末那一列的底色；不是周末就用窗口自己的底（等于不涂）。
+
+        **问核心层那个常量**而不是 ``weekday() >= 5`` —— 一周从周日开始之后，
+        「周六周日」是 ``6`` 与 ``0``，写成「大于等于 5」会把**周一**也涂成周末。
+        """
+        return self._colors.weekend if day.weekday() in WEEKEND_WEEKDAYS else self._background
 
 
 def day_label(day: datetime.date) -> str:
