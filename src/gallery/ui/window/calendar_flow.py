@@ -199,6 +199,11 @@ class CalendarFlowMixin:
         这一层不进浏览方式的账：它是日历点出来的一个视图，从它退回去回日历，
         而不是退到「这一层是按文件夹进来的」。它的顺序按当前排序走 ——
         用户在网格里排好的序，在这里也该是同一个序。
+
+        **告诉网格吞掉紧接着的那一下**（见 ``PhotoGrid.swallow_click``）：双击判定是
+        应用级的事，日历上那一下按下已经算「第一下」，而这一页紧接着要来的那一下会被
+        判成「网格里的第二下」—— 那个位置在这一页是空白，于是「双击空白处退一层」当场
+        把人带回日历（症状：双击一下，先进网格又马上退出来）。
         """
         self._drill_photos = photos
         self._drill_label = label
@@ -214,6 +219,7 @@ class CalendarFlowMixin:
         # **先摆内容再换页**：反过来就是换页那一刻拿的还是日历底下那一整库，
         # 按它算出来的可见行与真正要显示的这一批对不上（多要一批，还都是马上要丢的）。
         self._list_drill_photos(photos)
+        self._grid.swallow_click()  # 见上面那段：双击的第二下属于日历那一下
         self._stack.setCurrentWidget(self._grid_page)
         self._refresh_title()
         self._update_action_states()

@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Final
 
@@ -636,6 +637,10 @@ class PhotoGrid(QListView):
         self._rename_edit = RenameEdit(self.viewport())
         self._rename_edit.committed.connect(self._on_rename_committed)
         self._rename_edit.cancelled.connect(self.cancel_rename)
+
+        # 「上一下的尾巴」：这一下属于**别处**刚做完的那次点击（见 :meth:`swallow_click`）。
+        self._swallow_until = 0.0
+        self._swallow_press = False
 
         # 「再点一次」的等待窗口：等过这么久还没等到第二下，才认定是想改名。
         self._rename_timer = QTimer(self)
@@ -1446,6 +1451,26 @@ class PhotoGrid(QListView):
         self.clearSelection()
         self.setCurrentIndex(QModelIndex())
 
+    def swallow_click(self) -> None:
+        """接下来**一个**按下（双击阈值之内）不算数：它是别处那次点击的尾巴。
+
+        **Qt 判定双击是应用级的事**（上一次按下的时间与位置记在应用里，不是记在控件上），
+        于是「在日历上点一格 → 那一格摊成一层网格」之后紧接着的那一下，会被判成
+        **网格页里的第二下**。而网格页里那个位置多半是空白（那一格只摊出了几张照片，
+        摆在页面顶上），于是 :meth:`mouseDoubleClickEvent` 里「双击空白处退一层」
+        当场把人带回日历 —— 症状正是「双击一下：先进网格，马上又退出来」。
+
+        逻辑上第一下属于日历（它是「进去」的那一下），第二下不该算作新的一下。
+        """
+        self._swallow_until = time.monotonic() + QApplication.doubleClickInterval() / 1000
+
+    def _swallowing(self) -> bool:
+        """这一下要不要当成「上一次点击的尾巴」吃掉（吃掉之后只这一次）。"""
+        if time.monotonic() < self._swallow_until:
+            self._swallow_until = 0.0
+            return True
+        return False
+
     def reset_for_new_level(self) -> None:
         """换层：这一层从零开始，网格上不留上一层的一切痕迹。
 
@@ -1583,6 +1608,8 @@ class PhotoGrid(QListView):
         # 过渡进行中画面位置与 ``indexAt`` 不一致（理由见 :meth:`_cancel_transition`），
         # 于是这一按先让过渡落位，下面的命中才对得上画出来的那一格。
         self._cancel_transition()
+        # 上一次点击的尾巴：选区照常走（用户看见格子被选中），但**不 arm 重命名**。
+        self._swallow_press = self._swallowing()
         point = event.position().toPoint()
         self._press_point = point
         modifiers = event.modifiers()
@@ -1665,6 +1692,12 @@ class PhotoGrid(QListView):
         :meth:`mouseDoubleClickEvent`），一直没等到双击，才是重命名。
         """
         super().mouseReleaseEvent(event)
+        if self._swallow_press:
+            # 尾巴：这一下只用来把格子选中，不开始「再点一下就是改名」那套。
+            self._swallow_press = False
+            self._armed_row = -1
+            self._rename_timer.stop()
+            return
         # 这一次点击结束了，「从哪儿按下、带着什么修饰键」也就过期了：
         # 之后的手动悬停不该再被拦。修饰键按下与抬起时**都**看一眼：
         # 「先按下鼠标、再补上 ⇧」也是常见手势，只认按下那一刻会漏掉它。
@@ -1713,6 +1746,14 @@ class PhotoGrid(QListView):
         问到的已经是新的一层：刚点开的相册被自己当成空白，又立刻退了回去，
         屏幕上只剩一闪。
         """
+        if self._swallowing():
+            # 双击的第二下属于**上一个页面**那次点击（见 `swallow_click`）：既不打开
+            # 照片，也不「双击空白处退一层」—— 后者会把刚进来的人立刻又带走。
+            self._swallow_press = False
+            self._rename_timer.stop()
+            self._pending_rename_row = -1
+            self._armed_row = -1
+            return
         self._rename_timer.stop()
         self._pending_rename_row = -1
         self._armed_row = -1

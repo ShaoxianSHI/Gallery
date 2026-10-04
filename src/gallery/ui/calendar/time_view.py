@@ -18,7 +18,13 @@ from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import QFont, QMouseEvent, QPainter
 from PySide6.QtWidgets import QFrame, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
-from gallery.core.library.calendar import WEEKDAY_NAMES, week_index, week_start
+from gallery.core.library.calendar import (
+    WEEKDAY_NAMES,
+    DayBuckets,
+    HourBuckets,
+    week_index,
+    week_start,
+)
 from gallery.core.library.photos import PhotoRef
 from gallery.ui.calendar.base import LevelView, hour_label
 from gallery.ui.calendar.layout import (
@@ -30,7 +36,6 @@ from gallery.ui.calendar.layout import (
 )
 from gallery.ui.calendar.painting import (
     begin,
-    dot,
     draw_text,
     fill_rounded,
     font_px,
@@ -85,6 +90,8 @@ class WeekView(LevelView):
         # ``CalendarPage.focus_current_view``），一律交给 :class:`WeekView` 自己。
         area.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         area.verticalScrollBar().setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        #: 「滚到第一张照片」那次定位**有没有真的落地**（见 :meth:`set_buckets`）。
+        self._revealed = False
         #: 用户点中的那一格（``(哪一天, 第几个小时)``）—— **点哪一格高亮哪一格**。
         #: 切层时它原样留着（见 ``CalendarPage.set_level``：选中是哪一天就翻到哪一段）。
         self._selected_cell: tuple[datetime.date, int] | None = None
@@ -204,6 +211,21 @@ class WeekView(LevelView):
         """
         self._reveal.start()
 
+    def set_buckets(self, by_day: DayBuckets, by_hour: HourBuckets) -> None:
+        """换了桶：**上一次定位没落地的话补一次**。
+
+        定位是 :meth:`set_anchor` 排的，而拍摄时间是**后台读完才来的**（见
+        ``window/calendar_flow._start_calendar_load``）。于是刚切到周视图那一刻桶多半
+        还是空的 —— 定位对着空桶跑完，把滚动条按回 0 就再也不管了：这一周明明有照片，
+        屏幕却停在 00:00，而「看得见哪些」是按那个滚动位置算的，于是要的那几张
+        压根没人要图（症状：切到某一周时缩略图只剩一片占位灰）。
+
+        **只在没落地时补**：已经定位过（或用户自己滚过）的那一次不该被数据打回来。
+        """
+        super().set_buckets(by_day, by_hour)
+        if not self._revealed:
+            self._reveal_photos()
+
     def _apply_scroll(self) -> None:
         self._sync_grid_height()
         visible = set(self.days())
@@ -211,7 +233,8 @@ class WeekView(LevelView):
         bar = self._area.verticalScrollBar()
         if not hours:
             bar.setValue(0)
-            return
+            return  # 这一周还没有照片：算「没落地」，等桶到了再补一次
+        self._revealed = True
         row = self.row_height()
         target = int(max(0, min(hours) - 1) * row)
         bar.setValue(max(0, min(target, bar.maximum())))
@@ -381,7 +404,8 @@ class _TimeGrid(QWidget):
         **与年 / 月两层同一种画法**：格子就是一张照片，不压渐变、不写标题 ——
         「这一格是几点」左窄条已经写着，而压深的那道渐变原本是给标题垫底的。
 
-        **没有照片也画**：只剩那一层淡底 + 一个占位圆点，于是「我点的是这一格」看得见。
+        **没有照片的那一格只留一层选中底色**：底色已经把「我点的是这一格」说清楚了，
+        再补一个占位圆点就变成了「这一格有张照片还没读出来」—— 而它根本没有照片。
         """
         colors = self._view.colors
         x, y, cell_w, cell_h = cell_rect(row.width(), row.height())
@@ -389,7 +413,6 @@ class _TimeGrid(QWidget):
         if self._view.is_selected_cell(day, hour):
             fill_rounded(painter, cell, colors.selection, CARD_RADIUS)
         if not photos:
-            dot(painter, cell.center(), 2.5, colors.faint)
             return
         paint_cell_photo(
             painter,

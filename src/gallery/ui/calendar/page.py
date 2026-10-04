@@ -121,13 +121,21 @@ class CalendarPage(QWidget):
 
     # ---- 数据 -------------------------------------------------------------
     def set_photos(self, photos: Sequence[PhotoRef], values: Mapping[Path, PhotoFacets]) -> None:
-        """换一整库的照片与元数据快照。分桶在这里一次算好，四层共用。"""
+        """换一整库的照片与元数据快照。分桶在这里一次算好，四层共用。
+
+        **手上的缩略图一张都不扔**：那份仓库按「(路径, 档位)」记着，而同一张照片换了
+        一遍库仍然是那一张 —— 真正变了的是**哪些格子有照片**，不是照片本身。
+
+        从日历点一格进网格、退回来要重扫一遍整库（那一遍扫描的每一步都会喂到这里），
+        清空于是把**一屏已经出好图的格子全变成占位灰**，等重新解码才回来 ——
+        症状是「退回来之后有一格变灰了，切到下一周再切回来就好了」。文件真的变了
+        （改名、替换）走 :meth:`forget_thumbnails`，那里才该忘。
+        """
         by_day = group_by_day(photos, values)
         by_hour = group_by_hour(photos, values)
         for view in self._views.values():
             view.set_buckets(by_day, by_hour)
-        # 手上的图全扔了，所以「报过了」那份记录也一起扔（理由见 `_refresh_window`）。
-        self._thumbs.clear()
+        # 「报过了」那份记录要作废：哪些格子要图已经变了。
         self._forget_reported()
         self._refresh_window()
 

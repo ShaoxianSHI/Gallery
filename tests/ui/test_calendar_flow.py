@@ -23,6 +23,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QPoint, Qt  # noqa: E402
+from PySide6.QtGui import QImage  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 from waiting import wait_until, window_is_idle  # noqa: E402
@@ -453,6 +454,109 @@ def _week_at(qt_app: QApplication, window: MainWindow, day: datetime.date) -> No
     page.set_level("week")
     view = page.current_view()
     assert wait_until(qt_app, lambda: not view._reveal.isActive()), "周视图没有定位完"
+
+
+def test_a_picked_empty_cell_shows_only_the_selection_tint(
+    qt_app: QApplication, calendar_window: MainWindow
+) -> None:
+    """点中的那一格**只有那层底色**：不再多一个占位圆点。
+
+    圆点那一套是「这一格有张照片、还没读出来」的占位（年 / 月视图里都这么画），而这一格
+    **根本没有照片** —— 点它高亮，用户看见的却是「有一张还没出来」。
+    """
+    window = calendar_window
+    page = window._calendar_page
+    _week_at(qt_app, window, MARCH)
+    view = page.current_view()
+    assert not view.photos_in_hour(MARCH, 3), "前提不成立：三点那一格有照片"
+    view.select_hour(MARCH, 3)
+    qt_app.processEvents()
+
+    from gallery.ui.calendar.layout import cell_rect
+
+    image = QImage(view._grid.size(), QImage.Format.Format_RGBA8888)
+    view._grid.render(image)
+    column, row = view.column_width(), view.row_height()
+    offset = (MARCH - view.days()[0]).days
+    # 那一格**真正**落在哪儿（与画的时候同一个算法，别拍脑袋取点）
+    x, y, width, height = cell_rect(column, row)
+    left = view.content_left() + offset * column + x
+    top = 3 * row + y
+    painted = {
+        image.pixelColor(int(left + width * ratio), int(top + height * 0.5)).name()
+        for ratio in (0.2, 0.5, 0.8)
+    }
+    # 底色是半透明的，落到屏幕上要与窗口底色掺过 —— 所以只断言「**整格是同一个颜色**，
+    # 且那个颜色不是底色」：多一个占位圆点就会有两种颜色。
+    assert len(painted) == 1, f"那一格里不止一种颜色（多半是那个占位圆点）：{sorted(painted)}"
+    assert painted != {view.background.name()}, "点中的那一格没有铺选中底色"
+
+
+def test_the_pictures_survive_a_rescan_of_the_whole_library(
+    qt_app: QApplication, calendar_window: MainWindow
+) -> None:
+    """从一格退回来（那一遍整库要重扫、重喂桶）之后，**已出图的格子仍然是照片**。
+
+    退回来要重扫一遍整库，而扫描的每一步都会把新的一份桶喂给日历。原先每喂一次就把
+    手上那份缩略图**全扔了**，于是这一屏先变成一片占位灰，等重新解码才回来 ——
+    症状是「退回来之后有一格变灰了，切到下一周再切回来就好了」。缩略图是按
+    ``(路径, 档位)`` 记着的，换一遍库并不会让同一张照片变成另一张。
+    """
+    window = calendar_window
+    page = window._calendar_page
+    _cell_of(window, 4)  # 让日历这一页有数据
+    view = page.current_view()
+    day = datetime.date(2024, 4, 16)
+    refs = list(view.photos_of(day))
+    assert refs, "前提不成立：四月那天没有照片"
+    image = QImage(48, 48, QImage.Format.Format_RGBA8888)
+    image.fill(0x336699)
+    for ref in refs:
+        page.set_thumbnail(ref.path, image, page.thumbnail_edge())
+
+    page.set_photos(refs, {ref.path: _facets(ref, day, 9) for ref in refs})
+    qt_app.processEvents()
+
+    assert all(view.photo(ref) is not None for ref in refs), "重喂一次桶就把图全扔了"
+
+
+def _facets(ref, day: datetime.date, hour: int):  # type: ignore[no-untyped-def]
+    from gallery.core.metadata.facets import PhotoFacets
+
+    return PhotoFacets(
+        captured_at=float(day.toordinal() * 86400 + hour * 3600),
+        year=day.year,
+        month=day.month,
+        day=day.day,
+        hour=hour,
+    )
+
+
+def test_a_double_click_does_not_bounce_back_out_of_the_drill(
+    qt_app: QApplication, calendar_window: MainWindow
+) -> None:
+    """**双击一格：进去之后不会被立刻弹回来。**
+
+    Qt 判定双击是应用级的事（日历上那一下按下已经算第一下），于是紧接着落到网格页的
+    那一下被判成「网格里的第二下」；而那一格只摊出了几张照片、摆在页面顶上，日历那一格
+    所在的位置在网格页里是**空白** —— 于是「双击空白处退一层」当场把人带回日历。
+    """
+    window = calendar_window
+    _week_at(qt_app, window, MAY)
+    _click_hour_cell(qt_app, window, MAY, 9)
+    assert window._stack.currentWidget() is window._grid_page
+
+    # 第二下落在网格页里（模拟用户在同一处再点一下）
+    QTest.mouseDClick(
+        window._grid.viewport(),
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+        # 那一格只摊出几张照片、摆在页面顶上：这个位置在这一页是空白
+        QPoint(4, max(8, window._grid.viewport().height() - 8)),
+    )
+    _settle(qt_app, window)
+
+    assert window._stack.currentWidget() is window._grid_page, "双击把刚摊开的那一格弹回去了"
 
 
 def test_coming_back_from_a_photo_leaves_the_arrows_working(
