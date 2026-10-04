@@ -23,12 +23,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
 from gallery.core.errors import MetadataWriteError
-from gallery.core.metadata.writeback import (
-    COORDINATE_TAGS,
-    PLACE_TAGS,
-    STALE_GPS_TAGS,
-    Assignment,
-)
+from gallery.core.metadata.writeback import COORDINATE_TAGS, STALE_GPS_TAGS, Assignment
 from gallery.core.places.countries import place_label
 from gallery.core.places.dataset import is_real_coordinate
 
@@ -80,16 +75,14 @@ class PlaceEdit:
     country: str | None = None
     latitude: float | None = None
     longitude: float | None = None
-    #: 改了地名时，要不要顺手把这个地点的坐标也写进去（见 :func:`plan_place_edit`）。
-    update_coordinates: bool = True
-    #: **只删坐标、留地名**。
+    #: **只删坐标、留地名**（定位漂了而地名没错时，用户要的是这一下）。
     #:
     #: 「两个框都空了」本身说不清是「删掉它」还是「没动它」——后者是绝大多数情况（用户只是
     #: 改了个地名）。所以由界面明确说「这两个框原本有值、现在被清空了」，core 才当真去删。
-    #: 「连地名一起清」有单独的 :attr:`clear`，不必用这个。
+    #:
+    #: **「把位置整个清掉」不需要单独的开关**：三层地名与两个坐标框全清空就是那个意思 ——
+    #: 那是编辑器里唯一表达得出「全部删除」的形状，而勾选框只会让人多一种要记的用法。
     clear_coordinates: bool = False
-    #: 清空位置（坐标与三层地名一起清）。它盖过上面所有字段。
-    clear: bool = False
 
     def names(self) -> tuple[str | None, str | None, str | None]:
         return (self.city, self.region, self.country)
@@ -129,12 +122,6 @@ def plan_place_edit(
 
     :raises MetadataWriteError: 坐标不合法（超出范围、只填了一个、填成了 0,0）。
     """
-    if edit.clear:
-        return PlacePlan(
-            assignments=tuple(Assignment(tag, "") for tag in (*COORDINATE_TAGS, *PLACE_TAGS)),
-            notes=("坐标与地名都已从照片里清除。",),
-        )
-
     names = edit.names()
     names_changed = names != state.names()
     if edit.clear_coordinates:
@@ -159,7 +146,7 @@ def plan_place_edit(
         else:
             # 两个方向都在同一个对话框里改了：填了的说了算，不去反查覆盖它。
             notes.append("地名与坐标都是你填的，它们之间的对应关系 Gallery 没有替你调整。")
-    elif edit.update_coordinates and names_changed:
+    elif names_changed:
         found, found_coordinates = _lookup_coordinates(names, resolver, notes)
         assignments.extend(found)
         # 正查出来的坐标**优先于**照片里原来那个：用户明确要求「按这个地点改坐标」，

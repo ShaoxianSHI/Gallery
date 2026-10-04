@@ -487,10 +487,36 @@ class TestPlaceFields:
         )
 
         assert report.place_from_file == "Bordeaux · Nouvelle-Aquitaine · France"
+        # **三层写成一行**：它们说的是同一个地方，分三行摆着像三件无关的事
+        # （ADR 0031）。子地点仍单列 —— 那是另一个字段。
         fields = field_map(report.groups)
-        assert fields["地点"] == "Bordeaux"
-        assert fields["省 / 州"] == "Nouvelle-Aquitaine"
-        assert fields["国家"] == "France"
+        assert fields["地点"] == "Bordeaux · Nouvelle-Aquitaine · France"
+        assert "省 / 州" not in fields and "国家" not in fields
+
+    def test_the_place_is_one_line_whatever_family_exiftool_names_it(self, tmp_path: Path) -> None:
+        """**两种族名都要认**。
+
+        exiftool 的 ``-G`` 按一级族回填键，13.x 给的是 ``XMP:City``，而写作侧用的也是
+        这个。只认全名的话，Lightroom 那种只写 XMP 的照片「地点」永远是空的。
+        """
+        for keys in (
+            {"XMP:City": "京都", "XMP:State": "京都府", "XMP:Country": "日本"},
+            {
+                "XMP-photoshop:City": "京都",
+                "XMP-photoshop:State": "京都府",
+                "XMP-photoshop:Country": "日本",
+            },
+            {
+                "IPTC:City": "京都",
+                "IPTC:Province-State": "京都府",
+                "IPTC:Country-PrimaryLocationName": "日本",
+            },
+        ):
+            report = build_report(
+                keys, path=tmp_path / "a.jpg", size=1, mtime_ns=0, source="exiftool"
+            )
+
+            assert field_map(report.groups)["地点"] == "京都 · 京都府 · 日本"
 
     def test_no_place_in_file_means_nothing_to_show(self, tmp_path: Path) -> None:
         report = build_report(

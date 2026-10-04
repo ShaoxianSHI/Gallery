@@ -202,6 +202,11 @@ WANTED_TAGS: Final[tuple[str, ...]] = (
     "IPTC:Province-State",
     "IPTC:Country-PrimaryLocationName",
     "IPTC:Keywords",
+    # 两种族名都要点名要：**exiftool 的 ``-G`` 按一级族回填键**，只问全名的话这一批
+    # 根本不会出现在返回值里（要的是 ``XMP:City``，拿到的是 ``XMP-photoshop:City`` 就白问）。
+    "XMP:City",
+    "XMP:State",
+    "XMP:Country",
     "XMP-photoshop:City",
     "XMP-photoshop:State",
     "XMP-photoshop:Country",
@@ -251,9 +256,18 @@ def extract(raw: Mapping[str, object]) -> PhotoFacets:
         day=when.day if when else None,
         camera=camera_name(text),
         lens=first_value(text, "EXIF:LensModel", "EXIF:LensID", "EXIF:Lens"),
-        city=first_value(text, "XMP-photoshop:City", "IPTC:City"),
-        region=first_value(text, "XMP-photoshop:State", "IPTC:Province-State"),
-        country=first_value(text, "XMP-photoshop:Country", "IPTC:Country-PrimaryLocationName"),
+        # 两种族名都认（``XMP-photoshop:City`` 与 ``XMP:City``）：exiftool 的 ``-G`` 按
+        # 一级族回填键，只认全名的话「只写 XMP 不写 IPTC」的照片分不进城市组
+        # —— 与 ``exif._xmp_value`` 同一处判断。
+        city=first_value(text, "XMP-photoshop:City")
+        or first_value(text, "XMP:City")
+        or first_value(text, "IPTC:City"),
+        region=first_value(text, "XMP-photoshop:State")
+        or first_value(text, "XMP:State")
+        or first_value(text, "IPTC:Province-State"),
+        country=first_value(text, "XMP-photoshop:Country")
+        or first_value(text, "XMP:Country")
+        or first_value(text, "IPTC:Country-PrimaryLocationName"),
         keywords=_keywords(values),
         latitude=latitude,
         longitude=longitude,

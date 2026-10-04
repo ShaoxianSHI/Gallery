@@ -26,9 +26,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PIL import Image  # noqa: E402
-from PySide6.QtGui import QKeySequence  # noqa: E402
+from PySide6.QtGui import QGuiApplication, QKeySequence  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
+    QCheckBox,
     QDialog,
     QLabel,
     QLayout,
@@ -203,12 +204,11 @@ def test_the_dialog_prefills_what_the_photo_says(qt_app: QApplication) -> None:
         ),
     )
 
-    assert dialog._city.currentText() == "南京"
-    assert dialog._region.text() == "江苏省"
     assert dialog._country.text() == "中国"
+    assert dialog._region.text() == "江苏省"
+    assert dialog._city.currentText() == "南京"
     assert dialog._latitude.text().startswith("32.0603")
     assert dialog._longitude.text().startswith("118.7969")
-    assert dialog._sync.isChecked()
 
 
 def test_the_dialog_returns_the_final_state_not_a_patch(qt_app: QApplication) -> None:
@@ -260,7 +260,8 @@ def test_the_hint_tells_the_truth_before_saving(qt_app: QApplication) -> None:
     dialog = _dialog(None, PlaceState(city="南京", latitude=32.06, longitude=118.79))  # type: ignore[arg-type]
 
     assert "重新推断" not in dialog._hint.text()
-    dialog._region.setText("浙江省")
+    dialog._city.setCurrentText("苏州")
+    dialog._refresh()
     assert "市级精度" in dialog._hint.text()
 
 
@@ -596,21 +597,104 @@ def test_an_unknown_name_says_the_coordinates_stay_put(qt_app: QApplication) -> 
     assert "坐标保持原样" in dialog._hint.text()
 
 
-def test_unticking_the_sync_puts_the_original_coordinates_back(qt_app: QApplication) -> None:
-    """关掉那个勾 = 不动坐标，于是**刚自动填进去的那一对要还原回去**。
+def test_there_is_no_checkbox_to_turn_the_sync_off(qt_app: QApplication) -> None:
+    """**一个勾都没有**。
 
-    框里显示的必须是真正会被写下去的那一份 —— 否则用户看着有坐标、以为会写，其实不会。
+    「同时按这个地点更新经纬度」默认永远是开的 —— 那就是这个功能存在的意义，为它留一个
+    勾等于让用户每次都要决定一遍「我要不要它联动」。「清除位置」同样不需要：三层地名与
+    两个坐标框全清空就是那个意思。
     """
-    state = PlaceState(city="南京", latitude=32.06, longitude=118.79)
-    dialog = _dialog(None, state, resolver=StubResolver())
-    dialog._city.setCurrentText("苏州")
+    dialog = _dialog(None, PlaceState(city="苏州"))
+
+    assert not [
+        box
+        for box in dialog.findChildren(QCheckBox)
+        if "同时" in box.text() or "清除" in box.text()
+    ]
+
+
+def test_clearing_every_field_is_how_you_clear_the_place(qt_app: QApplication) -> None:
+    dialog = _dialog(
+        None,
+        PlaceState(city="苏州", region="江苏省", country="中国", latitude=31.3, longitude=120.6),
+    )
+
+    dialog._city.setCurrentText("")
+    dialog._region.clear()
+    dialog._country.clear()
+    dialog._latitude.clear()
+    dialog._longitude.clear()
+
+    result = dialog.edit()
+    assert result.city is None and result.country is None
+    assert result.clear_coordinates
+    assert "都会从照片里删掉" in dialog._hint.text()
+
+
+def test_copy_then_paste_moves_the_place_to_another_photo(qt_app: QApplication) -> None:
+    """**复制 / 粘贴**：一个地点从一张照片搬到另一张，不用一个数字一个数字地抄。"""
+    source = _dialog(
+        None,
+        PlaceState(
+            city="苏州", region="江苏省", country="中国", latitude=31.3111, longitude=120.6213
+        ),
+    )
+    target = _dialog(None, PlaceState(), resolver=StubResolver())
+
+    source._on_copy()
+    assert QGuiApplication.clipboard().text() == "31.311100, 120.621300\n苏州, 江苏省, 中国"
+    assert source._copy_button.text() == "已复制"
+
+    target._on_paste()
+
+    assert target._country.text() == "中国"
+    assert target._region.text() == "江苏省"
+    assert target._city.currentText() == "苏州"
+    assert float(target._latitude.text()) == pytest.approx(31.3111, abs=1e-4)
+    assert float(target._longitude.text()) == pytest.approx(120.6213, abs=1e-4)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "31.311100, 120.621300\n苏州, 江苏省, 中国",  # 我们自己那个格式
+        "120.621300 31.311100",  # 经度在前（用范围判出来）
+        "31.3111N 120.6213E",  # 半球标记
+        "31.3111, 120.6213",
+    ],
+)
+def test_paste_reads_the_common_ways_of_writing_a_coordinate(
+    qt_app: QApplication, text: str
+) -> None:
+    dialog = _dialog(None, PlaceState())
+
+    QGuiApplication.clipboard().setText(text)
+    dialog._on_paste()
+
+    assert float(dialog._latitude.text()) == pytest.approx(31.3111, abs=1e-4)
+    assert float(dialog._longitude.text()) == pytest.approx(120.6213, abs=1e-4)
+
+
+def test_pasting_nonsense_says_so_instead_of_guessing(qt_app: QApplication) -> None:
+    """**猜错的坐标会被原样写进照片** —— 所以认不出来就说认不出来。"""
+    dialog = _dialog(None, PlaceState())
+
+    QGuiApplication.clipboard().setText("明天开会记得带伞")
+    dialog._on_paste()
+
+    assert "没有可以用的位置" in dialog._error.text()
+    assert dialog._latitude.text() == ""
+
+
+def test_pasting_a_place_name_alone_fills_in_the_coordinates(qt_app: QApplication) -> None:
+    """只粘到地名也行 —— 正查补出坐标，那是双向联动的用处。"""
+    dialog = _dialog(None, PlaceState(), resolver=StubResolver())
+
+    QGuiApplication.clipboard().setText("苏州, 江苏省, 中国")
+    dialog._on_paste()
     dialog._refresh()
+
     assert float(dialog._latitude.text()) == pytest.approx(31.311, abs=1e-4)
-
-    dialog._sync.setChecked(False)
-
-    assert float(dialog._latitude.text()) == pytest.approx(32.06, abs=1e-4)
-    assert float(dialog._longitude.text()) == pytest.approx(118.79, abs=1e-4)
 
 
 def test_the_debounced_lookup_really_is_wired_to_typing(qt_app: QApplication) -> None:

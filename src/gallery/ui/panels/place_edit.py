@@ -12,6 +12,21 @@
 那一栏上，**而它排在最后**：用户从上面往下填，先敲国家再敲省，最后敲城市；城市一敲定，
 上面那两栏**自动补全**（用户也可以只敲城市，另外两栏自己长出来）。
 
+## 没有勾选框
+
+编辑器里**一个勾都没有**。「同时按这个地点更新经纬度」默认永远是开的 —— 那本来就是这个
+功能存在的意义，为它留一个勾等于让用户每次都要决定一遍「我要不要它联动」。
+「清除位置」同样不需要：三层地名与两个坐标框**全清空**就是那个意思，而勾选框只会多出
+一种要记的用法。
+
+## 复制 / 粘贴：一张照片的地点搬到另一张
+
+两张在同一处拍的照片，本来只能一个数字一个数字地抄。框下面那两个按钮把这件事变成一下：
+
+- **复制** —— 按一个固定格式写进剪贴板，**人也能读**（要粘进别的地图软件时直接可用）；
+- **粘贴** —— 认这个格式，认几种常见写法（半球标记、`°`、空格或逗号分隔、经度在前），
+  认不出来就明说，不猜。
+
 ## 两个方向都实时回填
 
 | 用户动了 | 立刻发生 |
@@ -33,12 +48,12 @@
 
 from __future__ import annotations
 
+import re
 from typing import Final
 
 from PySide6.QtCore import QStringListModel, Qt, QTimer
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (
-    QCheckBox,
     QComboBox,
     QCompleter,
     QDialog,
@@ -48,6 +63,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLayout,
     QLineEdit,
+    QPushButton,
     QVBoxLayout,
     QWidget,
 )
@@ -70,6 +86,9 @@ COORDINATE_DECIMALS: Final = 6
 #: 而「Gironde」「United States」「120.155070」这些内容算出来的宽度比能读它窄得多。
 FIELD_MIN_WIDTH: Final = 220
 
+#: 「已复制」在按钮上停留多久。
+COPIED_HINT_MS: Final = 1400
+
 #: 说明与错误各留几行的位置。**固定高度是为了对话框不跳**：文案在两句之间换来换去时，
 #: 对话框跟着长高再缩回来，用户看着像它在抖。
 NOTE_LINES: Final = 2
@@ -91,7 +110,6 @@ def dialog_style(app_theme: AppTheme) -> str:
         padding: 3px 6px;
         font-size: 12px;
     }}
-    QCheckBox {{ color: {rgba(app_theme.text_at(0.78))}; font-size: 12px; }}
     QPushButton {{
         color: {rgba(app_theme.text_at(0.9))};
         background: {rgba(app_theme.text_at(0.12))};
@@ -120,8 +138,6 @@ class PlaceEditDialog(QDialog):
         #: 程序自己往框里写字时为真 —— 那些 setter 会触发 ``textChanged``，
         #: 没有这道挡，「地名 → 坐标 → 地名」会自己打起来。
         self._programmatic = False
-        #: 我们自动填进坐标框的那一对坐标（用来判断「这两个框是不是我们填的」）。
-        self._auto_coordinates: tuple[float, float] | None = None
         #: 上一次按名字查到了哪一个（``None`` = 没查到）。说明那一行靠它说准话。
         self._place_hit: Place | None = None
         #: **查过没有**。区分「查了没查到」与「压根没查」（没有地点库可用时）：
@@ -133,6 +149,10 @@ class PlaceEditDialog(QDialog):
         #: 说的必须是**用户刚才那一下**的后果 —— 「我敲了苏州」与「我把坐标挪到波尔多」
         #: 接下来发生的事完全不是一回事。
         self._last_touched: str | None = None
+        #: 「已复制」那个提示的定时器。
+        self._copy_timer = QTimer(self)
+        self._copy_timer.setSingleShot(True)
+        self._copy_timer.timeout.connect(self._restore_copy_label)
         #: 上一次查过之后，两侧各自是什么 —— 只有真变了才再去查。
         self._seen_names: tuple[str, str, str] = ("", "", "")
         self._seen_coordinates: tuple[float | None, float | None] = (None, None)
@@ -204,14 +224,20 @@ class PlaceEditDialog(QDialog):
         form.addRow("经度", self._longitude)
         layout.addLayout(form)
 
-        self._sync = QCheckBox("同时按这个地点更新经纬度")
-        self._sync.setChecked(True)
-        self._sync.toggled.connect(self._on_sync_toggled)
-        layout.addWidget(self._sync)
-
-        self._clear = QCheckBox("清除位置（坐标与地名一起清空）")
-        self._clear.toggled.connect(self._update_enabled)
-        layout.addWidget(self._clear)
+        # 复制 / 粘贴：把一个地点从一张照片搬到另一张，不用一个数字一个数字地抄。
+        transfer = QHBoxLayout()
+        transfer.setContentsMargins(0, 2, 0, 0)
+        transfer.setSpacing(6)
+        self._copy_button = QPushButton("复制")
+        self._copy_button.setToolTip("把坐标（以及三层地名）按固定格式写进剪贴板")
+        self._copy_button.clicked.connect(self._on_copy)
+        self._paste_button = QPushButton("粘贴")
+        self._paste_button.setToolTip("从剪贴板读坐标与地名填进上面这些框")
+        self._paste_button.clicked.connect(self._on_paste)
+        transfer.addWidget(self._copy_button)
+        transfer.addWidget(self._paste_button)
+        transfer.addStretch(1)
+        layout.addLayout(transfer)
 
         line_height = self.fontMetrics().height()
         self._hint = QLabel()
@@ -252,7 +278,6 @@ class PlaceEditDialog(QDialog):
 
         self._city.setCurrentText(state.city or "")
         self._update_hint()
-        self._update_enabled()
 
     def _apply_theme(self) -> None:
         self.setStyleSheet(dialog_style(theme.current_theme()))
@@ -268,21 +293,19 @@ class PlaceEditDialog(QDialog):
 
     def _on_coordinates_changed(self, *_args: object) -> None:
         if self._programmatic:
-            return  # 程序自己填进去的：那两个框现在仍然是「我们填的」
-        # 用户亲手改了坐标 —— 从这一刻起它们不再算「我们自动填的那一对」。
+            return  # 程序自己填进去的，不当成「用户改了」
         self._last_touched = "coordinates"
-        self._auto_coordinates = None
         self._update_hint()
         self._timer.start(LOOKUP_DELAY_MS)
 
     def _refresh(self) -> None:
         """防抖之后真正去查的那一步：两个方向各看一次，只查**真变了**的那一侧。"""
         names = self._names()
-        if names != self._seen_names and not self._clear.isChecked():
+        if names != self._seen_names:
             self._seen_names = names
             self._fill_from_names(names)
         coordinates = self._coordinates()
-        if coordinates != self._seen_coordinates and not self._clear.isChecked():
+        if coordinates != self._seen_coordinates:
             self._seen_coordinates = coordinates
             self._fill_from_coordinates(coordinates)
         self._update_hint()
@@ -311,9 +334,6 @@ class PlaceEditDialog(QDialog):
             self._refresh_candidates(city)
             return
         place = found[0]
-        if not self._sync.isChecked():
-            self._refresh_candidates(city)
-            return  # 不勾「同时更新坐标」就不动坐标框 —— 那个勾说什么就做什么
         self._programmatic = True
         try:
             if place.city and place.city != self._city.currentText().strip():
@@ -326,7 +346,6 @@ class PlaceEditDialog(QDialog):
             self._longitude.setText(_format(place.longitude))
         finally:
             self._programmatic = False
-        self._auto_coordinates = (place.latitude, place.longitude)
         self._refresh_candidates(city)
 
     def _fill_from_coordinates(self, coordinates: tuple[float | None, float | None]) -> None:
@@ -394,24 +413,66 @@ class PlaceEditDialog(QDialog):
             self._fill_from_names(self._names())
             return
 
-    def _on_sync_toggled(self, checked: bool) -> None:
-        """把「同时按这个地点更新经纬度」兑现：关掉就把刚才自动填的坐标**还原回去**。
+    # ---- 复制 / 粘贴 ---------------------------------------------------------
 
-        否则用户看着框里有一对坐标（是我们填的，他没看见），以为照样会写进去 ——
-        而实际不会。**框里显示的必须是真正会被写下去的那一份。**
+    def _on_copy(self) -> None:
+        """把这个地点按固定格式写进剪贴板。
+
+        **格式是人也能读的**：第一行 ``纬度, 经度``（要粘进别的地图软件时就用这一行），
+        第二行 ``城市, 省州, 国家``（空的那一档留成空，于是 ``苏州,,中国`` 也认）。
+        查得到就写坐标与地名，一样都没有就说一句，不往剪贴板里塞空字符串。
         """
-        if not checked and self._auto_coordinates is not None:
-            current = self._coordinates()
-            if current == self._auto_coordinates:  # 只在「还是我们填的那一对」时才还原
-                original = self._state.coordinates()
-                self._programmatic = True
-                try:
-                    self._latitude.setText(_format(original[0] if original else None))
-                    self._longitude.setText(_format(original[1] if original else None))
-                finally:
-                    self._programmatic = False
-                self._auto_coordinates = None
-        self._update_hint()
+        latitude, longitude = self._coordinates()
+        city, region, country = self._names()
+        text = _clipboard_text(latitude, longitude, city, region, country)
+        if not text:
+            self._error.setText("这张照片还没有可以复制的位置。")
+            return
+        self._error.clear()
+        QGuiApplication.clipboard().setText(text)
+        self._copy_button.setText("已复制")
+        self._copy_timer.start(COPIED_HINT_MS)
+
+    def _restore_copy_label(self) -> None:
+        self._copy_button.setText("复制")
+
+    def _on_paste(self) -> None:
+        """从剪贴板读坐标与地名，填进上面这些框。
+
+        **认几种常见写法**（半球标记、`°`、空格 / 逗号 / 分号分隔、经度在前），
+        认不出来就明说「看不懂」而不是猜一个填进去 —— 填错的位置会被原样写进照片。
+        填完照常走一遍回填：粘进来坐标就反查出地点，粘进来地名就正查出坐标。
+        """
+        parsed = _parse_clipboard(QGuiApplication.clipboard().text())
+        if parsed is None:
+            self._error.setText("剪贴板里没有可以用的位置。")
+            return
+        self._error.clear()
+        coordinates, names = parsed
+        self._programmatic = True
+        try:
+            if coordinates != (None, None):
+                self._latitude.setText(_format(coordinates[0]))
+                self._longitude.setText(_format(coordinates[1]))
+            if any(names):
+                self._city.setCurrentText(names[0] or "")
+                self._region.setText(names[1] or "")
+                self._country.setText(names[2] or "")
+        finally:
+            self._programmatic = False
+        # **只粘到一半就补另一半；两边都粘到了就都别动。**
+        #
+        # 后者是「从另一张照片搬过来」的主要用法，而那张照片的坐标可能是米级的 —— 让正查
+        # 拿市级坐标把它盖掉，等于用户搬了个地点，精度却丢了。
+        if coordinates != (None, None) and any(names):
+            self._seen_coordinates, self._seen_names = self._coordinates(), self._names()
+        else:
+            if coordinates != (None, None):
+                self._seen_coordinates = (None, None)  # 让下面重跑这一侧的反查
+            if any(names):
+                self._seen_names = ("", "", "")  # 同上，让它重跑正查
+        self._last_touched = "coordinates" if coordinates != (None, None) else "names"
+        self._refresh()
 
     # ---- 校验与取值 --------------------------------------------------------
 
@@ -447,29 +508,23 @@ class PlaceEditDialog(QDialog):
     def _names_changed(self) -> bool:
         return self._names() != tuple(self._state.names())
 
-    def _update_enabled(self) -> None:
-        """勾了「清除位置」就把其余控件关掉 —— 那一下删的是全部，留下别的没意义。"""
-        clearing = self._clear.isChecked()
-        for widget in (self._city, self._region, self._country, self._latitude, self._longitude):
-            widget.setEnabled(not clearing)
-        self._sync.setEnabled(not clearing)
-        self._update_hint()
+    def _names_cleared(self) -> bool:
+        """三层地名**原来有、现在全空**了 —— 那就不只是「删坐标」，是整个位置删掉。"""
+        return not any(self._names()) and all(self._state.names())
 
     def _update_hint(self, *_args: object) -> None:
         """那行说明。**它是「保存下去会发生什么」的预告**，不是事后解释。"""
-        if self._clear.isChecked():
-            self._hint.setText("保存后，坐标与三层地名都会从照片里删掉。⌘Z 可以撤销。")
-            return
-        if self._coordinates_emptied():
-            self._hint.setText("保存后，这张照片的坐标会被删掉，地点保留。⌘Z 可以撤销。")
-            return
         # **按「用户刚才动的是哪一侧」说话，而不是按「哪一侧变了」**：自动回填会把两侧都
         # 改动，于是两个分支同时成立 —— 「我敲了苏州」与「我把坐标挪到波尔多」接下来
         # 发生的事完全不是一回事。
+        if self._coordinates_emptied():
+            if self._names_cleared():
+                self._hint.setText("保存后，坐标与三层地名都会从照片里删掉。⌘Z 可以撤销。")
+            else:
+                self._hint.setText("保存后，这张照片的坐标会被删掉，地点保留。⌘Z 可以撤销。")
+            return
         if self._names_changed() and self._last_touched != "coordinates":
-            if not self._sync.isChecked():
-                self._hint.setText("只改地点，不改坐标。⌘Z 可以撤销。")
-            elif self._place_searched and self._place_hit is None:
+            if self._place_searched and self._place_hit is None:
                 # 说清「不动」比说「按城市位置写入」诚实：城市库里没有这个名字。
                 self._hint.setText("城市库里没有这个名字，坐标保持原样。")
             else:
@@ -491,10 +546,99 @@ class PlaceEditDialog(QDialog):
             country=country or None,
             latitude=_parse(self._latitude.text()),
             longitude=_parse(self._longitude.text()),
-            update_coordinates=self._sync.isChecked(),
-            clear=self._clear.isChecked(),
+            # **坐标与地名全空**就是「把位置整个清掉」—— 不需要单独的勾（ADR 0031）。
             clear_coordinates=self._coordinates_emptied(),
         )
+
+
+# ---- 剪贴板格式 ----------------------------------------------------------------
+
+#: 复制出去的格式（**人也能读** —— 要把坐标粘进别的地图软件时，第一行直接可用）::
+
+#:     30.274150, 120.155070
+#:     杭州, 浙江省, 中国
+#:
+#: 没有坐标就只写第二行，没有地名就只写第一行。空的��一层留成空，于是「苏州,,中国」
+#: 粘回来仍然是「国家是中国、省州没写」。
+#:
+#: **不用制表符、不加标题行**：多一种分隔符就多一种要认的写法，而这一行的用途是
+#: 「人看得懂 + 我们认得出」，不是变成一个要长期维护的交换格式。
+CLIPBOARD_COORDINATE_LINE: Final = 0
+CLIPBOARD_NAME_LINE: Final = 1
+
+#: 坐标行里分隔两个数的那些字符。
+_SEPARATORS: Final = re.compile(r"[\s,;、/，；]+")
+
+#: 半球标记与度符号，解析时去掉。
+_HEMISPHERE: Final = re.compile(r"[NSEWnsew北南东西°'\"″]+")
+
+
+def _clipboard_text(
+    latitude: float | None,
+    longitude: float | None,
+    city: str,
+    region: str,
+    country: str,
+) -> str:
+    """按上面的格式拼出剪贴板里那一段。两边都是空时返回空串。"""
+    lines: list[str] = []
+    if latitude is not None and longitude is not None:
+        lines.append(f"{latitude:.{COORDINATE_DECIMALS}f}, {longitude:.{COORDINATE_DECIMALS}f}")
+    if city or region or country:
+        lines.append(f"{city}, {region}, {country}")
+    return "\n".join(lines)
+
+
+def _parse_clipboard(
+    text: str,
+) -> tuple[tuple[float | None, float | None], tuple[str | None, str | None, str | None]] | None:
+    """剪贴板里那一段 → ``(坐标, (城市, 省州, 国家))``；认不出来返回 ``None``。
+
+    **认得宽松，但只认一种「形状」**：一行两个十进制度（半球标记、``°``、空格或逗号
+    分隔都行），后面可以跟一行 ``城市, 省州, 国家``。**经度在前也认** —— 用范围判
+    （纬度不超过 90、经度不超过 180）交换一次，两数都合法就按「纬度在前」收。
+
+    **度分秒（``30°16'27"N``）不认**：那一行会被解析成三个数，于是这一行直接不算坐标。
+    把度分秒转成十进制度需要另一套解析，而我们只往照片里写十进制度 —— 猜错的坐标会
+    被原样写进照片，比「看不懂」糟糕得多。
+    """
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return None
+    coordinates: tuple[float | None, float | None] = (None, None)
+    names: tuple[str | None, str | None, str | None] = (None, None, None)
+    index = 0
+    pair = _parse_coordinate_pair(lines[CLIPBOARD_COORDINATE_LINE])
+    if pair is not None:
+        coordinates = pair
+        index = 1
+    if len(lines) > index:
+        line = lines[index]
+        # **必须有至少两个逗号**（也就是我们自己的三档写法）。少了这个判据，一句
+        # 「随便一段文字」会被当成城市名填进去，而它随后会被原样写进照片。
+        parts = [part.strip() for part in line.split(",")]
+        if line.count(",") >= 2 and len(parts) == 3:
+            names = tuple(part or None for part in parts)  # type: ignore[assignment]
+    if coordinates == (None, None) and names == (None, None, None):
+        return None
+    return (coordinates, names)
+
+
+def _parse_coordinate_pair(line: str) -> tuple[float, float] | None:
+    """一行里的两个十进制度。**不是就是 ``None``**，不做任何猜测。"""
+    cleaned = _HEMISPHERE.sub(" ", line.replace("，", ","))
+    parts = [part for part in _SEPARATORS.split(cleaned) if part]
+    if len(parts) != 2:
+        return None
+    try:
+        first, second = float(parts[0]), float(parts[1])
+    except ValueError:
+        return None
+    if abs(first) > 90.0 >= abs(second):  # 经度写在了前面
+        first, second = second, first
+    if abs(first) > 90.0 or abs(second) > 180.0:
+        return None
+    return (first, second)
 
 
 # ---- 小工具 -------------------------------------------------------------------
@@ -534,6 +678,7 @@ def _coordinate_problem(latitude: str, longitude: str) -> str | None:
 
 __all__ = [
     "COORDINATE_DECIMALS",
+    "COPIED_HINT_MS",
     "FIELD_MIN_WIDTH",
     "LOOKUP_DELAY_MS",
     "NOTE_LINES",

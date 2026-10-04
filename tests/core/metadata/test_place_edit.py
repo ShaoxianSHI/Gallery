@@ -136,22 +136,6 @@ def test_a_name_the_database_does_not_know_is_told_about_foreign_spelling(
     assert any("Kyoto" in note for note in plan.notes)
 
 
-def test_unticking_the_sync_leaves_the_coordinates_where_they_are(
-    library_state: PlaceState,
-) -> None:
-    """「同时更新坐标」不勾时，改名就不动坐标 —— 用户明确说过不要动。"""
-    resolver = FakeResolver(by_name={"苏州": SUZHOU})
-
-    plan = plan_place_edit(
-        library_state,
-        PlaceEdit(city="苏州", region="江苏省", country="中国", update_coordinates=False),
-        resolver=resolver,
-    )
-
-    assert plan.coordinates == library_state.coordinates()
-    assert set(tags(plan.assignments)) <= set(PLACE_TAGS)
-
-
 def test_both_given_user_wins_and_nothing_is_looked_up(library_state: PlaceState) -> None:
     """两个方向都填了：**用户填的说了算**，不去反查覆盖他。"""
     resolver = FakeResolver()
@@ -182,16 +166,22 @@ def test_editing_coordinates_clears_the_altitude_of_the_old_place(
     assert written["EXIF:GPSDateStamp"] == ""
 
 
-def test_clearing_removes_both_the_coordinates_and_the_names(
-    library_state: PlaceState,
-) -> None:
+def test_emptying_every_field_removes_the_whole_place(library_state: PlaceState) -> None:
+    """**三层地名与两个坐标框全清空，就是「把位置整个清掉」** —— 不需要单独的勾（ADR 0031）。
+
+    那一个勾选框只会多出一种要记的用法；清空本来就是编辑器里唯一表达得出「全删」的形状。
+    """
     resolver = FakeResolver()
 
-    plan = plan_place_edit(library_state, PlaceEdit(clear=True), resolver=resolver)
+    plan = plan_place_edit(
+        library_state,
+        fill(library_state, city="", region="", country="", clear_coordinates=True),
+        resolver=resolver,
+    )
 
     assert {item.tag for item in plan.assignments} == set(COORDINATE_TAGS) | set(PLACE_TAGS)
     assert set(tags(plan.assignments).values()) == {""}
-    assert resolver.calls == []  # 清空不需要问任何人
+    assert resolver.calls == []
 
 
 def test_emptying_both_coordinate_boxes_removes_only_the_coordinates(

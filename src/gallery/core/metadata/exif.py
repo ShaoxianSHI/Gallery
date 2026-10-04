@@ -532,12 +532,31 @@ def _degrees_to_decimal(value: str) -> float | None:
     return sign * (degrees + minutes / 60 + seconds / 3600)
 
 
+def _sub_location(raw: Mapping[str, str]) -> str | None:
+    """子地点（「西湖 · 断桥残雪」那种更细的位置）。同样两种族名都认，理由见 :func:`_xmp_value`。"""
+    return (
+        first_value(raw, "XMP-iptcCore:Location")
+        or first_value(raw, "XMP:Location")
+        or first_value(raw, "IPTC:Sub-location")
+    )
+
+
+def _xmp_value(raw: Mapping[str, str], tag: str) -> str | None:
+    """按 ``XMP-photoshop:City`` 这样的全名取，取不到再按一级族名 ``XMP:City`` 取。
+
+    **两个都要认**：exiftool 的 ``-G`` 按**一级族**回填键，于是 13.x 给的是 ``XMP:City``；
+    而写作侧（``metadata.writeback``）用的也是这个一级族名。只认全名的话，
+    Lightroom 那种**只写 XMP、不写 IPTC** 的照片，面板上的「地点」永远是空的。
+    """
+    return first_value(raw, f"XMP-photoshop:{tag}") or first_value(raw, f"XMP:{tag}")
+
+
 def _place_parts(raw: Mapping[str, str]) -> tuple[str | None, str | None, str | None]:
     """文件里写的三层地点（IPTC/XMP）。相机原图通常没有，Lightroom 导出常有。"""
     return (
-        first_value(raw, "XMP-photoshop:City", "IPTC:City"),
-        first_value(raw, "XMP-photoshop:State", "IPTC:Province-State"),
-        first_value(raw, "XMP-photoshop:Country", "IPTC:Country-PrimaryLocationName"),
+        _xmp_value(raw, "City") or first_value(raw, "IPTC:City"),
+        _xmp_value(raw, "State") or first_value(raw, "IPTC:Province-State"),
+        _xmp_value(raw, "Country") or first_value(raw, "IPTC:Country-PrimaryLocationName"),
     )
 
 
@@ -638,10 +657,11 @@ _CURATED_GROUPS: Final[tuple[tuple[str, tuple[_FieldSpec, ...]], ...]] = (
     (
         "位置",
         (
-            _FieldSpec("地点", _pick("XMP-photoshop:City", "IPTC:City")),
-            _FieldSpec("子地点", _pick("XMP-iptcCore:Location", "IPTC:Sub-location")),
-            _FieldSpec("省 / 州", _pick("XMP-photoshop:State", "IPTC:Province-State")),
-            _FieldSpec("国家", _pick("XMP-photoshop:Country", "IPTC:Country-PrimaryLocationName")),
+            # **三层地名写成一行**，用「 · 」连起来 —— 与推断出来的地点同一个说法
+            # （「中国 · 浙江省 · 杭州」）。分三行摆着看着像三件无关的事，而它们说的
+            # 其实是同一个地方；子地点是另一个字段（「西湖 · 断桥残雪」），仍单列一行。
+            _FieldSpec("地点", _place_from_file),
+            _FieldSpec("子地点", _sub_location),
             _FieldSpec("坐标", _coordinates),
             _FieldSpec("海拔", _altitude),
             _FieldSpec("定位时间", _gps_time),
