@@ -71,19 +71,49 @@ def test_the_image_is_already_scaled_when_it_arrives(
 def test_the_reported_edge_is_the_one_it_was_submitted_with(
     pipeline: tuple[ThumbnailPipeline, TaskRunner],
     photo: PhotoRef,
+    monkeypatch: pytest.MonkeyPatch,
     wait_for: Callable[..., bool],
 ) -> None:
-    """在途任务带着提交时的边长跑完 —— 不在完成时现读当前的档位。"""
+    """在途任务带着提交时的边长跑完 —— 不在完成时现读当前的档位。
+
+    切档之后**两个档位各解一遍**（理由见
+    :func:`test_a_window_at_a_new_edge_is_not_blocked_by_the_one_already_decoding`），
+    所以这里让旧的那一次卡在闸上：它是**最后**交回来的那一条，仍然要报自己的 64，
+    而不是此刻的 288 —— 报错了尺寸，界面就会拿一张对不上的图填格子。
+    """
+    import threading
+
+    import gallery.ui.thumbs.pipeline as pipeline_module
+
+    real = pipeline_module.to_scaled_qimage
+    gate = threading.Event()
+    held: list[int] = []
+
+    def gated(image: object, edge: int) -> object:
+        if edge == 64:
+            held.append(edge)
+            gate.wait(5.0)
+        return real(image, edge)
+
+    monkeypatch.setattr(pipeline_module, "to_scaled_qimage", gated)
+
     thumbs, runner = pipeline
     got = _collect(thumbs)
 
     thumbs.set_window([photo], target_edge=64)
+    assert wait_for(lambda: bool(held)), "旧的那一次没真的在飞，这条用例什么也没验到"
     thumbs.set_window([photo], target_edge=288)  # 切档
-
-    assert wait_for(lambda: bool(got), timeout=DEFAULT_TIMEOUT_SECONDS)
-    _, _, edge = got[0]
-    assert edge == 64
-    runner.wait_for_done(2000)
+    assert wait_for(lambda: any(edge == 288 for _, _, edge in got), timeout=DEFAULT_TIMEOUT_SECONDS)
+    gate.set()  # 放行旧的那一次
+    # **等它交回来**：结果是走信号回到主线程的，`runner.wait_for_done` 只等到工作线程
+    # 收工 —— 那一刻信号还排在队列里，于是断言看到的是「只有新那一条」。
+    assert wait_for(
+        lambda: len(got) >= 2, timeout=DEFAULT_TIMEOUT_SECONDS
+    ), "旧的那一次没交回来"
+    assert got[-1][2] == 64, (
+        f"在途任务报了当前档位 {got[-1][2]}，不是自己那一档：{[e for _, _, e in got]}"
+    )
+    runner.wait_for_done(3000)
 
 
 def test_no_target_edge_means_no_scaling(
@@ -317,31 +347,40 @@ def test_a_window_at_a_new_edge_is_not_blocked_by_the_one_already_decoding(
     """报了一个**新档位**，那一档必须真的被解一遍 —— 哪怕同一张正在按旧档位解。
 
     同一时刻只有一个窗口在要图，而日历三层与网格要的档位**互不相同**（年 48 / 月 288 /
-    周 192 / 网格 176）。切过去的那一刻，上一档位的那次通常还在飞，于是新档位的请求
-    被「同一张照片不能重复投递」挡掉；旧的那一次回来时带着**旧边长**，那一档从此没人
-    再解 —— 除非碰巧又滚动 / 又重排了一次（于是「有时自己好了」）。症状：刚切过来那一
+    周 192 / 网格 176）。切过去的那一刻，上一档位的那一次通常还在飞，于是新档位的请求
+    被「同一张照片不能重复投递」挡掉；旧的那一次回来时带着**旧边长**，那一档从此没人再
+    解 —— 除非碰巧又滚动 / 又重排了一次（于是「有时它自己好了」）。症状：刚切过来那一
     格是占位灰，切一下再切回来就好了。
+
+    旧的那一次卡在闸上（真机上就是队列里一堆在飞的样子），于是「新档位是走自己那一次解
+    出来的」还是「干等着前一次收工」只看这一刻 —— 不靠 sleep 赌时序（靠 sleep 的那版在
+    并行全量里偶发红：上一次有时收工得太快，新档位根本没被挡住，用例就假绿了）。
     """
-    import time
+    import threading
 
     import gallery.ui.thumbs.pipeline as pipeline_module
 
     real = pipeline_module.to_scaled_qimage
+    gate = threading.Event()
 
-    def slow(image: object, edge: int) -> object:
-        time.sleep(0.4)  # 让两次报告叠上（真实库正是这样：队列里有一堆在飞）
+    def gated(image: object, edge: int) -> object:
+        if edge == 176:
+            gate.wait(5.0)
         return real(image, edge)
 
-    monkeypatch.setattr(pipeline_module, "to_scaled_qimage", slow)
+    monkeypatch.setattr(pipeline_module, "to_scaled_qimage", gated)
 
     thumbs, runner = pipeline
     got = _collect(thumbs)
 
     thumbs.set_window([photo], target_edge=176)  # 网格那一档
-    thumbs.set_window([photo], target_edge=288)  # 紧接着切到日历那一档（还在飞）
+    assert wait_for(lambda: photo.path in thumbs._inflight), "旧档位那一次没在飞"
+    thumbs.set_window([photo], target_edge=288)  # 紧接着切到日历那一档
 
-    assert wait_for(lambda: any(edge == 288 for _, _, edge in got), timeout=5.0), (
-        "新档位被在途的那一次挡住了："
-        f"只交回了 {[edge for _, _, edge in got]}"
-    )
+    try:
+        assert wait_for(lambda: any(edge == 288 for _, _, edge in got), timeout=5.0), (
+            f"新档位被在途的那一次挡住了：只交回了 {[edge for _, _, edge in got]}"
+        )
+    finally:
+        gate.set()
     runner.wait_for_done(3000)
