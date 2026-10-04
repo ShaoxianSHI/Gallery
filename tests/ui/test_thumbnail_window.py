@@ -44,6 +44,10 @@ DATES = {
 }
 NAMES = tuple(DATES)
 
+#: 把假的 ``clear_cache`` 卡在 ``Event`` 上时最多等多久（秒）。**带上限是为了让
+#: 「万一它同步跑在主线程上」变成一次失败而不是挂死。** 正常路径上主线程放行得很快。
+RELEASE_TIMEOUT_SECONDS = 5.0
+
 
 @pytest.fixture
 def fake_facet_source(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -246,9 +250,16 @@ def test_clearing_the_thumbnail_cache_runs_off_the_main_thread(
     外推是 2～3 秒），而它正好紧跟在模态对话框之后 —— 对话框关掉的那一瞬间窗口
     整个冻住，用户按的明明是「清空缓存」，看到的却是软件没反应。
 
-    这里不测「快不快」（那要造两万个文件），只测**它在别的线程上**：对话框关掉、
-    ``clear_thumbnail_cache`` 返回的那一刻一个文件都还没删，而做完之后横幅上说的是
-    删了几个。
+    这里不测「快不快」（那要造两万个文件），只测**它在别的线程上**。
+
+    「调用返回时删除还没做完」这条**不能靠「它还没开始」来证**：提交之后工作线程
+    随时可能抢在断言之前跑起来，于是那条断言在快机器上会随机变红（实测遇到过）。
+    改成一个**不可能误判**的形状：把被调的函数卡在一个 ``Event`` 上，
+    ``finished`` 只在它**放行之后**才置位 ——
+    于是「调用返回时 ``finished`` 是空的」与线程调度无关地成立，
+    而它证明的东西还更强一层：**调用方没有等它做完**。
+
+    卡住时带超时，是为了「万一它真的同步跑在主线程上」变成一次**失败**而不是挂死。
     """
     library = window._library
     assert library is not None
@@ -261,21 +272,27 @@ def test_clearing_the_thumbnail_cache_runs_off_the_main_thread(
     )
 
     ran_on: list[str] = []
+    release = threading.Event()
+    finished = threading.Event()
 
     original_clear_cache = library.clear_cache
 
     def record() -> int:
         ran_on.append(threading.current_thread().name)
-        return original_clear_cache()
+        release.wait(RELEASE_TIMEOUT_SECONDS)  # 主线程放行之前一直卡在这儿
+        result = original_clear_cache()
+        finished.set()
+        return result
 
     monkeypatch.setattr(library, "clear_cache", record)
     main_thread = threading.current_thread().name
 
     window.clear_thumbnail_cache()
 
-    assert ran_on == [], "删除在 clear_thumbnail_cache 返回之前就发生了（还在主线程上）"
+    assert not finished.is_set(), "clear_thumbnail_cache 等到了删除做完 —— 那就还在主线程上"
     assert window._cache_job is not None, "没有投递后台任务"
 
+    release.set()
     assert wait_until(qt_app, lambda: window._cache_job is None and window_is_idle(window)), (
         "清空任务没收工"
     )

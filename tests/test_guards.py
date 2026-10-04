@@ -312,14 +312,42 @@ TEXT_SUFFIXES: Final = frozenset(
 
 
 def _text_files_under(root: Path) -> list[Path]:
-    """``root`` 下所有该当作文本读的文件（跳开二进制与构建产物）。"""
+    """``root`` 下所有**确实是文本**的文件（跳开二进制与构建产物）。
+
+    **「无扩展名」不等于「文本」**，这是本函数唯一需要小心的地方：macOS 随手丢下的
+    ``.DS_Store`` 就没有扩展名，按后缀收会把当成文本，于是任何一段二进制里的
+    ``ef bf bd`` 字节都被读成一条「编码坏掉的中文」，把守护变成随机响的噪音 ——
+    而一条会误报的守护比没有更坏。
+
+    所以判据是**内容**：先按后缀挡掉已知的二进制（``.png`` / ``.gz`` / ``.jpg`` …），
+    再对余下的按字节判 —— 含 NUL 的一律不是文本（UTF-8 与 UTF-16 的正文里都不会
+    出现 NUL，而它是各种二进制格式里最可靠的信号），且不许有解码错误
+    （真坏掉的编码会抛 ``UnicodeDecodeError``，那正是我们要找的东西而不是要跳开的）。
+    """
     found: list[Path] = []
     for path in sorted(root.rglob("*")):
         if not path.is_file() or EXCLUDED_DIRS.intersection(path.parts):
             continue
-        if path.suffix in TEXT_SUFFIXES or path.suffix == "":
+        if path.suffix and path.suffix not in TEXT_SUFFIXES:
+            continue
+        try:
+            data = path.read_bytes()
+        except OSError:
+            continue
+        if b"\x00" in data:
+            continue  # 二进制（``.DS_Store``、图片、资源……）
+        if data.decode("utf-8", errors="strict") is not None:
             found.append(path)
     return found
+
+
+def _is_text_file(path: Path) -> bool:
+    """这个文件是不是真的能当 UTF-8 文本读（判据见 :func:`_text_files_under`）。"""
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return False
+    return b"\x00" not in data
 
 
 def test_no_text_file_carries_the_replacement_character() -> None:
@@ -343,7 +371,11 @@ def test_no_text_file_carries_the_replacement_character() -> None:
         for root in (PROJECT_ROOT / "src", PROJECT_ROOT / "tests", PROJECT_ROOT / "scripts")
         for path in _text_files_under(root)
     ]
-    files += [PROJECT_ROOT / "pyproject.toml", PROJECT_ROOT / "README.md"]
+    files += [
+        path
+        for path in (PROJECT_ROOT / "pyproject.toml", PROJECT_ROOT / "README.md")
+        if _is_text_file(path)
+    ]
 
     offenders: list[str] = []
     for path in files:
