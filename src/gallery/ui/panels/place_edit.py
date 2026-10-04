@@ -56,13 +56,13 @@ from PySide6.QtGui import QAction, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (
     QCompleter,
     QDialog,
-    QDialogButtonBox,
     QFormLayout,
-    QHBoxLayout,
+    QGridLayout,
     QLabel,
     QLayout,
     QLineEdit,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -95,9 +95,9 @@ FIELD_MIN_WIDTH: Final = 220
 #: 「已复制」在按钮上停留多久。
 COPIED_HINT_MS: Final = 1400
 
-#: 说明与错误各留几行的位置。**固定高度是为了对话框不跳**：文案在两句之间换来换去时，
-#: 对话框跟着长高再缩回来，用户看着像它在抖。
-NOTE_LINES: Final = 2
+#: 错误那一行留几行的位置。**固定高度是为了对话框不跳**：报错前后它都在那儿，
+#: 对话框不会因为多了一行字就长高一截。
+ERROR_LINES: Final = 2
 
 
 def dialog_style(app_theme: AppTheme) -> str:
@@ -144,17 +144,6 @@ class PlaceEditDialog(QDialog):
         #: 程序自己往框里写字时为真 —— 那些 setter 会触发 ``textChanged``，
         #: 没有这道挡，「地名 → 坐标 → 地名」会自己打起来。
         self._programmatic = False
-        #: 上一次按名字查到了哪一个（``None`` = 没查到）。说明那一行靠它说准话。
-        self._place_hit: Place | None = None
-        #: **查过没有**。区分「查了没查到」与「压根没查」（没有地点库可用时）：
-        #: 前者要如实说「查不到」，后者不能拿「查不到」当理由 —— 那不是查的结果。
-        self._place_searched: bool = False
-        #: 用户**亲手**动的是哪一侧：``"names"`` / ``"coordinates"`` / ``None``。
-        #:
-        #: 自动回填会把两侧都改动，于是「哪一侧变了」这句话在两个方向都成立；说明那一行
-        #: 说的必须是**用户刚才那一下**的后果 —— 「我敲了苏州」与「我把坐标挪到波尔多」
-        #: 接下来发生的事完全不是一回事。
-        self._last_touched: str | None = None
         #: 「已复制」那个提示的定时器。
         self._copy_timer = QTimer(self)
         self._copy_timer.setSingleShot(True)
@@ -231,45 +220,49 @@ class PlaceEditDialog(QDialog):
         form.addRow("经度", self._longitude)
         layout.addLayout(form)
 
-        # 复制 / 粘贴：把一个地点从一张照片搬到另一张，不用一个数字一个数字地抄。
-        transfer = QHBoxLayout()
-        transfer.setContentsMargins(0, 2, 0, 0)
-        transfer.setSpacing(6)
+        # 第一行三个键：**复制 / 粘贴 / 清空**，各占三分之一。
+        # 第二行「取消 / 保存」分别与**粘贴 / 清空**对齐 —— 同一套列网格，因此宽度
+        # 与上面那行一模一样，不需要两排手工对齐的推算。
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 2, 0, 0)
+        grid.setHorizontalSpacing(6)
+        grid.setVerticalSpacing(6)
+
         self._copy_button = QPushButton("复制")
         self._copy_button.setToolTip("把坐标（以及三层地名）按固定格式写进剪贴板")
         self._copy_button.clicked.connect(self._on_copy)
         self._paste_button = QPushButton("粘贴")
         self._paste_button.setToolTip("从剪贴板读坐标与地名填进上面这些框")
         self._paste_button.clicked.connect(self._on_paste)
-        transfer.addWidget(self._copy_button)
-        transfer.addWidget(self._paste_button)
-        transfer.addStretch(1)
-        layout.addLayout(transfer)
+        self._clear_button = QPushButton("清空")
+        self._clear_button.setToolTip("把这一栏全清空：三层地名与两个坐标")
+        self._clear_button.clicked.connect(self._on_clear)
 
-        line_height = self.fontMetrics().height()
-        self._hint = QLabel()
-        self._hint.setObjectName("placeEditHint")
-        self._hint.setWordWrap(True)
-        self._hint.setFixedHeight(line_height * NOTE_LINES)
-        layout.addWidget(self._hint)
+        cancel = QPushButton("取消")
+        cancel.setObjectName("cancelButton")
+        cancel.clicked.connect(self.reject)
+        save = QPushButton("保存")
+        save.setObjectName("saveButton")
+        save.clicked.connect(self._on_accept)
+        save.setDefault(True)
+
+        grid.addWidget(self._copy_button, 0, 0)
+        grid.addWidget(self._paste_button, 0, 1)
+        grid.addWidget(self._clear_button, 0, 2)
+        grid.addWidget(cancel, 1, 1)
+        grid.addWidget(save, 1, 2)
+        # 三列等宽，于是「占满一行」是布局算出来的，不是估出来的。
+        for column in range(3):
+            grid.setColumnStretch(column, 1)
+        for button in (self._copy_button, self._paste_button, self._clear_button, cancel, save):
+            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        layout.addLayout(grid)
 
         self._error = QLabel()
         self._error.setObjectName("placeEditError")
         self._error.setWordWrap(True)
-        self._error.setFixedHeight(line_height * NOTE_LINES)
+        self._error.setFixedHeight(self.fontMetrics().height() * ERROR_LINES)
         layout.addWidget(self._error)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.button(QDialogButtonBox.StandardButton.Save).setText("保存")
-        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
-        buttons.accepted.connect(self._on_accept)
-        buttons.rejected.connect(self.reject)
-        row = QHBoxLayout()
-        row.addStretch(1)
-        row.addWidget(buttons)
-        layout.addLayout(row)
 
         # **⌘W 关闭**（`StandardKey.Close` 在 macOS 上就是它）。不挂这一条的话，⌘W 会
         # 一路走到主窗口 —— 在一个模态对话框里关掉整个窗口，那不是用户按键时想做的事。
@@ -283,8 +276,6 @@ class PlaceEditDialog(QDialog):
         for field in (self._city, self._region, self._country, self._latitude, self._longitude):
             field.setMinimumWidth(FIELD_MIN_WIDTH)
 
-        self._update_hint()
-
     def _apply_theme(self) -> None:
         self.setStyleSheet(dialog_style(theme.current_theme()))
 
@@ -293,15 +284,12 @@ class PlaceEditDialog(QDialog):
     def _on_names_changed(self, *_args: object) -> None:
         if self._programmatic:
             return  # 程序自己写进去的，不当成「用户改了」
-        self._last_touched = "names"
-        self._update_hint()
         self._timer.start(LOOKUP_DELAY_MS)
 
     def _on_coordinates_changed(self, *_args: object) -> None:
         if self._programmatic:
             return  # 程序自己填进去的，不当成「用户改了」
         self._last_touched = "coordinates"
-        self._update_hint()
         self._timer.start(LOOKUP_DELAY_MS)
 
     def _refresh(self) -> None:
@@ -314,7 +302,6 @@ class PlaceEditDialog(QDialog):
         if coordinates != self._seen_coordinates:
             self._seen_coordinates = coordinates
             self._fill_from_coordinates(coordinates)
-        self._update_hint()
 
     def _fill_from_names(self, names: tuple[str, str, str]) -> None:
         """**地点 → 坐标**：城市库里查得到就把它的坐标填进下面两个框。
@@ -323,7 +310,6 @@ class PlaceEditDialog(QDialog):
         地方带着它们的准确写法，比用户手打的更不容易错）。
         """
         city, region, country = names
-        self._place_searched = False
         if self._resolver is None or len(city) < MIN_LOOKUP_LENGTH:
             self._refresh_candidates(city)
             return
@@ -334,8 +320,6 @@ class PlaceEditDialog(QDialog):
             # 这时只按名字找一遍 —— 查到的结果本来就会把上面两栏改掉。
             found = self._resolver.place_named(city)
         self._candidates = list(found)
-        self._place_hit = found[0] if found else None
-        self._place_searched = True
         if not found:
             self._refresh_candidates(city)
             return
@@ -421,6 +405,26 @@ class PlaceEditDialog(QDialog):
 
     # ---- 复制 / 粘贴 ---------------------------------------------------------
 
+    def _on_clear(self) -> None:
+        """把这一栏全清空 —— 那就是「把位置整个删掉」。
+
+        **不需要一个勾选框**（ADR 0031）：勾选框得先去勾一下才生效，放在五个按钮里
+        反而更像一个动作，而「全清空」本来就是编辑器里唯一表达得出「全删」的形状。
+        这里只清**框**，仍然要按保存才写盘。
+        """
+        self._error.clear()
+        self._programmatic = True
+        try:
+            self._city.clear()
+            self._region.clear()
+            self._country.clear()
+            self._latitude.clear()
+            self._longitude.clear()
+            self._completer.popup().hide()
+        finally:
+            self._programmatic = False
+        self._refresh()
+
     def _on_copy(self) -> None:
         """把这个地点按固定格式写进剪贴板。
 
@@ -477,7 +481,6 @@ class PlaceEditDialog(QDialog):
                 self._seen_coordinates = (None, None)  # 让下面重跑这一侧的反查
             if any(names):
                 self._seen_names = ("", "", "")  # 同上，让它重跑正查
-        self._last_touched = "coordinates" if coordinates != (None, None) else "names"
         self._refresh()
 
     # ---- 校验与取值 --------------------------------------------------------
@@ -503,45 +506,6 @@ class PlaceEditDialog(QDialog):
         """两个坐标框都被清空了，而照片本来是有坐标的。"""
         had = self._state.coordinates() is not None
         return had and not self._latitude.text().strip() and not self._longitude.text().strip()
-
-    def _coordinates_changed(self) -> bool:
-        current = self._coordinates()
-        original = self._state.coordinates()
-        if original is None:
-            return current != (None, None)
-        return current != original
-
-    def _names_changed(self) -> bool:
-        return self._names() != tuple(self._state.names())
-
-    def _names_cleared(self) -> bool:
-        """三层地名**原来有、现在全空**了 —— 那就不只是「删坐标」，是整个位置删掉。"""
-        return not any(self._names()) and all(self._state.names())
-
-    def _update_hint(self, *_args: object) -> None:
-        """那行说明。**它是「保存下去会发生什么」的预告**，不是事后解释。"""
-        # **按「用户刚才动的是哪一侧」说话，而不是按「哪一侧变了」**：自动回填会把两侧都
-        # 改动，于是两个分支同时成立 —— 「我敲了苏州」与「我把坐标挪到波尔多」接下来
-        # 发生的事完全不是一回事。
-        if self._coordinates_emptied():
-            if self._names_cleared():
-                self._hint.setText("保存后，坐标与三层地名都会从照片里删掉。⌘Z 可以撤销。")
-            else:
-                self._hint.setText("保存后，这张照片的坐标会被删掉，地点保留。⌘Z 可以撤销。")
-            return
-        if self._names_changed() and self._last_touched != "coordinates":
-            if self._place_searched and self._place_hit is None:
-                # 说清「不动」比说「按城市位置写入」诚实：城市库里没有这个名字。
-                self._hint.setText("城市库里没有这个名字，坐标保持原样。")
-            else:
-                self._hint.setText(
-                    "保存后，坐标会按这座城市的位置写入 —— 那是市级精度，不是拍摄点。"
-                )
-            return
-        if self._coordinates_changed():
-            self._hint.setText("保存后，地点会按新坐标重新推断（离线，最近的城市）。")
-            return
-        self._hint.setText("没有改动。⌘Z 可以撤销。")
 
     def edit(self) -> PlaceEdit:
         """用户填完的那一份。**空 = 那一层不写**（由 ``core`` 判定该不该删）。"""
@@ -685,9 +649,9 @@ def _coordinate_problem(latitude: str, longitude: str) -> str | None:
 __all__ = [
     "COORDINATE_DECIMALS",
     "COPIED_HINT_MS",
+    "ERROR_LINES",
     "FIELD_MIN_WIDTH",
     "LOOKUP_DELAY_MS",
-    "NOTE_LINES",
     "PlaceEditDialog",
     "dialog_style",
 ]

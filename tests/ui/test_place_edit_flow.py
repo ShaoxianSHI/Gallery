@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (  # noqa: E402
     QLabel,
     QLayout,
     QLineEdit,
+    QPushButton,
 )
 from waiting import wait_for_idle, wait_until  # noqa: E402
 
@@ -254,19 +255,6 @@ def test_half_a_coordinate_is_refused_too(qt_app: QApplication) -> None:
 
     assert dialog.result() == 0
     assert "经度和纬度要一起填" in dialog._error.text()
-
-
-def test_the_hint_tells_the_truth_before_saving(qt_app: QApplication) -> None:
-    """**保存之前**就把后果说出来 —— 尤其是「坐标会变成市级精度」那一条。"""
-    dialog = _dialog(None, PlaceState(city="南京", latitude=32.06, longitude=118.79))  # type: ignore[arg-type]
-
-    assert "重新推断" not in dialog._hint.text()
-    dialog._city.setText("苏州")
-    dialog._refresh()
-    assert "市级精度" in dialog._hint.text()
-
-
-# ---- 写回与撤销 ----------------------------------------------------------------
 
 
 def _write(window: MainWindow, ref: object, state: PlaceState, edit: PlaceEdit) -> None:
@@ -605,35 +593,6 @@ def test_changing_the_city_is_not_blocked_by_the_stale_province(qt_app: QApplica
     assert dialog._region.text() == "江苏省"
 
 
-def test_the_hint_follows_the_side_the_user_just_touched(qt_app: QApplication) -> None:
-    """自动回填把两侧都改了，于是「哪一侧变了」这句话不再有用 ——
-    说明那一行必须说的是**用户刚才那一下**的后果。"""
-    dialog = _dialog(
-        None, PlaceState(city="京都", region="京都府", country="日本"), resolver=StubResolver()
-    )
-
-    dialog._city.setText("苏州")
-    dialog._refresh()
-    assert "市级精度" in dialog._hint.text()
-
-    dialog._latitude.setText("31.3110")
-    dialog._longitude.setText("120.6210")
-    dialog._refresh()
-    assert "重新推断" in dialog._hint.text()
-
-
-def test_an_unknown_name_says_the_coordinates_stay_put(qt_app: QApplication) -> None:
-    """查不到就**一个字都不填**，而且要说明「坐标不会动」——
-    说「按城市位置写入」是在说一件不会发生的事。"""
-    dialog = _dialog(None, PlaceState(city="南京"), resolver=StubResolver())
-
-    dialog._city.setText("西湖·断桥")
-    dialog._refresh()
-
-    assert "城市库里没有" in dialog._hint.text()
-    assert "坐标保持原样" in dialog._hint.text()
-
-
 def test_there_is_no_checkbox_to_turn_the_sync_off(qt_app: QApplication) -> None:
     """**一个勾都没有**。
 
@@ -650,22 +609,60 @@ def test_there_is_no_checkbox_to_turn_the_sync_off(qt_app: QApplication) -> None
     ]
 
 
-def test_clearing_every_field_is_how_you_clear_the_place(qt_app: QApplication) -> None:
+def test_the_clear_button_empties_every_field(qt_app: QApplication) -> None:
+    """**全清空就是「把位置整个删掉」** —— 不需要单独的勾选框（ADR 0031）。
+
+    勾选框得先去勾一下才生效，放在五个按钮里反而更像一个动作；而「全清空」本来就是
+    编辑器里唯一表达得出「全删」的形状。这里只清**框**，仍然要按保存才写盘。
+    """
     dialog = _dialog(
         None,
         PlaceState(city="苏州", region="江苏省", country="中国", latitude=31.3, longitude=120.6),
     )
 
-    dialog._city.setText("")
-    dialog._region.clear()
-    dialog._country.clear()
-    dialog._latitude.clear()
-    dialog._longitude.clear()
+    dialog._clear_button.click()
 
+    assert dialog._city.text() == ""
+    assert dialog._region.text() == ""
+    assert dialog._country.text() == ""
+    assert dialog._latitude.text() == ""
+    assert dialog._longitude.text() == ""
     result = dialog.edit()
     assert result.city is None and result.country is None
     assert result.clear_coordinates
-    assert "都会从照片里删掉" in dialog._hint.text()
+
+
+def test_three_buttons_on_top_and_two_below_aligned_with_paste_and_clear(
+    qt_app: QApplication,
+) -> None:
+    """复制 / 粘贴 / 清空**占满第一行**；取消 / 保存在第二行，**分别与粘贴和清空对齐**。
+
+    同一套列网格 —— 宽度与位置都是布局算出来的，不是两排手工对齐的推算。
+    """
+    dialog = _dialog(None, PlaceState(city="苏州"))
+    dialog.show()
+    QApplication.processEvents()
+
+    top = (dialog._copy_button, dialog._paste_button, dialog._clear_button)
+    cancel = dialog.findChild(QPushButton, "cancelButton")
+    save = dialog.findChild(QPushButton, "saveButton")
+
+    assert [button.text() for button in top] == ["复制", "粘贴", "清空"]
+    assert cancel is not None and cancel.text() == "取消"
+    assert save is not None and save.text() == "保存"
+    assert len({button.width() for button in top}) == 1  # 三个等宽
+    assert cancel.x() == dialog._paste_button.x()  # 取消与粘贴对齐
+    assert save.x() == dialog._clear_button.x()  # 保存与清空对齐
+    assert cancel.y() > dialog._clear_button.y()  # 在第二行
+    margins = dialog.layout().contentsMargins()
+    assert top[2].x() + top[2].width() == dialog.width() - margins.right()  # 占满整行
+
+
+def test_there_is_no_hint_line_left(qt_app: QApplication) -> None:
+    """那行「保存后，XXX」已经删掉了 —— 用户不要它。"""
+    dialog = _dialog(None, PlaceState(city="苏州"))
+
+    assert not dialog.findChildren(QLabel, "placeEditHint")
 
 
 def test_copy_then_paste_moves_the_place_to_another_photo(qt_app: QApplication) -> None:
