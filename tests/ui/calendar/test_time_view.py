@@ -153,3 +153,62 @@ def test_a_second_reveal_while_one_is_pending_does_not_lose_it(
     view.set_anchor(ANCHOR + datetime.timedelta(days=7))
 
     assert view._reveal.isActive(), "第二次定位把第一次顶掉了 —— 仍然只剩一个在排队"
+
+
+def _two_photos() -> tuple[dict, dict]:
+    """同一天 08:00 与 20:00 各一张 —— 定位该落在 08:00 上方。"""
+    refs = [_ref("a.jpg"), _ref("b.jpg")]
+    return {ANCHOR: refs}, {(ANCHOR, 8): refs[:1], (ANCHOR, 20): refs[1:]}
+
+
+def test_the_reveal_does_not_count_as_landed_before_the_scroll_bar_has_a_range(
+    qt_app: QApplication,
+    wait_for: object,
+) -> None:
+    """**没有范围就不算落地** —— 算了就再也没有第二次。
+
+    切到这一层时，报窗口与定位常常跑在**内部布局之前**（``setCurrentWidget`` 之后
+    滚动区的布局是延后处理的）：那一刻滚动条的最大值还是 0，``setValue`` 设了也没用。
+    而「已落地」这道闸一关上，定位就再也补不回来 —— 这一层永远停在 00:00，而
+    「看得见哪些」又是按这个位置算的，照片所在的那些格子**压根没人要图**
+    （症状：切到某一周是一片占位灰）。
+    """
+    view = WeekView(ThumbStore())
+    view.set_buckets(*_two_photos())
+    view.set_anchor(ANCHOR)  # 排一个定位
+    view._apply_scroll()  # 手跑一次 = 定时器抢在布局前面（真机上有这个窗口）
+
+    assert not view._revealed, "滚动条还没有范围，这一次不算落地"
+
+    view.resize(900, 600)
+    view.show()
+    assert wait_for(lambda: not view._reveal.isActive())  # type: ignore[operator]
+    assert view._area.verticalScrollBar().value() > 0, "内部几何定了之后没有补一次定位"
+
+
+def test_a_relayout_inside_the_week_reports_the_window_again(
+    qt_app: QApplication,
+    wait_for: object,
+) -> None:
+    """**内部几何变了就重报一次**（不是整层被 resize 的那种）。
+
+    可见区是按「网格宽度 → 行高」「视口高度」「滚动位置」算的，而前两个要等**内部布局**
+    跑过才定。切到这一层的那一次报窗口跑在布局前面时，算出来的是**另一批格子**；布局跑完
+    之后要是没人再报一次，那一批就永远没人要图 —— 屏幕上是占位灰。
+
+    这里只动**内部那个时间轴**的宽度：整层尺寸没变（所以 `WeekView.resizeEvent` 不响），
+    滚动范围也没变（所以滚动去抖那一路不响）—— 能报出窗口的只有「盯着内部几何」这一路。
+    """
+    view = WeekView(ThumbStore())
+    view.set_buckets(*_two_photos())
+    view.resize(900, 600)
+    view.show()
+    qt_app.processEvents()
+    view._geometry_notify.stop()
+
+    reports: list[int] = []
+    view.window_changed.connect(lambda: reports.append(1))
+    grid = view._grid
+    grid.resize(max(1, grid.width() - 60), grid.height())
+
+    assert wait_for(lambda: bool(reports)), "内部几何变了，却没有再报一次窗口"

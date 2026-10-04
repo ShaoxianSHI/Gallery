@@ -14,7 +14,7 @@ from __future__ import annotations
 import datetime
 from collections.abc import Sequence
 
-from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import QFont, QMouseEvent, QPainter
 from PySide6.QtWidgets import QFrame, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
@@ -102,6 +102,13 @@ class WeekView(LevelView):
         layout.addWidget(self._header)
         layout.addWidget(area, 1)
         self._area = area
+        # **内部几何也要盯着**：可见区是按「网格宽度（→行高）+ 视口高度 + 滚动位置」
+        # 算的，而前两个数要等**布局跑过一遍**才定。切到这一层的那一次报窗口常常跑在
+        # 布局前面（`setCurrentWidget` 之后内部布局是延后处理的），算出来的那一屏于是
+        # 与真正画出来的不是同一批 —— 而布局跑完之后**没有人再报一次**，那些格子就
+        # 永远没人要图（症状：切到某一周，屏幕上有几格是占位灰，切走再回来才好）。
+        area.viewport().installEventFilter(self)
+        self._grid.installEventFilter(self)
         # 「滚到第一张照片上方」那个定位的闸门（见 :meth:`_reveal_photos`）。
         #
         # **做成自己的子定时器，而不是 `QTimer.singleShot(0, self._apply_scroll)`**：
@@ -226,6 +233,19 @@ class WeekView(LevelView):
         if not self._revealed:
             self._reveal_photos()
 
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 - 名字是 Qt 定的
+        """滚动区的视口或时间轴本体被重新布局了：报一次窗口，定位没落地就补一次。
+
+        **这两个 resize 与 `WeekView.resizeEvent` 是三件不同的事**：整层被摆到新尺寸时
+        那个会响；而「这一层本来就在这个尺寸上，只是内部的滚动区 / 时间轴刚被布局出来」
+        只有这里看得见 —— 后一种正是切到这一层时最常见的形状（第一次切过去尤其如此）。
+        """
+        if event.type() == QEvent.Type.Resize:
+            self._geometry_notify.start()
+            if not self._revealed:
+                self._reveal_photos()
+        return super().eventFilter(watched, event)
+
     def _apply_scroll(self) -> None:
         self._sync_grid_height()
         visible = set(self.days())
@@ -234,6 +254,13 @@ class WeekView(LevelView):
         if not hours:
             bar.setValue(0)
             return  # 这一周还没有照片：算「没落地」，等桶到了再补一次
+        if bar.maximum() <= 0:
+            # **布局还没跑过**：滚动条一个范围都没有，这时候设了也没用。关键是**别把
+            # 这一次算成「已落地」** —— 算上了就再也没有第二次（`_revealed` 是那道
+            # 「补一次」的闸），于是这一层永远停在 00:00，而「看得见哪些」又按这个
+            # 位置算：照片所在的那些格子压根没人要图（症状：切到某一周是一片占位灰）。
+            # 内部几何一定下来，`eventFilter` 那边会补这一次。
+            return
         self._revealed = True
         row = self.row_height()
         target = int(max(0, min(hours) - 1) * row)

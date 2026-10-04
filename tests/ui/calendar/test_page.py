@@ -459,7 +459,15 @@ def test_a_resized_view_reports_its_window_again(
     short = len(page.current_view().visible_refs())
 
     page.resize(1000, 700)  # 放回去：新露出来的那几个小时
-    assert wait_for(lambda: len(reports) >= 2), "改完窗口大小没有再报一次"
+
+    # **等的是「最后那一次报全了」，不是「报了几次」**：改尺寸的过程中会报好几次
+    # （内部几何一变就补一次，见 `WeekView.eventFilter`），按次数等会等到过渡中的那一条，
+    # 而它报的是压扁时的那一屏 —— 断言于是随机红。
+    def reported_whole_window() -> bool:
+        visible = {ref.path for ref in page.current_view().visible_refs()}
+        return bool(reports) and not (visible - reports[-1])
+
+    assert wait_for(reported_whole_window), "放回去之后没有再报一次完整的那一屏"
     visible = {ref.path for ref in page.current_view().visible_refs()}
     assert not visible - reports[-1], f"{len(visible - reports[-1])} 张看得见却没报出去"
     if level == "week":
