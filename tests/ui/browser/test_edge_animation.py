@@ -24,7 +24,10 @@
   而不是等够多少秒。造好网格之后最长的那个定时器 120ms 就到头，原来一律睡 0.46s。
 - :func:`grid_helpers.drive_transition` / :func:`grid_helpers.step_transition` ——
   直接拨 ``QVariantAnimation`` 的时钟，一帧不差地落在同一批进度上。于是「取到几帧」
-  与「撞在哪一段时序上」都不再取决于机器有多快。
+  与「撞在哪一段时序上」都不再取决于机器有多快。唯一要提防的是**一边拨时钟一边转
+  事件循环**：真实时钟会顺着 ``processEvents`` 钻进动画里，把某一帧推到终点、下一句
+  ``setCurrentTime`` 又把它拽回来，于是取样里混进一个不属于这一帧的值；助手为此在
+  每次转循环之前先 ``pause``，见 :func:`grid_helpers.drive_transition`。
 
 唯一还留着的固定等待是 Qt **自己**那次推迟重排，它不是网格的定时器，
 :data:`grid_helpers.QT_DEFERRED_RELAYOUT_SECONDS` 那一处 —— 见

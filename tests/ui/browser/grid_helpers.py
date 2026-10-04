@@ -117,20 +117,46 @@ def drive_transition[T](
     滚动条开关带来的那次 ``resizeEvent`` 就在那里面，于是「过没有渡被掐掉」这条
     断言会**空转绿**：掐它的那个事件压根没送到。给了 ``spin``，事件在确定的帧与帧
     之间送达，既保住了那条断言，又不必回去等真实时钟。
+
+    **但转事件循环时必须先 ``pause()``：否则真实时钟会从缝里钻进来。**
+    ``setCurrentTime`` 会把动画的内部定时器重新按在「还剩多少」上，于是「一帧」在
+    真实时间里只剩 13ms；而 ``processEvents()`` 在并行跑（10 个 worker 抢 10 个核）
+    时一次几十上百毫秒是常事。定时器于是照样到点，把这一帧直接推到终点再收尾 ——
+    下一句 ``setCurrentTime`` 又把它拽回来，于是取到的序列里**混进一个不属于这一帧
+    的值**，单调性之类的断言随机变红（实测 ``test_toggling_the_scrollbar_does_not_
+    cut_the_transition_short`` 正是这么偶发失败的：某一帧是 130，下一帧又回到 137）。
+    ``pause`` 之后真实时钟完全停摆，``setCurrentTime`` 照样能拨（Qt 对暂停中的动画
+    也同步算值并发 ``valueChanged``），于是帧与帧之间只差**排着的事件**，时间轴回到
+    确定。
+
+    恢复只在这一段真的是自己 ``pause`` 出来的前提下做：``spin`` 里若恰好把过渡收了
+    （那正是被测的行为），状态已经是 ``Stopped``，此时 ``resume()`` 会把动画**重新
+    起跑**，反而把前提改掉了。
     """
     animation = grid._transition_anim
     assert animation.state() == QAbstractAnimation.State.Running, (
         "过渡没在跑，那就没有帧可取（前提没摆出来）"
     )
+
+    def spin_once() -> None:
+        if spin is None:
+            return
+        paused_here = animation.state() == QAbstractAnimation.State.Running
+        if paused_here:
+            animation.pause()
+        try:
+            spin()
+        finally:
+            if paused_here and animation.state() == QAbstractAnimation.State.Paused:
+                animation.resume()
+
     seen = [read()]
     for index in range(1, frames):
         animation.setCurrentTime(EDGE_ANIMATION_MS * index // frames)
-        if spin is not None:
-            spin()
+        spin_once()
         seen.append(read())
     animation.setCurrentTime(EDGE_ANIMATION_MS)
-    if spin is not None:
-        spin()
+    spin_once()
     seen.append(read())
     return seen
 
