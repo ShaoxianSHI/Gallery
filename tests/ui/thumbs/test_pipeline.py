@@ -306,3 +306,42 @@ def test_the_bad_file_memory_outlives_the_window(
     thumbs.set_window(_refs(2, "e"))
     assert {ref.path for ref in broken} <= thumbs._failed, "「这个文件读不出来」的结论被窗口清掉了"
     runner.wait_for_done(2000)
+
+
+def test_a_window_at_a_new_edge_is_not_blocked_by_the_one_already_decoding(
+    pipeline: tuple[ThumbnailPipeline, TaskRunner],
+    photo: PhotoRef,
+    monkeypatch: pytest.MonkeyPatch,
+    wait_for: Callable[..., bool],
+) -> None:
+    """报了一个**新档位**，那一档必须真的被解一遍 —— 哪怕同一张正在按旧档位解。
+
+    同一时刻只有一个窗口在要图，而日历三层与网格要的档位**互不相同**（年 48 / 月 288 /
+    周 192 / 网格 176）。切过去的那一刻，上一档位的那次通常还在飞，于是新档位的请求
+    被「同一张照片不能重复投递」挡掉；旧的那一次回来时带着**旧边长**，那一档从此没人
+    再解 —— 除非碰巧又滚动 / 又重排了一次（于是「有时自己好了」）。症状：刚切过来那一
+    格是占位灰，切一下再切回来就好了。
+    """
+    import time
+
+    import gallery.ui.thumbs.pipeline as pipeline_module
+
+    real = pipeline_module.to_scaled_qimage
+
+    def slow(image: object, edge: int) -> object:
+        time.sleep(0.4)  # 让两次报告叠上（真实库正是这样：队列里有一堆在飞）
+        return real(image, edge)
+
+    monkeypatch.setattr(pipeline_module, "to_scaled_qimage", slow)
+
+    thumbs, runner = pipeline
+    got = _collect(thumbs)
+
+    thumbs.set_window([photo], target_edge=176)  # 网格那一档
+    thumbs.set_window([photo], target_edge=288)  # 紧接着切到日历那一档（还在飞）
+
+    assert wait_for(lambda: any(edge == 288 for _, _, edge in got), timeout=5.0), (
+        "新档位被在途的那一次挡住了："
+        f"只交回了 {[edge for _, _, edge in got]}"
+    )
+    runner.wait_for_done(3000)
