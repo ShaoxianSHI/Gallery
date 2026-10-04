@@ -54,7 +54,6 @@ from typing import Final
 from PySide6.QtCore import QStringListModel, Qt, QTimer
 from PySide6.QtGui import QAction, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (
-    QComboBox,
     QCompleter,
     QDialog,
     QDialogButtonBox,
@@ -74,6 +73,13 @@ from gallery.core.places.dataset import Place
 from gallery.core.places.resolver import PlaceResolver
 from gallery.ui import theme
 from gallery.ui.theme import AppTheme, rgba
+
+#: **少于这么几个字就不查**。
+#:
+#: 自带的城市库里有「苏」这样一个真实条目（安徽某个被折叠进市里的区，见
+#: ``scripts/build_places_db.py`` 折叠区划那一步）。用户敲下第一个字就恰好命中它的话，
+#: 屏幕上会立刻跳出「中国 · 安徽省」和一串坐标 —— 那是数据里的碎片，不是用户要填的��方。
+MIN_LOOKUP_LENGTH: Final = 2
 
 #: 打字之后多久去查一次。**250 毫秒**：比人手打字快，又不至于每敲一个字
 #: 就去动一次城市库（那份表有 2 万多条）。
@@ -182,7 +188,7 @@ class PlaceEditDialog(QDialog):
         form.setSpacing(6)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
 
-        # 定时器**先建**：下面的 ``setText`` / ``setCurrentText`` 会触发 ``textChanged``，
+        # 定时器**先建**：下面的 ``setText`` 会触发 ``textChanged``，
         # 而那会来启动它 —— 顺序反了就是「打开对话框时崩一次」。
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
@@ -198,13 +204,14 @@ class PlaceEditDialog(QDialog):
         self._region.textChanged.connect(self._on_names_changed)
         form.addRow("省 / 州", self._region)
 
-        self._city = QComboBox()
-        self._city.setEditable(True)
-        self._city.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        # **普通的输入框**，不是下拉：这一栏和上面两栏一样是「填一个地方」，不是
+        # 「从清单里挑一个」。下拉那个朝下的小箭头会让人以为清单是封闭的 —— 而城市库
+        # 里没有的名字（用户自己的门牌、景区）恰恰是最该能填进去的那些。
+        # 补全仍然在：``QLineEdit.setCompleter`` 会照常弹候选，选中后由 ``_on_picked``
+        # 把整条「城市 · 省州 · 国家」换回**光标处那一个城市名**。
+        self._city = QLineEdit(state.city or "")
         self._city.setPlaceholderText("城市（先填城市也行）")
-        self._city.currentTextChanged.connect(self._on_names_changed)
-        # 补全是**弹窗**，不是把候选塞进下拉里：下拉里那几行会留在原地，用户改一个字
-        # 之后它们就变成了过期的答案。
+        self._city.textChanged.connect(self._on_names_changed)
         self._completer = QCompleter(self)
         self._completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self._completer.setFilterMode(Qt.MatchFlag.MatchContains)
@@ -276,7 +283,6 @@ class PlaceEditDialog(QDialog):
         for field in (self._city, self._region, self._country, self._latitude, self._longitude):
             field.setMinimumWidth(FIELD_MIN_WIDTH)
 
-        self._city.setCurrentText(state.city or "")
         self._update_hint()
 
     def _apply_theme(self) -> None:
@@ -318,7 +324,7 @@ class PlaceEditDialog(QDialog):
         """
         city, region, country = names
         self._place_searched = False
-        if self._resolver is None or not city:
+        if self._resolver is None or len(city) < MIN_LOOKUP_LENGTH:
             self._refresh_candidates(city)
             return
         found = self._resolver.place_named(city, region=region or None, country=country or None)
@@ -336,8 +342,8 @@ class PlaceEditDialog(QDialog):
         place = found[0]
         self._programmatic = True
         try:
-            if place.city and place.city != self._city.currentText().strip():
-                self._city.setCurrentText(place.city)
+            if place.city and place.city != self._city.text().strip():
+                self._city.setText(place.city)
             if place.region and place.region != self._region.text().strip():
                 self._region.setText(place.region)
             if place.country and place.country != self._country.text().strip():
@@ -362,8 +368,8 @@ class PlaceEditDialog(QDialog):
             return
         self._programmatic = True
         try:
-            if place.city and place.city != self._city.currentText().strip():
-                self._city.setCurrentText(place.city)
+            if place.city and place.city != self._city.text().strip():
+                self._city.setText(place.city)
             if place.region and place.region != self._region.text().strip():
                 self._region.setText(place.region)
             if place.country and place.country != self._country.text().strip():
@@ -379,7 +385,7 @@ class PlaceEditDialog(QDialog):
         断桥」不会有候选 —— 那本来也不该有，库里没有任何一条记录能代表那个点。
         """
         text = name.strip()
-        if self._resolver is None or not text:
+        if self._resolver is None or len(text) < MIN_LOOKUP_LENGTH:
             return
         if not self._candidates:
             self._candidates = list(self._resolver.place_named(text))
@@ -402,7 +408,7 @@ class PlaceEditDialog(QDialog):
                 continue
             self._programmatic = True
             try:
-                self._city.setCurrentText(place.city)
+                self._city.setText(place.city)
                 if not self._region.text().strip() and place.region:
                     self._region.setText(place.region)
                 if not self._country.text().strip():
@@ -455,7 +461,7 @@ class PlaceEditDialog(QDialog):
                 self._latitude.setText(_format(coordinates[0]))
                 self._longitude.setText(_format(coordinates[1]))
             if any(names):
-                self._city.setCurrentText(names[0] or "")
+                self._city.setText(names[0] or "")
                 self._region.setText(names[1] or "")
                 self._country.setText(names[2] or "")
         finally:
@@ -485,7 +491,7 @@ class PlaceEditDialog(QDialog):
 
     def _names(self) -> tuple[str, str, str]:
         return (
-            self._city.currentText().strip(),
+            self._city.text().strip(),
             self._region.text().strip(),
             self._country.text().strip(),
         )

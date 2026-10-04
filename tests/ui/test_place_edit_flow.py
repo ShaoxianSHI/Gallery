@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (  # noqa: E402
     QDialog,
     QLabel,
     QLayout,
+    QLineEdit,
 )
 from waiting import wait_for_idle, wait_until  # noqa: E402
 
@@ -206,7 +207,7 @@ def test_the_dialog_prefills_what_the_photo_says(qt_app: QApplication) -> None:
 
     assert dialog._country.text() == "中国"
     assert dialog._region.text() == "江苏省"
-    assert dialog._city.currentText() == "南京"
+    assert dialog._city.text() == "南京"
     assert dialog._latitude.text().startswith("32.0603")
     assert dialog._longitude.text().startswith("118.7969")
 
@@ -260,7 +261,7 @@ def test_the_hint_tells_the_truth_before_saving(qt_app: QApplication) -> None:
     dialog = _dialog(None, PlaceState(city="南京", latitude=32.06, longitude=118.79))  # type: ignore[arg-type]
 
     assert "重新推断" not in dialog._hint.text()
-    dialog._city.setCurrentText("苏州")
+    dialog._city.setText("苏州")
     dialog._refresh()
     assert "市级精度" in dialog._hint.text()
 
@@ -478,6 +479,44 @@ def _row_positions(dialog: QDialog) -> dict[str, int]:
     return positions
 
 
+def test_the_city_box_is_a_plain_input(qt_app: QApplication) -> None:
+    """**不是下拉。**
+
+    那一栏和上面两栏一样是「填一个地方」，朝下的小箭头会让人以为清单是封闭的 ——
+    而城市库里没有的名字（用户自己的门牌、景区）恰恰是最该能填进去的那些。补全仍在，
+    它只是**建议**。
+    """
+    dialog = _dialog(None, PlaceState(city="苏州"))
+
+    assert isinstance(dialog._city, QLineEdit)
+    assert dialog._city.completer() is not None
+
+
+def test_one_letter_does_not_run_a_look_up(qt_app: QApplication) -> None:
+    """城市库里有一个真叫「苏」的条目（安徽某个被折叠进市里的区）。
+
+    用户敲下第一个字就恰好命中它的话，屏幕上会立刻跳出「中国 · 安徽省」和一串坐标 ——
+    那是数据里的碎片，不是用户要填的地方。**少于两个字不查、也不给候选。**
+    """
+    dialog = _dialog(None, PlaceState(), resolver=StubResolver())
+
+    dialog._city.setText("苏")
+    dialog._refresh()
+
+    assert dialog._country.text() == ""
+    assert dialog._latitude.text() == ""
+
+
+def test_two_letters_are_enough(qt_app: QApplication) -> None:
+    dialog = _dialog(None, PlaceState(), resolver=StubResolver())
+
+    dialog._city.setText("苏州")
+    dialog._refresh()
+
+    assert dialog._country.text() == "中国"
+    assert float(dialog._latitude.text()) == pytest.approx(31.311, abs=1e-4)
+
+
 def test_the_fields_run_country_province_city(qt_app: QApplication) -> None:
     """**由大到小**：国家 → 省 / 州 → 城市。读地点就是这么读的。"""
     dialog = _dialog(None, PlaceState(city="苏州", region="江苏省", country="中国"))
@@ -490,7 +529,7 @@ def test_typing_a_city_fills_in_the_province_and_the_country(qt_app: QApplicatio
     """**只敲城市就行**：省与国家自己长出来，而且用的是库里那一带的准确写法。"""
     dialog = _dialog(None, PlaceState(), resolver=StubResolver())
 
-    dialog._city.setCurrentText("苏州")
+    dialog._city.setText("苏州")
     dialog._refresh()
 
     assert dialog._region.text() == "江苏省"
@@ -501,7 +540,7 @@ def test_a_place_updates_the_coordinates_right_away(qt_app: QApplication) -> Non
     """**地点 → 坐标实时更新**：保存之前就能看见会写进去的是哪一对。"""
     dialog = _dialog(None, PlaceState(), resolver=StubResolver())
 
-    dialog._city.setCurrentText("苏州")
+    dialog._city.setText("苏州")
     dialog._refresh()
 
     assert float(dialog._latitude.text()) == pytest.approx(31.311, abs=1e-4)
@@ -516,7 +555,7 @@ def test_coordinates_update_the_place_right_away(qt_app: QApplication) -> None:
     dialog._longitude.setText("120.6210")
     dialog._refresh()
 
-    assert dialog._city.currentText() == "苏州"
+    assert dialog._city.text() == "苏州"
     assert dialog._region.text() == "江苏省"
     assert dialog._country.text() == "中国"
 
@@ -530,7 +569,7 @@ def test_the_two_directions_do_not_talk_to_each_other(qt_app: QApplication) -> N
     dialog._refresh()
     dialog._refresh()
 
-    assert dialog._city.currentText() == "苏州"
+    assert dialog._city.text() == "苏州"
     assert float(dialog._latitude.text()) == pytest.approx(31.311, abs=1e-4)
 
 
@@ -540,7 +579,7 @@ def test_a_name_the_database_does_not_know_leaves_everything_alone(qt_app: QAppl
         None, PlaceState(city="南京", latitude=32.06, longitude=118.79), resolver=StubResolver()
     )
 
-    dialog._city.setCurrentText("西湖·断桥")
+    dialog._city.setText("西湖·断桥")
     dialog._refresh()
 
     assert dialog._region.text() == ""
@@ -561,7 +600,7 @@ def test_changing_the_city_is_not_blocked_by_the_stale_province(qt_app: QApplica
         resolver=_StaleAreaResolver(),
     )
 
-    dialog._city.setCurrentText("苏州")
+    dialog._city.setText("苏州")
     dialog._refresh()
 
     assert dialog._country.text() == "中国"
@@ -575,7 +614,7 @@ def test_the_hint_follows_the_side_the_user_just_touched(qt_app: QApplication) -
         None, PlaceState(city="京都", region="京都府", country="日本"), resolver=StubResolver()
     )
 
-    dialog._city.setCurrentText("苏州")
+    dialog._city.setText("苏州")
     dialog._refresh()
     assert "市级精度" in dialog._hint.text()
 
@@ -590,7 +629,7 @@ def test_an_unknown_name_says_the_coordinates_stay_put(qt_app: QApplication) -> 
     说「按城市位置写入」是在说一件不会发生的事。"""
     dialog = _dialog(None, PlaceState(city="南京"), resolver=StubResolver())
 
-    dialog._city.setCurrentText("西湖·断桥")
+    dialog._city.setText("西湖·断桥")
     dialog._refresh()
 
     assert "城市库里没有" in dialog._hint.text()
@@ -619,7 +658,7 @@ def test_clearing_every_field_is_how_you_clear_the_place(qt_app: QApplication) -
         PlaceState(city="苏州", region="江苏省", country="中国", latitude=31.3, longitude=120.6),
     )
 
-    dialog._city.setCurrentText("")
+    dialog._city.setText("")
     dialog._region.clear()
     dialog._country.clear()
     dialog._latitude.clear()
@@ -649,7 +688,7 @@ def test_copy_then_paste_moves_the_place_to_another_photo(qt_app: QApplication) 
 
     assert target._country.text() == "中国"
     assert target._region.text() == "江苏省"
-    assert target._city.currentText() == "苏州"
+    assert target._city.text() == "苏州"
     assert float(target._latitude.text()) == pytest.approx(31.3111, abs=1e-4)
     assert float(target._longitude.text()) == pytest.approx(120.6213, abs=1e-4)
 
@@ -702,7 +741,7 @@ def test_the_debounced_lookup_really_is_wired_to_typing(qt_app: QApplication) ->
     dialog = _dialog(None, PlaceState(), resolver=StubResolver())
     dialog._timer.setInterval(1)
 
-    dialog._city.setCurrentText("苏州")
+    dialog._city.setText("苏州")
 
     wait_until(qt_app, lambda: dialog._country.text() == "中国")
 
