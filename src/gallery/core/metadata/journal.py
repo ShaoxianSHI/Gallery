@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -75,6 +76,21 @@ RESULT_OK: Final = "ok"
 
 #: 操作失败（压根没改成；或者改到一半出错，已经写下去的那部分如实地记在这里）。
 RESULT_FAILED: Final = "failed"
+
+#: **打算改**（还没改）。
+#:
+#: 写回元数据是本项目里唯一「文件不搬家、内容被改」的操作，因此它的记账必须**早于**
+#: 那次写入：exiftool 起一次子进程就要几十到几百毫秒，这个窗口里断电 / 被强杀 /
+#: 磁盘写满，原图已经改了而日志里一条记录也没有 —— 用户拿不回任何东西。
+#:
+#: 所以先落一条 :data:`RESULT_PENDING`（字段原值与新值都已经齐了），再动文件，
+#: 最后补一条终态记录。正常情况下终态记录会把这条**顶掉**（见
+#: :func:`gallery.core.metadata.undo.pending_undo_runs`）；只有「进程死在中间」才会
+#: 留下一条孤零零的 pending，而那正是最需要 ⌘Z 的时候（红线 4）。
+RESULT_PENDING: Final = "pending"
+
+#: 终态：后面不会再有别的记录来说明这一条的结果了。
+_TERMINAL_RESULTS: Final = frozenset({RESULT_OK, RESULT_FAILED})
 
 
 def _now() -> str:
@@ -237,12 +253,61 @@ def append_record(root: Path, record: WriteRecord) -> bool:
             # 不值。这条就保持简单。
             os.fsync(handle.fileno())
     except OSError:
+        _forget(root)
         return False
+    _remember(root, record)
     return True
 
 
+#: 已经解析好的记录，按库根记着（见 :func:`read_records`）。
+#:
+#: 只留最近几个库 —— 换库、切库是常事，而一份用不上的日志没必要一直占着内存。
+#:
+#: 这是模块内的一份**记忆**，不是用来传递库路径或配置的全局状态：键就是入参，
+#: 值完全由本模块自己写自己读（整个程序里只有 :func:`append_record` 会动日志目录），
+#: 与 ``core.media.decode`` 里那个 ``_stuck_reads`` 同一形状。
+_CACHE_LIMIT = 4
+
+_cache: OrderedDict[Path, list[WriteRecord]] = OrderedDict()
+
+
+def _remember(root: Path, record: WriteRecord) -> None:
+    """新追加了一条：让缓存里那份也跟着长一条，省得下一次重读整个日志。"""
+    key = Path(root)
+    existing = _cache.get(key)
+    if existing is not None:
+        existing.append(record)
+        _cache.move_to_end(key)
+        return
+    _forget(key)
+
+
+def _forget(root: Path) -> None:
+    _cache.pop(Path(root), None)
+
+
 def read_records(root: Path) -> list[WriteRecord]:
-    """按时间顺序读出全部记录（跨天）。坏行跳过。"""
+    """按时间顺序读出全部记录（跨天）。坏行跳过。
+
+    **结果记在进程内**，写进去的那一条也会顺手把缓存补上（:func:`append_record`）。
+
+    为什么值得记：调用方是界面线程上的撤销栈，而**每做完一次写操作都要重算一次
+    「下一次 ⌘Z 会撤掉什么」**。没有缓存时那是一次「读完库里每一个按天分文件的日志
+    + 逐行 ``json.loads``」—— 而用户一天做二十次写操作，就是把这个代价付二十遍，
+    且日志越大越贵，**总代价是操作次数的平方**。一天二十次操作就足以让「按一下 ⌘Z」
+    开始发涩，用上一年更不用提。
+
+    缓存只在**本进程内**有效：换个进程（日志被别的工具动过、上次没记干净）自然重新读，
+    而本进程里写日志的只有 :func:`append_record` 一处，它负责同步 —— 于是这份缓存
+    不会漏读，也不会读到过期内容。
+    """
+    key = Path(root)
+    cached = _cache.get(key)
+    if cached is not None:
+        _cache.move_to_end(key)
+        # 交一份副本：调用方（撤销栈）会就地整理它，原地改坏了这份缓存就麻烦了。
+        return list(cached)
+
     directory = paths.journal_dir(root)
     try:
         # 文件名就是日期，字典序即时间序。
@@ -261,7 +326,10 @@ def read_records(root: Path) -> list[WriteRecord]:
             record = WriteRecord.from_json(line)
             if record is not None:
                 records.append(record)
-    return records
+    _cache[key] = records
+    while len(_cache) > _CACHE_LIMIT:
+        _cache.popitem(last=False)
+    return list(records)
 
 
 __all__ = [
@@ -276,6 +344,7 @@ __all__ = [
     "ACTION_UNDO_METADATA",
     "RESULT_FAILED",
     "RESULT_OK",
+    "RESULT_PENDING",
     "FieldChange",
     "WriteRecord",
     "append_record",

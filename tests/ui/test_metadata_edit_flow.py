@@ -384,7 +384,12 @@ def test_the_journal_has_the_field_level_record(
     )
 
     records = read_records(root)
-    assert [record.action for record in records] == ["metadata"]
+    # **成对**：先记「打算改」，动完文件再记终态（红线 4 —— 写入与落盘之间那一下崩溃
+    # 不能什么都不留下）。两记的是同一件事，撤销栈按「终态顶掉 pending」处理，
+    # 所以用户按一次 ⌘Z 就够。
+    assert [record.action for record in records] == ["metadata", "metadata"]
+    assert [record.result for record in records] == ["pending", "ok"]
+    assert records[0].changes == records[1].changes
     # 只填了城市，坐标是城市库里查出来的那个 —— 于是两组字段都在记录里，各带原值。
     # 「删掉海拔与定位时间」那三条**不在里面**：这张照片本来就没有它们，写入它们是空操作，
     # 空操作不该进日志（否则 ⌘Z 会去「撤销」一件根本没发生过的事）。
@@ -477,8 +482,8 @@ def test_time_and_place_go_out_in_one_write(
     )
 
     records = read_records(root)
-    assert len(records) == 1
-    tags = {change.tag for change in records[0].changes}
+    assert [record.result for record in records] == ["pending", "ok"]
+    tags = {change.tag for change in records[-1].changes}
     assert {"EXIF:DateTimeOriginal", "XMP:City"}.issubset(tags)
     # 一句话里说清两样都改了
     assert focused._banner.text() == "已更新「一张.jpg」的拍摄时间与位置。⌘Z 可以撤销。"
@@ -523,7 +528,10 @@ def test_a_refused_write_says_why_and_changes_nothing(
     )
 
     records = read_records(root)
-    assert len(records) == before + 1
+    # 「打算改」与「没改成」两条都在：原值留在日志里，人才有得救。
+    assert len(records) == before + 2
+    assert [record.result for record in records[-2:]] == ["pending", "failed"]
+    assert records[-2].changes, "原值没了就再也写不回去"
     assert records[-1].result == "failed"
     assert "只读" in records[-1].message
     assert "没有权限写入" in focused._banner.text()

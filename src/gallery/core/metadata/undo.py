@@ -33,6 +33,7 @@ from gallery.core.metadata.journal import (
     ACTION_TRASH,
     ACTION_UNDO,
     ACTION_UNDO_METADATA,
+    RESULT_PENDING,
     WriteRecord,
     read_records,
 )
@@ -87,9 +88,29 @@ def pending_undo_runs(root: Path) -> list[list[WriteRecord]]:
     弹栈按**原路径**配对：一条成功的撤销记录写着「我把这个路径改回去了」，
     于是只有它真正撤销掉的那几条离开这摞栈 —— 批量删除里取回失败的那几张仍留在栈上，
     用户再按一次 ⌘Z 还能再试一次。
+
+    **pending 记录怎么算**（见 :data:`RESULT_PENDING`）：写回元数据先落一条 pending
+    再动文件，因此正常情况下每条成功的写回在日志里是**成对**的（pending + 终态）。
+    重放时终态把同一条 pending 顶掉，用户按一次 ⌘Z 就够；只有「进程死在中间」才会
+    剩下孤零零的一条 pending —— 而那正是文件可能已经被改过、最需要 ⌘Z 的时候，
+    所以它照样压栈。
+
+    **只对元数据写回这么放行**：撤销一次写回是「把字段写回原值」，一次纯写入，
+    不删文件也不挪文件（红线 1 不牵扯）。而改名 / 移到废纸篓 / 移动的撤销是**反过来
+    搬动用户文件**，一条 pending 记录只说明「打算动」，不说明动成了什么样 ——
+    让它可撤销就可能拿一条没成功的记录去搬用户的东西，那比撤不掉糟糕得多。
     """
     runs: list[list[WriteRecord]] = []
+    #: 还没等到终态的 pending 记录，按 ``(动作, 路径)`` 记着。
+    unresolved: dict[tuple[str, Path], WriteRecord] = {}
     for record in read_records(Path(root)):
+        key = (record.action, record.target)
+        if record.result == RESULT_PENDING:
+            if record.action == ACTION_METADATA:
+                unresolved[key] = record
+            continue
+        # 终态一到，那条 pending 就不该再让人按一次 ⌘Z 了。
+        unresolved.pop(key, None)
         if not record.succeeded:
             continue
         if record.action in _PUSH_ACTIONS:
@@ -99,6 +120,10 @@ def pending_undo_runs(root: Path) -> list[list[WriteRecord]]:
                 runs.append([record])
         elif record.action in _POP_ACTIONS:
             _pop(runs, record)
+    # 剩下的 pending 说明「进程死在记账与落盘之间」，文件可能已经被改过 —— 它是最后
+    # 发生的那件事，所以压在栈顶。
+    for record in unresolved.values():
+        runs.append([record])
     return runs
 
 
@@ -208,15 +233,9 @@ def _pop(runs: list[list[WriteRecord]], record: WriteRecord) -> bool:
     return False
 
 
-def undo_label(action: str) -> str:
-    """动作名对应的中文（未知动作给个中性说法，不让界面显示 ``None``）。"""
-    return _LABELS.get(action, "上一步操作")
-
-
 __all__ = [
     "UndoResult",
     "next_undo_label",
     "pending_undo_runs",
-    "undo_label",
     "undo_last_write",
 ]

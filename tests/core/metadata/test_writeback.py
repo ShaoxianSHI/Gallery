@@ -24,6 +24,7 @@ from gallery.core.metadata.journal import (
     ACTION_UNDO_METADATA,
     RESULT_FAILED,
     RESULT_OK,
+    RESULT_PENDING,
     FieldChange,
     WriteRecord,
     read_records,
@@ -231,14 +232,16 @@ def test_writing_records_the_original_value_of_every_field(library: Path, photo:
     assert result.written
     assert result.entry is not None and result.entry.size == photo.size  # 假文件没变大
     records = read_records(library)
-    assert len(records) == 1
-    record = records[0]
-    assert record.action == ACTION_METADATA and record.result == RESULT_OK
+    # **两条**：先记「打算改」（原值与新值已经齐了），动完文件再记终态。
+    # 少掉前面那一条，写入与落盘之间那一下崩溃就什么都留不下（红线 4）。
+    assert [record.result for record in records] == [RESULT_PENDING, RESULT_OK]
+    pending, record = records
+    assert pending.action == record.action == ACTION_METADATA
+    assert pending.changes == record.changes  # 两记的是同一件事
     assert record.source == record.target == photo.path
     # 原值记成**十进制度**（读回来的是 44.83779，归一成 44.837790）—— 撤销要靠它写回去。
     assert FieldChange("EXIF:GPSLatitude", "44.837790", "30.274150") in record.changes
     assert FieldChange("XMP:City", "波尔多", None) not in record.changes  # 没让删就没删
-    assert record.journaled if hasattr(record, "journaled") else True
 
 
 def test_a_field_whose_value_did_not_change_is_not_written(library: Path, photo: PhotoRef) -> None:
@@ -278,7 +281,8 @@ def test_a_silent_failure_is_caught_and_rolled_back(library: Path, photo: PhotoR
     assert writer.fields["XMP:City"] == "波尔多"
     assert writer.writes[-1] == ("XMP:City",)  # 回滚确实又写了一次
     records = read_records(library)
-    assert [record.result for record in records] == [RESULT_FAILED]
+    # 「打算改」与「没改成」两条都在：没有前者，一次中途的崩溃就查不出动过什么。
+    assert [record.result for record in records] == [RESULT_PENDING, RESULT_FAILED]
 
 
 def test_coordinates_are_compared_as_numbers_not_as_text(library: Path, photo: PhotoRef) -> None:
@@ -331,8 +335,8 @@ def test_a_refused_write_is_journalled_as_failed(library: Path, photo: PhotoRef)
         write_metadata(library, photo, list(HANGZHOU), writer=writer)
 
     records = read_records(library)
-    assert [record.result for record in records] == [RESULT_FAILED]
-    assert records[0].message
+    assert [record.result for record in records] == [RESULT_PENDING, RESULT_FAILED]
+    assert records[-1].message
 
 
 # ---- 撤销 ----------------------------------------------------------------------
@@ -460,3 +464,87 @@ def test_a_broken_change_entry_does_not_lose_the_whole_record() -> None:
 
     assert record is not None
     assert record.changes == (FieldChange("XMP:City", None, "杭州"),)
+
+
+# ---- 回滚也要校验（红线 4 的「如实报错」那一半）---------------------------------
+
+
+class _RollbackCorruptingWriter(FakeWriter):
+    """写进去的值**总是错的**，但退出码为 0 —— exiftool 在这一支要处理的情形里正是如此。
+
+    实测能造出的局面：正向写入把经度写成了别的值（写进去了），回滚那次又写成了
+    另一个错值，于是**用户原来的坐标被冲掉**，而文件仍然报告「写入成功」。
+    """
+
+    def __init__(self, fields: Mapping[str, str]) -> None:
+        super().__init__(fields)
+        self.corrupted: set[str] = set()
+
+    def write(self, path: Path, assignments: Sequence[Assignment]) -> None:
+        super().write(path, assignments)
+        for item in assignments:
+            if item.tag in self.corrupted:
+                self.fields[item.tag] = "0.000000"
+
+
+def test_a_rollback_that_does_not_take_is_not_reported_as_a_success(
+    library: Path, photo: PhotoRef
+) -> None:
+    """**回滚本身要被回读校验** —— 「按原值写回去」是一次请求，不是一次保证。
+
+    曾经这里不查就宣布「照片已经恢复原样」。那句话是给用户看的，它必须为真：
+    照片里原来的经度被写成 ``0.000000`` 而界面说恢复原样，用户拿回的是一张坐标
+    被改坏的照片 —— 而日志里前后值都齐着，看上去一切正常。
+    """
+    writer = _RollbackCorruptingWriter(
+        {
+            "EXIF:GPSLatitude": "39.904200",
+            "EXIF:GPSLatitudeRef": "N",
+            "EXIF:GPSLongitude": "116.407400",
+            "EXIF:GPSLongitudeRef": "E",
+        }
+    )
+    writer.corrupted = {"EXIF:GPSLongitude"}
+
+    with pytest.raises(MetadataWriteError) as raised:
+        write_metadata(library, photo, list(HANGZHOU), writer=writer)
+
+    message = str(raised.value)
+    assert "EXIF:GPSLongitude" in message, message
+    assert "没能恢复" in message, message
+    # **关键**：不许出现「已经恢复原样」那句 —— 它此刻是假的。
+    assert "已经恢复原样" not in message, message
+
+
+def test_a_rollback_that_really_restores_still_says_so(library: Path, photo: PhotoRef) -> None:
+    """反过来那条：回滚确实把原值写回去了，就照旧给「已经恢复原样」。
+
+    校验是为了不再说假话，不是为了让每次失败都吓用户一跳。
+    """
+    writer = FakeWriter({"XMP:City": "波尔多"})
+    writer.silently_ignores = True  # 两次写都没进去，于是文件一直是原样
+
+    with pytest.raises(MetadataWriteError, match="已经恢复原样"):
+        write_metadata(library, photo, [Assignment("XMP:City", "杭州")], writer=writer)
+
+
+def test_the_intent_is_recorded_before_the_file_is_touched(library: Path, photo: PhotoRef) -> None:
+    """**先记账，再动文件。**
+
+    原值与新值在动文件之前就已经齐了，落一条 pending 只要几十微秒；而写入要起一到两次
+    exiftool 子进程（几十到几百毫秒）。那个窗口里断电、被强杀、磁盘写满，原图就改了
+    而日志上一条记录也没有 —— 用户拿不回任何东西，红线 4 的「写回前记录原值」落空。
+    """
+    seen: list[int] = []
+
+    class _WatchingWriter(FakeWriter):
+        def write(self, path: Path, assignments: Sequence[Assignment]) -> None:
+            # **写的那一刻**：日志里必须已经有那条「打算改」。
+            seen.append(len(read_records(library)))
+            super().write(path, assignments)
+
+    writer = _WatchingWriter({})
+    write_metadata(library, photo, list(HANGZHOU), writer=writer)
+
+    assert seen, "根本没有调过写入"
+    assert seen[0] >= 1, "动文件的那一刻，日志里一条记录都没有"

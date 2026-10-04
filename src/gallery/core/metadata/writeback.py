@@ -48,6 +48,7 @@ from gallery.core.metadata.journal import (
     ACTION_UNDO_METADATA,
     RESULT_FAILED,
     RESULT_OK,
+    RESULT_PENDING,
     FieldChange,
     WriteRecord,
     append_record,
@@ -300,13 +301,28 @@ def write_metadata(
     if not changes:
         # 与原来一模一样：不写盘也不记日志 —— 把「没改」记成一次改动，会让 ⌘Z 去撤一件空事。
         return WriteResult(entry=ref, journaled=True, written=False)
+
+    # **先记账，再动文件。** 原值与新值到这里已经齐了，落一条 pending 只要几十微秒；
+    # 而 :func:`_apply` 要起一到两次 exiftool 子进程（几十到几百毫秒）。那个窗口里
+    # 断电、被强杀、磁盘写满，原图就改了而日志上一条记录都没有 —— 用户拿不回任何
+    # 东西，红线 4 的「写回前记录原值」就落空了。
+    #
+    # 记不上账也照样往下走：这一步失败要告诉用户（``journaled=False``），但不能因为
+    # 记不上就把一次用户明确要求的写入整个拒掉 —— 那是他自己的照片，他点了保存。
+    logged = _journal(root, path, changes, RESULT_PENDING, None)
     try:
         _apply(path, changes, tool)
     except MetadataWriteError as exc:
         _journal(root, path, changes, RESULT_FAILED, exc.message)
         raise
-    logged = _journal(root, path, changes, RESULT_OK, None)
-    return WriteResult(entry=_refresh(path), changes=changes, journaled=logged, written=True)
+    # 终态记录与 pending 记的是同一件事，撤销栈按「同一条的终态顶掉 pending」处理，
+    # 于是这里多写的一行不会让用户多按一次 ⌘Z（见 ``undo.pending_undo_runs``）。
+    return WriteResult(
+        entry=_refresh(path),
+        changes=changes,
+        journaled=_journal(root, path, changes, RESULT_OK, None) and logged,
+        written=True,
+    )
 
 
 def undo_metadata(
@@ -386,6 +402,17 @@ def _apply(path: Path, changes: Sequence[FieldChange], tool: MetadataWriter) -> 
 
     **正向与撤销共用这一段**：两者的差别只有「写什么」，而校验与回滚的规矩一个字都不
     一样 —— 曾经它们各写各的，于是「撤销」那条路是不校验的。
+
+    **回滚本身也要回读校验。** 这是红线 4 的「写失败必须回滚并**如实报错**」那半句：
+    exiftool 在这一支要处理的那些情形（空间不够、写到一半被截断）里**照样返回 0**，
+    于是「按原值写回去」完全可以静默地什么都没做 —— 曾经这版代码在这里不查就宣布
+    「照片已经恢复原样」。实测能造出更糟的局面：照片里原来的经度被写成 ``0.000000``，
+    界面上仍然说恢复原样，用户拿回的是一张坐标被改坏的照片，而记录里前后值都齐着、
+    看上去一切正常。
+
+    所以现在两句话必须各自对得起自己：
+    **回滚后确实回到原值**才说「已经恢复原样」，否则说「原值没能恢复」并把没恢复的
+    字段一个一个列出来 —— 用户至少知道该去核对哪几个值。
     """
     path = Path(path)
     assignments = [Assignment(change.tag, change.after or "") for change in changes]
@@ -394,6 +421,7 @@ def _apply(path: Path, changes: Sequence[FieldChange], tool: MetadataWriter) -> 
     mismatched = [change.tag for change in changes if not _holds(change.after, change.tag, after)]
     if not mismatched:
         return
+    detail = f"回读到的值与目标不符：{mismatched}"
     try:
         tool.write(path, [Assignment(change.tag, change.before or "") for change in changes])
     except MetadataWriteError as exc:
@@ -401,12 +429,24 @@ def _apply(path: Path, changes: Sequence[FieldChange], tool: MetadataWriter) -> 
             f"写入没有生效，而且没能恢复原值：{'、'.join(mismatched)}。"
             f"请检查这张照片（{exc.message}）。",
             path=path,
-            detail=f"回读到的值与目标不符：{mismatched}；回滚也失败了：{exc.detail}",
+            detail=f"{detail}；回滚也失败了：{exc.detail}",
         ) from exc
+    # 回滚也回读一次 —— 「按原值写回去」是一次**请求**，不是一次保证。
+    restored = tool.read(path)
+    unrestored = [
+        change.tag for change in changes if not _holds(change.before, change.tag, restored)
+    ]
+    if unrestored:
+        raise MetadataWriteError(
+            f"写入没有生效，而且这几个字段的原值没能恢复：{'、'.join(unrestored)}。"
+            f"请打开这张照片核对一下这几个值（{'、'.join(mismatched)} 本次没有写成功）。",
+            path=path,
+            detail=f"{detail}；回滚之后这些字段仍然不是原值：{unrestored}",
+        )
     raise MetadataWriteError(
         f"写入没有生效，照片已经恢复原样：{'、'.join(mismatched)}。",
         path=path,
-        detail=f"回读到的值与目标不符：{mismatched}",
+        detail=detail,
     )
 
 
