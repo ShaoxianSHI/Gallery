@@ -53,6 +53,9 @@ class CalendarPage(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._thumbs = ThumbStore()
+        #: 上一次向流水线报出去的那一批（以及档位），见 `_refresh_window`。
+        self._reported: list[PhotoRef] = []
+        self._reported_edge = 0
         self._anchor = datetime.date.today()
         self._today = datetime.date.today()
         self._level = "month"
@@ -94,7 +97,9 @@ class CalendarPage(QWidget):
         by_hour = group_by_hour(photos, values)
         for view in self._views.values():
             view.set_buckets(by_day, by_hour)
+        # 手上的图全扔了，所以「报过了」那份记录也一起扔（理由见 `_refresh_window`）。
         self._thumbs.clear()
+        self._forget_reported()
         self._refresh_window()
 
     def thumbnail_edge(self) -> int:
@@ -107,7 +112,13 @@ class CalendarPage(QWidget):
 
     def forget_thumbnails(self, paths: Iterable[Path]) -> None:
         self._thumbs.forget(paths)
+        # 忘掉的那几张可能正在可见区里，所以「报过了」那份记录同样作废。
+        self._forget_reported()
         self.current_view().update()
+
+    def _forget_reported(self) -> None:
+        self._reported = []
+        self._reported_edge = 0
 
     # ---- 位置 -------------------------------------------------------------
     def level(self) -> str:
@@ -163,9 +174,36 @@ class CalendarPage(QWidget):
 
     # ---- 缩略图 -----------------------------------------------------------
     def _refresh_window(self) -> None:
-        edge = self.thumbnail_edge()
+        """报一次「现在看得见哪些」（必要时）。**判断放在页面里**，不放在外面。
+
+        ``ThumbnailQueue.set_window`` 是**整份替换**：换一层、翻一页、滚动去抖一次
+        都要重算一遍「看得见哪几张」，而算出来的常常是同一批 —— 每次都重报等于把队列
+        里还没跑的请求重排一遍，谁都排在后面。
+
+        但「没变」**不够**：还得**手上仍然有**这几张图。``set_photos``（换库、重扫）
+        与 ``forget_thumbnails``（文件变了）都会把手上的那份扔掉，而要的那一批本身
+        没变 —— 于是那次重报被跳过，界面停在空白上，直到用户碰巧换个月又切回来
+        （症状：月视图里点开一格再退出来，那一片的缩略图不出来了）。
+
+        把这份判断放在页面里，是因为它要保护的东西就在这儿：``_thumbs``。放在外面
+        就得在每一处丢图的调用点记得作废那份「报过了」的记录 —— 上一版就是这么漏的。
+
+        报出去之后**不重试**是流水线自己的事：解不出来的路径它记在 ``_failed`` 里，
+        再报也只是被跳过，不会反复解码。
+        """
+        view = self.current_view()
+        edge = view.thumbnail_edge()
         if edge:
             self._thumbs.set_edge(edge)
+        visible = view.visible_refs()
+        if (
+            visible == self._reported
+            and edge == self._reported_edge
+            and all(view.photo(ref) is not None for ref in visible)
+        ):
+            return
+        self._reported = visible
+        self._reported_edge = edge
         self.window_changed.emit()
 
     # ---- 配色 -------------------------------------------------------------

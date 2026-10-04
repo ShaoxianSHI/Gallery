@@ -21,6 +21,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtGui import QImage  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 from waiting import wait_until, window_is_idle  # noqa: E402
 
@@ -143,6 +144,66 @@ def test_the_calendar_is_not_re_bucketed_while_its_page_is_hidden(
     qt_app.processEvents()
     assert page.current_view()._by_day == buckets_before
     assert page.photo_count() >= 0  # 桶还在，只是没有重算
+
+
+def test_the_calendar_reports_again_after_its_pictures_are_dropped(
+    qt_app: QApplication, window: MainWindow, window_calls: list[tuple[int, int, int]]
+) -> None:
+    """**月视图点开一格再退回来，那一片的缩略图还在。**
+
+    退回来时会重扫整库，扫完重新分桶 → ``set_photos`` → 手上那批缩略图全扔掉。
+    而「这一批要哪几张」没变，于是「没变就不重报」那次判断把窗口跳过了 —— 界面停在
+    空白上，直到用户碰巧换个月又切回来（症状就是那样）。
+    """
+    import datetime
+
+    page = window._calendar_page
+    page.set_today(datetime.date(2024, 4, 16))
+    page.go_today()
+    page.set_level("month")
+    qt_app.processEvents()
+    view = page.current_view()
+    photos = list(view.photos_of(datetime.date(2024, 4, 16)))
+    assert len(photos) == 2
+
+    # 先让这一层把窗口报出去（页面上现在「已经报过了」）
+    window_calls.clear()
+    page._refresh_window()
+    assert any(visible > 0 for visible, _p, _e in window_calls), window_calls
+
+    # 退回来：重扫 → 重新分桶 → 手上那批图被清空，要的那一批没变
+    page._thumbs.clear()
+    page.set_photos(
+        [r for r in window._model.entries() if isinstance(r, PhotoRef)],
+        window._library.cached_facets(  # type: ignore[union-attr]
+            [r for r in window._model.entries() if isinstance(r, PhotoRef)]
+        ),
+    )
+    assert page.current_view().photo_count() > 0
+
+    window_calls.clear()
+    page._refresh_window()
+    assert any(visible > 0 for visible, _p, _e in window_calls), (
+        "手上那批缩略图已经清空了，却因为「要的那一批没变」而不重报 —— 界面停在空白上"
+    )
+
+
+def test_an_unchanged_window_with_pictures_in_hand_is_not_reported_again(
+    qt_app: QApplication, window: MainWindow, window_calls: list[tuple[int, int, int]]
+) -> None:
+    """反过来那条：**没变且手上都有**就别重报（队列是整份替换，重排一遍谁都得往后排）。"""
+    page = window._calendar_page
+    page.set_level("week")
+    qt_app.processEvents()
+    view = page.current_view()
+    for ref in view.visible_refs():
+        image = QImage(8, 6, QImage.Format.Format_RGBA8888)
+        image.fill(0x336699)
+        page.set_thumbnail(ref.path, image, view.thumbnail_edge())
+
+    window_calls.clear()
+    page._refresh_window()
+    assert window_calls == [], window_calls
 
 
 def test_opening_a_photo_from_the_calendar_fills_the_grid_window(

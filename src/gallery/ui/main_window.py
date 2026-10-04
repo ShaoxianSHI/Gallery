@@ -319,9 +319,6 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._from_calendar = False
         self._drill_photos: tuple[PhotoRef, ...] | None = None
         self._drill_label = ""
-        #: 上一次向流水线报的那一批（以及档位）—— 没变就不重报，见 ``_refresh_thumbnail_window``。
-        self._calendar_window: list[PhotoRef] = []
-        self._calendar_window_edge = 0
         #: 这一层还没摆上屏的条目。扫出来的一律先攒在这里，顺序定下来再一次给出去
         #: （见 ADR 0009 决策 6）；``None`` 表示「模型就是当前这一层的全部」，
         #: 也就是这一层已经排好、正在被人看。
@@ -2267,16 +2264,13 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             # 日历要的那一批是「当前层、当前滚到的那几格」，与网格的按行取法不同源，
             # 但**同样交给这一条流水线**（缩放在工作线程里做，ADR 0015）。
             #
-            # **要的那一批没变就不重报**：``ThumbnailQueue.set_window`` 是整份替换，
-            # 而滚动去抖一次要重算一遍「现在看得见哪几张」—— 算出来的却常常是同一批，
-            # 每次都重报等于把队列里还没跑的请求重排一遍，谁都排在后面。
-            visible = self._calendar_page.current_view().visible_refs()
-            edge = self._calendar_page.thumbnail_edge()
-            if visible == self._calendar_window and edge == self._calendar_window_edge:
-                return
-            self._calendar_window = visible
-            self._calendar_window_edge = edge
-            self._pipeline.set_window(visible, (), target_edge=edge)
+            # 「这一批变没变」由**页面**自己判断（``CalendarPage._refresh_window``）——
+            # 它认得手上的图有没有被换库 / 重扫 / 文件变化清掉；这里只管照着报。
+            self._pipeline.set_window(
+                self._calendar_page.current_view().visible_refs(),
+                (),
+                target_edge=self._calendar_page.thumbnail_edge(),
+            )
             return
         if self._stack.currentWidget() is not self._grid_page:
             return
