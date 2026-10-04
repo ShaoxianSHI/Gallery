@@ -298,6 +298,14 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         #: 日历那一页读整库拍摄时间的那次任务（与 :attr:`_facet_job` 分开：两个各自
         #: 有各自的取消时机，混成一个会让取消掉其中一个时另一个的结果也一起作废）。
         self._calendar_job: int | None = None
+        # **从日历点开的那一层**：日历 → 某一格（若干张）→ 大图。
+        # 两者都非空时，退回去要回**日历原来那一段**，而不是「全部照片」。
+        self._from_calendar = False
+        self._drill_photos: tuple[PhotoRef, ...] | None = None
+        self._drill_label = ""
+        #: 上一次向流水线报的那一批（以及档位）—— 没变就不重报，见 ``_refresh_thumbnail_window``。
+        self._calendar_window: list[PhotoRef] = []
+        self._calendar_window_edge = 0
         #: 这一层还没摆上屏的条目。扫出来的一律先攒在这里，顺序定下来再一次给出去
         #: （见 ADR 0009 决策 6）；``None`` 表示「模型就是当前这一层的全部」，
         #: 也就是这一层已经排好、正在被人看。
@@ -435,7 +443,7 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         # 日历那一页**自己带着工具条**（它占掉的就是网格那页的面包屑那一行，
         # ADR 0033 决策 5），所以这里加进去的是一个完整的一页，不是网格页里的一块。
         self._calendar_page = CalendarPage()
-        self._calendar_page.photo_requested.connect(self._on_calendar_photo_requested)
+        self._calendar_page.cell_requested.connect(self._on_calendar_cell_requested)
         self._calendar_page.level_changed.connect(self._on_calendar_level_changed)
         # 换层 / 翻页 / 滚动都会改变「现在看得见哪些」，据此重新要缩略图。
         self._calendar_page.window_changed.connect(self._on_calendar_window_changed)
@@ -2223,11 +2231,17 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         if self._stack.currentWidget() is self._calendar_page:
             # 日历要的那一批是「当前层、当前滚到的那几格」，与网格的按行取法不同源，
             # 但**同样交给这一条流水线**（缩放在工作线程里做，ADR 0015）。
-            self._pipeline.set_window(
-                self._calendar_page.current_view().visible_refs(),
-                (),
-                target_edge=self._calendar_page.thumbnail_edge(),
-            )
+            #
+            # **要的那一批没变就不重报**：``ThumbnailQueue.set_window`` 是整份替换，
+            # 而滚动去抖一次要重算一遍「现在看得见哪几张」—— 算出来的却常常是同一批，
+            # 每次都重报等于把队列里还没跑的请求重排一遍，谁都排在后面。
+            visible = self._calendar_page.current_view().visible_refs()
+            edge = self._calendar_page.thumbnail_edge()
+            if visible == self._calendar_window and edge == self._calendar_window_edge:
+                return
+            self._calendar_window = visible
+            self._calendar_window_edge = edge
+            self._pipeline.set_window(visible, (), target_edge=edge)
             return
         if self._stack.currentWidget() is not self._grid_page:
             return
@@ -2900,8 +2914,14 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         if self._stack.currentWidget() is self._calendar_page:
             # 日历与网格是**同一时刻只有一个**的关系（见 `_enter_calendar`）：从日历
             # 按 Esc 出来就是把浏览方式换回「全部照片」。留着「日历」这个模式而页已经
-            # 不在了，菜单里那个勾就成了假话，而 ``Y`` / ``M`` / ``W`` / ``D`` 也没处可去。
+            # 不在了，菜单里那个勾就成了假话，而 ``Y`` / ``M`` / ``W`` 也没处可去。
             self.set_browse_mode(BROWSE_MODE_FLAT)
+            return
+        if self._from_calendar and self._drill_photos is None:
+            # 从日历点开**就那一张**进来的大图：回去是回日历，不是回整库网格 ——
+            # 用户在看的是「第 12 号那一格」，不是「整个库」。
+            self._from_calendar = False
+            self._back_to_calendar()
             return
         if self._stack.currentWidget() is self._grid_page:
             return
@@ -3348,6 +3368,9 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             self._update_mode_actions()
             return
         was_calendar = self._browse_mode == BROWSE_MODE_CALENDAR
+        self._from_calendar = False
+        self._drill_photos = None
+        self._drill_label = ""
         self._browse_mode = mode
         self._group_view = None
         # 检索是横跨整个库的一层（ADR 0026 决策 1），换浏览方式时留着它等于把两个
@@ -3433,22 +3456,95 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._session = self._session.with_calendar_level(level)
         self._save_session()
 
-    def _on_calendar_photo_requested(self, photos: object, index: int) -> None:
-        """日历上点了某张照片：按它在模型里的行打开大图页。
+    def _on_calendar_cell_requested(self, photos: object, label: object) -> None:
+        """日历上点了有照片的一格：就一张直接进大图，好几张摊成一层网格。
+
+        **两种都记得是从日历来的**，于是从那里出来时回到**日历原来的那一段与那个滚动
+        位置**，而不是「全部照片」那一屏 —— 后者与用户刚才做的事没有关系，那是他三步
+        之前才用过的地方。
+        """
+        if not isinstance(photos, list) or not photos:
+            return
+        if not all(isinstance(ref, PhotoRef) for ref in photos):
+            return
+        self._from_calendar = True
+        if len(photos) == 1:
+            self._open_calendar_photo(photos[0])
+            return
+        self._enter_calendar_drill(tuple(photos), label if isinstance(label, str) else "")
+
+    def _open_calendar_photo(self, ref: PhotoRef) -> None:
+        """日历上唯一那一张：按它在模型里的行打开大图页。
 
         模型里没有这一张（扫描还没到）就当没点 —— 与 ``context_menu_for`` 同一个脾气：
         宁可不弹，也不对着一个过期的行号动手。
         """
-        if not isinstance(photos, (list, tuple)) or not photos:
-            return
-        first = photos[min(max(0, int(index)), len(photos) - 1)]
-        if not isinstance(first, PhotoRef):
-            return
-        row = self._model.row_of_path(first.path)
+        row = self._model.row_of_path(ref.path)
         if row < 0:
             return
         self._grid.select_row(row)
         self._open_detail(self._model.index(row, 0))
+
+    def _enter_calendar_drill(self, photos: tuple[PhotoRef, ...], label: str) -> None:
+        """把日历上那一格的若干张摊到网格页（**不重新扫盘**：就这些照片）。
+
+        这一层不进浏览方式的账：它是日历点出来的一个视图，从它退回去回日历，
+        而不是退到「这一层是按文件夹进来的」。它的顺序按当前排序走 ——
+        用户在网格里排好的序，在这里也该是同一个序。
+        """
+        self._drill_photos = photos
+        self._drill_label = label
+        self._stack.setCurrentWidget(self._grid_page)
+        self._list_drill_photos(photos)
+        self._refresh_title()
+        self._update_action_states()
+        self._refresh_thumbnail_window()
+
+    def _list_drill_photos(self, photos: Sequence[PhotoRef]) -> None:
+        """把这一层换成这若干张（同步排一次：就几十上百张，不值得占一个后台任务）。"""
+        library = self._library
+        self._model.clear()
+        self._grid.reset_for_new_level()
+        self._preview_cache.clear()
+        self._metadata_cache.clear()
+        self._current_row = -1
+        self._detail.clear_image()
+        self._panel.clear()
+        self._banner.hide()
+        root = library.root if library is not None else Path.home()
+        entries = [describe_entry(root, ref.path) or ref for ref in photos]
+        self._staged = entries
+        if library is None:
+            self._model.append(entries)
+            self._staged = []
+            return
+        self._apply_ordering()
+        self._start_facet_read()
+
+    def _leave_calendar_drill(self) -> None:
+        """从「那一格」退回日历，**模型回到整库**（下一层点开照片还要靠它的行）。"""
+        self._drill_photos = None
+        self._drill_label = ""
+        self._from_calendar = False
+        self._model.clear()
+        self._grid.reset_for_new_level()
+        self._current_row = -1
+        self._back_to_calendar()
+        self._start_scan()
+
+    def _back_to_calendar(self) -> None:
+        """把日历那一页摆回前面：**位置不动**（锚点与滚动条都还在那一页的控件里）。
+
+        这里刻意不碰层级与选中：用户刚找到的那一段、那一张，是他的上下文，
+        退出看一眼再回来不该把它清成「今天」。
+        """
+        if self._browse_mode != BROWSE_MODE_CALENDAR:
+            return
+        self._stack.setCurrentWidget(self._calendar_page)
+        self._calendar_page.set_today(datetime.date.today())
+        self._refresh_title()
+        self._update_action_states()
+        self._refresh_thumbnail_window()
 
     def _start_calendar_load(self) -> None:
         """把整库照片按天与按小时分好桶，交给日历。
@@ -3556,6 +3652,9 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             self._editing_condition = None
             self._apply_conditions()
             return
+        if self._drill_photos is not None:
+            self._leave_calendar_drill()
+            return
         if self._group_view is not None:
             self._leave_group()
             return
@@ -3576,6 +3675,8 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             return False
         if self._conditions:
             return True  # 有得撤：撤一条筛选条件就是「上一层」（与 go_up 同一套判据）
+        if self._drill_photos is not None:
+            return True  # 日历点出来的那一格，退回去回日历（与 go_up 同一套判据）
         if self._group_view is not None:
             return True
         if self._browse_mode != BROWSE_MODE_ALBUMS:
@@ -3729,6 +3830,11 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         # 而平铺模式下没有目录可指 —— 那正是「不显示」的理由，于是这里只剩它了。
         in_albums = self._browse_mode == BROWSE_MODE_ALBUMS
         conditions = [condition.chip_text for condition in self._conditions]
+        if self._drill_photos is not None:
+            # 日历点出来的那一格不是文件夹，面包屑没有一段能指；标题里已经写着
+            # 「9月12日 19:00 · 48 张」，那一行摆在这里只会重复还多一条假路径。
+            self._breadcrumb.hide()
+            return
         if library is None or (not in_albums and self._group_view is None and not conditions):
             self._breadcrumb.hide()
             return
@@ -3857,7 +3963,14 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         （那恰恰是用户正盯着改的名字）。
         """
         photo = self._model.photo_at(self._current_row) if self._in_detail_page() else None
-        name = photo.name if photo is not None else self._library_title
+        if photo is not None:
+            name = photo.name
+        elif self._drill_photos is not None:
+            # 从日历某一格摊开的那一层：标题要说得清在看哪一格，否则一屏照片
+            # 与「全部照片」长得一模一样，用户不知道自己在日历里的哪个位置。
+            name = f"{self._drill_label} · {len(self._drill_photos)} 张"
+        else:
+            name = self._library_title
         if self._owns_title_bar:
             self._title_bar.set_text(name)
         else:

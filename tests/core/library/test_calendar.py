@@ -54,12 +54,17 @@ def test_a_month_is_six_weeks_starting_on_a_monday() -> None:
     assert days[0] == datetime.date(2021, 8, 30)
 
 
-def test_a_week_starts_on_monday_and_a_day_is_itself() -> None:
+def test_a_week_starts_on_monday_and_ends_on_sunday() -> None:
     sunday = datetime.date(2021, 9, 12)
     assert week_start(sunday) == datetime.date(2021, 9, 6)
     assert days_of("week", sunday)[0] == datetime.date(2021, 9, 6)
     assert days_of("week", sunday)[-1] == sunday
-    assert days_of("day", sunday) == [sunday]
+
+
+def test_there_is_no_day_level() -> None:
+    """日历只有三层：再单开「日」摊出来的还是同一批照片。"""
+    assert LEVELS == ("year", "month", "week")
+    assert not is_level("day")
 
 
 @pytest.mark.parametrize(
@@ -71,8 +76,6 @@ def test_a_week_starts_on_monday_and_a_day_is_itself() -> None:
         ("month", -1, datetime.date(2021, 8, 12)),
         ("week", 1, datetime.date(2021, 9, 19)),
         ("week", -1, datetime.date(2021, 9, 5)),
-        ("day", 1, datetime.date(2021, 9, 13)),
-        ("day", -7, datetime.date(2021, 9, 5)),
     ],
 )
 def test_stepping_walks_exactly_one_period(level: str, step: int, expected: datetime.date) -> None:
@@ -91,7 +94,7 @@ def test_month_step_lands_on_a_day_that_exists() -> None:
 
 
 def test_stepping_across_a_leap_day() -> None:
-    assert shift("day", datetime.date(2024, 2, 28), 1) == datetime.date(2024, 2, 29)
+    assert shift("week", datetime.date(2024, 2, 26), 1) == datetime.date(2024, 3, 4)
     assert shift("month", datetime.date(2024, 2, 29), 1) == datetime.date(2024, 3, 29)
 
 
@@ -101,7 +104,6 @@ def test_stepping_across_a_leap_day() -> None:
         ("year", "2021年"),
         ("month", "2021年9月"),
         ("week", "2021年9月6日 – 9月12日 · 第 36 周"),
-        ("day", "2021年9月12日 星期日"),
     ],
 )
 def test_title_says_which_period_is_on_screen(level: str, expected: str) -> None:

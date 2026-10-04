@@ -1,6 +1,6 @@
 """日历视图的日期计算与分桶（纯 Python，不碰 Qt）。
 
-日历有四层（年 / 月 / 周 / 日），每层都是「一个锚点日期 → 一段连续的日子」。
+日历有三层（年 / 月 / 周），每层都是「一个锚点日期 → 一段连续的日子」。
 于是这里只有三件事：**当前层是哪一段日子**、**翻一页去哪里**、**这层标题写什么**。
 全部是纯函数，所以能直接单测（与 ``library.session`` 的几何推导同一个路数）。
 
@@ -25,16 +25,15 @@ from gallery.core.metadata.facets import PhotoFacets
 #: 没有元数据时的占位：任何照片都能用它算 key，只是分不进任何一桶。
 EMPTY_FACETS = PhotoFacets()
 
-#: 四层，从粗到细。顺序也是 ``Y`` / ``M`` / ``W`` / ``D`` 四枚快捷键的顺序。
-LEVELS: Final[tuple[str, ...]] = ("year", "month", "week", "day")
+#: 三层，从粗到细。顺序也是 ``Y`` / ``M`` / ``W`` 三枚快捷键的顺序。
+#:
+#: **没有日视图**：一周七列铺开之后，一天就是一个小时格子 —— 再单开一层「日」，
+#: 得到的还是同一批照片，只是把它摊到整屏；用户真正想做的事（「那天下午拍了什么」）
+#: 点一下那一小时就到了（见 :func:`group_by_hour`）。
+LEVELS: Final[tuple[str, ...]] = ("year", "month", "week")
 
 #: 各层的名称（标题栏的分段选择器与无障碍名称用它）。
-LEVEL_NAMES: Final[Mapping[str, str]] = {
-    "year": "年",
-    "month": "月",
-    "week": "周",
-    "day": "日",
-}
+LEVEL_NAMES: Final[Mapping[str, str]] = {"year": "年", "month": "月", "week": "周"}
 
 #: 年视图铺的那几天。取 366 是为了闰年的 2 月 29 日也有格子（按「最多」铺，
 #: 平年最后那一格落在下一年 1 月 1 日上 —— 年视图里没人会数它）。
@@ -67,18 +66,15 @@ def days_of(level: str, anchor: datetime.date) -> list[datetime.date]:
     - 年：366 天，够把 12 张小月都铺满；
     - 月：6 × 7 = 42 天，从**当月 1 号所在那一周的周一**起算 ——
       所以月视图第一行总从周一开始，与表头那七个字对得上；
-    - 周：周一到周日七天；
-    - 日：就那一天。
+    - 周：周一到周日七天。
     """
     if level == "year":
         start = datetime.date(anchor.year, 1, 1)
         return [start + datetime.timedelta(days=offset) for offset in range(_DAYS_IN_YEAR)]
     if level == "month":
         return month_matrix(anchor)
-    if level == "week":
-        start = week_start(anchor)
-        return [start + datetime.timedelta(days=offset) for offset in range(7)]
-    return [anchor]
+    start = week_start(anchor)
+    return [start + datetime.timedelta(days=offset) for offset in range(7)]
 
 
 def month_matrix(anchor: datetime.date) -> list[datetime.date]:
@@ -99,7 +95,7 @@ def week_start(day: datetime.date) -> datetime.date:
 def shift(level: str, anchor: datetime.date, steps: int) -> datetime.date:
     """往前 / 往后翻一页。
 
-    年翻一年、月翻一月、周翻七天、日翻一天。**保持同一个「日子」**：
+    年翻一年、月翻一月、周翻七天。**保持同一个「日子」**：
     1 月 31 日往后翻一个月是 2 月 28 日（``date`` 自己会截断），下一次往前翻
     回 1 月 28 日 —— 用户来回翻两下就停在 28 号上，不会越翻越偏。
     """
@@ -111,8 +107,7 @@ def shift(level: str, anchor: datetime.date, steps: int) -> datetime.date:
         total = anchor.year * 12 + (anchor.month - 1) + steps
         year, month = divmod(total, 12)
         return _clamped(year, month + 1, anchor.day)
-    days = {"week": 7, "day": 1}.get(level, 1)
-    return anchor + datetime.timedelta(days=steps * days)
+    return anchor + datetime.timedelta(days=steps * 7)
 
 
 def _clamped(year: int, month: int, day: int) -> datetime.date:
@@ -130,14 +125,11 @@ def title(level: str, anchor: datetime.date) -> str:
     - 年：``2021年``
     - 月：``2021年9月``
     - 周：``2021年9月6日 – 9月12日 · 第 36 周``
-    - 日：``2021年9月12日 星期日``
     """
     if level == "year":
         return f"{anchor.year}年"
     if level == "month":
         return f"{anchor.year}年{anchor.month}月"
-    if level == "day":
-        return f"{anchor.year}年{anchor.month}月{anchor.day}日 星期{weekday_name(anchor)}"
     start = week_start(anchor)
     end = start + datetime.timedelta(days=6)
     span = f"{start.year}年{start.month}月{start.day}日 – {end.month}月{end.day}日"

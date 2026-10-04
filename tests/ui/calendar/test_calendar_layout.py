@@ -8,12 +8,10 @@ from gallery.ui.calendar.layout import (
     CARD_RADIUS,
     CELL_ASPECT,
     CELL_GAP,
-    DAY_ROW_CAP,
     HOURS_PER_DAY,
     MIN_ROW_HEIGHT,
+    cell_rect,
     cell_size,
-    cells_and_offset,
-    cells_in_row,
     fitted_size,
     month_cells,
     row_height,
@@ -31,56 +29,54 @@ def test_a_week_row_is_exactly_one_cell_tall() -> None:
     这条是「一周只放一张照片」的**来源**：不是一条规则，而是放不下第二格的结果。
     """
     column = 181.0
-    row = row_height("week", column)
+    row = row_height(column)
     width, height = cell_size(row)
     assert height == pytest.approx((column - 2 * CELL_GAP) / CELL_ASPECT)
     assert width == pytest.approx(column - 2 * CELL_GAP)
-    assert cells_in_row(column, row) == 1
+    # 再塞一格就超出这一列了
+    assert 2 * width + 3 * CELL_GAP > column
 
 
 def test_a_narrow_week_column_still_gets_one_cell() -> None:
-    row = row_height("week", 40.0)
+    """行高有下限，窄列下「按比例该有的那一格」会比列还宽 —— 那就收窄，不溢出到隔壁。"""
+    row = row_height(40.0)
     assert row >= MIN_ROW_HEIGHT
-    assert cells_in_row(40.0, row) == 1
+    x, _y, width, height = cell_rect(40.0, row)
+    assert x + width <= 40.0 - CELL_GAP + 0.01
+    assert width / height == pytest.approx(CELL_ASPECT)
 
 
 @pytest.mark.parametrize("column", [80.0, 181.0, 300.0, 1200.0])
 def test_a_week_column_never_holds_two_cells(column: float) -> None:
-    assert cells_in_row(column, row_height("week", column)) == 1
-
-
-def test_a_day_row_is_capped_so_an_hour_stays_wider_than_tall() -> None:
-    """日视图的行高封顶 —— 否则一行按列宽算出来高到比整屏还高。"""
-    row = row_height("day", 1200.0)
-    assert row == DAY_ROW_CAP
+    row = row_height(column)
     width, _height = cell_size(row)
-    assert width > row  # 每一格都宽于高
+    assert 2 * width + 3 * CELL_GAP > column
 
 
-def test_a_day_row_fits_several_cells_side_by_side() -> None:
-    count, _offset = cells_and_offset(1200.0, DAY_ROW_CAP)
-    assert count >= 5
+@pytest.mark.parametrize("column", [40.0, 60.0, 181.0, 600.0])
+def test_the_cell_is_centred_in_its_column(column: float) -> None:
+    """左右一样宽：多出来的宽度对半分，而不是全堆到一边去。"""
+    row = row_height(column)
+    x, y, width, height = cell_rect(column, row)
+    assert y == CELL_GAP
+    assert x == pytest.approx(column - (x + width))
+    assert x >= CELL_GAP - 0.01
+    assert height <= row - 2 * CELL_GAP + 0.01
+    assert width / height == pytest.approx(CELL_ASPECT)
 
 
-def test_cells_are_centred_in_the_row() -> None:
-    """用户要的：一小时放几张都居中，不靠左。"""
-    count, offset = cells_and_offset(1200.0, DAY_ROW_CAP)
-    width, _height = cell_size(DAY_ROW_CAP)
-    used = count * width + (count - 1) * CELL_GAP
-    free = 1200.0 - 2 * CELL_GAP - used
-    assert offset == pytest.approx(free / 2)
-    assert offset > 0
-    # 左边留的空白与右边留的一样多
-    left = CELL_GAP + offset
-    right = 1200.0 - (CELL_GAP + offset + used)
-    assert left == pytest.approx(right)
+def test_a_very_narrow_column_still_centres_what_is_left() -> None:
+    x, _y, width, _height = cell_rect(40.0, row_height(40.0))
+    assert x >= CELL_GAP
+    assert 40.0 - (x + width) >= CELL_GAP - 0.01
 
 
-def test_a_row_too_narrow_for_two_still_centres_one() -> None:
-    count, offset = cells_and_offset(200.0, DAY_ROW_CAP)
-    assert count == 1
-    width, _height = cell_size(DAY_ROW_CAP)
-    assert offset == pytest.approx((200.0 - 2 * CELL_GAP - width) / 2)
+def test_the_cell_keeps_its_own_ratio_as_the_column_grows() -> None:
+    """格子是定的 3:2；列变宽只是让它周围的白更多，不是格子自己横向摊开。"""
+    small_w, small_h = cell_size(row_height(200.0))
+    large_w, large_h = cell_size(row_height(600.0))
+    assert large_w > small_w
+    assert large_w / large_h == pytest.approx(small_w / small_h, rel=0.01)
 
 
 @pytest.mark.parametrize(
@@ -112,7 +108,12 @@ def test_fitting_into_an_empty_box_does_not_divide_by_zero() -> None:
 
 def test_the_month_grid_is_six_by_seven() -> None:
     assert month_cells() == 42
-    assert month_cells() * HOURS_PER_DAY > 0  # 别把这两个常量写串了
+
+
+def test_the_hour_axis_is_long_but_not_endless() -> None:
+    """24 行按格子比例推出来大约两千像素：滚得动，也不至于长到没有尽头。"""
+    total = HOURS_PER_DAY * row_height(180.0)
+    assert 1000 < total < 4000
 
 
 def test_the_radius_is_a_corner_not_a_circle() -> None:

@@ -1,15 +1,12 @@
-"""周视图与日视图：一张按小时铺开的时间轴。
+"""周视图：7 列 × 24 小时的时间轴。
 
-两层共用同一套排版，**差别只在 :func:`~gallery.ui.calendar.layout.row_height` 一处**：
+每一小时一行，行高按格子比例从列宽推出来，于是**每小时恰好一格** ——
+「一个小时一张照片」不是一条规则，而是放不下第二格的自然结果。
 
-- 周视图：一列的宽度按格子比例推出一行的高度，于是**每小时恰好一格** ——
-  「一个小时一张照片」不是一条写死的规则，而是放不下第二格的自然结果；
-- 日视图：行高封顶（:data:`~gallery.ui.calendar.layout.DAY_ROW_CAP`），
-  宽度全用来并排放几张，而且那一排**居中**（用户要的：一小时放 3 张时右边不该空一条，
-  一小时放 9 张时几乎看不出来 —— 两种都齐）。
-
-**没有拍摄时间的照片不在这里**：它们不落到任何一天，画在哪儿是另一个话题
-（ADR 0033 决策 4）。
+**点一格就是一次下钻**：那一小时有几张照片就摊出几张（见
+:meth:`~gallery.ui.calendar.base.LevelView.select_cell` 发出的信号）。
+日历上没有更细的一层：再单开一个「日视图」摊出来的还是同一批照片，
+而「那天下午拍了什么」点一下那一小时就到了。
 """
 
 from __future__ import annotations
@@ -21,24 +18,11 @@ from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import QFont, QMouseEvent, QPainter
 from PySide6.QtWidgets import QFrame, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
-from gallery.core.library.calendar import WEEKDAY_NAMES, count_hours, week_start
+from gallery.core.library.calendar import WEEKDAY_NAMES, week_start
 from gallery.core.library.photos import PhotoRef
 from gallery.ui.calendar.base import LevelView, short_title
-from gallery.ui.calendar.layout import (
-    CELL_GAP,
-    HOURS_PER_DAY,
-    cell_size,
-    cells_and_offset,
-    row_height,
-)
-from gallery.ui.calendar.painting import (
-    begin,
-    draw_text,
-    fill_rounded,
-    font_px,
-    paint_photo,
-    scrim,
-)
+from gallery.ui.calendar.layout import CELL_GAP, HOURS_PER_DAY, cell_rect, row_height
+from gallery.ui.calendar.painting import begin, draw_text, fill_rounded, font_px, paint_photo, scrim
 from gallery.ui.calendar.thumbs import ThumbStore
 
 #: 左窄条（写钟点）多宽。
@@ -52,15 +36,22 @@ _DATE_FONT_PX = 15
 _CELL_TITLE_FONT_PX = 11
 _BADGE_FONT_PX = 10
 
-#: 缩略图按周视图那一格的大小要（约一百七十像素）；日视图那一格更小，用不着重取。
+#: 缩略图按一格的大小要（约一百七十像素）。
 THUMB_EDGE = 192
 
+#: 可见区上下再多要几小时（滚动去抖之后才重报窗口，那一段留白就露出来了）。
+PREFETCH_HOURS = 3
 
-class TimeView(LevelView):
-    """周 / 日两层共用的壳：固定表头 + 可滚动的时间轴。"""
+#: 滚动去抖：一次快速滚动会连发几十次 ``valueChanged``，而每一轮都要重算一遍
+#: 「现在看得见哪几张」并向流水线报一次（网格那边是同样的处理）。
+SCROLL_DEBOUNCE_MS = 80
 
-    def __init__(self, level: str, thumbs: ThumbStore, parent: object = None) -> None:  # type: ignore[arg-type]
-        super().__init__(level, thumbs, parent)
+
+class WeekView(LevelView):
+    """一周七列；表头固定，时间轴可滚动。"""
+
+    def __init__(self, thumbs: ThumbStore, parent: object = None) -> None:  # type: ignore[arg-type]
+        super().__init__("week", thumbs, parent)
         self._grid = _TimeGrid(self)
         area = QScrollArea()
         area.setWidget(self._grid)
@@ -76,24 +67,16 @@ class TimeView(LevelView):
         layout.addWidget(area, 1)
         self._area = area
         self._scrolling = False
-        # **滚动要重新报一次窗口**：可见的那几小时变了，要的缩略图也就变了。
-        # 去抖 80 ms：一次快速滚动会连发几十次 ``valueChanged``，而每一轮都要重算
-        # 一遍「现在看得见哪几张」并向流水线报一次（网格那边是同样的处理）。
         self._scroll_notify = QTimer(self)
         self._scroll_notify.setSingleShot(True)
-        self._scroll_notify.setInterval(80)
+        self._scroll_notify.setInterval(SCROLL_DEBOUNCE_MS)
         self._area.verticalScrollBar().valueChanged.connect(self._scroll_notify.start)
         self._scroll_notify.timeout.connect(self.window_changed)
 
     # ---- 几何 -------------------------------------------------------------
     def days(self) -> list[datetime.date]:
-        if self.level == "week":
-            start = week_start(self._anchor)
-            return [start + datetime.timedelta(days=offset) for offset in range(7)]
-        return [self._anchor]
-
-    def photo_count(self) -> int:
-        return count_hours(self._by_hour, self.days())
+        start = week_start(self._anchor)
+        return [start + datetime.timedelta(days=offset) for offset in range(7)]
 
     def column_width(self) -> float:
         return self.content_width() / max(1, len(self.days()))
@@ -106,7 +89,7 @@ class TimeView(LevelView):
         return GUTTER
 
     def row_height(self) -> float:
-        return row_height(self.level, self.column_width())
+        return row_height(self.column_width())
 
     def photos_in_hour(self, day: datetime.date, hour: int) -> Sequence[PhotoRef]:
         return self._by_hour.get((day, hour), ())
@@ -125,8 +108,6 @@ class TimeView(LevelView):
     # ---- 位置 -------------------------------------------------------------
     def set_anchor(self, anchor: datetime.date) -> None:
         super().set_anchor(anchor)
-        if self.level == "day":
-            self.set_selected(anchor)
         self._reveal_photos()
 
     def set_selected(self, day: datetime.date) -> None:
@@ -136,8 +117,9 @@ class TimeView(LevelView):
 
     def resizeEvent(self, event: object) -> None:  # noqa: N802 - 名字是 Qt 定的
         super().resizeEvent(event)  # type: ignore[arg-type]
+        # **改变窗口不重新定位**：用户滚到下午两点，这时拖一下窗口就跳回第一张照片，
+        # 那不是在帮他看清，是在把他刚找到的位置弄丢。这里只同步高度。
         self._sync_grid_height()
-        self._reveal_photos()
 
     def _sync_grid_height(self) -> None:
         self._grid.setMinimumHeight(int(HOURS_PER_DAY * self.row_height()) + 8)
@@ -145,7 +127,7 @@ class TimeView(LevelView):
     def _reveal_photos(self) -> None:
         """停在第一张照片所在的那个小时上方一点。
 
-        时间轴有 24 行、两千多像素，让用户自己滚过去等于把「这天有照片」这件事藏起来。
+        时间轴有 24 行、两千多像素，让用户自己滚过去等于把「这周有照片」这件事藏起来。
         **等一轮布局再定位**：那之前滚动条的最大值还是 0，设了也没用。
         """
         if self._scrolling:
@@ -166,29 +148,29 @@ class TimeView(LevelView):
         target = int(max(0, min(hours) - 1) * row)
         bar.setValue(max(0, min(target, bar.maximum())))
         self._grid.update()
+        self.window_changed.emit()
 
     # ---- 缩略图窗口 -------------------------------------------------------
     def visible_refs(self) -> list[PhotoRef]:
-        """滚到看得见的那几小时里的照片，每小时最多要一格那么多。
+        """滚到看得见的那几小时里的照片，每小时一张。
 
-        **底部至少留四行**：刚换层时视口高度还没量出来（0），那时候算出来的是
-        「一格都看不见」，于是**一张图都不会要** —— 而下一次报窗口要等到用户
-        滚动，那之前的这一层就一直是空的。
+        **上下再多要三小时**：滚动去抖之后才重报窗口，那一段如果正好有照片，
+        用户会看见格子空着再被填上。
         """
         refs: list[PhotoRef] = []
         visible = set(self.days())
-        capacity, _offset = cells_and_offset(self.column_width(), self.row_height())
         row = self.row_height()
         bar = self._area.verticalScrollBar()
         top = bar.value()
         bottom = top + max(self._area.viewport().height(), row * 4)
+        margin = row * PREFETCH_HOURS
         for (day, hour), photos in self._by_hour.items():
-            if day not in visible:
+            if day not in visible or not photos:
                 continue
             y = hour * row
-            if y + row < top or y > bottom:
+            if y + row < top - margin or y > bottom + margin:
                 continue
-            refs.extend(photos[:capacity])
+            refs.append(photos[0])
         return refs
 
     def thumbnail_edge(self) -> int:
@@ -198,7 +180,7 @@ class TimeView(LevelView):
 class _TimeHeader(QWidget):
     """表头：星期与日期。**今天是蓝圆点**（月视图里今天只是蓝字 —— 抄的就是这个差别）。"""
 
-    def __init__(self, view: TimeView) -> None:
+    def __init__(self, view: WeekView) -> None:
         super().__init__(view)
         self._view = view
         self.setFixedHeight(HEADER_HEIGHT)
@@ -210,12 +192,10 @@ class _TimeHeader(QWidget):
         painter.fillRect(self.rect(), self._view.background)
         days = self._view.days()
         column = self._view.column_width()
-        # **只有一列时不涂选中色**：日视图那一列永远是「选中的那一天」，
-        # 涂下去整屏就是一片蓝 —— 选中色是给「七列里挑了一列」用的。
         for index, day in enumerate(days):
             slot = QRectF(self._view.content_left() + index * column, 0, column, self.height())
             painter.fillRect(slot, self._view.column_tint(day))
-            if len(days) > 1 and day == self._view._selected:
+            if day == self._view._selected:
                 painter.fillRect(slot.adjusted(1, 0, -1, 0), colors.selection)
             draw_text(
                 painter,
@@ -255,9 +235,9 @@ class _TimeHeader(QWidget):
 
 
 class _TimeGrid(QWidget):
-    """时间轴本体（周视图 7 列，日视图 1 列）。"""
+    """时间轴本体（7 列 × 24 小时）。"""
 
-    def __init__(self, view: TimeView) -> None:
+    def __init__(self, view: WeekView) -> None:
         super().__init__(view)
         self._view = view
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -289,7 +269,7 @@ class _TimeGrid(QWidget):
         for index, day in enumerate(days):
             slot = QRectF(left + index * column, 0, column, self.height())
             painter.fillRect(slot, self._view.column_tint(day))
-            if len(days) > 1 and day == self._view._selected:
+            if day == self._view._selected:
                 painter.fillRect(slot.adjusted(1, 0, -1, 0), colors.selection)
             for hour in range(HOURS_PER_DAY):
                 photos = self._view.photos_in_hour(day, hour)
@@ -315,36 +295,31 @@ class _TimeGrid(QWidget):
     def _paint_hour_row(
         self, painter: QPainter, row: QRectF, hour: int, photos: Sequence[PhotoRef]
     ) -> None:
-        """一行：照片按格子比例并排，放得下几格放几格，整排**居中**；放不下的写进徽标。"""
+        """一行：一张照片，居中铺进那一格；不止一张时右下角写「还有 N 张」。
+
+        那一格**点下去是这一小时**（不是这张照片）—— 用户问的是「那几点拍了什么」，
+        而照片只是那一小时的代表。
+        """
         colors = self._view.colors
-        capacity, offset = cells_and_offset(row.width(), row.height())
-        cell_w, cell_h = cell_size(row.height())
-        shown = min(len(photos), capacity)
-        left = row.left() + CELL_GAP + offset
-        for index in range(shown):
-            cell = QRectF(left + index * (cell_w + CELL_GAP), row.top() + CELL_GAP, cell_w, cell_h)
-            paint_photo(painter, cell, self._view.photo(photos[index]))
-            if shown == 1:
-                # 压深的是**文字色**，标签写的是「底色」那一支：深色主题下正好反过来
-                # （浅压深、浅底深字）。写成黑压白只在浅色主题里成立。
-                scrim(painter, cell, colors.text, 0.8)
-                draw_text(
-                    painter,
-                    cell.adjusted(6, 0, -6, 0),
-                    f"{hour:02d}:00 · {short_title(photos[index].path)}",
-                    font_px(_CELL_TITLE_FONT_PX),
-                    colors.on_accent,
-                )
-        if len(photos) > shown:
-            last = QRectF(
-                left + (shown - 1) * (cell_w + CELL_GAP), row.top() + CELL_GAP, cell_w, cell_h
-            )
-            badge = QRectF(last.right() - 52, last.bottom() - 22, 46, 16)
-            fill_rounded(painter, badge, colors.chip, 8)
+        x, y, cell_w, cell_h = cell_rect(row.width(), row.height())
+        cell = QRectF(row.left() + x, row.top() + y, cell_w, cell_h)
+        paint_photo(painter, cell, self._view.photo(photos[0]))
+        # 压深的是**文字色**，标签写的是「底色」那一支：深色主题下正好反过来。
+        scrim(painter, cell, colors.text, 0.8)
+        draw_text(
+            painter,
+            cell.adjusted(6, 0, -6, 0),
+            f"{hour:02d}:00 · {short_title(photos[0].path)}",
+            font_px(_CELL_TITLE_FONT_PX),
+            colors.on_accent,
+        )
+        if len(photos) > 1:
+            badge = QRectF(cell.right() - 56, cell.bottom() - 22, 50, 16)
+            fill_rounded(painter, badge, colors.on_accent, 8)
             draw_text(
                 painter,
                 badge,
-                f"还有 {len(photos) - shown} 张",
+                f"还有 {len(photos) - 1} 张",
                 font_px(_BADGE_FONT_PX),
                 colors.text,
                 Qt.AlignmentFlag.AlignCenter,
@@ -359,11 +334,19 @@ class _TimeGrid(QWidget):
         if not (0 <= index < len(days)):
             return
         day = days[index]
-        self._view.select_day(day)
         hour = int(point.y() // self._view.row_height())
-        photos = self._view.photos_in_hour(day, hour)
-        if photos:
-            self._view.photo_requested.emit(list(photos), 0)
+        photos = list(self._view.photos_in_hour(day, hour))
+        if not photos:
+            return
+        self._view.select_day(day)
+        self._view.select_cell(photos)
 
 
-__all__ = ["GUTTER", "HEADER_HEIGHT", "THUMB_EDGE", "TimeView"]
+__all__ = [
+    "GUTTER",
+    "HEADER_HEIGHT",
+    "PREFETCH_HOURS",
+    "SCROLL_DEBOUNCE_MS",
+    "THUMB_EDGE",
+    "WeekView",
+]

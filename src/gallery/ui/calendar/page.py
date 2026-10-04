@@ -1,11 +1,11 @@
-"""日历这一页：工具条 + 四层视图，负责状态与快捷键。
+"""日历这一页：工具条 + 三层视图，负责状态与快捷键。
 
 页面只管三件事：**现在停在哪一层、停在哪一段日子、手上有哪些照片**；
-画什么交给那四个视图（它们各自 :class:`~gallery.ui.calendar.base.LevelView`），
+画什么交给那三个视图（它们各自 :class:`~gallery.ui.calendar.base.LevelView`），
 几何交给 :mod:`~gallery.ui.calendar.layout`，日期与分桶交给
 :mod:`gallery.core.library.calendar`。
 
-**快捷键 ``Y`` / ``M`` / ``W`` / ``D`` 收在这一页，不做成窗口级 QAction**：
+**快捷键 ``Y`` / ``M`` / ``W`` 收在这一页，不做成窗口级 QAction**：
 它们与网格那一层没有任何关系，而 ``←`` ``→`` 在网格里是「挪当前项」，在日历里是
 「翻页」 —— 做成窗口级就会把网格的上下左右也一起抢走（ADR 0033 决策 6）。
 """
@@ -27,17 +27,16 @@ from gallery.ui.calendar.base import LevelView
 from gallery.ui.calendar.colors import CalendarColors
 from gallery.ui.calendar.month_view import MonthView
 from gallery.ui.calendar.thumbs import ThumbStore
-from gallery.ui.calendar.time_view import TimeView
+from gallery.ui.calendar.time_view import WeekView
 from gallery.ui.calendar.toolbar import CalendarBar
 from gallery.ui.calendar.year_view import YearView
 from gallery.ui.theme import AppTheme, ThemeWatcher, current_theme, ensure_installed
 
-#: ``Y`` / ``M`` / ``W`` / ``D`` 四个键。
+#: ``Y`` / ``M`` / ``W`` 三个键。**没有日视图**，所以也没有 ``D``。
 _KEY_LEVELS = {
     Qt.Key.Key_Y: "year",
     Qt.Key.Key_M: "month",
     Qt.Key.Key_W: "week",
-    Qt.Key.Key_D: "day",
 }
 
 
@@ -46,10 +45,8 @@ class CalendarPage(QWidget):
 
     #: 停在哪一层了（外面据此记进会话）。
     level_changed = Signal(str)
-    #: 用户点开了某一天（外面据此切到日视图那一层）。
-    day_requested = Signal(object)
-    #: 用户点了某几张照片里的第几张（外面据此打开大图页）。
-    photo_requested = Signal(object, int)
+    #: 用户点了日历上一格里的照片（外面据此打开大图页，或摊成一层网格）。
+    cell_requested = Signal(object, str)
     #: 这一层需要的缩略图变了（外面据此向流水线要图）。
     window_changed = Signal()
 
@@ -68,14 +65,12 @@ class CalendarPage(QWidget):
         self._views: dict[str, LevelView] = {
             "year": YearView(self._thumbs),
             "month": MonthView(self._thumbs),
-            "week": TimeView("week", self._thumbs),
-            "day": TimeView("day", self._thumbs),
+            "week": WeekView(self._thumbs),
         }
         self._stack = QStackedWidget()
         for level in LEVELS:
             view = self._views[level]
-            view.day_requested.connect(self.day_requested)
-            view.photo_requested.connect(self.photo_requested)
+            view.cell_requested.connect(self.cell_requested)
             view.window_changed.connect(self.window_changed)
             self._stack.addWidget(view)
 

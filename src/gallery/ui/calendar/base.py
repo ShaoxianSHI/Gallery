@@ -1,6 +1,6 @@
-"""日历四层的公共底子：数据、配色、锚点、选中、缩略图。
+"""日历三层的公共底子：数据、配色、锚点、选中、缩略图。
 
-四个视图（年 / 月 / 周 / 日）要的东西几乎一样：一份按天分好的桶、一份按小时分好的桶、
+三个视图（年 / 月 / 周）要的东西几乎一样：一份按天分好的桶、一份按小时分好的桶、
 当前停在哪一天、今天是几号、点到了哪天哪一格。差的那部分只有「画成什么样」，
 所以这里只留状态与信号，具体怎么画交给各层。
 
@@ -39,10 +39,11 @@ _FILENAME_PREFIX = re.compile(r"^\d+_[\d-]+_[0-9A-Fa-f]{8}_*")
 class LevelView(QWidget):
     """一层日历视图的底子。"""
 
-    #: 用户点了某一天（那一格上有照片）：接上一层把它整个摊开。
-    day_requested = Signal(object)
-    #: 用户点了某几张照片（周 / 日两层）：外面据此打开大图页。
-    photo_requested = Signal(object, int)
+    #: 用户点了日历上的一格（那一格上有照片）：``(这一格的照片, 这一格的标题)``。
+    #:
+    #: **只有这一个动作**：一层日历里点任何一格，问的都是同一个问题 ——「这里拍了什么」。
+    #: 外面据此决定是直接打开大图（就一张）还是摊成一层网格（好几张），界面自己不必分情况。
+    cell_requested = Signal(object, str)
     #: 选中的东西变了（外面据此改标题与动作可用性）。
     selection_changed = Signal(object)
     #: 这一层需要的缩略图变了（外面据此向流水线要图）。
@@ -131,11 +132,15 @@ class LevelView(QWidget):
     def selected_refs(self) -> list[PhotoRef]:
         return list(self.photos_of(self._selected))
 
-    def select_day(self, day: datetime.date, *, descend: bool = False) -> None:
-        """点到了某一天。``descend`` 为真时，若那天有照片就把它整个摊开（切到日视图）。"""
+    def select_day(self, day: datetime.date) -> None:
+        """只改选中，不摊开（周视图点格子时选中那天用的就是它）。"""
         self.set_selected(day)
-        if descend and self.photos_of(day):
-            self.day_requested.emit(day)
+
+    def select_cell(self, photos: Sequence[PhotoRef], label: str) -> None:
+        """点到了有照片的一格：选中它，然后问外面「这一格怎么摊开」。"""
+        if not photos:
+            return
+        self.cell_requested.emit(list(photos), label)
 
     # ---- 供外面问的几件事 --------------------------------------------------
     def visible_refs(self) -> list[PhotoRef]:
@@ -158,6 +163,16 @@ class LevelView(QWidget):
         return self._colors.weekend if day.weekday() >= 5 else self._background
 
 
+def day_label(day: datetime.date) -> str:
+    """一格（一天）在标题里怎么写 —— 摊开成网格时那一层的名字。"""
+    return f"{day.month}月{day.day}日"
+
+
+def hour_label(day: datetime.date, hour: int) -> str:
+    """一格（一个钟点）在标题里怎么写。"""
+    return f"{day.month}月{day.day}日 {hour:02d}:00"
+
+
 def short_title(path: Path, limit: int = 24) -> str:
     """一格宽的照片标题。
 
@@ -173,4 +188,4 @@ def short_title(path: Path, limit: int = 24) -> str:
     return (cleaned or stem)[:limit]
 
 
-__all__ = ["LevelView", "short_title"]
+__all__ = ["LevelView", "day_label", "hour_label", "short_title"]

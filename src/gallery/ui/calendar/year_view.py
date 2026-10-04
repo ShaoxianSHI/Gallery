@@ -17,7 +17,7 @@ from PySide6.QtGui import QFont, QMouseEvent, QPainter
 
 from gallery.core.library.calendar import WEEKDAY_HEADERS, days_of, month_matrix
 from gallery.core.library.photos import PhotoRef
-from gallery.ui.calendar.base import LevelView
+from gallery.ui.calendar.base import LevelView, day_label
 from gallery.ui.calendar.painting import (
     draw_text,
     fill_rounded,
@@ -173,7 +173,8 @@ class YearView(LevelView):
         month = datetime.date(self._anchor.year, index, 1)
         picked = self._day_at(point, self._box(index - 1), month)
         if picked is not None:
-            self.select_day(picked, descend=True)
+            self.set_selected(picked)
+            self.select_cell(self.photos_of(picked), day_label(picked))
 
     def _day_at(self, point: object, box: QRectF, month: datetime.date) -> datetime.date | None:  # type: ignore[no-untyped-def]
         for day, cell in zip(month_matrix(month), self._day_cells(box), strict=True):
