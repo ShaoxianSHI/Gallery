@@ -97,13 +97,6 @@ class ChipButton(QToolButton):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.clicked.connect(self.edited)
 
-    def set_editing(self, editing: bool) -> None:
-        """标出「这一条正在输入框里改」。"""
-        self.setProperty("editing", editing)
-        self.setStyleSheet(_chip_style(editing=editing))
-        self.style().unpolish(self)
-        self.style().polish(self)
-
     def _hits_mark(self, x: float) -> bool:
         """这一点是不是落在右端那个 ``✕`` 上。"""
         text = self.text()

@@ -11,9 +11,7 @@
 from __future__ import annotations
 
 import datetime
-import re
 from collections.abc import Sequence
-from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QPainter
@@ -32,9 +30,6 @@ from gallery.ui.calendar.colors import CalendarColors
 from gallery.ui.calendar.painting import begin as begin_painter
 from gallery.ui.calendar.thumbs import ThumbStore
 from gallery.ui.theme import AppTheme, current_theme
-
-#: 文件名开头的序号 + 日期 + 机器码，例如 ``018_2021-09-12_D6D7FFA9_``。
-_FILENAME_PREFIX = re.compile(r"^\d+_[\d-]+_[0-9A-Fa-f]{8}_*")
 
 
 class LevelView(QWidget):
@@ -178,19 +173,4 @@ def hour_label(day: datetime.date, hour: int) -> str:
     return f"{day.month}月{day.day}日 {hour:02d}:00"
 
 
-def short_title(path: Path, limit: int = 24) -> str:
-    """一格宽的照片标题。
-
-    照片的文件名常常把一堆与内容无关的东西带在最前面 —— 测试相册那种
-    ``018_2021-09-12_D6D7FFA9#巴黎#凡尔赛宫`` 里的序号、日期与机器码，
-    还有 ``#`` 后面那一串地点。日历里每条只有一百多像素宽，先剥掉这些才看得出
-    「这是哪一张」。
-    """
-    stem = path.stem
-    if "#" in stem:
-        return stem.rsplit("#", 1)[-1][:limit]
-    cleaned = _FILENAME_PREFIX.sub("", stem)
-    return (cleaned or stem)[:limit]
-
-
-__all__ = ["LevelView", "day_label", "hour_label", "short_title"]
+__all__ = ["LevelView", "day_label", "hour_label"]

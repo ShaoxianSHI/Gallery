@@ -56,9 +56,6 @@ _LIKE_ESCAPE: Final = "\\"
 
 type SearchKind = Literal["name", "album", "format", "text", "size", "number", "datetime"]
 
-#: 条件的比较方式。空串是「等于」，于是相等那一档不必另写一份 SQL。
-COMPARATORS: Final = ("", "=", ">", ">=", "<", "<=")
-
 #: 一段区间两端之间的分隔符：**认全角与半角两种**，文档与提示里一律摆全角那一个。
 #:
 #: 当初只认全角，理由是「日期本身就带半角连字符，多认几种只会让『为什么这条没生效』更难猜，
@@ -649,7 +646,6 @@ def relative_folder_path(root: Path, path: Path) -> str:
 
 
 __all__ = [
-    "COMPARATORS",
     "DEFAULT_FIELD",
     "HALF_WIDTH_RANGE_SEPARATOR",
     "RANGE_SEPARATOR",

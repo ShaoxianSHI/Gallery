@@ -144,7 +144,7 @@ def test_the_calendar_starts_on_the_month(calendar_window: MainWindow) -> None:
     assert calendar_window._browse_mode == BROWSE_MODE_CALENDAR
     assert calendar_window._stack.currentWidget() is page
     assert page.level() == "month"
-    assert page.photo_count() == 2  # 四月那一张 + 四月那一张（��月那张不在这一屏上）
+    assert page.photo_count() == 2  # 四月那一张 + 四月那一张（三月那张不在这一屏上）
 
 
 def test_one_photo_in_a_cell_opens_the_big_view_and_comes_back(
@@ -292,7 +292,7 @@ def test_a_group_facet_on_does_not_empty_the_calendar(
     assert window._model.rowCount() == len(NAMES)
     assert page.photo_count() == 2  # 四月那两张
 
-    # 从日历退出去，网格上那个分组还���用户自己选的
+    # 从日历退出去，网格上那个分组还是用户自己选的
     window.show_grid()
     assert wait_until(qt_app, lambda: window_is_idle(window))
     assert window._model.group_count() > 0

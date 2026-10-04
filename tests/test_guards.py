@@ -13,7 +13,8 @@ import pytest
 
 from gallery.core.constants import CONFIG_DIR_NAME
 
-SRC_ROOT = Path(__file__).resolve().parents[1] / "src" / "gallery"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+SRC_ROOT = PROJECT_ROOT / "src" / "gallery"
 CORE_ROOT = SRC_ROOT / "core"
 UI_ROOT = SRC_ROOT / "ui"
 
@@ -291,3 +292,67 @@ def test_write_ops_does_not_touch_the_file_system_itself() -> None:
     """
     path = UI_ROOT / WRITE_OPS_MODULE
     assert not _opens_files(path), f"{WRITE_OPS_MODULE} 自己打开文件了；写操作一律走 core"
+
+
+# ---- 编码：U+FFFD 替换字符 ----------------------------------------------------
+
+#: U+FFFD。它在 UTF-8 里表示「这里本来有个字符，但我读不出来」。
+#:
+#: 常量而不是直接写字面量：**这条守护自己绝不能犯它守的毛病**。整个仓库里不该再
+#: 出现任何一个 U+FFFD —— 包括解释它是什么的这几行注释。
+REPLACEMENT_CHARACTER = "\ufffd"
+
+#: 扫描时跳开的目录：虚拟环境、构建产物、缓存、用户自己的库目录。
+EXCLUDED_DIRS: Final = frozenset({".venv", ".git", "build", "dist", "__pycache__", ".gallery"})
+
+#: 按后缀认的文本文件。空后缀一并收下（``.python-version`` 那类无扩展名的配置）。
+TEXT_SUFFIXES: Final = frozenset(
+    {".py", ".pyi", ".toml", ".md", ".txt", ".cfg", ".ini", ".lock", ".tsv", ".csv"}
+)
+
+
+def _text_files_under(root: Path) -> list[Path]:
+    """``root`` 下所有该当作文本读的文件（跳开二进制与构建产物）。"""
+    found: list[Path] = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or EXCLUDED_DIRS.intersection(path.parts):
+            continue
+        if path.suffix in TEXT_SUFFIXES or path.suffix == "":
+            found.append(path)
+    return found
+
+
+def test_no_text_file_carries_the_replacement_character() -> None:
+    """**任何入库的文本文件里都不许有 U+FFFD** —— 一个字丢得无声无息。
+
+    这个仓库的注释、文档与界面文案全是中文，而一个汉字在 UTF-8 里占三个字节。
+    任何一个字节被截断、或者某一次编码转换走了岔，落地就是一个替换字符：它嵌在
+    一段通顺的中文里，读起来只是「有个字怪怪的」，ruff、mypy、pytest 全都不会响。
+    真的发生过：``pyproject.toml`` 的注释里躺着「只有这（替换字符）个意思」，
+    几份测试的断言消息里也是。
+
+    之所以值得单开一条守护：U+FFFD 本身是**合法的** UTF-8 字符，``read_text()``
+    不会报错（要 ``errors="replace"`` 才会把它显出来），语法检查照常全绿 ——
+    属于那种「写错了却没有任何工具会告诉你」的内容，而它出现的地方恰恰是留给
+    下一个人的规矩与注释。
+    """
+    # 只扫源码树、脚本、测试与两个根文件。``src/gallery/resources/`` 下的应用图标与
+    # 城市库是二进制（``.png`` / ``.gz``），按后缀就已经挡在门外了。
+    files = [
+        path
+        for root in (PROJECT_ROOT / "src", PROJECT_ROOT / "tests", PROJECT_ROOT / "scripts")
+        for path in _text_files_under(root)
+    ]
+    files += [PROJECT_ROOT / "pyproject.toml", PROJECT_ROOT / "README.md"]
+
+    offenders: list[str] = []
+    for path in files:
+        # ``errors="replace"``：文件已经坏了也要能**报出位置**，而不是抛一个异常。
+        for number, line in enumerate(
+            path.read_text(encoding="utf-8", errors="replace").splitlines(), start=1
+        ):
+            if REPLACEMENT_CHARACTER in line:
+                offenders.append(f"{path.relative_to(PROJECT_ROOT)}:{number} {line.strip()[:60]}")
+    assert not offenders, "以下文件里有编码坏掉的中文（U+FFFD），请改回原字：\n" + "\n".join(
+        offenders
+    )

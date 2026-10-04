@@ -30,11 +30,6 @@ class SortOrder:
     facet: Facet | None
     descending: bool = False
 
-    @property
-    def is_default(self) -> bool:
-        """保持扫描顺序（不按任何字段排）。"""
-        return self.facet is None
-
     def value(
         self, ref: PhotoRef, root: Path, values: Mapping[Path, PhotoFacets]
     ) -> SortValue | None:
@@ -132,10 +127,16 @@ def _group_sort_key(group: GroupRef, facet: Facet) -> tuple[bool, float | str]:
     return (False, value)
 
 
-def group_photos_of(photos: Sequence[PhotoRef], groups: Sequence[GroupRef]) -> list[PhotoRef]:
+def flatten_groups(groups: Sequence[GroupRef]) -> list[PhotoRef]:
     """把若干组的成员摊平成一份照片列表（按路径去重）。
 
     按关键词分组时一张照片属于多个组，摊平后要按路径去重，否则组视图里会出现重影。
+
+    **只收组，不收那一层照片**：原来这里还挂着一个 ``photos`` 形参，可它从头到尾没被读
+    过一次 —— 签名承诺了一个并不存在的过滤（原意大概是「只保留还留在这一层里的那些」），
+    而调用方照着那个承诺传进来，得到的是「全都要」。一个不生效的形参比没有形参更糟：
+    它让人以为这函数会筛，于是写出对着它写的代码，然后发现筛不掉。把形参去掉，
+    承诺与行为就又一致了。
     """
     seen: set[Path] = set()
     result: list[PhotoRef] = []
@@ -152,6 +153,6 @@ __all__ = [
     "EMPTY_FACETS",
     "SortOrder",
     "build_groups",
-    "group_photos_of",
+    "flatten_groups",
     "sort_photos",
 ]

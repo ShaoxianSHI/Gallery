@@ -122,7 +122,7 @@ def test_album_undo_comes_back_as_one_entry(tmp_path: Path, make_photo) -> None:
     result = undo_last_write(tmp_path)
 
     assert result is not None
-    assert result.replaced is None, "取回来的条目是插回网格，不是替换某一���"
+    assert result.replaced is None, "取回来的条目是插回网格，不是替换某一项"
     assert isinstance(result.entries[0], FolderRef)
     assert (tmp_path / "2025 苏州" / "第一张.jpg").exists()
 

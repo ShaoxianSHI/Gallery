@@ -81,9 +81,6 @@ class ThumbStore:
         """当前档上有没有这一张；没有就是还没出图（宁可空着等重取）。"""
         return self._images.get((path, self._edge))
 
-    def has(self, path: Path) -> bool:
-        return (path, self._edge) in self._images
-
     def forget(self, paths: object) -> None:
         """这些路径上的文件变了：所有档位上的那几份都忘掉。
 

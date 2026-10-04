@@ -49,11 +49,12 @@ class MonthView(LevelView):
         return QRectF(self.rect()).adjusted(16, 6, -16, -14)
 
     def _column_width(self) -> float:
+        """一列多宽（格间距在 :meth:`_day_cell` 里才扣）。"""
         return self._grid_rect().width() / 7
 
     def _day_cell(self, index: int) -> QRectF:
         grid = self._grid_rect()
-        column = grid.width() / 7
+        column = self._column_width()
         body_top = grid.top() + _HEAD_HEIGHT + 1
         row_height = (grid.bottom() - body_top) / 6
         row, column_index = divmod(index, 7)

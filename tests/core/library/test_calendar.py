@@ -67,7 +67,7 @@ def test_a_week_starts_on_sunday_and_ends_on_saturday() -> None:
     assert week_start(datetime.date(2021, 9, 15)) == sunday
 
 
-def test_the_weekday_names_run_from_sunday() -> None:
+def test_the_weekday_constants_run_from_sunday() -> None:
     assert WEEKDAY_NAMES[0] == "日"
     assert WEEKDAY_NAMES[-1] == "六"
     assert WEEKDAY_HEADERS[0] == "星期日"

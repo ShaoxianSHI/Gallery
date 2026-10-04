@@ -62,13 +62,6 @@ class CaptureTime:
     #: ``+08:00``。**照片没记时区时就是 ``None``**，不按本机时区补。
     offset: str | None = None
 
-    def display(self) -> str:
-        """面板上那一行的写法：``2024-05-16 20:52:02``，带得上偏移就跟在后面。"""
-        if self.taken_at is None:
-            return ""
-        text = self.taken_at.replace(":", "-", 2)
-        return f"{text} {self.offset}" if self.offset else text
-
 
 @dataclass(frozen=True, slots=True)
 class CaptureTimeEdit:

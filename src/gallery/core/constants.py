@@ -61,9 +61,6 @@ DEFAULT_THUMBNAIL_MAX_EDGE: Final = 512
 #: 缩略图缓存默认上限（2 GiB）。0 表示不限制。
 DEFAULT_MAX_CACHE_BYTES: Final = 2 * 1024**3
 
-#: 网格中缩略图卡片的默认边长（像素，正方形）。
-GRID_TILE_EDGE: Final = 200
-
 __all__ = [
     "APP_ICON_BASENAME",
     "APP_ICON_SIZES",
@@ -73,7 +70,6 @@ __all__ = [
     "CONFIG_FILE_NAME",
     "DEFAULT_MAX_CACHE_BYTES",
     "DEFAULT_THUMBNAIL_MAX_EDGE",
-    "GRID_TILE_EDGE",
     "INDEX_CACHE_DIR_NAME",
     "INDEX_FILE_NAME",
     "JOURNAL_DIR_NAME",

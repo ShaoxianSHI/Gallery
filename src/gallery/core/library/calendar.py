@@ -146,10 +146,6 @@ def title(level: str, anchor: datetime.date) -> str:
     return f"{span} · 第 {week_number(start)} 周"
 
 
-def weekday_name(day: datetime.date) -> str:
-    return WEEKDAY_NAMES[day.weekday()]
-
-
 def week_number(day: datetime.date) -> int:
     """这一年里的第几周（**按日历上那一周数**：周日到周六）。
 
@@ -264,5 +260,4 @@ __all__ = [
     "title",
     "week_number",
     "week_start",
-    "weekday_name",
 ]

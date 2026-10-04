@@ -161,10 +161,6 @@ class BannerOverlay(QLabel):
         if self.isVisible():
             self._place()
 
-    def current_area(self) -> QRect:
-        """上一次 :meth:`reposition` 给的那一片（没给过就是空的）。"""
-        return QRect(self._area)
-
     @property
     def auto_hide_pending(self) -> bool:
         """显示中的这一条是不是**说完了自己会收起来**。

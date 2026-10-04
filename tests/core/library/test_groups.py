@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from gallery.core.library.groups import SortOrder, build_groups, group_photos_of, sort_photos
+from gallery.core.library.groups import SortOrder, build_groups, flatten_groups, sort_photos
 from gallery.core.library.photos import GroupRef, PhotoRef
 from gallery.core.metadata.facets import (
     FACET_CAPTURED,
@@ -161,7 +161,7 @@ def test_group_by_keyword_can_put_one_photo_in_several_groups(tmp_path: Path) ->
     groups = build_groups(photos, facet=facet, root=tmp_path, values=values)
 
     assert [(group.label, group.count) for group in groups] == [("夜景", 1), ("海边", 2)]
-    assert len(group_photos_of(photos, groups)) == 2  # 摊平后按路径去重
+    assert len(flatten_groups(groups)) == 2  # 摊平后按路径去重
 
 
 def test_group_members_are_sorted_by_current_order(tmp_path: Path) -> None:

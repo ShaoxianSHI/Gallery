@@ -153,11 +153,6 @@ class DetailView(QGraphicsView):
         return float(self.transform().m11())
 
     @property
-    def is_fitting(self) -> bool:
-        """当前是否为「适应窗口」状态。窗口尺寸变化时据此决定要不要重新适配。"""
-        return self._fit_mode
-
-    @property
     def image_size(self) -> tuple[int, int]:
         if self._pixmap.isNull():
             return (0, 0)
