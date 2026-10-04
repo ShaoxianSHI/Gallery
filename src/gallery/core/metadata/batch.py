@@ -27,7 +27,11 @@ from typing import Final, Protocol
 
 from gallery.core.cancellation import never_cancel
 from gallery.core.errors import MetadataError
-from gallery.core.metadata.exif import EXIFTOOL_EXECUTABLE, EXIFTOOL_TIMEOUT_SECONDS
+from gallery.core.metadata.exif import (
+    EXIFTOOL_CHARSET_ARGS,
+    EXIFTOOL_EXECUTABLE,
+    EXIFTOOL_TIMEOUT_SECONDS,
+)
 from gallery.core.metadata.facets import WANTED_TAGS, PhotoFacets, extract
 
 #: 一次交给 exiftool 的文件数。
@@ -111,7 +115,7 @@ class ExifToolBatchSource:
         # 归位又一遍），于是同一张照片在一批里要走四条 realpath —— 五千张照片就是两万次。
         # 解析一次，argv 与归位共用。
         resolved = [Path(path).resolve() for path in batch]
-        argv = [self._executable, "-j", "-G", "-sort", "-charset", "utf8", "-q"]
+        argv = [self._executable, "-j", "-G", "-sort", *EXIFTOOL_CHARSET_ARGS, "-q"]
         for tag in WANTED_TAGS:
             argv.append(f"-{tag}")
         argv.extend(str(path) for path in resolved)

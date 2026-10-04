@@ -35,6 +35,15 @@ EXIFTOOL_TIMEOUT_SECONDS: Final = 15.0
 #: exiftool 用这些串表示「这个字段是空的」。
 _EMPTY_VALUES: Final = frozenset({"-", "--", "unknown", ""})
 
+#: 读文件时要带的编码设置。
+#:
+#: ``-charset IPTC=UTF8`` 不能省：**exiftool 13 起，泛指的 ``-charset UTF8`` 不再覆盖
+#: IPTC**，而 IPTC 的缺省编码仍是 Latin-1。少了这一句，照片里的中文地点名读回来是一串
+#: 乱码（``æ­£å·ž``）—— 分组里的「城市」于是变成一堆乱码，面板上的「地点」也是。
+#: 写回那一侧用同一份（``metadata.writeback`` 也 import 它），写进去与读出来的编码
+#: 必须是同一套，否则回读校验会把成功的写入判成失败。
+EXIFTOOL_CHARSET_ARGS: Final[tuple[str, ...]] = ("-charset", "UTF8", "-charset", "IPTC=UTF8")
+
 
 @dataclass(frozen=True, slots=True)
 class MetadataField:
@@ -69,6 +78,14 @@ class MetadataReport:
     longitude: float | None = None
     #: 文件里写的地点名（IPTC/XMP）。有它就不再按坐标推断，免得给出两个说法。
     place_from_file: str | None = None
+    #: 文件里那三层地点**分开**的值。给「编辑位置」的输入框用（ADR 0031）。
+    #:
+    #: ``place_from_file`` 是拼好的一句话，只够显示；要把三个输入框各自填上，就得知道
+    #: 哪一段是城市、哪一段是省。**从那句话里拆是不行的** —— 地名本身就有「 ·
+    # 」（「圣 · 让娜 · 德 · 布雷」），拆开只会得到一堆碎片。
+    place_city: str | None = None
+    place_region: str | None = None
+    place_country: str | None = None
     #: 推断地点是否已经查过了。
     #:
     #: 必须区分「没查」与「查了但没有结果」：没有记录、失败都会给出结论，只有
@@ -144,7 +161,7 @@ class ExifToolReader:
 
     def read(self, path: Path) -> Mapping[str, object]:
         # -G 给每个键带上组前缀（EXIF:Make），-j 输出 JSON，-sort 让结果稳定可测。
-        argv = [self._executable, "-j", "-G", "-sort", "-charset", "utf8", str(path)]
+        argv = [self._executable, "-j", "-G", "-sort", *EXIFTOOL_CHARSET_ARGS, str(path)]
         try:
             completed = subprocess.run(
                 argv,
@@ -274,6 +291,7 @@ def build_report(
     all_fields = tuple(
         MetadataField(label=key, value=value) for key, value in sorted(normalized.items())
     )
+    place_city, place_region, place_country = _place_parts(normalized)
     return MetadataReport(
         path=path,
         groups=tuple(groups),
@@ -283,6 +301,9 @@ def build_report(
         latitude=latitude,
         longitude=longitude,
         place_from_file=_place_from_file(normalized),
+        place_city=place_city,
+        place_region=place_region,
+        place_country=place_country,
     )
 
 
@@ -447,11 +468,26 @@ def _equivalent_focal_length(raw: Mapping[str, str]) -> str | None:
 
 def coordinates_decimal(raw: Mapping[str, str]) -> tuple[float | None, float | None]:
     """把 ``GPSLatitude`` / ``GPSLongitude``（带半球标记）解析成十进制度。"""
-    latitude = _axis_decimal(raw, "EXIF:GPSLatitude", "EXIF:GPSLatitudeRef", negative={"S"})
-    longitude = _axis_decimal(raw, "EXIF:GPSLongitude", "EXIF:GPSLongitudeRef", negative={"W"})
+    latitude = latitude_decimal(raw)
+    longitude = longitude_decimal(raw)
     if latitude is None or longitude is None:
         return (None, None)
     return (latitude, longitude)
+
+
+def latitude_decimal(raw: Mapping[str, str]) -> float | None:
+    """只有纬度时用它（写回校验逐轴比对，见 ``metadata.writeback``）。
+
+    单独暴露是为了让 ``writeback`` 不必为了比一个轴而凑出一对坐标：坐标写成度分秒、
+    读回来也是度分秒，两边都得过 :func:`_degrees_to_decimal` 这同一份解析 —— 抄一份到
+    写回那一侧，两边迟早对不上，而「读出来和写进去不是一个数」正是校验要抓的东西。
+    """
+    return _axis_decimal(raw, "EXIF:GPSLatitude", "EXIF:GPSLatitudeRef", negative={"S"})
+
+
+def longitude_decimal(raw: Mapping[str, str]) -> float | None:
+    """只有经度时用它。理由见 :func:`latitude_decimal`。"""
+    return _axis_decimal(raw, "EXIF:GPSLongitude", "EXIF:GPSLongitudeRef", negative={"W"})
 
 
 def _axis_decimal(
@@ -496,15 +532,19 @@ def _degrees_to_decimal(value: str) -> float | None:
     return sign * (degrees + minutes / 60 + seconds / 3600)
 
 
-def _place_from_file(raw: Mapping[str, str]) -> str | None:
-    """文件里写的地点名（IPTC/XMP）。相机原图通常没有，Lightroom 导出常有。"""
-    parts = [
+def _place_parts(raw: Mapping[str, str]) -> tuple[str | None, str | None, str | None]:
+    """文件里写的三层地点（IPTC/XMP）。相机原图通常没有，Lightroom 导出常有。"""
+    return (
         first_value(raw, "XMP-photoshop:City", "IPTC:City"),
         first_value(raw, "XMP-photoshop:State", "IPTC:Province-State"),
         first_value(raw, "XMP-photoshop:Country", "IPTC:Country-PrimaryLocationName"),
-    ]
+    )
+
+
+def _place_from_file(raw: Mapping[str, str]) -> str | None:
+    """三层地点拼成一句话（显示用）。**顺序与 :attr:`MetadataReport.place_city` 那组一致**。"""
     kept: list[str] = []
-    for part in parts:
+    for part in _place_parts(raw):
         if part and part not in kept:
             kept.append(part)
     return " · ".join(kept) if kept else None
@@ -792,6 +832,7 @@ def _gps_decimal(value: object, ref: object) -> float | None:
 
 
 __all__ = [
+    "EXIFTOOL_CHARSET_ARGS",
     "EXIFTOOL_EXECUTABLE",
     "EXIFTOOL_TIMEOUT_SECONDS",
     "ExifToolReader",
@@ -806,7 +847,9 @@ __all__ = [
     "camera_name",
     "coordinates_decimal",
     "first_value",
+    "latitude_decimal",
     "leading_number",
+    "longitude_decimal",
     "positive_value",
     "read_metadata",
 ]
