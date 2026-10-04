@@ -73,6 +73,11 @@ class WeekView(LevelView):
         area.setFrameShape(QFrame.Shape.NoFrame)
         area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         area.setStyleSheet("QScrollArea { background: transparent; }")
+        # **横向的滚轮事件正好落在这个滚动区上，却不会在这儿停下来**：
+        # ``QScrollArea`` 对「横向为主」的滚轮事件是直接 ignore 的，于是它冒到父控件
+        # —— :class:`WeekView` 自己，那里收两指甩动并翻页（见 ``LevelView.wheelEvent``）。
+        # 换句话说，「时间轴左右划 = 上一周 / 下一周」这件事靠的是这个 ignore，
+        # 别在这里加横向滚动条把它截下来。
         # **滚动区与它那条竖滚动条都不接焦点**：Qt 在鼠标按下时把焦点给「按到的那一层里
         # 第一个 focusPolicy != NoFocus 的控件」，而这两个默认都是 StrongFocus ——
         # 于是**在时间轴上点一下（含点那条滚动条）键盘就被抢走**：← / → 变成滚动时间轴，

@@ -14,7 +14,7 @@ import datetime
 from collections.abc import Sequence
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QPainter
+from PySide6.QtGui import QColor, QPainter, QWheelEvent
 from PySide6.QtWidgets import QWidget
 
 from gallery.core.library.calendar import (
@@ -27,6 +27,7 @@ from gallery.core.library.calendar import (
 from gallery.core.library.photos import PhotoRef
 from gallery.ui.calendar.colors import CalendarColors
 from gallery.ui.calendar.painting import begin as begin_painter
+from gallery.ui.calendar.swipe import SwipeDetector, scroll_delta
 from gallery.ui.calendar.thumbs import ThumbStore
 from gallery.ui.theme import AppTheme, current_theme
 
@@ -36,6 +37,13 @@ from gallery.ui.theme import AppTheme, current_theme
 #: 并向流水线报一次 —— 单次定时器的 ``start()`` 在已经跑着的时候会原地续期，于是整段拖动
 #: 只在停下来之后报一次。
 GEOMETRY_DEBOUNCE_MS = 60
+
+#: 滚动事件里「手指已经离板子、系统在补惯性」的阶段。**那一段不该翻页。**
+#:
+#: macOS 的 ``NSEventPhaseMomentum*`` 原样映射成这一个值（Qt 只绑了旧的这四个：
+#: ``ScrollBegin`` / ``ScrollUpdate`` / ``ScrollEnd`` / ``ScrollMomentum``），
+#: 手指还按着板子的那三种都不在里头。
+_MOMENTUM_PHASE = Qt.ScrollPhase.ScrollMomentum
 
 
 class LevelView(QWidget):
@@ -50,6 +58,12 @@ class LevelView(QWidget):
     selection_changed = Signal(object)
     #: 这一层需要的缩略图变了（外面据此向流水线要图）。
     window_changed = Signal()
+    #: 用户在视图上横向甩了一下（触控板两指）：``(-1 或 1)``，外面据此翻页。
+    #:
+    #: **与 ``cell_requested`` 分开**：那一条问的是「这里拍了什么」，这一条问的是
+    #: 「上一段 / 下一段」—— 翻页这件事归页面（:meth:`page.CalendarPage.step`）管，
+    #: 三层各发同一个方向的整数，不自己挪锚点。
+    swiped = Signal(int)
 
     def __init__(self, level: str, thumbs: ThumbStore, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -60,6 +74,9 @@ class LevelView(QWidget):
         self._anchor = datetime.date.today()
         self._today = datetime.date.today()
         self._selected: datetime.date | None = datetime.date.today()
+        #: 「甩一下」的判据（阈值与那几道闸在 :mod:`~gallery.ui.calendar.swipe`，
+        #: **三层各留一份**：攒到一半切到别的层再切回来，不该接着上一次那半下算）。
+        self._swipe = SwipeDetector()
         # 起手就读一次当前主题：控件在构造时还没有被 ``apply_theme`` 走过，
         # 而日历一上来就要有底色（否则第一帧是黑的，下一帧才正常）。
         theme = current_theme()
@@ -193,6 +210,37 @@ class LevelView(QWidget):
     def thumbnail_edge(self) -> int:
         """这一层要缩略图缩到多长（长边像素）。"""
         return 0
+
+    # ---- 手势 -------------------------------------------------------------
+    def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
+        """触控板**两指横向拖动** = 翻一页（与 ``←`` / ``→`` 同一件事，见
+        :mod:`~gallery.ui.calendar.swipe`）。
+
+        **macOS 的两指划走的是滚轮事件**，不是 ``QPanGesture`` —— 所以判据只在
+        ``QWheelEvent`` 这一处，不要另起一套手势（那一套在真机上收不到）。
+
+        **只接横向**：竖着划照旧交给基类，周视图那个 ``QScrollArea`` 正是靠它滚时间轴。
+        斜着划（横向小于纵向）也算竖着 —— 斜着滚时间轴是常事，斜一下就翻页不是。
+        """
+        pixel = event.pixelDelta()
+        angle = event.angleDelta()
+        horizontal = abs(scroll_delta(float(pixel.x()), float(angle.x())))
+        vertical = abs(scroll_delta(float(pixel.y()), float(angle.y())))
+        if horizontal <= vertical:
+            super().wheelEvent(event)
+            return
+        phase = event.phase()
+        # **手指抬起来之后 macOS 自己补的那一截惯性不算**：手已经离板子了却还在翻页，
+        # 读起来是「我明明停手了，它自己又跳了一个月」。
+        if phase == _MOMENTUM_PHASE:
+            event.accept()
+            return
+        if phase == Qt.ScrollPhase.ScrollBegin:
+            self._swipe.begin()
+        steps = self._swipe.feed(float(pixel.x()), float(angle.x()))
+        if steps:
+            self.swiped.emit(steps)
+        event.accept()
 
     # ---- 几何 -------------------------------------------------------------
     def resizeEvent(self, event: object) -> None:  # noqa: N802 - 名字是 Qt 定的

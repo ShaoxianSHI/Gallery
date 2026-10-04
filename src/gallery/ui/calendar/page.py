@@ -8,6 +8,9 @@
 **快捷键 ``Y`` / ``M`` / ``W`` 收在这一页，不做成窗口级 QAction**：
 它们与网格那一层没有任何关系，而 ``←`` ``→`` 在网格里是「挪当前项」，在日历里是
 「翻页」 —— 做成窗口级就会把网格的上下左右也一起抢走（ADR 0033 决策 6）。
+
+**触控板两指横向拖动是同一件事的另一个入口**：那一串滚轮事件由各层的 ``wheelEvent``
+收，攒够了发一个 ``swiped``，这里接到 :meth:`step` —— 三个入口共用一次翻页的实现。
 """
 
 from __future__ import annotations
@@ -83,6 +86,10 @@ class CalendarPage(QWidget):
             view.cell_requested.connect(self.cell_requested)
             view.window_changed.connect(self.window_changed)
             view.selection_changed.connect(self._on_view_selected)
+            # **两指甩一下走的是同一个 ``step``**：翻一页只有这一处实现，
+            # 工具条的箭头、← / → 与手势三个入口的规矩（翻完收掉屏幕外的高亮、
+            # 重报缩略图窗口、标题跟着走）自动就是同一份。
+            view.swiped.connect(self.step)
             self._stack.addWidget(view)
         #: 页面自己推给各层的那一遍（见 :meth:`_on_view_selected`）—— 那不是「用户选的」。
         self._pushing_selection = False

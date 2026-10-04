@@ -19,13 +19,16 @@ from gallery.ui.calendar import CalendarPage
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QPointF, Qt  # noqa: E402
-from PySide6.QtGui import QColor, QImage, QKeyEvent, QPixmap  # noqa: E402
+from PySide6.QtCore import QPoint, QPointF, Qt  # noqa: E402
+from PySide6.QtGui import QColor, QImage, QKeyEvent, QPixmap, QWheelEvent  # noqa: E402
 from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
 TODAY = datetime.date(2021, 9, 12)
 #: 那一周的周三。选中它，那一格的高亮就不会落在采样点上（周末那两列上）。
 WEDNESDAY = datetime.date(2021, 9, 15)
+
+#: 不写阶段的滚轮事件按「还在滑」算（``ScrollUpdate`` 是默认的那种）。
+DEFAULT_PHASE = Qt.ScrollPhase.ScrollUpdate
 
 
 def _photo(name: str) -> PhotoRef:
@@ -86,6 +89,148 @@ def test_the_week_steps_by_seven_days(page: CalendarPage) -> None:
     page.set_level("week")
     press(page, Qt.Key.Key_Right)
     assert page.anchor() == datetime.date(2021, 9, 19)
+
+
+# ---- 触控板两指横向拖动（与 ← / → 同一件事）---------------------------------
+
+
+def scroll(
+    view: QWidget,
+    dx: int,
+    dy: int = 0,
+    *,
+    phase: Qt.ScrollPhase = DEFAULT_PHASE,
+    pixels: bool = True,
+) -> QWheelEvent:
+    """在某一层上划一下：发一个 macOS 触控板那种形状的滚轮事件（两个字段都给）。
+
+    **手写事件而不是伪造手势**：真机上两指划走的就是横向的 ``QWheelEvent``，那几个
+    ``Momentum*`` 阶段的常量 PySide 压根没绑（只有旧的那四个），所以这一条只能照
+    滚轮事件来验。
+    """
+    event = QWheelEvent(
+        QPointF(10.0, 10.0),
+        QPointF(10.0, 10.0),
+        QPoint(dx, dy) if pixels else QPoint(0, 0),
+        QPoint(dx, dy),
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+        phase,
+        False,
+    )
+    view.wheelEvent(event)
+    return event
+
+
+def flick(page: CalendarPage, direction: int = 1, *, pixels: bool = True, step: int = 40) -> None:
+    """一次用力的甩动：手指按下 + 两次增量（80 像素，刚够过阈值）。
+
+    ``pixels=False`` 走的是角度增量那份阈值（120），于是每一步要更大一点。
+    """
+    view = page.current_view()
+    scroll(view, step * direction, phase=Qt.ScrollPhase.ScrollBegin, pixels=pixels)
+    scroll(view, step * direction, pixels=pixels)
+
+
+@pytest.mark.parametrize(
+    ("level", "expected"),
+    [
+        ("year", datetime.date(2022, 9, 12)),
+        ("month", datetime.date(2021, 10, 12)),
+        ("week", datetime.date(2021, 9, 19)),
+    ],
+)
+def test_swiping_the_view_pages_one_period(
+    page: CalendarPage, level: str, expected: datetime.date
+) -> None:
+    """两指往右甩一下 = 往后翻一段（年 ± 一年、月 ± 一月、周 ± 七天），三层都成立。"""
+    page.set_level(level)
+    flick(page)
+    assert page.anchor() == expected
+
+
+def test_swiping_the_other_way_pages_back(page: CalendarPage) -> None:
+    page.set_level("month")
+    flick(page, -1)
+    assert page.anchor() == datetime.date(2021, 8, 12)
+
+
+def test_a_nudge_is_not_a_page(page: CalendarPage) -> None:
+    """轻轻推一下不该翻（真机上那也就二三十像素）。"""
+    page.set_level("month")
+    view = page.current_view()
+    scroll(view, 20)
+    assert page.anchor() == TODAY
+
+
+def test_one_flick_pages_once_and_the_momentum_after_it_pages_nothing(
+    page: CalendarPage,
+) -> None:
+    """一次甩动**只翻一页**，手指抬起来之后系统补的那一截惯性**一页都不翻**。
+
+    惯性那一截常有上百像素，没有这道闸就是「手已经离板子了，它自己又跳了三个月」。
+    """
+    page.set_level("month")
+    view = page.current_view()
+    scroll(view, 40, phase=Qt.ScrollPhase.ScrollBegin)
+    scroll(view, 40)  # 80 像素：翻一页
+    scroll(view, 40)  # 还压在右边：不再翻
+    for delta in (60, 40, 20):
+        scroll(view, delta, phase=Qt.ScrollPhase.ScrollMomentum)
+    assert page.anchor() == datetime.date(2021, 10, 12)
+
+
+def test_scrolling_vertically_leaves_the_page_alone(page: CalendarPage) -> None:
+    """**竖着划不翻页，而且要让事件继续往上走** —— 周视图的时间轴就靠它滚。
+
+    钉的是 ``isAccepted``：``QWidget`` 默认忽略不认识的滚轮事件，于是周视图里那个
+    ``QScrollArea`` 才拿得到它；这里一 ``accept``，时间轴就再也滚不动了。
+    """
+    page.set_level("week")
+    view = page.current_view()
+    event = scroll(view, 0, 90)
+    assert page.anchor() == TODAY
+    assert not event.isAccepted()
+
+
+def test_a_diagonal_scroll_counts_as_vertical(page: CalendarPage) -> None:
+    """斜着划（横向小于纵向）算竖着：斜着滚时间轴是常事，斜一下就翻周不是。"""
+    page.set_level("week")
+    scroll(page.current_view(), 30, 90)
+    assert page.anchor() == TODAY
+
+
+def test_a_horizontal_scroll_is_taken_by_the_calendar(page: CalendarPage) -> None:
+    """横向那一下要 **accept**：否则它会继续往上冒，在周视图里横向滚不了任何东西。"""
+    page.set_level("week")
+    event = scroll(page.current_view(), 90)
+    assert event.isAccepted()
+
+
+def test_a_device_without_pixel_deltas_still_pages(page: CalendarPage) -> None:
+    """只给角度增量的设备（Magic Mouse 一类）同样翻页 —— 走的是另一条阈值。"""
+    page.set_level("month")
+    flick(page, pixels=False, step=70)  # 140：两格滚轮（角度增量那份阈值是 120）
+    assert page.anchor() == datetime.date(2021, 10, 12)
+
+
+def test_a_swipe_is_a_page_turn_in_every_respect(page: CalendarPage) -> None:
+    """甩一下与按 ``→`` 是**同一件事**：收掉屏幕外的高亮、重报缩略图窗口。
+
+    三个入口共用 :meth:`CalendarPage.step`，这一条钉的是「真接上了」，不是各写一份。
+    锚点本身不动 —— ``set_selected`` 只改选中，翻到哪一段是 ``step`` 说了算（规则见
+    :meth:`CalendarPage.set_level`）。
+    """
+    page.set_level("year")
+    page.set_selected(datetime.date(2021, 5, 16))
+    reports: list[int] = []
+    page.window_changed.connect(lambda: reports.append(1))
+
+    flick(page)
+
+    assert page.anchor() == datetime.date(2022, 9, 12)
+    assert page.selected_day() is None, "翻走了却把别处那一天的高亮留着"
+    assert reports, "翻页没有重报缩略图窗口"
 
 
 def test_t_goes_back_to_today(page: CalendarPage) -> None:
