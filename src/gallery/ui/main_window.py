@@ -518,7 +518,7 @@ class MainWindow(
         self._up_action.setShortcut(QKeySequence("Esc"))
         self._up_action.triggered.connect(self.go_up)
 
-        self._albums_action = QAction("相册（按文件夹）", self)
+        self._albums_action = QAction("相册", self)
         self._albums_action.setCheckable(True)
         self._albums_action.triggered.connect(lambda: self.set_browse_mode(BROWSE_MODE_ALBUMS))
 
@@ -716,8 +716,10 @@ class MainWindow(
         view_menu.addAction(self._up_action)
         view_menu.addSeparator()
         browse_menu = view_menu.addMenu("浏览方式")
-        browse_menu.addAction(self._albums_action)
+        # 顺序与访达一致：先「全部照片」（整库平铺，最常用），再「相册」（逐层进入），
+        # 最后「日历」。菜单里的先后只影响眼睛扫过去的速度，三者是互斥的勾选。
         browse_menu.addAction(self._flat_action)
+        browse_menu.addAction(self._albums_action)
         browse_menu.addAction(self._calendar_action)
         self._build_order_menus(view_menu)
         view_menu.addSeparator()
