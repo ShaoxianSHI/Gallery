@@ -433,6 +433,8 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._panel.hide()
         # 「编辑位置」那个按钮只发信号（面板不碰文件，红线 1）；写盘在 ``write_ops``。
         self._panel.edit_place_requested.connect(self.edit_place_of_current)
+        # 焦点停在面板上时，← / → 仍然换照片（大图页走它自己那条路，网格上挪当前项）。
+        self._panel.photo_step_requested.connect(self.step_photo_from_panel)
         self._detail_page = QWidget()
         detail_layout = QHBoxLayout(self._detail_page)
         detail_layout.setContentsMargins(0, 0, 0, 0)
@@ -2843,6 +2845,17 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             return
         self._current_row = row
         self._load_detail(row)
+
+    def step_photo_from_panel(self, delta: int) -> None:
+        """元数据面板里按了 ← / → —— 换上一张 / 下一张。
+
+        **走大图页自己那条路**（``step_detail``，相册模式下会跳过相册格子），与在大图
+        本身上按方向键完全一样。面板只摆在大图页上（``_build_ui`` 里它加的是
+        ``detail_layout``），所以这里不必再判断当前在哪一页。
+
+        **焦点不转移**：用户还停在面板里，接着按 ← / → 能继续翻。
+        """
+        self.step_detail(delta)
 
     def _neighbour_photo_row(self, start: int, delta: int) -> int | None:
         row = start + delta

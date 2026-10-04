@@ -24,6 +24,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 from waiting import DEFAULT_TIMEOUT_SECONDS
 
@@ -547,3 +549,43 @@ def test_thumbnail_accessor_returns_none_when_missing() -> None:
 
     model = PhotoListModel()
     assert model.thumbnail_pixmap(Path("/没有/这张照片.jpg")) is None
+
+
+def test_the_panel_keeps_switching_photos_with_the_arrow_keys(
+    window: MainWindow,
+    wait_for: Callable[..., bool],
+    ready: Callable[[], None],
+) -> None:
+    """焦点停在面板里，← / → 仍然换照片 —— 大图页上。
+
+    这正是用户按「复制全部」之后会遇到的事：焦点落在面板的按钮上，方向键本来就被它吃掉，
+    什么也没发生，而用户还看着同一张照片的元数据。
+    """
+    window._metadata_action.setChecked(True)
+    ready()
+    first = window._model.photo_at(window._current_row)
+    assert first is not None
+
+    window._panel._copy_button.setFocus()
+    QApplication.processEvents()
+    QTest.keyClick(window._panel._copy_button, Qt.Key.Key_Right)
+    wait_for(lambda: window._current_row == 1, timeout=DEFAULT_TIMEOUT_SECONDS)
+    assert window._model.photo_at(window._current_row) != first
+
+    QTest.keyClick(window._panel._copy_button, Qt.Key.Key_Left)
+    wait_for(lambda: window._current_row == 0, timeout=DEFAULT_TIMEOUT_SECONDS)
+    assert window._model.photo_at(window._current_row) == first
+
+
+def test_the_focus_stays_in_the_panel_after_stepping(
+    window: MainWindow, ready: Callable[[], None]
+) -> None:
+    """**焦点不跟着走** —— 用户还停在面板里，接着按 ← / → 能继续翻。"""
+    window._metadata_action.setChecked(True)
+    ready()
+    window._panel._copy_button.setFocus()
+    QApplication.processEvents()
+
+    QTest.keyClick(window._panel._copy_button, Qt.Key.Key_Right)
+
+    assert QApplication.focusWidget() is window._panel._copy_button

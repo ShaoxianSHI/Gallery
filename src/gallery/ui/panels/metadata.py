@@ -10,16 +10,22 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from functools import partial
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QGuiApplication, QPainter
+from PySide6.QtGui import QAction, QGuiApplication, QKeySequence, QPainter
 from PySide6.QtWidgets import (
+    QAbstractSpinBox,
+    QApplication,
     QCheckBox,
+    QComboBox,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QScrollArea,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -81,6 +87,13 @@ class MetadataPanel(QWidget):
     #: 用户要编辑位置（点了「位置」那一组旁边的按钮）。**这里只发信号** ——
     #: 真正写文件的是 ``write_ops``，面板不碰（红线 1 在代码里必须是一句可查的话）。
     edit_place_requested = Signal()
+    #: 用户在面板里按了 ← / →：上一张 / 下一张（-1 / +1）。
+    #:
+    #: **焦点落在面板里也仍然该能换照片。** 网格自己的方向键走的是
+    #: ``PhotoGrid.keyPressEvent``，那条路只在网格有焦点时通；点一下「复制全部」、
+    #: 点一下元数据列表，焦点就跑到面板这边来了，此后 ← / → 按下去什么也没发生 ——
+    #: 用户明明还看着同一张照片的元数据，却换不了它。
+    photo_step_requested = Signal(int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -138,7 +151,40 @@ class MetadataPanel(QWidget):
         self._hint_timer.setSingleShot(True)
         self._hint_timer.timeout.connect(lambda: self._copy_button.setText("复制全部"))
 
+        self._install_step_shortcuts()
         self.clear()
+
+    # ---- 按键 --------------------------------------------------------------
+
+    def _step_photo(self, delta: int) -> None:
+        """← / → 转成「换上一张 / 下一张」。
+
+        **焦点在文本框里就不插手**：将来面板里加个搜索框时，方向键是那个框的，
+        不是换照片的。
+        """
+        focus = QApplication.focusWidget()
+        if isinstance(focus, (QLineEdit, QTextEdit, QAbstractSpinBox, QComboBox)):
+            return
+        self.photo_step_requested.emit(delta)
+
+    def _install_step_shortcuts(self) -> None:
+        """把 ← / → 收进面板自己，**范围是「面板以及面板里的东西」**。
+
+        为什么不写在 ``keyPressEvent`` 里让按键冒上来：Qt6 里控件把不认识的按键 ignore
+        掉之后**不会**往父控件冒 —— 点一下「复制全部」，焦点就停在那个按钮上，方向键到
+        了按钮手里就停住了，面板根本收不到。快捷键走的是另一条路（``ShortcutContext``
+        ：面板可见、焦点在面板这一支里，就生效），与事件传播无关。
+
+        **范围给的是「面板这一支」而不是整个应用**：焦点在网格里的时候，方向键仍然归
+        网格（那边要维护选中范围、「⌘R 亮着」这些界面状态），两条路各管各的。
+        """
+        for key, delta in ((Qt.Key.Key_Left, -1), (Qt.Key.Key_Right, 1)):
+            action = QAction(self)
+            action.setShortcut(QKeySequence(key))
+            action.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            action.setShortcutVisibleInContextMenu(False)
+            action.triggered.connect(partial(self._step_photo, delta))
+            self.addAction(action)
 
     # ---- 主题 --------------------------------------------------------------
 

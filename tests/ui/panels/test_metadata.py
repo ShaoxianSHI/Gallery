@@ -26,8 +26,16 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtGui import QColor, QImage  # noqa: E402
-from PySide6.QtWidgets import QApplication, QLabel, QWidget  # noqa: E402
+from PySide6.QtTest import QTest  # noqa: E402
+from PySide6.QtWidgets import (  # noqa: E402
+    QApplication,
+    QLabel,
+    QLineEdit,
+    QVBoxLayout,
+    QWidget,
+)
 
 from gallery.core.metadata.exif import build_report  # noqa: E402
 from gallery.ui import theme  # noqa: E402
@@ -170,3 +178,97 @@ def test_switching_report_hides_widgets_before_they_leave_the_panel(
         "的小窗口弹出来（就是那个闪一下的白色小窗）"
     )
     panel.deleteLater()
+
+
+# ---- 焦点在面板里时，← / → 仍然换照片 -----------------------------------------
+
+
+def _shown_panel(qt_app: QApplication) -> MetadataPanel:
+    """面板得**可见**快捷键才生效 —— 藏着的面板不该抢按键，所以这里真把它摆出来。"""
+    host = QWidget()
+    QVBoxLayout(host).addWidget(MetadataPanel())
+    host.show()
+    qt_app.processEvents()
+    panel = host.layout().itemAt(0).widget()
+    assert isinstance(panel, MetadataPanel)
+    panel.deleteLater()
+    host.deleteLater()
+    return panel
+
+
+def _steps(panel: MetadataPanel, qt_app: QApplication) -> list[int]:
+    seen: list[int] = []
+    panel.photo_step_requested.connect(seen.append)
+    panel._copy_button.setFocus()
+    qt_app.processEvents()
+    QTest.keyClick(panel._copy_button, Qt.Key.Key_Right)
+    QTest.keyClick(panel._copy_button, Qt.Key.Key_Left)
+    return seen
+
+
+def test_the_arrow_keys_switch_photos_while_the_panel_has_focus(
+    qt_app: QApplication,
+) -> None:
+    """**焦点落在面板里，← / → 仍然换照片。**
+
+    网格自己的方向键走 ``PhotoGrid.keyPressEvent``，那条路只在网格有焦点时通；点一下
+    「复制全部」、点一下「显示全部字段」，焦点就跑到面板这一支里来了，此后 ← / → 按下去
+    什么也没发生 —— 用户明明还看着同一张照片的元数据，却换不了它。
+    """
+    panel = _shown_panel(qt_app)
+
+    assert _steps(panel, qt_app) == [1, -1]
+
+
+def test_it_works_from_a_plain_click_on_the_panel(qt_app: QApplication) -> None:
+    panel = _shown_panel(qt_app)
+    seen: list[int] = []
+    panel.photo_step_requested.connect(seen.append)
+
+    panel.setFocus()
+    qt_app.processEvents()
+    QTest.keyClick(panel, Qt.Key.Key_Right)
+
+    assert seen == [1]
+
+
+def test_the_up_and_down_keys_are_left_to_the_scroll_area(qt_app: QApplication) -> None:
+    """**上下键留给滚动区自己滚动** —— 面板里的内容经常比面板高。"""
+    panel = _shown_panel(qt_app)
+    seen: list[int] = []
+    panel.photo_step_requested.connect(seen.append)
+    panel.setFocus()
+    qt_app.processEvents()
+
+    QTest.keyClick(panel, Qt.Key.Key_Up)
+    QTest.keyClick(panel, Qt.Key.Key_Down)
+
+    assert seen == []
+
+
+def test_a_modified_arrow_key_is_left_alone(qt_app: QApplication) -> None:
+    """⌥← 之类多半是输入法或辅助功能的用法，不该被抢走。"""
+    panel = _shown_panel(qt_app)
+    seen: list[int] = []
+    panel.photo_step_requested.connect(seen.append)
+    panel.setFocus()
+    qt_app.processEvents()
+
+    QTest.keyClick(panel, Qt.Key.Key_Left, Qt.KeyboardModifier.ShiftModifier)
+
+    assert seen == []
+
+
+def test_a_text_box_inside_the_panel_keeps_its_arrow_keys(qt_app: QApplication) -> None:
+    """焦点在文本框里就不插手 —— 方向键是那个框的，不是换照片的。"""
+    panel = _shown_panel(qt_app)
+    seen: list[int] = []
+    panel.photo_step_requested.connect(seen.append)
+    editor = QLineEdit()
+    panel.layout().addWidget(editor)
+    editor.setFocus()
+    qt_app.processEvents()
+
+    QTest.keyClick(editor, Qt.Key.Key_Right)
+
+    assert seen == []
