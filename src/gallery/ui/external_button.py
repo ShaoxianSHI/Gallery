@@ -33,6 +33,11 @@ BUTTON_GAP = 6
 #: 提示气泡上写的那一句。
 TOOLTIP = "用外部应用打开当前这一页"
 
+#: 自绘图标有哪几样。**只认形状，不认品牌**（见 :func:`drawn_icon`）。
+ICON_CALENDAR = "calendar"
+ICON_FOLDER = "folder"
+ICON_KINDS = (ICON_CALENDAR, ICON_FOLDER)
+
 
 @dataclass(frozen=True)
 class ExternalEntry:
@@ -63,7 +68,20 @@ def button_rect(search_x: int, strip_height: int, size: int = BUTTON_SIZE) -> QR
     return QRect(search_x - BUTTON_GAP - size, (strip_height - size) // 2, size, size)
 
 
-def _drawn_icon(size: int, accent: QColor) -> QIcon:
+def drawn_icon(kind: str, size: int = BUTTON_SIZE) -> QIcon:
+    """画一个中性的轮廓（:data:`ICON_KINDS` 之一），跟着主题变色。
+
+    **不冒充任何一个应用**：访达那个「两半脸」的图标与日历应用的品牌色都是别人的
+    商标，仓库里不放、也不临摹（ADR 0034 决策 6）。一个中性的文件夹轮廓足够让人
+    认出「这是个文件夹」。
+    """
+    accent = theme.current_theme().text
+    if kind == ICON_FOLDER:
+        return _draw_folder(size, accent)
+    return _draw_calendar(size, accent)
+
+
+def _draw_calendar(size: int, accent: QColor) -> QIcon:
     """画一个中性的日历轮廓。
 
     **没有装那个 PWA 时用它顶上，而仓库里不放第三方图标**：装了就直接用应用包
@@ -112,7 +130,42 @@ def calendar_icon(size: int = BUTTON_SIZE) -> QIcon:
         path = app_icon(app)
         if path is not None:
             return QIcon(str(path))
-    return _drawn_icon(size, theme.current_theme().text)
+    return drawn_icon(ICON_CALENDAR, size)
+
+
+def folder_icon(size: int = BUTTON_SIZE) -> QIcon:
+    """访达那一项的图标：一个中性的文件夹轮廓（不临摹访达自己的那个）。"""
+    return drawn_icon(ICON_FOLDER, size)
+
+
+def _draw_folder(size: int, accent: QColor) -> QIcon:
+    """一个文件夹：上面一个小挂头，下面一个圆角身子。"""
+    ratio = 2
+    pixmap = QPixmap(size * ratio, size * ratio)
+    pixmap.setDevicePixelRatio(ratio)
+    pixmap.fill(Qt.GlobalColor.transparent)
+
+    painter = QPainter(pixmap)
+    try:
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(accent)
+        pen.setWidthF(max(1.0, size * 0.06))
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        margin = size * 0.17
+        width = size - 2 * margin
+        body_top = margin + size * 0.16
+        body = QRectF(margin, body_top, width, size - body_top - margin)
+        painter.drawRoundedRect(body, size * 0.13, size * 0.13)
+        # 挂头：左上角那一小块，文件夹的形状全靠它认出来。
+        tab = QRectF(margin, margin, width * 0.45, size * 0.2)
+        painter.drawLine(int(tab.left()), int(tab.top()), int(tab.left()), int(body.top()))
+        painter.drawLine(int(tab.left()), int(tab.top()), int(tab.right()), int(tab.top()))
+        painter.drawLine(int(tab.right()), int(tab.top()), int(tab.right()), int(body.top()))
+    finally:
+        painter.end()
+    return QIcon(pixmap)
 
 
 class ExternalAppsButton(QToolButton):
@@ -163,5 +216,30 @@ class ExternalAppsButton(QToolButton):
             action.triggered.connect(lambda _checked=False, e=entry: self._activate(e))
             self._menu.addAction(action)
 
+    def is_available(self) -> bool:
+        """下拉框里此刻**有没有东西**。
+
+        **空着的按钮不该占位置**：日历那一页要一段日子、访达那一项要一个当前文件夹，
+        没有它们的页面（还没选库的欢迎页）上按钮就整个收起来 —— 摆一个点开是空菜单
+        的图标，用户只会以为坏了。
+        """
+        return any(entry.enabled() for entry in self._entries)
+
     def _activate(self, entry: ExternalEntry) -> None:
         self.entry_activated.emit(entry)
+
+
+__all__ = [
+    "BUTTON_GAP",
+    "BUTTON_SIZE",
+    "ICON_CALENDAR",
+    "ICON_FOLDER",
+    "ICON_KINDS",
+    "TOOLTIP",
+    "ExternalAppsButton",
+    "ExternalEntry",
+    "button_rect",
+    "calendar_icon",
+    "drawn_icon",
+    "folder_icon",
+]

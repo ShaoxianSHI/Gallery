@@ -93,7 +93,7 @@ from gallery.core.library.watcher import LibraryChange
 from gallery.core.metadata.exif import MetadataReport
 from gallery.core.metadata.facets import PhotoFacets
 from gallery.core.places.resolver import LazyPlaceResolver
-from gallery.ui import banners, theme
+from gallery.ui import banners, desktop, theme
 from gallery.ui.banner_overlay import BannerOverlay
 from gallery.ui.browser.grid import PhotoGrid
 from gallery.ui.browser.model import PhotoListModel
@@ -111,6 +111,7 @@ from gallery.ui.external_button import (
     ExternalEntry,
     button_rect,
     calendar_icon,
+    folder_icon,
 )
 from gallery.ui.navigation import (
     ENTRY_KIND_PATH,
@@ -826,13 +827,18 @@ class MainWindow(
         # 按钮就会亮着一条指向别处的路。日历里点照片是直接进大图页，
         # 于是这一页上它们统统关掉（大图页上它们照常按正在看的那一张算）。
         in_calendar = self._stack.currentWidget() is self._calendar_page
-        # 「用外部应用打开」**只在日历页出现**（ADR 0034）：那一页有「哪一层、哪一天」
-        # 可言，别的页上没有对应的东西可开。显隐收在这里，与其余动作的可用性同一个时机
-        # （换页、切层都会走到这儿），于是按钮与那些动作**不会各说各的**。
+        # 「用外部应用打开」**只在那一页有东西可开的时候出现**（ADR 0034）：日历页有
+        # 「哪一层、哪一天」可言，其余页面有「当前在哪个文件夹」可言；还没打开库的欢迎
+        # 页两样都没有，于是按钮整个收起来 —— 摆一个点开是空菜单的图标，用户只会
+        # 以为坏了。
         #
+        # 判据是 ``is_available()`` 而不是 ``in_calendar``：**摆不摆由下拉框里有没有
+        # 条目说了算**，于是「哪些页面上有什么」只有那一处知道。
         # **摆位不在这里算**：``_layout_title_bar`` 看见它可见就会把它摆对并让出宽度。
-        self._external_button.setVisible(self._owns_title_bar and in_calendar)
         self._external_button.refresh()
+        self._external_button.setVisible(
+            self._owns_title_bar and self._external_button.is_available()
+        )
         self._layout_title_bar()
         entries = [] if in_calendar else self._selected_entries()
         focus_row = -1 if in_calendar else self._focus_row()
@@ -1334,7 +1340,15 @@ class MainWindow(
                 id="google_calendar",
                 name="Google 日历",
                 icon=calendar_icon(),
-                enabled=lambda: self._stack.currentWidget() is self._calendar_page,
+                enabled=self._on_calendar_page,
+            ),
+            ExternalEntry(
+                id="finder",
+                name="访达",
+                icon=folder_icon(),
+                # **与日历那一项互补**：日历页给 Google 日历，其余页给访达 ——
+                # 每一页只有一样可开的东西，菜单里就不会出现两条与这一页无关的。
+                enabled=lambda: not self._on_calendar_page() and self._current_folder() is not None,
             ),
         )
 
@@ -1342,8 +1356,12 @@ class MainWindow(
         """下拉框里点了哪一项。**按 id 分派**，不在按钮那一侧写死（理由见
         :class:`~gallery.ui.external_button.ExternalEntry`）。
         """
-        if isinstance(entry, ExternalEntry) and entry.id == "google_calendar":
+        if not isinstance(entry, ExternalEntry):
+            return
+        if entry.id == "google_calendar":
             self._open_google_calendar()
+        elif entry.id == "finder":
+            self._open_finder()
 
     def _open_google_calendar(self) -> None:
         """把 Google 日历开到与当前这一页一致的那一层、那一天。
@@ -1368,6 +1386,36 @@ class MainWindow(
             return
         # **说过就走**：开都开完了，用户看的应该是那个窗口而不是这条消息（ADR 0029）。
         self._show_banner(banners.external_app_opened(outcome, "Google 日历"), auto_hide=True)
+
+    def _on_calendar_page(self) -> bool:
+        """此刻是不是日历那一页。**下拉框那两页互斥的判据都在这一句里。**"""
+        return self._stack.currentWidget() is self._calendar_page
+
+    def _current_folder(self) -> Path | None:
+        """此刻所在的那个文件夹，**没有库就是 ``None``**。
+
+        口径就是既有的那一句 ``_current_dir or library.root``（见 ``write_ops``）：
+        全部照片视图下锚点是库根，相册视图下是当前那一层。
+
+        **分组时用的也是它**：分组卡片自己不是磁盘上的东西，它代表的那批照片就摆在
+        这个目录里 —— 于是「向上找到文件夹」找到的正是它，不必再往别处问（ADR 0020）。
+        """
+        library = self._library
+        if library is None:
+            return None
+        return self._current_dir or library.root
+
+    def _open_finder(self) -> None:
+        """在访达里显示当前这个文件夹。
+
+        走的是右键菜单那条 ``reveal_in_finder``（ADR 0014 决策 3）：**同一个入口，
+        同一句话的措辞**，而不是另起一条 ``open -R``。
+        """
+        folder = self._current_folder()
+        if folder is None:
+            self._show_banner("还没有打开相册库，没有可以显示的文件夹。")
+            return
+        self._show_banner(desktop.reveal_in_finder([folder]), auto_hide=True)
 
     def _on_external_failed(self, message: str) -> None:
         # 走到这里的是「起进程这一步整个炸了」，而 :mod:`core.external.launch` 自己

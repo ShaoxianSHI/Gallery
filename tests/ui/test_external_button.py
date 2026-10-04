@@ -24,6 +24,7 @@ from waiting import wait_until  # noqa: E402
 
 from gallery.core.external import launch  # noqa: E402
 from gallery.core.library.config import prepare_library  # noqa: E402
+from gallery.ui import desktop  # noqa: E402
 from gallery.ui.external_button import (  # noqa: E402
     BUTTON_GAP,
     BUTTON_SIZE,
@@ -33,6 +34,8 @@ from gallery.ui.external_button import (  # noqa: E402
     calendar_icon,
 )
 from gallery.ui.main_window import MainWindow  # noqa: E402
+from gallery.ui.search_field import MARGIN_RIGHT as SEARCH_FIELD_MARGIN_RIGHT  # noqa: E402
+from gallery.ui.search_field import WIDTH as SEARCH_FIELD_WIDTH  # noqa: E402
 
 SEARCH_X = 800
 
@@ -171,10 +174,62 @@ def window(qt_app: QApplication, tmp_path: Path) -> Iterator[MainWindow]:
     instance.close()
 
 
-def test_button_is_hidden_on_the_grid_page(window: MainWindow) -> None:
-    """日历那一页有「哪一层、哪一天」可言，网格页没有 —— 于是它整条不出现。"""
+def test_button_is_visible_on_the_grid_page(window: MainWindow) -> None:
+    """网格页上换的是**访达**那一项（有当前文件夹可开），按钮照样在。"""
     assert window._stack.currentWidget() is window._grid_page
-    assert window._external_button.isVisible() is False
+    assert window._external_button.isVisible() is window._owns_title_bar
+
+
+def test_grid_page_offers_the_finder_not_the_calendar(window: MainWindow) -> None:
+    """日历那一项**只在日历页出现** —— 网格页上压根没有「哪一天」可开。"""
+    assert _menu_texts(window._external_button) == ["访达"]
+
+
+def test_calendar_page_offers_only_the_calendar(window: MainWindow) -> None:
+    """反过来也一样：日历页只有 Google 日历那一项。"""
+    window._enter_calendar()
+    assert _menu_texts(window._external_button) == ["Google 日历"]
+
+
+def test_no_library_means_the_button_stays_out(window: MainWindow) -> None:
+    """还没打开库（欢迎页）时两样都没有 —— **空菜单的图标只会让人以为坏了**。"""
+    window._library = None
+    window._external_button.refresh()
+    assert window._external_button.is_available() is False
+    assert _menu_texts(window._external_button) == []
+
+
+def test_the_current_folder_is_the_library_root_at_first(window: MainWindow) -> None:
+    """全部照片视图下锚点是库根 —— 口径就是既有那一句 ``_current_dir or root``。"""
+    window._current_dir = None
+    assert window._current_folder() == window._library.root
+
+
+def test_the_current_folder_follows_the_album_you_went_into(window: MainWindow) -> None:
+    album = window._library.root / "京都"
+    album.mkdir()
+    window._current_dir = album
+    assert window._current_folder() == album
+
+
+def test_grouping_still_reaches_the_folder_behind_it(window: MainWindow) -> None:
+    """**分组时用的也是它**：分组卡片自己不是磁盘上的东西，它代表的那批照片就摆在
+    这个目录里（ADR 0020）—— 于是向上找到的文件夹正是它，不必再往别处问。"""
+    window._current_dir = window._library.root / "京都"
+    window._group_view = ("month", "2026-06")
+    assert window._current_folder() == window._library.root / "京都"
+
+
+def test_the_finder_entry_reveals_that_folder(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """走的是右键菜单**同一条** ``reveal_in_finder``（ADR 0014 决策 3）。"""
+    seen: list[list[Path]] = []
+    monkeypatch.setattr(
+        desktop, "reveal_in_finder", lambda paths: seen.append(list(paths)) or "已在访达中显示。"
+    )
+    window._open_finder()
+    assert seen == [[window._library.root]]
 
 
 def test_button_appears_on_the_calendar_page(window: MainWindow) -> None:
@@ -195,16 +250,27 @@ def test_button_is_placed_left_of_the_search_field(window: MainWindow) -> None:
 
 
 def test_title_text_gives_room_for_the_button(window: MainWindow) -> None:
-    """按钮摆出来之后，标题文字要给它也让出来 —— 否则长相册名从它底下穿过去。"""
-    window._enter_calendar()
+    """按钮摆出来之后，标题文字要给它也让出来 —— 否则长相册名从它底下穿过去。
+
+    右上角那一段 = 搜索胶囊 + 胶囊的右边距 + **按钮 + 按钮与胶囊之间的缝**。
+    """
     window.show()
     if not window._owns_title_bar:
         pytest.skip("这一条标题条在本平台上不存在（只有 macOS 有）")
-    with_button = window._title_bar._right_reserved
-    window._stack.setCurrentWidget(window._grid_page)
-    window._update_action_states()
-    without = window._title_bar._right_reserved
-    assert with_button - without == BUTTON_SIZE + BUTTON_GAP
+    assert window._external_button.isVisible()
+    assert window._title_bar._right_reserved == (
+        SEARCH_FIELD_WIDTH + 2 * SEARCH_FIELD_MARGIN_RIGHT + BUTTON_SIZE + BUTTON_GAP
+    )
+
+
+def test_nothing_is_reserved_when_the_button_is_away(window: MainWindow) -> None:
+    """按钮收起来时**不让位**：空出来的宽度还给标题文字，长名字才摆得下。"""
+    window.show()
+    if not window._owns_title_bar:
+        pytest.skip("这一条标题条在本平台上不存在（只有 macOS 有）")
+    window._external_button.setVisible(False)
+    window._layout_title_bar()
+    assert window._title_bar._right_reserved == (SEARCH_FIELD_WIDTH + 2 * SEARCH_FIELD_MARGIN_RIGHT)
 
 
 def test_calendar_entry_carries_the_current_level_and_day(
