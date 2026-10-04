@@ -338,14 +338,14 @@ def test_every_menu_is_split_into_the_same_four_groups(
     write = ["移到废纸篓"]
     expected = {
         "照片": [
-            ["打开", "在默认应用中打开", *look],
+            ["打开", "在默认应用中打开", *look, "设为相册封面"],
             copy,
             ["重命名…", *write],
             ["显示元数据信息", "复制元数据"],
         ],
         "多选照片": [[*look], copy, write],
         "大图": [
-            ["退出", "在默认应用中打开", *look],
+            ["退出", "在默认应用中打开", *look, "设为相册封面"],
             copy,
             ["重命名…", *write],
             ["显示元数据信息", "复制元数据"],
@@ -389,6 +389,7 @@ def test_photo_menu_items(qt_app: QApplication, window: MainWindow) -> None:
         "打开",
         "在默认应用中打开",
         "在访达中显示",
+        "设为相册封面",
         "",
         "拷贝",
         "拷贝路径",
@@ -1108,6 +1109,7 @@ def test_detail_menu_is_the_photo_menu_with_close_on_top(
         "退出",
         "在默认应用中打开",
         "在访达中显示",
+        "设为相册封面",
         "",
         "拷贝",
         "拷贝路径",

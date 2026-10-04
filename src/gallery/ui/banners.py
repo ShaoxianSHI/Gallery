@@ -145,6 +145,23 @@ def undo_banner(result: UndoResult) -> str:
     return f"{head}{note}。"
 
 
+def album_cover_banner(album_name: str, photo_name: str) -> str:
+    """设完相册封面之后的那行提示（ADR 0028）。
+
+    **两样都要说出来**：是哪一张成了封面、它是**哪个相册**的封面。用户是在相册内部
+    按的右键，只说「已设为封面」的话，他得自己回去确认设的是不是刚才看的那个相册。
+
+    不提撤销：这一条只写 Gallery 自己的配置文件，不在 ⌘Z 那一摞栈里（决策 5），
+    说一句「⌘Z 可以撤销」就是在骗人。要改回去是相册右键菜单里的「取消相册封面」。
+    """
+    return f"已把「{photo_name}」设为「{album_name}」的封面。"
+
+
+def album_cover_cleared_banner(album_name: str) -> str:
+    """取消相册封面之后的那行提示：说清它回到了什么行为上（ADR 0028）。"""
+    return f"「{album_name}」恢复用里面的第一张照片当封面。"
+
+
 def first_reason(failures: Sequence[Failure]) -> str:
     """失败原因的摘要。
 
@@ -171,6 +188,8 @@ def album_name(entries: Sequence[GridEntry]) -> str:
 
 
 __all__ = [
+    "album_cover_banner",
+    "album_cover_cleared_banner",
     "album_name",
     "first_reason",
     "paste_banner",

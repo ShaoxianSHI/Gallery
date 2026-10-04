@@ -6,21 +6,30 @@
 打开一个库（``Library.open``）是**只读**的：它不创建任何目录、不写任何文件。
 创建配置目录是 ``gallery.core.library.config`` 里 ``prepare_library`` 的职责，
 且必须由界面在用户同意后显式调用。
+
+**唯一的例外是「设 / 取消相册封面」那两个方法**（:meth:`Library.set_album_cover` 等）：
+它们写的是 ``config.toml`` 也就是 Gallery 自己的配置文件，用户的照片一个字节都不动，
+而且只在用户亲手点了菜单里那一条之后才发生（ADR 0028）。
 """
 
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Container, Iterator, Sequence
+from collections.abc import Callable, Container, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 from gallery.core import paths
-from gallery.core.errors import LibraryNotAccessibleError
-from gallery.core.library.config import LibraryConfig, load_config
+from gallery.core.errors import ConfigError, LibraryNotAccessibleError
+from gallery.core.library.config import LibraryConfig, load_config, save_config
 from gallery.core.library.index import FacetIndex
-from gallery.core.library.photos import FolderRef, GridEntry, PhotoRef
+from gallery.core.library.photos import (
+    FolderRef,
+    GridEntry,
+    PhotoRef,
+    is_supported_photo,
+)
 from gallery.core.library.scanner import (
     ScanReport,
     iter_albums,
@@ -225,7 +234,8 @@ class Library:
         should_cancel: Callable[[], bool] | None = None,
         skip: Container[Path] = (),
     ) -> PhotoRef | None:
-        """相册封面：文件夹里（含更深的层级）找到的第一张照片，没有则 ``None``。
+        """相册封面：用户指定的那一张，没有指定就找文件夹里（含更深的层级）的第一张，
+        再没有则 ``None``。
 
         用「找到第一张就停」的搜索做封面：整棵树可能很大，而封面只需要一张。
 
@@ -236,10 +246,125 @@ class Library:
         folder = Path(folder)
         if not folder.is_dir():
             return None
+        # **指定的那一张排第一**（ADR 0028）：它也照 ``skip`` 走 —— 指定的那张读不出来时
+        # 退回「第一张照片」，而不是让整张卡片一直黑着。
+        chosen = self.album_cover(folder)
+        if chosen is not None and chosen.path not in skip:
+            return chosen
         for ref in iter_photos(folder, should_cancel=should_cancel):
             if ref.path not in skip:
                 return ref
         return None
+
+    def album_cover(self, folder: Path) -> PhotoRef | None:
+        """这个相册**被指定过**的封面照片。
+
+        没指定、指定的那张已经不在了、或者它现在压根不是一张能读的照片，都返回
+        ``None`` —— 调用方据此退回「里面第一张照片」（ADR 0028 决策 4）。
+
+        那一行配置**不会因此被删掉**：用户把照片挪出去又挪回来时，它又该是封面了。
+        """
+        key = _relative_posix(self._root, folder)
+        if key is None:
+            return None
+        stored = self._config.album_covers.get(key)
+        if stored is None:
+            return None
+        path = self._root / stored
+        # 先按扩展名与「是不是文件」筛掉，再 stat：一张读不出来的照片留给流水线去报错
+        # （它有换下一张当封面的机制），这里只挡「压根不是照片」的那些。
+        if not is_supported_photo(path) or not path.is_file():
+            return None
+        try:
+            return PhotoRef.from_path(path)
+        except OSError:
+            return None
+
+    def has_album_cover(self, folder: Path) -> bool:
+        """这个相册有没有**被指定过**封面（不管那张照片现在还在不在）。
+
+        界面靠它决定「取消相册封面」这一条出不出现：用户看得见自己设过，
+        哪怕那张照片此刻已经不在了 —— 那也仍然是他设过的。
+        """
+        key = _relative_posix(self._root, folder)
+        return key is not None and key in self._config.album_covers
+
+    def set_album_cover(self, album: Path, photo: Path) -> None:
+        """把 ``photo`` 记成 ``album`` 的封面，写进 ``config.toml``（ADR 0028）。
+
+        **只写 Gallery 自己的配置文件**，用户的照片一个字节都不动（红线 1）——
+        因此它既不记 journal 也不进撤销栈：那一摞栈装的是「动了用户文件」的那些操作。
+        撤销由对称的 :meth:`clear_album_cover` 负责（决策 5）。
+
+        :raises ConfigError: 封面照片不在这个相册里、不是一张受支持的照片、
+            或者这个库压根没有配置目录（用户当初选的是「缓存到系统目录」）。
+        """
+        album_key = self._album_key(album)
+        photo = Path(photo)
+        photo_key = _relative_posix(self._root, photo)
+        if photo_key is None:
+            raise ConfigError(f"「{photo.name}」不在这个库里，没法拿它当封面。", path=photo)
+        if not is_supported_photo(photo):
+            raise ConfigError(
+                f"「{photo.name}」不是 Gallery 支持的照片格式，换一张试试。", path=photo
+            )
+        if not photo_key.startswith(f"{album_key}/"):
+            # 与 ``config.from_mapping`` 里那条校验同一个判据：写进去的和读得出来的
+            # 必须是同一种键，否则这条设置在下一次打开库时就成了一句报错。
+            raise ConfigError(
+                f"封面得是「{Path(album).name}」里的照片，「{photo.name}」不在这个相册里。",
+                path=photo,
+            )
+        self._write_covers({**self._config.album_covers, album_key: photo_key})
+
+    def clear_album_cover(self, album: Path) -> bool:
+        """取消这个相册的指定封面，回到「里面第一张照片」。本来就没有就返回 ``False``。
+
+        没设置过就**什么都不写** —— 一次没有任何变化的配置改写只是白白多一次
+        ``fsync``，还可能在只读的库上凭空造出一个报错。
+        """
+        key = _relative_posix(self._root, album)
+        if key is None or key not in self._config.album_covers:
+            return False
+        self._write_covers(
+            {name: cover for name, cover in self._config.album_covers.items() if name != key}
+        )
+        return True
+
+    def _album_key(self, album: Path) -> str:
+        """相册在配置文件里的那把键：相对库根的 posix 路径。"""
+        album = Path(album)
+        if not album.is_dir():
+            raise ConfigError(f"「{album.name}」不是一个文件夹，没法给它设封面。", path=album)
+        key = _relative_posix(self._root, album)
+        if key is None:
+            if album.resolve() == self._root:
+                raise ConfigError(
+                    "库根目录不是一个相册，它在网格上不是一张卡片，没有封面可设。",
+                    path=album,
+                )
+            raise ConfigError(f"「{album.name}」不在这个库里，没法给它设封面。", path=album)
+        return key
+
+    def _write_covers(self, covers: Mapping[str, str]) -> None:
+        """把封面那张表写回 ``config.toml``，并让内存里的配置跟着更新。
+
+        **内存那份必须一起换**：封面是刚写进去的，同一个窗口里下一次要画那张卡片时
+        问的就是内存里这份 —— 只写文件不换内存，用户会看着自己刚设的封面没换上，
+        直到下一次打开库才生效。
+        """
+        directory = paths.config_dir(self._root)
+        if not directory.is_dir():
+            # 用户当初选的是「缓存到系统目录」，那个承诺是**照片文件夹一个字节都不写入**。
+            # 悄悄把配置目录建出来就是毁掉那个承诺，所以这里只说清楚，不写。
+            raise ConfigError(
+                f"这个库里没有 {directory.name} 目录，封面设置没有地方保存。"
+                "重新打开这个库并选择「在库中缓存」之后就能设封面了。",
+                path=directory,
+            )
+        updated = replace(self._config, album_covers=dict(covers))
+        save_config(self._root, updated)
+        self._config = updated
 
     def thumbnail(
         self, ref: PhotoRef, *, should_cancel: Callable[[], bool] | None = None
@@ -663,6 +788,23 @@ class Library:
         """改名不改变像素，但缓存 key 含路径 —— 不挪就会留下永远命不中的孤儿条目。"""
         if isinstance(previous, PhotoRef) and isinstance(entry, PhotoRef):
             self._thumbnails.relocate(previous, entry)
+
+
+def _relative_posix(root: Path, path: Path) -> str | None:
+    """``path`` 相对 ``root`` 的 posix 写法；不在库内、或它就是库根本身，返回 ``None``。
+
+    与 :meth:`Library.album_label` 是同一套理由：库根与扫描产出的路径都已经解析过，
+    ``/var`` 与 ``/private/var`` 说的是同一个文件夹，混着比就永远对不上（macOS 上
+    ``tmp_path`` 就在这条链上，测试尤其容易撞上）。
+
+    库根自己返回 ``None`` 而不是 ``"."``：库根在网格上不是一张相册卡片，
+    「给它设封面」这件事根本不该成立（ADR 0028 决策 2）。
+    """
+    try:
+        relative = Path(path).resolve().relative_to(Path(root).resolve())
+    except (OSError, ValueError):
+        return None
+    return relative.as_posix() if relative.parts else None
 
 
 def _has_coordinates(facets: PhotoFacets) -> bool:

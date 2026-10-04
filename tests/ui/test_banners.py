@@ -168,3 +168,22 @@ def test_moving_promises_that_it_can_be_undone(tmp_path: Path) -> None:
 
     assert "撤销" in banners.transfer_banner(result, "京都", verb="移动")
     assert "撤销" not in banners.transfer_banner(paste, "京都", verb="复制")
+
+
+def test_the_cover_banner_names_both_the_photo_and_its_album() -> None:
+    """用户是在**相册内部**按的右键：只说「已设为封面」他得自己回去确认设的是哪个相册。"""
+    text = banners.album_cover_banner("京都", "一张.jpg")
+
+    assert text == "已把「一张.jpg」设为「京都」的封面。"
+
+
+def test_the_cover_banner_never_promises_an_undo() -> None:
+    """**不提撤销**：这一条写的是 Gallery 自己的配置文件，不在 ⌘Z 那一摞栈里
+    （ADR 0028 决策 5）。说「⌘Z 可以撤销」就是在骗用户。"""
+    assert "撤销" not in banners.album_cover_banner("京都", "一张.jpg")
+    assert "撤销" not in banners.album_cover_cleared_banner("京都")
+
+
+def test_clearing_the_cover_says_what_it_fell_back_to() -> None:
+    """取消之后得说清它回到了**什么行为**上 —— 「第一张照片」，而不是「已取消」。"""
+    assert banners.album_cover_cleared_banner("京都") == "「京都」恢复用里面的第一张照片当封面。"

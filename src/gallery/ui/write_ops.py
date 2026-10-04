@@ -12,6 +12,7 @@
 - **复制到相册 / 移动到相册**（ADR 0019）。
 - **改名**（ADR 0004）与**移到废纸篓**（ADR 0008）—— 仅有的两个直接改原件的入口。
 - **撤销**（⌘Z）：改回去，或者从废纸篓取回来。
+- **设为相册封面 / 取消相册封面**（ADR 0028）—— 写的是 ``config.toml``，不碰照片。
 - 以及它们共用的那一个前置问题：「**现在动的是哪些东西**」。
 
 **它不碰文件。** 每一个真正的写操作都走 ``self._library`` 上的某个方法
@@ -30,6 +31,7 @@
 ``_library``            当前库；没有库时每条命令都直接返回
 ``_runner`` / ``_write_job``  后台写操作与「正在写」那一摊
 ``_model`` / ``_grid``  网格与模型，写完要同步它们
+``_pipeline``           缩略图流水线；换封面要让它忘掉对这个相册的记忆
 ``_stack`` / ``_grid_page`` / ``_detail_page``  「现在在网格页还是大图页」决定粘到哪里
 ``_group_view`` / ``_browse_mode`` / ``_current_dir``  当前这一层的判据
 ``_preview_cache`` / ``_metadata_cache``  写完要把受影响的缓存条目丢掉
@@ -318,6 +320,115 @@ class WriteOpsMixin:
             # 文件夹已经在手上了，缺的只是一条历史。如实说，别让用户以为「随时可查」。
             self._show_banner("没能记下操作日志。")
         self._grid.begin_rename(self._model.index(row, 0))
+
+    # ---- 相册封面（ADR 0028）-------------------------------------------------
+    #
+    # 这一段写的是 ``config.toml``，也就是 **Gallery 自己的配置文件**：用户的照片一个
+    # 字节都不动，因此不触犯红线 1，也**不进撤销栈**（那一摞栈装的是「动了用户文件」
+    # 的那些操作）。它仍然收在这个文件里，是因为它毕竟是「用户按了一下之后才发生的写入」，
+    # 而这一整个文件就是为了让那种写入在代码里一处可查（见模块文档）。
+    #
+    # 撤销是**对称的那一条命令**：相册右键菜单里的「取消相册封面」，不靠 ⌘Z。
+
+    def cover_candidate(self) -> PhotoRef | None:
+        """「设为相册封面」此刻作用于哪张照片；不该出现这一条时返回 ``None``。
+
+        三道判据，缺一条就**不出现**（不是置灰，ADR 0014 决策 4）：
+
+        - **恰好选中一张照片**。分组卡片不算：卡片不是磁盘上的东西，「把这个卡片当封面」
+          说不清指的是哪一张（组里恰好一张时更会让人以为说的是整组）。
+        - 它**属于某个相册**：库根下的照片没有相册卡片可以当封面，父目录就是库根。
+        - 父目录确实还在（照片刚被移走时它可能已经没了）。
+
+        大图页上算的是**正在看的那一张** —— 与 :meth:`_selected_entries` 同一个分叉
+        （ADR 0021）：翻过图之后网格的选区早就不是这一张了。
+        """
+        library = self._library
+        if library is None:
+            return None
+        entries = self._selected_entries()
+        if len(entries) != 1:
+            return None
+        entry = entries[0]
+        if not isinstance(entry, PhotoRef):
+            return None
+        album = entry.path.parent
+        if album == library.root or not album.is_dir():
+            return None
+        return entry
+
+    def covered_album(self) -> Path | None:
+        """「取消相册封面」此刻作用于哪个相册；没有可取消的就返回 ``None``。
+
+        判据是「选中的**恰好是一个**相册，而且它真的被指定过封面」—— 没指定过的那一
+        条就**不出现**（用户看得见自己设过，也就没有需要撤销的东西）。
+        """
+        library = self._library
+        entries = self._selected_entries()
+        if library is None or len(entries) != 1:
+            return None
+        entry = entries[0]
+        if not isinstance(entry, FolderRef):
+            return None
+        return entry.path if library.has_album_cover(entry.path) else None
+
+    def set_selected_as_album_cover(self) -> None:
+        """「设为相册封面」：把这一张记成它**所在那个相册**的封面（ADR 0028 决策 1）。
+
+        **相册是照片的父目录，不问「现在站在哪一层」** —— 用户在「全部照片」那一屏
+        里选到一张照片，说的一定是「它自己那个相册」，而不是当前这一层。
+
+        不走后台线程：改一个键值对再落一次盘，与 ``mkdir`` 同量级（ADR 0022 决策 6）。
+        """
+        library = self._library
+        photo = self.cover_candidate()
+        if library is None or photo is None:
+            self._show_banner("这里没有可以设为相册封面的照片。")
+            return
+        album = photo.path.parent
+        try:
+            library.set_album_cover(album, photo.path)
+        except GalleryError as exc:
+            logger.info("设置相册封面失败：%s", exc.detail or exc.message)
+            self._show_banner(exc.message)
+            return
+        self._refresh_album_cover(album)
+        self._show_banner(banners.album_cover_banner(album.name, photo.name))
+
+    def clear_album_cover(self) -> None:
+        """「取消相册封面」：这个相册回到「里面第一张照片」当封面（ADR 0028 决策 5）。"""
+        library = self._library
+        album = self.covered_album()
+        if library is None or album is None:
+            return
+        try:
+            library.clear_album_cover(album)
+        except GalleryError as exc:
+            logger.info("取消相册封面失败：%s", exc.detail or exc.message)
+            self._show_banner(exc.message)
+            return
+        self._refresh_album_cover(album)
+        self._show_banner(banners.album_cover_cleared_banner(album.name))
+
+    def _refresh_album_cover(self, album: Path) -> None:
+        """封面换了人，让那一张相册卡片重新去取图。
+
+        **两处记忆都要清**，少任何一处新封面都不会立刻出现：
+
+        - **模型**里已经缩放好的那张。不清的话 :meth:`PhotoListModel.needs_thumbnail`
+          说「这张我有了」，网格就一直挂着旧封面 —— 而相册卡片的键就是相册自己的路径，
+          它并不知道封面已经换了人。
+        - **流水线**里对这个相册的记忆：试过哪些照片当封面（:class:`_Cover`）与
+          「里面读不出图」。少了后一个，**一个原本空着的相册会永远停在文件夹图标上** ——
+          用户刚把里面唯一那张设成封面，看到的却还是那个图标。
+
+        相册卡片不在当前这一屏时这两步都是空转（模型里没有那一行），而回到上一层时
+        本来就会重新列一遍。
+        """
+        self._model.forget_thumbnails([album])
+        if self._pipeline is not None:
+            self._pipeline.forget([album])
+        self._refresh_thumbnail_window()
 
     def _on_album_chosen_for_copy(self, action: QAction) -> None:
         """用户在「复制到相册」里挑了一个相册。目标路径由子菜单挂在 ``action.data()`` 上。"""

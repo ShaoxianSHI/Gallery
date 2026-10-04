@@ -13,8 +13,13 @@ import pytest
 from PIL import Image
 
 from gallery.core import paths
-from gallery.core.errors import LibraryNotAccessibleError
-from gallery.core.library.config import LibraryConfig, save_config
+from gallery.core.errors import ConfigError, LibraryNotAccessibleError
+from gallery.core.library.config import (
+    LibraryConfig,
+    load_config,
+    prepare_library,
+    save_config,
+)
 from gallery.core.library.facade import Library
 from gallery.core.library.photos import FolderRef
 
@@ -154,6 +159,204 @@ def test_folder_cover_returns_none_for_empty(tmp_path: Path) -> None:
 
     assert library.folder_cover(album) is None
     assert library.folder_cover(tmp_path / "不存在") is None
+
+
+# ---- 相册封面（ADR 0028）---------------------------------------------------
+
+
+@pytest.fixture
+def library_with_album(tmp_path: Path, make_photo: Callable[..., Path]) -> Library:
+    """一个库：``京都/`` 里两张照片（``一张.jpg``、``另一张.jpg``），配置目录已建好。"""
+    album = tmp_path / "京都"
+    make_photo("一张.jpg", directory=album)
+    make_photo("另一张.jpg", directory=album)
+    prepare_library(tmp_path)
+    return Library.open(tmp_path)
+
+
+def test_set_album_cover_writes_the_config_and_takes_effect(
+    library_with_album: Library,
+) -> None:
+    """设完之后：文件里多了一行、下一次打开库读得到、这一层立刻就是那张封面。"""
+    album = library_with_album.root / "京都"
+    chosen = album / "另一张.jpg"
+
+    library_with_album.set_album_cover(album, chosen)
+
+    assert load_config(library_with_album.root).album_covers == {"京都": "京都/另一张.jpg"}
+    assert Library.open(library_with_album.root).folder_cover(album).path == chosen
+
+
+def test_setting_a_cover_leaves_the_other_settings_alone(
+    library_with_album: Library, tmp_path: Path
+) -> None:
+    """写封面走的是**整份配置**：顺手把用户手改的缩略图档位抹掉是不能接受的。"""
+    save_config(
+        library_with_album.root,
+        LibraryConfig(thumbnail_max_edge=128, recursive=False),
+    )
+    library = Library.open(library_with_album.root)
+    album = library.root / "京都"
+
+    library.set_album_cover(album, album / "另一张.jpg")
+
+    stored = load_config(library.root)
+    assert (stored.recursive, stored.thumbnail_max_edge) == (False, 128)
+
+
+def test_the_cover_is_found_in_a_sub_album(library_with_album: Library) -> None:
+    """父相册的封面可以是子相册里的照片 —— 递归的库本来就常这么用。"""
+    nested = library_with_album.root / "京都" / "奈良"
+    nested.mkdir()
+    photo = nested / "鹿.jpg"
+    photo.write_bytes(b"x")
+    library_with_album.set_album_cover(library_with_album.root / "京都", photo)
+
+    cover = library_with_album.folder_cover(library_with_album.root / "京都")
+
+    assert cover is not None
+    assert cover.path == photo
+
+
+def test_a_cover_that_is_gone_falls_back_to_the_first_photo(
+    library_with_album: Library,
+) -> None:
+    """封面照片被移走之后退回「第一张照片」，**而那一行配置留着**。
+
+    留着是有意的：用户把照片挪出去又挪回来时，它又该是封面了；而界面上什么都不用说 ——
+    相册卡片本来就该有一张能看的封面，用户要的是封面，不是原因。
+    """
+    album = library_with_album.root / "京都"
+    chosen = album / "另一张.jpg"
+    library_with_album.set_album_cover(album, chosen)
+    chosen.unlink()
+
+    cover = library_with_album.folder_cover(album)
+
+    assert cover is not None
+    assert cover.path == album / "一张.jpg"
+    assert library_with_album.has_album_cover(album) is True
+
+
+def test_an_unreadable_cover_is_skipped_like_any_other(library_with_album: Library) -> None:
+    """指定的那张被 ``skip`` 挡下（云盘上没下完）时，往后找而不是卡住。
+
+    与「第一张照片」那条规矩完全一样：不卡住，否则整张卡片永远挂着一张黑图。
+    """
+    album = library_with_album.root / "京都"
+    chosen = album / "另一张.jpg"
+    library_with_album.set_album_cover(album, chosen)
+
+    cover = library_with_album.folder_cover(album, skip={chosen})
+
+    assert cover is not None
+    assert cover.path == album / "一张.jpg"
+
+
+def test_an_album_with_no_cover_reports_none(library_with_album: Library) -> None:
+    album = library_with_album.root / "京都"
+
+    assert library_with_album.album_cover(album) is None
+    assert library_with_album.has_album_cover(album) is False
+
+
+def test_clear_album_cover_puts_the_first_photo_back(library_with_album: Library) -> None:
+    album = library_with_album.root / "京都"
+    library_with_album.set_album_cover(album, album / "另一张.jpg")
+
+    assert library_with_album.clear_album_cover(album) is True
+
+    cover = library_with_album.folder_cover(album)
+    assert cover is not None
+    assert cover.path == album / "一张.jpg"
+    assert load_config(library_with_album.root).album_covers == {}
+
+
+def test_clearing_a_cover_that_never_existed_writes_nothing(tmp_path: Path) -> None:
+    """没设置过就**一个字节都不写**：一次没有变化的改写只是白占一次 fsync，
+    在只读的库上还会凭空造出一个报错。"""
+    prepare_library(tmp_path)
+    library = Library.open(tmp_path)
+    before = paths.config_file(tmp_path).read_bytes()
+
+    assert library.clear_album_cover(tmp_path / "京都") is False
+
+    assert paths.config_file(tmp_path).read_bytes() == before
+
+
+def test_setting_a_cover_needs_the_config_dir(tmp_path: Path) -> None:
+    """用户当初选的是「缓存到系统目录」：那个承诺是照片文件夹一个字节都不写入。
+
+    悄悄把配置目录建出来就是毁掉它，所以这里只说清楚，不写。
+    """
+    album = tmp_path / "京都"
+    photo = album / "一张.jpg"
+    photo.parent.mkdir(parents=True)
+    photo.write_bytes(b"x")
+    library = Library.open(tmp_path, cache_in_library=False, cache_base=tmp_path / "系统")
+
+    with pytest.raises(ConfigError) as excinfo:
+        library.set_album_cover(album, photo)
+
+    assert "在库中缓存" in excinfo.value.message
+    assert paths.has_config_dir(tmp_path) is False
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["京都"]
+
+
+def test_a_cover_from_another_album_is_refused(library_with_album: Library) -> None:
+    """兄弟相册里的照片不是这个相册的封面 —— 与解析配置时那条校验同一个判据，
+    否则写进去的东西下一次打开库就会变成一句报错。"""
+    library = library_with_album
+    other = library.root / "奈良"
+    other.mkdir()
+    stranger = other / "鹿.jpg"
+    stranger.write_bytes(b"x")
+
+    with pytest.raises(ConfigError) as excinfo:
+        library.set_album_cover(library.root / "京都", stranger)
+
+    assert "不在这个相册里" in excinfo.value.message
+
+
+def test_the_library_root_is_not_an_album(library_with_album: Library) -> None:
+    """库根在网格上不是一张相册卡片，没有封面可设。"""
+    library = library_with_album
+    top = library.root / "散着的.jpg"
+    top.write_bytes(b"x")
+
+    with pytest.raises(ConfigError) as excinfo:
+        library.set_album_cover(library.root, top)
+
+    assert "库根目录不是一个相册" in excinfo.value.message
+
+
+def test_an_unsupported_file_is_not_a_cover(library_with_album: Library) -> None:
+    album = library_with_album.root / "京都"
+
+    with pytest.raises(ConfigError) as excinfo:
+        library_with_album.set_album_cover(album, album / "读我.txt")
+
+    assert "支持的照片格式" in excinfo.value.message
+
+
+def test_a_hand_edited_cover_that_is_not_a_photo_is_ignored(
+    tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """用户把封面那一行指到了一个 ``.txt`` 上：不当成错，而是当没设过。
+
+    错的是那一份配置，不是一次浏览；而 ``folder_cover`` 已经会退回第一张照片，
+    硬报错只会让用户连照片都看不成。
+    """
+    album = tmp_path / "京都"
+    make_photo("一张.jpg", directory=album)
+    (album / "读我.txt").write_text("x", encoding="utf-8")
+    prepare_library(tmp_path, config=LibraryConfig(album_covers={"京都": "京都/读我.txt"}))
+    library = Library.open(tmp_path)
+
+    cover = library.folder_cover(album)
+
+    assert cover is not None
+    assert cover.path == album / "一张.jpg"
 
 
 # ---- 全部相册（ADR 0019：复制到相册 / 移动到相册的目标清单）------------------

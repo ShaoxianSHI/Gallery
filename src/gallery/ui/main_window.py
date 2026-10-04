@@ -8,7 +8,7 @@
 - 不自己读原图：一切像素都来自 ``gallery.core``（经 ``Library`` 门面）。
 - 不偷偷写盘：**每一次写操作都来自用户在菜单或快捷键里亲手触发的那一下** ——
   改名（⌘R）、移到废纸篓（⌘⌫）、粘贴（⌘V）、复制 / 移动到相册、新建相册
-  （⇧⌘N）、撤销（⌘Z），另加开场对话框里同意后的 ``prepare_library``。
+  （⇧⌘N）、设为相册封面、撤销（⌘Z），另加开场对话框里同意后的 ``prepare_library``。
   每一条都有对应的 ADR，没有一个是后台整理、脚本改名或「顺便改改」（红线 1）。
 - 不阻塞主线程：**大件**都在 ``TaskRunner`` 的线程池里 —— 扫描、分组用的元数据批量
   读取、缩略图与全分辨率解码、粘贴与复制 / 移动（一次几百 MB）。
@@ -644,6 +644,16 @@ class MainWindow(WriteOpsMixin, QMainWindow):
 
         self._copy_group_action = QAction("复制分组条件", self)
         self._copy_group_action.triggered.connect(self.copy_current_group)
+
+        # 「设为相册封面」/「取消相册封面」（ADR 0028）：同样只活在右键菜单里，理由与
+        # 上面那两条一模一样 —— 都要「当前这一格」才有对象（前者是一张照片，后者是一个
+        # 相册）。**刻意不给真快捷键**：⇧⌘C 已经是「拷贝路径」，而这两条一年也用不到
+        # 几次，为它抢一个常用键位不值当。
+        self._set_cover_action = QAction("设为相册封面", self)
+        self._set_cover_action.triggered.connect(self.set_selected_as_album_cover)
+
+        self._clear_cover_action = QAction("取消相册封面", self)
+        self._clear_cover_action.triggered.connect(self.clear_album_cover)
 
         self._quit_action = QAction("退出 Gallery", self)
         self._quit_action.setShortcut(QKeySequence.StandardKey.Quit)
@@ -2618,6 +2628,12 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             sort_choices=tuple(self._sort_actions.values()),
             descending=self._descending_action,
             size_choices=tuple(self._size_actions),
+            # 封面那两条（ADR 0028）按**这一下的落点与选区**算，与「新建相册」同一个做法：
+            # 此刻没有对象就是 ``None``，菜单里不出现这一行，而不是摆一条点不动的。
+            # 对象是谁由 ``WriteOpsMixin`` 回答 —— 它与「粘到哪去」「动的是哪些东西」
+            # 是同一个前置问题，答案自然也在同一个地方。
+            set_cover=self._set_cover_action if self.cover_candidate() is not None else None,
+            clear_cover=self._clear_cover_action if self.covered_album() is not None else None,
         )
 
     def open_current_entry(self) -> None:
