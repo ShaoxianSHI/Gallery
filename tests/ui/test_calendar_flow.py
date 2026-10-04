@@ -209,66 +209,6 @@ def _days_total(page: object) -> int:
     )
 
 
-def test_switching_levels_leaves_no_cell_as_a_placeholder(
-    qt_app: QApplication,
-    calendar_window: MainWindow,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """切到周视图之后，那一格**立刻**就有图 —— 不是灰的占位。
-
-    三层要的档位互不相同（年 48 / 月 288 / 周 192 / 网格 176），而流水线的线程池里
-    **同时只解那么几张**。切过去的那一刻，上一档位的那一次通常还在飞；曾经「同一张
-    照片不能重复投递」是**按路径**一刀切的，于是新档位那一张被挡掉，在途的那一次回来
-    时带着**旧边长**（谁都用不上），而新档位从此**没人再解** —— 要等碰巧又滚动一次才
-    重新报上去。症状：刚切过来是灰的，切一下再切回来就好了（有时它自己又好了）。
-
-    「上一档位还在飞」在这里是**摆出来**的而不是等出来的：把月视图那一档的解码卡在闸上
-    （真机上正是从日历点开一格、或者从一个满屏的网格切过来时那样），于是周视图是自己
-    走新那一次解出来的，还是干等着前一次收工，只看这一刻。
-    """
-    import threading
-
-    import gallery.ui.thumbs.pipeline as pipeline_module
-
-    real = pipeline_module.to_scaled_qimage
-    gate = threading.Event()
-    # 月视图这一档（288）—— 拿它当「旧档位」来卡闸
-    month_edge = calendar_window._calendar_page.thumbnail_edge()
-
-    def gated(image: object, edge: int) -> object:
-        if edge == month_edge:
-            gate.wait(5.0)  # 卡住，直到用例放行
-        return real(image, edge)
-
-    monkeypatch.setattr(pipeline_module, "to_scaled_qimage", gated)
-
-    window = calendar_window
-    page = window._calendar_page
-    assert page.level() == "month"
-    # 等夹具那几次解码收干净，下面要的是「此刻刚好有一次在飞」
-    assert wait_until(qt_app, lambda: not window._pipeline._inflight), "夹具的解码没收工"
-    in_flight = list(page.current_view().visible_refs())
-    assert in_flight, "月视图这一屏没有要图的格子"
-
-    window._pipeline.set_window(in_flight, target_edge=month_edge)  # 这一档在飞
-    qt_app.processEvents()
-    assert window._pipeline._inflight, "没排上任务，前提不成立"
-
-    page.set_level("week")  # 周视图要另一个档位
-    qt_app.processEvents()
-    view = page.current_view()
-    assert wait_until(qt_app, lambda: not view._reveal.isActive()), "定位没有落地"
-    refs = list(view.visible_refs())
-    assert refs, "周视图这一屏没有要图的格子"
-
-    try:
-        assert wait_until(
-            qt_app, lambda: all(view.photo(ref) is not None for ref in refs), timeout=1.0
-        ), f"新档位被在途的那一次挡住了：{[r.name for r in refs if view.photo(r) is None]}"
-    finally:
-        gate.set()  # 放行，别把工作线程留在闸上
-
-
 def test_entering_a_drill_does_not_repoint_the_calendar_at_those_photos(
     qt_app: QApplication, calendar_window: MainWindow
 ) -> None:

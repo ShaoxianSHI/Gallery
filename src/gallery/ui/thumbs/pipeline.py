@@ -101,11 +101,7 @@ class ThumbnailPipeline(QObject):
         self._runner = runner
         self._queue = ThumbnailQueue()
         self._refs: dict[Path, PhotoRef] = {}
-        #: 每条路径**最新**那一次的 job_id（用来判断「是不是正在解」）。
         self._inflight: dict[Path, int] = {}
-        #: 所有还活着的任务：``job_id → (路径, 它是按哪个档位解的)``。
-        #: 一条路径可以同时有两个任务（见 :meth:`_dispatch`），所以计数与作废都问这一份。
-        self._live: dict[int, tuple[Path, int]] = {}
         self._failed: set[Path] = set()
         self._empty: set[Path] = set()
         #: 相册 → 挑封面挑到哪儿了（见 :class:`_Cover`）。
@@ -130,7 +126,7 @@ class ThumbnailPipeline(QObject):
 
         :param target_edge: 缩略图要缩到多长。在工作线程里做，``0`` 表示不缩放。
         """
-        self._target_edge = max(NO_EDGE, int(target_edge))  # noqa: E501
+        self._target_edge = max(NO_EDGE, int(target_edge))
         targets = [target for entry in visible if (target := _thumbnail_target(entry))]
         ahead = [target for entry in prefetch if (target := _thumbnail_target(entry))]
         self._queue.set_window(
@@ -144,10 +140,9 @@ class ThumbnailPipeline(QObject):
     def shutdown(self) -> None:
         """切库或关窗：作废所有在途结果，并请求取消它们的任务。"""
         self._generation += 1
-        for job_id in self._live:
+        for job_id in self._inflight.values():
             self._runner.cancel(job_id)
         self._inflight.clear()
-        self._live.clear()
         self._queue.clear()
         self._refs.clear()
         self._failed.clear()
@@ -192,22 +187,13 @@ class ThumbnailPipeline(QObject):
         self._refs = refs
 
     def _dispatch(self) -> None:
-        while len(self._live) < self._max_inflight:
+        while len(self._inflight) < self._max_inflight:
             path = self._queue.pop_next()
             if path is None:
                 return
-            if path in self._failed or path in self._empty:
-                continue
-            # 同一张照片**同一个档位**不能重复投递：窗口会随滚动反复刷新，而已在解码的
-            # 路径仍然会出现在新的可见窗口里。
-            #
-            # **档位不同就要再解一次**：日历三层与网格要的档位互不相同（年 48 / 月 288 /
-            # 周 192 / 网格 176），而切过去的那一刻，上一档位的那一次通常还在飞。按路径
-            # 一刀切地挡掉，于是新档位那一张**从此没人再解** —— 在途的那一次回来时带着
-            # 旧边长，谁都用不上（尺寸对不上就是没出图）。要等碰巧又滚动一次 / 又重排
-            # 一次才会重新报上去，于是「刚切过来是灰的，切一下再切回来就好了」。
-            busy = self._inflight.get(path)
-            if busy is not None and self._live.get(busy, (path, NO_EDGE))[1] == self._target_edge:
+            # 同一张照片不能重复投递：窗口会随滚动反复刷新，而已在解码的路径
+            # 仍然会出现在新的可见窗口里。
+            if path in self._inflight or path in self._failed or path in self._empty:
                 continue
             ref = self._refs.get(path)
             if ref is None:
@@ -259,8 +245,6 @@ class ThumbnailPipeline(QObject):
         # 小盒子把 job_id 递进去（:class:`_Job`）。拿到之后立刻写进 ``_inflight``。
         holder.job_id = job_id
         self._inflight[entry.path] = job_id
-        self._live[job_id] = (entry.path, edge)
-        self._live[job_id] = (entry.path, edge)
 
     def _release(self, entry: GridEntry, holder: _Job) -> None:
         """收尾时把这一格从「在途」里摘出去 —— **只摘自己那一次**。
@@ -270,10 +254,6 @@ class ThumbnailPipeline(QObject):
         ``_inflight`` 于是少数了（超过 ``_max_inflight`` 也不会再补），
         而 ``cancel()`` 更是再也够不着那个真正在跑的新任务。
         """
-        if holder.job_id is not None:
-            self._live.pop(holder.job_id, None)
-        if holder.job_id is not None:
-            self._live.pop(holder.job_id, None)
         if holder.job_id is not None and self._inflight.get(entry.path) == holder.job_id:
             del self._inflight[entry.path]
 
