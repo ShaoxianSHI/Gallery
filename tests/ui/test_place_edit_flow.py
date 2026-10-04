@@ -658,6 +658,22 @@ def test_three_buttons_on_top_and_two_below_aligned_with_paste_and_clear(
     assert top[2].x() + top[2].width() == dialog.width() - margins.right()  # 占满整行
 
 
+def test_no_input_box_has_a_placeholder(qt_app: QApplication) -> None:
+    """**空框里不浮字。** 左边那一列标签已经写着它们是什么，再说一遍只是说两遍。"""
+    dialog = _dialog(None, PlaceState())
+
+    assert [
+        field.placeholderText()
+        for field in (
+            dialog._country,
+            dialog._region,
+            dialog._city,
+            dialog._latitude,
+            dialog._longitude,
+        )
+    ] == ["", "", "", "", ""]
+
+
 def test_there_is_no_hint_line_left(qt_app: QApplication) -> None:
     """那行「保存后，XXX」已经删掉了 —— 用户不要它。"""
     dialog = _dialog(None, PlaceState(city="苏州"))

@@ -183,13 +183,13 @@ class PlaceEditDialog(QDialog):
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self._refresh)
 
+        # **不留占位文字**：左边那一列标签已经写着「国家」「省 / 州」「城市」「纬度」「经度」，
+        # 空框里再浮一遍同样的字只是把它说两遍。
         self._country = QLineEdit(state.country or "")
-        self._country.setPlaceholderText("国家")
         self._country.textChanged.connect(self._on_names_changed)
         form.addRow("国家", self._country)
 
         self._region = QLineEdit(state.region or "")
-        self._region.setPlaceholderText("省 / 州")
         self._region.textChanged.connect(self._on_names_changed)
         form.addRow("省 / 州", self._region)
 
@@ -199,7 +199,6 @@ class PlaceEditDialog(QDialog):
         # 补全仍然在：``QLineEdit.setCompleter`` 会照常弹候选，选中后由 ``_on_picked``
         # 把整条「城市 · 省州 · 国家」换回**光标处那一个城市名**。
         self._city = QLineEdit(state.city or "")
-        self._city.setPlaceholderText("城市（先填城市也行）")
         self._city.textChanged.connect(self._on_names_changed)
         self._completer = QCompleter(self)
         self._completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
@@ -211,11 +210,9 @@ class PlaceEditDialog(QDialog):
 
         coordinates = state.coordinates()
         self._latitude = QLineEdit(_format(coordinates[0] if coordinates else None))
-        self._latitude.setPlaceholderText("留空表示不改动")
         self._latitude.textChanged.connect(self._on_coordinates_changed)
         form.addRow("纬度", self._latitude)
         self._longitude = QLineEdit(_format(coordinates[1] if coordinates else None))
-        self._longitude.setPlaceholderText("留空表示不改动")
         self._longitude.textChanged.connect(self._on_coordinates_changed)
         form.addRow("经度", self._longitude)
         layout.addLayout(form)
