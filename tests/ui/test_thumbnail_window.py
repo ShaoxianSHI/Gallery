@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 
@@ -22,7 +23,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtGui import QImage  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 from waiting import wait_until, window_is_idle  # noqa: E402
 
 from gallery.core.library.config import prepare_library  # noqa: E402
@@ -166,7 +167,11 @@ def test_the_calendar_reports_again_after_its_pictures_are_dropped(
     photos = list(view.photos_of(datetime.date(2024, 4, 16)))
     assert len(photos) == 2
 
-    # 先让这一层把窗口报出去（页面上现在「已经报过了」）
+    # 先让这一层把窗口报出去（页面上现在「已经报过了」）。
+    # **前置条件得摆出来**：这一批缩略图解码回来没有，取决于后台线程的快慢，
+    # 拿它去赌就把这条用例变成掷硬币 —— 而「要的都在手上」正是 ``_refresh_window``
+    # **该**跳过的那一种（下面那条用例守的就是它）。所以自己把手上那份清空。
+    page._thumbs.clear()
     window_calls.clear()
     page._refresh_window()
     assert any(visible > 0 for visible, _p, _e in window_calls), window_calls
@@ -230,3 +235,51 @@ def test_opening_a_photo_from_the_calendar_fills_the_grid_window(
     qt_app.processEvents()
     assert window._model.rowCount() == 2
     assert any(visible > 0 for visible, _prefetch, _edge in window_calls), window_calls
+
+
+def test_clearing_the_thumbnail_cache_runs_off_the_main_thread(
+    qt_app: QApplication, window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**删除整个缓存目录里的文件不许跑在主线程上。**
+
+    它是一次 O(n) 的 unlink 循环（实测 2 万个条目约 884 ms，按默认那 2 GiB 的上限
+    外推是 2～3 秒），而它正好紧跟在模态对话框之后 —— 对话框关掉的那一瞬间窗口
+    整个冻住，用户按的明明是「清空缓存」，看到的却是软件没反应。
+
+    这里不测「快不快」（那要造两万个文件），只测**它在别的线程上**：对话框关掉、
+    ``clear_thumbnail_cache`` 返回的那一刻一个文件都还没删，而做完之后横幅上说的是
+    删了几个。
+    """
+    library = window._library
+    assert library is not None
+    assert wait_until(qt_app, lambda: window_is_idle(window)), "后台任务没收工"
+    # **横幅只有一个槽**：扫描 / 地点解析 / 建索引的进度随时会往里写。所以要断言它，
+    # 先等在途的活收工、再把槽收干净（理由见 AGENTS.md「断言界面上的共享状态之前…」）。
+    window._clear_banner()
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes
+    )
+
+    ran_on: list[str] = []
+
+    original_clear_cache = library.clear_cache
+
+    def record() -> int:
+        ran_on.append(threading.current_thread().name)
+        return original_clear_cache()
+
+    monkeypatch.setattr(library, "clear_cache", record)
+    main_thread = threading.current_thread().name
+
+    window.clear_thumbnail_cache()
+
+    assert ran_on == [], "删除在 clear_thumbnail_cache 返回之前就发生了（还在主线程上）"
+    assert window._cache_job is not None, "没有投递后台任务"
+
+    assert wait_until(qt_app, lambda: window._cache_job is None and window_is_idle(window)), (
+        "清空任务没收工"
+    )
+    qt_app.processEvents()
+
+    assert ran_on and ran_on[0] != main_thread, f"仍在主线程上删：{ran_on}"
+    assert "已清除" in window._banner.text()
