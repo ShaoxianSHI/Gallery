@@ -10,6 +10,11 @@
 **每张小月里也只有它自己那个月的日子有照片。** 12 张小月都是含上下月补位的 6 × 7，
 于是 10 月 1 日在「9 月」那张的末尾与「10 月」那张的开头各出现一次 —— 照片摆了两遍、
 张数数了两遍，而 9 月那个数字里混着十月的照片。补位格留一个灰日期号就好。
+
+**照片、「今天」、选中的高亮，三样都只画在它自己那个月的格子里**（同一个
+:func:`~gallery.core.library.calendar.in_month` 判据）。补位是**摆格子**为了对齐星期几
+用的，格子里的一切 —— 日期号除外 —— 都归那一天自己那个月：少一处重复是一回事，
+「刚刚点了一天，怎么亮了两天」更让人以为点错了。
 """
 
 from __future__ import annotations
@@ -152,15 +157,19 @@ class YearView(LevelView):
         self, painter: QPainter, cell: QRectF, day: datetime.date, month: datetime.date
     ) -> None:
         colors = self.colors
-        # **点一天就高亮那一天**（月视图里点一天高亮那一天，周视图里点一格高亮那一格）。
-        # 年视图的格子只有二十几像素：底色垫在照片下面看得见空格子，有照片的那几格
-        # 再补一圈描边 —— 两者一起才够认出来。
-        selected = day == self._selected
-        if selected:
-            fill_rounded(painter, cell, colors.selection, _CELL_RADIUS)
         # **补位格只有日期号**：那几格是邻月的日子，摆照片就是把邻月的照片摆进这一张
         # 小月 —— 同一张照片于是还会在它自己那张小月里再出现一次。
         own = in_month(day, month)
+        # **点一天就高亮那一天**（月视图里点一天高亮那一天，周视图里点一格高亮那一格）。
+        # 年视图的格子只有二十几像素：底色垫在照片下面看得见空格子，有照片的那几格
+        # 再补一圈描边 —— 两者一起才够认出来。
+        #
+        # **高亮也只画在它自己那个月的格子里**，与上面「照片」与「今天」同一判据：
+        # 10 月 1 日在「9 月」那张小月的末尾也出现一次，两处都涂就变成了「选中了两天」，
+        # 而用户刚点的明明只有一天。
+        selected = own and day == self._selected
+        if selected:
+            fill_rounded(painter, cell, colors.selection, _CELL_RADIUS)
         photos = self.photos_of(day) if own else ()
         if photos:
             paint_photo(painter, cell, self.photo(photos[-1]), radius=_CELL_RADIUS)

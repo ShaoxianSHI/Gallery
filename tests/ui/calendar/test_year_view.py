@@ -293,9 +293,15 @@ def test_a_picked_day_is_painted_as_selected(
     )
 
 
-def _cell_of(view, day: datetime.date):  # type: ignore[no-untyped-def]
-    """年视图里某一天那一格（12 张小月的矩阵与格子一一对应）。"""
+def _cell_of(view, day: datetime.date, month: int | None = None):  # type: ignore[no-untyped-def]
+    """年视图里某一天那一格（12 张小月的矩阵与格子一一对应）。
+
+    ``month`` 指定看**哪一张**小月：同一天会在两张小月里各出现一次（补位），
+    不指明就拿排在前面那一张。
+    """
     for index in range(12):
+        if month is not None and index + 1 != month:
+            continue
         box = view._box(index)
         for cell_day, cell in zip(
             month_matrix(datetime.date(view.anchor().year, index + 1, 1)),
@@ -305,3 +311,37 @@ def _cell_of(view, day: datetime.date):  # type: ignore[no-untyped-def]
             if cell_day == day:
                 return cell
     raise AssertionError(f"年视图上没有 {day} 这一格")
+
+
+def test_a_picked_day_is_highlighted_in_one_mini_month_only(
+    two_months: CalendarPage,
+    qt_app: QApplication,
+) -> None:
+    """选中的高亮**只画在它自己那个月的格子里**。
+
+    10 月 5 日既在「9 月」那张小月的末尾，也在「10 月」那张里。两处都涂，那一屏上
+    就是「刚刚点了一天，怎么亮了两天」，用户会以为点错了 —— 与照片、「今天」是同一处
+    补位造成的重复（照片那次已修，次高亮是新加的）。
+    """
+    from PySide6.QtGui import QImage
+
+    day = datetime.date(2021, 10, 5)  # fixture 的那年；那一天上没有照片
+    assert day in month_matrix(datetime.date(2021, 9, 1)), "前提不成立：9 月那张里没有它"
+    assert day in month_matrix(datetime.date(2021, 10, 1)), "前提不成立：10 月那张里没有它"
+
+    two_months.show()
+    qt_app.processEvents()
+    view = two_months.current_view()
+    assert not view.photos_of(day), "前提不成立：那一天上有照片（高亮会被照片盖住）"
+
+    image = QImage(view.size(), QImage.Format.Format_RGBA8888)
+    view.render(image)
+    october = _cell_of(view, day, month=10)
+    filler = _cell_of(view, day, month=9)
+    before = (_sample(image, october), _sample(image, filler))
+
+    view.set_selected(day)
+    view.render(image)
+
+    assert _sample(image, october) != before[0], "它自己那张小月里没有高亮"
+    assert _sample(image, filler) == before[1], "邻月那张小月里的补位格也被涂了"
