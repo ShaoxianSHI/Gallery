@@ -5,7 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from gallery.core.library.photos import FolderRef, GroupRef, PhotoRef
-from gallery.core.library.session import BROWSE_MODE_ALBUMS, BROWSE_MODE_FLAT
+from gallery.core.library.session import (
+    BROWSE_MODE_ALBUMS,
+    BROWSE_MODE_CALENDAR,
+    BROWSE_MODE_FLAT,
+)
 from gallery.ui.navigation import (
     breadcrumb_parts,
     entry_key,
@@ -95,6 +99,21 @@ def test_flat_and_albums_are_different_levels() -> None:
     root = Path("/照片/库")
 
     assert level_key(BROWSE_MODE_FLAT, root) != level_key(BROWSE_MODE_ALBUMS, root)
+
+
+def test_the_calendar_is_a_level_of_its_own() -> None:
+    """日历底下是**整库**，既不是「当前目录」也不是「整库平铺」，于是自成一个标识。
+
+    与相册模式共用一个标识的话，「还是这一层吗」会在两者之间误判成立：日历模型里
+    摆着的是整库照片，与相册模式那个目录不是一回事，于是切过去时会把上一页停着的
+    那一格恢复回来（换浏览方式是一次新的浏览，谁也不该选中）。
+    """
+    root = Path("/照片/库")
+
+    assert level_key(BROWSE_MODE_CALENDAR, root) != level_key(BROWSE_MODE_ALBUMS, root)
+    assert level_key(BROWSE_MODE_CALENDAR, root) != level_key(BROWSE_MODE_FLAT, root)
+    # 日历横跨整个库：在哪个目录进的日历都是同一层
+    assert level_key(BROWSE_MODE_CALENDAR, root) == level_key(BROWSE_MODE_CALENDAR, None)
 
 
 def test_a_group_level_differs_from_the_level_it_came_from() -> None:

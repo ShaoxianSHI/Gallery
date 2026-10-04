@@ -267,6 +267,107 @@ def test_switching_browse_mode_forgets_the_way_back(
     assert window._from_calendar is False
 
 
+def test_leaving_the_calendar_for_albums_lists_the_albums(
+    qt_app: QApplication,
+    tmp_path: Path,
+    make_photo: Callable[..., Path],
+    fake_places: None,
+    fake_facet_source: None,
+) -> None:
+    """从日历切到「相册」要看到相册，不是整库平铺。
+
+    日历那一页底下装的是**整库照片**（点开一张要能按行找它，见 ``_enter_calendar``），
+    所以退回「全部照片」可以直接复用那一份 —— 但「相册」这一层是**当前目录**，
+    与那一份根本不是同一层。忘了重列，用户在相册视图里看到的就是整库平铺；
+    开着分组时更离谱：那一份会被重新归拢成组卡片，**一个相册都没有**。
+    """
+    root = tmp_path / "照片"
+    root.mkdir(parents=True, exist_ok=True)
+    for name in NAMES:
+        make_photo(name, directory=root)
+    make_photo("相册里一张.jpg", directory=root / "四月")
+    prepare_library(root)
+    session_base = tmp_path / "会话"
+
+    window = _open(qt_app, root, session_base)
+    page = window._calendar_page
+    page.set_today(APRIL)
+    page.go_today()
+    assert wait_until(qt_app, lambda: window_is_idle(window) and page.photo_count() > 0)
+
+    window.set_browse_mode("albums")
+    assert wait_until(qt_app, lambda: window_is_idle(window)), "切到相册视图后没有收工"
+    qt_app.processEvents()
+
+    albums, photos = window._model.counts()
+    assert albums == 1, f"相册视图里没有相册，摆的是 {window._model.rowCount()} 行整库照片"
+    assert window._model.row_of_path(root / "四月") >= 0
+    # 相册模式下只列当前层：相册里那一张不该出现在这一层（它在「四月」那一层里）
+    assert photos == len(NAMES)
+    # 当前目录说得出口，面包屑就该摆出来（这一条与换页是同一段：日历那一页把它收掉了）
+    assert window._breadcrumb.isVisible()
+
+
+def test_leaving_the_calendar_for_albums_shows_albums_next_to_the_groups(
+    qt_app: QApplication,
+    tmp_path: Path,
+    make_photo: Callable[..., Path],
+    fake_places: None,
+    fake_facet_source: None,
+) -> None:
+    """开着「按拍摄日期分组」切到相册，**相册照样在**（组卡片排在它们后面）。
+
+    与上一条同一个病根，分组让它更显眼：整库被归拢成组卡片之后网格上全是组，
+    「相册」视图看上去像是没有相册这个概念。
+    """
+    root = tmp_path / "照片"
+    root.mkdir(parents=True, exist_ok=True)
+    for name in NAMES:
+        make_photo(name, directory=root)
+    make_photo("相册里一张.jpg", directory=root / "四月")
+    prepare_library(root)
+    session_base = tmp_path / "会话"
+
+    window = _open(qt_app, root, session_base, group_facet="captured_day")
+    page = window._calendar_page
+    page.set_today(APRIL)
+    page.go_today()
+    assert wait_until(qt_app, lambda: window_is_idle(window) and page.photo_count() > 0)
+
+    window.set_browse_mode("albums")
+    assert wait_until(qt_app, lambda: window_is_idle(window)), "切到相册视图后没有收工"
+    qt_app.processEvents()
+
+    # 分组是用户自己选的，退出日历不该顺手取消它（见 ``set_browse_mode`` 里那一段）
+    assert window._model.group_count() > 0
+    assert window._model.row_of_path(root / "四月") >= 0, "分组把相册卡片顶掉了"
+
+
+def test_leaving_the_calendar_selects_nothing(
+    qt_app: QApplication, calendar_window: MainWindow
+) -> None:
+    """从日历下钻出来的那一层切到相册，**谁也不该选中**（ADR 0025 决策 6）。
+
+    日历与日历下钻那一层摆的都不是「当前目录」，所以换浏览方式是一次新的浏览。
+    日历曾经与相册模式共用同一个层标识，于是「还是这一层吗」会误判成立 ——
+    网格上恢复出来的是下钻那一层停着的那一格，而那一张在新的一层里恰好也有。
+    """
+    window = calendar_window
+    photos, label = _cell_of(window, 5)  # 五月两张挤在同一个小时 → 摊成一层网格
+    window._calendar_page.current_view().select_cell(photos, label)
+    qt_app.processEvents()
+    assert window._model.rowCount() == 2
+    row = window._model.row_of_path(photos[0].path)
+    window._grid.select_row(row)
+    assert window._grid.genuinely_selected_rows() == [row], "前置条件：那一格是选中的"
+
+    window.set_browse_mode("albums")
+    assert wait_until(qt_app, lambda: window_is_idle(window)), "切到相册视图后没有收工"
+    qt_app.processEvents()
+
+    assert window._grid.genuinely_selected_rows() == [], "换浏览方式却把上一页选中的那格带过来了"
+
+
 def test_a_group_facet_on_does_not_empty_the_calendar(
     qt_app: QApplication,
     tmp_path: Path,

@@ -15,10 +15,19 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from gallery.core.library.photos import GridEntry, GroupRef
-from gallery.core.library.session import BROWSE_MODE_FLAT
+from gallery.core.library.session import BROWSE_MODE_CALENDAR, BROWSE_MODE_FLAT
 
 #: 一层的标识（见 :func:`level_key`）。是元组而不是字符串：只为了能哈希、能当键用。
 type LevelKey = tuple[str, ...]
+
+#: ``LevelKey`` 的第一段：整库平铺（一张照片一格，没有相册卡片）。
+LEVEL_KIND_FLAT = "flat"
+
+#: ``LevelKey`` 的第一段：相册模式逐层进入（一层里有相册卡片与照片）。
+LEVEL_KIND_ALBUMS = "albums"
+
+#: ``LevelKey`` 的第一段：日历那一页（底下是整库，页面上按日期归拢）。
+LEVEL_KIND_CALENDAR = "calendar"
 
 #: 网格里一格的标识（见 :func:`entry_key`）。
 type EntryKey = tuple[str, ...]
@@ -71,8 +80,9 @@ def level_key(
 ) -> LevelKey:
     """当前这一层的标识。
 
-    :param browse_mode: ``albums`` 逐层进入，``flat`` 整库平铺。两者摆着的东西不一样
-        （前者有相册卡片），于是是两层，不能互相顶掉对方的记忆。
+    :param browse_mode: ``albums`` 逐层进入，``flat`` 整库平铺，``calendar`` 日历。
+        三者摆着的东西不一样（相册模式有相册卡片，平铺与日历底下都是整库照片但不是同
+        一种摆法），于是是三层，不能互相顶掉对方的记忆。
     :param directory: 相册模式下当前所在目录。
     :param group: 正在看的分组，``(字段 id, 组标识)``；不在分组里就传 ``None``。
     :param conditions: 已生效的筛选条件，每条是 ``(字段 id, 用户敲的原文)``
@@ -83,8 +93,19 @@ def level_key(
     分组那一层要连**它是从哪一层进来的**一起算进去：相册模式下 ``旅行/2024`` 与
     ``家庭/2024`` 都可能按月份分出一个 ``2024-05``，两者是不同的两层，只是碰巧
     组标识相同。只按组标识记，回来时就会串到别的相册里去。
+
+    **日历自成一个标识**：它底下装的是整库（点开一张照片要能按行找它，见
+    ``CalendarFlowMixin._enter_calendar``），既不是「当前目录」也不是「整库平铺」。
+    与相册模式共用一个标识的话，「还是这一层吗」会在两者之间误判成立，于是从日历
+    切到相册时会把上一页停着的那一格当成「这一趟停着的」恢复回来（ADR 0025 决策 6：
+    换浏览方式是一次新的浏览，谁也不该选中）。
     """
-    base: LevelKey = ("flat",) if browse_mode == BROWSE_MODE_FLAT else ("albums", str(directory))
+    if browse_mode == BROWSE_MODE_CALENDAR:
+        base: LevelKey = (LEVEL_KIND_CALENDAR,)
+    elif browse_mode == BROWSE_MODE_FLAT:
+        base = (LEVEL_KIND_FLAT,)
+    else:
+        base = (LEVEL_KIND_ALBUMS, str(directory))
     if conditions:
         # 检索是**横跨整个库**的（ADR 0026 决策 1），因此它不属于任何一个目录层：
         # 底下那些目录各是各的，全算进去只会让两套毫不相干的条件撞出同一个标识。
@@ -131,6 +152,9 @@ __all__ = [
     "ENTRY_KIND_GROUP",
     "ENTRY_KIND_PATH",
     "ENTRY_KIND_SEARCH",
+    "LEVEL_KIND_ALBUMS",
+    "LEVEL_KIND_CALENDAR",
+    "LEVEL_KIND_FLAT",
     "EntryKey",
     "LevelKey",
     "breadcrumb_parts",

@@ -10,6 +10,9 @@
   整层日历从此空着，而界面上看不出任何原因。
 - **从日历点开的那一格要记得自己是怎么进来的**：退回去回**日历原来的那一段**，
   而不是「全部照片」那一屏 —— 后者与用户刚做的事没有关系。
+- **退出日历有两条路**：回「全部照片」可以复用模型里那份整库（就是同一层），
+  回「相册」必须**重列当前目录**（那是另一层，见 :meth:`CalendarFlowMixin.set_browse_mode`）。
+  两条当成一条的症状是「相册视图里显示全部照片」，开着分组时一个相册都没有。
 """
 
 from __future__ import annotations
@@ -21,7 +24,7 @@ from pathlib import Path
 
 from gallery.core.library.photos import GridEntry, GroupRef, PhotoRef
 from gallery.core.library.scanner import describe_entry
-from gallery.core.library.session import BROWSE_MODE_CALENDAR
+from gallery.core.library.session import BROWSE_MODE_CALENDAR, BROWSE_MODE_FLAT
 from gallery.ui.tasks import TaskContext
 
 
@@ -68,8 +71,8 @@ class CalendarFlowMixin:
             return
         if mode == BROWSE_MODE_CALENDAR:
             self._enter_calendar()
-        elif was_calendar:
-            # 日历那一页底下是**整库**（与「全部照片」同一份内容），回到网格时
+        elif was_calendar and mode == BROWSE_MODE_FLAT:
+            # 日历那一页底下是**整库**（与「全部照片」同一份内容），回到「全部照片」时
             # 那一层直接就是它，不必重扫一遍盘。
             #
             # 但**分组要补回去**：日历那一页摆的是没分组的整库照片（它自己就是按
@@ -81,6 +84,16 @@ class CalendarFlowMixin:
             self._update_action_states()
             self._refresh_thumbnail_window()
         else:
+            # 剩下的是**要重列这一层**的情形，其中最容易出错的是从日历切到「相册」：
+            # 模型里此刻摆的是日历底下那份**整库照片**，而「相册」要摆的是**当前目录**
+            # ——两者根本不是同一层。直接摆上去，用户在相册视图里看到的就是全部照片；
+            # 开着分组时更糟：那份会被重新归拢成组卡片，网格上一个相册都没有
+            # （归拢只处理照片，相册卡片要重列当前层才会进来）。
+            #
+            # 日历读拍摄时间那一遍顺带作废：结果回来时已经换了代次，它认不出这一层，
+            # 而那个句柄会永远留在 ``_calendar_job`` 上（后台任务于是永远收不了工）。
+            if was_calendar:
+                self._cancel_calendar_job()
             self._reload_level()
 
     def _show_calendar(self) -> None:
@@ -102,11 +115,18 @@ class CalendarFlowMixin:
         开头那一段与 :meth:`_reload_level` 一样：换页就是换一层，在途的扫描与
         元数据读取一律作废重开 —— 否则刚切过去时，**上一遍扫描的结果会跟着进来**
         （它是同一个 generation 的），用户看到的是相册模式那一层混进日历。
+
+        **记下「模型里此刻摆的是日历这一层」**：日历底下装的是整库，与相册模式的
+        当前目录、平铺模式都不是同一层（见 :func:`ui.navigation.level_key`）。不记的
+        话，从日历退回相册时「还是这一层吗」会拿上一页的目录标识答成「是」，
+        于是网格上会恢复上一页停着的那一格 —— 而换浏览方式是一次新的浏览，
+        谁也不该选中（ADR 0025 决策 6）。
         """
         if self._scan_job is not None:
             self._runner.cancel(self._scan_job)
             self._scan_job = None
         self._generation += 1
+        self._arm_focus()
         self._grid.cancel_rename()
         self._cancel_facet_job()
         self._cancel_calendar_job()
