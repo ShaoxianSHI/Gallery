@@ -41,6 +41,15 @@ def to_scaled_qimage(raster: RasterImage, edge: int) -> QImage:
     return _scale(_wrap(raster), edge)
 
 
+def scale_image(image: QImage, edge: int) -> QImage:
+    """把 ``QImage`` 缩到长边不超过 ``edge``（只缩不放），与 :func:`scale_pixmap` 同一个实现。
+
+    日历那一侧存的是 ``QImage``（绘制时直接 ``drawImage``，不必先转 ``QPixmap``），
+    换档时那次兜底缩放同样要走这里 —— 不另写一份，免得将来换算法漏掉这一处。
+    """
+    return _scale(image, edge)
+
+
 def scale_pixmap(pixmap: QPixmap, edge: int) -> QPixmap:
     """把 ``QPixmap`` 缩到长边不超过 ``edge``（只缩不放），并包装成 Qt 图像。
 
@@ -77,4 +86,4 @@ def _wrap(raster: RasterImage) -> QImage:
     )
 
 
-__all__ = ["to_qimage", "to_scaled_qimage"]
+__all__ = ["scale_image", "to_qimage", "to_scaled_qimage"]

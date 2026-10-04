@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+import datetime
 import logging
 import time
 from collections import OrderedDict
@@ -66,6 +67,7 @@ from gallery.core.library.search import (
 )
 from gallery.core.library.session import (
     BROWSE_MODE_ALBUMS,
+    BROWSE_MODE_CALENDAR,
     BROWSE_MODE_FLAT,
     SessionState,
     WindowGeometry,
@@ -98,6 +100,7 @@ from gallery.ui.browser.thumb_sizes import (
     nearest_index,
     shifted_index,
 )
+from gallery.ui.calendar import CalendarPage
 from gallery.ui.imaging import to_qimage
 from gallery.ui.menus import MenuActions, TargetKind, build_menu
 from gallery.ui.navigation import (
@@ -292,6 +295,9 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         #: 本层照片的分组 / 排序字段快照（按路径索引）。
         self._facet_values: dict[Path, PhotoFacets] = {}
         self._facet_job: int | None = None
+        #: 日历那一页读整库拍摄时间的那次任务（与 :attr:`_facet_job` 分开：两个各自
+        #: 有各自的取消时机，混成一个会让取消掉其中一个时另一个的结果也一起作废）。
+        self._calendar_job: int | None = None
         #: 这一层还没摆上屏的条目。扫出来的一律先攒在这里，顺序定下来再一次给出去
         #: （见 ADR 0009 决策 6）；``None`` 表示「模型就是当前这一层的全部」，
         #: 也就是这一层已经排好、正在被人看。
@@ -426,9 +432,20 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         # 大图页上的右键：视图只报位置，菜单在这一侧拼（与网格同一个流程，见 ADR 0021）。
         self._detail.context_requested.connect(self._show_detail_context_menu)
 
+        # 日历那一页**自己带着工具条**（它占掉的就是网格那页的面包屑那一行，
+        # ADR 0033 决策 5），所以这里加进去的是一个完整的一页，不是网格页里的一块。
+        self._calendar_page = CalendarPage()
+        self._calendar_page.photo_requested.connect(self._on_calendar_photo_requested)
+        self._calendar_page.level_changed.connect(self._on_calendar_level_changed)
+        # 换层 / 翻页 / 滚动都会改变「现在看得见哪些」，顺带也改变了「这一段有没有照片」
+        # —— 翻到一个空月份时那句提示要冒出来，翻回来时它要收回去。
+        self._calendar_page.window_changed.connect(self._on_calendar_window_changed)
+        self._calendar_page.set_today(datetime.date.today())
+
         self._stack = QStackedWidget()
         self._stack.addWidget(self._welcome)
         self._stack.addWidget(self._grid_page)
+        self._stack.addWidget(self._calendar_page)
         self._panel = MetadataPanel()
         self._panel.hide()
         # 「编辑元数据」那个按钮只发信号（面板不碰文件，红线 1）；写盘在 ``write_ops``。
@@ -536,6 +553,10 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._flat_action = QAction("全部照片", self)
         self._flat_action.setCheckable(True)
         self._flat_action.triggered.connect(lambda: self.set_browse_mode(BROWSE_MODE_FLAT))
+
+        self._calendar_action = QAction("日历", self)
+        self._calendar_action.setCheckable(True)
+        self._calendar_action.triggered.connect(lambda: self.set_browse_mode(BROWSE_MODE_CALENDAR))
 
         self._metadata_action = QAction("显示元数据信息", self)
         self._metadata_action.setCheckable(True)
@@ -725,6 +746,7 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         browse_menu = view_menu.addMenu("浏览方式")
         browse_menu.addAction(self._albums_action)
         browse_menu.addAction(self._flat_action)
+        browse_menu.addAction(self._calendar_action)
         self._build_order_menus(view_menu)
         view_menu.addSeparator()
         view_menu.addAction(self._fit_action)
@@ -1014,6 +1036,14 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             # 扫描出过问题时横幅归它：那句（哪些内容没读到）比「这里是空的」更该说，
             # 而这里也不许把它收掉 —— 收了等于把用户真正需要知道的事藏起来。
             return
+        if self._stack.currentWidget() is self._calendar_page:
+            if self._calendar_page.photo_count():
+                self._level_notice = False
+                self._banner.hide()
+                return
+            self._level_notice = True
+            self._show_banner("这一段日子里没有照片。换个月份或年份看看。")
+            return
         if self._model.rowCount():
             if self._level_notice:
                 self._level_notice = False
@@ -1082,21 +1112,30 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._maybe_start_photo_index()
 
     def _apply_ordering(self) -> None:
-        """把当前这一层按分组 / 排序重排一次，然后一次性摆到网格上。"""
-        if self._stack.currentWidget() is not self._grid_page:
+        """把当前这一层按分组 / 排序重排一次，然后一次性摆到网格上。
+
+        **大图页上不重排**：用户正看着某一张，重排会让那一行的内容换掉，而标题栏
+        还写着刚才那张的名字（ADR 0025 决策 4）。
+
+        **日历那一页要重排**：它的模型里装着整库，点开一张照片正是靠模型里的行
+        进的大图页 —— 模型空着的话，从日历点照片会一点反应都没有。
+        """
+        if self._stack.currentWidget() is self._detail_page:
             return
         library = self._library
         if library is None:
             return
+        in_grid = self._stack.currentWidget() is self._grid_page
         try:
             self._reorder_level(library)
         finally:
             # 顺序定下来了，这才有资格回答「这一层是不是空的」。
             self._update_level_notice()
-            # 也才找得到「退上去时该停住的那一格」：组卡片本身就是重排出来的。
-            self._restore_focus()
-            # 分组视图里来了新照片时，这里是重新分组之后回到原处的地方（ADR 0013）。
-            self._maybe_reenter_group()
+            if in_grid:
+                # 也才找得到「退上去时该停住的那一格」：组卡片本身就是重排出来的。
+                self._restore_focus()
+                # 分组视图里来了新照片时，这里是重新分组之后回到原处的地方（ADR 0013）。
+                self._maybe_reenter_group()
             # 暂存区到这里才清空：攒着的变化从这一刻起才能安全地落到网格上。
             self._flush_pending_watch()
 
@@ -1248,7 +1287,13 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._update_breadcrumb()
         self._update_mode_actions()
         self._library_title = library.display_name
-        self._stack.setCurrentWidget(self._grid_page)
+        self._calendar_page.set_level(self._session.resolved_calendar_level())
+        # **只换页**：这一段末尾本来就有一句 `_start_scan()`，再起一遍就是两遍扫描
+        # 同时往模型里塞同一库照片，于是每一行都出现两次。
+        if self._browse_mode == BROWSE_MODE_CALENDAR:
+            self._show_calendar()
+        else:
+            self._stack.setCurrentWidget(self._grid_page)
         self._refresh_title()  # 换库之后标题栏回到相册名（ADR 0025 决策 4）
         self._update_action_states()
         self._remember(library.root)
@@ -1270,6 +1315,7 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._focus = None
         self._level_key = None
         self._cancel_facet_job()
+        self._cancel_calendar_job()
         self._cancel_place_pass()
         # **写操作闸门也要收。** 搬几百 MB 的那一个 ⌘V / 「移动到相册」是在旧库的
         # ``Library`` 上跑的；不取消它就让它接着跑，而 ``self._library`` 此时已经指向
@@ -1409,6 +1455,18 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             on_error=partial(self._on_scan_failed, generation),
         )
 
+    def _feed_calendar(self) -> None:
+        """扫完之后把整库交给日历分桶。
+
+        **只在日历那一页上做**：同样的整库平铺在「全部照片」下已经在跑第二遍读元数据了，
+        日历再起一次就是白读一次 EXIF。
+        """
+        if self._browse_mode != BROWSE_MODE_CALENDAR or self._library is None:
+            return
+        if self._scan_job is not None:  # 还没扫完，等 _on_scan_done
+            return
+        self._start_calendar_load()
+
     def _on_scan_batch(self, generation: int, payload: object) -> None:
         if generation != self._generation:
             return
@@ -1443,6 +1501,7 @@ class MainWindow(WriteOpsMixin, QMainWindow):
             return
         self._refresh_thumbnail_window()
         self._start_facet_read()
+        self._feed_calendar()
         self._maybe_start_place_pass()
         self._maybe_start_photo_index()
 
@@ -2164,7 +2223,18 @@ class MainWindow(WriteOpsMixin, QMainWindow):
     # ---- 缩略图 ------------------------------------------------------------
 
     def _refresh_thumbnail_window(self) -> None:
-        if self._pipeline is None or self._stack.currentWidget() is not self._grid_page:
+        if self._pipeline is None:
+            return
+        if self._stack.currentWidget() is self._calendar_page:
+            # 日历要的那一批是「当前层、当前滚到的那几格」，与网格的按行取法不同源，
+            # 但**同样交给这一条流水线**（缩放在工作线程里做，ADR 0015）。
+            self._pipeline.set_window(
+                self._calendar_page.current_view().visible_refs(),
+                (),
+                target_edge=self._calendar_page.thumbnail_edge(),
+            )
+            return
+        if self._stack.currentWidget() is not self._grid_page:
             return
         visible_rows = self._grid.visible_rows()
         prefetch_rows = self._grid.visible_rows(margin_ratio=PREFETCH_MARGIN)
@@ -2198,6 +2268,8 @@ class MainWindow(WriteOpsMixin, QMainWindow):
     def _on_thumbnail_ready(self, path: object, image: object, edge: int = 0) -> None:
         if isinstance(path, Path) and isinstance(image, QImage):
             self._model.set_thumbnail(path, image, edge)
+            # 日历那一侧存的是另一份（小尺寸、按边长记账），两边各收各的。
+            self._calendar_page.set_thumbnail(path, image, edge)
 
     # ---- 缩略图尺寸 --------------------------------------------------------
 
@@ -2830,6 +2902,12 @@ class MainWindow(WriteOpsMixin, QMainWindow):
     def show_grid(self) -> None:
         """回到网格，并让当前照片保持选中。"""
         self._title_bar.stop_edit()  # 切页时把改到一半的名字收起来（ADR 0025）
+        if self._stack.currentWidget() is self._calendar_page:
+            # 日历与网格是**同一时刻只有一个**的关系（见 `_enter_calendar`）：从日历
+            # 按 Esc 出来就是把浏览方式换回「全部照片」。留着「日历」这个模式而页已经
+            # 不在了，菜单里那个勾就成了假话，而 ``Y`` / ``M`` / ``W`` / ``D`` 也没处可去。
+            self.set_browse_mode(BROWSE_MODE_FLAT)
+            return
         if self._stack.currentWidget() is self._grid_page:
             return
         self._stack.setCurrentWidget(self._grid_page)
@@ -3097,8 +3175,10 @@ class MainWindow(WriteOpsMixin, QMainWindow):
     # ---- 横幅的摆位（ADR 0029）------------------------------------------------
 
     def _on_page_changed(self, _index: int) -> None:
-        """换页：横幅要重新摆 —— 大图页上照片区右边让给了元数据面板，居中的位置变了。"""
+        """换页：横幅要重新摆 —— 大图页上照片区右边让给了元数据面板，居中的位置变了；
+        缩略图窗口也要换成**新页**要的那一批（网格按行、日历按格子）。"""
         self._layout_banner()
+        self._refresh_thumbnail_window()
 
     def _banner_area(self) -> QRect:
         """横幅可以摆的那一片：**内容区减去元数据面板**（面板摆着的那几页才减）。
@@ -3189,8 +3269,14 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         # 那一侧仍旧是网格的事。
         renaming_here = in_grid or (in_detail and self._title_bar.isVisible())
         # 移到废纸篓两边都成立：大图页删的是正在看的那一张（``_selected_entries`` 认这一页）。
-        entries = self._selected_entries()
-        focus_row = self._focus_row()
+        #
+        # **日历那一页两者都不是**：它的选区是「一段日子里的照片」，没有行号，
+        # 而网格的当前项还停着上一次在网格上点的那一格 —— 拿它算可用性，那些
+        # 按钮就会亮着一条指向别处的路。日历里点照片是直接进大图页，
+        # 于是这一页上它们统统关掉（大图页上它们照常按正在看的那一张算）。
+        in_calendar = self._stack.currentWidget() is self._calendar_page
+        entries = [] if in_calendar else self._selected_entries()
+        focus_row = -1 if in_calendar else self._focus_row()
         # 「改名」只对磁盘上的**某一个**东西成立：分组卡片不是磁盘上的东西，改不了名，
         # 一次也只改一条（见 ADR 0009 与 ADR 0004）。网格页要连**当前项**一起算
         # —— 它可能不在选区里；大图页指向的必然是正在看的那张照片，看它就够了。
@@ -3262,10 +3348,11 @@ class MainWindow(WriteOpsMixin, QMainWindow):
     # ---- 浏览方式与相册导航 ------------------------------------------------
 
     def set_browse_mode(self, mode: str) -> None:
-        """切换「相册（逐层进入）」与「全部照片（整库平铺）」。"""
+        """切换三种浏览方式：相册（逐层进入）、全部照片（整库平铺）、日历。"""
         if mode == self._browse_mode:
             self._update_mode_actions()
             return
+        was_calendar = self._browse_mode == BROWSE_MODE_CALENDAR
         self._browse_mode = mode
         self._group_view = None
         # 检索是横跨整个库的一层（ADR 0026 决策 1），换浏览方式时留着它等于把两个
@@ -3276,8 +3363,149 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._session = self._session.with_browse_mode(mode)
         self._save_session()
         self._update_mode_actions()
-        if self._library is not None:
+        if self._library is None:
+            return
+        if mode == BROWSE_MODE_CALENDAR:
+            self._enter_calendar()
+        elif was_calendar:
+            # 日历那一页底下是**整库**（与「全部照片」同一份内容），回到网格时
+            # 那一层直接就是它，不必重扫一遍盘。
+            self._stack.setCurrentWidget(self._grid_page)
+            self._refresh_title()
+            self._update_action_states()
+            self._refresh_thumbnail_window()
+        else:
             self._reload_level()
+
+    def _show_calendar(self) -> None:
+        """把日历那一页摆到前面来。**只换页，不起扫描**（打开库时外面已经在扫了）。"""
+        self._calendar_page.set_today(datetime.date.today())
+        self._stack.setCurrentWidget(self._calendar_page)
+        self._refresh_title()
+        self._update_action_states()
+        self._refresh_thumbnail_window()
+
+    def _enter_calendar(self) -> None:
+        """切到日历那一页，并把整库的照片与拍摄时间喂给它。
+
+        **模型里仍然是整库**：日历点开一张照片要能直接进大图页，而大图页是按**行**
+        工作的（`_load_detail`）。所以这里走的是与「全部照片」同一遍平铺扫描，
+        日历只是叠在它上面的另一页 —— 于是翻图、改名、移到废纸篓、撤销、
+        「在访达中显示」这些一个都不用为日历另写一份。
+
+        开头那一段与 :meth:`_reload_level` 一样：换页就是换一层，在途的扫描与
+        元数据读取一律作废重开 —— 否则刚切过去时，**上一遍扫描的结果会跟着进来**
+        （它是同一个 generation 的），用户看到的是相册模式那一层混进日历。
+        """
+        if self._scan_job is not None:
+            self._runner.cancel(self._scan_job)
+            self._scan_job = None
+        self._generation += 1
+        self._grid.cancel_rename()
+        self._cancel_facet_job()
+        self._cancel_calendar_job()
+        self._model.clear()
+        self._grid.reset_for_new_level()
+        self._preview_cache.clear()
+        self._metadata_cache.clear()
+        self._staged = []
+        self._level_notice = False
+        self._progress_notice = False
+        self._scan_issue = False
+        self._current_row = -1
+        self._detail.clear_image()
+        self._panel.clear()
+        self._banner.hide()
+        self._show_calendar()
+        self._start_scan()
+
+    def _cancel_calendar_job(self) -> None:
+        """作废日历那次读拍摄时间（换库、换浏览方式时）。"""
+        if self._calendar_job is not None:
+            self._runner.cancel(self._calendar_job)
+            self._calendar_job = None
+
+    def _on_calendar_window_changed(self) -> None:
+        self._refresh_thumbnail_window()
+        self._update_level_notice()
+
+    def _on_calendar_level_changed(self, level: str) -> None:
+        """记下日历停在哪一层（进会话，与浏览方式同一个开关）。"""
+        self._session = self._session.with_calendar_level(level)
+        self._save_session()
+
+    def _on_calendar_photo_requested(self, photos: object, index: int) -> None:
+        """日历上点了某张照片：按它在模型里的行打开大图页。
+
+        模型里没有这一张（扫描还没到）就当没点 —— 与 ``context_menu_for`` 同一个脾气：
+        宁可不弹，也不对着一个过期的行号动手。
+        """
+        if not isinstance(photos, (list, tuple)) or not photos:
+            return
+        first = photos[min(max(0, int(index)), len(photos) - 1)]
+        if not isinstance(first, PhotoRef):
+            return
+        row = self._model.row_of_path(first.path)
+        if row < 0:
+            return
+        self._grid.select_row(row)
+        self._open_detail(self._model.index(row, 0))
+
+    def _start_calendar_load(self) -> None:
+        """把整库照片按天与按小时分好桶，交给日历。
+
+        与 ``_start_facet_read`` 是同一套：**索引里全都有就直接分**（第二次打开这个库
+        的样子，纯粹是一次查表），缺才起后台线程去读 —— 于是「正在读元数据…」那句话
+        只在真的要读的时候才出现。
+        """
+        library = self._library
+        if library is None:
+            return
+        entries = self._model.entries()
+        refs = [entry for entry in entries if isinstance(entry, PhotoRef)]
+        if not refs:
+            return
+        cached = library.cached_facets(refs)
+        if len(cached) == len(refs):
+            self._calendar_page.set_photos(refs, cached)
+            self._update_level_notice()
+            self._refresh_thumbnail_window()
+            return
+
+        self._show_progress_notice(f"正在读取 {len(refs)} 张照片的拍摄时间，用于日历…")
+        generation = self._generation
+
+        def work(context: TaskContext) -> object:
+            return library.photo_facets(
+                refs,
+                should_cancel=context.is_cancelled,
+                on_progress=lambda done, total: context.progress((done, total)),
+            )
+
+        self._calendar_job = self._runner.submit(
+            work,
+            on_progress=partial(self._on_facet_progress, generation),
+            on_result=partial(self._on_calendar_facets_ready, generation, refs),
+            on_error=partial(self._on_calendar_facets_failed, generation),
+        )
+
+    def _on_calendar_facets_ready(
+        self, generation: int, refs: list[PhotoRef], payload: object
+    ) -> None:
+        if generation != self._generation or not isinstance(payload, dict):
+            return
+        self._calendar_job = None
+        self._clear_progress_notice()
+        self._calendar_page.set_photos(refs, payload)
+        self._update_level_notice()
+        self._refresh_thumbnail_window()
+
+    def _on_calendar_facets_failed(self, generation: int, message: str) -> None:
+        if generation != self._generation:
+            return
+        self._calendar_job = None
+        self._clear_progress_notice()
+        self._show_banner(f"日历没能读到拍摄时间：{message}")
 
     def enter_folder(self, directory: Path, *, focus: EntryKey | None = None) -> None:
         """进入一个相册（子文件夹）。库以外的路径一律拒绝。
@@ -3537,9 +3765,9 @@ class MainWindow(WriteOpsMixin, QMainWindow):
         self._breadcrumb.show()
 
     def _update_mode_actions(self) -> None:
-        albums = self._browse_mode == BROWSE_MODE_ALBUMS
-        self._albums_action.setChecked(albums)
-        self._flat_action.setChecked(not albums)
+        self._albums_action.setChecked(self._browse_mode == BROWSE_MODE_ALBUMS)
+        self._flat_action.setChecked(self._browse_mode == BROWSE_MODE_FLAT)
+        self._calendar_action.setChecked(self._browse_mode == BROWSE_MODE_CALENDAR)
 
     def _update_navigation_actions(self) -> None:
         # 「上一级」只在网格页启用：大图页的 Esc 是「返回网格」，两个动作共用一个 Esc，

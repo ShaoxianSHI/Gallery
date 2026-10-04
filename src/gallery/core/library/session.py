@@ -17,6 +17,7 @@ from typing import Final
 
 from gallery.core import paths
 from gallery.core.atomic import read_text_or_none, write_text_atomic
+from gallery.core.library.calendar import LEVELS as CALENDAR_LEVELS
 from gallery.core.metadata.facets import FACET_MODIFIED, group_facet, sort_facet
 
 #: 最多记住几个最近打开的库。
@@ -39,8 +40,18 @@ BROWSE_MODE_ALBUMS: Final = "albums"
 #: 浏览方式之一：把整个库（含所有子文件夹）的照片平铺在一起。
 BROWSE_MODE_FLAT: Final = "flat"
 
+#: 浏览方式之一：按时间浏览（年 / 月 / 周 / 日四层，ADR 0033）。
+#:
+#: 它**横跨整个库**，与前两种的一个根本差别是：那两个的「一层」是一批照片，
+#: 它的一层是**一段日子**，而那一段里的照片要等元数据读完才摆得出来。
+BROWSE_MODE_CALENDAR: Final = "calendar"
+
 #: 允许的浏览方式。
-BROWSE_MODES: Final = (BROWSE_MODE_ALBUMS, BROWSE_MODE_FLAT)
+BROWSE_MODES: Final = (BROWSE_MODE_ALBUMS, BROWSE_MODE_FLAT, BROWSE_MODE_CALENDAR)
+
+#: 日历视图的四层（见 ``core.library.calendar.LEVELS``）。会话里只记**当前是哪一层**，
+#: 停在哪天不记 —— 每次启动都从今天开始，跟「回到上次打开的库」是同一个脾气。
+DEFAULT_CALENDAR_LEVEL: Final = "month"
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +79,8 @@ class SessionState:
     metadata_visible: bool | None = None
     #: 上次用的分组字段（见 ``metadata.facets``）；``None`` 表示不分组。
     group_facet: str | None = None
+    #: 日历视图上次停在哪一层；``None`` 表示用 :data:`DEFAULT_CALENDAR_LEVEL`。
+    calendar_level: str | None = None
     #: 上次用的排序字段；``None`` 表示**没选过**（由 :meth:`resolved_sort_facet` 交回
     #: :data:`DEFAULT_SORT_FACET`）。界面上没有「不排序」这个选择，排序字段总是有一个。
     sort_facet: str | None = None
@@ -92,6 +105,10 @@ class SessionState:
     def with_metadata_visible(self, visible: bool) -> SessionState:
         return replace(self, metadata_visible=visible)
 
+    def with_calendar_level(self, level: str) -> SessionState:
+        """记下日历停在哪一层。**只记合法的层**，来路不明的值不写进去。"""
+        return replace(self, calendar_level=level if level in CALENDAR_LEVELS else None)
+
     def with_ordering(
         self, group_facet: str | None, sort_facet: str, descending: bool
     ) -> SessionState:
@@ -105,6 +122,11 @@ class SessionState:
             sort_facet=sort_facet,
             sort_descending=descending,
         )
+
+    def resolved_calendar_level(self) -> str:
+        """日历这一档该用的层。存着的值来路不明（老版本、手改过）就回默认。"""
+        level = self.calendar_level
+        return level if level in CALENDAR_LEVELS else DEFAULT_CALENDAR_LEVEL
 
     def resolved_sort_facet(self) -> str:
         """这一档该用的排序字段 id。
@@ -140,6 +162,7 @@ def load_session(*, base: Path | None = None) -> SessionState:
         # 字段 id 要对着真实字段表校验：会话文件是旧版本留下的、或者被人手改过时，
         # 一个来路不明的 id 会让界面在别处炸出 KeyError。
         group_facet=_parse_group_facet(data.get("group_facet")),
+        calendar_level=_parse_calendar_level(data.get("calendar_level")),
         sort_facet=_parse_sort_facet(data.get("sort_facet")),
         sort_descending=_parse_bool(data.get("sort_descending")),
     )
@@ -159,6 +182,7 @@ def save_session(state: SessionState, *, base: Path | None = None) -> None:
         "browse_mode": state.browse_mode,
         "metadata_visible": state.metadata_visible,
         "group_facet": state.group_facet,
+        "calendar_level": state.calendar_level,
         "sort_facet": state.sort_facet,
         "sort_descending": state.sort_descending,
     }
@@ -218,6 +242,11 @@ def _parse_sort_facet(value: object) -> str | None:
     return None
 
 
+def _parse_calendar_level(value: object) -> str | None:
+    """合法的层名，否则 ``None``（由 :meth:`SessionState.resolved_calendar_level` 接手）。"""
+    return value if isinstance(value, str) and value in CALENDAR_LEVELS else None
+
+
 def _parse_browse_mode(value: object) -> str | None:
     if isinstance(value, str) and value in BROWSE_MODES:
         return value
@@ -256,7 +285,9 @@ def _parse_window(value: object) -> WindowGeometry | None:
 __all__ = [
     "BROWSE_MODES",
     "BROWSE_MODE_ALBUMS",
+    "BROWSE_MODE_CALENDAR",
     "BROWSE_MODE_FLAT",
+    "DEFAULT_CALENDAR_LEVEL",
     "DEFAULT_SORT_FACET",
     "MAX_RECENT_ROOTS",
     "SESSION_VERSION",

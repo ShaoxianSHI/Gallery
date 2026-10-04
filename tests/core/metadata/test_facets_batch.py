@@ -84,7 +84,12 @@ def test_read_facets_extracts_values(tmp_path: Path) -> None:
 
     assert set(result) == {paths[0], paths[2]}
     assert result[paths[0]] == PhotoFacets(
-        captured_at=result[paths[0]].captured_at, year=2024, month=5, day=16
+        captured_at=result[paths[0]].captured_at,
+        year=2024,
+        month=5,
+        day=16,
+        hour=10,
+        minute=0,
     )
     assert result[paths[2]].year == 2023
 

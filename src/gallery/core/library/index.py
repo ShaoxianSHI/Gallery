@@ -47,7 +47,12 @@ logger = logging.getLogger(__name__)
 #: 城市库）。**表结构始终没变**，但存进去的城市名、省名变了 —— 不升版本的话，
 #: 老库里那些「波尔多 / 法国」「宝安 / 广东省」会永远留在索引里，新扫的照片却
 #: 已经是新说法，同一个库里新老混排且再也刷不掉（``place_ok`` 记着「已经查过了」）。
-SCHEMA_VERSION: Final = 6
+#: 7：新增 ``hour`` / ``minute`` 两栏 —— 日历视图的小时格子按**墙上钟点**摆
+#: （ADR 0033 决策 3），而 ``captured`` 那个 epoch 反推不出墙上钟点（照片写了时区
+#: 偏移时反推出来的是「在本机看到的时刻」）。因此这一版与上面几次不同：
+#: **老库会被整表丢掉重建**，也就是全库重读一次 EXIF（一次性；缓存在配置目录里，
+#: 重建得出等价状态，见 AGENTS 红线 5）。
+SCHEMA_VERSION: Final = 7
 
 #: **后加的 ``photos`` 表没有升版本**（ADR 0026 决策 3）：它是纯新增，语句全部带
 #: ``IF NOT EXISTS``，老库连上来自动多出这张表，一行已读好的 facet 都不用重读。
@@ -66,6 +71,8 @@ CREATE TABLE IF NOT EXISTS facets (
     year       INTEGER,
     month      INTEGER,
     day        INTEGER,
+    hour       INTEGER,
+    minute     INTEGER,
     camera     TEXT,
     lens       TEXT,
     city       TEXT,
@@ -106,7 +113,7 @@ _PHOTO_COLUMNS: Final[str] = "path, size, mtime_ns, name, folder, suffix"
 _PHOTO_PLACEHOLDERS: Final[str] = ", ".join("?" * len(_PHOTO_COLUMNS.split(",")))
 
 _COLUMNS: Final[str] = (
-    "path, size, mtime_ns, captured, year, month, day, camera, lens, "
+    "path, size, mtime_ns, captured, year, month, day, hour, minute, camera, lens, "
     "city, region, country, keywords, latitude, longitude, inferred, "
     "place_ok, place_km, aperture, shutter, iso, focal, pixels"
 )
@@ -236,6 +243,8 @@ class FacetIndex:
                 facets.year,
                 facets.month,
                 facets.day,
+                facets.hour,
+                facets.minute,
                 facets.camera,
                 facets.lens,
                 facets.city,
@@ -489,6 +498,8 @@ def _row_to_facets(values: Sequence[object]) -> PhotoFacets | None:
         year,
         month,
         day,
+        hour,
+        minute,
         camera,
         lens,
         city,
@@ -512,6 +523,8 @@ def _row_to_facets(values: Sequence[object]) -> PhotoFacets | None:
         year=_optional_int(year),
         month=_optional_int(month),
         day=_optional_int(day),
+        hour=_optional_int(hour),
+        minute=_optional_int(minute),
         camera=_optional_str(camera),
         lens=_optional_str(lens),
         city=_optional_str(city),
@@ -537,6 +550,8 @@ def _facets_to_row(facets: PhotoFacets) -> tuple[object, ...]:
         facets.year,
         facets.month,
         facets.day,
+        facets.hour,
+        facets.minute,
         facets.camera,
         facets.lens,
         facets.city,

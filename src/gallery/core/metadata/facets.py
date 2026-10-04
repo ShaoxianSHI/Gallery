@@ -133,6 +133,9 @@ class PhotoFacets:
     year: int | None = None
     month: int | None = None
     day: int | None = None
+    #: 拍摄时的**钟点**（同上，墙上时间）。日历视图的小时格子按它们摆（ADR 0033）。
+    hour: int | None = None
+    minute: int | None = None
     camera: str | None = None
     lens: str | None = None
     city: str | None = None
@@ -254,6 +257,8 @@ def extract(raw: Mapping[str, object]) -> PhotoFacets:
         year=when.year if when else None,
         month=when.month if when else None,
         day=when.day if when else None,
+        hour=when.hour if when else None,
+        minute=when.minute if when else None,
         camera=camera_name(text),
         lens=first_value(text, "EXIF:LensModel", "EXIF:LensID", "EXIF:Lens"),
         # 两种族名都认（``XMP-photoshop:City`` 与 ``XMP:City``）：exiftool 的 ``-G`` 按
@@ -283,15 +288,27 @@ def extract(raw: Mapping[str, object]) -> PhotoFacets:
 class CaptureMoment:
     """照片记下的那个拍摄时刻。
 
-    ``timestamp`` 用来**排序**（真实的时间先后）；``year`` / ``month`` / ``day`` 用来
-    **分组**，取的是照片里记下的墙上时间，不换算到本机时区 —— 否则一张在东京拍的
-    照片会在分组时被塞进相邻的某一天。
+    ``timestamp`` 用来**排序**（真实的时间先后）；其余字段用来**分组**，取的是照片里
+    记下的墙上时间，**不换算到本机时区** —— 否则一张在东京拍的照片会在分组时被塞进
+    相邻的某一天（ADR 0033 决策 3）。
+
+    ``hour`` / ``minute`` 与年月日是同一口径：日历视图的小时格子按它们摆
+    （「相机所在地几点几分」是用户唯一认得的那个时间），所以它们**不是**从
+    ``timestamp`` 反推的 —— 照片写了时区偏移时（``2021:09:04 19:45:25+02:00``），
+    反推出来的是「在这台机器上看到的时刻」，与上面这一套不是同一个口径。
     """
 
     timestamp: float
     year: int
     month: int
     day: int
+    hour: int
+    minute: int
+
+    @property
+    def date(self) -> datetime.date:
+        """墙上日期。"""
+        return datetime.date(self.year, self.month, self.day)
 
 
 def parse_capture_time(value: str | None) -> CaptureMoment | None:
@@ -313,7 +330,7 @@ def parse_capture_time(value: str | None) -> CaptureMoment | None:
         epoch = _epoch(year, month, day, hour, minute, second, offset)
     except (ValueError, OverflowError, OSError):
         return None
-    return CaptureMoment(timestamp=epoch, year=year, month=month, day=day)
+    return CaptureMoment(timestamp=epoch, year=year, month=month, day=day, hour=hour, minute=minute)
 
 
 def _offset_seconds(token: str | None) -> int | None:
