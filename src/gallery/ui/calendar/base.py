@@ -110,13 +110,22 @@ class LevelView(QWidget):
         return self._anchor
 
     def days(self) -> list[datetime.date]:
+        """这一层**自己**的那几天（不含上下月补位）—— 「有几张」按这个数。
+
+        铺格子用的 6 × 7（含补位）是另一张表，各视图自己拿
+        :func:`~gallery.core.library.calendar.month_matrix` 画。
+        """
         return days_of(self._level, self._anchor)
 
     def title(self) -> str:
         return title(self._level, self._anchor)
 
     def photo_count(self) -> int:
-        """当前这一段日子里有多少张照片（标题栏与「空日历」提示都用它）。"""
+        """当前这一段日子里有多少张照片（标题栏与「空日历」提示都用它）。
+
+        **邻月的照片不算**：停在九月，十月 1 号那一张既不在九月的格子里，
+        也不该出现在九月的张数里。
+        """
         return count_days(self._by_day, self.days())
 
     def set_anchor(self, anchor: datetime.date) -> None:

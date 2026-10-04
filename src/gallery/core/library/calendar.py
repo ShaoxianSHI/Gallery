@@ -8,6 +8,11 @@
 ``library.groups.build_groups`` 那个分组 —— 分组只给「有照片的那些组」，而日历要的是
 一张**每一天都有格子**的表（2021 年只有 8 天有照片，另外 357 格也得画出来）。
 
+**格子与照片是两回事：格子里铺的日子含上下月补位，照片只属于它自己的那个月。**
+:func:`month_matrix` 那 42 天里有 10 月 1 日，而那一格在「9 月」那张表里 ——
+于是「这一格摆不摆照片」「这一月有几张」都得问 :func:`in_month` 与
+:func:`month_days`，而不是「矩阵里有」。
+
 **没有拍摄时间的照片不进日历**（ADR 0033 决策 4）：它们不落到任何一天，画在哪儿都是
 另一个话题。分组视图那边「没值的排最后」（ADR 0009）在这里不成立。
 """
@@ -35,10 +40,8 @@ LEVELS: Final[tuple[str, ...]] = ("year", "month", "week")
 #: 各层的名称（标题栏的分段选择器与无障碍名称用它）。
 LEVEL_NAMES: Final[Mapping[str, str]] = {"year": "年", "month": "月", "week": "周"}
 
-#: 年视图铺的那几天。取 366 是为了闰年的 2 月 29 日也有格子（按「最多」铺，
-#: 平年最后那一格落在下一年 1 月 1 日上 —— 年视图里没人会数它）。
-#: （2 月 29 日在闰年会被多列一天 —— 年视图里多出来的那一格不会有人去数。）
-_DAYS_IN_YEAR: Final = 366
+#: 每个月的天数（平年）。闰年二月多一天，见 :func:`days_in_month`。
+_DAYS_IN_MONTH: Final[tuple[int, ...]] = (31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
 
 #: 一周的第一天：**周日**。三层日历的列都是周日打头（``date.weekday()`` 里周日是 6，
 #: 取模后落在最前面）。
@@ -72,28 +75,70 @@ def is_level(value: str) -> bool:
     return value in LEVELS
 
 
-def days_of(level: str, anchor: datetime.date) -> list[datetime.date]:
-    """这一层铺开的那段日子（含补位的邻月日子）。
+def _is_leap(year: int) -> bool:
+    """格里高利历的闰年（四年一闰，百年不闰，四百年再闰）。"""
+    return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
 
-    - 年：366 天，够把 12 张小月都铺满；
-    - 月：6 × 7 = 42 天，从**当月 1 号所在那一周的周日**起算 ——
-      所以月视图第一行总从周日开始，与表头那七个字对得上；
-    - 周：周日到周六七天。
+
+def days_in_month(month: datetime.date) -> int:
+    """``month`` 那个月有多少天（闰年二月 29 天）。``month`` 的「几号」不看。"""
+    if month.month == 2 and _is_leap(month.year):
+        return 29
+    return _DAYS_IN_MONTH[month.month - 1]
+
+
+def in_month(day: datetime.date, month: datetime.date) -> bool:
+    """这一天是不是 ``month`` 那个月**自己**的日子 —— 补位格不算。
+
+    月视图与年视图那张 6 × 7 的表都含上下月补位，于是 10 月 1 日在「9 月」那张表里
+    也会出现一次。**那一格不摆照片，也不算进九月的张数**：用户问的是「九月拍了什么」，
+    而九月的照片不该出现在九月的格子里 —— 那是邻月的照片，摆错了地方。
+
+    **判据只在这里写一处**：年月都算上（只比 ``month`` 会在跨年的补位上错），
+    界面不自己比较 ``day.month``。
+    """
+    return (day.year, day.month) == (month.year, month.month)
+
+
+def month_days(month: datetime.date) -> list[datetime.date]:
+    """``month`` 自己的那几天（29–31 天），顺序与 :func:`month_matrix` 里的一致。
+
+    数这一月的张数、列这一月要哪几张缩略图，都问它 —— 而不是拿 42 天的矩阵去减。
+    """
+    first = datetime.date(month.year, month.month, 1)
+    return [first + datetime.timedelta(days=offset) for offset in range(days_in_month(month))]
+
+
+def days_of(level: str, anchor: datetime.date) -> list[datetime.date]:
+    """这一层**自己**的那段日子（**不含**上下月补位）。
+
+    - 年：365 天，闰年 366 —— 停在 12 月 31 日，不多出下一年那一天的；
+    - 月：29–31 天；
+    - 周：周日到周六七天（周视图那七列本来就没有补位）。
+
+    **铺格子用的 6 × 7（含补位）是另一件事**，见 :func:`month_matrix`：那张表从
+    **当月 1 号所在那一周的周日**起算，所以第一行总从周日开始，与表头那七个字对得上；
+    而「这一层有几张照片」问的是自己那几天。
     """
     if level == "year":
-        start = datetime.date(anchor.year, 1, 1)
-        return [start + datetime.timedelta(days=offset) for offset in range(_DAYS_IN_YEAR)]
+        first = datetime.date(anchor.year, 1, 1)
+        length = 366 if _is_leap(anchor.year) else 365
+        return [first + datetime.timedelta(days=offset) for offset in range(length)]
     if level == "month":
-        return month_matrix(anchor)
+        return month_days(anchor)
     start = week_start(anchor)
     return [start + datetime.timedelta(days=offset) for offset in range(7)]
 
 
 def month_matrix(anchor: datetime.date) -> list[datetime.date]:
-    """覆盖整月的那 6 × 7 = 42 天，含上下月补位。
+    """铺格子用的那 6 × 7 = 42 天，**含上下月补位**。
 
     从**当月 1 号所在那一周的周日**起算，所以第一行总从周日开始，
     与表头那七个字对得上。
+
+    **这张表是给格子用的，不是给照片用的**：前后补位那几天是邻月的日子，
+    问「这一格摆不摆照片」用 :func:`in_month`，问「这一月有几天照片」用
+    :func:`month_days`。
     """
     start = week_start(datetime.date(anchor.year, anchor.month, 1))
     return [start + datetime.timedelta(days=offset) for offset in range(42)]
@@ -264,10 +309,13 @@ __all__ = [
     "capture_hour",
     "count_days",
     "count_hours",
+    "days_in_month",
     "days_of",
     "group_by_day",
     "group_by_hour",
+    "in_month",
     "is_level",
+    "month_days",
     "month_matrix",
     "shift",
     "title",

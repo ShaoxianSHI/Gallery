@@ -8,6 +8,10 @@
 
 **今天只写成蓝字，不加药丸** —— Google 月视图是这么画的（它的周视图里今天才是蓝圆点，
 两处不一样，别抄混）。
+
+**补位格只有日期号，没有照片。** 那 6 × 7 是为了对齐星期几而铺满的：9 月 1 号是周三，
+于是前面要有 8 月 29–31 号、后面要有 10 月 1–9 号。那几格摆的照片**是邻月的**，
+而这一屏回答的是「九月拍了什么」 —— 于是它们只留一个灰日期号，点下去也不做什么。
 """
 
 from __future__ import annotations
@@ -17,7 +21,12 @@ import datetime
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QFont, QMouseEvent, QPainter
 
-from gallery.core.library.calendar import WEEKDAY_HEADERS, month_matrix, week_index
+from gallery.core.library.calendar import (
+    WEEKDAY_HEADERS,
+    in_month,
+    month_matrix,
+    week_index,
+)
 from gallery.core.library.photos import PhotoRef
 from gallery.ui.calendar.base import LevelView, day_label
 from gallery.ui.calendar.layout import fitted_size
@@ -99,16 +108,18 @@ class MonthView(LevelView):
 
     def _paint_day(self, painter: QPainter, cell: QRectF, day: datetime.date) -> None:
         colors = self.colors
+        outside = not in_month(day, self._anchor)
         draw_text(
             painter,
             QRectF(cell.left() + 1, cell.top(), 28, 18),
             str(day.day),
             font_px(_DATE_FONT_PX, QFont.Weight.Medium),
-            colors.accent
-            if day == self.today()
-            else (colors.text if day.month == self._anchor.month else colors.faint),
+            colors.accent if day == self.today() else (colors.faint if outside else colors.text),
             elide=False,
         )
+        # **补位格到此为止**：那几格是邻月的日子，摆照片就是把邻月的照片摆进这一月。
+        if outside:
+            return
         photos = self.photos_of(day)
         if not photos:
             return
@@ -152,16 +163,25 @@ class MonthView(LevelView):
         row = int((point.y() - body_top) // row_height)
         if 0 <= column_index < 7 and 0 <= row < 6:
             day = month_matrix(self._anchor)[row * 7 + column_index]
+            # **补位格点了不动**：那一格是邻月的日子，而这一屏是本月。
+            # 摊开邻月那天的照片会让人以为「这一格明明是空的，怎么点出东西来」。
+            if not in_month(day, self._anchor):
+                return
             self.set_selected(day)
             self.select_cell(self.photos_of(day), day_label(day))
 
     # ---- 缩略图窗口 -------------------------------------------------------
     def visible_refs(self) -> list[PhotoRef]:
-        """一屏放得下的那些天，各要一张缩略图（每天就一张）。"""
+        """一屏放得下的那些天，各要一张缩略图（每天就一张）。
+
+        **补位格不要**：那里不摆照片，为它解码出来的那张永远不会被画出来。
+        """
         refs: list[PhotoRef] = []
         for index, day in enumerate(month_matrix(self._anchor)):
             cell = self._day_cell(index)
             if not cell.intersects(self.rect()):
+                continue
+            if not in_month(day, self._anchor):
                 continue
             photos = self.photos_of(day)
             if photos:

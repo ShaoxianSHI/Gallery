@@ -72,7 +72,11 @@ def fitted_size(source_w: int, source_h: int, box_w: float, box_h: float) -> tup
 
 
 def month_cells(level_days: int = 6, week_days: int = 7) -> int:
-    """月视图要几格：6 行 × 7 列 = 42（与 ``calendar.days_of('month', …)`` 对齐）。"""
+    """月视图要几格：6 行 × 7 列 = 42（与 ``calendar.month_matrix(…)`` 对齐）。
+
+    **这 42 格是铺格子用的，含上下月补位**；那一月自己的日子只有 29–31 天
+    （见 ``calendar.month_days``）—— 格子数与照片数是两回事。
+    """
     return level_days * week_days
 
 

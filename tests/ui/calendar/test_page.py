@@ -456,7 +456,10 @@ def test_a_burst_of_thumbnails_is_painted_exactly_once(
     image.fill(0x336699)
     edge = page.thumbnail_edge()
     arriving = view.visible_refs()
-    assert len(arriving) >= 30, "前提不成立：这一层几乎没要图"
+    # 40 张落在 9 月 12 日 – 10 月 9 日这 **28 天**上，横跨 9 月与 10 月两张小月；
+    # 补位格里不报（那里不画照片），所以**每张只报一次**。
+    assert len(arriving) == 28, "前提不成立：这一层要的那一批不是这 28 天"
+    assert len(set(arriving)) == len(arriving), "同一张照片报了两遍"
     for ref in arriving:
         page.set_thumbnail(ref.path, image, edge)
 

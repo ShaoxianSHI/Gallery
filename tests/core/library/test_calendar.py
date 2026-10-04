@@ -16,10 +16,13 @@ from gallery.core.library.calendar import (
     capture_hour,
     count_days,
     count_hours,
+    days_in_month,
     days_of,
     group_by_day,
     group_by_hour,
+    in_month,
     is_level,
+    month_days,
     month_matrix,
     shift,
     title,
@@ -42,10 +45,55 @@ def test_levels_are_the_four_we_offer(level: str) -> None:
     assert not is_level("")
 
 
-def test_a_year_is_six_hundred_and_sixty_six_days() -> None:
-    days = days_of("year", datetime.date(2021, 9, 12))
-    assert len(days) == 366
-    assert days[0] == datetime.date(2021, 1, 1)
+@pytest.mark.parametrize(("year", "length"), [(2021, 365), (2024, 366)])
+def test_a_year_is_exactly_its_own_days(year: int, length: int) -> None:
+    """**不多一天**：平年原先是 366 天，于是最后一天落在下一年 1 月 1 日上 ——
+    那一天的照片于是算进了这一年的张数里。"""
+    days = days_of("year", datetime.date(year, 9, 12))
+    assert len(days) == length
+    assert days[0] == datetime.date(year, 1, 1)
+    assert days[-1] == datetime.date(year, 12, 31)
+
+
+@pytest.mark.parametrize(("year", "month", "length"), [(2021, 2, 28), (2024, 2, 29)])
+def test_february_knows_how_long_it_is(year: int, month: int, length: int) -> None:
+    assert days_in_month(datetime.date(year, month, 15)) == length
+    assert len(month_days(datetime.date(year, month, 15))) == length
+
+
+@pytest.mark.parametrize(
+    ("month", "length"),
+    [(datetime.date(2021, 4, 9), 30), (datetime.date(2021, 12, 31), 31)],
+)
+def test_a_month_counts_only_the_days_it_has(month: datetime.date, length: int) -> None:
+    """月视图停在四月：这一层**自己**的那几天是 30 天，不是那张 6 × 7 的 42 天。"""
+    days = days_of("month", month)
+    assert len(days) == length
+    assert days[0] == datetime.date(month.year, month.month, 1)
+    assert all(in_month(day, month) for day in days)
+
+
+def test_a_filler_day_is_not_part_of_the_month() -> None:
+    """9 月那张 6 × 7 的表里摆着 10 月 1 日与 8 月 31 日 —— **那不是九月的日子**。
+
+    只比 ``month`` 在跨年时会错：12 月那张表的末尾摆着 1 月 1 日，
+    「1 月」与 12 月当然不同，可它属于**下一年**。
+    """
+    september = datetime.date(2021, 9, 12)
+    assert in_month(datetime.date(2021, 9, 1), september)
+    assert not in_month(datetime.date(2021, 10, 1), september)
+    assert not in_month(datetime.date(2021, 8, 31), september)
+    # 同一个月份号，不同的年：12 月那张小月的末尾
+    assert not in_month(datetime.date(2022, 1, 1), datetime.date(2021, 12, 1))
+
+
+def test_the_filler_days_of_the_matrix_are_exactly_the_ones_left_out() -> None:
+    anchor = datetime.date(2021, 9, 12)
+    matrix = month_matrix(anchor)
+    own = month_days(anchor)
+    assert [day for day in matrix if in_month(day, anchor)] == own
+    # 2021 年 9 月 1 号是周三：前面补 3 天（8 月 29–31），后面补 9 天（10 月 1–9）
+    assert len(matrix) - len(own) == 12
 
 
 def test_a_month_is_six_weeks_starting_on_a_sunday() -> None:
@@ -254,3 +302,19 @@ def test_counting_a_period() -> None:
     assert count_days(days, [datetime.date(2020, 1, 1)]) == 0
     assert count_hours(hours, [datetime.date(2021, 9, 12)]) == 1
     assert count_hours(hours, []) == 0
+
+
+def test_counting_a_month_leaves_out_the_filler_days() -> None:
+    """「九月有几张」数九月自己的日子 —— 10 月 1 号那一张不算。
+
+    10 月 1 号**确实在**九月那张 6 × 7 的表里（末尾那几格），所以按矩阵数是 2；
+    而界面上写着的是「9 月」，那几格里摆的也是十月的照片。
+    """
+    refs = [make_ref("september.jpg"), make_ref("october.jpg")]
+    values = {
+        refs[0].path: PhotoFacets(captured_at=1.0, year=2021, month=9, day=12, hour=9),
+        refs[1].path: PhotoFacets(captured_at=2.0, year=2021, month=10, day=1, hour=9),
+    }
+    buckets = group_by_day(refs, values)
+    assert count_days(buckets, month_matrix(datetime.date(2021, 9, 1))) == 2
+    assert count_days(buckets, month_days(datetime.date(2021, 9, 1))) == 1

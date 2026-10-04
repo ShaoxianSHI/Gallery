@@ -6,6 +6,10 @@
 
 有照片的那一天铺当天**最晚**的一张当封面（小月格子小，最近的那张通常也是用户觉得
 该当代表的那张），上面再压一枚底色日期徽标，于是深浅照片上都读得出数字。
+
+**每张小月里也只有它自己那个月的日子有照片。** 12 张小月都是含上下月补位的 6 × 7，
+于是 10 月 1 日在「9 月」那张的末尾与「10 月」那张的开头各出现一次 —— 照片摆了两遍、
+张数数了两遍，而 9 月那个数字里混着十月的照片。补位格留一个灰日期号就好。
 """
 
 from __future__ import annotations
@@ -15,7 +19,13 @@ import datetime
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QFont, QMouseEvent, QPainter
 
-from gallery.core.library.calendar import WEEKDAY_HEADERS, month_matrix
+from gallery.core.library.calendar import (
+    WEEKDAY_HEADERS,
+    count_days,
+    in_month,
+    month_days,
+    month_matrix,
+)
 from gallery.core.library.photos import PhotoRef
 from gallery.ui.calendar.base import LevelView, day_label
 from gallery.ui.calendar.painting import (
@@ -101,9 +111,12 @@ class YearView(LevelView):
         self, painter: QPainter, box: QRectF, month: int, days: list[datetime.date]
     ) -> None:
         colors = self.colors
-        # **按整张矩阵数**（含上下月补位的那几天），与原先 ``days_of("month", …)``
-        # 的口径一模一样 —— 那是既有行为，改它就是改界面上写着的那几个数字。
-        count = sum(len(self.photos_of(day)) for day in days)
+        first = datetime.date(self._anchor.year, month, 1)
+        # **只数这一月自己的日子**（``month_days``，29–31 天），不拿那 42 天的矩阵去数：
+        # 矩阵前后补位是邻月的日子，数进来就等于把 10 月的照片算进 9 月 —— 而标题上
+        # 写着的就是「9 月」。原先这里数整张矩阵，两处都错：数多了，也把同一张
+        # 照片在 9 月与 10 月各数了一遍。
+        count = count_days(self._by_day, month_days(first))
         title = QRectF(box.left(), box.top(), box.width(), _TITLE_HEIGHT)
         draw_text(
             painter,
@@ -133,11 +146,16 @@ class YearView(LevelView):
                 elide=False,
             )
         for day, cell in zip(days, self._day_cells(box), strict=True):
-            self._paint_day(painter, cell, day, month)
+            self._paint_day(painter, cell, day, first)
 
-    def _paint_day(self, painter: QPainter, cell: QRectF, day: datetime.date, month: int) -> None:
+    def _paint_day(
+        self, painter: QPainter, cell: QRectF, day: datetime.date, month: datetime.date
+    ) -> None:
         colors = self.colors
-        photos = self.photos_of(day)
+        # **补位格只有日期号**：那几格是邻月的日子，摆照片就是把邻月的照片摆进这一张
+        # 小月 —— 同一张照片于是还会在它自己那张小月里再出现一次。
+        own = in_month(day, month)
+        photos = self.photos_of(day) if own else ()
         if photos:
             paint_photo(painter, cell, self.photo(photos[-1]), radius=_CELL_RADIUS)
             size = min(cell.height() * 0.66, 16.0)
@@ -158,14 +176,14 @@ class YearView(LevelView):
                 cell,
                 str(day.day),
                 font_px(_DATE_FONT_PX),
-                colors.faint if day.month != month else colors.muted,
+                colors.muted if own else colors.faint,
                 Qt.AlignmentFlag.AlignCenter,
                 elide=False,
             )
         # **今天只在它自己那个月的格子里高亮**。小月矩阵含上下月补位，于是 10 月 4 日
         # 在「9 月」那张小月的末尾也会出现一次 —— 两处都圈上就成了两个「今天」，
         # 而用户要回答的问题是「今天在哪」，不是「今天出现了几次」。
-        if day == self.today() and day.month == month:
+        if own and day == self.today():
             outline_rounded(painter, cell, colors.accent, 1.6, radius=_CELL_RADIUS)
 
     # ---- 交互 -------------------------------------------------------------
@@ -183,7 +201,8 @@ class YearView(LevelView):
         index = row * 4 + column + 1
         month = datetime.date(self._anchor.year, index, 1)
         picked = self._day_at(point, self._box(index - 1), month)
-        if picked is not None:
+        # **补位格点了不动**：那一格是邻月的日子，而这一屏是这一年的 12 个月。
+        if picked is not None and in_month(picked, month):
             self.set_selected(picked)
             self.select_cell(self.photos_of(picked), day_label(picked))
 
@@ -199,10 +218,13 @@ class YearView(LevelView):
 
         **每天只要一张**：年视图一格就是一天的代表，再要三四张也没人看得见，
         而那是好几百张缩略图（几十兆内存）。
+
+        **走 ``month_days`` 而不是 42 天的矩阵**：补位格里不摆照片，为它解码出来的那张
+        永远不会被画出来，而同一张照片本来就会在它自己那张小月里报一次。
         """
         refs: list[PhotoRef] = []
         for index in range(12):
-            for day in month_matrix(datetime.date(self._anchor.year, index + 1, 1)):
+            for day in month_days(datetime.date(self._anchor.year, index + 1, 1)):
                 photos = self.photos_of(day)
                 if photos:
                     refs.append(photos[-1])
