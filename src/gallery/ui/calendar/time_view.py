@@ -36,6 +36,7 @@ from gallery.ui.calendar.layout import (
 )
 from gallery.ui.calendar.painting import (
     begin,
+    dot,
     draw_text,
     fill_rounded,
     font_px,
@@ -470,6 +471,11 @@ class _TimeGrid(QWidget):
 
         **没有照片的那一格只留一层选中底色**：底色已经把「我点的是这一格」说清楚了，
         再补一个占位圆点就变成了「这一格有张照片还没读出来」—— 而它根本没有照片。
+
+        **有照片、图还没到的那一格画一个安静的圆点**，与月视图同一个约定（见
+        ``month_view._paint_day``）。**别把整格铺成那块浅灰**：照片到了是按比例缩在格子里
+        摆的（比整格小一圈），于是「满格的灰块 → 小一圈的照片」看起来就是**闪一下、
+        尺寸还在变**（月视图没有这个毛病，正是因为它画的是圆点）。
         """
         colors = self._view.colors
         x, y, cell_w, cell_h = cell_rect(row.width(), row.height())
@@ -478,10 +484,14 @@ class _TimeGrid(QWidget):
             fill_rounded(painter, cell, colors.selection, CARD_RADIUS)
         if not photos:
             return
+        image = self._view.photo(photos[0])
+        if image is None:
+            dot(painter, cell.center(), 2.5, colors.faint)
+            return
         paint_cell_photo(
             painter,
             cell,
-            self._view.photo(photos[0]),
+            image,
             count=len(photos),
             chip=colors.chip,
             text=colors.text,

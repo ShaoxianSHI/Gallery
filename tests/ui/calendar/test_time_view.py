@@ -329,3 +329,55 @@ def test_switching_levels_reveals_before_returning(
 
     view = page.current_view()
     assert view._area.verticalScrollBar().value() > 0, "切层返回时还停在旧位置上"
+
+
+def test_a_cell_waiting_for_its_thumbnail_is_not_a_grey_block(
+    qt_app: QApplication,
+) -> None:
+    """有照片、图还没到的那一格：**画一个安静的圆点，不是满格灰块**。
+
+    「满格灰块 → 小一圈的照片」这一对帧看起来就是闪一下、尺寸还在变（照片按比例缩在
+    格子里摆，比整格小）。月视图同一个状态画的是圆点，所以它不闪 —— 周视图对齐过来。
+    """
+    from PySide6.QtGui import QImage
+
+    from gallery.ui.calendar.layout import cell_rect
+
+    view = WeekView(ThumbStore())
+    view.set_buckets({ANCHOR: [_ref("a.jpg")]}, {(ANCHOR, 8): [_ref("a.jpg")]})
+    view.resize(900, 600)
+    view.show()
+    qt_app.processEvents()
+    view.set_anchor(ANCHOR)
+    qt_app.processEvents()
+
+    bar = view._area.verticalScrollBar()
+    bar.setValue(7 * int(view.row_height()))  # 让 08:00 那一格落在屏幕上
+    qt_app.processEvents()
+
+    # **前提摆出来**：那一格在屏幕上、有照片、图还没到（不然下面两条断言会空转绿）
+    row_px = view.row_height()
+    assert bar.value() <= 8 * row_px <= bar.value() + view._area.viewport().height(), (
+        "08:00 那一格不在屏幕上，这条用例什么也没验到"
+    )
+    waiting = view.photos_in_hour(ANCHOR, 8)[0]
+    assert view.photo(waiting) is None, "前提不成立：那一格的图已经到了"
+
+    shot = QImage(view._grid.size(), QImage.Format.Format_RGBA8888)
+    view._grid.render(shot)
+    x, y, width, height = cell_rect(view.column_width(), row_px)
+    left = int(view.content_left() + x)
+    # **渲染的是网格自己**：滚动只影响视口那一层，网格坐标始终是 `hour * row`
+    top = int(8 * row_px + y)
+    background = view.background.name()
+
+    corner = shot.pixelColor(left + int(width * 0.15), top + int(height * 0.15)).name()
+    assert corner == background, f"那一格被铺满了（{corner}）—— 图一到就会缩一圈，看着闪"
+
+    painted = sum(
+        1
+        for dx in range(int(width))
+        for dy in range(int(height))
+        if shot.pixelColor(left + dx, top + dy).name() != background
+    )
+    assert painted < width * height * 0.05, f"那一格画了 {painted} 个点，不止一个小圆点"
