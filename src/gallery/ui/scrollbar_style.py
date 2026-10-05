@@ -7,7 +7,15 @@
 **为什么不给原生那一份**：原生滚动条常驻一条实心轨道，颜色由系统当前外观决定，
 与本应用统一下发的那份底色（:mod:`gallery.ui.theme`）对不上 —— 深色下是一条更深的
 灰底竖条，看起来像内容上压了一块东西。这里把轨道（``::add-page`` / ``::sub-page``）
-与两端的按钮（``::add-line`` / ``::sub-line``）都拿掉，只留一条按主题着色的滑块。
+与两端的按钮（``::add-line`` / ``::sub-line``）都拿掉，只留一条按主题着色的滑块：
+比原生那档细（:data:`SCROLLBAR_WIDTH`），圆角取宽度的一半（两头是标准胶囊），
+四边不留边 —— 紧贴窗口右缘（用户原话：「滚动条窄一点，圆角加大最大（宽度的一半），
+位置放到最右侧紧贴窗口」）。
+
+**写 ``width`` 会改动网格排版，而那是该改的**：``PhotoGrid._scrollbar_reserve`` 问的
+正是 ``sizeHint().width()``，于是格子宽一点 —— 少掉的那几像素原本是照片的。
+**但它确实会顶翻两条既有守护**（格宽一变列数就可能变，列数一变就该走切档过渡），
+那两条已经改成自己找一个「不换列」的增量，见 ``tests/ui/browser/grid_helpers.py``。
 
 **别用 ``QApplication.setStyleSheet`` 一把梭**：那会让每个控件都改走
 ``QStyleSheetStyle``，macOS 原生绘制随之失效（本仓库已经吃过一次亏，见
@@ -22,16 +30,18 @@ from PySide6.QtWidgets import QScrollBar
 from gallery.ui import theme
 from gallery.ui.theme import AppTheme, rgba
 
-#: 滑块左右各让开多少（点）：留一条与底色齐平的窄边，滑块才像「浮在内容上」而不是
-#: 「贴在边上」。
-HANDLE_SIDE_INSET = 2
+#: 滚动条占多宽（点）。比原生那一档（实测 18）细一截：轨道已经不要了，留一条宽地
+#: 只是把网格右边那一列内容缩掉，而缩掉的像素是照片自己的。
+SCROLLBAR_WIDTH = 12
 
 #: 滑块最短多少像素（点）。内容只比视口高一点点时，Qt 会把滑块压成一条几乎看不见的线，
 #: 而那正是用户最需要知道「还剩一点没看完」的时候 —— 短到这个下限就不再更短。
 HANDLE_MIN = 28
 
-#: 滑块圆角（点）：高度的一半附近，取值让短滑块也还是一根圆头小条。
-HANDLE_RADIUS = 3
+#: 滑块圆角（点）= **宽度的一半**，于是两头是标准胶囊（用户要的最大值，再大就变成
+#: 椭圆之外的东西）。跟着 :data:`SCROLLBAR_WIDTH` 走：宽度改了这一档自动跟着改，
+#: 别把它当成一个可以单独挑的数。
+HANDLE_RADIUS = SCROLLBAR_WIDTH // 2
 
 #: 滑块常态与悬停态的不透明度。**用正文色按透明度取**而不是挑一个中性灰：
 #: 浅底上是深灰、深底上是浅灰，两套合成同一个公式（:meth:`AppTheme.text_at`），
@@ -43,11 +53,8 @@ HANDLE_ALPHA_HOVER = 0.55
 def scrollbar_style(app_theme: AppTheme) -> str:
     """按当前主题生成滚动条的样式表。颜色全从主题派生，不在这里挑中性灰。
 
-    **刻意不写 ``width``**：一写，``sizeHint().width()`` 就归样式表说了算，而网格的排版
-    宽度正是从那里扣掉滚动条的（``PhotoGrid._scrollbar_reserve``）—— 一次「让这条看着
-    轻一点」就会顺带改掉每一格有多大，还把两条钉着过渡判据的用例顶翻（格宽一变列数就
-    可能变，列数一变就该过渡，与边缘差多小无关）。不写时 Qt 交回原生那一档（实测 18，
-    与挂样式表之前分毫不差），排版一个像素都不动。
+    **滑块四边的 margin 全部归零**：用户要的是「紧贴窗口右缘」，所以那一列像素整个
+    都是滑块自己的，不留与底色齐平的窄边。
     """
     handle = rgba(app_theme.text_at(HANDLE_ALPHA))
     handle_hover = rgba(app_theme.text_at(HANDLE_ALPHA_HOVER))
@@ -55,12 +62,14 @@ def scrollbar_style(app_theme: AppTheme) -> str:
     zero = "height: 0px; width: 0px;"
     return f"""
 QScrollBar {{ background: transparent; border: none; margin: 0px; }}
+QScrollBar:vertical {{ width: {SCROLLBAR_WIDTH}px; }}
+QScrollBar:horizontal {{ height: {SCROLLBAR_WIDTH}px; }}
 QScrollBar::handle:vertical {{
     background: {handle};
     border: none;
     border-radius: {HANDLE_RADIUS}px;
     min-height: {HANDLE_MIN}px;
-    margin: 0px {HANDLE_SIDE_INSET}px;
+    margin: 0px;
 }}
 QScrollBar::handle:vertical:hover {{ background: {handle_hover}; }}
 QScrollBar::handle:horizontal {{
@@ -68,7 +77,7 @@ QScrollBar::handle:horizontal {{
     border: none;
     border-radius: {HANDLE_RADIUS}px;
     min-width: {HANDLE_MIN}px;
-    margin: {HANDLE_SIDE_INSET}px 0px;
+    margin: 0px;
 }}
 QScrollBar::handle:horizontal:hover {{ background: {handle_hover}; }}
 QScrollBar::add-line, QScrollBar::sub-line {{ {zero} }}
@@ -108,7 +117,7 @@ __all__ = [
     "HANDLE_ALPHA_HOVER",
     "HANDLE_MIN",
     "HANDLE_RADIUS",
-    "HANDLE_SIDE_INSET",
+    "SCROLLBAR_WIDTH",
     "apply_scrollbar_style",
     "scrollbar_style",
 ]

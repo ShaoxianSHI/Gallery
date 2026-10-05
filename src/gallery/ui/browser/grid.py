@@ -520,8 +520,9 @@ class PhotoGrid(QListView):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         # 原生滚动条常驻一条实心轨道，颜色由系统外观决定、与本应用统一下发的底色对不上。
         # 样式只从 :mod:`gallery.ui.scrollbar_style` 一处来 —— 周视图与元数据面板共用同一份。
-        # **那条样式里刻意没有 ``width``**：``_scrollbar_reserve`` 问的正是 ``sizeHint().width()``，
-        # 一改宽度，每一格多大就跟着变（还顺带顶翻两条钉着切档判据的用例）。
+        # **它比原生那档细，于是 ``_scrollbar_reserve`` 跟着变小、排版宽度多出几像素**：
+        # 那是该得的（少掉的原本是照片的），但格宽一变列数就可能变、列数一变就该走切档过渡，
+        # 所以钉着切档判据的用例得自己找一个「不换列」的增量，见 grid_helpers。
         apply_scrollbar_style(self.verticalScrollBar())
         self._delegate = PhotoDelegate(self, icon_edge=icon_edge)
         self.setItemDelegate(self._delegate)

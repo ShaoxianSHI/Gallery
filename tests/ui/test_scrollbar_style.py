@@ -31,7 +31,12 @@ from gallery.ui.browser.grid import PhotoGrid  # noqa: E402
 from gallery.ui.calendar.thumbs import ThumbStore  # noqa: E402
 from gallery.ui.calendar.time_view import WeekView  # noqa: E402
 from gallery.ui.panels.metadata import MetadataPanel  # noqa: E402
-from gallery.ui.scrollbar_style import HANDLE_ALPHA, HANDLE_MIN  # noqa: E402
+from gallery.ui.scrollbar_style import (  # noqa: E402
+    HANDLE_ALPHA,
+    HANDLE_MIN,
+    HANDLE_RADIUS,
+    SCROLLBAR_WIDTH,
+)
 
 #: 每行多高、总共几行（内容共 8000 像素，视口 400）。按比例算出来的滑块只剩 20 像素
 #: 上下 —— 正好把 :data:`HANDLE_MIN` 那个下限顶起来。
@@ -251,17 +256,49 @@ def test_the_metadata_panel_no_longer_cascades_a_bare_declaration(qt_app: QAppli
     )
 
 
-def test_removing_the_track_leaves_the_layout_alone(qt_app: QApplication) -> None:
-    """去掉轨道**不许顺带把网格的排版宽度也改了**。
+def test_the_bar_is_narrower_than_the_native_one(qt_app: QApplication) -> None:
+    """滚动条比原生那档细，而网格把省下的像素算进排版里。
 
-    :meth:`PhotoGrid._scrollbar_reserve` 问的正是 ``sizeHint().width()``，所以样式表里
-    只要出现一个 ``width``，每一格多大就跟着变 —— 而格宽一变列数就可能变，列数一变就该
-    走切档过渡，与边缘差多小无关（实测把滚动条从 18 收到 12，就顶翻了两条钉着
-    :data:`~gallery.ui.browser.grid.EDGE_ANIMATION_MIN_DELTA` 的用例）。这里钉住
-    「预留的宽度与没上样式时一致」。
+    :meth:`PhotoGrid._scrollbar_reserve` 问的正是 ``sizeHint().width()``，所以这条
+    样式会**真的**把每一格挪宽几像素 —— 那是该得的（少掉的原本是照片的），但也意味着
+    格宽一变列数就可能变，而列数一变就该走切档过渡（见 ``grid_helpers`` 里那个
+    「找一个不换列的增量」）。钉住「预留的宽度确实变窄了」，免得哪天它悄悄回到 18
+    而省下的那几像素白扔了。
     """
     theme.ensure_installed(qt_app)
     plain = QScrollBar()
     grid = PhotoGrid()
-    assert grid.verticalScrollBar().sizeHint().width() == plain.sizeHint().width()
-    assert grid._scrollbar_reserve() == plain.sizeHint().width()
+    assert grid.verticalScrollBar().sizeHint().width() < plain.sizeHint().width()
+    assert grid._scrollbar_reserve() == grid.verticalScrollBar().sizeHint().width()
+
+
+def test_the_handle_is_a_pill_flush_against_the_right_edge(qt_app: QApplication) -> None:
+    """圆角取宽度的一半（四边不留边），滑块因此是胶囊形，且紧贴窗口右缘。
+
+    「紧贴」量的是**滑块自己那几列像素全是它**：左右两端都得是滑块颜色，任何一列
+    露着底色就说明中间留了边（曾经留的是 :data:`HANDLE_SIDE_INSET` = 2）。
+    """
+    theme.ensure_installed(qt_app)
+    background = theme.current_theme(qt_app).background
+    area, bar = _scroll_area(styled=True)
+    image = bar.grab().toImage()
+    top, bottom = _handle_span(image, background)
+    assert top >= 0, "滑块没画出来"
+
+    middle = (top + bottom) // 2
+    columns = [x for x in range(image.width()) if image.pixelColor(x, middle) != background]
+    assert columns[0] == 0 and columns[-1] == image.width() - 1, (
+        f"滑块横向只占了第 {columns} 列，右缘还露着底色 —— 没有紧贴窗口"
+    )
+    assert bar.width() == SCROLLBAR_WIDTH
+    area.close()
+
+
+def test_the_corner_radius_is_half_the_width(qt_app: QApplication) -> None:
+    """圆角 = 宽度的一半：两头是标准胶囊，也是用户要的上限（再大就不是胶囊了）。"""
+    theme.ensure_installed(qt_app)
+    assert HANDLE_RADIUS == SCROLLBAR_WIDTH // 2
+    sheet = scrollbar_style.scrollbar_style(theme.current_theme(qt_app))
+    assert f"border-radius: {HANDLE_RADIUS}px;" in sheet
+    # 滑块四边的 margin 全为零 —— 那一列像素整个归滑块，才谈得上「紧贴窗口右缘」。
+    assert "margin: 0px;" in sheet

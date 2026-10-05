@@ -17,12 +17,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import QAbstractAnimation
+from PySide6.QtCore import QAbstractAnimation, QSize
 from PySide6.QtWidgets import QApplication
 from waiting import wait_until
 
 from gallery.core.library.photos import PhotoRef
-from gallery.ui.browser.grid import EDGE_ANIMATION_MS, PhotoGrid
+from gallery.ui.browser.grid import EDGE_ANIMATION_MIN_DELTA, EDGE_ANIMATION_MS, PhotoGrid
 from gallery.ui.browser.model import PhotoListModel
 
 #: 一次过渡切几帧。12 帧 ≈ 每 13ms 一帧，与真实 60Hz 刷新同量级，够把
@@ -53,6 +53,42 @@ def make_grid(qt_app: QApplication, tmp_path: Path, count: int, *, width: int = 
     grid.show()
     qt_app.processEvents()
     return grid
+
+
+def largest_delta_that_keeps_columns(
+    qt_app: QApplication, grid: PhotoGrid, *, limit: int = EDGE_ANIMATION_MIN_DELTA
+) -> int:
+    """最大的「边缘增量小于 ``limit`` 且不换列」的格宽增量。
+
+    **为什么不能写死一个数**：格子宽度一变，排在第一行的格子数就可能跟着变，而列数一变
+    就该走切档过渡（:attr:`~gallery.ui.browser.grid.GridTransition.reflows`）—— 那与
+    边缘差多小无关。于是「变化太小所以不该有过渡」那条用例会在滚动条一改宽度、格子跨过
+    换列边界时突然变红，而它量的根本不是自己声明的那一闸。
+
+    那个边界有多贴脸：实测网格宽 1200 时 6 列恰好是「视口 ÷ 6」那么宽，``+3`` 还排得下
+    6 列、``+4`` 就掉到 5 列了 —— 写死 ``+4`` 的那条用例正好骑在上面。把滚动条从 18
+    收到 12（格宽 192 → 194）就把结论整个翻了过来。
+
+    **返回之前网格已经复原**，所以调用方接着 :meth:`PhotoGrid._set_cell` 就行。
+    """
+    cell = grid.gridSize()
+    columns = grid._first_row_columns()
+    scroll = grid.verticalScrollBar().value()
+
+    def columns_with(width: int) -> int:
+        grid._apply_geometry(QSize(width, cell.height()), scroll)
+        qt_app.processEvents()
+        return grid._first_row_columns()
+
+    for delta in range(limit - 1, 0, -1):
+        kept = columns_with(cell.width() + delta) == columns
+        columns_with(cell.width())  # 复原
+        if kept:
+            return delta
+    raise AssertionError(
+        f"宽度 {limit - 1} 到 1 之间没有一个增量能保住 {columns} 列 —— "
+        f"这条守护没法表达「变化太小」这个前提"
+    )
 
 
 def grid_is_laid_out(grid: PhotoGrid) -> bool:
@@ -178,6 +214,7 @@ __all__ = [
     "drive_transition",
     "fake_photos",
     "grid_is_laid_out",
+    "largest_delta_that_keeps_columns",
     "make_grid",
     "settle_grid",
     "step_transition",

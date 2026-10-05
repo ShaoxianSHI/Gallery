@@ -21,6 +21,7 @@ from grid_helpers import (  # noqa: E402
     QT_DEFERRED_RELAYOUT_SECONDS,
     drive_transition,
     fake_photos,
+    largest_delta_that_keeps_columns,
     make_grid,
     settle_grid,
     step_transition,
@@ -165,15 +166,20 @@ def test_resizing_the_window_does_not_animate(qt_app: QApplication, tmp_path: Pa
 
 
 def test_a_change_too_small_to_see_does_not_animate(qt_app: QApplication, tmp_path: Path) -> None:
-    """差几个像素肉眼看不见，却要付一整轮全视口重绘 —— 直接落位。"""
+    """差几个像素肉眼看不见，却要付一整轮全视口重绘 —— 直接落位。
+
+    增量由 :func:`~grid_helpers.largest_delta_that_keeps_columns` 找，不写死：换列
+    本身就**该**过渡（那是另一闸），写死一个数会让这条用例在滚动条一改宽度、
+    格子跨过换列边界时测的变成「换列该不该过渡」—— 那它一直是绿的，只是答错了题。
+    """
     grid = make_grid(qt_app, tmp_path, 40)
     settle_grid(qt_app, grid)
     cell = grid.gridSize()
+    delta = largest_delta_that_keeps_columns(qt_app, grid)
 
-    grid._set_cell(
-        QSize(cell.width() + EDGE_ANIMATION_MIN_DELTA - 2, cell.height() + 3), animate=True
-    )
+    grid._set_cell(QSize(cell.width() + delta, cell.height() + 3), animate=True)
 
+    assert delta < EDGE_ANIMATION_MIN_DELTA, "前提：这个增量本来就该看不见"
     assert grid._transition_anim.state() == QAbstractAnimation.State.Stopped
     assert grid._delegate.draw_edge == float(grid.icon_edge)
 
@@ -1256,10 +1262,9 @@ def test_a_transition_that_never_ran_does_not_report_itself_as_ended(
     ended: list[bool] = []
     grid.transition_ended.connect(lambda: ended.append(True))
     cell = grid.gridSize()
+    delta = largest_delta_that_keeps_columns(qt_app, grid)
 
-    grid._set_cell(
-        QSize(cell.width() + EDGE_ANIMATION_MIN_DELTA - 2, cell.height() + 3), animate=True
-    )
+    grid._set_cell(QSize(cell.width() + delta, cell.height() + 3), animate=True)
 
     assert grid._transition_anim.state() == QAbstractAnimation.State.Stopped
     assert not grid.is_transitioning
