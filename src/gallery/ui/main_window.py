@@ -108,9 +108,17 @@ from gallery.ui.write_ops import WriteOpsMixin, flattened_entries
 
 logger = logging.getLogger(__name__)
 
-#: 网格页左右各留多少（点）。面包屑那一行也要知道它：条件胶囊要与搜索胶囊右对齐
+#: 网格页**左边**留多少（点）。面包屑那一行也要知道它：条件胶囊要与搜索胶囊右对齐
 #: （见 :meth:`MainWindow._layout_title_bar`）。
 _GRID_PAGE_MARGIN_H = 10
+
+#: 网格页**右边**留多少（点）。**比左边窄得多，而且这一档是用户点名要的**
+#: （原话：「右边的 10 点改为 2」）：这一页最右边就是那条滚动条，它的右缘离窗口右缘
+#: 只该有这么一条窄缝 —— 滑块自己还带着
+#: :data:`~gallery.ui.scrollbar_style.HANDLE_GAP` 那 2 点，两段加起来才是滑块右缘到
+#: 窗口右缘的距离。**别把它并回 :data:`_GRID_PAGE_MARGIN_H`**：左边那 10 点是给照片
+#: 留的呼吸，右边这 2 点是给滚动条的，两件事。
+_GRID_PAGE_MARGIN_RIGHT = 2
 
 
 class MainWindow(
@@ -330,7 +338,7 @@ class MainWindow(
         # **横幅不进这个布局**（ADR 0029 决策 1）：在竖排里占一行，每来一条消息就把网格往下挤。
         self._grid_page = QWidget()
         grid_layout = QVBoxLayout(self._grid_page)
-        grid_layout.setContentsMargins(_GRID_PAGE_MARGIN_H, 10, _GRID_PAGE_MARGIN_H, 0)
+        grid_layout.setContentsMargins(_GRID_PAGE_MARGIN_H, 10, _GRID_PAGE_MARGIN_RIGHT, 0)
         grid_layout.setSpacing(8)
         grid_layout.addWidget(self._breadcrumb)
         grid_layout.addWidget(self._grid, 1)
@@ -1159,8 +1167,9 @@ class MainWindow(
         )
 
         # 面包屑右端那几枚条件胶囊与这个胶囊**右缘对齐**；换算只在这一处做 —— 面包屑摆在一份有
-        # 边距的布局里，右缘已经比窗口右缘靠内 :data:`_GRID_PAGE_MARGIN_H` 点。
-        self._breadcrumb.set_right_inset(SEARCH_FIELD_MARGIN_RIGHT - _GRID_PAGE_MARGIN_H)
+        # 边距的布局里，右缘比窗口右缘靠内 :data:`_GRID_PAGE_MARGIN_RIGHT` 点（**不是左边那
+        # 一档**：右边窄，因为那一条要让给贴边的滚动条）。
+        self._breadcrumb.set_right_inset(SEARCH_FIELD_MARGIN_RIGHT - _GRID_PAGE_MARGIN_RIGHT)
 
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         super().showEvent(event)

@@ -12,10 +12,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from pathlib import Path
+
 import pytest
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtCore import QPoint  # noqa: E402
 from PySide6.QtGui import QColor, QImage, QPalette  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
@@ -25,16 +29,21 @@ from PySide6.QtWidgets import (  # noqa: E402
     QVBoxLayout,
     QWidget,
 )
+from waiting import DEFAULT_TIMEOUT_SECONDS  # noqa: E402
 
+from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.ui import scrollbar_style, theme  # noqa: E402
 from gallery.ui.browser.grid import PhotoGrid  # noqa: E402
 from gallery.ui.calendar.thumbs import ThumbStore  # noqa: E402
 from gallery.ui.calendar.time_view import WeekView  # noqa: E402
+from gallery.ui.main_window import _GRID_PAGE_MARGIN_RIGHT, MainWindow  # noqa: E402
 from gallery.ui.panels.metadata import MetadataPanel  # noqa: E402
 from gallery.ui.scrollbar_style import (  # noqa: E402
     HANDLE_ALPHA,
+    HANDLE_GAP,
     HANDLE_MIN,
     HANDLE_RADIUS,
+    HANDLE_WIDTH,
     SCROLLBAR_WIDTH,
 )
 
@@ -69,8 +78,12 @@ def _within(actual: QColor, expected: QColor, tolerance: int = 1) -> bool:
     )
 
 
-def _scroll_area(*, styled: bool) -> tuple[QScrollArea, QScrollBar]:
-    """造一条够长的滚动区（可选地给它上样式），并把当前底色推到它身上。"""
+def _scroll_area(*, styled: bool, sheet: str | None = None) -> tuple[QScrollArea, QScrollBar]:
+    """造一条够长的滚动区（可选地给它上样式），并把当前底色推到它身上。
+
+    ``sheet`` 用来下发一份**手工改过的**样式表（给「方角对照组」用）；给了它就不再走
+    :func:`scrollbar_style.apply_scrollbar_style`。
+    """
     area = QScrollArea()
     area.setWidgetResizable(True)
     area.setFrameShape(QFrame.Shape.NoFrame)
@@ -82,11 +95,38 @@ def _scroll_area(*, styled: bool) -> tuple[QScrollArea, QScrollBar]:
         layout.addWidget(row)
     area.setWidget(body)
     area.resize(*VIEWPORT)
-    if styled:
+    if sheet is not None:
+        area.verticalScrollBar().setStyleSheet(sheet)
+    elif styled:
         scrollbar_style.apply_scrollbar_style(area.verticalScrollBar())
     area.show()
     theme.push_palette(area)
     return area, area.verticalScrollBar()
+
+
+def _handle_box(image: QImage, background: QColor) -> tuple[int, int, int, int]:
+    """滑块的外接矩形 ``(left, top, right, bottom)``；没画出来时 ``left`` 是 ``-1``。"""
+    top, bottom = _handle_span(image, background)
+    if top < 0:
+        return -1, -1, -1, -1
+    middle = (top + bottom) // 2
+    columns = [x for x in range(image.width()) if image.pixelColor(x, middle) != background]
+    return columns[0], top, columns[-1], bottom
+
+
+def _background_pixels_inside(image: QImage, background: QColor) -> int:
+    """滑块外接矩形里有多少像素是**底色**。
+
+    方角时是 0（那个矩形就是滑块自己），圆角时四角一定露着底色。
+    """
+    left, top, right, bottom = _handle_box(image, background)
+    assert left >= 0, "滑块没画出来"
+    return sum(
+        1
+        for y in range(top, bottom + 1)
+        for x in range(left, right + 1)
+        if image.pixelColor(x, y) == background
+    )
 
 
 def _handle_span(image: QImage, background: QColor) -> tuple[int, int]:
@@ -272,33 +312,132 @@ def test_the_bar_is_narrower_than_the_native_one(qt_app: QApplication) -> None:
     assert grid._scrollbar_reserve() == grid.verticalScrollBar().sizeHint().width()
 
 
-def test_the_handle_is_a_pill_flush_against_the_right_edge(qt_app: QApplication) -> None:
-    """圆角取宽度的一半（四边不留边），滑块因此是胶囊形，且紧贴窗口右缘。
+def test_the_handle_is_a_pill_set_back_from_the_right_edge(qt_app: QApplication) -> None:
+    """胶囊形，且右缘留 :data:`HANDLE_GAP` 像素的缝 —— 贴着边看着像内容被切掉一截。
 
-    「紧贴」量的是**滑块自己那几列像素全是它**：左右两端都得是滑块颜色，任何一列
-    露着底色就说明中间留了边（曾经留的是 :data:`HANDLE_SIDE_INSET` = 2）。
+    量的是**滑块横向占住哪几列**：左边起于第 0 列（靠着内容那一侧不留边），右边停在
+    倒数第 ``HANDLE_GAP`` 列，最后那两列必须是底色。贴死的那一版用户原话：
+    「你的截图上没有边缘，很奇怪」。
     """
     theme.ensure_installed(qt_app)
     background = theme.current_theme(qt_app).background
     area, bar = _scroll_area(styled=True)
     image = bar.grab().toImage()
-    top, bottom = _handle_span(image, background)
-    assert top >= 0, "滑块没画出来"
+    left, _top, right, _bottom = _handle_box(image, background)
+    assert left >= 0, "滑块没画出来"
 
-    middle = (top + bottom) // 2
-    columns = [x for x in range(image.width()) if image.pixelColor(x, middle) != background]
-    assert columns[0] == 0 and columns[-1] == image.width() - 1, (
-        f"滑块横向只占了第 {columns} 列，右缘还露着底色 —— 没有紧贴窗口"
+    assert left == 0, f"滑块左边没起于第 0 列（第 {left} 列起）"
+    assert right == HANDLE_WIDTH - 1, (
+        f"滑块横向占了第 {left}..{right} 列（宽 {right - left + 1}），"
+        f"要的是 {HANDLE_WIDTH} 列 —— 右边那 {HANDLE_GAP} 列应该是底色"
     )
-    assert bar.width() == SCROLLBAR_WIDTH
+    assert bar.width() == SCROLLBAR_WIDTH == HANDLE_WIDTH + HANDLE_GAP
     area.close()
 
 
-def test_the_corner_radius_is_half_the_width(qt_app: QApplication) -> None:
-    """圆角 = 宽度的一半：两头是标准胶囊，也是用户要的上限（再大就不是胶囊了）。"""
+def test_the_handle_corners_are_rounded_not_square(qt_app: QApplication) -> None:
+    """滑块四角是圆的 —— 半径一旦被 Qt 清零，滑块就是一个方头。
+
+    **这条守的是 ``983e00d`` 那个回退过的事故**：那一版是 9 点宽 + ``HANDLE_WIDTH / 2``
+    = 4.5，真机上圆角整个消失，而当时所有证据都来自离屏渲染。机制在
+    :mod:`gallery.ui.scrollbar_style` 的模块文档里（``qRound`` 一次 + ``qNormalizeRadii``
+    判 ``2 × 圆角 > 宽度`` 就清零）；现在这一档是 10 点宽 + 5 点圆角，正好压线而保住。
+
+    **量的是「有 / 没有」，不是「多圆」**：离屏渲染的圆弧比真机淡得多（实测这一档
+    真机上顶端内缩 9 设备像素，离屏下只有 2），量半径大小等于在量渲染器。所以
+    **同一个用例里再造一条半径 0 的做对照组**：有圆角的那条必须在外接矩形里露出底色，
+    方的那条一个也不许露 —— 「露了」与「一个都没露」才是这条要断的事。
+
+    **它专治「半径越过一半被清零」**（半径改成 6 时它会红）：单纯把 ``//`` 写成 ``/``
+    在偶数额度上只是 5.0 vs 5，渲染一样，那种违规由上一条用例按类型拦下。
+    """
     theme.ensure_installed(qt_app)
-    assert HANDLE_RADIUS == SCROLLBAR_WIDTH // 2
+    background = theme.current_theme(qt_app).background
+
+    rounded_area, rounded_bar = _scroll_area(styled=True)
+    rounded = _background_pixels_inside(rounded_bar.grab().toImage(), background)
+    rounded_area.close()
+
+    square_sheet = scrollbar_style.scrollbar_style(theme.current_theme(qt_app)).replace(
+        f"border-radius: {HANDLE_RADIUS}px;", "border-radius: 0px;"
+    )
+    square_area, square_bar = _scroll_area(styled=False, sheet=square_sheet)
+    square = _background_pixels_inside(square_bar.grab().toImage(), background)
+    square_area.close()
+
+    assert square == 0, f"对照组（半径 0）都露出 {square} 个底色像素 —— 这条用例量不到它要治的毛病"
+    assert rounded > square, (
+        f"有圆角的那条在外接矩形里一个底色像素都没露（对照组 {square} 个）—— 圆角被 Qt 清掉了"
+    )
+
+
+def test_the_corner_radius_is_exactly_half_the_handle_width(qt_app: QApplication) -> None:
+    """圆角**正好**是滑块宽度的一半（10 → 5），而宽度因此必须是偶数。
+
+    Qt 先把 ``border-radius`` 四舍五入成整数（``qcssparser.cpp`` 的 ``qRound``），
+    再在 ``qNormalizeRadii``（``qcssutil.cpp``）里判 ``2 × 圆角 > 宽度`` 就把半径清零 ——
+    真机上不是「圆角变小」而是**方头**。9 点宽那一档正好踩上：``4.5`` → ``qRound`` 成 5
+    → ``10 > 9`` → 圆角整个消失（``983e00d``，真机截屏里一点圆角都没有）。
+
+    **让步的是宽度，不是圆角**：一半要落在整数上，所以 :data:`HANDLE_WIDTH` 取偶数；
+    而 ``2 × 5 = 10`` 正好压在那条判据上 —— 它是 ``>`` 不是 ``≥``，所以保住。
+    这条用例同时钉住三件事：一半、整数、偶数宽度。
+    """
+    theme.ensure_installed(qt_app)
+    assert HANDLE_WIDTH % 2 == 0, "滑块宽度必须是偶数，圆角才可能正好是一半且落在整数上"
+    assert isinstance(HANDLE_RADIUS, int), "圆角必须是整数：小数会被 Qt 四舍五入到线那边去"
+    assert HANDLE_RADIUS == HANDLE_WIDTH // 2 == HANDLE_WIDTH / 2, "圆角不是严格的一半"
+    assert 2 * HANDLE_RADIUS <= HANDLE_WIDTH, "2 × 圆角超过了滑块宽度，Qt 会把圆角整个丢掉"
     sheet = scrollbar_style.scrollbar_style(theme.current_theme(qt_app))
     assert f"border-radius: {HANDLE_RADIUS}px;" in sheet
-    # 滑块四边的 margin 全为零 —— 那一列像素整个归滑块，才谈得上「紧贴窗口右缘」。
-    assert "margin: 0px;" in sheet
+    # 只有尾端留缝（竖着在右、横着在下），缝宽就是 HANDLE_GAP。
+    assert f"margin: 0px {HANDLE_GAP}px 0px 0px;" in sheet
+
+
+def test_the_grid_scrollbar_keeps_only_a_slit_to_the_window_edge(
+    qt_app: QApplication,
+    tmp_path: Path,
+    make_photo: Callable[..., Path],
+    wait_for: Callable[..., bool],
+) -> None:
+    """网格页那条滚动条的右缘离**窗口**右缘只有 :data:`_GRID_PAGE_MARGIN_RIGHT` 点。
+
+    **这条守的正是用户看见的那块「右侧空白」**：滑块的缝只有 2 点，可滚动区外面还包着
+    一圈页面边距（原来是 10 点，比滚动条本身还宽）—— 于是屏幕上那一段空白是这个之和，
+    看着像内容被切掉一截。用户原话：「右边的 10 点改为 2」。
+
+    **量的是窗口而不是滚动区**：上一轮只量到「滚动条右缘 = 滚动区右缘」，那一层是对的，
+    漏掉的恰恰是滚动区到窗口之间这一段。两个右缘相减，就是要守的那个数。
+
+    **「2」在这条用例里是写死的**：只跟 :data:`_GRID_PAGE_MARGIN_RIGHT` 比是空转 ——
+    常量一改，布局与断言一起变，永远绿（实测过：把右边距改回 10 它照样过）。
+    """
+    # 用户点名要的那一档就是 2 点（原话：「右边的 10 点改为 2」），在这儿独立写一遍才是守护。
+    assert _GRID_PAGE_MARGIN_RIGHT == 2, (
+        f"网格页右边距改成了 {_GRID_PAGE_MARGIN_RIGHT} 点，用户要的是 2 点"
+    )
+
+    root = tmp_path / "库"
+    for index in range(40):
+        make_photo(f"IMG_{index:04d}.jpg", directory=root)
+    prepare_library(root)
+
+    window = MainWindow(session_base=tmp_path / "会话", initial_library=root)
+    window.resize(1000, 700)
+    window.show()
+    try:
+        bar = window._grid.verticalScrollBar()
+        # 等两件事一起成立：照片扫出来了，**并且**布局已经跑过 —— 滚动条不再是那个还没被
+        # 摆过的默认 100 点宽，样式表定下的宽度已经生效。
+        assert wait_for(
+            lambda: window._model.rowCount() >= 40 and bar.width() == SCROLLBAR_WIDTH,
+            timeout=DEFAULT_TIMEOUT_SECONDS,
+        ), "照片没能在时限内扫出来、或者网格的布局还没跑过，这条量的就不是网格页"
+
+        bar_right = bar.mapToGlobal(QPoint(bar.width(), 0)).x()
+        window_right = window.mapToGlobal(QPoint(window.width(), 0)).x()
+        assert window_right - bar_right == 2, (
+            f"滚动条右缘离窗口右缘还有 {window_right - bar_right} 点，要的是 2 点"
+        )
+    finally:
+        window.close()
