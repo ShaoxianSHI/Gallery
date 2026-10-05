@@ -86,6 +86,40 @@ EDGE_REFRESH_THRESHOLD = 6
 #: 视口停止变化多久之后才真正通知界面重取缩略图（拖动窗口时的防抖）。
 EDGE_SETTLE_MS = 120
 
+#: Qt 的非精确滚轮**一格**是这么多角度单位（Qt 以八分之一度为单位，120 = 一格）。
+#:
+#: 与 :data:`thumb_sizes.ANGLE_UNITS_PER_PIXEL` 记的是同一个约定 —— 那一处是拿它把
+#: 角度增量折成「像素」给 ⌘+滚轮 卡阈值，这一处是拿它把一格滚轮折成像素。
+ANGLE_UNITS_PER_NOTCH: Final = 120.0
+
+#: 鼠标滚轮**一格**滚多少像素。Qt 的非精确滚轮一格是 120 个角度单位。
+#:
+#: **为什么不是 Qt 自己那一档**：Qt 在视图里的换算是「角度 ÷ 120 ×
+#: ``QApplication.wheelScrollLines()``（macOS 上是 3）× **一个格子高**」，而格子高
+#: 随档位与窗口宽度走（实测 1200×800 视口下是 171 / 220 / 317）。于是中档一格是
+#: 3 × 220 = **660 像素** —— 视口才 800 高、格子高 220，**每滚一格整整跳过三行**，
+#: 屏上正中的那张照片多半直接被翻过去（用户原话：「滚动一格就翻动了一页多，部分内容
+#: 永远看不见」）；格子再大一点那一格就够翻一整页，Qt 会索性当成翻页键（那一档实测
+#: 见 :meth:`PhotoGrid.wheelEvent`）。
+#:
+#: 取 120 是「不到半个默认格子」：滑过去之后任何一行都还留在屏上（两格就能对准一行），
+#: 「翻过头」这个毛病没了，而一趟到底仍然只要几格。
+WHEEL_NOTCH_PIXELS: Final = 120
+
+#: 触控板两指滚动的**像素增量**乘以它。
+#:
+#: **为什么用像素增量**：Qt 把 ``pixelDelta`` 整个丢掉了（只按角度增量算），而 macOS
+#: 给这两个字段的换算是「1 像素 = 2 个角度单位」（见 ``qnsview_mouse.mm``）—— 手指走
+#: 40 像素，到 Qt 手里变成 20 个角度单位，再乘上上面那 5.5 就是 **110 像素**：手指走
+#: 40、画面走 110，于是触控板比 macOS 原生快一倍多（用户原话：「触控板也降低一点」）。
+#: ``pixelDelta`` 才是**手指实际走过的距离**，而且 macOS 已经按系统的「滚动速度」缩放过
+#: 一次了，用它等于把那一档设置接了回来（两种设备的判据见
+#: :func:`thumb_sizes.wheel_delta`）。
+#:
+#: 0.5 是「手指走两像素、画面走一像素」，比原生略慢一点 —— 与滚轮那 120 同一个取向
+#: （两者都比 Qt 默认慢约 5.5 倍）。
+WHEEL_PIXEL_FACTOR: Final = 0.5
+
 #: 切档时格子「长过去/缩回去」的时长（毫秒）。
 #:
 #: 只驱动**画面**（格子画在哪、画多大），不驱动几何也不驱动缩略图请求 ——
@@ -626,6 +660,8 @@ class PhotoGrid(QListView):
         # 连按的那几下改由 MainWindow 排队（见 main_window.MainWindow.step_thumbnail_size）。
         self._pinch_steps = RateLimitedAccumulator(PINCH_THRESHOLD, MIN_PINCH_INTERVAL_MS)
         self._wheel_steps = StepAccumulator(WHEEL_STEP_PIXELS)
+        #: 滚动时**没走满一个像素**的那一点零头（见 :meth:`_scroll_pixels`）。
+        self._wheel_remainder = 0.0
 
         # **只接 ``activated``**。``QAbstractItemView.activated`` 在鼠标双击**和**按
         # 回车时都会发，所以它一条就够；再接上 ``doubleClicked`` 等于把双击那次算两遍。
@@ -1836,11 +1872,33 @@ class PhotoGrid(QListView):
         event.accept()
 
     def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
-        """⌘/Ctrl + 滚轮切换缩略图尺寸；普通滚动交给基类翻页。
+        """⌘/Ctrl + 滚轮切换缩略图尺寸；普通滚动按像素自己走，不交给基类。
 
-        **增量取 :func:`~gallery.ui.browser.thumb_sizes.wheel_delta` 换算过的那一份**，
-        不是直接读角度增量：Qt 的 macOS 层对魔法鼠标 / 触控板给的是**像素**增量，
-        角度增量被折算得极小（一格只有 4 上下），照角度卡阈值就得滚三十格才动一次。
+        **普通滚动为什么不能交给基类**：网格的竖直滚动是 ``ScrollPerPixel``，而 Qt
+        在这一支的算法是「角度增量 ÷ 120 × ``wheelScrollLines()``（macOS 上 3）×
+        **一个格子高**」，于是滚轮**一格** = 3 × 格子高。格子高跟着档位与窗口宽度走
+        （下面这一列是 1200×800 视口上的实测值）：
+
+        ==================  ==========  ==========================
+        档位                  格子高        Qt 默认滚**一格**过去
+        ==================  ==========  ==========================
+        小（目标 112）        171          513 像素
+        中（目标 176）        220          660 像素
+        大（目标 288）        317          951 像素
+        ==================  ==========  ==========================
+
+        视口才 800 高，所以中档**每滚一格整整跳过三行**：屏上正中的那张照片多半直接
+        被翻过去，想看回来得往回滚同样的三行 —— 症状正是用户说的「滚动一格就翻动了一
+        页多，部分内容永远不见」。格子更高时那一格已经够翻一整页，Qt 会索性把它当成
+        翻页键（实测：格子高 414 时一格给的是整整 800 像素 = 一个视口）。
+
+        这里改成按像素走：滚轮一格 :data:`WHEEL_NOTCH_PIXELS`（120，不到半个默认格子），
+        触控板按像素增量 × :data:`WHEEL_PIXEL_FACTOR`（**用 Qt 丢掉的 ``pixelDelta``**，
+        理由见那两个常量的注释）。两样都比 Qt 默认慢约 5.5 倍。
+
+        **仍然走 ``setValue`` 而不是直接 ``scrollContentsBy``**：滚动条那一跳会照样经过
+        :meth:`scrollContentsBy`，于是行内改名输入框跟着滚、切档过渡让位、可见区去抖
+        这三件都还在（走 ``scrollContentsBy`` 就得把这三样再抄一遍）。
         """
         modifiers = event.modifiers()
         if modifiers & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier):
@@ -1851,7 +1909,33 @@ class PhotoGrid(QListView):
                 self.size_step_requested.emit(1 if steps > 0 else -1)
             event.accept()
             return
-        super().wheelEvent(event)
+        # **只取纵向**：横向滚动条是关着的（见 ``__init__``），横向增量照旧什么也不做，
+        # 而两指斜着划时两个方向同时非零，取纵向才不会把那一划整个吃掉。
+        pixels = self._scroll_pixels(float(event.pixelDelta().y()), float(event.angleDelta().y()))
+        bar = self.verticalScrollBar()
+        # 正的增量是「往上滚」，内容下移，所以值要**减**（Qt 自己那一支的符号也是这样）。
+        bar.setValue(bar.value() - pixels)
+        event.accept()
+
+    def _scroll_pixels(self, pixel: float, angle: float) -> int:
+        """一次普通滚动该走多少**纵向像素**（判据与两种设备的换算见上面那两个常量）。
+
+        **没走满一个像素的那点零头要留着**（:attr:`_wheel_remainder`）：触控板慢速
+        推一下只给 1 像素的增量，乘 0.5 之后是 0.5 —— 直接取整就把**每一次**都抹成 0，
+        轻推一下纹丝不动，而且永远攒不起来。只给角度的滚轮一格就是 120 像素，取整
+        不掉什么，所以那条路上零头一直是 0。
+
+        向零截断（而不是四舍五入）不是为了取整方式好看：零头因此与增量**同号**，攒的
+        永远是「同一方向还差的那一点」，怎么推都不会卡住。
+        """
+        exact = (
+            pixel * WHEEL_PIXEL_FACTOR + self._wheel_remainder
+            if pixel
+            else angle * WHEEL_NOTCH_PIXELS / ANGLE_UNITS_PER_NOTCH
+        )
+        whole = int(exact)  # 向零截断
+        self._wheel_remainder = exact - whole
+        return whole
 
     def event(self, event: QEvent) -> bool:
         # macOS 触控板捏合：原生手势事件不会走 wheelEvent。
@@ -1935,6 +2019,7 @@ class PhotoGrid(QListView):
 
 
 __all__ = [
+    "ANGLE_UNITS_PER_NOTCH",
     "COLUMN_CHECK_MS",
     "EDGE_ANIMATION_CURVE",
     "EDGE_ANIMATION_MIN_DELTA",
@@ -1946,6 +2031,8 @@ __all__ = [
     "LAYOUT_SAFETY",
     "PREFETCH_MARGIN",
     "VIEWPORT_DEBOUNCE_MS",
+    "WHEEL_NOTCH_PIXELS",
+    "WHEEL_PIXEL_FACTOR",
     "PhotoDelegate",
     "PhotoGrid",
 ]
