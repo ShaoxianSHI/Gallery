@@ -17,7 +17,15 @@
 白字（症状：那一行标题整行看不见，而同一行上的按钮都好好的 —— 按钮的字色写在
 样式表里，标题原来没写）。
 
-钉住它的是 ``tests/ui/calendar/test_toolbar.py::test_the_title_is_legible_after_a_theme_switch``。
+**标题用系统默认那一档字号，样式表不许碰它。** 那条 ``font-size: 22px`` 是标题
+还是按钮时代的遗留，而它写的选择器又一直是错的（``QPushButton#title``，而标题是
+``QLabel``）—— 换句话说「22px 的标题」从来没存在过，标题一直就是默认那一档。修颜色
+的时候把它一并对上，看着是顺手，实际上是把字号放大了一号（用户原话「字体变大了，
+调回原本的字号」）。**字号是产品选择**：真要放大标题，改这一处，并同步
+``tests/ui/calendar/test_toolbar.py`` 里那一条 —— 别让它以「修 bug」的名义溜进来。
+
+钉住字色的是 ``tests/ui/calendar/test_toolbar.py`` 里的
+``test_dark_to_light_keeps_the_title_readable`` 与它那一条反向的用例。
 """
 
 from __future__ import annotations
@@ -113,8 +121,12 @@ class CalendarBar(QWidget):
             }}
             QPushButton#nav {{ padding: 0; font-size: 22px; }}
             /* 标题是个 QLabel：原先这条写的是 ``QPushButton#title``，**从来没匹配上过**，
-               于是它既没拿到字号也没拿到颜色 —— 颜色一直靠调色板，正好撞上上面那条。 */
-            QLabel#title {{ color: {_hex(colors.text)}; font-size: 22px; }}
+               所以它一直是系统默认那一档字号，也一直没拿到颜色 —— 而颜色才是那个
+               bug。**这里只补颜色，不补字号**：那条 22px 是按钮时代的遗留（标题
+               当初是个 QPushButton），它一直没生效过，标题就一直是默认那一档；
+               一并「顺手对上」反而把字号放大了一号（用户原话「字体变大了，
+               调回原本的字号」）。要改标题字号是另一件事，别混在这一条里。 */
+            QLabel#title {{ color: {_hex(colors.text)}; }}
             QPushButton:hover {{ background: {_hex(colors.chip)}; }}
             QPushButton:checked {{
                 background: rgba({accent.red()}, {accent.green()}, {accent.blue()}, 38);

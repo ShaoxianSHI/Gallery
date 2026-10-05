@@ -154,19 +154,26 @@ def test_light_to_dark_keeps_the_title_readable(
     )
 
 
-def test_the_title_carries_its_own_font_size(
+def test_the_title_keeps_the_default_font_size(
+    qt_app: QApplication,
     page_in: Callable[..., CalendarPage],
 ) -> None:
-    """标题那一行的大字是**样式表给的**，不是碰巧按了默认字号。
+    """标题是**系统默认那一档字号**，样式表不许碰它。
 
-    规则原先写成 ``QPushButton#title``，而标题是个 ``QLabel`` —— 从加进来那天起就没
-    匹配上过，于是「22px」一直是空话。字号小一号用户未必说得清，但它是同一个错
-    （给一个不存在的选择器写了样式），所以一并钉住。
+    那条 ``font-size: 22px`` 的规则写的是 ``QPushButton#title``，而标题是个
+    ``QLabel`` —— 从加进来那天起就没匹配上过。也就是说「22px 的标题」**从来没
+    存在过**，标题一直就是默认那一档。修字色的时候把它一并对上，看着是顺手，
+    实际上是把字号放大了一号（用户原话「字体变大了，调回原本的字号」）。
+
+    量的是「标签的字体与应用默认字体相等」，而不是某个具体数字 —— 默认字号跟平台
+    与系统设置走，写死一个数只会在换机器时红。
     """
     page = page_in(window=LIGHT_WINDOW, base=LIGHT_BASE)
-    assert "QLabel#title" in page._bar.styleSheet(), (
-        "标题的样式规则选择器对不上它是个 QLabel —— 原先那条 QPushButton#title 从没生效过"
+    label = page._bar._title
+
+    assert label.font() == qt_app.font(), (
+        f"标题是 {label.font().pointSize()}pt，应用默认是 {qt_app.font().pointSize()}pt ——"
+        " 样式表不该给标题改字号（那条 22px 是按钮时代的遗留，从没生效过）"
     )
-    assert page._bar._title.font().pixelSize() == 22, (
-        f"标题那一行是 {page._bar._title.font().pixelSize()}px，不是样式表里那个 22px"
-    )
+    rule = page._bar.styleSheet().split("QLabel#title")[1].split("}")[0]
+    assert "font-size" not in rule, f"标题那条规则里不该出现 font-size，实际是：{rule.strip()}"
