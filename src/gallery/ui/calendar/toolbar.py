@@ -7,6 +7,17 @@
 配色同样取自 :class:`~gallery.ui.calendar.colors.CalendarColors`：样式表要的是
 字符串，于是这里把那一套 ``QColor`` 翻译成 ``#rrggbb`` 再拼进去 —— 颜色仍然只有
 一个来源（``ui.theme``），不另写一份 Google 式的色值。
+
+**这一行上的字色一律写进样式表，没有一处靠下发的调色板。** 不是偏好，是被迫：
+本控件带着样式表，于是 ``QStyleSheetStyle`` 给「工具条连同它的子控件」这一支塞了一份
+**自己的**调色板，此后 :func:`gallery.ui.theme.apply_theme` 下发的调色板就到不了它们
+（同一个道理见 ``ui.theme`` 模块文档第 2 条）。而 :meth:`CalendarPage._on_theme_changed`
+是在 ``apply_theme`` **之后**才调到这里来的 —— 于是每次换外观，它都在替这一支
+**照上一次那份调色板**重画一次：切到浅色时别处都白了，只有这一行还留着深色那一档的
+白字（症状：那一行标题整行看不见，而同一行上的按钮都好好的 —— 按钮的字色写在
+样式表里，标题原来没写）。
+
+钉住它的是 ``tests/ui/calendar/test_toolbar.py::test_the_title_is_legible_after_a_theme_switch``。
 """
 
 from __future__ import annotations
@@ -85,6 +96,14 @@ class CalendarBar(QWidget):
 
         分段选择器选中态用**强调色压淡的那一层**：与日历里「选中的一天」同一份颜色，
         于是「这一层被选中了」与「那一天被选中了」看起来是一回事。
+
+        **这一行上的每一处字色都在样式表里写死，没有一处靠下发的调色板** ——
+        原因见模块文档：``setStyleSheet`` 会让 ``QStyleSheetStyle`` 给这一支（工具条
+        连同里面的子控件）塞一份「自己的」调色板，此后 :func:`gallery.ui.theme.
+        apply_theme` 下发的调色板到不了它们。而 ``CalendarPage._on_theme_changed``
+        恰恰是在 ``apply_theme`` **之后**才调到这里来的，于是下一次 ``setStyleSheet``
+        会照着这一支**上一次**那份调色板重算 —— 症状是「切到浅色，别处都白了，
+        只有这一行还留着深色那一档的字」，浅色底上白字等于看不见。
         """
         accent = colors.accent
         self.setStyleSheet(
@@ -93,7 +112,9 @@ class CalendarBar(QWidget):
                 border: none; border-radius: 6px; padding: 0 14px; color: {_hex(colors.text)};
             }}
             QPushButton#nav {{ padding: 0; font-size: 22px; }}
-            QPushButton#title {{ font-size: 22px; }}
+            /* 标题是个 QLabel：原先这条写的是 ``QPushButton#title``，**从来没匹配上过**，
+               于是它既没拿到字号也没拿到颜色 —— 颜色一直靠调色板，正好撞上上面那条。 */
+            QLabel#title {{ color: {_hex(colors.text)}; font-size: 22px; }}
             QPushButton:hover {{ background: {_hex(colors.chip)}; }}
             QPushButton:checked {{
                 background: rgba({accent.red()}, {accent.green()}, {accent.blue()}, 38);
