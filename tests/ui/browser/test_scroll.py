@@ -8,7 +8,7 @@
 （1200×800 视口上是 171 / 220 / 317），于是滚轮**一格**是 513 / 660 / 951 像素 ——
 视口才 800 高、格子高 220，每滚一格整整跳过三行，屏上正中的那张照片直接被翻过去，
 「部分内容永远看不见」就是这么来的。所以这里钉的是**网格走自己的换算**：滚轮一格
-:data:`~gallery.ui.browser.grid.WHEEL_NOTCH_PIXELS` 像素。
+:data:`~gallery.ui.browser.grid.WHEEL_NOTCH_PIXELS` 像素（240，约等于过中档那一行）。
 
 触控板那一路另外钉住「用像素增量」：Qt 把 ``pixelDelta`` 整个丢掉了，于是 macOS 的
 「1 像素 = 2 个角度单位」那一层折算又被 5.5 再乘一遍 —— 手指走 40 像素、画面走 110。
@@ -92,11 +92,15 @@ def _scrolled(grid: PhotoGrid, **kwargs: float) -> int:
     return start - bar.value()
 
 
-def test_a_mouse_notch_scrolls_less_than_a_row(qt_app: QApplication, tmp_path: Path) -> None:
-    """滚轮**一格**不许跳过整行 —— 跳过的那一行就成了「永远看不见」的内容。
+def test_a_mouse_notch_is_never_a_page_flip(qt_app: QApplication, tmp_path: Path) -> None:
+    """滚轮**一格**不许变成「翻一整页」。
 
-    这是整件事的病根。Qt 那一档是 3 × 格子高：中档 660 像素 / 220 像素的行高，
-    一格下去整整三行没了，而滚回去也要滚整整三行才找得回来。
+    这是整件事最硬的一条底线：Qt 那一档按 3 × 格子高算，格子一大就够翻一整页了
+    （实测格子高 414 时，一格给的是整整 800 像素 = 一个视口），那一格滚轮直接成了翻页键。
+
+    **为什么不是「一格不许跳过一整行」**：那一档是 :data:`WHEEL_NOTCH_PIXELS` = 240，
+    而中档那一行才 220 —— 用户要的就是「一格约等于过一行」（原来是三行），所以比行高
+    大一点是**有意的**。真正要守住的是「一格仍然是一次滑动，不是一次翻页」。
     """
     grid = make_grid(qt_app, tmp_path, ROWS)
     settle_grid(qt_app, grid)
@@ -104,9 +108,9 @@ def test_a_mouse_notch_scrolls_less_than_a_row(qt_app: QApplication, tmp_path: P
     moved = _scrolled(grid, angle=120)
 
     assert moved == WHEEL_NOTCH_PIXELS
-    assert moved < grid.gridSize().height(), (
-        f"一格滚轮滚过了 {moved} 像素，而一整行才 {grid.gridSize().height()} 高 —— "
-        "那一行在屏上一眼都看不到"
+    assert moved < grid.viewport().height(), (
+        f"一格滚轮滚过了 {moved} 像素，比一屏还高（视口 {grid.viewport().height()}）—— "
+        "那已经是翻页了"
     )
 
 
@@ -116,8 +120,8 @@ def test_a_mouse_notch_is_the_same_at_every_size(
 ) -> None:
     """一格滚多少**与档位无关**：否则切一次缩略图尺寸，手感整个变掉。
 
-    Qt 那一档是跟着格子高走的（426 / 660 / 1242 像素），大档那一格甚至被它改成翻一整页
-    —— 同一个滚轮，在三档里是三种完全不同的键。
+    Qt 那一档是跟着格子高走的（实测 513 / 660 / 951 像素），格子再大一点它还会把一格
+    滚轮当成翻页键 —— 同一个滚轮，在三档里是三种完全不同的键。
     """
     grid = make_grid(qt_app, tmp_path, ROWS)
     grid.set_target_edge(icon_edge)
@@ -230,3 +234,34 @@ def test_a_wheel_notch_still_cancels_a_running_transition(
 
     assert grid.verticalScrollBar().value() != _middle(grid), "前置条件：这一格真的滚走了"
     assert grid._transition_anim.state() == QAbstractAnimation.State.Stopped
+
+
+def test_the_rename_box_travels_with_the_cell_under_it(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """行内改名的输入框要跟着它盖着的那一格走 —— 位移要**一模一样**。
+
+    这一条盯的是一个已经栽过的坑：``scrollContentsBy`` 里曾经有一句「输入框是视口的子
+    控件，不会自己跟着格子滚」，于是手动挪一次；而基类滚的是 ``viewport->scroll``，
+    ``QWidget::scroll`` **自己就会挪子控件** —— 两次正好抵消，输入框钉在原地不动，
+    格子走了它不走，于是盖在别的照片的名字上。
+
+    量的是**输入框的位移 == 那一格 ``visualRect`` 的位移**，而不是「输入框动了没有」：
+    移错了方向照样算「跟着」，那种 bug 只有这样才量得出来。
+    """
+    grid = make_grid(qt_app, tmp_path, ROWS)
+    settle_grid(qt_app, grid)
+    index = grid.model().index(1, 0)
+    grid.scrollTo(index)
+    assert grid.begin_rename(index)
+    qt_app.processEvents()
+    grid.verticalScrollBar().setValue(_middle(grid))
+
+    box_before = grid._rename_edit.pos().y()  # noqa: SLF001
+    cell_before = grid.visualRect(index).top()
+    assert _scrolled(grid, angle=120) == WHEEL_NOTCH_PIXELS, "前置条件：这一格真的滚走了"
+
+    assert grid._rename_edit.pos().y() - box_before == grid.visualRect(index).top() - cell_before, (  # noqa: SLF001
+        f"格子走了 {cell_before - grid.visualRect(index).top()} 像素，"
+        f"输入框只走了 {grid._rename_edit.pos().y() - box_before} 像素"  # noqa: SLF001
+    )
