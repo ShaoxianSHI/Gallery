@@ -14,6 +14,9 @@
 三条要守着的：
 
 - **颜色一律从控件自己的调色板读**，不另外传进来（见 :func:`apply_style`）。
+  **而那份调色板里的四个角色是 ``theme`` 钉死的**（见 :data:`gallery.ui.theme.RESOLVED_ROLES`
+  与 ADR 0035 决策 2）：不写上的话 Qt 会按控件类型各解析一档，于是右键菜单与搜索框的
+  候选列表高亮成两种蓝 —— **同一份生成逻辑画出两种颜色**，用户说的「有一点割裂」就是这个。
 - **符号问 Qt 要，不查表**（见 :func:`_native`）。
 - :func:`ShortcutColumnMenu` 自绘快捷键列，因此**箭头要自己画**且画在字母列上
   （见 :meth:`ShortcutColumnMenu.owns_submenu_arrows` 与 :func:`apply_style` 里那段注释）。
@@ -171,6 +174,10 @@ def style_sheet(
     高亮之下那一档字色是 ``HighlightedText`` —— 分隔线的颜色由正文色按透明度压出来
     （见 :func:`separator_color`）。理由见模块文档那一段 ——
     样式表里的 ``palette(...)`` 取的是**应用**调色板，不是逐控件下发的那份。
+
+    **那四档是「原值」的前提，由 :mod:`gallery.ui.theme` 保证**：下发的调色板把它们
+    逐个颜色组钉死了，所以三处浮层读到的是同一个值（ADR 0035 决策 2）。这里照读不误，
+    不必也不该在这里再兜一层。
 
     ``check_gutter`` 是「这一列对勾原本会被预留的宽度」，只有**菜单里没有可勾选项**时才
     补上（见 :data:`MENU_CHECK_GUTTER`）。它排在最后一条规则，靠覆盖前面那条
@@ -636,7 +643,7 @@ def popup_menu_style(menu: QMenu) -> str:
         #
         # 内边距**左右同档**（就是候选列表那一档）：左内边距只管文字，图标那一侧归
         # 下面那条 ``::icon`` 规则，见 :data:`POPUP_MENU_ICON_MARGIN`。
-        + f"\nQMenu::item {{ padding: 3px {POPUP_LIST_ITEM_PAD}px;"
+         + f"\nQMenu::item {{ padding: 3px {POPUP_LIST_ITEM_PAD}px;"
         f" color: {rgba(text)}; border-radius: {MENU_HIGHLIGHT_RADIUS}px; }}"
         + f"\nQMenu::icon {{ margin-left: {POPUP_MENU_ICON_MARGIN}px; }}"
     )

@@ -23,7 +23,8 @@ from gallery.ui import theme
 from gallery.ui.theme import AppTheme, rgba
 
 #: 圆角半径（点）。系统那个 macOS 样式画出来的是个带立体边框的方框，浮在名字上很扎眼；
-#: 改成一块微微凸起的圆角面 —— 与 macOS 菜单、访达的行内编辑一个气质。
+#: 改成一块圆角的输入面 —— 与 macOS 菜单、访达的行内编辑一个气质（底色见
+#: :func:`field_background`：与外面同一个色，靠这一圈边框显出边界）。
 RADIUS = 5
 
 #: 左右各留一点，文字不贴着边框。
@@ -31,16 +32,22 @@ PADDING = 8
 
 
 def field_background(app_theme: AppTheme) -> QColor:
-    """输入框的底色：比窗口那块底色「浮」一点点。
+    """输入面的底色：**就是窗口那块底色**，不另派生一档。
 
-    底色只有一个来源（ADR 0005），所以这里是从它派生的，不写死任何颜色：
-    深色下提亮一点、浅色下压暗一点，两种主题下都是「一块微微凸起的面」。
+    原来是「比底色浮一点点」（深色下提亮、浅色下压暗）。看着像那么回事，实测浅色下
+    那一档灰（``#ffffff`` 压到 ``#ebebeb``）**恰好就是 macOS 系统窗口的颜色** ——
+    用户第一眼以为那是 Qt 原生的：界面上两块输入面（搜索胶囊与「用外部应用打开」
+    那个药丸）于是从这一整块白里凸出来，与整扇窗不是一个软件画的。
 
-    **搜索框那个胶囊用的是同一个函数**（``ui.search_field``）：它也是一块输入面，
-    两处各派生一次，早晚会在某个主题下差一档，而那时没人说得清是哪一档。
+    现在两者与外面**同一个色**，读得出来靠的是那一圈边框，不靠底色。
+    深色下同样（原来那一档比底色亮，是「另一个面」的意思，与上面的判断相反，
+    两套主题下看下来是两种不同的东西）—— ADR 0035 决策 1。
+
+    **三处输入面共用这一个函数**：搜索胶囊（``ui.search_field``）、那个药丸
+    （``ui.external_button``）与改名输入框（就是本模块）。各派生一次早晚会差一档，
+    而那时没人说得清是哪一档。
     """
-    color = QColor(app_theme.background)
-    return color.lighter(118) if app_theme.is_dark else color.darker(106)
+    return QColor(app_theme.background)
 
 
 def rename_edit_style(app_theme: AppTheme) -> str:

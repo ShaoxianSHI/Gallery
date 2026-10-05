@@ -23,7 +23,7 @@ from PySide6.QtCore import (  # noqa: E402
     QRect,
     QSize,  # noqa: E402
 )
-from PySide6.QtGui import QColor, QIcon, QImage  # noqa: E402
+from PySide6.QtGui import QColor, QIcon, QImage, QPalette  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,  # noqa: E402
     QMenu,
@@ -481,3 +481,34 @@ def test_both_halves_are_wide_enough(qt_app: QApplication) -> None:
     """
     assert BUTTON_WIDTH - MENU_EDGE >= ICON_EDGE + 8, "左半给图标留的余量不够"
     assert MENU_EDGE >= 16, "右半放那个箭头太挤"
+
+
+# ---- 与搜索框的候选列表是同一种东西 -------------------------------------------
+
+
+def test_the_dropdown_is_the_same_colour_as_the_search_popup(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """下拉框与搜索框的候选列表**同一套颜色**：那四个角色都要一样。
+
+    用户原话：「和搜索框 / 右键菜单配色尽量一致，现在有一点割裂」。这三样是三个不同的控件，
+    样式表都由 :mod:`gallery.ui.menu_style` 从**各自的**调色板生成 —— 而 macOS 上 Qt 会按
+    控件类型把高亮、正文色解析成不同的值（同一份调色板：``QMenu`` 的 ``Highlight`` 是
+    ``#548fff``、``QTreeWidget`` 是 ``#084ad9``），于是同一套生成逻辑画出了两种蓝。
+    钉死那几档之后（ADR 0035 决策 2）它们只可能同色。
+
+    **在测试里这一条是绿的、而真机上量得出差别**：测试默认跑在 ``offscreen`` 上（``fusion``），
+    那里每一类控件解析出来的都一样。真正把住那条不变式的是
+    ``tests/ui/test_theme.py::test_the_pushed_palette_pins_the_popup_roles`` ——
+    它量的是「钉没钉死」，与平台无关。
+    """
+    dropdown = window._external_button._menu.palette()
+    candidate_list = window._search_field._popup.palette()
+    for role in (
+        QPalette.ColorRole.Window,
+        QPalette.ColorRole.Highlight,
+        QPalette.ColorRole.WindowText,
+        QPalette.ColorRole.HighlightedText,
+    ):
+        assert candidate_list.color(role) == dropdown.color(role), f"{role.name} 两边不一样"
+    window.close()

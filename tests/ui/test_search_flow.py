@@ -165,10 +165,14 @@ def _search(qt_app: QApplication, window: MainWindow, text: str) -> None:
 
 
 def test_the_capsule_paints_its_own_edge(qt_app: QApplication) -> None:
-    """胶囊得**看得见**：底色与边框都要真的画出来。
+    """胶囊得**看得见**：边框要真的画出来。
 
     样式表挂在普通 ``QWidget`` 上时，底色与边框**一条都不会画** —— Qt 只给 ``QFrame``
     那一族自动画样式背景（实测：胶囊整个透明，在白色窗口上等于不存在）。
+
+    **看得见靠的是那一圈边框，不是底色**：底色与窗口外面同一个（ADR 0035 决策 1 ——
+    原来那一档灰恰好是 macOS 系统窗口的颜色，用户以为是 Qt 原生的）。所以这里断言的是
+    「边框与窗外不一样」，而不是「里面那一块与窗外不一样」。
     """
     window = QWidget()
     window.resize(400, 60)
@@ -181,8 +185,9 @@ def test_the_capsule_paints_its_own_edge(qt_app: QApplication) -> None:
     image = window.grab().toImage()
     border = image.pixelColor(20, 20)
     inside = image.pixelColor(120, 20)
+    outside = image.pixelColor(380, 20)
     assert border != inside, "胶囊的边框没画出来"
-    assert inside != image.pixelColor(380, 20), "胶囊的底色与窗口底色一样，等于看不见"
+    assert border != outside, "边框与窗口底色一样，胶囊等于看不见"
     window.close()
 
 

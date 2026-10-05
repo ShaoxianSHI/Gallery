@@ -36,7 +36,7 @@ from gallery.core.library.session import (  # noqa: E402
     SessionState,
     save_session,
 )
-from gallery.ui import theme  # noqa: E402
+from gallery.ui import rename_edit, theme  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.panels.breadcrumb import ChipButton  # noqa: E402
 
@@ -400,6 +400,102 @@ def test_drag_region_is_everything_above_the_content(window: MainWindow) -> None
             assert not window._is_title_bar(QPointF(200, top))
     finally:
         window.close()
+
+
+# ---- 下发的调色板：浮层那几个角色必须钉死 ---------------------------------------
+
+
+def test_the_pushed_palette_pins_the_popup_roles(qt_app: QApplication) -> None:
+    """下发给控件的那一份必须把 :data:`theme.RESOLVED_ROLES` **钉死**。
+
+    回归的是真实现象（ADR 0035 决策 2）：这几个角色不写上的话，Qt 会按控件类型各解析一档
+    —— 实测 macOS 上同一份调色板，``QMenu`` 的 ``Highlight`` 是 ``#548fff``、
+    ``QTreeWidget`` 是 ``#084ad9``、普通 ``QWidget`` 是 ``#a5cdff``，正文色还有 ``@0.847``
+    与 ``@1.0`` 两档。于是右键菜单与搜索框的候选列表高亮成两种蓝，而两者的样式表
+    是**同一份**生成出来的（症状就是「它们不像一套东西」）。
+
+    **这里量的是「钉没钉死」而不是「是什么颜色」**：直接比颜色在测试环境里量不出来 ——
+    测试跑在 ``offscreen``（``fusion``）上，那里每一类控件解析出来的都一样（``#308cc6``），
+    bug 在测试里根本看不见。改用「换掉应用调色板之后会跟着变还是不会」来问：
+
+    - 没钉死的那一份 → 会跟着应用调色板变（前提断言就是这一句）；
+    - 钉死了的那一份 → 自己的值原样留着。
+    """
+    pinned = theme.pushed_palette(qt_app)
+    unresolved = QPalette(qt_app.palette())  # 这几档没写过，交给 Qt 自己解析
+    original = QPalette(qt_app.palette())
+    sentinel = QColor(1, 2, 3)
+    try:
+        shifted = QPalette(original)
+        for role in theme.RESOLVED_ROLES:
+            shifted.setColor(role, sentinel)
+        qt_app.setPalette(shifted)
+        qt_app.processEvents()
+
+        loose = QWidget()
+        loose.setPalette(unresolved)
+        assert loose.palette().color(theme.RESOLVED_ROLES[0]) == sentinel, (
+            "测试前提不成立：Qt 不再按应用调色板解析这几个角色了，于是「钉没钉死」这一句量不出来"
+        )
+
+        probe = QWidget()
+        probe.setPalette(pinned)
+        for role in theme.RESOLVED_ROLES:
+            assert probe.palette().color(role) == pinned.color(role), (
+                f"{role.name} 没有钉死：控件会按自己的类型重新解析它，菜单与列表于是给出两个值"
+            )
+    finally:
+        qt_app.setPalette(original)
+        qt_app.processEvents()
+
+
+# ---- 输入面：与窗口同一个底色 --------------------------------------------------
+
+
+def _surface_fill(window: MainWindow, widget: QWidget) -> QColor:
+    """控件内部（去掉边框那一圈）铺得最多的颜色。"""
+    image = window.grab().toImage()
+    top_left = widget.mapTo(window, QPoint(0, 0))
+    counts: Counter[int] = Counter()
+    for x in range(top_left.x() + 2, top_left.x() + widget.width() - 2):
+        for y in range(top_left.y() + 2, top_left.y() + widget.height() - 2):
+            counts[image.pixelColor(x, y).rgb()] += 1
+    return QColor(counts.most_common(1)[0][0])
+
+
+@pytest.mark.parametrize("which", ["search_field", "external_button"])
+def test_the_input_surfaces_are_the_window_background(
+    qt_app: QApplication, window: MainWindow, appearance: Callable[..., None], which: str
+) -> None:
+    """两块输入面（搜索胶囊与「用外部应用打开」那个药丸）**与外面同一个底色**。
+
+    原来它们各派生一档（深色下提亮、浅色下压暗）。浅色下那一档灰恰好就是 macOS 系统
+    窗口的颜色，用户第一眼以为那是 Qt 原生的：两块输入面于是从整扇窗里凸出来，
+    与界面上其它东西不是一个软件画的（ADR 0035 决策 1）。现在靠那一圈边框显出边界。
+
+    **量渲染出来的像素**，不查调色板：两处的底色都是各画各的。
+    """
+    widget = window._search_field if which == "search_field" else window._external_button
+    try:
+        for tag, window_colour, base_colour in (
+            ("浅色", LIGHT_WINDOW, LIGHT_BASE),
+            ("深色", DARK_WINDOW, DARK_BASE),
+        ):
+            appearance(window=window_colour, base=base_colour)
+            qt_app.processEvents()
+            measured = _surface_fill(window, widget)
+            background = theme.current_theme(qt_app).background
+            assert measured == background, (
+                f"{tag}：{which} 那块不是窗口底色 {background.name()}，量到 {measured.name()}"
+            )
+    finally:
+        window.close()
+
+
+def test_the_rename_field_shares_that_background(qt_app: QApplication) -> None:
+    """改名输入框与那两块是**同一个**函数派生的（各派生一次早晚会差一档）。"""
+    current = theme.current_theme(qt_app)
+    assert rename_edit.field_background(current) == current.background
 
 
 # ---- 样式表里的 palette(...) ---------------------------------------------------

@@ -17,7 +17,7 @@
   底下、让标题栏不再画自己的底（见 :func:`unify_title_bar`），那一段于是也成了我们的底色。
 - 少数自己画底色的地方（大图区、元数据面板）不写死颜色，改为从这里取。
 
-**三个 Qt 上的坑，都在这里绕开**：
+**四个 Qt 上的坑，都在这里绕开**：
 
 1. ``QApplication.setPalette()`` 会把应用调色板标成「显式设置」。此后系统换浅色 / 深色时
    Qt 不再更新它，表现就是「切到浅色，只有 macOS 画的标题栏变浅了，其余还是黑的」。
@@ -28,6 +28,14 @@
    重来 —— 症状是「切了深浅色，那一枚胶囊的字色停在原处，要点一下才对」（点一下会重建
    它，于是重新解析了一遍）。所以 :func:`_push_one` 把**原样的样式表再设一遍**：
    颜色仍由 Qt 自己按那一档调色板挑，浅色深色各自是什么就是什么，这里修的是「不立刻变」。
+4. **一份没写全的调色板会被 Qt 按控件类型各解析一档。** 下发时只钉了铺底色的那几个角色，
+   其余由 Qt 自己填 —— 而它填出来的值**与控件类型有关**（实测 macOS 上，同一份应用调色板：
+   ``QMenu`` 的 ``Highlight`` 是 ``#548fff``、``QTreeWidget`` 是 ``#084ad9``、普通 ``QWidget``
+   是 ``#a5cdff``；深色下分别是 ``#3974e4`` / ``#0640c6`` / ``#314f78``）。
+   症状是**右键菜单与搜索框的候选列表高亮成两种蓝**，而两者的样式表是同一份生成出来的
+   —— 菜单那一档偏亮、列表那一档深，用户在两者之间来回走，一眼就看得出割裂。
+   :func:`_resolve_roles` 把这几档统一成**列表那一档**（界面上别处的选中色本来就是它），
+   再显式写进每一份下发的调色板，于是三处浮层只可能同色。
 
 要换底色只改 :data:`BACKGROUND_ROLE` 一处。
 """
@@ -40,7 +48,7 @@ from typing import cast
 
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QColor, QPalette
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication, QListView, QWidget
 
 #: 统一底色取自调色板的哪个角色（见模块文档）。
 #: ``Base`` 是系统的「内容区色」：浅色下是白，深色下是 ``#171717``。
@@ -52,6 +60,29 @@ BACKGROUND_ROLES = (
     QPalette.ColorRole.Window,
     QPalette.ColorRole.Base,
     QPalette.ColorRole.AlternateBase,
+)
+
+#: 除了铺底色之外，这几个角色**也要由我们钉死**，不能留给 Qt 自己解析
+#: （见模块文档第 4 条与 :func:`_resolve_roles`）。
+#:
+#: **它们就是弹出菜单与弹出列表读的那几个**：正文色、高亮色、高亮之下那一档字色，
+#: 以及置灰那一行的字色。三处浮层（右键菜单、搜索框的候选列表、标题条上那个下拉菜单）
+#: 拿的是**同一份**下发的调色板，而这几个值是 :mod:`gallery.ui.menu_style` 唯一的颜色来源
+#: —— 钉死了，三处就不可能再差一档（ADR 0035 决策 2）。
+RESOLVED_ROLES = (
+    QPalette.ColorRole.Highlight,
+    QPalette.ColorRole.HighlightedText,
+    QPalette.ColorRole.WindowText,
+    QPalette.ColorRole.Text,
+    QPalette.ColorRole.PlaceholderText,
+)
+
+#: 钉的时候逐组各钉各的。**不是统一钉 ``Active``**：置灰那一组本来就是给
+#: 「这一行点不得」用的，跟着自己的组走才对。
+COLOR_GROUPS = (
+    QPalette.ColorGroup.Active,
+    QPalette.ColorGroup.Inactive,
+    QPalette.ColorGroup.Disabled,
 )
 
 #: 样式表里写了它才需要「重新解析一遍」（见 :func:`_push_one`）。**只看这一个词**，
@@ -159,19 +190,47 @@ def _push_palette(app: QApplication, palette: QPalette) -> None:
             pending.extend(child for child in widget.children() if isinstance(child, QWidget))
 
 
-def apply_theme(app: QApplication) -> AppTheme:
-    """把统一底色下发到所有窗口，返回这一轮的主题。
+def _resolve_roles(palette: QPalette) -> QPalette:
+    """把 :data:`RESOLVED_ROLES` 里的几档**解析成一档**钉进这份调色板（模块文档第 4 条）。
 
-    刻意**不调用** ``QApplication.setPalette``：那会把应用调色板钉死，系统再换浅色 /
-    深色时 Qt 就不更新它了（见模块文档）。这里只改控件自己的调色板。
+    **问一个列表控件要答案**：下发时这几个角色是空的，Qt 会按控件类型各填各的
+    （实测菜单与列表给出两个不同的蓝）。列表那一档正是界面上别处的选中色 ——
+    网格里选中那一格的铺底、输入框里的选区都是它，所以统一成它，动的只有菜单。
+
+    问一次就够：这一份是在 :func:`pushed_palette` 里算的，每次下发主题算一次，
+    而每次下发的场合都是「换过浅色 / 深色」或「控件刚建出来」—— 不是热路径。
+    """
+    probe = QListView()
+    probe.setPalette(palette)
+    resolved = probe.palette()
+    for role in RESOLVED_ROLES:
+        for group in COLOR_GROUPS:
+            palette.setColor(group, role, resolved.color(group, role))
+    return palette
+
+
+def pushed_palette(app: QApplication) -> QPalette:
+    """要下发到每个控件上的那一份：底色指向统一底色，其余几档解析成同一档（见模块文档）。
+
+    :func:`apply_theme` 与 :func:`push_palette` 共用这一个 —— 两处各拼一遍的话，
+    迟早有一处忘了钉那几个角色，而症状只是「菜单与候选列表差一档蓝」。
     """
     theme = current_theme(app)
     palette = QPalette(app.palette())
     for role in BACKGROUND_ROLES:
         palette.setColor(role, theme.background)
         palette.setColor(QPalette.ColorGroup.Disabled, role, theme.background)
-    _push_palette(app, palette)
-    return theme
+    return _resolve_roles(palette)
+
+
+def apply_theme(app: QApplication) -> AppTheme:
+    """把统一底色下发到所有窗口，返回这一轮的主题。
+
+    刻意**不调用** ``QApplication.setPalette``：那会把应用调色板钉死，系统再换浅色 /
+    深色时 Qt 就不更新它了（见模块文档）。这里只改控件自己的调色板。
+    """
+    _push_palette(app, pushed_palette(app))
+    return current_theme(app)
 
 
 def push_palette(widget: QWidget, *, app: QApplication | None = None) -> None:
@@ -183,11 +242,7 @@ def push_palette(widget: QWidget, *, app: QApplication | None = None) -> None:
     明明「取自同一个地方」，取到的却不是同一份（实测列表 ``#ffffff``、菜单 ``#efefef``）。
     """
     instance = _application(app) if app is None else app
-    theme = current_theme(instance)
-    palette = QPalette(instance.palette())
-    for role in BACKGROUND_ROLES:
-        palette.setColor(role, theme.background)
-        palette.setColor(QPalette.ColorGroup.Disabled, role, theme.background)
+    palette = pushed_palette(instance)
     pending = [widget]
     while pending:
         current = pending.pop()
@@ -271,11 +326,15 @@ def ensure_installed(app: QApplication | None = None) -> ThemeWatcher:
 __all__ = [
     "BACKGROUND_ROLE",
     "BACKGROUND_ROLES",
+    "COLOR_GROUPS",
+    "RESOLVED_ROLES",
     "AppTheme",
     "ThemeWatcher",
     "apply_theme",
     "current_theme",
     "ensure_installed",
+    "push_palette",
+    "pushed_palette",
     "rgba",
     "unify_title_bar",
 ]
