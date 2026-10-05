@@ -13,6 +13,8 @@ from pathlib import Path
 import pytest
 from PIL import ExifTags, Image
 
+from gallery.core import paths
+
 #: EXIF 中 Orientation 标签的编号。
 EXIF_ORIENTATION_TAG = 0x0112
 
@@ -35,6 +37,45 @@ def fake_trash(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     directory = tmp_path / FAKE_TRASH_NAME
     monkeypatch.setattr(trash, "trash_dir_for", lambda _path: directory)
     return directory
+
+
+#: 没被 :func:`isolated_app_data` 换掉的那个 :func:`paths.app_data_base`。
+#:
+#: 只有「测它自己」的用例需要 —— 见下面那个 ``real_app_data_base`` fixture。
+_REAL_APP_DATA_BASE = paths.app_data_base
+
+
+@pytest.fixture(autouse=True)
+def isolated_app_data(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**把应用数据目录挪进临时目录**，任何测试都不许碰用户真实的那一个。
+
+    与 :func:`fake_trash` 是同一个形状、同一个理由：真废纸篓与真缓存目录都在用户的
+    家里，测试漏掉一次就是往那儿丢东西，而且**丢得看不出来**。
+
+    这里兜住的是两样：``state.json``（最近打开列表、窗口几何）与系统级缩略图缓存
+    ``<app cache>/thumbs/<库摘要>/``（ADR 0038 决策 1）。后者更要紧 —— 摘要按**库路径**
+    算，而测试每个用例一个 ``tmp_path``，于是**每个真去解码缩略图的用例都会留下一个
+    新的摘要目录**，而它们既不会被淘汰也没有上限（ADR 0038 那条已知遗留）。
+    实测：不隔离的话跑两轮就在用户的真实缓存目录里留下 2509 个，65 MB。
+
+    **钉在它身上而不是逐个调用点传参**：``app_data_base`` 是 ``state.json`` 与系统缓存
+    唯一的共同来源，而 ``Library.open`` 的调用点在测试里有三十多处 —— 逐个传
+    ``cache_base`` 是三十多次「记得写」，漏掉任何一处都是同样的泄漏。
+    """
+    base = tmp_path_factory.mktemp("应用数据")
+    monkeypatch.setattr(paths, "app_data_base", lambda: base)
+
+
+@pytest.fixture
+def real_app_data_base() -> Callable[[], Path]:
+    """真正的（没被隔离的）``app_data_base``。
+
+    只有一条用例需要它：``test_app_data_base_is_platform_specific`` 测的就是「各平台
+    落在各平台该在的地方」——那是关于**真实默认值**的断言，隔离了就没得测。
+    """
+    return _REAL_APP_DATA_BASE
 
 
 @pytest.fixture

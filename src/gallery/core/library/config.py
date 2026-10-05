@@ -398,26 +398,28 @@ def discard_legacy_thumb_cache(root: Path) -> int:
     ``index.db`` 与 ``journal/`` 一个都不碰 —— 前者不是缓存，后两者删掉有代价
     （见 README 关于 ``journal`` 那段例外）。
 
-    :returns: 删掉的文件数；目录本来就不存在时是 0。
+    **收完 ``thumbs`` 还要再收那个只装过它的父目录 ``cache/``**，判据是它空不空
+    （``rmdir`` 对非空目录会失败）：里面还有别人的东西时它自然留在原地。
+    这一步**不能挂在「thumbs 还在不在」这个早退后面** —— 一次开库之后 thumbs 就
+    没了，第二次打开时那个空壳还在，早退就永远走不到收它那一句（实测过一次：
+    库内只剩下一个空的 ``cache/``，而这条清理报「0 个」）。
+
+    :returns: 删掉的**文件**数；没有文件可删时是 0（空壳目录照收不误）。
     """
     directory = paths.legacy_thumbnail_cache_dir(root)
-    if not directory.is_dir():
-        return 0
     removed = 0
-    try:
-        for entry in directory.iterdir():
-            if not entry.is_file():
-                continue
-            try:
-                entry.unlink()
-                removed += 1
-            except OSError:
-                logger.info("删不掉旧缩略图缓存里的文件：%s", entry, exc_info=True)
-    except OSError:
-        logger.info("读不了旧缩略图缓存目录：%s", directory, exc_info=True)
-    # 收掉 thumbs 自己，**再收它那个父目录 ``cache/``** —— 父目录只装过 thumbs，
-    # 于是「整块作废」之后它必然空着。``rmdir`` 对非空目录会失败，所以这里天然安全：
-    # 里面还有别的东西时它就留在原地（那是别人的东西，不该我们删）。
+    if directory.is_dir():
+        try:
+            for entry in directory.iterdir():
+                if not entry.is_file():
+                    continue
+                try:
+                    entry.unlink()
+                    removed += 1
+                except OSError:
+                    logger.info("删不掉旧缩略图缓存里的文件：%s", entry, exc_info=True)
+        except OSError:
+            logger.info("读不了旧缩略图缓存目录：%s", directory, exc_info=True)
     for path in (directory, paths.legacy_cache_dir(root)):
         with contextlib.suppress(OSError):
             path.rmdir()

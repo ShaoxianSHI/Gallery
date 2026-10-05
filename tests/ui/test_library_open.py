@@ -19,6 +19,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
+from library_helpers import set_library_ui  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 from waiting import wait_for_idle
 
@@ -30,6 +31,7 @@ from gallery.core.library.session import (  # noqa: E402
     SessionState,
     save_session,
 )
+from gallery.ui.browser.thumb_sizes import DEFAULT_EDGE, edge_for_index  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 
 
@@ -236,3 +238,67 @@ def test_the_migration_happens_once_per_library(tmp_path: Path) -> None:
 
     # 库里已经有 [ui] 表了 —— 迁移的判据（`ui.is_empty`）不再成立。
     assert load_config(library_root).ui.is_empty is False
+
+
+def test_opening_a_library_does_not_reanimate_the_thumbnail_size(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """**打开一个库不该让格子自己动一下** —— 档位没变就不许叫网格重排。
+
+    这一条钉的是一个真实的回归：``_activate_library`` 里无条件调
+    ``_apply_thumbnail_size()``，而它走的是 ``grid.set_target_edge`` →
+    ``_recompute_layout(animate=True)`` —— **带一段动画的重排**。库刚打开时网格的
+    ``_laid_out_width`` 还是 0，判定必然成立，于是**每一次**打开库都起一段切档
+    动画，哪怕尺寸与上一个库一模一样。
+
+    判据是「这次打开有没有起过一段过渡」，问网格自己（``is_transitioning``）。
+    """
+    root = tmp_path / "照片"
+    root.mkdir()
+    make_photo("一张.jpg", directory=root)
+
+    instance = MainWindow(session_base=tmp_path / "会话", initial_library=root)
+    instance.resize(900, 600)
+    instance.show()
+    try:
+        wait_for_idle(qt_app, instance, what="扫描与地点解析")
+        assert not instance._grid.is_transitioning, (
+            "打开库就起了一段缩略图切档动画 —— 而档位与默认值一模一样"
+        )
+    finally:
+        instance.close()
+
+
+def test_switching_to_a_library_with_another_size_does_switch(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """反过来那半也要成立：档位**真的**不同时，必须换过去。
+
+    只钉「没变就不动」会把功能一起钉死 —— 库级的档位（ADR 0038 决策 4）就白做了。
+    """
+    first = tmp_path / "小档"
+    second = tmp_path / "大档"
+    for root in (first, second):
+        root.mkdir()
+        make_photo("一张.jpg", directory=root)
+    # 第一个库不写 [ui]：走界面默认档（``thumb_sizes.DEFAULT_INDEX`` = 中间那档）。
+    # 第二个库显式记最大那一档 —— 两档不同才谈得上「切过去要换上」。
+    set_library_ui(second, thumbnail_edge=288)
+
+    instance = MainWindow(session_base=tmp_path / "会话", initial_library=first)
+    instance.resize(900, 600)
+    instance.show()
+    try:
+        wait_for_idle(qt_app, instance, what="扫描与地点解析")
+        assert edge_for_index(instance._size_index) == DEFAULT_EDGE, "第一个库用的是默认档"
+        # ``icon_edge`` 是**适配窗口之后**的实际格子宽度，不是目标档位 ——
+        # 所以要断言的是「它跟着换了」，而不是它等于 288。
+        before = instance._grid.icon_edge
+
+        instance.open_library(second)
+        wait_for_idle(qt_app, instance, what="扫描与地点解析")
+
+        assert edge_for_index(instance._size_index) == 288, "第二个库记着最大档，切过去就该换上"
+        assert instance._grid.icon_edge > before, "换了大档，格子该跟着变大"
+    finally:
+        instance.close()

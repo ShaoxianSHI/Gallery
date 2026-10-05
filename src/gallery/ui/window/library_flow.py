@@ -111,8 +111,8 @@ class LibraryFlowMixin:
             )
         return True
 
-    def _apply_ui_state(self, library: Library) -> None:
-        """把这个库记着的界面偏好套到窗口上。
+    def _apply_ui_state(self, library: Library) -> bool:
+        """把这个库记着的界面偏好套到窗口上，返回**缩略图档位有没有变**。
 
         **打开的顺序在这里，而不是在 ``_restore_session``**：那些偏好存在
         这个库自己的 ``config.toml`` 里，「是哪个库」要等 :meth:`open_library`
@@ -121,8 +121,17 @@ class LibraryFlowMixin:
         同时做一次性的迁移（ADR 0038 决策 4）：从老版本升上来的用户，他上次选的
         排序字段与浏览方式原本记在 ``state.json`` 里 —— 库的配置还没有 ``[ui]``
         表时，把它们搬过去，免得「升级之后我的排序被重置了」。
+
+        **返回值是给调用方省一次多余的换档**（见 :meth:`_activate_library`）：
+        ``_apply_thumbnail_size`` 会叫网格重排，而网格那一步是带**动画**的
+        （``grid.set_target_edge`` → ``_recompute_layout(animate=True)``）。
+        档位没变还照样叫一次，就是「一打开库，格子自己动一下」——而它其实是
+        同一个尺寸。
         """
         ui = self._adopt_legacy_ui(library)
+        changed_edge = edge_for_index(self._size_index) != edge_for_index(
+            self._edge_to_index(ui.thumbnail_edge)
+        )
         self._browse_mode = ui.browse_mode or self._browse_mode
         self._size_index = self._edge_to_index(ui.thumbnail_edge)
         self._metadata_visible = bool(ui.metadata_visible)
@@ -130,6 +139,7 @@ class LibraryFlowMixin:
         self._sort_facet = ui.resolved_sort_facet()
         self._sort_descending = bool(ui.sort_descending)
         self._calendar_level = ui.resolved_calendar_level()
+        return changed_edge
 
     def _adopt_legacy_ui(self, library: Library) -> LibraryUIState:
         """库里还没有 ``[ui]`` 表时，从旧 ``state.json`` 里把偏好搬过来。
@@ -191,11 +201,6 @@ class LibraryFlowMixin:
         self._facet_values = {}
         self._model.clear()
 
-        # **库级偏好要在摆任何东西之前套上**（ADR 0038 决策 4）：浏览方式决定摆日历
-        # 还是网格，缩略图档位决定模型与网格的格子尺寸，排序决定扫完之后怎么排 ——
-        # 放在 `self._model.clear()` 之后、`_start_scan()` 之前的任何位置都不行。
-        self._apply_ui_state(library)
-
         self._pipeline = ThumbnailPipeline(library, self._runner, self)
         self._pipeline.ready.connect(self._on_thumbnail_ready)
         self._pipeline.failed.connect(self._on_thumbnail_failed)
@@ -206,11 +211,16 @@ class LibraryFlowMixin:
         self._panel.clear()
         # 面板上那个「编辑元数据」按钮的可用性跟着新库走（没装 exiftool 的库上它不出现）。
         self._update_metadata_editable()
-        # 缩略图档位与元数据面板的显隐都要跟着新库换 —— 网格的格子尺寸是按档位算的，
-        # 而档位现在是**每个库各自一份**（ADR 0038 决策 4）。走 ``_apply_thumbnail_size``
-        # 而不是直接 set：它才是「换档」的那一条路 —— 网格算完会通过
-        # ``icon_edge_changed`` 回来把模型也换掉，并作废那一批旧缩略图。
-        self._apply_thumbnail_size()
+        # **库级偏好要一次套上**（ADR 0038 决策 4）：浏览方式决定摆日历还是网格，
+        # 排序决定扫完之后怎么排，缩略图档位决定格子尺寸。
+        # 只调用一次 —— 它带副作用（会写 config.toml，见 ``_adopt_legacy_ui``）。
+        changed_edge = self._apply_ui_state(library)
+        # 缩略图档位变了才走 ``_apply_thumbnail_size``：那是「换档」的唯一一条路，
+        # 网格算完会通过 ``icon_edge_changed`` 回来把模型也换掉，并作废那批旧缩略图。
+        # **档位没变就别叫它** —— 它会让网格重排，而重排是带**动画**的，用户看到的
+        # 就是「一打开这个库，格子自己动了一下」，而尺寸其实一模一样。
+        if changed_edge:
+            self._apply_thumbnail_size()
         # **分组 / 排序那两张菜单的勾也要跟着换。** ``__init__`` 里那一句
         # ``_sync_order_actions`` 跑在打开库**之前**（那时还没有库可读），于是
         # 「从 A 库的分组切到 B 库」之后菜单上勾着的仍是 A 库那一项 ——

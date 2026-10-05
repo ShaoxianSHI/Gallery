@@ -36,8 +36,6 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import QCoreApplication, QEvent  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
-from gallery.core import paths  # noqa: E402
-
 #: 轮询间隔。够密才抓得住一闪而过的东西，又不至于把 CPU 跑满。
 POLL_SECONDS = 0.005
 
@@ -111,26 +109,6 @@ def qt_teardown(qt_app: QApplication) -> Iterator[None]:
     """
     yield
     _destroy_top_level_widgets(qt_app)
-
-
-@pytest.fixture(autouse=True)
-def isolated_app_data(
-    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """**把应用数据目录挪进临时目录**，任何界面用例都不许碰用户真实的那一个。
-
-    缩略图按库路径摘要分目录（``<app cache>/thumbs/<摘要>``，ADR 0038 决策 1），
-    而界面用例每个用例一个 ``tmp_path`` —— 摘要因此每个用例都不一样。不隔离的话
-    一轮全量会往 ``~/Library/Application Support/Gallery/cache/thumbs/`` 里丢下
-    几百个没人认领的摘要目录：实测**跑两轮就是 2509 个**，而且它们既不会被淘汰、
-    也没有上限（ADR 0038 那条已知遗留）。
-
-    钉在 :func:`gallery.core.paths.app_data_base` 上，因为它是 ``state.json`` 与
-    系统缓存**唯一**的共同来源 —— 逐个用例去传 ``session_base`` / ``cache_base``
-    是三十多处各写一遍，漏掉任何一处都是同样的泄漏，而且漏了看不出来。
-    """
-    base = tmp_path_factory.mktemp("应用数据")
-    monkeypatch.setattr(paths, "app_data_base", lambda: base)
 
 
 @pytest.fixture(autouse=True)

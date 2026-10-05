@@ -289,13 +289,19 @@ def test_concurrent_first_use_of_pillow_does_not_crash(
     library_root = tmp_path / "库"
     for index in range(16):
         make_photo(f"IMG_{index:04d}.jpg", directory=library_root)
+    # **缩略图缓存也要指到临时目录**：这是个子进程，父进程里那条 autouse 的
+    # ``isolated_app_data`` 管不到它 —— 不传的话它会往用户真实的
+    # ``~/Library/Application Support/Gallery/cache/thumbs/`` 里丢下一个摘要目录，
+    # 而那是没人认领、也没人淘汰的（ADR 0038 那条已知遗留）。
+    cache_base = tmp_path / "系统缓存"
 
     completed = _run_fresh_python(
         """
         import sys, threading
+        from pathlib import Path
         from gallery.core.library.facade import Library
 
-        library = Library.open(sys.argv[1])
+        library = Library.open(Path(sys.argv[1]), cache_base=Path(sys.argv[2]))
         refs = list(library.iter_photos())
         barrier = threading.Barrier(8)
         failures = []
@@ -317,6 +323,7 @@ def test_concurrent_first_use_of_pillow_does_not_crash(
         sys.exit(1 if failures else 0)
         """,
         str(library_root),
+        str(cache_base),
     )
 
     assert completed.returncode == 0, (

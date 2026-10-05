@@ -91,7 +91,10 @@ prepare_library(root)
 base = root.parent / "状态"
 save_session(SessionState(recent_roots=(root,)), base=base)
 app = create_application([])
-window = MainWindow(session_base=base, initial_library=root)
+# ``cache_base`` 要**显式传**：这是个子进程，父进程那条 autouse 的
+# ``isolated_app_data`` 管不到它 —— 不传的话那几张能解码的照片会往用户真实的
+# ``~/Library/Application Support/Gallery/cache/thumbs/`` 丢下一个没人认领的摘要目录。
+window = MainWindow(session_base=base, cache_base=Path(sys.argv[3]), initial_library=root)
 window.resize(900, 600)
 window.show()
 deadline = time.monotonic() + 6
@@ -115,8 +118,11 @@ def test_the_process_really_exits_when_decodes_are_stuck(tmp_path: Path) -> None
     root = tmp_path / "库"
     root.mkdir()
     verdict = tmp_path / "结论.txt"
+    cache_base = tmp_path / "系统缓存"
 
-    completed = _run_fresh_python(_QUIT_UNDER_STUCK_WORKERS, str(root), str(verdict))
+    completed = _run_fresh_python(
+        _QUIT_UNDER_STUCK_WORKERS, str(root), str(verdict), str(cache_base)
+    )
 
     assert verdict.read_text(encoding="utf-8").startswith("CLOSE_SECONDS"), "压根没走到关窗那一步"
     assert completed.returncode == 0, (

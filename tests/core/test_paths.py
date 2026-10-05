@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -72,13 +73,20 @@ def test_app_paths_follow_injected_base(tmp_path: Path) -> None:
     assert cache.name == paths.library_digest(tmp_path / "库")
 
 
-def test_app_data_base_is_platform_specific(monkeypatch: pytest.MonkeyPatch) -> None:
-    """各平台落在各平台该在的地方（AGENTS.md 那个 ``.gallery`` 别名的来处）。"""
+def test_app_data_base_is_platform_specific(
+    monkeypatch: pytest.MonkeyPatch, real_app_data_base: Callable[[], Path]
+) -> None:
+    """各平台落在各平台该在的地方（AGENTS.md 那个 ``.gallery`` 别名的来处）。
+
+    **用没被隔离的那一份**：其余用例都跑在 ``isolated_app_data`` 之下（那份 fixture
+    把默认值钉到临时目录上，好让测试永远不碰用户真实的缓存），而这一条测的正是
+    **真实的默认值**，隔离了就没得测。
+    """
     if sys.platform == "darwin":
-        assert paths.app_data_base() == Path.home() / "Library" / "Application Support"
+        assert real_app_data_base() == Path.home() / "Library" / "Application Support"
     else:
         monkeypatch.setenv("XDG_DATA_HOME", "/tmp/xdg")
-        assert paths.app_data_base() == Path("/tmp/xdg")
+        assert real_app_data_base() == Path("/tmp/xdg")
 
 
 def test_is_within(tmp_path: Path) -> None:
