@@ -5,8 +5,6 @@ __pycache__/
 .eggs/
 build/
 dist/
-# Nuitka 编译失败时写在当前目录的崩溃报告，属于本机排查用，不入库
-nuitka-crash-report.xml
 .venv/
 venv/
 .mypy_cache/
@@ -14,20 +12,17 @@ venv/
 .pytest_cache/
 .coverage
 htmlcov/
+# Nuitka 编译失败时写在当前目录的崩溃报告
+nuitka-crash-report.xml
 
 # ---- Gallery 运行时数据 ----
-# .gallery/ 里除 config.toml 外的内容都是可重建的缓存/日志，不入版本控制
+# .gallery/ 里除 config.toml 外的内容都是可重建的缓存与日志
 .gallery/*
 !.gallery/config.toml
 
 # ---- 本地测试数据 ----
-# 开发时把真实相册放在仓库根目录下就地取用。照片永远不进版本控制：
-# 仓库里不放用户的照片，也不放任何大尺寸二进制（见 AGENTS.md）。
+# 仓库里不放用户的照片，也不放任何大尺寸二进制
 /测试相册/
-
-# 误落在仓库根目录的照片（相机 / 截图直接掉进来，或在根目录跑过软件）。
-# 曾经就是这么混进去一个 0 字节的 IMG*.jpg：文件名本身就是「这里是相机原图」的提示，
-# 比一个 0 字节文件更能说明问题。只挡根目录，不影响 src/ 与 tests/。
 /IMG_*.jpg
 /IMG_*.jpeg
 /IMG_*.JPG
@@ -35,13 +30,13 @@ htmlcov/
 /DSC_*.JPG
 
 # ---- 本机笔记 ----
-# docs/ 是本机的设计笔记与调研记录（菜单外观方案、ADRs、调研报告…），不入版本控制。
-# 删了不会影响构建与运行，只是换台机器 clone 下来没有这些笔记。
-/docs/
-
-# ---- 本机协作约定 ----
-# AGENTS.md 是面向 AI agent 的工程规范（含本机开发流程），随本机走，不随仓库分发
+# docs/adr/ 是对外公开的设计决策记录，随仓库分发；其余几个文件是本机调研记录
+/docs/*
+!/docs/adr/
 AGENTS.md
+
+# ---- 开发工作区 ----
+.worktrees/
 
 # ---- macOS ----
 .DS_Store
@@ -55,6 +50,3 @@ AGENTS.md
 .idea/
 .vscode/
 *.swp
-
-# 开发工作区：AGENTS.md 要求改动都在 worktree 里做，主工作区停在 main
-.worktrees/
