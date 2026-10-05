@@ -34,7 +34,8 @@
    是 ``#a5cdff``；深色下分别是 ``#3974e4`` / ``#0640c6`` / ``#314f78``）。
    症状是**右键菜单与搜索框的候选列表高亮成两种蓝**，而两者的样式表是同一份生成出来的
    —— 菜单那一档偏亮、列表那一档深，用户在两者之间来回走，一眼就看得出割裂。
-   :func:`_resolve_roles` 把这几档统一成**列表那一档**（界面上别处的选中色本来就是它），
+   :func:`_resolve_roles` 把这几档统一成**菜单那一档**（问一个 ``QMenu`` 要那一档的值，
+   浅色 ``#548fff`` / 深色 ``#3974e4``；用户对着两档看过之后选的偏浅那个），
    再显式写进每一份下发的调色板，于是三处浮层只可能同色。
 
 要换底色只改 :data:`BACKGROUND_ROLE` 一处。
@@ -48,7 +49,7 @@ from typing import cast
 
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QColor, QPalette
-from PySide6.QtWidgets import QApplication, QListView, QWidget
+from PySide6.QtWidgets import QApplication, QMenu, QWidget
 
 #: 统一底色取自调色板的哪个角色（见模块文档）。
 #: ``Base`` 是系统的「内容区色」：浅色下是白，深色下是 ``#171717``。
@@ -193,14 +194,18 @@ def _push_palette(app: QApplication, palette: QPalette) -> None:
 def _resolve_roles(palette: QPalette) -> QPalette:
     """把 :data:`RESOLVED_ROLES` 里的几档**解析成一档**钉进这份调色板（模块文档第 4 条）。
 
-    **问一个列表控件要答案**：下发时这几个角色是空的，Qt 会按控件类型各填各的
-    （实测菜单与列表给出两个不同的蓝）。列表那一档正是界面上别处的选中色 ——
-    网格里选中那一格的铺底、输入框里的选区都是它，所以统一成它，动的只有菜单。
+    **问一个菜单控件要答案**：下发时这几个角色是空的，Qt 会按控件类型各填各的
+    （实测同一份调色板，``QMenu`` 与 ``QTreeWidget`` 给出两个不同的蓝）。统一到**菜单**
+    那一档 —— 用户看过两个之后选的（菜单那一档偏浅，列表那一档偏深）。
+
+    代价写在 ADR 0035 决策 2 里：浅色下白字压那一档是 3.1:1（WCAG 正文要 4.5:1，
+    大字与图形 3:1）。候选列表选中那一行的字偏淡是明摆着的，换来的是菜单里悬停那一行
+    不再偏浅得发白 —— 用户要的就是后者。
 
     问一次就够：这一份是在 :func:`pushed_palette` 里算的，每次下发主题算一次，
     而每次下发的场合都是「换过浅色 / 深色」或「控件刚建出来」—— 不是热路径。
     """
-    probe = QListView()
+    probe = QMenu()
     probe.setPalette(palette)
     resolved = probe.palette()
     for role in RESOLVED_ROLES:
