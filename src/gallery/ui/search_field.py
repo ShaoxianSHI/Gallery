@@ -64,7 +64,11 @@ HEIGHT = 22
 
 #: 胶囊离窗口右边多远。与左边交通灯那一段（78 点）不对称是刻意的：那边系统自己画着
 #: 三个按钮，胶囊是后来加的，靠边会显得被挤出去，于是留宽一点。
-MARGIN_RIGHT = 24
+#:
+#: **这一格是「右上角那一块」的右缘**，面包屑右端那几枚条件胶囊要与它对齐（它们是同
+#: 一列东西，只是分两行摆着），于是它同时被 ``BreadcrumbBar.set_right_inset`` 用到 ——
+#: 换句话说「对齐的那个数」只有这一个，别在面包屑那一侧另写一份。
+MARGIN_RIGHT = 20
 
 #: 胶囊比标题栏那一条的中线再往下挪多少（点）。
 #:
@@ -99,6 +103,11 @@ _FONT_PX = POPUP_FONT_PX
 #: ``test_the_candidate_hash_lines_up_with_the_typed_one`` 那条像素对拍兜着（它量的是
 #: 两个字真正画在哪，不是控件在哪）。
 _ITEM_TEXT_BASELINE = 1
+
+#: 候选列表最窄还能是几多（点）。左沿是「跟着输入框那一侧让开」的，让开得太过就成了一条
+#: 看不出是什么的竖条 —— 这一格是那条下限，**与胶囊离窗口右边多远无关**（原因见
+#: :meth:`SearchField._fill_popup` 里那段话）。够放下最长的那几项（「# 像素尺寸」）。
+_POPUP_MIN_WIDTH = 120
 
 
 class SearchEdit(QLineEdit):
@@ -499,8 +508,15 @@ class SearchField(QWidget):
         # 左沿让开的那一段由 :meth:`_popup_left` 算，**右沿仍与胶囊齐** —— 宽度跟着
         # 左移一起收窄，于是「# 与输入框对齐」与「不许越过右边」两件事都成立。
         # 窗口窄到放不下时宁可让列表贴着窗口左边（那时右沿也已经顶到窗口边了）。
+        #
+        # 让开量有个上限：**列表不许窄到看不出是什么**（:data:`_POPUP_MIN_WIDTH`）。
+        # **按胶囊自己算这个上限，不按窗口算** —— 写成 ``host.width() - WIDTH`` 时它
+        # 等于「让开量 ≤ ``MARGIN_RIGHT``」（两者只差一个右边距），于是胶囊一往右挪、
+        # :data:`MARGIN_RIGHT` 调小，这个上限就跟着变紧，``#`` 对齐那条会在与本意完全
+        # 无关的地方红 —— 守卫测试 ``test_the_candidate_list_follows_the_capsule_layout``
+        # 一直是靠「它碰巧比那个上限大」才过的。
         field_left = self.mapTo(self._host, QPoint(0, 0)).x()
-        left = min(self._popup_left(), max(0, self._host.width() - WIDTH))
+        left = max(0, min(self._popup_left(), field_left + WIDTH - _POPUP_MIN_WIDTH))
         self._popup.setGeometry(left, anchor.y(), WIDTH - max(0, left - field_left), height)
         items = self._candidate_items()
         if items:

@@ -26,6 +26,10 @@ SEPARATOR = "▸"
 #: 条件胶囊右边那个「撤掉它」的记号。
 DISMISS_MARK = "✕"
 
+#: 这一行上下左右各留多少（点）。右边那一格只是**默认值** —— 有条件胶囊时它由
+#: :meth:`BreadcrumbBar.set_right_inset` 按搜索胶囊的右缘换算过来。
+_PAD = 2
+
 #: 胶囊左右各留多少（点）。**热区算它**（见 :meth:`ChipButton._hits_mark`），
 #: 改样式表里的内边距时这个也要跟着改 —— 两处写同一个数不如让计算从样式表那一档来。
 _CHIP_PADDING_H = 8
@@ -129,8 +133,23 @@ class BreadcrumbBar(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._layout = QHBoxLayout(self)
-        self._layout.setContentsMargins(2, 2, 2, 2)
+        self._layout.setContentsMargins(_PAD, _PAD, _PAD, _PAD)
         self._layout.setSpacing(0)
+
+    def set_right_inset(self, points: int) -> None:
+        """把右端那几枚条件胶囊的右缘推到「离**这一行**的右缘 ``points`` 点」的地方。
+
+        **对齐的是标题栏右上角那个搜索胶囊的右缘，不是窗口右缘** —— 两者之间还隔着
+        摆这一行的那份布局边距，换算由 :meth:`MainWindow._layout_title_bar` 做
+        （那里同时知道窗口宽度与胶囊的 ``MARGIN_RIGHT``，是那个数唯一在用的地方）。
+
+        为什么非对齐不可：胶囊与条件胶囊是**同一列东西**，只是分两行摆着，右缘各说各话
+        时那条竖线是折的，看着像两样互不相干的控件。
+
+        **只改右边的留白**：路径段是从左边数起的，右端收窄多少都不影响它们；照片区在
+        面包屑下一行，两者互不相干。
+        """
+        self._layout.setContentsMargins(_PAD, _PAD, max(0, points), _PAD)
 
     def set_path(
         self,

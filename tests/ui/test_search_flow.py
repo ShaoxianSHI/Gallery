@@ -269,6 +269,38 @@ def test_the_capsule_keeps_a_wide_gap_to_the_window_edge(
     window.close()
 
 
+def test_the_rightmost_condition_lines_up_with_the_capsule(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """面包屑右端那几枚条件胶囊的**右缘**要与搜索胶囊的右缘在同一条竖线上。
+
+    两者是同一列东西，只是分两行摆着（ADR 0026 决策 4：条件按录入顺序从右端排开）。
+    右缘各说各话时那条竖线是折的，看着像两样互不相干的控件。
+
+    **钉的是「对齐」而不是某个数**：真要盯住的是最右那一枚的右缘与胶囊的右缘相等，
+    换句话说两边都得由 ``search_field.MARGIN_RIGHT`` 那一个数推出来 —— 两处各写一份
+    留白时这条会立刻变红。
+    """
+    root = _library(tmp_path, make_photo)
+    window = _open(qt_app, root, tmp_path / "会话")
+    _settle(qt_app, window)
+
+    _search(qt_app, window, "海边")
+    _search(qt_app, window, "#相机 Canon")
+
+    chips = window._breadcrumb.findChildren(ChipButton)
+    assert len(chips) == 2, f"两枚条件胶囊没摆出来：{len(chips)}"
+    crumb = window._breadcrumb
+    origin = crumb.mapTo(window, crumb.rect().topLeft()).x()
+    rightmost = max(origin + chip.geometry().right() for chip in chips)
+    capsule_right = window._search_field.geometry().right()
+
+    assert rightmost == capsule_right, (
+        f"最右那枚胶囊的右缘在 {rightmost}，搜索胶囊的在 {capsule_right}"
+    )
+    window.close()
+
+
 def test_hovering_a_candidate_highlights_it(qt_app: QApplication, tmp_path: Path) -> None:
     """鼠标移到哪一行，那一行就高亮。
 

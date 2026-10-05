@@ -153,6 +153,12 @@ from gallery.ui.write_ops import WriteOpsMixin, flattened_entries
 
 logger = logging.getLogger(__name__)
 
+#: 网格页左右各留多少（点）。面包屑与照片区都靠它离窗口边远一点。
+#:
+#: **面包屑那一行要知道它**：条件胶囊要与搜索胶囊右对齐，而面包屑的右缘已经比窗口右缘
+#: 靠内这么多了（见 :meth:`MainWindow._layout_title_bar`）。
+_GRID_PAGE_MARGIN_H = 10
+
 
 class MainWindow(
     OrderingMixin,
@@ -405,7 +411,7 @@ class MainWindow(
         # 都把网格往下挤一段。控件本体与摆位在 ``_build_ui`` 的最后一步建。
         self._grid_page = QWidget()
         grid_layout = QVBoxLayout(self._grid_page)
-        grid_layout.setContentsMargins(10, 10, 10, 0)
+        grid_layout.setContentsMargins(_GRID_PAGE_MARGIN_H, 10, _GRID_PAGE_MARGIN_H, 0)
         grid_layout.setSpacing(8)
         grid_layout.addWidget(self._breadcrumb)
         grid_layout.addWidget(self._grid, 1)
@@ -1323,6 +1329,12 @@ class MainWindow(
             + 2 * SEARCH_FIELD_MARGIN_RIGHT
             + (BUTTON_WIDTH + BUTTON_GAP if self._external_button.isVisible() else 0)
         )
+
+        # 面包屑右端那几枚条件胶囊与这个胶囊**右缘对齐**（同一列东西，两行摆的）。
+        # 换算只在这一处做：面包屑摆在一份有边距的布局里，它自己的右缘已经比窗口右缘
+        # 靠内 :data:`_GRID_PAGE_MARGIN_H` 点，于是留白要减掉那一段才是同一个位置 ——
+        # 两边各写一份数字，早晚差一档，而差的那一档正是在右缘上（最显眼的地方）。
+        self._breadcrumb.set_right_inset(SEARCH_FIELD_MARGIN_RIGHT - _GRID_PAGE_MARGIN_H)
 
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         super().showEvent(event)
