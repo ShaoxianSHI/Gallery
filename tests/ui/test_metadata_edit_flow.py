@@ -25,6 +25,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
+from library_helpers import set_library_ui  # noqa: E402
 from PIL import Image  # noqa: E402
 from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtGui import QGuiApplication, QKeySequence  # noqa: E402
@@ -41,13 +42,15 @@ from PySide6.QtWidgets import (  # noqa: E402
 from waiting import wait_for_idle, wait_until  # noqa: E402
 
 from gallery.core.errors import MetadataWriteError  # noqa: E402
-from gallery.core.library.config import prepare_library  # noqa: E402
-from gallery.core.library.photos import GroupRef  # noqa: E402
-from gallery.core.library.session import (  # noqa: E402
+from gallery.core.library.config import (
     BROWSE_MODE_ALBUMS,
+    prepare_library,
+)  # noqa: E402
+from gallery.core.library.photos import GroupRef  # noqa: E402
+from gallery.core.library.session import (
     SessionState,
     save_session,
-)
+)  # noqa: E402
 from gallery.core.metadata.capture_time import CaptureTime, CaptureTimeEdit  # noqa: E402
 from gallery.core.metadata.exif import build_report  # noqa: E402
 from gallery.core.metadata.journal import read_records  # noqa: E402
@@ -99,9 +102,8 @@ def writer() -> FakeWriter:
 @pytest.fixture
 def window(qt_app: QApplication, root: Path, writer: FakeWriter) -> Iterator[MainWindow]:
     session_base = root.parent / "状态"
-    save_session(
-        SessionState(recent_roots=(root,), browse_mode=BROWSE_MODE_ALBUMS), base=session_base
-    )
+    save_session(SessionState(recent_roots=(root,)), base=session_base)
+    set_library_ui(root, browse_mode=BROWSE_MODE_ALBUMS)
     instance = MainWindow(session_base=session_base, initial_library=root)
     instance._library._writer = writer  # 不起真的 exiftool（测试不得依赖本机装没装）
     instance.resize(900, 600)

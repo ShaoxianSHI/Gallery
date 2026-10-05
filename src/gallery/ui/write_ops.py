@@ -58,8 +58,8 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QDialog, QMenu
 
 from gallery.core.errors import GalleryError
+from gallery.core.library.config import BROWSE_MODE_ALBUMS, BROWSE_MODE_FLAT
 from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
-from gallery.core.library.session import BROWSE_MODE_ALBUMS, BROWSE_MODE_FLAT
 from gallery.core.metadata.capture_time import CaptureTime
 from gallery.core.metadata.exif import MetadataReport, read_metadata
 from gallery.core.metadata.journal import ACTION_METADATA, ACTION_RENAME

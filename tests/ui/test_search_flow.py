@@ -23,6 +23,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
+from library_helpers import set_library_ui  # noqa: E402
 from PySide6.QtCore import QEvent, QPointF, Qt  # noqa: E402
 from PySide6.QtGui import QMouseEvent, QPalette  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
@@ -33,14 +34,16 @@ from PySide6.QtWidgets import (  # noqa: E402
 )
 from waiting import wait_for_idle  # noqa: E402
 
-from gallery.core.library.config import prepare_library  # noqa: E402
-from gallery.core.library.photos import GroupRef, PhotoRef  # noqa: E402
-from gallery.core.library.session import (  # noqa: E402
+from gallery.core.library.config import (
     BROWSE_MODE_ALBUMS,
     BROWSE_MODE_FLAT,
+    prepare_library,
+)  # noqa: E402
+from gallery.core.library.photos import GroupRef, PhotoRef  # noqa: E402
+from gallery.core.library.session import (
     SessionState,
     save_session,
-)
+)  # noqa: E402
 from gallery.core.metadata import batch  # noqa: E402
 from gallery.core.places.resolver import LazyPlaceResolver, ResolvedPlace  # noqa: E402
 from gallery.ui import theme  # noqa: E402
@@ -105,10 +108,8 @@ def fake_facet_source(monkeypatch: pytest.MonkeyPatch) -> None:
 def _open(
     qt_app: QApplication, root: Path, session_base: Path, *, browse_mode: str = BROWSE_MODE_FLAT
 ) -> MainWindow:
-    save_session(
-        SessionState(recent_roots=(root,), browse_mode=browse_mode),
-        base=session_base,
-    )
+    save_session(SessionState(recent_roots=(root,)), base=session_base)
+    set_library_ui(root, browse_mode=browse_mode)
     window = MainWindow(session_base=session_base, initial_library=root)
     window.resize(1000, 700)
     window.show()

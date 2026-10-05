@@ -4,6 +4,11 @@
 （唯一的例外是 ``has_config_dir``，它只回答一个是非问题）。
 落盘由调用方显式触发，这样「什么时候会写用户的目录」在代码里始终是可见的。
 
+**东西放在哪里（ADR 0038）**：除缩略图之外，Gallery 关于一个库的一切都在
+库根下的配置目录里 —— 配置、索引、写操作日志、库级界面偏好。缩略图是唯一的例外，
+它按库路径摘要落在 ``<app cache>/thumbs/<摘要>/``：那是一万个只增不减的小文件，
+放在用户的照片文件夹里会被云同步来回传，而它本来就是随时能重新解码出来的东西。
+
 随包分发的只读资源（目前只有应用图标）由 ``resources_dir`` 定位：它跟着包的
 安装位置走，与用户的库无关。
 
@@ -31,9 +36,9 @@ from gallery.core.constants import (
     CACHE_DIR_NAME,
     CONFIG_DIR_NAME,
     CONFIG_FILE_NAME,
-    INDEX_CACHE_DIR_NAME,
     INDEX_FILE_NAME,
     JOURNAL_DIR_NAME,
+    LEGACY_INDEX_CACHE_DIR_NAME,
     PLACES_DB_FILENAME,
     RESOURCES_DIR_NAME,
     THUMBNAIL_DIR_NAME,
@@ -50,14 +55,9 @@ def config_file(root: Path) -> Path:
     return config_dir(root) / CONFIG_FILE_NAME
 
 
-def cache_dir(root: Path) -> Path:
-    """库内缓存目录（全部内容都可随时删除）。"""
-    return config_dir(root) / CACHE_DIR_NAME
-
-
-def thumbnail_cache_dir(root: Path) -> Path:
-    """库内缩略图缓存目录。"""
-    return cache_dir(root) / THUMBNAIL_DIR_NAME
+def index_file(root: Path) -> Path:
+    """SQLite 索引文件：分组 / 排序用的元数据快照（见 ADR 0009、ADR 0038）。"""
+    return config_dir(root) / INDEX_FILE_NAME
 
 
 def journal_dir(root: Path) -> Path:
@@ -65,30 +65,30 @@ def journal_dir(root: Path) -> Path:
     return config_dir(root) / JOURNAL_DIR_NAME
 
 
-def index_file(root: Path) -> Path:
-    """SQLite 索引文件：分组 / 排序用的元数据快照（见 ADR 0009）。"""
-    return config_dir(root) / INDEX_FILE_NAME
+def legacy_cache_dir(root: Path) -> Path:
+    """**旧版**的库内缓存目录（配置目录下的 ``cache/``）—— 缩略图曾经住在这里面。
 
-
-def external_index_file(root: Path, *, base: Path | None = None) -> Path:
-    """库外索引文件：``<app cache>/index/<库路径摘要>.db``。
-
-    用户在开场对话框里选「缓存到系统目录」时用它 —— 那个承诺是**照片文件夹一个字节都
-    不写入**，索引当然也得跟着走。
+    新版一个字节都不往这里写（ADR 0038 决策 1），这个函数只用来一次性清掉它。
     """
-    return app_cache_root(base=base) / INDEX_CACHE_DIR_NAME / f"{library_digest(root)}.db"
+    return config_dir(root) / CACHE_DIR_NAME
+
+
+def legacy_thumbnail_cache_dir(root: Path) -> Path:
+    """**旧版**的库内缩略图缓存目录 —— ADR 0038 之前缩略图住在这里。
+
+    新版不再往这里写任何东西，这个函数只用来一次性清掉它（迁移，见
+    :func:`gallery.core.library.config.discard_legacy_thumb_cache`）。
+    """
+    return legacy_cache_dir(root) / THUMBNAIL_DIR_NAME
 
 
 def has_config_dir(root: Path) -> bool:
-    """库内是否已经存在配置目录。
-
-    界面用它决定要不要先征求用户同意再创建缓存目录。
-    """
+    """库内是否已经存在配置目录。"""
     return config_dir(root).is_dir()
 
 
 def library_digest(root: Path) -> str:
-    """库路径的稳定短摘要，用于在系统目录下为每个库单独建缓存目录。"""
+    """库路径的稳定短摘要，用于在系统目录下为每个库单独建缩略图目录。"""
     resolved = str(Path(root).expanduser().resolve())
     return hashlib.sha1(resolved.encode("utf-8")).hexdigest()[:16]
 
@@ -166,17 +166,34 @@ def app_state_dir(*, base: Path | None = None) -> Path:
 
 
 def app_state_file(*, base: Path | None = None) -> Path:
-    """会话状态文件。"""
+    """会话状态文件。**只装应用级的东西**（最近打开过哪些库、窗口几何）——
+    库级的界面偏好在 ``config.toml`` 里（ADR 0038）。"""
     return app_state_dir(base=base) / "state.json"
 
 
 def app_cache_root(*, base: Path | None = None) -> Path:
-    """应用级缓存根目录，用于用户拒绝在库内创建配置目录的场景。"""
+    """应用级缓存根目录。**缩略图是这里唯一的住户**（ADR 0038）。"""
     return app_state_dir(base=base) / CACHE_DIR_NAME
 
 
-def external_thumbnail_cache_dir(root: Path, *, base: Path | None = None) -> Path:
-    """库外缩略图缓存目录：``<app cache>/thumbs/<库路径摘要>``。"""
+def app_index_cache_dir(*, base: Path | None = None) -> Path:
+    """**旧版**的库外索引目录：``<app cache>/index``。
+
+    新版不再往这里写任何东西（索引固定在库里的配置目录下，ADR 0038 决策 1），
+    这个函数只用来一次性清掉它。
+    """
+    return app_cache_root(base=base) / LEGACY_INDEX_CACHE_DIR_NAME
+
+
+def thumbnail_cache_dir(root: Path, *, base: Path | None = None) -> Path:
+    """本库的缩略图缓存目录：``<app cache>/thumbs/<库路径摘要>``。
+
+    这是 Gallery **唯一**不进 配置目录 的东西：按实测，一万张照片的缩略图是
+    九万多个 38 KiB 的小文件，而索引无论多大都只是一个文件（ADR 0038）。放在系统
+    目录里，用户把库放进 Dropbox / OneDrive 时它们不会跟着来回传。
+
+    :param base: 系统级缓存根目录，测试用；``None`` 表示走平台默认位置。
+    """
     return app_cache_root(base=base) / THUMBNAIL_DIR_NAME / library_digest(root)
 
 
@@ -271,19 +288,19 @@ __all__ = [
     "app_data_base",
     "app_icon_files",
     "app_icon_master",
+    "app_index_cache_dir",
     "app_state_dir",
     "app_state_file",
     "augment_external_tool_path",
-    "cache_dir",
     "config_dir",
     "config_file",
-    "external_index_file",
-    "external_thumbnail_cache_dir",
     "has_config_dir",
     "icon_file",
     "index_file",
     "is_within",
     "journal_dir",
+    "legacy_cache_dir",
+    "legacy_thumbnail_cache_dir",
     "library_digest",
     "places_db_file",
     "resolved",

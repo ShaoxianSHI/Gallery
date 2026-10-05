@@ -20,7 +20,11 @@ from gallery.core.library.calendar import (
     title,
 )
 from gallery.core.library.config import (
+    BROWSE_MODE_ALBUMS,
+    BROWSE_MODE_CALENDAR,
+    BROWSE_MODE_FLAT,
     LibraryConfig,
+    LibraryUIState,
     load_config,
     prepare_library,
     save_config,
@@ -37,6 +41,9 @@ from gallery.core.library.photos import (
 )
 
 __all__ = [
+    "BROWSE_MODE_ALBUMS",
+    "BROWSE_MODE_CALENDAR",
+    "BROWSE_MODE_FLAT",
     "LEVELS",
     "LEVEL_NAMES",
     "FolderRef",
@@ -44,6 +51,7 @@ __all__ = [
     "GroupRef",
     "Library",
     "LibraryConfig",
+    "LibraryUIState",
     "PhotoRef",
     "SortOrder",
     "build_groups",

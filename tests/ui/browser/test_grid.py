@@ -21,18 +21,21 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from grid_helpers import fake_photos, make_grid, settle_grid  # noqa: E402
+from library_helpers import set_library_ui  # noqa: E402
 from PySide6.QtCore import QModelIndex, QPoint, Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 from waiting import DEFAULT_TIMEOUT_SECONDS, wait_until
 
-from gallery.core.library.config import prepare_library  # noqa: E402
-from gallery.core.library.photos import FolderRef  # noqa: E402
-from gallery.core.library.session import (  # noqa: E402
+from gallery.core.library.config import (
     BROWSE_MODE_ALBUMS,
+    prepare_library,
+)  # noqa: E402
+from gallery.core.library.photos import FolderRef  # noqa: E402
+from gallery.core.library.session import (
     SessionState,
     save_session,
-)
+)  # noqa: E402
 from gallery.ui.browser.grid import PhotoGrid  # noqa: E402
 from gallery.ui.browser.model import PhotoListModel  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
@@ -101,10 +104,8 @@ def test_albums_mode_startup_keeps_normal_tile_size(
             make_photo(f"{index}.jpg", directory=root / album)
     prepare_library(root)
     session_base = tmp_path / "session"
-    save_session(
-        SessionState(recent_roots=(root,), thumbnail_edge=176, browse_mode=BROWSE_MODE_ALBUMS),
-        base=session_base,
-    )
+    save_session(SessionState(recent_roots=(root,)), base=session_base)
+    set_library_ui(root, thumbnail_edge=176, browse_mode=BROWSE_MODE_ALBUMS)
 
     window = MainWindow(session_base=session_base)
     window.resize(1200, 800)
@@ -226,10 +227,8 @@ def test_entering_an_album_fills_the_row(
         make_photo(f"{index}.jpg", directory=album)
     prepare_library(root)
     session_base = tmp_path / "session"
-    save_session(
-        SessionState(recent_roots=(root,), thumbnail_edge=176, browse_mode=BROWSE_MODE_ALBUMS),
-        base=session_base,
-    )
+    save_session(SessionState(recent_roots=(root,)), base=session_base)
+    set_library_ui(root, thumbnail_edge=176, browse_mode=BROWSE_MODE_ALBUMS)
 
     window = MainWindow(session_base=session_base)
     window.resize(1280, 860)
@@ -885,10 +884,8 @@ def test_in_the_window_clicking_the_blank_leaves_nothing_to_rename_or_to_open(
         make_photo("一张.jpg", directory=root / album)
     prepare_library(root)
     session_base = tmp_path / "session"
-    save_session(
-        SessionState(recent_roots=(root,), thumbnail_edge=176, browse_mode=BROWSE_MODE_ALBUMS),
-        base=session_base,
-    )
+    save_session(SessionState(recent_roots=(root,)), base=session_base)
+    set_library_ui(root, thumbnail_edge=176, browse_mode=BROWSE_MODE_ALBUMS)
     window = MainWindow(session_base=session_base)
     window.resize(1200, 800)
     window.show()

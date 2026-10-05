@@ -18,19 +18,22 @@ import pytest
 
 pytest.importorskip("PySide6")
 
+from library_helpers import set_library_ui  # noqa: E402
 from PySide6.QtCore import QCoreApplication, QEvent  # noqa: E402
 from PySide6.QtGui import QImage  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 from waiting import wait_until
 
-from gallery.core.library.config import prepare_library  # noqa: E402
-from gallery.core.library.photos import FolderRef, PhotoRef  # noqa: E402
-from gallery.core.library.session import (  # noqa: E402
+from gallery.core.library.config import (
     BROWSE_MODE_ALBUMS,
     BROWSE_MODE_FLAT,
+    prepare_library,
+)  # noqa: E402
+from gallery.core.library.photos import FolderRef, PhotoRef  # noqa: E402
+from gallery.core.library.session import (
     SessionState,
     save_session,
-)
+)  # noqa: E402
 from gallery.core.library.watcher import (  # noqa: E402
     ChangeKind,
     LibraryChange,
@@ -83,10 +86,8 @@ def open_window(
 ) -> tuple[MainWindow, FakeWatcher]:
     # 会话状态写在库外：放在库里面，相册模式下它自己就会变成一个相册卡片。
     session_base = root.parent / f"{root.name}-状态"
-    save_session(
-        SessionState(recent_roots=(root,), browse_mode=browse_mode),
-        base=session_base,
-    )
+    save_session(SessionState(recent_roots=(root,)), base=session_base)
+    set_library_ui(root, browse_mode=browse_mode)
     prepare_library(root)  # 没有配置目录时那个模态框在测试里没人点
     watchers: list[FakeWatcher] = []
     window = MainWindow(

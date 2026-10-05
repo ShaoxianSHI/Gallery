@@ -22,6 +22,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
+from library_helpers import set_library_ui  # noqa: E402
 from PySide6.QtCore import QEvent, QPoint, QPointF, Qt  # noqa: E402
 from PySide6.QtGui import QImage, QMouseEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
@@ -29,13 +30,15 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from waiting import wait_for_idle, wait_until, window_is_idle  # noqa: E402
 
 from gallery.core.library.calendar import month_matrix  # noqa: E402
-from gallery.core.library.config import prepare_library  # noqa: E402
-from gallery.core.library.session import (  # noqa: E402
+from gallery.core.library.config import (  # noqa: E402
     BROWSE_MODE_CALENDAR,
-    SessionState,
-    load_session,
-    save_session,
+    load_config,
+    prepare_library,
 )
+from gallery.core.library.session import (
+    SessionState,
+    save_session,
+)  # noqa: E402
 from gallery.core.metadata import batch  # noqa: E402
 from gallery.core.places.resolver import LazyPlaceResolver, ResolvedPlace  # noqa: E402
 from gallery.ui.calendar.month_view import MonthView  # noqa: E402
@@ -88,14 +91,8 @@ def _open(
     qt_app: QApplication, root: Path, session_base: Path, *, group_facet: str | None = None
 ) -> MainWindow:
     """开一个停在日历上的窗口。``group_facet`` 用来复现「用户开着分组进日历」。"""
-    save_session(
-        SessionState(
-            recent_roots=(root,),
-            browse_mode=BROWSE_MODE_CALENDAR,
-            group_facet=group_facet,
-        ),
-        base=session_base,
-    )
+    save_session(SessionState(recent_roots=(root,)), base=session_base)
+    set_library_ui(root, browse_mode=BROWSE_MODE_CALENDAR, group_facet=group_facet)
     window = MainWindow(session_base=session_base, initial_library=root)
     window.resize(900, 600)
     window.show()
@@ -784,7 +781,9 @@ def test_the_level_survives_a_reopen(
     reopened = MainWindow(session_base=session_base, initial_library=root)
     try:
         assert wait_until(qt_app, lambda: window_is_idle(reopened))
-        assert load_session(base=session_base).resolved_calendar_level() == "week"
+        # 日历停在哪一层是**库级**偏好（ADR 0038 决策 4）：它写在库里，
+        # 于是换个库打开时各自回到自己那一层。
+        assert load_config(root).ui.resolved_calendar_level() == "week"
         assert reopened._calendar_page.level() == "week"
     finally:
         reopened.close()

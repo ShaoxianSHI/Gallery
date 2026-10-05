@@ -22,10 +22,10 @@ import time
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
+from gallery.core.library.config import BROWSE_MODE_ALBUMS, BROWSE_MODE_FLAT
 from gallery.core.library.facade import Library
 from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
 from gallery.core.library.scanner import describe_entry
-from gallery.core.library.session import BROWSE_MODE_ALBUMS, BROWSE_MODE_FLAT
 from gallery.core.library.watcher import ChangeKind, LibraryChange, summarize
 
 logger = logging.getLogger(__name__)

@@ -16,19 +16,28 @@ CONFIG_DIR_NAME: Final = ".gallery"
 CONFIG_FILE_NAME: Final = "config.toml"
 
 #: ``.gallery/`` 下存放可丢弃缓存的子目录名。
+#:
+#: **缩略图已经不住在这里了**（ADR 0038）：它们按库路径摘要落在系统目录的
+#: ``<app cache>/thumbs/<摘要>/``，免得几万个小文件跟着照片被云同步来回传。
+#: 这个常量保留下来是因为**读老库的旧目录**时还要用到它（一次性迁移，见
+#: ``core.library.config.discard_legacy_thumb_cache``）。
 CACHE_DIR_NAME: Final = "cache"
 
-#: 缩略图缓存目录名（位于 ``.gallery/cache/`` 内）。
+#: 缩略图缓存目录名。**位于系统目录内**，按库路径摘要再分一层。
 THUMBNAIL_DIR_NAME: Final = "thumbs"
 
 #: 写操作日志目录名（``.gallery/journal/``）：每一次会动用户文件的操作都往里记一笔。
 JOURNAL_DIR_NAME: Final = "journal"
 
-#: SQLite 索引文件名。分组 / 排序读的元数据快照存在这里（见 ADR 0009）。
+#: SQLite 索引文件名。分组 / 排序读的元数据快照存在这里（见 ADR 0009、ADR 0038）。
 INDEX_FILE_NAME: Final = "index.db"
 
-#: 库外缓存（用户拒绝在库里创建配置目录时）存放索引的子目录名。
-INDEX_CACHE_DIR_NAME: Final = "index"
+#: **旧版**的库外索引子目录名（``<app cache>/index/``）。
+#:
+#: ADR 0038 把索引固定回库里之后就只剩一个用途：**认出这个目录好把它删掉**
+#: （``config.discard_legacy_external_index``）。留着常量而不是就地写个字面量，
+#: 是为了让「旧目录叫什么」这件事仍然只有一个来源。
+LEGACY_INDEX_CACHE_DIR_NAME: Final = "index"
 
 #: 应用在系统目录（macOS 为 ``~/Library/Application Support``）下的目录名。
 APP_NAME: Final = "Gallery"
@@ -70,9 +79,9 @@ __all__ = [
     "CONFIG_FILE_NAME",
     "DEFAULT_MAX_CACHE_BYTES",
     "DEFAULT_THUMBNAIL_MAX_EDGE",
-    "INDEX_CACHE_DIR_NAME",
     "INDEX_FILE_NAME",
     "JOURNAL_DIR_NAME",
+    "LEGACY_INDEX_CACHE_DIR_NAME",
     "PLACES_DB_FILENAME",
     "RESOURCES_DIR_NAME",
     "THUMBNAIL_DIR_NAME",

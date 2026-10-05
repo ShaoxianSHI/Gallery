@@ -58,9 +58,9 @@ class MetadataFlowMixin:
     # ---- 元数据面板、地点与进入
     def toggle_metadata(self, visible: bool) -> None:
         """⌘I：展开 / 收起右侧的元数据面板，并把选择记进会话。"""
+        self._metadata_visible = visible
         self._panel.setVisible(visible)
-        self._session = self._session.with_metadata_visible(visible)
-        self._save_session()
+        self._save_ui_state()
         # 面板一收一放，横幅要避开的那一块就变了，宽度跟着重摆（居中的仍是整个窗口）。
         self._layout_banner()
         if visible:

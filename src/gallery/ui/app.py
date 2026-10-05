@@ -83,10 +83,12 @@ class WindowHost(QObject):
         app: QApplication,
         *,
         session_base: Path | None = None,
+        cache_base: Path | None = None,
         library: Path | None = None,
     ) -> None:
         super().__init__(app)
         self._session_base = session_base
+        self._cache_base = cache_base
         self._library = library
         self._window: MainWindow | None = None
         app.applicationStateChanged.connect(self._on_application_state_changed)
@@ -98,7 +100,11 @@ class WindowHost(QObject):
 
     def open_window(self) -> MainWindow:
         """开出一个新窗口并摆出来，返回它。"""
-        window = MainWindow(session_base=self._session_base, initial_library=self._library)
+        window = MainWindow(
+            session_base=self._session_base,
+            cache_base=self._cache_base,
+            initial_library=self._library,
+        )
         window.show()
         self._window = window
         return window
@@ -129,6 +135,7 @@ def run(
     *,
     library: Path | None = None,
     session_base: Path | None = None,
+    cache_base: Path | None = None,
 ) -> int:
     """启动界面，返回进程退出码。"""
     # 在建 QApplication 之前补 PATH：从访达 / Dock 启动时 exiftool 不在系统目录里，
@@ -138,7 +145,7 @@ def run(
     # ⌘W 关窗与 ⌘Q 退出的分工（ADR 0037）。**必须在造窗口之前**：这一条只管
     # 「关掉最后一个窗口之后会发生什么」，而窗口一关就晚了。
     keep_running_without_windows(app)
-    host = WindowHost(app, session_base=session_base, library=library)
+    host = WindowHost(app, session_base=session_base, cache_base=cache_base, library=library)
     host.open_window()
     # ``host`` 是 ``applicationStateChanged`` 的接收者：它作为局部变量在整个
     # ``exec()`` 期间活着，这一行是事件循环停下来之后才返回的（见 :class:`WindowHost`）。

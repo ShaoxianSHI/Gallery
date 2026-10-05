@@ -34,7 +34,9 @@ from waiting import wait_until  # noqa: E402
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QCoreApplication, QEvent  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
+
+from gallery.core import paths  # noqa: E402
 
 #: 轮询间隔。够密才抓得住一闪而过的东西，又不至于把 CPU 跑满。
 POLL_SECONDS = 0.005
@@ -109,6 +111,50 @@ def qt_teardown(qt_app: QApplication) -> Iterator[None]:
     """
     yield
     _destroy_top_level_widgets(qt_app)
+
+
+@pytest.fixture(autouse=True)
+def isolated_app_data(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**把应用数据目录挪进临时目录**，任何界面用例都不许碰用户真实的那一个。
+
+    缩略图按库路径摘要分目录（``<app cache>/thumbs/<摘要>``，ADR 0038 决策 1），
+    而界面用例每个用例一个 ``tmp_path`` —— 摘要因此每个用例都不一样。不隔离的话
+    一轮全量会往 ``~/Library/Application Support/Gallery/cache/thumbs/`` 里丢下
+    几百个没人认领的摘要目录：实测**跑两轮就是 2509 个**，而且它们既不会被淘汰、
+    也没有上限（ADR 0038 那条已知遗留）。
+
+    钉在 :func:`gallery.core.paths.app_data_base` 上，因为它是 ``state.json`` 与
+    系统缓存**唯一**的共同来源 —— 逐个用例去传 ``session_base`` / ``cache_base``
+    是三十多处各写一遍，漏掉任何一处都是同样的泄漏，而且漏了看不出来。
+    """
+    base = tmp_path_factory.mktemp("应用数据")
+    monkeypatch.setattr(paths, "app_data_base", lambda: base)
+
+
+@pytest.fixture(autouse=True)
+def no_modal_dialogs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """**模态对话框一律当场失败**，不许把用例挂死。
+
+    这一条是被一次实测逼出来的：一个用例打开了不存在的库，界面走到
+    ``_report_error`` → ``QMessageBox.critical`` —— 离屏下没人点「确定」，
+    那个用例**永远不返回**。症状是「这个文件跑了五分钟还没完」，而不是一条红的
+    断言；查起来先是怀疑慢，再是怀疑死循环，最后才发现是弹窗。
+
+    **失败要快、要指名道姓**：这里把 ``exec``（真正那个模态循环）换掉，报出
+    「弹了个框」比让它挂着强得多。要测弹窗的用例自己 monkeypatch 掉那个静态方法
+    即可（见 ``test_library_open.py``）—— 静态方法被换掉之后就走不到 ``exec``，
+    所以那条路照样通。
+    """
+
+    def _refuse(self: QMessageBox) -> int:
+        raise AssertionError(
+            "这个用例弹出了一个模态对话框，而离屏测试里没人点确定 —— 它会一直挂着。"
+            "要测它就自己 monkeypatch 掉（QMessageBox.critical / .question / .warning / .exec）。"
+        )
+
+    monkeypatch.setattr(QMessageBox, "exec", _refuse)
 
 
 @pytest.fixture

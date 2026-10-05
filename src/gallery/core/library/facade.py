@@ -3,17 +3,20 @@
 界面**不允许**自己 ``open()`` 原图，也不允许自己拼路径去读缓存 —— 一切都要经过这里，
 这样「哪些操作会碰用户的文件、哪些只会碰缓存」在代码里始终是可审计的。
 
-打开一个库（``Library.open``）是**只读**的：它不创建任何目录、不写任何文件。
-创建配置目录是 ``gallery.core.library.config`` 里 ``prepare_library`` 的职责，
-且必须由界面在用户同意后显式调用。
+**打开一个库只在两种情况下会写**（ADR 0038 决策 2、决策 3）：建 配置目录，
+以及把它下面的旧缩略图缓存清掉。建不出来时**不报错**，只是退化成内存索引 ——
+界面在横幅上说一声，浏览照旧。
 
-**唯一的例外是「设 / 取消相册封面」那两个方法**（:meth:`Library.set_album_cover` 等）：
-它们写的是 ``config.toml`` 也就是 Gallery 自己的配置文件，用户的照片一个字节都不动，
-而且只在用户亲手点了菜单里那一条之后才发生（ADR 0028）。
+除缩略图（**只**在系统目录里）之外，Gallery 关于一个库的一切都在 配置目录 里：
+配置、索引、写操作日志、库级界面偏好。写回 ``config.toml`` 的方法有三处
+（:meth:`Library.set_album_cover` / :meth:`Library.clear_album_cover` /
+:meth:`Library.set_ui_state`），都只碰 Gallery 自己的配置文件，用户的照片一个字节都不动，
+而且都只在用户亲手做了某个动作之后才发生。
 """
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Callable, Container, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -22,7 +25,15 @@ from typing import TYPE_CHECKING, Final
 
 from gallery.core import paths
 from gallery.core.errors import ConfigError, LibraryNotAccessibleError
-from gallery.core.library.config import LibraryConfig, load_config, save_config
+from gallery.core.library.config import (
+    LibraryConfig,
+    LibraryUIState,
+    discard_legacy_external_index,
+    discard_legacy_thumb_cache,
+    load_config,
+    prepare_library,
+    save_config,
+)
 from gallery.core.library.index import FacetIndex
 from gallery.core.library.photos import (
     FolderRef,
@@ -64,6 +75,8 @@ from gallery.core.places.dataset import is_real_coordinate
 
 if TYPE_CHECKING:
     from gallery.core.places.resolver import PlaceResolver, Status
+
+logger = logging.getLogger(__name__)
 
 #: 解析地点时一次处理多少张照片。
 #:
@@ -109,17 +122,18 @@ class Library:
         config: LibraryConfig,
         thumbnails: ThumbnailCache,
         *,
-        cache_in_library: bool,
         writer: MetadataWriter | None = None,
     ) -> None:
         self._root = root
         self._config = config
         self._thumbnails = thumbnails
-        self._cache_in_library = cache_in_library
         #: 元数据写回的工具（ADR 0030）。``None`` 表示用默认的 exiftool，
         #: 测试注入假实现 —— 界面据此判断「编辑元数据」这一条该不该出现。
         self._writer = writer
-        # 索引只在真的用到分组 / 排序时才打开 —— 打开库本身仍然一个字节都不写。
+        #: 配置目录 是不是真的建出来了。为 ``False`` 时索引只在内存里用，
+        #: 界面拿它决定要不要在横幅上说明「这个库只读，索引没落盘」。
+        self._config_dir_ready = paths.has_config_dir(root)
+        # 索引只在真的用到分组 / 排序时才打开（ADR 0009）—— 打开它本身不写任何文件。
         self._index: FacetIndex | None = None
 
     @property
@@ -127,20 +141,23 @@ class Library:
         """元数据写回工具（界面判断功能可不可用时用 :meth:`can_write_metadata`）。"""
         return self._writer
 
+    @property
+    def config_dir_ready(self) -> bool:
+        """配置目录 是不是真的存在（建不出来时为 ``False``，只读卷上会发生）。"""
+        return self._config_dir_ready
+
     @classmethod
-    def open(
-        cls,
-        root: Path,
-        *,
-        cache_in_library: bool = True,
-        cache_base: Path | None = None,
-    ) -> Library:
+    def open(cls, root: Path, *, cache_base: Path | None = None) -> Library:
         """校验并打开库。
 
-        :param cache_in_library: 缩略图缓存是否放在库内的配置目录里。
-            用户拒绝写入照片文件夹时传 ``False``，缓存会落到系统目录
-            （见 ADR 0001 决策 5），功能不降级。
-        :param cache_base: 系统级缓存根目录，测试用；``None`` 表示走平台默认位置。
+        **会做两件事，两件都只碰 Gallery 自己的文件**（ADR 0038 决策 2、决策 6）：
+
+        1. 保证 配置目录 存在。没有弹窗了 —— 用户在这条路上没有第三个有意义
+           的选择，建不出来就退化成内存索引（见 :meth:`config_dir_ready`）。
+        2. 清掉**旧版**留在 配置目录下的 ``cache/`` 里的缩略图（缩略图已经搬去系统目录）。
+           那整块是「同一个库两份缓存」里多出来的那一份，全是可再生的缩略图。
+
+        :param cache_base: 系统级缩略图缓存根目录，测试用；``None`` 表示走平台默认位置。
         :raises LibraryNotAccessibleError: 目录不存在或没有读取权限。
         """
         # 统一解析成绝对路径：命令行允许传相对路径（gallery 2025-苏州），
@@ -163,18 +180,19 @@ class Library:
                 path=root,
             )
 
+        prepare_library(root)
+        # 两处存量清理一起做（ADR 0038 决策 6）：库内那块缩略图与库外那份索引，
+        # 都是「同一个库两份缓存」留下的东西，新版一个都不再写。
+        discarded = discard_legacy_thumb_cache(root) + discard_legacy_external_index()
+        if discarded:
+            logger.info("清掉旧版缓存 %d 个文件（库根 %s）", discarded, root)
         config = load_config(root)
-        directory = (
-            paths.thumbnail_cache_dir(root)
-            if cache_in_library
-            else paths.external_thumbnail_cache_dir(root, base=cache_base)
-        )
         thumbnails = ThumbnailCache(
-            directory,
+            paths.thumbnail_cache_dir(root, base=cache_base),
             max_edge=config.thumbnail_max_edge,
             max_bytes=config.max_cache_bytes,
         )
-        return cls(root, config, thumbnails, cache_in_library=cache_in_library)
+        return cls(root, config, thumbnails)
 
     @property
     def root(self) -> Path:
@@ -194,9 +212,29 @@ class Library:
         return self._thumbnails
 
     @property
-    def cache_in_library(self) -> bool:
-        """缓存是否位于库内。为 ``False`` 时库目录保持零写入。"""
-        return self._cache_in_library
+    def ui(self) -> LibraryUIState:
+        """这个库的界面偏好（上次看到哪儿了）。"""
+        return self._config.ui
+
+    def set_ui_state(self, ui: LibraryUIState) -> None:
+        """把界面偏好写进 ``config.toml``，并让内存里那份跟着更新（ADR 0038 决策 4）。
+
+        界面改排序、改日历层级、捏缩略图档位都走这里 —— 换库之后那些选择各自重来，
+        而它们记在哪一个库里是有意义的。
+
+        **内存那份必须一起换**，理由与 :meth:`_write_covers` 一样：刚切的那一档要立刻
+        生效，等下一次打开库才变的话界面会与自己记的东西对不上。
+
+        配置目录 建不出来时（只读卷）**什么都不做也不报错** —— 那台机器上本来就
+        存不住这些，界面这一次的运行仍然照常用它。
+        """
+        if ui == self._config.ui:
+            return  # 没变就不写：一次没有变化的改写只是白费一次 fsync
+        if not self._config_dir_ready:
+            return
+        updated = replace(self._config, ui=ui)
+        save_config(self._root, updated)
+        self._config = updated
 
     def iter_photos(
         self,
@@ -401,14 +439,13 @@ class Library:
         问的就是内存里这份 —— 只写文件不换内存，用户会看着自己刚设的封面没换上，
         直到下一次打开库才生效。
         """
-        directory = paths.config_dir(self._root)
-        if not directory.is_dir():
-            # 用户当初选的是「缓存到系统目录」，那个承诺是**照片文件夹一个字节都不写入**。
-            # 悄悄把配置目录建出来就是毁掉那个承诺，所以这里只说清楚，不写。
+        if not self._config_dir_ready:
+            # 只读卷上 配置目录 建不出来，封面设置没有地方存。
+            # 那台机器上本来也存不住，所以只说清楚，不硬写。
             raise ConfigError(
-                f"这个库里没有 {directory.name} 目录，封面设置没有地方保存。"
-                "重新打开这个库并选择「在库中缓存」之后就能设封面了。",
-                path=directory,
+                f"这个库建不了 {paths.config_dir(self._root).name} 目录，封面设置没有地方保存。"
+                "把这个文件夹移到可以写入的地方再试。",
+                path=self._root,
             )
         updated = replace(self._config, album_covers=dict(covers))
         save_config(self._root, updated)
@@ -498,9 +535,14 @@ class Library:
 
     @property
     def facet_index(self) -> FacetIndex:
-        """facet 缓存（首次调用时才打开数据库）。"""
+        """facet 缓存（首次调用时才打开数据库）。
+
+        配置目录 建不出来时**不开盘**——退回纯内存缓存，本次会话照常能用，
+        只是下次打开要重读一遍 EXIF。
+        """
         if self._index is None:
-            self._index = FacetIndex.open(self._root, in_library=self._cache_in_library)
+            path = paths.index_file(self._root) if self._config_dir_ready else None
+            self._index = FacetIndex(path)
         return self._index
 
     def photo_facets(

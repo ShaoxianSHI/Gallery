@@ -22,17 +22,20 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
+from library_helpers import set_library_ui  # noqa: E402
 from PySide6.QtGui import QImage  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 from waiting import wait_until, window_is_idle  # noqa: E402
 
-from gallery.core.library.config import prepare_library  # noqa: E402
-from gallery.core.library.photos import PhotoRef  # noqa: E402
-from gallery.core.library.session import (  # noqa: E402
+from gallery.core.library.config import (
     BROWSE_MODE_CALENDAR,
+    prepare_library,
+)  # noqa: E402
+from gallery.core.library.photos import PhotoRef  # noqa: E402
+from gallery.core.library.session import (
     SessionState,
     save_session,
-)
+)  # noqa: E402
 from gallery.core.metadata import batch  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.thumbs.pipeline import ThumbnailPipeline  # noqa: E402
@@ -74,9 +77,8 @@ def window(
         make_photo(name, directory=root)
     prepare_library(root)
     session_base = tmp_path / "会话"
-    save_session(
-        SessionState(recent_roots=(root,), browse_mode=BROWSE_MODE_CALENDAR), base=session_base
-    )
+    save_session(SessionState(recent_roots=(root,)), base=session_base)
+    set_library_ui(root, browse_mode=BROWSE_MODE_CALENDAR)
     win = MainWindow(session_base=session_base, initial_library=root)
     win.resize(900, 600)
     win.show()

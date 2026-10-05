@@ -13,6 +13,7 @@ import pytest
 from PIL import Image
 
 from gallery.core import paths
+from gallery.core.constants import CONFIG_DIR_NAME
 from gallery.core.errors import ConfigError, LibraryNotAccessibleError
 from gallery.core.library.config import (
     LibraryConfig,
@@ -38,24 +39,26 @@ def test_open_file_instead_of_directory(tmp_path: Path, make_photo: Callable[...
     assert "不是一个文件夹" in excinfo.value.message
 
 
-def test_open_never_writes(tmp_path: Path, make_photo: Callable[..., Path]) -> None:
+def test_open_makes_the_config_dir_and_keeps_thumbs_out_of_it(
+    tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """``.gallery/`` 自动建（ADR 0038 决策 2），**缩略图不进它**（决策 1）。
+
+    一条断言把两件事都钉住：照片目录里只多出一个 ``.gallery``，而缩略图落在
+    注入的系统目录下 —— 「同一个库两份缓存」那个局面正是这两条凑出来的。
+    """
     make_photo("a.jpg")
+    system = tmp_path.parent / "系统目录"
 
-    library = Library.open(tmp_path)
+    library = Library.open(tmp_path, cache_base=system)
 
-    assert paths.has_config_dir(tmp_path) is False
-    assert sorted(path.name for path in tmp_path.iterdir()) == ["a.jpg"]
-    assert library.thumbnails.directory == paths.thumbnail_cache_dir(tmp_path)
-    assert library.cache_in_library is True
-
-
-def test_open_in_system_cache(tmp_path: Path, make_photo: Callable[..., Path]) -> None:
-    library = Library.open(tmp_path, cache_in_library=False, cache_base=tmp_path / "系统目录")
-
-    assert library.cache_in_library is False
-    assert library.thumbnails.directory == paths.external_thumbnail_cache_dir(
-        tmp_path, base=tmp_path / "系统目录"
-    )
+    assert paths.has_config_dir(tmp_path) is True
+    assert library.config_dir_ready is True
+    # 用常量而不是字面量：写死的话，常量改名时这个断言会在一个与改名无关的
+    # 目录里凭空造出一个配置目录，然后照样全绿（tests/test_guards.py 守着这条）。
+    assert sorted(path.name for path in tmp_path.iterdir()) == [CONFIG_DIR_NAME, "a.jpg"]
+    assert library.thumbnails.directory == paths.thumbnail_cache_dir(tmp_path, base=system)
+    assert tmp_path not in library.thumbnails.directory.parents
 
 
 def test_iter_photos_follows_config(tmp_path: Path, make_photo: Callable[..., Path]) -> None:
@@ -285,22 +288,24 @@ def test_clearing_a_cover_that_never_existed_writes_nothing(tmp_path: Path) -> N
 
 
 def test_setting_a_cover_needs_the_config_dir(tmp_path: Path) -> None:
-    """用户当初选的是「缓存到系统目录」：那个承诺是照片文件夹一个字节都不写入。
+    """``.gallery/`` 建不出来时（只读卷）封面设置只说清楚，不硬写。
 
-    悄悄把配置目录建出来就是毁掉它，所以这里只说清楚，不写。
+    这条门原先守的是「用户当初选了缓存到系统目录」，那个模式已经删掉了
+    （ADR 0038 决策 1）—— 但**门本身还在**：``.gallery/` 存不住东西的库上，
+    封面与界面偏好都没有地方落，硬写只会报错。
     """
     album = tmp_path / "京都"
     photo = album / "一张.jpg"
     photo.parent.mkdir(parents=True)
     photo.write_bytes(b"x")
-    library = Library.open(tmp_path, cache_in_library=False, cache_base=tmp_path / "系统")
+    library = Library.open(tmp_path)
+    # 模拟只读卷：``.gallery/` 建出来了，随后又没了（沙箱里造不出真的只读卷）。
+    library._config_dir_ready = False
 
     with pytest.raises(ConfigError) as excinfo:
         library.set_album_cover(album, photo)
 
-    assert "在库中缓存" in excinfo.value.message
-    assert paths.has_config_dir(tmp_path) is False
-    assert sorted(path.name for path in tmp_path.iterdir()) == ["京都"]
+    assert "没有地方保存" in excinfo.value.message
 
 
 def test_a_cover_from_another_album_is_refused(library_with_album: Library) -> None:

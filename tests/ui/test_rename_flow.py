@@ -19,20 +19,23 @@ import pytest
 
 pytest.importorskip("PySide6")
 
+from library_helpers import set_library_ui  # noqa: E402
 from PySide6.QtCore import QEvent, QPointF, Qt  # noqa: E402
 from PySide6.QtGui import QMouseEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 from waiting import DEFAULT_TIMEOUT_SECONDS, wait_for_level
 
-from gallery.core.library.config import prepare_library  # noqa: E402
-from gallery.core.library.photos import FolderRef, PhotoRef  # noqa: E402
-from gallery.core.library.session import (  # noqa: E402
+from gallery.core.library.config import (
     BROWSE_MODE_ALBUMS,
     BROWSE_MODE_FLAT,
+    prepare_library,
+)  # noqa: E402
+from gallery.core.library.photos import FolderRef, PhotoRef  # noqa: E402
+from gallery.core.library.session import (
     SessionState,
     save_session,
-)
+)  # noqa: E402
 from gallery.ui.browser.grid import PhotoGrid  # noqa: E402
 from gallery.ui.browser.model import PhotoListModel  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
@@ -516,10 +519,8 @@ def open_window(
     # 相册卡片，于是行数对不上（与 ``tests/ui/test_level_focus.py`` 同一个理由，那里把它
     # 放在 ``root.parent``）。要按相册数行的用例得自己把它挪到库外。
     session_base = root / "状态" if session_base is None else session_base
-    save_session(
-        SessionState(recent_roots=(root,), browse_mode=browse_mode),
-        base=session_base,
-    )
+    save_session(SessionState(recent_roots=(root,)), base=session_base)
+    set_library_ui(root, browse_mode=browse_mode)
     # 先把配置目录准备好：没有它时 MainWindow 会问「缓存放哪」，
     # 那个模态框在测试里没人点，窗口就永远卡在构造中。
     prepare_library(root)

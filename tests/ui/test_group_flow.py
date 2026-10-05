@@ -21,18 +21,21 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
+from library_helpers import set_library_ui  # noqa: E402
 from PySide6.QtCore import QItemSelectionModel  # noqa: E402
 from PySide6.QtWidgets import QApplication, QToolButton  # noqa: E402
 from waiting import DEFAULT_TIMEOUT_SECONDS, wait_until, window_is_idle
 
-from gallery.core.library.config import prepare_library  # noqa: E402
-from gallery.core.library.photos import GroupRef, PhotoRef  # noqa: E402
-from gallery.core.library.session import (  # noqa: E402
+from gallery.core.library.config import (  # noqa: E402
     BROWSE_MODE_ALBUMS,
-    SessionState,
-    load_session,
-    save_session,
+    load_config,
+    prepare_library,
 )
+from gallery.core.library.photos import GroupRef, PhotoRef  # noqa: E402
+from gallery.core.library.session import (
+    SessionState,
+    save_session,
+)  # noqa: E402
 from gallery.core.metadata import batch  # noqa: E402
 from gallery.core.places.resolver import LazyPlaceResolver, ResolvedPlace  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
@@ -176,15 +179,13 @@ def _open(
     时必须这样，否则测试自己把刚记住的选择覆盖掉了）。
     """
     if remember:
-        save_session(
-            SessionState(
-                recent_roots=(root,),
-                browse_mode=browse_mode,
-                group_facet=group_facet,
-                sort_facet=sort_facet,
-                sort_descending=sort_descending,
-            ),
-            base=session_base,
+        save_session(SessionState(recent_roots=(root,)), base=session_base)
+        set_library_ui(
+            root,
+            browse_mode=browse_mode,
+            group_facet=group_facet,
+            sort_facet=sort_facet,
+            sort_descending=sort_descending,
         )
     window = MainWindow(session_base=session_base, initial_library=root)
     window.resize(900, 600)
@@ -374,8 +375,9 @@ def test_groups_are_remembered_across_restarts(
     _settle(qt_app, window, groups=True)
     window.close()
 
-    saved = load_session(base=session_base)
-    assert saved.group_facet == "captured_year"
+    # 分组选择是**库级**偏好：它写在那个库的 config.toml 里，不在 state.json 里
+    # （ADR 0038 决策 4）—— 于是「在 A 库按年份分组」不会跟着切到 B 库。
+    assert load_config(root).ui.group_facet == "captured_year"
 
     again = _open(qt_app, root, session_base=session_base, remember=False)
     _settle(qt_app, again, groups=True)

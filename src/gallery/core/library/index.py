@@ -17,8 +17,9 @@
 ``SELECT ... IN`` 与批量 ``UPSERT``），串行不会成为瓶颈。
 
 **提交强度按「缓存」而不是按「数据」配**（见 :func:`_relax_durability`）：
-``journal_mode=WAL`` + ``synchronous=NORMAL``，因为这份东西随时可以删掉重扫，
-为它每次 commit 都 fsync 是白等。
+``journal_mode=DELETE`` + ``synchronous=NORMAL``，因为这份东西随时可以删掉重扫，
+为它每次 commit 都 fsync 是白付。日志模式从 WAL 换成 DELETE 是 ADR 0038 决策 5，
+理由与实测都在那里 —— 简而言之：WAL 的优势这里用不上，而它的代价要用户自己承担。
 """
 
 from __future__ import annotations
@@ -153,10 +154,14 @@ class FacetIndex:
     # ---- 生命周期 -----------------------------------------------------------
 
     @classmethod
-    def open(cls, root: Path, *, in_library: bool, base: Path | None = None) -> FacetIndex:
-        """按缓存位置约定打开：库内配置目录（见 ``paths.index_file``），或系统缓存目录。"""
-        path = paths.index_file(root) if in_library else paths.external_index_file(root, base=base)
-        return cls(path)
+    def open(cls, root: Path) -> FacetIndex:
+        """按约定打开：索引永远在库内的配置目录下（见 ``paths.index_file``）。
+
+        曾经还有一个 ``in_library`` 开关，可以让索引跟着缩略图一起放到系统目录 ——
+        那条路已经删掉了（ADR 0038）：库级的界面偏好与索引同在 ``config.toml`` 旁边，
+        没有把索引拆到另一处的理由。
+        """
+        return cls(paths.index_file(root))
 
     @property
     def path(self) -> Path | None:
@@ -498,22 +503,28 @@ class FacetIndex:
 
 
 def _relax_durability(connection: sqlite3.Connection) -> None:
-    """把提交强度降到「缓存该有的强度」：``journal_mode=WAL`` + ``synchronous=NORMAL``。
+    """把提交强度降到「缓存该有的强度」：``journal_mode=DELETE`` + ``synchronous=NORMAL``。
 
     **索引是缓存，不是数据**（红线 5、模块开头那段话）：它没了，重扫一遍库、重读一遍
     EXIF 就回来了。而默认设置下每次 ``commit`` 都要 ``fsync`` —— 一次提交一次落到盘上的
     等待。存照片时是一张张来的，等的是用户的耐心，而这份索引随时可以丢：**为一个
     随时可以重建的东西付满额断电持久性，是白付**。
 
-    ``WAL`` 还顺带把读与写分开：后台线程读的同时不必等写事务提交。
+    **日志模式是 ``DELETE`` 而不是 ``WAL``（ADR 0038 决策 5）。** WAL 的卖点是读写不互斥，
+    而这里一把 Python 锁已经把所有访问串起来了 —— 那个并发优势用不上。剩下的代价却是
+    实打实的：``-wal`` 与 ``-shm`` 两个文件长期躺在 配置目录 里，跟着用户的库被
+    云同步来回传，而两台机器各跑 Gallery 时互相覆盖 WAL 有**损坏索引**的风险。
 
-    **失败只记一条日志、绝不致命。** 落到默认设置也只是慢一点，但更常见的是「那个卷
-    是只读的 / 不支持共享内存」—— 那种情况下索引本来就能只读地用着（WAL 需要建
-    ``-wal`` 与 ``-shm`` 两个文件），不能因为一次 pragma 就把它整个打成内存模式。
+    实测（1227 行的真实库规模，冷热各一轮）：整库扫描写 1227 行 photos 21.4 → 20.3 ms、
+    写 1227 行 facets 2.5 → 2.8 ms、读回全部 7.8 → 7.5 ms，都在噪声内；唯一变慢的是
+    监听器那条「加一张照片提交一次」，每次多 0.14 ms —— 而一个文件事件引发的重扫远比
+    这贵。落盘文件数从 3 个降到 1 个。
+
+    **失败只记一条日志、绝不致命。** 落到默认设置也只是多一个 ``-journal`` 文件；
     后面那句 ``PRAGMA user_version`` 仍会把真正的坏库降级掉。
     """
     try:
-        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA journal_mode=DELETE")
         connection.execute("PRAGMA synchronous=NORMAL")
     except sqlite3.Error as exc:
         logger.info("facet 索引沿用默认日志模式（%s）", exc)

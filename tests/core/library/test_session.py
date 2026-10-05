@@ -1,6 +1,9 @@
 """``gallery.core.library.session`` 的测试。
 
 会话状态不是数据：损坏、乱填、缺字段都必须静默回退，绝不能因为它打不开软件。
+
+**这里只测应用级的那两样**（最近打开过哪些库、窗口几何）。库级的界面偏好在
+``config.toml`` 里，见 ``test_config.py`` —— 拆开的那一刀是 ADR 0038 决策 4。
 """
 
 from __future__ import annotations
@@ -8,17 +11,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from gallery.core import paths
 from gallery.core.library.session import (
-    BROWSE_MODE_ALBUMS,
-    BROWSE_MODE_FLAT,
-    DEFAULT_SORT_FACET,
     MAX_RECENT_ROOTS,
     SESSION_VERSION,
     SessionState,
     WindowGeometry,
+    legacy_ui_state,
     load_session,
     save_session,
 )
@@ -111,143 +110,17 @@ def test_save_creates_parent_directory(tmp_path: Path) -> None:
     assert paths.app_state_file(base=base).is_file()
 
 
-def test_thumbnail_edge_round_trip(tmp_path: Path) -> None:
-    state = SessionState(thumbnail_edge=288)
+def test_the_written_file_holds_only_the_two_app_level_fields(tmp_path: Path) -> None:
+    """**写出去的只有最近打开列表与窗口几何**（ADR 0038 决策 4）。
 
-    save_session(state, base=tmp_path)
-
-    assert load_session(base=tmp_path).thumbnail_edge == 288
-
-
-def test_thumbnail_edge_defaults_to_none(tmp_path: Path) -> None:
-    assert load_session(base=tmp_path).thumbnail_edge is None
-    assert SessionState().thumbnail_edge is None
-
-
-@pytest.mark.parametrize("bad", [0, -176, "288", 1.5, True, None, [288]])
-def test_invalid_thumbnail_edge_falls_back(tmp_path: Path, bad: object) -> None:
-    file = paths.app_state_file(base=tmp_path)
-    file.parent.mkdir(parents=True)
-    file.write_text(json.dumps({"thumbnail_edge": bad}), encoding="utf-8")
-
-    assert load_session(base=tmp_path).thumbnail_edge is None
-
-
-def test_with_thumbnail_edge_keeps_other_fields(tmp_path: Path) -> None:
-    state = SessionState(recent_roots=(Path("/照片/一"),))
-
-    updated = state.with_thumbnail_edge(112)
-
-    assert updated.thumbnail_edge == 112
-    assert updated.recent_roots == (Path("/照片/一"),)
-    assert state.thumbnail_edge is None  # 原对象不可变
-
-
-def test_browse_mode_round_trip(tmp_path: Path) -> None:
-    state = SessionState(browse_mode=BROWSE_MODE_ALBUMS)
-
-    save_session(state, base=tmp_path)
-
-    assert load_session(base=tmp_path).browse_mode == BROWSE_MODE_ALBUMS
-
-
-def test_browse_mode_defaults_to_none(tmp_path: Path) -> None:
-    assert load_session(base=tmp_path).browse_mode is None
-    assert SessionState().browse_mode is None
-
-
-@pytest.mark.parametrize("bad", ["tree", "", "FLAT", 3, None, ["albums"], True])
-def test_invalid_browse_mode_falls_back(tmp_path: Path, bad: object) -> None:
-    file = paths.app_state_file(base=tmp_path)
-    file.parent.mkdir(parents=True)
-    file.write_text(json.dumps({"browse_mode": bad}), encoding="utf-8")
-
-    assert load_session(base=tmp_path).browse_mode is None
-
-
-def test_with_browse_mode_keeps_other_fields() -> None:
-    state = SessionState(thumbnail_edge=288)
-
-    updated = state.with_browse_mode(BROWSE_MODE_FLAT)
-
-    assert updated.browse_mode == BROWSE_MODE_FLAT
-    assert updated.thumbnail_edge == 288
-    assert state.browse_mode is None
-
-
-def test_metadata_visible_round_trip(tmp_path: Path) -> None:
-    save_session(SessionState(metadata_visible=True), base=tmp_path)
-
-    assert load_session(base=tmp_path).metadata_visible is True
-
-
-def test_metadata_visible_defaults_to_none(tmp_path: Path) -> None:
-    assert load_session(base=tmp_path).metadata_visible is None
-    assert SessionState().metadata_visible is None
-
-
-@pytest.mark.parametrize("bad", ["true", 1, 0, None, [], {}])
-def test_invalid_metadata_visible_falls_back(tmp_path: Path, bad: object) -> None:
-    file = paths.app_state_file(base=tmp_path)
-    file.parent.mkdir(parents=True)
-    file.write_text(json.dumps({"metadata_visible": bad}), encoding="utf-8")
-
-    assert load_session(base=tmp_path).metadata_visible is None
-
-
-def test_with_metadata_visible_keeps_other_fields() -> None:
-    state = SessionState(browse_mode=BROWSE_MODE_ALBUMS)
-
-    updated = state.with_metadata_visible(True)
-
-    assert updated.metadata_visible is True
-    assert updated.browse_mode == BROWSE_MODE_ALBUMS
-    assert state.metadata_visible is None
-
-
-# ---- 排序字段与它的默认值 ------------------------------------------------------------
-
-
-def test_no_sort_facet_means_the_default_one() -> None:
-    """从没选过排序字段：按修改时间排（``DEFAULT_SORT_FACET``）。
-
-    默认字段是「只看文件本身就能拿到」的那一档：打开库不必等 exiftool。
+    库级的七个字段由 :func:`legacy_ui_state` 读，但**再也不会被写回来** ——
+    留着它们就等于同一个值有两处来源，下次读的时候说不清听谁的。
     """
-    assert SessionState().resolved_sort_facet() == DEFAULT_SORT_FACET == "modified"
+    save_session(SessionState(recent_roots=(Path("/照片/一"),)), base=tmp_path)
 
+    payload = json.loads(paths.app_state_file(base=tmp_path).read_text(encoding="utf-8"))
 
-@pytest.mark.parametrize("bad", ["没有这个字段", "keyword", "", 3, None, ["captured"], "none"])
-def test_never_chosen_and_bogus_ids_fall_back_to_the_default(tmp_path: Path, bad: object) -> None:
-    """会话里没这一项、来路不明、或是早先那个「不排序」哨兵 —— 一律当「没选过」。
-
-    菜单里没有「不排序」了，于是默认值就是唯一的退路：任何不是真排序字段的值都
-    回到按修改时间排，而不是让界面去认一个已经不存在的选择。
-    """
-    file = paths.app_state_file(base=tmp_path)
-    file.parent.mkdir(parents=True)
-    file.write_text(json.dumps({"sort_facet": bad}), encoding="utf-8")
-
-    assert load_session(base=tmp_path).resolved_sort_facet() == DEFAULT_SORT_FACET
-
-
-def test_the_chosen_sort_facet_is_remembered(tmp_path: Path) -> None:
-    save_session(SessionState(sort_facet="iso"), base=tmp_path)
-
-    assert load_session(base=tmp_path).resolved_sort_facet() == "iso"
-
-
-def test_with_ordering_keeps_other_fields() -> None:
-    state = SessionState(thumbnail_edge=288, browse_mode=BROWSE_MODE_FLAT)
-
-    updated = state.with_ordering("captured_year", "captured", True)
-
-    assert updated.group_facet == "captured_year"
-    assert updated.sort_facet == "captured"
-    assert updated.sort_descending is True
-    assert updated.thumbnail_edge == 288
-    assert updated.browse_mode == BROWSE_MODE_FLAT
-    assert state.group_facet is None
-    assert state.sort_facet is None
+    assert set(payload) == {"version", "recent_roots", "window"}
 
 
 def test_a_file_from_another_version_is_not_parsed_as_this_one(tmp_path: Path) -> None:
@@ -264,8 +137,6 @@ def test_a_file_from_another_version_is_not_parsed_as_this_one(tmp_path: Path) -
             {
                 "version": SESSION_VERSION + 1,
                 "recent_roots": [str(tmp_path / "别的版本的库")],
-                "sort_facet": "captured",
-                "browse_mode": "albums",
             }
         ),
         encoding="utf-8",
@@ -274,4 +145,98 @@ def test_a_file_from_another_version_is_not_parsed_as_this_one(tmp_path: Path) -
     state = load_session(base=tmp_path)
 
     assert state.recent_roots == ()
-    assert state.sort_facet != "captured"
+    assert legacy_ui_state(base=tmp_path) is None
+
+
+# ---- 一次性迁移：旧会话里的库级偏好 --------------------------------------------------
+
+
+def test_the_library_preferences_are_migrated_out_of_the_old_session(tmp_path: Path) -> None:
+    """升级不静默重置排序偏好（ADR 0038 决策 4）。
+
+    老版本把这七项写在 ``state.json`` 里；打开一个库时要能把它们捞出来搬进那个库的
+    ``config.toml``，否则用户升级之后会发现「我上次按地点排的，怎么变了」。
+    """
+    paths.app_state_file(base=tmp_path).parent.mkdir(parents=True)
+    paths.app_state_file(base=tmp_path).write_text(
+        json.dumps(
+            {
+                "version": SESSION_VERSION,
+                "recent_roots": ["/照片/一"],
+                "browse_mode": "calendar",
+                "metadata_visible": True,
+                "group_facet": "city",
+                "calendar_level": "week",
+                "sort_facet": "captured",
+                "sort_descending": True,
+                "thumbnail_edge": 288,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    state = legacy_ui_state(base=tmp_path)
+
+    assert state is not None
+    assert state.browse_mode == "calendar"
+    assert state.sort_facet == "captured"
+    assert state.sort_descending is True
+    assert state.thumbnail_edge == 288
+    assert state.calendar_level == "week"
+    assert state.group_facet == "city"
+    assert state.metadata_visible is True
+
+
+def test_there_is_nothing_to_migrate_without_the_legacy_fields(tmp_path: Path) -> None:
+    """新版本写的 ``state.json`` 里没有那七项 —— 于是不迁（省掉一次多余的写盘）。"""
+    save_session(SessionState(recent_roots=(Path("/照片/一"),)), base=tmp_path)
+
+    assert legacy_ui_state(base=tmp_path) is None
+
+
+def test_nothing_to_migrate_when_the_old_file_is_unreadable(tmp_path: Path) -> None:
+    paths.app_state_file(base=tmp_path).parent.mkdir(parents=True)
+    paths.app_state_file(base=tmp_path).write_text("{ 坏的", encoding="utf-8")
+
+    assert legacy_ui_state(base=tmp_path) is None
+
+
+def test_nothing_to_migrate_when_every_legacy_value_is_bogus(tmp_path: Path) -> None:
+    """全是手改坏的：与其迁一堆默认值过去，不如让界面按自己的默认来。"""
+    paths.app_state_file(base=tmp_path).parent.mkdir(parents=True)
+    paths.app_state_file(base=tmp_path).write_text(
+        json.dumps(
+            {
+                "version": SESSION_VERSION,
+                "browse_mode": "tree",
+                "sort_facet": "编出来的字段",
+                "thumbnail_edge": "288",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert legacy_ui_state(base=tmp_path) is None
+
+
+def test_migration_keeps_the_ones_that_are_still_valid(tmp_path: Path) -> None:
+    """一半坏一半好时，**好的那几个照样迁** —— 不能因为一个字段坏了就全丢。"""
+    paths.app_state_file(base=tmp_path).parent.mkdir(parents=True)
+    paths.app_state_file(base=tmp_path).write_text(
+        json.dumps(
+            {
+                "version": SESSION_VERSION,
+                "browse_mode": "根本没有这个",
+                "sort_facet": "captured",
+                "thumbnail_edge": 176,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    state = legacy_ui_state(base=tmp_path)
+
+    assert state is not None
+    assert state.sort_facet == "captured"
+    assert state.thumbnail_edge == 176
+    assert state.browse_mode is None

@@ -23,19 +23,22 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
+from library_helpers import set_library_ui  # noqa: E402
 from PySide6.QtCore import QPoint, QPointF, Qt  # noqa: E402
 from PySide6.QtGui import QColor, QImage, QPalette  # noqa: E402
 from PySide6.QtWidgets import QApplication, QFrame, QLabel, QWidget  # noqa: E402
 from waiting import DEFAULT_TIMEOUT_SECONDS, wait_for_idle
 
-from gallery.core.library.config import prepare_library  # noqa: E402
-from gallery.core.library.search import DEFAULT_FIELD, SearchCondition  # noqa: E402
-from gallery.core.library.session import (  # noqa: E402
+from gallery.core.library.config import (
     BROWSE_MODE_ALBUMS,
     BROWSE_MODE_CALENDAR,
+    prepare_library,
+)  # noqa: E402
+from gallery.core.library.search import DEFAULT_FIELD, SearchCondition  # noqa: E402
+from gallery.core.library.session import (
     SessionState,
     save_session,
-)
+)  # noqa: E402
 from gallery.ui import rename_edit, theme  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.panels.breadcrumb import ChipButton  # noqa: E402
@@ -107,10 +110,8 @@ def window(
             make_photo(f"{index}.jpg", directory=root / album)
     prepare_library(root)
     session_base = tmp_path / "session"
-    save_session(
-        SessionState(recent_roots=(root,), browse_mode=BROWSE_MODE_ALBUMS),
-        base=session_base,
-    )
+    save_session(SessionState(recent_roots=(root,)), base=session_base)
+    set_library_ui(root, browse_mode=BROWSE_MODE_ALBUMS)
 
     window = MainWindow(session_base=session_base)
     window.resize(1200, 800)

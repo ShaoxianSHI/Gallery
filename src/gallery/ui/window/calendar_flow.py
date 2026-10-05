@@ -27,9 +27,9 @@ from collections.abc import Iterable, Sequence
 from functools import partial
 from pathlib import Path
 
+from gallery.core.library.config import BROWSE_MODE_CALENDAR, BROWSE_MODE_FLAT
 from gallery.core.library.photos import GridEntry, GroupRef, PhotoRef
 from gallery.core.library.scanner import describe_entry
-from gallery.core.library.session import BROWSE_MODE_CALENDAR, BROWSE_MODE_FLAT
 from gallery.ui.tasks import TaskContext
 
 
@@ -69,8 +69,7 @@ class CalendarFlowMixin:
         self._conditions.clear()
         self._editing_condition = None
         self._search_total = None
-        self._session = self._session.with_browse_mode(mode)
-        self._save_session()
+        self._save_ui_state()
         self._update_mode_actions()
         if self._library is None:
             return
@@ -182,9 +181,14 @@ class CalendarFlowMixin:
         self._refresh_thumbnail_window()
 
     def _on_calendar_level_changed(self, level: str) -> None:
-        """记下日历停在哪一层（进会话，与浏览方式同一个开关）。"""
-        self._session = self._session.with_calendar_level(level)
-        self._save_session()
+        """记下日历停在哪一层。**库级**偏好，与浏览方式各自写进 ``config.toml``。
+
+        **先把 ``_calendar_level`` 换掉再存**：``_save_ui_state`` 是从窗口这几个
+        属性上拼出整份偏好的，只存不换的话存回去的仍是**原来那一层**，
+        换库之后回到的就是旧层级。
+        """
+        self._calendar_level = level
+        self._save_ui_state()
 
     def _on_calendar_cell_requested(self, photos: object, label: object) -> None:
         """日历上点了有照片的一格：就一张直接进大图，好几张摊成一层网格。

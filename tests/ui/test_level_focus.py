@@ -29,19 +29,22 @@ import pytest
 
 pytest.importorskip("PySide6")
 
+from library_helpers import set_library_ui  # noqa: E402
 from PySide6.QtCore import QPoint, Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 from waiting import wait_for_level
 
-from gallery.core.library.config import prepare_library  # noqa: E402
-from gallery.core.library.photos import GroupRef  # noqa: E402
-from gallery.core.library.session import (  # noqa: E402
+from gallery.core.library.config import (
     BROWSE_MODE_ALBUMS,
     BROWSE_MODE_FLAT,
+    prepare_library,
+)  # noqa: E402
+from gallery.core.library.photos import GroupRef  # noqa: E402
+from gallery.core.library.session import (
     SessionState,
     save_session,
-)
+)  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 
 #: 分组字段：按「所在文件夹」分（只看路径，不读 EXIF，见模块文档）。
@@ -61,10 +64,8 @@ def open_window(
     「状态」「.gallery」这些不是相册的文件夹，行数对不上。
     """
     session_base = root.parent / "状态"
-    save_session(
-        SessionState(recent_roots=(root,), browse_mode=browse_mode, group_facet=group_facet),
-        base=session_base,
-    )
+    save_session(SessionState(recent_roots=(root,)), base=session_base)
+    set_library_ui(root, browse_mode=browse_mode, group_facet=group_facet)
     # 没有配置目录时 MainWindow 会问「缓存放哪」，那个模态框在测试里没人点。
     prepare_library(root)
     window = MainWindow(session_base=session_base, initial_library=root)

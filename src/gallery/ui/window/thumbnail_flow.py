@@ -179,8 +179,8 @@ class ThumbnailFlowMixin:
             action.setChecked(index == self._size_index)
 
     def _remember_thumbnail_size(self) -> None:
-        self._session = self._session.with_thumbnail_edge(edge_for_index(self._size_index))
-        self._save_session()
+        # 档位是**库级**偏好（ADR 0038 决策 4）：换库时各自回到自己那一份。
+        self._save_ui_state()
 
     def _on_thumbnail_failed(self, path: object, message: str) -> None:
         # 两类失败不是「照片坏了」，是用户自己（或自家代码）刚刚造成的，丢掉：

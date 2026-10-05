@@ -17,15 +17,18 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
+from library_helpers import set_library_ui  # noqa: E402
 from waiting import wait_for_idle
 
-from gallery.core.library.config import prepare_library  # noqa: E402
-from gallery.core.library.scanner import ScanReport  # noqa: E402
-from gallery.core.library.session import (  # noqa: E402
+from gallery.core.library.config import (
     BROWSE_MODE_ALBUMS,
+    prepare_library,
+)  # noqa: E402
+from gallery.core.library.scanner import ScanReport  # noqa: E402
+from gallery.core.library.session import (
     SessionState,
     save_session,
-)
+)  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 
 #: 等待后台扫描 / 元数据读取的时限。
@@ -34,10 +37,8 @@ from gallery.ui.main_window import MainWindow  # noqa: E402
 def _open(
     qt_app, root: Path, *, session_base: Path, browse_mode: str, group_facet: str | None
 ) -> MainWindow:
-    save_session(
-        SessionState(recent_roots=(root,), browse_mode=browse_mode, group_facet=group_facet),
-        base=session_base,
-    )
+    save_session(SessionState(recent_roots=(root,)), base=session_base)
+    set_library_ui(root, browse_mode=browse_mode, group_facet=group_facet)
     window = MainWindow(session_base=session_base, initial_library=root)
     window.resize(900, 600)
     window.show()

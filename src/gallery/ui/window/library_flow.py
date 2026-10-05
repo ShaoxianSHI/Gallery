@@ -24,21 +24,20 @@ from functools import partial
 from pathlib import Path
 
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QFileDialog, QMessageBox
+from PySide6.QtWidgets import QFileDialog
 
-from gallery.core import paths
 from gallery.core.errors import GalleryError
-from gallery.core.library.config import prepare_library
+from gallery.core.library.config import BROWSE_MODE_ALBUMS, BROWSE_MODE_CALENDAR, LibraryUIState
 from gallery.core.library.facade import Library, PlacePass
 from gallery.core.library.groups import sort_photos
 from gallery.core.library.photos import GridEntry, PhotoRef
 from gallery.core.library.scanner import ScanReport
 from gallery.core.library.session import (
-    BROWSE_MODE_ALBUMS,
-    BROWSE_MODE_CALENDAR,
     WindowGeometry,
+    legacy_ui_state,
     save_session,
 )
+from gallery.ui.browser.thumb_sizes import edge_for_index, nearest_index
 from gallery.ui.tasks import TaskContext
 from gallery.ui.thumbs.pipeline import ThumbnailPipeline
 from gallery.ui.window.notice import NoticeSlot
@@ -55,6 +54,12 @@ class LibraryFlowMixin:
     # ---- 恢复上一次的运行状态 ------------------------------------------------
 
     def _restore_session(self) -> None:
+        """恢复窗口位置与最近打开列表。
+
+        **库级的那几个偏好不在这里**（浏览方式、排序、日历层级、缩略图档位）：
+        它们住在那个库自己的 ``config.toml`` 里，而「是哪个库」要等
+        :meth:`open_library` 才知道 —— 见 :meth:`_apply_ui_state`。
+        """
         self._welcome.set_recent(self._session.recent_roots)
         window = self._session.window
         if window is None:
@@ -64,6 +69,7 @@ class LibraryFlowMixin:
             self.showMaximized()
 
     # ---- 打开库 ------------------------------------------------------------
+
     def choose_folder(self) -> None:
         """弹出系统文件夹选择框。"""
         start = str(self._library.root) if self._library is not None else str(Path.home())
@@ -74,65 +80,103 @@ class LibraryFlowMixin:
     def open_library(self, root: Path, *, silent: bool = False) -> bool:
         """打开一个库。返回是否成功。
 
-        :param silent: 启动时自动恢复上次的库时为 ``True``：不弹任何对话框，
-            缓存一律放到系统目录，避免用户刚打开软件就被问问题。
-        """
-        root = Path(root)
-        try:
-            cache_in_library = self._resolve_cache_location(root, silent=silent)
-        except GalleryError as exc:
-            self._report_error(exc.message)
-            return False
-        if cache_in_library is None:
-            return False
-        try:
-            library = Library.open(root, cache_in_library=cache_in_library)
-        except GalleryError as exc:
-            if not silent:
-                self._report_error(exc.message)
-            else:
-                logger.info("自动打开上次的库失败：%s", exc.message)
-            return False
+        **不再问「缓存放哪里」**（ADR 0038 决策 2）：配置目录由
+        :meth:`Library.open` 自动建，缩略图固定在系统目录 —— 用户在这条路上其实
+        没有第三个有意义的选择，而建不出来时的退路（内存索引）是明确的。
 
+        **建不出来时只在横幅上说一声**（决策 3）：只读卷、SMB 共享上浏览照旧，
+        只是索引退成内存缓存。不弹窗、不拦着用户 —— 那条路上他没有别的可做。
+
+        :param silent: 启动时自动恢复上次那个库时为 ``True``：**开不起来也不弹框**，
+            只记一条日志，让用户留在欢迎页上。README 承诺的是「下次启动回到上次
+            打开的库」，而那个库可能已经被移走或删掉 —— 那种情况下**不该**用一个
+            模态错误框拦住整个启动（那是用户的日常操作，不是故障）。
+            用户自己点「最近打开」时走默认的 ``False``：那一下是他刚做的动作，
+            失败了必须说清楚。
+        """
+        try:
+            library = Library.open(Path(root), cache_base=self._cache_base)
+        except GalleryError as exc:
+            if silent:
+                logger.info("自动打开上次的库失败（%s）：%s", root, exc.message)
+            else:
+                self._report_error(exc.message)
+            return False
         self._activate_library(library)
+        if not library.config_dir_ready:
+            # 摆在 ``_activate_library`` **之后**：它开头就把横幅收干净了。
+            self._show_banner(
+                f"「{library.display_name}」这个文件夹写不进去，Gallery 没法在里面建配置目录。"
+                "浏览、分组、搜索都正常，只是元数据索引这次不落盘 —— 下次打开要重读一遍。"
+            )
         return True
 
-    def _resolve_cache_location(self, root: Path, *, silent: bool) -> bool | None:
-        """决定缩略图缓存放在库内还是系统目录。
+    def _apply_ui_state(self, library: Library) -> None:
+        """把这个库记着的界面偏好套到窗口上。
 
-        返回 ``True`` 表示库内、``False`` 表示系统目录、``None`` 表示用户取消。
+        **打开的顺序在这里，而不是在 ``_restore_session``**：那些偏好存在
+        这个库自己的 ``config.toml`` 里，「是哪个库」要等 :meth:`open_library`
+        才知道。
+
+        同时做一次性的迁移（ADR 0038 决策 4）：从老版本升上来的用户，他上次选的
+        排序字段与浏览方式原本记在 ``state.json`` 里 —— 库的配置还没有 ``[ui]``
+        表时，把它们搬过去，免得「升级之后我的排序被重置了」。
         """
-        if paths.has_config_dir(root):
-            return True
-        if silent:
-            return False
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Icon.Question)
-        box.setWindowTitle("缓存放在哪里？")
-        box.setText(f"「{root.name}」还没有 Gallery 的缓存目录。")
-        box.setInformativeText(
-            "缩略图缓存能让浏览快很多。\n\n"
-            f"· 在库中缓存：在照片文件夹里创建 {paths.config_dir(root).name} 目录"
-            "（随时可删，删除后会自动重建）\n"
-            "· 缓存到系统目录：照片文件夹保持一个字节都不写入\n\n"
-            "无论选哪个，Gallery 都不会移动或修改你的照片；"
-            "只有你自己触发的重命名（⌘R）和移到废纸篓（⌘⌫）会动文件，"
-            "两者都能用 ⌘Z 撤销。"
-        )
-        in_library = box.addButton("在库中缓存（推荐）", QMessageBox.ButtonRole.AcceptRole)
-        system_cache = box.addButton("缓存到系统目录", QMessageBox.ButtonRole.ActionRole)
-        box.addButton("取消", QMessageBox.ButtonRole.RejectRole)
-        box.setDefaultButton(in_library)
-        box.exec()
+        ui = self._adopt_legacy_ui(library)
+        self._browse_mode = ui.browse_mode or self._browse_mode
+        self._size_index = self._edge_to_index(ui.thumbnail_edge)
+        self._metadata_visible = bool(ui.metadata_visible)
+        self._group_facet = ui.group_facet
+        self._sort_facet = ui.resolved_sort_facet()
+        self._sort_descending = bool(ui.sort_descending)
+        self._calendar_level = ui.resolved_calendar_level()
 
-        clicked = box.clickedButton()
-        if clicked is in_library:
-            # 这是全应用唯一会写入照片目录的动作，必须由用户刚刚的点击触发。
-            prepare_library(root)
-            return True
-        if clicked is system_cache:
-            return False
-        return None
+    def _adopt_legacy_ui(self, library: Library) -> LibraryUIState:
+        """库里还没有 ``[ui]`` 表时，从旧 ``state.json`` 里把偏好搬过来。
+
+        **每个库只搬一次**：搬完 ``config.toml`` 里就有那张表了，下一次打开
+        ``library.ui.is_empty`` 不成立，于是这次迁移不再发生 —— 于是「在 A 库
+        迁来的排序偏好」不会顺着切库一路传染到 B 库。
+
+        读旧会话的次数也只这一次（``_legacy_ui`` 记着）：``state.json`` 换库时
+        根本不该再读，它早就不再装这些东西了。
+        """
+        if not library.ui.is_empty:
+            return library.ui
+        if self._legacy_ui is None:
+            self._legacy_ui = legacy_ui_state(base=self._session_base) or LibraryUIState()
+        if self._legacy_ui.is_empty:
+            return library.ui
+        library.set_ui_state(self._legacy_ui)
+        return self._legacy_ui
+
+    def _edge_to_index(self, edge: int | None) -> int:
+        """配置里记的缩略图长边 → 档位序号（就近取档）。
+
+        **不合法就回默认档** —— 与读老会话时的处理一致：``[ui]`` 表是软件自己写的，
+        手改坏一个值不该让网格开天窗。
+        """
+        return nearest_index(edge)
+
+    def _save_ui_state(self) -> None:
+        """把窗口这几个库级偏好回写到当前库的 ``config.toml``。
+
+        由改过偏好的地方调用（排序、日历层级、浏览方式、缩略图档位、元数据面板）。
+
+        **没库时什么都不做**（欢迎页上那些操作本来就不可用），**值没变时也不写** ——
+        ``config.toml`` 每次改写都要一次 ``fsync``，而切层、扫描完这些都跟偏好无关。
+        两条都在 :meth:`Library.set_ui_state` 里再判一次，这里先挡掉最常见的两种。
+        """
+        library = self._library
+        if library is None:
+            return
+        library.set_ui_state(
+            library.ui.with_browse_mode(self._browse_mode)
+            .with_metadata_visible(self._metadata_visible)
+            .with_calendar_level(self._calendar_level)
+            .with_thumbnail_edge(edge_for_index(self._size_index))
+            .with_ordering(self._group_facet, self._sort_facet, self._sort_descending)
+        )
 
     def _activate_library(self, library: Library) -> None:
         self._teardown_library()
@@ -147,6 +191,11 @@ class LibraryFlowMixin:
         self._facet_values = {}
         self._model.clear()
 
+        # **库级偏好要在摆任何东西之前套上**（ADR 0038 决策 4）：浏览方式决定摆日历
+        # 还是网格，缩略图档位决定模型与网格的格子尺寸，排序决定扫完之后怎么排 ——
+        # 放在 `self._model.clear()` 之后、`_start_scan()` 之前的任何位置都不行。
+        self._apply_ui_state(library)
+
         self._pipeline = ThumbnailPipeline(library, self._runner, self)
         self._pipeline.ready.connect(self._on_thumbnail_ready)
         self._pipeline.failed.connect(self._on_thumbnail_failed)
@@ -157,6 +206,18 @@ class LibraryFlowMixin:
         self._panel.clear()
         # 面板上那个「编辑元数据」按钮的可用性跟着新库走（没装 exiftool 的库上它不出现）。
         self._update_metadata_editable()
+        # 缩略图档位与元数据面板的显隐都要跟着新库换 —— 网格的格子尺寸是按档位算的，
+        # 而档位现在是**每个库各自一份**（ADR 0038 决策 4）。走 ``_apply_thumbnail_size``
+        # 而不是直接 set：它才是「换档」的那一条路 —— 网格算完会通过
+        # ``icon_edge_changed`` 回来把模型也换掉，并作废那一批旧缩略图。
+        self._apply_thumbnail_size()
+        # **分组 / 排序那两张菜单的勾也要跟着换。** ``__init__`` 里那一句
+        # ``_sync_order_actions`` 跑在打开库**之前**（那时还没有库可读），于是
+        # 「从 A 库的分组切到 B 库」之后菜单上勾着的仍是 A 库那一项 ——
+        # 状态与菜单对不上，而那正是 `_sync_order_actions` 开头那句话要防的。
+        self._sync_order_actions()
+        self._metadata_action.setChecked(self._metadata_visible)
+        self._panel.setVisible(self._metadata_visible)
         self._current_dir = library.root
         self._arm_focus()  # 打开库走的是自己那一套，不经过 _reload_level
         # 每一层都要重排（排序字段总是有的），所以扫出来的一律先攒着，等顺序定下来。
@@ -169,7 +230,7 @@ class LibraryFlowMixin:
         self._update_breadcrumb()
         self._update_mode_actions()
         self._library_title = library.display_name
-        self._calendar_page.set_level(self._session.resolved_calendar_level())
+        self._calendar_page.set_level(self._calendar_level)
         # **只换页**：这一段末尾本来就有一句 `_start_scan()`，再起一遍就是两遍扫描
         # 同时往模型里塞同一库照片，于是每一行都出现两次。
         if self._browse_mode == BROWSE_MODE_CALENDAR:

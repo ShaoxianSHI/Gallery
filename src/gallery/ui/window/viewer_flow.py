@@ -20,8 +20,8 @@ from pathlib import Path
 
 from PySide6.QtGui import QImage
 
+from gallery.core.library.config import BROWSE_MODE_FLAT
 from gallery.core.library.photos import PhotoRef
-from gallery.core.library.session import BROWSE_MODE_FLAT
 from gallery.core.metadata.exif import MetadataReport, read_metadata
 from gallery.ui.imaging import to_qimage
 from gallery.ui.tasks import TaskContext

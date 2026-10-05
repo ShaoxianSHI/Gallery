@@ -23,10 +23,13 @@ def test_paths_live_under_config_dir(tmp_path: Path) -> None:
 
     assert paths.config_dir(root) == config
     assert paths.config_file(root) == config / "config.toml"
-    assert paths.cache_dir(root) == config / "cache"
-    assert paths.thumbnail_cache_dir(root) == config / "cache" / "thumbs"
     assert paths.journal_dir(root) == config / "journal"
     assert paths.index_file(root) == config / "index.db"
+    # 缩略图**不在**这个目录树里（ADR 0038 决策 1），但旧版留下的那块要认得出来，
+    # 迁移时靠它定位。
+    assert paths.legacy_cache_dir(root) == config / "cache"
+    assert paths.legacy_thumbnail_cache_dir(root) == config / "cache" / "thumbs"
+    assert tmp_path not in paths.thumbnail_cache_dir(root).parents
 
 
 def test_paths_do_not_touch_disk(tmp_path: Path) -> None:
@@ -35,6 +38,7 @@ def test_paths_do_not_touch_disk(tmp_path: Path) -> None:
 
     paths.thumbnail_cache_dir(root)
     paths.config_file(root)
+    paths.legacy_thumbnail_cache_dir(root)
 
     assert not root.exists()
 
@@ -63,8 +67,9 @@ def test_app_paths_follow_injected_base(tmp_path: Path) -> None:
     assert paths.app_state_file(base=base) == base / "Gallery" / "state.json"
     assert paths.app_cache_root(base=base) == base / "Gallery" / "cache"
 
-    cache = paths.external_thumbnail_cache_dir(tmp_path / "库", base=base)
+    cache = paths.thumbnail_cache_dir(tmp_path / "库", base=base)
     assert cache.parent == base / "Gallery" / "cache" / "thumbs"
+    assert cache.name == paths.library_digest(tmp_path / "库")
 
 
 def test_app_data_base_is_platform_specific(monkeypatch: pytest.MonkeyPatch) -> None:

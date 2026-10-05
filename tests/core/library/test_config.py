@@ -16,7 +16,15 @@ from gallery.core.constants import DEFAULT_MAX_CACHE_BYTES
 from gallery.core.errors import ConfigError
 from gallery.core.library.config import (
     ALBUM_COVERS_KEY,
+    BROWSE_MODE_CALENDAR,
+    BROWSE_MODE_FLAT,
+    DEFAULT_CALENDAR_LEVEL,
+    DEFAULT_SORT_FACET,
+    UI_KEY,
     LibraryConfig,
+    LibraryUIState,
+    discard_legacy_external_index,
+    discard_legacy_thumb_cache,
     load_config,
     prepare_library,
     save_config,
@@ -218,3 +226,231 @@ def test_a_cover_equal_to_the_album_itself_is_rejected(tmp_path: Path) -> None:
         load_config(tmp_path)
 
     assert "不在这个相册里" in excinfo.value.message
+
+
+# ---- 库级界面偏好（``[ui]`` 表，ADR 0038 决策 4）-------------------------------------
+
+
+def test_the_ui_table_survives_a_round_trip(tmp_path: Path) -> None:
+    """那七项**原样回到界面上** —— 排序层级与日历停在哪一层都不能在往返里丢掉。"""
+    config = LibraryConfig(
+        ui=LibraryUIState(
+            browse_mode=BROWSE_MODE_CALENDAR,
+            metadata_visible=True,
+            group_facet="city",
+            sort_facet="captured",
+            sort_descending=True,
+            calendar_level="week",
+            thumbnail_edge=288,
+        )
+    )
+
+    save_config(tmp_path, config)
+
+    assert load_config(tmp_path).ui == config.ui
+
+
+def test_a_fresh_library_writes_no_ui_table(tmp_path: Path) -> None:
+    """没人设过的东西不该在文件里留下一行等着被误读成「曾经有过设置」。"""
+    save_config(tmp_path, LibraryConfig())
+
+    assert UI_KEY not in paths.config_file(tmp_path).read_text(encoding="utf-8")
+    assert load_config(tmp_path).ui.is_empty is True
+
+
+def test_a_bool_in_the_ui_table_is_written_as_toml_not_as_python(tmp_path: Path) -> None:
+    """``bool`` 是 ``int`` 的子类 —— 反过来判就会写出 ``sort_descending = True``。
+
+    那不是 TOML：下一次读这个库会直接报语法错，而用户什么都没做。
+    """
+    config = LibraryConfig(ui=LibraryUIState(sort_descending=True, metadata_visible=False))
+    save_config(tmp_path, config)
+
+    assert "sort_descending = true" in paths.config_file(tmp_path).read_text(encoding="utf-8")
+    assert load_config(tmp_path).ui.sort_descending is True
+
+
+def test_an_unknown_value_in_the_ui_table_means_never_chosen(tmp_path: Path) -> None:
+    """``[ui]`` 是软件自己写的表：一个来路不明的字段 id 不该让整个库打不开。"""
+    paths.config_file(tmp_path).parent.mkdir(parents=True)
+    paths.config_file(tmp_path).write_text(
+        '[ui]\nsort_facet = "编出来的字段"\nbrowse_mode = "根本没有这个"\n'
+        'calendar_level = "decade"\nthumbnail_edge = 0\nmetadata_visible = "yes"\n',
+        encoding="utf-8",
+    )
+
+    ui = load_config(tmp_path).ui
+
+    assert ui.is_empty is True
+
+
+def test_a_ui_table_of_the_wrong_type_is_an_empty_table(tmp_path: Path) -> None:
+    paths.config_file(tmp_path).parent.mkdir(parents=True)
+    paths.config_file(tmp_path).write_text('ui = "不是一张表"\n', encoding="utf-8")
+
+    assert load_config(tmp_path).ui.is_empty is True
+
+
+def test_the_defaults_are_resolved_not_guessed(tmp_path: Path) -> None:
+    """从没选过排序字段：按修改时间排；日历停在「月」。
+
+    默认排序字段是「只看文件本身就能拿到」的那一档：打开库不必等 exiftool。
+    """
+    ui = LibraryUIState()
+
+    assert ui.resolved_sort_facet() == DEFAULT_SORT_FACET == "modified"
+    assert ui.resolved_calendar_level() == DEFAULT_CALENDAR_LEVEL == "month"
+
+
+def test_resolving_rejects_a_bogus_saved_value() -> None:
+    ui = LibraryUIState(sort_facet="编出来的", calendar_level="decade")
+
+    assert ui.resolved_sort_facet() == DEFAULT_SORT_FACET
+    assert ui.resolved_calendar_level() == DEFAULT_CALENDAR_LEVEL
+
+
+def test_the_builders_leave_the_original_alone() -> None:
+    """``LibraryUIState`` 是 frozen 的：链式改法要换新对象，
+    否则「存回去的必须是改过的那一个」就不成立。"""
+    first = LibraryUIState(thumbnail_edge=112, browse_mode=BROWSE_MODE_FLAT)
+    second = first.with_thumbnail_edge(288).with_ordering("city", "captured", True)
+
+    assert first.thumbnail_edge == 112
+    assert first.sort_facet is None
+    assert second.thumbnail_edge == 288
+    assert second.sort_facet == "captured"
+    assert second.sort_descending is True
+
+
+def test_an_unknown_calendar_level_is_not_recorded() -> None:
+    assert LibraryUIState().with_calendar_level("decade").calendar_level is None
+    assert LibraryUIState().with_calendar_level("year").calendar_level == "year"
+
+
+# ---- 只读卷上的降级与存量清理 -------------------------------------------------------
+
+
+def test_prepare_library_gives_up_instead_of_raising(tmp_path: Path) -> None:
+    """建不出来时返回 ``None``，界面据此退成内存索引并在横幅上说一声（ADR 0038 决策 3）。
+
+    这条路以前是抛 ``ConfigError`` 的 —— 只读卷上打开库直接失败，而用户在那个对话框
+    前其实没有第三个有意义的选择。
+    """
+    blocker = tmp_path / "拦住"
+    blocker.write_bytes(b"x")
+    root = tmp_path / "库"
+    root.mkdir()
+    # 在根目录下塞一个同名文件，``mkdir`` 必然失败（不是一个已存在的目录）。
+    (root / paths.CONFIG_DIR_NAME).write_bytes(b"x")
+
+    assert prepare_library(root) is None
+
+
+def test_prepare_library_creates_the_config_dir(tmp_path: Path) -> None:
+    file = prepare_library(tmp_path)
+
+    assert file == paths.config_file(tmp_path)
+    assert file.is_file()
+
+
+def test_the_legacy_thumb_cache_is_discarded(tmp_path: Path) -> None:
+    """缩略图搬去系统目录之后，``.gallery/cache/`` 整块作废（ADR 0038 决策 6）。
+
+    那正是「同一个库两份缓存」里多出来的那一份。
+    """
+    legacy = paths.legacy_thumbnail_cache_dir(tmp_path)
+    legacy.mkdir(parents=True)
+    for name in ("a.jpg", "b.jpg"):
+        (legacy / name).write_bytes(b"x")
+    prepare_library(tmp_path)
+    (paths.config_dir(tmp_path) / "index.db").write_bytes(b"x")
+
+    removed = discard_legacy_thumb_cache(tmp_path)
+
+    assert removed == 2
+    assert not legacy.exists()
+    # **别的文件一个都不动**：config.toml 与 index.db 不是缓存（journal 更不是，
+    # 删掉就丢了 ⌘Z 的撤销能力）。
+    assert (paths.config_dir(tmp_path) / "index.db").exists()
+    assert paths.config_file(tmp_path).is_file()
+
+
+def test_discarding_a_legacy_cache_that_is_not_there(tmp_path: Path) -> None:
+    assert discard_legacy_thumb_cache(tmp_path) == 0
+
+
+def test_discarding_leaves_what_it_must_not_delete(tmp_path: Path) -> None:
+    """只删**自己写的文件**；目录里还有别的东西就把目录留下，**不许报错**。
+
+    现实里那一类东西是有的：OneDrive 同步过程中会在旁边造出冲突副本与临时目录。
+    """
+    legacy = paths.legacy_thumbnail_cache_dir(tmp_path)
+    legacy.mkdir(parents=True)
+    (legacy / "一张缩略图.jpg").write_bytes(b"x")
+    (legacy / "一个冲突目录").mkdir()
+    (legacy / "一个冲突目录" / "半张").write_bytes(b"x")
+
+    removed = discard_legacy_thumb_cache(tmp_path)
+
+    assert removed == 1
+    assert not (legacy / "一张缩略图.jpg").exists()
+    assert (legacy / "一个冲突目录" / "半张").exists()
+
+
+def test_the_legacy_external_index_is_discarded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """库外那份索引整个作废（ADR 0038 决策 6）：「把索引放到系统目录」那条路没了。
+
+    它是**整台机器一份**的，与当前打开的是哪个库无关 —— 所以清理函数不接库根。
+    """
+    cache = tmp_path / "系统缓存"
+    monkeypatch.setattr(paths, "app_cache_root", lambda *, base=None: cache)
+    legacy = paths.app_index_cache_dir()
+    legacy.mkdir(parents=True)
+    (legacy / "某个库的摘要.db").write_bytes(b"x")
+    # 目录里别的东西**不许动**：将来 app cache 底下多出什么，这条清理不能顺手删掉。
+    (legacy / "不相干的东西.txt").write_bytes(b"x")
+
+    removed = discard_legacy_external_index()
+
+    assert removed == 1
+    assert not (legacy / "某个库的摘要.db").exists()
+    assert (legacy / "不相干的东西.txt").exists()
+
+
+def test_discarding_a_legacy_external_index_that_is_not_there(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(paths, "app_cache_root", lambda *, base=None: tmp_path / "空的")
+
+    assert discard_legacy_external_index() == 0
+
+
+def test_the_empty_legacy_cache_parent_is_removed_too(tmp_path: Path) -> None:
+    """``thumbs`` 收掉之后，只装过它的那个 ``cache/`` 空壳也要收掉。
+
+    「整块作废」才叫整块：留一个空目录在用户照片文件夹里，下一次看到它的人只会
+    以为还有东西没清干净。**判据是它空不空**：``rmdir`` 对非空目录会失败，
+    所以里面还有别人的东西时它自然留在原地。
+    """
+    prepare_library(tmp_path)
+    legacy = paths.legacy_thumbnail_cache_dir(tmp_path)
+    legacy.mkdir(parents=True)
+    (legacy / "一张.jpg").write_bytes(b"x")
+
+    assert discard_legacy_thumb_cache(tmp_path) == 1
+    assert not paths.legacy_cache_dir(tmp_path).exists()
+
+
+def test_a_legacy_cache_holding_something_else_is_left_alone(tmp_path: Path) -> None:
+    """父目录里还有别的东西时**不许**动它 —— 那是别人的东西，不是 Gallery 写的。"""
+    legacy = paths.legacy_thumbnail_cache_dir(tmp_path)
+    legacy.mkdir(parents=True)
+    (legacy / "一张.jpg").write_bytes(b"x")
+    (paths.legacy_cache_dir(tmp_path) / "不相干的.txt").write_bytes(b"x")
+
+    discard_legacy_thumb_cache(tmp_path)
+
+    assert not legacy.exists()
+    assert (paths.legacy_cache_dir(tmp_path) / "不相干的.txt").exists()

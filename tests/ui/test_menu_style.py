@@ -36,9 +36,11 @@ from PySide6.QtGui import (  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMenu, QTreeWidget  # noqa: E402
 from waiting import wait_until
 
-from gallery.core.library.config import prepare_library  # noqa: E402
+from gallery.core.library.config import (
+    BROWSE_MODE_ALBUMS,
+    prepare_library,
+)  # noqa: E402
 from gallery.core.library.photos import GroupRef, PhotoRef  # noqa: E402
-from gallery.core.library.session import BROWSE_MODE_ALBUMS  # noqa: E402
 from gallery.ui import menu_style, theme  # noqa: E402
 from gallery.ui.external_button import calendar_icon  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402

@@ -23,10 +23,10 @@ from functools import partial
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMenu
 
+from gallery.core.library.config import BROWSE_MODE_ALBUMS, BROWSE_MODE_CALENDAR
 from gallery.core.library.facade import Library
 from gallery.core.library.groups import SortOrder, build_groups, sort_photos
 from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
-from gallery.core.library.session import BROWSE_MODE_ALBUMS, BROWSE_MODE_CALENDAR
 from gallery.core.metadata.exif import ExifToolReader
 from gallery.core.metadata.facets import (
     GROUP_FACETS,
@@ -159,10 +159,9 @@ class OrderingMixin:
         self._reload_level()
 
     def _remember_ordering(self) -> None:
-        self._session = self._session.with_ordering(
-            self._group_facet, self._sort_facet, self._sort_descending
-        )
-        self._save_session()
+        # 分组 / 排序是**库级**偏好（ADR 0038 决策 4）：在 A 库按地点分组，
+        # 切到 B 库应该回到 B 库自己那一份，而不是把 A 库的分组法传染过去。
+        self._save_ui_state()
 
     def _sync_order_actions(self) -> None:
         """让菜单的勾选状态跟着实际选择走（含从会话恢复出来的选择）。"""

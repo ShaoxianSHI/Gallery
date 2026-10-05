@@ -16,19 +16,22 @@ import pytest
 
 pytest.importorskip("PySide6")
 
+from library_helpers import set_library_ui  # noqa: E402
 from PySide6.QtCore import QItemSelectionModel, QModelIndex  # noqa: E402
 from PySide6.QtGui import QKeySequence  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 from waiting import wait_until
 
-from gallery.core.library.config import prepare_library  # noqa: E402
-from gallery.core.library.photos import FolderRef, PhotoRef  # noqa: E402
-from gallery.core.library.session import (  # noqa: E402
+from gallery.core.library.config import (
     BROWSE_MODE_ALBUMS,
     BROWSE_MODE_FLAT,
+    prepare_library,
+)  # noqa: E402
+from gallery.core.library.photos import FolderRef, PhotoRef  # noqa: E402
+from gallery.core.library.session import (
     SessionState,
     save_session,
-)
+)  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 
 #: 等待异步扫描 / 缩略图完成的时限。
@@ -38,10 +41,8 @@ def open_window(
     qt_app: QApplication, root: Path, *, browse_mode: str = BROWSE_MODE_FLAT
 ) -> MainWindow:
     session_base = root / "状态"
-    save_session(
-        SessionState(recent_roots=(root,), browse_mode=browse_mode),
-        base=session_base,
-    )
+    save_session(SessionState(recent_roots=(root,)), base=session_base)
+    set_library_ui(root, browse_mode=browse_mode)
     # 没有配置目录时 MainWindow 会问「缓存放哪」，那个模态框在测试里没人点。
     prepare_library(root)
     window = MainWindow(session_base=session_base, initial_library=root)

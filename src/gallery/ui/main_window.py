@@ -81,16 +81,18 @@ from PySide6.QtWidgets import (
 
 from gallery.core import paths
 from gallery.core.external import launch
-from gallery.core.library.facade import Library
-from gallery.core.library.photos import GridEntry, GroupRef, PhotoRef
-from gallery.core.library.search import SearchCondition
-from gallery.core.library.session import (
+from gallery.core.library.config import (
     BROWSE_MODE_ALBUMS,
     BROWSE_MODE_CALENDAR,
     BROWSE_MODE_FLAT,
-    SessionState,
-    load_session,
+    DEFAULT_CALENDAR_LEVEL,
+    DEFAULT_SORT_FACET,
+    LibraryUIState,
 )
+from gallery.core.library.facade import Library
+from gallery.core.library.photos import GridEntry, GroupRef, PhotoRef
+from gallery.core.library.search import SearchCondition
+from gallery.core.library.session import SessionState, load_session
 from gallery.core.library.watcher import LibraryChange
 from gallery.core.metadata.exif import MetadataReport
 from gallery.core.metadata.facets import PhotoFacets
@@ -193,12 +195,21 @@ class MainWindow(
         self,
         *,
         session_base: Path | None = None,
+        cache_base: Path | None = None,
         initial_library: Path | None = None,
         watch_starter: WatchStarter | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._session_base = session_base
+        #: 系统级缩略图缓存根目录。``None`` = 走平台默认位置
+        #: （``~/Library/Application Support/Gallery/cache``）。
+        #:
+        #: **测试必须注入它**：缩略图按库路径摘要分目录，而测试每个用例一个
+        #: ``tmp_path`` —— 不注入的话一轮全量会在用户真实的缓存目录里留下几百个
+        #: 没人认领的摘要目录（实测跑两次就是 2509 个）。那条路只有 ``cache_base``
+        #: 一个闸门，所以它和 ``session_base`` 一样从构造函数传进来。
+        self._cache_base = cache_base
         self._session: SessionState = load_session(base=session_base)
         self._runner = TaskRunner(self)
         #: 外部文件变化 → 网格。回调在 watchdog 的线程上到达，必须用排队连接接。
@@ -269,14 +280,24 @@ class MainWindow(
         # 每次选中变化都重放一遍日志的话，用方向键翻图时白白读文件。
         self._undo_label: str | None = None
 
-        self._size_index = nearest_index(self._session.thumbnail_edge)
-        self._browse_mode: str = self._session.browse_mode or BROWSE_MODE_FLAT
+        # 缩略图档位、浏览方式、分组 / 排序**都是从库的配置里读的**（ADR 0038 决策 4），
+        # 而「是哪个库」要等 open_library 才知道 —— 所以这里先给界面默认值，
+        # 打开库时由 ``LibraryFlowMixin._apply_ui_state`` 覆盖。
+        self._size_index = nearest_index(None)
+        self._browse_mode: str = BROWSE_MODE_FLAT
         self._current_dir: Path | None = None
-        # 分组 / 排序（见 ADR 0009）：字段 id 存进会话，下次打开沿用。
-        # 从没选过排序字段的人（会话里那一项是空的）按默认排序字段走，见 session 模块。
-        self._group_facet: str | None = self._session.group_facet
-        self._sort_facet: str | None = self._session.resolved_sort_facet()
-        self._sort_descending: bool = bool(self._session.sort_descending)
+        # 分组 / 排序（见 ADR 0009）：字段 id 存在库的 config.toml 里，下次打开**这个库**沿用。
+        # 从没选过排序字段的人（那一项是空的）按默认排序字段走，见 config 模块。
+        self._group_facet: str | None = None
+        self._sort_facet: str | None = DEFAULT_SORT_FACET
+        self._sort_descending: bool = False
+        #: 大图页右侧的元数据面板是否展开。**同样是库级的**（ADR 0038 决策 4）。
+        self._metadata_visible: bool = False
+        #: 日历停在哪一层。也是库级的。
+        self._calendar_level: str = DEFAULT_CALENDAR_LEVEL
+        #: 旧 ``state.json`` 里的库级偏好，**整个进程只读一次**（见 ``_adopt_legacy_ui``）。
+        #: ``None`` 表示还没读。
+        self._legacy_ui: LibraryUIState | None = None
         #: 已经进入的分组（它不是磁盘上的目录，只是这一层的一个筛选项）。
         self._group_view: GroupRef | None = None
         #: 模型里此刻摆着的是哪一层。换层时用它分清「换了一层」（重新进入，选区清空）与
@@ -338,15 +359,16 @@ class MainWindow(
         self._build_actions()
         self._restore_session()
         self._sync_order_actions()
-        self._metadata_action.setChecked(bool(self._session.metadata_visible))
-        self._panel.setVisible(bool(self._session.metadata_visible))
+        self._metadata_action.setChecked(self._metadata_visible)
+        self._panel.setVisible(self._metadata_visible)
         self._sync_size_actions()
         self._update_action_states()
 
         if initial_library is not None:
             self.open_library(initial_library)
         elif self._session.recent_roots and self._session.recent_roots[0].is_dir():
-            # README 承诺过：下次启动回到上次打开的库。静默打开，失败就留在欢迎页。
+            # README 承诺过：下次启动回到上次打开的库。**开不起来就静默留在欢迎页**
+            # —— 那个库可能只是被移走了，不该用一个模态错误框拦住整个启动。
             self.open_library(self._session.recent_roots[0], silent=True)
 
     # ---- 构建界面 ----------------------------------------------------------

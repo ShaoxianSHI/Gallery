@@ -24,6 +24,7 @@ import pytest
 
 pytest.importorskip("PySide6")
 
+from library_helpers import set_library_ui  # noqa: E402
 from PIL import Image  # noqa: E402
 from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtGui import QKeySequence  # noqa: E402
@@ -31,14 +32,16 @@ from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMenu  # noqa: E402
 from waiting import wait_until
 
-from gallery.core.library.config import prepare_library  # noqa: E402
-from gallery.core.library.photos import FolderRef, GroupRef, PhotoRef  # noqa: E402
-from gallery.core.library.session import (  # noqa: E402
+from gallery.core.library.config import (
     BROWSE_MODE_ALBUMS,
     BROWSE_MODE_FLAT,
+    prepare_library,
+)  # noqa: E402
+from gallery.core.library.photos import FolderRef, GroupRef, PhotoRef  # noqa: E402
+from gallery.core.library.session import (
     SessionState,
     save_session,
-)
+)  # noqa: E402
 from gallery.core.metadata.journal import ACTION_CREATE, ACTION_RENAME, read_records  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 
@@ -69,7 +72,8 @@ def window(qt_app: QApplication, root: Path) -> Iterator[MainWindow]:
 
 def _open(qt_app: QApplication, root: Path, *, browse_mode: str = BROWSE_MODE_ALBUMS) -> MainWindow:
     session_base = root.parent / "状态"
-    save_session(SessionState(recent_roots=(root,), browse_mode=browse_mode), base=session_base)
+    save_session(SessionState(recent_roots=(root,)), base=session_base)
+    set_library_ui(root, browse_mode=browse_mode)
     instance = MainWindow(session_base=session_base, initial_library=root)
     instance.resize(900, 600)
     instance.show()

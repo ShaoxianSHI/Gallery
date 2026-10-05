@@ -37,18 +37,15 @@ import pytest
 
 pytest.importorskip("PySide6")
 
+from library_helpers import set_library_ui  # noqa: E402
 from PySide6.QtCore import QPoint, QPointF, QRect, Qt  # noqa: E402
 from PySide6.QtGui import QFontMetrics, QKeySequence  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 from waiting import wait_for_idle, wait_until  # noqa: E402
 
-from gallery.core.library.config import prepare_library  # noqa: E402
-from gallery.core.library.session import (  # noqa: E402
-    BROWSE_MODE_FLAT,
-    SessionState,
-    save_session,
-)
+from gallery.core.library.config import BROWSE_MODE_FLAT, prepare_library  # noqa: E402
+from gallery.core.library.session import SessionState, save_session  # noqa: E402
 from gallery.core.metadata.journal import ACTION_RENAME, read_records  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.rename_edit import RADIUS, RenameEdit  # noqa: E402
@@ -241,9 +238,8 @@ def window(
     root.mkdir(parents=True, exist_ok=True)
     make_photo(PHOTO, directory=root)
     prepare_library(root)
-    save_session(
-        SessionState(recent_roots=(root,), browse_mode=BROWSE_MODE_FLAT), base=tmp_path / "状态"
-    )
+    save_session(SessionState(recent_roots=(root,)), base=tmp_path / "状态")
+    set_library_ui(root, browse_mode=BROWSE_MODE_FLAT)
     instance = MainWindow(session_base=tmp_path / "状态", initial_library=root)
     instance.resize(900, 600)
     instance.show()

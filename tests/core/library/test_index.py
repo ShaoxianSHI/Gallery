@@ -273,15 +273,16 @@ def test_old_schema_is_rebuilt(tmp_path: Path) -> None:
     index.close()
 
 
-def test_open_for_library_and_external_cache(tmp_path: Path) -> None:
-    """用户在开场选「缓存到系统目录」时，索引必须跟着走（照片目录零写入）。"""
-    inside = FacetIndex.open(tmp_path, in_library=True)
-    outside = FacetIndex.open(tmp_path, in_library=False, base=tmp_path / "系统缓存")
+def test_the_index_always_lives_in_the_library(tmp_path: Path) -> None:
+    """索引永远在 ``.gallery/index.db``（ADR 0038 决策 1）。
 
-    assert inside.path == paths.config_dir(tmp_path) / "index.db"
-    assert outside.path is not None and "系统缓存" in str(outside.path)
-    inside.close()
-    outside.close()
+    库外那条路（``in_library=False``）删掉了：库级的界面偏好与它同在 ``config.toml``
+    旁边，没有把索引拆到另一处的理由。
+    """
+    index = FacetIndex.open(tmp_path)
+
+    assert index.path == paths.config_dir(tmp_path) / "index.db"
+    index.close()
 
 
 def test_after_close_the_index_no_longer_holds_a_path(tmp_path: Path) -> None:
@@ -305,12 +306,19 @@ def test_after_close_the_index_no_longer_holds_a_path(tmp_path: Path) -> None:
 # ---- 提交强度按缓存配（不是按数据配）----------------------------------------
 
 
-def test_the_index_runs_in_wal_with_normal_sync(tmp_path: Path) -> None:
-    """索引是缓存，提交强度就该按缓存配：``WAL`` + ``synchronous=NORMAL``。
+def test_the_index_runs_in_delete_with_normal_sync(tmp_path: Path) -> None:
+    """索引是缓存，提交强度就该按缓存配：``DELETE`` + ``synchronous=NORMAL``。
 
     默认设置下每次 ``commit`` 都要 fsync，而存照片是一张张来的 —— 等的是用户的耐心，
-    存的是一份随时可以删掉重扫就回来的东西（红线 5）。因此这里钉的是**真正落到连接上
-    的那两个 pragma 值**，不是「我们调用过 ``PRAGMA ...``」（那可能悄没声地失败）。
+    存的是一份随时可以删掉重扫就回来的东西（红线 5）。
+
+    **日志模式钉的是 ``delete`` 而不是 ``wal``**（ADR 0038 决策 5）：索引住在用户的
+    库里，而库常常在云盘上 —— WAL 的 ``-wal`` / ``-shm`` 两个文件会跟着一起同步，
+    两台机器各跑 Gallery 时互相覆盖有损坏索引的风险。而 WAL 的卖点（读写不互斥）
+    在这里用不上：这个类全程一把锁，SQLite 层的并发根本没机会发生。
+
+    这里量的是**真正落到连接上的 pragma 值**，不是「我们调用过 ``PRAGMA ...``」
+    （那可能悄没声地失败）。
     """
     index = FacetIndex(tmp_path / "index.db")
     connection = index._connection
@@ -319,7 +327,7 @@ def test_the_index_runs_in_wal_with_normal_sync(tmp_path: Path) -> None:
     journal_mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
     synchronous = connection.execute("PRAGMA synchronous").fetchone()[0]
 
-    assert journal_mode == "wal"
+    assert journal_mode == "delete"
     assert synchronous == 1  # NORMAL；FULL 才是 2，那正是要躲开的那份等待
     index.close()
 
@@ -338,17 +346,21 @@ def test_a_relaxed_index_still_round_trips(tmp_path: Path) -> None:
     reopened.close()
 
 
-def test_wal_leaves_no_side_files_behind_a_clean_close(tmp_path: Path) -> None:
-    """``-wal`` / ``-shm`` 是 ``WAL`` 带来的两个新文件，正常关掉就该被 SQLite 收走。
+def test_the_index_never_writes_a_side_file_next_to_the_library(tmp_path: Path) -> None:
+    """``-journal`` / ``-wal`` / ``-shm`` 一个都不该留在 ``.gallery/`` 里。
 
-    缓存目录里多两个文件本身不算事故，但它们**不该在关掉之后还赖着** —— 那说明连接
-    没有正常关闭（而本模块把「关掉之后不再偷偷重开」当成一条承诺，见
-    ``test_after_close_the_index_no_longer_holds_a_path``）。
+    **这条比「关掉之后收干净」更要紧**：``.gallery/`` 住在用户的照片文件夹里，而那里
+    常常挂着 Dropbox / OneDrive。多出来的每一个文件都是一次同步事件，而 ``-wal`` 与
+    ``-shm`` 还会跟着库跑到另一台机器上去（ADR 0038 决策 5）。
+
+    ``-journal`` 是 ``DELETE`` 模式的事务日志，``commit`` 之后就该被删掉；``-wal`` 与
+    ``-shm`` 是 WAL 的遗留，切到 DELETE 之后**连出现的机会都不该有** ——
+    它们在这儿出现，就说明 pragma 没落上（静默失败），所以这条同时也是 pragma 的探针。
     """
     index = FacetIndex(tmp_path / "index.db")
-    index.store([(_ref(tmp_path), FULL)])
-    assert (tmp_path / "index.db-wal").exists(), "开着 WAL 时就该有这个文件"
-
+    ref = _ref(tmp_path)
+    index.store([(ref, FULL)])
+    index.store_photos([ref], root=tmp_path)
     index.close()
 
     assert sorted(path.name for path in tmp_path.iterdir()) == ["index.db"]

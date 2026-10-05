@@ -14,8 +14,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path
 
+from gallery.core.library.config import BROWSE_MODE_CALENDAR, BROWSE_MODE_FLAT
 from gallery.core.library.photos import GridEntry, GroupRef
-from gallery.core.library.session import BROWSE_MODE_CALENDAR, BROWSE_MODE_FLAT
 
 #: 一层的标识（见 :func:`level_key`）。是元组而不是字符串：只为了能哈希、能当键用。
 type LevelKey = tuple[str, ...]

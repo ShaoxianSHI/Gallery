@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from gallery.core.library.photos import FolderRef, GroupRef, PhotoRef
-from gallery.core.library.session import (
+from gallery.core.library.config import (
     BROWSE_MODE_ALBUMS,
     BROWSE_MODE_CALENDAR,
     BROWSE_MODE_FLAT,
-)
+)  # noqa: E402
+from gallery.core.library.photos import FolderRef, GroupRef, PhotoRef
 from gallery.ui.navigation import (
     breadcrumb_parts,
     entry_key,

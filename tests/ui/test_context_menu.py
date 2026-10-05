@@ -30,13 +30,15 @@ from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMenu  # noqa: E402
 from waiting import wait_for_idle, wait_until
 
-from gallery.core.library.config import prepare_library  # noqa: E402
-from gallery.core.library.photos import GroupRef, PhotoRef  # noqa: E402
-from gallery.core.library.session import (  # noqa: E402
+from gallery.core.library.config import (
     BROWSE_MODE_ALBUMS,
+    prepare_library,
+)  # noqa: E402
+from gallery.core.library.photos import GroupRef, PhotoRef  # noqa: E402
+from gallery.core.library.session import (
     SessionState,
     save_session,
-)
+)  # noqa: E402
 from gallery.ui import (
     desktop,  # noqa: E402
     menus,  # noqa: E402

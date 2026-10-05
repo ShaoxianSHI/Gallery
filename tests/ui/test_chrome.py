@@ -26,16 +26,19 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
+from library_helpers import set_library_ui  # noqa: E402
 from PySide6.QtCore import QRect  # noqa: E402
 from PySide6.QtWidgets import QApplication, QStatusBar  # noqa: E402
 from waiting import DEFAULT_TIMEOUT_SECONDS, wait_until  # noqa: E402
 
-from gallery.core.library.config import prepare_library  # noqa: E402
-from gallery.core.library.session import (  # noqa: E402
+from gallery.core.library.config import (
     BROWSE_MODE_ALBUMS,
+    prepare_library,
+)  # noqa: E402
+from gallery.core.library.session import (
     SessionState,
     save_session,
-)
+)  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 
 
@@ -49,10 +52,8 @@ def _albums_window(
             make_photo(f"{index}.jpg", directory=root / album)
     prepare_library(root)
     session_base = tmp_path / "session"
-    save_session(
-        SessionState(recent_roots=(root,), browse_mode=BROWSE_MODE_ALBUMS),
-        base=session_base,
-    )
+    save_session(SessionState(recent_roots=(root,)), base=session_base)
+    set_library_ui(root, browse_mode=BROWSE_MODE_ALBUMS)
 
     window = MainWindow(session_base=session_base)
     window.resize(1200, 800)
