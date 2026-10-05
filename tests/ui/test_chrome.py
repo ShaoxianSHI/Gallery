@@ -10,6 +10,7 @@
   第一张照片正好被压在下面 —— 与其那样让人找路，不如老老实实给它留一行。
 - **横幅同样不进布局**：它在竖排里占一行，于是每一条消息都把网格往下挤一段，照片区
   矮一截、滚动位置跟着动。它是挂在窗口上的一层，因此网格页与大图页都看得见。
+- **横幅按整个窗口居中**，哪怕元数据面板摆着 —— 它是窗口上的一层，不是照片区的一层。
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtCore import QRect  # noqa: E402
 from PySide6.QtWidgets import QApplication, QStatusBar  # noqa: E402
 from waiting import DEFAULT_TIMEOUT_SECONDS
 
@@ -132,6 +134,42 @@ def test_the_banner_is_visible_over_the_photo_on_the_detail_page(
 
         assert window._banner.isVisible(), "大图页上不该看不见刚做的事"
         assert window._banner.geometry().intersects(window._detail.geometry()), "横幅该压在照片上"
+    finally:
+        window.close()
+
+
+def test_the_banner_is_centred_on_the_window_with_the_metadata_panel_open(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """**元数据面板摆着时，居中的是整个窗口**（用户反馈）。
+
+    原先 ``_banner_area`` 把面板减掉，于是大图页上横幅落在照片那一半的正中间 ——
+    看着像只对照片说话，而它这一句说的是整个窗口里刚发生的事。**位置照旧，宽度让开**：
+    面板正显示当前这张的 EXIF，不该被盖住。
+    """
+    window = _albums_window(qt_app, tmp_path, make_photo)
+    try:
+        window._stack.setCurrentWidget(window._detail_page)
+        window.toggle_metadata(True)
+        qt_app.processEvents()
+        assert window._panel.isVisible(), "这一条测的就是面板摆着的时候"
+
+        window._show_banner("已撤销，恢复为「海边.jpg」。")
+        qt_app.processEvents()
+
+        rect = window._banner.geometry()
+        area = window.centralWidget().geometry()
+        assert abs(rect.center().x() - area.center().x()) <= 1, (
+            f"横幅 {rect} 没有按整个窗口居中（窗口内容区 {area}）"
+        )
+        photo_area = QRect(area)
+        photo_area.setRight(window._panel.geometry().left() - 1)
+        assert rect.center().x() - photo_area.center().x() >= window._panel.width() // 2, (
+            "这还是落在照片区正中，不是窗口正中"
+        )
+        assert not rect.intersects(window._panel.geometry()), (
+            f"横幅 {rect} 压到了元数据面板 {window._panel.geometry()} 上"
+        )
     finally:
         window.close()
 

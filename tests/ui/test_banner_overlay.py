@@ -30,14 +30,19 @@ from gallery.ui.banner_overlay import (  # noqa: E402
     AUTO_HIDE_SECONDS,
     MARGIN_TOP,
     MAX_WIDTH,
+    MIN_AVOID_WIDTH,
     BannerOverlay,
     banner_rect,
     banner_width,
     text_height,
 )
+from gallery.ui.panels.metadata import PANEL_WIDTH  # noqa: E402
 
 #: 算术测试用的那一块「内容区」。
 AREA = QRect(0, 100, 1200, 700)
+
+#: 大图页上摆着元数据面板时的那一块（**与内容区同一套坐标** —— 两者都量在窗口上）。
+PANEL = QRect(900, 0, PANEL_WIDTH, 800)
 
 
 # ---- 1. 算术 ----------------------------------------------------------------
@@ -102,6 +107,59 @@ def test_an_empty_message_still_takes_one_line(qt_app: QApplication) -> None:
     assert text_height("", MAX_WIDTH, metrics) >= metrics.height()
 
 
+# ---- 1b. 让开元数据面板（位置不动，只收窄）------------------------------------
+
+
+def test_the_banner_is_centred_on_the_window_even_with_the_panel_open() -> None:
+    """**居中的基准是整个窗口**：面板摆着时横幅不该偏到照片那一半的正中间（用户反馈）。
+
+    原先的做法是把 ``area`` 减去面板，于是中心点跟着跑偏 —— 大图页上一句话摆在照片
+    正中央，看着像只对照片说话。这一条量的是**中心点**，宽度对不对量的是它右边那条。
+    """
+    area = QRect(0, 0, 1200, 800)
+    rect = banner_rect(area, QSize(MAX_WIDTH, 30), avoid=PANEL)
+    assert abs(rect.center().x() - area.center().x()) <= 1, (
+        f"横幅没有按整个窗口居中：中心 {rect.center().x()}，窗口 {area.center().x()}"
+    )
+    # 旧做法（减去面板）的中心点在照片区正中，两者差着整整半个面板。
+    photo_area = QRect(area)
+    photo_area.setRight(PANEL.left() - 1)
+    assert rect.center().x() - photo_area.center().x() >= PANEL_WIDTH // 2
+
+
+def test_a_centred_banner_stops_short_of_the_panel_instead_of_covering_it() -> None:
+    """两件都要：**位置一分不动**，宽度让开 —— 面板不该被盖住（它正显示当前这张的 EXIF）。"""
+    area = QRect(0, 0, 1200, 800)
+    rect = banner_rect(area, QSize(MAX_WIDTH, 30), avoid=PANEL)
+    assert rect.right() < PANEL.left(), f"横幅 {rect} 压到了面板 {PANEL} 上"
+    assert rect.left() > area.left(), "仍然要留在窗口里"
+
+
+def test_a_window_wide_enough_for_it_keeps_its_full_width() -> None:
+    """够宽时面板压根碰不着横幅，那条 :data:`MAX_WIDTH` 仍然赢 —— 窗口 1280 是默认尺寸。"""
+    area = QRect(0, 0, 1280, 800)
+    panel = QRect(1280 - PANEL_WIDTH, 0, PANEL_WIDTH, 800)
+    assert banner_width(area, avoid=panel) == MAX_WIDTH
+
+
+def test_it_stops_narrowing_before_it_becomes_a_vertical_strip() -> None:
+    """收到 :data:`MIN_AVOID_WIDTH` 以下就不再让了。
+
+    两三字一行、连着五六行的竖条不像提示，比它短暂压住面板左边缘更难认 —— 那种窗口
+    （已经窄到最小宽度 720）本来就是勉强摆得下元数据面板的。
+    """
+    area = QRect(0, 0, 720, 800)
+    panel = QRect(720 - PANEL_WIDTH, 0, PANEL_WIDTH, 800)
+    assert banner_width(area, avoid=panel) == MIN_AVOID_WIDTH
+
+
+def test_a_panel_that_is_not_there_changes_nothing() -> None:
+    """没给 ``avoid``（面板收着）与给了一块不相交的那一块：宽度与原先一模一样。"""
+    area = QRect(0, 0, 1200, 800)
+    assert banner_width(area, avoid=None) == banner_width(area)
+    assert banner_width(area, avoid=QRect(1400, 0, 300, 800)) == banner_width(area)
+
+
 # ---- 2. 控件 ----------------------------------------------------------------
 
 
@@ -144,6 +202,49 @@ def test_the_message_is_placed_inside_the_area_it_was_given(
     rect = banner.geometry()
     assert area.contains(rect), f"横幅 {rect} 摆到了 {area} 外面"
     assert rect.top() == area.top() + MARGIN_TOP
+
+
+def test_the_widget_honours_the_rectangle_it_is_told_to_avoid(
+    qt_app: QApplication, host: QWidget
+) -> None:
+    """``reposition(area, avoid)`` 那一支不是只有算术那一半：控件自己也得照办。"""
+    banner = BannerOverlay(host)
+    host.resize(1200, 800)
+    area = QRect(0, 0, 1200, 800)
+    panel = QRect(900, 0, PANEL_WIDTH, 800)
+    banner.reposition(area, panel)
+    banner.show_message("已撤销，恢复为「海边.jpg」。")
+    qt_app.processEvents()
+
+    rect = banner.geometry()
+    assert abs(rect.center().x() - area.center().x()) <= 1, "应当按整个窗口居中"
+    assert not rect.intersects(panel), f"横幅 {rect} 压到了面板上"
+
+
+def test_opening_the_thing_it_avoids_shortens_it_in_place(
+    qt_app: QApplication, host: QWidget
+) -> None:
+    """面板一展开，已经显示着的那一条要**当场收窄**（不重新 ``show_message``）。
+
+    用户展开面板时那句话往往还挂在上面 —— 等下一条消息来才摆正，中间那几秒就白压着
+    面板了（``reposition`` 与 ``show_message`` 都要走 ``_place``，两条路都指着它）。
+    """
+    banner = BannerOverlay(host)
+    host.resize(1200, 800)
+    area = QRect(0, 0, 1200, 800)
+    panel = QRect(900, 0, PANEL_WIDTH, 800)
+    banner.reposition(area)
+    banner.show_message("已撤销，恢复为「海边.jpg」。")
+    qt_app.processEvents()
+    before = banner.geometry()
+
+    banner.reposition(area, panel)
+    qt_app.processEvents()
+
+    after = banner.geometry()
+    assert after != before, "面板展开后横幅没有重摆"
+    assert after.width() < before.width(), "让开面板要收窄，不是挪位置"
+    assert not after.intersects(panel)
 
 
 def _columns_with_ink(image: QImage) -> tuple[int, int]:

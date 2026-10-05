@@ -80,37 +80,47 @@ class BannerFlowMixin:
     # ---- 横幅的摆位（ADR 0029）------------------------------------------------
 
     def _on_page_changed(self, _index: int) -> None:
-        """换页：横幅要重新摆 —— 大图页上照片区右边让给了元数据面板，居中的位置变了；
+        """换页：横幅要重新摆 —— 大图页上照片区右边让给了元数据面板，要避开的那一块变了；
         缩略图窗口也要换成**新页**要的那一批（网格按行、日历按格子）。"""
         self._layout_banner()
         self._refresh_thumbnail_window()
 
     def _banner_area(self) -> QRect:
-        """横幅可以摆的那一片：**内容区减去元数据面板**（面板摆着的那几页才减）。
+        """横幅可以摆的那一片：**整个窗口的内容区**。
 
         中央控件自己已经让开了标题栏那一条（见 ``_build_ui``），所以这里拿它的
-        ``geometry`` 就是照片区那一带，不必再算一遍边距。
+        ``geometry`` 就是内容区那一带，不必再算一遍边距。
+
+        **不因为元数据面板摆着就把它减掉**（原先是减的）：横幅是**窗口上**的一层，
+        居中的基准就该是**整个窗口** —— 减掉面板之后它落到照片那一半的正中间，看着像是
+        只对照片说话，而这一句说的是整个窗口里刚发生的事（用户反馈）。面板交给
+        :meth:`_banner_avoid` 让开，位置一分不动。
         """
         central = self.centralWidget()
-        if central is None:
-            return QRect()
-        area = QRect(central.geometry())
+        return QRect(central.geometry()) if central is not None else QRect()
+
+    def _banner_avoid(self) -> QRect | None:
+        """横幅不该压住的那一块：**正摆着的元数据面板**（没摆着就是 ``None``）。
+
+        面板不在中央控件的几何里，而是大图页横排布局里的另一个成员；它摆着时横幅会盖在
+        它上面，于是把宽度收窄到「居中之后右边缘停在它左边」（见
+        :func:`~gallery.ui.banner_overlay.banner_width`）。
+        """
         panel = self._panel
-        if panel is not None and panel.isVisible():
-            # 面板是盖在右边那一段的，不该被横幅压住：居中到照片区里去。
-            area.setRight(panel.geometry().left() - 1)
-        return area
+        if panel is None or not panel.isVisible():
+            return None
+        return QRect(panel.geometry())
 
     def _layout_banner(self) -> None:
-        """把横幅摆在内容区**顶边居中**（它在窗口上，不属于任何布局）。
+        """把横幅摆在**整个窗口顶边居中**（它在窗口上，不属于任何布局）。
 
-        顶边那一带正好是面包屑所在的那一行（ADR 0029 决策 1）；大图页上照片区右边让给
-        元数据面板，居中的位置也就落在照片区而不是整个窗口（见 :meth:`_banner_area`）。
+        顶边那一带正好是面包屑所在的那一行（ADR 0029 决策 1）；横向的基准是整个内容区，
+        元数据面板摆着时让开的是**宽度**，中心点仍在窗口正中（见 :meth:`_banner_area`）。
 
         窗口改大小、换页、展开收起元数据面板之后都要重摆一次 —— 与 ``_layout_title_bar``
         同一套时机。
         """
-        self._banner.reposition(self._banner_area())
+        self._banner.reposition(self._banner_area(), self._banner_avoid())
         if self._banner.isVisible():
             self._banner.raise_()  # 窗口布局跑完之后中央控件会被抬上来
 

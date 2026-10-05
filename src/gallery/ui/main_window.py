@@ -479,7 +479,7 @@ class MainWindow(
         # 顺序叠兄弟控件，先建的被后建的盖住）。差别是它**不进任何布局** —— 出现与消失
         # 都不动底下任何一样东西（ADR 0029 决策 1），摆位由 ``_layout_banner`` 负责。
         self._banner = BannerOverlay(self)
-        # 换页时重新摆：大图页上照片区右边让给元数据面板，居中的位置也就跟着变了。
+        # 换页时重新摆：大图页上照片区右边让给元数据面板，横幅要避开的那一块变了。
         self._stack.currentChanged.connect(self._on_page_changed)
 
         # 标题栏那一行第一次有话可说：还没打开库，所以是「Gallery」（ADR 0025 决策 4）。

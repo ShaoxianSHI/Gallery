@@ -61,7 +61,7 @@ class MetadataFlowMixin:
         self._panel.setVisible(visible)
         self._session = self._session.with_metadata_visible(visible)
         self._save_session()
-        # 面板一收一放，照片区右边那条边界就变了，横幅的居中位置跟着重摆。
+        # 面板一收一放，横幅要避开的那一块就变了，宽度跟着重摆（居中的仍是整个窗口）。
         self._layout_banner()
         if visible:
             self._load_metadata()

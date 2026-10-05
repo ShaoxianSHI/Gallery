@@ -10,6 +10,10 @@
 而不是压在最后一排缩略图上：面包屑过几秒就重新露出来，而用户正在挑的永远是下面那几行
 照片。
 
+**横向居中的基准是整个窗口，不是照片区**（用户反馈：大图页上元数据面板摆着时，横幅
+跑到了照片那一半的正中间，看着像只对照片说话）。面板那一块交给 ``avoid`` 让开 ——
+**位置照旧居中，只是宽度不压到它**，于是「窗口居中」与「不盖住面板」两件仍然都成立。
+
 **它同时出现在网格页与大图页**，因为它挂在窗口上而不是某一页里：用户正在看大图时
 做的任何一件事（⌘Z 撤销、⌘C 拷贝、⌘⌫ 移走这一张）说的那句话就在**照片上面**，
 不必退回网格才看得见（ADR 0029 决策 2）。
@@ -51,6 +55,13 @@ MARGIN_TOP = 10
 #: 横向最宽多少点。再宽就成了段落，两行以内的提示用不着横穿整个窗口。
 MAX_WIDTH = 560
 
+#: 让开 ``avoid``（大图页上的元数据面板）时，最窄还能有多宽（点）。
+#:
+#: **太窄的那一条已经不像提示了**：两三字一行、连着五六行，像一根竖着的条，比它短暂
+#: 压住面板左边缘更难认。到这条线以下就不再让开 —— 面板摆着时窗口本来就不宽，那种
+#: 情况下宁可短暂压住它左边缘几秒。
+MIN_AVOID_WIDTH = 240
+
 #: 框内留白与边框宽（点）。**样式表与 :func:`text_height` 共用这几个数**：高度是按它们
 #: 算出来的，两边各写一份的话文字迟早会被裁掉半行或者底下多出一截空白。
 PADDING_X = 12
@@ -66,13 +77,23 @@ FILL_ALPHA = 0.16
 EDGE_ALPHA = 0.45
 
 
-def banner_width(area: QRect) -> int:
+def banner_width(area: QRect, *, avoid: QRect | None = None) -> int:
     """横幅在 ``area`` 里能有多宽。
 
     窗口窄到一行都放不下时就让文字换行，也不越出 ``area`` —— 最小窗口宽度是 720
     （见 ``MainWindow.setMinimumSize``），正常情况下 :data:`MAX_WIDTH` 那一档总是赢。
+
+    ``avoid`` 是**要避开的那一块**（大图页上的元数据面板），与 ``area`` 同一套坐标：
+    横幅是**按 ``area`` 居中**的，于是只要它横着会压到那一块，就把宽度收窄到「居中之后
+    右边缘正好停在它左边」，**位置一分都不动**。收窄到 :data:`MIN_AVOID_WIDTH` 以下
+    就不再让了 —— 那时它已经不是一条横幅了。
     """
     room = area.width() - 2 * MARGIN_SIDE
+    if avoid is not None and area.intersects(avoid):
+        # 从 ``area`` 左边缘到 ``avoid`` 左边缘那一段（再留一道边距）。
+        free = max(avoid.left() - MARGIN_SIDE - area.left(), 1)
+        # 居中的那一条右边缘在 ``area.width() / 2 + width / 2``，要它不过界就得这么宽。
+        room = max(min(room, 2 * free - area.width()), MIN_AVOID_WIDTH)
     return max(min(room, MAX_WIDTH), 1)
 
 
@@ -91,14 +112,18 @@ def text_height(text: str, width: int, metrics: QFontMetrics) -> int:
     return max(bounds.height(), metrics.height()) + 2 * (PADDING_Y + BORDER)
 
 
-def banner_rect(area: QRect, size: QSize) -> QRect:
+def banner_rect(area: QRect, size: QSize, *, avoid: QRect | None = None) -> QRect:
     """把 ``size`` 那么大的一横幅摆在 ``area`` 的哪儿：**水平居中，浮在顶边下方**。
 
     顶边而不是底边：上面那一行是面包屑与窗口标题所在地盘，横幅盖住的是**导航信息**，
     几秒之后自己会让开；而底边那一带永远是最后一行缩略图，压上去的是用户正在挑的照片
     （ADR 0029 决策 1）。
+
+    **居中的基准是 ``area`` 自己**，``avoid`` 只参与算宽度（见 :func:`banner_width`）：
+    「整条横着居中」与「不压住面板」两件都要，就不能把 ``area`` 本身缩掉 —— 那样中心点
+    会跟着跑偏，横幅就跑到照片那一半的正中间去了。
     """
-    width = min(size.width(), max(area.width() - 2 * MARGIN_SIDE, 1))
+    width = min(size.width(), banner_width(area, avoid=avoid))
     height = max(size.height(), 1)
     x = area.x() + max(area.width() - width, 0) // 2
     y = area.top() + MARGIN_TOP
@@ -121,6 +146,7 @@ class BannerOverlay(QLabel):
         # 挡住的话点它就变成了点空处（取消选中）。
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self._area = QRect()
+        self._avoid: QRect | None = None
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self.hide)
@@ -152,12 +178,16 @@ class BannerOverlay(QLabel):
         else:
             self._timer.stop()
 
-    def reposition(self, area: QRect) -> None:
+    def reposition(self, area: QRect, avoid: QRect | None = None) -> None:
         """把它摆在 ``area`` 里（窗口改了大小、换了页面之后由外面叫）。
+
+        ``avoid`` 是**要避开的那一块**（元数据面板）：居中照旧按 ``area`` 算，只是不
+        让它压到那一块上（见 :func:`banner_width`）。
 
         收着的时候只记下这一片，显示中才真的重摆 —— 与 ``TitleBar`` 同一取舍。
         """
         self._area = QRect(area)
+        self._avoid = QRect(avoid) if avoid is not None else None
         if self.isVisible():
             self._place()
 
@@ -185,9 +215,9 @@ class BannerOverlay(QLabel):
 
     def _place(self) -> None:
         area = self._target_area()
-        width = banner_width(area)
+        width = banner_width(area, avoid=self._avoid)
         height = text_height(self.text(), width, QFontMetrics(self.font()))
-        self.setGeometry(banner_rect(area, QSize(width, height)))
+        self.setGeometry(banner_rect(area, QSize(width, height), avoid=self._avoid))
 
     def _apply_theme(self) -> None:
         """样式表就是**原来那一份**：浅橙的底 + 深一点的橙边，16% / 45% 两档不透明。
@@ -232,6 +262,7 @@ __all__ = [
     "MARGIN_SIDE",
     "MARGIN_TOP",
     "MAX_WIDTH",
+    "MIN_AVOID_WIDTH",
     "PADDING_X",
     "PADDING_Y",
     "BannerOverlay",
