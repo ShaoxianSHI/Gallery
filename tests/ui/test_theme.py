@@ -29,6 +29,7 @@ from PySide6.QtWidgets import QApplication, QFrame, QWidget  # noqa: E402
 from waiting import DEFAULT_TIMEOUT_SECONDS, wait_for_idle
 
 from gallery.core.library.config import prepare_library  # noqa: E402
+from gallery.core.library.search import DEFAULT_FIELD, SearchCondition  # noqa: E402
 from gallery.core.library.session import (  # noqa: E402
     BROWSE_MODE_ALBUMS,
     BROWSE_MODE_CALENDAR,
@@ -37,6 +38,7 @@ from gallery.core.library.session import (  # noqa: E402
 )
 from gallery.ui import theme  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
+from gallery.ui.panels.breadcrumb import ChipButton  # noqa: E402
 
 #: 取样点离右边多远。相册只有两个，右边整片是空的，取到的就是底色本身。
 SAMPLE_FROM_RIGHT = 24
@@ -386,5 +388,66 @@ def test_drag_region_is_everything_above_the_content(window: MainWindow) -> None
         else:
             # 离屏平台没有标题栏，内容顶到窗口最上沿：这时不存在可拖的那一条
             assert not window._is_title_bar(QPointF(200, top))
+    finally:
+        window.close()
+
+
+# ---- 样式表里的 palette(...) ---------------------------------------------------
+
+
+def _chip_ink(window: MainWindow) -> tuple[float, float]:
+    """条件胶囊那一块里**最暗与最亮**的两个像素（字色就落在其中一端）。
+
+    在**窗口**截图上量，不在控件上量：胶囊那一格是 ``background: transparent``，
+    单独 grab 一个控件只会得到一块没画过底的图（实测全黑），量出来的「对比」是假的。
+    """
+    chips = window._breadcrumb.findChildren(ChipButton)
+    assert chips, "条件胶囊没摆出来 —— 这条量的是它的字色"
+    chip = chips[-1]
+    image = window.grab().toImage()
+    top_left = chip.mapTo(window, QPoint(0, 0))
+    shades = [
+        image.pixelColor(x, y).lightnessF()
+        for x in range(top_left.x() + 3, top_left.x() + chip.width() - 3)
+        for y in range(top_left.y() + 3, top_left.y() + chip.height() - 3)
+    ]
+    return min(shades), max(shades)
+
+
+def test_condition_chip_ink_follows_the_theme_at_once(
+    qt_app: QApplication, window: MainWindow, appearance: Callable[..., None]
+) -> None:
+    """切浅色 / 深色之后，条件胶囊的字色**当场**就跟着走，不要等点一下。
+
+    回归的是真实缺陷（用户原话：「刚切换深色浅色模式时，搜索条件的字体颜色不会立刻改变，
+    需要点一下才会改变」）。原因在 ``ui.theme`` 模块文档第 3 条：样式表里的
+    ``palette(...)`` 只在样式表装上去的那一刻解析一次，改调色板不会让它重来。点一下管用
+    是因为那一下**重建了胶囊**，于是重新解析了一遍 —— 于是症状长成「要点一下」。
+
+    **量的是渲染出来的像素**：胶囊的调色板一直是新的（深色下 ``#ececee``），只有画出来
+    的那一层停在原处；查调色板会把这条测成绿的。
+    """
+    try:
+        window._conditions = [
+            SearchCondition(field=DEFAULT_FIELD, text="海边", comparator="contains", value="海边")
+        ]
+        window._update_breadcrumb()
+        qt_app.processEvents()
+        for tag, window_colour, base_colour in (
+            ("浅色", LIGHT_WINDOW, LIGHT_BASE),
+            ("深色", DARK_WINDOW, DARK_BASE),
+            ("再切回浅色", LIGHT_WINDOW, LIGHT_BASE),
+        ):
+            appearance(window=window_colour, base=base_colour)
+            dark_end, light_end = _chip_ink(window)
+            if base_colour == LIGHT_BASE:
+                readable = dark_end < 0.4
+                what = f"{tag}：胶囊上最暗的那一端是 {dark_end:.2f}"
+            else:
+                readable = light_end > 0.6
+                what = f"{tag}：胶囊上最亮的那一端是 {light_end:.2f}"
+            assert readable, f"{what} —— 字压在底上，看不见。要「立刻」变，不要靠点一下重建。"
+            # 胶囊是**换过主题之前**就在那儿的那一枚，不许在两轮之间重建过
+            assert window._breadcrumb.findChildren(ChipButton)
     finally:
         window.close()

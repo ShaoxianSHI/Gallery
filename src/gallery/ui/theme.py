@@ -17,13 +17,17 @@
   底下、让标题栏不再画自己的底（见 :func:`unify_title_bar`），那一段于是也成了我们的底色。
 - 少数自己画底色的地方（大图区、元数据面板）不写死颜色，改为从这里取。
 
-**两个 Qt 上的坑，都在这里绕开**：
+**三个 Qt 上的坑，都在这里绕开**：
 
 1. ``QApplication.setPalette()`` 会把应用调色板标成「显式设置」。此后系统换浅色 / 深色时
    Qt 不再更新它，表现就是「切到浅色，只有 macOS 画的标题栏变浅了，其余还是黑的」。
    所以这里**绝不碰应用调色板**，只在控件上下发；系统怎么变，我们照单全收。
 2. 带样式表的控件会被 ``QStyleSheetStyle`` 塞一份「自己的」调色板，应用级的变化到不了
    它们，所以 :func:`_push_palette` 逐个控件显式设置一遍。
+3. 样式表里的 ``palette(...)`` **只在样式表装上去的那一刻解析一次**，之后改调色板它不会
+   重来 —— 症状是「切了深浅色，那一枚胶囊的字色停在原处，要点一下才对」（点一下会重建
+   它，于是重新解析了一遍）。所以 :func:`_push_one` 把**原样的样式表再设一遍**：
+   颜色仍由 Qt 自己按那一档调色板挑，浅色深色各自是什么就是什么，这里修的是「不立刻变」。
 
 要换底色只改 :data:`BACKGROUND_ROLE` 一处。
 """
@@ -49,6 +53,11 @@ BACKGROUND_ROLES = (
     QPalette.ColorRole.Base,
     QPalette.ColorRole.AlternateBase,
 )
+
+#: 样式表里写了它才需要「重新解析一遍」（见 :func:`_push_one`）。**只看这一个词**，
+#: 别改成「凡是带样式表的都重设」：外面那一大圈控件是自绘的（胶囊、横幅、日历），
+#: 重设它们的样式表纯属白费力气，而自绘控件另有各自的 ``_apply_theme`` 收拾。
+_PALETTE_KEYWORD = "palette("
 
 
 def rgba(color: QColor) -> str:
@@ -117,6 +126,23 @@ def current_theme(app: QApplication | None = None) -> AppTheme:
     )
 
 
+def _push_one(widget: QWidget, palette: QPalette) -> None:
+    """把调色板给一个控件，并让它的样式表**重新解析一次**。
+
+    **为什么样式表要再设一遍**（模块文档第 3 条）：``palette(...)`` 只在样式表装上去的
+    那一刻被解析成具体颜色，之后无论控件还是应用的调色板改了，它都不会重来。症状是
+    「切深浅色要等一下才对，点一下就对」—— 点一下之所以管用，是因为那一下重建了控件。
+
+    重新解析之后拿到的颜色**与当初建它时同一档调色板解析出来的完全一样**：这一句修的是
+    「不立刻变」，不是「换个颜色」。真要改某处颜色，那是那个控件自己的 ``_apply_theme``
+    与样式表函数的事。
+    """
+    widget.setPalette(palette)
+    sheet = widget.styleSheet()
+    if _PALETTE_KEYWORD in sheet:
+        widget.setStyleSheet(sheet)
+
+
 def _push_palette(app: QApplication, palette: QPalette) -> None:
     """把调色板逐个送到窗口里的每个控件。
 
@@ -129,7 +155,7 @@ def _push_palette(app: QApplication, palette: QPalette) -> None:
         pending = [top]
         while pending:
             widget = pending.pop()
-            widget.setPalette(palette)
+            _push_one(widget, palette)
             pending.extend(child for child in widget.children() if isinstance(child, QWidget))
 
 
@@ -165,7 +191,7 @@ def push_palette(widget: QWidget, *, app: QApplication | None = None) -> None:
     pending = [widget]
     while pending:
         current = pending.pop()
-        current.setPalette(palette)
+        _push_one(current, palette)
         pending.extend(child for child in current.children() if isinstance(child, QWidget))
 
 
