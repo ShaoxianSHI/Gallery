@@ -247,8 +247,10 @@ def group_by_day(
 ) -> dict[datetime.date, list[PhotoRef]]:
     """按天分桶，**只含有照片的那些天**。
 
-    没有拍摄时间的照片直接不进来（ADR 0033 决策 4）。每桶内按拍摄时间排 ——
-    桶里第一张就是「那天最早的那张」，周 / 日视图拿它当那一格的封面。
+    没有拍摄时间的照片直接不进来（ADR 0033 决策 4）。每桶内按 ``(拍摄时间, 文件名)``
+    升序排 —— 于是**桶里第一张就是「那天最早的那张」**，那一格拿哪张当代表问
+    :func:`cell_cover`（**别在界面里自己写 ``photos[0]``**：三层各写一遍就各行其是，
+    曾经年视图取最晚的那一张，于是同一天在年视图与月视图里是两张脸）。
     """
     buckets: dict[datetime.date, list[tuple[float, str, PhotoRef]]] = {}
     for ref in photos:
@@ -272,6 +274,8 @@ def group_by_hour(
     **分钟与秒不参与**：一次连拍 48 张常常全在 19:44:02，按小时归一之后它们就是
     同一格，于是那一格的问题只剩「一格放几张」，不再是一小时切 48 条 0.8 像素高
     的细条（那条算下来是负数，什么都画不出来）。
+
+    排序与 :func:`group_by_day` 同一套，因此那一格的代表同样问 :func:`cell_cover`。
     """
     buckets: dict[tuple[datetime.date, int], list[tuple[float, str, PhotoRef]]] = {}
     for ref in photos:
@@ -285,6 +289,30 @@ def group_by_hour(
         key: [ref for _, _, ref in sorted(items, key=lambda item: (item[0], item[1]))]
         for key, items in buckets.items()
     }
+
+
+def cell_cover(photos: Sequence[PhotoRef]) -> PhotoRef | None:
+    """一格（一天 / 一个小时）拿哪张照片当代表 —— 空桶就是 ``None``。
+
+    **一个格子只有一张脸**：年 / 月两层一格就是一天、周视图一格是一个钟点，
+    里面几十张也只画得出一张（角标上写着张数）。挑哪一张是**产品的选择**，
+    所以它只有这一个来源 —— 三层各自写 ``photos[0]`` 或 ``photos[-1]`` 时，
+    同一天在年视图里与月视图里会长成两张脸（实测就是这么发生的）。
+
+    **取桶里第一张，也就是按拍摄时间最早的那张**：
+
+    - :func:`group_by_day` / :func:`group_by_hour` 按 ``(拍摄时间, 文件名)`` 升序排，
+      于是「第一张」有确定含义，不依赖谁在读这份桶；
+    - **同一个日子在三层里是同一张脸**：年视图缩到二十几像素也好、月视图铺满一格也好，
+      用户按 `Y` 与按 `M` 看到的「9 月 12 日」不该是两张照片；
+    - 「那天最早的那张」也是点开那一格之后网格里排在最前面的那一张（桶不重排），
+      于是「格子上看到的脸」与「点进去看到的第一张」是同一张。
+
+    曾经年视图取**最晚**的那一张（「最近的才是用户觉得该当代表的那张」），与另两层
+    相反。理由本身不坏，坏的是它只写在年视图的模块说明里、另两层没人知道 ——
+    那是三份互不相认的约定，不是一条约定。
+    """
+    return photos[0] if photos else None
 
 
 def count_days(buckets: DayBuckets, days: Iterable[datetime.date]) -> int:
@@ -307,6 +335,7 @@ __all__ = [
     "HourBuckets",
     "capture_day",
     "capture_hour",
+    "cell_cover",
     "count_days",
     "count_hours",
     "days_in_month",

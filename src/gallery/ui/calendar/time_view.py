@@ -22,6 +22,7 @@ from gallery.core.library.calendar import (
     WEEKDAY_NAMES,
     DayBuckets,
     HourBuckets,
+    cell_cover,
     week_index,
     week_start,
 )
@@ -291,6 +292,8 @@ class WeekView(LevelView):
 
         **上下再多要三小时**：滚动去抖之后才重报窗口，那一段如果正好有照片，
         用户会看见格子空着再被填上。
+
+        **挑哪一张问 ``cell_cover``**（那一小时里最早的那张），与年 / 月两层同一个来源。
         """
         refs: list[PhotoRef] = []
         visible = set(self.days())
@@ -300,12 +303,14 @@ class WeekView(LevelView):
         bottom = top + max(self._area.viewport().height(), row * 4)
         margin = row * PREFETCH_HOURS
         for (day, hour), photos in self._by_hour.items():
-            if day not in visible or not photos:
+            if day not in visible:
                 continue
             y = hour * row
             if y + row < top - margin or y > bottom + margin:
                 continue
-            refs.append(photos[0])
+            cover = cell_cover(photos)
+            if cover is not None:
+                refs.append(cover)
         return refs
 
     def repaint_content(self) -> None:
@@ -475,9 +480,10 @@ class _TimeGrid(QWidget):
         cell = QRectF(row.left() + x, row.top() + y, cell_w, cell_h)
         if self._view.is_selected_cell(day, hour):
             fill_rounded(painter, cell, colors.selection, CARD_RADIUS)
-        if not photos:
+        cover = cell_cover(photos)
+        if cover is None:
             return
-        image = self._view.photo(photos[0])
+        image = self._view.photo(cover)
         if image is None:
             dot(painter, cell.center(), 2.5, colors.faint)
             return

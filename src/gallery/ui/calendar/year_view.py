@@ -4,8 +4,10 @@
 但**日期格里铺照片** —— 那是日历里「这一天拍了几十张」唯一说得清的地方：
 365 个数字表达不了密度（ADR 0033 决策 2）。
 
-有照片的那一天铺当天**最晚**的一张当封面（小月格子小，最近的那张通常也是用户觉得
-该当代表的那张），上面再压一枚底色日期徽标，于是深浅照片上都读得出数字。
+有照片的那一天铺当天**最早**的一张当封面，上面再压一枚底色日期徽标，于是深浅照片上
+都读得出数字。**挑哪一张不归这一层管**：它问核心层的 ``cell_cover``，与月 / 周两层
+同一个来源 —— 曾经这一层取最晚、另两层取最早，于是同一天按 `Y` 与按 `M` 看到的是
+两张照片。
 
 **每张小月里也只有它自己那个月的日子有照片。** 12 张小月都是含上下月补位的 6 × 7，
 于是 10 月 1 日在「9 月」那张的末尾与「10 月」那张的开头各出现一次 —— 照片摆了两遍、
@@ -26,6 +28,7 @@ from PySide6.QtGui import QFont, QMouseEvent, QPainter
 
 from gallery.core.library.calendar import (
     WEEKDAY_HEADERS,
+    cell_cover,
     count_days,
     in_month,
     month_days,
@@ -171,8 +174,9 @@ class YearView(LevelView):
         if selected:
             fill_rounded(painter, cell, colors.selection, _CELL_RADIUS)
         photos = self.photos_of(day) if own else ()
-        if photos:
-            paint_photo(painter, cell, self.photo(photos[-1]), radius=_CELL_RADIUS)
+        cover = cell_cover(photos)
+        if cover is not None:
+            paint_photo(painter, cell, self.photo(cover), radius=_CELL_RADIUS)
             size = min(cell.height() * 0.66, 16.0)
             badge = QRectF(cell.center().x() - size / 2, cell.center().y() - size / 2, size, size)
             fill_rounded(painter, badge, self.background, size / 2)
@@ -238,13 +242,17 @@ class YearView(LevelView):
 
         **走 ``month_days`` 而不是 42 天的矩阵**：补位格里不摆照片，为它解码出来的那张
         永远不会被画出来，而同一张照片本来就会在它自己那张小月里报一次。
+
+        **挑哪一张问 ``cell_cover``**，不在这儿写死 ``[-1]`` 或 ``[0]``（理由见那里）：
+        曾经年视图取最晚的那一张而月 / 周两层取最早的那一张，于是同一天按 `Y` 与按 `M`
+        看到的是两张脸 —— 而这一格是「一天的代表」，它只该有一张脸。
         """
         refs: list[PhotoRef] = []
         for index in range(12):
             for day in month_days(datetime.date(self._anchor.year, index + 1, 1)):
-                photos = self.photos_of(day)
-                if photos:
-                    refs.append(photos[-1])
+                cover = cell_cover(self.photos_of(day))
+                if cover is not None:
+                    refs.append(cover)
         return refs
 
     def thumbnail_edge(self) -> int:

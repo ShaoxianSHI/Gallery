@@ -14,6 +14,7 @@ from gallery.core.library.calendar import (
     WEEKEND_WEEKDAYS,
     capture_day,
     capture_hour,
+    cell_cover,
     count_days,
     count_hours,
     days_in_month,
@@ -264,6 +265,27 @@ def test_group_by_day_sorts_inside_a_day_by_capture_time() -> None:
         refs[1].path: PhotoFacets(captured_at=100.0, year=2021, month=9, day=12),
     }
     assert group_by_day(refs, values)[datetime.date(2021, 9, 12)] == [refs[1], refs[0]]
+
+
+def test_the_cell_cover_is_the_earliest_photo_of_that_day() -> None:
+    """一格拿**最早**的那张当代表 —— 三层共用这一条（ADR 0033）。
+
+    曾经年视图取 ``[-1]``（最晚）、月 / 周两层取 ``[0]``（最早），于是同一天在年视图里
+    与月视图里是两张照片。理由留在核心层，三层不再各写一遍。
+    """
+    refs = [make_ref("third.jpg"), make_ref("first.jpg"), make_ref("second.jpg")]
+    values = {
+        refs[0].path: PhotoFacets(captured_at=300.0, year=2021, month=9, day=12),
+        refs[1].path: PhotoFacets(captured_at=100.0, year=2021, month=9, day=12),
+        refs[2].path: PhotoFacets(captured_at=200.0, year=2021, month=9, day=12),
+    }
+    bucket = group_by_day(refs, values)[datetime.date(2021, 9, 12)]
+    assert cell_cover(bucket) is refs[1]
+
+
+def test_an_empty_bucket_has_no_cover() -> None:
+    """空桶没有脸可画 —— 返回 ``None``，由界面画占位（**不是 ``IndexError``**）。"""
+    assert cell_cover([]) is None
 
 
 def test_a_burst_lands_in_one_hour_bucket() -> None:

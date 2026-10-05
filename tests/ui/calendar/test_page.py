@@ -618,6 +618,97 @@ def test_window_changed_fires_when_the_level_moves(page: CalendarPage) -> None:
     assert len(seen) >= 3
 
 
+# ---- 那一格拿哪一张当代表：三层必须是同一张 ---------------------------------
+
+
+def test_every_level_shows_the_same_photo_for_the_same_day(
+    page: CalendarPage,
+    qt_app: QApplication,  # noqa: ARG001
+) -> None:
+    """**同一天在三层里是同一张照片** —— 一格只有一张脸。
+
+    曾经年视图取当天**最晚**的那张而月 / 周两层取**最早**的那张，于是 9 月 12 日
+    在年视图里是 09:02 拍的那张、切到月视图就变成 09:00 的那张。同一个日子在两屏上
+    长成两张脸，用户会以为是自己记错了哪一天。
+
+    **三层各报的那一张必须是同一个文件** —— 报的那张（`visible_refs`，决定去解码谁）
+    与画的那张（`paint_*`）是成对的，只改一处的话格子会永远停在占位圆点上，
+    所以这一条量的是报窗口，与下面那条量绘制的那条配成一对。
+    """
+    refs = [_photo(f"三种{index}.jpg") for index in range(3)]
+    page.set_photos(
+        refs,
+        {
+            # 同一个钟点里三张，拍摄时间依次变晚：08:00 / 08:01 / 08:02
+            ref.path: _values(ref, TODAY, 8, index)
+            for index, ref in enumerate(refs)
+        },
+    )
+    page.resize(1200, 800)
+    page.show()
+    qt_app.processEvents()
+
+    wanted: dict[str, Path] = {}
+    for level in ("year", "month", "week"):
+        page.set_level(level)
+        qt_app.processEvents()
+        reported = [ref.path for ref in page.current_view().visible_refs()]
+        assert refs[0].path in reported, (
+            f"{level} 视图没有要当天最早的那张（{refs[0].name}）；它要的是 {reported}"
+        )
+        for ref in refs[1:]:
+            assert ref.path not in reported, f"{level} 视图把当天较晚的那张（{ref.name}）当成了代表"
+        wanted[level] = refs[0].path
+
+    assert len(set(wanted.values())) == 1, f"三层给同一天挑了不同的代表：{wanted}"
+
+
+def test_the_year_view_draws_the_photo_it_reported(
+    page: CalendarPage,
+    qt_app: QApplication,  # noqa: ARG001
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """年视图**画的那一张**就是它报的那一张（曾经一格报 `[-1]` 而画 `[0]`）。
+
+    这两处是成对的，分开写就会出现「要了 A 的图、屏幕上画的是 B」—— 症状是那一格
+    永远是占位圆点，而 ``photo()`` 一查是有图的（数据没错，于是格外难查）。
+    """
+    refs = [_photo(f"一对{index}.jpg") for index in range(2)]
+    page.set_photos(
+        refs,
+        {ref.path: _values(ref, TODAY, 8, index) for index, ref in enumerate(refs)},
+    )
+    page.set_level("year")
+    page.resize(1200, 800)
+    page.show()
+    qt_app.processEvents()
+    view = page.current_view()
+
+    # 每张缩略图各自填一种颜色，格子里画出来的到底是哪一张一眼就分得开。
+    for index, ref in enumerate(refs):
+        image = QImage(48, 48, QImage.Format.Format_RGB32)
+        image.fill(QColor(20 * (index + 1), 0, 0))
+        page.set_thumbnail(ref.path, image, page.thumbnail_edge())
+
+    asked: list[Path] = []
+    original = view.photo
+
+    def record(ref):  # type: ignore[no-untyped-def]
+        asked.append(ref.path)
+        return original(ref)
+
+    monkeypatch.setattr(view, "photo", record)
+    view.render(QPixmap(view.size()))
+
+    assert asked, "这一帧里一格都没查过缩略图 —— 测试在错误的前提下空转成绿的"
+    reported = {ref.path for ref in view.visible_refs()}
+    assert len(reported) == 1, f"前提不成立：这一天报了 {len(reported)} 张：{reported}"
+    assert set(asked) <= reported, (
+        f"画的时候查了 {sorted(set(asked))}，报出去的却是 {sorted(reported)} —— "
+        "要了 A 的图、画的是 B"
+    )
+
+
 def _a_year_of_photos(page: CalendarPage, count: int = 40) -> list[PhotoRef]:
     refs = [_photo(f"burst{index}.jpg") for index in range(count)]
     page.set_photos(

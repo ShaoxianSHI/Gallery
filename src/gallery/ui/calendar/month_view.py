@@ -23,6 +23,7 @@ from PySide6.QtGui import QFont, QMouseEvent, QPainter
 
 from gallery.core.library.calendar import (
     WEEKDAY_HEADERS,
+    cell_cover,
     in_month,
     month_matrix,
     week_index,
@@ -121,18 +122,20 @@ class MonthView(LevelView):
         if outside:
             return
         photos = self.photos_of(day)
-        if not photos:
+        cover = cell_cover(photos)
+        if cover is None:
             return
 
-        # **一格一张**：当天最早的那张（按拍摄时间排好之后的第一张）铺满日期下面那块，
-        # 比例按它自己的来 —— 竖幅照片上下留边、横向照片左右留边，与网格视图同一手法。
+        # **一格一张**：挑哪一张问核心层的 ``cell_cover``（当天最早的那张），与年 / 周
+        # 两层同一个来源 —— 比例按它自己的来，竖幅照片上下留边、横向照片左右留边，
+        # 与网格视图同一手法。
         area = QRectF(
             cell.left(),
             cell.top() + _NUMBER_HEIGHT,
             cell.width(),
             cell.height() - _NUMBER_HEIGHT,
         )
-        image = self.photo(photos[0])
+        image = self.photo(cover)
         if image is None:
             # 缩略图还没到：画一个安静的占位（一个居中的小圆点），不留空白
             dot(painter, area.center(), 2.5, colors.faint)
@@ -184,8 +187,9 @@ class MonthView(LevelView):
             if not in_month(day, self._anchor):
                 continue
             photos = self.photos_of(day)
-            if photos:
-                refs.append(photos[0])
+            cover = cell_cover(photos)
+            if cover is not None:
+                refs.append(cover)
         return refs
 
     def thumbnail_edge(self) -> int:
