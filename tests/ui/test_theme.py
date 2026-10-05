@@ -25,7 +25,7 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QPoint, QPointF, Qt  # noqa: E402
 from PySide6.QtGui import QColor, QImage, QPalette  # noqa: E402
-from PySide6.QtWidgets import QApplication, QFrame, QWidget  # noqa: E402
+from PySide6.QtWidgets import QApplication, QFrame, QLabel, QWidget  # noqa: E402
 from waiting import DEFAULT_TIMEOUT_SECONDS, wait_for_idle
 
 from gallery.core.library.config import prepare_library  # noqa: E402
@@ -66,6 +66,16 @@ def _platform_palette(app: QApplication, *, window: QColor, base: QColor) -> QPa
         QPalette.ColorRole.Link,
     ):
         palette.setColor(role, QColor(0xEC, 0xEC, 0xEE) if dark else QColor(0x1A, 0x1A, 0x1A))
+    # ``Mid`` 一族（Qt 用它画 3D 边框的中间那一档）深色下**一路压暗到 #585858**，
+    # 浅色下是 #b8b8b8。补上这一档不是较真：样式表里 ``palette(mid)`` 读的是**应用**
+    # 调色板（见 ``ui.menu_style`` 的模块文档），不设它的话离屏平台那份默认值会一直留在
+    # #b8b8b8，于是「深色下那一枚记号看不见」这件事在测试里压根不会发生。
+    for role in (
+        QPalette.ColorRole.Light,
+        QPalette.ColorRole.Midlight,
+        QPalette.ColorRole.Mid,
+    ):
+        palette.setColor(role, QColor(0x58, 0x58, 0x58) if dark else QColor(0xB8, 0xB8, 0xB8))
     return palette
 
 
@@ -449,5 +459,76 @@ def test_condition_chip_ink_follows_the_theme_at_once(
             assert readable, f"{what} —— 字压在底上，看不见。要「立刻」变，不要靠点一下重建。"
             # 胶囊是**换过主题之前**就在那儿的那一枚，不许在两轮之间重建过
             assert window._breadcrumb.findChildren(ChipButton)
+    finally:
+        window.close()
+
+
+# ---- 面包屑里那一枚分隔记号 ------------------------------------------------------
+
+
+def _contrast(a: QColor, b: QColor) -> float:
+    """WCAG 的对比度（相对亮度之比，落在 1:1 ~ 21:1）。"""
+
+    def luminance(color: QColor) -> float:
+        channels = []
+        for value in (color.redF(), color.greenF(), color.blueF()):
+            channels.append(value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4)
+        return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+    high, low = sorted((luminance(a), luminance(b)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
+def test_the_separator_is_visible_on_both_appearances(
+    qt_app: QApplication, window: MainWindow, appearance: Callable[..., None]
+) -> None:
+    """面包屑里那个 ``▸`` 在浅色与深色下都要看得见。
+
+    回归的是真实缺陷（用户原话：「面包屑里面的分隔符似乎是固定的灰色，在深色模式下看不清」）。
+    原因与 ``panels.welcome`` 那处一模一样：**拿 ``palette(mid)`` 当字色**。深色下那一档
+    是 ``#585858``，压在 ``#171717`` 的底上只有 2.52:1 —— 而 ``▸`` 是 11 点、笔画只有两三个
+    像素宽的字，抗锯齿一摊开就彻底没了。
+
+    **量的是渲染出来的像素，不是控件的调色板**：颜色是带透明度写进样式表的（``rgba(...)``），
+    而 Qt 不会把带透明度的 ``color`` 落到控件调色板的 ``Text`` 那一栏上 —— 读那一栏永远
+    读到的是正文色，于是这条会一直绿着，测不到任何东西。
+
+    判的是 **WCAG 对非文字内容那条 3:1**（这个记号不承载文字，是图形），量的是**画得最实
+    的那个像素** —— 它最接近字色本身，抗锯齿的边缘像素反而会把它量低。
+    """
+    try:
+        window._conditions = [
+            SearchCondition(field=DEFAULT_FIELD, text="海边", comparator="contains", value="海边")
+        ]
+        window._update_breadcrumb()
+        qt_app.processEvents()
+        for tag, window_colour, base_colour in (
+            ("浅色", LIGHT_WINDOW, LIGHT_BASE),
+            ("深色", DARK_WINDOW, DARK_BASE),
+        ):
+            appearance(window=window_colour, base=base_colour)
+            separators = [
+                widget
+                for widget in window._breadcrumb.findChildren(QLabel, "separator")
+                if widget.isVisible() and widget.width() < 100
+            ]
+            assert separators, "分隔符没摆出来（或者摆出来还没落位）—— 这条量的是它的字色"
+            image = window.grab().toImage()
+            separator = separators[0]
+            top_left = separator.mapTo(window, QPoint(0, 0))
+            background = image.pixelColor(top_left.x() + 1, top_left.y() + 1)
+            inked = [
+                image.pixelColor(x, y)
+                for x in range(top_left.x(), top_left.x() + separator.width())
+                for y in range(top_left.y(), top_left.y() + separator.height())
+                if image.pixelColor(x, y) != background
+            ]
+            assert inked, f"{tag}：分隔符一个像素都没画出来"
+            strongest = max(inked, key=lambda color: _contrast(color, background))
+            measured = _contrast(strongest, background)
+            assert measured >= 3.0, (
+                f"{tag}：分隔符画得最实的一笔是 {strongest.name()}，底色 "
+                f"{background.name()}，对比只有 {measured:.2f}:1 —— 低于非文字内容那条 3:1"
+            )
     finally:
         window.close()

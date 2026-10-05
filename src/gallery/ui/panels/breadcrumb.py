@@ -18,10 +18,24 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFontMetrics, QMouseEvent
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QToolButton, QWidget
 
+from gallery.ui import theme
 from gallery.ui.panels.layout import clear_layout
+from gallery.ui.theme import rgba
 
 #: 分隔符。
 SEPARATOR = "▸"
+
+#: 分隔符的字色取正文色的这一档不透明度。
+#:
+#: **不能写 ``palette(mid)``** —— 那是 Qt 的「填充色」角色（给未选中的行、表格隔行铺底
+#: 用的），深色下那一档是 ``#585858``，压在 ``#171717`` 的底上只有 **2.52:1**，而分隔符
+#: 是个 11 点、笔画只有两三个像素宽的 ``▸``，抗锯齿一摊开就彻底看不见了（实测那一块
+#: 最实的一笔也只有 2.48:1）。``panels.welcome`` 那一处是同一个道理。
+#:
+#: 0.55 是按 **3:1** 那条线挑的：WCAG 对非文字内容（这里就是这个记号）要 3:1，而浅色下
+#: 是**它**先到边（实测浅色 3.90:1、深色 6.14:1）。与元数据面板那几个标签同一档
+#: （``panels.metadata`` 里的 0.52 / 0.55），于是那一块面板与这一行看着是同一套深浅。
+SEPARATOR_ALPHA = 0.55
 
 #: 条件胶囊右边那个「撤掉它」的记号。
 DISMISS_MARK = "✕"
@@ -29,6 +43,10 @@ DISMISS_MARK = "✕"
 #: 这一行上下左右各留多少（点）。右边那一格只是**默认值** —— 有条件胶囊时它由
 #: :meth:`BreadcrumbBar.set_right_inset` 按搜索胶囊的右缘换算过来。
 _PAD = 2
+
+#: 分隔符那一枚 ``QLabel`` 的名字。只为 :meth:`BreadcrumbBar._apply_theme` 认得出它们
+#: —— 换外观时要挨个重上一次色（见那里）。
+_SEPARATOR_OBJECT_NAME = "separator"
 
 #: 胶囊左右各留多少（点）。**热区算它**（见 :meth:`ChipButton._hits_mark`），
 #: 改样式表里的内边距时这个也要跟着改 —— 两处写同一个数不如让计算从样式表那一档来。
@@ -135,6 +153,12 @@ class BreadcrumbBar(QWidget):
         self._layout = QHBoxLayout(self)
         self._layout.setContentsMargins(_PAD, _PAD, _PAD, _PAD)
         self._layout.setSpacing(0)
+        self._theme = theme.current_theme()
+        # **收下 ``ensure_installed()`` 返回的那一个监听器，不要自己去找** —— 它挂在
+        # ``QApplication`` 上，``findChild`` 只翻控件自己的子孙（``calendar.page`` 为此
+        # 吃过一次亏，注释在那里）。
+        self._watcher = theme.ensure_installed()
+        self._watcher.changed.connect(self._apply_theme)
 
     def set_right_inset(self, points: int) -> None:
         """把右端那几枚条件胶囊的右缘推到「离**这一行**的右缘 ``points`` 点」的地方。
@@ -150,6 +174,21 @@ class BreadcrumbBar(QWidget):
         面包屑下一行，两者互不相干。
         """
         self._layout.setContentsMargins(_PAD, _PAD, max(0, points), _PAD)
+
+    def _apply_theme(self) -> None:
+        """系统换浅色 / 深色之后，把**现存的**分隔符按新主题重上一次色。
+
+        **就地改样式，不整条重摆**：重摆会把这一行拆了重装，而新控件要等布局再激活一轮
+        才落位（实测那一刻它们还停在 640×480 的默认尺寸且不可见，分隔符干脆消失）。
+        而这一行里会随外观变的**只有分隔符的字色**（其余要么是调色板角色、要么由各自控件的
+        ``_apply_theme`` 负责），于是逐个补一次样式既够又便宜。
+
+        换完之后**新建**的那几枚不用管：``_separator`` 每次都从 ``self._theme`` 现取。
+        """
+        self._theme = theme.current_theme()
+        style = self._separator_style()
+        for widget in self.findChildren(QLabel, _SEPARATOR_OBJECT_NAME):
+            widget.setStyleSheet(style)
 
     def set_path(
         self,
@@ -216,8 +255,14 @@ class BreadcrumbBar(QWidget):
 
     def _separator(self) -> QLabel:
         separator = QLabel(SEPARATOR)
-        separator.setStyleSheet("color: palette(mid); font-size: 11px;")
+        # 名字是给 :meth:`_apply_theme` 认的：换外观时它要挨个找到现存的那些（见那里）。
+        separator.setObjectName(_SEPARATOR_OBJECT_NAME)
+        separator.setStyleSheet(self._separator_style())
         return separator
+
+    def _separator_style(self) -> str:
+        """分隔符那一枚记号的字色 —— **由主题派生**，理由见 :data:`SEPARATOR_ALPHA`。"""
+        return f"color: {rgba(self._theme.text_at(SEPARATOR_ALPHA))}; font-size: 11px;"
 
     def _segment_button(self, label: str, path: Path) -> QToolButton:
         button = QToolButton()
