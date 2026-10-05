@@ -10,6 +10,10 @@ Esc 同时还管着「大图页回网格」和「行内重命名取消」，所�
 **缩略图一档一档挪：⇧⌘↑ / ⇧⌘↓。** 捏合与 ⌘+滚轮要手搭在触控板上，这两条给的是键盘那一路。
 它们只作用在**网格**上：大图页里 ⌘+ / ⌘- 才是缩放，那边只有倍率、没有「档」。
 
+**⌘W 关窗、⌘Q 退出。** 这一对是 macOS 的标准分工（ADR 0037）：⌘W 关掉这一个窗口而应用
+还活着，⌘Q 才是退出。这里钉的是**按键那一侧**；「关掉最后一个窗口为什么不退出应用」
+是应用层的事，在 ``tests/ui/test_app.py``。
+
 全部用离屏 Qt，照片都是 ``tmp_path`` 里当场造的。
 """
 
@@ -34,6 +38,7 @@ from gallery.core.library.session import (  # noqa: E402
     SessionState,
     save_session,
 )
+from gallery.core.paths import app_state_file  # noqa: E402
 from gallery.ui.browser.thumb_sizes import DEFAULT_INDEX, THUMBNAIL_SIZES  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.rename_edit import RenameEdit  # noqa: E402
@@ -167,6 +172,88 @@ def test_rename_editor_claims_escape_from_the_window(qt_app: QApplication) -> No
     QCoreApplication.sendEvent(editor, override)
 
     assert override.isAccepted() is True
+
+
+# ---- 关窗与退出（⌘W / ⌘Q，ADR 0037）------------------------------------------
+#
+# **两者的键都刻意写死，不抄 ``StandardKey``**：Qt 在 macOS 上把 ``StandardKey.Close``
+# 解析成 ⌘F4、把 ``StandardKey.Quit`` 解析成**空序列**（实测 ``count() == 0``）——
+# 照抄那两份等于装了两个用户按不到的键，而 ⌘Q 那个更糟：它一直摆在菜单里，
+# 按下去却什么也不会发生。
+
+
+def test_cmd_w_closes_the_window(qt_app: QApplication, tmp_path: Path) -> None:
+    """⌘W 关掉窗口。**「不退出应用」的那一半在应用层**（见 ``tests/ui/test_app.py``）。
+
+    这里发的是真按键事件（走 Qt 的快捷键表）而不是直接调槽 —— 只 ``setShortcut``
+    而没挂进任何菜单的那种错，按键发过去什么都不会发生，测试却照样绿
+    （与下面缩略图那几条是同一个道理）。
+    """
+    library = tmp_path / "库"
+    (library / "海边").mkdir(parents=True)
+    window = open_window(qt_app, library)
+    try:
+        assert window._close_action.shortcut() == QKeySequence("Ctrl+W")
+
+        QTest.keyClick(window, Qt.Key.Key_W, Qt.KeyboardModifier.ControlModifier)
+        qt_app.processEvents()
+
+        assert window.isVisible() is False
+    finally:
+        window.close()
+
+
+def test_cmd_q_closes_the_window_and_saves_the_session(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """⌘Q 关窗之后还要说一声退出（:meth:`MainWindow.quit_app`）。
+
+    **判据是「窗口关掉 + 会话落盘」**：那两步是 ``closeEvent`` 做的，而
+    ``app.quit()`` 压根不发 ``closeEvent`` —— 只看窗口有没有关掉的话，
+    把整个 ``quit_app`` 缩成一行 ``app.quit()`` 这条用例照样绿。
+
+    **先把那份文件删掉再断言**：``open_window`` 摆窗口之前就写过一份，
+    于是「文件在不在」证明不了什么 —— 看着绿的那一次其实什么都没验。
+    """
+    library = tmp_path / "库"
+    (library / "海边").mkdir(parents=True)
+    window = open_window(qt_app, library)
+    try:
+        assert window._quit_action.shortcut() == QKeySequence("Ctrl+Q")
+        state_file = app_state_file(base=tmp_path / "状态")
+        state_file.unlink()
+        assert not state_file.exists(), "前提不成立：那份文件还在，验不到有没有重新写"
+
+        window._quit_action.trigger()
+        qt_app.processEvents()
+
+        assert window.isVisible() is False
+        assert state_file.is_file(), "会话没有落盘"
+        assert str(library) in state_file.read_text(encoding="utf-8")
+    finally:
+        window.close()
+
+
+def test_close_and_quit_sit_next_to_each_other_in_the_file_menu(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """菜单里挨着摆：这两条是同一族的两个动作，中间隔着的正是不该被顺手点掉的那一步。"""
+    library = tmp_path / "库"
+    (library / "海边").mkdir(parents=True)
+    window = open_window(qt_app, library)
+    try:
+        file_menu = next(
+            action.menu()
+            for action in window.menuBar().actions()
+            if action.text() == "文件" and action.menu() is not None
+        )
+
+        labels = [action.text() for action in file_menu.actions()]
+        assert labels.count("关闭窗口") == 1
+        assert labels.count("退出 Gallery") == 1
+        assert labels.index("关闭窗口") == labels.index("退出 Gallery") - 1
+    finally:
+        window.close()
 
 
 # ---- 缩略图一档一档挪（⇧⌘↑ / ⇧⌘↓）-------------------------------------------

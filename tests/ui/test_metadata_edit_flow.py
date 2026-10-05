@@ -26,7 +26,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PIL import Image  # noqa: E402
+from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtGui import QGuiApplication, QKeySequence  # noqa: E402
+from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
     QCheckBox,
@@ -1088,20 +1090,49 @@ def test_cmd_w_closes_the_dialog_without_touching_the_window(
 ) -> None:
     """⌘W 关的是**这个对话框**。
 
-    不挂这一条的话，⌘W 会一路走到主窗口 —— 在一个模态框里按 ⌘W 结果整个窗口没了，
-    那绝不是按键的人想做的事。
+    主窗口从 ADR 0037 起也有 ⌘W（关掉那个窗口）。模态框的快捷键优先于主窗口，
+    所以在框里按 ⌘W 关的是框 —— 不挂这一条的话，那一下会把整个窗口连同正在编辑的
+    那一摞一起带走。
+
+    **键是显式写出来的**：Qt 在 macOS 上把 ``StandardKey.Close`` 解析成 **⌘F4**，
+    而 macOS 上按的键是 ⌘W。这条原先挂的那份因此是个用户按不到的键 ——
+    它看起来「按得到」，只是因为当时主窗口上压根没有 ⌘W。
     """
     dialog = _dialog(None, PlaceState(city="苏州"))
 
     close_actions = [
-        action
-        for action in dialog.actions()
-        if action.shortcut() == QKeySequence(QKeySequence.StandardKey.Close)
+        action for action in dialog.actions() if action.shortcut() == QKeySequence("Ctrl+W")
     ]
 
-    assert len(close_actions) == 1
+    assert len(close_actions) == 1, "框里得有一条真的按得到的 ⌘W"
     close_actions[0].trigger()
     assert dialog.result() == QDialog.DialogCode.Rejected
+
+
+def test_cmd_w_in_the_dialog_closes_the_dialog_and_leaves_the_window_open(
+    qt_app: QApplication, focused: MainWindow
+) -> None:
+    """框开着的时候按 ⌘W：关掉的是**框**，窗口还开着。
+
+    这里发的是**真按键**（走 Qt 的快捷键表）而不是直接调槽 —— 上一条只验了「框上挂着
+    那一条」，而 ``trigger()`` 绕过了注册：挂上去却没注册的动作照样绿。
+
+    **窗口为什么不会跟着没**，两件事各管一半：**模态**挡着（框是用 ``exec()`` 开的，
+    主窗口被按在一边，它的 ⌘W 不生效），而**框自己那一条**让 ⌘W 在框里有事可做 ——
+    少了后一半，按键在框里落下来什么也不会发生，用户只会以为这个键坏了。
+    """
+    window = focused
+    dialog = MetadataEditDialog(window, MetadataState())
+    dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
+    dialog.show()
+    qt_app.processEvents()
+    assert window.isVisible() is True
+
+    QTest.keyClick(dialog, Qt.Key.Key_W, Qt.KeyboardModifier.ControlModifier)
+    qt_app.processEvents()
+
+    assert window.isVisible() is True, "⌘W 顺手把主窗口也带走了"
+    assert dialog.isVisible() is False, "⌘W 应当关掉这个框"
 
 
 def test_the_dialog_cannot_be_resized(qt_app: QApplication) -> None:

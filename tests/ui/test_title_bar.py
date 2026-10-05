@@ -11,6 +11,10 @@
 高亮都只有一份。它们仍在这里而不是另开一个 ``test_rename_edit.py``，是因为这条断言要
 的正是「两页看起来一样」，拆开就没有对象可断言了。
 
+第 5 块是**那一段上还发生的另外两件事**：按住拖窗口、双击进出全屏（ADR 0037）。它们与
+改名一样归那一段管，所以也钉在这里 —— 而拖窗口那一路必须**等过一个双击周期**才发起，
+理由写在 :meth:`MainWindow.mousePressEvent` 里，症状是「双击标题栏一次都不生效」。
+
 第3 块里每条写操作都对着 ``tmp_path`` 里的副本，并且断言 journal 里记了一笔
 （红线 4：任何写回都必须可回滚）。
 
@@ -28,8 +32,8 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QRect, Qt  # noqa: E402
-from PySide6.QtGui import QFontMetrics  # noqa: E402
+from PySide6.QtCore import QPoint, QPointF, QRect, Qt  # noqa: E402
+from PySide6.QtGui import QFontMetrics, QKeySequence  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 from waiting import wait_for_idle, wait_until  # noqa: E402
@@ -44,6 +48,7 @@ from gallery.core.metadata.journal import ACTION_RENAME, read_records  # noqa: E
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.rename_edit import RADIUS, RenameEdit  # noqa: E402
 from gallery.ui.title_bar import (  # noqa: E402
+    EXTRA_PADDING,
     HEIGHT,
     MAX_EDITOR_WIDTH,
     TRAFFIC_LIGHTS_WIDTH,
@@ -447,3 +452,168 @@ def test_the_grid_editor_and_the_title_bar_one_look_the_same(
 
     assert isinstance(_editor(window), RenameEdit)
     assert _editor(window).styleSheet() == grid_style
+
+
+# ---- 5. 那一段上还发生的另外两件事：拖窗口与全屏（ADR 0037）--------------------
+
+
+def _top_point(window: MainWindow) -> QPoint:
+    """窗口最顶上那一带的一个点：正中、离顶边几像素。
+
+    **正中**是刻意的：它与左上角那三个按钮、右侧的胶囊与标题文字都离得开，
+    按到的那一下只可能是「这一段本身」。
+    """
+    return QPoint(window.width() // 2, 4)
+
+
+def _double_click(qt_app: QApplication, window: MainWindow, point: QPoint) -> None:
+    QTest.mouseDClick(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, point)
+    qt_app.processEvents()
+
+
+def test_a_press_on_the_title_bar_waits_for_the_second_click_before_it_moves_the_window(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """**拖窗口这一路必须等过一个双击周期**（理由见 :meth:`MainWindow.mousePressEvent`）。
+
+    ``startSystemMove`` 一发起就是系统的窗口拖动会话，那一串鼠标事件被它整个吃掉 ——
+    不等这一下，双击标题栏就永远到不了 :meth:`mouseDoubleClickEvent`，
+    「双击全屏」于是一次都不会发生，而界面上看不出任何理由。
+    """
+    point = _top_point(window)
+    assert window._is_title_bar(QPointF(point)), "前提不成立：这一点压根不在标题栏上"
+
+    QTest.mousePress(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, point)
+    qt_app.processEvents()
+
+    assert window._title_bar_drag_armed is True
+    assert window._title_bar_drag_timer.isActive() is True
+    assert window.isFullScreen() is False
+
+
+def test_a_click_on_the_title_bar_that_is_not_held_does_nothing(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """点一下（不按住）什么也不该发生 —— 拖窗口得按住不放。
+
+    顺带钉住「松手就作废」：这一闸没作废的话，一次普通单击会在双击间隔之后
+    莫名发起一次窗口拖动，而用户早就松开手了。
+    """
+    point = _top_point(window)
+
+    QTest.mouseClick(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, point)
+    qt_app.processEvents()
+
+    assert window._title_bar_drag_armed is False
+    assert window._title_bar_drag_timer.isActive() is False
+    assert window.isFullScreen() is False
+
+
+def test_double_clicking_the_title_bar_goes_full_screen(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """双击标题栏进全屏（ADR 0037）。"""
+    assert window.isFullScreen() is False
+
+    _double_click(qt_app, window, _top_point(window))
+
+    assert window.isFullScreen() is True
+
+
+def test_in_full_screen_the_top_of_the_window_is_no_longer_a_title_bar(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """全屏里那一段已经整个收起来了，它不是「标题栏」。
+
+    留着这一条是为了**退出全屏只能走 ⌃⌘F**（下一条）：系统菜单栏要等鼠标移到屏幕
+    顶端才现出来，而那一段此刻压根不在 —— 双击在退出这一侧从来就没有对象可点。
+    """
+    _double_click(qt_app, window, _top_point(window))
+    assert window.isFullScreen() is True
+    assert window._is_title_bar(QPointF(_top_point(window))) is False
+
+    _double_click(qt_app, window, _top_point(window))
+
+    assert window.isFullScreen() is True
+
+
+def test_double_clicking_the_content_does_not_go_full_screen(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """内容区里的双击是网格自己的那一件事，不该顺手把窗口变成全屏。"""
+    _double_click(qt_app, window, QPoint(window.width() // 2, window.height() // 2))
+
+    assert window.isFullScreen() is False
+
+
+def test_the_chrome_steps_aside_in_full_screen_and_comes_back(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """全屏里标题栏、胶囊与外部按钮整个收起来，内容区也把那一段的空档还回去。
+
+    **空档这一条最容易被漏掉**：内容区平时往下让出 :data:`EXTRA_PADDING`，那是给
+    标题文字与胶囊腾出来的地方。全屏里它们都不摆了还留着它，照片区顶上就压着一条
+    什么都没有的白边。
+
+    **回头那三行只由 :meth:`MainWindow.changeEvent` 撑着**（退出全屏本身带着一次
+    几何变化，``resizeEvent`` 会把标题栏与胶囊摆回来；但外部按钮是全屏那一支
+    **藏起来**的，重摆只会「摆一个已经看不见的」）。摘掉 ``changeEvent`` 时这一条
+    与下面那条一起变红。
+    """
+    assert window._title_bar.isVisible() is True
+    assert window._search_field.isVisible() is True
+    assert window._external_button.isVisible() is True
+    assert window._stack.contentsMargins().top() == EXTRA_PADDING
+
+    _double_click(qt_app, window, _top_point(window))
+
+    assert window._title_bar.isVisible() is False
+    assert window._search_field.isVisible() is False
+    assert window._external_button.isVisible() is False
+    assert window._stack.contentsMargins().top() == 0
+
+    window.showNormal()
+    qt_app.processEvents()
+
+    assert window._title_bar.isVisible() is True
+    assert window._search_field.isVisible() is True
+    assert window._external_button.isVisible() is True, (
+        "退出全屏之后这个按钮自己回来了吗（它是全屏那一支藏起来的）"
+    )
+    assert window._stack.contentsMargins().top() == EXTRA_PADDING
+
+
+def test_the_full_screen_key_says_which_way_it_will_go(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """⌃⌘F 是全屏里唯一还按得到的那个键（见上一条），菜单上那句话得跟着状态走。
+
+    **⌃ 在 Qt 里写作 ``Meta``**（⌘ 才写作 ``Ctrl``）：写成 ``Ctrl+Ctrl+F`` 的话，
+    Qt 会把它并成 ⌘F —— 与「进入全屏」撞在同一个键上，退出全屏就成了 ⌘F。
+    """
+    assert window._full_screen_action.shortcut() == QKeySequence("Ctrl+Meta+F")
+    assert window._full_screen_action.text() == "进入全屏"
+
+    window._full_screen_action.trigger()
+    qt_app.processEvents()
+
+    assert window.isFullScreen() is True
+    assert window._full_screen_action.text() == "退出全屏"
+
+
+def test_the_drag_and_the_double_click_step_aside_while_a_name_is_being_edited(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """改到一半那一段上摆着输入框：拖走它等于把正在改的名字甩到屏幕外，
+    全屏则会让它当场收起来。
+
+    与 ADR 0025 决策 6 同一类让位（那时键盘归输入框，现在鼠标也归它）。
+    """
+    window._title_bar.set_text(PHOTO)
+    window._title_bar.begin_edit()
+    qt_app.processEvents()
+
+    _double_click(qt_app, window, _top_point(window))
+
+    assert window.isFullScreen() is False
+    assert window._title_bar.is_editing() is True

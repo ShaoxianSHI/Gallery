@@ -281,10 +281,15 @@ class MetadataEditDialog(QDialog):
 
         layout.addLayout(self._build_buttons())
 
-        # **⌘W 关闭**（`StandardKey.Close` 在 macOS 上就是它）。不挂这一条的话，⌘W 会
-        # 一路走到主窗口 —— 在一个模态对话框里关掉整个窗口，那不是用户按键时想做的事。
+        # **⌘W 关闭**。不挂这一条的话，⌘W 会一路走到主窗口 —— 在一个模态对话框里
+        # 关掉整个窗口，那不是用户按键时想做的事（主窗口从 ADR 0037 起也有 ⌘W 了）。
+        #
+        # **显式写出来，不写 ``StandardKey.Close``**：Qt 在 macOS 上把后者解析成 **⌘F4**
+        # （实测 ``QKeySequence(StandardKey.Close)`` 的原生写法是 ``⌘F4``），而 macOS
+        # 上按的键是 ⌘W —— 这一条原先挂着的那份等于一个用户按不到的键，而它之所以
+        # 看起来按得到，只是因为当时**主窗口上压根没有 ⌘W**。
         close_action = QAction("关闭", self)
-        close_action.setShortcut(QKeySequence.StandardKey.Close)
+        close_action.setShortcut(QKeySequence("Ctrl+W"))
         close_action.triggered.connect(self.reject)
         self.addAction(close_action)
 

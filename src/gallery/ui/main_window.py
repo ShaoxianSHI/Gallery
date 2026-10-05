@@ -19,12 +19,13 @@
 
 1. ``__init__``（状态一律在这里声明并初始化，**显式传下去**，不藏在别处）与
    ``_build_ui`` / ``_build_actions`` —— 控件与动作的**装配**；
-2. **Qt 的覆写**（``mousePressEvent`` / ``showEvent`` / ``resizeEvent`` / ``closeEvent`` …）
-   与标题栏那一行的几何 —— 它们**必须**留在 ``MainWindow`` 自己身上：Qt 按 MRO 找第一个
-   实现，拆进 mixin 就会有一处永远不生效，而哪一处不生效取决于书写顺序；
+2. **Qt 的覆写**（``mousePressEvent`` / ``mouseDoubleClickEvent`` / ``showEvent`` /
+   ``resizeEvent`` / ``changeEvent`` / ``closeEvent`` …）与标题栏那一行的几何 ——
+   它们**必须**留在 ``MainWindow`` 自己身上：Qt 按 MRO 找第一个实现，拆进 mixin
+   就会有一处永远不生效，而哪一处不生效取决于书写顺序；
 3. **跨流程的那几条线** —— 换层与换浏览方式时怎么重置状态（:meth:`MainWindow._reload_level`）、
    到了新的一层该选中哪一格（``_arm_focus`` 一族）、面包屑、每条命令此刻能不能按
-   （``_update_action_states``）、以及关窗时的收尾。
+   （``_update_action_states``）、以及关窗与退出时的收尾。
 
 其余每一条流程各住一个 mixin（``gallery.ui.window``），那些模块的文档里各自说清
 「这一块归它管、为什么单独拆出来」：
@@ -58,7 +59,7 @@ import logging
 from collections import OrderedDict
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, Qt, QTimer
+from PySide6.QtCore import QEvent, QPointF, Qt, QTimer
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
@@ -70,6 +71,7 @@ from PySide6.QtGui import (
     QShowEvent,
 )
 from PySide6.QtWidgets import (
+    QApplication,
     QHBoxLayout,
     QMainWindow,
     QStackedWidget,
@@ -222,6 +224,15 @@ class MainWindow(
         #: 选区变化后**攒一轮**再全量重算动作可用性（0ms 单次；理由见连接处）。
         #: 同步清掉是为了关窗时不留一个还排着队的定时器。
         self._action_states_timer = QTimer(self)
+        #: 「按住标题栏拖窗口」的那一闸（见 :meth:`mousePressEvent`）。**单次**，
+        #: 超时 = 一个双击周期之后：到那时还没等到第二下，这一按就不是双击，
+        #: 于是真的发起 ``startSystemMove``。
+        self._title_bar_drag_timer = QTimer(self)
+        self._title_bar_drag_timer.setSingleShot(True)
+        self._title_bar_drag_timer.setInterval(QApplication.doubleClickInterval())
+        self._title_bar_drag_timer.timeout.connect(self._start_title_bar_drag)
+        #: 按下之后还按着（还没拖、还没松）。**松手就作废** —— 点一下标题栏什么也不该发生。
+        self._title_bar_drag_armed = False
         self._detail_job: int | None = None
         self._current_row = -1
         self._metadata_job: int | None = None
@@ -449,7 +460,8 @@ class MainWindow(
         detail_layout.addWidget(self._panel)
         self._stack.addWidget(self._detail_page)
         self.setCentralWidget(self._stack)
-        # 内容区往下让出 :data:`TITLE_BAR_EXTRA`（标题栏那一条加高的那一段）。
+        # 内容区往下让出 :data:`TITLE_BAR_EXTRA`（标题栏那一条加高的那一段）——
+        # 初始值，**每次都重算是 :meth:`_layout_title_bar` 的事**（全屏时它要让回去）。
         # **不是把那一段画在内容上，而是真的给它腾出地方**：加边距之后三页的内容
         # 都从 ``安全区 + EXTRA`` 开始，胶囊与标题文字因此可以摆在多出来的那一段里，
         # 不会像之前那样压住照片区的顶边（ADR 0026 决策 8）。
@@ -504,6 +516,19 @@ class MainWindow(
         self._actual_action = QAction("实际大小", self)
         self._actual_action.setShortcut(QKeySequence("Ctrl+1"))
         self._actual_action.triggered.connect(self._detail.actual_size)
+
+        # ⌃⌘F：与 macOS 同一个键（进出全屏，ADR 0037）。**与双击标题栏是同一件事的两条路** ——
+        # 而这一条是全屏里唯一还按得到的：那一段已经整个收起来了（ADR 0025 决策 2），
+        # 菜单栏又要等鼠标移到屏幕顶端才现出来，于是双击在退出全屏那一侧根本无从下手。
+        # 换句话说，少了它就只剩「进得去、出不来」。
+        #
+        # **文案跟着此刻的状态走**（「进入全屏」/「退出全屏」，与访达同一套说法），
+        # 刷新只有 :meth:`_sync_full_screen_action` 那一处（进出全屏不走
+        # ``_update_action_states``，两处都调它）。
+        # **⌃ 在 Qt 里写作 ``Meta``**（⌘ 才写作 ``Ctrl``，见 ``_trash_action`` 那段）。
+        self._full_screen_action = QAction("进入全屏", self)
+        self._full_screen_action.setShortcut(QKeySequence("Ctrl+Meta+F"))
+        self._full_screen_action.triggered.connect(self._toggle_full_screen)
 
         self._zoom_in_action = QAction("放大", self)
         self._zoom_in_action.setShortcut(QKeySequence.StandardKey.ZoomIn)
@@ -689,9 +714,28 @@ class MainWindow(
         self._clear_cover_action = QAction("取消相册封面", self)
         self._clear_cover_action.triggered.connect(self.clear_album_cover)
 
+        # ⌘W 与 ⌘Q 是**两件事**（macOS 的标准分工，ADR 0037）：⌘W 关掉这一个窗口，
+        # 应用还活着 —— 从 Dock 点它就把窗口摆回来；⌘Q 才是退出。
+        #
+        # Qt 默认「最后一个窗口关掉 = 应用退出」，所以光加这一条只会把关窗变成退出，
+        # 正好是反的：那一半在 :func:`gallery.ui.app.keep_running_without_windows`
+        # （「退出」那一侧在 :meth:`quit_app`）。
+        #
+        # **刻意不写 ``StandardKey.Close``**：Qt 在 macOS 上把它解析成 **⌘F4**
+        # （实测），而 macOS 上按的键是 ⌘W —— 照抄那一份等于装了一个用户按不到的键。
+        # 元数据编辑器里那一条同样如此（见 ``ui.panels.metadata_edit``）：模态框的快捷键
+        # 优先于主窗口，在框里按 ⌘W 要关的是框，不是整个窗口。
+        self._close_action = QAction("关闭窗口", self)
+        self._close_action.setShortcut(QKeySequence("Ctrl+W"))
+        self._close_action.triggered.connect(self.close)
+
+        # ⌘Q：退出。**刻意不写 ``StandardKey.Quit``** —— Qt 在 macOS 上把它解析成
+        # **空序列**（实测 ``count() == 0``），于是那一条至今按 ⌘Q 什么也不会发生。
+        # 应用活着而没有退出的入口，这件事今天就已经不对；⌘W 之后它更是不该留 ——
+        # 「关窗不退出」配上「退不出去」，那是个死局。
         self._quit_action = QAction("退出 Gallery", self)
-        self._quit_action.setShortcut(QKeySequence.StandardKey.Quit)
-        self._quit_action.triggered.connect(self.close)
+        self._quit_action.setShortcut(QKeySequence("Ctrl+Q"))
+        self._quit_action.triggered.connect(self.quit_app)
 
         # ⌘F 与访达一致：不是弹一个对话框，是**把光标放进标题栏那个胶囊**。
         # 检索的那一套全在窗口顶上（ADR 0026），弹窗等于把界面挪到别处去。
@@ -725,6 +769,10 @@ class MainWindow(
         file_menu.addSeparator()
         file_menu.addAction(self._clear_cache_action)
         file_menu.addSeparator()
+        # 「关闭窗口」与「退出」挨着摆：这两条在 macOS 上是同一族的两个动作
+        # （访达、文本编辑都是），而它们之间隔着的正是不该被顺手点掉的那一步 ——
+        # 一个把窗口收起来，一个把应用带走（ADR 0037）。
+        file_menu.addAction(self._close_action)
         file_menu.addAction(self._quit_action)
 
         # 「编辑」：全选、拷贝、拷贝路径、粘贴、撤销 —— 与 macOS 的摆放一致
@@ -752,6 +800,8 @@ class MainWindow(
         view_menu.addSeparator()
         view_menu.addAction(self._fit_action)
         view_menu.addAction(self._actual_action)
+        # 「进入/退出全屏」与那两条摆在一起：都是「这个窗口怎么摆着看」。
+        view_menu.addAction(self._full_screen_action)
         view_menu.addSeparator()
         view_menu.addAction(self._zoom_in_action)
         view_menu.addAction(self._zoom_out_action)
@@ -816,6 +866,8 @@ class MainWindow(
         # 与「上一级」在网格页上的让位是同一条理由（见 ``_update_navigation_actions``）。
         self._back_action.setEnabled(in_detail and idle)
         self._clear_cache_action.setEnabled(self._library is not None and self._cache_job is None)
+        # 「进入全屏 / 退出全屏」：菜单里写的那一句与按下去会发生的事必须是同一句。
+        self._sync_full_screen_action()
         # 「清除搜索条件」**整条出现 / 消失**，不是置灰（ADR 0014 决策 4）：
         # 没有条件时它压根没有对象，摆一个灰着的「清除」只会让人去猜在清什么。
         self._clear_search_action.setVisible(bool(self._conditions))
@@ -1215,26 +1267,108 @@ class MainWindow(
     # ---- 窗口 --------------------------------------------------------------
 
     def _is_title_bar(self, point: QPointF) -> bool:
-        """这一点是不是落在标题栏那一段（窗口顶边与内容区之间）。"""
+        """这一点是不是落在标题栏那一段（窗口顶边与内容区之间）。
+
+        **全屏时一律不是**：那一整条已经收起来了（见 :meth:`_layout_title_bar`），
+        窗口最顶上那一块压根不是「标题栏」—— 在那儿双击该是别的意思，不该顺手
+        把刚退掉的全屏又打开。
+        """
+        if not self._owns_title_bar or self.isFullScreen():
+            return False
         central = self.centralWidget()
         return central is not None and point.y() < central.geometry().top()
+
+    def _press_belongs_to_the_title_bar(self, position: QPointF) -> bool:
+        """这一次按下是不是**归标题栏** —— 也就是「按住拖窗口」与「双击全屏」那两件事
+        该轮到这里。
+
+        **改到一半不算**：那一段上正摆着输入框，拖走它等于把正在改的那个名字甩到
+        屏幕外，全屏则会让它当场收起来。两件事用同一句判据，于是不会出现
+        「拖不动却能双击」这种半截状态。
+        """
+        return self._is_title_bar(position) and not self._title_bar.is_editing()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         """按住标题栏那一段拖动窗口。
 
         内容铺到标题栏底下之后（见 ``ui.theme.unify_title_bar``），那一条已经是我们的
-        客户区，系统不再代劳拖动，得自己发起。落在标题栏里的按下就交给 ``startSystemMove``；
-        它返回假（平台不支持、或系统其实自己会拖）就照常往下传，不影响别处的点击。
+        客户区，系统不再代劳拖动，得自己发起。落在标题栏里的按下**先排一个闸**
+        （见 :meth:`_start_title_bar_drag`），确认不是双击之后才真的发起。
 
         **不用先问 ``TitleBar`` 在不在那儿**：不在编辑时它对鼠标是透明的（编辑时要摘掉，
         否则输入框收不到点击），按下照旧落到窗口自己身上。
+
+        **那一闸是拖窗口这一路唯一的代价，代价也是必要的**（见 :meth:`_start_title_bar_drag`）：
+        不等这个双击周期，双击标题栏一次都不会生效。**macOS 的原生标题栏也等**
+        （它等的是一个「缩放 / 填满」），所以手感上不会比系统更迟钝。
         """
-        if event.button() == Qt.MouseButton.LeftButton and self._is_title_bar(event.position()):
-            handle = self.windowHandle()
-            if handle is not None and handle.startSystemMove():
-                event.accept()
-                return
+        if event.button() == Qt.MouseButton.LeftButton and self._press_belongs_to_the_title_bar(
+            event.position()
+        ):
+            self._title_bar_drag_armed = True
+            self._title_bar_drag_timer.start()
+            event.accept()
+            return
         super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
+        """松手就作废那一闸：拖动得**按住不放**，点一下标题栏什么也不该发生。"""
+        if self._title_bar_drag_armed:
+            self._title_bar_drag_armed = False
+            self._title_bar_drag_timer.stop()
+        super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
+        """双击标题栏：在**全屏**与窗口之间来回切（macOS 的标准动作）。
+
+        系统设置里「双击标题栏」可以选「缩放 / 填满 / 不做动作」，原生标题栏照它执行；
+        那一段已经归我们了（ADR 0025 决策 1），于是这件事得自己做。
+
+        **做的是全屏而不是「填满」**：填满是把窗口撑到屏幕那么大，而全屏把菜单栏与
+        Dock 都收起来 —— 看照片时那正是想要的。
+
+        **这一下必须先于拖动到达**：拖动一发就是系统的窗口拖动会话，它把这一串鼠标
+        事件整个吃掉 —— 所以拖动那一路才要等过一个双击周期（见 :meth:`mousePressEvent`）。
+        """
+        if event.button() == Qt.MouseButton.LeftButton and self._press_belongs_to_the_title_bar(
+            event.position()
+        ):
+            self._title_bar_drag_armed = False
+            self._title_bar_drag_timer.stop()
+            self._toggle_full_screen()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def _start_title_bar_drag(self) -> None:
+        """真的发起系统拖动 —— 已经等过一个双击周期，确认这一下不是双击。
+
+        **为什么非要等那一个周期**：Qt 在 macOS 上把 ``startSystemMove`` 实现成
+        ``[NSWindow performWindowDragWithEvent:]``（在 Qt 的 cocoa 插件二进制里能
+        查到那个选择器），而那是一个**模态的事件跟踪循环** —— 拖完之前它不返回，
+        后面那一下双击压根到不了窗口。于是不设闸的话，「双击标题栏全屏」一次都不会
+        发生，而界面上看不出任何理由（拖是好的）。
+
+        ``startSystemMove`` 返回假（平台不支持、或系统其实自己会拖）就什么都不做：
+        落在标题栏里的这一次按下没有别的含义，不该往下传成一次点空白处的点击。
+        """
+        if not self._title_bar_drag_armed:
+            return
+        self._title_bar_drag_armed = False
+        handle = self.windowHandle()
+        if handle is not None:
+            handle.startSystemMove()
+
+    def _toggle_full_screen(self) -> None:
+        """在全屏与窗口之间来回切。
+
+        **退出全屏回到进全屏之前那个大小**：``showNormal`` 恢复的正是那一份几何，
+        而不是让系统按当前屏幕随便给一个（拖到一半再双击回来，位置不该变）。
+        """
+        if self.isFullScreen():
+            self.showNormal()
+        else:
+            self.showFullScreen()
 
     # ---- 标题栏（见 ADR 0025）-----------------------------------------------
 
@@ -1273,10 +1407,16 @@ class MainWindow(
 
         **两个控件是摆在一起的，不是一套布局**：``TitleBar`` 那一行由标题文字与改名字段
         自己居中，胶囊要贴右边，两者抢同一份布局反而互相挪（ADR 0026 决策 8）。
+
+        **内容区让出多少也归这里**（``_build_ui`` 只留初始值）：全屏时那一段整个收起来，
+        让出去的那 12 点也就该还回去 —— 不还回去的话，照片区顶上会压着一条什么都没有的
+        空档，而那条空档平时正是标题文字与胶囊站的地方。
         """
         if not self._owns_title_bar:
             return
-        if self.isFullScreen():
+        full_screen = self.isFullScreen()
+        self._stack.setContentsMargins(0, 0 if full_screen else TITLE_BAR_EXTRA, 0, 0)
+        if full_screen:
             # 全屏时系统自己也不画标题栏，这一整条跟着收起来（ADR 0025 决策 2）：
             # 高度给 0，于是它与胶囊都不会盖在照片上。
             self._title_bar.setGeometry(0, 0, self.width(), 0)
@@ -1287,7 +1427,7 @@ class MainWindow(
         central = self.centralWidget()
         top = central.geometry().top() if central is not None else 0
         # 安全区之外**再加** :data:`TITLE_BAR_EXTRA`：中央控件已经用同样的边距把三页
-        # 往下推了（见 ``_build_ui``），于是多出来的那一段是真的空出来的，不是盖在
+        # 往下推了（上面那一行），于是多出来的那一段是真的空出来的，不是盖在
         # 内容上的 —— 胶囊是画的，压上去就等于在照片区顶边摆了一块底色。
         height = max(top + TITLE_BAR_EXTRA, TITLE_BAR_HEIGHT)
         self._title_bar.setGeometry(0, 0, self.width(), height)
@@ -1317,8 +1457,10 @@ class MainWindow(
         # 各算一遍的话，胶囊为了字的中线往下挪过 ``TEXT_ALIGN_DROP`` 而按钮没挪，
         # 肉眼就是「歪了」。
         #
-        # **摆不摆由 ``_update_action_states`` 说了算**（这一页有东西可开才有），
-        # 这里只管在它该在的时候把它摆对 —— 于是显隐与几何各归一处，不互相猜。
+        # **显隐的判据只有一处**：``ExternalAppsButton.is_available``，由
+        # ``_update_action_states`` 问。这里只管在它该在的时候把它摆对 ——
+        # 显隐与几何各归一处，不互相猜。**进出全屏时它整个不见**，那一半归
+        # :meth:`changeEvent`（那边是全屏那一份的另一半）。
         if self._external_button.isVisible():
             self._external_button.setGeometry(button_rect(self._search_field.geometry()))
             self._external_button.raise_()
@@ -1345,6 +1487,35 @@ class MainWindow(
         super().resizeEvent(event)
         self._layout_title_bar()
         self._layout_banner()
+
+    def changeEvent(self, event: QEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
+        """进出全屏之后把窗口顶边那一行重摆一次。
+
+        **只有窗口状态变化才重摆**：进全屏时安全区让位，标题栏那一条、胶囊与外部按钮
+        都要收起来（否则它们盖在照片上面）；退出全屏时又得全摆回来。
+        少这一句的后果是**半边的**：双击标题栏进了全屏，标题栏还在（压着照片），
+        而退出全屏之后「用外部应用打开」那个按钮没了（被全屏那一支藏起来没人叫醒）。
+
+        别的 ``changeEvent``（例如激活状态）不重摆：这两样东西只跟着窗口状态走。
+        """
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange:
+            # **先把外部按钮叫回来，再摆**：全屏那一支（见 :meth:`_layout_title_bar`）
+            # 把它整个藏起来了，而显隐的判据只有 ``is_available`` 那一处 ——
+            # 退出全屏不经过 ``_update_action_states``，不补这一句它就没了。
+            self._external_button.setVisible(self._external_button.is_available())
+            self._layout_title_bar()
+            self._layout_banner()
+            self._sync_full_screen_action()
+
+    def _sync_full_screen_action(self) -> None:
+        """「进入全屏 / 退出全屏」那一句跟着此刻的状态走。
+
+        **两处都要调**：菜单那一条平时跟着 :meth:`_update_action_states` 走，而
+        **进出全屏不经过那条路** —— 双击标题栏与按 ⌃⌘F 都不会去重算动作可用性，
+        漏了这一句的话，退了全屏菜单上仍然写着「退出全屏」。
+        """
+        self._full_screen_action.setText("退出全屏" if self.isFullScreen() else "进入全屏")
 
     def _on_title_rename_committed(self, text: str) -> None:
         """标题栏里确认了一个新名字。
@@ -1451,6 +1622,23 @@ class MainWindow(
         self._show_banner(f"没能打开 Google 日历：{message}")
 
     # ---- 关闭 --------------------------------------------------------------
+
+    def quit_app(self) -> None:
+        """⌘Q：收完尾之后退出**整个应用**（与 :meth:`close` 那一半是两件事，ADR 0037）。
+
+        **必须先 ``close()``**：会话落盘、监听器停掉、后台任务收工全在
+        :meth:`closeEvent` 里。而 ``QApplication.quit()`` 压根不发 ``closeEvent`` ——
+        直接调它的话，那三样一步都不走，于是「上次打开到哪儿」「上次窗口多大」统统
+        丢在内存里随进程一起没了。
+
+        后半句是为 :func:`gallery.ui.app.keep_running_without_windows` 准备的：
+        关掉最后一个窗口不再自动退出应用之后，⌘Q 就得自己说一声退出。
+        （那条开关没打开时，多走这一句也只是多走一遍。）
+        """
+        self.close()
+        application = QApplication.instance()
+        if application is not None:
+            application.quit()
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         self._save_session()
