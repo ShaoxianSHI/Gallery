@@ -24,7 +24,7 @@ from grid_helpers import fake_photos, make_grid, settle_grid  # noqa: E402
 from PySide6.QtCore import QModelIndex, QPoint, Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
-from waiting import DEFAULT_TIMEOUT_SECONDS
+from waiting import DEFAULT_TIMEOUT_SECONDS, wait_until
 
 from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.library.photos import FolderRef  # noqa: E402
@@ -733,3 +733,190 @@ def test_right_click_inside_an_existing_multi_selection_keeps_it(
 
     assert grid.genuinely_selected_rows() == before, "整份多选必须原样保留"
     grid.deleteLater()
+
+
+# ---- 选区与当前项必须说同一句话 ----------------------------------------------
+
+
+def _click(
+    grid: PhotoGrid, row: int, modifiers: Qt.KeyboardModifier = Qt.KeyboardModifier.NoModifier
+) -> None:  # noqa: E501
+    """在第 ``row`` 格正中点一下（修饰键由 ``modifiers`` 给）。"""
+    model = grid.model()
+    assert model is not None
+    QTest.mouseClick(
+        grid.viewport(),
+        Qt.MouseButton.LeftButton,
+        modifiers,
+        grid.visualRect(model.index(row, 0)).center(),
+    )
+
+
+def test_clicking_the_blank_clears_the_current_item_too(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """**点空白处 = 一个也没选中**：选区与当前项都要空。
+
+    缺陷现场（用户原话：「没有高亮时用户会认为没有选中任何相册」）：Qt 在
+    ``mouseReleaseEvent`` 里清掉选区，**却把当前项原封不动留着** —— 屏幕上那一格已经
+    没有高亮，⌘R 还能给它改名，↵ 还能进得去，⌘⌫ 甚至会把它丢掉。
+
+    所以这一条钉的是**状态本身**（当前项必须落在真选区里）而不是某一条命令的可用性：
+    可用性只是它的下游表现，钉命令就等于把这个不变量散抄成好几份。
+    """
+    grid = make_grid(qt_app, tmp_path, count=6)
+    settle_grid(qt_app, grid)
+    _click(grid, 2)
+    qt_app.processEvents()
+    assert grid.genuinely_selected_rows() == [2], "前置条件：那一格是选中的"
+    assert grid.current_row() == 2, "前置条件：它同时也是当前项"
+
+    QTest.mouseClick(
+        grid.viewport(),
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+        _blank_point(grid),
+    )
+    qt_app.processEvents()
+
+    assert grid.genuinely_selected_rows() == []
+    assert grid.current_row() == -1, "没有高亮就没有当前项：⌘R / ↵ 都不该再作用在那一格"
+    assert grid.selected_rows() == [], "连 selected_rows() 的兜底也不该再退回它"
+    grid.deleteLater()
+
+
+def test_command_clicking_the_last_selected_item_clears_the_current_item_too(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """**⌘ 点把最后一项减掉**是同一种病：选区空了，当前项还指着刚被减掉的那一格。"""
+    grid = make_grid(qt_app, tmp_path, count=6)
+    settle_grid(qt_app, grid)
+    _click(grid, 2)
+    qt_app.processEvents()
+
+    _click(grid, 2, Qt.KeyboardModifier.ControlModifier)
+    qt_app.processEvents()
+
+    assert grid.genuinely_selected_rows() == []
+    assert grid.current_row() == -1
+    grid.deleteLater()
+
+
+def test_command_clicking_another_cell_keeps_the_current_item_on_a_selected_one(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """上面那条的对照：⌘ 点**加**一个时，选区与当前项照旧一起动，一个都不许少。"""
+    grid = make_grid(qt_app, tmp_path, count=6)
+    settle_grid(qt_app, grid)
+    _click(grid, 2)
+    _click(grid, 4, Qt.KeyboardModifier.ControlModifier)
+    qt_app.processEvents()
+
+    assert grid.genuinely_selected_rows() == [2, 4]
+    assert grid.current_row() == 4
+    grid.deleteLater()
+
+
+def test_shift_clicking_the_blank_keeps_the_selection(qt_app: QApplication, tmp_path: Path) -> None:
+    """**⇧ 点空白处不清**：那是扩选手势（从锚点铺到空白处 = 什么也不加）。
+
+    「点空白 = 取消选中」说的是**空着手点**那一下；带 `⇧` 的那一下问的是
+    「把选区铺到哪里去」，两件事不能混成一件。
+    """
+    grid = make_grid(qt_app, tmp_path, count=6)
+    settle_grid(qt_app, grid)
+    _click(grid, 2)
+    qt_app.processEvents()
+
+    QTest.mouseClick(
+        grid.viewport(),
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.ShiftModifier,
+        _blank_point(grid),
+    )
+    qt_app.processEvents()
+
+    assert grid.genuinely_selected_rows() == [2]
+    assert grid.current_row() == 2
+    grid.deleteLater()
+
+
+def test_after_clearing_everything_the_arrow_keys_start_from_the_top(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """取消选中之后键盘仍然从**第一格**开始，而不是从刚才那格旁边接着走。
+
+    当前项被清掉正是为了让键盘从零开始；要是清掉之后方向键仍旧接着上次那一格走，
+    「⌘R 不作用在看不见的格子上」就成了「看不见的东西仍然抓得住键盘」。
+    """
+    grid = make_grid(qt_app, tmp_path, count=40)
+    settle_grid(qt_app, grid)
+    _click(grid, 12)
+    QTest.mouseClick(
+        grid.viewport(),
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+        _blank_point(grid),
+    )
+    qt_app.processEvents()
+    assert grid.current_row() == -1, "前置条件：此刻一个都没选中"
+
+    QTest.keyClick(grid.viewport(), Qt.Key.Key_Down)
+    qt_app.processEvents()
+
+    assert grid.current_row() == 0
+    assert grid.genuinely_selected_rows() == [0], "方向键走到的那一格同时是选中的"
+    grid.deleteLater()
+
+
+def test_in_the_window_clicking_the_blank_leaves_nothing_to_rename_or_to_open(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """**上面那条在窗口里长什么样**（用户报的那句：没有高亮就是没有选中）。
+
+    相册模式下点一个相册、再点旁边空白：界面上那一格已经没有高亮了，可 ⌘R 还能给它改名、
+    ↵ 还能进得去 —— 用户会认为「我什么也没选」，于是那两条全都该是灰的、按回车也该没反应。
+
+    这条用**真的点空白**（不是 ``clearSelection()``）：``QAbstractItemView`` 清掉选区却把
+    当前项留着正是从鼠标这条路来的，直接调 ``clearSelection()`` 量不到它。
+    """
+    root = tmp_path / "测试相册"
+    for album in ("京都", "奈良"):
+        make_photo("一张.jpg", directory=root / album)
+    prepare_library(root)
+    session_base = tmp_path / "session"
+    save_session(
+        SessionState(recent_roots=(root,), thumbnail_edge=176, browse_mode=BROWSE_MODE_ALBUMS),
+        base=session_base,
+    )
+    window = MainWindow(session_base=session_base)
+    window.resize(1200, 800)
+    window.show()
+    try:
+        assert wait_until(qt_app, lambda: window._model.rowCount() >= 2)
+        settle_grid(qt_app, window._grid)
+        grid = window._grid
+        model = grid.model()
+        assert model is not None
+
+        _click(grid, 0)
+        qt_app.processEvents()
+        assert window._rename_action.isEnabled() is True, "前置条件：选中了就能改名"
+
+        QTest.mouseClick(
+            grid.viewport(),
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+            _blank_point(grid),
+        )
+        qt_app.processEvents()
+
+        assert grid.genuinely_selected_rows() == [], "界面上没有高亮，选区就该是空的"
+        assert window._rename_action.isEnabled() is False, "⌘R 不该再作用在看不见的格子上"
+        opened: list[int] = []
+        grid.activated_index.connect(lambda index: opened.append(index.row()))
+        QTest.keyClick(grid.viewport(), Qt.Key.Key_Return)
+        qt_app.processEvents()
+        assert opened == [], "↵ 也不该再进得去那个相册"
+    finally:
+        window.close()

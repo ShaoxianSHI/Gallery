@@ -1424,6 +1424,10 @@ class PhotoGrid(QListView):
         这个兜底对「删除」「拷贝」这类命令是对的：它们总得作用于点什么。但它
         **不是**「谁被选中了」的答案 —— 判可见性（⌘V 粘到哪里）或判右键落点时
         要问的是真选区，见 :meth:`genuinely_selected_rows`。
+
+        鼠标那一头已经不指望这个兜底了：**当前项与选区由
+        :meth:`sync_current_to_selection` 保持一致**（点空白、⌘ 点减选之后两者一起空），
+        于是这里退回当前项时，回退到的正是**屏幕上还高亮着**的那一格。
         """
         rows = self.genuinely_selected_rows()
         if rows:
@@ -1443,12 +1447,43 @@ class PhotoGrid(QListView):
 
         **当前项要一起清**，不能只清选区：``⌘R`` / ``⌘⌫`` 的可用性判据读的是
         ``current_row``，留着它就会出现「菜单亮着、作用的对象在屏幕上不存在」
-        （同一个道理见 :meth:`select_for_context` 末尾那段）。
+        （同一个道理见 :meth:`select_for_context` 末尾那段，也见
+        :meth:`sync_current_to_selection`）。
 
         扩选锚点（``_range_anchor``）**不在这里动**：右键空白处也要用它，见
         :meth:`reset_for_new_level`。
         """
         self.clearSelection()
+        self.setCurrentIndex(QModelIndex())
+
+    def sync_current_to_selection(self) -> None:
+        """**当前项必须落在真选区里**，否则当场把它清掉。
+
+        界面上「选中」只有一种画法（:meth:`PhotoDelegate.paint` 问的是 ``State_Selected``），
+        而命令作用的对象读的是 :meth:`current_row` —— 两者一旦对不上，用户就拿到一个
+        **屏幕上没有高亮、↵ 却进得去、⌘R 却改得了名**的格子。没有高亮时用户会认为
+        什么也没选中，于是这三条全都说不通（更糟的是 ⌘⌫：它会删掉一个看不见的对象）。
+
+        Qt 自己就会造出这种状态，而且**不止一种**：
+
+        - **左键点空白处**：``QAbstractItemView`` 清掉选区，**却把当前项原封不动留着**
+          —— 这就是「点一下空白，⌘R 还能给刚才那个相册改名」那个症状；
+        - **⌘ 点把最后一个选中项减掉**：选区空了，当前项还指着刚被减掉的那一格。
+
+        两条**都在鼠标抬起那一步才落地**（实测：点空白时按下与抬起之间选区原封不动，
+        ``mouseReleaseEvent`` 一过才空掉；⌘ 点减选则更早，按下就改了）。所以收口放在
+        ``super().mouseReleaseEvent`` 之后。剩下唯一一处「选区是自己重算的」是橡皮筋那条路
+        （:meth:`_reassert_extended_selection`），由它自己再收一次口。
+
+        右键那条路不需要它：:meth:`select_for_context` 本来就把选区与当前项一起摆好。
+        """
+        row = self.current_row()
+        model = self.model()
+        selection = self.selectionModel()
+        if row < 0 or model is None or selection is None:
+            return
+        if selection.isSelected(model.index(row, 0)):
+            return
         self.setCurrentIndex(QModelIndex())
 
     def swallow_click(self) -> None:
@@ -1680,6 +1715,8 @@ class PhotoGrid(QListView):
                 model.index(row, 0),
                 QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
             )
+        # 选区是这里重算出来的（不是 Qt 那一遍），于是「当前项落在选区里」也得在这里重做一次。
+        self.sync_current_to_selection()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         """第一次点击只是选中；对**已经选中**的格子再点一次才开始重命名。
@@ -1692,6 +1729,10 @@ class PhotoGrid(QListView):
         :meth:`mouseDoubleClickEvent`），一直没等到双击，才是重命名。
         """
         super().mouseReleaseEvent(event)
+        # 这一下已经改完选区了：点空白处（Qt 在**抬起**这一刻清选区，实测按下时还没清）、
+        # ⌘ 点把最后一项减掉，都会留下一个「屏幕上没有高亮、命令却仍作用其上」的当前项。
+        # 收口在这里，理由见 :meth:`sync_current_to_selection`。
+        self.sync_current_to_selection()
         if self._swallow_press:
             # 尾巴：这一下只用来把格子选中，不开始「再点一下就是改名」那套。
             self._swallow_press = False
