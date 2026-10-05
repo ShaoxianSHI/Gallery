@@ -43,9 +43,8 @@ from gallery.core.paths import app_icon_master
 #: 打包产物的默认落点（相对仓库根），与 ``.gitignore`` 里的 ``dist/`` 对应。
 BUILD_DIR_NAME: Final = "dist"
 
-#: 逆向域名标识符。它与应用名保持一致（包标识符不能含大写字母），
-#: 改组织名或换签名/公证时改这里的前缀。
-BUNDLE_IDENTIFIER: Final = f"com.shaoxianshi.{APP_NAME.lower()}"
+#: 逆向域名标识符（包标识符不能含大写字母）。换签名或公证时改这里的前缀。
+BUNDLE_IDENTIFIER: Final = f"com.example.{APP_NAME.lower()}"
 
 #: ``Contents/MacOS/`` 下的启动脚本名，也就是 ``CFBundleExecutable``。
 LAUNCHER_NAME: Final = "Gallery"

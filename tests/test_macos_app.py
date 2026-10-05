@@ -63,7 +63,7 @@ def test_info_plist_points_at_the_icon(project_root: Path, tmp_path: Path, fake_
     info = plistlib.loads((_bundle(destination) / "Info.plist").read_bytes())
 
     assert info["CFBundleName"] == APP_NAME
-    assert info["CFBundleIdentifier"] == "com.shaoxianshi.gallery"
+    assert info["CFBundleIdentifier"] == "com.example.gallery"
     assert info["CFBundleExecutable"] == "Gallery"
     assert info["CFBundlePackageType"] == "APPL"
     # Dock 图标就来自这一行，它指的文件必须在包里
@@ -74,7 +74,7 @@ def test_info_plist_points_at_the_icon(project_root: Path, tmp_path: Path, fake_
 
 def test_bundle_identifier_follows_the_app_name() -> None:
     """包标识符不能含大写字母，也不能和应用名脱节；组织名要改就改这里。"""
-    assert macos_app.BUNDLE_IDENTIFIER == "com.shaoxianshi.gallery"
+    assert macos_app.BUNDLE_IDENTIFIER == "com.example.gallery"
     assert macos_app.BUNDLE_IDENTIFIER.endswith(APP_NAME.lower())
 
 
