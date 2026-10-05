@@ -117,22 +117,30 @@ def no_modal_dialogs(monkeypatch: pytest.MonkeyPatch) -> None:
 
     这一条是被一次实测逼出来的：一个用例打开了不存在的库，界面走到
     ``_report_error`` → ``QMessageBox.critical`` —— 离屏下没人点「确定」，
-    那个用例**永远不返回**。症状是「这个文件跑了五分钟还没完」，而不是一条红的
-    断言；查起来先是怀疑慢，再是怀疑死循环，最后才发现是弹窗。
+    那个用例**永远不返回**。症状是「这个文件跑了五分钟还没完」，而不是一条
+    红的断言；查起来先是怀疑慢，再是怀疑死循环，最后才发现是弹窗。
 
-    **失败要快、要指名道姓**：这里把 ``exec``（真正那个模态循环）换掉，报出
-    「弹了个框」比让它挂着强得多。要测弹窗的用例自己 monkeypatch 掉那个静态方法
-    即可（见 ``test_library_open.py``）—— 静态方法被换掉之后就走不到 ``exec``，
-    所以那条路照样通。
+    **要拦的是那几个 ``static`` 方法，不是 ``exec``。** 第一版写的是把实例方法
+    ``QMessageBox.exec`` 换掉 —— 那是个**假的守护**：``critical`` / ``question``
+    这些静态辅助函数在 C++ 里就把模态循环跑完了，压根不经过 Python 那一层，
+    于是探针用例照样挂满五分钟（试过了）。``src/`` 里现存的四处调用**全是**
+    静态形式（``banner_flow`` 的 ``critical``、``thumbnail_flow`` 的 ``question``
+    与它读回来的 ``StandardButton``），所以这几个名字一个都不能漏。
+
+    要测弹窗的用例自己 monkeypatch 掉对应那个静态方法即可
+    （见 ``test_library_open.py`` 与 ``test_thumbnail_window.py``）：用例里的
+    那次 ``setattr`` 跑在本 fixture 之后，自然盖过它。
     """
 
-    def _refuse(self: QMessageBox) -> int:
+    def _refuse(*args: object, **kwargs: object) -> QMessageBox.StandardButton:
         raise AssertionError(
             "这个用例弹出了一个模态对话框，而离屏测试里没人点确定 —— 它会一直挂着。"
-            "要测它就自己 monkeypatch 掉（QMessageBox.critical / .question / .warning / .exec）。"
+            "要测它就自己 monkeypatch 掉（QMessageBox.critical / .question / "
+            ".warning / .information）。"
         )
 
-    monkeypatch.setattr(QMessageBox, "exec", _refuse)
+    for name in ("critical", "question", "warning", "information", "about"):
+        monkeypatch.setattr(QMessageBox, name, _refuse)
 
 
 @pytest.fixture
