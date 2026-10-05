@@ -461,7 +461,7 @@ class MainWindow(
         self._stack.addWidget(self._detail_page)
         self.setCentralWidget(self._stack)
         # 内容区往下让出 :data:`TITLE_BAR_EXTRA`（标题栏那一条加高的那一段）——
-        # 初始值，**每次都重算是 :meth:`_layout_title_bar` 的事**（全屏时它要让回去）。
+        # 初始值，**每次都重算是 :meth:`_layout_title_bar` 的事**（真全屏时它要让回去）。
         # **不是把那一段画在内容上，而是真的给它腾出地方**：加边距之后三页的内容
         # 都从 ``安全区 + EXTRA`` 开始，胶囊与标题文字因此可以摆在多出来的那一段里，
         # 不会像之前那样压住照片区的顶边（ADR 0026 决策 8）。
@@ -517,18 +517,15 @@ class MainWindow(
         self._actual_action.setShortcut(QKeySequence("Ctrl+1"))
         self._actual_action.triggered.connect(self._detail.actual_size)
 
-        # ⌃⌘F：与 macOS 同一个键（进出全屏，ADR 0037）。**与双击标题栏是同一件事的两条路** ——
-        # 而这一条是全屏里唯一还按得到的：那一段已经整个收起来了（ADR 0025 决策 2），
-        # 菜单栏又要等鼠标移到屏幕顶端才现出来，于是双击在退出全屏那一侧根本无从下手。
-        # 换句话说，少了它就只剩「进得去、出不来」。
+        # ⌃⌘F：与 macOS 同一个键（缩放 / 铺满，ADR 0037）。**与双击标题栏是同一件事的两条路** ——
+        # 而这一条是那一个窗口被铺满之后唯一还按得到的（⌃⌘F 本来就是系统给缩放的键）。
         #
-        # **文案跟着此刻的状态走**（「进入全屏」/「退出全屏」，与访达同一套说法），
-        # 刷新只有 :meth:`_sync_full_screen_action` 那一处（进出全屏不走
-        # ``_update_action_states``，两处都调它）。
+        # **文案跟着此刻的状态走**（「铺满窗口」/「还原窗口」），刷新只有
+        # :meth:`_sync_fill_action` 那一处（铺满不走 ``_update_action_states``，两处都调它）。
         # **⌃ 在 Qt 里写作 ``Meta``**（⌘ 才写作 ``Ctrl``，见 ``_trash_action`` 那段）。
-        self._full_screen_action = QAction("进入全屏", self)
-        self._full_screen_action.setShortcut(QKeySequence("Ctrl+Meta+F"))
-        self._full_screen_action.triggered.connect(self._toggle_full_screen)
+        self._fill_action = QAction("铺满窗口", self)
+        self._fill_action.setShortcut(QKeySequence("Ctrl+Meta+F"))
+        self._fill_action.triggered.connect(self._toggle_filled)
 
         self._zoom_in_action = QAction("放大", self)
         self._zoom_in_action.setShortcut(QKeySequence.StandardKey.ZoomIn)
@@ -800,8 +797,8 @@ class MainWindow(
         view_menu.addSeparator()
         view_menu.addAction(self._fit_action)
         view_menu.addAction(self._actual_action)
-        # 「进入/退出全屏」与那两条摆在一起：都是「这个窗口怎么摆着看」。
-        view_menu.addAction(self._full_screen_action)
+        # 「铺满/还原窗口」与那两条摆在一起：都是「这个窗口怎么摆着看」。
+        view_menu.addAction(self._fill_action)
         view_menu.addSeparator()
         view_menu.addAction(self._zoom_in_action)
         view_menu.addAction(self._zoom_out_action)
@@ -866,8 +863,8 @@ class MainWindow(
         # 与「上一级」在网格页上的让位是同一条理由（见 ``_update_navigation_actions``）。
         self._back_action.setEnabled(in_detail and idle)
         self._clear_cache_action.setEnabled(self._library is not None and self._cache_job is None)
-        # 「进入全屏 / 退出全屏」：菜单里写的那一句与按下去会发生的事必须是同一句。
-        self._sync_full_screen_action()
+        # 「铺满窗口 / 还原窗口」：菜单里写的那一句与按下去会发生的事必须是同一句。
+        self._sync_fill_action()
         # 「清除搜索条件」**整条出现 / 消失**，不是置灰（ADR 0014 决策 4）：
         # 没有条件时它压根没有对象，摆一个灰着的「清除」只会让人去猜在清什么。
         self._clear_search_action.setVisible(bool(self._conditions))
@@ -1269,9 +1266,9 @@ class MainWindow(
     def _is_title_bar(self, point: QPointF) -> bool:
         """这一点是不是落在标题栏那一段（窗口顶边与内容区之间）。
 
-        **全屏时一律不是**：那一整条已经收起来了（见 :meth:`_layout_title_bar`），
-        窗口最顶上那一块压根不是「标题栏」—— 在那儿双击该是别的意思，不该顺手
-        把刚退掉的全屏又打开。
+        **真全屏时一律不是**：那一整条已经收起来了（见 :meth:`_layout_title_bar`），
+        窗口最顶上那一块压根不是「标题栏」。**铺满时照旧是** —— 那只是窗口变大，
+        标题栏还在那儿，于是双击铺满之后**还能双击还原**（用户要的正是一来一回）。
         """
         if not self._owns_title_bar or self.isFullScreen():
             return False
@@ -1279,11 +1276,11 @@ class MainWindow(
         return central is not None and point.y() < central.geometry().top()
 
     def _press_belongs_to_the_title_bar(self, position: QPointF) -> bool:
-        """这一次按下是不是**归标题栏** —— 也就是「按住拖窗口」与「双击全屏」那两件事
+        """这一次按下是不是**归标题栏** —— 也就是「按住拖窗口」与「双击铺满」那两件事
         该轮到这里。
 
         **改到一半不算**：那一段上正摆着输入框，拖走它等于把正在改的那个名字甩到
-        屏幕外，全屏则会让它当场收起来。两件事用同一句判据，于是不会出现
+        屏幕外，铺满则会让它当场收起来。两件事用同一句判据，于是不会出现
         「拖不动却能双击」这种半截状态。
         """
         return self._is_title_bar(position) and not self._title_bar.is_editing()
@@ -1319,13 +1316,14 @@ class MainWindow(
         super().mouseReleaseEvent(event)
 
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
-        """双击标题栏：在**全屏**与窗口之间来回切（macOS 的标准动作）。
+        """双击标题栏：把窗口**铺满**，再双击一次还原（macOS 的标准动作）。
 
         系统设置里「双击标题栏」可以选「缩放 / 填满 / 不做动作」，原生标题栏照它执行；
         那一段已经归我们了（ADR 0025 决策 1），于是这件事得自己做。
 
-        **做的是全屏而不是「填满」**：填满是把窗口撑到屏幕那么大，而全屏把菜单栏与
-        Dock 都收起来 —— 看照片时那正是想要的。
+        **做的是「铺满」而不是真全屏**：窗口占满菜单栏与 Dock 之间的那块地方，
+        **菜单栏与 Dock 都还在**，也不会另开一个 Space。真全屏（另一个 Space，
+        菜单栏与 Dock 都收起来）不是这件事，见 :meth:`_toggle_filled`。
 
         **这一下必须先于拖动到达**：拖动一发就是系统的窗口拖动会话，它把这一串鼠标
         事件整个吃掉 —— 所以拖动那一路才要等过一个双击周期（见 :meth:`mousePressEvent`）。
@@ -1335,7 +1333,7 @@ class MainWindow(
         ):
             self._title_bar_drag_armed = False
             self._title_bar_drag_timer.stop()
-            self._toggle_full_screen()
+            self._toggle_filled()
             event.accept()
             return
         super().mouseDoubleClickEvent(event)
@@ -1346,7 +1344,7 @@ class MainWindow(
         **为什么非要等那一个周期**：Qt 在 macOS 上把 ``startSystemMove`` 实现成
         ``[NSWindow performWindowDragWithEvent:]``（在 Qt 的 cocoa 插件二进制里能
         查到那个选择器），而那是一个**模态的事件跟踪循环** —— 拖完之前它不返回，
-        后面那一下双击压根到不了窗口。于是不设闸的话，「双击标题栏全屏」一次都不会
+        后面那一下双击压根到不了窗口。于是不设闸的话，「双击标题栏铺满」一次都不会
         发生，而界面上看不出任何理由（拖是好的）。
 
         ``startSystemMove`` 返回假（平台不支持、或系统其实自己会拖）就什么都不做：
@@ -1359,16 +1357,26 @@ class MainWindow(
         if handle is not None:
             handle.startSystemMove()
 
-    def _toggle_full_screen(self) -> None:
-        """在全屏与窗口之间来回切。
+    def _toggle_filled(self) -> None:
+        """铺满 / 还原 —— 也就是 macOS 的**缩放**（AppKit 的 ``zoom:``，⌃⌘F 那个键）。
 
-        **退出全屏回到进全屏之前那个大小**：``showNormal`` 恢复的正是那一份几何，
-        而不是让系统按当前屏幕随便给一个（拖到一半再双击回来，位置不该变）。
+        **窗口占满的是菜单栏与 Dock 之间的那块地方，两样都还在**，也不会另开一个
+        Space。``showMaximized`` 在 macOS 上正是 ``[NSWindow zoom:nil]``
+        （Qt 的 cocoa 插件里能查到 ``zoom:`` / ``isZoomed`` / ``windowShouldZoom:toFrame:``
+        这几个选择器），它落到 ``visibleFrame`` —— 屏幕减去菜单栏、再减去没有自动隐藏的 Dock。
+
+        **这不是 macOS 的「填满」**：那一个会让窗口盖住菜单栏与 Dock（系统设置 →
+        桌面与程序坞 → 「双击标题栏」可以选「填满」）。我们**不读那个设置** ——
+        那一段已经是我们的了（ADR 0025 决策 1），而那一档的三个选项里只有「缩放」
+        是我们要的（另两档是「盖住菜单栏」与「什么都不做」）。
+
+        **还原回进铺满之前那一份几何**（``showNormal`` 恢复的正是它），而不是让系统按
+        当前屏幕随便给一个 —— 拖到一半再双击回来，窗口该回到刚才那个大小与位置。
         """
-        if self.isFullScreen():
+        if self.isMaximized():
             self.showNormal()
         else:
-            self.showFullScreen()
+            self.showMaximized()
 
     # ---- 标题栏（见 ADR 0025）-----------------------------------------------
 
@@ -1402,22 +1410,24 @@ class MainWindow(
         """把 ``TitleBar`` 与搜索胶囊摆在窗口顶边那一条上。
 
         那一条的高度是**安全区**顶出来的那 28 点（见 ``theme.unify_title_bar``），不写死。
-        全屏时系统自己也不画标题栏，安全区让位，于是这一条跟着收起来 —— 否则它会盖在
-        照片上面（ADR 0025 决策 2）。
+        **真全屏**时系统自己也不画标题栏，安全区让位，于是这一条跟着收起来 —— 否则它会盖在
+        照片上面（ADR 0025 决策 2）。**铺满窗口不在此列**：那只是窗口变大，那一条照旧在。
 
         **两个控件是摆在一起的，不是一套布局**：``TitleBar`` 那一行由标题文字与改名字段
         自己居中，胶囊要贴右边，两者抢同一份布局反而互相挪（ADR 0026 决策 8）。
 
-        **内容区让出多少也归这里**（``_build_ui`` 只留初始值）：全屏时那一段整个收起来，
+        **内容区让出多少也归这里**（``_build_ui`` 只留初始值）：真全屏时那一段整个收起来，
         让出去的那 12 点也就该还回去 —— 不还回去的话，照片区顶上会压着一条什么都没有的
         空档，而那条空档平时正是标题文字与胶囊站的地方。
         """
         if not self._owns_title_bar:
             return
+        # 判据是**真全屏，不是铺满**：铺满只是窗口变大，那一条该照旧在 —— 用户要的
+        # 正是「菜单栏与 Dock 都还在，只把中间那块铺满」（见 :meth:`_toggle_filled`）。
         full_screen = self.isFullScreen()
         self._stack.setContentsMargins(0, 0 if full_screen else TITLE_BAR_EXTRA, 0, 0)
         if full_screen:
-            # 全屏时系统自己也不画标题栏，这一整条跟着收起来（ADR 0025 决策 2）：
+            # 真全屏时系统自己也不画标题栏，这一整条跟着收起来（ADR 0025 决策 2）：
             # 高度给 0，于是它与胶囊都不会盖在照片上。
             self._title_bar.setGeometry(0, 0, self.width(), 0)
             self._title_bar.hide()
@@ -1459,7 +1469,7 @@ class MainWindow(
         #
         # **显隐的判据只有一处**：``ExternalAppsButton.is_available``，由
         # ``_update_action_states`` 问。这里只管在它该在的时候把它摆对 ——
-        # 显隐与几何各归一处，不互相猜。**进出全屏时它整个不见**，那一半归
+        # 显隐与几何各归一处，不互相猜。**真全屏时它整个不见**，那一半归
         # :meth:`changeEvent`（那边是全屏那一份的另一半）。
         if self._external_button.isVisible():
             self._external_button.setGeometry(button_rect(self._search_field.geometry()))
@@ -1489,33 +1499,38 @@ class MainWindow(
         self._layout_banner()
 
     def changeEvent(self, event: QEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
-        """进出全屏之后把窗口顶边那一行重摆一次。
+        """窗口状态一变（铺满、还原、真全屏）就把窗口顶边那一行重摆一次。
 
-        **只有窗口状态变化才重摆**：进全屏时安全区让位，标题栏那一条、胶囊与外部按钮
-        都要收起来（否则它们盖在照片上面）；退出全屏时又得全摆回来。
-        少这一句的后果是**半边的**：双击标题栏进了全屏，标题栏还在（压着照片），
-        而退出全屏之后「用外部应用打开」那个按钮没了（被全屏那一支藏起来没人叫醒）。
+        **铺满时其实什么都不用动**：那只是窗口变大，安全区与那条标题栏照旧在
+        （见 :meth:`_layout_title_bar`）。但**真全屏要动**，而判据不能只挑那个来 ——
+        一并跟着 ``WindowStateChange`` 走，少一处判断也就少一处将来走错的机会。
+
+        **外部按钮的显隐也要补一次**：真全屏那一支把它藏起来了，而退出真全屏不经过
+        ``_update_action_states``，不补这一句它就没了（判据只有 ``is_available`` 那一处）。
 
         别的 ``changeEvent``（例如激活状态）不重摆：这两样东西只跟着窗口状态走。
         """
         super().changeEvent(event)
         if event.type() == QEvent.Type.WindowStateChange:
-            # **先把外部按钮叫回来，再摆**：全屏那一支（见 :meth:`_layout_title_bar`）
+            # **先把外部按钮叫回来，再摆**：真全屏那一支（见 :meth:`_layout_title_bar`）
             # 把它整个藏起来了，而显隐的判据只有 ``is_available`` 那一处 ——
-            # 退出全屏不经过 ``_update_action_states``，不补这一句它就没了。
+            # 退出真全屏不经过 ``_update_action_states``，不补这一句它就没了。
             self._external_button.setVisible(self._external_button.is_available())
             self._layout_title_bar()
             self._layout_banner()
-            self._sync_full_screen_action()
+            self._sync_fill_action()
 
-    def _sync_full_screen_action(self) -> None:
-        """「进入全屏 / 退出全屏」那一句跟着此刻的状态走。
+    def _sync_fill_action(self) -> None:
+        """「铺满窗口 / 还原窗口」那一句跟着此刻的状态走。
 
         **两处都要调**：菜单那一条平时跟着 :meth:`_update_action_states` 走，而
-        **进出全屏不经过那条路** —— 双击标题栏与按 ⌃⌘F 都不会去重算动作可用性，
-        漏了这一句的话，退了全屏菜单上仍然写着「退出全屏」。
+        **双击标题栏与按 ⌃⌘F 都不经过那条路** —— 漏了这一句的话，铺满之后菜单上
+        仍然写着「铺满窗口」。
+
+        **判据是「铺满」而不是「真全屏」**：菜单上这一条说的就是铺满，与那一条
+        （绿按钮悬停菜单里的「进入全屏幕」）不是同一件事。
         """
-        self._full_screen_action.setText("退出全屏" if self.isFullScreen() else "进入全屏")
+        self._fill_action.setText("还原窗口" if self.isMaximized() else "铺满窗口")
 
     def _on_title_rename_committed(self, text: str) -> None:
         """标题栏里确认了一个新名字。

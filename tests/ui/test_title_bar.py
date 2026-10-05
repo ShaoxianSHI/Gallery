@@ -11,9 +11,14 @@
 高亮都只有一份。它们仍在这里而不是另开一个 ``test_rename_edit.py``，是因为这条断言要
 的正是「两页看起来一样」，拆开就没有对象可断言了。
 
-第 5 块是**那一段上还发生的另外两件事**：按住拖窗口、双击进出全屏（ADR 0037）。它们与
-改名一样归那一段管，所以也钉在这里 —— 而拖窗口那一路必须**等过一个双击周期**才发起，
-理由写在 :meth:`MainWindow.mousePressEvent` 里，症状是「双击标题栏一次都不生效」。
+第 5 块是**那一段上还发生的另外两件事**：按住拖窗口、双击**铺满**窗口（ADR 0037）。
+它们与改名一样归那一段管，所以也钉在这里 —— 而拖窗口那一路必须**等过一个双击周期**
+才发起，理由写在 :meth:`MainWindow.mousePressEvent` 里，症状是「双击标题栏一次都不生效」。
+
+**「铺满」不是 macOS 的真全屏**，这两条要分清：铺满是窗口占满菜单栏与 Dock 之间的那一块，
+两样都还在；真全屏是另一个 Space，菜单栏与 Dock 都收起来了。用户要的是前者，
+所以 :func:`test_double_clicking_the_title_bar_fills_the_window_and_back` 两行都断言 ——
+把动作换成 ``showFullScreen`` 时它必须变红。
 
 第3 块里每条写操作都对着 ``tmp_path`` 里的副本，并且断言 journal 里记了一笔
 （红线 4：任何写回都必须可回滚）。
@@ -488,7 +493,7 @@ def test_a_press_on_the_title_bar_waits_for_the_second_click_before_it_moves_the
 
     assert window._title_bar_drag_armed is True
     assert window._title_bar_drag_timer.isActive() is True
-    assert window.isFullScreen() is False
+    assert window.isMaximized() is False
 
 
 def test_a_click_on_the_title_bar_that_is_not_held_does_nothing(
@@ -506,66 +511,108 @@ def test_a_click_on_the_title_bar_that_is_not_held_does_nothing(
 
     assert window._title_bar_drag_armed is False
     assert window._title_bar_drag_timer.isActive() is False
-    assert window.isFullScreen() is False
+    assert window.isMaximized() is False
 
 
-def test_double_clicking_the_title_bar_goes_full_screen(
+def test_double_clicking_the_title_bar_fills_the_window_and_back(
     qt_app: QApplication, window: MainWindow
 ) -> None:
-    """双击标题栏进全屏（ADR 0037）。"""
-    assert window.isFullScreen() is False
+    """双击标题栏**铺满**，再双击一次还原（ADR 0037）。
 
-    _double_click(qt_app, window, _top_point(window))
+    **「铺满」不是 macOS 的真全屏，这是两件事**：铺满是窗口占满菜单栏与 Dock 之间的
+    那一块，**菜单栏与 Dock 都还在**，也不会另开一个 Space（真全屏是另一个 Space，
+    菜单栏与 Dock 都收起来 —— 用户报的是前者，做成后者就是答非所问）。
 
-    assert window.isFullScreen() is True
+    **两行断言缺一不可**：只钉 ``isMaximized()`` 的话，把动作换成
+    ``showFullScreen`` 这条照样绿 —— 而症状是「菜单栏不见了、Dock 不见了」。
 
-
-def test_in_full_screen_the_top_of_the_window_is_no_longer_a_title_bar(
-    qt_app: QApplication, window: MainWindow
-) -> None:
-    """全屏里那一段已经整个收起来了，它不是「标题栏」。
-
-    留着这一条是为了**退出全屏只能走 ⌃⌘F**（下一条）：系统菜单栏要等鼠标移到屏幕
-    顶端才现出来，而那一段此刻压根不在 —— 双击在退出这一侧从来就没有对象可点。
+    **来来回回都要能**：铺满只是窗口变大，标题栏那一段照旧在，于是第二次双击仍然
+    落在标题栏上（判据是 ``isFullScreen``，不是 ``isMaximized``，见
+    :meth:`MainWindow._is_title_bar`）。少了这一半就是「进得去、出不来」。
     """
-    _double_click(qt_app, window, _top_point(window))
-    assert window.isFullScreen() is True
-    assert window._is_title_bar(QPointF(_top_point(window))) is False
-
-    _double_click(qt_app, window, _top_point(window))
-
-    assert window.isFullScreen() is True
-
-
-def test_double_clicking_the_content_does_not_go_full_screen(
-    qt_app: QApplication, window: MainWindow
-) -> None:
-    """内容区里的双击是网格自己的那一件事，不该顺手把窗口变成全屏。"""
-    _double_click(qt_app, window, QPoint(window.width() // 2, window.height() // 2))
-
+    assert window.isMaximized() is False
     assert window.isFullScreen() is False
 
+    _double_click(qt_app, window, _top_point(window))
 
-def test_the_chrome_steps_aside_in_full_screen_and_comes_back(
+    assert window.isMaximized() is True, "双击标题栏没有铺满"
+    assert window.isFullScreen() is False, "铺满不该是 macOS 的真全屏（菜单栏与 Dock 得留着）"
+
+    _double_click(qt_app, window, _top_point(window))
+
+    assert window.isMaximized() is False, "再双击一次没有还原"
+
+
+def test_filling_the_window_leaves_the_title_bar_where_it_is(
     qt_app: QApplication, window: MainWindow
 ) -> None:
-    """全屏里标题栏、胶囊与外部按钮整个收起来，内容区也把那一段的空档还回去。
+    """铺满时标题栏、胶囊、外部按钮与那 12 点空档**全都留在原处**。
 
-    **空档这一条最容易被漏掉**：内容区平时往下让出 :data:`EXTRA_PADDING`，那是给
-    标题文字与胶囊腾出来的地方。全屏里它们都不摆了还留着它，照片区顶上就压着一条
-    什么都没有的白边。
-
-    **回头那三行只由 :meth:`MainWindow.changeEvent` 撑着**（退出全屏本身带着一次
-    几何变化，``resizeEvent`` 会把标题栏与胶囊摆回来；但外部按钮是全屏那一支
-    **藏起来**的，重摆只会「摆一个已经看不见的」）。摘掉 ``changeEvent`` 时这一条
-    与下面那条一起变红。
+    **它们只在真全屏里才收起来**（那条路径见下一块的用例）—— 铺满只是窗口变大，
+    把它们顺手收掉得到的是「照片铺满了，但顶上什么都没有」，而不是「窗口铺满了」。
     """
     assert window._title_bar.isVisible() is True
     assert window._search_field.isVisible() is True
     assert window._external_button.isVisible() is True
-    assert window._stack.contentsMargins().top() == EXTRA_PADDING
 
     _double_click(qt_app, window, _top_point(window))
+
+    assert window._title_bar.isVisible() is True, "铺满之后标题栏不见了"
+    assert window._search_field.isVisible() is True, "铺满之后搜索胶囊不见了"
+    assert window._external_button.isVisible() is True, "铺满之后外部按钮不见了"
+    assert window._stack.contentsMargins().top() == EXTRA_PADDING
+
+
+def test_double_clicking_the_content_does_not_fill_the_window(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """内容区里的双击是网格自己的那一件事，不该顺手把窗口铺满。"""
+    _double_click(qt_app, window, QPoint(window.width() // 2, window.height() // 2))
+
+    assert window.isMaximized() is False
+
+
+def test_the_fill_key_says_which_way_it_will_go(qt_app: QApplication, window: MainWindow) -> None:
+    """⌃⌘F 是系统给铺满的那个键，菜单上那句话得跟着状态走。
+
+    **⌃ 在 Qt 里写作 ``Meta``**（⌘ 才写作 ``Ctrl``）：写成 ``Ctrl+Ctrl+F`` 的话，
+    Qt 会把它并成 ⌘F —— 于是铺满与「找」撞在同一个键上。
+
+    **判据是 ``isMaximized`` 而不是 ``isFullScreen``**：菜单上这一条说的就是铺满，
+    与绿按钮悬停菜单里的「进入全屏幕」不是同一件事。
+    """
+    assert window._fill_action.shortcut() == QKeySequence("Ctrl+Meta+F")
+    assert window._fill_action.text() == "铺满窗口"
+
+    window._fill_action.trigger()
+    qt_app.processEvents()
+
+    assert window.isMaximized() is True
+    assert window._fill_action.text() == "还原窗口"
+
+    window._fill_action.trigger()
+    qt_app.processEvents()
+
+    assert window.isMaximized() is False
+    assert window._fill_action.text() == "铺满窗口"
+
+
+def test_a_real_full_screen_stepped_aside_is_still_handled(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """**真全屏**（绿按钮悬停菜单里的「进入全屏幕」）那一支仍然要成立。
+
+    我们的动作不再进真全屏，但**用户能自己进**（系统设置里把绿按钮设成
+    「进入全屏幕」）—— 那时标题栏、胶囊与外部按钮必须收起来，否则盖在照片上面
+    （ADR 0025 决策 2）；内容区那 12 点空档也要还回去，不还回去照片区顶上就压着
+    一条什么都没有的白边。
+
+    **「回头那三行只由 :meth:`MainWindow.changeEvent` 撑着**：退出真全屏本身带着一次
+    几何变化（``resizeEvent`` 会把标题栏与胶囊摆回来），但外部按钮是全屏那一支
+    **藏起来**的，重摆只会「摆一个已经看不见的」。摘掉 ``changeEvent`` 时这一条变红。
+    """
+    window.showFullScreen()
+    qt_app.processEvents()
 
     assert window._title_bar.isVisible() is False
     assert window._search_field.isVisible() is False
@@ -578,34 +625,31 @@ def test_the_chrome_steps_aside_in_full_screen_and_comes_back(
     assert window._title_bar.isVisible() is True
     assert window._search_field.isVisible() is True
     assert window._external_button.isVisible() is True, (
-        "退出全屏之后这个按钮自己回来了吗（它是全屏那一支藏起来的）"
+        "退出真全屏之后这个按钮自己回来了吗（它是全屏那一支藏起来的）"
     )
     assert window._stack.contentsMargins().top() == EXTRA_PADDING
 
 
-def test_the_full_screen_key_says_which_way_it_will_go(
+def test_in_a_real_full_screen_the_top_of_the_window_is_no_longer_a_title_bar(
     qt_app: QApplication, window: MainWindow
 ) -> None:
-    """⌃⌘F 是全屏里唯一还按得到的那个键（见上一条），菜单上那句话得跟着状态走。
+    """真全屏里那一段已经整个收起来了，它不是「标题栏」。
 
-    **⌃ 在 Qt 里写作 ``Meta``**（⌘ 才写作 ``Ctrl``）：写成 ``Ctrl+Ctrl+F`` 的话，
-    Qt 会把它并成 ⌘F —— 与「进入全屏」撞在同一个键上，退出全屏就成了 ⌘F。
+    留着这一条是为了不给将来的人留一条走不通的路：真全屏里退出得走绿按钮或 ⌃⌘F，
+    而 ``_is_title_bar`` 若把那一块也算成标题栏，双击就会在退出那一侧做出一个
+    「进得去出不来」的状态。
     """
-    assert window._full_screen_action.shortcut() == QKeySequence("Ctrl+Meta+F")
-    assert window._full_screen_action.text() == "进入全屏"
-
-    window._full_screen_action.trigger()
+    window.showFullScreen()
     qt_app.processEvents()
 
-    assert window.isFullScreen() is True
-    assert window._full_screen_action.text() == "退出全屏"
+    assert window._is_title_bar(QPointF(_top_point(window))) is False
 
 
 def test_the_drag_and_the_double_click_step_aside_while_a_name_is_being_edited(
     qt_app: QApplication, window: MainWindow
 ) -> None:
     """改到一半那一段上摆着输入框：拖走它等于把正在改的名字甩到屏幕外，
-    全屏则会让它当场收起来。
+    铺满则会让它当场收起来。
 
     与 ADR 0025 决策 6 同一类让位（那时键盘归输入框，现在鼠标也归它）。
     """
@@ -615,5 +659,5 @@ def test_the_drag_and_the_double_click_step_aside_while_a_name_is_being_edited(
 
     _double_click(qt_app, window, _top_point(window))
 
-    assert window.isFullScreen() is False
+    assert window.isMaximized() is False
     assert window._title_bar.is_editing() is True
