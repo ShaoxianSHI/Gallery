@@ -622,6 +622,12 @@ class SearchField(QWidget):
         # 候选列表是**建好之后**才存在的（``_build_ui`` 的最后一步），主题早就下发过了，
         # 于是它一直拿着系统默认那一档颜色。先把调色板补给它，再按「取自同一个地方」
         # 的规矩生成样式表（见 ``theme.push_palette`` 与 ``popup_style``）。
+        #
+        # **顺序不能换**：样式表里写死的是 ``rgba(...)``，所以它必须从**刚推下去的那份**
+        # 调色板生成。代价是装完样式表之后 Qt 会重新 polish 一遍这个控件并**重算它的
+        # 调色板**（实测换成深色后列表的 ``Highlight`` 停在浅色那一档 ``#548fff``）——
+        # 那一档只在这一个控件上偏，界面上没有任何地方读它（列表整块是样式表在画），
+        # 而 ``QMenu`` 不受这个重算影响，右键菜单那个自绘快捷键列读的仍是刚推下去的那份。
         theme.push_palette(self._popup)
         self._popup.setStyleSheet(popup_style(self._popup, item_padding=self._item_padding()))
         self._icon.setPixmap(magnifier(app_theme, self.devicePixelRatioF()))

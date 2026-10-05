@@ -449,6 +449,98 @@ def test_the_pushed_palette_pins_the_popup_roles(qt_app: QApplication) -> None:
         qt_app.processEvents()
 
 
+def test_the_probe_is_not_handed_an_already_answered_palette(
+    qt_app: QApplication,
+) -> None:
+    """问 Qt 要那几档时给它的那份，**那几档一个都不许带着**。
+
+    回归的是真实现象（ADR 0035 决策 2）：应用调色板里那几档**有时带着「已解析」标记**
+    —— macOS 换过一次外观之后写进来的那份就带着（刚启动时那份没有，所以第一轮看起来
+    一切正常）。带着标记时 ``setPalette`` 变成「原样继承」，探针问出来的等于应用调色板
+    自己那一档，我们再把它钉下去：浅色下就成了那个发白的 ``#a5cdff``（白字 1.64:1），
+    **切一趟深浅色就再也回不来**（用户原话：「切回浅色后和之前也不一样了」，
+    数据上确实不一样：``#548fff`` → ``#a5cdff``）。
+
+    **量的是「有没有带着答案」而不是颜色**：``offscreen``（``fusion``）上只有一种解析结果，
+    带不带标记问出来都一样，颜色断言在这里量不出差别 —— 解析标记是能量的（``resolveMask``）。
+    """
+    mask = theme._probe_palette(theme.current_theme(qt_app).background).resolveMask()
+    for role in theme.RESOLVED_ROLES:
+        assert not (mask >> role.value) & 1, (
+            f"{role.name} 被写进了问 Qt 要答案的那份调色板 —— Qt 会原样继承，"
+            "问出来的就是应用调色板自己那一档，而不是「按控件类型解析」的那一档"
+        )
+
+
+def test_a_theme_change_is_applied_after_the_events_settle(
+    qt_app: QApplication,
+) -> None:
+    """换外观的那一下**不就地下发**：信号触发的那一刻应用调色板是半路的。
+
+    实测 macOS 一轮换外观里那个回调会被叫好几次：头一次拿到的还是**旧的**调色板，
+    后几次拿到的是新的 —— 但那一份里那几档**带着解析标记**（上一条那条）。就地下发
+    等于把半路的调色板钉进整棵控件树，而那几档一旦钉错就再也回不来。
+
+    所以真正那一次下发排到**这一批事件走完之后**（0ms 定时器），一轮里发几个信号都只发一次。
+
+    **量的是「有没有就地下发」**：改完应用调色板的那一刻，那个控件还不该被推过 ——
+    推了就说明我们采到了半路的那一份。
+    """
+    theme.ensure_installed(qt_app)
+    widget = QWidget()
+    original = QPalette(qt_app.palette())
+    try:
+        theme.apply_theme(qt_app)
+        before = widget.palette().color(QPalette.ColorRole.Base)
+
+        dark = QPalette(original)
+        dark.setColor(QPalette.ColorRole.Base, QColor(0x33, 0x33, 0x33))
+        qt_app.setPalette(dark)
+        assert widget.palette().color(QPalette.ColorRole.Base) == before, (
+            "换完外观的那一刻就已经下发过了 —— 那就又是在半路上钉的"
+        )
+
+        qt_app.processEvents()
+        assert (
+            widget.palette().color(QPalette.ColorRole.Base)
+            == theme.current_theme(qt_app).background
+        ), "转完一轮事件循环之后还没下发，这一轮换外观就丢了"
+    finally:
+        qt_app.setPalette(original)
+        theme.apply_theme(qt_app)
+
+
+def test_coming_back_to_light_gives_the_first_light_again(
+    qt_app: QApplication,
+) -> None:
+    """浅 → 深 → 浅之后，浮层那几个角色**与第一轮逐项相同**。
+
+    用户原话：「切到深色再切回浅色后，浅色模式和之前也不一样了」。这一条把「回来要一样」
+    写死：任何一轮里被半路调色板带偏、又被钉死的东西，都会在这一条上露出来。
+    """
+    roles = tuple(theme.RESOLVED_ROLES) + (QPalette.ColorRole.Window,)
+    popup = QWidget()
+    rounds: list[tuple[QColor, ...]] = []
+    original = QPalette(qt_app.palette())
+    try:
+        for base in (QColor(0xFF, 0xFF, 0xFF), QColor(0x17, 0x17, 0x17), QColor(0xFF, 0xFF, 0xFF)):
+            shifted = QPalette(original)
+            shifted.setColor(QPalette.ColorRole.Base, base)
+            qt_app.setPalette(shifted)
+            qt_app.processEvents()
+            theme.apply_theme(qt_app)
+            rounds.append(tuple(popup.palette().color(role) for role in roles))
+        assert rounds[1] != rounds[0], "测试前提不成立：深浅两轮给的是同一个值"
+        assert rounds[2] == rounds[0], (
+            "切回浅色之后与第一轮不一样：",
+            [color.name() for color in rounds[2]],
+        )
+    finally:
+        qt_app.setPalette(original)
+        qt_app.processEvents()
+        theme.apply_theme(qt_app)
+
+
 # ---- 输入面：与窗口同一个底色 --------------------------------------------------
 
 
