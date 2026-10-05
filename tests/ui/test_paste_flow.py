@@ -105,16 +105,24 @@ def _open(qt_app: QApplication, root: Path, *, browse_mode: str = BROWSE_MODE_AL
 
 
 def _enter(qt_app: QApplication, window: MainWindow, folder: Path) -> None:
-    """进相册并**等这一层彻底排好**。
+    """进相册并**等这一层彻底排好**，且**等监听器能直接落变化**。
 
     只等 ``_scan_job is None`` 不够：读元数据那一遍（``_facet_job``）会再排一次，
     而下面那些用例紧跟着就取 ``rowCount()`` 当基准并在等「多了一行」—— 撞上那次
     重排，行数会跳一下再回来，断言就成了在赌时序。
+
+    **还要等 ``_defer_watch_until_idle()`` 为假**：那是产品自己回答「现在能不能
+    就地改网格」的那句判断（扫描在途 / 条目还攒在暂存区 / 人正看着大图，三种
+    时候都不行）。``test_new_file_shows_up_in_the_grid`` 断言的正是「监听器把
+    新照片直接添进来」，而那句话为假时那一批变化会被**攒进** ``_watch_pending``，
+    等下一次重排才补上 —— 空相册这一层未必还有下一次重排，于是断言就成了一场
+    没赢面的等待。
     """
     window.enter_folder(folder)
-    assert wait_until(qt_app, lambda: window._scan_job is None and window._facet_job is None), (
-        "这一层没有排好"
-    )
+    assert wait_until(
+        qt_app,
+        lambda: window._facet_job is None and not window._defer_watch_until_idle(),
+    ), "这一层没有排好（监听器还不能直接落变化）"
 
 
 def _texts(menu: QMenu) -> list[str]:
@@ -608,8 +616,13 @@ def test_new_file_shows_up_in_the_grid(
 
     _paste_and_wait(qt_app, window)
 
-    assert wait_until(qt_app, lambda: window._model.rowCount() == before + 1)
-    assert window._model.row_of_path(root / "奈良" / "一张.jpg") >= 0
+    pasted = root / "奈良" / "一张.jpg"
+    # 等的是**那一条出现了**，不是「行数恰好 +1」：重排会把整层重排一遍，
+    # 拿行数当判据就是拿一个会被顺带改掉的数字当答案。
+    assert wait_until(qt_app, lambda: window._model.row_of_path(pasted) >= 0), (
+        "监听器没有把新照片送进网格"
+    )
+    assert window._model.rowCount() == before + 1, "粘一张进来只该多一行"
 
 
 def test_renamed_duplicate_is_named_in_the_banner(

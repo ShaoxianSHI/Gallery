@@ -375,6 +375,11 @@ def test_clearing_puts_the_first_photo_back(
     assert _wait_for_cover(qt_app, window, root / ALBUM) >= 0
 
     window.clear_album_cover()
+    # **「当场」两个字是这条用例要钉的另一半**：旧封面那份记忆必须在这一
+    # 次调用里作废（``_refresh_album_cover`` → ``forget_thumbnails`` 是同步的）。
+    # 不摆出这一句，下一句 ``_wait_for_cover`` 会在旧图还在的时候立刻
+    # 返回 —— 读到的还是取消之前那一张，断言就成了在赌时序。
+    assert window._model.has_thumbnail(root / ALBUM) is False, "旧封面没有当场作废"
     row = _wait_for_cover(qt_app, window, root / ALBUM)
 
     assert _shows(window, row, FIRST_COLOR)

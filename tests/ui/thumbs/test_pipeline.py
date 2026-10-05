@@ -301,7 +301,12 @@ def test_the_bad_file_memory_outlives_the_window(
     thumbs, runner = pipeline
     broken = _refs(2, "d")
     thumbs.set_window(broken)
-    assert wait_for(lambda: set(thumbs._failed) >= {ref.path for ref in broken})
+    # 先等**这批真的跑完**，再断言那笔账：``_failed`` 是在回调里记的，
+    # 而回调要等后台任务收工、经排队连接回到主线程才发生。
+    # 直接等那笔账就是在赌时序 —— 等不到时报出来的是「结论没记上」，
+    # 而真正的原因是任务压根没回来。
+    assert wait_for(lambda: not thumbs._inflight), "这批坏文件没有在时限内跑完"
+    assert set(thumbs._failed) >= {ref.path for ref in broken}, "读不出来的结论没有记进 _failed"
 
     thumbs.set_window(_refs(2, "e"))
     assert {ref.path for ref in broken} <= thumbs._failed, "「这个文件读不出来」的结论被窗口清掉了"
