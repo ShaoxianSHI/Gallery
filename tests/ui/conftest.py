@@ -204,17 +204,32 @@ def test_no_test_module_shadows_the_shared_fixtures() -> None:
 def _spins_the_loop_itself(node: ast.FunctionDef) -> bool:
     """这个函数**自己**转事件循环并且自己掐时间 —— 那就是自己写了一份轮询循环。
 
-    判据是「同时出现 ``processEvents`` 与（``monotonic`` 或 ``sleep``）」：这两样
-    一起才有轮询的样子。只有 ``processEvents`` 的多半是在收尾（转一圈就跑），
-    只有 ``monotonic`` 的多半是在量时长。
+    判据是三样同时出现：**有一个循环**（``for`` / ``while``）、循环里调了
+    ``processEvents``、以及（``monotonic`` 或 ``sleep``）。三样一起才有轮询的样子。
+
+    **「要有循环」这一条是量出来的**：只判后两样的话，量一次关窗耗时的那种
+    （``processEvents`` + ``monotonic``，压根没有循环）会被当成轮询循环报上来 ——
+    ``test_quit_under_unreadable_photos.py`` 里那一条正是。它量的是时长，不是等待。
+    只转一圈就走的收尾（只有 ``processEvents``）与纯量时长（只有 ``monotonic``）
+    也各走各的。
     """
+    spins = any(
+        isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr == "processEvents"
+        for loop in ast.walk(node)
+        if isinstance(loop, (ast.For, ast.While))
+        for call in ast.walk(loop)
+    )
+    if not spins:
+        return False
     calls = {
         call.func.attr
         for call in ast.walk(node)
         if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
     }
     names = {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
-    return "processEvents" in calls and bool({"sleep", "monotonic"} & (calls | names))
+    return bool({"sleep", "monotonic"} & (calls | names))
 
 
 def test_no_test_module_reimplements_the_wait_helper() -> None:
@@ -222,42 +237,37 @@ def test_no_test_module_reimplements_the_wait_helper() -> None:
 
     曾经散着 8 份轮询循环（``wait_until`` / ``_wait`` / ``_wait_for_scan`` /
     ``wait_rows``），``WAIT_SECONDS`` 与 ``SCAN_TIMEOUT_SECONDS`` 各自定了两个不同的
-    值，轮询间隔也有 0.02 与 0.005 两档。问题不在慢 —— 在于**同一件事有 8 份写法**：
-    改一处不会改到其余七处，而「该等多久才算超时」这种数字一旦各处不同，偶发失败
-    就很难归因（改好一处，另七处还在按旧数字等）。
+    值，轮询间隔也有 0.02 与 0.005 两档。问题不在慢 —— 在于**同一件事有 8 种写法**：
+    改一处不会改到其余几处，而「该等多久才算超时」这种数字一旦各处不同，偶发失败
+    就很难归因（改好一处，另几处还在按旧数字等）。
 
     ``_settle`` 是第二轮清出来的：五个模块各有一份「等 MainWindow 背后那几个后台任务
     收工」（合计 114 处调用），写法一模一样，而且**全都超时静默返回** —— 扫描卡住与
     扫描完成在返回值上完全一样。判据与轮询现在都在 :mod:`waiting` 里
     （:func:`waiting.window_is_idle` / :func:`waiting.wait_for_idle`），不成立直接抛。
 
-    **只拦「自己转循环」的**（见 :func:`_spins_the_loop_itself`），不按名字一刀切：
-    那几个模块仍保留着同名的一行包装（``groups=True`` / ``index=False`` 之类的额外
-    条件确实各不相同），但循环与判据都是 :mod:`waiting` 的 —— 把这种包装也拦掉，
-    等于逼着 114 处调用点各自把 ``what=`` 抄一遍，那是另一种「同一件事多种写法」。
+    **按「写法」判，不按函数名判** —— 这一条是补一个真漏掉的洞。原先还要求函数名在
+    一份白名单里，于是名字不在名单上的自写循环一个都拦不住，实测当场有六处：
+    ``test_chrome.py`` 的 ``_albums_window``（就是那条每八轮红一次的横幅用例旁边那个
+    助手，**超时之后照样把窗口交出去**）、``test_rename_flow.py`` 的 ``open_window``
+    与 ``wait_for_renaming``、``test_group_flow.py`` 的 ``_watch_names`` 与
+    ``_banners_while_busy``、``browser/test_grid.py`` 的
+    ``test_albums_mode_startup_keeps_normal_tile_size``。白名单看着整齐，
+    实际是「只有我想得到的那几种写法才受管」。
+
+    仍然**不拦只有 ``processEvents`` 的那种一行包装**（见 :func:`_spins_the_loop_itself`）：
+    循环与判据都是 :mod:`waiting` 的，包装只是换个默认参数 —— 把这种也拦掉，
+    等于逼着上百处调用点各自把 ``what=`` 抄一遍，那是另一种「同一件事多种写法」。
     """
-    reserved = {
-        "wait_until",
-        "_wait",
-        "_settle",
-        "wait_for_pending",
-        "_wait_for_scan",
-        "wait_rows",
-        "wait_for_idle",
-    }
     offenders: list[str] = []
     for path in sorted(pathlib.Path(__file__).resolve().parent.rglob("test_*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in tree.body:
-            if (
-                isinstance(node, ast.FunctionDef)
-                and node.name in reserved
-                and _spins_the_loop_itself(node)
-            ):
+            if isinstance(node, ast.FunctionDef) and _spins_the_loop_itself(node):
                 offenders.append(f"{path.name}:{node.lineno} {node.name}")
     assert not offenders, (
         f"这些模块自己写了一份轮询循环，请用 waiting.wait_until / waiting.wait_for_level /"
-        f" waiting.wait_for_idle：{offenders}"
+        f" waiting.wait_for_idle / waiting.wait_while_watching：{offenders}"
     )
 
 

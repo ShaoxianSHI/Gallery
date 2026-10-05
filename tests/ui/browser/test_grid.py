@@ -10,7 +10,6 @@
 from __future__ import annotations
 
 import os
-import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -111,12 +110,9 @@ def test_albums_mode_startup_keeps_normal_tile_size(
     window.resize(1200, 800)
     window.show()
 
-    deadline = time.monotonic() + DEFAULT_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
-        qt_app.processEvents()
-        if window._model.rowCount() >= 2 and window._grid._laid_out_columns:
-            break
-        time.sleep(0.01)
+    assert wait_until(
+        qt_app, lambda: window._model.rowCount() >= 2 and window._grid._laid_out_columns
+    ), f"两个相册没能在时限内排好（当前 {window._model.rowCount()} 行）"
     # 等条件而不是转满 0.5 秒：那个「核对列数」的定时器是 COLUMN_CHECK_MS = 50ms。
     settle_grid(qt_app, window._grid)
 

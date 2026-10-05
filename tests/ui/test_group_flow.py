@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import os
-import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 
@@ -19,7 +18,7 @@ pytest.importorskip("PySide6")
 from library_helpers import set_library_ui  # noqa: E402
 from PySide6.QtCore import QItemSelectionModel  # noqa: E402
 from PySide6.QtWidgets import QApplication, QToolButton  # noqa: E402
-from waiting import DEFAULT_TIMEOUT_SECONDS, wait_until, window_is_idle
+from waiting import wait_until, wait_while_watching, window_is_idle
 
 from gallery.core.library.config import (  # noqa: E402
     BROWSE_MODE_ALBUMS,
@@ -239,15 +238,13 @@ def _watch_names(
     model.rowsInserted.connect(on_rows_inserted)
     try:
         record()  # 观察的第一帧：此刻摆着的东西（换排序同步清空后的空网格）
-        deadline = time.monotonic() + DEFAULT_TIMEOUT_SECONDS
-        while time.monotonic() < deadline:
-            qt_app.processEvents()
-            record()
-            if window._scan_job is None and window._facet_job is None and ready():
-                break
-            time.sleep(0.005)
-        qt_app.processEvents()
-        record()  # 收尾那一趟事件也记上：最后一帧同样不许是旧顺序
+        # 轮询与超时用 waiting 里那一份（它顺带在收尾时多记一帧，见 wait_while_watching）。
+        wait_while_watching(
+            qt_app,
+            lambda: window._scan_job is None and window._facet_job is None and ready(),
+            record,
+            what="这一层排好",
+        )
     finally:
         model.modelReset.disconnect(record)
         model.rowsInserted.disconnect(on_rows_inserted)
@@ -440,19 +437,22 @@ def test_reopening_the_same_library_does_not_resolve_again(
 def _banners_while_busy(qt_app: QApplication, window: MainWindow) -> list[str]:
     """转事件循环直到后台活干完，把横幅上出现过的每一句记下来。"""
     seen: list[str] = []
-    deadline = time.monotonic() + DEFAULT_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
-        qt_app.processEvents()
-        if (
-            window._banner.isVisible()
-            and window._banner.text()
-            and (not seen or seen[-1] != window._banner.text())
-        ):
-            seen.append(window._banner.text())
-        if window._scan_job is None and window._facet_job is None and window._place_job is None:
-            qt_app.processEvents()
-            return seen
-        time.sleep(0.01)
+
+    def record() -> None:
+        text = window._banner.text()
+        if window._banner.isVisible() and text and (not seen or seen[-1] != text):
+            seen.append(text)
+
+    # 不成立直接抛：原先超时也返回，于是「后台没干完」与「干完了、只说过两句」在
+    # 返回值上没有区别，「空跑就一声不吭」那条用例会把缺的那几句算到账上。
+    wait_while_watching(
+        qt_app,
+        lambda: (
+            window._scan_job is None and window._facet_job is None and window._place_job is None
+        ),
+        record,
+        what="后台那一遍",
+    )
     return seen
 
 

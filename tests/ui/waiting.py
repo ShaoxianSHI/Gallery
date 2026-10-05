@@ -7,7 +7,7 @@
 定了两个不同的值），外加 conftest 里一份 fixture 形态的 ``wait_for``。问题不在慢，
 在于**同一件事有 8 份写法**：改一处不会改到其余七处。
 
-三种形态各自对应一件事：
+四种形态各自对应一件事：
 
 - :func:`wait_until` —— 答一个是非问题（「到了吗」），不成立就返回 ``False``，
   由用例自己决定怎么报。
@@ -15,6 +15,8 @@
   写进消息（那一层还没排好时看到的现象就是「模型里一个格子都没有」）。
 - :func:`wait_for_idle` —— 专等「MainWindow 背后那几个后台任务收工」，不成立
   **直接抛**。
+- :func:`wait_while_watching` —— 等的同时**把每一帧记下来**（换排序时掠过的那几帧、
+  横幅上先后出现过哪几句），不成立**直接抛**。
 """
 
 from __future__ import annotations
@@ -117,6 +119,41 @@ def wait_for_idle(
     qt_app.processEvents()
 
 
+def wait_while_watching(
+    qt_app: QApplication,
+    ready: Callable[[], bool],
+    on_tick: Callable[[], None],
+    *,
+    what: str,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+) -> None:
+    """转到 ``ready()`` 成立为止，**每一轮都先调一次 ``on_tick()`` 把那一帧记下**。
+
+    有些等的不只是「到了没」，还要看**一路上出现过什么**：换排序时模型掠过的那几帧
+    （同步清空后重排，中间那帧空网格只有信号才看得见）、横幅上先后出现过哪几句。
+    那种循环自己写一遍就又是**一份轮询循环** —— ``conftest.py`` 里那条
+    ``test_no_test_module_reimplements_the_wait_helper`` 盯的正是这个，
+    所以连「边等边看」也收进这里，由调用方只交出一个**记一帧**的回调。
+
+    **收尾多转的那一圈也在里面**：判定成立的那一刻，最后一批结果可能还在路上
+    （扫描是流式的）。所以成立之后先 ``processEvents()`` 再 ``on_tick()`` 一次，
+    「最后一帧同样是旧顺序」这种失败才断得出来。
+
+    :param what: 超时消息里说清在等什么（直接抛，不静默返回）。
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        qt_app.processEvents()
+        on_tick()
+        if ready():
+            break
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"{what}没有在 {timeout:g} 秒内就绪")
+        time.sleep(POLL_SECONDS)
+    qt_app.processEvents()  # 收尾那一趟：最后一帧同样要记
+    on_tick()
+
+
 __all__ = [
     "BACKGROUND_JOBS",
     "DEFAULT_TIMEOUT_SECONDS",
@@ -124,5 +161,6 @@ __all__ = [
     "wait_for_idle",
     "wait_for_level",
     "wait_until",
+    "wait_while_watching",
     "window_is_idle",
 ]

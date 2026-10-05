@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -17,7 +16,7 @@ from PySide6.QtCore import QEvent, QPointF, Qt  # noqa: E402
 from PySide6.QtGui import QMouseEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
-from waiting import DEFAULT_TIMEOUT_SECONDS, wait_for_level
+from waiting import wait_for_level, wait_until
 
 from gallery.core.library.config import (
     BROWSE_MODE_ALBUMS,
@@ -487,14 +486,8 @@ def open_window(
     window = MainWindow(session_base=session_base, initial_library=root)
     window.resize(900, 600)
     window.show()
-    qt_app.processEvents()
-    deadline = time.monotonic() + DEFAULT_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
-        qt_app.processEvents()
-        if window._model.rowCount() > 0:
-            return window
-        time.sleep(0.02)
-    raise AssertionError("扫描没有在时限内完成")
+    wait_for_level(window, qt_app, lambda: window._model.rowCount() > 0, what="照片")
+    return window
 
 
 def test_rename_through_the_grid_actually_renames_the_file(
@@ -708,11 +701,7 @@ def test_click_after_escape_renames_again_in_the_window(
 
 def wait_for_renaming(window: MainWindow, qt_app: QApplication) -> bool:
     """转到「已经进了行内重命名」为止（要等双击阈值那个定时器）。"""
-    deadline = time.monotonic() + DEFAULT_TIMEOUT_SECONDS
-    while time.monotonic() < deadline and not window._grid.is_renaming():
-        qt_app.processEvents()
-        time.sleep(0.005)
-    return window._grid.is_renaming()
+    return wait_until(qt_app, lambda: window._grid.is_renaming())
 
 
 def test_click_after_going_up_a_level_renames(

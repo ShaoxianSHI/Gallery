@@ -16,7 +16,6 @@
 from __future__ import annotations
 
 import threading
-import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -300,11 +299,12 @@ def test_switching_libraries_mid_transfer_does_not_leave_a_phantom_undo(
     def slow_copy(self: Library, *args: object, **kwargs: object) -> object:
         started.set()
         # 让任务真的跨过「提交 → 换库 → 收尾」这三步，别靠时间碰运气。
-        for _ in range(40):
-            qt_app.processEvents()
-            if window._library is not None and window._library.root == other:
-                break
-            time.sleep(0.005)
+        # 轮询用 waiting 里那一份：原先那个 `for _ in range(40)` 撞满 40 轮就
+        # 悄悄接着往下走，于是「换库没赶上」这条用例有可能是因为复制跑在了旧库上
+        # 才绿的 —— 门没被测到，测试自己看不出来。
+        assert wait_until(
+            qt_app, lambda: window._library is not None and window._library.root == other
+        ), "换库没有在时限内发生，这条用例没测到门"
         return real_copy_into(self, *args, **kwargs)
 
     monkeypatch.setattr(Library, "copy_into", slow_copy)
