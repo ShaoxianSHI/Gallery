@@ -1275,15 +1275,18 @@ class MainWindow(
         return self._current_dir or library.root
 
     def _open_finder(self) -> None:
-        """在访达里显示当前这个文件夹。
+        """在访达里**打开**当前这个文件夹 —— 落到它**里面**去，看的是里面摆着什么。
 
-        走右键菜单那条 ``reveal_in_finder``（ADR 0014 决策 3）：**同一个入口，同一句话的措辞**。
+        走 ``desktop.open_folder_in_finder``，与右键菜单对**相册**走的是同一件事（同一个
+        入口，同一句话的措辞）。**与「在访达中显示」不是同一件事**：那条是照片那一路，
+        ``open -R`` 把东西在它所在的目录里选出来（ADR 0014 决策 3）；对着文件夹用它，
+        用户看到的是文件夹**外面**那一层。
         """
         folder = self._current_folder()
         if folder is None:
-            self._show_banner("还没有打开相册库，没有可以显示的文件夹。")
+            self._show_banner("还没有打开相册库，没有可以打开的文件夹。")
             return
-        self._show_banner(desktop.reveal_in_finder([folder]), auto_hide=True)
+        self._show_banner(desktop.open_folder_in_finder([folder]), auto_hide=True)
 
     def _on_external_failed(self, message: str) -> None:
         # 走到这里的是「起进程这一步整个炸了」；``core.external.launch`` 自己的降级路径不抛异常。

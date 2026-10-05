@@ -324,16 +324,47 @@ def test_grouping_still_reaches_the_folder_behind_it(window: MainWindow) -> None
     assert window._current_folder() == window._library.root / "京都"
 
 
-def test_the_finder_entry_reveals_that_folder(
+def test_the_finder_entry_opens_that_folder(
     window: MainWindow, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """走的是右键菜单**同一条** ``reveal_in_finder``（ADR 0014 决策 3）。"""
-    seen: list[list[Path]] = []
+    """走的是右键菜单对**相册**那一条 ``open_folder_in_finder`` —— 落到**里面**去。
+
+    钉住的是「**不是** ``reveal_in_finder``」：``open -R`` 弹出来的访达停在当前这一层的
+    **上一级**，而这个按钮的用处就是看一眼**这一层里面**摆着什么。
+    """
+    opened: list[list[Path]] = []
+    revealed: list[list[Path]] = []
     monkeypatch.setattr(
-        desktop, "reveal_in_finder", lambda paths: seen.append(list(paths)) or "已在访达中显示。"
+        desktop,
+        "open_folder_in_finder",
+        lambda paths: opened.append(list(paths)) or "已在访达中打开。",
+    )
+    monkeypatch.setattr(
+        desktop,
+        "reveal_in_finder",
+        lambda paths: revealed.append(list(paths)) or "已在访达中显示。",
     )
     window._open_finder()
-    assert seen == [[window._library.root]]
+    assert opened == [[window._library.root]]
+    assert revealed == []
+
+
+def test_the_finder_entry_follows_the_folder_the_window_is_in(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """进到相册里之后按它，开的是**当前这一层**那个文件夹，不是永远开着库根。"""
+    opened: list[list[Path]] = []
+    monkeypatch.setattr(
+        desktop,
+        "open_folder_in_finder",
+        lambda paths: opened.append(list(paths)) or "已在访达中打开。",
+    )
+    album = window._library.root / "京都"
+    window._current_dir = album
+
+    window._open_finder()
+
+    assert opened == [[album]]
 
 
 def test_button_appears_on_the_calendar_page(window: MainWindow) -> None:

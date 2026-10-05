@@ -25,7 +25,7 @@ from gallery.core.library.config import (
     BROWSE_MODE_ALBUMS,
     prepare_library,
 )  # noqa: E402
-from gallery.core.library.photos import GroupRef, PhotoRef  # noqa: E402
+from gallery.core.library.photos import FolderRef, GroupRef, PhotoRef  # noqa: E402
 from gallery.core.library.session import (
     SessionState,
     save_session,
@@ -754,6 +754,73 @@ def test_reveal_selection_hands_paths_to_desktop(
     window.reveal_selection()
 
     assert seen == [[window._library.root / "京都" / PHOTO_NAMES[0]]]
+
+
+def test_reveal_on_an_album_opens_that_folder_instead_of_selecting_it(
+    qt_app: QApplication,
+    window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """对着**相册**按这一下要的是「打开进去」，不是「在上一级里把它选出来」。
+
+    两件事不能混：``open -R`` 弹出来的访达停在**外面**那一层，而对着相册按 ⌘⏎ 的人是想
+    看**里面**摆着什么。所以相册走 ``open_folder_in_finder``，且**一条 reveal 都不许发** ——
+    两条同时发的话访达会被连着叫起两次，用户看见的仍然是外面那一层。
+    """
+    opened: list[list[Path]] = []
+    revealed: list[list[Path]] = []
+    monkeypatch.setattr(
+        desktop,
+        "open_folder_in_finder",
+        lambda paths: opened.append([Path(path) for path in paths]) or "已在访达中打开。",
+    )
+    monkeypatch.setattr(
+        desktop,
+        "reveal_in_finder",
+        lambda paths: revealed.append([Path(path) for path in paths]) or "已在访达中显示。",
+    )
+    _show_albums(qt_app, window)
+    _select(window._grid, window._model, (0,))
+
+    window.reveal_selection()
+
+    assert opened == [[window._library.root / "京都"]]
+    assert revealed == []
+
+
+def test_reveal_on_a_photo_together_with_an_album_still_selects_them(
+    qt_app: QApplication,
+    window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """选区里混进了照片就仍然是「选出来」。
+
+    ``open`` 递一个**照片**进去是交给默认应用打开它（预览里一张一张翻），那不是
+    「在访达中显示」该做的事 —— 所以判据是**整个选区都是相册**，不是「有相册就打开」。
+    """
+    opened: list[list[Path]] = []
+    revealed: list[list[Path]] = []
+    monkeypatch.setattr(
+        desktop,
+        "open_folder_in_finder",
+        lambda paths: opened.append([Path(path) for path in paths]) or "已在访达中打开。",
+    )
+    monkeypatch.setattr(
+        desktop,
+        "reveal_in_finder",
+        lambda paths: revealed.append([Path(path) for path in paths]) or "已在访达中显示。",
+    )
+    _show_albums(qt_app, window)
+    window._model.reorder([_photo(window), FolderRef.from_path(window._library.root / "京都")])
+    qt_app.processEvents()
+    _select(window._grid, window._model, (0, 1))
+
+    window.reveal_selection()
+
+    assert opened == []
+    assert revealed == [
+        [window._library.root / "京都" / PHOTO_NAMES[0], window._library.root / "京都"]
+    ]
 
 
 def test_reveal_on_a_group_reveals_its_photos(

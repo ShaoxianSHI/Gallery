@@ -202,14 +202,23 @@ class ContextMenuFlowMixin:
             self._show_banner(message)
 
     def reveal_selection(self) -> None:
-        """「在访达中显示」：在访达里把选中的东西选出来（见 ``ui.desktop``）。
+        """「在访达中显示」：**照片**是在访达里选出来，**相册**是打开进去（见 ``ui.desktop``）。
+
+        两者不是一回事。``open -R`` 把文件夹在**它上一级**里选出来，而对着相册按这一下的
+        人想看的是它**里面**摆着什么 —— 所以整个选区都是相册时才走
+        ``open_folder_in_finder``。选区里混进了照片（或者本来就是照片、分组卡片）就仍然是
+        选出来：照片要的是「在访达里把**它**挑出来」。
 
         选中的**分组卡片**摊平成它的组员（ADR 0020）：卡片自己没有路径，而它代表的
-        那批照片在访达里实实在在地摆着。
+        那批照片在访达里实实在在地摆着 —— 那是照片那一路。
         """
+        entries = self._selected_entries()
         paths = self._selected_paths()
         if not paths:
             self._show_banner(NOTHING_SELECTED)
+            return
+        if entries and all(isinstance(entry, FolderRef) for entry in entries):
+            self._show_banner(desktop.open_folder_in_finder(paths), auto_hide=True)
             return
         self._show_banner(desktop.reveal_in_finder(paths), auto_hide=True)
 
