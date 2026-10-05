@@ -1,15 +1,7 @@
 """``gallery.core`` 的裸像素 → Qt 图像。
 
-两条规则写在这里，避免以后重犯：
-
-1. ``QImage`` 的构造函数**不复制**传入的缓冲区。Python ``bytes`` 一旦被回收，
-   画面就是花屏或直接崩溃 —— 所以这里一律 ``.copy()``，让 QImage 拥有自己的内存。
-2. ``QImage`` 可以在工作线程里构造，``QPixmap`` 只能在 GUI 线程构造。
-   因此后台任务只产出 ``QImage``，转 ``QPixmap`` 的动作一律留在主线程。
-
-**同一条规则还决定了缩放该待在哪**（ADR 0015）：``QImage.scaled`` 与
-``QPixmap.scaled`` 一样快（实测都是 0.08 ms），但只有前者能在工作线程上跑 ——
-所以缩放属于后台那半，界面线程只留下一次 ``QPixmap.fromImage``。
+``QImage`` 的构造函数**不复制**传入的缓冲区，所以这里一律 ``.copy()``；``QImage`` 可以在工作线程
+里构造而 ``QPixmap`` 只能在 GUI 线程构造，因此缩放与解码一起留在后台（ADR 0015）。
 """
 
 from __future__ import annotations
@@ -31,12 +23,10 @@ def to_qimage(raster: RasterImage) -> QImage:
 def to_scaled_qimage(raster: RasterImage, edge: int) -> QImage:
     """把 ``RasterImage`` 缩到长边不超过 ``edge``（只缩不放），并包装成 Qt 图像。
 
-    **合成一步是有意的**：直接 ``to_qimage`` 再 ``scaled``，中间那张
-    ``QImage.copy()``（几百 KB 的整幅拷贝）还没等任何人引用就被丢掉了。
-    ``QImage(bytes, …)`` 不复制缓冲区，而 ``scaled()`` 返回的是自己拥有内存的
-    新图 —— 中间那张只要活过这一次调用就行，不必 ``copy()``。
+    **合成一步是有意的**：``QImage(bytes, …)`` 不复制缓冲区，而 ``scaled()`` 返回的新图自己
+    拥有内存，中间那张只要活过这一次调用就行，不必再整幅 ``copy()`` 一遍。
 
-    :param edge: 目标长边；``<= 0`` 表示不缩放，按原尺寸交出去。
+    :param edge: 目标长边；``<= 0`` 表示不缩放。
     """
     return _scale(_wrap(raster), edge)
 
@@ -44,8 +34,7 @@ def to_scaled_qimage(raster: RasterImage, edge: int) -> QImage:
 def scale_image(image: QImage, edge: int) -> QImage:
     """把 ``QImage`` 缩到长边不超过 ``edge``（只缩不放），与 :func:`scale_pixmap` 同一个实现。
 
-    日历那一侧存的是 ``QImage``（绘制时直接 ``drawImage``，不必先转 ``QPixmap``），
-    换档时那次兜底缩放同样要走这里 —— 不另写一份，免得将来换算法漏掉这一处。
+    日历那一侧存的是 ``QImage``，换档时那次兜底缩放也走这里 —— 不另写一份，免得换算法漏掉。
     """
     return _scale(image, edge)
 
@@ -53,10 +42,9 @@ def scale_image(image: QImage, edge: int) -> QImage:
 def scale_pixmap(pixmap: QPixmap, edge: int) -> QPixmap:
     """把 ``QPixmap`` 缩到长边不超过 ``edge``（只缩不放），并包装成 Qt 图像。
 
-    **「只缩不放、保持比例、平滑」这三条曾经各写一遍**：这里、``browser.model``
-    换档位时的那次兜底、``browser.grid`` 绘制时的就地缩放。三处各写一份的后果
-    不只是多几行 —— 将来要换缩放算法（比如给 Retina 路径换 ``FastTransformation``）
-    得改三处，而其中两处**在主线程上**，那正是 ADR 0015 决策 3 当初要搬走的那类活。
+    「只缩不放、保持比例、平滑」这三条曾经在这里、``browser.model`` 与 ``browser.grid``
+    各写一遍：换一次缩放算法要改三处，而其中两处在主线程上 —— 正是 ADR 0015 决策 3
+    当初要搬走的那类活。
     """
     return _scale(pixmap, edge)
 

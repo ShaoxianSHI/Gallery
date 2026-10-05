@@ -1,18 +1,10 @@
 """实时监听（ADR 0013）：磁盘上变了什么，就把它落到当前这一层上。
 
-watchdog 的回调**不在主线程**，因此这一段的第一件事就是 :meth:`WatchFlowMixin._on_watch_changed`
-由排队连接搬回来再干活。搬回来之后有三个坎，每一个都是「现在还不能就地改网格」：
+watchdog 的回调**不在主线程**，所以先由排队连接搬回来。搬回来之后有三个坎（流式扫描还在跑、
+条目还攒在暂存区等着定顺序、人正看着大图），撞上就**攒着**，等能改的那一刻一次补上。
 
-- 流式扫描还在跑（插到旧位置、会插重）；
-- 条目还攒在暂存区等着定顺序（:attr:`_staged`）；
-- 人正看着大图（重排不动）。
-
-撞上就**攒着**（:attr:`_watch_pending`），等网格能改的那一刻（:meth:`WatchFlowMixin._flush_pending_watch`）
-一次补上，而不是在一条平行路径上把插 / 删 / 改三条分支各改一遍。
-
-还管两件容易漏的事：**自家写操作的回声**（改名 / 移到废纸篓 / 撤销之后，监听器会把同一件事
-再报一次，不挡就等于同一行被改两遍，见 :data:`WATCH_ECHO_TTL`），以及**相册封面的作废**
-（往相册里丢一张照片可能换掉封面，而封面是「里面第一张照片」）。
+还管两件容易漏的事：**自家写操作的回声**（改名 / 移到废纸篓 / 撤销之后监听器会再报一次同一
+件事，见 :data:`WATCH_ECHO_TTL`）与**相册封面的作废**（封面是「里面第一张照片」）。
 """
 
 from __future__ import annotations
@@ -30,9 +22,8 @@ from gallery.core.library.watcher import ChangeKind, LibraryChange, summarize
 
 logger = logging.getLogger(__name__)
 
-#: 自家写操作（改名 / 移到废纸篓 / 撤销）之后，监听器报回来的同一件事在这段时间内
-#: 不再重复应用。给的是**够用**的时间而不是「等下一个事件」：漏掉一次回声会让同一行
-#: 被改两遍，过期之后用户真的在访达里新建一个同名文件又该正常显示（ADR 0013）。
+#: 自家写操作（改名 / 移到废纸篓 / 撤销）之后，监听器报回来的同一件事在这段时间内不再重复
+#: 应用：漏掉一次回声会让同一行被改两遍；过期之后用户真的在访达里新建同名文件又该正常显示。
 WATCH_ECHO_TTL = 2.0
 
 
@@ -62,8 +53,7 @@ class WatchFlowMixin:
     def _defer_watch_until_idle(self) -> bool:
         """现在还不能就地改网格吗？回答「是」，这批变化就该先攒着。
 
-        三种时候不能就地改：扫描还在流式上屏、条目还攒在暂存区等着定顺序、
-        人正看着大图（前两种会插到旧位置、会插重，第三种会重排不动）。
+        三种时候不能就地改：扫描还在流式上屏、条目还攒在暂存区等着定顺序、人正看着大图。
         """
         return (
             self._scan_job is not None
@@ -92,9 +82,7 @@ class WatchFlowMixin:
     def _apply_watch_changes(self, library: Library, changes: Sequence[LibraryChange]) -> None:
         """按当前这一层的形状，把一批变化落到网格、内存缓存与索引上。"""
         if self._conditions:
-            # 检索结果是横跨整个库的一层，「当前这一层」的增量逻辑接不上（见
-            # :meth:`_apply_search_changes`）。重跑一次几十毫秒，比在一条平行路径上
-            # 把插 / 删 / 改三条分支都改对便宜得多。
+            # 检索结果是横跨整个库的一层，增量逻辑接不上；重跑一次几十毫秒，比改三条分支便宜。
             self._apply_search_changes(library, changes)
             return
         added: list[GridEntry] = []
@@ -123,18 +111,14 @@ class WatchFlowMixin:
                 if self._is_on_current_level(change.path):
                     row = self._model.row_of_path(change.path)
                     if row >= 0:
-                        # 换一份新的引用，让这一行不再挂着旧的大小与修改时间。
                         self._model.replace_entry(row, entry)
                         continue
                 covers.update(self._album_covering(change.path))
                 continue
             if self._is_on_current_level(change.path):
                 added.append(entry)
-                # 「这一格已经在了」也要当成文件变了：云盘同步中的照片会先以半截的样子
-                # 出现（解码失败，流水线把它记成「读不出来」），等下完了再报一次「创建」。
-                # 那一格如果不换新引用就一直挂着旧的大小与修改时间，而那份「读不出来」的
-                # 记忆也不会清 —— 于是文件明明已经能读了，缩略图却永远回不来。
-                # 这正是「照片放进文件夹之后一直是黑的，重开也没用」的一半原因。
+                # 「这一格已经在了」也要当成文件变了：云盘同步中的照片会先以半截的样子出现
+                # （解码失败），等下完了再报一次「创建」—— 不换新引用，那份「读不出来」就永远不清。
                 if self._model.row_of_path(change.path) >= 0:
                     stale.add(change.path)
             else:
@@ -161,19 +145,14 @@ class WatchFlowMixin:
                 return
             # 新照片要读一次 EXIF 才排得对；其余照片命中索引，不会重读。
             self._start_facet_read()
-        # 「这一层空不空」由它自己判断是加提示还是收提示（扫描出问题时它会让位）。
         self._update_level_notice()
         self._refresh_thumbnail_window()
 
     def _apply_search_changes(self, library: Library, changes: Sequence[LibraryChange]) -> None:
         """检索这一层的变化：先把索引跟上，再重跑一次检索。
 
-        **索引先跟上，界面后跟上**：重跑时读的就是它，不先更新的话新照片搜不到、
-        删掉的照片还在结果里（那正是 ``search_photos`` 要逐条确认「还在不在」的原因 ——
-        它兜得住残留行，但那是兜底，不是做法）。
-
-        变化落在两层之下时（例如另一个相册里新增一张），**照样重新检索**：条件能不能
-        命中它取决于条件本身，与它在屏幕上可见不可见无关。
+        **索引先跟上，界面后跟上**：重跑时读的就是它，不先更新的话新照片搜不到、删掉的照片还
+        在结果里。变化落在两层之下时**照样重新检索**：条件能不能命中它取决于条件本身。
         """
         gone: list[Path] = []
         fresh: list[PhotoRef] = []
@@ -242,8 +221,8 @@ class WatchFlowMixin:
     def _album_covering(self, path: Path) -> tuple[Path, ...]:
         """变化发生在某个相册**内部**时，找出当前这一层里代表它的那个相册。
 
-        相册的封面是「里面第一张照片」，所以往相册里丢一张新照片可能会换封面 ——
-        这种情况下要把那一格已经画好的封面作废，让缩略图流水线重新去找一次。
+        相册的封面是「里面第一张照片」，所以往相册里丢新照片可能换封面 —— 那要把那一格已经
+        画好的封面作废，让缩略图流水线重新去找一次。
         """
         library = self._library
         if library is None or self._browse_mode != BROWSE_MODE_ALBUMS:
@@ -267,8 +246,8 @@ class WatchFlowMixin:
     def _forget_caches(self, paths: Iterable[Path]) -> None:
         """丢掉按路径索引的内存缓存（路径上已经没有文件，或者文件已经不是那个文件了）。
 
-        磁盘上的缩略图缓存**不用动**：它的键含路径与 ``(大小, 修改时间)``，文件一改
-        键就自然对不上，下次会重新解码（见 ``media.thumbs``）。
+        磁盘上的缩略图缓存**不用动**：它的键含路径与 ``(大小, 修改时间)``，文件一改键就自然
+        对不上，下次会重新解码（见 ``media.thumbs``）。
         """
         wanted = {Path(path) for path in paths}
         for path in wanted:
@@ -292,11 +271,9 @@ class WatchFlowMixin:
     def _reenter_group_later(self, key: str) -> None:
         """分组视图里来了新照片：整个库重新分组一次，之后再回到同一个组。
 
-        否则组卡片上的张数会一直停在快照那一刻，用户看不出这个组已经变了。
-
-        **这一趟不是用户自己退出去的**，所以停着的那一格要记下来，等回到同一个组时
-        重新选中 —— 不然库里只是多了一张照片，人正在看的那张就被甩掉了（与「换排序
-        跟着照片走」同一取向，见 :meth:`_arm_focus`）。
+        否则组卡片上的张数会一直停在快照那一刻。**这一趟不是用户自己退出去的**，所以停着的那
+        一格要记下来，等回到同一个组时重新选中 —— 不然库里只是多了一张照片，人正在看的那张
+        就被甩掉了。
         """
         self._pending_group = key
         self._pending_focus = self._shown_entry_key()

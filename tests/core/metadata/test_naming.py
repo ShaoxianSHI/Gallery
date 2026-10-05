@@ -1,8 +1,6 @@
 """起名规矩的测试（改名、粘贴、移动到相册共用这一份）。
 
-规则只有一条但很要紧：**绝不覆盖用户已有的文件**。三处调用方各写一份，迟早会漂；
-收到 :mod:`gallery.core.metadata.naming` 之后，这里就是它的单点测试。
-"""
+规则只有一条但很要紧：**绝不覆盖用户已有的文件** —— 这里就是它的单点测试。"""
 
 from __future__ import annotations
 
@@ -46,11 +44,7 @@ def test_free_name_works_for_folders_too(tmp_path: Path) -> None:
 
 
 def test_free_name_gives_up_rather_than_truncating(tmp_path: Path) -> None:
-    """名字长到加编号也放不下时如实说不行。
-
-    绝不截断用户的文件名 —— 那会造出一个他认不出的照片（红线 1 的精神：宁可不做，
-    也不做出一个让人误认的东西）。
-    """
+    """名字长到加编号也放不下时如实说不行：绝不截断用户的文件名（红线 1：宁可不做）。"""
     long_stem = "很长的名字" * 40  # 远超 255 字节
     _touch(tmp_path, f"{long_stem}.jpg")
 
@@ -59,7 +53,7 @@ def test_free_name_gives_up_rather_than_truncating(tmp_path: Path) -> None:
 
 def test_free_name_counts_bytes_not_characters(tmp_path: Path) -> None:
     """上限是**字节**（APFS / HFS+ 都是 255 字节，与字符数无关）。"""
-    # 每个汉字 3 字节，86 个字就是 258 字节，已经超了。
+    # 每个汉字 3 字节，86 个字 = 258 字节，已经超了。
     stem = "字" * 86
     assert len(stem.encode()) > MAX_NAME_BYTES
     _touch(tmp_path, f"{stem}.jpg")

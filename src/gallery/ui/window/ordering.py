@@ -1,18 +1,10 @@
 """分组与排序（ADR 0009）：这一层里的照片按什么归拢、按什么排队。
 
-从 :class:`~gallery.ui.main_window.MainWindow` 里拆出来的理由：**它是一段完整的流程**——
-「用户换了一个分组字段」到「网格上重新排好、中间那段还报着进度」之间是一条链，
-链上的每一环（起后台任务、报进度、收进度、按快照重排、把它收完的结果喂给日历与监听器）
-单独看都说不清在干什么。而这一段又是**别的所有流程都要经过的**：打开库、检索、监听到
-新照片，全都会走到 :meth:`OrderingMixin._apply_ordering`。
+它是一段**完整的流程**（换字段 → 后台读元数据 → 报进度 → 按快照重排），而**别的所有流程都要
+经过** :meth:`OrderingMixin._apply_ordering`（打开库、检索、监听到新照片）。
 
-它自己也是一种「流程的总闸」：``_staged``（还没定顺序的暂存区）、``_generation``
-（换库换代）、``_facet_values``（本层的元数据快照）都由这里维护。混在别处的话，
-「扫出来的条目为什么还没上屏」就得跨三个文件去找答案。
-
-另外搬进来的有两个小东西，它们与排序不是一回事，只是**只有这一段用得到**：
-``_show_progress_notice`` / ``_clear_progress_notice``（读元数据那条进度，ADR 0030 说清
-为什么它必须让着用户刚做完的那件事）与共用的地点反查器 :meth:`OrderingMixin._place_lookup`。
+它同时是「流程的总闸」：``_staged``（暂存区）、``_generation``、``_facet_values`` 都由这里
+维护 —— 混在别处的话，「扫出来的条目为什么还没上屏」就得跨三个文件去找。
 """
 
 from __future__ import annotations
@@ -49,8 +41,7 @@ class OrderingMixin:
     def _build_order_menus(self, view_menu: QMenu) -> None:
         """「视图 → 分组 / 排序」两个子菜单。
 
-        放菜单而不是窗口上的控件：这个项目一直刻意不加工具栏，照片区那点高度不该
-        拿来放两个下拉。
+        放菜单而不是窗口上的控件：照片区那点高度不该拿来放两个下拉。
         """
         group_menu = view_menu.addMenu("分组")
         group_menu.setToolTipsVisible(True)
@@ -68,9 +59,8 @@ class OrderingMixin:
 
         sort_menu = view_menu.addMenu("排序")
         sort_menu.setToolTipsVisible(True)
-        # 菜单里**没有「不排序」**：扫描顺序是内部实现（相册在前、按名称），把它摆成一个
-        # 选项等于承认「不按任何字段排」也是用户的正当选择 —— 那条路只会让人在两种
-        # 看不懂的顺序之间来回试。真的要按名字看，「文件名」那一项摆在那儿。
+        # 菜单里**没有「不排序」**：扫描顺序是内部实现，摆成选项只会让人在两种
+        # 看不懂的顺序之间来回试。
         self._sort_actions: dict[str, QAction] = {}
         for facet in SORT_FACETS:
             self._sort_actions[facet.id] = self._order_choice(
@@ -109,8 +99,8 @@ class OrderingMixin:
     def _unavailable_hint(self, facet: Facet) -> str | None:
         """没装 exiftool 时，只有 exiftool 读得到的那些字段要**明说**为什么用不了。
 
-        降级可以，假装没降级不行（见 ``core.metadata.exif``）：让用户分出一个
-        「全都没有」的组，比一开始就告诉他「这个字段要装 exiftool」糟糕得多。
+        降级可以，假装没降级不行：让用户分出一个「全都没有」的组，比一开始就告诉他
+        「这个字段要装 exiftool」更糟。
         """
         if not facet.needs_exiftool or self._has_exiftool:
             return None
@@ -159,8 +149,7 @@ class OrderingMixin:
         self._reload_level()
 
     def _remember_ordering(self) -> None:
-        # 分组 / 排序是**库级**偏好（ADR 0038 决策 4）：在 A 库按地点分组，
-        # 切到 B 库应该回到 B 库自己那一份，而不是把 A 库的分组法传染过去。
+        # 分组 / 排序是**库级**偏好（ADR 0038 决策 4）：切库时不该把 A 库的分组法传染给 B 库。
         self._save_ui_state()
 
     def _sync_order_actions(self) -> None:
@@ -187,11 +176,11 @@ class OrderingMixin:
     def enter_group(self, group: GroupRef, *, focus: EntryKey | None = None) -> None:
         """进入一个分组（双击组卡片）。
 
-        分组不是磁盘上的目录，因此不走 ``enter_folder``：它记不住路径，退出时
-        直接回到进来之前的那一层。
+        分组不是磁盘上的目录，因此不走 ``enter_folder``：它记不住路径，退出时直接回到进来
+        之前的那一层。
 
-        :param focus: 到了这一层选中哪一格。只有软件自己为了重新分组绕出去再回来时
-            才给（见 :meth:`_reenter_group_later`）；用户点进来的一律谁也不选。
+        :param focus: 到了这一层选中哪一格。只有软件自己为了重新分组绕出去再回来时才给；
+            用户点进来的一律谁也不选。
         """
         self._group_view = group
         self._reload_level(focus=focus)
@@ -201,8 +190,7 @@ class OrderingMixin:
         if group is None:
             return
         self._group_view = None
-        # 退回来的那一层选中这张组卡片：分组不是磁盘上的目录，退出时回不到「上一层目录」，
-        # 只能由摆着它的这一层来收场（这一层摆的是组卡片，所以组卡片的标识正好对得上）。
+        # 退回来的那一层选中这张组卡片：分组不在磁盘上，退出时回不到「上一层目录」。
         self._reload_level(focus=entry_key(group))
 
     # ---- 读取本层元数据并重排 ------------------------------------------------
@@ -210,9 +198,8 @@ class OrderingMixin:
     def _start_facet_read(self) -> None:
         """按当前选择给这一层补齐元数据，然后重排。
 
-        只有真的要读 EXIF 的字段才会走到这里（按文件名排序之类是纯算的）。
-        读过一次的结果落进索引（``core.library.index``），所以第二次换分组字段
-        几乎立刻完成。
+        只有真的要读 EXIF 的字段才会走到这里（按文件名排序是纯算的）。读过一次的结果落进
+        索引，所以第二次换分组字段几乎立刻完成。
         """
         library = self._library
         if library is None or not self._needs_facet_read():
@@ -226,9 +213,8 @@ class OrderingMixin:
             return
         generation = self._generation
 
-        # **索引里全都有就直接排**：这正是「第二次打开这个库」的样子，纯粹是一次查表加
-        # 一次排序。起后台线程、报「正在读取 N 张照片的元数据」都是在说一件没发生的事 ——
-        # 用户没法分辨是又在干活还是软件出了毛病（同 ``_maybe_start_place_pass`` 的理由）。
+        # **索引里全都有就直接排**（「第二次打开这个库」的样子）：起后台线程、报「正在读取
+        # N 张照片的元数据」都是在说一件没发生的事，用户没法分辨是又在干活还是软件出了毛病。
         cached = library.cached_facets(refs)
         if len(cached) == len(refs):
             self._facet_values = cached
@@ -260,20 +246,14 @@ class OrderingMixin:
     def _show_progress_notice(self, text: str) -> None:
         """「正在读取元数据…」**让着**用户刚做完的那件事（与 ``_show_place_notice`` 同一套）。
 
-        这不是客气，是一次真实存在的抢话：用户刚编辑完位置，横幅上正写着
-        「已更新……坐标已按「杭州」更新」，紧接着的 facet 重读把它顶掉，读完再收走 ——
-        那句话他就永远看不到了，而它是唯一告诉他「坐标被动过」的地方（ADR 0030）。
-
-        记账交给 :class:`~gallery.ui.window.notice.NoticeSlot`，与检索索引那一族、
-        地点那一族共用同一份判据。
+        这不是客气，是一次真实存在的抢话：用户刚编辑完位置，横幅上正写着「坐标已按『杭州』
+        更新」，紧接着的 facet 重读把它顶掉、读完再收走 —— 那句话他就永远看不到了，而它是
+        唯一告诉他「坐标被动过」的地方（ADR 0030）。
         """
         self._progress_slot.show(text, defer=False)
 
     def _clear_progress_notice(self) -> None:
-        """收掉「正在读取元数据…」那条 —— **只在自己还占着的时候收**。
-
-        为什么非要这一道条件，见 :meth:`NoticeSlot.clear` 的文档。
-        """
+        """收掉「正在读取元数据…」那条 —— **只在自己还占着的时候收**（见 ``NoticeSlot.clear``）。"""
         self._progress_slot.clear()
 
     @property
@@ -283,19 +263,16 @@ class OrderingMixin:
     def _update_level_notice(self) -> None:
         """这一层什么都没有时说一声；有了内容就把这句收回去。
 
-        **判据是「网格上有没有条目」，不是「有没有相册 / 照片」**：分组会把照片换成
-        一张张组卡片，只数相册和照片会把一屏组卡片（甚至一屏相册）误判成空 ——
-        那正是这条提示曾经出现的地方。
+        **判据是「网格上有没有条目」，不是「有没有相册 / 照片」**：分组会把照片换成一张张组
+        卡片，只数相册和照片会把一屏组卡片误判成空。
 
-        **日历那一页不另说一句**：翻到没有照片的月份是常事，网格上一个空白月
-        本来也不说话，横幅却在这里冒出来，等于把「翻过去了」说成「出问题了」。
-        库里真的什么都没有时，下面那句照旧说 —— 那句话这时候是对的。
+        **日历那一页不另说一句**：翻到没有照片的月份是常事，横幅冒出来等于把「翻过去了」说成
+        「出问题了」。
         """
         if self._library is None:
             return
         if self._scan_issue:
-            # 扫描出过问题时横幅归它：那句（哪些内容没读到）比「这里是空的」更该说，
-            # 而这里也不许把它收掉 —— 收了等于把用户真正需要知道的事藏起来。
+            # 扫描出过问题时横幅归它：那句「哪些内容没读到」更该说，这里也不许把它收掉。
             return
         if self._model.rowCount():
             if self._level_notice:
@@ -304,8 +281,7 @@ class OrderingMixin:
             return
         self._level_notice = True
         if self._conditions:
-            # 检索没命中时**不要说「没有找到可显示的照片，支持 JPEG…」**：
-            # 那个格式清单与此刻发生的事毫无关系，用户会以为自己的文件格式不对。
+            # 检索没命中时**不要说那句格式清单**：它与此刻无关，用户会以为文件格式不对。
             self._show_banner("这些筛选条件下没有照片。")
         elif self._group_view is not None:
             self._show_banner("这个分组里没有照片了。")
@@ -323,8 +299,8 @@ class OrderingMixin:
     def _place_lookup(self) -> LazyPlaceResolver:
         """共用的地点反查器：分组、元数据面板、打开库时那一遍都用这一个。
 
-        城市库（解压后约 1.2 MB）只该读一次，所以三条路径共用同一个实例 ——
-        反查器自己缓存着加载好的索引与查过的坐标。
+        城市库（解压后约 1.2 MB）只该读一次，所以三条路径共用同一个实例 —— 反查器自己
+        缓存着加载好的索引与查过的坐标。
         """
         if self._place_resolver is None:
             self._place_resolver = LazyPlaceResolver()
@@ -333,8 +309,7 @@ class OrderingMixin:
     def _on_facet_progress(self, generation: int, payload: object) -> None:
         if generation != self._generation:
             return
-        # 每一条都走 ``_show_progress_notice``：记下自己写过的话，收尾才收得掉自己那一句
-        # （其余的情况见 ``_clear_progress_notice`` 与 ADR 0010 决策 6 的同一个理由）。
+        # 每一条都走 ``_show_progress_notice``：记下自己写过的话，收尾才收得掉自己那一句。
         if isinstance(payload, str):
             self._show_progress_notice(payload)  # 「正在加载城市库…」这类说明
             return
@@ -367,24 +342,18 @@ class OrderingMixin:
     def _apply_ordering(self) -> None:
         """把当前这一层按分组 / 排序重排一次，然后一次性摆到网格上。
 
-        **大图页上不重排**：用户正看着某一张，重排会让那一行的内容换掉，而标题栏
-        还写着刚才那张的名字（ADR 0025 决策 4）。
+        **大图页上不重排**（重排会让那一行的内容换掉，而标题栏还写着刚才那张的名字，ADR 0025
+        决策 4），**日历那一页要重排**（它的模型里装着整库，模型空着的话从日历点照片没反应）。
 
-        **日历那一页要重排**：它的模型里装着整库，点开一张照片正是靠模型里的行
-        进的大图页 —— 模型空着的话，从日历点照片会一点反应都没有。
-
-        **日历在这里喂，不在扫描收工时喂**（这一处曾经是 bug）：模型什么时候摆好
-        是不定的 —— 排序要读元数据时，重排落在那个后台任务回来之后，而不是扫描
-        收工那一刻。于是「扫描完 → 喂日历」会在模型还空着的时候读出零张照片，
-        整层日历从此空着（用户那边看不出任何原因）。跟着模型走就一定对得上。
+        **日历在这里喂，不在扫描收工时喂**：排序要读元数据时，重排落在那个后台任务回来之后，
+        而「扫描完 → 喂日历」会在模型还空着时读出零张照片，整层日历从此空着。
         """
         library = self._library
         if library is None:
             return
         in_grid = self._stack.currentWidget() is self._grid_page
         try:
-            # 大图页上不重排（ADR 0025 决策 4）—— 但日历那一页仍然要喂：用户正看着
-            # 某一张，底下那一层摆着整库照片这件事与他在看哪一张无关。
+            # 大图页上不重排（ADR 0025 决策 4）—— 但日历那一页仍然要喂。
             if self._stack.currentWidget() is not self._detail_page:
                 self._reorder_level(library)
         finally:
@@ -409,13 +378,8 @@ class OrderingMixin:
         photos = [entry for entry in entries if isinstance(entry, PhotoRef)]
         # 相册卡片永远排在前面：先看文件夹、再看按元数据归拢出来的组，是既有心智。
         order = self._current_order()
-        # 已经在分组里面了：那一层全是照片，再分一次组毫无意义（进去就出不来）。
-        #
-        # **日历那一页也不分组**（修的正是这一处）：日历本身就是按日期归拢的那一层，
-        # 而模型在那一页上要装的是**整库照片** —— 一是点开一张照片要能按行找到它
-        # （大图页是按行工作的），二是日历要把整库按小时分桶。带着分组进日历时，
-        # 模型里摆着的是一张张组卡片，于是日历读到零张照片，整层空着，
-        # 而界面上看不出任何原因（症状：开着「按拍摄日期分组」再切到日历，一片空白）。
+        # 已经在分组里面了（再分一次就出不来），**日历那一页也不分组**：它自己就是按日期归拢
+        # 的那一层，模型里要装整库照片；带着分组进去时模型里全是组卡片，日历读到零张照片。
         grouped = self._group_view is not None or self._browse_mode == BROWSE_MODE_CALENDAR
         group = None if grouped else self._current_group_facet()
         values = self._facet_values

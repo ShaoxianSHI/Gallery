@@ -1,9 +1,6 @@
 """``gallery.core.metadata.facets`` 的测试。
 
-这个模块是分组与排序的地基：它决定「一个字段的值是什么形状」。所以这里测的重点不是
-漂亮，是**别把该是数字的东西变成字符串**（``1/2000`` 与 ``1/400`` 的先后），
-以及**读不到时老实给 None**（宁可归到「未知」组，也不要编一个值出来）。
-"""
+它决定字段值的形状：重点是**别把该是数字的东西变成字符串**、**读不到就老实给 None**。"""
 
 from __future__ import annotations
 
@@ -44,10 +41,9 @@ from gallery.core.metadata.facets import (
 )
 from gallery.core.places.resolver import ResolvedPlace
 
-#: 主 IFD 里的标签（写入文件时也要用，见 tests/conftest.py 的 make_photo）。
+#: 主 IFD 里的标签（写入文件时也用它）；下面那五个在 Exif 子 IFD 里。
 TAG_MAKE = 0x010F
 TAG_MODEL = 0x0110
-#: Exif 子 IFD 里的标签。
 TAG_DATETIME_ORIGINAL = 0x9003
 TAG_SHUTTER = 0x829A
 TAG_APERTURE = 0x829D
@@ -59,9 +55,6 @@ def _ref(tmp_path: Path, name: str = "a.jpg", size: int = 100) -> PhotoRef:
     path = tmp_path / name
     path.write_bytes(b"x" * size)
     return PhotoRef(path=path, size=size, mtime_ns=1)
-
-
-# ---- 提取 --------------------------------------------------------------------------
 
 
 def test_extract_reads_exif_fields() -> None:
@@ -145,9 +138,6 @@ def test_extract_of_empty_mapping_is_all_unknown() -> None:
     assert facets == PhotoFacets()
 
 
-# ---- 坐标 ---------------------------------------------------------------------------
-
-
 def test_extract_reads_gps_coordinates() -> None:
     """相机原图几乎只写 GPS、不写 IPTC 地点：读不到坐标就分不出国家（见 WANTED_TAGS）。"""
     raw = {
@@ -181,9 +171,6 @@ def test_gps_tags_are_requested() -> None:
     """回归测试：漏掉这几行，每张照片的地点字段就都是空的。"""
     for tag in ("EXIF:GPSLatitude", "EXIF:GPSLongitude", "EXIF:GPSLatitudeRef"):
         assert tag in WANTED_TAGS
-
-
-# ---- 按坐标补地点 ---------------------------------------------------------------------
 
 
 def test_resolved_place_fills_the_empty_fields() -> None:
@@ -254,9 +241,6 @@ def test_a_lookup_that_could_not_happen_is_not_marked() -> None:
     assert unmarked.place_checked is False
 
 
-# ---- 拍摄时间解析 --------------------------------------------------------------------
-
-
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
@@ -290,9 +274,6 @@ def test_parse_capture_time_rejects_nonsense(text: str | None) -> None:
     assert parse_capture_time(text) is None
 
 
-# ---- 字段表 ------------------------------------------------------------------------
-
-
 def test_unknown_ids_fall_back_to_none() -> None:
     assert group_facet("没有这个字段") is None
     assert sort_facet("没有这个字段") is None
@@ -309,11 +290,7 @@ def test_keyword_is_not_sortable() -> None:
 def test_place_fields_need_exiftool() -> None:
     """没装 exiftool 时界面据此把国家 / 省州 / 城市 / 关键词置灰。
 
-    **关键词也别漏**：它只住在 IPTC / XMP（``WANTED_TAGS`` 里的 ``IPTC:Keywords``、
-    ``XMP:Subject``、``XMP-dc:Subject``），Pillow 读不出来。不标这一条，菜单里那条
-    「按关键词分组」就仍然可点，而点下去满屏都是「无关键词」—— 用户会以为是自己
-    没给照片写关键词。
-    """
+    **关键词也别漏**：它只住在 IPTC / XMP，漏标那项菜单就全是空的。"""
     assert group_facet(FACET_CITY).needs_exiftool
     assert group_facet(FACET_COUNTRY).needs_exiftool
     assert group_facet(FACET_REGION).needs_exiftool
@@ -325,13 +302,9 @@ def test_place_fields_need_exiftool() -> None:
 def test_keywords_really_do_come_from_exiftool_only(
     tmp_path: Path, make_photo: Callable[..., Path]
 ) -> None:
-    """上一条的前提：降级来源（Pillow）根本给不出关键词。
+    """上一条的前提：降级来源（Pillow）根本给不出关键词 —— 它只产出 ``EXIF:`` 前缀的键。
 
-    ``_read_with_pillow`` 只产出 ``EXIF:`` 前缀的键，而关键词读的是
-    ``IPTC:Keywords`` / ``XMP:Subject`` / ``XMP-dc:Subject``。这条测试把那个前提
-    钉住 —— 将来若有人把关键词挪到某个基础 EXIF 标签上，就得回来改 ``needs_exiftool``，
-    否则菜单会继续说「缺 exiftool 就用不了」，而其实已经能用了。
-    """
+    将来若有人把关键词挪到某个基础 EXIF 标签上，就得回来改 ``needs_exiftool``。"""
     keyword_keys = {"IPTC:Keywords", "XMP:Subject", "XMP-dc:Subject"}
     # 关键词读的键都得在 WANTED_TAGS 里，否则 exiftool 那一路也读不到。
     assert keyword_keys <= set(WANTED_TAGS)
@@ -357,9 +330,6 @@ def test_catalogs_have_no_duplicates_and_real_labels() -> None:
     assert len({facet.id for facet in GROUP_FACETS}) == len(GROUP_FACETS)
     assert len({facet.id for facet in SORT_FACETS}) == len(SORT_FACETS)
     assert all(facet.label for facet in (*GROUP_FACETS, *SORT_FACETS))
-
-
-# ---- 取值 ---------------------------------------------------------------------------
 
 
 def _input(tmp_path: Path, name: str, facets: PhotoFacets) -> object:

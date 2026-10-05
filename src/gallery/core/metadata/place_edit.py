@@ -1,20 +1,8 @@
 """用户在编辑器里改的那份位置，翻译成要写进文件的字段（ADR 0031）。
 
-**这一层只做翻译，不碰文件**：输入是「照片此刻的位置」与「用户填完的那一份」，输出是
-一组 :class:`~gallery.core.metadata.writeback.Assignment`。真正写盘的是
-:func:`gallery.core.metadata.writeback.write_metadata`，它记账、校验、回滚、可撤销。
-
-两条方向在这里合流：
-
-- **坐标 → 地点**：按新坐标反查一次城市（``place_for``），把结论一并写进去，于是照片的
-  坐标与地点永远说同一句话；
-- **地点 → 坐标**：按新地名正查一次（``place_named``，ADR 0031），查得到就把那个地点的
-  坐标写进去，查不到就**只写地名、坐标原样不动** —— 库里没有的名字绝不配一个坐标
-  （那是拿「市一级的位置」冒充「这张照片在哪」）。
-
-**两个方向撞在一起时，用户填的说了算**：两个方向都在同一个对话框里，就不去反查覆盖
-用户填的地名 —— 否则用户改完坐标、顺手把城市名也调了一下，回来却发现自己的地名被
-反查结果盖掉了。那一刻只说一句「它们之间的对应关系是你定的」。
+**只做翻译，不碰文件** —— 写盘、记账、校验与撤销都在 ``metadata.writeback``。坐标 → 地点
+是反查、地点 → 坐标是正查（查不到就只写地名、坐标原样不动）；两个方向撞在一起时用户填的
+说了算，不用反查结果盖掉他填的地名。
 """
 
 from __future__ import annotations
@@ -61,10 +49,8 @@ class PlaceState:
 class PlaceEdit:
     """用户在编辑器里填完的**那一份**，不是「改了哪些」。
 
-    编辑器是三个输入框加一对坐标框，**打开时就把照片此刻的值填进去**，用户改完直接保存 ——
-    那是访达「显示简介」的用法。于是这里收到的是「最终应该是什么样」，而不是一个补丁：
-    **空串表示那一层要清掉**（这是与「没动它」不同的一件事，正因为如此才不该让界面传
-    「改了哪些」过来 —— 那种形状没法表达「把城市清空」）。
+    编辑器打开时就把照片此刻的值填进去，用户改完直接保存 —— 收到的是「最终应该是什么样」
+    而不是补丁：**空串表示那一层要清掉**（与「没动它」是两件事，那种形状没法表达「清空城市」）。
     """
 
     city: str | None = None
@@ -72,13 +58,9 @@ class PlaceEdit:
     country: str | None = None
     latitude: float | None = None
     longitude: float | None = None
-    #: **只删坐标、留地名**（定位漂了而地名没错时，用户要的是这一下）。
-    #:
-    #: 「两个框都空了」本身说不清是「删掉它」还是「没动它」——后者是绝大多数情况（用户只是
-    #: 改了个地名）。所以由界面明确说「这两个框原本有值、现在被清空了」，core 才当真去删。
-    #:
-    #: **「把位置整个清掉」不需要单独的开关**：三层地名与两个坐标框全清空就是那个意思 ——
-    #: 那是编辑器里唯一表达得出「全部删除」的形状，而勾选框只会让人多一种要记的用法。
+    #: **只删坐标、留地名**（定位漂了而地名没错时，用户要的是这一下）。「两个框都空了」本身
+    #: 说不清是「删掉它」还是「没动它」，所以由界面明确说「原本有值、现在被清空了」。
+    #: 「把位置整个清掉」不需要单独的开关：三层地名与两个坐标框全清空就是那个意思。
     clear_coordinates: bool = False
 
     def names(self) -> tuple[str | None, str | None, str | None]:
@@ -125,8 +107,8 @@ def plan_place_edit(
     assignments: list[Assignment] = []
     final_names = names
     final_coordinates = coordinates or state.coordinates()
-    #: 地名要不要跟着写。**没改过、也没反查出新结论时一个字都不写** —— 重写一遍同样的
-    #: 值在写回那一层会被判成「没变」而跳过，但把它列进计划里会让人以为程序动过它。
+    #: 地名要不要跟着写。**没改过、也没反查出新结论时一个字都不写** —— 重写一遍同样的值在
+    #: 写回那一层会被判成「没变」而跳过，但列进计划里会让人以为程序动过它。
     names_written = names_changed
 
     if coordinates is not None:
@@ -140,8 +122,7 @@ def plan_place_edit(
     elif names_changed:
         found, found_coordinates = _lookup_coordinates(names, resolver)
         assignments.extend(found)
-        # 正查出来的坐标**优先于**照片里原来那个：用户明确要求「按这个地点改坐标」，
-        # 原来的坐标在这条要求里就是要被替换掉的那一个。
+        # 正查出来的坐标**优先于**照片里原来那个：用户明确要求「按这个地点改坐标」。
         final_coordinates = found_coordinates or final_coordinates
 
     if names_written:
@@ -186,8 +167,8 @@ def _coordinates(state: PlaceState, edit: PlaceEdit) -> tuple[float, float] | No
     if not -180.0 <= longitude <= 180.0:
         raise MetadataWriteError(f"经度要在 -180 到 180 之间，写的是 {longitude}。")
     if not is_real_coordinate(latitude, longitude):
-        # 0,0 是几内亚湾里一个不存在的点（见 is_real_coordinate）。用户真的要去那儿也是
-        # 一个合法意图 —— 但十有八九是「我没定到 GPS，程序给我填了 0」的原样搬运。
+        # 0,0 是几内亚湾里一个不存在的点（见 is_real_coordinate），十有八九是「我没定到 GPS，
+        # 程序给我填了 0」的原样搬运。
         raise MetadataWriteError("经纬度都是 0 —— 那是几内亚湾里的一个点，世上并不存在。")
     current = state.coordinates()
     if current is not None and all(
@@ -201,8 +182,8 @@ def _coordinates(state: PlaceState, edit: PlaceEdit) -> tuple[float, float] | No
 def _coordinate_assignments(latitude: float, longitude: float) -> list[Assignment]:
     """坐标 → 四个标签，外加**把旧位置的海拔与定位时间清掉**。
 
-    那两个字段记的是「另一个位置」上的测量值：留着它们，一条 GPS 记录内部就自相矛盾了
-    （坐标在杭州、海拔是珠峰的）。清掉比留着好，而清掉这件事必须说给用户听。
+    那两个字段记的是「另一个位置」上的测量值，留着一条 GPS 记录就自相矛盾（坐标在杭州、
+    海拔是珠峰）。清掉比留着好，而清掉这件事必须说给用户听。
     """
     return [
         Assignment("EXIF:GPSLatitude", f"{abs(latitude):.6f}"),
@@ -241,10 +222,8 @@ def _lookup_place(
 ) -> tuple[list[Assignment], tuple[str | None, str | None, str | None] | None]:
     """坐标 → 地点（反查）。**查不到就什么都不加**，照片里原来的地名原样留着。
 
-    保留而不是清空：那张照片本来就写着「南京」，用户只是把坐标挪到了别处 —— 该由用户
-    判断是地名错了还是坐标错了，Gallery 替他删掉一个字段只会让事情更难查。
-
-    返回 ``(字段, 结论)``，结论为 ``None`` 就是「附近没有城市」——调用方据此不动地名。
+    保留而不是清空：该由用户判断是地名错了还是坐标错了，替他删掉只会让事情更难查。
+    返回 ``(字段, 结论)``，结论为 ``None`` 就是「附近没有城市」。
     """
     if resolver is None:
         return [], None
@@ -261,11 +240,9 @@ def _lookup_coordinates(
 ) -> tuple[list[Assignment], tuple[float, float] | None]:
     """地点 → 坐标（正查，ADR 0031）。
 
-    **查不到就是查不到**：库里没有的名字（用户自己写的门牌、景区、小店）绝不能配一个
-    坐标 —— 那是一个看起来精确、实际错得离谱的值，比留着没有坐标糟糕得多。
-
-    返回 ``(字段, 坐标)``，坐标为 ``None`` 就是「库里没有这个名字」，调用方据此
-    **原样保留照片里原来的坐标**，并把原因说给用户。
+    **查不到就是查不到**：库里没有的名字（用户自己写的门牌、景区、小店）绝不能配一个坐标
+    —— 那是一个看起来精确、实际错得离谱的值。返回 ``(字段, 坐标)``，坐标为 ``None`` 时
+    调用方原样保留照片里原来的坐标。
     """
     city, region, country = names
     if resolver is None or not city:

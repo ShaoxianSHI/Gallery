@@ -1,17 +1,8 @@
 """一次性读取一组照片的元数据。
 
-界面选中一张就起一次 exiftool（约 50ms）这件事只适合「看当前这一张」。分组与排序
-要对**当前层的每一张**做同样的事，一次一个子进程就是 5000 张 × 50ms ≈ 4 分钟 ——
-功能等于不存在。所以这里把一批路径交给**同一个** exiftool 进程。
-
-三个要点：
-
-- **点名要标签**而不是拉全量（见 ``facets.WANTED_TAGS``）：5000 张的全量 JSON 有几十兆，
-  解码它比排序本身还贵。
-- **分批**：argv 长度有硬上限（macOS 的 ``ARG_MAX`` 约 1MB），一万个路径会直接 ``E2BIG``；
-  分批顺便给了取消点。
-- **可取消**：用 ``Popen`` 轮询而不是一次 ``run``，切库时能立刻 ``terminate``，
-  不给野进程留在后台跑。
+逐张起 exiftool（约 50ms/张）只适合「看当前这一张」，5000 张就是 4 分钟；这里把一批路径交给
+**同一个** exiftool 进程，并只点名要标签（``facets.WANTED_TAGS``）、分批（argv 有 ``ARG_MAX``
+上限，顺带给取消点）、用 ``Popen`` 轮询而不是一次 ``run``（切库时能立刻 ``terminate``）。
 """
 
 from __future__ import annotations
@@ -34,21 +25,15 @@ from gallery.core.metadata.exif import (
 )
 from gallery.core.metadata.facets import WANTED_TAGS, PhotoFacets, extract
 
-#: 一次交给 exiftool 的文件数。
-#:
-#: 越大越省进程启动开销（一次约 60ms），但一次失败要重读的也多。400 个一批时，
-#: 5000 张照片的读取约 2~3 秒，取消延迟也在一秒多以内 —— 这个平衡点够用。
+#: 一次交给 exiftool 的文件数。越大越省进程启动开销（约 60ms），但一次失败要重读的也多；
+#: 400 个一批时 5000 张约 2~3 秒，取消延迟在一秒多以内。
 BATCH_SIZE: Final = 400
 
 #: 轮询间隔：够细才叫得动取消，粗了又白费 CPU。
 POLL_SECONDS: Final = 0.05
 
-#: 报进度的粒度（张）。
-#:
-#: 与 :data:`BATCH_SIZE` 对齐 —— 用户看见的「正在读取元数据…x / y」本来就该一跳一跳的，
-#: 而这一跳正好对应一次 exiftool 子进程。**每张照片报一次是错的**：界面那一次回调是
-#: 跨线程的 Qt 信号（见 ``facade._offset_progress`` 接到 ``MainWindow._on_facet_progress``），
-#: 五千张照片就是五千次信号投递，而那条横幅本来一屏都装不下那么多中间态。
+#: 报进度的粒度（张），与 :data:`BATCH_SIZE` 对齐 —— 一跳正好对应一次 exiftool 子进程。
+#: **每张照片报一次是错的**：界面那一次回调是跨线程的 Qt 信号，五千张就是五千次投递。
 PROGRESS_STEP: Final = BATCH_SIZE
 
 
@@ -65,9 +50,8 @@ class BatchMetadataSource(Protocol):
         """依次产出 ``(路径, 原始键值)``。
 
         **「读到了但里面什么都没有」与「压根没读出来」是两件事**，用 ``None`` 区分：
-        前者要记进索引（那张照片就是没有拍摄时间，下次不必再问一遍），后者不记
-        （权限问题、文件正被占用，下次还得再试）。少了这个区分，换一次分组字段
-        就得把整库没写元数据的照片重新问一遍 exiftool。
+        前者要记进索引（那张照片就是没有拍摄时间），后者不记（权限问题、文件被占用，下次
+        还得再试）。少了这个区分，换一次分组字段就得把整库没写元数据的照片重新问一遍。
         """
         ...
 
@@ -172,11 +156,8 @@ class ExifToolBatchSource:
 
 
 class PillowBatchSource:
-    """降级来源：没有 exiftool 时逐张用 Pillow 读基础 EXIF。
-
-    不起子进程，因此比「每张一个 exiftool」快得多；拿不到 IPTC / XMP，
-    也就是国家、省州、城市、关键词那几项（界面据此把它们置灰并说明原因）。
-    """
+    """降级来源：没有 exiftool 时逐张用 Pillow 读基础 EXIF（不起子进程，比逐张起 exiftool 快得多；
+    拿不到 IPTC / XMP，界面据此把国家、省州、城市、关键词几项置灰）。"""
 
     def __init__(self) -> None:
         from gallery.core.metadata.exif import PillowSource

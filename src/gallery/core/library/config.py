@@ -1,18 +1,6 @@
-"""库级配置（``config.toml``）的读写。
-
-它是配置目录里唯一不是缓存的文件，所以这里的读写必须防御：
-文件缺失用默认值，语法或取值非法给出可行动的中文提示，写入走原子替换。
-
-配置文件的字段对用户是**公开接口**——用户手改 `config.toml` 是预期行为，
-因此每个错误提示里都要带上文件路径和合法取值范围。
-
-相册封面（ADR 0028）也在这份文件里，它的两列都是**相对库根的路径**：库挪个位置、
-换台机器 clone 一份，那几行照样指着同一张照片。
-
-**库级界面偏好（``[ui]`` 表）也在这里**（ADR 0038 决策 4）。它原先住在应用级的
-``state.json`` 里，与「最近打开过哪些库」「窗口多大」混在一起 —— 但换库就该重来，
-而 ``state.json`` 那两样是应用级的（打开软件时还不知道要开哪个库）。拆开之后
-「用 A 库的地点分组习惯切到 B 库」会回到 B 库自己的设置，这正是要的。
+"""库级配置（``config.toml``）的读写：配置目录里唯一不是缓存的文件，用户手改是预期行为。
+缺字段用默认值、非法取值给可行动的中文提示（带上路径与合法取值）、写入走原子替换。
+相册封面与库级界面偏好 ``[ui]``（ADR 0038 决策 4）也在这里，存的路径都相对库根。
 """
 
 from __future__ import annotations
@@ -58,11 +46,8 @@ BROWSE_MODE_CALENDAR: Final = "calendar"
 #: 允许的浏览方式。界面上只有这三个，不给「不选」。
 BROWSE_MODES: Final = (BROWSE_MODE_ALBUMS, BROWSE_MODE_FLAT, BROWSE_MODE_CALENDAR)
 
-#: 排序字段的**界面默认值**：用户从没选过排序字段时，按修改时间排。
-#:
-#: 时间才是照片之间最实在的那条线索，而**文件自己就带着它** —— 不必等 exiftool，
-#: 打开一个库就能立刻排好顺序（``FILE_FACET_IDS`` 里的字段才做得到这一点）。
-#: 想按拍摄时间排的，「排序」菜单里有那一项，读一次元数据即可切过去。
+#: 排序字段的**界面默认值**：用户从没选过排序字段时，按修改时间排 —— 时间是照片之间最实在的
+#: 线索，而且文件自己就带着它，不必等 exiftool（按拍摄时间排也有那一项，只是要读一次元数据）。
 DEFAULT_SORT_FACET: Final = FACET_MODIFIED
 
 #: 日历视图停在哪一层的默认值。
@@ -77,20 +62,11 @@ _CONFIG_HEADER: Final = (
 
 @dataclass(frozen=True, slots=True)
 class LibraryUIState:
-    """**库级**界面偏好：上次在这个库里看到哪儿了。
+    """**库级**界面偏好：上次在这个库里看到哪儿了（软件自己记的，用户要调的是顶层那几个键）。
 
-    每个字段的 ``None`` 都有确切含义 ——「从没选过」，由界面默认值接手。它与
-    ``state.json`` 里的应用级状态分开，是因为判据不同：换库时这几个该重来，
-    最近打开列表与窗口几何不该。
-
-    **这些字段是软件自己记的，不必手改。** 用户要调的是同一文件里那几个顶层键
-    （``recursive`` / ``thumbnail_max_edge`` / ``max_cache_bytes``）与
-    ``[album_covers]``。
-
-    ``thumbnail_edge`` 是网格里每格显示多大，与顶层的 ``thumbnail_max_edge``
-    （缓存里存多大）**不是一回事**：后者是缓存规格，前者是显示档位。档位表在
-    ``ui/browser/thumb_sizes.py``，这里只保证它是个正整数 —— 归一（就近取档）是
-    界面的事，``core`` 不该再定义一份档位表出来。
+    字段为 ``None`` 即「从没选过」，由界面默认值接手。与应用级 ``state.json`` 分开，是因为
+    换库时这几个该重来，而最近打开列表与窗口几何不该。``thumbnail_edge`` 是网格每格的显示
+    档位，与顶层 ``thumbnail_max_edge``（缓存规格）不是一回事，归一是界面的事。
     """
 
     browse_mode: str | None = None
@@ -133,10 +109,7 @@ class LibraryUIState:
     def with_ordering(
         self, group_facet: str | None, sort_facet: str, descending: bool
     ) -> LibraryUIState:
-        """记下分组 / 排序选择（见 ADR 0009）。
-
-        ``sort_facet`` 必须是真字段 id：菜单里没有「不排序」，界面上永远有一个排序字段。
-        """
+        """记下分组 / 排序选择（ADR 0009）。``sort_facet`` 要真字段 id：菜单里没有「不排序」。"""
         return replace(
             self,
             group_facet=group_facet,
@@ -150,25 +123,19 @@ class LibraryUIState:
         return level if level in CALENDAR_LEVELS else DEFAULT_CALENDAR_LEVEL
 
     def resolved_sort_facet(self) -> str:
-        """这一档该用的排序字段 id。
+        """这一档该用的排序字段 id。没选过、或存着的值来路不明（老版本、手改过）就交回
+        :data:`DEFAULT_SORT_FACET`，界面上没有「不排序」可退回。
 
-        没选过、或存着的值来路不明（老版本、手改过、程序里直接塞的）就交回
-        :data:`DEFAULT_SORT_FACET` —— 界面上没有「不排序」可退回，默认值就是唯一的退路。
-
-        **这里自己再判一次，不靠 :meth:`from_mapping` 的校验**：``LibraryUIState``
-        也能被直接 ``LibraryUIState(sort_facet=…)`` 造出来，而「resolve」这个词
-        承诺的是「交回一个能用的值」—— 那就不能只对读文件那条路成立。
+        这里自己再判一次而不靠 :meth:`from_mapping` 的校验：``LibraryUIState`` 也能被直接
+        ``LibraryUIState(sort_facet=…)`` 造出来，而「resolve」承诺的是交回一个能用的值。
         """
         if self.sort_facet is not None and sort_facet(self.sort_facet) is not None:
             return self.sort_facet
         return DEFAULT_SORT_FACET
 
     def to_toml(self) -> str:
-        """``[ui]`` 那一张表。**一个都没记过时整段不写** —— 跟相册封面同一原则：
-        没人设过的东西不该在文件里留下一行等着被误读成「曾经有过设置」。
-
-        按固定顺序写，于是同一个库的 ``config.toml`` 每次保存都长得一样，
-        跟着库提交进版本控制时 diff 里全是噪音。
+        """``[ui]`` 那一张表。**一个都没记过时整段不写**（与相册封面同一原则：没人设过的东西不该留下
+        一行等着被误读成「曾经有过设置」）。按固定顺序写，于是每次保存 diff 里没有噪音。
         """
         if self.is_empty:
             return ""
@@ -194,11 +161,8 @@ class LibraryUIState:
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, object]) -> LibraryUIState:
-        """读 ``[ui]`` 那张表。
-
-        **值来路不明一律当「没记过」而不是报错** —— 与会话文件同一套理由：
-        这张表是软件自己写的，手改坏一个分组字段 id 不该让整个库打不开。
-        （对照：顶层那几个键是公开接口，非法值必须报错并说清合法取值。）
+        """读 ``[ui]`` 那张表。**值来路不明一律当「没记过」而不是报错**：这张表是软件自己写的，
+        手改坏一个分组字段 id 不该让整个库打不开（顶层那几个键是公开接口，非法值必须报错）。
         """
         browse = data.get("browse_mode")
         level = data.get("calendar_level")
@@ -244,22 +208,17 @@ class LibraryConfig:
     thumbnail_max_edge: int = DEFAULT_THUMBNAIL_MAX_EDGE
     #: 缩略图缓存上限（字节）。0 表示不限制。
     max_cache_bytes: int = DEFAULT_MAX_CACHE_BYTES
-    #: **相册封面**（ADR 0028）：相册相对库根的路径 → 封面照片相对库根的路径。
-    #:
-    #: 空 = 一个都没指定，于是每个相册都用「里面第一张照片」（从前的行为，一个字节都不变）。
-    #: 存**相对路径**是必须的：绝对路径在库里挪个位置、换台机器就全废了，而这是用户会
-    #: 手改、也会跟着库一起提交进版本控制的文件（见模块文档）。
+    #: **相册封面**（ADR 0028）：相册相对库根的路径 → 封面照片相对库根的路径。空 = 一个都没指定，
+    #: 于是每个相册都用「里面第一张照片」（从前的行为，一个字节都不变）。存相对路径是必须的：
+    #: 绝对路径在库里挪个位置、换台机器就全废了，而这份文件用户会手改、也会跟着库提交。
     album_covers: Mapping[str, str] = field(default_factory=dict)
-    #: **库级界面偏好**（ADR 0038 决策 4）：上次在这个库里看到哪儿了。
-    #:
-    #: 与相册封面一样住在 ``config.toml`` 里，理由是同一句：它是「关于这个库」的。
-    #: 它原先在应用级的 ``state.json`` 里，于是「在 A 库选了地点分组」会跟着切到 B 库。
+    #: **库级界面偏好**（ADR 0038 决策 4）：同样是「关于这个库」的，所以与相册封面同住一份文件 ——
+    #: 它原先在应用级 ``state.json`` 里，于是「在 A 库选了地点分组」会跟着切到 B 库。
     ui: LibraryUIState = field(default_factory=LibraryUIState)
 
     def __post_init__(self) -> None:
-        # ``frozen=True`` 只挡得住属性**重新赋值**，映射本身照样可改。这份映射是从用户
-        # 手改的 TOML 里读出来的：抄一份再包成只读视图，它才不会在别处被悄悄改掉，
-        # 而 ``config.toml`` 与内存里的内容从此对不上（封面会「记住」一个已经改掉的路径）。
+        # ``frozen=True`` 只挡得住属性重新赋值，映射本身照样可改：抄一份再包成只读视图，否则封面会
+        # 「记住」一个已经改掉的路径，而文件与内存里的内容从此对不上。
         object.__setattr__(self, "album_covers", MappingProxyType(dict(self.album_covers)))
 
     def to_toml(self) -> str:
@@ -274,11 +233,8 @@ class LibraryConfig:
         )
 
     def _album_covers_toml(self) -> str:
-        """封面那张表（ADR 0028）。**一张封面都没有时整段不写** ——
-        一个刚建出来的库不该因为多了一节空注释就让人以为这里曾经有过设置。
-
-        按键排序写出去：否则同一份配置每次保存的顺序都可能不同，diff 里全是噪音，
-        而这是用户会跟着库一起提交进版本控制的文件。
+        """封面那张表（ADR 0028）。**一张封面都没有时整段不写** —— 一个刚建出来的库不该因为多了一节
+        空注释就让人以为这里曾经有过设置。按键排序写出去，diff 里才不会有噪音。
         """
         if not self.album_covers:
             return ""
@@ -324,10 +280,8 @@ class LibraryConfig:
 
 
 def _read_ui(data: Mapping[str, object], *, source: Path | None) -> Mapping[str, object]:
-    """``[ui]`` 那张表。**没有这张表就是没有偏好**，不是错误 ——
-    从前的库、刚建出来的库都没有它。
-
-    类型不对也不报错（那是软件自己写的表），只是当成空表。
+    """``[ui]`` 那张表。**没有这张表就是没有偏好**，不是错误（老库与刚建出来的库都没有它）；
+    类型不对也不报错（那是软件自己写的表），只当空表。
     """
     raw = data.get(UI_KEY, {})
     if not isinstance(raw, Mapping):
@@ -366,14 +320,11 @@ def save_config(root: Path, config: LibraryConfig) -> None:
 
 
 def prepare_library(root: Path, *, config: LibraryConfig | None = None) -> Path | None:
-    """确保配置目录与 ``config.toml`` 存在，返回配置文件的路径。
+    """确保配置目录与 ``config.toml`` 存在，返回配置文件的路径；已存在的不覆盖。
 
-    **建不出来时返回 ``None`` 而不是抛异常**（ADR 0038 决策 3）：这个目录是打开库时
-    自动建的，而只读卷、SMB 共享、网络盘断开都会让它建不出来 —— 那时界面要继续开
-    这个库（索引退成内存缓存、缩略图照常去系统目录），只在横幅上说一声。
-    弹窗那条路已经删掉了：用户其实没有第三个有意义的选择。
-
-    已存在的配置文件不会被覆盖。
+    **建不出来时返回 ``None`` 而不是抛异常**（ADR 0038 决策 3）：只读卷、SMB 共享、网络盘断开
+    都会让它建不出来，那时界面要继续开这个库（索引退成内存缓存、缩略图照常去系统目录），只在
+    横幅上说一声 —— 用户其实没有第三个有意义的选择。
     """
     directory = paths.config_dir(root)
     try:
@@ -390,19 +341,11 @@ def prepare_library(root: Path, *, config: LibraryConfig | None = None) -> Path 
 def discard_legacy_thumb_cache(root: Path) -> int:
     """删掉**旧版**的库内缩略图缓存目录，返回删掉的文件数（ADR 0038 决策 6）。
 
-    缩略图搬去系统目录之后 配置目录下的 ``cache/`` 整块作废 —— 它正是「同一个库两份
-    缓存」那份重复。里面全是可再生的缩略图，删掉最坏结果是下次浏览重新解码一遍
-    （红线 5）。
+    里面全是可再生的缩略图，删掉最坏结果是重新解码一遍（红线 5）。**只删 Gallery 自己写的那个
+    子目录**：配置目录里的 ``config.toml``、``index.db`` 与 ``journal/`` 一个都不碰。
 
-    **只删 Gallery 自己写的那个子目录**，配置目录 里的 ``config.toml``、
-    ``index.db`` 与 ``journal/`` 一个都不碰 —— 前者不是缓存，后两者删掉有代价
-    （见 README 关于 ``journal`` 那段例外）。
-
-    **收完 ``thumbs`` 还要再收那个只装过它的父目录 ``cache/``**，判据是它空不空
-    （``rmdir`` 对非空目录会失败）：里面还有别人的东西时它自然留在原地。
-    这一步**不能挂在「thumbs 还在不在」这个早退后面** —— 一次开库之后 thumbs 就
-    没了，第二次打开时那个空壳还在，早退就永远走不到收它那一句（实测过一次：
-    库内只剩下一个空的 ``cache/``，而这条清理报「0 个」）。
+    收完 ``thumbs`` 还要再收只装过它的父目录 ``cache/``（判据是它空不空）。这一步**不能挂在
+    「thumbs 还在不在」这个早退后面** —— 一次开库之后 thumbs 就没了，第二次打开时那个空壳还在。
 
     :returns: 删掉的**文件**数；没有文件可删时是 0（空壳目录照收不误）。
     """
@@ -429,13 +372,8 @@ def discard_legacy_thumb_cache(root: Path) -> int:
 def discard_legacy_external_index() -> int:
     """删掉**旧版**的库外索引目录，返回删掉的文件数（ADR 0038 决策 6）。
 
-    「把索引放到系统目录」那条路整个删掉了，于是 ``<app cache>/index/`` 里那几份
-    ``<摘要>.db`` 再也不会有人读、也不会有人写。删之前**先确认目录名是旧的索引那一个**
-    （见 :data:`~gallery.core.constants.INDEX_CACHE_DIR_NAME` 的注释），
-    免得将来 ``<app cache>/`` 底下多出别的东西时把不该删的删掉。
-
-    与 :func:`discard_legacy_thumb_cache` 不同，这个是**整台机器一份**的：库外索引
-    本来就按库摘要分文件躺在同一个目录里，与当前打开的是哪个库无关。
+    只删目录名确实是旧索引那一个、且只删 ``.db``，免得将来 ``<app cache>/`` 底下多出别的东西
+    时被误删。它是**整台机器一份**的，与当前打开的是哪个库无关。
 
     :returns: 删掉的文件数；目录本来就不存在时是 0。
     """
@@ -460,13 +398,10 @@ def discard_legacy_external_index() -> int:
 
 
 def _read_album_covers(data: Mapping[str, object], *, source: Path | None) -> dict[str, str]:
-    """读那张「相册 → 封面照片」表，逐条校验（ADR 0028）。
+    """读那张「相册 → 封面照片」表，逐条校验（ADR 0028）。**没有这张表就是没有封面**，不是错误。
 
-    **没有这张表就是没有封面**，不是一个错误 —— 从前的库、刚建出来的库都没有它。
-
-    校验比别的字段严，是因为这两列**会被拼成路径去读用户的照片**：一个 ``../..`` 或者
-    一个绝对路径会让「封面」指向库外的东西。宁可在打开库时就给一句能照着改的中文提示，
-    也不要等到界面上画出一张莫名其妙的图。
+    校验比别的字段严，是因为这两列**会被拼成路径去读用户的照片**：一个 ``../..`` 或一个绝对
+    路径会让「封面」指向库外的东西。宁可打开库时就给一句能照着改的中文提示。
     """
     raw = data.get(ALBUM_COVERS_KEY, {})
     if not isinstance(raw, Mapping):
@@ -486,8 +421,7 @@ def _read_album_covers(data: Mapping[str, object], *, source: Path | None) -> di
             )
         cover = _read_relative(f"{label} 的封面", photo, source=source)
         if not cover.startswith(f"{key}/"):
-            # 子相册里的照片算数（键本来就只是一段相对路径），兄弟相册里的不算 ——
-            # 那不是这个相册的封面。
+            # 子相册里的照片算数，兄弟相册里的不算 —— 那不是这个相册的封面。
             raise ConfigError(
                 f"{label} 的封面「{photo}」不在这个相册里；"
                 f"封面要写成这个相册里的照片，例如「{key}/照片.jpg」。",
@@ -500,9 +434,8 @@ def _read_album_covers(data: Mapping[str, object], *, source: Path | None) -> di
 def _read_relative(label: str, value: str, *, source: Path | None) -> str:
     """一个相对库根的路径：不能空、不能是绝对路径、不能带 ``..``。
 
-    顺手归一化成 posix 写法（``./2025/苏州/`` → ``2025/苏州``），于是
-    「相册」与「封面」两列、以及界面上拼出来的那把键，比较的都是同一种写法 ——
-    否则一个手写成 ``./京都`` 的相册名就能让封面「设置成功却读不到」。
+    顺手归一化成 posix 写法（``./2025/苏州/`` → ``2025/苏州``），否则一个手写成 ``./京都`` 的
+    相册名就能让封面「设置成功却读不到」。
     """
     path = PurePosixPath(value)
     if not value or not path.parts:
@@ -541,10 +474,8 @@ def _toml_bool(value: bool) -> str:
 
 
 def _toml_value(value: str | bool | int) -> str:
-    """``[ui]`` 表里的值：字符串走 TOML 基本字符串，布尔与整数直写。
-
-    那一节只有字符串、布尔与正整数三种类型，所以不必做成一张类型分发表的通用实现 ——
-    真多出一种类型时再改这里，别先把架子搭起来。
+    """``[ui]`` 表里的值：字符串走 TOML 基本字符串，布尔与整数直写（那一节只有这三种类型，
+    真多出一种时再改这里）。
 
     **``bool`` 必须先判**：它是 ``int`` 的子类，反过来写会把 ``sort_descending = True``
     落进文件里 —— 那不是 TOML，下次读这个库直接报语法错。
@@ -555,11 +486,8 @@ def _toml_value(value: str | bool | int) -> str:
 
 
 def _toml_string(value: str) -> str:
-    """一个 TOML 基本字符串。
-
-    **借 JSON 来转义**：两者的转义规则在基本字符串上是同一套（``\\"`` ``\\\\``
-    与控制字符），而 ``json`` 是标准库里的、谁都认识的那一份。手写一套转义只为省下
-    一个 import，代价是将来少一个能一眼看懂的实现。
+    """一个 TOML 基本字符串——借 JSON 来转义。两者在基本字符串上的转义规则是同一套（``\\"`` ``\\\\``
+    与控制字符），而 ``json`` 是标准库里谁都认识的那一份。
     """
     return json.dumps(value, ensure_ascii=False)
 

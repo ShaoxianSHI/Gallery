@@ -1,62 +1,6 @@
-"""窗口底色的唯一来源。
+"""窗口底色的唯一来源：``Window`` / ``Base`` / ``AlternateBase`` 都指向一个颜色，再逐控件下发。
 
-窗口里原本套着好几层，各铺各的底色：标题栏那一段与菜单栏、面包屑跟着系统调色板的
-``Window``（深色下 ``#323232``），网格视口用 ``Base``（``#171717``），大图区与元数据
-面板则写死成 ``#1C1C1E``。于是浅色主题下点开照片会突然变黑，深色主题下则是三四种
-不同的黑。
-
-这里把「整个窗口是一整块底色」收成一份主题：
-
-- **底色只有一个来源**，即 :data:`BACKGROUND_ROLE` 指的那个调色板角色。取系统调色板里的
-  ``Base``（内容区色）：浅色下是白，深色下是 ``#171717`` —— 比 ``Window`` 的 ``#323232``
-  深得多，照片才沉得下去。
-- :func:`apply_theme` 把 ``Window`` / ``Base`` / ``AlternateBase`` 三个铺底色的角色都指向
-  这一个颜色，再逐个控件下发（见 :func:`_push_palette`）。
-- 标题栏那一段由 macOS 自己画，而且是一层半透明材质（实测深色下 ``#3b3e3f``、浅色下
-  ``#f2f4f7``，还会随壁纸变），调色板既改不到它、也匹配不准它。所以改成把内容铺到标题栏
-  底下、让标题栏不再画自己的底（见 :func:`unify_title_bar`），那一段于是也成了我们的底色。
-- 少数自己画底色的地方（大图区、元数据面板）不写死颜色，改为从这里取。
-
-**六个 Qt 上的坑，都在这里绕开**：
-
-1. ``QApplication.setPalette()`` 会把应用调色板标成「显式设置」。此后系统换浅色 / 深色时
-   Qt 不再更新它，表现就是「切到浅色，只有 macOS 画的标题栏变浅了，其余还是黑的」。
-   所以这里**绝不碰应用调色板**，只在控件上下发；系统怎么变，我们照单全收。
-2. 带样式表的控件会被 ``QStyleSheetStyle`` 塞一份「自己的」调色板，应用级的变化到不了
-   它们，所以 :func:`_push_palette` 逐个控件显式设置一遍。
-3. 样式表里的 ``palette(...)`` **只在样式表装上去的那一刻解析一次**，之后改调色板它不会
-   重来 —— 症状是「切了深浅色，那一枚胶囊的字色停在原处，要点一下才对」（点一下会重建
-   它，于是重新解析了一遍）。所以 :func:`_push_one` 把**原样的样式表再设一遍**：
-   颜色仍由 Qt 自己按那一档调色板挑，浅色深色各自是什么就是什么，这里修的是「不立刻变」。
-4. **一份没写全的调色板会被 Qt 按控件类型各解析一档。** 下发时只钉了铺底色的那几个角色，
-   其余由 Qt 自己填 —— 而它填出来的值**与控件类型有关**（实测 macOS 上，同一份应用调色板：
-   ``QMenu`` 的 ``Highlight`` 是 ``#548fff``、``QTreeWidget`` 是 ``#084ad9``、普通 ``QWidget``
-   是 ``#a5cdff``；深色下分别是 ``#3974e4`` / ``#0640c6`` / ``#314f78``）。
-   症状是**右键菜单与搜索框的候选列表高亮成两种蓝**，而两者的样式表是同一份生成出来的
-   —— 菜单那一档偏亮、列表那一档深，用户在两者之间来回走，一眼就看得出割裂。
-   :func:`_resolve_roles` 把这几档统一成**菜单那一档**（问一个 ``QMenu`` 要那一档的值，
-   浅色 ``#548fff`` / 深色 ``#3974e4``；用户对着两档看过之后选的偏浅那个），
-   再显式写进每一份下发的调色板，于是三处浮层只可能同色。
-5. **「问 Qt 要那一档」这件事，只有在调色板真的是空调色板时才问得到。**
-   应用调色板里那几个角色**有时带着「已解析」标记** —— macOS 换过一次外观之后写进来的
-   那份就带着（刚启动时那份没有，于是第一轮看起来一切正常）。带着标记时，
-   ``QWidget.setPalette`` 变成「原样继承」，探针问出来的是应用调色板自己那一档，
-   我们再把它钉下去 —— 浅色下就成了那个发白的 ``#a5cdff``（白字 1.64:1）。
-   **症状是「切一趟深浅色之后回不去了」**：用户原话「切回浅色后和之前也不一样了」，
-   而数据上确实不一样（``#548fff`` → ``#a5cdff``）。
-   :func:`_probe_palette` 因此给的是一份**只写了铺底色**的空调色板。
-
-   这一条与第 4 条是同一件事的两半：**第 4 条说「别让 Qt 按控件类型各解析一档」，
-   第 5 条说「要解析就得给它一份没解析过的」** —— 只做前者会在换过一次外观之后失效，
-   而且失效的样子是「回到浅色变成了另一个颜色」，不查到最后不会想到是这一处。
-6. **换外观的信号是在半路上发的，不能就地下发。** 实测 macOS 上一轮换外观里，
-   :meth:`ThemeWatcher._on_system_theme_changed` 会收到好几次，头一次拿到的还是**旧的**
-   调色板（浅色），后几次拿到的是新的 —— 但那一份里那几个角色**带着解析标记**（见第 5 条）。
-   就地下发就是把半路的调色板钉进整棵控件树，而第 5 条那件事也就跟着一起发作。
-   所以 :meth:`ThemeWatcher._on_system_theme_changed` 只**排一个 0ms 定时器**，
-   真正那一次下发等这一批事件走完之后；一轮里发几个信号都只发一次。
-
-要换底色只改 :data:`BACKGROUND_ROLE` 一处。
+不碰应用调色板；浮层那几档颜色由 :data:`RESOLVED_ROLES` 钉死（ADR 0035）。
 """
 
 from __future__ import annotations
@@ -69,25 +13,19 @@ from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication, QMenu, QWidget
 
-#: 统一底色取自调色板的哪个角色（见模块文档）。
-#: ``Base`` 是系统的「内容区色」：浅色下是白，深色下是 ``#171717``。
+#: 统一底色取自调色板的哪个角色：``Base`` 是内容区色，浅色下白、深色下 ``#171717``。
 BACKGROUND_ROLE = QPalette.ColorRole.Base
 
-#: 所有「铺底色」的角色。``Window`` 是窗口与菜单栏，``Base`` 是列表与文本视口，
-#: ``AlternateBase`` 是表格的隔行底色 —— 少改一个，就有一层仍按系统原来的颜色铺。
+#: 所有「铺底色」的角色：窗口与菜单栏、列表与文本视口、表格隔行底色 —— 少改一个
+#: 就有一层仍按系统原来的颜色铺。
 BACKGROUND_ROLES = (
     QPalette.ColorRole.Window,
     QPalette.ColorRole.Base,
     QPalette.ColorRole.AlternateBase,
 )
 
-#: 除了铺底色之外，这几个角色**也要由我们钉死**，不能留给 Qt 自己解析
-#: （见模块文档第 4 条与 :func:`_resolve_roles`）。
-#:
-#: **它们就是弹出菜单与弹出列表读的那几个**：正文色、高亮色、高亮之下那一档字色，
-#: 以及置灰那一行的字色。三处浮层（右键菜单、搜索框的候选列表、标题条上那个下拉菜单）
-#: 拿的是**同一份**下发的调色板，而这几个值是 :mod:`gallery.ui.menu_style` 唯一的颜色来源
-#: —— 钉死了，三处就不可能再差一档（ADR 0035 决策 2）。
+#: 铺底色之外**也要钉死**的那几个角色，正是弹出菜单与弹出列表读的（正文色、高亮色、
+#: 高亮之下的字色、置灰行的字色）。三处浮层拿的是同一份下发的调色板（ADR 0035）。
 RESOLVED_ROLES = (
     QPalette.ColorRole.Highlight,
     QPalette.ColorRole.HighlightedText,
@@ -96,26 +34,20 @@ RESOLVED_ROLES = (
     QPalette.ColorRole.PlaceholderText,
 )
 
-#: 钉的时候逐组各钉各的。**不是统一钉 ``Active``**：置灰那一组本来就是给
-#: 「这一行点不得」用的，跟着自己的组走才对。
+#: 逐组各钉各的，**不是统一钉 ``Active``**：置灰那一组是给「这一行点不得」用的。
 COLOR_GROUPS = (
     QPalette.ColorGroup.Active,
     QPalette.ColorGroup.Inactive,
     QPalette.ColorGroup.Disabled,
 )
 
-#: 样式表里写了它才需要「重新解析一遍」（见 :func:`_push_one`）。**只看这一个词**，
-#: 别改成「凡是带样式表的都重设」：外面那一大圈控件是自绘的（胶囊、横幅、日历），
-#: 重设它们的样式表纯属白费力气，而自绘控件另有各自的 ``_apply_theme`` 收拾。
+#: 样式表里写了它才需要重设一遍（见 :func:`_push_one`）。**只看这一个词**：自绘控件
+#: （胶囊、横幅、日历）各有自己的 ``_apply_theme``，重设它们的样式表是白费力气。
 _PALETTE_KEYWORD = "palette("
 
 
 def rgba(color: QColor) -> str:
-    """样式表用的颜色写法（``rgba(r, g, b, a)``）。
-
-    Qt 样式表认这个写法；``QColor.name()`` 在带透明度时给的是六位十六进制，
-    会把半透明的颜色悄悄画成不透明。
-    """
+    """样式表用的颜色写法（``rgba(r, g, b, a)``）：``QColor.name()`` 带透明度时会悄悄丢掉 alpha。"""
     alpha = round(color.alphaF(), 3)
     return f"rgba({color.red()}, {color.green()}, {color.blue()}, {alpha})"
 
@@ -140,11 +72,7 @@ class AppTheme:
         return self.background.lightnessF() < 0.5
 
     def text_at(self, alpha: float) -> QColor:
-        """正文色按透明度取。
-
-        深色主题下等于「浅字压深底」，浅色主题下等于「深字压浅底」—— 深浅两套字色
-        因此合成一个公式，不必各写一份。
-        """
+        """正文色按透明度取：深色下是浅字压深底，浅色下反过来，两套合成一个公式。"""
         color = QColor(self.text)
         color.setAlphaF(alpha)
         return color
@@ -160,8 +88,7 @@ def _application(app: QApplication | None = None) -> QApplication:
 def current_theme(app: QApplication | None = None) -> AppTheme:
     """按应用当前的调色板算出一份主题。
 
-    读的必须是**平台刚写进来的**那份应用调色板，所以本模块不调用
-    ``QApplication.setPalette``（那会把这份颜色钉死，见模块文档）。
+    **不能**调用 ``QApplication.setPalette``：那会把这份颜色钉死。
     """
     palette = _application(app).palette()
     background = QColor(palette.color(BACKGROUND_ROLE))
@@ -177,16 +104,7 @@ def current_theme(app: QApplication | None = None) -> AppTheme:
 
 
 def _push_one(widget: QWidget, palette: QPalette) -> None:
-    """把调色板给一个控件，并让它的样式表**重新解析一次**。
-
-    **为什么样式表要再设一遍**（模块文档第 3 条）：``palette(...)`` 只在样式表装上去的
-    那一刻被解析成具体颜色，之后无论控件还是应用的调色板改了，它都不会重来。症状是
-    「切深浅色要等一下才对，点一下就对」—— 点一下之所以管用，是因为那一下重建了控件。
-
-    重新解析之后拿到的颜色**与当初建它时同一档调色板解析出来的完全一样**：这一句修的是
-    「不立刻变」，不是「换个颜色」。真要改某处颜色，那是那个控件自己的 ``_apply_theme``
-    与样式表函数的事。
-    """
+    """把调色板给一个控件，并让它的样式表重新解析一次：``palette(...)`` 只在装上去时解析。"""
     widget.setPalette(palette)
     sheet = widget.styleSheet()
     if _PALETTE_KEYWORD in sheet:
@@ -194,13 +112,7 @@ def _push_one(widget: QWidget, palette: QPalette) -> None:
 
 
 def _push_palette(app: QApplication, palette: QPalette) -> None:
-    """把调色板逐个送到窗口里的每个控件。
-
-    样式表是个绕不开的坎：某个控件或它的父控件一旦带着样式表，``QStyleSheetStyle`` 就会
-    给这一支塞一份「自己的」调色板（横幅那一块就带着一份，ADR 0029），此后连应用级的
-    变化也到不了它们 —— 实测改一次应用调色板，标题栏那一段变了、网格那一层还停在原处。
-    所以逐个显式设置：换过主题之后，整棵控件树是同一份。
-    """
+    """把调色板逐个送到窗口里的每个控件：带样式表的控件会被 ``QStyleSheetStyle`` 塞一份自己的。"""
     for top in app.topLevelWidgets():
         pending = [top]
         while pending:
@@ -210,16 +122,8 @@ def _push_palette(app: QApplication, palette: QPalette) -> None:
 
 
 def _probe_palette(background: QColor) -> QPalette:
-    """问 Qt 要那几档时，**给它的那一份**调色板：除了底色，一个角色都不带。
-
-    **不能拿应用调色板去问** —— 那份里那几档**有时带着「已解析」标记**（实测：macOS
-    换过一次外观之后写进来的新调色板就带着；刚启动时那份没有）。带着标记时
-    ``setPalette`` 就变成「原样继承」，问出来的等于应用调色板自己那一档：
-    浅色下是那个发白的 ``#a5cdff``（白字压上去只有 1.64:1），深色下是 ``#314f78``。
-    **症状是切一趟深浅色之后浮层的颜色再也回不来**（用户原话：「切回浅色后和之前也
-    不一样了」）—— 因为第一次下发用的是还没带标记的那一份，看着是对的。
-
-    空调色板 + 只写铺底色那三个，Qt 才肯按「控件是哪种」重新解析一次（见 :func:`_resolve_roles`）。
+    """给「问 Qt 要那几档」用的调色板：除底色外一个角色都不带。应用调色板里那几档有时带着
+    「已解析」标记，那时问出来的是它自己那一档，浮层颜色再也回不来。
     """
     palette = QPalette()
     for role in BACKGROUND_ROLES:
@@ -229,21 +133,8 @@ def _probe_palette(background: QColor) -> QPalette:
 
 
 def _resolve_roles(palette: QPalette, background: QColor) -> QPalette:
-    """把 :data:`RESOLVED_ROLES` 里的几档**解析成一档**钉进这份调色板（模块文档第 4 条）。
-
-    **问一个菜单控件要答案**：下发时这几个角色是空的，Qt 会按控件类型各填各的
-    （实测同一份调色板，``QMenu`` 与 ``QTreeWidget`` 给出两个不同的蓝）。统一到**菜单**
-    那一档 —— 用户看过两个之后选的（菜单那一档偏浅，列表那一档偏深）。
-
-    给它的是 :func:`_probe_palette` 那一份**空调色板**，不是应用调色板 ——
-    原因写在那里，那一处不换掉，问出来的就是应用调色板自己那一档。
-
-    代价写在 ADR 0035 决策 2 里：浅色下白字压那一档是 3.1:1（WCAG 正文要 4.5:1，
-    大字与图形 3:1）。候选列表选中那一行的字偏淡是明摆着的，换来的是菜单里悬停那一行
-    不再偏浅得发白 —— 用户要的就是后者。
-
-    问一次就够：这一份是在 :func:`pushed_palette` 里算的，每次下发主题算一次，
-    而每次下发的场合都是「换过浅色 / 深色」或「控件刚建出来」—— 不是热路径。
+    """把 :data:`RESOLVED_ROLES` 里的几档解析成一档钉进这份调色板；不钉的话 Qt 会按控件类型
+    各填各的（``QMenu`` 与 ``QTreeWidget`` 给出两种蓝）。
     """
     probe = QMenu()
     probe.setPalette(_probe_palette(background))
@@ -255,11 +146,7 @@ def _resolve_roles(palette: QPalette, background: QColor) -> QPalette:
 
 
 def pushed_palette(app: QApplication) -> QPalette:
-    """要下发到每个控件上的那一份：底色指向统一底色，其余几档解析成同一档（见模块文档）。
-
-    :func:`apply_theme` 与 :func:`push_palette` 共用这一个 —— 两处各拼一遍的话，
-    迟早有一处忘了钉那几个角色，而症状只是「菜单与候选列表差一档蓝」。
-    """
+    """要下发到每个控件上的那一份：底色统一，浮层那几档钉成同一档。"""
     current = current_theme(app)
     palette = QPalette(app.palette())
     for role in BACKGROUND_ROLES:
@@ -269,23 +156,13 @@ def pushed_palette(app: QApplication) -> QPalette:
 
 
 def apply_theme(app: QApplication) -> AppTheme:
-    """把统一底色下发到所有窗口，返回这一轮的主题。
-
-    刻意**不调用** ``QApplication.setPalette``：那会把应用调色板钉死，系统再换浅色 /
-    深色时 Qt 就不更新它了（见模块文档）。这里只改控件自己的调色板。
-    """
+    """把统一底色下发到所有窗口，返回这一轮的主题。刻意不调用 ``QApplication.setPalette``。"""
     _push_palette(app, pushed_palette(app))
     return current_theme(app)
 
 
 def push_palette(widget: QWidget, *, app: QApplication | None = None) -> None:
-    """把当前主题的调色板下发到**一棵**控件树上（:func:`apply_theme` 面向整个应用那一份的单棵版）。
-
-    **为什么需要它**：:func:`apply_theme` 走的是「此刻已经存在的顶层控件」，而有些控件是
-    之后才建的 —— 搜索框的候选列表就是一个（它在 ``_build_ui`` 的最后一步建，主题早就
-    下发过了）。不补这一下，它就一直用系统默认那一档颜色：于是候选列表与右键菜单
-    明明「取自同一个地方」，取到的却不是同一份（实测列表 ``#ffffff``、菜单 ``#efefef``）。
-    """
+    """把当前主题的调色板下发到一棵控件树上：主题下发之后才建的控件（搜索框的候选列表）靠它补。"""
     instance = _application(app) if app is None else app
     palette = pushed_palette(instance)
     pending = [widget]
@@ -296,25 +173,10 @@ def push_palette(widget: QWidget, *, app: QApplication | None = None) -> None:
 
 
 def unify_title_bar(window: QWidget) -> bool:
-    """让标题栏那一段也用窗口自己的底色，返回**那一段是不是已经归我们了**（只在 macOS 上动手）。
+    """让标题栏那一段也用窗口自己的底色，返回那一段是不是已经由本窗口自绘（只在 macOS 上动手）。
 
-    原生标题栏是一层半透明材质，跟着桌面壁纸走：实测深色下 ``#3b3e3f``、浅色下
-    ``#f2f4f7``，与系统给内容区的颜色（``#323232`` / ``#ececec``）本来就差一档 ——
-    调色板既改不到它，也匹配不准它。
-
-    这两个窗口标志把这层材质去掉（``NoTitleBarBackgroundHint``），并把客户区扩到整个
-    窗口（``ExpandedClientAreaHint``）：那一段于是由窗口自己的底色来画，和下面连成一块。
-
-    两条边界都实测过：
-
-    - 红黄绿三个按钮仍由系统画在最上层，窗口照旧能按标题栏拖动（拖动由
-      :meth:`MainWindow.mousePressEvent` 接管，见那里）；
-    - 内容区会留在安全区内（实测顶部空出 28 点），面包屑不会挤到按钮下面 —— 所以
-      **不要**顺手关掉 ``WA_ContentsMarginsRespectsSafeArea``，那正是它干的活。
-
-    其它平台返回 ``False`` 原样放过：这两个标志在别处含义不同，而这里要解决的只是 macOS
-    标题栏的颜色。返回值是给 :class:`~gallery.ui.title_bar.TitleBar` 用的 —— 那一段既然
-    归我们了，**标题文字也该由我们自己画**（ADR 0025 决策 2），别处照旧 ``setWindowTitle``。
+    去掉原生标题栏的半透明材质并把客户区扩到整窗；内容区留在安全区内，
+    别关掉 ``WA_ContentsMarginsRespectsSafeArea``。
     """
     if sys.platform != "darwin":
         return False
@@ -337,23 +199,13 @@ class ThemeWatcher(QObject):
         self._applying = False
         self._pending = False
         app.paletteChanged.connect(self._on_system_theme_changed)
-        # macOS 换外观时还会单独报一次 colorSchemeChanged。两个都接：谁先谁后、是不是
-        # 都发，各平台不一样，少接一个就可能漏掉一整轮。
+        # macOS 换外观时还会单独报一次 colorSchemeChanged。两个都接：谁先谁后各平台不同，
+        # 少接一个就可能漏掉一整轮。
         app.styleHints().colorSchemeChanged.connect(self._on_system_theme_changed)
 
     def _on_system_theme_changed(self, *_args: object) -> None:
-        """收到「系统换外观了」，把真正那一次下发**排到这一批事件走完之后**。
-
-        **不在这个回调里就地下发**（模块文档第 6 条）：信号触发的那一刻，
-        应用调色板是**半路**的状态 —— 实测深色那一轮，头两次还拿着旧的浅色调色板，
-        后几次拿到的是新的但「那几个角色带着解析标记」的那一份。
-        带着标记时 :func:`_resolve_roles` 问出来的是应用调色板自己那一档，于是浮层
-        高亮变成浅色下那个发白的 ``#a5cdff``（症状：切一趟深浅色就回不去了）。
-        等这一批走完，那份调色板才是稳的（实测四处采样一致）。
-
-        **只排一次**：一轮换外观要发好几个信号（macOS 上是 ``colorSchemeChanged`` 与
-        ``paletteChanged`` 各一次，中间还夹着控件自己的 ``_apply_theme``），
-        每次都下发一遍既白做功又会把半路的调色板钉下去。
+        """收到「系统换外观了」，把真正那一次下发排到这一批事件走完之后：回调触发时应用调色板还是
+        半路状态，就地下发会把那份半路的调色板钉进整棵控件树。一轮要发好几个信号，所以只排一次。
         """
         if self._applying or self._pending:
             return
@@ -371,13 +223,8 @@ class ThemeWatcher(QObject):
 
 
 def ensure_installed(app: QApplication | None = None) -> ThemeWatcher:
-    """装一次主题，并把当前底色重新下发一遍，返回监听器（幂等）。
-
-    控件在构造时调它：绕开 ``ui.app.run`` 直接建窗口的测试与脚本，也就拿到同一份底色。
-
-    **每次都要重新下发**，不能因为「监听器已经在了」就早退：调色板是逐控件设的，一个刚建
-    出来的窗口不会自动带上别的窗口里那份 —— 早退的话，新窗口的窗口那层仍是系统原来的
-    ``#efefef``，而它的网格视口已被上一个窗口带着走成了 ``#ffffff``，接缝又回来了。
+    """装一次主题，把当前底色重新下发一遍，返回监听器（幂等）。每次都要重新下发：调色板是逐控件
+    设的，新窗口不会自动带上别的窗口那份。
     """
     application = _application(app)
     watcher = application.findChild(ThemeWatcher)

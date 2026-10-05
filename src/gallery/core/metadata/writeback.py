@@ -1,29 +1,9 @@
-"""把用户改过的坐标 / 地点**写回照片文件**（ADR 0030）。
+"""把用户改过的坐标 / 地点**写回照片文件**（ADR 0030）—— 文件不搬家，内容被改。
 
-这是本项目里第一个「文件不搬家、内容被改」的操作，所以规矩与改名（ADR 0004）一样重，
-只是多了一条独有的一条：**写完必须校验**。
+红线 1（只增不改）与红线 4（先记账再动文件、写完回读校验、失败回滚并如实报错）在这里最重：
+只写 :data:`WRITABLE_TAGS` 里的字段，每一步都记字段级的原值与新值，撤销按它逐字段写回。
 
-- **只写白名单里的字段**：:data:`WRITABLE_TAGS` 是唯一来源。位置相关的十三个 tag 与拍摄
-  时间的两个（ADR 0032）之外的一切（相机、镜头、曝光三件套……）在这个模块里压根不可达 ——
-  「大部分元数据不该可编辑」因此是**代码里的一条事实**，而不是只写在界面上的一句承诺。
-- **写之前读原值，写之后读回来比对**：exiftool 退出码为 0 **不代表写成功了**（标签不被
-  支持、格式拒绝、只写了一部分时它都可能返回 0）。所以真正的判据是回读：值对不上就
-  **按原值写回去**，然后如实报错（红线 3、4）。
-- **每一步都记账**：记的是**字段级**的原值与新值（``journal.FieldChange``），撤销按它
-  逐字段写回。
-- **绝不在用户照片目录里留下别的东西**：argv 里固定带 ``-overwrite_original``，
-  否则 exiftool 会在照片旁边留下一个 ``xxx.jpg_original``（红线 6）。
-- **容器存不下的标签压根不发**（ADR 0036）：exiftool 往 HEIC 写 IPTC 时**返回 0、不警告、
-  什么都不写**，而 argv 上的 ``-q -q`` 连它那句 ``1 image files unchanged`` 也一并吞掉 ——
-  于是这一路没有任何信号，回读校验必定判它没写进去，紧接着的**整体回滚会把已经写成功的
-  XMP 一起擦掉**（实测：HEIC 的地点永远写不进去，横幅报的却是三个用户从没见过的 IPTC 标签）。
-  判据是 :data:`UNSTORABLE_TAGS`，实测得来。
-
-**坐标的符号与数值是分开的两个字段**：``-EXIF:GPSLatitude`` 只写绝对值，南北由
-``GPSLatitudeRef`` 决定 —— 与 exiftool 读出来的形状一致，校验时才能逐轴比数值。
-
-本模块不弹窗、不问「要不要继续」：被拒绝就抛
-:class:`~gallery.core.errors.MetadataWriteError`，由界面决定怎么告诉用户。
+不弹窗、不问「要不要继续」：被拒绝就抛 :class:`~gallery.core.errors.MetadataWriteError`。
 """
 
 from __future__ import annotations
@@ -76,21 +56,17 @@ STALE_GPS_TAGS: Final[tuple[str, ...]] = (
     "EXIF:GPSDateStamp",
 )
 
-#: 地点的三层。**XMP 与 IPTC 两份都写**：Lightroom 与 Capture One 读 XMP，老得多的
-#: 软件读 IPTC —— 只写一份的话，用户在别的工具里看到的就是一个空。
-#:
-#: **XMP 用一级族名（``XMP:City``）而不是 ``XMP-photoshop:City``**：exiftool 的 ``-G``
-#: 按一级族给键，回读校验拿到的是 ``XMP:City``。写用 ``XMP-photoshop:City``、读回
-#: ``XMP:City`` 会让**每一次成功的写入都被判成没写进去**（实测，ADR 0030 决策 2）。
-#: 两种写法 exiftool 都认（都落到 photoshop 那套 schema 上），这里取能与回读对上的那个。
+#: 地点的三层。**XMP 与 IPTC 两份都写**：Lightroom 与 Capture One 读 XMP，老软件读 IPTC。
+#: XMP 用一级族名 ``XMP:City`` 而不是全名：exiftool 的 ``-G`` 按一级族回填键，写用全名、读用
+#: 一级族会让**每一次成功的写入都被判成没写进去**（ADR 0030 决策 2）。
 XMP_PLACE_TAGS: Final[tuple[str, ...]] = (
     "XMP:City",
     "XMP:State",
     "XMP:Country",
 )
 
-#: **只给存得下 IPTC 的容器用**（见 :data:`UNSTORABLE_TAGS`）。HEIC / HEIF / WebP / GIF
-#: 上这一组会被静默丢弃，所以写回时压根不发 —— 不是「发了没生效」，是压根不发。
+#: **只给存得下 IPTC 的容器用**（见 :data:`UNSTORABLE_TAGS`）：HEIC / HEIF / WebP / GIF 上这一组
+#: 会被静默丢弃，所以压根不发 —— 不是「发了没生效」。
 IPTC_PLACE_TAGS: Final[tuple[str, ...]] = (
     "IPTC:City",
     "IPTC:Province-State",
@@ -100,14 +76,9 @@ IPTC_PLACE_TAGS: Final[tuple[str, ...]] = (
 #: 三层地名的全部标签。**白名单意义上的那一份**（HEIC 上实际发出去的只有其中的 XMP）。
 PLACE_TAGS: Final[tuple[str, ...]] = (*XMP_PLACE_TAGS, *IPTC_PLACE_TAGS)
 
-#: 拍摄时间的两个标签（ADR 0032）。
-#:
-#: **只写这两个，别的日期字段一个字都不动**：``CreateDate`` / ``DateTimeDigitized`` /
-#: ``ModifyDate`` 记的是**文件处理过程**（什么时候被创建、被数字化、被改写过），与
-#: 「这张照片什么时候拍的」不是一回事 —— 改它们等于制造一条没发生过的记录。
-#:
-#: 偏移**不必跟着时间一起写**：照片没记时区时那个字段压根不存在，「删掉它」是空操作，
-#: :func:`_changes` 会把它跳过。
+#: 拍摄时间的两个标签（ADR 0032）。**别的日期字段一个字都不动**：``CreateDate`` /
+#: ``DateTimeDigitized`` / ``ModifyDate`` 记的是**文件处理过程**，改它们等于制造一条没发生过的记录。
+#: 偏移不必跟着时间一起写：照片没记时区时那个字段压根不存在，:func:`_changes` 会跳过它。
 CAPTURE_TIME_TAGS: Final[tuple[str, ...]] = (
     "EXIF:DateTimeOriginal",
     "EXIF:OffsetTimeOriginal",
@@ -121,30 +92,12 @@ WRITABLE_TAGS: Final[frozenset[str]] = frozenset(
 #: EXIF 那一组（坐标 + 顺带清掉的海拔与定位时间 + 拍摄时间）。
 _EXIF_TAGS: Final[frozenset[str]] = frozenset(COORDINATE_TAGS + STALE_GPS_TAGS + CAPTURE_TIME_TAGS)
 
-#: **哪些容器存不下哪些标签**（ADR 0036）。键是文件后缀，值是这个后缀下压根写不进去的标签。
-#:
-#: 这张表里只有**静默丢弃**的那些 —— exiftool 对它们返回 0、不警告、什么都不写，而 argv 上
-#: 的 ``-q -q`` 连那句 ``1 image files unchanged`` 也吞掉，整条路一个信号都不给。收到这种
-#: 赋值的结果不是「写失败」，而是「回读校验必定对不上 → 整体回滚 → **连写成功的 XMP 也被
-#: 一起擦掉**」。实测（HEIC 上地点永远写不进去就是这么来的）。
-#:
-#: **逐格式逐标签实测来的，不是从文档推的**（exiftool 13.55，字段集取
-#: :data:`WRITABLE_TAGS`，一个标签一次赋值再回读）：
-#:
-#: ============  ==========  ==========  ========
-#: 格式           IPTC 三层   EXIF 那一组  XMP 三层
-#: ============  ==========  ==========  ========
-#: JPEG / PNG / TIFF    ✓          ✓         ✓
-#: HEIC / HEIF / WebP   **✗**      ✓         ✓
-#: GIF                  **✗**      **✗**     ✓
-#: ============  ==========  ==========  ========
-#:
-#: **BMP 不在这张表里**：exiftool 对它明确报错并返回非 0，那条路本来就是通的（见
-#: :func:`_explain`）。这张表只装不说话的 —— 一句现成的清楚错误，比一张我们自己维护的表准。
-#:
-#: **按后缀判，不嗅探文件内容**：与 ``decode.py`` / ``is_supported_photo`` 是同一套，Gallery
-#: 全程按后缀认格式。代价是一个 HEIC 被错命名成 ``.jpg`` 时会判错（退回 ADR 0036 决策 2
-#: 记的那个行为，不会更糟）；真要根治得让 exiftool 自己报格式。
+#: **哪些容器存不下哪些标签**（ADR 0036，逐格式逐标签实测）。键是文件后缀，值是该后缀下压根写
+#: 不进去的标签。表里只有**静默丢弃**的那些：exiftool 返回 0、不警告、什么都不写，``-q -q`` 连
+#: 那句 ``1 image files unchanged`` 也吞掉，于是收到这种赋值的结果不是「写失败」，而是「回读校验
+#: 必定对不上 → 整体回滚连写成功的 XMP 一起擦掉」。
+#: **按后缀判，不嗅探文件内容**（与 ``decode.py`` / ``is_supported_photo`` 同一套）。BMP 不在表里
+#: —— exiftool 对它明确报错并返回非 0，那条路本来就通；这张表只装不说话的。
 UNSTORABLE_TAGS: Final[dict[str, frozenset[str]]] = {
     ".heic": frozenset(IPTC_PLACE_TAGS),
     ".heif": frozenset(IPTC_PLACE_TAGS),
@@ -153,9 +106,8 @@ UNSTORABLE_TAGS: Final[dict[str, frozenset[str]]] = {
     ".gif": _EXIF_TAGS | frozenset(IPTC_PLACE_TAGS),
 }
 
-#: 坐标比对的容差（度）。exiftool 把十进制度存成度分秒、秒只给两位小数，
-#: 精度约 3e-6 度；取 1e-5（约 1.1 米）既能容忍那点量化误差，又不至于把「差了一条街」
-#: 当成写成功了。
+#: 坐标比对的容差（度）。exiftool 把十进制度存成度分秒、秒只给两位小数（精度约 3e-6 度），
+#: 取 1e-5（约 1.1 米）既能容忍那点量化误差，又不至于把「差了一条街」当成写成功了。
 COORDINATE_TOLERANCE_DEGREES: Final = 1e-5
 
 #: exiftool 说的「这个格式写不了」那几句（不同版本措辞略有差别）。
@@ -191,9 +143,8 @@ class MetadataWriter(Protocol):
     def read(self, path: Path) -> Mapping[str, str]:
         """读出一个文件此刻的原始键值（读不到的标签压根不出现在返回的字典里）。
 
-        **不按标签过滤**：`-G` 回填的键名与请求时写的不一定逐字相同（见 :data:`PLACE_TAGS`
-        那一段），过滤会让回读对不上键。一次只读一个文件，多读几百个标签换「键名确定」
-        值得。
+        **不按标签过滤**：``-G`` 回填的键名与请求时写的不一定逐字相同（见 :data:`PLACE_TAGS`
+        那一段），过滤会让回读对不上键。
         """
         ...
 
@@ -228,9 +179,8 @@ class UndoMetadataResult:
     restored: tuple[FieldChange, ...] = ()
     #: 没能撤销的字段与原因。
     #:
-    #: 只有一种原因：**文件里已经不是 Gallery 当初写下去的那个值了** —— 用户在别的工具里
-    #: 改过，或者又用 Gallery 改了一次。那种情况下按原值盖回去就是毁掉那次改动，因此
-    #: 如实报告、绝不硬改（与「撤销移动时目标被占用」同一取向）。
+    #: 只有一种原因：**文件里已经不是 Gallery 当初写下去的那个值了**（用户在别的工具里改过）。
+    #: 那时按原值盖回去就是毁掉那次改动，因此如实报告、绝不硬改。
     conflicts: tuple[Failure, ...] = ()
     journaled: bool = True
 
@@ -278,11 +228,9 @@ class ExifToolWriter:
         return {key: as_text(value) for key, value in parsed[0].items()}
 
     def write(self, path: Path, assignments: Sequence[Assignment]) -> None:
-        """写回。
-
-        **先试原地改（``-overwrite_original_in_place``）**：只动对应的那几个字节，大图不必
-        重写整份文件，像素数据的位置也不变。部分容器格式不支持它，那种情况退回普通覆盖
-        —— 失败后重试是安全的：所有字段都会再写一遍，值幂等。
+        """写回。**先试原地改**（``-overwrite_original_in_place``）：只动对应的那几个字节，像素数据的
+        位置也不变。部分容器格式不支持它，那种情况退回普通覆盖 —— 失败后重试是安全的：
+        所有字段都会幂等地再写一遍。
         """
         path = Path(path)
         base = [self._executable, "-overwrite_original", *EXIFTOOL_CHARSET_ARGS, "-q", "-q"]
@@ -350,21 +298,17 @@ def write_metadata(
         # 与原来一模一样：不写盘也不记日志 —— 把「没改」记成一次改动，会让 ⌘Z 去撤一件空事。
         return WriteResult(entry=ref, journaled=True, written=False)
 
-    # **先记账，再动文件。** 原值与新值到这里已经齐了，落一条 pending 只要几十微秒；
-    # 而 :func:`_apply` 要起一到两次 exiftool 子进程（几十到几百毫秒）。那个窗口里
-    # 断电、被强杀、磁盘写满，原图就改了而日志上一条记录都没有 —— 用户拿不回任何
-    # 东西，红线 4 的「写回前记录原值」就落空了。
-    #
-    # 记不上账也照样往下走：这一步失败要告诉用户（``journaled=False``），但不能因为
-    # 记不上就把一次用户明确要求的写入整个拒掉 —— 那是他自己的照片，他点了保存。
+    # **先记账，再动文件。** 原值与新值到这里已经齐了，落一条 pending 只要几十微秒；而
+    # :func:`_apply` 要起一到两次 exiftool 子进程（几十到几百毫秒）—— 那个窗口里断电，原图就改了
+    # 而日志上一条都没有（红线 4）。记不上账也照样往下走（报 ``journaled=False``）：不能因为记不上
+    # 就把一次用户明确要求的写入整个拒掉。
     logged = _journal(root, path, changes, RESULT_PENDING, None)
     try:
         _apply(path, changes, tool)
     except MetadataWriteError as exc:
         _journal(root, path, changes, RESULT_FAILED, exc.message)
         raise
-    # 终态记录与 pending 记的是同一件事，撤销栈按「同一条的终态顶掉 pending」处理，
-    # 于是这里多写的一行不会让用户多按一次 ⌘Z（见 ``undo.pending_undo_runs``）。
+    # 终态记录顶掉 pending，撤销栈因此只算一次 ⌘Z（见 ``undo.pending_undo_runs``）。
     return WriteResult(
         entry=_refresh(path),
         changes=changes,
@@ -381,11 +325,8 @@ def undo_metadata(
 ) -> UndoMetadataResult:
     """把一次写回改回去 —— **只改「当前值仍是我们写下去的那个」的字段**。
 
-    别人改过的字段跳过并如实报告：按原值盖回去就是毁掉那次改动，而用户按下 ⌘Z 时想的
-    是「撤掉我自己刚才那一下」，不是「把别人刚才那一下也抹了」。
-
-    **不往撤销栈里再压一条**：撤销的那一次写入记成 :data:`ACTION_UNDO_METADATA`
-    （弹栈用的动作名），否则「改一下、按一次 ⌘Z」会变成无限循环。
+    别人改过的字段跳过并如实报告：按原值盖回去就是毁掉那次改动。**不往撤销栈里再压一条** ——
+    撤销的那一次记成 :data:`ACTION_UNDO_METADATA`（弹栈用的动作名），否则会变成无限循环。
     """
     root = Path(root)
     path = Path(record.target)
@@ -451,11 +392,8 @@ def unstorable_tags(path: Path) -> frozenset[str]:
 
 
 def _nothing_to_write(assignments: Sequence[Assignment], path: Path) -> str:
-    """没东西可写时的那一句。
-
-    **「本来就没改」与「这个格式存不下」必须分开说**：共用一句「没有要写入的改动」会把后者
-    说成前者，用户于是以为自己没保存成功、再点一次保存，那一次还是同样的结果（ADR 0036
-    决策 4）。真的什么都没改是常态、该静默；全被过滤掉是这一格格式的常态、该说清楚。
+    """没东西可写时的那一句。**「本来就没改」与「这个格式存不下」必须分开说**：共用一句会把后者
+    说成前者，用户于是以为自己没保存成功、再点一次还是同样的结果（ADR 0036 决策 4）。
     """
     dropped = sorted({item.tag for item in assignments} & unstorable_tags(path))
     if not dropped:
@@ -469,19 +407,12 @@ def _nothing_to_write(assignments: Sequence[Assignment], path: Path) -> str:
 def _apply(path: Path, changes: Sequence[FieldChange], tool: MetadataWriter) -> None:
     """把 ``changes`` 的目标值写进去并**回读校验**；对不上就按原值写回去。
 
-    **正向与撤销共用这一段**：两者的差别只有「写什么」，而校验与回滚的规矩一个字都不
-    一样 —— 曾经它们各写各的，于是「撤销」那条路是不校验的。
+    **正向与撤销共用这一段**：两者的差别只有「写什么」，校验与回滚的规矩一个字都不变 ——
+    曾经它们各写各的，于是「撤销」那条路是不校验的。
 
-    **回滚本身也要回读校验。** 这是红线 4 的「写失败必须回滚并**如实报错**」那半句：
-    exiftool 在这一支要处理的那些情形（空间不够、写到一半被截断）里**照样返回 0**，
-    于是「按原值写回去」完全可以静默地什么都没做 —— 曾经这版代码在这里不查就宣布
-    「照片已经恢复原样」。实测能造出更糟的局面：照片里原来的经度被写成 ``0.000000``，
-    界面上仍然说恢复原样，用户拿回的是一张坐标被改坏的照片，而记录里前后值都齐着、
-    看上去一切正常。
-
-    所以现在两句话必须各自对得起自己：
-    **回滚后确实回到原值**才说「已经恢复原样」，否则说「原值没能恢复」并把没恢复的
-    字段一个一个列出来 —— 用户至少知道该去核对哪几个值。
+    **回滚本身也要回读校验**（红线 4）：「按原值写回去」是一次**请求**，不是保证 —— exiftool
+    在空间不够、写到一半被截断这些要处理的失败情形里照样返回 0。不回读就宣布「已恢复原样」，
+    用户拿回的就是一张坐标被写坏的照片，而记录里前后值都齐着、看上去一切正常。
     """
     path = Path(path)
     assignments = [Assignment(change.tag, change.after or "") for change in changes]
@@ -527,11 +458,10 @@ def _checked(assignments: Sequence[Assignment], path: Path) -> tuple[Assignment,
     """去重（同一个标签以最后一条为准）、逐条查白名单，再**去掉这个容器存不下的标签**。
 
     **两道闸在同一个出口**：白名单管「该不该由 Gallery 改」，存储缺口管「这个文件里放不放得下」。
-    放在一处是因为它们问的是同一个问题的两面 —— 「往这个文件里发哪些字段」。
 
     存不下的那条**静默跳过、不报错**：用户要的是「地点写进去」，而 HEIC 上 IPTC 那一份从来
     就不是用户看得到的东西（ADR 0036 决策 1）。真全部被跳过时由 :func:`_nothing_to_write`
-    说清楚是哪种「没东西可写」。
+    说清是哪种「没东西可写」。
     """
     unstorable = unstorable_tags(path)
     unique: dict[str, str] = {}
@@ -548,10 +478,8 @@ def _checked(assignments: Sequence[Assignment], path: Path) -> tuple[Assignment,
 
 
 def _guard(root: Path, path: Path) -> None:
-    """确认要改的文件在允许的范围内。
-
-    与改名的守卫同源：网格里根本不会出现配置目录与库根本身，这里仍然挡一道 ——
-    这是**会动用户文件**的入口。
+    """确认要改的文件在允许的范围内。与改名的守卫同源：网格里根本不会出现配置目录与库根本身，
+    这里仍然挡一道 —— 这是**会动用户文件**的入口（红线 1）。
     """
     if not is_supported_photo(path):
         raise MetadataWriteError(
@@ -580,10 +508,8 @@ def _changes(before: Mapping[str, str], items: Sequence[Assignment]) -> tuple[Fi
 def _normalize(tag: str, value: object) -> str | None:
     """读回来的值 → **我们会写回去的那一种写法**（空白与「不知道」都当没有）。
 
-    坐标必须归一：exiftool 读回来的是 ``35 deg 1' 16"``，而我们写进去的是 ``35.021100``。
-    把度分秒原样记进 journal，撤销时 ``-EXIF:GPSLatitude=35 deg 1' 16"`` 就会写出一个
-    毫无意义的值，校验随即判它没写进去 —— 用户按下 ⌘Z 得到的是一句「照片已经恢复原样」，
-    而它其实一个字都没能恢复（实测）。半球标记同理：``North`` 与 ``N`` 都认，但要统一。
+    坐标必须归一：exiftool 读回来的是 ``35 deg 1' 16"``、我们写进去的是 ``35.021100``，照抄
+    原值会让 ⌘Z 写出一个毫无意义的值、校验随即判它没写进去。半球标记同理（``N`` / ``North``）。
     """
     if tag == "EXIF:GPSLatitude":
         latitude = latitude_decimal({"EXIF:GPSLatitude": as_text(value)} if value else {})
@@ -610,8 +536,8 @@ def _text_of(value: object) -> str | None:
 def _holds(expected: str | None, tag: str, current: Mapping[str, str]) -> bool:
     """文件里这个字段现在是不是 ``expected`` 那个值。
 
-    **坐标按数值比、不是按字符串比**：写进去的是 ``30.27415``，读回来是
-    ``30 deg 16' 26.94"`` —— 逐字符比会把每一次成功的写入都判成失败（ADR 0030 决策 2）。
+    **坐标按数值比、不是按字符串比**：写进去的是 ``30.27415``，读回来是 ``30 deg 16' 26.94"``
+    —— 逐字符比会把每一次成功的写入都判成失败（ADR 0030 决策 2）。
     """
     if tag == "EXIF:GPSLatitude":
         return _axis_holds(expected, current, latitude_decimal)
@@ -629,8 +555,8 @@ def _axis_holds(
 ) -> bool:
     """一个坐标轴：期望值与实际值差在容差之内就算写成了。
 
-    **只比绝对值**：正负由 ``GPSLatitudeRef`` 那两个标签管，它们各是一次独立的赋值，
-    在这里一起被比掉 —— 分成两处判会有一半的组合漏判。
+    **只比绝对值**：正负由 ``GPSLatitudeRef`` 那两个标签管，它们各是一次独立的赋值，在这里
+    一起被比掉 —— 分成两处判会有一半的组合漏判。
     """
     if expected is None:
         return axis(current) is None

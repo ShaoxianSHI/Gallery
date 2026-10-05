@@ -1,9 +1,6 @@
 """``gallery.core.metadata.batch`` 的测试。
 
-分组与排序的性能全押在这一条路上：批量读必须**一批一个子进程**、点名要标签、
-读不出来的不拖垮整批、取消要真的停。测试不依赖本机装了 exiftool ——
-用假的批量来源验调度，用一个假可执行文件验 JSON 解析与路径归位。
-"""
+分组与排序的性能全押在这条路上：**一批一个子进程**、坏文件不拖垮整批、取消要真的停。"""
 
 from __future__ import annotations
 
@@ -68,9 +65,6 @@ def _paths(tmp_path: Path, count: int) -> list[Path]:
     return paths
 
 
-# ---- 调度 --------------------------------------------------------------------------
-
-
 def test_read_facets_extracts_values(tmp_path: Path) -> None:
     paths = _paths(tmp_path, 3)
     source = FakeSource(
@@ -98,10 +92,7 @@ def test_read_facets_extracts_values(tmp_path: Path) -> None:
 def test_progress_always_lands_on_the_total(tmp_path: Path, total: int) -> None:
     """**收尾一定落在「读完了」上**，与总数能不能被档位整除无关。
 
-    进度是按 :data:`PROGRESS_STEP` 报的（理由见那个常量），所以总数是 5000 时
-    最后一次整档报的是 4800 —— 不补一次，进度条就停在 4800/5000，看着像卡住了。
-    那一档之后剩下的那些、以及压根没读出来的那些，都不会再有回调。
-    """
+    进度按 :data:`PROGRESS_STEP` 报，总数 5000 时最后一次整档报的是 4800，不补一次就像卡住。"""
     paths = _paths(tmp_path, total)
     source = FakeSource({f"{index:03d}.jpg": {"EXIF:ISO": "100"} for index in range(total)})
     seen: list[tuple[int, int]] = []
@@ -120,8 +111,7 @@ def test_progress_always_lands_on_the_total(tmp_path: Path, total: int) -> None:
 def test_progress_is_not_reported_once_per_photo(tmp_path: Path) -> None:
     """**不按张报**：每一次都是跨线程的 Qt 信号，五千张就是五千次投递。
 
-    粒度见 :data:`PROGRESS_STEP`（与一次 exiftool 子进程对齐）：横幅本来就一跳一跳的。
-    """
+    粒度见 :data:`PROGRESS_STEP`（与一次 exiftool 子进程对齐）：横幅本来就一跳一跳的。"""
     paths = _paths(tmp_path, 2000)
     source = FakeSource({f"{index:03d}.jpg": {"EXIF:ISO": "100"} for index in range(2000)})
     seen: list[tuple[int, int]] = []
@@ -175,11 +165,7 @@ def test_read_facets_respects_cancellation(tmp_path: Path) -> None:
 
     result = read_facets(paths, source=source, should_cancel=should_cancel)
 
-    # 取消之后不再往下读，但已经拿到的仍在结果里。
     assert 0 < len(result) < len(paths)
-
-
-# ---- exiftool 这一侧的解析 ------------------------------------------------------------
 
 
 #: 假 exiftool：按收到的路径逐个回一份 JSON，字段由环境变量给。

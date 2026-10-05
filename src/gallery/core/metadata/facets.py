@@ -1,17 +1,7 @@
-"""可分组 / 可排序的元数据字段（facet）。
+"""可分组 / 可排序的元数据字段（facet）—— **显示归格式化，排序归原始值**。
 
-**为什么不直接用 `MetadataReport`**：元数据面板要的是给人看的字符串（``f/2.8``、
-``1/2000 秒``、``2024 年 5 月``）。按这种串排序，``1/2000 秒`` 与 ``1/400 秒`` 的先后就
-取决于字典序了；按它分组，``ISO 100`` 与 ``ISO 1000`` 干脆是两组。**显示归格式化，
-排序归原始值** —— 所以这里定义的每个字段都带两个取值函数：分组用的「组键 + 显示名」，
-排序用的「可比较的值」。
-
-字段分两处来：
-
-- **文件自带的**（文件名、大小、修改时间、所在文件夹、格式）：扫描时就有了，零成本。
-- **元数据里的**（拍摄时间、相机、镜头、地点、关键词、拍摄参数）：必须真去读 EXIF，
-  由 ``core.metadata.batch`` 批量读出来、由 ``core.library.index`` 缓存。
-
+每个字段带两个取值函数：分组的「组键 + 显示名」与排序用的可比较的值。按给人看的字符串排，
+``1/2000 秒`` 与 ``1/400 秒`` 的先后就取决于字典序了。字段分「文件自带」与「读 EXIF」两处来源。
 纯 Python，不碰 Qt、不碰文件。
 """
 
@@ -27,8 +17,7 @@ from typing import TYPE_CHECKING, Final, Literal
 from gallery.core.library.photos import PhotoRef
 
 if TYPE_CHECKING:
-    # ResolvedPlace 住在 places 域：facets 只按结构用它，运行期不 import，
-    # 两个域因此不必互相依赖（geodata 的加载 / 下载是 places 的事）。
+    # ResolvedPlace 住在 places 域：facets 只按结构用它，运行期不 import，两个域因此不必互相依赖。
     from gallery.core.places.resolver import ResolvedPlace
 
 from gallery.core.metadata.exif import (
@@ -73,8 +62,7 @@ FACET_PIXELS: Final = "pixels"
 #: 字段的取值种类。决定分组键与排序值的形状，界面也据此选文案。
 FacetKind = Literal["text", "number", "captured", "path"]
 
-#: 排序时能拿到的值。同一个字段内部类型是统一的（要么全数字，要么全字符串），
-#: 所以拿它排序不会撞上「数字和字符串不能比」这种问题。
+#: 排序时能拿到的值。同一个字段内部类型统一（全数字或全字符串），不会撞上「数字和字符串不能比」。
 type SortValue = float | str
 
 
@@ -98,15 +86,13 @@ class Facet:
     id: str
     label: str
     kind: FacetKind
-    #: 分组取值：``(组键, 显示名)`` 的列表。**可以多于一个** —— 一张有多个关键词的
-    #: 照片同时属于多个组（标签的通常语义）。返回空列表表示没有值。
-    #: ``None`` 表示这个字段只能排序、不能分组。
+    #: 分组取值：``(组键, 显示名)`` 的列表。**可以多于一个** —— 一张有多个关键词的照片同时属于
+    #: 多个组（标签的通常语义）。返回空列表表示没有值；``None`` 表示只能排序、不能分组。
     group: Callable[[FacetInput], Sequence[tuple[str, str]]] | None
     #: 排序取值：没有值就返回 ``None``（一律排在最后，正序逆序都一样）。
     sort: Callable[[FacetInput], SortValue | None] = lambda _input: None
-    #: 组键怎么比较。``"2024-05"`` 这类日期键必须**当数字**比
-    #: （``2024-05`` 反过来字典序排会得到「11 月排在 2 月前面」），其余按名称升序。
-    #: 返回数字的字段，组内所有键都是数字；返回字符串的反之。
+    #: 组键怎么比较。``"2024-05"`` 这类日期键必须**当数字**比（按字典序排会得到「11 月排在
+    #: 2 月前面」），其余按名称升序。返回数字的字段，组内所有键都是数字；返回字符串的反之。
     group_order: Callable[[str], SortValue] | None = None
     #: 组的默认排列方向。时间为真时是「新 → 旧」，其余按名称升序。
     newest_first: bool = False
@@ -121,11 +107,7 @@ class Facet:
 
 @dataclass(frozen=True, slots=True)
 class PhotoFacets:
-    """一张照片的分组 / 排序用元数据。
-
-    这是**索引里存的东西**，也是分组排序唯一依赖的输入：所有需要读 EXIF 的字段
-    都提前算成可比较的值，读一次、存一次、以后排序不再碰原文件。
-    """
+    """一张照片的分组 / 排序用元数据。这是**索引里存的东西**，也是分组排序唯一依赖的输入。"""
 
     #: 拍摄时间（epoch 秒）。用来排序。
     captured_at: float | None = None
@@ -145,18 +127,12 @@ class PhotoFacets:
     #: 十进制度坐标。**只用来离线反查地点**（见 ``core.places``），不做别的用途。
     latitude: float | None = None
     longitude: float | None = None
-    #: 地点是不是**按坐标推断**的（文件里没写）。
-    #:
-    #: 记在索引里是为了**溯源** —— 这个城市名是照片自带的还是算出来的，两者可信
-    #: 级别不同。界面上不再为此弹提示（元数据面板有自己的「地点（推断）」标注，
-    #: 分组这边只需要能查、能排序），所以这个标记只留在数据里。
+    #: 地点是不是**按坐标推断**的（文件里没写）。记在索引里是为了**溯源**：这个城市名是照片
+    #: 自带的还是算出来的，两者可信级别不同（界面另有「地点（推断）」标注，不为此弹提示）。
     place_inferred: bool = False
-    #: 按坐标反查过了没有。
-    #:
-    #: 与「查到了什么」分开记，因为**查不到也是结论**：附近 300 公里没有城市，
-    #: 每次都重查一遍既慢又可能因为城市数据刚好下好而给出不一样的答案。
-    #: 数据没下好 / 下载失败那次不算（见 ``mark_place_resolved``）——
-    #: 那不是结论，只是这次没查成，记下来会把「未知」永久钉死（ADR 0010）。
+    #: 按坐标反查过了没有。**与「查到了什么」分开记，因为查不到也是结论**：附近 300 公里没有城市，
+    #: 每次重查既慢又可能因为城市数据刚好下好而给出不一样的答案。数据没下好 / 下载失败那次
+    #: 不算（见 ``mark_place_resolved``）—— 那不是结论，记下来会把「未知」永久钉死。
     place_checked: bool = False
     #: 坐标离反查出来的城市有多远（公里）。界面靠它说清「这只是最近的城市」。
     place_distance_km: float | None = None
@@ -171,10 +147,8 @@ class PhotoFacets:
     pixels: float | None = None
 
 
-#: exiftool 只需要给出这些标签。
-#:
-#: 点名要而不是拉全量：一张照片的完整标签有好几百个，5000 张的 JSON 有几十兆，
-#: 解码它的时间与内存都比排序本身贵得多。**加字段时往这里加一行**。
+#: exiftool 只需要给出这些标签。点名要而不是拉全量：一张照片的完整标签有好几百个，5000 张
+#: 的 JSON 有几十兆，解码它的时间与内存都比排序本身贵得多。**加字段时往这里加一行**。
 WANTED_TAGS: Final[tuple[str, ...]] = (
     "EXIF:DateTimeOriginal",
     "EXIF:CreateDate",
@@ -194,9 +168,8 @@ WANTED_TAGS: Final[tuple[str, ...]] = (
     "EXIF:ExifImageHeight",
     "File:ImageWidth",
     "File:ImageHeight",
-    # 坐标：**国家 / 省州 / 城市这三个字段绝大多数照片靠它**。相机原图通常不写
-    # IPTC / XMP 地点（Lightroom 导出才写），只写 GPS —— 漏了这几行，于是每张照片
-    # 的地点字段都是空的，分组出来一片「未知」。
+    # 坐标：**国家 / 省州 / 城市这三个字段绝大多数照片靠它**。相机原图通常不写 IPTC / XMP 地点
+    # （Lightroom 导出才写），只写 GPS —— 漏了这几行，于是每张照片的地点字段都是空的。
     "EXIF:GPSLatitude",
     "EXIF:GPSLatitudeRef",
     "EXIF:GPSLongitude",
@@ -214,20 +187,16 @@ WANTED_TAGS: Final[tuple[str, ...]] = (
     "XMP-photoshop:State",
     "XMP-photoshop:Country",
     "XMP:Subject",
-    # ``_keywords`` 认 Dublin Core 的 ``dc:subject``（Lightroom / Capture One 把它当
-    # 主要的关键词字段），不列在这里它就永远收不到 —— 键在读取端、没在请求端，
-    # 是一条走不到的路。
+    # ``_keywords`` 认 Dublin Core 的 ``dc:subject``（Lightroom / Capture One 把它当主要的关键词
+    # 字段），不列在这里它就永远收不到 —— 键在读取端、没在请求端，是一条走不到的路。
     "XMP-dc:Subject",
 )
 
 #: IPTC 的关键词字段可能是数组或用分号分隔的字符串。
 _KEYWORD_SPLIT = re.compile(r"[;,、]")
 
-#: ``2024:05:16 20:52:02``（EXIF）与 ``2024-05-16T20:52:02+02:00``（XMP）都认。
-#:
-#: 时区偏移**在同一个正则里**一起吃掉：它紧贴在秒后面（``20:52:02+02:00``），
-#: 分开用另一个正则去找，``+`` 前面没有空格就会漏掉 —— 漏掉的后果是把东八区的
-#: 照片当成 UTC，排序整整偏八小时。
+#: ``2024:05:16 20:52:02``（EXIF）与 ``2024-05-16T20:52:02+02:00``（XMP）都认。时区偏移**在同一个
+#: 正则里**一起吃掉：分开找 ``+`` 前面没有空格会漏掉，漏掉就是把东八区的照片当成 UTC。
 _DATETIME = re.compile(
     r"(\d{4})[:\-](\d{2})[:\-](\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?"
     r"\s*(Z|[+-]\d{2}:?\d{2})?\s*$"
@@ -237,12 +206,9 @@ _DATETIME = re.compile(
 def extract(raw: Mapping[str, object]) -> PhotoFacets:
     """从原始键值里抽出分组 / 排序用的字段（纯函数，测试直接喂字典）。
 
-    取值规则与元数据面板同源（都走 ``exif`` 里的 ``first_value`` 等），但**不共用
-    格式化**：这里要的是能比较的东西。
-
-    值一律先转成字符串再解析：exiftool 同一批字段里数字与字符串混着给
-    （``File:ImageWidth`` 是 1440、``EXIF:FNumber`` 是 "2.8"），按类型分两套取值函数
-    等于给自己埋一个「某个字段类型一变就静默失效」的坑。
+    取值规则与元数据面板同源（都走 ``exif`` 里的 ``first_value`` 等），但**不共用格式化**：
+    这里要的是能比较的东西。值一律先转成字符串再解析 —— 按类型分两套取值函数等于给自己埋一个
+    「某个字段类型一变就静默失效」的坑。
     """
     values = {key: value for key, value in raw.items() if key != "SourceFile"}
     text = {key: as_text(value) for key, value in values.items()}
@@ -261,9 +227,8 @@ def extract(raw: Mapping[str, object]) -> PhotoFacets:
         minute=when.minute if when else None,
         camera=camera_name(text),
         lens=first_value(text, "EXIF:LensModel", "EXIF:LensID", "EXIF:Lens"),
-        # 两种族名都认（``XMP-photoshop:City`` 与 ``XMP:City``）：exiftool 的 ``-G`` 按
-        # 一级族回填键，只认全名的话「只写 XMP 不写 IPTC」的照片分不进城市组
-        # —— 与 ``exif._xmp_value`` 同一处判断。
+        # 两种族名都认（``XMP-photoshop:City`` 与 ``XMP:City``）：exiftool 的 ``-G`` 按一级族回填
+        # 键，只认全名的话「只写 XMP 不写 IPTC」的照片分不进城市组（见 ``exif._xmp_value``）。
         city=first_value(text, "XMP-photoshop:City")
         or first_value(text, "XMP:City")
         or first_value(text, "IPTC:City"),
@@ -288,14 +253,10 @@ def extract(raw: Mapping[str, object]) -> PhotoFacets:
 class CaptureMoment:
     """照片记下的那个拍摄时刻。
 
-    ``timestamp`` 用来**排序**（真实的时间先后）；其余字段用来**分组**，取的是照片里
-    记下的墙上时间，**不换算到本机时区** —— 否则一张在东京拍的照片会在分组时被塞进
-    相邻的某一天（ADR 0033 决策 3）。
-
-    ``hour`` / ``minute`` 与年月日是同一口径：日历视图的小时格子按它们摆
-    （「相机所在地几点几分」是用户唯一认得的那个时间），所以它们**不是**从
-    ``timestamp`` 反推的 —— 照片写了时区偏移时（``2021:09:04 19:45:25+02:00``），
-    反推出来的是「在这台机器上看到的时刻」，与上面这一套不是同一个口径。
+    ``timestamp`` 用来**排序**（真实的时间先后）；其余字段用来**分组**，取照片里记下的墙上时间、
+    **不换算到本机时区** —— 否则在东京拍的照片会被塞进相邻的某一天（ADR 0033 决策 3）。
+    ``hour`` / ``minute`` 与年月日同一口径（所以**不是**从 ``timestamp`` 反推的）：日历的小时
+    格子按它们摆，那是用户唯一认得的那个时间。
     """
 
     timestamp: float
@@ -325,8 +286,8 @@ def parse_capture_time(value: str | None) -> CaptureMoment | None:
         return None
     offset = _offset_seconds(match.group(7))
     try:
-        # 没有时区信息时按本机时间理解：EXIF 习惯不写偏移，而相机写下的墙上时间
-        # 对用户来说就是「几点几分」，换算反而会让分组漂到别的日期。
+        # 没有时区信息时按本机时间理解：EXIF 习惯不写偏移，强行当成 UTC 会把排序整体平移几个小时，
+        # 而分组的年月日本来就取自这串墙上时间，两者保持一致才不会漂到别的日期去。
         epoch = _epoch(year, month, day, hour, minute, second, offset)
     except (ValueError, OverflowError, OSError):
         return None
@@ -348,13 +309,8 @@ def _offset_seconds(token: str | None) -> int | None:
 def _epoch(
     year: int, month: int, day: int, hour: int, minute: int, second: int, offset: int | None
 ) -> float:
-    """把「墙上时间」换成 epoch 秒。
-
-    - **写了时区偏移**（含 ``Z``）就按 UTC 理解再减去偏移，得到真实时刻。
-    - **没写**（相机 EXIF 的常态）就按本机时区理解：EXIF 习惯不写偏移，而相机
-      写下的墙上时间对用户来说就是「几点几分」，强行当成 UTC 会把排序整体平移
-      几个小时。分组的年月日本来就取自这串墙上时间，两者保持一致才不会漂到别的
-      日期去。
+    """把「墙上时间」换成 epoch 秒。**写了时区偏移**（含 ``Z``）就按 UTC 理解再减去偏移；
+    **没写**（相机 EXIF 的常态）就按本机时区理解 —— 见 :func:`parse_capture_time` 里那一段。
     """
     wall = datetime.datetime(year, month, day, hour, minute, second)  # noqa: DTZ001
     if offset is None:
@@ -408,11 +364,9 @@ def _keywords(values: Mapping[str, object]) -> tuple[str, ...]:
 def relative_folder(path: Path, root: Path) -> str:
     """照片所在文件夹相对库根的位置（``旅行/2024``）；就在根下时返回空串。
 
-    库外（理论上不该出现）返回绝对路径 —— 宁可显示得啰嗦，也别显示成空的那一档，
-    那样所有库外照片会挤进同一个组。
+    库外（理论上不该出现）返回绝对路径 —— 宁可显示得啰嗦，也别显示成空的那一档。
 
-    **搜索的「#相册」条件用的是同一个函数**（ADR 0026）：索引里存的就是这个字符串，
-    两处各写一份迟早算出不一样的写法，于是「#相册 旅行」一条都查不到。
+    **搜索的「#相册」条件用的是同一个函数**（ADR 0026）：两处各写一份迟早算出不一样的写法。
     """
     try:
         relative = Path(path).parent.relative_to(Path(root))
@@ -642,10 +596,8 @@ _FACETS: Final[tuple[Facet, ...]] = (
         "关键词",
         "text",
         group=_keyword_group,
-        # 关键词只住在 IPTC / XMP 里（``WANTED_TAGS`` 的那三行），Pillow 读不出来。
-        # 不标这一条，没装 exiftool 时菜单里那条「关键词」会照常可点，而点下去
-        # 满屏都是「无关键词」—— 用户以为是自己没写关键词，其实是没有工具去读。
-        # 国家 / 省州 / 城市同理（它们靠的是 GPS 与反查，同属「没 exiftool 就没数」那一类）。
+        # 关键词只住在 IPTC / XMP 里（``WANTED_TAGS`` 的那三行），Pillow 读不出来。不标这一条，
+        # 没装 exiftool 时菜单里那条「关键词」照常可点，点下去满屏都是「无关键词」（城市同理）。
         needs_exiftool=True,
         empty_label="无关键词",
     ),
@@ -690,10 +642,8 @@ GROUP_FACET_IDS: Final[tuple[str, ...]] = (
     FACET_FORMAT,
 )
 
-#: 「排序」子菜单按它生成，顺序即菜单顺序。
-#:
-#: 先是不用读元数据的一档（立刻生效），再是需要读 EXIF 的一档 —— 排在后面等于
-#: 让用户先点快的那一档。关键词不在其中：按一串标签排序没有意义。
+#: 「排序」子菜单按它生成，顺序即菜单顺序。先是不用读元数据的一档（立刻生效），再是需要读
+#: EXIF 的一档 —— 排在后面等于让用户先点快的那一档。关键词不在其中：按一串标签排序没有意义。
 SORT_FACET_IDS: Final[tuple[str, ...]] = (
     FACET_NAME,
     FACET_SIZE,
@@ -736,15 +686,9 @@ def needs_metadata(facets: Sequence[Facet | None]) -> bool:
 def with_resolved_place(facets: PhotoFacets, place: ResolvedPlace | None) -> PhotoFacets:
     """用反查出来的地点补齐缺的那些字段，并记下这是**推断**来的。
 
-    三条规矩：
-
-    - **文件里写了就以文件为准**，反查只填空缺（Lightroom 导出的地点通常比反查准）；
-    - **一个字段一个字段补**，文件里只写了国家时，城市可以来自反查；
-    - 补过就置 ``place_inferred``，界面据此说明「这组是推出来的」；
-    - 距离一并记下：面板要靠它提醒「这只是最近的城市」。
-
-    **是否记「查过了」不归这里管**，那是 :func:`mark_place_resolved` 的事 ——
-    本函数只管「答案是什么」，不管「这次查询算不算数」。
+    **文件里写了就以文件为准**，反查只填空缺，而且**一个字段一个字段补**（只写了国家时城市可以
+    来自反查）；补过就置 ``place_inferred``，距离一并记下（面板要靠它提醒「这只是最近的城市」）。
+    是否记「查过了」不归这里管 —— 那是 :func:`mark_place_resolved` 的事。
     """
     if place is None:
         return facets
@@ -767,10 +711,8 @@ def with_resolved_place(facets: PhotoFacets, place: ResolvedPlace | None) -> Pho
 def mark_place_resolved(facets: PhotoFacets, *, usable: bool = True) -> PhotoFacets:
     """记下「已经按坐标反查过一次」，让索引不必为同一张照片反复反查。
 
-    :param usable: 反查器当时的数据是不是可用。**不可用就别记**：城市数据还没下好、
-        或下载失败时 ``place_for`` 也返回 ``None``，但那不是「附近没有城市」的结论，
-        记下来等于把这张照片永久钉在「未知」上（下次数据到位了也不会再问）。
-        见 :class:`gallery.core.places.resolver.PlaceResolver`。
+    :param usable: 反查器当时的数据是不是可用。**不可用就别记** —— 数据没下好时 ``place_for``
+        也返回 ``None``，但那不是「附近没有城市」的结论，记下来等于把这张照片永久钉在「未知」上。
     """
     return facets if facets.place_checked == usable else replace(facets, place_checked=usable)
 

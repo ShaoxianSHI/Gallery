@@ -1,15 +1,6 @@
 """菜单面板的底色必须跟窗口是同一块（README 设计原则第 6 条）。
 
-背景：统一底色是在 ``_build_ui`` 里下发的，而菜单是**之后**才建出来的 ——
-菜单栏里那几个在 ``_build_actions`` 里建，右键菜单更晚，按一次才建。它们因此一直用
-系统菜单色（浅色 ``#ececec`` / 深色 ``#2b2b2b``），与窗口的纯色底差一档：按一下菜单
-的那一刻，界面就从「一整块底色」掉出去了。
-
-这里钉住两件事：菜单栏里的菜单（含子菜单）与右键菜单都拿到窗口那份调色板，且系统
-换浅色 / 深色时菜单栏里的菜单会跟着一起变。
-
-**菜单的「长什么样」全在这一份**（``gallery.ui.menu_style``）：样式表、快捷键列、
-子菜单箭头、以及「菜单里该有哪些条目」那半在 ``gallery.ui.menus``。
+菜单是主题下发**之后**才建出来的，一直用系统菜单色；「菜单长什么样」全在 ``gallery.ui.menu_style``。
 """
 
 from __future__ import annotations
@@ -46,11 +37,8 @@ from gallery.ui.external_button import calendar_icon  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.theme import rgba  # noqa: E402
 
-#: 「假装系统换成了深色」用的底色。真深色下 Qt 给的是别的值，这里要的是
-#: 「换一个和当前不同的值」，具体是哪个数与这条测试无关。
+#: 「假装系统换成了深色」用的底色：只要与当前不同，具体是哪个数与这条测试无关。
 FLIPPED_BACKGROUND = QColor(23, 23, 23)
-
-#: 等待扫描完成的时限。
 
 
 @pytest.fixture
@@ -58,8 +46,7 @@ def window(qt_app: QApplication, tmp_path: Path) -> Iterator[MainWindow]:
     root = tmp_path / "照片"
     root.mkdir()
     Image.new("RGB", (64, 48), (200, 120, 40)).save(root / "一张.jpg")
-    # 还要有一个子文件夹：没有它就取不到「相册」那一种落点（用户正是看着相册菜单说
-    # 「在访达中显示」和 ⇧ 几乎同一条 x 的）。
+    # 还要有一个子文件夹：没有它就取不到「相册」那一种落点。
     album = root / "京都"
     album.mkdir()
     Image.new("RGB", (64, 48), (10, 160, 90)).save(album / "另一张.jpg")
@@ -118,11 +105,8 @@ def test_context_menu_shares_window_background(qt_app: QApplication, window: Mai
 
 
 def test_context_menu_carries_our_look(qt_app: QApplication, window: MainWindow) -> None:
-    """圆角与行距在样式表里，而**底色必须一起写进去**。
-
-    这是实测出来的坑：给 ``QMenu`` 加了样式表之后，面板就不再由 macOS 样式画，
-    底色会掉回系统菜单色（浅色 ``#ececec``）。样式表里若不写底色，上一条测试
-    断言的「与窗口同色」就会当场作废 —— 两条必须一起成立。
+    """圆角与行距在样式表里，而**底色必须一起写进去**：挂了样式表之后面板不再由 macOS 样式画，
+    不写底色就会掉回系统菜单色（浅色 ``#ececec``），上一条的「与窗口同色」当场作废。
     """
     window._stack.setCurrentWidget(window._grid_page)
     row = window._model.row_of_path(window._library.root / "一张.jpg")
@@ -139,11 +123,8 @@ def test_context_menu_carries_our_look(qt_app: QApplication, window: MainWindow)
 
 
 def test_context_menu_has_hover_highlight(qt_app: QApplication, window: MainWindow) -> None:
-    """菜单必须有悬停 / 当前项的高亮带。
-
-    实测过的坑：只要给 ``QMenu`` 挂了样式表，系统样式那份高亮就**不再画**了 ——
-    原生菜单按方向键会把当前行点亮成强调色，加了样式表之后按 ↓ 两次所有行仍是底色，
-    用户根本看不出鼠标在哪一行。所以这两条规则是补回来的，不能删。
+    """菜单必须有悬停 / 当前项的高亮带：给 ``QMenu`` 挂了样式表之后系统那份高亮**不再画**，
+    按 ↓ 两次所有行仍是底色，用户根本看不出鼠标在哪一行。
     """
     window._stack.setCurrentWidget(window._grid_page)
     row = window._model.row_of_path(window._library.root / "一张.jpg")
@@ -157,33 +138,26 @@ def test_context_menu_has_hover_highlight(qt_app: QApplication, window: MainWind
     assert "QMenu::item:hover" in sheet
     assert "QMenu::item:selected" in sheet
     assert sheet.count(highlight) >= 2, "两条规则都得用调色板里的高亮色"
-    # 高亮带是内缩的圆角带。**带状态的规则里不许写 margin**：margin 属于盒子模型，
-    # 写在 :selected 里等于每悬停一次就换一次盒子，文字会跟着挪位置（用户实测）。内缩
-    # 由菜单自身的内边距决定，与状态无关。
+    # 高亮带是内缩的圆角带。**带状态的规则里不许写 margin**：写在 :selected 里等于每悬停
+    # 一次就换一次盒子，文字会跟着挪位置。内缩由菜单自身的内边距决定，与状态无关。
     assert f"border-radius: {menu_style.MENU_HIGHLIGHT_RADIUS}px" in sheet
-    # 两条带状态的规则都**要换上高亮那一档字色**：只给底色的话，浅色下是黑字压蓝底
-    # （下面 :func:`test_the_selected_row_wears_the_highlighted_text` 量的是画出来的那一档）。
+    # 两条带状态的规则都**要换上高亮那一档字色**：只给底色的话，浅色下是黑字压蓝底。
     highlighted_text = rgba(menu.palette().color(QPalette.ColorRole.HighlightedText))
     assert _state_rules(sheet).count(highlighted_text) >= 2, "悬停与当前项都要给字色"
-    # 只查那两条带状态的规则，不查整份：分隔线那条带 margin 是故意要的（那里没有
-    # 状态，见 ``ui.menus`` 里 MENU_SEPARATOR_HEIGHT 那段）。
+    # 只查那两条带状态的规则，不查整份：分隔线那条带 margin 是故意要的。
     assert "margin" not in _state_rules(sheet)
-    # 内缩的那一处在菜单上，**四边同值**：只留左右的话，高亮带会顶着面板上下两条边
+    # 内缩的那一处在菜单上**四边同值**：只留左右的话高亮带会顶着面板上下两条边。
     assert f"padding: {menu_style.MENU_INSET}px" in sheet
 
 
 def test_the_selected_row_wears_the_highlighted_text(
     qt_app: QApplication, window: MainWindow
 ) -> None:
-    """浅色下选中那一行的**条目文字**得跟着高亮一起变浅（用户报的就是它）。
+    """浅色下选中那一行的**条目文字**得跟着高亮一起变浅。
 
-    坑在 Qt 上：样式表一挂上去，``QMenu::item`` 就归 ``QStyleSheetStyle`` 画，而它**不再按
-    ``State_Selected`` 去挑 ``HighlightedText``** —— 选中行与未选中行一律是正文色。深色下
-    两者本来就都是浅字，看不出来；浅色下就成了黑字压蓝底，而我们自己画的快捷键列早就按
-    ``_text_role`` 换成了 ``HighlightedText``，于是那一行左半边白、右半边黑。
-
-    **真的抓一张图去量**：只查样式表里有没有 ``color``，将来谁把它删掉、或写成一个 Qt 根本
-    不认的值，测试都还是绿的 —— 而坏法恰好是「看着没变、画出来是黑的」。
+    坑在 Qt 上：样式表一挂上去，``QMenu::item`` 归 ``QStyleSheetStyle`` 画，而它**不再按
+    ``State_Selected`` 挑 ``HighlightedText``**，浅色下就成了黑字压蓝底 —— 那一行左半边白
+    （快捷键列已换色）、右半边黑。真的抓一张图去量：只查样式表里有没有 ``color`` 抓不住它。
     """
     original = QPalette(qt_app.palette())
     try:
@@ -194,8 +168,7 @@ def test_the_selected_row_wears_the_highlighted_text(
         window._stack.setCurrentWidget(window._grid_page)
         row = window._model.row_of_path(window._library.root / "一张.jpg")
         assert row >= 0
-        # 右键之前网格会先把那一格选中（``_show_context_menu`` 走的正是这条），
-        # 「拷贝路径」这一类命令才可用 —— 前置条件摆出来，不拿默认值去赌。
+        # 右键前网格会先选中那一格，「拷贝路径」这类命令才可用 —— 前置条件摆出来，不拿默认值去赌。
         assert window._grid.select_for_context(row) == row
         assert window._grid.selected_rows() == [row]
         menu = window.context_menu_for(row)
@@ -233,9 +206,8 @@ def test_the_selected_row_wears_the_highlighted_text(
 
 
 def _light_palette(original: QPalette) -> QPalette:
-    """一份**浅色**的调色板：白底、深字，配上系统那套高亮色。
-
-    存在的理由是这条测试要测的就是浅色下的坏法，而跑测试的机器此刻是深是浅不能假定。
+    """一份**浅色**的调色板：白底、深字，配上系统那套高亮色。要测的正是浅色下的坏法，
+    而跑测试的机器此刻是深是浅不能假定。
     """
     flipped = QPalette(original)
     for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive):
@@ -262,13 +234,10 @@ def _enabled_action(menu: QMenu, text: str) -> QAction:
 def _label_ink(menu: QMenu, action: QAction) -> tuple[QColor, QColor]:
     """这一行**标签**上铺的底色与画出来的字色。
 
-    取样范围是标签本身（菜单内缩 + 那一列对勾宽，右边刚好到文字末尾），因此右沿那列
-    我们自己画的快捷键不掺进来 —— 这一条要盯的是 Qt 画的那一半。
-
-    底色取「这一块里最多的那个颜色」，字色取「离它最远的那一档」：抗锯齿的边缘像素于是
-    自动被排除，剩下的就是笔画真正的颜色。远近按 ``lightness()``（HSL 的明度）量，不用
-    ``value()`` —— 高亮那一档蓝的 ``value()`` 高达 198，白字与它只差 57，按那条线量就
-    白字也成不了「字」。
+    取样范围是标签本身，右沿那列我们自己画的快捷键不掺进来。底色取「这一块里最多的那个
+    颜色」、字色取「离它最远的那一档」，抗锯齿的边缘像素于是自动排除；远近按
+    ``lightness()`` 量而不用 ``value()``（高亮那一档蓝的 ``value()`` 高达 198，
+    白字与它只差 57，按那条线量白字也成不了「字」）。
     """
     image = menu.grab().toImage()
     scale = image.devicePixelRatio()
@@ -296,9 +265,7 @@ def _label_ink(menu: QMenu, action: QAction) -> tuple[QColor, QColor]:
 def _state_rules(sheet: str) -> str:
     """样式表里那两条**带状态**的规则（悬停 / 当前项）。
 
-    拆出来单独断言，而不是对整份样式表搜 ``margin``：分隔线那条规则带 margin 是
-    故意要的（见 ``ui.menus``），而「高亮带不许有 margin」这条禁令针对的是
-    **会随悬停换盒子**的那两条。
+    拆出来单独断言而不是对整份样式表搜 ``margin``：分隔线那条带 margin 是故意要的。
     """
     return "\n".join(line for line in sheet.splitlines() if ":hover" in line or ":selected" in line)
 
@@ -306,9 +273,8 @@ def _state_rules(sheet: str) -> str:
 def test_separator_color_follows_the_theme() -> None:
     """分隔线的颜色深浅两套：深色下要**提亮到看得见**，浅色下维持原来的浓度。
 
-    深色下那条线原本由系统样式画，取的是**应用调色板**里偏暗的一档（实测 ``#0f0f0f``），
-    比底色 ``#171717`` 还深，等于没画。浅色下它本来是 ``#aaaaaa``、看得见，所以那个值
-    照抄（实测合成出来是 ``#ababab``，差一档，看不出来）—— 不顺手改浅色的观感。
+    深色下那条线原本取的是应用调色板里偏暗的一档（实测 ``#0f0f0f``），比底色 ``#171717``
+    还深等于没画；浅色下照抄 ``#aaaaaa``，不顺手改浅色的观感。
     """
     dark = QColor("#171717")
     light = QColor("#ffffff")
@@ -335,11 +301,8 @@ def _line_on(background: QColor, rule_color: str) -> QColor:
 
 
 def test_dark_separator_is_a_line_you_can_see(qt_app: QApplication, window: MainWindow) -> None:
-    """深色下右键菜单里的分隔线必须**看得见，而且是线**（用户报的就是它基本看不见）。
-
-    **真的抓一张图来看**，而不是只读样式表：只读样式表的话，将来谁把 ``height``
-    删掉测试还是绿的 —— 而那一栏 12 像素会整块填上，看着像一条灰色的带子（见
-    ``ui.menus`` 里 MENU_SEPARATOR_HEIGHT 那段）。
+    """深色下右键菜单里的分隔线必须**看得见，而且是线**：**真的抓一张图来看**，只读样式表的话
+    把 ``height`` 删掉测试还是绿的，而那一栏 12 像素会整块填上、看着像一条灰色的带子。
     """
     original = QPalette(qt_app.palette())
     background = QColor("#171717")
@@ -373,8 +336,7 @@ def test_dark_separator_is_a_line_you_can_see(qt_app: QApplication, window: Main
 def _painted_separator(menu: QMenu, background: QColor) -> tuple[QColor, int]:
     """菜单中间那一列上，分隔线真正画出来的那一段：颜色与厚度（像素）。
 
-    厚度数的是「不是底色的行数」：只看颜色的话，上面那两种坏法（整块填上、根本没画）
-    都会漏过去。取中间一列是为了躲开两端的圆角。
+    厚度数的是「不是底色的行数」，只看颜色的话整块填上与根本没画都会漏过去。
     """
     separator = next(action for action in menu.actions() if action.isSeparator())
     rect = menu.actionGeometry(separator)
@@ -397,9 +359,8 @@ def _painted_separator(menu: QMenu, background: QColor) -> tuple[QColor, int]:
 def test_split_shortcut_separates_modifiers_from_the_key() -> None:
     """修饰符与键要分得开：靠的是 QKeyCombination，不是去解析「⇧⌘C」这种字符串。
 
-    **注意第一个修饰符是 ``ControlModifier``**：macOS 上 Qt 把 Ctrl 译成 Command
-    （菜单里显示的一直是 ⌘R / ⌘⌫ / ⇧⌘C），而 ``MetaModifier`` 才是控制键 ⌃。认反了
-    画出来就是 ⌃R。
+    **注意第一个修饰符是 ``ControlModifier``**：macOS 上 Qt 把 Ctrl 译成 Command，
+    而 ``MetaModifier`` 才是控制键 ⌃，认反了画出来就是 ⌃R。
     """
     modifiers, key = menu_style.split_shortcut(QKeySequence("Ctrl+Shift+C"))
 
@@ -418,11 +379,8 @@ def test_split_shortcut_separates_modifiers_from_the_key() -> None:
 def test_each_shortcut_column_lines_up(qt_app: QApplication, window: MainWindow) -> None:
     """「三个列各自对齐」：同一列在所有行上是同一段 x，字母列一律贴右沿。
 
-    列宽只按整个菜单量一次，所有行都按它摆（见 ``menu_style.ShortcutColumns``）。早先试着在
-    条目文字里补空格来对齐，位移只有请求的 2/3 且不线性，永远差几像素。
-
-    **对齐的是「那一组列」**（:meth:`menu_style.ShortcutColumns.slot_rects`），不是每个符号：
-    符号落哪一格是逐行定的，见 ``test_a_lone_modifier_hugs_the_key``。
+    列宽只按整个菜单量一次（早先试着在条目文字里补空格来对齐，位移只有请求的 2/3 且不线性）。
+    对齐的是**那一组列**（``slot_rects``）而不是每个符号：符号落哪一格是逐行定的。
     """
     window._stack.setCurrentWidget(window._grid_page)
     row = window._model.row_of_path(window._library.root / "一张.jpg")
@@ -458,13 +416,10 @@ def test_each_shortcut_column_lines_up(qt_app: QApplication, window: MainWindow)
 
 
 def test_a_lone_modifier_hugs_the_key(qt_app: QApplication, window: MainWindow) -> None:
-    """**只有一个**修饰符的那一行，它占内侧那一列，不占自己那一列。
+    """**只有一个**修饰符的那一行占内侧那一列，不占自己那一列。
 
-    照片菜单里「在默认应用中打开」的 ``⇧⏎`` 就是这么一行（用户原话：shift 应该在第二列）。
-    若按「每个修饰符钉死一列」来画，它的 ⇧ 会落到 ⌘ 的外侧，中间隔着一格空白 —— 看着像
-    凭空多出来一列，而同一行紧挨着的 ``⌘⏎`` 的 ⌘ 却贴在字母旁边。
-
-    与之相对，``⇧⌘C`` 两个修饰符都要，各占一格、依次往外排（访达的读法）。
+    「在默认应用中打开」的 ``⇧⏎`` 就是这么一行；按「每个修饰符钉死一列」来画，它的 ⇧ 会落到
+    ⌘ 的外侧，中间隔着一格空白。两个修饰符的 ``⇧⌘C`` 则各占一格、依次往外排。
     """
     window._stack.setCurrentWidget(window._grid_page)
     row = window._model.row_of_path(window._library.root / "一张.jpg")
@@ -546,12 +501,8 @@ def test_open_hint_is_really_painted_in_the_key_column(
 ) -> None:
     """「打开」那一行的最右列里**真的有字** —— 那不是 ``QAction`` 的快捷键，是我们自己画的。
 
-    抓一张图来数墨迹，而不是只查 ``key_cells()``：只查的话，将来谁把 ``paintEvent`` 里
-    画提示的那一段删掉，测试还是绿的，而菜单上就只剩一个空位置 —— 用户看到的正是
-    「快捷键图标没出来」。
-
-    顺带钉住**画在对的位置**：墨迹必须落在这一行的键位列里，且不越出这一行的上下边
-    （越出去就压到隔壁行上去了）。
+    抓一张图来数墨迹而不是只查 ``key_cells()``：把 ``paintEvent`` 里画提示的那一段删掉，
+    只查的测试还是绿的而菜单上只剩一个空位置。
     """
     window._stack.setCurrentWidget(window._grid_page)
     row = _row_for(qt_app, window, kind)
@@ -574,8 +525,7 @@ def test_open_hint_is_really_painted_in_the_key_column(
 def _ink_in(menu: QMenu, action: QAction) -> int:
     """「这一行的键位列」里画出来多少墨迹（像素）。
 
-    位置按 :meth:`menu_style.ShortcutColumnMenu.key_rect` 算 —— 那正是 ``paintEvent`` 用的那套
-    几何。抓图按设备像素给（Retina 上是两倍），几何却是逻辑像素，两边要按倍率对起来。
+    位置按 ``key_rect`` 算；抓图按设备像素给而几何是逻辑像素，两边要按倍率对起来。
     """
     assert isinstance(menu, menu_style.ShortcutColumnMenu)
     background = menu.palette().color(QPalette.ColorRole.Window).rgb()
@@ -599,8 +549,7 @@ def test_shortcut_columns_start_after_the_longest_label(
 ) -> None:
     """三列要排在**最长那条文字的右侧**，且留出固定的间距。
 
-    这一段以前只有 0.5~2 像素：相册菜单里「在访达中显示」和下面 ⇧ 所在那列几乎同一条
-    x，看着像串成一片。留白取 :data:`menu_style.SHORTCUT_LABEL_GAP`，与原生菜单一致。
+    这一段以前只有 0.5~2 像素，「在访达中显示」和下面 ⇧ 所在那列几乎同一条 x，看着像串成一片。
     """
     window._stack.setCurrentWidget(window._grid_page)
     row = _row_for(qt_app, window, kind)
@@ -630,9 +579,7 @@ def test_shortcut_columns_start_after_the_longest_label(
 def _needed_width(menu: QMenu) -> int:
     """菜单至少要有多宽才装得下「最长标签 + 间距 + 最右列」。
 
-    最右列按 :meth:`menu_style.ShortcutColumnMenu.key_cells` 数，**不能只数快捷键** ——
-    「打开」那枚只画不生效的提示也在那一列里（见 ``ui.menus`` 里 ``show_key``），漏掉它
-    这条断言就会放过「菜单不够宽、把提示压到标签上」这种坏法。
+    最右列按 ``key_cells`` 数，**不能只数快捷键** ——「打开」那枚只画不生效的提示也在那一列里。
     """
     assert isinstance(menu, menu_style.ShortcutColumnMenu)
     metrics = QFontMetrics(menu.font())
@@ -672,8 +619,7 @@ def test_qt_no_longer_draws_the_shortcut_column_itself(
 ) -> None:
     """我们自己画快捷键，就得先关掉 Qt 画的那一版，否则两者重叠。
 
-    这个标志是**长期生效**的（动作与菜单栏共用），但只影响弹出菜单：菜单栏那边原生的照旧，
-    ``shortcut`` 本身也没动，按键照常触发。
+    这个标志**长期生效**但只影响弹出菜单，菜单栏那边原生的照旧，按键照常触发。
     """
     window._stack.setCurrentWidget(window._grid_page)
     row = window._model.row_of_path(window._library.root / "一张.jpg")
@@ -692,13 +638,9 @@ def test_qt_no_longer_draws_the_shortcut_column_itself(
 def test_submenu_arrow_moves_into_the_key_column(qt_app: QApplication, window: MainWindow) -> None:
     """子菜单的右箭头与快捷键的**字母列**对齐（原生就是这样）。
 
-    QSS 挪不动 Qt 那个箭头 —— 实测 ``padding-right`` 从 12 加到 28，它始终在 x=148~151.5，
-    落在字母列（129~141）右边，看着是另一个不相干的东西。所以带子菜单的那张菜单要**关掉**
-    Qt 画的那一个（``::right-arrow`` 尺寸给 0 之后完全不画），改由
-    ``ShortcutColumnMenu`` 画进字母列。
-
-    照片菜单自 ADR 0019 起**也有**子菜单行了（「复制到相册」「移动到相册」），于是它与
-    空白处那张一样，箭头归我们自己画 —— 全软件的箭头落在同一列上。
+    QSS 挪不动 Qt 那个箭头（``padding-right`` 从 12 加到 28 它始终在原处），所以带子菜单的
+    那张菜单要**关掉** Qt 画的那一个，改由 ``ShortcutColumnMenu`` 画进字母列 ——
+    照片菜单自 ADR 0019 起也有子菜单行，于是全软件的箭头落在同一列上。
     """
     window._stack.setCurrentWidget(window._grid_page)
 
@@ -769,17 +711,10 @@ def test_every_row_that_owns_ink_really_paints_it(
 ) -> None:
     """**每一行该有的墨迹都得真的有** —— 子菜单的右箭头与快捷键是同一支笔画出来的。
 
-    这条钉的是「画出来了」而不是「打算画」：上面那条只查样式表与开关，看不见笔是不是
-    真的落到屏幕上。它漏过一次 —— ``_paint_arrow`` 里留着一次 ``painter.end()``，于是**第一
-    个**子菜单行（分组 / 复制到相册）画得出箭头，它之后的每一行都画不出，症状正是用户报的
-    「排序 / 缩略图大小 / 移动到相册没有右箭头」；排在后面的快捷键（⌘R / ⌘⌫ / ⌘I / ⎋）
-    也一起消失。而 Qt 只在 stderr 留一句 ``QPainter::setPen: Painter not active``，界面上
-    完全看不出来，测试也就一路绿灯。
-
-    所以这里**数墨迹**（见 :func:`_ink_in`），而且是**逐行**数：坏法是「从第几行往后全没了」，
-    只查第一行或只查标志位都抓不住。
-
-    快捷键一并查：它们与箭头走同一个出口、同一支笔，箭头丢在哪一行它们就从哪一行开始丢。
+    上面那条只查样式表与开关，看不见笔是不是真的落到屏幕上。它漏过一次 ——
+    ``_paint_arrow`` 里留着一次 ``painter.end()``，于是**第一个**子菜单行画得出箭头、
+    它之后的每一行都画不出，而 Qt 只在 stderr 留一句 ``QPainter::setPen``，测试一路绿灯。
+    所以这里**数墨迹**（见 :func:`_ink_in`），而且**逐行**数：坏法是「从第几行往后全没了」。
     """
     menu = _menu_to_paint(qt_app, window, kind)
     assert isinstance(menu, menu_style.ShortcutColumnMenu)
@@ -809,9 +744,8 @@ def test_menus_without_checkable_items_keep_the_text_column(
 ) -> None:
     """没有可勾选项的菜单，文字也要与照片菜单对齐。
 
-    Qt 只在菜单里**存在可勾选项**时才预留那一列对勾宽度（实测 19 像素），整列文字
-    跟着右移：照片菜单文字在 28，相册 / 分组 / 空白处只有 9。菜单里根本没有对勾可画，
-    留着那列空白没有道理，但文字忽左忽右更难看 —— 所以统一补上，全软件的文字列对齐。
+    Qt 只在菜单里**存在可勾选项**时才预留那一列对勾宽度（实测 19 像素），整列文字跟着右移。
+    那种菜单里根本没有对勾可画，留着那列空白没有道理，但文字忽左忽右更难看。
     """
     window._stack.setCurrentWidget(window._grid_page)
     row = window._model.row_of_path(window._library.root / "一张.jpg")
@@ -851,9 +785,8 @@ def test_submenus_get_the_same_look(qt_app: QApplication, window: MainWindow) ->
 def test_menu_bar_menus_are_left_native(window: MainWindow) -> None:
     """菜单栏那边**不该**被右键菜单的样式波及。
 
-    ``QAction`` 是全局复用的，``some_action.menu()`` 可能指向菜单栏里的子菜单；
-    递归时若不认「这个子菜单的 ``menuAction()`` 是不是当前这条 action」，
-    「视图 → 排序 / 分组 / 缩略图大小」会被顺带改掉 —— 它们并不属于这次右键。
+    ``QAction`` 是全局复用的，``some_action.menu()`` 可能指向菜单栏里的子菜单；递归时若不认
+    「这个子菜单的 ``menuAction()`` 是不是当前这条 action」，「视图 → 排序」会被顺带改掉。
     """
     window._stack.setCurrentWidget(window._grid_page)
     row = window._model.row_of_path(window._library.root / "一张.jpg")
@@ -870,8 +803,7 @@ def test_menu_bar_menus_are_left_native(window: MainWindow) -> None:
 def test_menu_bar_menus_follow_theme_change(qt_app: QApplication, window: MainWindow) -> None:
     """系统换浅色 / 深色之后重下一次底色，菜单要跟着一起变。
 
-    **只有这个测试会去动应用调色板** —— 它要的就是「系统换了一套颜色」这个前提，
-    而那正是产品代码永远不做的一步（见 ``ui.theme`` 模块文档里那两个坑）。
+    **只有这个测试会去动应用调色板** —— 它要的就是「系统换了一套颜色」这个前提。
     """
     original = QPalette(qt_app.palette())
     before = window.palette().color(QPalette.ColorRole.Window).name()
@@ -892,35 +824,27 @@ def test_menu_bar_menus_follow_theme_change(qt_app: QApplication, window: MainWi
         theme.apply_theme(qt_app)
 
 
-# ---- 「朴素下拉菜单」与搜索框的候选列表必须是同一种东西 -------------------
-
-
 def test_the_plain_menu_is_sized_like_the_search_popup(qt_app: QApplication) -> None:
     """字号、行内边距、圆角、字色**全部来自同一处常量**。
 
-    这两个控件用户是挨着用的（搜索框就在那个按钮右边），字号或行内边距差一档，
-    一眼就看得出「这是另一个软件弹的」。所以这里断言的不是「像」，是**同一个数**。
+    这两个控件用户是挨着用的，字号或行内边距差一档一眼就看得出「这是另一个软件弹的」。
     """
     style = menu_style.popup_menu_style(QMenu())
 
     assert f"font-size: {menu_style.POPUP_FONT_PX}px" in style
     assert f"border-radius: {menu_style.MENU_HIGHLIGHT_RADIUS}px" in style
     assert f"border: {menu_style.POPUP_LIST_BORDER}px solid" in style
-    # 行的内边距**左右同档**（就是候选列表那一档）：左内边距只管文字，图标那一侧
-    # 归下面那条 ``::icon`` 规则 —— 两处各管一半。
+    # 行的内边距**左右同档**（就是候选列表那一档）：左内边距只管文字，图标那一侧归下面那条
+    # ``::icon`` 规则 —— 两处各管一半。
     assert f"padding: 3px {menu_style.POPUP_LIST_ITEM_PAD}px;" in style
-    # 图标那一段靠 ``::icon`` 的 ``margin-left``，**不是** ``QMenu::item`` 的左内边距
-    # （左内边距只推文字，改它等于把右边那段又拉宽）。乘 2 见那条常量的说明。
+    # 图标那一段靠 ``::icon`` 的 ``margin-left``，**不是** ``QMenu::item`` 的左内边距。
     assert f"QMenu::icon {{ margin-left: {menu_style.POPUP_MENU_ICON_MARGIN}px; }}" in style
 
 
 def test_the_plain_menu_spells_out_its_text_colour(qt_app: QApplication) -> None:
-    """**item 的字色必须写死。**
-
-    挂了样式表之后 Qt 不再按调色板给 item 上色 —— 实测深色下菜单的调色板里
-    ``WindowText`` 明明白白是 ``#ffffff``，画出来却是 ``#000000``（近黑底上等于
-    看不见）。曾经只在 ``:hover`` / ``:selected`` 里写了字色，于是**没被指到的那些行
-    全是黑的**。候选列表那份一直写死了 ``color``，是同一个坑。
+    """**item 的字色必须写死。** 挂了样式表之后 Qt 不再按调色板给 item 上色：实测深色下调色板里
+    ``WindowText`` 明明白白是 ``#ffffff``，画出来却是 ``#000000``；而只写在 ``:hover`` /
+    ``:selected`` 里会让**没被指到的那些行全是黑的**。
     """
     style = menu_style.popup_menu_style(QMenu())
 
@@ -928,10 +852,8 @@ def test_the_plain_menu_spells_out_its_text_colour(qt_app: QApplication) -> None
 
 
 def test_the_search_popup_and_the_plain_menu_share_one_font_size(qt_app: QApplication) -> None:
-    """字号只有一处来源：改 ``POPUP_FONT_PX`` 两边一起变。
-
-    各写一个字面量的话，改了其中一处、另一处不会报错也不会变红 —— 只会**看起来
-    不是一套东西**，而那正是这一节要防的。
+    """字号只有一处来源：改 ``POPUP_FONT_PX`` 两边一起变。各写一个字面量的话，改了其中一处
+    另一处不会报错也不会变红，只会**看起来不是一套东西**。
     """
     from gallery.ui import search_field
 
@@ -943,21 +865,10 @@ def test_the_search_popup_and_the_plain_menu_share_one_font_size(qt_app: QApplic
 def test_the_icon_sits_evenly_between_edge_and_text(qt_app: QApplication) -> None:
     """**图标到项矩形左沿的距离 ≈ 图标到文字的距离**（逐像素量渲染结果）。
 
-    用户的原话：「icon 距离高亮框的边距要和 icon 和后面文字的距离差不多」。
-    项矩形就是高亮带画的那一块，所以量它就等于量高亮带。
-
-    这一条**只能靠渲染出来量**：一边由 ``QMenu::icon`` 的 ``margin-left`` 说了算、
-    另一边由 Qt 自己排的图标列说了算，而 ``margin-left`` 到底把图标推多远**取决于
-    Qt 怎么排那一列**（实测：拿点满整张画布的标记量是一个数，拿真图标量是另一个数）。
-    Qt 换了排法，样式表里那个数字不会报错、也不会有别的测试变红，只有这条能发现。
-
-    **用的就是应用自己那个图标**（``calendar_icon()``）：图标墨迹的宽窄直接决定
-    右边那一段有多长，换个形状的标记量出来的就不是同一个东西 —— 这里试过，
-    满格标记的平衡点差着 5 点。装了 PWA 用真图标、没装用自画的那一个，
-    **两条路量出来一样**（四种组合实测都是左右各 8 点），所以这条不依赖本机装了什么。
-
-    **量的是「没高亮」那一张**（黑字压白底）：高亮那张里文字是白的压蓝底，
-    抗锯齿的边缘落在哪一列全看阈值，同一个菜单能差出 3 点来 —— 比这条的容差还大。
+    只能靠渲染出来量：左边由 ``margin-left`` 说了算、右边由 Qt 自己排的图标列说了算，
+    而 ``margin-left`` 推多远**取决于 Qt 怎么排那一列**。用的就是应用自己那个图标 ——
+    墨迹宽窄直接决定右边那一段有多长，换个形状的标记量出来的不是同一个东西。
+    量的是「没高亮」那一张：高亮那张里抗锯齿的边缘落在哪一列全看阈值，能差出 3 点。
     """
     menu = QMenu()
     # 颜色钉死：`Window` / `WindowText` 在系统主题下是什么值不定，量的时候要有确定判据。

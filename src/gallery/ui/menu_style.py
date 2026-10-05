@@ -1,25 +1,6 @@
-"""菜单**长什么样** —— 那一件东西的样式、快捷键列的排布、以及我们自己画的那几笔。
+"""菜单长什么样：样式表、快捷键列的排布、以及自绘的那几笔。
 
-与 :mod:`gallery.ui.menus` 是同一件事的两半，判据是**「改它会不会牵连另一个包」**：
-
-- 这里答的是「菜单怎么画」。菜单栏、右键菜单、菜单里的子菜单**全都是同一副样子**，
-  所以它不属于 ``browser/`` 也不属于 ``viewer/`` —— 与 ``theme.py`` 同类，
-  是整个界面共用的那一层外观。
-- :mod:`gallery.ui.menus` 答的是「菜单里该有哪些条目」，那是产品行为，
-  由 ADR 0014 / 0018 / 0021 / 0023 钉死。
-
-过去这两半在同一个文件里（``menus.py`` 1148 行），于是「菜单里有什么」与「菜单怎么画」
-互相牵连：改一个分组顺序要读一整段 ``paintEvent``，改一次圆角要去数 ``_add_*`` 有几处。
-
-三条要守着的：
-
-- **颜色一律从控件自己的调色板读**，不另外传进来（见 :func:`apply_style`）。
-  **而那份调色板里的四个角色是 ``theme`` 钉死的**（见 :data:`gallery.ui.theme.RESOLVED_ROLES`
-  与 ADR 0035 决策 2）：不写上的话 Qt 会按控件类型各解析一档，于是右键菜单与搜索框的
-  候选列表高亮成两种蓝 —— **同一份生成逻辑画出两种颜色**，用户说的「有一点割裂」就是这个。
-- **符号问 Qt 要，不查表**（见 :func:`_native`）。
-- :func:`ShortcutColumnMenu` 自绘快捷键列，因此**箭头要自己画**且画在字母列上
-  （见 :meth:`ShortcutColumnMenu.owns_submenu_arrows` 与 :func:`apply_style` 里那段注释）。
+颜色一律从控件自己的调色板读，那几个角色由 :mod:`gallery.ui.theme` 钉死（ADR 0035）。
 """
 
 from __future__ import annotations
@@ -56,46 +37,29 @@ MENU_ARROW_DRAWN_HEIGHT = 9.5
 
 MENU_ITEM_PADDING = "5px 12px 5px 0px"
 
-#: 弹出列表那一圈的边框宽度（点）。**样式表那边写、摆位置那边算**，所以立成常数
-#: 而不是散落在 f-string 里的一个字面量 —— 两处差一像素，用户就看见两个「#」错开。
+#: 弹出列表那一圈的边框宽度（点）。样式表那边写、摆位置那边算，立成常数是为了两处
+#: 不会差一像素 —— 差一点就看见两个「#」错开。
 POPUP_LIST_BORDER = 1
 
 #: 弹出列表的行内边距：比菜单那一档（:data:`MENU_INSET`）少 2 —— 列表只有两列、
 #: 没有对勾要避让，多留一档只会显得比菜单还松。
 POPUP_LIST_PADDING = MENU_INSET - 2
 
-#: 弹出列表里第一列文字离**列表左沿**多远（点）= 边框 + 内边距。
-#: 行里那一行文字还要再让开 :data:`POPUP_LIST_ITEM_PAD`，两者加起来才是字真正落下的
-#: 位置（见 ``gallery.ui.search_field.SearchField._item_padding``）。
+#: 弹出列表里第一列文字离列表左沿多远（点）= 边框 + 内边距。行里那一行文字还要再让开
+#: :data:`POPUP_LIST_ITEM_PAD`，两者加起来才是字真正落下的位置。
 POPUP_LIST_INSET = POPUP_LIST_BORDER + POPUP_LIST_PADDING
 
-#: 弹出列表那一行**文字**离行矩形左沿多远（点）。
-#:
-#: **这一份决定候选列表里那个「#」落在哪**：Qt 画 ``::item`` 的文字是从行矩形左沿起算、
-#: 再让开这一个内边距的。菜单那一档是给「左边留了对勾 gutter」的菜单定的，列表没有对勾，
-#: 这份要按「文字要与输入框里那个字对齐」重算（见
-#: ``gallery.ui.search_field.SearchField._item_padding``）。
+#: 弹出列表那一行文字离行矩形左沿多远（点），决定候选列表里那个「#」落在哪。Qt 画
+#: ``::item`` 的文字从行矩形左沿起算；菜单那一档是给「左边留了对勾 gutter」的菜单定的。
 POPUP_LIST_ITEM_PAD = 8
 
-#: 朴素下拉菜单里，图标那一侧的 ``margin-left``（点）。
-#:
-#: 用户的原话是「icon 距离高亮框的边沿要和 icon 和后面文字的距离差不多」——
-#: 这个数就是照着**真图标量出来的**那个平衡点：13 时两边各约 8.5 点
-#: （实测 M=8 → 6/11，M=18 → 11/6）。Google 日历与访达两个条目量出来一模一样，
-#: 因为它们的图标在自己的画布里都是**左右各留 1 点**。
-#:
-#: **它不是「想要的间距 × 某个系数」，别再照着系数推。** 这里踩过两次：
-#:   - ``QMenu::item`` 的左内边距**只把文字往右推、图标纹丝不动** —— 改它反而把
-#:     右边那段拉得更宽，与目的正好相反（改了半天数字，图标一直贴在左边）。
-#:   - ``QMenu::icon`` 的 ``margin-left`` 才真的移动图标，但**移动多少取决于 Qt 怎么排
-#:     图标列**：拿一个满格的标记图标量是「一半」，拿真图标量又不是。
-#: 所以这个数是量出来的，`test_the_icon_sits_evenly_between_edge_and_text` **逐像素**
-#: 盯着它 —— 那条测试用的标记图标也留 1 点白边，与真图标同一个形状。
+#: 朴素下拉菜单里，图标那一侧的 ``margin-left``（点）—— 照真图标量出来的平衡点。
+#: **它不是「想要的间距 × 某个系数」**：``QMenu::item`` 的左内边距只推文字、图标纹丝
+#: 不动，``QMenu::icon`` 的 ``margin-left`` 才真的移动图标；只能实测，别照着系数推。
 POPUP_MENU_ICON_MARGIN = 13
 
-#: 弹出列表与弹出菜单的字号（点）。**只有这一处。** 搜索框的候选列表与标题条上那个
-#: 下拉菜单是两种控件、两条样式表，用户却在它们之间来回走 —— 字号各存一份的话，
-#: 早晚在一个主题下差一档，而那时没人说得清是哪一档。
+#: 弹出列表与弹出菜单的字号（点）。**只有这一处**：搜索框的候选列表与标题条上那个
+#: 下拉菜单是两种控件、两条样式表，而用户在两处之间来回走 —— 各存一份早晚差一档。
 POPUP_FONT_PX = 12
 
 MENU_CHECK_GUTTER = 19
@@ -108,10 +72,7 @@ MENU_SEPARATOR_MIX_LIGHT = 0.333
 
 
 def separator_color(background: QColor, text: QColor) -> str:
-    """分隔线那一档颜色，写成样式表认的 ``rgba(...)``（见 :data:`MENU_SEPARATOR_MIX_DARK`）。
-
-    深浅的判据是底色的明度，与 :attr:`gallery.ui.theme.AppTheme.is_dark` 同一个。
-    """
+    """分隔线那一档颜色，写成样式表认的 ``rgba(...)``；深浅的判据是底色的明度。"""
     mix = MENU_SEPARATOR_MIX_DARK if background.lightnessF() < 0.5 else MENU_SEPARATOR_MIX_LIGHT
     color = QColor(text)
     color.setAlphaF(mix)
@@ -119,21 +80,9 @@ def separator_color(background: QColor, text: QColor) -> str:
 
 
 def popup_list_style(list_widget: QWidget, *, item_padding: int = POPUP_LIST_ITEM_PAD) -> str:
-    """弹出列表（搜索框的候选列表）用的样式表 —— **与弹出菜单同一套颜色**。
+    """弹出列表（搜索框的候选列表）用的样式表 —— 与弹出菜单同一套颜色，只复用颜色那一层。
 
-    四个角色与 :func:`style_sheet` 取自同一个地方（控件自己的调色板，见模块文档头一条），
-    于是候选列表与右键菜单是同一种底色、同一种悬停高亮、同一种圆角：用户从菜单移到
-    搜索框，看到的不是「另一种东西」。
-
-    **列表不是菜单**，因此不共用那一整份样式表：菜单的行有快捷键列、有分隔线、有子菜单
-    箭头（``ShortcutColumnMenu`` 自己画那几笔），列表两样都没有。这里复用的只是**颜色**
-    与圆角那一层，行的内边距另给。
-
-    :param list_widget: 那个列表本身。颜色从**它自己的**调色板读（系统换浅色 / 深色时
-        :mod:`gallery.ui.theme` 会逐控件下发），所以调用方只要把控件给过来。
-    :param item_padding: 行里**文字**离行矩形左沿多远（见 :data:`POPUP_LIST_ITEM_PAD`）。
-        默认那一档是给「文字靠左」用的；搜索框要「文字与输入框里那个字对齐」，于是它把
-        自己量出来的那个数给过来 —— **QSS 调不出像素级的对齐，这里是唯一的一处入口**。
+    ``item_padding`` 是行里文字离行矩形左沿多远（QSS 调不出像素级对齐，这里是唯一入口）。
     """
     palette = list_widget.palette()
     background = palette.color(QPalette.ColorRole.Window)
@@ -147,11 +96,8 @@ def popup_list_style(list_widget: QWidget, *, item_padding: int = POPUP_LIST_ITE
         f"border: {POPUP_LIST_BORDER}px solid {rgba(edge)}; "
         f"border-radius: {MENU_CORNER_RADIUS}px; padding: {POPUP_LIST_PADDING}px; }}\n"
         f"QTreeWidget#searchPopup::item {{ padding: 3px {item_padding}px; color: {rgba(text)}; }}\n"
-        # 悬停与选中**合成一条规则**：候选列表是「鼠标移到哪一行就高亮哪一行」
-        # （``search_field.CandidateList.mouseMoveEvent`` 把那一行设成当前项），
-        # 两者本是同一件事。少写一条的症状是列表完全不亮 —— 挂了样式表之后 Qt 不再
-        # 按 ``State_MouseOver`` 自己去挑高亮色（与 :func:`style_sheet` 里那条菜单的
-        # 注释是同一件事）。
+        # 悬停与选中**合成一条规则**：候选列表是「鼠标移到哪一行就高亮哪一行」，两者本是
+        # 同一件事。少写一条的症状是列表完全不亮 —— 挂了样式表之后 Qt 不再自己挑高亮色。
         f"QTreeWidget#searchPopup::item:hover, "
         f"QTreeWidget#searchPopup::item:selected {{ background: {rgba(highlight)}; "
         f"color: {rgba(highlighted_text)}; border-radius: {MENU_HIGHLIGHT_RADIUS}px; }}"
@@ -169,51 +115,25 @@ def style_sheet(
 ) -> str:
     """给弹出菜单的那份样式表。
 
-    四个颜色都必须由调用方给**调色板里的原值**：底色是「一整块底色」那块（``Window``
-    角色），高亮是系统强调色（``Highlight`` 角色），正文色是 ``WindowText`` 角色，
-    高亮之下那一档字色是 ``HighlightedText`` —— 分隔线的颜色由正文色按透明度压出来
-    （见 :func:`separator_color`）。理由见模块文档那一段 ——
-    样式表里的 ``palette(...)`` 取的是**应用**调色板，不是逐控件下发的那份。
-
-    **那四档是「原值」的前提，由 :mod:`gallery.ui.theme` 保证**：下发的调色板把它们
-    逐个颜色组钉死了，所以三处浮层读到的是同一个值（ADR 0035 决策 2）。这里照读不误，
-    不必也不该在这里再兜一层。
-
-    ``check_gutter`` 是「这一列对勾原本会被预留的宽度」，只有**菜单里没有可勾选项**时才
-    补上（见 :data:`MENU_CHECK_GUTTER`）。它排在最后一条规则，靠覆盖前面那条
-    ``QMenu::item`` 的左内边距生效。
-
-    ``own_arrow`` 表示「子菜单的右箭头由我们自己画」（见 :class:`ShortcutColumnMenu`），
-    于是把 Qt 那一个**关掉**。关是能关掉的：``::right-arrow`` 只对 ``width`` / ``height``
-    有反应（实测把 ``padding-right`` 从 12 加到 28，箭头纹丝不动，仍在 x=148~151.5），
-    尺寸给 0 之后它就完全不画了。
+    颜色都由调用方从调色板取原值（``palette(...)`` 读的是**应用**调色板，不是逐控件下发的那份）。
+    ``check_gutter`` 只在菜单里没有可勾选项时补；``own_arrow`` 关掉 Qt 的右箭头。
     """
     return (
         f"QMenu {{ border-radius: {MENU_CORNER_RADIUS}px; "
         f"background: {rgba(background)}; padding: {MENU_INSET}px; }}\n"
         f"QMenu::item {{ padding: {MENU_ITEM_PADDING}; }}\n"
-        # 悬停 / 当前项的高亮带。**不加这两行，菜单就完全没有高亮**：样式表一旦挂上，
-        # 系统样式那份高亮就不再画了（实测原生菜单按方向键会点亮 #548fff，加了样式表
-        # 之后按 ↓ 两次所有行仍是 #ffffff），用户就看不出鼠标在哪一行。
-        #
-        # 字色**也要跟着换**，否则浅色下是黑字压蓝底：挂了样式表之后 Qt 不再按
-        # ``State_Selected`` 去挑 ``HighlightedText``（实测未选中行与选中行都是 #000000，
-        # 而调色板里的 ``HighlightedText`` 是 #ffffff）。我们自己画的快捷键列早就是按
-        # ``_text_role`` 跟着换的，于是那一行左半边白、右半边黑 —— 用户报的就是这个。
-        #
-        # 置灰的行不受影响：**Qt 压根不点亮它们**（实测 ``setActiveAction`` 直接把置灰行
-        # 拒掉，鼠标悬过去底色也仍是原来的白色），所以这里不必再补一条 ``:disabled``
-        # 把字色按回去 —— 那条规则永远不会被命中。
+        # 悬停 / 当前项的高亮带。**不加这两行菜单就完全没有高亮**：样式表一挂上，系统样式
+        # 那份高亮就不再画了。字色**也要跟着换**，否则浅色下是黑字压蓝底（Qt 不再按
+        # ``State_Selected`` 挑 ``HighlightedText``），而自绘的快捷键列早就跟着换了。
+        # 置灰的行 Qt 压根不点亮，不必再补 ``:disabled``。
         f"QMenu::item:hover {{ background: {rgba(highlight)}; "
         f"color: {rgba(highlighted_text)}; }}\n"
         f"QMenu::item:selected {{ background: {rgba(highlight)}; "
         f"color: {rgba(highlighted_text)}; "
         f"border-radius: {MENU_HIGHLIGHT_RADIUS}px; }}\n"
-        # 分隔线。**这条是深色下唯一看得见的那条线**：不给它，颜色由系统样式从应用
-        # 调色板里挑一档偏暗的（深色下 #0f0f0f，比底色还深），于是等于没画。
-        #
-        # 它带 margin —— 与高亮带那条禁令不冲突：那条禁的是**带状态**的规则里写 margin
-        # （每悬停一次换一次盒子，文字跟着挪），这里的状态与悬停无关。
+        # 分隔线。**这条是深色下唯一看得见的那条线**：不给它，颜色由系统样式从应用调色板
+        # 里挑一档偏暗的（深色下比底色还深），等于没画。它带 margin 与高亮那条禁令不冲突
+        # —— 那条禁的是**带状态**的规则里写 margin（每悬停一次换一次盒子），这里与悬停无关。
         f"QMenu::separator {{ height: {MENU_SEPARATOR_HEIGHT}px; "
         f"margin: {MENU_SEPARATOR_MARGIN}px 0px; "
         f"background: {separator_color(background, text)}; }}\n"
@@ -228,15 +148,9 @@ def style_sheet(
 
 
 def _owned_menus(menu: QMenu) -> Iterator[QMenu]:
-    """这个菜单**自己**拥有的那一串菜单：它，加上它的各级子菜单。
+    """这个菜单自己拥有的那一串菜单：它，加上它的各级子菜单。
 
-    **必须认所有权**：``QAction`` 是全局复用的（菜单栏与右键菜单共用同一份），
-    ``some_action.menu()`` 可能指向别处的菜单。判据是「这个子菜单的 ``menuAction()``
-    是不是当前这条 action」—— 只有那样它才真的长在这个菜单里。否则会把「视图」菜单
-    下的排序 / 分组 / 缩略图大小一并算进来，而它们并不属于这次右键。
-
-    **子菜单也不是它的子控件**（实测 ``QMenu.addMenu(另一个 QMenu)`` 不给后者设父对象，
-    ``findChildren`` 找不到它，``sub.styleSheet()`` 是空的），所以只能顺着 action 找。
+    判据是子菜单的 ``menuAction()`` 是不是当前 action（``QAction`` 共用，``menu()`` 可能指向别处）。
     """
     seen: set[int] = set()
     pending = [menu]
@@ -273,13 +187,8 @@ SHORTCUT_LABEL_GAP = 20
 
 
 def _text_role(action: QAction, active: QAction | None) -> QPalette.ColorRole:
-    """这一行的文字该用哪一档颜色 —— 悬停 / 正常 / 置灰。
-
-    原本在 :meth:`ShortcutColumnMenu.paintEvent` 与 :meth:`_paint_arrow` 里各写一遍。
-
-    选中时那一档**必须与样式表里 ``:selected`` 的字色同源**（都是 ``HighlightedText``，
-    见 :func:`style_sheet`）：一行左半边是 Qt 画的条目文字、右半边是我们自己画的快捷键，
-    两边不同色就是「一半白一半黑」那一眼。
+    """这一行的文字该用哪一档颜色 —— 悬停 / 正常 / 置灰。选中那一档必须与样式表的 ``:selected``
+    字色同源，否则一行左半边是 Qt 画的、右半边是自绘的，两色对不上。
     """
     if action is active:
         return QPalette.ColorRole.HighlightedText
@@ -305,11 +214,7 @@ CLOSE_KEY_HINT = _native(Qt.Key_Escape)
 def split_shortcut(shortcut: QKeySequence) -> tuple[frozenset[Qt.KeyboardModifier], str]:
     """把快捷键拆成「有哪些修饰符」与「那个键本身」。
 
-    Qt 6 把修饰符与按键合进了同一个 ``QKeyCombination``，但它自己分得很干净
-    （``keyboardModifiers()`` 与 ``key()``），这里不必去解析「⇧⌘C」这样的字符串。
-
-    只认**第一个**组合：菜单里显示的是这一个能按出来的键组，``QKeySequence`` 里其余的
-    是同一快捷键的其他写法（选单键 / 选全键），一并显示只会互相打架。
+    只认第一个组合：其余的是同一快捷键的其他写法，一并显示只会互相打架。
     """
     if shortcut.isEmpty() or shortcut.count() == 0:
         return frozenset(), ""
@@ -323,13 +228,8 @@ def split_shortcut(shortcut: QKeySequence) -> tuple[frozenset[Qt.KeyboardModifie
 
 @dataclass(frozen=True, slots=True)
 class ShortcutColumns:
-    """快捷键那几列的尺寸：字母一列 + 各种修饰符各一列，**整个菜单共用同一套列宽**。
-
-    列宽只按整个菜单里最宽的量一次，所有行都按它摆 —— ⌘R / ⌘⌫ / ⌘I 的 ⌘ 落在同一列上，
-    ⇧⌘C 的 ⇧ 与 ⌥ 也落在同一列上，字母则一律贴着右沿。
-
-    **符号落在哪一列，是按这一行用到的修饰符「从里往外依次填」决定的**（见 :meth:`cells`）：
-    位置不是每个修饰符钉死的，只有那一组列本身钉死。
+    """快捷键那几列的尺寸：字母一列 + 各修饰符一列，整个菜单共用同一套列宽。
+    落在哪一列由 :meth:`cells` 按「这一行用到的修饰符从里往外依次填」决定。
     """
 
     key_width: int
@@ -345,10 +245,8 @@ class ShortcutColumns:
         parts: Iterable[tuple[frozenset[Qt.KeyboardModifier], str]],
         metrics: QFontMetrics,
     ) -> ShortcutColumns:
-        """按**已经拆开**的「修饰符 + 键位」量一次（拆法见 :func:`split_shortcut`）。
-
-        :meth:`measure` 只认 ``QKeySequence``，而菜单里还可能有只挂了一枚提示、**压根没有
-        快捷键**的行（见 :meth:`ShortcutColumnMenu.show_key`）—— 那些量不到，只能从这里进。
+        """按已经拆开的「修饰符 + 键位」量一次：:meth:`measure` 只认 ``QKeySequence``，
+        只挂提示、没有快捷键的行只能从这里进。
         """
         parts = list(parts)
         return cls(
@@ -356,7 +254,7 @@ class ShortcutColumns:
                 (metrics.horizontalAdvance(key_text) for _, key_text in parts if key_text),
                 default=0,
             ),
-            # **只给这个菜单里真用到的修饰符留列**：空白处那张菜单只有 ⌘ 与无修饰的 ⎋，
+            # 只给这个菜单里真用到的修饰符留列：空白处那张菜单只有 ⌘ 与无修饰的 ⎋，
             # 硬留四列就是白占三十几像素。
             modifier_widths={
                 bit: metrics.horizontalAdvance(_modifier_glyph(bit))
@@ -379,11 +277,7 @@ class ShortcutColumns:
         return QRect(right - SHORTCUT_RIGHT_INSET - self.key_width, top, self.key_width, height)
 
     def slot_rects(self, right: int, top: int, height: int) -> list[QRect]:
-        """这一整块里的每一格：**先字母，再各修饰符列，从右往左**。
-
-        这几格的**位置对所有行都是同一套**，钉死的也是它们 —— 每一行落到哪一格由
-        :meth:`cells` 决定。菜单要给整块留宽时也用它（见 :meth:`width`）。
-        """
+        """这一整块里的每一格：先字母，再各修饰符列，从右往左。位置对所有行都是同一套。"""
         rects = [self.key_rect(right, top, height)]
         edge = rects[0].left() - SHORTCUT_GAP
         for width in self.modifier_widths.values():
@@ -401,19 +295,8 @@ class ShortcutColumns:
     ) -> tuple[QRect, dict[Qt.KeyboardModifier, QRect]]:
         """这一行里各格的矩形：字母一格，外加这一行用到的修饰符。
 
-        **修饰符从字母那一侧往里依次填**（填的顺序是 :data:`MODIFIER_ORDER`：⌘ 最靠里，
-        然后 ⇧、⌥、⌃），而不是「每个修饰符占自己那一列」。于是：
-
-        - ``⌘C`` 与 ``⇧⏎`` 的修饰符**都贴在字母旁边** —— 它们各只有一个修饰符，
-          孤零零地待在外侧那一列，中间隔着一格空白，看着像多出来一列；
-        - ``⇧⌘C`` 两个都要，⌘ 靠里、⇧ 退到外一格，仍然列列对齐。
-
-        代价是同一张菜单里同一个符号可能出现在两列上（照片菜单：``⇧⏎`` 的 ⇧ 与 ``⇧⌘C``
-        的 ⇧）。这与访达那种「整个键组贴着右沿」的排法是同一件事，而菜单栏那一侧仍是
-        原生的右对齐。
-
-        每格都按右对齐画而不是按字宽推位置：同一列里的字形宽窄不同（C / R / I / ⌫），
-        按字宽推必然参差，而右对齐时 Qt 把文字贴到格子右沿，一像素不差。
+        **修饰符从字母那一侧往里依次填**（顺序见 :data:`MODIFIER_ORDER`），不是每个修饰符
+        占自己那一列；每格按右对齐画，字宽不同也不参差。
         """
         rects = self.slot_rects(right, top, height)
         placed: dict[Qt.KeyboardModifier, QRect] = {}
@@ -425,20 +308,8 @@ class ShortcutColumns:
 class ShortcutColumnMenu(QMenu):
     """弹出菜单：快捷键按「字母一列 + 修饰符各占一列」自己画在行右沿。
 
-    **为什么不用 Qt 自己画**：样式表一挂到 ``QMenu`` 上，Qt 就不再给快捷键算位置了 ——
-    实测无论有没有 ``QMenu::item`` 规则、右内边距取多少，它都紧跟在文字后面（右沿恒为
-    78.5），而原生菜单里它贴着右沿。``setShortcut`` 一直都在设，问题是出在**画**的那一步，
-    QSS 调不动，只能自己画。
-
-    **哪一行落到哪一列**由 :meth:`ShortcutColumns.cells` 决定：这一行用到的修饰符从字母
-    那一侧往里依次填（见那里的说明）。
-
-    画之前得先给这一块**预留宽度**（见 :meth:`reserve_shortcut_columns`）：快捷键不在条目
-    文字里，Qt 不会替它腾地方，不预留就压在标签上（实测菜单宽 143、列块要画到 x≈100，
-    而「在访达中显示」一直伸到 98；预留之后 218）。
-
-    那一列里还可能有**只画不生效**的提示（见 :meth:`show_key`）：它一样要占位置、一样要
-    参与量列宽，只是不来自 ``QAction``。
+    样式表一挂到 ``QMenu`` 上 Qt 就不再给快捷键算位置，它总是紧跟在文字后面。画之前得先
+    :meth:`reserve_shortcut_columns` 预留宽度，否则列块压在标签上。
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -450,20 +321,12 @@ class ShortcutColumnMenu(QMenu):
     def show_key(self, action: QAction, text: str) -> None:
         """给某一行挂一枚**只画不生效**的键位提示，画在最右那一列（见 :data:`OPEN_KEY_HINT`）。
 
-        **刻意不去 ``setShortcut``**：``QAction`` 是菜单栏与右键菜单共用的，挂在动作上
-        就成了整个窗口的快捷键 —— 而回车网格自己已经处理了（``PhotoGrid.keyPressEvent``），
-        再抢一遍就要和它打架。菜单是**用完即弃**的，提示挂在这一次的那份菜单上，正合适。
-
-        因此那一行**没有** ``QAction`` 快捷键，:func:`prepare` 也就没什么要关的 ——
-        Qt 本来就不会画它（它画的是 ``QAction`` 上的快捷键），两个版本不会重叠。
+        刻意不去 ``setShortcut``：``QAction`` 是共用的，挂上去就成了整个窗口的快捷键。
         """
         self._key_hints[action] = text
 
     def key_cell(self, action: QAction) -> tuple[frozenset[Qt.KeyboardModifier], str] | None:
-        """这一行要画进最右列的内容：修饰符集合 + 键位文字。没有就返回 ``None``。
-
-        带快捷键的按快捷键拆；只挂了一枚提示的没有修饰符，键位就是提示本身。
-        """
+        """这一行要画进最右列的内容：修饰符集合 + 键位文字；没有就返回 ``None``。"""
         hint = self._key_hints.get(action)
         if hint is not None:
             return frozenset(), hint
@@ -479,11 +342,8 @@ class ShortcutColumnMenu(QMenu):
         return any(action.menu() is not None for action in self.actions())
 
     def owns_submenu_arrows(self) -> bool:
-        """子菜单的右箭头是否**由我们画**。
-
-        两个条件缺一不可：有子菜单行（有箭头可画），**而且**这张菜单里最右列确实有东西
-        （字母列存在，箭头才有地方对齐）。只满足前一个就自己画是不行的 —— :func:`apply_style`
-        会在同一个判断上把 Qt 那个关掉，结果箭头谁也不画，整块消失。
+        """子菜单的右箭头是否由本模块自绘：有子菜单行，**而且**最右列确实有东西（箭头才有地方对齐）。
+        只满足前一个就自绘不行：:func:`apply_style` 会在同一判断上把 Qt 那个关掉，结果谁也不画。
         """
         return self.has_submenu_arrows() and bool(self.key_cells())
 
@@ -496,15 +356,9 @@ class ShortcutColumnMenu(QMenu):
             return
         columns = ShortcutColumns.measure_parts(cells, metrics)
         align = int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
-        # 这三样**与哪一行无关**，却原来在循环里一遍遍重算：
-        # ``owns_submenu_arrows()`` 一路走到 ``key_cells()`` 与 ``split_shortcut()``，
-        # 也就是每个 action 都要做一次平台字符串转换（``QKeySequence.toString``）；
-        # ``activeAction()`` 同理，而它一悬停就变。
-        # 一次 ``QPainter`` 覆盖整个菜单，而不是一行一个（每行都要重新问一次设备、
-        # 重新置一次变换）。
-        #
-        # **它因此也是整张菜单唯一的笔**：中途 ``end()`` 掉，后面的行就全成了哑的（见
-        # :meth:`_paint_arrow`），而症状只是「有几行没画」—— 所以收尾只在这一处。
+        # 这三样**与哪一行无关**，却原来在循环里一遍遍重算：``owns_submenu_arrows()`` 会走到
+        # ``split_shortcut()``（每个 action 一次平台字符串转换），``activeAction()`` 一悬停就
+        # 变。一次 ``QPainter`` 覆盖整张菜单，收尾也只在 ``finally`` 这一处（唯一的笔）。
         owns_arrows = self.owns_submenu_arrows()
         active = self.activeAction()
         palette = self.palette()
@@ -537,13 +391,8 @@ class ShortcutColumnMenu(QMenu):
         active: QAction | None,
     ) -> None:
         """子菜单的右箭头画在**字母列**上 —— 原生菜单里它与快捷键的键位是同一列。
-
-        不画在 Qt 那个位置（行右沿内侧约 5 像素）：那在字母列右边，两者看着是两个不相干
-        的东西。QSS 挪不动它（``padding-right`` 从 12 加到 28，实测箭头仍在 x=148~151.5），
-        所以是关掉 Qt 那个（``::right-arrow`` 尺寸给 0 就完全不画）改由我们画。
-
-        ``painter`` / ``palette`` / ``active`` 由 :meth:`paintEvent` 递进来：这个菜单
-        一次绘制只建一个 ``QPainter``、只取一次调色板、只问一次当前项。
+        Qt 那个位置在字母列右边且 QSS 挪不动它，所以关掉 Qt 的改由自绘；``painter`` 等
+        参数由 :meth:`paintEvent` 递进来。
         """
         rect = self.actionGeometry(action)
         key_rect = columns.key_rect(rect.right(), rect.top(), rect.height())
@@ -562,12 +411,8 @@ class ShortcutColumnMenu(QMenu):
             )
         )
         # **这里不许 ``painter.end()``** —— 那支笔是 :meth:`paintEvent` 的，收尾归它的
-        # ``finally``（它建它收）。这里一收，后面所有行就都画不出来了：``QPainter`` 一旦
-        # ``end()``，``setPen`` / ``drawText`` / ``drawPolygon`` 全部静默失效（只在 stderr
-        # 留一句 ``QPainter::setPen: Painter not active``，界面上看不出来）。实测那正是
-        # 「排序 / 缩略图大小 / 移动到相册没有右箭头」的成因：同一张菜单里**第一个**子菜单
-        # 行（分组 / 复制到相册）画得出箭头，它之后的每一行都画不出 —— 连排在它们后面的
-        # 快捷键（⌘R / ⌘⌫ / ⌘I / ⎋）也一起没了。
+        # ``finally``。一收，后面所有行就都画不出来（``setPen`` / ``drawText`` 静默失效），
+        # 症状是第一个子菜单行之后的箭头与快捷键全都不画。
 
     def reserve_shortcut_columns(self) -> None:
         """把菜单撑到「最长标签 + 最右列」那么宽（那一列空着就什么也不做）。"""
@@ -581,13 +426,11 @@ class ShortcutColumnMenu(QMenu):
             for action in self.actions()
             if not action.isSeparator()
         )
-        # 文字左边距恒为 MENU_INSET + MENU_CHECK_GUTTER：有可勾选项时那 19 像素是 Qt
-        # 自己给对勾留的，没有时是样式表补的（见 style_sheet 的 check_gutter）——
-        # **两种情况都得算**，只算一种的话列块会贴着文字（实测空白处菜单只差 2 像素）。
+        # 文字左边距恒为 MENU_INSET + MENU_CHECK_GUTTER：有可勾选项时那 19 像素是 Qt 自己
+        # 给对勾留的，没有时是样式表补的（见 style_sheet 的 check_gutter）—— **两种都得算**。
         left = MENU_INSET + MENU_CHECK_GUTTER
         # 这一段必须是**最小宽度**：标签越长菜单越宽，而列块是钉在右沿上的，宽度不够
-        # 它就会压到标签上（实测空白处菜单自然宽 124，列块左沿 62，而「缩略图大小」
-        # 的文字一直伸到 90 —— 两者几乎同一条 x）。
+        # 它就会压到标签上。
         self.setMinimumWidth(
             int(
                 labels
@@ -603,28 +446,12 @@ class ShortcutColumnMenu(QMenu):
 def popup_menu_style(menu: QMenu) -> str:
     """一个**朴素的下拉菜单**该用的样式表 —— 与搜索框的候选列表是同一种东西。
 
-    与 :func:`style_sheet` 的差别有这么几处，都是「它只有一条两项」换来的：
-
-    - **不预留勾选槽**（``check_gutter=0``）：那一列是给快捷键列与对勾的，
-      菜单里没有可勾选项却留一列，左边就空出 19 点（视觉检查里看着像图标旁边
-      还抵着一段空白）。
-    - **字号与行的内边距取候选列表那一档**：见 :data:`POPUP_FONT_PX` 与
-      :data:`POPUP_LIST_ITEM_PAD`。这是「与搜索框一致」最显眼的两处 —— 字号大一号
-      或行内边距宽一点，用户立刻看出这是另一个软件弹的。
-    - **高亮那一格也带圆角**：与列表的 ``::item:hover`` 同一档
-      （:data:`MENU_HIGHLIGHT_RADIUS`）。
-    - **带边框**：见下面那行注释。
-    - **图标两侧留白一样宽**：见 :data:`POPUP_MENU_ICON_MARGIN` —— 那一处要靠
-      ``QMenu::icon``，**不是** ``QMenu::item`` 的左内边距。
-
-    这几处都是**覆盖**在 :func:`style_sheet` 后面（同优先级、写在后面者胜），
-    与 ``search_field.popup_style`` 给列表补字号是同一个做法。
+    差别都来自「它只有一条两项」：不预留勾选槽、字号与行内边距取候选列表那一档、高亮带圆角、带边框。
     """
     palette = menu.palette()
     text = palette.color(QPalette.ColorRole.WindowText)
-    # 边框与列表那份同一档 —— :func:`style_sheet` 给菜单的**没有边框**（右键菜单
-    # 浮在内容上，不需要），而这一份是「和搜索框那个列表一模一样的浮层」，缺了
-    # 边框，两者在浅色下就差出一条轮廓（视觉检查：白底白底，圆角也因此看不出来）。
+    # 边框与列表那份同一档（:func:`style_sheet` 给菜单的没有边框）：缺了它，两者在浅色下
+    # 就差出一条轮廓（白底白底，圆角也因此看不出来）。
     edge = QColor(text)
     edge.setAlphaF(MENU_SEPARATOR_MIX_LIGHT)
     return (
@@ -637,12 +464,9 @@ def popup_menu_style(menu: QMenu) -> str:
         )
         + f"\nQMenu {{ font-size: {POPUP_FONT_PX}px;"
         f" border: {POPUP_LIST_BORDER}px solid {rgba(edge)}; }}"
-        # 字色**必须自己写**：挂了样式表之后 Qt 不再按调色板给 item 上色，
-        # 实测深色下调色板里明明白白是 ``#ffffff``，画出来却是 ``#000000``
-        # （近黑底上等于看不见）。候选列表那份同样写死了 ``color``，是同一个坑。
-        #
-        # 内边距**左右同档**（就是候选列表那一档）：左内边距只管文字，图标那一侧归
-        # 下面那条 ``::icon`` 规则，见 :data:`POPUP_MENU_ICON_MARGIN`。
+        # 字色**必须自己写**：挂了样式表之后 Qt 不再按调色板给 item 上色（深色下调色板里
+        # 明明是 ``#ffffff``，画出来却是近黑的 ``#000000``），候选列表那份同样写死了 color。
+        # 内边距**左右同档**：左内边距只管文字，图标那一侧归下面的 ``::icon`` 规则。
          + f"\nQMenu::item {{ padding: 3px {POPUP_LIST_ITEM_PAD}px;"
         f" color: {rgba(text)}; border-radius: {MENU_HIGHLIGHT_RADIUS}px; }}"
         + f"\nQMenu::icon {{ margin-left: {POPUP_MENU_ICON_MARGIN}px; }}"
@@ -652,14 +476,7 @@ def popup_menu_style(menu: QMenu) -> str:
 def apply_style(menu: QMenu) -> None:
     """给菜单与它的子菜单上同一份样式表。
 
-    四个颜色都**从菜单自己的调色板读**，不另外传进来：调用方刚把窗口那份统一调色板
-    下发到菜单上（``MainWindow.context_menu_for``），于是这里读到的底色就是「一整块
-    底色」那块，而高亮色是系统给的强调色 —— 也就是说这份样式表用的是系统自己那套配色，
-    深浅色自动跟随（理由见模块文档那一段：样式表里的 ``palette(...)`` 取的是应用调色板，
-    不是这份逐控件下发的）。分隔线的颜色由底色与正文色配出来（见 :func:`separator_color`），
-    高亮之下那一档字色则直接取配对的那个 ``HighlightedText``，因此深浅两套也跟着一起变。
-
-    子菜单那份样式发不发得下去，理由见 :func:`_owned_menus`（不继承、也不是子控件）。
+    四个颜色都从菜单自己的调色板读（调用方刚把统一调色板下发到菜单上），深浅色自动跟随。
     """
     palette = menu.palette()
     background = palette.color(QPalette.ColorRole.Window)
@@ -684,14 +501,9 @@ def apply_style(menu: QMenu) -> None:
 
 
 def prepare(menu: QMenu) -> None:
-    """接管快捷键：关掉 Qt 自己画的那一列，并给我们的列块预留宽度。
+    """接管快捷键：关掉 Qt 自己画的那一列，并给自绘的列块预留宽度。
 
-    两件事都得做，缺一不可：
-
-    * **关掉它自己画的**：不关的话 Qt 会把快捷键紧跟在文字后面再画一遍，和我们那几列
-      重叠。这个标志是**长期生效**的（动作是菜单栏与右键菜单共用的），但只影响弹出菜单
-      的显示 —— 菜单栏那边原生的照旧，``shortcut`` 本身也没动，按键照常触发。
-    * **预留宽度**：快捷键不在条目文字里，Qt 不会替它腾地方，不预留就压在标签上。
+    不关的话 Qt 会把快捷键跟在文字后面再画一遍；不预留宽度就压在标签上。
     """
     for current in _owned_menus(menu):
         for action in current.actions():

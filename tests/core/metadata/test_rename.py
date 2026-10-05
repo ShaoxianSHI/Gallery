@@ -1,14 +1,6 @@
-"""重命名的测试。
+"""重命名的测试：在 ``tmp_path`` 里进行，因为这里的操作真的会改用户的文件名。
 
-全部在 ``tmp_path`` 里进行：这里测的操作**真的会改用户的文件名**，
-所以测试用的每个「照片」都是当场造出来的临时文件，一个字节也不许落到真实相册里。
-
-重点覆盖三类风险：
-
-1. 该拦的必须拦住（非法名字、覆盖已有文件、改扩展名、以点开头）。
-2. 改完必须能改回去（日志里有据可查，撤销真的把名字还回来了）。
-3. 失败也要如实记账，不许悄悄吞掉。
-"""
+**该拦的必须拦住**、**改完必须改得回去**（⌘Z 真的把名字还回来）、**失败也要如实记账**。"""
 
 from __future__ import annotations
 
@@ -45,9 +37,6 @@ def make_album(root: Path, name: str = "2025 苏州") -> FolderRef:
     folder = root / name
     folder.mkdir()
     return FolderRef.from_path(folder)
-
-
-# ---- 校验：不该放行的名字 ---------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -121,9 +110,6 @@ def test_outside_the_library_is_refused(tmp_path: Path) -> None:
         assert "只能重命名库里的东西" in caught.value.message
     finally:
         outside.unlink(missing_ok=True)
-
-
-# ---- 执行 -------------------------------------------------------------------
 
 
 def test_rename_moves_the_file(tmp_path: Path, photo: PhotoRef) -> None:
@@ -206,7 +192,6 @@ def test_rejected_rename_touches_nothing_and_logs_nothing(tmp_path: Path, photo:
     assert photo.path.exists()
 
 
-# ---- 日志与撤销 -------------------------------------------------------------
 # 撤销只有一个入口（metadata.undo 那一摞共用的栈，⌘Z 走它），所以这里也用它。
 
 
@@ -305,9 +290,6 @@ def test_failed_rename_is_not_undoable(tmp_path: Path, photo: PhotoRef) -> None:
     assert undo_last_write(tmp_path) is None
 
 
-# ---- 日志文件本身 -----------------------------------------------------------
-
-
 def test_journal_is_written_as_jsonl_under_the_config_dir(tmp_path: Path, photo: PhotoRef) -> None:
     rename_entry(tmp_path, photo, "海边日落")
 
@@ -349,9 +331,6 @@ def test_rename_still_succeeds_when_the_journal_cannot_be_written(
     assert (tmp_path / "海边日落.jpg").exists()
 
 
-# ---- 门面 -------------------------------------------------------------------
-
-
 def test_library_rename_and_undo(tmp_path: Path, make_photo: Callable[..., Path]) -> None:
     """Library 是界面唯一能碰的入口，顺带确认缩略图缓存跟着搬家。"""
     from gallery.core.library.facade import Library
@@ -364,7 +343,6 @@ def test_library_rename_and_undo(tmp_path: Path, make_photo: Callable[..., Path]
     result = library.rename_entry(entry, "海边日落")
     assert result.renamed is True
     assert library.thumbnails.total_bytes() > 0
-    # 改完还能立刻再取到缩略图（缓存被挪到了新键上，没有重新解码）
     assert library.thumbnail(result.entry).width > 0
 
     undone = library.undo_last_write()

@@ -1,12 +1,7 @@
 """日历在窗口里的整条链：切到日历 → 点一格 → 网格 → 大图 → 一路退回来。
 
-用户点名的三件事都在这里钉住：
-
-- 日历上点**就一张**的那一格 → 大图页，退回来是**日历**（不是「全部照片」）；
-- 点**好几张**的那一格 → 网格里就是那几张，再退一级才回日历；
-- 退回来时**位置不动**（停在哪一周、滚到哪个小时都要还在）。
-
-拍摄时间用假的批量来源（见 ``fake_facet_source``）：测试不依赖本机装了 exiftool。
+用户点名的三件事都在这里钉住：点**就一张**的那一格 → 大图页，退回来是**日历**；点**好几张**
+的那一格 → 网格里就是那几张，再退一级才回日历；退回来时**位置不动**。
 """
 
 from __future__ import annotations
@@ -224,13 +219,9 @@ def test_the_cell_you_come_back_from_becomes_the_anchor(
 ) -> None:
     """点开一格 → 退回来：**那一格成为锚点，而高亮不回来**。
 
-    整条链都走真的：月视图里点下去（鼠标事件）→ 摊成网格 → ``Esc`` 退回来。
     用户点的是**有照片的那一格**时它会摊开，而原先退回来时「点过的那一天」被一起丢掉了，
     于是按 ``W`` 翻到的是与那一格毫无关系的那一周（点空格子不会摊开，所以没暴露这个
-    不对称 —— 那条路上高亮一直替它记着）。
-
-    **锚点挪的是那一天，摆着的那一段不动**：五月那一屏与它的滚动条都还在（理由见
-    ``_back_to_calendar``）。
+    不对称）。**锚点挪的是那一天，摆着的那一段不动**。
     """
     window = calendar_window
     page = window._calendar_page
@@ -270,11 +261,8 @@ def test_entering_a_drill_does_not_repoint_the_calendar_at_those_photos(
 ) -> None:
     """摊开的那一层**不是**「这一层的照片」，拿它分桶等于告诉日历整个库就那几张。
 
-    进网格是「先摆内容再换页」（理由见 ``_enter_calendar_drill``），于是换页那一刻
-    日历还在前面，模型却已经被换成那几张 —— 重排立刻把日历重新分桶，整个换掉。
-    于是其余格子当场空掉：症状是「点开一格再退回来，另外几格变灰了 / 变黑了」，
-    而且要等退回来之后那一遍重扫把整库重新喂进去才恢复（真实库扫得久，于是看着像
-    「切到下一周再切回来就好了」）。**这里不扫完就断言**：坏的时候就是那一刻坏。
+    进网格是「先摆内容再换页」，换页那一刻日历还在前面而模型已经被换成那几张，于是其余
+    格子当场空掉，要等退回来之后那一遍重扫才恢复。**这里不扫完就断言**。
     """
     window = calendar_window
     page = window._calendar_page
@@ -296,14 +284,11 @@ def test_entering_a_drill_does_not_repoint_the_calendar_at_those_photos(
 def test_a_scan_in_flight_does_not_land_on_the_drill_layer(
     qt_app: QApplication, calendar_window: MainWindow
 ) -> None:
-    """扫描在途时点一格，那一遍扫描的结果**不许**把这一层换成整库。
+    """扫描在途时点一格，那一遍扫描的结果**不许**把这一层换成整库（症状是「点开一格，
+    出来一大片」）。
 
-    刚切到日历就点一格时正好会这样：日历那一页摆的还是上一次的桶（照片已经能点），
-    而底下那遍整库平铺还在扫。它一回来，这一格的几张就变成整库照片了 ——
-    症状是「点开一格，出来一大片」。
-
-    这里把「在途」摆出来而不是等它真的在途：测试库太小，扫描一瞬间就完了，
-    等不到那一刻；而要验的正是**迟到的那一批**落地时会怎样。
+    这里把「在途」摆出来而不是等它真的在途：测试库太小扫描一瞬间就完了，等不到那一刻；
+    而要验的正是**迟到的那一批**落地时会怎样。
     """
     from gallery.core.library.scanner import ScanReport
 
@@ -370,10 +355,9 @@ def test_leaving_the_calendar_for_albums_lists_the_albums(
 ) -> None:
     """从日历切到「相册」要看到相册，不是整库平铺。
 
-    日历那一页底下装的是**整库照片**（点开一张要能按行找它，见 ``_enter_calendar``），
-    所以退回「全部照片」可以直接复用那一份 —— 但「相册」这一层是**当前目录**，
-    与那一份根本不是同一层。忘了重列，用户在相册视图里看到的就是整库平铺；
-    开着分组时更离谱：那一份会被重新归拢成组卡片，**一个相册都没有**。
+    日历那一页底下装的是**整库照片**，而「相册」这一层是**当前目录**，与那一份根本不是
+    同一层；忘了重列，用户在相册视图里看到的就是整库平铺，开着分组时更离谱 ——
+    那一份会被重新归拢成组卡片，**一个相册都没有**。
     """
     root = tmp_path / "照片"
     root.mkdir(parents=True, exist_ok=True)
@@ -440,11 +424,10 @@ def test_leaving_the_calendar_for_albums_shows_albums_next_to_the_groups(
 def test_leaving_the_calendar_selects_nothing(
     qt_app: QApplication, calendar_window: MainWindow
 ) -> None:
-    """从日历下钻出来的那一层切到相册，**谁也不该选中**（ADR 0025 决策 6）。
+    """从日历下钻出来的那一层切到相册，**谁也不该选中**。
 
-    日历与日历下钻那一层摆的都不是「当前目录」，所以换浏览方式是一次新的浏览。
-    日历曾经与相册模式共用同一个层标识，于是「还是这一层吗」会误判成立 ——
-    网格上恢复出来的是下钻那一层停着的那一格，而那一张在新的一层里恰好也有。
+    日历与日历下钻那一层摆的都不是「当前目录」，所以换浏览方式是一次新的浏览；共用同一个
+    层标识会让「还是这一层吗」误判成立。
     """
     window = calendar_window
     photos, label = _cell_of(window, 5)  # 五月两张挤在同一个小时 → 摊成一层网格
@@ -471,9 +454,8 @@ def test_a_group_facet_on_does_not_empty_the_calendar(
 ) -> None:
     """开着「按拍摄日期分组」切到日历，日历照样有照片。
 
-    这是真出过的：模型是网格与日历共用的，带着分组时它摆的是一张张**组卡片**，
-    而日历只从模型里挑 ``PhotoRef`` 挑到零张 —— 整层空着，界面上看不出任何原因。
-    分组是网格那一页的事；日历这一页不分组，模型里装整库照片。
+    模型是网格与日历共用的，带着分组时它摆的是一张张**组卡片**，而日历只从模型里挑
+    ``PhotoRef`` —— 挑到零张时整层空着，界面上看不出任何原因。
     """
     root = tmp_path / "照片"
     root.mkdir(parents=True, exist_ok=True)
@@ -554,8 +536,8 @@ def test_a_picked_empty_cell_shows_only_the_selection_tint(
 ) -> None:
     """点中的那一格**只有那层底色**：不再多一个占位圆点。
 
-    圆点那一套是「这一格有张照片、还没读出来」的占位（年 / 月视图里都这么画），而这一格
-    **根本没有照片** —— 点它高亮，用户看见的却是「有一张还没出来」。
+    圆点那一套是「这一格有张照片、还没读出来」的占位，而这一格**根本没有照片** ——
+    点它高亮，用户看见的却是「有一张还没出来」。
     """
     window = calendar_window
     page = window._calendar_page
@@ -590,9 +572,8 @@ def test_the_pictures_survive_a_rescan_of_the_whole_library(
 ) -> None:
     """从一格退回来（那一遍整库要重扫、重喂桶）之后，**已出图的格子仍然是照片**。
 
-    退回来要重扫一遍整库，而扫描的每一步都会把新的一份桶喂给日历。原先每喂一次就把
-    手上那份缩略图**全扔了**，于是这一屏先变成一片占位灰，等重新解码才回来 ——
-    症状是「退回来之后有一格变灰了，切到下一周再切回来就好了」。缩略图是按
+    退回来要重扫一遍整库，而扫描的每一步都会把新的一份桶喂给日历。原先每喂一次就把手上
+    那份缩略图**全扔了**，于是这一屏先变成一片占位灰，等重新解码才回来。缩略图是按
     ``(路径, 档位)`` 记着的，换一遍库并不会让同一张照片变成另一张。
     """
     window = calendar_window
@@ -630,9 +611,9 @@ def test_a_double_click_does_not_bounce_back_out_of_the_drill(
 ) -> None:
     """**双击一格：进去之后不会被立刻弹回来。**
 
-    Qt 判定双击是应用级的事（日历上那一下按下已经算第一下），于是紧接着落到网格页的
-    那一下被判成「网格里的第二下」；而那一格只摊出了几张照片、摆在页面顶上，日历那一格
-    所在的位置在网格页里是**空白** —— 于是「双击空白处退一层」当场把人带回日历。
+    Qt 判定双击是应用级的事（日历上那一下按下已经算第一下），于是紧接着落到网格页的那一下
+    被判成「网格里的第二下」；而日历那一格所在的位置在网格页里是**空白** ——
+    「双击空白处退一层」当场把人带回日历。
     """
     window = calendar_window
     _week_at(qt_app, window, MAY)
@@ -657,9 +638,9 @@ def test_coming_back_from_a_photo_leaves_the_arrows_working(
 ) -> None:
     """周视图里点进一张照片再退出来，**← / → 要还能翻周**。
 
-    焦点必须点名交给周视图：退回来时 Qt 把焦点顺焦点链交给页面上第一个能接焦点的控件 ——
-    那一页里那是那个 ``QScrollArea``，它把 ← / → 当成滚动时间轴吃掉，于是日历的
-    「上一周 / 下一周」按多少次都没反应。月视图里落到的恰好是视图自己，所以只有周视图犯病。
+    焦点必须点名交给周视图：退回来时 Qt 把焦点交给页面上第一个能接焦点的控件 —— 那一页
+    里那是那个 ``QScrollArea``，它把 ← / → 当成滚动时间轴吃掉。月视图里落到的恰好是视图
+    自己，所以只有周视图犯病。
     """
     window = calendar_window
     page = window._calendar_page
@@ -705,9 +686,9 @@ def test_clicking_around_the_week_view_never_steals_the_arrows(
 ) -> None:
     """**在周视图里点任何地方都不能把键盘抢走** —— 点格子、点表头、点那条竖滚动条。
 
-    Qt 在鼠标按下时把焦点给「按到的那一层里第一个 focusPolicy != NoFocus 的控件」，
-    而 ``QScrollArea`` 与 ``QScrollBar`` 默认都是 StrongFocus：焦点一落上去，← / → 变成
-    滚动时间轴，日历的「上一周 / 下一周」按多少次都没反应（点一下滚动条就中招）。
+    Qt 在鼠标按下时把焦点给「按到的那一层里第一个 focusPolicy != NoFocus 的控件」，而
+    ``QScrollArea`` 与 ``QScrollBar`` 默认都是 StrongFocus：焦点一落上去 ← / → 就变成滚动
+    时间轴，日历的「上一周 / 下一周」按多少次都没反应。
     """
     window = calendar_window
     page = window._calendar_page
@@ -781,15 +762,11 @@ def test_the_level_survives_a_reopen(
     reopened = MainWindow(session_base=session_base, initial_library=root)
     try:
         assert wait_until(qt_app, lambda: window_is_idle(reopened))
-        # 日历停在哪一层是**库级**偏好（ADR 0038 决策 4）：它写在库里，
-        # 于是换个库打开时各自回到自己那一层。
+        # 日历停在哪一层是**库级**偏好（ADR 0038 决策 4）：换个库打开时各自回到自己那一层。
         assert load_config(root).ui.resolved_calendar_level() == "week"
         assert reopened._calendar_page.level() == "week"
     finally:
         reopened.close()
-
-
-# ---- 检索与日历的来回（ADR 0026 决策 1）---------------------------------------
 
 
 def _settle_everything(qt_app: QApplication, window: MainWindow) -> None:
@@ -803,7 +780,7 @@ def test_a_search_from_the_calendar_shows_its_results_on_the_grid(
     """检索结果横跨整库，所以它**只在网格页上摆**，日历那一页不参与。
 
     钉住这一半才钉得住另一半：撤掉条件之后回到日历，靠的是「条件没了」，
-    不是「从日历进来的就回去」—— 后者会把 ``Y`` / ``M`` / ``W`` 也一起带走。
+    不是「从日历进来的就回去」。
     """
     window = calendar_window
     window._on_search_submitted("三月")
@@ -817,8 +794,8 @@ def test_clearing_a_search_comes_back_to_the_calendar(
 ) -> None:
     """撤光条件：回日历，**停在原来那一段**。
 
-    撤掉的是那一条条件，不是用户停在哪一周 —— 而浏览方式本来就是日历，
-    屏幕上却摆着「全部照片」：菜单里那个勾与眼前那一页说的不是同一件事。
+    撤掉的是那一条条件，不是用户停在哪一周 —— 而浏览方式本来就是日历，屏幕上却摆着
+    「全部照片」：菜单里那个勾与眼前那一页说的不是同一件事。
     """
     window = calendar_window
     page = window._calendar_page
@@ -848,10 +825,8 @@ def test_clearing_a_search_comes_back_to_the_calendar(
 def test_the_last_condition_is_also_removed_with_escape(
     qt_app: QApplication, calendar_window: MainWindow
 ) -> None:
-    """``Esc`` 撤掉最后一条条件是同一件事 —— 也要回日历。
-
-    ``Esc`` 是「上一层」，而条件比任何一层都深（ADR 0026 决策 9）：撤光之后就退到底了，
-    底下那一层就是日历。
+    """``Esc`` 撤掉最后一条条件是同一件事 —— 也要回日历：条件比任何一层都深，
+    撤光之后就退到底了，底下那一层就是日历（ADR 0026 决策 9）。
     """
     window = calendar_window
     page = window._calendar_page
@@ -897,9 +872,8 @@ def test_a_search_from_a_calendar_cell_forgets_that_cell(
 ) -> None:
     """在日历摊开的那一格上检索：那一格**不再是**「上一层」。
 
-    网格页上摆的是横跨整库的结果，不是那一格的几张 —— 留着那份记账，条件撤光之后
-    按 ``Esc`` 会退到那一格去，而屏幕上压根没有那一格（白扫一遍整库，还把用户送到
-    一个他这一趟没去过的层）。
+    网格页上摆的是横跨整库的结果；留着那份记账，条件撤光之后按 ``Esc`` 会退到一个他
+    这一趟没去过的层。
     """
     window = calendar_window
     page = window._calendar_page

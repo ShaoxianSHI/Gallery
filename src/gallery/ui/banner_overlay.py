@@ -1,30 +1,7 @@
 """覆盖在内容上的那一条横幅。
 
-**它不在任何布局里。** 横幅原先是网格页竖排布局里的一个 ``addWidget``，于是每一条消息
-都会把网格**整体往下挤一段**：照片区忽然矮一截，网格重排、滚动位置跟着动 —— 而用户
-正要看的正是刚被挤走的那一屏。这里改成把它挂在窗口上（与 ``TitleBar``、
-``SearchField`` 同一手法），尺寸与位置自己算：出现与消失都不动底下任何一样东西
-（ADR 0029 决策 1）。
-
-它浮在**内容区的顶边、正好是面包屑那一行**，配色是原来那一对橙色。覆盖在导航信息上
-而不是压在最后一排缩略图上：面包屑过几秒就重新露出来，而用户正在挑的永远是下面那几行
-照片。
-
-**横向居中的基准是整个窗口，不是照片区**（用户反馈：大图页上元数据面板摆着时，横幅
-跑到了照片那一半的正中间，看着像只对照片说话）。面板那一块交给 ``avoid`` 让开 ——
-**位置照旧居中，只是宽度不压到它**，于是「窗口居中」与「不盖住面板」两件仍然都成立。
-
-**它同时出现在网格页与大图页**，因为它挂在窗口上而不是某一页里：用户正在看大图时
-做的任何一件事（⌘Z 撤销、⌘C 拷贝、⌘⌫ 移走这一张）说的那句话就在**照片上面**，
-不必退回网格才看得见（ADR 0029 决策 2）。
-
-**说过就走。** 一句「已重命名为…」过了几秒还压在照片中间是碍事的，而它说完之后确实
-没有新内容 —— 需要用户动手处理的那几句（出错、这一层是空的）由调用方点名要留着，
-默认判据与时长都写在 :data:`AUTO_HIDE_SECONDS` 上（ADR 0029 决策 3）。
-
-摆位与高度是三段纯算术（:func:`banner_width` / :func:`banner_rect` /
-:func:`text_height`），因此不必造一个真窗口就能测 —— 与 ``title_bar.editor_rect``
-同一做法。
+**它不在任何布局里** —— 挤进布局的话消息会把网格整体往下推一段（ADR 0029 决策 1）；横向居中于
+整个窗口，元数据面板那一块由 ``avoid`` 让开。摆位与高度是纯算术，不必造窗口就能测。
 """
 
 from __future__ import annotations
@@ -36,30 +13,20 @@ from PySide6.QtWidgets import QLabel, QSizePolicy, QWidget
 from gallery.ui import theme
 from gallery.ui.theme import rgba
 
-#: 「说过就走」的那些话停留多久（秒）。
-#:
-#: 四秒够读完一句「已把 3 项移到废纸篓。⌘Z 可以撤销。」，又不至于让它一直压在照片上。
-#: **要长于 :data:`gallery.ui.main_window.BANNER_STICKY_SECONDS`**：那句话刚上屏的
-#: 两秒里后台消息还在让位，之后到收起来之间还留着几秒，够用户扫一眼。
+#: 「说过就走」的那些话停留多久（秒）。四秒够读完一句「已把 3 项移到废纸篓。⌘Z 可以
+#: 撤销。」，又不至于一直压在照片上；**要长于 ``main_window.BANNER_STICKY_SECONDS``**。
 AUTO_HIDE_SECONDS = 4.0
 
-#: 离左右、离顶边各留多少（点）。
-#:
-#: **横向离窗口边远一点**：窄横幅孤零零地贴着一侧像没摆完，居中才像是刻意摆的。
-#: **纵向离内容区顶边 :data:`MARGIN_TOP` 点** —— 与网格页那一行的上边距一样，于是它
-#: 正好压在面包屑那一行上（ADR 0029 决策 1）。顶边这一带本来就是导航信息，横幅盖住
-#: 几秒、又自己收走，比压住照片下缘更好认（那一带永远是最后一行缩略图）。
+#: 离左右、离顶边各留多少（点）。**横向离窗口边远一点**（贴着一侧像没摆完）；
+#: **纵向离内容区顶边 :data:`MARGIN_TOP` 点**，于是它正好压在面包屑那一行上（ADR 0029）。
 MARGIN_SIDE = 28
 MARGIN_TOP = 10
 
 #: 横向最宽多少点。再宽就成了段落，两行以内的提示用不着横穿整个窗口。
 MAX_WIDTH = 560
 
-#: 让开 ``avoid``（大图页上的元数据面板）时，最窄还能有多宽（点）。
-#:
-#: **太窄的那一条已经不像提示了**：两三字一行、连着五六行，像一根竖着的条，比它短暂
-#: 压住面板左边缘更难认。到这条线以下就不再让开 —— 面板摆着时窗口本来就不宽，那种
-#: 情况下宁可短暂压住它左边缘几秒。
+#: 让开 ``avoid``（大图页上的元数据面板）时，最窄还能有多宽（点）。**太窄就不像提示了**
+#: （两三字一行、连着五六行），到这条线以下就不再让开。
 MIN_AVOID_WIDTH = 240
 
 #: 框内留白与边框宽（点）。**样式表与 :func:`text_height` 共用这几个数**：高度是按它们
@@ -68,8 +35,7 @@ PADDING_X = 12
 PADDING_Y = 8
 BORDER = 1
 
-#: 横幅那两个橙色的分量（RGB）。**就是原来那一对** —— 用户每天看惯了它，换成别的颜色
-#: 是把一件已经用过很久的东西改成另一件。
+#: 横幅那两个橙色的分量（RGB）。**就是原来那一对** —— 用户每天看惯了它。
 FILL_RGB = (255, 176, 32)
 #: 底色留 16% 不透明：它盖在照片与缩略图上，压得太实就等于把那一块内容藏起来了。
 FILL_ALPHA = 0.16
@@ -80,13 +46,10 @@ EDGE_ALPHA = 0.45
 def banner_width(area: QRect, *, avoid: QRect | None = None) -> int:
     """横幅在 ``area`` 里能有多宽。
 
-    窗口窄到一行都放不下时就让文字换行，也不越出 ``area`` —— 最小窗口宽度是 720
-    （见 ``MainWindow.setMinimumSize``），正常情况下 :data:`MAX_WIDTH` 那一档总是赢。
-
-    ``avoid`` 是**要避开的那一块**（大图页上的元数据面板），与 ``area`` 同一套坐标：
-    横幅是**按 ``area`` 居中**的，于是只要它横着会压到那一块，就把宽度收窄到「居中之后
-    右边缘正好停在它左边」，**位置一分都不动**。收窄到 :data:`MIN_AVOID_WIDTH` 以下
-    就不再让了 —— 那时它已经不是一条横幅了。
+    窗口窄到一行都放不下时就让文字换行，也不越出 ``area``。``avoid`` 是**要避开的那一块**
+    （大图页上的元数据面板），与 ``area`` 同一套坐标：横幅按 ``area`` 居中，只要会压到那一块
+    就把宽度收窄到「居中之后右边缘正好停在它左边」，**位置一分都不动**；收窄到
+    :data:`MIN_AVOID_WIDTH` 以下就不再让了。
     """
     room = area.width() - 2 * MARGIN_SIDE
     if avoid is not None and area.intersects(avoid):
@@ -100,12 +63,9 @@ def banner_width(area: QRect, *, avoid: QRect | None = None) -> int:
 def text_height(text: str, width: int, metrics: QFontMetrics) -> int:
     """这句话在 ``width`` 那么宽里摆开要占多高（含边框与内边距）。
 
-    用 :class:`QFontMetrics` 量而不是 ``QLabel.heightForWidth``：后者量的是 Qt 自己那份
-    尺寸策略算出来的东西，而这里的位置与大小全是自己给的（样式表里的留白也不在它的
-    计算里）。空话至少占一行高 —— 否则 ``show_message("")`` 会画出一个两像素的条。
-
-    那个矩形的高度是 0：**只约束宽度**（实测 0 / 1 / 100 / 10000 给的是同一个高度），
-    换行要几行就量几行。
+    用 :class:`QFontMetrics` 量而不是 ``QLabel.heightForWidth``（后者量的是 Qt 自己那份尺寸
+    策略算出来的东西）。空话至少占一行高 —— 否则 ``show_message("")`` 会画出一个两像素的条；
+    传给 ``boundingRect`` 的矩形高度是 0：**只约束宽度**，换行要几行就量几行。
     """
     inner = max(width - 2 * (PADDING_X + BORDER), 1)
     bounds = metrics.boundingRect(QRect(0, 0, inner, 0), int(Qt.TextFlag.TextWordWrap), text)
@@ -115,13 +75,9 @@ def text_height(text: str, width: int, metrics: QFontMetrics) -> int:
 def banner_rect(area: QRect, size: QSize, *, avoid: QRect | None = None) -> QRect:
     """把 ``size`` 那么大的一横幅摆在 ``area`` 的哪儿：**水平居中，浮在顶边下方**。
 
-    顶边而不是底边：上面那一行是面包屑与窗口标题所在地盘，横幅盖住的是**导航信息**，
-    几秒之后自己会让开；而底边那一带永远是最后一行缩略图，压上去的是用户正在挑的照片
-    （ADR 0029 决策 1）。
-
-    **居中的基准是 ``area`` 自己**，``avoid`` 只参与算宽度（见 :func:`banner_width`）：
-    「整条横着居中」与「不压住面板」两件都要，就不能把 ``area`` 本身缩掉 —— 那样中心点
-    会跟着跑偏，横幅就跑到照片那一半的正中间去了。
+    顶边那一行是面包屑与窗口标题所在地盘，横幅盖住的是**导航信息**，几秒之后自己会让开；
+    底边那一带永远是最后一行缩略图（ADR 0029 决策 1）。**居中的基准是 ``area`` 自己**，
+    ``avoid`` 只参与算宽度：把 ``area`` 缩掉的话中心点会跟着跑偏。
     """
     width = min(size.width(), banner_width(area, avoid=avoid))
     height = max(size.height(), 1)
@@ -137,21 +93,18 @@ class BannerOverlay(QLabel):
         super().__init__(parent)
         self.setObjectName("banner")
         self.setWordWrap(True)
-        # **文字居中**：横幅的宽度是「装得下就多宽」，不是固定的，于是左对齐的话那句话
-        # 总是偏在一边，一条窄横幅看上去像没摆正（横向、纵向都居中）。
+        # **文字居中**：横幅的宽度是「装得下就多宽」，左对齐的话那句话总是偏在一边。
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # 几何完全由外面给（``setGeometry``），别让某个布局顺手改它。
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        # 纯提示，不该吃掉底下那一片的点击与拖动：横幅正压在网格上，
-        # 挡住的话点它就变成了点空处（取消选中）。
+        # 纯提示，不该吃掉底下那一片的点击与拖动（它正压在网格上，挡住就变成点空处）。
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self._area = QRect()
         self._avoid: QRect | None = None
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self.hide)
-        # 底色与边框是写死的那一对橙色，只有字色跟着主题走（浅色下深字、深色下浅字），
-        # 所以换过外观之后要重下这一份 —— 与 ``TitleBar`` 同一个做法。
+        # 底色与边框是写死的那一对橙色，只有字色跟着主题走，所以换过外观之后要重下一份。
         self._watcher = theme.ensure_installed()
         self._watcher.changed.connect(self._apply_theme)
         self._apply_theme()
@@ -162,8 +115,7 @@ class BannerOverlay(QLabel):
     def show_message(self, text: str, *, auto_hide_seconds: float | None = None) -> None:
         """显示 ``text``；``auto_hide_seconds`` 给一个数就那么多秒之后自己收起来。
 
-        收起来的方式是 ``hide`` 而不是淡出：Qt 的淡出要自己驱动一个动画，而这一条
-        出现的时机（后台进度刚报上来）常常紧跟着另一条，淡到一半被换掉只会更乱。
+        收起来的方式是 ``hide`` 而不是淡出：淡到一半被另一条换掉只会更乱。
         """
         self.setText(text)
         self._place()
@@ -181,10 +133,8 @@ class BannerOverlay(QLabel):
     def reposition(self, area: QRect, avoid: QRect | None = None) -> None:
         """把它摆在 ``area`` 里（窗口改了大小、换了页面之后由外面叫）。
 
-        ``avoid`` 是**要避开的那一块**（元数据面板）：居中照旧按 ``area`` 算，只是不
-        让它压到那一块上（见 :func:`banner_width`）。
-
-        收着的时候只记下这一片，显示中才真的重摆 —— 与 ``TitleBar`` 同一取舍。
+        ``avoid`` 是要避开的那一块（元数据面板）：居中照旧按 ``area`` 算，只是不让它压到那一
+        块上。收着的时候只记下这一片，显示中才真的重摆。
         """
         self._area = QRect(area)
         self._avoid = QRect(avoid) if avoid is not None else None
@@ -193,10 +143,7 @@ class BannerOverlay(QLabel):
 
     @property
     def auto_hide_pending(self) -> bool:
-        """显示中的这一条是不是**说完了自己会收起来**。
-
-        给调用方与测试一个不碰私有成员的问法：「这句话会一直挂着吗」。
-        """
+        """显示中的这一条是不是**说完了自己会收起来**（给调用方与测试一个不碰私有成员的问法）。"""
         return self._timer.isActive()
 
     # ---- 内部 --------------------------------------------------------------
@@ -204,9 +151,8 @@ class BannerOverlay(QLabel):
     def _target_area(self) -> QRect:
         """摆在哪儿：**外面给的那一片**，还没给过就用父控件自己那块。
 
-        还没给过的那一瞬是有的：窗口刚建好、还没 ``show()`` 时进来的第一条进度。
-        那时 ``MainWindow`` 的中央控件几何也还没定，回退到父控件至少不会摆成一个
-        一像素宽的条（下一轮 ``resizeEvent`` / ``showEvent`` 就会把它摆正）。
+        窗口刚建好、还没 ``show()`` 时进来的第一条进度就会撞上这一瞬：那时中央控件的几何还
+        没定，回退到父控件至少不会摆成一个一像素宽的条。
         """
         if not self._area.isEmpty():
             return QRect(self._area)
@@ -222,11 +168,8 @@ class BannerOverlay(QLabel):
     def _apply_theme(self) -> None:
         """样式表就是**原来那一份**：浅橙的底 + 深一点的橙边，16% / 45% 两档不透明。
 
-        底色压得淡是有意的 —— 它盖在照片与缩略图上，压实了就等于把那一块内容藏起来；
-        边框那一档实一些，好让「横幅有这么一块边界」看得出来。
-
-        只有**字色**跟着主题走（原先写的 ``palette(text)`` 在 Qt 样式表里并不成立，
-        实际走的是控件默认色，也就是正文色那一份）。
+        底色压得淡是有意的 —— 它盖在照片与缩略图上，压实了就等于把那一块内容藏起来。只有
+        **字色**跟着主题走（样式表里的 ``palette(text)`` 并不成立，实际走的是控件默认色）。
         """
         fill = QColor(*FILL_RGB)
         fill.setAlphaF(FILL_ALPHA)
@@ -245,9 +188,8 @@ class BannerOverlay(QLabel):
     def hideEvent(self, event: QHideEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         """被收掉就不再等自己 —— 换一条消息进来、或外部直接 ``hide()`` 都是这条路。
 
-        定时器归在这里管而不是只在 ``show_message`` 里管，是因为**收掉横幅的地方不止
-        那里**：进度收尾、换层、换库都是直接 ``hide()`` 的（见 ``MainWindow``），
-        只在显示时重置的话，先前的那个定时器会在新内容上原样再收一次。
+        定时器归在这里管而不是只在 ``show_message`` 里管：收掉横幅的地方不止那里（进度收尾、
+        换层、换库都是直接 ``hide()``），只在显示时重置的话先前的定时器会再收一次新内容。
         """
         super().hideEvent(event)
         self._timer.stop()

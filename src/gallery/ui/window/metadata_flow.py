@@ -1,20 +1,10 @@
 """右侧那块元数据面板：显示当前这张照片的什么，以及地点是怎么得出的。
 
-⌘I 展开 / 收起，面板照着**当前这一张**显示 EXIF（读一次约 50ms，命中缓存直接显示，
-没命中就说「正在读取」—— **绝不把上一张的元数据留在屏幕上**，那是错的照片的数据）。
+⌘I 展开 / 收起，面板照着**当前这一张**显示 EXIF（读一次约 50ms，命中缓存直接显示，没命中
+就说「正在读取」—— **绝不把上一张的元数据留在屏幕上**，那是错的照片的数据）。
 
-这一段里最值得说明的是**地点**：它不是读文件读出来的，是按坐标反查出来的，
-而且必须与分组显示的地点是同一个说法（ADR 0010，所以两处共用
-``places.place_label``）。查法是「**先读索引，索引里没有才现场反查**」——
-打开库时那一遍已经把结论存进索引了（见 :mod:`gallery.ui.window.library_flow`），
-于是绝大多数照片是一次同步的读缓存就显示到位，不必起后台任务。
-
-「编辑元数据」那个按钮只发信号（面板不碰文件，红线 1）；写盘一律走
-:mod:`gallery.ui.write_ops`。
-
-模块末尾那个 :func:`_place_text` 与 :data:`PLACE_DISTANCE_NOTICE_KM` 是**纯函数**：
-把索引里那一行摊成面板上的一句话，顺带在偏得远时补一句距离（标签本身已经写了「（推断）」，
-只有偏得远才补 —— 那是在提醒「这只是最近的城市」，不是在报误差）。
+**地点**是按坐标反查出来的，必须与分组显示的地点同一个说法（ADR 0010），查法是「先读索引，
+索引里没有才现场反查」。「编辑元数据」那个按钮只发信号（面板不碰文件，红线 1）。
 """
 
 from __future__ import annotations
@@ -32,8 +22,7 @@ from gallery.ui.tasks import TaskContext
 
 #: 离最近的城市超过这么多公里，就在地点后面补一句距离。
 #:
-#: 标签本身已经写了「（推断）」，内容里不再重复；只有偏得远时才补 —— 那是在提醒
-#: 「这只是最近的城市」，不是在报误差。
+#: 标签本身已经写了「（推断）」；偏得远时才补 —— 那是在提醒「这只是最近的城市」，不是在报误差。
 PLACE_DISTANCE_NOTICE_KM = 50.0
 
 
@@ -61,7 +50,6 @@ class MetadataFlowMixin:
         self._metadata_visible = visible
         self._panel.setVisible(visible)
         self._save_ui_state()
-        # 面板一收一放，横幅要避开的那一块就变了，宽度跟着重摆（居中的仍是整个窗口）。
         self._layout_banner()
         if visible:
             self._load_metadata()
@@ -71,8 +59,8 @@ class MetadataFlowMixin:
     def _update_metadata_editable(self) -> None:
         """面板上「编辑位置」那一处此刻摆什么。
 
-        **能改就摆按钮，不能改就把那句话摆在那里**（ADR 0014 决策 4）：一个点下去只会
-        报错的按钮，比没有更糟；而只字不提的话，用户会以为 Gallery 压根不管这件事。
+        **能改就摆按钮，不能改就把那句话摆在那里**（ADR 0014 决策 4）：一个点下去只会报错的
+        按钮比没有更糟，而只字不提又会让用户以为 Gallery 压根不管这件事。
         """
         library = self._library
         if library is not None and library.can_write_metadata():
@@ -94,9 +82,8 @@ class MetadataFlowMixin:
     def _load_metadata(self) -> None:
         """读当前这张照片的元数据；面板没展开就什么都不做。
 
-        命中缓存就同步显示（真正的「直接显示」）；没命中就老实说「正在读取」，
-        **不要把上一张的元数据留在屏幕上** —— 那是错的照片的元数据，用户会当成
-        当前这张的信息看，比多等 50ms 糟糕得多。
+        命中缓存就同步显示；没命中就老实说「正在读取」，**不要把上一张的元数据留在屏幕上**
+        —— 用户会把错的照片的数据当成当前这张的信息看。
         """
         self._cancel_metadata_job()
         if not self._panel.isVisible():
@@ -111,11 +98,10 @@ class MetadataFlowMixin:
         if cached is not None:
             self._panel.set_report(cached)
             self._prefetch_metadata(row)
-            # 缓存里的报告可能还没推断过地点（预读只读元数据）：命中缓存不等于
-            # 「地点已经查过」，漏了这一步，带坐标的照片会永远不显示地点。
+            # 缓存里的报告可能还没推断过地点（预读只读元数据）：漏了这一步，
+            # 带坐标的照片永远不显示地点。
             self._maybe_lookup_place(ref, cached, generation, announce=False)
             return
-        # 未命中：先说在读，不要让上一张的元数据冒充当前这张。
         self._panel.show_loading(ref.name)
 
         def work(context: TaskContext) -> object:
@@ -156,15 +142,12 @@ class MetadataFlowMixin:
     ) -> None:
         """按坐标给出地点：**先读索引**，索引里没有才现场反查一次。
 
-        打开库时那一遍已经把结论存进索引了（ADR 0010），所以绝大多数照片在这里是
-        一次同步的读缓存就显示到位，不必起后台任务。
-        现场反查只兜两种情况：打开时那一遍还没轮到它，或者后来才加进库的照片。
-        那条路走 ``Library.resolve_photo_place``：用面板手里已经读到的坐标去查，
-        **查完并回索引** —— 面板临时算出来的东西不会只留在内存里。
+        打开库时那一遍已经把结论存进索引了（ADR 0010），所以绝大多数照片在这里是一次同步
+        读缓存就显示到位。现场反查只兜两种情况：打开时那一遍还没轮到它，或者后来才加进库的
+        照片；那条路走 ``Library.resolve_photo_place``，**查完并回索引**。
 
-        ``announce`` 为真时才在面板上显示中间状态（「正在查询…」「正在加载城市库…」）。
-        预读与缓存命中都传 ``False``：那时候面板上显示的是当前这张照片，
-        拿别的照片的中间状态去替换它，用户只会看到内容闪一下。
+        ``announce`` 为真时才显示中间状态。预读与缓存命中都传 ``False``：那时面板上显示的
+        是当前这张照片，拿别的照片的中间状态去替换它，用户只会看到内容闪一下。
         """
         if report.latitude is None or report.longitude is None:
             return
@@ -177,7 +160,6 @@ class MetadataFlowMixin:
         library = self._library
         if library is None:
             return
-        # 索引里已经有结论就直接显示：这是绝大多数照片走的那条路。
         stored = library.cached_facets([ref]).get(ref.path)
         if stored is not None and stored.place_checked:
             self._show_place(ref, report, generation, _place_text(stored))
@@ -196,8 +178,7 @@ class MetadataFlowMixin:
                 status=lambda text: context.progress(text),
             )
 
-        # 不取消进行中的地点查询：它只往索引里写，切走了也仍然有用，
-        # 切回来时反而能一次显示到位。
+        # 不取消进行中的地点查询：它只往索引里写，切走了也仍然有用，切回来反而能一次显示到位。
         self._runner.submit(
             work,
             on_progress=partial(self._on_place_progress, ref, report, generation),

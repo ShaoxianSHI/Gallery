@@ -1,15 +1,8 @@
 """应用级会话状态：最近打开的库、窗口几何。
 
-它**不是数据**。会话文件损坏、字段缺失、路径已不存在，都静默回退到默认值 ——
-绝不能让「记不住上次开了哪个文件夹」变成打不开软件。
-
-**这里只剩应用级的那两样**（ADR 0038 决策 4）。判据是「打开软件时还不知道要开哪个库」：
-库级的界面偏好（浏览方式、排序、日历停在哪一层、缩略图档位……）已经搬进那个库的
-``config.toml`` 的 ``[ui]`` 表，因为它们换库就该重来，而最近打开列表与窗口大小不该。
-
-真正的用户数据只有两样：照片本身，和库里的 ``config.toml``。
-所以这里也不用 ``QSettings``（plist 不透明、没法在测试里构造），而是一个显式 JSON 文件，
-路径可以注入，测试直接传 ``tmp_path``。
+它**不是数据**：会话文件损坏、字段缺失、路径已不存在，都静默回退到默认值 —— 绝不能让
+「记不住上次开了哪个文件夹」变成打不开软件。这里只剩应用级的那两样（ADR 0038 决策 4），
+判据是「打开软件时还不知道要开哪个库」；库级偏好在库的 ``config.toml`` 的 ``[ui]`` 表里。
 """
 
 from __future__ import annotations
@@ -27,13 +20,11 @@ from gallery.core.library.config import LibraryUIState
 MAX_RECENT_ROOTS: Final = 8
 
 #: 会话文件格式版本。**读的时候要认它**，不然将来结构一变，一份 v1 的老文件会被
-#: 当成 v2 解析出一个半懂不懂的状态 —— 那正是这个字段当初写下来要防的事。
+#: 当成 v2 解析出一个半懂不懂的状态。
 SESSION_VERSION: Final = 1
 
-#: 这几个键在旧版会话文件里是应用级的，ADR 0038 把它们搬进了库的 ``config.toml``。
-#:
-#: **只给一次性迁移读**（:func:`legacy_ui_state`）。它们不再被写出去，也不再被读成
-#: 状态 —— 留着这个名单是为了「从老版本升级上来的用户，排序偏好不会被静默重置」。
+#: 旧版会话文件里那几个应用级 UI 键，ADR 0038 把它们搬进了库的 ``config.toml``。
+#: **只给一次性迁移读**（:func:`legacy_ui_state`），不再写出也不再读成状态。
 LEGACY_UI_KEYS: Final = (
     "browse_mode",
     "metadata_visible",
@@ -58,11 +49,10 @@ class WindowGeometry:
 
 @dataclass(frozen=True, slots=True)
 class SessionState:
-    """跨启动保留的**应用级**界面状态。
+    """跨启动保留的**应用级**界面状态：最近打开过哪些库、窗口在哪儿。
 
-    **刻意只有两项**：最近打开过哪些库、窗口在哪儿。两者都问的是「这个应用」
-    而不是「这个库」—— 打开软件时还不知道要开哪个库，所以它们进不了任何一份
-    ``config.toml``。库级的偏好见 :class:`~gallery.core.library.config.LibraryUIState`。
+    两者问的都是「这个应用」而不是「这个库」，所以进不了任何一份 ``config.toml``；
+    库级偏好见 :class:`~gallery.core.library.config.LibraryUIState`。
     """
 
     recent_roots: tuple[Path, ...] = ()
@@ -109,15 +99,9 @@ def save_session(state: SessionState, *, base: Path | None = None) -> None:
 def legacy_ui_state(*, base: Path | None = None) -> LibraryUIState | None:
     """旧版会话文件里的**库级**界面偏好，供一次性迁移用（ADR 0038 决策 4）。
 
-    读它是为了让「从老版本升级上来的用户，排序偏好不会被静默重置」—— 代价只是
-    多写一次 ``config.toml``。没有可迁的场合一律返回 ``None``：
-
-    - 读不出文件 / 结构不对 / 版本不认（与 :func:`load_session` 同一套判据）；
-    - 文件里根本没有这几个键（新版本写的）；
-    - 有键但一个都认不得（全是手改坏的）—— 与其迁一堆默认值过去，
-      不如让界面按自己的默认来。
-
-    :returns: 可以迁的偏好；没有可迁的返回 ``None``。
+    读它是为了让「从老版本升级上来的用户，排序偏好不会被静默重置」，代价只是多写一次
+    ``config.toml``。读不出文件 / 结构不对 / 版本不认 / 没有这几个键 / 一个都认不得，
+    一律返回 ``None``（与 :func:`load_session` 同一套判据）。
     """
     data = _read_state(base=base)
     if data is None:
@@ -129,9 +113,8 @@ def legacy_ui_state(*, base: Path | None = None) -> LibraryUIState | None:
 def _read_state(*, base: Path | None) -> dict[str, object] | None:
     """把会话文件读成一张映射；读不出来或结构不对时是 ``None``。
 
-    版本号**必须认**（:data:`SESSION_VERSION`）：那个键过去只写不读，于是
-    「用于迁移或丢弃」那句话是空的 —— 一份结构不同的老文件会被照新结构解析出一个
-    半懂不懂的状态。不认识的一律当作「读不出来」。
+    版本号**必须认**（:data:`SESSION_VERSION`）：那个键过去只写不读，于是一份结构不同的
+    老文件会被照新结构解析出一个半懂不懂的状态。不认识的一律当作「读不出来」。
     """
     raw = read_text_or_none(paths.app_state_file(base=base))
     if raw is None:

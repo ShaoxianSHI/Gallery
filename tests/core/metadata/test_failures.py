@@ -1,9 +1,6 @@
-"""``gallery.core.metadata.failures`` 的测试：**一份失败记录、一套错误说法**。
+"""``gallery.core.metadata.failures``：**一份失败记录、一套错误说法**。
 
-这个模块存在的全部理由，是「同一件事以前有五处各写一份」。所以它的测试也不测功能，
-测的是**统一这件事本身**：三种失败记录必须真的长得一样（否则界面又要分形状），
-几种系统错误必须真的只有一种说法（否则用户会看到同一个错误两种措辞）。
-"""
+它存在的理由就是「同一件事以前五处各写一份」，所以这里测的是**统一本身**。"""
 
 from __future__ import annotations
 
@@ -24,12 +21,8 @@ from gallery.core.metadata.trash import Failure as TrashFailure
 
 
 def test_there_is_exactly_one_failure_type() -> None:
-    """**三个模块报回来的必须是同一个类** —— 不是「形状相同」，是同一个对象。
-
-    界面 ``_first_reason`` 只认一种形状，而那三份里 ``trash`` 的只有 ``name``、
-    ``transfer`` 的多一个 ``source``、``paste`` 的两个都没有。同名同义而形状不同，
-    是最坏的一种重复：类型注解能骗过检查器，用起来才发现少一个字段。
-    """
+    """**三个模块报回来的必须是同一个类**，不是「形状相同」：否则界面要按形状分开认，
+    而类型注解能骗过检查器，用起来才发现少一个字段。"""
     assert TrashFailure is Failure
     assert TransferFailure is Failure
 
@@ -41,7 +34,7 @@ def test_the_failure_record_always_has_a_name_and_sometimes_a_path() -> None:
     assert at.source == Path("/库/京都/一张.jpg")
     assert at.message == "磁盘满了，腾出点空间再试。"
 
-    # 分组卡片没有路径 —— 那是事实，不该为了凑一个字段而编一个假路径出来。
+    # 分组卡片没有路径 —— 那是事实，不该为了凑字段编一个假的。
     group = Failure(name="2024 年 5 月", message="分组不是磁盘上的东西。")
     assert group.name == "2024 年 5 月"
     assert group.source is None
@@ -59,10 +52,7 @@ def test_the_failure_record_always_has_a_name_and_sometimes_a_path() -> None:
 def test_the_common_failures_say_one_thing_each(errno_value: int, fragment: str) -> None:
     """**磁盘满了 / 东西没了 / 没权限 / 名字太长** —— 全仓库各只有一种说法。
 
-    这四样在动手之前无法预知、用户也控制不了，因此它们的措辞不该取决于撞上哪个操作：
-    用户在「粘贴」里看到「磁盘空间不足」、在「移到废纸篓」里看到「磁盘满了」，
-    会以为是两个不同的问题。
-    """
+    这四样用户控制不了，措辞不该取决于撞上哪个操作：两处各写一句，用户会以为是两个问题。"""
     assert fragment in os_reason(OSError(errno_value, "whatever"))
 
 
@@ -77,11 +67,7 @@ def test_the_permission_hint_depends_on_whether_it_is_a_folder() -> None:
 
 
 def test_the_prefix_only_goes_on_the_vague_branch() -> None:
-    """操作名（「复制」「移动」）**只加在说不清原因的那一条上**。
-
-    加在具体原因前面只是啰嗦：「复制失败：磁盘满了」比「磁盘满了」多三个字，
-    少三个字用户就少读一次。
-    """
+    """操作名（「复制」「移动」）**只加在说不清原因的那一条上** —— 具体原因前加它只是啰嗦。"""
     assert os_reason(OSError(errno.ENOSPC, ""), action="复制") == os_reason(
         OSError(errno.ENOSPC, "")
     )

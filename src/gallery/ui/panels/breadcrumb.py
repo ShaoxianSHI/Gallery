@@ -1,12 +1,7 @@
-"""面包屑导航条：库名 ▸ 子目录 ▸ 当前目录，右边挂着已生效的筛选条件（ADR 0026）。
+"""面包屑导航条：库名 ▸ 子目录 ▸ 当前目录，右端挂着生效中的筛选条件（ADR 0026）。
 
-平时只在相册模式下显示；**有筛选条件时一律显示** —— 平铺模式下那里没有文件夹可指，
-而条件总得有个地方摆。
-
-路径段都可以点击跳回，**只有「当前所在」那一段点不动** —— 而当前所在是路径**后面**
-跟着的那一段：开着分组时是组名，检索时是「搜索结果」，都不是路径段本身
-（见 :meth:`BreadcrumbBar.set_path`）。右端那几枚条件胶囊**点文字是改**
-（把它放回搜索框）、**点右端那个 ✕ 才是撤掉**。
+有筛选条件时一律显示。路径段都可点击跳回；「当前所在」是路径**后面**跟着的那一段
+（分组名或「搜索结果」），因此它之前的每一段都点得动（见 :meth:`BreadcrumbBar.set_path`）。
 """
 
 from __future__ import annotations
@@ -22,39 +17,23 @@ from gallery.ui import theme
 from gallery.ui.panels.layout import clear_layout
 from gallery.ui.theme import rgba
 
-#: 分隔符。
 SEPARATOR = "▸"
 
-#: 分隔符的字色取正文色的这一档不透明度。
-#:
-#: **不能写 ``palette(mid)``** —— 那是 Qt 的「填充色」角色（给未选中的行、表格隔行铺底
-#: 用的），深色下那一档是 ``#585858``，压在 ``#171717`` 的底上只有 **2.52:1**，而分隔符
-#: 是个 11 点、笔画只有两三个像素宽的 ``▸``，抗锯齿一摊开就彻底看不见了（实测那一块
-#: 最实的一笔也只有 2.48:1）。``panels.welcome`` 那一处是同一个道理。
-#:
-#: 0.55 是按 **3:1** 那条线挑的：WCAG 对非文字内容（这里就是这个记号）要 3:1，而浅色下
-#: 是**它**先到边（实测浅色 3.90:1、深色 6.14:1）。与元数据面板那几个标签同一档
-#: （``panels.metadata`` 里的 0.52 / 0.55），于是那一块面板与这一行看着是同一套深浅。
+#: 分隔符的字色取正文色的这一档不透明度。不能写 ``palette(mid)``：深色下那是 ``#585858``，
+#: 一枚 11 点的 ``▸`` 抗锯齿一摊开就看不见了；0.55 按非文字内容的 3:1 那条线挑。
 SEPARATOR_ALPHA = 0.55
 
-#: 条件胶囊右边那个「撤掉它」的记号。
 DISMISS_MARK = "✕"
 
-#: 这一行上下左右各留多少（点）。右边那一格只是**默认值** —— 有条件胶囊时它由
-#: :meth:`BreadcrumbBar.set_right_inset` 按搜索胶囊的右缘换算过来。
+#: 这一行四边的留白；右边那一格是默认值，有条件胶囊时由 ``set_right_inset`` 换算。
 _PAD = 2
 
-#: 分隔符那一枚 ``QLabel`` 的名字。只为 :meth:`BreadcrumbBar._apply_theme` 认得出它们
-#: —— 换外观时要挨个重上一次色（见那里）。
 _SEPARATOR_OBJECT_NAME = "separator"
 
-#: 胶囊左右各留多少（点）。**热区算它**（见 :meth:`ChipButton._hits_mark`），
-#: 改样式表里的内边距时这个也要跟着改 —— 两处写同一个数不如让计算从样式表那一档来。
+#: 胶囊左右各留多少（点）。热区算它（见 :meth:`ChipButton._hits_mark`），改样式表时同步。
 _CHIP_PADDING_H = 8
 
-#: 路径上每一段都是一个按钮，但按钮不画自己的底色：``background: transparent`` 让它
-#: 融进这一行统一的底色里（见 ``ui.theme``），否则每个路径段都是一块系统按钮色的圆角块，
-#: 在浅色主题下比周围的底色明显深一档。悬停靠下划线示意即可。
+#: 路径段按钮不画自己的底色，否则每一段都是一块比周围深一档的系统按钮色圆角块。
 _BUTTON_STYLE = """
 QToolButton {
     border: none;
@@ -68,16 +47,9 @@ QToolButton:hover { text-decoration: underline; }
 
 
 def _chip_style(*, editing: bool) -> str:
-    """条件胶囊的样式。
+    """条件胶囊的样式：它不是链接、是正在生效的东西，所以不用链接色。
 
-    它是一块**不是链接**的面 —— 它不是「可以去的地方」，是「正在生效的东西」，
-    所以不用链接色、不用下划线。
-
-    两种状态：
-
-    - 平时：点它是**改**；
-    - 正在改（已放进搜索框、按回车会就地替换）：边框换成高亮色、底色压深一档 ——
-      用户得能看出「回车之后是改这一条，而不是再多一条」。
+    ``editing`` 那一枚（已放进搜索框）边框换高亮、底色压深一档，让用户看出回车是改。
     """
     border = "palette(highlight)" if editing else "palette(mid)"
     hover = "palette(alternate-base)" if not editing else ""
@@ -95,27 +67,19 @@ def _chip_style(*, editing: bool) -> str:
 
 
 class ChipButton(QToolButton):
-    """一枚筛选条件胶囊：**点文字是改，点 ✕ 是撤掉**。
+    """一枚筛选条件胶囊：点文字是改，点 ✕ 是撤掉。
 
-    两件事挤在一个按钮上，所以按位置分热区：``✕`` 那一段是「撤掉」，其余是「改」。
-    分界用字体度量算 —— ``✕`` 紧跟在文字后面，样式表里的左右内边距也是已知的
-    （:data:`_CHIP_PADDING_H`），于是「点在 ✕ 上」这件事不必靠猜。
-
-    **键盘走「改」那一条**（``clicked`` 即改）：键盘没有「点 ✕ 上」这回事，
-    而「改」是更常用、更不容易丢东西的那一个（`Esc` 与清空后回车都还留着撤掉的入口）。
+    两件事挤在一个按钮上，所以按位置分热区：``✕`` 那一段是撤掉，其余是改（键盘走「改」，
+    因为键盘没有「点 ✕」这回事）。
     """
 
-    #: 点在文字上（默认动作，与键盘激活同一条）。
     edited = Signal()
-    #: 点在右端那个 ✕ 上。
     removed = Signal()
 
     def __init__(self, text: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("searchChip")
         self.setText(f"{text} {DISMISS_MARK}")
-        # **不挂提示**：这一行本来就写得清清楚楚（条件 + 一个 ✕），鼠标停在上面再弹
-        # 一句「点一下改这一条」，读的是屏幕上已经有的东西，还要用户移开鼠标才看得完。
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.clicked.connect(self.edited)
 
@@ -124,8 +88,7 @@ class ChipButton(QToolButton):
         text = self.text()
         body = text[: -len(DISMISS_MARK)].rstrip()  # 去掉标记与它前面那个空格
         metrics = QFontMetrics(self.font())
-        # 文字起点 + 文字宽度 + 一个空格 ≈ 标记起点；再往左留两像素容差，
-        # 省得「点准了却没反应」。
+        # 文字起点 + 文字宽 + 一个空格 ≈ 标记起点；再往左留两像素容差。
         mark_start = _CHIP_PADDING_H + metrics.horizontalAdvance(body) + 4
         return x >= mark_start - 2
 
@@ -140,12 +103,9 @@ class ChipButton(QToolButton):
 class BreadcrumbBar(QWidget):
     """可点击的路径条，右端挂着已生效的筛选条件。"""
 
-    #: 用户点了某一段，要求跳到那里。
     path_requested = Signal(object)
-    #: 用户撤掉了右端某一枚条件胶囊，带的是它的序号（撤掉的是「刚敲的那一条」，
-    #: 而不是界面上数出来的位置 —— 两者在重排之后未必一样）。
+    #: 用户撤掉了右端某一枚条件胶囊，带的是它的序号（不是界面上数出来的位置）。
     condition_removed = Signal(int)
-    #: 用户要改某一枚条件胶囊（把它放回搜索框），带的是它的序号。
     condition_edited = Signal(int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -154,36 +114,24 @@ class BreadcrumbBar(QWidget):
         self._layout.setContentsMargins(_PAD, _PAD, _PAD, _PAD)
         self._layout.setSpacing(0)
         self._theme = theme.current_theme()
-        # **收下 ``ensure_installed()`` 返回的那一个监听器，不要自己去找** —— 它挂在
-        # ``QApplication`` 上，``findChild`` 只翻控件自己的子孙（``calendar.page`` 为此
-        # 吃过一次亏，注释在那里）。
+        # 收下 ``ensure_installed()`` 返回的监听器：``findChild`` 翻不到挂在 ``QApplication``
+        # 上的它。
         self._watcher = theme.ensure_installed()
         self._watcher.changed.connect(self._apply_theme)
 
     def set_right_inset(self, points: int) -> None:
-        """把右端那几枚条件胶囊的右缘推到「离**这一行**的右缘 ``points`` 点」的地方。
+        """把右端那几枚条件胶囊的右缘推到「离这一行的右缘 ``points`` 点」的地方。
 
-        **对齐的是标题栏右上角那个搜索胶囊的右缘，不是窗口右缘** —— 两者之间还隔着
-        摆这一行的那份布局边距，换算由 :meth:`MainWindow._layout_title_bar` 做
-        （那里同时知道窗口宽度与胶囊的 ``MARGIN_RIGHT``，是那个数唯一在用的地方）。
-
-        为什么非对齐不可：胶囊与条件胶囊是**同一列东西**，只是分两行摆着，右缘各说各话
-        时那条竖线是折的，看着像两样互不相干的控件。
-
-        **只改右边的留白**：路径段是从左边数起的，右端收窄多少都不影响它们；照片区在
-        面包屑下一行，两者互不相干。
+        对齐的是标题栏右上角那个搜索胶囊的右缘，不是窗口右缘（换算由
+        :meth:`MainWindow._layout_title_bar` 做）：不对齐时两列东西的右缘是折的。
         """
         self._layout.setContentsMargins(_PAD, _PAD, max(0, points), _PAD)
 
     def _apply_theme(self) -> None:
-        """系统换浅色 / 深色之后，把**现存的**分隔符按新主题重上一次色。
+        """系统换浅色 / 深色之后，把现存的分隔符按新主题重上一次色。
 
-        **就地改样式，不整条重摆**：重摆会把这一行拆了重装，而新控件要等布局再激活一轮
-        才落位（实测那一刻它们还停在 640×480 的默认尺寸且不可见，分隔符干脆消失）。
-        而这一行里会随外观变的**只有分隔符的字色**（其余要么是调色板角色、要么由各自控件的
-        ``_apply_theme`` 负责），于是逐个补一次样式既够又便宜。
-
-        换完之后**新建**的那几枚不用管：``_separator`` 每次都从 ``self._theme`` 现取。
+        就地改样式而不整条重摆：重摆要等布局再激活一轮才落位，中间那一刻新控件还停在
+        640×480 的默认尺寸且不可见。
         """
         self._theme = theme.current_theme()
         style = self._separator_style()
@@ -201,20 +149,9 @@ class BreadcrumbBar(QWidget):
     ) -> None:
         """重建整条路径。``parts`` 由 ``ui.navigation.breadcrumb_parts`` 给出。
 
-        ``group`` 是当前进入的分组名（见 ADR 0009）。它**不是磁盘上的目录**，因此
-        只能显示、点不动 —— 放在最后一段，视觉上也正好是「当前所在的位置」。
-
-        ``conditions`` 是已生效的筛选条件（每个一段文字），``result_count`` 是这次
-        检索命中了多少张 —— 两者都在**右端**、按录入顺序从左往右排（ADR 0026 决策 4）。
-        有条件时路径末尾多一段「搜索结果」：那是这一层真正的所在，而它也不是目录。
-
-        ``editing`` 是「正在输入框里改」的那一条的序号（没有就 ``None``）—— 它要看起来
-        与别的胶囊不一样，否则用户按回车会突然发现多了一条而不是「原来那条被改了」。
-
-        **「当前所在」是路径后面跟着的那一段，不是路径自己最后一段。** 开着分组时
-        当前所在是那一组（「照片 ▸ 旅行 ▸ 2024 年」里，``旅行`` 只是走到组里的路），
-        检索时是「搜索结果」。于是这两种情况下路径上的每一段都是**可点的** ——
-        把相册画成不可点的当前层，用户就只能按 `Esc` 退，而 `Esc` 一次只退一层。
+        ``group`` 是分组名（ADR 0009），``conditions`` / ``result_count`` 是生效中的筛选
+        条件与命中数（ADR 0026），``editing`` 是正在改的那一条的序号。「当前所在」是路径
+        后面跟着的那一段（分组名或「搜索结果」），于是它之前的每一段都点得动。
         """
         self._clear()
         # 「当前所在」落在路径上，仅当后面既没有分组也没有搜索结果可指。
@@ -255,7 +192,7 @@ class BreadcrumbBar(QWidget):
 
     def _separator(self) -> QLabel:
         separator = QLabel(SEPARATOR)
-        # 名字是给 :meth:`_apply_theme` 认的：换外观时它要挨个找到现存的那些（见那里）。
+        # 名字是给 :meth:`_apply_theme` 认的（换外观时要挨个找到现存的那些）。
         separator.setObjectName(_SEPARATOR_OBJECT_NAME)
         separator.setStyleSheet(self._separator_style())
         return separator
@@ -287,8 +224,7 @@ class BreadcrumbBar(QWidget):
         return widget
 
     def _clear(self) -> None:
-        # 面包屑**每换一次目录就整个重摆**，所以顺序上的那个坑（先藏、再摘）在这里
-        # 一样踩得到 —— 详见 panels.layout 的模块文档。
+        # 每换一次目录就整个重摆，所以顺序上的那个坑在这里一样踩得到（见 panels.layout）。
         clear_layout(self._layout)
 
 

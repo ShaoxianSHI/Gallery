@@ -1,12 +1,6 @@
 """编辑位置的那层翻译（ADR 0031）：两个方向怎么合流、什么时候什么都不做。
 
-**反查器是假的**：它只回答「这个坐标最近的城市是什么」「这个名字在哪」，不碰文件、不碰
-城市库 —— 城市库那一半在 ``tests/core/places/test_dataset.py`` 里单独测。
-
-每条用例盯的是**写出去的字段**：有没有写、有没有写全、有没有多写、以及**不该写的
-一个字节都没动**。「哪些字段会被改」就是这一层全部的责任 —— 话由对话框在保存之前说，
-横幅只说「成了吗、能不能撤」。
-"""
+**反查器是假的**；每条用例盯的是**写出去的字段**：有没有写、写没写全、不该写的一个字节都没动。"""
 
 from __future__ import annotations
 
@@ -153,9 +147,8 @@ def test_editing_coordinates_clears_the_altitude_of_the_old_place(
 
 
 def test_emptying_every_field_removes_the_whole_place(library_state: PlaceState) -> None:
-    """**三层地名与两个坐标框全清空，就是「把位置整个清掉」** —— 不需要单独的勾（ADR 0031）。
-
-    那一个勾选框只会多出一种要记的用法；清空本来就是编辑器里唯一表达得出「全删」的形状。
+    """**三层地名与两个坐标框全清空，就是「把位置整个清掉」**，不需要单独的勾（ADR 0031）——
+    那个勾只会多出一种要记的用法，而清空本来就表达得出「全删」。
     """
     resolver = FakeResolver()
 
@@ -216,9 +209,6 @@ def test_no_place_anywhere_nearby_keeps_the_written_name(library_state: PlaceSta
     assert set(tags(plan.assignments)) & set(PLACE_TAGS) == set()  # 地名一个字都没写
 
 
-# ---- 不合法的坐标 ---------------------------------------------------------------
-
-
 @pytest.mark.parametrize(
     ("latitude", "longitude", "complaint"),
     [
@@ -251,13 +241,8 @@ def test_the_southern_hemisphere_writes_a_south_ref(library_state: PlaceState) -
 
 
 def fill(state: PlaceState, **changes: object) -> PlaceEdit:
-    """造一份「用户在对话框里填完的那一份」。
-
-    **对话框打开时会把三层地名与坐标全都填上**（它显示的就是照片此刻的值），所以
-    ``PlaceEdit`` 收到的一直是**最终状态**而不是补丁。这里的 ``fill`` 就是照那个行为写的
-    —— 用它而不是手写 ``PlaceEdit(latitude=…)``，才不会在用例里悄悄表达成
-    「把三层地名清空」。
-    """
+    """造一份「用户在对话框里填完的那一份」：打开时三层地名与坐标都填着照片此刻的值，
+    所以 ``PlaceEdit`` 收到的是**最终状态**而不是补丁 —— 用它写才不会把地名悄悄清空。"""
     base: dict[str, object] = {
         "city": state.city,
         "region": state.region,

@@ -91,9 +91,6 @@ def test_the_week_steps_by_seven_days(page: CalendarPage) -> None:
     assert page.anchor() == datetime.date(2021, 9, 19)
 
 
-# ---- 触控板两指横向拖动（与 ← / → 同一件事）---------------------------------
-
-
 def scroll(
     view: QWidget,
     dx: int,
@@ -317,7 +314,7 @@ def test_an_hour_cell_hands_over_its_own_photos(page: CalendarPage) -> None:
     view.select_cell(view.photos_in_hour(TODAY, 19), "9月12日 19:00")
     photos, label = opened[0]
     assert label == "9月12日 19:00"
-    # 同一秒的一批按文件名排（burst1 排在 burst10 前面），所以比集合不比顺序
+    # 同一秒的一批按文件名排（burst1 在 burst10 前），所以比集合而不比顺序。
     assert {ref.path for ref in photos} == {ref.path for ref in burst}
 
 
@@ -362,7 +359,7 @@ def test_no_column_is_tinted_for_the_weekend(
         for index in (0, 6)  # 周日与周六，且都不是选中的周三
     ]
     for widget, y, where in (
-        # 网格与表头是两个控件，各画各的；表头高 56，日期号那一行到 50 就没了
+        # 网格与表头是两个控件各画各的：表头高 56，日期号那一行到 50 就没了。
         (view._grid, view.row_height() * 2.5, "周视图的时间轴"),  # type: ignore[attr-defined]
         (view._header, 53.0, "周视图的表头"),  # type: ignore[attr-defined]
     ):
@@ -460,9 +457,8 @@ def test_a_resized_view_reports_its_window_again(
 
     page.resize(1000, 700)  # 放回去：新露出来的那几个小时
 
-    # **等的是「最后那一次报全了」，不是「报了几次」**：改尺寸的过程中会报好几次
-    # （内部几何一变就补一次，见 `WeekView.eventFilter`），按次数等会等到过渡中的那一条，
-    # 而它报的是压扁时的那一屏 —— 断言于是随机红。
+    # **等的是「最后那一次报全了」而不是「报了几次」**：改尺寸时会报好几次（内部几何
+    # 一变就补一次，见 `WeekView.eventFilter`），按次数等会等到过渡中的那一条。
     def reported_whole_window() -> bool:
         visible = {ref.path for ref in page.current_view().visible_refs()}
         return bool(reports) and not (visible - reports[-1])
@@ -539,8 +535,8 @@ def test_the_cell_you_come_back_from_is_where_the_next_level_opens(
         assert picked in page.current_view().days(), f"{level} 那一层摆的不是那一天所在的一段"
 
 
-# 焦点那一条（从大图页退回来时焦点要回到当前那层，← / → 才重新有用）走真实窗口 ——
-# 独立的控件在离屏平台上压根拿不到焦点，见 ``tests/ui/test_calendar_flow.py``。
+# 焦点那一条（退回来时焦点要回到当前那层，← / → 才重新有用）走真实窗口：独立的控件在
+# 离屏平台上拿不到焦点，见 ``tests/ui/test_calendar_flow.py``。
 
 
 def test_today_is_highlighted_once_in_the_year_view(
@@ -616,9 +612,6 @@ def test_window_changed_fires_when_the_level_moves(page: CalendarPage) -> None:
     page.step(1)
     page.go_today()
     assert len(seen) >= 3
-
-
-# ---- 那一格拿哪一张当代表：三层必须是同一张 ---------------------------------
 
 
 def test_every_level_shows_the_same_photo_for_the_same_day(
@@ -744,8 +737,8 @@ def test_a_burst_of_thumbnails_is_painted_exactly_once(
     image.fill(0x336699)
     edge = page.thumbnail_edge()
     arriving = view.visible_refs()
-    # 40 张落在 9 月 12 日 – 10 月 9 日这 **28 天**上，横跨 9 月与 10 月两张小月；
-    # 补位格里不报（那里不画照片），所以**每张只报一次**。
+    # 40 张落在 9 月 12 日 – 10 月 9 日这 28 天上，横跨两张小月；补位格不画照片，
+    # 所以每张只报一次。
     assert len(arriving) == 28, "前提不成立：这一层要的那一批不是这 28 天"
     assert len(set(arriving)) == len(arriving), "同一张照片报了两遍"
     for ref in arriving:
@@ -771,9 +764,6 @@ def test_the_thumbnails_of_a_burst_all_land(
         page.set_thumbnail(ref.path, image, edge)
 
     assert all(view.photo(ref) is not None for ref in refs)
-
-
-# ---- 选中：点哪一格高亮哪一格、切层以它为锚点 ---------------------------------
 
 
 def _pick_day(page: CalendarPage, day: datetime.date) -> None:

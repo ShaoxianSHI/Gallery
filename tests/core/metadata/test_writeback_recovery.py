@@ -1,19 +1,6 @@
 """写回元数据出岔子之后，用户还捞得回来吗（红线 4）。
 
-写回是本项目里唯一「文件不搬家、内容被改」的操作，于是它有两件别的操作不必操心的事：
-
-1. **先记账再动文件**（:data:`~gallery.core.metadata.journal.RESULT_PENDING`）——
-   exiftool 起一次子进程要几十到几百毫秒，那个窗口里断电 / 被强杀 / 磁盘写满，
-   原图就改了而日志上一条记录都没有。
-2. **回滚也要回读校验** —— 「按原值写回去」是一次请求，不是一次保证（见
-   ``test_writeback`` 里那两条）。
-
-这两条各自钉在自己的测试文件里（那里用的是假 writer）；本文件钉的是它们**合起来**
-在撤销栈上的样子：崩溃之后用户按 ⌘Z 到底撤不撤得掉。
-
-（另有一处相关但独立的不变量在 ``test_undo.py``：改名 / 移到废纸篓 / 移动的撤销是
-**反过来搬动用户文件**，所以那边刻意不放行 pending 记录。）
-"""
+**先记账再动文件**与**回滚也要回读校验**各钉在自己的文件里；这里钉的是它们在撤销栈上合起来的样子。"""
 
 from __future__ import annotations
 
@@ -89,10 +76,8 @@ def _record(library: Path, photo: PhotoRef, result: str) -> WriteRecord:
 
 
 def test_a_normal_write_is_one_undo_step_not_two(library: Path, photo: PhotoRef) -> None:
-    """成功的一次写回在日志里是**成对**的（pending + 终态），而它只该值**一次** ⌘Z。
-
-    两记说的是同一件事；撤销栈按「终态顶掉 pending」处理，少了这步处理，用户改一次
-    元数据要按两次 ⌘Z 才会看到原值 —— 而第二次按下去会撤掉更早的那一次编辑。
+    """成功的一次写回在日志里是**成对**的（pending + 终态），而它只该值**一次** ⌘Z ——
+    撤销栈按「终态顶掉 pending」处理，少了这步，用户改一次元数据要按两次 ⌘Z 才看到原值。
     """
     writer = _RecordingWriter({"XMP:City": "波尔多"})
     write_metadata(library, photo, [Assignment("XMP:City", "杭州")], writer=writer)
@@ -106,10 +91,8 @@ def test_a_normal_write_is_one_undo_step_not_two(library: Path, photo: PhotoRef)
 def test_a_crash_between_journalling_and_writing_stays_undoable(
     library: Path, photo: PhotoRef
 ) -> None:
-    """**进程死在「记完账、还没写完」那一刻** —— 那正是最需要 ⌘Z 的时候。
-
-    这条 pending 没有终态：文件可能已经被改过，也可能没有。撤销栈仍要把它压在栈顶，
-    让用户能自己决定要不要、能不能撤。
+    """**进程死在「记完账、还没写完」那一刻** —— 那正是最需要 ⌘Z 的时候：这条 pending 没有
+    终态（文件改没改过都不知道），撤销栈仍要把它压在栈顶，让用户自己决定撤不撤。
     """
     assert append_record(library, _record(library, photo, RESULT_PENDING))
 
@@ -122,10 +105,7 @@ def test_a_crash_between_journalling_and_writing_stays_undoable(
 
 
 def test_a_pending_record_loses_to_its_own_outcome(library: Path, photo: PhotoRef) -> None:
-    """终态一到，那条 pending 就不再单独占一摞 —— 它已经说完了。
-
-    仍然剩**一**摞（终态那一条本来就该可撤销），关键是没有变成两摞。
-    """
+    """终态一到，那条 pending 就不再单独占一摞 —— 它已经说完了；关键是仍然只有一摞。"""
     assert append_record(library, _record(library, photo, RESULT_PENDING))
     assert append_record(library, _record(library, photo, RESULT_OK))
 
@@ -135,11 +115,9 @@ def test_a_pending_record_loses_to_its_own_outcome(library: Path, photo: PhotoRe
 
 
 def test_a_failed_write_back_is_not_offered_as_undoable(library: Path, photo: PhotoRef) -> None:
-    """**失败的写回不压栈**：文件压根没被改（回滚已经把它还原了），没什么可撤。
+    """**失败的写回不压栈**：文件压根没被改（回滚已经还原了），没什么可撤。
 
-    这与上一条不是一回事：pending 是「不知道改没改成」，failed 是「确认没改成」。
-    把后者也压上去，⌘Z 就会去重写一遍根本没动过的字段。
-    """
+    pending 是「不知道改没改成」，failed 是「确认没改成」—— 压上去，⌘Z 会去重写没动过的字段。"""
     assert append_record(library, _record(library, photo, RESULT_PENDING))
     assert append_record(library, _record(library, photo, RESULT_FAILED))
 
@@ -149,10 +127,7 @@ def test_a_failed_write_back_is_not_offered_as_undoable(library: Path, photo: Ph
 def test_the_intent_survives_when_the_write_itself_is_refused(
     library: Path, photo: PhotoRef
 ) -> None:
-    """工具直接拒绝时：pending 与 failed 都在，且原值仍然齐着。
-
-    原值在日志里，人才有得救 —— 哪怕这次没能自动撤回来。
-    """
+    """工具直接拒绝时：pending 与 failed 都在，且原值仍然齐着 —— 原值在日志里人才有得救。"""
 
     class _Refusing(_RecordingWriter):
         def write(self, path: Path, assignments: Sequence[Assignment]) -> None:

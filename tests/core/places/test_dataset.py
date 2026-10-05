@@ -1,6 +1,6 @@
 """``gallery.core.places.dataset`` 的测试：读自带城市库，按坐标查最近的城市。
 
-测试数据一律 ``tmp_path`` 现场造（AGENTS.md）：城市库本身是 380 KB 的生成产物，
+测试数据一律 ``tmp_path`` 现场造：城市库本身是 380 KB 的生成产物，
 不该为了测一个解析函数就把它塞进测试里。唯一碰真文件的是 :func:`test_bundled_database_is_usable`
 —— 它要守住「随包分发的那份真的能用」，那是整个功能的地基。
 """

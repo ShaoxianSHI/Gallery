@@ -2,7 +2,6 @@
 
 ``PhotoRef`` 只携带「定位 + 判断缓存是否失效」所需的信息（路径、大小、修改时间），
 **不读像素、不读 EXIF**：扫描几万张照片时，任何一次多余的 open() 都会让首屏变慢。
-需要更丰富的元数据时再引入索引层（M2）。
 """
 
 from __future__ import annotations
@@ -11,8 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-#: v1 支持的图片扩展名（小写，含点）。RAW 明确不在其中，见
-#: docs/adr/0001-viewer-architecture.md。
+#: v1 支持的图片扩展名（小写，含点）。RAW 明确不在其中（ADR 0001）。
 SUPPORTED_SUFFIXES: Final[frozenset[str]] = frozenset(
     {
         ".jpg",
@@ -50,8 +48,8 @@ def format_label(suffix: str) -> str:
 def normalize_suffix(text: str) -> str | None:
     """用户敲的那个格式名 → 扩展名（``jpg`` / ``JPEG`` / ``.jpg`` 都认成 ``.jpg``）。
 
-    ``None`` 表示认不出来 —— 与 :func:`format_label` 恰好互逆，把两张表合成一张，
-    于是「格式叫什么」只有一处说了算（搜索的「#文件格式」条件与分组的格式字段共用它）。
+    ``None`` 表示认不出来。它与 :func:`format_label` 恰好互逆、共用一张表，于是「格式叫
+    什么」只有一处说了算（搜索的「#文件格式」条件与分组的格式字段都用它）。
     """
     cleaned = text.strip().casefold().lstrip(".")
     if not cleaned:
@@ -105,8 +103,8 @@ class PhotoRef:
 class FolderRef:
     """对子文件夹（相册）的轻量引用。
 
-    相册模式逐层浏览时，同一层里会有文件夹和照片混排；两者都用「路径 + 名称」
-    描述，界面据此画卡片、决定双击是进入相册还是打开照片。
+    相册模式逐层浏览时文件夹与照片混排，两者都用「路径 + 名称」描述，界面据此画卡片、
+    决定双击是进入相册还是打开照片。
     """
 
     path: Path
@@ -132,9 +130,7 @@ class FolderRef:
 class GroupRef:
     """一个分组卡片：按元数据字段把一堆照片归到一起（见 ``library.groups``）。
 
-    形态与 :class:`FolderRef` 一致 —— 网格只认「这一格画成什么、双击做什么」，
-    所以分组在界面里就是一个能双击进去的卡片，而不是另一套交互。
-
+    形态与 :class:`FolderRef` 一致 —— 网格只认「这一格画成什么、双击做什么」。
     它**不是磁盘上的东西**：不可改名、不可移到废纸篓，操作只在进入之后对照片本身进行。
     """
 

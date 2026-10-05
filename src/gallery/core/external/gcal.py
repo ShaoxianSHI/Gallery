@@ -6,8 +6,7 @@
 
 **三层与 Gallery 的三层同名同义**（``year`` / ``month`` / ``week``），因此这里没有
 映射表。日期一律由调用方给一个具体的 :class:`datetime.date`：周视图把那一天递过去
-即可，Google 自己会算出包含它的那一周——两边的周都从周日起，我们不必再算一遍周数
-（``AGENTS.md``：别再引入第三套星期口径）。
+即可，Google 自己会算出包含它的那一周——两边的周都从周日起，别再引入第三套星期口径。
 """
 
 from __future__ import annotations

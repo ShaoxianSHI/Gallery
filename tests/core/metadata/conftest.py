@@ -1,9 +1,6 @@
-"""``tests/core/metadata/`` 共用的东西。
+"""``tests/core/metadata/`` 共用的 fixture。
 
-原本每个写操作测试各自抄了一份一模一样的 ``library`` fixture（三份，字面相同、
-只有 docstring 不同），还各自抄了一份「等后台任务收工」的 ``_wait``。收在这里，
-改动才有一处。
-"""
+三份写操作测试各自抄过一模一样的一份，收在这里才只有一处。"""
 
 from __future__ import annotations
 
@@ -20,9 +17,7 @@ from gallery.core.library.photos import PhotoRef
 def library(tmp_path: Path) -> Path:
     """一个已经准备好配置目录的库：两个相册，每个里两张照片。
 
-    配置目录是用 :func:`gallery.core.paths.config_dir` 建的 —— 那个名字只有一个来源
-    （``core.constants.CONFIG_DIR_NAME``），测试里也不该硬编码 ``.gallery`` 字面量。
-    """
+    配置目录走 ``paths.config_dir`` —— 目录名只有一个来源，测试里也不许硬编码。"""
     root = tmp_path / "照片"
     (root / "京都").mkdir(parents=True)
     (root / "奈良").mkdir()
@@ -40,12 +35,9 @@ def photo(library: Path) -> PhotoRef:
 
 @pytest.fixture
 def unwritable_journal(library: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """让记账写不进去（模拟只读的磁盘 / 权限问题）。
+    """让记账写不进去（模拟只读磁盘 / 权限问题）：拦的是 ``journal`` 目录的 ``mkdir``。
 
-    拦的是 ``journal`` 目录的 ``mkdir``：那正是 :func:`journal.append_record` 写的
-    第一步。**这是红线 4 守着的那条路** —— 记不上账不能把已经改好的文件说成没改成，
-    只能如实告诉用户「撤销不了了」。五个写操作都得能这么退化，所以做成 fixture。
-    """
+    **红线 4**：记不上账不能说「没改成」，只能说「撤销不了」—— 五个写操作都得能这么退化。"""
     real_mkdir = Path.mkdir
 
     def refuse(self: Path, *args: object, **kwargs: object) -> None:

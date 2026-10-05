@@ -1,22 +1,8 @@
-"""年视图：4 × 3 张小月。
+"""年视图：4 × 3 张小月，日期格里铺照片（365 个数字表达不了「这一天拍了几十张」的密度，
+ADR 0033 决策 2）—— 有照片的那天铺**最早**的一张当封面 + 日期徽标。
 
-照 Google Calendar 的年视图排版（4 列 3 行，每张小月上面是月份与这一月的张数），
-但**日期格里铺照片** —— 那是日历里「这一天拍了几十张」唯一说得清的地方：
-365 个数字表达不了密度（ADR 0033 决策 2）。
-
-有照片的那一天铺当天**最早**的一张当封面，上面再压一枚底色日期徽标，于是深浅照片上
-都读得出数字。**挑哪一张不归这一层管**：它问核心层的 ``cell_cover``，与月 / 周两层
-同一个来源 —— 曾经这一层取最晚、另两层取最早，于是同一天按 `Y` 与按 `M` 看到的是
-两张照片。
-
-**每张小月里也只有它自己那个月的日子有照片。** 12 张小月都是含上下月补位的 6 × 7，
-于是 10 月 1 日在「9 月」那张的末尾与「10 月」那张的开头各出现一次 —— 照片摆了两遍、
-张数数了两遍，而 9 月那个数字里混着十月的照片。补位格留一个灰日期号就好。
-
-**照片、「今天」、选中的高亮，三样都只画在它自己那个月的格子里**（同一个
-:func:`~gallery.core.library.calendar.in_month` 判据）。补位是**摆格子**为了对齐星期几
-用的，格子里的一切 —— 日期号除外 —— 都归那一天自己那个月：少一处重复是一回事，
-「刚刚点了一天，怎么亮了两天」更让人以为点错了。
+**每张小月里只有它自己那个月的日子有照片、「今天」和高亮** —— 12 张小月都含上下月补位，不按
+:func:`~gallery.core.library.calendar.in_month` 判就会把邻月的照片和张数算进来。
 """
 
 from __future__ import annotations
@@ -45,9 +31,7 @@ from gallery.ui.calendar.painting import (
 )
 from gallery.ui.calendar.thumbs import ThumbStore
 
-#: 12 张小月之间的留白。
 _BOX_GAP = 22.0
-#: 小月里那张表上下的留白。
 _ROW_GAP = 3.0
 
 _TITLE_HEIGHT = 20.0
@@ -70,7 +54,6 @@ class YearView(LevelView):
     def __init__(self, thumbs: ThumbStore, parent: object = None) -> None:  # type: ignore[arg-type]
         super().__init__("year", thumbs, parent)
 
-    # ---- 几何 -------------------------------------------------------------
     def _grid_rect(self) -> QRectF:
         return QRectF(self.rect()).adjusted(18, 6, -18, -10)
 
@@ -102,13 +85,9 @@ class YearView(LevelView):
             for index in range(42)
         ]
 
-    # ---- 绘制 -------------------------------------------------------------
     def paintEvent(self, _event: object) -> None:  # noqa: N802 - 名字是 Qt 定的
         painter = self.begin()
-        # **12 张小月的日期矩阵在这一次绘制里各算一遍**。原先每张算两遍
-        # （数张数一遍 ``days_of``、画格子一遍 ``month_matrix``），而两次都是同一个
-        # 6 × 7 = 42 天的矩阵 —— 一帧于是重建 24 × 42 = 1008 个 ``datetime.date``。
-        # 矩阵在一帧之内不变，算一次就够。
+        # 12 张的日期矩阵一帧里各算一遍（原先每张算两遍，一帧重建 1008 个 ``datetime.date``）。
         year = self._anchor.year
         matrices = [month_matrix(datetime.date(year, index + 1, 1)) for index in range(12)]
         for index in range(12):
@@ -120,10 +99,8 @@ class YearView(LevelView):
     ) -> None:
         colors = self.colors
         first = datetime.date(self._anchor.year, month, 1)
-        # **只数这一月自己的日子**（``month_days``，29–31 天），不拿那 42 天的矩阵去数：
-        # 矩阵前后补位是邻月的日子，数进来就等于把 10 月的照片算进 9 月 —— 而标题上
-        # 写着的就是「9 月」。原先这里数整张矩阵，两处都错：数多了，也把同一张
-        # 照片在 9 月与 10 月各数了一遍。
+        # **只数这一月自己的日子**（``month_days``）：那 42 天含邻月补位，数进来就是把 10 月的照片
+        # 算进标题写着「9 月」的那一张。
         count = count_days(self._by_day, month_days(first))
         title = QRectF(box.left(), box.top(), box.width(), _TITLE_HEIGHT)
         draw_text(
@@ -160,16 +137,10 @@ class YearView(LevelView):
         self, painter: QPainter, cell: QRectF, day: datetime.date, month: datetime.date
     ) -> None:
         colors = self.colors
-        # **补位格只有日期号**：那几格是邻月的日子，摆照片就是把邻月的照片摆进这一张
-        # 小月 —— 同一张照片于是还会在它自己那张小月里再出现一次。
+        # **补位格只有日期号**：那几格是邻月的日子，摆照片就是把邻月的照片摆进这一张小月。
         own = in_month(day, month)
-        # **点一天就高亮那一天**（月视图里点一天高亮那一天，周视图里点一格高亮那一格）。
-        # 年视图的格子只有二十几像素：底色垫在照片下面看得见空格子，有照片的那几格
-        # 再补一圈描边 —— 两者一起才够认出来。
-        #
-        # **高亮也只画在它自己那个月的格子里**，与上面「照片」与「今天」同一判据：
-        # 10 月 1 日在「9 月」那张小月的末尾也出现一次，两处都涂就变成了「选中了两天」，
-        # 而用户刚点的明明只有一天。
+        # **点一天就高亮那一天，且只画在它自己那个月的格子里**（10 月 1 日在「9 月」末尾也出现
+        # 一次，两处都涂就成了「选中了两天」）。格子只有二十几像素，底色之外还要补一圈描边。
         selected = own and day == self._selected
         if selected:
             fill_rounded(painter, cell, colors.selection, _CELL_RADIUS)
@@ -201,13 +172,10 @@ class YearView(LevelView):
             )
         if selected:
             outline_rounded(painter, cell, colors.accent, 2.0, radius=_CELL_RADIUS)
-        # **今天只在它自己那个月的格子里高亮**。小月矩阵含上下月补位，于是 10 月 4 日
-        # 在「9 月」那张小月的末尾也会出现一次 —— 两处都圈上就成了两个「今天」，
-        # 而用户要回答的问题是「今天在哪」，不是「今天出现了几次」。
+        # **「今天」也只在它自己那个月里圈一次**：矩阵含上下月补位，两处都圈就成了两个「今天」。
         elif own and day == self.today():
             outline_rounded(painter, cell, colors.accent, 1.6, radius=_CELL_RADIUS)
 
-    # ---- 交互 -------------------------------------------------------------
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         point = event.position()
         grid = self._grid_rect()
@@ -233,19 +201,11 @@ class YearView(LevelView):
                 return day
         return None
 
-    # ---- 缩略图窗口 -------------------------------------------------------
     def visible_refs(self) -> list[PhotoRef]:
-        """有照片的那些天，各要一张封面。
+        """有照片的那些天，各要一张封面 —— **每天只要一张**，且只问 ``month_days`` 里的日子。
 
-        **每天只要一张**：年视图一格就是一天的代表，再要三四张也没人看得见，
-        而那是好几百张缩略图（几十兆内存）。
-
-        **走 ``month_days`` 而不是 42 天的矩阵**：补位格里不摆照片，为它解码出来的那张
-        永远不会被画出来，而同一张照片本来就会在它自己那张小月里报一次。
-
-        **挑哪一张问 ``cell_cover``**，不在这儿写死 ``[-1]`` 或 ``[0]``（理由见那里）：
-        曾经年视图取最晚的那一张而月 / 周两层取最早的那一张，于是同一天按 `Y` 与按 `M`
-        看到的是两张脸 —— 而这一格是「一天的代表」，它只该有一张脸。
+        **挑哪一张问 ``cell_cover``**：曾经这一层取最晚、另两层取最早，于是同一天按 `Y` 与按
+        `M` 看到的是两张脸。
         """
         refs: list[PhotoRef] = []
         for index in range(12):

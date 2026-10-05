@@ -1,11 +1,6 @@
-"""分组与排序在窗口里的整条链。
+"""分组与排序在窗口里的整条链：菜单选字段 → 组卡片 → 双击进入 → 组内排序 → `Esc` 退回。
 
-覆盖用户真正会经历的那条路：菜单选一个字段 → 这一层变成组卡片 → 双击进入 →
-组内排序换方向 → `Esc` 退回 → 选择被记住。
-
-元数据读取用假的批量来源（见 ``fake_facet_source``）：测试不依赖本机装了 exiftool，
-也不该因为机器上碰巧装了就把行为测偏。真实 exiftool 那条路由
-``tests/core/metadata/test_facets_batch.py`` 单独测。
+元数据读取用假的批量来源 ``fake_facet_source``，不依赖本机装了 exiftool。
 """
 
 from __future__ import annotations
@@ -40,8 +35,6 @@ from gallery.core.metadata import batch  # noqa: E402
 from gallery.core.places.resolver import LazyPlaceResolver, ResolvedPlace  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.write_ops import flattened_entries  # noqa: E402
-
-#: 等待后台扫描 / 元数据读取的时限。
 
 #: 测试库里每张照片的拍摄时间（按文件名对应）。
 DATES = {
@@ -78,9 +71,7 @@ GPS: dict[str, dict[str, str]] = {
 def fake_places(monkeypatch: pytest.MonkeyPatch) -> Callable[[], int]:
     """把地点反查换成假的：按「纬度 > 40 是巴黎，否则西安」回答，并数着问了几次。
 
-    **假实现连「按坐标缓存」一起照搬**：真解析器（``core.places.resolver``）问过一次
-    的坐标就不再问，而分组与打开时那一遍解析会拿到同一批照片 —— 不缓存的话，
-    计数里混进去的全是这份假实现独有的重复，问不出「到底问了几次」。
+    连「按坐标缓存」一起照搬：不缓存的话，计数里混进去的全是这份假实现独有的重复。
     """
     calls = {"count": 0}
     memo: dict[tuple[float, float], ResolvedPlace] = {}
@@ -100,11 +91,8 @@ def fake_places(monkeypatch: pytest.MonkeyPatch) -> Callable[[], int]:
         memo[key] = answer
         return answer
 
-    # 只换掉「按坐标查」这一步：解析器的其余行为（数据加载）都是真的，
-    # 但测试因此不联网、也不依赖本机有没有下过 GeoNames 数据。
-    #
-    # ``ready`` 一并改成真：真解析器是在 ``place_for`` 里加载数据、加载完才 ready 的，
-    # 而这里这一步整个被换掉了，不改的话索引会把每一行都记成「这次没查成」。
+    # 只换掉「按坐标查」这一步，解析器的其余行为（数据加载）都是真的，测试因此不联网。
+    # ``ready`` 一并改成真：不改的话索引会把每一行都记成「这次没查成」。
     monkeypatch.setattr(LazyPlaceResolver, "place_for", place_for)
     monkeypatch.setattr(LazyPlaceResolver, "ready", property(lambda _self: True))
     return lambda: calls["count"]
@@ -148,10 +136,8 @@ MTIME_BASE = 1_700_000_000.0
 
 
 def _touch(path: Path, step: float) -> None:
-    """把照片的修改时间钉到 :data:`MTIME_BASE` + ``step``。
-
-    默认排序按**修改时间**（``DEFAULT_SORT_FACET``），于是未分组的顺序不能靠
-    「谁先被创建」：文件系统给的是真实时间，那不是断言能说清楚的东西。
+    """把照片的修改时间钉到 :data:`MTIME_BASE` + ``step``：默认排序按**修改时间**，
+    未分组的顺序不能靠「谁先被创建」——文件系统给的是真实时间。
     """
     os.utime(path, (MTIME_BASE + step, MTIME_BASE + step))
 
@@ -173,10 +159,8 @@ def _open(
     sort_descending: bool = False,
     remember: bool = True,
 ) -> MainWindow:
-    """开一个窗口。
-
-    ``remember=False`` 表示**沿用上一次写进会话的那份**（测「重新打开软件仍然记得」
-    时必须这样，否则测试自己把刚记住的选择覆盖掉了）。
+    """开一个窗口。``remember=False`` 表示沿用上一次写进会话的那份，否则测试自己
+    把刚记住的选择覆盖掉了。
     """
     if remember:
         save_session(SessionState(recent_roots=(root,)), base=session_base)
@@ -195,10 +179,8 @@ def _open(
 
 
 def _select_rows(window: MainWindow, *rows: int) -> None:
-    """按代码选中若干行（等价于用户按住 ⌘ 连点）。
-
-    **先设当前项再选**：``setCurrentIndex`` 会把选区收成那一格，顺序反了多选就只剩一格
-    （与 ``tests/ui/test_context_menu.py`` 里那个同名助手是同一件事）。
+    """按代码选中若干行（等价于用户按住 ⌘ 连点）。**先设当前项再选**：
+    ``setCurrentIndex`` 会把选区收成那一格，顺序反了多选就只剩一格。
     """
     window._grid.setCurrentIndex(window._model.index(rows[0], 0))
     selection = window._grid.selectionModel()
@@ -214,9 +196,7 @@ def _select_rows(window: MainWindow, *rows: int) -> None:
 def _settle(qt_app: QApplication, window: MainWindow, *, groups: bool = False) -> None:
     """转到「扫描结束、元数据读完、地点解析完、顺序已经排好」为止。
 
-    「三个后台任务都收工」那部分在 :mod:`waiting` 里，五个模块共用同一份
-    （:func:`waiting.window_is_idle`）；轮询循环也只有那一个
-    （:func:`waiting.wait_until`）。不成立**直接抛** —— 原来这里是超时也返回，
+    等条件与轮询只在 :mod:`waiting` 里那一份；不成立**直接抛** —— 超时也返回的话，
     扫描卡住与扫描成功长得一模一样。
     """
     assert wait_until(
@@ -237,20 +217,12 @@ def _watch_until_settled(
 def _watch_names(
     qt_app: QApplication, window: MainWindow, ready: Callable[[], bool]
 ) -> list[tuple[str, ...]]:
-    """同上，但记录**条目名字**：顺序对不对，只有名字能说明白。
+    """同上，但记录**条目名字**：顺序对不对只有名字能说明白。
 
-    **模型经历的每一版都记下来，靠的是模型自己的通知而不是轮询。**
-    「不许闪一屏旧顺序」是一条否定断言，而轮询只采得到采样之间的状态：换排序是
-    :meth:`MainWindow._reload_level` 同步清空的（清空 → 排好），这两步完全可能落在
-    **同一轮** ``processEvents`` 里 —— 后台那一遍早就跑完时正是如此，并行跑最容易
-    撞上。于是中间那帧空网格整个漏掉，用例既没有真的在数帧，也随机变红
-    （实测 ``test_entering_a_group_also_waits_for_the_metadata_sort`` 32 次里挂 3 次，
-    报出来的是「只看到一帧」，而那一帧还是排好的那一版）。
-
-    ``clear()`` 发 ``modelReset``、``append()`` 发 ``rowsInserted``，挂上去之后一帧
-    不漏；**观察的第一帧**单独先取一次（那一刻模型刚被同步清空，正是要看的空帧）。
-    轮询那次取样仍然留着：改缩略图、改名走的是 ``dataChanged``，不动行数也发不出
-    上面那两个信号，只有轮询才看得见。
+    靠模型自己的通知（``modelReset`` / ``rowsInserted``）记下每一版，不靠轮询：换排序是
+    同步清空后重排的，两步可能落在**同一轮** ``processEvents`` 里，轮询会整个漏掉中间
+    那帧空网格（实测 32 次里挂 3 次）。轮询那次取样仍然留着 —— 改缩略图、改名走的是
+    ``dataChanged``，只有轮询看得见。
     """
     seen: list[tuple[str, ...]] = []
     model = window._model
@@ -294,9 +266,6 @@ def _groups(window: MainWindow) -> list[GroupRef]:
     return [entry for entry in window._model.entries() if isinstance(entry, GroupRef)]
 
 
-# ---- 菜单 ----------------------------------------------------------------------------
-
-
 def test_menus_expose_group_and_sort_fields(qt_app: QApplication, tmp_path: Path) -> None:
     window = MainWindow(session_base=tmp_path / "状态")
 
@@ -321,9 +290,6 @@ def test_restored_session_checks_the_right_items(qt_app: QApplication, tmp_path:
     window.close()
 
 
-# ---- 分组 ----------------------------------------------------------------------------
-
-
 def test_grouping_turns_the_level_into_group_cards(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path], fake_facet_source: object
 ) -> None:
@@ -331,7 +297,6 @@ def test_grouping_turns_the_level_into_group_cards(
     _touch_all(root, sorted(DATES))  # 默认排序按修改时间，钉死这一层未分组的顺序
     window = _open(qt_app, root, session_base=tmp_path / "状态")
     _settle(qt_app, window)
-    # 还没分组时这一层就是那四张照片，顺序按钉好的修改时间
     assert _labels(window) == sorted(DATES)
 
     window.set_group_facet("captured_month")
@@ -375,8 +340,8 @@ def test_groups_are_remembered_across_restarts(
     _settle(qt_app, window, groups=True)
     window.close()
 
-    # 分组选择是**库级**偏好：它写在那个库的 config.toml 里，不在 state.json 里
-    # （ADR 0038 决策 4）—— 于是「在 A 库按年份分组」不会跟着切到 B 库。
+    # 分组选择是**库级**偏好，写在那个库的 config.toml 里而不在 state.json 里（ADR 0038 决策 4），
+    # 于是「在 A 库按年份分组」不会跟着切到 B 库。
     assert load_config(root).ui.group_facet == "captured_year"
 
     again = _open(qt_app, root, session_base=session_base, remember=False)
@@ -402,8 +367,7 @@ def test_grouping_by_country_resolves_places_from_gps(
         ("中国", 1),
         ("法国", 2),
     ]
-    # 问的是**几个不同的坐标**，不是几张照片：三月在西安，另外两张在同一个巴黎坐标上
-    # （解析器按坐标缓存，core 那边单独钉住）。分组那一遍与打开时的整库解析共用结论。
+    # 问的是**几个不同的坐标**而不是几张照片：另外两张在同一个巴黎坐标上（解析器按坐标缓存）。
     assert fake_places() == 2
     window.close()
 
@@ -428,9 +392,6 @@ def test_photos_without_gps_land_in_the_unknown_group(
     window.close()
 
 
-# ---- 打开库时把地点解析一遍（ADR 0010）-------------------------------------------------
-
-
 def test_opening_a_library_resolves_places_for_the_whole_library(
     qt_app: QApplication,
     tmp_path: Path,
@@ -438,15 +399,11 @@ def test_opening_a_library_resolves_places_for_the_whole_library(
     fake_facet_source: object,
     fake_places: Callable[[], int],
 ) -> None:
-    """**不用**先选分组：打开库就跑一遍，之后索引里就有结论了。
-
-    这是这一版改动的全部意义：以前地点要等用户手动分组才落库，面板只能自己临时算。
-    """
+    """**不用**先选分组：打开库就跑一遍，之后索引里就有结论了（以前要等用户手动分组才落库）。"""
     root = _library(tmp_path, make_photo, ["三月.jpg", "四月.jpg", "去年十二月.jpg"])
     window = _open(qt_app, root, session_base=tmp_path / "状态")
     _settle(qt_app, window)
 
-    # 没有分组，就是普通的三张照片（默认按修改时间排）
     assert sorted(_labels(window)) == sorted(["三月.jpg", "四月.jpg", "去年十二月.jpg"])
     stored = window._library.cached_facets(
         [PhotoRef.from_path(root / name) for name in ("三月.jpg", "四月.jpg", "去年十二月.jpg")]
@@ -463,9 +420,8 @@ def test_reopening_the_same_library_does_not_resolve_again(
     fake_facet_source: object,
     fake_places: Callable[[], int],
 ) -> None:
-    """关掉再打开同一个库：结论还在索引里，一次反查都不必再来。
-
-    「每开一次库就重算一遍整库」是这套缓存最怕的毛病。
+    """关掉再打开同一个库：结论还在索引里，一次反查都不必再来 ——「每开一次库就重算一遍
+    整库」是这套缓存最怕的毛病。
     """
     root = _library(tmp_path, make_photo, ["三月.jpg", "四月.jpg"])
     window = _open(qt_app, root, session_base=tmp_path / "状态")
@@ -507,11 +463,8 @@ def test_an_already_resolved_library_shows_no_banner(
     fake_facet_source: object,
     fake_places: Callable[[], int],
 ) -> None:
-    """空跑就**一声不吭**：横幅不许说「正在解析…」，因为根本没有东西在解析。
-
-    那句话原本每次打开都闪一下，看着像又在重算一遍 —— 用户没法分辨是又在干活，
-    还是软件出了毛病。换成按拍摄时间排序也一样：索引里已经有的那一遍直接排序，
-    不起后台线程、不报「正在读取元数据」。
+    """空跑就**一声不吭**：横幅不许说「正在解析…」。那句话原本每次打开都闪一下，
+    看着像又在重算一遍，用户没法分辨是又在干活还是软件出了毛病。
     """
     root = _library(tmp_path, make_photo, ["三月.jpg", "四月.jpg"])
     first = _open(qt_app, root, session_base=tmp_path / "状态")
@@ -532,10 +485,8 @@ def test_switching_back_and_forth_does_not_start_it_twice(
     fake_facet_source: object,
     fake_places: Callable[[], int],
 ) -> None:
-    """同一个会话里 A → B → A：回到 A 不该把那一遍再起一次。
-
-    记账要是只记「上一个库」，切回来就会起一遍空跑 —— 白占一个后台线程，
-    还会让用户以为软件在反复重算。
+    """同一个会话里 A → B → A：回到 A 不该把那一遍再起一次。记账要是只记「上一个库」，
+    切回来就会起一遍空跑，白占一个后台线程。
     """
     first_root = _library(tmp_path / "一", make_photo, ["三月.jpg", "四月.jpg"])
     second_root = _library(tmp_path / "二", make_photo, ["五月.jpg"])
@@ -550,7 +501,6 @@ def test_switching_back_and_forth_does_not_start_it_twice(
     assert window.open_library(first_root)
     _settle(qt_app, window)
 
-    # 两个库都记着 → 切回 A 不会再起一遍
     assert first_root in window._place_pass_roots
     assert window._place_job is None
     window.close()
@@ -563,10 +513,8 @@ def test_the_pass_does_not_steal_the_banner_from_someone_else(
     fake_facet_source: object,
     fake_places: Callable[[], int],
 ) -> None:
-    """后台进度不许顶掉用户刚做完的事的确认。
-
-    横幅是全局共享的一条，谁都能写；而「已把 3 项移到废纸篓」这种确认比后台进度
-    重要得多 —— 顶掉了用户就再也看不到自己刚才做了什么。
+    """后台进度不许顶掉用户刚做完的事的确认：横幅是全局共享的一条，谁都能写，
+    而「已把 3 项移到废纸篓」顶掉了用户就再也看不到自己刚才做了什么。
     """
     root = _library(tmp_path, make_photo, ["三月.jpg", "四月.jpg", "去年十二月.jpg"])
     window = _open(qt_app, root, session_base=tmp_path / "状态")
@@ -580,9 +528,6 @@ def test_the_pass_does_not_steal_the_banner_from_someone_else(
 
     assert window._banner.text() == "已把 3 项移到废纸篓", "后台进度不该抢别人的话"
     window.close()
-
-
-# ---- 进入与退出分组 --------------------------------------------------------------------
 
 
 def test_entering_a_group_lists_its_photos(
@@ -672,10 +617,8 @@ def _album_with_a_group(
 def test_the_album_stays_a_link_while_a_group_of_it_is_open(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path], fake_facet_source: object
 ) -> None:
-    """相册底下开着分组时，面包屑上的**相册那一段仍然要能点回去**。
-
-    当前所在的是那一组，不是相册 —— 面包屑若把最后一段路径当成「当前所在」，
-    相册就被画成不可点的粗体标签，用户只能按 `Esc` 退出去。
+    """相册底下开着分组时，面包屑上的**相册那一段仍然要能点回去**：当前所在的是那一组，
+    面包屑若把最后一段路径当成「当前所在」，相册就被画成不可点的粗体标签。
     """
     window = _album_with_a_group(qt_app, tmp_path, make_photo)
 
@@ -719,16 +662,10 @@ def test_clicking_the_album_leaves_the_group_and_lands_on_that_album(
     window.close()
 
 
-# ---- 排序 ----------------------------------------------------------------------------
-
-
 def test_photos_are_sorted_by_modified_time_without_asking(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path], fake_facet_source: object
 ) -> None:
-    """默认排序就是按修改时间：没打开过排序菜单的人也该按时间看照片。
-
-    菜单也要把这一项勾上 —— 否则菜单与实际状态对不上，用户会以为软件没听他的话。
-    """
+    """默认排序就是按修改时间，且菜单要把这一项勾上，否则菜单与实际状态对不上。"""
     root = _library(tmp_path, make_photo, list(DATES))
     # 故意按与拍摄时间、与文件名都不同的顺序钉修改时间：默认排的确实是它
     _touch_all(root, ["三月.jpg", "没有时间.jpg", "四月.jpg", "去年十二月.jpg"])
@@ -744,10 +681,7 @@ def test_photos_are_sorted_by_modified_time_without_asking(
 def test_the_default_sort_needs_no_metadata_read(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path], fake_facet_source: object
 ) -> None:
-    """默认排序只看文件本身：打开库不必等 exiftool，也就不必报那一屏进度。
-
-    没有 exiftool 的人（以及不想为一屏照片等几秒的人）拿到的是同一个首屏。
-    """
+    """默认排序只看文件本身：打开库不必等 exiftool，也就不必报那一屏进度。"""
     root = _library(tmp_path, make_photo, ["三月.jpg", "四月.jpg"])
     window = _open(qt_app, root, session_base=tmp_path / "状态")
     _settle(qt_app, window)
@@ -760,10 +694,8 @@ def test_the_default_sort_needs_no_metadata_read(
 def test_there_is_no_sorting_off_option(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path], fake_facet_source: object
 ) -> None:
-    """「不排序」这一项没了：网格永远按某个字段排。
-
-    摆着它等于承认「不按任何字段排」也是正当选择，那条路只会让人在两种看不懂的
-    顺序之间来回试；真想按名字看，「文件名」那一项摆在那儿。
+    """「不排序」这一项没了：摆着它等于承认「不按任何字段排」也是正当选择，
+    那条路只会让人在两种看不懂的顺序之间来回试。
     """
     root = _library(tmp_path, make_photo, list(DATES))
     window = _open(qt_app, root, session_base=tmp_path / "状态")
@@ -862,10 +794,8 @@ def test_sorting_by_file_name_never_touches_exiftool(
     make_photo: Callable[..., Path],
     fake_facet_source: Callable[[], list[Path]],
 ) -> None:
-    """按文件名排序是纯算的，切换到它不该**新增**一次 EXIF 读取。
-
-    比的是增量而不是零：打开库时那一遍地点解析会读一遍整个库（ADR 0010），
-    那次读取与排序字段无关。
+    """按文件名排序是纯算的，切换到它不该**新增**一次 EXIF 读取：比的是增量而不是零，
+    打开库时那一遍地点解析会读整个库（ADR 0010），与排序字段无关。
     """
     root = _library(tmp_path, make_photo, ["b.jpg", "a.jpg"])
     window = _open(qt_app, root, session_base=tmp_path / "状态")
@@ -880,16 +810,11 @@ def test_sorting_by_file_name_never_touches_exiftool(
     window.close()
 
 
-# ---- 不许先闪一下再换内容 ------------------------------------------------------------
-
-
 def test_entering_an_album_never_shows_the_ungrouped_photos_first(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path], fake_facet_source: object
 ) -> None:
-    """这一条是回归测试：曾经点进相册先出一屏照片、下一秒它们全变成组卡片。
-
-    修法是「要重排就先攒着」：网格要么是空的（横幅说明正在读元数据），要么直接
-    就是最终的组卡片 —— **中间那一屏错误的顺序不该出现**。
+    """点进相册不许先出一屏照片、下一秒全变成组卡片：网格要么是空的，要么直接就是最终的
+    组卡片，**中间那一屏错误的顺序不该出现**。
     """
     root = tmp_path / "照片"
     album = root / "子相册"
@@ -904,10 +829,8 @@ def test_entering_an_album_never_shows_the_ungrouped_photos_first(
         browse_mode=BROWSE_MODE_ALBUMS,
         group_facet="captured_year",
     )
-    # 这里停在库根的相册模式，网格上是一张相册卡片，**一个组都没有** —— 分组只作用在
-    # 照片上，照片要等点进相册之后才出现。所以此处只能等「活干完了」，不能等组：
-    # `groups=True` 在这里是永远等不到的条件，会白白空转满 10 秒（这一条曾占掉整轮
-    # 套件三成的时间）。组由下面 `_watch_until_settled` 那一行负责等。
+    # 库根的相册模式下一张相册卡片、**一个组都没有**（分组只作用在照片上），所以这里只能等
+    # 「活干完了」：`groups=True` 是永远等不到的条件。组由下面那一行负责等。
     _settle(qt_app, window)
     row = next(
         index for index, entry in enumerate(window._model.entries()) if entry.name == "子相册"
@@ -924,11 +847,8 @@ def test_entering_an_album_never_shows_the_ungrouped_photos_first(
 def test_switching_the_sort_never_shows_the_old_order_first(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path], fake_facet_source: object
 ) -> None:
-    """换排序字段同样先攒后摆：旧顺序一帧都不许出现。
-
-    钉出来的修改时间顺序是「三月 → 去年十二月 → 四月」，按拍摄时间则是
-    「去年十二月 → 三月 → 四月」—— 两边不一样，所以这一条真的在看「有没有闪」。
-    断言里数的是帧：重排期间网格要么是空的，要么直接就是排好的那一版。
+    """换排序字段同样先攒后摆：旧顺序一帧都不许出现。钉出来的修改时间顺序与按拍摄时间排
+    不一样，所以这一条真的在看「有没有闪」。
     """
     root = _library(tmp_path, make_photo, ["三月.jpg", "四月.jpg", "去年十二月.jpg"])
     _touch_all(root, ["三月.jpg", "去年十二月.jpg", "四月.jpg"])
@@ -949,8 +869,7 @@ def test_entering_a_group_also_waits_for_the_metadata_sort(
 ) -> None:
     """进组之后再换排序字段，同样不能先闪一屏旧顺序。"""
     root = _library(tmp_path, make_photo, ["三月.jpg", "四月.jpg", "去年十二月.jpg"])
-    # 默认排序（修改时间）下这一组是「四月 → 三月」，与按拍摄时间排**反过来** ——
-    # 换字段才有东西可换，「不许闪一屏旧顺序」才真的被测到。
+    # 默认排序（修改时间）下这一组与按拍摄时间排**反过来**——换字段才有东西可换。
     _touch_all(root, ["去年十二月.jpg", "四月.jpg", "三月.jpg"])
     window = _open(qt_app, root, session_base=tmp_path / "状态", group_facet="captured_year")
     _settle(qt_app, window, groups=True)
@@ -968,22 +887,16 @@ def test_entering_a_group_also_waits_for_the_metadata_sort(
 
     # 三月（2024-03）在四月（2024-04）之前；逆序就该反过来。
     assert _names(window) == ["四月.jpg", "三月.jpg"]
-    # 关键在这一行：**旧顺序一帧都不许出现**。曾经这里会先摆一屏三月/四月，
-    # 下一秒才换成四月/三月 —— 那一下闪得最明显。
+    # 关键在这一行：**旧顺序一帧都不许出现**（曾经先摆一屏三月/四月，下一秒才换成四月/三月）。
     assert seen == [(), ("四月.jpg", "三月.jpg")]
     window.close()
-
-
-# ---- 分组卡片不能改名，但它的组员能被删（ADR 0020）--------------------------------
 
 
 def test_group_cards_refuse_rename_and_trash(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path], fake_facet_source: object
 ) -> None:
-    """改不了名的是**那张卡片**；删得掉的是它代表的那批照片。
-
-    摊平只发生在命令的对象上：⌘R 按下去仍然要说清为什么（改的是卡片，而卡片不是磁盘上
-    的东西，ADR 0004），⌘⌫ 则把组里的照片整组送进废纸篓 —— 与「进去全选再删」是同一件事。
+    """改不了名的是**那张卡片**；删得掉的是它代表的那批照片。⌘R 仍要说清为什么
+    （卡片不是磁盘上的东西，ADR 0004），⌘⌫ 则把组里的照片整组送进废纸篓。
     """
     root = _library(tmp_path, make_photo, list(DATES))
     window = _open(qt_app, root, session_base=tmp_path / "状态", group_facet="captured_year")
@@ -1009,11 +922,8 @@ def test_group_cards_refuse_rename_and_trash(
 def test_a_group_card_acts_on_all_of_its_photos(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path], fake_facet_source: object
 ) -> None:
-    """选中卡片就是选中它代表的**全部**组员 —— 摊平摊的是整张卡片。
-
-    分组的一层里只有相册与组卡片，照片被分组吃掉了（``_reorder_level``），所以
-    「只删组里一部分」在这条路上压根不存在；部分删除只可能发生在**进组之后**选了几张
-    （见下一条用例），那里的卡片照旧留着。
+    """选中卡片就是选中它代表的**全部**组员：分组那一层里只有相册与组卡片，照片被分组吃掉了，
+    「只删组里一部分」只可能发生在**进组之后**选了几张。
     """
     root = _library(tmp_path, make_photo, list(DATES))
     window = _open(qt_app, root, session_base=tmp_path / "状态", group_facet="captured_year")
@@ -1031,10 +941,8 @@ def test_a_group_card_acts_on_all_of_its_photos(
 
 
 def test_flattening_never_counts_one_photo_twice() -> None:
-    """同一张照片既是组员、又被单独选中时只算一次。
-
-    去重不是洁癖：同一个路径递两遍，第二次要么在废纸篓那里报成一次「没移走」，要么
-    在粘贴时造出一张「一张 2.jpg」。
+    """同一张照片既是组员、又被单独选中时只算一次：同一个路径递两遍，第二次要么在废纸篓那里
+    报成一次「没移走」，要么在粘贴时造出一张「一张 2.jpg」。
     """
     photo = PhotoRef(path=Path("/库/一张.jpg"), size=1, mtime_ns=1)
     group = GroupRef(facet="camera", key="canon", label="Canon", photos=(photo,))

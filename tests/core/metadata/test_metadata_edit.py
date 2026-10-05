@@ -1,20 +1,6 @@
 """**合流的那一层**（ADR 0030 / 0031 / 0032）：一次保存 = 一次写回 = 一条 journal = 一下 ⌘Z。
 
-时间与位置各有各的翻译逻辑（``test_capture_time.py`` 与 ``test_place_edit.py`` 各测一半），
-而它们在**同一个对话框**里。于是这一层要盯住的是合流本身：
-
-- 两处都改 → **一份**计划，里面两半的字段都在（不是两份计划）；
-- 只改一半 → **另一半一个字节都没动**（对话框打开时把照片此刻的值全填着，所以
-  「没动」在数据上必须被认出来）；
-- 什么都没改 → 一条字段都不该有，于是调用方压根不该走到写盘那一步。
-
-最后一条是**真的走一遍写回**（对着 ``tmp_path`` 里现场造的最小 JPEG，用假的 writer）：
-这一层平常只交计划，没人看着的时候计划可以一直是错的 —— 而红线 4 说每一次写回都要留下
-可回滚的记录，所以这条用例断言 journal 里确实多了一条。
-
-**反查器是假的**：理由与 ``test_place_edit.py`` 一样 —— 测试不碰城市库，也不该因为机器上
-碰巧装了 exiftool 就把行为测偏。
-"""
+这里盯的是合流本身：两处都改 → **一份**计划、只改一半 → 另一半一个字节都没动。"""
 
 from __future__ import annotations
 
@@ -71,7 +57,7 @@ class FakeResolver:
 
 
 class FakeWriter:
-    """一份内存里的「文件」—— 测试不得依赖本机有没有装 exiftool（AGENTS）。"""
+    """一份内存里的「文件」—— 测试不得依赖本机有没有装 exiftool。"""
 
     def __init__(self, fields: Mapping[str, str] | None = None) -> None:
         self.fields: dict[str, str] = dict(fields or {})
@@ -106,10 +92,8 @@ def state() -> MetadataState:
 
 
 def fill_edit(current: MetadataState, **changes: object) -> MetadataEdit:
-    """造一份「用户在对话框里填完的那一份」。
-
-    **对话框打开时把两个框组全都填上**（访达「显示简介」的用法），所以这里收到的一直是
-    **最终状态**而不是补丁 —— 与 ``test_place_edit.py`` 的 ``fill`` 同一个道理。
+    """造一份「用户在对话框里填完的那一份」：打开时两个框组全都填着照片此刻的值，所以这里
+    收到的一直是**最终状态**而不是补丁 —— 与 ``test_place_edit.py`` 的 ``fill`` 同一个道理。
     """
     base: dict[str, object] = {
         "capture": CaptureTimeEdit(
@@ -126,15 +110,10 @@ def fill_edit(current: MetadataState, **changes: object) -> MetadataEdit:
     return MetadataEdit(**{**base, **changes})  # type: ignore[arg-type]
 
 
-# ---- 什么都没改 ----------------------------------------------------------------
-
-
 def test_an_untouched_editor_produces_no_assignment(state: MetadataState) -> None:
     """打开对话框什么都没动就按保存：**一条字段都不该有**。
 
-    ``MetadataPlan.is_empty`` 是给调用方的信号：为空就不该走到写盘那一步。走到那一步
-    的后果是一次假的写回 —— 而写回会记账，于是 ⌘Z 会去撤一件根本没发生的事。
-    """
+    ``is_empty`` 是给调用方的信号：为空就不该走到写盘那一步，否则 ⌘Z 要去撤一件没发生的事。"""
     plan = plan_metadata_edit(state, fill_edit(state))
 
     assert plan.assignments == ()
@@ -143,16 +122,10 @@ def test_an_untouched_editor_produces_no_assignment(state: MetadataState) -> Non
     assert not plan.place_changed
 
 
-# ---- 两处都改：一次写回 --------------------------------------------------------
-
-
 def test_changing_both_halves_comes_out_as_one_plan(state: MetadataState) -> None:
     """**两处都改 → 恰好一份计划，两半都在里面。**
 
-    分成两次写回的话，用户按了一次保存却要撤两下、横幅也要说两遍 —— 那不是一次操作
-    （模块文档里说的就是这件事）。所以这里盯的是**一份**，不是一个「时间那个计划」加一个
-    「位置那个计划」。
-    """
+    分成两次写回的话，用户按一次保存却要撤两下、横幅也要说两遍 —— 那不是一次操作。"""
     edit = fill_edit(
         state,
         capture=CaptureTimeEdit(taken_at="2003-07-19 09:12:00", offset="+09:00"),
@@ -193,9 +166,6 @@ def test_the_same_value_on_both_sides_is_not_written_twice(state: MetadataState)
     assert not plan.place_changed
 
 
-# ---- 只改一半：另一半一个字节都不动 ---------------------------------------------
-
-
 def test_changing_only_the_time_leaves_the_place_untouched(state: MetadataState) -> None:
     """只改时间：位置那六个字段一个都不在计划里，照片里的地名与坐标原样留着。"""
     edit = fill_edit(
@@ -210,10 +180,8 @@ def test_changing_only_the_time_leaves_the_place_untouched(state: MetadataState)
 
 
 def test_changing_only_the_place_leaves_the_time_untouched(state: MetadataState) -> None:
-    """只改地点：时间那一个字段一个都不在计划里，照片里的拍摄时间原样留着。
-
-    对话框把时刻原样填在框里，用户没碰它 —— 此刻绝不能被顺带改掉（顺带改时区的后果是
-    这张照片整体偏几个小时）。
+    """只改地点：时间那一个字段都不在计划里，照片里的拍摄时间原样留着 —— 对话框把时刻原样
+    填在框里，用户没碰它，顺带改掉会让整张照片偏几个小时。
     """
     edit = fill_edit(
         state,
@@ -247,9 +215,6 @@ def test_the_two_halves_do_not_interfere_when_one_is_cleared(state: MetadataStat
     assert plan.place.coordinates == (32.0603, 118.7969)
 
 
-# ---- 错了就当场报错 ------------------------------------------------------------
-
-
 @pytest.mark.parametrize(
     ("edit", "complaint"),
     [
@@ -271,16 +236,10 @@ def test_something_the_user_typed_wrong_is_refused_with_a_reason(
         plan_metadata_edit(state, fill_edit(state, **edit), resolver=FakeResolver())
 
 
-# ---- 真的走一遍写回 -------------------------------------------------------------
-
-
 def test_one_save_writes_back_once_and_leaves_one_journal_run(tmp_path: Path) -> None:
-    """**一次保存 = 一次写回 = 一条 journal**（红线 4，以及模块文档里那句「一下 ⌘Z」）。
+    """**一次保存 = 一次写回 = 一条 journal**（红线 4）。
 
-    这是这一层唯一真正写用户文件的路径，而它是数据安全那条红线靠的地方：两半合成一次
-    写回，于是「用户按了一次保存」与「⌘Z 撤一次」才一一对应。分成两次写回的话，
-    撤销栈上会多出一摞，用户得撤两下 —— 而中间那一半已经落盘、撤不干净。
-    """
+    两半合成一次写回，「按一次保存」与「⌘Z 撤一次」才一一对应；分开写会让撤销栈多出一摞。"""
     root = tmp_path / "照片"
     root.mkdir()
     Image.new("RGB", (8, 6), (10, 20, 30)).save(root / "一张.jpg")
@@ -312,8 +271,7 @@ def test_one_save_writes_back_once_and_leaves_one_journal_run(tmp_path: Path) ->
     assert writer.fields["XMP:City"] == "杭州"
     records = read_records(root)
     assert records, "写回没有留下任何 journal 记录 —— 那样就撤不回来了"
-    # **一摞两条**（pending 与终态记的是同一件事，撤销栈按终态顶掉 pending），
-    # 而这一摞里两半的字段都在 —— 用户按了一次保存、日志上就该只出现一次保存。
+    # **一摞两条**（终态顶掉 pending），且两半的字段都在这一摞里。
     assert [record.result for record in records] == [RESULT_PENDING, RESULT_OK]
     assert {record.action for record in records} == {ACTION_METADATA}
     written = {change.tag for change in records[-1].changes}
@@ -322,10 +280,8 @@ def test_one_save_writes_back_once_and_leaves_one_journal_run(tmp_path: Path) ->
 
 
 def test_an_empty_plan_is_not_handed_to_the_write_back(tmp_path: Path) -> None:
-    """空计划**到不了** ``write_metadata`` —— 那一步会直接拒收并抛错。
-
-    把这条钉住是因为它是上一条的另一半：调用点必须先看 ``is_empty``，否则「用户什么都没
-    改」就变成一次抛异常的操作。
+    """空计划**到不了** ``write_metadata``（那一步会直接拒收并抛错）—— 这是上一条的另一半：
+    调用点必须先看 ``is_empty``，否则「什么都没改」就成了一次抛异常的操作。
     """
     root = tmp_path / "照片"
     root.mkdir()

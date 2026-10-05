@@ -1,20 +1,8 @@
 """日历视图的日期计算与分桶（纯 Python，不碰 Qt）。
 
-日历有三层（年 / 月 / 周），每层都是「一个锚点日期 → 一段连续的日子」。
-于是这里只有三件事：**当前层是哪一段日子**、**翻一页去哪里**、**这层标题写什么**。
-全部是纯函数，所以能直接单测（与 ``library.session`` 的几何推导同一个路数）。
-
-另一半是**分桶**：把照片按「哪一天」「哪一个小时」归拢。这一步**不是**
-``library.groups.build_groups`` 那个分组 —— 分组只给「有照片的那些组」，而日历要的是
-一张**每一天都有格子**的表（2021 年只有 8 天有照片，另外 357 格也得画出来）。
-
-**格子与照片是两回事：格子里铺的日子含上下月补位，照片只属于它自己的那个月。**
-:func:`month_matrix` 那 42 天里有 10 月 1 日，而那一格在「9 月」那张表里 ——
-于是「这一格摆不摆照片」「这一月有几张」都得问 :func:`in_month` 与
-:func:`month_days`，而不是「矩阵里有」。
-
-**没有拍摄时间的照片不进日历**（ADR 0033 决策 4）：它们不落到任何一天，画在哪儿都是
-另一个话题。分组视图那边「没值的排最后」（ADR 0009）在这里不成立。
+三层（年 / 月 / 周）都是「一个锚点日期 → 一段连续的日子」，因此这里全是纯函数：这一层
+是哪几天、翻一页去哪里、标题写什么。另一半是**分桶** —— 与 ``groups.build_groups`` 不同，
+日历要的是一张**每一天都有格子**的表。
 """
 
 from __future__ import annotations
@@ -31,10 +19,7 @@ from gallery.core.metadata.facets import PhotoFacets
 EMPTY_FACETS = PhotoFacets()
 
 #: 三层，从粗到细。顺序也是 ``Y`` / ``M`` / ``W`` 三枚快捷键的顺序。
-#:
-#: **没有日视图**：一周七列铺开之后，一天就是一个小时格子 —— 再单开一层「日」，
-#: 得到的还是同一批照片，只是把它摊到整屏；用户真正想做的事（「那天下午拍了什么」）
-#: 点一下那一小时就到了（见 :func:`group_by_hour`）。
+#: **没有日视图**：一周七列铺开后一天就是一个小时格子，点一下那一小时就到了。
 LEVELS: Final[tuple[str, ...]] = ("year", "month", "week")
 
 #: 各层的名称（标题栏的分段选择器与无障碍名称用它）。
@@ -43,22 +28,16 @@ LEVEL_NAMES: Final[Mapping[str, str]] = {"year": "年", "month": "月", "week": 
 #: 每个月的天数（平年）。闰年二月多一天，见 :func:`days_in_month`。
 _DAYS_IN_MONTH: Final[tuple[int, ...]] = (31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
 
-#: 一周的第一天：**周日**。三层日历的列都是周日打头（``date.weekday()`` 里周日是 6，
-#: 取模后落在最前面）。
+#: 一周的第一天：**周日**（``date.weekday()`` 里周日是 6，取模后落在最前面）。
 _FIRST_WEEKDAY: Final = 6
 
-#: 中文短星期名。**索引是「周日打头」那一套**（0 = 日 … 6 = 六），与表头那七列、
-#: 与 :func:`week_index` 一致 —— **不是** ``date.weekday()`` 那一套（那一套周一在前，
-#: 0 = 一、6 = 日）。两套差一天，所以**别拿 ``day.weekday()`` 直接索引它**：那样每一列
-#: 的名字都差一天，表头第一列（周日）会写成「周六」。
-#:
-#: 要按 ``date.weekday()`` 问「这是不是周末」，问 :data:`WEEKEND_WEEKDAYS`。
+#: 中文短星期名，**索引是「周日打头」那一套**（0 = 日 … 6 = 六），与表头那七列、与
+#: :func:`week_index` 一致 —— **不是** ``date.weekday()``（那一套周一在前）。
+#: 要按 ``date.weekday()`` 问「是不是周末」，问 :data:`WEEKEND_WEEKDAYS`。
 WEEKDAY_NAMES: Final[tuple[str, ...]] = ("日", "一", "二", "三", "四", "五", "六")
 
 #: 周末是哪两天 —— **``date.weekday()`` 的口径**：周六 5、周日 6。
-#:
-#: 早先这里是 ``{6, 0}``，那是从「周日打头」那套数出来的（可 0 在 ``weekday()`` 里是
-#: **周一**）：周视图于是把周一涂成了周末、周六反而没有底色，与表头对不上。
+#: 早先写成 ``{6, 0}``（那是「周日打头」那套数出来的），周视图于是把周一涂成周末、周六没有底色。
 WEEKEND_WEEKDAYS: Final[frozenset[int]] = frozenset({5, 6})
 
 #: 月视图表头写「星期一」而不是「一」：一列里只有「一」是认不出来的。
@@ -90,35 +69,25 @@ def days_in_month(month: datetime.date) -> int:
 def in_month(day: datetime.date, month: datetime.date) -> bool:
     """这一天是不是 ``month`` 那个月**自己**的日子 —— 补位格不算。
 
-    月视图与年视图那张 6 × 7 的表都含上下月补位，于是 10 月 1 日在「9 月」那张表里
-    也会出现一次。**那一格不摆照片，也不算进九月的张数**：用户问的是「九月拍了什么」，
-    而九月的照片不该出现在九月的格子里 —— 那是邻月的照片，摆错了地方。
-
-    **判据只在这里写一处**：年月都算上（只比 ``month`` 会在跨年的补位上错），
-    界面不自己比较 ``day.month``。
+    **判据只在这里写一处**（年月都算上，只比 ``month`` 会在跨年的补位上错）：界面不自己
+    比较 ``day.month``，否则邻月的照片会被摆进邻月的格子里。
     """
     return (day.year, day.month) == (month.year, month.month)
 
 
 def month_days(month: datetime.date) -> list[datetime.date]:
-    """``month`` 自己的那几天（29–31 天），顺序与 :func:`month_matrix` 里的一致。
+    """``month`` 自己的那几天（29–31 天）。
 
-    数这一月的张数、列这一月要哪几张缩略图，都问它 —— 而不是拿 42 天的矩阵去减。
+    数这一月的张数、列这一月要哪几张缩略图都问它 —— 别拿 42 天的矩阵去减。
     """
     first = datetime.date(month.year, month.month, 1)
     return [first + datetime.timedelta(days=offset) for offset in range(days_in_month(month))]
 
 
 def days_of(level: str, anchor: datetime.date) -> list[datetime.date]:
-    """这一层**自己**的那段日子（**不含**上下月补位）。
+    """这一层**自己**的那段日子（**不含**上下月补位）：年 365/366 天、月 29–31 天、周七天。
 
-    - 年：365 天，闰年 366 —— 停在 12 月 31 日，不多出下一年那一天的；
-    - 月：29–31 天；
-    - 周：周日到周六七天（周视图那七列本来就没有补位）。
-
-    **铺格子用的 6 × 7（含补位）是另一件事**，见 :func:`month_matrix`：那张表从
-    **当月 1 号所在那一周的周日**起算，所以第一行总从周日开始，与表头那七个字对得上；
-    而「这一层有几张照片」问的是自己那几天。
+    铺格子用的 6 × 7（含补位）是另一件事，见 :func:`month_matrix`。
     """
     if level == "year":
         first = datetime.date(anchor.year, 1, 1)
@@ -131,13 +100,10 @@ def days_of(level: str, anchor: datetime.date) -> list[datetime.date]:
 
 
 def month_matrix(anchor: datetime.date) -> list[datetime.date]:
-    """铺格子用的那 6 × 7 = 42 天，**含上下月补位**。
+    """铺格子用的那 6 × 7 = 42 天（含上下月补位），从**当月 1 号所在那一周的周日**起算。
 
-    从**当月 1 号所在那一周的周日**起算，所以第一行总从周日开始，
-    与表头那七个字对得上。
-
-    **这张表是给格子用的，不是给照片用的**：前后补位那几天是邻月的日子，
-    问「这一格摆不摆照片」用 :func:`in_month`，问「这一月有几天照片」用
+    **这张表是给格子用的，不是给照片用的**：补位格只为对齐星期几而存在，**只画一个
+    日期号**，点它什么都不做；摆不摆照片、这一月有几张问 :func:`in_month` 与
     :func:`month_days`。
     """
     start = week_start(datetime.date(anchor.year, anchor.month, 1))
@@ -150,22 +116,18 @@ def week_start(day: datetime.date) -> datetime.date:
 
 
 def week_index(day: datetime.date) -> int:
-    """这一天在「周日打头的那一周」里是第几列（周日 0 … 周六 6）。
+    """这一天在「周日打头的那一周」里是第几列（周日 0 … 周六 6）。表头与点到的列都问它。
 
-    表头那一行写哪个星期名、点到了哪一列 —— 都问它。**两套星期口径差一天**：
-    ``date.weekday()`` 是周一 0 … 周日 6，而日历的列是周日 0 … 周六 6。
-    拿前者去索引 :data:`WEEKDAY_NAMES`（周日打头那一套）会**每一列都差一天** ——
-    症状是表头第一列写着「周六」，而那一列其实是周日。
+    **两套星期口径差一天**（``date.weekday()`` 是周一 0 … 周日 6），拿前者去索引
+    :data:`WEEKDAY_NAMES` 会**每一列都差一天**：表头第一列（周日）会写成「周六」。
     """
     return (day.weekday() - _FIRST_WEEKDAY) % 7
 
 
 def shift(level: str, anchor: datetime.date, steps: int) -> datetime.date:
-    """往前 / 往后翻一页。
+    """往前 / 往后翻一页（年翻一年、月翻一月、周翻七天），**保持同一个「日子」**。
 
-    年翻一年、月翻一月、周翻七天。**保持同一个「日子」**：
-    1 月 31 日往后翻一个月是 2 月 28 日（``date`` 自己会截断），下一次往前翻
-    回 1 月 28 日 —— 用户来回翻两下就停在 28 号上，不会越翻越偏。
+    1 月 31 日往后翻一个月是 2 月 28 日，再往前翻回 1 月 28 日 —— 来回翻两下不会越翻越偏。
     """
     if steps == 0:
         return anchor
@@ -188,12 +150,7 @@ def _clamped(year: int, month: int, day: int) -> datetime.date:
 
 
 def title(level: str, anchor: datetime.date) -> str:
-    """这一层的标题（工具条上那一行大字）。
-
-    - 年：``2021年``
-    - 月：``2021年9月``
-    - 周：``2021年9月6日 – 9月12日 · 第 36 周``
-    """
+    """这一层的标题：``2021年`` / ``2021年9月`` / ``2021年9月6日 – 9月12日 · 第 36 周``。"""
     if level == "year":
         return f"{anchor.year}年"
     if level == "month":
@@ -205,15 +162,10 @@ def title(level: str, anchor: datetime.date) -> str:
 
 
 def week_number(day: datetime.date) -> int:
-    """这一年里的第几周（**按日历上那一周数**：周日到周六）。
+    """这一年里的第几周（**按日历上那一周数**：周日到周六），刻意不用 ISO 8601。
 
-    刻意不用 ISO 8601 周号：ISO 是「周一为一周之首」，而这里的一周从周日开始 ——
-    同一个日期在两套口径下常常差一格，标题上写着一个数、屏幕上摆着另一周，
-    那比不写更糟。
-
-    **第 1 周是「含 1 月 1 日的那一周」**：不管 1 月 1 日是星期几，它所在的那一周
-    就是第 1 周（年底同理 —— 12 月 31 日所在的那一周仍是今年最后一周，不会溢到
-    「第 0 周」或「第 54 周」）。这是日历软件惯用的那套。
+    **第 1 周是「含 1 月 1 日的那一周」**，年底同理 —— 12 月 31 日所在的那一周仍是今年
+    最后一周，不溢到「第 0 周」。
     """
     first_week = week_start(datetime.date(day.year, 1, 1))
     return (day - first_week).days // 7 + 1
@@ -222,8 +174,8 @@ def week_number(day: datetime.date) -> int:
 def capture_day(facets: PhotoFacets) -> datetime.date | None:
     """这张照片的**墙上日期**；没有拍摄时间就是 ``None``。
 
-    刻意不从 ``captured_at`` 换算：照片写了时区偏移时，换算出来的是「在这台机器上
-    看到的日期」，与 ``year`` / ``month`` / ``day`` 那一套不是同一个口径（ADR 0033 决策 3）。
+    刻意不从 ``captured_at`` 换算：换了得到的是「在这台机器上看到的日期」，与 ``year`` /
+    ``month`` / ``day`` 不是同一个口径（ADR 0033 决策 3）。
     """
     year, month, day = facets.year, facets.month, facets.day
     if year is None or month is None or day is None:
@@ -245,12 +197,10 @@ def capture_hour(facets: PhotoFacets) -> tuple[datetime.date, int] | None:
 def group_by_day(
     photos: Iterable[PhotoRef], values: Mapping[Path, PhotoFacets]
 ) -> dict[datetime.date, list[PhotoRef]]:
-    """按天分桶，**只含有照片的那些天**。
+    """按天分桶，**只含有照片的那些天**（没有拍摄时间的照片不进日历，ADR 0033 决策 4）。
 
-    没有拍摄时间的照片直接不进来（ADR 0033 决策 4）。每桶内按 ``(拍摄时间, 文件名)``
-    升序排 —— 于是**桶里第一张就是「那天最早的那张」**，那一格拿哪张当代表问
-    :func:`cell_cover`（**别在界面里自己写 ``photos[0]``**：三层各写一遍就各行其是，
-    曾经年视图取最晚的那一张，于是同一天在年视图与月视图里是两张脸）。
+    桶内按 ``(拍摄时间, 文件名)`` 升序，于是**第一张就是「那天最早的那张」**；代表图问
+    :func:`cell_cover`，**别在界面里自己写 ``photos[0]``**。
     """
     buckets: dict[datetime.date, list[tuple[float, str, PhotoRef]]] = {}
     for ref in photos:
@@ -271,11 +221,8 @@ def group_by_hour(
 ) -> dict[tuple[datetime.date, int], list[PhotoRef]]:
     """按（天, 小时）分桶 —— 周 / 日两层每一个小时格子就是其中一项。
 
-    **分钟与秒不参与**：一次连拍 48 张常常全在 19:44:02，按小时归一之后它们就是
-    同一格，于是那一格的问题只剩「一格放几张」，不再是一小时切 48 条 0.8 像素高
-    的细条（那条算下来是负数，什么都画不出来）。
-
-    排序与 :func:`group_by_day` 同一套，因此那一格的代表同样问 :func:`cell_cover`。
+    **分钟与秒不参与**：一次连拍 48 张常常全在同一分钟，按小时归一后那一格只剩「放几张」
+    一个问题，而不是一小时切 48 条什么都画不出来的细条。
     """
     buckets: dict[tuple[datetime.date, int], list[tuple[float, str, PhotoRef]]] = {}
     for ref in photos:
@@ -294,23 +241,9 @@ def group_by_hour(
 def cell_cover(photos: Sequence[PhotoRef]) -> PhotoRef | None:
     """一格（一天 / 一个小时）拿哪张照片当代表 —— 空桶就是 ``None``。
 
-    **一个格子只有一张脸**：年 / 月两层一格就是一天、周视图一格是一个钟点，
-    里面几十张也只画得出一张（角标上写着张数）。挑哪一张是**产品的选择**，
-    所以它只有这一个来源 —— 三层各自写 ``photos[0]`` 或 ``photos[-1]`` 时，
-    同一天在年视图里与月视图里会长成两张脸（实测就是这么发生的）。
-
-    **取桶里第一张，也就是按拍摄时间最早的那张**：
-
-    - :func:`group_by_day` / :func:`group_by_hour` 按 ``(拍摄时间, 文件名)`` 升序排，
-      于是「第一张」有确定含义，不依赖谁在读这份桶；
-    - **同一个日子在三层里是同一张脸**：年视图缩到二十几像素也好、月视图铺满一格也好，
-      用户按 `Y` 与按 `M` 看到的「9 月 12 日」不该是两张照片；
-    - 「那天最早的那张」也是点开那一格之后网格里排在最前面的那一张（桶不重排），
-      于是「格子上看到的脸」与「点进去看到的第一张」是同一张。
-
-    曾经年视图取**最晚**的那一张（「最近的才是用户觉得该当代表的那张」），与另两层
-    相反。理由本身不坏，坏的是它只写在年视图的模块说明里、另两层没人知道 ——
-    那是三份互不相认的约定，不是一条约定。
+    **一个格子只有一张脸**：三层各自写 ``photos[0]`` 或 ``photos[-1]`` 时，同一天在年视图
+    与月视图里就长成两张脸。取桶里第一张（按拍摄时间最早的那张），它既是三层一致的那张，
+    也是点开那一格之后网格里的第一张。
     """
     return photos[0] if photos else None
 

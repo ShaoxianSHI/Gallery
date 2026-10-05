@@ -1,26 +1,8 @@
 """与桌面系统打交道的那几个动作：在访达里显示、往剪贴板里放文本或文件。
 
-这里会是**界面层第一个调起系统进程的地方**（``reveal_in_finder`` 走 ``open -R``），
-所以先说清楚为什么：
-
-``QDesktopServices.openUrl`` 只有「打开」这一个动作，没有「在访达里选中并露出它」——
-访达的「在访达中显示」走的是 ``open -R <路径>``。为了让右键菜单与访达对齐，这里用了
-``QProcess.startDetached``。这是权衡的结果，不是随手写的：进程起不来就降级成打开所在文件夹，
-并在界面上如实说明做了什么（见 ADR 0014 决策 3）。
-
-刻意只放这四件事：
-
-- **把文件交给系统默认的应用打开**（:func:`open_with_default_app`）与**在访达里把它挑出来**
-  （:func:`reveal_in_finder`）是同一件事的两头：一个交给别的程序看，一个留在访达里。
-  前者用 ``QDesktopServices`` 就够，不另起进程；后者不行，原因见上面那段。
-- **往剪贴板里放文件是做得到的，不必引 pyobjc**（见 :func:`copy_files_to_clipboard` 与
-  ADR 0017）。这里原先写着「访达认可的文件引用类型 Qt 放不进去」，那句话是错的：实测
-  ``QMimeData.setUrls`` 写的两个公开类型与访达自己 ⌘C 时写的完全一样。
-- **读剪贴板里的文件**（:func:`read_files_from_clipboard`）是同一套类型的反向那一步，
-  供「粘贴」⌘V 用（ADR 0018）。**不做粘进剪贴板**（那是 ⌘V 要管的事，落在
-  ``core.metadata.paste``，界面不碰文件系统）。
-- **不碰元数据、不碰原图像素**。所有文件访问仍然只经过 ``gallery.core`` 的门面
-  （见 ``core.library.facade``）。放进剪贴板的是一个**路径引用**：不读像素、不写文件。
+``QDesktopServices`` 没有「在访达里选中并露出它」那个动作，所以走 ``open -R``，起不来就降级成
+打开所在文件夹（ADR 0014 决策 3）；剪贴板放的是**文件引用**（``QMimeData.setUrls``，ADR 0017）。
+这里只读，不做粘进剪贴板（那是 ``core.metadata.paste`` 的事）。
 """
 
 from __future__ import annotations
@@ -47,23 +29,11 @@ def copy_files_to_clipboard(paths: Sequence[Path]) -> str:
     """把这些**文件**放进剪贴板，返回一句说清实际做了什么的中文文案。
 
     放的是文件引用，不是路径文字、也不是像素：访达里 ⌘V 得到一份拷贝，粘到邮件里是附件
-    （访达的 ⌘C 也是这么放的，见 ADR 0017 决策 1）。相册是文件夹，同样算。
+    （ADR 0017 决策 1）。相册是文件夹，同样算。
 
-    **不需要 pyobjc，这条是复核过的**：早先 ADR 0014 以为「访达认可的文件引用类型 Qt 放不
-    进去」，实测并非如此 ——
-
-    ==========================  ======  ==============
-    剪贴板类型                   访达    ``setUrls()``
-    ==========================  ======  ==============
-    ``public.file-url``          ✓       ✓
-    ``NSFilenamesPboardType``    ✓       ✓
-    ``Apple URL pasteboard …``   ✓       ✓
-    两个私有的 ``dyn.*``          ✓       —（访达自己的账）
-    ==========================  ======  ==============
-
-    缺的只是访达私有的那两个类型，而决定能不能粘的是上面那几个公开的。
-
-    放引用而不是数据，因此**拷多少张、每张多大都是同一次系统调用**，也不会把原图读进内存。
+    **不需要 pyobjc**：``QMimeData.setUrls`` 写的 ``public.file-url`` 与
+    ``NSFilenamesPboardType`` 正是访达认的那几个**公开**类型（ADR 0014 里那句「Qt 放不进去」
+    是错的）。放引用而不是数据，因此**拷多少张、每张多大都是同一次系统调用**，也不读原图。
     """
     targets = [Path(path) for path in paths]
     if not targets:
@@ -79,11 +49,8 @@ def copy_files_to_clipboard(paths: Sequence[Path]) -> str:
 def read_files_from_clipboard() -> list[Path]:
     """剪贴板里那些**是文件**的路径；剪贴板里没有文件就当空的。
 
-    Gallery 自己拷的与访达拷的都读得到（两边写的是同一种剪贴板类型，见 ADR 0017）。
-    **只认本地文件**：从浏览器里拷过来的 ``https://…`` 不是文件，粘不成任何东西。
-
-    读一次约 1 微秒（Qt 自己缓存着 mime 数据，实测 200 次 0.2 ms），所以
-    「现在能不能粘」可以随时问，不必替它省。
+    Gallery 自己拷的与访达拷的都读得到（两边写的是同一种剪贴板类型，见 ADR 0017）。**只认本地
+    文件**：从浏览器里拷过来的 ``https://…`` 不是文件。读一次约 1 微秒，所以随时问得起。
     """
     data = QGuiApplication.clipboard().mimeData()
     if data is None:
@@ -92,25 +59,17 @@ def read_files_from_clipboard() -> list[Path]:
 
 
 def format_paths(paths: Sequence[Path]) -> str:
-    """若干条路径 → 剪贴板里的文本，一行一个。
-
-    访达的「拷贝路径」也是这个格式，别的软件（终端、编辑器）能直接贴。
-    """
+    """若干条路径 → 剪贴板里的文本，一行一个（访达的「拷贝路径」也是这个格式）。"""
     return "\n".join(str(path) for path in paths)
 
 
 def open_with_default_app(path: Path) -> str | None:
     """用系统为这类文件设定的**默认应用**打开它，返回一句需要说出口的话（成功时没有）。
 
-    与 :func:`reveal_in_finder` 相反的那一头：那个把文件**留在访达里挑出来**，这个把它
-    **交给别的程序**（预览、Photoshop…）。同样只读：打开成什么样是那个程序自己的事，
-    Gallery 既不读像素也不写文件。
-
-    **成功时不说话**（``None``）：那个应用自己会弹到前台，那就是反馈，横幅不必再抢一句。
-    失败必须说一句 —— 静默不动会被当成程序卡住了。
-
-    **没有「打开方式…」那种选应用的版本**：那会改掉系统对这个类型的默认设置，那是改
-    用户系统设置的事，不该由 Gallery 的一个菜单项顺手做掉。要换关联程序请去访达。
+    与 :func:`reveal_in_finder` 相反的那一头（那个留在访达里挑出来，这个交给别的程序）。
+    **成功时不说话**：那个应用自己会弹到前台，那就是反馈；失败必须说一句 —— 静默不动会被
+    当成程序卡住了。**没有「打开方式…」那种选应用的版本**：那会改掉系统对这个类型的默认
+    设置，不该由 Gallery 的一个菜单项顺手做掉。
     """
     target = Path(path)
     if QDesktopServices.openUrl(QUrl.fromLocalFile(str(target))):
@@ -121,9 +80,8 @@ def open_with_default_app(path: Path) -> str | None:
 def reveal_in_finder(paths: Sequence[Path]) -> str:
     """在访达里选中并露出这些路径，返回一句说清**实际做了什么**的中文文案。
 
-    降级只有两级：``open -R`` 起不来 → 用 ``QDesktopServices`` 打开所在文件夹。
-    文案一定与实际动作一致，界面把它原样放进横幅 —— 弹出访达却什么都没选中，
-    比明说「只打开了文件夹」糟糕得多。
+    降级只有两级：``open -R`` 起不来 → 用 ``QDesktopServices`` 打开所在文件夹。文案必须与
+    实际动作一致：弹出访达却什么都没选中，比明说「只打开了文件夹」糟糕得多。
     """
     targets = [Path(path) for path in paths]
     if not targets:

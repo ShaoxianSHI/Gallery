@@ -1,14 +1,8 @@
 """大图查看。
 
-用 ``QGraphicsView`` 而不是自绘控件：坐标变换、滚动、平滑缩放都是现成的 ——
-``AnchorUnderMouse`` 让缩放围绕光标进行，``ScrollHandDrag`` 直接给出拖拽平移。
-
-这里只负责「显示与变换」。两级加载（先预览、后全分辨率）由主窗口决定，
-因为它才知道当前窗口大小与内存预算。
-
-**右键不在这里拼菜单**：视图只报「用户在照片上按了右键、在这个位置」
-（:attr:`DetailView.context_requested`），菜单由 ``MainWindow`` 按网格同一套流程拼
-（ADR 0021）—— 与 :class:`~gallery.ui.browser.grid.PhotoGrid` 一个分工。
+用 ``QGraphicsView`` 而不是自绘控件：坐标变换、滚动、平滑缩放都是现成的（``AnchorUnderMouse``
+让缩放围绕光标，``ScrollHandDrag`` 给出拖拽平移）。这里只负责显示与变换，两级加载（先预览、
+后全分辨率）由主窗口决定；右键菜单也不在这里拼，视图只报「按了右键、在这个位置」（ADR 0021）。
 """
 
 from __future__ import annotations
@@ -47,22 +41,18 @@ from PySide6.QtWidgets import (
 from gallery.ui import theme
 from gallery.ui.viewer.zoom import MAX_FIT_SCALE, MAX_SCALE, ZOOM_STEP, clamp_scale, fit_scale
 
-#: 角落提示的字号。
 OVERLAY_FONT_SIZE = 13
-
-#: 角落提示与视口边缘的距离。
 OVERLAY_MARGIN = 16
 
 #: 回到默认视图的动画时长。再长就显得拖沓，再短就看不出是「平滑」过去的。
 FIT_ANIMATION_MS = 220
 
-#: 判断「已经处于默认视图」的容差：比例用相对误差，位置用屏幕像素 ——
-#: 场景坐标下的偏差在不同缩放下含义完全不同。
+#: 判断「已经处于默认视图」的容差：比例用相对误差，位置用屏幕像素。
 SCALE_EPSILON = 0.002
 CENTER_TOLERANCE_PX = 2.0
 
 
-#: 角标现在只用于「加载失败时说明原因」，不再显示「正在载入」。
+#: 角标只用于「加载失败时说明原因」，不显示「正在载入」。
 _OVERLAY_STYLE = f"""
 QLabel#detailOverlay {{
     background: rgba(150, 40, 40, 0.82);
@@ -77,11 +67,8 @@ QLabel#detailOverlay {{
 class DetailView(QGraphicsView):
     """单张大图的查看器。"""
 
-    #: 用户要求返回（Esc / 回车）。
     request_close = Signal()
-    #: 用户要求切换照片：-1 上一张，+1 下一张。
     request_step = Signal(int)
-    #: 缩放比例变化（用于状态栏显示）。
     zoom_changed = Signal(float)
     #: 用户在照片上按了右键。位置是**窗口坐标**（``QMenu.exec`` 直接吃它）。
     context_requested = Signal(QPoint)
@@ -130,19 +117,11 @@ class DetailView(QGraphicsView):
         self._animation.valueChanged.connect(self._animation_frame)
         self._animation.finished.connect(self._animation_finished)
 
-    # ---- 主题 --------------------------------------------------------------
-
     def _apply_theme(self) -> None:
-        """底色跟着主题走。
-
-        这里以前写死成深色（``#1C1C1E``），于是浅色主题下点开照片会突然变一块黑 ——
-        底色只有一个来源，见 ``ui.theme``。
-        """
+        """底色跟着主题走：写死深色会让浅色主题下点开照片突然变一块黑。"""
         color = theme.current_theme().background
         self.setBackgroundBrush(color)
         self._scene.setBackgroundBrush(color)
-
-    # ---- 状态 --------------------------------------------------------------
 
     @property
     def has_image(self) -> bool:
@@ -158,19 +137,16 @@ class DetailView(QGraphicsView):
             return (0, 0)
         return (self._pixmap.width(), self._pixmap.height())
 
-    # ---- 内容 --------------------------------------------------------------
-
     def set_image(self, image: QImage, *, refit: bool = True) -> None:
         """显示一张图像。
 
         :param refit: 是否重新适配窗口。替换图像（预览 → 全分辨率）时传 ``False``，
-            可以保住用户当前的缩放与位置，不会「跳一下」。
+            可以保住用户当前的缩放与位置。
         """
         self.hide_overlay()
         self.stop_animation()
         pixmap = QPixmap.fromImage(image)
-        # 先放开上一张：32MP 照片的全分辨率副本约 128 MB，
-        # 让新旧两张同时存在会把内存峰值直接翻倍。
+        # 先放开上一张：32MP 照片的全分辨率副本约 128 MB，新旧同时存在会翻倍内存峰值。
         self._item.setPixmap(QPixmap())
         self._pixmap = QPixmap()
         self._scene.setSceneRect(QRectF())
@@ -183,10 +159,8 @@ class DetailView(QGraphicsView):
             self._emit_scale()
 
     def prepare_switch(self) -> None:
-        """切图前的准备：撤掉上一张可能残留的错误提示。
-
-        **刻意不显示任何加载提示**：上一张照片继续留在屏幕上等新图，
-        切图时多一个一闪而过的角标比多等 50ms 更扎眼。
+        """切图前的准备：撤掉上一张可能残留的错误提示，但不显示任何加载提示 ——
+        上一张继续留在屏幕上等新图，一闪而过的角标比多等 50ms 更扎眼。
         """
         if self._overlay.isVisible():
             self.hide_overlay()
@@ -213,8 +187,6 @@ class DetailView(QGraphicsView):
         self._overlay.adjustSize()
         self._overlay.show()
         self._reposition_overlay()
-
-    # ---- 缩放 --------------------------------------------------------------
 
     def fit_to_window(self) -> None:
         if self._pixmap.isNull():
@@ -246,14 +218,11 @@ class DetailView(QGraphicsView):
     def _apply_scale(self, scale: float, *, fitting: bool) -> None:
         self.stop_animation()
         # 「适应窗口」不能套用手动缩放的上限：小图铺满视口需要的倍数会超过 8 倍
-        # （168 像素的占位缩略图在大窗口里要 12 倍以上），一旦卡住，占位图就只占中间
-        # 一小块，全图到了再「变大一圈」。只有手动放大才受 MAX_SCALE 约束。
+        # （168 像素的占位缩略图在大窗口里要 12 倍以上），卡住的话占位图只占中间一小块。
         scale = clamp_scale(scale, maximum=MAX_FIT_SCALE if fitting else MAX_SCALE)
         self.setTransform(QTransform.fromScale(scale, scale))
         self._fit_mode = fitting
         self._emit_scale()
-
-    # ---- 回到默认视图 ------------------------------------------------------
 
     def fit_scale_value(self) -> float:
         """当前窗口下「适应窗口」的比例。"""
@@ -266,8 +235,7 @@ class DetailView(QGraphicsView):
     def animate_to_fit(self) -> None:
         """平滑回到默认视图：适应窗口并把图片摆回正中。
 
-        直接 setTransform 会「跳」一下，用户会瞬间失去方位感；这里把比例与
-        视口中心一起插值，看得到它是怎么过去的。
+        直接 setTransform 会「跳」一下，把比例与视口中心一起插值才看得出它是怎么过去的。
         """
         if self._pixmap.isNull():
             return
@@ -334,8 +302,6 @@ class DetailView(QGraphicsView):
     def _emit_scale(self) -> None:
         self.zoom_changed.emit(self.current_scale)
 
-    # ---- 事件 --------------------------------------------------------------
-
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         """双击图片：平滑回到默认视图（适应窗口并居中）。"""
         if event.button() == Qt.MouseButton.LeftButton and not self._pixmap.isNull():
@@ -347,14 +313,8 @@ class DetailView(QGraphicsView):
     def contextMenuEvent(self, event: QContextMenuEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         """右键照片：把位置告诉窗口，菜单由 ``MainWindow`` 拼（ADR 0021）。
 
-        与网格那侧同一个分工：视图只回答「这一下落在哪」，**菜单里有什么**它不该知道 ——
-        「重命名为」是什么、分组为什么删不掉，这些都在 ``ui.menus`` 里。
-
-        传的是 ``globalPos`` 而不是 ``pos``：``QMenu.exec`` 要的是屏幕坐标，事件里的
-        ``pos`` 相对视口，传过去菜单会贴在大图的左上角。
-
-        **画面上什么都没有时也不弹**：``has_image`` 为假时那不是一张照片，菜单里每一条
-        命令的对象都不存在（照片可能正在解码，或上一次解码失败了）。
+        视图只回答「这一下落在哪」，菜单里有什么它不该知道。传 ``globalPos`` 而不是
+        ``pos``（``QMenu.exec`` 要屏幕坐标）；画面上什么都没有时也不弹。
         """
         if self._pixmap.isNull():
             event.accept()

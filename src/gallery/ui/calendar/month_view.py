@@ -1,17 +1,7 @@
-"""月视图：7 列 × 6 行，每格**一张照片**。
+"""月视图：7 列 × 6 行，每格**一张照片**（当天最早的那张当封面，点它看那天全部）。
 
-照 Google Calendar 月视图的骨架（表头七个星期名、每格左上角是日期，
-下面是这个月的第一张照片铺满整格），而格子里**只画一张** —— 一格一叠条目看着像
-待办清单，而这里是照片：每天摆一张封面，想看那天全部就点它。
-
-一格放得下几张由 `layout.fitted_size` 按**照片自己的比例**算，与年视图同一手法。
-
-**今天只写成蓝字，不加药丸** —— Google 月视图是这么画的（它的周视图里今天才是蓝圆点，
-两处不一样，别抄混）。
-
-**补位格只有日期号，没有照片。** 那 6 × 7 是为了对齐星期几而铺满的：9 月 1 号是周三，
-于是前面要有 8 月 29–31 号、后面要有 10 月 1–9 号。那几格摆的照片**是邻月的**，
-而这一屏回答的是「九月拍了什么」 —— 于是它们只留一个灰日期号，点下去也不做什么。
+**今天只写成蓝字，不加药丸**（周视图里今天才是蓝圆点，别抄混）；**补位格只有日期号、没有
+照片** —— 那 6 × 7 是为了对齐星期几铺满的，而这一屏回答的是「这个月拍了什么」。
 """
 
 from __future__ import annotations
@@ -51,7 +41,6 @@ class MonthView(LevelView):
     def __init__(self, thumbs: ThumbStore, parent: object = None) -> None:  # type: ignore[arg-type]
         super().__init__("month", thumbs, parent)
 
-    # ---- 几何 -------------------------------------------------------------
     def _grid_rect(self) -> QRectF:
         return QRectF(self.rect()).adjusted(16, 6, -16, -14)
 
@@ -72,7 +61,6 @@ class MonthView(LevelView):
             row_height - _CELL_GAP,
         )
 
-    # ---- 绘制 -------------------------------------------------------------
     def paintEvent(self, _event: object) -> None:  # noqa: N802 - 名字是 Qt 定的
         painter = self.begin()
         colors = self.colors
@@ -91,9 +79,7 @@ class MonthView(LevelView):
                 ),
                 label,
                 font_px(_HEAD_FONT_PX),
-                # 「今天那一列」用深色写。**按周日打头的列号问**（与上面那个周末淡底
-                # 同一套），不是 ``today().weekday()`` —— 那一套是周一 0，于是今天在周日
-                # 时高亮的是**周六**那一列。
+                # 「今天那一列」按周日打头的列号问：``weekday()`` 是周一 0，索引列名会差一格。
                 colors.text if index == week_index(self.today()) else colors.muted,
                 Qt.AlignmentFlag.AlignCenter,
             )
@@ -126,9 +112,7 @@ class MonthView(LevelView):
         if cover is None:
             return
 
-        # **一格一张**：挑哪一张问核心层的 ``cell_cover``（当天最早的那张），与年 / 周
-        # 两层同一个来源 —— 比例按它自己的来，竖幅照片上下留边、横向照片左右留边，
-        # 与网格视图同一手法。
+        # **一格一张**：挑哪一张问核心层的 ``cell_cover``，与年 / 周两层同一个来源。
         area = QRectF(
             cell.left(),
             cell.top() + _NUMBER_HEIGHT,
@@ -137,11 +121,10 @@ class MonthView(LevelView):
         )
         image = self.photo(cover)
         if image is None:
-            # 缩略图还没到：画一个安静的占位（一个居中的小圆点），不留空白
+            # 缩略图还没到：画一个居中的小圆点。**别铺满格灰块** —— 照片到了是缩在格子里摆的，
+            # 比整格小一圈，两帧摆在一起就是「闪一下，尺寸还在变」。
             dot(painter, area.center(), 2.5, colors.faint)
             return
-        # **按照片自己的比例缩进去再摆**：竖幅照片上下留边、横向照片左右留边，
-        # 与周视图那一格同一种画法（见 ``painting.paint_cell_photo``）。
         width, height = fitted_size(image.width(), image.height(), area.width(), area.height())
         fitted = QRectF(
             area.center().x() - width / 2, area.center().y() - height / 2, width, height
@@ -155,7 +138,6 @@ class MonthView(LevelView):
             text=colors.text,
         )
 
-    # ---- 交互 -------------------------------------------------------------
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         grid = self._grid_rect()
         column = grid.width() / 7
@@ -166,19 +148,14 @@ class MonthView(LevelView):
         row = int((point.y() - body_top) // row_height)
         if 0 <= column_index < 7 and 0 <= row < 6:
             day = month_matrix(self._anchor)[row * 7 + column_index]
-            # **补位格点了不动**：那一格是邻月的日子，而这一屏是本月。
-            # 摊开邻月那天的照片会让人以为「这一格明明是空的，怎么点出东西来」。
+            # **补位格点了不动**：摊开邻月那天的照片会让人以为「这一格明明是空的」。
             if not in_month(day, self._anchor):
                 return
             self.set_selected(day)
             self.select_cell(self.photos_of(day), day_label(day))
 
-    # ---- 缩略图窗口 -------------------------------------------------------
     def visible_refs(self) -> list[PhotoRef]:
-        """一屏放得下的那些天，各要一张缩略图（每天就一张）。
-
-        **补位格不要**：那里不摆照片，为它解码出来的那张永远不会被画出来。
-        """
+        """一屏放得下的那些天，各要一张缩略图（**补位格不要**：那里不摆照片，解出来永远画不上）。"""
         refs: list[PhotoRef] = []
         for index, day in enumerate(month_matrix(self._anchor)):
             cell = self._day_cell(index)

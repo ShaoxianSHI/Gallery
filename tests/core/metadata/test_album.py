@@ -1,15 +1,6 @@
-"""新建相册的测试（ADR 0022）。
+"""新建相册的测试（ADR 0022）：在 ``tmp_path`` 里进行。
 
-全部在 ``tmp_path`` 里进行：这里测的操作**真的会往用户的目录里写东西**，所以每个
-「库」都是当场造的临时目录，照片也是临时文件。
-
-钉住的是四类风险：
-
-1. **只增不改** —— 建出来的是一个**全新的空文件夹**，用户原有的目录与照片一个字节都没动。
-2. **绝不覆盖** —— 同名时按访达的办法改叫「新建相册 2」。
-3. **边界** —— 目标不是文件夹、不在库内、往配置目录里建、名字非法，一律拒绝且**什么都不建**。
-4. **记账与撤销** —— 写进 ``journal/``，而它**不进撤销栈**（撤销就是删文件夹，红线 1）。
-"""
+**只增不改、绝不覆盖**、写进 ``journal/`` 但不进撤销栈（红线 1）。"""
 
 from __future__ import annotations
 
@@ -29,9 +20,6 @@ def _listing(directory: Path) -> list[str]:
     return sorted(item.name for item in directory.iterdir())
 
 
-# ---- 真的会建 ----------------------------------------------------------------
-
-
 def test_creates_an_empty_folder_where_it_should(library: Path) -> None:
     """建在指定的那一层里，名字是默认的「新建相册」，内容是空的。"""
     result = create_album(library, library / "奈良")
@@ -45,10 +33,7 @@ def test_creates_an_empty_folder_where_it_should(library: Path) -> None:
 
 
 def test_nothing_else_on_that_level_is_touched(library: Path) -> None:
-    """只增不改：用户的目录里只多了一项，别的什么都没动。
-
-    这是红线 1 的落点 —— 新建相册绝不能顺手带走、改名或清空用户的东西。
-    """
+    """只增不改（红线 1）：用户的目录里只多了一项，别的什么都没动。"""
     before = _listing(library)
     inside = _listing(library / "奈良")
     photo = library / "京都" / "一张.jpg"
@@ -71,16 +56,10 @@ def test_a_custom_name_is_honoured(library: Path) -> None:
 
 
 def test_the_new_folder_carries_no_gallery_sidecar(library: Path) -> None:
-    """建出来的相册是**干净的**：里面只有用户自己往里放的东西。
-
-    ``.gallery`` 只出现在库根上（红线 6），绝不会被顺手塞进每一个新建的相册里。
-    """
+    """建出来的相册是**干净的**：``.gallery`` 只出现在库根上（红线 6）。"""
     create_album(library, library / "奈良")
 
     assert list((library / "奈良" / DEFAULT_ALBUM_NAME).iterdir()) == []
-
-
-# ---- 绝不覆盖 ---------------------------------------------------------------
 
 
 def test_a_duplicate_name_is_numbered_like_the_finder(library: Path) -> None:
@@ -103,9 +82,6 @@ def test_the_existing_directory_is_left_alone(library: Path) -> None:
 
     mine = library / "奈良" / DEFAULT_ALBUM_NAME
     assert _listing(mine) == ["我的照片.jpg"], "用户自己那个目录里不该多出任何东西"
-
-
-# ---- 边界：建不出来的时候，一个字节都不写 ------------------------------------
 
 
 def test_refuses_a_target_that_is_not_a_folder(library: Path) -> None:
@@ -153,10 +129,7 @@ def test_refuses_to_build_inside_the_config_directory(library: Path) -> None:
     ],
 )
 def test_refuses_names_that_may_not_be_used(library: Path, name: str, fragment: str) -> None:
-    """名字的规矩与改名共用同一份实现（``naming.clean_name``），判据与文案都一样。
-
-    而且**抛异常之前一个字节都没写**。
-    """
+    """名字的规矩与改名共用 ``naming.clean_name``：判据与文案都一样，且抛异常前一个字节都没写。"""
     with pytest.raises(AlbumError) as caught:
         create_album(library, library / "奈良", name)
 
@@ -179,9 +152,6 @@ def test_a_read_only_target_is_reported_not_swallowed(library: Path) -> None:
     assert _listing(target) == []
 
 
-# ---- 记账与撤销 -------------------------------------------------------------
-
-
 def test_the_creation_is_journaled(library: Path) -> None:
     """写一条 ``action=create`` 的记录：建在哪、建了什么、什么时候、结果如何。"""
     result = create_album(library, library / "奈良")
@@ -197,10 +167,7 @@ def test_the_creation_is_journaled(library: Path) -> None:
 
 
 def test_creating_an_album_is_not_undoable(library: Path) -> None:
-    """撤销一次新建就是删掉一个文件夹，而删除只许用户亲手触发（红线 1）。
-
-    所以 ``⌘Z`` 那一摞栈压根不收它 —— 紧接着的那一次改名才是能撤的。
-    """
+    """撤销新建就是删文件夹，而删除只许用户亲手触发（红线 1）—— ``⌘Z`` 那一摞不收它。"""
     create_album(library, library / "奈良")
 
     assert next_undo_label(library) is None

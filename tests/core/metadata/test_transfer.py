@@ -1,16 +1,6 @@
-"""「移动到相册」的测试（ADR 0019）。
+"""「移动到相册」的测试（ADR 0019）：在 ``tmp_path`` 里进行。
 
-全部在 ``tmp_path`` 里进行：这里测的操作**真的会让用户的照片离开原处**，所以每个
-「照片」都是当场造出来的临时文件，一个字节也不许落到真实相册里。
-
-钉住的是五类风险：
-
-1. **动的是位置不是内容** —— 像素、修改时间都不变，原处**不再有**它。
-2. **绝不覆盖** —— 目标已有同名时改叫「一张 2.jpg」（与粘贴同一份实现）。
-3. **边界** —— 本来就在那个相册里的原样跳过、文件夹不挪进自己的子目录。
-4. **记账** —— 每一项都写 ``action=move`` 进 ``journal/``。
-5. **能撤销** —— ⌘Z 把它挪回原来的相册，**一次 ⌘Z 撤一整批**；原位置被占了就不动它。
-"""
+**动的是位置不是内容**、**绝不覆盖**（同名改叫「一张 2.jpg」）、**边界**、**一次 ⌘Z 撤一整批**。"""
 
 from __future__ import annotations
 
@@ -40,10 +30,8 @@ def _move(root: Path, target: Path, *sources: Path):
 
 
 def _rename(root: Path, entry: Path, new_name: str) -> None:
-    """走真正的改名入口，这样才会写下一条 ``action=rename`` 的记录。
-
-    直接 ``Path.rename()`` 不会记账 —— 而撤销栈是**照着日志重放**出来的，
-    没记账的改动在这一摞 ⌘Z 里根本不存在。
+    """走真正的改名入口，这样才会写下一条 ``action=rename`` 的记录：直接 ``Path.rename()``
+    不记账，而撤销栈是照着日志重放出来的 —— 没记账的改动在这摞 ⌘Z 里根本不存在。
     """
     rename_entry(root, PhotoRef(path=entry, size=entry.stat().st_size, mtime_ns=0), new_name)
 
@@ -78,8 +66,7 @@ def test_move_never_overwrites_a_same_named_file(library: Path) -> None:
     created = library / "奈良" / "一张 2.jpg"
     assert [item.created for item in result.moved] == [created]
     assert result.moved[0].renamed
-    # 目标里原来那张**一个字节都没变** —— 那可能是用户自己放进去的。
-    # （比字节而不是比像素：JPEG 存回去会掉色，拿颜色断言等于在测编解码器。）
+    # 目标里原来那张一个字节都没变（比字节不比像素：JPEG 存回去会掉色）。
     assert taken.read_bytes() == before
 
 
@@ -108,10 +95,8 @@ def test_move_skips_what_is_already_there(library: Path) -> None:
 
 
 def test_move_resolves_symlinks_before_comparing(library: Path) -> None:
-    """「已经在那儿」要按**磁盘上的真实位置**比（macOS 上 ``/var`` 链到 ``/private/var``）。
-
-    不解析就会判成「不在同一个目录」，于是把照片原地又「移动」一次，
-    平白多出一份「一张 2.jpg」。
+    """「已经在那儿」要按**磁盘上的真实位置**比（macOS 上 ``/var`` 链到 ``/private/var``）：
+    不解析就会判成「不在同一个目录」，于是把照片原地又「移动」一次，多出一份「一张 2.jpg」。
     """
     source = library / "京都" / "一张.jpg"
     linked = library / "别名"
@@ -158,9 +143,6 @@ def test_move_stops_at_the_next_item_when_cancelled(library: Path) -> None:
     assert _names(library / "京都") == ["一张.jpg", "另一张.jpg"]
 
 
-# ---- 记账与撤销 --------------------------------------------------------------
-
-
 def test_move_journals_every_item(library: Path) -> None:
     """每一项都记一条 ``action=move``，从哪儿来、到哪儿去都写清楚。"""
     _move(library, library / "奈良", library / "京都" / "一张.jpg")
@@ -200,8 +182,7 @@ def test_undo_is_gone_after_it_ran(library: Path) -> None:
 
 
 def test_undo_refuses_when_the_original_place_is_taken(library: Path) -> None:
-    """原位置被占了就不动它 —— 替用户腾位置等于删掉他放进去的东西（红线 1）。
-
+    """原位置被占了就不动它（红线 1）—— 替用户腾位置等于删掉他放进去的东西，
     与取回废纸篓同一个取向：宁可撤不回来，也不替用户做删除的决定。
     """
     source = library / "京都" / "一张.jpg"
@@ -259,8 +240,7 @@ def test_a_move_is_not_confused_with_a_rename_record(library: Path) -> None:
 
 def test_move_reports_failure_for_an_unwritable_target(library: Path) -> None:
     """目标写不进去要如实报中文原因，而不是抛一个栈给用户看。"""
-    # **只读相册必须在库里**：它是一个合法的目标相册，只是写不进去。放在库外的话，
-    # 守卫（``transfer._guard``）会先一步挡下来，压根走不到「写不进去」这条路上。
+    # **只读相册必须在库里**：放库外的话 ``transfer._guard`` 会先一步挡下来，走不到这里。
     locked = library / "只读相册"
     locked.mkdir()
     os.chmod(locked, stat.S_IRUSR | stat.S_IXUSR)
@@ -275,16 +255,10 @@ def test_move_reports_failure_for_an_unwritable_target(library: Path) -> None:
     assert (library / "京都" / "一张.jpg").exists(), "没挪成就必须还在原地"
 
 
-# ---- 守卫：目标必须落在库里 -----------------------------------------------------
-
-
 def test_a_target_outside_the_library_is_refused(library: Path, tmp_path: Path) -> None:
-    """**移到库外一律拒绝** —— 那是「把用户的文件搬出 Gallery 管得着的地方」。
+    """**移到库外一律拒绝** —— 那是「把用户的文件搬出 Gallery 管得着的地方」（红线 1）。
 
-    界面上够不到（目标只能从网格里的相册挑），但这是四个写操作里唯一没有过这道闸的
-    一个，而它恰好是红线 1 点名的那个。缺了这道闸，别的入口日后一旦露出来，
-    用户的照片就被搬走了，且没有任何一条后续流程能撤回。
-    """
+    界面上够不到，但缺了这道闸，别的入口日后一旦露出来，照片就被搬走且撤不回来。"""
     outside = tmp_path / "库外"
     outside.mkdir()
 
@@ -297,9 +271,7 @@ def test_a_target_outside_the_library_is_refused(library: Path, tmp_path: Path) 
 def test_the_library_root_is_a_legal_target(library: Path) -> None:
     """**库根本身不挡**：守卫要挡的是「跑到库外」，不是「落在库里」。
 
-    与 ``rename._guard`` / ``trash._guard`` 挡库根的理由不同 —— 那两个查的是**源**
-    （把库本身改名或删掉，Gallery 就再也找不到照片了）；对目标来说那两件事都不成立。
-    """
+    与 ``rename._guard`` / ``trash._guard`` 不同 —— 那两个查的是**源**，对目标不成立。"""
     result = _move(library, library, library / "京都" / "一张.jpg")
 
     assert result.moved and (library / "一张.jpg").exists()

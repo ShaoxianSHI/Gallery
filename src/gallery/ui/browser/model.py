@@ -1,25 +1,8 @@
 """缩略视图的数据源。
 
-模型保管的是**一层里的条目**：相册（子文件夹）与照片混在一起，相册在前。
-它只负责展示字段与缩略图缓存，**不负责解码**：需要哪张图由视图通知
-（``viewport_changed``），结果由 :meth:`set_thumbnail` 回填，所以 ``data()`` 永不阻塞。
-
-缩略图在这里被缩放到图标尺寸再缓存 —— 一次平滑缩放，换来每次重绘都省下的一次缩放。
-
-**实时监听靠这里的插行 / 摘行**：磁盘上多一张少一张，界面就地改一格，不重扫整层
-（ADR 0013）。因此同一个路径在网格上只可能有一行 —— :meth:`insert_entry` 与
-:meth:`append` 都会先看看它在不在。
-
-**刻意不提供悬停提示**：格子底下的文件名已经说清了是哪一张，其余信息（格式、大小、
-时间、坐标、拍摄参数）在大图右侧的元数据面板里（⌘I）随时能看，对着一屏照片时再悬停
-反而晃眼。这个提示曾经有过，是按「可有可无」删掉的。
-
-顺带留一句，免得有人重查一遍：删它**不是因为它坏**。当年「打开照片时照片的位置上闪出
-一个装着元数据的白色小窗」查下来是元数据面板换内容时把旧控件 ``setParent(None)`` 摘成
-了顶层窗口（见 :meth:`gallery.ui.panels.metadata.MetadataPanel._fill` 的注释），与悬停
-提示无关。不过顺带一提，Qt 在这里确实有两处真实的毛刺，留个记录：悬停是在鼠标停下那一刻
-就排好的，而 ``QToolTip.hideText()`` 不取消已排好的定时器；Qt 收到 ``ToolTip`` 事件时也不
-检查目标控件还在不在屏幕上（实测把事件递给已经不可见的控件，它照弹）。
+模型保管**一层里的条目**（相册在前、照片在后），只负责展示字段与缩略图缓存，
+``data()`` 永不阻塞。实时监听靠插行 / 摘行就地改一格、不重扫整层（ADR 0013），
+所以同一个路径在网格上只可能有一行；也刻意不提供悬停提示（信息都在元数据面板里）。
 """
 
 from __future__ import annotations
@@ -78,16 +61,12 @@ class PhotoListModel(QAbstractListModel):
     ) -> None:
         super().__init__(parent)
         self._entries: list[GridEntry] = []
-        #: 与 :attr:`_entries` **逐行平行**的排序键（见 :func:`_sort_key`）。
-        #:
-        #: 存在的理由只有一个：``_insert_position`` 要逐行比较，而比较用的键里有一项
-        #: 是 ``name.casefold()``。不记下来就得每一行现算一次 —— 三万行的一层里插一行，
-        #: 光是三万次 ``casefold()`` 就要好几秒（实测 cProfile 占了 17%）。
-        #: 记一份之后这一项是纯列表取值。**任何改动 ``_entries`` 的地方都要同步它。**
+        #: 与 :attr:`_entries` **逐行平行**的排序键（见 :func:`_sort_key`）。存在的理由只有
+        #: 一个：键里的 ``name.casefold()`` 不记下来就得每行现算（三万行插一行要好几秒）。
+        #: **任何改动 ``_entries`` 的地方都要同步它。**
         self._keys: list[tuple[int, str]] = []
         self._row_by_path: dict[Path, int] = {}
-        #: 组卡片按**封面照片**索引。按关键词分组时一张照片可以当好几个组的封面，
-        #: 所以这里是路径 → 多个行号，而 ``_row_by_path`` 是路径 → 一个行号。
+        #: 组卡片按**封面照片**索引：一张照片可以当好几个组的封面，所以是路径 → 多个行号。
         self._group_rows_by_cover: dict[Path, list[int]] = {}
         self._pixmaps: OrderedDict[Path, _CachedThumb] = OrderedDict()
         self._icon_edge = icon_edge
@@ -133,8 +112,7 @@ class PhotoListModel(QAbstractListModel):
     def shows_path(self, path: Path) -> bool:
         """这一层里还有没有这个东西：作为条目本身，或者作为某个分组卡片的封面。
 
-        「在途的缩略图结果还该不该认」只应由这一处说了算：成功回填与失败上报是同一件事
-        的两面，用同一个判据才不会一边丢、一边当成故障报给用户。
+        「在途的缩略图结果还该不该认」只由这一处说了算：回填与失败上报是同一件事的两面。
         """
         target = Path(path)
         return target in self._row_by_path or target in self._group_rows_by_cover
@@ -144,8 +122,7 @@ class PhotoListModel(QAbstractListModel):
     def replace_entry(self, row: int, entry: GridEntry) -> bool:
         """把某一行换成新的条目引用（重命名后路径变了）。返回是否替换成功。
 
-        刻意**不重新扫描**：改个名字而已，让整屏闪回占位框再一张张弹回来太蠢。
-        已经缩放好的缩略图顺手搬到新键上，于是这一格连闪都不闪。
+        **不重新扫描**：改个名字而已。已经缩放好的缩略图顺手搬到新键上，这一格连闪都不闪。
         """
         if not 0 <= row < len(self._entries) or isinstance(entry, GroupRef):
             return False
@@ -174,8 +151,7 @@ class PhotoListModel(QAbstractListModel):
     def remove_rows(self, rows: Sequence[int]) -> list[GridEntry]:
         """删掉若干行，返回被删掉的条目（按它们的原顺序）。
 
-        删除是就地摘行而不是重扫：整屏闪回占位框、再一张张弹回来太蠢。内存里缓存的
-        缩略图也一起丢掉 —— 那些路径上已经没有文件了。
+        就地摘行而不是重扫；内存里缓存的缩略图也一起丢掉 —— 那些路径上已经没有文件了。
         """
         targets = sorted({row for row in rows if 0 <= row < len(self._entries)}, reverse=True)
         removed: list[GridEntry] = []
@@ -197,9 +173,7 @@ class PhotoListModel(QAbstractListModel):
     def remove_paths(self, paths: Iterable[Path]) -> list[GridEntry]:
         """按路径摘掉若干行，返回被摘掉的条目（按网格里的先后顺序）。
 
-        实时监听用：磁盘上少了一个文件，界面上就该少一格，不必重扫整层（ADR 0013）。
-        分组卡片不会经这条路被摘掉 —— 它的行号不走 ``_row_by_path``；组里少掉的那张
-        会在重排时自然消失。
+        实时监听用（ADR 0013）。分组卡片不走这条路 —— 它的行号不在 ``_row_by_path`` 里。
         """
         wanted = {Path(path) for path in paths}
         rows = sorted({row for path, row in self._row_by_path.items() if path in wanted})
@@ -224,24 +198,20 @@ class PhotoListModel(QAbstractListModel):
     def insert_entry(self, entry: GridEntry, *, whole_level: bool = False) -> int:
         """把一条**取回来的**条目插回它该在的行，返回那一行的行号。
 
-        撤销删除之后用：按「同一目录内（相册在前，名字）」插到正确的位置，与扫描器的
-        排序一致（见 ``scanner``）。一个兄弟节点都不在屏幕上时（用户把它们都删了）
-        就追加到末尾 —— 顺序在下一次扫描时自然归位，不值得为它重扫整层。
+        撤销删除之后用：按「同一目录内（相册在前，名字）」插到与扫描器排序一致的位置，
+        一个兄弟节点都不在屏幕上时追加到末尾。
 
         :param whole_level: 这一层不是同一个目录时（平铺模式、分组视图）置 ``True``：
-            「兄弟节点」这个前提在那儿不成立，位置要在整层里按名字找。监听往平铺层里
-            插一张照片必须用它，否则它会被追加到末尾，和旁边的照片错位（ADR 0013）。
+            「兄弟节点」这个前提不成立，位置要在整层里按名字找；监听往平铺层里插一张
+            照片必须用它，否则会被追加到末尾而与旁边的照片错位（ADR 0013）。
         """
         if isinstance(entry, GroupRef):
             # 撤销删除取回的是磁盘上的东西，不会有分组卡片从这里回来。
             return -1
         existing = self._row_by_path.get(entry.path, -1)
         if existing >= 0:
-            # 同一个路径在网格上只可能有一行：监听报上来的新增与撤销取回可能撞上同一张。
-            # 既然来的是一份**更新的**引用，就顺手把这一行换掉 —— 留着旧的大小与修改
-            # 时间，下一次取缩略图用的缓存 key 会对不上，那一格就再也回不来。
-            # （云盘同步中的照片正是这么卡住的：先以半截的样子出现，补完后又报一次
-            # 「创建」，而这一行还挂着半截时的大小。见 ADR 0013。）
+            # 同一个路径只可能有一行：来的是一份**更新的**引用，就顺手换掉 —— 留着旧的大小
+            # 与修改时间会让取缩略图的缓存 key 对不上，那一格再也回不来（ADR 0013）。
             self.replace_entry(existing, entry)
             return existing
         row = self._insert_position(entry, whole_level=whole_level)
@@ -255,8 +225,8 @@ class PhotoListModel(QAbstractListModel):
     def append(self, entries: Sequence[GridEntry]) -> None:
         """追加一批条目（扫描是流式的，界面不等整层扫完就能出图）。
 
-        已经在屏幕上的路径会被跳过：扫描还在流式上屏时用户又丢进来一张照片，那张会由
-        监听单独插进来（ADR 0013），两处都收下就会出现两格同一张照片。
+        已经在屏幕上的路径会被跳过：那张会由监听单独插进来（ADR 0013），两处都收下就会
+        出现两格同一张照片。
         """
         known = set(self._row_by_path)
         fresh: list[GridEntry] = []
@@ -287,9 +257,8 @@ class PhotoListModel(QAbstractListModel):
     def reorder(self, entries: Sequence[GridEntry]) -> None:
         """把这一层按新顺序重排（分组 / 排序之后调用）。
 
-        **刻意不清缩略图缓存**：重排只是同一批照片换了位置，缓存按路径索引，清掉等于
-        让整屏缩略图从磁盘缓存重读重缩放一遍。行的内容变了，于是发一次 reset 让视图
-        整体重画 —— 这一次重排换来的是排完版之后不再有格子错位。
+        **刻意不清缩略图缓存**：重排只是同一批照片换位置，而缓存按路径索引，清掉等于
+        让整屏从磁盘缓存重读重缩放一遍。
         """
         self.beginResetModel()
         self._entries = list(entries)
@@ -300,11 +269,9 @@ class PhotoListModel(QAbstractListModel):
     def set_thumbnail(self, path: Path, image: QImage, edge: int = 0) -> None:
         """回填一张缩略图（相册与分组卡片的缩略图就是它们的封面）。必须从主线程调用。
 
-        :param edge: 这张图是按哪个长边缩好的（流水线在工作线程里缩的，见 ADR 0015）。
-            ``0`` 表示没缩过 —— 这时退回按当前 :attr:`icon_edge` 在这里缩一次，
-            好让这个方法被直接调用时也依然正确。**记账用的就是这个值**：传进来的
-            边长与当前档位对不上时 :meth:`needs_thumbnail` 会说还需要，于是
-            切档瞬间在途的结果会自己被重取顶替，不会把格子填歪。
+        :param edge: 这张图是按哪个长边缩好的（见 ADR 0015）。``0`` 表示没缩过 ——
+            退回按当前 :attr:`icon_edge` 在这里缩一次。**记账用的就是这个值**：边长与
+            当前档位对不上时 :meth:`needs_thumbnail` 会说还需要，在途的结果会被顶替。
         """
         if not self.shows_path(path):
             return  # 条目已经被换层清掉了，直接丢弃
@@ -328,9 +295,8 @@ class PhotoListModel(QAbstractListModel):
     def set_icon_edge(self, edge: int) -> None:
         """切换缩略图尺寸。
 
-        **刻意不清空已有缩略图**：清空会让整屏先闪成占位框、再一张张弹回来。
-        旧图由委托按新尺寸缩放显示（略软），新图到了原地替换，用户看不到跳变。
-        哪些条目需要按新尺寸重取，由 :meth:`needs_thumbnail` 回答。
+        **刻意不清空已有缩略图**：清掉会让整屏先闪成占位框再一张张弹回来。旧图由委托
+        按新尺寸缩放显示，新图到了原地替换。
         """
         self._icon_edge = edge
 
@@ -341,8 +307,7 @@ class PhotoListModel(QAbstractListModel):
     def thumbnail_pixmap(self, path: Path) -> QPixmap | None:
         """这张照片已经缓存好的缩略图（没有就返回 ``None``）。
 
-        打开大图时先用它顶上：立刻显示的是**正确那张照片**，只是尺寸小一些 ——
-        比留着上一张照片、或闪一下黑屏都好。
+        打开大图时先用它顶上：立刻显示的是**正确那张照片**，只是尺寸小一些。
         """
         cached = self._pixmaps.get(path)
         return cached.pixmap if cached is not None else None
@@ -381,8 +346,7 @@ class PhotoListModel(QAbstractListModel):
             return entry.name
         # ToolTipRole 刻意不答：卡片不提供悬停提示，理由见模块文档那一段。
         if role == int(Qt.ItemDataRole.DecorationRole):
-            # 还没有缩略图时返回 None，由委托画占位（相册与分组画文件夹图标），
-            # 模型不阻塞等待。组卡片的封面就是组内第一张照片。
+            # 没有缩略图时返回 None，由委托画占位（相册与分组画文件夹图标），不阻塞等待。
             cached = self._pixmaps.get(_cover_of(entry))
             return cached.pixmap if cached is not None else None
         if role == ENTRY_ROLE:
@@ -402,18 +366,12 @@ class PhotoListModel(QAbstractListModel):
     def _insert_position(self, entry: GridEntry, *, whole_level: bool = False) -> int:
         """这条条目该插在第几行：排在它后面的第一行，或末尾。
 
-        默认只看**同一个目录**里的邻居（相册在前、同类按名字，与扫描一致）；整层不是
-        一个目录时（平铺模式、分组视图）传 ``whole_level=True``，这时在整层里按同一
-        把尺子找位置。
+        默认只看**同一个目录**里的邻居（相册在前、同类按名字，与扫描一致）；``whole_level``
+        为真时在整层里按同一把尺子找位置。已经有分组 / 排序时改由调用方重排整层 ——
+        那时「排在哪里」由排出来的顺序说了算。
 
-        已经有分组 / 排序时改由调用方重排整层（见 :meth:`insert_entry` 的说明）——
-        那时「排在哪里」要由排出来的顺序说了算，按名字猜没有意义。
-
-        **这里原本是整个网格里最贵的一段纯 Python。** 两处重复计算都提到循环外了：
-        ``entry.path.parent`` 不是属性访问而是每次现造一个 ``Path`` 对象，写在
-        ``and`` 的右边就意味着**每一行重算一遍同一个值**；而 ``_sort_key(other)`` 里的
-        ``name.casefold()`` 改成查那份与 :attr:`_entries` 平行的 :attr:`_keys`。
-        实测三万行的一层里插一行：48 ms → 6 ms。
+        ``entry.path.parent`` 与 ``name.casefold()`` 都提到了循环外：写在 ``and`` 右边就是
+        每行重算一遍同一个值，而 :attr:`_keys` 让后者变成纯列表取值（三万行插一行 48 → 6 ms）。
         """
         key = _sort_key(entry)
         parent = entry.path.parent

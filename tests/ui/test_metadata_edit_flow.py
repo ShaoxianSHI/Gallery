@@ -1,16 +1,8 @@
-"""「编辑元数据」的界面测试（ADR 0030 / 0031 / 0032）。
+"""「编辑元数据」的界面测试（ADR 0030 / 0031 / 0032）：菜单摆不摆得对、对话框自己
+（预填、读成 ``PlaceEdit``、不合法时不关自己）、以及写完之后横幅/模型/⌘Z 都跟上。
 
-三块：
-
-1. **菜单摆不摆得对** —— 单选照片有、多选没有、分组卡片没有；没装 exiftool 时更没有
-   （摆一条点下去只会报错的，比没有更糟）。
-2. **对话框自己** —— 预填照片此刻的值、把用户填的读成 ``PlaceEdit``、坐标不合法时**不关
-   自己**并说清是哪一处。
-3. **写完之后** —— 横幅把「已经发生的事」说出来、网格里那一行换了新引用、⌘Z 撤得回去。
-
-**不碰真 exiftool**：窗口建好之后把库里的 writer 换成一份内存里的假表（与
-``tests/core/metadata/test_writeback.py`` 同一形状）。于是这条链在没装 exiftool 的机器上
-也照样跑，而真去起 exiftool 的那一半在那份测试里。
+**不碰真 exiftool**：窗口建好之后把库里的 writer 换成一份内存里的假表，于是这条链在没装
+exiftool 的机器上也照样跑。
 """
 
 from __future__ import annotations
@@ -116,8 +108,8 @@ def window(qt_app: QApplication, root: Path, writer: FakeWriter) -> Iterator[Mai
 def _enter_album(qt_app: QApplication, window: MainWindow, root: Path) -> int:
     """进那个相册并等这一层排好，返回照片那一行的行号。
 
-    列一层是**后台**跑的：转一圈事件循环不等于扫完了（``test_album_cover_flow`` 里
-    写着同一段理由），所以必须等 ``row_of_path`` 真的能给出行号。
+    列一层是**后台**跑的：转一圈事件循环不等于扫完了，所以必须等 ``row_of_path`` 真的能
+    给出行号。
     """
     window.set_browse_mode(BROWSE_MODE_ALBUMS)
     window.enter_folder(root / "京都")
@@ -159,9 +151,6 @@ def _photo_ref(window: MainWindow, root: Path) -> object:
     return window._model.photo_at(row)
 
 
-# ---- 入口摆不摆 ----------------------------------------------------------------
-
-
 def test_the_photo_menu_has_it_in_the_write_group(
     qt_app: QApplication, window: MainWindow, root: Path
 ) -> None:
@@ -196,9 +185,6 @@ def test_it_disappears_when_exiftool_is_missing(
     qt_app.processEvents()
 
     assert "编辑元数据…" not in _context_at(window, row)
-
-
-# ---- 对话框 --------------------------------------------------------------------
 
 
 def _dialog(
@@ -296,7 +282,7 @@ def test_the_clear_button_leaves_the_capture_time_alone(qt_app: QApplication) ->
 def test_the_dialog_returns_the_final_state_not_a_patch(qt_app: QApplication) -> None:
     """``MetadataEdit`` 收的是**最终状态**：空框表示「清空那一层」，不是「别动它」。
 
-    这正是对话框打开时要把三层地名与坐标全填上的原因（见 ``MetadataEdit`` 的文档）。
+    这正是对话框打开时要把三层地名与坐标全填上的原因。
     """
     dialog = _dialog(None, PlaceState(city="南京", latitude=32.06, longitude=118.79))  # type: ignore[arg-type]
 
@@ -388,15 +374,13 @@ def test_the_journal_has_the_field_level_record(
     )
 
     records = read_records(root)
-    # **成对**：先记「打算改」，动完文件再记终态（红线 4 —— 写入与落盘之间那一下崩溃
-    # 不能什么都不留下）。两记的是同一件事，撤销栈按「终态顶掉 pending」处理，
-    # 所以用户按一次 ⌘Z 就够。
+    # **成对**：先记「打算改」，动完文件再记终态（红线 4 —— 写入与落盘之间那一下崩溃不能
+    # 什么都不留下）。两记的是同一件事，撤销栈按「终态顶掉 pending」处理，用户按一次 ⌘Z 就够。
     assert [record.action for record in records] == ["metadata", "metadata"]
     assert [record.result for record in records] == ["pending", "ok"]
     assert records[0].changes == records[1].changes
     # 只填了城市，坐标是城市库里查出来的那个 —— 于是两组字段都在记录里，各带原值。
-    # 「删掉海拔与定位时间」那三条**不在里面**：这张照片本来就没有它们，写入它们是空操作，
-    # 空操作不该进日志（否则 ⌘Z 会去「撤销」一件根本没发生过的事）。
+    # 「删掉海拔与定位时间」那三条**不在里面**：这张照片本来就没有它们，空操作不该进日志。
     assert [change.tag for change in records[0].changes] == [
         "EXIF:GPSLatitude",
         "EXIF:GPSLatitudeRef",
@@ -431,8 +415,8 @@ def test_writing_the_capture_time_goes_through_the_whole_way(
 ) -> None:
     """**改拍摄时间走的是同一条路**：写盘、记账、横幅、⌘Z，一个都不少。
 
-    ``DateTimeOriginal`` 与 ``OffsetTimeOriginal`` 是后加进白名单的（ADR 0032），它们
-    与坐标一样必记账、必可撤销 —— 少了这一条，「写回就等于撤销得回」这句话对它们是假的。
+    ``DateTimeOriginal`` 与 ``OffsetTimeOriginal`` 与坐标一样必记账、必可撤销 ——
+    少了这一条，「写回就等于撤销得回」这句话对它们是假的（ADR 0032）。
     """
     writer.fields["EXIF:DateTimeOriginal"] = "2024:05:16 20:52:02"
     _write(
@@ -471,7 +455,7 @@ def test_undo_puts_the_capture_time_back(
 def test_time_and_place_go_out_in_one_write(
     focused: MainWindow, root: Path, writer: FakeWriter
 ) -> None:
-    """**一次保存 = 一条日志 = 一下 ⌘Z**（ADR 0032 决策 4）。
+    """一次保存 = 一条日志 = 一下 ⌘Z（ADR 0032 决策 4）。
 
     分成两次写回的话，用户按了一次保存却要撤两下、横幅也要说两遍 —— 那不是一次操作。
     """
@@ -557,9 +541,6 @@ def test_the_panel_offers_the_editor(qt_app: QApplication, focused: MainWindow) 
     assert panel._edit_button.isEnabled()
     # 页脚在读到元数据之前是藏着的（那时照片还没选中，几句话说了也没用）。
     wait_until(qt_app, lambda: not panel._footer.isHidden())
-
-
-# ---- 字段顺序、实时回填、⌘W 与不可缩放 -----------------------------------------
 
 
 class StubResolver:
@@ -650,8 +631,7 @@ def test_the_city_box_is_a_plain_input(qt_app: QApplication) -> None:
     """**不是下拉。**
 
     那一栏和上面两栏一样是「填一个地方」，朝下的小箭头会让人以为清单是封闭的 ——
-    而城市库里没有的名字（用户自己的门牌、景区）恰恰是最该能填进去的那些。补全仍在，
-    它只是**建议**。
+    而城市库里没有的名字恰恰是最该能填进去的那些。补全仍在，它只是**建议**。
     """
     dialog = _dialog(None, PlaceState(city="苏州"))
 
@@ -660,7 +640,7 @@ def test_the_city_box_is_a_plain_input(qt_app: QApplication) -> None:
 
 
 def test_one_letter_does_not_run_a_look_up(qt_app: QApplication) -> None:
-    """城市库里有一个真叫「苏」的条目（安徽某个被折叠进市里的区）。
+    """城市库里有一个真叫「苏」的条目。
 
     用户敲下第一个字就恰好命中它的话，屏幕上会立刻跳出「中国 · 安徽省」和一串坐标 ——
     那是数据里的碎片，不是用户要填的地方。**少于两个字不查、也不给候选。**
@@ -775,11 +755,8 @@ def test_changing_the_city_is_not_blocked_by_the_stale_province(qt_app: QApplica
 
 
 def test_there_is_no_checkbox_to_turn_the_sync_off(qt_app: QApplication) -> None:
-    """**一个勾都没有**。
-
-    「同时按这个地点更新经纬度」默认永远是开的 —— 那就是这个功能存在的意义，为它留一个
-    勾等于让用户每次都要决定一遍「我要不要它联动」。「清除位置」同样不需要：三层地名与
-    两个坐标框全清空就是那个意思。
+    """**一个勾都没有**：联动默认永远是开的，那就是这个功能存在的意义；
+    「清除位置」同样不需要 —— 三层地名与两个坐标框全清空就是那个意思。
     """
     dialog = _dialog(None, PlaceState(city="苏州"))
 
@@ -793,8 +770,7 @@ def test_there_is_no_checkbox_to_turn_the_sync_off(qt_app: QApplication) -> None
 def test_the_clear_button_empties_the_whole_place(qt_app: QApplication) -> None:
     """**全清空就是「把位置整个删掉」** —— 不需要单独的勾选框（ADR 0031）。
 
-    勾选框得先去勾一下才生效，放在九个键里反而更像一个动作；而「全清空」本来就是
-    编辑器里唯一表达得出「全删」的形状。这里只清**框**，仍然要按保存才写盘。
+    这里只清**框**，仍然要按保存才写盘。
     """
     dialog = _dialog(
         None,
@@ -896,9 +872,8 @@ def test_the_buttons_sit_at_the_bottom_with_no_dangling_space_under_them(
 ) -> None:
     """**「保存」下面只留布局自己的下边距。**
 
-    报错那一行本来压在按钮下面，而它平时是空的 —— 那块空着的两行垫在最底下，看起来
-    像一大截多余的边（对话框高度还因此虚胖了 30px）。挪到按钮**上面**之后：报错说的是
-    上面那几个框里哪一个不对，放在那儿也才找得回去。
+    报错那一行本来压在按钮下面，而它平时是空的 —— 那块空着的两行垫在最底下，看起来像一大
+    截多余的边。挪到按钮**上面**之后，报错说的是上面那几个框里哪一个不对，也才找得回去。
     """
     dialog = _dialog(None, PlaceState(city="苏州", region="江苏省", country="中国"))
     dialog.show()
@@ -927,8 +902,7 @@ def test_the_error_line_keeps_its_room_even_while_it_is_empty(qt_app: QApplicati
 def test_the_capture_time_says_nothing_under_it(qt_app: QApplication) -> None:
     """拍摄时间下面**没有说明行**。
 
-    左边那一列已经写着「拍摄时间」「时区」，而这一栏填什么本来就是访达「显示简介」那一
-    种用法 —— 用户改自己的照片，不需要先被教育一遍。
+    左边那一列已经写着「拍摄时间」「时区」，用户改自己的照片不需要先被教育一遍。
     """
     dialog = _dialog(None, PlaceState(city="苏州"))
 
@@ -938,8 +912,7 @@ def test_the_capture_time_says_nothing_under_it(qt_app: QApplication) -> None:
 def test_the_time_boxes_sit_above_the_place_boxes(qt_app: QApplication) -> None:
     """拍摄时间与时区**在最上面两行**，位置那五栏在它们下面。
 
-    顺序与元数据面板里的分组顺序一致，而对话框是那个面板的编辑器 —— 两处反过来会让人
-    在两个界面里找同一栏。
+    顺序与元数据面板里的分组顺序一致 —— 两处反过来会让人在两个界面里找同一栏。
     """
     dialog = _dialog(None, PlaceState(city="苏州"), capture=CaptureTime("2024:05:16 20:52:02"))
     dialog.show()
@@ -1090,15 +1063,11 @@ def test_the_debounced_lookup_really_is_wired_to_typing(qt_app: QApplication) ->
 def test_cmd_w_closes_the_dialog_without_touching_the_window(
     qt_app: QApplication,
 ) -> None:
-    """⌘W 关的是**这个对话框**。
+    """⌘W 关的是**这个对话框**，不是主窗口（ADR 0037）。
 
-    主窗口从 ADR 0037 起也有 ⌘W（关掉那个窗口）。模态框的快捷键优先于主窗口，
-    所以在框里按 ⌘W 关的是框 —— 不挂这一条的话，那一下会把整个窗口连同正在编辑的
-    那一摞一起带走。
-
-    **键是显式写出来的**：Qt 在 macOS 上把 ``StandardKey.Close`` 解析成 **⌘F4**，
-    而 macOS 上按的键是 ⌘W。这条原先挂的那份因此是个用户按不到的键 ——
-    它看起来「按得到」，只是因为当时主窗口上压根没有 ⌘W。
+    模态框的快捷键优先于主窗口，不挂这一条的话那一下会把整个窗口连同正在编辑的那一摞
+    一起带走。**键是显式写出来的**：Qt 在 macOS 上把 ``StandardKey.Close`` 解析成 **⌘F4**，
+    而 macOS 上按的键是 ⌘W。
     """
     dialog = _dialog(None, PlaceState(city="苏州"))
 
@@ -1116,12 +1085,9 @@ def test_cmd_w_in_the_dialog_closes_the_dialog_and_leaves_the_window_open(
 ) -> None:
     """框开着的时候按 ⌘W：关掉的是**框**，窗口还开着。
 
-    这里发的是**真按键**（走 Qt 的快捷键表）而不是直接调槽 —— 上一条只验了「框上挂着
-    那一条」，而 ``trigger()`` 绕过了注册：挂上去却没注册的动作照样绿。
-
-    **窗口为什么不会跟着没**，两件事各管一半：**模态**挡着（框是用 ``exec()`` 开的，
-    主窗口被按在一边，它的 ⌘W 不生效），而**框自己那一条**让 ⌘W 在框里有事可做 ——
-    少了后一半，按键在框里落下来什么也不会发生，用户只会以为这个键坏了。
+    这里发的是**真按键**（走 Qt 的快捷键表）而不是直接调槽。**窗口为什么不会跟着没**，
+    两件事各管一半：**模态**挡着，而**框自己那一条**让 ⌘W 在框里有事可做 —— 少了后一半，
+    按键在框里落下来什么也不会发生。
     """
     window = focused
     dialog = MetadataEditDialog(window, MetadataState())
@@ -1152,8 +1118,7 @@ def test_a_photo_without_any_place_still_has_the_entry_point(
 ) -> None:
     """**照片本来就没有位置时，按钮照样在那儿。**
 
-    之前它摆在「位置」那一组的标题右边，而没有位置的照片压根不会渲染出那一组 ——
-    用户想补一个位置的时候，界面上根本没有入口。
+    之前它摆在「位置」那一组的标题右边，而没有位置的照片压根不会渲染出那一组。
     """
     window = focused
     window.toggle_metadata(True)

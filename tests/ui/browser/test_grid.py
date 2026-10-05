@@ -42,8 +42,8 @@ from gallery.ui.main_window import MainWindow  # noqa: E402
 
 #: 等待异步扫描完成的时限。
 
-#: 第一行至少要铺到视口的这个比例才算「铺满」。剩下的几像素是网格页本来就有的
-#: 左右留白加上滚动条预留，肉眼看不出来；掉一整列则是 15% 以上，界线很清楚。
+#: 第一行至少要铺到视口的这个比例才算「铺满」：剩下的几像素是留白与滚动条预留，
+#: 肉眼看不出来，而掉一整列是 15% 以上，界线很清楚。
 FILL_RATIO = 0.95
 
 
@@ -117,8 +117,7 @@ def test_albums_mode_startup_keeps_normal_tile_size(
         if window._model.rowCount() >= 2 and window._grid._laid_out_columns:
             break
         time.sleep(0.01)
-    # 让「核对列数」的定时器有机会跑起来（真有缺陷时就是它把格子撑大的）。
-    # 等条件而不是转满 0.5 秒：那个定时器是 COLUMN_CHECK_MS = 50ms，0.5s 是它的十倍。
+    # 等条件而不是转满 0.5 秒：那个「核对列数」的定时器是 COLUMN_CHECK_MS = 50ms。
     settle_grid(qt_app, window._grid)
 
     grid = window._grid
@@ -130,9 +129,6 @@ def test_albums_mode_startup_keeps_normal_tile_size(
         f"两个相册占满了窗口：格子 {grid.gridSize().width()} / 视口 {grid.viewport().width()}"
     )
     window.close()
-
-
-# ---- 换层：上一层的一切痕迹都不留 ------------------------------------------
 
 
 def test_a_new_level_starts_without_a_selection(qt_app: QApplication, tmp_path: Path) -> None:
@@ -173,14 +169,6 @@ def test_a_shift_click_after_a_level_change_selects_only_that_cell(
 
     assert grid.genuinely_selected_rows() == [1]
     grid.deleteLater()
-
-
-# ---- 第一行铺不满：右边空出一整列 ------------------------------------------
-
-#: 缺陷现场：刚打开 GUI，进一个相册，照片没有铺满窗口，右边空出一大片；
-#: 放大再缩小一次才铺满。根因是排版时按视口宽算格子，而 Qt 换行用的宽度比视口窄
-#: （纵向滚动条 + 样式默认边距），于是 ``1260 // 6`` 那个格子宽正好卡在 Qt 摆不下
-#: 6 个的边界上，它只摆 5 个 —— 右边整整空出一列。
 
 
 def test_rows_arriving_late_still_fill_the_row(
@@ -247,9 +235,6 @@ def test_entering_an_album_fills_the_row(
         )
     finally:
         window.close()
-
-
-# ---- 多选：手抖不该变成框选 ------------------------------------------------
 
 
 def _selected_rows(grid: PhotoGrid) -> list[int]:
@@ -539,9 +524,6 @@ def test_command_click_reassert_toggles_one_item(qt_app: QApplication, tmp_path:
     grid.deleteLater()
 
 
-# ---- 双击空白处：这一下落在格子还是空白 ----------------------------------------
-
-
 def _blank_point(grid: PhotoGrid) -> QPoint:
     """网格里一个不属于任何格子的点。
 
@@ -603,11 +585,8 @@ def test_double_click_on_a_cell_still_opens_it(qt_app: QApplication, tmp_path: P
     _double_click(grid, grid.visualRect(model.index(0, 0)).center())
     qt_app.processEvents()
 
-    # **恰好一次**。这里原先写成集合比较（``{index.row() ...} == {0}``），把
-    # 「双击被算两遍」整个藏了起来 —— 而双击进入相册是**同步**的（模型清空、版面
-    # 重排），第二下会落在**刚进入的那一层**上，可能顺手打开一张无关的照片。
-    # 曾经 ``doubleClicked`` 与 ``activated`` 同时连着 ``activated_index``，
-    # 于是一次双击发两遍。
+    # **恰好一次**，且必须比成列表而不是集合：双击进入相册是同步的（模型清空、版面
+    # 重排），第二下会落在刚进入的那一层上，可能顺手打开一张无关的照片。
     assert opened, "双击格子什么也没打开"
     assert [index.row() for index in opened] == [0], f"一次双击应当只激活一格，实际 {opened}"
     assert asked == []
@@ -732,9 +711,6 @@ def test_right_click_inside_an_existing_multi_selection_keeps_it(
 
     assert grid.genuinely_selected_rows() == before, "整份多选必须原样保留"
     grid.deleteLater()
-
-
-# ---- 选区与当前项必须说同一句话 ----------------------------------------------
 
 
 def _click(

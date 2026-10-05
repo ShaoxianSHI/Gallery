@@ -1,10 +1,5 @@
-"""``gallery.core.library.search`` 与它那条 SQL 的测试。
-
-三组：**输入怎么解析**（用户敲的那一串到底是什么意思）、**SQL 怎么生成**（哪个字段落到
-哪一列、怎么匹配）、**真库上查得对不对**（``tmp_path`` 里现造一个库）。
-
-最后那组最要紧：前面两组都只是「断言我们自己写的字符串」，而检索真正的失败方式
-是「SQL 生成对了但查出来的东西不对」—— 于是每一条条件都在真库上跑一遍。
+"""``gallery.core.library.search`` 与它那条 SQL 的测试：输入怎么解析、SQL 怎么生成、
+真库上查得对不对。最后那组最要紧：检索真正的失败方式是「SQL 生成对了但查出来的东西不对」。
 """
 
 from __future__ import annotations
@@ -44,8 +39,6 @@ from gallery.core.metadata.facets import (
     FACET_NAME,
     PhotoFacets,
 )
-
-# ---- 解析输入 ---------------------------------------------------------------------
 
 
 def test_no_hash_means_the_file_name() -> None:
@@ -102,9 +95,6 @@ def test_the_default_field_is_the_first_one_offered() -> None:
     assert SEARCH_FIELDS[0] is DEFAULT_FIELD
 
 
-# ---- 字段名 ------------------------------------------------------------------------
-
-
 def test_a_field_matches_both_its_id_and_its_chinese_name() -> None:
     """用户一定会打中文；``#camera`` 与 ``#相机`` 必须是同一个字段。"""
     assert match_field("相机") is not None
@@ -136,9 +126,6 @@ def test_partial_field_is_what_follows_the_hash() -> None:
     assert partial_field("海边") == ""
 
 
-# ---- 值怎么解析 -------------------------------------------------------------------
-
-
 def _condition(text: str) -> SearchCondition | None:
     return make_condition(parse_input(text))
 
@@ -168,9 +155,6 @@ def test_dates_become_a_range() -> None:
     assert condition is not None and condition.comparator == "between"
     low, _, high = condition.value.partition("|")
     assert float(low) < float(high)
-
-
-# ---- 区间 ---------------------------------------------------------------------------
 
 
 def _bounds(condition: SearchCondition) -> tuple[float, float]:
@@ -207,9 +191,8 @@ def test_a_range_takes_both_ends_at_their_own_granularity() -> None:
         "#拍摄时间 2023 ～ 2024",
         "#拍摄时间  2023～2024 ",
         "#拍摄时间 2023 ～2024",
-        # **半角也认**：英文键盘敲出来的就是它，而当初只认全角，于是这一条被判成
-        # 「不是个日期」，报错了还不说是哪一种写法不对 —— 判据反过来了：日期语法里
-        # 根本不会出现波浪号，多认一种不产生歧义，少认一种只是把用户挡在门外。
+        # **半角也认**：英文键盘敲出来的就是它。日期语法里根本不会出现波浪号，
+        # 多认一种不产生歧义，少认一种只是把用户挡在门外。
         "#拍摄时间 2023~2024",
         "#拍摄时间 2023 ~ 2024",
     ],
@@ -271,16 +254,13 @@ def test_a_range_is_refused_rather_than_half_honoured(typed: str) -> None:
 def test_a_day_that_does_not_exist_is_refused_rather_than_raised() -> None:
     """``2023-02-30`` 光看「日 ≤ 31」是过得去的，真去造日期才会炸。
 
-    炸出去的地方是界面上的回车（:func:`make_condition` 是在槽里调用的），于是用户只看到
-    「按了回车什么也没发生」。解析不了就是解析不了，不该是一段栈。
+    炸出去的地方是界面上的回车，于是用户只看到「按了回车什么也没发生」。
+    解析不了就是解析不了，不该是一段栈。
     """
     for typed in ("#拍摄时间 2023-02-30", "#拍摄时间 2023-02-29", "#拍摄时间 2023-04-31"):
         assert _condition(typed) is None, typed
     # 平年的 2 月 29 日不存在，闰年的那一张存在 —— 别把这个判反了。
     assert _condition("#拍摄时间 2024-02-29") is not None
-
-
-# ---- 横幅上那句话 -----------------------------------------------------------------
 
 
 def test_a_reversed_range_says_which_end_is_wrong() -> None:
@@ -329,9 +309,6 @@ def test_a_format_is_normalised_to_a_suffix() -> None:
         assert condition.value.startswith("."), text
 
 
-# ---- SQL ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize(
     ("typed", "restored"),
     [
@@ -346,11 +323,8 @@ def test_a_condition_can_be_put_back_into_the_box(typed: str, restored: str) -> 
     """胶囊放回搜索框时要**带字段前缀**。
 
     只放值的话用户看到的是「旅行」，不知道这一条是按哪个字段筛的 —— 而改条件多半正是
-    要换字段，那才是这个交互的主要用法。
-
-    顺带钉住字段名**不带空格**这条：搜索框按第一个空格把字段名与值分开，「#省 / 州 浙江」
-    会把「省」当成字段名而认不出，于是那一条悄悄变成按文件名搜（候选列表里补全出来的
-    是没有空格的那个写法）。
+    要换字段。顺带钉住字段名**不带空格**这条：搜索框按第一个空格分开，「#省 / 州 浙江」
+    会把「省」当成字段名而认不出，于是悄悄变成按文件名搜。
     """
     condition = _condition(typed)
 
@@ -390,9 +364,6 @@ def test_rows_become_refs_without_touching_the_disk() -> None:
 
     assert [ref.path.name for ref in refs] == ["海边.jpg"]
     assert (refs[0].size, refs[0].mtime_ns) == (2048, 99)
-
-
-# ---- 索引 ---------------------------------------------------------------------------
 
 
 def _library(tmp_path: Path, make_photo: Callable[..., Path]) -> Library:
@@ -469,8 +440,7 @@ def test_metadata_conditions_use_the_facet_rows(tmp_path: Path, make_photo) -> N
     """元数据那一族走 ``facets``；没有读过的照片自然查不到（那是「我们知不知道」）。"""
     library = _library(tmp_path, make_photo)
     library.index_photos()
-    # **按名字取，不按序号**：``iter_photos`` 的顺序是目录遍历的顺序，
-    # 拿 ``refs[3]`` 当「山.jpg」只在某一次目录顺序下成立。
+    # **按名字取，不按序号**：``iter_photos`` 的顺序是目录遍历的顺序。
     by_name = {ref.name: ref for ref in library.iter_photos()}
     library.facet_index.store(
         [
@@ -489,8 +459,8 @@ def test_metadata_conditions_use_the_facet_rows(tmp_path: Path, make_photo) -> N
 def _taken_in(year: int, month: int, day: int) -> PhotoFacets:
     """一张在某年某月某日中午拍的照片的 facet 快照。
 
-    时间取**中午**而不是零点：零点正好压在区间的边界上，``>=`` 与 ``<`` 差一秒就会
-    少算它一张 —— 那种失败与真正的缺陷长得一模一样，排查起来白费时间。
+    时间取**中午**而不是零点：零点正好压在区间的边界上，``>=`` 与 ``<`` 差一秒就会少算
+    它一张 —— 那种失败与真正的缺陷长得一模一样。
     """
     moment = datetime.datetime(year, month, day, 12, 0)  # noqa: DTZ001 - 与库里的算法一致
     return PhotoFacets(captured_at=moment.timestamp(), year=year, month=month, day=day)
@@ -500,8 +470,7 @@ def test_a_capture_date_finds_the_photos_taken_then(tmp_path: Path, make_photo) 
     """``#拍摄时间`` 要在真库上查得对 —— 这一族从来没被真库执行过，列名写错也不会红。
 
     曾经的故障：字段表里把这一项的列写成了 ``f.captured_at``（那是 ``PhotoFacets`` 上的
-    **属性名**，不是列名），于是每一种写法都在执行时报 ``no such column``，界面表现成
-    「一条都搜不出来」。解析与生成 SQL 那两层照样全绿。
+    **属性名**，不是列名），界面表现成「一条都搜不出来」，而解析与生成 SQL 那两层照样全绿。
     """
     library = _library(tmp_path, make_photo)
     library.index_photos()
@@ -521,8 +490,7 @@ def test_a_capture_date_finds_the_photos_taken_then(tmp_path: Path, make_photo) 
     ]
     # 那天没有照片 —— 区间要真的是一段，不是一个「大概在那前后」。
     assert _names(library.search_photos([_condition("#拍摄时间 2023-05-17")]).refs) == []  # type: ignore[list-item]
-    # 带比较符时取的是**那一段之外**：`>2023` 是「晚于 2023 年年底」，于是落在 2024 年的
-    # 那张被选中，2023 年那张不是 —— 这条钉住的是比较符那一支，不是区间那一支。
+    # 带比较符时取的是**那一段之外**：`>2023` 是「晚于 2023 年年底」，这条钉的是比较符那一支。
     assert _names(library.search_photos([_condition("#拍摄时间 >2023")]).refs) == ["山.jpg"]  # type: ignore[list-item]
 
 
@@ -556,8 +524,8 @@ def test_a_capture_range_spans_both_ends_of_the_years_it_names(tmp_path: Path, m
     ]
 
 
-#: 每种 ``kind`` 取一个**能解析成功**的样例值：守护测试要的是把每个字段都真的查一遍，
-#: 而值写坏了就只会得到「解析不出来」，那个 ``None`` 断的是另一件事。
+#: 每种 ``kind`` 取一个**能解析成功**的样例值：值写坏了就只会得到「解析不出来」，
+#: 那个 ``None`` 断的是另一件事。
 _SAMPLE_VALUE: Final[dict[str, str]] = {
     "name": "海边",
     "album": "旅行",
@@ -572,9 +540,9 @@ _SAMPLE_VALUE: Final[dict[str, str]] = {
 def test_every_searchable_field_survives_the_real_schema(tmp_path: Path, make_photo) -> None:
     """每个可搜字段都拿真 schema 执行一遍 —— **守护**。
 
-    ``SEARCH_FIELDS`` 里那些列名是手写的，抄成 ``PhotoFacets`` 上的属性名不会有任何人
-    看出来（只有拍摄时间这一项两者还不一样），而错列名要等 SQLite 执行才说
-    ``no such column``。所以这里不问「查得对不对」，只问「这句 SQL 能不能跑」。
+    ``SEARCH_FIELDS`` 里那些列名是手写的，抄成 ``PhotoFacets`` 上的属性名没有人看得出来，
+    而错列名要等 SQLite 执行才说 ``no such column``。所以这里不问「查得对不对」，
+    只问「这句 SQL 能不能跑」。
     """
     library = _library(tmp_path, make_photo)
     library.index_photos()
@@ -649,9 +617,8 @@ def test_clearing_empties_both_tables(tmp_path: Path) -> None:
 
 
 def test_search_needs_an_index_on_disk(tmp_path: Path) -> None:
-    """库所在卷只读时检索做不了 —— 但那是「这一件做不了」，不是「整个软件坏了」。
-
-    分组与排序在同样情况下照常可用：它们把读到的值揣在内存里算，不需要索引。
+    """库所在卷只读时检索做不了 —— 但那是「这一件做不了」，不是「整个软件坏了」：
+    分组与排序把读到的值揣在内存里算，照常可用。
     """
     index = FacetIndex(None)
     ref = PhotoRef(path=tmp_path / "a.jpg", size=1, mtime_ns=1)

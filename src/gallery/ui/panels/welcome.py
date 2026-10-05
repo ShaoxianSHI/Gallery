@@ -1,12 +1,7 @@
 """空状态页：还没打开任何库时看到的东西。
 
-它是应用的第一屏，所以除了一个「打开文件夹」按钮之外，还要把两件事说清楚：
-照片不会被移动或修改，以及首次打开会询问缓存目录放在哪里。
-
-**次要文字的颜色必须由主题派生**，不能写 ``palette(mid)``：那是 Qt 的「填充色」
-角色（给未选中的行、表格隔行铺底用的），拿它当字色，深色下在 #171717 的底上只有
-3.6:1 的对比度，达不到 WCAG AA 对正文的 4.5:1 —— 也就是欢迎页那两行字看着发灰的原因。
-透明度档位见 :func:`welcome_style`。
+除「打开文件夹」之外还要把「照片不会被移动或修改」说清楚。次要文字的颜色必须由主题派生，
+不能写 ``palette(mid)``：那是 Qt 的填充色角色，深色下对比度只有 3.6:1，达不到 WCAG AA。
 """
 
 from __future__ import annotations
@@ -21,12 +16,9 @@ from gallery.ui import theme
 from gallery.ui.panels.layout import clear_layout
 from gallery.ui.theme import AppTheme, rgba
 
-#: 最多列出几个最近打开的库。
 MAX_RECENT_SHOWN = 5
 
-#: 次要文字的透明度。0.82 是**浅色下**仍能守住 4.5:1 的下限 ——
-#: 黑字压白底的对比度掉得比白字压黑底快得多，同一个值在深色下反而有 7.8:1。
-#: 别为了「层次感」再往下调，元数据面板那档 0.5 在浅色下只有 2:1。
+#: 次要文字的透明度。0.82 是浅色下仍能守住 4.5:1 的下限，别为了层次感再往下调。
 SUBTITLE_ALPHA = 0.88
 SECONDARY_ALPHA = 0.82
 
@@ -34,8 +26,7 @@ SECONDARY_ALPHA = 0.82
 def welcome_style(app_theme: AppTheme) -> str:
     """欢迎页的文字样式。底色不在这里 —— 它由窗口统一铺好。
 
-    文字色全部从主题派生：深色下是「浅字压深底」，浅色下自动变成「深字压浅底」，
-    不必再维护两套写死的字色（与 ``panels.metadata`` 同一套办法）。
+    文字色全部从主题派生，深浅两套底色自动跟上。
     """
     return f"""
 #welcomeTitle {{ font-size: 30px; font-weight: 600; }}
@@ -57,15 +48,12 @@ QPushButton#recentButton:hover {{ text-decoration: underline; }}
 class WelcomeView(QWidget):
     """引导用户选择第一个（或下一个）库。"""
 
-    #: 用户点了「打开文件夹…」。
     open_requested = Signal()
-    #: 用户点了某个最近打开的库。
     recent_requested = Signal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        # 字色在样式表里，就得跟着主题重来：样式表只在构造时设一次，
-        # 系统换浅色 / 深色时不会自己重算（见 panels.metadata 的同一处）。
+        # 字色在样式表里，就得跟着主题重来：样式表只在构造时设一次。
         self._theme_watcher = theme.ensure_installed()
         self._theme_watcher.changed.connect(self._apply_theme)
         self._apply_theme()
@@ -129,8 +117,6 @@ class WelcomeView(QWidget):
                 lambda _checked=False, path=root: self.recent_requested.emit(path)
             )
             self._recent_layout.addWidget(button, alignment=Qt.AlignmentFlag.AlignCenter)
-
-    # ---- 主题 --------------------------------------------------------------
 
     def _apply_theme(self) -> None:
         """按当前主题重画文字。底色由窗口统一铺，这里只管字色。"""

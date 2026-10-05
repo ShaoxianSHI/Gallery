@@ -23,14 +23,13 @@ build-backend = "hatchling.build"
 [dependency-groups]
 dev = [
     "pytest>=8.0",
-    # 让测试默认并行跑：串行一轮 37s，分进程并行约 9s（见 addopts 处的说明）。
+    # 让测试默认并行跑（串行一轮 37s，并行约 9s）。
     "pytest-xdist>=3.6",
     "ruff>=0.9",
     "mypy>=1.14",
 ]
 # 打包工具：把源码编译成自包含的 Gallery.app（见 scripts/build_app.py）。
-# 单独成组而不是并进 dev —— 它只在打包时用到，还会拖一堆编译期依赖（clang、
-# 下载辅助工具等），不该拖慢日常的 `uv sync`。
+# 单独成组是因为它只在打包时用到，还会拖一堆编译期依赖。
 build = [
     "nuitka>=2.7",
 ]
@@ -44,13 +43,10 @@ target-version = "py312"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
-# "N" 只为一件事：N802 命中的是 **Qt 覆写的方法名**（mousePressEvent、closeEvent…）。
-#   本项目里 N802 只有这一个意思，所以打开它 —— 将来新写一个 Qt 覆写却忘了写
-#   noqa，会当场被拦下，而不必等 reviewer 逐个看。
-# "RUF022"：__all__ 按 isort 风格排序。排序过的清单让「少了谁」一眼看得出来
-#   （menus.__all__ 就长期漏着它对外最要紧的 prepare）。
-# 不开 "RUF" 整组：RUF001/002/003 是「易混淆的 Unicode 字符」，而这个仓库的
-#   注释与文案全是中文，一开就是一万多条。
+# "N" 在本仓库只有一件事：N802 命中的是 Qt 覆写的方法名（mousePressEvent、
+# closeEvent…），忘了写 noqa 会当场被拦下。
+# "RUF022"：__all__ 按 isort 风格排序，排序过的清单让「少了谁」一眼看得出来。
+# 不开 "RUF" 整组：RUF001/002/003 是「易混淆的 Unicode 字符」，而注释与文案全是中文。
 select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF022"]
 
 [tool.mypy]
@@ -61,34 +57,19 @@ warn_unreachable = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# 默认分进程并行（`uv run pytest` 就是并行的，不必额外记参数）。
+# 默认分进程并行（`uv run pytest` 就是并行的）。
 #
-#   -n auto        进程数跟核心数走。实测一轮 37.4s → 8.8s（10 核）。
-#   --dist loadfile 一个测试文件整体交给同一个 worker，且保持文件内的声明顺序。
-#                  选它而不是更快的 worksteal是有意的：界面测试里 `qt_app` 是模块级
-#                  fixture，每个用例还有 `qt_teardown` 收尾，让一个文件待在同一个
-#                  进程里，执行模型与串行时完全一致。那点差别换「刚修完进程收尾崩溃
-#                  之后执行模型不变」，值。
+#   -n auto         进程数跟核心数走（10 核实测一轮 37.4s → 8.8s）。
+#   --dist loadfile 一个测试文件整体交给同一个 worker，保持文件内声明顺序 ——
+#                   界面测试的 `qt_app` 是模块级 fixture，这样执行模型与串行一致。
 #
-# 顺带一提：`--dist loadfile` 也意味着**最慢的那一个文件就是这一轮的地板**。曾经
-# `tests/ui/browser/test_edge_animation.py` 一个文件占掉 37s（占全轮的 95%），整轮
-# 的时间就是它的时间；那 37s 里几乎全是在睡 —— 40 段真实时钟的 160ms 动画。
-# 现在过渡改成拨 `QVariantAnimation` 的时钟（`grid_helpers.drive_transition`）、等待
-# 改成等条件（`grid_helpers.settle_grid`），那个文件降到 7s 上下。**要再快，先看
-# `--durations` 里最慢的那个文件，而不是先动并行参数。**
-#
-# 调试单个用例时想要串行、想要完整报错栈：`-n 0`（或 `-p no:xdist`）。
+# 代价是「最慢的那个文件就是这一轮的地板」：要提速先看 `--durations` 里最慢的文件。
+# 调试单个用例想要串行与完整报错栈时用 `-n 0`。
 addopts = "-q --dist loadfile -n auto"
 
-# 线程里逃出去的异常一律**当失败**。
+# 后台线程里逃出去的异常一律当失败。
 #
-# 监听线程、去抖定时器、解码 worker 全是后台线程：一个在那边逃出去的异常，界面上的
-# 表现往往只是「某张图一直不出来」或者「关窗时崩一下」，在这里它只是一条
-# warning —— 也就是说**默认配置下没人会看见它**。升成 error 之后，守护测试
-# `test_a_batch_arriving_after_the_bridge_is_gone_is_dropped_quietly` 那类「不许
-# 有异常逃出去」的用例才真的是在守着。
-#
-# 已验证：后台线程 `raise` 且主线程 `join` 过 → 用例变红。（不 `join` 不会红 ——
-# 那条警告要等 pytest 收尾时由那个异常对象触发，线程还活着就收不到。
-# 探针里记得 join，不然会误以为这条规则是摆设。）
+# 监听线程、去抖定时器、解码 worker 全在那边：异常在界面上的表现往往只是「某张图
+# 一直不出来」，默认配置下没人会看见。写探针验证这条规则时记得 `join` 那个线程，
+# 否则 pytest 收尾时那个异常对象还没被处理，看不出效果。
 filterwarnings = ["error::pytest.PytestUnhandledThreadExceptionWarning"]

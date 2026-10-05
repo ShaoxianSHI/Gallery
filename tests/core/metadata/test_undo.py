@@ -1,12 +1,6 @@
-"""撤销栈的测试：改名与移到废纸篓共用同一摞（见 ADR 0008）。
+"""撤销栈的测试（ADR 0008）：改名与移到废纸篓共用同一摞，而它是照着 ``journal/`` 重放出来的。
 
-这一摞栈不存内存里，而是照着 ``journal/`` 重放出来的，所以要钉住的是：
-
-1. 顺序：栈顶永远是最近一次写操作，⌘Z 一层层往回退。
-2. 粒度：一次 ⌘⌫ 删十张 = 一次 ⌘Z 全部取回，不是十次。
-3. 韧性：取回失败的那几张仍留在栈上，再按一次 ⌘Z 还能重试；成功的那些不会重来一遍。
-4. 库隔离：另一个库的日志不该出现在这一摞里。
-"""
+四件事：顺序（栈顶最新）、粒度（删十张只值一次 ⌘Z）、韧性（失败的留在栈上可重试）、库隔离。"""
 
 from __future__ import annotations
 
@@ -31,9 +25,6 @@ def two_photos(tmp_path: Path) -> tuple[PhotoRef, PhotoRef]:
     first.write_bytes(_CONTENT)
     second.write_bytes(_CONTENT)
     return PhotoRef.from_path(first), PhotoRef.from_path(second)
-
-
-# ---- 顺序 -------------------------------------------------------------------
 
 
 def test_nothing_to_undo_on_a_fresh_library(tmp_path: Path) -> None:
@@ -83,9 +74,6 @@ def test_label_follows_the_top_of_the_stack(tmp_path: Path, two_photos) -> None:
     assert next_undo_label(tmp_path) == "重命名"
 
 
-# ---- 粒度 -------------------------------------------------------------------
-
-
 def test_one_batch_is_undone_in_one_go(tmp_path: Path, make_photo: Callable[..., Path]) -> None:
     photos = [PhotoRef.from_path(make_photo(f"{index}.jpg")) for index in range(3)]
     trash_entries(tmp_path, photos)
@@ -127,9 +115,6 @@ def test_album_undo_comes_back_as_one_entry(tmp_path: Path, make_photo) -> None:
     assert (tmp_path / "2025 苏州" / "第一张.jpg").exists()
 
 
-# ---- 韧性 -------------------------------------------------------------------
-
-
 def test_a_failed_restore_stays_on_the_stack(
     tmp_path: Path, fake_trash: Path, make_photo: Callable[..., Path]
 ) -> None:
@@ -164,9 +149,6 @@ def test_restore_is_recorded_so_the_stack_stays_consistent(
 
     actions = [record.action for record in read_records(tmp_path)]
     assert actions == [ACTION_TRASH, "restore"]
-
-
-# ---- 库隔离 -----------------------------------------------------------------
 
 
 def test_another_library_never_leaks_into_the_stack(tmp_path: Path, fake_trash: Path) -> None:

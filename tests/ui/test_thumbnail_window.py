@@ -267,7 +267,7 @@ def test_clearing_the_thumbnail_cache_runs_off_the_main_thread(
     assert library is not None
     assert wait_until(qt_app, lambda: window_is_idle(window)), "后台任务没收工"
     # **横幅只有一个槽**：扫描 / 地点解析 / 建索引的进度随时会往里写。所以要断言它，
-    # 先等在途的活收工、再把槽收干净（理由见 AGENTS.md「断言界面上的共享状态之前…」）。
+    # 先等在途的活收工、再把槽收干净（共享状态要先摆前置条件再断言）。
     window._clear_banner()
     monkeypatch.setattr(
         QMessageBox, "question", lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes

@@ -1,12 +1,7 @@
-"""窗口底色只有一层的回归测试。
-
-窗口里套着三层：标题框（菜单栏）、相册路径那一层、最里头的照片区。它们以前各铺各的
-底色（``Window`` / ``Base`` / 写死的 ``#1C1C1E``），于是浅色主题下点开照片会突然变一块
-黑，深色主题下则是三四种不同的黑。
+"""窗口底色只有一层的回归测试：标题框、相册路径那一层、最里头的照片区必须同色。
 
 这里不检查控件树，而是**量渲染出来的像素**：在同一张窗口截图上逐层取样，颜色必须相同，
-且等于主题给出的那一个底色（``ui.theme``）。另有一条守「跟随系统主题」：系统换成深色时，
-各层仍然同色，并且一起变过去。
+且等于主题给出的那一个底色。另有几条守「跟随系统主题」与「下发的调色板钉死那几个角色」。
 """
 
 from __future__ import annotations
@@ -69,10 +64,9 @@ def _platform_palette(app: QApplication, *, window: QColor, base: QColor) -> QPa
         QPalette.ColorRole.Link,
     ):
         palette.setColor(role, QColor(0xEC, 0xEC, 0xEE) if dark else QColor(0x1A, 0x1A, 0x1A))
-    # ``Mid`` 一族（Qt 用它画 3D 边框的中间那一档）深色下**一路压暗到 #585858**，
-    # 浅色下是 #b8b8b8。补上这一档不是较真：样式表里 ``palette(mid)`` 读的是**应用**
-    # 调色板（见 ``ui.menu_style`` 的模块文档），不设它的话离屏平台那份默认值会一直留在
-    # #b8b8b8，于是「深色下那一枚记号看不见」这件事在测试里压根不会发生。
+    # ``Mid`` 一族（Qt 用它画 3D 边框的中间那一档）深色下**一路压暗到 #585858**。补上这一档
+    # 不是较真：样式表里 ``palette(mid)`` 读的是**应用**调色板，不设它的话离屏平台那份默认值
+    # 会一直留在 #b8b8b8，于是「深色下那一枚记号看不见」在测试里压根不会发生。
     for role in (
         QPalette.ColorRole.Light,
         QPalette.ColorRole.Midlight,
@@ -124,9 +118,6 @@ def window(
     return window
 
 
-# ---- 取样 ---------------------------------------------------------------
-
-
 def _row_y(window: QWidget, widget: QWidget) -> int:
     """控件在窗口坐标里的中间一行。"""
     return widget.mapTo(window, QPoint(0, widget.height() // 2)).y()
@@ -167,10 +158,8 @@ def _open_detail(qt_app: QApplication, window: MainWindow) -> None:
 def _without_banner(qt_app: QApplication, window: MainWindow) -> None:
     """量底色之前先把横幅收干净。
 
-    横幅是**浮在内容上面**的一层（ADR 0029），它出现时照片区顶边那一圈是橙色的 ——
-    那既不是边框，也不是「几层各铺各的底色」。这条守护量的是「最里层四周有没有描边」，
-    所以先把时有时无的那一层收掉：**先等后台收工**（否则进度消息会在截图之前又冒出来），
-    再清横幅，最后转一圈让 ``hide()`` 生效。
+    横幅是**浮在内容上面**的一层，它出现时照片区顶边那一圈是橙色的 —— 那既不是边框，也不是
+    「几层各铺各的底色」。所以先等后台收工（否则进度消息会在截图之前又冒出来），再清横幅。
     """
     wait_for_idle(qt_app, window)
     window._clear_banner()
@@ -181,10 +170,8 @@ def _edge_colors(image: QImage, window: QWidget, widget: QWidget, *, outward: in
     """控件四周那一圈（内外各若干像素）出现过的颜色。
 
     ``outward`` 是往外看几像素。框是画在控件**自己**的矩形上的，``QListView`` 那种
-    ``StyledPanel`` 边框就落在视口外面 1 像素，所以默认要往外看；大图区的视口正贴着
-    菜单栏，外侧那几行是菜单栏自己的分隔线（实测 ``#e5e5e5``），那边传 ``outward=0``。
-
-    ``QListView`` 默认那圈灰描边实测是 ``#8e8e8e`` / ``#b6b6b6``，在一整块底色上很显眼。
+    ``StyledPanel`` 边框落在视口外面 1 像素，所以默认要往外看；大图区的视口正贴着菜单栏，
+    外侧那几行是菜单栏自己的分隔线，那边传 ``outward=0``。
     """
     top_left = widget.mapTo(window, widget.rect().topLeft())
     x0, y0 = top_left.x(), top_left.y()
@@ -209,18 +196,13 @@ def _edge_colors(image: QImage, window: QWidget, widget: QWidget, *, outward: in
     return found
 
 
-# ---- 测试 ---------------------------------------------------------------
-
-
 def test_innermost_layer_has_no_border(qt_app: QApplication, window: MainWindow) -> None:
     """最里层（照片区 / 网格）四周不能有任何描边或轮廓。
 
     回归的是那条系统灰边框：``QListView`` 默认带 ``StyledPanel``，会在视口四周画一圈
-    ``#b6b6b6`` 之类的描边，整个照片区看上去像浮在一块面板上，而不是铺满窗口。大图区
-    本来就是 ``NoFrame``，网格要跟它对齐。
-
-    **先把横幅收干净**（:func:`_without_banner`）：它浮在内容上面，压在照片区顶边时
-    那一圈是橙色的 —— 量的是边框，不能把那一层浮着的东西算进来。
+    ``#b6b6b6`` 之类的描边，整个照片区看上去像浮在一块面板上。大图区本来就是 ``NoFrame``，
+    网格要跟它对齐。横幅浮在内容上面，压在照片区顶边时那一圈是橙色的 —— 量的是边框，
+    不能把那一层浮着的东西算进来。
     """
     try:
         expected = theme.current_theme().background.rgb()
@@ -316,13 +298,9 @@ def test_calendar_page_follows_the_system_theme(
 ) -> None:
     """日历那一页也要跟着系统走 —— 它是唯一自己派一份配色的地方。
 
-    回归的是真实缺陷：``CalendarPage`` 起手拿 ``self.findChild(ThemeWatcher)`` 找监听器，
-    而那个监听器是挂在 ``QApplication`` 上的 —— ``findChild`` 只翻**控件自己的子孙**，
-    于是返回值永远是 ``None``，``changed`` 从来没接上。症状是**系统切到浅色时别处都白了、
-    日历那一页还是黑的**（深色起手时尤其容易看出来）；而重新进出一次日历又正常了，
-    因为那一页是按「当下的调色板」重建配色的。
-
-    量的是**渲染出来的像素**：日历的配色（``CalendarColors``）是一份派生物，
+    回归的是真实缺陷：``CalendarPage`` 起手拿 ``findChild(ThemeWatcher)`` 找监听器，而那个
+    监听器挂在 ``QApplication`` 上 —— ``findChild`` 只翻控件自己的子孙，于是返回的永远是
+    ``None``，``changed`` 从来接不上。量的是**渲染出来的像素**：日历的配色是一份派生物，
     「对象换过了」不等于「屏幕上换过了」。
     """
     try:
@@ -345,10 +323,8 @@ def test_calendar_page_follows_the_system_theme(
 
 
 def test_dark_background_is_the_deeper_content_colour(appearance: Callable[..., None]) -> None:
-    """深色下要的是内容区那种更深的黑，不是系统窗口那层灰。
-
-    实测 macOS 深色：``Window`` 是 ``#323232``、``Base`` 是 ``#171717``。取 ``Window``
-    会让整块界面浮着一层灰，照片压不住。
+    """深色下要的是内容区那种更深的黑，不是系统窗口那层灰：实测 macOS 深色 ``Window`` 是
+    ``#323232``、``Base`` 是 ``#171717``，取 ``Window`` 会让整块界面浮着一层灰。
     """
     appearance(window=DARK_WINDOW, base=DARK_BASE)
     background = theme.current_theme().background
@@ -364,8 +340,7 @@ def test_theme_leaves_the_application_palette_to_the_platform(
 ) -> None:
     """应用调色板是平台的地盘，我们只在控件上下发。
 
-    一旦回头去写应用调色板，就等于把它钉死：系统换外观时 Qt 不再更新它，
-    界面从此跟不上系统（这正是「浅色下只有标题栏变浅」的成因）。
+    一旦回头去写应用调色板，就等于把它钉死：系统换外观时 Qt 不再更新它，界面从此跟不上系统。
     """
     try:
         appearance(window=DARK_WINDOW, base=DARK_BASE)
@@ -379,9 +354,7 @@ def test_theme_leaves_the_application_palette_to_the_platform(
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="标题栏是 macOS 的事")
 def test_title_bar_is_painted_by_the_window(window: MainWindow) -> None:
-    """标题栏那一段要由窗口自己画。
-
-    macOS 的原生标题栏是一层半透明材质，实测深色下 ``#3b3e3f``、浅色下 ``#f2f4f7``，
+    """标题栏那一段要由窗口自己画：macOS 的原生标题栏是一层半透明材质，
     和内容区差一档且随壁纸变；调色板匹配不上它，只能让它别画自己的底。
     """
     flags = window.windowFlags()
@@ -403,24 +376,15 @@ def test_drag_region_is_everything_above_the_content(window: MainWindow) -> None
         window.close()
 
 
-# ---- 下发的调色板：浮层那几个角色必须钉死 ---------------------------------------
-
-
 def test_the_pushed_palette_pins_the_popup_roles(qt_app: QApplication) -> None:
     """下发给控件的那一份必须把 :data:`theme.RESOLVED_ROLES` **钉死**。
 
-    回归的是真实现象（ADR 0035 决策 2）：这几个角色不写上的话，Qt 会按控件类型各解析一档
-    —— 实测 macOS 上同一份调色板，``QMenu`` 的 ``Highlight`` 是 ``#548fff``、
-    ``QTreeWidget`` 是 ``#084ad9``、普通 ``QWidget`` 是 ``#a5cdff``，正文色还有 ``@0.847``
-    与 ``@1.0`` 两档。于是右键菜单与搜索框的候选列表高亮成两种蓝，而两者的样式表
-    是**同一份**生成出来的（症状就是「它们不像一套东西」）。
+    不写上的话 Qt 会按控件类型各解析一档 —— 实测 macOS 上同一份调色板，``QMenu`` 的
+    ``Highlight`` 是 ``#548fff``、``QTreeWidget`` 是 ``#084ad9``，于是右键菜单与候选列表
+    高亮成两种蓝，而两者的样式表是**同一份**生成的（ADR 0035 决策 2）。
 
-    **这里量的是「钉没钉死」而不是「是什么颜色」**：直接比颜色在测试环境里量不出来 ——
-    测试跑在 ``offscreen``（``fusion``）上，那里每一类控件解析出来的都一样（``#308cc6``），
-    bug 在测试里根本看不见。改用「换掉应用调色板之后会跟着变还是不会」来问：
-
-    - 没钉死的那一份 → 会跟着应用调色板变（前提断言就是这一句）；
-    - 钉死了的那一份 → 自己的值原样留着。
+    **量的是「钉没钉死」而不是「是什么颜色」**：测试跑在 ``offscreen``（``fusion``）上，
+    那里每一类控件解析出来的都一样，bug 在测试里根本看不见。
     """
     pinned = theme.pushed_palette(qt_app)
     unresolved = QPalette(qt_app.palette())  # 这几档没写过，交给 Qt 自己解析
@@ -455,15 +419,13 @@ def test_the_probe_is_not_handed_an_already_answered_palette(
 ) -> None:
     """问 Qt 要那几档时给它的那份，**那几档一个都不许带着**。
 
-    回归的是真实现象（ADR 0035 决策 2）：应用调色板里那几档**有时带着「已解析」标记**
-    —— macOS 换过一次外观之后写进来的那份就带着（刚启动时那份没有，所以第一轮看起来
-    一切正常）。带着标记时 ``setPalette`` 变成「原样继承」，探针问出来的等于应用调色板
-    自己那一档，我们再把它钉下去：浅色下就成了那个发白的 ``#a5cdff``（白字 1.64:1），
-    **切一趟深浅色就再也回不来**（用户原话：「切回浅色后和之前也不一样了」，
-    数据上确实不一样：``#548fff`` → ``#a5cdff``）。
+    应用调色板里那几档**有时带着「已解析」标记** —— macOS 换过一次外观之后写进来的那份
+    就带着（刚启动时那份没有，所以第一轮看起来一切正常）。带着标记时 ``setPalette``
+    变成「原样继承」，探针问出来的等于应用调色板自己那一档：浅色下就成了那个发白的
+    ``#a5cdff``，**切一趟深浅色就再也回不来**（ADR 0035 决策 2）。
 
-    **量的是「有没有带着答案」而不是颜色**：``offscreen``（``fusion``）上只有一种解析结果，
-    带不带标记问出来都一样，颜色断言在这里量不出差别 —— 解析标记是能量的（``resolveMask``）。
+    **量的是「有没有带着答案」而不是颜色**：``fusion`` 上只有一种解析结果，颜色断言在这里
+    量不出差别 —— 解析标记是能量的（``resolveMask``）。
     """
     mask = theme._probe_palette(theme.current_theme(qt_app).background).resolveMask()
     for role in theme.RESOLVED_ROLES:
@@ -478,14 +440,10 @@ def test_a_theme_change_is_applied_after_the_events_settle(
 ) -> None:
     """换外观的那一下**不就地下发**：信号触发的那一刻应用调色板是半路的。
 
-    实测 macOS 一轮换外观里那个回调会被叫好几次：头一次拿到的还是**旧的**调色板，
-    后几次拿到的是新的 —— 但那一份里那几档**带着解析标记**（上一条那条）。就地下发
-    等于把半路的调色板钉进整棵控件树，而那几档一旦钉错就再也回不来。
-
-    所以真正那一次下发排到**这一批事件走完之后**（0ms 定时器），一轮里发几个信号都只发一次。
-
-    **量的是「有没有就地下发」**：改完应用调色板的那一刻，那个控件还不该被推过 ——
-    推了就说明我们采到了半路的那一份。
+    实测 macOS 一轮换外观里那个回调会被叫好几次：头一次拿到的还是**旧的**调色板，后几次
+    拿到的是新的 —— 而那一份里那几档**带着解析标记**。就地下发等于把半路的调色板钉进整棵
+    控件树，而那几档一旦钉错就再也回不来。所以真正那一次下发排到**这一批事件走完之后**
+    （0ms 定时器），一轮里发几个信号都只发一次。
     """
     theme.ensure_installed(qt_app)
     widget = QWidget()
@@ -516,8 +474,7 @@ def test_coming_back_to_light_gives_the_first_light_again(
 ) -> None:
     """浅 → 深 → 浅之后，浮层那几个角色**与第一轮逐项相同**。
 
-    用户原话：「切到深色再切回浅色后，浅色模式和之前也不一样了」。这一条把「回来要一样」
-    写死：任何一轮里被半路调色板带偏、又被钉死的东西，都会在这一条上露出来。
+    任何一轮里被半路调色板带偏、又被钉死的东西，都会在这一条上露出来。
     """
     roles = tuple(theme.RESOLVED_ROLES) + (QPalette.ColorRole.Window,)
     popup = QWidget()
@@ -542,9 +499,6 @@ def test_coming_back_to_light_gives_the_first_light_again(
         theme.apply_theme(qt_app)
 
 
-# ---- 输入面：与窗口同一个底色 --------------------------------------------------
-
-
 def _surface_fill(window: MainWindow, widget: QWidget) -> QColor:
     """控件内部（去掉边框那一圈）铺得最多的颜色。"""
     image = window.grab().toImage()
@@ -562,11 +516,8 @@ def test_the_input_surfaces_are_the_window_background(
 ) -> None:
     """两块输入面（搜索胶囊与「用外部应用打开」那个药丸）**与外面同一个底色**。
 
-    原来它们各派生一档（深色下提亮、浅色下压暗）。浅色下那一档灰恰好就是 macOS 系统
-    窗口的颜色，用户第一眼以为那是 Qt 原生的：两块输入面于是从整扇窗里凸出来，
-    与界面上其它东西不是一个软件画的（ADR 0035 决策 1）。现在靠那一圈边框显出边界。
-
-    **量渲染出来的像素**，不查调色板：两处的底色都是各画各的。
+    原来它们各派生一档（深色下提亮、浅色下压暗），而浅色下那一档灰恰好就是 macOS 系统
+    窗口的颜色，用户第一眼以为那是 Qt 原生的（ADR 0035 决策 1）。现在靠那一圈边框显出边界。
     """
     widget = window._search_field if which == "search_field" else window._external_button
     try:
@@ -589,9 +540,6 @@ def test_the_rename_field_shares_that_background(qt_app: QApplication) -> None:
     """改名输入框与那两块是**同一个**函数派生的（各派生一次早晚会差一档）。"""
     current = theme.current_theme(qt_app)
     assert rename_edit.field_background(current) == current.background
-
-
-# ---- 样式表里的 palette(...) ---------------------------------------------------
 
 
 def _chip_ink(window: MainWindow) -> tuple[float, float]:
@@ -618,13 +566,10 @@ def test_condition_chip_ink_follows_the_theme_at_once(
 ) -> None:
     """切浅色 / 深色之后，条件胶囊的字色**当场**就跟着走，不要等点一下。
 
-    回归的是真实缺陷（用户原话：「刚切换深色浅色模式时，搜索条件的字体颜色不会立刻改变，
-    需要点一下才会改变」）。原因在 ``ui.theme`` 模块文档第 3 条：样式表里的
-    ``palette(...)`` 只在样式表装上去的那一刻解析一次，改调色板不会让它重来。点一下管用
-    是因为那一下**重建了胶囊**，于是重新解析了一遍 —— 于是症状长成「要点一下」。
-
-    **量的是渲染出来的像素**：胶囊的调色板一直是新的（深色下 ``#ececee``），只有画出来
-    的那一层停在原处；查调色板会把这条测成绿的。
+    原因在 ``ui.theme`` 模块文档第 3 条：样式表里的 ``palette(...)`` 只在样式表装上去的
+    那一刻解析一次，改调色板不会让它重来。点一下管用是因为那一下**重建了胶囊**，于是症状
+    长成「要点一下」。**量的是渲染出来的像素**：胶囊的调色板一直是新的，只有画出来的那
+    一层停在原处。
     """
     try:
         window._conditions = [
@@ -652,9 +597,6 @@ def test_condition_chip_ink_follows_the_theme_at_once(
         window.close()
 
 
-# ---- 面包屑里那一枚分隔记号 ------------------------------------------------------
-
-
 def _contrast(a: QColor, b: QColor) -> float:
     """WCAG 的对比度（相对亮度之比，落在 1:1 ~ 21:1）。"""
 
@@ -673,17 +615,11 @@ def test_the_separator_is_visible_on_both_appearances(
 ) -> None:
     """面包屑里那个 ``▸`` 在浅色与深色下都要看得见。
 
-    回归的是真实缺陷（用户原话：「面包屑里面的分隔符似乎是固定的灰色，在深色模式下看不清」）。
-    原因与 ``panels.welcome`` 那处一模一样：**拿 ``palette(mid)`` 当字色**。深色下那一档
-    是 ``#585858``，压在 ``#171717`` 的底上只有 2.52:1 —— 而 ``▸`` 是 11 点、笔画只有两三个
-    像素宽的字，抗锯齿一摊开就彻底没了。
-
-    **量的是渲染出来的像素，不是控件的调色板**：颜色是带透明度写进样式表的（``rgba(...)``），
-    而 Qt 不会把带透明度的 ``color`` 落到控件调色板的 ``Text`` 那一栏上 —— 读那一栏永远
-    读到的是正文色，于是这条会一直绿着，测不到任何东西。
-
-    判的是 **WCAG 对非文字内容那条 3:1**（这个记号不承载文字，是图形），量的是**画得最实
-    的那个像素** —— 它最接近字色本身，抗锯齿的边缘像素反而会把它量低。
+    原因：**拿 ``palette(mid)`` 当字色**。深色下那一档是 ``#585858``，压在 ``#171717``
+    的底上只有 2.52:1 —— 而 ``▸`` 是 11 点、笔画只有两三个像素宽的字，抗锯齿一摊开就
+    彻底没了。**量的是渲染出来的像素，不是控件的调色板**：颜色是带透明度写进样式表的，
+    Qt 不会把带透明度的 ``color`` 落到控件调色板的 ``Text`` 那一栏上，读那一栏永远读到
+    的是正文色。判的是 **WCAG 对非文字内容那条 3:1**，量的是**画得最实的那个像素**。
     """
     try:
         window._conditions = [

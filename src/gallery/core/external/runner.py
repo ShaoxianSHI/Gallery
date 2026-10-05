@@ -2,7 +2,7 @@
 
 **这一层存在的理由只有一个：让测试碰不到本机。** 「Google 日历 PWA 装没装」「Chrome
 在不在跑」「那个窗口叫什么」在测试机上是不可控的，而 :class:`Runner` 让它们变成
-一个可以塞假实现的参数（``AGENTS.md``：测试不得依赖本机已安装的外部程序）。
+一个可以塞假实现的参数。
 
 :func:`subprocess_runner` 是真实现；测试传自己的进去。
 """
@@ -68,5 +68,5 @@ def subprocess_runner(
     return CommandResult(returncode=done.returncode, stdout=done.stdout, stderr=done.stderr)
 
 
-#: 等一会儿。抽成参数是为了测试里不真的睡（``AGENTS.md``：等东西要等条件，不要等秒数）。
+#: 等一会儿。抽成参数是为了测试里不真的睡 —— 等东西要等条件，不要等秒数。
 Sleeper = Callable[[float], None]

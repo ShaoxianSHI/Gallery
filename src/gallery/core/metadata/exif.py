@@ -1,13 +1,8 @@
 """读取照片元数据（只读）。
 
-数据来源优先 **exiftool 子进程** —— 它与元数据写回同源，EXIF / IPTC / XMP 一次拿全，
-用户看到的和将来写回去的是同一套字段。拿不到 exiftool（没装、超时、输出不可解析）时
-降级为 Pillow 能读到的部分，并在报告里**如实说明少了什么**：降级可以，假装没降级不行。
-
-这里只读不写：不起任何缓存文件。结果由界面按 ``(路径, mtime_ns)`` 在内存里缓存。
-
-字段表集中在 ``_CURATED_GROUPS``，加字段只改一处；值一律保持来源原样（``Canon EOS R6``、
-``1/500``），只有单位这类机械拼接才在格式化函数里做。
+数据来源优先 **exiftool 子进程** —— 它与元数据写回同源，EXIF / IPTC / XMP 一次拿全。拿不到时
+降级为 Pillow，并在报告里**如实说明少了什么**：降级可以，假装没降级不行。这里只读不写，
+不起任何缓存文件；字段表集中在 ``_CURATED_GROUPS``，加字段只改一处。
 """
 
 from __future__ import annotations
@@ -37,13 +32,9 @@ EXIFTOOL_TIMEOUT_SECONDS: Final = 15.0
 #: exiftool 用这些串表示「这个字段是空的」。
 _EMPTY_VALUES: Final = frozenset({"-", "--", "unknown", ""})
 
-#: 读文件时要带的编码设置。
-#:
-#: ``-charset IPTC=UTF8`` 不能省：**exiftool 13 起，泛指的 ``-charset UTF8`` 不再覆盖
-#: IPTC**，而 IPTC 的缺省编码仍是 Latin-1。少了这一句，照片里的中文地点名读回来是一串
-#: 乱码（``æ­£å·ž``）—— 分组里的「城市」于是变成一堆乱码，面板上的「地点」也是。
-#: 写回那一侧用同一份（``metadata.writeback`` 也 import 它），写进去与读出来的编码
-#: 必须是同一套，否则回读校验会把成功的写入判成失败。
+#: 读文件时要带的编码设置。``-charset IPTC=UTF8`` 不能省：exiftool 13 起泛指的 ``-charset
+#: UTF8`` 不再覆盖 IPTC，而它的缺省编码仍是 Latin-1 —— 少了这一句，照片里的中文地点名读回来
+#: 是一串乱码。写回那一侧用同一份：编码必须是同一套，否则回读校验会把成功的写入判成失败。
 EXIFTOOL_CHARSET_ARGS: Final[tuple[str, ...]] = ("-charset", "UTF8", "-charset", "IPTC=UTF8")
 
 
@@ -81,27 +72,19 @@ class MetadataReport:
     #: 文件里写的地点名（IPTC/XMP），拼成一句 ``中国 · 浙江省 · 杭州``。
     #: 有它就不再按坐标推断，免得给出两个说法。
     place_from_file: str | None = None
-    #: 文件里那三层地点**分开**的值。给「编辑元数据」的输入框用（ADR 0031）。
-    #:
-    #: ``place_from_file`` 是拼好的一句话，只够显示；要把三个输入框各自填上，就得知道
-    #: 哪一段是城市、哪一段是省。**从那句话里拆是不行的** —— 地名本身就有「 ·
-    # 」（「圣 · 让娜 · 德 · 布雷」），拆开只会得到一堆碎片。
+    #: 文件里那三层地点**分开**的值，给「编辑元数据」的输入框用（ADR 0031）。
+    #: **从 ``place_from_file`` 那句拼好的话里拆是不行的** —— 地名本身就有「 · 」
+    #: （「圣 · 让娜 · 德 · 布雷」），拆开只会得到一堆碎片。
     place_city: str | None = None
     place_region: str | None = None
     place_country: str | None = None
-    #: 照片记下的**拍摄时间**与**时区偏移**，都已归一（``+08:00``）。给「编辑元数据」的
-    #: 输入框用（ADR 0032）。
-    #:
-    #: **不从「位置」那几个字段里凑，也不从面板显示的那一行反解** —— 面板上显示的是
-    #: ``2022-04-16 20:52:02 +08:00`` 这样拼好的一句，把它拆回两个输入框要写第二套解析，
-    #: 而两套规则早晚会各自漂移。照片没记时区时偏移就是 ``None``，**不按本机时区补**。
+    #: 照片记下的**拍摄时间**与**时区偏移**，都已归一（``+08:00``）（ADR 0032）。
+    #: **不从面板显示的那一行反解** —— 那行是 ``2022-04-16 20:52:02 +08:00`` 这样拼好的一句，
+    #: 拆回两个输入框要写第二套解析，而两套规则早晚会各自漂移。没记时区时偏移就是 ``None``。
     captured_at: str | None = None
     captured_offset: str | None = None
-    #: 推断地点是否已经查过了。
-    #:
-    #: 必须区分「没查」与「查了但没有结果」：没有记录、失败都会给出结论，只有
-    #: 还没查过的报告才需要再查一次。少了这个标记，命中缓存的路径就会把
-    #: 「尚未推断」当成「推断不出」，于是带坐标的照片永远不显示地点。
+    #: 推断地点是否已经查过了。**必须区分「没查」与「查了但没有结果」**：只有还没查过的报告
+    #: 才需要再查一次，少了这个标记，命中缓存的路径会把「尚未推断」当成「推断不出」。
     place_resolved: bool = False
 
     @property
@@ -327,9 +310,8 @@ def build_report(
 def as_text(value: object) -> str:
     """原始字段值 → 字符串（数组按顿号连接，字节按 UTF-8 解，解不出就替换）。
 
-    **分组 / 排序与元数据面板读的是同一批字段**，因此两处对同一个值必须说出同一句
-    话：这份实现在 :mod:`gallery.core.metadata.facets` 里也用（``_as_text`` 早已是它
-    的一份抄写），抄来抄去只会各自漂移。
+    **分组 / 排序与元数据面板读的是同一批字段**，两处对同一个值必须说出同一句话 ——
+    这份实现在 :mod:`gallery.core.metadata.facets` 里也用。
     """
     if isinstance(value, (list, tuple)):
         return "、".join(as_text(item) for item in value)
@@ -339,10 +321,8 @@ def as_text(value: object) -> str:
 
 
 def first_value(raw: Mapping[str, str], *keys: str) -> str | None:
-    """按顺序取第一个有内容的值。
-
-    与 :func:`camera_name` 等取值函数一样对外公开：``facets`` 要从同一批原始键值里
-    抽分组与排序用的字段，规则必须只有这一份，否则两边迟早对不上。
+    """按顺序取第一个有内容的值。与 :func:`camera_name` 等一样对外公开：``facets`` 要从同一批
+    原始键值里抽字段，规则必须只有这一份，否则两边迟早对不上。
     """
     for key in keys:
         value = raw.get(key)
@@ -361,11 +341,8 @@ def leading_number(value: str) -> float | None:
 
 
 def positive_value(value: str | None) -> str | None:
-    """这类字段里 0（或负数）等于「没记录」。
-
-    实测有导出工具把 FNumber / FocalLength / ISO 一律填 0，而且焦距还带着单位
-    （``0.0 mm``）；显示成 f/0.0、0.0 mm、ISO 0 只会让人以为软件坏了。
-    取不到数字的值（``1/500``）原样保留。
+    """这类字段里 0（或负数）等于「没记录」：实测有导出工具把 FNumber / FocalLength / ISO
+    一律填 0，还带着单位（``0.0 mm``），显示成 f/0.0 只会让人以为软件坏了。取不到数字的值原样保留。
     """
     if value is None:
         return None
@@ -386,12 +363,9 @@ def camera_name(raw: Mapping[str, str]) -> str | None:
 
 # ---- 拍摄时间（ADR 0032）--------------------------------------------------------
 #
-# **EXIF 的拍摄时间是墙上时间，不带时区**：`DateTimeOriginal` 存的是「2024:05:16 20:52:02」
-# 这样一串裸的钟点，既不是 UTC，也没有换算。时区在**单独的可选字段** `OffsetTimeOriginal`
-# （EXIF 2.31 才有）里，相机十有八九不写它。
-#
-# 归一化只有一份，就在这里 —— 读报告（``build_report``）与写回时的校验都用它，两边说出的话
-# 不一样的话，面板上显示的时间与写进去的时间就会对不上。
+# **EXIF 的拍摄时间是墙上时间，不带时区**：时区在单独的可选字段 ``OffsetTimeOriginal``
+# （EXIF 2.31 才有）里，相机十有八九不写它。归一化只有一份（下面那几个函数），读报告与
+# 写回校验都用它 —— 两边说出的话不一样的话，面板上显示的时间与写进去的时间就对不上。
 
 #: 拍摄时间的那几个标签，与 ``_shooting_time`` 取值的顺序一致（面板显示的也就是它）。
 CAPTURE_TIME_FIELDS: Final[tuple[str, ...]] = (
@@ -419,12 +393,9 @@ _MAX_OFFSET_HOURS: Final = 14
 def normalize_capture_time(text: str | None) -> str | None:
     """``2024-05-16 20:52:02`` / ``2024:05:16 20:52:02`` → EXIF 的写法；看不懂返回 ``None``。
 
-    **只做「成不合法」的判断，不猜**：``2024-13-01``（十三月）、``2024-02-31`` 这类会原样
-    抛 ``ValueError`` 并被判为看不懂 —— 一个不存在的时间比没有时间糟糕得多，而它偏偏是
-    用户手滑就能敲出来的。
-
-    返回值一律补齐到秒：EXIF 的写法就是 ``YYYY:MM:DD HH:MM:SS``，少了秒会被 exiftool
-    读回来时补上，于是校验会把一次成功的写入判成没写进去。
+    **只做「成不合法」的判断，不猜**：``2024-13-01``、``2024-02-31`` 这类原样抛 ``ValueError``
+    并被判为看不懂 —— 一个不存在的时间比没有时间糟糕得多。返回值一律补齐到秒：少了秒会被
+    exiftool 读回来时补上，校验随即把一次成功的写入判成没写进去。
     """
     if not text:
         return None
@@ -441,10 +412,8 @@ def normalize_capture_time(text: str | None) -> str | None:
 
 
 def normalize_offset(text: str | None) -> str | None:
-    """``+08:00`` / ``-0500`` / ``Z`` → ``+08:00``；看不懂返回 ``None``。
-
-    ``Z`` 归到 ``+00:00``：它们是同一件事，而留着 ``Z`` 会让「改了没改」这件事比出来的
-    是两个写法。
+    """``+08:00`` / ``-0500`` / ``Z`` → ``+08:00``；看不懂返回 ``None``。``Z`` 归到 ``+00:00``：
+    它们是同一件事，而留着 ``Z`` 会让「改了没改」比出来是两个写法。
     """
     if not text:
         return None
@@ -461,10 +430,8 @@ def normalize_offset(text: str | None) -> str | None:
 
 
 def capture_time_parts(raw: Mapping[str, str]) -> tuple[str | None, str | None]:
-    """照片此刻的 ``(拍摄时间, 时区偏移)``，都已归一；没有就是 ``None``。
-
-    给「编辑元数据」的输入框用（ADR 0032）。**取不到就是 ``None``，绝不按本机时区补一个**
-    —— 凭空替用户猜时区，猜错的后果是排序整体偏几个小时（见 ADR 0032 决策 2）。
+    """照片此刻的 ``(拍摄时间, 时区偏移)``，都已归一；没有就是 ``None``（ADR 0032）。
+    **绝不按本机时区补一个** —— 凭空猜错的后果是排序整体偏几个小时。
     """
     return (
         normalize_capture_time(first_value(raw, *CAPTURE_TIME_FIELDS)),
@@ -473,10 +440,8 @@ def capture_time_parts(raw: Mapping[str, str]) -> tuple[str | None, str | None]:
 
 
 def _shooting_time(raw: Mapping[str, str]) -> str | None:
-    """面板上那一行「拍摄时间」。**原样显示墙上时间，不换算到本机时区**。
-
-    带得上偏移就跟在后面（``2022-04-16 20:52:02 +08:00``）—— 那正是照片自己记下的说法；
-    换算一遍只会让用户对不上他拍的那张照片。
+    """面板上那一行「拍摄时间」。**原样显示墙上时间，不换算到本机时区**，带得上偏移就跟在后面
+    （``2022-04-16 20:52:02 +08:00``）—— 那正是照片自己记下的说法，换算一遍只会让用户对不上。
     """
     value = first_value(raw, *CAPTURE_TIME_FIELDS)
     if value is None:
@@ -577,11 +542,8 @@ def coordinates_decimal(raw: Mapping[str, str]) -> tuple[float | None, float | N
 
 
 def latitude_decimal(raw: Mapping[str, str]) -> float | None:
-    """只有纬度时用它（写回校验逐轴比对，见 ``metadata.writeback``）。
-
-    单独暴露是为了让 ``writeback`` 不必为了比一个轴而凑出一对坐标：坐标写成度分秒、
-    读回来也是度分秒，两边都得过 :func:`_degrees_to_decimal` 这同一份解析 —— 抄一份到
-    写回那一侧，两边迟早对不上，而「读出来和写进去不是一个数」正是校验要抓的东西。
+    """只有纬度时用它（写回校验逐轴比对）。单独暴露是为了让 ``writeback`` 不必为了比一个轴而凑出
+    一对坐标：两边都得过 :func:`_degrees_to_decimal` 同一份解析，抄一份迟早对不上。
     """
     return _axis_decimal(raw, "EXIF:GPSLatitude", "EXIF:GPSLatitudeRef", negative={"S"})
 
@@ -609,10 +571,8 @@ _DEGREE_NUMBER = re.compile(r"(\d+(?:\.\d+)?)")
 
 
 def _degrees_to_decimal(value: str) -> float | None:
-    """``44.83779`` 与 ``44 deg 50' 16.04"`` 都要认。
-
-    exiftool 默认输出的就是度分秒（``44 deg 50' 16.04"``），只认十进制会让
-    坐标解析失败、连带反查功能整个不工作。
+    """``44.83779`` 与 ``44 deg 50' 16.04"`` 都要认 —— exiftool 默认输出的就是度分秒，只认十进制
+    会让坐标解析失败、连带反查功能整个不工作。
     """
     text = value.strip()
     if not text:
@@ -645,8 +605,7 @@ def _sub_location(raw: Mapping[str, str]) -> str | None:
 def _xmp_value(raw: Mapping[str, str], tag: str) -> str | None:
     """按 ``XMP-photoshop:City`` 这样的全名取，取不到再按一级族名 ``XMP:City`` 取。
 
-    **两个都要认**：exiftool 的 ``-G`` 按**一级族**回填键，于是 13.x 给的是 ``XMP:City``；
-    而写作侧（``metadata.writeback``）用的也是这个一级族名。只认全名的话，
+    **两个都要认**：exiftool 的 ``-G`` 按**一级族**回填键，13.x 给的是 ``XMP:City``；只认全名的话，
     Lightroom 那种**只写 XMP、不写 IPTC** 的照片，面板上的「地点」永远是空的。
     """
     return first_value(raw, f"XMP-photoshop:{tag}") or first_value(raw, f"XMP:{tag}")
@@ -662,12 +621,9 @@ def _place_parts(raw: Mapping[str, str]) -> tuple[str | None, str | None, str | 
 
 
 def _place_from_file(raw: Mapping[str, str]) -> str | None:
-    """文件里那三层地点拼成一句话（显示用）。
-
-    **顺序与推断出来的那个一模一样（国家 · 省 · 市）**，而且走的是同一个
-    :func:`~gallery.core.places.countries.place_label`。面板上「地点」与「地点（推断）」
-    是「位置」组里挨着的两行，用户正要拿来对照 —— 一个「中国 · 浙江省 · 杭州」、
-    一个「杭州 · 浙江省 · 中国」，读起来像是两个地方。这里各拼一次，早晚会漂回去。
+    """文件里那三层地点拼成一句话（显示用）。**顺序与推断出来的那个一模一样（国家 · 省 · 市）**，
+    而且走同一个 :func:`~gallery.core.places.countries.place_label` —— 面板上「地点」与
+    「地点（推断）」是挨着的两行，用户正要拿来对照，两处各拼一次早晚漂回去。
     """
     city, region, country = _place_parts(raw)
     return place_label(city, region, country) or None
@@ -761,9 +717,8 @@ _CURATED_GROUPS: Final[tuple[tuple[str, tuple[_FieldSpec, ...]], ...]] = (
     (
         "位置",
         (
-            # **三层地名写成一行**，用「 · 」连起来 —— 与推断出来的地点同一个说法
-            # （「中国 · 浙江省 · 杭州」）。分三行摆着看着像三件无关的事，而它们说的
-            # 其实是同一个地方；子地点是另一个字段（「西湖 · 断桥残雪」），仍单列一行。
+            # **三层地名写成一行**，用「 · 」连起来 —— 与推断出来的地点同一个说法。分三行摆着看着像
+            # 三件无关的事，而它们说的其实是同一个地方；子地点是另一个字段，仍单列一行。
             _FieldSpec("地点", _place_from_file),
             _FieldSpec("子地点", _sub_location),
             _FieldSpec("坐标", _coordinates),
@@ -856,11 +811,8 @@ _PILLOW_ENUMS: Final[dict[str, dict[int, str]]] = {
 
 
 class PillowSource:
-    """降级来源：只用 Pillow 读基础 EXIF，不起子进程。
-
-    与 :class:`ExifToolReader` 同形，因此可以被注入替换。批量读取分组 / 排序字段时
-    缺 exiftool 也走这里（见 ``core.metadata.batch``）：逐张用 Pillow 读反而比
-    每张起一个子进程快得多，只是拿不到 IPTC / XMP。
+    """降级来源：只用 Pillow 读基础 EXIF，不起子进程。批量读分组 / 排序字段时缺 exiftool 也走这里：
+    逐张用 Pillow 读比每张起一个子进程快得多，只是拿不到 IPTC / XMP。
     """
 
     def available(self) -> bool:
@@ -911,10 +863,8 @@ def _pillow_gps(exif: Image.Exif) -> dict[str, object]:
 
 
 def _gps_fields(gps: Mapping[int, object]) -> dict[str, object]:
-    """GPS IFD（数字标签 → 值）→ 与 exiftool 同形的键值。
-
-    单独抽出来是因为它纯函数、可单测：Pillow 给的是 ``(度, 分, 秒)`` 三元组，
-    写成 JPEG 再读回来看结果太绕。
+    """GPS IFD（数字标签 → 值）→ 与 exiftool 同形的键值。单独抽出来是因为它纯函数、可单测：
+    Pillow 给的是 ``(度, 分, 秒)`` 三元组，写成 JPEG 再读回来看结果太绕。
     """
     if not gps:
         return {}

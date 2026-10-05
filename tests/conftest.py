@@ -1,6 +1,6 @@
 """测试共享工具。
 
-测试数据一律现场构造：仓库里不放真实照片，也不放任何大尺寸二进制（见 AGENTS.md）。
+测试数据一律现场构造：仓库里不放真实照片，也不放任何大尺寸二进制；
 需要真实文件时用 Pillow 当场生成最小的合法图片。
 """
 
@@ -27,10 +27,8 @@ FAKE_TRASH_NAME = ".废纸篓"
 def fake_trash(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """把「废纸篓」指向临时目录，返回那个目录。
 
-    **故意是 autouse 的**：这条测试要动的是用户的文件，测试一旦漏了这个 fixture，
-    就会把临时照片搬进用户真实的 ``~/.Trash`` —— 那里面的东西用户还要还原，
-    而这个隐患是静默的（在受限环境里表现为「测试莫名其妙失败」）。
-    统一在这里兜住，每个测试就不必自己记得了（需要断言废纸篓内容的照常显式要它）。
+    故意做成 autouse：漏了这个 fixture 就会把临时照片搬进用户真实的 ``~/.Trash``，
+    而那个隐患是静默的。
     """
     from gallery.core.metadata import trash
 
@@ -40,8 +38,6 @@ def fake_trash(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 #: 没被 :func:`isolated_app_data` 换掉的那个 :func:`paths.app_data_base`。
-#:
-#: 只有「测它自己」的用例需要 —— 见下面那个 ``real_app_data_base`` fixture。
 _REAL_APP_DATA_BASE = paths.app_data_base
 
 
@@ -51,18 +47,12 @@ def isolated_app_data(
 ) -> None:
     """**把应用数据目录挪进临时目录**，任何测试都不许碰用户真实的那一个。
 
-    与 :func:`fake_trash` 是同一个形状、同一个理由：真废纸篓与真缓存目录都在用户的
-    家里，测试漏掉一次就是往那儿丢东西，而且**丢得看不出来**。
+    兜住 ``state.json`` 与 ``<app cache>/thumbs/<库摘要>/``（ADR 0038 决策 1）；后者更要紧
+    —— 摘要按**库路径**算，而每个用例一个 ``tmp_path``，不隔离的话两轮测试就在用户真实
+    缓存目录里堆出几千个既不会淘汰也没有上限的摘要目录。
 
-    这里兜住的是两样：``state.json``（最近打开列表、窗口几何）与系统级缩略图缓存
-    ``<app cache>/thumbs/<库摘要>/``（ADR 0038 决策 1）。后者更要紧 —— 摘要按**库路径**
-    算，而测试每个用例一个 ``tmp_path``，于是**每个真去解码缩略图的用例都会留下一个
-    新的摘要目录**，而它们既不会被淘汰也没有上限（ADR 0038 那条已知遗留）。
-    实测：不隔离的话跑两轮就在用户的真实缓存目录里留下 2509 个，65 MB。
-
-    **钉在它身上而不是逐个调用点传参**：``app_data_base`` 是 ``state.json`` 与系统缓存
-    唯一的共同来源，而 ``Library.open`` 的调用点在测试里有三十多处 —— 逐个传
-    ``cache_base`` 是三十多次「记得写」，漏掉任何一处都是同样的泄漏。
+    钉在 ``app_data_base`` 这一个来源上而不是逐个调用点传参：``Library.open`` 的调用点
+    有三十多处，逐个传参等于三十多次「记得写」，漏掉任何一处都是同样的泄漏。
     """
     base = tmp_path_factory.mktemp("应用数据")
     monkeypatch.setattr(paths, "app_data_base", lambda: base)
@@ -70,11 +60,7 @@ def isolated_app_data(
 
 @pytest.fixture
 def real_app_data_base() -> Callable[[], Path]:
-    """真正的（没被隔离的）``app_data_base``。
-
-    只有一条用例需要它：``test_app_data_base_is_platform_specific`` 测的就是「各平台
-    落在各平台该在的地方」——那是关于**真实默认值**的断言，隔离了就没得测。
-    """
+    """真正的（没被隔离的）``app_data_base``，供「各平台默认落在哪」那条断言用。"""
     return _REAL_APP_DATA_BASE
 
 
@@ -82,10 +68,8 @@ def real_app_data_base() -> Callable[[], Path]:
 def make_photo(tmp_path: Path) -> Callable[..., Path]:
     """返回一个「造照片」的工厂：``make_photo("a.jpg", size=(40, 20))``。
 
-    默认在 ``tmp_path`` 下生成，保证每个测试都在自己的临时目录里工作。
-
-    ``exif`` / ``exif_ifd`` 可以往文件里写真的 EXIF（主 IFD 与 Exif 子 IFD，
-    键用标签编号）。分组与排序的测试需要它们 —— 那种照片得带拍摄时间才分得开。
+    ``exif`` / ``exif_ifd`` 往文件里写真 EXIF（主 IFD 与 Exif 子 IFD，键用标签编号）；
+    分组与排序的测试需要它们 —— 那种照片得带拍摄时间才分得开。
     """
     counter = itertools.count()
 

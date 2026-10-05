@@ -1,12 +1,6 @@
 """元数据写回（ADR 0030）：白名单、回读校验、回滚、记账、撤销。
 
-**一律用假的 writer**：测试不得依赖本机有没有装 exiftool（AGENTS）。假的 writer 是一份
-内存里的键值表 —— 它既能模拟「写成了」，也能模拟「exiftool 说成功了却什么都没写进去」，
-而后者恰恰是回读校验存在的理由，真 exiftool 反而不容易造出来。
-
-断言两件事，缺一不可：**文件（那份内存里的表）变成了新的**，以及 **journal 里记下了
-字段级的原值与新值**（红线 4）。
-"""
+**一律用假的 writer**：它能模拟「exiftool 说成功了却什么都没写进去」，而那正是回读校验的由来。"""
 
 from __future__ import annotations
 
@@ -53,9 +47,8 @@ class FakeWriter:
         self.writes: list[tuple[str, ...]] = []
         #: 假装这次写其实没写进去（退出码为 0，值却原封不动）。
         self.silently_ignores = False
-        #: **这个「容器」存不下的标签** —— 模拟 exiftool 往 HEIC 写 IPTC 时的真实行为：
-        #: 返回 0、不警告、**只把这几个字段默默跳过**，其余照写。少了这一项，「HEIC 地点
-        #: 写不进去」那个 bug 在测试里就复现不出来（假的 writer 什么都存得下）。
+        #: **这个「容器」存不下的标签**：exiftool 往 HEIC 写 IPTC 时返回 0、不警告、把这几个
+        #: 字段默默跳过 —— 少了它，「HEIC 地点写不进去」那个 bug 就复现不出来。
         self.unstorable: frozenset[str] = frozenset()
         #: 假装工具直接拒绝了这次写入。
         self.refuses = False
@@ -105,22 +98,10 @@ HANGZHOU = (
 )
 
 
-# ---- 白名单：这是「大部分元数据不能编辑」在代码里的形状 ------------------------
-
-
 def test_only_capture_time_and_position_tags_are_writable() -> None:
     """**白名单就是位置那十三个加拍摄时间那两个**，一个不多。
 
-    「大部分元数据不该可编辑」如果只写在界面上，早晚会有人从别的入口写进去。相机、
-    镜头、曝光三件套一个都不在清单里 —— 想写它们在这个模块里压根做不到。
-
-    **拍摄时间那两个是唯一的新增**（ADR 0032）：它们的加入是一次有意的收窄放宽，
-    判据是「时间是需要人校准的时钟读数，而曝光是机身测出来的量」。
-
-    顺带钉住**文件处理过程那几个日期字段仍然不可写**：``CreateDate`` /
-    ``DateTimeDigitized`` / ``ModifyDate`` 记的是文件什么时候被创建、被数字化、被改写过，
-    改它们等于制造一条没发生过的记录。
-    """
+    「大部分元数据不该可编辑」只写在界面上，早晚有人从别的入口写进去（ADR 0032）。"""
     expected = frozenset(
         (
             *COORDINATE_TAGS,
@@ -170,10 +151,8 @@ def test_writing_a_field_outside_the_whitelist_is_refused(
 def test_writing_the_capture_time_goes_through_the_same_guarded_path(
     library: Path, photo: PhotoRef
 ) -> None:
-    """**拍摄时间与坐标走同一条路**：守卫、回读校验、记账、撤销，一个都不少。
-
-    它是后加的白名单条目（ADR 0032），而白名单的价值恰恰在于「加进来之后仍然受同一套
-    规矩管」—— 少了这一条，加进来的两个标签就可能绕过回读校验或者不记账。
+    """**拍摄时间与坐标走同一条路**：守卫、回读校验、记账、撤销，一个都不少 —— 白名单的价值
+    在于「加进来之后仍受同一套规矩管」，少了这条，新标签就可能绕过校验或不记账（ADR 0032）。
     """
     writer = FakeWriter(fields={"EXIF:DateTimeOriginal": "2024:05:16 20:52:02"})
 
@@ -231,15 +210,9 @@ def test_without_exiftool_it_says_so_instead_of_failing_obscurely(
         write_metadata(library, photo, list(HANGZHOU), writer=writer)
 
 
-# ---- 容器存不下的标签压根不发（ADR 0036）----------------------------------------
-
-
 def _photo_with_suffix(library: Path, suffix: str) -> PhotoRef:
-    """造一张**指定后缀**的照片。
-
-    这一层只 ``stat`` 文件、只看后缀，压根不碰像素 ——``is_supported_photo`` 的文档原话
-    就是「不检查文件是否真的能解码」，而 ADR 0036 决策 2 定的判据正是**后缀**。
-    所以这里不需要造一张真的 HEIC，也不需要 pillow-heif。
+    """造一张**指定后缀**的照片：这一层只 ``stat`` 文件、只看后缀（ADR 0036 决策 2），
+    不碰像素 —— 所以不需要造一张真的 HEIC，也不需要 pillow-heif。
     """
     path = library / f"一张{suffix}"
     path.write_bytes(b"not really a photo, just takes up a spot")
@@ -263,10 +236,7 @@ def test_a_tag_the_container_cannot_store_is_never_sent_to_the_writer(
 ) -> None:
     """**表里说存不下的，一个都不许发出去。**
 
-    这条钉住的是 ADR 0036 的整件事：发出去等于「exiftool 返回 0、什么都不写」，回读校验
-    必定判它没写进去，紧接着的**整体回滚会把已经写成功的 XMP 一起擦掉** —— HEIC 的地点
-    写不进去就是从这儿来的。逐个后缀过一遍，表里每一条都要被真的拦住。
-    """
+    发出去等于「exiftool 返回 0、什么都不写」，回读校验必定判它没写进去并整体回滚（ADR 0036）。"""
     writer = FakeWriter()
     ref = _photo_with_suffix(library, suffix)
 
@@ -282,14 +252,8 @@ def test_a_tag_the_container_cannot_store_is_never_sent_to_the_writer(
 def test_the_place_still_lands_on_a_container_that_cannot_store_iptc(
     library: Path, suffix: str
 ) -> None:
-    """**这就是用户遇到的那个 bug 的完整复现**（ADR 0036）。
-
-    假的 writer 这一条**真的会丢 IPTC**（``unstorable``），于是今天的行为会原样重演：
-    IPTC 发出去 → 被默默跳过 → 回读对不上 → **整体回滚把已经写成功的 XMP 一起擦掉** →
-    地点一个字都没写进去。
-
-    修好之后：存不下的压根不发，XMP 落地，回滚一次都没发生。
-    """
+    """**那个 bug 的完整复现**（ADR 0036）：假 writer 这一条真的会丢 IPTC，于是旧行为原样重演 ——
+    IPTC 发出去被默默跳过、回读对不上、整体回滚把写成功的 XMP 也擦掉。"""
     writer = FakeWriter()
     writer.unstorable = UNSTORABLE_TAGS[suffix]
     ref = _photo_with_suffix(library, suffix)
@@ -306,9 +270,8 @@ def test_the_place_still_lands_on_a_container_that_cannot_store_iptc(
 
 @pytest.mark.parametrize("suffix", sorted(UNSTORABLE_TAGS))
 def test_a_filtered_tag_never_reaches_the_journal(library: Path, suffix: str) -> None:
-    """**没写过的字段不该出现在回滚记录里。**
-
-    撤销时去「恢复」一个从未存在过的 IPTC，反而会造出一条不存在的记录。
+    """**没写过的字段不该出现在回滚记录里**：撤销时去「恢复」一个从未存在的 IPTC，
+    反而会造出一条不存在的记录。
     """
     writer = FakeWriter()
     ref = _photo_with_suffix(library, suffix)
@@ -347,10 +310,8 @@ def test_the_coordinates_still_go_to_a_container_without_iptc(library: Path) -> 
 def test_when_every_field_is_filtered_out_it_says_the_format_cannot_store_them(
     library: Path,
 ) -> None:
-    """**「本来就没改」与「这个格式存不下」必须分开说**（ADR 0036 决策 4）。
-
-    共用一句「没有要写入的改动」的话，用户会以为自己没保存成功、再点一次保存 ——
-    那一次还是同样的结果。
+    """**「本来就没改」与「这个格式存不下」必须分开说**（ADR 0036 决策 4）：共用一句「没有
+    要写入的改动」，用户会以为没保存成功、再点一次，而结果还是一样。
     """
     writer = FakeWriter()
     ref = _photo_with_suffix(library, ".gif")
@@ -364,10 +325,8 @@ def test_when_every_field_is_filtered_out_it_says_the_format_cannot_store_them(
 
 
 def test_the_two_kinds_of_nothing_to_write_are_told_apart(library: Path) -> None:
-    """**「压根没让写」与「让写了但值一样」是两回事**，只有后者该安静（ADR 0036 决策 4）。
-
-    前者本来就是一句报错；后者是常态 —— 把「没改」记成一次改动，会让 ⌘Z 去撤一件空事，
-    所以它连日志都不该留。
+    """**「压根没让写」与「让写了但值一样」是两回事**（ADR 0036 决策 4）：前者本来就报错，
+    后者是常态 —— 把「没改」记成一次改动会让 ⌘Z 去撤空事，所以它连日志都不该留。
     """
     writer = FakeWriter(fields={"XMP:City": "杭州"})
     ref = _photo_with_suffix(library, ".jpg")
@@ -383,13 +342,9 @@ def test_the_two_kinds_of_nothing_to_write_are_told_apart(library: Path) -> None
     assert read_records(library) == []
 
 
-# ---- 那张表本身的守护 ---------------------------------------------------------
-
-
 def test_the_storage_gap_table_only_names_tags_gallery_can_write() -> None:
-    """**表里的标签必须都在白名单里** —— 写错一个字母，整条修复静悄悄地失效。
-
-    而它失效的方式正是最难发现的那种：HEIC 的地点继续写不进去，没有一处报错。
+    """**表里的标签必须都在白名单里** —— 写错一个字母，整条修复静悄悄地失效：HEIC 的地点
+    继续写不进去，而没有一处报错。
     """
     for suffix, tags in UNSTORABLE_TAGS.items():
         for tag in tags:
@@ -397,9 +352,8 @@ def test_the_storage_gap_table_only_names_tags_gallery_can_write() -> None:
 
 
 def test_the_storage_gap_table_never_drops_the_xmp_place_names() -> None:
-    """**XMP 一个都不许进表** —— 每一个进表的容器都存得下它（实测）。
-
-    砍掉 XMP 就等于把今天这个 bug 换个格式重演一遍：地点彻底写不进去。
+    """**XMP 一个都不许进表**（实测每个进表的容器都存得下它）—— 砍掉它就是把这个 bug
+    换个格式重演一遍：地点彻底写不进去。
     """
     for suffix, tags in UNSTORABLE_TAGS.items():
         assert set(XMP_PLACE_TAGS) & tags == set(), f"{suffix} 那条把 XMP 也砍掉了"
@@ -407,10 +361,8 @@ def test_the_storage_gap_table_never_drops_the_xmp_place_names() -> None:
 
 @pytest.mark.parametrize("suffix", [".heic", ".heif", ".webp"])
 def test_the_containers_without_iptc_drop_exactly_the_iptc_place_names(suffix: str) -> None:
-    """**这三个容器丢掉的正好是 IPTC 那三个地名标签** —— 一个不多，一个不少。
-
-    坐标、拍摄时间在那几个容器里都是好的（实测），**多丢一个就是又一次「地点写不进去」**，
-    少丢一个就还是今天这个 bug。
+    """**这三个容器丢掉的正好是 IPTC 那三个地名标签**，一个不多一个不少：坐标与拍摄时间在
+    那几个容器里都是好的（实测），多丢一个就是又一次「地点写不进去」。
     """
     assert UNSTORABLE_TAGS[suffix] == frozenset(IPTC_PLACE_TAGS)
 
@@ -421,10 +373,8 @@ def test_the_storage_gap_table_only_covers_formats_the_library_shows() -> None:
 
 
 def test_bmp_is_left_to_the_message_exiftool_already_gives() -> None:
-    """**BMP 不进这张表**：exiftool 对它明确报错并返回非 0，那条路本来就是通的。
-
-    这张表只装**不说话的**。把 BMP 也塞进来「静默跳过」，等于把一句现成的清楚错误
-    换成一句沉默的失败 —— 那比现在糟。
+    """**BMP 不进这张表**：exiftool 对它明确报错并返回非 0，那条路本来就是通的 —— 这张表
+    只装**不说话的**，把它塞进来等于把一句清楚的错误换成一次沉默的失败。
     """
     assert ".bmp" not in UNSTORABLE_TAGS
 
@@ -432,10 +382,7 @@ def test_bmp_is_left_to_the_message_exiftool_already_gives() -> None:
 def test_the_place_edit_a_heic_gets_is_the_one_that_actually_lands(library: Path) -> None:
     """**从计划到写盘的整条路**（跨 :mod:`place_edit` 与 :mod:`writeback` 两层）。
 
-    ``plan_place_edit`` 仍然同时生成 XMP 与 IPTC —— 那是对的（它不知道你要写进哪种容器）。
-    **由写回这一层按容器去掉存不下的那一份**，于是 HEIC 上落到文件里的是 XMP，
-    而「地点写不进去」这个症状就此消失。
-    """
+    ``plan_place_edit`` 同时生成 XMP 与 IPTC 是对的；由写回这一层按容器去掉存不下的那一份。"""
     plan = plan_place_edit(PlaceState(), PlaceEdit(city="杭州", region="浙江省", country="中国"))
     assert {"IPTC:City", "XMP:City"} <= {item.tag for item in plan.assignments}
 
@@ -450,9 +397,6 @@ def test_the_place_edit_a_heic_gets_is_the_one_that_actually_lands(library: Path
     assert {c.tag for c in result.changes} == {"XMP:City", "XMP:State", "XMP:Country"}
 
 
-# ---- 写与记账 ------------------------------------------------------------------
-
-
 def test_writing_records_the_original_value_of_every_field(library: Path, photo: PhotoRef) -> None:
     writer = FakeWriter({"EXIF:GPSLatitude": "44.83779", "XMP:City": "波尔多"})
 
@@ -461,8 +405,7 @@ def test_writing_records_the_original_value_of_every_field(library: Path, photo:
     assert result.written
     assert result.entry is not None and result.entry.size == photo.size  # 假文件没变大
     records = read_records(library)
-    # **两条**：先记「打算改」（原值与新值已经齐了），动完文件再记终态。
-    # 少掉前面那一条，写入与落盘之间那一下崩溃就什么都留不下（红线 4）。
+    # **两条**：先记「打算改」（原值与新值那时已齐），动完文件再记终态；少一条则崩溃窗口留不下东西。
     assert [record.result for record in records] == [RESULT_PENDING, RESULT_OK]
     pending, record = records
     assert pending.action == record.action == ACTION_METADATA
@@ -493,13 +436,9 @@ def test_clearing_a_field_writes_an_empty_value(library: Path, photo: PhotoRef) 
     assert "XMP:City" not in writer.fields
 
 
-# ---- 回读校验与回滚 -------------------------------------------------------------
-
-
 def test_a_silent_failure_is_caught_and_rolled_back(library: Path, photo: PhotoRef) -> None:
-    """exiftool 返回成功却没写进去（标签不支持、格式拒绝）—— 靠**回读**才看得出来。
-
-    回滚必须把原值写回去：这时文件已经被人动过了（哪怕动得不多），留着半成品才是真事故。
+    """exiftool 返回成功却没写进去（标签不支持、格式拒绝）—— 靠**回读**才看得出来。回滚必须
+    把原值写回去：文件已经被人动过（哪怕动得不多），留着半成品才是真事故。
     """
     writer = FakeWriter({"XMP:City": "波尔多"})
     writer.silently_ignores = True  # 第一次写没进去，回滚那次照样「没进去」，于是仍是原样
@@ -510,14 +449,12 @@ def test_a_silent_failure_is_caught_and_rolled_back(library: Path, photo: PhotoR
     assert writer.fields["XMP:City"] == "波尔多"
     assert writer.writes[-1] == ("XMP:City",)  # 回滚确实又写了一次
     records = read_records(library)
-    # 「打算改」与「没改成」两条都在：没有前者，一次中途的崩溃就查不出动过什么。
     assert [record.result for record in records] == [RESULT_PENDING, RESULT_FAILED]
 
 
 def test_coordinates_are_compared_as_numbers_not_as_text(library: Path, photo: PhotoRef) -> None:
-    """写进去的是十进制度，读回来的是度分秒 —— **按字符串比会把每次成功都判成失败**。
-
-    假 writer 刻意模拟真实行为：写入 ``30.274150``，回读时给出 ``30 deg 16' 27"``。
+    """写进去的是十进制度，读回来的是度分秒 —— **按字符串比会把每次成功都判成失败**：
+    假 writer 刻意模拟真实行为，写入 ``30.274150`` 而回读给出 ``30 deg 16' 27"``。
     """
     writer = FakeWriter()
     real_write = writer.write
@@ -568,9 +505,6 @@ def test_a_refused_write_is_journalled_as_failed(library: Path, photo: PhotoRef)
     assert records[-1].message
 
 
-# ---- 撤销 ----------------------------------------------------------------------
-
-
 #: 坐标加上三层地名 —— 撤销冲突那几条用例要的是「只有地名被外部改过，坐标没动」。
 WRITTEN = (*HANGZHOU, Assignment("XMP:City", "杭州"), Assignment("IPTC:City", "杭州"))
 
@@ -582,14 +516,12 @@ def _written_record(library: Path, writer: FakeWriter, photo: PhotoRef) -> Write
 
 def test_undo_writes_the_original_values_back(library: Path, photo: PhotoRef) -> None:
     writer = FakeWriter({"XMP:City": "波尔多", "EXIF:GPSLatitude": "44.83779"})
-    # 「44.83779」是 exiftool 那种十进制度的写法；度分秒那种见下面那条用例。
     record = _written_record(library, writer, photo)
 
     result = undo_metadata(library, record, writer=writer)
 
     assert result.ok
     assert [change.tag for change in result.restored] == [change.tag for change in record.changes]
-    # 原来有值 → 写回原值（不是删掉）；本来就没有的那几条 → 删掉。
     assert writer.fields["EXIF:GPSLatitude"] == "44.837790"  # 归一后写回的那个值
     assert "EXIF:GPSLongitude" not in writer.fields
     assert writer.fields["XMP:City"] == "波尔多"
@@ -599,9 +531,8 @@ def test_undo_writes_the_original_values_back(library: Path, photo: PhotoRef) ->
 def test_undo_skips_a_field_that_was_changed_outside_gallery(
     library: Path, photo: PhotoRef
 ) -> None:
-    """**别人改过的字段绝不覆盖。** 用户按 ⌘Z 想撤的是自己刚才那一下，不是别人那一下。
-
-    文件里那条已经是「杭州 · 用户自己写的」，按原值盖回「波尔多」就是毁掉他的编辑。
+    """**别人改过的字段绝不覆盖**：用户按 ⌘Z 想撤的是自己刚才那一下，不是别人那一下 ——
+    按原值盖回去就是毁掉他的编辑。
     """
     writer = FakeWriter()
     record = _written_record(library, writer, photo)
@@ -654,10 +585,7 @@ def test_the_recorded_original_value_is_a_number_not_a_degree_string(
 ) -> None:
     """**原值必须归一成我们会写回去的那一种写法。**
 
-    exiftool 读回来的是 ``35 deg 1' 16"``，而我们写进去的是 ``35.021100``。把度分秒原样
-    记进 journal，撤销时 ``-EXIF:GPSLatitude=35 deg 1' 16"`` 就会写出一个毫无意义的值 ——
-    用户按下 ⌘Z 得到一句「照片已经恢复原样」，而它其实一个字都没恢复（实测）。
-    """
+    exiftool 读回来是度分秒，我们写进去是十进制度：原样记进 journal，撤销会写出一个毫无意义的值。"""
     writer = FakeWriter({"EXIF:GPSLatitude": "35 deg 1' 16\"", "EXIF:GPSLatitudeRef": "North"})
     record = write_metadata(library, photo, list(WRITTEN), writer=writer)
     record = read_records(library)[0]
@@ -665,12 +593,8 @@ def test_the_recorded_original_value_is_a_number_not_a_degree_string(
 
     assert latitude.before is not None
     assert float(latitude.before) == pytest.approx(35.0211, abs=1e-4)
-    # 半球那一条压根不进记录：它已经是「North」也就是「N」，写不写都一样
-    # （`before` 归一之后与目标逐字相同 → 这一条是空操作）。
+    # 半球那一条压根不进记录：``before`` 归一之后与目标逐字相同，是空操作。
     assert "EXIF:GPSLatitudeRef" not in [change.tag for change in record.changes]
-
-
-# ---- 旧日志照读 ----------------------------------------------------------------
 
 
 def test_an_old_journal_line_still_parses() -> None:
@@ -695,15 +619,9 @@ def test_a_broken_change_entry_does_not_lose_the_whole_record() -> None:
     assert record.changes == (FieldChange("XMP:City", None, "杭州"),)
 
 
-# ---- 回滚也要校验（红线 4 的「如实报错」那一半）---------------------------------
-
-
 class _RollbackCorruptingWriter(FakeWriter):
-    """写进去的值**总是错的**，但退出码为 0 —— exiftool 在这一支要处理的情形里正是如此。
-
-    实测能造出的局面：正向写入把经度写成了别的值（写进去了），回滚那次又写成了
-    另一个错值，于是**用户原来的坐标被冲掉**，而文件仍然报告「写入成功」。
-    """
+    """写进去的值**总是错的**，但退出码为 0 —— exiftool 在这一支要处理的情形里正是如此：
+    正向写入把经度写成别的值，回滚那次又写成另一个错值，于是原来的坐标被冲掉。"""
 
     def __init__(self, fields: Mapping[str, str]) -> None:
         super().__init__(fields)
@@ -721,10 +639,7 @@ def test_a_rollback_that_does_not_take_is_not_reported_as_a_success(
 ) -> None:
     """**回滚本身要被回读校验** —— 「按原值写回去」是一次请求，不是一次保证。
 
-    曾经这里不查就宣布「照片已经恢复原样」。那句话是给用户看的，它必须为真：
-    照片里原来的经度被写成 ``0.000000`` 而界面说恢复原样，用户拿回的是一张坐标
-    被改坏的照片 —— 而日志里前后值都齐着，看上去一切正常。
-    """
+    曾经不查就宣布「照片已经恢复原样」：经度被写成 ``0.000000`` 而日志里前后值都齐着。"""
     writer = _RollbackCorruptingWriter(
         {
             "EXIF:GPSLatitude": "39.904200",
@@ -746,9 +661,8 @@ def test_a_rollback_that_does_not_take_is_not_reported_as_a_success(
 
 
 def test_a_rollback_that_really_restores_still_says_so(library: Path, photo: PhotoRef) -> None:
-    """反过来那条：回滚确实把原值写回去了，就照旧给「已经恢复原样」。
-
-    校验是为了不再说假话，不是为了让每次失败都吓用户一跳。
+    """反过来那条：回滚确实把原值写回去了，就照旧给「已经恢复原样」—— 校验是为了不再说
+    假话，不是为了让每次失败都吓用户一跳。
     """
     writer = FakeWriter({"XMP:City": "波尔多"})
     writer.silently_ignores = True  # 两次写都没进去，于是文件一直是原样
@@ -760,10 +674,7 @@ def test_a_rollback_that_really_restores_still_says_so(library: Path, photo: Pho
 def test_the_intent_is_recorded_before_the_file_is_touched(library: Path, photo: PhotoRef) -> None:
     """**先记账，再动文件。**
 
-    原值与新值在动文件之前就已经齐了，落一条 pending 只要几十微秒；而写入要起一到两次
-    exiftool 子进程（几十到几百毫秒）。那个窗口里断电、被强杀、磁盘写满，原图就改了
-    而日志上一条记录也没有 —— 用户拿不回任何东西，红线 4 的「写回前记录原值」落空。
-    """
+    落一条 pending 只要几十微秒，写入却要起一到两次 exiftool 子进程，断电窗口里什么都留不下。"""
     seen: list[int] = []
 
     class _WatchingWriter(FakeWriter):

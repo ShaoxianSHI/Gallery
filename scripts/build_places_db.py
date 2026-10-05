@@ -1,52 +1,21 @@
-"""生成自带的城市库 ``src/gallery/resources/places.tsv.gz``。
+"""生成自带的城市库 src/gallery/resources/places.tsv.gz。
 
-**这个脚本只在维护者更新数据时跑，应用本身从不联网取地名。**
-用法::
+**只在维护者更新数据时跑，应用本身从不联网取地名。** 用法::
 
-    uv run python scripts/build_places_db.py                 # 下载源数据并生成
-    uv run python scripts/build_places_db.py --offline       # 只用已有源文件，不联网
+    uv run python scripts/build_places_db.py            # 下载源数据并生成
+    uv run python scripts/build_places_db.py --offline  # 只用已有源文件，不联网
 
-## 为什么自带一份，而不是运行时下载
+归属在**生成期**一次算完（ADR 0012），运行时只剩一次最近邻查询：城市名取 ``native`` 字段，
+区、街道沿 ``parent_id`` 归属到它所属的市（松岗离东莞比离深圳还近，只看距离会选错）。
+源数据只用 ``csv-cities.csv.gz``（17 字段）—— 另一份精简 JSON 缺 ``type`` / ``native`` /
+``parent_id``，用它会把整个境外过滤空。
 
-反查地点的难点不在「找最近的城市」，而在**「最近的那个到底算什么」**。
-中国的区、街道、镇、村在 GeoNames 里都标成了居民点（全球 974 条 ``PPLA4`` 里 777 条
-是中国），所以深圳松岗的照片会得到「松岗」—— 可松岗不是一座城市。而各地把区划标成
-什么 ``feature code`` 各不相同，光看代码分不出来。
-
-我们不再在运行时猜，而是**在生成期把「叫什么、放在哪个坐标」一次算完**：
-
-- 城市名来自源数据的 ``native`` 字段（深圳就是深圳，不会变成旧县名「宝安」）；
-- 区、街道沿 ``parent_id`` 归属到它所属的市 —— 这是「属于谁」，比「旁边有什么」可靠
-  （松岗离东莞 28 公里、离深圳 34 公里，只看距离会选错）；
-- 直辖市、港澳台不设省级那一层，直接就是城市（ADR 0012）。
-
-运行时因此只剩一次最近邻查询，``core.places`` 里不再有任何翻译与归属判断。
-
-## 数据来源
-
-| 来源 | 用途 | 授权 |
-|------|------|------|
-| `dr5hn/countries-states-cities-database`（CSV + 合并 JSON） | 城市、隶属关系、本地名 | ODbL-1.0 |
-| GeoNames ``cities15000.txt`` | **不再使用**，见下方「为什么不再需要」 | CC BY 4.0 |
-
-**必须用 ``csv-cities.csv.gz``（17 字段）而不是 ``json-countries+states+cities.json.gz``**：
-后者是精简导出，只有 8 个字段，没有 ``type`` / ``native`` / ``parent_id`` / ``population``，
-用它会把整个境外过滤空。
-
-**为什么不再需要 GeoNames：** 中国城市名与隶属关系全部来自上面的源数据；直辖市与港澳
-在源数据里是「既是省又是市」的单位且带坐标；省级中文名用仓库里自带的
-``core.places.countries.CHINA_PROVINCES_ZH``。三样加起来是自洽的。
-
-## 已知的坑（都在下面代码里标注了）
-
-- **直辖市不是城市记录**，而是 ``type=municipality`` 的省，下面挂着它的区。
-  重庆横跨 470 公里，用省质心当唯一锚点会漏掉城区，所以辖区内的每个点都标成市名。
-- **港澳在源数据里登记了两次**：既是独立国家，又是「中国」下叫
-  ``Hong Kong SAR`` / ``Macau SAR`` 的省。两边都要处理，否则香港会掉进广东省。
-- **``parent_id`` 只有中国有**（66%，别国一律 0%），所以「沿隶属链归属」只对中国的
-  区、街道、县有效；境外就是当前的「找最近的城市」。
-- **``type`` 不可全信**：上海「闸北」是上海的区（早已并入静安）却标着 ``city``。
-  用「同范围内人口大 3 倍以上就丢弃」消歧，但这条只是补丁。
+四个坑（下面代码里都标注了）：直辖市在源数据里是 ``type=municipality`` 的**省**而不是
+城市记录，辖区内的每个点都要标成市名（重庆横跨 470 公里，只有一个锚点会漏掉城区）；
+港澳登记了两次（独立国家 + 「中国」下的 SAR），两边都要处理，否则香港会掉进广东省；
+``parent_id`` 只有中国填了，「沿隶属链归属」只对中国的区、街道、县有效；``type`` 不可全信
+（上海「闸北」早已并入静安却标着 ``city``），靠「同范围内人口大 3 倍就丢弃」消歧，但那条
+只是补丁。
 """
 
 from __future__ import annotations
@@ -112,14 +81,10 @@ FALLBACK_MAX_KM: Final = 300.0
 
 EARTH_RADIUS_KM: Final = 6371.0
 
-#: 坐标为 ``(0, 0)`` 的行一律丢掉。
-#:
-#: 那个点在几内亚湾里，世上并不存在 —— 源数据里有十几条这样的坏行（哈尔滨、大庆、
-#: 廊坊……），都是「坐标坏了的区县」被贴上了最近城市的名字。它们只会给出一个**自信的
-#: 错答案**：相机在定不到 GPS 时填的 0 恰好会命中它们，于是所有坏照片都显示成哈尔滨。
-#: 那些城市本身另有坐标正确的记录，丢掉零损失。
-#:
-#: 只判两个同时为零 —— 纬度 0 是赤道、经度 0 是本初子午线，都是真实位置。
+#: 坐标为 ``(0, 0)`` 的行一律丢掉：那个点在几内亚湾里，世上并不存在 —— 源数据里有十几条
+#: 这样的坏行（坐标坏了的区县被贴上了最近城市的名字），而相机定不到 GPS 时填的 0 恰好会
+#: 命中它们，于是所有坏照片都显示成同一个城市。只判两个同时为零（纬度 0 是赤道、
+#: 经度 0 是本初子午线，都是真实位置）。
 NULL_ISLAND: Final = (0.0, 0.0)
 
 
@@ -160,7 +125,6 @@ def _load_sources(cache_dir: Path, *, offline: bool) -> tuple[list[dict[str, str
             return (cache_dir / name).read_bytes()
         return _fetch(f"{BASE_URL}/{name}", cache_dir / name)
 
-    # 两个源文件都是 gzipped。
     cities_text = gzip.decompress(get(CITIES_CSV)).decode("utf-8")
     cities = list(csv.DictReader(io.StringIO(cities_text)))
     countries = {
@@ -232,8 +196,7 @@ class _Builder:
             coord = self._coord(row)
             if coord is not None:
                 picked.append((row, *coord))
-        # 消歧：附近有人口大 3 倍的城市，说明这条是「大城市的误标区」。
-        # 只是补丁 —— 源数据里上海「闸北」这种区的 type 确实标着 city。
+        # 消歧：附近有人口大 3 倍的城市，说明这条是「大城市的误标区」（补丁，见模块文档）。
         return [
             (row, la, lo)
             for row, la, lo in picked
@@ -258,17 +221,15 @@ class _Builder:
         out: list[tuple[str, str, str, float, float, int]] = []
         anchors = self._anchors()
 
-        # ① 直辖市：不设省层，市名就是直辖市名。
-        #    辖区内的**每个点**都标成市名，而不是只在省质心放一个锚点 ——
-        #    重庆横跨 470 公里，只有一个锚点的话城区（离质心 43 公里）会漏掉。
+        # ① 直辖市：不设省层，市名就是直辖市名。辖区内的**每个点**都标成市名，而不是只在
+        #    省质心放一个锚点 —— 重庆横跨 470 公里，只有一个锚点的话城区会漏掉。
         municipalities = {
             s["name"]: MUNICIPALITIES[s["name"]]
             for s in self._countries["CN"]["states"]
             if s["type"] == "municipality" and s["name"] in MUNICIPALITIES
         }
 
-        # ② 港澳：一条记录，用国家坐标。澳门在源数据里 states 为空，
-        #    但国家表有坐标（22.1667, 113.55），本来就不需要下级条目。
+        # ② 港澳：一条记录，用国家坐标。澳门在源数据里 states 为空，但国家表有坐标。
         for code in ("HK", "MO"):
             country = self._countries[code]
             out.append(

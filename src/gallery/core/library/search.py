@@ -1,18 +1,8 @@
-"""搜索：条件长什么样、落到哪一列、整句 SQL 长什么样（纯函数）。
+"""搜索：条件长什么样、落到哪一列、整句 SQL 长什么样（纯函数，不碰文件也不碰 Qt）。
 
-三块，各有各的理由：
-
-- **字段表** :data:`SEARCH_FIELDS` —— ``#`` 后面能选的那些项。**字段 id 与
-  :mod:`gallery.core.metadata.facets` 用的是同一套**（相册就是 ``FACET_FOLDER``、
-  文件名就是 ``FACET_NAME``），不另立一套：两套字段表迟早各自漂，而漂了之后
-  「界面上写的那个相机」与「查的那个相机」就对不上了。
-- **条件模型** :class:`SearchCondition` —— 界面把它摆成面包屑右侧的胶囊，
-  core 把它翻成 SQL。两者之间只有这一个数据结构。
-- **SQL** :func:`build_query` —— **只在这里生成**。于是「哪个字段落到哪一列、
-  怎么匹配」这件事在代码里是可 grep 的一段，而不是散在各个 ``if`` 分支里
-  （ADR 0026 决策 6）。
-
-不碰文件、不碰 Qt、不碰 Qt 的事件循环，因此整份都可以直接单测。
+字段 id 与 :mod:`gallery.core.metadata.facets` 用的是同一套，不另立一套：两套字段表迟早各自漂，
+漂了之后「界面上写的那个相机」与「查的那个相机」就对不上。**SQL 只在 :func:`build_query` 生成**，
+于是「哪个字段落到哪一列、怎么匹配」在代码里是可 grep 的一段（ADR 0026 决策 6）。
 """
 
 from __future__ import annotations
@@ -56,15 +46,9 @@ _LIKE_ESCAPE: Final = "\\"
 
 type SearchKind = Literal["name", "album", "format", "text", "size", "number", "datetime"]
 
-#: 一段区间两端之间的分隔符：**认全角与半角两种**，文档与提示里一律摆全角那一个。
-#:
-#: 当初只认全角，理由是「日期本身就带半角连字符，多认几种只会让『为什么这条没生效』更难猜，
-#: 而没人会去猜是自己敲错了全角还是半角」。这条规则当场就撞了 —— 英文键盘敲出来的正是半角
-#: ``~``，而报错里没有半个字提到是哪一种，于是那句话等于没写。**判据反过来了**：
-#: 日期语法里根本不会出现波浪号，多认一种写法不产生歧义，少认一种却只是把用户挡在门外。
-#:
-#: 两侧的空格由 :func:`_period` 各自 ``strip`` 掉，于是 ``2023 ～ 2024`` 与 ``2023 ~ 2024``
-#: 一样认。
+#: 一段区间两端之间的分隔符：**认全角与半角两种**，文档与提示里一律摆全角那一个。判据是日期
+#: 语法里根本不会出现波浪号，多认一种写法不产生歧义，少认一种却只是把用户挡在门外；两侧的
+#: 空格由 :func:`_period` 各自 ``strip`` 掉。
 RANGE_SEPARATOR: Final = "～"
 
 #: 半角那一个。**不是另一种语义，是同一种语义的另一种键盘**（见 :data:`RANGE_SEPARATOR`）。
@@ -75,12 +59,9 @@ HALF_WIDTH_RANGE_SEPARATOR: Final = "~"
 class SearchField:
     """``#`` 后面能选的一项：它是哪个字段、落到哪一列、怎么匹配。
 
-    :param id: 与 :mod:`gallery.core.metadata.facets` 同一个 id 空间。
-    :param label: 候选列表里显示的名字。**只有别名会与 ``Facet.label`` 不同**
-        （「所在文件夹」在搜索里叫「相册」）。
-    :param kind: 怎么匹配 —— 决定用子串、前缀还是范围。
+    :param label: 候选列表里显示的名字。**只有别名会与 ``Facet.label`` 不同**（「所在文件夹」
+        在搜索里叫「相册」）。
     :param column: SQL 里的列（``p.`` = 文件表，``f.`` = facet 表）。
-    :param hint: 候选右侧那句灰字，告诉用户这里能写什么。
     """
 
     id: str
@@ -91,10 +72,8 @@ class SearchField:
 
     @property
     def needs_metadata(self) -> bool:
-        """这个字段是不是必须真去读 EXIF 才拿得到。
-
-        没装 exiftool 时（Pillow 降级路径），地点与关键词那一族根本读不出来 ——
-        仍然让它们出现在候选里可以，但界面要先把这句话说出来（见 ADR 0026）。
+        """这个字段是不是必须真去读 EXIF 才拿得到：没装 exiftool 时地点与关键词那一族根本读不出来，
+        仍然可以出现在候选里，但界面要把这句话说出来（ADR 0026）。
         """
         return self.column.startswith("f.")
 
@@ -110,15 +89,11 @@ def _field(
     return SearchField(id=facet_id, label=label, kind=kind, column=column, hint=hint)
 
 
-#: 候选列表的顺序即这里面的顺序。**不打乱 ``GROUP_FACET_IDS`` / ``SORT_FACET_IDS``
-#: 的既有顺序**（字段与分组排序看到的是同一套字段，不该在这里另排一遍），
-#: 只把「不读 EXIF、立刻出结果」的四个提到最前面：文件名、相册、文件格式、文件大小。
-#:
-#: ``column`` 写的是 **SQL 里的列名**，不是 ``PhotoFacets`` 上的属性名 —— 两者只在
-#: 拍摄时间这一项上不一样（属性叫 ``captured_at``，列叫 ``captured``）。写错的后果
-#: **不会在解析与生成 SQL 时露出来**：SQLite 直到执行才说 ``no such column``，而那条
-#: 错误被 :meth:`FacetIndex.search` 包成了「检索没能完成」—— 界面上表现为「一条都搜不到」。
-#: ``tests/core/library/test_search.py`` 里那条列名守护就是为这件事准备的。
+#: 候选列表的顺序即这里面的顺序。**不打乱 GROUP_FACET_IDS / SORT_FACET_IDS 的既有顺序**
+#: （字段与分组排序看到的是同一套字段），只把「不读 EXIF、立刻出结果」的四个提到最前面。
+#: ``column`` 写的是 **SQL 里的列名**，不是 ``PhotoFacets`` 上的属性名 —— 只有拍摄时间两者不同
+#: （属性 ``captured_at``，列 ``captured``）。写错**不会在生成 SQL 时露出来**，SQLite 到执行才
+#: 报 ``no such column``，而那条错误被包成了「检索没能完成」。
 SEARCH_FIELDS: Final[tuple[SearchField, ...]] = (
     _field(FACET_NAME, "文件名", "name", "p.name"),
     _field(FACET_FOLDER, "相册", "album", "p.folder", hint="含子相册"),
@@ -128,9 +103,7 @@ SEARCH_FIELDS: Final[tuple[SearchField, ...]] = (
     _field(FACET_CAMERA, "相机", "text", "f.camera"),
     _field(FACET_LENS, "镜头", "text", "f.lens"),
     _field(FACET_COUNTRY, "国家", "text", "f.country"),
-    # **标签里不许有空格**：字段名是拿来敲的（「#省/州 浙江」），而搜索框把 ``#`` 与
-    # 之间的那一段当字段名 —— 名字里带空格的话，放回输入框时会按空格切开，认不回来。
-    # 分组与元数据面板那边仍写「省 / 州」，那是给人看的文案，不是拿来敲的。
+    # **标签里不许有空格**：字段名是拿来敲的（「#省/州 浙江」），放回输入框时会按空格切开认不回来。
     _field(FACET_REGION, "省/州", "text", "f.region"),
     _field(FACET_CITY, "城市", "text", "f.city"),
     _field(FACET_KEYWORD, "关键词", "text", "f.keywords"),
@@ -158,9 +131,8 @@ class SearchOutcome(NamedTuple):
     """一次检索的结果。
 
     :param refs: 命中的照片，**按文件名**排好（界面随后按用户选的排序字段重排）。
-    :param total: 命中总数。**它可以大于 ``len(refs)``**（结果被
-        :data:`RESULT_LIMIT` 截断），也可能是 :data:`library.index` 库里那些
-        「文件早就被删了」的残留行 —— 所以界面摆的是 ``len(refs)``，说出口的是 ``total``。
+    :param total: 命中总数。**它可以大于 ``len(refs)``**（被 :data:`RESULT_LIMIT` 截断，或是索引
+        里那些「文件早就被删了」的残留行），所以界面摆的是 ``len(refs)``、说出口的是 ``total``。
     """
 
     refs: list[PhotoRef]
@@ -171,10 +143,8 @@ class SearchOutcome(NamedTuple):
 class ParsedInput:
     """搜索框里那一串东西解析之后的样子。
 
-    :param selecting: 用户还在**挑字段**（敲了 ``#`` 还没确认）。此时回车是
-        「补全这个字段」，不是「提交一条条件」。
-    :param field: 已经定下来的字段；还在挑时是 ``None``（列表全开）。
-    :param value: 字段后面那一段原文，还没敲就是空串。
+    :param selecting: 用户还在**挑字段**（敲了 ``#`` 还没确认）。此时回车是「补全这个字段」，
+        不是「提交一条条件」；``field`` 为 ``None``（列表全开），``value`` 是字段后面那段的原文。
     """
 
     selecting: bool
@@ -184,10 +154,8 @@ class ParsedInput:
 
 @dataclass(frozen=True, slots=True)
 class SearchCondition:
-    """一条已确认的筛选条件。
-
-    ``text`` 是用户敲的原文（面包屑上的胶囊照原样显示），``value`` 是解析之后
-    真正拿去比的那个值 ——「2.8」与「< 2」在胶囊上长得不一样，在 SQL 里也不同。
+    """一条已确认的筛选条件。``text`` 是用户敲的原文（胶囊照原样显示），``value`` 是解析之后真正
+    拿去比的那个值 ——「2.8」与「< 2」在胶囊上长得不一样，在 SQL 里也不同。
     """
 
     field: SearchField
@@ -206,11 +174,10 @@ class SearchCondition:
 
     @property
     def as_input(self) -> str:
-        """能把它还原成搜索框里那一串的样子（``#相机 Canon`` / ``海边``）。
+        """能把它还原成搜索框里那一串的样子（``#相机 Canon``）。
 
-        **要带上字段前缀**：只把值放回去的话，用户在输入框里看到的是「旅行」——
-        不知道这一条是按哪个字段筛的，而改条件多半正是要换字段（那是这个交互的主要用法）。
-        默认字段（文件名）不带前缀，与它当初是怎么敲进来的一致。
+        **要带上字段前缀**：只把值放回去的话，用户看到的是「旅行」，不知道这一条按哪个字段筛 ——
+        而改条件多半正是要换字段，那是这个交互的主要用法。默认字段（文件名）不带前缀。
         """
         if self.field.id == DEFAULT_FIELD.id:
             return self.text
@@ -226,12 +193,10 @@ class SearchCondition:
 
 
 def parse_input(raw: str) -> ParsedInput | None:
-    """搜索框里那一串 → 该补全还是该提交。
+    """搜索框里那一串 → 该补全还是该提交（``None`` 表示什么都不用做）。
 
-    ``None`` 表示「什么都不用做」（空串，或只有 ``#`` 后面一个字段名还没落到值上）。
-
-    **认不出字段名时不报错**，退回按文件名搜：``#海边`` 多半是用户想找一张名字带
-    「海边」的照片，而「这个输入不合法，请重选字段」对他说不出任何他没打算做的事。
+    **认不出字段名时不报错**，退回按文件名搜：``#海边`` 多半是想找一张名字带「海边」的照片，
+    而「这个输入不合法」对用户说不出任何他没打算做的事。
     """
     text = raw.strip()
     if not text:
@@ -251,9 +216,8 @@ def parse_input(raw: str) -> ParsedInput | None:
 
 
 def match_field(text: str) -> SearchField | None:
-    """候选列表里匹配一个字段名：id（``#camera``）与中文名（``#相机``）都认。
-
-    比较时**去掉空格**，于是「省/州」与「省 / 州」（面板那边的写法）是同一个。
+    """候选列表里匹配一个字段名：id（``#camera``）与中文名（``#相机``）都认。比较时**去掉空格**，
+    于是「省/州」与「省 / 州」是同一个。
     """
     needle = _compact(text)
     if not needle:
@@ -281,11 +245,10 @@ def suggestions(query: str) -> list[SearchField]:
 
 
 def partial_field(text: str) -> str:
-    """``#`` 后面正在敲的那一段字段名（没敲空格的那一段；没带 ``#`` 就是空串）。
+    """``#`` 后面正在敲的那一段字段名（没带 ``#`` 就是空串）。
 
-    界面用它过滤候选列表。**不要拿解析结果的 ``value`` 当查询串**：那一位是
-    「字段后面那个值」，用户还在挑字段时它必然是空的，于是列表会列出全部字段 ——
-    敲了「相机」两个字却看不见「相机」被选中。
+    界面用它过滤候选列表。**不要拿解析结果的 ``value`` 当查询串**：那一位是「字段后面那个值」，
+    用户还在挑字段时它必然是空的，于是列表会列出全部字段 —— 敲了「相机」却看不见它被选中。
     """
     if not text.startswith("#"):
         return ""
@@ -294,12 +257,10 @@ def partial_field(text: str) -> str:
 
 
 def make_condition(parsed: ParsedInput) -> SearchCondition | None:
-    """把一次解析变成一条可提交的条件；不该提交（还没输入 / 还在挑字段 / 数字写坏了）
-    就是 ``None``。
+    """把一次解析变成一条可提交的条件；不该提交（没输入 / 还在挑字段 / 数字写坏了）就是 ``None``。
 
-    **收 ``None`` 进去**是因为界面那一侧最自然的写法就是「解析完直接交给它」
-    （``make_condition(parse_input(raw))``），而空输入框按回车正是 ``None`` ——
-    在这里挡住，调用方就不必为这一种最常见的输入单开一个分支。
+    **收 ``None`` 进去**：界面那一侧最自然的写法就是 ``make_condition(parse_input(raw))``，
+    而空输入框按回车正是 ``None`` —— 在这里挡住，调用方就不必为最常见的输入单开一个分支。
     """
     if parsed is None or parsed.selecting or parsed.field is None:
         return None
@@ -309,11 +270,8 @@ def make_condition(parsed: ParsedInput) -> SearchCondition | None:
 def unusable_reason(field: SearchField, value: str) -> str:
     """这句话为什么变不成一条条件 —— 界面横幅照它说一句中文（不套「要一个值」那种话）。
 
-    :func:`make_condition` 返回 ``None`` 时界面唯一能说的话就是这一句，所以**说得具体
-    是这里唯一的指望**：``2024～2023`` 与 ``2024-13`` 要改的地方完全不一样，而用户看得见
-    的只有横幅。日期这一族因此说得比别的字段细，其余各栏用一句通用的话。
-
-    **判据与 :func:`_is_reversed` 共用同一处**（「什么算写反了」不该有两份定义）。
+    :func:`make_condition` 返回 ``None`` 时界面唯一能说的话就是这一句，所以**说得具体是这里
+    唯一的指望**：``2024～2023`` 与 ``2024-13`` 要改的地方完全不一样，而用户看得见的只有横幅。
     """
     if field.kind == "datetime":
         pieces = _split_range(value)
@@ -411,16 +369,11 @@ def _parse_size(text: str) -> tuple[str, str] | None:
 def _parse_datetime(text: str) -> tuple[str, str] | None:
     """``2024`` / ``2024-05`` / ``2024-05-16`` / ``2023～2024`` → 那一段的时间区间。
 
-    **不带比较符时取的是「那一段之内」**：``#拍摄时间 2024`` 是「2024 年拍的」，
-    而不是「大于 2024」。带 ``>`` / ``<`` 时才取它的一侧。
+    **不带比较符时取的是「那一段之内」**：``#拍摄时间 2024`` 是「2024 年拍的」，不是「大于 2024」。
+    ``2023～2024`` 是**两端各含自己那一整段**，所以它就是「2023 与 2024 两年」；空格与全角半角
+    都无所谓（见 :data:`RANGE_SEPARATOR`）。
 
-    ``2023～2024`` 是**两端各含自己那一整段**：左边从 2023 年元旦起，右边到 2024 年
-    12 月 31 日为止 —— 与裸值是同一套语义，于是 ``2023～2024`` 就是「2023 与 2024 两年」，
-    而 ``2023-05 ～ 2023-08`` 是那三个月。分隔符两侧的空格与全角半角都无所谓
-    （见 :data:`RANGE_SEPARATOR`）。
-
-    **区间里不认比较符**（``>2023～2024`` 提交不了）：要单边就用 ``>`` / ``<``，
-    一句话里塞两个比较符说的是两件不同的事。
+    **区间里不认比较符**（``>2023～2024`` 提交不了）：一句话里塞两个比较符说的是两件不同的事。
     """
     pieces = _split_range(text)
     if len(pieces) > 2:
@@ -451,10 +404,10 @@ def _parse_datetime(text: str) -> tuple[str, str] | None:
 
 
 def _split_range(text: str) -> list[str]:
-    """按区间分隔符切成两端；没有分隔符就是一个元素（那就是「裸值」那一条路）。
+    """按区间分隔符切成两端；没有分隔符就是一个元素（那就是「裸值」那条路）。
 
-    **全角与半角先归一**：``2023~2024`` 与 ``2023～2024`` 是同一个意思，而切分这件事
-    有两个调用方（解析条件、给横幅找理由）—— 各切各的，迟早一边认一种写法。
+    **全角与半角先归一**：``2023~2024`` 与 ``2023～2024`` 是同一个意思，而切分这件事有两个
+    调用方（解析条件、给横幅找理由）—— 各切各的，迟早一边认一种写法。
     """
     return text.replace(HALF_WIDTH_RANGE_SEPARATOR, RANGE_SEPARATOR).split(RANGE_SEPARATOR)
 
@@ -462,12 +415,11 @@ def _split_range(text: str) -> list[str]:
 def _period(text: str) -> tuple[datetime.datetime, datetime.datetime] | None:
     """一段日期 → 它那一段的起止（左闭右开）。写不成一个日期就是 ``None``。
 
-    **只写了哪几级，段就有多长**：``2024`` 是一整年、``2024-05`` 是一整个月、
-    ``2024-05-16`` 是那一天 —— 于是「那一段之内」这句话有确定的落点。
+    **只写了哪几级，段就有多长**：``2024`` 是一整年、``2024-05`` 是一整个月、``2024-05-16``
+    是那一天 —— 于是「那一段之内」有确定的落点。
 
-    **不存在的日子返回 ``None`` 而不是抛**：``2023-02-30``（或平年里的 2 月 29 日）
-    光看「1 <= 日 <= 31」是过得去的，真去造 ``datetime`` 才会炸，而炸出去的地方是
-    界面上的回车 —— 那时候用户只看到「按了回车什么也没发生」。
+    **不存在的日子返回 ``None`` 而不是抛**：``2023-02-30`` 光看「1 <= 日 <= 31」是过得去的，真去
+    造 ``datetime`` 才炸，而炸出去的地方是界面上的回车 —— 那时用户只看到「按了回车什么也没发生」。
     """
     match = _DATE.match(text.strip())
     if match is None:
@@ -493,10 +445,8 @@ def _period(text: str) -> tuple[datetime.datetime, datetime.datetime] | None:
 
 
 def _is_reversed(left: str, right: str) -> bool:
-    """区间两端是不是写反了（写不成日期的那一种不算「反了」，那是另一种毛病）。
-
-    界面要靠它说一句人话（见 :func:`unusable_reason`），而判据只有这一处 ——
-    两边各判一次，迟早会把「什么算反了」判成两样。
+    """区间两端是不是写反了（写不成日期的那一种不算「反了」，那是另一种毛病）。判据只有这一处 ——
+    界面与解析各判一次，迟早会把「什么算反了」判成两样（见 :func:`unusable_reason`）。
     """
     low, high = _period(left), _period(right)
     return low is not None and high is not None and low[0] >= high[0]
@@ -534,9 +484,8 @@ def build_query(
 ) -> tuple[str, list[object]]:
     """这些条件 → 一条 SQL 与它的绑定值。
 
-    **条件一律 ``AND``**（ADR 0026 决策 1）：每提交一条就再收窄一层。
-    排序留给界面（``library.groups.sort_photos`` 按用户选的字段排），
-    这里只保证同一批结果的先后稳定，于是 ``PhotoRef`` 造出来时是确定的。
+    **条件一律 ``AND``**（ADR 0026 决策 1），每提交一条就再收窄一层。排序留给界面，这里只保证
+    同一批结果的先后稳定，于是 ``PhotoRef`` 造出来时是确定的。
     """
     clauses: list[str] = []
     values: list[object] = []
@@ -552,10 +501,8 @@ def build_query(
 
 
 def build_count_query(conditions: Sequence[SearchCondition]) -> tuple[str, list[object]]:
-    """同样这些条件的**命中总数**。
-
-    与 :func:`build_query` 共用同一个 ``WHERE``，于是两处不可能算出不一样的条件。
-    界面拿它说清「共 12345 张，只显示前 5000 张」—— 被截断了这件事用户必须看得见。
+    """同样这些条件的**命中总数**，与 :func:`build_query` 共用同一个 ``WHERE``，两处不可能算出不一样
+    的条件。界面拿它说清「共 12345 张，只显示前 5000 张」—— 被截断了这件事用户必须看得见。
     """
     clauses: list[str] = []
     values: list[object] = []
@@ -570,9 +517,7 @@ def build_count_query(conditions: Sequence[SearchCondition]) -> tuple[str, list[
 
 
 def _clause(condition: SearchCondition) -> tuple[str, list[object]]:
-    """一条条件 → ``(SQL 片段, 绑定值)``。
-
-    **匹配方式逐字段定死**（ADR 0026 决策 6），且这里就是唯一一份：
+    """一条条件 → ``(SQL 片段, 绑定值)``。**匹配方式逐字段定死**（ADR 0026 决策 6），唯一一份：
 
     ==============  ==========================================================
     字段            匹配
@@ -621,10 +566,8 @@ def _like(text: str) -> str:
 
 
 def rows_to_refs(rows: Sequence[tuple[object, ...]]) -> list[PhotoRef]:
-    """``(路径, 大小, 修改时间)`` 三元组 → ``PhotoRef``。
-
-    **大小与修改时间直接从索引里带出来**，不为每条结果再 ``stat()`` 一次 ——
-    一万条结果就是一万次系统调用，而这两个值索引里本来就有。
+    """``(路径, 大小, 修改时间)`` 三元组 → ``PhotoRef``。**大小与修改时间直接从索引里带出来**，不为
+    每条结果再 ``stat()`` 一次 —— 一万条结果就是一万次系统调用。
     """
     refs: list[PhotoRef] = []
     for row in rows:
@@ -636,11 +579,8 @@ def rows_to_refs(rows: Sequence[tuple[object, ...]]) -> list[PhotoRef]:
 
 
 def relative_folder_path(root: Path, path: Path) -> str:
-    """照片所在相册相对库根的位置。
-
-    直接转给 :func:`gallery.core.metadata.facets.relative_folder` —— 索引里存的
-    就是那一个函数算出来的字符串，两处各写一份迟早对不上（那正是「#相册 旅行」
-    一条都查不到的成因）。
+    """照片所在相册相对库根的位置。直接转给 :func:`gallery.core.metadata.facets.relative_folder`
+    —— 索引里存的就是那一个函数算出来的字符串，两处各写一份迟早对不上。
     """
     return relative_folder(path, root)
 

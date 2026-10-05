@@ -1,13 +1,9 @@
 """「库」：对外门面、目录扫描、条目模型、分组与排序、索引、检索、文件监听、库配置与会话状态。
 
-界面层通常只需要 :class:`Library` 与 :func:`prepare_library`；只有需要自己遍历
-目录（相册封面、逐层列举）时才直接用 :mod:`~gallery.core.library.scanner`，需要自己
-排顺序（网格重排、测试）时才用 :mod:`~gallery.core.library.groups`，按时间浏览
-（年 / 月 / 周 / 日）时才用 :mod:`~gallery.core.library.calendar`，要写一条筛选条件
-时才用 :mod:`~gallery.core.library.search`（搜索框与网格之间只有
-:class:`~gallery.core.library.search.SearchCondition` 这一个数据结构）。文件监听经由
-:meth:`Library.watch`，其事件合并规则在 :mod:`~gallery.core.library.watcher`。
-内部模块一律从具体子模块导入，避免与本文件的再导出互相绕圈。
+界面层通常只需要 :class:`Library` 与 :func:`prepare_library`；其余按需从具体子模块导入
+（扫描 :mod:`~gallery.core.library.scanner`、排序 :mod:`~gallery.core.library.groups`、
+日历 :mod:`~gallery.core.library.calendar`、筛选 :mod:`~gallery.core.library.search`、
+监听 :mod:`~gallery.core.library.watcher`），**不要经本文件绕圈互相导入**。
 """
 
 from gallery.core.library.calendar import (

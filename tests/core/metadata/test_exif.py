@@ -1,8 +1,6 @@
 """``gallery.core.metadata.exif`` 的测试。
 
-exiftool 路径用**假的可执行脚本**验证：测试既不需要本机装了 exiftool，
-也不依赖它真实的输出格式。纯解析与格式化则直接喂字典。
-"""
+exiftool 那一路用**假的可执行脚本**验证，纯解析与格式化直接喂字典（不需本机装 exiftool）。"""
 
 from __future__ import annotations
 
@@ -37,9 +35,6 @@ def report_of(raw: Mapping[str, object], tmp_path: Path) -> dict[str, str]:
         source="exiftool",
     )
     return field_map(report.groups)
-
-
-# ---- 精选字段与格式化 ------------------------------------------------------------
 
 
 def test_full_exif_maps_to_chinese_labels(tmp_path: Path) -> None:
@@ -202,9 +197,6 @@ def test_as_text_contains_groups_and_notice(tmp_path: Path) -> None:
     assert report.is_complete is False
 
 
-# ---- 假 exiftool 脚本（验证子进程路径，无需真的安装） ------------------------------
-
-
 def _fake_exiftool(tmp_path: Path, body: str) -> Path:
     script = tmp_path / "exiftool"
     script.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
@@ -258,9 +250,6 @@ def test_reader_reports_empty_output(tmp_path: Path, make_photo: Callable[..., P
     assert "没有返回可用信息" in excinfo.value.message
 
 
-# ---- 来源缺失 / 失败时的行为 -------------------------------------------------------
-
-
 class _Missing:
     """假来源：永远不可用（等价于没装 exiftool）。"""
 
@@ -291,7 +280,6 @@ def test_missing_exiftool_falls_back_to_pillow(
     assert report.source == "pillow"
     assert report.notice is not None
     assert "brew install exiftool" in report.notice
-    # Pillow 的数字枚举被翻成可读值，方向来自真实写入的 EXIF
     assert field_map(report.groups)["方向"] == "顺时针 90°"
 
 
@@ -318,9 +306,6 @@ def test_missing_file_is_reported(tmp_path: Path) -> None:
         read_metadata(tmp_path / "不存在.jpg", source=_Missing())
 
     assert "读不到" in excinfo.value.message
-
-
-# ---- Pillow 降级路径的 GPS 换算 ----------------------------------------------------
 
 
 def test_pillow_gps_is_converted_to_decimal() -> None:
@@ -356,18 +341,7 @@ def test_pillow_gps_ignores_garbage() -> None:
 def test_the_degraded_path_works_without_exiftool(tmp_path: Path) -> None:
     """**没有 exiftool 也能读**：降级路径只用 Pillow 与标准库，不依赖任何外部命令。
 
-    原来是两条改不动的断言（重述 ``EXIFTOOL_EXECUTABLE`` 的字面量、以及
-    ``os.path.sep in str(Path("a/b"))`` 这种标准库恒真式）—— 名字说「不依赖 exiftool」，
-    断言里却没有一处碰到 exiftool，于是降级路径里悄悄多了一个子进程，这条照样绿。
-
-    （顺带一提：那条常量是 ``ExifToolReader.__init__`` 的**默认参数**，在类定义时就
-    固化了，所以改模块属性根本影响不到它 —— 也就是说「把 exiftool 指到别处」这种
-    做法在这套代码上是走不通的，来源只能从参数进来。）
-
-    现在真的让来源「不可用」，再走一遍完整读取：读得到 EXIF、并且**如实说明这是基础
-    信息**（那句提示是降级时给用户看的，不许悄悄消失）。来源是注入进去的，所以本机
-    装没装 exiftool 都一样。
-    """
+    原来那两条断言是标准库恒真式，于是降级路径里悄悄多一个子进程也照样绿。"""
     photo = tmp_path / "IMG_0001.jpg"
     photo.write_bytes(_jpeg_with_exif())
 
@@ -487,8 +461,7 @@ class TestPlaceFields:
         )
 
         assert report.place_from_file == "France · Nouvelle-Aquitaine · Bordeaux"
-        # **三层写成一行**：它们说的是同一个地方，分三行摆着像三件无关的事
-        # （ADR 0031）。子地点仍单列 —— 那是另一个字段。
+        # 三层写成一行（ADR 0031）；子地点仍单列 —— 那是另一个字段。
         fields = field_map(report.groups)
         assert fields["地点"] == "France · Nouvelle-Aquitaine · Bordeaux"
         assert "省 / 州" not in fields and "国家" not in fields
@@ -496,12 +469,8 @@ class TestPlaceFields:
     def test_the_written_and_the_inferred_place_read_in_the_same_order(
         self, tmp_path: Path
     ) -> None:
-        """**「地点」与「地点（推断）」必须从大到小，同一个顺序。**
-
-        面板上这两行在「位置」组里挨着，用户正要拿来对照：一个写着「中国 · 浙江省 ·
-        杭州」、另一个写着「杭州 · 浙江省 · 中国」，读起来像两个地方。
-        推断那一行走 ``places.place_label``，这里量的是**文件里那一行是不是同一个顺序**。
-        """
+        """**「地点」与「地点（推断）」必须从大到小，同一个顺序**：面板上这两行挨着，用户
+        正要拿来对照，一个写「中国 · 浙江省 · 杭州」、另一个写「杭州 · 浙江省 · 中国」。"""
         report = build_report(
             {
                 "XMP-photoshop:City": "杭州",
@@ -525,11 +494,8 @@ class TestPlaceFields:
         assert inferred == written
 
     def test_the_place_is_one_line_whatever_family_exiftool_names_it(self, tmp_path: Path) -> None:
-        """**两种族名都要认**。
-
-        exiftool 的 ``-G`` 按一级族回填键，13.x 给的是 ``XMP:City``，而写作侧用的也是
-        这个。只认全名的话，Lightroom 那种只写 XMP 的照片「地点」永远是空的。
-        """
+        """**两种族名都要认**：exiftool 13.x 的 ``-G`` 把这类键回填成 ``XMP:City``，
+        只认全名的话，Lightroom 那种只写 XMP 的照片「地点」永远是空的。"""
         for keys in (
             {"XMP:City": "京都", "XMP:State": "京都府", "XMP:Country": "日本"},
             {
@@ -578,7 +544,6 @@ class TestPlaceFields:
 
         fields = field_map(updated.groups)
         assert fields["地点（推断）"] == "法国 · 新亚奎丹 · 波尔多（按坐标推断）"
-        # 推断的那行必须排在最前面，且原报告不被改动
         position = next(group for group in updated.groups if group.title == "位置")
         assert position.fields[0].label == "地点（推断）"
         assert "地点（推断）" not in field_map(report.groups)
@@ -595,12 +560,8 @@ class TestPlaceFields:
 
 
 class TestRealExifToolOutput:
-    """用 exiftool 对真实照片的实际输出核对字段映射。
-
-    这一组是补真实缺陷：先前只用十进制坐标做测试，而 exiftool 默认给的是
-    度分秒（``44 deg 50' 16.04"``）配 ``North`` 这种长半球名 —— 结果坐标解析
-    失败、按坐标反查整个不工作。带单位的零值（``0.0 mm``）与零值时间戳同理。
-    """
+    """用 exiftool 对真实照片的实际输出核对字段映射：先前只拿十进制坐标测，而 exiftool
+    默认给度分秒配 ``North`` 这种长半球名，坐标解析整个失败。"""
 
     #: 取自 exiftool 13.55 对一张真实照片的输出（只留相关字段）。
     REAL = {

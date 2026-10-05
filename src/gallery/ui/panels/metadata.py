@@ -1,10 +1,7 @@
 """大图右侧的元数据面板。
 
-推挤式而不是浮层：面板占掉宽度、图片区域缩小并重新适配，因此**任何照片都不会被挡住**。
-底色与图片区同色（同一份主题，见 ``ui.theme``），看起来像同一个取景器旁边的一块信息板。
-
-值一律可选中复制；底部「显示全部字段」展开来源返回的原始键值 —— 精选字段表覆盖不到的
-东西（制造商注释、ICC 配置等）在那里都能翻到。
+推挤式而不是浮层：面板占掉宽度、图片区域缩小并重新适配，任何照片都不会被挡住。
+值一律可选中复制；底部「显示全部字段」展开来源返回的原始键值（ICC 配置等在那里也能翻到）。
 """
 
 from __future__ import annotations
@@ -36,27 +33,17 @@ from gallery.ui import theme
 from gallery.ui.panels.layout import clear_layout
 from gallery.ui.theme import AppTheme, rgba
 
-#: 「位置」那一组标题右边的按钮。**只有这一组有**：坐标与地点是唯一一组「人会想去改」的
-#: 元数据（ADR 0030），其余各组是拍摄事实与文件事实，改了就是改写了证据或字段没有对应的
-#: 输入框 —— 面板上到处摆输入框只会让人以为别的也能改。
+#: 「位置」那一组标题右边的按钮。只有这一组有 —— 坐标与地点是唯一一组人会想去改的元数据
+#: （ADR 0030）；其余各组是拍摄事实与文件事实，改了就是改写证据。
 PLACE_GROUP_TITLE = "位置"
 
-#: 面板宽度。窄了中文标签换行，宽了抢照片的地方。
 PANEL_WIDTH = 300
-
-#: 左列标签宽度。
 LABEL_WIDTH = 84
-
-#: 「已复制」提示停留多久。
 COPIED_HINT_MS = 1400
 
 
 def panel_style(app_theme: AppTheme) -> str:
-    """面板的文字与按钮样式。底色不在这里 —— 它由 ``paintEvent`` 统一画。
-
-    文字色全部从主题派生：深色主题下是「浅字压深底」，浅色主题下自动变成「深字压浅底」，
-    不必再维护两套写死的字色。
-    """
+    """面板的文字与按钮样式。底色由 ``paintEvent`` 统一画，文字色全部从主题派生。"""
     return f"""
 #metadataPanel {{ background: transparent; }}
 #metadataGroupTitle {{
@@ -85,24 +72,18 @@ QCheckBox#metadataToggle {{ color: {rgba(app_theme.text_at(0.62))}; font-size: 1
 class MetadataPanel(QWidget):
     """展示一张照片的元数据。只负责画，读取由主窗口在后台完成。"""
 
-    #: 用户要编辑元数据（点了页脚那个按钮）。**这里只发信号** ——
-    #: 真正写文件的是 ``write_ops``，面板不碰（红线 1 在代码里必须是一句可查的话）。
+    #: 用户要编辑元数据（点了页脚那个按钮）。这里只发信号 —— 真正写文件的是 ``write_ops``。
     edit_metadata_requested = Signal()
-    #: 用户在面板里按了 ← / →：上一张 / 下一张（-1 / +1）。
-    #:
-    #: **焦点落在面板里也仍然该能换照片。** 网格自己的方向键走的是
-    #: ``PhotoGrid.keyPressEvent``，那条路只在网格有焦点时通；点一下「复制全部」、
-    #: 点一下元数据列表，焦点就跑到面板这边来了，此后 ← / → 按下去什么也没发生 ——
-    #: 用户明明还看着同一张照片的元数据，却换不了它。
+    #: 用户在面板里按了 ← / →：上一张 / 下一张（-1 / +1）。焦点落在面板里也仍然该能
+    #: 换照片 —— 点一下「复制全部」焦点就跑到面板这边，而网格的方向键只在网格有焦点时通。
     photo_step_requested = Signal(int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("metadataPanel")
         self.setFixedWidth(PANEL_WIDTH)
-        # 底色不在样式表里：普通 QWidget 的样式表背景要靠 WA_StyledBackground，
-        # 而 macOS 上连调色板也可能被原生样式覆盖 —— 实测两者都靠不住，
-        # 所以底色自己画，见 paintEvent。系统换浅色 / 深色时重新取一次。
+        # 底色自己画（见 paintEvent）：普通 QWidget 的样式表背景要靠 WA_StyledBackground，
+        # 而 macOS 上连调色板都可能被原生样式覆盖。
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setAutoFillBackground(True)
         self._theme_watcher = theme.ensure_installed()
@@ -110,7 +91,6 @@ class MetadataPanel(QWidget):
         self._apply_theme()
 
         self._report: MetadataReport | None = None
-        #: 此刻能不能编辑元数据（没装 exiftool 时为 ``False``，按钮变成一句说明）。
         self._metadata_editable = False
         self._metadata_reason = ""
 
@@ -122,8 +102,7 @@ class MetadataPanel(QWidget):
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        # 裸声明会级联到所有子控件：让滚动区、内容区与每一行都透明，
-        # 露出面板自己画的底色，而不是各自按调色板再填一遍。
+        # 裸声明会级联到所有子控件：让滚动区、内容区与每一行都透明，露出自己画的底色。
         self._scroll.setStyleSheet("background: transparent; border: none;")
         self._body = QWidget()
         self._body_layout = QVBoxLayout(self._body)
@@ -149,8 +128,7 @@ class MetadataPanel(QWidget):
         footer_layout.addWidget(self._copy_button)
         footer_layout.addWidget(self._edit_button)
         footer_layout.addWidget(self._show_all)
-        # **三个组件平分整行**，后面不留一段空：面板宽 300，两个按钮比那个勾选框窄，
-        # 剩下的宽度按比例分给它们（``Expanding``），不然右边会空出一小条。
+        # 三个组件平分整行：两个按钮比勾选框窄，剩下的宽度按比例分给它们（``Expanding``）。
         for button in (self._copy_button, self._edit_button):
             button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         layout.addWidget(self._footer)
@@ -162,29 +140,18 @@ class MetadataPanel(QWidget):
         self._install_step_shortcuts()
         self.clear()
 
-    # ---- 按键 --------------------------------------------------------------
-
     def _step_photo(self, delta: int) -> None:
-        """← / → 转成「换上一张 / 下一张」。
-
-        **焦点在文本框里就不插手**：将来面板里加个搜索框时，方向键是那个框的，
-        不是换照片的。
-        """
+        """← / → 转成换上一张 / 下一张；焦点在文本框里就不插手。"""
         focus = QApplication.focusWidget()
         if isinstance(focus, (QLineEdit, QTextEdit, QAbstractSpinBox, QComboBox)):
             return
         self.photo_step_requested.emit(delta)
 
     def _install_step_shortcuts(self) -> None:
-        """把 ← / → 收进面板自己，**范围是「面板以及面板里的东西」**。
+        """把 ← / → 收进面板自己，范围是「面板以及面板里的东西」。
 
-        为什么不写在 ``keyPressEvent`` 里让按键冒上来：Qt6 里控件把不认识的按键 ignore
-        掉之后**不会**往父控件冒 —— 点一下「复制全部」，焦点就停在那个按钮上，方向键到
-        了按钮手里就停住了，面板根本收不到。快捷键走的是另一条路（``ShortcutContext``
-        ：面板可见、焦点在面板这一支里，就生效），与事件传播无关。
-
-        **范围给的是「面板这一支」而不是整个应用**：焦点在网格里的时候，方向键仍然归
-        网格（那边要维护选中范围、「⌘R 亮着」这些界面状态），两条路各管各的。
+        不写在 ``keyPressEvent`` 里：Qt6 里控件 ignore 掉不认识的按键后不会往父控件冒，
+        焦点停在按钮上时面板根本收不到。范围只给「面板这一支」—— 焦点在网格里时方向键仍归网格。
         """
         for key, delta in ((Qt.Key.Key_Left, -1), (Qt.Key.Key_Right, 1)):
             action = QAction(self)
@@ -194,24 +161,15 @@ class MetadataPanel(QWidget):
             action.triggered.connect(partial(self._step_photo, delta))
             self.addAction(action)
 
-    # ---- 主题 --------------------------------------------------------------
-
     def _apply_theme(self) -> None:
         """按当前主题重画文字与按钮（底色在 ``paintEvent`` 里取，不用重建）。"""
         self.setStyleSheet(panel_style(theme.current_theme()))
         self.update()
 
     def paintEvent(self, event: object) -> None:  # noqa: N802 - Qt 命名
-        """自己画底色。
-
-        样式表背景对普通 QWidget 不生效（除非 ``WA_StyledBackground``），而 macOS 上
-        连调色板也可能被原生样式覆盖 —— 面板与照片区是不是同一块底色，是能不能看清
-        的分界线，不值得赌样式系统的脾气，直接填。
-        """
+        """自己画底色：样式表背景对普通 QWidget 不生效，macOS 上连调色板也可能被覆盖。"""
         painter = QPainter(self)
         painter.fillRect(self.rect(), theme.current_theme().background)
-
-    # ---- 状态 --------------------------------------------------------------
 
     def clear(self) -> None:
         """还没有选中照片。"""
@@ -236,15 +194,11 @@ class MetadataPanel(QWidget):
         self._render()
 
     def set_metadata_editable(self, editable: bool, *, reason: str = "") -> None:
-        """「编辑元数据」此刻能不能用（没装 exiftool 时不能，理由也由这里给）。
-
-        **摆着一个点下去只会报错的按钮，比没有更糟**（ADR 0014 决策 4）—— 所以不能用的
-        时候那个位置显示成一句话，说明为什么。
+        """「编辑元数据」此刻能不能用；不能用时（没装 exiftool）把理由说出来 ——
+        摆着一个点下去只会报错的按钮比没有更糟（ADR 0014）。
         """
         self._metadata_editable = editable
         self._metadata_reason = reason
-        # 按钮在页脚（不在「位置」那一组里），所以这里也得跟着换：不能用时**置灰**，
-        # 理由放进悬浮提示，而「位置」那一组仍然把这句话写出来（看得见，不必去猜）。
         self._edit_button.setEnabled(editable)
         self._edit_button.setToolTip(
             reason if not editable else "改拍摄时间或位置，会写回这张照片（⌘Z 可以撤销）"
@@ -258,8 +212,6 @@ class MetadataPanel(QWidget):
     @property
     def report(self) -> MetadataReport | None:
         return self._report
-
-    # ---- 渲染 --------------------------------------------------------------
 
     def _render(self) -> None:
         report = self._report
@@ -288,11 +240,10 @@ class MetadataPanel(QWidget):
         return container
 
     def _group_title(self, title: str) -> QWidget:
-        """组标题。只有「位置」那一组例外：不能编辑时把**理由**说在标题右边。
+        """组标题。只有「位置」那一组例外：不能编辑时把理由说在标题右边。
 
-        **「编辑元数据」按钮不在这里**（在页脚，和「复制全部」「显示全部字段」一行）——
-        照片**本来就没有位置**的时候，面板上根本没有「位置」那一组，入口也就跟着没了，
-        而那恰恰是最需要补一个位置的时候。
+        「编辑元数据」按钮在页脚而不在标题上：照片本来就没有位置时，面板上根本没有「位置」
+        那一组，入口也就跟着没了 —— 而那恰恰是最需要补一个位置的时候。
         """
         row = QWidget()
         layout = QHBoxLayout(row)
@@ -338,15 +289,12 @@ class MetadataPanel(QWidget):
         return label
 
     def _fill(self, widgets: Sequence[QWidget]) -> None:
-        # 「先藏、再摘、再排队删」的三步顺序，理由（以及那个「闪一下的白窗」是怎么来的）
-        # 写在 ``panels.layout`` 里 —— 面包屑与欢迎页同样要拆控件，规矩只有一份。
+        # 「先藏、再摘、再排队删」的三步顺序与理由写在 ``panels.layout`` 里，规矩只有一份。
         clear_layout(self._body_layout)
         for widget in widgets:
             self._body_layout.addWidget(widget)
         self._body_layout.addStretch(1)
         self._scroll.verticalScrollBar().setValue(0)
-
-    # ---- 复制 --------------------------------------------------------------
 
     def _copy_all(self) -> None:
         report = self._report

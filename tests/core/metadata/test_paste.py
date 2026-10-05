@@ -1,15 +1,6 @@
 """粘贴的测试。
 
-全部在 ``tmp_path`` 里进行：这里测的操作**真的会往用户的相册里写文件**，所以每个
-「照片」都是当场造出来的临时文件，一个字节也不许落到真实相册里。
-
-钉住的是四类风险：
-
-1. **只增不改** —— 源文件一个字节都不能变，粘进去的是**新文件**。
-2. **绝不覆盖** —— 同名时按访达的办法改叫「一张 2.jpg」，且改到真的可用为止。
-3. **边界** —— 已经在目标目录里的原样跳过、文件夹不粘进自己、取消时不留半截文件。
-4. **记账** —— 每一项都写进 ``journal/``，而它**不进撤销栈**（撤销粘贴就是删文件）。
-"""
+**只增不改、绝不覆盖**、拒绝越界的目标、写进 ``journal/`` 但不进撤销栈。"""
 
 from __future__ import annotations
 
@@ -54,11 +45,8 @@ def test_paste_copies_without_touching_the_source(library: Path) -> None:
 
 
 def test_paste_keeps_the_modified_time(library: Path) -> None:
-    """连修改时间一起复制。
-
-    库里默认按修改时间排序；粘进来的照片因此还留在原来的时间位置上，
-    而不是齐刷刷跳到「今天」。
-    """
+    """连修改时间一起复制：库里默认按修改时间排序，粘进来的照片因此留在原来的时间位置上，
+    而不是齐刷刷跳到「今天」。"""
     source = library / "京都" / "一张.jpg"
     os.utime(source, (1_600_000_000, 1_600_000_000))
 
@@ -79,10 +67,8 @@ def test_paste_into_the_same_folder_does_nothing(library: Path) -> None:
 
 
 def test_same_folder_check_survives_a_different_spelling(tmp_path: Path) -> None:
-    """``/var`` 与 ``/private/var`` 在 macOS 上是同一个文件夹。
-
-    不解析就比不相等，于是「已经在同一目录」这条判断会失效，粘出一堆重复文件。
-    这里用符号链接造出同一条路径的两种写法（不依赖 macOS 的 ``/private`` 约定）。
+    """``/var`` 与 ``/private/var`` 在 macOS 上是同一个文件夹：不解析就比不相等，
+    于是「已经在同一目录」失效，粘出一堆重复文件。用符号链接造两种写法，不依赖 macOS 约定。
     """
     real = tmp_path / "真实"
     (real / "京都").mkdir(parents=True)
@@ -98,10 +84,8 @@ def test_same_folder_check_survives_a_different_spelling(tmp_path: Path) -> None
 
 
 def test_renames_instead_of_overwriting(library: Path) -> None:
-    """同名不覆盖，按系统自己的规矩改叫「一张 2.jpg」。
-
-    12 与 13 那个测法是量出来的：在访达里对同一个文件连按两次「复制项目」，
-    中文系统给出的正是这两个名字。
+    """同名不覆盖，改叫「一张 2.jpg」—— 名字是量出来的：在访达里对同一项连按两次
+    「复制项目」，中文系统给的就是这两个名字。
     """
     source = library / "京都" / "一张.jpg"
 
@@ -127,7 +111,7 @@ def test_renaming_keeps_going_until_the_name_is_free(library: Path) -> None:
     result = _paste(library, library / "奈良", source)
 
     assert [item.created for item in result.pasted] == [library / "奈良" / "一张 3.jpg"]
-    # 占位的那两张不能被动。
+
     assert (library / "奈良" / "一张 2.jpg").read_bytes() != source.read_bytes()
 
 
@@ -162,10 +146,7 @@ def test_target_must_be_a_directory(library: Path) -> None:
 
 
 def test_cancelling_stops_before_the_next_item(library: Path) -> None:
-    """取消只在**项与项之间**生效：粘到一半停下来会留下半截文件，那比粘完更糟。
-
-    判据是「一项都没粘」——取消检查在动手之前。
-    """
+    """取消只在**项与项之间**生效：粘到一半停下来会留下半截文件，那比粘完更糟。"""
     calls = {"n": 0}
 
     def should_cancel() -> bool:
@@ -184,10 +165,8 @@ def test_cancelling_stops_before_the_next_item(library: Path) -> None:
 
 
 def test_a_half_written_file_is_cleaned_up(library: Path, monkeypatch) -> None:  # noqa: ANN001
-    """复制到一半失败：把**自己刚写的那个半截文件**清掉，不留给用户。
-
-    留着它才是真的把相册弄脏了 —— 库里会出现一张解码不了的「照片」。
-    只删这一个：别的文件一个都不碰（源文件仍在、已有的同名文件仍在）。
+    """复制到一半失败：把**自己刚写的那个半截文件**清掉 —— 留着它，库里会多一张
+    解码不了的「照片」。只删这一个，源文件与已有的同名文件一个都不碰。
     """
 
     def failing_copy(source: str, target: str, *args: object, **kwargs: object) -> str:
@@ -217,9 +196,6 @@ def test_read_only_target_is_reported(library: Path) -> None:
         assert result.failures[0].message.startswith("没有权限")
     finally:
         os.chmod(locked, stat.S_IRWXU)
-
-
-# ---- 记账 -------------------------------------------------------------------
 
 
 def test_every_pasted_item_is_journaled(library: Path) -> None:
@@ -261,10 +237,8 @@ def test_a_failed_copy_is_journaled_as_failed(library: Path, monkeypatch) -> Non
 
 
 def test_paste_is_not_in_the_undo_stack(library: Path) -> None:
-    """粘进来的文件**不能 ⌘Z**：撤销粘贴就是删文件（红线 1）。
-
-    这条是本项目里最容易日后被人「顺手补上」的地方，所以钉住：粘完之后撤销栈必须
-    仍然是空的，⌘Z 什么也不做，而新文件还在。
+    """粘进来的文件**不能 ⌘Z**：撤销粘贴就是删文件（红线 1）—— 这里最容易日后被人
+    「顺手补上」，所以钉住：粘完之后撤销栈仍然是空的，而新文件还在。
     """
     _paste(library, library / "奈良", library / "京都" / "一张.jpg")
 
@@ -286,13 +260,9 @@ def test_paste_records_do_not_disturb_the_undo_stack(library: Path) -> None:
     assert [r.action for r in read_records(library)] == [ACTION_RENAME, ACTION_PASTE]
 
 
-# ---- 守卫：目标必须落在库里（源可以来自库外）-----------------------------------
-
-
 def test_a_paste_target_outside_the_library_is_refused(library: Path, tmp_path: Path) -> None:
-    """**目标必须在库里**：它才是新文件落地的地方。
-
-    落到库外就是一份谁都看不见、扫描器不收、索引不记、也永远不会有人清理的孤儿文件。
+    """**目标必须在库里**：落到库外就是一份谁都看不见、扫描器不收、索引不记、也没人清理的
+    孤儿文件。
     """
     outside = tmp_path / "库外"
     outside.mkdir()
@@ -306,9 +276,8 @@ def test_a_paste_target_outside_the_library_is_refused(library: Path, tmp_path: 
 
 
 def test_a_paste_source_may_live_outside_the_library(library: Path, tmp_path: Path) -> None:
-    """**源可以在库外** —— 那正是这个操作存在的理由（访达里 ⌘C 复制进来的就是）。
-
-    守卫只查目标：要是在源那一侧也挡一道，ADR 0018 的整个意义就没了。
+    """**源可以在库外** —— 那正是这个操作存在的理由（访达里 ⌘C 复制进来的就是）；
+    守卫只查目标，源那一侧也挡一道的话 ADR 0018 的意义就没了。
     """
     outside = tmp_path / "下载"
     outside.mkdir()
@@ -323,10 +292,8 @@ def test_a_paste_source_may_live_outside_the_library(library: Path, tmp_path: Pa
 
 
 def test_the_library_root_is_a_legal_paste_target(library: Path, tmp_path: Path) -> None:
-    """**「全部照片」那条 ⌘V 粘的就是库根** —— 守卫一度把它挡掉，那条命令整个失灵。
-
-    钉住它是因为它曾经真的坏过：守卫的立意是「不许跑到库外去」，而库根恰恰是
-    ``_paste_target()`` 在没有选中项时返回的地方。
+    """**「全部照片」那条 ⌘V 粘的就是库根**，而守卫一度把它挡掉，那条命令整个失灵 ——
+    守卫的立意是「不许跑到库外」，库根恰恰是没选中项时 ``_paste_target()`` 返回的地方。
     """
     source = tmp_path / "从访达粘来的.jpg"
     Image.new("RGB", (8, 6), (30, 60, 90)).save(source)
@@ -337,10 +304,8 @@ def test_the_library_root_is_a_legal_paste_target(library: Path, tmp_path: Path)
 
 
 def test_the_config_directory_is_not_a_paste_target(library: Path, tmp_path: Path) -> None:
-    """配置目录里放的每一样都是「只有 Gallery 自己看得见」的缓存。
-
-    用户往里粘照片不会让照片变得可见，只会让下一次清理把它当成垃圾（红线 5）。
-    """
+    """配置目录里都是「只有 Gallery 自己看得见」的缓存：用户往里粘照片不会让它变得可见，
+    只会让下一次清理把它当垃圾（红线 5）。"""
     source = tmp_path / "从访达粘来的.jpg"
     Image.new("RGB", (8, 6), (30, 60, 90)).save(source)
 

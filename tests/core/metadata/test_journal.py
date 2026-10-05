@@ -1,12 +1,6 @@
 """``gallery.core.metadata.journal``：每一次会动用户文件的操作都要在这里留一笔。
 
-它是红线 4 的落点 —— 「写不进去也不能让操作失败，但必须如实说撤销不了」。
-此前这个模块**没有任何专属测试**：它只是被五个写操作的测试间接用到，而那几个测试
-又从不停下来问它「你写不进去时会怎样」。这里把那几条单独钉住。
-
-还要守住的是日志本身的两条性质：**追加写中途崩溃只丢最后一行**，以及
-**跨天按时间顺序读回**（撤销栈完全靠重放它）。
-"""
+红线 4 的落点：「写不进去也不能让操作失败，但必须如实说撤销不了」；还要守住崩溃只丢最后一行。"""
 
 from __future__ import annotations
 
@@ -38,9 +32,6 @@ def _record(**overrides: object) -> WriteRecord:
     }
     base.update(overrides)
     return WriteRecord(**base)  # type: ignore[arg-type]
-
-
-# ---- 写与读 ---------------------------------------------------------------
 
 
 def test_a_record_survives_a_round_trip(library: Path) -> None:
@@ -92,10 +83,8 @@ def test_a_missing_journal_directory_is_created(library: Path) -> None:
 def test_an_unwritable_journal_reports_failure_instead_of_raising(
     library: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """**记账失败绝不抛异常**：用户已经改好的文件不能因为记不上账就说成没改成。
-
-    返回 ``False`` 由调用方决定要不要提示（红线 4）。
-    """
+    """**记账失败绝不抛异常**（红线 4）：返回 ``False``，由调用方决定要不要提示 ——
+    已经改好的文件不能因为记不上账就被说成没改成。"""
     real_mkdir = Path.mkdir
 
     def refuse(self: Path, *args: object, **kwargs: object) -> None:
@@ -125,15 +114,9 @@ def test_reading_without_any_journal_yields_nothing(tmp_path: Path) -> None:
     assert read_records(tmp_path) == []
 
 
-# ---- 跨天 -----------------------------------------------------------------
-
-
 def test_records_from_different_days_come_back_in_order(library: Path) -> None:
-    """撤销栈完全靠重放这些记录，所以**跨天的先后顺序必须对**。
-
-    文件名就是日期（``journal/YYYY-MM-DD.jsonl``），字典序即时间序 —— 这条性质
-    没有别处盯着，而它错位一次就是「⌘Z 撤错了东西」。
-    """
+    """撤销栈完全靠重放这些记录，所以**跨天的先后顺序必须对**：文件名就是日期
+    （``journal/YYYY-MM-DD.jsonl``），字典序即时间序 —— 错位一次就是「⌘Z 撤错了东西」。"""
     today = datetime.now().astimezone()
     earlier, later = today - timedelta(days=2), today - timedelta(days=1)
     for day, action in ((earlier, ACTION_RENAME), (later, ACTION_MOVE), (today, ACTION_PASTE)):
@@ -159,9 +142,6 @@ def test_non_jsonl_files_in_the_directory_are_ignored(library: Path) -> None:
     append_record(library, _record())
 
     assert len(read_records(library)) == 1
-
-
-# ---- 记录本身 --------------------------------------------------------------
 
 
 @pytest.mark.parametrize(

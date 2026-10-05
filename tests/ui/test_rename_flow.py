@@ -1,12 +1,5 @@
-"""行内重命名的界面测试。
-
-覆盖三件事：
-
-1. 输入框本身的行为（回车提交、Esc 取消、点别处也提交、照片只选中主干）。
-2. 「再次点击已选中的格子」才进重命名，而**双击仍然是打开** —— 这是最容易做反的一条。
-3. 端到端：提交之后磁盘上的文件真的改名了，模型与提示也跟着更新。
-
-全部用离屏 Qt，照片都是 ``tmp_path`` 里当场造的。
+"""行内重命名的界面测试：输入框本身的行为、「再次点击已选中的格子」才进重命名（**双击仍然是
+打开** —— 这是最容易做反的一条）、以及提交之后磁盘上的文件真的改名了。
 """
 
 from __future__ import annotations
@@ -41,8 +34,6 @@ from gallery.ui.browser.model import PhotoListModel  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.rename_edit import RenameEdit  # noqa: E402
 
-#: 等待异步扫描完成的时限。
-
 
 def make_grid(qt_app: QApplication, tmp_path: Path, names: list[str]) -> PhotoGrid:
     grid = PhotoGrid(icon_edge=176)
@@ -53,9 +44,6 @@ def make_grid(qt_app: QApplication, tmp_path: Path, names: list[str]) -> PhotoGr
     grid.show()
     qt_app.processEvents()
     return grid
-
-
-# ---- 输入框 -----------------------------------------------------------------
 
 
 def test_return_commits(qt_app: QApplication) -> None:
@@ -130,9 +118,6 @@ def test_album_selects_the_whole_name(qt_app: QApplication) -> None:
     assert edit.selectedText() == "2025.07 苏州"
 
 
-# ---- 再次点击 vs 双击 --------------------------------------------------------
-
-
 def click_cell(grid: PhotoGrid, row: int) -> None:
     index = grid.model().index(row, 0)
     QTest.mouseClick(
@@ -193,12 +178,9 @@ def test_double_click_wins_over_rename(
 ) -> None:
     """双击打开照片时**绝不能**顺带弹出重命名输入框。
 
-    这是个真缺陷：Qt 按「第二次**按下**」的时机判定双击，而人的手并不稳 ——
-    第二下按下去之后多按了一会儿才抬起（两次抬起的间隔就超过了双击阈值）。
-    两边各判各的，于是这一次操作变成「照片打开了，同时还弹出一个重命名输入框」。
-
-    修法是让双击先说话：第二次点击先等满一个双击阈值，这段时间里 Qt 认成双击，
-    就去打开照片；一直没等到，才当用户确实想改名。
+    Qt 按「第二次**按下**」的时机判定双击，而人的手并不稳 —— 第二下按下去之后多按了一会儿
+    才抬起，两边各判各的，这一次操作就变成「照片打开了，同时还弹出一个重命名输入框」。
+    修法是让双击先说话：第二次点击先等满一个双击阈值，一直没等到才当用户确实想改名。
     """
     grid = make_grid(qt_app, tmp_path, ["a.jpg", "b.jpg"])
     requested: list[int] = []
@@ -281,9 +263,8 @@ def test_editor_covers_the_file_name(qt_app: QApplication, tmp_path: Path) -> No
 def test_editor_stays_inside_the_selected_cell(qt_app: QApplication, tmp_path: Path) -> None:
     """输入框不许越出那一格的选中框 —— 下半截挂在框外看着像错位。
 
-    ``adjusted(3, 3, -3, -3)`` 是选中时铺的那层淡色底的边界，``PhotoDelegate.paint`` 与
-    ``begin_rename`` 用的是同一个矩形；名字那一行的下沿正好贴着它，所以输入框只能往上长，
-    往下长就越界了。输入框有了圆角边框之后这一点尤其显眼（ADR 0025）。
+    ``adjusted(3, 3, -3, -3)`` 是选中时铺的那层淡色底的边界，名字那一行的下沿正好贴着它，
+    所以输入框只能往上长。
     """
     grid = make_grid(qt_app, tmp_path, ["a.jpg"])
     index = grid.model().index(0, 0)
@@ -300,26 +281,15 @@ def test_editor_stays_inside_the_selected_cell(qt_app: QApplication, tmp_path: P
     )
 
 
-# ---- 「再点一次改名」的成立条件 ----------------------------------------------
-
-
 def test_clicking_again_after_escape_offers_rename(
     qt_app: QApplication, settle: Callable[[float], None], tmp_path: Path
 ) -> None:
     """⌘R → Esc 之后，再点那一格就该能改名 —— 用户看到的仍然是选中态。
 
-    这是上一条 Esc 修复的**另一半**，症状是：⌘R 能进，Esc 也退得出来，可左键再点
-    那一格毫无反应，非要点第二下。
-
-    根因不在 Esc 上，在 :attr:`PhotoGrid._armed_row` 的记法上：它答的是「这一格
-    **再点一下**是不是改名」，却只由「上次完成的普通左键点选」维护。于是**凡是
-    不是用左键选中那一格的路径**，这一格对它就是没 arm 过的 —— 刚打开时 Qt 顺手设的
-    当前项、代码里的 ``select_row``、⌘R 本身，都算。用户看见的是高亮着的选中态，
-    代码看见的是「从来没点过这一格」，于是这次点击被当成「第一次：只选中」。
-
-    前置条件摆出来：**这一格从来没有被左键点过**（``armed`` 还是 -1、真选区是空的），
-    网格刚打开就是这个样子。于是接下来那次点击之所以能改名，只可能是因为 ⌘R 这一路
-    把它 arm 上 —— 换成「点两下」那条老路本来就会过，与本次修复无关。
+    根因不在 Esc 上，在 ``_armed_row`` 的记法上：它答的是「这一格**再点一下**是不是改名」，
+    却只由「上次完成的普通左键点选」维护。于是刚打开时 Qt 顺手设的当前项、代码里的
+    ``select_row``、⌘R 本身都不算 —— 用户看见的是高亮着的选中态，代码看见的是
+    「从来没点过这一格」，于是这次点击被当成「第一次：只选中」。
     """
     grid = make_grid(qt_app, tmp_path, ["a.jpg", "b.jpg"])
     requested: list[int] = []
@@ -350,9 +320,9 @@ def test_the_first_click_after_opening_still_only_selects(
 ) -> None:
     """反过来也得守住：刚打开时第一下点击只能选中，不能一碰就弹出输入框。
 
-    这是上面那条修复的红线。Qt 在行插进来的那一轮事件循环里会把第 0 行设成当前项，
-    用户看到的已经是一个高亮的格子；若把判据写成「点当前项就是改名」，那么**打开
-    应用后随手点一下照片就直接改名**了 —— 连选中都不选中。
+    这是上面那条的红线：Qt 在行插进来的那一轮事件循环里会把第 0 行设成当前项，用户看到的
+    已经是一个高亮的格子；判据若写成「点当前项就是改名」，**打开应用后随手点一下照片就直接
+    改名**了。
     """
     grid = make_grid(qt_app, tmp_path, ["a.jpg", "b.jpg"])
     requested: list[int] = []
@@ -369,11 +339,9 @@ def test_the_first_click_after_opening_still_only_selects(
     assert grid.genuinely_selected_rows() == [0]
 
 
-# ---- 除了左键，还有哪些路把某一格「选中」了 ----------------------------------
-#
-# 三条都是同一个症状：界面上那一格是**选中**的（画着选中框，⌘R 也亮着），点它一下
-# 却没有反应，非要点第二下。根因是同一个：``_armed_row`` 只认「上次完成的普通左键
-# 点选」，于是凡是没走左键的选中路径，那一格对它都是没 arm 过的。
+# 除了左键，还有哪些路把某一格「选中」了 —— 三条同一个症状：界面上那一格是**选中**的
+# （画着选中框、⌘R 也亮着），点它一下却没有反应，非要点第二下。根因同一个：
+# ``_armed_row`` 只认「上次完成的普通左键点选」。
 
 
 def test_a_programmatically_selected_cell_can_be_renamed_by_one_click(
@@ -381,10 +349,8 @@ def test_a_programmatically_selected_cell_can_be_renamed_by_one_click(
 ) -> None:
     """``select_row`` 选中的那一格，点一下就该改名 —— 不该要点两下。
 
-    这一条是底下两条（大图返回、返回上级）的共同机制：两条都靠
-    ``MainWindow._restore_level_focus`` / ``show_grid`` 调 ``select_row`` 把该选中的
-    那一格摆出来。选区是真的（``sel`` 里有它）、当前项也是它，用户看到的就是一个
-    选中的格子 —— 于是「再点一下改名」必须认它。
+    大图返回、返回上级两条都靠 ``select_row`` 把该选中的那一格摆出来，用户看到的就是一个
+    选中的格子，于是「再点一下改名」必须认它。
     """
     grid = make_grid(qt_app, tmp_path, ["a.jpg", "b.jpg", "c.jpg"])
     requested: list[int] = []
@@ -433,8 +399,7 @@ def test_an_arrow_key_that_does_not_move_the_cursor_arms_nothing(
     """方向键没挪动当前项时**不许** arm —— 守住「刚打开时随手点一下只是选中」。
 
     方向键那一路是「当前项变了就 arm」。可要是无条件 arm，按一个按不动的方向键
-    （已经在第 0 行还按 ↑）就会把 Qt 顺手设的那个当前项 arm 上，于是打开应用后随手
-    点一下照片直接弹输入框。这条钉的是那个「不许」。
+    （已经在第 0 行还按 ↑）就会把 Qt 顺手设的那个当前项 arm 上。
     """
     grid = make_grid(qt_app, tmp_path, ["a.jpg", "b.jpg"])
     settle(0.1)
@@ -458,9 +423,8 @@ def test_changing_the_level_drops_the_armed_cell(
 ) -> None:
     """换一层之后，旧的那一格就不再「再点一下改名」了。
 
-    这是上面几条的反面，也是同一个状态机上的另一个洞：``_armed_row`` 记的是**行号**，
-    而换一层（``PhotoListModel.clear``）摆上去的是**另一批条目**。旧行号若还留着，
-    用户在新一层里点那一格，第一下就直接改名 —— 而他什么都没指过。
+    同一个状态机上的另一个洞：``_armed_row`` 记的是**行号**，而换一层摆上去的是**另一批
+    条目**。旧行号若还留着，用户在新一层里点那一格，第一下就直接改名。
     """
     grid = make_grid(qt_app, tmp_path, ["a.jpg", "b.jpg", "c.jpg", "d.jpg"])
     settle(0.1)
@@ -505,9 +469,6 @@ def test_clicking_a_different_cell_after_escape_still_only_selects(
     assert grid.current_row() == 1
 
 
-# ---- 端到端 -----------------------------------------------------------------
-
-
 def open_window(
     qt_app: QApplication,
     root: Path,
@@ -515,9 +476,8 @@ def open_window(
     browse_mode: str = BROWSE_MODE_FLAT,
     session_base: Path | None = None,
 ) -> MainWindow:
-    # 会话目录默认**放在库里**：相册浏览模式下它自己就是一个文件夹，会在网格上多出一张
-    # 相册卡片，于是行数对不上（与 ``tests/ui/test_level_focus.py`` 同一个理由，那里把它
-    # 放在 ``root.parent``）。要按相册数行的用例得自己把它挪到库外。
+    # 会话目录默认**放在库里**：相册浏览模式下它自己就是一个文件夹，会在网格上多出一张相册
+    # 卡片，于是行数对不上。要按相册数行的用例得自己把它挪到库外。
     session_base = root / "状态" if session_base is None else session_base
     save_session(SessionState(recent_roots=(root,)), base=session_base)
     set_library_ui(root, browse_mode=browse_mode)
@@ -633,10 +593,8 @@ def test_rename_action_is_disabled_without_a_selection(
     make_photo("IMG_0001.jpg", directory=tmp_path)
     window = open_window(qt_app, tmp_path)
     try:
-        # 「刚打开时没有选中」不是一个可以依赖的状态：行插进来的那一轮事件循环里，
-        # 网格可能顺手把第 0 行设成当前项（访达也是这么做的）。要测「没选中就不能改名」，
-        # 就得**真的**把选中清掉，而不是拿开头的默认状态去赌时序
-        # （`tests/ui/test_trash_flow.py` 里的 `clear_selection` 记着同一条）。
+        # 「刚打开时没有选中」不是一个可以依赖的状态：行插进来的那一轮事件循环里网格可能顺手
+        # 把第 0 行设成当前项。要测「没选中就不能改名」就得**真的**把选中清掉。
         window._grid.select_for_context(-1)
 
         assert window._rename_action.isEnabled() is False
@@ -652,19 +610,10 @@ def test_escape_cancels_and_leaves_rename_usable_again(
 ) -> None:
     """Esc 取消之后仍然是选中的那一格，于是 ⌘R 必须还能再进一次重命名。
 
-    这是个真缺陷，而且症状很怪：**第一次** ⌘R 好好地能进，Esc 之后第二次却彻底没反应，
-    菜单里的「重命名…」也一起变灰 —— 照片明明还选着，别的命令（拷贝、废纸篓）都还亮着。
-    灰掉的只有「重命名」这一条，正好是 :meth:`MainWindow._update_action_states` 里那个
-    ``idle`` 判据：改名的这段时间它禁用，收起来之后**必须**有人把它点回亮。
-
-    而「Esc 取消」这条路上没人点。``RenameEdit._cancel`` 先 ``hide()`` 再发
-    ``cancelled``，网格那边的 ``cancel_rename`` 到场时输入框**早已藏好**，于是它读到的
-    ``was_editing`` 是 False，「输入框收起来了」这条信号压根没发出去。
-    （回车提交那条路没事：``_on_rename_committed`` 是无条件发那条信号的。）
-
-    钉的是窗口这一侧的接线：输入框自己没问题，坏掉的是「输入框收起来 → 窗口把菜单
-    点回亮」。断言也只从窗口看 —— 输入框自己那条 Esc 用例（``test_escape_cancels``）
-    一直是对的。
+    症状很怪：**第一次** ⌘R 好好地能进，Esc 之后第二次却彻底没反应，菜单里的「重命名…」
+    也一起变灰。坏的是「输入框收起来 → 窗口把菜单点回亮」那条接线：``RenameEdit._cancel``
+    先 ``hide()`` 再发 ``cancelled``，网格的 ``cancel_rename`` 到场时读到的是
+    「本来就没在编辑」，「输入框收起来了」那条信号压根没发出去。
     """
     make_photo("IMG_0001.jpg", directory=tmp_path)
     window = open_window(qt_app, tmp_path)
@@ -730,17 +679,13 @@ def test_click_after_escape_renames_again_in_the_window(
 ) -> None:
     """端到端：⌘R → Esc → 左键点那一格 → 真的又进了重命名。
 
-    与同文件里那条 ``test_escape_cancels_and_leaves_rename_usable_again`` 是同一个
-    「Esc 之后还能不能改名」的两种入口（键盘与鼠标）。分开钉是因为它们断的地方不同：
-    ⌘R 走的是 QAction 的可用性，左键走的是网格里那个「再点一次」的判据 ——
-    后者与 Esc 无关，改名一开始就是坏的，只是要走到「⌘R → Esc」这条路上才显形。
+    与上一条是同一个「Esc 之后还能不能改名」的两种入口（键盘与鼠标），断的地方不同：
+    ⌘R 走 QAction 的可用性，左键走网格里那个「再点一次」的判据。
     """
     make_photo("IMG_0001.jpg", directory=tmp_path)
     window = open_window(qt_app, tmp_path)
     try:
-        # 「刚打开时当前项是第 0 行」不是一个可以依赖的状态（行插进来的那一轮事件
-        # 循环里，Qt 可能顺手设，也可能没设 —— 串行单跑时它总是设的，并行下就未必）。
-        # 所以显式摆出来，跟 `test_rename_action_is_disabled_without_a_selection` 一样。
+        # 「刚打开时当前项是第 0 行」不是一个可以依赖的状态，所以显式摆出来。
         window._grid.select_for_context(-1)
         window._grid.select_row(0)
         qt_app.processEvents()
@@ -775,9 +720,8 @@ def test_click_after_going_up_a_level_renames(
 ) -> None:
     """返回上一级之后，点那个被重新选中的相册就该改名。
 
-    「退上去时上一层停在刚离开的那一格」是刻意做的（见 ``test_level_focus.py``）：
-    不然每退一级都要重新找一遍刚才在的那个相册。用户看到它是选中的，
-    点一下却要等第二下才改名 —— 于是「记住了停在哪」这件事白记了一半。
+    「退上去时上一层停在刚离开的那一格」是刻意做的：用户看到它是选中的，点一下却要等
+    第二下才改名 —— 于是「记住了停在哪」这件事白记了一半。
     """
     library = tmp_path / "库"
     make_photo("IMG_0001.jpg", directory=library / "海边")
@@ -806,8 +750,8 @@ def test_click_after_leaving_the_photo_renames(
 ) -> None:
     """从大图退回网格之后，点那张照片就该改名。
 
-    与上一条同一个机制（都走 ``show_grid`` → ``select_row``），但换了个入口：
-    大图是看照片时最常待的地方，退回来顺手改个名是很自然的一下。
+    与上一条同一个机制（都走 ``show_grid`` → ``select_row``），但换了个入口：看照片时
+    退回来顺手改个名是很自然的一下。
     """
     make_photo("IMG_0001.jpg", directory=tmp_path)
     window = open_window(qt_app, tmp_path)
@@ -833,8 +777,8 @@ def test_switching_away_still_restores_the_actions(
 ) -> None:
     """外部强制收起那条路（切层 / 切页）一直是好的 —— 别把 Esc 也修坏。
 
-    ``MainWindow`` 自己在 :meth:`cancel_rename` 之前就调 :meth:`_update_action_states`，
-    所以那条路没经过网格的 ``cancel_rename``。这条守住两侧的行为差异。
+    ``MainWindow`` 自己在 ``cancel_rename`` 之前就调 ``_update_action_states``，
+    所以那条路没经过网格的 ``cancel_rename``。
     """
     make_photo("IMG_0001.jpg", directory=tmp_path)
     window = open_window(qt_app, tmp_path)
@@ -851,9 +795,6 @@ def test_switching_away_still_restores_the_actions(
         assert window._rename_action.isEnabled() is True
     finally:
         window.close()
-
-
-# ---- 模型 -------------------------------------------------------------------
 
 
 def test_replace_entry_keeps_the_thumbnail(qt_app: QApplication, tmp_path: Path) -> None:

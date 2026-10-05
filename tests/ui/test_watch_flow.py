@@ -888,7 +888,7 @@ def _jpeg_bytes(
 ) -> bytes:
     """现造一张最小合法 JPEG 的字节。
 
-    测试数据一律现场构造（AGENTS.md）：不放真实照片，也不放二进制进仓库。
+    测试数据一律现场构造：仓库里不放真实照片，也不放大尺寸二进制。
     """
     from io import BytesIO
 

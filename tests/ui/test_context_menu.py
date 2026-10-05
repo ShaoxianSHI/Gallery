@@ -1,15 +1,6 @@
-"""右键菜单：落点决定菜单，视图把选区摆正（ADR 0014）。
-
-三块，分开测：
-
-1. **选区语义** —— 右键在没选中的格子 / 已选中的格子 / 空白处各会发生什么。
-   这一段用裸网格测：它与窗口、与库都没有关系，测窗口只会把因果搅浑。
-2. **菜单内容** —— 四种落点各拼出什么。走真实的 ``MainWindow.context_menu_for``，
-   因为置灰是 ``_update_action_states`` 算出来的，只有连着窗口才是真的。
-3. **新命令** —— 拷贝 ⌘C、拷贝路径、全选、复制分组条件、在访达中显示、在默认应用中打开。
-
-「在访达中显示」与「在默认应用中打开」在这里**必须换掉**：真跑会把访达与别的程序叫起来，
-那是测试机上真实的副作用。
+"""右键菜单：落点决定菜单，视图把选区摆正（ADR 0014）。分三块测：选区语义（裸网格）、
+菜单内容（走真实的 ``MainWindow.context_menu_for``）、新命令。两个「打开」必须换掉：
+真跑会叫起访达与别的程序。
 """
 
 from __future__ import annotations
@@ -47,8 +38,6 @@ from gallery.ui.browser.grid import PhotoGrid  # noqa: E402
 from gallery.ui.browser.model import PhotoListModel  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 
-#: 等待后台扫描 / 元数据读取 / 地点解析跑完的时限。
-
 #: 测试库里的两张照片，按扫描顺序（相册内按名称）。
 PHOTO_NAMES = ("一张.jpg", "另一张.jpg")
 
@@ -57,9 +46,9 @@ PHOTO_NAMES = ("一张.jpg", "另一张.jpg")
 def exiftool_present(window: MainWindow, monkeypatch: pytest.MonkeyPatch) -> None:
     """让这个窗口所在的库「改得动元数据」。
 
-    **测试不得依赖本机有没有装 exiftool**（AGENTS）。而「编辑元数据…」进不进菜单恰好由它
-    决定（``Library.can_write_metadata``），所以这里把这一句按成「有」—— 真去起
-    exiftool 的那些用例在 ``tests/core/metadata/test_writeback.py`` 里，用假的 writer。
+    **测试不得依赖本机有没有装 exiftool**，而「编辑元数据…」进不进菜单恰好由它决定
+    （``Library.can_write_metadata``）。真去起 exiftool 的用例在
+    ``tests/core/metadata/test_writeback.py`` 里，用假的 writer。
     """
     monkeypatch.setattr(window._library, "can_write_metadata", lambda: True)
 
@@ -68,9 +57,8 @@ def exiftool_present(window: MainWindow, monkeypatch: pytest.MonkeyPatch) -> Non
 def empty_clipboard(qt_app: QApplication) -> Iterator[None]:
     """每条用例都从「剪贴板是空的」开始。
 
-    照片与相册菜单里有没有「粘贴」这一条，取决于剪贴板里有没有文件（ADR 0018），
-    而剪贴板是**进程级**的、会被同一个 worker 上跑完的用例留下来。不摆这一下，下面
-    「菜单里有什么」的断言就成了执行顺序的函数。
+    照片与相册菜单里有没有「粘贴」这一条取决于剪贴板里有没有文件（ADR 0018），而剪贴板是
+    **进程级**的、会被同一个 worker 上跑完的用例留下来。
     """
     QGuiApplication.clipboard().clear()
     yield
@@ -92,9 +80,6 @@ def _select(view: PhotoGrid, model: PhotoListModel, rows: Sequence[int]) -> None
             model.index(row, 0),
             QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
         )
-
-
-# ---- 1. 选区语义（裸网格）---------------------------------------------------
 
 
 def _bare_grid(qt_app: QApplication, count: int = 4) -> PhotoGrid:
@@ -180,15 +165,8 @@ def test_context_menu_event_reports_the_row(qt_app: QApplication) -> None:
     assert grid.selected_rows() == [2]
 
 
-# ---- 窗口里的菜单与命令 -----------------------------------------------------
-
-
 def _settle(qt_app: QApplication, window: MainWindow) -> None:
-    """等扫描、分组、地点那一遍收工。
-
-    判据与轮询循环都在 :mod:`waiting` 里（五个模块共用同一份，见那里的
-    :func:`waiting.wait_for_idle`）—— 不成立**直接抛**，而不是超时也返回。
-    """
+    """等扫描、分组、地点那一遍收工。判据与轮询循环都在 :mod:`waiting` 里，不成立**直接抛**。"""
     wait_for_idle(qt_app, window, what="扫描、分组与地点解析")
 
 
@@ -222,9 +200,8 @@ def window(
 def _photo(window: MainWindow) -> PhotoRef:
     """库里那张照片的引用（给分组卡片当组员用）。
 
-    组卡片**必须带至少一张照片**：``build_groups`` 只从真照片建桶，空组在产品里根本
-    不存在；而 ``PhotoListModel`` 找封面时按「``cover.path`` 或 ``entry.path``」取，
-    空组会正好崩在「``GroupRef`` 没有 ``path``」这件事上。
+    组卡片**必须带至少一张照片**：``build_groups`` 只从真照片建桶，空组在产品里根本不存在；
+    而 ``PhotoListModel`` 找封面时按「``cover.path`` 或 ``entry.path``」取。
     """
     return PhotoRef(path=window._library.root / "京都" / PHOTO_NAMES[0], size=1, mtime_ns=1)
 
@@ -287,8 +264,7 @@ def _enabled(menu: QMenu, label: str) -> bool:
 def _key_cell(menu: QMenu, label: str) -> tuple[frozenset[Qt.KeyboardModifier], str]:
     """那一行最右列上的内容：有哪些修饰符 + 键位文字（没有这一列就报错）。
 
-    走 :meth:`menus.ShortcutColumnMenu.key_cell`：快捷键与提示在这一列里是同一个出口，
-    拼菜单的地方也不该分出两条路来（见 ``ui.menus`` 里 ``show_key``）。
+    走 ``menus.ShortcutColumnMenu.key_cell``：快捷键与提示在这一列里是同一个出口。
     """
     assert isinstance(menu, menus.ShortcutColumnMenu)
     action = next(a for a in menu.actions() if a.text() == label)
@@ -309,18 +285,12 @@ def test_every_menu_is_split_into_the_same_four_groups(
 ) -> None:
     """五张菜单共用同四个组（ADR 0023）：看一眼 · 拿进拿出 · 会动文件 · 它是什么。
 
-    分组按「这道命令到底动什么」，**不按落点**：用户在照片上、在分组卡片上、在大图上
-    看到的是同一组块，缺哪几条一眼就知道那张菜单少了什么。
-
-    **剪贴板先摆满**，「粘贴」在哪儿才看得见：它只出现在**相册**那一份的「拿进拿出」组里
-    （ADR 0018 决策 7 —— 按在照片上「粘到哪」说不清）。空剪贴板下这一条压根不出现，
-    那样的对照等于把四组的形状少钉了一条。
-
-    空白处那张不在其中 —— 它的第一组是「新建相册」与「粘贴」两条（ADR 0022 / 0018），
-    后面才是视图级命令。
+    分组按「这道命令到底动什么」**不按落点**。**剪贴板先摆满**，「粘贴」在哪儿才看得见：
+    它只出现在**相册**那一份的「拿进拿出」组里（ADR 0018 决策 7）。
+    空白处那张不在其中 —— 它的第一组是「新建相册」与「粘贴」两条（ADR 0022）。
     """
     # 顺序有讲究：换浏览方式只在「真的是换了」时才重列一层，所以相册那张要在进相册之前拼；
-    # 大图页拼完得先退回网格，右键菜单才拼得出来（见 ``context_menu_for``）。
+    # 大图页拼完得先退回网格，右键菜单才拼得出来。
     desktop.copy_files_to_clipboard([window._library.root / "京都" / PHOTO_NAMES[1]])
     _show_albums(qt_app, window)
     album_row = window._model.row_of_path(window._library.root / "京都")
@@ -383,13 +353,10 @@ def test_every_menu_is_split_into_the_same_four_groups(
 
 
 def test_photo_menu_items(qt_app: QApplication, window: MainWindow) -> None:
-    """照片：四组各占一段（ADR 0023）。
+    """照片：四组各占一段（ADR 0023），分组按「这道命令到底动什么」。
 
-    分组按「这道命令到底动什么」：看一眼 · 拿进拿出 · 会动文件 · 它是什么。
     「会动文件」单独一段、离前面那几条远一点 —— 它俩是仅有的两个会改用户文件的入口。
-
-    **「拿进拿出」那一段里没有「粘贴」**，而这一条与剪贴板里有没有文件无关（另见
-    :func:`test_photo_menu_has_no_paste_even_with_files`）。
+    「拿进拿出」那一段里没有「粘贴」，且与剪贴板里有没有文件无关。
     """
     _enter_album(qt_app, window)
     row = window._model.row_of_path(window._library.root / "京都" / PHOTO_NAMES[0])
@@ -424,9 +391,8 @@ def test_photo_menu_items(qt_app: QApplication, window: MainWindow) -> None:
 def test_photo_menu_has_no_paste_even_with_files(qt_app: QApplication, window: MainWindow) -> None:
     """按在照片上（单选与多选都是）**不摆「粘贴」**，剪贴板摆满了也不摆（ADR 0018 决策 7）。
 
-    用户明确要求的：这一格未必属于当前这一层（全部照片、分组那几屏都是各相册混在
-    一起的），摆出来只会让人猜「粘到哪」。**⌘V 照旧能用**（它粘进当前这一层）——
-    菜单摆不摆与快捷键怎么用是两回事。少的是「拿进拿出」那一段里的**一行**，
+    这一格未必属于当前这一层（全部照片、分组那几屏都是各相册混在一起的），摆出来只会让
+    人猜「粘到哪」。**⌘V 照旧能用**（它粘进当前这一层）。少的是「拿进拿出」里**一行**，
     其余几行与段的位置原样留着（ADR 0023 决策 2）。
     """
     _enter_album(qt_app, window)
@@ -453,11 +419,9 @@ def test_photo_menu_has_no_paste_even_with_files(qt_app: QApplication, window: M
 def test_album_menu_has_no_metadata_items(qt_app: QApplication, window: MainWindow) -> None:
     """相册：没有元数据那两条，也没有「在默认应用中打开」（目录不是照片）。
 
-    后一条是刻意不给的：相册是文件夹，让系统用默认应用打开它就是让访达打开它 ——
-    那与上面那行「打开」是同一件事，菜单里摆两行等于把一件事说两遍（ADR 0014 决策 7）。
-
-    同样**没有**「复制到相册 / 移动到相册」：那两条搬的是照片，搬相册会动到整棵子树
-    （ADR 0019 决策 5）。
+    后一条是刻意不给的：让系统用默认应用打开文件夹就是让访达打开它，与上面那行「打开」
+    是同一件事（ADR 0014 决策 7）。同样**没有**「复制到相册 / 移动到相册」：
+    那两条搬的是照片，搬相册会动到整棵子树（ADR 0019 决策 5）。
     """
     _show_albums(qt_app, window)
     row = window._model.row_of_path(window._library.root / "京都")
@@ -480,11 +444,10 @@ def test_album_menu_has_no_metadata_items(qt_app: QApplication, window: MainWind
 
 
 def test_album_menu_shows_the_paste_shortcut(qt_app: QApplication, window: MainWindow) -> None:
-    """相册菜单里「粘贴」那一行最右列写着 **⌘V**（用户明确要求补上）。
+    """相册菜单里「粘贴」那一行最右列写着 **⌘V**。
 
-    那一行**就是菜单栏那个 ⌘V**（ADR 0018 决策 7），所以这枚键不是画的装饰：菜单开着时
-    按 ⌘V 与点它走的是同一个动作、同一个槽，粘进的**都是这个相册内部**。用户要的是
-    「右键这个相册就粘进这个相册」，键位得说同一句话。
+    那一行**就是菜单栏那个 ⌘V**（ADR 0018 决策 7），所以这枚键不是画的装饰：菜单开着时按
+    ⌘V 与点它走的是同一个动作，粘进的**都是这个相册内部**。
     """
     _show_albums(qt_app, window)
     desktop.copy_files_to_clipboard([window._library.root / "京都" / PHOTO_NAMES[1]])
@@ -503,14 +466,9 @@ def test_album_menu_shows_the_paste_shortcut(qt_app: QApplication, window: MainW
 def test_group_menu_acts_on_the_photos_inside(qt_app: QApplication, window: MainWindow) -> None:
     """分组卡片：中间那一段与「多选照片」**逐字相同**（ADR 0020）。
 
-    摊平之后就是一组照片，所以「在访达中显示 / 拷贝 / 拷贝路径 / 复制到相册 / 移动到相册 /
-    移到废纸篓」一条都不用改自己的实现，也不用分叉文案。
-
-    **仍然没有**「重命名」（改的是卡片，而它不是磁盘上的东西，ADR 0004）与「粘贴」
-    （它作用的是剪贴板，与这一组无关）；开头结尾是分组自己的两条。
-
-    「移到废纸篓」**前面单独隔一道**：它是这张菜单里唯一会动文件的一条，前面几条点哪
-    一个都只是把东西递出去（原件仍在原地）。
+    摊平之后就是一组照片，所以那几条一条都不用改自己的实现。**仍然没有**「重命名」
+    （改的是卡片，ADR 0004）与「粘贴」（它作用的是剪贴板，与这一组无关）。
+    「移到废纸篓」**前面单独隔一道**：它是这张菜单里唯一会动文件的一条。
     """
     photo = PhotoRef(path=window._library.root / "京都" / PHOTO_NAMES[0], size=1, mtime_ns=1)
     group = GroupRef(facet="camera", key="canon", label="Canon EOS R5", photos=(photo,))
@@ -541,16 +499,10 @@ def test_multi_selection_hides_single_item_actions(
 ) -> None:
     """多选：只作用在「某一个东西」上的命令全部藏起来（ADR 0004 与菜单设计）。
 
-    「复制到相册」「移动到相册」**多选时仍然留着** —— 它们作用于整个选择，说的正是
-    「把这一堆东西挪到那儿去」，正是多选最想干的事（ADR 0019）。
-
-    **藏掉的只是那一行，组块与分隔线原样留着**（ADR 0023 决策 2）：于是第一组只剩
-    「在访达中显示」、第三组只剩「移到废纸篓」，而用户在单选与多选之间切换时看到的是
-    同一组块 —— 分隔线的位置不跳。
-
-    唯独**第四组整组消失**（连同它前面那道分隔线）：「显示元数据信息」与「复制元数据」
-    讲的都是**这一张**照片（面板显示的是光标那一格），选区里另外那一张没有被指定的
-    理由。早先只藏了后者、把前者留着，那是在同一段里用两套判据。
+    「复制到相册」「移动到相册」**多选时仍然留着**（ADR 0019）。**藏掉的只是那一行，
+    组块与分隔线原样留着**（ADR 0023 决策 2），用户在单选与多选之间切换时看到的分隔线不跳。
+    唯独**第四组整组消失**：「显示元数据信息」与「复制元数据」讲的都是**这一张**照片，
+    早先只藏了后者、把前者留着，那是在同一段里用两套判据。
     """
     _enter_album(qt_app, window)
     assert window._model.rowCount() == len(PHOTO_NAMES)
@@ -575,11 +527,7 @@ def test_background_menu_has_no_file_actions(window: MainWindow) -> None:
     """空白处：「新建相册」在最上面，其余仍是视图级命令。
 
     剪贴板空着时「新建相册」是这条菜单里**唯一会动磁盘**的一条（ADR 0022），而它属于
-    「只增不改」那一类 —— 建出来的是空文件夹，绝不覆盖任何东西。真正危险的那几条
-    （重命名、移到废纸篓、在访达中显示）依然一条都不在这儿。
-
-    「粘贴」是**唯一**会出现在这里的另一个文件操作，剪贴板里有文件时它会挨在「新建相册」
-    下面（ADR 0018 决策 7），见 ``tests/ui/test_paste_flow.py``。
+    「只增不改」那一类。「粘贴」是**唯一**会出现在这里的另一个文件操作（ADR 0018 决策 7）。
     """
     menu = _context_on_blank(window)
 
@@ -613,12 +561,9 @@ def test_open_says_return_on_every_level_that_has_it(
 ) -> None:
     """「打开」出现在哪一级，最右列就都要写着回车那个符号（``↵``）。
 
-    网格里回车本来就开着当前项（``PhotoGrid.keyPressEvent``），而照片 / 相册 / 分组这三张
-    菜单此前一个字都没写 —— 用户对着「打开」不知道还能这么按。开大图、进相册、进分组是
-    同一个键，所以三处是同一句提示，不是各写各的。
-
-    **这枚提示只画不生效**（``ShortcutColumnMenu.show_key``），所以那个共用的 ``QAction``
-    上的快捷键仍然必须空着：挂上去它就成了整个窗口的回车，与网格自己的处理打架。
+    网格里回车本来就开着当前项，而照片 / 相册 / 分组这三张菜单此前一个字都没写。
+    **这枚提示只画不生效**（``show_key``），所以共用的 ``QAction`` 上的快捷键仍然必须空着：
+    挂上去它就成了整个窗口的回车，与网格自己的处理打架。
     """
     # 相册要在**库根**看（进了京都就只剩照片），所以这一段排在进相册之前 —— 换浏览方式
     # 不会退回上一层，顺序写反了相册那一行就找不到（实测 row -1）。
@@ -652,8 +597,8 @@ def test_open_says_return_on_every_level_that_has_it(
     assert _texts(group)[0] == "打开"
     assert _key_hint(group, "打开") == menus.OPEN_KEY_HINT
 
-    # 界面上的字面就钉死成**那个符号**：常量是从 Qt 要来的（``QKeySequence(Qt.Key_Return)``），
-    # 万一它在别的平台上译成了别的字样，这里红一次总比菜单上写着「回车」两个字强。
+    # 界面上的字面就钉死成**那个符号**：常量是从 Qt 要来的，万一它在别的平台上译成了别的字样，
+    # 这里红一次总比菜单上写着「回车」两个字强。
     assert menus.OPEN_KEY_HINT == "↵"
     assert len(menus.OPEN_KEY_HINT) == 1, "是一个符号，不是「回车」两个字"
 
@@ -681,9 +626,6 @@ def test_multi_selection_has_no_open_row_to_hint(qt_app: QApplication, window: M
     assert _key_cell(menu, "在访达中显示")[1] == menus.OPEN_KEY_HINT
 
 
-# ---- 命令 -------------------------------------------------------------------
-
-
 def test_copy_paths_puts_one_per_line(qt_app: QApplication, window: MainWindow) -> None:
     _enter_album(qt_app, window)
     _select(window._grid, window._model, (0, 1))
@@ -702,11 +644,9 @@ def test_copy_puts_the_files_themselves_on_the_clipboard(
 ) -> None:
     """⌘C 放的是**文件**（ADR 0017），不是路径文字、也不是像素。
 
-    与访达一致：在访达里 ⌘V 得到一份拷贝。为此剪贴板里必须有**文件 URL** ——
-    纯文本的剪贴板粘到访达里什么也不会发生，下面把 ⇧⌘C 那条拿来对照。
-
+    与访达一致，剪贴板里必须有**文件 URL** —— 纯文本粘到访达里什么也不会发生。
     **别去断言 ``clipboard().text()`` 是空的**：Qt 在 macOS 上会从 uri-list 自己合成一份
-    文字（实测 ``file:///…``），那是平台行为，不是我们放的。
+    文字，那是平台行为，不是我们放的。
     """
     _enter_album(qt_app, window)
     _select(window._grid, window._model, (0, 1))
@@ -755,12 +695,11 @@ def test_copy_works_for_an_album_folder(qt_app: QApplication, window: MainWindow
 
 
 def _settle_actions(qt_app: QApplication) -> None:
-    """等动作可用性重算完 —— 它现在**攒一轮**再算（见 MainWindow 的连接处）。
+    """等动作可用性重算完 —— 它现在**攒一轮**再算。
 
-    选区变化只把重算**排到这一轮事件循环结束时**：一次用户动作 Qt 会连发
-    ``currentChanged`` 与 ``selectionChanged``，而全量重算里包含一次同步的
-    剪贴板读，框里拖选三百行不该做三百遍。所以断言任何一枚动作的亮/灰之前，
-    先把这一轮转完 —— 否则读到的是上一轮的答案。
+    选区变化只把重算**排到这一轮事件循环结束时**（一次用户动作 Qt 会连发
+    ``currentChanged`` 与 ``selectionChanged``，而全量重算里包含一次同步的剪贴板读）。
+    断言任何一枚动作的亮/灰之前先把这一轮转完，否则读到的是上一轮的答案。
     """
     qt_app.processEvents()
 
@@ -847,11 +786,9 @@ def test_reveal_says_command_return_and_the_key_really_opens_finder(
 ) -> None:
     """「在访达中显示」是 ⌘⏎，而且这条**要能真的按出来**，不是只写在菜单上的字。
 
-    ⏎ 归「打开」（网格自己处理，见 ``PhotoGrid.keyPressEvent``），所以这条要的是
-    「加 ⌘ 的回车」—— 回车行与 ⌘ 回车行挨着，画的是同一列，用户才认得出是同一族键。
-
-    按键这一段不能省：``QAction`` 的快捷键只有被 ``addAction`` 加进某个控件之后才会注册进
-    Qt 的快捷键表，而右键菜单是用完即弃的 —— 只挂菜单的话，菜单上写着 ⌘⏎、按下去没反应。
+    ⏎ 归「打开」，所以这条要的是「加 ⌘ 的回车」—— 回车行与 ⌘ 回车行挨着，画的是同一列。
+    按键这一段不能省：``QAction`` 的快捷键只有被 ``addAction`` 加进某个控件之后才会注册
+    进 Qt 的快捷键表，而右键菜单是用完即弃的。
     """
     seen: list[list[Path]] = []
 
@@ -922,11 +859,9 @@ def test_open_default_app_is_shift_return_and_the_key_really_opens_it(
 ) -> None:
     """「在默认应用中打开」是 ⇧⏎，而且这条**要能真的按出来**，不是只写在菜单上的字。
 
-    ⏎ 归「打开」、⌘⏎ 归「在访达中显示」，每一层加一个修饰符，于是三个「打开」挨着摆、
-    画的也是同一列，用户才认得出是同一族键。
-
-    按键这一段不能省：``QAction`` 的快捷键只有被 ``addAction`` 加进某个控件之后才会注册进
-    Qt 的快捷键表，而右键菜单是用完即弃的 —— 只挂菜单的话，菜单上写着 ⇧⏎、按下去没反应。
+    ⏎ 归「打开」、⌘⏎ 归「在访达中显示」，每一层加一个修饰符，三个「打开」挨着摆。
+    按键这一段不能省：``QAction`` 的快捷键只有被 ``addAction`` 加进某个控件之后才会注册
+    进 Qt 的快捷键表，而右键菜单是用完即弃的。
     """
     seen = _record_default_app(monkeypatch)
     _enter_album(qt_app, window)
@@ -982,11 +917,10 @@ def test_open_default_app_skips_group_cards_and_does_not_fall_back_to_open(
     window: MainWindow,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """选中分组卡片时：这一条不可用，⇧⏎ 也不该偷偷变成「在 Gallery 里打开」。
+    """选中分组卡片时这一条不可用，⇧⏎ 也不该偷偷变成「在 Gallery 里打开」。
 
-    后半句是网格那一侧的判据（``PhotoGrid.keyPressEvent``）：⇧⏎ 属于窗口级的动作，
-    不可用时按键会落到网格上，而网格只把**不带修饰符**的回车当成「打开」。要让用户以为
-    「换个地方打开」最后打开的还是 Gallery，不如什么都不做。
+    后半句是网格那一侧的判据：⇧⏎ 属于窗口级的动作，不可用时按键会落到网格上，而网格只把
+    **不带修饰符**的回车当成「打开」。
     """
     seen = _record_default_app(monkeypatch)
     group = GroupRef(facet="camera", key="canon", label="Canon", photos=(_photo(window),))
@@ -1000,8 +934,7 @@ def test_open_default_app_skips_group_cards_and_does_not_fall_back_to_open(
     qt_app.processEvents()
 
     assert seen == []
-    # 判据是「有没有真的把组打开」而不是「还在不在网格页」：进组同样会把网格重新列一遍
-    # （``_reload_level``），看着页面没变，其实在 GroupRef 上白跑了一趟。
+    # 判据是「有没有真的把组打开」而不是「还在不在网格页」：进组同样会把网格重新列一遍。
     assert window._group_view is None, "不该退回「打开」把组打开"
 
 
@@ -1091,14 +1024,11 @@ def test_copy_paths_covers_the_photos_of_a_group_card(
     ]
 
 
-# ---- 大图页的右键菜单（ADR 0021）--------------------------------------------
-
-
 def _open_detail(qt_app: QApplication, window: MainWindow, name: str) -> int:
     """打开某张照片的大图，等预览落屏，返回它的行号。
 
     **必须等解码**再往下走：画面还空着的时候右键根本不会有菜单（``DetailView`` 按
-    ``has_image`` 挡着），菜单内容与作用对象也就无从断言。
+    ``has_image`` 挡着）。
     """
     _enter_album(qt_app, window)
     row = window._model.row_of_path(window._library.root / "京都" / name)
@@ -1146,10 +1076,7 @@ def test_detail_menu_differs_from_the_photo_menu_only_on_the_first_row(
     """与网格那张**逐行对照**：只差第一行，其余一模一样。
 
     这条比「把行抄一遍」更能防退化：将来网格那张加了命令，这张忘了加，这里就红了。
-
-    剪贴板先摆满，免得两张菜单的内容取决于执行顺序 —— 「粘贴」只出现在**相册**与
-    **空白处**那两张里（ADR 0018 决策 7），照片与这一张都不摆，所以这里两边的行序
-    本来就应当一字不差。
+    剪贴板先摆满，免得两张菜单的内容取决于执行顺序。
     """
     _enter_album(qt_app, window)
     desktop.copy_files_to_clipboard([window._library.root / "京都" / PHOTO_NAMES[1]])
@@ -1213,10 +1140,10 @@ def test_detail_menu_has_no_paste_even_when_the_clipboard_has_files(
 def test_detail_menu_is_enabled_for_the_viewed_photo(
     qt_app: QApplication, window: MainWindow
 ) -> None:
-    """菜单里那些行该亮就亮，「重命名…」**也亮**（ADR 0025 接上了 ADR 0021 留下的那一行）。
+    """菜单里那些行该亮就亮，「重命名…」**也亮**。
 
-    它亮着是因为真的有对象：改的是正在看的那一张，改名的字段是窗口标题栏那一行。
-    ADR 0021 当初把它置灰，是因为那时大图页的改名字段确实还没有 —— 灰着比亮着不接线好。
+    它亮着是因为真的有对象：改的是正在看的那一张。ADR 0021 当初把它置灰，是因为那时
+    大图页的改名字段确实还没有。
     """
     _open_detail(qt_app, window, PHOTO_NAMES[0])
 
@@ -1261,8 +1188,7 @@ def test_trashing_the_photo_you_are_looking_at_shows_the_next_one(
 ) -> None:
     """大图页里 ⌘⌫：删掉正在看的那张，**接着看下一张**，不退回网格。
 
-    这是 ADR 0021 里那笔当时算过的账：删完之后人得留在一个说得清的地方，而看照片时
-    最顺手的动作就是「这张不要，下一张」。
+    删完之后人得留在一个说得清的地方，而看照片时最顺手的动作就是「这张不要，下一张」。
     """
     row = _open_detail(qt_app, window, PHOTO_NAMES[0])
     first = window._library.root / "京都" / PHOTO_NAMES[0]
@@ -1287,8 +1213,7 @@ def test_trashing_the_last_photo_you_are_looking_at_falls_back_to_the_previous_o
     qt_app: QApplication, window: MainWindow
 ) -> None:
     """正在看的是这一层的**最后一张**：没有下一张就看上一张，同样不退回网格。
-
-    与「没有照片可看才退回网格」是两件事（见下一条），别混成一条规则。
+    与「没有照片可看才退回网格」是两件事，别混成一条规则。
     """
     _open_detail(qt_app, window, PHOTO_NAMES[1])
 

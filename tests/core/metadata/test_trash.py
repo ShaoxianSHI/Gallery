@@ -1,15 +1,6 @@
 """移到系统废纸篓的测试。
 
-重点覆盖四类风险 —— 这些操作**真的会动用户的文件**：
-
-1. 删掉的必须是「搬到废纸篓」，一个字节都不能少（原路径没了、内容还在、日志记着）。
-2. 越权的东西一律不许动：库根、``.gallery/``、库外的路径。
-3. 恢复时**绝不覆盖**：原位置有别人的文件就如实报错。
-4. 批量删除允许部分失败，但每一条都记进日志，不能悄悄吞掉。
-
-废纸篓由 ``fake_trash`` fixture 指向临时目录：测试绝不能往用户真实的 ``~/.Trash``
-里丢东西。
-"""
+四类风险：内容一个字节不少、越权的一律不许动、恢复时**绝不覆盖**、批量部分失败每条都记日志。"""
 
 from __future__ import annotations
 
@@ -53,9 +44,6 @@ def photo(tmp_path: Path) -> PhotoRef:
     return PhotoRef.from_path(path)
 
 
-# ---- 废纸篓在哪 -------------------------------------------------------------
-
-
 def test_trash_dir_next_to_home_is_the_home_trash(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -90,9 +78,6 @@ def test_undecidable_volume_falls_back_to_the_home_trash(
 
     monkeypatch.setattr(Path, "stat", explode)
     assert trash_dir_for(tmp_path / "照片.jpg") == tmp_path / ".Trash"
-
-
-# ---- 移进去 -----------------------------------------------------------------
 
 
 def test_file_is_moved_into_the_trash_with_its_bytes_intact(
@@ -130,9 +115,6 @@ def test_album_is_moved_with_its_whole_tree(
 
     assert not (tmp_path / "2025 苏州").exists()
     assert (trashed / "第一张.jpg").exists()
-
-
-# ---- 边界 -------------------------------------------------------------------
 
 
 def test_library_root_cannot_be_trashed(tmp_path: Path, fake_trash: Path) -> None:
@@ -178,9 +160,6 @@ def test_guard_runs_before_anything_is_moved(
     assert photo.path.exists(), "校验没过就一个都不许动"
 
 
-# ---- 日志 -------------------------------------------------------------------
-
-
 def test_every_item_gets_its_own_record_sharing_one_batch(
     tmp_path: Path, fake_trash: Path, make_photo: Callable[..., Path]
 ) -> None:
@@ -219,9 +198,6 @@ def test_a_failed_item_is_recorded_and_the_others_still_move(
     records = read_records(tmp_path)
     assert [record.result for record in records] == [RESULT_OK, RESULT_FAILED]
     assert records[1].message
-
-
-# ---- 取回来 -----------------------------------------------------------------
 
 
 def test_restore_puts_the_file_back_where_it_was(

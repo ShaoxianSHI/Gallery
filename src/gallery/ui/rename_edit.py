@@ -1,14 +1,8 @@
 """重命名用的输入框 —— **网格与大图页共用这一份**。
 
-两处改名的入口各自摆一个输入框：网格里它浮在格子下面那行文件名上（ADR 0004 决策 6），
-大图页里它就摆在窗口标题栏那一行（ADR 0025）。行为照搬访达：回车提交、Esc 取消、
-点别处也提交。照片默认**只选中主干**、不选中扩展名，于是直接打字就是在改名字，
-不会手滑把 ``.jpg`` 敲掉。
-
-住在本层顶层而不是 ``ui/browser/`` 里，判据同 ADR 0006：改了它会不会牵连另一个包 —— 会。
-另写一份的那条路已经被否决了：同一套语义抄两遍，抄的那份迟早和第一份不一样 ——
-**外观也一样**：两处摆的是同一个控件，所以圆角、底色、文字、高亮都不必各调一遍，
-改 :func:`rename_edit_style` 一处，两边一起变。
+网格里它浮在格子下面那行文件名上，大图页里它在窗口标题栏那一行（ADR 0004 / 0025）。行为照搬访达：
+回车提交、Esc 取消、点别处也提交，照片默认只选中主干。住在顶层而不是 ``ui/browser/`` 里
+（ADR 0006）：两处摆的是同一个控件，语义与外观各只有一份。
 """
 
 from __future__ import annotations
@@ -23,8 +17,7 @@ from gallery.ui import theme
 from gallery.ui.theme import AppTheme, rgba
 
 #: 圆角半径（点）。系统那个 macOS 样式画出来的是个带立体边框的方框，浮在名字上很扎眼；
-#: 改成一块圆角的输入面 —— 与 macOS 菜单、访达的行内编辑一个气质（底色见
-#: :func:`field_background`：与外面同一个色，靠这一圈边框显出边界）。
+#: 改成一块圆角的输入面，底色见 :func:`field_background`（与外面同一个色，靠边框显出边界）。
 RADIUS = 5
 
 #: 左右各留一点，文字不贴着边框。
@@ -34,18 +27,9 @@ PADDING = 8
 def field_background(app_theme: AppTheme) -> QColor:
     """输入面的底色：**就是窗口那块底色**，不另派生一档。
 
-    原来是「比底色浮一点点」（深色下提亮、浅色下压暗）。看着像那么回事，实测浅色下
-    那一档灰（``#ffffff`` 压到 ``#ebebeb``）**恰好就是 macOS 系统窗口的颜色** ——
-    用户第一眼以为那是 Qt 原生的：界面上两块输入面（搜索胶囊与「用外部应用打开」
-    那个药丸）于是从这一整块白里凸出来，与整扇窗不是一个软件画的。
-
-    现在两者与外面**同一个色**，读得出来靠的是那一圈边框，不靠底色。
-    深色下同样（原来那一档比底色亮，是「另一个面」的意思，与上面的判断相反，
-    两套主题下看下来是两种不同的东西）—— ADR 0035 决策 1。
-
-    **三处输入面共用这一个函数**：搜索胶囊（``ui.search_field``）、那个药丸
-    （``ui.external_button``）与改名输入框（就是本模块）。各派生一次早晚会差一档，
-    而那时没人说得清是哪一档。
+    原来是「比底色浮一点点」，而浅色下那一档灰恰好就是 macOS 系统窗口的颜色：三处输入面
+    （搜索胶囊、外部打开那个药丸、改名输入框）于是从整块白里凸出来。现在读得出来靠的是那一圈
+    边框，不靠底色（ADR 0035 决策 1）—— **三处共用这一个函数**，各派生一次早晚会差一档。
     """
     return QColor(app_theme.background)
 
@@ -53,12 +37,8 @@ def field_background(app_theme: AppTheme) -> QColor:
 def rename_edit_style(app_theme: AppTheme) -> str:
     """改名的输入框长什么样。
 
-    **选区颜色交给调色板的 ``Highlight``，不写死任何一个蓝。** 这一块恰恰是最容易被
-    写坏的地方：原先标题栏那一份把链接色当高亮底，深色下那一片比正文还沉，
-    「主干已经选中了」这件事反而看不出来。走调色板则永远与系统、与网格里那一处一致 ——
-    而网格里那一处走的本来就是系统样式。
-
-    其余颜色全部从主题派生（与 ``panels.welcome`` 同一套办法）。
+    **选区颜色交给调色板的 ``Highlight``，不写死任何一个蓝**：标题栏那一份曾经把链接色当高亮
+    底，深色下那一片比正文还沉，「主干已经选中了」反而看不出来。其余颜色从主题派生。
     """
     return f"""
     QLineEdit#renameEdit {{
@@ -101,8 +81,8 @@ class RenameEdit(QLineEdit):
     def start(self, rect: QRect, text: str, *, keep_suffix: bool) -> None:
         """在 ``rect`` 处开始编辑 ``text``。
 
-        :param keep_suffix: ``True`` 时保留扩展名不选中（照片），
-            ``False`` 时全选（相册没有「扩展名」这回事）。
+        :param keep_suffix: ``True`` 时保留扩展名不选中（照片），``False`` 时全选（相册没有
+            「扩展名」这回事）。
         """
         self._settled = False
         self.setGeometry(rect)
@@ -126,9 +106,8 @@ class RenameEdit(QLineEdit):
     # ---- 事件 --------------------------------------------------------------
 
     def event(self, event: QEvent) -> bool:
-        # 窗口把 Esc 绑成了「上一级」，所以这里先把 Esc 抢过来：Qt 会先问焦点控件要不要
-        # 接管这次按键（ShortcutOverride），接管了就当成普通按键交给 keyPressEvent，
-        # 不会走 QAction —— 否则改到一半按 Esc 会跳出上一层，输入框里的字也白打了。
+        # 窗口把 Esc 绑成了「上一级」，所以这里先把 Esc 抢过来（Qt 先问焦点控件要不要接管
+        # 这次按键）：接管了就当成普通按键，否则改到一半按 Esc 会跳出上一层，字也白打了。
         if isinstance(event, QShortcutEvent) and event.key() == Qt.Key.Key_Escape:
             event.accept()
             return True

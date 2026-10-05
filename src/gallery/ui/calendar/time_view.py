@@ -1,12 +1,7 @@
-"""周视图：7 列 × 24 小时的时间轴。
+"""周视图：7 列 × 24 小时的时间轴（表头固定，时间轴可滚动）。
 
-每一小时一行，行高按格子比例从列宽推出来，于是**每小时恰好一格** ——
-「一个小时一张照片」不是一条规则，而是放不下第二格的自然结果。
-
-**点一格就是一次下钻**：那一小时有几张照片就摊出几张（见
-:meth:`~gallery.ui.calendar.base.LevelView.select_cell` 发出的信号）。
-日历上没有更细的一层：再单开一个「日视图」摊出来的还是同一批照片，
-而「那天下午拍了什么」点一下那一小时就到了。
+行高按格子比例从列宽推出来，于是**每小时恰好一格** —— 「一个小时一张」不是规则，而是放不下
+第二格的自然结果。**点一格就是一次下钻**，没有更细的「日视图」。
 """
 
 from __future__ import annotations
@@ -47,7 +42,6 @@ from gallery.ui.calendar.thumbs import ThumbStore
 
 #: 左窄条（写钟点）多宽。
 GUTTER = 56.0
-#: 表头（星期与日期）多高。
 HEADER_HEIGHT = 56.0
 
 _HOUR_FONT_PX = 10
@@ -56,15 +50,13 @@ _DATE_FONT_PX = 15
 #: 缩略图按一格的大小要（约一百七十像素）。
 THUMB_EDGE = 192
 
-#: 可见区上下再多要几小时（滚动去抖之后才重报窗口，那一段留白就露出来了）。
+#: 可见区上下再多要几小时：滚动去抖之后才重报窗口，那一段留白会露出来。
 PREFETCH_HOURS = 3
 
-#: 滚动去抖：一次快速滚动会连发几十次 ``valueChanged``，而每一轮都要重算一遍
-#: 「现在看得见哪几张」并向流水线报一次（网格那边是同样的处理）。
+#: 滚动去抖：一次快速滚动会连发几十次 ``valueChanged``，每次都重算一遍可见区。
 SCROLL_DEBOUNCE_MS = 80
 
-#: 「滚到第一张照片上方」那个定位延后多久（毫秒）。**0 = 下一轮事件循环** ——
-#: 要等的只是**布局**跑过一遍（滚动条的最大值在那之前还是 0）。
+#: 「滚到第一张照片上方」的定位延后多久（毫秒）。**0 = 下一轮事件循环**：要等的只是布局跑过。
 REVEAL_DELAY_MS = 0
 
 
@@ -80,22 +72,15 @@ class WeekView(LevelView):
         area.setFrameShape(QFrame.Shape.NoFrame)
         area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         area.setStyleSheet("QScrollArea { background: transparent; }")
-        # **横向的滚轮事件正好落在这个滚动区上，却不会在这儿停下来**：
-        # ``QScrollArea`` 对「横向为主」的滚轮事件是直接 ignore 的，于是它冒到父控件
-        # —— :class:`WeekView` 自己，那里收两指甩动并翻页（见 ``LevelView.wheelEvent``）。
-        # 换句话说，「时间轴左右划 = 上一周 / 下一周」这件事靠的是这个 ignore，
-        # 别在这里加横向滚动条把它截下来。
-        # **滚动区与它那条竖滚动条都不接焦点**：Qt 在鼠标按下时把焦点给「按到的那一层里
-        # 第一个 focusPolicy != NoFocus 的控件」，而这两个默认都是 StrongFocus ——
-        # 于是**在时间轴上点一下（含点那条滚动条）键盘就被抢走**：← / → 变成滚动时间轴，
-        # 日历的「上一周 / 下一周」按多少次都没反应。焦点是这一页自己的（见
-        # ``CalendarPage.focus_current_view``），一律交给 :class:`WeekView` 自己。
+        # **横向的滚轮事件正好落在这个滚动区上，却不会停在这儿**：``QScrollArea`` 对「横向为主」的
+        # 事件直接 ignore，于是冒到 :class:`WeekView` 自己翻页 —— 别加横向滚动条把它截下来。
+        # **滚动区与它那条竖滚动条都不接焦点**：Qt 在鼠标按下时会把焦点给「按到的那一层里第一个能
+        # 接焦点的控件」，于是点一下时间轴（含点滚动条）键盘就被抢走，← / → 变成滚动。
         area.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         area.verticalScrollBar().setFocusPolicy(Qt.FocusPolicy.NoFocus)
         #: 「滚到第一张照片」那次定位**有没有真的落地**（见 :meth:`set_buckets`）。
         self._revealed = False
         #: 用户点中的那一格（``(哪一天, 第几个小时)``）—— **点哪一格高亮哪一格**。
-        #: 切层时它原样留着（见 ``CalendarPage.set_level``：选中是哪一天就翻到哪一段）。
         self._selected_cell: tuple[datetime.date, int] | None = None
         self._header = _TimeHeader(self)
         layout = QVBoxLayout(self)
@@ -104,25 +89,12 @@ class WeekView(LevelView):
         layout.addWidget(self._header)
         layout.addWidget(area, 1)
         self._area = area
-        # **内部几何也要盯着**：可见区是按「网格宽度（→行高）+ 视口高度 + 滚动位置」
-        # 算的，而前两个数要等**布局跑过一遍**才定。切到这一层的那一次报窗口常常跑在
-        # 布局前面（`setCurrentWidget` 之后内部布局是延后处理的），算出来的那一屏于是
-        # 与真正画出来的不是同一批 —— 而布局跑完之后**没有人再报一次**，那些格子就
-        # 永远没人要图（症状：切到某一周，屏幕上有几格是占位灰，切走再回来才好）。
+        # **内部几何也要盯着**：可见区按「行高 + 视口高 + 滚动位置」算，前两个要等**布局跑过**才
+        # 定，而切层那次报窗口常常跑在布局前面，布局跑完却没有人再报一次。
         area.viewport().installEventFilter(self)
         self._grid.installEventFilter(self)
-        # 「滚到第一张照片上方」那个定位的闸门（见 :meth:`_reveal_photos`）。
-        #
-        # **做成自己的子定时器，而不是 `QTimer.singleShot(0, self._apply_scroll)`**：
-        # 后者是**两参**形态，这个定时器与本对象毫无关系，于是「按了 `W` → 同一轮里
-        # ⌘Q 关窗」这种再平常不过的时序会让它照常触发，去调一个已经析构的
-        # ``_apply_scroll``，换来一条 ``Internal C++ object already deleted``
-        # （同一个道理与那条注释见 ``browser/grid.py`` 的 ``eventFilter``）。
-        #
-        # 子定时器把「接收方析构时自动取消」这件事变成了**自己的成员**：控件没了它也没了。
-        # 顺带换掉的是那个布尔闩锁 ``_scrolling`` —— 闩锁一旦卡住（那个定时器没跑成）
-        # 就再也解不开，``_reveal_photos`` 会从此次次早退，周视图再也找不到它的第一张照片；
-        # ``isActive()`` 说的是「眼下是不是真的排着一个」，不存在卡住这一说。
+        # 「滚到第一张照片上方」的定位闸门（见 :meth:`_reveal_photos`）。**自己的子定时器**比
+        # ``QTimer.singleShot(0, ...)`` 好：「按了 W → 同一轮 ⌘Q 关窗」会让它去调已析构的槽。
         self._reveal = QTimer(self)
         self._reveal.setSingleShot(True)
         self._reveal.setInterval(REVEAL_DELAY_MS)
@@ -133,7 +105,6 @@ class WeekView(LevelView):
         self._area.verticalScrollBar().valueChanged.connect(self._scroll_notify.start)
         self._scroll_notify.timeout.connect(self.window_changed)
 
-    # ---- 几何 -------------------------------------------------------------
     def days(self) -> list[datetime.date]:
         start = week_start(self._anchor)
         return [start + datetime.timedelta(days=offset) for offset in range(7)]
@@ -154,14 +125,11 @@ class WeekView(LevelView):
     def photos_in_hour(self, day: datetime.date, hour: int) -> Sequence[PhotoRef]:
         return self._by_hour.get((day, hour), ())
 
-    # ---- 选中 -------------------------------------------------------------
     def select_hour(self, day: datetime.date, hour: int) -> None:
         """点到了某一天某一小时的那一格：高亮**那一格**，并选中那一天。
 
-        **高亮的范围就是用户点到的那一格**（月视图里点一天高亮那一天）：先前是把**整列**
-        24 行全涂一遍 —— 那是「选中一天」而不是「点了一格」，而且退不掉的底色看着像卡住了。
-        一天被选中（从别的层切过来）时，表头那一格里仍有一层淡底，于是「选的是哪一天」
-        还看得出来。
+        **高亮的范围就是用户点到的那一格**：整列 24 行全涂一遍是「选中一天」，而且那底色退不掉，
+        看着像卡住了。选中哪天在表头那一格里仍有一层淡底。
         """
         self._selected_cell = (day, hour)
         self.set_selected(day)
@@ -176,7 +144,6 @@ class WeekView(LevelView):
         return self._selected_cell == (day, hour)
 
     def set_selected(self, day: datetime.date | None) -> None:
-        # 换了一天（或收掉选中）之后，那一格的高亮不再属于屏幕上任何东西 —— 跟着走。
         if self._selected_cell is not None and self._selected_cell[0] != day:
             self._selected_cell = None
             self.repaint_content()
@@ -185,43 +152,30 @@ class WeekView(LevelView):
         self._grid.update()
 
     def now_row(self) -> float:
-        """今天那一格里，「现在」落在第几行（0 = 00:00 那一行的顶）。
-
-        **今天不是真的今天时画不出来**（截图与测试里「今天」被指到别的日子）：
-        那时落在第一行顶上，而不是拿真实时钟去画一根不在这一天的线。
-        """
+        """今天那一格里「现在」落在第几行（0 = 00:00）；**「今天」不是真的今天时画不出来**。"""
         if datetime.date.today() != self._today:
             return 0.0
         moment = datetime.datetime.now().time()
         return moment.hour + moment.minute / 60.0
 
-    # ---- 位置 -------------------------------------------------------------
     def set_anchor(self, anchor: datetime.date) -> None:
         super().set_anchor(anchor)
         self._reveal_photos()
 
     def resizeEvent(self, event: object) -> None:  # noqa: N802 - 名字是 Qt 定的
         super().resizeEvent(event)  # type: ignore[arg-type]
-        # **改变窗口不重新定位**：用户滚到下午两点，这时拖一下窗口就跳回第一张照片，
-        # 那不是在帮他看清，是在把他刚找到的位置弄丢。这里只同步高度。
+        # **改变窗口不重新定位**：拖一下窗口就跳回第一张照片，是在把用户刚找到的位置弄丢。
         self._sync_grid_height()
 
     def _sync_grid_height(self) -> None:
         self._grid.setMinimumHeight(int(HOURS_PER_DAY * self.row_height()) + 8)
 
     def _reveal_photos(self) -> None:
-        """停在第一张照片所在的那个小时上方一点。
+        """停在第一张照片所在的那个小时上方一点（24 行两千多像素，让用户自己滚等于把它藏起来）。
 
-        时间轴有 24 行、两千多像素，让用户自己滚过去等于把「这周有照片」这件事藏起来。
-
-        **当场落位，别等下一轮**：落在 0 ms 定时器上的话，**第一帧已经按旧位置画出来了**
-        —— 用户看见的是内容从上面窜下来（「一张图飞快跑下来」）。而滚动范围其实在切过来
-        的那一刻常常已经有了（切层时视图已经摆好、翻页时更是本来就在屏幕上），于是先
-        试一次同步的；真的还没有范围（这一层还没被布局过）才退回定时器，等
-        :meth:`eventFilter` 那边在内部几何定下来之后补。
-
-        **连着按 ← / → 只定位一次**：定时器 ``start()`` 在已经排着一个的时候会原地续期，
-        而 :meth:`_apply_scroll` 读的是**此刻**的锚点，于是最后一次说了算。
+        **当场落位，别留一帧**：挂在 0 ms 定时器上的话**第一帧已经按旧位置画出来了**，用户看见内容
+        从上面窜下来。滚动范围在切过来那一刻常常已经有了，先同步试一次；真没有才退回定时器等
+        :meth:`eventFilter` 补。
         """
         self._apply_scroll()
         if not self._revealed:
@@ -230,13 +184,9 @@ class WeekView(LevelView):
     def set_buckets(self, by_day: DayBuckets, by_hour: HourBuckets) -> None:
         """换了桶：**上一次定位没落地的话补一次**。
 
-        定位是 :meth:`set_anchor` 排的，而拍摄时间是**后台读完才来的**（见
-        ``window/calendar_flow._start_calendar_load``）。于是刚切到周视图那一刻桶多半
-        还是空的 —— 定位对着空桶跑完，把滚动条按回 0 就再也不管了：这一周明明有照片，
-        屏幕却停在 00:00，而「看得见哪些」是按那个滚动位置算的，于是要的那几张
-        压根没人要图（症状：切到某一周时缩略图只剩一片占位灰）。
-
-        **只在没落地时补**：已经定位过（或用户自己滚过）的那一次不该被数据打回来。
+        拍摄时间是**后台读完才来的**，于是刚切到周视图那一刻桶多半是空的 —— 定位对着空桶跑完把
+        滚动条按回 0 就再也不管了，而「看得见哪些」按那个位置算（症状：切过来是一片占位灰）。
+        **已经落地的那一次不补**：换库与重扫每一步都换桶，无条件补等于把用户正在看的位置拽回去。
         """
         super().set_buckets(by_day, by_hour)
         if not self._revealed:
@@ -245,17 +195,10 @@ class WeekView(LevelView):
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 - 名字是 Qt 定的
         """滚动区的视口或时间轴本体被重新布局了：报一次窗口、补一次定位、**并重画表头**。
 
-        **这两个 resize 与 `WeekView.resizeEvent` 是三件不同的事**：整层被摆到新尺寸时
-        那个会响；而「这一层本来就在这个尺寸上，只是内部的滚动区 / 时间轴刚被布局出来」
-        只有这里看得见 —— 后一种正是切到这一层时最常见的形状（第一次切过去尤其如此）。
-
-        **表头必须在这里重画**（:meth:`_TimeHeader.paintEvent`）：它的七列是按
-        ``column_width()`` 摆的，而那个数取自**时间轴的宽度** —— 竖滚动条一出现 / 一离开，
-        视口就窄掉 / 宽出一条滚动条，列宽跟着变，**而表头自己一个像素都没动**。Qt 只在
-        控件自身尺寸变化时替它重画，于是它会一直停在旧列宽上（症状：表头与时间轴对不齐，
-        往右越差越多，差值正好是滚动条宽度；而 ``grab()`` / ``render()`` 这类探针会
-        强制重画，看不到）。实测把窗口真的显示出来时，表头 5 次重画全部发生在滚动条
-        占位之前（列宽 149.14），而此刻的列宽已经是 147.0 —— 一次都没补上。
+        「内部刚被布局出来」而不是整层换了尺寸，这一种只有这里看得见，而那正是切层时最常见的形状。
+        **表头必须在这里重画**：它的列宽取自时间轴宽度，竖滚动条一出现列宽就变，而表头自己一个
+        像素都没动（症状：表头与时间轴对不齐，差值正好是滚动条宽度；``render()`` / ``grab()`` 会
+        强制重画，所以探针看不到）。
         """
         if event.type() == QEvent.Type.Resize:
             self._header.update()
@@ -273,11 +216,8 @@ class WeekView(LevelView):
             bar.setValue(0)
             return  # 这一周还没有照片：算「没落地」，等桶到了再补一次
         if bar.maximum() <= 0:
-            # **布局还没跑过**：滚动条一个范围都没有，这时候设了也没用。关键是**别把
-            # 这一次算成「已落地」** —— 算上了就再也没有第二次（`_revealed` 是那道
-            # 「补一次」的闸），于是这一层永远停在 00:00，而「看得见哪些」又按这个
-            # 位置算：照片所在的那些格子压根没人要图（症状：切到某一周是一片占位灰）。
-            # 内部几何一定下来，`eventFilter` 那边会补这一次。
+            # **布局还没跑过**：滚动条一个范围都没有，设了也没用 —— 关键是**别把这一次算成
+            # 「已落地」**（`_revealed` 是那道「补一次」的闸），几何定下来 ``eventFilter`` 会补。
             return
         self._revealed = True
         row = self.row_height()
@@ -286,14 +226,11 @@ class WeekView(LevelView):
         self._grid.update()
         self.window_changed.emit()
 
-    # ---- 缩略图窗口 -------------------------------------------------------
     def visible_refs(self) -> list[PhotoRef]:
-        """滚到看得见的那几小时里的照片，每小时一张。
+        """滚到看得见的那几小时里的照片，每小时一张（**挑哪一张问 ``cell_cover``**）。
 
-        **上下再多要三小时**：滚动去抖之后才重报窗口，那一段如果正好有照片，
-        用户会看见格子空着再被填上。
-
-        **挑哪一张问 ``cell_cover``**（那一小时里最早的那张），与年 / 月两层同一个来源。
+        **上下再多要三小时**（:data:`PREFETCH_HOURS`）：滚动去抖之后才重报窗口，那一段如果正好
+        有照片，用户会看见格子空着再被填上。
         """
         refs: list[PhotoRef] = []
         visible = set(self.days())
@@ -316,8 +253,7 @@ class WeekView(LevelView):
     def repaint_content(self) -> None:
         """重画**时间轴与表头**——格子是它们画的，不是 ``WeekView`` 自己画的。
 
-        ``WeekView.update()`` 只把自己那一块标脏，画着照片的是里面那个 ``_TimeGrid``。
-        缩略图一张一张回来时走的就是这一次重画：漏了它，图在手上而屏幕上是占位灰。
+        ``WeekView.update()`` 只把自己那一块标脏：缩略图一张一张回来时漏了它，图在手上而屏是灰。
         """
         self._grid.update()
         self._header.update()
@@ -344,16 +280,12 @@ class _TimeHeader(QWidget):
         for index, day in enumerate(days):
             slot = QRectF(self._view.content_left() + index * column, 0, column, self.height())
             if day == self._view._selected:
-                # **只染表头这一格**：整列 24 行全涂一遍看着像卡住了，而「选的是哪一天」
-                # 这一格说得清 —— 尤其从年 / 月视图切过来时，时间轴上并没有点中的那一格。
                 painter.fillRect(slot.adjusted(1, 0, -1, 0), colors.selection)
             draw_text(
                 painter,
                 QRectF(slot.left(), 4, slot.width(), 18),
-                # **按「周日打头」数出来的列号取名字**，不是 ``day.weekday()``：
-                # :data:`WEEKDAY_NAMES` 是周日 0 … 周六 6，而 ``weekday()`` 是
-                # 周一 0 … 周日 6 —— 直接索引会让七个名字整体差一天，表头第一列
-                # （周日）写成「周六」。
+                # **按「周日打头」数出来的列号取名字**：``WEEKDAY_NAMES`` 是周日 0 … 周六 6，
+                # 而 ``weekday()`` 是周一 0 … 周日 6，直接索引会让表头第一列（周日）写成「周六」。
                 f"周{WEEKDAY_NAMES[week_index(day)]}",
                 font_px(_WEEKDAY_FONT_PX),
                 colors.accent if day == self._view.today() else colors.muted,
@@ -424,8 +356,7 @@ class _TimeGrid(QWidget):
             slot = QRectF(left + index * column, 0, column, self.height())
             for hour in range(HOURS_PER_DAY):
                 photos = self._view.photos_in_hour(day, hour)
-                # **点中的那一格也要画**（哪怕那一小时没有照片）：用户点的是「这一格」，
-                # 高亮就该跟着这一格走，而不是跟着有没有照片走。
+                # **点中的那一格也要画**（哪怕那一小时没有照片）：高亮跟着这一格走，不是照片。
                 if photos or self._view.is_selected_cell(day, hour):
                     self._paint_hour_row(
                         painter,
@@ -439,9 +370,7 @@ class _TimeGrid(QWidget):
             if index == len(days) - 1:
                 painter.drawLine(right, 0, right, self.height())
 
-        # 「现在」那条线**只画在今天那一格里**：起点是今天这一列的左沿，终点是它的右沿。
-        # **别一路划到最右边**（原先终点写的是 ``right``）—— 那看着像「从今天往后延伸的
-        # 进度」，而这条线说的只是「今天现在几点」，右边那几天与它无关。
+        # 「现在」那条线**只画在今天那一格里**：划到最右边看着像「从今天往后延伸的进度」。
         if self._view.today() in days:
             index = days.index(self._view.today())
             y = self._view.now_row() * row
@@ -464,16 +393,9 @@ class _TimeGrid(QWidget):
     ) -> None:
         """一行：一格照片（不止一张时右下角写「N 张」），点中的那一格先铺一层选中底色。
 
-        **与年 / 月两层同一种画法**：格子就是一张照片，不压渐变、不写标题 ——
-        「这一格是几点」左窄条已经写着，而压深的那道渐变原本是给标题垫底的。
-
-        **没有照片的那一格只留一层选中底色**：底色已经把「我点的是这一格」说清楚了，
-        再补一个占位圆点就变成了「这一格有张照片还没读出来」—— 而它根本没有照片。
-
-        **有照片、图还没到的那一格画一个安静的圆点**，与月视图同一个约定（见
-        ``month_view._paint_day``）。**别把整格铺成那块浅灰**：照片到了是按比例缩在格子里
-        摆的（比整格小一圈），于是「满格的灰块 → 小一圈的照片」看起来就是**闪一下、
-        尺寸还在变**（月视图没有这个毛病，正是因为它画的是圆点）。
+        **与年 / 月两层同一种画法**：格子就是一张照片，不压渐变、不写标题。**没有照片的那一格只留
+        选中底色**（再补个占位圆点就成了「有张照片还没读出来」）。**有照片、图还没到的那一格画
+        圆点**：铺满格灰块的话，照片到了是小一圈的，两帧摆在一起就是「闪一下，尺寸还在变」。
         """
         colors = self._view.colors
         x, y, cell_w, cell_h = cell_rect(row.width(), row.height())
@@ -505,10 +427,8 @@ class _TimeGrid(QWidget):
             return
         day = days[index]
         hour = int(point.y() // self._view.row_height())
-        # 键盘归视图自己：**点一下不等于把键盘让给时间轴的滚动区**（理由见 __init__）。
         self._view.setFocus()
-        # **空白的那一格也选中**（与月视图点空白的一天同一脾气）：那一格点得中，
-        # 高亮就该跟着它走；没有照片就不摊开任何东西。
+        # **空白的那一格也选中**：那一格点得中，高亮就该跟着它走；没有照片就不摊开任何东西。
         self._view.select_hour(day, hour)
         photos = list(self._view.photos_in_hour(day, hour))
         if not photos:
