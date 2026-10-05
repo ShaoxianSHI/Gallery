@@ -1305,6 +1305,25 @@ def _pinch(grid: PhotoGrid, value: float, device: QPointingDevice) -> None:
     QCoreApplication.sendEvent(grid, event)
 
 
+def _wheel(angle: float, pixel: float) -> QWheelEvent:
+    """一个 ⌘+滚轮事件，角度与像素增量**分开给** —— 两种设备给的正是这两份。
+
+    真机上的那一格：传统滚轮是 ``(角度 120, 像素 0)``，魔法鼠标 / 触控板是
+    ``(角度 4, 像素 20)``（Qt 按「1 像素 = 2 个角度单位」折算，见
+    ``qnsview_mouse.mm``）。两个字段混在一起写就看不出这个差别了。
+    """
+    return QWheelEvent(
+        QPointF(10.0, 10.0),
+        QPointF(10.0, 10.0),
+        QPoint(0, int(pixel)),
+        QPoint(0, int(angle)),
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.ControlModifier,
+        Qt.ScrollPhase.NoScrollPhase,
+        False,
+    )
+
+
 def test_the_pinch_interval_is_never_shorter_than_the_animation() -> None:
     """限速的全部意义是「让上一段过渡跑完」，比动画短就等于没限。
 
@@ -1360,20 +1379,27 @@ def test_the_wheel_is_not_rate_limited(qt_app: QApplication, tmp_path: Path) -> 
 
     for _ in range(3):
         QTest.keyClick(grid, Qt.Key.Key_Up, Qt.KeyboardModifier.ControlModifier)
-        grid.wheelEvent(
-            QWheelEvent(
-                QPointF(10.0, 10.0),
-                QPointF(10.0, 10.0),
-                QPoint(0, 0),
-                QPoint(0, 120),
-                Qt.MouseButton.NoButton,
-                Qt.KeyboardModifier.ControlModifier,
-                Qt.ScrollPhase.NoScrollPhase,
-                False,
-            )
-        )
+        grid.wheelEvent(_wheel(120.0, 0.0))
 
     assert steps == [1, 1, 1]
+
+
+def test_a_magic_mouse_notch_switches_one_step(qt_app: QApplication, tmp_path: Path) -> None:
+    """魔法鼠标滚**一格**就该切一档 —— 角度增量那一格只有 4，照角度卡阈值会迟钝到不行。
+
+    Qt 的 macOS 层对「有精确滚动」的设备给的是像素增量，角度增量按「1 像素 = 2 个
+    角度单位」折算（见 Qt 的 ``qnsview_mouse.mm``）。这里量的是**信号真的发出去了**，
+    不是那个阈值常量本身（那是 :mod:`tests.ui.browser.test_thumb_sizes` 的活）。
+    """
+    grid = make_grid(qt_app, tmp_path, 40)
+    settle_grid(qt_app, grid)
+    steps: list[int] = []
+    grid.size_step_requested.connect(steps.append)
+
+    grid.wheelEvent(_wheel(4.0, 20.0))
+    grid.wheelEvent(_wheel(-4.0, -20.0))
+
+    assert steps == [1, -1]
 
 
 def test_transition_ended_is_emitted_once_per_started_transition(

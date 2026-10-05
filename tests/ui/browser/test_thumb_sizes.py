@@ -12,7 +12,7 @@ from gallery.ui.browser.thumb_sizes import (
     PINCH_THRESHOLD,
     THUMBNAIL_LABELS,
     THUMBNAIL_SIZES,
-    WHEEL_THRESHOLD,
+    WHEEL_STEP_PIXELS,
     RateLimitedAccumulator,
     StepAccumulator,
     clamp_index,
@@ -22,6 +22,7 @@ from gallery.ui.browser.thumb_sizes import (
     label_for_index,
     nearest_index,
     shifted_index,
+    wheel_delta,
 )
 
 
@@ -133,11 +134,47 @@ def test_accumulator_rejects_non_positive_threshold() -> None:
         StepAccumulator(0)
 
 
-def test_a_single_mouse_wheel_notch_switches_one_step() -> None:
-    accumulator = StepAccumulator(WHEEL_THRESHOLD)
+#: 一格滚轮的两种样子（Qt 的 ``qnsview_mouse.mm`` 给出的那几个数）。
+CLASSIC_NOTCH = (0.0, 120.0)  # 传统滚轮：只有角度增量
+PRECISE_NOTCH = (20.0, 4.0)  # 魔法鼠标 / 触控板：有像素增量，角度只有它的一半
 
-    assert accumulator.feed(WHEEL_THRESHOLD) == 1
-    assert accumulator.feed(-WHEEL_THRESHOLD) == -1
+
+class TestWheelDelta:
+    """⌘+滚轮：两种设备给的是两套单位，换算到同一个单位之后一格就该切一档。
+
+    这一组是用「滚一格」这件事本身写的，不是照着阈值写的：Qt 的 macOS 层对传统滚轮
+    给角度增量（一格 120），对魔法鼠标 / 触控板给像素增量（一格约 20，角度只有 4）。
+    曾经只读角度增量、按 120 卡阈值，症状是**魔法鼠标滚三十格才切一档**。
+    """
+
+    @pytest.mark.parametrize(("pixel", "angle"), [CLASSIC_NOTCH, PRECISE_NOTCH])
+    def test_one_notch_switches_one_step(self, pixel: float, angle: float) -> None:
+        accumulator = StepAccumulator(WHEEL_STEP_PIXELS)
+
+        assert accumulator.feed(wheel_delta(pixel, angle)) == 1
+        assert accumulator.feed(wheel_delta(-pixel, -angle)) == -1
+
+    @pytest.mark.parametrize(("pixel", "angle"), [CLASSIC_NOTCH, PRECISE_NOTCH])
+    def test_the_delta_is_the_same_notch_on_both_devices(self, pixel: float, angle: float) -> None:
+        """一格在两种设备上是同一个量 —— 阈值只有一份，手感才可能一致。"""
+        assert wheel_delta(pixel, angle) == pytest.approx(wheel_delta(*CLASSIC_NOTCH))
+
+    def test_the_pixel_delta_wins_when_both_are_given(self) -> None:
+        """魔法鼠标与触控板两个字段都有值，而角度那一份被折算得极小。
+
+        拿角度去卡阈值就是这一支迟钝的病根（Qt 按「1 像素 = 2 个角度单位」折算）。
+        """
+        assert wheel_delta(*PRECISE_NOTCH) == pytest.approx(20.0)
+
+    def test_a_notch_worth_of_pixels_is_enough_to_fire(self) -> None:
+        """阈值必须**小于**一格的像素量，否则高精度滚轮滚一格仍然没反应。"""
+        assert wheel_delta(*PRECISE_NOTCH) > WHEEL_STEP_PIXELS
+
+    def test_a_movement_below_the_threshold_is_not_a_notch(self) -> None:
+        """攒着是为了连着来的一串小增量，不是为了把「没滚到位」也当一格。"""
+        accumulator = StepAccumulator(WHEEL_STEP_PIXELS)
+
+        assert accumulator.feed(wheel_delta(*PRECISE_NOTCH) / 3) == 0
 
 
 class TestRateLimitedAccumulator:

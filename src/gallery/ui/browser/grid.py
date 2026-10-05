@@ -61,10 +61,11 @@ from gallery.ui.browser.thumb_sizes import (
     MIN_EDGE,
     MIN_PINCH_INTERVAL_MS,
     PINCH_THRESHOLD,
-    WHEEL_THRESHOLD,
+    WHEEL_STEP_PIXELS,
     RateLimitedAccumulator,
     StepAccumulator,
     fit_columns,
+    wheel_delta,
 )
 from gallery.ui.rename_edit import RenameEdit
 
@@ -624,7 +625,7 @@ class PhotoGrid(QListView):
         # ⌘+滚轮**不**限速 —— 那一格一格的滚动是用户明确的意图，去限速只会迟钝；
         # 连按的那几下改由 MainWindow 排队（见 main_window.MainWindow.step_thumbnail_size）。
         self._pinch_steps = RateLimitedAccumulator(PINCH_THRESHOLD, MIN_PINCH_INTERVAL_MS)
-        self._wheel_steps = StepAccumulator(WHEEL_THRESHOLD)
+        self._wheel_steps = StepAccumulator(WHEEL_STEP_PIXELS)
 
         # **只接 ``activated``**。``QAbstractItemView.activated`` 在鼠标双击**和**按
         # 回车时都会发，所以它一条就够；再接上 ``doubleClicked`` 等于把双击那次算两遍。
@@ -1835,10 +1836,17 @@ class PhotoGrid(QListView):
         event.accept()
 
     def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
-        """⌘/Ctrl + 滚轮切换缩略图尺寸；普通滚动交给基类翻页。"""
+        """⌘/Ctrl + 滚轮切换缩略图尺寸；普通滚动交给基类翻页。
+
+        **增量取 :func:`~gallery.ui.browser.thumb_sizes.wheel_delta` 换算过的那一份**，
+        不是直接读角度增量：Qt 的 macOS 层对魔法鼠标 / 触控板给的是**像素**增量，
+        角度增量被折算得极小（一格只有 4 上下），照角度卡阈值就得滚三十格才动一次。
+        """
         modifiers = event.modifiers()
         if modifiers & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier):
-            steps = self._wheel_steps.feed(float(event.angleDelta().y()))
+            steps = self._wheel_steps.feed(
+                wheel_delta(float(event.pixelDelta().y()), float(event.angleDelta().y()))
+            )
             if steps:
                 self.size_step_requested.emit(1 if steps > 0 else -1)
             event.accept()

@@ -49,8 +49,25 @@ PINCH_THRESHOLD: Final = 0.1
 #: 落位那一帧还没画出去」的一点空间。
 MIN_PINCH_INTERVAL_MS: Final = 220
 
-#: ⌘+滚轮的切换阈值：一格传统滚轮是 120，触控板则是一连串小增量。
-WHEEL_THRESHOLD: Final = 120.0
+#: 只给角度增量的设备上，**一个角度单位等于多少像素**。
+#:
+#: 取的就是 Qt 自己那一处换算：非精确滚轮一格 = 120 个角度单位，而 Qt 把一格估成
+#: 20 像素（``lineWidthEstimate``）。有了它，两种设备才能落在同一个单位上。
+ANGLE_UNITS_PER_PIXEL: Final = 120.0 / 20.0
+
+#: ⌘+滚轮的切换阈值，单位是**像素**。
+#:
+#: **为什么不用角度增量**：Qt 的 macOS 层按「设备有没有精确滚动」给的是两套单位 ——
+#: 传统滚轮给角度增量（一格 120，单位是八分之一度），而**魔法鼠标与触控板给的是像素
+#: 增量**，同时按「1 像素 = 2 个角度单位」折算一份**极小**的角度增量（见 Qt 的
+#: ``qnsview_mouse.mm``）。于是魔法鼠标滚一格只有 4 上下，拿 120 去卡它要滚三十格
+#: 才切一档 —— 症状正是「鼠标滚轮缩放缩略图太迟钝，一格下去什么都没发生」。
+#:
+#: **一格是多少**：上面那个换算下是 20 像素，两种设备一致。阈值取 **12** 而不是 20：
+#: 留一点余量，好让那些一格报不足一整行的高精度滚轮也**滚一格就切一档**。
+#: 多攒出来的那点不会多切 —— 网格一次滚轮事件只发一个 ±1（见
+#: ``grid.PhotoGrid.wheelEvent``），而快捷键那一条排队等动画跑完（ADR 0001 决策 9）。
+WHEEL_STEP_PIXELS: Final = 12.0
 
 #: 缩略图长边的下限。窗口小到离谱时也不至于缩成看不清的一点。
 MIN_EDGE: Final = 48
@@ -112,6 +129,19 @@ def describe(index: int) -> str:
 def describe_actual(index: int, edge: int) -> str:
     """自适应排完之后的提示：目标只是目标，实际长边由窗口宽度决定。"""
     return f"缩略图：{label_for_index(index)} · 实际 {edge} 像素"
+
+
+def wheel_delta(pixel: float, angle: float) -> float:
+    """一次滚轮事件里**说得准的那一份**增量，统一换算成像素。
+
+    两个字段不是都有值的（判据与理由见 :data:`ANGLE_UNITS_PER_PIXEL`）：
+    **有像素就用像素**，只给角度的那条按 ``角度单位 ÷ 6`` 折过来，于是传统滚轮与
+    魔法鼠标落在同一个单位上，一格都是 20 像素（阈值见 :data:`WHEEL_STEP_PIXELS`）。
+
+    只喂角度增量、拿 120 当阈值，正是「魔法鼠标滚三十格才切一档」的成因 ——
+    那一支的量纲与魔法鼠标根本不是一回事（见本模块的 :data:`ANGLE_UNITS_PER_PIXEL`）。
+    """
+    return pixel if pixel else angle / ANGLE_UNITS_PER_PIXEL
 
 
 class StepAccumulator:
@@ -214,6 +244,7 @@ class RateLimitedAccumulator(StepAccumulator):
 
 
 __all__ = [
+    "ANGLE_UNITS_PER_PIXEL",
     "DEFAULT_EDGE",
     "DEFAULT_INDEX",
     "MAX_COLUMNS",
@@ -222,7 +253,7 @@ __all__ = [
     "PINCH_THRESHOLD",
     "THUMBNAIL_LABELS",
     "THUMBNAIL_SIZES",
-    "WHEEL_THRESHOLD",
+    "WHEEL_STEP_PIXELS",
     "RateLimitedAccumulator",
     "StepAccumulator",
     "clamp_index",
@@ -234,4 +265,5 @@ __all__ = [
     "monotonic_ms",
     "nearest_index",
     "shifted_index",
+    "wheel_delta",
 ]
