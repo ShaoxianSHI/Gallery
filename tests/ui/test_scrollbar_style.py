@@ -33,8 +33,10 @@ from gallery.ui.calendar.time_view import WeekView  # noqa: E402
 from gallery.ui.panels.metadata import MetadataPanel  # noqa: E402
 from gallery.ui.scrollbar_style import (  # noqa: E402
     HANDLE_ALPHA,
+    HANDLE_GAP,
     HANDLE_MIN,
     HANDLE_RADIUS,
+    HANDLE_WIDTH,
     SCROLLBAR_WIDTH,
 )
 
@@ -272,11 +274,11 @@ def test_the_bar_is_narrower_than_the_native_one(qt_app: QApplication) -> None:
     assert grid._scrollbar_reserve() == grid.verticalScrollBar().sizeHint().width()
 
 
-def test_the_handle_is_a_pill_flush_against_the_right_edge(qt_app: QApplication) -> None:
-    """圆角取宽度的一半（四边不留边），滑块因此是胶囊形，且紧贴窗口右缘。
+def test_the_handle_is_a_pill_set_back_from_the_right_edge(qt_app: QApplication) -> None:
+    """胶囊形，且右缘留 :data:`HANDLE_GAP` 像素的缝 —— 贴着边看着像内容被切掉一截。
 
-    「紧贴」量的是**滑块自己那几列像素全是它**：左右两端都得是滑块颜色，任何一列
-    露着底色就说明中间留了边（曾经留的是 :data:`HANDLE_SIDE_INSET` = 2）。
+    量的是**滑块横向占住哪几列**：左边起于第 0 列，右边停在倒数第 ``HANDLE_GAP`` 列，
+    那最后几列必须是底色。上一版留 0（紧贴），用户原话「没有边缘，很奇怪」。
     """
     theme.ensure_installed(qt_app)
     background = theme.current_theme(qt_app).background
@@ -287,18 +289,24 @@ def test_the_handle_is_a_pill_flush_against_the_right_edge(qt_app: QApplication)
 
     middle = (top + bottom) // 2
     columns = [x for x in range(image.width()) if image.pixelColor(x, middle) != background]
-    assert columns[0] == 0 and columns[-1] == image.width() - 1, (
-        f"滑块横向只占了第 {columns} 列，右缘还露着底色 —— 没有紧贴窗口"
+    assert columns[0] == 0, f"滑块左边没起于第 0 列（第 {columns[0]} 列起）"
+    assert columns[-1] == HANDLE_WIDTH - 1, (
+        f"滑块宽 {len(columns)} 列（{columns[-1] + 1}），要的是 {HANDLE_WIDTH} 列"
     )
-    assert bar.width() == SCROLLBAR_WIDTH
+    assert bar.width() == SCROLLBAR_WIDTH == HANDLE_WIDTH + HANDLE_GAP
     area.close()
 
 
-def test_the_corner_radius_is_half_the_width(qt_app: QApplication) -> None:
-    """圆角 = 宽度的一半：两头是标准胶囊，也是用户要的上限（再大就不是胶囊了）。"""
+def test_the_corner_radius_is_half_the_handle_width(qt_app: QApplication) -> None:
+    """圆角 = 滑块宽度的一半：两头是标准胶囊，也是用户要的上限（再大就不是胶囊了）。
+
+    **得是 4.5 而不是 4**：整数除法会把 9 砍成 8，滑块就差一点不到胶囊 ——
+    那种「明明是胶囊却看着有点方」的差别就是这么来的。
+    """
     theme.ensure_installed(qt_app)
-    assert HANDLE_RADIUS == SCROLLBAR_WIDTH // 2
+    assert HANDLE_RADIUS == HANDLE_WIDTH / 2
+    assert HANDLE_RADIUS * 2 == HANDLE_WIDTH
     sheet = scrollbar_style.scrollbar_style(theme.current_theme(qt_app))
     assert f"border-radius: {HANDLE_RADIUS}px;" in sheet
-    # 滑块四边的 margin 全为零 —— 那一列像素整个归滑块，才谈得上「紧贴窗口右缘」。
-    assert "margin: 0px;" in sheet
+    # 只有尾端留缝（上/右之下那一个），缝宽就是 HANDLE_GAP。
+    assert f"margin: 0px {HANDLE_GAP}px 0px 0px;" in sheet
