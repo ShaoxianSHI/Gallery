@@ -419,3 +419,46 @@ def test_a_cell_waiting_for_its_thumbnail_is_not_a_grey_block(
         if shot.pixelColor(left + dx, top + dy).name() != background
     )
     assert painted < width * height * 0.05, f"那一格画了 {painted} 个点，不止一个小圆点"
+
+
+def test_the_now_line_stays_inside_todays_own_column(
+    qt_app: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """「现在」那条线**只画在今天那一格里**，不一路划到最右边。
+
+    原先它的终点是整条时间轴的右沿，于是「今天现在几点」看着像一条从今天往后延伸的
+    进度线 —— 而右边那几天与它无关，那几天各有各的钟点。
+    """
+    from PySide6.QtGui import QImage
+
+    view = WeekView(ThumbStore())
+    view.resize(900, 600)
+    view.show()
+    qt_app.processEvents()
+
+    # **钉在一个不在整点上的钟点**：整点上这条线正好压着那一行的横网格线，
+    # 像素探针就分不清量到的到底是线还是线。
+    monkeypatch.setattr(WeekView, "now_row", lambda self: 10.5)
+
+    days = view.days()
+    index = days.index(view.today())
+    column = view.column_width()
+    left = view.content_left()
+    background = view.background.name()
+
+    shot = QImage(view._grid.size(), QImage.Format.Format_RGBA8888)
+    view._grid.render(shot)
+    y = int(view.now_row() * view.row_height())
+
+    # **一像素宽的线是带抗锯齿的**：落点常常被底色掺过一手，于是钉的是
+    # 「这里有画东西 / 这里什么都没有」，不是「这里的颜色恰好等于笔的颜色」。
+    inside = int(left + (index + 0.5) * column)
+    painted = {shot.pixelColor(inside, y + dy).name() for dy in (-1, 0, 1)}
+    assert painted != {background}, "今天那一格里没有画「现在」那条线"
+    for neighbour in (index - 1, index + 1):
+        if not 0 <= neighbour < len(days):
+            continue
+        x = int(left + (neighbour + 0.5) * column)
+        around = {shot.pixelColor(x, y + dy).name() for dy in (-1, 0, 1)}
+        assert around == {background}, f"那条线划出了今天那一格，落到了 {days[neighbour]} 上面"

@@ -434,14 +434,19 @@ class _TimeGrid(QWidget):
             if index == len(days) - 1:
                 painter.drawLine(right, 0, right, self.height())
 
+        # 「现在」那条线**只画在今天那一格里**：起点是今天这一列的左沿，终点是它的右沿。
+        # **别一路划到最右边**（原先终点写的是 ``right``）—— 那看着像「从今天往后延伸的
+        # 进度」，而这条线说的只是「今天现在几点」，右边那几天与它无关。
         if self._view.today() in days:
             index = days.index(self._view.today())
             y = self._view.now_row() * row
+            line_left = left + index * column
+            line_right = left + (index + 1) * column
             painter.setPen(colors.now)
-            painter.drawLine(int(left + index * column), int(y), right, int(y))
+            painter.drawLine(int(line_left), int(y), int(line_right), int(y))
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(colors.now)
-            painter.drawEllipse(QPointF(left + index * column, y), 3.5, 3.5)
+            painter.drawEllipse(QPointF(line_left, y), 3.5, 3.5)
         painter.end()
 
     def _paint_hour_row(
