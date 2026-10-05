@@ -18,7 +18,7 @@ from PIL import Image
 
 from gallery.core import paths
 from gallery.core.errors import MetadataWriteError
-from gallery.core.library.photos import PhotoRef
+from gallery.core.library.photos import SUPPORTED_SUFFIXES, PhotoRef
 from gallery.core.metadata.journal import (
     ACTION_METADATA,
     ACTION_UNDO_METADATA,
@@ -29,11 +29,15 @@ from gallery.core.metadata.journal import (
     WriteRecord,
     read_records,
 )
+from gallery.core.metadata.place_edit import PlaceEdit, PlaceState, plan_place_edit
 from gallery.core.metadata.writeback import (
     CAPTURE_TIME_TAGS,
     COORDINATE_TAGS,
+    IPTC_PLACE_TAGS,
     PLACE_TAGS,
+    UNSTORABLE_TAGS,
     WRITABLE_TAGS,
+    XMP_PLACE_TAGS,
     Assignment,
     undo_metadata,
     write_metadata,
@@ -49,6 +53,10 @@ class FakeWriter:
         self.writes: list[tuple[str, ...]] = []
         #: 假装这次写其实没写进去（退出码为 0，值却原封不动）。
         self.silently_ignores = False
+        #: **这个「容器」存不下的标签** —— 模拟 exiftool 往 HEIC 写 IPTC 时的真实行为：
+        #: 返回 0、不警告、**只把这几个字段默默跳过**，其余照写。少了这一项，「HEIC 地点
+        #: 写不进去」那个 bug 在测试里就复现不出来（假的 writer 什么都存得下）。
+        self.unstorable: frozenset[str] = frozenset()
         #: 假装工具直接拒绝了这次写入。
         self.refuses = False
         self.available_flag = True
@@ -66,6 +74,8 @@ class FakeWriter:
         if self.silently_ignores:
             return
         for item in assignments:
+            if item.tag in self.unstorable:
+                continue  # 静默丢弃：**不报错，也不影响同一批里别的字段**
             if item.value:
                 self.fields[item.tag] = item.value
             else:
@@ -219,6 +229,225 @@ def test_without_exiftool_it_says_so_instead_of_failing_obscurely(
 
     with pytest.raises(MetadataWriteError, match="没有找到 exiftool"):
         write_metadata(library, photo, list(HANGZHOU), writer=writer)
+
+
+# ---- 容器存不下的标签压根不发（ADR 0036）----------------------------------------
+
+
+def _photo_with_suffix(library: Path, suffix: str) -> PhotoRef:
+    """造一张**指定后缀**的照片。
+
+    这一层只 ``stat`` 文件、只看后缀，压根不碰像素 ——``is_supported_photo`` 的文档原话
+    就是「不检查文件是否真的能解码」，而 ADR 0036 决策 2 定的判据正是**后缀**。
+    所以这里不需要造一张真的 HEIC，也不需要 pillow-heif。
+    """
+    path = library / f"一张{suffix}"
+    path.write_bytes(b"not really a photo, just takes up a spot")
+    return PhotoRef.from_path(path)
+
+
+#: 三个地名层在计划里的形状：XMP 与 IPTC 各一份（ADR 0030 决策 1）。
+PLACE_EDIT = (
+    Assignment("XMP:City", "杭州"),
+    Assignment("XMP:State", "浙江省"),
+    Assignment("XMP:Country", "中国"),
+    Assignment("IPTC:City", "杭州"),
+    Assignment("IPTC:Province-State", "浙江省"),
+    Assignment("IPTC:Country-PrimaryLocationName", "中国"),
+)
+
+
+@pytest.mark.parametrize("suffix", sorted(UNSTORABLE_TAGS))
+def test_a_tag_the_container_cannot_store_is_never_sent_to_the_writer(
+    library: Path, suffix: str
+) -> None:
+    """**表里说存不下的，一个都不许发出去。**
+
+    这条钉住的是 ADR 0036 的整件事：发出去等于「exiftool 返回 0、什么都不写」，回读校验
+    必定判它没写进去，紧接着的**整体回滚会把已经写成功的 XMP 一起擦掉** —— HEIC 的地点
+    写不进去就是从这儿来的。逐个后缀过一遍，表里每一条都要被真的拦住。
+    """
+    writer = FakeWriter()
+    ref = _photo_with_suffix(library, suffix)
+
+    write_metadata(library, ref, (*PLACE_EDIT, *HANGZHOU), writer=writer)
+
+    dropped = UNSTORABLE_TAGS[suffix]
+    sent = {tag for batch in writer.writes for tag in batch}
+    assert sent, "整批都被过滤掉了 —— 那不该走到写盘这一步"
+    assert sent & dropped == set()
+
+
+@pytest.mark.parametrize("suffix", sorted(UNSTORABLE_TAGS))
+def test_the_place_still_lands_on_a_container_that_cannot_store_iptc(
+    library: Path, suffix: str
+) -> None:
+    """**这就是用户遇到的那个 bug 的完整复现**（ADR 0036）。
+
+    假的 writer 这一条**真的会丢 IPTC**（``unstorable``），于是今天的行为会原样重演：
+    IPTC 发出去 → 被默默跳过 → 回读对不上 → **整体回滚把已经写成功的 XMP 一起擦掉** →
+    地点一个字都没写进去。
+
+    修好之后：存不下的压根不发，XMP 落地，回滚一次都没发生。
+    """
+    writer = FakeWriter()
+    writer.unstorable = UNSTORABLE_TAGS[suffix]
+    ref = _photo_with_suffix(library, suffix)
+
+    result = write_metadata(library, ref, PLACE_EDIT, writer=writer)
+
+    assert result.written
+    assert writer.fields["XMP:City"] == "杭州"
+    assert writer.fields["XMP:State"] == "浙江省"
+    assert writer.fields["XMP:Country"] == "中国"
+    # 读回校验没被放松：回滚一次都没发生（真发生过一次的话 XMP 已经被擦掉了）
+    assert len(writer.writes) == 1
+
+
+@pytest.mark.parametrize("suffix", sorted(UNSTORABLE_TAGS))
+def test_a_filtered_tag_never_reaches_the_journal(library: Path, suffix: str) -> None:
+    """**没写过的字段不该出现在回滚记录里。**
+
+    撤销时去「恢复」一个从未存在过的 IPTC，反而会造出一条不存在的记录。
+    """
+    writer = FakeWriter()
+    ref = _photo_with_suffix(library, suffix)
+
+    result = write_metadata(library, ref, PLACE_EDIT, writer=writer)
+
+    recorded = {change.tag for record in read_records(library) for change in record.changes}
+    assert recorded == {change.tag for change in result.changes}
+    assert recorded & UNSTORABLE_TAGS[suffix] == set()
+
+
+def test_a_container_that_can_store_both_is_still_given_both(library: Path) -> None:
+    """**别把另一半也砍掉**：JPEG 存得下 IPTC，两份照写（ADR 0030 决策 1）。"""
+    writer = FakeWriter()
+    ref = _photo_with_suffix(library, ".jpg")
+
+    write_metadata(library, ref, PLACE_EDIT, writer=writer)
+
+    assert writer.fields["XMP:City"] == "杭州"
+    assert writer.fields["IPTC:City"] == "杭州"
+    assert writer.fields["IPTC:Province-State"] == "浙江省"
+    assert writer.fields["IPTC:Country-PrimaryLocationName"] == "中国"
+
+
+def test_the_coordinates_still_go_to_a_container_without_iptc(library: Path) -> None:
+    """**过滤不许伤及无辜**：坐标在 HEIC 上一直是好的，别顺手把它也砍了。"""
+    writer = FakeWriter()
+    ref = _photo_with_suffix(library, ".heic")
+
+    write_metadata(library, ref, HANGZHOU, writer=writer)
+
+    assert writer.fields["EXIF:GPSLatitude"] == "30.274150"
+    assert writer.fields["EXIF:GPSLongitude"] == "120.155070"
+
+
+def test_when_every_field_is_filtered_out_it_says_the_format_cannot_store_them(
+    library: Path,
+) -> None:
+    """**「本来就没改」与「这个格式存不下」必须分开说**（ADR 0036 决策 4）。
+
+    共用一句「没有要写入的改动」的话，用户会以为自己没保存成功、再点一次保存 ——
+    那一次还是同样的结果。
+    """
+    writer = FakeWriter()
+    ref = _photo_with_suffix(library, ".gif")
+    capture = [Assignment("EXIF:DateTimeOriginal", "2024:01:02 03:04:05")]
+
+    with pytest.raises(MetadataWriteError, match="存不下要写的字段") as raised:
+        write_metadata(library, ref, capture, writer=writer)
+
+    assert "没有要写入的改动" not in raised.value.message
+    assert writer.writes == []  # 一次都没发出去
+
+
+def test_the_two_kinds_of_nothing_to_write_are_told_apart(library: Path) -> None:
+    """**「压根没让写」与「让写了但值一样」是两回事**，只有后者该安静（ADR 0036 决策 4）。
+
+    前者本来就是一句报错；后者是常态 —— 把「没改」记成一次改动，会让 ⌘Z 去撤一件空事，
+    所以它连日志都不该留。
+    """
+    writer = FakeWriter(fields={"XMP:City": "杭州"})
+    ref = _photo_with_suffix(library, ".jpg")
+
+    with pytest.raises(MetadataWriteError, match="没有要写入的改动"):
+        write_metadata(library, ref, [], writer=writer)
+
+    result = write_metadata(library, ref, [Assignment("XMP:City", "杭州")], writer=writer)
+
+    assert not result.written
+    assert result.changes == ()
+    assert writer.writes == []
+    assert read_records(library) == []
+
+
+# ---- 那张表本身的守护 ---------------------------------------------------------
+
+
+def test_the_storage_gap_table_only_names_tags_gallery_can_write() -> None:
+    """**表里的标签必须都在白名单里** —— 写错一个字母，整条修复静悄悄地失效。
+
+    而它失效的方式正是最难发现的那种：HEIC 的地点继续写不进去，没有一处报错。
+    """
+    for suffix, tags in UNSTORABLE_TAGS.items():
+        for tag in tags:
+            assert tag in WRITABLE_TAGS, f"{suffix} 那条写错了标签：{tag}"
+
+
+def test_the_storage_gap_table_never_drops_the_xmp_place_names() -> None:
+    """**XMP 一个都不许进表** —— 每一个进表的容器都存得下它（实测）。
+
+    砍掉 XMP 就等于把今天这个 bug 换个格式重演一遍：地点彻底写不进去。
+    """
+    for suffix, tags in UNSTORABLE_TAGS.items():
+        assert set(XMP_PLACE_TAGS) & tags == set(), f"{suffix} 那条把 XMP 也砍掉了"
+
+
+@pytest.mark.parametrize("suffix", [".heic", ".heif", ".webp"])
+def test_the_containers_without_iptc_drop_exactly_the_iptc_place_names(suffix: str) -> None:
+    """**这三个容器丢掉的正好是 IPTC 那三个地名标签** —— 一个不多，一个不少。
+
+    坐标、拍摄时间在那几个容器里都是好的（实测），**多丢一个就是又一次「地点写不进去」**，
+    少丢一个就还是今天这个 bug。
+    """
+    assert UNSTORABLE_TAGS[suffix] == frozenset(IPTC_PLACE_TAGS)
+
+
+def test_the_storage_gap_table_only_covers_formats_the_library_shows() -> None:
+    """**表里的每个后缀都得是 Gallery 认得的照片格式** —— 否则那是给不存在的东西开的口子。"""
+    assert set(UNSTORABLE_TAGS) <= SUPPORTED_SUFFIXES
+
+
+def test_bmp_is_left_to_the_message_exiftool_already_gives() -> None:
+    """**BMP 不进这张表**：exiftool 对它明确报错并返回非 0，那条路本来就是通的。
+
+    这张表只装**不说话的**。把 BMP 也塞进来「静默跳过」，等于把一句现成的清楚错误
+    换成一句沉默的失败 —— 那比现在糟。
+    """
+    assert ".bmp" not in UNSTORABLE_TAGS
+
+
+def test_the_place_edit_a_heic_gets_is_the_one_that_actually_lands(library: Path) -> None:
+    """**从计划到写盘的整条路**（跨 :mod:`place_edit` 与 :mod:`writeback` 两层）。
+
+    ``plan_place_edit`` 仍然同时生成 XMP 与 IPTC —— 那是对的（它不知道你要写进哪种容器）。
+    **由写回这一层按容器去掉存不下的那一份**，于是 HEIC 上落到文件里的是 XMP，
+    而「地点写不进去」这个症状就此消失。
+    """
+    plan = plan_place_edit(PlaceState(), PlaceEdit(city="杭州", region="浙江省", country="中国"))
+    assert {"IPTC:City", "XMP:City"} <= {item.tag for item in plan.assignments}
+
+    writer = FakeWriter()
+    ref = _photo_with_suffix(library, ".heic")
+
+    result = write_metadata(library, ref, plan.assignments, writer=writer)
+
+    assert result.written
+    assert writer.fields["XMP:City"] == "杭州"
+    assert "IPTC:City" not in writer.fields
+    assert {c.tag for c in result.changes} == {"XMP:City", "XMP:State", "XMP:Country"}
 
 
 # ---- 写与记账 ------------------------------------------------------------------

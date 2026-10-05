@@ -13,6 +13,11 @@
   逐字段写回。
 - **绝不在用户照片目录里留下别的东西**：argv 里固定带 ``-overwrite_original``，
   否则 exiftool 会在照片旁边留下一个 ``xxx.jpg_original``（红线 6）。
+- **容器存不下的标签压根不发**（ADR 0036）：exiftool 往 HEIC 写 IPTC 时**返回 0、不警告、
+  什么都不写**，而 argv 上的 ``-q -q`` 连它那句 ``1 image files unchanged`` 也一并吞掉 ——
+  于是这一路没有任何信号，回读校验必定判它没写进去，紧接着的**整体回滚会把已经写成功的
+  XMP 一起擦掉**（实测：HEIC 的地点永远写不进去，横幅报的却是三个用户从没见过的 IPTC 标签）。
+  判据是 :data:`UNSTORABLE_TAGS`，实测得来。
 
 **坐标的符号与数值是分开的两个字段**：``-EXIF:GPSLatitude`` 只写绝对值，南北由
 ``GPSLatitudeRef`` 决定 —— 与 exiftool 读出来的形状一致，校验时才能逐轴比数值。
@@ -78,14 +83,22 @@ STALE_GPS_TAGS: Final[tuple[str, ...]] = (
 #: 按一级族给键，回读校验拿到的是 ``XMP:City``。写用 ``XMP-photoshop:City``、读回
 #: ``XMP:City`` 会让**每一次成功的写入都被判成没写进去**（实测，ADR 0030 决策 2）。
 #: 两种写法 exiftool 都认（都落到 photoshop 那套 schema 上），这里取能与回读对上的那个。
-PLACE_TAGS: Final[tuple[str, ...]] = (
+XMP_PLACE_TAGS: Final[tuple[str, ...]] = (
     "XMP:City",
     "XMP:State",
     "XMP:Country",
+)
+
+#: **只给存得下 IPTC 的容器用**（见 :data:`UNSTORABLE_TAGS`）。HEIC / HEIF / WebP / GIF
+#: 上这一组会被静默丢弃，所以写回时压根不发 —— 不是「发了没生效」，是压根不发。
+IPTC_PLACE_TAGS: Final[tuple[str, ...]] = (
     "IPTC:City",
     "IPTC:Province-State",
     "IPTC:Country-PrimaryLocationName",
 )
+
+#: 三层地名的全部标签。**白名单意义上的那一份**（HEIC 上实际发出去的只有其中的 XMP）。
+PLACE_TAGS: Final[tuple[str, ...]] = (*XMP_PLACE_TAGS, *IPTC_PLACE_TAGS)
 
 #: 拍摄时间的两个标签（ADR 0032）。
 #:
@@ -104,6 +117,41 @@ CAPTURE_TIME_TAGS: Final[tuple[str, ...]] = (
 WRITABLE_TAGS: Final[frozenset[str]] = frozenset(
     COORDINATE_TAGS + STALE_GPS_TAGS + PLACE_TAGS + CAPTURE_TIME_TAGS
 )
+
+#: EXIF 那一组（坐标 + 顺带清掉的海拔与定位时间 + 拍摄时间）。
+_EXIF_TAGS: Final[frozenset[str]] = frozenset(COORDINATE_TAGS + STALE_GPS_TAGS + CAPTURE_TIME_TAGS)
+
+#: **哪些容器存不下哪些标签**（ADR 0036）。键是文件后缀，值是这个后缀下压根写不进去的标签。
+#:
+#: 这张表里只有**静默丢弃**的那些 —— exiftool 对它们返回 0、不警告、什么都不写，而 argv 上
+#: 的 ``-q -q`` 连那句 ``1 image files unchanged`` 也吞掉，整条路一个信号都不给。收到这种
+#: 赋值的结果不是「写失败」，而是「回读校验必定对不上 → 整体回滚 → **连写成功的 XMP 也被
+#: 一起擦掉**」。实测（HEIC 上地点永远写不进去就是这么来的）。
+#:
+#: **逐格式逐标签实测来的，不是从文档推的**（exiftool 13.55，字段集取
+#: :data:`WRITABLE_TAGS`，一个标签一次赋值再回读）：
+#:
+#: ============  ==========  ==========  ========
+#: 格式           IPTC 三层   EXIF 那一组  XMP 三层
+#: ============  ==========  ==========  ========
+#: JPEG / PNG / TIFF    ✓          ✓         ✓
+#: HEIC / HEIF / WebP   **✗**      ✓         ✓
+#: GIF                  **✗**      **✗**     ✓
+#: ============  ==========  ==========  ========
+#:
+#: **BMP 不在这张表里**：exiftool 对它明确报错并返回非 0，那条路本来就是通的（见
+#: :func:`_explain`）。这张表只装不说话的 —— 一句现成的清楚错误，比一张我们自己维护的表准。
+#:
+#: **按后缀判，不嗅探文件内容**：与 ``decode.py`` / ``is_supported_photo`` 是同一套，Gallery
+#: 全程按后缀认格式。代价是一个 HEIC 被错命名成 ``.jpg`` 时会判错（退回 ADR 0036 决策 2
+#: 记的那个行为，不会更糟）；真要根治得让 exiftool 自己报格式。
+UNSTORABLE_TAGS: Final[dict[str, frozenset[str]]] = {
+    ".heic": frozenset(IPTC_PLACE_TAGS),
+    ".heif": frozenset(IPTC_PLACE_TAGS),
+    ".webp": frozenset(IPTC_PLACE_TAGS),
+    # GIF 只存得下 XMP —— 连 EXIF 那一组（坐标与拍摄时间）也放不进去。
+    ".gif": _EXIF_TAGS | frozenset(IPTC_PLACE_TAGS),
+}
 
 #: 坐标比对的容差（度）。exiftool 把十进制度存成度分秒、秒只给两位小数，
 #: 精度约 3e-6 度；取 1e-5（约 1.1 米）既能容忍那点量化误差，又不至于把「差了一条街」
@@ -290,9 +338,9 @@ def write_metadata(
     """
     root = Path(root)
     path = Path(ref.path)
-    items = _checked(assignments)
+    items = _checked(assignments, path)
     if not items:
-        raise MetadataWriteError("没有要写入的改动。", path=path)
+        raise MetadataWriteError(_nothing_to_write(assignments, path), path=path)
     _guard(root, path)
     tool = _tool(writer)
 
@@ -397,6 +445,27 @@ def _tool(writer: MetadataWriter | None) -> MetadataWriter:
     return tool
 
 
+def unstorable_tags(path: Path) -> frozenset[str]:
+    """这个容器存不下哪些标签（:data:`UNSTORABLE_TAGS`）。不在表里的后缀一个都存得下。"""
+    return UNSTORABLE_TAGS.get(Path(path).suffix.lower(), frozenset())
+
+
+def _nothing_to_write(assignments: Sequence[Assignment], path: Path) -> str:
+    """没东西可写时的那一句。
+
+    **「本来就没改」与「这个格式存不下」必须分开说**：共用一句「没有要写入的改动」会把后者
+    说成前者，用户于是以为自己没保存成功、再点一次保存，那一次还是同样的结果（ADR 0036
+    决策 4）。真的什么都没改是常态、该静默；全被过滤掉是这一格格式的常态、该说清楚。
+    """
+    dropped = sorted({item.tag for item in assignments} & unstorable_tags(path))
+    if not dropped:
+        return "没有要写入的改动。"
+    return (
+        f"「{Path(path).name}」存不下要写的字段（{'、'.join(dropped)}）："
+        f"这种格式放不了它们，一个字都没写进去。"
+    )
+
+
 def _apply(path: Path, changes: Sequence[FieldChange], tool: MetadataWriter) -> None:
     """把 ``changes`` 的目标值写进去并**回读校验**；对不上就按原值写回去。
 
@@ -454,8 +523,17 @@ def _argv(assignments: Sequence[Assignment]) -> list[str]:
     return [f"-{item.tag}={item.value}" for item in assignments]
 
 
-def _checked(assignments: Sequence[Assignment]) -> tuple[Assignment, ...]:
-    """去重（同一个标签以最后一条为准）并逐条查白名单。"""
+def _checked(assignments: Sequence[Assignment], path: Path) -> tuple[Assignment, ...]:
+    """去重（同一个标签以最后一条为准）、逐条查白名单，再**去掉这个容器存不下的标签**。
+
+    **两道闸在同一个出口**：白名单管「该不该由 Gallery 改」，存储缺口管「这个文件里放不放得下」。
+    放在一处是因为它们问的是同一个问题的两面 —— 「往这个文件里发哪些字段」。
+
+    存不下的那条**静默跳过、不报错**：用户要的是「地点写进去」，而 HEIC 上 IPTC 那一份从来
+    就不是用户看得到的东西（ADR 0036 决策 1）。真全部被跳过时由 :func:`_nothing_to_write`
+    说清楚是哪种「没东西可写」。
+    """
+    unstorable = unstorable_tags(path)
     unique: dict[str, str] = {}
     for item in assignments:
         if item.tag not in WRITABLE_TAGS:
@@ -463,6 +541,8 @@ def _checked(assignments: Sequence[Assignment]) -> tuple[Assignment, ...]:
                 f"「{item.tag}」不在可以修改的字段里。Gallery 只改拍摄时间与位置。",
                 detail=item.tag,
             )
+        if item.tag in unstorable:
+            continue
         unique[item.tag] = item.value
     return tuple(Assignment(tag, value) for tag, value in unique.items())
 
@@ -633,14 +713,18 @@ __all__ = [
     "COORDINATE_TAGS",
     "COORDINATE_TOLERANCE_DEGREES",
     "INSTALL_HINT",
+    "IPTC_PLACE_TAGS",
     "PLACE_TAGS",
     "STALE_GPS_TAGS",
+    "UNSTORABLE_TAGS",
     "WRITABLE_TAGS",
+    "XMP_PLACE_TAGS",
     "Assignment",
     "ExifToolWriter",
     "MetadataWriter",
     "UndoMetadataResult",
     "WriteResult",
     "undo_metadata",
+    "unstorable_tags",
     "write_metadata",
 ]
