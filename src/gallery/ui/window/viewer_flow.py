@@ -51,6 +51,11 @@ class ViewerFlowMixin:
     # ---- 大图（见 ADR 0021）
     def show_grid(self) -> None:
         """回到网格，并让当前照片保持选中。"""
+        # **离开大图页就把横幅收掉**（见 :meth:`_clear_banner`）：那句话说的是刚才那
+        # 一张照片，人已经回到网格上找别的照片了，让它继续压在顶边只是挡路（用户反馈）。
+        # 三条出大图的路（Esc、关大图、删掉最后一张之后退回）都从这里走，一处就够。
+        if self._stack.currentWidget() is self._detail_page:
+            self._clear_banner()
         self._title_bar.stop_edit()  # 切页时把改到一半的名字收起来（ADR 0025）
         if self._stack.currentWidget() is self._calendar_page:
             # 日历与网格是**同一时刻只有一个**的关系（见 `_enter_calendar`）：从日历
@@ -80,6 +85,10 @@ class ViewerFlowMixin:
         row = self._neighbour_photo_row(self._current_row, delta)
         if row is None:
             return
+        # **换一张照片就把横幅收掉**（见 :meth:`_clear_banner`）：那句「已复制它的路径」
+        # 「已把它移到废纸篓」说的是**刚才那一张**，人已经在看下一张了（用户反馈）。
+        # 只在真的换到一张时收：按 ← 已经在最后一张上时什么也没发生，不该收走什么。
+        self._clear_banner()
         self._current_row = row
         self._load_detail(row)
 

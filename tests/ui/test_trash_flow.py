@@ -354,6 +354,33 @@ def test_undo_brings_the_deleted_photo_back_into_view(
         window.close()
 
 
+def test_the_confirmation_survives_the_jump_to_the_next_photo(
+    qt_app: QApplication, tmp_path: Path, fake_trash: Path, make_photo: Callable[..., Path]
+) -> None:
+    """**删掉正在看的那一张之后自动跳下一张，那句确认仍然看得见**。
+
+    「大图页上翻一张照片就把横幅收掉」不能误伤这里：那一跳与那句话的次序是
+    **先跳、后说**（见 ``write_ops.trash_selected`` —— ``_show_next_after_trash`` 在
+    ``_show_banner`` 前面）。次序一旦反过来，用户看到的就是一句刚说完就消失的话：
+    「已把「b.jpg」移到废纸篓」再也没人知道发生过。
+    """
+    for name in ("a", "b", "c"):
+        make_photo(f"{name}.jpg")
+    window = open_window(qt_app, tmp_path)
+    try:
+        _open_detail_of(window, tmp_path / "b.jpg")
+
+        window.trash_selected()
+        qt_app_process(window)
+
+        assert _showing(window) == "c.jpg", "删掉一张之后接着看下一张"
+        assert window._banner.isVisible(), "跳到下一张不该把刚说的那句话一起带走"
+        assert "已把「b.jpg」移到废纸篓" in window._banner.text()
+        assert "⌘Z 可以撤销" in window._banner.text()
+    finally:
+        window.close()
+
+
 def test_undo_reopens_the_photo_when_the_level_emptied_out(
     qt_app: QApplication, tmp_path: Path, fake_trash: Path, make_photo: Callable[..., Path]
 ) -> None:

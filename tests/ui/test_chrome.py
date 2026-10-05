@@ -28,7 +28,7 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QRect  # noqa: E402
 from PySide6.QtWidgets import QApplication, QStatusBar  # noqa: E402
-from waiting import DEFAULT_TIMEOUT_SECONDS
+from waiting import DEFAULT_TIMEOUT_SECONDS, wait_until  # noqa: E402
 
 from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.library.session import (  # noqa: E402
@@ -64,6 +64,29 @@ def _albums_window(
         if window._model.rowCount() >= 2 and window._breadcrumb.isVisible():
             break
         time.sleep(0.01)
+    return window
+
+
+def _viewer_window(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> MainWindow:
+    """开一个**站在大图页上**的窗口：三张照片，所以「下一张」翻得到。
+
+    等的是条件（照片扫出来、大图真的上屏），不是秒数 —— 画面还空着的时候
+    ``step_detail`` 与 ``show_grid`` 那几条走的并不是用户走的那条路。
+    """
+    root = tmp_path / "库"
+    for name in ("一.jpg", "二.jpg", "三.jpg"):
+        make_photo(name, directory=root)
+    prepare_library(root)
+    window = MainWindow(session_base=tmp_path / "session", initial_library=root)
+    window.resize(1200, 800)
+    window.show()
+
+    assert wait_until(qt_app, lambda: window._model.rowCount() >= 3), "照片没能在时限内扫出来"
+    window._open_detail(window._model.index(0, 0))
+    assert wait_until(qt_app, lambda: window._detail.has_image), "大图没能在时限内显示出来"
+    assert window._stack.currentWidget() is window._detail_page
     return window
 
 
@@ -170,6 +193,79 @@ def test_the_banner_is_centred_on_the_window_with_the_metadata_panel_open(
         assert not rect.intersects(window._panel.geometry()), (
             f"横幅 {rect} 压到了元数据面板 {window._panel.geometry()} 上"
         )
+    finally:
+        window.close()
+
+
+# ---- 大图页上「走到别处去了」，横幅跟着走 -------------------------------------
+
+
+def test_the_banner_leaves_when_the_viewer_moves_on_to_another_photo(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """**大图页上翻一张照片，横幅就走**（用户反馈）。
+
+    那句话说的是**刚才那一张**（「已复制它的路径」「已把它移到废纸篓」）。人已经在看
+    下一张了，它还压在顶边就成了挡路的 —— 而它多半又是那句「一直留着」的不自动消失的
+    出错提示，于是它能一直压到用户退回去为止。
+    """
+    window = _viewer_window(qt_app, tmp_path, make_photo)
+    try:
+        window._show_banner("已把「一.jpg」移到废纸篓。⌘Z 可以撤销。")
+        qt_app.processEvents()
+        assert window._banner.isVisible(), "这一条要有一句正在显示的话"
+
+        window.step_detail(1)
+        qt_app.processEvents()
+
+        assert window._current_row == 1, "照片没换成功，那这条测的不是翻图这条路"
+        assert not window._banner.isVisible(), "换了一张照片之后不该还留着刚才那一句"
+    finally:
+        window.close()
+
+
+def test_the_banner_leaves_when_you_go_back_to_the_grid(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """**退回网格也走** —— 连出错与后台进度那一类（默认留着的那种）一起走。
+
+    留着的那几句本来是为了「用户还得动手处理」，可他已经不在这一页上了：那句话指的
+    是大图页上的那一张，回到网格里它既挡着面包屑又对不上眼前的东西。
+    """
+    window = _viewer_window(qt_app, tmp_path, make_photo)
+    try:
+        window._show_banner("读取元数据失败，按默认顺序显示：磁盘读不出来。")
+        qt_app.processEvents()
+        assert window._banner.isVisible() and not window._banner.auto_hide_pending
+
+        window.show_grid()
+        qt_app.processEvents()
+
+        assert window._stack.currentWidget() is window._grid_page, "确实退回网格了"
+        assert not window._banner.isVisible(), "不在这一页上了，那句话就该收掉"
+    finally:
+        window.close()
+
+
+def test_a_banner_that_belongs_to_the_grid_is_not_taken_away_with_the_viewer(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """**只有大图页上那句会被顺带收掉**：网格页上自己出的提示原样留着。
+
+    「离开大图页就清」写成「``show_grid`` 一律清」的话，网格上刚出的那一句会被下一次
+    ``show_grid``（Esc 连按、删掉一张之后）无声无息地抹掉 —— 用户压根没请求过。
+    """
+    window = _viewer_window(qt_app, tmp_path, make_photo)
+    try:
+        window.show_grid()
+        window.show_grid()  # 本来就在网格页上：这是一次空操作
+        window._show_banner("这个分组里没有照片了。")
+        qt_app.processEvents()
+
+        window.show_grid()
+        qt_app.processEvents()
+
+        assert window._banner.isVisible(), "网格页上自己的那句话不该被顺带收走"
     finally:
         window.close()
 
