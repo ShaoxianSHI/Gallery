@@ -478,11 +478,15 @@ def test_coming_back_to_the_page_leaves_no_day_highlighted(
     page: CalendarPage,
     qt_app: QApplication,
 ) -> None:
-    """回到日历这一页时，上一次点开的那一格**不再高亮**。
+    """回到日历这一页时，上一次点开的那一格**不再高亮**，而那**一天成了锚点**。
 
     用户点的是某一天，进的是那张照片或那一格 —— 退回来时那一格不在眼前。留着的高亮
-    是一块**点不掉**的底色（那一份高亮曾经是整列 24 行）。锚点不动：那是用户刚找到的
-    那一段。
+    是一块**点不掉**的底色（周视图里那一份高亮曾经是整列 24 行，压根点不掉）。可它仍然是
+    用户刚指着的那一天，所以按 ``Y`` / ``M`` / ``W`` 看到的该是它所在的那一层（下面那一条
+    钉的就是这件事）。
+
+    **摆着的那一段不动**：那是用户刚找到的地方（滚动条与那一段都留着，理由见
+    ``window/calendar_flow._back_to_calendar``）。
     """
     ref = _photo("a.jpg")
     page.set_photos([ref], {ref.path: _values(ref, TODAY, 9)})
@@ -490,15 +494,49 @@ def test_coming_back_to_the_page_leaves_no_day_highlighted(
     page.show()
     qt_app.processEvents()
     view = page.current_view()
-    view.select_day(TODAY)
-    assert view._selected == TODAY, "前提不成立：点过的那一天没被选中"
+    days_before = list(view.days())
+    # 周视图里点的是**某一小时那一格**（那一格有照片 → 会摊开），不是整天
+    view.select_hour(WEDNESDAY, 14)  # 点的是周三，不是起手那个锚点（今天）
+    assert view.is_selected_cell(WEDNESDAY, 14), "前提不成立：点过的那一格没被选中"
+    assert page.anchor() == TODAY, "前提不成立：锚点一开始就是点过的那一天"
 
     page.hide()
     page.show()
     qt_app.processEvents()
 
+    assert view.selected_cell() is None, "退回来还留着那一格的高亮"
     assert view._selected is None
-    assert page.anchor() == TODAY, "锚点不该被这一次「回来」动过"
+    assert page.selected_day() is None
+    assert page.anchor() == WEDNESDAY, "点过的那一天没有成为锚点"
+    assert list(view.days()) == days_before, "摆着的那一周被这一次「回来」挪走了"
+
+
+def test_the_cell_you_come_back_from_is_where_the_next_level_opens(
+    page: CalendarPage,
+    qt_app: QApplication,
+) -> None:
+    """年视图里点开一格 → 退回来 → 按 W / M / Y：看到的是**那一格所在的那一层**。
+
+    没有这一条时，退回来把「点过的那一天」一起丢了，于是按 ``W`` 翻到的是锚点原来那一天
+    所在的那一周 —— 与用户刚点的地方毫无关系（症状：「我点的是 5 月 16 号，怎么按 W 就到了
+    九月那一周」）。点**空格子**时这条路一直是对的（高亮就是那一天），而**点得进去的那一格
+    退回来就丢了** —— 用户说的正是这个不对称。
+    """
+    picked = datetime.date(2021, 5, 16)
+    page.set_level("year")
+    page.show()
+    qt_app.processEvents()
+    page.current_view().select_day(picked)  # 外面接上去摊开那一格
+
+    page.hide()
+    page.show()
+    qt_app.processEvents()  # 退回来
+
+    assert page.selected_day() is None, "退回来还留着高亮"
+    for level in ("week", "month", "year"):
+        page.set_level(level)
+        assert page.anchor() == picked, f"{level} 那一层没有落在点过的那一天"
+        assert picked in page.current_view().days(), f"{level} 那一层摆的不是那一天所在的一段"
 
 
 # 焦点那一条（从大图页退回来时焦点要回到当前那层，← / → 才重新有用）走真实窗口 ——

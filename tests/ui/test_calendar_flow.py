@@ -22,12 +22,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QPoint, Qt  # noqa: E402
-from PySide6.QtGui import QImage  # noqa: E402
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt  # noqa: E402
+from PySide6.QtGui import QImage, QMouseEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 from waiting import wait_for_idle, wait_until, window_is_idle  # noqa: E402
 
+from gallery.core.library.calendar import month_matrix  # noqa: E402
 from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.library.session import (  # noqa: E402
     BROWSE_MODE_CALENDAR,
@@ -37,6 +38,7 @@ from gallery.core.library.session import (  # noqa: E402
 )
 from gallery.core.metadata import batch  # noqa: E402
 from gallery.core.places.resolver import LazyPlaceResolver, ResolvedPlace  # noqa: E402
+from gallery.ui.calendar.month_view import MonthView  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 
 #: 三月一张（一格一张 → 进大图页）、四月两张（各自一格）、五月两张挤在同一个小时
@@ -147,6 +149,26 @@ def _cell_of(window: MainWindow, month: int) -> tuple[list[object], str]:
     return photos, f"{month}月16日"
 
 
+def _click_a_cell(view: MonthView, day: datetime.date) -> None:
+    """在月视图里**真的点一下**那一格（走鼠标事件，与用户点下去同一条路）。
+
+    **不直接调 ``select_cell``**：那样子跳过了「先选中、再摊开」的前半截，而下面那一条
+    要验的恰恰是前半截留在页面上的那一天（事件坐标要过一遍 Qt，所以按控件坐标发）。
+    """
+    point: QPointF = view._day_cell(month_matrix(view.anchor()).index(day)).center()  # type: ignore[attr-defined]
+    view.mousePressEvent(
+        QMouseEvent(
+            QEvent.Type.MouseButtonPress,
+            point,
+            point,
+            point,
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+    )
+
+
 def test_the_calendar_starts_on_the_month(calendar_window: MainWindow) -> None:
     page = calendar_window._calendar_page
     assert calendar_window._browse_mode == BROWSE_MODE_CALENDAR
@@ -198,6 +220,43 @@ def test_several_photos_in_a_cell_are_laid_out_in_a_grid(
     assert page.anchor() == anchor_before
     # 模型回到整库：从日历再点照片还得靠它的行
     assert window._model.rowCount() == len(NAMES)
+
+
+def test_the_cell_you_come_back_from_becomes_the_anchor(
+    qt_app: QApplication, calendar_window: MainWindow
+) -> None:
+    """点开一格 → 退回来：**那一格成为锚点，而高亮不回来**。
+
+    整条链都走真的：月视图里点下去（鼠标事件）→ 摊成网格 → ``Esc`` 退回来。
+    用户点的是**有照片的那一格**时它会摊开，而原先退回来时「点过的那一天」被一起丢掉了，
+    于是按 ``W`` 翻到的是与那一格毫无关系的那一周（点空格子不会摊开，所以没暴露这个
+    不对称 —— 那条路上高亮一直替它记着）。
+
+    **锚点挪的是那一天，摆着的那一段不动**：五月那一屏与它的滚动条都还在（理由见
+    ``_back_to_calendar``）。
+    """
+    window = calendar_window
+    page = window._calendar_page
+    page.set_today(datetime.date(2024, 5, 20))  # 停在五月二十：与点开的那格不是同一天
+    page.go_today()
+    page.set_level("month")
+    view = page.current_view()
+    assert isinstance(view, MonthView)
+    assert len(list(view.photos_of(MAY))) == 2, "前提不成立：五月那一格不是好几张"
+    assert page.anchor() != MAY, "前提不成立：锚点就是点开的那一天"
+
+    _click_a_cell(view, MAY)
+    qt_app.processEvents()
+    assert window._stack.currentWidget() is window._grid_page, "那一格没有摊开"
+
+    window.go_up()
+    _settle(qt_app, window)
+    assert window._stack.currentWidget() is page
+    assert page.selected_day() is None, "退回来还留着高亮"
+    assert page.anchor() == MAY, "点开的那一格没有成为锚点"
+
+    page.set_level("week")
+    assert MAY in page.current_view().days(), "按 W 没有落到点开的那一天那一周"
 
 
 def _days_total(page: object) -> int:

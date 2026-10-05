@@ -65,7 +65,8 @@ class CalendarPage(QWidget):
         self._reported: list[PhotoRef] = []
         self._reported_edge = 0
         self._anchor = datetime.date.today()
-        #: 选中的是哪一天。**整页一份**（理由见 :meth:`set_selected`）。
+        #: 选中（**高亮**）的是哪一天。**整页一份**（理由见 :meth:`set_selected`）。
+        #: 与 :attr:`_anchor` 是两件事：退回来时高亮收掉，而锚点挪到点过的那一天。
         self._selected: datetime.date | None = None
         self._today = datetime.date.today()
         self._level = "month"
@@ -175,6 +176,12 @@ class CalendarPage(QWidget):
         return self._level
 
     def anchor(self) -> datetime.date:
+        """停在哪**一天**（摆哪一段由当前那一层决定）。
+
+        **从有照片的一格退回来时，它就是那一格的那一天**（理由见 :meth:`_reset_selection`）——
+        所以拿它去问「那一天是几号」（如标题条上那个 Google 日历入口）问得到用户刚点的
+        那一天，而不是这一段里的某一天。
+        """
         return self._anchor
 
     def today(self) -> datetime.date:
@@ -222,7 +229,18 @@ class CalendarPage(QWidget):
         self.set_selected(None)
 
     def _reset_selection(self) -> None:
-        """**静默**地不选中任何一天 —— 外面没人要听「这一页刚露出来」这件事。
+        """**静默**地收掉高亮，而把点过的那一天挪成锚点 —— 外面没人要听「这一页刚露出来」这件事。
+
+        **高亮与锚点是两件事，两半一起做**：那一格已经被摊开（进的是那张照片或那一格），
+        退回来时它不在眼前，留着的高亮是一块点不掉的底色；可它**仍然是用户刚才指着的那
+        一天**，按 ``Y`` / ``M`` / ``W`` 时该翻到的是它所在的那一层（规则见
+        :meth:`set_level`）。原先两半一起丢掉，于是「点开一格 → 退回来 → 按 W」看到的是
+        锚点原来那一天所在的那一周 —— 与用户刚点的地方毫无关系。
+
+        **只挪页面这一份，不挪各层自己的锚点**：挪它只为「按 W 时翻到那一天所在的那一周」，
+        而那一周此刻正摆在屏幕上 —— 让周视图重新定位一次反而会把用户刚找到的滚动位置弄丢
+        （理由见 ``window/calendar_flow._back_to_calendar``）。两处落在同一段日子里，
+        下一次翻页或切层就会重新对上。
 
         与 :meth:`clear_selection` 只差一个信号，而这个信号在本页**一个接收方都没有**
         （`grep selection_changed src/` 只有声明与那一发）。曾经在 ``showEvent`` 里发它，
@@ -230,6 +248,9 @@ class CalendarPage(QWidget):
         ``SearchField.__init__``，与这里八竿子打不着：控件还活着的时候就已经被弄坏，
         要等下一次大分配才崩。
         """
+        pointed = self._selected
+        if pointed is not None:
+            self._anchor = pointed
         self._selected = None
         self.current_view().clear_selection()
 
@@ -245,13 +266,15 @@ class CalendarPage(QWidget):
         self.current_view().setFocus()
 
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
-        """这一页重新露出来：把焦点还给当前那层，并把留在这里的「选中」收掉。
+        """这一页重新露出来：把焦点还给当前那层，并收拾「选中」（见 :meth:`_reset_selection`）。
 
-        **收掉选中是因为那一格已经摊开了**：用户点的是某一天，进的是那张照片或那一格；
-        退回来时那一格不在眼前，留着的高亮是一块点不掉的底色（周视图里点空白格子什么也
-        不会发生 —— 它提前 return 了 —— 于是它永远留着）。**第一次露出来也一并收掉**：
-        起手那个「选中今天」没有人点过它，而「今天」本来就由蓝字与蓝圆点写着。
-        锚点与滚动位置**不动**：那才是用户刚找到的地方，理由见
+        **高亮收掉、锚点留下**：用户点的是某一天，进的是那张照片或那一格；退回来时那一格
+        不在眼前，留着的高亮是一块点不掉的底色（周视图里点空白格子什么也不会发生 ——
+        它提前 return 了 —— 于是它永远留着）。而那**一天仍然是锚点**：退回来之后按 ``Y`` /
+        ``M`` / ``W``，看到的是它所在的那一层，不是与它毫无关系的另一段日子。
+        **第一次露出来也一并收掉**：起手那个「选中今天」没有人点过它，而「今天」本来就
+        由蓝字与蓝圆点写着 —— 没有点过的那一天就没有锚点可挪，锚点照旧不动。
+        滚动位置**不动**：那才是用户刚找到的地方，理由见
         ``window/calendar_flow._back_to_calendar``。
         """
         super().showEvent(event)
@@ -259,11 +282,13 @@ class CalendarPage(QWidget):
         self._reset_selection()
 
     def set_level(self, level: str) -> None:
-        """切到另一层。**选中了哪一天，就翻到那一天所在的那一层。**
+        """切到另一层。**指着哪一天，就翻到那一天所在的那一层。**
 
         「在年视图里点 5 月 16 号 → 按 W」必须看到 5 月 16 号那一周，而不是上周剩下
-        的那几天 —— 所以切层前先把锚点挪到选中的那一天上。三条入口（``Y`` / ``M`` /
-        ``W``、工具条的分段选择器、会话恢复）都走这里，一处就够。
+        的那几天 —— 所以切层前先把锚点挪到那一天上。「那一天」有两个来源，按新鲜程度取：
+        还在高亮的那一天（刚点了空格子），以及**退回来时留下的锚点**（点开一格又退了回来，
+        高亮已经收掉，见 :meth:`_reset_selection`）—— 没有点过就一天都不动，锚点照旧。
+        三条入口（``Y`` / ``M`` / ``W``、工具条的分段选择器、会话恢复）都走这里，一处就够。
         """
         if level not in self._views:
             return
