@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from functools import partial
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QGuiApplication, QKeySequence, QPainter
+from PySide6.QtGui import QAction, QColor, QGuiApplication, QKeySequence, QPainter, QPalette
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QApplication,
@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 from gallery.core.metadata.exif import MetadataGroup, MetadataReport
 from gallery.ui import theme
 from gallery.ui.panels.layout import clear_layout
+from gallery.ui.scrollbar_style import apply_scrollbar_style
 from gallery.ui.theme import AppTheme, rgba
 
 #: 「位置」那一组标题右边的按钮。只有这一组有 —— 坐标与地点是唯一一组人会想去改的元数据
@@ -88,7 +89,7 @@ class MetadataPanel(QWidget):
         self.setAutoFillBackground(True)
         self._theme_watcher = theme.ensure_installed()
         self._theme_watcher.changed.connect(self._apply_theme)
-        self._apply_theme()
+        # **首次下发挪到滚动区建好之后**：:meth:`_apply_theme` 要点名视口，那会儿它还不存在。
 
         self._report: MetadataReport | None = None
         self._metadata_editable = False
@@ -102,15 +103,19 @@ class MetadataPanel(QWidget):
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        # 裸声明会级联到所有子控件：让滚动区、内容区与每一行都透明，露出自己画的底色。
-        self._scroll.setStyleSheet("background: transparent; border: none;")
+        # **这里原来写的是一条不带选择器的裸声明，会级联到所有子控件 —— 那条竖滚动条也在内**：
+        # 挂了样式表之后它不再走原生样式，改由 ``QStyleSheetStyle`` 画，轨道成了一条常驻的
+        # 实心竖条（深色下尤其显眼）。要透明就点名视口，别裸声明。
         self._body = QWidget()
+        self._body.setAutoFillBackground(False)
         self._body_layout = QVBoxLayout(self._body)
         self._body_layout.setContentsMargins(0, 0, 0, 0)
         self._body_layout.setSpacing(10)
         self._body_layout.addStretch(1)
         self._scroll.setWidget(self._body)
+        apply_scrollbar_style(self._scroll.verticalScrollBar())
         layout.addWidget(self._scroll, 1)
+        self._apply_theme()
 
         self._footer = QWidget()
         footer_layout = QHBoxLayout(self._footer)
@@ -164,7 +169,22 @@ class MetadataPanel(QWidget):
     def _apply_theme(self) -> None:
         """按当前主题重画文字与按钮（底色在 ``paintEvent`` 里取，不用重建）。"""
         self.setStyleSheet(panel_style(theme.current_theme()))
+        self._see_through_viewport()
         self.update()
+
+    def _see_through_viewport(self) -> None:
+        """滚动区的视口自己不铺底色，露出 :meth:`paintEvent` 画的那一层。
+
+        **每轮换外观都要重设一遍**：:func:`theme.apply_theme` 把调色板逐控件下发，而视口
+        就在那棵控件树上 —— 只在构造时设一次，下一轮就被顶回不透明，深色下那块视口会
+        变成一条比面板更浅的竖条。
+        """
+        viewport = self._scroll.viewport()
+        see_through = QPalette(viewport.palette())
+        for role in (QPalette.ColorRole.Base, QPalette.ColorRole.Window):
+            see_through.setColor(role, QColor(0, 0, 0, 0))
+        viewport.setAutoFillBackground(True)
+        viewport.setPalette(see_through)
 
     def paintEvent(self, event: object) -> None:  # noqa: N802 - Qt 命名
         """自己画底色：样式表背景对普通 QWidget 不生效，macOS 上连调色板也可能被覆盖。"""

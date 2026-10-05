@@ -65,6 +65,7 @@ from gallery.ui.browser.thumb_sizes import (
     wheel_delta,
 )
 from gallery.ui.rename_edit import RenameEdit
+from gallery.ui.scrollbar_style import apply_scrollbar_style
 
 #: 滚动后延迟多久重算可见区。避免每滚一个像素就重排一次缩略图请求。
 VIEWPORT_DEBOUNCE_MS = 60
@@ -517,6 +518,11 @@ class PhotoGrid(QListView):
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # 原生滚动条常驻一条实心轨道，颜色由系统外观决定、与本应用统一下发的底色对不上。
+        # 样式只从 :mod:`gallery.ui.scrollbar_style` 一处来 —— 周视图与元数据面板共用同一份。
+        # **那条样式里刻意没有 ``width``**：``_scrollbar_reserve`` 问的正是 ``sizeHint().width()``，
+        # 一改宽度，每一格多大就跟着变（还顺带顶翻两条钉着切档判据的用例）。
+        apply_scrollbar_style(self.verticalScrollBar())
         self._delegate = PhotoDelegate(self, icon_edge=icon_edge)
         self.setItemDelegate(self._delegate)
         # 捏合与滚轮都是连续事件，必须攒够阈值才切一档；捏合另套一道最小间隔，否则手势快

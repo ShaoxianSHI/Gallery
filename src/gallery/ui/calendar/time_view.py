@@ -39,6 +39,7 @@ from gallery.ui.calendar.painting import (
     paint_cell_photo,
 )
 from gallery.ui.calendar.thumbs import ThumbStore
+from gallery.ui.scrollbar_style import apply_scrollbar_style
 
 #: 左窄条（写钟点）多宽。
 GUTTER = 56.0
@@ -78,6 +79,9 @@ class WeekView(LevelView):
         # 接焦点的控件」，于是点一下时间轴（含点滚动条）键盘就被抢走，← / → 变成滚动。
         area.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         area.verticalScrollBar().setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        # 与网格、元数据面板共用同一份滚动条样式（那个类型选择器只命中 ``QScrollArea`` 本身，
+        # **不**级联到滚动条上，所以这里那条仍然是原生的、带一条常驻实心轨道）。
+        apply_scrollbar_style(area.verticalScrollBar())
         #: 「滚到第一张照片」那次定位**有没有真的落地**（见 :meth:`set_buckets`）。
         self._revealed = False
         #: 用户点中的那一格（``(哪一天, 第几个小时)``）—— **点哪一格高亮哪一格**。
