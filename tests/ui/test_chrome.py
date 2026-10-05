@@ -16,7 +16,6 @@
 from __future__ import annotations
 
 import os
-import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -29,7 +28,7 @@ pytest.importorskip("PySide6")
 from library_helpers import set_library_ui  # noqa: E402
 from PySide6.QtCore import QRect  # noqa: E402
 from PySide6.QtWidgets import QApplication, QStatusBar  # noqa: E402
-from waiting import DEFAULT_TIMEOUT_SECONDS, wait_until  # noqa: E402
+from waiting import wait_for_idle, wait_until  # noqa: E402
 
 from gallery.core.library.config import (
     BROWSE_MODE_ALBUMS,
@@ -45,7 +44,14 @@ from gallery.ui.main_window import MainWindow  # noqa: E402
 def _albums_window(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
 ) -> MainWindow:
-    """开一个相册模式的窗口：根目录下放两个相册，面包屑才可见。"""
+    """开一个相册模式的窗口：根目录下放两个相册，面包屑才可见。
+
+    **等的是条件，而且没等到就抛**：这条原先自己写了一份轮询循环（``monotonic`` +
+    ``sleep`` + ``processEvents``），超时之后**照样把窗口交出去** ——
+    于是「扫描慢」与「这个窗口压根没准备好」在返回值上没有区别，失败被推迟到
+    后面某条不相干的断言上，报出来的是「相册模式下应当显示面包屑」这种
+    看着像产品坏了的话。轮询与超时都用 :mod:`waiting` 里那一份。
+    """
     root = tmp_path / "库"
     for album in ("2022-复活节波尔多", "2023-京都"):
         for index in range(2):
@@ -59,12 +65,9 @@ def _albums_window(
     window.resize(1200, 800)
     window.show()
 
-    deadline = time.monotonic() + DEFAULT_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
-        qt_app.processEvents()
-        if window._model.rowCount() >= 2 and window._breadcrumb.isVisible():
-            break
-        time.sleep(0.01)
+    assert wait_until(
+        qt_app, lambda: window._model.rowCount() >= 2 and window._breadcrumb.isVisible()
+    ), f"相册没能在时限内扫出来，或面包屑没显示（当前 {window._model.rowCount()} 行）"
     return window
 
 
@@ -75,6 +78,20 @@ def _viewer_window(
 
     等的是条件（照片扫出来、大图真的上屏），不是秒数 —— 画面还空着的时候
     ``step_detail`` 与 ``show_grid`` 那几条走的并不是用户走的那条路。
+
+    **末尾还要等后台那一遍收工（``_index_job`` 一并等上）**：横幅是**一个槽**，
+    用户动作的说明与后台进度都往里写（见 :mod:`gallery.ui.window.notice`）。
+    打开一个库时后台排着一条链：扫描 → 元数据 → 地点解析 → 检索索引，地点与索引
+    各自在跑的时候都会把「正在解析 N 张照片的地点…」这类进度往那一个槽上写。
+
+    用例「翻一张照片 / 退回网格」把横幅收掉之后，那条进度消息就又抢回了那一个槽
+    （:meth:`_clear_banner` 同时把「用户刚动作过」那两秒的让位也一并清了，
+    于是后台消息不再被挡）。**收掉那一刻是对的，抢回来也是对的** ——
+    地点解析确实还在跑，说一句「正在解析」是应该的。所以红的是断言：
+    「那句话不该还留着」这句在后台还没收工时压根不成立，它赌的是时序，
+    实测每八轮全量里红一次（并行、机器越忙越容易撞上）。
+
+    换句话说：**横幅是共享状态，断言它之前要先把前置条件摆出来**。
     """
     root = tmp_path / "库"
     for name in ("一.jpg", "二.jpg", "三.jpg"):
@@ -88,6 +105,7 @@ def _viewer_window(
     window._open_detail(window._model.index(0, 0))
     assert wait_until(qt_app, lambda: window._detail.has_image), "大图没能在时限内显示出来"
     assert window._stack.currentWidget() is window._detail_page
+    wait_for_idle(qt_app, window, also=("_index_job",))
     return window
 
 
