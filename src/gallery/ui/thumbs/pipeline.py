@@ -39,7 +39,7 @@ class ScaledThumbnail:
 
 @dataclass(slots=True)
 class _Job:
-    """装「一次投递」的盒子：它的 job_id，以及这一格最终用了谁的像素。
+    """装「一次投递」的盒子：它的 job_id、档位，以及这一格最终用了谁的像素。
 
     ``TaskRunner.submit`` 要先拿到回调，回调又要知道自己是谁 —— 那时 ``job_id`` 还不存在，
     于是用一个只装一次的盒子把 id 递进去。``cover`` 只对相册有意义：封面是现去找的，失败时
@@ -47,6 +47,7 @@ class _Job:
     """
 
     job_id: int | None = None
+    edge: int = NO_EDGE
     cover: Path | None = None
 
 
@@ -76,7 +77,7 @@ class ThumbnailPipeline(QObject):
         self._runner = runner
         self._queue = ThumbnailQueue()
         self._refs: dict[Path, PhotoRef] = {}
-        self._inflight: dict[Path, int] = {}
+        self._inflight: dict[tuple[Path, int], int] = {}
         self._failed: set[Path] = set()
         self._empty: set[Path] = set()
         self._covers: dict[Path, _Cover] = {}
@@ -103,9 +104,12 @@ class ThumbnailPipeline(QObject):
         self._target_edge = max(NO_EDGE, int(target_edge))
         targets = [target for entry in visible if (target := _thumbnail_target(entry))]
         ahead = [target for entry in prefetch if (target := _thumbnail_target(entry))]
+        # 已在解码的路径不再重新入队 —— 不同档位互相独立，由 _dispatch
+        # 按 (path, edge) 区分；同档位在途的请求自然被挡住。
+        inflight_paths = {path for path, _ in self._inflight}
         self._queue.set_window(
-            [target.path for target in targets],
-            prefetch=[target.path for target in ahead],
+            [target.path for target in targets if target.path not in inflight_paths],
+            prefetch=[target.path for target in ahead if target.path not in inflight_paths],
         )
         self._remember_window((*targets, *ahead))
         self._dispatch()
@@ -143,7 +147,7 @@ class ThumbnailPipeline(QObject):
         5.2 MB）。在途的那几条必须留着：``_refs`` 同时是换封面那条路回头找条目的地方。
         """
         refs = {entry.path: entry for entry in entries}
-        for path in self._inflight:
+        for path, _ in self._inflight:
             entry = self._refs.get(path)
             if entry is not None:
                 refs.setdefault(path, entry)
@@ -154,8 +158,12 @@ class ThumbnailPipeline(QObject):
             path = self._queue.pop_next()
             if path is None:
                 return
-            # 同一张照片不能重复投递：已在解码的路径仍会出现在新的可见窗口里。
-            if path in self._inflight or path in self._failed or path in self._empty:
+            # 同一张照片同一档位不能重复投递：已在解码的路径仍会出现在新的可见窗口里。
+            # 失败/空相册结论按路径记，但不同档位（边缘长度）互相独立 ——
+            # 256 px 在途不代表 128 px 也能用，进来时把旧结论清掉让新档位重试。
+            self._failed.discard(path)
+            self._empty.discard(path)
+            if (path, self._target_edge) in self._inflight:
                 continue
             ref = self._refs.get(path)
             if ref is None:
@@ -196,7 +204,8 @@ class ThumbnailPipeline(QObject):
             on_error=partial(self._on_error, entry, generation, holder),
         )
         holder.job_id = job_id
-        self._inflight[entry.path] = job_id
+        holder.edge = edge
+        self._inflight[(entry.path, edge)] = job_id
 
     def _release(self, entry: GridEntry, holder: _Job) -> None:
         """收尾时把这一格从「在途」里摘出去，且只摘自己那一次。
@@ -205,8 +214,8 @@ class ThumbnailPipeline(QObject):
         ``pop(entry.path)``，摘掉的就是新一代登记的那一条 —— ``_inflight`` 少数了，
         ``cancel()`` 也够不着真正在跑的新任务。
         """
-        if holder.job_id is not None and self._inflight.get(entry.path) == holder.job_id:
-            del self._inflight[entry.path]
+        if holder.job_id is not None and self._inflight.get((entry.path, holder.edge)) == holder.job_id:
+            del self._inflight[(entry.path, holder.edge)]
 
     def _on_result(self, entry: GridEntry, generation: int, holder: _Job, result: object) -> None:
         self._release(entry, holder)

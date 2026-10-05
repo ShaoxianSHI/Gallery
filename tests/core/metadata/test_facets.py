@@ -274,6 +274,14 @@ def test_parse_capture_time_rejects_nonsense(text: str | None) -> None:
     assert parse_capture_time(text) is None
 
 
+def test_parse_capture_time_rejects_impossible_dates() -> None:
+    """2 月 30 日、4 月 31 日这类不合法日期必须拒绝——不能只靠「月份 1-12、天数 1-31」
+    这种宽松检查，否则会传到 datetime.date 抛异常（性能差）或漏过非法日期。"""
+    assert parse_capture_time("2024:02:30 12:00:00") is None
+    assert parse_capture_time("2024:04:31 12:00:00") is None
+    assert parse_capture_time("2023:02:29 12:00:00") is None  # 非闰年
+
+
 def test_unknown_ids_fall_back_to_none() -> None:
     assert group_facet("没有这个字段") is None
     assert sort_facet("没有这个字段") is None

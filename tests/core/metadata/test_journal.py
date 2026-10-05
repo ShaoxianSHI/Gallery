@@ -158,11 +158,15 @@ def test_from_json_rejects_bad_lines(payload: str, reason: str) -> None:
 
 
 def test_from_json_defaults_are_conservative() -> None:
-    """缺字段时往「不确定」那边倒：没写结果就当没成功。"""
+    """缺字段时往「不确定」那边倒：没写结果就当没成功。
+
+    动作默认空串（未知），这样撤销时走 ``_undo_delete`` 兜底，
+    比误当成改名更安全（改名会真的动文件）。
+    """
     record = WriteRecord.from_json('{"from": "/a.jpg", "to": "/b.jpg"}')
 
     assert record is not None
-    assert record.action == ACTION_RENAME
+    assert record.action == ""
     assert record.result == RESULT_FAILED
     assert record.succeeded is False
     assert record.is_dir is False

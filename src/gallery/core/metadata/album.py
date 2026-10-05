@@ -93,10 +93,13 @@ def _guard(root: Path, destination: Path) -> None:
     """确认这一层可以往里建东西（界面上只传当前层，这里是第二道保险）。"""
     if not destination.is_dir():
         raise AlbumError(f"「{destination.name}」不是一个文件夹。", path=destination)
-    if not paths.is_within(root, destination):
-        raise AlbumError(f"只能在库里的文件夹中新建相册：{destination}。", path=destination)
-    if destination == paths.config_dir(root):
-        raise AlbumError("这是 Gallery 自己的配置目录，不能往里建相册。", path=destination)
+    try:
+        paths.guard_within_root(root, destination, allow_root=True)
+    except ValueError as exc:
+        raise AlbumError(
+            f"只能在库里的文件夹中新建相册：{destination}。（{exc}）",
+            path=destination,
+        ) from exc
 
 
 __all__ = ["DEFAULT_ALBUM_NAME", "CreatedAlbum", "create_album"]

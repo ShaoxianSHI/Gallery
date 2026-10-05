@@ -312,10 +312,12 @@ def _guard(root: Path, destination: Path) -> None:
     用户的照片粘进去不会变得可见，只会成为下次清理的垃圾（红线 5）。
     """
     root = Path(root)
-    if not paths.is_within(root, destination):
-        raise TransferError(f"只能移到库里的相册：{destination}。", path=destination)
-    if destination == paths.config_dir(root):
-        raise TransferError("这是 Gallery 自己的配置目录，不能移东西进去。", path=destination)
+    try:
+        paths.guard_within_root(root, destination, allow_root=True)
+    except ValueError as exc:
+        raise TransferError(
+            f"只能移到库里的相册：{destination}。（{exc}）", path=destination
+        ) from exc
 
 
 __all__ = [

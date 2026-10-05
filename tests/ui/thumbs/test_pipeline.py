@@ -220,19 +220,19 @@ def test_a_stale_result_does_not_release_the_new_jobs_slot(qt_app, tmp_path: Pat
     # 手动造两个「在途登记」：先记旧的一代，再换代并登记新的那一代。
     pipeline._generation += 1
     old_generation = pipeline._generation
-    pipeline._inflight[entry.path] = 111
+    pipeline._inflight[(entry.path, 0)] = 111
     pipeline.shutdown()
     pipeline._generation += 1
-    pipeline._inflight[entry.path] = 222
+    pipeline._inflight[(entry.path, 0)] = 222
 
     # 旧一代的回调迟到（直接调私有回调，不去跑真的线程池）。
-    pipeline._on_result(entry, old_generation, _Job(job_id=111), None)
+    pipeline._on_result(entry, old_generation, _Job(job_id=111, edge=0), None)
 
-    assert pipeline._inflight.get(entry.path) == 222, "新任务的在途登记不该被旧回调摘掉"
+    assert pipeline._inflight.get((entry.path, 0)) == 222, "新任务的在途登记不该被旧回调摘掉"
 
     # 而**自己那一次**的回调仍然要能正常摘掉，否则在途表永远清不干净。
-    pipeline._on_result(entry, pipeline._generation, _Job(job_id=222), None)
-    assert entry.path not in pipeline._inflight
+    pipeline._on_result(entry, pipeline._generation, _Job(job_id=222, edge=0), None)
+    assert (entry.path, 0) not in pipeline._inflight
 
     pipeline.shutdown()
 
@@ -285,7 +285,8 @@ def test_an_in_flight_entry_survives_the_window_rebuild(
 
     thumbs.set_window([])  # 滚到窗外
 
-    assert set(running) <= set(thumbs._refs), "在途的条目被清掉了 —— 换封面与 cancel 都够不着它"
+    running_paths = {path for path, _ in running}
+    assert running_paths <= set(thumbs._refs), "在途的条目被清掉了 —— 换封面与 cancel 都够不着它"
 
 
 def test_the_bad_file_memory_outlives_the_window(

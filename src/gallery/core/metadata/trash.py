@@ -309,10 +309,10 @@ def _guard(root: Path, source: Path) -> None:
     root = Path(root)
     if source.resolve() == root.resolve():
         raise DeleteError("这是库本身，删掉它 Gallery 就找不到任何照片了。", path=source)
-    if not paths.is_within(root, source):
-        raise DeleteError(f"只能移除库里的东西：{source}。", path=source)
-    if source == paths.config_dir(root):
-        raise DeleteError("这是 Gallery 自己的配置目录，不能删。", path=source)
+    try:
+        paths.guard_within_root(root, source)
+    except ValueError as exc:
+        raise DeleteError(f"只能移除库里的东西：{source}。（{exc}）", path=source) from exc
 
 
 def _free_name(candidate: Path, *, is_dir: bool) -> Path:

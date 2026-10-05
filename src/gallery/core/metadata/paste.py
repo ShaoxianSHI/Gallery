@@ -218,10 +218,12 @@ def _guard(root: Path, destination: Path) -> None:
     「不覆盖」不归这里管 —— 那是 :mod:`~gallery.core.metadata.naming` 的活。
     """
     root = Path(root)
-    if not paths.is_within(root, destination):
-        raise PasteError(f"只能粘到库里的文件夹：{destination}。", path=destination)
-    if destination == paths.config_dir(root):
-        raise PasteError("这是 Gallery 自己的配置目录，照片不该粘进去。", path=destination)
+    try:
+        paths.guard_within_root(root, destination, allow_root=True)
+    except ValueError as exc:
+        raise PasteError(
+            f"只能粘到库里的文件夹：{destination}。（{exc}）", path=destination
+        ) from exc
 
 
 __all__ = [

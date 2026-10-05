@@ -103,6 +103,24 @@ def is_within(root: Path, candidate: Path) -> bool:
     return resolved == resolved_root or resolved_root in resolved.parents
 
 
+def guard_within_root(
+    root: Path, path: Path, *, allow_root: bool = True
+) -> None:
+    """确认 ``path`` 在库内且不是配置目录。
+
+    :param allow_root: ``True`` 时允许 ``path == root``（粘贴的目标可以是库根）；
+        ``False`` 时禁止（库根本身不能被改名或删除）。
+    """
+    root = Path(root)
+    path = Path(path)
+    if not allow_root and path.resolve() == root.resolve():
+        return  # 由调用方决定抛什么错
+    if not is_within(root, path):
+        raise ValueError(f"不在库内：{path}")
+    if path.resolve() == config_dir(root).resolve():
+        raise ValueError("这是 Gallery 自己的配置目录")
+
+
 #: :func:`resolved` 记多少条。够一个中型库一整轮，且不因为翻的库多而一直涨。
 RESOLVED_CACHE_SIZE = 8192
 
@@ -294,6 +312,7 @@ __all__ = [
     "augment_external_tool_path",
     "config_dir",
     "config_file",
+    "guard_within_root",
     "has_config_dir",
     "icon_file",
     "index_file",

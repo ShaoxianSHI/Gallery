@@ -192,10 +192,13 @@ def _guard(root: Path, source: Path, target: Path) -> None:
     root = Path(root)
     if source.resolve() == root.resolve():
         raise RenameError("这是库本身，改名会让 Gallery 找不到照片。", path=source)
-    if not paths.is_within(root, source) or not paths.is_within(root, target):
-        raise RenameError(f"只能重命名库里的东西：{source}。", path=source)
-    if source == paths.config_dir(root) or target == paths.config_dir(root):
-        raise RenameError("这是 Gallery 自己的配置目录，不能改名。", path=source)
+    for _path in (source, target):
+        try:
+            paths.guard_within_root(root, _path)
+        except ValueError as exc:
+            raise RenameError(
+                f"只能重命名库里的东西：{_path}。（{exc}）", path=_path
+            ) from exc
 
 
 def _keep_suffix(entry: PhotoRef, cleaned: str) -> str:

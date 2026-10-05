@@ -184,7 +184,7 @@ class WriteRecord:
                 if (change := FieldChange.from_json(item)) is not None
             )
         return cls(
-            action=str(data.get("action", ACTION_RENAME)),
+            action=str(data.get("action", "")),
             source=Path(source),
             target=Path(target),
             result=str(data.get("result", RESULT_FAILED)),
