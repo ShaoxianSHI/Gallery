@@ -486,12 +486,43 @@ class TestPlaceFields:
             source="exiftool",
         )
 
-        assert report.place_from_file == "Bordeaux · Nouvelle-Aquitaine · France"
+        assert report.place_from_file == "France · Nouvelle-Aquitaine · Bordeaux"
         # **三层写成一行**：它们说的是同一个地方，分三行摆着像三件无关的事
         # （ADR 0031）。子地点仍单列 —— 那是另一个字段。
         fields = field_map(report.groups)
-        assert fields["地点"] == "Bordeaux · Nouvelle-Aquitaine · France"
+        assert fields["地点"] == "France · Nouvelle-Aquitaine · Bordeaux"
         assert "省 / 州" not in fields and "国家" not in fields
+
+    def test_the_written_and_the_inferred_place_read_in_the_same_order(
+        self, tmp_path: Path
+    ) -> None:
+        """**「地点」与「地点（推断）」必须从大到小，同一个顺序。**
+
+        面板上这两行在「位置」组里挨着，用户正要拿来对照：一个写着「中国 · 浙江省 ·
+        杭州」、另一个写着「杭州 · 浙江省 · 中国」，读起来像两个地方。
+        推断那一行走 ``places.place_label``，这里量的是**文件里那一行是不是同一个顺序**。
+        """
+        report = build_report(
+            {
+                "XMP-photoshop:City": "杭州",
+                "XMP-photoshop:State": "浙江省",
+                "XMP-photoshop:Country": "中国",
+                "EXIF:GPSLatitude": "30.27415",
+                "EXIF:GPSLatitudeRef": "N",
+                "EXIF:GPSLongitude": "120.15515",
+                "EXIF:GPSLongitudeRef": "E",
+            },
+            path=tmp_path / "a.jpg",
+            size=1,
+            mtime_ns=0,
+            source="exiftool",
+        )
+
+        written = field_map(report.groups)["地点"]
+        inferred = field_map(report.with_place(written).groups)["地点（推断）"]
+
+        assert written == "中国 · 浙江省 · 杭州"
+        assert inferred == written
 
     def test_the_place_is_one_line_whatever_family_exiftool_names_it(self, tmp_path: Path) -> None:
         """**两种族名都要认**。
@@ -516,7 +547,7 @@ class TestPlaceFields:
                 keys, path=tmp_path / "a.jpg", size=1, mtime_ns=0, source="exiftool"
             )
 
-            assert field_map(report.groups)["地点"] == "京都 · 京都府 · 日本"
+            assert field_map(report.groups)["地点"] == "日本 · 京都府 · 京都"
 
     def test_no_place_in_file_means_nothing_to_show(self, tmp_path: Path) -> None:
         report = build_report(
@@ -543,10 +574,10 @@ class TestPlaceFields:
             source="exiftool",
         )
 
-        updated = report.with_place("Bordeaux · 新亚奎丹 · 法国（按坐标推断）")
+        updated = report.with_place("法国 · 新亚奎丹 · 波尔多（按坐标推断）")
 
         fields = field_map(updated.groups)
-        assert fields["地点（推断）"] == "Bordeaux · 新亚奎丹 · 法国（按坐标推断）"
+        assert fields["地点（推断）"] == "法国 · 新亚奎丹 · 波尔多（按坐标推断）"
         # 推断的那行必须排在最前面，且原报告不被改动
         position = next(group for group in updated.groups if group.title == "位置")
         assert position.fields[0].label == "地点（推断）"

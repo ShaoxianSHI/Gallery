@@ -26,6 +26,7 @@ from PIL import ExifTags, Image
 
 from gallery.core.errors import MetadataError
 from gallery.core.formatting import format_bytes, format_timestamp
+from gallery.core.places.countries import place_label
 
 #: exiftool 可执行文件名。它属于运行时外部依赖，不进 pyproject.toml。
 EXIFTOOL_EXECUTABLE: Final = "exiftool"
@@ -77,7 +78,8 @@ class MetadataReport:
     #: 十进制度的坐标（有 GPS 时才有），供离线反查用。
     latitude: float | None = None
     longitude: float | None = None
-    #: 文件里写的地点名（IPTC/XMP）。有它就不再按坐标推断，免得给出两个说法。
+    #: 文件里写的地点名（IPTC/XMP），拼成一句 ``中国 · 浙江省 · 杭州``。
+    #: 有它就不再按坐标推断，免得给出两个说法。
     place_from_file: str | None = None
     #: 文件里那三层地点**分开**的值。给「编辑元数据」的输入框用（ADR 0031）。
     #:
@@ -660,12 +662,15 @@ def _place_parts(raw: Mapping[str, str]) -> tuple[str | None, str | None, str | 
 
 
 def _place_from_file(raw: Mapping[str, str]) -> str | None:
-    """三层地点拼成一句话（显示用）。**顺序与 :attr:`MetadataReport.place_city` 那组一致**。"""
-    kept: list[str] = []
-    for part in _place_parts(raw):
-        if part and part not in kept:
-            kept.append(part)
-    return " · ".join(kept) if kept else None
+    """文件里那三层地点拼成一句话（显示用）。
+
+    **顺序与推断出来的那个一模一样（国家 · 省 · 市）**，而且走的是同一个
+    :func:`~gallery.core.places.countries.place_label`。面板上「地点」与「地点（推断）」
+    是「位置」组里挨着的两行，用户正要拿来对照 —— 一个「中国 · 浙江省 · 杭州」、
+    一个「杭州 · 浙江省 · 中国」，读起来像是两个地方。这里各拼一次，早晚会漂回去。
+    """
+    city, region, country = _place_parts(raw)
+    return place_label(city, region, country) or None
 
 
 def _coordinates(raw: Mapping[str, str]) -> str | None:
