@@ -47,7 +47,7 @@ from gallery.core.metadata.capture_time import CaptureTime, CaptureTimeEdit  # n
 from gallery.core.metadata.exif import build_report  # noqa: E402
 from gallery.core.metadata.journal import read_records  # noqa: E402
 from gallery.core.metadata.metadata_edit import MetadataEdit, MetadataState  # noqa: E402
-from gallery.core.metadata.place_edit import PlaceEdit, PlaceState  # noqa: E402
+from gallery.core.metadata.place_edit import PlaceEdit, PlaceState, plan_place_edit  # noqa: E402
 from gallery.core.metadata.writeback import Assignment  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.panels.metadata import MetadataPanel  # noqa: E402
@@ -369,12 +369,15 @@ def test_writing_updates_the_file_the_row_and_the_banner(
 def test_the_journal_has_the_field_level_record(
     focused: MainWindow, root: Path, writer: FakeWriter
 ) -> None:
-    # 照对话框那样把三层都填上 —— ``MetadataEdit`` 是最终状态，空的那一层意思是「清掉它」。
+    # 照对话框按完「地点 → 经纬度」之后那样：三层地名与两个坐标框都有值。
+    # ``MetadataEdit`` 是最终状态，空的那一层意思是「清掉它」。
     _write(
         focused,
         _photo_ref(focused, root),
         PlaceState(),
-        PlaceEdit(city="杭州", region="浙江省", country="中国"),
+        PlaceEdit(
+            city="杭州", region="浙江省", country="中国", latitude=30.2741, longitude=120.1551
+        ),
     )
 
     records = read_records(root)
@@ -383,8 +386,8 @@ def test_the_journal_has_the_field_level_record(
     assert [record.action for record in records] == ["metadata", "metadata"]
     assert [record.result for record in records] == ["pending", "ok"]
     assert records[0].changes == records[1].changes
-    # 只填了城市，坐标是城市库里查出来的那个 —— 于是两组字段都在记录里，各带原值。
-    # 「删掉海拔与定位时间」那三条**不在里面**：这张照片本来就没有它们，空操作不该进日志。
+    # 地名与坐标都在记录里，各带原值。「删掉海拔与定位时间」那三条**不在里面**：
+    # 这张照片本来就没有它们，空操作不该进日志。
     assert [change.tag for change in records[0].changes] == [
         "EXIF:GPSLatitude",
         "EXIF:GPSLatitudeRef",
@@ -588,6 +591,20 @@ class _Resolved:
         self.distance_km = distance_km
 
 
+class NoRegionResolver(StubResolver):
+    """反查到**直辖市** —— 城市有、国家有、**省是空的**。
+
+    随包那份城市库里北京、上海、天津、重庆、香港、澳门这 151 条就是这样
+    （``_City.region`` 允许为 ``None``），而它正是「界面显示的」与「写下去的」
+    分道扬镳的那条路。
+    """
+
+    def place_for(self, latitude: float, longitude: float, *, status: object = None) -> object:
+        if abs(latitude - 31.2304) < 0.5:
+            return _Resolved("上海", None, "中国", 0.4)
+        return None
+
+
 class _Place:
     def __init__(
         self, city: str, region: str | None, country: str, latitude: float, longitude: float
@@ -658,14 +675,60 @@ def test_one_letter_does_not_run_a_look_up(qt_app: QApplication) -> None:
     assert dialog._latitude.text() == ""
 
 
-def test_two_letters_are_enough(qt_app: QApplication) -> None:
+def test_two_letters_are_enough_to_press_the_button(qt_app: QApplication) -> None:
+    """**两个字母就够按那个按钮了** —— 门槛还在，只是从「自动」挪到了「手动」（ADR 0039）。"""
+    dialog = _dialog(None, PlaceState(), resolver=StubResolver())
+
+    dialog._city.setText("苏州")
+    dialog._names_to_coordinates_button.click()
+
+    assert float(dialog._latitude.text()) == pytest.approx(31.311, abs=1e-4)
+    assert float(dialog._longitude.text()) == pytest.approx(120.621, abs=1e-4)
+
+
+def test_one_letter_is_not_enough(qt_app: QApplication) -> None:
+    """城市库里有一个真叫「苏」的条目（安徽某个被折叠进市里的区）：敲第一个字就查它，
+    屏幕上会立刻跳出「中国 · 安徽省」和一串坐标 —— 那是数据里的碎片，不是用户要填的地方。"""
+    dialog = _dialog(None, PlaceState(), resolver=StubResolver())
+
+    dialog._city.setText("苏")
+    dialog._names_to_coordinates_button.click()
+
+    assert dialog._latitude.text() == ""
+    assert "城市" in dialog._error.text()
+
+
+def test_typing_a_city_fills_in_nothing_until_the_button_is_pressed(
+    qt_app: QApplication,
+) -> None:
+    """**敲字不再顺手改别的框**（ADR 0039 决策 1）。
+
+    缺陷现场：原先敲一个「苏州」省与国家自己就长出来、坐标也自己填上，于是
+    「框里显示的」和「真正写下去的」在不同路上不是同一份 —— 界面那三个
+    ``if place.region and ...`` 查不到就不动，而写盘时那一层是被**清空**的。
+    """
     dialog = _dialog(None, PlaceState(), resolver=StubResolver())
 
     dialog._city.setText("苏州")
     dialog._refresh()
 
-    assert dialog._country.text() == "中国"
-    assert float(dialog._latitude.text()) == pytest.approx(31.311, abs=1e-4)
+    assert dialog._region.text() == ""
+    assert dialog._country.text() == ""
+    assert dialog._latitude.text() == ""
+
+
+def test_typing_a_city_by_itself_writes_nothing(qt_app: QApplication) -> None:
+    """只敲了城市而没按任何按钮：**一个坐标都不写进去**，保存也不会配上（ADR 0031 决策 3）。"""
+    dialog = _dialog(None, PlaceState(), resolver=StubResolver())
+    dialog._city.setText("苏州")
+
+    plan = plan_place_edit(
+        PlaceState(),
+        PlaceEdit(city="苏州", region="", country="", latitude=None, longitude=None),
+        resolver=StubResolver(),
+    )
+
+    assert [a.tag for a in plan.assignments if "GPS" in a.tag] == []
 
 
 def test_the_fields_run_country_province_city(qt_app: QApplication) -> None:
@@ -676,39 +739,89 @@ def test_the_fields_run_country_province_city(qt_app: QApplication) -> None:
     assert rows["国家"] < rows["省 / 州"] < rows["城市"] < rows["纬度"] < rows["经度"]
 
 
-def test_typing_a_city_fills_in_the_province_and_the_country(qt_app: QApplication) -> None:
-    """**只敲城市就行**：省与国家自己长出来，而且用的是库里那一带的准确写法。"""
+def test_the_button_fills_in_the_province_and_the_country(qt_app: QApplication) -> None:
+    """**只敲城市就够**：按一下按钮，省与国家按库里那一带的准确写法长出来。"""
     dialog = _dialog(None, PlaceState(), resolver=StubResolver())
 
     dialog._city.setText("苏州")
-    dialog._refresh()
+    dialog._names_to_coordinates_button.click()
 
     assert dialog._region.text() == "江苏省"
     assert dialog._country.text() == "中国"
 
 
-def test_a_place_updates_the_coordinates_right_away(qt_app: QApplication) -> None:
-    """**地点 → 坐标实时更新**：保存之前就能看见会写进去的是哪一对。"""
+def test_a_place_updates_the_coordinates_when_the_button_is_pressed(
+    qt_app: QApplication,
+) -> None:
+    """**地点 → 坐标**：按一下按钮，保存之前就能看见会写进去的是哪一对。"""
     dialog = _dialog(None, PlaceState(), resolver=StubResolver())
 
     dialog._city.setText("苏州")
-    dialog._refresh()
+    dialog._names_to_coordinates_button.click()
 
     assert float(dialog._latitude.text()) == pytest.approx(31.311, abs=1e-4)
     assert float(dialog._longitude.text()) == pytest.approx(120.621, abs=1e-4)
 
 
-def test_coordinates_update_the_place_right_away(qt_app: QApplication) -> None:
-    """**坐标 → 地点实时更新**：把坐标拖到苏州附近，上面三栏自己说出「中国 · 江苏省 · 苏州」。"""
+def test_coordinates_update_the_place_when_the_button_is_pressed(
+    qt_app: QApplication,
+) -> None:
+    """**坐标 → 地点**：把坐标拖到苏州附近，按一下按钮，上面三栏说出「中国 · 江苏省 · 苏州」。"""
     dialog = _dialog(None, PlaceState(), resolver=StubResolver())
 
     dialog._latitude.setText("31.3110")
     dialog._longitude.setText("120.6210")
-    dialog._refresh()
+    dialog._coordinates_to_names_button.click()
 
     assert dialog._city.text() == "苏州"
     assert dialog._region.text() == "江苏省"
     assert dialog._country.text() == "中国"
+
+
+def test_a_layer_the_database_does_not_have_is_cleared_so_the_form_tells_the_truth(
+    qt_app: QApplication,
+) -> None:
+    """**库里没有的那一层要显示成空** —— 这个对话框显示的就是将被写入的那一份（ADR 0039 决策 2）。
+
+    缺陷现场（已实测复现）：城市库里北京、上海、天津、重庆、香港、澳门这 151 条的
+    ``region`` 是空的。照片原本写着「杭州 / 浙江省 / 中国」，坐标改到上海之后，界面那三个
+    ``if place.region and ...`` 一个都不成立，框里留着「浙江省」；而写盘时那一层被写成
+    空串 —— **删掉**。照片变成「上海 / （无省）」，而对话框从头到尾显示着「浙江省」。
+    """
+    dialog = _dialog(
+        None,
+        PlaceState(city="杭州", region="浙江省", country="中国"),
+        resolver=NoRegionResolver(),
+    )
+
+    dialog._latitude.setText("31.2304")
+    dialog._longitude.setText("121.4737")
+    dialog._coordinates_to_names_button.click()
+
+    assert dialog._city.text() == "上海"
+    assert dialog._region.text() == "", "库里没有省，框里就必须显示成空 —— 否则它在骗人"
+    assert dialog._country.text() == "中国"
+
+
+def test_the_button_overwrites_a_layer_the_user_typed_by_hand(
+    qt_app: QApplication,
+) -> None:
+    """**按钮以城市库为准，手敲的也覆盖**（ADR 0039 决策 3）。
+
+    保留一半才是更坏的答案：那半栏显示旧值、保存时照样被覆盖，界面上就有一半是假的。
+    """
+    dialog = _dialog(
+        None,
+        PlaceState(city="杭州", region="浙江省", country="中国"),
+        resolver=NoRegionResolver(),
+    )
+
+    dialog._latitude.setText("31.2304")
+    dialog._longitude.setText("121.4737")
+    dialog._region.setText("我自己填的")
+    dialog._coordinates_to_names_button.click()
+
+    assert dialog._region.text() == ""
 
 
 def test_the_two_directions_do_not_talk_to_each_other(qt_app: QApplication) -> None:
@@ -752,7 +865,7 @@ def test_changing_the_city_is_not_blocked_by_the_stale_province(qt_app: QApplica
     )
 
     dialog._city.setText("苏州")
-    dialog._refresh()
+    dialog._names_to_coordinates_button.click()
 
     assert dialog._country.text() == "中国"
     assert dialog._region.text() == "江苏省"
@@ -796,15 +909,18 @@ def test_the_clear_button_empties_the_whole_place(qt_app: QApplication) -> None:
 def test_three_buttons_on_each_of_the_first_two_rows_and_three_actions_below(
     qt_app: QApplication,
 ) -> None:
-    """**3×3 九个键**，每一行都占满，三行共用同一套列网格。
+    """**上面一行两个方向，下面 3×3 九个键**，每一行都占满，共用同一套列网格。
 
     ```
+    地点→经纬度  经纬度→地点
     复制        复制时间      复制位置
     粘贴        粘贴时间      粘贴位置
     清空位置    取消          保存
     ```
 
-    有了两段可搬的内容，「复制 / 粘贴」就分出了「全搬」与「搬一段」；第三行是三个动作。
+    有了两段可搬的内容，「复制 / 粘贴」就分出了「全搬」与「搬一段」；最后一行是三个动作。
+    第一行那两个是 ADR 0039 加的：跨层填充只发生在用户按下的那一刻，所以它们摆得比
+    搬与清的九宫格更靠上一点 —— 它们改的是上面的框。
     **宽度与位置都是布局算出来的**，不是三排手工对齐的推算。
     """
     dialog = _dialog(None, PlaceState(city="苏州"))
@@ -814,17 +930,21 @@ def test_three_buttons_on_each_of_the_first_two_rows_and_three_actions_below(
     cancel = dialog.findChild(QPushButton, "cancelButton")
     save = dialog.findChild(QPushButton, "saveButton")
     assert cancel is not None and save is not None
+    directions = (dialog._names_to_coordinates_button, dialog._coordinates_to_names_button)
     rows = (
         (dialog._copy_button, dialog._copy_time_button, dialog._copy_place_button),
         (dialog._paste_button, dialog._paste_time_button, dialog._paste_place_button),
         (dialog._clear_button, cancel, save),
     )
 
+    assert [button.text() for button in directions] == ["地点 → 经纬度", "经纬度 → 地点"]
     assert [[button.text() for button in row] for row in rows[:2]] == [
         ["复制", "复制时间", "复制位置"],
         ["粘贴", "粘贴时间", "粘贴位置"],
     ]
     assert [button.text() for button in rows[2]] == ["清空位置", "取消", "保存"]
+    # 方向那一行确实在九宫格**上面**，不是被塞进了它里面某一格的位置。
+    assert directions[0].y() < rows[0][0].y()
     # **三列等宽**：九个子控件的 x 只有三个值。
     assert len({button.x() for row in rows for button in row}) == 3
     # 宽度允许差一个像素 —— 整除有余数时 Qt 会把它摊到某一列（实测 87 / 88），
@@ -1043,14 +1163,22 @@ def test_pasting_nonsense_says_so_instead_of_guessing(qt_app: QApplication) -> N
     assert dialog._taken_at.text() == ""
 
 
-def test_pasting_a_place_name_alone_fills_in_the_coordinates(qt_app: QApplication) -> None:
-    """只粘到地名也行 —— 正查补出坐标，那是双向联动的用处。"""
+def test_pasting_a_place_name_alone_fills_in_nothing_but_the_names(
+    qt_app: QApplication,
+) -> None:
+    """**粘到地名不再顺手正查出坐标**（ADR 0039 决策 1）—— 要坐标就按那个按钮。
+
+    粘进来的坐标本该是用户自己那份；被程序顺手改一遍，就成了「框里写的不是他要的」。
+    """
     dialog = _dialog(None, PlaceState(), resolver=StubResolver())
 
     QGuiApplication.clipboard().setText("苏州, 江苏省, 中国")
     dialog._on_paste()
     dialog._refresh()
 
+    assert dialog._city.text() == "苏州"
+    assert dialog._latitude.text() == "", "坐标不该被自动正查改掉"
+    dialog._names_to_coordinates_button.click()
     assert float(dialog._latitude.text()) == pytest.approx(31.311, abs=1e-4)
 
 

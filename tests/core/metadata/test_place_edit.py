@@ -72,8 +72,14 @@ def tags(assignments: tuple[Assignment, ...]) -> dict[str, str]:
     return {item.tag: item.value for item in assignments}
 
 
-def test_only_coordinates_given_still_fills_in_the_place(library_state: PlaceState) -> None:
-    """**坐标 → 地点**：只改坐标，地点也一并重算并写进去，于是两者从此说同一句话。"""
+def test_only_coordinates_given_writes_only_the_coordinates(library_state: PlaceState) -> None:
+    """**只填坐标就只写坐标** —— 地名一个字都不动（ADR 0039 决策 4）。
+
+    缺陷现场：这一层原先会顺手反查地名，于是「对话框显示的那一份」与「真正写下去的
+    那一份」在不同路上不是同一份 —— 界面上那三个 ``if place.region and ...`` 查不到
+    就不动，而这里的空值是**删掉**。跨层填充搬到了对话框那两个按钮上，而按钮改的就是
+    框本身，所以这一层只做翻译。
+    """
     resolver = FakeResolver()
 
     plan = plan_place_edit(
@@ -85,21 +91,59 @@ def test_only_coordinates_given_still_fills_in_the_place(library_state: PlaceSta
     written = tags(plan.assignments)
     assert written["EXIF:GPSLatitude"] == "30.274100"
     assert written["EXIF:GPSLatitudeRef"] == "N"
+    assert not (set(written) & set(PLACE_TAGS)), "地名不该被顺手改掉"
+    assert plan.coordinates == (30.2741, 120.1551)
+    assert resolver.calls == [], "这一层不再反查"
+
+
+def test_the_place_is_written_only_when_the_form_carries_it(library_state: PlaceState) -> None:
+    """地点与坐标都在**框里**（用户按过对话框的按钮）时，两半一次写对。"""
+    plan = plan_place_edit(
+        library_state,
+        PlaceEdit(
+            city="杭州", region="浙江省", country="中国", latitude=30.2741, longitude=120.1551
+        ),
+    )
+
+    written = tags(plan.assignments)
     assert written["XMP:City"] == "杭州"
-    assert written["IPTC:City"] == "杭州"
+    assert written["XMP:State"] == "浙江省"
+    assert written["EXIF:GPSLatitude"] == "30.274100"
     assert plan.city == "杭州" and plan.coordinates == (30.2741, 120.1551)
 
 
-def test_a_place_given_updates_the_coordinates(library_state: PlaceState) -> None:
-    """**地点 → 坐标**：城市库里有这个名字，就把它的位置写进去。"""
+def test_a_layer_the_form_left_blank_is_still_cleared(library_state: PlaceState) -> None:
+    """**框里空就是「清掉它」** —— 对话框显示的就是将被写入的那一份（ADR 0039 决策 2）。
+
+    城市库里上海那 151 条（直辖市之类）没有省，于是反查得到的省是空。用户在界面上
+    看得见那一栏被清空了，保存时就该真的清掉，而不是替他保留一个「浙江省」。
+    """
+    plan = plan_place_edit(
+        library_state,
+        PlaceEdit(city="上海", region="", country="中国", latitude=31.2304, longitude=121.4737),
+    )
+
+    written = tags(plan.assignments)
+    assert written["XMP:City"] == "上海"
+    assert written["XMP:State"] == "", "框里是空的，写盘就该是删掉"
+    assert written["IPTC:Province-State"] == ""
+
+
+def test_a_place_given_does_not_look_a_coordinate_up(library_state: PlaceState) -> None:
+    """**只填地名不会凭空多出一个坐标**（ADR 0031 决策 3、ADR 0039 决策 1）。
+
+    用户按对话框那个「地点 → 经纬度」按钮，坐标才会出现在框里；只敲了城市就保存，
+    坐标保持原样 —— 绝不配一个看起来精确、实际错得离谱的值。
+    """
     resolver = FakeResolver(by_name={"苏州": SUZHOU})
 
     plan = plan_place_edit(
         library_state, PlaceEdit(city="苏州", region="江苏省", country="中国"), resolver=resolver
     )
 
-    assert plan.coordinates == (31.311, 120.621)
-    assert tags(plan.assignments)["EXIF:GPSLatitude"] == "31.311000"
+    assert "EXIF:GPSLatitude" not in tags(plan.assignments)
+    assert plan.coordinates == library_state.coordinates()
+    assert resolver.calls == []
 
 
 def test_a_name_the_database_does_not_know_leaves_the_coordinates_alone(
@@ -113,7 +157,7 @@ def test_a_name_the_database_does_not_know_leaves_the_coordinates_alone(
     written = tags(plan.assignments)
     assert set(written) <= set(PLACE_TAGS)
     assert plan.coordinates == library_state.coordinates()
-    assert resolver.calls == ["名字 西湖·断桥"]
+    assert resolver.calls == [], "这一层不再正查 —— 按不按按钮是用户的事"
 
 
 def test_both_given_user_wins_and_nothing_is_looked_up(library_state: PlaceState) -> None:

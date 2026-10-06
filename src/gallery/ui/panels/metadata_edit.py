@@ -1,9 +1,14 @@
-"""编辑一张照片的元数据 —— 拍摄时间与位置（ADR 0030 / 0031 / 0032）。
+"""编辑一张照片的元数据 —— 拍摄时间与位置（ADR 0030 / 0031 / 0032 / 0039）。
 
 这个对话框一个文件都不碰：它只把用户填的那一份读成 ``MetadataEdit``，写盘走 ``write_ops``。
 ``DateTimeOriginal`` 是墙上时间，时区在单独的 ``OffsetTimeOriginal`` 里而相机多半不写它 ——
-留空就是「不记这一项」，绝不按本机时区替用户补一个。地名由大到小填、真正查的是城市，两侧
-实时回填（防抖 250 毫秒，``_programmatic`` 挡住连锁）；剪贴板格式见 :func:`_clipboard_text`。
+留空就是「不记这一项」，绝不按本机时区替用户补一个。地名由大到小填、真正查的是城市。
+
+**跨层填充由两个按钮手动触发**（ADR 0039）：「地点 → 经纬度」与「经纬度 → 地点」。
+原先是实时回填（ADR 0031 决策 7），而那套做法让**框里显示的那一份**与**真正写下去的那一份**
+对得上的时候不再是同一份 —— 城市库里上海的 `region` 是空的，反查不到省，界面那三个
+``if place.region and ...`` 一个都不成立，框里留着上一座城市的省，而写盘时那一层被清空。
+「对话框显示的就是将被写入的那一份」是这条的立意；剪贴板格式见 :func:`_clipboard_text`。
 """
 
 from __future__ import annotations
@@ -19,6 +24,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QFormLayout,
     QGridLayout,
+    QHBoxLayout,
     QLabel,
     QLayout,
     QLineEdit,
@@ -142,15 +148,18 @@ class MetadataEditDialog(QDialog):
         form.addRow("时区", self._offset)
 
         self._country = QLineEdit(state.place.country or "")
+        self._country.setObjectName("country")
         self._country.textChanged.connect(self._on_names_changed)
         form.addRow("国家", self._country)
 
         self._region = QLineEdit(state.place.region or "")
+        self._region.setObjectName("region")
         self._region.textChanged.connect(self._on_names_changed)
         form.addRow("省 / 州", self._region)
 
         # 普通的输入框而不是下拉：城市库里没有的名字（门牌、景区）恰恰是最该能填进去的。
         self._city = QLineEdit(state.place.city or "")
+        self._city.setObjectName("city")
         self._city.textChanged.connect(self._on_names_changed)
         self._completer = QCompleter(self)
         self._completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
@@ -164,9 +173,11 @@ class MetadataEditDialog(QDialog):
 
         coordinates = state.place.coordinates()
         self._latitude = QLineEdit(_format(coordinates[0] if coordinates else None))
+        self._latitude.setObjectName("latitude")
         self._latitude.textChanged.connect(self._on_coordinates_changed)
         form.addRow("纬度", self._latitude)
         self._longitude = QLineEdit(_format(coordinates[1] if coordinates else None))
+        self._longitude.setObjectName("longitude")
         self._longitude.textChanged.connect(self._on_coordinates_changed)
         form.addRow("经度", self._longitude)
         layout.addLayout(form)
@@ -199,10 +210,49 @@ class MetadataEditDialog(QDialog):
         ):
             field.setMinimumWidth(FIELD_MIN_WIDTH)
 
-    def _build_buttons(self) -> QGridLayout:
+    def _build_buttons(self) -> QLayout:
+        """上面一行两个方向的按钮，下面九宫格。按行读：搬、搬、动作。
+
+        第一行那两个是 ADR 0039 加的：跨层填充只发生在用户按下的那一刻。
+        **它们在独立的布局里，不进九宫格的列网格** —— 「地点 → 经纬度」这个标签比
+        「复制」宽得多，混进同一套列里会把第 0 列撑宽，而九宫格那三列等宽是它的性质
+        （也正是下面那条用例量的东西）。
+        """
+        column = QVBoxLayout()
+        column.setContentsMargins(0, 2, 0, 0)
+        column.setSpacing(6)
+        column.addLayout(self._build_direction_buttons())
+        column.addLayout(self._build_action_grid())
+        return column
+
+    def _build_direction_buttons(self) -> QLayout:
+        """那两个方向的键，各占一半宽。"""
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
+
+        self._names_to_coordinates_button = QPushButton("地点 → 经纬度")
+        self._names_to_coordinates_button.setToolTip(
+            "按城市框里的名字，从城市库查出这座市的省、国家与坐标，填进其余几栏"
+            "（库里没有的那一层会清空）。"
+        )
+        self._names_to_coordinates_button.clicked.connect(self._on_names_to_coordinates)
+        self._coordinates_to_names_button = QPushButton("经纬度 → 地点")
+        self._coordinates_to_names_button.setToolTip(
+            "按下面两个坐标框里的位置，从城市库查出最近的城市，填进上面三个地名框"
+            "（城市库里没有的那一层会清空，例如直辖市没有省）。"
+        )
+        self._coordinates_to_names_button.clicked.connect(self._on_coordinates_to_names)
+
+        for button in (self._names_to_coordinates_button, self._coordinates_to_names_button):
+            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            row.addWidget(button)
+        return row
+
+    def _build_action_grid(self) -> QGridLayout:
         """九个键，3×3 等宽。按行读：搬、搬、动作。"""
         grid = QGridLayout()
-        grid.setContentsMargins(0, 2, 0, 0)
+        grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(6)
         grid.setVerticalSpacing(6)
 
@@ -256,73 +306,91 @@ class MetadataEditDialog(QDialog):
     def _on_coordinates_changed(self, *_args: object) -> None:
         if self._programmatic:
             return  # 程序自己填进去的，不当成「用户改了」
-        self._last_touched = "coordinates"
         self._timer.start(LOOKUP_DELAY_MS)
 
     def _refresh(self) -> None:
-        """防抖之后真正去查的那一步：两个方向各看一次，只查真变了的那一侧。"""
+        """防抖之后真正要做的那一步：**只刷候选列表**。
+
+        跨层填充已经不在这里了（ADR 0039）：原先这一步会顺手把对面那三个框也改掉，
+        于是「框里显示的」与「真正写下去的」成了两份东西。补全还要留着 —— 那是候选，
+        不是写盘。
+        """
         names = self._names()
         if names != self._seen_names:
             self._seen_names = names
-            self._fill_from_names(names)
-        coordinates = self._coordinates()
-        if coordinates != self._seen_coordinates:
-            self._seen_coordinates = coordinates
-            self._fill_from_coordinates(coordinates)
+            self._refresh_candidates(names[0])
 
-    def _fill_from_names(self, names: tuple[str, str, str]) -> None:
-        """地点 → 坐标：城市库里查得到就填进下面两个框，顺带把省与国家的准确写法补上。"""
-        city, region, country = names
+    def _on_names_to_coordinates(self) -> None:
+        """「地点 → 经纬度」：按城市框里的名字把**这个地点的其余各层**都查出来填上。
+
+        填的是省 / 国家与两个坐标框 —— 城市是输入，不动。省与国家用库里那一带的准确写法
+        补上（ADR 0031 决策 7「只敲城市就行」），**库里本来就没有的那一层照清空**
+        （ADR 0039 决策 2：这个对话框显示的就是将被写入的那一份）。
+
+        城市是**输入**所以不动；省 / 国家与坐标是**结论**，按库里的写法改写，
+        用户亲手敲过的那一个不动（决策 3）。
+
+        查不到就是查不到：城市库里没有这个名字（门牌、景区）就**一个字都不改**，
+        并如实说明，绝不配一个看起来精确、实际错得离谱的值（ADR 0031 决策 3）。
+        """
+        self._error.clear()
+        city, region, country = self._names()
         if self._resolver is None or len(city) < MIN_LOOKUP_LENGTH:
-            self._refresh_candidates(city)
+            self._error.setText("先把城市填上，城市库是按市名查的。")
             return
         found = self._resolver.place_named(city, region=region or None, country=country or None)
         if not found and (region or country):
             # 上面两栏还留着上一座城市的省与国家（照片原本写着「日本 · 京都府 · 京都」，
-            # 敲一个「苏州」进去）：这时只按名字找一遍。
+            # 敲一个「苏州」进去），按那个过期范围查当然查不到。
             found = self._resolver.place_named(city)
-        self._candidates = list(found)
         if not found:
-            self._refresh_candidates(city)
+            self._error.setText(f"城市库里没有「{city}」，省与国家、坐标都保持原样。")
             return
         place = found[0]
         self._programmatic = True
         try:
-            if place.city and place.city != self._city.text().strip():
-                self._city.setText(place.city)
-            if place.region and place.region != self._region.text().strip():
-                self._region.setText(place.region)
-            if place.country and place.country != self._country.text().strip():
-                self._country.setText(place.country)
+            self._region.setText(place.region or "")
+            self._country.setText(place.country or "")
             self._latitude.setText(_format(place.latitude))
             self._longitude.setText(_format(place.longitude))
         finally:
             self._programmatic = False
+        self._seen_names, self._seen_coordinates = self._names(), self._coordinates()
         self._refresh_candidates(city)
 
-    def _fill_from_coordinates(self, coordinates: tuple[float | None, float | None]) -> None:
-        """坐标 → 地点：反查出最近的城市写进上面三个框。
+    def _on_coordinates_to_names(self) -> None:
+        """「经纬度 → 地点」：按两个坐标框里的位置查出最近的城市，填进三个地名框。
 
-        反查不到就一个字都不填（附近 300 公里没有城市是常事，尤其是海上）——保留用户已经
-        写着的地名，好过拿一个编出来的替换掉。
+        **逐层写入，包括城市库里本来就没有的那一层**（ADR 0039 决策 2）。城市库里
+        北京、上海、天津、重庆、香港、澳门这 151 条的 ``region`` 是空的，于是反查到上海
+        就该把「省 / 州」清空 —— 留着上一座城市的省既错又看不懂。这个对话框显示的就是
+        将被写入的那一份，所以空必须显示成空。
+
+        **三个框一律按城市库的结果覆盖**，不因为是用户亲手敲的就手下留情：他按的是
+        「以城市库为准」这个按钮，保留一半才是另一种更坏的答案 —— 界面上那一半是旧的，
+        而保存时会一起被覆盖。
+
+        附近 300 公里没有城市（海上很常见）就**一个字都不改**，并如实说明 ——
+        该由用户判断是地名错了还是坐标错了（ADR 0031 决策 4）。
         """
-        latitude, longitude = coordinates
+        self._error.clear()
+        latitude, longitude = self._coordinates()
         if self._resolver is None or latitude is None or longitude is None:
+            self._error.setText("先把经纬度填上，两个都要。")
             return
         place = self._resolver.place_for(latitude, longitude)
         if place is None:
+            self._error.setText("附近没有城市记录，原来的地名没有改动。")
             return
         self._programmatic = True
         try:
-            if place.city and place.city != self._city.text().strip():
-                self._city.setText(place.city)
-            if place.region and place.region != self._region.text().strip():
-                self._region.setText(place.region)
-            if place.country and place.country != self._country.text().strip():
-                self._country.setText(place.country)
+            self._city.setText(place.city or "")
+            self._region.setText(place.region or "")
+            self._country.setText(place.country or "")
         finally:
             self._programmatic = False
-        self._refresh_candidates(place.city)
+        self._seen_names = self._names()
+        self._refresh_candidates(self._names()[0])
 
     def _refresh_candidates(self, name: str) -> None:
         """把候选喂给补全窗口；离线、不联网（ADR 0003）：候选只来自随包那份城市库。
@@ -346,7 +414,8 @@ class MetadataEditDialog(QDialog):
     def _on_picked(self, label: str) -> None:
         """用户从补全里挑了一个：把它那一层的省州与国家也填上。
 
-        只在空着时填 —— 用户自己写的省州是他的选择；坐标照常由 ``_refresh`` 填。
+        只在空着时填 —— 用户自己写的省州是他的选择（ADR 0039 决策 5：补全是补全，
+        不是覆盖）。**不再顺手反查坐标**：跨层填充只发生在那两个按钮上。
         """
         for place in self._candidates:
             if place_label(place.city, place.region, place.country) != label:
@@ -361,7 +430,6 @@ class MetadataEditDialog(QDialog):
             finally:
                 self._programmatic = False
             self._seen_names = self._names()
-            self._fill_from_names(self._names())
             return
 
     def _on_clear(self) -> None:
@@ -478,15 +546,14 @@ class MetadataEditDialog(QDialog):
         return True
 
     def _fill_in_place(self) -> None:
-        """粘完之后决定要不要重跑回填 —— 与「粘到一半补另一半」是同一个道理。"""
-        coordinates, names = self._coordinates(), self._names()
-        if coordinates != (None, None) and any(names):
-            self._seen_coordinates, self._seen_names = coordinates, names
-        else:
-            if coordinates != (None, None):
-                self._seen_coordinates = (None, None)  # 让下面重跑这一侧的反查
-            if any(names):
-                self._seen_names = ("", "", "")  # 同上，让它重跑正查
+        """粘完之后刷一次候选列表。
+
+        原来这里还会重跑一次跨层回填（「粘到一半补另一半」），那套已经去掉了
+        （ADR 0039）：跨层填充只发生在用户按下的那两个按钮上，而按钮改的就是框本身，
+        粘贴进来的坐标与地名已经是用户要的那一份，不该再被反查覆盖一遍。
+        """
+        self._seen_coordinates = self._coordinates()
+        self._seen_names = self._names()
         self._refresh()
 
     def _on_accept(self) -> None:

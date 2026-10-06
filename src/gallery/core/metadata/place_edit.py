@@ -98,7 +98,17 @@ def plan_place_edit(
     """把「用户填完的那一份」翻译成要写进文件的字段。
 
     :raises MetadataWriteError: 坐标不合法（超出范围、只填了一个、填成了 0,0）。
+
+    **只写用户填的那几层，不再隐式跨层填充**（ADR 0039 决策 4）。原先坐标变了会顺手
+    反查地名、地名变了会顺手正查坐标，于是「对话框显示的那一份」与「真正写下去的
+    那一份」在某些路上不是同一份 —— 界面上那三个 ``if place.region and ...``
+    查不到就不动，而这里的空值是**删掉**。跨层填充现在只发生在对话框那两个按钮上，
+    而按钮改的就是框本身，所以这一层只做翻译。
+
+    ``resolver`` 仍被接受（对话框那两个按钮用的就是同一个），但这里**不用它** ——
+    保留是为了让签名与调用点不必跟着改。
     """
+    del resolver  # 跨层填充搬到了对话框的按钮上，这里不再需要反查（ADR 0039）
     names = edit.names()
     names_changed = names != state.names()
     if edit.clear_coordinates:
@@ -107,23 +117,12 @@ def plan_place_edit(
     assignments: list[Assignment] = []
     final_names = names
     final_coordinates = coordinates or state.coordinates()
-    #: 地名要不要跟着写。**没改过、也没反查出新结论时一个字都不写** —— 重写一遍同样的值在
-    #: 写回那一层会被判成「没变」而跳过，但列进计划里会让人以为程序动过它。
+    #: 地名要不要跟着写。**没改过就一个字都不写** —— 重写一遍同样的值在写回那一层会被
+    #: 判成「没变」而跳过，但列进计划里会让人以为程序动过它。
     names_written = names_changed
 
     if coordinates is not None:
         assignments.extend(_coordinate_assignments(*coordinates))
-        if not names_changed:
-            looked_up, found_names = _lookup_place(coordinates, resolver)
-            if found_names is not None:
-                assignments.extend(looked_up)
-                final_names = found_names
-                names_written = True
-    elif names_changed:
-        found, found_coordinates = _lookup_coordinates(names, resolver)
-        assignments.extend(found)
-        # 正查出来的坐标**优先于**照片里原来那个：用户明确要求「按这个地点改坐标」。
-        final_coordinates = found_coordinates or final_coordinates
 
     if names_written:
         assignments.extend(_place_assignments(*final_names))
