@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import shutil
 import subprocess
@@ -124,6 +125,18 @@ INSTALL_HINT: Final = "安装后即可使用：brew install exiftool"
 #: exiftool 用这几个词表示「这个字段是空的」，与读取侧同一套（``exif._EMPTY_VALUES``）。
 _EMPTY_VALUES: Final = frozenset({"-", "--", "unknown"})
 
+#: **回滚那次写回用的超时**（理由见 :func:`_apply`）。
+#:
+#: 一次 :meth:`ExifToolWriter.write` 最多起两个子进程（先试原地改、失败再退回覆盖），
+#: 加上前后两次 :meth:`read`，:func:`_apply` 最坏要起 **6 个** exiftool，而每个可以卡满
+#: :data:`EXIFTOOL_TIMEOUT_SECONDS` —— 最坏 90 秒。而「回滚没有成功」正是用户最需要尽快
+#: 看到结果的那条路径：他刚按的 ⌘Z 现在处于一个说不清的状态里。
+#:
+#: 回滚是一次**重写**：目标值明确、不需要「先试原地改再退回」那种试探，所以给更短的
+#: 上限。真出了超时，:func:`_apply` 会照实报「没能恢复原值，请核对这几个字段」——
+#: 宁可让人早点去看一眼，也别让他对着不动的界面等一分半。
+ROLLBACK_TIMEOUT_SECONDS: Final = 5.0
+
 
 @dataclass(frozen=True, slots=True)
 class Assignment:
@@ -227,10 +240,22 @@ class ExifToolWriter:
             return {}
         return {key: as_text(value) for key, value in parsed[0].items()}
 
-    def write(self, path: Path, assignments: Sequence[Assignment]) -> None:
+    def write(
+        self,
+        path: Path,
+        assignments: Sequence[Assignment],
+        *,
+        timeout: float | None = None,
+    ) -> None:
         """写回。**先试原地改**（``-overwrite_original_in_place``）：只动对应的那几个字节，像素数据的
         位置也不变。部分容器格式不支持它，那种情况退回普通覆盖 —— 失败后重试是安全的：
         所有字段都会幂等地再写一遍。
+
+        **回滚那次要传一个更短的 ``timeout``** —— 见 :func:`_apply` 里那段：那条路径上
+        用户正等着一个「照片恢复原样了吗」的答复，不能让它先等满两轮
+        :data:`EXIFTOOL_TIMEOUT_SECONDS`。协议（:class:`MetadataWriter`）里**没有**这个
+        参数，所以 :func:`_apply` 用 ``isinstance`` 判断而不是鸭子类型 ——
+        给协议加上它就得改所有假实现，而它们根本不起进程。
         """
         path = Path(path)
         base = [self._executable, "-overwrite_original", *EXIFTOOL_CHARSET_ARGS, "-q", "-q"]
@@ -240,16 +265,19 @@ class ExifToolWriter:
                 [*base, "-overwrite_original_in_place", *fields, str(path)],
                 action="写入",
                 path=path,
+                timeout=timeout,
             )
         except MetadataWriteError:
-            self._run([*base, *fields, str(path)], action="写入", path=path)
+            self._run([*base, *fields, str(path)], action="写入", path=path, timeout=timeout)
 
-    def _run(self, argv: Sequence[str], *, action: str, path: Path) -> str:
+    def _run(
+        self, argv: Sequence[str], *, action: str, path: Path, timeout: float | None = None
+    ) -> str:
         try:
             completed = subprocess.run(  # noqa: S603 - argv 是自己拼的，没有 shell
                 argv,
                 capture_output=True,
-                timeout=self._timeout,
+                timeout=self._timeout if timeout is None else timeout,
                 check=False,
             )
         except subprocess.TimeoutExpired as exc:
@@ -404,6 +432,29 @@ def _nothing_to_write(assignments: Sequence[Assignment], path: Path) -> str:
     )
 
 
+def _write_for_rollback(
+    tool: MetadataWriter, path: Path, assignments: Sequence[Assignment]
+) -> None:
+    """回滚那一次写回，**能用更短超时就用**（理由见 :func:`_apply`）。
+
+    ``MetadataWriter`` 是 :class:`Protocol`，签名里**没有** ``timeout`` ——
+    给协议加上它就得改所有假实现，而它们根本不起进程。所以这里问「这个工具接不接受
+    这个关键字」，而不是 ``isinstance(tool, ExifToolWriter)``：后者在测试里够不到
+    （测试注入的都是假实现），那条分支就成了**永远验不到的死代码**。
+
+    用 ``inspect`` 查签名而不是直接 ``getattr(tool, "write")`` 之后调用 —— 后者遇到一个
+    真的不支持该参数的第三种实现会当场 ``TypeError``，而那时照片已经被写坏过一次了。
+    """
+    try:
+        supports = "timeout" in inspect.signature(tool.write).parameters
+    except (TypeError, ValueError):  # pragma: no cover - C 实现的 callable 没有签名
+        supports = False
+    if supports:
+        tool.write(path, assignments, timeout=ROLLBACK_TIMEOUT_SECONDS)  # type: ignore[call-arg]
+    else:
+        tool.write(path, assignments)
+
+
 def _apply(path: Path, changes: Sequence[FieldChange], tool: MetadataWriter) -> None:
     """把 ``changes`` 的目标值写进去并**回读校验**；对不上就按原值写回去。
 
@@ -413,6 +464,11 @@ def _apply(path: Path, changes: Sequence[FieldChange], tool: MetadataWriter) -> 
     **回滚本身也要回读校验**（红线 4）：「按原值写回去」是一次**请求**，不是保证 —— exiftool
     在空间不够、写到一半被截断这些要处理的失败情形里照样返回 0。不回读就宣布「已恢复原样」，
     用户拿回的就是一张坐标被写坏的照片，而记录里前后值都齐着、看上去一切正常。
+
+    **回滚那次用更短的超时**（:data:`_ROLLBACK_TIMEOUT_SECONDS`）。这一段最坏要起 6 个
+    exiftool（两次 ``write`` 各两个 + 两次 ``read``），每个能卡满
+    :data:`EXIFTOOL_TIMEOUT_SECONDS` —— 最坏一分半，而用户此刻正盯着一个不动的界面，
+    不知道他刚按的 ⌘Z 到底成没成。
     """
     path = Path(path)
     assignments = [Assignment(change.tag, change.after or "") for change in changes]
@@ -423,7 +479,11 @@ def _apply(path: Path, changes: Sequence[FieldChange], tool: MetadataWriter) -> 
         return
     detail = f"回读到的值与目标不符：{mismatched}"
     try:
-        tool.write(path, [Assignment(change.tag, change.before or "") for change in changes])
+        _write_for_rollback(
+            tool,
+            path,
+            [Assignment(change.tag, change.before or "") for change in changes],
+        )
     except MetadataWriteError as exc:
         raise MetadataWriteError(
             f"写入没有生效，而且没能恢复原值：{'、'.join(mismatched)}。"

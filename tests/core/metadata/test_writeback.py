@@ -28,8 +28,10 @@ from gallery.core.metadata.undo import pending_undo_runs  # noqa: E402
 from gallery.core.metadata.writeback import (
     CAPTURE_TIME_TAGS,
     COORDINATE_TAGS,
+    EXIFTOOL_TIMEOUT_SECONDS,
     IPTC_PLACE_TAGS,
     PLACE_TAGS,
+    ROLLBACK_TIMEOUT_SECONDS,
     UNSTORABLE_TAGS,
     WRITABLE_TAGS,
     XMP_PLACE_TAGS,
@@ -718,3 +720,67 @@ def test_the_intent_is_recorded_before_the_file_is_touched(library: Path, photo:
 
     assert seen, "根本没有调过写入"
     assert seen[0] >= 1, "动文件的那一刻，日志里一条记录都没有"
+
+
+class _TimeoutRecordingWriter(FakeWriter):
+    """记下每次 ``write`` 收到的 ``timeout``，其余行为与 :class:`FakeWriter` 一样。
+
+    它**接受** ``timeout``，于是 :func:`_write_for_rollback` 的能力探测会命中 ——
+    那正是这条用例要验的那条路。（原先那个判据是 ``isinstance(tool, ExifToolWriter)``，
+    测试注入的都是假实现，于是**永远验不到**：写出来永远为绿的守护比没有更坏。）
+    """
+
+    def __init__(self, fields: dict[str, str] | None = None) -> None:
+        super().__init__(fields)
+        self.timeouts: list[float | None] = []
+
+    def write(  # type: ignore[override]
+        self,
+        path: Path,
+        assignments: Sequence[Assignment],
+        *,
+        timeout: float | None = None,
+    ) -> None:
+        self.timeouts.append(timeout)
+        super().write(path, assignments)
+
+
+def test_the_rollback_write_gets_a_shorter_timeout_than_the_first_one(
+    library: Path, photo: PhotoRef
+) -> None:
+    """**回滚那次不等满两轮超时** —— 用户此刻正盯着一个不动的界面。
+
+    ``_apply`` 这一段最坏要起 6 个 exiftool（两次 ``write`` 各两个 + 两次 ``read``），
+    每个能卡满 :data:`EXIFTOOL_TIMEOUT_SECONDS`（15 秒）—— 最坏一分半。而「回滚没有
+    成功」正是最需要尽快看到结果的一条路径：他刚按的 ⌘Z 现在处于说不清的状态里。
+    """
+    writer = _TimeoutRecordingWriter({"XMP:City": "波尔多"})
+    writer.silently_ignores = True  # 第一次写没进去，于是走回滚
+
+    with pytest.raises(MetadataWriteError, match="写入没有生效"):
+        write_metadata(library, photo, [Assignment("XMP:City", "杭州")], writer=writer)
+
+    assert writer.timeouts, "回滚那次压根没写"
+    assert writer.timeouts[0] is None, "第一次写该用默认超时"
+    assert writer.timeouts[-1] == ROLLBACK_TIMEOUT_SECONDS, (
+        f"回滚那次用的超时是 {writer.timeouts[-1]}，应当是 {ROLLBACK_TIMEOUT_SECONDS}"
+    )
+    assert ROLLBACK_TIMEOUT_SECONDS < EXIFTOOL_TIMEOUT_SECONDS
+
+
+def test_a_plain_writer_is_not_poked_with_a_timeout_it_does_not_take(
+    library: Path, photo: PhotoRef
+) -> None:
+    """**协议里没有 ``timeout``**，所以假实现绝不能被塞一个它不认的参数。
+
+    :class:`~gallery.core.metadata.writeback.MetadataWriter` 是 ``Protocol``，
+    加上那个参数就得改所有假实现 —— 而它们根本不起进程。所以 ``_apply`` 用
+    ``isinstance`` 判断：这条钉住那条分支走的正是「不传」。
+    """
+    writer = FakeWriter({"XMP:City": "波尔多"})
+    writer.silently_ignores = True
+
+    with pytest.raises(MetadataWriteError, match="写入没有生效"):
+        write_metadata(library, photo, [Assignment("XMP:City", "杭州")], writer=writer)
+
+    assert writer.writes[-1] == ("XMP:City",), "回滚确实发生了（假实现没被 timeout 弄坏）"
