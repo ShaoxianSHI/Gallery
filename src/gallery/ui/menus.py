@@ -98,6 +98,14 @@ class MenuActions:
     #: 与封面那两条一样**只活在右键菜单里**（需要一个对话框才说得清），快捷键照常有效
     #: （``MainWindow`` 把它挂到窗口上）。
     edit_metadata: QAction | None = None
+    #: 「记录为…」那一个子菜单（旅行 / 演出……，ADR 0043）。``None`` = 这一行不出现：
+    #: 事件库不可用（只读卷），或者压根没选中照片。**它内部是三层的**，
+    #: 三层都得在下发样式表之前建出来（理由见 ``ui.window.event_flow`` 的模块文档）。
+    record_as: QMenu | None = None
+    #: 「编辑事件…」——**只在事件分组卡片上出现**（ADR 0043 决策 8）：那一组就是某个事件。
+    edit_event: QAction | None = None
+    #: 「从这次事件移出」——同上，作用对象是卡片背后的那批照片。
+    leave_event: QAction | None = None
 
 
 def build_photo_menu(actions: MenuActions, *, multiple: bool) -> QMenu:
@@ -153,6 +161,8 @@ def build_group_menu(actions: MenuActions) -> QMenu:
     """分组卡片：打开它、把**它代表的那批照片**交出去、复制分组条件（ADR 0020）。
 
     中间那一段与「多选照片」逐字相同；「重命名」「粘贴」不出现，第四段由「复制分组条件」占着。
+    **事件分组卡片**额外多两行（ADR 0043 决策 8）：那一组就是某个事件，于是「改个名」与
+    「把某张踢出去」在卡片上直接做得到，不必退回照片逐张右键。
     """
     menu = ShortcutColumnMenu()
     _add_look_group(menu, actions, multiple=False)
@@ -161,6 +171,10 @@ def build_group_menu(actions: MenuActions) -> QMenu:
     menu.addSeparator()
     _add_write_group(menu, actions, multiple=False, rename=False)
     menu.addSeparator()
+    if actions.edit_event is not None:
+        menu.addAction(actions.edit_event)
+    if actions.leave_event is not None:
+        menu.addAction(actions.leave_event)
     menu.addAction(actions.copy_group)
     return menu
 
@@ -283,13 +297,24 @@ def _add_write_group(
 
 
 def _add_metadata_group(menu: ShortcutColumnMenu, actions: MenuActions, *, multiple: bool) -> None:
-    """第四组「它是什么」：显示元数据信息 · 复制元数据（ADR 0023）。两条都是只读问答，摆在最后。
+    """第四组「它是什么」：记录为… · 显示元数据信息 · 复制元数据（ADR 0023、ADR 0043）。
 
-    **多选时整组不出现，连同它前面那道分隔线一起** —— 两条讲的都是**这一张**照片，本函数自带那道线。
+    后两条都是只读问答。而「记录为…」放在这一组的**最前面**：它同样是在说「这几张照片是什么」，
+    而且它动的是 Gallery 自己的库（一个用户的文件都不碰），所以它不属于第三组「会动文件」。
+
+    **多选时后两条不出现，而这一组的分隔线留着** —— 那道线是「它是什么」这一组的界标，
+    少了它「记录为…」看起来就像第三组的一部分（可它一个字节都不动用户的文件）。
+    「记录为…」多选时照样出现：一次记一批是这件事最自然的用法。
     """
+    if actions.record_as is not None or not multiple:
+        menu.addSeparator()
+    if actions.record_as is not None:
+        # **用 ``addMenu`` 而不是 ``addAction(menuAction())``**：后者不接管那个 QMenu 的所有权，
+        # 它在 ``MenuActions`` 这份临时包里一被回收就析构，留在菜单里的就成了悬空的 menuAction
+        # （点开时报 ``Internal C++ object already deleted``）。相册那两个清单走的也是 addMenu。
+        menu.addMenu(actions.record_as)
     if multiple:
         return
-    menu.addSeparator()
     menu.addAction(actions.metadata)
     menu.addAction(actions.copy_metadata)
 

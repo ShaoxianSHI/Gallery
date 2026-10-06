@@ -538,6 +538,16 @@ class Library:
         """某一类的全部事件，顺序即菜单顺序（新→旧）。"""
         return events_of_kind(self.all_events(), kind_id)
 
+    def photos_in_days(self, first_day: str, last_day: str) -> tuple[PhotoRef, ...]:
+        """这几天里拍的那些照片（容器型事件最常用的那一步：「这一周的都算」，ADR 0043 决策 4）。
+
+        **走索引、整库查** —— 旅行的照片不只在当前这一层，而只在这一层里挑的话用户会以为
+        自己的照片丢了。
+
+        :raises IndexUnavailableError: 索引没落盘（只读卷）。
+        """
+        return tuple(self.facet_index.photos_in_days(first_day, last_day))
+
     def events_for_photos(
         self, photos: Sequence[PhotoRef | Path]
     ) -> dict[Path, tuple[EventRef, ...]]:

@@ -15,6 +15,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, Literal
 
+from gallery.core.events.store import EventRef
 from gallery.core.library.photos import PhotoRef
 
 if TYPE_CHECKING:
@@ -48,6 +49,10 @@ FACET_REGION: Final = "region"
 FACET_CITY: Final = "city"
 FACET_KEYWORD: Final = "keyword"
 
+#: 字段：照片属于哪些事件（ADR 0043）。**取值来自我们自己的库而不是照片**，于是它既不需要
+#: exiftool，也不在 :data:`FILE_FACET_IDS` 里 —— 那个集合的语义是「只看文件本身就能拿到」。
+FACET_EVENT: Final = "event"
+
 FACET_FOLDER: Final = "folder"
 FACET_FORMAT: Final = "format"
 FACET_NAME: Final = "name"
@@ -69,11 +74,17 @@ type SortValue = float | str
 
 @dataclass(frozen=True, slots=True)
 class FacetInput:
-    """取值时能看到的全部东西：照片本身、它的元数据快照、库根目录。"""
+    """取值时能看到的全部东西：照片本身、它的元数据快照、库根目录。
+
+    ``events`` 是这张照片属于哪些事件，**只给 :data:`FACET_EVENT` 那一个字段看**（ADR 0043
+    决策 7）—— 事件不是从照片里读出来的元数据，所以它不进 :class:`PhotoFacets`（那是索引里
+    存的东西，而事件绑定会被索引重建抹掉），只在这一层多带一份。
+    """
 
     ref: PhotoRef
     facets: PhotoFacets
     root: Path
+    events: tuple[EventRef, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -520,6 +531,23 @@ def _facet(
     )
 
 
+def _event_group(item: FacetInput) -> Sequence[tuple[str, str]]:
+    """一张照片属于几个事件就进几个组（与关键词同款的多归属，ADR 0043 决策 7）。
+
+    组键是 ``起始日期#事件 id``：日期在前，:func:`_date_group_order` 那种「把键里的数字取出来
+    拼成一个数」的比较法直接可用，而 id 在后是为了让两个同名同日的旅行不挤成一组。
+    """
+    return tuple((ref.group_key, ref.label) for ref in item.events)
+
+
+def _event_group_order(key: str) -> float:
+    """``"2026-05-16#42"`` 按起始日期排。**没填日期的那一组一律沉底** —— 键以 ``#`` 开头，
+    这里给 0，而 :func:`~gallery.core.library.groups.build_groups` 会把新→旧取负，
+    于是 ``-0.0`` 大于任何负日期，正好排在最后。"""
+    date_part = key.partition("#")[0]
+    return _date_group_order(date_part) if date_part else 0.0
+
+
 _FACETS: Final[tuple[Facet, ...]] = (
     _facet(
         FACET_CAPTURED,
@@ -569,6 +597,15 @@ _FACETS: Final[tuple[Facet, ...]] = (
         group=_lens_group,
         sort=_facet_text("lens"),
         empty_label="镜头未知",
+    ),
+    _facet(
+        FACET_EVENT,
+        "事件",
+        "text",
+        group=_event_group,
+        group_order=_event_group_order,
+        newest_first=True,
+        empty_label="未归入事件",
     ),
     _facet(
         FACET_COUNTRY,
@@ -633,6 +670,10 @@ FILE_FACET_IDS: Final[frozenset[str]] = frozenset(
     {FACET_FOLDER, FACET_FORMAT, FACET_NAME, FACET_SIZE, FACET_MODIFIED}
 )
 
+#: 取值来自**我们自己的数据库**而不是照片的字段（事件，ADR 0043）。既不在文件上也不在 EXIF 里，
+#: 所以 :func:`needs_metadata` 要单独放它一马 —— 那一族的取值是一次 SQL，不是重读一遍 EXIF。
+GALLERY_OWN_FACET_IDS: Final[frozenset[str]] = frozenset({FACET_EVENT})
+
 #: 「分组」子菜单按它生成，顺序即菜单顺序。
 GROUP_FACET_IDS: Final[tuple[str, ...]] = (
     FACET_YEAR,
@@ -644,6 +685,7 @@ GROUP_FACET_IDS: Final[tuple[str, ...]] = (
     FACET_REGION,
     FACET_CITY,
     FACET_KEYWORD,
+    FACET_EVENT,
     FACET_FOLDER,
     FACET_FORMAT,
 )
@@ -685,8 +727,18 @@ def sort_facet(facet_id: str | None) -> Facet | None:
 
 
 def needs_metadata(facets: Sequence[Facet | None]) -> bool:
-    """这些字段里有没有一个必须真去读 EXIF 才能拿到。"""
-    return any(facet is not None and facet.id not in FILE_FACET_IDS for facet in facets)
+    """这些字段里有没有一个必须真去读 EXIF 才能拿到。
+
+    **事件那一族不算**：它不来自照片，而来自我们自己的库。不放它过去的话，用户点一次「按事件
+    分组」会先起一个后台任务把整库 EXIF 重读一遍 + 报一条「正在读取 N 张照片…」——而事件值
+    只是几毫秒的 SQL（ADR 0043 决策 7）。
+    """
+    return any(
+        facet is not None
+        and facet.id not in FILE_FACET_IDS
+        and facet.id not in GALLERY_OWN_FACET_IDS
+        for facet in facets
+    )
 
 
 def with_resolved_place(facets: PhotoFacets, place: ResolvedPlace | None) -> PhotoFacets:
@@ -723,9 +775,11 @@ def mark_place_resolved(facets: PhotoFacets, *, usable: bool = True) -> PhotoFac
     return facets if facets.place_checked == usable else replace(facets, place_checked=usable)
 
 
-def input_for(ref: PhotoRef, facets: PhotoFacets, root: Path) -> FacetInput:
+def input_for(
+    ref: PhotoRef, facets: PhotoFacets, root: Path, events: tuple[EventRef, ...] = ()
+) -> FacetInput:
     """组装取值上下文。"""
-    return FacetInput(ref=ref, facets=facets, root=Path(root))
+    return FacetInput(ref=ref, facets=facets, root=Path(root), events=events)
 
 
 __all__ = [

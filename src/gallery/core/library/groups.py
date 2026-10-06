@@ -10,6 +10,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from gallery.core.events.store import EventRef
 from gallery.core.library.photos import GroupRef, PhotoRef
 from gallery.core.metadata.facets import Facet, PhotoFacets, SortValue, input_for
 
@@ -71,15 +72,25 @@ def build_groups(
     root: Path,
     order: SortOrder | None = None,
     values: Mapping[Path, PhotoFacets] | None = None,
+    event_values: Mapping[Path, Sequence[EventRef]] | None = None,
 ) -> list[GroupRef]:
-    """按 ``facet`` 把照片分组，组内按 ``order`` 排好序。"""
+    """按 ``facet`` 把照片分组，组内按 ``order`` 排好序。
+
+    ``event_values`` 是「照片属于哪些事件」那一份，**只给 :data:`FACET_EVENT` 看**（ADR 0043
+    决策 7）。分组的算法一个字没为它改 —— 多归属的那层循环本来就是为关键词写的。
+    """
     if facet.group is None:
         raise ValueError(f"字段 {facet.id} 不能用来分组")
     facets = values if values is not None else {}
+    events = event_values if event_values is not None else {}
     buckets: dict[str, list[PhotoRef]] = {}
     labels: dict[str, str] = {}
     for ref in photos:
-        members = facet.group(input_for(ref, facets.get(ref.path, EMPTY_FACETS), root))
+        members = facet.group(
+            input_for(
+                ref, facets.get(ref.path, EMPTY_FACETS), root, tuple(events.get(ref.path, ()))
+            )
+        )
         if not members:
             key, label = "", facet.empty_label
             buckets.setdefault(key, []).append(ref)

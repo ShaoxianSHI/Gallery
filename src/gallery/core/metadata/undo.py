@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from gallery.core.events.store import EventStore
+from gallery.core.events.store import Event, EventStore
 from gallery.core.library.photos import GridEntry
 from gallery.core.metadata.failures import Failure
 from gallery.core.metadata.journal import (
@@ -85,6 +85,9 @@ class UndoResult:
     failures: tuple[TrashFailure | TransferFailure, ...] = ()
     #: 是否记下了这次撤销。为 ``False`` 时界面应说明再按一次 ⌘Z 撤不掉更多了。
     journaled: bool = True
+    #: 撤销事件改动之后**那个事件**（ADR 0043）。事件不是网格里的条目，所以它不在
+    #: :attr:`entries` 里 —— 而横幅要说出它叫什么，于是单独带一个。撤别的动作时恒为 ``None``。
+    event: Event | None = None
 
 
 def pending_undo_runs(root: Path) -> list[list[WriteRecord]]:
@@ -214,7 +217,9 @@ def _undo_event(record: WriteRecord, events: EventStore | None) -> UndoResult:
             failures=(Failure(name="事件", message=outcome.message),),
             journaled=False,
         )
-    return UndoResult(action=record.action, entries=(), journaled=outcome.journaled)
+    return UndoResult(
+        action=record.action, entries=(), journaled=outcome.journaled, event=outcome.event
+    )
 
 
 def _undo_rename(root: Path, record: WriteRecord, events: EventStore | None) -> UndoResult:

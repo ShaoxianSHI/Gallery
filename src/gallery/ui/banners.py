@@ -8,11 +8,17 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from gallery.core.events.store import EventWriteOutcome
 from gallery.core.external.launch import OpenOutcome
 from gallery.core.library.facade import MetadataWriteOutcome
 from gallery.core.library.photos import FolderRef, GridEntry
 from gallery.core.metadata.failures import Failure
-from gallery.core.metadata.journal import ACTION_METADATA, ACTION_MOVE, ACTION_RENAME
+from gallery.core.metadata.journal import (
+    ACTION_EVENT_DELETE,
+    ACTION_METADATA,
+    ACTION_MOVE,
+    ACTION_RENAME,
+)
 from gallery.core.metadata.paste import PastedFile, PasteResult
 from gallery.core.metadata.paste import Skipped as PasteSkipped
 from gallery.core.metadata.rename import RenameResult
@@ -34,6 +40,63 @@ def rename_banner(result: RenameResult) -> str:
 
 def undo_note(journaled: bool) -> str:
     return "" if journaled else "，但没能记下操作日志"
+
+
+# ---- 事件（ADR 0043）----------------------------------------------------------
+
+
+def event_created_banner(outcome: EventWriteOutcome) -> str:
+    """记完一次之后的那一句。**新建不在撤销栈里**（撤销它就是删），所以这一句不承诺 ⌘Z。"""
+    return f"已记为「{outcome.event.display_name}」。"
+
+
+def event_updated_banner(outcome: EventWriteOutcome) -> str:
+    """改了事件之后。**一句里说清成没成与能不能撤** —— 与元数据那一族同一套规矩。"""
+    if not outcome.changed:
+        return f"「{outcome.event.display_name}」没有改动。"
+    if not outcome.journaled:
+        return f"已更新「{outcome.event.display_name}」。⌘Z 撤销不了：没能记下操作日志。"
+    return f"已更新「{outcome.event.display_name}」。⌘Z 可以撤销。"
+
+
+def event_deleted_banner(outcome: EventWriteOutcome) -> str:
+    """删掉事件之后。**连着删掉的照片关联要一起说**：那是用户看不见的损失，不说他不会知道。
+
+    撤销**能把绑定放回来**，所以这一句承诺 ⌘Z。
+    """
+    what = f"「{outcome.event.display_name}」"
+    photos = f"，连带从 {len(outcome.unbound)} 张照片上移掉了它的记录" if outcome.unbound else ""
+    note = "" if outcome.journaled else "。⌘Z 撤销不了：没能记下操作日志"
+    return f"已删除{what}{photos}{note}。"
+
+
+def photos_bound_banner(count: int, event_name: str, *, by_range: bool = False) -> str:
+    """把照片记进一个事件之后。**新记进去几张**说清 —— 已经记着的那些不是这次的成果。
+
+    ``by_range`` 为真时提一句「按日期」：那是几百张的批量操作，用户该知道它为什么这么多。
+    """
+    if count <= 0:
+        return f"这些照片已经在「{event_name}」里了，没有改动。"
+    how = "按日期范围把" if by_range else "已把"
+    return f"{how} {count} 张照片记进「{event_name}」。"
+
+
+def photos_unbound_banner(count: int, event_name: str) -> str:
+    """把照片从一个事件里拿出来之后。"""
+    if count <= 0:
+        return f"这些照片本来就不在「{event_name}」里，没有改动。"
+    return f"已把 {count} 张照片从「{event_name}」里拿出来。"
+
+
+def event_undo_banner(result: UndoResult, kind_label: str) -> str:
+    """⌘Z 撤掉一次事件改动之后。**两种改动说法不一样** —— 撤的是删除就说「回来了」。"""
+    what = (
+        f"{kind_label}「{result.event.display_name}」" if result.event is not None else kind_label
+    )
+    verb = "已恢复" if result.action == ACTION_EVENT_DELETE else "已把"
+    if not result.journaled:
+        return f"{verb}{what}改回去，但没能记下操作日志，下一次 ⌘Z 不一定接得上。"
+    return f"{verb}{what}改回去。"
 
 
 def paste_banner(result: PasteResult, target_name: str) -> str:
@@ -255,10 +318,16 @@ __all__ = [
     "album_cover_banner",
     "album_cover_cleared_banner",
     "album_name",
+    "event_created_banner",
+    "event_deleted_banner",
+    "event_undo_banner",
+    "event_updated_banner",
     "external_app_opened",
     "first_reason",
     "metadata_edit_banner",
     "paste_banner",
+    "photos_bound_banner",
+    "photos_unbound_banner",
     "rename_banner",
     "transfer_banner",
     "trash_banner",

@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from gallery.core import paths
+from gallery.core.events.store import EventRef
 from gallery.core.external import launch
 from gallery.core.library.config import (
     BROWSE_MODE_ALBUMS,
@@ -101,6 +102,7 @@ from gallery.ui.watch import WatchBridge, WatchStarter, start_watch
 from gallery.ui.window.banner_flow import BannerFlowMixin
 from gallery.ui.window.calendar_flow import CalendarFlowMixin
 from gallery.ui.window.context_menu_flow import ContextMenuFlowMixin
+from gallery.ui.window.event_flow import EventFlowMixin
 from gallery.ui.window.level_stack import (
     AlbumFrame,
     CalendarFrame,
@@ -146,11 +148,13 @@ class MainWindow(
     BannerFlowMixin,
     CalendarFlowMixin,
     WriteOpsMixin,
+    EventFlowMixin,
     QMainWindow,
 ):
     # 这些 mixin 就是这个窗口的目录：每一条流程各住一间（各模块的文档说清自己管哪一块），
     # 这一份文件留装配、Qt 覆写与跨流程的那几条线。``WriteOpsMixin`` 带进来的是**会动用户
     # 文件的那些入口**（红线 1），它必须留在 ``ui/write_ops.py`` —— 守护测试按文件名找它。
+    # ``EventFlowMixin`` 反过来：它一个用户的文件都不碰（动的是 Gallery 自己的事件库）。
 
     """应用主窗口。"""
 
@@ -247,12 +251,17 @@ class MainWindow(
         #: 上面那一格摆出来了吗。一层只摆一次，免得跟用户后来的点选抢当前项。
         self._focus_restored = False
         self._facet_values: dict[Path, PhotoFacets] = {}
+        #: 这一层的照片各属于哪些事件（ADR 0043）。**只给「按事件分组」看**，而它必须跟着
+        #: facet 读取那个后台任务一起回来 —— 分组是在主线程同步算的，不能在那里现发一次随层
+        #: 大小线性增长的查询（那一层可能五千张）。
+        self._event_values: dict[Path, tuple[EventRef, ...]] = {}
         #: **上一次重排的输入** —— 用来在排序**之前**判「这次会不会变」（见
         #: :meth:`ordering.OrderingMixin._reorder_level`），少了它监听器每报一次自己写的回声
         #: 就要白付一次整层排序。``_reorder_values`` 存的是**对象本身**（不是 ``id()``），
         #: 这样它不会被回收、地址不会被复用，判 ``is`` 才靠得住。
         self._reorder_fingerprint: tuple[object, ...] | None = None
         self._reorder_values: dict[Path, PhotoFacets] | None = None
+        self._reorder_events: dict[Path, tuple[EventRef, ...]] | None = None
         self._reorder_photos: tuple[PhotoRef, ...] = ()
         self._reorder_albums: tuple[FolderRef, ...] = ()
         self._facet_job: int | None = None
@@ -292,6 +301,9 @@ class MainWindow(
         self._pending_size_step = 0
         self._build_ui()
         self._build_actions()
+        # 事件分组卡片上那两行的动作**开窗时就建**（不懒建）：它们要挂到窗口上才能有快捷键，
+        # 而「此刻有没有一个认得的事件卡片」这个判据由 `_update_event_actions` 管。
+        self._ensure_event_actions()
         self._restore_session()
         self._sync_order_actions()
         self._metadata_action.setChecked(self._metadata_visible)
@@ -704,6 +716,7 @@ class MainWindow(
 
     def _update_action_states(self) -> None:
         self._update_navigation_actions()
+        self._update_event_actions()
         in_detail = self._in_detail_page()
         in_grid = self._stack.currentWidget() is self._grid_page
         # 改名的过程中别启用会动文件的命令 —— 那时键盘归输入框，⌘⌫ 不该把正在编辑的那张删掉。

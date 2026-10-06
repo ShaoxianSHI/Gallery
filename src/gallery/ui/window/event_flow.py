@@ -1,0 +1,394 @@
+"""把照片「记录为」某个事件 —— 菜单、面板、写库、横幅（ADR 0043）。
+
+**这一层一个用户的文件都不碰**，所以它不住 ``write_ops``（那一个只管会动用户文件的入口，
+红线 1 的守护按文件名找它）。它动的是 Gallery 自己的库。
+
+菜单是三级的：「记录为 → 旅行 → 京都五日」。而**三层 QMenu 必须先全建出来**再填内容 ——
+``menu_style.apply_style`` 是在菜单建好那一刻一次性递归给所有子菜单下发样式表的，建完再补第三层
+的话，那一层会是一张系统默认的白底菜单（与 ``menus.build_lazy_album_picker`` 同一个坑）。清单
+的填充一律挂 ``aboutToShow``，与相册清单那一支同一写法。
+"""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Callable, Sequence
+from functools import partial
+from pathlib import Path
+
+from PySide6.QtGui import QAction
+from PySide6.QtWidgets import QDialog, QMenu, QMessageBox
+
+from gallery.core.errors import EventsUnavailableError, GalleryError
+from gallery.core.events.kinds import EVENT_KINDS, EventKind, kind_by_id
+from gallery.core.events.store import Event
+from gallery.core.library.photos import GridEntry, GroupRef
+from gallery.core.metadata.facets import FACET_EVENT
+from gallery.ui import banners
+from gallery.ui.panels.event_edit import EventEdit, EventEditDialog
+
+logger = logging.getLogger(__name__)
+
+#: 没选中照片时那两条提示。两句都要说清「先选照片」—— 用户多半是先选中再去右键的，
+#: 而这一行压根不出现时他连问都问不到。
+NOTHING_TO_BIND = "先选中几张照片，再记为某次事件。"
+NOTHING_TO_UNBIND = "先选中要从这次事件移出来的照片。"
+
+#: 点了菜单里的某一项要告诉窗口的事：**建一个新的**，还是**记到某一个已有名下**。
+#: 「新建」那一项的 ``data`` 是 ``None``，于是两种情形不需要两个回调。
+Submitter = Callable[[str, QAction], None]
+
+
+class EventFlowMixin:
+    """:class:`~gallery.ui.main_window.MainWindow` 上与事件有关的那几条。"""
+
+    def _update_event_actions(self) -> None:
+        """事件分组卡片那两行的灰度：**只有当光标落在认得的事件卡片上才可点**。
+
+        每次弹菜单、每次刷新可用性都会被问到，而它只是「当前项背后有没有一个事件 id」这一个
+        是非问题 —— 不必去查库。
+        """
+        if getattr(self, "_edit_event_action", None) is None:
+            return
+        usable = self._group_card_event_id() is not None
+        self._edit_event_action.setEnabled(usable)
+        self._leave_event_action.setEnabled(usable)
+
+    def _ensure_event_actions(self) -> None:
+        """建那两个**常驻窗口**的动作（事件分组卡片上的「编辑事件…」与「从这次事件移出」）。
+
+        它们常驻而不是每次现建：要挂到窗口上（否则快捷键不注册），也要能被
+        ``_update_action_states`` 按「此刻有没有一个认得的事件」管灰度（与菜单里其余动作同一套）。
+        """
+        if getattr(self, "_edit_event_action", None) is not None:
+            return
+        self._edit_event_action = QAction("编辑事件…", self)
+        self._edit_event_action.triggered.connect(self._edit_event_of_group_card)
+        self.addAction(self._edit_event_action)
+        self._leave_event_action = QAction("从这次事件移出", self)
+        self._leave_event_action.triggered.connect(self._leave_group_card)
+        self.addAction(self._leave_event_action)
+
+    def _group_card_event_id(self) -> int | None:
+        """此刻光标所在那张组卡片背后的事件 id。"""
+        row = self._grid.current_row()
+        return _event_id_of(self._model.entry_at(row))
+
+    def _edit_event_of_group_card(self) -> None:
+        event_id = self._group_card_event_id()
+        if event_id is not None:
+            self.edit_event(event_id)
+
+    def _leave_group_card(self) -> None:
+        """把卡片背后的**那批照片**从这个事件里拿出来（不是一个都不动，也不是整个事件删掉）。"""
+        library = self._library
+        event_id = self._group_card_event_id()
+        if library is None or event_id is None:
+            return
+        event = library.event(event_id)
+        if event is None:
+            self._show_banner("这个事件已经不在了。")
+            return
+        photos = [entry.path for entry in self._model.group_at(self._grid.current_row()).photos]  # type: ignore[union-attr]
+        if not photos:
+            return
+        try:
+            count = library.unbind_photos(photos, event.id)
+        except EventsUnavailableError as exc:
+            self._show_banner(exc.message)
+            return
+        self._after_events_changed()
+        self._show_banner(banners.photos_unbound_banner(count, event.display_name))
+
+    # ---- 菜单 --------------------------------------------------------------
+
+    def record_as_candidate(self) -> QMenu | None:
+        """「记录为」这一行摆不摆：**要选中照片，而且事件库这次用得上**。
+
+        只读卷上事件库建不出来（ADR 0043 决策 1），那时这一行整个不出现 —— 而不是摆出来按下去
+        才报错，用户并没有第三个有意义的选择。
+        """
+        library = self._library
+        if library is None or not library.events_available or not self._selected_paths():
+            return None
+        return self.record_as_menu()
+
+    def record_as_menu(self) -> QMenu:
+        """「记录为」那一个子菜单。**三层先全建出来**，内容等展开时再填。"""
+        menu = QMenu("记录为")
+        menu.setToolTipsVisible(True)
+        for kind in EVENT_KINDS:
+            menu.addMenu(self._event_picker(kind))
+        leaving = self._leaving_events()
+        self._event_leave_menu = _lazy_menu(menu, "从这次事件移出", lambda: leaving)
+        self._event_leave_menu.triggered.connect(self._on_event_left)
+        # **立刻**知道自己该不该摆 —— 摆一个永远点不开的空框只会让人以为坏了。
+        self._event_leave_menu.setDisabled(not leaving)
+        return menu
+
+    def _event_picker(self, kind: EventKind) -> QMenu:
+        """一类事件的那一层：「新建」永远在最上面，下面一条分隔线，再列已有的那些。
+
+        **连的是 ``QMenu.triggered`` 而不是每个 ``QAction.trigged``**：前者发的是**那个动作**
+        （要从它身上取 ``data()``），后者发的是一个 ``bool``。按类型连一次而不是按动作连，
+        清单每次重填也不用重连。
+        """
+
+        def fill() -> None:
+            submenu.clear()
+            create = submenu.addAction(f"新建{kind.label}…")
+            create.setData(None)
+            library = self._library
+            if library is None:
+                return
+            existing = library.events_by_kind(kind.id)
+            if not existing:
+                return
+            submenu.addSeparator()
+            for event in existing:
+                submenu.addAction(event.display_name).setData(event.id)
+
+        submenu = QMenu(kind.label)
+        submenu.setToolTipsVisible(True)
+        submenu.aboutToShow.connect(fill)
+        submenu.triggered.connect(partial(self._on_event_chosen, kind.id))
+        return submenu
+
+    def _leaving_events(self) -> list[tuple[str, int]]:
+        """当前选中的照片属于哪些事件（「从这次事件移出」那一层列的就是它）。
+
+        **按事件平铺，不再按类型分组** —— 要离开哪一次旅行，用户自己知道是哪一次。
+        """
+        library = self._library
+        if library is None:
+            return []
+        paths = self._selected_paths()
+        if not paths:
+            return []
+        found = library.events_for_photos(paths)
+        seen: dict[int, str] = {}
+        for refs in found.values():
+            for ref in refs:
+                seen.setdefault(ref.id, ref.title)
+        return [(title, event_id) for event_id, title in sorted(seen.items(), reverse=True)]
+
+    # ---- 动作 --------------------------------------------------------------
+
+    def _on_event_chosen(self, kind_id: str, action: QAction) -> None:
+        """点了哪一项。``QMenu.triggered`` 带来的就是那个动作；``data`` 是 ``None`` 即「新建」。"""
+        data = action.data()
+        if data is None:
+            self.open_new_event(kind_id)
+            return
+        self.record_selected_as(kind_id, int(data))
+
+    def _on_event_left(self, action: QAction) -> None:
+        """「从这次事件移出 → 京都五日」。"""
+        library = self._library
+        if library is None:
+            return
+        event = library.event(int(action.data()))
+        photos = self._selected_paths()
+        if event is None:
+            self._show_banner("这个事件已经不在了。")
+            return
+        if not photos:
+            self._show_banner(NOTHING_TO_UNBIND)
+            return
+        try:
+            count = library.unbind_photos(photos, event.id)
+        except EventsUnavailableError as exc:
+            self._show_banner(exc.message)
+            return
+        self._after_events_changed()
+        self._show_banner(banners.photos_unbound_banner(count, event.display_name))
+
+    def open_new_event(self, kind_id: str) -> None:
+        """摆出面板，让用户填一个新事件，填完把当前选中的照片记进去。"""
+        kind = kind_by_id(kind_id)
+        if kind is None:  # pragma: no cover - 菜单里出现的类型都是认得的
+            return
+        self._apply_event_edit(kind, None)
+
+    def edit_event(self, event_id: int) -> None:
+        """改一个已有事件（事件分组卡片上的「编辑事件…」走这里）。"""
+        library = self._library
+        if library is None:
+            return
+        event = library.event(event_id)
+        if event is None:
+            self._show_banner("这个事件已经不在了。")
+            return
+        kind = kind_by_id(event.kind)
+        if kind is None:  # pragma: no cover - 认不出的类型压根不会进缓存
+            return
+        self._apply_event_edit(kind, event)
+
+    def delete_event(self, event_id: int) -> None:
+        """删掉一个事件。**要确认框**：废纸篓那支不确认是因为「废纸篓本身就是那层保险，⌘Z 再是
+        一层」，而事件两样都没有（ADR 0043 决策 5）。
+        """
+        library = self._library
+        if library is None:
+            return
+        event = library.event(event_id)
+        if event is None:
+            self._show_banner("这个事件已经不在了。")
+            return
+        photos = len(library.events.photos_of_event(event_id))
+        extra = f"，连同 {photos} 张照片上的记录" if photos else ""
+        answer = QMessageBox.question(
+            self,
+            "Gallery",
+            f"删除「{event.display_name}」{extra}？\n\n⌘Z 可以把它连同那些记录一起恢复回来。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            outcome = library.delete_event(event_id)
+        except GalleryError as exc:
+            logger.info("删除事件失败：%s", exc.detail or exc.message)
+            self._show_banner(exc.message)
+            return
+        self._after_events_changed()
+        self._show_banner(banners.event_deleted_banner(outcome))
+        self._refresh_undo_label()
+
+    def record_selected_as(self, kind_id: str, event_id: int) -> None:
+        """把当前选中的照片记进这个事件。"""
+        library = self._library
+        if library is None:
+            return
+        event = library.event(event_id)
+        photos = self._selected_paths()
+        if event is None:
+            self._show_banner("这个事件已经不在了。")
+            return
+        if not photos:
+            self._show_banner(NOTHING_TO_BIND)
+            return
+        try:
+            count = library.bind_photos(photos, event_id)
+        except EventsUnavailableError as exc:
+            self._show_banner(exc.message)
+            return
+        self._after_events_changed()
+        self._show_banner(banners.photos_bound_banner(count, event.display_name))
+
+    # ---- 面板 --------------------------------------------------------------
+
+    def _apply_event_edit(self, kind: EventKind, event: Event | None) -> None:
+        """摆面板 → 拿到用户填的那一份 → 写库。**一次事件编辑只写一次**（与元数据编辑器同一条）。"""
+        library = self._library
+        if library is None:
+            return
+        photos = self._selected_paths()
+        dialog = EventEditDialog(self, kind, event=event, selected=len(photos))
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        try:
+            if event is None:
+                outcome = library.create_event(kind.id, dialog.edit().draft)
+                self._bind_the_new_one(dialog.edit(), outcome.event, photos)
+                self._show_banner(banners.event_created_banner(outcome))
+            else:
+                outcome = library.update_event(event.id, dialog.edit().draft)
+                self._show_banner(banners.event_updated_banner(outcome))
+        except GalleryError as exc:
+            logger.info("写事件失败：%s", exc.detail or exc.message)
+            self._show_banner(exc.message)
+            return
+        self._after_events_changed()
+        self._refresh_undo_label()
+
+    def _bind_the_new_one(self, edit: EventEdit, event: Event, selected: Sequence[Path]) -> None:
+        """新建之后把照片记进去：选中的那些，加上（勾着的）按日期范围挑的那些。
+
+        **面板不碰任何一张照片**，所以这一步在这里。日期范围那一条查的是**整库** —— 旅行的照片
+        不只在当前这一层，只在这一层里挑的话用户会以为自己的照片丢了（ADR 0043 决策 4）。
+        """
+        library = self._library
+        if library is None or not edit.include_range:
+            photos = list(selected)
+        else:
+            already = set(selected)
+            photos = [
+                *selected,
+                *(
+                    path
+                    for path in self._photos_in_range(
+                        edit.first_day, edit.last_day or edit.first_day
+                    )
+                    if path not in already
+                ),
+            ]
+        if photos:
+            library.bind_photos(photos, event.id)
+
+    def _photos_in_range(self, first_day: str, last_day: str) -> list[Path]:
+        """这几天里拍的那些照片。**查不成就说清是哪一件**，不静默什么都不做。"""
+        library = self._library
+        if library is None:
+            return []
+        try:
+            return [ref.path for ref in library.photos_in_days(first_day, last_day)]
+        except GalleryError as exc:
+            logger.info("按日期范围挑照片失败：%s", exc.detail or exc.message)
+            self._show_banner(exc.message)
+            return []
+
+    # ---- 刷新 --------------------------------------------------------------
+
+    def _after_events_changed(self) -> None:
+        """事件变了之后要跟着动的那几样。
+
+        **按事件分组时要重新取一次那份映射**，然后再重排。原因在重排那道闸：它判的是
+        「对象换了没有」，而绑定变了之后手上那一份**仍是旧的那个对象** —— 它不会因为库里的行
+        变了就变。于是直接 ``_order_now()`` 会被闸挡掉，用户看到的是「记完什么都没发生」
+        （ADR 0043 决策 7）。
+
+        顺带一件不显然的：**此刻模型里摆的是组卡片而不是照片**，而重排是从模型里取照片的 ——
+        不喂一份进去就算出「一个组都没有」（症状是整屏组卡片瞬间消失）。上一次分组时的那批照片
+        还留着（``_reorder_photos``），拿来当输入正是它当初的用途。
+        """
+        if not self._groups_by_event():
+            return
+        if not self._reorder_photos:
+            self._reload_level()
+            return
+        self._staged = list(self._reorder_photos)
+        self._start_facet_read()
+
+
+def _event_id_of(entry: GridEntry | None) -> int | None:
+    """这一格背后的事件 id —— ``None`` 表示它不是一张事件分组卡片。
+
+    组键是 ``起始日期#事件 id``（见 ``core.metadata.facets._event_group``），所以 id 从 ``#``
+    后面取。**认不出就返回 ``None``**：别的分组卡片（年份、相机……）于是照旧只看到
+    「复制分组条件」那一行。
+    """
+    if not isinstance(entry, GroupRef) or entry.facet != FACET_EVENT:
+        return None
+    _, separator, tail = entry.key.rpartition("#")
+    return int(tail) if separator and tail.isdigit() else None
+
+
+def _lazy_menu(parent: QMenu, title: str, supplier: Callable[[], list[tuple[str, int]]]) -> QMenu:
+    """一个**先建出来、内容展开时再填**的子菜单（与相册清单那一支同一写法）。"""
+    submenu = QMenu(title)
+    submenu.setToolTipsVisible(True)
+    submenu.aboutToShow.connect(partial(_fill_lazy, submenu, supplier))
+    parent.addMenu(submenu)
+    return submenu
+
+
+def _fill_lazy(submenu: QMenu, supplier: Callable[[], list[tuple[str, int]]]) -> None:
+    submenu.clear()
+    for label, value in supplier():
+        action = submenu.addAction(label)
+        action.setData(value)
+
+
+__all__ = ["EventFlowMixin"]

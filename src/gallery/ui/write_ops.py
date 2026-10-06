@@ -22,7 +22,12 @@ from gallery.core.library.config import BROWSE_MODE_ALBUMS, BROWSE_MODE_FLAT
 from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
 from gallery.core.metadata.capture_time import CaptureTime
 from gallery.core.metadata.exif import MetadataReport, read_metadata
-from gallery.core.metadata.journal import ACTION_METADATA, ACTION_RENAME
+from gallery.core.metadata.journal import (
+    ACTION_EVENT,
+    ACTION_EVENT_DELETE,
+    ACTION_METADATA,
+    ACTION_RENAME,
+)
 from gallery.core.metadata.metadata_edit import MetadataEdit, MetadataState
 from gallery.core.metadata.paste import PasteResult
 from gallery.core.metadata.place_edit import PlaceState
@@ -729,6 +734,16 @@ class WriteOpsMixin:
         # **这一次撤销之后，「跳回刚删掉的那张」就不作数了**：那一摞栈已经矮了一格，无论撤的
         # 是哪一种（下面三支）都只对紧接着的那一次有效。
         trashed_in_detail, self._detail_trashed = self._detail_trashed, None
+        if result.action in (ACTION_EVENT, ACTION_EVENT_DELETE):
+            # 撤销一次事件改动（ADR 0043）：**网格里没有它的条目**，所以这里不碰模型，只把
+            # 按事件分组的那些卡片重算一遍 —— 事件回来了/改回去了，组卡片就该跟着变。
+            self._after_events_changed()
+            self._show_banner(
+                banners.event_undo_banner(result, "事件"),
+                auto_hide=result.journaled and not result.failures,
+            )
+            self._refresh_undo_label()
+            return
         if result.action == ACTION_METADATA:
             # 撤销位置编辑：照片回到原样，但**大小与修改时间又变了一次**（撤销本身也是一次
             # 写回），所以网格里那一行、内存缓存、分组排序全都要跟上 —— 与正向那次走的是同一

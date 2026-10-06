@@ -364,9 +364,42 @@ class FacetIndex:
                 raise IndexUnavailableError("筛选没能完成，请再试一次。", detail=str(exc)) from exc
         return {row[0] for row in rows if isinstance(row[0], str)}
 
+    def photos_in_days(self, first_day: str, last_day: str) -> list[PhotoRef]:
+        """这几天里拍的那些照片（按**照片里记的那个日子**，ADR 0043）。
+
+        **比 ``captured`` 那个 epoch 上做区间更稳**：时区不换算，所以 epoch 反推出来的墙上时间
+        与照片里写的日子未必是同一件事（ADR 0032 / 0033 记着这个坑）。于是这里用 year / month /
+        day 三列拼出 ``YYYY-MM-DD`` 再比字符串 —— 没有索引可用（``printf`` 表达式走不了索引），
+        但那是对索引的一次扫描，几万行是毫秒级。
+
+        没有拍摄时间的照片（时间未知）``printf`` 出来是全零，落在区间之外，与「没记这一项」
+        是一回事。
+
+        :raises IndexUnavailableError: 索引没落盘（只读卷）。
+        """
+        if self._connection is None:
+            raise IndexUnavailableError(
+                "这个库没法建立索引（多半是照片所在的磁盘不允许写入缓存），"
+                "所以没法按日期范围挑照片。"
+            )
+        sql = (
+            "SELECT p.path, p.size, p.mtime_ns FROM photos p"
+            " JOIN facets f ON f.path = p.path"
+            " WHERE printf('%04d-%02d-%02d', f.year, f.month, f.day) BETWEEN ? AND ?"
+            " ORDER BY p.path"
+        )
+        with self._lock:
+            try:
+                rows = self._connection.execute(sql, (first_day, last_day)).fetchall()
+            except sqlite3.Error as exc:
+                logger.info("按日期范围挑照片失败：%s", exc)
+                raise IndexUnavailableError(
+                    "按日期范围挑照片没能完成，请再试一次。", detail=str(exc)
+                ) from exc
+        return rows_to_refs(rows)
+
     def prune(self, live: Iterable[Path]) -> int:
         """删掉不在这一批里的行，返回删掉了几行。
-
         照片被移走 / 改名之后那一行不会自己消失；索引是缓存，删不干净也不影响浏览，所以不抛异常。
         **两张表一起清**：少清一张，检索会拿那些指向已删文件的行当命中（``prune`` 只在重建时用）。
         目前唯一的调用者是它自己的测试 —— 接口留着，「清掉已不存在照片那一行」是索引该有的能力。

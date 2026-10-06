@@ -145,9 +145,7 @@ def rename_entry(
     )
 
 
-def _follow_rename(
-    events: EventStore | None, source: Path, target: Path, *, is_dir: bool
-) -> None:
+def _follow_rename(events: EventStore | None, source: Path, target: Path, *, is_dir: bool) -> None:
     """把事件绑定从旧路径搬到新路径上（ADR 0043 决策 8）。
 
     **搬不动就当没有**：绑定是附带信息，而改名已经成了 —— 报错只会让用户以为照片没改成功。

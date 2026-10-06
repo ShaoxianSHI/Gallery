@@ -9,21 +9,26 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
 from functools import partial
+from pathlib import Path
 from typing import Final
 
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMenu
 
+from gallery.core.events.store import EventRef
 from gallery.core.library.config import BROWSE_MODE_ALBUMS, BROWSE_MODE_CALENDAR
 from gallery.core.library.facade import Library
 from gallery.core.library.groups import SortOrder, build_groups, sort_photos
 from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
 from gallery.core.metadata.facets import (
+    FACET_EVENT,
     GROUP_FACETS,
     SORT_FACETS,
     Facet,
+    PhotoFacets,
     group_facet,
     needs_metadata,
     sort_facet,
@@ -37,6 +42,26 @@ from gallery.ui.window.notice import NoticeSlot
 #: 「正在读取 N 张照片的元数据，用于…」—— **只在真的缺东西时才报**（见 ``_start_facet_read``）。
 #: 放在模板里是因为它现在从工作线程里发出去，而那一侧拿不到 ``self``。
 _FACET_PROGRESS: Final = "正在读取 {} 张照片的元数据，用于{}…"
+
+
+@dataclass(frozen=True, slots=True)
+class _LevelFacets:
+    """后台那一次读取的结果。
+
+    **两样一起回来**而不是分两条任务：它们要的是同一个「这一层的照片」，而分组是在主线程同步算的，
+    所以两样都得在那一次后台里取好（ADR 0043 决策 7）。``events`` 只在按事件分组时非空。
+    """
+
+    values: dict[Path, PhotoFacets]
+    events: dict[Path, tuple[EventRef, ...]] = field(default_factory=dict)
+
+
+def _events_of(library: Library, refs: Sequence[PhotoRef]) -> dict[Path, tuple[EventRef, ...]]:
+    """这些照片各属于哪些事件。**事件库不可用时是空的一份**，不是报错 —— 那一行菜单压根
+    不该摆出来（ADR 0043 决策 1）。"""
+    if not library.events_available:
+        return {}
+    return library.events_for_photos(refs)
 
 
 class OrderingMixin:
@@ -187,9 +212,15 @@ class OrderingMixin:
         筛选那一半是 ADR 0040 决策 3：``#相机 Canon`` 要的是 ``facets.camera``，而 facet 表
         只有读过 EXIF 的照片才有行。不把这一半算进来，筛选就等于拿一张空表去查，用户看到的
         是「这个视图里没有符合这些条件的照片」—— 而那不是答案，是元数据还没读。
+
+        **事件分组也要走这个后台任务**（ADR 0043 决策 7），虽然它不读 EXIF：它要的是
+        「照片各属于哪些事件」，那份映射同样得在后台取回来，而 :func:`needs_metadata` 明确
+        不为它开口子（免得点一次「按事件分组」就重读一遍全库 EXIF）。
         """
         group = None if self._group_view is not None else self._current_group_facet()
         if needs_metadata((group, sort_facet(self._sort_facet))):
+            return True
+        if group is not None and group.id == FACET_EVENT:
             return True
         return self._conditions_need_metadata()
 
@@ -210,6 +241,13 @@ class OrderingMixin:
         if self._conditions_need_metadata():
             return "筛选"
         return "分组" if self._group_facet else "排序"
+
+    def _groups_by_event(self) -> bool:
+        """当前是不是按事件分组（进了某个组之后不算 —— 那一层已经是摊开的那一批照片）。"""
+        if self._group_view is not None:
+            return False
+        facet = self._current_group_facet()
+        return facet is not None and facet.id == FACET_EVENT
 
     # ---- 进入与退出分组 ------------------------------------------------------
 
@@ -261,19 +299,23 @@ class OrderingMixin:
         # 字段、换排序、**以及监听器每次触发重排**时都要走一遍；``FacetIndex.lookup`` 是纯读
         # 且在锁内（见 :mod:`gallery.core.library.index`），在工作线程上调是同一件事。
         def work(context: TaskContext) -> object:
+            events = _events_of(library, refs) if self._groups_by_event() else {}
             cached = library.cached_facets(refs)
             if len(cached) == len(refs):
                 # 「索引里全都有」——**不报进度**（见下面那段），直接用这份。
-                return cached
+                return _LevelFacets(values=cached, events=events)
             # 缺东西才起横幅：起后台线程、报「正在读取 N 张照片的元数据」都是在说一件
             # 没发生的事，用户没法分辨是又在干活还是软件出了毛病。
             context.progress(_FACET_PROGRESS.format(len(refs), self._facet_read_purpose()))
-            return library.photo_facets(
-                refs,
-                should_cancel=context.is_cancelled,
-                on_progress=lambda done, total: context.progress((done, total)),
-                status=lambda text: context.progress(text),
-                resolver=resolver,
+            return _LevelFacets(
+                values=library.photo_facets(
+                    refs,
+                    should_cancel=context.is_cancelled,
+                    on_progress=lambda done, total: context.progress((done, total)),
+                    status=lambda text: context.progress(text),
+                    resolver=resolver,
+                ),
+                events=events,
             )
 
         self._facet_job = self._runner.submit(
@@ -367,7 +409,11 @@ class OrderingMixin:
         if generation != self._generation:
             return
         self._facet_job = None
-        self._facet_values = payload if isinstance(payload, dict) else {}
+        ready = payload if isinstance(payload, _LevelFacets) else _LevelFacets(values={})
+        self._facet_values = ready.values
+        # **每回都重新赋值**（哪怕是空的）：从「按事件分组」换到别的字段时，那份映射就该被丢掉，
+        # 否则它一直挂在内存里，而重排那道闸会以为输入没变。
+        self._event_values = ready.events
         self._clear_progress_notice()
         self._order_now()
         # 这一层读完了，才轮到整库那两遍（见 _maybe_start_place_pass 里的理由）。
@@ -439,6 +485,7 @@ class OrderingMixin:
         grouped = self._group_view is not None or self._browse_mode == BROWSE_MODE_CALENDAR
         group = None if grouped else self._current_group_facet()
         values = self._facet_values
+        events = self._event_values
 
         # **先判「会不会变」，再排序**（这道闸排在排序之后就等于白付一次整层排序）。判据取
         # **输入**而不是输出（输出比的是刚算出来的 ``ordered``），比内容而不是比身份（``photos``
@@ -459,6 +506,7 @@ class OrderingMixin:
             staged is None
             and fingerprint == self._reorder_fingerprint
             and values is self._reorder_values
+            and events is self._reorder_events
             and tuple(albums) == self._reorder_albums
             and tuple(photos) == self._reorder_photos
         ):
@@ -467,12 +515,22 @@ class OrderingMixin:
         if group is not None:
             ordered: list[GridEntry] = [
                 *albums,
-                *build_groups(photos, facet=group, order=order, root=library.root, values=values),
+                *build_groups(
+                    photos,
+                    facet=group,
+                    order=order,
+                    root=library.root,
+                    values=values,
+                    event_values=events,
+                ),
             ]
         else:
             ordered = [*albums, *sort_photos(photos, order=order, root=library.root, values=values)]
         self._reorder_fingerprint = fingerprint
         self._reorder_values = values
+        # **事件那份也要进这道闸**（ADR 0043 决策 7）：绑定变了一定要重排，否则用户记完照片
+        # 看到的是「什么都没发生」。同样是判 ``is`` 且持有强引用，不记 ``id()``。
+        self._reorder_events = events
         self._reorder_photos, self._reorder_albums = tuple(photos), tuple(albums)
         if staged is None and ordered == list(self._model.entries()):
             return  # 什么都没攒、顺序也没变：让整屏重画一次毫无意义
