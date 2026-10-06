@@ -72,7 +72,7 @@
 
 ### 3. 作用域切换 = 纯粹的 push / pop
 
-漏斗切换按钮那两档（`SEARCH_SCOPE_LIBRARY` / `SEARCH_SCOPE_LEVEL`）：
+作用域切换按钮那两档（`SEARCH_SCOPE_LIBRARY` / `SEARCH_SCOPE_LEVEL`）：
 
 - 筛选 → 搜索：**压**一帧 `SearchFrame`；
 - 搜索 → 筛选：**弹**掉那帧。

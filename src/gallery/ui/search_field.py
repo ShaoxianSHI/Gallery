@@ -68,7 +68,7 @@ MARGIN_RIGHT = 20
 #: 而一个 44 点宽的单状态按钮摆在 208 点宽的胶囊右边会喧宾夺主。
 TOGGLE_EDGE = 22
 
-#: 按钮里那个漏斗的边长（点）。**与按钮边长分开**：在 22 点里画一个 22 点的东西，它会顶到边框
+#: 按钮里那个图标的边长（点）。**与按钮边长分开**：在 22 点里画一个 22 点的东西，它会顶到边框
 #: 上，读起来像「图标被框住了」而不是「图标在按钮里」。
 #:
 #: **13 这一档有出处**：与 :data:`ICON_EDGE`（胶囊里那个放大镜）、
@@ -558,14 +558,17 @@ class SearchField(QWidget):
         self.focus_search()
 
 
-def funnel(app_theme: AppTheme, ratio: float, *, active: bool) -> QPixmap:
-    """那个漏斗：**现画的**，与 :func:`magnifier` 同一套规矩（坐标一律逻辑像素，仓库里不放图）。
+def scope_arrows(app_theme: AppTheme, ratio: float, *, active: bool) -> QPixmap:
+    """那两支反向的横向箭头（上下各一支，左上那支朝左、右下那支朝右）：**现画的**，
+    与 :func:`magnifier` 同一套规矩（坐标一律逻辑像素，仓库里不放图）。
 
     **选中态换的是不透明度而不是形状** —— 两枚图标长得不一样会让用户以为是两个不同的功能，
     而它们是同一个功能的两端。区别只在「现在是不是筛选模式」这一件事上。
 
     **画布是 :data:`TOGGLE_ICON_EDGE` 而不是按钮边长**：画布给多大，图形就画多大，所以
-    图标跟着按钮一起变大就会顶到边框上（用户原话：「icon 缩小一圈」）。
+    图标跟着按钮一起变大就会顶到边框上。
+
+    **各段比例一律按画布算**，不写死点数 —— 换一档画布时形状跟着缩，放大镜那边同理。
     """
     size = TOGGLE_ICON_EDGE
     pixmap = QPixmap(round(size * ratio), round(size * ratio))
@@ -575,20 +578,22 @@ def funnel(app_theme: AppTheme, ratio: float, *, active: bool) -> QPixmap:
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     pen = QPen(app_theme.text if active else app_theme.text_at(0.55))
     pen.setWidthF(_ICON_STROKE)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
     pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
     painter.setPen(pen)
-    # 漏斗：上宽下窄的一个梯形，收成一根管子。**让开量按画布的比例算**（13 点画布上约 2.4
-    # 点）—— 写死成 4 点的话，在缩小的画布上就几乎贴边，而 :func:`magnifier` 的
-    # :data:`_ICON_INSET` 正是为「笔宽画在路径两侧、收少了会被裁掉」留的那一份。
-    inset = size * 0.18
-    left, right = inset, size - inset
-    top, waist, bottom = inset, size * 0.55, size - inset
-    painter.drawLine(QPointF(left, top), QPointF(right, top))
-    painter.drawLine(QPointF(right, top), QPointF(size * 0.62, waist))
-    painter.drawLine(QPointF(size * 0.62, waist), QPointF(size * 0.62, bottom))
-    painter.drawLine(QPointF(size * 0.62, bottom), QPointF(size * 0.38, bottom))
-    painter.drawLine(QPointF(size * 0.38, bottom), QPointF(size * 0.38, waist))
-    painter.drawLine(QPointF(size * 0.38, waist), QPointF(left, top))
+    left, right = size * 0.18, size * 0.82
+    # 两支箭杆分居画布的 0.28 与 0.72，箭头张开的那一半（0.145）因此离上下边还剩 1.7 点 ——
+    # 笔宽画在路径两侧，收少了会被画布裁掉（与放大镜的 :data:`ICON_INSET` 同一件事）。
+    head_len, head_half = size * 0.17, size * 0.145
+    # ``back`` 是「箭头从尖端往箭杆那一头退多少」：两支箭头的分叉都朝箭杆内侧，尖端那一端
+    # 才不会被画布裁掉（写死成同一个方向的话，朝右那支的分叉正好戳到画布右缘上）。
+    for tip_x, other_x, back, y in (
+        (left, right, head_len, size * 0.28),
+        (right, left, -head_len, size * 0.72),
+    ):
+        painter.drawLine(QPointF(other_x, y), QPointF(tip_x, y))
+        painter.drawLine(QPointF(tip_x, y), QPointF(tip_x + back, y - head_half))
+        painter.drawLine(QPointF(tip_x, y), QPointF(tip_x + back, y + head_half))
     painter.end()
     return pixmap
 
@@ -646,7 +651,6 @@ class ScopeToggle(QToolButton):
         self._applied_active: bool | None = None
         self._watcher = theme.ensure_installed()
         self._watcher.changed.connect(self._apply_theme)
-        self.setToolTip("在这些条件里筛选当前这一层（切到全部照片就筛整库，切到日历就筛日历）")
         self._apply_theme()
 
     def set_filtering(self, filtering: bool) -> None:
@@ -658,11 +662,6 @@ class ScopeToggle(QToolButton):
                 self.setChecked(filtering)
             finally:
                 self.blockSignals(False)
-        self.setToolTip(
-            "当前：筛选当前这一层。点一下改为在整个库里检索。"
-            if filtering
-            else "当前：在整个库里检索。点一下改为只筛选当前这一层。"
-        )
         if self._active != filtering:
             self._active = filtering
             self._apply_theme()
@@ -679,7 +678,7 @@ class ScopeToggle(QToolButton):
         ):
             return
         self.setStyleSheet(toggle_style(app_theme, active=self._active, radius=radius))
-        self.setIcon(QIcon(funnel(app_theme, self.devicePixelRatioF(), active=self._active)))
+        self.setIcon(QIcon(scope_arrows(app_theme, self.devicePixelRatioF(), active=self._active)))
         self._applied_theme = app_theme
         self._applied_radius = radius
         self._applied_active = self._active
@@ -703,8 +702,8 @@ __all__ = [
     "ScopeToggle",
     "SearchEdit",
     "SearchField",
-    "funnel",
     "popup_style",
+    "scope_arrows",
     "search_field_style",
     "toggle_style",
 ]

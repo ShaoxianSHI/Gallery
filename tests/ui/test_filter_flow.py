@@ -24,7 +24,7 @@ pytest.importorskip("PySide6")
 
 from library_helpers import set_library_ui  # noqa: E402
 from PySide6.QtCore import Qt  # noqa: E402
-from PySide6.QtGui import QColor, QGuiApplication, QPalette  # noqa: E402
+from PySide6.QtGui import QColor, QGuiApplication, QImage, QPalette  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 from waiting import wait_for_idle  # noqa: E402
@@ -47,7 +47,12 @@ from gallery.core.places.resolver import LazyPlaceResolver, ResolvedPlace  # noq
 from gallery.ui.external_button import ICON_EDGE as EXTERNAL_ICON_EDGE  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.panels.breadcrumb import ChipButton  # noqa: E402
-from gallery.ui.search_field import ICON_EDGE, PLACEHOLDER_FILTER, PLACEHOLDER_SEARCH  # noqa: E402
+from gallery.ui.search_field import (  # noqa: E402
+    ICON_EDGE,
+    PLACEHOLDER_FILTER,
+    PLACEHOLDER_SEARCH,
+    TOGGLE_ICON_EDGE,
+)
 
 #: 测试库里每张照片的相机（按文件名对应）。没给的就是没写相机。
 CAMERAS = {"海边-01.jpg": "Canon EOS R5", "山.jpg": "Sony A7"}
@@ -1330,6 +1335,59 @@ def test_the_icon_is_smaller_than_the_button(qt_app: QApplication, tmp_path: Pat
     )
     # 那一档不是随手定的：标题条上另外两个图标（放大镜、外部应用）都是 13。
     assert icon_edge == ICON_EDGE == EXTERNAL_ICON_EDGE
+    window.close()
+
+
+def test_the_icon_is_two_arrows_pointing_opposite_ways(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """图标是**上下两支反向的横向箭头**（上面那支朝左、下面那支朝右），不是漏斗。
+
+    量的是**墨迹落在哪一侧**：箭头那一头多出分叉的两笔，于是「箭头所在的那一侧」一定更重。
+    只断「画布上有墨」量不到朝向 —— 两支都朝右也是满画布的墨，断出来照样绿。
+    """
+    window = MainWindow(session_base=tmp_path / "会话")
+    window.show()
+    qt_app.processEvents()
+
+    pixmap = window._scope_toggle.icon().pixmap(TOGGLE_ICON_EDGE, TOGGLE_ICON_EDGE)
+    image = pixmap.toImage()
+    assert not image.isNull(), "按钮上根本没有图标"
+    top_left, top_right, bottom_left, bottom_right = _quadrant_weight(image)
+
+    assert top_left > top_right, f"上面那支箭头不是朝左的：{_quadrant_weight(image)}"
+    assert bottom_right > bottom_left, f"下面那支箭头不是朝右的：{_quadrant_weight(image)}"
+    window.close()
+
+
+def _quadrant_weight(image: QImage) -> tuple[int, int, int, int]:
+    """画布四象限各有多少个着墨的像素（左上、右上、左下、右下）。
+
+    阈值取 24 而不是「非全透明」：抗锯齿边缘的像素淡到几乎看不见，把它们算进去等于把
+    每一象限都摊成同一个数，这条断言就恒真了。
+    """
+    width, height = image.width(), image.height()
+    counts = [0, 0, 0, 0]
+    for y in range(height):
+        for x in range(width):
+            if image.pixelColor(x, y).alpha() > 24:
+                counts[(0 if x < width // 2 else 1) + (0 if y < height // 2 else 2)] += 1
+    return counts[0], counts[1], counts[2], counts[3]
+
+
+def test_the_button_has_no_hover_hint(qt_app: QApplication, tmp_path: Path) -> None:
+    """按钮**没有悬浮提示**，切过一轮之后仍然没有。
+
+    开着 / 关着已经由整枚按钮的填充色说清楚了（见下一条），再挂一句提示是在把同一件事说两遍。
+    """
+    window = MainWindow(session_base=tmp_path / "会话")
+    window.show()
+    qt_app.processEvents()
+
+    assert window._scope_toggle.toolTip() == ""
+    window._scope_toggle.setChecked(True)
+    qt_app.processEvents()
+    assert window._scope_toggle.toolTip() == "", "切过去之后提示又回来了"
     window.close()
 
 
