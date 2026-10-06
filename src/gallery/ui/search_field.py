@@ -10,12 +10,17 @@ from typing import cast
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import (
+    QColor,
     QCursor,
+    QEnterEvent,
     QFocusEvent,
     QIcon,
     QKeyEvent,
     QMouseEvent,
     QPainter,
+    QPainterPath,
+    QPaintEvent,
+    QPalette,
     QPen,
     QPixmap,
     QResizeEvent,
@@ -166,16 +171,54 @@ class SearchEdit(QLineEdit):
         self._owner.edit_ended()
 
 
-def search_field_style(app_theme: AppTheme, *, focused: bool, radius: int = 0) -> str:
-    """胶囊长什么样。底色与改名的输入框同一个函数派生，聚焦时边框换成调色板的 ``Highlight``。
-    ``radius`` 由摆它的那一处按实际高度给过来：超过高度一半就整个不画，胶囊会变成方框。
+def outline_color(widget: QWidget, *, accent: bool) -> QColor:
+    """轮廓那一圈的颜色：**正在用这一枚**（输入中 / 指针悬着）时是高亮色，否则是输入面
+    那一档边框色（``text_at(0.28)``，与改名的输入框同一档）。
+
+    高亮色取**那个控件自己调色板**上的 ``Highlight`` —— 与样式表里 ``palette(highlight)``
+    读的是同一档，而这一枚颜色现在是自己画的，就该由画它的这一处去问。
     """
-    border = "palette(highlight)" if focused else rgba(app_theme.text_at(0.28))
+    if accent:
+        return widget.palette().color(QPalette.ColorRole.Highlight)
+    return theme.current_theme().text_at(0.28)
+
+
+def draw_outline(
+    painter: QPainter, rect: QRectF, radius: float, color: QColor, width: float = 1.0
+) -> None:
+    """画那一圈 :paramref:`width` 点宽的圆角轮廓：**外圆角矩形减内圆角矩形**，一条路径
+    ``OddEven`` 填出来。
+
+    **别用样式表的 ``border``，也别用带笔的 ``drawPath``/``drawRoundedRect``**：Qt 把 QSS
+    那一圈描成「四段直边 + 四段圆弧」，接缝处两半的抗锯齿**重叠**；而输入面这一族的边框
+    都是半透明的（``text_at(0.28)``），重叠就叠成**更深的点** —— 落在圆弧与直边相接的四处
+    与每段圆弧的 45°，正好是轮廓上的八个等分点（实测：轮廓中位 184，那八处 133，
+    而 255 × 0.72² = 132，正是同一层边框被调了两遍）。
+
+    填一条环只有一条边，重叠无处可发生：实测那八处与别处一样都是 184。
+    """
+    outer = QRectF(rect)
+    inner = outer.adjusted(width, width, -width, -width)
+    path = QPainterPath()
+    path.setFillRule(Qt.FillRule.OddEvenFill)
+    path.addRoundedRect(outer, radius, radius)
+    path.addRoundedRect(inner, max(0.0, radius - width), max(0.0, radius - width))
+    painter.fillPath(path, color)
+
+
+def search_field_style(app_theme: AppTheme, *, radius: int = 0) -> str:
+    """胶囊长什么样。底色与改名的输入框同一个函数派生。
+    ``radius`` 由摆它的那一处按实际高度给过来：超过高度一半就整个不画，胶囊会变成方框。
+
+    **这一份里既没有 ``border`` 也不看有没有焦点**：那一圈轮廓由
+    :meth:`SearchField.paintEvent` 调 :func:`draw_outline` 自己填（理由在那个函数里），
+    于是「聚焦时换高亮色」也归那一处管。
+    """
     corner = max(0, radius or HEIGHT // 2)
     return f"""
     QWidget#searchField {{
         background: {rgba(field_background(app_theme))};
-        border: 1px solid {border};
+        border: none;
         border-radius: {corner}px;
     }}
     QLabel#searchIcon {{ background: transparent; }}
@@ -519,7 +562,7 @@ class SearchField(QWidget):
             and self._applied_focused == self._focused
         ):
             return
-        self.setStyleSheet(search_field_style(app_theme, focused=self._focused, radius=radius))
+        self.setStyleSheet(search_field_style(app_theme, radius=radius))
         # 候选列表是**建好之后**才存在的，主题早就下发过了，于是它一直拿着系统默认那一档。
         # 先推调色板再生成样式表 —— **顺序不能换**：样式表里写死的是 ``rgba(...)``，必须从刚
         # 推下去的那份调色板生成。
@@ -529,6 +572,8 @@ class SearchField(QWidget):
         self._applied_theme = app_theme
         self._applied_radius = radius
         self._applied_focused = self._focused
+        # 轮廓不在样式表里了，焦点与半径变了只能自己标脏（画它的是 paintEvent）。
+        self.update()
 
     def focus_gained(self) -> None:
         """输入框拿到焦点：边框换成高亮色，并告诉外面「键盘归这里了」。"""
@@ -552,6 +597,21 @@ class SearchField(QWidget):
         """点胶囊的哪一块都是「进去输入」。"""
         super().mousePressEvent(event)
         self.focus_search()
+
+    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
+        """底色照样式表画，**那一圈轮廓自己填**（理由见 :func:`draw_outline`）。"""
+        super().paintEvent(event)
+        painter = QPainter(self)
+        try:
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            draw_outline(
+                painter,
+                QRectF(self.rect()),
+                self.height() / 2,
+                outline_color(self, accent=self._focused),
+            )
+        finally:
+            painter.end()
 
 
 def scope_arrows(app_theme: AppTheme, ratio: float, *, active: bool) -> QPixmap:
@@ -601,27 +661,25 @@ def toggle_style(app_theme: AppTheme, *, active: bool, radius: int = 0) -> str:
     """切换按钮长什么样。
 
     **选中时整枚按钮填满高亮色**，而不只是轮廓：按钮是 22 点的圆角小块，一圈 1 像素的蓝边在小
-    尺寸下只占边长的一成，而它没有文字标签 —— 唯一的「现在开着吗」信号就是那圈边。底色换的是
+    尺寸下只占边长的一成，而它没有文字标签 —— 唯一的「现在开着吗」信号就是那一片颜色。底色换的是
     ``Highlight``，与弹出菜单里选中项（``menu_style`` 的 ``:selected``）用同一档：用户在菜单与
     按钮之间来回走，两处要看起来是同一件事。
 
     **未选中时底色与胶囊同一个来源**（:func:`~gallery.ui.rename_edit.field_background`）——
     输入面那一族统一是窗口底色靠那一圈边框显出边界（ADR 0035 决策 1）。
+
+    **这一份里没有 ``border``，也没有 ``:hover``**：那一圈轮廓改由
+    :meth:`ScopeToggle.paintEvent` 自己填（理由见 :func:`draw_outline`），于是悬停色也跟着
+    走 Python 那一侧的状态。
     """
     corner = max(0, radius or TOGGLE_EDGE // 2)
-    if active:
-        border = "palette(highlight)"
-        background = "palette(highlight)"
-    else:
-        border = rgba(app_theme.text_at(0.28))
-        background = rgba(field_background(app_theme))
+    background = "palette(highlight)" if active else rgba(field_background(app_theme))
     return f"""
     QToolButton#searchScopeToggle {{
         background: {background};
-        border: 1px solid {border};
+        border: none;
         border-radius: {corner}px;
     }}
-    QToolButton#searchScopeToggle:hover {{ border: 1px solid palette(highlight); }}
     """
 
 
@@ -643,6 +701,7 @@ class ScopeToggle(QToolButton):
         # （与胶囊同一份样式来源，见 :func:`toggle_style`）。
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._active = False
+        self._hovered = False
         self._applied_theme: AppTheme | None = None
         self._applied_radius = -1
         self._applied_active: bool | None = None
@@ -684,6 +743,33 @@ class ScopeToggle(QToolButton):
         super().resizeEvent(event)
         self._apply_theme()
 
+    def enterEvent(self, event: QEnterEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
+        """悬停要改轮廓的颜色 —— 轮廓不再走样式表的 ``:hover``，状态得自己记。"""
+        super().enterEvent(event)
+        self._hovered = True
+        self.update()
+
+    def leaveEvent(self, event: QEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
+        super().leaveEvent(event)
+        self._hovered = False
+        self.update()
+
+    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
+        """底色与图标照 ``QToolButton`` 自己那一套画，**那一圈轮廓自己填**
+        （理由见 :func:`draw_outline`）。"""
+        super().paintEvent(event)
+        painter = QPainter(self)
+        try:
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            draw_outline(
+                painter,
+                QRectF(self.rect()),
+                self.height() / 2,
+                outline_color(self, accent=self._active or self._hovered),
+            )
+        finally:
+            painter.end()
+
 
 __all__ = [
     "HEIGHT",
@@ -699,6 +785,8 @@ __all__ = [
     "ScopeToggle",
     "SearchEdit",
     "SearchField",
+    "draw_outline",
+    "outline_color",
     "popup_style",
     "scope_arrows",
     "search_field_style",

@@ -2,8 +2,12 @@
 
 **再下发一次样式表不是「重新拼一遍字符串」那么轻**：Qt 会把整棵子树重新 polish
 一遍（``repolish``），于是每次焦点进出都要把输入框、放大镜、候选列表那一整棵树走一遍。
-而这一份样式表的输入只有三个：主题、圆角半径（按胶囊高度算）、有没有焦点。
-三个都没变时应当**什么都不做**。
+而这一次下发的输入只有两个：主题与圆角半径（按胶囊高度算）。都没变时应当**什么都不做**。
+
+**第三样「有没有焦点」仍然要留在判据里**，只是它管的不再是样式表：那一圈轮廓已经不在
+样式表里了（改由 :func:`~gallery.ui.search_field.draw_outline` 自己填），焦点那一下看得见
+的变化是**换了轮廓的颜色 + 标脏重画**。少了它缓存就会把这一次也吃掉，点进搜索框边框不变色
+—— 而这一条既不崩也不报错。
 """
 
 from __future__ import annotations
@@ -16,19 +20,24 @@ from PySide6.QtGui import QColor  # noqa: E402
 from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
 from gallery.ui import theme  # noqa: E402
-from gallery.ui.search_field import SearchField  # noqa: E402
+from gallery.ui.search_field import SearchField, outline_color  # noqa: E402
 
 
 class _CountingSearchField(SearchField):
-    """记下每一次 ``setStyleSheet`` —— 计数的是**下发**，不是拼字符串。"""
+    """记下每一次 ``setStyleSheet`` 与 ``update`` —— 前者数**下发**，后者数**重画**。"""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         self.applied: list[str] = []  # 构造里就会调一次，先建好
+        self.repaints = 0
         super().__init__(parent)
 
     def setStyleSheet(self, style: str) -> None:  # noqa: N802 - 名字是 Qt 定的
         self.applied.append(style)
         super().setStyleSheet(style)
+
+    def update(self) -> None:  # noqa: N802 - 名字是 Qt 定的
+        self.repaints += 1
+        super().update()
 
 
 @pytest.fixture
@@ -60,19 +69,24 @@ def test_nothing_changed_means_nothing_is_republished(field: _CountingSearchFiel
     assert len(field.applied) == before
 
 
-def test_focus_really_does_republish_once(field: _CountingSearchField) -> None:
-    """焦点那一下**要**重下（边框换高亮色）—— 上面那条不是说「永远别下」。
+def test_focus_really_does_repaint_the_outline(field: _CountingSearchField) -> None:
+    """焦点那一下**要**看得见：轮廓换高亮色，而且要真的重画一遍。
 
     少了 ``focused`` 这个判据，缓存就会把这一次也吃掉，于是点进搜索框边框不变色 ——
     而这一条既不崩也不报错。
+
+    **盯的是颜色与重画，不是样式表字符串**：那一圈轮廓已经不在样式表里了（自己填的，
+    理由见 :func:`~gallery.ui.search_field.draw_outline`），字符串在焦点那一下根本不变。
     """
     before = len(field.applied)
+    resting = outline_color(field, accent=False)
 
     field.focus_gained()
 
     assert field._applied_focused is True
     assert len(field.applied) == before + 1
-    assert field.applied[-1] != field.applied[-2]
+    assert field.repaints >= 1, "没人标脏，那一圈还是上一次的颜色"
+    assert outline_color(field, accent=True) != resting, "轮廓的颜色没跟着焦点换"
 
 
 def test_a_new_height_republishes_it(field: _CountingSearchField) -> None:
