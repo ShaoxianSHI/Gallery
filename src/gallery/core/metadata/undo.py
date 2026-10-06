@@ -14,8 +14,10 @@ from typing import Final
 
 from gallery.core.library.photos import GridEntry
 from gallery.core.metadata.journal import (
+    ACTION_CREATE,
     ACTION_METADATA,
     ACTION_MOVE,
+    ACTION_PASTE,
     ACTION_RENAME,
     ACTION_RESTORE,
     ACTION_TRASH,
@@ -32,19 +34,34 @@ from gallery.core.metadata.trash import Failure as TrashFailure
 from gallery.core.metadata.trash import restore_entries
 from gallery.core.metadata.writeback import MetadataWriter, undo_metadata
 
-#: 压栈的动作：用户做过的写操作。
-_PUSH_ACTIONS: Final = frozenset({ACTION_RENAME, ACTION_TRASH, ACTION_MOVE, ACTION_METADATA})
-
 #: 弹栈的动作：这些写操作被撤销掉了。
 _POP_ACTIONS: Final = frozenset({ACTION_UNDO, ACTION_RESTORE, ACTION_UNDO_METADATA})
 
-#: 菜单里显示的文案。
+#: **不收进撤销栈的动作。** 一份显式的排除清单，而不是「不在压栈清单里就等于排除」。
+#:
+#: 这两个动作的「撤销」都是**删掉用户的东西**，而删除只许用户亲手触发（红线 1）：
+#:
+#: - :data:`~gallery.core.metadata.journal.ACTION_CREATE` —— 撤销新建相册就是删掉那个
+#:   文件夹；
+#: - :data:`~gallery.core.metadata.journal.ACTION_PASTE` —— 撤销粘贴就是删掉刚粘进来的
+#:   照片（同模块文档里那句「粘贴不在栈里」）。
+#:
+#: 它们原先靠「``_PUSH_ACTIONS`` 里没有它」隐式成立，于是「把不认识的动作也压栈」那个
+#: 修复（认不出的日志行也让人能 ⌘Z）会连带把它们放进来。**排除必须显式**：一份清单
+#: 少写一个是静默的，而少写意味着用户按一次 ⌘Z 就删掉了他的东西。
+_NEVER_UNDOABLE: Final = frozenset({ACTION_CREATE, ACTION_PASTE})
+
+#: 菜单里显示的文案。**认不出的动作名走「上一步」**：宁可说得笼统，也不能因为
+#: 没有对应条目就让 ⌘Z 在菜单上不出现。
 _LABELS: Final[dict[str, str]] = {
     ACTION_RENAME: "重命名",
     ACTION_TRASH: "移到废纸篓",
     ACTION_MOVE: "移动到相册",
     ACTION_METADATA: "编辑元数据",
 }
+
+#: ``_LABELS`` 里没有的动作名用它。
+FALLBACK_LABEL: Final = "上一步"
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,13 +106,26 @@ def pending_undo_runs(root: Path) -> list[list[WriteRecord]]:
         unresolved.pop(key, None)
         if not record.succeeded:
             continue
-        if record.action in _PUSH_ACTIONS:
+        if record.action in _NEVER_UNDOABLE:
+            continue
+        if record.action in _POP_ACTIONS:
+            _pop(runs, record)
+        else:
+            # **不是弹栈的就都压栈**，包括动作名不认识的那几条。
+            #
+            # 缺陷现场：这一支原先是「在压栈清单里就压栈、在弹栈清单里就弹栈」，
+            # 动作名缺失（日志被截断、外来的记录、将来新加的动作忘了登记）时两个集合
+            # 都不匹配，那条记录被**静默丢掉** —— 用户刚做完的事从此再也撤不掉，
+            # 而菜单上的「撤销」根本不出现，没有任何提示。红线 4 要的是
+            # 「每次写回都留得下可回滚记录」。
+            #
+            # 压进去之后 :func:`_undo_delete` 会把它移回原处（把 target 搬回 source），
+            # 而那正是改名 / 移到废纸篓 / 移动撤销的共同归宿 —— **不认识动作名也能撤**，
+            # 比「不认得就当没发生过」安全得多。
             if record.batch and runs and runs[-1][0].batch == record.batch:
                 runs[-1].append(record)
             else:
                 runs.append([record])
-        elif record.action in _POP_ACTIONS:
-            _pop(runs, record)
     # 剩下的 pending 是最后发生的那件事，所以压在栈顶。
     for record in unresolved.values():
         runs.append([record])
@@ -105,7 +135,7 @@ def pending_undo_runs(root: Path) -> list[list[WriteRecord]]:
 def next_undo_label(root: Path) -> str | None:
     """下一次 ⌘Z 会撤掉什么（「重命名」/「移到废纸篓」）。没什么可撤时返回 ``None``。"""
     runs = pending_undo_runs(root)
-    return _LABELS.get(runs[-1][0].action) if runs else None
+    return _LABELS.get(runs[-1][0].action, FALLBACK_LABEL) if runs else None
 
 
 def undo_last_write(root: Path, *, writer: MetadataWriter | None = None) -> UndoResult | None:
@@ -202,6 +232,7 @@ def _pop(runs: list[list[WriteRecord]], record: WriteRecord) -> bool:
 
 
 __all__ = [
+    "FALLBACK_LABEL",
     "UndoResult",
     "next_undo_label",
     "pending_undo_runs",
