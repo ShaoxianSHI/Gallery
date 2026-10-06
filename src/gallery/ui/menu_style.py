@@ -22,6 +22,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QMenu, QWidget
 
+from gallery.ui import outline
 from gallery.ui.theme import rgba
 
 MENU_CORNER_RADIUS = 8
@@ -79,6 +80,18 @@ def separator_color(background: QColor, text: QColor) -> str:
     return rgba(color)
 
 
+def popup_edge_color(palette: QPalette) -> QColor:
+    """浮层那一圈轮廓的颜色，**已经与底色合成过、不透明**。
+
+    两个来源都取自**调用方刚下发的那份调色板**，深浅色自动跟随。合成而不是留半透明的理由见
+    :mod:`gallery.ui.outline`：半透明的一圈在八个等分点上会被画两遍、叠成更深的点。
+    """
+    background = palette.color(QPalette.ColorRole.Window)
+    edge = QColor(palette.color(QPalette.ColorRole.WindowText))
+    edge.setAlphaF(MENU_SEPARATOR_MIX_LIGHT)  # 与菜单的分隔线同一档
+    return outline.opaque_over(edge, background)
+
+
 def popup_list_style(list_widget: QWidget, *, item_padding: int = POPUP_LIST_ITEM_PAD) -> str:
     """弹出列表（搜索框的候选列表）用的样式表 —— 与弹出菜单同一套颜色，只复用颜色那一层。
 
@@ -89,11 +102,9 @@ def popup_list_style(list_widget: QWidget, *, item_padding: int = POPUP_LIST_ITE
     highlight = palette.color(QPalette.ColorRole.Highlight)
     text = palette.color(QPalette.ColorRole.WindowText)
     highlighted_text = palette.color(QPalette.ColorRole.HighlightedText)
-    edge = QColor(text)
-    edge.setAlphaF(MENU_SEPARATOR_MIX_LIGHT)  # 边框与菜单的分隔线同一档
     return (
         f"QTreeWidget#searchPopup {{ background: {rgba(background)}; "
-        f"border: {POPUP_LIST_BORDER}px solid {rgba(edge)}; "
+        f"border: {POPUP_LIST_BORDER}px solid {rgba(popup_edge_color(palette))}; "
         f"border-radius: {MENU_CORNER_RADIUS}px; padding: {POPUP_LIST_PADDING}px; }}\n"
         f"QTreeWidget#searchPopup::item {{ padding: 3px {item_padding}px; color: {rgba(text)}; }}\n"
         # 悬停与选中**合成一条规则**：候选列表是「鼠标移到哪一行就高亮哪一行」，两者本是同一
@@ -447,10 +458,6 @@ def popup_menu_style(menu: QMenu) -> str:
     """
     palette = menu.palette()
     text = palette.color(QPalette.ColorRole.WindowText)
-    # 边框与列表那份同一档（:func:`style_sheet` 给菜单的没有边框）：缺了它，两者在浅色下
-    # 就差出一条轮廓（白底白底，圆角也因此看不出来）。
-    edge = QColor(text)
-    edge.setAlphaF(MENU_SEPARATOR_MIX_LIGHT)
     return (
         style_sheet(
             palette.color(QPalette.ColorRole.Window),
@@ -460,7 +467,7 @@ def popup_menu_style(menu: QMenu) -> str:
             check_gutter=0,
         )
         + f"\nQMenu {{ font-size: {POPUP_FONT_PX}px;"
-        f" border: {POPUP_LIST_BORDER}px solid {rgba(edge)}; }}"
+        f" border: {POPUP_LIST_BORDER}px solid {rgba(popup_edge_color(palette))}; }}"
         # 字色**必须自己写**：挂了样式表之后 Qt 不再按调色板给 item 上色（深色下调色板里明明是
         # ``#ffffff``，画出来却是近黑的 ``#000000``）。内边距**左右同档** —— 左内边距只管
         # 文字，图标那一侧归下面的 ``::icon`` 规则。
@@ -537,6 +544,7 @@ __all__ = [
     "ShortcutColumnMenu",
     "ShortcutColumns",
     "apply_style",
+    "popup_edge_color",
     "popup_list_style",
     "prepare",
     "separator_color",

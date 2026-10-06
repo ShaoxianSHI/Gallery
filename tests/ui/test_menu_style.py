@@ -15,6 +15,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
+from outline_helpers import assert_no_darker_dots  # noqa: E402
 from PIL import Image  # noqa: E402
 from PySide6.QtCore import QItemSelectionModel, QPoint, QRect, Qt  # noqa: E402
 from PySide6.QtGui import (  # noqa: E402
@@ -922,3 +923,36 @@ def test_the_icon_sits_evenly_between_edge_and_text(qt_app: QApplication) -> Non
     assert abs(left_gap - right_gap) <= 1, (
         f"图标两边的留白不匀：左边 {left_gap} 点、右边 {right_gap} 点"
     )
+
+
+def test_the_popup_edge_is_already_mixed_with_the_background(
+    qt_app: QApplication,
+) -> None:
+    """浮层那一圈边框的颜色**必须是不透明的**，而且是与底色合成过的那一档。
+
+    Qt 把那一圈描成「四段直边 + 四段圆弧」，接缝处两半的抗锯齿**重叠**；半透明的颜色被调两遍
+    就叠成更深的点，落在圆弧与直边相接的四处与每段圆弧的 45° —— 轮廓上的**八个等分点**。
+    合成成不透明之后那两半画两遍也是同一个颜色，点就看不出来（理由见
+    :mod:`gallery.ui.outline`）。
+
+    **量的是像素，不是那句 ``rgba(...)``**：只断「颜色不透明」量不到「重叠看不出来」，
+    而只断「八个等分点一样深」在控件压根没画轮廓时又恒真。
+    """
+    from gallery.ui.search_field import CandidateList, popup_style
+
+    list_widget = CandidateList()
+    list_widget.setObjectName("searchPopup")
+    list_widget.setStyleSheet(popup_style(list_widget))
+    menu = QMenu()
+    menu.setStyleSheet(menu_style.popup_menu_style(menu))
+    list_widget.resize(200, 70)
+    menu.resize(140, 44)
+
+    for widget, label in ((list_widget, "候选列表"), (menu, "下拉菜单")):
+        widget.show()
+        qt_app.processEvents()
+        fill = widget.palette().color(QPalette.ColorRole.Window)
+        assert_no_darker_dots(
+            widget, fill.lightness(), radius=menu_style.MENU_CORNER_RADIUS, label=label
+        )
+        widget.close()

@@ -12,6 +12,7 @@ import pytest
 pytest.importorskip("PySide6")
 
 from library_helpers import set_library_ui  # noqa: E402
+from outline_helpers import assert_no_darker_dots  # noqa: E402
 from PySide6.QtCore import QEvent, QPointF, Qt  # noqa: E402
 from PySide6.QtGui import QMouseEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
@@ -28,10 +29,12 @@ from gallery.core.library.session import (
     SessionState,
     save_session,
 )  # noqa: E402
+from gallery.ui import theme  # noqa: E402
 from gallery.ui.browser.grid import PhotoGrid  # noqa: E402
 from gallery.ui.browser.model import PhotoListModel  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
-from gallery.ui.rename_edit import RenameEdit  # noqa: E402
+from gallery.ui.rename_edit import RADIUS as RENAME_RADIUS  # noqa: E402
+from gallery.ui.rename_edit import RenameEdit, field_background  # noqa: E402
 
 
 def make_grid(qt_app: QApplication, tmp_path: Path, names: list[str]) -> PhotoGrid:
@@ -56,6 +59,23 @@ def test_return_commits(qt_app: QApplication) -> None:
 
     assert committed == ["日落"]
     assert edit.is_editing() is False
+
+
+def test_the_outline_has_no_darker_dots(qt_app: QApplication) -> None:
+    """改名输入框那一圈轮廓上**那八个等分点不许比别处更深**。
+
+    与搜索胶囊那一条同源（``tests/ui/test_filter_flow.py``），量的做法在
+    :mod:`tests.ui.outline_helpers`。Qt 把样式表那一圈描成八段、接缝处的半透明边框被调两遍，
+    就叠成更深的点 —— 理由与实测数字见 :mod:`gallery.ui.outline`。
+    """
+    edit = RenameEdit()
+    edit.resize(160, 22)
+    edit.setText("海边-01")
+    edit.show()
+    qt_app.processEvents()
+
+    background = field_background(theme.current_theme()).lightness()
+    assert_no_darker_dots(edit, background, radius=RENAME_RADIUS, label="改名输入框")
 
 
 def test_escape_cancels(qt_app: QApplication) -> None:

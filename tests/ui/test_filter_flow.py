@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import ast
 import datetime
-import math
 import os
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
@@ -24,10 +23,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from library_helpers import set_library_ui  # noqa: E402
+from outline_helpers import assert_no_darker_dots  # noqa: E402
 from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtGui import QColor, QGuiApplication, QImage, QPalette, QPixmap  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
-from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
+from PySide6.QtWidgets import QApplication  # noqa: E402
 from waiting import wait_for_idle  # noqa: E402
 
 from gallery.core.library.config import (  # noqa: E402
@@ -1360,64 +1360,19 @@ def test_the_outline_has_no_darker_dots_at_the_eight_divisions(
     正是同一层边框被调了两遍）。
 
     **量的是那一圈本身**：胶囊里还坐着放大镜、外面还有底色，量别处量不到这件事。
+
+    量法在 :mod:`tests.ui.outline_helpers`（三处都要量它，只有那一份）；浮层那两处的同类
+    断言在 ``tests/ui/test_menu_style.py``。
     """
     window = MainWindow(session_base=tmp_path / "会话")
     window.show()
     qt_app.processEvents()
 
+    fill = field_background(theme.current_theme())
+    background = (fill.red() + fill.green() + fill.blue()) // 3
     for widget in (window._search_field, window._scope_toggle):
-        divisions, elsewhere = _outline_darkness(widget)
-        worst = min(divisions)
-        base = sorted(elsewhere)[len(elsewhere) // 2]
-        # **先钉住「那一圈确实画出来了」**：整枚控件没有轮廓时采样全落在底色上，八个点与别处
-        # 自然一样深，下面那条就成了恒真。
-        fill = field_background(theme.current_theme())
-        background = (fill.red() + fill.green() + fill.blue()) // 3
-        assert base <= background - 10, f"{type(widget).__name__}：压根量不到那一圈轮廓"
-        assert worst >= base - 6, (
-            f"{widget.objectName() or type(widget).__name__}：轮廓上那八个点最深 {worst}，"
-            f"别处中位 {base}"
-        )
+        assert_no_darker_dots(widget, background)
     window.close()
-
-
-def _outline_darkness(widget: QWidget) -> tuple[list[int], list[int]]:
-    """轮廓上**那八个等分点**与其余各点的暗度（越小越深）。
-
-    轮廓按控件自己的圆角矩形走：左右两段半圆（胶囊）或整圈（切换按钮）各取 361 个采样点，
-    八个等分点 = 每段半圆的两端（与直边相接）与两个 45°。采样按**控件坐标**换算到图片像素，
-    所以离屏下量到的东西与真机一致。
-
-    **``render`` / ``grab`` 会强制重画**：屏幕上的陈旧像素在那种探针里永远看不见（见
-    ``PhotoGrid`` 那条教训），而这里量的正是「此刻真的会被画出来的东西」。
-    """
-    image = widget.grab().toImage()
-    w, h = widget.width(), widget.height()
-    scale = image.width() / w
-
-    def dark(x: float, y: float) -> int:
-        px, py = int(round(x * scale)), int(round(y * scale))
-        if not (0 <= px < image.width() and 0 <= py < image.height()):
-            return 255
-        color = image.pixelColor(px, py)
-        return (color.red() + color.green() + color.blue()) // 3
-
-    def darkest(x: float, y: float) -> int:
-        return min(dark(x + dx, y + dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1))
-
-    radius = min(h / 2, w / 2)
-    divisions: list[int] = []
-    elsewhere: list[int] = []
-    for i in range(0, 361):
-        angle = math.radians(-90 + 180 * i / 360)
-        for cx in (w - radius, radius):
-            value = darkest(cx + radius * math.cos(angle), radius + radius * math.sin(angle))
-            (divisions if i in (0, 45, 135, 180) else elsewhere).append(value)
-    if w > 2 * h:  # 上下那两段直边只在这个形状上真的存在
-        for i in range(0, 361):
-            elsewhere.append(darkest(radius + (w - 2 * radius) * i / 360, 0.0))
-            elsewhere.append(darkest(w - radius - (w - 2 * radius) * i / 360, h - 1.0))
-    return divisions, elsewhere
 
 
 def _ink_box(pixmap: QPixmap, threshold: int = 24) -> tuple[int, int, int, int]:

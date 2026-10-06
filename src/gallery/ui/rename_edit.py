@@ -9,11 +9,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QRect, Qt, Signal
-from PySide6.QtGui import QColor, QFocusEvent, QKeyEvent, QShortcutEvent
+from PySide6.QtCore import QEvent, QRect, QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QFocusEvent, QKeyEvent, QPainter, QPaintEvent, QShortcutEvent
 from PySide6.QtWidgets import QLineEdit, QWidget
 
 from gallery.ui import theme
+from gallery.ui.outline import draw_outline
 from gallery.ui.theme import AppTheme, rgba
 
 #: 圆角半径（点）。系统那个 macOS 样式画出来的是个带立体边框的方框，浮在名字上很扎眼；
@@ -39,12 +40,17 @@ def rename_edit_style(app_theme: AppTheme) -> str:
 
     **选区颜色交给调色板的 ``Highlight``，不写死任何一个蓝**：拿链接色当高亮底，深色下那一片
     比正文还沉，「这一段已经选中了」反而看不出来。其余颜色从主题派生。
+
+    **这一份里没有 ``border``**：那一圈轮廓由 :meth:`RenameEdit.paintEvent` 自己填
+    （理由见 :mod:`gallery.ui.outline`）。这一处**不留那 1 点的占位** —— 量过：QLineEdit 的
+    文字位置只由 ``padding`` 决定，边框在不在都不动（有实色边框 / 透明 / 没有，三种都是
+    59..101）；而浮层那种形状删掉边框会让整个浮层缩 2 点、每行的字挪 1 点，所以那边要留。
     """
     return f"""
     QLineEdit#renameEdit {{
         background: {rgba(field_background(app_theme))};
         color: {rgba(app_theme.text)};
-        border: 1px solid {rgba(app_theme.text_at(0.28))};
+        border: none;
         border-radius: {RADIUS}px;
         padding: 0 {PADDING}px;
         selection-background-color: palette(highlight);
@@ -75,6 +81,23 @@ class RenameEdit(QLineEdit):
     def _apply_theme(self) -> None:
         """换过浅色 / 深色之后重新下发一次颜色。"""
         self.setStyleSheet(rename_edit_style(theme.current_theme()))
+        self.update()  # 轮廓不在样式表里，颜色变了要自己重画
+
+    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
+        """底色、文字、选区照 ``QLineEdit`` 自己那一套画，**那一圈轮廓自己填**
+        （理由见 :mod:`gallery.ui.outline`）。"""
+        super().paintEvent(event)
+        painter = QPainter(self)
+        try:
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            draw_outline(
+                painter,
+                QRectF(self.rect()),
+                RADIUS,
+                theme.current_theme().text_at(0.28),
+            )
+        finally:
+            painter.end()
 
     # ---- 对外 --------------------------------------------------------------
 
