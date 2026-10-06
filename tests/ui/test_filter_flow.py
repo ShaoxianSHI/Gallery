@@ -22,7 +22,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from library_helpers import set_library_ui  # noqa: E402
-from PySide6.QtGui import QGuiApplication  # noqa: E402
+from PySide6.QtGui import QColor, QGuiApplication, QPalette  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 from waiting import wait_for_idle  # noqa: E402
 
@@ -40,8 +40,9 @@ from gallery.core.library.session import (  # noqa: E402
 )
 from gallery.core.metadata import batch  # noqa: E402
 from gallery.core.places.resolver import LazyPlaceResolver, ResolvedPlace  # noqa: E402
+from gallery.ui.external_button import ICON_EDGE as EXTERNAL_ICON_EDGE  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
-from gallery.ui.search_field import PLACEHOLDER_FILTER, PLACEHOLDER_SEARCH  # noqa: E402
+from gallery.ui.search_field import ICON_EDGE, PLACEHOLDER_FILTER, PLACEHOLDER_SEARCH  # noqa: E402
 
 #: 测试库里每张照片的相机（按文件名对应）。没给的就是没写相机。
 CAMERAS = {"海边-01.jpg": "Canon EOS R5", "山.jpg": "Sony A7"}
@@ -502,6 +503,94 @@ def test_the_button_switches_the_scope_and_the_words(qt_app: QApplication, tmp_p
     assert window._search_action.text() == "筛选…"
     assert window._clear_search_action.text() == "清除筛选条件"
     window.close()
+
+
+def test_the_icon_is_smaller_than_the_button(qt_app: QApplication, tmp_path: Path) -> None:
+    """图标**不许画满整个按钮** —— 22 点画布上画 22 点的东西会顶到边框上。
+
+    钉的是「图标比按钮小」这个关系，不是某个数：真要盯住的是图标画布与按钮边长之间留着
+    余量，而两者都由 :data:`~gallery.ui.search_field.TOGGLE_ICON_EDGE` 与
+    :data:`~gallery.ui.search_field.TOGGLE_EDGE` 推出来 —— 有人把图标又改回跟着按钮走时，
+    这条会立刻变红。
+    """
+    window = MainWindow(session_base=tmp_path / "会话")
+    window.show()
+    qt_app.processEvents()
+
+    button_edge = window._scope_toggle.width()
+    pixmap = window._scope_toggle.icon().pixmap(button_edge, button_edge)
+    icon_edge = pixmap.width() / (pixmap.devicePixelRatio() or 1.0)
+
+    assert icon_edge < button_edge, (
+        f"图标 {icon_edge:g} 点画在 {button_edge:g} 点的按钮里 —— 顶到边框上了"
+    )
+    # 那一档不是随手定的：标题条上另外两个图标（放大镜、外部应用）都是 13。
+    assert icon_edge == ICON_EDGE == EXTERNAL_ICON_EDGE
+    window.close()
+
+
+def test_selecting_the_button_fills_it_not_just_its_edge(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """选中时**整枚按钮**填满高亮色，不只是那一圈轮廓 —— 守护。
+
+    **量像素，不量样式表字符串**：只断言 ``"background"`` 出现在样式表里量不到任何东西 ——
+    颜色写对了而 Qt 没画（或者被别的规则盖掉）时它照样绿。这一条量的是「按钮中心那一块到底
+    是什么颜色」。
+
+    为什么非得填满：22 点的圆角小块上，1 像素的边只占边长的一成，而这一枚按钮**没有文字标签**
+    可看 —— 唯一的「现在开着吗」信号就是那一片颜色。
+    """
+    window = MainWindow(session_base=tmp_path / "会话")
+    window.show()
+    qt_app.processEvents()
+    toggle = window._scope_toggle
+
+    resting = _button_center_color(toggle)
+    toggle.setChecked(True)
+    qt_app.processEvents()
+    selected = _button_center_color(toggle)
+
+    assert resting is not None and selected is not None
+    assert selected != resting, "选中态的中心还是原来那个底色 —— 整枚按钮没被填满"
+    # 填的必须是高亮那一档，而它与菜单里选中项同源（``menu_style`` 的 ``:selected``）。
+    highlight = QPalette(QApplication.instance().palette()).color(QPalette.ColorRole.Highlight)
+    assert _close(selected, highlight, 0.06), (
+        f"选中态填的是 {selected.name()}，要高亮的 {highlight.name()}（菜单选中项也是那一档）"
+    )
+    window.close()
+
+
+def _button_center_color(button: object) -> QColor | None:
+    """按钮**中心那一块**画出来的颜色。
+
+    **中心而不是四角**：圆角按钮的四角是圆角外的透明区，量那里量到的是父控件的底色，于是
+    「有没有填满」与「圆角画得对不对」两件事会搅在一起。中心是任何圆角半径下都必然被填到的那
+    一块。
+
+    用 ``render()`` 而不是屏幕像素：它会**强制**重画，所以量到的是此刻真的会被画出来的东西
+    （对照 ``PhotoGrid`` 那条教训：屏幕上的陈旧像素在 ``grab()`` 里看不见）。
+
+    ``render(None)`` 返回 ``None``（Qt 在没有目标矩形时不给画布），所以走
+    :meth:`QWidget.grab` 之前先确认控件自己已经有一个尺寸 —— 离屏下没跑过布局时它是 640×480
+    的默认值，中心那一块量的就不是这枚按钮了。
+    """
+    size = button.size()  # type: ignore[attr-defined]
+    if size.width() < 2 or size.height() < 2:
+        return None
+    image = button.grab().toImage()  # type: ignore[attr-defined]
+    if image.isNull() or image.width() < 2:
+        return None
+    return image.pixelColor(image.width() // 2, image.height() // 2)
+
+
+def _close(left: QColor, right: QColor, tolerance: float) -> bool:
+    """两个颜色差得不算远（``lightnessF`` 上的差，阈值写死一个 ``tolerance``）。"""
+    return abs(left.lightnessF() - right.lightnessF()) <= tolerance and (
+        abs(left.red() - right.red()) <= 2
+        and abs(left.green() - right.green()) <= 2
+        and abs(left.blue() - right.blue()) <= 2
+    )
 
 
 def test_the_menu_item_and_the_button_are_one_setting(qt_app: QApplication, tmp_path: Path) -> None:

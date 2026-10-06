@@ -68,6 +68,14 @@ MARGIN_RIGHT = 20
 #: 而一个 44 点宽的单状态按钮摆在 208 点宽的胶囊右边会喧宾夺主。
 TOGGLE_EDGE = 22
 
+#: 按钮里那个漏斗的边长（点）。**与按钮边长分开**：在 22 点里画一个 22 点的东西，它会顶到边框
+#: 上，读起来像「图标被框住了」而不是「图标在按钮里」。
+#:
+#: **13 这一档有出处**：与 :data:`ICON_EDGE`（胶囊里那个放大镜）、
+#: ``external_button.ICON_EDGE``（外部应用那个）同一档 —— 标题条上三个图标都是 13，而 16 就明显
+#: 粗一圈。第三个图标偏一档，整条标题条上的图标看着就不是一套的了。
+TOGGLE_ICON_EDGE = 13
+
 #: 切换按钮与胶囊之间的缝（点）。与 :data:`~gallery.ui.external_button.BUTTON_GAP`（9）同一档：
 #: 挤在一起读起来像胶囊自带的一个零件，而它是另一样东西。
 TOGGLE_GAP = 8
@@ -555,8 +563,11 @@ def funnel(app_theme: AppTheme, ratio: float, *, active: bool) -> QPixmap:
 
     **选中态换的是不透明度而不是形状** —— 两枚图标长得不一样会让用户以为是两个不同的功能，
     而它们是同一个功能的两端。区别只在「现在是不是筛选模式」这一件事上。
+
+    **画布是 :data:`TOGGLE_ICON_EDGE` 而不是按钮边长**：画布给多大，图形就画多大，所以
+    图标跟着按钮一起变大就会顶到边框上（用户原话：「icon 缩小一圈」）。
     """
-    size = TOGGLE_EDGE
+    size = TOGGLE_ICON_EDGE
     pixmap = QPixmap(round(size * ratio), round(size * ratio))
     pixmap.setDevicePixelRatio(ratio)
     pixmap.fill(Qt.GlobalColor.transparent)
@@ -566,9 +577,12 @@ def funnel(app_theme: AppTheme, ratio: float, *, active: bool) -> QPixmap:
     pen.setWidthF(_ICON_STROKE)
     pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
     painter.setPen(pen)
-    # 漏斗：上宽下窄的一个梯形，收成一根管子。整张画布 22 点，两边各让开 4 点。
-    left, right = 4.0, size - 4.0
-    top, waist, bottom = 4.0, size * 0.55, size - 4.0
+    # 漏斗：上宽下窄的一个梯形，收成一根管子。**让开量按画布的比例算**（13 点画布上约 2.4
+    # 点）—— 写死成 4 点的话，在缩小的画布上就几乎贴边，而 :func:`magnifier` 的
+    # :data:`_ICON_INSET` 正是为「笔宽画在路径两侧、收少了会被裁掉」留的那一份。
+    inset = size * 0.18
+    left, right = inset, size - inset
+    top, waist, bottom = inset, size * 0.55, size - inset
     painter.drawLine(QPointF(left, top), QPointF(right, top))
     painter.drawLine(QPointF(right, top), QPointF(size * 0.62, waist))
     painter.drawLine(QPointF(size * 0.62, waist), QPointF(size * 0.62, bottom))
@@ -582,15 +596,26 @@ def funnel(app_theme: AppTheme, ratio: float, *, active: bool) -> QPixmap:
 def toggle_style(app_theme: AppTheme, *, active: bool, radius: int = 0) -> str:
     """切换按钮长什么样。
 
-    **底色与胶囊同一个来源**（:func:`~gallery.ui.rename_edit.field_background`），边框则跟着
-    状态换：激活时用 ``Highlight``，与胶囊获得焦点时是同一档 —— 「这个模式正开着」与「我正在
-    这里打字」在视觉上是同一件事，而它们确实是。
+    **选中时整枚按钮填满高亮色**（用户原话：「选中时高亮整个按钮，而不只是轮廓」）。
+
+    边框单独换色**不够**：按钮是 22 点的圆角小块，一圈 1 像素的蓝边在小尺寸下只占边长的一成，
+    而这一枚按钮没有文字标签可看 —— 唯一的「现在开着吗」信号就是那圈边。于是底色也跟着换成
+    ``Highlight``，与弹出菜单里选中项（``menu_style`` 的 ``:selected``）用同一档：用户在菜单与
+    按钮之间来回走，两处要看起来是同一件事。
+
+    **未选中时底色与胶囊同一个来源**（:func:`~gallery.ui.rename_edit.field_background`）——
+    输入面那一族统一是窗口底色靠那一圈边框显出边界（ADR 0035 决策 1）。
     """
-    border = "palette(highlight)" if active else rgba(app_theme.text_at(0.28))
     corner = max(0, radius or TOGGLE_EDGE // 2)
+    if active:
+        border = "palette(highlight)"
+        background = "palette(highlight)"
+    else:
+        border = rgba(app_theme.text_at(0.28))
+        background = rgba(field_background(app_theme))
     return f"""
     QToolButton#searchScopeToggle {{
-        background: {rgba(field_background(app_theme))};
+        background: {background};
         border: 1px solid {border};
         border-radius: {corner}px;
     }}
@@ -672,6 +697,7 @@ __all__ = [
     "TEXT_ALIGN_DROP",
     "TOGGLE_EDGE",
     "TOGGLE_GAP",
+    "TOGGLE_ICON_EDGE",
     "WIDTH",
     "CandidateList",
     "ScopeToggle",
