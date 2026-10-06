@@ -57,7 +57,7 @@ class EventField:
     column: str
     #: 建表时这一列的类型。只认 ``TEXT`` / ``INTEGER`` / ``REAL`` 三种。
     sql_type: str = "TEXT"
-    #: 输入框底下的说明。留空就不显示那一行。
+    #: 筛选里 ``#字段名`` 缺值时给的那句「例如 …」。**面板不在输入框底下显示它。**
     hint: str = ""
     #: 能不能留空。
     required: bool = False

@@ -17,11 +17,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from library_helpers import set_library_ui  # noqa: E402
+from outline_helpers import assert_no_darker_dots  # noqa: E402
 from PIL import ExifTags, Image  # noqa: E402
 from PySide6.QtCore import QPoint, QRect, QTimer  # noqa: E402
 from PySide6.QtGui import QAction, QPalette  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
+    QLabel,
     QMenu,
     QMessageBox,
 )
@@ -32,10 +34,15 @@ from gallery.core.events.store import Event, EventDraft  # noqa: E402
 from gallery.core.library.config import BROWSE_MODE_ALBUMS, prepare_library  # noqa: E402
 from gallery.core.library.photos import GroupRef  # noqa: E402
 from gallery.core.library.session import SessionState, save_session  # noqa: E402
-from gallery.ui import menu_style  # noqa: E402
+from gallery.ui import menu_style, theme  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.menu_style import ShortcutColumnMenu  # noqa: E402
-from gallery.ui.panels.event_edit import ChoiceButtons, EventEditDialog  # noqa: E402
+from gallery.ui.outline import opaque_over  # noqa: E402
+from gallery.ui.panels.event_edit import (  # noqa: E402
+    FIELD_RADIUS,
+    ChoiceButtons,
+    EventEditDialog,
+)
 from gallery.ui.theme import rgba  # noqa: E402
 
 #: DateTimeOriginal 的标签编号与它在**Exif 子 IFD** 里（塞进主 IFD 读不出来）。
@@ -625,6 +632,41 @@ def test_the_panel_is_built_from_the_field_definitions(qt_app: QApplication) -> 
     dialog = EventEditDialog(None, TRIP)
 
     assert sorted(dialog._fields) == sorted(field.id for field in fields_of(TRIP))
+
+
+def test_the_fields_say_nothing_under_them(qt_app: QApplication) -> None:
+    """每个输入框下面**没有说明行** —— 左边的标签已经写着「名称」「开始日期」……
+
+    这个对话框本来就是访达「显示简介」那一类用法：用户记录自己的一趟旅行，不需要先被
+    教育每一栏填什么。
+    """
+    dialog = EventEditDialog(None, TRIP)
+
+    assert not dialog.findChildren(QLabel, "eventEditHint")
+
+
+def test_the_field_outline_has_no_darker_dots(qt_app: QApplication) -> None:
+    """输入框那一圈轮廓上**那八个等分点不比别处更深**。
+
+    与改名输入框、搜索胶囊同源（量法在 :mod:`tests.ui.outline_helpers`）：Qt 把样式表那一圈
+    描成八段，接缝处的半透明边框被调两遍就叠成更深的点（理由见 :mod:`gallery.ui.outline`）。
+    """
+    app_theme = theme.current_theme()
+    fill = opaque_over(app_theme.text_at(0.08), app_theme.background)
+    dialog = EventEditDialog(None, TRIP)
+    dialog.show()
+    qt_app.processEvents()
+    field = dialog._fields["destination"]
+    # 焦点那一档边框是另一种颜色，还带一个光标，量的不是常态那一圈。
+    field.clearFocus()
+    dialog.setFocus()
+    qt_app.processEvents()
+    # 底色必须先是不透明的：半透明底色在离屏抓取里抓到一片透明，下面那条断言就成了空转
+    # （抓出来全是 0，看着像「一圈都很深」）。做法见 :func:`dialog_style`。
+    inside = field.grab().toImage().pixelColor(field.width() - 20, field.height() // 2)
+    assert inside.alpha() == 255, "输入框底色不透明，这条守护才量得到东西"
+
+    assert_no_darker_dots(field, fill.lightness(), radius=FIELD_RADIUS, label="事件输入框")
 
 
 def test_a_rating_field_comes_up_as_a_row_of_five_buttons(qt_app: QApplication) -> None:

@@ -46,6 +46,7 @@ from gallery.core.events.kinds import (
 )
 from gallery.core.events.store import Event, EventDraft
 from gallery.ui import theme
+from gallery.ui.outline import opaque_over
 from gallery.ui.theme import AppTheme, rgba
 
 #: 错误那一行留几行的位置。固定高度是为了对话框不跳：报错前后它都在那儿。
@@ -53,6 +54,9 @@ ERROR_LINES: Final = 2
 
 #: 输入框至少这么宽（「United States」那种地名放不下）。
 FIELD_MIN_WIDTH: Final = 220
+
+#: 输入框那一圈的圆角半径（点）—— 与搜索胶囊、改名输入框同一档手感。
+FIELD_RADIUS: Final = 5
 
 #: 每一个字段是哪种控件 —— 一排按钮还是输入框。**由字段自己的声明说了算**，没有第三种。
 type FieldWidget = QLineEdit | ChoiceButtons
@@ -130,9 +134,15 @@ def dialog_style(app_theme: AppTheme, palette: QPalette) -> str:
 
     选中的评分按钮借用**与弹出菜单、候选列表同一档**的高亮（``Highlight`` / ``HighlightedText``，
     由 :mod:`gallery.ui.theme` 钉死），所以要 ``palette`` 把那一份递进来 —— 不在这里另派生一份。
+
+    输入框那圈边框与它自己的底色**先合成成不透明的**（理由见 :mod:`gallery.ui.outline`）：
+    Qt 把样式表那一圈描成八段，半透明的颜色在接缝处被调两遍就深一点。
     """
     highlight = palette.color(QPalette.ColorRole.Highlight)
     highlighted_text = palette.color(QPalette.ColorRole.HighlightedText)
+    fill = opaque_over(app_theme.text_at(0.08), app_theme.background)
+    edge = opaque_over(app_theme.text_at(0.18), fill)
+    focus = opaque_over(app_theme.link, fill)
     return f"""
     QDialog {{ background: {rgba(app_theme.background)}; }}
     QLabel {{ color: {rgba(app_theme.text_at(0.92))}; font-size: 12px; }}
@@ -141,13 +151,13 @@ def dialog_style(app_theme: AppTheme, palette: QPalette) -> str:
     QLabel#eventEditError {{ color: {rgba(app_theme.error)}; font-size: 11px; }}
     QLineEdit {{
         color: {rgba(app_theme.text_at(0.92))};
-        background: {rgba(app_theme.text_at(0.08))};
-        border: 1px solid {rgba(app_theme.text_at(0.18))};
-        border-radius: 5px;
+        background: {rgba(fill)};
+        border: 1px solid {rgba(edge)};
+        border-radius: {FIELD_RADIUS}px;
         padding: 3px 6px;
         font-size: 12px;
     }}
-    QLineEdit:focus {{ border: 1px solid {rgba(app_theme.link)}; }}
+    QLineEdit:focus {{ border: 1px solid {rgba(focus)}; }}
     QPushButton {{
         color: {rgba(app_theme.text_at(0.9))};
         background: {rgba(app_theme.text_at(0.12))};
@@ -242,7 +252,7 @@ class EventEditDialog(QDialog):
         for field in fields_of(self._kind):
             widget = self._build_field(field)
             self._fields[field.id] = widget
-            form.addRow(field.label, _with_hint(widget, field.hint))
+            form.addRow(field.label, widget)
         return form
 
     def _build_field(self, field: EventField) -> FieldWidget:
@@ -364,26 +374,10 @@ def _hint(text: str) -> QLabel:
     return label
 
 
-def _with_hint(widget: QWidget, text: str) -> QWidget:
-    """控件加上它下面那行说明，竖着摆 —— 对话框窄一点也不会把说明挤成一行。
-
-    没说明就**原样返回控件**：不要为了「结构统一」给每个字段都套一层空壳。
-    """
-    if not text:
-        return widget
-    column = QVBoxLayout()
-    column.setContentsMargins(0, 0, 0, 0)
-    column.setSpacing(2)
-    column.addWidget(widget)
-    column.addWidget(_hint(text))
-    holder = QWidget()
-    holder.setLayout(column)
-    return holder
-
-
 __all__ = [
     "ERROR_LINES",
     "FIELD_MIN_WIDTH",
+    "FIELD_RADIUS",
     "ChoiceButtons",
     "EventEdit",
     "EventEditDialog",
