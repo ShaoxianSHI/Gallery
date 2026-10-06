@@ -257,17 +257,16 @@ class CalendarFlowMixin:
         refs = _photos_on_this_level(self._model.entries())
         if not refs:
             return
-        cached = library.cached_facets(refs)
-        if len(cached) == len(refs):
-            self._calendar_page.set_photos(refs, cached)
-            self._update_level_notice()
-            self._refresh_thumbnail_window()
-            return
-
-        self._show_progress_notice(f"正在读取 {len(refs)} 张照片的拍摄时间，用于日历…")
         generation = self._generation
 
+        # **查索引也搬到后台** —— 理由与 `ordering._start_facet_read` 那条完全一样：
+        # 三万张全命中时 cached_facets 要 234 ms，而这一段在换层、换排序、以及监听器
+        # 每次触发重排时都要走（``_apply_ordering`` 的 finally 里）。
         def work(context: TaskContext) -> object:
+            cached = library.cached_facets(refs)
+            if len(cached) == len(refs):
+                return cached  # 全都有 → 不报「正在读」
+            context.progress(f"正在读取 {len(refs)} 张照片的拍摄时间，用于日历…")
             return library.photo_facets(
                 refs,
                 should_cancel=context.is_cancelled,

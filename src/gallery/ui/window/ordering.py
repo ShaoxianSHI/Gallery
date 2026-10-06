@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from functools import partial
+from typing import Final
 
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMenu
@@ -31,6 +32,10 @@ from gallery.core.places.resolver import LazyPlaceResolver
 from gallery.ui.navigation import EntryKey, entry_key
 from gallery.ui.tasks import TaskContext
 from gallery.ui.window.notice import NoticeSlot
+
+#: 「正在读取 N 张照片的元数据，用于…」—— **只在真的缺东西时才报**（见 ``_start_facet_read``）。
+#: 放在模板里是因为它现在从工作线程里发出去，而那一侧拿不到 ``self``。
+_FACET_PROGRESS: Final = "正在读取 {} 张照片的元数据，用于{}…"
 
 
 class OrderingMixin:
@@ -248,22 +253,23 @@ class OrderingMixin:
             self._order_now()
             return
         generation = self._generation
-
-        # **索引里全都有就直接排**（「第二次打开这个库」的样子）：起后台线程、报「正在读取
-        # N 张照片的元数据」都是在说一件没发生的事，用户没法分辨是又在干活还是软件出了毛病。
-        cached = library.cached_facets(refs)
-        if len(cached) == len(refs):
-            self._facet_values = cached
-            self._order_now()
-            return
-
-        self._show_progress_notice(
-            f"正在读取 {len(refs)} 张照片的元数据，用于{self._facet_read_purpose()}…"
-        )
-
         resolver = self._place_lookup()
 
+        # **查索引这一步也搬到后台。** 缺陷现场：原先 ``cached_facets(refs)`` 在主线程上，
+        # 而它是整层查一次：实测三万张（全部命中）234 ms、五万张 258 ms —— 而这一段在
+        # 换分组字段、换排序、**以及监听器每次触发重排**时都要走一遍。三百毫秒的界面冻死
+        # 换来的是「本来就已经有了」这个事实，主线程不该为它买单。
+        #
+        # ``FacetIndex.lookup`` 是纯读且在锁内（见 :mod:`gallery.core.library.index`），
+        # 在工作线程上调与在主线程上调是同一件事。
         def work(context: TaskContext) -> object:
+            cached = library.cached_facets(refs)
+            if len(cached) == len(refs):
+                # 「索引里全都有」——**不报进度**（见下面那段），直接用这份。
+                return cached
+            # 缺东西才起横幅：起后台线程、报「正在读取 N 张照片的元数据」都是在说一件
+            # 没发生的事，用户没法分辨是又在干活还是软件出了毛病。
+            context.progress(_FACET_PROGRESS.format(len(refs), self._facet_read_purpose()))
             return library.photo_facets(
                 refs,
                 should_cancel=context.is_cancelled,

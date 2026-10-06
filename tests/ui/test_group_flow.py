@@ -788,6 +788,37 @@ def test_metadata_is_read_once_and_then_cached(
     window.close()
 
 
+def test_a_second_grouping_says_nothing_about_reading_metadata(
+    qt_app: QApplication,
+    tmp_path: Path,
+    make_photo: Callable[..., Path],
+    fake_facet_source: Callable[[], list[Path]],
+) -> None:
+    """**索引里全都有时不报「正在读取」** —— 报的是一件没发生的事。
+
+    第一次换分组字段要读一次 EXIF，那句横幅是对的；第二次索引里已经全有了，用户看到的
+    应该是「立刻排好」，而不是又冒一句「正在读取 N 张照片的元数据」—— 他没法分辨这是又在
+    干活还是软件出了毛病（ADR 0014 决策 4 同一个取向）。
+
+    这条在把「查索引」搬进后台之后尤其要紧：判定挪到工作线程里，**报横幅的时机也跟着挪**，
+    而搬错了的症状就是这一句 —— 界面先静一下、再冒出一句它根本不必说的话。
+    """
+    root = _library(tmp_path, make_photo, list(DATES))
+    window = _open(qt_app, root, session_base=tmp_path / "状态")
+    _settle(qt_app, window)
+
+    window.set_group_facet("captured_month")
+    _settle(qt_app, window, groups=True)
+
+    seen: list[str] = []
+    window._show_progress_notice = lambda text: seen.append(text)  # type: ignore[method-assign]
+    window.set_group_facet("captured_year")
+    _settle(qt_app, window, groups=True)
+
+    assert not [text for text in seen if "正在读取" in text], f"索引里全都有却还是报了进度：{seen}"
+    window.close()
+
+
 def test_sorting_by_file_name_never_touches_exiftool(
     qt_app: QApplication,
     tmp_path: Path,
