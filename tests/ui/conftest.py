@@ -8,10 +8,9 @@
 - ``wait_for(predicate, timeout=...)`` —— 转到条件成立为止。**``timeout`` 只是上限，
   不是固定开销**：条件一成立立刻返回。
 
-固定 sleep 的毛病是必须比真实耗时长才能在慢机器上也稳，于是每次都在空转：实测
-「面板出内容」约 56ms、「预读填满」约 107ms，而代码里原先写的是 1 秒 —— 十倍的浪费。
-换成 ``wait_for`` 之后，超时上限原样保留当保险，常态耗时还回来，而且**不会比原来
-更早断言**，只会更早结束。
+固定 sleep 的毛病是必须比真实耗时长才能在慢机器上也稳，于是每次都在空转。换成
+``wait_for`` 之后，超时上限原样保留当保险，常态耗时还回来，而且**不会比原来更早
+断言**，只会更早结束。
 
 第三样是 ``qt_teardown``：每个用例之后确定性地销毁这一轮造出来的控件。这条不是
 可有可无的讲究，理由（以及不这么做会怎样）写在 :func:`_destroy_top_level_widgets` 里。
@@ -42,9 +41,8 @@ POLL_SECONDS = 0.005
 #: 测试里的双击阈值（毫秒）。生产上它跟着系统走，macOS 是 500ms。
 #:
 #: 值得单独调小的原因：行内重命名的定时器**就是照它设的间隔**（``PhotoGrid`` 构造时读
-#: ``QApplication.doubleClickInterval()``），于是测「第二次点击到底算不算改名」的用例也
-#: 只能照同一个值去等 —— 每个这样的用例要在事件循环里空转一秒上下，一整个
-#: ``test_rename_flow.py`` 有三分之一的时间是在等它。
+#: ``QApplication.doubleClickInterval()``），于是测「第二次点击到底算不算改名」的用例
+#: 也只能照同一个值去等。
 #:
 #: 调小它并没有削弱这些用例：它们发的是**显式**的 ``MouseButtonDblClick`` 事件，不靠
 #: Qt 自己按时间判定双击；被测的「定时器按双击阈值走」这件事在 40ms 下照样成立，
@@ -71,9 +69,8 @@ def _destroy_top_level_widgets(app: QApplication) -> None:
     的析构去收拾它们，一路活到解释器收尾。
 
     到了那一步它们是怎么死的就不由我们决定了：``Py_FinalizeEx`` 先抽干模块、再跑一轮
-    循环 gc，销毁顺序随机器负载而变，于是「谁先被拆掉」成了掷硬币。实测表现为
-    **用例全绿、最后进程 SIGSEGV**（退出码 139，汇总行都来不及打印）——这正是这套
-    测试「有一定概率随机不通过」的来源，而且随机性只来自时序，与被测代码无关。
+    循环 gc，销毁顺序随机器负载而变，于是「谁先被拆掉」成了掷硬币 —— 表现出来是
+    **用例全绿、最后进程 SIGSEGV**（退出码 139，汇总行都来不及打印）。
 
     所以收尾必须**在 QApplication 还完整活着的时候做**，而且顺序是有讲究的：
 
@@ -115,17 +112,14 @@ def qt_teardown(qt_app: QApplication) -> Iterator[None]:
 def no_modal_dialogs(monkeypatch: pytest.MonkeyPatch) -> None:
     """**模态对话框一律当场失败**，不许把用例挂死。
 
-    这一条是被一次实测逼出来的：一个用例打开了不存在的库，界面走到
-    ``_report_error`` → ``QMessageBox.critical`` —— 离屏下没人点「确定」，
-    那个用例**永远不返回**。症状是「这个文件跑了五分钟还没完」，而不是一条
-    红的断言；查起来先是怀疑慢，再是怀疑死循环，最后才发现是弹窗。
+    离屏下没人点「确定」，弹窗一旦漏出去，那个用例**永远不返回** —— 报出来的是
+    「这个文件跑了五分钟还没完」，而不是一条红的断言。
 
-    **要拦的是那几个 ``static`` 方法，不是 ``exec``。** 第一版写的是把实例方法
-    ``QMessageBox.exec`` 换掉 —— 那是个**假的守护**：``critical`` / ``question``
+    **要拦的是那几个 ``static`` 方法，不是 ``exec``**：``critical`` / ``question``
     这些静态辅助函数在 C++ 里就把模态循环跑完了，压根不经过 Python 那一层，
-    于是探针用例照样挂满五分钟（试过了）。``src/`` 里现存的四处调用**全是**
-    静态形式（``banner_flow`` 的 ``critical``、``thumbnail_flow`` 的 ``question``
-    与它读回来的 ``StandardButton``），所以这几个名字一个都不能漏。
+    所以换掉实例方法 ``QMessageBox.exec`` 等于没拦。``src/`` 里现存的四处调用
+    **全是**静态形式（``banner_flow`` 的 ``critical``、``thumbnail_flow`` 的
+    ``question`` 与它读回来的 ``StandardButton``），这几个名字一个都不能漏。
 
     要测弹窗的用例自己 monkeypatch 掉对应那个静态方法即可
     （见 ``test_library_open.py`` 与 ``test_thumbnail_window.py``）：用例里的
@@ -170,21 +164,10 @@ def wait_for(qt_app: QApplication) -> Callable[..., bool]:
 def test_no_test_module_shadows_the_shared_fixtures() -> None:
     """**测试模块不许自己再定义一份共享 fixture。**
 
-    曾经 14 个模块各自写了一份 ``qt_app``，里面少了 conftest 那句
-    ``QApplication.setDoubleClickInterval(40)`` —— 于是它们全部悄悄跑在系统默认的
-    500ms 双击阈值上，而**测试照常全绿**：没人看得见少掉的那一句，直到某个用例
-    开始按机器负载偶发变红。
-
-    同类的还有各写一份的等待助手（``wait_until`` / ``_wait``，8 份）与
-    ``WAIT_SECONDS``（两个不同的值）。它们的问题不是慢，是**同一件事有 8 份写法**，
-    改一处不会改到其余七处。
-
-    ``settle`` 也在名单里：``test_blank_double_click`` 曾自己写了一个同名的
-    ``settle(qt_app, seconds)``。它不报错、也不冲突（没有用例把 ``settle`` 写成
-    参数），于是那半边「共享的那一份」被顶掉了，而顶掉这件事**完全看不出来** ——
-    与 ``qt_app`` 那次一模一样的形状，只是更安静。
-
-    这条守护让「共享 fixture 只有一份」这件事从约定变成红灯。
+    模块里重定义一份不报错、也不冲突，只是**悄悄丢掉共享那一半**：``qt_app``
+    少了 ``setDoubleClickInterval(40)`` 就跑在系统默认的 500ms 上（测试照常全绿，
+    没人看得见少掉的那一句）；同名的 ``settle(qt_app, seconds)`` 则把共享的那一份顶掉。
+    等待助手与 ``WAIT_SECONDS`` 同理：它们的问题不是慢，是同一件事有多份写法。
     """
     reserved = {"qt_app", "wait_for", "settle", "make_grid"}
     offenders: list[str] = []
@@ -207,11 +190,9 @@ def _spins_the_loop_itself(node: ast.FunctionDef) -> bool:
     判据是三样同时出现：**有一个循环**（``for`` / ``while``）、循环里调了
     ``processEvents``、以及（``monotonic`` 或 ``sleep``）。三样一起才有轮询的样子。
 
-    **「要有循环」这一条是量出来的**：只判后两样的话，量一次关窗耗时的那种
+    **「要有循环」这一条不能省**：只判后两样的话，量一次关窗耗时的那种
     （``processEvents`` + ``monotonic``，压根没有循环）会被当成轮询循环报上来 ——
-    ``test_quit_under_unreadable_photos.py`` 里那一条正是。它量的是时长，不是等待。
-    只转一圈就走的收尾（只有 ``processEvents``）与纯量时长（只有 ``monotonic``）
-    也各走各的。
+    它量的是时长，不是等待。
     """
     spins = any(
         isinstance(call, ast.Call)
@@ -235,25 +216,13 @@ def _spins_the_loop_itself(node: ast.FunctionDef) -> bool:
 def test_no_test_module_reimplements_the_wait_helper() -> None:
     """等待助手**只有 :mod:`waiting` 里的那几份**，任何测试模块都不许再自己写循环。
 
-    曾经散着 8 份轮询循环（``wait_until`` / ``_wait`` / ``_wait_for_scan`` /
-    ``wait_rows``），``WAIT_SECONDS`` 与 ``SCAN_TIMEOUT_SECONDS`` 各自定了两个不同的
-    值，轮询间隔也有 0.02 与 0.005 两档。问题不在慢 —— 在于**同一件事有 8 种写法**：
-    改一处不会改到其余几处，而「该等多久才算超时」这种数字一旦各处不同，偶发失败
-    就很难归因（改好一处，另几处还在按旧数字等）。
-
-    ``_settle`` 是第二轮清出来的：五个模块各有一份「等 MainWindow 背后那几个后台任务
-    收工」（合计 114 处调用），写法一模一样，而且**全都超时静默返回** —— 扫描卡住与
-    扫描完成在返回值上完全一样。判据与轮询现在都在 :mod:`waiting` 里
+    问题不在慢 —— 在于**同一件事有多种写法**：改一处不会改到其余几处，而「该等多久
+    才算超时」这种数字一旦各处不同，偶发失败就很难归因（改好一处，另几处还在按旧
+    数字等）。等 MainWindow 背后那几个后台任务收工的判据也在 :mod:`waiting` 里
     （:func:`waiting.window_is_idle` / :func:`waiting.wait_for_idle`），不成立直接抛。
 
-    **按「写法」判，不按函数名判** —— 这一条是补一个真漏掉的洞。原先还要求函数名在
-    一份白名单里，于是名字不在名单上的自写循环一个都拦不住，实测当场有六处：
-    ``test_chrome.py`` 的 ``_albums_window``（就是那条每八轮红一次的横幅用例旁边那个
-    助手，**超时之后照样把窗口交出去**）、``test_rename_flow.py`` 的 ``open_window``
-    与 ``wait_for_renaming``、``test_group_flow.py`` 的 ``_watch_names`` 与
-    ``_banners_while_busy``、``browser/test_grid.py`` 的
-    ``test_albums_mode_startup_keeps_normal_tile_size``。白名单看着整齐，
-    实际是「只有我想得到的那几种写法才受管」。
+    **按「写法」判，不按函数名判**：按名字要有一份白名单，而白名单看着整齐，实际是
+    「只有我想得到的那几种写法才受管」。
 
     仍然**不拦只有 ``processEvents`` 的那种一行包装**（见 :func:`_spins_the_loop_itself`）：
     循环与判据都是 :mod:`waiting` 的，包装只是换个默认参数 —— 把这种也拦掉，
@@ -274,9 +243,9 @@ def test_no_test_module_reimplements_the_wait_helper() -> None:
 def test_the_polling_interval_is_defined_once() -> None:
     """轮询间隔与默认超时也只有一份 —— 两个数字在八处各写一遍时，偶发失败没法归因。
 
-    ``READY_TIMEOUT_SECONDS`` 是第二轮清出来的：四个模块各自把它定义成 ``8.0``，
-    恰好等于 :data:`waiting.DEFAULT_TIMEOUT_SECONDS` —— 同一件事两份定义，改了
-    :mod:`waiting` 里那份，四处静悄悄地继续按旧数字等。
+    ``READY_TIMEOUT_SECONDS`` 这种同义名也算：它恰好等于
+    :data:`waiting.DEFAULT_TIMEOUT_SECONDS`，同一件事两份定义，改了 :mod:`waiting`
+    里那份，其余各处静悄悄地继续按旧数字等。
     """
     offenders: list[str] = []
     for path in sorted(pathlib.Path(__file__).resolve().parent.rglob("test_*.py")):

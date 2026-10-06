@@ -59,7 +59,7 @@ def test_garbled_listing_gives_no_windows() -> None:
 
 def test_chrome_is_up_asks_pgrep_not_applescript() -> None:
     """**必须用 ``pgrep``**：AppleScript 会自动启动目标应用，于是「查一下在不在」
-    变成了「把它启动一遍」，还会顺带开出一个「新标签页」窗口（实测踩过）。"""
+    变成了「把它启动一遍」，还会顺带开出一个「新标签页」窗口。"""
     runner, calls = recording_runner(CommandResult(0))
     assert chrome_is_up(runner) is True
     assert calls[0][0] == "pgrep"

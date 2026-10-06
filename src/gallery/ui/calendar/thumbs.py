@@ -43,17 +43,10 @@ class ThumbStore:
     def _evict_extra_edges(self) -> None:
         """留不下那么多档时，**只按边长留最小的 :attr:`_edges` 档**。
 
-        **不看当前档，也不保正在用的那一档。** 原先那句 docstring 写的是「扔掉离当前档
-        最远的、仍在用的最后才扔」—— 那是一个**没有实现**的策略：代码只按边长升序排、
-        留前 N 档。照那句去改代码的人会以为已有保护。
-
-        还有一个更要紧的次序问题：:meth:`set_edge` 是**先**淘汰、**后**换当前档，所以刚
-        切过去的那一档可能已经被上一轮淘汰掉了（实测：存 48/192/288、只留 2 档，切到 48
-        时那一档已经不在，``get`` 返回 ``None``）。
-
-        默认配置下走不到这里：日历三层恰好三档（年 48 / 周 192 / 月 288），
-        而 :data:`DEFAULT_EDGES` 正是 3 —— 多一档都还没有。要改这个策略的话连着
-        :meth:`set_edge` 的次序一起改。
+        **不看当前档，也不保正在用的那一档** —— 别把这句读成「仍在用的最后才扔」，代码只按
+        边长升序排、留前 N 档。次序上 :meth:`set_edge` 也是**先**淘汰、**后**换当前档，
+        所以刚切过去的那一档可能已经被上一轮淘汰掉了；要改这个策略得连着 :meth:`set_edge` 一起改。
+        默认三档（年 48 / 周 192 / 月 288）下走不到这里。
         """
         by_edge: dict[int, list[_Key]] = {}
         for key in self._images:
@@ -83,22 +76,14 @@ class ThumbStore:
     def forget(self, paths: Iterable[Path]) -> None:
         """这些路径上的文件变了：所有档位上的那几份都忘掉（与流水线的 ``forget`` 配对）。
 
-        收**真的** ``Iterable``，而不是靠 ``isinstance`` 猜来的是列表还是单个路径。
-        缺陷现场：原先签名是 ``paths: object``，用
-        ``isinstance(paths, (list, tuple, set, frozenset))`` 分流 ——
-        而 :meth:`page.CalendarPage.forget_thumbnails` 的签名承诺 ``Iterable[Path]`` 并
-        原样透传，于是传一个**生成器**（它恰好是最自然的写法）时两个分支都不成立，
-        那个生成器被当成单个路径交给 ``Path()``，**直接抛 TypeError**。
-        症状是「文件变了但那一格永远停在旧图上」，而栈顶只在日历页点开那张照片时才出现。
-
-        所以这里 ``list(...)`` 一次收干净，下面那个循环才拿得到真路径。
+        收**真的** ``Iterable``，而不是靠 ``isinstance`` 猜来的是列表还是单个路径：
+        :meth:`page.CalendarPage.forget_thumbnails` 原样透传，传一个**生成器**（最自然的
+        写法）时按类型分流会把它当成单个路径交给 ``Path()``。``list(...)`` 一次收干净，
+        下面那个循环才拿得到真路径。
         """
         dropped = {Path(path) for path in paths}
-        # **一次遍历过滤掉，不要「每个路径扫一遍全表」。** 缺陷现场：原先是
-        # ``for target in paths: for key in [k for k in self._images if k[0] == target]``，
-        # 代价是 O(路径数 × 仓库条目数)。而仓库容量是 1024 × 3 = 3072 项，于是云盘上
-        # 同步落一批（200 张）要在主线程上走 200 × 3072 ≈ 61 万次比较（实测 53 ms）。
-        # 收齐成集合一次过滤过去，代价只与**仓库有多大**成正比。
+        # **一次遍历过滤掉，不要「每个路径扫一遍全表」**：后者是 O(路径数 × 仓库条目数)，而
+        # 仓库容量是 1024 × 3 = 3072 项，代价只与**仓库有多大**成正比。
         if dropped:
             for key in [key for key in self._images if key[0] in dropped]:
                 self._images.pop(key, None)

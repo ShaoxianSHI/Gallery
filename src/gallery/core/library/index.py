@@ -29,13 +29,13 @@ from gallery.core.metadata.facets import PhotoFacets, relative_folder
 
 logger = logging.getLogger(__name__)
 
-#: 表结构版本。表结构或存进去的结论变了就 +1（老表整表重建，缓存不值得迁移）：4 / 5 / 6 是地点
-#: 结论改了几轮，不升版本的话老库里那些旧地名会永远留着（``place_ok`` 记着「已经查过了」）；
-#: 7 新增 ``hour`` / ``minute``：日历按墙上钟点摆格子（ADR 0033 决策 3），``captured`` 反推不出。
+#: 表结构版本。表结构或存进去的结论变了就 +1（老表整表重建，缓存不值得迁移）—— 地点结论改过几轮，
+#: 不升版本的话老库里那些旧地名会永远留着（``place_ok`` 记着「已经查过了」）；7 增了
+#: ``hour`` / ``minute``（日历按墙上钟点摆格子，ADR 0033 决策 3）。
+#: 后加的 ``photos`` 表**没有**升版本（ADR 0026 决策 3）：语句全带 ``IF NOT EXISTS``，老库连上来
+#: 自动多出这张表；将来要**改**它的列时那才升版本。
 SCHEMA_VERSION: Final = 7
 
-#: 后加的 ``photos`` 表**没有**升版本（ADR 0026 决策 3）：语句全带 ``IF NOT EXISTS``，老库连上来
-#: 自动多出这张表，一行已读好的 facet 都不用重读；将来要**改**它的列时那才升版本。
 #: 一次 ``UPSERT`` 最多写多少行。太大则一条语句过长，太小则语句条数多。
 WRITE_CHUNK: Final = 500
 
@@ -98,8 +98,8 @@ _COLUMNS: Final[str] = (
 #: 关键词在库里用一个分隔符存 —— 关键词本身可能含逗号，不能用逗号拼回去。
 _KEYWORD_SEPARATOR = "\x1f"
 
-#: 每一行有几个值。写死的数字曾经和列数对不上（17 vs 18），分组于是退化成「全是时间未知」；
-#: 宁可从列名里数出来。
+#: 每一行有几个值。**从列名里数出来，不要写死数字** —— 写死的那个曾经与列数差一个，
+#: 分组于是退化成「全是时间未知」，而 SQL 照样执行成功。
 _COLUMN_COUNT = len(_COLUMNS.split(","))
 
 #: 单行插入用的占位符。
@@ -115,8 +115,7 @@ class FacetIndex:
     ``path`` 为 ``None`` 时**不落盘**：只在内存里缓存本次会话读到的值 ——
     库所在卷只读、配置目录建不出来时（见 :mod:`gallery.core.library.facade`）。
 
-    **只有那一个来路。** 曾经这里还写着「或用户不想在库里留任何文件时」，那对应的是
-    ADR 0038 已删掉的 ``cache_in_library`` 开关 —— 别把它加回来。
+    **这是唯一一个 ``None`` 的来路**：ADR 0038 已删掉 ``cache_in_library`` 开关，别把它加回来。
     """
 
     def __init__(self, path: Path | None = None) -> None:
@@ -329,8 +328,8 @@ class FacetIndex:
         """这些条件命中了哪些路径 —— 当前层筛选要的那一份（ADR 0040 决策 2）。
 
         **不截断**（SQL 在 :func:`~gallery.core.library.search.build_match_query` 里就没有
-        ``LIMIT``）：调用方拿它与手上那份列表求交，少给一条就等于凭空少一张照片，而症状是
-        「筛选比搜索少一张」—— 与「文件被删了」长得一模一样。
+        ``LIMIT``）：调用方拿它与手上那份列表求交，少给一条就等于凭空少一张照片，而那与
+        「文件被删了」长得一模一样。
 
         :raises IndexUnavailableError: 索引没落盘。与 :meth:`search` 同一句提示：只读卷上建不出
             缓存时，筛选与检索一样用不了（界面据此说清是哪一件，而不是让人对空结果猜）。

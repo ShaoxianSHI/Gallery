@@ -518,11 +518,9 @@ class PhotoGrid(QListView):
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        # 原生滚动条常驻一条实心轨道，颜色由系统外观决定、与本应用统一下发的底色对不上。
         # 样式只从 :mod:`gallery.ui.scrollbar_style` 一处来 —— 周视图与元数据面板共用同一份。
-        # **它比原生那档细，于是 ``_scrollbar_reserve`` 跟着变小、排版宽度多出几像素**：
-        # 那是该得的（少掉的原本是照片的），但格宽一变列数就可能变、列数一变就该走切档过渡，
-        # 所以钉着切档判据的用例得自己找一个「不换列」的增量，见 grid_helpers。
+        # 它比原生那档细，于是 ``_scrollbar_reserve`` 跟着变小、排版宽度多出几像素（少掉的那几
+        # 像素原本是照片的）；但格宽一变列数就可能变，切档过渡的判据因此得看列数而不看边缘差。
         apply_scrollbar_style(self.verticalScrollBar())
         self._delegate = PhotoDelegate(self, icon_edge=icon_edge)
         self.setItemDelegate(self._delegate)
@@ -560,10 +558,9 @@ class PhotoGrid(QListView):
         self._examiner.setInterval(COLUMN_CHECK_MS)
         self._examiner.timeout.connect(self._examine_columns)
 
-        # **一批插入只排一次版。** 见 :meth:`_on_rows_inserted`：监听器报一批新文件时模型会
-        # 一条一条地插（每条一次 ``rowsInserted``），而这一格直接排全版的话，那一批就是
-        # 「批大小」次全量排版。0 ms 单发、``start()`` 在已排着时原地续期，于是天然合并成
-        # 一次 —— 与 :attr:`_debounce` 同一个手法。
+        # **一批插入只排一次版。** 见 :meth:`_on_rows_inserted`：监听器报一批新文件时模型会一条
+        # 一条地插（每条一次 ``rowsInserted``），直接排全版就是「批大小」次全量排版。0 ms 单发、
+        # ``start()`` 在已排着时原地续期，于是天然合并 —— 与 :attr:`_debounce` 同一个手法。
         self._relayout = QTimer(self)
         self._relayout.setSingleShot(True)
         self._relayout.setInterval(0)
@@ -625,14 +622,12 @@ class PhotoGrid(QListView):
 
         给「核对实际列数」补一次机会（见 :meth:`setModel`）；**已经滚下去过的话，
         顺手把这次插入引起的重排接管掉** —— Qt 为插入排的延迟重排每次都从第 0 条重新
-        排起，滚动条范围在排完第一批那一刻只剩一小块，正看到中间的人当场被夹回顶部
-        （400 张的库 6970 → 1620）。停在最顶上时（扫库的常态）不花这笔钱。
+        排起，滚动条范围在排完第一批那一刻只剩一小块，正看到中间的人当场被夹回顶部。
+        停在最顶上时（扫库的常态）不花这笔钱。
 
-        **那一摞重排排成 0 ms 定时器，不在这里当场做。** 缺陷现场：监听器一次报一批新
-        文件、模型一条一条地插，于是这里被调「批大小」次，而每一次都是一次**全量排版**
-        —— 实测三万张的库里插 20 行是 477 ms（23.9 ms/行），访达丢 200 张就是几秒的
-        主线程冻死，而其中绝大部分是重复劳动：那一批要排的版是同一份。定时器在已排着时
-        原地续期，于是合并成一次（与 :attr:`_debounce` 同一个手法）。
+        **那一摞重排排成 0 ms 定时器，不在这里当场做**：监听器一次报一批新文件、模型一条一条
+        地插，于是这里被调「批大小」次，而每一次都是一次**全量排版**，其中绝大部分是重复劳动
+        —— 那一批要排的版是同一份。定时器在已排着时原地续期，于是合并成一次。
         """
         # 插进来的新行没有「旧位置」可言，算不出它该从哪来 —— 过渡作废。
         self._cancel_transition()
@@ -792,7 +787,7 @@ class PhotoGrid(QListView):
             self._paint_transition_frame(float(self._transition_anim.currentValue()))
 
     def _rebuild_transition(self, cell: QSize) -> None:
-        """几何变了之后，把过渡里记的那套「新布局」也换成实测的那一套。
+        """几何变了之后，把过渡里记的那套「新布局」也换成刚排出来的那一套。
 
         委托拿过渡算出来的矩形是**相对当前逻辑布局**的，逻辑布局已经按新几何排好了；
         过渡里还留着旧几何的话差得可不止一两个像素（格子高差 30 像素时第 100 格就差
@@ -1577,9 +1572,8 @@ class PhotoGrid(QListView):
             self._armed_row = index.row()
 
     def scrollContentsBy(self, dx: int, dy: int) -> None:  # noqa: N802 - 名字是 Qt 定的
-        # **输入框跟着格子滚是基类做的，这里一个字都不用加。** 曾经这里有一句「手动挪同样
-        # 的距离」，理由是错的：基类滚的就是 ``viewport->scroll``，子控件跟着一起挪；那一句
-        # 于是成了搬两次（先 ``-dy`` 再 ``+dy``），症状是改着名字一滚动输入框钉在原地不动。
+        # 输入框跟着格子滚是基类做的（基类滚的就是 ``viewport->scroll``），**这里一个字都不用加**
+        # —— 自己再挪一遍就成了搬两次，改着名字一滚动输入框钉在原地不动。
         super().scrollContentsBy(dx, dy)
         if not self._driving_scroll:
             # 用户自己滚了：过渡立刻让位，否则动画会一边往终点走、一边被推着改终点。

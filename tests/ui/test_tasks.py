@@ -1,6 +1,6 @@
 """``gallery.ui.tasks`` 的线程数与取消令牌（ADR 0015 第 4 节）。
 
-线程数这一条值得钉住，是因为它曾经被拍成 4 —— 而 Pillow 解码会释放 GIL，
+线程数这一条值得钉住：Pillow 解码会释放 GIL，所以线程数要跟着物理核心走而不是拍一个定值 ——
 4 线程在 8 核以上的机器上就是白白闲置了一半核心（实测 384 → 493 张/秒）。
 """
 
@@ -24,7 +24,7 @@ def test_leaves_a_core_for_the_main_thread(monkeypatch: pytest.MonkeyPatch) -> N
 def test_uses_more_than_four_threads_on_a_big_machine(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """这条钉的是「别再退回 4」—— 那是在没有实测数据时定的。"""
+    """这条钉的是「别再退回一个与核心数无关的定值」。"""
     monkeypatch.setattr(os, "cpu_count", lambda: 10)
 
     assert default_thread_count() > 4

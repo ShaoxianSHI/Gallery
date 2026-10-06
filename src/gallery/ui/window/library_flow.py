@@ -188,9 +188,8 @@ class LibraryFlowMixin:
         # 作用域是**刚换过来的**（换库时每个库各记各的），胶囊上那句话与按钮的勾要跟着换 ——
         # 与换分组 / 排序之后要 ``_sync_order_actions`` 同一个道理。
         self._sync_search_scope()
-        # 缩略图档位变了才走 ``_apply_thumbnail_size``（「换档」的唯一一条路，网格算完会回来
-        # 把模型也换掉）。**档位没变就别叫它** —— 它会让网格带动画重排，用户看到的就是
-        # 「一打开这个库，格子自己动了一下」，而尺寸其实一模一样。
+        # 缩略图档位变了才走 ``_apply_thumbnail_size``（它是「换档」的唯一一条路，网格算完会回来
+        # 把模型也换掉）。**档位没变就别叫它** —— 那会让网格带动画重排一下而尺寸一模一样。
         if changed_edge:
             self._apply_thumbnail_size()
         # **分组 / 排序那两张菜单的勾也要跟着换**：那句 ``_sync_order_actions`` 跑在打开库
@@ -392,9 +391,8 @@ class LibraryFlowMixin:
         # **日历那一页不在前面时不喂**：模型每次重排都会走到这里，而用户可能在日历点出来的那一层。
         if self._stack.currentWidget() is not self._calendar_page:
             return
-        # **摊开的那一层更不能喂**：那一层是日历上一格里的几张，拿它分桶等于告诉日历「整个库
-        # 就这几张」。换页发生在摆内容**之后**（``_list_drill_photos``），所以上面那条拦不住：
-        # 症状是点开一格再退回来，另外几格当场变灰 / 变黑。
+        # **摊开的那一层更不能喂**：那一层是日历上一格里的几张，拿它分桶等于告诉日历「整个库就
+        # 这几张」。换页发生在摆内容**之后**（``_list_drill_photos``），上面那条拦不住。
         if self._drill_photos is not None:
             return
         if self._scan_job is not None:  # 还没扫完，等 _on_scan_done

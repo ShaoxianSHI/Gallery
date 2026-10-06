@@ -143,10 +143,8 @@ def test_an_unusable_database_is_tried_only_once(
 ) -> None:
     """城市库读不出来时，**整轮只试一次** —— 不是每张照片一次。
 
-    曾经这里是「缓存未命中就再读一次」：于是城市库缺失（安装损坏）时，300 张照片
-    就是 300 次重读重解析那份 ~380 KB 的 gzip、300 条一模一样的警告、300 次往
-    横幅里写「正在加载城市库…」。那个文件要么在要么不在，同一个进程里它不会
-    自己变好，再试多少次都一样。
+    「缓存未命中就再读一次」在这里是错的：那个文件要么在要么不在，同一个进程里它
+    不会自己变好，再试多少次都一样 —— 而每张照片一次就是几百次重读重解析。
     """
     loads: list[Path | None] = []
     original = PlaceIndex.load
@@ -178,12 +176,9 @@ def test_null_island_coordinates_are_refused(tmp_path: Path) -> None:
 def test_existing_index_is_reused_for_the_panel(monkeypatch: pytest.MonkeyPatch) -> None:
     """面板已经加载过索引时，分组这边**一次城市库都不该再读**。
 
-    原来是 ``assert resolver.index is index`` —— 构造函数里刚存进去的那一个，
-    不成立的可能性为零，于是 docstring 承诺的「不再读一遍」没有任何东西在看着：
-    把 :func:`PlaceIndex.load` 整个换成会抛的实现，这条照样绿。
-
-    现在把 ``PlaceIndex.load`` 打成会炸的桩再走一遍完整查询：读得到结论就说明
-    走的是手上那个索引。（桩必须会炸而不是返回 ``None``：``None`` 会被当成
+    「断言 ``resolver.index is index``」是钉不住的 —— 构造函数里刚存进去的那一个，
+    不成立的可能性为零。于是把 ``PlaceIndex.load`` 打成会炸的桩再走一遍完整查询：
+    读得到结论就说明走的是手上那个索引。（桩必须会炸而不是返回 ``None``：``None`` 会被当成
     「库读不到」而正常降级，那样就证明不了任何事。）
     """
     index = FakeIndex(_place())

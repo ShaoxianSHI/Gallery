@@ -49,8 +49,8 @@ def test_the_first_theme_always_goes_out(field: _CountingSearchField) -> None:
 def test_nothing_changed_means_nothing_is_republished(field: _CountingSearchField) -> None:
     """主题、高度、焦点三样都没变 → **一次都不再下发**。
 
-    ``focus_gained`` / ``edit_ended`` / ``resizeEvent`` 都走 ``_apply_theme``；
-    重复的那一次原先照样会把整棵树 polish 一遍 —— 用户每点一次搜索框就付一次。
+    ``focus_gained`` / ``edit_ended`` / ``resizeEvent`` 都走 ``_apply_theme``，而重复的那一次
+    照样会把整棵树 polish 一遍 —— 每点一次搜索框就付一次。
     """
     before = len(field.applied)
 
@@ -63,8 +63,8 @@ def test_nothing_changed_means_nothing_is_republished(field: _CountingSearchFiel
 def test_focus_really_does_republish_once(field: _CountingSearchField) -> None:
     """焦点那一下**要**重下（边框换高亮色）—— 上面那条不是说「永远别下」。
 
-    少了 ``focused`` 这个判据，缓存就会把这一次也吃掉，于是点进搜索框边框不变色，
-    而症状只是「看起来没高亮」，既不崩也不报错。
+    少了 ``focused`` 这个判据，缓存就会把这一次也吃掉，于是点进搜索框边框不变色 ——
+    而这一条既不崩也不报错。
     """
     before = len(field.applied)
 

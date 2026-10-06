@@ -5,9 +5,9 @@
 与 :mod:`gallery.ui.menu_style` 当初要解决的是同一件事。
 
 **这里量的是像素，不是样式表字符串**：样式表写着 ``::add-page { background: transparent }``
-只说明它写对了，不代表屏幕上真的没画。实测过两轮：原生滚动条那一份在离屏下轨道是
-``#e6e6e6`` 的实心竖条（正是用户说的「常驻的一条灰底」）；而只写 ``::handle`` 而不中和
-``::add-page`` 的话，轨道原样留着 —— 所以下面每条断言都对着像素。
+只说明它写对了，不代表屏幕上真的没画。原生滚动条那一份在离屏下轨道是一条 ``#e6e6e6`` 的
+实心竖条，而只写 ``::handle`` 而不中和 ``::add-page`` 的话轨道原样留着 —— 所以下面每条
+断言都对着像素。
 """
 
 from __future__ import annotations
@@ -173,7 +173,7 @@ def test_the_track_is_gone_and_only_the_handle_is_left(qt_app: QApplication) -> 
     top, bottom = _handle_span(image, background)
     assert top >= 0, "整条滚动条上一个非底色像素都没有，滑块根本没画出来"
     # **先钉住「确实量得到轨道那一段」**：滑块一铺满整条，下面那个 ``beyond`` 就是空列表，
-    # 而 ``all([])`` 恒为真 —— 守护于是变成空转，轨道回来了它照样绿（实测过）。
+    # 而 ``all([])`` 恒为真 —— 守护于是变成空转，轨道回来了它照样绿。
     beyond = [y for y in range(image.height()) if not top <= y <= bottom]
     assert beyond, "滑块铺满了整条，量不到轨道那一段"
 
@@ -250,8 +250,7 @@ def test_a_theme_change_re_pushes_the_sheet(qt_app: QApplication) -> None:
         palette = qt_app.palette()
         palette.setColor(theme.BACKGROUND_ROLE, dark.background)
         # **正文色也要一起换**：:func:`theme.current_theme` 的 ``text`` 取自 ``WindowText``，
-        # 只换底色的话滑块压出来的还是那一档黑 —— 那是测试把前置条件设残了，
-        # 真机换外观时这一档本来就跟着变。
+        # 只换底色的话滑块压出来的还是那一档黑 —— 真机换外观时这一档本来就跟着变。
         for role in (QPalette.ColorRole.WindowText, QPalette.ColorRole.Text):
             palette.setColor(role, dark.text)
         qt_app.setPalette(palette)
@@ -316,8 +315,7 @@ def test_the_handle_is_a_pill_set_back_from_the_right_edge(qt_app: QApplication)
     """胶囊形，且右缘留 :data:`HANDLE_GAP` 像素的缝 —— 贴着边看着像内容被切掉一截。
 
     量的是**滑块横向占住哪几列**：左边起于第 0 列（靠着内容那一侧不留边），右边停在
-    倒数第 ``HANDLE_GAP`` 列，最后那两列必须是底色。贴死的那一版用户原话：
-    「你的截图上没有边缘，很奇怪」。
+    倒数第 ``HANDLE_GAP`` 列，最后那两列必须是底色 —— 贴着边看着像内容被切掉一截。
     """
     theme.ensure_installed(qt_app)
     background = theme.current_theme(qt_app).background
@@ -338,15 +336,13 @@ def test_the_handle_is_a_pill_set_back_from_the_right_edge(qt_app: QApplication)
 def test_the_handle_corners_are_rounded_not_square(qt_app: QApplication) -> None:
     """滑块四角是圆的 —— 半径一旦被 Qt 清零，滑块就是一个方头。
 
-    **这条守的是 ``983e00d`` 那个回退过的事故**：那一版是 9 点宽 + ``HANDLE_WIDTH / 2``
-    = 4.5，真机上圆角整个消失，而当时所有证据都来自离屏渲染。机制在
-    :mod:`gallery.ui.scrollbar_style` 的模块文档里（``qRound`` 一次 + ``qNormalizeRadii``
-    判 ``2 × 圆角 > 宽度`` 就清零）；现在这一档是 10 点宽 + 5 点圆角，正好压线而保住。
+    9 点宽 + ``HANDLE_WIDTH / 2`` = 4.5 时真机上圆角整个消失（机制在
+    :mod:`gallery.ui.scrollbar_style` 的模块文档里：``qRound`` 一次 + ``qNormalizeRadii``
+    判 ``2 × 圆角 > 宽度`` 就清零），所以这一档是 10 点宽 + 5 点圆角，正好压线而保住。
 
-    **量的是「有 / 没有」，不是「多圆」**：离屏渲染的圆弧比真机淡得多（实测这一档
-    真机上顶端内缩 9 设备像素，离屏下只有 2），量半径大小等于在量渲染器。所以
-    **同一个用例里再造一条半径 0 的做对照组**：有圆角的那条必须在外接矩形里露出底色，
-    方的那条一个也不许露 —— 「露了」与「一个都没露」才是这条要断的事。
+    **量的是「有 / 没有」，不是「多圆」**：离屏渲染的圆弧比真机淡得多，量半径大小等于在量
+    渲染器。所以**同一个用例里再造一条半径 0 的做对照组**：有圆角的那条必须在外接矩形里
+    露出底色，方的那条一个也不许露。
 
     **它专治「半径越过一半被清零」**（半径改成 6 时它会红）：单纯把 ``//`` 写成 ``/``
     在偶数额度上只是 5.0 vs 5，渲染一样，那种违规由上一条用例按类型拦下。
@@ -402,17 +398,16 @@ def test_the_grid_scrollbar_keeps_only_a_slit_to_the_window_edge(
 ) -> None:
     """网格页那条滚动条的右缘离**窗口**右缘只有 :data:`_GRID_PAGE_MARGIN_RIGHT` 点。
 
-    **这条守的正是用户看见的那块「右侧空白」**：滑块的缝只有 2 点，可滚动区外面还包着
-    一圈页面边距（原来是 10 点，比滚动条本身还宽）—— 于是屏幕上那一段空白是这个之和，
-    看着像内容被切掉一截。用户原话：「右边的 10 点改为 2」。
+    **这条守的正是屏幕上那块「右侧空白」**：滑块的缝只有 2 点，可滚动区外面还包着一圈页面
+    边距（比滚动条本身还宽）—— 屏幕上那一段空白是这个之和，看着像内容被切掉一截。
 
-    **量的是窗口而不是滚动区**：上一轮只量到「滚动条右缘 = 滚动区右缘」，那一层是对的，
-    漏掉的恰恰是滚动区到窗口之间这一段。两个右缘相减，就是要守的那个数。
+    **量的是窗口而不是滚动区**：只量「滚动条右缘 = 滚动区右缘」那一层是对的，漏掉的恰恰是
+    滚动区到窗口之间这一段。两个右缘相减，就是要守的那个数。
 
     **「2」在这条用例里是写死的**：只跟 :data:`_GRID_PAGE_MARGIN_RIGHT` 比是空转 ——
-    常量一改，布局与断言一起变，永远绿（实测过：把右边距改回 10 它照样过）。
+    常量一改，布局与断言一起变，永远绿。
     """
-    # 用户点名要的那一档就是 2 点（原话：「右边的 10 点改为 2」），在这儿独立写一遍才是守护。
+    # 2 点是这一档定下来的取值，在这儿独立写一遍才是守护。
     assert _GRID_PAGE_MARGIN_RIGHT == 2, (
         f"网格页右边距改成了 {_GRID_PAGE_MARGIN_RIGHT} 点，用户要的是 2 点"
     )

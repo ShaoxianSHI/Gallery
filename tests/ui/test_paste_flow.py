@@ -88,14 +88,9 @@ def _open(qt_app: QApplication, root: Path, *, browse_mode: str = BROWSE_MODE_AL
     instance = MainWindow(session_base=session_base, initial_library=root)
     instance.resize(900, 600)
     instance.show()
-    # **等扫描真正收工，不是「屏幕上已经有东西了」。** 原来这里只等
-    # ``rowCount() > 0``：第一条一到就返回，于是用例开始选中的时候扫描还在跑，
+    # 等扫描真正收工（「这一层排好了」的唯一判据是 ``_scan_job is None``，同 test_context_menu /
+    # test_group_flow / test_blank_double_click 用的都是它），不是「屏幕上已经有东西了」：
     # 收尾那一下 ``_apply_ordering`` 会重排整个模型并**把选区收掉**。
-    # 机器一忙（并行跑测试时正是这样）就偶发：粘到了与相册同级的地方。
-    #
-    # 「这一层排好了」的唯一判据是 ``_scan_job is None``（同 test_context_menu /
-    # test_group_flow / test_blank_double_click 用的都是它），顺带把分组用的
-    # facet 读取也算进去 —— 那一遍会再排一次。
     assert wait_until(qt_app, lambda: instance._model.rowCount() > 0), "扫描没有在时限内完成"
     assert wait_until(
         qt_app,
@@ -248,11 +243,9 @@ def test_clearing_the_selection_goes_back_to_the_current_level(
 ) -> None:
     """**点空白取消选中之后，⌘V 立刻回到当前这一层** —— 不粘进刚才那个相册。
 
-    用户报过的那个症状。左键点空白处已经会把选区**与当前项**一起清掉
-    （``PhotoGrid.sync_current_to_selection``），所以真机上不必造这个状态；
-    这里要验的是**判据本身**仍然是「读真选区」：于是「选区空、当前项还指着某个相册」
-    这个状态（模型重排时 Qt 顺手设的那种，以及下面直接摆出来的这一种）也不会把 ⌘V
-    粘进用户已经取消选择的目录。
+    左键点空白处会把选区**与当前项**一起清掉（``PhotoGrid.sync_current_to_selection``），
+    真机上不必造这个状态；这里要验的是**判据本身**仍然是「读真选区」：于是「选区空、当前项
+    还指着某个相册」这个状态（模型重排时 Qt 顺手设的那种）也不会把 ⌘V 粘进已经取消选择的目录。
     """
     desktop.copy_files_to_clipboard([root / "京都" / "一张.jpg"])
     row = window._model.row_of_path(root / "京都")
@@ -406,9 +399,8 @@ def test_the_blank_menu_leaves_no_empty_slot_when_paste_is_the_only_one(
 def test_pasting_on_a_photo_is_not_offered(qt_app: QApplication, window: MainWindow) -> None:
     """按在一张照片上（单选 / 多选都是）**不出现**「粘贴」，而 ⌘V 照旧能用。
 
-    用户明确要求的：这一格未必属于当前这一层（全部照片、分组那几屏都是各相册混在一起
-    的），摆出来只会让人猜「粘到哪」。「拿进拿出」那一组里其余几行与分隔线照旧
-    （ADR 0023 决策 2）。
+    这一格未必属于当前这一层（全部照片、分组那几屏都是各相册混在一起的），摆出来只会让人猜
+    「粘到哪」。「拿进拿出」那一组里其余几行与分隔线照旧（ADR 0023 决策 2）。
     """
     _enter(qt_app, window, window._library.root / "京都")
     # 源放在**另一个**相册里：在京都里 ⌘C 再 ⌘V 什么也不做（ADR 0018 决策 2），那样
@@ -655,7 +647,7 @@ def test_a_second_paste_does_not_race_the_first(
     """两个粘贴同时跑会争同一个目标名字，后到的会把先到的盖掉。
 
     所以上一次没结束就再按 ⌘V，要被挡住。**把第一次复制卡住**才是确定性的写法 ——
-    靠「文件小、任务快」去撞，那个偶发会随机器负载变。
+    靠「文件小、任务快」去撞就是随机器负载赌。
     """
     started = threading.Event()
     release = threading.Event()

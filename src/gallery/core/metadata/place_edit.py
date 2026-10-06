@@ -59,8 +59,8 @@ class PlaceEdit:
     latitude: float | None = None
     longitude: float | None = None
     #: **只删坐标、留地名**（定位漂了而地名没错时，用户要的是这一下）。「两个框都空了」本身
-    #: 说不清是「删掉它」还是「没动它」，所以由界面明确说「原本有值、现在被清空了」。
-    #: 「把位置整个清掉」不需要单独的开关：三层地名与两个坐标框全清空就是那个意思。
+    #: 说不清是「删掉它」还是「没动它」，所以由界面明确说「原本有值、现在被清空了」——
+    #: 「把位置整个清掉」不需要单独的开关，全清空就是那个意思。
     clear_coordinates: bool = False
 
     def names(self) -> tuple[str | None, str | None, str | None]:
@@ -99,11 +99,9 @@ def plan_place_edit(
 
     :raises MetadataWriteError: 坐标不合法（超出范围、只填了一个、填成了 0,0）。
 
-    **只写用户填的那几层，不再隐式跨层填充**（ADR 0039 决策 4）。原先坐标变了会顺手
-    反查地名、地名变了会顺手正查坐标，于是「对话框显示的那一份」与「真正写下去的
-    那一份」在某些路上不是同一份 —— 界面上那三个 ``if place.region and ...``
-    查不到就不动，而这里的空值是**删掉**。跨层填充现在只发生在对话框那两个按钮上，
-    而按钮改的就是框本身，所以这一层只做翻译。
+    **只写用户填的那几层，不再隐式跨层填充**（ADR 0039 决策 4）：坐标变了顺手反查地名、
+    地名变了顺手正查坐标，会让「对话框显示的那一份」与「真正写下去的那一份」在某些路上不是
+    同一份。跨层填充现在只发生在对话框那两个按钮上，而按钮改的就是框本身。
 
     ``resolver`` 仍被接受（对话框那两个按钮用的就是同一个），但这里**不用它** ——
     保留是为了让签名与调用点不必跟着改。
@@ -141,11 +139,9 @@ def _clearing_coordinates(
     """「把坐标删掉，但地名留着」——定位漂了、地名没错时用户真正想要的那一下。
 
     **海拔与定位时间一并清掉**，与 :func:`_coordinate_assignments` 同一份定义
-    （:data:`~gallery.core.metadata.writeback.STALE_GPS_TAGS`）。缺陷现场：原先这里只发
-    :data:`~gallery.core.metadata.writeback.COORDINATE_TAGS` 那四条，于是清空之后文件里
-    留下一条「有海拔 3200 米、有 GPS 定位时间、但没有经纬度」的记录 —— 任何读 EXIF 的
-    软件看到都是一脸困惑，而 :func:`_coordinate_assignments` 的 docstring 恰好写着
-    「留着一条 GPS 记录就自相矛盾」。两条路各写一份清单，迟早分叉；现在只写一份。
+    （:data:`~gallery.core.metadata.writeback.STALE_GPS_TAGS`）：只清经纬度那几条会在文件里
+    留下一条「有海拔、有 GPS 定位时间、但没有经纬度」的记录，读 EXIF 的软件看到都是一脸困惑。
+    两条路各写一份清单迟早分叉，现在只写一份。
     """
     assignments: list[Assignment] = [Assignment(tag, "") for tag in _all_coordinate_tags()]
     if names_changed:

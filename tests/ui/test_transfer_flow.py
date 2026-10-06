@@ -143,8 +143,8 @@ def _submenu(menu: QMenu, title: str) -> QMenu:
 
     展开是必要的一步，不是多余的：相册清单是在 ``aboutToShow`` 里现列的
     （见 :func:`gallery.ui.menus.build_lazy_album_picker`）—— 右键的那一刻只建出两个
-    空壳子菜单，用户真的把鼠标移上去才去列清单。这个助手发的就是那一下，于是
-    「用户看到什么」与菜单构造那一刻的状态不再是两件事。
+    空壳子菜单，鼠标真的移上去才去列清单。这个助手发的就是那一下，于是「看到什么」与菜单
+    构造那一刻的状态不再是两件事。
     """
     for action in menu.actions():
         if action.text() == title:
@@ -167,9 +167,9 @@ def _album_item(menu: QMenu, label: str):
 
 
 def test_both_sit_under_copy_path(qt_app: QApplication, window: MainWindow) -> None:
-    """紧挨在「拷贝路径」正下方（用户指定的位置，ADR 0019）。
+    """紧挨在「拷贝路径」正下方（ADR 0019）。
 
-    下面**不再是**「粘贴」——按在照片上不摆那一条了（ADR 0018 决策 7），这一张菜单里
+    下面**不再是**「粘贴」—— 按在照片上不摆那一条了（ADR 0018 决策 7），这一张菜单里
     「把东西放到别处去」只剩这两条。
     """
     _enter(qt_app, window, window._library.root / "京都")
@@ -203,8 +203,8 @@ def test_both_are_submenus_not_plain_rows(qt_app: QApplication, window: MainWind
 def test_the_album_list_is_the_whole_library(qt_app: QApplication, window: MainWindow) -> None:
     """列的是**全库**的相册（含深层的），标签是相对库根的路径。
 
-    深层相册也要能直接挑到 —— 用户要的是「挪到某个相册去」，不是「挪到这一层能看见的
-    那几个去」（ADR 0019 决策 1）。
+    深层相册也要能直接挑到 —— 要的是「挪到某个相册去」，不是「挪到这一层能看见的那几个去」
+    （ADR 0019 决策 1）。
     """
     _enter(qt_app, window, window._library.root / "京都")
     row = _select_photo(window, "一张.jpg")
@@ -282,8 +282,7 @@ def test_switching_libraries_mid_transfer_does_not_leave_a_phantom_undo(
 ) -> None:
     """搬一半换库：闸门必须跟着收，否则横幅骗人说「⌘Z 可以撤销」。
 
-    缺陷现场：⌘V 复制几百 MB 跑到一半，用户用「文件 → 打开文件夹…」切了另一个库。
-    换库时 `_teardown_library` 忘了取消写操作闸门，于是那次复制接着在**旧库**上跑完；
+    换库时 `_teardown_library` 必须取消写操作闸门，否则那次复制接着在**旧库**上跑完；
     收尾时 `_on_transfer_done` 拿着**新库**去问「下一次 ⌘Z 撤什么」—— 记录明明
     记在旧库的 journal 里，界面上却一条都撤不掉。
     """
@@ -299,9 +298,8 @@ def test_switching_libraries_mid_transfer_does_not_leave_a_phantom_undo(
     def slow_copy(self: Library, *args: object, **kwargs: object) -> object:
         started.set()
         # 让任务真的跨过「提交 → 换库 → 收尾」这三步，别靠时间碰运气。
-        # 轮询用 waiting 里那一份：原先那个 `for _ in range(40)` 撞满 40 轮就
-        # 悄悄接着往下走，于是「换库没赶上」这条用例有可能是因为复制跑在了旧库上
-        # 才绿的 —— 门没被测到，测试自己看不出来。
+        # 轮询用 waiting 里那一份：撞满轮数就悄悄接着往下走的话，「换库没赶上」这条用例
+        # 有可能是因为复制跑在了旧库上才绿的 —— 门没被测到，测试自己看不出来。
         assert wait_until(
             qt_app, lambda: window._library is not None and window._library.root == other
         ), "换库没有在时限内发生，这条用例没测到门"

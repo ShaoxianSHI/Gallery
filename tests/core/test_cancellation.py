@@ -21,8 +21,7 @@ def test_never_cancel_says_keep_going() -> None:
 def test_no_module_redefines_the_stand_in() -> None:
     """核心层里**只有这一处**定义「永远不取消」，别的地方不许再抄一份。
 
-    这条曾经散成四份一模一样的 ``_never_cancel``（scanner / batch / paste / transfer），
-    而它们没有任何理由不同 —— 抄来抄去只会各自漂移。
+    抄一份出来没有任何理由不同，而抄来抄去只会各自漂移。
     """
     offenders: list[str] = []
     for path in sorted(CORE_ROOT.rglob("*.py")):

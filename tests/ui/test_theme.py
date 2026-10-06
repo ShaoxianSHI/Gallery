@@ -66,7 +66,7 @@ def _platform_palette(app: QApplication, *, window: QColor, base: QColor) -> QPa
         palette.setColor(role, QColor(0xEC, 0xEC, 0xEE) if dark else QColor(0x1A, 0x1A, 0x1A))
     # ``Mid`` 一族（Qt 用它画 3D 边框的中间那一档）深色下**一路压暗到 #585858**。补上这一档
     # 不是较真：样式表里 ``palette(mid)`` 读的是**应用**调色板，不设它的话离屏平台那份默认值
-    # 会一直留在 #b8b8b8，于是「深色下那一枚记号看不见」在测试里压根不会发生。
+    # 会一直留着，「深色下那一枚记号看不见」在测试里压根不会发生。
     for role in (
         QPalette.ColorRole.Light,
         QPalette.ColorRole.Midlight,
@@ -177,8 +177,8 @@ def _edge_colors(image: QImage, window: QWidget, widget: QWidget, *, outward: in
     x0, y0 = top_left.x(), top_left.y()
     x1, y1 = x0 + widget.width(), y0 + widget.height()
     width, height = image.width(), image.height()
-    # 截图最外圈 3 像素是窗口自己的圆角与阴影（实测底行是 #c3c5c7 一类桌面色），
-    # 不是界面画的框 —— 跳过，否则会把窗口边缘当成边框。
+    # 截图最外圈 3 像素是窗口自己的圆角与阴影（底行是 #c3c5c7 一类桌面色），不是界面画的
+    # 框 —— 跳过，否则会把窗口边缘当成边框。
     margin = 3
     found: set[int] = set()
 
@@ -246,7 +246,7 @@ def test_the_three_layers_paint_one_background(qt_app: QApplication, window: Mai
 
 
 def test_detail_view_keeps_the_same_background(qt_app: QApplication, window: MainWindow) -> None:
-    """从网格切到大图，底色不能变 —— 以前点开照片会突然黑一块。"""
+    """从网格切到大图，底色不能变 —— 否则点开照片会突然黑一块。"""
     try:
         expected = theme.current_theme().background
         _open_detail(qt_app, window)

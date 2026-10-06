@@ -103,9 +103,8 @@ def copy_into(
     skipped: list[Skipped] = []
     failures: list[Failure] = []
     journaled = True
-    # **目录只扫一次**：加编号的探测原本是「撞一次 stat 一次」，而这一层是逐项循环 —— 把几百张
-    # 同名照片粘进一个已经有几百张同名照片的目录，探测次数就是两者的乘积。
-    # 扫不动时是 ``None``（「不知道」），那一层就退回逐项 ``exists()``，宁可慢也不猜。
+    # **目录只扫一次**：逐项 ``exists()`` 加编号在这一层是「路径数 × 已有同名数」次系统调用。
+    # 扫不动时是 ``None``（「不知道」），那一层退回逐项探测，宁可慢也不猜。
     taken = occupied_names(destination)
 
     for raw_source in sources:
@@ -169,9 +168,8 @@ def _copy_one(
             # 因此还留在它原来的时间位置上，而不是齐刷刷跳到今天。
             shutil.copy2(source, created)
     except FileExistsError:
-        # 目标已经存在，**而那不是我们写了一半的东西，是用户自己放进去的**。
-        # 绝不能清理它：copytree 压根还没开始写，清理那句 ``rmtree`` 删掉的是用户的
-        # 文件夹连同里面所有照片，而横幅只会说「复制失败」（红线 1）。
+        # 目标已经存在，**而那不是我们写了一半的东西，是用户自己放进去的** —— 绝不能清理它：
+        # 清理那句 ``rmtree`` 删掉的是用户的文件夹连同里面所有照片（红线 1）。
         message = "这个位置已经有同名的文件或文件夹了，粘贴没有动它。"
         return _Outcome(
             failure=Failure.at(source, message=message),

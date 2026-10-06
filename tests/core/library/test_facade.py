@@ -58,9 +58,8 @@ def test_a_missing_exiftool_hides_the_metadata_editor_instead_of_failing_on_save
     报错的命令）。而生产路径 ``Library.open`` 从不传 writer，于是 ``None`` 说的是
     「还没探过、默认用 exiftool」，不是「能用」。
 
-    缺陷现场：那句判据写成 ``self._writer is None or self._writer.available()``，
-    生产环境下它恒为 ``True`` —— 没装 exiftool 的机器上菜单照样出现，用户填完点保存
-    才在 ``write_metadata`` 里抛错。比一开始就不出现糟糕得多。
+    ``.writer is None`` 时恒真的话，这条判据在生产环境下等于没有 —— 没装 exiftool 的
+    机器上菜单照样出现，填完点保存才在 ``write_metadata`` 里抛错。比一开始就不出现糟糕得多。
     """
     make_photo("一张.jpg")
     library = Library.open(tmp_path)
@@ -340,9 +339,8 @@ def test_clearing_a_cover_that_never_existed_writes_nothing(tmp_path: Path) -> N
 def test_setting_a_cover_needs_the_config_dir(tmp_path: Path) -> None:
     """``.gallery/`` 建不出来时（只读卷）封面设置只说清楚，不硬写。
 
-    这条门原先守的是「用户当初选了缓存到系统目录」，那个模式已经删掉了
-    （ADR 0038 决策 1）—— 但**门本身还在**：``.gallery/` 存不住东西的库上，
-    封面与界面偏好都没有地方落，硬写只会报错。
+    **门本身还在**：``.gallery/` 存不住东西的库上，封面与界面偏好都没有地方落，
+    硬写只会报错。
     """
     album = tmp_path / "京都"
     photo = album / "一张.jpg"

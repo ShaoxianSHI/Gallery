@@ -1,8 +1,5 @@
 """缩略图网格的滚动灵敏度。
 
-用户原话：「当前缩略图滚动灵敏度太高了，降低一点，现在鼠标滚动一格设置翻动了一页多，
-部分内容永远看不见。触控板和鼠标灵敏度都降低一点」。
-
 **被测的是「滚一次走多少像素」这一个量。** Qt 自己那一档是「角度 ÷ 120 ×
 ``wheelScrollLines()``（macOS 上 3）× **一个格子高**」，格子高跟着档位与窗口宽度走
 （1200×800 视口上是 171 / 220 / 317），于是滚轮**一格**是 513 / 660 / 951 像素 ——
@@ -95,12 +92,12 @@ def _scrolled(grid: PhotoGrid, **kwargs: float) -> int:
 def test_a_mouse_notch_is_never_a_page_flip(qt_app: QApplication, tmp_path: Path) -> None:
     """滚轮**一格**不许变成「翻一整页」。
 
-    这是整件事最硬的一条底线：Qt 那一档按 3 × 格子高算，格子一大就够翻一整页了
-    （实测格子高 414 时，一格给的是整整 800 像素 = 一个视口），那一格滚轮直接成了翻页键。
+    这是整件事最硬的一条底线：Qt 那一档按 3 × 格子高算，格子一大就够翻一整页了，
+    那一格滚轮直接成了翻页键。
 
     **为什么不是「一格不许跳过一整行」**：那一档是 :data:`WHEEL_NOTCH_PIXELS` = 240，
-    而中档那一行才 220 —— 用户要的就是「一格约等于过一行」（原来是三行），所以比行高
-    大一点是**有意的**。真正要守住的是「一格仍然是一次滑动，不是一次翻页」。
+    而中档那一行才 220 —— 一格约等于过一行是**有意的**，比行高略大一点。
+    真正要守住的是「一格仍然是一次滑动，不是一次翻页」。
     """
     grid = make_grid(qt_app, tmp_path, ROWS)
     settle_grid(qt_app, grid)
@@ -120,8 +117,8 @@ def test_a_mouse_notch_is_the_same_at_every_size(
 ) -> None:
     """一格滚多少**与档位无关**：否则切一次缩略图尺寸，手感整个变掉。
 
-    Qt 那一档是跟着格子高走的（实测 513 / 660 / 951 像素），格子再大一点它还会把一格
-    滚轮当成翻页键 —— 同一个滚轮，在三档里是三种完全不同的键。
+    Qt 那一档是跟着格子高走的，格子再大一点它还会把一格滚轮当成翻页键 ——
+    同一个滚轮，在三档里是三种完全不同的键。
     """
     grid = make_grid(qt_app, tmp_path, ROWS)
     grid.set_target_edge(icon_edge)
@@ -147,7 +144,7 @@ def test_the_trackpad_follows_the_fingers(qt_app: QApplication, tmp_path: Path) 
     """触控板按**像素增量**走：手指走多少，画面跟着走多少（再乘一个系数）。
 
     Qt 丢掉 ``pixelDelta``、只按角度增量算，于是 macOS 的「1 像素 = 2 个角度单位」被
-    5.5 再乘一遍：手指走 40 像素，画面走 110（用户说「太灵敏」的正是这条）。
+    5.5 再乘一遍：手指走 40 像素，画面走 110 —— 那就是「太灵敏」。
     """
     grid = make_grid(qt_app, tmp_path, ROWS)
     settle_grid(qt_app, grid)
@@ -241,9 +238,8 @@ def test_the_rename_box_travels_with_the_cell_under_it(
 ) -> None:
     """行内改名的输入框要跟着它盖着的那一格走 —— 位移要**一模一样**。
 
-    这一条盯的是一个已经栽过的坑：``scrollContentsBy`` 里曾经有一句「输入框是视口的子
-    控件，不会自己跟着格子滚」，于是手动挪一次；而基类滚的是 ``viewport->scroll``，
-    ``QWidget::scroll`` **自己就会挪子控件** —— 两次正好抵消，输入框钉在原地不动，
+    ``scrollContentsBy`` 里手动挪一次是不对的：基类滚的是 ``viewport->scroll``，
+    而 ``QWidget::scroll`` **自己就会挪子控件** —— 两次正好抵消，输入框钉在原地不动，
     格子走了它不走，于是盖在别的照片的名字上。
 
     量的是**输入框的位移 == 那一格 ``visualRect`` 的位移**，而不是「输入框动了没有」：

@@ -93,9 +93,7 @@ class LevelStackMixin:
         （它被删了，或者本来就是空格子），而 ``None`` 是「根本不在日历那一格里」。合成一处，
         「在那一格里但空的」会变成「不在那一格」，于是 :meth:`MainWindow._reload_level` 里那句
         「条件非空就清掉日历格」反而**不**清它 —— 而那一格摊开的内容是空的，留着只会让人以为
-        还在那一格。
-
-        **这条是被守护测试逼出来的**：我第一版把两者合了，守护立刻红，而它红得对。
+        还在那一格。守护测试盯着这一条。
         """
         frame = self._calendar_frame
         return frame.photos if frame is not None else None
@@ -125,8 +123,8 @@ class LevelStackMixin:
 
     @property
     def _search_frame(self) -> SearchFrame | None:
-        """栈上最近那个搜索结果帧。**搜索结果的判据只有一个地方**（原先要同时看
-        ``_conditions`` 与 ``_search_scope``，七个调用点各问一次 —— 那正是这类 bug 的来源）。"""
+        """栈上最近那个搜索结果帧。**搜索结果的判据只有一个地方** —— 让每个调用点自己同时看
+        ``_conditions`` 与 ``_search_scope``，正是这类 bug 的来源。"""
         for frame in reversed(self._level_stack.frames):
             if isinstance(frame, SearchFrame):
                 return frame
@@ -177,15 +175,12 @@ class LevelStackMixin:
         ``[CalendarFrame, SearchFrame]``，而日历格**不在栈顶**。
 
         **别用 ``_pop_to(lambda: self._calendar_frame is None)``** —— 那是「从栈顶连续弹」，
-        在这个栈上会把刚压上去的搜索帧一并弹掉，而它不会被压回来。留下的状态是矛盾的：条件
-        还在、作用域还是 library，可栈上没有搜索帧（``_is_library_search()`` 答「在检索」而
-        ``_search_frame`` 是 ``None``）。下一次换浏览方式时 ``set_browse_mode`` 因此抓不到帧、
-        清不掉条件 —— 症状是「日历格内搜索之后切到全部照片，之前的搜索条件被用来作为筛选条件」。
+        在这个栈上会把刚压上去的搜索帧一并弹掉，而它不会被压回来，留下一个矛盾状态：条件还在、
+        作用域还是 library，可栈上没有搜索帧。下一次换浏览方式时 ``set_browse_mode`` 因此抓不到帧、
+        清不掉条件。
 
         **也别写成「栈顶是日历格才摘」**：那样一句在真实时序里永远不成立（栈顶是搜索帧），
-        日历格摘不掉，于是撤光条件之后按 Esc 会退到「他这一趟没去过的那一格」
-        （钉它的用例：``test_a_search_from_a_calendar_cell_forgets_that_cell``）。两个方向各有一
-        条用例，所以这个方法的两条判据都不能省。
+        日历格摘不掉，于是撤光条件之后按 Esc 会退到「他这一趟没去过的那一格」。
         """
         frames = self._level_stack.frames
         index = next(

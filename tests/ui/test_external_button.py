@@ -91,10 +91,7 @@ def test_button_is_exactly_as_tall_as_the_field() -> None:
 
 
 def test_button_is_wide_enough_for_an_icon_and_an_arrow() -> None:
-    """里面放的是**两样东西**（图标 + 下拉箭头），正方形放不下。
-
-    曾经是 22×22 的正方形，屏幕上只剩一个孤零零的三角 —— 视觉检查抓到的症状。
-    """
+    """里面放的是**两样东西**（图标 + 下拉箭头），正方形放不下。"""
     assert button_rect(FIELD).width() > ICON_EDGE
     assert button_rect(FIELD).width() >= 36
 
@@ -139,8 +136,7 @@ def test_the_left_half_shows_only_the_icon(qt_app: QApplication) -> None:
 def test_the_left_half_carries_an_icon(qt_app: QApplication) -> None:
     """**左半那个图标要有。**
 
-    曾经只给菜单项设了图标而忘了按钮自己，于是 Qt 给空图标画了一个占位方框，
-    屏幕上就是「一个方框 + 一个下拉三角」——视觉检查抓到的症状。
+    忘了按钮自己时 Qt 会给空图标画一个占位方框，屏幕上就成了「一个方框 + 一个下拉三角」。
     """
     button = ExternalAppsButton()
     button.set_entries([_entry("google_calendar", "Google 日历", True)])
@@ -183,9 +179,8 @@ def test_it_is_two_buttons_side_by_side(qt_app: QApplication) -> None:
 def test_the_right_half_does_not_borrow_qt_menu_indicator(qt_app: QApplication) -> None:
     """**右半不把菜单挂到按钮上。**
 
-    挂了 Qt 就会在那一格里再画一个它自己的菜单三角，与我们画的那个箭头叠在一起
-    （实测就是这个症状）；而给 ``::menu-indicator`` 写样式去压它，那个三角又会整个
-    消失。干脆两条都不走。
+    挂了 Qt 就会在那一格里再画一个它自己的菜单三角，与我们画的那个箭头叠在一起；而给
+    ``::menu-indicator`` 写样式去压它，那个三角又会整个消失。干脆两条都不走。
     """
     button = ExternalAppsButton()
     assert button._menu_button.menu() is None
@@ -308,9 +303,7 @@ def test_no_library_means_the_button_stays_out(window: MainWindow) -> None:
 
 def test_the_current_folder_is_the_library_root_at_first(window: MainWindow) -> None:
     """全部照片视图下锚点是库根 —— 口径就是既有那一句 ``_current_dir or root``。"""
-    # **栈上什么都没有**（只有根帧）—— 原来这里是 ``window._current_dir = None``，
-    # 而那个字段现在是栈的投影、不可写（ADR 0041）。要摆出「没进相册」就用**空的栈**，
-    # 那正是这个用例要的状态。
+    # ``_current_dir`` 是栈的投影、不可写（ADR 0041），摆出「没进相册」只能用**空的栈**。
     assert window._level_stack.frames == (), "前提不成立：栈上已经有东西了"
     assert window._current_folder() == window._library.root
 
@@ -529,8 +522,7 @@ def test_folder_icon_falls_back_to_a_drawn_one(
 def test_both_halves_are_wide_enough(qt_app: QApplication) -> None:
     """两半都要**放得下里面的东西**再留出余量。
 
-    用户提过一次「两个按钮都稍微宽一点」：左半要容得下一个十几点的图标，右半要容得下
-    那个 V —— 卡着图标宽度的话，两样东西都像贴在边上。
+    两半都要留出余量：卡着图标宽度的话，图标与那个 V 都像贴在边上。
     """
     assert BUTTON_WIDTH - MENU_EDGE >= ICON_EDGE + 8, "左半给图标留的余量不够"
     assert MENU_EDGE >= 16, "右半放那个箭头太挤"
@@ -544,11 +536,10 @@ def test_the_dropdown_is_the_same_colour_as_the_search_popup(
 ) -> None:
     """下拉框与搜索框的候选列表**同一套颜色**：那四个角色都要一样。
 
-    用户原话：「和搜索框 / 右键菜单配色尽量一致，现在有一点割裂」。这三样是三个不同的控件，
-    样式表都由 :mod:`gallery.ui.menu_style` 从**各自的**调色板生成 —— 而 macOS 上 Qt 会按
-    控件类型把高亮、正文色解析成不同的值（同一份调色板：``QMenu`` 的 ``Highlight`` 是
-    ``#548fff``、``QTreeWidget`` 是 ``#084ad9``），于是同一套生成逻辑画出了两种蓝。
-    钉死那几档之后（ADR 0035 决策 2）它们只可能同色。
+    这三样是三个不同的控件，样式表都由 :mod:`gallery.ui.menu_style` 从**各自的**调色板生成 ——
+    而 macOS 上 Qt 会按控件类型把高亮、正文色解析成不同的值（同一份调色板：``QMenu`` 的
+    ``Highlight`` 是 ``#548fff``、``QTreeWidget`` 是 ``#084ad9``），于是同一套生成逻辑画出了
+    两种蓝。钉死那几档之后（ADR 0035 决策 2）它们只可能同色。
 
     **在测试里这一条是绿的、而真机上量得出差别**：测试默认跑在 ``offscreen`` 上（``fusion``），
     那里每一类控件解析出来的都一样。真正把住那条不变式的是

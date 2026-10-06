@@ -355,8 +355,8 @@ def test_the_storage_gap_table_only_names_tags_gallery_can_write() -> None:
 
 
 def test_the_storage_gap_table_never_drops_the_xmp_place_names() -> None:
-    """**XMP 一个都不许进表**（实测每个进表的容器都存得下它）—— 砍掉它就是把这个 bug
-    换个格式重演一遍：地点彻底写不进去。
+    """**XMP 一个都不许进表**（进表的那些容器都存得下它）—— 砍掉它就等于让地点
+    彻底写不进去。
     """
     for suffix, tags in UNSTORABLE_TAGS.items():
         assert set(XMP_PLACE_TAGS) & tags == set(), f"{suffix} 那条把 XMP 也砍掉了"
@@ -365,7 +365,7 @@ def test_the_storage_gap_table_never_drops_the_xmp_place_names() -> None:
 @pytest.mark.parametrize("suffix", [".heic", ".heif", ".webp"])
 def test_the_containers_without_iptc_drop_exactly_the_iptc_place_names(suffix: str) -> None:
     """**这三个容器丢掉的正好是 IPTC 那三个地名标签**，一个不多一个不少：坐标与拍摄时间在
-    那几个容器里都是好的（实测），多丢一个就是又一次「地点写不进去」。
+    那几个容器里都是好的，多丢一个就是让地点又写不进去一次。
     """
     assert UNSTORABLE_TAGS[suffix] == frozenset(IPTC_PLACE_TAGS)
 
@@ -570,7 +570,7 @@ def test_an_undo_that_could_restore_nothing_stays_on_the_stack(
 ) -> None:
     """**一项都没撤成时，那条写回留在栈上** —— 再按一次 ⌘Z 会重试。
 
-    两种情形必须分开，注释里曾经把它们混成一句：
+    部分冲突与全冲突是两种情形，必须分开：
 
     - **部分冲突**（有能撤的字段）：撤成功的那几条记 ``ok`` → 弹栈。它们确实回到原值了，
       再让用户去重撤一遍没有意义。
@@ -669,9 +669,8 @@ class _RollbackCorruptingWriter(FakeWriter):
 def test_a_rollback_that_does_not_take_is_not_reported_as_a_success(
     library: Path, photo: PhotoRef
 ) -> None:
-    """**回滚本身要被回读校验** —— 「按原值写回去」是一次请求，不是一次保证。
-
-    曾经不查就宣布「照片已经恢复原样」：经度被写成 ``0.000000`` 而日志里前后值都齐着。"""
+    """**回滚本身要被回读校验** —— 「按原值写回去」是一次请求，不是一次保证
+    （exiftool 在这一支照样返回 0，见 :class:`_RollbackCorruptingWriter`）。"""
     writer = _RollbackCorruptingWriter(
         {
             "EXIF:GPSLatitude": "39.904200",
@@ -726,8 +725,8 @@ class _TimeoutRecordingWriter(FakeWriter):
     """记下每次 ``write`` 收到的 ``timeout``，其余行为与 :class:`FakeWriter` 一样。
 
     它**接受** ``timeout``，于是 :func:`_write_for_rollback` 的能力探测会命中 ——
-    那正是这条用例要验的那条路。（原先那个判据是 ``isinstance(tool, ExifToolWriter)``，
-    测试注入的都是假实现，于是**永远验不到**：写出来永远为绿的守护比没有更坏。）
+    那正是这条用例要验的那条路。所以探测不能写成 ``isinstance(tool, ExifToolWriter)``：
+    测试注入的都是假实现，那样**永远验不到**，而写出来永远为绿的守护比没有更坏。
     """
 
     def __init__(self, fields: dict[str, str] | None = None) -> None:

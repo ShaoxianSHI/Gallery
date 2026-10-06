@@ -135,9 +135,9 @@ def _settle(qt_app: QApplication, window: MainWindow, *, index: bool = True) -> 
     ``index=False`` 用于**故意不等索引那一遍**的用例：它们要看的正是
     「索引还没建好时用户提交了条件」那条路。
     """
-    # 除了 :func:`waiting.BACKGROUND_JOBS` 那三个，检索这一遍（``_search_job``）
-    # 与尚未提交的暂存选择（``_staged``）也要收工 —— 它们同样按「是 ``None``
-    # 算收工」判，所以一并交给 :func:`waiting.wait_for_idle`。不成立**直接抛**。
+    # 除了 :func:`waiting.BACKGROUND_JOBS` 那三个，检索这一遍（``_search_job``）、尚未提交的
+    # 暂存选择（``_staged``）与索引那一遍也按「是 ``None`` 算收工」判，一并交给
+    # :func:`waiting.wait_for_idle`。不成立**直接抛**。
     also = ("_search_job", "_staged", "_index_job") if index else ("_search_job", "_staged")
     wait_for_idle(qt_app, window, also=also, what="检索、排序与索引")
 
@@ -169,11 +169,10 @@ def test_the_capsule_paints_its_own_edge(qt_app: QApplication) -> None:
     """胶囊得**看得见**：边框要真的画出来。
 
     样式表挂在普通 ``QWidget`` 上时，底色与边框**一条都不会画** —— Qt 只给 ``QFrame``
-    那一族自动画样式背景（实测：胶囊整个透明，在白色窗口上等于不存在）。
+    那一族自动画样式背景。
 
-    **看得见靠的是那一圈边框，不是底色**：底色与窗口外面同一个（ADR 0035 决策 1 ——
-    原来那一档灰恰好是 macOS 系统窗口的颜色，用户以为是 Qt 原生的）。所以这里断言的是
-    「边框与窗外不一样」，而不是「里面那一块与窗外不一样」。
+    **看得见靠的是那一圈边框，不是底色**：底色与窗口外面同一个（ADR 0035 决策 1）。所以这里
+    断言的是「边框与窗外不一样」，而不是「里面那一块与窗外不一样」。
     """
     window = QWidget()
     window.resize(400, 60)
@@ -225,9 +224,7 @@ def test_the_capsule_stays_inside_the_title_bar_strip(qt_app: QApplication, tmp_
     """胶囊不许压到内容上。
 
     标题栏那一条比安全区高（``title_bar.EXTRA_PADDING``），高出来的那一段**必须
-    同时把内容区也往下推**—— 不推就是拿胶囊的底色去盖照片区的顶边。这条曾经真的
-    发生过，是被 ``test_innermost_layer_has_no_border`` 抓到的（它量到大图区上边缘
-    出现了几百个非底色像素）。
+    同时把内容区也往下推** —— 不推就是拿胶囊的底色去盖照片区的顶边。
     """
     window = MainWindow(session_base=tmp_path / "会话")
     window.show()
@@ -434,11 +431,11 @@ def test_the_candidate_list_takes_its_colors_from_the_menu_side(
 def test_the_magnifier_fits_inside_its_canvas(qt_app: QApplication, ratio: float) -> None:
     """放大镜要完整，还要**在画布之内**。
 
-    两条曾经踩过的坑各钉一条：
+    两条约束各钉一条：
 
     - 笔是画在路径**两侧**的，画到画布边上会被裁掉（手柄的尖少一截）；
     - ``QPainter`` 按设备像素比缩放它拿到的坐标，拿设备像素画上去在 Retina 上就是
-      放大一倍 —— 13 点的画布里只剩手柄的尖（不透明像素只剩右下角一个）。
+      放大一倍 —— 13 点的画布里只剩手柄的尖。
 
     ``ratio=2`` 那一条正是 Retina 屏上的样子。
     """
@@ -506,8 +503,8 @@ def _hash_columns(field: SearchField, host: QWidget) -> tuple[int, int]:
     """输入框里那个 ``#`` 与候选列表里那个 ``#`` 各自的横坐标（**宿主**逻辑坐标）。
 
     量的是**画出来的像素**，不是控件的矩形：Qt 画 ``::item`` 的文字之前自己还会让开
-    一段（委托的边距），QSS 的 ``padding`` 是在那之后才叠上去的 —— 只看控件位置，
-    永远看不到这段（这一条当初就栽在这儿：控件量出来是齐的，界面上仍然错开八点）。
+    一段（委托的边距），QSS 的 ``padding`` 是在那之后才叠上去的 —— 只看控件位置永远看不到
+    这段。
 
     列表量的是**没被选中**的那一行：选中行整行铺着高亮色，它比文字更靠左，量它
     量到的是高亮的圆角。深浅色都成立，所以底色参考点取同一行右侧的空白处。
@@ -517,8 +514,7 @@ def _hash_columns(field: SearchField, host: QWidget) -> tuple[int, int]:
     popup = field._popup
     box = popup.geometry()
     # ``visualItemRect`` 给的是**视口**坐标，换到窗口坐标要加视口的左上角而不是列表的 ——
-    # 两者差着一整圈边框与内边距（:data:`POPUP_LIST_INSET`）。加错了量到的是上一行
-    # 高亮的下沿（实测偏七点，量出来「差 20」，真实差 2）。
+    # 两者差着一整圈边框与内边距（:data:`POPUP_LIST_INSET`）。加错了量到的是上一行高亮的下沿。
     view = popup.viewport().mapTo(host, QPointF(0, 0))
     row = popup.visualItemRect(popup.topLevelItem(1)).translated(view.toPoint())
     background = image.pixelColor(  # type: ignore[attr-defined]
@@ -578,11 +574,8 @@ def test_the_candidate_list_does_not_stick_out_past_the_capsule(
 ) -> None:
     """列表的右沿**不许越过胶囊的右沿**。
 
-    宽度曾经是 :data:`WIDTH` 而左沿又照着胶囊往右挪了十八点，于是右边整整探出去
-    十八点 —— 一份挂在输入框底下、比输入框还宽的列表看着是漏的。
-
-    现在左沿让开多少、宽度就收多少，于是右沿**正正**压在胶囊右沿上（不是「不超过」，
-    是「一样宽到同一处」）。只断言「不超过」的话，把列表缩成一条窄缝也能过。
+    左沿让开多少、宽度就收多少，于是右沿**正正**压在胶囊右沿上（不是「不超过」，是「一样宽到
+    同一处」）。只断言「不超过」的话，把列表缩成一条窄缝也能过。
     """
     window = _open_candidates(qt_app, tmp_path, "#")
     field = window._search_field
@@ -601,8 +594,8 @@ def test_the_candidate_list_follows_the_capsule_layout(
     """胶囊左边多出一截，列表的左沿要**跟着挪那么多**。
 
     这条盯的是「让开的那一段是**量出来的**，不是写死的常数」（见
-    ``SearchField._popup_left``）：写死的话这里不会红，而换过放大镜之后两个 ``#``
-    就对不齐了 —— 那一档 8 点内边距不变，挪的是框，框挪多少全看输入框那一侧有多宽。
+    ``SearchField._popup_left``）：写死的话这里不会红，而换过放大镜之后两个 ``#`` 就对不齐了
+    —— 那一档 8 点内边距不变，挪的是框，框挪多少全看输入框那一侧有多宽。
     """
     window = _open_candidates(qt_app, tmp_path, "#")
     field = window._search_field
@@ -646,8 +639,8 @@ def test_the_candidate_list_is_only_as_tall_as_its_rows(
 ) -> None:
     """列表底下不许留一截空白。
 
-    高度曾经是「行数 × 26」，而那一档字号下真正的行高是 23 —— 每行多算三点，十七条
-    就在最下面攒出四十来点空白（实测 450 高、内容只有 391）。那一块不是留白，是算错的。
+    高度按 ``sizeHintForRow`` 算而不是按某个常数：那一档字号下真正的行高是 23，按 26 算就是
+    每行多三点，十七条足以在最下面攒出几十点空白 —— 那一块不是留白，是算错的。
     """
     window = _open_candidates(qt_app, tmp_path, "#")
     popup = window._search_field._popup
@@ -928,9 +921,8 @@ def test_the_library_name_stays_a_link_while_searching(
     _settle(qt_app, window)
 
     assert window._conditions == [], "点库名就是退出检索"
-    # 栈：点库名 = 压一条**空的相册链**（落在库根）。``_current_dir`` 是栈的投影，
-    # **在库根时是 ``None``** —— 真正被各处用的是 :meth:`_current_folder`（口径
-    # ``_current_dir or root``），所以断它而不是断那个字段。
+    # 点库名 = 压一条**空的相册链**（落在库根）。``_current_dir`` 是栈的投影、在库根时是
+    # ``None``；真正被各处用的是 :meth:`_current_folder`（口径 ``_current_dir or root``）。
     assert window._current_folder() == root
     assert window._level_stack.frames == (), "点库名之后栈上还有东西 —— 那是「没退回库根」"
     assert _trail(window) == ["照片"]
@@ -946,7 +938,7 @@ def test_the_breadcrumb_drops_the_group_while_searching(
     """检索时那一组也不报 —— 与文件夹同一个理由。
 
     「照片 ▸ 2024 年 5 月 ▸ 搜索结果（3）」读起来是「这一组里搜到 3 张」，而检索横跨
-    整库。实测过一个**空组**：里面搜出 3 张全库照片，面包屑却还写着那个组。
+    整库 —— **空组**尤其明显：里面搜出 3 张全库照片，面包屑却还写着那个组。
     撤光条件之后要回到原来那一组（分组状态留着，不是丢了）。
     """
     root = _library(tmp_path, make_photo)

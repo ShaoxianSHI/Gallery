@@ -225,8 +225,8 @@ class CalendarFlowMixin:
         """**日历格那一帧已经被 ``go_up`` 弹掉了** —— 这一步只做模型与视图的收尾。
 
         分成两个方法是因为「弹栈」是统一的（「谁弹的都一样」），而收尾因帧而异（「日历格要回
-        日历页、分组要把刚离开的卡片选中」）。原先这里自己弹一次字段，于是**弹栈这件事有两处**，
-        漏一处就出现「按 Esc 位置动了而模型还是那一格的内容」。
+        日历页、分组要把刚离开的卡片选中」）。收尾若自己弹一次字段，**弹栈这件事就有两处**，
+        漏一处会出现「按 Esc 位置动了而模型还是那一格的内容」。
         """
         self._model.clear()
         self._grid.reset_for_new_level()
@@ -262,9 +262,7 @@ class CalendarFlowMixin:
             return
         generation = self._generation
 
-        # **查索引也搬到后台** —— 理由与 `ordering._start_facet_read` 那条完全一样：
-        # 三万张全命中时 cached_facets 要 234 ms，而这一段在换层、换排序、以及监听器
-        # 每次触发重排时都要走（``_apply_ordering`` 的 finally 里）。
+        # **查索引也搬到后台** —— 理由与 ``ordering._start_facet_read`` 那条完全一样。
         def work(context: TaskContext) -> object:
             cached = library.cached_facets(refs)
             if len(cached) == len(refs):

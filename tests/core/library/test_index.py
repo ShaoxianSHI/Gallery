@@ -147,7 +147,7 @@ def test_store_replaces_instead_of_duplicating(tmp_path: Path) -> None:
 
 
 def test_write_chunking_matches_row_count(tmp_path: Path) -> None:
-    """分批写入（每批 500 行）不能丢行 —— 这条曾经是静默写歪的那种 bug。"""
+    """分批写入（每批 500 行）不能丢行 —— 丢行在索引里是静默的。"""
     index = FacetIndex(tmp_path / "index.db")
     refs = [_ref(tmp_path, f"{number:05}.jpg") for number in range(1200)]
     items = [
@@ -185,11 +185,10 @@ def test_prune_drops_photos_that_are_gone(tmp_path: Path) -> None:
 def test_prune_handles_a_list_longer_than_sqlite_takes_variables(tmp_path: Path) -> None:
     """**保留名单比 SQLite 能带的变量还长时，也要清得掉。**
 
-    缺陷现场：这一段曾被改成一条 ``DELETE … WHERE path NOT IN (?, ?, …)``，
-    「一次扫描 + 一条 SQL」比「扫描 + 逐个 executemany」好看。但 SQLite 对一次语句里
-    能带的变量个数有上限（实测 100000 个就报 ``too many SQL variables``），而
-    ``except sqlite3.Error`` 会把那个错吞成「返回 0」—— **静默什么都不删**，正是索引
-    这种可再生缓存最不该有的失败方式。
+    ``DELETE … WHERE path NOT IN (?, ?, …)`` 看着比「扫描 + 逐个 executemany」干净，
+    但 SQLite 对一次语句里能带的变量个数有上限（十万个就报 ``too many SQL
+    variables``），而 ``except sqlite3.Error`` 会把那个错吞成「返回 0」——
+    **静默什么都不删**，正是索引这种可再生缓存最不该有的失败方式。
 
     注意**不能靠分批绕开**：``NOT IN`` 分批等于「不在这一批里就删」，会把别批的活照片
     全删掉 —— 那比删不掉糟得多。所以这一段是「先查出已知的、Python 侧算出该删哪些、

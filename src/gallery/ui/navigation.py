@@ -42,10 +42,9 @@ ENTRY_KIND_GROUP = "group"
 #: 它不是目录，因此不与相册或分组混用。
 ENTRY_KIND_SEARCH = "search"
 
-#: :data:`LevelKey` 里插在条件前面的一段：**条件正在收窄这一层，而不是取代它**（ADR 0040 决策 2）。
-#:
-#: **这一段不是可有可无的**：筛选时条件仍要进标识（否则「加一条条件」会被当成「还是这一层」，
-#: 焦点恢复会往一个已被滤掉的行上跳），而条件一进标识就与不带条件的那一层长得不一样了。
+#: :data:`LevelKey` 里插在条件前面的一段：**条件正在收窄这一层，而不是取代它**（ADR 0040 决策
+#: 2）。这一段不是可有可无的 —— 条件要进标识（否则「加一条条件」会被当成「还是这一层」），
+#: 而条件一进标识就与不带条件的那一层长得不一样了。
 ENTRY_KIND_FILTER = "filter"
 
 
@@ -111,9 +110,8 @@ def level_key(
         base = (LEVEL_KIND_ALBUMS, str(directory))
     if conditions:
         if scope == SEARCH_SCOPE_LEVEL:
-            # **层还是那一层**：目录要留着（不留着的话「在相册 A 筛过」与「在相册 B 筛过」会撞成
-            # 同一个标识），条件后面也缀一段 :data:`ENTRY_KIND_FILTER` 让它与不带条件的那一层
-            # 分得开。
+            # **层还是那一层**：目录要留着（不留着「在相册 A 筛过」与「在相册 B 筛过」会撞成
+            # 同一个标识），条件前面缀一段 :data:`ENTRY_KIND_FILTER` 让它与不带条件的分得开。
             base = (*base, ENTRY_KIND_FILTER, *conditions)
         else:
             base = (ENTRY_KIND_SEARCH, *base, *conditions)

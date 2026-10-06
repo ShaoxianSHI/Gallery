@@ -115,12 +115,7 @@ def guard_within_root(root: Path, path: Path, *, allow_root: bool = True) -> Non
     :raises ValueError: 不满足上面任何一条。
 
     **别再把「库根」写成静默返回。** 这条闸门是「确认」用的，而 ``return`` 什么都不
-    确认 —— 文档写着「禁止」、代码却放行，读的人只能靠猜。它原先那句
-    ``if not allow_root and path.resolve() == root.resolve(): return``
-    之所以没出事，是因为 :func:`gallery.core.metadata.rename._guard` 与
-    :func:`gallery.core.metadata.trash._guard` 各自在前面查了一遍库根、并且带着更贴切的
-    领域错误文案；把它们说清楚之后，这道闸自己就把库根挡掉，那两处预检也就不再是
-    「唯一拦得住的地方」了。
+    确认 —— 文档写着「禁止」、代码却放行，读的人只能靠猜。
     """
     root = Path(root)
     path = Path(path)
@@ -226,11 +221,9 @@ def thumbnail_cache_dir(root: Path, *, base: Path | None = None) -> Path:
     return app_cache_root(base=base) / THUMBNAIL_DIR_NAME / library_digest(root)
 
 
-#: 外部工具（exiftool 等）常见的安装目录。
-#:
-#: 终端里 ``PATH`` 里有它们，是因为登录 shell 读了用户的配置文件；从访达 / Dock
-#: 启动的进程没有这个上下文，只拿到 ``/usr/bin:/bin:/usr/sbin:/sbin``。写死这些
-#: 目录是刻意的：进程内没有别的方式知道第三方包管理器把东西装到了哪。
+#: 外部工具（exiftool 等）常见的安装目录。终端里 ``PATH`` 里有它们是因为登录 shell 读了用户的
+#: 配置文件，从访达 / Dock 启动的进程没有这个上下文。写死是刻意的：进程内没有别的方式知道
+#: 第三方包管理器把东西装到了哪。
 EXTRA_TOOL_DIRS: Final = (
     "/opt/homebrew/bin",
     "/usr/local/bin",

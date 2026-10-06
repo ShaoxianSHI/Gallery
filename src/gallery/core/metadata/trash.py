@@ -329,9 +329,6 @@ def _free_name(candidate: Path, *, is_dir: bool) -> Path:
     **「不覆盖」这条规矩归 :mod:`gallery.core.metadata.naming` 管**（它的模块文档
     写着「只有一份实现，否则日后三份会各自漂移」），这里只交代本地的一件事：
     目录**没有扩展名可拆**，所以整体算名字（``京都.2024`` → ``京都.2024 2``）。
-    曾经这里自己写了一遍加编号的循环，于是它已经与粘贴那套漂开了：数到 999 就
-    放弃、也压根不管 255 字节的上限 —— 超长的名字要走到 ``rename`` 才炸，
-    报一句与真正原因无关的话。
     """
     if not candidate.exists():
         return candidate

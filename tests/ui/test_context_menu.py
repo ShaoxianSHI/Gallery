@@ -59,14 +59,12 @@ def exiftool_present(window: MainWindow) -> None:
     """让这个窗口所在的库「改得动元数据」——**注入假工具，而不是改判据**。
 
     「编辑元数据…」进不进菜单由 ``Library.can_write_metadata`` 决定，它转问
-    ``Library.exiftool_available()``。原先这条 fixture 去 monkeypatch 那个方法，
-    于是**判据本身从未被测过**；再加上生产路径上它恒为 ``True``（``writer=None``
-    被当成了「能用」），这条 fixture 在生产语义下是个**恒等操作** —— 菜单出不出现
-    与本机装没装 exiftool 无关。
+    ``Library.exiftool_available()``。monkeypatch 那个方法的话**判据本身从未被测过**；
+    而生产路径上它恒为 ``True``（``writer=None`` 被当成了「能用」），于是菜单出不出现与本机
+    装没装 exiftool 无关。
 
-    所以改成注入一个 :attr:`_writer` 并清掉探测缓存，让判据真的被走一遍：
-    「没注入就按默认 exiftool 探，探不到就 ``False``」由 ``tests/core`` 里那条
-    新的核心层用例负责。
+    所以注入一个 :attr:`_writer` 并清掉探测缓存，让判据真的被走一遍：「没注入就按默认
+    exiftool 探，探不到就 ``False``」由 ``tests/core`` 里那条核心层用例负责。
     """
     window._library._writer = _AvailableWriter()
     window._library._exiftool_available = None  # 让它按新注入的工具重新探一次
@@ -520,8 +518,8 @@ def test_multi_selection_hides_single_item_actions(
 
     「复制到相册」「移动到相册」**多选时仍然留着**（ADR 0019）。**藏掉的只是那一行，
     组块与分隔线原样留着**（ADR 0023 决策 2），用户在单选与多选之间切换时看到的分隔线不跳。
-    唯独**第四组整组消失**：「显示元数据信息」与「复制元数据」讲的都是**这一张**照片，
-    早先只藏了后者、把前者留着，那是在同一段里用两套判据。
+    唯独**第四组整组消失**：「显示元数据信息」与「复制元数据」讲的都是**这一张**照片 ——
+    同一段里不该用两套判据（只藏后者、把前者留着）。
     """
     _enter_album(qt_app, window)
     assert window._model.rowCount() == len(PHOTO_NAMES)
@@ -585,7 +583,7 @@ def test_open_says_return_on_every_level_that_has_it(
     挂上去它就成了整个窗口的回车，与网格自己的处理打架。
     """
     # 相册要在**库根**看（进了京都就只剩照片），所以这一段排在进相册之前 —— 换浏览方式
-    # 不会退回上一层，顺序写反了相册那一行就找不到（实测 row -1）。
+    # 不会退回上一层，顺序写反了相册那一行就找不到。
     _show_albums(qt_app, window)
     album_row = window._model.row_of_path(window._library.root / "京都")
     assert album_row >= 0

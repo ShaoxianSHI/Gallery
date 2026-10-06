@@ -274,9 +274,9 @@ def test_an_unknown_search_scope_is_not_recorded() -> None:
 
 
 def test_resolving_the_search_scope_falls_back_to_the_whole_library() -> None:
-    """没选过就是整库检索 —— 那是从前唯一的那一种行为（ADR 0040 决策 1）。
+    """没选过就是整库检索（ADR 0040 决策 1）。
 
-    **别把默认定成筛选**：新用户不该一装上就与从前不一样，而「筛选」是主动去开的那一个。
+    **别把默认定成筛选**：那是主动去开的那一个。
     """
     assert LibraryUIState().resolved_search_scope() == SEARCH_SCOPE_LIBRARY
     assert LibraryUIState(search_scope="编出来的").resolved_search_scope() == SEARCH_SCOPE_LIBRARY
@@ -295,7 +295,7 @@ def test_the_search_scope_alone_means_the_ui_table_is_not_empty() -> None:
 
 
 def test_a_fresh_library_writes_no_ui_table(tmp_path: Path) -> None:
-    """没人设过的东西不该在文件里留下一行等着被误读成「曾经有过设置」。"""
+    """没人设过的东西不该在文件里留下一行 —— 那一行会被读成「设过，只是设成这个」。"""
     save_config(tmp_path, LibraryConfig())
 
     assert UI_KEY not in paths.config_file(tmp_path).read_text(encoding="utf-8")
@@ -504,9 +504,8 @@ def test_a_legacy_cache_holding_something_else_is_left_alone(tmp_path: Path) -> 
 def test_the_empty_shell_is_removed_even_after_the_thumbs_are_gone(tmp_path: Path) -> None:
     """``thumbs`` 早就没了、只剩一个空壳 ``cache/`` 时，**也要把它收掉**。
 
-    这一条钉的是一个真实的早退 bug：清理函数原本写成「``thumbs`` 不存在就 return 0」，
-    于是**第一次**打开库把 thumbs 删掉、第二次打开时那个空壳就再也没人管 ——
-    实测在真实库上看到的就是「清理报 0 个文件，而 ``.gallery/cache/`` 还杵在那儿」。
+    清理函数不能写成「``thumbs`` 不存在就 return 0」：**第一次**打开库把 thumbs 删掉、
+    第二次打开时那个空壳就再也没人管，于是报出来的是「清理了 0 个文件」而目录还在。
     """
     prepare_library(tmp_path)
     paths.legacy_cache_dir(tmp_path).mkdir(parents=True)  # 只有空壳，没有 thumbs

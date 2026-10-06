@@ -202,10 +202,10 @@ def test_an_album_whose_every_photo_fails_says_why(
 def test_a_stale_result_does_not_release_the_new_jobs_slot(qt_app, tmp_path: Path) -> None:
     """**旧一代的迟到结果不许摘掉新一代的在途登记。**
 
-    缺陷现场：``shutdown()``（切库 / 关窗）清空了 ``_inflight`` 并换代。上一代还在
-    路上的任务若晚回来、还照着老写法无条件 ``pop(entry.path)``，摘掉的就是新一代
-    为同一格登记的那一条 —— ``_inflight`` 于是少数了（超过 ``_max_inflight`` 也不再
-    补），而 ``cancel()`` 更是再也够不着那个真正在跑的新任务。
+    ``shutdown()``（切库 / 关窗）会清空 ``_inflight`` 并换代。上一代还在路上的任务若晚
+    回来、无条件 ``pop(entry.path)``，摘掉的就是新一代为同一格登记的那一条 ——
+    ``_inflight`` 于是少数了（超过 ``_max_inflight`` 也不再补），
+    而 ``cancel()`` 更是再也够不着那个真正在跑的新任务。
     """
     del qt_app
     prepare_library(tmp_path)
@@ -252,10 +252,10 @@ def test_the_reference_table_forgets_what_left_the_window(
     pipeline: tuple[ThumbnailPipeline, TaskRunner],
     wait_for: Callable[..., bool],
 ) -> None:
-    """滚走的那些不留着 —— 10 万张的平铺库滚一趟不能攒下 10 万条（实测约 5.2 MB）。
+    """滚走的那些不留着 —— 10 万张的平铺库滚一趟不能攒下 10 万条（约 5 MB）。
 
     ``_refs`` 唯一的作用是给**队列里**的路径找条目，而队列每次都整份换成可见 + 预读；
-    窗外那些谁也够不着。原先只往后加、只有切库才清，于是换层 / 换分组 / 换相册都留着。
+    窗外那些谁也够不着。所以每次换窗口都要重收一遍，不能只往后加。
     """
     thumbs, runner = pipeline
     first = _refs(50, "a")
@@ -303,9 +303,8 @@ def test_the_bad_file_memory_outlives_the_window(
     broken = _refs(2, "d")
     thumbs.set_window(broken)
     # 先等**这批真的跑完**，再断言那笔账：``_failed`` 是在回调里记的，
-    # 而回调要等后台任务收工、经排队连接回到主线程才发生。
-    # 直接等那笔账就是在赌时序 —— 等不到时报出来的是「结论没记上」，
-    # 而真正的原因是任务压根没回来。
+    # 而回调要等后台任务收工、经排队连接回到主线程才发生 —— 直接等那笔账
+    # 等到的报出来是「结论没记上」，而真正的原因是任务压根没回来。
     assert wait_for(lambda: not thumbs._inflight), "这批坏文件没有在时限内跑完"
     assert set(thumbs._failed) >= {ref.path for ref in broken}, "读不出来的结论没有记进 _failed"
 
@@ -322,11 +321,10 @@ def test_scrolling_back_to_a_bad_file_does_not_decode_it_again(
 ) -> None:
     """**滚回去也不能重解码** —— 上面那条只守了「切到别的窗口」，缺的那一半在这儿。
 
-    缺陷现场：``_dispatch`` 里原本无差别 ``_failed.discard(path)``，理由是「换档要重试」。
-    但它并不看档位，于是**每一次**队列里重新出现这个路径（用户滚回去、窗口重建、
-    换一次缩放档位）都把结论抹掉一次。症状是同一个截断的 JPEG 被反复解码，每次都
-    占住线程池把好照片挤到后面，并且每次都再报一次错 —— 正是上面那条 docstring
-    说要防的事。
+    ``_dispatch`` 里不能无差别 ``_failed.discard(path)``（理由是「换档要重试」）：
+    它并不看档位，于是**每一次**队列里重新出现这个路径（用户滚回去、窗口重建、
+    换一次缩放档位）都把结论抹掉一次 —— 同一个截断的 JPEG 被反复解码，每次都
+    占住线程池把好照片挤到后面，并且每次都再报一次错。
 
     判据用「``set_window`` 返回后 ``_inflight`` 仍为空」：``_dispatch`` 是在
     ``set_window`` 末尾**同步**跑完的，而 ``_start`` 也是同步登记在途的，所以真要重解码
@@ -340,7 +338,7 @@ def test_scrolling_back_to_a_bad_file_does_not_decode_it_again(
 
     thumbs.set_window(_refs(2, "e"))  # 滚走
     # 等这一批（"e" 那两个并不存在的路径）真的收工：不然断言里看到的在途登记是它们的，
-    # 而不是「坏文件被重解码」这件事 —— 那样这条用例就成了永远为绿的空转。
+    # 而不是「坏文件被重解码」这件事。
     assert wait_for(lambda: not thumbs._inflight), "滚走之后这批没有在时限内跑完"
 
     thumbs.set_window(broken)  # 滚回来

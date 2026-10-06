@@ -97,10 +97,10 @@ def test_config_dir_cannot_be_renamed(tmp_path: Path) -> None:
 def test_library_root_cannot_be_renamed(tmp_path: Path) -> None:
     """**钉住这句文案**，不只是「提到库本身」。
 
-    ``_guard`` 原先在 ``guard_within_root`` 之前另写了一遍库根检查，那句被删掉之后
-    「库根本身」改由 ``guard_within_root(allow_root=False)`` 抛出、再经 ``_rename_reason``
-    映射成一句话。**两处的文案必须一字不差** —— 差一个字就是用户在一条熟悉的消息里
-    看到别的东西，而这条报错是「改不了」时用户唯一会看到的东西。
+    「库根本身」由 ``guard_within_root(allow_root=False)`` 抛出、再经 ``_rename_reason``
+    映射成一句话，所以**这里的文案与 ``core.paths`` 那句必须一字不差** ——
+    差一个字就是用户在一条熟悉的消息里看到别的东西，而这条报错是「改不了」时用户
+    唯一会看到的东西。
     """
     with pytest.raises(RenameError) as caught:
         rename_entry(tmp_path, FolderRef.from_path(tmp_path), "新名字")

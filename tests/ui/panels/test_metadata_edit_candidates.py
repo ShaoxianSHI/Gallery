@@ -1,7 +1,7 @@
 """元数据编辑器那一格补全背后的模型。
 
-``_refresh_candidates`` 每 250 毫秒（防抖的那一头）就会走一遍，而原先每次都新建一个
-``QStringListModel`` 再挂给 ``QCompleter`` —— 候选本身没变，变的只是它背后的那几行，
+``_refresh_candidates`` 每 250 毫秒（防抖的那一头）就会走一遍，所以它**不能每次新建一个
+``QStringListModel``** 再挂给 ``QCompleter``：候选本身没变，变的只是它背后的那几行，
 而每次新建都要连着重新接一遍补全那一串内部连接。
 """
 
@@ -77,7 +77,7 @@ def test_the_candidate_model_is_built_once(qt_app: QApplication) -> None:  # noq
 
 
 def test_no_candidates_means_no_model_is_attached(qt_app: QApplication) -> None:  # noqa: ARG001
-    """一个都查不到时**什么都不做** —— 与原先一致（补全窗口于是不弹）。"""
+    """一个都查不到时**什么都不做** —— 挂上一个空模型补全窗口就会弹出来。"""
     dialog = _dialog(StubResolver())
 
     dialog._refresh_candidates("查不到的地方")

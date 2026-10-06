@@ -138,9 +138,8 @@ class ContextMenuFlowMixin:
 
     def _menu_actions(self, paste: QAction | None) -> MenuActions:
         """把菜单要用的动作收成一包（``ui.menus`` 只认这个，不认窗口）。"""
-        # 相册清单**在用户展开子菜单时才列**：列一次要走一遍整棵目录树（3000 个相册约
-        # 120 ms，全在主线程上）。「一个相册都没有就不建这条菜单」（ADR 0014 决策 4）问的是
-        # ``has_albums`` —— 它找到一个就停，所以有相册时只花一次 scandir。
+        # 相册清单**在用户展开子菜单时才列**：列一次要走一遍整棵目录树（3000 个相册约 120 ms，
+        # 全在主线程上）。上面那道 ``has_albums`` 找到一个就停，所以有相册时只花一次 scandir。
         copy_to_album = move_to_album = None
         if self._library is not None and self._library.has_albums():
             copy_to_album = self._album_picker("复制到相册", self._album_targets)

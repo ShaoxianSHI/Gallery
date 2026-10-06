@@ -93,12 +93,9 @@ WRITABLE_TAGS: Final[frozenset[str]] = frozenset(
 #: EXIF 那一组（坐标 + 顺带清掉的海拔与定位时间 + 拍摄时间）。
 _EXIF_TAGS: Final[frozenset[str]] = frozenset(COORDINATE_TAGS + STALE_GPS_TAGS + CAPTURE_TIME_TAGS)
 
-#: **哪些容器存不下哪些标签**（ADR 0036，逐格式逐标签实测）。键是文件后缀，值是该后缀下压根写
-#: 不进去的标签。表里只有**静默丢弃**的那些：exiftool 返回 0、不警告、什么都不写，``-q -q`` 连
-#: 那句 ``1 image files unchanged`` 也吞掉，于是收到这种赋值的结果不是「写失败」，而是「回读校验
-#: 必定对不上 → 整体回滚连写成功的 XMP 一起擦掉」。
-#: **按后缀判，不嗅探文件内容**（与 ``decode.py`` / ``is_supported_photo`` 同一套）。BMP 不在表里
-#: —— exiftool 对它明确报错并返回非 0，那条路本来就通；这张表只装不说话的。
+#: **哪些容器存不下哪些标签**（ADR 0036，逐格式逐标签实测）。表里只有**静默丢弃**的那些 ——
+#: exiftool 返回 0、不警告、什么都不写，于是收到这种赋值的结果不是「写失败」，而是「回读校验必定
+#: 对不上 → 整体回滚连写成功的 XMP 一起擦掉」。明确报错并返回非 0 的（BMP）不在表里。
 UNSTORABLE_TAGS: Final[dict[str, frozenset[str]]] = {
     ".heic": frozenset(IPTC_PLACE_TAGS),
     ".heif": frozenset(IPTC_PLACE_TAGS),
@@ -125,16 +122,9 @@ INSTALL_HINT: Final = "安装后即可使用：brew install exiftool"
 #: exiftool 用这几个词表示「这个字段是空的」，与读取侧同一套（``exif._EMPTY_VALUES``）。
 _EMPTY_VALUES: Final = frozenset({"-", "--", "unknown"})
 
-#: **回滚那次写回用的超时**（理由见 :func:`_apply`）。
-#:
-#: 一次 :meth:`ExifToolWriter.write` 最多起两个子进程（先试原地改、失败再退回覆盖），
-#: 加上前后两次 :meth:`read`，:func:`_apply` 最坏要起 **6 个** exiftool，而每个可以卡满
-#: :data:`EXIFTOOL_TIMEOUT_SECONDS` —— 最坏 90 秒。而「回滚没有成功」正是用户最需要尽快
-#: 看到结果的那条路径：他刚按的 ⌘Z 现在处于一个说不清的状态里。
-#:
-#: 回滚是一次**重写**：目标值明确、不需要「先试原地改再退回」那种试探，所以给更短的
-#: 上限。真出了超时，:func:`_apply` 会照实报「没能恢复原值，请核对这几个字段」——
-#: 宁可让人早点去看一眼，也别让他对着不动的界面等一分半。
+#: **回滚那次写回用的超时**，比 :data:`EXIFTOOL_TIMEOUT_SECONDS` 短：一次 :func:`_apply` 最坏
+#: 要起 6 个 exiftool，各能卡满正常超时，而「回滚没有成功」正是用户最需要尽快看到结果的那条
+#: 路径。回滚是一次**重写**（目标值明确，不需要「先试原地改再退回」那种试探），所以给更短的上限。
 ROLLBACK_TIMEOUT_SECONDS: Final = 5.0
 
 
@@ -190,10 +180,8 @@ class UndoMetadataResult:
     entry: PhotoRef | None
     #: 确实写回了原值的那些字段。
     restored: tuple[FieldChange, ...] = ()
-    #: 没能撤销的字段与原因。
-    #:
-    #: 只有一种原因：**文件里已经不是 Gallery 当初写下去的那个值了**（用户在别的工具里改过）。
-    #: 那时按原值盖回去就是毁掉那次改动，因此如实报告、绝不硬改。
+    #: 没能撤销的字段与原因。只有一种原因：**文件里已经不是 Gallery 当初写下去的那个值了**
+    #: （用户在别的工具里改过）—— 那时按原值盖回去就是毁掉那次改动，因此如实报告、绝不硬改。
     conflicts: tuple[Failure, ...] = ()
     journaled: bool = True
 
@@ -326,10 +314,9 @@ def write_metadata(
         # 与原来一模一样：不写盘也不记日志 —— 把「没改」记成一次改动，会让 ⌘Z 去撤一件空事。
         return WriteResult(entry=ref, journaled=True, written=False)
 
-    # **先记账，再动文件。** 原值与新值到这里已经齐了，落一条 pending 只要几十微秒；而
-    # :func:`_apply` 要起一到两次 exiftool 子进程（几十到几百毫秒）—— 那个窗口里断电，原图就改了
-    # 而日志上一条都没有（红线 4）。记不上账也照样往下走（报 ``journaled=False``）：不能因为记不上
-    # 就把一次用户明确要求的写入整个拒掉。
+    # **先记账，再动文件。** 落一条 pending 只要几十微秒，而 :func:`_apply` 要起一到两次 exiftool
+    # 子进程（几十到几百毫秒）—— 那个窗口里断电，原图就改了而日志上一条都没有（红线 4）。
+    # 记不上账也照样往下走（报 ``journaled=False``）：不能因为记不上就把一次用户要求的写入拒掉。
     logged = _journal(root, path, changes, RESULT_PENDING, None)
     try:
         _apply(path, changes, tool)
@@ -459,7 +446,7 @@ def _apply(path: Path, changes: Sequence[FieldChange], tool: MetadataWriter) -> 
     """把 ``changes`` 的目标值写进去并**回读校验**；对不上就按原值写回去。
 
     **正向与撤销共用这一段**：两者的差别只有「写什么」，校验与回滚的规矩一个字都不变 ——
-    曾经它们各写各的，于是「撤销」那条路是不校验的。
+    各写各的时「撤销」那条路是不校验的。
 
     **回滚本身也要回读校验**（红线 4）：「按原值写回去」是一次**请求**，不是保证 —— exiftool
     在空间不够、写到一半被截断这些要处理的失败情形里照样返回 0。不回读就宣布「已恢复原样」，

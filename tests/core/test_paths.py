@@ -26,8 +26,8 @@ def test_paths_live_under_config_dir(tmp_path: Path) -> None:
     assert paths.config_file(root) == config / "config.toml"
     assert paths.journal_dir(root) == config / "journal"
     assert paths.index_file(root) == config / "index.db"
-    # 缩略图**不在**这个目录树里（ADR 0038 决策 1），但旧版留下的那块要认得出来，
-    # 迁移时靠它定位。
+    # 缩略图**不在**这个目录树里（ADR 0038 决策 1），但搬走之前留在库里的那块
+    # 仍要认得出来，迁移时靠它定位。
     assert paths.legacy_cache_dir(root) == config / "cache"
     assert paths.legacy_thumbnail_cache_dir(root) == config / "cache" / "thumbs"
     assert tmp_path not in paths.thumbnail_cache_dir(root).parents
@@ -103,10 +103,8 @@ def test_is_within(tmp_path: Path) -> None:
 def test_the_guard_really_refuses_the_library_root(tmp_path: Path) -> None:
     """``allow_root=False`` 是**禁止**，不是一个什么都不检查的静默返回。
 
-    缺陷现场：那一支写的是 ``return`` —— 文档写着「禁止」、代码放行，而这是一个
-    「确认」用的闸门。它当时没出事，是因为 :func:`rename._guard` 与
-    :func:`trash._guard` 各自在前面查了一遍库根、还带着更贴切的领域文案；读代码的人
-    只能靠猜那道闸到底拦不拦。
+    这一支写成 ``return`` 就是文档与代码打架：这是一个「确认」用的闸门，别的调用点
+    未必都在前面自己查过一遍库根，读代码的人只能靠猜那道闸到底拦不拦。
     """
     root = tmp_path / "库"
     root.mkdir()

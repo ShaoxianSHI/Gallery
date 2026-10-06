@@ -110,10 +110,9 @@ def test_discard_and_clear() -> None:
 def test_discard_only_drops_the_one_that_was_asked_for() -> None:
     """``discard`` 丢的是**指定的那一个**，其余请求原样留着。
 
-    原来这条只是调了一下、没有任何断言 —— 而 ``discard`` 就是
-    ``dict.pop(path, None)``，在不在场都不可能抛，所以它守不住任何东西。
-    现在摆两条进去，丢一条，断言**另一条还在**：``discard`` 若被改成
-    ``_pending.clear()``（曾经真有过），这条会红。
+    ``discard`` 就是 ``dict.pop(path, None)``，在不在场都不可能抛，所以只「调一下、
+    不抛」是守不住任何东西的。这里摆两条进去、丢一条，断言**另一条还在**：
+    ``discard`` 一旦被写成 ``_pending.clear()`` 这条就红。
     """
     queue = ThumbnailQueue()
     kept = Path("/照片/留下的.jpg")

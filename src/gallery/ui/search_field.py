@@ -55,25 +55,19 @@ WIDTH = 208
 #: 胶囊多高。比标题栏（见 ``title_bar.HEIGHT``）矮一点，上下留白，不贴着窗口顶边。
 HEIGHT = 22
 
-#: 胶囊离窗口右边多远。**这一格是「右上角那一块」的右缘**，面包屑右端的条件胶囊要与它
-#: 对齐，所以它同时被 ``BreadcrumbBar.set_right_inset`` 用到 —— 「对齐的那个数」只有这一个。
-#:
-#: **从它开始往右量的那一块里现在还有一枚切换按钮**（:data:`ScopeToggle`，ADR 0040 决策 5），
-#: 也就是说胶囊自己被推到左边去了，但这一格仍然是「右上角那一块」的右缘：面包屑要对齐的仍然是
-#: 胶囊的右缘，换算在 :meth:`MainWindow._layout_title_bar` 里做。
+#: 胶囊离窗口右边多远。这一格是「右上角那一块」的右缘，面包屑右端的条件胶囊要与**胶囊的
+#: 右缘**对齐，所以它同时被 ``BreadcrumbBar.set_right_inset`` 用到（换算在
+#: :meth:`MainWindow._layout_title_bar` 里做，那一枚切换按钮从这一格往左量）。
 MARGIN_RIGHT = 20
 
 #: 切换按钮的边长（点）。**正方形**：它只有一个状态可切（搜索 ⇄ 筛选），没有下拉箭头要放 ——
-#: 里面塞两样东西就成了「外部应用」那种 44 点宽的按钮（见 ``external_button.BUTTON_WIDTH``），
-#: 而一个 44 点宽的单状态按钮摆在 208 点宽的胶囊右边会喧宾夺主。
+#: 里面塞两样东西就成了「外部应用」那种 44 点宽的按钮，而 44 点宽的单状态按钮摆在 208 点宽的
+#: 胶囊右边会喧宾夺主。
 TOGGLE_EDGE = 22
 
-#: 按钮里那个图标的边长（点）。**与按钮边长分开**：在 22 点里画一个 22 点的东西，它会顶到边框
-#: 上，读起来像「图标被框住了」而不是「图标在按钮里」。
-#:
-#: **13 这一档有出处**：与 :data:`ICON_EDGE`（胶囊里那个放大镜）、
-#: ``external_button.ICON_EDGE``（外部应用那个）同一档 —— 标题条上三个图标都是 13，而 16 就明显
-#: 粗一圈。第三个图标偏一档，整条标题条上的图标看着就不是一套的了。
+#: 按钮里那个图标的边长（点）。**与按钮边长分开**：在 22 点里画一个 22 点的东西会顶到边框上，
+#: 读起来像「图标被框住了」。13 这一档与 :data:`ICON_EDGE`、
+#: ``external_button.ICON_EDGE`` 同一档 —— 标题条上三个图标要是一套。
 TOGGLE_ICON_EDGE = 13
 
 #: 切换按钮与胶囊之间的缝（点）。与 :data:`~gallery.ui.external_button.BUTTON_GAP`（9）同一档：
@@ -286,9 +280,9 @@ class SearchField(QWidget):
         layout.addWidget(self._icon)
         layout.addWidget(self._edit, 1)
 
-        # 候选列表挂在**窗口**上（是胶囊的兄弟，不是子控件），也**不是** ``Qt.Popup`` 窗口：
-        # 挂在胶囊里会被裁掉（Qt 只把子控件画在父矩形之内，而它要伸到胶囊下面去）；用弹出
-        # 窗口则会在 ``show()`` 那一刻把焦点从输入框抢走。挂在窗口上的普通子控件不吃焦点。
+        # 候选列表挂在**窗口**上（是胶囊的兄弟，不是子控件）也**不是** ``Qt.Popup`` 窗口：
+        # 挂在胶囊里会被裁掉（Qt 只把子控件画在父矩形之内，而它要伸到胶囊下面去），用弹出窗口
+        # 则会在 ``show()`` 那一刻把焦点从输入框抢走。挂在窗口上的普通子控件不吃焦点。
         self._host = self if parent is None else parent
         self._popup = CandidateList(self._host)
         self._popup.setObjectName("searchPopup")
@@ -446,10 +440,9 @@ class SearchField(QWidget):
             rows + POPUP_LIST_INSET * 2,
             max(0, self._host.height() - anchor.y()),
         )
-        # 左沿让开的那一段由 :meth:`_popup_left` 算，**右沿仍与胶囊齐**（宽度跟着左移一起
-        # 收窄）。让开量有上限：**列表不许窄到看不出是什么**（:data:`_POPUP_MIN_WIDTH`），
-        # 而这个上限要**按胶囊自己算、不按窗口算** —— 写成 ``host.width() - WIDTH`` 就等于
-        # 「让开量 ≤ MARGIN_RIGHT」，MARGIN_RIGHT 一调小上限就跟着变紧。
+        # 左沿让开的那一段由 :meth:`_popup_left` 算，**右沿仍与胶囊齐**（宽度跟着左移收窄）。
+        # 让开量有上限：**列表不许窄到看不出是什么**，而这个上限要**按胶囊自己算、不按窗口算**
+        # —— 写成 ``host.width() - WIDTH`` 就让上限跟着 :data:`MARGIN_RIGHT` 变紧。
         field_left = self.mapTo(self._host, QPoint(0, 0)).x()
         left = max(0, min(self._popup_left(), field_left + WIDTH - _POPUP_MIN_WIDTH))
         self._popup.setGeometry(left, anchor.y(), WIDTH - max(0, left - field_left), height)
@@ -524,9 +517,8 @@ class SearchField(QWidget):
             return
         self.setStyleSheet(search_field_style(app_theme, focused=self._focused, radius=radius))
         # 候选列表是**建好之后**才存在的，主题早就下发过了，于是它一直拿着系统默认那一档。
-        # 先把调色板补给它，再生成样式表 —— **顺序不能换**：样式表里写死的是 ``rgba(...)``，
-        # 必须从刚推下去的那份调色板生成。代价是装完样式表之后 Qt 会重算这个控件的调色板
-        # （那一档只在这一个控件上偏，而列表整块是样式表在画，没人读它）。
+        # 先推调色板再生成样式表 —— **顺序不能换**：样式表里写死的是 ``rgba(...)``，必须从刚
+        # 推下去的那份调色板生成。
         theme.push_palette(self._popup)
         self._popup.setStyleSheet(popup_style(self._popup, item_padding=self._item_padding()))
         self._icon.setPixmap(magnifier(app_theme, self.devicePixelRatioF()))
@@ -565,8 +557,8 @@ def scope_arrows(app_theme: AppTheme, ratio: float, *, active: bool) -> QPixmap:
     **选中态换的是不透明度而不是形状** —— 两枚图标长得不一样会让用户以为是两个不同的功能，
     而它们是同一个功能的两端。区别只在「现在是不是筛选模式」这一件事上。
 
-    **画布是 :data:`TOGGLE_ICON_EDGE` 而不是按钮边长**：画布给多大，图形就画多大，所以
-    图标跟着按钮一起变大就会顶到边框上。
+    **画布是 :data:`TOGGLE_ICON_EDGE` 而不是按钮边长**：画布给多大，图形就画多大，图标跟着
+    按钮一起变大就会顶到边框上。
 
     **各段比例一律按画布算**，不写死点数 —— 换一档画布时形状跟着缩，放大镜那边同理。
 
@@ -604,10 +596,8 @@ def scope_arrows(app_theme: AppTheme, ratio: float, *, active: bool) -> QPixmap:
 def toggle_style(app_theme: AppTheme, *, active: bool, radius: int = 0) -> str:
     """切换按钮长什么样。
 
-    **选中时整枚按钮填满高亮色**（用户原话：「选中时高亮整个按钮，而不只是轮廓」）。
-
-    边框单独换色**不够**：按钮是 22 点的圆角小块，一圈 1 像素的蓝边在小尺寸下只占边长的一成，
-    而这一枚按钮没有文字标签可看 —— 唯一的「现在开着吗」信号就是那圈边。于是底色也跟着换成
+    **选中时整枚按钮填满高亮色**，而不只是轮廓：按钮是 22 点的圆角小块，一圈 1 像素的蓝边在小
+    尺寸下只占边长的一成，而它没有文字标签 —— 唯一的「现在开着吗」信号就是那圈边。底色换的是
     ``Highlight``，与弹出菜单里选中项（``menu_style`` 的 ``:selected``）用同一档：用户在菜单与
     按钮之间来回走，两处要看起来是同一件事。
 

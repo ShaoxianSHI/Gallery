@@ -53,9 +53,9 @@ POPUP_LIST_INSET = POPUP_LIST_BORDER + POPUP_LIST_PADDING
 #: ``::item`` 的文字从行矩形左沿起算；菜单那一档是给「左边留了对勾 gutter」的菜单定的。
 POPUP_LIST_ITEM_PAD = 8
 
-#: 朴素下拉菜单里，图标那一侧的 ``margin-left``（点）—— 照真图标量出来的平衡点。
-#: **它不是「想要的间距 × 某个系数」**：``QMenu::item`` 的左内边距只推文字、图标纹丝
-#: 不动，``QMenu::icon`` 的 ``margin-left`` 才真的移动图标；只能实测，别照着系数推。
+#: 朴素下拉菜单里，图标那一侧的 ``margin-left``（点）—— 照真图标量出来的平衡点。**它不是
+#: 「想要的间距 × 某个系数」**：``QMenu::item`` 的左内边距只推文字、图标纹丝不动，只有
+#: ``QMenu::icon`` 的 ``margin-left`` 才真的移动图标。
 POPUP_MENU_ICON_MARGIN = 13
 
 #: 弹出列表与弹出菜单的字号（点）。**只有这一处**：搜索框的候选列表与标题条上那个
@@ -96,8 +96,8 @@ def popup_list_style(list_widget: QWidget, *, item_padding: int = POPUP_LIST_ITE
         f"border: {POPUP_LIST_BORDER}px solid {rgba(edge)}; "
         f"border-radius: {MENU_CORNER_RADIUS}px; padding: {POPUP_LIST_PADDING}px; }}\n"
         f"QTreeWidget#searchPopup::item {{ padding: 3px {item_padding}px; color: {rgba(text)}; }}\n"
-        # 悬停与选中**合成一条规则**：候选列表是「鼠标移到哪一行就高亮哪一行」，两者本是
-        # 同一件事。少写一条的症状是列表完全不亮 —— 挂了样式表之后 Qt 不再自己挑高亮色。
+        # 悬停与选中**合成一条规则**：候选列表是「鼠标移到哪一行就高亮哪一行」，两者本是同一
+        # 件事。少写一条列表就完全不亮 —— 挂了样式表之后 Qt 不再自己挑高亮色。
         f"QTreeWidget#searchPopup::item:hover, "
         f"QTreeWidget#searchPopup::item:selected {{ background: {rgba(highlight)}; "
         f"color: {rgba(highlighted_text)}; border-radius: {MENU_HIGHLIGHT_RADIUS}px; }}"
@@ -122,18 +122,17 @@ def style_sheet(
         f"QMenu {{ border-radius: {MENU_CORNER_RADIUS}px; "
         f"background: {rgba(background)}; padding: {MENU_INSET}px; }}\n"
         f"QMenu::item {{ padding: {MENU_ITEM_PADDING}; }}\n"
-        # 悬停 / 当前项的高亮带。**不加这两行菜单就完全没有高亮**：样式表一挂上，系统样式
-        # 那份高亮就不再画了。字色**也要跟着换**，否则浅色下是黑字压蓝底（Qt 不再按
-        # ``State_Selected`` 挑 ``HighlightedText``），而自绘的快捷键列早就跟着换了。
-        # 置灰的行 Qt 压根不点亮，不必再补 ``:disabled``。
+        # 悬停 / 当前项的高亮带。**不加这两行菜单就完全没有高亮**（样式表一挂上，系统样式那份
+        # 高亮就不再画了）。字色**也要跟着换** —— Qt 不再按 ``State_Selected`` 挑
+        # ``HighlightedText``，不写就是黑字压蓝底。置灰的行 Qt 压根不点亮，不必补 ``:disabled``。
         f"QMenu::item:hover {{ background: {rgba(highlight)}; "
         f"color: {rgba(highlighted_text)}; }}\n"
         f"QMenu::item:selected {{ background: {rgba(highlight)}; "
         f"color: {rgba(highlighted_text)}; "
         f"border-radius: {MENU_HIGHLIGHT_RADIUS}px; }}\n"
-        # 分隔线。**这条是深色下唯一看得见的那条线**：不给它，颜色由系统样式从应用调色板
-        # 里挑一档偏暗的（深色下比底色还深），等于没画。它带 margin 与高亮那条禁令不冲突
-        # —— 那条禁的是**带状态**的规则里写 margin（每悬停一次换一次盒子），这里与悬停无关。
+        # 分隔线。**这条是深色下唯一看得见的那条线**：不给它，颜色由系统样式从应用调色板里挑
+        # 一档偏暗的（深色下比底色还深），等于没画。它带 margin 与高亮那条禁令不冲突 ——
+        # 那条禁的是**带状态**的规则里写 margin，这里与悬停无关。
         f"QMenu::separator {{ height: {MENU_SEPARATOR_HEIGHT}px; "
         f"margin: {MENU_SEPARATOR_MARGIN}px 0px; "
         f"background: {separator_color(background, text)}; }}\n"
@@ -356,9 +355,8 @@ class ShortcutColumnMenu(QMenu):
             return
         columns = ShortcutColumns.measure_parts(cells, metrics)
         align = int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
-        # 这三样**与哪一行无关**，却原来在循环里一遍遍重算：``owns_submenu_arrows()`` 会走到
-        # ``split_shortcut()``（每个 action 一次平台字符串转换），``activeAction()`` 一悬停就
-        # 变。一次 ``QPainter`` 覆盖整张菜单，收尾也只在 ``finally`` 这一处（唯一的笔）。
+        # 这三样**与哪一行无关**，放进循环就是白算：``owns_submenu_arrows()`` 会走到
+        # ``split_shortcut()``（每个 action 一次平台字符串转换），``activeAction()`` 一悬停就变。
         owns_arrows = self.owns_submenu_arrows()
         active = self.activeAction()
         palette = self.palette()
@@ -411,8 +409,7 @@ class ShortcutColumnMenu(QMenu):
             )
         )
         # **这里不许 ``painter.end()``** —— 那支笔是 :meth:`paintEvent` 的，收尾归它的
-        # ``finally``。一收，后面所有行就都画不出来（``setPen`` / ``drawText`` 静默失效），
-        # 症状是第一个子菜单行之后的箭头与快捷键全都不画。
+        # ``finally``。一收，后面所有行都画不出来（``setPen`` / ``drawText`` 静默失效）。
 
     def reserve_shortcut_columns(self) -> None:
         """把菜单撑到「最长标签 + 最右列」那么宽（那一列空着就什么也不做）。"""
@@ -464,9 +461,9 @@ def popup_menu_style(menu: QMenu) -> str:
         )
         + f"\nQMenu {{ font-size: {POPUP_FONT_PX}px;"
         f" border: {POPUP_LIST_BORDER}px solid {rgba(edge)}; }}"
-        # 字色**必须自己写**：挂了样式表之后 Qt 不再按调色板给 item 上色（深色下调色板里
-        # 明明是 ``#ffffff``，画出来却是近黑的 ``#000000``），候选列表那份同样写死了 color。
-        # 内边距**左右同档**：左内边距只管文字，图标那一侧归下面的 ``::icon`` 规则。
+        # 字色**必须自己写**：挂了样式表之后 Qt 不再按调色板给 item 上色（深色下调色板里明明是
+        # ``#ffffff``，画出来却是近黑的 ``#000000``）。内边距**左右同档** —— 左内边距只管
+        # 文字，图标那一侧归下面的 ``::icon`` 规则。
          + f"\nQMenu::item {{ padding: 3px {POPUP_LIST_ITEM_PAD}px;"
         f" color: {rgba(text)}; border-radius: {MENU_HIGHLIGHT_RADIUS}px; }}"
         + f"\nQMenu::icon {{ margin-left: {POPUP_MENU_ICON_MARGIN}px; }}"

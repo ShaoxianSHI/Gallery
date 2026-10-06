@@ -61,8 +61,7 @@ from gallery.ui.search_field import (  # noqa: E402
 CAMERAS = {"海边-01.jpg": "Canon EOS R5", "山.jpg": "Sony A7"}
 
 #: 每张照片的拍摄时间。**取「这个月」而不是写死的年份**：日历停在今天上，而
-#: :meth:`CalendarPage.photo_count` 只数**当前那一段**里看得见的 —— 日期写死在别处，这一层就
-#: 永远是空的，而症状（`photo_count() == 0`）与「日历没喂上照片」一模一样。
+#: :meth:`CalendarPage.photo_count` 只数**当前那一段**里看得见的。
 TODAY = datetime.date.today()
 
 #: 每张照片拍在今天往前多少天（``#拍摄时间`` 那一族在日历测试里要用）。
@@ -250,13 +249,13 @@ def test_the_calendar_only_shows_the_matching_photos(
 def test_the_conditions_are_visible_on_the_calendar(
     qt_app: QApplication, tmp_path: Path, make_photo
 ) -> None:
-    """日历那一页**看得见**自己加了哪几条条件 —— 用户原话：「看不到加了什么筛选条件」。
+    """日历那一页**看得见**自己加了哪几条条件。
 
     **这一条是这个需求本身**：筛选时那一页仍然是日历（上面那条），而日历那一页占掉的就是网格页
     那条面包屑（ADR 0033 决策 5）—— 胶囊只摆在面包屑上，就等于「加了但不知道加了什么」。
 
     量的是**工具条上真的有那几枚**，而不是「模型里的条件列表非空」：后者在日历上照样成立，
-    它量不到「用户看不见」。
+    它量不到「看不见」。
     """
     root = _library(tmp_path, make_photo)
     window = _open(qt_app, root, tmp_path / "会话", browse_mode=BROWSE_MODE_CALENDAR)
@@ -273,14 +272,13 @@ def test_the_conditions_are_visible_on_the_calendar(
 def test_clearing_a_condition_on_the_calendar_clears_the_toolbar_too(
     qt_app: QApplication, tmp_path: Path, make_photo
 ) -> None:
-    """在日历上把条件撤光，**工具条上那几枚也要跟着走** —— 用户原话：「UI 上第二个一直存在不消失」。
+    """在日历上把条件撤光，**工具条上那几枚也要跟着走**。
 
-    **这一条盯的是那条早退路径**：摆胶囊的那一句曾写在 :meth:`_update_breadcrumb` 的末尾，
-    而那个方法在「无条件」时 ``hide()`` 完就 ``return`` —— 撤光走的正是那一支，于是控件留在
-    屏幕上（模型里已经空了，量模型永远绿）。切到相册视图再切回来就好了，因为切视图会重走
-    一遍没有早退的那条路，症状于是变成「要绕一圈才干净」。
+    **这一条盯的是那条早退路径**：摆胶囊的那一句写在 :meth:`_update_breadcrumb` 的末尾，而那个
+    方法在「无条件」时 ``hide()`` 完就 ``return`` —— 撤光走的正是那一支，于是控件留在屏幕上
+    （模型里已经空了，量模型永远绿）。
 
-    所以这里从**窗口**这一层按用户的手法走一遍（点 ✕、回车、Esc 都试），而不是直接调
+    所以这里从**窗口**这一层按界面上真走的路走一遍（点 ✕、回车、Esc 都试），而不是直接调
     ``set_conditions([])`` —— 后者绕开了那条早退，用例会一路绿。
     """
     root = _library(tmp_path, make_photo)
@@ -320,9 +318,8 @@ def test_clearing_conditions_in_the_search_field_clears_the_toolbar(
     _filter(qt_app, window, "#城市 西安")
     _settle(qt_app, window)
 
-    # **先让输入框空下来**：`dismiss` 的第一件事是清空输入框（那是「这一下」），输入框空了才轮到撤
-    # 条件。刚加完条件时框里还留着那一串，于是连按两下只撤了一条 —— 症状是「撤不掉」，
-    # 而真因是少按了一下。**按到条件真的撤光为止**，不写死按几下。
+    # **先让输入框空下来**：`dismiss` 的第一件事是清空输入框（那是「这一下」），输入框空了才轮到
+    # 撤条件。**按到条件真的撤光为止**，不写死按几下。
     while _chips(window):
         window._search_field.dismiss()
         _settle(qt_app, window)
@@ -342,15 +339,11 @@ def test_typing_a_new_condition_after_glancing_at_a_chip_appends_it(
 ) -> None:
     """点了一下胶囊正文、没接着改，然后敲了一条新的 → **追加，不是替换**。
 
-    > 用户原话：「在相册视图切到日历视图后再增加一个筛选条件会取代之前的筛选条件」。
+    危险在 ``_editing_condition`` **粘住**：点胶囊正文会设上它，而下一次回车走的是
+    ``self._conditions[editing] = …`` —— 就地替换、条目数不增加，屏幕上只看得见「条件变了」，
+    看不见「我刚才点过一枚胶囊」。
 
-    根因是 ``_editing_condition`` **粘住**：点胶囊正文会设上它，而下一次回车走的是
-    ``self._conditions[editing] = …`` —— **就地替换，条目数不增加**。焦点离开原先不清它，于是
-    用户点完胶囊去做别的（切视图、点空白），之后敲的每一条都在顶掉那一条，而屏幕上只看得见
-    「条件变了」，看不见「我刚才点过一枚胶囊」。
-
-    **量的是条目数**，不是值对不对：值对了而条目数没变，正是这个 bug（被顶掉的那条恰好与新的
-    等价时，值的断言会一路绿）。
+    **量的是条目数**：被顶掉的那条恰好与新的等价时，值的断言会一路绿。
     """
     root = _library(tmp_path, make_photo)
     window = _open(qt_app, root, tmp_path / "会话", browse_mode=BROWSE_MODE_CALENDAR)
@@ -362,8 +355,8 @@ def test_typing_a_new_condition_after_glancing_at_a_chip_appends_it(
     # 用户在日历工具条上点了一下那枚胶囊的**正文**（不是 ✕），没接着改。
     window._on_condition_edited(0)
     _settle(qt_app, window)
-    # 接着去做了别的事 —— 焦点离开了输入框，编辑态随之清掉（用户原话：「避免用户做了很多
-    # 别的操作后忘记之前进了编辑模式」）。**这一步不能省**：留着编辑态才是在测「静默劫持」。
+    # 接着去做了别的事 —— 焦点离开了输入框，编辑态随之清掉。**这一步不能省**：
+    # 留着编辑态才是在测「静默劫持」。
     window._grid.setFocus()
     _settle(qt_app, window)
 
@@ -382,9 +375,8 @@ def _is_conditions_target(node: ast.expr) -> bool:
     """这一个赋值 / ``del`` 的目标是不是 ``self._conditions``（或其下标）。
 
     **要认下标**是因为 ``self._conditions[i] = …``（就地替换）与 ``del self._conditions[i]``
-    也都是改动它。脱下标时**只脱一层就够**（``self._conditions[a][b]`` 不存在），脱完拿到的
-    应当还是 ``self._conditions`` 这个 ``Attribute`` —— 顺手把它拆成 ``self`` 之后就没人能
-    拿 ``attr`` 了，那正是这条判据一开始返回 ``False`` 的原因。
+    也都是改动它。脱下标时**只脱一层就够**（``self._conditions[a][b]`` 不存在），且脱完必须还
+    留着那个 ``Attribute`` —— 顺手拆成 ``self`` 之后就没人拿得到 ``attr`` 了。
     """
     if isinstance(node, ast.Subscript):
         node = node.value
@@ -431,21 +423,20 @@ def _the_line_about_conditions(block: str) -> str:
 def test_only_three_things_can_take_a_condition_away() -> None:
     """条件只有三个下场：**点 ✕ / 改这一条时回车替换 / 换库**（ADR 0040 决策 12）。
 
-    用户要的是「除了手动点叉之外任何情况下不消失」，而这一条是那句话的**可查形式**：扫出全仓库
-    每一处改动 ``self._conditions`` 长度的写法，只允许那三样。清单外的写法一律红。
+    「除了手动点叉之外任何情况下不消失」的**可查形式**：扫出全仓库每一处改动
+    ``self._conditions`` 长度的写法，只允许那三样。清单外的写法一律红。
 
     **为什么非要扫一遍而不靠几条行为用例**：这个 bug 的形状是「某处 ``_editing_condition``
     粘住 → 下一次提交静默替换」，而任何一条行为用例都只能盯住**它已知的那几条路径**。新加一条
     「清条件」的路（换作用域、换分组、回退到大图页）时，行为用例一条都不会红 —— 只有这份清单会。
 
     **扫的是 AST 而不是文本**：文档里 ``self._conditions[editing] = …`` 这样的代码片段到处都有
-    （写清楚为什么是「就地替换」就得写它），按行扫会把注释与 docstring 一起算进来 —— 那条守护
-    第一次跑就抓到了我自己写的一段说明文字。
+    （写清楚为什么是「就地替换」就得写它），按行扫会把注释与 docstring 一起算进来。
     """
     allowed = {
         # ---- 初始化 ----
         ("src/gallery/ui/main_window.py", "self._conditions: list[SearchCondition] = []"),
-        # ---- 用户明明白白做的那几件 ----
+        # ---- 明确是用户动作的那几件 ----
         ("src/gallery/ui/window/search_flow.py", "self._conditions.append(condition)"),  # 加一条
         ("src/gallery/ui/window/search_flow.py", "del self._conditions[position]"),  # 点 ✕
         ("src/gallery/ui/main_window.py", "self._conditions.pop()"),  # ⇧Esc 撤一条
@@ -453,22 +444,19 @@ def test_only_three_things_can_take_a_condition_away() -> None:
         # 就地替换：长度不变，但它确实改内容 —— 单独放行。
         ("src/gallery/ui/window/search_flow.py", "self._conditions[editing] = condition"),
         # ---- 弹掉搜索帧之后，把底下那一帧自己那份筛选放回去（ADR 0041 决策 2）----
-        # 条件**随帧存**，所以弹出搜索帧时底下那一帧的 ``narrowing`` 要装回 ``_conditions`` ——
-        # 用户在搜索结果里加的那条筛选不该留在底下的相册上。这与「点 ✕ 撤一条」是两件事：
-        # 那一条是从列表里删掉一条，这一条是把某一帧存的那份整体装回来。
+        # 条件**随帧存**，所以弹出搜索帧时底下那一帧的 ``narrowing`` 要整体装回 ``_conditions``。
+        # 这与「点 ✕ 撤一条」是两件事：那一条从列表里删一条，这一条装回某一帧存的那份。
         (
             "src/gallery/ui/window/search_flow.py",
             "self._conditions = list(conditions) "
             "if self._search_scope == SEARCH_SCOPE_LEVEL else []",
         ),
-        # ---- 换场合，不是「用户撤掉了」：换库时清掉它 ----
+        # ---- 换场合，不是「主动撤掉了」：换库时清掉它 ----
         # 条件是**临时的**（ADR 0026 决策 9）：换库之后还留着上一座库的胶囊，检索结果就属于一个
         # 已关掉的文件夹。
         #
-        # **这里只剩这一处了**。「换浏览方式」原先也清一次（``calendar_flow.py``），现在走
-        # :meth:`SearchFlowMixin._leave_search_frame` —— 那个入口**清条件并弹掉栈上的搜索帧**，
-        # 而原来那处只清条件、不弹帧，于是栈上留着一帧已经什么都不接管的东西（Esc 弹掉的是它，
-        # 用户看到的是「按 Esc 什么都没发生」）。清单少一条不是放松，是那个场合已经并进去了。
+        # 「换浏览方式」并进 :meth:`SearchFlowMixin._leave_search_frame` 了（那个入口清条件**并**
+        # 弹掉栈上的搜索帧），所以清单里只剩这一条 —— 少一条不是放松，是那个场合已经并进去。
         ("src/gallery/ui/window/library_flow.py", "self._conditions.clear()"),
     }
 
@@ -478,9 +466,8 @@ def test_only_three_things_can_take_a_condition_away() -> None:
         relative = path.relative_to(root).as_posix()
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
-            # **判据是「这一句会不会改它」**。会改长度的写法全在下面三支里，而读
-            # （``for x in self._conditions``、``len(...)``、下标取值）与改顺序的
-            # （``.sort()``）走的不是任何一支，天然不算。
+            # **判据是「这一句会不会改它」**：读（迭代、``len(...)``、下标取值）与改顺序
+            # （``.sort()``）走的不是下面三支，天然不算。
             if isinstance(node, ast.Assign | ast.AnnAssign):
                 targets: tuple[ast.expr, ...] = (
                     tuple(node.targets) if isinstance(node, ast.Assign) else (node.target,)
@@ -641,7 +628,7 @@ def test_leaving_the_field_while_typing_a_new_one_keeps_what_was_typed(
     """**正在输入一条全新的条件**时失焦，输入框里敲的字要留着。
 
     这一条是上一条的必要反面：放弃修改的闸若不区分「在改已有的一条」与「在敲新的一条」，
-    用户敲到一半点别处，**刚敲的字凭空消失** —— 那比原 bug 更糟（它丢的是没确认的东西）。
+    用户敲到一半点别处，**刚敲的字凭空消失** —— 丢的是没确认的东西。
     """
     root = _library(tmp_path, make_photo)
     window = _open(qt_app, root, tmp_path / "会话")
@@ -699,16 +686,16 @@ def test_switching_the_view_keeps_the_conditions_but_drops_the_pending_change(
 ) -> None:
     """切浏览方式：**条件跟着走，改到一半那一次不跟着走**（ADR 0040 决策 12）。
 
-    条件跟着走是 ADR 0040 决策 1（早就在了），编辑态不跟着走是这一条。只断前半句的话，症状是
-    「换了视图再敲一条，顶掉的是上一个视图里的那一条」。
+    条件跟着走是 ADR 0040 决策 1，编辑态不跟着走是这一条。只断前半句的话，「换了视图再敲一条」
+    顶掉的就是上一个视图里的那一条。
     """
 
     def _no_cancel_on_blur(self: MainWindow) -> None:
         """把**失焦那条兜底**按掉 —— 只让 ``set_browse_mode`` 里的那一处有机会干活。
 
         **按的是 :meth:`_on_search_active_changed` 而不是 :meth:`_cancel_condition_edit` 本身**：
-        后者会把 ``set_browse_mode`` 里那一处也一起按掉（它调的正是这个方法），于是注入违规后
-        用例照样绿 —— 第一版就是这么写的。按「失焦的入口」才真的只关掉一条路。
+        后者会把 ``set_browse_mode`` 里那一处也一起按掉（它调的正是这个方法）。按「失焦的入口」
+        才真的只关掉一条路。
         """
         self._update_action_states()
 
@@ -720,9 +707,8 @@ def test_switching_the_view_keeps_the_conditions_but_drops_the_pending_change(
     window._on_condition_edited(0)
     _settle(qt_app, window)
 
-    # **把失焦那条兜底彻底按掉**，只让 ``set_browse_mode`` 里的那一处有机会干活：不这么做的话，
-    # 切视图时 ``focus_current_view`` 会把焦点从输入框拿走、失焦那条顺手清掉编辑态，于是即使把
-    # ``set_browse_mode`` 里那一处删掉，本用例照样绿 —— 它第一版就是这么写的，注入违规后没红。
+    # 把失焦那条兜底彻底按掉，只让 ``set_browse_mode`` 里那一处有机会干活：否则切视图时
+    # ``focus_current_view`` 会顺手清掉编辑态，把那一处删掉本用例照样绿。
     monkeypatch.setattr(MainWindow, "_on_search_active_changed", _no_cancel_on_blur)
     window._editing_condition = 0
     window.set_browse_mode(BROWSE_MODE_CALENDAR)
@@ -830,10 +816,7 @@ def test_switching_the_calendar_level_keeps_the_filter(
 def test_switching_the_browse_mode_keeps_the_filter(
     qt_app: QApplication, tmp_path: Path, make_photo
 ) -> None:
-    """换浏览方式**保留**条件（ADR 0040 决策 1）—— 整库检索在这一步会清掉它们。
-
-    反过来的症状是「换一次视图筛选就没了」，而用户会以为是自己按了什么。
-    """
+    """换浏览方式**保留**条件（ADR 0040 决策 1）—— 整库检索在这一步会清掉它们。"""
     root = _library(tmp_path, make_photo)
     window = _open(qt_app, root, tmp_path / "会话")
     _settle(qt_app, window)
@@ -963,17 +946,13 @@ def test_escape_exits_the_search_after_walking_through_a_group(
 ) -> None:
     """搜索结果里按 ``Esc`` 能退出搜索 —— **进过分组再出来也一样**。
 
-    > 用户原话：「在搜索结果里（假设没有往下点分组或照片大图），点 esc 应该能退出搜索，
-    > 但是现在搜索后直接 esc 可以退出，点进分组再出来就不行了，esc 没反应」。
-
-    **根因不是「Esc 在分组里不管用」，而是搜索结果压根不在 ``go_up`` 的那一串 ``if`` 里** ——
-    它既不是文件夹也不是分组，于是搜索后 ``_can_go_up()`` 恒为 ``False``。「搜索后直接按 Esc
-    能退出」是**巧合**：那时焦点还在搜索框里，走的是搜索框自己的 Esc（``dismiss`` →
-    ``pop_last_condition``）；进一趟分组，焦点回到网格，那条路就断了。
+    根因不是「Esc 在分组里不管用」，而是搜索结果压根不在 ``go_up`` 的那一串 ``if`` 里 ——
+    它既不是文件夹也不是分组。「搜索后直接按 Esc 能退出」是**巧合**：那时焦点还在搜索框里，
+    走的是搜索框自己的 Esc（``dismiss`` → ``pop_last_condition``）；进一趟分组，焦点回到网格，
+    那条路就断了。
 
     钉的是「**往返一次之后**仍然退得回去」：只断「刚搜完按 Esc」的话，把 ``go_up`` 写成
-    「有搜索帧就清条件」也能过 —— 而那正是原代码（弹了分组弹掉的是分组，用户看到的是位置
-    退了一层、搜索还在）。
+    「有搜索帧就清条件」也能过 —— 那样弹掉分组弹的是分组，搜索还留着。
     """
     root = _library(tmp_path, make_photo)
     window = _open(qt_app, root, tmp_path / "会话", browse_mode=BROWSE_MODE_ALBUMS)
@@ -982,7 +961,7 @@ def test_escape_exits_the_search_after_walking_through_a_group(
     _settle(qt_app, window)
     assert window._can_go_up() is True, "前提不成立：搜索结果里本来就退不出去"
 
-    # 往返一次分组 —— 用户报的是「进去再出来之后 Esc 不管用」。
+    # 往返一次分组：只断「刚搜完」的话，弹掉分组弹的是分组，搜索帧还留着。
     photo = PhotoRef(path=root / "海边-01.jpg", size=1, mtime_ns=1)
     window.enter_group(GroupRef(facet="camera", key="canon", label="Canon", photos=(photo,)))
     _settle(qt_app, window)
@@ -1009,11 +988,9 @@ def test_escape_exits_the_search_after_walking_through_a_group(
     window.close()
 
 
-#: 「从哪一档换到哪一档」——**三档两两之间的转移全列**，而不是只从相册出发。
-#:
-#: 用户是从**相册视图**发起搜索的（「在相册视图区搜索，然后切到日历视图」），但只断那一条
-#: 转移会漏掉两件事：一是 ``set_browse_mode`` 撞上当前这一档会**早退**（什么也不做），二是
-#: 「从日历切回相册」是另一条分支，走的是同一个漏掉的刷新。
+#: 「从哪一档换到哪一档」——**三档两两之间的转移全列**，而不是只从相册出发。只断那一条转移会漏掉
+#: 两件事：一是 ``set_browse_mode`` 撞上当前这一档会**早退**（什么也不做），二是「从日历切回相册」
+#: 走的是另一条分支，同一个漏掉的刷新。
 ALL_BROWSE_TRANSITIONS = [
     (BROWSE_MODE_ALBUMS, BROWSE_MODE_CALENDAR),
     (BROWSE_MODE_ALBUMS, BROWSE_MODE_FLAT),
@@ -1036,11 +1013,7 @@ def test_switching_the_view_leaves_no_condition_chip_behind(
 ) -> None:
     """换浏览方式之后，**界面上不许还挂着上一层的条件胶囊**。
 
-    > 用户原话：「在相册视图区搜索，然后切到日历视图。这是日历视图的条件栏那里残留着之前的
-    > 搜索条件，但是既没有用来搜索，也没有用来筛选。这个条件在 UI 上应该去掉才对」
-    > 以及「再切到全部照片也会残留，只有切到相册时会清掉」。
-
-    **模型早就清了，界面没清** —— 这是「状态改了但没人去刷新那一行」的典型症状，与栈无关
+    **模型早就清了，界面没清** —— 典型的是「状态改了但没人去刷新那一行」，与栈无关
     （切到日历时栈已经是空的了）。
 
     真因：:meth:`MainWindow._sync_calendar_conditions` 是**唯一**摆这两处胶囊的地方，而它只由
@@ -1077,15 +1050,13 @@ def test_switching_the_view_leaves_no_condition_chip_behind(
 def test_escape_leaves_the_folder_without_touching_the_conditions(
     qt_app: QApplication, tmp_path: Path, make_photo
 ) -> None:
-    """在子相册里按 `Esc`：**退出去，条件一条都不少** —— 用户报的那个 bug。
+    """在子相册里按 `Esc`：**退出去，条件一条都不少** —— 相册与日历**两边都**有。
 
-    用户原话：「点开一个格子后，esc 退出一层就会清空一个筛选条件」，相册与日历**两边都**有。
+    根因是判据的**顺序**：条件排在文件夹 / 那一格之前（ADR 0026 决策 9「条件又深一级」）的话，
+    只要有条件就永远退不出位置 —— 按 Esc 看到的是一条条件被撤掉而**位置纹丝不动**，而那两件事在
+    屏幕上分不出来。
 
-    根因是判据的**顺序**：那一版把条件排在文件夹 / 那一格之前（ADR 0026 决策 9「条件又深一级」），
-    于是只要有条件就永远退不出位置 —— 按 Esc 看到的是一条条件被撤掉而**位置纹丝不动**，而那两件
-    事在屏幕上分不出来，用户会以为程序卡住了。
-
-    量的是**位置真的退了**与**条件真的没少**：只断一条的话，另一条坏掉都没人看着 —— 而症状一样。
+    量的是**位置真的退了**与**条件真的没少**：只断一条的话，另一条坏掉都没人看着。
     """
     root = _library(tmp_path, make_photo)
     window = _open(qt_app, root, tmp_path / "会话", browse_mode=BROWSE_MODE_ALBUMS)
@@ -1117,8 +1088,7 @@ def test_escape_returns_to_the_calendar_without_touching_the_conditions(
     """日历里点开一格之后按 `Esc`：**退回日历，条件一条都不少**。
 
     与相册那条同一个根因（判据顺序），但**这条路要单独钉**：日历那一格走的是
-    ``_drill_photos``，相册走的是 ``_current_dir``，两条独立的分支 —— 只钉一条的话另一条坏掉
-    没人看着，而症状一模一样。
+    ``_drill_photos``，相册走的是 ``_current_dir``，两条独立的分支 —— 只钉一条另一条就没人看着。
     """
     root = _library(tmp_path, make_photo)
     window = _open(qt_app, root, tmp_path / "会话", browse_mode=BROWSE_MODE_CALENDAR)
@@ -1145,7 +1115,7 @@ def test_escape_does_nothing_when_there_is_nowhere_to_go(
     """在最外层（有条件、没进任何东西）按 `Esc`：**什么也不做**，也不撤条件。
 
     **这一条钉的是「退不动就安静地不动」**：撤条件那条路挪到 ``⇧Esc`` 之后，``Esc`` 就没有
-    「顺手做点什么」的理由了。退不掉而顺手撤一条，用户完全无法预期。
+    「顺手做点什么」的理由了。
     """
     root = _library(tmp_path, make_photo)
     window = _open(qt_app, root, tmp_path / "会话")
@@ -1195,8 +1165,7 @@ def test_shift_escape_removes_the_conditions_one_by_one(
     **这一条从 ``Esc`` 挪到了 ``⇧Esc``**（ADR 0040 决策 11，用户选定的）：Esc 退位置而不再撤条件。
 
     命中的那张是 ``海边-01.jpg``（``CAMERAS`` 里 Canon 是它、山是 Sony）—— 断言里的名字是**照着
-    模块那份对照表抄的**：凭印象写会写成「山」，而症状是停在「条件没生效」那条红上，真因却是我
-    记错了哪张是 Canon。
+    模块那份对照表抄的**，不是凭印象。
     """
     root = _library(tmp_path, make_photo)
     window = _open(qt_app, root, tmp_path / "会话")
@@ -1693,8 +1662,8 @@ def test_a_new_photo_shows_up_only_if_it_matches(
 ) -> None:
     """筛选中来了新照片：命中的留下，不命中的不进这一层。
 
-    走的是「重跑一遍」那条路（与整库检索同一处），所以这条量的是**结果对不对**，不是增量
-    逻辑本身 —— 增量分支本来就不该存在（另写一份正是 ADR 0026 决策 7 点名的 bug 来源）。
+    走的是「重跑一遍」那条路（与整库检索同一处），所以这条量的是**结果对不对** —— 增量分支
+    本来就不该存在（另写一份正是 ADR 0026 决策 7 点名的 bug 来源）。
     """
     root = _library(tmp_path, make_photo)
     window = _open(qt_app, root, tmp_path / "会话")
@@ -1732,8 +1701,7 @@ def test_the_condition_chips_stay_clickable_while_filtering(
 
     assert _chips(window) == []
     assert len(_names(window)) == 3
-    # **不再显示**（平铺模式下没有条件时面包屑整条收起来，ADR 0026 决策 9）。
     # 断的是「可见」而不是「子控件清空了」：``set_path`` 在隐藏时不会被调，面包屑里留着上一轮
-    # 那几枚控件 —— 它整条不可见，留着无害，而拿 ``findChildren`` 去断会量到一件与用户无关的事。
+    # 那几枚控件 —— 它整条不可见，留着无害，拿 ``findChildren`` 去断会量到一件与界面无关的事。
     assert window._breadcrumb.isVisible() is False
     window.close()

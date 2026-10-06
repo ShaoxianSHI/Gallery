@@ -72,12 +72,9 @@ ICONSET_ENTRIES: Final = (
 #: 包内最低系统版本，只影响 LaunchServices 的判断。
 MINIMUM_SYSTEM_VERSION: Final = "13.0"
 
-#: 启动时补进 PATH 的常见安装目录。
-#:
-#: 从访达 / Dock 启动的进程只拿到系统那几个目录（``/usr/bin:/bin:/usr/sbin:/sbin``），
-#: Homebrew 装的 exiftool 因此不在 PATH 里 —— 元数据读不全，还会一路降级成只读模式，
-#: 看起来就像「明明装了 exiftool，Gallery 却说没有」。目录写死在这里是刻意的：
-#: 启动器没有登录 shell 的上下文，只能这样把常见的安装位置补回去。
+#: 启动时补进 PATH 的常见安装目录。从访达 / Dock 启动的进程只拿到系统那几个目录，Homebrew
+#: 装的 exiftool 因此不在里面（读不全元数据，还会一路降级成只读模式）。写死在这里是刻意的：
+#: 启动器没有登录 shell 的上下文，只能这样把常见安装位置补回去。
 EXTRA_PATH_DIRS: Final = (
     "/opt/homebrew/bin",
     "/usr/local/bin",

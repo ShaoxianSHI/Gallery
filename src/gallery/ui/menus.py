@@ -59,11 +59,9 @@ class MenuActions:
     copy_to_album: QMenu | None
     #: 「移动到相册」子菜单（同上）。
     move_to_album: QMenu | None
-    #: 这一份菜单里的「粘贴」。**``None`` 就是菜单里不出现这一条**（不是置灰）。
-    #:
-    #: **它就是菜单栏那个 ⌘V**，点它与按 ⌘V 走的是同一个动作；粘到哪里一律由
-    #: ``MainWindow._paste_target`` 按选区算。这个字段只决定摆不摆（照片、分组卡片、
-    #: 多个相册、大图页一律 ``None``，ADR 0018），摆在那一组里由各张菜单自己决定。
+    #: 这一份菜单里的「粘贴」。**``None`` 就是菜单里不出现这一条**（不是置灰）。它就是菜单栏
+    #: 那个 ⌘V，点它与按 ⌘V 走同一个动作，粘到哪里由 ``MainWindow._paste_target`` 按选区算；
+    #: 这个字段只决定摆不摆（照片、分组卡片、多个相册、大图页一律 ``None``，ADR 0018）。
     paste: QAction | None
     #: 「新建相册」⇧⌘N（ADR 0022）。**只有空白处那张菜单用它**，建不了就是 ``None``。
     new_album: QAction | None

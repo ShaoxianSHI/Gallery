@@ -1,14 +1,13 @@
 """周视图那一个「延一轮再定位」的定时器。
 
-它原先是 ``QTimer.singleShot(0, self._apply_scroll)`` —— **两参**形态，那个定时器
-与本对象毫无关系。于是「按了 ``W`` → 同一轮里 ⌘Q 关窗」这种再平常不过的时序会让它
-照常触发，去调一个已经析构的 ``_apply_scroll``，换来一条
-``Internal C++ object already deleted``（同一个道理见 ``browser/grid.py`` 的
-``eventFilter``）。
+它必须是**本对象的定时器**，不能用 ``QTimer.singleShot(0, self._apply_scroll)``
+那种两参形态：那个定时器与本对象毫无关系，于是「按了 ``W`` → 同一轮里 ⌘Q 关窗」这种
+时序会让它照常触发，去调一个已经析构的 ``_apply_scroll``（同一个道理见
+``browser/grid.py`` 的 ``eventFilter``）。
 
-更糟的是那一版的副产物：那之前还有一个布尔闩锁 ``_scrolling``，定时器没跑成就永远
-卡在「正在定位」，``_reveal_photos`` 从此次次早退 —— **周视图再也找不到它的第一张
-照片**，而用户看到的只是一条空荡荡的时间轴。
+所以也不能配一个布尔闩锁「定时器没跑成就先返回」：定时器没跑成时那个闩锁会永远卡在
+「正在定位」，``_reveal_photos`` 从此一次次早退 —— **周视图再也找不到它的第一张照片**，
+而界面上只剩一条空荡荡的时间轴。
 """
 
 from __future__ import annotations
@@ -96,8 +95,8 @@ def test_the_reveal_happens_again_when_the_photos_arrive_after_it(
 
     定位是 :meth:`WeekView.set_anchor` 排的，而刚切到周视图那一刻桶多半还是空的 ——
     定位对着空桶跑完，把滚动条按回 0 就不管了：这一周明明有照片、屏幕却停在 00:00。
-    而「看得见哪些」正是按那个滚动位置算的，于是要的那几张压根没人要图（症状：切到
-    某一周时缩略图只剩一片占位灰，切到下一周再切回来才正常）。
+    而「看得见哪些」正是按那个滚动位置算的，于是要的那几张压根没人要图 —— 切到某一周
+    时是一片占位灰，要切走再切回来才正常。
     """
     view = WeekView(ThumbStore())
     view.resize(900, 600)
@@ -173,8 +172,7 @@ def test_the_reveal_does_not_count_as_landed_before_the_scroll_bar_has_a_range(
     切到这一层时，报窗口与定位常常跑在**内部布局之前**（``setCurrentWidget`` 之后
     滚动区的布局是延后处理的）：那一刻滚动条的最大值还是 0，``setValue`` 设了也没用。
     而「已落地」这道闸一关上，定位就再也补不回来 —— 这一层永远停在 00:00，而
-    「看得见哪些」又是按这个位置算的，照片所在的那些格子**压根没人要图**
-    （症状：切到某一周是一片占位灰）。
+    「看得见哪些」又是按这个位置算的，照片所在的那些格子**压根没人要图**。
     """
     view = WeekView(ThumbStore())
     view.set_buckets(*_two_photos())
@@ -226,12 +224,11 @@ def test_the_header_is_repainted_when_the_viewport_changes_width(
 
     表头那七列是按 ``column_width()`` 摆的，而那个数取自**时间轴的宽度**：滚动条一出现，
     视口就窄掉一条滚动条，列宽跟着变，**而表头自己一个像素都没动**。Qt 只在控件自身尺寸
-    变化时替它重画，于是表头停在旧列宽上 —— 症状正是「表头与时间轴对不齐，往右越差越多」，
-    差值累到最后一列就是一条滚动条的宽度（实测 1200 宽的窗口：149.14 vs 147.0）。
+    变化时替它重画，于是表头停在旧列宽上 —— 表头与时间轴对不齐，往右越差越多，
+    差值累到最后一列就是一条滚动条的宽度（1200 宽的窗口：149.14 vs 147.0）。
 
     **只能靠「有没有人标脏」来钉**：``grab()`` / ``render()`` 会强制重画，屏幕上那份陈旧
-    像素在像素探针里永远看不见 —— 真机上它是这样被抓到的：表头连续 5 次重画全发生在
-    滚动条占位之前，之后一次都没有。
+    像素在像素探针里永远看不见。
     """
     view = WeekView(ThumbStore())
     view.set_buckets(*_two_photos())
@@ -260,11 +257,10 @@ def test_a_delivered_thumbnail_asks_the_timeline_to_repaint(
 ) -> None:
     """一张缩略图到了，**要让画着格子的那个控件重画** —— 周视图里是时间轴。
 
-    这一条钉的是一个真出现过的症状：图明明已经在仓库里（``photo()`` 不是 ``None``），
-    屏幕上却一直是占位灰，而且**等多久都不变**，一滚动或一换层就出来。
-    原因是那次重画问错了对象 —— ``CalendarPage`` 收到图之后重画的是**这一层**
-    （``WeekView.update()``），而格子是里面那个 ``_TimeGrid`` 画的；月 / 年视图画在
-    自己身上，所以只有周视图犯病（滚动与换层会强制重画那一块，于是「一滑动就出来」）。
+    图明明已经在仓库里（``photo()`` 不是 ``None``）而屏幕上一直是占位灰、**等多久都不
+    变**，一滚动或一换层就出来 —— 那是重画问错了对象：``CalendarPage`` 收到图之后重画
+    的是**这一层**（``WeekView.update()``），而格子是里面那个 ``_TimeGrid`` 画的；
+    月 / 年视图画在自己身上，只有周视图要绕这一道（滚动与换层会强制重画那一块）。
 
     （测试环境里 ``update()`` 本来就不会产生 paint 事件 —— 离屏平台不会 expose 窗口。
     所以这里钉的是**契约**：画格子的那个控件必须被标脏。）
@@ -428,8 +424,8 @@ def test_the_now_line_stays_inside_todays_own_column(
 ) -> None:
     """「现在」那条线**只画在今天那一格里**，不一路划到最右边。
 
-    原先它的终点是整条时间轴的右沿，于是「今天现在几点」看着像一条从今天往后延伸的
-    进度线 —— 而右边那几天与它无关，那几天各有各的钟点。
+    终点不能取整条时间轴的右沿：那看着像一条从今天往后延伸的进度线 —— 而右边那几天
+    与它无关，那几天各有各的钟点。
     """
     from PySide6.QtGui import QImage
 
@@ -500,12 +496,11 @@ def test_a_partial_repaint_only_draws_the_hours_it_can_show(
 ) -> None:
     """**局部重画不许走满 24 行。**
 
-    缺陷现场：那一段循环原来无条件走满 25 条小时线 + 7×24 = 168 格，于是时间轴有多高
-    就画多高。可它高 2218 px 而视口只有 724 px —— **七成四的活画在屏幕外头**。
+    那一段循环若无条件走满 25 条小时线 + 7×24 = 168 格，就是时间轴有多高画多高 ——
+    而它高 2218 px、视口只有 724 px，**七成四的活画在屏幕外头**。
 
     之所以要紧，是因为 :meth:`WeekView.update` 在**每张缩略图回来时**都调一次
-    ``self._grid.update()``，而一次 ``update()`` 标脏整块。实测一周 336 张照片逐张到达
-    = 336 次整块重画，paintEvent 累计 290 ms。
+    ``self._grid.update()``，而一次 ``update()`` 标脏的是整块。
 
     断的是**形状**：一次局部重画只许碰看得见的那几行。量时间会随机器飘，量格数不会。
     """
@@ -559,10 +554,9 @@ def test_a_full_repaint_still_draws_every_hour(qt_app: QApplication) -> None:
 def test_no_clip_region_means_draw_everything(qt_app: QApplication) -> None:
     """**拿不到裁剪区就当整块都可见。**
 
-    宁可多画，不可在该画的地方留空白 —— 而这里曾经真会一格都不画：
-    裁剪区只在 ``event.region()`` 上，Qt **不会**把它设到 paintEvent 里我们自己新建的
-    painter 上（实测 ``painter.clipBoundingRect()`` 是空矩形），于是照着它算会得出
-    「第一行 0、最后一行 -1」。
+    宁可多画，不可在该画的地方留空白。裁剪区只在 ``event.region()`` 上，Qt **不会**把它
+    设到 paintEvent 里我们自己新建的 painter 上（``painter.clipBoundingRect()`` 是空
+    矩形），照着它算会得出「第一行 0、最后一行 -1」——于是一格都不画。
     """
     view = WeekView(ThumbStore())
     view.resize(1000, 780)

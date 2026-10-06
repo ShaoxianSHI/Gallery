@@ -341,7 +341,9 @@ def test_pillow_gps_ignores_garbage() -> None:
 def test_the_degraded_path_works_without_exiftool(tmp_path: Path) -> None:
     """**没有 exiftool 也能读**：降级路径只用 Pillow 与标准库，不依赖任何外部命令。
 
-    原来那两条断言是标准库恒真式，于是降级路径里悄悄多一个子进程也照样绿。"""
+    断言要真的读得出字段：用「标准库恒真式」的那种写法，降级路径里悄悄多一个子进程
+    也照样绿。
+    """
     photo = tmp_path / "IMG_0001.jpg"
     photo.write_bytes(_jpeg_with_exif())
 

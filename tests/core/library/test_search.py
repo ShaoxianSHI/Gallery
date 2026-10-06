@@ -469,10 +469,8 @@ def _taken_in(year: int, month: int, day: int) -> PhotoFacets:
 
 
 def test_a_capture_date_finds_the_photos_taken_then(tmp_path: Path, make_photo) -> None:
-    """``#拍摄时间`` 要在真库上查得对 —— 这一族从来没被真库执行过，列名写错也不会红。
-
-    曾经的故障：字段表里把这一项的列写成了 ``f.captured_at``（那是 ``PhotoFacets`` 上的
-    **属性名**，不是列名），界面表现成「一条都搜不出来」，而解析与生成 SQL 那两层照样全绿。
+    """``#拍摄时间`` 要在真库上查得对 —— 只测解析与生成 SQL 那两层的话，列名写错不会红
+    （``PhotoFacets`` 上的**属性名**与列名不是一回事）。
     """
     library = _library(tmp_path, make_photo)
     library.index_photos()
@@ -576,8 +574,8 @@ def test_the_match_query_survives_the_real_schema(tmp_path: Path, make_photo) ->
     """筛选那条查询里**每一个可搜字段**都要拿真 schema 执行一遍 —— 守护。
 
     与 :func:`test_every_searchable_field_survives_the_real_schema` 同源，但走的是
-    :func:`build_match_query`：那条 SQL 有自己的一行 ``SELECT``，列名写错同样要到 SQLite 执行
-    才报 ``no such column``，而症状是「这一栏筛选出来永远是空的」—— 与「这一栏没得筛」一模一样。
+    :func:`build_match_query`：那条 SQL 有自己的一行 ``SELECT``，列名写错同样要到
+    SQLite 执行才报 ``no such column``，而那一眼看上去就是「这一栏没得筛」。
 
     **别因为两条 SQL 共用同一个 ``WHERE`` 就当这条多余**：共用的只有条件那部分，取哪几列是
     各写各的（ADR 0040 决策 2）。
@@ -598,9 +596,9 @@ def test_the_match_query_survives_the_real_schema(tmp_path: Path, make_photo) ->
 def test_the_match_query_is_never_truncated(tmp_path: Path, make_photo) -> None:
     """那条 SQL **不许有 LIMIT** —— 守护。
 
-    截断在这里等于静默丢命中：命中八千张而当前层的那几张排在第 5001 名之后时，用户看到的是
-    「一条都没有」，而那不是答案，是查询自己偷偷少给了。症状与「这一层真的没有」完全一样，
-    于是没有任何线索指向它。整库检索可以截断（结果本来就是给人浏览的前几百张），相交不行：
+    截断在这里等于静默丢命中：命中八千张而当前层的那几张排在第 5001 名之后时，界面上
+    是「一条都没有」，而那不是答案，是查询自己偷偷少给了 —— 没有任何线索指向它。
+    整库检索可以截断（结果本来就是给人浏览的前几百张），相交不行：
     **交出来的每一张都得是对的**。
     """
     library = _library(tmp_path, make_photo)
@@ -616,7 +614,7 @@ def test_the_match_query_is_never_truncated(tmp_path: Path, make_photo) -> None:
 def test_matching_paths_finds_the_same_photos_as_the_search(tmp_path: Path, make_photo) -> None:
     """两份查询对同一条条件要给出**同一批路径** —— 它们各自返回不同的列，却共用同一个 ``WHERE``。
 
-    不一致的症状是「筛选比搜索少一张」，而那极难分辨：既可能是真的少了命中，也可能是这一层
+    不一致时长成「筛选比搜索少一张」，而那极难分辨：既可能是真的少了命中，也可能是这一层
     本来就没有那张照片。所以钉在**纯核心**这一层，不掺界面。
     """
     library = _library(tmp_path, make_photo)

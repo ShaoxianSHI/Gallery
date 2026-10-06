@@ -1,13 +1,11 @@
 """缩略图在途失败时该不该报给用户。
 
-缺陷现场：给一张照片改名，网格刚把它换到新路径上，而**改名之前**那次解码还在
-工作线程里跑着 —— 它读的是旧路径，文件已经不在了，解码失败是必然的。原先失败这一侧
-没有「这一格还在不在当前层」的判据，于是横幅立刻从「已重命名为 海边日落.jpg」变成
-「有 1 张照片无法显示缩略图：无法解码 IMG_0001.jpg：文件可能已损坏或被截断」。
+给一张照片改名，网格刚把它换到新路径上，而**改名之前**那次解码还在工作线程里跑着 ——
+它读的是旧路径，文件已经不在了，解码失败是必然的。所以失败这一侧必须与成功的回填
+（``PhotoListModel.set_thumbnail``）**对称**：同样按「这一格还在不在当前层」判。
 
-那是**假警报**，而且是最坏的一种：它把一次成功的改名说成了数据损坏，用户很可能
-就此去抢救一个根本没坏的文件。成功的回填早就按「还在不在这一层」丢掉了
-（``PhotoListModel.set_thumbnail``），失败这一侧原先却没有对称的判据。
+少了那条判据就是**假警报**，而且是最坏的一种：横幅会从「已重命名为 海边日落.jpg」变成
+「有 1 张照片无法显示缩略图：无法解码 IMG_0001.jpg」—— 把一次成功的改名说成了数据损坏。
 
 这一组把两侧钉在同一条判据上：仍然在屏幕上的坏文件照报，已经离开这一层的静默丢掉。
 """
@@ -115,18 +113,17 @@ def test_a_failure_for_a_path_the_app_just_wrote_is_dropped(
     assert DECODE_FAILURE not in window._banner.text()
 
 
-# ---- 后台消息不许盖掉用户动作 -------------------------------------------------
+# ---- 后台消息不许盖掉刚刚那个动作 -------------------------------------------------
 
 
 def test_a_background_message_waits_its_turn_after_a_user_action(
     qt_app: QApplication, window: MainWindow, wait_for: Callable[..., bool]
 ) -> None:
-    """用户刚做完一件事之后，横幅先把那句话说完，后台的失败让位。
+    """刚做完一件事之后，横幅先把那句话说完，后台的失败让位。
 
-    现场：把照片移到废纸篓之后，网格立刻去给留下来的那些行要缩略图，于是
-    「刚被自家动过、这一刻读不到」的那一张解码失败会**迟一步**报上来。
-    横幅只有一个槽，用户看到的就成了一句与自己刚做的操作无关的解码错误，
-    而「1 张没移走」那句话没了。
+    把照片移到废纸篓之后，网格立刻去给留下来的那些行要缩略图，于是「刚被自家动过、
+    这一刻读不到」的那一张解码失败会**迟一步**报上来。横幅只有一个槽，抢到的就成了一句与
+    刚做的操作无关的解码错误，而「1 张没移走」那句话没了。
     """
     path = _first_path(window, wait_for)
     window._clear_banner()
@@ -141,7 +138,7 @@ def test_a_background_message_waits_its_turn_after_a_user_action(
 def test_a_background_message_still_gets_through_when_nothing_is_pending(
     qt_app: QApplication, window: MainWindow, wait_for: Callable[..., bool]
 ) -> None:
-    """让位只针对「刚刚」：没有用户动作的时候，解码失败照常要说出来。"""
+    """让位只针对「刚刚」：没有动作占着的时候，解码失败照常要说出来。"""
     path = _first_path(window, wait_for)
     window._clear_banner()
 

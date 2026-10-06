@@ -48,7 +48,7 @@ def test_levels_are_the_four_we_offer(level: str) -> None:
 
 @pytest.mark.parametrize(("year", "length"), [(2021, 365), (2024, 366)])
 def test_a_year_is_exactly_its_own_days(year: int, length: int) -> None:
-    """**不多一天**：平年原先是 366 天，于是最后一天落在下一年 1 月 1 日上 ——
+    """**不多一天**：多一天的话最后一天就落在下一年 1 月 1 日上，
     那一天的照片于是算进了这一年的张数里。"""
     days = days_of("year", datetime.date(year, 9, 12))
     assert len(days) == length
@@ -121,9 +121,8 @@ def test_the_weekday_constants_run_from_sunday() -> None:
     assert WEEKDAY_NAMES[0] == "日"
     assert WEEKDAY_NAMES[-1] == "六"
     assert WEEKDAY_HEADERS[0] == "星期日"
-    # 周末是**周六与周日**。``date.weekday()`` 是周一 0 … 周日 6，所以是 5 与 6 ——
-    # 早先这里是 ``{6, 0}``，那个 0 是「周日打头」那一套的周一，于是周视图把周一涂成了
-    # 周末、周六反而没有底色，与表头对不上。
+    # 周末是**周六与周日**。``date.weekday()`` 是周一 0 … 周日 6，所以是 5 与 6；
+    # 别拿日历那套「周日 0」的编号直接填进来，那会把周一涂成周末、周六反而没有底色。
     assert frozenset({5, 6}) == WEEKEND_WEEKDAYS
     assert datetime.date(2021, 9, 18).weekday() in WEEKEND_WEEKDAYS  # 周六
     assert datetime.date(2021, 9, 12).weekday() in WEEKEND_WEEKDAYS  # 周日
@@ -186,10 +185,8 @@ def test_month_step_lands_on_a_day_that_exists() -> None:
 def test_stepping_across_a_leap_day() -> None:
     assert shift("week", datetime.date(2024, 2, 26), 1) == datetime.date(2024, 3, 4)
     assert shift("month", datetime.date(2024, 2, 29), 1) == datetime.date(2024, 3, 29)
-    # **年视图也得走同一套截断**：缺陷现场是它直接 ``replace(year=…)``，于是
-    # 2024-02-29 往后翻一年抛 ``ValueError: day is out of range for month``。
-    # 三条入口（工具条 / 方向键 / 两指横甩）都走 :func:`shift`，症状是「按了没反应」，
-    # 而异常只在那一刻打到 stderr —— 界面连锚点都没更新，看起来像没听见。
+    # **年视图也得走同一套截断**：直接 ``replace(year=…)`` 会让 2024-02-29 往后翻一年
+    # 抛 ``ValueError``，而异常只打到 stderr —— 界面连锚点都没更新，看起来像没听见。
     assert shift("year", datetime.date(2024, 2, 29), 1) == datetime.date(2025, 2, 28)
     assert shift("year", datetime.date(2024, 2, 29), -1) == datetime.date(2023, 2, 28)
     # 闰年本身要保住 2 月 29 日，别把好日子也截掉。
@@ -278,8 +275,8 @@ def test_group_by_day_sorts_inside_a_day_by_capture_time() -> None:
 def test_the_cell_cover_is_the_earliest_photo_of_that_day() -> None:
     """一格拿**最早**的那张当代表 —— 三层共用这一条（ADR 0033）。
 
-    曾经年视图取 ``[-1]``（最晚）、月 / 周两层取 ``[0]``（最早），于是同一天在年视图里
-    与月视图里是两张照片。理由留在核心层，三层不再各写一遍。
+    各层取不同的下标（``[-1]`` 与 ``[0]``）会让同一天在年视图与月视图里是两张照片，
+    所以理由只留在核心层一处，三层不再各写一遍。
     """
     refs = [make_ref("third.jpg"), make_ref("first.jpg"), make_ref("second.jpg")]
     values = {

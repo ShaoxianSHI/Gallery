@@ -4,11 +4,10 @@
 所以这里测的是「真的画得出来，且画的是那一格」—— 用离屏平台把委托画进一张
 QPixmap，再看结果，不是靠读代码确认。
 
-**数像素必须数在指定的那一块上。** 卡片底下那一行文件名也是深色的，整张图一起数
-的话「角标画出来了」这种断言**永远为真** —— 曾经两条用例（徽标、文件夹图形）都是
-这么写的：把 :meth:`PhotoDelegate._draw_group_badge` 与
-:meth:`PhotoDelegate._draw_folder_glyph` 整个打成空实现，量出来的深色像素一像素
-都没少，全是那行字。
+**数像素必须数在指定的那一块上。** 卡片底下那一行文件名也是深色的，整张图一起数的话
+「角标画出来了」这种断言**永远为真**：把 :meth:`PhotoDelegate._draw_group_badge` 与
+:meth:`PhotoDelegate._draw_folder_glyph` 整个打成空实现，量出来的深色像素一像素都不会少，
+全是那行字。
 """
 
 from __future__ import annotations

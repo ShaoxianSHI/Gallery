@@ -53,8 +53,7 @@ FIRST = "一张.png"
 SECOND = "另一张.png"
 
 #: 两张照片各有各的颜色：封面换成哪一张，靠像素就能看出来，不靠「缩略图不是 None」。
-#: **用 PNG 而不是 JPEG**：JPEG 是有损的，解码回来是 (201, 120, 41) 而不是
-#: (200, 120, 40) —— 那样这条断言就得写成「差不多」，而「差不多」正是它该防住的那种退化。
+#: **用 PNG 而不是 JPEG**：有损解码会把颜色推偏，这条断言就只好写成「差不多」。
 FIRST_COLOR = (200, 120, 40)
 SECOND_COLOR = (20, 60, 200)
 
@@ -375,10 +374,8 @@ def test_clearing_puts_the_first_photo_back(
     assert _wait_for_cover(qt_app, window, root / ALBUM) >= 0
 
     window.clear_album_cover()
-    # **「当场」两个字是这条用例要钉的另一半**：旧封面那份记忆必须在这一
-    # 次调用里作废（``_refresh_album_cover`` → ``forget_thumbnails`` 是同步的）。
-    # 不摆出这一句，下一句 ``_wait_for_cover`` 会在旧图还在的时候立刻
-    # 返回 —— 读到的还是取消之前那一张，断言就成了在赌时序。
+    # 「当场」是这条用例要钉的另一半：旧封面那份记忆必须在这次调用里作废，否则下面
+    # ``_wait_for_cover`` 会在旧图还在的时候就返回，读到的还是取消之前那一张。
     assert window._model.has_thumbnail(root / ALBUM) is False, "旧封面没有当场作废"
     row = _wait_for_cover(qt_app, window, root / ALBUM)
 
@@ -437,11 +434,9 @@ def test_a_failure_is_said_out_loud_in_the_core_wording(
 # ---- 写封面这件事在代码里也要一处可查 ----------------------------------------
 
 
-#: 界面上写封面只该发生在一个地方。
-#:
-#: 与 ``tests/test_guards.py`` 那条「界面上改用户文件的地方只在 ``ui/write_ops.py``」
-#: 同一个理由。这一条**不进那一份清单**：封面写的是 ``config.toml``（Gallery 自己的配置），
-#: 不是用户的文件 —— 混进去会让那份清单说的事情变得不真（ADR 0028 决策 5）。
+#: 界面上写封面只该发生在一个地方，与 ``tests/test_guards.py`` 那条同一个理由。这一条**不进
+#: 那一份清单**：封面写的是 ``config.toml`` 而不是照片，混进去会让那份清单变得不真
+#: （ADR 0028 决策 5）。
 COVER_WRITE_CALLS = ("set_album_cover(", "clear_album_cover(")
 COVER_WRITE_MODULE = "write_ops.py"
 UI_ROOT = Path(__file__).resolve().parents[2] / "src" / "gallery" / "ui"
@@ -450,9 +445,8 @@ UI_ROOT = Path(__file__).resolve().parents[2] / "src" / "gallery" / "ui"
 def test_setting_a_cover_happens_in_write_ops_and_nowhere_else() -> None:
     """界面上写封面的调用点只许出现在 ``ui/write_ops.py`` 里。
 
-    ``write_ops.py`` 那个文件的存在意义就是「用户按了一下之后才发生的写入，在代码里一处可查」。
     封面落在那里（它确实是那种写入），那就该被同样地钉住，否则下一条命令又会散回
-    三千行装配代码里，而那时只剩人记。
+    几千行装配代码里，而那时只剩人记。
     """
     offenders: list[str] = []
     for path in sorted(UI_ROOT.rglob("*.py")):

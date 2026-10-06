@@ -124,7 +124,7 @@ def test_context_menu_carries_our_look(qt_app: QApplication, window: MainWindow)
 
 def test_context_menu_has_hover_highlight(qt_app: QApplication, window: MainWindow) -> None:
     """菜单必须有悬停 / 当前项的高亮带：给 ``QMenu`` 挂了样式表之后系统那份高亮**不再画**，
-    按 ↓ 两次所有行仍是底色，用户根本看不出鼠标在哪一行。
+    按 ↓ 两次所有行仍是底色，根本看不出鼠标在哪一行。
     """
     window._stack.setCurrentWidget(window._grid_page)
     row = window._model.row_of_path(window._library.root / "一张.jpg")
@@ -273,8 +273,8 @@ def _state_rules(sheet: str) -> str:
 def test_separator_color_follows_the_theme() -> None:
     """分隔线的颜色深浅两套：深色下要**提亮到看得见**，浅色下维持原来的浓度。
 
-    深色下那条线原本取的是应用调色板里偏暗的一档（实测 ``#0f0f0f``），比底色 ``#171717``
-    还深等于没画；浅色下照抄 ``#aaaaaa``，不顺手改浅色的观感。
+    深色下照抄应用调色板里偏暗的一档（``#0f0f0f``）比底色 ``#171717`` 还深，等于没画；
+    浅色下维持 ``#aaaaaa``，不顺手改浅色的观感。
     """
     dark = QColor("#171717")
     light = QColor("#ffffff")
@@ -379,8 +379,8 @@ def test_split_shortcut_separates_modifiers_from_the_key() -> None:
 def test_each_shortcut_column_lines_up(qt_app: QApplication, window: MainWindow) -> None:
     """「三个列各自对齐」：同一列在所有行上是同一段 x，字母列一律贴右沿。
 
-    列宽只按整个菜单量一次（早先试着在条目文字里补空格来对齐，位移只有请求的 2/3 且不线性）。
-    对齐的是**那一组列**（``slot_rects``）而不是每个符号：符号落哪一格是逐行定的。
+    列宽只按整个菜单量一次（在条目文字里补空格来对齐是不行的：位移只有请求的三分之二且
+    不线性）。对齐的是**那一组列**（``slot_rects``）而不是每个符号：符号落哪一格是逐行定的。
     """
     window._stack.setCurrentWidget(window._grid_page)
     row = window._model.row_of_path(window._library.root / "一张.jpg")
@@ -477,8 +477,8 @@ def test_menus_reserve_room_for_the_shortcut_columns(
 ) -> None:
     """菜单要为快捷键列块**预留宽度**：它不在条目文字里，Qt 不会替它腾地方。
 
-    不预留就压在标签上（实测空白处菜单自然宽 124，列块左沿 62，而「缩略图大小」的文字
-    一直伸到 90）。
+    不预留就压在标签上（空白处菜单自然宽一百二十四，列块左沿六十二，而「缩略图大小」的文字
+    一直伸到九十）。
     """
     window._stack.setCurrentWidget(window._grid_page)
     row = window._model.row_of_path(window._library.root / "一张.jpg")
@@ -549,7 +549,7 @@ def test_shortcut_columns_start_after_the_longest_label(
 ) -> None:
     """三列要排在**最长那条文字的右侧**，且留出固定的间距。
 
-    这一段以前只有 0.5~2 像素，「在访达中显示」和下面 ⇧ 所在那列几乎同一条 x，看着像串成一片。
+    这一段只有 0.5~2 像素的话，「在访达中显示」和下面 ⇧ 所在那列几乎同一条 x，看着像串成一片。
     """
     window._stack.setCurrentWidget(window._grid_page)
     row = _row_for(qt_app, window, kind)
@@ -744,7 +744,7 @@ def test_menus_without_checkable_items_keep_the_text_column(
 ) -> None:
     """没有可勾选项的菜单，文字也要与照片菜单对齐。
 
-    Qt 只在菜单里**存在可勾选项**时才预留那一列对勾宽度（实测 19 像素），整列文字跟着右移。
+    Qt 只在菜单里**存在可勾选项**时才预留那一列对勾宽度（十九像素），整列文字跟着右移。
     那种菜单里根本没有对勾可画，留着那列空白没有道理，但文字忽左忽右更难看。
     """
     window._stack.setCurrentWidget(window._grid_page)
@@ -827,7 +827,7 @@ def test_menu_bar_menus_follow_theme_change(qt_app: QApplication, window: MainWi
 def test_the_plain_menu_is_sized_like_the_search_popup(qt_app: QApplication) -> None:
     """字号、行内边距、圆角、字色**全部来自同一处常量**。
 
-    这两个控件用户是挨着用的，字号或行内边距差一档一眼就看得出「这是另一个软件弹的」。
+    这两个控件是挨着用的，字号或行内边距差一档一眼就看得出「这是另一个软件弹的」。
     """
     style = menu_style.popup_menu_style(QMenu())
 
@@ -842,7 +842,7 @@ def test_the_plain_menu_is_sized_like_the_search_popup(qt_app: QApplication) -> 
 
 
 def test_the_plain_menu_spells_out_its_text_colour(qt_app: QApplication) -> None:
-    """**item 的字色必须写死。** 挂了样式表之后 Qt 不再按调色板给 item 上色：实测深色下调色板里
+    """**item 的字色必须写死。** 挂了样式表之后 Qt 不再按调色板给 item 上色：深色下调色板里
     ``WindowText`` 明明白白是 ``#ffffff``，画出来却是 ``#000000``；而只写在 ``:hover`` /
     ``:selected`` 里会让**没被指到的那些行全是黑的**。
     """

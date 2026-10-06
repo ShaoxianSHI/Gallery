@@ -91,9 +91,8 @@ def _field(
 
 #: 候选列表的顺序即这里面的顺序。**不打乱 GROUP_FACET_IDS / SORT_FACET_IDS 的既有顺序**
 #: （字段与分组排序看到的是同一套字段），只把「不读 EXIF、立刻出结果」的四个提到最前面。
-#: ``column`` 写的是 **SQL 里的列名**，不是 ``PhotoFacets`` 上的属性名 —— 只有拍摄时间两者不同
-#: （属性 ``captured_at``，列 ``captured``）。写错**不会在生成 SQL 时露出来**，SQLite 到执行才
-#: 报 ``no such column``，而那条错误被包成了「检索没能完成」。
+#: ``column`` 写的是 **SQL 里的列名**而不是 ``PhotoFacets`` 的属性名 —— 只有拍摄时间两者不同
+#: （属性 ``captured_at``，列 ``captured``），写错要到 SQLite 执行时才报出来。
 SEARCH_FIELDS: Final[tuple[SearchField, ...]] = (
     _field(FACET_NAME, "文件名", "name", "p.name"),
     _field(FACET_FOLDER, "相册", "album", "p.folder", hint="含子相册"),
@@ -557,9 +556,8 @@ def albums_kept(
     """
     if not albums:
         return []
-    # **卡片的位置用它自己，命中照片的位置用它的父目录** —— 两者不是同一个函数：``relative_folder``
-    # 收的是「照片所在文件夹」，拿它去算一张卡片会把卡片自己的名字也去掉（``旅行/2024`` 的卡片
-    # 算成 ``旅行``），于是所有卡片都短了一级、谁也匹配不上。
+    # **卡片的位置用它自己，命中照片的位置用它的父目录** —— ``relative_folder`` 收的是「照片所在
+    # 文件夹」，拿它去算一张卡片会把卡片自己的名字也去掉（``旅行/2024`` 算成 ``旅行``）。
     prefixes = tuple(_directory_prefix(album.path, root) for album in albums)
     hit: set[str] = set()
     for path in matching:

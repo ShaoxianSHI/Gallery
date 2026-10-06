@@ -42,9 +42,8 @@ def scale_image(image: QImage, edge: int) -> QImage:
 def scale_pixmap(pixmap: QPixmap, edge: int) -> QPixmap:
     """把 ``QPixmap`` 缩到长边不超过 ``edge``（只缩不放），并包装成 Qt 图像。
 
-    「只缩不放、保持比例、平滑」这三条曾经在这里、``browser.model`` 与 ``browser.grid``
-    各写一遍：换一次缩放算法要改三处，而其中两处在主线程上 —— 正是 ADR 0015 决策 3
-    当初要搬走的那类活。
+    缩放的三个口径（只缩不放、保持比例、平滑）只在这一处实现：各写一份的话，换一次算法要改
+    三处，而其中两处在主线程上 —— 正是 ADR 0015 决策 3 当初要搬走的那类活。
     """
     return _scale(pixmap, edge)
 

@@ -72,15 +72,13 @@ class MetadataReport:
     #: 文件里写的地点名（IPTC/XMP），拼成一句 ``中国 · 浙江省 · 杭州``。
     #: 有它就不再按坐标推断，免得给出两个说法。
     place_from_file: str | None = None
-    #: 文件里那三层地点**分开**的值，给「编辑元数据」的输入框用（ADR 0031）。
-    #: **从 ``place_from_file`` 那句拼好的话里拆是不行的** —— 地名本身就有「 · 」
-    #: （「圣 · 让娜 · 德 · 布雷」），拆开只会得到一堆碎片。
+    #: 文件里那三层地点**分开**的值，给「编辑元数据」的输入框用（ADR 0031）。**从
+    #: ``place_from_file`` 那句拼好的话里拆是不行的** —— 地名本身就有「 · 」。
     place_city: str | None = None
     place_region: str | None = None
     place_country: str | None = None
-    #: 照片记下的**拍摄时间**与**时区偏移**，都已归一（``+08:00``）（ADR 0032）。
-    #: **不从面板显示的那一行反解** —— 那行是 ``2022-04-16 20:52:02 +08:00`` 这样拼好的一句，
-    #: 拆回两个输入框要写第二套解析，而两套规则早晚会各自漂移。没记时区时偏移就是 ``None``。
+    #: 照片记下的**拍摄时间**与**时区偏移**，都已归一（``+08:00``）（ADR 0032）。**不从面板
+    #: 显示的那一行反解** —— 拆回两个输入框要写第二套解析，而两套规则早晚会各自漂移。
     captured_at: str | None = None
     captured_offset: str | None = None
     #: 推断地点是否已经查过了。**必须区分「没查」与「查了但没有结果」**：只有还没查过的报告
@@ -341,8 +339,8 @@ def leading_number(value: str) -> float | None:
 
 
 def positive_value(value: str | None) -> str | None:
-    """这类字段里 0（或负数）等于「没记录」：实测有导出工具把 FNumber / FocalLength / ISO
-    一律填 0，还带着单位（``0.0 mm``），显示成 f/0.0 只会让人以为软件坏了。取不到数字的值原样保留。
+    """这类字段里 0（或负数）等于「没记录」：有导出工具把 FNumber / FocalLength / ISO 一律填 0
+    还带着单位（``0.0 mm``），显示成 f/0.0 只会让人以为软件坏了。取不到数字的值原样保留。
     """
     if value is None:
         return None
@@ -362,12 +360,11 @@ def camera_name(raw: Mapping[str, str]) -> str | None:
 
 
 # ---- 拍摄时间（ADR 0032）--------------------------------------------------------
-#
 # **EXIF 的拍摄时间是墙上时间，不带时区**：时区在单独的可选字段 ``OffsetTimeOriginal``
 # （EXIF 2.31 才有）里，相机十有八九不写它。归一化只有一份（下面那几个函数），读报告与
 # 写回校验都用它 —— 两边说出的话不一样的话，面板上显示的时间与写进去的时间就对不上。
 
-#: 拍摄时间的那几个标签，与 ``_shooting_time`` 取值的顺序一致（面板显示的也就是它）。
+#: 拍摄时间的那几个标签，与 ``_shooting_time`` 取值的顺序一致。
 CAPTURE_TIME_FIELDS: Final[tuple[str, ...]] = (
     "EXIF:DateTimeOriginal",
     "EXIF:CreateDate",

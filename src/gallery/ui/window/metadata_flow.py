@@ -21,9 +21,8 @@ from gallery.core.places.dataset import is_real_coordinate
 from gallery.ui.tasks import TaskContext
 from gallery.ui.window.level_stack import PhotoFrame
 
-#: 离最近的城市超过这么多公里，就在地点后面补一句距离。
-#:
-#: 标签本身已经写了「（推断）」；偏得远时才补 —— 那是在提醒「这只是最近的城市」，不是在报误差。
+#: 离最近的城市超过这么多公里，就在地点后面补一句距离。标签本身已经写了「（推断）」；
+#: 偏得远时才补 —— 那是在提醒「这只是最近的城市」，不是在报误差。
 PLACE_DISTANCE_NOTICE_KM = 50.0
 
 

@@ -85,10 +85,9 @@ class WatchFlowMixin:
     def _apply_watch_changes(self, library: Library, changes: Sequence[LibraryChange]) -> None:
         """按当前这一层的形状，把一批变化落到网格、内存缓存与索引上。"""
         if self._conditions:
-            # 有条件时增量逻辑一律接不上，于是两种作用域都重跑一遍：整库检索要重跑一次查询，
-            # 筛选要重新枚举这一层再收窄一次（ADR 0040 决策 6）。真增量得逐张判断「新照片命不
-            # 命中」，那还是得查索引，而 ``_reload_level`` 已经把整条链接通了 —— 另写一份
-            # 增量分支正是 ADR 0026 决策 7 点名的 bug 来源。
+            # 有条件时增量逻辑一律接不上，于是两种作用域都重跑一遍：整库检索重跑一次查询，筛选
+            # 重新枚举这一层再收窄一次（ADR 0040 决策 6）。真增量仍要逐张判断「新照片命中吗」，
+            # 那还是得查索引，而 ``_reload_level`` 已经把整条链接通了。
             self._apply_search_changes(library, changes)
             return
         added: list[GridEntry] = []

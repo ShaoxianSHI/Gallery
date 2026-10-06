@@ -338,8 +338,8 @@ def test_the_first_click_after_opening_still_only_selects(
     assert grid.genuinely_selected_rows() == [0]
 
 
-# 除了左键，还有哪些路把某一格「选中」了 —— 三条同一个症状：界面上那一格是**选中**的
-# （画着选中框、⌘R 也亮着），点它一下却没有反应，非要点第二下。根因同一个：
+# 除了左键，还有哪些路把某一格「选中」了 —— 三条都要求「点一下就改名」：界面上那一格是**选中**的
+# （画着选中框、⌘R 也亮着），点它一下却没有反应、非要点第二下。根因同一个：
 # ``_armed_row`` 只认「上次完成的普通左键点选」。
 
 
@@ -422,8 +422,8 @@ def test_changing_the_level_drops_the_armed_cell(
 ) -> None:
     """换一层之后，旧的那一格就不再「再点一下改名」了。
 
-    同一个状态机上的另一个洞：``_armed_row`` 记的是**行号**，而换一层摆上去的是**另一批
-    条目**。旧行号若还留着，用户在新一层里点那一格，第一下就直接改名。
+    ``_armed_row`` 记的是**行号**，而换一层摆上去的是**另一批条目**：旧行号若还留着，
+    在新一层里点那一格，第一下就直接改名。
     """
     grid = make_grid(qt_app, tmp_path, ["a.jpg", "b.jpg", "c.jpg", "d.jpg"])
     settle(0.1)
@@ -603,10 +603,9 @@ def test_escape_cancels_and_leaves_rename_usable_again(
 ) -> None:
     """Esc 取消之后仍然是选中的那一格，于是 ⌘R 必须还能再进一次重命名。
 
-    症状很怪：**第一次** ⌘R 好好地能进，Esc 之后第二次却彻底没反应，菜单里的「重命名…」
-    也一起变灰。坏的是「输入框收起来 → 窗口把菜单点回亮」那条接线：``RenameEdit._cancel``
-    先 ``hide()`` 再发 ``cancelled``，网格的 ``cancel_rename`` 到场时读到的是
-    「本来就没在编辑」，「输入框收起来了」那条信号压根没发出去。
+    坏的是「输入框收起来 → 窗口把菜单点回亮」那条接线：``RenameEdit._cancel`` 先 ``hide()``
+    再发 ``cancelled``，网格的 ``cancel_rename`` 到场时读到的是「本来就没在编辑」，
+    「输入框收起来了」那条信号压根没发出去。
     """
     make_photo("IMG_0001.jpg", directory=tmp_path)
     window = open_window(qt_app, tmp_path)
@@ -642,8 +641,8 @@ def test_escape_leaves_the_other_actions_usable_too(
 ) -> None:
     """与上一条同一根因，但看的是另一侧：Esc 之后 ⌘⌫ / ⇧⌘N / ⌘⏎ 也得一起回来。
 
-    ``idle`` 是这几条动作**共用**的判据，所以 Esc 之后一起失灵，只是「重命名」
-    最先被用户撞上而已 —— 把这一条钉住，才能说明修的是那条接线而不是某一条动作。
+    ``idle`` 是这几条动作**共用**的判据，所以 Esc 之后一起失灵 —— 把这一条钉住，才能说明
+    钉住的是那条接线而不是某一条动作。
     """
     make_photo("IMG_0001.jpg", directory=tmp_path)
     window = open_window(qt_app, tmp_path)

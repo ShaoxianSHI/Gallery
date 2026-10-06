@@ -49,9 +49,8 @@ def _imported_modules(path: Path, *, full: bool = False) -> list[str]:
 
 
 #: 界面层**允许**调用的 ``.open(...)``：它们不是「打开一个文件」，而是走 core 的门面。
-#:
-#: 用白名单而不是枚举「已知的坏形态」：``Path.open()``、``os.open()``、内置 ``open``
-#: 的别名……黑名单总会漏掉一种。
+#: 用白名单而不是枚举「已知的坏形态」（``Path.open()``、``os.open()``、内置 ``open``
+#: 的别名……）—— 黑名单总会漏掉一种。
 ALLOWED_METHOD_OPENS: Final = frozenset({"Library.open", "cls.open", "type(self).open"})
 
 
@@ -206,10 +205,8 @@ def test_tests_do_not_hardcode_the_config_dir_name_either() -> None:
     )
 
 
-#: ``Library`` 上那几个**真的会改用户文件**的方法（红线 1）。
-#:
-#: 界面上每一个调用点都应当在 ``ui/write_ops.py`` 里，那一整个文件就是为了让
-#: 「界面上会动用户文件的地方」变成一句可以 grep 的话。
+#: ``Library`` 上那几个**真的会改用户文件**的方法（红线 1）。界面上每一个调用点都应当
+#: 在 ``ui/write_ops.py`` 里 —— 那一整个文件就是为了让这句话可以 grep。
 WRITE_METHODS_ON_LIBRARY = (
     "rename_entry",
     "move_to_trash",
@@ -219,8 +216,7 @@ WRITE_METHODS_ON_LIBRARY = (
     "create_album",
     "undo_last_write",
     # 元数据写回（ADR 0030）：改的是照片**里面**的字节。方法名必须与
-    # ``facade.Library`` 上的逐字一致 —— 它扫的是方法名，换了名而没改这里，
-    # 守护就会悄悄放过整个写回功能。
+    # ``facade.Library`` 上的逐字一致 —— 它扫的就是方法名。
     "write_metadata_edit",
 )
 

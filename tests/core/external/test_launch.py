@@ -148,7 +148,7 @@ def test_browser_is_used_when_the_url_cannot_be_written(tmp_path: Path) -> None:
 
 
 def test_nothing_sleeps_when_everything_is_ready(tmp_path: Path) -> None:
-    """**等的是条件不是秒数**：一路都通的话一次都不该睡（实测整条 1.3 秒）。"""
+    """**等的是条件不是秒数**：一路都通的话一次都不该睡。"""
     apps, _ = make_installed_pwa(tmp_path)
     slept: list[float] = []
     open_google_calendar("week", DAY, runner=FakeRunner(), search_dirs=[apps], sleeper=slept.append)

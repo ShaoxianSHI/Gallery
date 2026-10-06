@@ -91,18 +91,10 @@ class ExifToolBatchSource:
     def _read_batch(
         self, batch: Sequence[Path], *, should_cancel: Callable[[], bool]
     ) -> Iterator[tuple[Path, Mapping[str, object] | None]]:
-        # 路径先转绝对：exiftool 回填的 SourceFile 就是我们给它的字面量，
-        # 相对路径在不同工作目录下会认不出自己。
-        #
-        # **每张照片只解析一次。** ``Path.resolve()`` 会走一整条 ``realpath`` 的系统调用
-        # 链（解析每一段符号链接），而归位时 ``_normalized`` 又要对两边各做一次
-        # ``realpath``。这里原本把 ``resolve()`` 写了两遍（拼 argv 一遍、按 SourceFile
-        # 归位又一遍），于是同一张照片在一批里要走四条 realpath —— 五千张照片就是两万次。
-        # 解析一次，argv 与归位共用。
-        #
-        # **走 :func:`gallery.core.paths.resolved` 那份带记忆的**（实测 20.1 → 0.31 µs）：
-        # 同一张照片在下一批、下一次打开同一个库、换一个分组字段重读时都要重新付一遍，
-        # 而答案是逐字相同的 —— 那正是 AGENTS.md 点名的「同一个问题反复问」。
+        # 路径先转绝对：exiftool 回填的 SourceFile 就是我们给它的字面量，相对路径在不同工作
+        # 目录下会认不出自己。**每张照片只解析一次，argv 与归位共用** —— ``resolve()`` 走的是
+        # 一整条 ``realpath`` 系统调用链，而 :func:`gallery.core.paths.resolved` 那份带记忆，
+        # 下一批、下一次打开同一个库、换一个分组字段重读时答案都逐字相同。
         resolved = [paths.resolved(path) for path in batch]
         argv = [self._executable, "-j", "-G", "-sort", *EXIFTOOL_CHARSET_ARGS, "-q"]
         for tag in WANTED_TAGS:

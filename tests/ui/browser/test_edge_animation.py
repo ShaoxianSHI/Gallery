@@ -641,11 +641,11 @@ def test_the_layout_is_exactly_the_same_whether_or_not_it_animates(
 def test_the_scroll_glides_from_where_it_was_to_where_the_selection_is(
     qt_app: QApplication, tmp_path: Path
 ) -> None:
-    """选中项在屏外时放大：从「原来看着的那一片」一路滑到选中项，中间不许倒退。
+    """选中项在屏外时放大：从「此刻看着的那一片」一路滑到选中项，中间不许倒退。
 
-    起点得是「原来那一片」而不是那个像素值 —— 格子高矮与每行张数都变了，同一个数在新
-    布局里指的是另一批照片。Batched 布局的滚动条范围要 12–131ms（200–3000 张）才涨到位，
-    早先的「重试几轮」在 800 张以上一次都没等到，现在靠 ``_layout_everything`` 同步算对。
+    起点得是「看着的那一片」而不是某个像素值 —— 格子高矮与每行张数都变了，同一个数在
+    新布局里指的是另一批照片。Batched 布局的滚动条范围要 12–131ms（200–3000 张）才涨到位，
+    所以范围得靠 ``_layout_everything`` 同步算对，不能指望重试几轮轮过去。
     """
     grid = make_grid(qt_app, tmp_path, 800)
     settle_grid(qt_app, grid)
@@ -684,7 +684,7 @@ def test_the_scrollbar_range_is_already_right_at_the_moment_of_the_change(
     qt_app: QApplication, tmp_path: Path
 ) -> None:
     """切档刚做完，滚动条范围就该覆盖全部条目：范围不对时「摆到正中」只能算到那一小块以内，
-    选中项会被摆到「够得着的最远处」（实测 3000 张差 232602）。
+    选中项会被摆到「够得着的最远处」（3000 张时差 23 万多像素）。
     """
     grid = make_grid(qt_app, tmp_path, 800)
     settle_grid(qt_app, grid)
@@ -753,7 +753,7 @@ def test_dragging_the_window_never_lets_the_scroll_position_go(
     """拖窗口时滚动条不许跳 —— **哪怕列数根本没变**，而且每一帧都不许跳。
 
     每帧格子宽度都变一点点，Batched 布局就按「已排版的那一批」重算范围、把当前位置夹到
-    那一批末尾（实测 400 张从 5930 掉到 1290，2000 张从 31010 掉到 1300）。夹取与恢复
+    那一批末尾（400 张能从 5930 掉到 1290）。夹取与恢复
     发生在同一帧内的先后两步，只在 ``resize`` 之后量一次量不到那一段；末尾还得等过
     ``QT_DEFERRED_RELAYOUT_SECONDS`` —— 那是 Qt 内部的定时器，``settle_grid`` 等不到它。
     """
@@ -772,7 +772,7 @@ def test_dragging_the_window_never_lets_the_scroll_position_go(
         return rows * grid.gridSize().height() - grid.viewport().height()
 
     seen: list[int] = []
-    ranges: list[tuple[int, int]] = []  # (实测 maximum, 该有的 maximum)
+    ranges: list[tuple[int, int]] = []  # (此刻的 maximum, 该有的 maximum)
     # 相邻两档里有格子尺寸没变的那些：旧实现里那几帧连几何都不改，位置就是被那次延迟重排夹走的。
     for offset in (8, 4, 0, -4, -8, 0, 8, 4, 0, -4):
         grid.resize(1200 + offset, 800)
@@ -799,7 +799,7 @@ def test_new_photos_arriving_do_not_lose_the_scroll_position(
     qt_app: QApplication, tmp_path: Path, settle: Callable[[float], None]
 ) -> None:
     """扫描 / 监听加条目时滚动位置同样不许被夹走：加条目会让 Qt 从第 0 条重排一次，
-    范围在排完第一批那一刻只剩一小块（实测 400 张的库 6970 → 1620）。
+    范围在排完第一批那一刻只剩一小块（400 张的库里 6970 → 1620）。
     走的是 ``rowsInserted``，与拖窗口那条不是同一个入口。
     """
     grid = make_grid(qt_app, tmp_path, 400)
@@ -892,7 +892,7 @@ def test_a_level_change_never_flashes_to_another_part_of_the_album(
     """换档的**第 0 帧**必须还是用户原来看着的那一片。
 
     滚动位置是内容坐标，换档又同时改了格子高矮与每行张数 —— 照搬旧的像素值当起点，
-    同一个数在新布局里指的是**另一批照片**（实测第 795 张从 y=469 变成 y=34244）。
+    同一个数在新布局里指的是**另一批照片**（第 795 张从 y=469 变成 y=34244）。
     判据是「原来那一片还在不在屏上」而不是滚动条那个数字。
     """
     for at_bottom in (True, False):
@@ -960,7 +960,7 @@ def test_toggling_the_scrollbar_does_not_change_the_cell_size(
     wait_for: Callable[..., bool],
 ) -> None:
     """滚动条自己开关，**不许**改变这一档的格子尺寸与列数：排版宽度里那条滚动条是无条件扣的，
-    拿当刻的 ``viewport().width()`` 去排会让同一个窗口算出不同的列数（实测 1100 宽、12 个
+    拿当刻的 ``viewport().width()`` 去排会让同一个窗口算出不同的列数（1100 宽、12 个
     条目下大档是 4 列 268 像素对 3 列 352），那一次重排既是一跳又会把正在跑的过渡掐掉。
     """
     holder, grid = hosted_grid(qt_app, tmp_path, 12)
@@ -1138,9 +1138,7 @@ def _wheel(angle: float, pixel: float) -> QWheelEvent:
 
 
 def test_the_pinch_interval_is_never_shorter_than_the_animation() -> None:
-    """限速的全部意义是「让上一段过渡跑完」：比动画短就等于没限，
-    症状与没做限速一模一样。
-    """
+    """限速的全部意义是「让上一段过渡跑完」：比动画短就等于没限。"""
     assert MIN_PINCH_INTERVAL_MS >= EDGE_ANIMATION_MS
 
 

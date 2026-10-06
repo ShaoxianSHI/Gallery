@@ -194,23 +194,15 @@ def _guard(root: Path, source: Path, target: Path) -> None:
     root = Path(root)
     for _path in (source, target):
         try:
-            # **库根本身这道闸在下面那道里**（``allow_root=False``），不必在前面另写一遍。
-            # 原先这里有一句 ``_path.resolve() == root.resolve()``，是四次裸 ``resolve()``
-            # （一次 27 µs，路径上每一段都要 lstat）只为判断一件 ``guard_within_root`` 已经
-            # 判过、而且抛的是同一句话的事 —— ``_rename_reason`` 把那句 ``ValueError`` 映射
-            # 出来的文案与这里原来那句一字不差。
+            # 库根本身这道闸就在下面那道里（``allow_root=False``），不必在前面另判一遍。
             paths.guard_within_root(root, _path, allow_root=False)
         except ValueError as exc:
             raise RenameError(_rename_reason(_path, str(exc)), path=_path) from exc
 
 
 def _rename_reason(path: Path, reason: str) -> str:
-    """按闸门说的那一件事给一句中文，而不是把它的内部措辞倒给用户。
-
-    缺陷现场：三处 ``_guard`` 原本共用一句话，于是「配置目录」这种**具体且可行动**的
-    原因被降级成括号里的补充，而路径在句子里出现了两次 —— 「只能在库里的文件夹中新建相册：
-    /长路径/配置目录。（这是 Gallery 自己的配置目录）」。那条具体文案是每处各自写的，
-    抽取时被抹平了。
+    """按闸门说的那一件事给一句中文，而不是把它的内部措辞倒给用户 —— 三处 ``_guard`` 共用一句话
+    会把「配置目录」这种**具体且可行动**的原因降级成括号里的补充，而路径在句子里出现两次。
     """
     if "配置目录" in reason:
         return "这是 Gallery 自己的配置目录，不能改名。"

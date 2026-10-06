@@ -181,9 +181,8 @@ def test_it_disappears_when_exiftool_is_missing(
 ) -> None:
     """没装 exiftool 时**不出现**，而不是摆一条点了只会报错的（ADR 0014 决策 4）。"""
     writer.available_flag = False
-    # 探测结果**按设计只算一次**（`Library.exiftool_available`），而这条 fixture 是在窗口
-    # 建好、`wait_for_idle` 跑完之后才把 writer 注入的 —— 那时答案已经缓存成「能用」了。
-    # 所以翻转之后要把那份缓存作废，让它按新的可用性重新探一次。
+    # 探测结果**按设计只算一次**（`Library.exiftool_available`），而 writer 是窗口建好、
+    # ``wait_for_idle`` 跑完之后才注入的 —— 那时答案已经缓存成「能用」，翻转后要作废重来。
     window._library._exiftool_available = None
     row = _enter_album(qt_app, window, root)
     qt_app.processEvents()
@@ -703,8 +702,8 @@ def test_typing_a_city_fills_in_nothing_until_the_button_is_pressed(
 ) -> None:
     """**敲字不再顺手改别的框**（ADR 0039 决策 1）。
 
-    缺陷现场：原先敲一个「苏州」省与国家自己就长出来、坐标也自己填上，于是
-    「框里显示的」和「真正写下去的」在不同路上不是同一份 —— 界面那三个
+    跨层填充只发生在按下按钮的那一刻：敲一个「苏州」就自己长出省与国家、填上坐标的话，
+    「框里显示的」与「真正写下去的」在不同路上就不是同一份 —— 界面那三个
     ``if place.region and ...`` 查不到就不动，而写盘时那一层是被**清空**的。
     """
     dialog = _dialog(None, PlaceState(), resolver=StubResolver())
@@ -783,10 +782,10 @@ def test_a_layer_the_database_does_not_have_is_cleared_so_the_form_tells_the_tru
 ) -> None:
     """**库里没有的那一层要显示成空** —— 这个对话框显示的就是将被写入的那一份（ADR 0039 决策 2）。
 
-    缺陷现场（已实测复现）：城市库里北京、上海、天津、重庆、香港、澳门这 151 条的
-    ``region`` 是空的。照片原本写着「杭州 / 浙江省 / 中国」，坐标改到上海之后，界面那三个
-    ``if place.region and ...`` 一个都不成立，框里留着「浙江省」；而写盘时那一层被写成
-    空串 —— **删掉**。照片变成「上海 / （无省）」，而对话框从头到尾显示着「浙江省」。
+    城市库里北京、上海、天津、重庆、香港、澳门这 151 条的 ``region`` 是空的。照片原本写着
+    「杭州 / 浙江省 / 中国」，坐标改到上海之后，界面那三个 ``if place.region and ...``
+    一个都不成立，框里留着「浙江省」；而写盘时那一层被写成空串 —— **删掉**。照片变成
+    「上海 / （无省）」，而对话框从头到尾显示着「浙江省」。
     """
     dialog = _dialog(
         None,
@@ -919,8 +918,8 @@ def test_three_buttons_on_each_of_the_first_two_rows_and_three_actions_below(
     ```
 
     有了两段可搬的内容，「复制 / 粘贴」就分出了「全搬」与「搬一段」；最后一行是三个动作。
-    第一行那两个是 ADR 0039 加的：跨层填充只发生在用户按下的那一刻，所以它们摆得比
-    搬与清的九宫格更靠上一点 —— 它们改的是上面的框。
+    第一行那两个是 ADR 0039 加的：跨层填充只发生在按下的那一刻，所以它们摆得比搬与清的
+    九宫格更靠上一点 —— 它们改的是上面的框。
     **宽度与位置都是布局算出来的**，不是三排手工对齐的推算。
     """
     dialog = _dialog(None, PlaceState(city="苏州"))
@@ -947,8 +946,7 @@ def test_three_buttons_on_each_of_the_first_two_rows_and_three_actions_below(
     assert directions[0].y() < rows[0][0].y()
     # **三列等宽**：九个子控件的 x 只有三个值。
     assert len({button.x() for row in rows for button in row}) == 3
-    # 宽度允许差一个像素 —— 整除有余数时 Qt 会把它摊到某一列（实测 87 / 88），
-    # 那是像素取整，不是没对齐。
+    # 宽度允许差一个像素 —— 整除有余数时 Qt 会把它摊到某一列，那是像素取整，不是没对齐。
     widths = [button.width() for row in rows for button in row]
     assert max(widths) - min(widths) <= 1
     assert [row[0].y() for row in rows] == sorted(row[0].y() for row in rows)

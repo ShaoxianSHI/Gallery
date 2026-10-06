@@ -108,7 +108,7 @@ def test_extract_joins_keywords_from_several_sources() -> None:
 
 
 def test_extract_treats_zero_fnumber_as_missing() -> None:
-    """实测有导出工具把 FNumber / ISO 一律填 0，显示成 f/0、ISO 0 像坏了。"""
+    """有导出工具把 FNumber / ISO 一律填 0 —— 显示成 f/0、ISO 0 看着像坏了。"""
     raw = {"EXIF:FNumber": "0.0", "EXIF:ISO": "0", "EXIF:FocalLength": "0.0 mm"}
 
     facets = extract(raw)

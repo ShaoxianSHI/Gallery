@@ -517,10 +517,10 @@ def test_double_clicking_the_title_bar_fills_the_window_and_back(
 
     **「铺满」不是 macOS 的真全屏，这是两件事**：铺满是窗口占满菜单栏与 Dock 之间的
     那一块，**菜单栏与 Dock 都还在**，也不会另开一个 Space（真全屏是另一个 Space，
-    菜单栏与 Dock 都收起来 —— 用户报的是前者，做成后者就是答非所问）。
+    菜单栏与 Dock 都收起来 —— 做成后者就是答非所问）。
 
     **两行断言缺一不可**：只钉 ``isMaximized()`` 的话，把动作换成
-    ``showFullScreen`` 这条照样绿 —— 而症状是「菜单栏不见了、Dock 不见了」。
+    ``showFullScreen`` 这条照样绿。
 
     **来来回回都要能**：铺满只是窗口变大，标题栏那一段照旧在，于是第二次双击仍然
     落在标题栏上（判据是 ``isFullScreen``，不是 ``isMaximized``，见

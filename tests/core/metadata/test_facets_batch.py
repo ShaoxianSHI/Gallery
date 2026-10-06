@@ -270,10 +270,9 @@ def test_the_exiftool_source_resolves_each_path_through_the_memo(
 ) -> None:
     """**批量读走 :func:`gallery.core.paths.resolved` 那份带记忆的**。
 
-    缺陷现场：这里是裸 ``Path.resolve()``。而 ``realpath`` 要 ``lstat`` 路径上的每一段
-    （实测 20.1 µs），同一张照片在**下一批、下一次打开同一个库、换一个分组字段重读**
-    时都要重新付一遍，而答案是逐字相同的 —— 正是 AGENTS.md 点名的「同一个问题反复问」。
-    五万张的一遍全库读取，约一秒的 pure realpath 全部是重复劳动。
+    ``realpath`` 要 ``lstat`` 路径上的每一段，而同一张照片在**下一批、下一次打开
+    同一个库、换一个分组字段重读**时都要重新付一遍，答案却逐字相同 —— 正是
+    AGENTS.md 点名的「同一个问题反复问」。
 
     钉的是「第二次不再解析」，不是速度：第一次必然要真算一次（缓存未命中），
     而测试里量时间本来就不稳。

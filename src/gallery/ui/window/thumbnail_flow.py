@@ -44,8 +44,8 @@ class ThumbnailFlowMixin:
         if self._stack.currentWidget() is not self._grid_page:
             return
         visible_rows = self._grid.visible_rows()
-        # **网格还没重排时，不要把已经排好的请求清掉**（这一处空过一整屏）：那一刻「可见行」
-        # 是空的，而 ``set_window`` 是**整份替换**，会把刚排好的几十个请求全丢掉。
+        # **网格还没重排时，不要把已经排好的请求清掉**：那一刻「可见行」是空的，而
+        # ``set_window`` 是**整份替换**，会把刚排好的几十个请求全丢掉（这一处空过一整屏）。
         # 模型**真的空了**时照旧报空窗口。
         if not visible_rows and self._model.rowCount() > 0:
             return
@@ -151,9 +151,8 @@ class ThumbnailFlowMixin:
     def _on_thumbnail_failed(self, path: object, message: str) -> None:
         # 两类失败不是「照片坏了」，是用户自己（或自家代码）刚造成的，丢掉：**这一格已经不在
         # 当前这一层**（刚改名 / 移走 / 删掉 / 换库），或者**这个路径是自家刚写过的**（在途那次
-        # 解码读的就是它，文件被改名那一瞬间确实读不到，撤销改名就是这样）。
-        #
-        # 不丢的话：刚改完名成功，横幅立刻变成「文件可能已损坏」—— 把成功的操作说成数据损坏。
+        # 解码读的就是它，文件被改名那一瞬间确实读不到）。不丢的话，刚改完名成功横幅立刻变成
+        # 「文件可能已损坏」—— 把成功的操作说成数据损坏。
         if isinstance(path, Path) and (
             not self._model.shows_path(path) or self._was_self_written(path)
         ):
@@ -175,11 +174,10 @@ class ThumbnailFlowMixin:
     def clear_thumbnail_cache(self) -> None:
         """清空当前库的缩略图缓存（只删缓存目录里的文件）。**删除本身跑在工作线程上。**
 
-        这一条原先是整个窗口里**唯一一个留在主线程上的 O(n) 动作**：实测 2 万个条目约 884 ms，
-        而它又紧跟在一个模态对话框之后 —— 对话框关掉的那一瞬间窗口整个冻住。
-
-        所以它跟粘贴 / 改名走同一条路（``self._runner`` + 横幅，见 ADR 0018）。带代次判据：清到
-        一半换了库的话，回来的结果会把新库的缩略图清掉。
+        删除是 O(n) 的（2 万个条目约 884 ms），而它紧跟在一个模态对话框之后 —— 留在主线程上
+        的话，对话框关掉的那一瞬间窗口整个冻住。所以它跟粘贴 / 改名走同一条路
+        （``self._runner`` + 横幅，见 ADR 0018），并带代次判据：清到一半换了库的话，
+        回来的结果会把新库的缩略图清掉。
         """
         library = self._library
         if library is None:

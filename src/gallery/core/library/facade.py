@@ -119,9 +119,8 @@ class Library:
         #: 元数据写回的工具（ADR 0030）。``None`` 表示用默认的 exiftool，测试注入假实现 ——
         #: 界面据此判断「编辑元数据」这一条该不该出现。
         self._writer = writer
-        #: exiftool 探测的结果（``None`` = 还没探过）。**整个应用只有这一个判据**：
-        #: 界面层原先在 ``ui/window/ordering.py`` 里自己造一个 ``ExifToolReader`` 去探，
-        #: 于是同一个「装没装」的问题有两套问法、两个答案可能不一致。
+        #: exiftool 探测的结果（``None`` = 还没探过）。**整个应用只有这一个判据** —— 界面层
+        #: 再造一个 ``ExifToolReader`` 去探就变成同一个「装没装」的问题有两套问法。
         self._exiftool_available: bool | None = None
         #: 配置目录是不是真的建出来了。为 ``False`` 时索引只在内存里用，界面据此决定要不要在
         #: 横幅上说明「这个库只读，索引没落盘」。
@@ -531,8 +530,8 @@ class Library:
             cached.update(fresh)
         if resolver is not None:
             # 缓存里可能还留着「有坐标、没结论」的旧行，既然反查器在手就顺手补上。
-            # **与上面读新照片那一段是并行的，不是二选一**：这里曾是 ``elif``，于是「这一批里有
-            # 任何一张没缓存过」就整段跳过 —— 而那恰恰是最常见的情形，旧行永远补不上。
+            # **与上面读新照片那一段是并行的，不是二选一** —— 写成 ``elif`` 就会「这一批里有任何
+            # 一张没缓存过」整段跳过，而那恰恰是最常见的情形。
             by_path = {ref.path: ref for ref in refs}
             pending = [path for path, facets in cached.items() if _needs_lookup(facets)]
             resolved: list[tuple[PhotoRef, PhotoFacets]] = []
@@ -750,12 +749,11 @@ class Library:
 
         **探一次就记住**：这一条在每次弹出右键菜单、每次更新菜单可用性时都会被问到，
         而探测是 ``shutil.which``，不该反复去问文件系统。装了 exiftool 之后要重启软件
-        才认 —— 与界面层原先那套「启动时探一次」的语义一致。
+        才认。
 
-        ``None``（没注入 writer）**不是「能用」而是「还没探过」**。原先那句
-        ``self._writer is None or ...`` 让生产路径（``Library.open`` 从不传 writer）
-        恒为 ``True``，于是没装 exiftool 的机器上菜单照样出现「编辑元数据…」，
-        用户填完点保存才报错 —— 恰好是下一段 docstring 说要避免的那件事。
+        ``None``（没注入 writer）**不是「能用」而是「还没探过」** —— 把它当成能用的话，
+        生产路径（``Library.open`` 从不传 writer）会恒为真，没装 exiftool 的机器上菜单
+        照样出现「编辑元数据…」，用户填完点保存才报错。
         """
         if self._exiftool_available is None:
             self._exiftool_available = (self._writer or ExifToolWriter()).available()
@@ -976,10 +974,9 @@ def _resolve_batch(
                 facets = _resolved(facets, resolver, status)
                 resolved += 1
         elif _has_coordinates(facets):
-            # **文件自己就写全了地点**（Lightroom 导出的 XMP 如此）：反查器没什么可补，那份地点同样
-            # 是结论（而且更准），照 ADR 0010「文件里写了就以文件为准」记下来就是。
-            # 判据是「**已经齐全**」而不是「查过」：地点还缺着时不能记，否则等于把这张照片
-            # 永久钉在「未知」上，等城市数据到位了也不会再问一遍。
+            # **文件自己就写全了地点**（Lightroom 导出的 XMP 如此）：那份地点同样是结论而且更准，
+            # 照 ADR 0010「文件里写了就以文件为准」记下来就是。判据是「**已经齐全**」而不是
+            # 「查过」—— 地点还缺着时不能记，否则等于把这张照片永久钉在「未知」上。
             facets = mark_place_resolved(facets)
         rows.append((ref, facets))
     index.store(rows)

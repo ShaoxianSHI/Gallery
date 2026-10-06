@@ -39,7 +39,7 @@ from gallery.ui.browser.grid import PhotoGrid  # noqa: E402
 from gallery.ui.browser.model import PhotoListModel  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 
-#: 等待异步扫描完成的时限。
+#: 异步扫描的等待上限在 :data:`waiting.DEFAULT_TIMEOUT_SECONDS` 一处，不在这里另定。
 
 #: 第一行至少要铺到视口的这个比例才算「铺满」：剩下的几像素是留白与滚动条预留，
 #: 肉眼看不出来，而掉一整列是 15% 以上，界线很清楚。
@@ -200,10 +200,10 @@ def test_entering_an_album_fills_the_row(
     settle: Callable[[float], None],
     wait_for: Callable[..., bool],
 ) -> None:
-    """按用户说的那条路复现：打开相册 → 照片铺满窗口。
+    """打开相册 → 照片铺满窗口。
 
     照片特意只放十几张：排出来只有两三行、冒不出滚动条，于是「视口不会变化」，
-    也就没有任何东西来把「按空模型算出来的格子宽度」纠正回来 —— 这正是缺陷现场。
+    也就没有任何东西来纠正「按空模型算出来的格子宽度」。
     """
     root = tmp_path / "测试相册"
     album = root / "2024-旅行"
@@ -280,10 +280,8 @@ def _click_with_drift(
 def test_shift_click_selects_the_whole_range_however_the_hand_drifts(
     qt_app: QApplication, tmp_path: Path, drift: int
 ) -> None:
-    """⇧ 点选是「从 A 到 B 的连续区间」，不是橡皮筋框出来的矩形。
-
-    缺陷现场：第一行第一个 →（手抖两像素）⇧ 第三行第三个，选中的却是每行最边上
-    的那一两个格子 —— 网格分行排，矩形落到屏幕上就是「隔一个跳一个」。
+    """⇧ 点选是「从 A 到 B 的连续区间」，不是橡皮筋框出来的矩形 —— 网格分行排，
+    矩形落到屏幕上就是「隔一个跳一个」，手抖两像素就完全变了形状。
     """
     grid = make_grid(qt_app, tmp_path, count=40)
     columns = grid._laid_out_columns
@@ -610,10 +608,9 @@ def test_entering_a_folder_on_double_click_is_not_read_as_blank(
 ) -> None:
     """回归：双击打开是**同步**的，判据必须在它之前问。
 
-    缺陷现场：双击相册卡片先进去，紧接着又被当成「双击空白处」弹回来 ——
-    刚进去的相册（模型已清空、版面已重排）在那一点底下什么都不剩，
-    于是「这一下落在空白上」在打开**之后**才被问出来。屏幕上只剩一闪。
-    这里照着真实的打开动作接一个「当场清空模型」的处理函数，把它钉死。
+    打开**之后**再问「这一下是不是落在空白上」就晚了：刚进去的相册（模型已清空、
+    版面已重排）在那一点底下什么都不剩，于是紧接着的「双击空白处」会把人弹回来，
+    屏幕上只剩一闪。这里照着真实的打开动作接一个「当场清空模型」的处理函数，把它钉死。
     """
     grid = make_grid(qt_app, tmp_path, count=3)
     model = grid.model()
@@ -659,16 +656,13 @@ def test_right_clicking_the_current_item_actually_selects_it(
 ) -> None:
     """右键「当前项」必须**真的选中它**，哪怕谁也没选中过。
 
-    缺陷现场：``select_for_context`` 判「已经选中了吗」问的是 ``selected_rows()``，
-    而那个函数在选区为空时会**退回当前项**。于是网格刚打开、Qt 顺手把第 0 行设成
-    当前项（而选区还是空的）这个状态会被误判成「它已经选中了」而直接返回 ——
-    一个格子都没选中，右键菜单却照常摆出来。
+    ``select_for_context`` 判「已经选中了吗」问的是 ``selected_rows()``，而那个函数
+    在选区为空时会**退回当前项** —— 网格刚打开、Qt 顺手把第 0 行设成当前项（选区还是
+    空的）这个状态于是被误判成「它已经选中了」，一个格子都没选中而右键菜单照常摆出来。
 
-    而菜单里每一条命令读的都是**真选区**（⌘V 粘到哪里就看它，ADR 0018 决策 7），
-    于是用户看到的是「右键了京都」，实际作用的是「什么都没选」：粘到了与相册同级的
+    菜单里每一条命令读的都是**真选区**（⌘V 粘到哪里就看它，ADR 0018 决策 7），
+    于是界面上看着是「右键了京都」，实际作用的是「什么都没选」：粘到了与相册同级的
     库根里。粘文件进用户没选的地方是这个功能里最坏的一种错。
-
-    这条同时是那条偶发失败的根因（机器一忙，扫描还在跑，那个状态就出现了）。
     """
     grid = make_grid(qt_app, tmp_path, count=3)
     model = grid.model()
@@ -728,9 +722,9 @@ def test_clicking_the_blank_clears_the_current_item_too(
 ) -> None:
     """**点空白处 = 一个也没选中**：选区与当前项都要空。
 
-    缺陷现场（用户原话：「没有高亮时用户会认为没有选中任何相册」）：Qt 在
-    ``mouseReleaseEvent`` 里清掉选区，**却把当前项原封不动留着** —— 屏幕上那一格已经
-    没有高亮，⌘R 还能给它改名，↵ 还能进得去，⌘⌫ 甚至会把它丢掉。
+    Qt 在 ``mouseReleaseEvent`` 里清掉选区，**却把当前项原封不动留着** —— 屏幕上那一格
+    已经没有高亮（于是读起来像「一个也没选中」），⌘R 还能给它改名，↵ 还能进得去，
+    ⌘⌫ 甚至会把它丢掉。
 
     所以这一条钉的是**状态本身**（当前项必须落在真选区里）而不是某一条命令的可用性：
     可用性只是它的下游表现，钉命令就等于把这个不变量散抄成好几份。
@@ -843,7 +837,7 @@ def test_after_clearing_everything_the_arrow_keys_start_from_the_top(
 def test_in_the_window_clicking_the_blank_leaves_nothing_to_rename_or_to_open(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
 ) -> None:
-    """**上面那条在窗口里长什么样**（用户报的那句：没有高亮就是没有选中）。
+    """**上面那条在窗口里长什么样**：没有高亮就是没有选中。
 
     相册模式下点一个相册、再点旁边空白：界面上那一格已经没有高亮了，可 ⌘R 还能给它改名、
     ↵ 还能进得去 —— 用户会认为「我什么也没选」，于是那两条全都该是灰的、按回车也该没反应。

@@ -87,7 +87,7 @@ class YearView(LevelView):
 
     def paintEvent(self, _event: object) -> None:  # noqa: N802 - 名字是 Qt 定的
         painter = self.begin()
-        # 12 张的日期矩阵一帧里各算一遍（原先每张算两遍，一帧重建 1008 个 ``datetime.date``）。
+        # 12 张的日期矩阵一帧里各算一遍：``month_matrix`` 每次要重建 42 个 ``datetime.date``。
         year = self._anchor.year
         matrices = [month_matrix(datetime.date(year, index + 1, 1)) for index in range(12)]
         for index in range(12):
@@ -204,8 +204,7 @@ class YearView(LevelView):
     def visible_refs(self) -> list[PhotoRef]:
         """有照片的那些天，各要一张封面 —— **每天只要一张**，且只问 ``month_days`` 里的日子。
 
-        **挑哪一张问 ``cell_cover``**：曾经这一层取最晚、另两层取最早，于是同一天按 `Y` 与按
-        `M` 看到的是两张脸。
+        **挑哪一张一律问 ``cell_cover``**：各层各取一头的话，同一天按 `Y` 与按 `M` 看到的是两张脸。
         """
         refs: list[PhotoRef] = []
         for index in range(12):

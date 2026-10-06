@@ -16,10 +16,8 @@ from gallery.ui.banner_overlay import AUTO_HIDE_SECONDS as BANNER_AUTO_HIDE_SECO
 
 logger = logging.getLogger(__name__)
 
-#: 用户触发了一条横幅之后，后台消息让位这么久（秒）。
-#:
-#: 横幅只有一个槽：移到废纸篓后网格立刻给留下来的行要缩略图，「刚被自家动过、这一刻读不到」
-#: 的解码失败会迟一步把「1 张没移走」盖掉；代价是这两秒里真正的解码失败不冒头。
+#: 用户触发了一条横幅之后，后台消息让位这么久（秒）。横幅只有一个槽：移到废纸篓后网格立刻要
+#: 缩略图，「刚被自家动过、这一刻读不到」的解码失败会迟一步把「1 张没移走」盖掉。
 BANNER_STICKY_SECONDS = 2.0
 
 

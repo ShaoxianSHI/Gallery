@@ -37,18 +37,9 @@ from gallery.core.metadata.writeback import MetadataWriter, undo_metadata
 #: 弹栈的动作：这些写操作被撤销掉了。
 _POP_ACTIONS: Final = frozenset({ACTION_UNDO, ACTION_RESTORE, ACTION_UNDO_METADATA})
 
-#: **不收进撤销栈的动作。** 一份显式的排除清单，而不是「不在压栈清单里就等于排除」。
-#:
-#: 这两个动作的「撤销」都是**删掉用户的东西**，而删除只许用户亲手触发（红线 1）：
-#:
-#: - :data:`~gallery.core.metadata.journal.ACTION_CREATE` —— 撤销新建相册就是删掉那个
-#:   文件夹；
-#: - :data:`~gallery.core.metadata.journal.ACTION_PASTE` —— 撤销粘贴就是删掉刚粘进来的
-#:   照片（同模块文档里那句「粘贴不在栈里」）。
-#:
-#: 它们原先靠「``_PUSH_ACTIONS`` 里没有它」隐式成立，于是「把不认识的动作也压栈」那个
-#: 修复（认不出的日志行也让人能 ⌘Z）会连带把它们放进来。**排除必须显式**：一份清单
-#: 少写一个是静默的，而少写意味着用户按一次 ⌘Z 就删掉了他的东西。
+#: **不收进撤销栈的动作** —— 一份显式的排除清单，而不是「不在压栈清单里就等于排除」。
+#: 这两个动作的「撤销」都是**删掉用户的东西**，而删除只许用户亲手触发（红线 1）。靠隐式成立
+#: 不够：认不出的动作名也压栈，而这份清单少写一个成员是**静默**的。
 _NEVER_UNDOABLE: Final = frozenset({ACTION_CREATE, ACTION_PASTE})
 
 #: 菜单里显示的文案。**认不出的动作名走「上一步」**：宁可说得笼统，也不能因为
@@ -111,17 +102,9 @@ def pending_undo_runs(root: Path) -> list[list[WriteRecord]]:
         if record.action in _POP_ACTIONS:
             _pop(runs, record)
         else:
-            # **不是弹栈的就都压栈**，包括动作名不认识的那几条。
-            #
-            # 缺陷现场：这一支原先是「在压栈清单里就压栈、在弹栈清单里就弹栈」，
-            # 动作名缺失（日志被截断、外来的记录、将来新加的动作忘了登记）时两个集合
-            # 都不匹配，那条记录被**静默丢掉** —— 用户刚做完的事从此再也撤不掉，
-            # 而菜单上的「撤销」根本不出现，没有任何提示。红线 4 要的是
-            # 「每次写回都留得下可回滚记录」。
-            #
-            # 压进去之后 :func:`_undo_delete` 会把它移回原处（把 target 搬回 source），
-            # 而那正是改名 / 移到废纸篓 / 移动撤销的共同归宿 —— **不认识动作名也能撤**，
-            # 比「不认得就当没发生过」安全得多。
+            # **不是弹栈的就都压栈**，包括动作名不认识的那几条：按清单匹配时动作名缺失（日志被
+            # 截断、外来的记录、新加的动作忘了登记）会把那条记录**静默丢掉**，用户刚做完的事从此
+            # 再也撤不掉。压进去之后 :func:`_undo_delete` 会把它移回原处 —— 不认识动作名也能撤。
             if record.batch and runs and runs[-1][0].batch == record.batch:
                 runs[-1].append(record)
             else:
@@ -168,8 +151,7 @@ def _undo_metadata(root: Path, record: WriteRecord, *, writer: MetadataWriter | 
     **冲突的字段留在原地并如实报告**：它们在 Gallery 之外被改过，按原值盖回去就是毁掉
     别人的改动。
 
-    **弹不弹栈分两种情形**（原先这句话把两件事混成一句，于是既说「弹栈」又说
-    「栈顶仍是它」，自相矛盾）：
+    **弹不弹栈分两种情形**：
 
     - **部分冲突**（有撤得成的字段）：撤成功的那几条记 ``ok`` → 这次撤销被弹栈。
       它们确实回到原值了，再让用户按一次去重撤没有意义。

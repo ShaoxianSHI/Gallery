@@ -257,13 +257,9 @@ class OrderingMixin:
         generation = self._generation
         resolver = self._place_lookup()
 
-        # **查索引这一步也搬到后台。** 缺陷现场：原先 ``cached_facets(refs)`` 在主线程上，
-        # 而它是整层查一次：实测三万张（全部命中）234 ms、五万张 258 ms —— 而这一段在
-        # 换分组字段、换排序、**以及监听器每次触发重排**时都要走一遍。三百毫秒的界面冻死
-        # 换来的是「本来就已经有了」这个事实，主线程不该为它买单。
-        #
-        # ``FacetIndex.lookup`` 是纯读且在锁内（见 :mod:`gallery.core.library.index`），
-        # 在工作线程上调与在主线程上调是同一件事。
+        # **查索引这一步也搬到后台。** 它是整层查一次（实测三万张 234 ms），而这一段在换分组
+        # 字段、换排序、**以及监听器每次触发重排**时都要走一遍；``FacetIndex.lookup`` 是纯读
+        # 且在锁内（见 :mod:`gallery.core.library.index`），在工作线程上调是同一件事。
         def work(context: TaskContext) -> object:
             cached = library.cached_facets(refs)
             if len(cached) == len(refs):
@@ -391,8 +387,8 @@ class OrderingMixin:
         """这一层摆上屏之前的**唯一**一个漏斗：先按条件收窄（只在筛选作用域下），再排序。
 
         **所有出口都必须走它**，不能直接调 :meth:`_apply_ordering` —— 那样每个调用点都要自己
-        判断一遍「现在是不是在筛选」，而漏掉一处的症状是「这一层没被筛」或者「没被筛的东西
-        被筛掉了」，两者都不像作用域出了问题。
+        判断一遍「现在是不是在筛选」，而漏掉一处就出现「这一层没被筛」或「没被筛的东西被筛掉
+        了」，两者都不像作用域出了问题。
 
         :meth:`SearchFlowMixin._start_level_filter` 的**两端**调的是 :meth:`_apply_ordering`
         而不是这里 —— 漏斗走完就该排序，排序完再回到漏斗就是递归到自己。
@@ -444,31 +440,21 @@ class OrderingMixin:
         group = None if grouped else self._current_group_facet()
         values = self._facet_values
 
-        # **先判「会不会变」，再排序**（那道闸原先排在排序之后，白付一次 41 ms）。
-        # 判据是**输入**而不是输出：输出比的是 ``ordered``，而它是刚花 41 ms 算出来的。
-        #
-        # 「监听器报了个自己写的回声、什么其实都没变」这条路上，用户什么都没干、屏幕上
-        # 也不该有任何变化 —— 而那次 41 ms 的排序（3 万张；6 万张 82 ms）是纯浪费。
-        #
-        # 比内容而不是比身份：``photos`` 与 ``albums`` 是这一段现造的两个列表，每次都是新
-        # 对象，指针比对**永不命中**。而比内容几乎不要钱（实测 3 万张 0.07 ms，比排序便宜
-        # 500 倍）—— 因为模型里存的就是**同一批** ``PhotoRef``，逐个 ``==`` 走的是身份捷径。
-        #
-        # 判据里刻意有的几样：
-        # - ``library.root``：``sort_photos`` / ``build_groups`` 都吃 ``root``（相对路径那类
-        #   字段的排序值靠它算）。少了它，换一个根目录打开同一批照片时闸会误跳，顺序就错着。
-        # - 分组字段只记 ``id``：``_current_group_facet`` 从一个固定表里取，同 id 即同语义。
-        # - **不记** ``self._group_view``：它在非空时 ``group`` 必为 ``None``，两个组视图之间
-        #   来回换不影响输出，记进去只会白触发一次排序。
+        # **先判「会不会变」，再排序**（这道闸排在排序之后就等于白付一次整层排序）。判据取
+        # **输入**而不是输出（输出比的是刚算出来的 ``ordered``），比内容而不是比身份（``photos``
+        # / ``albums`` 是现造的两个列表，指针比对永不命中，而模型里存的就是**同一批**
+        # ``PhotoRef``，逐个 ``==`` 走的是身份捷径）。
+        # 判据里刻意有的几样：``library.root`` 也要记（``sort_photos`` / ``build_groups`` 靠它算
+        # 相对路径那类字段的排序值）；分组字段只记 ``id``；**不记** ``self._group_view``
+        # （它在非空时 ``group`` 必为 ``None``，两个组视图来回换不影响输出）。
         fingerprint = (
             group.id if group is not None else None,
             self._sort_facet,
             self._sort_descending,
             library.root,
         )
-        # ``values`` 单独用 ``is`` 判，而且**持有强引用**（存在 ``self._reorder_values`` 里）。
-        # 不能记 ``id(values)``：Python 会复用已释放对象的地址，换库之后新 dict 完全可能落在
-        # 同一个地址上，闸就会以为「元数据没变」而跳过排序 —— 而那一层恰恰刚重扫过。
+        # ``values`` 单独用 ``is`` 判并**持有强引用**（存在 ``self._reorder_values`` 里）—— 记
+        # ``id(values)`` 会踩到地址复用：换库后新 dict 落在同一个地址上，闸就会以为没变而跳过排序。
         if (
             staged is None
             and fingerprint == self._reorder_fingerprint

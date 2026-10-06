@@ -138,9 +138,7 @@ def move_into(
     skipped: list[Skipped] = []
     failures: list[Failure] = []
     journaled = True
-    # **目录只扫一次**：加编号的探测原本是「撞一次 stat 一次」，而这一层是逐项循环 ——
-    # 把几百个同名相册移进一个已经有几百个同名相册的目标，探测次数就是两者的乘积。
-    # 理由与偏差见 :func:`~gallery.core.metadata.naming.free_name_in`。
+    # **目录只扫一次**（理由与偏差见 :func:`~gallery.core.metadata.naming.free_name_in`）。
     taken = occupied_names(destination)
 
     for raw_source in sources:

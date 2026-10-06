@@ -1,6 +1,6 @@
 """快捷键的分工。
 
-**Esc 一层层往外退。** 「上一级」原来是 ⌘↑，但 macOS 上那个键已经被占着，于是改成 Esc。
+**Esc 一层层往外退。** 「上一级」不用 ⌘↑（macOS 上那个键已经被占着），用 Esc。
 Esc 同时还管着「大图页回网格」和「行内重命名取消」，所以这里把三者的边界钉死：
 
 1. Esc 在大图页回网格、在网格页回上一层，两个动作同一时刻只有一个可用；
@@ -176,19 +176,15 @@ def test_rename_editor_claims_escape_from_the_window(qt_app: QApplication) -> No
 
 
 # ---- 关窗与退出（⌘W / ⌘Q，ADR 0037）------------------------------------------
-#
-# **两者的键都刻意写死，不抄 ``StandardKey``**：Qt 在 macOS 上把 ``StandardKey.Close``
-# 解析成 ⌘F4、把 ``StandardKey.Quit`` 解析成**空序列**（实测 ``count() == 0``）——
-# 照抄那两份等于装了两个用户按不到的键，而 ⌘Q 那个更糟：它一直摆在菜单里，
-# 按下去却什么也不会发生。
+# 两者的键都刻意写死：Qt 在 macOS 上把 ``StandardKey.Close`` 解析成 ⌘F4、把
+# ``StandardKey.Quit`` 解析成**空序列**，照抄等于装两个按不到的键。
 
 
 def test_cmd_w_closes_the_window(qt_app: QApplication, tmp_path: Path) -> None:
     """⌘W 关掉窗口。**「不退出应用」的那一半在应用层**（见 ``tests/ui/test_app.py``）。
 
     这里发的是真按键事件（走 Qt 的快捷键表）而不是直接调槽 —— 只 ``setShortcut``
-    而没挂进任何菜单的那种错，按键发过去什么都不会发生，测试却照样绿
-    （与下面缩略图那几条是同一个道理）。
+    而没挂进任何菜单的那种错，按键发过去什么都不会发生，测试却照样绿。
     """
     library = tmp_path / "库"
     (library / "海边").mkdir(parents=True)

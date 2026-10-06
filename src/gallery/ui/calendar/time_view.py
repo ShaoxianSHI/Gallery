@@ -75,8 +75,8 @@ class WeekView(LevelView):
         area.setStyleSheet("QScrollArea { background: transparent; }")
         # **横向的滚轮事件正好落在这个滚动区上，却不会停在这儿**：``QScrollArea`` 对「横向为主」的
         # 事件直接 ignore，于是冒到 :class:`WeekView` 自己翻页 —— 别加横向滚动条把它截下来。
-        # **滚动区与它那条竖滚动条都不接焦点**：Qt 在鼠标按下时会把焦点给「按到的那一层里第一个能
-        # 接焦点的控件」，于是点一下时间轴（含点滚动条）键盘就被抢走，← / → 变成滚动。
+        # 滚动区与竖滚动条都**不接焦点**：Qt 在鼠标按下时把焦点给「按到的那一层里第一个能接焦点
+        # 的控件」，不设 NoFocus 的话点一下时间轴（含点滚动条）就把 ← / → 抢去滚时间轴。
         area.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         area.verticalScrollBar().setFocusPolicy(Qt.FocusPolicy.NoFocus)
         # 与网格、元数据面板共用同一份滚动条样式（那个类型选择器只命中 ``QScrollArea`` 本身，
@@ -188,8 +188,8 @@ class WeekView(LevelView):
     def set_buckets(self, by_day: DayBuckets, by_hour: HourBuckets) -> None:
         """换了桶：**上一次定位没落地的话补一次**。
 
-        拍摄时间是**后台读完才来的**，于是刚切到周视图那一刻桶多半是空的 —— 定位对着空桶跑完把
-        滚动条按回 0 就再也不管了，而「看得见哪些」按那个位置算（症状：切过来是一片占位灰）。
+        拍摄时间是**后台读完才来的**，刚切到周视图那一刻桶多半是空的 —— 定位对着空桶跑完把滚动条
+        按回 0 就再也不管了，而「看得见哪些」按那个位置算。
         **已经落地的那一次不补**：换库与重扫每一步都换桶，无条件补等于把用户正在看的位置拽回去。
         """
         super().set_buckets(by_day, by_hour)
@@ -201,8 +201,7 @@ class WeekView(LevelView):
 
         「内部刚被布局出来」而不是整层换了尺寸，这一种只有这里看得见，而那正是切层时最常见的形状。
         **表头必须在这里重画**：它的列宽取自时间轴宽度，竖滚动条一出现列宽就变，而表头自己一个
-        像素都没动（症状：表头与时间轴对不齐，差值正好是滚动条宽度；``render()`` / ``grab()`` 会
-        强制重画，所以探针看不到）。
+        像素都没动（``render()`` / ``grab()`` 会强制重画，所以像素探针看不到这种陈旧）。
         """
         if event.type() == QEvent.Type.Resize:
             self._header.update()
@@ -357,21 +356,11 @@ class _TimeGrid(QWidget):
         left = self._view.content_left()
         right = int(left + self._view.content_width())
 
-        # **只画看得见的那几行**（下方两段循环都按这个范围收口）。
-        #
-        # 缺陷现场：这两段循环原来无条件走满 —— 25 条小时线加 7×24 = 168 格，于是时间轴
-        # 有多高就画多高。可它高 2218 px 而视口只有 724 px（**只露三分之一**），七成四的
-        # 活是画在屏幕外头的。
-        #
-        # 之所以要紧，是因为 :meth:`WeekView.update` 在**每张缩略图回来时**都调一次
-        # ``self._grid.update()``（见那里「缩略图一张一张回来时漏了它」那段），而一次
-        # ``update()`` 标脏的是整块：实测一周 336 张照片逐张到达 = **336 次整块重画**，
-        # 光 paintEvent 就累计 290 ms（占那一段墙钟的 95%）。这张表一收就只剩三分之一。
-        #
-        # 裁剪区**只能从 ``event`` 上取**：Qt 不会把它设到 paintEvent 里我们自己新建的
-        # painter 上 —— 实测 ``painter.clipBoundingRect()`` 是空矩形。所以写成
-        # ``painter.clipRect()`` 会算出「第一行 0、最后一行 -1」，于是**一格都不画**。
-        # 光栅层面早被 ``QBackingStore`` 按 update 区域裁掉了，省下来的是这些 Python 循环。
+        # **只画看得见的那几行**（下方两段循环都按这个范围收口）：整条时间轴比视口高三倍，而
+        # :meth:`WeekView.update` 每张缩略图回来都标脏整块，逐格走满是纯浪费。
+        # 裁剪区**只能从 ``event`` 上取** —— Qt 不会把它设到我们自己新建的 painter 上
+        # （``painter.clipBoundingRect()`` 是空矩形），写成 ``painter.clipRect()`` 会算出
+        # 「第一行 0、最后一行 -1」，于是**一格都不画**。光栅层面早被 ``QBackingStore`` 裁掉了。
         first, last = self._visible_hours(event, row)
 
         for index in range(first, min(last + 1, HOURS_PER_DAY) + 1):

@@ -212,8 +212,7 @@ class CalendarPage(QWidget):
         **高亮与锚点是两件事**：那一格已经摊开，退回来时留着的高亮是一块点不掉的底色；可它**仍然
         是用户刚指着的那一天**，按 ``Y`` / ``M`` / ``W`` 该翻到它所在的那一层。**只挪页面这一份**：
         让周视图重新定位会把用户刚找到的滚动位置弄丢。它与 :meth:`clear_selection` 只差
-        ``selection_changed``，而那一发**曾经从 ``showEvent`` 发出去，足以让下一个窗口构造时段
-        错误** —— 本页一个接收方都没有，别再加回来。
+        ``selection_changed``，而那一发**不许从 :meth:`showEvent` 发** —— 本页一个接收方都没有。
         """
         pointed = self._selected
         if pointed is not None:
@@ -225,7 +224,7 @@ class CalendarPage(QWidget):
         """把键盘焦点交给当前那层 —— **必须点名，不能指望 Qt 自己挪**。
 
         从大图页退回来时 Qt 会把焦点交给页面上**第一个**能接焦点的控件，周视图里那是
-        ``QScrollArea``，它把 ← / → 当成滚动时间轴吃掉（症状：点进一张照片再退出来，左右键就废了）。
+        ``QScrollArea``，它会把 ← / → 当成滚动时间轴吃掉。
         """
         self.current_view().setFocus()
 

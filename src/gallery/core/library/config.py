@@ -129,7 +129,7 @@ class LibraryUIState:
 
     def resolved_search_scope(self) -> str:
         """这一档该用的检索作用域。没选过、或值来路不明（老版本、手改过）就交回
-        :data:`SEARCH_SCOPE_LIBRARY` —— 那是从前唯一的那一种行为，界面上没有「不选」可退回。"""
+        :data:`SEARCH_SCOPE_LIBRARY` —— 界面上没有「不选」可退回。"""
         scope = self.search_scope
         if scope in SEARCH_SCOPES:
             return scope
@@ -241,11 +241,10 @@ class LibraryConfig:
     #: 缩略图缓存上限（字节）。0 表示不限制。
     max_cache_bytes: int = DEFAULT_MAX_CACHE_BYTES
     #: **相册封面**（ADR 0028）：相册相对库根的路径 → 封面照片相对库根的路径。空 = 一个都没指定，
-    #: 于是每个相册都用「里面第一张照片」（从前的行为，一个字节都不变）。存相对路径是必须的：
-    #: 绝对路径在库里挪个位置、换台机器就全废了，而这份文件用户会手改、也会跟着库提交。
+    #: 于是每个相册都用「里面第一张照片」。存相对路径是必须的：绝对路径在库里挪个位置、换台
+    #: 机器就全废了，而这份文件用户会手改、也会跟着库提交。
     album_covers: Mapping[str, str] = field(default_factory=dict)
-    #: **库级界面偏好**（ADR 0038 决策 4）：同样是「关于这个库」的，所以与相册封面同住一份文件 ——
-    #: 它原先在应用级 ``state.json`` 里，于是「在 A 库选了地点分组」会跟着切到 B 库。
+    #: **库级界面偏好**（ADR 0038 决策 4）：同样是「关于这个库」的，所以与相册封面同住一份文件。
     ui: LibraryUIState = field(default_factory=LibraryUIState)
 
     def __post_init__(self) -> None:

@@ -176,10 +176,6 @@ def has_album(root: Path) -> bool:
     「库里有没有相册」与「根目录下有没有可见的子目录」是同一个问题，
     一次 ``scandir`` 就答完了，根本不需要往下走。
 
-    曾经这里写的是一个广度优先的 ``stack``，而那个 ``stack`` 从头到尾没被压进过东西
-    —— 结果对，只是白摆出一副「要递归」的样子。改成现在这样是为了让读代码的人
-    不必自己重新推一遍这件事。
-
     **可见性规则与 :func:`iter_albums` 一致**：隐藏项、配置目录与符号链接一律算不得。
     """
     entries = _list_dir(Path(root), None)
@@ -314,7 +310,7 @@ def describe_entry(root: Path, path: Path) -> GridEntry | None:
 
 
 def _require_directory(path: Path) -> None:
-    """不是目录（或压根不存在）就抛 —— 那句话曾经被抄了四份。"""
+    """不是目录（或压根不存在）就抛。全仓库这一句话只有这一处，别的调用点引用它。"""
     if not Path(path).is_dir():
         raise LibraryNotAccessibleError(
             f"打不开这个文件夹：{path}。它可能已被移动、重命名或删除。",

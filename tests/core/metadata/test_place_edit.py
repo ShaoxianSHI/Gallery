@@ -81,10 +81,9 @@ def tags(assignments: tuple[Assignment, ...]) -> dict[str, str]:
 def test_only_coordinates_given_writes_only_the_coordinates(library_state: PlaceState) -> None:
     """**只填坐标就只写坐标** —— 地名一个字都不动（ADR 0039 决策 4）。
 
-    缺陷现场：这一层原先会顺手反查地名，于是「对话框显示的那一份」与「真正写下去的
-    那一份」在不同路上不是同一份 —— 界面上那三个 ``if place.region and ...`` 查不到
-    就不动，而这里的空值是**删掉**。跨层填充搬到了对话框那两个按钮上，而按钮改的就是
-    框本身，所以这一层只做翻译。
+    这一层顺手反查地名的话，「对话框显示的那一份」与「真正写下去的那一份」就不是同一份
+    —— 界面上那三个 ``if place.region and ...`` 查不到就不动，而这里的空值是**删掉**。
+    跨层填充放在对话框那两个按钮上（按钮改的就是框本身），所以这一层只做翻译。
     """
     resolver = FakeResolver()
 
@@ -235,11 +234,11 @@ def test_emptying_both_coordinate_boxes_removes_only_the_coordinates(
 def test_clearing_the_coordinates_clears_the_altitude_too(library_state: PlaceState) -> None:
     """**「清空坐标」与「改坐标」动的是同一批标签** —— 海拔与定位时间一并清掉。
 
-    缺陷现场：清空那条原先只发 :data:`COORDINATE_TAGS` 那四条，于是文件里留下一条
-    「有海拔 3200 米、有 GPS 定位时间、但没有经纬度」的记录，任何读 EXIF 的软件看到都是
-    一脸困惑；而「改坐标」那条 :func:`_coordinate_assignments` 的 docstring 恰好写着
-    「留着一条 GPS 记录就自相矛盾」。**两条路各写一份清单，迟早分叉** —— 现在只写一份
-    （``place_edit._all_coordinate_tags``），这条用例钉住它们不再分叉。
+    只清 :data:`COORDINATE_TAGS` 那四条的话，文件里会留下一条「有海拔 3200 米、
+    有 GPS 定位时间、但没有经纬度」的记录 —— 而「改坐标」那条
+    :func:`_coordinate_assignments` 的 docstring 恰好写着「留着一条 GPS 记录就自相矛盾」。
+    **两条路各写一份清单，迟早分叉** —— 所以只写一份（``place_edit._all_coordinate_tags``），
+    这条用例钉住它们不再分叉。
     """
     from gallery.core.metadata.place_edit import _all_coordinate_tags
 

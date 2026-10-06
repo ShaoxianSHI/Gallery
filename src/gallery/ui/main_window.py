@@ -126,12 +126,10 @@ logger = logging.getLogger(__name__)
 #: （见 :meth:`MainWindow._layout_title_bar`）。
 _GRID_PAGE_MARGIN_H = 10
 
-#: 网格页**右边**留多少（点）。**比左边窄得多，而且这一档是用户点名要的**
-#: （原话：「右边的 10 点改为 2」）：这一页最右边就是那条滚动条，它的右缘离窗口右缘
-#: 只该有这么一条窄缝 —— 滑块自己还带着
-#: :data:`~gallery.ui.scrollbar_style.HANDLE_GAP` 那 2 点，两段加起来才是滑块右缘到
-#: 窗口右缘的距离。**别把它并回 :data:`_GRID_PAGE_MARGIN_H`**：左边那 10 点是给照片
-#: 留的呼吸，右边这 2 点是给滚动条的，两件事。
+#: 网格页**右边**留多少（点），比左边窄得多：这一页最右边就是那条滚动条，它自己还带着
+#: :data:`~gallery.ui.scrollbar_style.HANDLE_GAP` 那 2 点，两段加起来才是滑块右缘到窗口右缘的
+#: 距离。**别把它并回 :data:`_GRID_PAGE_MARGIN_H`** —— 左边那 10 点是给照片留的呼吸，
+#: 右边这 2 点是给滚动条的，两件事。
 _GRID_PAGE_MARGIN_RIGHT = 2
 
 
@@ -150,9 +148,9 @@ class MainWindow(
     WriteOpsMixin,
     QMainWindow,
 ):
-    # 这十个 mixin 就是这个窗口的目录：每一条流程各住一间（各模块的文档说清自己管哪一块），
+    # 这些 mixin 就是这个窗口的目录：每一条流程各住一间（各模块的文档说清自己管哪一块），
     # 这一份文件留装配、Qt 覆写与跨流程的那几条线。``WriteOpsMixin`` 带进来的是**会动用户
-    # 文件的那些入口**（红线 1），它留在 ``ui/write_ops.py`` —— 守护测试是按文件名找它的。
+    # 文件的那些入口**（红线 1），它必须留在 ``ui/write_ops.py`` —— 守护测试按文件名找它。
 
     """应用主窗口。"""
 
@@ -225,8 +223,8 @@ class MainWindow(
         # 缩略图档位、浏览方式、分组 / 排序都是**库级配置**（ADR 0038 决策 4）：这里先给界面
         # 默认值，打开库时由 ``_apply_ui_state`` 覆盖。
         self._size_index = nearest_index(None)
-        #: 「我在哪一层」—— **一条栈**（ADR 0041）。原先那六个字段（浏览方式、当前目录、分组、
-        #: 日历那一格及其两个标志位）都是从这条栈算出来的属性，见 ``LevelStackMixin``。
+        #: 「我在哪一层」—— **一条栈**（ADR 0041）。浏览方式、当前目录、分组、日历那一格及
+        #: 其标志位都是从这条栈算出来的属性，见 ``LevelStackMixin``。
         self._level_stack = LevelStack(root=RootKind.FLAT)
         #: 检索条件的作用域（ADR 0040）：整库检索还是筛选当前这一层。**库级**偏好，
         #: 打开库时由 ``_apply_ui_state`` 从那个库的 ``config.toml`` 覆盖。
@@ -250,10 +248,9 @@ class MainWindow(
         self._focus_restored = False
         self._facet_values: dict[Path, PhotoFacets] = {}
         #: **上一次重排的输入** —— 用来在排序**之前**判「这次会不会变」（见
-        #: :meth:`ordering.OrderingMixin._reorder_level`）。少了它，「监听器报了个自己写的
-        #: 回声、其实什么都没变」那条路上每次都要白付一次整层排序（3 万张 41 ms）。
-        #: ``_reorder_values`` 存的是**对象本身**（不是 ``id()``），这样它不会被回收、
-        #: 地址不会被复用，判 ``is`` 才靠得住。
+        #: :meth:`ordering.OrderingMixin._reorder_level`），少了它监听器每报一次自己写的回声
+        #: 就要白付一次整层排序。``_reorder_values`` 存的是**对象本身**（不是 ``id()``），
+        #: 这样它不会被回收、地址不会被复用，判 ``is`` 才靠得住。
         self._reorder_fingerprint: tuple[object, ...] | None = None
         self._reorder_values: dict[Path, PhotoFacets] | None = None
         self._reorder_photos: tuple[PhotoRef, ...] = ()
@@ -487,11 +484,8 @@ class MainWindow(
         self.addAction(self._thumb_zoom_out_action)
 
         # 回上一层用 Esc（⌘↑ 被 macOS 占着）：Esc 在大图页是「返回网格」、网格页才是「上一级」。
-        #
         # **Esc 只管位置，不管条件**（ADR 0040 决策 11）：判据里条件排在最前时，只要有条件就永远
-        # 退不出文件夹 / 日历点出来的那一格 —— 用户在子相册里按 Esc，看到的是一条条件被撤掉而
-        # 位置纹丝不动（用户原话：「点开一个格子后，esc 退出一层就会清空一个筛选条件」）。
-        # 撤条件挪到 ⇧Esc，两者彻底分开，绝不互相抢。
+        # 退不出那一层。撤条件挪到 ⇧Esc，两者彻底分开，绝不互相抢。
         self._up_action = QAction("上一级", self)
         self._up_action.setShortcut(QKeySequence("Esc"))
         self._up_action.triggered.connect(self.go_up)
@@ -608,8 +602,7 @@ class MainWindow(
         self._clear_cover_action = QAction("取消相册封面", self)
         self._clear_cover_action.triggered.connect(self.clear_album_cover)
 
-        # ⌘W 与 ⌘Q 是**两件事**（ADR 0037）：⌘W 关掉这一个窗口（应用还活着），⌘Q 才是退出 —— Qt
-        # 默认「最后一个窗口关掉 = 应用退出」，那一半在 ``app.keep_running_without_windows``。
+        # ⌘W 与 ⌘Q 是**两件事**（ADR 0037）：⌘W 关掉这一个窗口（应用还活着），⌘Q 才是退出。
         # **刻意不写 ``StandardKey.Close``**：Qt 在 macOS 上把它解析成 ⌘F4，而用户按的是 ⌘W。
         self._close_action = QAction("关闭窗口", self)
         self._close_action.setShortcut(QKeySequence("Ctrl+W"))
@@ -737,8 +730,7 @@ class MainWindow(
         self._clear_cache_action.setEnabled(self._library is not None and self._cache_job is None)
         self._sync_fill_action()
         # 「清除搜索条件」**整条出现 / 消失**，不是置灰（ADR 0014 决策 4）：没有条件时它没有对象。
-        # 文案跟着作用域走（ADR 0040 决策 5）：用户清掉的是「筛选条件」还是「搜索条件」，
-        # 说的就是他刚才用的那一个。
+        # 文案跟着作用域走（ADR 0040 决策 5）：清掉的是「筛选条件」还是「搜索条件」。
         filtering_now = self._search_scope == SEARCH_SCOPE_LEVEL
         self._clear_search_action.setVisible(bool(self._conditions))
         self._clear_search_action.setText("清除筛选条件" if filtering_now else "清除搜索条件")
@@ -761,8 +753,7 @@ class MainWindow(
         )
         self._layout_title_bar()
         # **网格选区整轮只问一次** —— `selected_rows()` 要为每一个选中项新建一个 `QModelIndex`
-        # 再收成列表，实测三万张全选时一次 15.4 ms。这一段原先问两遍（`_selected_entries`
-        # 一次、「改名」判据里再一次），那是纯重复劳动；大图页 / 日历页根本不需要它。
+        # 再收成列表（三万张全选时一次 15.4 ms），问两遍是纯重复劳动。
         grid_rows = self._grid.selected_rows() if in_grid else []
         entries = [] if in_calendar else self._selected_entries(grid_rows if in_grid else None)
         focus_row = -1 if in_calendar else self._focus_row()
@@ -784,10 +775,9 @@ class MainWindow(
         self._copy_path_action.setEnabled(bool(paths))
         self._copy_action.setEnabled(bool(paths))
         # ⌘V 与选区无关；**大图页不粘** —— 那一页没有「当前这一层」（ADR 0021）。
-        # **筛选生效时两条写操作都不亮**（ADR 0040 决策 7）：这一层显示的不是全部内容，
-        # 粘进去 / 新建出来的照片可能一条都不出现（没命中条件），用户会以为坏了。而它们
-        # 恰恰是**会动用户文件**的那一类（红线 1），不该在用户看不清全貌时发生 —— 真要粘，
-        # 先撤掉筛选。
+        # **筛选生效时两条写操作都不亮**（ADR 0040 决策 7）：这一层显示的不是全部内容，粘进去 /
+        # 新建出来的照片可能一条都不出现，而它们恰恰是**会动用户文件**的那一类（红线 1），
+        # 不该在用户看不清全貌时发生 —— 真要粘，先撤掉筛选。
         writes_hidden = self._is_filtering()
         self._paste_action.setEnabled(in_grid and not writes_hidden and self._can_paste())
         # ⇧⌘N 与选区无关（只看这一层有没有这个目录，ADR 0022）；分组里不行 —— 摆的全是照片。
@@ -932,8 +922,8 @@ class MainWindow(
     def _can_go_up(self) -> bool:
         """现在退不退得回去。**就是「栈深 > 1」**（ADR 0041 决策 1）。
 
-        判据与 :meth:`go_up` 用的是**同一句话**（栈深），而原来两者各手写一遍那串 ``if`` ——
-        顺序还是层级深度，而顺序错了的症状是「退错了一层」，不是任何一句能自检的东西。
+        判据与 :meth:`go_up` 用**同一句话**（栈深），不各手写一遍那串 ``if`` ——「退错了一层」
+        不是任何一句能自检的东西。
         """
         if self._library is None or self._grid.is_renaming():
             return False
@@ -1000,10 +990,9 @@ class MainWindow(
         self._start_scan()
 
     # ---- 到了这一层该选中哪一格 ----------------------------------------------
-    #
     # **往上一层退**时仍停在刚离开的那个相册 / 那个组；**还是这一层重排一遍**时跟着停着的那一格走；
-    # **换了层**时谁也不选 —— 留着上一次的选择，用户看到的是上一趟的高亮，而随手一个 ⌘⌫ 删掉的
-    # 是他这一趟并没有指过的东西。三者都靠**标识**而不是行号，比一比**层标识**就知道属于哪一种。
+    # **换了层**时谁也不选 —— 留着上一次的选择，用户看到的是上一趟的高亮。三者都靠**标识**而不是
+    # 行号，比一比**层标识**就知道属于哪一种。
 
     def _arm_focus(self, focus: EntryKey | None = None) -> None:
         """记下到了新的一层该选中哪一格。
@@ -1084,9 +1073,8 @@ class MainWindow(
         conditions = [condition.chip_text for condition in self._conditions]
         editing = self._editing_condition if conditions else None
         # **日历工具条那几枚先摆，且在每一个早退之前**（ADR 0040 决策 9）。摆在末尾就漏了
-        # 「撤光条件」那一步：早退在 ``conditions`` 为空时直接返回，那一枚撤掉的胶囊就一直挂在
-        # 工具条上（用户原话：「UI 上第二个一直存在不消失」），要切到相册视图再切回来才走
-        # —— 因为切视图会重新走一遍没有早退的那条路。
+        # 「撤光条件」那一步：早退在 ``conditions`` 为空时直接返回，那一枚撤掉的胶囊就一直挂着，
+        # 要切一次视图再切回来才走。
         self._sync_calendar_conditions(conditions, editing)
         if self._drill_photos is not None:
             # 日历点出来的那一格不是文件夹，面包屑没有一段能指；标题里已经写着它在哪一段日子。
@@ -1121,8 +1109,8 @@ class MainWindow(
     def _hide_breadcrumb(self) -> None:
         """藏起来，**并且清空内容**。
 
-        ``hide()`` 只让控件不画，上一轮摆的那些还留在布局里。:meth:`set_path` 开头是
-        ``_clear()``，两处早退原先只 ``hide()`` —— 「不摆」与「摆成空的」被当成同一件事。
+        ``hide()`` 只让控件不画，上一轮摆的那些还留在布局里（``set_path`` 开头就是 ``_clear()``）；
+        「不摆」与「摆成空的」不是同一件事。
         """
         self._breadcrumb.clear_content()
         self._breadcrumb.hide()
@@ -1310,10 +1298,9 @@ class MainWindow(
         # 胶囊摆在**这一条**里（内容区从 ``top + EXTRA`` 开始），再往下挪
         # :data:`SEARCH_FIELD_TEXT_ALIGN_DROP`。
         field_height = min(SEARCH_FIELD_HEIGHT, height - 4)
-        # **右上角那一块现在有两样东西**（ADR 0040 决策 5）：切换按钮贴着窗口右边，胶囊被推到它
-        # 左边。两者的间距与同高都由 :data:`SCOPE_TOGGLE_GAP` 与 ``field_height`` 一处给出 ——
-        # 各算各的会出现「歪了一两个点」，而这正是胶囊当初与外部按钮之间踩过的那个坑
-        # （见 ``external_button.button_rect``）。
+        # **右上角那一块有两样东西**（ADR 0040 决策 5）：切换按钮贴着窗口右边，胶囊被推到它左边。
+        # 两者的间距与同高都由 :data:`SCOPE_TOGGLE_GAP` 与 ``field_height`` 一处给出 —— 各算各的
+        # 会「歪了一两个点」（见 ``external_button.button_rect``）。
         block_right = self.width() - SEARCH_FIELD_MARGIN_RIGHT
         toggle_width = min(SCOPE_TOGGLE_EDGE, max(0, field_height))
         toggle_x = block_right - toggle_width
@@ -1331,9 +1318,8 @@ class MainWindow(
         self._scope_toggle.setGeometry(toggle_x, self._search_field.y(), toggle_width, field_height)
         self._scope_toggle.show()
         self._scope_toggle.raise_()
-        #: **窗口右缘到胶囊右缘**有多远。面包屑那几枚条件胶囊对齐的就是这条线（ADR 0026
-        #: 决策 8），所以这一个数是它们与这一块之间唯一的换算依据 —— 各写一份留白时那条守护
-        #: 会立刻变红。
+        #: **窗口右缘到胶囊右缘**有多远 —— 面包屑那几枚条件胶囊对齐的就是这条线（ADR 0026 决策
+        #: 8），这一个数是两者之间唯一的换算依据。
         inset_to_capsule = SEARCH_FIELD_MARGIN_RIGHT + toggle_width + SCOPE_TOGGLE_GAP
 
         # 「用外部应用打开」**从胶囊那一块往左长出来**（见 ``button_rect``），于是两者必然同高、同一
@@ -1350,12 +1336,9 @@ class MainWindow(
         )
 
         # 面包屑右端那几枚条件胶囊与这个胶囊**右缘对齐**；换算只在这一处做 —— 面包屑摆在一份有
-        # 边距的布局里，右缘比窗口右缘靠内 :data:`_GRID_PAGE_MARGIN_RIGHT` 点（**不是左边那
-        # 一档**：右边窄，因为那一条要让给贴边的滚动条）。
-        #
-        # **对齐的是胶囊而不是那一整块**：切换按钮在胶囊右边，而条件胶囊是胶囊的下属概念，
-        # 让它们对齐到按钮的右缘（更靠右）会在中间空出一截，看着像那几枚条件不属于任何一个框。
-        # `test_the_rightmost_condition_lines_up_with_the_capsule` 量的正是这一条。
+        # 边距的布局里，右缘比窗口右缘靠内 :data:`_GRID_PAGE_MARGIN_RIGHT` 点。
+        # **对齐的是胶囊而不是那一整块**：切换按钮在胶囊右边，让条件胶囊对齐到按钮的右缘会在
+        # 中间空出一截，看着像它们不属于任何一个框。
         self._breadcrumb.set_right_inset(inset_to_capsule - _GRID_PAGE_MARGIN_RIGHT)
 
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - 名字是 Qt 定的

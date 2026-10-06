@@ -220,8 +220,8 @@ def _watch_names(
 
     靠模型自己的通知（``modelReset`` / ``rowsInserted``）记下每一版，不靠轮询：换排序是
     同步清空后重排的，两步可能落在**同一轮** ``processEvents`` 里，轮询会整个漏掉中间
-    那帧空网格（实测 32 次里挂 3 次）。轮询那次取样仍然留着 —— 改缩略图、改名走的是
-    ``dataChanged``，只有轮询看得见。
+    那帧空网格。轮询那次取样仍然留着 —— 改缩略图、改名走的是 ``dataChanged``，
+    只有轮询看得见。
     """
     seen: list[tuple[str, ...]] = []
     model = window._model
@@ -443,8 +443,8 @@ def _banners_while_busy(qt_app: QApplication, window: MainWindow) -> list[str]:
         if window._banner.isVisible() and text and (not seen or seen[-1] != text):
             seen.append(text)
 
-    # 不成立直接抛：原先超时也返回，于是「后台没干完」与「干完了、只说过两句」在
-    # 返回值上没有区别，「空跑就一声不吭」那条用例会把缺的那几句算到账上。
+    # 不成立直接抛：超时也返回的话，「后台没干完」与「干完了、只说过两句」在返回值上没有
+    # 区别，「空跑就一声不吭」那条用例会把缺的那几句算到账上。
     wait_while_watching(
         qt_app,
         lambda: (
@@ -463,8 +463,8 @@ def test_an_already_resolved_library_shows_no_banner(
     fake_facet_source: object,
     fake_places: Callable[[], int],
 ) -> None:
-    """空跑就**一声不吭**：横幅不许说「正在解析…」。那句话原本每次打开都闪一下，
-    看着像又在重算一遍，用户没法分辨是又在干活还是软件出了毛病。
+    """空跑就**一声不吭**：横幅不许说「正在解析…」。那句话每次打开都闪一下的话，
+    看着像又在重算一遍，分不清是又在干活还是软件出了毛病。
     """
     root = _library(tmp_path, make_photo, ["三月.jpg", "四月.jpg"])
     first = _open(qt_app, root, session_base=tmp_path / "状态")
@@ -796,12 +796,11 @@ def test_a_second_grouping_says_nothing_about_reading_metadata(
 ) -> None:
     """**索引里全都有时不报「正在读取」** —— 报的是一件没发生的事。
 
-    第一次换分组字段要读一次 EXIF，那句横幅是对的；第二次索引里已经全有了，用户看到的
-    应该是「立刻排好」，而不是又冒一句「正在读取 N 张照片的元数据」—— 他没法分辨这是又在
-    干活还是软件出了毛病（ADR 0014 决策 4 同一个取向）。
+    第一次换分组字段要读一次 EXIF，那句横幅是对的；第二次索引里已经全有了，看到的应该是
+    「立刻排好」，而不是又冒一句「正在读取 N 张照片的元数据」—— 分不清这是又在干活还是软件
+    出了毛病（ADR 0014 决策 4 同一个取向）。
 
-    这条在把「查索引」搬进后台之后尤其要紧：判定挪到工作线程里，**报横幅的时机也跟着挪**，
-    而搬错了的症状就是这一句 —— 界面先静一下、再冒出一句它根本不必说的话。
+    「查索引」搬进后台之后尤其要紧：判定挪到工作线程里，**报横幅的时机也跟着挪**。
     """
     root = _library(tmp_path, make_photo, list(DATES))
     window = _open(qt_app, root, session_base=tmp_path / "状态")
@@ -918,7 +917,7 @@ def test_entering_a_group_also_waits_for_the_metadata_sort(
 
     # 三月（2024-03）在四月（2024-04）之前；逆序就该反过来。
     assert _names(window) == ["四月.jpg", "三月.jpg"]
-    # 关键在这一行：**旧顺序一帧都不许出现**（曾经先摆一屏三月/四月，下一秒才换成四月/三月）。
+    # 关键在这一行：**旧顺序一帧都不许出现**（先摆一屏三月/四月、下一帧才换成四月/三月也不行）。
     assert seen == [(), ("四月.jpg", "三月.jpg")]
     window.close()
 

@@ -23,12 +23,8 @@ _GENERATOR = Path(__file__).resolve().parents[3] / "scripts" / "build_places_db.
 
 @pytest.mark.skipif(not _GENERATOR.is_file(), reason="仓库里没有生成脚本")
 def test_the_generator_reads_this_same_table() -> None:
-    """**「两边用同一份」要有东西看着** —— 那句话过去只是一句注释。
-
-    生成器 ``import`` 的是本模块这张表（省名就是它写进城市库的），但没有任何检查
-    守着这一点：哪天有人为了让脚本能独立跑而内联一份表，两边就静默漂了 ——
-    而症状是运行时的 ``CHINA_PROVINCES_ZH`` 与城市库里的省名对不上，
-    要等到某个省的照片被归错类才看得见。
+    """**「两边用同一份」要有东西看着** —— 生成器 ``import`` 的是本模块这张表，
+    而哪天真有人为了让脚本能独立跑而内联一份表，两边就静默漂了。
 
     判据用 ``is``：不是「两张表内容相等」，而是**同一个对象**，所以连改都改不到
     两份上去。

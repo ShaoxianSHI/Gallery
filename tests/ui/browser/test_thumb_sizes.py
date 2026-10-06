@@ -144,7 +144,7 @@ class TestWheelDelta:
 
     这一组是用「滚一格」这件事本身写的，不是照着阈值写的：Qt 的 macOS 层对传统滚轮
     给角度增量（一格 120），对魔法鼠标 / 触控板给像素增量（一格约 20，角度只有 4）。
-    曾经只读角度增量、按 120 卡阈值，症状是**魔法鼠标滚三十格才切一档**。
+    只读角度增量、按 120 卡阈值的话，魔法鼠标要滚三十格才切一档。
     """
 
     @pytest.mark.parametrize(("pixel", "angle"), [CLASSIC_NOTCH, PRECISE_NOTCH])

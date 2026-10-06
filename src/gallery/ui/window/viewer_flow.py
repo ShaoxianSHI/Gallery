@@ -57,13 +57,8 @@ class ViewerFlowMixin:
             self.set_browse_mode(BROWSE_MODE_FLAT)
             return
         if self._photo_frame is not None:
-            # **栈：从大图页弹掉照片帧，底下是日历格就回日历**（ADR 0041）。
-            #
-            # 这一支原先是两个字段的组合判断：``_from_calendar``（是不是从日历来的）与
-            # ``_drill_photos``（那一格摊开了没有）。两者有四种组合，而其中一种
-            # ——「从日历来、且那一格只有一张照片所以压根没摊开」—— 要靠第三个字段
-            # ``_from_calendar`` 单独记着，于是漏清一次就是「Esc 从日历大图里出来却停在网格」。
-            # 栈上没有这种歧义：**照片帧底下是日历格还是相册，看一眼就知道**。
+            # **栈：从大图页弹掉照片帧，底下是日历格就回日历**（ADR 0041）。用两个字段做组合判断
+            # 分不出「从日历来、且那一格只有一张照片压根没摊开」那一种，栈上没有这种歧义。
             self._pop_frame()
             if self._calendar_frame is not None:
                 self._back_to_calendar()

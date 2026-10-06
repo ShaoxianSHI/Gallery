@@ -111,10 +111,10 @@ def test_an_empty_message_still_takes_one_line(qt_app: QApplication) -> None:
 
 
 def test_the_banner_is_centred_on_the_window_even_with_the_panel_open() -> None:
-    """**居中的基准是整个窗口**：面板摆着时横幅不该偏到照片那一半的正中间（用户反馈）。
+    """**居中的基准是整个窗口**：面板摆着时横幅不该偏到照片那一半的正中间。
 
-    原先的做法是把 ``area`` 减去面板，于是中心点跟着跑偏 —— 大图页上一句话摆在照片
-    正中央，看着像只对照片说话。这一条量的是**中心点**，宽度对不对量的是它右边那条。
+    ``area`` 要是减去面板，中心点就跟着跑偏 —— 大图页上一句话摆在照片正中央，看着像只对照片
+    说话。这一条量的是**中心点**，宽度对不对量的是它右边那条。
     """
     area = QRect(0, 0, 1200, 800)
     rect = banner_rect(area, QSize(MAX_WIDTH, 30), avoid=PANEL)
@@ -154,7 +154,7 @@ def test_it_stops_narrowing_before_it_becomes_a_vertical_strip() -> None:
 
 
 def test_a_panel_that_is_not_there_changes_nothing() -> None:
-    """没给 ``avoid``（面板收着）与给了一块不相交的那一块：宽度与原先一模一样。"""
+    """没给 ``avoid``（面板收着）与给了一块不相交的那一块：宽度一模一样。"""
     area = QRect(0, 0, 1200, 800)
     assert banner_width(area, avoid=None) == banner_width(area)
     assert banner_width(area, avoid=QRect(1400, 0, 300, 800)) == banner_width(area)
@@ -226,8 +226,8 @@ def test_opening_the_thing_it_avoids_shortens_it_in_place(
 ) -> None:
     """面板一展开，已经显示着的那一条要**当场收窄**（不重新 ``show_message``）。
 
-    用户展开面板时那句话往往还挂在上面 —— 等下一条消息来才摆正，中间那几秒就白压着
-    面板了（``reposition`` 与 ``show_message`` 都要走 ``_place``，两条路都指着它）。
+    展开面板时那句话往往还挂在上面 —— 等下一条消息来才摆正，中间那几秒就白压着面板了
+    （``reposition`` 与 ``show_message`` 都要走 ``_place``，两条路都指着它）。
     """
     banner = BannerOverlay(host)
     host.resize(1200, 800)
@@ -274,7 +274,7 @@ def _columns_with_ink(image: QImage) -> tuple[int, int]:
 def test_the_words_sit_in_the_middle_of_the_banner(qt_app: QApplication, host: QWidget) -> None:
     """**字要居中**：横幅的宽度是「装得下就多宽」，左对齐的话窄横幅永远偏在一侧。
 
-    这里**画出来量像素**，而不是只看 ``alignment()`` —— 用户看见的是墨迹落在哪儿，
+    这里**画出来量像素**，而不是只看 ``alignment()`` —— 看见的是墨迹落在哪儿，
     「标志位设了」与「看着是歪的」中间还隔着换行、内边距与几何。
     """
     banner = BannerOverlay(host)

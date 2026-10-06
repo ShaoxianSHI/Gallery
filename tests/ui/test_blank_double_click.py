@@ -42,10 +42,8 @@ from gallery.core.library.session import (
 from gallery.ui.browser.grid import PhotoGrid  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 
-#: 等待扫描 / 分组排完的时限。
-
-#: 分组字段：按「所在文件夹」分。这一档只看路径，不读 EXIF，
-#: 于是这些测试既不依赖本机装了 exiftool，也不必再造一个假的批量读取器。
+#: 分组字段：按「所在文件夹」分。这一档只看路径、不读 EXIF，于是这些测试既不依赖本机装了
+#: exiftool，也不必再造一个假的批量读取器。
 FOLDER_FACET = "folder"
 
 
@@ -166,8 +164,8 @@ def test_double_clicking_an_album_card_enters_it_and_stays_there(
 ) -> None:
     """双击相册卡片要真的进得去，而且留在里面。
 
-    缺陷现场：点开相册（模型当场清空、版面重排）之后才去问「这一点底下还有没有格子」，
-    问到的已经是新的一层，于是刚进去又被「双击空白处」弹回来，屏幕上只剩一闪。
+    「这一点底下还有没有格子」必须在**交给基类之前**问：点开相册时模型当场清空、版面重排，
+    事后再问就已经是新的一层，于是刚进去又被「双击空白处」弹回来。
     与相册里有没有照片无关：空相册同样要进得去。
     """
     library = tmp_path / "库"
@@ -278,12 +276,8 @@ def test_blank_double_click_at_the_library_root_says_nothing(
         double_click_blank(window, qt_app)
 
         assert window._current_folder() == library, "已经在库根，不能再往上"
-        # **栈上没有相册帧**就是「在库根」—— 原来断言的是 ``_current_dir == library``
-        # （那个字段此刻是库根），而 ``_current_dir`` 现在是栈的投影、不可写。
-        # 量的是 :meth:`_current_folder`：那是真正被各处用的那句（``_current_dir or root``）。
-        # 横幅是全局共享的一个槽：「正在解析地点…」这种后台进度也会往里写（那是正常的，
-        # 见 BANNER_STICKY_SECONDS）。这里要验的是**自己**没有为「退不动」弹话，所以先
-        # 等地点解析那一趟收工，再把横幅收干净，然后才双击空白。
+        # 横幅是全局共享的一个槽，后台进度也会往里写（见 BANNER_STICKY_SECONDS）。这里要验的
+        # 是**自己**没有为「退不动」弹话，所以先等地点解析收工、再把横幅收干净。
         wait_for_level(window, qt_app, lambda: window._place_job is None)
         window._clear_banner()
         double_click_blank(window, qt_app)

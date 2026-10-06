@@ -51,11 +51,10 @@ _NUITKA_STEM: Final = "gallery"
 _RESOURCES_SOURCE: Final = _ENTRY_DIR / "resources"
 _RESOURCES_TARGET: Final = "resources"
 
-#: 排掉用不到的依赖（逐条理由见 ADR 0007）。三处坑：``--noinclude-qt-plugins`` 按
-#: **家族名**排，但 ``imageformats`` 不能排（``libqicns`` 要读系统里的 .icns）；
-#: ``--noinclude-dlls`` 匹配的是**产物里的目标路径**，写错不匹配且无警告；``PIL.ImageMath``
-#: 也不能排（``GifImagePlugin`` 顶层就 import 它，删了只是 GIF 静默解不出来），
-#: 而惰性引用的 ``PIL.ImageCms`` 排在名单里是安全的。
+#: 排掉用不到的依赖（逐条理由见 ADR 0007）。三处坑：``--noinclude-qt-plugins`` 按**家族名**
+#: 排，但 ``imageformats`` 不能排（``libqicns`` 要读系统里的 .icns）；``--noinclude-dlls``
+#: 匹配的是**产物里的目标路径**，写错不匹配且无警告；``PIL.ImageMath`` 也不能排
+#: （``GifImagePlugin`` 顶层就 import 它），而惰性引用的 ``PIL.ImageCms`` 排掉是安全的。
 _TRIM_OPTIONS: Final[tuple[str, ...]] = (
     # 应用完全不联网，TLS 后端一个都用不上。
     "--noinclude-qt-plugins=tls",
@@ -74,11 +73,10 @@ _TRIM_OPTIONS: Final[tuple[str, ...]] = (
     "--nofollow-import-to=PIL._imagingcms",
 )
 
-#: 上面那些插件排掉之后，就**没有任何东西再链接**的 Qt 库，必须跟着一起删（QtCore /
-#: QtGui / QtWidgets 是应用自己在用的；QtDBus 是 QtGui 在 macOS 上的硬依赖）。
-#:
-#: **不能靠命令行参数删：** Nuitka 在 ``--noinclude-dlls`` 生效之前就把依赖图算完了，
-#: 插件排掉了、它拖进来的 Qt 库仍留着 —— 这一步只能编译完再做。
+#: 上面那些插件排掉之后，就**没有任何东西再链接**的 Qt 库，必须跟着一起删（QtCore / QtGui /
+#: QtWidgets 是应用自己在用的；QtDBus 是 QtGui 在 macOS 上的硬依赖）。
+#: **不能靠命令行参数删** —— Nuitka 在 ``--noinclude-dlls`` 生效之前就把依赖图算完了，
+#: 这一步只能编译完再做。
 _ORPHANED_QT_LIBS: Final[tuple[str, ...]] = ("QtPdf", "QtSvg", "QtNetwork")
 
 #: 重新签名用的身份。Nuitka 默认是 ad-hoc 签名，这里跟着用 ``-``；将来若加了真证书，
@@ -219,7 +217,7 @@ def _rejects_removal(bundle: Path, removing: tuple[Path, ...]) -> Path | None:
     """找出包内**留下来之后仍然链接着**待删 Qt 库的那个文件；没有就返回 ``None``。
 
     这是删之前的一道闸：那三个库「只被已排除的插件拖进来」的判断会随 Qt 版本失效，
-    而删错了的症状是**运行期**才炸（``dyld`` 找不到库，``codesign --verify`` 却绿）。
+    而删错只会在**运行期**炸（``dyld`` 找不到库，``codesign --verify`` 却绿）。
     待删的那几个文件本身要跳过：它们互相链接着，一起走掉，谁也不欠谁。
     """
     wanted = {path.name for path in removing}

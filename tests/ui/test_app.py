@@ -37,9 +37,8 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from gallery.ui.app import WindowHost, keep_running_without_windows  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 
-#: 子进程里那一份脚本。**刻意不接管道**（用 DEVNULL）：打开库会起 exiftool 子进程，
-#: 它继承走标准输出，而 ``subprocess`` 要读到 EOF 才返回 —— 那会让人等上的根本不是
-#: 关窗这件事。结论按顺序追加进那个文件。
+#: 子进程里那一份脚本。**刻意不接管道**（用 DEVNULL）：打开库会起 exiftool 子进程而它继承走
+#: 标准输出，``subprocess`` 要读到 EOF 才返回 —— 那等上的根本不是关窗这件事。结论按顺序追加。
 _LIFECYCLE = """
 import sys
 from pathlib import Path

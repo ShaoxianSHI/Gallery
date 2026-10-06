@@ -257,7 +257,7 @@ def test_pillow_is_initialized_at_import_time() -> None:
     """导入 core.media.decode 时就要把 Pillow 初始化完。
 
     ``Image.open`` / ``Image.save`` 会惰性导入解码器，而那个「初始化过没有」的全局
-    标志不是线程安全的：多个解码线程同时第一次用到 Pillow 时实测会**段错误**
+    标志不是线程安全的：多个解码线程同时第一次用到 Pillow 时会**段错误**
     （不是抛异常，是整个进程挂掉）。这里在全新进程里检查那个标志，因此不受
     测试会话里先前已经用过 Pillow 的影响。
     """
@@ -290,9 +290,8 @@ def test_concurrent_first_use_of_pillow_does_not_crash(
     for index in range(16):
         make_photo(f"IMG_{index:04d}.jpg", directory=library_root)
     # **缩略图缓存也要指到临时目录**：这是个子进程，父进程里那条 autouse 的
-    # ``isolated_app_data`` 管不到它 —— 不传的话它会往用户真实的
-    # ``~/Library/Application Support/Gallery/cache/thumbs/`` 里丢下一个摘要目录，
-    # 而那是没人认领、也没人淘汰的（ADR 0038 那条已知遗留）。
+    # ``isolated_app_data`` 管不到它 —— 不传的话它会往用户的真实缓存目录里丢下一个
+    # 摘要目录，而那是没人认领、也没人淘汰的（ADR 0038 那条已知遗留）。
     cache_base = tmp_path / "系统缓存"
 
     completed = _run_fresh_python(

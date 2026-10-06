@@ -29,12 +29,9 @@ CHROME_PROCESS_PATTERN = "Google Chrome.app/Contents/MacOS/Google Chrome"
 #: 浏览器应用名（AppleScript 里用它寻址）。
 CHROME_APP_NAME = "Google Chrome"
 
-#: 枚举窗口的脚本。**每一件东西各占一行，前面一个字母做前缀** —— 而不是拿分隔符
-#: 拼成一行：页面标题里什么字符都可能出现，而「按行首字母认字段」不需要挑分隔符，
-#: 出了错直接看得懂。
-#:
-#: **倒着枚举**（从最后一个窗口到第一个），于是输出的头一个就是最新的窗口，
-#: :func:`find_pwa_window` 认到头一个就走 —— 同时开着好几个候选时取最新的那个。
+#: 枚举窗口的脚本。**每一件东西各占一行，前面一个字母做前缀** —— 页面标题里什么字符都可能出现，
+#: 挑不出一个安全的分隔符，而「按行首字母认字段」出了错直接看得懂。**倒着枚举**，于是输出的
+#: 头一个就是最新的窗口，:func:`find_pwa_window` 认到头一个就走。
 _LIST_WINDOWS_SCRIPT = """
 tell application "Google Chrome"
 	set out to ""
@@ -68,9 +65,9 @@ class ChromeWindow:
 def chrome_is_up(runner: Runner) -> bool:
     """浏览器的进程在不在。
 
-    **用 ``pgrep`` 而不是 AppleScript 去问**：AppleScript 会**自动启动目标应用**，
-    于是「查一下在不在」变成了「把它启动一遍」，还会顺带开出一个「新标签页」窗口
-    （实测踩过）。``pgrep`` 什么也不会启动（ADR 0034 决策 4）。
+    **用 ``pgrep`` 而不是 AppleScript 去问**：AppleScript 会**自动启动目标应用**，于是
+    「查一下在不在」变成了「把它启动一遍」，还会顺带开出一个「新标签页」窗口。``pgrep``
+    什么也不会启动（ADR 0034 决策 4）。
     """
     return runner(["pgrep", "-f", CHROME_PROCESS_PATTERN]).returncode == 0
 

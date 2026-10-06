@@ -364,11 +364,10 @@ class ExternalAppsButton(QWidget):
         """换过浅色 / 深色之后重画一遍。
 
         **自绘图标也要重画**：它们跟着 :attr:`AppTheme.text` 变色。菜单那份样式表里写死了颜色，
-        换主题时不重下发的症状是菜单还是上一套深浅。
+        换主题时不重下发就还是上一套深浅。
         """
-        # **菜单是「主题下发之后才建的控件」**，与搜索框的候选列表同一个情况：
-        # ``theme.apply_theme`` 只走「那一刻已经存在的顶层控件」，菜单不在里面，于是它一直用
-        # 系统默认那一档颜色（深色下菜单里的字在近黑底上几乎看不见）。
+        # 菜单是**主题下发之后才建的控件**（``theme.apply_theme`` 只走那一刻已存在的顶层控件），
+        # 不补一次调色板就一直用系统默认那一档颜色 —— 深色下菜单里的字在近黑底上几乎看不见。
         theme.push_palette(self._menu)
         self._menu.setStyleSheet(menu_style.popup_menu_style(self._menu))
         self.refresh()

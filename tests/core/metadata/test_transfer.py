@@ -287,7 +287,7 @@ def test_the_config_directory_is_not_a_target_album(library: Path) -> None:
 def test_a_same_named_file_dropped_in_mid_batch_is_never_overwritten(
     library: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """移动到相册也绝不覆盖用户在途中放进来的照片（红线 1，已实测复现）。
+    """移动到相册也绝不覆盖用户在途中放进来的照片（红线 1）。
 
     ``occupied_names`` 是这一批开始那一刻的快照，而一批几百项、跨卷时要跑几分钟。
     期间落进来的同名文件那张表看不见 —— 而 ``Path.rename`` 在 POSIX 上是**原子替换**，

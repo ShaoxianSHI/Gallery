@@ -53,12 +53,9 @@ _MKTEMP_RANDOM_LEN = 8
 _MKTEMP_RANDOM_PATTERN = "[a-z0-9_]"
 
 #: 「这个文件名是不是本模块自己留下的原子写临时文件」的判据，逐段对上
-#: ``mkstemp(dir=..., prefix=f"{条目名}.", suffix=".tmp")`` 实际会产出的那一串：
-#:
-#:     <摘要> + (".jpg" | ".png") + "." + <8 个随机字符> + ".tmp"
-#:
-#: 摘要长度取自 ``hashlib.sha1()``（换算法它跟着变）。认得这么死是因为认宽了就会去删用户
-#: 自己放进来的文件 —— ``clear()`` 只承诺删自己认识的条目。
+#: ``mkstemp(dir=..., prefix=f"{条目名}.", suffix=".tmp")`` 产出的那一串：
+#: ``<摘要> + (".jpg" | ".png") + "." + <8 个随机字符> + ".tmp"``。摘要长度取自
+#: ``hashlib.sha1()``。认得这么死是因为认宽了就会去删用户自己放进来的文件。
 _ORPHAN_PATTERN: Final = re.compile(
     rf"[0-9a-f]{{{hashlib.sha1().digest_size * 2}}}"
     rf"(?:{'|'.join(re.escape(suffix) for suffix in _ENTRY_SUFFIXES)})"
