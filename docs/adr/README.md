@@ -55,3 +55,4 @@
 | [0036](0036-container-cannot-store-a-tag.md) | 容器存不下的标签写回时压根不发（HEIC 不写 IPTC），避免整体回滚把已写成的 XMP 一起擦掉 | 已接受 |
 | [0037](0037-window-chrome-and-lifecycle.md) | 双击标题栏铺满窗口（菜单栏与 Dock 都留着）；⌘W 关窗与 ⌘Q 退出分成两件事，三个键一律显式写死 | 已接受 |
 | [0038](0038-unify-cache-location.md) | 取消 external 模式：缩略图进系统目录，`config.toml` / 索引 / 日志 / 库级界面偏好全进 `.gallery/`；开场不问，索引关掉 WAL | 已接受 |
+| [0040](0040-filter-within-the-current-view.md) | 检索条件的第二个作用域：在当前视图内筛选（月视图仍然是月视图），范围靠一次相交而不靠 SQL | 已接受 |
