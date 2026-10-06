@@ -266,6 +266,13 @@ condition_away` 用 AST 扫出全仓库每一处改动 `self._conditions` 长度
 
 ## 后果
 
+> **其中「`Esc` 只管位置」这一条已被 [ADR 0041](0041-the-level-stack.md) 补完**：本篇把条件
+> 移出 `go_up` 时（「`Esc` 只管位置」，决策 11），**没有问「那 `Esc` 退出搜索由谁来管」** ——
+> 答案是没人管。搜索结果「接管当前层」而它既不是文件夹也不是分组，于是
+> `_can_go_up()` 恒为 `False`：搜索后直接按 Esc 能退出是**巧合**（那时焦点还在搜索框里，
+> 走的是搜索框自己的 Esc），进一趟分组、焦点回到网格就没反应了。ADR 0041 把搜索结果变成栈上
+> 一帧，那两条不用专门修 —— 它们是模型的结果。
+
 - `core/library/search.py` 多一个查询与一个纯函数；`Library.matching_paths` 与
   `FacetIndex.match_paths` 各一条入口。
 - `ui/window/search_flow.py` 多一组方法（`_start_level_filter` / `_on_level_filtered` /
