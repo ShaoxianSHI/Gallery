@@ -603,7 +603,13 @@ class MainWindow(
         # 所以两处永远说同一句话 —— 菜单里勾着而按钮没亮，用户会以为它们是两个设置。
         self._scope_action = QAction("筛选当前视图", self)
         self._scope_action.setCheckable(True)
-        self._scope_action.toggled.connect(self.set_search_scope)
+        # **``toggled`` 递过来的是 ``checked``（一个 bool），不是作用域那个字符串** —— 直接接
+        # ``set_search_scope`` 会让一个非法的值走到它开头那道校验里，于是按了没反应。
+        self._scope_action.toggled.connect(
+            lambda checked=False: self.set_search_scope(
+                SEARCH_SCOPE_LEVEL if checked else SEARCH_SCOPE_LIBRARY
+            )
+        )
 
         file_menu = self.menuBar().addMenu("文件")
         file_menu.addAction(self._open_action)
@@ -744,9 +750,16 @@ class MainWindow(
         self._copy_path_action.setEnabled(bool(paths))
         self._copy_action.setEnabled(bool(paths))
         # ⌘V 与选区无关；**大图页不粘** —— 那一页没有「当前这一层」（ADR 0021）。
-        self._paste_action.setEnabled(in_grid and self._can_paste())
+        # **筛选生效时两条写操作都不亮**（ADR 0040 决策 7）：这一层显示的不是全部内容，
+        # 粘进去 / 新建出来的照片可能一条都不出现（没命中条件），用户会以为坏了。而它们
+        # 恰恰是**会动用户文件**的那一类（红线 1），不该在用户看不清全貌时发生 —— 真要粘，
+        # 先撤掉筛选。
+        writes_hidden = self._is_filtering()
+        self._paste_action.setEnabled(in_grid and not writes_hidden and self._can_paste())
         # ⇧⌘N 与选区无关（只看这一层有没有这个目录，ADR 0022）；分组里不行 —— 摆的全是照片。
-        self._new_album_action.setEnabled(in_grid and idle and self._can_create_album())
+        self._new_album_action.setEnabled(
+            in_grid and idle and not writes_hidden and self._can_create_album()
+        )
         # ⌘⏎ 与改名输入框抢键：改到一半键盘归输入框，否则「敲完名字顺手 ⌘⏎」会把访达叫起来。
         self._reveal_action.setEnabled(bool(paths) and idle)
         self._open_entry_action.setEnabled(current is not None)
