@@ -27,6 +27,7 @@ from gallery.core.library.search import (
     unusable_reason,
 )
 from gallery.ui.tasks import TaskContext
+from gallery.ui.window.level_stack import SearchFrame
 from gallery.ui.window.library_flow import SCAN_BATCH_SIZE
 from gallery.ui.window.notice import NoticeSlot
 
@@ -74,12 +75,21 @@ class SearchFlowMixin:
 
         **条件不清空**：这是同一个胶囊里的同一批条件，用户改的只是「它们管到哪儿」。清掉等于
         逼他重新敲一遍，而那串输入他刚刚才确认过。
+
+        **切到搜索 = 压一帧，切回筛选 = 弹掉那一帧**（ADR 0041 决策 3，纯粹的 push / pop，
+        不看栈顶原本是什么 —— 用户：「除了搜索外的其他位置都能压入搜索」）。
         """
         if scope not in SEARCH_SCOPES or scope == self._search_scope:
             self._sync_search_scope()
             return
         self._search_scope = scope
         self._remember_ordering()  # 作用域是库级偏好（ADR 0040 决策 6）
+        if self._is_library_search():
+            self._push_frame(SearchFrame(conditions=tuple(self._conditions)))
+        else:
+            # 切回筛选 = 弹掉搜索帧。**弹不掉时什么都不做**：那时栈上没有搜索帧（用户是在
+            # 相册或分组里把按钮拨到筛选那一档），而那一档压根不需要换一层。
+            self._pop_to(lambda stack: not isinstance(stack.top, SearchFrame))
         self._sync_search_scope()
         # **有条件才重列这一层**：没有条件时两种作用域的显示完全一样（都是这一层的全部内容），
         # 重列只是让网格无意义地闪一下。
@@ -278,7 +288,61 @@ class SearchFlowMixin:
             self._conditions.append(condition)
         self._editing_condition = None
         self._warn_metadata_without_exiftool(condition)
+        self._sync_search_frame()
         self._apply_conditions()
+
+    def _leave_search_frame(self, frame: object = None, *, reload: bool = True) -> None:  # type: ignore[assignment]
+        """搜索结果帧已被弹掉（或即将被弹掉）—— **清条件，恢复底下那一层**。
+
+        **用传进来的那一帧，不重新查栈**：``go_up`` 是**先弹再收尾**的，而弹完之后
+        ``self._search_frame`` 已经是 ``None`` 了 —— 重新查会得到「没有搜索帧」，于是这一支
+        直接返回，条件留在原地而搜索框与漏斗按钮还亮着（实测：Esc 一次之后条件仍在、
+        结果仍是搜出来的那几张）。
+
+        **条件是那一帧的内容**（ADR 0041 决策 3），所以帧一没条件就得跟着没；清完之后
+        ``_is_library_search`` 自然变假，于是胶囊、漏斗按钮的选中态、面包屑那一段
+        「搜索结果（N）」全都自己回到筛选那一边 —— **不必在这里逐个改回去**。
+
+        :param reload: ``False`` 给「已经要重列别的东西」的那些调用点（``enter_folder`` 要
+            压相册链并按新的那一层重列，重列两次会让网格无意义地闪一下）。
+        """
+        if not isinstance(frame, SearchFrame):
+            return
+        self._conditions.clear()
+        self._editing_condition = None
+        self._search_total = None
+        self._search_field.stop_edit()
+        # 底层那一帧的筛选恢复成压入之前那份（栈上它那份 ``narrowing`` 就是）。
+        self._restore_narrowing(self._level_stack.narrowing_top)
+        if reload:
+            self._reload_level()
+
+    def _restore_narrowing(self, conditions: tuple[object, ...]) -> None:
+        """把某一帧自己那份筛选条件装回 ``_conditions``。
+
+        **只有切回「筛选」那一档才装**：此刻是整库检索的话，条件属于搜索帧而不是底下那一帧 ——
+        装回去就成了「弹掉了搜索帧，条件却还在」。
+        """
+        self._conditions = list(conditions) if self._search_scope == SEARCH_SCOPE_LEVEL else []
+
+    def _sync_search_frame(self) -> None:
+        """让栈上的**搜索结果帧**与「此刻在不在整库检索」对上（ADR 0041 决策 3）。
+
+        **整库检索是「换了一层」，所以是栈上的一帧；筛选不是**（它收窄的正是当前这一层，
+        决策 2）。这一句是那件事的**唯一**同步点 —— 早先 `_is_library_search` 要同时看
+        ``_conditions`` 与 ``_search_scope`` 两个字段，而它是七个调用点各问一次的地方，
+        漏一处的症状是「换层级之后这一层的内容还是上一次那种」。
+
+        **压帧时把那一层当时的样子带进去**（``narrowing``）：弹回来时筛选条件恢复成压入之前的
+        样子 —— 用户在搜索结果里加的那条筛选不该留在底下的相册上（决策 2）。
+        """
+        if self._is_library_search():
+            if self._search_frame is None:
+                self._push_frame(SearchFrame(conditions=tuple(self._conditions)))
+            else:
+                self._push_frame(SearchFrame(conditions=tuple(self._conditions)), replace=True)
+        elif self._search_frame is not None:
+            self._pop_to(lambda stack: not isinstance(stack.top, SearchFrame))
 
     def _warn_unusable_input(self, parsed: object) -> None:
         """没提交成的一条输入，值不值得说一句。
@@ -377,6 +441,7 @@ class SearchFlowMixin:
             self._editing_condition = None
         elif editing is not None and editing > position:
             self._editing_condition = editing - 1
+        self._sync_search_frame()  # 可能是最后一条 → 弹掉搜索帧（ADR 0041 决策 3）
         self._apply_conditions()
 
     def clear_search_conditions(self) -> None:
@@ -385,6 +450,7 @@ class SearchFlowMixin:
             return
         self._conditions.clear()
         self._editing_condition = None
+        self._sync_search_frame()  # 条件全清 → 弹掉搜索帧（ADR 0041 决策 3）
         self._apply_conditions()
 
     def focus_search(self) -> None:

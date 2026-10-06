@@ -34,6 +34,7 @@ from gallery.core.library.config import (  # noqa: E402
     BROWSE_MODE_CALENDAR,
     BROWSE_MODE_FLAT,
     SEARCH_SCOPE_LEVEL,
+    SEARCH_SCOPE_LIBRARY,
     prepare_library,
 )
 from gallery.core.library.photos import GroupRef, PhotoRef  # noqa: E402
@@ -443,12 +444,23 @@ def test_only_three_things_can_take_a_condition_away() -> None:
         ("src/gallery/ui/window/search_flow.py", "self._conditions.clear()"),  # 清搜索框
         # 就地替换：长度不变，但它确实改内容 —— 单独放行。
         ("src/gallery/ui/window/search_flow.py", "self._conditions[editing] = condition"),
+        # ---- 弹掉搜索帧之后，把底下那一帧自己那份筛选放回去（ADR 0041 决策 2）----
+        # 条件**随帧存**，所以弹出搜索帧时底下那一帧的 ``narrowing`` 要装回 ``_conditions`` ——
+        # 用户在搜索结果里加的那条筛选不该留在底下的相册上。这与「点 ✕ 撤一条」是两件事：
+        # 那一条是从列表里删掉一条，这一条是把某一帧存的那份整体装回来。
+        (
+            "src/gallery/ui/window/search_flow.py",
+            "self._conditions = list(conditions) "
+            "if self._search_scope == SEARCH_SCOPE_LEVEL else []",
+        ),
         # ---- 换场合，不是「用户撤掉了」：切到整库检索时清掉它 ----
         # 整库检索横跨整个库，而筛选只管当前这一层（ADR 0026 决策 1 / ADR 0040 决策 1）——
-        # 两者是互不相干的概念，换浏览方式 / 进相册 / 换库时不该叠在一起。
+        # 两者是互不相干的概念，换浏览方式 / 换库时不该叠在一起。
+        # **``main_window.py`` 里那一处没有了**（原先 ``enter_folder`` 里有）：现在「进相册就是
+        # 退出整库检索」走 :meth:`SearchFlowMixin._leave_search_frame`，它清条件**并**弹掉栈上的
+        # 搜索帧 —— 只清条件不弹帧的话那一帧会留在栈上，Esc 弹掉的是它而它已经不接管任何东西。
         ("src/gallery/ui/window/library_flow.py", "self._conditions.clear()"),
         ("src/gallery/ui/window/calendar_flow.py", "self._conditions.clear()"),
-        ("src/gallery/ui/main_window.py", "self._conditions.clear()"),
     }
 
     root = Path(__file__).resolve().parents[2]
@@ -885,6 +897,57 @@ def test_the_photos_of_this_level_survive_even_with_no_card(
 # ---- 撤销与清空（与整库检索同一套心智）--------------------------------------------
 
 
+def test_escape_exits_the_search_after_walking_through_a_group(
+    qt_app: QApplication, tmp_path: Path, make_photo
+) -> None:
+    """搜索结果里按 ``Esc`` 能退出搜索 —— **进过分组再出来也一样**。
+
+    > 用户原话：「在搜索结果里（假设没有往下点分组或照片大图），点 esc 应该能退出搜索，
+    > 但是现在搜索后直接 esc 可以退出，点进分组再出来就不行了，esc 没反应」。
+
+    **根因不是「Esc 在分组里不管用」，而是搜索结果压根不在 ``go_up`` 的那一串 ``if`` 里** ——
+    它既不是文件夹也不是分组，于是搜索后 ``_can_go_up()`` 恒为 ``False``。「搜索后直接按 Esc
+    能退出」是**巧合**：那时焦点还在搜索框里，走的是搜索框自己的 Esc（``dismiss`` →
+    ``pop_last_condition``）；进一趟分组，焦点回到网格，那条路就断了。
+
+    钉的是「**往返一次之后**仍然退得回去」：只断「刚搜完按 Esc」的话，把 ``go_up`` 写成
+    「有搜索帧就清条件」也能过 —— 而那正是原代码（弹了分组弹掉的是分组，用户看到的是位置
+    退了一层、搜索还在）。
+    """
+    root = _library(tmp_path, make_photo)
+    window = _open(qt_app, root, tmp_path / "会话", browse_mode=BROWSE_MODE_ALBUMS)
+    _settle(qt_app, window)
+    _filter(qt_app, window, "海边", scope=SEARCH_SCOPE_LIBRARY)
+    _settle(qt_app, window)
+    assert window._can_go_up() is True, "前提不成立：搜索结果里本来就退不出去"
+
+    # 往返一次分组 —— 用户报的是「进去再出来之后 Esc 不管用」。
+    photo = PhotoRef(path=root / "海边-01.jpg", size=1, mtime_ns=1)
+    window.enter_group(GroupRef(facet="camera", key="canon", label="Canon", photos=(photo,)))
+    _settle(qt_app, window)
+    assert window._group_view is not None, "前提不成立：没进到分组里"
+    window.go_up()
+    _settle(qt_app, window)
+    assert window._group_view is None, "前提不成立：没退出分组"
+
+    assert window._can_go_up() is True, "进出一次分组之后就再也退不出搜索了"
+
+    window.go_up()
+    _settle(qt_app, window)
+
+    assert _chips(window) == [], f"Esc 没能退出搜索，条件还在：{_chips(window)}"
+    # 退出搜索之后停在**相册视图的根**。断的是「回到了这一层」而不是「那一层恰好有哪些条目」
+    # —— 根上既有相册卡片也有散在根下的照片，写死那份清单就等于把断言骑在测试库的目录结构上。
+    assert window._level_stack.frames == (), (
+        f"退出搜索之后栈上还有东西：{window._level_stack.frames}"
+    )
+    assert "家庭" in _names(window) and "旅行" in _names(window), (
+        f"退出搜索之后没有退回相册根：{_names(window)}"
+    )
+    assert not window._is_library_search(), "退出搜索之后仍说自己在整库检索"
+    window.close()
+
+
 def test_escape_leaves_the_folder_without_touching_the_conditions(
     qt_app: QApplication, tmp_path: Path, make_photo
 ) -> None:
@@ -913,7 +976,9 @@ def test_escape_leaves_the_folder_without_touching_the_conditions(
     window.go_up()
     _settle(qt_app, window)
 
-    assert window._current_dir == root, "Esc 没能退出子相册"
+    # ``_current_dir`` 是栈的投影、**在库根时是 ``None``**；被各处真正用的是
+    # :meth:`_current_folder`（口径 ``_current_dir or root``），所以断它。
+    assert window._current_folder() == root, "Esc 没能退出子相册"
     assert _chips(window) == ["相机：Canon", "城市：西安"], (
         f"Esc 顺手撤掉了条件：{_chips(window)} —— 它只该管位置"
     )

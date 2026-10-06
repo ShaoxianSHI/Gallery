@@ -928,7 +928,11 @@ def test_the_library_name_stays_a_link_while_searching(
     _settle(qt_app, window)
 
     assert window._conditions == [], "点库名就是退出检索"
-    assert window._current_dir == root
+    # 栈：点库名 = 压一条**空的相册链**（落在库根）。``_current_dir`` 是栈的投影，
+    # **在库根时是 ``None``** —— 真正被各处用的是 :meth:`_current_folder`（口径
+    # ``_current_dir or root``），所以断它而不是断那个字段。
+    assert window._current_folder() == root
+    assert window._level_stack.frames == (), "点库名之后栈上还有东西 —— 那是「没退回库根」"
     assert _trail(window) == ["照片"]
     assert sorted(_names(window)) == ["旅行", "海边-01.jpg", "海边-02.jpg"], (
         "回到的是库根那一层（相册卡片 + 散着的照片），不是检索结果"

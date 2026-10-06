@@ -228,12 +228,13 @@ class CalendarFlowMixin:
         self._apply_ordering()
         self._start_facet_read()
 
-    def _leave_calendar_drill(self) -> None:
-        """从「那一格」退回日历，**模型回到整库**（下一层点开照片还要靠它的行）。"""
-        # 栈：弹掉日历格。**「记得是从日历来的」不用再单独记一个标志位** —— 栈顶是不是日历格
-        # 就是那句话（原先 `_from_calendar` 有 4 处手动跟着置位与清零，漏一处就是「退回去之后
-        # 还以为是从日历来的」）。
-        self._pop_frame()
+    def _leave_calendar_cell(self) -> None:
+        """**日历格那一帧已经被 ``go_up`` 弹掉了** —— 这一步只做模型与视图的收尾。
+
+        分成两个方法是因为「弹栈」是统一的（「谁弹的都一样」），而收尾因帧而异（「日历格要回
+        日历页、分组要把刚离开的卡片选中」）。原先这里自己弹一次字段，于是**弹栈这件事有两处**，
+        漏一处就出现「按 Esc 位置动了而模型还是那一格的内容」。
+        """
         self._model.clear()
         self._grid.reset_for_new_level()
         self._current_row = -1

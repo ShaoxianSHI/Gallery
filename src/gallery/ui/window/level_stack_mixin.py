@@ -162,6 +162,46 @@ class LevelStackMixin:
         """
         self._level_stack = self._level_stack.with_root(root)
 
+    def _drop_search_frames(self) -> None:
+        """弹掉栈上**所有**搜索结果帧（进相册时用 —— 进相册就是退出整库检索，ADR 0041 决策 3）。
+
+        **弹到栈顶不是搜索帧为止**，而不是只弹一层：搜索帧之上可能还压着分组或照片
+        （用户在搜索结果里进了分组再点面包屑上的某个相册），而那一摞都属于「搜索」这一次
+        浏览。只弹一层的话它们会留在栈上，Esc 弹掉的是它们而搜索帧还在 ——
+        「按 Esc 什么都没发生」。
+        """
+        self._level_stack = self._level_stack.pop_until(
+            lambda stack: not isinstance(stack.top, SearchFrame)
+        )
+
+    def _push_album_chain(self, target: Path) -> None:
+        """压出从「现在这一层」到 ``target`` 的**整条相册链**（一层一层一帧）。
+
+        从库根直接点进 ``旅行/2024`` 要压两帧（旅行、2024），Esc 一次退到「旅行」、两次退到库根。
+        压一帧不行：那样「旅行/2024」与「旅行/2025」在栈上长得一样，退一次就掉回库根。
+
+        **先弹掉原先那条相册链**（换相册等于换了一条路），而**搜索帧与日历格留着** —— 它们
+        不是相册链的一部分：那两条链互斥（ADR 0041 决策 1），而搜索帧可以压在相册上。
+        """
+        library = getattr(self, "_library", None)
+        root = getattr(library, "root", None)
+        if root is None:
+            self._push_frame(AlbumFrame(target))
+            return
+        # 弹到「栈上不再是相册链」为止。
+        while self._level_stack.can_pop() and isinstance(self._level_stack.top, AlbumFrame):
+            self._level_stack = self._level_stack.pop()
+        # 从库根到目标的那几层，一层一帧压上去。
+        try:
+            relative = target.relative_to(root)
+        except ValueError:  # 不在库里 —— 调用点已经查过，这里只是不再崩一次
+            self._push_frame(AlbumFrame(target))
+            return
+        current = Path(root)
+        for part in relative.parts:
+            current = current / part
+            self._push_frame(AlbumFrame(current))
+
     def _push_frame(
         self, frame: object, narrowing: tuple[object, ...] = (), *, replace: bool = False
     ) -> None:

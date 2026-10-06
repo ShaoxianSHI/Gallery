@@ -121,7 +121,7 @@ def test_escape_from_an_album_selects_that_album(
         window.go_up()
         wait_for_level(window, qt_app, lambda: window._model.rowCount() == 2, what="退回后的这一层")
 
-        assert window._current_dir == library
+        assert window._current_folder() == library
         assert current_name(window) == "海边", "退回来时该停在刚离开的那个相册上"
     finally:
         window.close()
@@ -142,7 +142,7 @@ def test_double_clicking_blank_out_of_an_album_selects_that_album(
         double_click_blank(window, qt_app)
         wait_for_level(window, qt_app, lambda: window._model.rowCount() == 2, what="退回库根")
 
-        assert window._current_dir == library
+        assert window._current_folder() == library
         assert current_name(window) == "山巅"
     finally:
         window.close()

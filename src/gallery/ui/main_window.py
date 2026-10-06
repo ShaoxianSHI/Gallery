@@ -78,7 +78,6 @@ from gallery.ui.navigation import (
     breadcrumb_parts,
     entry_key,
     level_key,
-    parent_of,
     path_key,
     row_of_entry_key,
 )
@@ -102,7 +101,15 @@ from gallery.ui.watch import WatchBridge, WatchStarter, start_watch
 from gallery.ui.window.banner_flow import BannerFlowMixin
 from gallery.ui.window.calendar_flow import CalendarFlowMixin
 from gallery.ui.window.context_menu_flow import ContextMenuFlowMixin
-from gallery.ui.window.level_stack import AlbumFrame, LevelStack, RootKind
+from gallery.ui.window.level_stack import (
+    AlbumFrame,
+    CalendarFrame,
+    GroupFrame,
+    LevelStack,
+    PhotoFrame,
+    RootKind,
+    SearchFrame,
+)
 from gallery.ui.window.level_stack_mixin import LevelStackMixin
 from gallery.ui.window.library_flow import LibraryFlowMixin
 from gallery.ui.window.metadata_flow import MetadataFlowMixin
@@ -839,43 +846,88 @@ class MainWindow(
         if not paths.is_within(library.root, target):
             return
         resolved = target.resolve()
-        # **栈：压一个相册帧**（ADR 0041）。分组的清理由「压栈」本身完成 —— 原来这里是
-        # ``_current_dir = …`` 加 ``_group_view = None`` 两行手工同步，而漏掉后一行就是
-        # 「进了相册却还说自己在分组里」。
-        self._push_frame(AlbumFrame(resolved))
+        # **栈：相册链是「一层一帧」** —— 从库根点进「旅行/2024」要压**两**帧（旅行、2024），
+        # 于是 Esc 一次退到「旅行」、两次退到库根，与访达逐层退出同一套。压一帧是不够的：
+        # 那样「旅行/2024」与「旅行/2025」在栈上长得一样，退一次就掉回库根（实测：
+        # 进去是 1 行，退一次却变成库根的 2 行）。
+        #
+        # **分组的清理由压栈本身完成** —— 原来这里是 ``_current_dir = …`` 加
+        # ``_group_view = None`` 两行手工同步，而漏掉后一行就是「进了相册却还说自己在分组里」。
+        # **栈：进相册就是「退出整库检索」**（ADR 0041 决策 3）—— 弹掉搜索帧并清条件。
+        # **顺序要紧**：搜索帧压在相册链**之上**，而 ``_drop_search_frames`` 只从栈顶往上弹，
+        # 所以必须**先弹搜索帧、再压相册链**；压完再弹的话弹掉的是刚压上去的那一层，而搜索帧
+        # 留在下面（症状是「点库名退回相册」之后仍停在原来那个相册）。
+        leaving_search = self._search_frame is not None
+        if leaving_search:
+            self._leave_search_frame(self._search_frame, reload=False)
+            self._drop_search_frames()
+        self._push_album_chain(resolved)
         # **只有整库检索要清条件**（理由见上面那段）：筛选要跟着走进这个相册。
-        if self._is_library_search():
-            self._conditions.clear()
-            self._editing_condition = None
-            self._search_total = None
         self._reload_level(focus=focus)
 
     def go_up(self) -> None:
-        """**只管位置**：退出当前文件夹 / 分组 / 日历点出来的那一格。
+        """**弹掉栈顶一帧** —— 只管位置，与条件无关（ADR 0041 决策 1）。
 
-        **条件不在这条链上**（ADR 0040 决策 11，取代 ADR 0026 决策 9）：那一版把条件排在最前，
-        于是「条件又深一级」，后果是只要有条件就永远退不出文件夹与那一格 —— 用户在子相册里按
-        ``Esc``，看到的是一条条件被撤掉而位置纹丝不动（用户原话：「点开一个格子后，esc 退出一层
-        就会清空一个筛选条件」）。撤条件是 :meth:`pop_last_condition` 的事，键是 ``⇧Esc``。
+        「能退什么」不再由一串手写的 ``if`` 决定，而是**看弹掉的那一帧是什么**，四种情况在
+        :meth:`_leave_frame` 里分派。加一种新层级只需在那一处加一支 —— 而原来「忘了在
+        ``go_up`` 与 ``_can_go_up`` 里各加一支」正是那个 bug：搜索结果既不是文件夹也不是分组，
+        于是 ``_can_go_up()`` 恒为 ``False``，「搜索后直接按 Esc 能退出」是**巧合**（那时焦点
+        还在搜索框里，走的是搜索框自己的 Esc），进一趟分组、焦点回到网格就没反应了。
 
         退上去时**把刚离开的那一级留在选中状态**（访达里退上一层就是这样）；只此一处例外 ——
         再点进去是另一次浏览，那一层不留上一次的选中（见 :meth:`_arm_focus`）。
         """
-        library = self._library
-        if library is None:
+        if self._library is None:
             return
-        if self._drill_photos is not None:
-            self._leave_calendar_drill()
+        popped = self._pop_frame()
+        if popped is None:
+            return  # 只有根帧：退不动就安静地不动
+        self._leave_frame(popped.top)
+
+    def _leave_frame(self, frame: object) -> None:
+        """**刚弹掉的是哪一帧，就按那一帧做收尾**（重新列出这一层、必要时回日历 / 选中原卡片）。
+
+        **这是 ``go_up`` 唯一需要「认得帧」的地方**：弹栈是统一的，而不同帧的收尾差别很大
+        —— 日历格那一帧要回日历页、分组那一帧要把刚离开的卡片重新选中、相册与搜索帧只是重列
+        那一层。
+
+        **注意 :meth:`go_up` 是「先弹再收尾」** —— 所以这一支**不能**走 ``enter_folder``
+        （那会再压一帧，栈越退越深，实测退不出相册）。要退到哪一层是弹之前就决定的：
+        弹掉相册帧之后底下那一帧就是去处。
+        """
+        if isinstance(frame, AlbumFrame):
+            # 弹掉相册帧之后**底下那一帧**就是要去的地方（可能是根帧 = 库根）。
+            target = self._level_stack.top
+            focus = path_key(frame.path)
+            if isinstance(target, GroupFrame):
+                self._reload_level(focus=entry_key(target.group))
+                return
+            if isinstance(target, CalendarFrame):
+                self._leave_calendar_cell()
+                return
+            self._reload_level(focus=focus)
             return
-        if self._group_view is not None:
-            self._leave_group()
+        if isinstance(frame, GroupFrame):
+            self._reload_level(focus=entry_key(frame.group))
             return
-        if self._browse_mode != BROWSE_MODE_ALBUMS:
+        if isinstance(frame, CalendarFrame):
+            self._leave_calendar_cell()
             return
-        current = self._current_dir or library.root
-        parent = parent_of(library.root, current)
-        if parent is not None:
-            self.enter_folder(parent, focus=path_key(current))
+        if isinstance(frame, PhotoFrame):
+            # 照片帧底下是日历格就回日历，否则回网格。
+            if self._calendar_frame is not None:
+                self._back_to_calendar()
+            return
+        if isinstance(frame, SearchFrame):
+            # **搜索结果帧弹掉了 = 退出整库检索**（ADR 0041 决策 3）：条件是**那一帧的内容**，
+            # 帧没了条件自然也没了 —— 而底下那一层要恢复成「没搜过」的样子（它自己那份筛选
+            # 随帧存着，`_leave_search_frame` 把它放回去）。
+            #
+            # **把刚弹掉的那一帧传进去**：弹完之后 ``self._search_frame`` 已经是 ``None``，
+            # 在那一支里重新查栈会以为「压根没有搜索帧」而直接返回（条件留在原地）。
+            self._leave_search_frame(frame)
+            return
+        self._reload_level()
 
     def pop_last_condition(self) -> None:
         """撤掉最后一条筛选条件（``⇧Esc``，或菜单里的那一行）。
@@ -888,23 +940,18 @@ class MainWindow(
             return
         self._conditions.pop()
         self._editing_condition = None
+        self._sync_search_frame()  # 撤光了就不再是整库检索 → 弹掉搜索帧（ADR 0041 决策 3）
         self._apply_conditions()
 
     def _can_go_up(self) -> bool:
-        """现在退不退得回去。菜单里的「上一级」与双击空白处都问它。
+        """现在退不退得回去。**就是「栈深 > 1」**（ADR 0041 决策 1）。
 
-        判据与 :meth:`go_up` 一致，否则菜单灰着、双击却退了回去（或者反过来）。
+        判据与 :meth:`go_up` 用的是**同一句话**（栈深），而原来两者各手写一遍那串 ``if`` ——
+        顺序还是层级深度，而顺序错了的症状是「退错了一层」，不是任何一句能自检的东西。
         """
-        library = self._library
-        if library is None or self._grid.is_renaming():
+        if self._library is None or self._grid.is_renaming():
             return False
-        if self._drill_photos is not None:
-            return True  # 日历点出来的那一格，退回去回日历（与 go_up 同一套判据）
-        if self._group_view is not None:
-            return True
-        if self._browse_mode != BROWSE_MODE_ALBUMS:
-            return False
-        return parent_of(library.root, self._current_dir or library.root) is not None
+        return self._level_stack.can_pop()
 
     def _on_background_activated(self) -> None:
         """双击了网格里没有格子的地方：退回上一层，与 ``Esc`` 是同一件事。

@@ -122,7 +122,7 @@ def test_blank_double_click_walks_out_of_an_album(
         double_click_blank(window, qt_app)
         wait_for_level(window, qt_app, lambda: window._model.rowCount() == 2, what="退回后的这一层")
 
-        assert window._current_dir == library
+        assert window._current_folder() == library
         assert {entry.name for entry in window._model.entries()} == {"海边", "山巅"}
     finally:
         window.close()
@@ -149,7 +149,7 @@ def test_blank_double_click_walks_out_of_an_empty_album(
         qt_app.processEvents()
         wait_for_level(window, qt_app, lambda: window._model.rowCount() == 2)
 
-        assert window._current_dir == library
+        assert window._current_folder() == library
         assert {entry.name for entry in window._model.entries()} == {"空的", "山巅"}
     finally:
         window.close()
@@ -194,7 +194,9 @@ def test_double_clicking_an_album_card_enters_it_and_stays_there(
         wait_for_level(
             window,
             qt_app,
-            lambda: window._current_dir == library and window._scan_job is None,
+            # 栈：``_current_dir`` 是栈的投影、**在库根时是 ``None``**，所以断
+            # :meth:`_current_folder`（口径 ``_current_dir or root``）。
+            lambda: window._current_folder() == library and window._scan_job is None,
             what="退回根",
         )
         wait_for_level(window, qt_app, lambda: window._model.rowCount() == 2, what="根层列完")
@@ -309,7 +311,7 @@ def test_blank_double_click_does_nothing_while_renaming(
 
         window._on_background_activated()
 
-        assert window._current_dir == library / "海边"
+        assert window._current_folder() == library / "海边"
         assert picture.exists()
     finally:
         window.close()
@@ -331,6 +333,6 @@ def test_double_clicking_a_photo_still_opens_the_big_view(
         qt_app.processEvents()
 
         assert window._stack.currentWidget() is window._detail_page
-        assert window._current_dir == library / "海边", "双击照片不该顺手退上一层"
+        assert window._current_folder() == library / "海边", "双击照片不该顺手退上一层"
     finally:
         window.close()

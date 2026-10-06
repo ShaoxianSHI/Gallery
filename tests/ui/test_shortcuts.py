@@ -105,7 +105,7 @@ def test_escape_leaves_the_detail_view_first(
         qt_app.processEvents()
 
         assert window._stack.currentWidget() is window._grid_page
-        assert window._current_dir == library / "海边"
+        assert window._current_folder() == library / "海边"
         assert window._up_action.isEnabled() is True
     finally:
         window.close()
@@ -126,13 +126,13 @@ def test_escape_walks_up_one_level_at_a_time(
         qt_app.processEvents()
         wait_for_level(window, qt_app, lambda: window._model.rowCount() == 1, what="扫描")
 
-        assert window._current_dir == library
+        assert window._current_folder() == library
         assert window._up_action.isEnabled() is False
 
         QTest.keyClick(window, Qt.Key.Key_Escape)
         qt_app.processEvents()
 
-        assert window._current_dir == library, "已经在库根，不能再往上"
+        assert window._current_folder() == library, "已经在库根，不能再往上"
     finally:
         window.close()
 
@@ -158,7 +158,7 @@ def test_escape_cancels_rename_instead_of_going_up(
         qt_app.processEvents()
 
         assert editor.is_editing() is False
-        assert window._current_dir == library / "海边", "不该顺手跳上一层"
+        assert window._current_folder() == library / "海边", "不该顺手跳上一层"
         assert picture.exists()
     finally:
         window.close()
