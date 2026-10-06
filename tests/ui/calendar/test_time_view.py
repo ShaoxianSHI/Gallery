@@ -21,13 +21,14 @@ import pytest
 pytest.importorskip("PySide6")
 
 import shiboken6  # noqa: E402
-from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtCore import QPoint, QRect, Qt  # noqa: E402
+from PySide6.QtGui import QImage, QRegion  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from gallery.core.library.photos import PhotoRef  # noqa: E402
 from gallery.core.metadata.facets import PhotoFacets  # noqa: E402
 from gallery.ui.calendar.thumbs import ThumbStore  # noqa: E402
-from gallery.ui.calendar.time_view import WeekView  # noqa: E402
+from gallery.ui.calendar.time_view import HOURS_PER_DAY, WeekView  # noqa: E402
 
 ANCHOR = datetime.date(2021, 9, 12)
 #: 一周里的第一个小时有照片 —— 定位应该把滚动条推到 0 行前面一点。
@@ -462,3 +463,115 @@ def test_the_now_line_stays_inside_todays_own_column(
         x = int(left + (neighbour + 0.5) * column)
         around = {shot.pixelColor(x, y + dy).name() for dy in (-1, 0, 1)}
         assert around == {background}, f"那条线划出了今天那一格，落到了 {days[neighbour]} 上面"
+
+
+def _full_week(view: WeekView, per_hour: int = 1) -> None:
+    """一周七列、每小时都塞上照片（这样每一格都要画，跑不掉）。"""
+    by_day: dict = {}
+    by_hour: dict = {}
+    for day in view.days():
+        refs = [
+            _ref(f"{day}_{hour}_{index}.jpg")
+            for hour in range(HOURS_PER_DAY)
+            for index in range(per_hour)
+        ]
+        by_day[day] = refs
+        for hour in range(HOURS_PER_DAY):
+            by_hour[(day, hour)] = [ref for ref in refs if f"_{hour}_" in ref.path.name]
+    view.set_buckets(by_day, by_hour)
+
+
+def _paint_counting(view: WeekView) -> list[int]:
+    """数「这一帧真的画了几格」——装一个假的 ``_paint_hour_row``。"""
+    calls: list[int] = []
+    grid = view._grid
+    real = grid._paint_hour_row
+
+    def counting(*args: object, **kwargs: object) -> None:
+        calls.append(1)
+        real(*args, **kwargs)  # type: ignore[arg-type]
+
+    grid._paint_hour_row = counting  # type: ignore[method-assign]
+    return calls
+
+
+def test_a_partial_repaint_only_draws_the_hours_it_can_show(
+    qt_app: QApplication,
+) -> None:
+    """**局部重画不许走满 24 行。**
+
+    缺陷现场：那一段循环原来无条件走满 25 条小时线 + 7×24 = 168 格，于是时间轴有多高
+    就画多高。可它高 2218 px 而视口只有 724 px —— **七成四的活画在屏幕外头**。
+
+    之所以要紧，是因为 :meth:`WeekView.update` 在**每张缩略图回来时**都调一次
+    ``self._grid.update()``，而一次 ``update()`` 标脏整块。实测一周 336 张照片逐张到达
+    = 336 次整块重画，paintEvent 累计 290 ms。
+
+    断的是**形状**：一次局部重画只许碰看得见的那几行。量时间会随机器飘，量格数不会。
+    """
+    view = WeekView(ThumbStore())
+    view.resize(1000, 780)
+    view.show()
+    qt_app.processEvents()
+    view.set_anchor(ANCHOR)
+    _full_week(view)
+    qt_app.processEvents()
+
+    grid = view._grid
+    calls = _paint_counting(view)
+    band = QRect(0, 0, grid.width(), view._area.viewport().height())
+    shot = QImage(grid.size(), QImage.Format.Format_RGBA8888)
+    grid.render(shot, QPoint(0, 0), QRegion(band))  # 局部重画
+    calls.clear()
+
+    grid.render(shot, QPoint(0, 0), QRegion(band))
+
+    row = view.row_height()
+    hours_on_screen = min(HOURS_PER_DAY, int(band.height() // row) + 2)
+    ceiling = len(view.days()) * hours_on_screen + len(view.days())  # 每格 + 一天的余量
+    assert 0 < len(calls) <= ceiling, (
+        f"只重画了可见的 {band.height()} px，却碰了 {len(calls)} 格（上限 {ceiling}）"
+        " —— 七成四的活画在屏幕外头了"
+    )
+
+
+def test_a_full_repaint_still_draws_every_hour(qt_app: QApplication) -> None:
+    """整块重画（窗口刚露出来、切页回来）**不许**因为收口而漏画。"""
+    view = WeekView(ThumbStore())
+    view.resize(1000, 780)
+    view.show()
+    qt_app.processEvents()
+    view.set_anchor(ANCHOR)
+    _full_week(view)
+    qt_app.processEvents()
+
+    grid = view._grid
+    calls = _paint_counting(view)
+    shot = QImage(grid.size(), QImage.Format.Format_RGBA8888)
+    grid.render(shot, QPoint(0, 0), QRegion(grid.rect()))
+
+    assert len(calls) == len(view.days()) * HOURS_PER_DAY, (
+        f"整块重画只碰了 {len(calls)} 格，应是 {len(view.days()) * HOURS_PER_DAY} 格"
+        " —— 少画的地方在屏幕上就是空白"
+    )
+
+
+def test_no_clip_region_means_draw_everything(qt_app: QApplication) -> None:
+    """**拿不到裁剪区就当整块都可见。**
+
+    宁可多画，不可在该画的地方留空白 —— 而这里曾经真会一格都不画：
+    裁剪区只在 ``event.region()`` 上，Qt **不会**把它设到 paintEvent 里我们自己新建的
+    painter 上（实测 ``painter.clipBoundingRect()`` 是空矩形），于是照着它算会得出
+    「第一行 0、最后一行 -1」。
+    """
+    view = WeekView(ThumbStore())
+    view.resize(1000, 780)
+    view.show()
+    qt_app.processEvents()
+    view.set_anchor(ANCHOR)
+
+    assert view._grid._visible_hours(None, view.row_height()) == (0, HOURS_PER_DAY - 1)
+    assert view._grid._visible_hours(object(), view.row_height()) == (
+        0,
+        HOURS_PER_DAY - 1,
+    )

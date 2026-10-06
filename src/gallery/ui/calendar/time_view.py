@@ -332,7 +332,23 @@ class _TimeGrid(QWidget):
         self._view = view
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
-    def paintEvent(self, _event: object) -> None:  # noqa: N802 - 名字是 Qt 定的
+    def _visible_hours(self, event: object, row: float) -> tuple[int, int]:
+        """这次重画覆盖哪几行小时（闭区间）。
+
+        取 ``event.region()`` 的外接矩形 —— 那才是 Qt 真正要重画的范围。**拿不到就当整块
+        都可见**（比画少了安全得多：宁可多画，不可在该画的地方留空白）。
+        """
+        region = getattr(event, "region", None)
+        bounds = region().boundingRect() if callable(region) else None
+        if bounds is None or not bounds.isValid() or row <= 0:
+            return 0, HOURS_PER_DAY - 1
+        first = int(bounds.top() // row)
+        # **下界留一行余量**：贴着可见区上沿的那一行，它的标签画在格子里侧（``y + CELL_GAP``），
+        # 上沿正好切在标签中间时多留一格才画得全。少这一行就是「第一行的小时数被切掉一半」。
+        last = int(bounds.bottom() // row) + 1
+        return max(0, first), min(HOURS_PER_DAY - 1, last)
+
+    def paintEvent(self, event: object) -> None:  # noqa: N802 - 名字是 Qt 定的
         painter = begin(self, self._view.background)
         colors = self._view.colors
         days = self._view.days()
@@ -341,7 +357,24 @@ class _TimeGrid(QWidget):
         left = self._view.content_left()
         right = int(left + self._view.content_width())
 
-        for index in range(HOURS_PER_DAY + 1):
+        # **只画看得见的那几行**（下方两段循环都按这个范围收口）。
+        #
+        # 缺陷现场：这两段循环原来无条件走满 —— 25 条小时线加 7×24 = 168 格，于是时间轴
+        # 有多高就画多高。可它高 2218 px 而视口只有 724 px（**只露三分之一**），七成四的
+        # 活是画在屏幕外头的。
+        #
+        # 之所以要紧，是因为 :meth:`WeekView.update` 在**每张缩略图回来时**都调一次
+        # ``self._grid.update()``（见那里「缩略图一张一张回来时漏了它」那段），而一次
+        # ``update()`` 标脏的是整块：实测一周 336 张照片逐张到达 = **336 次整块重画**，
+        # 光 paintEvent 就累计 290 ms（占那一段墙钟的 95%）。这张表一收就只剩三分之一。
+        #
+        # 裁剪区**只能从 ``event`` 上取**：Qt 不会把它设到 paintEvent 里我们自己新建的
+        # painter 上 —— 实测 ``painter.clipBoundingRect()`` 是空矩形。所以写成
+        # ``painter.clipRect()`` 会算出「第一行 0、最后一行 -1」，于是**一格都不画**。
+        # 光栅层面早被 ``QBackingStore`` 按 update 区域裁掉了，省下来的是这些 Python 循环。
+        first, last = self._visible_hours(event, row)
+
+        for index in range(first, min(last + 1, HOURS_PER_DAY) + 1):
             y = index * row
             painter.setPen(colors.hairline)
             painter.drawLine(int(GUTTER), int(y), right, int(y))
@@ -358,7 +391,7 @@ class _TimeGrid(QWidget):
 
         for index, day in enumerate(days):
             slot = QRectF(left + index * column, 0, column, self.height())
-            for hour in range(HOURS_PER_DAY):
+            for hour in range(first, last + 1):
                 photos = self._view.photos_in_hour(day, hour)
                 # **点中的那一格也要画**（哪怕那一小时没有照片）：高亮跟着这一格走，不是照片。
                 if photos or self._view.is_selected_cell(day, hour):
@@ -369,6 +402,7 @@ class _TimeGrid(QWidget):
                         hour,
                         photos,
                     )
+            # 列分隔线是**通高**的，不受可见行范围影响（它在 x 上不在 y 上）。
             painter.setPen(colors.outline)
             painter.drawLine(int(slot.left()), 0, int(slot.left()), self.height())
             if index == len(days) - 1:
