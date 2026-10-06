@@ -453,14 +453,15 @@ def test_only_three_things_can_take_a_condition_away() -> None:
             "self._conditions = list(conditions) "
             "if self._search_scope == SEARCH_SCOPE_LEVEL else []",
         ),
-        # ---- 换场合，不是「用户撤掉了」：切到整库检索时清掉它 ----
-        # 整库检索横跨整个库，而筛选只管当前这一层（ADR 0026 决策 1 / ADR 0040 决策 1）——
-        # 两者是互不相干的概念，换浏览方式 / 换库时不该叠在一起。
-        # **``main_window.py`` 里那一处没有了**（原先 ``enter_folder`` 里有）：现在「进相册就是
-        # 退出整库检索」走 :meth:`SearchFlowMixin._leave_search_frame`，它清条件**并**弹掉栈上的
-        # 搜索帧 —— 只清条件不弹帧的话那一帧会留在栈上，Esc 弹掉的是它而它已经不接管任何东西。
+        # ---- 换场合，不是「用户撤掉了」：换库时清掉它 ----
+        # 条件是**临时的**（ADR 0026 决策 9）：换库之后还留着上一座库的胶囊，检索结果就属于一个
+        # 已关掉的文件夹。
+        #
+        # **这里只剩这一处了**。「换浏览方式」原先也清一次（``calendar_flow.py``），现在走
+        # :meth:`SearchFlowMixin._leave_search_frame` —— 那个入口**清条件并弹掉栈上的搜索帧**，
+        # 而原来那处只清条件、不弹帧，于是栈上留着一帧已经什么都不接管的东西（Esc 弹掉的是它，
+        # 用户看到的是「按 Esc 什么都没发生」）。清单少一条不是放松，是那个场合已经并进去了。
         ("src/gallery/ui/window/library_flow.py", "self._conditions.clear()"),
-        ("src/gallery/ui/window/calendar_flow.py", "self._conditions.clear()"),
     }
 
     root = Path(__file__).resolve().parents[2]
@@ -503,6 +504,58 @@ def test_only_three_things_can_take_a_condition_away() -> None:
     # 清单本身也要看着点：允许项被挪走或改名了时这里会红，而不是悄悄放行。
     unused = allowed - found
     assert not unused, f"清单里有几条已经不存在了（挪走或改名了）：{sorted(unused)}"
+
+
+def test_only_one_place_ends_a_library_search() -> None:
+    """「退出整库检索」只有**一个**入口：``_leave_search_frame``。
+
+    **清条件与弹搜索帧是同一件事的两半**，所以必须走同一个入口 —— 这条盯的是那个「半」：
+
+    写 ``self._conditions.clear()`` 而不弹帧，眼下常常看不出差别（换浏览方式时栈已经被换根
+    清空了，于是清条件就够了）。但那是**靠别人顺手清了栈**才成立的隐性耦合：谁把换根挪到
+    条件清理之后，症状就是「条件没了、栈上还挂着一个什么都不接管的搜索帧」，而 Esc 弹掉的正是
+    它 —— 用户看到的是「按 Esc 什么都没发生」，界面上还看不出任何异常。
+
+    与 :func:`test_only_three_things_can_take_a_condition_away` 的分工：那条盯「谁可以改条件」，
+    这条盯「改条件时栈跟不跟得上」。
+
+    **``library_flow.py``（换库）是另一个正当场合**：那里栈也被 ``_set_root`` 清空了，而条件是
+    **上一座库的**（ADR 0026 决策 9），压根不存在「要不要弹搜索帧」这个问题 —— 整条栈都没了。
+    所以它不在本条的眼里，由上一条清单管着。
+    """
+    source_root = Path(__file__).resolve().parents[2] / "src" / "gallery"
+    assert source_root.is_dir(), f"扫的目录不存在：{source_root}"
+
+    # **相对路径以 ``src/gallery`` 为基准**（写成 ``parents[3]`` 的话前缀会带上工作区目录名，
+    # 于是 ``exempt`` 全不匹配而这条恒红 —— 与「扫零个文件而恒绿」是同一种失效，两头都要防）。
+    exempt = {
+        "ui/window/search_flow.py",  # 那个入口自己住在这儿
+        "ui/window/library_flow.py",  # 换库：整条栈都已清空
+    }
+    offenders: list[str] = []
+    for path in sorted(source_root.rglob("*.py")):
+        relative = path.relative_to(source_root).as_posix()
+        if relative in exempt:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not (
+                isinstance(func, ast.Attribute)
+                and func.attr == "clear"
+                and isinstance(func.value, ast.Attribute)
+                and func.value.attr == "_conditions"
+            ):
+                continue
+            offenders.append(f"{relative}:{node.lineno}")
+    assert not offenders, (
+        "这些地方自己清条件而没走 _leave_search_frame（栈上的搜索帧会留下）：\n"
+        + "\n".join(offenders)
+        + "\n退出整库检索走 SearchFlowMixin._leave_search_frame —— 它清条件、弹搜索帧、"
+        "恢复底下那一层自己的筛选，并刷新面包屑。"
+    )
 
 
 def test_a_chip_click_is_released_by_the_next_real_action(
@@ -946,6 +999,71 @@ def test_escape_exits_the_search_after_walking_through_a_group(
     )
     assert not window._is_library_search(), "退出搜索之后仍说自己在整库检索"
     window.close()
+
+
+#: 「从哪一档换到哪一档」——**三档两两之间的转移全列**，而不是只从相册出发。
+#:
+#: 用户是从**相册视图**发起搜索的（「在相册视图区搜索，然后切到日历视图」），但只断那一条
+#: 转移会漏掉两件事：一是 ``set_browse_mode`` 撞上当前这一档会**早退**（什么也不做），二是
+#: 「从日历切回相册」是另一条分支，走的是同一个漏掉的刷新。
+ALL_BROWSE_TRANSITIONS = [
+    (BROWSE_MODE_ALBUMS, BROWSE_MODE_CALENDAR),
+    (BROWSE_MODE_ALBUMS, BROWSE_MODE_FLAT),
+    (BROWSE_MODE_CALENDAR, BROWSE_MODE_ALBUMS),
+    (BROWSE_MODE_CALENDAR, BROWSE_MODE_FLAT),
+    (BROWSE_MODE_FLAT, BROWSE_MODE_ALBUMS),
+    (BROWSE_MODE_FLAT, BROWSE_MODE_CALENDAR),
+]
+
+_BROWSE_NAMES = {
+    BROWSE_MODE_ALBUMS: "相册",
+    BROWSE_MODE_FLAT: "全部照片",
+    BROWSE_MODE_CALENDAR: "日历",
+}
+
+
+@pytest.mark.parametrize(("frm", "to"), ALL_BROWSE_TRANSITIONS)
+def test_switching_the_view_leaves_no_condition_chip_behind(
+    qt_app: QApplication, tmp_path: Path, make_photo, frm: str, to: str
+) -> None:
+    """换浏览方式之后，**界面上不许还挂着上一层的条件胶囊**。
+
+    > 用户原话：「在相册视图区搜索，然后切到日历视图。这是日历视图的条件栏那里残留着之前的
+    > 搜索条件，但是既没有用来搜索，也没有用来筛选。这个条件在 UI 上应该去掉才对」
+    > 以及「再切到全部照片也会残留，只有切到相册时会清掉」。
+
+    **模型早就清了，界面没清** —— 这是「状态改了但没人去刷新那一行」的典型症状，与栈无关
+    （切到日历时栈已经是空的了）。
+
+    真因：:meth:`MainWindow._sync_calendar_conditions` 是**唯一**摆这两处胶囊的地方，而它只由
+    :meth:`MainWindow._update_breadcrumb` 调；后者又只由 :meth:`MainWindow._reload_level` 调。
+    ``set_browse_mode`` 的三条分支里**只有「切到相册」那条**经过 ``_reload_level``，另两条走
+    ``_enter_calendar`` 与直接换页 —— 于是胶囊留在屏幕上，要来回切一次才消失。
+
+    **六个转移全断**：只断「相册→日历」的话，「切到全部照片也残留」正好漏过去 —— 而它恰恰
+    说明病根不在日历上，而在「谁负责刷新」。
+    """
+    root = _library(tmp_path, make_photo)
+    window = _open(qt_app, root, tmp_path / "会话", browse_mode=frm)
+    try:
+        _settle(qt_app, window)
+        _filter(qt_app, window, "#相机 Canon", scope=SEARCH_SCOPE_LIBRARY)
+        _settle(qt_app, window)
+        assert _chips(window) == ["相机：Canon"], "前提不成立：没搜出条件来"
+        where = f"{_BROWSE_NAMES[frm]}→{_BROWSE_NAMES[to]}"
+
+        window.set_browse_mode(to)
+        _settle(qt_app, window)
+
+        assert _chips(window) == [], f"{where} 之后模型里还留着条件"
+        assert _calendar_chips(window) == [], (
+            f"{where} 之后日历工具条上还挂着胶囊：{_calendar_chips(window)}"
+        )
+        assert not any(text.endswith("✕") for text in _trail(window)), (
+            f"{where} 之后面包屑上还挂着条件：{_trail(window)}"
+        )
+    finally:
+        window.close()
 
 
 def test_escape_leaves_the_folder_without_touching_the_conditions(

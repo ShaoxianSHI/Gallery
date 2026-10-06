@@ -1108,10 +1108,10 @@ class MainWindow(
         self._sync_calendar_conditions(conditions, editing)
         if self._drill_photos is not None:
             # 日历点出来的那一格不是文件夹，面包屑没有一段能指；标题里已经写着它在哪一段日子。
-            self._breadcrumb.hide()
+            self._hide_breadcrumb()
             return
         if library is None or (not in_albums and self._group_view is None and not conditions):
-            self._breadcrumb.hide()
+            self._hide_breadcrumb()
             return
         if self._is_library_search():
             # **检索时只报库名：既不报当前文件夹，也不报当前那一组**（检索横跨整个库，ADR 0026
@@ -1135,6 +1135,24 @@ class MainWindow(
             scope=self._search_scope,
         )
         self._breadcrumb.show()
+
+    def _hide_breadcrumb(self) -> None:
+        """**藏起来，而且真的清空**（不是只 ``hide()``）。
+
+        ``QWidget.hide`` 只是不画 —— 上一轮摆的那些控件还留在布局里，于是「上一层的条件胶囊」
+        会在下一次有人读控件树时冒出来（症状：换浏览方式之后模型与栈都清了，屏幕上那几枚胶囊
+        却还挂着，且既没在搜也没在筛 —— 用户原话：「切到日历视图后条件栏那里残留着之前的搜索
+        条件」「再切到全部照片也会残留，只有切到相册时会清掉」）。
+
+        **早退的那两条路原先只 ``hide()``**，而它们的对面（``set_path``）开头是 ``_clear()`` ——
+        「不摆」与「摆成空的」被当成了同一件事。真正决定可见性的地方只有两个（网格页看不到
+        面包屑时、日历那一格没有一段能指时），两处都走这一个方法，就不会再漏第三处。
+
+        **别改成只 ``hide()``**：那一行 ``self._breadcrumb.show()`` 与这里的 ``_clear()`` 是一对
+        —— 少了清空，控件会一直留着，而它下一次被 ``set_path`` 之前都不消失。
+        """
+        self._breadcrumb.clear_content()
+        self._breadcrumb.hide()
 
     def _sync_calendar_conditions(self, conditions: Sequence[str], editing: int | None) -> None:
         """把同一批条件也摆到日历工具条上（ADR 0040 决策 9）。

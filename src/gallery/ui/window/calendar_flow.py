@@ -45,6 +45,10 @@ class CalendarFlowMixin:
             self._update_mode_actions()
             return
         was_calendar = self._browse_mode == BROWSE_MODE_CALENDAR
+        # **换根之前先抓住搜索帧**：``_set_root`` 会把整条栈清空，之后 ``self._search_frame``
+        # 就已经是 ``None`` 了 —— 而「刚才在不在整库检索」正是这里要回答的问题（顺序反了症状
+        # 是「换视图之后条件没清」，实测：抓在换根之后就成了一直抓不到）。
+        leaving_search = self._search_frame
         # **栈：换浏览方式 = 换根，顺带清掉分组 / 日历格**（ADR 0041 决策 3）。
         # 原来是四行手工同步（标志位 + 两个字段 + 浏览方式），漏一行就出现「换了浏览方式却还在
         # 那一格里」；现在只有换根这一句。
@@ -56,10 +60,16 @@ class CalendarFlowMixin:
         # **改到一半换视图 = 放弃**（ADR 0040 决策 12）：条件跟着走，但「正在改哪一条」不跟着走 ——
         # 否则用户换了视图再敲一条，敲的那条会去替换刚才那一视图里那一条，而视图已经变了。
         self._cancel_condition_edit()
-        if self._is_library_search():
-            self._conditions.clear()
-            self._editing_condition = None
-            self._search_total = None
+        # **换浏览方式就是退出整库检索**（栈上那一帧已经随换根没了，条件也该跟着没）——
+        # 走 :meth:`SearchFlowMixin._leave_search_frame` 那一个入口，不要在这里自己 ``clear()``。
+        #
+        # 原来这里是 ``if self._is_library_search(): self._conditions.clear()``，而那个判据**读
+        # 的就是 ``_conditions`` 自己**：现在碰巧成立（清之前条件还在），可它属于「靠顺序正确」
+        # 而不是「靠语义正确」—— 往后谁在这两句之间插一句读条件的话，那句就会读到已被清空的
+        # 列表。与 ADR 0041 里「``_reload_level`` 弹到满足某条件为止，连相册帧一起弹掉」同一类。
+        if leaving_search is not None:
+            # ``reload=False``：下面三条分支各自会重列。
+            self._leave_search_frame(leaving_search, reload=False)
         self._save_ui_state()
         self._update_mode_actions()
         if self._library is None:
@@ -80,6 +90,22 @@ class CalendarFlowMixin:
             if was_calendar:
                 self._cancel_calendar_job()
             self._reload_level()
+        # **三条分支跑完之后无条件把面包屑与日历工具条重摆一次**（ADR 0041 决策 3）。
+        #
+        # 这一句在三条分支**之后**、而不是各分支里各补一句，有两个理由：
+        #
+        # 一、**摆胶囊的唯一入口是 ``_update_breadcrumb``**（它调 ``_sync_calendar_conditions``），
+        #    而它只由 ``_reload_level`` 调 —— 三条分支里只有「切到相册」那条经过它。原先缺的就是
+        #    这一句，症状是**模型与栈都清了、屏幕上那枚胶囊还挂着**，且它既没在搜也没在筛
+        #    （用户原话：「在相册视图区搜索，然后切到日历视图，日历视图的条件栏那里残留着之前的
+        #    搜索条件」「再切到全部照片也会残留，只有切到相册时会清掉」）。补在分支里的话，
+        #    往后加一条新分支就又漏一次。
+        #
+        # 二、**必须在分支之后**：``_enter_calendar`` 与 ``_reload_level`` 自己也会走一遍
+        #    ``_update_breadcrumb``，而面包屑那段「搜索结果（N）」是按 ``_search_total`` 算的 ——
+        #    摆在分支之前，那几个分支各自又动一次状态，最后一次赢，屏幕上留的是中间态
+        #    （实测：日历工具条清了而面包屑还挂着「搜索结果（1） + 条件胶囊」）。
+        self._update_breadcrumb()
 
     def _shows_calendar_page(self) -> bool:
         """「这一层」此刻该摆在日历那一页上吗。

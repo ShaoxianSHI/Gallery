@@ -263,5 +263,19 @@ class BreadcrumbBar(QWidget):
         # 每换一次目录就整个重摆，所以顺序上的那个坑在这里一样踩得到（见 panels.layout）。
         clear_layout(self._layout)
 
+    def clear_content(self) -> None:
+        """**清空这一行的内容**（给「这一行此刻不该出现」的那些调用点用）。
+
+        **与 :meth:`_clear` 的区别是公开**：``_clear`` 是「我要重摆一遍」的第一步，而这一句是
+        「这一行现在什么都不该有」。
+
+        存在的理由：``hide()`` 只让控件不画，**它们还留在布局里** —— 于是「藏起来」与「摆成空的」
+        被当成了同一件事，而它们不是。症状是切走之后那一行不显示，可它里面的控件还在，下一次
+        有人读这一行（例如量它摆了什么）就量到了上一层的残留。
+
+        **别拿它当「顺便刷新」**：真要摆内容走 :meth:`set_path`（它开头就清）。
+        """
+        self._clear()
+
 
 __all__ = ["DISMISS_MARK", "SEPARATOR", "BreadcrumbBar", "ChipButton", "build_chip", "chip_style"]
