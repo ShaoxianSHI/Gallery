@@ -92,6 +92,10 @@ ICON_INSET = 1.6
 #: 放大镜那两笔的粗细（点）。
 _ICON_STROKE = 1.4
 
+#: 切换按钮那两支箭头的笔宽（点）。**比放大镜细一档**：两支箭头上下叠着，笔宽与放大镜
+#: 一样粗时同样的墨迹读起来就重一档，于是图形不得不画得更小 —— 细一档换回来的是图形尺寸。
+_TOGGLE_ICON_STROKE = 1.2
+
 #: 输入区里那一列的字号，与标题文字（13 点）差一档 —— 它是次要控件。**与弹出列表、弹出
 #: 菜单共用同一个数**（``POPUP_FONT_PX``）：那三样在用户眼里是同一种排版，各存一份早晚差一档。
 _FONT_PX = POPUP_FONT_PX
@@ -562,8 +566,8 @@ def scope_arrows(app_theme: AppTheme, ratio: float, *, active: bool) -> QPixmap:
 
     **各段比例一律按画布算**，不写死点数 —— 换一档画布时形状跟着缩，放大镜那边同理。
 
-    **图形占画布 0.56、笔宽仍取 :data:`_ICON_STROKE`**：两支箭头叠在一起的墨迹是放大镜的
-    一倍多，占满就会读成「图标被框住了」；而笔宽不跟着缩，才与放大镜是同一支笔。
+    **图形占画布 0.54、笔宽取 :data:`_TOGGLE_ICON_STROKE`**（比放大镜细一档）：两支箭头叠
+    在一起的墨迹本来就是放大镜的一倍多，占满画布会读成「图标被框住了」。
     """
     size = TOGGLE_ICON_EDGE
     pixmap = QPixmap(round(size * ratio), round(size * ratio))
@@ -572,19 +576,19 @@ def scope_arrows(app_theme: AppTheme, ratio: float, *, active: bool) -> QPixmap:
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     pen = QPen(app_theme.text if active else app_theme.text_at(0.55))
-    pen.setWidthF(_ICON_STROKE)
+    pen.setWidthF(_TOGGLE_ICON_STROKE)
     pen.setCapStyle(Qt.PenCapStyle.RoundCap)
     pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
     painter.setPen(pen)
-    left, right = size * 0.22, size * 0.78
-    # 两支箭杆分居画布的 0.30 与 0.70，箭头张开的那一半（0.125）因此离上下边还剩 2.4 点 ——
+    left, right = size * 0.27, size * 0.73
+    # 两支箭杆分居画布的 0.31 与 0.69，箭头张开的那一半（0.11）因此离上下边还剩 3 点 ——
     # 笔宽画在路径两侧，收少了会被画布裁掉（与放大镜的 :data:`ICON_INSET` 同一件事）。
-    head_len, head_half = size * 0.145, size * 0.125
+    head_len, head_half = size * 0.13, size * 0.11
     # ``back`` 是「箭头从尖端往箭杆那一头退多少」：两支箭头的分叉都朝箭杆内侧，尖端那一端
     # 才不会被画布裁掉（写死成同一个方向的话，朝右那支的分叉正好戳到画布右缘上）。
     for tip_x, other_x, back, y in (
-        (left, right, head_len, size * 0.30),
-        (right, left, -head_len, size * 0.70),
+        (left, right, head_len, size * 0.31),
+        (right, left, -head_len, size * 0.69),
     ):
         painter.drawLine(QPointF(other_x, y), QPointF(tip_x, y))
         painter.drawLine(QPointF(tip_x, y), QPointF(tip_x + back, y - head_half))
