@@ -82,7 +82,10 @@ class WatchFlowMixin:
     def _apply_watch_changes(self, library: Library, changes: Sequence[LibraryChange]) -> None:
         """按当前这一层的形状，把一批变化落到网格、内存缓存与索引上。"""
         if self._conditions:
-            # 检索结果是横跨整个库的一层，增量逻辑接不上；重跑一次几十毫秒，比改三条分支便宜。
+            # 有条件时增量逻辑一律接不上，于是两种作用域都重跑一遍：整库检索要重跑一次查询，
+            # 筛选要重新枚举这一层再收窄一次（ADR 0040 决策 6）。真增量得逐张判断「新照片命不
+            # 命中」，那还是得查索引，而 ``_reload_level`` 已经把整条链接通了 —— 另写一份
+            # 增量分支正是 ADR 0026 决策 7 点名的 bug 来源。
             self._apply_search_changes(library, changes)
             return
         added: list[GridEntry] = []
@@ -149,10 +152,11 @@ class WatchFlowMixin:
         self._refresh_thumbnail_window()
 
     def _apply_search_changes(self, library: Library, changes: Sequence[LibraryChange]) -> None:
-        """检索这一层的变化：先把索引跟上，再重跑一次检索。
+        """条件生效时这一层的变化：先把索引跟上，再重跑一次。
 
-        **索引先跟上，界面后跟上**：重跑时读的就是它，不先更新的话新照片搜不到、删掉的照片还
-        在结果里。变化落在两层之下时**照样重新检索**：条件能不能命中它取决于条件本身。
+        **两种作用域都走这里**（ADR 0040 决策 6）：索引先跟上、界面后跟上 —— 重跑时读的就是它，
+        不先更新的话新照片筛不到、删掉的照片还在结果里。变化落在两层之下时**照样重跑**：
+        条件能不能命中它取决于条件本身。
         """
         gone: list[Path] = []
         fresh: list[PhotoRef] = []
@@ -208,11 +212,15 @@ class WatchFlowMixin:
             gone.append(change.path)
 
     def _is_on_current_level(self, path: Path) -> bool:
-        """这个路径是不是当前这一层直接摆出来的一条。"""
+        """这个路径是不是当前这一层直接摆出来的一条。
+
+        **筛选不在此列**（ADR 0040 决策 6）：筛选时这一层仍然是它自己，判据照旧按浏览方式算 ——
+        「筛选在相册模式下会不会把别的相册的新照片也收进来」由筛选那一遍的相交负责。
+        """
         library = self._library
         if library is None:
             return False
-        if self._conditions:
+        if self._is_library_search():
             return True  # 检索横跨整个库（ADR 0026 决策 1）
         if self._group_view is not None or self._browse_mode == BROWSE_MODE_FLAT:
             return True  # 平铺与分组：整棵子树都摆在屏幕上

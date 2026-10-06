@@ -49,6 +49,7 @@ from gallery.ui.external_button import (  # noqa: E402
 )
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.search_field import MARGIN_RIGHT as SEARCH_FIELD_MARGIN_RIGHT  # noqa: E402
+from gallery.ui.search_field import TOGGLE_EDGE, TOGGLE_GAP  # noqa: E402
 from gallery.ui.search_field import WIDTH as SEARCH_FIELD_WIDTH  # noqa: E402
 
 #: 搜索胶囊摆好之后的那一块。**按钮是从它往左长出来的**，所以这一块就是唯一的输入。
@@ -387,25 +388,37 @@ def test_button_is_placed_left_of_the_search_field(window: MainWindow) -> None:
 def test_title_text_gives_room_for_the_button(window: MainWindow) -> None:
     """按钮摆出来之后，标题文字要给它也让出来 —— 否则长相册名从它底下穿过去。
 
-    右上角那一段 = 搜索胶囊 + 胶囊的右边距 + **按钮 + 按钮与胶囊之间的缝**。
+    右上角那一段 = 切换按钮 + 它与胶囊之间的缝 + 搜索胶囊 + 胶囊的右边距 + **外部按钮 + 它与
+    胶囊之间的缝**（ADR 0040 决策 5）。
     """
     window.show()
     if not window._owns_title_bar:
         pytest.skip("这一条标题条在本平台上不存在（只有 macOS 有）")
     assert window._external_button.isVisible()
     assert window._title_bar._right_reserved == (
-        SEARCH_FIELD_WIDTH + 2 * SEARCH_FIELD_MARGIN_RIGHT + BUTTON_WIDTH + BUTTON_GAP
+        TOGGLE_EDGE
+        + TOGGLE_GAP
+        + SEARCH_FIELD_WIDTH
+        + 2 * SEARCH_FIELD_MARGIN_RIGHT
+        + BUTTON_WIDTH
+        + BUTTON_GAP
     )
 
 
 def test_nothing_is_reserved_when_the_button_is_away(window: MainWindow) -> None:
-    """按钮收起来时**不让位**：空出来的宽度还给标题文字，长名字才摆得下。"""
+    """按钮收起来时**不让位**：空出来的宽度还给标题文字，长名字才摆得下。
+
+    **切换按钮那份仍然占着**（它一直摆着，与外部按钮那个会收起来的不同）—— 所以这里少的只是
+    外部按钮那两样。
+    """
     window.show()
     if not window._owns_title_bar:
         pytest.skip("这一条标题条在本平台上不存在（只有 macOS 有）")
     window._external_button.setVisible(False)
     window._layout_title_bar()
-    assert window._title_bar._right_reserved == (SEARCH_FIELD_WIDTH + 2 * SEARCH_FIELD_MARGIN_RIGHT)
+    assert window._title_bar._right_reserved == (
+        TOGGLE_EDGE + TOGGLE_GAP + SEARCH_FIELD_WIDTH + 2 * SEARCH_FIELD_MARGIN_RIGHT
+    )
 
 
 def test_calendar_entry_carries_the_current_level_and_day(

@@ -11,13 +11,17 @@ from __future__ import annotations
 
 import logging
 from functools import partial
+from pathlib import Path
 
+from gallery.core.library.config import SEARCH_SCOPE_LEVEL, SEARCH_SCOPES
 from gallery.core.library.facade import Library
+from gallery.core.library.photos import FolderRef, GridEntry, PhotoRef
 from gallery.core.library.scanner import ScanReport
 from gallery.core.library.search import (
     RESULT_LIMIT,
     ParsedInput,
     SearchCondition,
+    albums_kept,
     make_condition,
     parse_input,
     unusable_reason,
@@ -29,8 +33,159 @@ from gallery.ui.window.notice import NoticeSlot
 logger = logging.getLogger(__name__)
 
 
+def _entry_survives(entry: GridEntry, matching: set[Path], kept_albums: frozenset[Path]) -> bool:
+    """这一格在筛选后留不留。
+
+    **照片按路径、卡片按「它自己那张卡留没留」** —— 卡片判据由 :func:`search.albums_kept` 在
+    core 那一侧算完（要遍历整份命中集合），所以这里只查表，不再各算一遍前缀。
+    """
+    if isinstance(entry, FolderRef):
+        return entry.path in kept_albums
+    if isinstance(entry, PhotoRef):
+        return entry.path in matching
+    return True  # 分组卡片由 _reorder_level 重算，不归这里管
+
+
 class SearchFlowMixin:
-    """检索框那一套条件，以及「把整库写进索引」那一遍后台维护。"""
+    """检索框那一套条件，以及「把整库写进索引」那一遍后台维护。
+
+    **条件有两种作用域**（ADR 0040 决策 1）：整库检索的结果**接管**当前层，而筛选只**收窄**
+    当前层、视图本身不动。整个窗口里凡是「条件非空就意味着什么」的地方一律问
+    :meth:`_is_library_search` —— 七个判据各自问一次 ``self._conditions`` 是这类 bug 的来源，
+    而症状（筛选时日历被换成网格页、进相册时条件被清掉）看起来都像「另一个功能坏了」。
+    """
+
+    # ---- 作用域（ADR 0040）----------------------------------------------------
+
+    def _is_library_search(self) -> bool:
+        """条件正**接管**这一层（整库检索），而不是在收窄它。
+
+        **全窗口唯一的那句判据**：``bool(self._conditions)`` 只说明「有条件」，不说明条件管到
+        哪儿 —— 两者在筛选下必须分开，而分开的地方多了就一定会漏一处。
+        """
+        return bool(self._conditions) and self._search_scope != SEARCH_SCOPE_LEVEL
+
+    def _is_filtering(self) -> bool:
+        """条件正**收窄**这一层，且这一层仍然是它自己（月视图仍然是月视图）。"""
+        return bool(self._conditions) and self._search_scope == SEARCH_SCOPE_LEVEL
+
+    def set_search_scope(self, scope: str) -> None:
+        """切到哪一种作用域（切换按钮与菜单项都走这里）。
+
+        **条件不清空**：这是同一个胶囊里的同一批条件，用户改的只是「它们管到哪儿」。清掉等于
+        逼他重新敲一遍，而那串输入他刚刚才确认过。
+        """
+        if scope not in SEARCH_SCOPES or scope == self._search_scope:
+            self._sync_search_scope()
+            return
+        self._search_scope = scope
+        self._remember_ordering()  # 作用域是库级偏好（ADR 0040 决策 6）
+        self._sync_search_scope()
+        # **有条件才重列这一层**：没有条件时两种作用域的显示完全一样（都是这一层的全部内容），
+        # 重列只是让网格无意义地闪一下。
+        if self._conditions:
+            self._reload_level()
+        else:
+            self._update_action_states()
+
+    def _sync_search_scope(self) -> None:
+        """胶囊上的那句话、切换按钮与菜单项的勾，三处一起跟着作用域走。"""
+        filtering = self._search_scope == SEARCH_SCOPE_LEVEL
+        self._search_field.set_scope(filtering)
+        self._scope_toggle.set_filtering(filtering)
+        self._scope_action.setChecked(filtering)
+        self._update_action_states()
+
+    # ---- 筛选（ADR 0040 决策 3）------------------------------------------------
+
+    def _start_level_filter(self) -> None:
+        """把这一层按条件收窄（**不在筛选作用域时直接往下走**，见 :meth:`_order_now`）。
+
+        收窄是**一次相交**而不是另写一条列举链：这一层的照片照常枚举（相册 / 平铺 / 分组快照各
+        走各的现成路径），然后拿一份「命中路径集合」去求交。于是分桶、排序、缩略图预取、
+        焦点恢复、空层提示、监听增量全都原样复用 —— 与整库检索共用同一条收尾路径
+        （ADR 0026 决策 7 的同一条原则，另写一条平行路径才是 bug 的来源）。
+
+        **索引没建全时先把它建起来**（与 :meth:`_start_search` 同一道闸，理由也一样）：文件表
+        里没有行时，一条都命中不了，用户看到的是「这个视图里没有符合这些条件的照片」，而那
+        不是答案，是索引还没建。那一遍跑完会自己重跑这一遍（``_on_photo_index_done``）。
+        """
+        library = self._library
+        if not self._is_filtering() or library is None:
+            self._apply_ordering()
+            return
+        if library.indexed_photos() == 0:
+            self._maybe_start_photo_index()
+            return
+        generation = self._generation
+        conditions = tuple(self._conditions)
+
+        def work(context: TaskContext) -> object:
+            matching = library.matching_paths(conditions)
+            if context.is_cancelled():
+                return None
+            # 相册卡片不是照片，但一张照片都不在它子树里的卡片该收起来 —— 否则用户点进去
+            # 看到的是个空层。判据是「子树里有没有命中」，由 core 一次算完（ADR 0040 决策 3）。
+            staged = self._staged if self._staged is not None else self._model.entries()
+            albums = [entry for entry in staged if isinstance(entry, FolderRef)]
+            kept_albums = {album.path for album in albums_kept(albums, matching, root=library.root)}
+            return (matching, frozenset(kept_albums))
+
+        self._filter_job = self._runner.submit(
+            work,
+            on_result=partial(self._on_level_filtered, generation),
+            on_error=partial(self._on_filter_failed, generation),
+        )
+
+    def _on_level_filtered(self, generation: int, payload: object) -> None:
+        """命中集合回来了：把这一层收窄，然后照常往下走（排序、分桶、缩略图）。
+
+        **收窄落在 ``_staged`` 上而不是模型上**：这一层还没上屏（换层时暂存区优先），在那里收
+        窄才不会出现「先摆一屏未筛选的、再换成筛过的」那种闪。
+        """
+        if generation != self._generation:
+            return
+        self._filter_job = None
+        if not isinstance(payload, tuple) or len(payload) != 2:
+            self._apply_ordering()
+            return
+        matching, kept_albums = payload
+        if not isinstance(matching, set) or not isinstance(kept_albums, frozenset):
+            self._apply_ordering()
+            return
+        staged = self._staged
+        if staged is not None:
+            self._staged = [
+                entry for entry in staged if _entry_survives(entry, matching, kept_albums)
+            ]
+        else:
+            # 已经上屏（监听器增量那一路）：就地换掉模型内容。
+            entries = self._model.entries()
+            kept = [entry for entry in entries if _entry_survives(entry, matching, kept_albums)]
+            if kept != list(entries):
+                self._model.clear()
+                self._model.append(kept)
+        self._search_total = (
+            len(self._staged) if self._staged is not None else self._model.rowCount()
+        )
+        self._update_breadcrumb()
+        # **直接排**：筛选已经做完，再绕回 ``_order_now`` 会再筛一次（同一个漏斗递归到自己）。
+        self._apply_ordering()
+
+    def _on_filter_failed(self, generation: int, message: str) -> None:
+        """筛选没能完成。**说清是哪一件**，别让用户对着一个空层猜。"""
+        if generation != self._generation:
+            return
+        self._filter_job = None
+        self._show_banner(f"筛选没能完成：{message}")
+        # 照常把这一层排出来：一片空白比未筛选的内容更没用，而横幅已经说清发生了什么。
+        self._apply_ordering()
+
+    def _cancel_level_filter(self) -> None:
+        """作废在途的筛选（换层、换库、关窗时）。"""
+        if self._filter_job is not None:
+            self._runner.cancel(self._filter_job)
+            self._filter_job = None
 
     # ---- 检索（ADR 0026）------------------------------------------------------
     def _start_search(self, library: Library) -> None:
@@ -110,7 +265,11 @@ class SearchFlowMixin:
             return
         if self._library is None:
             # 没有库的时候收下这条条件是**悄悄的**：面包屑不显示它，换库时又被清掉 —— 不如说一句。
-            self._show_banner("先打开一个照片文件夹，再搜索。")
+            self._show_banner(
+                "先打开一个照片文件夹，再筛选。"
+                if self._is_filtering()
+                else "先打开一个照片文件夹，再搜索。"
+            )
             return
         if editing is not None and 0 <= editing < len(self._conditions):
             # **就地替换**：改一条条件的结果仍是那一条、位置也不变 —— 否则面包屑上的顺序会跳。
@@ -213,7 +372,7 @@ class SearchFlowMixin:
         self._search_total = None
         self._reload_level()
 
-    # ---- 建立检索索引（ADR 0026 决策 5）---------------------------------------
+    # ---- 建立检索索引（ADR 0026 决策 5、ADR 0040 决策 3）---------------------------
 
     def _maybe_start_photo_index(self) -> None:
         """把整个库的照片写进索引的文件表，**只有真的有活干才起**。
@@ -278,7 +437,13 @@ class SearchFlowMixin:
         self._forget_indexed_root()
         logger.info("建立检索索引失败：%s", message)
         if self._conditions:
-            self._show_banner("这个库没法建立检索索引，搜索暂时用不了。")
+            # **说清是哪一种条件**：两个功能坏在同一个原因上（那个卷不许写缓存），而用户看到的
+            # 是他自己刚才做的那件事 —— 把话说成他正在用的那个功能，他才不会去别处找原因。
+            self._show_banner(
+                "这个库没法建立检索索引，筛选暂时用不了。"
+                if self._is_filtering()
+                else "这个库没法建立检索索引，搜索暂时用不了。"
+            )
 
     def _cancel_photo_index(self) -> None:
         """作废在途的索引维护（切库、关窗时）。"""

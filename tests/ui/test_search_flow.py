@@ -263,15 +263,58 @@ def test_the_title_bar_is_taller_than_the_safe_area(qt_app: QApplication, tmp_pa
 def test_the_capsule_keeps_a_wide_gap_to_the_window_edge(
     qt_app: QApplication, tmp_path: Path
 ) -> None:
-    """胶囊离窗口右边要留够 —— 12 点太贴边，看着像被窗口挤出去。"""
+    """**右上角那一块**离窗口右边要留够 —— 12 点太贴边，看着像被窗口挤出去。
+
+    那一块现在有两样东西（ADR 0040 决策 5）：胶囊与它右边那枚切换按钮，而
+    ``MARGIN_RIGHT`` 量的正是**整块**的右边距 —— 胶囊自己被推到左边去了，所以量它自己会量到一个
+    比留白大得多的数（按钮宽 + 缝 + 右边距），而那不是这条要盯的东西。
+    """
+    window = MainWindow(session_base=tmp_path / "会话")
+    window.resize(1000, 600)
+    window.show()
+    qt_app.processEvents()
+
+    block_right = max(
+        window._search_field.geometry().right(),
+        window._scope_toggle.geometry().right(),
+    )
+    assert MARGIN_RIGHT >= 16, f"右边距只有 {MARGIN_RIGHT} 点"
+    assert window.width() - 1 - block_right == MARGIN_RIGHT
+    window.close()
+
+
+def test_the_toggle_sits_between_the_capsule_and_the_window_edge(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """切换按钮在**胶囊与窗口右缘之间**，与胶囊同高、同基线。
+
+    **高与基线都要一样**：各算各的话两者会歪开一两个点（胶囊为了字的中线被往下挪了
+    ``TEXT_ALIGN_DROP``），而这正是胶囊当初与「外部应用」按钮之间踩过的那个坑。
+    """
     window = MainWindow(session_base=tmp_path / "会话")
     window.resize(1000, 600)
     window.show()
     qt_app.processEvents()
 
     field = window._search_field.geometry()
-    assert MARGIN_RIGHT >= 16, f"右边距只有 {MARGIN_RIGHT} 点"
-    assert window.width() - (field.x() + field.width()) == MARGIN_RIGHT
+    toggle = window._scope_toggle.geometry()
+
+    assert toggle.left() >= field.right() + 1, "按钮压在胶囊上，或跑到它左边去了"
+    assert toggle.top() == field.top(), f"按钮在第 {toggle.top()} 行，胶囊在第 {field.top()} 行"
+    assert toggle.height() == field.height()
+    assert toggle.width() == toggle.height(), "22×22 正方形里只放一个图标"
+    window.close()
+
+
+def test_the_toggle_is_hidden_when_the_title_bar_is_not_ours(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """那一行不归我们时（别的平台）按钮也不出现 —— 它就摆在那一行上。"""
+    window = MainWindow(session_base=tmp_path / "会话")
+    window.show()
+    qt_app.processEvents()
+
+    assert window._scope_toggle.isVisible() is window._owns_title_bar
     window.close()
 
 

@@ -49,10 +49,13 @@ class CalendarFlowMixin:
         self._drill_label = ""
         self._browse_mode = mode
         self._group_view = None
-        # 检索横跨整个库（ADR 0026 决策 1），换浏览方式时留着它等于把两个互不相干的概念叠在一起。
-        self._conditions.clear()
-        self._editing_condition = None
-        self._search_total = None
+        # **只有整库检索要清**：它横跨整个库，换浏览方式时留着它等于把两个互不相干的概念叠在
+        # 一起（ADR 0026 决策 1）。筛选是「当前这一层里符合条件的那部分」，换浏览方式只是换了
+        # 「这一层」是什么，条件该跟着走（ADR 0040 决策 1）。
+        if self._is_library_search():
+            self._conditions.clear()
+            self._editing_condition = None
+            self._search_total = None
         self._save_ui_state()
         self._update_mode_actions()
         if self._library is None:
@@ -77,10 +80,13 @@ class CalendarFlowMixin:
     def _shows_calendar_page(self) -> bool:
         """「这一层」此刻该摆在日历那一页上吗。
 
-        日历是浏览方式而不是一层，唯一的例外是**检索**（ADR 0026 决策 1）。**问的是状态，不是
-        「刚才是从哪儿进来的」** —— 后者会在换一次排序后掉到网格页上，而菜单里的勾还留着日历。
+        日历是浏览方式而不是一层，唯一的例外是**整库检索**（ADR 0026 决策 1）。**筛选不换页**
+        —— 这正是它存在的理由：在月视图里加一条条件仍然是月视图（ADR 0040 决策 1）。
+
+        **问的是状态，不是「刚才是从哪儿进来的」** —— 后者会在换一次排序后掉到网格页上，
+        而菜单里的勾还留着日历。
         """
-        return self._browse_mode == BROWSE_MODE_CALENDAR and not self._conditions
+        return self._browse_mode == BROWSE_MODE_CALENDAR and not self._is_library_search()
 
     def _show_calendar(self) -> None:
         """把日历那一页摆到前面来。**只换页，不起扫描**（打开库时外面已经在扫了）。"""

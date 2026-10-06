@@ -12,6 +12,7 @@ from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import (
     QCursor,
     QFocusEvent,
+    QIcon,
     QKeyEvent,
     QMouseEvent,
     QPainter,
@@ -27,6 +28,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
     QWidget,
@@ -55,7 +57,25 @@ HEIGHT = 22
 
 #: 胶囊离窗口右边多远。**这一格是「右上角那一块」的右缘**，面包屑右端的条件胶囊要与它
 #: 对齐，所以它同时被 ``BreadcrumbBar.set_right_inset`` 用到 —— 「对齐的那个数」只有这一个。
+#:
+#: **从它开始往右量的那一块里现在还有一枚切换按钮**（:data:`ScopeToggle`，ADR 0040 决策 5），
+#: 也就是说胶囊自己被推到左边去了，但这一格仍然是「右上角那一块」的右缘：面包屑要对齐的仍然是
+#: 胶囊的右缘，换算在 :meth:`MainWindow._layout_title_bar` 里做。
 MARGIN_RIGHT = 20
+
+#: 切换按钮的边长（点）。**正方形**：它只有一个状态可切（搜索 ⇄ 筛选），没有下拉箭头要放 ——
+#: 里面塞两样东西就成了「外部应用」那种 44 点宽的按钮（见 ``external_button.BUTTON_WIDTH``），
+#: 而一个 44 点宽的单状态按钮摆在 208 点宽的胶囊右边会喧宾夺主。
+TOGGLE_EDGE = 22
+
+#: 切换按钮与胶囊之间的缝（点）。与 :data:`~gallery.ui.external_button.BUTTON_GAP`（9）同一档：
+#: 挤在一起读起来像胶囊自带的一个零件，而它是另一样东西。
+TOGGLE_GAP = 8
+
+#: 两种模式下占位文字各写什么。**两句话要一眼能分**：「筛选照片…」说明照片还在原地、只是少了
+#: 一些，「搜索照片…」说明整层已经被换掉了（ADR 0040 决策 5）。
+PLACEHOLDER_SEARCH = "搜索照片…"
+PLACEHOLDER_FILTER = "筛选照片…"
 
 #: 胶囊比标题栏那一条的中线再往下挪多少（点）：挪 0 点齐、挪 2 点就比标题低 1.75 点，
 #: 取中间这一格。**别再往下加** —— 2 点已经实测过是过头的那一头。
@@ -92,7 +112,7 @@ class SearchEdit(QLineEdit):
         super().__init__(parent)
         self._owner = owner
         self.setObjectName("searchEdit")
-        self.setPlaceholderText("搜索照片…")
+        self.setPlaceholderText(PLACEHOLDER_SEARCH)
         self.setFrame(False)
         # **只有点它才进来**：默认的 ``StrongFocus`` 会让窗口打开时把光标送进这个框，于是
         # 方向键在网格上立刻失灵。要它进来有一条明路：⌘F（``focus_search``）。
@@ -286,6 +306,20 @@ class SearchField(QWidget):
         self._apply_theme()
 
     # ---- 对外 --------------------------------------------------------------
+
+    def set_scope(self, filtering: bool) -> None:
+        """切到「筛选当前视图」还是「搜索整个库」（ADR 0040 决策 5）。
+
+        **只改占位文字**：候选列表、``#`` 语法、胶囊的圆角与配色全都一样 —— 用户敲的是同一套
+        条件语法，变的只是那些条件管到哪儿。把两件事做成两套语法，用户就得学两遍，而两遍里
+        有一遍会是他不用的那个。
+        """
+        self._edit.setPlaceholderText(PLACEHOLDER_FILTER if filtering else PLACEHOLDER_SEARCH)
+        self.setToolTip(
+            "在这些条件里筛选当前这一层（切到全部照片就筛整库，切到日历就筛日历）"
+            if filtering
+            else "在整个库里检索（切到筛选按钮可以只筛当前这一层）"
+        )
 
     def focus_search(self) -> None:
         """聚焦并把光标放进胶囊（⌘F）。"""
@@ -516,14 +550,135 @@ class SearchField(QWidget):
         self.focus_search()
 
 
+def funnel(app_theme: AppTheme, ratio: float, *, active: bool) -> QPixmap:
+    """那个漏斗：**现画的**，与 :func:`magnifier` 同一套规矩（坐标一律逻辑像素，仓库里不放图）。
+
+    **选中态换的是不透明度而不是形状** —— 两枚图标长得不一样会让用户以为是两个不同的功能，
+    而它们是同一个功能的两端。区别只在「现在是不是筛选模式」这一件事上。
+    """
+    size = TOGGLE_EDGE
+    pixmap = QPixmap(round(size * ratio), round(size * ratio))
+    pixmap.setDevicePixelRatio(ratio)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    pen = QPen(app_theme.text if active else app_theme.text_at(0.55))
+    pen.setWidthF(_ICON_STROKE)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    # 漏斗：上宽下窄的一个梯形，收成一根管子。整张画布 22 点，两边各让开 4 点。
+    left, right = 4.0, size - 4.0
+    top, waist, bottom = 4.0, size * 0.55, size - 4.0
+    painter.drawLine(QPointF(left, top), QPointF(right, top))
+    painter.drawLine(QPointF(right, top), QPointF(size * 0.62, waist))
+    painter.drawLine(QPointF(size * 0.62, waist), QPointF(size * 0.62, bottom))
+    painter.drawLine(QPointF(size * 0.62, bottom), QPointF(size * 0.38, bottom))
+    painter.drawLine(QPointF(size * 0.38, bottom), QPointF(size * 0.38, waist))
+    painter.drawLine(QPointF(size * 0.38, waist), QPointF(left, top))
+    painter.end()
+    return pixmap
+
+
+def toggle_style(app_theme: AppTheme, *, active: bool, radius: int = 0) -> str:
+    """切换按钮长什么样。
+
+    **底色与胶囊同一个来源**（:func:`~gallery.ui.rename_edit.field_background`），边框则跟着
+    状态换：激活时用 ``Highlight``，与胶囊获得焦点时是同一档 —— 「这个模式正开着」与「我正在
+    这里打字」在视觉上是同一件事，而它们确实是。
+    """
+    border = "palette(highlight)" if active else rgba(app_theme.text_at(0.28))
+    corner = max(0, radius or TOGGLE_EDGE // 2)
+    return f"""
+    QToolButton#searchScopeToggle {{
+        background: {rgba(field_background(app_theme))};
+        border: 1px solid {border};
+        border-radius: {corner}px;
+    }}
+    QToolButton#searchScopeToggle:hover {{ border: 1px solid palette(highlight); }}
+    """
+
+
+class ScopeToggle(QToolButton):
+    """胶囊右边那枚按钮：把搜索框在「搜索整个库」与「筛选当前视图」之间切换（ADR 0040）。
+
+    **一个文件都不碰**，只发 :attr:`toggled` —— 与 :mod:`gallery.ui.rename_edit` 同一件事。
+    """
+
+    #: 用户切了模式（带的是「现在是筛选吗」这个 ``bool``）。
+    toggled = Signal(bool)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("searchScopeToggle")
+        self.setCheckable(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        # **不要 ``setFlat``**：那会让 Qt 不再画样式背景，而我们要画的就是那一圈边框与底色
+        # （与胶囊同一份样式来源，见 :func:`toggle_style`）。
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._active = False
+        self._applied_theme: AppTheme | None = None
+        self._applied_radius = -1
+        self._applied_active: bool | None = None
+        self._watcher = theme.ensure_installed()
+        self._watcher.changed.connect(self._apply_theme)
+        self.setToolTip("在这些条件里筛选当前这一层（切到全部照片就筛整库，切到日历就筛日历）")
+        self._apply_theme()
+
+    def set_filtering(self, filtering: bool) -> None:
+        """当前是不是筛选模式。**不发 :attr:`toggled`** —— 那是「用户按了」的信号，
+        而这里只是外面（换库、恢复偏好）在同步状态；发了会让外面以为用户自己切过一次。"""
+        if self.isChecked() != filtering:
+            self.blockSignals(True)
+            try:
+                self.setChecked(filtering)
+            finally:
+                self.blockSignals(False)
+        self.setToolTip(
+            "当前：筛选当前这一层。点一下改为在整个库里检索。"
+            if filtering
+            else "当前：在整个库里检索。点一下改为只筛选当前这一层。"
+        )
+        if self._active != filtering:
+            self._active = filtering
+            self._apply_theme()
+
+    def _apply_theme(self) -> None:
+        """换过浅色 / 深色之后重下一次 —— 输入面那一族的颜色由 :mod:`gallery.ui.theme` 钉死，
+        别处不兜一层（ADR 0035 决策 2）。"""
+        app_theme = theme.current_theme()
+        radius = self.height() // 2
+        if (
+            self._applied_theme == app_theme
+            and self._applied_radius == radius
+            and self._applied_active == self._active
+        ):
+            return
+        self.setStyleSheet(toggle_style(app_theme, active=self._active, radius=radius))
+        self.setIcon(QIcon(funnel(app_theme, self.devicePixelRatioF(), active=self._active)))
+        self._applied_theme = app_theme
+        self._applied_radius = radius
+        self._applied_active = self._active
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
+        super().resizeEvent(event)
+        self._apply_theme()
+
+
 __all__ = [
     "HEIGHT",
     "MARGIN_RIGHT",
+    "PLACEHOLDER_FILTER",
+    "PLACEHOLDER_SEARCH",
     "TEXT_ALIGN_DROP",
+    "TOGGLE_EDGE",
+    "TOGGLE_GAP",
     "WIDTH",
     "CandidateList",
+    "ScopeToggle",
     "SearchEdit",
     "SearchField",
+    "funnel",
     "popup_style",
     "search_field_style",
+    "toggle_style",
 ]

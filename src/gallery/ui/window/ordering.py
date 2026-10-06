@@ -175,9 +175,34 @@ class OrderingMixin:
         return group_facet(self._group_facet)
 
     def _needs_facet_read(self) -> bool:
-        """当前的选择是否必须真去读 EXIF 才能算出顺序。"""
+        """当前的选择是否必须真去读 EXIF 才能算出顺序 —— **或者才能算出筛选结果**。
+
+        筛选那一半是 ADR 0040 决策 3：``#相机 Canon`` 要的是 ``facets.camera``，而 facet 表
+        只有读过 EXIF 的照片才有行。不把这一半算进来，筛选就等于拿一张空表去查，用户看到的
+        是「这个视图里没有符合这些条件的照片」—— 而那不是答案，是元数据还没读。
+        """
         group = None if self._group_view is not None else self._current_group_facet()
-        return needs_metadata((group, sort_facet(self._sort_facet)))
+        if needs_metadata((group, sort_facet(self._sort_facet))):
+            return True
+        return self._conditions_need_metadata()
+
+    def _conditions_need_metadata(self) -> bool:
+        """生效中的条件里有没有一条必须真读 EXIF 才算得出来（只在筛选作用域下算数）。
+
+        整库检索不在这里算：它自己有一道「索引没建全就挂起」的闸（:meth:`_start_search`），
+        而筛选这一层是照常枚举出来的，facet 读取就挂在同一条链上（见 :meth:`_start_facet_read`）。
+        """
+        return self._is_filtering() and any(
+            condition.field.needs_metadata for condition in self._conditions
+        )
+
+    def _facet_read_purpose(self) -> str:
+        """那句「用于…」的话。**说清这一次读是为了什么** —— 读元数据有几件不同的理由，
+        说错一件用户就不知道进度条在忙什么。
+        """
+        if self._conditions_need_metadata():
+            return "筛选"
+        return "分组" if self._group_facet else "排序"
 
     # ---- 进入与退出分组 ------------------------------------------------------
 
@@ -208,16 +233,19 @@ class OrderingMixin:
 
         只有真的要读 EXIF 的字段才会走到这里（按文件名排序是纯算的）。读过一次的结果落进
         索引，所以第二次换分组字段几乎立刻完成。
+
+        **筛选的条件要元数据时也走到这里**（:meth:`_needs_facet_read`）：facet 读取会**写**
+        索引，而筛选查询要**读**索引 —— 顺序反了就是拿一张空表去筛，用户看到「一条都没有」。
         """
         library = self._library
         if library is None or not self._needs_facet_read():
-            self._apply_ordering()
+            self._order_now()
             return
         # 暂存优先：刚扫完的这一层还在暂存区里，模型上一条也没有。
         entries = self._staged if self._staged is not None else self._model.entries()
         refs = [entry for entry in entries if isinstance(entry, PhotoRef)]
         if not refs:
-            self._apply_ordering()
+            self._order_now()
             return
         generation = self._generation
 
@@ -226,11 +254,11 @@ class OrderingMixin:
         cached = library.cached_facets(refs)
         if len(cached) == len(refs):
             self._facet_values = cached
-            self._apply_ordering()
+            self._order_now()
             return
 
         self._show_progress_notice(
-            f"正在读取 {len(refs)} 张照片的元数据，用于{'分组' if self._group_facet else '排序'}…"
+            f"正在读取 {len(refs)} 张照片的元数据，用于{self._facet_read_purpose()}…"
         )
 
         resolver = self._place_lookup()
@@ -288,7 +316,11 @@ class OrderingMixin:
                 self._banner.hide()
             return
         self._level_notice = True
-        if self._conditions:
+        if self._is_filtering():
+            # **说的是「这一层里没有」而不是「这些条件下没有」**（ADR 0040 决策 4）：整库检索
+            # 的那句话在这个视图里是骗人的 —— 用户看到的正是这一层，而整库里明明有照片。
+            self._show_banner("当前这一层里没有符合这些条件的照片。")
+        elif self._is_library_search():
             # 检索没命中时**不要说那句格式清单**：它与此刻无关，用户会以为文件格式不对。
             self._show_banner("这些筛选条件下没有照片。")
         elif self._group_view is not None:
@@ -333,7 +365,7 @@ class OrderingMixin:
         self._facet_job = None
         self._facet_values = payload if isinstance(payload, dict) else {}
         self._clear_progress_notice()
-        self._apply_ordering()
+        self._order_now()
         # 这一层读完了，才轮到整库那两遍（见 _maybe_start_place_pass 里的理由）。
         self._maybe_start_place_pass()
         self._maybe_start_photo_index()
@@ -343,9 +375,21 @@ class OrderingMixin:
             return
         self._facet_job = None
         self._show_banner(f"读取元数据失败，按默认顺序显示：{message}")
-        self._apply_ordering()
+        self._order_now()
         self._maybe_start_place_pass()
         self._maybe_start_photo_index()
+
+    def _order_now(self) -> None:
+        """这一层摆上屏之前的**唯一**一个漏斗：先按条件收窄（只在筛选作用域下），再排序。
+
+        **所有出口都必须走它**，不能直接调 :meth:`_apply_ordering` —— 那样每个调用点都要自己
+        判断一遍「现在是不是在筛选」，而漏掉一处的症状是「这一层没被筛」或者「没被筛的东西
+        被筛掉了」，两者都不像作用域出了问题。
+
+        :meth:`SearchFlowMixin._start_level_filter` 的**两端**调的是 :meth:`_apply_ordering`
+        而不是这里 —— 漏斗走完就该排序，排序完再回到漏斗就是递归到自己。
+        """
+        self._start_level_filter()
 
     def _apply_ordering(self) -> None:
         """把当前这一层按分组 / 排序重排一次，然后一次性摆到网格上。

@@ -38,6 +38,8 @@ from gallery.core.library.config import (
     BROWSE_MODE_FLAT,
     DEFAULT_CALENDAR_LEVEL,
     DEFAULT_SORT_FACET,
+    SEARCH_SCOPE_LEVEL,
+    SEARCH_SCOPE_LIBRARY,
     LibraryUIState,
 )
 from gallery.core.library.facade import Library
@@ -85,8 +87,10 @@ from gallery.ui.panels.welcome import WelcomeView
 from gallery.ui.search_field import HEIGHT as SEARCH_FIELD_HEIGHT
 from gallery.ui.search_field import MARGIN_RIGHT as SEARCH_FIELD_MARGIN_RIGHT
 from gallery.ui.search_field import TEXT_ALIGN_DROP as SEARCH_FIELD_TEXT_ALIGN_DROP
+from gallery.ui.search_field import TOGGLE_EDGE as SCOPE_TOGGLE_EDGE
+from gallery.ui.search_field import TOGGLE_GAP as SCOPE_TOGGLE_GAP
 from gallery.ui.search_field import WIDTH as SEARCH_FIELD_WIDTH
-from gallery.ui.search_field import SearchField
+from gallery.ui.search_field import ScopeToggle, SearchField
 from gallery.ui.tasks import TaskRunner
 from gallery.ui.thumbs.pipeline import ThumbnailPipeline
 from gallery.ui.title_bar import EXTRA_PADDING as TITLE_BAR_EXTRA
@@ -212,6 +216,9 @@ class MainWindow(
         self._size_index = nearest_index(None)
         self._browse_mode: str = BROWSE_MODE_FLAT
         self._current_dir: Path | None = None
+        #: 检索条件的作用域（ADR 0040）：整库检索还是筛选当前这一层。**库级**偏好，
+        #: 打开库时由 ``_apply_ui_state`` 从那个库的 ``config.toml`` 覆盖。
+        self._search_scope: str = SEARCH_SCOPE_LIBRARY
         # 分组 / 排序（ADR 0009）：字段 id 存在库的 config.toml 里，下次打开这个库沿用；空值走默认。
         self._group_facet: str | None = None
         self._sort_facet: str | None = DEFAULT_SORT_FACET
@@ -254,6 +261,9 @@ class MainWindow(
         #: 上一次检索命中了多少张（面包屑上那个「搜索结果（128）」；``None`` = 还没查过）。
         self._search_total: int | None = None
         self._search_job: int | None = None
+        #: 「按条件收窄当前这一层」那一次筛选的任务（ADR 0040）。**与检索那个是分开的两份**：
+        #: 它们互不同时在途（条件非空时只走其中一条），但取消时机不同 —— 换层时两个都要作废。
+        self._filter_job: int | None = None
         #: 「把整库的照片写进索引」那一遍的任务（见 ``_maybe_start_photo_index``）。
         self._index_job: int | None = None
         #: 已经起过那一遍的库。**是集合不是单个**：来回切库不该把同一个库再起一遍空跑。
@@ -392,6 +402,13 @@ class MainWindow(
         self._search_field.dismissed.connect(self._on_search_dismissed)
         self._search_field.editing_changed.connect(self._on_search_active_changed)
         self._search_field.hide()
+
+        # 切换按钮摆在搜索胶囊**右边**（ADR 0040 决策 5）：同一个胶囊里的同一套条件语法，
+        # 只改这些条件管到哪儿。不进布局 —— 与胶囊一样由 ``_layout_title_bar`` 摆，并且
+        # **建在胶囊之后**才叠得上去。
+        self._scope_toggle = ScopeToggle(self)
+        self._scope_toggle.toggled.connect(self._on_scope_toggled)
+        self._scope_toggle.hide()
 
         # 横幅**也建在最后**（Qt 按创建顺序叠兄弟控件）；差别是它**不进任何布局**。
         self._banner = BannerOverlay(self)
@@ -582,11 +599,18 @@ class MainWindow(
         self._clear_search_action = QAction("清除搜索条件", self)
         self._clear_search_action.triggered.connect(self.clear_search_conditions)
 
+        # 「筛选当前视图」：切换按钮在菜单里的那条路（ADR 0040 决策 5）。**与按钮共用一份状态**，
+        # 所以两处永远说同一句话 —— 菜单里勾着而按钮没亮，用户会以为它们是两个设置。
+        self._scope_action = QAction("筛选当前视图", self)
+        self._scope_action.setCheckable(True)
+        self._scope_action.toggled.connect(self.set_search_scope)
+
         file_menu = self.menuBar().addMenu("文件")
         file_menu.addAction(self._open_action)
         self._recent_menu = file_menu.addMenu("最近打开")
         file_menu.addSeparator()
         file_menu.addAction(self._search_action)
+        file_menu.addAction(self._scope_action)
         # 没有条件时**整条不出现**（``QAction.setVisible`` 就是「不进菜单」，ADR 0014 决策 4）。
         self._clear_search_action.setVisible(False)
         file_menu.addAction(self._clear_search_action)
@@ -675,9 +699,18 @@ class MainWindow(
         self._clear_cache_action.setEnabled(self._library is not None and self._cache_job is None)
         self._sync_fill_action()
         # 「清除搜索条件」**整条出现 / 消失**，不是置灰（ADR 0014 决策 4）：没有条件时它没有对象。
+        # 文案跟着作用域走（ADR 0040 决策 5）：用户清掉的是「筛选条件」还是「搜索条件」，
+        # 说的就是他刚才用的那一个。
+        filtering_now = self._search_scope == SEARCH_SCOPE_LEVEL
         self._clear_search_action.setVisible(bool(self._conditions))
+        self._clear_search_action.setText("清除筛选条件" if filtering_now else "清除搜索条件")
+        self._search_action.setText("筛选…" if filtering_now else "搜索…")
         # 搜索框摆在标题栏那一行上（ADR 0026 决策 8），而**那一行只在 macOS 上存在**：别的平台置灰。
         self._search_action.setEnabled(self._owns_title_bar)
+        # 切换按钮同理（它就摆在那一行上），并且要一直跟得上库级偏好。
+        self._scope_toggle.setVisible(self._owns_title_bar)
+        self._scope_toggle.setEnabled(self._library is not None)
+        self._scope_action.setEnabled(self._library is not None)
         # 「改名」落在哪儿：大图页改的是标题栏那一行（ADR 0025），网格里是行内编辑。
         renaming_here = in_grid or (in_detail and self._title_bar.isVisible())
         # 移到废纸篓两边都成立（大图页删的是正在看的那一张）。**日历那一页两者都不是** —— 它没有
@@ -749,8 +782,10 @@ class MainWindow(
 
         :param focus: 到了这一层该选中哪一格；``Esc`` 退上去时传的是刚离开的那个相册。
 
-        **进目录就是退出检索**：两者都是「一层」（ADR 0026）—— 条件不清掉的话，下一次
+        **进目录就是退出整库检索**：两者都是「一层」（ADR 0026）—— 条件不清掉的话，下一次
         ``_start_scan`` 里检索会抢在目录前面，点开一个相册看到的却是全库的检索结果。
+        **筛选不在此列**（ADR 0040 决策 1）：它收窄的正是「当前这一层」，所以进相册就是进到
+        「那个相册里符合条件的那部分」，条件要跟着走。
 
         **存进去的是解析过的路径**：库路径里带软链接时，监听器报回来的是真路径而这里存的是
         原写法，「是不是在当前这一层」就永远说不成 —— 访达里丢进来一张照片，网格当没看见。
@@ -763,9 +798,11 @@ class MainWindow(
             return
         self._current_dir = target.resolve()
         self._group_view = None
-        self._conditions.clear()
-        self._editing_condition = None
-        self._search_total = None
+        # **只有整库检索要清条件**（理由见上面那段）：筛选要跟着走进这个相册。
+        if self._is_library_search():
+            self._conditions.clear()
+            self._editing_condition = None
+            self._search_total = None
         self._reload_level(focus=focus)
 
     def go_up(self) -> None:
@@ -839,6 +876,7 @@ class MainWindow(
         if self._scan_job is not None:
             self._runner.cancel(self._scan_job)
             self._scan_job = None
+        self._cancel_level_filter()
         self._arm_focus(focus)
         # 换代：让已经在路上的旧结果作废。
         self._generation += 1
@@ -901,7 +939,13 @@ class MainWindow(
         """当前这一层的标识（见 ``navigation.level_key``）。"""
         group = None if self._group_view is None else (self._group_view.facet, self._group_view.key)
         conditions = [condition.identity for condition in self._conditions]
-        return level_key(self._browse_mode, self._current_dir, group=group, conditions=conditions)
+        return level_key(
+            self._browse_mode,
+            self._current_dir,
+            group=group,
+            conditions=conditions,
+            scope=self._search_scope,
+        )
 
     def _shown_entry_key(self) -> EntryKey | None:
         """网格上此刻停着的那一格是谁；不是同一层（或者压根没有）就是 ``None``。"""
@@ -941,6 +985,13 @@ class MainWindow(
         return None if self._group_view is None else self._group_view.label
 
     def _update_breadcrumb(self) -> None:
+        """面包屑那一行写什么。
+
+        **两种作用域写的是两件不同的事**（ADR 0040 决策 4）：整库检索时报**只有库名** ——
+        范围真的变成整库了，留着「旅行 ▸ 2024」读起来就是「在这个文件夹里搜到 4 张」，而那 4 张
+        大半在别处（ADR 0026 决策 1b）；筛选时报**完整路径 + 那一组**，因为范围没变，藏掉路径
+        同样是在说一件不存在的事。
+        """
         library = self._library
         # 平铺模式下平时不显示面包屑，但**分组里与有条件时一律显示**（ADR 0026 决策 9）。
         in_albums = self._browse_mode == BROWSE_MODE_ALBUMS
@@ -952,18 +1003,19 @@ class MainWindow(
         if library is None or (not in_albums and self._group_view is None and not conditions):
             self._breadcrumb.hide()
             return
-        if conditions:
+        if self._is_library_search():
             # **检索时只报库名：既不报当前文件夹，也不报当前那一组**（检索横跨整个库，ADR 0026
             # 决策 1）。范围要收窄加一条「#相册 …」；``_group_view`` 与 ``_current_dir`` 都留着。
             parts = [(library.display_name, library.root)]
+            group = None
         else:
             parts = (
                 breadcrumb_parts(library.root, self._current_dir or library.root)
                 if in_albums
                 else [(library.display_name, library.root)]
             )
-        # 分组那一段同理：条件还在的时候它说的不是检索范围，而是「我进来过哪一组」。
-        group = None if conditions else self._group_view_label()
+            # 筛选时这一组**说的是真的**：它就是这一层的范围。
+            group = self._group_view_label()
         editing = self._editing_condition if conditions else None
         self._breadcrumb.set_path(
             parts,
@@ -971,6 +1023,7 @@ class MainWindow(
             conditions=conditions,
             result_count=self._search_total if conditions else None,
             editing=editing,
+            scope=self._search_scope,
         )
         self._breadcrumb.show()
 
@@ -1132,6 +1185,7 @@ class MainWindow(
             self._title_bar.hide()
             self._search_field.hide()
             self._external_button.hide()
+            self._scope_toggle.hide()
             return
         central = self.centralWidget()
         top = central.geometry().top() if central is not None else 0
@@ -1142,7 +1196,14 @@ class MainWindow(
         # 胶囊摆在**这一条**里（内容区从 ``top + EXTRA`` 开始），再往下挪
         # :data:`SEARCH_FIELD_TEXT_ALIGN_DROP`。
         field_height = min(SEARCH_FIELD_HEIGHT, height - 4)
-        search_x = self.width() - SEARCH_FIELD_WIDTH - SEARCH_FIELD_MARGIN_RIGHT
+        # **右上角那一块现在有两样东西**（ADR 0040 决策 5）：切换按钮贴着窗口右边，胶囊被推到它
+        # 左边。两者的间距与同高都由 :data:`SCOPE_TOGGLE_GAP` 与 ``field_height`` 一处给出 ——
+        # 各算各的会出现「歪了一两个点」，而这正是胶囊当初与外部按钮之间踩过的那个坑
+        # （见 ``external_button.button_rect``）。
+        block_right = self.width() - SEARCH_FIELD_MARGIN_RIGHT
+        toggle_width = min(SCOPE_TOGGLE_EDGE, max(0, field_height))
+        toggle_x = block_right - toggle_width
+        search_x = toggle_x - SCOPE_TOGGLE_GAP - SEARCH_FIELD_WIDTH
         self._search_field.setGeometry(
             search_x,
             (height - field_height) // 2 + SEARCH_FIELD_TEXT_ALIGN_DROP,
@@ -1152,6 +1213,14 @@ class MainWindow(
         self._search_field.show()
         # **要抬一次**：布局跑完之后，中央控件与菜单栏会被抬到「最后创建的子控件」之上把胶囊盖住。
         self._search_field.raise_()
+        # 切换按钮**建在胶囊之后**（`_build_ui` 里），于是这一次抬就是为它准备的。
+        self._scope_toggle.setGeometry(toggle_x, self._search_field.y(), toggle_width, field_height)
+        self._scope_toggle.show()
+        self._scope_toggle.raise_()
+        #: **窗口右缘到胶囊右缘**有多远。面包屑那几枚条件胶囊对齐的就是这条线（ADR 0026
+        #: 决策 8），所以这一个数是它们与这一块之间唯一的换算依据 —— 各写一份留白时那条守护
+        #: 会立刻变红。
+        inset_to_capsule = SEARCH_FIELD_MARGIN_RIGHT + toggle_width + SCOPE_TOGGLE_GAP
 
         # 「用外部应用打开」**从胶囊那一块往左长出来**（见 ``button_rect``），于是两者必然同高、同一
         # 基线。**显隐的判据只有一处**（``is_available``）；真全屏时它整个不见。
@@ -1160,15 +1229,20 @@ class MainWindow(
             self._external_button.raise_()
         # 标题文字与 ⌘R 的输入框都要给右上角这一整块让出来（胶囊**加上左边的按钮**）。
         self._title_bar.reserve_right(
-            SEARCH_FIELD_WIDTH
-            + 2 * SEARCH_FIELD_MARGIN_RIGHT
+            inset_to_capsule
+            + SEARCH_FIELD_WIDTH
+            + SEARCH_FIELD_MARGIN_RIGHT
             + (BUTTON_WIDTH + BUTTON_GAP if self._external_button.isVisible() else 0)
         )
 
         # 面包屑右端那几枚条件胶囊与这个胶囊**右缘对齐**；换算只在这一处做 —— 面包屑摆在一份有
         # 边距的布局里，右缘比窗口右缘靠内 :data:`_GRID_PAGE_MARGIN_RIGHT` 点（**不是左边那
         # 一档**：右边窄，因为那一条要让给贴边的滚动条）。
-        self._breadcrumb.set_right_inset(SEARCH_FIELD_MARGIN_RIGHT - _GRID_PAGE_MARGIN_RIGHT)
+        #
+        # **对齐的是胶囊而不是那一整块**：切换按钮在胶囊右边，而条件胶囊是胶囊的下属概念，
+        # 让它们对齐到按钮的右缘（更靠右）会在中间空出一截，看着像那几枚条件不属于任何一个框。
+        # `test_the_rightmost_condition_lines_up_with_the_capsule` 量的正是这一条。
+        self._breadcrumb.set_right_inset(inset_to_capsule - _GRID_PAGE_MARGIN_RIGHT)
 
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         super().showEvent(event)
@@ -1206,6 +1280,12 @@ class MainWindow(
         与绿按钮悬停菜单里的「进入全屏幕」不是同一件事。
         """
         self._fill_action.setText("还原窗口" if self.isMaximized() else "铺满窗口")
+
+    def _on_scope_toggled(self, filtering: bool) -> None:
+        """切换按钮被按了。走 :meth:`set_search_scope` —— **与菜单里那一条是同一个入口**，
+        所以两处永远说同一句话（各写一份回调，早晚会有一处忘了改其中一样）。
+        """
+        self.set_search_scope(SEARCH_SCOPE_LEVEL if filtering else SEARCH_SCOPE_LIBRARY)
 
     def _on_title_rename_committed(self, text: str) -> None:
         """标题栏里确认了一个新名字。

@@ -1,7 +1,10 @@
 """面包屑导航条：库名 ▸ 子目录 ▸ 当前目录，右端挂着生效中的筛选条件（ADR 0026）。
 
 有筛选条件时一律显示。路径段都可点击跳回；「当前所在」是路径**后面**跟着的那一段
-（分组名或「搜索结果」），因此它之前的每一段都点得动（见 :meth:`BreadcrumbBar.set_path`）。
+（分组名或结果段），因此它之前的每一段都点得动（见 :meth:`BreadcrumbBar.set_path`）。
+
+**结果那一段有两种说法**（ADR 0040 决策 4）：整库检索报「搜索结果（128）」而只报库名，筛选报
+「筛选后（12）」而**照旧报完整路径** —— 范围变了才藏路径，范围没变时藏路径是在说一件不存在的事。
 """
 
 from __future__ import annotations
@@ -13,6 +16,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFontMetrics, QMouseEvent
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QToolButton, QWidget
 
+from gallery.core.library.config import SEARCH_SCOPE_LEVEL, SEARCH_SCOPE_LIBRARY
 from gallery.ui import theme
 from gallery.ui.panels.layout import clear_layout
 from gallery.ui.theme import rgba
@@ -146,15 +150,21 @@ class BreadcrumbBar(QWidget):
         conditions: Sequence[str] = (),
         result_count: int | None = None,
         editing: int | None = None,
+        scope: str = SEARCH_SCOPE_LIBRARY,
     ) -> None:
         """重建整条路径。``parts`` 由 ``ui.navigation.breadcrumb_parts`` 给出。
 
         ``group`` 是分组名（ADR 0009），``conditions`` / ``result_count`` 是生效中的筛选
-        条件与命中数（ADR 0026），``editing`` 是正在改的那一条的序号。「当前所在」是路径
-        后面跟着的那一段（分组名或「搜索结果」），于是它之前的每一段都点得动。
+        条件与命中数（ADR 0026），``editing`` 是正在改的那一条的序号，``scope`` 是条件的
+        作用域（ADR 0040）。「当前所在」是路径后面跟着的那一段（分组名或结果段），于是它之前的
+        每一段都点得动。
+
+        **作用域只改那一段的说法，不改路径本身**（ADR 0040 决策 4）：整库检索时调用方只传库名
+        —— 范围真的变成整库了，报出「旅行 ▸ 2024」就是在说一件不存在的事；而筛选时范围没变，
+        藏掉路径同样是在说一件不存在的事。
         """
         self._clear()
-        # 「当前所在」落在路径上，仅当后面既没有分组也没有搜索结果可指。
+        # 「当前所在」落在路径上，仅当后面既没有分组也没有结果段可指。
         current = None if (group or conditions) else len(parts) - 1
         for index, (label, path) in enumerate(parts):
             if index:
@@ -168,18 +178,29 @@ class BreadcrumbBar(QWidget):
             self._layout.addWidget(self._group_label(group))
         if conditions:
             self._layout.addWidget(self._separator())
-            self._layout.addWidget(self._search_label(result_count))
+            self._layout.addWidget(self._result_label(result_count, scope))
         self._layout.addStretch(1)
         for position, text in enumerate(conditions):
             if position:
                 self._layout.addSpacing(4)
             self._layout.addWidget(self._chip(position, text, editing == position))
 
-    def _search_label(self, result_count: int | None) -> QLabel:
-        """「搜索结果」那一段。命中数写在里面，**被截断时用户看得见**。"""
-        text = "搜索结果" if result_count is None else f"搜索结果（{result_count}）"
+    def _result_label(self, result_count: int | None, scope: str) -> QLabel:
+        """结果那一段。命中数写在里面，**被截断时用户看得见**。
+
+        **两句话说两件不同的事**（ADR 0040 决策 4）：整库检索的结果横跨全库，而筛选的结果是
+        「当前这一层里剩下的那些」。用同一句话会把前者说成后者 —— 界面表现是「这个文件夹里搜到
+        4 张」，而实际那 4 张大半在别处。
+        """
+        filtering = scope == SEARCH_SCOPE_LEVEL
+        title = "筛选后" if filtering else "搜索结果"
+        text = title if result_count is None else f"{title}（{result_count}）"
         widget = QLabel(text)
-        widget.setToolTip("整个库里检索出来的照片（不是只在某一个文件夹里）；Esc 逐条撤销条件")
+        widget.setToolTip(
+            "当前这一层里符合这些条件的照片；Esc 逐条撤销条件"
+            if filtering
+            else "整个库里检索出来的照片（不是只在某一个文件夹里）；Esc 逐条撤销条件"
+        )
         widget.setStyleSheet("font-size: 12px; font-weight: 600; padding: 2px 6px;")
         return widget
 

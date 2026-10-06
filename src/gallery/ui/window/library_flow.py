@@ -109,6 +109,9 @@ class LibraryFlowMixin:
             self._edge_to_index(ui.thumbnail_edge)
         )
         self._browse_mode = ui.browse_mode or self._browse_mode
+        # 检索作用域（ADR 0040）：**每个库各记各的** —— 「我习惯用筛选」是关于这个库的偏好，
+        # 与分组、排序那几项一样，切库不该把 A 库的用法传染给 B 库。
+        self._search_scope = ui.resolved_search_scope()
         self._size_index = self._edge_to_index(ui.thumbnail_edge)
         self._metadata_visible = bool(ui.metadata_visible)
         self._group_facet = ui.group_facet
@@ -155,6 +158,7 @@ class LibraryFlowMixin:
             .with_calendar_level(self._calendar_level)
             .with_thumbnail_edge(edge_for_index(self._size_index))
             .with_ordering(self._group_facet, self._sort_facet, self._sort_descending)
+            .with_search_scope(self._search_scope)
         )
 
     def _activate_library(self, library: Library) -> None:
@@ -180,6 +184,9 @@ class LibraryFlowMixin:
         self._update_metadata_editable()
         # **库级偏好要一次套上**（ADR 0038 决策 4）；只调用一次 —— 它带副作用（会写 config.toml）。
         changed_edge = self._apply_ui_state(library)
+        # 作用域是**刚换过来的**（换库时每个库各记各的），胶囊上那句话与按钮的勾要跟着换 ——
+        # 与换分组 / 排序之后要 ``_sync_order_actions`` 同一个道理。
+        self._sync_search_scope()
         # 缩略图档位变了才走 ``_apply_thumbnail_size``（「换档」的唯一一条路，网格算完会回来
         # 把模型也换掉）。**档位没变就别叫它** —— 它会让网格带动画重排，用户看到的就是
         # 「一打开这个库，格子自己动了一下」，而尺寸其实一模一样。
@@ -244,6 +251,7 @@ class LibraryFlowMixin:
             self._runner.cancel(self._detail_job)
             self._detail_job = None
         self._cancel_search()
+        self._cancel_level_filter()
         self._cancel_photo_index()
         if self._pipeline is not None:
             self._pipeline.shutdown()
@@ -266,14 +274,17 @@ class LibraryFlowMixin:
     def _start_scan(self) -> None:
         """按当前浏览方式列出内容：平铺模式递归整库，相册模式只列当前一层。
 
-        **有筛选条件时走检索那条路**（ADR 0026 决策 7）：结果横跨整个库，与当前在哪一层无关。
+        **只有整库检索才接管这一层**（ADR 0040 决策 1）：筛选是照常枚举这一层、随后收窄
+        （收窄在那条链的末尾，见 :meth:`OrderingMixin._order_now`），所以这里问的是
+        :meth:`_is_library_search` 而不是「有没有条件」—— 问错了的话，月视图里加一条条件就会
+        被换成网格页，而那正是筛选要避免的那件事。
         已经进入某个分组时不再扫盘 —— 这一组是上一次分组算出来的，直接铺开即可。
         """
         library = self._library
         if library is None:
             return
         # 搜索优先于分组：分组那一族是「这一层里怎么归拢」，而检索结果是**一层**。
-        if self._conditions:
+        if self._is_library_search():
             self._start_search(library)
         elif self._group_view is not None:
             self._start_group_listing(library)
@@ -424,7 +435,7 @@ class LibraryFlowMixin:
         self._scan_issue = True
         self._show_banner(f"扫描失败：{message}")
         # 已经攒到的条目照常摆出来：扫到一半失败时给一屏能看的东西，比一屏空白有用。
-        self._apply_ordering()
+        self._order_now()
 
     # ---- 打开库时把地点解析一遍（ADR 0010）------------------------------------
 
