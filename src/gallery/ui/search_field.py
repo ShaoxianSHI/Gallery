@@ -569,6 +569,9 @@ def scope_arrows(app_theme: AppTheme, ratio: float, *, active: bool) -> QPixmap:
     图标跟着按钮一起变大就会顶到边框上。
 
     **各段比例一律按画布算**，不写死点数 —— 换一档画布时形状跟着缩，放大镜那边同理。
+
+    **图形占画布 0.56、笔宽仍取 :data:`_ICON_STROKE`**：两支箭头叠在一起的墨迹是放大镜的
+    一倍多，占满就会读成「图标被框住了」；而笔宽不跟着缩，才与放大镜是同一支笔。
     """
     size = TOGGLE_ICON_EDGE
     pixmap = QPixmap(round(size * ratio), round(size * ratio))
@@ -581,15 +584,15 @@ def scope_arrows(app_theme: AppTheme, ratio: float, *, active: bool) -> QPixmap:
     pen.setCapStyle(Qt.PenCapStyle.RoundCap)
     pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
     painter.setPen(pen)
-    left, right = size * 0.18, size * 0.82
-    # 两支箭杆分居画布的 0.28 与 0.72，箭头张开的那一半（0.145）因此离上下边还剩 1.7 点 ——
+    left, right = size * 0.22, size * 0.78
+    # 两支箭杆分居画布的 0.30 与 0.70，箭头张开的那一半（0.125）因此离上下边还剩 2.4 点 ——
     # 笔宽画在路径两侧，收少了会被画布裁掉（与放大镜的 :data:`ICON_INSET` 同一件事）。
-    head_len, head_half = size * 0.17, size * 0.145
+    head_len, head_half = size * 0.145, size * 0.125
     # ``back`` 是「箭头从尖端往箭杆那一头退多少」：两支箭头的分叉都朝箭杆内侧，尖端那一端
     # 才不会被画布裁掉（写死成同一个方向的话，朝右那支的分叉正好戳到画布右缘上）。
     for tip_x, other_x, back, y in (
-        (left, right, head_len, size * 0.28),
-        (right, left, -head_len, size * 0.72),
+        (left, right, head_len, size * 0.30),
+        (right, left, -head_len, size * 0.70),
     ):
         painter.drawLine(QPointF(other_x, y), QPointF(tip_x, y))
         painter.drawLine(QPointF(tip_x, y), QPointF(tip_x + back, y - head_half))

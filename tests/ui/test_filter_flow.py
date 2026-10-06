@@ -24,7 +24,7 @@ pytest.importorskip("PySide6")
 
 from library_helpers import set_library_ui  # noqa: E402
 from PySide6.QtCore import Qt  # noqa: E402
-from PySide6.QtGui import QColor, QGuiApplication, QImage, QPalette  # noqa: E402
+from PySide6.QtGui import QColor, QGuiApplication, QImage, QPalette, QPixmap  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 from waiting import wait_for_idle  # noqa: E402
@@ -44,6 +44,7 @@ from gallery.core.library.session import (  # noqa: E402
 )
 from gallery.core.metadata import batch  # noqa: E402
 from gallery.core.places.resolver import LazyPlaceResolver, ResolvedPlace  # noqa: E402
+from gallery.ui import theme  # noqa: E402
 from gallery.ui.external_button import ICON_EDGE as EXTERNAL_ICON_EDGE  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.panels.breadcrumb import ChipButton  # noqa: E402
@@ -52,6 +53,8 @@ from gallery.ui.search_field import (  # noqa: E402
     PLACEHOLDER_FILTER,
     PLACEHOLDER_SEARCH,
     TOGGLE_ICON_EDGE,
+    magnifier,
+    scope_arrows,
 )
 
 #: 测试库里每张照片的相机（按文件名对应）。没给的就是没写相机。
@@ -1358,6 +1361,40 @@ def test_the_icon_is_two_arrows_pointing_opposite_ways(
     assert top_left > top_right, f"上面那支箭头不是朝左的：{_quadrant_weight(image)}"
     assert bottom_right > bottom_left, f"下面那支箭头不是朝右的：{_quadrant_weight(image)}"
     window.close()
+
+
+def test_the_arrows_stay_narrower_than_the_magnifier(qt_app: QApplication) -> None:
+    """两支箭头叠在一起的墨迹**不许比放大镜更宽** —— 两份图形叠在 13 点画布里，占满就
+    读成「图标被框住了」。
+
+    量的是**墨迹的包围盒**而不是画布：两枚图标的画布一样是 13，量画布量不出这件事。
+    """
+    app_theme = theme.current_theme()
+    arrows_box = _ink_box(scope_arrows(app_theme, 1.0, active=False))
+    magnifier_box = _ink_box(magnifier(app_theme, 1.0))
+
+    assert arrows_box[2] - arrows_box[0] <= magnifier_box[2] - magnifier_box[0], (
+        f"两支箭头的墨迹 {arrows_box} 比放大镜的 {magnifier_box} 还宽"
+    )
+
+
+def _ink_box(pixmap: QPixmap, threshold: int = 24) -> tuple[int, int, int, int]:
+    """着墨像素的包围盒（左、上、右、下）。
+
+    阈值 24 而不是「非全透明」：抗锯齿边缘那圈淡到几乎看不见，把它算进去等于把整张画布
+    都算成有墨，这条断言就成了恒真。
+    """
+    image = pixmap.toImage()
+    points = [
+        (x, y)
+        for y in range(image.height())
+        for x in range(image.width())
+        if image.pixelColor(x, y).alpha() > threshold
+    ]
+    xs = [x for x, _ in points]
+    ys = [y for _, y in points]
+    assert points, "这张图上一个像素都没着墨"
+    return min(xs), min(ys), max(xs), max(ys)
 
 
 def _quadrant_weight(image: QImage) -> tuple[int, int, int, int]:
