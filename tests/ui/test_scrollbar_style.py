@@ -32,12 +32,17 @@ from PySide6.QtWidgets import (  # noqa: E402
 from waiting import DEFAULT_TIMEOUT_SECONDS  # noqa: E402
 
 from gallery.core.library.config import prepare_library  # noqa: E402
+from gallery.core.metadata.exif import (  # noqa: E402
+    MetadataField,
+    MetadataGroup,
+    MetadataReport,
+)
 from gallery.ui import scrollbar_style, theme  # noqa: E402
 from gallery.ui.browser.grid import PhotoGrid  # noqa: E402
 from gallery.ui.calendar.thumbs import ThumbStore  # noqa: E402
 from gallery.ui.calendar.time_view import WeekView  # noqa: E402
 from gallery.ui.main_window import _GRID_PAGE_MARGIN_RIGHT, MainWindow  # noqa: E402
-from gallery.ui.panels.metadata import MetadataPanel  # noqa: E402
+from gallery.ui.panels.metadata import SCROLLBAR_EDGE_GAP, MetadataPanel  # noqa: E402
 from gallery.ui.scrollbar_style import (  # noqa: E402
     HANDLE_ALPHA,
     HANDLE_GAP,
@@ -433,6 +438,88 @@ def test_the_grid_scrollbar_keeps_only_a_slit_to_the_window_edge(
         window_right = window.mapToGlobal(QPoint(window.width(), 0)).x()
         assert window_right - bar_right == 2, (
             f"滚动条右缘离窗口右缘还有 {window_right - bar_right} 点，要的是 2 点"
+        )
+    finally:
+        window.close()
+
+
+def _gap_to_window_right(window: MainWindow, bar: QScrollBar) -> int:
+    """滚动条右缘到**窗口**右缘有几像素（点）。
+
+    **对着窗口量，而不是滚动区或面板**：滚动区外面还包着一圈页面边距，而面板右缘此刻
+    贴着窗口右缘只是 ``detail_layout`` 边距为 0 的结果 —— 量窗口把这两段一起钉住。
+    """
+    bar_right = bar.mapToGlobal(QPoint(bar.width(), 0)).x()
+    window_right = window.mapToGlobal(QPoint(window.width(), 0)).x()
+    return window_right - bar_right
+
+
+def _tall_report(count: int) -> MetadataReport:
+    """字段多到面板一定溢出 —— 滚动条没被摆出来时量的是它的默认几何。"""
+    fields = tuple(MetadataField(f"字段 {index}", "值") for index in range(count))
+    return MetadataReport(
+        path=Path("x.jpg"),
+        groups=(MetadataGroup(title="拍摄信息", fields=fields),),
+        all_fields=(),
+        source="exiftool",
+    )
+
+
+def test_the_panel_scrollbar_sits_where_the_grid_one_does(
+    qt_app: QApplication,
+    tmp_path: Path,
+    make_photo: Callable[..., Path],
+    wait_for: Callable[..., bool],
+) -> None:
+    """大图页那条滚动条到**窗口**右缘的距离与网格那条**一样**：都是 2 点。
+
+    面板原来留的是 :data:`~gallery.ui.panels.metadata.CONTENT_PAD` 那 12 点内容内边距，
+    滑块因此比网格那条靠里 10 点 —— 用户在两页之间来回走，看得出那是两根不一样的东西。
+    **正文与页脚的留白没有跟着变窄**：面板那一档窄缝补进了滚动区与页脚自己的右边距
+    （``_CONTENT_PAD_RIGHT``），所以量得到变化的只有滚动条那一处。
+
+    **走真的大图页而不是一个孤零零的面板**：面板右缘此刻正好压在窗口右缘上，量面板等于
+    量窗口，可那是 ``detail_layout`` 边距为 0 的结果 —— 这一条把它一起钉住。
+    """
+    # 2 点是这一档定下来的取值，在这儿独立写一遍才是守护（理由同上面那条）。
+    assert SCROLLBAR_EDGE_GAP == 2, (
+        f"面板滚动条离窗口右缘改成了 {SCROLLBAR_EDGE_GAP} 点，用户要的是 2 点"
+    )
+    assert SCROLLBAR_EDGE_GAP == _GRID_PAGE_MARGIN_RIGHT, (
+        "面板那条与网格那条离窗口右缘的距离不是同一个值 —— 用户要的是「一致」"
+    )
+
+    root = tmp_path / "库"
+    for index in range(40):
+        make_photo(f"IMG_{index:04d}.jpg", directory=root)
+    prepare_library(root)
+
+    window = MainWindow(session_base=tmp_path / "会话", initial_library=root)
+    window.resize(1000, 700)
+    window.show()
+    try:
+        grid_bar = window._grid.verticalScrollBar()
+        assert wait_for(
+            lambda: window._model.rowCount() >= 40 and grid_bar.width() == SCROLLBAR_WIDTH,
+            timeout=DEFAULT_TIMEOUT_SECONDS,
+        ), "照片没能在时限内扫出来、或者网格的布局还没跑过，这条量的就不是网格页"
+
+        panel_bar = window._panel._scroll.verticalScrollBar()
+        # **不走 ``toggle_metadata``**：它会把面板自己的读取任务放出去，而那条任务回来时会把
+        # 这里摆的报告换成真照片的，于是溢出就没了。
+        window._panel.set_report(_tall_report(40))
+        window._stack.setCurrentWidget(window._detail_page)
+        window._panel.setVisible(True)
+        assert wait_for(
+            lambda: panel_bar.width() == SCROLLBAR_WIDTH and panel_bar.isVisible(),
+            timeout=DEFAULT_TIMEOUT_SECONDS,
+        ), "面板的布局还没跑过、或者报告不够高，这条量的不是大图页那条滚动条"
+
+        grid_gap = _gap_to_window_right(window, grid_bar)
+        panel_gap = _gap_to_window_right(window, panel_bar)
+        assert panel_gap == grid_gap == SCROLLBAR_EDGE_GAP, (
+            f"网格那条离窗口右缘 {grid_gap} 点，面板那条 {panel_gap} 点，"
+            f"要的是同一个值 {SCROLLBAR_EDGE_GAP} 点"
         )
     finally:
         window.close()

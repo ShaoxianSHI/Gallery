@@ -42,6 +42,20 @@ PANEL_WIDTH = 300
 LABEL_WIDTH = 84
 COPIED_HINT_MS = 1400
 
+#: 面板内容离右缘留几像素（点）。**滚动条那一侧不算它**：那一侧要的是一条窄缝（见下一档）。
+CONTENT_PAD = 12
+
+#: 面板那条滚动条离**窗口**右缘留几像素（点），与网格页取同一个值
+#: （``main_window._GRID_PAGE_MARGIN_RIGHT``）：用户在网格与大图之间来回走，两条滚动条到
+#: 窗口右缘的距离要读得出是同一条。滑块自己还带
+#: :data:`~gallery.ui.scrollbar_style.HANDLE_GAP` 那 2 点，两段加起来才是滑块右缘的距离。
+SCROLLBAR_EDGE_GAP = 2
+
+#: 滚动区与页脚**自己**的右边距（点）= :data:`CONTENT_PAD` 减去那一档窄缝。滚动条挪到窗口
+#: 边上之后，正文与页脚靠外的留白得在这一层补回来 —— 文本紧贴窗口右缘比一条宽缝难看得多，
+#: 而这一档补的是位置，那一份宽度一分不少。
+_CONTENT_PAD_RIGHT = CONTENT_PAD - SCROLLBAR_EDGE_GAP
+
 
 def panel_style(app_theme: AppTheme) -> str:
     """面板的文字与按钮样式。底色由 ``paintEvent`` 统一画，文字色全部从主题派生。"""
@@ -96,7 +110,8 @@ class MetadataPanel(QWidget):
         self._metadata_reason = ""
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 10)
+        # 右边那一档比左边窄得多：滚动区要贴到窗口边上，让它的滚动条与网格页那条对齐。
+        layout.setContentsMargins(CONTENT_PAD, CONTENT_PAD, SCROLLBAR_EDGE_GAP, 10)
         layout.setSpacing(8)
 
         self._scroll = QScrollArea()
@@ -109,7 +124,7 @@ class MetadataPanel(QWidget):
         self._body = QWidget()
         self._body.setAutoFillBackground(False)
         self._body_layout = QVBoxLayout(self._body)
-        self._body_layout.setContentsMargins(0, 0, 0, 0)
+        self._body_layout.setContentsMargins(0, 0, _CONTENT_PAD_RIGHT, 0)
         self._body_layout.setSpacing(10)
         self._body_layout.addStretch(1)
         self._scroll.setWidget(self._body)
@@ -119,7 +134,7 @@ class MetadataPanel(QWidget):
 
         self._footer = QWidget()
         footer_layout = QHBoxLayout(self._footer)
-        footer_layout.setContentsMargins(0, 0, 0, 0)
+        footer_layout.setContentsMargins(0, 0, _CONTENT_PAD_RIGHT, 0)
         footer_layout.setSpacing(8)
         self._copy_button = QPushButton("复制全部")
         self._copy_button.setObjectName("metadataButton")
@@ -331,9 +346,11 @@ class MetadataPanel(QWidget):
 
 
 __all__ = [
+    "CONTENT_PAD",
     "COPIED_HINT_MS",
     "LABEL_WIDTH",
     "PANEL_WIDTH",
+    "SCROLLBAR_EDGE_GAP",
     "MetadataPanel",
     "panel_style",
 ]

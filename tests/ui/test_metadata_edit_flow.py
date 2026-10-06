@@ -50,7 +50,7 @@ from gallery.core.metadata.metadata_edit import MetadataEdit, MetadataState  # n
 from gallery.core.metadata.place_edit import PlaceEdit, PlaceState, plan_place_edit  # noqa: E402
 from gallery.core.metadata.writeback import Assignment  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
-from gallery.ui.panels.metadata import MetadataPanel  # noqa: E402
+from gallery.ui.panels.metadata import CONTENT_PAD, MetadataPanel  # noqa: E402
 from gallery.ui.panels.metadata_edit import MetadataEditDialog  # noqa: E402
 
 PHOTO = "一张.jpg"
@@ -1273,7 +1273,12 @@ def test_a_photo_without_any_place_still_has_the_entry_point(
 
 
 def test_the_three_footer_widgets_fill_the_row(qt_app: QApplication) -> None:
-    """复制全部 / 编辑元数据 / 显示全部字段**平分整行**，右边不空出一小条。"""
+    """复制全部 / 编辑元数据 / 显示全部字段**平分整行**，右边不空出一小条。
+
+    **扣掉的是两层边距**：面板自己那一层与页脚自己那一层 —— 页脚的右边距补的是滚动条挪到
+    窗口边上之后少掉的那一档内容留白（见 ``panels.metadata._CONTENT_PAD_RIGHT``），
+    只扣面板那一层的话，扣掉的数与实际可用的宽度对不上。
+    """
     panel = _panel(qt_app)
     row = panel._footer.layout()
 
@@ -1282,8 +1287,15 @@ def test_the_three_footer_widgets_fill_the_row(qt_app: QApplication) -> None:
     assert [widget.text() for widget in widgets] == ["复制全部", "编辑元数据", "显示全部字段"]
     used = sum(widget.width() for widget in widgets)
     used += row.spacing() * (len(widgets) - 1)
-    margins = panel.layout().contentsMargins()  # 面板自己的左右边距
-    assert used == panel.width() - (margins.left() + margins.right())
+    margins = panel.layout().contentsMargins()  # 面板自己那一层
+    insets = row.contentsMargins()  # 页脚自己那一层
+    assert used == panel.width() - (
+        margins.left() + margins.right() + insets.left() + insets.right()
+    )
+    # 两层右边距加起来仍是那一档内容留白 —— 滚动条挪到窗口边上动的是**位置**，不是留白。
+    assert margins.right() + insets.right() == CONTENT_PAD, (
+        f"页脚离面板右缘 {margins.right() + insets.right()} 点，要的是 {CONTENT_PAD} 点"
+    )
     assert len({widgets[0].width(), widgets[1].width()}) == 1  # 两个按钮一样宽
 
 
