@@ -42,6 +42,7 @@ from gallery.core.metadata import batch  # noqa: E402
 from gallery.core.places.resolver import LazyPlaceResolver, ResolvedPlace  # noqa: E402
 from gallery.ui.external_button import ICON_EDGE as EXTERNAL_ICON_EDGE  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
+from gallery.ui.panels.breadcrumb import ChipButton  # noqa: E402
 from gallery.ui.search_field import ICON_EDGE, PLACEHOLDER_FILTER, PLACEHOLDER_SEARCH  # noqa: E402
 
 #: 测试库里每张照片的相机（按文件名对应）。没给的就是没写相机。
@@ -231,6 +232,75 @@ def test_the_calendar_only_shows_the_matching_photos(
     _filter(qt_app, window, "#相机 Canon")
 
     assert window._calendar_page.photo_count() == 1
+    window.close()
+
+
+def test_the_conditions_are_visible_on_the_calendar(
+    qt_app: QApplication, tmp_path: Path, make_photo
+) -> None:
+    """日历那一页**看得见**自己加了哪几条条件 —— 用户原话：「看不到加了什么筛选条件」。
+
+    **这一条是这个需求本身**：筛选时那一页仍然是日历（上面那条），而日历那一页占掉的就是网格页
+    那条面包屑（ADR 0033 决策 5）—— 胶囊只摆在面包屑上，就等于「加了但不知道加了什么」。
+
+    量的是**工具条上真的有那几枚**，而不是「模型里的条件列表非空」：后者在日历上照样成立，
+    它量不到「用户看不见」。
+    """
+    root = _library(tmp_path, make_photo)
+    window = _open(qt_app, root, tmp_path / "会话", browse_mode=BROWSE_MODE_CALENDAR)
+    _settle(qt_app, window)
+
+    _filter(qt_app, window, "#相机 Canon")
+
+    chips = window._calendar_page._bar._chips.findChildren(ChipButton)
+    assert len(chips) == 1, "日历工具条上没有条件胶囊（这是那个需求本身）"
+    assert "相机" in chips[0].text(), chips[0].text()
+    window.close()
+
+
+def test_the_conditions_follow_the_user_onto_the_calendar(
+    qt_app: QApplication, tmp_path: Path, make_photo
+) -> None:
+    """条件可以**在网格页上改**，改完切到日历页要立刻看见那一份。
+
+    钉的是「判据是条件现在是什么样，而不是日历页此刻在不在线」—— 条件可能是在别处改的
+    （例如从「全部照片」切过来之前），而日历那一页的工具条要跟着。
+    """
+    root = _library(tmp_path, make_photo)
+    window = _open(qt_app, root, tmp_path / "会话")
+    _settle(qt_app, window)
+    _filter(qt_app, window, "#相机 Canon")
+
+    window.set_browse_mode(BROWSE_MODE_CALENDAR)
+    _settle(qt_app, window)
+
+    chips = window._calendar_page._bar._chips.findChildren(ChipButton)
+    assert len(chips) == 1, "在网格页上加的条件，切到日历页不见了"
+    window.close()
+
+
+def test_removing_a_condition_from_the_calendar_works(
+    qt_app: QApplication, tmp_path: Path, make_photo
+) -> None:
+    """在日历工具条上点 ✕ 撤掉一条 —— 那几枚不是摆设。
+
+    走的是**同一个** ``_on_condition_removed``（两个控件接到同一个处理函数上），所以
+    「日历上撤掉了、网格页上还留着」这种不一致不可能发生。
+    """
+    root = _library(tmp_path, make_photo)
+    window = _open(qt_app, root, tmp_path / "会话", browse_mode=BROWSE_MODE_CALENDAR)
+    _settle(qt_app, window)
+    _filter(qt_app, window, "#相机 Canon")
+    _filter(qt_app, window, "#城市 西安")
+    _settle(qt_app, window)
+    assert len(window._calendar_page._bar._chips.findChildren(ChipButton)) == 2
+
+    window._on_condition_removed(0)
+    _settle(qt_app, window)
+
+    assert _chips(window) == ["城市：西安"], "日历上撤掉了，条件列表里还在"
+    remaining = window._calendar_page._bar._chips.findChildren(ChipButton)
+    assert len(remaining) == 1, "日历工具条上还留着撤掉的那一枚"
     window.close()
 
 

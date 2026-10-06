@@ -49,6 +49,9 @@ class CalendarPage(QWidget):
     window_changed = Signal()
     #: 选中的东西变了（外面据此改标题与动作可用性）。
     selection_changed = Signal(object)
+    #: 工具条上那几枚条件胶囊被点了（改 / 撤掉），带的是条件在列表里的序号（ADR 0040）。
+    condition_edited = Signal(int)
+    condition_removed = Signal(int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -66,6 +69,10 @@ class CalendarPage(QWidget):
         self._bar.step_requested.connect(self.step)
         self._bar.today_requested.connect(self.go_today)
         self._bar.level_changed.connect(self.set_level)
+        # 工具条上那两枚胶囊与面包屑右端那几枚是**同一批条件**（ADR 0040 决策 9），所以信号
+        # 原样往外转发 —— 外面接到的是同一个处理函数，两处不可能对不上。
+        self._bar.condition_edited.connect(self.condition_edited)
+        self._bar.condition_removed.connect(self.condition_removed)
 
         self._views: dict[str, LevelView] = {
             "year": YearView(self._thumbs),
@@ -163,6 +170,14 @@ class CalendarPage(QWidget):
     def selected_day(self) -> datetime.date | None:
         """选中的是哪一天（没有选中就是 ``None``）。**三层共用这一份。**"""
         return self._selected
+
+    def set_conditions(self, conditions: Sequence[str], *, editing: int | None = None) -> None:
+        """把生效中的条件摆到工具条上（空 = 整块收起来，ADR 0040 决策 9）。
+
+        **这一页自己那个面包屑是看不见的**（它挂在网格页上），所以条件不摆到工具条上，用户就
+        看不到自己加了哪几条。
+        """
+        self._bar.set_conditions(conditions, editing=editing)
 
     def selected_refs(self) -> list[PhotoRef]:
         return self.current_view().selected_refs()

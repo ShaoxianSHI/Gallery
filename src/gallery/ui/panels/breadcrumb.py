@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QFontMetrics, QMouseEvent
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QToolButton, QWidget
 
@@ -50,10 +50,13 @@ QToolButton:hover { text-decoration: underline; }
 """
 
 
-def _chip_style(*, editing: bool) -> str:
+def chip_style(*, editing: bool) -> str:
     """条件胶囊的样式：它不是链接、是正在生效的东西，所以不用链接色。
 
     ``editing`` 那一枚（已放进搜索框）边框换高亮、底色压深一档，让用户看出回车是改。
+
+    **不私有**是因为日历那一页也要摆同样的胶囊（ADR 0040 决策 9）：两处各派生一遍样式，
+    过一阵就是「日历上那几枚比网格上那几枚浅一档」，而没人说得清哪一档是对的。
     """
     border = "palette(highlight)" if editing else "palette(mid)"
     hover = "palette(alternate-base)" if not editing else ""
@@ -102,6 +105,22 @@ class ChipButton(QToolButton):
         else:
             self.edited.emit()
         event.accept()
+
+
+def build_chip(
+    text: str, position: int, *, editing: bool, parent: QWidget, owner: QObject
+) -> ChipButton:
+    """造一枚条件胶囊，并把它的两个信号接到 ``owner`` 的 ``condition_edited`` /
+    ``condition_removed`` 上（带的是它在条件列表里的序号）。
+
+    **两处摆胶囊的地方（面包屑右端、日历工具条）都走这一个出口**（ADR 0040 决策 9）——
+    网格页与日历页各派生一遍样式的话，过一阵就是「日历上那几枚比网格上那几枚浅一档」。
+    """
+    button = ChipButton(text, parent)
+    button.setStyleSheet(chip_style(editing=editing))
+    button.edited.connect(lambda index=position: owner.condition_edited.emit(index))
+    button.removed.connect(lambda index=position: owner.condition_removed.emit(index))
+    return button
 
 
 class BreadcrumbBar(QWidget):
@@ -205,11 +224,7 @@ class BreadcrumbBar(QWidget):
         return widget
 
     def _chip(self, position: int, text: str, editing: bool) -> ChipButton:
-        button = ChipButton(text, self)
-        button.setStyleSheet(_chip_style(editing=editing))
-        button.edited.connect(lambda index=position: self.condition_edited.emit(index))
-        button.removed.connect(lambda index=position: self.condition_removed.emit(index))
-        return button
+        return build_chip(text, position, editing=editing, parent=self, owner=self)
 
     def _separator(self) -> QLabel:
         separator = QLabel(SEPARATOR)
@@ -249,4 +264,4 @@ class BreadcrumbBar(QWidget):
         clear_layout(self._layout)
 
 
-__all__ = ["DISMISS_MARK", "SEPARATOR", "BreadcrumbBar", "ChipButton"]
+__all__ = ["DISMISS_MARK", "SEPARATOR", "BreadcrumbBar", "ChipButton", "build_chip", "chip_style"]

@@ -8,6 +8,7 @@ from __future__ import annotations
 import datetime
 import logging
 from collections import OrderedDict
+from collections.abc import Sequence
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QPointF, Qt, QTimer
@@ -362,6 +363,10 @@ class MainWindow(
         self._calendar_page = CalendarPage()
         self._calendar_page.cell_requested.connect(self._on_calendar_cell_requested)
         self._calendar_page.level_changed.connect(self._on_calendar_level_changed)
+        # 工具条上那几枚胶囊与面包屑右端那几枚是**同一批条件**（ADR 0040 决策 9），接到**同一个**
+        # 处理函数上：两处各接一次，早晚会有一处忘了改。
+        self._calendar_page.condition_edited.connect(self._on_condition_edited)
+        self._calendar_page.condition_removed.connect(self._on_condition_removed)
         # 换层 / 翻页 / 滚动都会改变「现在看得见哪些」，据此重新要缩略图。
         self._calendar_page.window_changed.connect(self._on_calendar_window_changed)
         self._calendar_page.set_today(datetime.date.today())
@@ -1039,6 +1044,18 @@ class MainWindow(
             scope=self._search_scope,
         )
         self._breadcrumb.show()
+        self._sync_calendar_conditions(conditions, editing)
+
+    def _sync_calendar_conditions(self, conditions: Sequence[str], editing: int | None) -> None:
+        """把同一批条件也摆到日历工具条上（ADR 0040 决策 9）。
+
+        **两处摆的是同一批条件**：这一行占掉的就是网格页那条面包屑（ADR 0033 决策 5），而筛选时
+        用户看不到网格页 —— 只摆面包屑上，条件就等于「加了但不知道加了什么」。
+
+        **无论当前在哪一页都要更新**：条件可能是在网格页上改的（那边改完切到日历页要立刻看见），
+        所以判据是「条件现在是什么样」，不是「日历页此刻在不在线」。
+        """
+        self._calendar_page.set_conditions(conditions, editing=editing)
 
     def _update_mode_actions(self) -> None:
         self._albums_action.setChecked(self._browse_mode == BROWSE_MODE_ALBUMS)

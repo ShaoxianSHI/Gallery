@@ -30,8 +30,9 @@ from gallery.ui.calendar import CalendarPage
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtGui import QColor, QImage, QPalette  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt  # noqa: E402
+from PySide6.QtGui import QColor, QImage, QMouseEvent, QPalette  # noqa: E402
+from PySide6.QtWidgets import QApplication, QToolButton  # noqa: E402
 
 TODAY = datetime.date(2024, 5, 16)
 
@@ -152,6 +153,148 @@ def test_light_to_dark_keeps_the_title_readable(
     assert contrast >= MIN_CONTRAST, (
         f"切到深色之后标题只有 {contrast:.2f}:1（{described}）—— 深底上的深字看不见"
     )
+
+
+@pytest.fixture
+def shown_page(qt_app: QApplication) -> Iterator[CalendarPage]:
+    """造一个**真的显示着**的页面。
+
+    ``isVisible()`` 要求祖先全都可见，而这些用例没把页面放上屏幕 —— 于是一条
+    「有条件时那一块该可见」会红，而它其实已经 ``setVisible(True)`` 了。问「有没有被显式收起来」
+    （``isHidden()``）才量的是我们真正写下的那一句。
+    """
+    page = CalendarPage()
+    page.resize(1000, 700)
+    page.show()
+    qt_app.processEvents()
+    try:
+        yield page
+    finally:
+        page.deleteLater()
+
+
+def test_the_chips_show_before_the_level_buttons(
+    qt_app: QApplication, shown_page: CalendarPage
+) -> None:
+    """条件胶囊摆在**年 / 月 / 周左边**，不是右边（ADR 0040 决策 9）。
+
+    右边那一头就是分段选择器：胶囊按录入顺序从右往左排开的话，最后几枚会**压在那三个按钮
+    上面** —— 两组控件叠在同一处，而叠着的那一组是永远点不到的那个（用户原话：「和相册视图
+    一致的话会和这几个按钮重叠」）。
+
+    量的是**两组的左右次序**，不是某个坐标：胶囊在左、分段器在右，这个关系一旦反过来立刻红。
+    """
+    page = shown_page
+    page.set_conditions(["相机：Canon"])
+    qt_app.processEvents()
+
+    chips = page._bar._chips
+    levels = page._bar._group.buttons()[-1]
+
+    assert chips.isVisible() is True, "有条件时那一块没收起来 —— 用户看不到自己加了哪几条"
+    assert chips.mapTo(page._bar, QPoint(0, 0)).x() < levels.mapTo(page._bar, QPoint(0, 0)).x(), (
+        "胶囊摆到分段选择器右边去了 —— 两者会重叠"
+    )
+
+
+def test_no_conditions_means_no_chips(qt_app: QApplication, shown_page: CalendarPage) -> None:
+    """条件撤光后那一块**整个收起来** —— 留一圈空白在那儿像是还有条件。"""
+    page = shown_page
+    page.set_conditions(["相机：Canon"])
+    qt_app.processEvents()
+    assert page._bar._chips.isVisible() is True
+
+    page.set_conditions([])
+    qt_app.processEvents()
+
+    assert page._bar._chips.isVisible() is False
+
+
+def test_the_chips_stay_readable_in_both_appearances(
+    qt_app: QApplication,
+    page_in: Callable[..., CalendarPage],
+) -> None:
+    """浅色与深色下胶囊都得读得出来 —— 守护。
+
+    **这一条量的是画出来的像素，不是 ``chip.palette()``**，理由与上面那个标题的用例一样：
+    工具条带着样式表，而样式表会让这一支拿到 ``QStyleSheetStyle`` **自己那份**调色板 ——
+    胶囊自己的样式表里那几条 ``palette(text)`` / ``palette(mid)`` 取的正是它。出问题时
+    ``palette()`` 已经是新那一档、画的却还是旧那一档，量调色板会一路绿。
+
+    为什么这条不是杞人忧天：胶囊**套在工具条里**（工具条那一行占掉的就是面包屑那一行），
+    于是它们第一次吃到了工具条那份样式表的级联 —— 而这条级联路径此前没有人验过。
+    """
+    for name, window, base in (
+        ("浅色", LIGHT_WINDOW, LIGHT_BASE),
+        ("深色", DARK_WINDOW, DARK_BASE),
+    ):
+        page = page_in(window=window, base=base)
+        page.resize(1000, 700)
+        page.show()
+        qt_app.processEvents()
+        page.set_conditions(["相机：Canon"])
+        qt_app.processEvents()
+
+        chip = page._bar._chips.findChildren(QToolButton)[0]
+        image = page.grab().toImage()
+        left, top = chip.mapTo(page, QPoint(0, 0)).toTuple()
+        pixels = [
+            image.pixelColor(left + dx, top + dy)
+            for dx in range(chip.width())
+            for dy in range(chip.height())
+        ]
+        ink = min(pixels, key=lambda color: _luminance(color))
+        background = max(pixels, key=lambda color: _luminance(color))
+        ratio = _contrast(ink, background)
+
+        # **4.5:1 是正文可读的下限**：胶囊上写的是条件（「相机：Canon」）而不是图标。
+        assert ratio >= 4.5, (
+            f"{name}下胶囊读不出来：{ratio:.1f}:1（字 {ink.name()} 压在底 {background.name()} 上）"
+        )
+        page.deleteLater()
+
+
+def test_a_click_on_a_chip_reaches_the_page(qt_app: QApplication, shown_page: CalendarPage) -> None:
+    """工具条上的胶囊点下去**要真的报到外面去** —— 否则用户看得见却点不动。
+
+    钉的是「序号原样传出去」：传错了下标，用户点第二枚改的却是第一条，而症状是他看到输入框里
+    冒出另一条条件。
+    """
+    page = shown_page
+    page.set_conditions(["文件名：海边", "相机：Canon"])
+    qt_app.processEvents()
+    seen: list[tuple[str, int]] = []
+    page.condition_edited.connect(lambda index: seen.append(("edited", index)))
+    page.condition_removed.connect(lambda index: seen.append(("removed", index)))
+
+    chips = page._bar._chips.findChildren(QToolButton)
+    assert len(chips) == 2
+    # 点右端那个 ✕（热区按字体度量分，见 ``ChipButton._hits_mark``）。
+    _click(chips[1], at_mark=True)
+    # 点文字那一段。
+    _click(chips[0], at_mark=False)
+
+    assert seen == [("removed", 1), ("edited", 0)], f"传出去的序号不对：{seen}"
+
+
+def _click(chip: QToolButton, *, at_mark: bool) -> None:
+    """在胶囊上按一下并松开（``at_mark`` 决定落在文字还是右端那个 ✕）。"""
+    x = chip.width() - 4 if at_mark else 10
+    for kind, buttons in (
+        (QEvent.Type.MouseButtonPress, Qt.MouseButton.LeftButton),
+        (QEvent.Type.MouseButtonRelease, Qt.MouseButton.NoButton),
+    ):
+        QApplication.sendEvent(
+            chip,
+            QMouseEvent(
+                kind,
+                QPointF(x, chip.height() / 2),
+                QPointF(x, chip.height() / 2),
+                Qt.MouseButton.LeftButton,
+                buttons,
+                Qt.KeyboardModifier.NoModifier,
+            ),
+        )
 
 
 def test_the_title_keeps_the_default_font_size(
