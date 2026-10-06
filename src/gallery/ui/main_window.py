@@ -91,6 +91,7 @@ from gallery.ui.search_field import TOGGLE_EDGE as SCOPE_TOGGLE_EDGE
 from gallery.ui.search_field import TOGGLE_GAP as SCOPE_TOGGLE_GAP
 from gallery.ui.search_field import WIDTH as SEARCH_FIELD_WIDTH
 from gallery.ui.search_field import ScopeToggle, SearchField
+from gallery.ui.side_buttons import SideButtonFilter
 from gallery.ui.tasks import TaskRunner
 from gallery.ui.thumbs.pipeline import ThumbnailPipeline
 from gallery.ui.title_bar import EXTRA_PADDING as TITLE_BAR_EXTRA
@@ -487,6 +488,13 @@ class MainWindow(
         self._up_action.setShortcut(QKeySequence("Esc"))
         self._up_action.triggered.connect(self.go_up)
 
+        # 鼠标后侧键也归这一条（ADR 0043）：触发的是**同一个动作**，于是启用状态、菜单里那一条与
+        # 真正干活的 go_up 只有一份。
+        self._side_buttons = SideButtonFilter(self)
+        self._side_buttons.back_pressed.connect(self._on_back_button)
+        #: 后侧键这一下刚把改名的输入框收掉了（由 ``_on_rename_active_changed`` 记）。
+        self._input_closed_by_back_button = False
+
         self._pop_condition_action = QAction("撤掉最后一条筛选条件", self)
         self._pop_condition_action.setShortcut(QKeySequence("Shift+Esc"))
         self._pop_condition_action.triggered.connect(self.pop_last_condition)
@@ -840,6 +848,20 @@ class MainWindow(
         self._push_album_chain(resolved)
         # **只有整库检索要清条件**（理由见上面那段）：筛选要跟着走进这个相册。
         self._reload_level(focus=focus)
+
+    def _on_back_button(self) -> None:
+        """鼠标后侧键 = **「上一级」那一条命令**（ADR 0043），与 ``Esc`` 是同一个动作。
+
+        **输入框被这一下收掉时这一格让开**：Qt 是先把焦点给鼠标底下的控件、再把事件交给过滤器
+        的（实测顺序：``focusOut`` → 改名提交 → 过滤器），所以等这一层看见侧键时输入框已经收起、
+        那条动作也已经重新亮起来 —— 直接触发就是「既把名字提交了又退一层」。而这一按的意思
+        早就变成了「点别处」（与左键完全一样）。
+        """
+        if self._input_closed_by_back_button:
+            self._input_closed_by_back_button = False
+            return
+        # **不自己判能不能退**：那条动作的启用状态就是那一句（``Esc`` 此刻按不到时侧键也按不到）。
+        self._up_action.trigger()
 
     def go_up(self) -> None:
         """**弹掉栈顶一帧** —— 只管位置，与条件无关（ADR 0041 决策 1）。

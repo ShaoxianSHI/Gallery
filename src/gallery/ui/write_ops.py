@@ -12,9 +12,9 @@ from collections.abc import Callable, Sequence
 from functools import partial
 from pathlib import Path
 
-from PySide6.QtCore import QModelIndex
+from PySide6.QtCore import QModelIndex, Qt
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QDialog, QMenu
+from PySide6.QtWidgets import QApplication, QDialog, QMenu
 
 from gallery.core import paths
 from gallery.core.errors import GalleryError
@@ -600,8 +600,13 @@ class WriteOpsMixin:
             return
         self._grid.begin_rename(index)
 
-    def _on_rename_active_changed(self, _active: bool) -> None:
+    def _on_rename_active_changed(self, active: bool) -> None:
         """改名的这段时间里 Esc 是「取消改名」，菜单里的「上一级」也跟着让开。"""
+        if not active and QApplication.mouseButtons() & Qt.MouseButton.BackButton:
+            # **收掉这个输入框的是后侧键这一下**（判据是此刻按着的键：Qt 在事件过滤器**之前**
+            # 就把焦点给了鼠标底下的控件，于是侧键随后看到的那条动作已经重新亮了 —— 不记这一笔，
+            # 一次「返回」就既提交了名字又退一层，见 ``MainWindow._on_back_button``，ADR 0043）。
+            self._input_closed_by_back_button = True
         self._update_action_states()
 
     def _on_rename_committed(self, row: int, text: str) -> None:
