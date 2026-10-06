@@ -37,8 +37,19 @@ GROUP_COUNT_ROLE = int(Qt.ItemDataRole.UserRole) + 5
 #: 默认缩略图边长，与档位定义（``ui.thumb_sizes``）同源。
 DEFAULT_ICON_EDGE = DEFAULT_EDGE
 
-#: 内存中最多保留多少张已缩放的缩略图。按 176px 估算约 30 MB。
+#: 内存中最多保留多少张已缩放的缩略图。**这是兜底，不是主要的那个** ——
+#: 真正的上限是 :data:`PIXMAP_MEMORY_BUDGET`，而这一条留着是为了「边长极小时张数无界」
+#: 那种情形（此时每张只占几 KB，按字节算会一直存下去）。
 DEFAULT_PIXMAP_CACHE = 600
+
+#: 网格那一份已缩放缩略图的字节预算（约 64 MB）。
+#:
+#: **为什么要有它**：每张的实际大小是 ``边长² × 4`` 字节，只按张数封顶的话内存跟着
+#: 边长的**平方**走 —— 实测 600 张在 176 档是 66 MB、在 288 档就是 237 MB，而用户选「大」
+#: 档只按了一个键。
+#:
+#: 两个上限一起用：先按字节砍，砍到预算内为止；同时仍然守张数上限（见上面的常量）。
+PIXMAP_MEMORY_BUDGET = 64 * 1024 * 1024
 
 
 @dataclass(slots=True)
@@ -310,12 +321,36 @@ class PhotoListModel(QAbstractListModel):
             pixmap = scale_pixmap(pixmap, sized)
         self._pixmaps[path] = _CachedThumb(pixmap=pixmap, edge=sized)
         self._pixmaps.move_to_end(path)
-        while len(self._pixmaps) > self._cache_size:
-            self._pixmaps.popitem(last=False)
+        self._trim_pixmaps()
         if row is not None:
             self._notify_row(row)
         for group_row in group_rows:
             self._notify_row(group_row)
+
+    def _trim_pixmaps(self) -> None:
+        """淘汰到**字节预算**之内（条目数上限同时留着，见两个常量的说明）。
+
+        缺陷现场：原先只按**条目数**淘汰，而每张的实际大小是 ``边长² × 4`` 字节 ——
+        于是内存跟着边长的**平方**走，「按 176px 估算约 30 MB」那句只在 176 那一档
+        成立。实测（``DEFAULT_PIXMAP_CACHE`` = 600）：
+
+        | 档位 | 视口 720 | 1400 | 2560 |
+        |------|---------|------|------|
+        | 112  | 29 MB | 27 MB | 29 MB |
+        | 176  | 50 MB | 66 MB | 79 MB |
+        | 288  | **243 MB** | **237 MB** | 198 MB |
+
+        用户选「大」档再看一个宽的库，网格自己就常驻两百多 MB，而那还没算大图页的
+        ``_preview_cache`` 与全分辨率那一张。
+        """
+        total = sum(
+            item.pixmap.width() * item.pixmap.height() * 4 for item in self._pixmaps.values()
+        )
+        while self._pixmaps and (
+            total > PIXMAP_MEMORY_BUDGET or len(self._pixmaps) > self._cache_size
+        ):
+            _key, dropped = self._pixmaps.popitem(last=False)
+            total -= dropped.pixmap.width() * dropped.pixmap.height() * 4
 
     def set_icon_edge(self, edge: int) -> None:
         """切换缩略图尺寸。

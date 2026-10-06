@@ -18,7 +18,10 @@ pytest.importorskip("PySide6")
 from PySide6.QtGui import QImage  # noqa: E402
 
 from gallery.core.library.photos import GroupRef, PhotoRef  # noqa: E402
-from gallery.ui.browser.model import PhotoListModel  # noqa: E402
+from gallery.ui.browser.model import (  # noqa: E402
+    DEFAULT_PIXMAP_CACHE,
+    PhotoListModel,
+)
 
 
 @pytest.fixture
@@ -110,3 +113,67 @@ def test_a_group_card_cover_counts_as_shown(qt_app) -> None:  # type: ignore[no-
     model.reorder([GroupRef(facet="camera", key="canon", label="Canon", photos=(photo,))])
 
     assert model.shows_path(Path("/库/封面.jpg")) is True
+
+
+def _used_bytes(model: PhotoListModel) -> int:
+    return sum(item.pixmap.width() * item.pixmap.height() * 4 for item in model._pixmaps.values())
+
+
+def test_the_memory_hold_is_capped_by_bytes_not_by_count(qt_app, tmp_path: Path) -> None:
+    """**内存按字节封顶**，不按张数 —— 每张是 ``边长² × 4`` 字节。
+
+    缺陷现场：原先只按条目数淘汰（600 张），而「按 176px 估算约 30 MB」那句只在 176
+    那一档成立。实测 900 张喂进去：
+
+    | 档位 | 改前（只按张数） | 改后（字节 + 张数两个上限） |
+    |------|------------------|---------------------------|
+    | 112  | 28.7 MB          | 28.7 MB                   |
+    | 176  | 70.9 MB          | 63.9 MB                   |
+    | 288  | **189.8 MB**     | **63.9 MB**               |
+
+    用户选「大」档只看一个键，而那一份内存是白白涨上去的。
+
+    **判据写死绝对数字，不用 ``PIXMAP_MEMORY_BUDGET`` 那个常量。** 拿被测对象自己的
+    常量当基准是同义反复：把常量调到天上，代码与断言两边一起变大，这条用例就成了
+    永远为绿的那种守护 —— 本仓库吃过好几次这个亏。
+    """
+    del qt_app
+    ceiling = 64 * 1024 * 1024  # 与 PIXMAP_MEMORY_BUDGET 同档，但在这里写死
+    for edge in (288, 176):
+        model = PhotoListModel(icon_edge=edge)
+        refs = [
+            PhotoRef(path=tmp_path / f"{edge}-{index}.jpg", size=1, mtime_ns=index)
+            for index in range(900)
+        ]
+        model.append(refs)
+        for ref in refs:
+            model.set_thumbnail(ref.path, _image(edge), edge)
+
+        used = _used_bytes(model)
+        assert used <= ceiling, (
+            f"{edge} 档留下 {used / 1024 / 1024:.1f} MB，超过 {ceiling / 1024 / 1024:.0f} MB"
+            " —— 字节上限没生效（只按张数封顶就会这样）"
+        )
+        assert model._pixmaps, "不该全被淘汰掉"
+        assert len(model._pixmaps) < len(refs), "不该全留着"
+
+
+def test_the_count_cap_still_applies_for_tiny_images(qt_app, tmp_path: Path) -> None:
+    """**字节很小的时候张数仍然封顶** —— 只按字节算的话会一直存下去。
+
+    :data:`PIXMAP_MEMORY_BUDGET` 是主要那个上限，:data:`DEFAULT_PIXMAP_CACHE` 是兜底：
+    边长极小时每张只占几 KB，字节离预算还远得很，而张数无界。
+    """
+    del qt_app
+    model = PhotoListModel()
+    refs = [
+        PhotoRef(path=tmp_path / f"t{index}.jpg", size=1, mtime_ns=index)
+        for index in range(DEFAULT_PIXMAP_CACHE + 50)
+    ]
+    model.append(refs)
+    for ref in refs:
+        model.set_thumbnail(ref.path, _image(4), 4)
+
+    assert len(model._pixmaps) <= DEFAULT_PIXMAP_CACHE, (
+        f"留下 {len(model._pixmaps)} 张，超过张数上限 {DEFAULT_PIXMAP_CACHE}"
+    )
