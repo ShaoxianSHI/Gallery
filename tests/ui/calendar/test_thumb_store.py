@@ -3,6 +3,10 @@
 它按 ``(路径, 边长)`` 存小幅缩略图，日历三层各要一档（年 48 / 周 192 / 月 288），
 而**多档各留一份、换档不清空** —— 清掉的话 ``Y``/``M``/``W`` 来回翻时会把同一批照片
 重新解码一遍。
+
+**每条用例都要 ``qt_app``**，哪怕一个控件都不摆：``QImage`` 仍然要 ``QApplication`` 在，
+而 ``conftest`` 里那个 autouse 的 ``qt_teardown`` **依赖 ``qt_app``** —— 不声明它的用例
+拿不到确定性的收尾（控件会活到解释器收尾去碰运气，症状是用例全绿而进程最后 SIGSEGV）。
 """
 
 from __future__ import annotations
@@ -14,6 +18,7 @@ import pytest
 pytest.importorskip("PySide6")
 
 from PySide6.QtGui import QImage  # noqa: E402
+from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from gallery.ui.calendar.thumbs import DEFAULT_EDGES, ThumbStore  # noqa: E402
 
@@ -25,7 +30,7 @@ def _image() -> QImage:
     return QImage(8, 6, QImage.Format.Format_RGB32)
 
 
-def test_every_edge_keeps_its_own_copy(tmp_path: Path) -> None:
+def test_every_edge_keeps_its_own_copy(qt_app: QApplication, tmp_path: Path) -> None:
     """换档不清空：三个档位各留一份，来回翻不用重新解码。"""
     store = ThumbStore()
     photo = tmp_path / "一张.jpg"
@@ -40,7 +45,7 @@ def test_every_edge_keeps_its_own_copy(tmp_path: Path) -> None:
 
 
 def test_the_default_keeps_exactly_as_many_edges_as_the_calendar_has(
-    tmp_path: Path,
+    qt_app: QApplication, tmp_path: Path
 ) -> None:
     """**默认配置下淘汰分支走不到**：日历三层三档，而 :data:`DEFAULT_EDGES` 正是 3。
 
@@ -59,7 +64,7 @@ def test_the_default_keeps_exactly_as_many_edges_as_the_calendar_has(
 
 
 def test_eviction_drops_the_largest_edges_and_may_drop_the_one_in_use(
-    tmp_path: Path,
+    qt_app: QApplication, tmp_path: Path
 ) -> None:
     """**淘汰只按边长，留最小的几档 —— 不看当前档，也不保正在用的那一档。**
 
@@ -83,7 +88,9 @@ def test_eviction_drops_the_largest_edges_and_may_drop_the_one_in_use(
     assert store.get(photo) is not None
 
 
-def test_forget_takes_any_iterable_not_just_the_four_container_types(tmp_path: Path) -> None:
+def test_forget_takes_any_iterable_not_just_the_four_container_types(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
     """**收真的 ``Iterable``** —— 传生成器（最自然的写法）不许抛异常。
 
     缺陷现场：原先签名是 ``paths: object``，用 ``isinstance(paths, (list, tuple, set,
