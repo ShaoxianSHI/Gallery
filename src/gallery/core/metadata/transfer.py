@@ -313,9 +313,14 @@ def _guard(root: Path, destination: Path) -> None:
     try:
         paths.guard_within_root(root, destination, allow_root=True)
     except ValueError as exc:
-        raise TransferError(
-            f"只能移到库里的相册：{destination}。（{exc}）", path=destination
-        ) from exc
+        raise TransferError(_transfer_reason(destination, str(exc)), path=destination) from exc
+
+
+def _transfer_reason(path: Path, reason: str) -> str:
+    """按闸门说的那一件事给一句中文 —— 理由见 :func:`rename._rename_reason`。"""
+    if "配置目录" in reason:
+        return "这是 Gallery 自己的配置目录，不能移东西进去。"
+    return f"只能移到库里的相册：{path}。"
 
 
 __all__ = [

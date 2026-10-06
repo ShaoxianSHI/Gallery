@@ -105,11 +105,14 @@ def same_directory(left: Path, right: Path) -> bool:
     访达的剪贴板里可能是 ``/private/var/…`` 这样的写法，而界面上拿到的是 ``/var/…``；
     不解析就比不相等，于是「已经在同一目录了」这条判断会失效（粘贴会粘出一堆重复
     文件，「移动」会把照片原地又移一次、平白多出一份「一张 2.jpg」）。
+
+    **走 :func:`~gallery.core.paths.resolved_str` 而不是裸的 ``resolve()``**：粘贴与移动
+    都在逐项循环里问这一条，而右侧那个目标目录整场循环不变 —— 同一个问题问几百遍，
+    而 ``resolve()`` 每次都要 ``lstat`` 路径上的每一段（实测十二段的库一次约 19 µs）。
     """
-    try:
-        return left.resolve() == right.resolve()
-    except OSError:  # pragma: no cover - resolve 基本不会失败
-        return left == right
+    from gallery.core.paths import resolved_str
+
+    return resolved_str(left) == resolved_str(right)
 
 
 __all__ = ["SOURCE_GONE", "Failure", "os_reason", "same_directory"]

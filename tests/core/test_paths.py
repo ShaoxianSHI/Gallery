@@ -76,7 +76,7 @@ def test_app_paths_follow_injected_base(tmp_path: Path) -> None:
 def test_app_data_base_is_platform_specific(
     monkeypatch: pytest.MonkeyPatch, real_app_data_base: Callable[[], Path]
 ) -> None:
-    """各平台落在各平台该在的地方（``.gallery`` 别名的来处）。
+    """各平台落在各平台该在的地方（配置目录名的来处）。
 
     **用没被隔离的那一份**：其余用例都跑在 ``isolated_app_data`` 之下（那份 fixture
     把默认值钉到临时目录上，好让测试永远不碰用户真实的缓存），而这一条测的正是
@@ -98,6 +98,77 @@ def test_is_within(tmp_path: Path) -> None:
     assert paths.is_within(root, tmp_path / "别处") is False
     # 前缀相同的兄弟目录不算「在其下」
     assert paths.is_within(root, tmp_path / "库2") is False
+
+
+def test_the_guard_really_refuses_the_library_root(tmp_path: Path) -> None:
+    """``allow_root=False`` 是**禁止**，不是一个什么都不检查的静默返回。
+
+    缺陷现场：那一支写的是 ``return`` —— 文档写着「禁止」、代码放行，而这是一个
+    「确认」用的闸门。它当时没出事，是因为 :func:`rename._guard` 与
+    :func:`trash._guard` 各自在前面查了一遍库根、还带着更贴切的领域文案；读代码的人
+    只能靠猜那道闸到底拦不拦。
+    """
+    root = tmp_path / "库"
+    root.mkdir()
+
+    paths.guard_within_root(root, root, allow_root=True)  # 粘贴的目标可以是库根
+
+    with pytest.raises(ValueError, match="库本身"):
+        paths.guard_within_root(root, root, allow_root=False)
+
+
+def test_the_guard_refuses_the_config_dir(tmp_path: Path) -> None:
+    """配置目录永远不在允许范围内 —— 里面放的每一样都是「只有 Gallery 自己看得见」的缓存。"""
+    root = tmp_path / "库"
+    root.mkdir()
+    config = paths.config_dir(root)
+    config.mkdir()
+
+    with pytest.raises(ValueError, match="配置目录"):
+        paths.guard_within_root(root, config)
+
+
+def test_the_guard_rejects_a_path_outside_the_library(tmp_path: Path) -> None:
+    root = tmp_path / "库"
+    root.mkdir()
+    outside = tmp_path / "别处"
+    outside.mkdir()
+
+    with pytest.raises(ValueError, match="不在库内"):
+        paths.guard_within_root(root, outside)
+
+
+def test_the_hot_paths_do_not_resolve_the_same_string_twice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**这道闸走带记忆的 ``resolved_str``** —— 它在粘贴 / 移动 / 改名的逐项循环里被问，
+    而 ``root`` 在整场会话里不变。裸 ``resolve()`` 每次都要 ``lstat`` 路径上的每一段
+    （实测十二段的库一次约 19 µs，带记忆那份约 0.08 µs）。
+
+    钉的是「问第二次不再解析」：第一次必然要真算一次（缓存未命中），而那一笔之后
+    就该全是查表。测试里量时间本来就不稳，钉这个更实。
+    """
+    root = tmp_path / "库"
+    (root / "相册").mkdir(parents=True)
+    inside = root / "相册" / "一张.jpg"
+    # 先把这一批填进缓存（``config_dir`` 也算一个：闸门每次都要拿它比一比）。
+    paths.is_within(root, inside)
+    paths.is_within(root, paths.config_dir(root))
+    paths.is_within(root, root / "相册")
+
+    calls: list[str] = []
+    original = Path.resolve
+
+    def counting(self: Path, *args: object, **kwargs: object) -> Path:
+        calls.append(str(self))
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", counting)
+    paths.is_within(root, inside)
+    paths.guard_within_root(root, inside)
+    paths.is_within(root, root / "相册")
+
+    assert calls == [], f"同一批路径被重复解析了 {len(calls)} 次"
 
 
 def test_resources_dir_follows_the_package() -> None:

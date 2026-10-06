@@ -96,10 +96,14 @@ def _guard(root: Path, destination: Path) -> None:
     try:
         paths.guard_within_root(root, destination, allow_root=True)
     except ValueError as exc:
-        raise AlbumError(
-            f"只能在库里的文件夹中新建相册：{destination}。（{exc}）",
-            path=destination,
-        ) from exc
+        raise AlbumError(_album_reason(destination, str(exc)), path=destination) from exc
+
+
+def _album_reason(path: Path, reason: str) -> str:
+    """按闸门说的那一件事给一句中文 —— 理由见 :func:`rename._rename_reason`。"""
+    if "配置目录" in reason:
+        return "这是 Gallery 自己的配置目录，不能往里建相册。"
+    return f"只能在库里的文件夹中新建相册：{path}。"
 
 
 __all__ = ["DEFAULT_ALBUM_NAME", "CreatedAlbum", "create_album"]

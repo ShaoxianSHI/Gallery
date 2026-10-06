@@ -249,9 +249,14 @@ def _guard(root: Path, destination: Path) -> None:
     try:
         paths.guard_within_root(root, destination, allow_root=True)
     except ValueError as exc:
-        raise PasteError(
-            f"只能粘到库里的文件夹：{destination}。（{exc}）", path=destination
-        ) from exc
+        raise PasteError(_paste_reason(destination, str(exc)), path=destination) from exc
+
+
+def _paste_reason(path: Path, reason: str) -> str:
+    """按闸门说的那一件事给一句中文 —— 理由见 :func:`rename._rename_reason`。"""
+    if "配置目录" in reason:
+        return "这是 Gallery 自己的配置目录，照片不该粘进去。"
+    return f"只能粘到库里的文件夹：{path}。"
 
 
 __all__ = [

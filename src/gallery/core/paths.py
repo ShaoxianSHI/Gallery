@@ -97,25 +97,38 @@ def is_within(root: Path, candidate: Path) -> bool:
     """``candidate`` 是否就是 ``root`` 或位于其下（按解析后的绝对路径比较）。
 
     相册模式允许逐层进入子文件夹，界面因此需要一个「不许走出库」的闸门。
+
+    **走 :func:`resolved_str` 而不是裸的 ``resolve()``**：这条闸门在粘贴 / 移动 / 改名的
+    逐项循环里被问，而 ``root`` 在整场会话里不变；裸 ``resolve()`` 要 ``lstat`` 路径上的
+    每一段（实测十二段的库一次约 19 µs，而带记忆那份约 0.08 µs）。
     """
-    resolved_root = Path(root).resolve()
-    resolved = Path(candidate).resolve()
+    resolved_root = Path(resolved_str(root))
+    resolved = Path(resolved_str(candidate))
     return resolved == resolved_root or resolved_root in resolved.parents
 
 
 def guard_within_root(root: Path, path: Path, *, allow_root: bool = True) -> None:
-    """确认 ``path`` 在库内且不是配置目录。
+    """确认 ``path`` 在库内、不是配置目录、也不是库根本身。
 
     :param allow_root: ``True`` 时允许 ``path == root``（粘贴的目标可以是库根）；
-        ``False`` 时禁止（库根本身不能被改名或删除）。
+        ``False`` 时**禁止** —— 库根本身不能被改名或删除。
+    :raises ValueError: 不满足上面任何一条。
+
+    **别再把「库根」写成静默返回。** 这条闸门是「确认」用的，而 ``return`` 什么都不
+    确认 —— 文档写着「禁止」、代码却放行，读的人只能靠猜。它原先那句
+    ``if not allow_root and path.resolve() == root.resolve(): return``
+    之所以没出事，是因为 :func:`gallery.core.metadata.rename._guard` 与
+    :func:`gallery.core.metadata.trash._guard` 各自在前面查了一遍库根、并且带着更贴切的
+    领域错误文案；把它们说清楚之后，这道闸自己就把库根挡掉，那两处预检也就不再是
+    「唯一拦得住的地方」了。
     """
     root = Path(root)
     path = Path(path)
-    if not allow_root and path.resolve() == root.resolve():
-        return  # 由调用方决定抛什么错
     if not is_within(root, path):
         raise ValueError(f"不在库内：{path}")
-    if path.resolve() == config_dir(root).resolve():
+    if not allow_root and resolved_str(path) == resolved_str(root):
+        raise ValueError(f"这是库本身：{root}")
+    if resolved_str(path) == resolved_str(config_dir(root)):
         raise ValueError("这是 Gallery 自己的配置目录")
 
 

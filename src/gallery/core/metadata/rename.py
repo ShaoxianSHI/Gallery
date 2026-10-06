@@ -190,13 +190,28 @@ def _guard(root: Path, source: Path, target: Path) -> None:
     文件的入口，值得对「库根」「配置目录」多一层保险。
     """
     root = Path(root)
-    if source.resolve() == root.resolve():
-        raise RenameError("这是库本身，改名会让 Gallery 找不到照片。", path=source)
     for _path in (source, target):
+        if _path.resolve() == root.resolve():
+            raise RenameError("这是库本身，改名会让 Gallery 找不到照片。", path=_path)
         try:
-            paths.guard_within_root(root, _path)
+            paths.guard_within_root(root, _path, allow_root=False)
         except ValueError as exc:
-            raise RenameError(f"只能重命名库里的东西：{_path}。（{exc}）", path=_path) from exc
+            raise RenameError(_rename_reason(_path, str(exc)), path=_path) from exc
+
+
+def _rename_reason(path: Path, reason: str) -> str:
+    """按闸门说的那一件事给一句中文，而不是把它的内部措辞倒给用户。
+
+    缺陷现场：三处 ``_guard`` 原本共用一句话，于是「配置目录」这种**具体且可行动**的
+    原因被降级成括号里的补充，而路径在句子里出现了两次 —— 「只能在库里的文件夹中新建相册：
+    /长路径/配置目录。（这是 Gallery 自己的配置目录）」。那条具体文案是每处各自写的，
+    抽取时被抹平了。
+    """
+    if "配置目录" in reason:
+        return "这是 Gallery 自己的配置目录，不能改名。"
+    if "库本身" in reason:
+        return "这是库本身，改名会让 Gallery 找不到照片。"
+    return f"只能重命名库里的东西：{path}。"
 
 
 def _keep_suffix(entry: PhotoRef, cleaned: str) -> str:

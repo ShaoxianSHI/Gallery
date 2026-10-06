@@ -307,12 +307,19 @@ def _guard(root: Path, source: Path) -> None:
     原处的入口，值得对「库根」「配置目录」多一层保险。
     """
     root = Path(root)
-    if source.resolve() == root.resolve():
-        raise DeleteError("这是库本身，删掉它 Gallery 就找不到任何照片了。", path=source)
     try:
-        paths.guard_within_root(root, source)
+        paths.guard_within_root(root, source, allow_root=False)
     except ValueError as exc:
-        raise DeleteError(f"只能移除库里的东西：{source}。（{exc}）", path=source) from exc
+        raise DeleteError(_trash_reason(source, str(exc)), path=source) from exc
+
+
+def _trash_reason(path: Path, reason: str) -> str:
+    """按闸门说的那一件事给一句中文 —— 理由见 :func:`rename._rename_reason`。"""
+    if "配置目录" in reason:
+        return "这是 Gallery 自己的配置目录，不能删。"
+    if "库本身" in reason:
+        return "这是库本身，删掉它 Gallery 就找不到任何照片了。"
+    return f"只能移除库里的东西：{path}。"
 
 
 def _free_name(candidate: Path, *, is_dir: bool) -> Path:
