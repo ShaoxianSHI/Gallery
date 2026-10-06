@@ -326,6 +326,10 @@ class SearchField(QWidget):
         self._popup.setUniformRowHeights(True)
         self._popup.itemClicked.connect(lambda _item, _column: self.complete())
         self._popup.hide()
+        # 窗口变小的时候要把列表重新夹一次（理由见 :meth:`eventFilter`）。宿主就是自己的时候
+        # 不用挂 —— 那种用法（不传 parent）本来也不存在「窗口变小」这回事。
+        if self._host is not self:
+            self._host.installEventFilter(self)
 
         self._focused = False
         #: 正在补全字段（补全那一瞬不许把列表重新弹起来，见 :meth:`complete`）。
@@ -462,13 +466,23 @@ class SearchField(QWidget):
         if not fields:
             self._close_popup()
             return
+        self._place_popup(len(fields))
+        items = self._candidate_items()
+        if items:
+            self._popup.setCurrentItem(items[0])
+        self._popup.raise_()
+        self._popup.show()
+
+    def _place_popup(self, rows: int) -> None:
+        """把列表摆在胶囊下面，并**夹在窗口以内**。
+
+        高**按行高算**，不按「行数 × 一个写死的数」—— 写死的那个数并不是这一档字号下真正的
+        行高，于是最下面多出一截空白。上下各留 :data:`POPUP_LIST_INSET` 正好是视口留白。
+        """
         # 位置换算到**窗口**坐标（列表是胶囊的兄弟，见 __init__ 那段）。
         anchor = self.mapTo(self._host, QPoint(0, self.height() + 2))
-        # 高**按行高算**，不按「行数 × 一个写死的数」—— 写死的那个数并不是这一档字号下真正
-        # 的行高，于是最下面多出一截空白。上下各留 :data:`POPUP_LIST_INSET` 正好是视口留白。
-        rows = len(fields) * self._popup.sizeHintForRow(0)
         height = min(
-            rows + POPUP_LIST_INSET * 2,
+            rows * self._popup.sizeHintForRow(0) + POPUP_LIST_INSET * 2,
             max(0, self._host.height() - anchor.y()),
         )
         # 左沿让开的那一段由 :meth:`_popup_left` 算，**右沿仍与胶囊齐**（宽度跟着左移收窄）。
@@ -477,11 +491,20 @@ class SearchField(QWidget):
         field_left = self.mapTo(self._host, QPoint(0, 0)).x()
         left = max(0, min(self._popup_left(), field_left + WIDTH - _POPUP_MIN_WIDTH))
         self._popup.setGeometry(left, anchor.y(), WIDTH - max(0, left - field_left), height)
-        items = self._candidate_items()
-        if items:
-            self._popup.setCurrentItem(items[0])
-        self._popup.raise_()
-        self._popup.show()
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 - Qt 定的
+        """窗口变小的时候重新摆一次列表。
+
+        **列表挂在窗口上，而普通子控件不吃窗口的尺寸变化** —— 高度是填列表那一刻按当时的窗口
+        算的，于是窗口缩小之后它就伸到外面去了。
+
+        这一条以前一直成立只是因为字段少：18 个字段的自然高度恰好比窗口的最小高度还短，于是
+        那个夹取从来没有被考验过。加了几个字段它才露出来（守护见
+        ``tests/ui/test_search_flow.py::test_the_candidate_list_still_fits_a_short_window``）。
+        """
+        if watched is self._host and event.type() == QEvent.Type.Resize and self._popup.isVisible():
+            self._place_popup(self._popup.topLevelItemCount())
+        return super().eventFilter(watched, event)
 
     def _item_padding(self) -> int:
         """**固定就是菜单那一档**（:data:`POPUP_LIST_ITEM_PAD`）：让路的活整个交给框的位置。

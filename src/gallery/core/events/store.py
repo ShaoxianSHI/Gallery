@@ -54,6 +54,11 @@ logger = logging.getLogger(__name__)
 #: 挂到索引连接上时的别名。搜索层的子查询按它写（``ev.photo_events``）。
 SCHEMA_NAME: Final = "ev"
 
+#: 公共表与绑定表的表名。**搜索层按它们写子查询**，所以名字是常量而不是各处各写一遍 ——
+#: 写错要到 SQLite 执行时才报 ``no such table``，而那一眼看上去是「这一栏没得筛」。
+EVENTS_TABLE: Final = "events"
+BINDINGS_TABLE: Final = "photo_events"
+
 #: 事件库的表结构版本。**只管 events.db 自己那份** ``PRAGMA ev.user_version``，
 #: 与索引的 ``SCHEMA_VERSION`` 无关（索引升版会重建它的表，事件库不会）。
 SCHEMA_VERSION: Final = 1
@@ -63,13 +68,13 @@ SCHEMA_VERSION: Final = 1
 CHUNK: Final = 400
 
 #: 绑定表。它与类型无关，所以写死在这儿（扩展表按类型生成，见 :func:`_kind_schema`）。
-_BINDINGS_SCHEMA: Final = """
-CREATE TABLE IF NOT EXISTS ev.photo_events (
+_BINDINGS_SCHEMA: Final = f"""
+CREATE TABLE IF NOT EXISTS ev.{BINDINGS_TABLE} (
     path     TEXT NOT NULL,
-    event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    event_id INTEGER NOT NULL REFERENCES {EVENTS_TABLE}(id) ON DELETE CASCADE,
     PRIMARY KEY (path, event_id)
 );
-CREATE INDEX IF NOT EXISTS ev.photo_events_event ON photo_events(event_id);
+CREATE INDEX IF NOT EXISTS ev.{BINDINGS_TABLE}_event ON {BINDINGS_TABLE}(event_id);
 """
 
 #: ``events`` 表里除 :data:`COMMON_FIELDS` 之外那几列：身份与记账时间。
@@ -106,10 +111,11 @@ _EVENT_SELECT: Final = ", ".join(f"e.{name}" for name in _EVENT_NAMES)
 
 #: 建 ``events`` 表与它的索引。
 _EVENTS_SCHEMA: Final = (
-    "CREATE TABLE IF NOT EXISTS ev.events (\n    "
+    f"CREATE TABLE IF NOT EXISTS ev.{EVENTS_TABLE} (\n    "
     + ",\n    ".join(f"{name} {declaration}" for name, declaration in _event_columns())
     + "\n);"
-    "CREATE INDEX IF NOT EXISTS ev.events_kind_started ON events(kind, started_on DESC);"
+    f"CREATE INDEX IF NOT EXISTS ev.{EVENTS_TABLE}_kind_started"
+    f" ON {EVENTS_TABLE}(kind, started_on DESC);"
 )
 
 type SqlValue = str | int | float | None
@@ -403,7 +409,7 @@ def _drop_script() -> str:
     **只列事件库里的表名** —— 索引的重建脚本（``index.py``）同样只列它自己的两张。哪一边
     漏写一个表名，用户填的东西就没了，而两边的守护测试各盯各的那一句。
     """
-    tables = ["events", "photo_events", *(kind.table for kind in EVENT_KINDS)]
+    tables = [EVENTS_TABLE, BINDINGS_TABLE, *(kind.table for kind in EVENT_KINDS)]
     return "".join(f"DROP TABLE IF EXISTS {SCHEMA_NAME}.{table};" for table in tables)
 
 

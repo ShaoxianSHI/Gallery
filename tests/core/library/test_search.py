@@ -6,13 +6,16 @@ from __future__ import annotations
 
 import datetime
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Final
 
 import pytest
 
+from gallery.core import paths
 from gallery.core.errors import IndexUnavailableError
+from gallery.core.events.store import SCHEMA_NAME
 from gallery.core.library.facade import Library
 from gallery.core.library.index import FacetIndex
 from gallery.core.library.photos import FolderRef, PhotoRef
@@ -21,6 +24,7 @@ from gallery.core.library.search import (
     HALF_WIDTH_RANGE_SEPARATOR,
     SEARCH_FIELDS,
     SearchCondition,
+    SearchField,
     albums_kept,
     build_count_query,
     build_match_query,
@@ -534,7 +538,36 @@ _SAMPLE_VALUE: Final[dict[str, str]] = {
     "size": "5MB",
     "number": "1",
     "datetime": "2024",
+    "event": "京都",
 }
+
+
+def _sample(field: SearchField) -> str:
+    """这个字段拿什么值去试。
+
+    **事件那一族要按列的类型取**，不能按 ``kind`` 取：同一个 ``kind="event"`` 里既有文字
+    （``#目的地 京都``）也有数值（``#花费 1``），给数值字段一个文字就只会得到「解析不出来」——
+    而那个 ``None`` 断的是另一件事（见 :data:`_SAMPLE_VALUE`）。
+    """
+    if field.is_event:
+        return "1" if field.sql_type in ("INTEGER", "REAL") else _SAMPLE_VALUE["event"]
+    return _SAMPLE_VALUE[field.kind]
+
+
+@contextmanager
+def _connected(database: Path, root: Path) -> Iterator[sqlite3.Connection]:
+    """连上索引并把事件库挂上去 —— **和 :class:`FacetIndex` 做法一致**。
+
+    事件那一族的字段靠 ``EXISTS`` 子查询去读挂在同一条连接上的事件库（ADR 0043 决策 6），
+    所以这两条守护要一个挂着事件库的连接才测得到它们；不开挂载的话它们会报
+    ``no such table: ev.events``，而那不是列名写错。
+    """
+    connection = sqlite3.connect(database)
+    try:
+        connection.execute(f"ATTACH DATABASE ? AS {SCHEMA_NAME}", (str(paths.events_file(root)),))
+        yield connection
+    finally:
+        connection.close()
 
 
 def test_every_searchable_field_survives_the_real_schema(tmp_path: Path, make_photo) -> None:
@@ -549,9 +582,9 @@ def test_every_searchable_field_survives_the_real_schema(tmp_path: Path, make_ph
     database = library.facet_index.path
     assert database is not None
 
-    with sqlite3.connect(database) as connection:
+    with _connected(database, library.root) as connection:
         for field in SEARCH_FIELDS:
-            condition = _condition(f"#{field.label} {_SAMPLE_VALUE[field.kind]}")
+            condition = _condition(f"#{field.label} {_sample(field)}")
             assert condition is not None, field.label
             sql, values = build_query([condition])
             # 列名不对时这里抛的正是 `no such column: …`，读得懂。
@@ -585,9 +618,9 @@ def test_the_match_query_survives_the_real_schema(tmp_path: Path, make_photo) ->
     database = library.facet_index.path
     assert database is not None
 
-    with sqlite3.connect(database) as connection:
+    with _connected(database, library.root) as connection:
         for field in SEARCH_FIELDS:
-            condition = _condition(f"#{field.label} {_SAMPLE_VALUE[field.kind]}")
+            condition = _condition(f"#{field.label} {_sample(field)}")
             assert condition is not None, field.label
             sql, values = build_match_query([condition])
             connection.execute(sql, values).fetchall()

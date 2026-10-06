@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal, NamedTuple
 
+from gallery.core.events.kinds import EVENT_KINDS
+from gallery.core.events.store import BINDINGS_TABLE, EVENTS_TABLE, SCHEMA_NAME
 from gallery.core.library.photos import FolderRef, PhotoRef, normalize_suffix
 from gallery.core.metadata.facets import (
     FACET_APERTURE,
@@ -44,7 +46,7 @@ RESULT_LIMIT: Final = 5000
 #: 否则会多出一堆「IMGX001」那样的照片。转义了就必须同时写 ``ESCAPE``。
 _LIKE_ESCAPE: Final = "\\"
 
-type SearchKind = Literal["name", "album", "format", "text", "size", "number", "datetime"]
+type SearchKind = Literal["name", "album", "format", "text", "size", "number", "datetime", "event"]
 
 #: 一段区间两端之间的分隔符：**认全角与半角两种**，文档与提示里一律摆全角那一个。判据是日期
 #: 语法里根本不会出现波浪号，多认一种写法不产生歧义，少认一种却只是把用户挡在门外；两侧的
@@ -61,7 +63,13 @@ class SearchField:
 
     :param label: 候选列表里显示的名字。**只有别名会与 ``Facet.label`` 不同**（「所在文件夹」
         在搜索里叫「相册」）。
-    :param column: SQL 里的列（``p.`` = 文件表，``f.`` = facet 表）。
+    :param column: SQL 里的列（``p.`` = 文件表，``f.`` = facet 表）。事件那族写的是**它那张
+        事件表里的列名**，要配 :attr:`table` 一起看。
+    :param table: 事件库里的那张表（ADR 0043）。非空表示这一条走 ``EXISTS`` 子查询而不是
+        直接比某一列 —— 因为照片与事件是多对多的。
+    :param sql_type: 事件那一列声明的类型（``TEXT`` / ``DAY`` / ``INTEGER`` / ``REAL``）。
+        **匹配方式由它分派**，与 facet 那一族「一个 kind 决定一切」的做法不同：同一个
+        ``kind="event"`` 里既有文字也有数值。
     """
 
     id: str
@@ -69,11 +77,19 @@ class SearchField:
     kind: SearchKind
     column: str
     hint: str = ""
+    table: str = ""
+    sql_type: str = ""
+
+    @property
+    def is_event(self) -> bool:
+        return self.table != ""
 
     @property
     def needs_metadata(self) -> bool:
         """这个字段是不是必须真去读 EXIF 才拿得到：没装 exiftool 时地点与关键词那一族根本读不出来，
         仍然可以出现在候选里，但界面要把这句话说出来（ADR 0026）。
+
+        **事件那一族为假**：它不来自照片，也就不看 exiftool 装没装。
         """
         return self.column.startswith("f.")
 
@@ -89,7 +105,57 @@ def _field(
     return SearchField(id=facet_id, label=label, kind=kind, column=column, hint=hint)
 
 
-#: 候选列表的顺序即这里面的顺序。**不打乱 GROUP_FACET_IDS / SORT_FACET_IDS 的既有顺序**
+#: 「事件类型」在库里存的是 id（``trip``），而用户敲的是中文名（``旅行``）。两种都认。
+EVENT_KIND_VALUES: Final[dict[str, str]] = {
+    alias: kind.id for kind in EVENT_KINDS for alias in (kind.id, kind.label)
+}
+
+
+def _event_fields() -> tuple[SearchField, ...]:
+    """事件那一族的可搜字段，**由事件类型定义生成**（ADR 0043 决策 6）。
+
+    加一类事件、给它加一个字段，搜索里就多一项 —— 不用在这里补一行，也就不会「加了字段却忘了
+    能搜」。
+
+    **一条约束**：候选列表按 id 与中文名匹配（:func:`match_field`），所以两个事件类型里同名
+    的字段（比如两家都叫「备注」）只能有一个被选中。眼下只有旅行一类，将来加第二类时把重名的
+    改成更具体的名字。
+    """
+    common = (
+        SearchField(
+            id="event_kind",
+            label="事件类型",
+            kind="event",
+            column="kind",
+            table=EVENTS_TABLE,
+            hint="旅行",
+        ),
+        SearchField(
+            id="event",
+            label="事件",
+            kind="event",
+            column="title",
+            table=EVENTS_TABLE,
+            hint="京都五日",
+        ),
+    )
+    per_kind = tuple(
+        SearchField(
+            id=f"event_{field.id}",
+            label=field.label,
+            kind="event",
+            column=field.column,
+            table=kind.table,
+            sql_type=field.sql_type,
+            hint=field.hint,
+        )
+        for kind in EVENT_KINDS
+        for field in kind.fields
+    )
+    return (*common, *per_kind)
+
+
+#: 候选列表的顺序即这里里面的顺序。**不打乱 GROUP_FACET_IDS / SORT_FACET_IDS 的既有顺序**
 #: （字段与分组排序看到的是同一套字段），只把「不读 EXIF、立刻出结果」的四个提到最前面。
 #: ``column`` 写的是 **SQL 里的列名**而不是 ``PhotoFacets`` 的属性名 —— 只有拍摄时间两者不同
 #: （属性 ``captured_at``，列 ``captured``），写错要到 SQLite 执行时才报出来。
@@ -112,6 +178,7 @@ SEARCH_FIELDS: Final[tuple[SearchField, ...]] = (
     _field(FACET_FOCAL, "焦距", "number", "f.focal", hint="35 或 <= 70"),
     _field(FACET_PIXELS, "像素尺寸", "number", "f.pixels", hint="12000000 或 >12MP"),
     _field(FACET_MODIFIED, "修改时间", "datetime", "p.mtime_ns", hint="2024 / 2024-05"),
+    *_event_fields(),
 )
 
 _FIELDS_BY_ID: Final[dict[str, SearchField]] = {field.id: field for field in SEARCH_FIELDS}
@@ -306,6 +373,13 @@ def _condition(field: SearchField, text: str) -> SearchCondition | None:
         if suffix is None:
             return None
         return SearchCondition(field=field, text=value, comparator="", value=suffix)
+    if field.kind == "event":
+        # **匹配方式由那一列声明的类型说了算**（与 facet 那一族同一件事，只是分派的地方从
+        # ``kind`` 换成了 ``sql_type``）：文字、多值、日期都是子串匹配，数值才是比较式。
+        if field.sql_type in ("INTEGER", "REAL"):
+            parsed_number = _parse_number(value)
+            return None if parsed_number is None else SearchCondition(field, text, *parsed_number)
+        return SearchCondition(field=field, text=text, comparator="", value=value)
     if field.kind == "size":
         parsed_size = _parse_size(value)
         if parsed_size is None:
@@ -599,6 +673,8 @@ def _clause(condition: SearchCondition) -> tuple[str, list[object]]:
     """
     field = condition.field
     value = condition.value
+    if field.is_event:
+        return _event_clause(field, condition)
     if field.kind == "name":
         return f"{field.column} LIKE ? ESCAPE '{_LIKE_ESCAPE}'", [f"%{_like(value)}%"]
     if field.kind == "text":
@@ -622,6 +698,40 @@ def _clause(condition: SearchCondition) -> tuple[str, list[object]]:
     if field.id == FACET_MODIFIED:
         return f"{field.column} {condition.comparator} ?", [float(value) * 1e9]
     return f"{field.column} {condition.comparator} ?", [float(value)]
+
+
+def _join_column(table: str) -> str:
+    """事件那张表的主键叫什么：公共表是 ``id``，每类事件的扩展表是 ``event_id``。
+
+    两张表都拿同一个小写别名 ``t``，于是子查询只在这一处区分 —— 别处各写一遍就会有一个地方
+    拼错，而错的那个要等 SQLite 执行时才报 ``no such column: t.event_id``。
+    """
+    return "id" if table == EVENTS_TABLE else "event_id"
+
+
+def _event_clause(field: SearchField, condition: SearchCondition) -> tuple[str, list[object]]:
+    """事件条件 → ``EXISTS`` 子查询（ADR 0043 决策 6）。
+
+    **走 EXISTS 而不是 ``JOIN``**：一张照片可以同时属于几个事件，可能好几行都满足条件，而
+    ``JOIN`` 会让它在结果里重复出现 —— 我们要的只是「它是不是属于某个满足条件的事件」。
+
+    事件库挂在索引那条连接上（别名取自 ``core.events.store``，不在这儿另写一遍）。
+    """
+    value = condition.value
+    head = (
+        f"SELECT 1 FROM {SCHEMA_NAME}.{BINDINGS_TABLE} pe"
+        f" JOIN {SCHEMA_NAME}.{field.table} t ON t.{_join_column(field.table)} = pe.event_id"
+        f" WHERE pe.path = p.path AND "
+    )
+    if field.column == "kind":
+        return f"EXISTS ({head} t.kind = ?)", [EVENT_KIND_VALUES.get(value, value)]
+    if field.sql_type in ("INTEGER", "REAL"):
+        comparator = condition.comparator or "="
+        return f"EXISTS ({head} t.{field.column} {comparator} ?)", [float(value)]
+    return (
+        f"EXISTS ({head} t.{field.column} LIKE ? ESCAPE '{_LIKE_ESCAPE}')",
+        [f"%{_like(value)}%"],
+    )
 
 
 def _like(text: str) -> str:
