@@ -28,6 +28,7 @@ from gallery.core.library.calendar import month_matrix  # noqa: E402
 from gallery.core.library.config import (  # noqa: E402
     BROWSE_MODE_CALENDAR,
     BROWSE_MODE_FLAT,
+    SEARCH_SCOPE_LIBRARY,
     load_config,
     prepare_library,
 )
@@ -917,6 +918,52 @@ def test_a_search_inside_a_calendar_cell_keeps_the_search_frame(
     _settle_everything(qt_app, window)
     assert window._conditions == [], f"换浏览方式之后条件还留着：{window._conditions}"
     assert window._search_frame is None
+    window.close()
+
+
+def test_a_search_on_the_calendar_page_still_reloads_when_leaving_it(
+    qt_app: QApplication, calendar_window: MainWindow
+) -> None:
+    """在**日历页**上检索，然后切到「全部照片」：要重新列出整库，而不是留着检索结果。
+
+    > 用户原话：「在日历上搜索，在搜索结果页跳转全部照片，UI 上不显示搜索条件，显示的照片是被
+    > 筛选过的」。
+
+    条件与胶囊都清对了（那是上一批修的），**只有模型没人重扫** —— 于是屏幕上是整库 5 张里的 2 张，
+    而界面正确地表示着「没有条件」。两边互相矛盾，而矛盾不会有任何断言抓到：状态那侧确实是对的。
+
+    「日历底下就是整库，不必重扫盘」这个前提**只在没有整库检索时成立**：日历页上检索时模型里摆的
+    是横跨整库的检索结果，而条件此刻已经清掉，谁都不会再去重扫。
+
+    **搜「四月」而不是「相机」**：相机字段要 exiftool，测试环境里读不到，于是搜出零张 ——
+    而「搜不出任何东西」时那条路径恰好是干净的，用它复现等于造了个假场景（真机上就是这样错过
+    一轮）。文件名不需要任何外部依赖。
+    """
+    window = calendar_window
+
+    window._search_scope = SEARCH_SCOPE_LIBRARY
+    window._sync_search_scope()
+    window.focus_search()
+    qt_app.processEvents()
+    window._search_field._edit.setText("四月")
+    window._search_field.submit()
+    qt_app.processEvents()
+    window._grid.setFocus()
+    _settle_everything(qt_app, window)
+
+    assert window._model.rowCount() == 2, (
+        f"前提不成立：检索没有命中（库里 5 张，文件名含「四月」的是 2 张），"
+        f"现在 {window._model.rowCount()} 张"
+    )
+
+    window.set_browse_mode(BROWSE_MODE_FLAT)
+    _settle_everything(qt_app, window)
+
+    assert window._conditions == [], f"条件没清掉：{window._conditions}"
+    assert window._model.rowCount() == len(NAMES), (
+        f"切到「全部照片」之后模型里是 {window._model.rowCount()} 张，该是整库 {len(NAMES)} 张 —— "
+        "没人重新列出这一层，屏幕上还留着检索结果（症状：UI 上没有条件，照片却是筛过的）"
+    )
     window.close()
 
 

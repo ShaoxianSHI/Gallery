@@ -239,12 +239,7 @@ class MetadataFlowMixin:
         if photo is None:
             return
         self._current_row = row
-        # 栈：压**照片帧**（ADR 0041）。
-        #
-        # **只在栈顶已经是照片帧时才换掉它** —— 「在大图页里翻上下一张」不是往深里走（否则
-        # Esc 要按几十次才退得回去）；而从日历点开那一张时栈顶是**日历格**，那一次必须压上去，
-        # 无条件 replace 会把日历格顶掉，于是 Esc 退不回日历（实测：栈里只剩 PhotoFrame，
-        # 而日历格与「从日历来的」这个信息一起没了）。
+        # 照片帧只在大图页里翻页时换掉栈顶 —— 往深里压的话 Esc 要按几十次才退得回去。
         if self._photo_frame is not None:
             self._push_frame(PhotoFrame(photo.path), replace=True)
         else:

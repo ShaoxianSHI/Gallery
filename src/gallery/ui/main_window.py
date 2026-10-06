@@ -261,8 +261,7 @@ class MainWindow(
         self._facet_job: int | None = None
         #: 日历页读整库拍摄时间的任务；与 :attr:`_facet_job` 分开（取消时机不同，会互相作废）。
         self._calendar_job: int | None = None
-        # **从日历点开的那一层**（日历 → 某一格 → 大图）：`_drill_photos` / `_drill_label` /
-        # `_from_calendar` 三个字段都成了栈上 ``CalendarFrame`` 的投影（ADR 0041）。
+        # 从日历点开的那一层 —— `_drill_*` 三个字段是栈上 ``CalendarFrame`` 的投影（ADR 0041）。
         #: 这一层还没摆上屏的条目（顺序定下来再一次给出去，ADR 0009 决策 6）；``None`` = 已经排好。
         self._staged: list[GridEntry] | None = None
         self._level_notice = False
@@ -846,17 +845,8 @@ class MainWindow(
         if not paths.is_within(library.root, target):
             return
         resolved = target.resolve()
-        # **栈：相册链是「一层一帧」** —— 从库根点进「旅行/2024」要压**两**帧（旅行、2024），
-        # 于是 Esc 一次退到「旅行」、两次退到库根，与访达逐层退出同一套。压一帧是不够的：
-        # 那样「旅行/2024」与「旅行/2025」在栈上长得一样，退一次就掉回库根（实测：
-        # 进去是 1 行，退一次却变成库根的 2 行）。
-        #
-        # **分组的清理由压栈本身完成** —— 原来这里是 ``_current_dir = …`` 加
-        # ``_group_view = None`` 两行手工同步，而漏掉后一行就是「进了相册却还说自己在分组里」。
-        # **栈：进相册就是「退出整库检索」**（ADR 0041 决策 3）—— 弹掉搜索帧并清条件。
-        # **顺序要紧**：搜索帧压在相册链**之上**，而 ``_drop_search_frames`` 只从栈顶往上弹，
-        # 所以必须**先弹搜索帧、再压相册链**；压完再弹的话弹掉的是刚压上去的那一层，而搜索帧
-        # 留在下面（症状是「点库名退回相册」之后仍停在原来那个相册）。
+        # 进相册 = 退出整库检索（ADR 0041 决策 3）。**必须先弹搜索帧再压相册链**：搜索帧压在
+        # 相册链之上，而 ``_drop_search_frames`` 只从栈顶往上弹，反过来弹掉的是刚压上去的那一层。
         leaving_search = self._search_frame is not None
         if leaving_search:
             self._leave_search_frame(self._search_frame, reload=False)
@@ -919,12 +909,8 @@ class MainWindow(
                 self._back_to_calendar()
             return
         if isinstance(frame, SearchFrame):
-            # **搜索结果帧弹掉了 = 退出整库检索**（ADR 0041 决策 3）：条件是**那一帧的内容**，
-            # 帧没了条件自然也没了 —— 而底下那一层要恢复成「没搜过」的样子（它自己那份筛选
-            # 随帧存着，`_leave_search_frame` 把它放回去）。
-            #
-            # **把刚弹掉的那一帧传进去**：弹完之后 ``self._search_frame`` 已经是 ``None``，
-            # 在那一支里重新查栈会以为「压根没有搜索帧」而直接返回（条件留在原地）。
+            # 条件是那一帧的内容，所以帧没了条件也没了 —— 底下那一层恢复成「没搜过」的样子。
+            # **必须把刚弹掉的那一帧传进去**：弹完之后重查栈只会得到「压根没有搜索帧」。
             self._leave_search_frame(frame)
             return
         self._reload_level()
@@ -1001,25 +987,7 @@ class MainWindow(
         self._detail.clear_image()
         self._panel.clear()
         self._banner.hide()
-        # **检索不是日历这一层的一部分**：留着它，条件撤光之后按 Esc 会退到日历点出来的那一格。
-        #
-        # 栈：**摘掉日历格，且绝不能连带它上面的东西**。
-        #
-        # 顺序上要紧：这一句跑在 ``_apply_conditions`` **之后**，而那一串里
-        # :meth:`_sync_search_frame` 刚把**搜索帧压在日历格之上**，栈是
-        # ``[CalendarFrame, SearchFrame]``。两个后果：
-        #
-        # 一、**判据不能是「栈顶是日历格」** —— 栈顶是搜索帧，那一句永远不成立，于是日历格摘不掉
-        #   （钉它的用例 ``test_a_search_from_a_calendar_cell_forgets_that_cell`` 会红：「撤光条件
-        #   之后按 Esc 退到一个他这一趟没去过的层」）。
-        # 二、**判据更不能是「弹到栈上没有日历格为止」**（``_pop_to`` 是从栈顶**连续**弹）——
-        #   在 ``[CalendarFrame, SearchFrame]`` 上它会把刚压上去的搜索帧一起弹掉，而那一帧不会
-        #   再被压回来。症状是一个**矛盾状态**：条件还在、作用域还是 library，于是
-        #   ``_is_library_search()`` 说在检索，可栈上没有搜索帧；接着换浏览方式时
-        #   ``set_browse_mode`` 抓不到帧（``leaving_search`` 是 ``None``），条件就留在了新的一层上
-        #   —— 于是「格内搜索之后切到全部照片，之前的搜索条件被用来作为筛选条件」。
-        #
-        # 所以是**摘中间那一帧**：从栈顶往下看，弹掉第一个日历格（它在栈上最多一个）。
+        # 整库检索不是日历这一层的一部分：条件撤光之后 Esc 不该退到日历的那一格。
         self._drop_calendar_cell_frame()
         # **摆哪一页问的是状态**（浏览方式 + 有没有条件）：一律摆成网格页，勾与眼前那一页对不上。
         self._update_breadcrumb()
@@ -1151,19 +1119,10 @@ class MainWindow(
         self._breadcrumb.show()
 
     def _hide_breadcrumb(self) -> None:
-        """**藏起来，而且真的清空**（不是只 ``hide()``）。
+        """藏起来，**并且清空内容**。
 
-        ``QWidget.hide`` 只是不画 —— 上一轮摆的那些控件还留在布局里，于是「上一层的条件胶囊」
-        会在下一次有人读控件树时冒出来（症状：换浏览方式之后模型与栈都清了，屏幕上那几枚胶囊
-        却还挂着，且既没在搜也没在筛 —— 用户原话：「切到日历视图后条件栏那里残留着之前的搜索
-        条件」「再切到全部照片也会残留，只有切到相册时会清掉」）。
-
-        **早退的那两条路原先只 ``hide()``**，而它们的对面（``set_path``）开头是 ``_clear()`` ——
-        「不摆」与「摆成空的」被当成了同一件事。真正决定可见性的地方只有两个（网格页看不到
-        面包屑时、日历那一格没有一段能指时），两处都走这一个方法，就不会再漏第三处。
-
-        **别改成只 ``hide()``**：那一行 ``self._breadcrumb.show()`` 与这里的 ``_clear()`` 是一对
-        —— 少了清空，控件会一直留着，而它下一次被 ``set_path`` 之前都不消失。
+        ``hide()`` 只让控件不画，上一轮摆的那些还留在布局里。:meth:`set_path` 开头是
+        ``_clear()``，两处早退原先只 ``hide()`` —— 「不摆」与「摆成空的」被当成同一件事。
         """
         self._breadcrumb.clear_content()
         self._breadcrumb.hide()

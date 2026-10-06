@@ -45,30 +45,12 @@ class CalendarFlowMixin:
             self._update_mode_actions()
             return
         was_calendar = self._browse_mode == BROWSE_MODE_CALENDAR
-        # **换根之前先抓住搜索帧**：``_set_root`` 会把整条栈清空，之后 ``self._search_frame``
-        # 就已经是 ``None`` 了 —— 而「刚才在不在整库检索」正是这里要回答的问题（顺序反了症状
-        # 是「换视图之后条件没清」，实测：抓在换根之后就成了一直抓不到）。
+        # 先抓住搜索帧：``_set_root`` 会清空整条栈，之后就抓不到了。
         leaving_search = self._search_frame
-        # **栈：换浏览方式 = 换根，顺带清掉分组 / 日历格**（ADR 0041 决策 3）。
-        # 原来是四行手工同步（标志位 + 两个字段 + 浏览方式），漏一行就出现「换了浏览方式却还在
-        # 那一格里」；现在只有换根这一句。
-        self._set_root(root_for(mode))
-        # **只有整库检索要清**：它横跨整个库，换浏览方式时留着它等于把两个互不相干的概念叠在
-        # 一起（ADR 0026 决策 1）。筛选是「当前这一层里符合条件的那部分」，换浏览方式只是换了
-        # 「这一层」是什么，条件该跟着走（ADR 0040 决策 1）。
-        #
-        # **改到一半换视图 = 放弃**（ADR 0040 决策 12）：条件跟着走，但「正在改哪一条」不跟着走 ——
-        # 否则用户换了视图再敲一条，敲的那条会去替换刚才那一视图里那一条，而视图已经变了。
+        self._set_root(root_for(mode))  # 换浏览方式 = 换根，顺带清掉上面的一切
         self._cancel_condition_edit()
-        # **换浏览方式就是退出整库检索**（栈上那一帧已经随换根没了，条件也该跟着没）——
-        # 走 :meth:`SearchFlowMixin._leave_search_frame` 那一个入口，不要在这里自己 ``clear()``。
-        #
-        # 原来这里是 ``if self._is_library_search(): self._conditions.clear()``，而那个判据**读
-        # 的就是 ``_conditions`` 自己**：现在碰巧成立（清之前条件还在），可它属于「靠顺序正确」
-        # 而不是「靠语义正确」—— 往后谁在这两句之间插一句读条件的话，那句就会读到已被清空的
-        # 列表。与 ADR 0041 里「``_reload_level`` 弹到满足某条件为止，连相册帧一起弹掉」同一类。
+        # 整库检索横跨整个库，换层就得清；筛选是收窄当前层，跟着走（ADR 0040 决策 1）。
         if leaving_search is not None:
-            # ``reload=False``：下面三条分支各自会重列。
             self._leave_search_frame(leaving_search, reload=False)
         self._save_ui_state()
         self._update_mode_actions()
@@ -77,34 +59,21 @@ class CalendarFlowMixin:
         if mode == BROWSE_MODE_CALENDAR:
             self._enter_calendar()
         elif was_calendar and mode == BROWSE_MODE_FLAT:
-            # 日历底下就是**整库**，回到「全部照片」不必重扫盘；
-            # 但**分组要补回去** —— 那是用户自己的选择。
-            self._stack.setCurrentWidget(self._grid_page)
-            self._apply_ordering()
-            self._refresh_title()
-            self._update_action_states()
-            self._refresh_thumbnail_window()
+            # 刚退出检索时模型里摆的是检索结果，不是整库 —— 必须重新列出这一层。
+            if leaving_search is not None:
+                self._reload_level()
+            else:
+                self._stack.setCurrentWidget(self._grid_page)
+                self._apply_ordering()
+                self._refresh_title()
+                self._update_action_states()
         else:
-            # 从日历切到「相册」要**重列当前目录**：模型里此刻摆的是整库照片，直接摆上去
-            # 相册视图里就是全部照片。日历读拍摄时间那一遍顺带作废，否则句柄会永远留着。
+            # 从日历切到「相册」要重列当前目录：模型里此刻摆的是整库照片。
             if was_calendar:
                 self._cancel_calendar_job()
             self._reload_level()
-        # **三条分支跑完之后无条件把面包屑与日历工具条重摆一次**（ADR 0041 决策 3）。
-        #
-        # 这一句在三条分支**之后**、而不是各分支里各补一句，有两个理由：
-        #
-        # 一、**摆胶囊的唯一入口是 ``_update_breadcrumb``**（它调 ``_sync_calendar_conditions``），
-        #    而它只由 ``_reload_level`` 调 —— 三条分支里只有「切到相册」那条经过它。原先缺的就是
-        #    这一句，症状是**模型与栈都清了、屏幕上那枚胶囊还挂着**，且它既没在搜也没在筛
-        #    （用户原话：「在相册视图区搜索，然后切到日历视图，日历视图的条件栏那里残留着之前的
-        #    搜索条件」「再切到全部照片也会残留，只有切到相册时会清掉」）。补在分支里的话，
-        #    往后加一条新分支就又漏一次。
-        #
-        # 二、**必须在分支之后**：``_enter_calendar`` 与 ``_reload_level`` 自己也会走一遍
-        #    ``_update_breadcrumb``，而面包屑那段「搜索结果（N）」是按 ``_search_total`` 算的 ——
-        #    摆在分支之前，那几个分支各自又动一次状态，最后一次赢，屏幕上留的是中间态
-        #    （实测：日历工具条清了而面包屑还挂着「搜索结果（1） + 条件胶囊」）。
+        # 摆胶囊的唯一入口。在三条分支之后：分支自己也会调，而「搜索结果（N）」按
+        # ``_search_total`` 算，摆在之前会停在中间态。
         self._update_breadcrumb()
 
     def _shows_calendar_page(self) -> bool:
@@ -190,9 +159,7 @@ class CalendarFlowMixin:
         if not all(isinstance(ref, PhotoRef) for ref in photos):
             return
         if len(photos) == 1:
-            # **那一格的帧照样压**（栈上必须有它，Esc 才退得回日历）—— 跳过的只是把照片摊成一层
-            # 网格那一步。原先那一格对「只有一个格子」不存在任何状态，于是退回去要靠
-            # `_from_calendar` 这个标志位单独记着「我是从日历来的」。
+            # 那一格的帧照样压 —— 跳过的只是把照片摊成网格那一步，而 Esc 要退得回日历。
             self._push_frame(
                 CalendarFrame(photos=(photos[0],), label=label if isinstance(label, str) else "")
             )
