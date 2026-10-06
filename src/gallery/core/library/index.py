@@ -337,12 +337,15 @@ class FacetIndex:
                 return len(stale)
             try:
                 removed = 0
-                keep_list = list(keep)
                 for table in ("facets", "photos"):
-                    removed += self._connection.execute(
-                        f"DELETE FROM {table} WHERE path NOT IN ({','.join('?' for _ in keep_list)})",
-                        keep_list,
-                    ).rowcount
+                    known = [
+                        row[0] for row in self._connection.execute(f"SELECT path FROM {table}")
+                    ]
+                    stale = [key for key in known if key not in keep]
+                    self._connection.executemany(
+                        f"DELETE FROM {table} WHERE path = ?", [(key,) for key in stale]
+                    )
+                    removed += len(stale)
                 self._connection.commit()
                 return removed
             except sqlite3.Error as exc:  # pragma: no cover - 磁盘坏了才会走到

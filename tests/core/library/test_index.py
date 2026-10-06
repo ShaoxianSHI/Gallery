@@ -182,6 +182,37 @@ def test_prune_drops_photos_that_are_gone(tmp_path: Path) -> None:
     index.close()
 
 
+def test_prune_handles_a_list_longer_than_sqlite_takes_variables(tmp_path: Path) -> None:
+    """**保留名单比 SQLite 能带的变量还长时，也要清得掉。**
+
+    缺陷现场：这一段曾被改成一条 ``DELETE … WHERE path NOT IN (?, ?, …)``，
+    「一次扫描 + 一条 SQL」比「扫描 + 逐个 executemany」好看。但 SQLite 对一次语句里
+    能带的变量个数有上限（实测 100000 个就报 ``too many SQL variables``），而
+    ``except sqlite3.Error`` 会把那个错吞成「返回 0」—— **静默什么都不删**，正是索引
+    这种可再生缓存最不该有的失败方式。
+
+    注意**不能靠分批绕开**：``NOT IN`` 分批等于「不在这一批里就删」，会把别批的活照片
+    全删掉 —— 那比删不掉糟得多。所以这一段是「先查出已知的、Python 侧算出该删哪些、
+    再逐个删」的两步法。
+    """
+    index = FacetIndex(tmp_path / "index.db")
+    stored = [_ref(tmp_path, f"p{index:06d}.jpg") for index in range(_PRUNE_STRESS)]
+    index.store([(ref, FULL) for ref in stored])
+
+    # 保留绝大多数、只删掉一张：名单长度远超任何合理的变量上限。
+    drop = stored[-1]
+    assert index.prune([ref.path for ref in stored[:-1]]) == 1
+
+    assert set(index.lookup([drop])) == set(), "该删的那张还在"
+    assert len(index.lookup(stored)) == len(stored) - 1, "不该动的活照片被误删了"
+    index.close()
+
+
+#: 保留名单要长到「一条 SQL 带不下」才说明问题。SQLite 的
+#: ``SQLITE_MAX_VARIABLE_NUMBER`` 默认 32766，取两倍余量。
+_PRUNE_STRESS = 70000
+
+
 def test_forget_drops_only_the_given_paths(tmp_path: Path) -> None:
     """实时监听得知哪个路径不见了就删哪个 —— 别的相册的行不能跟着没（ADR 0013）。
 
