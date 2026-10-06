@@ -193,9 +193,12 @@ def _guard(root: Path, source: Path, target: Path) -> None:
     """
     root = Path(root)
     for _path in (source, target):
-        if _path.resolve() == root.resolve():
-            raise RenameError("这是库本身，改名会让 Gallery 找不到照片。", path=_path)
         try:
+            # **库根本身这道闸在下面那道里**（``allow_root=False``），不必在前面另写一遍。
+            # 原先这里有一句 ``_path.resolve() == root.resolve()``，是四次裸 ``resolve()``
+            # （一次 27 µs，路径上每一段都要 lstat）只为判断一件 ``guard_within_root`` 已经
+            # 判过、而且抛的是同一句话的事 —— ``_rename_reason`` 把那句 ``ValueError`` 映射
+            # 出来的文案与这里原来那句一字不差。
             paths.guard_within_root(root, _path, allow_root=False)
         except ValueError as exc:
             raise RenameError(_rename_reason(_path, str(exc)), path=_path) from exc

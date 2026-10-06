@@ -113,7 +113,7 @@ def move_to_trash(entry_path: Path) -> Path:
     try:
         directory = trash_dir_for(source)
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-        target = _free_name(directory / source.name, is_dir=source.is_dir())
+        target = _free_name(directory / source.name, is_dir=is_dir)
     except OSError as exc:
         raise DeleteError(
             f"没法使用废纸篓：{os_reason(exc, is_dir=True)}",
