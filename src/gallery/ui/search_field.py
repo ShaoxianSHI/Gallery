@@ -65,9 +65,9 @@ HEIGHT = 22
 #: :meth:`MainWindow._layout_title_bar` 里做，那一枚切换按钮从这一格往左量）。
 MARGIN_RIGHT = 20
 
-#: 切换按钮的边长（点）。**正方形**：它只有一个状态可切（搜索 ⇄ 筛选），没有下拉箭头要放 ——
-#: 里面塞两样东西就成了「外部应用」那种 44 点宽的按钮，而 44 点宽的单状态按钮摆在 208 点宽的
-#: 胶囊右边会喧宾夺主。
+#: 切换按钮的边长（点）。**正方形**：它只做「掉个头」这一个动作（搜索 ⇄ 筛选），没有下拉箭头
+#: 要放 —— 里面塞两样东西就成了「外部应用」那种 44 点宽的按钮，而那个摆在 208 点宽的胶囊右边
+#: 就已经喧宾夺主了。
 TOGGLE_EDGE = 22
 
 #: 按钮里那个图标的边长（点）。**与按钮边长分开**：在 22 点里画一个 22 点的东西会顶到边框上，
@@ -81,6 +81,9 @@ TOGGLE_GAP = 8
 
 #: 两种模式下占位文字各写什么。**两句话要一眼能分**：「筛选照片…」说明照片还在原地、只是少了
 #: 一些，「搜索照片…」说明整层已经被换掉了（ADR 0040 决策 5）。
+#:
+#: **切换按钮已经不摆状态了**（ADR 0042 决策 1），于是这一行与菜单里那一项的勾就是标题条上
+#: 仅有的两处「此刻是哪一种」—— **它们必须一直是准的**，按钮那份信号不再有。
 PLACEHOLDER_SEARCH = "搜索照片…"
 PLACEHOLDER_FILTER = "筛选照片…"
 
@@ -595,12 +598,12 @@ class SearchField(QWidget):
             painter.end()
 
 
-def scope_arrows(app_theme: AppTheme, ratio: float, *, active: bool) -> QPixmap:
+def scope_arrows(app_theme: AppTheme, ratio: float) -> QPixmap:
     """那两支反向的横向箭头（上下各一支，左上那支朝左、右下那支朝右）：**现画的**，
     与 :func:`magnifier` 同一套规矩（坐标一律逻辑像素，仓库里不放图）。
 
-    **选中态换的是不透明度而不是形状** —— 两枚图标长得不一样会让用户以为是两个不同的功能，
-    而它们是同一个功能的两端。区别只在「现在是不是筛选模式」这一件事上。
+    **只有一种画法**：按钮是一次性动作，界面上不摆「现在是哪一头」的状态（ADR 0042 决策 1），
+    所以墨色恒取输入面那一档 —— 悬停与按下由控件自己那一层去变，图标不跟着换。
 
     **画布是 :data:`TOGGLE_ICON_EDGE` 而不是按钮边长**：画布给多大，图形就画多大，图标跟着
     按钮一起变大就会顶到边框上。
@@ -616,7 +619,7 @@ def scope_arrows(app_theme: AppTheme, ratio: float, *, active: bool) -> QPixmap:
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    pen = QPen(app_theme.text if active else app_theme.text_at(0.55))
+    pen = QPen(app_theme.text_at(0.55))
     pen.setWidthF(_TOGGLE_ICON_STROKE)
     pen.setCapStyle(Qt.PenCapStyle.RoundCap)
     pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
@@ -638,87 +641,79 @@ def scope_arrows(app_theme: AppTheme, ratio: float, *, active: bool) -> QPixmap:
     return pixmap
 
 
-def toggle_style(app_theme: AppTheme, *, active: bool, radius: int = 0) -> str:
+def toggle_style(app_theme: AppTheme, *, radius: int = 0) -> str:
     """切换按钮长什么样。
 
-    **选中时整枚按钮填满高亮色**，而不只是轮廓：按钮是 22 点的圆角小块，一圈 1 像素的蓝边在小
-    尺寸下只占边长的一成，而它没有文字标签 —— 唯一的「现在开着吗」信号就是那一片颜色。底色换的是
-    ``Highlight``，与弹出菜单里选中项（``menu_style`` 的 ``:selected``）用同一档：用户在菜单与
-    按钮之间来回走，两处要看起来是同一件事。
+    **底色恒是输入面那一档**（:func:`~gallery.ui.rename_edit.field_background`）——
+    输入面那一族统一是窗口底色靠那一圈边框显出边界（ADR 0035 决策 1）。按钮不再有「选中」这一态，
+    所以整枚按钮不会填满高亮色（ADR 0042 决策 1）；「此刻是哪一头」由胶囊里的占位文字与菜单里
+    那一项的勾说。
 
-    **未选中时底色与胶囊同一个来源**（:func:`~gallery.ui.rename_edit.field_background`）——
-    输入面那一族统一是窗口底色靠那一圈边框显出边界（ADR 0035 决策 1）。
+    **按下去给一点反馈**（``:pressed`` 提亮一档）：它是**一次性**动作，而按下去之后按钮自己不会
+    变 —— 一点反馈都没有的话，用户会以为没按着。
 
     **这一份里没有 ``border``，也没有 ``:hover``**：那一圈轮廓改由
     :meth:`ScopeToggle.paintEvent` 自己填（理由见 :mod:`gallery.ui.outline`），于是悬停色也跟着
     走 Python 那一侧的状态。
     """
     corner = max(0, radius or TOGGLE_EDGE // 2)
-    background = "palette(highlight)" if active else rgba(field_background(app_theme))
+    rest = QColor(field_background(app_theme))
+    # 按下那一档与「外部应用」那枚药丸的悬停提亮同一档（那边是 lighter(112)/darker(104)）——
+    # 用户在这一行上来回走，两个按钮的「被按到 / 被指着」得是同一个手感。
+    pressed = rest.lighter(112) if app_theme.is_dark else rest.darker(104)
     return f"""
     QToolButton#searchScopeToggle {{
-        background: {background};
+        background: {rgba(rest)};
         border: none;
         border-radius: {corner}px;
+    }}
+    QToolButton#searchScopeToggle:pressed {{
+        background: {rgba(pressed)};
     }}
     """
 
 
 class ScopeToggle(QToolButton):
-    """胶囊右边那枚按钮：把搜索框在「搜索整个库」与「筛选当前视图」之间切换（ADR 0040）。
+    """胶囊右边那枚按钮：把搜索框在「搜索整个库」与「筛选当前视图」之间**掉个头**（ADR 0040）。
 
-    **一个文件都不碰**，只发 :attr:`toggled` —— 与 :mod:`gallery.ui.rename_edit` 同一件事。
+    **它是一次性动作，不是可勾选的开关**（ADR 0042 决策 1）：按一下换一次，不留在任何一态上。
+    所以它**不 checkable**、也没有 :meth:`set_filtering` —— 「此刻是哪一头」由胶囊里的占位文字与
+    菜单里那一项的勾说，按钮这一枚两种情况下长得一模一样。悬停与按下照旧有反馈。
+
+    **一个文件都不碰**，只发 :attr:`switched` —— 与 :mod:`gallery.ui.rename_edit` 同一件事。
     """
 
-    #: 用户切了模式（带的是「现在是筛选吗」这个 ``bool``）。
-    toggled = Signal(bool)
+    #: 用户按了它（**不带「现在是筛选吗」**：按钮自己不记状态，掉个头由外面按当前作用域算）。
+    switched = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("searchScopeToggle")
-        self.setCheckable(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         # **不要 ``setFlat``**：那会让 Qt 不再画样式背景，而我们要画的就是那一圈边框与底色
         # （与胶囊同一份样式来源，见 :func:`toggle_style`）。
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._active = False
+        # **重发成自己的信号**：外面接的永远是这一个，而它**不带「现在是筛选吗」** ——
+        # 按钮不记状态（ADR 0042 决策 1），带上的那个 bool 只会让人以为它有两态。
+        self.clicked.connect(self.switched.emit)
         self._hovered = False
         self._applied_theme: AppTheme | None = None
         self._applied_radius = -1
-        self._applied_active: bool | None = None
         self._watcher = theme.ensure_installed()
         self._watcher.changed.connect(self._apply_theme)
         self._apply_theme()
-
-    def set_filtering(self, filtering: bool) -> None:
-        """当前是不是筛选模式。**不发 :attr:`toggled`** —— 那是「用户按了」的信号，
-        而这里只是外面（换库、恢复偏好）在同步状态；发了会让外面以为用户自己切过一次。"""
-        if self.isChecked() != filtering:
-            self.blockSignals(True)
-            try:
-                self.setChecked(filtering)
-            finally:
-                self.blockSignals(False)
-        if self._active != filtering:
-            self._active = filtering
-            self._apply_theme()
 
     def _apply_theme(self) -> None:
         """换过浅色 / 深色之后重下一次 —— 输入面那一族的颜色由 :mod:`gallery.ui.theme` 钉死，
         别处不兜一层（ADR 0035 决策 2）。"""
         app_theme = theme.current_theme()
         radius = self.height() // 2
-        if (
-            self._applied_theme == app_theme
-            and self._applied_radius == radius
-            and self._applied_active == self._active
-        ):
+        if self._applied_theme == app_theme and self._applied_radius == radius:
             return
-        self.setStyleSheet(toggle_style(app_theme, active=self._active, radius=radius))
-        self.setIcon(QIcon(scope_arrows(app_theme, self.devicePixelRatioF(), active=self._active)))
+        self.setStyleSheet(toggle_style(app_theme, radius=radius))
+        self.setIcon(QIcon(scope_arrows(app_theme, self.devicePixelRatioF())))
         self._applied_theme = app_theme
         self._applied_radius = radius
-        self._applied_active = self._active
 
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         super().resizeEvent(event)
@@ -746,7 +741,7 @@ class ScopeToggle(QToolButton):
                 painter,
                 QRectF(self.rect()),
                 self.height() / 2,
-                outline_color(self, accent=self._active or self._hovered),
+                outline_color(self, accent=self._hovered),
             )
         finally:
             painter.end()

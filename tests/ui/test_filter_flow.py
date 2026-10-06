@@ -1269,22 +1269,51 @@ def test_the_breadcrumb_keeps_the_group_while_filtering(
 # ---- 切换按钮与作用域（ADR 0040 决策 5、6）----------------------------------------
 
 
-def test_the_button_switches_the_scope_and_the_words(qt_app: QApplication, tmp_path: Path) -> None:
-    """按钮一按：占位文字、勾、菜单文案一起换。**三处说同一句话**，否则用户会以为它们是两个设置。"""
-    window = MainWindow(session_base=tmp_path / "会话")
-    window.show()
-    qt_app.processEvents()
+def test_the_button_switches_the_scope_and_the_words(
+    qt_app: QApplication, tmp_path: Path, make_photo
+) -> None:
+    """按钮一按：占位文字、勾、菜单文案一起换。**这几处说同一句话**，否则用户会以为是两个设置。
+
+    按钮**按一次掉个头**（ADR 0042 决策 1）：它是动作，不是可勾选的开关，所以这里发的是真的
+    ``click`` 而不是 ``setChecked``。**要开着库** —— 没有库时按钮是置灰的
+    （``_update_action_states``），而置灰的按钮 ``click()`` 什么也不发，于是对着空窗口按一下
+    量到的是「没反应」。
+    """
+    root = _library(tmp_path, make_photo)
+    window = _open(qt_app, root, tmp_path / "会话")
+    _settle(qt_app, window)
 
     assert window._search_field._edit.placeholderText() == PLACEHOLDER_SEARCH
-    assert window._scope_toggle.isChecked() is False
 
-    window._scope_toggle.setChecked(True)
+    window._scope_toggle.click()
     qt_app.processEvents()
 
     assert window._search_field._edit.placeholderText() == PLACEHOLDER_FILTER
     assert window._scope_action.isChecked() is True
     assert window._search_action.text() == "筛选…"
     assert window._clear_search_action.text() == "清除筛选条件"
+    window.close()
+
+
+def test_pressing_the_button_twice_comes_back(
+    qt_app: QApplication, tmp_path: Path, make_photo
+) -> None:
+    """**按两下回到原处** —— 「掉个头」是这个意思，而一个只进不退的开关就不是。
+
+    这条护的是「按钮不留在任何一态上」：它自己不记状态，第二次按下去时外面按当前作用域算，
+    于是两头都回得去。**按的是真的按钮**，所以它同时断「信号接上了、按钮没被置灰」。
+    """
+    root = _library(tmp_path, make_photo)
+    window = _open(qt_app, root, tmp_path / "会话")
+    _settle(qt_app, window)
+
+    window._scope_toggle.click()
+    qt_app.processEvents()
+    assert window._search_scope == SEARCH_SCOPE_LEVEL
+
+    window._scope_toggle.click()
+    qt_app.processEvents()
+    assert window._search_scope == SEARCH_SCOPE_LIBRARY
     window.close()
 
 
@@ -1341,7 +1370,7 @@ def test_the_arrows_stay_narrower_than_the_magnifier(qt_app: QApplication) -> No
     量的是**墨迹的包围盒**而不是画布：两枚图标的画布一样是 13，量画布量不出这件事。
     """
     app_theme = theme.current_theme()
-    arrows_box = _ink_box(scope_arrows(app_theme, 1.0, active=False))
+    arrows_box = _ink_box(scope_arrows(app_theme, 1.0))
     magnifier_box = _ink_box(magnifier(app_theme, 1.0))
 
     assert arrows_box[2] - arrows_box[0] <= magnifier_box[2] - magnifier_box[0], (
@@ -1409,50 +1438,59 @@ def _quadrant_weight(image: QImage) -> tuple[int, int, int, int]:
     return counts[0], counts[1], counts[2], counts[3]
 
 
-def test_the_button_has_no_hover_hint(qt_app: QApplication, tmp_path: Path) -> None:
+def test_the_button_has_no_hover_hint(qt_app: QApplication, tmp_path: Path, make_photo) -> None:
     """按钮**没有悬浮提示**，切过一轮之后仍然没有。
 
-    开着 / 关着已经由整枚按钮的填充色说清楚了（见下一条），再挂一句提示是在把同一件事说两遍。
+    它是一次性动作，而「此刻是哪一头」紧挨着就写在胶囊的占位文字里（「搜索照片…」/
+    「筛选照片…」）—— 再挂一句提示是把同一件事在两处说，而按钮自己**根本没有状态可说**
+    （ADR 0042 决策 2）。
     """
-    window = MainWindow(session_base=tmp_path / "会话")
-    window.show()
-    qt_app.processEvents()
+    root = _library(tmp_path, make_photo)
+    window = _open(qt_app, root, tmp_path / "会话")
+    _settle(qt_app, window)
 
     assert window._scope_toggle.toolTip() == ""
-    window._scope_toggle.setChecked(True)
+    window._scope_toggle.click()
     qt_app.processEvents()
     assert window._scope_toggle.toolTip() == "", "切过去之后提示又回来了"
     window.close()
 
 
-def test_selecting_the_button_fills_it_not_just_its_edge(
-    qt_app: QApplication, tmp_path: Path
+def test_the_button_stays_the_same_in_both_scopes(
+    qt_app: QApplication, tmp_path: Path, make_photo
 ) -> None:
-    """选中时**整枚按钮**填满高亮色，不只是那一圈轮廓 —— 守护。
+    """两种作用域下按钮**长得一模一样** —— 守护「它没有选中态」（ADR 0042 决策 1）。
 
-    **量像素，不量样式表字符串**：只断言 ``"background"`` 出现在样式表里量不到任何东西 ——
-    颜色写对了而 Qt 没画（或者被别的规则盖掉）时它照样绿。这一条量的是「按钮中心那一块到底
-    是什么颜色」。
+    **量像素，不量样式表字符串**：只断 ``"background"`` 出现过量不到任何东西 —— 颜色写对了而
+    Qt 没画（或者被别的规则盖掉）时它照样绿。这条量的是「按钮中心那一块到底是什么颜色」，
+    并且**两种作用域各量一次**。
 
-    为什么非得填满：22 点的圆角小块上，1 像素的边只占边长的一成，而这一枚按钮**没有文字标签**
-    可看 —— 唯一的「现在开着吗」信号就是那一片颜色。
+    为什么这一条要紧：一个可勾选的按钮，用户会盯着它判断「现在是筛选还是搜索」；而这一枚按下去
+    就不留在任何一态上（占位文字与菜单里那一项的勾才说当前是哪一头），留着填充色就是在骗人 ——
+    按完之后按钮亮着，而下一次按它到底是切过去还是切回来就说不清了。
     """
-    window = MainWindow(session_base=tmp_path / "会话")
-    window.show()
-    qt_app.processEvents()
+    root = _library(tmp_path, make_photo)
+    window = _open(qt_app, root, tmp_path / "会话")
+    _settle(qt_app, window)
     toggle = window._scope_toggle
 
-    resting = _button_center_color(toggle)
-    toggle.setChecked(True)
+    in_library = _button_center_color(toggle)
+    toggle.click()
     qt_app.processEvents()
-    selected = _button_center_color(toggle)
+    in_level = _button_center_color(toggle)
 
-    assert resting is not None and selected is not None
-    assert selected != resting, "选中态的中心还是原来那个底色 —— 整枚按钮没被填满"
-    # 填的必须是高亮那一档，而它与菜单里选中项同源（``menu_style`` 的 ``:selected``）。
+    assert in_library is not None and in_level is not None
+    # 兜底：两档真的切开了（按钮没被置灰）。少了这一行，两次量到同一个状态也会照样绿。
+    assert window._search_scope == SEARCH_SCOPE_LEVEL
+    assert _close(in_library, in_level, 0.01), (
+        f"按钮的中心在两档之间变了：{in_library.name()} → {in_level.name()}"
+        "（这一枚是一次性动作，不摆状态）"
+    )
+    # 两档都不该是高亮色：那一片颜色是弹出菜单里「选中项」在用的（``menu_style`` 的
+    # ``:selected``），按钮借用它就是在冒充一个可勾选项。
     highlight = QPalette(QApplication.instance().palette()).color(QPalette.ColorRole.Highlight)
-    assert _close(selected, highlight, 0.06), (
-        f"选中态填的是 {selected.name()}，要高亮的 {highlight.name()}（菜单选中项也是那一档）"
+    assert not _close(in_level, highlight, 0.06), (
+        f"筛选那一档填的是高亮色 {in_level.name()} —— 按钮不该有选中态"
     )
     window.close()
 
@@ -1490,7 +1528,11 @@ def _close(left: QColor, right: QColor, tolerance: float) -> bool:
 
 
 def test_the_menu_item_and_the_button_are_one_setting(qt_app: QApplication, tmp_path: Path) -> None:
-    """从菜单切过去，按钮也要亮 —— 两条路走同一个入口，所以两处永远一致。"""
+    """从菜单切过去，胶囊那句话也跟着换 —— 两条路走同一个入口，所以两处永远一致。
+
+    **按钮不再有可断言的状态**（ADR 0042 决策 1），所以这一条量的是那两处仍然在说话的地方：
+    菜单项的勾与胶囊的占位文字。按钮那一侧断言的是「它不会成为第三个说法」。
+    """
     window = MainWindow(session_base=tmp_path / "会话")
     window.show()
     qt_app.processEvents()
@@ -1499,7 +1541,6 @@ def test_the_menu_item_and_the_button_are_one_setting(qt_app: QApplication, tmp_
     qt_app.processEvents()
 
     assert window._search_scope == SEARCH_SCOPE_LEVEL
-    assert window._scope_toggle.isChecked() is True
     assert window._search_field._edit.placeholderText() == PLACEHOLDER_FILTER
     window.close()
 
@@ -1538,7 +1579,8 @@ def test_the_scope_is_remembered_per_library(
     _settle(qt_app, again)
 
     assert again._search_scope == SEARCH_SCOPE_LEVEL
-    assert again._scope_toggle.isChecked() is True
+    # 按钮不再摆状态（ADR 0042 决策 1），所以「记住了」只能从**胶囊那句话**上看。
+    assert again._search_field._edit.placeholderText() == PLACEHOLDER_FILTER
     again.close()
 
 

@@ -99,10 +99,13 @@ class SearchFlowMixin:
             self._update_action_states()
 
     def _sync_search_scope(self) -> None:
-        """胶囊上的那句话、切换按钮与菜单项的勾，三处一起跟着作用域走。"""
+        """胶囊上的那句话与菜单项的勾，两处一起跟着作用域走。
+
+        **切换按钮不在其中**：它是一次性动作，界面上不摆状态（ADR 0042 决策 1），所以没有
+        「要同步过去的那一份」。
+        """
         filtering = self._search_scope == SEARCH_SCOPE_LEVEL
         self._search_field.set_scope(filtering)
-        self._scope_toggle.set_filtering(filtering)
         self._scope_action.setChecked(filtering)
         self._update_action_states()
 
@@ -300,7 +303,7 @@ class SearchFlowMixin:
         结果仍是搜出来的那几张）。
 
         **条件是那一帧的内容**（ADR 0041 决策 3），所以帧一没条件就得跟着没；清完之后
-        ``_is_library_search`` 自然变假，于是胶囊、作用域按钮的选中态、面包屑那一段
+        ``_is_library_search`` 自然变假，于是胶囊的占位文字、菜单项的勾、面包屑那一段
         「搜索结果（N）」全都自己回到筛选那一边 —— **不必在这里逐个改回去**。
 
         :param reload: ``False`` 给「已经要重列别的东西」的那些调用点（``enter_folder`` 要

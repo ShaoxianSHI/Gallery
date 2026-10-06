@@ -425,7 +425,7 @@ class MainWindow(
         # 只改这些条件管到哪儿。不进布局 —— 与胶囊一样由 ``_layout_title_bar`` 摆，并且
         # **建在胶囊之后**才叠得上去。
         self._scope_toggle = ScopeToggle(self)
-        self._scope_toggle.toggled.connect(self._on_scope_toggled)
+        self._scope_toggle.switched.connect(self._on_scope_switched)
         self._scope_toggle.hide()
 
         # 横幅**也建在最后**（Qt 按创建顺序叠兄弟控件）；差别是它**不进任何布局**。
@@ -619,8 +619,9 @@ class MainWindow(
         self._clear_search_action = QAction("清除搜索条件", self)
         self._clear_search_action.triggered.connect(self.clear_search_conditions)
 
-        # 「筛选当前视图」：切换按钮在菜单里的那条路（ADR 0040 决策 5）。**与按钮共用一份状态**，
-        # 所以两处永远说同一句话 —— 菜单里勾着而按钮没亮，用户会以为它们是两个设置。
+        # 「筛选当前视图」：切换按钮在菜单里的那条路（ADR 0040 决策 5）。**与按钮走同一个入口**，
+        # 所以两处永远说同一句话。按钮自己不再摆状态（ADR 0042 决策 1），**这一项的勾是菜单上
+        # 唯一的「此刻是哪一头」** —— 与胶囊里的占位文字一起，那两处必须一直是准的。
         self._scope_action = QAction("筛选当前视图", self)
         self._scope_action.setCheckable(True)
         # **``toggled`` 递过来的是 ``checked``（一个 bool），不是作用域那个字符串** —— 直接接
@@ -1375,11 +1376,15 @@ class MainWindow(
         """
         self._fill_action.setText("还原窗口" if self.isMaximized() else "铺满窗口")
 
-    def _on_scope_toggled(self, filtering: bool) -> None:
-        """切换按钮被按了。走 :meth:`set_search_scope` —— **与菜单里那一条是同一个入口**，
-        所以两处永远说同一句话（各写一份回调，早晚会有一处忘了改其中一样）。
+    def _on_scope_switched(self) -> None:
+        """切换按钮被按了：把作用域**掉个头**（按钮自己不记状态，ADR 0042 决策 1）。
+
+        走 :meth:`set_search_scope` —— **与菜单里那一条是同一个入口**，所以两处永远说同一句话
+        （各写一份回调，早晚会有一处忘了改其中一样）。
         """
-        self.set_search_scope(SEARCH_SCOPE_LEVEL if filtering else SEARCH_SCOPE_LIBRARY)
+        self.set_search_scope(
+            SEARCH_SCOPE_LIBRARY if self._search_scope == SEARCH_SCOPE_LEVEL else SEARCH_SCOPE_LEVEL
+        )
 
     def _on_title_rename_committed(self, text: str) -> None:
         """标题栏里确认了一个新名字。
