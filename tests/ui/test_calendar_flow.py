@@ -27,6 +27,7 @@ from waiting import wait_for_idle, wait_until, window_is_idle  # noqa: E402
 from gallery.core.library.calendar import month_matrix  # noqa: E402
 from gallery.core.library.config import (  # noqa: E402
     BROWSE_MODE_CALENDAR,
+    BROWSE_MODE_FLAT,
     load_config,
     prepare_library,
 )
@@ -870,6 +871,53 @@ def test_changing_the_order_on_the_calendar_stays_on_the_calendar(
     assert window._stack.currentWidget() is page, "改一下排序就被甩到「全部照片」那一页"
     assert page.anchor() == anchor_before
     assert _days_total(page) == len(NAMES)
+
+
+def test_a_search_inside_a_calendar_cell_keeps_the_search_frame(
+    qt_app: QApplication, calendar_window: MainWindow
+) -> None:
+    """在日历格内检索之后，**搜索帧必须在栈上** —— 那一格被忘掉，不等于搜索也被忘掉。
+
+    > 用户原话：「在日历视图搜索之后，切到全部照片，之前的搜索条件被用来作为筛选条件了」。
+
+    这与 :func:`test_a_search_from_a_calendar_cell_forgets_that_cell` 是**同一个动作的两半**，
+    而原实现只做成了前一半：`_reload_level` 里那句
+    ``_pop_to(lambda: self._calendar_frame is None)`` 是「从栈顶**连续**弹到判据成立」，而栈是
+    ``[CalendarFrame, SearchFrame]`` —— 判据在第一步不成立，于是**把刚压上去的搜索帧一并弹掉**。
+
+    留下的状态是**矛盾的**：条件还在、作用域还是 library，于是 :meth:`_is_library_search` 答
+    「在检索」，可 ``_search_frame`` 是 ``None``。下一次换浏览方式时
+    :meth:`CalendarFlowMixin.set_browse_mode` 因此抓不到帧（``leaving_search`` 为 ``None``）、
+    清不掉条件 —— 条件就落在了新的一层上，而那一层并不是它筛出来的那一层。这就是「被用来作为
+    筛选条件」。
+
+    **断两件事，缺一个都红**：日历格被忘掉（前半条用例已经断）与搜索帧还在（本条）。
+    只断后者的话，「把日历格也留着」能过 —— 而那正是 :func:`_drop_calendar_cell_frame` 文档里
+    写的第二个方向的错。
+    """
+    window = calendar_window
+    page = window._calendar_page
+    photos, label = _cell_of(window, 5)
+    page.current_view().select_cell(photos, label)
+    qt_app.processEvents()
+    assert window._drill_photos is not None, "前置条件：日历那一格没有摊开"
+
+    window._on_search_submitted("三月")
+    _settle_everything(qt_app, window)
+
+    assert window._drill_photos is None, "那一格该被忘掉（前半条用例断的就是这个）"
+    assert window._search_frame is not None, (
+        "搜索帧被连带弹掉了 —— 条件还在而栈上没有一个接管它的那一层，"
+        "下一次换浏览方式就抓不到帧、清不掉条件（症状：条件被当成筛选条件用了）"
+    )
+    assert window._is_library_search(), "整库检索的属性与「栈上没有搜索帧」矛盾了"
+
+    # 换浏览方式之后条件要真清掉，而不是被留在新的一层上当筛选。
+    window.set_browse_mode(BROWSE_MODE_FLAT)
+    _settle_everything(qt_app, window)
+    assert window._conditions == [], f"换浏览方式之后条件还留着：{window._conditions}"
+    assert window._search_frame is None
+    window.close()
 
 
 def test_a_search_from_a_calendar_cell_forgets_that_cell(

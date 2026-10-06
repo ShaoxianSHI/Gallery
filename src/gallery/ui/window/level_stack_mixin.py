@@ -174,6 +174,33 @@ class LevelStackMixin:
             lambda stack: not isinstance(stack.top, SearchFrame)
         )
 
+    def _drop_calendar_cell_frame(self) -> None:
+        """**摘掉栈上的日历格**，而且只摘它一个 —— 它上面压着的那些（搜索帧）一个都不动。
+
+        日历格与搜索帧的**先后**由两次不同的调用决定：先
+        :meth:`SearchFlowMixin._sync_search_frame` 压上搜索帧，再由
+        :meth:`MainWindow._reload_level` 摘掉日历格。所以摘的时候栈是
+        ``[CalendarFrame, SearchFrame]``，而日历格**不在栈顶**。
+
+        **别用 ``_pop_to(lambda: self._calendar_frame is None)``** —— 那是「从栈顶连续弹」，
+        在这个栈上会把刚压上去的搜索帧一并弹掉，而它不会被压回来。留下的状态是矛盾的：条件
+        还在、作用域还是 library，可栈上没有搜索帧（``_is_library_search()`` 答「在检索」而
+        ``_search_frame`` 是 ``None``）。下一次换浏览方式时 ``set_browse_mode`` 因此抓不到帧、
+        清不掉条件 —— 症状是「日历格内搜索之后切到全部照片，之前的搜索条件被用来作为筛选条件」。
+
+        **也别写成「栈顶是日历格才摘」**：那样一句在真实时序里永远不成立（栈顶是搜索帧），
+        日历格摘不掉，于是撤光条件之后按 Esc 会退到「他这一趟没去过的那一格」
+        （钉它的用例：``test_a_search_from_a_calendar_cell_forgets_that_cell``）。两个方向各有一
+        条用例，所以这个方法的两条判据都不能省。
+        """
+        frames = self._level_stack.frames
+        index = next(
+            (i for i, frame in enumerate(frames) if isinstance(frame, CalendarFrame)),
+            None,
+        )
+        if index is not None:
+            self._level_stack = self._level_stack.without_frame(index)
+
     def _push_album_chain(self, target: Path) -> None:
         """压出从「现在这一层」到 ``target`` 的**整条相册链**（一层一层一帧）。
 

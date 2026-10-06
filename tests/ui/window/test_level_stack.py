@@ -231,6 +231,50 @@ def test_replace_top_on_an_empty_stack_pushes() -> None:
 # ---- 弹到某个条件 ---------------------------------------------------------------
 
 
+def test_without_frame_takes_out_a_frame_that_is_not_on_top() -> None:
+    """**摘中间那一帧** —— ``pop`` / ``pop_until`` 只能从栈顶弹，摘不到被压住的。
+
+    真实形状是 ``[CalendarFrame, SearchFrame]``：整库检索压在日历格之上，而那一格不该继续算作
+    「上一层」；可搜索帧不能动（动了就留下一副「条件还在、栈上却没有搜索帧」的矛盾状态）。
+    """
+    stack = (
+        LevelStack(root=RootKind.CALENDAR)
+        .push(CalendarFrame(photos=(), label="那一格"))
+        .push(SearchFrame(conditions=()))
+    )
+
+    after = stack.without_frame(0)
+    assert after.frames == (SearchFrame(conditions=()),), "摘掉的不是那一格"
+    assert after.depth == 1
+    # **上面那一帧的筛选条件得跟着它自己走** —— 摘日历格不该动搜索帧那份。
+    assert after.narrowing == ((),)
+
+
+def test_without_frame_keeps_the_other_frames_narrowing_where_it_belonged() -> None:
+    """摘中间那一帧时，**每一帧的筛选条件要跟着自己那一帧**（别整体错位一格）。"""
+    stack = (
+        LevelStack(root=RootKind.CALENDAR)
+        .push(CalendarFrame(photos=(), label="格"), ("格上的筛选",))
+        .push(SearchFrame(conditions=()), ("搜索的筛选",))
+    )
+
+    after = stack.without_frame(0)
+    assert after.frames == (SearchFrame(conditions=()),)
+    assert after.narrowing == (("搜索的筛选",),), "筛选条件跟着错位到了别的帧上"
+
+
+def test_without_frame_raises_rather_than_silently_doing_nothing() -> None:
+    """索引越界**抛** —— 静默当成「没找到」会让调用方以为摘掉了。
+
+    与 :meth:`with_narrowing` 同一个取向：栈是纯数据，宁可在开发期炸掉。
+    """
+    stack = LevelStack(root=RootKind.ALBUMS).push(AlbumFrame(Path("/lib/a")))
+
+    for bad in (-1, 1, 99):
+        with pytest.raises(IndexError):
+            stack.without_frame(bad)
+
+
 def test_pop_until_stops_at_the_first_frame_that_matches() -> None:
     """「退到相册视图的根」这类动作：一次弹干净。"""
     stack = (

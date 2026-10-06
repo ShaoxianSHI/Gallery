@@ -241,6 +241,28 @@ class LevelStack:
             stack = stack.pop()
         return stack
 
+    def without_frame(self, index: int) -> LevelStack:
+        """**摘掉第 ``index`` 帧**（不在栈顶的那一帧），其余原样保留 —— 筛选条件跟着各自走。
+
+        与 :meth:`pop` / :meth:`pop_until` 的区别就是这一条：**那些只能从栈顶弹**，所以摘不掉
+        被别的帧压在下面的那一帧。
+
+        要它的是「日历格 + 其上的搜索帧」这个形状：整库检索压在日历格之上，而检索不该让那一格
+        继续算作「上一层」（条件撤光之后 Esc 会退到用户这一趟没去过的一格）。可搜索帧不能动 ——
+        动它就留下一副「条件还在、栈上却没有搜索帧」的矛盾状态。用「从栈顶连续弹」去表达
+        「摘中间那一帧」会正好犯这个错。
+
+        **索引是 ``frames`` 里的下标**，越界抛 ``IndexError``（与 :meth:`with_narrowing` 一致，
+        不静默当成「没找到」—— 那会让调用方以为摘掉了）。
+        """
+        if not 0 <= index < len(self.frames):
+            raise IndexError(f"没有第 {index} 帧（栈里有 {len(self.frames)} 帧）")
+        return LevelStack(
+            root=self.root,
+            frames=(*self.frames[:index], *self.frames[index + 1 :]),
+            narrowing=(*self.narrowing[:index], *self.narrowing[index + 1 :]),
+        )
+
     def with_narrowing(self, index: int, conditions: tuple[object, ...]) -> LevelStack:
         """换掉第 ``index`` 帧那份筛选条件。"""
         if not 0 <= index < len(self.narrowing):

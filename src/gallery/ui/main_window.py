@@ -1002,11 +1002,25 @@ class MainWindow(
         self._panel.clear()
         self._banner.hide()
         # **检索不是日历这一层的一部分**：留着它，条件撤光之后按 Esc 会退到日历点出来的那一格。
-        # 栈：**只弹日历格**（判据是「栈上还有没有日历格」），不能写成「弹到满足某条件为止」——
-        # 那会连相册帧一起弹掉：换层时无条件地退回了根帧，于是「进了相册却还停在库根」
-        # （实测：``_reload_level`` 把栈从 ``['AlbumFrame']`` 清成 ``[]``）。
-        if self._conditions:
-            self._pop_to(lambda stack: self._calendar_frame is None)
+        #
+        # 栈：**摘掉日历格，且绝不能连带它上面的东西**。
+        #
+        # 顺序上要紧：这一句跑在 ``_apply_conditions`` **之后**，而那一串里
+        # :meth:`_sync_search_frame` 刚把**搜索帧压在日历格之上**，栈是
+        # ``[CalendarFrame, SearchFrame]``。两个后果：
+        #
+        # 一、**判据不能是「栈顶是日历格」** —— 栈顶是搜索帧，那一句永远不成立，于是日历格摘不掉
+        #   （钉它的用例 ``test_a_search_from_a_calendar_cell_forgets_that_cell`` 会红：「撤光条件
+        #   之后按 Esc 退到一个他这一趟没去过的层」）。
+        # 二、**判据更不能是「弹到栈上没有日历格为止」**（``_pop_to`` 是从栈顶**连续**弹）——
+        #   在 ``[CalendarFrame, SearchFrame]`` 上它会把刚压上去的搜索帧一起弹掉，而那一帧不会
+        #   再被压回来。症状是一个**矛盾状态**：条件还在、作用域还是 library，于是
+        #   ``_is_library_search()`` 说在检索，可栈上没有搜索帧；接着换浏览方式时
+        #   ``set_browse_mode`` 抓不到帧（``leaving_search`` 是 ``None``），条件就留在了新的一层上
+        #   —— 于是「格内搜索之后切到全部照片，之前的搜索条件被用来作为筛选条件」。
+        #
+        # 所以是**摘中间那一帧**：从栈顶往下看，弹掉第一个日历格（它在栈上最多一个）。
+        self._drop_calendar_cell_frame()
         # **摆哪一页问的是状态**（浏览方式 + 有没有条件）：一律摆成网格页，勾与眼前那一页对不上。
         self._update_breadcrumb()
         if self._shows_calendar_page():
