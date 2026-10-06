@@ -62,7 +62,7 @@ from gallery.core.metadata.rename import RenameResult, rename_entry
 from gallery.core.metadata.transfer import MoveResult, move_into
 from gallery.core.metadata.trash import TrashResult, trash_entries
 from gallery.core.metadata.undo import UndoResult, next_undo_label, undo_last_write
-from gallery.core.metadata.writeback import MetadataWriter, write_metadata
+from gallery.core.metadata.writeback import ExifToolWriter, MetadataWriter, write_metadata
 from gallery.core.places.dataset import is_real_coordinate
 
 if TYPE_CHECKING:
@@ -119,6 +119,10 @@ class Library:
         #: 元数据写回的工具（ADR 0030）。``None`` 表示用默认的 exiftool，测试注入假实现 ——
         #: 界面据此判断「编辑元数据」这一条该不该出现。
         self._writer = writer
+        #: exiftool 探测的结果（``None`` = 还没探过）。**整个应用只有这一个判据**：
+        #: 界面层原先在 ``ui/window/ordering.py`` 里自己造一个 ``ExifToolReader`` 去探，
+        #: 于是同一个「装没装」的问题有两套问法、两个答案可能不一致。
+        self._exiftool_available: bool | None = None
         #: 配置目录是不是真的建出来了。为 ``False`` 时索引只在内存里用，界面据此决定要不要在
         #: 横幅上说明「这个库只读，索引没落盘」。
         self._config_dir_ready = paths.has_config_dir(root)
@@ -729,13 +733,29 @@ class Library:
 
     # ---- 写操作（唯一会改动用户文件的一类）------------------------------------
 
+    def exiftool_available(self) -> bool:
+        """exiftool 现在能不能用 —— **整个应用只有这一个判据**（界面层只问它）。
+
+        **探一次就记住**：这一条在每次弹出右键菜单、每次更新菜单可用性时都会被问到，
+        而探测是 ``shutil.which``，不该反复去问文件系统。装了 exiftool 之后要重启软件
+        才认 —— 与界面层原先那套「启动时探一次」的语义一致。
+
+        ``None``（没注入 writer）**不是「能用」而是「还没探过」**。原先那句
+        ``self._writer is None or ...`` 让生产路径（``Library.open`` 从不传 writer）
+        恒为 ``True``，于是没装 exiftool 的机器上菜单照样出现「编辑元数据…」，
+        用户填完点保存才报错 —— 恰好是下一段 docstring 说要避免的那件事。
+        """
+        if self._exiftool_available is None:
+            self._exiftool_available = (self._writer or ExifToolWriter()).available()
+        return self._exiftool_available
+
     def can_write_metadata(self) -> bool:
         """此刻能不能改照片里的元数据 —— 没装 exiftool 时为 ``False``。
 
         界面据此**不出现**「编辑元数据」那一条，而不是摆一条点下去只会报错的命令
         （与「粘贴」同一个取向，ADR 0014 决策 4）。
         """
-        return self._writer is None or self._writer.available()
+        return self.exiftool_available()
 
     def write_metadata_edit(
         self,

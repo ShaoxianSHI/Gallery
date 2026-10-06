@@ -39,6 +39,56 @@ def test_open_file_instead_of_directory(tmp_path: Path, make_photo: Callable[...
     assert "不是一个文件夹" in excinfo.value.message
 
 
+class _Writer:
+    """只回答「能不能用」的写入工具（``MetadataWriter`` 是 ``Protocol``）。"""
+
+    def __init__(self, can: bool) -> None:
+        self._can = can
+
+    def available(self) -> bool:
+        return self._can
+
+
+def test_a_missing_exiftool_hides_the_metadata_editor_instead_of_failing_on_save(
+    tmp_path: Path, make_photo: Callable[..., Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**没注入 writer ≠ 能写。**
+
+    界面据此决定要不要摆「编辑元数据…」那一条（ADR 0014 决策 4：不摆一条点下去只会
+    报错的命令）。而生产路径 ``Library.open`` 从不传 writer，于是 ``None`` 说的是
+    「还没探过、默认用 exiftool」，不是「能用」。
+
+    缺陷现场：那句判据写成 ``self._writer is None or self._writer.available()``，
+    生产环境下它恒为 ``True`` —— 没装 exiftool 的机器上菜单照样出现，用户填完点保存
+    才在 ``write_metadata`` 里抛错。比一开始就不出现糟糕得多。
+    """
+    make_photo("一张.jpg")
+    library = Library.open(tmp_path)
+    monkeypatch.setenv("PATH", str(tmp_path / "空目录"))
+
+    assert library.writer is None, "前提不成立：生产路径不该注入 writer"
+    assert library.can_write_metadata() is False
+    assert library.exiftool_available() is False
+
+
+def test_the_metadata_capability_is_asked_only_once(tmp_path: Path) -> None:
+    """探测的结果要记住 —— 这条判据每次弹菜单、每次更新菜单可用性都会被问。"""
+    library = Library.open(tmp_path)
+    calls: list[int] = []
+
+    class _Counting(_Writer):
+        def available(self) -> bool:
+            calls.append(1)
+            return True
+
+    library._writer = _Counting(True)
+    assert library.exiftool_available() is True
+    assert library.exiftool_available() is True
+    assert library.can_write_metadata() is True
+
+    assert len(calls) == 1, f"探测被问了几次：{len(calls)} 次（该只问一次）"
+
+
 def test_open_makes_the_config_dir_and_keeps_thumbs_out_of_it(
     tmp_path: Path, make_photo: Callable[..., Path]
 ) -> None:

@@ -181,6 +181,10 @@ def test_it_disappears_when_exiftool_is_missing(
 ) -> None:
     """没装 exiftool 时**不出现**，而不是摆一条点了只会报错的（ADR 0014 决策 4）。"""
     writer.available_flag = False
+    # 探测结果**按设计只算一次**（`Library.exiftool_available`），而这条 fixture 是在窗口
+    # 建好、`wait_for_idle` 跑完之后才把 writer 注入的 —— 那时答案已经缓存成「能用」了。
+    # 所以翻转之后要把那份缓存作废，让它按新的可用性重新探一次。
+    window._library._exiftool_available = None
     row = _enter_album(qt_app, window, root)
     qt_app.processEvents()
 

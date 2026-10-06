@@ -246,7 +246,6 @@ class MainWindow(
         self._progress_notice_text: str | None = None
         #: 扫描本身出过问题（跳过的目录 / 读不了的文件）。它比「这里是空的」更该说。
         self._scan_issue = False
-        self._exiftool_available: bool | None = None  # 探测一次就够
         # ---- 搜索（ADR 0026）-------------------------------------------------
         #: 已生效的筛选条件，按录入顺序。**空列表 = 不在搜索**（普通的一层）。
         self._conditions: list[SearchCondition] = []

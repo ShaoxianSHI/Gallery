@@ -19,7 +19,6 @@ from gallery.core.library.config import BROWSE_MODE_ALBUMS, BROWSE_MODE_CALENDAR
 from gallery.core.library.facade import Library
 from gallery.core.library.groups import SortOrder, build_groups, sort_photos
 from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
-from gallery.core.metadata.exif import ExifToolReader
 from gallery.core.metadata.facets import (
     GROUP_FACETS,
     SORT_FACETS,
@@ -108,10 +107,19 @@ class OrderingMixin:
 
     @property
     def _has_exiftool(self) -> bool:
-        """exiftool 现在能不能用。启动时探一次，之后不再反复起进程去问。"""
-        if self._exiftool_available is None:
-            self._exiftool_available = ExifToolReader().available()
-        return self._exiftool_available
+        """exiftool 现在能不能用。
+
+        **只问 :class:`~gallery.core.library.facade.Library` 那一个判据**
+        （:meth:`Library.exiftool_available`），不要在界面层自己造一个
+        ``ExifToolReader`` 去探：同一个「装没装」的问题有过两套问法、一个探读侧
+        一个探写侧，答案可能不一致而没有任何地方会发现。
+
+        库还没打开时（``_build_actions`` 在构造期就会建这些菜单，而库是稍后才从会话里
+        恢复的）一律当作「能用」：那一刻菜单本来就是空的，那句「需要 exiftool 才能读取
+        这个字段」的提示没有对象；真打开库之后这条会被重新问到。
+        """
+        library = self._library
+        return True if library is None else library.exiftool_available()
 
     def set_group_facet(self, facet_id: str | None) -> None:
         """切换分组字段（菜单用）。"""

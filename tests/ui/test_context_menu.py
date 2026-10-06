@@ -42,15 +42,34 @@ from gallery.ui.main_window import MainWindow  # noqa: E402
 PHOTO_NAMES = ("一张.jpg", "另一张.jpg")
 
 
-@pytest.fixture
-def exiftool_present(window: MainWindow, monkeypatch: pytest.MonkeyPatch) -> None:
-    """让这个窗口所在的库「改得动元数据」。
+class _AvailableWriter:
+    """只回答「能不能用」的最小写入工具。
 
-    **测试不得依赖本机有没有装 exiftool**，而「编辑元数据…」进不进菜单恰好由它决定
-    （``Library.can_write_metadata``）。真去起 exiftool 的用例在
-    ``tests/core/metadata/test_writeback.py`` 里，用假的 writer。
+    :class:`~gallery.core.metadata.writeback.MetadataWriter` 是 ``Protocol``，
+    而这条 fixture 只要那一个方法。真去起 exiftool 的用例在
+    ``tests/core/metadata/test_writeback.py`` 里。
     """
-    monkeypatch.setattr(window._library, "can_write_metadata", lambda: True)
+
+    def available(self) -> bool:
+        return True
+
+
+@pytest.fixture
+def exiftool_present(window: MainWindow) -> None:
+    """让这个窗口所在的库「改得动元数据」——**注入假工具，而不是改判据**。
+
+    「编辑元数据…」进不进菜单由 ``Library.can_write_metadata`` 决定，它转问
+    ``Library.exiftool_available()``。原先这条 fixture 去 monkeypatch 那个方法，
+    于是**判据本身从未被测过**；再加上生产路径上它恒为 ``True``（``writer=None``
+    被当成了「能用」），这条 fixture 在生产语义下是个**恒等操作** —— 菜单出不出现
+    与本机装没装 exiftool 无关。
+
+    所以改成注入一个 :attr:`_writer` 并清掉探测缓存，让判据真的被走一遍：
+    「没注入就按默认 exiftool 探，探不到就 ``False``」由 ``tests/core`` 里那条
+    新的核心层用例负责。
+    """
+    window._library._writer = _AvailableWriter()
+    window._library._exiftool_available = None  # 让它按新注入的工具重新探一次
 
 
 @pytest.fixture(autouse=True)
