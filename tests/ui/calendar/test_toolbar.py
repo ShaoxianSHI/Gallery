@@ -32,7 +32,7 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QEvent, QPoint, QPointF, Qt  # noqa: E402
 from PySide6.QtGui import QColor, QImage, QMouseEvent, QPalette  # noqa: E402
-from PySide6.QtWidgets import QApplication, QToolButton  # noqa: E402
+from PySide6.QtWidgets import QApplication, QLabel, QToolButton  # noqa: E402
 
 TODAY = datetime.date(2024, 5, 16)
 
@@ -208,6 +208,96 @@ def test_no_conditions_means_no_chips(qt_app: QApplication, shown_page: Calendar
     qt_app.processEvents()
 
     assert page._bar._chips.isVisible() is False
+
+
+def test_clearing_the_conditions_takes_the_chips_away(
+    qt_app: QApplication, shown_page: CalendarPage
+) -> None:
+    """撤光条件后工具条上**一枚都不留** —— 用户原话：「UI 上第二个一直存在不消失」。
+
+    **这条曾经红过**，而红的方式很能说明问题：条件确实撤掉了（模型里是空的），工具条上那枚
+    胶囊却还挂着。它之所以发生，是因为摆胶囊的那一句写在 :meth:`MainWindow._update_breadcrumb`
+    的**末尾**，而那个方法在「无条件」时 ``hide()`` 完就 ``return`` 了 —— 撤光的路径正好
+    走的是早退那一支。切到相册视图再切回来就好了，因为切视图会重走一遍没有早退的那条路，
+    症状于是变成「要绕一圈才干净」。
+
+    所以这条量的是**条件空了之后工具条上真的什么都没有**：模型为空而控件还在，量模型永远绿。
+    """
+    page = shown_page
+    page.set_conditions(["相机：Canon", "城市：西安"])
+    qt_app.processEvents()
+    assert page._bar._chips.findChildren(QToolButton), "前提不成立：胶囊没摆出来"
+
+    page.set_conditions([])
+    qt_app.processEvents()
+
+    assert page._bar._chips.findChildren(QToolButton) == [], "条件已经撤光，工具条上还留着胶囊"
+    assert page._bar._chips.isHidden() is True, "条件已经撤光，那一块没收起来"
+
+
+def test_every_chip_stays_whole_when_they_do_not_all_fit(
+    qt_app: QApplication, shown_page: CalendarPage
+) -> None:
+    """摆不下时**收掉尾部那几枚**，而不是把每一枚都压成省略号 —— 守护。
+
+    **用户原话：「添加第二个之后就只显示第二个了」**，而那一枚其实是**第一条**被压没了：
+    ``QToolButton`` 窄到尺寸提示以下会把文字省略掉，于是「拍摄时…1 ✕」这样一条**不存在的
+    条件**摆在那里 —— 用户读到的是错的，而且点它撤掉的是另一条（症状与「删错条件」一模一样）。
+
+    量的是**每枚摆出来的都拿到自己需要的宽度**：压缩是逐枚按比例摊的，摊完谁都不够；收掉尾部
+    则每一枚都是完整的。
+    """
+    page = shown_page
+    page.resize(720, 480)
+    qt_app.processEvents()
+    # 第一条刻意写长：只有长条件才会触发溢出（两条短的在最小窗口下也放得下）。
+    page.set_conditions(["拍摄时间：2026-01-01 00:00 之后的那一段", "文件名：山", "城市：西安"])
+    qt_app.processEvents()
+
+    chips = page._bar._chips.findChildren(QToolButton)
+    assert chips, "前提不成立：一枚都没摆"
+    for chip in chips:
+        assert chip.width() >= chip.sizeHint().width(), (
+            f"{chip.text()!r} 只有 {chip.width()} 点而它要 {chip.sizeHint().width()} 点 ——"
+            " 文字被省略掉了，用户读到的是一条不存在的条件"
+        )
+
+    # **至少完整摆下一枚**：只有一条条件时它必须可读，挤成省略号等于没显示。
+    assert page._bar._overflow < len(page._bar._all_conditions), "整块都收起来了，一条都没摆"
+
+    # 排不下的那些要说清楚还有几条，而不是假装条件只有那么几条。
+    # **只钉「+N 与 ``_overflow`` 对得上」而不钉具体是几条** —— 那个数取决于字体度量，
+    # 换个平台就变，写死会让这条用例偶尔红，而它红的原因与被守的东西无关。
+    overflow_labels = [
+        label.text()
+        for label in page._bar._chips.findChildren(QLabel)
+        if label.text().startswith("+")
+    ]
+    assert overflow_labels == [f"+{page._bar._overflow}"], (
+        f"没显示的那几条没说清楚：标着 {overflow_labels}，实际还有 {page._bar._overflow} 条"
+    )
+
+
+def test_the_chips_grow_back_when_the_window_does(
+    qt_app: QApplication, shown_page: CalendarPage
+) -> None:
+    """窗口拖宽后**多摆几枚** —— 收起来的那几条要跟着回来。
+
+    钉的是「重排这件事发生在 ``resizeEvent`` 里」：只按 ``set_conditions`` 时算一次的话，
+    拖宽窗口仍只有那几枚，与眼前的空间对不上（用户得重新加一条条件才看得到变化）。
+    """
+    page = shown_page
+    page.resize(720, 480)
+    qt_app.processEvents()
+    page.set_conditions(["拍摄时间：2026-01-01 00:00 之后的那一段", "文件名：山", "城市：西安"])
+    qt_app.processEvents()
+    assert page._bar._overflow > 0, "前提不成立：窄窗口下并没有溢出"
+
+    page.resize(1400, 480)
+    qt_app.processEvents()
+
+    assert page._bar._overflow == 0, "窗口已经够宽了，还有条件没摆出来"
+    assert len(page._bar._chips.findChildren(QToolButton)) == 3
 
 
 def test_the_chips_stay_readable_in_both_appearances(

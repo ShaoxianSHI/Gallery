@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QResizeEvent
+from PySide6.QtGui import QFontMetrics, QResizeEvent
 from PySide6.QtWidgets import (
     QButtonGroup,
     QHBoxLayout,
@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 
 from gallery.core.library.calendar import LEVEL_NAMES, LEVELS, title
 from gallery.ui.calendar.colors import CalendarColors
-from gallery.ui.panels.breadcrumb import build_chip
+from gallery.ui.panels.breadcrumb import DISMISS_MARK, build_chip
 from gallery.ui.panels.layout import clear_layout
 
 _BAR_HEIGHT = 60
@@ -90,6 +90,10 @@ class CalendarBar(QWidget):
         self._chips_layout.setContentsMargins(0, 0, 8, 0)
         self._chips_layout.setSpacing(4)
         self._chips.setVisible(False)
+        # 完整那一批条件与「正在改哪一条」记在这里，``_refit`` 每次按当前宽度重新决定摆几枚。
+        self._all_conditions: list[str] = []
+        self._editing: int | None = None
+        self._overflow = 0
         layout.addWidget(self._chips)
 
         self._group = QButtonGroup(self)
@@ -113,27 +117,45 @@ class CalendarBar(QWidget):
         **与面包屑共用同一份胶囊**（:func:`~gallery.ui.panels.breadcrumb.build_chip`）——
         两处各派生一遍样式，过一阵就是「日历上那几枚比网格上那几枚浅一档」。
 
-        宽度不够时**先缩胶囊、后压标题**：标题是「我在看哪一段」，条件是附注，所以空间紧的时候
-        先让附注让路。
+        宽度不够时**收掉排不下的那几枚**，而不是把每一枚都压成省略号 —— 见 :meth:`_refit`。
+        """
+        self._all_conditions = list(conditions)
+        self._editing = editing
+        self._refit()
+
+    def _refit(self) -> None:
+        """按当前宽度决定**摆几枚**，摆出来的与留在模型里的必须是同一批。
+
+        **挤掉的必须是尾部那几枚，不能按比例压缩每一枚** —— 压缩到宽度以下时 ``QToolButton``
+        会省略文字，于是长条件变成「拍摄时…1 ✕」，用户读到的是一条**不存在的条件**
+        （用户原话：「添加第二个之后就只显示第二个了」，而那一枚其实是第一条被压没了）。
+        完整那条留着、后面跟一枚「+N」，读起来才对：「还有两条没显示」。
+
+        **条件被点掉时按索引走**（:func:`~gallery.ui.panels.breadcrumb.build_chip` 传的是它在
+        **完整列表**里的序号），所以收起来的那几枚撤掉之后索引不会错位。
         """
         clear_layout(self._chips_layout)
-        self._chips.setVisible(bool(conditions))
-        for position, text in enumerate(conditions):
+        shown, overflow = self._how_many_fit()
+        self._overflow = len(self._all_conditions) - shown
+
+        for position, text in enumerate(self._all_conditions[:shown]):
             self._chips_layout.addWidget(
                 build_chip(
-                    text, position, editing=editing == position, parent=self._chips, owner=self
+                    text,
+                    position,
+                    editing=self._editing == position,
+                    parent=self._chips,
+                    owner=self,
                 )
             )
-        # 水平方向给一个**上限**，而不是让这一块去争弹性：``Stretch`` 会让标题与胶囊抢宽度
-        # （标题长的时候把胶囊压成一条缝），而 ``Ignored`` 更糟 —— 它**丢掉尺寸提示**，布局于是
-        # 给 0 宽，整块连同里面的胶囊一起消失。附注要的是「最多占这么多、别再抢」。
-        #
-        # **上限在 :meth:`resizeEvent` 里算，不在这里** —— ``set_conditions`` 常发生在布局跑过
-        # 之前，那时 ``self.width()`` 还是 0，算出来是个 0 宽的上限，胶囊当场消失（实测）。
-        self._cap_chips_width()
+        if overflow:
+            self._chips_layout.addWidget(self._overflow_chip(overflow))
+        self._chips.setVisible(bool(self._all_conditions))
+        self._chips.setMaximumWidth(self._available_width())
+        # 水平方向不设下限：**胶囊是附注，标题才是「我在看哪一段」**，空间紧的时候先让附注让路。
         self._title.setMinimumWidth(0)
 
-    def _cap_chips_width(self) -> None:
+    def _available_width(self) -> int:
         """胶囊最多能占多宽 —— 剩下的留给标题与分段选择器。
 
         **标题优先**：它是「我在看哪一段」，条件是附注，所以空间紧的时候先让附注让路。
@@ -141,12 +163,42 @@ class CalendarBar(QWidget):
         别让分段选择器被挤扁。
         """
         keep_for_the_rest = self._title.sizeHint().width() + 320
-        available = max(0, self.width() - keep_for_the_rest)
-        self._chips.setMaximumWidth(available)
+        return max(0, self.width() - keep_for_the_rest)
+
+    def _how_many_fit(self) -> tuple[int, int]:
+        """返回「完整摆得下几枚」与「后面还剩几条」。
+
+        **至少摆一枚**：一行只有一条条件时它必须完整可读 —— 挤成省略号等于没显示。
+        摆不下第一条就把整块收起来（``+N`` 那枚也放不下，见 :meth:`_overflow_chip`）。
+        """
+        available = self._available_width()
+        used = 0
+        shown = 0
+        for text in self._all_conditions:
+            needed = QFontMetrics(self.font()).horizontalAdvance(f"{text} {DISMISS_MARK}") + 26
+            if shown and used + needed > available:
+                break
+            used += needed
+            shown += 1
+        return shown, len(self._all_conditions) - shown
+
+    def _overflow_chip(self, count: int) -> QLabel:
+        """「+N」那一枚 —— 说明还有几条没显示，而不是假装条件只有那么几条。
+
+        **按整块能不能摆下它决定收不收**：标题那条本来就可能被压到 0 宽，这时再塞一枚
+        「+N」只会在工具条上多出一块空白。它自己**不是按钮** —— 摆的是数量，不是能点的东西，
+        给它指针光标会让用户以为点得动。
+        """
+        label = QLabel(f"+{count}")
+        label.setObjectName("overflow")
+        label.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        return label
 
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         super().resizeEvent(event)
-        self._cap_chips_width()
+        # 窗口一变宽就该多摆几枚 —— 不重排的话拖宽窗口仍只有那几枚，与空间对不上。
+        self._refit()
 
     def set_title(self, level: str, anchor: object) -> None:  # type: ignore[no-untyped-def]
         self._title.setText(title(level, anchor))  # type: ignore[arg-type]
@@ -169,6 +221,10 @@ class CalendarBar(QWidget):
                 那一档字号。**这里只补颜色、不补字号**：22px 是按钮时代的遗留且一直没生效，
                 「顺手对上」反而把字号放大了 —— 标题字号是另一件事，别混在这一条里。 */
             QLabel#title {{ color: {_hex(colors.text)}; }}
+            /* 「+N」那一枚：字色与胶囊一样，所以每个字符都要显式写 ——
+               ``QStyleSheetStyle`` 给这一支塞了它自己那份调色板（模块文档），而
+               ``faint`` 就是胶囊那档「次要信息」的色。 */
+            QLabel#overflow {{ color: {_hex(colors.faint)}; font-size: 11px; }}
             QPushButton:hover {{ background: {_hex(colors.chip)}; }}
             QPushButton:checked {{
                 background: rgba({accent.red()}, {accent.green()}, {accent.blue()}, 38);

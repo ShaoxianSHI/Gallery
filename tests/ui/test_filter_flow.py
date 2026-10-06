@@ -258,6 +258,72 @@ def test_the_conditions_are_visible_on_the_calendar(
     window.close()
 
 
+def test_clearing_a_condition_on_the_calendar_clears_the_toolbar_too(
+    qt_app: QApplication, tmp_path: Path, make_photo
+) -> None:
+    """在日历上把条件撤光，**工具条上那几枚也要跟着走** —— 用户原话：「UI 上第二个一直存在不消失」。
+
+    **这一条盯的是那条早退路径**：摆胶囊的那一句曾写在 :meth:`_update_breadcrumb` 的末尾，
+    而那个方法在「无条件」时 ``hide()`` 完就 ``return`` —— 撤光走的正是那一支，于是控件留在
+    屏幕上（模型里已经空了，量模型永远绿）。切到相册视图再切回来就好了，因为切视图会重走
+    一遍没有早退的那条路，症状于是变成「要绕一圈才干净」。
+
+    所以这里从**窗口**这一层按用户的手法走一遍（点 ✕、回车、Esc 都试），而不是直接调
+    ``set_conditions([])`` —— 后者绕开了那条早退，用例会一路绿。
+    """
+    root = _library(tmp_path, make_photo)
+    window = _open(qt_app, root, tmp_path / "会话", browse_mode=BROWSE_MODE_CALENDAR)
+    _settle(qt_app, window)
+    _filter(qt_app, window, "#相机 Canon")
+    _filter(qt_app, window, "#城市 西安")
+    _settle(qt_app, window)
+    assert len(_calendar_chips(window)) == 2, "前提不成立：两枚胶囊没摆出来"
+
+    # 走用户的手法：点 ✕ 逐条撤。
+    window._on_condition_removed(0)
+    _settle(qt_app, window)
+    window._on_condition_removed(0)
+    _settle(qt_app, window)
+
+    assert _chips(window) == [], "条件已经撤光"
+    assert _calendar_chips(window) == [], (
+        f"条件已经撤光，日历工具条上还留着 {_calendar_chips(window)} ——"
+        " 切换视图能清掉，所以症状是「要绕一圈才干净」"
+    )
+    window.close()
+
+
+def test_clearing_conditions_with_escape_clears_the_toolbar(
+    qt_app: QApplication, tmp_path: Path, make_photo
+) -> None:
+    """**Esc 撤光**也要清掉工具条上那几枚 —— 与点 ✕ 同一个毛病的两条路。
+
+    点 ✕ 那条已经钉住，但撤光有三条独立的路（点 ✕、输入框清空回车、Esc），而它们各自走一遍
+    ``_apply_conditions``。只钉一条的话，另两条各自坏掉都没人看着 —— 而症状一样。
+    """
+    root = _library(tmp_path, make_photo)
+    window = _open(qt_app, root, tmp_path / "会话", browse_mode=BROWSE_MODE_CALENDAR)
+    _settle(qt_app, window)
+    _filter(qt_app, window, "#相机 Canon")
+    _filter(qt_app, window, "#城市 西安")
+    _settle(qt_app, window)
+
+    # Esc 撤的是**最后一条**（`dismiss` 走的是这条路），撤两次才撤得光。
+    window._search_field.dismiss()
+    _settle(qt_app, window)
+    window._search_field.dismiss()
+    _settle(qt_app, window)
+
+    assert _chips(window) == [], "前提不成立：Esc 没能撤光条件"
+    assert _calendar_chips(window) == [], f"Esc 撤光后工具条上还留着 {_calendar_chips(window)}"
+    window.close()
+
+
+def _calendar_chips(window: MainWindow) -> list[str]:
+    """日历工具条上那几枚胶囊的文字。"""
+    return [chip.text() for chip in window._calendar_page._bar._chips.findChildren(ChipButton)]
+
+
 def test_the_conditions_follow_the_user_onto_the_calendar(
     qt_app: QApplication, tmp_path: Path, make_photo
 ) -> None:

@@ -1003,7 +1003,7 @@ class MainWindow(
         return None if self._group_view is None else self._group_view.label
 
     def _update_breadcrumb(self) -> None:
-        """面包屑那一行写什么。
+        """面包屑那一行写什么（**顺带把日历工具条上那几枚胶囊也摆好**）。
 
         **两种作用域写的是两件不同的事**（ADR 0040 决策 4）：整库检索时报**只有库名** ——
         范围真的变成整库了，留着「旅行 ▸ 2024」读起来就是「在这个文件夹里搜到 4 张」，而那 4 张
@@ -1014,6 +1014,12 @@ class MainWindow(
         # 平铺模式下平时不显示面包屑，但**分组里与有条件时一律显示**（ADR 0026 决策 9）。
         in_albums = self._browse_mode == BROWSE_MODE_ALBUMS
         conditions = [condition.chip_text for condition in self._conditions]
+        editing = self._editing_condition if conditions else None
+        # **日历工具条那几枚先摆，且在每一个早退之前**（ADR 0040 决策 9）。摆在末尾就漏了
+        # 「撤光条件」那一步：早退在 ``conditions`` 为空时直接返回，那一枚撤掉的胶囊就一直挂在
+        # 工具条上（用户原话：「UI 上第二个一直存在不消失」），要切到相册视图再切回来才走
+        # —— 因为切视图会重新走一遍没有早退的那条路。
+        self._sync_calendar_conditions(conditions, editing)
         if self._drill_photos is not None:
             # 日历点出来的那一格不是文件夹，面包屑没有一段能指；标题里已经写着它在哪一段日子。
             self._breadcrumb.hide()
@@ -1034,7 +1040,6 @@ class MainWindow(
             )
             # 筛选时这一组**说的是真的**：它就是这一层的范围。
             group = self._group_view_label()
-        editing = self._editing_condition if conditions else None
         self._breadcrumb.set_path(
             parts,
             group=group,
@@ -1044,7 +1049,6 @@ class MainWindow(
             scope=self._search_scope,
         )
         self._breadcrumb.show()
-        self._sync_calendar_conditions(conditions, editing)
 
     def _sync_calendar_conditions(self, conditions: Sequence[str], editing: int | None) -> None:
         """把同一批条件也摆到日历工具条上（ADR 0040 决策 9）。
