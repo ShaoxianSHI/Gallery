@@ -45,12 +45,11 @@ class ViewerFlowMixin:
 
     # ---- 大图（见 ADR 0021）
     def show_grid(self) -> None:
-        """回到网格，并让当前照片保持选中。"""
-        # **离开大图页就把横幅收掉**（见 :meth:`_clear_banner`）：那句话说的是刚才那一张照片。
-        # 三条出大图的路（Esc、关大图、删掉最后一张之后退回）都从这里走。
-        if self._stack.currentWidget() is self._detail_page:
-            self._clear_banner()
-        self._title_bar.stop_edit()  # 切页时把改到一半的名字收起来（ADR 0025）
+        """回到网格，并让当前照片保持选中。
+
+        关大图、删掉最后一张之后退回这两条路走这里；``Esc``（菜单里那一条「上一级」）走
+        :meth:`MainWindow.go_up`，由它弹栈之后调 :meth:`leave_detail_page`。
+        """
         if self._stack.currentWidget() is self._calendar_page:
             # 日历与网格**同一时刻只有一个**：从日历按 Esc 出来就是把浏览方式换回「全部照片」，
             # 否则菜单里那个勾就成了假话，``Y`` / ``M`` / ``W`` 也没处可去。
@@ -63,6 +62,18 @@ class ViewerFlowMixin:
             if self._calendar_frame is not None:
                 self._back_to_calendar()
                 return
+        self.leave_detail_page()
+
+    def leave_detail_page(self) -> None:
+        """**照片帧已经不在栈上了**：换页，并把大图页攒下的东西一次性收拾掉。
+
+        与 :meth:`show_grid` 分开是因为「弹栈」是统一的（「谁弹的都一样」），而收尾是
+        「刚离开大图页」才做的事 —— 合成一处就会有一处得判「这一次是不是从大图页来的」。
+        """
+        # **离开大图页就把横幅收掉**（见 :meth:`_clear_banner`）：那句话说的是刚才那一张照片。
+        if self._stack.currentWidget() is self._detail_page:
+            self._clear_banner()
+        self._title_bar.stop_edit()  # 切页时把改到一半的名字收起来（ADR 0025）
         if self._stack.currentWidget() is self._grid_page:
             return
         self._stack.setCurrentWidget(self._grid_page)

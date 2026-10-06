@@ -1,9 +1,10 @@
 """快捷键的分工。
 
 **Esc 一层层往外退。** 「上一级」不用 ⌘↑（macOS 上那个键已经被占着），用 Esc。
-Esc 同时还管着「大图页回网格」和「行内重命名取消」，所以这里把三者的边界钉死：
+**大图页也是栈上的一帧**，所以那一页的 Esc 与网格页的是同一条命令（不再有第二个「返回网格」）。
+Esc 同时还管着「行内重命名取消」，所以这里把两者的边界钉死：
 
-1. Esc 在大图页回网格、在网格页回上一层，两个动作同一时刻只有一个可用；
+1. Esc 在大图页退回网格、在网格页退上一层，全程只有「上一级」这一条命令；
 2. 改到一半按 Esc 只取消改名，不会顺手跳到上一层；
 3. 连按 Esc，目录会一层层退到库根，到根上就不再动了。
 
@@ -88,7 +89,11 @@ def test_go_up_is_bound_to_escape(qt_app: QApplication, tmp_path: Path) -> None:
 def test_escape_leaves_the_detail_view_first(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
 ) -> None:
-    """大图页的 Esc 是「返回网格」，那一刻「上一级」必须是关着的 —— 同一个键不能有两个主人。"""
+    """大图页的 Esc 是「退一层」——**同一条命令**，不是另立一个「返回网格」。
+
+    大图页在栈上就是压着一帧（ADR 0041），所以这一格判据是「菜单里只有一条 `Esc` 命令」：
+    两条同键的动作意味着同一个键有两个主人，而它们要做的其实是同一件事。
+    """
     library = tmp_path / "库"
     make_photo("IMG_0001.jpg", directory=library / "海边")
     window = open_window(qt_app, library)
@@ -99,14 +104,46 @@ def test_escape_leaves_the_detail_view_first(
         window._open_detail(window._grid.currentIndex())
 
         assert window._stack.currentWidget() is window._detail_page
-        assert window._up_action.isEnabled() is False
+        assert window._up_action.isEnabled() is True
 
         QTest.keyClick(window, Qt.Key.Key_Escape)
         qt_app.processEvents()
 
         assert window._stack.currentWidget() is window._grid_page
         assert window._current_folder() == library / "海边"
+        # 退回网格之后**还在原来那一层**（不是顺带退到库根）：Esc 一次只弹一帧。
         assert window._up_action.isEnabled() is True
+        assert window._current_folder() == library / "海边"
+    finally:
+        window.close()
+
+
+def test_the_view_menu_has_exactly_one_escape_command(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """「视图」菜单里**只有一条 `Esc` 命令**，文案是「上一级」。
+
+    **守卫的是「同一个键不能有两个主人」**：合并不是省了一行菜单，而是因为大图页退一层与
+    网格页退一层本来就是同一件事（栈上都是弹顶帧，ADR 0041 决策 1）。哪天又添一条 `Esc`
+    命令，症状是「有时按 Esc 没反应」—— 加载顺序决定谁先触发，界面看不出错。
+    """
+    library = tmp_path / "库"
+    make_photo("IMG_0001.jpg", directory=library / "海边")
+    window = open_window(qt_app, library)
+    try:
+        view_menu = next(
+            action.menu()
+            for action in window.menuBar().actions()
+            if action.text() == "视图" and action.menu() is not None
+        )
+
+        escape_rows = [
+            action.text() for action in view_menu.actions() if not action.shortcut().isEmpty()
+        ]
+        assert escape_rows.count("上一级") == 1
+        assert window._up_action.shortcut() == QKeySequence("Esc")
+        # 「返回网格」这条已经不存在了：大图页退一层走的就是「上一级」。
+        assert "返回网格" not in [action.text() for action in view_menu.actions()]
     finally:
         window.close()
 

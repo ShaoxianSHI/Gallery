@@ -77,7 +77,7 @@ class MenuActions:
     copy_group: QAction
     #: 「全选」⌘A。
     select_all: QAction
-    #: 「上一级」Esc。
+    #: 「上一级」Esc —— **大图页与网格页共用这一条**（ADR 0041 决策 6）。
     up: QAction
     #: 「分组」子菜单里的单选项，顺序即菜单栏里的顺序（先是「不分组」）。
     group_choices: tuple[QAction, ...]

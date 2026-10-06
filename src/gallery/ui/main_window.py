@@ -440,10 +440,6 @@ class MainWindow(
         self._open_action.setShortcut(QKeySequence.StandardKey.Open)
         self._open_action.triggered.connect(self.choose_folder)
 
-        self._back_action = QAction("返回网格", self)
-        self._back_action.setShortcut(QKeySequence("Esc"))
-        self._back_action.triggered.connect(self.show_grid)
-
         self._fit_action = QAction("适应窗口", self)
         self._fit_action.setShortcut(QKeySequence("Ctrl+0"))
         self._fit_action.triggered.connect(self._detail.fit_to_window)
@@ -483,7 +479,8 @@ class MainWindow(
         self.addAction(self._thumb_zoom_in_action)
         self.addAction(self._thumb_zoom_out_action)
 
-        # 回上一层用 Esc（⌘↑ 被 macOS 占着）：Esc 在大图页是「返回网格」、网格页才是「上一级」。
+        # 回上一层用 Esc（⌘↑ 被 macOS 占着）：**大图页与网格页共用这一条**——大图页也是栈上
+        # 一帧，退掉它就是回网格（ADR 0041 决策 1），所以「返回网格」不再另立一个动作。
         # **Esc 只管位置，不管条件**（ADR 0040 决策 11）：判据里条件排在最前时，只要有条件就永远
         # 退不出那一层。撤条件挪到 ⇧Esc，两者彻底分开，绝不互相抢。
         self._up_action = QAction("上一级", self)
@@ -664,7 +661,7 @@ class MainWindow(
         edit_menu.addAction(self._undo_action)
 
         view_menu = self.menuBar().addMenu("视图")
-        view_menu.addAction(self._back_action)
+        # **「上一级」一条管两处**（大图页 / 网格页），所以视图菜单里没有第二条同键的命令。
         view_menu.addAction(self._up_action)
         # 挨着「上一级」：两者是同一族的「往回退」，但一个退位置、一个退条件（ADR 0040 决策 11）。
         view_menu.addAction(self._pop_condition_action)
@@ -725,8 +722,6 @@ class MainWindow(
         # 缩略图那两条只在网格页亮着；改到一半也不亮 —— 换档会重排网格，把正在编辑的那一格挪走。
         for action in (self._thumb_zoom_in_action, self._thumb_zoom_out_action):
             action.setEnabled(in_grid and idle)
-        # 「退出」也是 Esc，改到一半要关掉它（那一刻 Esc 是输入框的「取消改名」）。
-        self._back_action.setEnabled(in_detail and idle)
         self._clear_cache_action.setEnabled(self._library is not None and self._cache_job is None)
         self._sync_fill_action()
         # 「清除搜索条件」**整条出现 / 消失**，不是置灰（ADR 0014 决策 4）：没有条件时它没有对象。
@@ -894,9 +889,11 @@ class MainWindow(
             self._leave_calendar_cell()
             return
         if isinstance(frame, PhotoFrame):
-            # 照片帧底下是日历格就回日历，否则回网格。
+            # 照片帧底下是日历格就回日历，否则回网格 —— **大图页的「上一级」就是这里**。
             if self._calendar_frame is not None:
                 self._back_to_calendar()
+                return
+            self.leave_detail_page()
             return
         if isinstance(frame, SearchFrame):
             # 条件是那一帧的内容，所以帧没了条件也没了 —— 底下那一层恢复成「没搜过」的样子。
@@ -1132,10 +1129,10 @@ class MainWindow(
         self._calendar_action.setChecked(self._browse_mode == BROWSE_MODE_CALENDAR)
 
     def _update_navigation_actions(self) -> None:
-        # 「上一级」只在网格页启用（两个动作共用一个 Esc，必须有一个是关着的）；改到一半也不启用。
-        in_grid = self._stack.currentWidget() is self._grid_page
+        # 「上一级」是**弹栈顶一帧**，大图页那一帧也压在上面，所以那里同样成立（ADR 0041 决策 1）。
+        # 改到一半不启用：那一刻 Esc 归输入框（「取消改名」）。
         idle = not self._grid.is_renaming() and not self._title_bar.is_editing()
-        self._up_action.setEnabled(in_grid and idle and self._can_go_up())
+        self._up_action.setEnabled(idle and self._can_go_up())
         # **「撤掉最后一条」不限于网格页**：条件是跨页的，在日历那一页也还在，于是那条 ⇧Esc 在
         # 任何一页都要能用（ADR 0040 决策 11）。没条件时关掉，而不是按下去什么也不发生。
         self._pop_condition_action.setEnabled(bool(self._conditions))
