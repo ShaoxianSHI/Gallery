@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 import threading
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 from typing import Final
 
@@ -28,6 +28,11 @@ from gallery.core.library.search import (
 from gallery.core.metadata.facets import PhotoFacets, relative_folder
 
 logger = logging.getLogger(__name__)
+
+#: 建好连接之后的挂钩：把别的东西挂到同一条连接上，返回值由 :attr:`FacetIndex.attached` 原样
+#: 交出去（事件库用它，ADR 0043 决策 1）。**索引不知道挂钩是什么**，所以事件那条线可以整个
+#: 不传 —— 测试里不传就没有事件库。失败要由挂钩自己吞掉：索引不能因为挂钩挂了就不可用。
+type AttachHook = Callable[[sqlite3.Connection, threading.Lock], object]
 
 #: 表结构版本。表结构或存进去的结论变了就 +1（老表整表重建，缓存不值得迁移）—— 地点结论改过几轮，
 #: 不升版本的话老库里那些旧地名会永远留着（``place_ok`` 记着「已经查过了」）；7 增了
@@ -118,12 +123,15 @@ class FacetIndex:
     **这是唯一一个 ``None`` 的来路**：ADR 0038 已删掉 ``cache_in_library`` 开关，别把它加回来。
     """
 
-    def __init__(self, path: Path | None = None) -> None:
+    def __init__(self, path: Path | None = None, *, attach: AttachHook | None = None) -> None:
         self._path = Path(path) if path is not None else None
         self._lock = threading.Lock()
         self._connection: sqlite3.Connection | None = None
         self._memory: dict[str, tuple[tuple[int, int], PhotoFacets]] = {}
-        self._open()
+        #: 挂在这条连接上的东西（事件库，ADR 0043）。**索引不认识它** —— 只把返回值原样收着，
+        #: 由 ``Library`` 接线、取走。没挂上或挂失败都是 ``None``。
+        self._attached: object | None = None
+        self._open(attach)
 
     # ---- 生命周期 -----------------------------------------------------------
 
@@ -155,7 +163,7 @@ class FacetIndex:
             self._path = None
             self._memory.clear()
 
-    def _open(self) -> None:
+    def _open(self, attach: AttachHook | None = None) -> None:
         if self._path is None:
             return
         try:
@@ -183,6 +191,15 @@ class FacetIndex:
             self._path = None
             return
         self._connection = connection
+        if attach is not None:
+            # 挂钩在**建表之后**才跑：两边的表各自建各的，谁也不需要先看见谁。
+            # 挂钩自己吞掉失败（返回 ``None``），索引照常可用（ADR 0043 决策 1）。
+            self._attached = attach(connection, self._lock)
+
+    @property
+    def attached(self) -> object | None:
+        """挂在连接上的东西（事件库）。类型由挂钩决定，所以这里是 ``object``。"""
+        return self._attached
 
     # ---- 读写 ---------------------------------------------------------------
 

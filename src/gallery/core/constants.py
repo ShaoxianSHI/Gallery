@@ -26,6 +26,12 @@ JOURNAL_DIR_NAME: Final = "journal"
 #: SQLite 索引文件名。分组 / 排序读的元数据快照存在这里（见 ADR 0009、ADR 0038）。
 INDEX_FILE_NAME: Final = "index.db"
 
+#: 事件库文件名（``.gallery/events.db``）：事件定义与照片↔事件的绑定（ADR 0043）。
+#:
+#: **它是 ``.gallery/`` 里第一份不是缓存的东西**：事件是用户自己填的，重扫照片重建不出来，
+#: 所以索引重建与清缓存都不许碰它 —— 那是红线 5 的第一个例外。
+EVENTS_FILE_NAME: Final = "events.db"
+
 #: 旧版库外索引子目录名（``<app cache>/index/``）。索引固定回库里后它只剩一个用途：认出这个目录
 #: 好删掉（``config.discard_legacy_external_index``），留着常量好让「旧目录叫什么」仍是单一来源。
 LEGACY_INDEX_CACHE_DIR_NAME: Final = "index"
@@ -66,6 +72,7 @@ __all__ = [
     "CONFIG_FILE_NAME",
     "DEFAULT_MAX_CACHE_BYTES",
     "DEFAULT_THUMBNAIL_MAX_EDGE",
+    "EVENTS_FILE_NAME",
     "INDEX_FILE_NAME",
     "JOURNAL_DIR_NAME",
     "LEGACY_INDEX_CACHE_DIR_NAME",

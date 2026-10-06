@@ -103,10 +103,20 @@ class IndexUnavailableError(GalleryError):
     """
 
 
+class EventsUnavailableError(GalleryError):
+    """事件库挂不上（配置目录建不出来），于是事件这一族做不了。
+
+    **只有配置目录整个建不出来时才会走到**（只读卷 / SMB / 网络盘断开），因为事件库就住在
+    那个目录里（ADR 0043 决策 1）。界面据此让「记录为」那一行**不出现**而不是报错 ——
+    浏览、分组、搜索全都照常，用户其实没有第三个有意义的选择。
+    """
+
+
 __all__ = [
     "AlbumError",
     "ConfigError",
     "DeleteError",
+    "EventsUnavailableError",
     "GalleryError",
     "ImageDecodeError",
     "IndexUnavailableError",

@@ -12,9 +12,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+from gallery.core.events.store import EventStore
 from gallery.core.library.photos import GridEntry
+from gallery.core.metadata.failures import Failure
 from gallery.core.metadata.journal import (
     ACTION_CREATE,
+    ACTION_EVENT,
+    ACTION_EVENT_CREATE,
+    ACTION_EVENT_DELETE,
     ACTION_METADATA,
     ACTION_MOVE,
     ACTION_PASTE,
@@ -22,6 +27,7 @@ from gallery.core.metadata.journal import (
     ACTION_RESTORE,
     ACTION_TRASH,
     ACTION_UNDO,
+    ACTION_UNDO_EVENT,
     ACTION_UNDO_METADATA,
     RESULT_PENDING,
     WriteRecord,
@@ -35,12 +41,18 @@ from gallery.core.metadata.trash import restore_entries
 from gallery.core.metadata.writeback import MetadataWriter, undo_metadata
 
 #: 弹栈的动作：这些写操作被撤销掉了。
-_POP_ACTIONS: Final = frozenset({ACTION_UNDO, ACTION_RESTORE, ACTION_UNDO_METADATA})
+_POP_ACTIONS: Final = frozenset(
+    {ACTION_UNDO, ACTION_RESTORE, ACTION_UNDO_METADATA, ACTION_UNDO_EVENT}
+)
 
 #: **不收进撤销栈的动作** —— 一份显式的排除清单，而不是「不在压栈清单里就等于排除」。
-#: 这两个动作的「撤销」都是**删掉用户的东西**，而删除只许用户亲手触发（红线 1）。靠隐式成立
+#: 这几个动作的「撤销」都是**删掉用户的东西**，而删除只许用户亲手触发（红线 1）。靠隐式成立
 #: 不够：认不出的动作名也压栈，而这份清单少写一个成员是**静默**的。
-_NEVER_UNDOABLE: Final = frozenset({ACTION_CREATE, ACTION_PASTE})
+#:
+#: 新建事件与新建相册同款：撤销它就是删，而刚建的那一刻用户还没往里放东西。**它比别的更
+#: 需要这一条**：新建事件之后往往紧跟着绑定几百张照片（那一步不入栈），⌘Z 要是撤到「新建」
+#: 就会把那些绑定一起带走。
+_NEVER_UNDOABLE: Final = frozenset({ACTION_CREATE, ACTION_PASTE, ACTION_EVENT_CREATE})
 
 #: 菜单里显示的文案。**认不出的动作名走「上一步」**：宁可说得笼统，也不能因为
 #: 没有对应条目就让 ⌘Z 在菜单上不出现。
@@ -49,6 +61,8 @@ _LABELS: Final[dict[str, str]] = {
     ACTION_TRASH: "移到废纸篓",
     ACTION_MOVE: "移动到相册",
     ACTION_METADATA: "编辑元数据",
+    ACTION_EVENT: "修改事件",
+    ACTION_EVENT_DELETE: "删除事件",
 }
 
 #: ``_LABELS`` 里没有的动作名用它。
@@ -59,7 +73,7 @@ FALLBACK_LABEL: Final = "上一步"
 class UndoResult:
     """撤销一次写操作的结果。"""
 
-    #: 撤掉的是哪一种操作。界面据此决定是「替换那一行」还是「把行插回网格」。
+    #: 撤掉的是哪一种操作。界面据此决定是「替换那一行」「把行插回网格」还是「刷新事件清单」。
     action: str
     #: 撤销之后网格里应该存在的条目。撤销元数据编辑也是一条 —— 文件还在原地，但大小与
     #: 修改时间变了，界面手上那条引用已经过期（缩略图与索引的键都含它）。
@@ -121,10 +135,16 @@ def next_undo_label(root: Path) -> str | None:
     return _LABELS.get(runs[-1][0].action, FALLBACK_LABEL) if runs else None
 
 
-def undo_last_write(root: Path, *, writer: MetadataWriter | None = None) -> UndoResult | None:
+def undo_last_write(
+    root: Path,
+    *,
+    writer: MetadataWriter | None = None,
+    events: EventStore | None = None,
+) -> UndoResult | None:
     """撤销最近一次还没被撤销过的写操作。
 
     :param writer: 撤销位置编辑时用的写回工具（测试注入假实现）。其余动作用不上。
+    :param events: 事件库（撤销事件改动时用）。``None`` 表示事件库这次不可用。
     :return: 没有可撤销的记录时返回 ``None``。
     :raises RenameError: 撤的是改名，但文件已经不在原处（或原处被别的文件占了）。
     :raises DeleteError: 撤的是删除，但废纸篓里已经没有它（或原位置被占了）。单项失败不会
@@ -142,6 +162,10 @@ def undo_last_write(root: Path, *, writer: MetadataWriter | None = None) -> Undo
         return _undo_move(root, run)
     if run[0].action == ACTION_METADATA:
         return _undo_metadata(root, run[0], writer=writer)
+    if run[0].action in (ACTION_EVENT, ACTION_EVENT_DELETE):
+        # **必须显式分派**：落到最后那条兜底（``_undo_delete``）就是拿事件记录里的
+        # 事件库那个文件当路径去系统废纸篓里捞东西。
+        return _undo_event(run[0], events)
     return _undo_delete(root, run)
 
 
@@ -165,6 +189,32 @@ def _undo_metadata(root: Path, record: WriteRecord, *, writer: MetadataWriter | 
         failures=result.conflicts,
         journaled=result.journaled,
     )
+
+
+def _undo_event(record: WriteRecord, events: EventStore | None) -> UndoResult:
+    """把一次事件改动改回去（ADR 0043 决策 5）。
+
+    **网格里没有它的条目**（事件不是磁盘上的东西），所以 ``entries`` 恒为空 —— 界面按
+    ``action`` 决定刷新哪一处，别指望从 ``entries`` 里找到点什么。
+
+    事件库不可用时如实说一句，而不是当作「没什么可撤的」：那会让用户以为 ⌘Z 坏了。
+    """
+    if events is None or not events.available:
+        return UndoResult(
+            action=record.action,
+            entries=(),
+            failures=(Failure(name="事件", message="这次打不开事件库，撤不了。"),),
+            journaled=False,
+        )
+    outcome = events.undo_record(record)
+    if outcome.message is not None:
+        return UndoResult(
+            action=record.action,
+            entries=(),
+            failures=(Failure(name="事件", message=outcome.message),),
+            journaled=False,
+        )
+    return UndoResult(action=record.action, entries=(), journaled=outcome.journaled)
 
 
 def _undo_rename(root: Path, record: WriteRecord) -> UndoResult:

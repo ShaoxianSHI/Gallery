@@ -5,9 +5,12 @@
 落盘由调用方显式触发，这样「什么时候会写用户的目录」在代码里始终是可见的。
 
 **东西放在哪里（ADR 0038）**：除缩略图之外，Gallery 关于一个库的一切都在
-库根下的配置目录里 —— 配置、索引、写操作日志、库级界面偏好。缩略图是唯一的例外，
+库根下的配置目录里 —— 配置、索引、事件、写操作日志、库级界面偏好。缩略图是唯一的例外，
 它按库路径摘要落在 ``<app cache>/thumbs/<摘要>/``：那是一万个只增不减的小文件，
 放在用户的照片文件夹里会被云同步来回传，而它本来就是随时能重新解码出来的东西。
+
+配置目录里**只有事件库（``events.db``）不是缓存**（ADR 0043）：事件是用户自己填的，
+重扫照片重建不出来，所以索引重建与清缓存都不许碰它。
 
 随包分发的只读资源（目前只有应用图标）由 ``resources_dir`` 定位：它跟着包的
 安装位置走，与用户的库无关。
@@ -36,6 +39,7 @@ from gallery.core.constants import (
     CACHE_DIR_NAME,
     CONFIG_DIR_NAME,
     CONFIG_FILE_NAME,
+    EVENTS_FILE_NAME,
     INDEX_FILE_NAME,
     JOURNAL_DIR_NAME,
     LEGACY_INDEX_CACHE_DIR_NAME,
@@ -58,6 +62,14 @@ def config_file(root: Path) -> Path:
 def index_file(root: Path) -> Path:
     """SQLite 索引文件：分组 / 排序用的元数据快照（见 ADR 0009、ADR 0038）。"""
     return config_dir(root) / INDEX_FILE_NAME
+
+
+def events_file(root: Path) -> Path:
+    """事件库文件：事件定义与照片↔事件的绑定（ADR 0043）。
+
+    **它不是缓存** —— 事件是用户自己填的，重扫重建不出来，所以索引重建与清缓存都不碰它。
+    """
+    return config_dir(root) / EVENTS_FILE_NAME
 
 
 def journal_dir(root: Path) -> Path:

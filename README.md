@@ -116,12 +116,15 @@ uv run python -m gallery.macos_app
 └── .gallery/
     ├── config.toml         # 库级配置（相册封面、界面偏好）
     ├── index.db            # 索引缓存，删掉可重建
+    ├── events.db           # 事件（旅行、演出……）与照片的关联，删掉就没了
     └── journal/            # 写操作日志，用于回溯与撤销
 ```
 
-除 `config.toml` 外都是缓存：整个删掉，重新扫描就能恢复等价状态。缩略图不放在库里，
-而是按库路径摘要放在 `~/Library/Application Support/Gallery/cache/thumbs/` —— 照片文件夹
-常常挂在云盘上，几万个小文件跟着同步是白白折腾。
+`index.db` 与 `journal/` 都是缓存：整个删掉，重新扫描就能恢复等价状态。`config.toml` 建议自己留个
+副本（相册封面、界面偏好）。**`events.db` 不是缓存**：事件是你自己填的，删掉之后没有任何办法能重建
+回来 —— 所以清缓存与重建索引都不会碰它。缩略图不放在库里，而是按库路径摘要放在
+`~/Library/Application Support/Gallery/cache/thumbs/` —— 照片文件夹常常挂在云盘上，几万个小文件
+跟着同步是白白折腾。
 
 ## 支持的照片格式
 

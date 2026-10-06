@@ -26,6 +26,9 @@ def test_paths_live_under_config_dir(tmp_path: Path) -> None:
     assert paths.config_file(root) == config / "config.toml"
     assert paths.journal_dir(root) == config / "journal"
     assert paths.index_file(root) == config / "index.db"
+    # 事件库也在配置目录里，但它**不是缓存**（ADR 0043）—— 与索引只差一个文件名，
+    # 而「删掉重扫就能恢复」那句话对这两个文件一个字都不成立。
+    assert paths.events_file(root) == config / "events.db"
     # 缩略图**不在**这个目录树里（ADR 0038 决策 1），但搬走之前留在库里的那块
     # 仍要认得出来，迁移时靠它定位。
     assert paths.legacy_cache_dir(root) == config / "cache"

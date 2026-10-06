@@ -52,6 +52,22 @@ ACTION_METADATA: Final = "metadata"
 #: 记 ``failed`` → 栈上**留着**当初那条写回，再按一次 ⌘Z 会重试。冲突的字段一律留在原处。
 ACTION_UNDO_METADATA: Final = "undo_metadata"
 
+#: 日志里的动作名：改一个事件的内容（ADR 0043）。它**动的是我们自己的库**，不是用户的照片，
+#: 但一样可 ⌘Z —— 事件是唯一一份重扫重建不出来的数据。前后值在 :attr:`WriteRecord.changes`
+#: 里逐字段记着，而 ``payload`` 里记着是哪一条事件。
+ACTION_EVENT: Final = "event"
+
+#: 日志里的动作名：新建一个事件。与 :data:`ACTION_CREATE`（新建相册）同属「只增不改」，
+#: **不在撤销栈里** —— 撤销它就是删，而刚建的那一刻用户还没往里放东西。留着是为了可追溯。
+ACTION_EVENT_CREATE: Final = "event_create"
+
+#: 日志里的动作名：删一个事件。``payload`` 里带着它当时那些绑定，撤销要把它们一起放回去 ——
+#: 只恢复事件本体的话，照片关联没了而用户看不出来（ADR 0043 决策 5）。
+ACTION_EVENT_DELETE: Final = "event_delete"
+
+#: 日志里的动作名：把一次事件改动改回去（弹栈）。
+ACTION_UNDO_EVENT: Final = "undo_event"
+
 #: 操作成功。
 RESULT_OK: Final = "ok"
 
@@ -135,7 +151,13 @@ class WriteRecord:
     batch: str | None = None
     #: 元数据写回时逐字段记下的原值与新值（ADR 0030），其余动作恒为空 —— 改名与删除靠
     #: ``source`` / ``target`` 就能还原，只有写回既不动路径也不动文件集合。
+    #: 事件记录（ADR 0043）也用这一栏记字段的前后值，因为「一个字段从什么变成了什么」正是
+    #: 撤销要的东西。
     changes: tuple[FieldChange, ...] = ()
+    #: **自己解释的一段 JSON**，只有事件记录在用（ADR 0043）：``{"event_id": …, "kind": …,
+    #: "bindings": [...]}``。加这一栏是为了让日志**不长出事件的领域知识** —— 事件前后像的形状
+    #: 由 ``core.events`` 自己讲，日志只管把它原样存下来。
+    payload: str | None = None
 
     @property
     def succeeded(self) -> bool:
@@ -153,6 +175,7 @@ class WriteRecord:
                 "message": self.message,
                 "batch": self.batch,
                 "changes": [change.to_json() for change in self.changes],
+                "payload": self.payload,
             },
             ensure_ascii=False,
         )
@@ -172,6 +195,7 @@ class WriteRecord:
             return None
         message = data.get("message")
         batch = data.get("batch")
+        raw_payload = data.get("payload")
         raw_changes = data.get("changes")
         changes: tuple[FieldChange, ...] = ()
         if isinstance(raw_changes, list):
@@ -191,6 +215,7 @@ class WriteRecord:
             timestamp=str(data.get("timestamp", "")),
             batch=batch if isinstance(batch, str) and batch else None,
             changes=changes,
+            payload=raw_payload if isinstance(raw_payload, str) and raw_payload else None,
         )
 
 

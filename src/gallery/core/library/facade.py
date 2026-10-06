@@ -10,13 +10,23 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Callable, Container, Iterator, Mapping, Sequence
+from collections.abc import Callable, Container, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 from gallery.core import paths
 from gallery.core.errors import ConfigError, LibraryNotAccessibleError
+from gallery.core.events import store as events
+from gallery.core.events.store import (
+    Event,
+    EventDraft,
+    EventRef,
+    EventStore,
+    EventWriteOutcome,
+    events_of_kind,
+)
 from gallery.core.library.config import (
     LibraryConfig,
     LibraryUIState,
@@ -51,6 +61,7 @@ from gallery.core.metadata.facets import (
     mark_place_resolved,
     with_resolved_place,
 )
+from gallery.core.metadata.journal import ACTION_EVENT, ACTION_EVENT_DELETE
 from gallery.core.metadata.metadata_edit import (
     MetadataEdit,
     MetadataPlan,
@@ -127,6 +138,8 @@ class Library:
         self._config_dir_ready = paths.has_config_dir(root)
         # 索引只在真的用到分组 / 排序时才打开（ADR 0009）—— 打开它本身不写任何文件。
         self._index: FacetIndex | None = None
+        #: 整份事件清单的会话缓存（ADR 0043 决策 7）。``None`` = 还没读过或刚被写操作作废。
+        self._events_cache: tuple[Event, ...] | None = None
 
     @property
     def writer(self) -> MetadataWriter | None:
@@ -487,8 +500,95 @@ class Library:
         """
         if self._index is None:
             path = paths.index_file(self._root) if self._config_dir_ready else None
-            self._index = FacetIndex(path)
+            # 事件库挂在**索引这条连接**上（ADR 0043 决策 1）：SQL 层仍然是一张库，而生命周期
+            # 上仍是两个文件、两份 ``user_version``。挂钩只有这一处接线 —— ``index.py`` 不认识事件。
+            self._index = FacetIndex(path, attach=partial(events.attach, root=self._root))
+            self._events_cache = None
         return self._index
+
+    @property
+    def events(self) -> EventStore:
+        """事件库（ADR 0043）。配置目录建不出来时**每一次都是不可用的那个** —— 与索引同源。"""
+        attached = self.facet_index.attached
+        if isinstance(attached, EventStore):
+            return attached
+        return EventStore(self._root)
+
+    @property
+    def events_available(self) -> bool:
+        """此刻事件功能能不能用。界面据此让「记录为」那一行不出现。"""
+        return self.events.available
+
+    def all_events(self) -> tuple[Event, ...]:
+        """整份事件清单，**读一次就缓存住**。
+
+        一个库的事件只有几十条，而菜单要按类型列它、面板要预填、分组要给标签 —— 每次都查一遍
+        等于把同一条 ``SELECT`` 花在「弹出右键菜单」这种地方。写入口只有下面那几个，每次写完
+        就地作废这份缓存，于是它不可能与库里的不一致。
+        """
+        if self._events_cache is None:
+            self._events_cache = self.events.all_events()
+        return self._events_cache
+
+    def event(self, event_id: int) -> Event | None:
+        """按 id 取一个事件（从上面那份缓存里找，不查库）。"""
+        return next((event for event in self.all_events() if event.id == event_id), None)
+
+    def events_by_kind(self, kind_id: str) -> tuple[Event, ...]:
+        """某一类的全部事件，顺序即菜单顺序（新→旧）。"""
+        return events_of_kind(self.all_events(), kind_id)
+
+    def events_for_photos(
+        self, photos: Sequence[PhotoRef | Path]
+    ) -> dict[Path, tuple[EventRef, ...]]:
+        """这些照片分别属于哪些事件 —— **分组与筛选要的那一份，走 SQL**。
+
+        **必须在后台线程里调**：这是唯一一个随照片数增长的查询（一层可能五千张），而分组本身
+        是在主线程同步算的（ADR 0043 决策 7）。
+        """
+        paths_to_ask = [
+            photo.path if isinstance(photo, PhotoRef) else Path(photo) for photo in photos
+        ]
+        return self.events.events_for_photos(paths_to_ask)
+
+    # ---- 事件的写入口（它不动用户文件，动的是我们自己的库）--------------------
+
+    def create_event(self, kind_id: str, draft: EventDraft) -> EventWriteOutcome:
+        """新建一个事件。**不写照片、不写 journal 之外的任何用户文件**；索引也不碰
+        （索引是 EXIF 的投影，事件不是 EXIF）。"""
+        outcome = self.events.create(kind_id, draft)
+        self._events_cache = None
+        return outcome
+
+    def update_event(self, event_id: int, draft: EventDraft) -> EventWriteOutcome:
+        """改一个事件。公共列与类型独有字段在**同一次写**里改完，所以只值一次 ⌘Z。"""
+        outcome = self.events.update(event_id, draft)
+        self._events_cache = None
+        return outcome
+
+    def delete_event(self, event_id: int) -> EventWriteOutcome:
+        """删一个事件，连带它那些绑定（返回值里带着，撤销要靠它放回去）。"""
+        outcome = self.events.delete(event_id)
+        self._events_cache = None
+        return outcome
+
+    def bind_photos(self, photos: Iterable[PhotoRef | Path], event_id: int) -> int:
+        """把照片记进这个事件，返回新记进去几张。
+
+        **不上撤销栈**（ADR 0043 决策 5）：反向动作同样是一键（「记录为 → 无」），而「这一周
+        的照片都算」一次就是几百张。
+        """
+        paths_to_bind = [
+            photo.path if isinstance(photo, PhotoRef) else Path(photo) for photo in photos
+        ]
+        return self.events.bind(paths_to_bind, event_id)
+
+    def unbind_photos(self, photos: Iterable[PhotoRef | Path], event_id: int) -> int:
+        """把这些照片从这个事件里拿出来。"""
+        paths_to_remove = [
+            photo.path if isinstance(photo, PhotoRef) else Path(photo) for photo in photos
+        ]
+        return self.events.unbind(paths_to_remove, event_id)
 
     def photo_facets(
         self,
@@ -862,13 +962,16 @@ class Library:
         return create_album(self._root, parent, name)
 
     def undo_last_write(self) -> UndoResult | None:
-        """撤销最近一次写操作（改名、移到废纸篓、移动到相册或编辑元数据）。
+        """撤销最近一次写操作（改名、移到废纸篓、移动到相册、编辑元数据或改事件）。
 
         没有可撤销的记录时返回 ``None``。
         """
-        result = undo_last_write(self._root, writer=self._writer)
+        result = undo_last_write(self._root, writer=self._writer, events=self.events)
         if result is not None and result.replaced is not None:
             self._relocate_thumbnail(result.replaced, result.entries[0])
+        if result is not None and result.action in (ACTION_EVENT, ACTION_EVENT_DELETE):
+            # 事件不是磁盘上的东西，网格里没有它的条目 —— 这份缓存就是唯一需要跟着动的地方。
+            self._events_cache = None
         return result
 
     def next_undo_label(self) -> str | None:
