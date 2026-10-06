@@ -352,23 +352,27 @@ class ShortcutColumnMenu(QMenu):
         return any(action.menu() is not None for action in self.actions())
 
     def owns_submenu_arrows(self) -> bool:
-        """子菜单的右箭头是否由本模块自绘：有子菜单行，**而且**最右列确实有东西（箭头才有地方对齐）。
-        只满足前一个就自绘不行：:func:`apply_style` 会在同一判断上把 Qt 那个关掉，结果谁也不画。
+        """子菜单的右箭头是否由本模块自绘：**只要有子菜单行**就由本模块画。
+
+        自绘是为了画一个实心三角，与快捷键那一列里 Qt 那个（macOS 下形状不同）拉齐 ——
+        没有快捷键的菜单（「记录为」那一层）同样有子菜单行，也得走这里，
+        否则同一个软件里会出现两种箭头。无快捷键时箭头落在右沿那条空列上（见 ``_paint_arrow``）。
         """
-        return self.has_submenu_arrows() and bool(self.key_cells())
+        return self.has_submenu_arrows()
 
     def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         super().paintEvent(event)
         rows = [action for action in self.actions() if not action.isSeparator()]
         metrics = QFontMetrics(self.font())
         cells = self.key_cells()
-        if not cells:
+        owns_arrows = self.owns_submenu_arrows()
+        # 没有快捷键**但有子菜单行**时也要画 —— 那一层只有箭头，见 ``owns_submenu_arrows``。
+        if not cells and not owns_arrows:
             return
         columns = ShortcutColumns.measure_parts(cells, metrics)
         align = int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
         # 这三样**与哪一行无关**，放进循环就是白算：``owns_submenu_arrows()`` 会走到
         # ``split_shortcut()``（每个 action 一次平台字符串转换），``activeAction()`` 一悬停就变。
-        owns_arrows = self.owns_submenu_arrows()
         active = self.activeAction()
         palette = self.palette()
         painter = QPainter(self)
@@ -423,9 +427,13 @@ class ShortcutColumnMenu(QMenu):
         # ``finally``。一收，后面所有行都画不出来（``setPen`` / ``drawText`` 静默失效）。
 
     def reserve_shortcut_columns(self) -> None:
-        """把菜单撑到「最长标签 + 最右列」那么宽（那一列空着就什么也不做）。"""
+        """把菜单撑到「最长标签 + 最右列」那么宽（那一列与子菜单箭头都没有就什么也不做）。
+
+        ``own_arrow`` 会把 Qt 那条 ``::right-arrow`` 的宽度归零，Qt 于是不再自己为箭头留位 ——
+        所以**即使没有快捷键**，只要有子菜单行就得在这里替自绘的箭头留出右沿那一列。
+        """
         cells = self.key_cells()
-        if not cells:
+        if not cells and not self.owns_submenu_arrows():
             return
         metrics = QFontMetrics(self.font())
         columns = ShortcutColumns.measure_parts(cells, metrics)

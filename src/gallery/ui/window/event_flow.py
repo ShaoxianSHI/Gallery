@@ -25,6 +25,7 @@ from gallery.core.events.store import Event
 from gallery.core.library.photos import GridEntry, GroupRef
 from gallery.core.metadata.facets import FACET_EVENT
 from gallery.ui import banners
+from gallery.ui.menu_style import ShortcutColumnMenu
 from gallery.ui.panels.event_edit import EventEdit, EventEditDialog
 
 logger = logging.getLogger(__name__)
@@ -114,8 +115,12 @@ class EventFlowMixin:
         return self.record_as_menu()
 
     def record_as_menu(self) -> QMenu:
-        """「记录为」那一个子菜单。**三层先全建出来**，内容等展开时再填。"""
-        menu = QMenu("记录为")
+        """「记录为」那一个子菜单。**三层先全建出来**，内容等展开时再填。
+
+        **用 ``ShortcutColumnMenu``**：这一层「旅行 / 演出 / ……」与「从这次事件移出」都是
+        子菜单行，得跟上一层的箭头一样是自绘的实心三角（理由见 ``owns_submenu_arrows``）。
+        """
+        menu = ShortcutColumnMenu("记录为")
         menu.setToolTipsVisible(True)
         for kind in EVENT_KINDS:
             menu.addMenu(self._event_picker(kind))

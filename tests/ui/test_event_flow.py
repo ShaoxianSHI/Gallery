@@ -18,7 +18,8 @@ pytest.importorskip("PySide6")
 
 from library_helpers import set_library_ui  # noqa: E402
 from PIL import ExifTags, Image  # noqa: E402
-from PySide6.QtCore import QTimer  # noqa: E402
+from PySide6.QtCore import QPoint, QRect, QTimer  # noqa: E402
+from PySide6.QtGui import QAction, QPalette  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
     QMenu,
@@ -31,7 +32,9 @@ from gallery.core.events.store import Event, EventDraft  # noqa: E402
 from gallery.core.library.config import BROWSE_MODE_ALBUMS, prepare_library  # noqa: E402
 from gallery.core.library.photos import GroupRef  # noqa: E402
 from gallery.core.library.session import SessionState, save_session  # noqa: E402
+from gallery.ui import menu_style  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
+from gallery.ui.menu_style import ShortcutColumnMenu  # noqa: E402
 from gallery.ui.panels.event_edit import ChoiceButtons, EventEditDialog  # noqa: E402
 
 #: DateTimeOriginal 的标签编号与它在**Exif 子 IFD** 里（塞进主 IFD 读不出来）。
@@ -214,6 +217,52 @@ def test_all_three_levels_are_built_before_the_style_goes_out(
     # 它会是一张系统默认的白底菜单 —— 而那个症状在离屏下几乎看不出来，所以这里断的是
     # 「样式到没到」。
     assert all(part.styleSheet() for part in (record_as, kinds, leave))
+
+
+def test_the_record_as_menu_draws_the_same_solid_arrows(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """「记录为」那一层的箭头也是**自绘的实心三角** —— 「旅行」与「从这次事件移出」两行都要。
+
+    这一层没有快捷键，原先走 Qt 那条 ``::right-arrow``（macOS 上画出来的形状与上一层不同，
+    同一个软件里于是有两种箭头）。所以这里既钉样式表里 Qt 那条被关掉，
+    也**数墨迹**：「关掉 Qt 的、自己又没画」时会得到一个空荡荡的右沿，样式表那一句却照样绿。
+    """
+    row = _select(window, "京都-01.jpg")
+    record_as = _submenu(_context(window, row), "记录为")
+
+    assert isinstance(record_as, ShortcutColumnMenu)
+    assert record_as.owns_submenu_arrows()
+    assert "QMenu::right-arrow { width: 0; height: 0; }" in record_as.styleSheet()
+
+    record_as.popup(QPoint(60, 60))
+    try:
+        assert record_as.activeAction() is None, "有行被高亮了，数墨迹就数不出箭头"
+        for label in ("旅行", "从这次事件移出"):
+            action = next(a for a in record_as.actions() if a.text() == label)
+            assert _arrow_ink(record_as, action) > 0, f"「{label}」那一行的箭头没画出来"
+    finally:
+        record_as.close()
+
+
+def _arrow_ink(menu: QMenu, action: QAction) -> int:
+    """这一行右沿那条箭头列里画出来多少墨迹（像素）。
+
+    框按 ``SHORTCUT_RIGHT_INSET`` 对称取 12 点宽 —— 没画箭头时那一带只剩底色。
+    抓图是设备像素，几何是逻辑像素，两边按倍率对起来。
+    """
+    background = menu.palette().color(QPalette.ColorRole.Window).rgb()
+    rect = menu.actionGeometry(action)
+    edge = rect.right() - menu_style.SHORTCUT_RIGHT_INSET
+    box = QRect(edge - 6, rect.top(), 12, rect.height())
+    image = menu.grab().toImage()
+    scale = image.devicePixelRatio()
+    return sum(
+        1
+        for y in range(round(box.top() * scale), round(box.bottom() * scale) + 1)
+        for x in range(round(box.left() * scale), round(box.right() * scale) + 1)
+        if image.pixelColor(x, y).rgb() != background
+    )
 
 
 # ---- 记一次 -------------------------------------------------------------------
