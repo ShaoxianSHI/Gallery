@@ -19,10 +19,16 @@ pytest.importorskip("PySide6")
 from library_helpers import set_library_ui  # noqa: E402
 from PIL import ExifTags, Image  # noqa: E402
 from PySide6.QtCore import QTimer  # noqa: E402
-from PySide6.QtWidgets import QApplication, QMenu, QMessageBox  # noqa: E402
+from PySide6.QtWidgets import (  # noqa: E402
+    QApplication,
+    QComboBox,
+    QMenu,
+    QMessageBox,
+)
 from waiting import wait_for_idle, wait_until  # noqa: E402
 
-from gallery.core.events.store import EventDraft  # noqa: E402
+from gallery.core.events.kinds import TRIP, fields_of  # noqa: E402
+from gallery.core.events.store import Event, EventDraft  # noqa: E402
 from gallery.core.library.config import BROWSE_MODE_ALBUMS, prepare_library  # noqa: E402
 from gallery.core.library.photos import GroupRef  # noqa: E402
 from gallery.core.library.session import SessionState, save_session  # noqa: E402
@@ -559,3 +565,114 @@ def test_answering_no_keeps_the_event(
     window.delete_event(trip.id)
 
     assert library.event(trip.id) is not None
+
+
+# ---- 面板自己（不碰任何一张照片）-----------------------------------------------
+
+
+def test_the_panel_is_built_from_the_field_definitions(qt_app: QApplication) -> None:
+    """**控件由事件的定义生成**：旅行的六个独有字段加上四个公共字段，一样不少
+    （ADR 0043 决策 3）。"""
+    dialog = EventEditDialog(None, TRIP)
+
+    assert sorted(dialog._fields) == sorted(field.id for field in fields_of(TRIP))
+
+
+def test_a_rating_field_comes_up_as_a_choice(qt_app: QApplication) -> None:
+    """有值域的字段画成下拉，而**第一项是空的**（「不记这一项」）。"""
+    dialog = EventEditDialog(None, TRIP)
+    combo = dialog._fields["rating"]
+
+    assert isinstance(combo, QComboBox)
+    assert combo.currentText() == ""
+    assert [combo.itemText(i) for i in range(1, combo.count())] == ["1", "2", "3", "4", "5"]
+
+
+def test_the_name_grows_by_itself_until_the_user_types_one(qt_app: QApplication) -> None:
+    """名称栏自动长成「目的地 · 日期」，**用户动过它之后就不再自动改** —— 手写的名字是他的意思。"""
+    dialog = EventEditDialog(None, TRIP)
+    dialog._fields["destination"].setText("京都, 奈良")
+    dialog._fields["started_on"].setText("2026-05-16")
+    assert dialog._text("title") == "京都、奈良 · 2026-05-16"
+
+    dialog._fields["title"].setText("我自己起的名字")
+    dialog._fields["destination"].setText("大阪")
+
+    assert dialog._text("title") == "我自己起的名字"
+
+
+def test_editing_an_existing_event_prefills_it(qt_app: QApplication) -> None:
+    """改一个已有事件时那一格不少，而「按日期范围加入」收起来（那里已经在讨论改内容了）。"""
+    event = Event(
+        id=1,
+        kind="trip",
+        created_at=0,
+        modified_at=0,
+        values={
+            "title": "京都五日",
+            "started_on": "2026-05-16",
+            "destination": "京都、奈良",
+            "cost": 3280.5,
+            "rating": 5,
+        },
+    )
+
+    dialog = EventEditDialog(None, TRIP, event=event)
+
+    assert dialog._text("title") == "京都五日"
+    assert dialog._text("destination") == "京都、奈良"
+    assert dialog._text("cost") == "3280.5"
+    assert dialog._fields["rating"].currentText() == "5"  # type: ignore[union-attr]
+    assert dialog._include_range.isChecked() is False
+
+
+def test_a_bad_date_keeps_the_dialog_open(qt_app: QApplication) -> None:
+    """**校验不过就不关自己** —— 关掉了用户填的那一份就白填了（与元数据编辑器同一套）。"""
+    dialog = EventEditDialog(None, TRIP)
+    dialog._fields["started_on"].setText("去年夏天")
+
+    dialog._on_accept()
+
+    assert dialog.result() == 0
+    assert "开始日期看不懂" in dialog._error.text()
+    assert dialog.edit().draft.text("destination") == ""
+
+
+def test_an_end_before_the_start_is_reported(qt_app: QApplication) -> None:
+    dialog = EventEditDialog(None, TRIP)
+    dialog._fields["started_on"].setText("2026-05-16")
+    dialog._fields["ended_on"].setText("2026-05-10")
+
+    dialog._on_accept()
+
+    assert "还早" in dialog._error.text()
+
+
+def test_a_good_draft_accepts_and_carries_the_range_flag(qt_app: QApplication) -> None:
+    dialog = EventEditDialog(None, TRIP)
+    dialog._fields["destination"].setText("京都")
+    dialog._fields["started_on"].setText("2026-05-16")
+    dialog._fields["ended_on"].setText("2026-05-20")
+
+    dialog._on_accept()
+    edit = dialog.edit()
+
+    assert dialog.result() != 0
+    assert edit.include_range is True
+    assert edit.first_day == "2026-05-16"
+    assert edit.last_day == "2026-05-20"
+
+
+def test_the_range_flag_needs_a_start_day(qt_app: QApplication) -> None:
+    """勾着但没填开始日期 → 那一次整库查询没有意义，而 ``first_day`` 是空的（不会去查）。"""
+    dialog = EventEditDialog(None, TRIP)
+
+    assert dialog.edit().include_range is False
+
+
+def test_one_end_day_is_used_when_the_end_is_left_empty(qt_app: QApplication) -> None:
+    """当天来回是最常见的那种 —— 结束日期留空就与头一天同一天。"""
+    dialog = EventEditDialog(None, TRIP)
+    dialog._fields["started_on"].setText("2026-05-16")
+
+    assert dialog.edit().last_day == "2026-05-16"

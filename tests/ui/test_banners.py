@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from gallery.core.events.store import Event, EventWriteOutcome
 from gallery.core.external.launch import WHERE_APP, WHERE_BROWSER, OpenOutcome
 from gallery.core.library.facade import MetadataWriteOutcome
 from gallery.core.library.photos import FolderRef, PhotoRef
@@ -309,3 +310,84 @@ def test_external_banner_keeps_the_reason_of_a_fallback() -> None:
     assert banners.external_app_opened(outcome, "Google 日历") == (
         "没认出那个应用的窗口，已改用浏览器打开。"
     )
+
+
+# ---- 事件（ADR 0043）----------------------------------------------------------
+
+
+def _event(event_id: int = 1, title: str = "京都五日") -> Event:
+    return Event(
+        id=event_id,
+        kind="trip",
+        created_at=0,
+        modified_at=0,
+        values={"title": title},
+    )
+
+
+def test_a_new_event_banner_does_not_promise_undo() -> None:
+    """**新建不在撤销栈里**（撤销它就是删），所以这一句不承诺 ⌘Z —— 说了就是骗人。"""
+    outcome = EventWriteOutcome(event=_event(), journaled=True)
+
+    text = banners.event_created_banner(outcome)
+
+    assert "京都五日" in text
+    assert "⌘Z" not in text
+
+
+def test_a_failed_journal_on_an_edit_says_undo_is_gone() -> None:
+    """记账失败必须说出来 —— 与元数据那一族同一套规矩。"""
+    outcome = EventWriteOutcome(event=_event(), journaled=False)
+
+    assert "⌘Z 撤销不了" in banners.event_updated_banner(outcome)
+
+
+def test_an_unchanged_edit_says_nothing_happened() -> None:
+    """面板存了一份与库里逐字段一样的内容时，说「已更新」就是撒谎。"""
+    outcome = EventWriteOutcome(event=_event(), journaled=True, changed=False)
+
+    assert "没有改动" in banners.event_updated_banner(outcome)
+
+
+def test_deleting_an_event_says_how_many_photos_lost_the_record() -> None:
+    """**连带删掉的照片关联要一起说**：那是用户看不见的损失，不说他不会知道。"""
+    outcome = EventWriteOutcome(
+        event=_event(),
+        journaled=True,
+        unbound=(Path("/库/a.jpg"), Path("/库/b.jpg")),
+    )
+
+    text = banners.event_deleted_banner(outcome)
+
+    assert "2 张照片" in text
+    assert "⌘Z" in text
+
+
+def test_binding_says_how_many_were_new() -> None:
+    """**新记进去几张**说清 —— 已经记着的那些不是这次的成果。"""
+    assert "3 张" in banners.photos_bound_banner(3, "京都五日")
+    assert banners.photos_bound_banner(0, "京都五日").startswith("这些照片已经在")
+
+
+def test_binding_by_a_date_range_says_why_there_are_so_many() -> None:
+    """按日期范围是几百张的批量操作，用户该知道它为什么这么多。"""
+    assert banners.photos_bound_banner(312, "京都五日", by_range=True).startswith("按日期范围把")
+
+
+def test_unbinding_reports_the_count() -> None:
+    assert "2 张" in banners.photos_unbound_banner(2, "京都五日")
+    assert "本来就不在" in banners.photos_unbound_banner(0, "京都五日")
+
+
+def test_undoing_a_delete_says_it_came_back() -> None:
+    """撤的是删除就说「回来了」，撤的是改动就说「改回去」—— 两句话不是同一句。"""
+    from gallery.core.metadata.journal import ACTION_EVENT, ACTION_EVENT_DELETE
+
+    restored = UndoResult(
+        action=ACTION_EVENT_DELETE, entries=(), event=_event(), journaled=True
+    )
+    changed = UndoResult(action=ACTION_EVENT, entries=(), event=_event(), journaled=True)
+
+    assert "恢复" in banners.event_undo_banner(restored, "事件")
+    assert "改回去" in banners.event_undo_banner(changed, "事件")
+    assert "京都五日" in banners.event_undo_banner(changed, "事件")

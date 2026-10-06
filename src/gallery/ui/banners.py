@@ -62,11 +62,12 @@ def event_updated_banner(outcome: EventWriteOutcome) -> str:
 def event_deleted_banner(outcome: EventWriteOutcome) -> str:
     """删掉事件之后。**连着删掉的照片关联要一起说**：那是用户看不见的损失，不说他不会知道。
 
-    撤销**能把绑定放回来**，所以这一句承诺 ⌘Z。
+    撤销**能把绑定放回来**，所以这一句要**承诺 ⌘Z** ——「删掉 37 张照片上的记录」那句话读着
+    吓人，而它其实撤得回来。
     """
     what = f"「{outcome.event.display_name}」"
     photos = f"，连带从 {len(outcome.unbound)} 张照片上移掉了它的记录" if outcome.unbound else ""
-    note = "" if outcome.journaled else "。⌘Z 撤销不了：没能记下操作日志"
+    note = "。⌘Z 可以撤销" if outcome.journaled else "。⌘Z 撤销不了：没能记下操作日志"
     return f"已删除{what}{photos}{note}。"
 
 
