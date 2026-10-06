@@ -611,6 +611,18 @@ class Library:
             on_progress(scanned)
         return written
 
+    def matching_paths(self, conditions: Sequence[SearchCondition]) -> set[Path]:
+        """这些条件命中了哪些路径 —— **只读这一层摆着的那部分**的筛选（ADR 0040）。
+
+        范围不在这里收：收在调用方（它手上已经有这一层的照片了，求交即可）。所以这一份是整库的
+        命中集合 —— 用 :meth:`search_photos` 的那份代替不得，那份按 :data:`RESULT_LIMIT` 截断，
+        而相交**少一条就等于凭空少一张照片**（理由见
+        :meth:`~gallery.core.library.index.FacetIndex.match_paths`）。
+
+        :raises IndexUnavailableError: 索引没落盘，界面据此说清是哪一件。
+        """
+        return {Path(key) for key in self.facet_index.match_paths(conditions)}
+
     def search_photos(
         self, conditions: Sequence[SearchCondition], *, limit: int = RESULT_LIMIT
     ) -> SearchOutcome:

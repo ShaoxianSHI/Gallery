@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import datetime
 import re
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal, NamedTuple
 
-from gallery.core.library.photos import PhotoRef, normalize_suffix
+from gallery.core.library.photos import FolderRef, PhotoRef, normalize_suffix
 from gallery.core.metadata.facets import (
     FACET_APERTURE,
     FACET_CAMERA,
@@ -125,6 +125,10 @@ _SELECT: Final = (
 )
 
 _SELECT_COUNT: Final = "SELECT COUNT(*) FROM photos p LEFT JOIN facets f ON f.path = p.path"
+
+#: 「哪些路径命中了」的查询（ADR 0040 决策 2）。**与 :data:`_SELECT` 的差别只有取哪几列** ——
+#: 相交用的就是它，所以这一列也要走同一个 ``LEFT JOIN``，于是「命中」这件事只有一处定义。
+_SELECT_PATHS: Final = "SELECT p.path FROM photos p LEFT JOIN facets f ON f.path = p.path"
 
 
 class SearchOutcome(NamedTuple):
@@ -479,6 +483,25 @@ def _compact(text: str) -> str:
 # ---- 生成 SQL --------------------------------------------------------------------
 
 
+def _where(conditions: Sequence[SearchCondition]) -> tuple[str, list[object]]:
+    """这些条件 → ``WHERE`` 那一段与它的绑定值。
+
+    **三个查询共用它**（:func:`build_query` 取结果、:func:`build_count_query` 取总数、
+    :func:`build_match_query` 取路径），于是「命中」这件事在代码里只有一处 —— 整库检索与当前层
+    筛选（ADR 0040 决策 2）不可能对同一条条件给出不一样的答案。各写一份 ``WHERE`` 时，
+    改条件语义就一定会漏掉一处，而漏掉的那处表现为「筛选比搜索多出几张」，极难分辨。
+    """
+    clauses: list[str] = []
+    values: list[object] = []
+    for condition in conditions:
+        clause, bound = _clause(condition)
+        clauses.append(f"({clause})")
+        values.extend(bound)
+    if not clauses:
+        return "", []
+    return " WHERE " + " AND ".join(clauses), values
+
+
 def build_query(
     conditions: Sequence[SearchCondition], *, limit: int = RESULT_LIMIT
 ) -> tuple[str, list[object]]:
@@ -487,15 +510,8 @@ def build_query(
     **条件一律 ``AND``**（ADR 0026 决策 1），每提交一条就再收窄一层。排序留给界面，这里只保证
     同一批结果的先后稳定，于是 ``PhotoRef`` 造出来时是确定的。
     """
-    clauses: list[str] = []
-    values: list[object] = []
-    for condition in conditions:
-        clause, bound = _clause(condition)
-        clauses.append(f"({clause})")
-        values.extend(bound)
-    sql = _SELECT
-    if clauses:
-        sql += " WHERE " + " AND ".join(clauses)
+    where, values = _where(conditions)
+    sql = _SELECT + where
     sql += f" ORDER BY p.name LIMIT {max(1, int(limit))}"
     return sql, values
 
@@ -504,16 +520,69 @@ def build_count_query(conditions: Sequence[SearchCondition]) -> tuple[str, list[
     """同样这些条件的**命中总数**，与 :func:`build_query` 共用同一个 ``WHERE``，两处不可能算出不一样
     的条件。界面拿它说清「共 12345 张，只显示前 5000 张」—— 被截断了这件事用户必须看得见。
     """
-    clauses: list[str] = []
-    values: list[object] = []
-    for condition in conditions:
-        clause, bound = _clause(condition)
-        clauses.append(f"({clause})")
-        values.extend(bound)
-    sql = _SELECT_COUNT
-    if clauses:
-        sql += " WHERE " + " AND ".join(clauses)
-    return sql, values
+    where, values = _where(conditions)
+    return _SELECT_COUNT + where, values
+
+
+def build_match_query(conditions: Sequence[SearchCondition]) -> tuple[str, list[object]]:
+    """这些条件命中了**哪些路径** —— 当前层筛选（ADR 0040 决策 2）要的那一份。
+
+    与 :func:`build_query` 的差别只有两点，**都别去掉**：
+
+    - **只取路径**：调用方要的是与手上那份列表求交，一个字符串就够，不必带回大小与修改时间
+      （那两列在筛选这一侧没人用）。
+    - **既不排序也不截断**：:data:`RESULT_LIMIT` 在这里等于**静默丢命中** —— 命中八千张而当前
+      层的那三张排在第五千零一��时，用户看到的是「一条都没有」，而那不是答案，是查询自己偷偷
+      少给了。整库检索可以截断（那一层的结果本来就是给人浏览的前几百张），相交不行：
+      **交出来的每一张都得是对的**。
+    """
+    where, values = _where(conditions)
+    return _SELECT_PATHS + where, values
+
+
+def albums_kept(
+    albums: Sequence[FolderRef], matching: Collection[Path], *, root: Path
+) -> list[FolderRef]:
+    """相册模式下留下哪些卡片：**子树里有命中的那些**（ADR 0040 决策 3）。
+
+    筛选回答的是「哪些照片符合条件」，而卡片不是照片 —— 所以一张都不命中照片的子相册不该摆出来，
+    而摆着一个空相册等于骗用户点进去看一个空层。命中的那张照片在不在卡片**自己这一层**里不算：
+    卡片的含义是它的整棵子树。
+
+    一次遍历把命中按「相对 ``root`` 的第一段」分桶，于是代价是 O(命中数) 而不是 O(卡片 × 命中数)
+    —— 一层几百张卡片配八千条命中时，后者是四百万次前缀比较。
+
+    **只在这一层直接列出来的那些卡片里判**（``albums`` 是这一层的 ``FolderRef``），不在的地方一律
+    留：``root`` 之外或已经收走的东西不该由这个函数替界面决定。
+    """
+    if not albums:
+        return []
+    # **卡片的位置用它自己，命中照片的位置用它的父目录** —— 两者不是同一个函数：``relative_folder``
+    # 收的是「照片所在文件夹」，拿它去算一张卡片会把卡片自己的名字也去掉（``旅行/2024`` 的卡片
+    # 算成 ``旅行``），于是所有卡片都短了一级、谁也匹配不上。
+    prefixes = tuple(_directory_prefix(album.path, root) for album in albums)
+    hit: set[str] = set()
+    for path in matching:
+        relative = relative_folder(path, root)
+        for prefix in prefixes:
+            if relative == prefix or relative.startswith(prefix + "/"):
+                hit.add(prefix)
+                break
+    return [album for album, prefix in zip(albums, prefixes, strict=True) if prefix in hit]
+
+
+def _directory_prefix(path: Path, root: Path) -> str:
+    """一个**目录**相对库根的位置（posix 写法）；就在库根下时是空串，不在库内时是绝对路径。
+
+    **空串在这里只有一个含义**：这个目录就是库根本身。那种卡片不该由这一层列出来（列的是子相册），
+    所以它匹配不到任何命中 —— 宁可让它消失，也不要让它变成一张「什么都命中」的通配卡片。
+    """
+    try:
+        relative = Path(path).relative_to(Path(root))
+    except ValueError:
+        return str(path)
+    text = relative.as_posix()
+    return "" if text == "." else text
 
 
 def _clause(condition: SearchCondition) -> tuple[str, list[object]]:
@@ -596,7 +665,9 @@ __all__ = [
     "SearchField",
     "SearchKind",
     "SearchOutcome",
+    "albums_kept",
     "build_count_query",
+    "build_match_query",
     "build_query",
     "make_condition",
     "match_field",

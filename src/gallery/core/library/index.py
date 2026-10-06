@@ -21,6 +21,7 @@ from gallery.core.library.search import (
     SearchCondition,
     SearchOutcome,
     build_count_query,
+    build_match_query,
     build_query,
     rows_to_refs,
 )
@@ -320,6 +321,29 @@ class FacetIndex:
                 logger.info("检索失败：%s", exc)
                 raise IndexUnavailableError("检索没能完成，请再试一次。", detail=str(exc)) from exc
         return SearchOutcome(refs=rows_to_refs(rows), total=total)
+
+    def match_paths(self, conditions: Sequence[SearchCondition]) -> set[str]:
+        """这些条件命中了哪些路径 —— 当前层筛选要的那一份（ADR 0040 决策 2）。
+
+        **不截断**（SQL 在 :func:`~gallery.core.library.search.build_match_query` 里就没有
+        ``LIMIT``）：调用方拿它与手上那份列表求交，少给一条就等于凭空少一张照片，而症状是
+        「筛选比搜索少一张」—— 与「文件被删了」长得一模一样。
+
+        :raises IndexUnavailableError: 索引没落盘。与 :meth:`search` 同一句提示：只读卷上建不出
+            缓存时，筛选与检索一样用不了（界面据此说清是哪一件，而不是让人对空结果猜）。
+        """
+        if self._connection is None:
+            raise IndexUnavailableError(
+                "这个库没法建立检索索引（多半是照片所在的磁盘不允许写入缓存）。分组与排序仍然可用。"
+            )
+        sql, values = build_match_query(conditions)
+        with self._lock:
+            try:
+                rows = self._connection.execute(sql, values).fetchall()
+            except sqlite3.Error as exc:
+                logger.info("筛选失败：%s", exc)
+                raise IndexUnavailableError("筛选没能完成，请再试一次。", detail=str(exc)) from exc
+        return {row[0] for row in rows if isinstance(row[0], str)}
 
     def prune(self, live: Iterable[Path]) -> int:
         """删掉不在这一批里的行，返回删掉了几行。

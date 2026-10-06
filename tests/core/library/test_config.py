@@ -20,6 +20,8 @@ from gallery.core.library.config import (
     BROWSE_MODE_FLAT,
     DEFAULT_CALENDAR_LEVEL,
     DEFAULT_SORT_FACET,
+    SEARCH_SCOPE_LEVEL,
+    SEARCH_SCOPE_LIBRARY,
     UI_KEY,
     LibraryConfig,
     LibraryUIState,
@@ -250,6 +252,48 @@ def test_the_ui_table_survives_a_round_trip(tmp_path: Path) -> None:
     assert load_config(tmp_path).ui == config.ui
 
 
+def test_the_search_scope_survives_a_round_trip(tmp_path: Path) -> None:
+    """检索作用域是**库级偏好**（ADR 0040 决策 6）：重开这个库还该是筛选，而不是变回搜索。
+
+    与条件本身相反 —— 条件不进会话（ADR 0026 决策 10），因为条件是一次性的选择，而「我习惯
+    用筛选」是关于这个库的偏好。
+    """
+    config = LibraryConfig(ui=LibraryUIState(search_scope=SEARCH_SCOPE_LEVEL))
+
+    save_config(tmp_path, config)
+
+    assert load_config(tmp_path).ui.search_scope == SEARCH_SCOPE_LEVEL
+
+
+def test_an_unknown_search_scope_is_not_recorded() -> None:
+    """来路不明的值不写进去 —— ``resolved_search_scope`` 拿不到就回默认那一种。"""
+    assert LibraryUIState().with_search_scope("编出来的").search_scope is None
+    assert LibraryUIState().with_search_scope(SEARCH_SCOPE_LIBRARY).search_scope == (
+        SEARCH_SCOPE_LIBRARY
+    )
+
+
+def test_resolving_the_search_scope_falls_back_to_the_whole_library() -> None:
+    """没选过就是整库检索 —— 那是从前唯一的那一种行为（ADR 0040 决策 1）。
+
+    **别把默认定成筛选**：新用户不该一装上就与从前不一样，而「筛选」是主动去开的那一个。
+    """
+    assert LibraryUIState().resolved_search_scope() == SEARCH_SCOPE_LIBRARY
+    assert LibraryUIState(search_scope="编出来的").resolved_search_scope() == SEARCH_SCOPE_LIBRARY
+    assert (
+        LibraryUIState(search_scope=SEARCH_SCOPE_LEVEL).resolved_search_scope()
+        == SEARCH_SCOPE_LEVEL
+    )
+
+
+def test_the_search_scope_alone_means_the_ui_table_is_not_empty() -> None:
+    """只设了作用域也算「设过」—— 少了它，重开这个库会静默变回整库检索。"""
+    ui = LibraryUIState(search_scope=SEARCH_SCOPE_LEVEL)
+
+    assert ui.is_empty is False
+    assert "search_scope" in ui.to_toml()
+
+
 def test_a_fresh_library_writes_no_ui_table(tmp_path: Path) -> None:
     """没人设过的东西不该在文件里留下一行等着被误读成「曾经有过设置」。"""
     save_config(tmp_path, LibraryConfig())
@@ -275,7 +319,8 @@ def test_an_unknown_value_in_the_ui_table_means_never_chosen(tmp_path: Path) -> 
     paths.config_file(tmp_path).parent.mkdir(parents=True)
     paths.config_file(tmp_path).write_text(
         '[ui]\nsort_facet = "编出来的字段"\nbrowse_mode = "根本没有这个"\n'
-        'calendar_level = "decade"\nthumbnail_edge = 0\nmetadata_visible = "yes"\n',
+        'calendar_level = "decade"\nthumbnail_edge = 0\nmetadata_visible = "yes"\n'
+        'search_scope = "编出来的"\n',
         encoding="utf-8",
     )
 

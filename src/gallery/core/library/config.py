@@ -53,6 +53,16 @@ DEFAULT_SORT_FACET: Final = FACET_MODIFIED
 #: 日历视图停在哪一层的默认值。
 DEFAULT_CALENDAR_LEVEL: Final = "month"
 
+#: 检索条件的作用域之一：横跨整个库，命中结果**接管**当前那一层（ADR 0026 决策 1）。
+SEARCH_SCOPE_LIBRARY: Final = "library"
+
+#: 检索条件的作用域之二：只把**当前这一层**的照片收窄，视图本身不动 —— 月视图仍然是月视图
+#: （ADR 0040 决策 1）。
+SEARCH_SCOPE_LEVEL: Final = "level"
+
+#: 允许的作用域。界面上只有这两种，不给「不选」—— 没有条件时两者是一回事。
+SEARCH_SCOPES: Final = (SEARCH_SCOPE_LIBRARY, SEARCH_SCOPE_LEVEL)
+
 _CONFIG_HEADER: Final = (
     "# Gallery 库级配置。\n"
     "# 这是配置目录中唯一建议纳入版本控制的文件，其余内容都是可重建的缓存。\n"
@@ -76,6 +86,9 @@ class LibraryUIState:
     sort_descending: bool | None = None
     calendar_level: str | None = None
     thumbnail_edge: int | None = None
+    #: 检索条件的作用域（ADR 0040 决策 1）。**只记作用域，不记条件本身** —— 条件是临时的，
+    #: 换库就清空（ADR 0026 决策 10），而「我习惯用筛选而不是搜索」是个关于这个库的偏好。
+    search_scope: str | None = None
 
     @property
     def is_empty(self) -> bool:
@@ -90,6 +103,7 @@ class LibraryUIState:
                 self.sort_descending,
                 self.calendar_level,
                 self.thumbnail_edge,
+                self.search_scope,
             )
         )
 
@@ -105,6 +119,18 @@ class LibraryUIState:
     def with_calendar_level(self, level: str) -> LibraryUIState:
         """记下日历停在哪一层。**只记合法的层**，来路不明的值不写进去。"""
         return replace(self, calendar_level=level if level in CALENDAR_LEVELS else None)
+
+    def with_search_scope(self, scope: str) -> LibraryUIState:
+        """记下检索条件的作用域（ADR 0040）。同样只记合法值。"""
+        return replace(self, search_scope=scope if scope in SEARCH_SCOPES else None)
+
+    def resolved_search_scope(self) -> str:
+        """这一档该用的检索作用域。没选过、或值来路不明（老版本、手改过）就交回
+        :data:`SEARCH_SCOPE_LIBRARY` —— 那是从前唯一的那一种行为，界面上没有「不选」可退回。"""
+        scope = self.search_scope
+        if scope in SEARCH_SCOPES:
+            return scope
+        return SEARCH_SCOPE_LIBRARY
 
     def with_ordering(
         self, group_facet: str | None, sort_facet: str, descending: bool
@@ -154,6 +180,7 @@ class LibraryUIState:
                 ("sort_descending", self.sort_descending),
                 ("calendar_level", self.calendar_level),
                 ("thumbnail_edge", self.thumbnail_edge),
+                ("search_scope", self.search_scope),
             )
             if value is not None
         )
@@ -166,6 +193,7 @@ class LibraryUIState:
         """
         browse = data.get("browse_mode")
         level = data.get("calendar_level")
+        scope = data.get("search_scope")
         return cls(
             browse_mode=browse if browse in BROWSE_MODES else None,
             metadata_visible=_ui_bool(data.get("metadata_visible")),
@@ -174,6 +202,7 @@ class LibraryUIState:
             sort_descending=_ui_bool(data.get("sort_descending")),
             calendar_level=level if level in CALENDAR_LEVELS else None,
             thumbnail_edge=_ui_edge(data.get("thumbnail_edge")),
+            search_scope=scope if scope in SEARCH_SCOPES else None,
         )
 
 
@@ -502,6 +531,9 @@ __all__ = [
     "DEFAULT_SORT_FACET",
     "MAX_THUMBNAIL_MAX_EDGE",
     "MIN_THUMBNAIL_MAX_EDGE",
+    "SEARCH_SCOPES",
+    "SEARCH_SCOPE_LEVEL",
+    "SEARCH_SCOPE_LIBRARY",
     "UI_KEY",
     "LibraryConfig",
     "LibraryUIState",

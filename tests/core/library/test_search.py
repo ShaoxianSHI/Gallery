@@ -15,13 +15,15 @@ import pytest
 from gallery.core.errors import IndexUnavailableError
 from gallery.core.library.facade import Library
 from gallery.core.library.index import FacetIndex
-from gallery.core.library.photos import PhotoRef
+from gallery.core.library.photos import FolderRef, PhotoRef
 from gallery.core.library.search import (
     DEFAULT_FIELD,
     HALF_WIDTH_RANGE_SEPARATOR,
     SEARCH_FIELDS,
     SearchCondition,
+    albums_kept,
     build_count_query,
+    build_match_query,
     build_query,
     make_condition,
     match_field,
@@ -565,6 +567,151 @@ def test_conditions_narrow_each_other(tmp_path: Path, make_photo) -> None:
     both = library.search_photos([_condition("海边"), _condition("#相册 旅行")])  # type: ignore[list-item]
 
     assert _names(both.refs) == ["海边-03.jpg"]
+
+
+# ---- 当前层筛选（ADR 0040）：命中路径集合与相册卡片判据 --------------------------------
+
+
+def test_the_match_query_survives_the_real_schema(tmp_path: Path, make_photo) -> None:
+    """筛选那条查询里**每一个可搜字段**都要拿真 schema 执行一遍 —— 守护。
+
+    与 :func:`test_every_searchable_field_survives_the_real_schema` 同源，但走的是
+    :func:`build_match_query`：那条 SQL 有自己的一行 ``SELECT``，列名写错同样要到 SQLite 执行
+    才报 ``no such column``，而症状是「这一栏筛选出来永远是空的」—— 与「这一栏没得筛」一模一样。
+
+    **别因为两条 SQL 共用同一个 ``WHERE`` 就当这条多余**：共用的只有条件那部分，取哪几列是
+    各写各的（ADR 0040 决策 2）。
+    """
+    library = _library(tmp_path, make_photo)
+    library.index_photos()
+    database = library.facet_index.path
+    assert database is not None
+
+    with sqlite3.connect(database) as connection:
+        for field in SEARCH_FIELDS:
+            condition = _condition(f"#{field.label} {_SAMPLE_VALUE[field.kind]}")
+            assert condition is not None, field.label
+            sql, values = build_match_query([condition])
+            connection.execute(sql, values).fetchall()
+
+
+def test_the_match_query_is_never_truncated(tmp_path: Path, make_photo) -> None:
+    """那条 SQL **不许有 LIMIT** —— 守护。
+
+    截断在这里等于静默丢命中：命中八千张而当前层的那几张排在第 5001 名之后时，用户看到的是
+    「一条都没有」，而那不是答案，是查询自己偷偷少给了。症状与「这一层真的没有」完全一样，
+    于是没有任何线索指向它。整库检索可以截断（结果本来就是给人浏览的前几百张），相交不行：
+    **交出来的每一张都得是对的**。
+    """
+    library = _library(tmp_path, make_photo)
+    library.index_photos()
+    condition = _condition("jpg")
+    assert condition is not None
+
+    sql, _values = build_match_query([condition])
+
+    assert "LIMIT" not in sql.upper()
+
+
+def test_matching_paths_finds_the_same_photos_as_the_search(tmp_path: Path, make_photo) -> None:
+    """两份查询对同一条条件要给出**同一批路径** —— 它们各自返回不同的列，却共用同一个 ``WHERE``。
+
+    不一致的症状是「筛选比搜索少一张」，而那极难分辨：既可能是真的少了命中，也可能是这一层
+    本来就没有那张照片。所以钉在**纯核心**这一层，不掺界面。
+    """
+    library = _library(tmp_path, make_photo)
+    library.index_photos()
+    condition = _condition("海边")
+    assert condition is not None
+
+    found = library.matching_paths([condition])
+    searched = library.search_photos([condition]).refs
+
+    assert {ref.path for ref in searched} == found
+
+
+def test_matching_paths_says_so_when_the_index_is_not_there(tmp_path: Path) -> None:
+    """索引建不出来时**抛异常而不是返回空集**。
+
+    返回空集的话，界面把整层都滤空了并说「这个视图里没有符合这些条件的照片」—— 那是在拿一件
+    根本没做成的事回答用户。降级可以，假装没降级不行。
+
+    **与检索说同一句话**：两个功能坏在同一个原因上（那个卷不许写缓存），用户不该被两个说法
+    绕晕。
+    """
+    index = FacetIndex(None)
+    ref = PhotoRef(path=tmp_path / "a.jpg", size=1, mtime_ns=1)
+    index.store([(ref, PhotoFacets(camera="Canon"))])
+    condition = _condition("海边")
+    assert condition is not None
+
+    with pytest.raises(IndexUnavailableError) as excinfo:
+        index.match_paths([condition])
+
+    assert "检索索引" in excinfo.value.message
+
+
+def _albums(*paths: Path) -> list[FolderRef]:
+    return [FolderRef(path=path, mtime_ns=0) for path in paths]
+
+
+def test_an_album_card_survives_when_its_own_subtree_has_a_hit(tmp_path: Path) -> None:
+    """子树里有命中，卡片就留 —— 卡片不是照片，但它代表的那棵子树里有。"""
+    root = tmp_path / "库"
+    albums = _albums(root / "旅行", root / "家庭")
+
+    kept = albums_kept(albums, [root / "旅行" / "2024" / "山.jpg"], root=root)
+
+    assert kept == [albums[0]]
+
+
+def test_an_album_card_dies_when_only_a_sibling_matched(tmp_path: Path) -> None:
+    """命中在**兄弟目录**里时这张卡片不该留 —— 那不是它的子树。
+
+    前缀比较少一个分隔符就会把 ``旅行`` 与 ``旅行者`` 认成同一家，而界面上那是两个相册。
+    """
+    root = tmp_path / "库"
+    albums = _albums(root / "旅行")
+
+    kept = albums_kept(albums, [root / "旅行者" / "山.jpg"], root=root)
+
+    assert kept == []
+
+
+def test_a_hit_in_the_album_itself_does_not_rescue_its_sibling_card(tmp_path: Path) -> None:
+    """命中的照片就在**这一层**上时，它不归属任何子相册卡片。
+
+    卡片判据问的是「这张卡片代表的子树」，而根下的照片不属于任何一张卡片 —— 于是根下有命中时，
+    该留的是照片本身，**所有**子相册卡片都照常按各自的子树判。
+    """
+    root = tmp_path / "库"
+    albums = _albums(root / "旅行")
+
+    kept = albums_kept(albums, [root / "海边.jpg"], root=root)
+
+    assert kept == []
+
+
+def test_an_album_at_the_library_root_is_matched_by_its_name(tmp_path: Path) -> None:
+    """根下的子相册也要能被命中 —— 它的相对位置就是它自己的名字（空串那一档只留给照片）。"""
+    root = tmp_path / "库"
+    albums = _albums(root / "旅行")
+
+    kept = albums_kept(albums, [root / "旅行" / "2024" / "山.jpg"], root=root)
+
+    assert kept == [albums[0]]
+
+
+def test_no_albums_means_nothing_to_decide(tmp_path: Path) -> None:
+    """相册模式之外压根没有卡片 —— 平铺与日历那两层不经过这个判据。"""
+    assert albums_kept([], [tmp_path / "海边.jpg"], root=tmp_path) == []
+
+
+def test_no_hits_means_no_cards(tmp_path: Path) -> None:
+    """一条都没命中时整层只剩（或也不剩）照片 —— 摆着一排点进去全是空的相册卡片更糟。"""
+    root = tmp_path / "库"
+
+    assert albums_kept(_albums(root / "旅行"), [], root=root) == []
 
 
 def test_deleted_files_are_not_counted(tmp_path: Path, make_photo) -> None:
