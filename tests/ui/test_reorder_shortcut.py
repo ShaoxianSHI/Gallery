@@ -157,6 +157,22 @@ def test_a_fresh_facet_read_still_reorders(window: MainWindow, count_sorts: list
     assert count_sorts != [], "元数据重读了一遍却没重排：那份新数据可能带了新的排序值"
 
 
+def test_a_fresh_event_mapping_still_reorders(window: MainWindow, count_sorts: list[str]) -> None:
+    """**事件映射换了一份 → 一定要真排**（ADR 0043 决策 7）。
+
+    与上面那条元数据同源，只是第二份输入：用户记完 / 移出一张照片之后，那份「照片各属于哪些
+    事件」是新对象，而内容可能与上一次一模一样。闸漏了它，用户看到的就是「记完什么都没发生」。
+    """
+    assert window._library is not None
+    window._reorder_level(window._library)
+    count_sorts.clear()
+
+    window._event_values = dict(window._event_values)
+    window._reorder_level(window._library)
+
+    assert count_sorts != [], "事件映射换了一份却没重排：刚记进去的那几张位置就是错的"
+
+
 def test_a_new_photo_still_reorders(window: MainWindow, count_sorts: list[str]) -> None:
     """多了一张照片 → 一定要真排。"""
     assert window._library is not None

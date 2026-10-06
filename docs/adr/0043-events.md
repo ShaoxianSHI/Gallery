@@ -6,9 +6,10 @@
   它的第一个例外
 - 相关 ADR：0009（分组与排序的 facet 机制）、0026（`photos` 文件表与检索）、0038（东西只放两个位置、
   不开 WAL）、0031（元数据编辑：一个对话框只写一次）、0032（拍摄时间与时区）、0040（筛选的两种作用域）
-- 相关代码：`src/gallery/core/events/`、`src/gallery/core/library/index.py`、
-  `src/gallery/core/metadata/facets.py`、`src/gallery/ui/panels/event_edit.py`、
-  `src/gallery/ui/window/event_flow.py`
+- 相关代码：`src/gallery/core/events/{kinds,store}.py`、`src/gallery/core/library/index.py`（`attach` 挂钩）、
+  `src/gallery/core/library/{groups,search,facade}.py`、`src/gallery/core/metadata/facets.py`（事件那个字段）、
+  `src/gallery/core/metadata/{journal,undo,rename}.py`、`src/gallery/ui/panels/event_edit.py`、
+  `src/gallery/ui/window/event_flow.py`、`src/gallery/ui/window/ordering.py`（背景那一趟顺带取事件）
 
 ## 背景
 

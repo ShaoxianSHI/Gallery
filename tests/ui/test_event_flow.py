@@ -365,8 +365,26 @@ def test_grouping_by_event_does_not_read_exiftool(qt_app: QApplication, window: 
 
     assert facet is not None
     assert needs_metadata((facet,)) is False
-    window.set_group_facet("event")
-    wait_for_idle(qt_app, window, what="按事件分组")
+
+    # **量的是「有没有真去读 EXIF」**，而不是横幅上有没有出现过那句话：横幅收走之后
+    # ``_progress_notice_text`` 回到 ``None``，两种情况在它身上长得一样。
+    library = window._library
+    assert library is not None
+    reads: list[int] = []
+    real = library.photo_facets
+
+    def counted(*args: object, **kwargs: object) -> object:
+        reads.append(1)
+        return real(*args, **kwargs)  # type: ignore[arg-type]
+
+    library.photo_facets = counted  # type: ignore[method-assign]
+    try:
+        window.set_group_facet("event")
+        wait_for_idle(qt_app, window, what="按事件分组")
+    finally:
+        library.photo_facets = real  # type: ignore[method-assign]
+
+    assert reads == [], "按事件分组重读了一遍 EXIF：它既不在文件上也不在 EXIF 里"
 
 
 # ---- 撤销 ---------------------------------------------------------------------
