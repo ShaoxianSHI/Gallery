@@ -8,6 +8,9 @@
 ``_failed`` / ``_empty`` / ``_covers`` 是「这个文件读不出来」这种结论的记忆，只在切库时清：
 按窗口清掉的话，用户每滚回去一次就要把同一个坏文件重新解码一遍，而坏文件恰恰是最贵的那种
 失败。文件被外部换掉时由 :meth:`forget` 作废那一条。
+
+前两个**按档位记账**（``路径 -> 当时那个档位``）：128 px 读不出来不代表 256 px 也读不出来，
+所以换档要重试；而同一档位下坏文件就是坏文件，重试再多次也是同一个结果。
 """
 
 from __future__ import annotations
@@ -78,8 +81,8 @@ class ThumbnailPipeline(QObject):
         self._queue = ThumbnailQueue()
         self._refs: dict[Path, PhotoRef] = {}
         self._inflight: dict[tuple[Path, int], int] = {}
-        self._failed: set[Path] = set()
-        self._empty: set[Path] = set()
+        self._failed: dict[Path, int] = {}
+        self._empty: dict[Path, int] = {}
         self._covers: dict[Path, _Cover] = {}
         self._generation = 0
         #: 当前要缩到多长。在**提交任务时**定格进闭包（见 :meth:`_start`）。
@@ -134,8 +137,8 @@ class ThumbnailPipeline(QObject):
         """
         for path in paths:
             target = Path(path)
-            self._failed.discard(target)
-            self._empty.discard(target)
+            self._failed.pop(target, None)
+            self._empty.pop(target, None)
             for cover in self._covers.values():
                 cover.skipped.discard(target)
 
@@ -158,12 +161,15 @@ class ThumbnailPipeline(QObject):
             path = self._queue.pop_next()
             if path is None:
                 return
-            # 同一张照片同一档位不能重复投递：已在解码的路径仍会出现在新的可见窗口里。
-            # 失败/空相册结论按路径记，但不同档位（边缘长度）互相独立 ——
-            # 256 px 在途不代表 128 px 也能用，进来时把旧结论清掉让新档位重试。
-            self._failed.discard(path)
-            self._empty.discard(path)
-            if (path, self._target_edge) in self._inflight:
+            # 「读不出来」「是空相册」这两个结论**按档位**判，而不是一律丢掉重试：
+            # 128 px 读不出来不代表 256 px 也读不出来（换档要重试），而同一档位下坏文件
+            # 就是坏文件（重试再多次还是那个结果）。原先这里无差别清掉记忆，症状是用户
+            # 每滚回去一次就把同一个截断的 JPEG 重新解码一遍 —— 那恰恰是最贵的那种失败，
+            # 还要占住线程池把好照片挤到后面，还会再报一次错。
+            edge = self._target_edge
+            if self._failed.get(path) == edge or self._empty.get(path) == edge:
+                continue
+            if (path, edge) in self._inflight:
                 continue
             ref = self._refs.get(path)
             if ref is None:
@@ -214,8 +220,9 @@ class ThumbnailPipeline(QObject):
         ``pop(entry.path)``，摘掉的就是新一代登记的那一条 —— ``_inflight`` 少数了，
         ``cancel()`` 也够不着真正在跑的新任务。
         """
-        if holder.job_id is not None and self._inflight.get((entry.path, holder.edge)) == holder.job_id:
-            del self._inflight[(entry.path, holder.edge)]
+        key = (entry.path, holder.edge)
+        if holder.job_id is not None and self._inflight.get(key) == holder.job_id:
+            del self._inflight[key]
 
     def _on_result(self, entry: GridEntry, generation: int, holder: _Job, result: object) -> None:
         self._release(entry, holder)
@@ -225,7 +232,7 @@ class ThumbnailPipeline(QObject):
         if result is None:
             # 空相册没有封面：记下来别再反复问，界面会画文件夹图标。但「整个相册都读不出来」
             # 长得和空相册一模一样，区别只有一句话 —— 那句话得说出来。
-            self._empty.add(entry.path)
+            self._empty[entry.path] = holder.edge
             cover = self._covers.get(entry.path)
             if cover is not None and cover.message:
                 self.failed.emit(entry.path, cover.message)
@@ -245,7 +252,7 @@ class ThumbnailPipeline(QObject):
                 self._queue.add(entry.path, priority=VISIBLE)
                 self._dispatch()
                 return
-            self._failed.add(entry.path)
+            self._failed[entry.path] = holder.edge
             self.failed.emit(entry.path, message)
         self._dispatch()
 

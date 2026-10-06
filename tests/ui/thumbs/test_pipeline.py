@@ -22,7 +22,7 @@ from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.library.facade import Library  # noqa: E402
 from gallery.core.library.photos import PhotoRef  # noqa: E402
 from gallery.ui.tasks import TaskRunner  # noqa: E402
-from gallery.ui.thumbs.pipeline import ThumbnailPipeline, _Job  # noqa: E402
+from gallery.ui.thumbs.pipeline import NO_EDGE, ThumbnailPipeline, _Job  # noqa: E402
 
 
 @pytest.fixture
@@ -310,5 +310,65 @@ def test_the_bad_file_memory_outlives_the_window(
     assert set(thumbs._failed) >= {ref.path for ref in broken}, "读不出来的结论没有记进 _failed"
 
     thumbs.set_window(_refs(2, "e"))
-    assert {ref.path for ref in broken} <= thumbs._failed, "「这个文件读不出来」的结论被窗口清掉了"
+    assert {ref.path for ref in broken} <= set(thumbs._failed), (
+        "「这个文件读不出来」的结论被窗口清掉了"
+    )
+    runner.wait_for_done(2000)
+
+
+def test_scrolling_back_to_a_bad_file_does_not_decode_it_again(
+    pipeline: tuple[ThumbnailPipeline, TaskRunner],
+    wait_for: Callable[..., bool],
+) -> None:
+    """**滚回去也不能重解码** —— 上面那条只守了「切到别的窗口」，缺的那一半在这儿。
+
+    缺陷现场：``_dispatch`` 里原本无差别 ``_failed.discard(path)``，理由是「换档要重试」。
+    但它并不看档位，于是**每一次**队列里重新出现这个路径（用户滚回去、窗口重建、
+    换一次缩放档位）都把结论抹掉一次。症状是同一个截断的 JPEG 被反复解码，每次都
+    占住线程池把好照片挤到后面，并且每次都再报一次错 —— 正是上面那条 docstring
+    说要防的事。
+
+    判据用「``set_window`` 返回后 ``_inflight`` 仍为空」：``_dispatch`` 是在
+    ``set_window`` 末尾**同步**跑完的，而 ``_start`` 也是同步登记在途的，所以真要重解码
+    的话这一刻 ``_inflight`` 必定非空 —— 不必去赌后台线程的时序。
+    """
+    thumbs, runner = pipeline
+    broken = _refs(2, "d")
+    thumbs.set_window(broken)
+    assert wait_for(lambda: not thumbs._inflight), "这批坏文件没有在时限内跑完"
+    assert {ref.path for ref in broken} <= set(thumbs._failed), "前提不成立：没记上读不出来的结论"
+
+    thumbs.set_window(_refs(2, "e"))  # 滚走
+    # 等这一批（"e" 那两个并不存在的路径）真的收工：不然断言里看到的在途登记是它们的，
+    # 而不是「坏文件被重解码」这件事 —— 那样这条用例就成了永远为绿的空转。
+    assert wait_for(lambda: not thumbs._inflight), "滚走之后这批没有在时限内跑完"
+
+    thumbs.set_window(broken)  # 滚回来
+
+    assert not thumbs._inflight, "滚回去就把同一个坏文件又解码了一遍"
+    assert {ref.path for ref in broken} <= set(thumbs._failed), "滚回去把「读不出来」的结论抹掉了"
+    runner.wait_for_done(2000)
+
+
+def test_a_different_size_still_retries_what_the_previous_size_could_not_read(
+    pipeline: tuple[ThumbnailPipeline, TaskRunner],
+    wait_for: Callable[..., bool],
+) -> None:
+    """换档**要**重试 —— 上一条别把闸门关过头了。
+
+    128 px 读不出来不代表 256 px 也读不出来（失败多半出在解码，而档位是解码之后才缩的，
+    但结论不该替这一档打包票）。所以记账要带上「当时那个档位」：同档不重试，换档重试。
+    """
+    thumbs, runner = pipeline
+    broken = _refs(1, "d")
+    thumbs.set_window(broken, target_edge=NO_EDGE)
+    assert wait_for(lambda: not thumbs._inflight), "这批坏文件没有在时限内跑完"
+    assert broken[0].path in thumbs._failed, "前提不成立：没记上读不出来的结论"
+    assert thumbs._failed[broken[0].path] == NO_EDGE, "记账要记下当时那个档位"
+
+    thumbs.set_window([], target_edge=NO_EDGE)
+    thumbs.set_window(broken, target_edge=256)
+
+    assert thumbs._inflight, "换档之后没有重试 —— 128 px 的结论不该替 256 px 打包票"
+    assert wait_for(lambda: not thumbs._inflight), "换档后的重试没有在时限内跑完"
     runner.wait_for_done(2000)
