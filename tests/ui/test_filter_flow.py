@@ -10,6 +10,7 @@ exiftool，也不该因为机器上碰巧装了就把行为测偏。
 
 from __future__ import annotations
 
+import ast
 import datetime
 import os
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -325,6 +326,364 @@ def test_clearing_conditions_in_the_search_field_clears_the_toolbar(
 def _calendar_chips(window: MainWindow) -> list[str]:
     """日历工具条上那几枚胶囊的文字。"""
     return [chip.text() for chip in window._calendar_page._bar._chips.findChildren(ChipButton)]
+
+
+def test_typing_a_new_condition_after_glancing_at_a_chip_appends_it(
+    qt_app: QApplication, tmp_path: Path, make_photo
+) -> None:
+    """点了一下胶囊正文、没接着改，然后敲了一条新的 → **追加，不是替换**。
+
+    > 用户原话：「在相册视图切到日历视图后再增加一个筛选条件会取代之前的筛选条件」。
+
+    根因是 ``_editing_condition`` **粘住**：点胶囊正文会设上它，而下一次回车走的是
+    ``self._conditions[editing] = …`` —— **就地替换，条目数不增加**。焦点离开原先不清它，于是
+    用户点完胶囊去做别的（切视图、点空白），之后敲的每一条都在顶掉那一条，而屏幕上只看得见
+    「条件变了」，看不见「我刚才点过一枚胶囊」。
+
+    **量的是条目数**，不是值对不对：值对了而条目数没变，正是这个 bug（被顶掉的那条恰好与新的
+    等价时，值的断言会一路绿）。
+    """
+    root = _library(tmp_path, make_photo)
+    window = _open(qt_app, root, tmp_path / "会话", browse_mode=BROWSE_MODE_CALENDAR)
+    _settle(qt_app, window)
+    _filter(qt_app, window, "#相机 Canon")
+    _settle(qt_app, window)
+    assert len(_chips(window)) == 1, "前提不成立：第一条条件没加上"
+
+    # 用户在日历工具条上点了一下那枚胶囊的**正文**（不是 ✕），没接着改。
+    window._on_condition_edited(0)
+    _settle(qt_app, window)
+    # 接着去做了别的事 —— 焦点离开了输入框，编辑态随之清掉（用户原话：「避免用户做了很多
+    # 别的操作后忘记之前进了编辑模式」）。**这一步不能省**：留着编辑态才是在测「静默劫持」。
+    window._grid.setFocus()
+    _settle(qt_app, window)
+
+    # 然后照常敲一条新的。
+    _filter(qt_app, window, "#城市 西安")
+
+    assert len(_chips(window)) == 2, (
+        f"敲新条件把原来的顶掉了：{_chips(window)} ——"
+        " 点过胶囊之后新敲的应当是追加（点过但没改的那一次不该劫持下一次提交）"
+    )
+    assert _chips(window) == ["相机：Canon", "城市：西安"], _chips(window)
+    window.close()
+
+
+def _is_conditions_target(node: ast.expr) -> bool:
+    """这一个赋值 / ``del`` 的目标是不是 ``self._conditions``（或其下标）。
+
+    **要认下标**是因为 ``self._conditions[i] = …``（就地替换）与 ``del self._conditions[i]``
+    也都是改动它。脱下标时**只脱一层就够**（``self._conditions[a][b]`` 不存在），脱完拿到的
+    应当还是 ``self._conditions`` 这个 ``Attribute`` —— 顺手把它拆成 ``self`` 之后就没人能
+    拿 ``attr`` 了，那正是这条判据一开始返回 ``False`` 的原因。
+    """
+    if isinstance(node, ast.Subscript):
+        node = node.value
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == "_conditions"
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "self"
+    )
+
+
+#: 会改 ``_conditions`` 长度的那些方法。``.sort()`` / ``.reverse()`` 改顺序不改长度，不算。
+CONDITION_MUTATORS = frozenset({"append", "extend", "clear", "pop", "remove", "insert"})
+
+
+def _is_conditions_mutation(node: ast.Call) -> bool:
+    """这一次调用会不会改 ``self._conditions`` 的长度。
+
+    **只认直接挂在 ``self._conditions`` 上的那几个方法**：``.append(x)`` 改长度，
+    ``.sort()`` 不改，``.index()`` 更不改 —— 混进判据会让这条守护变成「凡碰到它就红」。
+    """
+    call = node.func
+    return (
+        isinstance(call, ast.Attribute)
+        and call.attr in CONDITION_MUTATORS
+        and isinstance(call.value, ast.Attribute)
+        and call.value.attr == "_conditions"
+        and isinstance(call.value.value, ast.Name)
+        and call.value.value.id == "self"
+    )
+
+
+def _the_line_about_conditions(block: str) -> str:
+    """从 ``ast.unparse`` 的整块里取出**提到 ``_conditions`` 的那一句**。
+
+    ``if editing is not None: self._conditions[editing] = condition`` 这一整块的文本与源码里
+    那一行不是一回事（前者带缩进与换行），而清单按源码写 —— 所以只留相关的那句。
+    读（``conditions = tuple(self._conditions)``）不在这几支里，不会被取出来。
+    """
+    lines = [line.strip() for line in block.splitlines() if "self._conditions" in line]
+    return lines[0] if lines else block.strip()
+
+
+def test_only_three_things_can_take_a_condition_away() -> None:
+    """条件只有三个下场：**点 ✕ / 改这一条时回车替换 / 换库**（ADR 0040 决策 12）。
+
+    用户要的是「除了手动点叉之外任何情况下不消失」，而这一条是那句话的**可查形式**：扫出全仓库
+    每一处改动 ``self._conditions`` 长度的写法，只允许那三样。清单外的写法一律红。
+
+    **为什么非要扫一遍而不靠几条行为用例**：这个 bug 的形状是「某处 ``_editing_condition``
+    粘住 → 下一次提交静默替换」，而任何一条行为用例都只能盯住**它已知的那几条路径**。新加一条
+    「清条件」的路（换作用域、换分组、回退到大图页）时，行为用例一条都不会红 —— 只有这份清单会。
+
+    **扫的是 AST 而不是文本**：文档里 ``self._conditions[editing] = …`` 这样的代码片段到处都有
+    （写清楚为什么是「就地替换」就得写它），按行扫会把注释与 docstring 一起算进来 —— 那条守护
+    第一次跑就抓到了我自己写的一段说明文字。
+    """
+    allowed = {
+        # ---- 初始化 ----
+        ("src/gallery/ui/main_window.py", "self._conditions: list[SearchCondition] = []"),
+        # ---- 用户明明白白做的那几件 ----
+        ("src/gallery/ui/window/search_flow.py", "self._conditions.append(condition)"),  # 加一条
+        ("src/gallery/ui/window/search_flow.py", "del self._conditions[position]"),  # 点 ✕
+        ("src/gallery/ui/main_window.py", "self._conditions.pop()"),  # ⇧Esc 撤一条
+        ("src/gallery/ui/window/search_flow.py", "self._conditions.clear()"),  # 清搜索框
+        # 就地替换：长度不变，但它确实改内容 —— 单独放行。
+        ("src/gallery/ui/window/search_flow.py", "self._conditions[editing] = condition"),
+        # ---- 换场合，不是「用户撤掉了」：切到整库检索时清掉它 ----
+        # 整库检索横跨整个库，而筛选只管当前这一层（ADR 0026 决策 1 / ADR 0040 决策 1）——
+        # 两者是互不相干的概念，换浏览方式 / 进相册 / 换库时不该叠在一起。
+        ("src/gallery/ui/window/library_flow.py", "self._conditions.clear()"),
+        ("src/gallery/ui/window/calendar_flow.py", "self._conditions.clear()"),
+        ("src/gallery/ui/main_window.py", "self._conditions.clear()"),
+    }
+
+    root = Path(__file__).resolve().parents[2]
+    found: set[tuple[str, str]] = set()
+    for path in sorted((root / "src" / "gallery").rglob("*.py")):
+        relative = path.relative_to(root).as_posix()
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            # **判据是「这一句会不会改它」**。会改长度的写法全在下面三支里，而读
+            # （``for x in self._conditions``、``len(...)``、下标取值）与改顺序的
+            # （``.sort()``）走的不是任何一支，天然不算。
+            if isinstance(node, ast.Assign | ast.AnnAssign):
+                targets: tuple[ast.expr, ...] = (
+                    tuple(node.targets) if isinstance(node, ast.Assign) else (node.target,)
+                )
+                if not any(_is_conditions_target(target) for target in targets):
+                    continue
+            elif isinstance(node, ast.Delete):
+                if not any(_is_conditions_target(target) for target in node.targets):
+                    continue
+            elif isinstance(node, ast.Call):
+                # ``self._conditions.append(x)`` —— **方法调用那一支**，与赋值分开判。
+                if not _is_conditions_mutation(node):
+                    continue
+            else:
+                continue
+            # **只取「涉及它的那一句」**：``ast.unparse`` 出的是整块（含 ``if``/``else``），
+            # 同一个字符串于是与清单对不上。清单按源码那一行写，逐行比才有意义。
+            code = _the_line_about_conditions(ast.unparse(node))
+            found.add((relative, code))
+            if (relative, code) not in allowed:
+                pytest.fail(
+                    f"{relative}:{node.lineno} 多了一处改动筛选条件的地方：{code!r}\n"
+                    "条件只该由三件事动：点 ✕（_on_condition_removed）、改这一条时回车"
+                    "（_on_search_submitted 里就地替换）、换库 / 换作用域。"
+                    "\n真要加第四条，请连同这里与 ADR 0040 决策 12 一起改 —— "
+                    "否则就是又一条「条件自己消失了」而没人说得清为什么。"
+                )
+
+    # 清单本身也要看着点：允许项被挪走或改名了时这里会红，而不是悄悄放行。
+    unused = allowed - found
+    assert not unused, f"清单里有几条已经不存在了（挪走或改名了）：{sorted(unused)}"
+
+
+def test_a_chip_click_is_released_by_the_next_real_action(
+    qt_app: QApplication, tmp_path: Path, make_photo
+) -> None:
+    """三种「走开」**都要能把编辑态放掉**，而不是只保一条。
+
+    上面几条分别钉了失焦 / 点空白 / 切视图。这里钉的是它们**共用的那一半**：三条走同一个
+    :meth:`_cancel_condition_edit`，而那条路一旦被改成只认其中一种（很容易发生 —— 失焦是后加的，
+    改动时最容易漏掉另外两条的语义），点空白与切视图那两条各自会变红，但**最要命的那种仍然
+    守得住**：用户点完胶囊、去点了别处、再敲新条件。
+
+    所以这里把三种走法都走一遍，每一轮都断言「敲新条件是追加、条目数 +1」。
+    """
+    root = _library(tmp_path, make_photo)
+
+    def fresh(mode: str):
+        window = _open(qt_app, root, tmp_path / f"会话{mode}", browse_mode=mode)
+        _settle(qt_app, window)
+        _filter(qt_app, window, "#相机 Canon")
+        _settle(qt_app, window)
+        return window
+
+    # 每一种走法都用**一个新窗口**：上一轮留下的浏览方式会让下一轮的「切视图」变成空操作，
+    # 而空操作照样绿 —— 这正是这类测试最容易自欺的地方。
+    walk_aways = {
+        "失焦": (BROWSE_MODE_CALENDAR, lambda w: w._grid.setFocus()),
+        "点空白": (BROWSE_MODE_CALENDAR, lambda w: w._on_background_activated()),
+        "切视图": (BROWSE_MODE_ALBUMS, lambda w: w.set_browse_mode(BROWSE_MODE_CALENDAR)),
+    }
+    for label, (mode, walk_away) in walk_aways.items():
+        window = fresh(mode)
+        window._on_condition_edited(0)
+        _settle(qt_app, window)
+        assert window._editing_condition == 0, f"{label}：前提不成立，没进编辑态"
+
+        walk_away(window)
+        _settle(qt_app, window)
+        assert window._editing_condition is None, f"{label}：走开之后还挂在编辑态"
+
+        _filter(qt_app, window, "#城市 西安")
+        assert len(_chips(window)) == 2, f"{label}：敲新条件把原来的顶掉了 → {_chips(window)}"
+        window.close()
+
+
+def test_leaving_the_search_field_abandons_the_pending_change(
+    qt_app: QApplication, tmp_path: Path, make_photo
+) -> None:
+    """**焦点离开输入框 = 放弃**改这一条（ADR 0040 决策 12）。
+
+    用户要的就是这一条：「避免用户做了很多别的操作后忘记之前进了编辑模式」。兜底挂在
+    ``editing_changed(False)`` 上而不是焦点事件上 —— 离屏下量不出焦点的先后顺序，而信号是
+    「焦点已经离开」这件事本身。
+    """
+    root = _library(tmp_path, make_photo)
+    window = _open(qt_app, root, tmp_path / "会话")
+    _settle(qt_app, window)
+    _filter(qt_app, window, "#相机 Canon")
+    _settle(qt_app, window)
+    window._on_condition_edited(0)
+    _settle(qt_app, window)
+    assert window._editing_condition == 0, "前提不成立：没进编辑态"
+
+    window._grid.setFocus()  # 焦点离开输入框
+    _settle(qt_app, window)
+
+    assert window._editing_condition is None, "失焦之后还挂在编辑态"
+    assert _chips(window) == ["相机：Canon"], f"放弃修改不该动条件本身：{_chips(window)}"
+    window.close()
+
+
+def test_leaving_the_field_while_typing_a_new_one_keeps_what_was_typed(
+    qt_app: QApplication, tmp_path: Path, make_photo
+) -> None:
+    """**正在输入一条全新的条件**时失焦，输入框里敲的字要留着。
+
+    这一条是上一条的必要反面：放弃修改的闸若不区分「在改已有的一条」与「在敲新的一条」，
+    用户敲到一半点别处，**刚敲的字凭空消失** —— 那比原 bug 更糟（它丢的是没确认的东西）。
+    """
+    root = _library(tmp_path, make_photo)
+    window = _open(qt_app, root, tmp_path / "会话")
+    _settle(qt_app, window)
+    _filter(qt_app, window, "#相机 Canon")
+    _settle(qt_app, window)
+    assert window._editing_condition is None, "前提不成立：上一条条件残留着编辑态"
+
+    window.focus_search()
+    window._search_field._edit.setText("#城市 西安")  # 敲到一半
+    qt_app.processEvents()
+
+    window._grid.setFocus()  # 点别处
+    _settle(qt_app, window)
+
+    assert window._search_field.text() == "#城市 西安", (
+        f"敲到一半的字被清掉了：{window._search_field.text()!r}"
+    )
+    window.close()
+
+
+def test_clicking_the_blank_abandons_the_pending_change(
+    qt_app: QApplication, tmp_path: Path, make_photo
+) -> None:
+    """点网格空白处 = 放弃改这一条（ADR 0040 决策 12）。
+
+    与 :meth:`_on_background_activated` 里那个 ``is_renaming()`` 的早退同一位置、同一理由：
+    「改到一半」这个状态下，用户的这一下先归输入框，不顺手把人带走。
+    """
+    root = _library(tmp_path, make_photo)
+    window = _open(qt_app, root, tmp_path / "会话", browse_mode=BROWSE_MODE_ALBUMS)
+    _settle(qt_app, window)
+    _filter(qt_app, window, "#相机 Canon")
+    _settle(qt_app, window)
+    child = root / "海边"
+    window.enter_folder(child)
+    _settle(qt_app, window)
+    window._on_condition_edited(0)
+    _settle(qt_app, window)
+    assert window._editing_condition == 0, "前提不成立：没进编辑态"
+
+    window._on_background_activated()
+    _settle(qt_app, window)
+
+    assert window._editing_condition is None, "点空白没有放弃修改"
+    assert _chips(window) == ["相机：Canon"], f"放弃修改不该动条件本身：{_chips(window)}"
+    window.close()
+
+
+def test_switching_the_view_keeps_the_conditions_but_drops_the_pending_change(
+    qt_app: QApplication,
+    tmp_path: Path,
+    make_photo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """切浏览方式：**条件跟着走，改到一半那一次不跟着走**（ADR 0040 决策 12）。
+
+    条件跟着走是 ADR 0040 决策 1（早就在了），编辑态不跟着走是这一条。只断前半句的话，症状是
+    「换了视图再敲一条，顶掉的是上一个视图里的那一条」。
+    """
+
+    def _no_cancel_on_blur(self: MainWindow) -> None:
+        """把**失焦那条兜底**按掉 —— 只让 ``set_browse_mode`` 里的那一处有机会干活。
+
+        **按的是 :meth:`_on_search_active_changed` 而不是 :meth:`_cancel_condition_edit` 本身**：
+        后者会把 ``set_browse_mode`` 里那一处也一起按掉（它调的正是这个方法），于是注入违规后
+        用例照样绿 —— 第一版就是这么写的。按「失焦的入口」才真的只关掉一条路。
+        """
+        self._update_action_states()
+
+    root = _library(tmp_path, make_photo)
+    window = _open(qt_app, root, tmp_path / "会话", browse_mode=BROWSE_MODE_ALBUMS)
+    _settle(qt_app, window)
+    _filter(qt_app, window, "#相机 Canon")
+    _settle(qt_app, window)
+    window._on_condition_edited(0)
+    _settle(qt_app, window)
+
+    # **把失焦那条兜底彻底按掉**，只让 ``set_browse_mode`` 里的那一处有机会干活：不这么做的话，
+    # 切视图时 ``focus_current_view`` 会把焦点从输入框拿走、失焦那条顺手清掉编辑态，于是即使把
+    # ``set_browse_mode`` 里那一处删掉，本用例照样绿 —— 它第一版就是这么写的，注入违规后没红。
+    monkeypatch.setattr(MainWindow, "_on_search_active_changed", _no_cancel_on_blur)
+    window._editing_condition = 0
+    window.set_browse_mode(BROWSE_MODE_CALENDAR)
+    qt_app.processEvents()
+
+    assert _chips(window) == ["相机：Canon"], f"切视图不该动条件：{_chips(window)}"
+    assert window._editing_condition is None, "切视图没有放弃修改"
+    window.close()
+
+
+def test_switching_the_view_keeps_the_conditions_and_appends_the_next_one(
+    qt_app: QApplication, tmp_path: Path, make_photo
+) -> None:
+    """切视图之后敲的新条件是**追加** —— 与上一条一起把「切视图」这半边钉住。
+
+    上一条按掉了失焦那条兜底，所以它量的是「``set_browse_mode`` 自己有没有放弃」；这一条走真实
+    路径，量的是**最终结果**：条件还在、新敲的接在后面而不是顶掉它。
+    """
+    root = _library(tmp_path, make_photo)
+    window = _open(qt_app, root, tmp_path / "会话", browse_mode=BROWSE_MODE_ALBUMS)
+    _settle(qt_app, window)
+    _filter(qt_app, window, "#相机 Canon")
+    _settle(qt_app, window)
+    window._on_condition_edited(0)
+    _settle(qt_app, window)
+
+    window.set_browse_mode(BROWSE_MODE_CALENDAR)
+    _settle(qt_app, window)
+    _filter(qt_app, window, "#城市 西安")
+
+    assert _chips(window) == ["相机：Canon", "城市：西安"], (
+        f"切视图之后新敲的顶掉了原来的：{_chips(window)}"
+    )
+    window.close()
 
 
 def test_the_conditions_follow_the_user_onto_the_calendar(

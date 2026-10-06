@@ -901,6 +901,7 @@ class MainWindow(
         if self._grid.is_renaming():
             # 改到一半：这一下先归输入框。既不把人带走，也不打扰他。
             return
+        self._cancel_condition_edit()  # 改到一半：这一下算放弃（ADR 0040 决策 12）
         if self._can_go_up():
             self.go_up()
 

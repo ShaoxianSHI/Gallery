@@ -322,9 +322,24 @@ class SearchFlowMixin:
             return
         self.pop_last_condition()
 
-    def _on_search_active_changed(self, _active: bool) -> None:
-        """正在输入时别的命令让开 —— 与两个改名输入框同一件事（键盘归输入框）。"""
+    def _on_search_active_changed(self, active: bool) -> None:
+        """正在输入时别的命令让开 —— 与两个改名输入框同一件事（键盘归输入框）。
+
+        **失焦（``active`` 为假）顺带放弃「正在改哪一条」**（ADR 0040 决策 12）。这一条是整个
+        筛选机制的**兜底**：``_editing_condition`` 一旦设上，下一次回车走的是
+        ``self._conditions[editing] = …`` —— **就地替换，条目数不增加**。而焦点离开原先不清它，
+        于是用户点了一下胶囊、没接着改就去做别的，之后敲的每一条都在顶掉那一条：
+
+        > 用户原话：「在相册视图切到日历视图后再增加一个筛选条件会取代之前的筛选条件」。
+
+        **挂在 ``editing_changed(False)`` 上，而不是焦点事件上**：离屏下窗口拿不到真实焦点
+        （``QTest.mouseClick`` 在 offscreen 里不产生焦点切换），而 ``focusOutEvent`` 的**先后
+        顺序**量不出来 —— 一旦点胶囊本身被拆成「失焦 → 获焦」，功能会当场自毁。信号是「焦点
+        已经离开」这件事本身，稳。
+        """
         self._update_action_states()
+        if not active:
+            self._cancel_condition_edit()
 
     def _on_condition_edited(self, position: int) -> None:
         """点面包屑上第 ``position`` 枚胶囊：把它放回输入框接着改。
@@ -339,7 +354,14 @@ class SearchFlowMixin:
         self._update_breadcrumb()
 
     def _cancel_condition_edit(self) -> None:
-        """放弃这一次改动：胶囊原样留着，输入框清空。"""
+        """放弃这一次改动：胶囊原样留着，输入框清空。
+
+        **没在改任何一条时什么都不做** —— :meth:`_on_search_active_changed` 在失焦时也会调它，
+        而那一刻用户很可能正在**输入一条全新的条件**（``_editing_condition`` 是 ``None``）。
+        那时把输入框清掉就是凭空删掉他刚敲的字。
+        """
+        if self._editing_condition is None:
+            return
         self._editing_condition = None
         self._search_field.stop_edit()
         self._update_breadcrumb()

@@ -52,6 +52,10 @@ class CalendarFlowMixin:
         # **只有整库检索要清**：它横跨整个库，换浏览方式时留着它等于把两个互不相干的概念叠在
         # 一起（ADR 0026 决策 1）。筛选是「当前这一层里符合条件的那部分」，换浏览方式只是换了
         # 「这一层」是什么，条件该跟着走（ADR 0040 决策 1）。
+        #
+        # **改到一半换视图 = 放弃**（ADR 0040 决策 12）：条件跟着走，但「正在改哪一条」不跟着走 ——
+        # 否则用户换了视图再敲一条，敲的那条会去替换刚才那一视图里那一条，而视图已经变了。
+        self._cancel_condition_edit()
         if self._is_library_search():
             self._conditions.clear()
             self._editing_condition = None
