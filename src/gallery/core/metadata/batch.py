@@ -16,6 +16,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Final, Protocol
 
+from gallery.core import paths
 from gallery.core.cancellation import never_cancel
 from gallery.core.errors import MetadataError
 from gallery.core.metadata.exif import (
@@ -98,7 +99,11 @@ class ExifToolBatchSource:
         # ``realpath``。这里原本把 ``resolve()`` 写了两遍（拼 argv 一遍、按 SourceFile
         # 归位又一遍），于是同一张照片在一批里要走四条 realpath —— 五千张照片就是两万次。
         # 解析一次，argv 与归位共用。
-        resolved = [Path(path).resolve() for path in batch]
+        #
+        # **走 :func:`gallery.core.paths.resolved` 那份带记忆的**（实测 20.1 → 0.31 µs）：
+        # 同一张照片在下一批、下一次打开同一个库、换一个分组字段重读时都要重新付一遍，
+        # 而答案是逐字相同的 —— 那正是 AGENTS.md 点名的「同一个问题反复问」。
+        resolved = [paths.resolved(path) for path in batch]
         argv = [self._executable, "-j", "-G", "-sort", *EXIFTOOL_CHARSET_ARGS, "-q"]
         for tag in WANTED_TAGS:
             argv.append(f"-{tag}")

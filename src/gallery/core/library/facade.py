@@ -386,7 +386,7 @@ class Library:
             raise ConfigError(f"「{album.name}」不是一个文件夹，没法给它设封面。", path=album)
         key = _relative_posix(self._root, album)
         if key is None:
-            if album.resolve() == self._root:
+            if paths.resolved(album) == paths.resolved(self._root):
                 raise ConfigError(
                     "库根目录不是一个相册，它在网格上不是一张卡片，没有封面可设。",
                     path=album,
@@ -891,7 +891,9 @@ def _relative_posix(root: Path, path: Path) -> str | None:
     ``None`` 而不是 ``"."``：它在网格上不是一张卡片，「给它设封面」根本不该成立（ADR 0028 决策 2）。
     """
     try:
-        relative = Path(path).resolve().relative_to(Path(root).resolve())
+        # 带记忆的那份（见 :func:`gallery.core.paths.resolved`）：``album_label`` 已经是
+        # 记忆版，而这一半没换 —— 同一个文件里并存两种写法，下一个人照抄错的那份。
+        relative = paths.resolved(path).relative_to(paths.resolved(root))
     except (OSError, ValueError):
         return None
     return relative.as_posix() if relative.parts else None

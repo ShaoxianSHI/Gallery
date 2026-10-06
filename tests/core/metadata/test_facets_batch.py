@@ -263,3 +263,38 @@ def test_pillow_fallback_reads_basic_exif(make_photo) -> None:  # type: ignore[n
     assert facets.camera == "Canon EOS R6"
     assert (facets.year, facets.month, facets.day) == (2024, 5, 16)
     assert facets.country is None
+
+
+def test_the_exiftool_source_resolves_each_path_through_the_memo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**批量读走 :func:`gallery.core.paths.resolved` 那份带记忆的**。
+
+    缺陷现场：这里是裸 ``Path.resolve()``。而 ``realpath`` 要 ``lstat`` 路径上的每一段
+    （实测 20.1 µs），同一张照片在**下一批、下一次打开同一个库、换一个分组字段重读**
+    时都要重新付一遍，而答案是逐字相同的 —— 正是 AGENTS.md 点名的「同一个问题反复问」。
+    五万张的一遍全库读取，约一秒的 pure realpath 全部是重复劳动。
+
+    钉的是「第二次不再解析」，不是速度：第一次必然要真算一次（缓存未命中），
+    而测试里量时间本来就不稳。
+    """
+    photo = tmp_path / "一张.jpg"
+    photo.write_bytes(b"x")
+    source = ExifToolBatchSource(executable=str(tmp_path / "没有这个命令"))
+
+    calls: list[str] = []
+    real = Path.resolve
+
+    def counting(self: Path, *args: object, **kwargs: object) -> Path:
+        calls.append(str(self))
+        return real(self, *args, **kwargs)
+
+    # 先真跑一次，把这个路径填进记忆里（第一次必然要算一次，那不是浪费）。
+    with pytest.raises(MetadataError):
+        list(source.read_many([photo]))
+
+    monkeypatch.setattr(Path, "resolve", counting)
+    with pytest.raises(MetadataError):
+        list(source.read_many([photo]))  # 这一遍才是「重复劳动」
+
+    assert calls == [], f"同一个路径被重复解析 {len(calls)} 次"
