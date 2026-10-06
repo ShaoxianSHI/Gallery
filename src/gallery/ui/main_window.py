@@ -471,9 +471,18 @@ class MainWindow(
         self.addAction(self._thumb_zoom_out_action)
 
         # 回上一层用 Esc（⌘↑ 被 macOS 占着）：Esc 在大图页是「返回网格」、网格页才是「上一级」。
+        #
+        # **Esc 只管位置，不管条件**（ADR 0040 决策 11）：判据里条件排在最前时，只要有条件就永远
+        # 退不出文件夹 / 日历点出来的那一格 —— 用户在子相册里按 Esc，看到的是一条条件被撤掉而
+        # 位置纹丝不动（用户原话：「点开一个格子后，esc 退出一层就会清空一个筛选条件」）。
+        # 撤条件挪到 ⇧Esc，两者彻底分开，绝不互相抢。
         self._up_action = QAction("上一级", self)
         self._up_action.setShortcut(QKeySequence("Esc"))
         self._up_action.triggered.connect(self.go_up)
+
+        self._pop_condition_action = QAction("撤掉最后一条筛选条件", self)
+        self._pop_condition_action.setShortcut(QKeySequence("Shift+Esc"))
+        self._pop_condition_action.triggered.connect(self.pop_last_condition)
 
         self._albums_action = QAction("相册", self)
         self._albums_action.setCheckable(True)
@@ -648,6 +657,8 @@ class MainWindow(
         view_menu = self.menuBar().addMenu("视图")
         view_menu.addAction(self._back_action)
         view_menu.addAction(self._up_action)
+        # 挨着「上一级」：两者是同一族的「往回退」，但一个退位置、一个退条件（ADR 0040 决策 11）。
+        view_menu.addAction(self._pop_condition_action)
         view_menu.addSeparator()
         browse_menu = view_menu.addMenu("浏览方式")
         browse_menu.addAction(self._flat_action)
@@ -826,19 +837,18 @@ class MainWindow(
         self._reload_level(focus=focus)
 
     def go_up(self) -> None:
-        """回到上一层：有筛选条件就撤掉最后一条，否则按分组 / 相册往上退。
+        """**只管位置**：退出当前文件夹 / 分组 / 日历点出来的那一格。
 
-        分组比文件夹深一级、**筛选条件又深一级**（跨着整个库，ADR 0026 决策 9），三者走同一个
-        ``Esc``。退上去时**把刚离开的那一级留在选中状态**（访达里退上一层就是这样）；只此一处
-        例外 —— 再点进去是另一次浏览，那一层不留上一次的选中（见 :meth:`_arm_focus`）。
+        **条件不在这条链上**（ADR 0040 决策 11，取代 ADR 0026 决策 9）：那一版把条件排在最前，
+        于是「条件又深一级」，后果是只要有条件就永远退不出文件夹与那一格 —— 用户在子相册里按
+        ``Esc``，看到的是一条条件被撤掉而位置纹丝不动（用户原话：「点开一个格子后，esc 退出一层
+        就会清空一个筛选条件」）。撤条件是 :meth:`pop_last_condition` 的事，键是 ``⇧Esc``。
+
+        退上去时**把刚离开的那一级留在选中状态**（访达里退上一层就是这样）；只此一处例外 ——
+        再点进去是另一次浏览，那一层不留上一次的选中（见 :meth:`_arm_focus`）。
         """
         library = self._library
         if library is None:
-            return
-        if self._conditions:
-            self._conditions.pop()
-            self._editing_condition = None
-            self._apply_conditions()
             return
         if self._drill_photos is not None:
             self._leave_calendar_drill()
@@ -853,6 +863,19 @@ class MainWindow(
         if parent is not None:
             self.enter_folder(parent, focus=path_key(current))
 
+    def pop_last_condition(self) -> None:
+        """撤掉最后一条筛选条件（``⇧Esc``，或菜单里的那一行）。
+
+        **与 :meth:`go_up` 分开是用户选定的**：Esc 纯粹退位置，退不掉的时候什么也不做，也不
+        顺手撤掉一条条件 —— 「按 Esc 退一层，结果条件少了一条」这件事没法从屏幕上分辨出
+        「我退了」还是「我撤了一条」。
+        """
+        if not self._conditions:
+            return
+        self._conditions.pop()
+        self._editing_condition = None
+        self._apply_conditions()
+
     def _can_go_up(self) -> bool:
         """现在退不退得回去。菜单里的「上一级」与双击空白处都问它。
 
@@ -861,8 +884,6 @@ class MainWindow(
         library = self._library
         if library is None or self._grid.is_renaming():
             return False
-        if self._conditions:
-            return True  # 有得撤：撤一条筛选条件就是「上一层」（与 go_up 同一套判据）
         if self._drill_photos is not None:
             return True  # 日历点出来的那一格，退回去回日历（与 go_up 同一套判据）
         if self._group_view is not None:
@@ -1073,6 +1094,9 @@ class MainWindow(
         in_grid = self._stack.currentWidget() is self._grid_page
         idle = not self._grid.is_renaming() and not self._title_bar.is_editing()
         self._up_action.setEnabled(in_grid and idle and self._can_go_up())
+        # **「撤掉最后一条」不限于网格页**：条件是跨页的，在日历那一页也还在，于是那条 ⇧Esc 在
+        # 任何一页都要能用（ADR 0040 决策 11）。没条件时关掉，而不是按下去什么也不发生。
+        self._pop_condition_action.setEnabled(bool(self._conditions))
 
     # ---- 窗口 --------------------------------------------------------------
 

@@ -22,7 +22,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from library_helpers import set_library_ui  # noqa: E402
+from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtGui import QColor, QGuiApplication, QPalette  # noqa: E402
+from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 from waiting import wait_for_idle  # noqa: E402
 
@@ -293,13 +295,13 @@ def test_clearing_a_condition_on_the_calendar_clears_the_toolbar_too(
     window.close()
 
 
-def test_clearing_conditions_with_escape_clears_the_toolbar(
+def test_clearing_conditions_in_the_search_field_clears_the_toolbar(
     qt_app: QApplication, tmp_path: Path, make_photo
 ) -> None:
-    """**Esc 撤光**也要清掉工具条上那几枚 —— 与点 ✕ 同一个毛病的两条路。
+    """**在搜索框里撤光**也要清掉工具条上那几枚 —— 与点 ✕ 同一个毛病的两条路。
 
-    点 ✕ 那条已经钉住，但撤光有三条独立的路（点 ✕、输入框清空回车、Esc），而它们各自走一遍
-    ``_apply_conditions``。只钉一条的话，另两条各自坏掉都没人看着 —— 而症状一样。
+    点 ✕ 那条已经钉住，但撤光有几条独立的路（点 ✕、输入框里清空回车、``⇧Esc``），而它们各自走
+    一遍 ``_apply_conditions``。只钉一条的话，另几条各自坏掉都没人看着 —— 而症状一样。
     """
     root = _library(tmp_path, make_photo)
     window = _open(qt_app, root, tmp_path / "会话", browse_mode=BROWSE_MODE_CALENDAR)
@@ -308,14 +310,15 @@ def test_clearing_conditions_with_escape_clears_the_toolbar(
     _filter(qt_app, window, "#城市 西安")
     _settle(qt_app, window)
 
-    # Esc 撤的是**最后一条**（`dismiss` 走的是这条路），撤两次才撤得光。
-    window._search_field.dismiss()
-    _settle(qt_app, window)
-    window._search_field.dismiss()
-    _settle(qt_app, window)
+    # **先让输入框空下来**：`dismiss` 的第一件事是清空输入框（那是「这一下」），输入框空了才轮到撤
+    # 条件。刚加完条件时框里还留着那一串，于是连按两下只撤了一条 —— 症状是「撤不掉」，
+    # 而真因是少按了一下。**按到条件真的撤光为止**，不写死按几下。
+    while _chips(window):
+        window._search_field.dismiss()
+        _settle(qt_app, window)
 
-    assert _chips(window) == [], "前提不成立：Esc 没能撤光条件"
-    assert _calendar_chips(window) == [], f"Esc 撤光后工具条上还留着 {_calendar_chips(window)}"
+    assert _chips(window) == [], "前提不成立：没能撤光条件"
+    assert _calendar_chips(window) == [], f"撤光后工具条上还留着 {_calendar_chips(window)}"
     window.close()
 
 
@@ -440,7 +443,11 @@ def test_entering_an_album_keeps_the_filter(
 def test_entering_a_group_keeps_the_filter(
     qt_app: QApplication, tmp_path: Path, make_photo
 ) -> None:
-    """进出分组同样保留条件 —— 分组也是「这一层」。"""
+    """进出分组同样保留条件 —— 分组也是「这一层」。
+
+    **``go_up`` 退出分组，条件一条都不动**（ADR 0040 决策 11）：按 Esc 退一层，看到的必须是
+    「我退了」，而不是「我撤了一条条件」—— 那两件事在屏幕上分不出来。
+    """
     root = _library(tmp_path, make_photo)
     window = _open(qt_app, root, tmp_path / "会话", browse_mode=BROWSE_MODE_ALBUMS)
     _settle(qt_app, window)
@@ -449,11 +456,11 @@ def test_entering_a_group_keeps_the_filter(
     _settle(qt_app, window)
     _filter(qt_app, window, "jpg")
 
-    window.go_up()  # 撤掉那一条条件
+    window.go_up()
     _settle(qt_app, window)
 
-    assert _chips(window) == []
-    assert window._group_view is not None, "撤光条件就该回到原来那一组"
+    assert window._group_view is None, "Esc 退分组没退出去"
+    assert _chips(window) == ["文件名：jpg"], "Esc 顺手撤掉了一条条件 —— 它只该管位置"
     window.close()
 
 
@@ -519,16 +526,135 @@ def test_the_photos_of_this_level_survive_even_with_no_card(
 # ---- 撤销与清空（与整库检索同一套心智）--------------------------------------------
 
 
-def test_escape_still_removes_the_conditions_one_by_one(
+def test_escape_leaves_the_folder_without_touching_the_conditions(
     qt_app: QApplication, tmp_path: Path, make_photo
 ) -> None:
-    """`Esc` 逐条撤条件，撤光之后这一层恢复完整 —— 一个动作都不多。"""
+    """在子相册里按 `Esc`：**退出去，条件一条都不少** —— 用户报的那个 bug。
+
+    用户原话：「点开一个格子后，esc 退出一层就会清空一个筛选条件」，相册与日历**两边都**有。
+
+    根因是判据的**顺序**：那一版把条件排在文件夹 / 那一格之前（ADR 0026 决策 9「条件又深一级」），
+    于是只要有条件就永远退不出位置 —— 按 Esc 看到的是一条条件被撤掉而**位置纹丝不动**，而那两件
+    事在屏幕上分不出来，用户会以为程序卡住了。
+
+    量的是**位置真的退了**与**条件真的没少**：只断一条的话，另一条坏掉都没人看着 —— 而症状一样。
+    """
+    root = _library(tmp_path, make_photo)
+    window = _open(qt_app, root, tmp_path / "会话", browse_mode=BROWSE_MODE_ALBUMS)
+    _settle(qt_app, window)
+    _filter(qt_app, window, "#相机 Canon")
+    _filter(qt_app, window, "#城市 西安")
+    _settle(qt_app, window)
+    child = root / "海边"
+    window.enter_folder(child)
+    _settle(qt_app, window)
+    assert window._current_dir == child, "前提不成立：没进到子相册里"
+    assert _chips(window) == ["相机：Canon", "城市：西安"]
+
+    window.go_up()
+    _settle(qt_app, window)
+
+    assert window._current_dir == root, "Esc 没能退出子相册"
+    assert _chips(window) == ["相机：Canon", "城市：西安"], (
+        f"Esc 顺手撤掉了条件：{_chips(window)} —— 它只该管位置"
+    )
+    window.close()
+
+
+def test_escape_returns_to_the_calendar_without_touching_the_conditions(
+    qt_app: QApplication, tmp_path: Path, make_photo
+) -> None:
+    """日历里点开一格之后按 `Esc`：**退回日历，条件一条都不少**。
+
+    与相册那条同一个根因（判据顺序），但**这条路要单独钉**：日历那一格走的是
+    ``_drill_photos``，相册走的是 ``_current_dir``，两条独立的分支 —— 只钉一条的话另一条坏掉
+    没人看着，而症状一模一样。
+    """
+    root = _library(tmp_path, make_photo)
+    window = _open(qt_app, root, tmp_path / "会话", browse_mode=BROWSE_MODE_CALENDAR)
+    _settle(qt_app, window)
+    _filter(qt_app, window, "#相机 Canon")
+    _settle(qt_app, window)
+    window._enter_calendar_drill([], "3 天前")
+    _settle(qt_app, window)
+    assert window._drill_photos is not None, "前提不成立：没点开那一格"
+
+    window.go_up()
+    _settle(qt_app, window)
+
+    assert window._drill_photos is None, "Esc 没能退回日历"
+    assert _chips(window) == ["相机：Canon"], (
+        f"Esc 顺手撤掉了条件：{_chips(window)} —— 它只该管位置"
+    )
+    window.close()
+
+
+def test_escape_does_nothing_when_there_is_nowhere_to_go(
+    qt_app: QApplication, tmp_path: Path, make_photo
+) -> None:
+    """在最外层（有条件、没进任何东西）按 `Esc`：**什么也不做**，也不撤条件。
+
+    **这一条钉的是「退不动就安静地不动」**：撤条件那条路挪到 ``⇧Esc`` 之后，``Esc`` 就没有
+    「顺手做点什么」的理由了。退不掉而顺手撤一条，用户完全无法预期。
+    """
     root = _library(tmp_path, make_photo)
     window = _open(qt_app, root, tmp_path / "会话")
     _settle(qt_app, window)
     _filter(qt_app, window, "#相机 Canon")
+    _settle(qt_app, window)
+    assert window._can_go_up() is False, "前提不成立：这一层其实退得回去"
 
     window.go_up()
+    _settle(qt_app, window)
+
+    assert _chips(window) == ["相机：Canon"], "退不动的时候 Esc 撤掉了一条条件"
+    window.close()
+
+
+def test_shift_escape_is_the_key_that_pops_a_condition(
+    qt_app: QApplication, tmp_path: Path, make_photo
+) -> None:
+    """``⇧Esc`` 这一键**真的按得动** —— 钉的是键，不只是那个方法。
+
+    **量的是按键事件而不是直接调方法**：上面几条走的是 ``pop_last_condition()``，那与「这个键
+    接上了没有」是两件事 —— 快捷键没挂上、上下文写错、或者被输入框先吃掉，症状都是「按了没反应」，
+    而上面几条照样绿。
+
+    按键发在**网格**上（条件生效时焦点通常在这儿），不在输入框里。
+    """
+    root = _library(tmp_path, make_photo)
+    window = _open(qt_app, root, tmp_path / "会话")
+    _settle(qt_app, window)
+    _filter(qt_app, window, "#相机 Canon")
+    _filter(qt_app, window, "#城市 西安")
+    _settle(qt_app, window)
+    assert len(_chips(window)) == 2, "前提不成立：两条条件没加上"
+
+    QTest.keyClick(window._grid, Qt.Key.Key_Escape, Qt.KeyboardModifier.ShiftModifier)
+    _settle(qt_app, window)
+
+    assert _chips(window) == ["相机：Canon"], f"⇧Esc 没能撤掉最后一条：{_chips(window)}"
+    window.close()
+
+
+def test_shift_escape_removes_the_conditions_one_by_one(
+    qt_app: QApplication, tmp_path: Path, make_photo
+) -> None:
+    """``⇧Esc`` 逐条撤条件，撤光之后这一层恢复完整 —— 一个动作都不多。
+
+    **这一条从 ``Esc`` 挪到了 ``⇧Esc``**（ADR 0040 决策 11，用户选定的）：Esc 退位置而不再撤条件。
+
+    命中的那张是 ``海边-01.jpg``（``CAMERAS`` 里 Canon 是它、山是 Sony）—— 断言里的名字是**照着
+    模块那份对照表抄的**：凭印象写会写成「山」，而症状是停在「条件没生效」那条红上，真因却是我
+    记错了哪张是 Canon。
+    """
+    root = _library(tmp_path, make_photo)
+    window = _open(qt_app, root, tmp_path / "会话")
+    _settle(qt_app, window)
+    _filter(qt_app, window, "#相机 Canon")
+    assert _names(window) == ["海边-01.jpg"], "前提不成立：条件没生效"
+
+    window.pop_last_condition()
     _settle(qt_app, window)
 
     assert _chips(window) == []

@@ -899,7 +899,7 @@ def test_the_breadcrumb_says_the_search_spans_the_library(
     _settle(qt_app, window)
     _search(qt_app, window, "山")
     _settle(qt_app, window)
-    window.go_up()  # 撤掉那一条条件
+    window.pop_last_condition()  # 撤掉那一条条件（Esc 现在只退位置）
     _settle(qt_app, window)
     assert _trail(window) == ["照片", "旅行", "2024"], "撤光条件就该回到原来那一层"
     window.close()
@@ -958,7 +958,7 @@ def test_the_breadcrumb_drops_the_group_while_searching(
 
     assert _trail(window) == ["照片", "搜索结果（3）", "文件名：jpg ✕"]
     assert len(_names(window)) == 3, "这一组里只有一张，搜出来的却是全库三张"
-    window.go_up()  # 撤掉那一条条件
+    window.pop_last_condition()  # 撤掉那一条条件（Esc 现在只退位置）
     _settle(qt_app, window)
     assert _trail(window) == ["照片", "Canon"], "撤光条件就该回到原来那一组"
     assert window._group_view is not None
@@ -1082,23 +1082,29 @@ def test_escape_while_editing_keeps_the_condition(
     window.close()
 
 
-def test_escape_removes_the_last_condition_one_by_one(
+def test_shift_escape_removes_the_last_condition_one_by_one(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
 ) -> None:
+    """``⇧Esc`` 逐条撤条件 —— 整库检索那边同样如此（ADR 0040 决策 11）。
+
+    **这一条从 ``go_up`` 挪到了 ``pop_last_condition``**：Esc 退位置而不再撤条件。整库检索与在
+    当前层筛选共用同一条 ``go_up``，所以两边一起挪 —— 只挪一半的话，用户在检索结果里按 Esc 撤掉
+    一条条件、在日历里按 Esc 却退出那一格，而那不是「两种模式的心智不同」，是同一条键两种行为。
+    """
     root = _library(tmp_path, make_photo)
     window = _open(qt_app, root, tmp_path / "会话")
     _settle(qt_app, window)
     _search(qt_app, window, "海边")
     _search(qt_app, window, "#相册 旅行")
 
-    window.go_up()
+    window.pop_last_condition()
     _settle(qt_app, window)
     assert _chips(window) == ["文件名：海边"]
 
-    window.go_up()
+    window.pop_last_condition()
     _settle(qt_app, window)
     assert _chips(window) == []
-    # 撤光了才是「回到原来那一层」：三张照片全回来了。
+    # 撤光了这一层才恢复完整：三张照片全回来了。
     assert _names(window) == ["山.jpg", "海边-01.jpg", "海边-02.jpg"]
     window.close()
 

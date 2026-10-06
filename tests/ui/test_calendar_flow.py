@@ -822,11 +822,16 @@ def test_clearing_a_search_comes_back_to_the_calendar(
     assert page.photo_count() == 1  # 三月那张仍停在这段日子里
 
 
-def test_the_last_condition_is_also_removed_with_escape(
+def test_clearing_the_last_condition_comes_back_to_the_calendar(
     qt_app: QApplication, calendar_window: MainWindow
 ) -> None:
-    """``Esc`` 撤掉最后一条条件是同一件事 —— 也要回日历：条件比任何一层都深，
-    撤光之后就退到底了，底下那一层就是日历（ADR 0026 决策 9）。
+    """**撤光最后一条条件就回到日历**，且停在原来那一段。
+
+    走的是 ``pop_last_condition``（``⇧Esc``）而不再是 ``go_up``（``Esc``）—— 后者只管位置了
+    （ADR 0040 决策 11）。**回来的那一步没变**，变的只是从哪个键走：撤光条件后那一层不存在了，
+    于是摆在最前面的就是日历。
+
+    「停在原来那一段」一起钉：日历的锚点不该被这一趟检索/撤销挪走。
     """
     window = calendar_window
     page = window._calendar_page
@@ -838,7 +843,7 @@ def test_the_last_condition_is_also_removed_with_escape(
     _settle_everything(qt_app, window)
     assert window._stack.currentWidget() is window._grid_page
 
-    window.go_up()
+    window.pop_last_condition()
     _settle_everything(qt_app, window)
 
     assert not window._conditions
