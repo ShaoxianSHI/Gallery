@@ -18,6 +18,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from library_helpers import set_library_ui  # noqa: E402
+from outline_helpers import assert_no_darker_dots  # noqa: E402
 from PIL import Image  # noqa: E402
 from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtGui import QGuiApplication, QKeySequence  # noqa: E402
@@ -49,9 +50,11 @@ from gallery.core.metadata.journal import read_records  # noqa: E402
 from gallery.core.metadata.metadata_edit import MetadataEdit, MetadataState  # noqa: E402
 from gallery.core.metadata.place_edit import PlaceEdit, PlaceState, plan_place_edit  # noqa: E402
 from gallery.core.metadata.writeback import Assignment  # noqa: E402
+from gallery.ui import theme  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
+from gallery.ui.outline import opaque_over  # noqa: E402
 from gallery.ui.panels.metadata import CONTENT_PAD, MetadataPanel  # noqa: E402
-from gallery.ui.panels.metadata_edit import MetadataEditDialog  # noqa: E402
+from gallery.ui.panels.metadata_edit import FIELD_RADIUS, MetadataEditDialog  # noqa: E402
 
 PHOTO = "一张.jpg"
 
@@ -1045,6 +1048,31 @@ def test_the_time_boxes_sit_above_the_place_boxes(qt_app: QApplication) -> None:
 
     assert ys == sorted(ys)
     assert len(set(ys)) == len(ys)  # 五个框各占一行，没有并排
+
+
+def test_the_field_outline_has_no_darker_dots(qt_app: QApplication) -> None:
+    """输入框那一圈轮廓上**那八个等分点不比别处更深**。
+
+    与改名输入框、搜索胶囊、事件面板同源（量法在 :mod:`tests.ui.outline_helpers`）：Qt 把
+    样式表那一圈描成八段，接缝处的半透明边框被调两遍就叠成更深的点
+    （理由见 :mod:`gallery.ui.outline`）。
+    """
+    app_theme = theme.current_theme()
+    fill = opaque_over(app_theme.text_at(0.08), app_theme.background)
+    dialog = _dialog(None, PlaceState(city="苏州"))
+    dialog.show()
+    qt_app.processEvents()
+    field = dialog._city
+    # 焦点那一档还带一个光标，量的不是常态那一圈。
+    field.clearFocus()
+    dialog.setFocus()
+    qt_app.processEvents()
+    # 底色必须先是不透明的：半透明底色在离屏抓取里抓到一片透明，下面那条断言就成了空转
+    # （抓出来全是 0，看着像「一圈都很深」）。做法见 :func:`dialog_style`。
+    inside = field.grab().toImage().pixelColor(field.width() - 20, field.height() // 2)
+    assert inside.alpha() == 255, "输入框底色不透明，这条守护才量得到东西"
+
+    assert_no_darker_dots(field, fill.lightness(), radius=FIELD_RADIUS, label="元数据输入框")
 
 
 def test_copy_then_paste_moves_the_place_to_another_photo(qt_app: QApplication) -> None:

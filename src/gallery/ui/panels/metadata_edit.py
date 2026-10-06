@@ -41,6 +41,7 @@ from gallery.core.places.countries import place_label
 from gallery.core.places.dataset import Place
 from gallery.core.places.resolver import PlaceResolver
 from gallery.ui import theme
+from gallery.ui.outline import opaque_over
 from gallery.ui.theme import AppTheme, rgba
 
 #: 少于这么几个字就不查：城市库里有「苏」这样一个真实条目，用户敲下第一个字就恰好命中
@@ -56,6 +57,9 @@ COORDINATE_DECIMALS: Final = 6
 #: 它窄得多；九个键（4 个字的那几个）也靠它才摆得下。
 FIELD_MIN_WIDTH: Final = 220
 
+#: 输入框那一圈的圆角半径（点）—— 与搜索胶囊、改名输入框同一档手感。
+FIELD_RADIUS: Final = 5
+
 COPIED_HINT_MS: Final = 1400
 
 #: 错误那一行留几行的位置。固定高度是为了对话框不跳：报错前后它都在那儿。
@@ -63,7 +67,13 @@ ERROR_LINES: Final = 2
 
 
 def dialog_style(app_theme: AppTheme) -> str:
-    """对话框的样式。文字色全部从主题派生，与元数据面板同一份底色。"""
+    """对话框的样式。文字色全部从主题派生，与元数据面板同一份底色。
+
+    输入框那圈边框与它自己的底色**先合成成不透明的**（理由见 :mod:`gallery.ui.outline`）：
+    Qt 把样式表那一圈描成八段，半透明的颜色在接缝处被调两遍就深一点。
+    """
+    fill = opaque_over(app_theme.text_at(0.08), app_theme.background)
+    edge = opaque_over(app_theme.text_at(0.18), fill)
     return f"""
     QDialog {{ background: {rgba(app_theme.background)}; }}
     QLabel {{ color: {rgba(app_theme.text_at(0.92))}; font-size: 12px; }}
@@ -71,9 +81,9 @@ def dialog_style(app_theme: AppTheme) -> str:
     QLabel#metadataEditError {{ color: {rgba(app_theme.error)}; font-size: 11px; }}
     QLineEdit, QComboBox {{
         color: {rgba(app_theme.text_at(0.92))};
-        background: {rgba(app_theme.text_at(0.08))};
-        border: 1px solid {rgba(app_theme.text_at(0.18))};
-        border-radius: 5px;
+        background: {rgba(fill)};
+        border: 1px solid {rgba(edge)};
+        border-radius: {FIELD_RADIUS}px;
         padding: 3px 6px;
         font-size: 12px;
     }}
@@ -808,6 +818,7 @@ __all__ = [
     "COPIED_HINT_MS",
     "ERROR_LINES",
     "FIELD_MIN_WIDTH",
+    "FIELD_RADIUS",
     "LOOKUP_DELAY_MS",
     "ClipboardContent",
     "MetadataEditDialog",
