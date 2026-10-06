@@ -75,6 +75,18 @@ def flattened_entries(entries: Sequence[GridEntry]) -> list[GridEntry]:
 
 
 class WriteOpsMixin:
+    """**会动用户文件的那些入口** —— 粘贴 / 新建相册 / 复制与移动到相册 / 改名 /
+    编辑元数据 / 移到废纸篓 / 撤销。
+
+    **红线 1 在代码里就靠这一个文件变成一句可查的话**：``tests/test_guards.py`` 扫的是
+    「调用 ``Library.rename_entry`` / ``move_to_trash`` / ``copy_into`` / ``move_into`` /
+    ``create_album`` / ``undo_last_write`` / ``write_metadata_edit`` 的地方只许是这一个
+    文件」。别的模块要动用户文件，只能从这里进。
+
+    而它**自己一个文件都不碰**（另一条守护盯着）：它只决定「什么时候调、成功了怎么改
+    界面」，怎么动、怎么记账、怎么撤销全在 ``core/metadata/*``（红线 4）。
+    """
+
     def _paste_target(self) -> Path | None:
         """⌘V 要粘进哪个文件夹 —— **先看选区，再看这一层**（ADR 0018 决策 1、决策 7）。
 

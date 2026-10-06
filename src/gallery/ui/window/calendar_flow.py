@@ -103,8 +103,8 @@ class CalendarFlowMixin:
         （`_load_detail`），于是这里走与「全部照片」同一遍平铺扫描。
 
         开头与 :meth:`_reload_level` 一样：换页就是换一层，在途的扫描与元数据读取一律作废重开。
-        **还要把这一层记成日历那一层**（ADR 0025 决策 6），否则从日历退回相册时会答成「还是
-        这一层」，恢复上一页停着的那一格。
+        **还要把这一层记成日历那一层**（ADR 0033 决策 11 末尾引的 ADR 0025 决策 6），
+        否则从日历退回相册时会答成「还是这一层」，恢复上一页停着的那一格。
         """
         if self._scan_job is not None:
             self._runner.cancel(self._scan_job)

@@ -166,8 +166,15 @@ def _undo_metadata(root: Path, record: WriteRecord, *, writer: MetadataWriter | 
     """把写回去的字段改回原值（ADR 0030）。
 
     **冲突的字段留在原地并如实报告**：它们在 Gallery 之外被改过，按原值盖回去就是毁掉
-    别人的改动。撤成功的那几条仍记一条 :data:`ACTION_UNDO_METADATA` 把这次撤销弹栈，于是
-    再按一次 ⌘Z 时栈顶仍是那条没撤干净的写回。
+    别人的改动。
+
+    **弹不弹栈分两种情形**（原先这句话把两件事混成一句，于是既说「弹栈」又说
+    「栈顶仍是它」，自相矛盾）：
+
+    - **部分冲突**（有撤得成的字段）：撤成功的那几条记 ``ok`` → 这次撤销被弹栈。
+      它们确实回到原值了，再让用户按一次去重撤没有意义。
+    - **全冲突**（一项都撤不了）：记 ``failed`` → **不弹栈**，栈顶仍是当初那条写回，
+      再按一次会重试。留着是因为外部那一方可能改回去了。
     """
     result = undo_metadata(root, record, writer=writer)
     return UndoResult(

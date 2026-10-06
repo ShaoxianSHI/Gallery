@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from collections.abc import Iterable
 from pathlib import Path
 
 from PySide6.QtGui import QImage
@@ -40,7 +41,20 @@ class ThumbStore:
         self._evict_extra_edges()
 
     def _evict_extra_edges(self) -> None:
-        """留不下那么多档时，扔掉**离当前档最远**的那几档（仍在用的最后才扔）。"""
+        """留不下那么多档时，**只按边长留最小的 :attr:`_edges` 档**。
+
+        **不看当前档，也不保正在用的那一档。** 原先那句 docstring 写的是「扔掉离当前档
+        最远的、仍在用的最后才扔」—— 那是一个**没有实现**的策略：代码只按边长升序排、
+        留前 N 档。照那句去改代码的人会以为已有保护。
+
+        还有一个更要紧的次序问题：:meth:`set_edge` 是**先**淘汰、**后**换当前档，所以刚
+        切过去的那一档可能已经被上一轮淘汰掉了（实测：存 48/192/288、只留 2 档，切到 48
+        时那一档已经不在，``get`` 返回 ``None``）。
+
+        默认配置下走不到这里：日历三层恰好三档（年 48 / 周 192 / 月 288），
+        而 :data:`DEFAULT_EDGES` 正是 3 —— 多一档都还没有。要改这个策略的话连着
+        :meth:`set_edge` 的次序一起改。
+        """
         by_edge: dict[int, list[_Key]] = {}
         for key in self._images:
             by_edge.setdefault(key[1], []).append(key)
@@ -66,10 +80,20 @@ class ThumbStore:
         """当前档上有没有这一张；没有就是还没出图（宁可空着等重取）。"""
         return self._images.get((path, self._edge))
 
-    def forget(self, paths: object) -> None:
-        """这些路径上的文件变了：所有档位上的那几份都忘掉（与流水线的 ``forget`` 配对）。"""
-        for path in paths if isinstance(paths, (list, tuple, set, frozenset)) else (paths,):
-            target = Path(path)  # type: ignore[arg-type]
+    def forget(self, paths: Iterable[Path]) -> None:
+        """这些路径上的文件变了：所有档位上的那几份都忘掉（与流水线的 ``forget`` 配对）。
+
+        收**真的** ``Iterable``，而不是靠 ``isinstance`` 猜来的是列表还是单个路径。
+        缺陷现场：原先签名是 ``paths: object``，用
+        ``isinstance(paths, (list, tuple, set, frozenset))`` 分流 ——
+        而 :meth:`page.CalendarPage.forget_thumbnails` 的签名承诺 ``Iterable[Path]`` 并
+        原样透传，于是传一个**生成器**（它恰好是最自然的写法）时两个分支都不成立，
+        那个生成器被当成单个路径交给 ``Path()``，**直接抛 TypeError**。
+        症状是「文件变了但那一格永远停在旧图上」，而栈顶只在日历页点开那张照片时才出现。
+
+        所以这里 ``list(...)`` 一次收干净，下面那个循环才拿得到真路径。
+        """
+        for target in {Path(path) for path in paths}:
             for key in [key for key in self._images if key[0] == target]:
                 self._images.pop(key, None)
 

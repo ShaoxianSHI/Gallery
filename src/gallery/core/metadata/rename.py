@@ -186,8 +186,10 @@ def undo_rename_record(root: Path, record: WriteRecord) -> RenameResult:
 def _guard(root: Path, source: Path, target: Path) -> None:
     """确认这次改名落在允许的范围内。
 
-    扫描器本来就不会把点开头的目录摆进网格，这里仍然挡一道：这是唯一会动用户
-    文件的入口，值得对「库根」「配置目录」多一层保险。
+    扫描器本来就不会把点开头的目录摆进网格，这里仍然挡一道：这是**会动用户文件的入口
+    之一**（改名 / 移到废纸篓 / 粘贴 / 移动到相册 / 新建相册 / 写回元数据，六处各有一份
+    同名的 ``_guard``，都经 :func:`~gallery.core.paths.guard_within_root`），值得对
+    「库根」「配置目录」多一层保险。
     """
     root = Path(root)
     for _path in (source, target):

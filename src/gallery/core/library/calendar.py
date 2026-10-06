@@ -46,7 +46,7 @@ WEEKDAY_HEADERS: Final[tuple[str, ...]] = tuple(f"星期{name}" for name in WEEK
 #: 一格按天分的桶。
 DayBuckets = Mapping[datetime.date, Sequence[PhotoRef]]
 
-#: 一格按（天, 小时）分的桶。周 / 日两层的每一个小时格子就是其中一项。
+#: 一格按（天, 小时）分的桶。**周视图**的每一个小时格子就是其中一项。
 HourBuckets = Mapping[tuple[datetime.date, int], Sequence[PhotoRef]]
 
 
@@ -219,7 +219,7 @@ def group_by_day(
 def group_by_hour(
     photos: Iterable[PhotoRef], values: Mapping[Path, PhotoFacets]
 ) -> dict[tuple[datetime.date, int], list[PhotoRef]]:
-    """按（天, 小时）分桶 —— 周 / 日两层每一个小时格子就是其中一项。
+    """按（天, 小时）分桶 —— **周视图**每一个小时格子就是其中一项。
 
     **分钟与秒不参与**：一次连拍 48 张常常全在同一分钟，按小时归一后那一格只剩「放几张」
     一个问题，而不是一小时切 48 条什么都画不出来的细条。
@@ -254,7 +254,7 @@ def count_days(buckets: DayBuckets, days: Iterable[datetime.date]) -> int:
 
 
 def count_hours(buckets: HourBuckets, days: Iterable[datetime.date]) -> int:
-    """同上，按小时的桶来数。周 / 日两层一天要过 24 个格子，所以那一次多 24 次查表。"""
+    """同上，按小时的桶来数。**周视图**一天要过 24 个格子，所以那一次多 24 次查表。"""
     return sum(len(buckets.get((day, hour), ())) for day in days for hour in range(24))
 
 

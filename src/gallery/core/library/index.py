@@ -112,8 +112,11 @@ type SqlValue = str | int | float | None
 class FacetIndex:
     """按 ``(路径, 大小, 修改时间)`` 缓存 facet 值。
 
-    ``path`` 为 ``None`` 时**不落盘**：只在内存里缓存本次会话读到的值
-    （库所在卷只读、或用户不想在库里留任何文件时用）。
+    ``path`` 为 ``None`` 时**不落盘**：只在内存里缓存本次会话读到的值 ——
+    库所在卷只读、配置目录建不出来时（见 :mod:`gallery.core.library.facade`）。
+
+    **只有那一个来路。** 曾经这里还写着「或用户不想在库里留任何文件时」，那对应的是
+    ADR 0038 已删掉的 ``cache_in_library`` 开关 —— 别把它加回来。
     """
 
     def __init__(self, path: Path | None = None) -> None:

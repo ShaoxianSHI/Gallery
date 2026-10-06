@@ -108,12 +108,15 @@ class LibraryUIState:
         )
 
     def with_thumbnail_edge(self, edge: int | None) -> LibraryUIState:
+        """换个缩略图档位返回新的一份，原样不动（它是不可变的）。"""
         return replace(self, thumbnail_edge=edge)
 
     def with_browse_mode(self, mode: str | None) -> LibraryUIState:
+        """换浏览方式（平铺 / 相册 / 日历）返回新的一份。"""
         return replace(self, browse_mode=mode)
 
     def with_metadata_visible(self, visible: bool | None) -> LibraryUIState:
+        """换「网格里显不显示这一行元数据」返回新的一份。"""
         return replace(self, metadata_visible=visible)
 
     def with_calendar_level(self, level: str) -> LibraryUIState:

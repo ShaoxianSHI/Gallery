@@ -24,6 +24,7 @@ from gallery.core.metadata.journal import (
     read_records,
 )
 from gallery.core.metadata.place_edit import PlaceEdit, PlaceState, plan_place_edit
+from gallery.core.metadata.undo import pending_undo_runs  # noqa: E402
 from gallery.core.metadata.writeback import (
     CAPTURE_TIME_TAGS,
     COORDINATE_TAGS,
@@ -544,6 +545,9 @@ def test_undo_skips_a_field_that_was_changed_outside_gallery(
     assert not result.ok
     assert [item.name for item in result.conflicts] == ["XMP:City", "IPTC:City"]
     assert writer.fields["XMP:City"] == "苏州"
+    # 这里坐标那几条**没被外部改过**，所以是「部分冲突」：能撤的照撤 → 记 ok → 弹栈。
+    # 「一项都没撤成」（那才是 failed、不弹栈、再按一次会重试）由下面那条用例负责。
+    assert read_records(library)[-1].result == RESULT_OK
 
 
 def test_undo_restores_the_fields_that_are_untouched(library: Path, photo: PhotoRef) -> None:
@@ -557,6 +561,32 @@ def test_undo_restores_the_fields_that_are_untouched(library: Path, photo: Photo
     assert "EXIF:GPSLatitude" not in writer.fields  # 坐标那四条照撤
     assert writer.fields["XMP:City"] == "苏州"  # 被外部改过的那一条留在原处
     assert len(result.restored) == len(record.changes) - 1
+
+
+def test_an_undo_that_could_restore_nothing_stays_on_the_stack(
+    library: Path, photo: PhotoRef
+) -> None:
+    """**一项都没撤成时，那条写回留在栈上** —— 再按一次 ⌘Z 会重试。
+
+    两种情形必须分开，注释里曾经把它们混成一句：
+
+    - **部分冲突**（有能撤的字段）：撤成功的那几条记 ``ok`` → 弹栈。它们确实回到原值了，
+      再让用户去重撤一遍没有意义。
+    - **全冲突**（一个都撤不了）：记 ``failed`` → :func:`pending_undo_runs` 的
+      ``if not record.succeeded: continue`` 跳过它 → **栈顶仍是当初那条写回**。
+      留着是因为外部那一方可能改回去：那样这一次重试就撤得掉。
+    """
+    writer = FakeWriter()
+    record = _written_record(library, writer, photo)
+    for change in record.changes:  # 每一项都在 Gallery 之外被改过
+        writer.fields[change.tag] = "别人写的"
+
+    result = undo_metadata(library, record, writer=writer)
+
+    assert result.restored == ()
+    assert read_records(library)[-1].result == RESULT_FAILED
+    # 记的是 failed，于是下一次读栈时会跳过它 —— **栈上还有那条写回**。
+    assert [run[0].result for run in pending_undo_runs(library)] == [RESULT_OK]
 
 
 def test_undoing_a_gone_file_says_so(library: Path, photo: PhotoRef) -> None:
