@@ -299,11 +299,12 @@ class EventEditDialog(QDialog):
     def _suggest_title(self) -> None:
         """名称栏自动长成「目的地 · 日期」，**直到用户动手改过它为止**。
 
-        判据是「名称栏现在不是用户写的」：空着，或者还是上一次自动生成的那一句。手写的名字
-        是他的意思，自动生成的那句不是。
+        判据是「名称栏里那一句还是不是上次自动生成的那句」。不是了就归用户写 —— 手写的名字是
+        他的意思，而**把这一栏删空同样是**（删空与「还没填」在字符上一样，靠 ``_auto_title``
+        区分：用户清空后它就不等于那句自动生成的了）。
         """
         current = self._text("title")
-        if current and current != self._auto_title:
+        if current != self._auto_title:
             return
         suggestion = suggested_title(
             self._kind, self._text("destination"), self._text("started_on")

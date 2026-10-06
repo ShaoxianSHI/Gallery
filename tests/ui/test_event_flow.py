@@ -669,6 +669,22 @@ def test_the_name_grows_by_itself_until_the_user_types_one(qt_app: QApplication)
     assert dialog._text("title") == "我自己起的名字"
 
 
+def test_clearing_the_generated_name_keeps_it_clear(qt_app: QApplication) -> None:
+    """把自动生成的名称删掉之后**不许自己长回来** —— 否则用户永远输不进自己的名字。
+
+    删空与「还没填」在字符上一样，所以判据只能是「它是不是上次自动生成的那一句」。
+    """
+    dialog = EventEditDialog(None, TRIP)
+    assert dialog._text("title") == "新的旅行"
+
+    dialog._fields["title"].clear()
+    assert dialog._text("title") == ""
+
+    dialog._fields["title"].setText("2026 京都")
+    dialog._fields["destination"].setText("京都")
+    assert dialog._text("title") == "2026 京都"
+
+
 def test_editing_an_existing_event_prefills_it(qt_app: QApplication) -> None:
     """改一个已有事件时那一格不少，而「按日期范围加入」收起来（那里已经在讨论改内容了）。"""
     event = Event(
