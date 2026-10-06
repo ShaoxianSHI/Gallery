@@ -21,14 +21,15 @@ from typing import Final
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
-    QComboBox,
     QDialog,
     QFormLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -53,8 +54,8 @@ ERROR_LINES: Final = 2
 #: 输入框至少这么宽（「United States」那种地名放不下）。
 FIELD_MIN_WIDTH: Final = 220
 
-#: 每一个字段是哪种控件 —— 下拉还是输入框。**由字段自己的声明说了算**，没有第三种。
-type FieldWidget = QLineEdit | QComboBox
+#: 每一个字段是哪种控件 —— 一排按钮还是输入框。**由字段自己的声明说了算**，没有第三种。
+type FieldWidget = QLineEdit | ChoiceButtons
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +78,53 @@ class EventEdit:
         return self.draft.text("ended_on") or self.first_day
 
 
+class ChoiceButtons(QWidget):
+    """有值域的字段摆成一排按钮：点一下选中，再点一下取消（都不选 = 不记这一项）。
+
+    比下拉少一次展开的动作，五个评分也一眼全在。**单选由这一层自己管**（``QButtonGroup``
+    设成非互斥）：互斥的组不给「再点一下把当前那个取消」，而评分是可不记的。
+    """
+
+    def __init__(self, choices: tuple[str, ...], parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._buttons: dict[str, QPushButton] = {}
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(4)
+        group = QButtonGroup(self)
+        group.setExclusive(False)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        # 与其余字段同宽：这一排要铺满输入框那一列，不是各占自己那一小块。
+        self.setMinimumWidth(FIELD_MIN_WIDTH)
+        for choice in choices:
+            button = QPushButton(choice)
+            button.setObjectName("eventEditChoice")
+            button.setCheckable(True)
+            # 每个按钮都 Expanding：五个平分这一排（用户要的就是「铺满这一排」）。
+            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            # 过一层 lambda：``clicked`` 那个 bool 穿不过 ``partial`` 的参数自省。
+            button.clicked.connect(
+                lambda checked=False, chosen=choice: self._on_pressed(chosen, checked)
+            )
+            row.addWidget(button)
+            self._buttons[choice] = button
+            group.addButton(button)
+
+    def _on_pressed(self, choice: str, checked: bool) -> None:
+        if checked:
+            for other, button in self._buttons.items():
+                if other != choice:
+                    button.setChecked(False)
+
+    def value(self) -> str:
+        """选中的那一项；都没选就是空串。"""
+        return next((choice for choice, button in self._buttons.items() if button.isChecked()), "")
+
+    def set_value(self, text: str) -> None:
+        for choice, button in self._buttons.items():
+            button.setChecked(choice == text)
+
+
 def dialog_style(app_theme: AppTheme) -> str:
     """对话框的样式。文字色全部从主题派生，与元数据编辑器同一份底色。"""
     return f"""
@@ -85,7 +133,7 @@ def dialog_style(app_theme: AppTheme) -> str:
     QLabel#eventEditTitle {{ font-size: 13px; font-weight: 600; }}
     QLabel#eventEditHint {{ color: {rgba(app_theme.text_at(0.62))}; font-size: 11px; }}
     QLabel#eventEditError {{ color: {rgba(app_theme.error)}; font-size: 11px; }}
-    QLineEdit, QComboBox {{
+    QLineEdit {{
         color: {rgba(app_theme.text_at(0.92))};
         background: {rgba(app_theme.text_at(0.08))};
         border: 1px solid {rgba(app_theme.text_at(0.18))};
@@ -93,13 +141,17 @@ def dialog_style(app_theme: AppTheme) -> str:
         padding: 3px 6px;
         font-size: 12px;
     }}
-    QLineEdit:focus, QComboBox:focus {{ border: 1px solid {rgba(app_theme.link)}; }}
+    QLineEdit:focus {{ border: 1px solid {rgba(app_theme.link)}; }}
     QPushButton {{
         color: {rgba(app_theme.text_at(0.9))};
         background: {rgba(app_theme.text_at(0.12))};
         border: none; border-radius: 6px; padding: 5px 8px; font-size: 12px;
     }}
     QPushButton:hover {{ background: {rgba(app_theme.text_at(0.2))}; }}
+    QPushButton#eventEditChoice:checked {{
+        color: {rgba(app_theme.background)};
+        background: {rgba(app_theme.link)};
+    }}
     QCheckBox {{ color: {rgba(app_theme.text_at(0.78))}; font-size: 12px; }}
     """
 
@@ -188,12 +240,9 @@ class EventEditDialog(QDialog):
         return form
 
     def _build_field(self, field: EventField) -> FieldWidget:
-        """一个字段摆成什么控件：有值域的下拉，其余输入框。"""
+        """一个字段摆成什么控件：有值域的一排按钮，其余输入框。"""
         if field.choices:
-            combo = QComboBox()
-            combo.addItem("")  # 「不记这一项」
-            combo.addItems(field.choices)
-            return combo
+            return ChoiceButtons(field.choices)
         line = QLineEdit()
         line.setMinimumWidth(FIELD_MIN_WIDTH)
         if field.multiple:
@@ -241,8 +290,8 @@ class EventEditDialog(QDialog):
         for field in fields_of(self._kind):
             widget = self._fields[field.id]
             text = event.text(field.id)
-            if isinstance(widget, QComboBox):
-                widget.setCurrentText(text)
+            if isinstance(widget, ChoiceButtons):
+                widget.set_value(text)
             else:
                 widget.setText(text)
         self._auto_title = event.title
@@ -291,8 +340,8 @@ class EventEditDialog(QDialog):
 
     def _text(self, field_id: str) -> str:
         widget = self._fields.get(field_id)
-        if isinstance(widget, QComboBox):
-            return widget.currentText().strip()
+        if isinstance(widget, ChoiceButtons):
+            return widget.value()
         if isinstance(widget, QLineEdit):
             return widget.text().strip()
         return ""
@@ -328,6 +377,7 @@ def _with_hint(widget: QWidget, text: str) -> QWidget:
 __all__ = [
     "ERROR_LINES",
     "FIELD_MIN_WIDTH",
+    "ChoiceButtons",
     "EventEdit",
     "EventEditDialog",
     "dialog_style",

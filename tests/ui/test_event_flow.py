@@ -21,7 +21,6 @@ from PIL import ExifTags, Image  # noqa: E402
 from PySide6.QtCore import QTimer  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
-    QComboBox,
     QMenu,
     QMessageBox,
 )
@@ -33,7 +32,7 @@ from gallery.core.library.config import BROWSE_MODE_ALBUMS, prepare_library  # n
 from gallery.core.library.photos import GroupRef  # noqa: E402
 from gallery.core.library.session import SessionState, save_session  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
-from gallery.ui.panels.event_edit import EventEditDialog  # noqa: E402
+from gallery.ui.panels.event_edit import ChoiceButtons, EventEditDialog  # noqa: E402
 
 #: DateTimeOriginal 的标签编号与它在**Exif 子 IFD** 里（塞进主 IFD 读不出来）。
 DATETIME_ORIGINAL = 0x9003
@@ -578,14 +577,34 @@ def test_the_panel_is_built_from_the_field_definitions(qt_app: QApplication) -> 
     assert sorted(dialog._fields) == sorted(field.id for field in fields_of(TRIP))
 
 
-def test_a_rating_field_comes_up_as_a_choice(qt_app: QApplication) -> None:
-    """有值域的字段画成下拉，而**第一项是空的**（「不记这一项」）。"""
-    dialog = EventEditDialog(None, TRIP)
-    combo = dialog._fields["rating"]
+def test_a_rating_field_comes_up_as_a_row_of_five_buttons(qt_app: QApplication) -> None:
+    """有值域的字段画成**一排按钮**（用户要的是「一排 5 个按钮，铺满这一排」）。
 
-    assert isinstance(combo, QComboBox)
-    assert combo.currentText() == ""
-    assert [combo.itemText(i) for i in range(1, combo.count())] == ["1", "2", "3", "4", "5"]
+    点一下选中，再点一下取消 —— 评分是可不记的，所以「都不选」也是合法状态，
+    不再需要下拉里那个空选项。
+    """
+    dialog = EventEditDialog(None, TRIP)
+    dialog.show()
+    qt_app.processEvents()
+    choice = dialog._fields["rating"]
+
+    assert isinstance(choice, ChoiceButtons)
+    buttons = [choice._buttons[str(score)] for score in range(1, 6)]
+    assert [button.text() for button in buttons] == ["1", "2", "3", "4", "5"]
+    assert all(not button.isChecked() for button in buttons)
+    # 铺满这一排：五个平分（整数宽度除不尽时最多差 1 点），最右那个顶到右缘。
+    widths = [button.width() for button in buttons]
+    assert max(widths) - min(widths) <= 1
+    assert widths[0] > buttons[0].sizeHint().width()  # 被拉宽了，而不是各占自己那一小块
+    assert buttons[-1].geometry().right() >= choice.width() - 2
+    assert choice.width() == dialog._fields["title"].width()  # 与其余输入框同宽（铺满那一列）
+
+    buttons[2].click()
+    assert choice.value() == "3"
+    buttons[0].click()
+    assert choice.value() == "1"
+    buttons[0].click()
+    assert choice.value() == ""
 
 
 def test_the_name_grows_by_itself_until_the_user_types_one(qt_app: QApplication) -> None:
@@ -622,7 +641,9 @@ def test_editing_an_existing_event_prefills_it(qt_app: QApplication) -> None:
     assert dialog._text("title") == "京都五日"
     assert dialog._text("destination") == "京都、奈良"
     assert dialog._text("cost") == "3280.5"
-    assert dialog._fields["rating"].currentText() == "5"  # type: ignore[union-attr]
+    rating = dialog._fields["rating"]
+    assert isinstance(rating, ChoiceButtons)
+    assert rating.value() == "5"
     assert dialog._include_range.isChecked() is False
 
 
