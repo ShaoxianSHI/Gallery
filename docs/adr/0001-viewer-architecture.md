@@ -48,15 +48,23 @@ README 的路线图原本把「库扫描与索引（SQLite）」列为 M1、「�
 
 ### 4. 缩略图缓存可丢弃，key 覆盖全部失效条件
 
+> **位置已被取代**：缩略图不再住 `<库根>/.gallery/cache/`，改按库路径摘要放
+> `<app cache>/thumbs/`（[ADR 0038](0038-unify-cache-location.md) 决策 1）；缓存格式另见
+> [ADR 0015](0015-thumbnail-pipeline-speedups.md)。key 的构成与「删掉即可重建」这条约定不变。
+
 缓存文件位于 `<库根>/.gallery/cache/thumbs/<sha1>.<jpg|png>`，key 由
 `(绝对路径, mtime_ns, size, max_edge, THUMBNAIL_SPEC_VERSION)` 构成。
 `THUMBNAIL_SPEC_VERSION` 变化（算法或 Pillow 大版本升级）即整批失效。
-带透明通道的图存 PNG，其余存 JPEG(q=85)。
+带透明通道的图存 PNG，其余存 JPEG。
 缓存超过上限（默认 2 GiB，`config.toml` 可调）后按修改时间做 LRU 清理。
 
-删掉 `.gallery/cache/` 必须能通过重新扫描恢复等价状态——这是硬性约定，有测试守着。
+删掉缓存必须能通过重新扫描恢复等价状态——这是硬性约定，有测试守着。
 
 ### 5. 写入用户目录的行为只有一处，且必须先征得同意
+
+> **已被取代**：[ADR 0038](0038-unify-cache-location.md) 决策 2 取消了这个三选一弹窗 ——
+> 开场不再问「缓存放哪里」，库内一切进 `.gallery/`，缩略图进系统目录；`.gallery/` 建不出来时
+> 自动降级成内存索引并横幅说明，不再给用户第三个没有意义的选择。
 
 首次打开一个还没有 `.gallery/` 的库时，弹窗询问：
 
@@ -68,6 +76,9 @@ README 的路线图原本把「库扫描与索引（SQLite）」列为 M1、「�
 任何情况下都不写入照片目录里的其他位置，也绝不修改原图。
 
 ### 6. 会话状态存 app 级目录，不进库
+
+> **已被取代**：[ADR 0038](0038-unify-cache-location.md) 决策 4 把界面偏好挪成每库一份、
+> 存进该库的 `config.toml`；「最近打开的库」与窗口几何仍留在 app 级。下面这段说的是当时。
 
 「最近打开的库」和窗口几何存在 `~/Library/Application Support/Gallery/state.json`。
 不能存进库里的 `config.toml`——读它的时候还不知道库在哪。也不用 `QSettings`：
@@ -142,7 +153,7 @@ Qt 相关的可测逻辑（适配缩放比例、可见区优先级队列）抽�
 - `core` 保持可脱离 Qt 测试；`ui` 里不允许出现 `PIL`、`open()` 原图。
 - 解码路径唯一：任何缩略图与预览都必须经过 `core`，便于将来统一加入颜色管理或 RAW 支持。
 - 内存占用有明确上限（全图 3 张 + 缩略图 LRU），不会随库规模增长。
-- 库目录在用户拒绝时完全只读，代价是缓存散落在系统目录里。
+- 库内写入只有 `.gallery/` 一处；缩略图例外，按库路径摘要放系统缓存目录（ADR 0038）。
 
 ## 被否决的替代方案
 

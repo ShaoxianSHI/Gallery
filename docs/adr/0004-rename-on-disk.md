@@ -2,7 +2,7 @@
 
 - 状态：已接受
 - 日期：2026-10-01
-- 相关代码：`src/gallery/core/metadata/rename.py`、`src/gallery/core/metadata/journal.py`、`src/gallery/ui/browser/rename_edit.py`、`src/gallery/ui/main_window.py`、`src/gallery/ui/write_ops.py`
+- 相关代码：`src/gallery/core/metadata/rename.py`、`src/gallery/core/metadata/journal.py`、`src/gallery/ui/rename_edit.py`、`src/gallery/ui/main_window.py`、`src/gallery/ui/write_ops.py`
 
 ## 背景
 

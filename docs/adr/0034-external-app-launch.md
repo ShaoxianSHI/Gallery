@@ -3,7 +3,7 @@
 - 状态：已接受
 - 日期：2026-10-04
 - 相关代码：`src/gallery/core/external/`、`src/gallery/ui/external_button.py`、`src/gallery/ui/main_window.py`、`src/gallery/ui/banners.py`
-- 相关：[ADR 0025](0025-rename-in-the-title-bar.md)（挂在窗口上的一层怎么摆位）、[ADR 0026](0026-…-and-ui-top-level-modules)（`ui/` 顶层按「跨域共享」判）、[ADR 0033](0033-calendar-view.md)（日历三层与选中/锚点）、[ADR 0029](0029-banner-overlay.md)（做完之后横幅上那一句）
+- 相关：[ADR 0025](0025-rename-in-the-title-bar.md)（挂在窗口上的一层怎么摆位）、[ADR 0006](0006-package-layout.md)（`ui/` 顶层按「跨域共享」判）、[ADR 0033](0033-calendar-view.md)（日历三层与选中/锚点）、[ADR 0029](0029-banner-overlay.md)（做完之后横幅上那一句）
 
 ## 背景
 

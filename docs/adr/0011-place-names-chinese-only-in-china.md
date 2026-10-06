@@ -3,7 +3,7 @@
 - 状态：已接受
 - 日期：2026-10-02
 - 相关 ADR：0003（离线反查）、0010（打开时解析入库）
-- 相关代码：`src/gallery/core/places/countries.py`、`src/gallery/core/places/geonames.py`、
+- 相关代码：`src/gallery/core/places/countries.py`、`src/gallery/core/places/dataset.py`、
   `src/gallery/core/library/index.py`
 
 ## 背景

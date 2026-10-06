@@ -5,7 +5,8 @@
 - 相关 ADR：0003（离线反查）、0010（打开时解析入库）、0011（地点语言规则）、
   0012（自带城市库）、0030（写回原文件）
 - 相关代码：`src/gallery/core/places/dataset.py`、`src/gallery/core/places/resolver.py`、
-  `src/gallery/core/metadata/place_edit.py`、`src/gallery/ui/panels/place_edit.py`
+  `src/gallery/core/metadata/place_edit.py`、`src/gallery/ui/panels/metadata_edit.py`
+  （原名 `place_edit.py` / `PlaceEditDialog`，ADR 0032 随「编辑元数据」一起改名）
 
 ## 背景
 
