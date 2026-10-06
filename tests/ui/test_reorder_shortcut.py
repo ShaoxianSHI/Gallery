@@ -1,0 +1,169 @@
+"""重排之前那道「这次会不会变」的闸（``_reorder_level`` 开头那道）。
+
+那道闸原先排在排序**之后**：判据比的是 ``ordered``，而它是刚花 41 ms（三万张）算出来的。
+于是「监听器报了个自己写的回声、什么其实都没变」这条路上 —— 用户什么都没干、屏幕上
+也不该有任何变化 —— 每次都白付一次整层排序。
+
+改成比**输入**之后，那次 41 ms 没了。这组用例盯的是两件事：
+
+- 没变的时候**连排序都不调用**（这是省下来的时间本身）
+- 变了的时候**一定真的重排**（闸不能为了快而把该做的活吃掉）
+
+第二条更要紧：闸判错的后果是屏幕上的顺序悄悄不对，用户只当是程序抽风。
+"""
+
+from __future__ import annotations
+
+import os
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from pathlib import Path
+
+import pytest
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+pytest.importorskip("PySide6")
+
+from library_helpers import set_library_ui  # noqa: E402
+from PySide6.QtWidgets import QApplication  # noqa: E402
+from waiting import wait_until, window_is_idle  # noqa: E402
+
+from gallery.core.library.config import (
+    BROWSE_MODE_FLAT,
+    prepare_library,
+)  # noqa: E402
+from gallery.core.library.photos import PhotoRef  # noqa: E402
+from gallery.core.library.session import (
+    SessionState,
+    save_session,
+)  # noqa: E402
+from gallery.core.metadata import batch  # noqa: E402
+from gallery.ui.main_window import MainWindow  # noqa: E402
+from gallery.ui.window import ordering as ordering_module  # noqa: E402
+
+DATES = {
+    "三月一张.jpg": "2024:03:16 10:00:00",
+    "四月一张.jpg": "2024:04:16 09:00:00",
+    "四月两张.jpg": "2024:04:16 18:00:00",
+}
+NAMES = tuple(DATES)
+
+
+@pytest.fixture
+def fake_facet_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    def read_many(
+        self: object, paths: Sequence[Path], *, should_cancel: object = None
+    ) -> Iterator[tuple[Path, Mapping[str, object] | None]]:
+        for path in paths:
+            raw: dict[str, object] = {}
+            when = DATES.get(Path(path).name)
+            if when:
+                raw["EXIF:DateTimeOriginal"] = when
+            yield Path(path), raw
+
+    monkeypatch.setattr(batch.ExifToolBatchSource, "read_many", read_many, raising=True)
+
+
+@pytest.fixture
+def window(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path], fake_facet_source: None
+) -> MainWindow:
+    root = tmp_path / "照片"
+    root.mkdir(parents=True, exist_ok=True)
+    for name in NAMES:
+        make_photo(name, directory=root)
+    prepare_library(root)
+    session_base = tmp_path / "会话"
+    save_session(SessionState(recent_roots=(root,)), base=session_base)
+    set_library_ui(root, browse_mode=BROWSE_MODE_FLAT)
+    win = MainWindow(session_base=session_base, initial_library=root)
+    win.resize(900, 600)
+    win.show()
+    qt_app.processEvents()
+    assert wait_until(qt_app, lambda: window_is_idle(win)), "扫描没有收工"
+    qt_app.processEvents()
+    return win
+
+
+@pytest.fixture
+def count_sorts(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """数「这一层真的排了一次」。**判据是排序函数被调用** —— 那就是省下来的时间本身。
+
+    刻意不去读被测代码自己的常量或内部字段当基准：那样注入违规也未必变红（同一个同义反复
+    两头兜）。
+    """
+    calls: list[str] = []
+    for name in ("sort_photos", "build_groups"):
+        real = getattr(ordering_module, name)
+
+        def counting(
+            *args: object, _real: object = real, _name: str = name, **kwargs: object
+        ) -> object:
+            calls.append(_name)
+            return _real(*args, **kwargs)  # type: ignore[operator]
+
+        monkeypatch.setattr(ordering_module, name, counting, raising=True)
+    return calls
+
+
+def test_a_reorder_that_changes_nothing_skips_the_sort(
+    window: MainWindow, count_sorts: list[str]
+) -> None:
+    """什么都不没变 → 连排序都不调用。
+
+    先空跑一次把闸的「上一次输入」记牢（开窗那次的记录可能赶在元数据读回来之前，
+    那样 ``_facet_values`` 就已经换了一份，闸理应放行）。之后才是要盯的那一次。
+    """
+    assert window._library is not None
+    window._reorder_level(window._library)
+    count_sorts.clear()
+
+    window._reorder_level(window._library)
+
+    assert count_sorts == [], "输入逐字没变却重排了一次：又白付了一次整层排序"
+
+
+def test_changing_the_sort_direction_still_reorders(
+    window: MainWindow, count_sorts: list[str]
+) -> None:
+    """改了排序方向 → 一定要真排。闸要是把这个也吃掉，屏幕上的顺序就悄悄错了。"""
+    assert window._library is not None
+    window._reorder_level(window._library)
+    before = list(window._model.entries())
+    count_sorts.clear()
+
+    window._sort_descending = not window._sort_descending
+    window._reorder_level(window._library)
+
+    assert count_sorts != [], "改了排序方向却没排：顺序该变的没变"
+    assert list(window._model.entries()) != before, "排了，但顺序没换过来"
+
+
+def test_a_fresh_facet_read_still_reorders(window: MainWindow, count_sorts: list[str]) -> None:
+    """**元数据重读过一次 → 一定要真排。**
+
+    这是那道闸最容易判错的一处：重读回来的 ``_facet_values`` 内容可能和上一次**完全一样**
+    （同一批照片又读了一遍 EXIF），可它确实是一份新对象。曾经那版判据记的是 ``id(values)``
+    —— 而 Python 会复用已释放对象的地址，于是换库之后新那份完全可能落在同一个地址上，
+    闸就会以为「没变」而跳过排序，而那一层恰恰刚重扫过。症状是换了库顺序不动。
+    """
+    assert window._library is not None
+    window._reorder_level(window._library)
+    count_sorts.clear()
+
+    window._facet_values = dict(window._facet_values)
+    window._reorder_level(window._library)
+
+    assert count_sorts != [], "元数据重读了一遍却没重排：那份新数据可能带了新的排序值"
+
+
+def test_a_new_photo_still_reorders(window: MainWindow, count_sorts: list[str]) -> None:
+    """多了一张照片 → 一定要真排。"""
+    assert window._library is not None
+    window._reorder_level(window._library)
+    count_sorts.clear()
+
+    window._model.append([PhotoRef(path=Path("/tmp/多出来的一张.jpg"), size=1, mtime_ns=1)])
+    window._reorder_level(window._library)
+
+    assert count_sorts != [], "多了一张照片却没重排：新照片的位置就是错的"

@@ -44,7 +44,7 @@ from gallery.core.library.config import (
     LibraryUIState,
 )
 from gallery.core.library.facade import Library
-from gallery.core.library.photos import GridEntry, GroupRef, PhotoRef
+from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
 from gallery.core.library.search import SearchCondition
 from gallery.core.library.session import SessionState, load_session
 from gallery.core.library.watcher import LibraryChange
@@ -239,6 +239,15 @@ class MainWindow(
         #: 上面那一格摆出来了吗。一层只摆一次，免得跟用户后来的点选抢当前项。
         self._focus_restored = False
         self._facet_values: dict[Path, PhotoFacets] = {}
+        #: **上一次重排的输入** —— 用来在排序**之前**判「这次会不会变」（见
+        #: :meth:`ordering.OrderingMixin._reorder_level`）。少了它，「监听器报了个自己写的
+        #: 回声、其实什么都没变」那条路上每次都要白付一次整层排序（3 万张 41 ms）。
+        #: ``_reorder_values`` 存的是**对象本身**（不是 ``id()``），这样它不会被回收、
+        #: 地址不会被复用，判 ``is`` 才靠得住。
+        self._reorder_fingerprint: tuple[object, ...] | None = None
+        self._reorder_values: dict[Path, PhotoFacets] | None = None
+        self._reorder_photos: tuple[PhotoRef, ...] = ()
+        self._reorder_albums: tuple[FolderRef, ...] = ()
         self._facet_job: int | None = None
         #: 日历页读整库拍摄时间的任务；与 :attr:`_facet_job` 分开（取消时机不同，会互相作废）。
         self._calendar_job: int | None = None

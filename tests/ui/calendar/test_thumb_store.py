@@ -11,8 +11,10 @@
 
 from __future__ import annotations
 
-import time
+from collections import OrderedDict
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -113,6 +115,30 @@ def test_forget_takes_any_iterable_not_just_the_four_container_types(
     assert store.get(photos[-1]) is not None, "不在生成器里的那个不该被动"
 
 
+class _CountingStore(OrderedDict):  # type: ignore[type-arg]
+    """数「仓库被完整遍历了几次」。
+
+    继承 ``OrderedDict``（不是 ``dict``）：``ThumbStore.set`` 要用 ``move_to_end`` 与
+    ``popitem(last=False)`` 做 LRU 淘汰，换成普通 dict 就 ``AttributeError``。
+
+    ``ThumbStore.forget`` 的两种写法在这上面差别是**整数倍**、而不是「快一点慢一点」：
+
+    - 改前：外层遍历路径、内层扫全表 → 传 N 条就把 ``_images`` 走 N 遍；
+    - 改后：路径先收成集合、单趟过滤 → 恒走 1 遍。
+
+    所以量**遍历次数**（形状），不量耗时。上一版这里量的是耗时比，于是并行跑的时候
+    ``forget(1)`` 碰上一次调度抖动就误红 —— 明明形状没变，机器一忙就挂。
+    """
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+        self.scans = 0
+
+    def __iter__(self) -> Iterator[Any]:
+        self.scans += 1
+        return super().__iter__()
+
+
 def test_forget_walks_the_store_once_no_matter_how_many_paths(
     qt_app: QApplication, tmp_path: Path
 ) -> None:
@@ -123,25 +149,24 @@ def test_forget_walks_the_store_once_no_matter_how_many_paths(
     200 × 3072 ≈ 61 万次比较（实测 53 ms）。收齐成集合一次过滤之后，代价只与**仓库
     有多大**成正比 —— 实测同一个满仓库 200 条从 53 ms 降到 0.76 ms。
 
-    断的是**形状**而不是时间：一批越大越吃亏，所以拿「200 条」与「1 条」的相对代价
-    说话 —— 改前是 1 条 0.27 ms / 200 条 53 ms（200 倍），改后两条几乎一样。
-    量时间会随机器飘，量形状不会。
+    断的是**形状**：无论给 1 条还是 200 条，仓库都只许被走一遍。
     """
     del qt_app
     store = ThumbStore()
+    store._images = _CountingStore()  # type: ignore[assignment]
     image = _image()
     for index in range(1000):
         store.set(tmp_path / f"已有{index}.jpg", image, WEEK_EDGE)
 
-    def forget(count: int) -> float:
+    def scans_for(count: int) -> int:
         targets = [tmp_path / f"新来{index}.jpg" for index in range(count)]
-        started = time.monotonic()
+        before = store._images.scans
         store.forget(iter(targets))  # 传生成器：契约收的是 Iterable
-        return (time.monotonic() - started) * 1000
+        return store._images.scans - before
 
-    one = forget(1)
-    many = forget(200)
-    assert many < one * 20 + 5, (
-        f"200 条花了 {many:.2f} ms 而 1 条只花 {one:.2f} ms ——"
-        "代价还在随路径数线性涨（每个路径扫了一遍全表）"
+    one = scans_for(1)
+    many = scans_for(200)
+    assert one == 1, f"给 1 条路径却把仓库走了 {one} 遍"
+    assert many == 1, (
+        f"给 200 条路径把仓库走了 {many} 遍 —— 代价还在随路径数线性涨（每个路径扫了一遍全表）"
     )

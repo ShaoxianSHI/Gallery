@@ -441,6 +441,41 @@ class OrderingMixin:
         grouped = self._group_view is not None or self._browse_mode == BROWSE_MODE_CALENDAR
         group = None if grouped else self._current_group_facet()
         values = self._facet_values
+
+        # **先判「会不会变」，再排序**（那道闸原先排在排序之后，白付一次 41 ms）。
+        # 判据是**输入**而不是输出：输出比的是 ``ordered``，而它是刚花 41 ms 算出来的。
+        #
+        # 「监听器报了个自己写的回声、什么其实都没变」这条路上，用户什么都没干、屏幕上
+        # 也不该有任何变化 —— 而那次 41 ms 的排序（3 万张；6 万张 82 ms）是纯浪费。
+        #
+        # 比内容而不是比身份：``photos`` 与 ``albums`` 是这一段现造的两个列表，每次都是新
+        # 对象，指针比对**永不命中**。而比内容几乎不要钱（实测 3 万张 0.07 ms，比排序便宜
+        # 500 倍）—— 因为模型里存的就是**同一批** ``PhotoRef``，逐个 ``==`` 走的是身份捷径。
+        #
+        # 判据里刻意有的几样：
+        # - ``library.root``：``sort_photos`` / ``build_groups`` 都吃 ``root``（相对路径那类
+        #   字段的排序值靠它算）。少了它，换一个根目录打开同一批照片时闸会误跳，顺序就错着。
+        # - 分组字段只记 ``id``：``_current_group_facet`` 从一个固定表里取，同 id 即同语义。
+        # - **不记** ``self._group_view``：它在非空时 ``group`` 必为 ``None``，两个组视图之间
+        #   来回换不影响输出，记进去只会白触发一次排序。
+        fingerprint = (
+            group.id if group is not None else None,
+            self._sort_facet,
+            self._sort_descending,
+            library.root,
+        )
+        # ``values`` 单独用 ``is`` 判，而且**持有强引用**（存在 ``self._reorder_values`` 里）。
+        # 不能记 ``id(values)``：Python 会复用已释放对象的地址，换库之后新 dict 完全可能落在
+        # 同一个地址上，闸就会以为「元数据没变」而跳过排序 —— 而那一层恰恰刚重扫过。
+        if (
+            staged is None
+            and fingerprint == self._reorder_fingerprint
+            and values is self._reorder_values
+            and tuple(albums) == self._reorder_albums
+            and tuple(photos) == self._reorder_photos
+        ):
+            return  # 输入逐字没变，顺序也就逐字没变：连排序都不必算
+
         if group is not None:
             ordered: list[GridEntry] = [
                 *albums,
@@ -448,6 +483,9 @@ class OrderingMixin:
             ]
         else:
             ordered = [*albums, *sort_photos(photos, order=order, root=library.root, values=values)]
+        self._reorder_fingerprint = fingerprint
+        self._reorder_values = values
+        self._reorder_photos, self._reorder_albums = tuple(photos), tuple(albums)
         if staged is None and ordered == list(self._model.entries()):
             return  # 什么都没攒、顺序也没变：让整屏重画一次毫无意义
         selected = self._grid.selected_rows()
