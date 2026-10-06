@@ -93,8 +93,14 @@ class ThumbStore:
 
         所以这里 ``list(...)`` 一次收干净，下面那个循环才拿得到真路径。
         """
-        for target in {Path(path) for path in paths}:
-            for key in [key for key in self._images if key[0] == target]:
+        dropped = {Path(path) for path in paths}
+        # **一次遍历过滤掉，不要「每个路径扫一遍全表」。** 缺陷现场：原先是
+        # ``for target in paths: for key in [k for k in self._images if k[0] == target]``，
+        # 代价是 O(路径数 × 仓库条目数)。而仓库容量是 1024 × 3 = 3072 项，于是云盘上
+        # 同步落一批（200 张）要在主线程上走 200 × 3072 ≈ 61 万次比较（实测 53 ms）。
+        # 收齐成集合一次过滤过去，代价只与**仓库有多大**成正比。
+        if dropped:
+            for key in [key for key in self._images if key[0] in dropped]:
                 self._images.pop(key, None)
 
     def clear(self) -> None:

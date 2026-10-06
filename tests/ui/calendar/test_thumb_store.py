@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
@@ -110,3 +111,37 @@ def test_forget_takes_any_iterable_not_just_the_four_container_types(
 
     assert store.get(photos[0]) is None, "生成器里的路径没有被作废"
     assert store.get(photos[-1]) is not None, "不在生成器里的那个不该被动"
+
+
+def test_forget_walks_the_store_once_no_matter_how_many_paths(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """**一次遍历过滤掉，不「每个路径扫一遍全表」。**
+
+    缺陷现场：原先是「外层遍历路径、内层扫全表」，代价是 O(路径数 × 仓库条目数)。
+    而仓库容量是 1024 × 3 = 3072 项，于是云盘同步落一批（200 张）要在主线程上走
+    200 × 3072 ≈ 61 万次比较（实测 53 ms）。收齐成集合一次过滤之后，代价只与**仓库
+    有多大**成正比 —— 实测同一个满仓库 200 条从 53 ms 降到 0.76 ms。
+
+    断的是**形状**而不是时间：一批越大越吃亏，所以拿「200 条」与「1 条」的相对代价
+    说话 —— 改前是 1 条 0.27 ms / 200 条 53 ms（200 倍），改后两条几乎一样。
+    量时间会随机器飘，量形状不会。
+    """
+    del qt_app
+    store = ThumbStore()
+    image = _image()
+    for index in range(1000):
+        store.set(tmp_path / f"已有{index}.jpg", image, WEEK_EDGE)
+
+    def forget(count: int) -> float:
+        targets = [tmp_path / f"新来{index}.jpg" for index in range(count)]
+        started = time.monotonic()
+        store.forget(iter(targets))  # 传生成器：契约收的是 Iterable
+        return (time.monotonic() - started) * 1000
+
+    one = forget(1)
+    many = forget(200)
+    assert many < one * 20 + 5, (
+        f"200 条花了 {many:.2f} ms 而 1 条只花 {one:.2f} ms ——"
+        "代价还在随路径数线性涨（每个路径扫了一遍全表）"
+    )

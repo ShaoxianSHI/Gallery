@@ -134,13 +134,17 @@ class ThumbnailPipeline(QObject):
 
         那两个集合是记忆，为的是别对同一个坏文件反复重试；文件被外部替换之后记忆就过期了 ——
         不清掉，那一格会永远停在占位图上（ADR 0012）。
+
+        **一批一次过，不逐条重扫所有封面。** 原先是「外层遍历路径、内层遍历
+        ``_covers``」，云盘上大量占位文件读不出来时 ``_covers`` 会很大，而监听器一
+        次能报几十条 —— 于是几千次 ``set.discard``。收成集合之后只走一遍。
         """
-        for path in paths:
-            target = Path(path)
+        targets = {Path(path) for path in paths}
+        for target in targets:
             self._failed.pop(target, None)
             self._empty.pop(target, None)
-            for cover in self._covers.values():
-                cover.skipped.discard(target)
+        for cover in self._covers.values():
+            cover.skipped.difference_update(targets)
 
     def _remember_window(self, entries: tuple[GridEntry, ...]) -> None:
         """把 ``_refs`` 换成当前窗口那一份。
