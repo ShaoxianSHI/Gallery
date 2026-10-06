@@ -275,7 +275,10 @@ def test_blank_double_click_at_the_library_root_says_nothing(
 
         double_click_blank(window, qt_app)
 
-        assert window._current_dir == library, "已经在库根，不能再往上"
+        assert window._current_folder() == library, "已经在库根，不能再往上"
+        # **栈上没有相册帧**就是「在库根」—— 原来断言的是 ``_current_dir == library``
+        # （那个字段此刻是库根），而 ``_current_dir`` 现在是栈的投影、不可写。
+        # 量的是 :meth:`_current_folder`：那是真正被各处用的那句（``_current_dir or root``）。
         # 横幅是全局共享的一个槽：「正在解析地点…」这种后台进度也会往里写（那是正常的，
         # 见 BANNER_STICKY_SECONDS）。这里要验的是**自己**没有为「退不动」弹话，所以先
         # 等地点解析那一趟收工，再把横幅收干净，然后才双击空白。

@@ -18,6 +18,7 @@ from gallery.core.library.config import BROWSE_MODE_CALENDAR, BROWSE_MODE_FLAT
 from gallery.core.library.photos import GridEntry, GroupRef, PhotoRef
 from gallery.core.library.scanner import describe_entry
 from gallery.ui.tasks import TaskContext
+from gallery.ui.window.level_stack import CalendarFrame, root_for
 
 
 def _photos_on_this_level(entries: Iterable[GridEntry]) -> list[PhotoRef]:
@@ -44,11 +45,10 @@ class CalendarFlowMixin:
             self._update_mode_actions()
             return
         was_calendar = self._browse_mode == BROWSE_MODE_CALENDAR
-        self._from_calendar = False
-        self._drill_photos = None
-        self._drill_label = ""
-        self._browse_mode = mode
-        self._group_view = None
+        # **栈：换浏览方式 = 换根，顺带清掉分组 / 日历格**（ADR 0041 决策 3）。
+        # 原来是四行手工同步（标志位 + 两个字段 + 浏览方式），漏一行就出现「换了浏览方式却还在
+        # 那一格里」；现在只有换根这一句。
+        self._set_root(root_for(mode))
         # **只有整库检索要清**：它横跨整个库，换浏览方式时留着它等于把两个互不相干的概念叠在
         # 一起（ADR 0026 决策 1）。筛选是「当前这一层里符合条件的那部分」，换浏览方式只是换了
         # 「这一层」是什么，条件该跟着走（ADR 0040 决策 1）。
@@ -163,8 +163,13 @@ class CalendarFlowMixin:
             return
         if not all(isinstance(ref, PhotoRef) for ref in photos):
             return
-        self._from_calendar = True
         if len(photos) == 1:
+            # **那一格的帧照样压**（栈上必须有它，Esc 才退得回日历）—— 跳过的只是把照片摊成一层
+            # 网格那一步。原先那一格对「只有一个格子」不存在任何状态，于是退回去要靠
+            # `_from_calendar` 这个标志位单独记着「我是从日历来的」。
+            self._push_frame(
+                CalendarFrame(photos=(photos[0],), label=label if isinstance(label, str) else "")
+            )
             self._open_calendar_photo(photos[0])
             return
         self._enter_calendar_drill(tuple(photos), label if isinstance(label, str) else "")
@@ -187,8 +192,7 @@ class CalendarFlowMixin:
         算双击的第一下，这一页紧接着那一下会被判成「网格里的第二下」，而那个位置多半是空白，
         于是「双击空白处退一层」当场把人带回日历。
         """
-        self._drill_photos = photos
-        self._drill_label = label
+        self._push_frame(CalendarFrame(photos=photos, label=label))
         # **在途的扫描作废**：这一层不是整库，那一遍扫描落上来会把这一格的几张换回整库照片。
         if self._scan_job is not None:
             self._runner.cancel(self._scan_job)
@@ -226,9 +230,10 @@ class CalendarFlowMixin:
 
     def _leave_calendar_drill(self) -> None:
         """从「那一格」退回日历，**模型回到整库**（下一层点开照片还要靠它的行）。"""
-        self._drill_photos = None
-        self._drill_label = ""
-        self._from_calendar = False
+        # 栈：弹掉日历格。**「记得是从日历来的」不用再单独记一个标志位** —— 栈顶是不是日历格
+        # 就是那句话（原先 `_from_calendar` 有 4 处手动跟着置位与清零，漏一处就是「退回去之后
+        # 还以为是从日历来的」）。
+        self._pop_frame()
         self._model.clear()
         self._grid.reset_for_new_level()
         self._current_row = -1

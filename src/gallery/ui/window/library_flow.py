@@ -30,6 +30,7 @@ from gallery.core.library.session import (
 from gallery.ui.browser.thumb_sizes import edge_for_index, nearest_index
 from gallery.ui.tasks import TaskContext
 from gallery.ui.thumbs.pipeline import ThumbnailPipeline
+from gallery.ui.window.level_stack import root_for
 from gallery.ui.window.notice import NoticeSlot
 
 logger = logging.getLogger(__name__)
@@ -108,7 +109,7 @@ class LibraryFlowMixin:
         changed_edge = edge_for_index(self._size_index) != edge_for_index(
             self._edge_to_index(ui.thumbnail_edge)
         )
-        self._browse_mode = ui.browse_mode or self._browse_mode
+        self._set_root(root_for(ui.browse_mode or self._browse_mode))
         # 检索作用域（ADR 0040）：**每个库各记各的** —— 「我习惯用筛选」是关于这个库的偏好，
         # 与分组、排序那几项一样，切库不该把 A 库的用法传染给 B 库。
         self._search_scope = ui.resolved_search_scope()
@@ -197,7 +198,9 @@ class LibraryFlowMixin:
         self._sync_order_actions()
         self._metadata_action.setChecked(self._metadata_visible)
         self._panel.setVisible(self._metadata_visible)
-        self._current_dir = library.root
+        # 栈：开库 = 从头开始（只留根帧）。原来这句是 ``_current_dir = library.root``，
+        # 与「换浏览方式清栈」是同一件事的两条路，现在都归 :meth:`_set_root`。
+        self._set_root(self._level_stack.root)
         self._arm_focus()  # 打开库走的是自己那一套，不经过 _reload_level
         # 每一层都要重排（排序字段总是有的），所以扫出来的一律先攒着，等顺序定下来。
         self._staged = []
@@ -260,7 +263,9 @@ class LibraryFlowMixin:
         if self._library is not None:
             self._library.close_index()
         self._library = None
-        self._group_view = None
+        # 栈：关库 = 回到只有根帧（否则上一座库的相册 / 分组 / 日历格还挂着，而它们引用的
+        # 都是已经关掉的索引）。与「开库从头开始」共用 :meth:`_set_root` 这一句。
+        self._set_root(self._level_stack.root)
         self._facet_values = {}
         self._update_metadata_editable()
         # 条件是**临时的**（ADR 0026 决策 9）：换库之后还留着上一座库的胶囊，

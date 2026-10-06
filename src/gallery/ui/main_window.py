@@ -102,6 +102,8 @@ from gallery.ui.watch import WatchBridge, WatchStarter, start_watch
 from gallery.ui.window.banner_flow import BannerFlowMixin
 from gallery.ui.window.calendar_flow import CalendarFlowMixin
 from gallery.ui.window.context_menu_flow import ContextMenuFlowMixin
+from gallery.ui.window.level_stack import AlbumFrame, LevelStack, RootKind
+from gallery.ui.window.level_stack_mixin import LevelStackMixin
 from gallery.ui.window.library_flow import LibraryFlowMixin
 from gallery.ui.window.metadata_flow import MetadataFlowMixin
 from gallery.ui.window.ordering import OrderingMixin
@@ -127,6 +129,7 @@ _GRID_PAGE_MARGIN_RIGHT = 2
 
 
 class MainWindow(
+    LevelStackMixin,
     OrderingMixin,
     LibraryFlowMixin,
     SearchFlowMixin,
@@ -215,8 +218,9 @@ class MainWindow(
         # 缩略图档位、浏览方式、分组 / 排序都是**库级配置**（ADR 0038 决策 4）：这里先给界面
         # 默认值，打开库时由 ``_apply_ui_state`` 覆盖。
         self._size_index = nearest_index(None)
-        self._browse_mode: str = BROWSE_MODE_FLAT
-        self._current_dir: Path | None = None
+        #: 「我在哪一层」—— **一条栈**（ADR 0041）。原先那六个字段（浏览方式、当前目录、分组、
+        #: 日历那一格及其两个标志位）都是从这条栈算出来的属性，见 ``LevelStackMixin``。
+        self._level_stack = LevelStack(root=RootKind.FLAT)
         #: 检索条件的作用域（ADR 0040）：整库检索还是筛选当前这一层。**库级**偏好，
         #: 打开库时由 ``_apply_ui_state`` 从那个库的 ``config.toml`` 覆盖。
         self._search_scope: str = SEARCH_SCOPE_LIBRARY
@@ -230,8 +234,7 @@ class MainWindow(
         self._calendar_level: str = DEFAULT_CALENDAR_LEVEL
         #: 旧 ``state.json`` 里的库级偏好，整个进程只读一次（``None`` = 还没读）。
         self._legacy_ui: LibraryUIState | None = None
-        #: 已经进入的分组（它不是磁盘上的目录，只是这一层的一个筛选项）。
-        self._group_view: GroupRef | None = None
+        # 已经进入的分组（`_group_view`）不再是字段 —— 它是栈上最近一个 ``GroupFrame``。
         #: 模型里此刻摆着的是哪一层：用来分清「换了一层」（选区清空）与「还是这一层，重排一遍」。
         self._level_key: LevelKey | None = None
         #: 这一层第一次排好时该选中的一格（``None`` = 谁也不选，见 :meth:`_arm_focus`）。
@@ -251,10 +254,8 @@ class MainWindow(
         self._facet_job: int | None = None
         #: 日历页读整库拍摄时间的任务；与 :attr:`_facet_job` 分开（取消时机不同，会互相作废）。
         self._calendar_job: int | None = None
-        # **从日历点开的那一层**（日历 → 某一格 → 大图）；两者都非空时退回去要回日历原处。
-        self._from_calendar = False
-        self._drill_photos: tuple[PhotoRef, ...] | None = None
-        self._drill_label = ""
+        # **从日历点开的那一层**（日历 → 某一格 → 大图）：`_drill_photos` / `_drill_label` /
+        # `_from_calendar` 三个字段都成了栈上 ``CalendarFrame`` 的投影（ADR 0041）。
         #: 这一层还没摆上屏的条目（顺序定下来再一次给出去，ADR 0009 决策 6）；``None`` = 已经排好。
         self._staged: list[GridEntry] | None = None
         self._level_notice = False
@@ -825,7 +826,8 @@ class MainWindow(
         **进目录就是退出整库检索**：两者都是「一层」（ADR 0026）—— 条件不清掉的话，下一次
         ``_start_scan`` 里检索会抢在目录前面，点开一个相册看到的却是全库的检索结果。
         **筛选不在此列**（ADR 0040 决策 1）：它收窄的正是「当前这一层」，所以进相册就是进到
-        「那个相册里符合条件的那部分」，条件要跟着走。
+        「那个相册里符合条件的那部分」，条件要跟着走 —— 栈模型下它是**跟着这一帧走**，
+        弹回来时自动恢复（ADR 0041 决策 2）。
 
         **存进去的是解析过的路径**：库路径里带软链接时，监听器报回来的是真路径而这里存的是
         原写法，「是不是在当前这一层」就永远说不成 —— 访达里丢进来一张照片，网格当没看见。
@@ -836,8 +838,11 @@ class MainWindow(
         target = Path(directory)
         if not paths.is_within(library.root, target):
             return
-        self._current_dir = target.resolve()
-        self._group_view = None
+        resolved = target.resolve()
+        # **栈：压一个相册帧**（ADR 0041）。分组的清理由「压栈」本身完成 —— 原来这里是
+        # ``_current_dir = …`` 加 ``_group_view = None`` 两行手工同步，而漏掉后一行就是
+        # 「进了相册却还说自己在分组里」。
+        self._push_frame(AlbumFrame(resolved))
         # **只有整库检索要清条件**（理由见上面那段）：筛选要跟着走进这个相册。
         if self._is_library_search():
             self._conditions.clear()
@@ -950,10 +955,11 @@ class MainWindow(
         self._panel.clear()
         self._banner.hide()
         # **检索不是日历这一层的一部分**：留着它，条件撤光之后按 Esc 会退到日历点出来的那一格。
+        # 栈：**只弹日历格**（判据是「栈上还有没有日历格」），不能写成「弹到满足某条件为止」——
+        # 那会连相册帧一起弹掉：换层时无条件地退回了根帧，于是「进了相册却还停在库根」
+        # （实测：``_reload_level`` 把栈从 ``['AlbumFrame']`` 清成 ``[]``）。
         if self._conditions:
-            self._drill_photos = None
-            self._drill_label = ""
-            self._from_calendar = False
+            self._pop_to(lambda stack: self._calendar_frame is None)
         # **摆哪一页问的是状态**（浏览方式 + 有没有条件）：一律摆成网格页，勾与眼前那一页对不上。
         self._update_breadcrumb()
         if self._shows_calendar_page():

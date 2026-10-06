@@ -39,7 +39,9 @@ __all__ = [
     "PhotoFrame",
     "RootKind",
     "SearchFrame",
+    "browse_mode_of",
     "label_of",
+    "root_for",
 ]
 
 
@@ -49,6 +51,40 @@ class RootKind(Enum):
     FLAT = "flat"
     ALBUMS = "albums"
     CALENDAR = "calendar"
+
+
+def root_for(browse_mode: str) -> RootKind:
+    """浏览方式那三个字符串常量 → 栈底。
+
+    **双向映射写在这一个模块里**，因为「浏览方式」是 ``core`` 的概念而「栈底」是界面的概念，
+    两边对同一件事各说一遍就会差一档（那正是 ``_browse_mode`` 那个属性的由来 —— 它有 25 处读）。
+    """
+    from gallery.core.library.config import (
+        BROWSE_MODE_ALBUMS,
+        BROWSE_MODE_CALENDAR,
+        BROWSE_MODE_FLAT,
+    )
+
+    return {
+        BROWSE_MODE_FLAT: RootKind.FLAT,
+        BROWSE_MODE_ALBUMS: RootKind.ALBUMS,
+        BROWSE_MODE_CALENDAR: RootKind.CALENDAR,
+    }.get(browse_mode, RootKind.FLAT)
+
+
+def browse_mode_of(root: RootKind) -> str:
+    """栈底 → 浏览方式那三个字符串常量（:func:`root_for` 的反向）。"""
+    from gallery.core.library.config import (
+        BROWSE_MODE_ALBUMS,
+        BROWSE_MODE_CALENDAR,
+        BROWSE_MODE_FLAT,
+    )
+
+    return {
+        RootKind.FLAT: BROWSE_MODE_FLAT,
+        RootKind.ALBUMS: BROWSE_MODE_ALBUMS,
+        RootKind.CALENDAR: BROWSE_MODE_CALENDAR,
+    }[root]
 
 
 @dataclass(frozen=True, slots=True)

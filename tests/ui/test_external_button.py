@@ -33,6 +33,7 @@ from waiting import wait_until  # noqa: E402
 
 from gallery.core.external import launch  # noqa: E402
 from gallery.core.library.config import prepare_library  # noqa: E402
+from gallery.core.library.photos import GroupRef  # noqa: E402
 from gallery.ui import desktop  # noqa: E402
 from gallery.ui.external_button import (  # noqa: E402
     BUTTON_GAP,
@@ -51,6 +52,7 @@ from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.search_field import MARGIN_RIGHT as SEARCH_FIELD_MARGIN_RIGHT  # noqa: E402
 from gallery.ui.search_field import TOGGLE_EDGE, TOGGLE_GAP  # noqa: E402
 from gallery.ui.search_field import WIDTH as SEARCH_FIELD_WIDTH  # noqa: E402
+from gallery.ui.window.level_stack import AlbumFrame, GroupFrame  # noqa: E402
 
 #: 搜索胶囊摆好之后的那一块。**按钮是从它往左长出来的**，所以这一块就是唯一的输入。
 FIELD = QRect(300, 7, 208, 22)
@@ -306,22 +308,29 @@ def test_no_library_means_the_button_stays_out(window: MainWindow) -> None:
 
 def test_the_current_folder_is_the_library_root_at_first(window: MainWindow) -> None:
     """全部照片视图下锚点是库根 —— 口径就是既有那一句 ``_current_dir or root``。"""
-    window._current_dir = None
+    # **栈上什么都没有**（只有根帧）—— 原来这里是 ``window._current_dir = None``，
+    # 而那个字段现在是栈的投影、不可写（ADR 0041）。要摆出「没进相册」就用**空的栈**，
+    # 那正是这个用例要的状态。
+    assert window._level_stack.frames == (), "前提不成立：栈上已经有东西了"
     assert window._current_folder() == window._library.root
 
 
 def test_the_current_folder_follows_the_album_you_went_into(window: MainWindow) -> None:
     album = window._library.root / "京都"
     album.mkdir()
-    window._current_dir = album
+    window._push_frame(AlbumFrame(album))
     assert window._current_folder() == album
 
 
 def test_grouping_still_reaches_the_folder_behind_it(window: MainWindow) -> None:
     """**分组时用的也是它**：分组卡片自己不是磁盘上的东西，它代表的那批照片就摆在
-    这个目录里（ADR 0020）—— 于是向上找到的文件夹正是它，不必再往别处问。"""
-    window._current_dir = window._library.root / "京都"
-    window._group_view = ("month", "2026-06")
+    这个目录里（ADR 0020）—— 于是向上找到的文件夹正是它，不必再往别处问。
+
+    栈上是「相册 + 分组」两帧，而 ``_current_folder`` 要给的是**分组底下那个目录** ——
+    那是这一条存在的全部理由（它要跨过分组那一帧往下看）。
+    """
+    window._push_frame(AlbumFrame(window._library.root / "京都"))
+    window._push_frame(GroupFrame(GroupRef("month", "2026-06", "2026 年 6 月", ())))
     assert window._current_folder() == window._library.root / "京都"
 
 
@@ -361,7 +370,7 @@ def test_the_finder_entry_follows_the_folder_the_window_is_in(
         lambda paths: opened.append(list(paths)) or "已在访达中打开。",
     )
     album = window._library.root / "京都"
-    window._current_dir = album
+    window._push_frame(AlbumFrame(album))
 
     window._open_finder()
 

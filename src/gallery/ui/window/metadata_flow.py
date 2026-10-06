@@ -19,6 +19,7 @@ from gallery.core.metadata.facets import PhotoFacets
 from gallery.core.places.countries import place_label
 from gallery.core.places.dataset import is_real_coordinate
 from gallery.ui.tasks import TaskContext
+from gallery.ui.window.level_stack import PhotoFrame
 
 #: 离最近的城市超过这么多公里，就在地点后面补一句距离。
 #:
@@ -234,9 +235,20 @@ class MetadataFlowMixin:
 
     def _open_detail(self, index: QModelIndex) -> None:
         row = index.row()
-        if self._model.photo_at(row) is None:
+        photo = self._model.photo_at(row)
+        if photo is None:
             return
         self._current_row = row
+        # 栈：压**照片帧**（ADR 0041）。
+        #
+        # **只在栈顶已经是照片帧时才换掉它** —— 「在大图页里翻上下一张」不是往深里走（否则
+        # Esc 要按几十次才退得回去）；而从日历点开那一张时栈顶是**日历格**，那一次必须压上去，
+        # 无条件 replace 会把日历格顶掉，于是 Esc 退不回日历（实测：栈里只剩 PhotoFrame，
+        # 而日历格与「从日历来的」这个信息一起没了）。
+        if self._photo_frame is not None:
+            self._push_frame(PhotoFrame(photo.path), replace=True)
+        else:
+            self._push_frame(PhotoFrame(photo.path))
         self._stack.setCurrentWidget(self._detail_page)
         self._detail.setFocus()
         self._update_action_states()

@@ -31,6 +31,7 @@ from gallery.core.metadata.facets import (
 from gallery.core.places.resolver import LazyPlaceResolver
 from gallery.ui.navigation import EntryKey, entry_key
 from gallery.ui.tasks import TaskContext
+from gallery.ui.window.level_stack import GroupFrame
 from gallery.ui.window.notice import NoticeSlot
 
 #: 「正在读取 N 张照片的元数据，用于…」—— **只在真的缺东西时才报**（见 ``_start_facet_read``）。
@@ -137,7 +138,8 @@ class OrderingMixin:
         self._remember_ordering()
         self._sync_order_actions()
         # 换分组字段等于换了一组组卡片，原来进入的那个组已经不存在了。
-        self._group_view = None
+        # 栈：弹到没有分组帧为止（分组只可能压一层，所以至多弹一帧）。
+        self._pop_to(lambda stack: self._group_view is None)
         self._reload_level()
 
     def set_sort_facet(self, facet_id: str | None) -> None:
@@ -220,14 +222,14 @@ class OrderingMixin:
         :param focus: 到了这一层选中哪一格。只有软件自己为了重新分组绕出去再回来时才给；
             用户点进来的一律谁也不选。
         """
-        self._group_view = group
+        self._push_frame(GroupFrame(group))
         self._reload_level(focus=focus)
 
     def _leave_group(self) -> None:
         group = self._group_view
         if group is None:
             return
-        self._group_view = None
+        self._pop_frame()
         # 退回来的那一层选中这张组卡片：分组不在磁盘上，退出时回不到「上一层目录」。
         self._reload_level(focus=entry_key(group))
 
