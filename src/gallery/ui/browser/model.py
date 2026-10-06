@@ -219,8 +219,33 @@ class PhotoListModel(QAbstractListModel):
         self._entries.insert(row, entry)
         self._keys.insert(row, _sort_key(entry))
         self.endInsertRows()
-        self._reindex()
+        self._track(entry, row)
+        self._shift_rows_from(row + 1)
         return row
+
+    def _shift_rows_from(self, first: int) -> None:
+        """插在 ``first`` 之前：**``first`` 及其后的每一行行号 +1**。
+
+        **不要整份重建。** 缺陷现场：这一段原先是 ``self._reindex()`` —— 一次插行要把
+        两张索引整个重扫一遍（实测三万行 4.2 ms/行），而监听器一次报一批新文件，于是
+        访达往一个 3 万张的库里丢 200 张照片要在主线程上花掉近一秒**全是搬行号的力气**，
+        外面还要叠上网格那次全量排版。
+
+        而真正变的只有**后移的那一段**：``first`` 之前的行号一个字都没动。所以从 ``first``
+        起往后重登记一遍，代价与「插在哪儿」成正比（通常插在末尾，那就是零）。
+
+        **分组卡片那本仍然整份重建。** 它的值是**一个行号列表**，只会被追加；而插行之后
+        列表里那些旧行号全都失效了，增量改不动—— 一本「哪些行号指向这张照片」的历史
+        清单没法逐条 +1，只能重扫。好在分组视图里插行是少数情形（监听器往平铺层插照片
+        时压根没有组卡片），而 :meth:`_group_rows_by_cover` 只在真有组卡片时才扫。
+        """
+        self._group_rows_by_cover = {}
+        for index in range(first, len(self._entries)):
+            entry = self._entries[index]
+            if isinstance(entry, GroupRef):
+                self._track(entry, index)
+            else:
+                self._row_by_path[entry.path] = index
 
     def append(self, entries: Sequence[GridEntry]) -> None:
         """追加一批条目（扫描是流式的，界面不等整层扫完就能出图）。

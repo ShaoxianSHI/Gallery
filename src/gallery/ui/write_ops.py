@@ -521,11 +521,16 @@ class WriteOpsMixin:
         logger.info("%s到相册失败：%s", verb, message)
         self._show_banner(f"没能{verb}：{message.rstrip('。')}")
 
-    def _selected_entries(self) -> list[GridEntry]:
+    def _selected_entries(self, rows: Sequence[int] | None = None) -> list[GridEntry]:
         """「此刻这些命令作用于谁」—— 网格页是整个选区，大图页是正在看的那一张。
 
         **大图页不能问网格的选区**（翻图只动 ``_current_row``，网格的选区停在打开大图的那一格）
         —— 那样「在访达中显示」「拷贝路径」作用到的会是一张屏幕上根本没有的照片（ADR 0021）。
+
+        :param rows: 已经问过一次网格选区的话把它传进来，**别再问第二遍** ——
+            ``selected_rows`` 要为每一个选中项新建一个 ``QModelIndex``，实测三万张全选时
+            一次 15.4 ms，而 :meth:`MainWindow._update_action_states` 一次里要问两遍
+            （这一处与「改名」的判据各一遍）。那是纯重复劳动。
         """
         if self._stack.currentWidget() is self._detail_page:
             row = self._current_row
@@ -533,7 +538,10 @@ class WriteOpsMixin:
             return [] if entry is None else [entry]
         return [
             entry
-            for entry in (self._model.entry_at(row) for row in self._grid.selected_rows())
+            for entry in (
+                self._model.entry_at(row)
+                for row in (self._grid.selected_rows() if rows is None else rows)
+            )
             if entry is not None
         ]
 

@@ -560,6 +560,19 @@ class PhotoGrid(QListView):
         self._examiner.setInterval(COLUMN_CHECK_MS)
         self._examiner.timeout.connect(self._examine_columns)
 
+        # **一批插入只排一次版。** 见 :meth:`_on_rows_inserted`：监听器报一批新文件时模型会
+        # 一条一条地插（每条一次 ``rowsInserted``），而这一格直接排全版的话，那一批就是
+        # 「批大小」次全量排版。0 ms 单发、``start()`` 在已排着时原地续期，于是天然合并成
+        # 一次 —— 与 :attr:`_debounce` 同一个手法。
+        self._relayout = QTimer(self)
+        self._relayout.setSingleShot(True)
+        self._relayout.setInterval(0)
+        self._relayout.timeout.connect(self._relayout_after_insert)
+        #: 插入发生时用户正看着的纵向位置。**要在插入那一刻记，不能在定时器里读** ——
+        #: Qt 紧接着就会从第 0 条重排一次，那时 ``bar.value()`` 已经是那个被夹小的值
+        #: （400 张的库 7037 → 1642），拿它去重排就是拿错的基准去修。
+        self._relayout_anchor = 0
+
         self._edge_timer = QTimer(self)
         self._edge_timer.setSingleShot(True)
         self._edge_timer.setInterval(EDGE_SETTLE_MS)
@@ -614,13 +627,23 @@ class PhotoGrid(QListView):
         顺手把这次插入引起的重排接管掉** —— Qt 为插入排的延迟重排每次都从第 0 条重新
         排起，滚动条范围在排完第一批那一刻只剩一小块，正看到中间的人当场被夹回顶部
         （400 张的库 6970 → 1620）。停在最顶上时（扫库的常态）不花这笔钱。
+
+        **那一摞重排排成 0 ms 定时器，不在这里当场做。** 缺陷现场：监听器一次报一批新
+        文件、模型一条一条地插，于是这里被调「批大小」次，而每一次都是一次**全量排版**
+        —— 实测三万张的库里插 20 行是 477 ms（23.9 ms/行），访达丢 200 张就是几秒的
+        主线程冻死，而其中绝大部分是重复劳动：那一批要排的版是同一份。定时器在已排着时
+        原地续期，于是合并成一次（与 :attr:`_debounce` 同一个手法）。
         """
         # 插进来的新行没有「旧位置」可言，算不出它该从哪来 —— 过渡作废。
         self._cancel_transition()
         self._examiner.start()
-        bar = self.verticalScrollBar()
-        if bar.value() > 0:
-            self._apply_geometry(self._cell_size_for(self._layout_width()), bar.value())
+        if self.verticalScrollBar().value() > 0:
+            self._relayout_anchor = self.verticalScrollBar().value()
+            self._relayout.start()
+
+    def _relayout_after_insert(self) -> None:
+        """一批插入排完版之后按**插入那一刻**的滚动位置重排一次（见 :attr:`_relayout_anchor`）。"""
+        self._apply_geometry(self._cell_size_for(self._layout_width()), self._relayout_anchor)
 
     def _on_model_reset(self, *_args: object) -> None:
         """模型整体重置（换层、换排序）→ 旧的 arm 作废。

@@ -733,13 +733,15 @@ class MainWindow(
             self._owns_title_bar and self._external_button.is_available()
         )
         self._layout_title_bar()
-        entries = [] if in_calendar else self._selected_entries()
+        # **网格选区整轮只问一次** —— `selected_rows()` 要为每一个选中项新建一个 `QModelIndex`
+        # 再收成列表，实测三万张全选时一次 15.4 ms。这一段原先问两遍（`_selected_entries`
+        # 一次、「改名」判据里再一次），那是纯重复劳动；大图页 / 日历页根本不需要它。
+        grid_rows = self._grid.selected_rows() if in_grid else []
+        entries = [] if in_calendar else self._selected_entries(grid_rows if in_grid else None)
         focus_row = -1 if in_calendar else self._focus_row()
         # 「改名」只对磁盘上的**某一个**东西成立（组卡片改不了名，一次只改一条，ADR 0009 / 0004）。
         considered: tuple[int, ...] = (
-            (*self._grid.selected_rows(), self._grid.current_row())
-            if in_grid
-            else (self._current_row,)
+            (*grid_rows, self._grid.current_row()) if in_grid else (self._current_row,)
         )
         file_only = not any(
             isinstance(self._model.entry_at(row), GroupRef) for row in considered if row >= 0
