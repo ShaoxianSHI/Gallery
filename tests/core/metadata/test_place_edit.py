@@ -5,12 +5,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Final
 
 import pytest
 
 from gallery.core.errors import MetadataWriteError
 from gallery.core.metadata.place_edit import PlaceEdit, PlaceState, plan_place_edit
-from gallery.core.metadata.writeback import COORDINATE_TAGS, PLACE_TAGS, Assignment
+from gallery.core.metadata.writeback import (
+    COORDINATE_TAGS,
+    PLACE_TAGS,
+    STALE_GPS_TAGS,
+    Assignment,
+)
 from gallery.core.places.dataset import Place
 from gallery.core.places.resolver import ResolvedPlace
 
@@ -190,6 +196,10 @@ def test_editing_coordinates_clears_the_altitude_of_the_old_place(
     assert written["EXIF:GPSDateStamp"] == ""
 
 
+#: 「改坐标」与「清空坐标」都要动的那一批 —— 含海拔与定位时间。
+_ALL_GPS: Final = (*COORDINATE_TAGS, *STALE_GPS_TAGS)
+
+
 def test_emptying_every_field_removes_the_whole_place(library_state: PlaceState) -> None:
     """**三层地名与两个坐标框全清空，就是「把位置整个清掉」**，不需要单独的勾（ADR 0031）——
     那个勾只会多出一种要记的用法，而清空本来就表达得出「全删」。
@@ -202,7 +212,9 @@ def test_emptying_every_field_removes_the_whole_place(library_state: PlaceState)
         resolver=resolver,
     )
 
-    assert {item.tag for item in plan.assignments} == set(COORDINATE_TAGS) | set(PLACE_TAGS)
+    # 坐标那四条**加上**海拔与定位时间 —— 见下面那条：这两条记的是旧位置上的测量值，
+    # 留着就是一条自相矛盾的 GPS 记录（ADR 0031 决策 6）。
+    assert {item.tag for item in plan.assignments} == set(_ALL_GPS) | set(PLACE_TAGS)
     assert set(tags(plan.assignments).values()) == {""}
     assert resolver.calls == []
 
@@ -216,8 +228,38 @@ def test_emptying_both_coordinate_boxes_removes_only_the_coordinates(
     )
 
     written = tags(plan.assignments)
-    assert set(written) == set(COORDINATE_TAGS)
+    assert set(written) == set(_ALL_GPS)
     assert plan.city == library_state.city
+
+
+def test_clearing_the_coordinates_clears_the_altitude_too(library_state: PlaceState) -> None:
+    """**「清空坐标」与「改坐标」动的是同一批标签** —— 海拔与定位时间一并清掉。
+
+    缺陷现场：清空那条原先只发 :data:`COORDINATE_TAGS` 那四条，于是文件里留下一条
+    「有海拔 3200 米、有 GPS 定位时间、但没有经纬度」的记录，任何读 EXIF 的软件看到都是
+    一脸困惑；而「改坐标」那条 :func:`_coordinate_assignments` 的 docstring 恰好写着
+    「留着一条 GPS 记录就自相矛盾」。**两条路各写一份清单，迟早分叉** —— 现在只写一份
+    （``place_edit._all_coordinate_tags``），这条用例钉住它们不再分叉。
+    """
+    from gallery.core.metadata.place_edit import _all_coordinate_tags
+
+    cleared = tags(
+        plan_place_edit(
+            library_state, fill(library_state, clear_coordinates=True), resolver=FakeResolver()
+        ).assignments
+    )
+    edited = tags(
+        plan_place_edit(
+            library_state,
+            fill(library_state, latitude=30.2741, longitude=120.1551),
+            resolver=FakeResolver(),
+        ).assignments
+    )
+
+    assert set(_all_coordinate_tags()) == set(COORDINATE_TAGS) | set(STALE_GPS_TAGS)
+    assert set(STALE_GPS_TAGS) <= set(cleared), "清空坐标没有清掉海拔与定位时间"
+    assert set(STALE_GPS_TAGS) <= set(edited)
+    assert set(cleared) == set(edited), "两条路发的标签集合分叉了"
 
 
 def test_nothing_changed_writes_nothing(library_state: PlaceState) -> None:

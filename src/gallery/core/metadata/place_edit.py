@@ -138,8 +138,16 @@ def plan_place_edit(
 def _clearing_coordinates(
     state: PlaceState, names: tuple[str | None, str | None, str | None], names_changed: bool
 ) -> PlacePlan:
-    """「把坐标删掉，但地名留着」——定位漂了、地名没错时用户真正想要的那一下。"""
-    assignments: list[Assignment] = [Assignment(tag, "") for tag in COORDINATE_TAGS]
+    """「把坐标删掉，但地名留着」——定位漂了、地名没错时用户真正想要的那一下。
+
+    **海拔与定位时间一并清掉**，与 :func:`_coordinate_assignments` 同一份定义
+    （:data:`~gallery.core.metadata.writeback.STALE_GPS_TAGS`）。缺陷现场：原先这里只发
+    :data:`~gallery.core.metadata.writeback.COORDINATE_TAGS` 那四条，于是清空之后文件里
+    留下一条「有海拔 3200 米、有 GPS 定位时间、但没有经纬度」的记录 —— 任何读 EXIF 的
+    软件看到都是一脸困惑，而 :func:`_coordinate_assignments` 的 docstring 恰好写着
+    「留着一条 GPS 记录就自相矛盾」。两条路各写一份清单，迟早分叉；现在只写一份。
+    """
+    assignments: list[Assignment] = [Assignment(tag, "") for tag in _all_coordinate_tags()]
     if names_changed:
         assignments.extend(_place_assignments(*names))
     return PlacePlan(
@@ -178,11 +186,23 @@ def _coordinates(state: PlaceState, edit: PlaceEdit) -> tuple[float, float] | No
     return (latitude, longitude)
 
 
+def _all_coordinate_tags() -> tuple[str, ...]:
+    """**改坐标**与**清空坐标**都要动的全部坐标标签。
+
+    海拔与定位时间记的是「另一个位置」上的测量值：坐标在杭州、海拔是珠峰，留着一条 GPS
+    记录就自相矛盾（ADR 0031 决策 6）。清掉比留着好，而清掉这件事必须说给用户听。
+
+    **只有这一处定义。** 两条路各写一份清单的代价已经付过一次：清空那条漏了
+    :data:`~gallery.core.metadata.writeback.STALE_GPS_TAGS`，于是清空之后文件里留下一条
+    「有海拔、有定位时间、没坐标」的记录。
+    """
+    return (*COORDINATE_TAGS, *STALE_GPS_TAGS)
+
+
 def _coordinate_assignments(latitude: float, longitude: float) -> list[Assignment]:
     """坐标 → 四个标签，外加**把旧位置的海拔与定位时间清掉**。
 
-    那两个字段记的是「另一个位置」上的测量值，留着一条 GPS 记录就自相矛盾（坐标在杭州、
-    海拔是珠峰）。清掉比留着好，而清掉这件事必须说给用户听。
+    要动的全部标签见 :func:`_all_coordinate_tags` —— 与「清空坐标」共用那一份。
     """
     return [
         Assignment("EXIF:GPSLatitude", f"{abs(latitude):.6f}"),

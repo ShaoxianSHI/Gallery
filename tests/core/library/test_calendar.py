@@ -186,6 +186,14 @@ def test_month_step_lands_on_a_day_that_exists() -> None:
 def test_stepping_across_a_leap_day() -> None:
     assert shift("week", datetime.date(2024, 2, 26), 1) == datetime.date(2024, 3, 4)
     assert shift("month", datetime.date(2024, 2, 29), 1) == datetime.date(2024, 3, 29)
+    # **年视图也得走同一套截断**：缺陷现场是它直接 ``replace(year=…)``，于是
+    # 2024-02-29 往后翻一年抛 ``ValueError: day is out of range for month``。
+    # 三条入口（工具条 / 方向键 / 两指横甩）都走 :func:`shift`，症状是「按了没反应」，
+    # 而异常只在那一刻打到 stderr —— 界面连锚点都没更新，看起来像没听见。
+    assert shift("year", datetime.date(2024, 2, 29), 1) == datetime.date(2025, 2, 28)
+    assert shift("year", datetime.date(2024, 2, 29), -1) == datetime.date(2023, 2, 28)
+    # 闰年本身要保住 2 月 29 日，别把好日子也截掉。
+    assert shift("year", datetime.date(2024, 2, 29), 4) == datetime.date(2028, 2, 29)
 
 
 @pytest.mark.parametrize(

@@ -128,11 +128,16 @@ def shift(level: str, anchor: datetime.date, steps: int) -> datetime.date:
     """往前 / 往后翻一页（年翻一年、月翻一月、周翻七天），**保持同一个「日子」**。
 
     1 月 31 日往后翻一个月是 2 月 28 日，再往前翻回 1 月 28 日 —— 来回翻两下不会越翻越偏。
+
+    **闰日也一样**：2 月 29 日翻到没有闰日的年份截到 2 月 28 日（年视图原来直接
+    ``replace(year=…)``，会在 2024-02-29 上抛 ``ValueError``）。三条入口 ——
+    工具条、方向键、两指横甩—— 都走这里，于是症状是「按了没反应」而栈顶只在那一刻
+    有东西。与月视图同一套判据，不另立一份。
     """
     if steps == 0:
         return anchor
     if level == "year":
-        return anchor.replace(year=anchor.year + steps)
+        return _clamped(anchor.year + steps, anchor.month, anchor.day)
     if level == "month":
         total = anchor.year * 12 + (anchor.month - 1) + steps
         year, month = divmod(total, 12)
@@ -141,7 +146,12 @@ def shift(level: str, anchor: datetime.date, steps: int) -> datetime.date:
 
 
 def _clamped(year: int, month: int, day: int) -> datetime.date:
-    """``date`` 的年月组合在「这一天不存在」时截到当月最后一天（1 月 31 日 + 1 月）。"""
+    """``date`` 的年月组合在「这一天不存在」时截到当月最后一天。
+
+    1 月 31 日 + 1 月 → 2 月 28 日；**2 月 29 日 + 1 年 → 2 月 28 日**。
+    逐日往前挪而不是查 ``monthrange``：闰年的 2 月有 29 天，两者恰好同一条路，
+    而这一条不需要为「哪些月份有几天」另立一份判据。
+    """
     while True:
         try:
             return datetime.date(year, month, day)
