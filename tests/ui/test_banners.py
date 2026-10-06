@@ -383,9 +383,7 @@ def test_undoing_a_delete_says_it_came_back() -> None:
     """撤的是删除就说「回来了」，撤的是改动就说「改回去」—— 两句话不是同一句。"""
     from gallery.core.metadata.journal import ACTION_EVENT, ACTION_EVENT_DELETE
 
-    restored = UndoResult(
-        action=ACTION_EVENT_DELETE, entries=(), event=_event(), journaled=True
-    )
+    restored = UndoResult(action=ACTION_EVENT_DELETE, entries=(), event=_event(), journaled=True)
     changed = UndoResult(action=ACTION_EVENT, entries=(), event=_event(), journaled=True)
 
     assert "恢复" in banners.event_undo_banner(restored, "事件")
