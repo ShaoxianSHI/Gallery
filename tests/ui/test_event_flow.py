@@ -36,6 +36,7 @@ from gallery.ui import menu_style  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.menu_style import ShortcutColumnMenu  # noqa: E402
 from gallery.ui.panels.event_edit import ChoiceButtons, EventEditDialog  # noqa: E402
+from gallery.ui.theme import rgba  # noqa: E402
 
 #: DateTimeOriginal 的标签编号与它在**Exif 子 IFD** 里（塞进主 IFD 读不出来）。
 DATETIME_ORIGINAL = 0x9003
@@ -654,6 +655,31 @@ def test_a_rating_field_comes_up_as_a_row_of_five_buttons(qt_app: QApplication) 
     assert choice.value() == "1"
     buttons[0].click()
     assert choice.value() == ""
+
+
+def test_the_checked_rating_wears_the_popup_highlight(qt_app: QApplication) -> None:
+    """评分按钮选中时用**与弹出菜单、候选列表同一档**的高亮：底色 ``Highlight``、字色
+    ``HighlightedText``（由 ``theme`` 钉死，ADR 0035）。判据是「与下发的那一份相等」，不写死颜色。
+    """
+    dialog = EventEditDialog(None, TRIP)
+    palette = dialog.palette()
+    highlight = rgba(palette.color(QPalette.ColorRole.Highlight))
+    highlighted_text = rgba(palette.color(QPalette.ColorRole.HighlightedText))
+
+    checked = _style_rule(dialog.styleSheet(), "QPushButton#eventEditChoice:checked")
+
+    assert f"background: {highlight}" in checked
+    assert f"color: {highlighted_text}" in checked
+
+
+def _style_rule(sheet: str, selector: str) -> str:
+    """样式表里某一条选择器的规则体（``{`` 与 ``}`` 之间）。找不到就是空串 —— 断言因此会失败。"""
+    start = sheet.find(selector)
+    if start < 0:
+        return ""
+    body = sheet.find("{", start)
+    end = sheet.find("}", body)
+    return sheet[body:end] if 0 <= body < end else ""
 
 
 def test_the_name_grows_by_itself_until_the_user_types_one(qt_app: QApplication) -> None:

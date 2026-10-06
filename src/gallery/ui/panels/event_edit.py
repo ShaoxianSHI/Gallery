@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Final
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction, QKeySequence, QPalette
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -125,8 +125,14 @@ class ChoiceButtons(QWidget):
             button.setChecked(choice == text)
 
 
-def dialog_style(app_theme: AppTheme) -> str:
-    """对话框的样式。文字色全部从主题派生，与元数据编辑器同一份底色。"""
+def dialog_style(app_theme: AppTheme, palette: QPalette) -> str:
+    """对话框的样式。文字色全部从主题派生，与元数据编辑器同一份底色。
+
+    选中的评分按钮借用**与弹出菜单、候选列表同一档**的高亮（``Highlight`` / ``HighlightedText``，
+    由 :mod:`gallery.ui.theme` 钉死），所以要 ``palette`` 把那一份递进来 —— 不在这里另派生一份。
+    """
+    highlight = palette.color(QPalette.ColorRole.Highlight)
+    highlighted_text = palette.color(QPalette.ColorRole.HighlightedText)
     return f"""
     QDialog {{ background: {rgba(app_theme.background)}; }}
     QLabel {{ color: {rgba(app_theme.text_at(0.92))}; font-size: 12px; }}
@@ -149,8 +155,8 @@ def dialog_style(app_theme: AppTheme) -> str:
     }}
     QPushButton:hover {{ background: {rgba(app_theme.text_at(0.2))}; }}
     QPushButton#eventEditChoice:checked {{
-        color: {rgba(app_theme.background)};
-        background: {rgba(app_theme.link)};
+        color: {rgba(highlighted_text)};
+        background: {rgba(highlight)};
     }}
     QCheckBox {{ color: {rgba(app_theme.text_at(0.78))}; font-size: 12px; }}
     """
@@ -348,7 +354,7 @@ class EventEditDialog(QDialog):
         return ""
 
     def _apply_theme(self) -> None:
-        self.setStyleSheet(dialog_style(theme.current_theme()))
+        self.setStyleSheet(dialog_style(theme.current_theme(), self.palette()))
 
 
 def _hint(text: str) -> QLabel:
