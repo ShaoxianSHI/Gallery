@@ -283,7 +283,12 @@ def parse_capture_time(value: str | None) -> CaptureMoment | None:
         return None
     year, month, day, hour, minute = (int(part) for part in match.groups()[:5])
     second = int(match.group(6) or 0)
-    if not (1 <= month <= 12 and 1 <= day <= calendar.monthrange(year, month)[1] and hour < 24 and minute < 60):
+    if not (
+        1 <= month <= 12
+        and 1 <= day <= calendar.monthrange(year, month)[1]
+        and hour < 24
+        and minute < 60
+    ):
         return None
     offset = _offset_seconds(match.group(7))
     try:

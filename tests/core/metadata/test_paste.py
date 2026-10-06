@@ -13,6 +13,7 @@ from PIL import Image
 
 from gallery.core import paths
 from gallery.core.errors import PasteError
+from gallery.core.metadata import naming
 from gallery.core.metadata.journal import (
     ACTION_PASTE,
     ACTION_RENAME,
@@ -311,3 +312,71 @@ def test_the_config_directory_is_not_a_paste_target(library: Path, tmp_path: Pat
 
     with pytest.raises(PasteError, match="配置目录"):
         copy_into(library, paths.config_dir(library), [source])
+
+
+def test_an_unreadable_destination_never_deletes_the_folder_already_there(
+    library: Path, tmp_path: Path
+) -> None:
+    """**目录读不了的时候，绝不能把用户已有的同名文件夹连同照片删掉**（红线 1）。
+
+    缺陷现场（已实测复现，用户目录连同 3 张照片一起消失）：
+    ``occupied_names`` 在 ``scandir`` 失败时返回**空集**，而 ``free_name_in`` 的
+    ``taken()`` 判的是 ``occupied is not None`` —— 空集不是 ``None``，于是那句
+    「目录读不了就当作空的，``free_name_in`` 会退回去真的去 ``exists()``」是假的：
+    查表判成「原名空着」→ ``copytree`` 撞上用户那个同名文件夹抛 ``FileExistsError``
+    → 收尾那句 ``rmtree`` 把**用户的文件夹**删了，横幅只说一句「复制失败」。
+
+    触发条件在真实机器上并不罕见：目录可写可进入但不可读、云盘占位目录、网络卷瞬断。
+
+    ``0o333`` 是「属主可进入、不可读」—— 只有属主那份读权限被摘掉才能造出这个形状，
+    所以这个用例在别的用户下没有意义（本项目只在 macOS 上跑）。
+    """
+    destination = library / "奈良"
+    user_folder = destination / "2024"
+    user_folder.mkdir(parents=True)
+    for name in ("a.jpg", "b.jpg", "c.jpg"):
+        (user_folder / name).write_text("用户的照片")
+
+    incoming = tmp_path / "2024"
+    incoming.mkdir()
+    (incoming / "x.jpg").write_text("新照片")
+
+    destination.chmod(0o333)
+    try:
+        assert naming.occupied_names(destination) is None, "前提不成立：目录本该读不了"
+        result = copy_into(library, destination, [incoming])
+    finally:
+        destination.chmod(0o755)
+
+    assert user_folder.is_dir(), "用户自己的文件夹被删了"
+    assert sorted(p.name for p in user_folder.iterdir()) == ["a.jpg", "b.jpg", "c.jpg"]
+    assert [item.created.name for item in result.pasted] == ["2024 2"], "应当改用编号让开"
+
+
+def test_a_same_named_file_dropped_in_mid_batch_is_never_overwritten(
+    library: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**「绝不覆盖」得由磁盘保证，不能只靠批次开始时那张快照**（红线 1）。
+
+    ``occupied_names`` 是操作开始那一刻的一次快照，而一批几百项、跨卷时要跑几分钟。
+    期间用户或访达/同步工具放进去的同名文件，那张表看不见：``shutil.copy2`` 会
+    **静默覆盖**、``Path.rename`` 在 POSIX 上是原子替换，两条路都不报错 ——
+    用户自己那份就这么没了，横幅还报「已粘贴 1 项」。
+
+    这里把那个窗口造出来：让这一批拿到的是**一份已经过期的快照** —— 快照取完之后，
+    目标目录里才落进一个同名文件。
+    """
+    destination = library / "奈良"
+    mine = tmp_path / "a.jpg"
+    mine.write_text("Gallery 的照片")
+
+    stale = naming.occupied_names(destination)  # 快照：此刻目录里还什么都没有
+    assert stale == set(), "前提不成立：快照应当是空的"
+    landed = destination / "a.jpg"
+    landed.write_text("用户后来放进去的")
+
+    monkeypatch.setattr("gallery.core.metadata.paste.occupied_names", lambda _dir: stale)
+    result = copy_into(library, destination, [mine])
+
+    assert landed.read_text() == "用户后来放进去的", "用户那份被覆盖了"
+    assert [item.created.name for item in result.pasted] == ["a 2.jpg"], "应当加编号让开"

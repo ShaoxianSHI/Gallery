@@ -196,9 +196,7 @@ def _guard(root: Path, source: Path, target: Path) -> None:
         try:
             paths.guard_within_root(root, _path)
         except ValueError as exc:
-            raise RenameError(
-                f"只能重命名库里的东西：{_path}。（{exc}）", path=_path
-            ) from exc
+            raise RenameError(f"只能重命名库里的东西：{_path}。（{exc}）", path=_path) from exc
 
 
 def _keep_suffix(entry: PhotoRef, cleaned: str) -> str:

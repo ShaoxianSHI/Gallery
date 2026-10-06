@@ -103,9 +103,7 @@ def is_within(root: Path, candidate: Path) -> bool:
     return resolved == resolved_root or resolved_root in resolved.parents
 
 
-def guard_within_root(
-    root: Path, path: Path, *, allow_root: bool = True
-) -> None:
+def guard_within_root(root: Path, path: Path, *, allow_root: bool = True) -> None:
     """确认 ``path`` 在库内且不是配置目录。
 
     :param allow_root: ``True`` 时允许 ``path == root``（粘贴的目标可以是库根）；

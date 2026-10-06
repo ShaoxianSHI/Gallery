@@ -74,19 +74,26 @@ def split_suffix(name: str, *, whole: bool = False) -> tuple[str, str]:
     return stem, f".{suffix}"
 
 
-def occupied_names(directory: Path) -> set[str]:
+def occupied_names(directory: Path) -> set[str] | None:
     """``directory`` 里已经有的那些名字（一次 ``scandir``）。
 
     交给 :func:`free_name_in` 的 ``occupied`` 用。存在的理由只有一个：
     **批量操作里，一个目录只该扫一次。** 见 :func:`free_name_in` 的说明。
+
+    **读不了时返回 ``None``，不是空集。** 这两者说的不是一回事：空集说「这里什么都没有」，
+    ``None`` 说「不知道」。而 :func:`free_name_in` 的 ``occupied`` 正是靠这个差别决定
+    走查表还是退回逐个 ``exists()``（``taken`` 判的是 ``is not None``）。
+
+    缺陷现场（红线 1）：这里原先返回空集，于是「不知道」被当成「什么都没有」，
+    加编号的探测判成「原名空着」→ ``copytree`` 撞上用户自己那个同名文件夹、抛
+    ``FileExistsError`` → 收尾那句 ``rmtree`` 把**用户那个文件夹连同里面的照片删掉了**，
+    而横幅只说一句「复制失败：File exists」。
     """
     try:
         with os.scandir(directory) as entries:
             return {entry.name for entry in entries}
     except OSError:
-        # 目录读不了就当作空的：接下来 ``free_name_in`` 会退回去真的去 ``exists()``，
-        # 于是顶多多撞一次上而已，不会覆盖用户已有的东西。
-        return set()
+        return None
 
 
 def free_name_in(
@@ -102,8 +109,9 @@ def free_name_in(
 
     :param whole: 传给 :func:`split_suffix`（相册那种没有扩展名的，整体算名字）。
     :param occupied: 这个目录里**已经有的名字**（见 :func:`occupied_names`）。
-        给了它就纯查表，一次系统调用都不发；不给就退回逐个 ``exists()``。
-        **批量操作必须传** —— 见下面那段说明。
+        给了它就纯查表，一次系统调用都不发；**``None`` 就退回逐个 ``exists()``** ——
+        目录读不了时 :func:`occupied_names` 返回的正是 ``None``，于是「不知道」不会被
+        当成「空着」。**批量操作必须传** —— 见下面那段说明。
     :return: 空着的那个名字；``None`` 表示「加编号也还是太长」—— 光靠加数字缩短不了
         名字，那就如实说不行，而不是截断用户文件名（那会造出一个他认不出的照片）。
 
@@ -138,11 +146,37 @@ def free_name_in(
         number += 1
 
 
+def free_target(directory: Path, wanted: str, occupied: set[str] | None = None) -> Path | None:
+    """挑一个**此刻真的空着**的完整目标路径；加编号也还是太长就 ``None``。
+
+    :func:`free_name_in` 只查 ``occupied`` 那张表，而那张表是**一批操作开始那一刻**的
+    快照 —— 一批几百项、跨卷时要跑几分钟，期间用户或访达/同步工具放进去的同名文件，
+    查表是看不见的。而 ``copy2`` 会**静默覆盖**、``Path.rename`` 在 POSIX 上是原子替换，
+    两条路都不报错，用户自己那份就这么没了（红线 1「绝不覆盖」）。
+
+    所以动手之前**再看一眼磁盘**：撞上了就重新加编号。一项一次 ``stat``，相对整批拷贝
+    可以忽略，而这一项换来的是「绝不覆盖」这句话真的成立。
+
+    **粘贴与移动到相册都走这里** —— 「绝不覆盖」这条规矩只有一处实现。
+    """
+    folder = Path(directory)
+    while True:
+        name = free_name_in(folder, wanted, occupied=occupied)
+        if name is None:
+            return None
+        if occupied is not None:
+            occupied.add(name)  # 后一项不许挑到同一个名字
+        candidate = folder / name
+        if not candidate.exists():
+            return candidate
+
+
 __all__ = [
     "FIRST_DUPLICATE_NUMBER",
     "MAX_NAME_BYTES",
     "clean_name",
     "free_name_in",
+    "free_target",
     "occupied_names",
     "split_suffix",
 ]

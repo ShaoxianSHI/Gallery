@@ -50,7 +50,7 @@ from gallery.core.metadata.journal import (
     WriteRecord,
     append_record,
 )
-from gallery.core.metadata.naming import free_name_in, occupied_names
+from gallery.core.metadata.naming import free_target, occupied_names
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,12 +156,10 @@ def move_into(
             continue
         if cancelled():
             break
-        name = free_name_in(destination, source.name, occupied=taken)
-        if name is None:
+        created = free_target(destination, source.name, taken)
+        if created is None:
             failures.append(Failure.at(source, message="这个名字太长，再加编号也放不下了。"))
             continue
-        created = destination / name
-        taken.add(name)  # 后一项不许挑到同一个名字
         try:
             _move(source, created)
         except OSError as error:

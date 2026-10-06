@@ -14,6 +14,7 @@ from PIL import Image
 from gallery.core import paths
 from gallery.core.errors import TransferError
 from gallery.core.library.photos import PhotoRef
+from gallery.core.metadata import naming
 from gallery.core.metadata.journal import (
     ACTION_MOVE,
     ACTION_RENAME,
@@ -281,3 +282,28 @@ def test_the_config_directory_is_not_a_target_album(library: Path) -> None:
     """配置目录里放东西 = 用户照片目录里多出一份非「只有缓存才有」的数据（红线 5）。"""
     with pytest.raises(TransferError, match="配置目录"):
         _move(library, paths.config_dir(library), library / "京都" / "一张.jpg")
+
+
+def test_a_same_named_file_dropped_in_mid_batch_is_never_overwritten(
+    library: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """移动到相册也绝不覆盖用户在途中放进来的照片（红线 1，已实测复现）。
+
+    ``occupied_names`` 是这一批开始那一刻的快照，而一批几百项、跨卷时要跑几分钟。
+    期间落进来的同名文件那张表看不见 —— 而 ``Path.rename`` 在 POSIX 上是**原子替换**，
+    连 ``FileExistsError`` 都不抛：用户那份就这么没了，``failures`` 是空的，
+    横幅还报「已移动 1 项」。
+    """
+    destination = library / "奈良"
+    mine = library / "p050.jpg"
+    mine.write_text("incoming-from-gallery")
+
+    stale = naming.occupied_names(destination)
+    landed = destination / "p050.jpg"
+    landed.write_text("用户的")
+
+    monkeypatch.setattr("gallery.core.metadata.transfer.occupied_names", lambda _dir: stale)
+    result = _move(library, destination, mine)
+
+    assert landed.read_text() == "用户的", "用户那份被覆盖了"
+    assert result.moved, "应当改用编号让开，而不是失败"

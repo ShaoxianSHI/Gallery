@@ -32,7 +32,7 @@ from gallery.core.metadata.journal import (
     WriteRecord,
     append_record,
 )
-from gallery.core.metadata.naming import free_name_in, occupied_names
+from gallery.core.metadata.naming import free_target, occupied_names
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +105,7 @@ def copy_into(
     journaled = True
     # **目录只扫一次**：加编号的探测原本是「撞一次 stat 一次」，而这一层是逐项循环 —— 把几百张
     # 同名照片粘进一个已经有几百张同名照片的目录，探测次数就是两者的乘积。
+    # 扫不动时是 ``None``（「不知道」），那一层就退回逐项 ``exists()``，宁可慢也不猜。
     taken = occupied_names(destination)
 
     for raw_source in sources:
@@ -146,26 +147,49 @@ class _Outcome:
     journaled: bool = True
 
 
-def _copy_one(root: Path, destination: Path, source: Path, batch: str, taken: set[str]) -> _Outcome:
+def _copy_one(
+    root: Path, destination: Path, source: Path, batch: str, taken: set[str] | None
+) -> _Outcome:
     """把一项复制进 ``destination``。
 
-    ``taken`` 是这一批共用的一份「已经被占掉的名字」，由调用方扫一次目录得到。
+    ``taken`` 是这一批共用的一份「已经被占掉的名字」，由调用方扫一次目录得到；
+    **目录读不了时它是 ``None``**（见 :func:`~gallery.core.metadata.naming.occupied_names`），
+    那时每项退回逐个 ``exists()``。
     """
-    name = free_name_in(destination, source.name, occupied=taken)
-    if name is None:
+    is_dir = source.is_dir()
+    created = free_target(destination, source.name, taken)
+    if created is None:
         return _Outcome(failure=Failure.at(source, message="这个名字太长，再加编号也放不下了。"))
-    created = destination / name
-    taken.add(name)  # 后一项不许挑到同一个名字
     try:
-        if source.is_dir():
+        if is_dir:
             # copytree 目标已存在会直接报错（它不做覆盖），半途失败也会自己收尾。
             shutil.copytree(source, created, copy_function=shutil.copy2)
         else:
             # copy2 连修改时间一起复制：库里默认按修改时间排序，粘进来的照片
             # 因此还留在它原来的时间位置上，而不是齐刷刷跳到今天。
             shutil.copy2(source, created)
+    except FileExistsError:
+        # 目标已经存在，**而那不是我们写了一半的东西，是用户自己放进去的**。
+        # 绝不能清理它：copytree 压根还没开始写，清理那句 ``rmtree`` 删掉的是用户的
+        # 文件夹连同里面所有照片，而横幅只会说「复制失败」（红线 1）。
+        message = "这个位置已经有同名的文件或文件夹了，粘贴没有动它。"
+        return _Outcome(
+            failure=Failure.at(source, message=message),
+            journaled=append_record(
+                root,
+                WriteRecord(
+                    action=ACTION_PASTE,
+                    source=source,
+                    target=created,
+                    result=RESULT_FAILED,
+                    message=message,
+                    is_dir=is_dir,
+                    batch=batch,
+                ),
+            ),
+        )
     except OSError as error:
-        _remove_partial(created, source.is_dir())
+        _remove_partial(created, is_dir)
         message = os_reason(error, action="复制")
         return _Outcome(
             failure=Failure.at(source, message=message),
@@ -191,7 +215,7 @@ def _copy_one(root: Path, destination: Path, source: Path, batch: str, taken: se
                 source=source,
                 target=created,
                 result=RESULT_OK,
-                is_dir=source.is_dir(),
+                is_dir=is_dir,
                 batch=batch,
             ),
         ),
@@ -199,7 +223,11 @@ def _copy_one(root: Path, destination: Path, source: Path, batch: str, taken: se
 
 
 def _remove_partial(created: Path, is_dir: bool) -> None:
-    """把**本模块刚写了一半**的那个目标清掉 —— 只删这一条，别的文件一个都不碰。"""
+    """把**本模块刚写了一半**的那个目标清掉 —— 只删这一条，别的文件一个都不碰。
+
+    **只对已经确定是我们创建的目标调用**（``FileExistsError`` 那一条不归它管：那是用户
+    自己放进去的，copytree 一个字节都还没写）。
+    """
     try:
         if is_dir:
             shutil.rmtree(created, ignore_errors=True)
