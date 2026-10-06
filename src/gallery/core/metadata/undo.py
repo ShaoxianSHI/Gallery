@@ -157,7 +157,7 @@ def undo_last_write(
         return None
     run = runs[-1]
     if run[0].action == ACTION_RENAME:
-        return _undo_rename(root, run[0])
+        return _undo_rename(root, run[0], events)
     if run[0].action == ACTION_MOVE:
         return _undo_move(root, run)
     if run[0].action == ACTION_METADATA:
@@ -217,8 +217,9 @@ def _undo_event(record: WriteRecord, events: EventStore | None) -> UndoResult:
     return UndoResult(action=record.action, entries=(), journaled=outcome.journaled)
 
 
-def _undo_rename(root: Path, record: WriteRecord) -> UndoResult:
-    result = undo_rename_record(root, record)
+def _undo_rename(root: Path, record: WriteRecord, events: EventStore | None) -> UndoResult:
+    # 撤销是一次改名，于是事件绑定跟着搬回去（ADR 0043 决策 8）。
+    result = undo_rename_record(root, record, events=events)
     return UndoResult(
         action=ACTION_RENAME,
         entries=(result.entry,),

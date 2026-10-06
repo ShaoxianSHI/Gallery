@@ -908,7 +908,7 @@ class Library:
 
         这是少数会动用户文件的操作，规矩与红线见 ``core.rename`` 和 ADR 0004。
         """
-        result = rename_entry(self._root, entry, new_name)
+        result = rename_entry(self._root, entry, new_name, events=self.events)
         if result.renamed:
             self._relocate_thumbnail(result.previous, result.entry)
         return result

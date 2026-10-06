@@ -25,6 +25,7 @@ from pathlib import Path
 
 from gallery.core import paths
 from gallery.core.errors import RenameError
+from gallery.core.events.store import EventStore
 from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
 from gallery.core.metadata.failures import os_reason
 from gallery.core.metadata.journal import (
@@ -69,9 +70,17 @@ def validate_name(name: str, entry: GridEntry) -> str:
     return cleaned
 
 
-def rename_entry(root: Path, entry: GridEntry, new_name: str) -> RenameResult:
+def rename_entry(
+    root: Path, entry: GridEntry, new_name: str, *, events: EventStore | None = None
+) -> RenameResult:
     """把一个条目改名，结果写进日志。
 
+    **事件绑定跟着一起搬**（ADR 0043 决策 8）：红线 1 豁免的这一改会改路径，而绑定是按路径记的。
+    索引里的 facet 行靠 ``(大小, 修改时间)`` 自动过期、用户无感，事件绑定是用户一份心意，
+    不能这么兜。相册改名要搬它下面**所有**照片的绑定 —— 一次改名牵动几千张。
+
+    :param events: 事件库（可换绑用）。``None`` 或不可用时跳过那一步 —— 配置目录建不出来的
+        库上压根没有事件。
     :raises RenameError: 名字不合法、目标已被占用、越权操作，或系统拒绝了这次改名。
     """
     root = Path(root)
@@ -127,6 +136,7 @@ def rename_entry(root: Path, entry: GridEntry, new_name: str) -> RenameResult:
         ),
     )
     # logged 为 False 时改动照样落地，只是没有可回滚的记录 —— 由界面如实告知。
+    _follow_rename(events, source, target, is_dir=is_dir)
     return RenameResult(
         entry=_relocated(entry, target),
         previous=entry,
@@ -135,7 +145,24 @@ def rename_entry(root: Path, entry: GridEntry, new_name: str) -> RenameResult:
     )
 
 
-def undo_rename_record(root: Path, record: WriteRecord) -> RenameResult:
+def _follow_rename(
+    events: EventStore | None, source: Path, target: Path, *, is_dir: bool
+) -> None:
+    """把事件绑定从旧路径搬到新路径上（ADR 0043 决策 8）。
+
+    **搬不动就当没有**：绑定是附带信息，而改名已经成了 —— 报错只会让用户以为照片没改成功。
+    """
+    if events is None or not events.available:
+        return
+    if is_dir:
+        events.move_bindings_under(source, target)
+    else:
+        events.move_binding(source, target)
+
+
+def undo_rename_record(
+    root: Path, record: WriteRecord, *, events: EventStore | None = None
+) -> RenameResult:
     """把一条改名记录改回去。
 
     「哪一条该撤」由 :mod:`gallery.core.metadata.undo` 照着日志重放决定，本模块只管
@@ -175,6 +202,8 @@ def undo_rename_record(root: Path, record: WriteRecord) -> RenameResult:
             is_dir=record.is_dir,
         ),
     )
+    # 撤销是一次改名，绑定跟着搬回去（方向与当初那次相反）。
+    _follow_rename(events, source, target, is_dir=record.is_dir)
     return RenameResult(
         entry=_reference(target, is_dir=record.is_dir),
         previous=previous,

@@ -248,6 +248,17 @@ def _now() -> int:
     return int(time.time())
 
 
+def like_pattern(text: str, tail: str = "") -> str:
+    """把一段文字转成 ``LIKE … ESCAPE '\\'`` 的模式。
+
+    **下划线必须转义**：文件名里 ``IMG_0001`` 太常见，不转的话 ``_`` 会变成通配符，于是
+    「相册 A」这一条查询顺手把「相册 B」里的照片也搬了（与 ``core.library.search`` 的
+    ``_like`` 同一个坑）。
+    """
+    escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"{escaped}{tail}"
+
+
 def _to_sql(field: EventField, value: str) -> SqlValue:
     """面板给的一格文字 → 存进库的值。空的一律存 ``NULL``，不存空串。"""
     if field.multiple:
@@ -813,6 +824,26 @@ class EventStore:
                 (str(new), str(old)),
             )
         return cursor.rowcount > 0
+
+    def move_bindings_under(self, old_dir: Path, new_dir: Path) -> int:
+        """相册改名之后把**它下面所有**绑定一起搬过去，返回搬了几条。
+
+        一条语句搞定（``substr`` 按字符数切后缀），不逐张照片去问 —— 一次相册改名可能牵动
+        几千张照片，逐条搬既慢又容易漏。**只搬相册自己的目录，不递归**（``子相册/…`` 由
+        ``path LIKE '…/%'`` 一并盖上），而改名只改一层目录名。
+        """
+        connection = self._connection
+        if connection is None:
+            return 0
+        old_prefix, new_prefix = str(old_dir), str(new_dir)
+        with self._lock, connection:
+            cursor = connection.execute(
+                f"UPDATE OR REPLACE {SCHEMA_NAME}.photo_events"
+                f" SET path = ? || substr(path, ?)"
+                f" WHERE path LIKE ? ESCAPE '\\' OR path = ?",
+                (new_prefix, len(old_prefix) + 1, like_pattern(old_prefix, "/%"), old_prefix),
+            )
+        return max(cursor.rowcount, 0)
 
     def _kind_of(self, event_id: int) -> str:
         """这一条事件是哪一类。改它之前要按类型拼扩展表的列，所以得先问一次。"""
