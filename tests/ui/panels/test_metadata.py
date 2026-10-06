@@ -27,7 +27,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import Qt  # noqa: E402
-from PySide6.QtGui import QColor, QImage  # noqa: E402
+from PySide6.QtGui import QColor, QImage, QPalette  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
@@ -96,6 +96,54 @@ def test_panel_matches_the_window_background_with_readable_text(
         f"底色 {background.name()} 与文字 {text.name()} 的对比度不足"
     )
     panel.deleteLater()
+
+
+def test_the_scroll_area_follows_a_theme_change(qt_app: QApplication, report: object) -> None:
+    """换外观时**滚动区那一整块也要跟着变**，不能只在四边露出新底色。
+
+    深色下建出来、随后切到浅色：面板中间（滚动区与它里面那一层）曾经停在旧的深色上 ——
+    重设样式表会把这一支重新 polish 一遍，内容区的调色板在那一步被弹回上一轮的底色。
+    """
+    original = QPalette(qt_app.palette())
+    dark = QPalette(original)
+    for role in (
+        QPalette.ColorRole.Window,
+        QPalette.ColorRole.Base,
+        QPalette.ColorRole.AlternateBase,
+    ):
+        dark.setColor(role, QColor("#171717"))
+    for role in (QPalette.ColorRole.WindowText, QPalette.ColorRole.Text):
+        dark.setColor(role, QColor("#ffffff"))
+
+    panel: MetadataPanel | None = None
+    try:
+        qt_app.setPalette(dark)
+        panel = MetadataPanel()
+        panel.resize(300, 420)
+        panel.set_report(report)  # type: ignore[arg-type]
+        panel.show()
+        qt_app.processEvents()
+        assert sample_colors(panel)[0] == theme.current_theme().background, (
+            "深色下建出来的那一份就先不对了，后面那条切换也就没了意义"
+        )
+
+        qt_app.setPalette(original)
+        qt_app.paletteChanged.emit(original)
+        qt_app.processEvents()
+
+        background, text = sample_colors(panel)
+        assert background == theme.current_theme().background, (
+            f"换到浅色后滚动区还是 {background.name()}，窗口是"
+            f" {theme.current_theme().background.name()}"
+            " —— 面板四边已经变白，中间却压着一整块旧色"
+        )
+        assert contrast_ratio(background, text) >= MIN_CONTRAST
+    finally:
+        qt_app.setPalette(original)
+        qt_app.paletteChanged.emit(original)
+        qt_app.processEvents()
+        if panel is not None:
+            panel.deleteLater()
 
 
 def test_switching_report_leaves_no_stale_labels(qt_app: QApplication, report: object) -> None:
