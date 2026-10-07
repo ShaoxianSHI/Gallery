@@ -6,7 +6,8 @@ watchdog 的回调**不在主线程**，所以先由排队连接搬回来。搬�
 网格的行，漏了它会让日历页一收到变化就往网格里插行）。
 
 还管两件容易漏的事：**自家写操作的回声**（改名 / 移到废纸篓 / 撤销之后监听器会再报一次同一
-件事，见 :data:`WATCH_ECHO_TTL`）与**相册封面的作废**（封面是「里面第一张照片」）。
+件事，见 :data:`WATCH_ECHO_TTL`）与**相册封面的作废**（封面是「里面第一张照片」——**哪怕那个
+相册此刻不在这一层上也要作废**，理由见 :meth:`WatchFlowMixin._albums_touched_by`）。
 
 **事件绑定在这一层跟一次外部改名 / 移动**（:meth:`WatchFlowMixin._follow_moved_bindings`）——
 它不碰界面，却必须在这里做，因为这是唯一知道「访达里改了路径」的地方。
@@ -20,7 +21,7 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 from gallery.core.events.store import follow_moves
-from gallery.core.library.config import BROWSE_MODE_ALBUMS, BROWSE_MODE_FLAT
+from gallery.core.library.config import BROWSE_MODE_FLAT
 from gallery.core.library.facade import Library
 from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
 from gallery.core.library.scanner import describe_entry
@@ -109,6 +110,13 @@ class WatchFlowMixin:
 
     def _apply_watch_changes(self, library: Library, changes: Sequence[LibraryChange]) -> None:
         """按当前这一层的形状，把一批变化落到网格、内存缓存与索引上。"""
+        #: 内部变了、封面要重找的相册。**先算、先作废** —— 下面两条路都会重新要一遍缩略图，
+        #: 而那份「这个相册是空的」记忆会让 :meth:`ThumbnailPipeline._dispatch` 当场跳过。
+        covers: set[Path] = set()
+        for change in changes:
+            covers.update(self._albums_touched_by(change))
+        if covers:
+            self._refresh_album_covers(covers)
         if self._conditions:
             # 有条件时增量逻辑一律接不上，于是两种作用域都重跑一遍：整库检索重跑一次查询，筛选
             # 重新枚举这一层再收窄一次（ADR 0040 决策 6）。真增量仍要逐张判断「新照片命中吗」，
@@ -119,8 +127,6 @@ class WatchFlowMixin:
         gone: list[Path] = []
         #: 内存里缓存作废的路径（改名、内容变了、照片没了）。
         stale: set[Path] = set()
-        #: 内部变了、封面可能要重找的相册。
-        covers: set[Path] = set()
 
         for change in changes:
             if change.kind is ChangeKind.MOVED and change.dest_path is not None:
@@ -130,8 +136,6 @@ class WatchFlowMixin:
                 if self._is_on_current_level(change.path):
                     gone.append(change.path)
                     stale.add(change.path)
-                else:
-                    covers.update(self._album_covering(change.path))
                 continue
             entry = describe_entry(library.root, change.path)
             if entry is None:
@@ -142,8 +146,6 @@ class WatchFlowMixin:
                     row = self._model.row_of_path(change.path)
                     if row >= 0:
                         self._model.replace_entry(row, entry)
-                        continue
-                covers.update(self._album_covering(change.path))
                 continue
             if self._is_on_current_level(change.path):
                 added.append(entry)
@@ -151,19 +153,14 @@ class WatchFlowMixin:
                 # （解码失败），等下完了再报一次「创建」—— 不换新引用，那份「读不出来」就永远不清。
                 if self._model.row_of_path(change.path) >= 0:
                     stale.add(change.path)
-            else:
-                covers.update(self._album_covering(change.path))
 
         rows = sorted(row for path in gone if (row := self._model.row_of_path(path)) >= 0)
         if rows:
             self._model.remove_paths(gone)
             library.forget_paths(gone)  # 索引里的孤儿行：照片不在了，那一行也不该留着
             self._select_after_removal(rows)
-        # 缓存与相册封面**先**处理：整层重算的那一支也要做这些事，放在它后面就被跳过了。
         if stale:
             self._forget_caches(stale)
-        if covers:
-            self._refresh_album_covers(covers)
         if not added and not gone:
             self._update_level_notice()
             self._refresh_thumbnail_window()
@@ -261,30 +258,44 @@ class WatchFlowMixin:
             return True  # 平铺与分组：整棵子树都摆在屏幕上
         return path.parent == (self._current_dir or library.root)
 
-    def _album_covering(self, path: Path) -> tuple[Path, ...]:
-        """变化发生在某个相册**内部**时，找出当前这一层里代表它的那个相册。
+    def _albums_touched_by(self, change: LibraryChange) -> tuple[Path, ...]:
+        """这次变化落在哪些相册**里面** —— 那些相册的封面要重新找一次。
 
-        相册的封面是「里面第一张照片」，所以往相册里丢新照片可能换封面 —— 那要把那一格已经
-        画好的封面作废，让缩略图流水线重新去找一次。
+        **答案不看「那个相册是不是正好在屏幕上」**：改完之后用户退回去就会看到它，而模型是
+        换层时重扫出来的、流水线上「这个相册是空的」那份记忆却活过换层。不作废，那张卡片
+        会一直停在文件夹图标上（只有改一次缩略图尺寸才会重新问一遍）。
+
+        **一路问到库根**：``folder_cover`` 找的是「里面（**含更深层级**）第一张照片」，所以往
+        空的 ``A/B`` 里丢一张，``A`` 的封面也跟着变。库根本身不是网格上的一张卡片，不算。
+        """
+        return (*self._albums_above(change.path), *self._albums_above(change.dest_path))
+
+    def _albums_above(self, path: Path | None) -> tuple[Path, ...]:
+        """``path`` 所在的那个相册，以及它上面每一层相册（到库根为止）。
+
+        库外的路径给不出任何东西（监听器把移出库的那一端解析成绝对路径，见
+        :func:`gallery.core.library.watcher._normalize`）：第一层就出库时 ``found`` 还是空的，
+        往上走过了库根时收在已经收下的那几层上。
         """
         library = self._library
-        if library is None or self._browse_mode != BROWSE_MODE_ALBUMS:
+        if library is None or path is None:
             return ()
-        current = self._current_dir or library.root
-        try:
-            relative = path.relative_to(current)
-        except ValueError:
-            return ()
-        if len(relative.parts) < 2:
-            return ()  # 就是这一层上的东西，不走这条路
-        album = current / relative.parts[0]
-        return (album,) if self._model.row_of_path(album) >= 0 else ()
+        root = library.root
+        found: list[Path] = []
+        folder = Path(path).parent
+        while folder != root:
+            try:
+                folder.relative_to(root)
+            except ValueError:
+                break
+            found.append(folder)
+            folder = folder.parent
+        return tuple(found)
 
     def _refresh_album_covers(self, albums: Iterable[Path]) -> None:
-        """相册内容变了：让封面重新找一次。"""
-        stale = {album for album in albums if self._model.row_of_path(album) >= 0}
-        if stale:
-            self._forget_caches(stale)
+        """相册内容变了：让封面重新找一次。**不论那张卡片此刻在不在这一层上**（理由见
+        :meth:`_albums_touched_by`）。"""
+        self._forget_caches(albums)
 
     def _forget_caches(self, paths: Iterable[Path]) -> None:
         """丢掉按路径索引的内存缓存（路径上已经没有文件，或者文件已经不是那个文件了）。

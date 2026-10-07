@@ -22,7 +22,7 @@ from library_helpers import set_library_ui  # noqa: E402
 from PySide6.QtCore import QCoreApplication, QEvent  # noqa: E402
 from PySide6.QtGui import QImage  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
-from waiting import wait_until
+from waiting import wait_for_idle, wait_for_level, wait_until
 
 from gallery.core.events.store import EventDraft  # noqa: E402
 from gallery.core.library.config import (
@@ -122,6 +122,23 @@ def names(window: MainWindow) -> list[str]:
     return [entry.name for entry in window._model.entries()]
 
 
+def _enter(qt_app: QApplication, window: MainWindow, directory: Path) -> None:
+    """走进一个相册（用户双击那一格），并等那一层列完。"""
+    window.enter_folder(directory)
+    wait_for_idle(qt_app, window, what=f"列出「{directory.name}」那一层")
+
+
+def _go_up_to(qt_app: QApplication, window: MainWindow, present: Path) -> None:
+    """退回上一层（用户按 Esc），并等 ``present`` 那一格真的回到屏幕上。"""
+    window.go_up()
+    wait_for_level(
+        window,
+        qt_app,
+        lambda: window._model.row_of_path(present) >= 0,
+        what=f"退回上一层后看到「{present.name}」",
+    )
+
+
 def _bind_one(window: MainWindow, photo: Path) -> int:
     """建一个事件并把 ``photo`` 记进去，返回事件 id。"""
     library = window._library
@@ -133,6 +150,14 @@ def _bind_one(window: MainWindow, photo: Path) -> int:
 
 #: 测试里的修改时间基准（2023-11-14 前后）。具体值无所谓，只要先后是确定的。
 MTIME_BASE = 1_700_000_000.0
+
+#: 挪来挪去的那张照片，以及挪走 / 留下那两张：颜色各不相同，靠像素就能认出卡片上挂着谁。
+MOVED_NAME = "挪来挪去.jpg"
+MOVED_COLOR = (40, 160, 60)
+LEAVING_NAME = "第一张.jpg"
+STAYING_NAME = "第二张.jpg"
+LEAVING_COLOR = (200, 40, 30)
+STAYING_COLOR = (30, 60, 200)
 
 
 def touch(path: Path, step: float) -> None:
@@ -565,6 +590,147 @@ def test_moving_a_photo_out_of_this_level_takes_its_row(
         assert window._model.rowCount() == 0
     finally:
         window.close()
+
+
+# ---- 相册封面 -----------------------------------------------------------------
+
+
+def test_a_photo_moved_into_an_album_that_is_not_here_still_changes_its_cover(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """**用户报的那一条**：站在别的相册里把照片挪进新建的那个相册，退回去它还是文件夹图标。
+
+    「移动到相册」的子菜单列的是**全库所有相册**（见 ``_album_targets``），所以目标相册十有八九
+    不在你站着的那一层上。而封面作废曾经只认「当前这一层的直接子目录、且正好是屏幕上的一行」——
+    于是那次作废压根没发生，流水线上「这个相册是空的」那份记忆活过换层，退回去重扫时又被它
+    当场跳过，卡片就一直停在文件夹图标上（只有改一次缩略图尺寸才会重新问）。
+    """
+    album = tmp_path / "新建相册"
+    album.mkdir()
+    elsewhere = tmp_path / "别处"
+    photo = make_photo(MOVED_NAME, directory=elsewhere, color=MOVED_COLOR)
+    window, watcher = open_window(qt_app, tmp_path, browse_mode=BROWSE_MODE_ALBUMS)
+    try:
+        pin_thumbnail_edge(window)
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.ADDED, album, is_dir=True))
+        # 空相册那张卡片确实问过一次封面（正是那份「什么都没有」要被作废）。
+        assert wait_until(qt_app, lambda: album in window._pipeline._empty)
+
+        _enter(qt_app, window, elsewhere)
+        inside = album / photo.name
+        photo.rename(inside)
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.MOVED, photo, dest_path=inside))
+        _go_up_to(qt_app, window, album)
+
+        assert wait_until(qt_app, lambda: _shows(window, album, MOVED_COLOR)), (
+            "照片已经挪进相册了，退回去那张卡片还挂着文件夹图标"
+        )
+    finally:
+        window.close()
+
+
+def test_a_photo_deleted_inside_the_album_next_to_this_level_changes_its_cover(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """相册卡片就在眼前时，里面那张被删了：封面要换成剩下那张。
+
+    这一条今天本来就是好的（照片在相册里 → 不在当前层上 → 走 ``else`` 那一支）。它钉的是
+    **封面作废被挪出各分支之后这条仍然成立** —— 那次挪动顺手把三支里的 ``covers.update`` 删了。
+    """
+    album = tmp_path / "京都"
+    album.mkdir()
+    doomed = make_photo(LEAVING_NAME, directory=album, color=LEAVING_COLOR)
+    make_photo(STAYING_NAME, directory=album, color=STAYING_COLOR)
+    window, watcher = open_window(qt_app, tmp_path, browse_mode=BROWSE_MODE_ALBUMS)
+    try:
+        pin_thumbnail_edge(window)
+        assert wait_until(qt_app, lambda: _shows(window, album, LEAVING_COLOR))
+
+        doomed.unlink()
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.REMOVED, doomed))
+
+        assert wait_until(qt_app, lambda: _shows(window, album, STAYING_COLOR)), (
+            "封面还挂着已经删掉的那张"
+        )
+    finally:
+        window.close()
+
+
+def test_an_album_deeper_down_changes_its_own_cover_too(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """封面找的是「里面（**含更深层级**）第一张照片」，所以空的祖先相册也跟着换。
+
+    只作废直接父目录的话：`甲` 的卡片永远停在文件夹图标上，而它其实已经有照片了。
+    """
+    album = tmp_path / "甲"  # 一个字节照片都没有的相册
+    nested = album / "乙"
+    nested.mkdir(parents=True)
+    photo = make_photo(MOVED_NAME, directory=tmp_path / "别处", color=MOVED_COLOR)
+    window, watcher = open_window(qt_app, tmp_path, browse_mode=BROWSE_MODE_ALBUMS)
+    try:
+        pin_thumbnail_edge(window)
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.ADDED, album, is_dir=True))
+        assert wait_until(qt_app, lambda: album in window._pipeline._empty)
+
+        _enter(qt_app, window, tmp_path / "别处")
+        inside = nested / photo.name
+        photo.rename(inside)
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.MOVED, photo, dest_path=inside))
+        _go_up_to(qt_app, window, album)
+
+        assert wait_until(qt_app, lambda: _shows(window, album, MOVED_COLOR)), (
+            "照片在「甲/乙」里，「甲」的封面却没有换"
+        )
+    finally:
+        window.close()
+
+
+def test_a_photo_moved_into_the_album_next_to_this_level_changes_its_cover(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """照片就在这一层上、挪进旁边那个相册：库内的挪动报的是**改名**而不是「新增」。"""
+    album = tmp_path / "新建相册"
+    album.mkdir()
+    photo = make_photo(MOVED_NAME, directory=tmp_path, color=MOVED_COLOR)
+    window, watcher = open_window(qt_app, tmp_path, browse_mode=BROWSE_MODE_ALBUMS)
+    try:
+        pin_thumbnail_edge(window)
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.ADDED, album, is_dir=True))
+        assert wait_until(qt_app, lambda: album in window._pipeline._empty)
+
+        inside = album / photo.name
+        photo.rename(inside)
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.MOVED, photo, dest_path=inside))
+
+        assert wait_until(qt_app, lambda: _shows(window, album, MOVED_COLOR)), (
+            "照片已经挪进相册了，那张卡片还挂着文件夹图标"
+        )
+    finally:
+        window.close()
+
+
+def pin_thumbnail_edge(window: MainWindow) -> None:
+    """把缩略图档位钉死在当前这一档（不再听网格改尺寸）。
+
+    **为什么这一组非钉不可**：空相册那份记忆是**按档位**记的（128 px 问出来是空相册，不代表
+    256 px 也是），所以窗口刚打开、网格还在改尺寸的那几轮里，那张卡片会被反反复复重问一遍
+    封面 —— 于是「挪进去之后封面出来了」这条断言会在**档位那一遍**里自己变绿，而真机上
+    （窗口早摆定了、档位不变）封面根本不会回来。钉住档位，断的才是用户看见的那件事。
+    """
+    window._grid.icon_edge_changed.disconnect(window._on_grid_edge_changed)
+
+
+def _shows(window: MainWindow, path: Path, color: tuple[int, int, int]) -> bool:
+    """那一格画出来的是不是这张底色的照片（还没解码出来时答 ``False``）。
+
+    **按色阶比，不按整数比**：磁盘上的缩略图缓存存的是 JPEG，解码回来偏几个色阶。
+    """
+    pixmap = window._model.thumbnail_pixmap(path)
+    if pixmap is None:
+        return False
+    got = pixmap.toImage().pixelColor(0, 0).getRgb()[:3]
+    return all(abs(one - want) <= 24 for one, want in zip(got, color, strict=True))
 
 
 def test_a_photo_changed_elsewhere_refreshes_its_row(
