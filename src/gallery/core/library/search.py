@@ -108,20 +108,21 @@ EVENT_KIND_VALUES: Final[dict[str, str]] = {
 }
 
 
-def _event_fields(taken: Collection[str]) -> tuple[SearchField, ...]:
-    """事件那一族的可搜字段，**由事件类型定义生成**（ADR 0043 决策 6）。
+def _event_fields() -> tuple[SearchField, ...]:
+    """事件那一族的可搜字段，**由事件类型定义生成**（ADR 0043 决策 6、0046）。
 
     加一类事件、给它加一个字段，搜索里就多一项 —— 不用在这里补一行，也就不会「加了字段却忘了
     能搜」。
 
-    **重名自动带上类型前缀**：候选列表按 id 与中文名匹配（:func:`match_field`），而两个事件类型
-    里同名的字段、或与照片那族撞名的字段（「城市」）只能有一个被选中。于是后来那个叫
-    「演出·城市」「演出·评分」。``taken`` 是已经用掉的标签（照片那族加事件公共那两条）。
+    **每类独有的字段一律带类型前缀**（``旅行·目的地``、``演出·评分``）：候选列表是全局的，用户
+    一眼要看出这一项属于哪一类；两类里同名的字段（都有 ``评分``）也因此天然分得开，不必再靠
+    「先声明的那一类不带前缀」那种位置相关的规则。敲 ``#旅行`` 就筛出旅行那一组候选。
 
-    ``id`` 一律带上类型（``event_trip_destination``）：两个类型的列可以同名（旅行的 ``rating``
+    公共那两条（``事件类型`` / ``事件``）不带前缀：它们对每一类都成立，没有某一个类型可挂。
+
+    ``id`` 同样带上类型（``event_trip_destination``）：两个类型的列可以同名（旅行的 ``rating``
     与演出的 ``rating``），而条件的身份是 ``(id, 原文)``，不带类型就会让两条不同的条件撞成一条。
     """
-    used = set(taken)
     common = (
         SearchField(
             id="event_kind",
@@ -140,16 +141,13 @@ def _event_fields(taken: Collection[str]) -> tuple[SearchField, ...]:
             hint="京都五日",
         ),
     )
-    used.update(field.label for field in common)
     per_kind: list[SearchField] = []
     for kind in EVENT_KINDS:
         for field in kind.fields:
-            label = field.label if field.label not in used else f"{kind.label}·{field.label}"
-            used.add(label)
             per_kind.append(
                 SearchField(
                     id=f"event_{kind.id}_{field.id}",
-                    label=label,
+                    label=f"{kind.label}·{field.label}",
                     kind="event",
                     column=field.column,
                     table=kind.table,
@@ -160,7 +158,8 @@ def _event_fields(taken: Collection[str]) -> tuple[SearchField, ...]:
     return (*common, *per_kind)
 
 
-#: 照片本身的那些字段。事件那一族接在它后面，重名消歧靠它的标签（见 :func:`_event_fields`）。
+#: 照片本身的那些字段。事件那一族接在它后面，每类独有的字段各带类型前缀（见
+#: :func:`_event_fields`）。
 _PHOTO_FIELDS: Final[tuple[SearchField, ...]] = (
     _field(FACET_NAME, "文件名", "name", "p.name"),
     _field(FACET_FOLDER, "相册", "album", "p.folder", hint="含子相册"),
@@ -188,7 +187,7 @@ _PHOTO_FIELDS: Final[tuple[SearchField, ...]] = (
 #: （属性 ``captured_at``，列 ``captured``），写错要到 SQLite 执行时才报出来。
 SEARCH_FIELDS: Final[tuple[SearchField, ...]] = (
     *_PHOTO_FIELDS,
-    *_event_fields(frozenset(field.label for field in _PHOTO_FIELDS)),
+    *_event_fields(),
 )
 
 _FIELDS_BY_ID: Final[dict[str, SearchField]] = {field.id: field for field in SEARCH_FIELDS}

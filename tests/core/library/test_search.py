@@ -546,8 +546,8 @@ def _sample(field: SearchField) -> str:
     """这个字段拿什么值去试。
 
     **事件那一族要按列的类型取**，不能按 ``kind`` 取：同一个 ``kind="event"`` 里既有文字
-    （``#目的地 京都``）也有数值（``#花费 1``），给数值字段一个文字就只会得到「解析不出来」——
-    而那个 ``None`` 断的是另一件事（见 :data:`_SAMPLE_VALUE`）。
+    （``#旅行·目的地 京都``）也有数值（``#旅行·花费 1``），给数值字段一个文字就只会得到
+    「解析不出来」——而那个 ``None`` 断的是另一件事（见 :data:`_SAMPLE_VALUE`）。
     """
     if field.is_event:
         return "1" if field.sql_type in ("INTEGER", "REAL") else _SAMPLE_VALUE["event"]

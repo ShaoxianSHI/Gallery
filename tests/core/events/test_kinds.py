@@ -10,7 +10,7 @@ from gallery.core.events import kinds
 def test_every_declared_field_has_a_column_and_a_label() -> None:
     """面板与建表语句都由这份定义生成，所以每个字段都得说得出自己的列名与中文名。
 
-    **字段名里不许有空格**：``#目的地 京都`` 那种输入是拿标签名去敲的，有空格就永远认不回来
+    **字段名里不许有空格**：``#旅行·目的地 京都`` 那种输入是拿标签名去敲的，有空格就永远认不回来
     （与 ``core.library.search`` 里省/州那一项同一条理由）。
     """
     for kind in kinds.EVENT_KINDS:

@@ -1,4 +1,4 @@
-"""按事件筛选（ADR 0043 决策 6）：``#事件类型`` / ``#事件`` / ``#目的地`` ……
+"""按事件筛选（ADR 0043 决策 6）：``#事件类型`` / ``#事件`` / ``#旅行·目的地`` ……
 
 事件那一族的条件走 ``EXISTS`` 子查询去读**挂在索引那条连接上**的事件库，所以它同时验了三件事：
 字段能解析、生成的 SQL 能在真 schema 上跑、以及命中的照片确实是对的那几张。
@@ -90,36 +90,44 @@ def _with_shows(library: Library) -> int:
 
 
 def test_the_candidate_list_offers_the_event_fields() -> None:
-    """字段表由事件类型定义生成 —— 加一类事件、给它加一个字段，这里就多一项。"""
+    """字段表由事件类型定义生成 —— 加一类事件、给它加一个字段，这里就多一项。
+
+    **每类独有的字段都带类型前缀**：候选列表是全局的，一眼要看出这一项属于哪一类。
+    """
     labels = [field.label for field in suggestions("")]
 
     assert "事件类型" in labels
     assert "事件" in labels
-    assert "目的地" in labels
-    assert "花费" in labels
-    assert "艺人" in labels
-    assert "场馆" in labels
+    assert "旅行·目的地" in labels
+    assert "旅行·花费" in labels
+    assert "演出·艺人" in labels
+    assert "演出·场馆" in labels
     assert "演出·评分" in labels
 
 
+def test_a_bare_event_field_name_is_not_a_field_any_more() -> None:
+    """独有字段的名字就是带前缀那一个 —— 「目的地」不再能选中旅行那一栏（避免与照片那族撞名）。"""
+    assert match_field("旅行·目的地").id == "event_trip_destination"
+    assert match_field("目的地") is None
+
+
 def test_an_event_field_is_recognised_by_its_label_and_id() -> None:
-    assert match_field("目的地").id == "event_trip_destination"
+    assert match_field("旅行·目的地").id == "event_trip_destination"
     assert match_field("event_kind").label == "事件类型"
     assert match_field("没有这个字段") is None
 
 
-def test_a_field_that_collides_gets_the_kind_prefix() -> None:
-    """候选里同名的字段各叫各的名字：EXIF 的「城市」不动，演出的叫「演出·城市」；
-    旅行先声明，「评分」留给它，演出那份叫「演出·评分」。"""
+def test_a_colliding_field_keeps_the_photo_family_one_untouched() -> None:
+    """同名时照片那一族的「城市」不动，事件那两份各带各的类型；两类同名的「评分」也各叫各的。"""
     assert match_field("城市").is_event is False
     assert match_field("演出·城市").id == "event_show_city"
-    assert match_field("评分").id == "event_trip_rating"
+    assert match_field("旅行·评分").id == "event_trip_rating"
     assert match_field("演出·评分").id == "event_show_rating"
 
 
 def test_an_event_field_does_not_need_exiftool() -> None:
     """事件不来自照片 —— 所以没装 exiftool 时它照样出现在候选里。"""
-    assert match_field("目的地").needs_metadata is False
+    assert match_field("旅行·目的地").needs_metadata is False
     assert match_field("城市").needs_metadata is True
 
 
@@ -127,7 +135,7 @@ def test_filtering_by_kind_finds_the_photos_of_that_event(library: Library) -> N
     _with_trips(library)
 
     assert _names(library, "#事件类型 旅行") == ["京都-01.jpg", "京都-02.jpg", "大阪-01.jpg"]
-    assert _names(library, "#目的地 大阪") == ["大阪-01.jpg"]
+    assert _names(library, "#旅行·目的地 大阪") == ["大阪-01.jpg"]
 
 
 def test_the_kind_field_takes_the_chinese_label_as_well_as_the_id(
@@ -142,8 +150,8 @@ def test_the_kind_field_takes_the_chinese_label_as_well_as_the_id(
 def test_filtering_by_a_per_kind_field(library: Library) -> None:
     _with_trips(library)
 
-    assert _names(library, "#目的地 奈良") == ["京都-01.jpg", "京都-02.jpg"]
-    assert _names(library, "#目的地 名古屋") == []
+    assert _names(library, "#旅行·目的地 奈良") == ["京都-01.jpg", "京都-02.jpg"]
+    assert _names(library, "#旅行·目的地 名古屋") == []
 
 
 def test_filtering_by_the_event_title(library: Library) -> None:
@@ -153,11 +161,11 @@ def test_filtering_by_the_event_title(library: Library) -> None:
 
 
 def test_a_numeric_event_field_is_compared_not_matched(library: Library) -> None:
-    """花费存的是 ``REAL``，所以 ``#花费 >3000`` 要按数字比而不是按字符串。"""
+    """花费存的是 ``REAL``，所以 ``#旅行·花费 >3000`` 要按数字比而不是按字符串。"""
     _with_trips(library)
 
-    assert _names(library, "#花费 >3000") == ["京都-01.jpg", "京都-02.jpg"]
-    assert _names(library, "#花费 <1000") == ["大阪-01.jpg"]
+    assert _names(library, "#旅行·花费 >3000") == ["京都-01.jpg", "京都-02.jpg"]
+    assert _names(library, "#旅行·花费 <1000") == ["大阪-01.jpg"]
 
 
 def test_a_photo_in_no_event_is_not_found(library: Library) -> None:
@@ -171,7 +179,7 @@ def test_event_conditions_narrow_each_other(library: Library) -> None:
     """两个事件条件是「与」的关系 —— 于是「2026 那次旅行里去了奈良的照片」筛得出来。"""
     _with_trips(library)
 
-    both = library.search_photos([_condition("#事件类型 旅行"), _condition("#目的地 奈良")])
+    both = library.search_photos([_condition("#事件类型 旅行"), _condition("#旅行·目的地 奈良")])
 
     assert sorted(ref.name for ref in both.refs) == ["京都-01.jpg", "京都-02.jpg"]
 
@@ -191,7 +199,7 @@ def test_the_filtering_query_survives_the_real_schema(library: Library) -> None:
 
     _with_trips(library)
 
-    paths = library.matching_paths([_condition("#目的地 京都")])
+    paths = library.matching_paths([_condition("#旅行·目的地 京都")])
 
     assert sorted(path.name for path in paths) == ["京都-01.jpg", "京都-02.jpg"]
 
@@ -202,21 +210,21 @@ def test_filtering_by_the_show_kind_and_its_fields(library: Library) -> None:
     _with_shows(library)
 
     assert _names(library, "#事件类型 演出") == ["京都-01.jpg"]
-    assert _names(library, "#艺人 某剧团") == ["京都-01.jpg"]
-    assert _names(library, "#场馆 某剧院") == ["京都-01.jpg"]
+    assert _names(library, "#演出·艺人 某剧团") == ["京都-01.jpg"]
+    assert _names(library, "#演出·场馆 某剧院") == ["京都-01.jpg"]
     assert _names(library, "#演出·城市 上海") == ["京都-01.jpg"]
     assert _names(library, "#演出·城市 京都") == []
     # 数字那一列按数字比而不是按字符串：360 在 300 与 400 之间。
-    assert _names(library, "#实付 >300") == ["京都-01.jpg"]
+    assert _names(library, "#演出·实付 >300") == ["京都-01.jpg"]
     assert _names(library, "#演出·评分 >4") == ["京都-01.jpg"]
 
 
 def test_the_two_kinds_rates_are_two_conditions(library: Library) -> None:
-    """旅行的「评分」与演出的「演出·评分」是两条不同的条件（身份不撞），能各筛各的。"""
+    """旅行与演出各有一个「评分」，带上类型前缀之后是两条不同的条件（身份不撞），能各筛各的。"""
     _with_trips(library)
     _with_shows(library)
 
-    assert _names(library, "#评分 5") == []  # 三类事件里没有评分为 5 的旅行
+    assert _names(library, "#旅行·评分 5") == []  # 三类事件里没有评分为 5 的旅行
     assert _names(library, "#演出·评分 5") == ["京都-01.jpg"]
 
 
