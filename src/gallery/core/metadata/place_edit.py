@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
 from gallery.core.errors import MetadataWriteError
+from gallery.core.metadata.exif import COORDINATE_AXES
 from gallery.core.metadata.writeback import COORDINATE_TAGS, STALE_GPS_TAGS, Assignment
 from gallery.core.places.countries import place_label
 from gallery.core.places.dataset import is_real_coordinate
@@ -199,14 +200,16 @@ def _coordinate_assignments(latitude: float, longitude: float) -> list[Assignmen
     """坐标 → 四个标签，外加**把旧位置的海拔与定位时间清掉**。
 
     要动的全部标签见 :func:`_all_coordinate_tags` —— 与「清空坐标」共用那一份。
+    四个标签与两个半球字面量从 :data:`~gallery.core.metadata.exif.COORDINATE_AXES`
+    来：纬度与经度只差那几个字面量，写两遍就有一遍会漏。
     """
-    return [
-        Assignment("EXIF:GPSLatitude", f"{abs(latitude):.6f}"),
-        Assignment("EXIF:GPSLatitudeRef", "N" if latitude >= 0 else "S"),
-        Assignment("EXIF:GPSLongitude", f"{abs(longitude):.6f}"),
-        Assignment("EXIF:GPSLongitudeRef", "E" if longitude >= 0 else "W"),
-        *(Assignment(tag, "") for tag in STALE_GPS_TAGS),
-    ]
+    assignments: list[Assignment] = []
+    for axis, value in zip(COORDINATE_AXES, (latitude, longitude), strict=True):
+        assignments.append(Assignment(axis.value_tag, f"{abs(value):.6f}"))
+        hemisphere = axis.positive if value >= 0 else axis.negative
+        assignments.append(Assignment(axis.ref_tag, hemisphere))
+    assignments.extend(Assignment(tag, "") for tag in STALE_GPS_TAGS)
+    return assignments
 
 
 # ---- 地名 ---------------------------------------------------------------------

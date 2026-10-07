@@ -13,6 +13,7 @@ from typing import Final
 import pytest
 
 from gallery.core.constants import CONFIG_DIR_NAME
+from gallery.core.metadata.exif import COORDINATE_TAGS
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = PROJECT_ROOT / "src" / "gallery"
@@ -158,6 +159,38 @@ def test_config_dir_name_has_single_source() -> None:
         if path != allowed and CONFIG_DIR_NAME in path.read_text(encoding="utf-8")
     ]
     assert not offenders, f"以下文件硬编码了 {CONFIG_DIR_NAME}，请改为导入常量：{offenders}"
+
+
+def test_the_coordinate_tags_have_a_single_source() -> None:
+    """**坐标那四个标签只在 ``exif.COORDINATE_AXES`` 里写一遍。**
+
+    它们原先在**五处**各写一遍：``writeback`` 的标签元组、``place_edit`` 的赋值、
+    ``facets`` 的请求清单、``exif`` 的 Pillow 兜底，以及 ``writeback`` 里那两条分派梯子。
+    少写一个标签的后果不是「少个字段」—— 是另一半留着**上一个位置**的值，一个自信的错答案。
+
+    判据是**源码里不再出现这些字符串字面量**（字符串节点，注释与文档字符串不算），
+    只有那张表里那一处。标签从表里取，于是加一个轴也自动被这条守着。
+    """
+    tags = set(COORDINATE_TAGS)
+    allowed = CORE_ROOT / "metadata" / "exif.py"
+    guard = Path(__file__).resolve()
+    offenders: list[str] = []
+    for path in _iter_python_files(SRC_ROOT):
+        if path in (allowed, guard):
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        docstrings = _docstring_nodes(tree)
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and id(node) not in docstrings
+                and node.value in tags
+            ):
+                offenders.append(f"{path.relative_to(PROJECT_ROOT)}:{node.lineno} {node.value}")
+    assert not offenders, (
+        "坐标标签只许在 exif.COORDINATE_AXES 里写一遍，别处请从它取：\n" + "\n".join(offenders)
+    )
 
 
 def _docstring_nodes(tree: ast.Module) -> set[int]:

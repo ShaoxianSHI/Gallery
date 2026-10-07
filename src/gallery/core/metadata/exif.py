@@ -533,6 +533,42 @@ def _equivalent_focal_length(raw: Mapping[str, str]) -> str | None:
     return positive_value(first_value(raw, "EXIF:FocalLengthIn35mmFormat"))
 
 
+@dataclass(frozen=True, slots=True)
+class CoordinateAxis:
+    """一个坐标轴：数值标签、半球标签，以及两个半球各写哪个字母。
+
+    纬度与经度**只差这几个字面量**，而它们原先在五处各写了一遍（``writeback`` 的标签
+    元组、``place_edit`` 的赋值、``facets`` 的请求清单、这里的 Pillow 兜底，以及
+    ``writeback`` 里那两条分派梯子）。写坐标时少写一个标签的后果是另一半留着上一个
+    位置的值 —— 一个自信的错答案，比没有坐标糟糕得多。
+    """
+
+    value_tag: str
+    ref_tag: str
+    positive: str
+    negative: str
+
+    def decimal(self, raw: Mapping[str, str]) -> float | None:
+        """把这一轴解析成十进制度（带正负号）。"""
+        return _axis_decimal(raw, self)
+
+
+#: 两个坐标轴。**这一族标签的唯一来源**。
+COORDINATE_AXES: Final[tuple[CoordinateAxis, ...]] = (
+    CoordinateAxis("EXIF:GPSLatitude", "EXIF:GPSLatitudeRef", "N", "S"),
+    CoordinateAxis("EXIF:GPSLongitude", "EXIF:GPSLongitudeRef", "E", "W"),
+)
+
+LATITUDE_AXIS: Final = COORDINATE_AXES[0]
+LONGITUDE_AXIS: Final = COORDINATE_AXES[1]
+
+#: 坐标的四个标签。**四个必须一起写**：少写一个，另一半就是上一个位置留下的值 ——
+#: 那是一个自信的错答案，比没有坐标糟糕得多。
+COORDINATE_TAGS: Final[tuple[str, ...]] = tuple(
+    tag for axis in COORDINATE_AXES for tag in (axis.value_tag, axis.ref_tag)
+)
+
+
 def coordinates_decimal(raw: Mapping[str, str]) -> tuple[float | None, float | None]:
     """把 ``GPSLatitude`` / ``GPSLongitude``（带半球标记）解析成十进制度。"""
     latitude = latitude_decimal(raw)
@@ -546,26 +582,24 @@ def latitude_decimal(raw: Mapping[str, str]) -> float | None:
     """只有纬度时用它（写回校验逐轴比对）。单独暴露是为了让 ``writeback`` 不必为了比一个轴而凑出
     一对坐标：两边都得过 :func:`_degrees_to_decimal` 同一份解析，抄一份迟早对不上。
     """
-    return _axis_decimal(raw, "EXIF:GPSLatitude", "EXIF:GPSLatitudeRef", negative={"S"})
+    return LATITUDE_AXIS.decimal(raw)
 
 
 def longitude_decimal(raw: Mapping[str, str]) -> float | None:
     """只有经度时用它。理由见 :func:`latitude_decimal`。"""
-    return _axis_decimal(raw, "EXIF:GPSLongitude", "EXIF:GPSLongitudeRef", negative={"W"})
+    return LONGITUDE_AXIS.decimal(raw)
 
 
-def _axis_decimal(
-    raw: Mapping[str, str], value_key: str, ref_key: str, *, negative: set[str]
-) -> float | None:
-    value = first_value(raw, value_key)
+def _axis_decimal(raw: Mapping[str, str], axis: CoordinateAxis) -> float | None:
+    value = first_value(raw, axis.value_tag)
     if value is None:
         return None
     decimal = _degrees_to_decimal(value)
     if decimal is None:
         return None
     # exiftool 给的是 "North"/"West"，Pillow 给的是 "N"/"W"，取首字母统一处理。
-    hemisphere = (first_value(raw, ref_key) or "").strip().upper()[:1]
-    return -abs(decimal) if hemisphere in negative else abs(decimal)
+    hemisphere = (first_value(raw, axis.ref_tag) or "").strip().upper()[:1]
+    return -abs(decimal) if hemisphere == axis.negative else abs(decimal)
 
 
 _DEGREE_NUMBER = re.compile(r"(\d+(?:\.\d+)?)")
@@ -773,6 +807,13 @@ _GPS_ALTITUDE_REF: Final = 5
 _GPS_ALTITUDE: Final = 6
 _GPS_DATE_STAMP: Final = 29
 
+#: 与 :data:`COORDINATE_AXES` **按位置配对**的 Pillow 数字标签：``(值, 半球)``。
+#: 两边数量对不上时 :func:`_gps_fields` 里那句 ``zip(strict=True)`` 会当场抛。
+_GPS_AXIS_KEYS: Final[tuple[tuple[int, int], ...]] = (
+    (_GPS_LATITUDE, _GPS_LATITUDE_REF),
+    (_GPS_LONGITUDE, _GPS_LONGITUDE_REF),
+)
+
 #: Pillow 只能给出数字的枚举，降级时补一份可读映射（exiftool 本身给的是英文串）。
 _PILLOW_ENUMS: Final[dict[str, dict[int, str]]] = {
     "EXIF:Flash": {
@@ -871,14 +912,14 @@ def _gps_fields(gps: Mapping[int, object]) -> dict[str, object]:
         return {}
 
     result: dict[str, object] = {}
-    latitude = _gps_decimal(gps.get(_GPS_LATITUDE), gps.get(_GPS_LATITUDE_REF))
-    if latitude is not None:
-        result["EXIF:GPSLatitude"] = f"{abs(latitude):.5f}"
-        result["EXIF:GPSLatitudeRef"] = "N" if latitude >= 0 else "S"
-    longitude = _gps_decimal(gps.get(_GPS_LONGITUDE), gps.get(_GPS_LONGITUDE_REF))
-    if longitude is not None:
-        result["EXIF:GPSLongitude"] = f"{abs(longitude):.5f}"
-        result["EXIF:GPSLongitudeRef"] = "E" if longitude >= 0 else "W"
+    for axis, keys in zip(COORDINATE_AXES, _GPS_AXIS_KEYS, strict=True):
+        value_key, ref_key = keys
+        decimal = _gps_decimal(gps.get(value_key), gps.get(ref_key))
+        if decimal is None:
+            continue
+        # 保留 **5 位**：这是「读回来的样子」，不是我们写回去的那一份（``place_edit`` 写 6 位）。
+        result[axis.value_tag] = f"{abs(decimal):.5f}"
+        result[axis.ref_tag] = axis.positive if decimal >= 0 else axis.negative
 
     altitude = gps.get(_GPS_ALTITUDE)
     if isinstance(altitude, (int, float)):
@@ -908,6 +949,8 @@ def _gps_decimal(value: object, ref: object) -> float | None:
 
 __all__ = [
     "CAPTURE_TIME_FIELDS",
+    "COORDINATE_AXES",
+    "COORDINATE_TAGS",
     "EMPTY_VALUES",
     "EXIFTOOL_CHARSET_ARGS",
     "EXIFTOOL_EXECUTABLE",

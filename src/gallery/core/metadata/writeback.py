@@ -21,15 +21,16 @@ from gallery.core import paths
 from gallery.core.errors import MetadataWriteError
 from gallery.core.library.photos import PhotoRef, is_supported_photo
 from gallery.core.metadata.exif import (
-    EMPTY_VALUES as _EXIF_EMPTY_VALUES,
-)
-from gallery.core.metadata.exif import (
+    COORDINATE_AXES,
+    COORDINATE_TAGS,
     EXIFTOOL_CHARSET_ARGS,
     EXIFTOOL_EXECUTABLE,
     EXIFTOOL_TIMEOUT_SECONDS,
+    CoordinateAxis,
     as_text,
-    latitude_decimal,
-    longitude_decimal,
+)
+from gallery.core.metadata.exif import (
+    EMPTY_VALUES as _EXIF_EMPTY_VALUES,
 )
 from gallery.core.metadata.failures import Failure
 from gallery.core.metadata.journal import (
@@ -43,14 +44,9 @@ from gallery.core.metadata.journal import (
     append_record,
 )
 
-#: 坐标的两个数值标签与两个半球标签。**四个必须一起写**：少写一个，另一半就是上一个
-#: 位置留下的值 —— 那是一个自信的错答案，比没有坐标糟糕得多。
-COORDINATE_TAGS: Final[tuple[str, ...]] = (
-    "EXIF:GPSLatitude",
-    "EXIF:GPSLatitudeRef",
-    "EXIF:GPSLongitude",
-    "EXIF:GPSLongitudeRef",
-)
+#: 坐标的四个标签。**定义在** :mod:`gallery.core.metadata.exif`（那一族标签的唯一来源），
+#: 这里原样转出去 —— 写回这一侧与读取那一侧必须是同一份，各写一份迟早对不上。
+#: 四个**必须一起写**：少写一个，另一半就是上一个位置留下的值。
 
 #: 改坐标时**一并清掉**的那几个字段：海拔与定位时间记的是「另一个位置」上的测量值，
 #: 留着它们等于让一条 GPS 记录自相矛盾（ADR 0030 决策 4）。
@@ -578,22 +574,32 @@ def _changes(before: Mapping[str, str], items: Sequence[Assignment]) -> tuple[Fi
     return tuple(result)
 
 
+#: 四个坐标标签 → 它属于哪一轴。``_normalize`` 与 ``_holds`` 都按它分派 ——
+#: 这两条梯子原先各写一遍同样的四个标签，加一个轴就要同时改两处、顺序还不能错。
+_AXIS_BY_TAG: Final[Mapping[str, CoordinateAxis]] = {
+    tag: axis for axis in COORDINATE_AXES for tag in (axis.value_tag, axis.ref_tag)
+}
+
+#: 半球标记的全部合法首字母。**从轴上取**，于是加一个轴不必再来这里补一遍。
+_COMPASS: Final[frozenset[str]] = frozenset(
+    initial for axis in COORDINATE_AXES for initial in (axis.positive, axis.negative)
+)
+
+
 def _normalize(tag: str, value: object) -> str | None:
     """读回来的值 → **我们会写回去的那一种写法**（空白与「不知道」都当没有）。
 
     坐标必须归一：exiftool 读回来的是 ``35 deg 1' 16"``、我们写进去的是 ``35.021100``，照抄
     原值会让 ⌘Z 写出一个毫无意义的值、校验随即判它没写进去。半球标记同理（``N`` / ``North``）。
     """
-    if tag == "EXIF:GPSLatitude":
-        latitude = latitude_decimal({"EXIF:GPSLatitude": as_text(value)} if value else {})
-        return f"{abs(latitude):.6f}" if latitude is not None else None
-    if tag == "EXIF:GPSLongitude":
-        longitude = longitude_decimal({"EXIF:GPSLongitude": as_text(value)} if value else {})
-        return f"{abs(longitude):.6f}" if longitude is not None else None
-    if tag in {"EXIF:GPSLatitudeRef", "EXIF:GPSLongitudeRef"}:
-        initial = _initial(_text_of(value))
-        return {"N": "N", "S": "S", "E": "E", "W": "W"}.get(initial or "")
-    return _text_of(value)
+    axis = _AXIS_BY_TAG.get(tag)
+    if axis is None:
+        return _text_of(value)
+    if tag == axis.value_tag:
+        decimal = axis.decimal({tag: as_text(value)} if value else {})
+        return None if decimal is None else f"{abs(decimal):.6f}"
+    initial = _initial(_text_of(value))
+    return initial if initial in _COMPASS else None
 
 
 def _text_of(value: object) -> str | None:
@@ -612,13 +618,12 @@ def _holds(expected: str | None, tag: str, current: Mapping[str, str]) -> bool:
     **坐标按数值比、不是按字符串比**：写进去的是 ``30.27415``，读回来是 ``30 deg 16' 26.94"``
     —— 逐字符比会把每一次成功的写入都判成失败（ADR 0030 决策 2）。
     """
-    if tag == "EXIF:GPSLatitude":
-        return _axis_holds(expected, current, latitude_decimal)
-    if tag == "EXIF:GPSLongitude":
-        return _axis_holds(expected, current, longitude_decimal)
-    if tag in {"EXIF:GPSLatitudeRef", "EXIF:GPSLongitudeRef"}:
-        return _initial(current.get(tag)) == _initial(expected)
-    return _text_of(current.get(tag)) == (expected.strip() or None if expected else None)
+    axis = _AXIS_BY_TAG.get(tag)
+    if axis is None:
+        return _text_of(current.get(tag)) == (expected.strip() or None if expected else None)
+    if tag == axis.value_tag:
+        return _axis_holds(expected, current, axis.decimal)
+    return _initial(current.get(tag)) == _initial(expected)
 
 
 def _axis_holds(

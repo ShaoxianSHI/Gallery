@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from gallery.core.places.resolver import ResolvedPlace
 
 from gallery.core.metadata.exif import (
+    COORDINATE_TAGS,
     as_text,
     camera_name,
     coordinates_decimal,
@@ -182,10 +183,7 @@ WANTED_TAGS: Final[tuple[str, ...]] = (
     "File:ImageHeight",
     # 坐标：**国家 / 省州 / 城市这三个字段绝大多数照片靠它**。相机原图通常不写 IPTC / XMP 地点
     # （Lightroom 导出才写），只写 GPS —— 漏了这几行，于是每张照片的地点字段都是空的。
-    "EXIF:GPSLatitude",
-    "EXIF:GPSLatitudeRef",
-    "EXIF:GPSLongitude",
-    "EXIF:GPSLongitudeRef",
+    *COORDINATE_TAGS,
     "IPTC:City",
     "IPTC:Province-State",
     "IPTC:Country-PrimaryLocationName",

@@ -783,3 +783,51 @@ def test_a_plain_writer_is_not_poked_with_a_timeout_it_does_not_take(
         write_metadata(library, photo, [Assignment("XMP:City", "杭州")], writer=writer)
 
     assert writer.writes[-1] == ("XMP:City",), "回滚确实发生了（假实现没被 timeout 弄坏）"
+
+
+def test_normalize_turns_every_coordinate_tag_into_the_form_we_write() -> None:
+    """**归一化按轴表分派**：四个坐标标签各归一成「我们会写回去的那一种写法」。
+
+    它是撤销的立足点 —— 原值照抄 exiftool 的度分秒会让 ⌘Z 写回一个毫无意义的值，校验
+    随即判它没写进去（ADR 0030 决策 2）。四个一起量是因为它们现在共用同一张轴表：
+    漏一个的症状是**那一轴撤不回来**，而另外三轴正常。
+    """
+    from gallery.core.metadata.writeback import _normalize
+
+    assert _normalize("EXIF:GPSLatitude", "30 deg 16' 26.94\"") == "30.274150"
+    assert _normalize("EXIF:GPSLongitude", "120 deg 9' 18.25\"") == "120.155069"
+    # 半球标记：exiftool 回 ``North``、Pillow 回 ``N``，都要归一成 ``N``。
+    assert _normalize("EXIF:GPSLatitudeRef", "North") == "N"
+    assert _normalize("EXIF:GPSLatitudeRef", "S") == "S"
+    assert _normalize("EXIF:GPSLongitudeRef", "East") == "E"
+    assert _normalize("EXIF:GPSLongitudeRef", "W") == "W"
+    # 不是半球字母的一律当「没有」，别把一段乱文本当成方向。
+    assert _normalize("EXIF:GPSLatitudeRef", "乱写") is None
+    assert _normalize("EXIF:GPSLatitudeRef", None) is None
+    # 非坐标标签照旧走文本那一支。
+    assert _normalize("XMP:City", " 杭州 ") == "杭州"
+
+
+def test_holds_compares_the_hemisphere_by_its_initial() -> None:
+    """半球标记也**取首字母**比 —— 我们写 ``N``，exiftool 回读给的是 ``North``。"""
+    from gallery.core.metadata.writeback import _holds
+
+    assert _holds("N", "EXIF:GPSLatitudeRef", {"EXIF:GPSLatitudeRef": "North"})
+    assert _holds("S", "EXIF:GPSLatitudeRef", {"EXIF:GPSLatitudeRef": "South"})
+    assert _holds("E", "EXIF:GPSLongitudeRef", {"EXIF:GPSLongitudeRef": "East"})
+    assert not _holds("N", "EXIF:GPSLatitudeRef", {"EXIF:GPSLatitudeRef": "South"})
+    assert not _holds("N", "EXIF:GPSLatitudeRef", {}), "文件里没记方向，就不算写成"
+
+
+def test_the_coordinate_tags_are_two_axes_of_two_tags() -> None:
+    """``COORDINATE_TAGS`` 就是那四个标签、顺序固定（先值后半球）。
+
+    顺序是给写回用的；「四个必须一起写」这件事也靠它盯着 —— 少一个的症状不是「少个字段」，
+    是另一半留着**上一个位置**的值。
+    """
+    assert COORDINATE_TAGS == (
+        "EXIF:GPSLatitude",
+        "EXIF:GPSLatitudeRef",
+        "EXIF:GPSLongitude",
+        "EXIF:GPSLongitudeRef",
+    )
