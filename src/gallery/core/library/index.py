@@ -124,6 +124,22 @@ _COLUMNS: Final[str] = ", ".join(
 #: 关键词在库里用一个分隔符存 —— 关键词本身可能含逗号，不能用逗号拼回去。
 _KEYWORD_SEPARATOR = "\x1f"
 
+#: 索引没落盘时给用户的那一句（检索与筛选共用）。
+_UNAVAILABLE_HINT: Final = (
+    "这个库没法建立检索索引（多半是照片所在的磁盘不允许写入缓存）。分组与排序仍然可用。"
+)
+
+#: 按日期挑照片那句 —— 比上面多一个「挑不到」的后果，因为它只服务那一件事。
+_BY_DATE_UNAVAILABLE: Final = (
+    "这个库没法建立索引（多半是照片所在的磁盘不允许写入缓存），所以没法按日期范围挑照片。"
+)
+
+#: 索引自己那两张表。**凡是要动其中一张的地方都必须两张一起动**：只清 facet 的话检索会
+#: 拿一份刚被丢掉的文件表继续查（「缩略图清了但搜索还在」），只清 photos 则给检索留一条
+#: 打不开的假命中。这条不变量原先靠 ``prune`` / ``forget`` / ``clear`` 三处各写一遍
+#: ``("facets", "photos")``，命名一次才不会漏。
+_FACET_TABLES: Final = ("facets", "photos")
+
 #: 每一行有几个值。**从列名里数出来，不要写死数字** —— 写死的那个曾经与列数差一个。
 _COLUMN_COUNT = len(_COLUMNS.split(","))
 
@@ -312,6 +328,16 @@ class FacetIndex:
             except sqlite3.Error:  # pragma: no cover - 磁盘坏了才会走到
                 return 0
 
+    def _require_connection(self, message: str = _UNAVAILABLE_HINT) -> sqlite3.Connection:
+        """拿连接；索引没落盘就按 ``message`` 抛。
+
+        **检索与筛选用同一句提示** —— 它们是同一件事的两面，各写一份迟早会说成两套话。
+        :meth:`photos_in_days` 传自己那一句，因为它多一个「按日期挑不到照片」的后果要说清。
+        """
+        if self._connection is None:
+            raise IndexUnavailableError(message)
+        return self._connection
+
     def search(
         self, conditions: Sequence[SearchCondition], *, limit: int = RESULT_LIMIT
     ) -> SearchOutcome:
@@ -320,16 +346,13 @@ class FacetIndex:
         :raises IndexUnavailableError: 索引没落盘（库所在卷只读）。**分组与排序在同样情况下照常
             可用** —— 那是把读到的值揣在内存里算的，不需要索引。
         """
-        if self._connection is None:
-            raise IndexUnavailableError(
-                "这个库没法建立检索索引（多半是照片所在的磁盘不允许写入缓存）。分组与排序仍然可用。"
-            )
+        connection = self._require_connection()
         sql, values = build_query(conditions, limit=limit)
         count_sql, count_values = build_count_query(conditions)
         with self._lock:
             try:
-                rows = self._connection.execute(sql, values).fetchall()
-                total = int(self._connection.execute(count_sql, count_values).fetchone()[0])
+                rows = connection.execute(sql, values).fetchall()
+                total = int(connection.execute(count_sql, count_values).fetchone()[0])
             except sqlite3.Error as exc:
                 logger.info("检索失败：%s", exc)
                 raise IndexUnavailableError("检索没能完成，请再试一次。", detail=str(exc)) from exc
@@ -345,14 +368,11 @@ class FacetIndex:
         :raises IndexUnavailableError: 索引没落盘。与 :meth:`search` 同一句提示：只读卷上建不出
             缓存时，筛选与检索一样用不了（界面据此说清是哪一件，而不是让人对空结果猜）。
         """
-        if self._connection is None:
-            raise IndexUnavailableError(
-                "这个库没法建立检索索引（多半是照片所在的磁盘不允许写入缓存）。分组与排序仍然可用。"
-            )
+        connection = self._require_connection()
         sql, values = build_match_query(conditions)
         with self._lock:
             try:
-                rows = self._connection.execute(sql, values).fetchall()
+                rows = connection.execute(sql, values).fetchall()
             except sqlite3.Error as exc:
                 logger.info("筛选失败：%s", exc)
                 raise IndexUnavailableError("筛选没能完成，请再试一次。", detail=str(exc)) from exc
@@ -371,11 +391,7 @@ class FacetIndex:
 
         :raises IndexUnavailableError: 索引没落盘（只读卷）。
         """
-        if self._connection is None:
-            raise IndexUnavailableError(
-                "这个库没法建立索引（多半是照片所在的磁盘不允许写入缓存），"
-                "所以没法按日期范围挑照片。"
-            )
+        connection = self._require_connection(_BY_DATE_UNAVAILABLE)
         sql = (
             "SELECT p.path, p.size, p.mtime_ns FROM photos p"
             " JOIN facets f ON f.path = p.path"
@@ -384,7 +400,7 @@ class FacetIndex:
         )
         with self._lock:
             try:
-                rows = self._connection.execute(sql, (first_day, last_day)).fetchall()
+                rows = connection.execute(sql, (first_day, last_day)).fetchall()
             except sqlite3.Error as exc:
                 logger.info("按日期范围挑照片失败：%s", exc)
                 raise IndexUnavailableError(
@@ -407,7 +423,7 @@ class FacetIndex:
                 return len(stale)
             try:
                 removed = 0
-                for table in ("facets", "photos"):
+                for table in _FACET_TABLES:
                     known = [
                         row[0] for row in self._connection.execute(f"SELECT path FROM {table}")
                     ]
@@ -444,7 +460,7 @@ class FacetIndex:
                 for start in range(0, len(unique), 900):
                     chunk = unique[start : start + 900]
                     marks = ", ".join("?" * len(chunk))
-                    for table in ("facets", "photos"):
+                    for table in _FACET_TABLES:
                         cursor = self._connection.execute(
                             f"DELETE FROM {table} WHERE path IN ({marks})", chunk
                         )
@@ -463,8 +479,8 @@ class FacetIndex:
             if self._connection is None:
                 return
             try:
-                self._connection.execute("DELETE FROM facets")
-                self._connection.execute("DELETE FROM photos")
+                for table in _FACET_TABLES:
+                    self._connection.execute(f"DELETE FROM {table}")
                 self._connection.commit()
             except sqlite3.Error as exc:  # pragma: no cover
                 logger.info("清空索引失败：%s", exc)
