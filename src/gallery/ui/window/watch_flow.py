@@ -125,6 +125,10 @@ class WatchFlowMixin:
         for change in changes:
             if change.kind is ChangeKind.MOVED and change.dest_path is not None:
                 self._apply_watch_move(change, added, gone, stale)
+                # 改名的两端各自都可能在相册里面，而封面正是「里面第一张照片」：挪进一个相册要
+                # 重找封面，挪出一个相册同样要（它可能正是排第一张的那一张）。
+                covers.update(self._album_covering(change.path))
+                covers.update(self._album_covering(change.dest_path))
                 continue
             if change.kind is ChangeKind.REMOVED:
                 if self._is_on_current_level(change.path):
