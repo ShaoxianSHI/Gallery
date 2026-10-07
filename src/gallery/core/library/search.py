@@ -91,6 +91,38 @@ class SearchField:
         """
         return self.column.startswith("f.")
 
+    @property
+    def is_numeric(self) -> bool:
+        """这一列是不是数值 —— **匹配方式由它分派**。
+
+        三个分派处都要问它：:func:`_condition` 决定「解析成数还是当文本」，:func:`_clause`
+        与 :func:`_event_clause` 决定「比较式还是 ``LIKE``」。原先三处各写各的判据
+        （照片那一族按 ``kind``、事件那一族按 ``sql_type``），改一处漏一处**不会报错** ——
+        只是在某一族上换了匹配方式，而查询照样出得来结果。
+
+        事件那一族按**列声明的类型**判：同一个 ``kind="event"`` 里既有文字（多值的
+        ``Tags``）也有数值（``评分``），``kind`` 说不了这件事。
+        """
+        if self.is_event:
+            return self.sql_type in ("INTEGER", "REAL")
+        return self.kind in ("number", "size")
+
+    @property
+    def is_date(self) -> bool:
+        """时间那一族：解析成区间、渲染成区间比较。
+
+        ``f.captured`` 存的是秒、``p.mtime_ns`` 是纳秒，所以渲染那一侧还要按字段再分一次
+        （见 :func:`_date_clause`）。
+        """
+        return self.kind == "datetime"
+
+    @property
+    def stores_event_kind_id(self) -> bool:
+        """「事件类型」那一列：库里存的是 id（``trip``）、用户敲的是中文（``旅行``），
+        两者要比对得上。
+        """
+        return self.is_event and self.column == "kind"
+
 
 def _field(
     facet_id: str,
@@ -367,10 +399,23 @@ def unusable_reason(field: SearchField, value: str) -> str:
 
 
 def _condition(field: SearchField, text: str) -> SearchCondition | None:
+    """``#字段 值`` → 一条条件；解析不出来返回 ``None``（界面照 :func:`unusable_reason` 说话）。
+
+    **每一种 ``kind`` 都在这里有名字**，没有兜底那一条：原先时间那一族是 ``if`` 链末尾的
+    fallthrough，于是新加一种 kind 却忘了在这里写规则时，它会**被当成日期解析** ——
+    值照样解析得出来（``2024`` 那种），只是含义完全不对。
+    """
     value = text.strip()
     if not value:
         return None
-    if field.kind == "name" or field.kind == "text":
+    if field.is_event:
+        # 匹配方式由那一列声明的类型说了算（与照片那一族同一件事，判据见 :attr:`SearchField.
+        # is_numeric`）：文字、多值都是子串匹配，数值才是比较式。
+        if field.is_numeric:
+            parsed_number = _parse_number(value)
+            return None if parsed_number is None else SearchCondition(field, text, *parsed_number)
+        return SearchCondition(field=field, text=text, comparator="", value=value)
+    if field.kind in ("name", "text"):
         return SearchCondition(field=field, text=text, comparator="", value=value)
     if field.kind == "album":
         # 相册写成 "旅行/2024" 也认，但两边多余的斜杠不参与匹配。
@@ -383,27 +428,15 @@ def _condition(field: SearchField, text: str) -> SearchCondition | None:
         if suffix is None:
             return None
         return SearchCondition(field=field, text=value, comparator="", value=suffix)
-    if field.kind == "event":
-        # **匹配方式由那一列声明的类型说了算**（与 facet 那一族同一件事，只是分派的地方从
-        # ``kind`` 换成了 ``sql_type``）：文字、多值、日期都是子串匹配，数值才是比较式。
-        if field.sql_type in ("INTEGER", "REAL"):
-            parsed_number = _parse_number(value)
-            return None if parsed_number is None else SearchCondition(field, text, *parsed_number)
-        return SearchCondition(field=field, text=text, comparator="", value=value)
     if field.kind == "size":
-        parsed_size = _parse_size(value)
-        if parsed_size is None:
-            return None
-        return SearchCondition(field, text, parsed_size[0], parsed_size[1])
-    if field.kind == "number":
-        parsed_number = _parse_number(value)
-        if parsed_number is None:
-            return None
-        return SearchCondition(field, text, parsed_number[0], parsed_number[1])
-    parsed_dates = _parse_datetime(value)
-    if parsed_dates is None:
-        return None
-    return SearchCondition(field, text, parsed_dates[0], parsed_dates[1])
+        parsed = _parse_size(value)
+    elif field.kind == "number":
+        parsed = _parse_number(value)
+    elif field.is_date:
+        parsed = _parse_datetime(value)
+    else:
+        raise AssertionError(f"没给这个搜索字段定义解析规则：{field.id}（kind={field.kind}）")
+    return None if parsed is None else SearchCondition(field, text, parsed[0], parsed[1])
 
 
 # ---- 数值 / 日期 -------------------------------------------------------------------
@@ -683,9 +716,8 @@ def _clause(condition: SearchCondition) -> tuple[str, list[object]]:
     value = condition.value
     if field.is_event:
         return _event_clause(field, condition)
-    if field.kind == "name":
-        return f"{field.column} LIKE ? ESCAPE '{ESCAPE}'", [f"%{like_pattern(value)}%"]
-    if field.kind == "text":
+    if field.kind in ("name", "text"):
+        # 文件名与文本一族用同一条规则 —— 原先写成两支逐字相同的分支。
         return f"{field.column} LIKE ? ESCAPE '{ESCAPE}'", [f"%{like_pattern(value)}%"]
     if field.kind == "album":
         return (
@@ -694,10 +726,20 @@ def _clause(condition: SearchCondition) -> tuple[str, list[object]]:
         )
     if field.kind == "format":
         return f"{field.column} = ?", [value]
-    if field.kind in ("number", "size"):
-        comparator = condition.comparator or "="
-        return f"{field.column} {comparator} ?", [float(value)]
-    # 时间：区间比较时 ``value`` 是「起|止」两个 epoch 秒。
+    if field.is_numeric:
+        return f"{field.column} {condition.comparator or '='} ?", [float(value)]
+    if field.is_date:
+        return _date_clause(field, condition)
+    raise AssertionError(f"没给这个搜索字段定义匹配方式：{field.id}（kind={field.kind}）")
+
+
+def _date_clause(field: SearchField, condition: SearchCondition) -> tuple[str, list[object]]:
+    """时间那一族的 SQL。区间比较时 ``value`` 是「起|止」两个 epoch 秒。
+
+    ``f.captured`` 存的是秒，而 ``p.mtime_ns`` 是**纳秒**（按文件的修改时间排时用后者），
+    所以用到它时要把两头都乘上去 —— 区间与单值两处都要，漏一处就会拿秒去比纳秒。
+    """
+    value = condition.value
     if condition.comparator == "between":
         low, _, high = value.partition("|")
         if field.id == FACET_MODIFIED:
@@ -731,11 +773,10 @@ def _event_clause(field: SearchField, condition: SearchCondition) -> tuple[str, 
         f" JOIN {SCHEMA_NAME}.{field.table} t ON t.{_join_column(field.table)} = pe.event_id"
         f" WHERE pe.path = p.path AND "
     )
-    if field.column == "kind":
+    if field.stores_event_kind_id:
         return f"EXISTS ({head} t.kind = ?)", [EVENT_KIND_VALUES.get(value, value)]
-    if field.sql_type in ("INTEGER", "REAL"):
-        comparator = condition.comparator or "="
-        return f"EXISTS ({head} t.{field.column} {comparator} ?)", [float(value)]
+    if field.is_numeric:
+        return f"EXISTS ({head} t.{field.column} {condition.comparator or '='} ?)", [float(value)]
     return (
         f"EXISTS ({head} t.{field.column} LIKE ? ESCAPE '{ESCAPE}')",
         [f"%{like_pattern(value)}%"],

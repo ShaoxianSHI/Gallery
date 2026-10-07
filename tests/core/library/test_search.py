@@ -38,6 +38,12 @@ from gallery.core.library.search import (
     suggestions,
     unusable_reason,
 )
+from gallery.core.library.search import (
+    _clause as _render_clause,
+)
+from gallery.core.library.search import (
+    _condition as _parse_field,
+)
 from gallery.core.metadata.facets import (
     FACET_CAMERA,
     FACET_FOLDER,
@@ -806,3 +812,59 @@ def test_search_needs_an_index_on_disk(tmp_path: Path) -> None:
         index.search([_condition("海边")])  # type: ignore[list-item]
 
     assert "检索索引" in excinfo.value.message
+
+
+def _sample_for(field: SearchField) -> str:
+    """这一族**应该解析得出来**的一种写法。认不出的 kind 在这里当场 KeyError。"""
+    if field.is_event:
+        return "5" if field.is_numeric else "杭州"
+    return {
+        "name": "杭州",
+        "text": "杭州",
+        "album": "旅行/2024",
+        "format": ".jpg",
+        "size": "2MB",
+        "number": "2.8",
+        "datetime": "2024-05",
+    }[field.kind]
+
+
+def test_every_search_field_can_both_parse_and_render() -> None:
+    """**每个字段都解析得出、也渲染得出** —— 加一种 kind 而漏了某一条梯子，这里当场红。
+
+    原先 ``_condition`` 与 ``_clause`` 各是一条 if/elif 梯子，而**两条都以「时间」兜底**：
+    加了新 kind 却忘了某一处不会报错 —— 那个字段会被当成日期解析（值照样解析得出来，
+    只是含义完全不对），或者渲染成一段与它无关的 SQL，而查询照样出得来结果。
+
+    这条用例逐个字段走一遍两半，并把每个 ``kind`` 的判据（``is_numeric`` / ``is_date``）
+    也一并钉住：它们是三个分派处共用的，改错一处不会有别的症状。
+    """
+    kinds = set()
+    for field in SEARCH_FIELDS:
+        kinds.add(field.kind)
+        text = _sample_for(field)
+
+        condition = _parse_field(field, text)
+        assert condition is not None, f"{field.id} 解析不出「{text}」"
+
+        sql, values = _render_clause(condition)
+        assert sql and values, f"{field.id} 渲染不出 SQL"
+
+        # 判据自身：数值一族与时间一族各只能由该族的字段认领。
+        if field.is_event:
+            assert field.is_numeric == (field.sql_type in ("INTEGER", "REAL")), field.id
+        else:
+            assert field.is_numeric == (field.kind in ("number", "size")), field.id
+        assert field.is_date == (field.kind == "datetime"), field.id
+
+    # 每一种 kind 都得真有字段用上 —— 否则这一族根本没有被上面走一遍。
+    assert kinds == {
+        "name",
+        "text",
+        "album",
+        "format",
+        "size",
+        "number",
+        "datetime",
+        "event",
+    }, f"有 kind 没有任何字段：{kinds}"
