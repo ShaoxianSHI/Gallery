@@ -22,8 +22,9 @@ from PySide6.QtWidgets import QApplication
 from waiting import wait_until
 
 from gallery.core.library.photos import PhotoRef
-from gallery.ui.browser.grid import EDGE_ANIMATION_MIN_DELTA, EDGE_ANIMATION_MS, PhotoGrid
+from gallery.ui.browser.grid import PhotoGrid  # noqa: E402
 from gallery.ui.browser.model import PhotoListModel
+from gallery.ui.browser.transition import EDGE_ANIMATION_MIN_DELTA, EDGE_ANIMATION_MS  # noqa: E402
 
 #: 一次过渡切几帧。12 帧 ≈ 每 13ms 一帧，与真实 60Hz 刷新同量级，够把
 #: 「一次跳变」与「一段过渡」在取样上分得开。
@@ -59,7 +60,7 @@ def largest_delta_that_keeps_columns(
     """最大的「边缘增量小于 ``limit`` 且不换列」的格宽增量。
 
     **为什么不能写死一个数**：格子宽度一变，排在第一行的格子数就可能跟着变，而列数一变
-    就该走切档过渡（:attr:`~gallery.ui.browser.grid.GridTransition.reflows`）—— 那与
+    就该走切档过渡（:attr:`~gallery.ui.browser.transition.GridTransition.reflows`）—— 那与
     边缘差多小无关。于是「变化太小所以不该有过渡」那条用例会在滚动条一改宽度、格子跨过
     换列边界时突然变红，而它量的根本不是自己声明的那一闸。
 

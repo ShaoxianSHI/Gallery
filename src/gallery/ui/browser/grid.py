@@ -7,19 +7,16 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
 from typing import Final
 
 from PySide6.QtCore import (
     QAbstractAnimation,
     QAbstractItemModel,
-    QEasingCurve,
     QEvent,
     QItemSelectionModel,
     QModelIndex,
     QObject,
     QPoint,
-    QRect,
     QSize,
     Qt,
     QTimer,
@@ -27,17 +24,11 @@ from PySide6.QtCore import (
     Signal,
 )
 from PySide6.QtGui import (
-    QColor,
     QContextMenuEvent,
     QGuiApplication,
     QKeyEvent,
     QMouseEvent,
     QNativeGestureEvent,
-    QPainter,
-    QPainterPath,
-    QPalette,
-    QPen,
-    QPixmap,
     QResizeEvent,
     QWheelEvent,
 )
@@ -46,13 +37,12 @@ from PySide6.QtWidgets import (
     QApplication,
     QFrame,
     QListView,
-    QStyle,
-    QStyledItemDelegate,
-    QStyleOptionViewItem,
     QWidget,
 )
 
-from gallery.ui.browser.model import ALBUM_ROLE, GROUP_COUNT_ROLE, GROUP_ROLE
+from gallery.ui.browser.anchoring import AnchoringMixin
+from gallery.ui.browser.delegate import GRID_PADDING_X, GRID_PADDING_Y, PhotoDelegate
+from gallery.ui.browser.model import ALBUM_ROLE
 from gallery.ui.browser.thumb_sizes import (
     DEFAULT_EDGE,
     MIN_EDGE,
@@ -64,6 +54,13 @@ from gallery.ui.browser.thumb_sizes import (
     fit_columns,
     wheel_delta,
 )
+from gallery.ui.browser.transition import (
+    EDGE_ANIMATION_CURVE,
+    EDGE_ANIMATION_MS,
+    EDGE_SETTLE_MS,
+    GridTransition,
+    TransitionMixin,
+)
 from gallery.ui.rename_edit import RenameEdit
 from gallery.ui.scrollbar_style import apply_scrollbar_style
 
@@ -73,15 +70,6 @@ VIEWPORT_DEBOUNCE_MS = 60
 #: 预取时向视口四周外扩的比例（1.0 表示各外扩一个视口）。
 PREFETCH_MARGIN = 1.0
 
-#: 格子相对缩略图多出来的留白：横向是卡片内边距，纵向还要放下文件名。
-GRID_PADDING_X = 28
-GRID_PADDING_Y = 56
-
-#: 长边与上次「通知界面重取缩略图」的差值小于它就不折腾，否则整屏缩略图作废重取。
-EDGE_REFRESH_THRESHOLD = 6
-
-#: 视口停止变化多久之后才真正通知界面重取缩略图（拖动窗口时的防抖）。
-EDGE_SETTLE_MS = 120
 
 #: Qt 的非精确滚轮**一格**是这么多角度单位（120 = 一格），与 ``thumb_sizes`` 里同一个约定。
 ANGLE_UNITS_PER_NOTCH: Final = 120.0
@@ -94,14 +82,6 @@ WHEEL_NOTCH_PIXELS: Final = 240
 #: 而 macOS 的换算是「1 像素 = 2 个角度单位」，照角度算会把手指距离放大一倍多。
 WHEEL_PIXEL_FACTOR: Final = 0.5
 
-#: 切档时格子「长过去/缩回去」的时长（毫秒）。只驱动**画面**，不驱动几何与缩略图请求。
-EDGE_ANIMATION_MS = 160
-
-#: 切档过渡的缓动曲线：**两端都缓**的对称曲线（``OutCubic`` 第一帧就走完 27%，是一跳）。
-EDGE_ANIMATION_CURVE = QEasingCurve.Type.InOutCubic
-
-#: 边长差小于这个值就不动画：差几个像素看不出来，却白付一次全视口重绘。
-EDGE_ANIMATION_MIN_DELTA = 6
 
 #: 排完版多久之后核对实际列数（等布局彻底落定，避免读到半成品）。
 COLUMN_CHECK_MS = 50
@@ -117,81 +97,6 @@ MAX_LAYOUT_MEMO = 32
 
 #: 拖动距离的兜底值。正常情况取平台自己的数字（见 :func:`_drag_threshold`）。
 _FALLBACK_DRAG_DISTANCE = 10
-
-
-@dataclass(frozen=True)
-class GridTransition:
-    """换一档时，每一格从旧布局飞到新布局的那段位移。
-
-    **只描述画面，不描述逻辑状态**：``gridSize``、``visualRect``、``indexAt`` 在切换
-    那一刻就已经是最终值了，Qt 全程不知道有过过渡。**不用逐帧重排**：显式
-    ``doItemsLayout`` 会强制全量排版，几万条目时单次几十毫秒，60 帧装不下；而绘制时
-    改一块矩形只是 O(可见格数) 的几次整数加法。
-
-    两端的列数都是**量出来的**（见 :meth:`PhotoGrid._first_row_columns`）：
-    :meth:`PhotoGrid._columns_for` 给的只是「打算摆几列」，用错每格会整体漂移。
-    """
-
-    old_columns: int
-    old_cell: QSize
-    new_columns: int
-    new_cell: QSize
-    #: 旧画面整体要跟着挪多少像素（内容坐标）：不补这一笔，第 0 帧整幅画会挪到屏幕外面去。
-    scroll_shift: int = 0
-
-    @property
-    def reflows(self) -> bool:
-        """列数变了 —— 有格子从上一行挪到下一行，光缩放救不回来。
-
-        **只看列数**：格子大小差几个像素时肉眼根本看不出来，却要白付一整轮全视口
-        重绘（那正是 :data:`EDGE_ANIMATION_MIN_DELTA` 管的事）。
-        """
-        return self.old_columns != self.new_columns
-
-    @staticmethod
-    def _position(columns: int, cell: QSize, row: int) -> QPoint:
-        """第 ``row`` 格在「``columns`` 列、每格 ``cell``」这套布局里的左上角。"""
-        return QPoint((row % columns) * cell.width(), (row // columns) * cell.height())
-
-    def offset(self, row: int, t: float) -> QPoint:
-        """第 ``row`` 格相对**最终位置**要往回挪多少，才能落在第 ``t`` 帧。
-
-        ``t=0`` 给回旧位置，``t=1`` 给 0。坐标是**内容坐标**：视图的滚动平移由 Qt
-        统一叠在上面。
-        """
-        old = self._position(self.old_columns, self.old_cell, row)
-        new = self._position(self.new_columns, self.new_cell, row)
-        k = 1.0 - t
-        return QPoint(
-            round((old.x() - new.x()) * k),
-            round((old.y() - new.y()) * k) + round(self.scroll_shift * k),
-        )
-
-    def frame_rect(self, final: QRect, row: int, t: float) -> QRect:
-        """第 ``row`` 格在第 ``t`` 帧该画成的那块矩形（``final`` 是 Qt 给的终态）。
-
-        **位置与尺寸一起插**：只插位置的话，卡片（选中底、角标、文件名）在切换那一刻
-        就已经是新尺寸、只有照片在长（见 :meth:`PhotoDelegate.cell_rect`）。尺寸长到
-        ``final.size()`` 而不是 :attr:`new_cell`，因为那才是 Qt 真正排出来的那一格；
-        两端于是各自与切换前/后的那一帧完全一致，中间没有混血帧。
-        """
-        size = QSize(
-            round(self.old_cell.width() + (final.width() - self.old_cell.width()) * t),
-            round(self.old_cell.height() + (final.height() - self.old_cell.height()) * t),
-        )
-        return QRect(final.topLeft() + self.offset(row, t), size)
-
-
-@dataclass(frozen=True)
-class _ScrollAnchor:
-    """换几何**之前**，视口正中那一格：行号，以及它当时在屏幕上的纵向位置。
-
-    **两个都要**：行号用来算它换完之后落在第几行（列数一变行号就变了），屏幕位置
-    用来把它摆回原处 —— 只摆到视口正中会多挪最多半格，那也是一跳。
-    """
-
-    row: int
-    screen_y: int
 
 
 def _drag_threshold() -> int:
@@ -212,249 +117,7 @@ _EXTEND_MODIFIERS: Final = (
 )
 
 
-class PhotoDelegate(QStyledItemDelegate):
-    """把一格画成卡片：居中缩略图、底部省略号文件名。
-
-    底色一律透明，只有选中才铺一层淡色圆角底，好让「选中了哪一张」一眼可见；
-    相册靠封面角标与文件夹图形区分，不靠底色。照片、相册与分组卡片三样都圆角。
-    """
-
-    PADDING = 8
-    LABEL_HEIGHT = 20
-    RADIUS = 10
-    #: 缩略图自身的圆角半径。**只轻微柔化**，占位虚线框用同一个值，否则落地那格就换了形状。
-    THUMB_RADIUS = 5
-
-    def __init__(self, parent: QWidget | None = None, *, icon_edge: int = DEFAULT_EDGE) -> None:
-        super().__init__(parent)
-        self._icon_edge = icon_edge
-        #: **画出来**的边长：切档动画要把它取成小数并逐帧变化，几何尺寸则必须一直是整数。
-        self._draw_edge = float(icon_edge)
-        #: 切档过渡：这一帧相对最终位置往回挪多少。``None`` 表示不偏移（常态）。
-        self._transition: GridTransition | None = None
-        self._t = 1.0
-
-    def set_icon_edge(self, edge: int) -> None:
-        """几何尺寸变了 —— 绘制尺寸先跟它对齐。
-
-        动画是在 :meth:`PhotoGrid._set_cell` 里、几何定下来**之后**另行发起的，它会把
-        :meth:`draw_edge` 拨回旧尺寸再往新尺寸走，所以这里顺手对齐不会吃掉动画的起点。
-        """
-        self._icon_edge = edge
-        self._draw_edge = float(edge)
-
-    @property
-    def draw_edge(self) -> float:
-        """当前**画出来**的缩略图长边。动画期间是小数且逐帧变化。"""
-        return self._draw_edge
-
-    def set_draw_edge(self, edge: float) -> None:
-        """只改绘制尺寸，不碰几何。见 :attr:`draw_edge`。"""
-        self._draw_edge = max(1.0, edge)
-
-    def set_transition(self, transition: GridTransition | None, t: float) -> None:
-        """这一帧该画在哪、画多大（``None`` 表示不偏移、就是 Qt 给的那一格）。
-
-        与 :meth:`set_draw_edge` 是同一个 ``t`` 的两半：分成两个动画就会是两个时钟，
-        早晚差一帧 —— 那一帧里照片已经变了尺寸、格子却还没到位。
-        """
-        self._transition = transition
-        self._t = t if transition is not None else 1.0
-
-    def cell_offset(self, row: int) -> QPoint:
-        """第 ``row`` 格相对 ``option.rect`` 的额外位移（没有过渡时是原点）。
-
-        **位置只是这一帧的一半** —— 整格的矩形见 :meth:`cell_rect`。
-        """
-        if self._transition is None:
-            return QPoint()
-        return self._transition.offset(row, self._t)
-
-    def cell_rect(self, rect: QRect, row: int) -> QRect:
-        """Qt 给的那一格在这一帧该画成什么样（没有过渡时原样返回）。
-
-        **位置与尺寸一起换**：只平移的话，卡片的框、选中底与文件名已经是新尺寸、
-        只有照片在长；整格一起插值，卡片才是一个整体在长大。
-        """
-        if self._transition is None:
-            return rect
-        return self._transition.frame_rect(rect, row, self._t)
-
-    def label_rect(self, rect: QRect) -> QRect:
-        """文件名那一行的位置。
-
-        绘制与行内重命名的输入框共用这一份，否则会看到「框在别处、字在这儿」。
-        """
-        return QRect(
-            rect.left() + 8,
-            rect.bottom() - self.LABEL_HEIGHT,
-            rect.width() - 16,
-            self.LABEL_HEIGHT,
-        )
-
-    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
-        painter.save()
-        try:
-            # 过渡中这一格画在「旧布局与最终布局之间」的那一帧，位置与**大小**一起插值。
-            rect = self.cell_rect(option.rect, index.row()).adjusted(3, 3, -3, -3)
-            selected = bool(option.state & QStyle.StateFlag.State_Selected)
-            is_album = bool(index.data(ALBUM_ROLE))
-            is_group = bool(index.data(GROUP_ROLE))
-            palette = option.palette
-
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-            highlight = palette.color(QPalette.ColorRole.Highlight)
-            # 未选中时不铺底色：密排时相邻格子的底色会连成一片，照片边界反而看不清。
-            background = QColor(highlight)
-            background.setAlpha(90 if selected else 0)
-            painter.setPen(Qt.PenStyle.NoPen)
-            if background.alpha() > 0:
-                painter.setBrush(background)
-                painter.drawRoundedRect(rect, self.RADIUS, self.RADIUS)
-
-            label_rect = self.label_rect(rect)
-            image_rect = rect.adjusted(
-                self.PADDING,
-                self.PADDING,
-                -self.PADDING,
-                -(self.PADDING + self.LABEL_HEIGHT),
-            )
-
-            pixmap = index.data(Qt.ItemDataRole.DecorationRole)
-            if isinstance(pixmap, QPixmap) and not pixmap.isNull():
-                # 照片落的那一块算一次（角标仍钉取景框角，见 :meth:`_draw_badge`）。
-                photo = self.target_rect(image_rect, pixmap)
-                self._draw_thumbnail(painter, photo, pixmap)
-                if is_album:
-                    self._draw_album_badge(painter, image_rect)
-                elif is_group:
-                    self._draw_group_badge(painter, image_rect, str(index.data(GROUP_COUNT_ROLE)))
-            elif is_album or is_group:
-                self._draw_folder_glyph(painter, image_rect, highlight)
-            else:
-                self._draw_placeholder(painter, image_rect, palette)
-
-            text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
-            painter.setPen(palette.color(QPalette.ColorRole.WindowText))
-            metrics = painter.fontMetrics()
-            painter.drawText(
-                label_rect,
-                int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter),
-                metrics.elidedText(text, Qt.TextElideMode.ElideMiddle, label_rect.width()),
-            )
-
-            if selected:
-                pen = QPen(highlight)
-                pen.setWidth(2)
-                painter.setPen(pen)
-                painter.setBrush(Qt.BrushStyle.NoBrush)
-                painter.drawRoundedRect(rect, self.RADIUS, self.RADIUS)
-        finally:
-            painter.restore()
-
-    def target_rect(self, rect: QRect, pixmap: QPixmap) -> QRect:
-        """缩略图落在取景框里的哪一块（按比例缩放后居中）。
-
-        绘制与测试共用这一份，测试量角时不必再复刻一遍魔数。用的是 :attr:`draw_edge`
-        而不是几何边长 —— 那正是切档动画能动的地方。**取整**是有意的：亚像素坐标肉眼
-        看不出来，却会让 ``QSize`` / ``QRect`` 的整数契约在绘制路径上到处漏小数。
-        """
-        edge = round(self._draw_edge)
-        target = pixmap.size().scaled(QSize(edge, edge), Qt.AspectRatioMode.KeepAspectRatio)
-        return QRect(
-            rect.left() + (rect.width() - target.width()) // 2,
-            rect.top() + (rect.height() - target.height()) // 2,
-            target.width(),
-            target.height(),
-        )
-
-    def _draw_thumbnail(self, painter: QPainter, target: QRect, pixmap: QPixmap) -> None:
-        """把缩略图画进 ``target``（照片自己那一块），四角按 :attr:`THUMB_RADIUS` 裁圆。
-
-        尺寸刚切换时手里的图还是按旧边长缩放的，这里就地缩放到新框，于是每一格始终
-        有图、大小也对得上。**刻意不走** :func:`gallery.ui.imaging.scale_pixmap`：那一处
-        是把缩略图缩成新位图存起来，这里是绘制时按目标矩形画，不额外产出中间位图。
-        圆角用 clip 裁而不是蒙版抠 —— 后者每格多产出一张等大位图，而且抠出来还是锯齿。
-        """
-        clip = QPainterPath()
-        clip.addRoundedRect(target, self.THUMB_RADIUS, self.THUMB_RADIUS)
-        painter.save()
-        try:
-            painter.setClipPath(clip, Qt.ClipOperation.IntersectClip)
-            if target.size() == pixmap.size():
-                painter.drawPixmap(target.topLeft(), pixmap)
-            else:
-                painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
-                painter.drawPixmap(target, pixmap)
-        finally:
-            painter.restore()
-
-    def _draw_folder_glyph(self, painter: QPainter, rect: QRect, color: QColor) -> None:
-        """空相册（或封面还没到时）画一个文件夹，而不是「加载中」的虚线框。"""
-        box = rect.adjusted(
-            rect.width() // 5, rect.height() // 3, -rect.width() // 5, -rect.height() // 3
-        )
-        if box.width() < 24 or box.height() < 18:
-            box = rect.adjusted(8, 8, -8, -8)
-        tab_width = max(14, box.width() // 3)
-        tab = QRect(
-            box.left(), box.top() - max(4, box.height() // 6), tab_width, max(6, box.height() // 4)
-        )
-        fill = QColor(color)
-        fill.setAlpha(200)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(fill)
-        painter.drawRoundedRect(tab, 3, 3)
-        painter.drawRoundedRect(box, 4, 4)
-
-    def _draw_group_badge(self, painter: QPainter, frame: QRect, count: str) -> None:
-        """分组卡片：左上角盖一个张数徽标（相册盖的是「相册」两个字）。
-
-        用封面当分组卡片的正脸 —— 封面还没到时才退回文件夹图形。
-        """
-        self._draw_badge(painter, frame, count)
-
-    def _draw_album_badge(self, painter: QPainter, frame: QRect) -> None:
-        """有封面的相册：左上角盖一个「相册」小标签。"""
-        self._draw_badge(painter, frame, "相册")
-
-    def _draw_badge(self, painter: QPainter, frame: QRect, text: str) -> None:
-        """在**取景框**左上角盖一个小标签。
-
-        钉取景框而不是钉照片：照片按比例居中，横竖封面的左边缘落在不同的横坐标上，
-        跟着照片走一屏卡片的角标就参差不齐。代价是封面不是正方形时角标会落在照片之外
-        的留白上 —— 为了整齐认下的取舍。取景框本身跟着过渡插值，所以角标照样跟着卡片
-        一起挪、一起长（见 :meth:`PhotoDelegate.cell_rect`）。
-        """
-        metrics = painter.fontMetrics()
-        width = metrics.horizontalAdvance(text) + 12
-        height = metrics.height() + 4
-        badge = QRect(frame.left() + 4, frame.top() + 4, width, height)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(0, 0, 0, 150))
-        painter.drawRoundedRect(badge, 6, 6)
-        painter.setPen(QColor(255, 255, 255, 235))
-        painter.drawText(badge, int(Qt.AlignmentFlag.AlignCenter), text)
-
-    def _draw_placeholder(self, painter: QPainter, rect: QRect, palette: QPalette) -> None:
-        """还没有缩略图时的占位：一个淡色空框，而不是空白或转圈。
-
-        圆角跟 :attr:`THUMB_RADIUS` 一致，否则缩略图一落地那一格就换了形状。
-        """
-        color = palette.color(QPalette.ColorRole.WindowText)
-        pen = QPen(QColor(color.red(), color.green(), color.blue(), 60))
-        pen.setStyle(Qt.PenStyle.DashLine)
-        painter.setPen(pen)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        radius = self.THUMB_RADIUS
-        painter.drawRoundedRect(rect.adjusted(6, 6, -6, -6), radius, radius)
-
-    def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:  # noqa: N802
-        del option, index
-        return QSize(self._icon_edge + GRID_PADDING_X, self._icon_edge + GRID_PADDING_Y)
-
-
-class PhotoGrid(QListView):
+class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
     """缩略图网格视图。"""
 
     activated_index = Signal(QModelIndex)
@@ -789,26 +452,6 @@ class PhotoGrid(QListView):
         if self._transition_anim.state() != QAbstractAnimation.State.Stopped:
             self._paint_transition_frame(float(self._transition_anim.currentValue()))
 
-    def _rebuild_transition(self, cell: QSize) -> None:
-        """几何变了之后，把过渡里记的那套「新布局」也换成刚排出来的那一套。
-
-        委托拿过渡算出来的矩形是**相对当前逻辑布局**的，逻辑布局已经按新几何排好了；
-        过渡里还留着旧几何的话差得可不止一两个像素（格子高差 30 像素时第 100 格就差
-        三千像素）。**旧端原样留着** —— 那是这一趟飞行的起点，与刚改完的几何无关。
-        """
-        if self._transition is None:
-            return
-        columns = self._first_row_columns()
-        if columns <= 0:
-            return
-        self._transition = GridTransition(
-            self._transition.old_columns,
-            self._transition.old_cell,
-            columns,
-            cell,
-            self._transition.scroll_shift,
-        )
-
     def _refresh_scroll_goal(self) -> None:
         """过渡正滑向某个位置时，按新几何把那个位置重算一遍。
 
@@ -908,49 +551,6 @@ class PhotoGrid(QListView):
         finally:
             self._driving_scroll = False
 
-    def _anchor(self) -> _ScrollAnchor:
-        """视口正中那一格：行号 + 它这一刻在屏幕上的纵向位置。
-
-        **必须在改几何之前问**：改完之后「正中」已经指到另一格、格子高矮也变了。
-        """
-        middle = QPoint(self.viewport().width() // 2, self.viewport().height() // 2)
-        index = self.indexAt(middle)
-        if not index.isValid():
-            return _ScrollAnchor(-1, middle.y())
-        return _ScrollAnchor(index.row(), self.visualRect(index).center().y())
-
-    def _anchored_scroll_value(self, anchor: _ScrollAnchor, columns: int) -> int | None:
-        """把 ``anchor`` 那一格摆回它换几何之前所在的位置时，滚动条该在的值。
-
-        这是过渡**第 0 帧**要落的地方。滚动位置是内容坐标，格子高矮与每行张数一变，
-        同一个像素值指的就是**另一批照片** —— 照搬旧值，末尾放大一档时滚动条会一上来
-        从 100% 跳到 46%（屏上正中的那一格从第 795 张变成第 366 张），然后才一路滑
-        回来。缩小方向同样会闪。画面本身要与它配合（见
-        :attr:`GridTransition.scroll_shift`），否则第 0 帧画出来的是「旧画面 + 新滚动
-        位置」。量不出那一格（``row < 0``）时返回 ``None``，调用方退回像素值。
-        """
-        if anchor.row < 0 or columns <= 0:
-            return None
-        top = (anchor.row // columns) * self.gridSize().height()
-        target = top + self.gridSize().height() // 2 - anchor.screen_y
-        bar = self.verticalScrollBar()
-        return max(bar.minimum(), min(bar.maximum(), target))
-
-    def _focus_row(self, anchor_row: int) -> int:
-        """换了行之后该把哪一格摆到正中。
-
-        有真选区时是当前项，否则是换行之前视口正中那一格。**不能退回 ``currentIndex()``**：
-        Qt 在模型重置与每一次重排之后都会把当前项顺手设成第 0 行，照它居中就等于
-        「在相册中间放大一档 → 整屏弹回相册顶部」。
-        """
-        if self.genuinely_selected_rows():
-            row = self.current_row()
-            if row >= 0:
-                return row
-        if anchor_row >= 0:
-            return anchor_row
-        return self.current_row()
-
     def _layout_everything(self) -> None:
         """把**全部**条目排一遍版。每一次几何变化都用它（见 :meth:`_apply_geometry`）。
 
@@ -965,140 +565,6 @@ class PhotoGrid(QListView):
             self.doItemsLayout()
         finally:
             self.setLayoutMode(QListView.LayoutMode.Batched)
-
-    def _centered_scroll_value(self, row: int, columns: int) -> int:
-        """把第 ``row`` 行摆到正中时滚动条该在的值（夹进范围）。
-
-        格子的位置由「``columns`` 列、每格 ``cell``」直接算出（:class:`GridTransition`
-        用的是同一条算术），**与那一行有没有被排版过无关**。夹范围只为内容比视口短的
-        情况；``columns`` 量不出来时退回 :attr:`_laid_out_columns`。
-        """
-        if columns <= 0:
-            columns = max(1, self._laid_out_columns)
-        cell_height = self.gridSize().height()
-        top = (row // columns) * cell_height
-        bar = self.verticalScrollBar()
-        target = top + cell_height // 2 - self.viewport().height() // 2
-        return max(bar.minimum(), min(bar.maximum(), target))
-
-    def _center_on_row(self, row: int, columns: int) -> None:
-        """把第 ``row`` 行摆到视口正中间（``columns`` 是当前这套布局实际的列数）。
-
-        **不用 ``scrollTo(PositionAtCenter)``**：它要问 ``visualRect``，而 Batched 布局下
-        超出已排版那一批的行返回的是空矩形，于是它静默什么都不做。记下 ``row``
-        （:attr:`_centered_row`）供几何变动后重算终点（见 :meth:`_examine_columns`）。
-        """
-        self._centered_row = row
-        target = self._centered_scroll_value(row, columns)
-        # :meth:`_start_transition` 紧接着就拿滚动条的当前位置当终点，所以这里**必须**摆过去。
-        self._scroll_to = target
-        self._driving_scroll = True
-        try:
-            self.verticalScrollBar().setValue(target)
-        finally:
-            self._driving_scroll = False
-
-    def _start_transition(self, drawn_edge: float, scroll_from: int, *, animate: bool) -> None:
-        """发一次切档过渡（``animate`` 为假就直接落位）。
-
-        **过渡只碰「画成什么样」，别的都一步到位**：:attr:`_applied_edge` 与 ``gridSize``
-        一动，Batched 布局就得整个重排，格子飞过去靠的是委托另画一块矩形；而
-        ``icon_edge_changed`` 是**重新取缩略图**的信号，跟着动画走会按几十个中间尺寸
-        各要一遍图，磁盘上「一张照片只有几份缓存」的不变量当场作废；``visualRect``
-        全程是终值，代价是那 160ms 里画面与逻辑不一致，由「任何交互都立刻落位」来兜。
-
-        滚动起点要**夹进新范围**，否则插值中途会被 ``maximum()`` 削平、先平一段再动。
-        """
-        # 上一段还没跑完又换了一档就**不接第二段**（读状态必须在 ``stop()`` 之前）。
-        still_running = self._transition_anim.state() != QAbstractAnimation.State.Stopped
-        self._transition_anim.stop()
-        self._edge_from = drawn_edge
-        self._edge_to = float(self._applied_edge)
-        bar = self.verticalScrollBar()
-        self._scroll_from = min(scroll_from, bar.maximum())
-        self._scroll_to = bar.value()
-
-        reflows = self._transition is not None and self._transition.reflows
-        grows = abs(self._edge_to - self._edge_from) >= EDGE_ANIMATION_MIN_DELTA
-        if not animate or still_running or not (reflows or grows):
-            self._settle_transition()
-            return
-
-        # 先把第 0 帧摆出来再启动：``set_icon_edge`` 已把绘制尺寸对齐到了新几何。
-        self._paint_transition_frame(0.0)
-        self._transition_running = True
-        self._transition_anim.start()
-
-    def _on_transition_step(self, t: float) -> None:
-        """动画每一帧回调：把这一帧摆出来。"""
-        self._paint_transition_frame(t)
-
-    def _paint_transition_frame(self, t: float) -> None:
-        """把第 ``t`` 帧摆出来：格子画在哪、画多大，缩略图画多大，纵向滚到哪。
-
-        **与动画时钟分开是有意的**：几何在过渡途中被改掉时（见 :meth:`_examine_columns`），
-        改几何那一步会把绘制尺寸对齐到新几何，那时要能按动画自己的 ``t`` 重摆这一帧。
-        """
-        self._delegate.set_draw_edge(self._edge_from + (self._edge_to - self._edge_from) * t)
-        self._delegate.set_transition(self._transition, t)
-        self._driving_scroll = True
-        try:
-            self.verticalScrollBar().setValue(
-                round(self._scroll_from + (self._scroll_to - self._scroll_from) * t)
-            )
-        finally:
-            self._driving_scroll = False
-        self.viewport().update()
-
-    def _settle_transition(self, *, restore_scroll: bool = True) -> None:
-        """过渡收尾：画面回到「就是逻辑几何」，绘制尺寸与几何对齐。
-
-        ``restore_scroll=False`` 是给「被用户打断」那条路用的：用户自己滚到了某处，
-        就该留在那里。**要恢复滚动目标**，因为动画可能一步都没走完就被判了落位，
-        那时滚动条还停在起点上。**取消也走这里** —— 格子用的还是旧布局算出来的位置，
-        停在半空等于画面在说一件假话。:attr:`transition_ended` 也在这里发（**只发真正
-        跑起来过的那一段**），于是「跑完」与「被掐断」是同一个出口：掐断时动画的
-        ``finished`` 不会来，由 :meth:`_cancel_transition` 走到这里来补。
-        """
-        if restore_scroll:
-            self._driving_scroll = True
-            try:
-                self.verticalScrollBar().setValue(self._scroll_to)
-            finally:
-                self._driving_scroll = False
-        self._transition = None
-        self._delegate.set_transition(None, 1.0)
-        self._delegate.set_draw_edge(float(self._applied_edge))
-        self.viewport().update()
-        # **放在最后发**：被它叫醒的排队切档必须看到已经彻底落位的网格。
-        if self._transition_running:
-            self._transition_running = False
-            self.transition_ended.emit()
-
-    def _cancel_transition(self) -> None:
-        """用户动了，或者局面已经变了 —— 过渡立刻落位。
-
-        **按下就取消**而不是「让它跑完」：那 160ms 里画面位置与 ``visualRect`` /
-        ``indexAt`` 不一致，一次点击会落在**画得好看的那一格**、却选中**逻辑上的另一格**。
-        与其在命中测试上做一套反向映射，不如让那一刻的画面先归位。滚动位置**不动**。
-        """
-        if self._transition_anim.state() == QAbstractAnimation.State.Stopped:
-            return
-        # 这一趟是用户自己接手结束的：它要居中的那一行不再是目标了。
-        self._centered_row = -1
-        self._transition_anim.stop()
-        self._settle_transition(restore_scroll=False)
-
-    def _schedule_edge_update(self) -> None:
-        if abs(self._applied_edge - self._emitted_edge) < EDGE_REFRESH_THRESHOLD:
-            return
-        self._edge_timer.start()
-
-    def _emit_edge_change(self) -> None:
-        if self._applied_edge == self._emitted_edge:
-            return
-        self._emitted_edge = self._applied_edge
-        self.icon_edge_changed.emit(self._applied_edge)
 
     # ---- 可见区计算 --------------------------------------------------------
 
@@ -1606,18 +1072,10 @@ class PhotoGrid(QListView):
 __all__ = [
     "ANGLE_UNITS_PER_NOTCH",
     "COLUMN_CHECK_MS",
-    "EDGE_ANIMATION_CURVE",
-    "EDGE_ANIMATION_MIN_DELTA",
-    "EDGE_ANIMATION_MS",
-    "EDGE_REFRESH_THRESHOLD",
-    "EDGE_SETTLE_MS",
-    "GRID_PADDING_X",
-    "GRID_PADDING_Y",
     "LAYOUT_SAFETY",
     "PREFETCH_MARGIN",
     "VIEWPORT_DEBOUNCE_MS",
     "WHEEL_NOTCH_PIXELS",
     "WHEEL_PIXEL_FACTOR",
-    "PhotoDelegate",
     "PhotoGrid",
 ]

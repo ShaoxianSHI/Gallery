@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (  # noqa: E402
 )
 
 from gallery.core.library.photos import FolderRef, GroupRef, PhotoRef  # noqa: E402
-from gallery.ui.browser.grid import PhotoDelegate  # noqa: E402
+from gallery.ui.browser.delegate import PhotoDelegate  # noqa: E402
 from gallery.ui.browser.model import PhotoListModel  # noqa: E402
 
 #: 取样用的缩略图边长。小一点就跑得快，格子结构完全一样。

@@ -56,20 +56,19 @@ from PySide6.QtWidgets import (  # noqa: E402
 )
 
 from gallery.core.library.photos import PhotoRef  # noqa: E402
-from gallery.ui.browser.grid import (  # noqa: E402
-    EDGE_ANIMATION_CURVE,
-    EDGE_ANIMATION_MIN_DELTA,
-    EDGE_ANIMATION_MS,
-    GRID_PADDING_X,
-    GridTransition,
-    PhotoDelegate,
-    PhotoGrid,
-)
+from gallery.ui.browser.delegate import GRID_PADDING_X, PhotoDelegate  # noqa: E402
+from gallery.ui.browser.grid import PhotoGrid  # noqa: E402
 from gallery.ui.browser.model import PhotoListModel  # noqa: E402
 from gallery.ui.browser.thumb_sizes import (  # noqa: E402
     MIN_PINCH_INTERVAL_MS,
     PINCH_THRESHOLD,
     THUMBNAIL_SIZES,
+)
+from gallery.ui.browser.transition import (  # noqa: E402
+    EDGE_ANIMATION_CURVE,
+    EDGE_ANIMATION_MIN_DELTA,
+    EDGE_ANIMATION_MS,
+    GridTransition,
 )
 
 #: 转一小会儿事件循环的时长。只用在「必须等满，否则测不到」的地方，其余一律等条件。

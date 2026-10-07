@@ -26,7 +26,7 @@ from PySide6.QtGui import QColor, QImage, QPainter, QPixmap  # noqa: E402
 from PySide6.QtWidgets import QApplication, QStyleOptionViewItem  # noqa: E402
 
 from gallery.core.library.photos import GroupRef, PhotoRef  # noqa: E402
-from gallery.ui.browser.grid import GRID_PADDING_X, GRID_PADDING_Y, PhotoDelegate  # noqa: E402
+from gallery.ui.browser.delegate import GRID_PADDING_X, GRID_PADDING_Y, PhotoDelegate  # noqa: E402
 from gallery.ui.browser.model import GROUP_COUNT_ROLE, PhotoListModel  # noqa: E402
 
 #: 缩略图边长，与网格默认档位一致。
