@@ -19,6 +19,7 @@ pytest.importorskip("PySide6")
 from library_helpers import set_library_ui  # noqa: E402
 from PySide6.QtCore import (
     QItemSelectionModel,  # noqa: E402
+    QModelIndex,  # noqa: E402
     Qt,  # noqa: E402
 )
 from PySide6.QtGui import QKeySequence  # noqa: E402
@@ -211,8 +212,14 @@ def test_the_key_really_makes_the_copy(qt_app: QApplication, window: MainWindow)
 
 
 def test_nothing_selected_leaves_the_shortcut_disabled(window: MainWindow) -> None:
-    """没有选区时 ⌘D 置灰：造副本一定得先有「造哪一份」。"""
+    """没有选区时 ⌘D 置灰：造副本一定得先有「造哪一份」。
+
+    **光 ``clearSelection()`` 不够** —— ``selected_rows()`` 在真选区为空时会**退回当前项**
+    （网格刚打开时 Qt 可能顺手把第 0 行设成当前项），那是个兜底而不是「谁被选中了」。
+    所以这里连当前项一起清掉，否则这条用例是在赌时序。
+    """
     window._grid.clearSelection()
+    window._grid.setCurrentIndex(QModelIndex())
 
     window._update_action_states()
 
