@@ -20,17 +20,25 @@ pytest.importorskip("PySide6")
 from library_helpers import set_library_ui  # noqa: E402
 from outline_helpers import assert_no_darker_dots  # noqa: E402
 from PIL import ExifTags, Image  # noqa: E402
-from PySide6.QtCore import QItemSelectionModel, QPoint, QRect, QTimer  # noqa: E402
+from PySide6.QtCore import (  # noqa: E402
+    QItemSelectionModel,
+    QModelIndex,
+    QPoint,
+    QRect,
+    QTimer,
+)
 from PySide6.QtGui import QAction, QPalette  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
+    QDialog,
     QLabel,
     QMenu,
     QMessageBox,
+    QPushButton,
 )
 from waiting import wait_for_idle, wait_until  # noqa: E402
 
-from gallery.core.events.kinds import TRIP, fields_of  # noqa: E402
+from gallery.core.events.kinds import EVENT_KINDS, TRIP, fields_of  # noqa: E402
 from gallery.core.events.store import Event, EventDraft  # noqa: E402
 from gallery.core.library.config import BROWSE_MODE_ALBUMS, prepare_library  # noqa: E402
 from gallery.core.library.photos import GroupRef  # noqa: E402
@@ -41,8 +49,10 @@ from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.menu_style import ShortcutColumnMenu  # noqa: E402
 from gallery.ui.outline import opaque_over  # noqa: E402
 from gallery.ui.panels.event_edit import (  # noqa: E402
+    DELETE_REQUESTED,
     FIELD_RADIUS,
     ChoiceButtons,
+    EventEdit,
     EventEditDialog,
 )
 from gallery.ui.theme import rgba  # noqa: E402
@@ -637,6 +647,278 @@ def test_answering_no_keeps_the_event(
     window.delete_event(trip.id)
 
     assert library.event(trip.id) is not None
+
+
+# ---- 删除事件：入口在编辑面板里（ADR 0043 决策 5 的那一整套本来就写好了，只差一个入口）----
+
+
+def _dialog_of(window: MainWindow, kind: TRIP, event: Event | None) -> EventEditDialog:
+    """照面板真正被摆出来的样子造一个（缺这一步就量不到它自己那个布局）。"""
+    dialog = EventEditDialog(window, kind, event=event, selected=0)
+    return dialog
+
+
+def test_the_panel_offers_no_delete_while_creating(window: MainWindow) -> None:
+    """**新建的那一个还不存在**，摆一个「删除事件…」是没有对象的。"""
+    dialog = _dialog_of(window, TRIP, None)
+
+    assert dialog.findChild(QPushButton, "eventEditDelete") is None
+    dialog.close()
+
+
+def test_the_panel_offers_delete_while_editing(window: MainWindow) -> None:
+    library = window._library
+    assert library is not None
+    trip = library.create_event("trip", EventDraft(values={"title": "京都五日"})).event
+
+    dialog = _dialog_of(window, TRIP, trip)
+
+    assert dialog.findChild(QPushButton, "eventEditDelete") is not None
+    dialog.close()
+
+
+def test_the_delete_button_gives_back_its_own_code(window: MainWindow) -> None:
+    """**一个专属的返回值，而不是 Accepted 也不是 Rejected。**
+
+    用信号的话「确认框」会嵌套在对话框自己的 ``exec()`` 里面 —— 两个模态叠着，关闭顺序会乱。
+    返回值把两件事分成先后两步，这条钉的就是它仍是那一步。
+    """
+    library = window._library
+    assert library is not None
+    trip = library.create_event("trip", EventDraft(values={"title": "京都五日"})).event
+    dialog = _dialog_of(window, TRIP, trip)
+
+    dialog.findChild(QPushButton, "eventEditDelete").click()
+
+    assert dialog.result() == DELETE_REQUESTED
+    assert DELETE_REQUESTED not in (QDialog.DialogCode.Accepted, QDialog.DialogCode.Rejected)
+    dialog.close()
+
+
+def test_the_delete_button_deletes_the_event_it_was_editing(
+    qt_app: QApplication, window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**走面板那一条路真的删得掉** —— 在这之前界面上压根没有入口，
+    而 :meth:`delete_event` 那一整套（确认框 / journal / 撤销）早就写好了。
+
+    **走的是真的 ``_apply_event_edit``**（把面板的 ``exec`` 换成给回那个码）。自己照着
+    ``if result == DELETE_REQUESTED`` 重演一遍分派的话，调用点写错了这条也会绿 ——
+    而那个分派正是这条要钉的东西。
+    """
+    library = window._library
+    assert library is not None
+    trip = library.create_event("trip", EventDraft(values={"title": "京都五日"})).event
+    library.bind_photos(_paths(window, "京都-01.jpg"), trip.id)
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.Yes
+    )
+    monkeypatch.setattr(EventEditDialog, "exec", lambda self: DELETE_REQUESTED, raising=False)
+
+    window._apply_event_edit(TRIP, trip)
+
+    assert library.event(trip.id) is None
+    window.undo_last_write()
+    assert library.event(trip.id) is not None
+    assert set(library.events.photos_of_event(trip.id)) == set(_paths(window, "京都-01.jpg"))
+
+
+def test_asking_no_in_that_dialog_keeps_the_event(
+    qt_app: QApplication, window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """面板上点了删除、又在确认框里点「取消」—— **什么都不该发生**。"""
+    library = window._library
+    assert library is not None
+    trip = library.create_event("trip", EventDraft(values={"title": "京都五日"})).event
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.Cancel
+    )
+    monkeypatch.setattr(EventEditDialog, "exec", lambda self: DELETE_REQUESTED, raising=False)
+
+    window._apply_event_edit(TRIP, trip)
+
+    assert library.event(trip.id) is not None
+
+
+def test_cancelling_the_panel_never_deletes(
+    qt_app: QApplication, window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """在面板上按「取消」或「保存」都不许走到删除那一支 —— 只有那一个按钮发那个码。"""
+    library = window._library
+    assert library is not None
+    trip = library.create_event("trip", EventDraft(values={"title": "京都五日"})).event
+    asked: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: asked.append("问了") or QMessageBox.StandardButton.Yes,
+    )
+    dialog = _dialog_of(window, TRIP, trip)
+
+    dialog.findChild(QPushButton, "cancelButton").click()
+
+    assert dialog.result() != DELETE_REQUESTED
+    assert asked == [], "取消却弹了删除确认框"
+    assert library.event(trip.id) is not None
+    dialog.close()
+
+
+# ---- 菜单栏「编辑 → 新增事件 / 编辑事件」---------------------------------------
+
+
+def _open_submenu(window: MainWindow, menu: QMenu) -> list[QAction]:
+    """模拟展开：把 ``aboutToShow`` 与样式表那一遍都跑一遍，然后列出菜单项。"""
+    menu.aboutToShow.emit()
+    menu_style.apply_style(menu)
+    return menu.actions()
+
+
+def test_the_edit_menu_carries_the_two_event_entries(window: MainWindow) -> None:
+    """这两条是**常驻**在「编辑」菜单里的（不是右键那一支）。"""
+    titles = [action.text() for action in window.menuBar().actions()[1].menu().actions()]
+
+    assert "新增事件" in titles
+    assert "编辑事件" in titles
+
+
+def test_the_new_event_menu_lists_every_kind(window: MainWindow) -> None:
+    """按类型列 —— 点一个直接摆那个类型的新建面板。"""
+    menu = window._new_event_menu
+
+    actions = _open_submenu(window, menu)
+
+    assert [action.text() for action in actions] == [kind.label for kind in EVENT_KINDS]
+
+
+def test_the_new_event_menu_is_empty_until_it_is_opened(window: MainWindow) -> None:
+    """**建出来的时候是空的** —— 菜单栏的子菜单常驻，而事件随时会变（理由见 ADR 0043 决策 9）。"""
+    assert window._new_event_menu.actions() == []
+
+
+def _select_nothing(window: MainWindow) -> None:
+    """一条都不选。**光 ``clearSelection()`` 不够** —— ``selected_rows()`` 在真选区为空时会退回
+    当前项（网格刚打开时 Qt 可能顺手把第 0 行设成当前项），那是在赌时序（与
+    ``test_duplicate_flow`` 里那条同一理由）。"""
+    window._grid.clearSelection()
+    window._grid.setCurrentIndex(QModelIndex())
+
+
+def test_the_new_event_menu_opens_the_panel_without_any_photo_selected(
+    qt_app: QApplication, window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**不要求选中照片** —— 与右键的「记录为」不同，那一条是「把这批照片记进去」，
+    这一条是「建一个事件」。"""
+    _select_nothing(window)
+    opened: list[str] = []
+    monkeypatch.setattr(window, "_apply_event_edit", lambda kind, event: opened.append(kind.id))
+
+    window._on_new_event_kind(_open_submenu(window, window._new_event_menu)[0])
+
+    assert opened == [EVENT_KINDS[0].id]
+
+
+def test_the_edit_event_menu_lists_what_there_is(window: MainWindow) -> None:
+    """顺序照 ``all_events``：**新→旧**（两者都没填日期，于是按 id 从大到小）。"""
+    library = window._library
+    assert library is not None
+    library.create_event("trip", EventDraft(values={"title": "京都五日"}))
+    library.create_event("trip", EventDraft(values={"title": "奈良三日"}))
+
+    actions = _open_submenu(window, window._edit_event_menu)
+
+    assert [action.text() for action in actions] == ["奈良三日", "京都五日"]
+
+
+def test_the_edit_event_menu_is_greyed_out_with_nothing_to_edit(window: MainWindow) -> None:
+    """**零个事件时置灰** —— 摆一个永远点不开的框只会让人以为软件坏了。"""
+    menu = window._edit_event_menu
+
+    _open_submenu(window, menu)
+
+    assert menu.isEnabled() is False
+
+
+def test_creating_the_first_event_ungreys_the_edit_menu(
+    qt_app: QApplication, window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**建完第一个事件，那一层要当场从灰变亮。**
+
+    少了这一下它就一直灰着 —— 建事件走的面板那条路不经过 :meth:`_update_action_states` 覆盖的
+    那些入口，于是「编辑事件」在用户看来像是坏的，直到他碰巧点别的东西刷新了一遍。
+    """
+    assert window._edit_event_menu.isEnabled() is False
+    library = window._library
+    assert library is not None
+    filled = EventEdit(draft=EventDraft(values={"title": "京都五日"}), include_range=False)
+    monkeypatch.setattr(
+        EventEditDialog, "exec", lambda self: QDialog.DialogCode.Accepted, raising=False
+    )
+    monkeypatch.setattr(EventEditDialog, "edit", lambda self: filled, raising=False)
+
+    window._apply_event_edit(TRIP, None)
+
+    assert library.all_events()
+    assert window._edit_event_menu.isEnabled() is True
+
+
+def test_deleting_the_last_event_greys_the_edit_menu_again(
+    qt_app: QApplication, window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """与上一条对称的那一头 —— **删掉最后一个事件之后要重新置灰**。
+
+    两个方向都钉：只钉建的那一头的话，「删」那一头的刷新漏了照样全绿。
+    """
+    library = window._library
+    assert library is not None
+    trip = library.create_event("trip", EventDraft(values={"title": "京都五日"})).event
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.Yes
+    )
+    window._update_event_actions()
+    assert window._edit_event_menu.isEnabled() is True
+
+    window.delete_event(trip.id)
+
+    assert not library.all_events()
+    assert window._edit_event_menu.isEnabled() is False
+
+
+def test_picking_one_from_the_edit_event_menu_opens_that_event(
+    qt_app: QApplication, window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    library = window._library
+    assert library is not None
+    trip = library.create_event("trip", EventDraft(values={"title": "京都五日"})).event
+    library.create_event("trip", EventDraft(values={"title": "奈良三日"}))
+    opened: list[int] = []
+    monkeypatch.setattr(window, "edit_event", opened.append)
+
+    window._on_edit_event_picked(_open_submenu(window, window._edit_event_menu)[1])
+
+    assert opened == [trip.id]
+
+
+def test_both_menu_entries_go_grey_without_an_event_store(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """配置目录建不出来的库上压根没有事件（ADR 0043 决策 1）—— **置灰，不弹错**。"""
+    library = window._library
+    assert library is not None
+    library.create_event("trip", EventDraft(values={"title": "京都五日"}))
+    library.events._connection = None
+
+    window._update_event_actions()
+
+    assert window._new_event_menu.isEnabled() is False
+    assert window._edit_event_menu.isEnabled() is False
+
+
+def test_the_menu_entries_need_no_selection(window: MainWindow) -> None:
+    """**判据是「事件库用不用得上」，不是「有没有选中照片」。**"""
+    _select_nothing(window)
+
+    window._update_action_states()
+
+    assert window._new_event_menu.isEnabled() is True
 
 
 # ---- 预填（第一次打开面板时按选中的照片推一遍）---------------------------------

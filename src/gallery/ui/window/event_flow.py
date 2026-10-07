@@ -28,7 +28,7 @@ from gallery.core.library.photos import GridEntry, GroupRef, PhotoRef
 from gallery.core.metadata.facets import FACET_EVENT
 from gallery.ui import banners
 from gallery.ui.menu_style import ShortcutColumnMenu
-from gallery.ui.panels.event_edit import EventEdit, EventEditDialog
+from gallery.ui.panels.event_edit import DELETE_REQUESTED, EventEdit, EventEditDialog
 from gallery.ui.write_ops import flattened_entries
 
 logger = logging.getLogger(__name__)
@@ -46,12 +46,35 @@ Submitter = Callable[[str, QAction], None]
 class EventFlowMixin:
     """:class:`~gallery.ui.main_window.MainWindow` 上与事件有关的那几条。"""
 
-    def _update_event_actions(self) -> None:
-        """事件分组卡片那两行的灰度：**只有当光标落在认得的事件卡片上才可点**。
+    def _events_usable(self) -> bool:
+        """事件库这次用不用得上。配置目录建不出来的库上压根没有事件（ADR 0043 决策 1）。
 
-        每次弹菜单、每次刷新可用性都会被问到，而它只是「当前项背后有没有一个事件 id」这一个
-        是非问题 —— 不必去查库。
+        **判据只有这一处**：菜单栏那两层在 ``aboutToShow`` 与 ``_update_event_actions`` 两处都要
+        置灰，各写一遍就会有一个地方忘了 —— 而那个症状是「菜单摆着，按下去没反应」。
         """
+        library = self._library
+        return library is not None and library.events_available
+
+    def _edit_event_usable(self) -> bool:
+        """「编辑事件」那一层还多一条：**至少有一个事件**。"""
+        library = self._library
+        return self._events_usable() and library is not None and bool(library.all_events())
+
+    def _update_event_actions(self) -> None:
+        """事件那几处的灰度，分两种判据。
+
+        **事件分组卡片上那两行**：只有当光标落在认得的事件卡片上才可点 —— 它只是「当前项背后
+        有没有一个事件 id」这一个是非问题，不必去查库。
+
+        **菜单栏那两条**：见 :meth:`_events_usable` —— **不是「有没有选中照片」**，与右键那一支
+        不同，那一条是「把这批照片记进去」，这一条是「建一个事件 / 改一个事件」。
+        """
+        new_menu = getattr(self, "_new_event_menu", None)
+        if new_menu is not None:
+            new_menu.setEnabled(self._events_usable())
+        edit_menu = getattr(self, "_edit_event_menu", None)
+        if edit_menu is not None:
+            edit_menu.setEnabled(self._edit_event_usable())
         if getattr(self, "_edit_event_action", None) is None:
             return
         usable = self._group_card_event_id() is not None
@@ -133,6 +156,70 @@ class EventFlowMixin:
         # **立刻**知道自己该不该摆 —— 摆一个永远点不开的空框只会让人以为坏了。
         self._event_leave_menu.setDisabled(not leaving)
         return menu
+
+    def new_event_menu(self) -> QMenu:
+        """菜单栏「编辑 → 新增事件」那一层：按类型列一行（ADR 0043）。
+
+        **建出来的时候是空的**，挂在 ``aboutToShow`` 上填 —— 菜单栏的子菜单是常驻的，
+        而事件是随时会变的。与「记录为」那一支同一理由（``menu_style.apply_style`` 在建好那一刻
+        一次性递归下发样式表，建完再补子项的话那一项会留在系统默认的白底菜单里）。
+        """
+        menu = ShortcutColumnMenu("新增事件")
+        menu.setToolTipsVisible(True)
+
+        def fill() -> None:
+            menu.clear()
+            for kind in EVENT_KINDS:
+                menu.addAction(kind.label).setData(kind.id)
+
+        menu.aboutToShow.connect(fill)
+        menu.triggered.connect(self._on_new_event_kind)
+        return menu
+
+    def edit_event_menu(self) -> QMenu:
+        """菜单栏「编辑 → 编辑事件」那一层：列已有的那些，点一个直接开那个事件的编辑面板。
+
+        **平铺，不按类型分组** —— 用户想改的就是某一个具体的事件，类型他多半还记得但不影响他
+        要找的那一个；而这里只有一种类型（``kinds.EVENT_KINDS`` 目前一条），分组也分不出什么。
+
+        同样挂在 ``aboutToShow`` 上填（理由见 :meth:`new_event_menu`），**零个事件时置灰** ——
+        摆一个永远点不开的框只会让人以为软件坏了。
+        """
+        menu = ShortcutColumnMenu("编辑事件")
+        menu.setToolTipsVisible(True)
+
+        def fill() -> None:
+            menu.clear()
+            library = self._library
+            if library is None:
+                return
+            for event in library.all_events():
+                menu.addAction(event.display_name).setData(event.id)
+            # 展开那一刻按**同一个判据**再置一次灰（见 :meth:`_events_usable`）：建完第一个事件
+            # 之后 ``_update_action_states`` 可能还没被叫到，靠这一句菜单当场就是对的。
+            menu.setEnabled(self._edit_event_usable())
+
+        menu.aboutToShow.connect(fill)
+        menu.triggered.connect(self._on_edit_event_picked)
+        return menu
+
+    def _on_new_event_kind(self, action: QAction) -> None:
+        """菜单栏那一条：选了哪个类型就摆那个类型的新建面板。
+
+        **不要求选中照片** —— 与右键菜单的「记录为」不同，那一条是「把这批照片记进去」，
+        这一条是「建一个事件」，选中只决定要不要顺带绑上。
+        """
+        kind = kind_by_id(str(action.data()))
+        if kind is not None:
+            self.open_new_event(kind.id)
+
+    def _on_edit_event_picked(self, action: QAction) -> None:
+        """菜单栏那一条：``data`` 就是那个事件的 id。"""
+        try:
+            event_id = int(action.data())  # type: ignore[arg-type]
+        except (TypeError, ValueError):  # pragma: no cover - 菜单里摆的都是整数
+            return
+        self.edit_event(event_id)
 
     def _event_picker(self, kind: EventKind) -> QMenu:
         """一类事件的那一层：「新建」永远在最上面，下面一条分隔线，再列已有的那些。
@@ -346,7 +433,14 @@ class EventFlowMixin:
             selected=len(photos),
             prefill=None if event is not None else self._event_prefill(entries),
         )
-        if dialog.exec() != QDialog.DialogCode.Accepted:
+        result = dialog.exec()
+        if result == DELETE_REQUESTED:
+            # 「删除事件…」按钮只在编辑已有事件时才摆（见 EventEditDialog._build_buttons），
+            # 而这里这一次确认框要问「连同 N 张照片上的记录」—— 所以问的是那个事件本身。
+            if event is not None:
+                self.delete_event(event.id)
+            return
+        if result != QDialog.DialogCode.Accepted:
             return
         try:
             if event is None:
@@ -361,6 +455,7 @@ class EventFlowMixin:
             self._show_banner(exc.message)
             return
         self._after_events_changed()
+        self._refresh_undo_label()
         self._refresh_undo_label()
 
     def _event_prefill(self, entries: Sequence[GridEntry]) -> EventPrefill:
@@ -430,7 +525,13 @@ class EventFlowMixin:
         顺带一件不显然的：**此刻模型里摆的是组卡片而不是照片**，而重排是从模型里取照片的 ——
         不喂一份进去就算出「一个组都没有」（症状是整屏组卡片瞬间消失）。上一次分组时的那批照片
         还留着（``_reorder_photos``），拿来当输入正是它当初的用途。
+
+        **菜单栏那两层的灰度也在这里刷**：它们按「事件库用不用得上」与「有没有事件」置灰
+        （见 :meth:`_events_usable`），而事件一变就该跟着变 —— 走 ``_update_action_states``
+        覆盖的那些路（右键「记录为」那几条）都会刷，建 / 改 / 删走的面板那几条不会，
+        所以**放在这里**：所有事件的改动都经过这个方法，不必每处记得补一句。
         """
+        self._update_event_actions()
         if not self._groups_by_event():
             return
         if not self._reorder_photos:

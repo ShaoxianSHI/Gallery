@@ -682,6 +682,12 @@ class MainWindow(
         edit_menu.addAction(self._copy_path_action)
         edit_menu.addAction(self._duplicate_action)
         edit_menu.addAction(self._paste_action)
+        # 事件那两条挨着「复制到」：都是「造一个东西出来」那一族，与拷贝路径不是一类。
+        edit_menu.addSeparator()
+        self._new_event_menu = self.new_event_menu()
+        self._edit_event_menu = self.edit_event_menu()
+        edit_menu.addMenu(self._new_event_menu)
+        edit_menu.addMenu(self._edit_event_menu)
         edit_menu.addSeparator()
         edit_menu.addAction(self._undo_action)
 

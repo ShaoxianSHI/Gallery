@@ -62,6 +62,13 @@ FIELD_RADIUS: Final = 5
 #: 每一个字段是哪种控件 —— 一排按钮还是输入框。**由字段自己的声明说了算**，没有第三种。
 type FieldWidget = QLineEdit | ChoiceButtons
 
+#: 「删除事件…」按下去时 :meth:`QDialog.exec` 给回来的那个码。**不是 Accepted 也不是 Rejected**
+#: —— 调用方要在 exec 回来之后分派，而那一刻这个对话框已经关掉了。
+#:
+#: **不用信号**：信号是从 ``clicked`` 里同步发出来的，于是「确认框」会嵌套在对话框自己的
+#: ``exec()`` 里面 —— 两个模态叠在一起，关闭顺序会乱。一个返回值把两件事分成先后两步。
+DELETE_REQUESTED: Final = 2
+
 
 @dataclass(frozen=True, slots=True)
 class EventEdit:
@@ -169,6 +176,9 @@ def dialog_style(app_theme: AppTheme, palette: QPalette) -> str:
         color: {rgba(highlighted_text)};
         background: {rgba(highlight)};
     }}
+    /* 删除与「取消 / 保存」不是一件事，**颜色要分开**：它不可撤销地删掉用户自己填的一批记录，
+       摆在同一种中性灰里等于把它说成「跟保存差不多」。用主题的 error 那一档，不另派生。 */
+    QPushButton#eventEditDelete {{ color: {rgba(app_theme.error)}; }}
     QCheckBox {{ color: {rgba(app_theme.text_at(0.78))}; font-size: 12px; }}
     """
 
@@ -295,6 +305,12 @@ class EventEditDialog(QDialog):
     def _build_buttons(self) -> QHBoxLayout:
         row = QHBoxLayout()
         row.setContentsMargins(0, 2, 0, 0)
+        if self._event is not None:
+            # **只有编辑已有事件时才摆**：新建的那个还不存在，删了它没有对象。
+            delete = QPushButton("删除事件…")
+            delete.setObjectName("eventEditDelete")
+            delete.clicked.connect(lambda: self.done(DELETE_REQUESTED))
+            row.addWidget(delete)
         row.addStretch(1)
         cancel = QPushButton("取消")
         cancel.setObjectName("cancelButton")
@@ -400,6 +416,7 @@ def _hint(text: str) -> QLabel:
 
 
 __all__ = [
+    "DELETE_REQUESTED",
     "ERROR_LINES",
     "FIELD_MIN_WIDTH",
     "FIELD_RADIUS",
