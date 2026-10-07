@@ -19,24 +19,43 @@ import json
 import logging
 import sqlite3
 import threading
-import time
-from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
-from typing import Any, Final, cast
+from typing import cast
 
 from gallery.core import paths
 from gallery.core.errors import EventsUnavailableError
-from gallery.core.events.kinds import (
-    COMMON_FIELDS,
-    EVENT_KINDS,
-    EventField,
-    EventKind,
-    join_multi,
-    kind_by_id,
-    normalize_day,
-    parse_cost,
-    split_multi,
+from gallery.core.events.conversions import (
+    _before_values,
+    _event_from_common,
+    _field_changes,
+    _field_values,
+    _now,
+    _parse_payload,
+)
+from gallery.core.events.kinds import COMMON_FIELDS, EVENT_KINDS, EventKind, kind_by_id
+from gallery.core.events.models import (
+    Event,
+    EventDraft,
+    EventRef,
+    EventUndoResult,
+    EventWriteOutcome,
+    Orphan,
+    SqlValue,
+)
+from gallery.core.events.schema import (
+    _BINDINGS_SCHEMA,
+    _EVENT_NAMES,
+    _EVENT_SELECT,
+    _EVENTS_SCHEMA,
+    BINDINGS_TABLE,
+    CHUNK,
+    EVENTS_TABLE,
+    SCHEMA_NAME,
+    SCHEMA_VERSION,
+    _drop_script,
+    _kind_schema,
+    _relax_journal_mode_only,
 )
 from gallery.core.metadata.journal import (
     ACTION_EVENT,
@@ -51,328 +70,6 @@ from gallery.core.metadata.journal import (
 from gallery.core.sql import ESCAPE, like_pattern
 
 logger = logging.getLogger(__name__)
-
-#: 挂到索引连接上时的别名。搜索层的子查询按它写（``ev.photo_events``）。
-SCHEMA_NAME: Final = "ev"
-
-#: 公共表与绑定表的表名。**搜索层按它们写子查询**，所以名字是常量而不是各处各写一遍 ——
-#: 写错要到 SQLite 执行时才报 ``no such table``，而那一眼看上去是「这一栏没得筛」。
-EVENTS_TABLE: Final = "events"
-BINDINGS_TABLE: Final = "photo_events"
-
-#: 事件库的表结构版本。**只管 events.db 自己那份** ``PRAGMA ev.user_version``，
-#: 与索引的 ``SCHEMA_VERSION`` 无关（索引升版会重建它的表，事件库不会）。
-SCHEMA_VERSION: Final = 1
-
-#: 一条语句里最多塞多少个绑定变量。``IN (…)`` 与多列插入都按它分批：
-#: SQLite 的上限是 999（老版本），一行的绑定数还不止一个，所以按**行**取这个数的一半。
-CHUNK: Final = 400
-
-#: 绑定表。它与类型无关，所以写死在这儿（扩展表按类型生成，见 :func:`_kind_schema`）。
-_BINDINGS_SCHEMA: Final = f"""
-CREATE TABLE IF NOT EXISTS ev.{BINDINGS_TABLE} (
-    path     TEXT NOT NULL,
-    event_id INTEGER NOT NULL REFERENCES {EVENTS_TABLE}(id) ON DELETE CASCADE,
-    PRIMARY KEY (path, event_id)
-);
-CREATE INDEX IF NOT EXISTS ev.{BINDINGS_TABLE}_event ON {BINDINGS_TABLE}(event_id);
-"""
-
-#: ``events`` 表里除 :data:`COMMON_FIELDS` 之外那几列：身份与记账时间。
-_EVENT_HEAD: Final = (("id", "INTEGER PRIMARY KEY AUTOINCREMENT"), ("kind", "TEXT NOT NULL"))
-_EVENT_TAIL: Final = (("created_at", "INTEGER NOT NULL"), ("modified_at", "INTEGER NOT NULL"))
-
-
-def declaration_of(field: EventField) -> str:
-    """建表时这一列写什么类型。``DAY`` 落成 ``TEXT``（SQLite 没有日期类型）。"""
-    base = "TEXT" if field.sql_type == "DAY" else field.sql_type
-    return base + (" NOT NULL" if field.required else "")
-
-
-def _event_columns() -> tuple[tuple[str, str], ...]:
-    """``events`` 表的列（名字 + 完整类型声明）。
-
-    **从 :data:`COMMON_FIELDS` 生成**，与扩展表同一个道理：手写一份列清单就有两处会漂，
-    而漂的那一处要到 SQLite 执行才报错。``required`` 的字段带上 ``NOT NULL`` ——
-    校验在面板那一层，这里是兜底。
-    """
-    return (
-        *_EVENT_HEAD,
-        *((field.column, declaration_of(field)) for field in COMMON_FIELDS),
-        *_EVENT_TAIL,
-    )
-
-
-#: ``events`` 的列名，顺序与 :func:`_event_columns` 一致。行按名字取，不按位置 ——
-#: 位置错一位不会报错，只会让两个字段静默串个儿。
-_EVENT_NAMES: Final = tuple(name for name, _declaration in _event_columns())
-
-#: 取一行事件时那串列名。带 ``e.`` 前缀是因为查询会 ``JOIN`` 扩展表，而两边的列名不许撞。
-_EVENT_SELECT: Final = ", ".join(f"e.{name}" for name in _EVENT_NAMES)
-
-#: 建 ``events`` 表与它的索引。
-_EVENTS_SCHEMA: Final = (
-    f"CREATE TABLE IF NOT EXISTS ev.{EVENTS_TABLE} (\n    "
-    + ",\n    ".join(f"{name} {declaration}" for name, declaration in _event_columns())
-    + "\n);"
-    f"CREATE INDEX IF NOT EXISTS ev.{EVENTS_TABLE}_kind_started"
-    f" ON {EVENTS_TABLE}(kind, started_on DESC);"
-)
-
-type SqlValue = str | int | float | None
-
-
-@dataclass(frozen=True, slots=True)
-class Event:
-    """一个事件：**所有字段的值都在 :attr:`values` 里**，键是 ``EventField.id``。
-
-    公共列（名称、日期、备注）与类型独有的字段一视同仁 —— 面板预填因此就是一次循环，而
-    「公共列有哪几个」只有 :data:`COMMON_FIELDS` 一处说了算。常用的那几样另有同名属性可读。
-
-    **是字典而不可哈希**：字段随类型增删，具名属性做不到（``PhotoFacets`` 用元组是因为它的
-    字段是写死的）。别拿它当键用。
-    """
-
-    id: int
-    kind: str
-    created_at: int
-    modified_at: int
-    values: dict[str, SqlValue] = field(default_factory=dict)
-
-    def text(self, field_id: str) -> str:
-        """某个字段的值按文字给出（面板与菜单要的就是这个）。空值就是空串。"""
-        value = self.values.get(field_id)
-        return "" if value is None else str(value)
-
-    @property
-    def title(self) -> str:
-        return self.text("title")
-
-    @property
-    def started_on(self) -> str | None:
-        return self.text("started_on") or None
-
-    @property
-    def ended_on(self) -> str | None:
-        return self.text("ended_on") or None
-
-    @property
-    def note(self) -> str | None:
-        return self.text("note") or None
-
-    @property
-    def display_name(self) -> str:
-        """界面上怎么称呼它。没填名称（只可能是从库里读到的旧数据）时退回类型名。"""
-        if self.title:
-            return self.title
-        kind = kind_by_id(self.kind)
-        return kind.empty_label if kind is not None else ""
-
-
-@dataclass(frozen=True, slots=True)
-class EventWriteOutcome:
-    """一次事件写动的结果。
-
-    ``event`` 是**写完之后**的样子；删除时是**删之前**的样子 —— 两种情形界面都要拿它的名字
-    去拼那句话。``unbound`` 只有删除时非空，撤销靠它把绑定放回去。
-
-    ``changed`` 为假表示这次保存与库里那一份逐字段一样 —— 界面据此说「没有改动」，
-    而不是「已更新 …」（与元数据编辑器同一套说法）。
-    """
-
-    event: Event
-    journaled: bool
-    changed: bool = True
-    unbound: tuple[Path, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class EventUndoResult:
-    """一次事件撤销的结果。"""
-
-    action: str
-    #: 撤销之后这个事件的样子；撤销删除且没撤成时为 ``None``。
-    event: Event | None
-    journaled: bool
-    #: 撤不成时给用户看的一句中文，``None`` 表示成了。
-    message: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class EventRef:
-    """照片属于哪些事件时只需要带这么几样：分组要组键与显示名，菜单要名字。"""
-
-    id: int
-    kind: str
-    title: str
-    started_on: str | None
-
-    @property
-    def group_key(self) -> str:
-        """分组的组键：``起始日期#事件 id``。
-
-        日期在前，于是 :func:`~gallery.core.metadata.facets._date_group_order` 那种「把键里的数字
-        全取出来拼成一个数」的比较法直接能用（日期占大头、id 兜底同日期的先后）；id 在后是
-        因为组键必须**唯一** —— 两个同名同日的旅行不能挤成一组。
-        """
-        return f"{self.started_on or ''}#{self.id}"
-
-    @property
-    def label(self) -> str:
-        return self.title
-
-
-@dataclass(frozen=True, slots=True)
-class Orphan:
-    """一条绑定，外加它属于哪个事件。
-
-    **放在这儿而不是 ``orphans``**：它是 :meth:`EventStore.all_bindings` 造出来的，而那一头
-    要读绑定表 —— 放到 ``orphans`` 就是包内两个模块互相导入。孤儿检查
-    （:mod:`gallery.core.events.orphans`）从这里导入它。
-    """
-
-    path: Path
-    event_id: int
-    event_title: str
-
-
-@dataclass(frozen=True, slots=True)
-class EventDraft:
-    """面板交出来的那一份：**每个字段一格文字**，键是 ``EventField.id``。
-
-    公共列（名称、日期、备注）与类型独有的字段一视同仁 —— 字段表是数据、可以增删，具名属性
-    做不到；而拆成两半会让「公共列有哪几个、什么顺序」又出现一处手写的地方。
-    """
-
-    values: dict[str, str] = field(default_factory=dict)
-
-    def text(self, field_id: str) -> str:
-        return self.values.get(field_id, "")
-
-    @classmethod
-    def of(cls, **fields: str) -> EventDraft:
-        """``EventDraft.of(title="京都五日", destination="京都")`` —— 手写一份草稿时省一层字典。"""
-        return cls(values=dict(fields))
-
-
-def _kind_schema(kind: EventKind) -> str:
-    """一类事件的扩展表。**列名与类型都从字段定义拼出来**，不许手写。"""
-    columns = ",\n    ".join(f"{field.column} {declaration_of(field)}" for field in kind.fields)
-    return (
-        f"CREATE TABLE IF NOT EXISTS ev.{kind.table} (\n"
-        f"    event_id INTEGER PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,\n"
-        f"    {columns}\n);"
-    )
-
-
-def _now() -> int:
-    return int(time.time())
-
-
-def _to_sql(field: EventField, value: str) -> SqlValue:
-    """面板给的一格文字 → 存进库的值。空的一律存 ``NULL``，不存空串。"""
-    if field.multiple:
-        return join_multi(split_multi(value)) or None
-    text = value.strip()
-    if not text:
-        return None
-    if field.sql_type == "DAY":
-        return normalize_day(text) or None
-    if field.sql_type == "REAL":
-        return parse_cost(text)
-    if field.sql_type == "INTEGER":
-        return int(text) if text.lstrip("+-").isdigit() else None
-    return text
-
-
-def _from_sql(field: EventField, value: object) -> SqlValue:
-    """库里的一格 → 事件上那个字段的值。类型由 :attr:`EventField.sql_type` 说了算。"""
-    if value is None:
-        return None
-    return str(value) if field.sql_type in ("TEXT", "DAY") else value  # type: ignore[return-value]
-
-
-def _event_from_common(
-    kind: EventKind, common: Mapping[str, SqlValue], extra: Sequence[SqlValue]
-) -> Event:
-    """一行 ``events`` + 一行扩展表拼成一个事件。公共列也进 ``values``，于是面板只走一条路。"""
-    values: dict[str, SqlValue] = {
-        field.id: _from_sql(field, common[field.column]) for field in COMMON_FIELDS
-    }
-    values.update(
-        {field.id: _from_sql(field, extra[index]) for index, field in enumerate(kind.fields)}
-    )
-    # 这三列在库里是 ``INTEGER NOT NULL``，SQLite 只会给回整数；断言是说给类型检查器听的。
-    identifier, created_at, modified_at = common["id"], common["created_at"], common["modified_at"]
-    assert isinstance(identifier, int) and isinstance(created_at, int)
-    assert isinstance(modified_at, int)
-    return Event(
-        id=identifier,
-        kind=str(common["kind"]),
-        created_at=created_at,
-        modified_at=modified_at,
-        values=values,
-    )
-
-
-def _field_values(fields: Sequence[EventField], draft: EventDraft) -> tuple[SqlValue, ...]:
-    """一列字段的值，顺序与 ``fields`` 一致 —— 建表、插入、更新三处都按它拼。"""
-    return tuple(_to_sql(field, draft.text(field.id)) for field in fields)
-
-
-def _before_values(
-    fields: Sequence[EventField], before: Mapping[str, str | None]
-) -> tuple[SqlValue, ...]:
-    """``field id → 原值的文字`` 转成能写进库的值。撤销与恢复都走这条 —— 原值在 journal 里
-    是文字（``FieldChange`` 只存字符串），回来时过一遍与新建同一条 :func:`_to_sql`。"""
-    return tuple(_to_sql(field, before.get(field.id) or "") for field in fields)
-
-
-def _text_of(value: SqlValue) -> str | None:
-    """一个值在 journal 里的样子。``FieldChange`` 只收字符串，数字先转成文字，
-    回来时 :func:`_to_sql` 再读一遍 —— 于是「3,280.50 存成 3280.5」这条归一只有一处。"""
-    return None if value is None else str(value)
-
-
-def _field_changes(
-    kind: EventKind, before: Event | None, after: Event | None
-) -> tuple[FieldChange, ...]:
-    """这次写动的**完整前像与后像**，公共列与类型独有字段都在里面。
-
-    **不挑「变了的那几个」**：撤销是拿这张前像整行写回去的，而没被记进来的字段会被当成
-    ``NULL`` 写下去 —— ``title`` 那一栏是 ``NOT NULL``，一次「只改了目的地」的撤销会当场撞上
-    约束（这一类 bug 只在撤销时发作，正常路径看不出来）。
-    """
-    return tuple(
-        FieldChange(
-            tag=declared.id,
-            before=_text_of(before.values.get(declared.id) if before is not None else None),
-            after=_text_of(after.values.get(declared.id) if after is not None else None),
-        )
-        for declared in (*COMMON_FIELDS, *kind.fields)
-    )
-
-
-def _parse_payload(payload: str | None) -> dict[str, Any] | None:
-    """事件记录里那段自己解释的 JSON。坏行返回 ``None``（日志不该把程序带崩）。"""
-    if not payload:
-        return None
-    try:
-        data = json.loads(payload)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(data, dict):
-        return None
-    event_id, kind_id = data.get("event_id"), data.get("kind")
-    raw_bindings = data.get("bindings")
-    if not isinstance(event_id, int) or not isinstance(kind_id, str):
-        return None
-    bindings = (
-        [str(item) for item in raw_bindings if isinstance(item, str)]
-        if isinstance(raw_bindings, list)
-        else []
-    )
-    return {"event_id": event_id, "kind": kind_id, "bindings": bindings}
 
 
 def attach(
@@ -405,31 +102,6 @@ def attach(
         logger.info("事件库不可用（%s），事件功能这次不参与", exc)
         return None
     return EventStore(root, connection, lock)
-
-
-def _drop_script() -> str:
-    """版本对不上时重建的是**事件库自己的表**。
-
-    **只列事件库里的表名** —— 索引的重建脚本（``index.py``）同样只列它自己的两张。哪一边
-    漏写一个表名，用户填的东西就没了，而两边的守护测试各盯各的那一句。
-    """
-    tables = [EVENTS_TABLE, BINDINGS_TABLE, *(kind.table for kind in EVENT_KINDS)]
-    return "".join(f"DROP TABLE IF EXISTS {SCHEMA_NAME}.{table};" for table in tables)
-
-
-def _relax_journal_mode_only(connection: sqlite3.Connection) -> None:
-    """**只动日志模式，不动持久性** —— 它叫 ``only`` 就是要挡住「与索引那一个合并」。
-
-    ``journal_mode=DELETE`` 的理由与索引相同（ADR 0038 决策 5：``-wal`` / ``-shm`` 跟着用户的库
-    在云盘上互相覆盖），但 ``synchronous`` 必须保持默认。索引是丢了能重建的缓存
-    （``index._relax_cache_durability`` 连 ``synchronous`` 一起降），这里是用户自己填的数据，
-    两个函数名字长得像而策略**相反**，合成一个就会静默地降低事件的持久性。
-    **失败只记日志**：落到 WAL 也只是多两个文件。
-    """
-    try:
-        connection.execute(f"PRAGMA {SCHEMA_NAME}.journal_mode=DELETE")
-    except sqlite3.Error as exc:
-        logger.info("事件库沿用默认日志模式：%s", exc)
 
 
 class EventStore:
@@ -989,13 +661,17 @@ def follow_moves(events: EventStore | None, moves: Iterable[tuple[Path, Path, bo
 
 
 __all__ = [
+    "BINDINGS_TABLE",
     "CHUNK",
+    "EVENTS_TABLE",
     "SCHEMA_NAME",
     "SCHEMA_VERSION",
     "Event",
     "EventDraft",
     "EventRef",
     "EventStore",
+    "EventUndoResult",
+    "EventWriteOutcome",
     "Orphan",
     "attach",
     "event_by_id",
