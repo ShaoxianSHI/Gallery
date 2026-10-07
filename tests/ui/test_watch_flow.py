@@ -30,7 +30,7 @@ from gallery.core.library.config import (
     BROWSE_MODE_FLAT,
     prepare_library,
 )  # noqa: E402
-from gallery.core.library.photos import FolderRef, PhotoRef  # noqa: E402
+from gallery.core.library.photos import FolderRef, GroupRef, PhotoRef  # noqa: E402
 from gallery.core.library.session import (
     SessionState,
     save_session,
@@ -871,6 +871,167 @@ def test_regrouping_to_come_back_keeps_the_photo_you_were_on(
         row = window._model.row_of_path(looking_at.path)
         assert row >= 0, "刚才在看的那张还在组里"
         assert window._grid.genuinely_selected_rows() == [row], "绕一圈回来仍停在同一张上"
+    finally:
+        window.close()
+
+
+# ---- 分组**顶层**（不是组内部）------------------------------------------------
+#
+# 这一段与上面那一段是**两件事**：上面是「已经进了某个组，组里的成员是快照」，
+# 那里监听器有专门的一条路（重新分组再回来）。而分组**顶层**摆的是**组卡片**，
+# 照片只存在于 ``GroupRef.photos`` 这个元组里 —— 模型的行**不是**这一层的照片列表。
+
+
+def _group_the_level(qt_app: QApplication, window: MainWindow) -> GroupRef:
+    """在**分组顶层**摆出组卡片（不进任何一个组）—— 这一层的行就是卡片，不是照片。"""
+    window.set_group_facet("folder")
+    assert wait_until(qt_app, lambda: window._model.group_count() > 0), "分组没有出现"
+    assert window._group_view is None, "停在顶层，不要进组"
+    card = window._model.group_at(0)
+    assert isinstance(card, GroupRef)
+    return card
+
+
+def _members_of(window: MainWindow, key: str) -> list[str]:
+    """那张卡片此刻摆着哪几张（按文件名）。整层重算的途中模型是空的 —— 那一下给 ``[]``。"""
+    for entry in window._model.entries():
+        if isinstance(entry, GroupRef) and entry.key == key:
+            return sorted(photo.name for photo in entry.photos)
+    return []
+
+
+@pytest.mark.parametrize(
+    "browse_mode", [BROWSE_MODE_FLAT, BROWSE_MODE_ALBUMS], ids=["平铺", "相册"]
+)
+def test_a_new_photo_on_the_grouped_level_does_not_eat_the_existing_ones(
+    qt_app: QApplication,
+    tmp_path: Path,
+    make_photo: Callable[..., Path],
+    browse_mode: str,
+) -> None:
+    """**分组顶层**来了新照片：原来的那些一张都不许少。
+
+    这一条是回归：那一层摆的是组卡片，而照片只存在于 ``GroupRef.photos`` 里，所以
+    「往里插一行照片」在这里根本不成立 —— 插进去的那一行让重排只看见新来的几张，
+    重建出的卡片里**原来的全没了**（症状是那个组忽然只剩新照片那一张）。
+    """
+    make_photo("一张.jpg")
+    make_photo("两张.jpg")
+    window, watcher = open_window(qt_app, tmp_path, browse_mode=browse_mode)
+    try:
+        card = _group_the_level(qt_app, window)
+        before = _members_of(window, card.key)
+        assert before == ["一张.jpg", "两张.jpg"]
+
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.ADDED, make_photo("刚来的.jpg")))
+
+        assert wait_until(qt_app, lambda: "刚来的.jpg" in _members_of(window, card.key))
+        assert _members_of(window, card.key) == ["一张.jpg", "两张.jpg", "刚来的.jpg"]
+    finally:
+        window.close()
+
+
+def test_the_grouped_level_never_gets_a_bare_photo_row(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """分组顶层那一层的行**必须全是组卡片** —— 混进一个裸 ``PhotoRef`` 就是上面那条病的
+    现场：重排拿到的候选集只剩它，原件就此从界面上消失。"""
+    make_photo("一张.jpg")
+    make_photo("两张.jpg")
+    window, watcher = open_window(qt_app, tmp_path)
+    try:
+        _group_the_level(qt_app, window)
+
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.ADDED, make_photo("刚来的.jpg")))
+
+        assert wait_until(qt_app, lambda: window._model.group_count() > 0)
+        stray = [e for e in window._model.entries() if not isinstance(e, GroupRef)]
+        assert stray == [], f"卡片层上混进了照片行：{stray}"
+    finally:
+        window.close()
+
+
+def test_a_photo_deleted_on_the_grouped_level_does_not_come_back(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """卡片层上删掉的照片**不许复活**。
+
+    这一条钉的是**为什么不能走「把卡片里的照片并回来重新分组」那条更省的路**：
+    ``remove_paths`` 只索引非卡片行，卡片里的照片不在那张表里，于是并回来的一份里还留着
+    它 —— 屏幕上就出现一张磁盘上已经不在了的照片。
+
+    **文件要真的删掉**：这一层是从磁盘重算的，只报一个事件而磁盘上还在，重算把它找回来是
+    对的行为（那正是访达「删了又撤销回来」的样子）。
+    """
+    doomed = make_photo("没了.jpg")
+    make_photo("还在.jpg")
+    window, watcher = open_window(qt_app, tmp_path)
+    try:
+        card = _group_the_level(qt_app, window)
+        assert _members_of(window, card.key) == ["没了.jpg", "还在.jpg"]
+
+        doomed.unlink()
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.REMOVED, doomed))
+
+        assert wait_until(qt_app, lambda: _members_of(window, card.key) == ["还在.jpg"])
+    finally:
+        window.close()
+
+
+def test_the_grouped_level_keeps_the_card_you_were_on(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """重算整层不该把用户刚点的那张组卡片甩掉 —— 那一格停着的地方要靠**标识**找回来。"""
+    make_photo("一张.jpg")
+    make_photo("两张.jpg")
+    window, watcher = open_window(qt_app, tmp_path)
+    try:
+        looking_at = _group_the_level(qt_app, window)
+        window._grid.select_row(0)
+
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.ADDED, make_photo("刚来的.jpg")))
+
+        assert wait_until(qt_app, lambda: _row_of_card(window, looking_at.key) >= 0)
+        assert window._grid.current_row() == _row_of_card(window, looking_at.key), (
+            "重算整层之后仍停在刚点的那张卡片上"
+        )
+    finally:
+        window.close()
+
+
+def _row_of_card(window: MainWindow, key: str) -> int:
+    """那张卡片此刻在第几行，没有就 ``-1``（``GroupRef`` 不是磁盘上的东西，没有 ``path``）。"""
+    for row, entry in enumerate(window._model.entries()):
+        if isinstance(entry, GroupRef) and entry.key == key:
+            return row
+    return -1
+
+
+def test_duplicate_on_the_grouped_level_keeps_the_original_in_the_card(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """**分组顶层**按 ⌘D：卡片的成员从 1 张变 2 张，原件仍在。
+
+    复制命令与监听器之间的那一次交接就是上一条用例的形状 —— 这一条钉的是用户真正会走的那条
+    路（ADR 0044 的「复制」加上 ADR 0013 决策 3 的那条例外）。
+    """
+    original = make_photo("一张.jpg")
+    window, watcher = open_window(qt_app, tmp_path)
+    try:
+        card = _group_the_level(qt_app, window)
+        assert _members_of(window, card.key) == ["一张.jpg"]
+        window._grid.select_row(_row_of_card(window, card.key))
+
+        window.duplicate_selected()
+        assert wait_until(qt_app, lambda: window._write_job is None), "复制没有在时限内结束"
+        copy = tmp_path / "一张的副本.jpg"
+        assert wait_until(qt_app, copy.is_file), "副本没有落盘"
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.ADDED, copy))
+
+        assert wait_until(
+            qt_app, lambda: _members_of(window, card.key) == ["一张.jpg", "一张的副本.jpg"]
+        )
+        assert original.is_file()
     finally:
         window.close()
 

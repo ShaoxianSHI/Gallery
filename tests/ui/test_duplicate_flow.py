@@ -227,8 +227,7 @@ def test_nothing_selected_leaves_the_shortcut_disabled(window: MainWindow) -> No
 
 
 def test_a_group_card_copies_the_photos_inside(qt_app: QApplication, window: MainWindow) -> None:
-    """分组卡片**没有**菜单里那一行，但 ⌘D 仍然对选区生效 —— 摊平成组员一起复制，
-    与卡片上的「移到废纸篓」同一套（ADR 0020 与 ADR 0044）。"""
+    """分组卡片：摊平成组员一起复制，与卡片上的「移到废纸篓」同一套（ADR 0020 与 ADR 0044）。"""
     photo = PhotoRef.from_path(window._library.root / "京都" / "一张.jpg")
     group = GroupRef(facet="camera", key="canon", label="Canon EOS R5", photos=(photo,))
     window._model.reorder([group])
@@ -239,11 +238,13 @@ def test_a_group_card_copies_the_photos_inside(qt_app: QApplication, window: Mai
 
     assert wait_until(
         qt_app, lambda: (window._library.root / "京都" / "一张的副本.jpg").is_file()
-    ), "按了卡片却只复制了别的什么"
+    ), "卡片上的「复制」没有复制组员"
 
 
-def test_the_group_card_menu_has_no_duplicate_row(qt_app: QApplication, window: MainWindow) -> None:
-    """卡片不是磁盘上的东西，「造一份卡片」这句话说不通 —— 菜单里不摆那一行。"""
+def test_the_group_card_menu_offers_the_duplicate_row(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """卡片不是磁盘上的东西，但它代表的那批照片是 —— 与同段其余几条同一套摊平语义（ADR 0044）。"""
     photo = PhotoRef.from_path(window._library.root / "京都" / "一张.jpg")
     group = GroupRef(facet="camera", key="canon", label="Canon EOS R5", photos=(photo,))
     window._model.reorder([group])
@@ -254,8 +255,8 @@ def test_the_group_card_menu_has_no_duplicate_row(qt_app: QApplication, window: 
 
     assert menu is not None
     labels = [action.text() for action in menu.actions()]
-    assert "复制" not in labels
-    assert "复制到相册" in labels
+    assert "复制" in labels
+    assert labels.index("复制") == labels.index("拷贝路径") + 1
 
 
 # ---- 红线 1：原件不动、撤销不得承诺 ----------------------------------------------

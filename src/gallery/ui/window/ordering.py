@@ -206,6 +206,18 @@ class OrderingMixin:
     def _current_group_facet(self) -> Facet | None:
         return group_facet(self._group_facet)
 
+    def _level_shows_group_cards(self) -> bool:
+        """这一层的行是不是**组卡片** —— 于是「往里插一行照片」在这里根本不成立。
+
+        照片只存在于 ``GroupRef.photos`` 里，模型的行不是这一层的照片列表，所以派生视图的
+        变化只能整层重算（ADR 0013 决策 3 的那条例外）。
+        """
+        return (
+            self._group_view is None
+            and self._browse_mode != BROWSE_MODE_CALENDAR
+            and self._current_group_facet() is not None
+        )
+
     def _needs_facet_read(self) -> bool:
         """当前的选择是否必须真去读 EXIF 才能算出顺序 —— **或者才能算出筛选结果**。
 
@@ -480,10 +492,9 @@ class OrderingMixin:
         photos = [entry for entry in entries if isinstance(entry, PhotoRef)]
         # 相册卡片永远排在前面：先看文件夹、再看按元数据归拢出来的组，是既有心智。
         order = self._current_order()
-        # 已经在分组里面了（再分一次就出不来），**日历那一页也不分组**：它自己就是按日期归拢
-        # 的那一层，模型里要装整库照片；带着分组进去时模型里全是组卡片，日历读到零张照片。
-        grouped = self._group_view is not None or self._browse_mode == BROWSE_MODE_CALENDAR
-        group = None if grouped else self._current_group_facet()
+        # 分组只在这一层摆卡片时才有（判据只有 :meth:`_level_shows_group_cards` 一处）：
+        # 已经在分组里面就再分不出来，而日历那一页自己按日期归拢、要装整库照片。
+        group = self._current_group_facet() if self._level_shows_group_cards() else None
         values = self._facet_values
         events = self._event_values
 

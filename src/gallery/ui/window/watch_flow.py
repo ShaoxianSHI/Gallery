@@ -159,22 +159,30 @@ class WatchFlowMixin:
             self._model.remove_paths(gone)
             library.forget_paths(gone)  # 索引里的孤儿行：照片不在了，那一行也不该留着
             self._select_after_removal(rows)
-        if added:
-            whole_level = self._group_view is not None or self._browse_mode == BROWSE_MODE_FLAT
-            for entry in added:
-                self._model.insert_entry(entry, whole_level=whole_level)
+        # 缓存与相册封面**先**处理：整层重算的那一支也要做这些事，放在它后面就被跳过了。
         if stale:
             self._forget_caches(stale)
         if covers:
             self._refresh_album_covers(covers)
-
-        if added or gone:
-            if self._group_view is not None and any(not isinstance(e, FolderRef) for e in added):
-                # 组里的成员是上一次分组算出来的快照，新照片该不该进这个组只能重算。
-                self._reenter_group_later(self._group_view.key)
-                return
-            # 新照片要读一次 EXIF 才排得对；其余照片命中索引，不会重读。
-            self._start_facet_read()
+        if not added and not gone:
+            self._update_level_notice()
+            self._refresh_thumbnail_window()
+            return
+        if self._level_shows_group_cards():
+            # 这一层的照片不在模型的行里，所以只能整层重算 —— 「就地把新照片并进卡片」
+            # 不成立（ADR 0013 决策 3 的那条例外，理由见那条 ADR）。
+            self._reload_level()
+            return
+        if added:
+            whole_level = self._group_view is not None or self._browse_mode == BROWSE_MODE_FLAT
+            for entry in added:
+                self._model.insert_entry(entry, whole_level=whole_level)
+        if self._group_view is not None and any(not isinstance(e, FolderRef) for e in added):
+            # 组里的成员是上一次分组算出来的快照，新照片该不该进这个组只能重算。
+            self._reenter_group_later(self._group_view.key)
+            return
+        # 新照片要读一次 EXIF 才排得对；其余照片命中索引，不会重读。
+        self._start_facet_read()
         self._update_level_notice()
         self._refresh_thumbnail_window()
 
