@@ -58,6 +58,7 @@ from gallery.ui.title_bar import (  # noqa: E402
     TitleBar,
     editor_rect,
 )
+from gallery.ui.window.title_bar_flow import DRAG_THRESHOLD  # noqa: E402
 
 #: 测试库里的照片名。
 PHOTO = "海边日落.jpg"
@@ -500,8 +501,15 @@ def test_a_press_on_the_title_bar_starts_a_drag_only_after_the_mouse_moves_far_e
     """拖动与双击靠**移动距离**分家（理由见 :meth:`MainWindow.mouseMoveEvent`）。
 
     **按下那一刻还不能发起拖动**：那一下可能只是双击的第一下。手抖（移动不到
-    ``startDragDistance``）也不算拖动，否则双击会被吃掉一半。
+    :data:`DRAG_THRESHOLD`）也不算拖动，否则双击会被吃掉一半。
+
+    **这条线必须比拖放那条（``startDragDistance``，10 点）小得多**：拖动要立刻跟手，
+    拿 10 点当线的话，窗口要先等光标走满 10 点才动 —— 读起来就是「拖之前得先动一会儿」。
     """
+    assert QApplication.startDragDistance() > DRAG_THRESHOLD, (
+        "窗口拖动的分界线又变回拖放那条了，窗口会先等光标走满一大截才跟手"
+    )
+
     started: list[int] = []
     monkeypatch.setattr(MainWindow, "_start_title_bar_drag", lambda self: started.append(1))
 
@@ -513,7 +521,7 @@ def test_a_press_on_the_title_bar_starts_a_drag_only_after_the_mouse_moves_far_e
     assert window._title_bar_drag_armed is True
     assert started == [], "刚按下就发起拖动，双击就没有机会了"
 
-    _move_holding_left(qt_app, window, point, delta=QPoint(3, 0))
+    _move_holding_left(qt_app, window, point, delta=QPoint(DRAG_THRESHOLD - 1, 0))
     assert started == [], "手抖不该被当成拖动"
 
     _move_holding_left(qt_app, window, point, delta=QPoint(40, 0))

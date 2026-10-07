@@ -11,7 +11,6 @@ from __future__ import annotations
 from typing import Final
 
 from PySide6.QtCore import QPointF
-from PySide6.QtWidgets import QApplication
 
 from gallery.ui.external_button import BUTTON_GAP, BUTTON_WIDTH, button_rect
 from gallery.ui.search_field import HEIGHT as SEARCH_FIELD_HEIGHT
@@ -28,6 +27,13 @@ from gallery.ui.title_bar import HEIGHT as TITLE_BAR_HEIGHT
 #: 距离。**别把它并回** ``main_window._GRID_PAGE_MARGIN_H`` —— 左边那 10 点是给照片留的呼吸，
 #: 右边这 2 点是给滚动条的，两件事。网格页的布局也要它（``MainWindow`` 从这里取）。
 _GRID_PAGE_MARGIN_RIGHT: Final = 2
+
+#: 从按下算起，光标要移动多少点才算「拖动」而不是「双击时手的抖动」。
+#:
+#: **不能用 ``QApplication.startDragDistance``**：那是**拖放（DnD）**的分界线，macOS 上
+#: 是 10 点 —— 拿它当窗口拖动的那条线，窗口要先等光标走满 10 点才开始跟手，读起来就是
+#: 「拖之前得先动一会儿」。macOS 自己的标题栏差不多在 2~3 点就动了。
+DRAG_THRESHOLD: Final = 3
 
 
 class TitleBarFlowMixin:
@@ -68,12 +74,13 @@ class TitleBarFlowMixin:
         让窗口在这段时间里**一步都不跟手** —— 正常的一拖在这个时限之前就松手了，用户读到
         的就是「拖不动」。macOS 自己的标题栏也是这么分的（动过就是拖，没动才算双击）。
 
-        距离用 :meth:`QApplication.startDragDistance`：拖动与手抖的分界线全应用一份。
+        这条线是 :data:`DRAG_THRESHOLD`（一个很小的数），**不是拖放那条 10 点**：拖动要
+        立刻跟手，双击那一点手抖却远到不了 3 点，两者在这个尺度上刚好分得开。
         """
         if not self._title_bar_drag_armed or self._title_bar_drag_origin is None:
             return False
         moved = global_position - self._title_bar_drag_origin
-        return moved.manhattanLength() >= QApplication.startDragDistance()
+        return moved.manhattanLength() >= DRAG_THRESHOLD
 
     def _disarm_title_bar_drag(self) -> None:
         """把「这一次按下」清掉：松手、双击、或者已经真的拖起来了，三种情况都到这儿。"""
@@ -219,4 +226,4 @@ class TitleBarFlowMixin:
         self._fill_action.setText("还原窗口" if self.isMaximized() else "铺满窗口")
 
 
-__all__ = ["TitleBarFlowMixin"]
+__all__ = ["DRAG_THRESHOLD", "TitleBarFlowMixin"]

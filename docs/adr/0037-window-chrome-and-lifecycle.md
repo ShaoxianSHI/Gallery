@@ -87,9 +87,13 @@ Qt 上就是 `showMaximized()`：它在 macOS 上落到 `[NSWindow zoom:nil]`
 但「什么时候算拖动」的判据是**鼠标动了多远**，不是**等了多久**。
 
 于是按下只在 `mousePressEvent` 里记一个记号（按下位置），
-`mouseMoveEvent` 里移动超过 `QApplication.startDragDistance()` 才真的发起；
-松手立刻作废（拖窗口得按住并动起来，点一下什么也不该发生）。
+`mouseMoveEvent` 里移动超过 :data:`~gallery.ui.window.title_bar_flow.DRAG_THRESHOLD`
+才真的发起；松手立刻作废（拖窗口得按住并动起来，点一下什么也不该发生）。
 双击那一点手抖远到不了这个距离，于是两条路自然分开。
+
+**这条线要小（现在是 3 点），不能拿拖放（DnD）那条 ``QApplication.startDragDistance``
+（macOS 上 10 点）来用**：窗口拖动要立刻跟手，而 10 点的死区读起来就是
+「拖之前光标得先动一会儿」。macOS 自己的标题栏差不多在 2~3 点就动了 —— 这是同一尺度。
 
 **这里最早做错过，而且错得很隐蔽。** 最初按时间做：按下排一个 `QTimer`
 （间隔 = `QApplication.doubleClickInterval()`），超时才发起。看着像在模仿系统，
