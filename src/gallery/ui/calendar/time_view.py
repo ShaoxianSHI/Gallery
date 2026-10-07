@@ -73,6 +73,7 @@ class WeekView(LevelView):
         area.setFrameShape(QFrame.Shape.NoFrame)
         area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         area.setStyleSheet("QScrollArea { background: transparent; }")
+        # guard: allow-long-comment（横向滚轮必须冒到 WeekView，滚动区与滚动条都不接焦点）
         # **横向的滚轮事件正好落在这个滚动区上，却不会停在这儿**：``QScrollArea`` 对「横向为主」的
         # 事件直接 ignore，于是冒到 :class:`WeekView` 自己翻页 —— 别加横向滚动条把它截下来。
         # 滚动区与竖滚动条都**不接焦点**：Qt 在鼠标按下时把焦点给「按到的那一层里第一个能接焦点
@@ -356,6 +357,7 @@ class _TimeGrid(QWidget):
         left = self._view.content_left()
         right = int(left + self._view.content_width())
 
+        # guard: allow-long-comment（裁剪区只能从 event 取，写成 painter.clipRect() 会一格都不画）
         # **只画看得见的那几行**（下方两段循环都按这个范围收口）：整条时间轴比视口高三倍，而
         # :meth:`WeekView.update` 每张缩略图回来都标脏整块，逐格走满是纯浪费。
         # 裁剪区**只能从 ``event`` 上取** —— Qt 不会把它设到我们自己新建的 painter 上

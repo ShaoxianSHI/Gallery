@@ -68,6 +68,7 @@ class PhotoListModel(QAbstractListModel):
     ) -> None:
         super().__init__(parent)
         self._entries: list[GridEntry] = []
+        # guard: allow-long-comment（与 _entries 逐行平行的不变量，任何改动它的地方都要同步）
         #: 与 :attr:`_entries` **逐行平行**的排序键（见 :func:`_sort_key`）。存在的理由只有
         #: 一个：键里的 ``name.casefold()`` 不记下来就得每行现算（三万行插一行要好几秒）。
         #: **任何改动 ``_entries`` 的地方都要同步它。**

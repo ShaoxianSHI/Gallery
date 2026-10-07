@@ -791,6 +791,7 @@ class WriteOpsMixin:
             self._refresh_undo_label()
             return
         if result.action == ACTION_METADATA:
+            # guard: allow-long-comment（撤销本身也是一次写回，大小与修改时间又变了一次）
             # 撤销位置编辑：照片回到原样，但**大小与修改时间又变了一次**（撤销本身也是一次
             # 写回），所以网格里那一行、内存缓存、分组排序全都要跟上 —— 与正向那次走的是同一
             # 个 ``_after_metadata_write``。**它不是删除**：撤的是字段，照片一直在那儿。

@@ -91,6 +91,7 @@ class ExifToolBatchSource:
     def _read_batch(
         self, batch: Sequence[Path], *, should_cancel: Callable[[], bool]
     ) -> Iterator[tuple[Path, Mapping[str, object] | None]]:
+        # guard: allow-long-comment（绝对路径与记忆版 resolved() 少一条就认不出自己或慢十倍）
         # 路径先转绝对：exiftool 回填的 SourceFile 就是我们给它的字面量，相对路径在不同工作
         # 目录下会认不出自己。**每张照片只解析一次，argv 与归位共用** —— ``resolve()`` 走的是
         # 一整条 ``realpath`` 系统调用链，而 :func:`gallery.core.paths.resolved` 那份带记忆，

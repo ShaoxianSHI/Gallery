@@ -254,10 +254,12 @@ class MainWindow(
         #: 上面那一格摆出来了吗。一层只摆一次，免得跟用户后来的点选抢当前项。
         self._focus_restored = False
         self._facet_values: dict[Path, PhotoFacets] = {}
+        # guard: allow-long-comment（必须跟着 facet 那个后台任务回来，不能在主线程现发整层查询）
         #: 这一层的照片各属于哪些事件（ADR 0043）。**只给「按事件分组」看**，而它必须跟着
         #: facet 读取那个后台任务一起回来 —— 分组是在主线程同步算的，不能在那里现发一次随层
         #: 大小线性增长的查询（那一层可能五千张）。
         self._event_values: dict[Path, tuple[EventRef, ...]] = {}
+        # guard: allow-long-comment（判「会不会变」用输入；少了它监听器每次回声都白付一次整层排序）
         #: **上一次重排的输入** —— 用来在排序**之前**判「这次会不会变」（见
         #: :meth:`ordering.OrderingMixin._reorder_level`），少了它监听器每报一次自己写的回声
         #: 就要白付一次整层排序。``_reorder_values`` 存的是**对象本身**（不是 ``id()``），
@@ -436,6 +438,7 @@ class MainWindow(
         self._search_field.editing_changed.connect(self._on_search_active_changed)
         self._search_field.hide()
 
+        # guard: allow-long-comment（切换按钮要建在胶囊之后才叠得上去，且不进布局）
         # 切换按钮摆在搜索胶囊**右边**（ADR 0040 决策 5）：同一个胶囊里的同一套条件语法，
         # 只改这些条件管到哪儿。不进布局 —— 与胶囊一样由 ``_layout_title_bar`` 摆，并且
         # **建在胶囊之后**才叠得上去。
@@ -494,6 +497,7 @@ class MainWindow(
         self.addAction(self._thumb_zoom_in_action)
         self.addAction(self._thumb_zoom_out_action)
 
+        # guard: allow-long-comment（Esc 只管位置不管条件：条件在前面时永远退不出那一层）
         # 回上一层用 Esc（⌘↑ 被 macOS 占着）：**大图页与网格页共用这一条**——大图页也是栈上
         # 一帧，退掉它就是回网格（ADR 0041 决策 1），所以「返回网格」不再另立一个动作。
         # **Esc 只管位置，不管条件**（ADR 0040 决策 11）：判据里条件排在最前时，只要有条件就永远
@@ -642,6 +646,7 @@ class MainWindow(
         self._clear_search_action = QAction("清除搜索条件", self)
         self._clear_search_action.triggered.connect(self.clear_search_conditions)
 
+        # guard: allow-long-comment（菜单上唯一的「此刻是哪一头」，与胶囊占位文字必须准）
         # 「筛选当前视图」：切换按钮在菜单里的那条路（ADR 0040 决策 5）。**与按钮走同一个入口**，
         # 所以两处永远说同一句话。按钮自己不再摆状态（ADR 0042 决策 1），**这一项的勾是菜单上
         # 唯一的「此刻是哪一头」** —— 与胶囊里的占位文字一起，那两处必须一直是准的。
@@ -801,10 +806,12 @@ class MainWindow(
         self._select_all_action.setEnabled(in_grid and self._model.rowCount() > 0)
         self._copy_path_action.setEnabled(bool(paths))
         self._copy_action.setEnabled(bool(paths))
+        # guard: allow-long-comment（复制与废纸篓同一判据，且不受筛选影响：复制的是看得见的选区）
         # 「复制」⌘D 与「移到废纸篓」同一判据：作用在**摊平之后**的选区上（分组卡片 = 组员），
         # 所以按了分组卡片也会把那一组各复制一份 —— 与卡片上的废纸篓同一套语义。
         # **不受筛选影响**（与 ⌘V 那两条相反）：复制的是用户看得见的选区，不是这一层的内容。
         self._duplicate_action.setEnabled(bool(flat) and idle)
+        # guard: allow-long-comment（红线 1：筛选生效时写操作不亮，用户看不清全貌时不该动他的文件）
         # ⌘V 与选区无关；**大图页不粘** —— 那一页没有「当前这一层」（ADR 0021）。
         # **筛选生效时两条写操作都不亮**（ADR 0040 决策 7）：这一层显示的不是全部内容，粘进去 /
         # 新建出来的照片可能一条都不出现，而它们恰恰是**会动用户文件**的那一类（红线 1），
@@ -1105,6 +1112,7 @@ class MainWindow(
         in_albums = self._browse_mode == BROWSE_MODE_ALBUMS
         conditions = [condition.chip_text for condition in self._conditions]
         editing = self._editing_condition if conditions else None
+        # guard: allow-long-comment（日历那几枚要摆在每一个早退之前，摆在末尾会漏掉「撤光条件」）
         # **日历工具条那几枚先摆，且在每一个早退之前**（ADR 0040 决策 9）。摆在末尾就漏了
         # 「撤光条件」那一步：早退在 ``conditions`` 为空时直接返回，那一枚撤掉的胶囊就一直挂着，
         # 要切一次视图再切回来才走。
@@ -1331,6 +1339,7 @@ class MainWindow(
         # 胶囊摆在**这一条**里（内容区从 ``top + EXTRA`` 开始），再往下挪
         # :data:`SEARCH_FIELD_TEXT_ALIGN_DROP`。
         field_height = min(SEARCH_FIELD_HEIGHT, height - 4)
+        # guard: allow-long-comment（间距与同高只从 SCOPE_TOGGLE_GAP 一处出，各算各的会歪）
         # **右上角那一块有两样东西**（ADR 0040 决策 5）：切换按钮贴着窗口右边，胶囊被推到它左边。
         # 两者的间距与同高都由 :data:`SCOPE_TOGGLE_GAP` 与 ``field_height`` 一处给出 —— 各算各的
         # 会「歪了一两个点」（见 ``external_button.button_rect``）。
@@ -1368,6 +1377,7 @@ class MainWindow(
             + (BUTTON_WIDTH + BUTTON_GAP if self._external_button.isVisible() else 0)
         )
 
+        # guard: allow-long-comment（对齐的是胶囊不是那一整块；对齐到按钮右缘会在中间空出一截）
         # 面包屑右端那几枚条件胶囊与这个胶囊**右缘对齐**；换算只在这一处做 —— 面包屑摆在一份有
         # 边距的布局里，右缘比窗口右缘靠内 :data:`_GRID_PAGE_MARGIN_RIGHT` 点。
         # **对齐的是胶囊而不是那一整块**：切换按钮在胶囊右边，让条件胶囊对齐到按钮的右缘会在

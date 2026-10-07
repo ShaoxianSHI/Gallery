@@ -307,6 +307,7 @@ class OrderingMixin:
         generation = self._generation
         resolver = self._place_lookup()
 
+        # guard: allow-long-comment（整层查一次（实测三万张 234 ms），换分组与换排序都走）
         # **查索引这一步也搬到后台。** 它是整层查一次（实测三万张 234 ms），而这一段在换分组
         # 字段、换排序、**以及监听器每次触发重排**时都要走一遍；``FacetIndex.lookup`` 是纯读
         # 且在锁内（见 :mod:`gallery.core.library.index`），在工作线程上调是同一件事。
@@ -498,6 +499,7 @@ class OrderingMixin:
         values = self._facet_values
         events = self._event_values
 
+        # guard: allow-long-comment（这道闸排在排序之后就白付一次整层排序；判据取输入而不是输出）
         # **先判「会不会变」，再排序**（这道闸排在排序之后就等于白付一次整层排序）。判据取
         # **输入**而不是输出（输出比的是刚算出来的 ``ordered``），比内容而不是比身份（``photos``
         # / ``albums`` 是现造的两个列表，指针比对永不命中，而模型里存的就是**同一批**

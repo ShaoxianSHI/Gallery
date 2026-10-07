@@ -118,6 +118,7 @@ class WatchFlowMixin:
         if covers:
             self._refresh_album_covers(covers)
         if self._conditions:
+            # guard: allow-long-comment（有条件时增量逻辑接不上，两种作用域都重跑一遍）
             # 有条件时增量逻辑一律接不上，于是两种作用域都重跑一遍：整库检索重跑一次查询，筛选
             # 重新枚举这一层再收窄一次（ADR 0040 决策 6）。真增量仍要逐张判断「新照片命中吗」，
             # 那还是得查索引，而 ``_reload_level`` 已经把整条链接通了。

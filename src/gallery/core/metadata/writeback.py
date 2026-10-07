@@ -314,6 +314,7 @@ def write_metadata(
         # 与原来一模一样：不写盘也不记日志 —— 把「没改」记成一次改动，会让 ⌘Z 去撤一件空事。
         return WriteResult(entry=ref, journaled=True, written=False)
 
+    # guard: allow-long-comment（红线 4：先记账再动文件，中间断电就改没了而日志上没有）
     # **先记账，再动文件。** 落一条 pending 只要几十微秒，而 :func:`_apply` 要起一到两次 exiftool
     # 子进程（几十到几百毫秒）—— 那个窗口里断电，原图就改了而日志上一条都没有（红线 4）。
     # 记不上账也照样往下走（报 ``journaled=False``）：不能因为记不上就把一次用户要求的写入拒掉。

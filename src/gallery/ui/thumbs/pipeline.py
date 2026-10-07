@@ -164,6 +164,7 @@ class ThumbnailPipeline(QObject):
             path = self._queue.pop_next()
             if path is None:
                 return
+            # guard: allow-long-comment（坏文件按档位记结论：同一档重试还是那个结果，还占线程池）
             # 「读不出来」「是空相册」这两个结论**按档位**记，而不是一律丢掉重试：128 px 读不
             # 出来不代表 256 px 也读不出来（换档要重试），而同一档位下坏文件重试再多次还是那个
             # 结果 —— 而那是最贵的一种失败，还要占住线程池把好照片挤到后面。

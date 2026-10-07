@@ -322,6 +322,7 @@ def _add_metadata_group(menu: ShortcutColumnMenu, actions: MenuActions, *, multi
     if actions.record_as is not None or not multiple:
         menu.addSeparator()
     if actions.record_as is not None:
+        # guard: allow-long-comment（addAction(menuAction()) 不接管所有权，临时包回收后菜单项悬空）
         # **用 ``addMenu`` 而不是 ``addAction(menuAction())``**：后者不接管那个 QMenu 的所有权，
         # 它在 ``MenuActions`` 这份临时包里一被回收就析构，留在菜单里的就成了悬空的 menuAction
         # （点开时报 ``Internal C++ object already deleted``）。相册那两个清单走的也是 addMenu。

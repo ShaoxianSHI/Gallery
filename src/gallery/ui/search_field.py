@@ -311,6 +311,7 @@ class SearchField(QWidget):
         layout.addWidget(self._icon)
         layout.addWidget(self._edit, 1)
 
+        # guard: allow-long-comment（挂在胶囊里会被裁掉，用 Qt.Popup 则 show() 那一刻抢走焦点）
         # 候选列表挂在**窗口**上（是胶囊的兄弟，不是子控件）也**不是** ``Qt.Popup`` 窗口：
         # 挂在胶囊里会被裁掉（Qt 只把子控件画在父矩形之内，而它要伸到胶囊下面去），用弹出窗口
         # 则会在 ``show()`` 那一刻把焦点从输入框抢走。挂在窗口上的普通子控件不吃焦点。
@@ -485,6 +486,7 @@ class SearchField(QWidget):
             rows * self._popup.sizeHintForRow(0) + POPUP_LIST_INSET * 2,
             max(0, self._host.height() - anchor.y()),
         )
+        # guard: allow-long-comment（让开量按胶囊自己算，否则上限跟着 MARGIN_RIGHT 变紧）
         # 左沿让开的那一段由 :meth:`_popup_left` 算，**右沿仍与胶囊齐**（宽度跟着左移收窄）。
         # 让开量有上限：**列表不许窄到看不出是什么**，而这个上限要**按胶囊自己算、不按窗口算**
         # —— 写成 ``host.width() - WIDTH`` 就让上限跟着 :data:`MARGIN_RIGHT` 变紧。
@@ -570,6 +572,7 @@ class SearchField(QWidget):
         ):
             return
         self.setStyleSheet(search_field_style(app_theme, radius=radius))
+        # guard: allow-long-comment（样式表里写死的是 rgba(...)，必须从刚推下去的调色板生成）
         # 候选列表是**建好之后**才存在的，主题早就下发过了，于是它一直拿着系统默认那一档。
         # 先推调色板再生成样式表 —— **顺序不能换**：样式表里写死的是 ``rgba(...)``，必须从刚
         # 推下去的那份调色板生成。

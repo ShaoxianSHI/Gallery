@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import ast
+import tokenize
 from pathlib import Path, PurePosixPath
 from typing import Final
 
@@ -256,6 +257,217 @@ def test_write_ops_does_not_touch_the_file_system_itself() -> None:
     """
     path = UI_ROOT / WRITE_OPS_MODULE
     assert not _opens_files(path), f"{WRITE_OPS_MODULE} 自己打开文件了；写操作一律走 core"
+
+
+# ---- 注释：别让它长成事故复盘 -----------------------------------------------
+
+#: 行内注释的连续行数上限。**到第三行就该拆成一个有名字的函数，或者删掉一半。**
+MAX_INLINE_COMMENT_LINES: Final = 2
+
+#: 放行标记。写在**那一段的第一行**，后面跟一句「凭什么」——
+#: 没有理由的放行等于没有放行，那只是把守护关掉。
+LONG_COMMENT_PRAISMA: Final = "guard: allow-long-comment"
+
+#: 考古式的**整句**短语。用短语而不用单词，是因为单词在这个仓库里大量正当用法：
+#: ``原来是`` 是 journal 里的领域词（「原来没有」对「原来是空串」）、``曾经`` 在
+#: :func:`paths.legacy_cache_dir` 里解释那条函数为什么还在、``实测`` 是三十多处性能数字的
+#: 出处（红线与性能数字本来就允许写进注释）。按单词拉黑会误伤它们，而误报的守护会被人忽略 ——
+#: 那比没有守护更坏。所以这里只收**不可能正当使用**的整句。
+ARCHAEOLOGY_PHRASES: Final = ("已作废", "原来写的是", "别再照着", "那一版转给")
+
+
+def _function_spans(tree: ast.Module) -> list[tuple[int, int, str]]:
+    """每个函数体的 ``(起始行, 结束行, 函数名)``，嵌套的也各算一份。
+
+    起始行取 ``def`` 那一行而不是 ``body[0].lineno`` —— 后者是**第一条语句**，于是写在
+    函数体最开头的那几行注释（最常见的位置）会落在区间之外，一条都量不到。
+    ``def`` 行本身不是注释，所以拿它当区间起点不会把函数上方的说明算进来。
+    """
+    spans: list[tuple[int, int, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            spans.append((node.lineno, node.end_lineno or node.lineno, node.name))
+    return spans
+
+
+def _comment_lines(path: Path) -> dict[int, str]:
+    """行号 → 该行**整行注释**的正文（``#`` 与空格已去掉）。
+
+    用 :mod:`tokenize` 而不是扫原文：它认得引号里的 ``#`` 不是注释，也认得字符串跨行。
+
+    **只收整行的，挂在代码末尾的那种不算** —— 行尾注释天然只有一行，凑不成一段话，
+    而它紧挨着上一段话的时候会被当成那一段的一部分（``scanner.describe_entry`` 就是
+    这么被算成三行的）。
+    """
+    found: dict[int, str] = {}
+    source = path.read_text(encoding="utf-8")
+    lines = source.splitlines()
+    with path.open("rb") as handle:
+        for token in tokenize.tokenize(handle.readline):
+            if token.type != tokenize.COMMENT:
+                continue
+            number, column = token.start
+            if not 1 <= number <= len(lines):
+                continue  # 越界就当没有 —— 守护崩掉比守护漏掉更坏
+            if column and lines[number - 1][:column].strip():
+                continue  # 前面有代码 —— 行尾注释
+            found[number] = token.string.lstrip("#").strip()
+    return found
+
+
+def _long_comment_blocks(path: Path) -> list[str]:
+    """这个文件里过长的行内注释块，每条给出 ``函数名:起始行（行数）``。"""
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    spans = _function_spans(tree)
+    comments = _comment_lines(path)
+
+    # 按**函数体的区间**归堆而不是按函数名：一个文件里有两个 ``__init__``（不同类里的）是
+    # 常事，按名字归堆会把它们的注释并成一段不相干的连续块。取最内层的那一层 ——
+    # 嵌套函数里的注释不该同时算到外层头上，否则外层拿到放行、内层新写的散文就跟着过了。
+    buckets: dict[tuple[int, int, str], list[int]] = {}
+    for number in sorted(comments):
+        covering = [span for span in spans if span[0] <= number <= span[1]]
+        if not covering:
+            continue  # 模块级或类级的注释，不在这条守护的范围内
+        buckets.setdefault(min(covering, key=lambda span: span[1] - span[0]), []).append(number)
+
+    offenders: list[str] = []
+    for (_, _, name), numbers in buckets.items():
+        run: list[int] = []
+        for number in [*numbers, None]:  # 末尾那个哨兵把最后一段冲出来
+            if number is not None and run and number == run[-1] + 1:
+                run.append(number)
+                continue
+            if (
+                len(run) > MAX_INLINE_COMMENT_LINES
+                and LONG_COMMENT_PRAISMA not in (comments[run[0]])
+            ):
+                offenders.append(f"{name}:{run[0]}（{len(run)} 行）")
+            run = [] if number is None else [number]
+    return offenders
+
+
+def test_inline_comments_stay_short_or_carry_a_praisma() -> None:
+    """**行内注释连续不超过两行** —— 第三行说明该拆函数，或者该删一半。
+
+    只量**函数体里**的行内注释：模块文档与类文档是说明文档，与行内注释不是一回事。
+    过长的那一段要在**自己第一行**写上 :data:`LONG_COMMENT_PRAISMA` 与理由 ——
+    红线、性能数字、跨文件耦合确实值得超过两行，而「值得」这件事本身要有人签字。
+    """
+    offenders: list[str] = []
+    for path in _iter_python_files(SRC_ROOT):
+        for block in _long_comment_blocks(path):
+            offenders.append(f"{path.relative_to(PROJECT_ROOT)}:{block}")
+    assert not offenders, (
+        f"函数体里的行内注释超过 {MAX_INLINE_COMMENT_LINES} 行，且没有 {LONG_COMMENT_PRAISMA}"
+        f" 放行（放行要写在那一段的第一行并附理由）：\n" + "\n".join(offenders)
+    )
+
+
+def test_comments_do_not_keep_patch_history() -> None:
+    """**注释与文档字符串里不许留打补丁的痕迹** —— 那些属于提交信息与 ADR。
+
+    一段描述「这里曾经坏成什么样」的说明，在病根修掉之后就成了**过时的误导**：它的读者
+    是半年后维护这段代码的人，他要的是「这一行为什么是这样」，不是「它曾经坏在哪」。
+
+    只收整句短语，理由见 :data:`ARCHAEOLOGY_PHRASES`。``docs/`` 不扫 —— ADR 与提交信息
+    **本来就该**记下历史，那是它们存在的理由。本文件也跳过：它把这些短语当字面量收着。
+    """
+    guard = Path(__file__).resolve()
+    roots = (SRC_ROOT, guard.parent, PROJECT_ROOT / "scripts")
+    offenders: list[str] = []
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for path in _iter_python_files(root):
+            if path == guard:
+                continue
+            relative = path.relative_to(PROJECT_ROOT)
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+                if not line.lstrip().startswith("#"):
+                    continue
+                offenders += [
+                    f"{relative}:{number}「{phrase}」"
+                    for phrase in ARCHAEOLOGY_PHRASES
+                    if phrase in line
+                ]
+            for phrase, number in _docstring_hits(path):
+                offenders.append(f"{relative}:{number}「{phrase}」（文档字符串）")
+    assert not offenders, (
+        "注释里留着打补丁的痕迹，请改成「这一行为什么是这样」，或把这段历史写进 ADR：\n"
+        + "\n".join(offenders)
+    )
+
+
+def _docstring_hits(path: Path) -> list[tuple[str, int]]:
+    """文档字符串里命中的考古式短语，连同它在文件里的行号。
+
+    用 :mod:`ast` 而不是扫原文，否则字符串字面量里恰好写着这几个字也会被算进来。
+    """
+    found: list[tuple[str, int]] = []
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        doc = ast.get_docstring(node, clean=False)
+        if not doc:
+            continue
+        first = node.body[0].lineno
+        for offset, line in enumerate(doc.splitlines()):
+            found += [(phrase, first + offset) for phrase in ARCHAEOLOGY_PHRASES if phrase in line]
+    return found
+
+
+def _write(path: Path, text: str) -> Path:
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_the_comment_guards_would_notice_a_violation(tmp_path: Path) -> None:
+    """**这两条守护自己必须验过一次** —— 否则它们可能一直绿着而什么也没看住。
+
+    判据是往临时文件里注入违规：``_long_comment_blocks`` 认不认得出三行无放行的注释、
+    认不认得出带放行的那一段、以及模块级的注释**不算**（它不在这条守护范围内）。
+    """
+
+    def block(indent: str, *, released: bool = False) -> str:
+        head = f"{indent}# {LONG_COMMENT_PRAISMA}（红线 4）\n" if released else ""
+        body = "".join(f"{indent}# 第 {number} 行\n" for number in range(1, 4))
+        return head + body
+
+    long = _write(tmp_path / "long.py", f"def f():\n{block('    ')}    return 1\n")
+    assert len(_long_comment_blocks(long)) == 1
+
+    ok = _write(
+        tmp_path / "released.py",
+        f"def f():\n{block('    ', released=True)}    return 1\n",
+    )
+    assert not _long_comment_blocks(ok)
+
+    module_level = _write(tmp_path / "module.py", "# 第 1 行\n# 第 2 行\n# 第 3 行\nx = 1\n")
+    assert not _long_comment_blocks(module_level)
+
+    # 嵌套的那一段只算它自己那个函数体，不因为外层更大就重复计一次。
+    nested = _write(
+        tmp_path / "nested.py",
+        f"def outer():\n{block('    ')}    def inner():\n{block('        ')}        return 1\n",
+    )
+    assert len(_long_comment_blocks(nested)) == 2
+
+    # 行尾注释凑不成一段话，不该把它上面那段整行注释顶成三行。
+    trailing = _write(
+        tmp_path / "trailing.py",
+        f"def f():\n    return None  # 已经删掉了\n{block('    ')}    return 1\n",
+    )
+    assert len(_long_comment_blocks(trailing)) == 1
+
+    # 两行整行注释本来就合法，上下的行尾注释也不改变这一点。
+    pair = "".join(f"    # 第 {number} 行\n" for number in (1, 2))
+    ok_pair = _write(
+        tmp_path / "pair.py",
+        f"def f():\n    x = 1  # 上面那个\n{pair}    y = 2  # 下面那个\n    return x, y\n",
+    )
+    assert _long_comment_blocks(ok_pair) == []
 
 
 # ---- 编码：U+FFFD 替换字符 ----------------------------------------------------

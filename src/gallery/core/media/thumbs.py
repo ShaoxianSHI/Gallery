@@ -91,6 +91,7 @@ class ThumbnailCache:
         self._max_edge = max_edge
         self._spec_version = spec_version
         self._max_bytes = max_bytes
+        # guard: allow-long-comment（None 是「没数过」：不播种就会以为缓存是空的，上限彻底失效）
         #: 记账下来的缓存总量。``None`` = 还没数过（必须真的扫一遍目录：进程重启后计数归零，
         #: 不播种就会以为缓存是空的，上限彻底失效）。之后每写成功一张 ``+= len(data)``，
         #: 只有真的越过上限时才去扫，扫完用结果重置，计数不会越走越偏。
@@ -237,6 +238,7 @@ class ThumbnailCache:
     def _write_entry(self, digest: str, image: RasterImage) -> None:
         data, suffix = _encode(image)
         try:
+            # guard: allow-long-comment（缓存条目可再生，省掉一次 fsync）
             # durable=False：缓存条目是**可再生的**（源图还在，重解一次就有），为它付一次
             # fsync 纯属浪费。崩在断电上至多留下半截文件，而 :meth:`_read_entry` 对半截
             # 文件能自愈（PIL 解不开就删掉重生成）。

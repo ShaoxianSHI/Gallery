@@ -118,9 +118,8 @@ class MetadataPanel(QWidget):
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        # **这里原来写的是一条不带选择器的裸声明，会级联到所有子控件 —— 那条竖滚动条也在内**：
-        # 挂了样式表之后它不再走原生样式，改由 ``QStyleSheetStyle`` 画，轨道成了一条常驻的
-        # 实心竖条（深色下尤其显眼）。要透明就点名视口，别裸声明。
+        # **要透明就点名视口，别裸声明。** 不带选择器的那条会级联到所有子控件 —— 竖滚动条也在内，
+        # 而它挂了样式表之后就不再走原生样式，轨道成了一条常驻的实心竖条（深色下尤其显眼）。
         self._body = QWidget()
         self._body.setAutoFillBackground(False)
         self._body_layout = QVBoxLayout(self._body)

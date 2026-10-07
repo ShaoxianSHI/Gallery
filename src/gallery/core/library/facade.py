@@ -658,6 +658,7 @@ class Library:
             index.store([(ref, fresh[ref.path]) for ref in missing if ref.path in fresh])
             cached.update(fresh)
         if resolver is not None:
+            # guard: allow-long-comment（与上面读新照片那一段是并行的，重构成 elif 就会整段跳过）
             # 缓存里可能还留着「有坐标、没结论」的旧行，既然反查器在手就顺手补上。
             # **与上面读新照片那一段是并行的，不是二选一** —— 写成 ``elif`` 就会「这一批里有任何
             # 一张没缓存过」整段跳过，而那恰恰是最常见的情形。
@@ -1128,6 +1129,7 @@ def _resolve_batch(
                 facets = _resolved(facets, resolver, status)
                 resolved += 1
         elif _has_coordinates(facets):
+            # guard: allow-long-comment（判据是「已经齐全」而不是「查过」，差一条就永久钉死）
             # **文件自己就写全了地点**（Lightroom 导出的 XMP 如此）：那份地点同样是结论而且更准，
             # 照 ADR 0010「文件里写了就以文件为准」记下来就是。判据是「**已经齐全**」而不是
             # 「查过」—— 地点还缺着时不能记，否则等于把这张照片永久钉在「未知」上。

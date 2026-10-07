@@ -379,8 +379,8 @@ class SearchFlowMixin:
         正在改某一条的时候，``Esc`` 是**放弃这一次改动**（那一条原样留着）—— 否则
         「改到一半想溜」与「撤掉一条」是同一下，用户没法中途反悔。
 
-        **走的是 :meth:`pop_last_condition` 而不是 :meth:`go_up`**（ADR 0040 决策 11）：那一版转给
-        ``go_up``，于是搜索框里那个 Esc 也变成了「退一层」—— 用户在子相册里点进搜索框按 Esc，
+        **走的是 :meth:`pop_last_condition` 而不是 :meth:`go_up`**（ADR 0040 决策 11）：转给
+        ``go_up`` 的话，搜索框里那个 Esc 也会变成「退一层」—— 在子相册里点进搜索框按 Esc，
         位置没退、反而少了一条条件。搜索框这一处的语境是**条件**，所以它撤条件。
         """
         if self._editing_condition is not None:

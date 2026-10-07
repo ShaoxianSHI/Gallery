@@ -44,6 +44,7 @@ class ThumbnailFlowMixin:
         if self._stack.currentWidget() is not self._grid_page:
             return
         visible_rows = self._grid.visible_rows()
+        # guard: allow-long-comment（网格没重排时「可见行」是空的，而 set_window 是整份替换）
         # **网格还没重排时，不要把已经排好的请求清掉**：那一刻「可见行」是空的，而
         # ``set_window`` 是**整份替换**，会把刚排好的几十个请求全丢掉（这一处空过一整屏）。
         # 模型**真的空了**时照旧报空窗口。
@@ -149,6 +150,7 @@ class ThumbnailFlowMixin:
         self._save_ui_state()
 
     def _on_thumbnail_failed(self, path: object, message: str) -> None:
+        # guard: allow-long-comment（丢错类别会把一次成功的改名说成「文件可能已损坏」）
         # 两类失败不是「照片坏了」，是用户自己（或自家代码）刚造成的，丢掉：**这一格已经不在
         # 当前这一层**（刚改名 / 移走 / 删掉 / 换库），或者**这个路径是自家刚写过的**（在途那次
         # 解码读的就是它，文件被改名那一瞬间确实读不到）。不丢的话，刚改完名成功横幅立刻变成

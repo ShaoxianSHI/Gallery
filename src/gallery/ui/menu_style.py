@@ -133,6 +133,7 @@ def style_sheet(
         f"QMenu {{ border-radius: {MENU_CORNER_RADIUS}px; "
         f"background: {rgba(background)}; padding: {MENU_INSET}px; }}\n"
         f"QMenu::item {{ padding: {MENU_ITEM_PADDING}; }}\n"
+        # guard: allow-long-comment（Qt 不再按调色板给 HighlightedText 上色，不写就是黑字压蓝底）
         # 悬停 / 当前项的高亮带。**不加这两行菜单就完全没有高亮**（样式表一挂上，系统样式那份
         # 高亮就不再画了）。字色**也要跟着换** —— Qt 不再按 ``State_Selected`` 挑
         # ``HighlightedText``，不写就是黑字压蓝底。置灰的行 Qt 压根不点亮，不必补 ``:disabled``。
@@ -141,6 +142,7 @@ def style_sheet(
         f"QMenu::item:selected {{ background: {rgba(highlight)}; "
         f"color: {rgba(highlighted_text)}; "
         f"border-radius: {MENU_HIGHLIGHT_RADIUS}px; }}\n"
+        # guard: allow-long-comment（深色下不给它，颜色由系统样式挑一档比底色更深的，等于没画）
         # 分隔线。**这条是深色下唯一看得见的那条线**：不给它，颜色由系统样式从应用调色板里挑
         # 一档偏暗的（深色下比底色还深），等于没画。它带 margin 与高亮那条禁令不冲突 ——
         # 那条禁的是**带状态**的规则里写 margin，这里与悬停无关。
@@ -476,6 +478,7 @@ def popup_menu_style(menu: QMenu) -> str:
         )
         + f"\nQMenu {{ font-size: {POPUP_FONT_PX}px;"
         f" border: {POPUP_LIST_BORDER}px solid {rgba(popup_edge_color(palette))}; }}"
+        # guard: allow-long-comment（QMenu::item 的字色必须写死：不写就是深色下近黑底压近黑字）
         # 字色**必须自己写**：挂了样式表之后 Qt 不再按调色板给 item 上色（深色下调色板里明明是
         # ``#ffffff``，画出来却是近黑的 ``#000000``）。内边距**左右同档** —— 左内边距只管
         # 文字，图标那一侧归下面的 ``::icon`` 规则。

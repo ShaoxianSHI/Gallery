@@ -518,6 +518,7 @@ class PhotoGrid(QListView):
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # guard: allow-long-comment（样式与排版判据只从 scrollbar_style 一处来，改一处要连带改判据）
         # 样式只从 :mod:`gallery.ui.scrollbar_style` 一处来 —— 周视图与元数据面板共用同一份。
         # 它比原生那档细，于是 ``_scrollbar_reserve`` 跟着变小、排版宽度多出几像素（少掉的那几
         # 像素原本是照片的）；但格宽一变列数就可能变，切档过渡的判据因此得看列数而不看边缘差。
@@ -558,6 +559,7 @@ class PhotoGrid(QListView):
         self._examiner.setInterval(COLUMN_CHECK_MS)
         self._examiner.timeout.connect(self._examine_columns)
 
+        # guard: allow-long-comment（一批插入只排一次版：逐条排是「批大小」次全量排版）
         # **一批插入只排一次版。** 见 :meth:`_on_rows_inserted`：监听器报一批新文件时模型会一条
         # 一条地插（每条一次 ``rowsInserted``），直接排全版就是「批大小」次全量排版。0 ms 单发、
         # ``start()`` 在已排着时原地续期，于是天然合并 —— 与 :attr:`_debounce` 同一个手法。
@@ -565,6 +567,7 @@ class PhotoGrid(QListView):
         self._relayout.setSingleShot(True)
         self._relayout.setInterval(0)
         self._relayout.timeout.connect(self._relayout_after_insert)
+        # guard: allow-long-comment（QWidget 默认强焦点，点一下时间轴就抢走 ← / →）
         #: 插入发生时用户正看着的纵向位置。**要在插入那一刻记，不能在定时器里读** ——
         #: Qt 紧接着就会从第 0 条重排一次，那时 ``bar.value()`` 已经是那个被夹小的值
         #: （400 张的库 7037 → 1642），拿它去重排就是拿错的基准去修。
@@ -1583,6 +1586,7 @@ class PhotoGrid(QListView):
 
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         super().resizeEvent(event)
+        # guard: allow-long-comment（这里刻意不取消过渡，另一类 resize 又必须放行）
         # **这里刻意不 ``_cancel_transition()``。** 真的拖窗口会让排版宽度变，
         # :meth:`_recompute_layout` 走到 :meth:`_set_cell` 时自己就落位了。
         # 而**不是**拖窗口的那种 resize 必须放行：横幅出现/消失、切档让滚动条开关都改不动
@@ -1592,6 +1596,7 @@ class PhotoGrid(QListView):
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 - 名字是 Qt 定的
         if watched is self.viewport() and event.type() == QEvent.Type.Resize:
+            # guard: allow-long-comment（定时器必须绑住本对象，否则会去调已析构的对象）
             # 延到事件循环下一轮：视口尺寸变化本身发生在布局过程中，立刻重排会把布局再推进。
             # 第三个参数（context）是**必须**的：没有它，这个 0 毫秒定时器与本对象毫无关系，
             # 「收到 resize → 同一轮里窗口被关掉」会让它去调一个已经析构的对象。

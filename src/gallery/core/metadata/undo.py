@@ -119,6 +119,7 @@ def pending_undo_runs(root: Path) -> list[list[WriteRecord]]:
         if record.action in _POP_ACTIONS:
             _pop(runs, record)
         else:
+            # guard: allow-long-comment（红线 4：动作名不认识也要压栈，否则那条被静默丢掉）
             # **不是弹栈的就都压栈**，包括动作名不认识的那几条：按清单匹配时动作名缺失（日志被
             # 截断、外来的记录、新加的动作忘了登记）会把那条记录**静默丢掉**，用户刚做完的事从此
             # 再也撤不掉。压进去之后 :func:`_undo_delete` 会把它移回原处 —— 不认识动作名也能撤。

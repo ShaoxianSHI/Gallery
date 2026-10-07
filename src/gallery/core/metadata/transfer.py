@@ -204,6 +204,7 @@ def move_into(
         )
         moved.append(MovedItem(source=source, created=created))
         follow.append((source, created, is_dir))
+    # guard: allow-long-comment（红线 4：绑定与移动同一事务，漏一次就丢一批绑定）
     # 绑定跟着走，且**一次事务搬完整批**（ADR 0043 决策 8）。只收真的移走的那些 ——
     # 失败的那些路径压根没变，而复制出来的那些是新文件、与绑定无关（ADR 0044）。
     # 监听器随后还会把同一件事报回来一次（``MOVE`` 不做回声屏蔽，新文件的上屏靠它），
