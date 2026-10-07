@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -19,7 +20,7 @@ pytest.importorskip("PySide6")
 from library_helpers import set_library_ui  # noqa: E402
 from outline_helpers import assert_no_darker_dots  # noqa: E402
 from PIL import ExifTags, Image  # noqa: E402
-from PySide6.QtCore import QPoint, QRect, QTimer  # noqa: E402
+from PySide6.QtCore import QItemSelectionModel, QPoint, QRect, QTimer  # noqa: E402
 from PySide6.QtGui import QAction, QPalette  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
@@ -34,6 +35,7 @@ from gallery.core.events.store import Event, EventDraft  # noqa: E402
 from gallery.core.library.config import BROWSE_MODE_ALBUMS, prepare_library  # noqa: E402
 from gallery.core.library.photos import GroupRef  # noqa: E402
 from gallery.core.library.session import SessionState, save_session  # noqa: E402
+from gallery.core.metadata.facets import PhotoFacets  # noqa: E402
 from gallery.ui import menu_style, theme  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.menu_style import ShortcutColumnMenu  # noqa: E402
@@ -104,17 +106,31 @@ def _paths(window: MainWindow, *names: str) -> tuple[Path, ...]:
 
 
 def _select(window: MainWindow, *names: str) -> int:
-    """选中若干张（多选）并返回第一张的行号。**摆正选区**也要做 —— 菜单据此算判据。"""
-    wanted = set(_paths(window, *names))
+    """选中若干张（多选）并返回第一张的行号。**摆正选区**也要做 —— 菜单据此算判据。
+
+    **不能用 ``PhotoGrid.select_row`` 逐个选**：它每一次都是 ``ClearAndSelect``，
+    循环下来只剩最后一行，于是「多选」从来没真的发生过（先前那条记两张的用例是靠日期范围
+    把第二张捞进去才绿的，症状与单选完全一样）。走 ``selectionModel`` 才是 ⌘ 连点那一路。
+    """
     rows = [
-        window._model.row_of_path(path) for path in wanted if window._model.row_of_path(path) >= 0
+        row
+        for row in (window._model.row_of_path(path) for path in _paths(window, *names))
+        if row >= 0
     ]
-    window._grid.clearSelection()
+    if not rows:
+        return -1
+    # 先设当前项：``setCurrentIndex`` 会把选区收成那一格，顺序反了多选又只剩一格。
+    window._grid.setCurrentIndex(window._model.index(rows[0], 0))
+    selection = window._grid.selectionModel()
+    assert selection is not None
+    selection.clearSelection()
     for row in rows:
-        window._grid.select_row(row)
-    if rows:
-        window._grid.select_for_context(rows[0])
-    return rows[0] if rows else -1
+        selection.select(
+            window._model.index(row, 0),
+            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+        )
+    window._grid.select_for_context(rows[0])
+    return rows[0]
 
 
 def _context(window: MainWindow, row: int) -> QMenu:
@@ -621,6 +637,177 @@ def test_answering_no_keeps_the_event(
     window.delete_event(trip.id)
 
     assert library.event(trip.id) is not None
+
+
+# ---- 预填（第一次打开面板时按选中的照片推一遍）---------------------------------
+
+
+def _new_dialog(kind_menu: QMenu) -> EventEditDialog:
+    """走「新建旅行…」那一条，**看一眼就关掉** —— 预填只发生一次，所以断的是摆出来那一刻。"""
+    action = next(a for a in kind_menu.actions() if a.text().startswith("新建"))
+    dialogs: list[EventEditDialog] = []
+
+    def grab() -> None:
+        dialog = QApplication.activeModalWidget()
+        assert isinstance(dialog, EventEditDialog)
+        dialogs.append(dialog)
+        dialog.reject()
+
+    QTimer.singleShot(0, grab)
+    action.trigger()
+    assert dialogs, "面板没有弹出来"
+    return dialogs[0]
+
+
+def _place(window: MainWindow, name: str, **columns: str) -> None:
+    """往索引里给这一张**补上**一段地点。**真读 EXIF 才能拿到地点**（相机原图只写 GPS），
+    而离线反查要真坐标 —— 这里要的只是「这几张的地点是这几段」这个前提。
+
+    **在原有那一行上改，而不是整行换掉**：照片本来就有拍摄时间，整行覆盖会把它一起抹掉，
+    于是「日期与目的地同时预填」那条用例会只测到目的地。
+    """
+    library = window._library
+    assert library is not None
+    ref = next(entry for entry in window._model.entries() if getattr(entry, "name", None) == name)
+    current = library.cached_facets([ref]).get(ref.path, PhotoFacets())
+    library.facet_index.store([(ref, replace(current, **columns))])
+
+
+def test_what_the_user_types_afterwards_is_left_alone(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """**预填只发生一次**：用户改过之后，那几栏就是他写的了。
+
+    断的是「改完之后仍然是他写的」而不是「有没有预填」—— 预填写成了 ``textChanged`` 之类会
+    反复触发的东西时，这一条立刻红：用户敲下的目的地会被下一次触发顶回照片里那个。
+    """
+    _place(window, "京都-01.jpg", city="杭州", region="浙江省", country="中国")
+    row = _select(window, "京都-01.jpg")
+    dialog = _new_dialog(_open_kind_menu(_context(window, row)))
+
+    dialog._fields["destination"].setText("我自己写的目的地")
+    dialog._fields["started_on"].setText("2020-01-01")
+    dialog._fields["ended_on"].setText("2020-01-05")
+
+    assert dialog._text("destination") == "我自己写的目的地"
+    assert dialog._text("started_on") == "2020-01-01"
+    assert dialog._text("ended_on") == "2020-01-05"
+
+
+def test_one_selected_photo_fills_both_dates_with_its_own_day(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """只选中一张：开始与结束都是它的拍摄日期（``京都-01.jpg`` 拍于 2026-05-16）。"""
+    row = _select(window, "京都-01.jpg")
+
+    dialog = _new_dialog(_open_kind_menu(_context(window, row)))
+
+    assert dialog._text("started_on") == "2026-05-16"
+    assert dialog._text("ended_on") == "2026-05-16"
+
+
+def test_several_selected_photos_span_from_the_earliest_to_the_latest(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """多选：最早的那天当开始、最晚的那天当结束（``大阪-01.jpg`` 拍于 2025-10-02）。"""
+    row = _select(window, "京都-01.jpg", "大阪-01.jpg")
+
+    dialog = _new_dialog(_open_kind_menu(_context(window, row)))
+
+    assert dialog._text("started_on") == "2025-10-02"
+    assert dialog._text("ended_on") == "2026-05-16"
+
+
+def test_the_destination_is_the_lowest_place_they_share(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """目的地取**最低层公共位置**：两张都在浙江省而城市不同 → 浙江省。
+
+    判据是那几格里的字，不是另抄一份算法 —— 换句话说，面板上填的与用户看到的是同一个说法。
+    """
+    _place(window, "京都-01.jpg", city="杭州", region="浙江省", country="中国")
+    _place(window, "京都-02.jpg", city="宁波", region="浙江省", country="中国")
+    row = _select(window, "京都-01.jpg", "京都-02.jpg")
+
+    dialog = _new_dialog(_open_kind_menu(_context(window, row)))
+
+    assert dialog._text("destination") == "浙江省"
+
+
+def test_the_same_city_gives_the_city_itself(qt_app: QApplication, window: MainWindow) -> None:
+    """城市一样就用城市，不必退到省州。"""
+    _place(window, "京都-01.jpg", city="杭州", region="浙江省", country="中国")
+    _place(window, "京都-02.jpg", city="杭州", region="浙江省", country="中国")
+    row = _select(window, "京都-01.jpg", "京都-02.jpg")
+
+    dialog = _new_dialog(_open_kind_menu(_context(window, row)))
+
+    assert dialog._text("destination") == "杭州"
+
+
+def test_the_prefilled_name_grows_out_of_them(qt_app: QApplication, window: MainWindow) -> None:
+    """预填的日期与目的地会把名称栏带成「杭州 · 2026-05-16」—— 那是它本来就有的那一条联动。
+
+    一张照片的最低公共位置**就是它自己的城市**（见 ``common_place``），所以名称栏里是「杭州」
+    而不是「浙江省」：用户要改的正是这一句，写长了反而不好认。
+    """
+    _place(window, "京都-01.jpg", city="杭州", region="浙江省", country="中国")
+    row = _select(window, "京都-01.jpg")
+
+    dialog = _new_dialog(_open_kind_menu(_context(window, row)))
+
+    assert dialog._text("title") == "杭州 · 2026-05-16"
+
+
+def test_a_photo_without_a_capture_time_leaves_the_dates_blank(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """索引里读不到拍摄时间就**留空**，而不是替用户挑一天。"""
+    library = window._library
+    assert library is not None
+    ref = next(
+        entry for entry in window._model.entries() if getattr(entry, "name", None) == "京都-01.jpg"
+    )
+    library.facet_index.store([(ref, PhotoFacets())])
+    row = _select(window, "京都-01.jpg")
+
+    dialog = _new_dialog(_open_kind_menu(_context(window, row)))
+
+    assert dialog._text("started_on") == ""
+    assert dialog._text("ended_on") == ""
+
+
+def test_editing_an_existing_event_does_not_prefill_from_the_selection(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """改一个**已有**事件时预填不参与 —— 那里要显示的是事件自己的那一份，
+    拿选中的照片去覆盖它就是把用户记好的东西抹掉。"""
+    library = window._library
+    assert library is not None
+    _place(window, "京都-01.jpg", city="杭州", region="浙江省", country="中国")
+    event = library.create_event("trip", EventDraft(values={"title": "京都五日"})).event
+    library.bind_photos(_paths(window, "京都-01.jpg"), event.id)
+    window.set_group_facet("event")
+    wait_until(qt_app, lambda: window._model.group_count() > 0)
+    card_row = next(
+        row
+        for row in range(window._model.rowCount())
+        if (group := window._model.group_at(row)) is not None and group.label == "京都五日"
+    )
+    _context(window, card_row)
+
+    def grab() -> None:
+        dialog = QApplication.activeModalWidget()
+        assert isinstance(dialog, EventEditDialog)
+        dialogs.append(dialog)
+        dialog.reject()
+
+    dialogs: list[EventEditDialog] = []
+    QTimer.singleShot(0, grab)
+    window._edit_event_action.trigger()
+
+    assert dialogs[0]._text("destination") == ""
+    assert dialogs[0]._text("started_on") == ""
 
 
 # ---- 面板自己（不碰任何一张照片）-----------------------------------------------

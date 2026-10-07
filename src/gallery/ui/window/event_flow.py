@@ -21,12 +21,14 @@ from PySide6.QtWidgets import QDialog, QMenu, QMessageBox
 
 from gallery.core.errors import EventsUnavailableError, GalleryError
 from gallery.core.events.kinds import EVENT_KINDS, EventKind, kind_by_id
+from gallery.core.events.prefill import EventPrefill, prefill_from_photos
 from gallery.core.events.store import Event
-from gallery.core.library.photos import GridEntry, GroupRef
+from gallery.core.library.photos import GridEntry, GroupRef, PhotoRef
 from gallery.core.metadata.facets import FACET_EVENT
 from gallery.ui import banners
 from gallery.ui.menu_style import ShortcutColumnMenu
 from gallery.ui.panels.event_edit import EventEdit, EventEditDialog
+from gallery.ui.write_ops import flattened_entries
 
 logger = logging.getLogger(__name__)
 
@@ -289,8 +291,17 @@ class EventFlowMixin:
         library = self._library
         if library is None:
             return
-        photos = self._selected_paths()
-        dialog = EventEditDialog(self, kind, event=event, selected=len(photos))
+        # 摊平只做一次：下面既要路径（绑定用）也要 ``PhotoRef``
+        # （读索引要它的 size / mtime 才算命中）。
+        entries = flattened_entries(self._selected_entries())
+        photos = [entry.path for entry in entries]
+        dialog = EventEditDialog(
+            self,
+            kind,
+            event=event,
+            selected=len(photos),
+            prefill=None if event is not None else self._event_prefill(entries),
+        )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         try:
@@ -307,6 +318,24 @@ class EventFlowMixin:
             return
         self._after_events_changed()
         self._refresh_undo_label()
+
+    def _event_prefill(self, entries: Sequence[GridEntry]) -> EventPrefill:
+        """按**选中的照片**推出目的地与起止日期。
+
+        **只读索引里已经有的那几行**（``cached_facets``），所以摆面板这一下不同步去读 EXIF
+        —— 当前这一层的元数据早就读过了（``ordering._start_facet_read``），没读到的那几张
+        就当没有：推不出来的那一栏留空，用户自己填。
+        """
+        library = self._library
+        refs = [entry for entry in entries if isinstance(entry, PhotoRef)]
+        if library is None or not refs:
+            return EventPrefill()
+        try:
+            cached = library.cached_facets(refs)
+        except GalleryError as exc:
+            logger.info("读索引里的元数据失败：%s", exc.detail or exc.message)
+            return EventPrefill()
+        return prefill_from_photos(cached.values())
 
     def _bind_the_new_one(self, edit: EventEdit, event: Event, selected: Sequence[Path]) -> None:
         """新建之后把照片记进去：选中的那些，加上（勾着的）按日期范围挑的那些。

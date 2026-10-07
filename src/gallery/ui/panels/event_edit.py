@@ -44,6 +44,7 @@ from gallery.core.events.kinds import (
     suggested_title,
     title_problem,
 )
+from gallery.core.events.prefill import EventPrefill
 from gallery.core.events.store import Event, EventDraft
 from gallery.ui import theme
 from gallery.ui.outline import opaque_over
@@ -182,7 +183,13 @@ class EventEditDialog(QDialog):
         *,
         event: Event | None = None,
         selected: int = 0,
+        prefill: EventPrefill | None = None,
     ) -> None:
+        """``prefill`` 是从选中的照片推出来的默认值（见 :mod:`gallery.core.events.prefill`）。
+
+        **只在摆出来这一次填进去**，之后这一栏就是用户的 —— 与名称那一栏的自动生成同一件事，
+        只是那边靠「当前那句还是不是我生成的」判断，这边靠「还没填过」。
+        """
         super().__init__(parent)
         self._kind = kind
         self._event = event
@@ -199,6 +206,7 @@ class EventEditDialog(QDialog):
         if event is not None:
             self._fill(event)
         else:
+            self._prefill(prefill or EventPrefill())
             self._suggest_title()
 
     # ---- 对外 --------------------------------------------------------------
@@ -311,6 +319,23 @@ class EventEditDialog(QDialog):
             else:
                 widget.setText(text)
         self._auto_title = event.title
+
+    def _prefill(self, prefill: EventPrefill) -> None:
+        """把从选中的照片推出来的那几个默认值填进去。**空串跳过** —— 那是「推不出来」，
+        不是「要清空用户填的」。
+
+        **只在摆出来这一刻填一次**，之后那几栏归用户：不挂 ``textChanged``，免得用户敲下的
+        目的地被下一次触发顶回照片里那个（``test_what_the_user_types_afterwards_is_left_alone``
+        断的就是这一条）。
+        """
+        for field_id, text in (
+            ("destination", prefill.destination),
+            ("started_on", prefill.started_on),
+            ("ended_on", prefill.ended_on),
+        ):
+            widget = self._fields.get(field_id)
+            if text and isinstance(widget, QLineEdit):
+                widget.setText(text)
 
     def _suggest_title(self) -> None:
         """名称栏自动长成「目的地 · 日期」，**直到用户动手改过它为止**。

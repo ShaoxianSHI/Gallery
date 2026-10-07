@@ -19,6 +19,10 @@ from gallery.core.events.kinds import (
     suggested_title,
 )
 
+# ``prefill`` **不在这里导出**：它要 ``core.library.calendar``，而 ``core.metadata.facets``
+# 反过来要本包（``EventRef``）—— 从这里拉它，那条链就成了环。领域内部按 AGENTS.md 的规矩
+# 从具体子模块导入即可（``from gallery.core.events.prefill import prefill_from_photos``）。
+
 __all__ = [
     "COMMON_FIELDS",
     "EVENT_KINDS",
