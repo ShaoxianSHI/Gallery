@@ -15,6 +15,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, Literal
 
+from gallery.core import paths
 from gallery.core.events.store import EventRef
 from gallery.core.library.photos import PhotoRef
 
@@ -372,11 +373,10 @@ def relative_folder(path: Path, root: Path) -> str:
 
     **搜索的「#相册」条件用的是同一个函数**（ADR 0026）：两处各写一份迟早算出不一样的写法。
     """
-    try:
-        relative = Path(path).parent.relative_to(Path(root))
-    except ValueError:
-        return str(Path(path).parent)
-    return "" if str(relative) == "." else relative.as_posix()
+    folder = Path(path).parent
+    # ``resolve=False``：照片路径由扫描器给出，from 库根那条链上已经解析过。
+    relative = paths.relative_posix(root, folder, resolve=False)
+    return str(folder) if relative is None else relative
 
 
 def _relative_folder(item: FacetInput) -> str:

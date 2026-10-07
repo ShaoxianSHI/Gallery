@@ -588,3 +588,48 @@ def test_the_batch_walker_yields_nothing_for_an_empty_library(
     root.mkdir(parents=True, exist_ok=True)
 
     assert list(Library.open(root)._iter_photo_batches(2, None)) == []
+
+
+def test_the_relative_path_helpers_share_one_calculation_but_not_their_edges(
+    tmp_path: Path,
+) -> None:
+    """四份「相对库根」现在共用 :func:`gallery.core.paths.relative_posix`，**但两端各按目的处置**。
+
+    | 调用点 | 就是库根 | 库外 |
+    |---|---|---|
+    | ``facade.album_label`` | 文件夹的名字 | 文件夹的名字 |
+    | ``facade._relative_posix`` | ``None`` | ``None`` |
+    | ``facets.relative_folder`` | 空串 | 绝对路径 |
+    | ``search._directory_prefix`` | 空串 | 绝对路径 |
+
+    这条用例钉的是**那两个边角故意不一样**。「看着像重复、顺手合成一个」正是这里最危险的
+    改动：合成之后某一处的菜单名或分组键会悄悄换写法，而没有任何东西报错 —— 因为它们
+    各自都还是「算得出一个字符串」。
+    """
+    from gallery.core.library import facade as facade_module
+    from gallery.core.library.search import _directory_prefix
+    from gallery.core.metadata.facets import relative_folder
+
+    root = tmp_path / "库"
+    (root / "旅行").mkdir(parents=True)
+    outside = tmp_path / "别处"
+    outside.mkdir()
+    library = Library.open(root)
+
+    # 就是库根的那一档
+    assert library.album_label(root) == "库", "菜单里要写名字，不能是一个孤零零的点"
+    assert facade_module._relative_posix(root, root) is None, "库根不是一张卡片，没有「相对位置」"
+    assert relative_folder(root / "a.jpg", root) == "", "照片就在根下 —— 相册是空的"
+    assert _directory_prefix(root, root) == "", "空串只有一个含义：它就是库根"
+
+    # 库外的那一档
+    assert library.album_label(outside) == "别处"
+    assert facade_module._relative_posix(root, outside) is None
+    assert relative_folder(outside / "a.jpg", root) == str(outside), "库外宁可啰嗦也别显示成空"
+    assert _directory_prefix(outside, root) == str(outside)
+
+    # 正常的相对路径四边一致
+    assert library.album_label(root / "旅行") == "旅行"
+    assert facade_module._relative_posix(root, root / "旅行") == "旅行"
+    assert relative_folder(root / "旅行" / "a.jpg", root) == "旅行"
+    assert _directory_prefix(root / "旅行", root) == "旅行"

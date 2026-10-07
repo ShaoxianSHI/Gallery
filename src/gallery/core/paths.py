@@ -120,6 +120,32 @@ def is_within(root: Path, candidate: Path) -> bool:
     return resolved == resolved_root or resolved_root in resolved.parents
 
 
+def relative_posix(root: Path, path: Path, *, resolve: bool = True) -> str | None:
+    """``path`` 相对 ``root`` 的位置，写成 posix 串。
+
+    **两种「给不出位置」分开报** —— 调用点对它们的处置各不相同（有的显示成文件夹自己的
+    名字、有的显示成空串、有的当成「没有」），所以由调用点决定，这里只负责说清是哪一种：
+
+    - 返回**空串**：``path`` 就是 ``root`` 自己，没有可写的相对段；
+    - 返回 ``None``：两者不是相对关系（``path`` 不在 ``root`` 里）。
+
+    :param resolve: 先过一遍带记忆的 :func:`resolved`。库根与库里的照片路径本来就已经解析过
+        （``Library.open`` 解析库根、扫描器不跟进符号链接），这一趟兜的是「同一个文件夹两种
+        写法」那类输入（``/var`` 与 ``/private/var``），代价被那份记忆压到接近零。
+
+    **别在调用点各写一遍这段 `relative_to`**：这个仓库里曾经有四份，而它们对上面那两种
+    情形的处置两两不同 —— 照抄错一份不会报错，只会让某一处的相册名或分组悄悄换了写法。
+    """
+    source, base = Path(path), Path(root)
+    if resolve:
+        source, base = resolved(source), resolved(base)
+    try:
+        relative = source.relative_to(base)
+    except (OSError, ValueError):
+        return None
+    return relative.as_posix() if relative.parts else ""
+
+
 class GuardReason(Enum):
     """:func:`guard_within_root` 拒绝一个路径的三种原因。
 
@@ -371,6 +397,7 @@ __all__ = [
     "legacy_thumbnail_cache_dir",
     "library_digest",
     "places_db_file",
+    "relative_posix",
     "resolved",
     "resolved_str",
     "resources_dir",

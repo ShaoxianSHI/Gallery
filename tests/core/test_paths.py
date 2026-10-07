@@ -103,6 +103,39 @@ def test_is_within(tmp_path: Path) -> None:
     assert paths.is_within(root, tmp_path / "库2") is False
 
 
+def test_relative_posix_tells_the_two_no_position_cases_apart(tmp_path: Path) -> None:
+    """``relative_posix`` **把两种「给不出位置」分开报** —— 空串 = 就是它自己，``None`` = 库外。
+
+    四个调用点对这两件事的处置两两不同（文件夹自己的名字 / 空串 / 「没有」），所以这里只
+    负责说清是哪一种，由它们各自决定。混成一种，就会有一处的相册名悄悄换了写法 ——
+    不报错，只是界面上的名字与分组用的键对不上。
+    """
+    root = tmp_path / "库"
+    (root / "旅行").mkdir(parents=True)
+
+    assert paths.relative_posix(root, root) == "", "就是它自己 → 空串"
+    assert paths.relative_posix(root, root / "旅行") == "旅行"
+    assert paths.relative_posix(root, root / "旅行" / "a.jpg") == "旅行/a.jpg"
+    assert paths.relative_posix(root, tmp_path / "别处") is None, "库外 → None"
+    assert paths.relative_posix(root, tmp_path / "库2") is None, "前缀相同的兄弟不算在其下"
+
+
+def test_relative_posix_settles_a_symlinked_root(tmp_path: Path) -> None:
+    """**解析过的那一趟专门治符号链接**：``/var`` 与 ``/private/var`` 是同一个文件夹。
+
+    库里的路径本来就已经解析过（``Library.open`` 解析库根、扫描器不跟进符号链接），
+    但别的入口仍可能递进未解析的路径 —— 解析之后两边说的是同一个位置，不解析就落到
+    「库外」那一档（绝对路径），而那不是同一个答案。
+    """
+    real = tmp_path / "真的库"
+    (real / "旅行").mkdir(parents=True)
+    link = tmp_path / "链接"
+    link.symlink_to(real)
+
+    assert paths.relative_posix(real, link / "旅行") == "旅行"
+    assert paths.relative_posix(real, link / "旅行", resolve=False) is None
+
+
 def test_the_guard_really_refuses_the_library_root(tmp_path: Path) -> None:
     """``allow_root=False`` 是**禁止**，不是一个什么都不检查的静默返回。
 

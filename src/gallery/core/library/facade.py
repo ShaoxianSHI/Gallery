@@ -293,14 +293,8 @@ class Library:
         「苏州」用户分不清自己要挪到哪去。
         """
         target = Path(folder)
-        try:
-            # 带记忆的解析（见 :func:`gallery.core.paths.resolved`）：菜单每次弹出都要重算一遍，
-            # 而它们全都来自同一个已解析的库根 —— 两千个相册就是四千趟 ``lstat``。
-            relative = paths.resolved(target).relative_to(paths.resolved(self._root))
-        except (OSError, ValueError):
-            return target.name
-        # ``relative_to`` 对「就是它自己」给出 ``Path('.')``，写出来是个孤零零的点 —— 那就写名字。
-        return relative.as_posix() if relative.parts else target.name
+        # 库根本身（相对位置是空串）与库外都给文件夹自己的名字 —— 这一处显示的是菜单项。
+        return paths.relative_posix(self._root, target) or target.name
 
     def folder_cover(
         self,
@@ -1025,17 +1019,11 @@ class Library:
 def _relative_posix(root: Path, path: Path) -> str | None:
     """``path`` 相对 ``root`` 的 posix 写法；不在库内、或它就是库根本身，返回 ``None``。
 
-    与 :meth:`Library.album_label` 是同一套理由：``/var`` 与 ``/private/var`` 说的是同一个文件夹，
-    混着比就永远对不上（macOS 上 ``tmp_path`` 就在这条链上，测试尤其容易撞上）。库根自己返回
-    ``None`` 而不是 ``"."``：它在网格上不是一张卡片，「给它设封面」根本不该成立（ADR 0028 决策 2）。
+    与 :meth:`Library.album_label` 只是对「库根本身」的处置不同（那边写文件夹的名字，
+    这一边当成「没有」）：库根在网格上不是一张卡片，「给它设封面」根本不该成立
+    （ADR 0028 决策 2）。两者走的是同一个 :func:`gallery.core.paths.relative_posix`。
     """
-    try:
-        # 带记忆的那份（见 :func:`gallery.core.paths.resolved`）：``album_label`` 已经是
-        # 记忆版，而这一半没换 —— 同一个文件里并存两种写法，下一个人照抄错的那份。
-        relative = paths.resolved(path).relative_to(paths.resolved(root))
-    except (OSError, ValueError):
-        return None
-    return relative.as_posix() if relative.parts else None
+    return paths.relative_posix(root, path) or None
 
 
 def _paths_of(photos: Iterable[PhotoRef | Path]) -> list[Path]:

@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal, NamedTuple
 
+from gallery.core import paths
 from gallery.core.events.kinds import EVENT_KINDS
 from gallery.core.events.store import BINDINGS_TABLE, EVENTS_TABLE, SCHEMA_NAME
 from gallery.core.library.photos import FolderRef, PhotoRef, normalize_suffix
@@ -658,12 +659,10 @@ def _directory_prefix(path: Path, root: Path) -> str:
     **空串在这里只有一个含义**：这个目录就是库根本身。那种卡片不该由这一层列出来（列的是子相册），
     所以它匹配不到任何命中 —— 宁可让它消失，也不要让它变成一张「什么都命中」的通配卡片。
     """
-    try:
-        relative = Path(path).relative_to(Path(root))
-    except ValueError:
-        return str(path)
-    text = relative.as_posix()
-    return "" if text == "." else text
+    # ``resolve=False``：这一处的 ``root`` 与 ``album.path`` 都已经是库内解析过的路径
+    # （库根由 ``Library.open`` 解析，卡片由扫描器给出），再解析一趟只是白花。
+    relative = paths.relative_posix(root, path, resolve=False)
+    return str(path) if relative is None else relative
 
 
 def _clause(condition: SearchCondition) -> tuple[str, list[object]]:
