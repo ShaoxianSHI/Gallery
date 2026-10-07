@@ -18,7 +18,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QApplication, QFileDialog, QMenu  # noqa: E402
+from PySide6.QtCore import QTimer  # noqa: E402
+from PySide6.QtWidgets import QApplication, QFileDialog, QMenu, QMessageBox  # noqa: E402
 from waiting import wait_for_idle  # noqa: E402
 
 from gallery.core.library.config import prepare_library  # noqa: E402
@@ -174,3 +175,109 @@ def test_the_entry_is_greyed_without_an_event_store(
     window._update_event_actions()
 
     assert _submenu(_file_menu(window), "导入演出").isEnabled() is False
+
+
+# ---- 重复（ADR 0047：写库之前先问一句）-----------------------------------------
+
+
+def _two_shows(path: Path) -> Path:
+    return _write_xlsx(
+        path,
+        [
+            ["某演唱会", "某乐队", "某剧目", 46158.479166, "西安", "某场馆", 5],
+            ["某话剧", "", "某剧", 46159.0, "北京", "某剧院", 0],
+        ],
+    )
+
+
+def test_plan_counts_what_is_already_in_the_library(
+    qt_app: QApplication, window: MainWindow, tmp_path: Path
+) -> None:
+    """预演只读不写：重复按名称 + 日期 + 场馆数出来。"""
+    library = window._library
+    assert library is not None
+    table = _two_shows(tmp_path / "演出.xlsx")
+
+    assert library.plan_show_import(table).duplicates == 0
+    library.import_shows(library.plan_show_import(table), skip_duplicates=True)
+
+    assert library.plan_show_import(table).duplicates == 2
+
+
+def test_importing_again_can_skip_the_duplicates(
+    qt_app: QApplication, window: MainWindow, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """同一个文件导两次、选「跳过重复」：库里还是那两场。"""
+    library = window._library
+    assert library is not None
+    table = _two_shows(tmp_path / "演出.xlsx")
+    _choose(monkeypatch, table)
+    _import_action(window).trigger()
+    assert len(library.events_by_kind("show")) == 2
+
+    monkeypatch.setattr(window, "_ask_about_duplicate_shows", lambda plan: True)
+    _import_action(window).trigger()
+
+    assert len(library.events_by_kind("show")) == 2
+    assert "跳过 2 场已存在的" in window._banner.text()
+
+
+def test_importing_again_can_keep_everything(
+    qt_app: QApplication, window: MainWindow, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """选「全部导入」就照建不误 —— 同名同日同场馆确实可能是两场。"""
+    library = window._library
+    assert library is not None
+    table = _two_shows(tmp_path / "演出.xlsx")
+    _choose(monkeypatch, table)
+    _import_action(window).trigger()
+
+    monkeypatch.setattr(window, "_ask_about_duplicate_shows", lambda plan: False)
+    _import_action(window).trigger()
+
+    assert len(library.events_by_kind("show")) == 4
+    assert "已从「演迹」导入 2 场演出" in window._banner.text()
+    assert "跳过" not in window._banner.text()
+
+
+def test_cancelling_the_duplicate_prompt_changes_nothing(
+    qt_app: QApplication, window: MainWindow, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    library = window._library
+    assert library is not None
+    table = _two_shows(tmp_path / "演出.xlsx")
+    _choose(monkeypatch, table)
+    _import_action(window).trigger()
+
+    monkeypatch.setattr(window, "_ask_about_duplicate_shows", lambda plan: None)
+    _import_action(window).trigger()
+
+    assert len(library.events_by_kind("show")) == 2
+
+
+def test_the_duplicate_dialog_answers_with_the_clicked_button(
+    qt_app: QApplication, window: MainWindow, tmp_path: Path
+) -> None:
+    """真弹那个框、真点按钮：跳过 → True，全部导入 → False，取消 → None。"""
+    library = window._library
+    assert library is not None
+    table = _two_shows(tmp_path / "演出.xlsx")
+    library.import_shows(library.plan_show_import(table), skip_duplicates=True)
+    plan = library.plan_show_import(table)
+    assert plan.duplicates == 2
+
+    def click(label: str) -> None:
+        def act() -> None:
+            box = QApplication.activeModalWidget()
+            assert isinstance(box, QMessageBox)
+            button = next(candidate for candidate in box.buttons() if candidate.text() == label)
+            button.click()
+
+        QTimer.singleShot(0, act)
+
+    click("跳过重复")
+    assert window._ask_about_duplicate_shows(plan) is True
+    click("全部导入")
+    assert window._ask_about_duplicate_shows(plan) is False
+    click("取消")
+    assert window._ask_about_duplicate_shows(plan) is None

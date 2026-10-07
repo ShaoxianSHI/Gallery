@@ -26,6 +26,7 @@ from gallery.core.events.kinds import EVENT_KINDS, EventKind, kind_by_id
 from gallery.core.events.orphans import OrphanScan
 from gallery.core.events.prefill import EventPrefill, prefill_from_photos
 from gallery.core.events.store import Event
+from gallery.core.library.facade import ShowImportPlan
 from gallery.core.library.photos import GridEntry, GroupRef, PhotoRef
 from gallery.core.metadata.facets import FACET_EVENT
 from gallery.ui import banners
@@ -229,8 +230,9 @@ class EventFlowMixin:
     def import_shows_from_yanji(self) -> None:
         """挑一个「演迹」导出的表格，把里面的演出读进事件库（ADR 0047）。
 
-        **一次导入建一批事件**，它们都不进撤销栈（``create_event`` 本来就不进）—— 导入错了
-        就去事件清单里逐个删。表格不合格时说清是哪一种不合格，而不是留一个空结果。
+        **先预演一次**（只读、不写库）：发现表格里有与库里名称 + 日期 + 场馆都相同的演出时，
+        先问用户一句要跳过还是全部再建一遍，再真正写。**一次导入建一批事件**，它们都不进撤销栈
+        （``create_event`` 本来就不进）—— 导入错了就去事件清单里逐个删。
         """
         library = self._library
         if library is None or not library.events_available:
@@ -242,13 +244,53 @@ class EventFlowMixin:
         if not chosen:
             return
         try:
-            outcome = library.import_shows(Path(chosen))
+            plan = library.plan_show_import(Path(chosen))
+        except GalleryError as exc:
+            logger.info("读「演迹」表格失败：%s", exc.detail or exc.message)
+            self._show_banner(exc.message)
+            return
+        skip_duplicates = False
+        if plan.duplicates:
+            answer = self._ask_about_duplicate_shows(plan)
+            if answer is None:
+                return
+            skip_duplicates = answer
+        try:
+            outcome = library.import_shows(plan, skip_duplicates=skip_duplicates)
         except GalleryError as exc:
             logger.info("导入演出失败：%s", exc.detail or exc.message)
             self._show_banner(exc.message)
             return
         self._after_events_changed()
-        self._show_banner(banners.shows_imported_banner(outcome.created, len(outcome.skipped)))
+        self._show_banner(
+            banners.shows_imported_banner(outcome.created, outcome.duplicates, len(outcome.skipped))
+        )
+
+    def _ask_about_duplicate_shows(self, plan: ShowImportPlan) -> bool | None:
+        """发现疑似重复时问一句。**跳过重复** 返回 ``True``，**全部导入** 返回 ``False``，
+        取消返回 ``None``。
+
+        **默认按钮是「跳过重复」**：重复导入本来就不该多出东西，那是最接近幂等的选择；而
+        「全部导入」把决定权交回给用户 —— 同名同日同场馆确实可能是两场。
+        """
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("导入演出")
+        box.setText(
+            f"表格里有 {plan.total} 场演出，其中 {plan.duplicates} 场的名称、日期与场馆"
+            "与库里已有的相同。\n\n要跳过这些，还是全部再建一遍？"
+        )
+        skip = box.addButton("跳过重复", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("全部导入", QMessageBox.ButtonRole.DestructiveRole)
+        cancel = box.addButton("取消", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(skip)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is skip:
+            return True
+        if clicked is cancel:
+            return None
+        return False
 
     def _on_new_event_kind(self, action: QAction) -> None:
         """菜单栏那一条：选了哪个类型就摆那个类型的新建面板。

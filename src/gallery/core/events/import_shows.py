@@ -72,6 +72,16 @@ class ShowImport:
     skipped: tuple[str, ...] = ()
 
 
+def show_identity(title: str, started_on: str, venue: str) -> tuple[str, str, str]:
+    """判重键：**名称 + 日期 + 场馆**（各自去掉首尾空白）。
+
+    导出的行里没有一个稳定唯一的 id，判重只能靠内容。这三样一起相同基本就是同一场
+    （同名同日同场馆的两场演出几乎不存在），代价是极端情况下真有两场会被当成一场 ——
+    所以界面会在写库之前把这件事问一句（ADR 0047）。
+    """
+    return (title.strip(), started_on.strip(), venue.strip())
+
+
 def read_show_export(path: Path) -> ShowImport:
     """读一张「演迹」导出的 ``.xlsx``，返回里面那批演出草稿。
 
@@ -236,4 +246,4 @@ def _find_header(grid: list[tuple[int, dict[str, str]]]) -> tuple[int, dict[str,
     return None
 
 
-__all__ = ["ShowImport", "read_show_export"]
+__all__ = ["ShowImport", "read_show_export", "show_identity"]

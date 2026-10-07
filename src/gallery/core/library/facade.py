@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Final
 from gallery.core import paths
 from gallery.core.errors import ConfigError, LibraryNotAccessibleError
 from gallery.core.events import store as events
-from gallery.core.events.import_shows import read_show_export
+from gallery.core.events.import_shows import read_show_export, show_identity
 from gallery.core.events.kinds import SHOW
 from gallery.core.events.orphans import OrphanScan, find_orphans, forget_orphans
 from gallery.core.events.store import (
@@ -122,13 +122,35 @@ class MetadataWriteOutcome:
 
 
 @dataclass(frozen=True, slots=True)
+class ShowImportPlan:
+    """一次导入的**预演**：表格里读出来的草稿，以及其中几场与库里已有的重复。
+
+    ``duplicates`` 只按名称 + 日期 + 场馆比（见
+    :func:`~gallery.core.events.import_shows.show_identity`），用来在写库之前问用户一句。
+    真正写的时候会重算一遍 —— 用户可能选「全部导入」。
+    """
+
+    drafts: tuple[EventDraft, ...]
+    duplicates: int = 0
+    #: 表格里没被当成演出的行，一行一句中文（含行号与原因）。
+    skipped: tuple[str, ...] = ()
+
+    @property
+    def total(self) -> int:
+        """表格里一共读出了多少场。"""
+        return len(self.drafts)
+
+
+@dataclass(frozen=True, slots=True)
 class ShowImportOutcome:
     """:meth:`Library.import_shows` 的结果。
 
-    ``skipped`` 是一行一句、可以直接念给用户听的跳过说明（含行号与原因）。
+    ``duplicates`` 是这次因为「跳过重复」而没有建的场数；``skipped`` 是一行一句、可以直接
+    念给用户听的跳过说明（含行号与原因）。
     """
 
     created: int
+    duplicates: int = 0
     skipped: tuple[str, ...] = ()
 
 
@@ -594,21 +616,49 @@ class Library:
         """删一个事件，连带它那些绑定（返回值里带着，撤销要靠它放回去）。"""
         return self.events.delete(event_id)
 
-    def import_shows(self, path: Path) -> ShowImportOutcome:
-        """从「演迹」导出的 ``.xlsx`` 里把演出读进来（ADR 0047）。
+    def plan_show_import(self, path: Path) -> ShowImportPlan:
+        """读一张「演迹」导出的 ``.xlsx``，**先不写库**，只算出会建哪些、其中几场是重复的。
 
-        每一行建一条演出事件，走的是 :meth:`create_event`，于是 journal、缓存作废与手工新建
-        完全一致。**一个用户的文件都不碰**（红线 1），只写 Gallery 自己的 ``events.db``；
-        新建事件本来就不进 ⌘Z 那一摞，一次导入因此也不进（导入错了去事件清单里逐个删）。
+        重复按名称 + 日期 + 场馆判（见 :func:`~gallery.core.events.import_shows.show_identity`）。
+        界面拿这个数字决定要不要问用户一句，然后把同一个 :class:`ShowImportPlan` 交给
+        :meth:`import_shows`。
 
         :raises ShowImportError: 文件读不出来，或者不是「演迹」的演出列表。
         """
         parsed = read_show_export(Path(path))
+        existing = self._show_identities()
+        duplicates = sum(1 for draft in parsed.drafts if _draft_identity(draft) in existing)
+        return ShowImportPlan(drafts=parsed.drafts, duplicates=duplicates, skipped=parsed.skipped)
+
+    def import_shows(
+        self, plan: ShowImportPlan, *, skip_duplicates: bool = False
+    ) -> ShowImportOutcome:
+        """按 :meth:`plan_show_import` 的预演把演出建进库里（ADR 0047）。
+
+        ``skip_duplicates`` 为真时，名称 + 日期 + 场馆与库里已有的相同的那几场不建。每一行建
+        一条演出事件，走的是 :meth:`create_event`，于是 journal、缓存作废与手工新建完全一致。
+        **一个用户的文件都不碰**（红线 1），只写 Gallery 自己的 ``events.db``；新建事件本来就
+        不进 ⌘Z 那一摞，一次导入因此也不进（导入错了去事件清单里逐个删）。
+        """
+        existing = self._show_identities()
         created = 0
-        for draft in parsed.drafts:
+        duplicates = 0
+        for draft in plan.drafts:
+            identity = _draft_identity(draft)
+            if skip_duplicates and identity in existing:
+                duplicates += 1
+                continue
             self.create_event(SHOW.id, draft)
             created += 1
-        return ShowImportOutcome(created=created, skipped=parsed.skipped)
+            existing.add(identity)
+        return ShowImportOutcome(created=created, duplicates=duplicates, skipped=plan.skipped)
+
+    def _show_identities(self) -> set[tuple[str, str, str]]:
+        """库里已有演出的判重键集合。"""
+        return {
+            show_identity(event.text("title"), event.text("started_on"), event.text("venue"))
+            for event in self.events_by_kind(SHOW.id)
+        }
 
     def bind_photos(self, photos: Iterable[PhotoRef | Path], event_id: int) -> int:
         """把照片记进这个事件，返回新记进去几张。
@@ -1060,6 +1110,11 @@ def _relative_posix(root: Path, path: Path) -> str | None:
     return paths.relative_posix(root, path) or None
 
 
+def _draft_identity(draft: EventDraft) -> tuple[str, str, str]:
+    """一份演出草稿的判重键（与 :meth:`Library._show_identities` 同一套字段）。"""
+    return show_identity(draft.text("title"), draft.text("started_on"), draft.text("venue"))
+
+
 def _paths_of(photos: Iterable[PhotoRef | Path]) -> list[Path]:
     """把「照片引用或裸路径」一律落成路径。
 
@@ -1069,4 +1124,11 @@ def _paths_of(photos: Iterable[PhotoRef | Path]) -> list[Path]:
     return [photo.path if isinstance(photo, PhotoRef) else Path(photo) for photo in photos]
 
 
-__all__ = ["PLACE_PASS_BATCH", "Library", "MetadataWriteOutcome", "PlacePass"]
+__all__ = [
+    "PLACE_PASS_BATCH",
+    "Library",
+    "MetadataWriteOutcome",
+    "PlacePass",
+    "ShowImportOutcome",
+    "ShowImportPlan",
+]
