@@ -54,6 +54,11 @@ class MenuActions:
     copy: QAction
     #: 「拷贝路径」⇧⌘C。
     copy_path: QAction
+    #: 「复制」⌘D（ADR 0044）：在**原位置**造一份副本，``一张.jpg`` → ``一张的副本.jpg``。
+    #: 与「拷贝」的差别是那一份**落在磁盘上**（不进剪贴板），与「复制到相册」的差别是
+    #: **不用挑目标相册**。**分组卡片那张菜单是 ``None``**（那里没有「这一项」可言，
+    #: 但 ⌘D 快捷键仍然对选区生效）。
+    duplicate: QAction | None
     #: 「复制到相册」子菜单（ADR 0019）。**此刻没有可选的相册就是 ``None``**，
     #: 菜单里干脆不出现 —— 空子菜单点开是个空框，不如不出现。
     copy_to_album: QMenu | None
@@ -160,14 +165,16 @@ def build_album_menu(actions: MenuActions, *, multiple: bool) -> QMenu:
 def build_group_menu(actions: MenuActions) -> QMenu:
     """分组卡片：打开它、把**它代表的那批照片**交出去、复制分组条件（ADR 0020）。
 
-    中间那一段与「多选照片」逐字相同；「重命名」「粘贴」不出现，第四段由「复制分组条件」占着。
+    中间那一段与「多选照片」逐字相同；「重命名」「粘贴」「复制」不出现，第四段由「复制分组条件」
+    占着。**⌘D 仍然对选中的卡片生效**（摊平组员一起复制，与卡片上的「移到废纸篓」同一套），
+    只是右键菜单里不摆那一行 —— 卡片不是一个文件，「造一份卡片」这句话说不通。
     **事件分组卡片**额外多两行（ADR 0043 决策 8）：那一组就是某个事件，于是「改个名」与
     「把某张踢出去」在卡片上直接做得到，不必退回照片逐张右键。
     """
     menu = ShortcutColumnMenu()
     _add_look_group(menu, actions, multiple=False)
     menu.addSeparator()
-    _add_copy_group(menu, actions)
+    _add_copy_group(menu, replace(actions, duplicate=None))
     menu.addSeparator()
     _add_write_group(menu, actions, multiple=False, rename=False)
     menu.addSeparator()
@@ -262,12 +269,17 @@ def _add_look_group(
 def _add_copy_group(
     menu: ShortcutColumnMenu, actions: MenuActions, *, album_targets: bool = True
 ) -> None:
-    """第二组「拿进拿出」：拷贝 · 拷贝路径 · 复制到相册 · 移动到相册 · 粘贴。
+    """第二组「拿进拿出」：拷贝 · 拷贝路径 · **复制** · 复制到相册 · 移动到相册 · 粘贴。
+
+    「复制」⌘D（ADR 0044）紧跟在「拷贝路径」下面，与两条「拷贝」同族 —— 它是**多一份出来**
+    （第三行），而「重命名」「移到废纸篓」动的是既有那一份（第三组），两道分隔线仍然分得清。
 
     「粘贴」粘的是剪贴板，粘不了时不出现；``album_targets=False`` 是相册菜单（ADR 0019）。
     """
     menu.addAction(actions.copy)
     menu.addAction(actions.copy_path)
+    if actions.duplicate is not None:
+        menu.addAction(actions.duplicate)
     if album_targets:
         if actions.copy_to_album is not None:
             menu.addMenu(actions.copy_to_album)

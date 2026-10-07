@@ -1,8 +1,9 @@
 """界面上**会动用户文件**的那些入口，全在这儿（红线 1）。
 
-界面上所有调 ``rename_entry`` / ``move_to_trash`` / ``copy_into`` / ``undo_last_write`` 的地方都
-只许出现在这个文件里（守护测试按此钉住）。**它不碰文件**：每个写操作都走 ``self._library`` 上的
-方法 —— 界面决定**时机**，``core`` 保证**后果**（必记 journal、可 ⌘Z 撤销）。
+界面上所有调 ``rename_entry`` / ``move_to_trash`` / ``copy_into`` / ``duplicate`` /
+``undo_last_write`` 的地方都只许出现在这个文件里（守护测试按此钉住）。**它不碰文件**：每个写操作
+都走 ``self._library`` 上的方法 —— 界面决定**时机**，``core`` 保证**后果**（必记 journal、
+可 ⌘Z 撤销）。
 """
 
 from __future__ import annotations
@@ -216,6 +217,51 @@ class WriteOpsMixin:
         self._write_job = None
         logger.info("粘贴失败：%s", message)
         self._show_banner(f"没能粘贴：{message.rstrip('。')}")
+
+    def duplicate_selected(self) -> None:
+        """「复制」⌘D：把选中的每一项**在原位置**造一份副本（ADR 0044）。
+
+        目标目录不用挑 —— 每项目标就是它自己的父目录，所以选区跨了几个相册都能一次做完。
+        选中的分组卡片摊平成组员一起复制，与卡片上的「移到废纸篓」同一套语义。
+
+        **新副本不进撤销栈**（撤销一次复制就是删文件，红线 1），横幅因此不承诺 ⌘Z；
+        **不选中新副本** —— 新文件由监听器（ADR 0013）自己上屏，而那要等它扫到。
+        """
+        library = self._library
+        if library is None:
+            return
+        sources = self._selected_paths()
+        if not sources:
+            self._show_banner(NOTHING_SELECTED)
+            return
+        if self._write_job is not None:
+            # 与粘贴 / 复制到相册 / 移动到相册共用这一道闸门（ADR 0019 决策 6）。
+            self._show_banner("上一次操作还没结束。")
+            return
+
+        def work(context: TaskContext) -> object:
+            return library.duplicate(sources, should_cancel=context.is_cancelled)
+
+        self._show_banner(f"正在复制 {len(sources)} 份副本…")
+        self._write_job = self._runner.submit(
+            work,
+            on_result=self._on_duplicate_done,
+            on_error=self._on_duplicate_failed,
+        )
+
+    def _on_duplicate_done(self, payload: object) -> None:
+        self._write_job = None
+        if isinstance(payload, PasteResult):
+            # 判据与粘贴同一套（ADR 0029 决策 3）：失败项与「没记下账」都要留在屏幕上。
+            self._show_banner(
+                banners.duplicate_banner(payload),
+                auto_hide=payload.journaled and not payload.failures,
+            )
+
+    def _on_duplicate_failed(self, message: str) -> None:
+        self._write_job = None
+        logger.info("复制副本失败：%s", message)
+        self._show_banner(f"没能复制：{message.rstrip('。')}")
 
     def create_album(self) -> None:
         """「新建相册」⇧⌘N：在当前这一层建一个空相册，**建完立刻进行内重命名**。

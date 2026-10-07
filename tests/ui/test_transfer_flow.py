@@ -167,10 +167,10 @@ def _album_item(menu: QMenu, label: str):
 
 
 def test_both_sit_under_copy_path(qt_app: QApplication, window: MainWindow) -> None:
-    """紧挨在「拷贝路径」正下方（ADR 0019）。
+    """紧挨在「拷贝路径」正下方（ADR 0019），而**「复制」⌘D 插在它们前面**（ADR 0044）。
 
     下面**不再是**「粘贴」—— 按在照片上不摆那一条了（ADR 0018 决策 7），这一张菜单里
-    「把东西放到别处去」只剩这两条。
+    「把东西放到别处去」只剩「复制」与这两条。
     """
     _enter(qt_app, window, window._library.root / "京都")
     row = _select_photo(window, "一张.jpg")
@@ -183,7 +183,8 @@ def test_both_sit_under_copy_path(qt_app: QApplication, window: MainWindow) -> N
     assert menu is not None
     labels = _texts(menu)
     assert labels.index("拷贝") < labels.index("拷贝路径")
-    assert labels.index("复制到相册") == labels.index("拷贝路径") + 1
+    assert labels.index("复制") == labels.index("拷贝路径") + 1
+    assert labels.index("复制到相册") == labels.index("复制") + 1
     assert labels.index("移动到相册") == labels.index("复制到相册") + 1
     assert "粘贴" not in labels
 
@@ -434,16 +435,25 @@ def test_nothing_is_overwritten_in_the_target(qt_app: QApplication, window: Main
     assert "改名为「一张 2.jpg」" in window._banner.text()
 
 
-def test_moving_into_the_album_it_is_already_in(qt_app: QApplication, window: MainWindow) -> None:
-    """挑了它已经在的那个相册：什么都不做，如实说清为什么。"""
+def test_moving_into_the_album_it_is_already_in_makes_a_copy(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """挑了它已经在的那个相册：**复制一份**，横幅说清复制出来的是哪一个（ADR 0044）。
+
+    源文件留在原地 —— 「移动」到这个形状里根本搬不动任何东西，早先那句「什么都不做」
+    是把用户按下的那个键当成了没按。
+    """
     _enter(qt_app, window, window._library.root / "京都")
     _select_photo(window, "一张.jpg")
 
     window._transfer_selected(window._library.root / "京都", move=True)
 
     assert wait_until(qt_app, lambda: window._write_job is None)
-    assert (window._library.root / "京都" / "一张.jpg").exists()
-    assert "本来就在「京都」里" in window._banner.text()
+    root = window._library.root
+    assert (root / "京都" / "一张.jpg").exists(), "源必须还在原地"
+    assert (root / "京都" / "一张的副本.jpg").exists()
+    assert "已复制一份（一张的副本.jpg）" in window._banner.text()
+    assert "⌘Z" not in window._banner.text(), "没有东西进过撤销栈，不许许这个诺"
 
 
 def test_a_group_card_moves_the_photos_inside(qt_app: QApplication, window: MainWindow) -> None:

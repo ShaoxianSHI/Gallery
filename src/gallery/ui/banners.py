@@ -20,10 +20,8 @@ from gallery.core.metadata.journal import (
     ACTION_RENAME,
 )
 from gallery.core.metadata.paste import PastedFile, PasteResult
-from gallery.core.metadata.paste import Skipped as PasteSkipped
 from gallery.core.metadata.rename import RenameResult
 from gallery.core.metadata.transfer import MovedItem, MoveResult
-from gallery.core.metadata.transfer import Skipped as MoveSkipped
 from gallery.core.metadata.trash import TrashResult
 from gallery.core.metadata.undo import UndoResult
 
@@ -101,15 +99,17 @@ def event_undo_banner(result: UndoResult, kind_label: str) -> str:
 
 
 def paste_banner(result: PasteResult, target_name: str) -> str:
-    """粘贴之后的那行提示：三件事都要说清 —— 粘了哪些、跳过了哪些、为什么没成。
+    """粘贴之后的那行提示：粘了哪些、为什么没成。
 
     **改了名的要单独点出来**：用户要求的是「不覆盖」，而系统给出的新名字得让他看见。话怎么
     拼在 :func:`_into_album_parts` 里，与「复制到相册 / 移动到相册」共用同一份。
+
+    **「本来就在这一层的那几项」不再是空操作**（ADR 0044），它们混在 ``pasted`` 里按
+    「一张的副本.jpg」报出来 —— 用户要的是「做了一件事」，横幅说「什么都没做」就是撒谎。
     """
     return _banner_line(
         _into_album_parts(
             result.pasted,
-            result.skipped,
             result.failures,
             journaled=result.journaled,
             target_name=target_name,
@@ -119,31 +119,77 @@ def paste_banner(result: PasteResult, target_name: str) -> str:
     )
 
 
+def duplicate_banner(result: PasteResult) -> str:
+    """「复制」⌘D 之后的那行提示（ADR 0044）。
+
+    **不套 :func:`_into_album_parts`**：那句话的骨架是「到「某个相册」」，而这里压根没有目标相册
+    —— 每一项的目标就是它自己所在的那一层，有几个不同的父目录就得说几个名字，凑成一句反而更绕。
+
+    单项时把新名字点出来（那一项往往就是用户刚点的那个），多项只报个数。
+
+    **这一句不承诺 ⌘Z**：撤销一次复制就是删文件，红线 1。
+    """
+    parts: list[str] = []
+    if result.pasted:
+        head = f"已复制 {len(result.pasted)} 份副本"
+        if len(result.pasted) == 1:
+            head += f"（{result.pasted[0].created.name}）"
+        parts.append(head)
+    if result.failures:
+        parts.append(_failure_clause(result.failures, fail_verb="复制"))
+    if not result.journaled:
+        parts.append("没能记下操作日志")
+    return _banner_line(parts)
+
+
 def transfer_banner(result: MoveResult | PasteResult, target_name: str, verb: str) -> str:
     """「复制到相册 / 移动到相册」之后的那行提示（ADR 0019）。
 
     与 :func:`paste_banner` 一套说法（含「改了名的要单独点出来」）。移动比粘贴多一句
     「⌘Z 可以撤销」—— 这是用户敢用它的前提（红线 1，见 ADR 0019 决策 3），也是两条路唯一
     刻意不同的地方。
+
+    **那句话只在真的移走了东西时才说**（ADR 0044）：只复制的那一批没有任何东西进过撤销栈，
+    说「⌘Z 可以撤销」就是许了一个不存在的承诺。
     """
     moved = result.moved if isinstance(result, MoveResult) else result.pasted
     parts = _into_album_parts(
         moved,
-        result.skipped,
         result.failures,
         journaled=result.journaled,
         target_name=target_name,
         done_verb=verb,
         fail_verb=verb,
     )
-    if isinstance(result, MoveResult) and result.journaled:
+    copied = result.copied if isinstance(result, MoveResult) else ()
+    if copied:
+        parts.append(_stayed_put_clause(copied, target_name))
+    if isinstance(result, MoveResult) and result.moved and result.journaled:
         parts.append("⌘Z 可以撤销")
     return _banner_line(parts)
 
 
+def _stayed_put_clause(copied: Sequence[PastedFile], target_name: str) -> str:
+    """「移动到相册」而目标正是它所在的那一层：不说跳过，说复制了一份（ADR 0044）。"""
+    if len(copied) == 1:
+        item = copied[0]
+        return f"{item.source.name} 本来就在「{target_name}」里，已复制一份（{item.created.name}）"
+    return f"另有 {len(copied)} 项本来就在「{target_name}」里，各复制了一份"
+
+
+def _failure_clause(failures: Sequence[Failure], *, fail_verb: str) -> str:
+    """没成的那些：只报第一条（更多就带上条数）—— 一行横幅放不下更多，而失败原因往往同源。
+
+    一律读 :attr:`Failure.name`：直接读它才不必赌 ``source`` 不是 ``None``（分组卡片那一种就
+    没有路径）。
+    """
+    first = failures[0]
+    more = f"，共 {len(failures)} 项" if len(failures) > 1 else ""
+    return f"{first.name} 没{fail_verb}成{more}：{first.message.rstrip('。')}"
+
+
 def _into_album_parts(
     moved: Sequence[PastedFile | MovedItem],
-    skipped: Sequence[PasteSkipped | MoveSkipped],
     failures: Sequence[Failure],
     *,
     journaled: bool,
@@ -155,9 +201,8 @@ def _into_album_parts(
 
     粘贴（ADR 0018）与复制 / 移动到相册（ADR 0019）说的是同一件事，于是按同一套说法报出来；
     两处刻意不同的地方由参数带进来 —— ``done_verb`` / ``fail_verb`` 分成两个，因为粘贴那句是
-    「已**粘贴** 3 项」而失败那句是「没**粘**成」。失败项一律读 :attr:`Failure.name`：直接读它
-    才不必赌 ``source`` 不是 ``None``（分组卡片那一种就没有路径）。返回**分段**而不是整句，是
-    为了让调用方能在后面追加自己那一句（移动的「⌘Z 可以撤销」）。
+    「已**粘贴** 3 项」而失败那句是「没**粘**成」。返回**分段**而不是整句，是为了让调用方能
+    在后面追加自己那一句（移动的「⌘Z 可以撤销」、副本的那句「本来就在这里」）。
     """
     parts: list[str] = []
     if moved:
@@ -168,12 +213,8 @@ def _into_album_parts(
         elif renamed:
             head += f"（其中 {len(renamed)} 项改了名，免得覆盖已有的）"
         parts.append(head)
-    if skipped:
-        parts.append(f"{len(skipped)} 项本来就在「{target_name}」里")
     if failures:
-        first = failures[0]
-        more = f"，共 {len(failures)} 项" if len(failures) > 1 else ""
-        parts.append(f"{first.name} 没{fail_verb}成{more}：{first.message.rstrip('。')}")
+        parts.append(_failure_clause(failures, fail_verb=fail_verb))
     if not journaled:
         parts.append("没能记下操作日志")
     return parts
@@ -319,6 +360,7 @@ __all__ = [
     "album_cover_banner",
     "album_cover_cleared_banner",
     "album_name",
+    "duplicate_banner",
     "event_created_banner",
     "event_deleted_banner",
     "event_undo_banner",

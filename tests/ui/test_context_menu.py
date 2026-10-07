@@ -334,7 +334,10 @@ def test_every_menu_is_split_into_the_same_four_groups(
     group = _context_at(window, 0)
 
     look = ["在访达中显示"]
-    copy = ["拷贝", "拷贝路径", "复制到相册", "移动到相册"]
+    # 「复制」⌘D 紧跟在「拷贝路径」下面（ADR 0044），而**分组卡片那张没有它** ——
+    # 卡片不是一个文件，「造一份卡片」这句话说不通（⌘D 快捷键仍然对选区生效）。
+    copy = ["拷贝", "拷贝路径", "复制", "复制到相册", "移动到相册"]
+    group_copy = ["拷贝", "拷贝路径", "复制到相册", "移动到相册"]
     write = ["移到废纸篓"]
     expected = {
         "照片": [
@@ -351,8 +354,8 @@ def test_every_menu_is_split_into_the_same_four_groups(
             ["重命名…", "编辑元数据…", *write],
             ["记录为", "显示元数据信息", "复制元数据"],
         ],
-        "相册": [["打开", *look], ["拷贝", "拷贝路径", "粘贴"], ["重命名…", *write]],
-        "分组卡片": [["打开", *look], copy, write, ["复制分组条件"]],
+        "相册": [["打开", *look], ["拷贝", "拷贝路径", "复制", "粘贴"], ["重命名…", *write]],
+        "分组卡片": [["打开", *look], group_copy, write, ["复制分组条件"]],
     }
     menus = {
         "照片": photo,
@@ -391,6 +394,7 @@ def test_photo_menu_items(qt_app: QApplication, window: MainWindow) -> None:
         "",
         "拷贝",
         "拷贝路径",
+        "复制",
         "复制到相册",
         "移动到相册",
         "",
@@ -456,6 +460,7 @@ def test_album_menu_has_no_metadata_items(qt_app: QApplication, window: MainWind
         "",
         "拷贝",
         "拷贝路径",
+        "复制",
         "",
         "重命名…",
         "移到废纸篓",
@@ -486,7 +491,8 @@ def test_group_menu_acts_on_the_photos_inside(qt_app: QApplication, window: Main
     """分组卡片：中间那一段与「多选照片」**逐字相同**（ADR 0020）。
 
     摊平之后就是一组照片，所以那几条一条都不用改自己的实现。**仍然没有**「重命名」
-    （改的是卡片，ADR 0004）与「粘贴」（它作用的是剪贴板，与这一组无关）。
+    （改的是卡片，ADR 0004）、「粘贴」（它作用的是剪贴板，与这一组无关）与**「复制」**
+    （卡片不是一个文件，「造一份卡片」说不通 —— ADR 0044；但 ⌘D 仍然对选区生效）。
     「移到废纸篓」**前面单独隔一道**：它是这张菜单里唯一会动文件的一条。
     """
     photo = PhotoRef(path=window._library.root / "京都" / PHOTO_NAMES[0], size=1, mtime_ns=1)
@@ -518,7 +524,8 @@ def test_multi_selection_hides_single_item_actions(
 ) -> None:
     """多选：只作用在「某一个东西」上的命令全部藏起来（ADR 0004 与菜单设计）。
 
-    「复制到相册」「移动到相册」**多选时仍然留着**（ADR 0019）。**藏掉的只是那一行，
+    「复制」「复制到相册」「移动到相册」**多选时仍然留着**（一次造一批副本 / 一次搬一批，
+    正是它们最自然的用法；ADR 0019 与 ADR 0044）。**藏掉的只是那一行，
     组块与分隔线原样留着**（ADR 0023 决策 2），用户在单选与多选之间切换时看到的分隔线不跳。
     唯独**第四组里那两条整组消失**：「显示元数据信息」与「复制元数据」讲的都是**这一张**照片 ——
     同一段里不该用两套判据（只藏后者、把前者留着）。
@@ -537,6 +544,7 @@ def test_multi_selection_hides_single_item_actions(
         "",
         "拷贝",
         "拷贝路径",
+        "复制",
         "复制到相册",
         "移动到相册",
         "",
@@ -1148,6 +1156,7 @@ def test_detail_menu_is_the_photo_menu_with_close_on_top(
         "",
         "拷贝",
         "拷贝路径",
+        "复制",
         "复制到相册",
         "移动到相册",
         "",

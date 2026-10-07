@@ -499,17 +499,24 @@ def test_pastes_into_the_folder_being_browsed(
     assert message == "已粘贴 1 项到「奈良」。"
 
 
-def test_pasting_in_the_same_folder_does_nothing(
+def test_pasting_in_the_same_folder_makes_a_copy(
     qt_app: QApplication, window: MainWindow, root: Path
 ) -> None:
-    """同一个相册里 ⌘C 再 ⌘V 什么也不做（用户明确要求），横幅要说清为什么。"""
+    """同一个相册里 ⌘C 再 ⌘V **造一份副本**，横幅要说出它造出来的是哪一个（ADR 0044）。
+
+    早先这里是「什么都不做」+「1 项本来就在「京都」里」：用户按了 ⌘V 却什么都没发生。
+    """
     desktop.copy_files_to_clipboard([root / "京都" / "一张.jpg"])
     _enter(qt_app, window, root / "京都")
 
     message = _paste_and_wait(qt_app, window)
 
-    assert sorted(p.name for p in (root / "京都").iterdir()) == ["一张.jpg", "另一张.jpg"]
-    assert message == "1 项本来就在「京都」里。"
+    assert sorted(p.name for p in (root / "京都").iterdir()) == [
+        "一张.jpg",
+        "一张的副本.jpg",
+        "另一张.jpg",
+    ]
+    assert message == "已粘贴 1 项到「京都」（「一张.jpg」改名为「一张的副本.jpg」）。"
 
 
 def test_a_group_inside_one_album_pastes_into_that_album(
@@ -538,10 +545,10 @@ def test_a_group_inside_one_album_pastes_into_that_album(
     assert message == "已粘贴 1 项到「京都」。"
 
 
-def test_pasting_a_photo_of_that_same_album_from_a_group_does_nothing(
+def test_pasting_a_photo_of_that_same_album_from_a_group_makes_a_copy(
     qt_app: QApplication, window: MainWindow, root: Path
 ) -> None:
-    """分组指向的相册，就是「已经在同一目录」判据里的那个目录。"""
+    """分组指向的相册，就是「已经在同一目录」判据里的那个目录 —— 所以这里也造副本（ADR 0044）。"""
     photo = PhotoRef.from_path(root / "京都" / "一张.jpg")
     group = GroupRef(facet="camera", key="canon", label="Canon", photos=(photo,))
     window._model.reorder([group])
@@ -551,8 +558,8 @@ def test_pasting_a_photo_of_that_same_album_from_a_group_does_nothing(
 
     message = _paste_and_wait(qt_app, window)
 
-    assert sorted(p.name for p in (root / "京都").iterdir()) == ["一张.jpg", "另一张.jpg"]
-    assert message == "1 项本来就在「京都」里。"
+    assert (root / "京都" / "另一张的副本.jpg").is_file()
+    assert message == "已粘贴 1 项到「京都」（「另一张.jpg」改名为「另一张的副本.jpg」）。"
 
 
 def test_a_group_spanning_albums_has_nowhere_to_paste(

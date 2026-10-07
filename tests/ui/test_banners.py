@@ -19,7 +19,7 @@ from gallery.core.library.photos import FolderRef, PhotoRef
 from gallery.core.metadata.failures import Failure
 from gallery.core.metadata.journal import ACTION_METADATA, ACTION_MOVE, ACTION_RENAME
 from gallery.core.metadata.metadata_edit import MetadataPlan
-from gallery.core.metadata.paste import PastedFile, PasteResult, Skipped
+from gallery.core.metadata.paste import PastedFile, PasteResult
 from gallery.core.metadata.rename import RenameResult
 from gallery.core.metadata.transfer import MovedItem, MoveResult
 from gallery.core.metadata.trash import TrashResult
@@ -94,14 +94,96 @@ def test_a_paste_that_renamed_a_collision_says_so(tmp_path: Path) -> None:
     assert "改名为「a 2.jpg」" in text
 
 
-def test_a_paste_that_skipped_everything_does_not_say_it_succeeded(tmp_path: Path) -> None:
-    """全被跳过（本来就在那里）不是成功，横幅不能说「已粘贴」。"""
-    result = PasteResult(skipped=(Skipped(source=tmp_path / "a.jpg", message="已经在那里了。"),))
+def test_a_paste_where_everything_already_was_still_reports_what_it_made(
+    tmp_path: Path,
+) -> None:
+    """「本来就在这一层」不再是空操作（ADR 0044），所以横幅说的是**造出来的那几份**。
+
+    早先这一形状是「全被跳过」，横幅得压着不说「已粘贴」；现在没有跳过这回事了 ——
+    用户按了 ⌘V 就该看到「做了什么」，而不是「什么都没做」。
+    """
+    result = PasteResult(
+        pasted=(PastedFile(source=tmp_path / "a.jpg", created=tmp_path / "a的副本.jpg"),)
+    )
 
     text = banners.paste_banner(result, "京都")
 
-    assert "已粘贴" not in text
-    assert "本来就在" in text
+    assert "已粘贴" in text
+    assert "改名为「a的副本.jpg」" in text
+
+
+def test_the_duplicate_banner_names_the_copy_it_made(tmp_path: Path) -> None:
+    """单项时把新名字点出来：用户刚点的就是那一项，看不见新名字等于没做完。"""
+    result = PasteResult(
+        pasted=(PastedFile(source=tmp_path / "a.jpg", created=tmp_path / "a的副本.jpg"),)
+    )
+
+    text = banners.duplicate_banner(result)
+
+    assert text == "已复制 1 份副本（a的副本.jpg）。"
+
+
+def test_the_duplicate_banner_counts_when_there_are_many(tmp_path: Path) -> None:
+    """多项只报个数 —— 逐个列出来一行横幅放不下，而失败项已经由那句带出来了。"""
+    result = PasteResult(
+        pasted=(
+            PastedFile(source=tmp_path / "a.jpg", created=tmp_path / "a的副本.jpg"),
+            PastedFile(source=tmp_path / "b.jpg", created=tmp_path / "b的副本.jpg"),
+        )
+    )
+
+    text = banners.duplicate_banner(result)
+
+    assert text == "已复制 2 份副本。"
+
+
+def test_the_duplicate_banner_never_promises_undo(tmp_path: Path) -> None:
+    """**撤销一次复制就是删文件**（红线 1），所以这句话不许出现「⌘Z 可以撤销」。"""
+    result = PasteResult(
+        pasted=(PastedFile(source=tmp_path / "a.jpg", created=tmp_path / "a的副本.jpg"),)
+    )
+
+    assert "⌘Z" not in banners.duplicate_banner(result)
+
+
+def test_the_duplicate_banner_says_about_the_journal_when_it_could_not_write_it(
+    tmp_path: Path,
+) -> None:
+    """记不上账不等于没做成，但用户得知道 ⌘Z 这条路在这里不存在（红线 4）。"""
+    result = PasteResult(
+        pasted=(PastedFile(source=tmp_path / "a.jpg", created=tmp_path / "a的副本.jpg"),),
+        journaled=False,
+    )
+
+    assert "没能记下操作日志" in banners.duplicate_banner(result)
+
+
+def test_a_move_that_only_copied_does_not_offer_undo(tmp_path: Path) -> None:
+    """只复制的那一批**没有任何东西进过撤销栈**，说「⌘Z 可以撤销」是许了个不存在的承诺
+    （ADR 0044）。这一条量的是「⌘Z 撤不回副本」这件事必须被说出来，而不是被藏起来。
+    """
+    result = MoveResult(
+        copied=(PastedFile(source=tmp_path / "a.jpg", created=tmp_path / "a的副本.jpg"),)
+    )
+
+    text = banners.transfer_banner(result, "京都", "移动")
+
+    assert "⌘Z" not in text
+    assert "已复制一份" in text
+
+
+def test_a_move_that_did_both_still_offers_undo(tmp_path: Path) -> None:
+    """真的移走了东西时那句话照旧要说 —— 那是用户敢用「移动」的前提（ADR 0019 决策 3）。"""
+    result = MoveResult(
+        moved=(MovedItem(source=tmp_path / "b.jpg", created=tmp_path / "京都" / "b.jpg"),),
+        copied=(PastedFile(source=tmp_path / "a.jpg", created=tmp_path / "a的副本.jpg"),),
+    )
+
+    text = banners.transfer_banner(result, "京都", "移动")
+
+    assert "⌘Z 可以撤销" in text
+    assert "已移动 1 项" in text
+    assert "已复制一份" in text
 
 
 def test_the_trash_banner_knows_when_an_album_went_as_a_whole(tmp_path: Path) -> None:

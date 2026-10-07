@@ -577,6 +577,14 @@ class MainWindow(
         self._copy_path_action.setShortcut(QKeySequence("Ctrl+Shift+C"))
         self._copy_path_action.triggered.connect(self.copy_selected_paths)
 
+        # ⌘D：在**原位置**造一份副本（ADR 0044），与访达的「复制项目」同一个键。
+        # **不进撤销栈** —— 撤销一次复制就是删文件（红线 1），所以横幅也不承诺 ⌘Z。
+        self._duplicate_action = QAction("复制", self)
+        self._duplicate_action.setShortcut(QKeySequence("Ctrl+D"))
+        self._duplicate_action.triggered.connect(self.duplicate_selected)
+        # **必须挂到窗口上**才按得出来（理由见 ``_reveal_action`` 那段）。
+        self.addAction(self._duplicate_action)
+
         # ⌘V 与访达一致：把剪贴板里的文件**复制**进当前这一层（ADR 0018），是这几个写操作里唯一
         # 不进撤销栈的（撤销粘贴就是删文件，红线 1）；**相册菜单里那一条也是它**。
         self._paste_action = QAction("粘贴", self)
@@ -664,11 +672,12 @@ class MainWindow(
         file_menu.addAction(self._close_action)
         file_menu.addAction(self._quit_action)
 
-        # 「编辑」：全选、拷贝、拷贝路径、粘贴、撤销（ADR 0014 决策 5）；⌘Z 从「文件」搬过来。
+        # 「编辑」：全选、拷贝、拷贝路径、复制、粘贴、撤销（ADR 0014 决策 5）；⌘Z 从「文件」搬过来。
         edit_menu = self.menuBar().addMenu("编辑")
         edit_menu.addAction(self._select_all_action)
         edit_menu.addAction(self._copy_action)
         edit_menu.addAction(self._copy_path_action)
+        edit_menu.addAction(self._duplicate_action)
         edit_menu.addAction(self._paste_action)
         edit_menu.addSeparator()
         edit_menu.addAction(self._undo_action)
@@ -783,6 +792,10 @@ class MainWindow(
         self._select_all_action.setEnabled(in_grid and self._model.rowCount() > 0)
         self._copy_path_action.setEnabled(bool(paths))
         self._copy_action.setEnabled(bool(paths))
+        # 「复制」⌘D 与「移到废纸篓」同一判据：作用在**摊平之后**的选区上（分组卡片 = 组员），
+        # 所以按了分组卡片也会把那一组各复制一份 —— 与卡片上的废纸篓同一套语义。
+        # **不受筛选影响**（与 ⌘V 那两条相反）：复制的是用户看得见的选区，不是这一层的内容。
+        self._duplicate_action.setEnabled(bool(flat) and idle)
         # ⌘V 与选区无关；**大图页不粘** —— 那一页没有「当前这一层」（ADR 0021）。
         # **筛选生效时两条写操作都不亮**（ADR 0040 决策 7）：这一层显示的不是全部内容，粘进去 /
         # 新建出来的照片可能一条都不出现，而它们恰恰是**会动用户文件**的那一类（红线 1），

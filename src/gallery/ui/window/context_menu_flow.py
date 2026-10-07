@@ -175,6 +175,9 @@ class ContextMenuFlowMixin:
             reveal=self._reveal_action,
             copy=self._copy_action,
             copy_path=self._copy_path_action,
+            # 「复制」⌘D（ADR 0044）：除分组卡片外每张菜单都有，置灰与否全看这一份
+            # ``QAction``，所以菜单栏与右键菜单永远说同一句话。
+            duplicate=self._duplicate_action,
             # 「新建相册」只在空白处那张菜单里（ADR 0022 决策 1），建不了时不出现。
             new_album=self._new_album_action if self._can_create_album() else None,
             copy_to_album=copy_to_album,
