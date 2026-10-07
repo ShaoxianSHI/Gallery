@@ -215,6 +215,83 @@ def test_several_photos_in_a_cell_are_laid_out_in_a_grid(
     assert window._model.rowCount() == len(NAMES)
 
 
+def test_opening_a_photo_from_a_drill_grid_comes_back_to_that_grid(
+    qt_app: QApplication, calendar_window: MainWindow
+) -> None:
+    """摊开的那一格网格里点开一张照片：`Esc` 退回**那一层网格**，不是直接回日历。
+
+    日历链是「日历页 → 日历格 → 照片」三层栈（ADR 0041 决策 1）：照片帧底下压着的就是那张
+    网格。跳过它直接回日历，屏幕上露出日历页而标题还写着那一格的名字 —— 两层对不上，要再按
+    一次 `Esc` 才恢复。
+    """
+    window = calendar_window
+    page = window._calendar_page
+    photos, label = _cell_of(window, 5)  # 五月两张挤在同一个小时 → 摊成一层网格
+    assert len(photos) == 2
+
+    page.current_view().select_cell(photos, label)
+    qt_app.processEvents()
+    assert window._stack.currentWidget() is window._grid_page
+    assert window._model.rowCount() == 2
+
+    row = window._model.row_of_path(photos[0].path)
+    window._grid.select_row(row)
+    window._open_detail(window._model.index(row, 0))
+    qt_app.processEvents()
+    assert window._stack.currentWidget() is window._detail_page
+    assert window._drill_photos is not None, "前置条件：不在那一格摊开的网格里"
+
+    window.go_up()
+    _settle(qt_app, window)
+    # **退回的是摊开的那一层**：模型里还是那一格的几张，标题也还是那一格。
+    assert window._stack.currentWidget() is window._grid_page, "Esc 跳过了网格直接回日历"
+    assert window._model.rowCount() == 2, "退回的是整库，不是摊开的那一格"
+    assert window._drill_label == label
+    assert window._title_bar.current_text == f"{label} · 2 张", (
+        f"回到网格后标题是 {window._title_bar.current_text!r}，不是那一格"
+    )
+
+    # 再退一级才回日历
+    window.go_up()
+    _settle(qt_app, window)
+    assert window._stack.currentWidget() is page, "第二下 Esc 没有回日历"
+    assert window._drill_photos is None
+    assert window._title_bar.current_text == window._library_title, (
+        f"回到日历后标题还是 {window._title_bar.current_text!r}"
+    )
+
+
+def test_one_photo_in_a_cell_leaves_the_calendar_on_one_escape(
+    qt_app: QApplication, calendar_window: MainWindow
+) -> None:
+    """一格只有一张：日历格与照片帧**一起进、一起出** —— 一次 `Esc` 就回日历，不留残层。
+
+    那一格从没摊成网格（``expanded=False``），于是它不该像多张那一格那样成为一次停靠：退回
+    去时日历页已经摆在前面、标题也该是库名，而不是「日历页 + 那一格的标题」那个半截状态，
+    要再按一次 `Esc` 才恢复。
+    """
+    window = calendar_window
+    page = window._calendar_page
+    photos, label = _cell_of(window, 3)  # 三月那一格只有一张
+    assert len(photos) == 1
+
+    page.current_view().select_cell(photos, label)
+    qt_app.processEvents()
+    assert window._stack.currentWidget() is window._detail_page
+    # 「一起进」：日历格那一帧也在栈上，只是不做成网格那一层。
+    assert window._calendar_frame is not None
+    assert window._calendar_frame.expanded is False
+
+    window.go_up()
+    _settle(qt_app, window)
+    assert window._stack.currentWidget() is page, "Esc 没有一次性退回日历"
+    assert window._calendar_frame is None, "回到日历之后栈上还留着那一格"
+    assert not window._can_go_up(), "回到日历之后还退得动"
+    assert window._title_bar.current_text == window._library_title, (
+        f"回到日历后标题还是 {window._title_bar.current_text!r}"
+    )
+
+
 def test_the_cell_you_come_back_from_becomes_the_anchor(
     qt_app: QApplication, calendar_window: MainWindow
 ) -> None:

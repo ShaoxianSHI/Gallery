@@ -49,7 +49,9 @@ class ViewerFlowMixin:
         """回到网格，并让当前照片保持选中。
 
         关大图、删掉最后一张之后退回这两条路走这里；``Esc``（菜单里那一条「上一级」）走
-        :meth:`MainWindow.go_up`，由它弹栈之后调 :meth:`leave_detail_page`。
+        :meth:`MainWindow.go_up`。**两条路只在栈顶上投影出同一件事**（弹掉照片帧），所以这里
+        直接交给 :meth:`MainWindow.go_up` 的 ``_leave_frame`` —— 退到网格还是日历由照片帧底下
+        压着的那一层决定，不在这里各写一遍。
         """
         if self._stack.currentWidget() is self._calendar_page:
             # 日历与网格**同一时刻只有一个**：从日历按 Esc 出来就是把浏览方式换回「全部照片」，
@@ -57,12 +59,8 @@ class ViewerFlowMixin:
             self.set_browse_mode(BROWSE_MODE_FLAT)
             return
         if self._photo_frame is not None:
-            # **栈：从大图页弹掉照片帧，底下是日历格就回日历**（ADR 0041）。用两个字段做组合判断
-            # 分不出「从日历来、且那一格只有一张照片压根没摊开」那一种，栈上没有这种歧义。
-            self._pop_frame()
-            if self._calendar_frame is not None:
-                self._back_to_calendar()
-                return
+            self.go_up()
+            return
         self.leave_detail_page()
 
     def leave_detail_page(self) -> None:

@@ -107,10 +107,16 @@ class CalendarFrame:
 
     **照片一起存**：那一格摊开的内容就是它，``photos`` 为空表示这一格一张照片也没有
     （点开是合法动作，只是没东西可看）。
+
+    :param expanded: 这一格**在屏幕上摊成网格**了吗。多张的那一格有：它自己就是一层，
+        退回来停在它上面。只有一张的那一格没有 —— 那一次是「日历格 + 照片」**一起进、一起出**
+        的一对（点开直接进大图，``Esc`` 连它一起收掉回日历），屏幕上从没出现过网格。
+        **界面画哪一页与 ``Esc`` 退到哪一层都从这一位看**，不再靠「进来时是几张」各自记一份。
     """
 
     photos: tuple[PhotoRef, ...]
     label: str
+    expanded: bool = True
 
 
 @dataclass(frozen=True, slots=True)

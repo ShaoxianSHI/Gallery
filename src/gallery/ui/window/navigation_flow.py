@@ -26,6 +26,7 @@ from gallery.ui.window.level_stack import (
     CalendarFrame,
     GroupFrame,
     PhotoFrame,
+    RootKind,
     SearchFrame,
 )
 
@@ -112,8 +113,20 @@ class NavigationFlowMixin:
             self._leave_calendar_cell()
             return
         if isinstance(frame, PhotoFrame):
-            # 照片帧底下是日历格就回日历，否则回网格 —— **大图页的「上一级」就是这里**。
-            if self._calendar_frame is not None:
+            # **大图页的「上一级」就是这里** —— 退到哪一层看照片帧底下压着什么。
+            top = self._level_stack.top
+            if isinstance(top, CalendarFrame) and not top.expanded:
+                # 只有一张的那一格：日历格与照片是**一起进出的一对**（见 ``expanded``），
+                # 从没摊成网格，于是连它一起收掉，直接回日历那一页。
+                self._pop_frame()
+                self._back_to_calendar()
+                return
+            if isinstance(top, CalendarFrame):
+                # 底下压着摊开的网格：退回那一层（模型里还是这一格的几张）。
+                self.leave_detail_page()
+                return
+            if top is None and self._level_stack.root is RootKind.CALENDAR:
+                # 栈底就是日历、上面没有别的层：直接回日历那一页。
                 self._back_to_calendar()
                 return
             self.leave_detail_page()

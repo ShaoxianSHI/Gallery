@@ -159,9 +159,14 @@ class CalendarFlowMixin:
         if not all(isinstance(ref, PhotoRef) for ref in photos):
             return
         if len(photos) == 1:
-            # 那一格的帧照样压 —— 跳过的只是把照片摊成网格那一步，而 Esc 要退得回日历。
+            # **日历格与照片是一起进出的一对**（``expanded=False``）：那一格从没摊成网格，
+            # 点开直接进大图，``Esc`` 把两帧一起收掉、回日历。多张的那一格才是独立的一层。
             self._push_frame(
-                CalendarFrame(photos=(photos[0],), label=label if isinstance(label, str) else "")
+                CalendarFrame(
+                    photos=(photos[0],),
+                    label=label if isinstance(label, str) else "",
+                    expanded=False,
+                )
             )
             self._open_calendar_photo(photos[0])
             return
