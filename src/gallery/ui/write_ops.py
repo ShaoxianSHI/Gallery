@@ -22,7 +22,7 @@ from gallery.core.errors import GalleryError
 from gallery.core.library.config import BROWSE_MODE_ALBUMS, BROWSE_MODE_FLAT
 from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
 from gallery.core.metadata.capture_time import CaptureTime
-from gallery.core.metadata.exif import MetadataReport, read_metadata
+from gallery.core.metadata.exif import read_metadata
 from gallery.core.metadata.journal import (
     ACTION_EVENT,
     ACTION_EVENT_DELETE,
@@ -33,6 +33,7 @@ from gallery.core.metadata.metadata_edit import MetadataEdit, MetadataState
 from gallery.core.metadata.paste import PasteResult
 from gallery.core.metadata.place_edit import PlaceState
 from gallery.core.metadata.rename import RenameResult
+from gallery.core.metadata.report import MetadataReport
 from gallery.core.metadata.transfer import MoveResult
 from gallery.core.metadata.undo import UndoResult
 from gallery.ui import banners, desktop, menus

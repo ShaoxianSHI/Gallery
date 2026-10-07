@@ -45,10 +45,10 @@ from gallery.core.library.session import (
     save_session,
 )  # noqa: E402
 from gallery.core.metadata.capture_time import CaptureTime, CaptureTimeEdit  # noqa: E402
-from gallery.core.metadata.exif import build_report  # noqa: E402
 from gallery.core.metadata.journal import read_records  # noqa: E402
 from gallery.core.metadata.metadata_edit import MetadataEdit, MetadataState  # noqa: E402
 from gallery.core.metadata.place_edit import PlaceEdit, PlaceState, plan_place_edit  # noqa: E402
+from gallery.core.metadata.report import build_report  # noqa: E402
 from gallery.core.metadata.writeback import Assignment  # noqa: E402
 from gallery.ui import theme  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402

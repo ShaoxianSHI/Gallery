@@ -14,8 +14,9 @@ from functools import partial
 from PySide6.QtCore import QModelIndex
 
 from gallery.core.library.photos import FolderRef, GroupRef, PhotoRef
-from gallery.core.metadata.exif import MetadataReport, read_metadata
+from gallery.core.metadata.exif import read_metadata
 from gallery.core.metadata.facets import PhotoFacets
+from gallery.core.metadata.report import MetadataReport
 from gallery.core.places.countries import place_label
 from gallery.core.places.dataset import is_real_coordinate
 from gallery.ui.tasks import TaskContext

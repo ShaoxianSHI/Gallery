@@ -20,11 +20,7 @@ from gallery.core.metadata.batch import (
 )
 from gallery.core.metadata.exif import (
     ExifToolReader,
-    MetadataField,
-    MetadataGroup,
-    MetadataReport,
     MetadataSource,
-    build_report,
     read_metadata,
 )
 from gallery.core.metadata.facets import (
@@ -45,6 +41,12 @@ from gallery.core.metadata.rename import (
     rename_entry,
     undo_rename_record,
     validate_name,
+)
+from gallery.core.metadata.report import (
+    MetadataField,
+    MetadataGroup,
+    MetadataReport,
+    build_report,
 )
 from gallery.core.metadata.transfer import (
     MovedItem,

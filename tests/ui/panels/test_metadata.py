@@ -37,7 +37,7 @@ from PySide6.QtWidgets import (  # noqa: E402
     QWidget,
 )
 
-from gallery.core.metadata.exif import build_report  # noqa: E402
+from gallery.core.metadata.report import build_report  # noqa: E402
 from gallery.ui import theme  # noqa: E402
 from gallery.ui.panels.metadata import MetadataPanel  # noqa: E402
 

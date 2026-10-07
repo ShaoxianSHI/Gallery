@@ -39,8 +39,8 @@ from gallery.core.library.watcher import (  # noqa: E402
     ChangeKind,
     LibraryChange,
 )
-from gallery.core.metadata.exif import MetadataReport  # noqa: E402
 from gallery.core.metadata.facets import PhotoFacets  # noqa: E402
+from gallery.core.metadata.report import MetadataReport  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.watch import WatchBridge  # noqa: E402
 from gallery.ui.window.watch_flow import WATCH_ECHO_TTL  # noqa: E402  （常量跟着监听那一段搬了家）

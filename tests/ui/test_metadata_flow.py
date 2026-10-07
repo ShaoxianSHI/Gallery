@@ -30,8 +30,8 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from waiting import DEFAULT_TIMEOUT_SECONDS
 
 from gallery.core.library.config import prepare_library  # noqa: E402
-from gallery.core.metadata.exif import build_report  # noqa: E402
 from gallery.core.metadata.facets import PhotoFacets  # noqa: E402
+from gallery.core.metadata.report import build_report  # noqa: E402
 from gallery.core.places.resolver import ResolvedPlace  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.panels import metadata as panel_module  # noqa: E402
@@ -259,7 +259,7 @@ def test_place_lookup_result_is_cached(
     window: MainWindow, timeline: list[str], ready: Callable[[], None]
 ) -> None:
     """推断出的地点要入缓存，否则切回这张照片会「先没地点、再被替换」闪一次。"""
-    from gallery.core.metadata.exif import MetadataReport
+    from gallery.core.metadata.report import MetadataReport
 
     window._metadata_action.setChecked(True)
     ready()

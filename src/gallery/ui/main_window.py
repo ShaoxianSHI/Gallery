@@ -49,8 +49,8 @@ from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
 from gallery.core.library.search import SearchCondition
 from gallery.core.library.session import SessionState, load_session
 from gallery.core.library.watcher import LibraryChange
-from gallery.core.metadata.exif import MetadataReport
 from gallery.core.metadata.facets import PhotoFacets
+from gallery.core.metadata.report import MetadataReport
 from gallery.core.places.resolver import LazyPlaceResolver
 from gallery.ui import banners, desktop, theme
 from gallery.ui.banner_overlay import BannerOverlay

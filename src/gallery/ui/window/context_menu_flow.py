@@ -18,8 +18,9 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMenu
 
 from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
-from gallery.core.metadata.exif import MetadataReport, read_metadata
+from gallery.core.metadata.exif import read_metadata
 from gallery.core.metadata.facets import group_facet
+from gallery.core.metadata.report import MetadataReport
 from gallery.ui import desktop, menu_style
 from gallery.ui.menus import MenuActions, TargetKind, build_menu
 from gallery.ui.tasks import TaskContext

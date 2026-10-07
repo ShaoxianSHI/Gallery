@@ -17,9 +17,9 @@ from PIL import Image
 from gallery.core.errors import MetadataError
 from gallery.core.metadata.exif import (
     ExifToolReader,
-    build_report,
     read_metadata,
 )
+from gallery.core.metadata.report import build_report
 
 
 def field_map(report_groups: object) -> dict[str, str]:

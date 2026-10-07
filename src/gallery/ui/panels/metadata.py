@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gallery.core.metadata.exif import MetadataGroup, MetadataReport
+from gallery.core.metadata.report import MetadataGroup, MetadataReport
 from gallery.ui import theme
 from gallery.ui.panels.layout import clear_layout
 from gallery.ui.scrollbar_style import apply_scrollbar_style

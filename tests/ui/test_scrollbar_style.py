@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (  # noqa: E402
 from waiting import DEFAULT_TIMEOUT_SECONDS  # noqa: E402
 
 from gallery.core.library.config import prepare_library  # noqa: E402
-from gallery.core.metadata.exif import (  # noqa: E402
+from gallery.core.metadata.report import (  # noqa: E402
     MetadataField,
     MetadataGroup,
     MetadataReport,
