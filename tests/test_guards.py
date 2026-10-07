@@ -13,7 +13,12 @@ from typing import Final
 import pytest
 
 from gallery.core.constants import CONFIG_DIR_NAME
-from gallery.core.metadata.exif import COORDINATE_TAGS
+from gallery.core.metadata.exif import (
+    COORDINATE_TAGS,
+    IPTC_PLACE_TAGS,
+    WANTED_PLACE_TAGS,
+    XMP_PLACE_TAGS,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = PROJECT_ROOT / "src" / "gallery"
@@ -161,18 +166,11 @@ def test_config_dir_name_has_single_source() -> None:
     assert not offenders, f"以下文件硬编码了 {CONFIG_DIR_NAME}，请改为导入常量：{offenders}"
 
 
-def test_the_coordinate_tags_have_a_single_source() -> None:
-    """**坐标那四个标签只在 ``exif.COORDINATE_AXES`` 里写一遍。**
+def _tag_literals_outside(allowed: Path, tags: set[str]) -> list[str]:
+    """源码里出现的这些标签**字符串字面量**，除了 ``allowed`` 那个文件。
 
-    它们原先在**五处**各写一遍：``writeback`` 的标签元组、``place_edit`` 的赋值、
-    ``facets`` 的请求清单、``exif`` 的 Pillow 兜底，以及 ``writeback`` 里那两条分派梯子。
-    少写一个标签的后果不是「少个字段」—— 是另一半留着**上一个位置**的值，一个自信的错答案。
-
-    判据是**源码里不再出现这些字符串字面量**（字符串节点，注释与文档字符串不算），
-    只有那张表里那一处。标签从表里取，于是加一个轴也自动被这条守着。
+    只看 ``ast.Constant`` 的字符串节点，且跳开文档字符串 —— 注释里拿它举例是在解释规矩。
     """
-    tags = set(COORDINATE_TAGS)
-    allowed = CORE_ROOT / "metadata" / "exif.py"
     guard = Path(__file__).resolve()
     offenders: list[str] = []
     for path in _iter_python_files(SRC_ROOT):
@@ -188,8 +186,47 @@ def test_the_coordinate_tags_have_a_single_source() -> None:
                 and node.value in tags
             ):
                 offenders.append(f"{path.relative_to(PROJECT_ROOT)}:{node.lineno} {node.value}")
-    assert not offenders, (
-        "坐标标签只许在 exif.COORDINATE_AXES 里写一遍，别处请从它取：\n" + "\n".join(offenders)
+    return offenders
+
+
+#: 两个「一族标签只有一份来源」的清单：``(名字, 唯一来源, 全部标签)``。
+#: 标签本身**从表里取**，于是给表加一项也自动被守着。
+TAG_FAMILIES = (
+    (
+        "坐标",
+        CORE_ROOT / "metadata" / "exif.py",
+        COORDINATE_TAGS,
+        "exif.COORDINATE_AXES",
+        "少写一个的症状不是「少个字段」——是另一半留着**上一个位置**的值，一个自信的错答案。",
+    ),
+    (
+        "地名",
+        CORE_ROOT / "metadata" / "exif.py",
+        (*XMP_PLACE_TAGS, *IPTC_PLACE_TAGS, *WANTED_PLACE_TAGS),
+        "exif.PLACE_FIELDS",
+        "三族标签（IPTC / XMP 一级名 / XMP 全名）原先在四处各写一遍，而漏一处的症状是"
+        "「某类照片的地点字段永远是空的」——一个不报错、只是不对的答案。",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("name", "allowed", "tags", "table", "why"),
+    TAG_FAMILIES,
+    ids=[family[0] for family in TAG_FAMILIES],
+)
+def test_a_tag_family_has_a_single_source(
+    name: str, allowed: Path, tags: tuple[str, ...], table: str, why: str
+) -> None:
+    """**一族标签只在 ``exif`` 里那张表写一遍。**
+
+    判据是**源码里不再出现这些字符串字面量**（字符串节点，注释与文档字符串不算），
+    只有表里那一处 —— 「读起来像同源」不算数。
+    """
+    offenders = _tag_literals_outside(allowed, set(tags))
+
+    assert not offenders, f"{name}标签只许在 {table} 里写一遍，别处请从它取。{why}\n" + "\n".join(
+        offenders
     )
 
 

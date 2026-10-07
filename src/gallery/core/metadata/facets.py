@@ -24,11 +24,13 @@ if TYPE_CHECKING:
 
 from gallery.core.metadata.exif import (
     COORDINATE_TAGS,
+    WANTED_PLACE_TAGS,
     as_text,
     camera_name,
     coordinates_decimal,
     first_value,
     leading_number,
+    place_parts,
     positive_value,
 )
 
@@ -184,18 +186,11 @@ WANTED_TAGS: Final[tuple[str, ...]] = (
     # 坐标：**国家 / 省州 / 城市这三个字段绝大多数照片靠它**。相机原图通常不写 IPTC / XMP 地点
     # （Lightroom 导出才写），只写 GPS —— 漏了这几行，于是每张照片的地点字段都是空的。
     *COORDINATE_TAGS,
-    "IPTC:City",
-    "IPTC:Province-State",
-    "IPTC:Country-PrimaryLocationName",
+    # 地名三族（IPTC / XMP 一级名 / XMP 全名）都点名要：**exiftool 的 ``-G`` 按一级族回填键**，
+    # 只问全名的话这一批根本不会出现在返回值里。清单从 ``exif.PLACE_FIELDS`` 来 ——
+    # 与读取那一侧同一份，不会各自漏一行。
+    *WANTED_PLACE_TAGS,
     "IPTC:Keywords",
-    # 两种族名都要点名要：**exiftool 的 ``-G`` 按一级族回填键**，只问全名的话这一批
-    # 根本不会出现在返回值里（要的是 ``XMP:City``，拿到的是 ``XMP-photoshop:City`` 就白问）。
-    "XMP:City",
-    "XMP:State",
-    "XMP:Country",
-    "XMP-photoshop:City",
-    "XMP-photoshop:State",
-    "XMP-photoshop:Country",
     "XMP:Subject",
     # ``_keywords`` 认 Dublin Core 的 ``dc:subject``（Lightroom / Capture One 把它当主要的关键词
     # 字段），不列在这里它就永远收不到 —— 键在读取端、没在请求端，是一条走不到的路。
@@ -223,6 +218,7 @@ def extract(raw: Mapping[str, object]) -> PhotoFacets:
     values = {key: value for key, value in raw.items() if key != "SourceFile"}
     text = {key: as_text(value) for key, value in values.items()}
     latitude, longitude = coordinates_decimal(text)
+    city, region, country = place_parts(text)
     when = parse_capture_time(
         first_value(text, "EXIF:DateTimeOriginal", "EXIF:CreateDate", "EXIF:DateTimeDigitized")
     )
@@ -237,17 +233,10 @@ def extract(raw: Mapping[str, object]) -> PhotoFacets:
         minute=when.minute if when else None,
         camera=camera_name(text),
         lens=first_value(text, "EXIF:LensModel", "EXIF:LensID", "EXIF:Lens"),
-        # 两种族名都认（``XMP-photoshop:City`` 与 ``XMP:City``）：exiftool 的 ``-G`` 按一级族回填
-        # 键，只认全名的话「只写 XMP 不写 IPTC」的照片分不进城市组（见 ``exif._xmp_value``）。
-        city=first_value(text, "XMP-photoshop:City")
-        or first_value(text, "XMP:City")
-        or first_value(text, "IPTC:City"),
-        region=first_value(text, "XMP-photoshop:State")
-        or first_value(text, "XMP:State")
-        or first_value(text, "IPTC:Province-State"),
-        country=first_value(text, "XMP-photoshop:Country")
-        or first_value(text, "XMP:Country")
-        or first_value(text, "IPTC:Country-PrimaryLocationName"),
+        # 三族地名的回退链在 ``exif.PlaceField`` 里，与面板那条路共用同一份。
+        city=city,
+        region=region,
+        country=country,
         keywords=_keywords(values),
         latitude=latitude,
         longitude=longitude,

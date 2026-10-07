@@ -418,3 +418,19 @@ def test_group_order_of_date_keys_is_numeric(tmp_path: Path) -> None:
 
     assert isinstance(may, float) and isinstance(november, float)
     assert november > may
+
+
+def test_the_full_xmp_name_wins_over_the_primary_one_and_iptc() -> None:
+    """三族都有值时按 ``XMP-photoshop`` > ``XMP`` > ``IPTC`` 取第一个非空的。
+
+    **顺序就是这条回退链的全部内容**，而它原先写在 ``extract`` 里、现在写在
+    ``exif.PlaceField`` 里。顺序倒过来不会报错 —— 只是换了另一个来源的值，而面板与
+    分组用的是同一条链，于是**一起错、看不出异常**。
+    """
+    assert extract({"XMP-photoshop:City": "波尔多", "IPTC:City": "Bordeaux"}).city == "波尔多"
+    assert extract({"XMP:City": "波尔多市", "IPTC:City": "Bordeaux"}).city == "波尔多市"
+    assert extract({"IPTC:City": "Bordeaux"}).city == "Bordeaux"
+    assert extract({}).city is None
+    # 三层各自独立，一层缺失不影响另两层。
+    partial = extract({"IPTC:City": "Bordeaux", "XMP-photoshop:Country": "France"})
+    assert (partial.city, partial.region, partial.country) == ("Bordeaux", None, "France")

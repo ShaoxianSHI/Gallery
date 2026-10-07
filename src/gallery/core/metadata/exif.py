@@ -287,7 +287,7 @@ def build_report(
     all_fields = tuple(
         MetadataField(label=key, value=value) for key, value in sorted(normalized.items())
     )
-    place_city, place_region, place_country = _place_parts(normalized)
+    place_city, place_region, place_country = place_parts(normalized)
     captured_at, captured_offset = capture_time_parts(normalized)
     return MetadataReport(
         path=path,
@@ -629,7 +629,9 @@ def _degrees_to_decimal(value: str) -> float | None:
 
 
 def _sub_location(raw: Mapping[str, str]) -> str | None:
-    """子地点（「西湖 · 断桥残雪」那种更细的位置）。同样两种族名都认，理由见 :func:`_xmp_value`。"""
+    """子地点（「西湖 · 断桥残雪」那种更细的位置）。同样两种族名都认，理由见
+    :class:`PlaceField`。
+    """
     return (
         first_value(raw, "XMP-iptcCore:Location")
         or first_value(raw, "XMP:Location")
@@ -637,22 +639,60 @@ def _sub_location(raw: Mapping[str, str]) -> str | None:
     )
 
 
-def _xmp_value(raw: Mapping[str, str], tag: str) -> str | None:
-    """按 ``XMP-photoshop:City`` 这样的全名取，取不到再按一级族名 ``XMP:City`` 取。
+@dataclass(frozen=True, slots=True)
+class PlaceField:
+    """地名的一层：**三个标签**，读写各用其中的一些。
 
-    **两个都要认**：exiftool 的 ``-G`` 按**一级族**回填键，13.x 给的是 ``XMP:City``；只认全名的话，
-    Lightroom 那种**只写 XMP、不写 IPTC** 的照片，面板上的「地点」永远是空的。
+    ``XMP`` 有两种写法要分清，这不是笔误：
+
+    - **写**用一级名 ``XMP:City`` —— exiftool 的 ``-G`` 按**一级族**回填键，写全名会让
+      **每一次成功的写入都被判成没写进去**（ADR 0030 决策 2）；
+    - **读**要认 ``XMP-photoshop:City``（``-G`` 回填给的就是这个）与 ``XMP:City`` 两种 ——
+      相机原图与 Lightroom 导出的键名不一样，只认一种就会有一类照片读不到地点。
+
+    IPTC 那一份永远照原样。子地点（``_sub_location``）不在这里：它用的是另一个 XMP 族
+    （``XMP-iptcCore``），而且只用来显示，不参与写回与分组。
     """
-    return first_value(raw, f"XMP-photoshop:{tag}") or first_value(raw, f"XMP:{tag}")
+
+    xmp_tag: str
+    read_tag: str
+    iptc_tag: str
+
+    def from_file(self, raw: Mapping[str, str]) -> str | None:
+        """文件里这一层写了什么：先读全名，再读一级名，最后 IPTC。"""
+        return (
+            first_value(raw, self.read_tag)
+            or first_value(raw, self.xmp_tag)
+            or first_value(raw, self.iptc_tag)
+        )
 
 
-def _place_parts(raw: Mapping[str, str]) -> tuple[str | None, str | None, str | None]:
-    """文件里写的三层地点（IPTC/XMP）。相机原图通常没有，Lightroom 导出常有。"""
-    return (
-        _xmp_value(raw, "City") or first_value(raw, "IPTC:City"),
-        _xmp_value(raw, "State") or first_value(raw, "IPTC:Province-State"),
-        _xmp_value(raw, "Country") or first_value(raw, "IPTC:Country-PrimaryLocationName"),
-    )
+#: 地名的三层。**这是这一族标签的唯一来源**：请求哪些标签（``facets.WANTED_TAGS``）、
+#: 读的时候怎么回退（:meth:`PlaceField.from_file`）、写回时用哪些（``writeback`` 的两张
+#: 清单）——全部由它推出来。原先这三族标签在四处各写一遍（``facets`` 的请求清单与
+#: ``extract`` 的回退链、``writeback`` 的两张清单、这里的读取链），而漏一处的症状是
+#: 「某类照片的地点字段永远是空的」——一个不报错、只是不对的答案。
+PLACE_FIELDS: Final[tuple[PlaceField, ...]] = (
+    PlaceField("XMP:City", "XMP-photoshop:City", "IPTC:City"),
+    PlaceField("XMP:State", "XMP-photoshop:State", "IPTC:Province-State"),
+    PlaceField("XMP:Country", "XMP-photoshop:Country", "IPTC:Country-PrimaryLocationName"),
+)
+
+#: 写回时用的两组标签。
+XMP_PLACE_TAGS: Final[tuple[str, ...]] = tuple(field.xmp_tag for field in PLACE_FIELDS)
+IPTC_PLACE_TAGS: Final[tuple[str, ...]] = tuple(field.iptc_tag for field in PLACE_FIELDS)
+
+#: 读这一族要**点名要**的全部标签 —— exiftool 只回填你问过的那几个，
+#: 少问一个的症状是那一层永远是空的。
+WANTED_PLACE_TAGS: Final[tuple[str, ...]] = tuple(
+    tag for field in PLACE_FIELDS for tag in (field.read_tag, field.xmp_tag, field.iptc_tag)
+)
+
+
+def place_parts(raw: Mapping[str, str]) -> tuple[str | None, str | None, str | None]:
+    """文件里写的三层地点（市、省、国）。相机原图通常没有，Lightroom 导出常有。"""
+    city, region, country = (field.from_file(raw) for field in PLACE_FIELDS)
+    return (city, region, country)
 
 
 def _place_from_file(raw: Mapping[str, str]) -> str | None:
@@ -660,7 +700,7 @@ def _place_from_file(raw: Mapping[str, str]) -> str | None:
     而且走同一个 :func:`~gallery.core.places.countries.place_label` —— 面板上「地点」与
     「地点（推断）」是挨着的两行，用户正要拿来对照，两处各拼一次早晚漂回去。
     """
-    city, region, country = _place_parts(raw)
+    city, region, country = place_parts(raw)
     return place_label(city, region, country) or None
 
 
@@ -955,7 +995,11 @@ __all__ = [
     "EXIFTOOL_CHARSET_ARGS",
     "EXIFTOOL_EXECUTABLE",
     "EXIFTOOL_TIMEOUT_SECONDS",
+    "IPTC_PLACE_TAGS",
     "OFFSET_TIME_FIELDS",
+    "PLACE_FIELDS",
+    "WANTED_PLACE_TAGS",
+    "XMP_PLACE_TAGS",
     "ExifToolReader",
     "MetadataError",
     "MetadataField",
@@ -963,6 +1007,7 @@ __all__ = [
     "MetadataReport",
     "MetadataSource",
     "PillowSource",
+    "PlaceField",
     "as_text",
     "build_report",
     "camera_name",
@@ -974,6 +1019,7 @@ __all__ = [
     "longitude_decimal",
     "normalize_capture_time",
     "normalize_offset",
+    "place_parts",
     "positive_value",
     "read_metadata",
 ]

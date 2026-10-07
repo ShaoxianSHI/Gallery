@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
 from gallery.core.errors import MetadataWriteError
-from gallery.core.metadata.exif import COORDINATE_AXES
+from gallery.core.metadata.exif import COORDINATE_AXES, PLACE_FIELDS
 from gallery.core.metadata.writeback import COORDINATE_TAGS, STALE_GPS_TAGS, Assignment
 from gallery.core.places.countries import place_label
 from gallery.core.places.dataset import is_real_coordinate
@@ -218,17 +218,16 @@ def _coordinate_assignments(latitude: float, longitude: float) -> list[Assignmen
 def _place_assignments(
     city: str | None, region: str | None, country: str | None
 ) -> list[Assignment]:
-    """三层地名 → XMP 与 IPTC 各一份。**空的那一层 = 删掉那两个字段**（XMP 与 IPTC 都删）。"""
-    pairs = (
-        ("XMP:City", "IPTC:City", city),
-        ("XMP:State", "IPTC:Province-State", region),
-        ("XMP:Country", "IPTC:Country-PrimaryLocationName", country),
-    )
-    result: list[Assignment] = []
-    for xmp_tag, iptc_tag, value in pairs:
-        result.append(Assignment(xmp_tag, value or ""))
-        result.append(Assignment(iptc_tag, value or ""))
-    return result
+    """三层地名 → XMP 与 IPTC 各一份。**空的那一层 = 删掉那两个字段**（XMP 与 IPTC 都删）。
+
+    标签对从 :data:`~gallery.core.metadata.exif.PLACE_FIELDS` 来 —— 与读取那一侧同一份，
+    写出去的名字与读回来的名字不会各自漂。
+    """
+    assignments: list[Assignment] = []
+    for field, value in zip(PLACE_FIELDS, (city, region, country), strict=True):
+        assignments.append(Assignment(field.xmp_tag, value or ""))
+        assignments.append(Assignment(field.iptc_tag, value or ""))
+    return assignments
 
 
 # ---- 两个方向的查 -------------------------------------------------------------

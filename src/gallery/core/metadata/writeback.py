@@ -26,6 +26,8 @@ from gallery.core.metadata.exif import (
     EXIFTOOL_CHARSET_ARGS,
     EXIFTOOL_EXECUTABLE,
     EXIFTOOL_TIMEOUT_SECONDS,
+    IPTC_PLACE_TAGS,
+    XMP_PLACE_TAGS,
     CoordinateAxis,
     as_text,
 )
@@ -56,22 +58,10 @@ STALE_GPS_TAGS: Final[tuple[str, ...]] = (
     "EXIF:GPSDateStamp",
 )
 
-#: 地点的三层。**XMP 与 IPTC 两份都写**：Lightroom 与 Capture One 读 XMP，老软件读 IPTC。
-#: XMP 用一级族名 ``XMP:City`` 而不是全名：exiftool 的 ``-G`` 按一级族回填键，写用全名、读用
-#: 一级族会让**每一次成功的写入都被判成没写进去**（ADR 0030 决策 2）。
-XMP_PLACE_TAGS: Final[tuple[str, ...]] = (
-    "XMP:City",
-    "XMP:State",
-    "XMP:Country",
-)
-
-#: **只给存得下 IPTC 的容器用**（见 :data:`UNSTORABLE_TAGS`）：HEIC / HEIF / WebP / GIF 上这一组
-#: 会被静默丢弃，所以压根不发 —— 不是「发了没生效」。
-IPTC_PLACE_TAGS: Final[tuple[str, ...]] = (
-    "IPTC:City",
-    "IPTC:Province-State",
-    "IPTC:Country-PrimaryLocationName",
-)
+#: 地名的三层。**标签本身定义在** :mod:`gallery.core.metadata.exif` 的
+#: :data:`~gallery.core.metadata.exif.PLACE_FIELDS`（那一族标签的唯一来源），这里原样转出去 ——
+#: 写回这一侧与读取那一侧必须是同一份。**XMP 与 IPTC 两份都写**：Lightroom 与 Capture One
+#: 读 XMP，老软件读 IPTC。
 
 #: 三层地名的全部标签。**白名单意义上的那一份**（HEIC 上实际发出去的只有其中的 XMP）。
 PLACE_TAGS: Final[tuple[str, ...]] = (*XMP_PLACE_TAGS, *IPTC_PLACE_TAGS)
