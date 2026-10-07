@@ -11,7 +11,7 @@ import sqlite3
 import threading
 from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
-from typing import Final
+from typing import Any, Final, cast
 
 from gallery.core import paths
 from gallery.core.errors import IndexUnavailableError
@@ -44,33 +44,56 @@ SCHEMA_VERSION: Final = 7
 #: 一次 ``UPSERT`` 最多写多少行。太大则一条语句过长，太小则语句条数多。
 WRITE_CHUNK: Final = 500
 
-_SCHEMA: Final = """
+#: facet 表里那 22 个字段，**一份就是全部**：建表语句、列清单、写行与读行都由它推出来。
+#:
+#: 每一项是 ``(列名, SQL 类型, PhotoFacets 上的属性名, 取值方式, DDL 附加约束)``，
+#: 「取值方式」决定两端怎么转，见 :func:`_encode_field` 与 :func:`_decode_field`。
+#: **列顺序就是这张表的顺序。**
+#:
+#: 这个布局原来手写了五遍（建表语句、列清单、:meth:`FacetIndex.store`、读行、写行），
+#: 而加一个字段漏改哪一处都不会报错 —— SQL 照样执行成功，只是那一列永远是空的，
+#: 分组退化成「全是时间未知」。所以 :func:`_row_to_facets` 那道 ``zip(strict=True)``
+#: 是刻意留着的：列数与字段数一旦对不上，它当场抛，而不会安静地少读一列。
+_FACET_FIELDS: Final[tuple[tuple[str, str, str, str, str], ...]] = (
+    ("captured", "REAL", "captured_at", "float", ""),
+    ("year", "INTEGER", "year", "int", ""),
+    ("month", "INTEGER", "month", "int", ""),
+    ("day", "INTEGER", "day", "int", ""),
+    ("hour", "INTEGER", "hour", "int", ""),
+    ("minute", "INTEGER", "minute", "int", ""),
+    ("camera", "TEXT", "camera", "str", ""),
+    ("lens", "TEXT", "lens", "str", ""),
+    ("city", "TEXT", "city", "str", ""),
+    ("region", "TEXT", "region", "str", ""),
+    ("country", "TEXT", "country", "str", ""),
+    ("keywords", "TEXT", "keywords", "keywords", ""),
+    ("latitude", "REAL", "latitude", "float", ""),
+    ("longitude", "REAL", "longitude", "float", ""),
+    ("inferred", "INTEGER", "place_inferred", "bool", " NOT NULL DEFAULT 0"),
+    ("place_ok", "INTEGER", "place_checked", "bool", " NOT NULL DEFAULT 0"),
+    ("place_km", "REAL", "place_distance_km", "float", ""),
+    ("aperture", "REAL", "aperture", "float", ""),
+    ("shutter", "REAL", "shutter", "float", ""),
+    ("iso", "REAL", "iso", "float", ""),
+    ("focal", "REAL", "focal", "float", ""),
+    ("pixels", "REAL", "pixels", "float", ""),
+)
+
+#: 前三列来自 :class:`~gallery.core.library.photos.PhotoRef` 而不是 facet，所以不在上面那张表里。
+_ROW_HEAD: Final[tuple[tuple[str, str, str], ...]] = (
+    ("path", "TEXT", "TEXT PRIMARY KEY"),
+    ("size", "INTEGER", "INTEGER NOT NULL"),
+    ("mtime_ns", "INTEGER", "INTEGER NOT NULL"),
+)
+
+_FACET_DDL: Final = ",\n".join(
+    [f"    {name:<10} {declaration}" for name, _, declaration in _ROW_HEAD]
+    + [f"    {name:<10} {sql_type}{extra}" for name, sql_type, _, _, extra in _FACET_FIELDS]
+)
+
+_SCHEMA: Final = f"""
 CREATE TABLE IF NOT EXISTS facets (
-    path       TEXT PRIMARY KEY,
-    size       INTEGER NOT NULL,
-    mtime_ns   INTEGER NOT NULL,
-    captured   REAL,
-    year       INTEGER,
-    month      INTEGER,
-    day        INTEGER,
-    hour       INTEGER,
-    minute     INTEGER,
-    camera     TEXT,
-    lens       TEXT,
-    city       TEXT,
-    region     TEXT,
-    country    TEXT,
-    keywords   TEXT,
-    latitude   REAL,
-    longitude  REAL,
-    inferred   INTEGER NOT NULL DEFAULT 0,
-    place_ok   INTEGER NOT NULL DEFAULT 0,
-    place_km   REAL,
-    aperture   REAL,
-    shutter    REAL,
-    iso        REAL,
-    focal      REAL,
-    pixels     REAL
+{_FACET_DDL}
 );
 
 CREATE TABLE IF NOT EXISTS photos (
@@ -94,17 +117,14 @@ _PHOTO_COLUMNS: Final[str] = "path, size, mtime_ns, name, folder, suffix"
 
 _PHOTO_PLACEHOLDERS: Final[str] = ", ".join("?" * len(_PHOTO_COLUMNS.split(",")))
 
-_COLUMNS: Final[str] = (
-    "path, size, mtime_ns, captured, year, month, day, hour, minute, camera, lens, "
-    "city, region, country, keywords, latitude, longitude, inferred, "
-    "place_ok, place_km, aperture, shutter, iso, focal, pixels"
+_COLUMNS: Final[str] = ", ".join(
+    [name for name, _, _ in _ROW_HEAD] + [name for name, _, _, _, _ in _FACET_FIELDS]
 )
 
 #: 关键词在库里用一个分隔符存 —— 关键词本身可能含逗号，不能用逗号拼回去。
 _KEYWORD_SEPARATOR = "\x1f"
 
-#: 每一行有几个值。**从列名里数出来，不要写死数字** —— 写死的那个曾经与列数差一个，
-#: 分组于是退化成「全是时间未知」，而 SQL 照样执行成功。
+#: 每一行有几个值。**从列名里数出来，不要写死数字** —— 写死的那个曾经与列数差一个。
 _COLUMN_COUNT = len(_COLUMNS.split(","))
 
 #: 单行插入用的占位符。
@@ -224,33 +244,7 @@ class FacetIndex:
         if not items:
             return 0
         rows: list[tuple[SqlValue, ...]] = [
-            (
-                str(ref.path),
-                ref.size,
-                ref.mtime_ns,
-                facets.captured_at,
-                facets.year,
-                facets.month,
-                facets.day,
-                facets.hour,
-                facets.minute,
-                facets.camera,
-                facets.lens,
-                facets.city,
-                facets.region,
-                facets.country,
-                _KEYWORD_SEPARATOR.join(facets.keywords),
-                facets.latitude,
-                facets.longitude,
-                1 if facets.place_inferred else 0,
-                1 if facets.place_checked else 0,
-                facets.place_distance_km,
-                facets.aperture,
-                facets.shutter,
-                facets.iso,
-                facets.focal,
-                facets.pixels,
-            )
+            (str(ref.path), ref.size, ref.mtime_ns, *_facets_to_row(facets))
             for ref, facets in items
         ]
         with self._lock:
@@ -538,81 +532,54 @@ def _relax_durability(connection: sqlite3.Connection) -> None:
 
 
 def _row_to_facets(values: Sequence[object]) -> PhotoFacets | None:
-    (
-        captured,
-        year,
-        month,
-        day,
-        hour,
-        minute,
-        camera,
-        lens,
-        city,
-        region,
-        country,
-        keywords,
-        latitude,
-        longitude,
-        inferred,
-        place_ok,
-        place_km,
-        aperture,
-        shutter,
-        iso,
-        focal,
-        pixels,
-    ) = values
-    words = tuple(word for word in str(keywords or "").split(_KEYWORD_SEPARATOR) if word)
-    return PhotoFacets(
-        captured_at=_optional_float(captured),
-        year=_optional_int(year),
-        month=_optional_int(month),
-        day=_optional_int(day),
-        hour=_optional_int(hour),
-        minute=_optional_int(minute),
-        camera=_optional_str(camera),
-        lens=_optional_str(lens),
-        city=_optional_str(city),
-        region=_optional_str(region),
-        country=_optional_str(country),
-        keywords=words,
-        latitude=_optional_float(latitude),
-        longitude=_optional_float(longitude),
-        place_inferred=bool(inferred),
-        place_checked=bool(place_ok),
-        place_distance_km=_optional_float(place_km),
-        aperture=_optional_float(aperture),
-        shutter=_optional_float(shutter),
-        iso=_optional_float(iso),
-        focal=_optional_float(focal),
-        pixels=_optional_float(pixels),
-    )
+    """一行的后 22 列 → :class:`PhotoFacets`。字段与类型由 :data:`_FACET_FIELDS` 决定。
+
+     ``strict=True`` 是这条函数的重点：列数与字段数对不上时它当场抛，而不会按短的
+     那个安静地少读一列 —— 那正是「分组退化成全是时间未知、SQL 照样成功」的成因。
+     属性名与 :class:`PhotoFacets` 对不对得上由一条测试盯着（``test_the_facet_table
+    _matches_the_dataclass``），这里只管按表逐列解码。
+    """
+    decoded = {
+        attribute: _decode_field(kind, value)
+        for (_, _, attribute, kind, _), value in zip(_FACET_FIELDS, values, strict=True)
+    }
+    return PhotoFacets(**cast("dict[str, Any]", decoded))
 
 
-def _facets_to_row(facets: PhotoFacets) -> tuple[object, ...]:
-    return (
-        facets.captured_at,
-        facets.year,
-        facets.month,
-        facets.day,
-        facets.hour,
-        facets.minute,
-        facets.camera,
-        facets.lens,
-        facets.city,
-        facets.region,
-        facets.country,
-        _KEYWORD_SEPARATOR.join(facets.keywords),
-        facets.latitude,
-        facets.longitude,
-        1 if facets.place_inferred else 0,
-        1 if facets.place_checked else 0,
-        facets.place_distance_km,
-        facets.aperture,
-        facets.shutter,
-        facets.iso,
-        facets.focal,
-        facets.pixels,
+def _encode_field(kind: str, value: object) -> object:
+    """:class:`PhotoFacets` 上的值 → 存进库的那一份。"""
+    if kind == "keywords":
+        return _KEYWORD_SEPARATOR.join(cast("tuple[str, ...]", value))
+    if kind == "bool":
+        return 1 if value else 0
+    return value
+
+
+def _decode_field(kind: str, value: object) -> object:
+    """库里读回来的那一份 → :class:`PhotoFacets` 上该有的类型。
+
+    数值与文本都要过一遍转换而不是直接用：SQLite 是弱类型的，而后面那些
+    「按 0 / 空串判未知」的分组判据吃的就是类型对不对。
+    """
+    if kind == "float":
+        return _optional_float(value)
+    if kind == "int":
+        return _optional_int(value)
+    if kind == "str":
+        return _optional_str(value)
+    if kind == "bool":
+        return bool(value)
+    return tuple(word for word in str(value or "").split(_KEYWORD_SEPARATOR) if word)
+
+
+def _facets_to_row(facets: PhotoFacets) -> tuple[SqlValue, ...]:
+    """:class:`PhotoFacets` → 一行的后 22 列。内存那条读路径与落盘那条共用它。"""
+    return cast(
+        "tuple[SqlValue, ...]",
+        tuple(
+            _encode_field(kind, getattr(facets, attribute))
+            for _, _, attribute, kind, _ in _FACET_FIELDS
+        ),
     )
 
 

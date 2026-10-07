@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import sqlite3
 from pathlib import Path
 
@@ -446,3 +447,55 @@ def test_a_failure_to_relax_durability_does_not_take_the_index_down(
     index.store([(ref, FULL)])
     assert index.lookup([ref]) == {ref.path: FULL}
     index.close()
+
+
+def test_the_facet_table_matches_the_dataclass() -> None:
+    """**字段表与 :class:`PhotoFacets` 一一对应** —— 少一个、多一个、拼错一个都不行。
+
+    这条守护是 :data:`_FACET_FIELDS` 那份单一来源的兑现处。字段表是手写的，而
+    :class:`PhotoFacets` 是另一个文件里的 dataclass，两边对不上时 SQL 照样执行成功，
+    症状是那一列永远空着、分组退化成「全是时间未知」。这条布局原来手写了五遍，
+    那次故障就是这么来的。
+    """
+    from gallery.core.library import index as module
+
+    listed = [attribute for _, _, attribute, _, _ in module._FACET_FIELDS]
+    declared = [field.name for field in dataclasses.fields(PhotoFacets)]
+
+    assert sorted(listed) == sorted(declared), (
+        f"字段表与 dataclass 对不上：表里多/少的是"
+        f"{sorted(set(listed) ^ set(declared))}"
+    )
+    assert len(listed) == len(set(listed)), f"字段表里有重复的属性名：{listed}"
+
+
+def test_the_column_list_agrees_with_the_generated_schema() -> None:
+    """**列清单与建表语句是同一份** —— 两处手写时加一列就会静默对不上。
+
+    判据是真建一个库，把 ``PRAGMA table_info`` 读回来与 :data:`_COLUMNS` 逐字比：
+    名字、顺序与类型都要一致。
+    """
+    from gallery.core.library import index as module
+
+    connection = sqlite3.connect(":memory:")
+    try:
+        connection.executescript(module._SCHEMA)
+        actual = [str(row[1]) for row in connection.execute("PRAGMA table_info(facets)")]
+    finally:
+        connection.close()
+
+    expected = [name.strip() for name in module._COLUMNS.split(",")]
+    assert actual == expected, f"建表语句与列清单对不上：\n库里的 {actual}\n清单里的 {expected}"
+
+
+def test_a_row_of_the_wrong_length_is_rejected() -> None:
+    """**列数对不上就当场抛**，而不是按短的安静地少读一列。
+
+    ``zip(strict=True)`` 就是这条守护的兑现处：它把「字段表与列清单悄悄错开」这件事
+    从一个运行很久之后才显出来的症状，变成了一次立即的失败。
+    """
+    from gallery.core.library import index as module
+
+    short = tuple(None for _ in module._FACET_FIELDS)[:-1]
+    with pytest.raises(ValueError):
+        module._row_to_facets(short)
