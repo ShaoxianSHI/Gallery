@@ -30,7 +30,11 @@ EXIFTOOL_EXECUTABLE: Final = "exiftool"
 EXIFTOOL_TIMEOUT_SECONDS: Final = 15.0
 
 #: exiftool 用这些串表示「这个字段是空的」。
-_EMPTY_VALUES: Final = frozenset({"-", "--", "unknown", ""})
+#: exiftool 用这几个词表示「这个字段是空的」。**读取与写回共用这一份**：
+#: 写完要回读校验，两边的「空」判错一次就等于刚写进去的东西被自己判成没写。
+#: 那个空串成员在两处都够不着（都先 ``strip()``、再用真值判断挡掉），留着是为了
+#: 「这一份就是 exiftool 的全部空值写法」这句话本身成立。
+EMPTY_VALUES: Final = frozenset({"-", "--", "unknown", ""})
 
 #: 读文件时要带的编码设置。``-charset IPTC=UTF8`` 不能省：exiftool 13 起泛指的 ``-charset
 #: UTF8`` 不再覆盖 IPTC，而它的缺省编码仍是 Latin-1 —— 少了这一句，照片里的中文地点名读回来
@@ -327,7 +331,7 @@ def first_value(raw: Mapping[str, str], *keys: str) -> str | None:
         if value is None:
             continue
         text = value.strip()
-        if text and text.lower() not in _EMPTY_VALUES:
+        if text and text.lower() not in EMPTY_VALUES:
             return text
     return None
 
@@ -904,6 +908,7 @@ def _gps_decimal(value: object, ref: object) -> float | None:
 
 __all__ = [
     "CAPTURE_TIME_FIELDS",
+    "EMPTY_VALUES",
     "EXIFTOOL_CHARSET_ARGS",
     "EXIFTOOL_EXECUTABLE",
     "EXIFTOOL_TIMEOUT_SECONDS",

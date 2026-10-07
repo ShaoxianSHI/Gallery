@@ -21,6 +21,9 @@ from gallery.core import paths
 from gallery.core.errors import MetadataWriteError
 from gallery.core.library.photos import PhotoRef, is_supported_photo
 from gallery.core.metadata.exif import (
+    EMPTY_VALUES as _EXIF_EMPTY_VALUES,
+)
+from gallery.core.metadata.exif import (
     EXIFTOOL_CHARSET_ARGS,
     EXIFTOOL_EXECUTABLE,
     EXIFTOOL_TIMEOUT_SECONDS,
@@ -119,8 +122,11 @@ _UNSUPPORTED_MARKERS: Final = (
 #: 没装 exiftool 时给用户的那一句。
 INSTALL_HINT: Final = "安装后即可使用：brew install exiftool"
 
-#: exiftool 用这几个词表示「这个字段是空的」，与读取侧同一套（``exif._EMPTY_VALUES``）。
-_EMPTY_VALUES: Final = frozenset({"-", "--", "unknown"})
+#: exiftool 用这几个词表示「这个字段是空的」。**直接用读取侧那一份**而不是各写一套：
+#: 写回后回读校验与读取走的是同一个 exiftool，两边的「空」判错一次就等于刚写进去的东西
+#: 被自己判成没写。差别只在 ``exif`` 那份多一个空串，而它在这里够不着 —— 两处都先
+#: ``strip()``、再用真值判断挡掉空串。
+_EMPTY_VALUES = _EXIF_EMPTY_VALUES
 
 #: **回滚那次写回用的超时**，比 :data:`EXIFTOOL_TIMEOUT_SECONDS` 短：一次 :func:`_apply` 最坏
 #: 要起 6 个 exiftool，各能卡满正常超时，而「回滚没有成功」正是用户最需要尽快看到结果的那条
