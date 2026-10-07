@@ -22,7 +22,7 @@ from gallery.core.library.config import (
     save_config,
 )
 from gallery.core.library.facade import Library
-from gallery.core.library.photos import FolderRef
+from gallery.core.library.photos import FolderRef, PhotoRef
 
 
 def test_open_missing_directory(tmp_path: Path) -> None:
@@ -513,3 +513,78 @@ def test_album_label_never_renders_the_root_as_a_dot(
     assert library.album_label(root) == "照片"
     assert library.album_label(root / "京都") == "京都"
     assert library.album_label(root / "京都" / "内") == "京都/内"
+
+
+def _library_of(tmp_path: Path, make_photo: Callable[..., Path], count: int) -> Library:
+    root = tmp_path / "库"
+    root.mkdir(parents=True, exist_ok=True)
+    for number in range(count):
+        make_photo(f"照片-{number:03d}.jpg", directory=root)
+    return Library.open(root)
+
+
+def _walk(
+    library: Library,
+    monkeypatch: pytest.MonkeyPatch,
+    refs: list[PhotoRef],
+    size: int,
+    should_cancel: Callable[[], bool] | None = None,
+) -> list[tuple[int, int]]:
+    """让被测那一段只看到 ``refs``，返回 ``[(批大小, 已扫过)]``。
+
+    **把整库遍历换掉是必要的**：真的 ``iter_photos`` 自己也会问同一个 ``should_cancel``，
+    取消为真时它一张都不交 —— 于是「收尾那半批被丢掉了」与「压根没扫到照片」在结果上
+    分不出来，用例会在**测不到那一行**的情况下变绿。
+    """
+    monkeypatch.setattr(library, "iter_photos", lambda **_: iter(refs))
+    return [
+        (len(batch), scanned) for batch, scanned in library._iter_photo_batches(size, should_cancel)
+    ]
+
+
+def _refs_of(library: Library) -> list[PhotoRef]:
+    return list(library.iter_photos())
+
+
+def test_the_batch_walker_yields_full_batches_and_then_the_tail(
+    tmp_path: Path, make_photo: Callable[..., Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """成批产出：前面的都是整批，最后那半批也交出来，计数跟着上一批。"""
+    library = _library_of(tmp_path, make_photo, 5)
+
+    assert _walk(library, monkeypatch, _refs_of(library), 2) == [(2, 2), (2, 4), (1, 5)]
+
+
+def test_the_tail_is_dropped_when_cancelled_but_kept_otherwise(
+    tmp_path: Path, make_photo: Callable[..., Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**不够一整批时走的是收尾那一条**，它同样要看取消 —— 这条判据唯一的家。
+
+    它原先在 ``index_photos`` 与 ``resolve_places`` 里各写一遍（「非空 **且** 未取消」），
+    抄漏一处不会报错：只会在用户按了停之后再多写一批。只有一张而批大小是 2，整批那条路
+    一次都不会走，能交出来的只有收尾那半批，于是两半都钉得住。
+    """
+    library = _library_of(tmp_path, make_photo, 1)
+    refs = _refs_of(library)
+
+    assert _walk(library, monkeypatch, refs, 2, lambda: True) == [], "取消了还交收尾那批"
+    assert _walk(library, monkeypatch, refs, 2) == [(1, 1)]
+
+
+def test_the_full_batch_is_not_yielded_once_cancelled(
+    tmp_path: Path, make_photo: Callable[..., Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """整批那一条也要看取消：取消了就不该再交出去。"""
+    library = _library_of(tmp_path, make_photo, 2)
+
+    assert _walk(library, monkeypatch, _refs_of(library), 2, lambda: True) == []
+
+
+def test_the_batch_walker_yields_nothing_for_an_empty_library(
+    tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """空库一次都不交 —— 收尾那一次不该交出一个空批（否则索引会白写一遍）。"""
+    root = tmp_path / "空库"
+    root.mkdir(parents=True, exist_ok=True)
+
+    assert list(Library.open(root)._iter_photo_batches(2, None)) == []

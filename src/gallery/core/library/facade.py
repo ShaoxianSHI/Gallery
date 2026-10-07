@@ -688,6 +688,30 @@ class Library:
         """
         return self.facet_index.store_photos(refs, root=self._root)
 
+    def _iter_photo_batches(
+        self, batch_size: int, should_cancel: Callable[[], bool] | None
+    ) -> Iterator[tuple[list[PhotoRef], int]]:
+        """按 ``batch_size`` 成批产出照片，顺带给出「到此为止扫过多少张」。
+
+        两条整库遍历（:meth:`index_photos` 建索引、:meth:`resolve_places` 补地点）共用它。
+        **最后那半批只在没被取消时才产出** —— 取消了还写一次，等于用户按了停却停不下来。
+        这条判据是「非空 **且** 未取消」两个条件，原先在那两处各抄一遍，而抄漏一处不会报错：
+        只会在取消之后多写一批。
+        """
+        batch: list[PhotoRef] = []
+        scanned = 0
+        for ref in self.iter_photos(should_cancel=should_cancel):
+            scanned += 1
+            batch.append(ref)
+            if len(batch) < batch_size:
+                continue
+            if should_cancel is not None and should_cancel():
+                return
+            yield batch, scanned
+            batch = []
+        if batch and not (should_cancel is not None and should_cancel()):
+            yield batch, scanned
+
     def index_photos(
         self,
         *,
@@ -710,24 +734,14 @@ class Library:
         written = 0
         announced = False
         scanned = 0
-        batch: list[PhotoRef] = []
-        for ref in self.iter_photos(should_cancel=should_cancel):
-            scanned += 1
-            batch.append(ref)
-            if len(batch) < PHOTO_INDEX_BATCH:
-                continue
-            if should_cancel is not None and should_cancel():
-                break
+        for batch, scanned in self._iter_photo_batches(PHOTO_INDEX_BATCH, should_cancel):
             written += index.store_photos(batch, root=self._root)
-            batch.clear()
             if not announced:
                 announced = True
                 if on_work is not None:
                     on_work(scanned)
             if on_progress is not None:
                 on_progress(scanned)
-        if batch and not (should_cancel is not None and should_cancel()):
-            written += index.store_photos(batch, root=self._root)
         if on_progress is not None:
             on_progress(scanned)
         return written
@@ -824,14 +838,7 @@ class Library:
                 if on_work is not None:
                     on_work(count)
 
-        batch: list[PhotoRef] = []
-        for ref in self.iter_photos(should_cancel=should_cancel):
-            scanned += 1
-            batch.append(ref)
-            if len(batch) < PLACE_PASS_BATCH:
-                continue
-            if should_cancel is not None and should_cancel():
-                break
+        for batch, scanned in self._iter_photo_batches(PLACE_PASS_BATCH, should_cancel):
             resolved += _resolve_batch(
                 index,
                 batch,
@@ -841,19 +848,8 @@ class Library:
                 should_cancel=should_cancel,
                 on_work=announce,
             )
-            batch.clear()
             if on_progress is not None:
                 on_progress(scanned, 0)
-        if batch and not (should_cancel is not None and should_cancel()):
-            resolved += _resolve_batch(
-                index,
-                batch,
-                resolver=resolver,
-                status=status,
-                source=source,
-                should_cancel=should_cancel,
-                on_work=announce,
-            )
         if on_progress is not None:
             on_progress(scanned, scanned)  # 没有总数时最后补一次收尾
         return PlacePass(scanned=scanned, resolved=resolved)
