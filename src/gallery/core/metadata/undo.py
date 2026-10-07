@@ -162,7 +162,7 @@ def undo_last_write(
     if run[0].action == ACTION_RENAME:
         return _undo_rename(root, run[0], events)
     if run[0].action == ACTION_MOVE:
-        return _undo_move(root, run)
+        return _undo_move(root, run, events)
     if run[0].action == ACTION_METADATA:
         return _undo_metadata(root, run[0], writer=writer)
     if run[0].action in (ACTION_EVENT, ACTION_EVENT_DELETE):
@@ -233,13 +233,15 @@ def _undo_rename(root: Path, record: WriteRecord, events: EventStore | None) -> 
     )
 
 
-def _undo_move(root: Path, run: Sequence[WriteRecord]) -> UndoResult:
+def _undo_move(root: Path, run: Sequence[WriteRecord], events: EventStore | None) -> UndoResult:
     """把移动过的东西挪回原来的相册（ADR 0019）。
 
     网格该显示什么交给界面重扫：挪回来的东西**可能不在当前这一层**，这里不替界面决定
     插到哪一行。
+
+    事件绑定跟着搬回去（ADR 0043 决策 8）—— 撤销一次移动仍然是一次移动，而绑定按路径记。
     """
-    result = undo_move_records(root, run)
+    result = undo_move_records(root, run, events=events)
     return UndoResult(
         action=ACTION_MOVE,
         entries=(),

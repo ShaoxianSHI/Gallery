@@ -15,6 +15,8 @@
   移动**：东西一直都在，只是回到了它原来待着的地方。
 - **每一项都记账**（:data:`~gallery.core.metadata.journal.ACTION_MOVE`），与另外三个
   写操作同一处；一次操作里的多项共用一个 ``batch``，于是一次 ⌘Z 撤一整批。
+- **事件绑定跟着走，撤销也跟回来**（ADR 0043 决策 8）：移动改的是绝对路径，而绑定按路径记。
+  撤销是一次移动，于是绑定也搬回去 —— 与撤销改名同一套道理，**不做这一步的话撤销会把事件弄丢**。
 
 跨卷（库在外接盘上，或相册横跨两个卷）时 ``rename`` 会返回 ``EXDEV``，这时才退化成
 拷贝 + 删除，且**删除只在拷贝成功之后发生** —— 与 ``core.metadata.trash`` 是同一套做法。
@@ -36,6 +38,7 @@ from uuid import uuid4
 from gallery.core import paths
 from gallery.core.cancellation import never_cancel
 from gallery.core.errors import TransferError
+from gallery.core.events.store import EventStore, follow_moves
 from gallery.core.metadata.failures import (
     SOURCE_GONE,
     Failure,
@@ -117,6 +120,7 @@ def move_into(
     sources: Sequence[Path],
     *,
     should_cancel: Callable[[], bool] | None = None,
+    events: EventStore | None = None,
 ) -> MoveResult:
     """把 ``sources`` **移动**进 ``target``，返回结果。
 
@@ -125,6 +129,8 @@ def move_into(
     :param sources: 要移动的路径。界面上给的是网格里选中的照片；理论上也接受文件夹。
     :param should_cancel: 每移一项之前问一次。只在**项与项之间**取消：移一半停下来会让
         用户自己都说不清哪些被移了，那比移完更糟。
+    :param events: 事件库（可换绑用）。``None`` 或不可用时跳过那一步 —— 见
+        :func:`~gallery.core.metadata.rename.rename_entry` 的同一段说明。
     :raises TransferError: ``target`` 不是目录，或者它落在库外。
     """
     destination = Path(target)
@@ -137,6 +143,8 @@ def move_into(
     moved: list[MovedItem] = []
     skipped: list[Skipped] = []
     failures: list[Failure] = []
+    #: 真要跟着搬的绑定：``(旧位置, 新位置, 是不是文件夹)``，攒到整批结束再一次事务搬完。
+    follow: list[tuple[Path, Path, bool]] = []
     journaled = True
     # **目录只扫一次**（理由与偏差见 :func:`~gallery.core.metadata.naming.free_name_in`）。
     taken = occupied_names(destination)
@@ -158,6 +166,9 @@ def move_into(
         if created is None:
             failures.append(Failure.at(source, message="这个名字太长，再加编号也放不下了。"))
             continue
+        # **移动之前**问一次：移完之后源路径已经不存在，那时再问恒为假，于是移相册的日志里
+        # ``is_dir`` 会记成照片。绑定跟过去同样要用它（相册要按前缀搬整棵子树）。
+        is_dir = source.is_dir()
         try:
             _move(source, created)
         except OSError as error:
@@ -170,7 +181,7 @@ def move_into(
                     target=created,
                     result=RESULT_FAILED,
                     message=message,
-                    is_dir=source.is_dir(),
+                    is_dir=is_dir,
                     batch=batch,
                 ),
             )
@@ -183,11 +194,16 @@ def move_into(
                 source=source,
                 target=created,
                 result=RESULT_OK,
-                is_dir=source.is_dir(),
+                is_dir=is_dir,
                 batch=batch,
             ),
         )
         moved.append(MovedItem(source=source, created=created))
+        follow.append((source, created, is_dir))
+    # 绑定跟着走，且**一次事务搬完整批**（ADR 0043 决策 8）。只收真的移走的那些 ——
+    # 跳过与失败的那些路径压根没变。监听器随后还会把同一件事报回来一次（``MOVE`` 不做回声
+    # 屏蔽，新文件的上屏靠它），那一次搬不到什么：源路径上已经没有绑定了。
+    follow_moves(events, follow)
     return MoveResult(
         moved=tuple(moved),
         skipped=tuple(skipped),
@@ -196,17 +212,23 @@ def move_into(
     )
 
 
-def undo_move_records(root: Path, records: Sequence[WriteRecord]) -> UndoMoveResult:
+def undo_move_records(
+    root: Path, records: Sequence[WriteRecord], *, events: EventStore | None = None
+) -> UndoMoveResult:
     """把 :mod:`gallery.core.metadata.undo` 挑出来的移动记录挪回原处。
 
     与 :func:`trash.restore_entries` 对称：逐条还原，取不回来的如实报告，不静默跳过。
 
     **原位置被占了就不动它**（与取回废纸篓同一个取向）：用户在这期间自己放了东西进去，
     替他腾出位置等于删掉那个东西 —— 那需要用户亲手做。
+
+    :param events: 事件库（可换绑用）。撤销一次移动仍然是一次移动，绑定跟着搬回去
+        （方向与当初那次相反），与撤销改名同一套道理。
     """
     root = Path(root)
     restored: list[MovedItem] = []
     failures: list[Failure] = []
+    follow: list[tuple[Path, Path, bool]] = []
     journaled = True
     for record in records:
         current, original = record.target, record.source
@@ -272,6 +294,8 @@ def undo_move_records(root: Path, records: Sequence[WriteRecord]) -> UndoMoveRes
             ),
         )
         restored.append(MovedItem(source=current, created=original))
+        follow.append((current, original, record.is_dir))
+    follow_moves(events, follow)
     return UndoMoveResult(restored=tuple(restored), failures=tuple(failures), journaled=journaled)
 
 

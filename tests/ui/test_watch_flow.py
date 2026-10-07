@@ -24,6 +24,7 @@ from PySide6.QtGui import QImage  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 from waiting import wait_until
 
+from gallery.core.events.store import EventDraft  # noqa: E402
 from gallery.core.library.config import (
     BROWSE_MODE_ALBUMS,
     BROWSE_MODE_FLAT,
@@ -119,6 +120,15 @@ def row_of(window: MainWindow, path: Path) -> int:
 
 def names(window: MainWindow) -> list[str]:
     return [entry.name for entry in window._model.entries()]
+
+
+def _bind_one(window: MainWindow, photo: Path) -> int:
+    """建一个事件并把 ``photo`` 记进去，返回事件 id。"""
+    library = window._library
+    assert library is not None and library.events_available
+    event_id = library.create_event("trip", EventDraft.of(title="京都五日")).event.id
+    assert library.bind_photos([photo], event_id) == 1
+    return event_id
 
 
 #: 测试里的修改时间基准（2023-11-14 前后）。具体值无所谓，只要先后是确定的。
@@ -438,6 +448,81 @@ def test_renaming_outside_keeps_the_row_and_the_selection(
         assert names(window) == ["新名.jpg"]
         assert window._model.row_of_path(before) == -1
         assert window._grid.current_row() == row_of(window, after)
+    finally:
+        window.close()
+
+
+# ---- 外部改名 / 移动要带着事件绑定 --------------------------------------------
+
+
+def test_renaming_outside_carries_the_event_bindings(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """访达里改个名，事件绑定跟着走（ADR 0043 决策 8）。
+
+    **这是监听这一层唯一知道「访达里改了路径」的地方**：应用内改名走 ``core.rename``，
+    而访达里的那一下只能从这里知道。绑定跟着网格一起走，照片就不会「还在、事件没了」。
+    """
+    before = make_photo("旧名.jpg")
+    after = tmp_path / "新名.jpg"
+    window, watcher = open_window(qt_app, tmp_path)
+    try:
+        event_id = _bind_one(window, before)
+        before.rename(after)
+
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.MOVED, before, dest_path=after))
+
+        assert window._library.events.photos_of_event(event_id) == (after,)
+    finally:
+        window.close()
+
+
+def test_moving_a_whole_album_outside_carries_every_binding_under_it(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """相册在访达里被改名 / 挪走：里面每一张照片的绝对路径都变了，绑定逐张换前缀。"""
+    make_photo("深处.jpg", directory=tmp_path / "京都" / "子相册")
+    window, watcher = open_window(qt_app, tmp_path, browse_mode=BROWSE_MODE_ALBUMS)
+    try:
+        event_id = _bind_one(window, tmp_path / "京都" / "子相册" / "深处.jpg")
+        (tmp_path / "京都").rename(tmp_path / "奈良")
+
+        deliver(
+            qt_app,
+            window,
+            watcher,
+            LibraryChange(
+                ChangeKind.MOVED, tmp_path / "京都", dest_path=tmp_path / "奈良", is_dir=True
+            ),
+        )
+
+        assert window._library.events.photos_of_event(event_id) == (
+            tmp_path / "奈良" / "子相册" / "深处.jpg",
+        )
+    finally:
+        window.close()
+
+
+def test_bindings_follow_a_move_even_while_the_level_is_frozen(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """**延后闸只该推迟改界面，不该推迟修数据。**
+
+    日历页 / 大图页 / 扫描在途时这批变化会攒进 ``_watch_pending``，而它可能被直接丢掉
+    （扫描一完成就 ``_watch_pending = None`` 再重扫那一层）。绑定要是跟着界面页面的状态走，
+    那正是「照片还在、事件没了」的来路。
+    """
+    before = make_photo("旧名.jpg")
+    after = tmp_path / "新名.jpg"
+    window, watcher = open_window(qt_app, tmp_path)
+    try:
+        event_id = _bind_one(window, before)
+        before.rename(after)
+        window._show_calendar()  # 不能就地改网格的那一页
+
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.MOVED, before, dest_path=after))
+
+        assert window._library.events.photos_of_event(event_id) == (after,)
     finally:
         window.close()
 

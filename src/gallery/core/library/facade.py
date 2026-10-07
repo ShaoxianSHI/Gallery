@@ -959,8 +959,13 @@ class Library:
         规矩与红线见 ``core.transfer`` 与 ADR 0019：这是唯一会让用户的文件**离开原处**
         的操作，因此只在用户亲手点了菜单项时才发生，且**进撤销栈** —— ⌘Z 把它挪回原来的
         相册（撤销一次移动仍然是一次移动，不是删除）。与粘贴一样**绝不覆盖**。
+
+        **事件绑定跟着走**（ADR 0043 决策 8），撤销也跟回来：移动改的是绝对路径，
+        而绑定按路径记 —— 与粘贴的差别就在这里，副本是用户没表达过心意的新照片。
         """
-        return move_into(self._root, target, sources, should_cancel=should_cancel)
+        return move_into(
+            self._root, target, sources, should_cancel=should_cancel, events=self.events
+        )
 
     def create_album(self, parent: Path, name: str = DEFAULT_ALBUM_NAME) -> CreatedAlbum:
         """在 ``parent`` 里新建一个空相册（界面上是「新建相册」⇧⌘N）。

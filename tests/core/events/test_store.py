@@ -12,7 +12,14 @@ import pytest
 from gallery.core import paths
 from gallery.core.events import store as store_module
 from gallery.core.events.kinds import EVENT_KINDS, SQL_TYPES, TRIP, fields_of
-from gallery.core.events.store import Event, EventDraft, EventRef, EventStore, events_of_kind
+from gallery.core.events.store import (
+    Event,
+    EventDraft,
+    EventRef,
+    EventStore,
+    events_of_kind,
+    follow_moves,
+)
 
 
 @pytest.fixture
@@ -400,14 +407,34 @@ def test_renaming_a_photo_carries_its_events_over(events: EventStore) -> None:
     old, new = Path("/库/旧名.jpg"), Path("/库/新名.jpg")
     events.bind([old], event.id)
 
-    assert events.move_binding(old, new)
+    assert follow_moves(events, [(old, new, False)]) == 1
     assert events.photos_of_event(event.id) == (new,)
     assert events.events_for_photos([old]) == {}
 
 
 def test_moving_a_binding_that_is_not_there_reports_it(events: EventStore) -> None:
-    """没搬动过就如实回答 ``False``，让改名那条路不必猜。"""
-    assert not events.move_binding(Path("/库/没有.jpg"), Path("/库/另一个.jpg"))
+    """没搬动过就如实报 0 条，让调用点不必猜。**重复搬也是 0** —— 应用内移动因此既自己搬
+    一次、又被监听器报回来的那次搬一次（ADR 0043 决策 8）。"""
+    assert follow_moves(events, [(Path("/库/没有.jpg"), Path("/库/另一个.jpg"), False)]) == 0
+
+    event = _create(events)
+    old, new = Path("/库/旧名.jpg"), Path("/库/新名.jpg")
+    events.bind([old], event.id)
+    assert follow_moves(events, [(old, new, False)]) == 1
+    assert follow_moves(events, [(old, new, False)]) == 0
+
+
+def test_renaming_an_album_carries_the_whole_subtree(events: EventStore) -> None:
+    """相册换位置改的是里面每一张照片的绝对路径，一条按前缀的 UPDATE 就够。"""
+    event = _create(events)
+    photos = [Path("/库/京都/a.jpg"), Path("/库/京都/子相册/b.jpg")]
+    events.bind(photos, event.id)
+
+    assert follow_moves(events, [(Path("/库/京都"), Path("/库/奈良"), True)]) == 2
+    assert events.photos_of_event(event.id) == (
+        Path("/库/奈良/a.jpg"),
+        Path("/库/奈良/子相册/b.jpg"),
+    )
 
 
 def test_deleting_an_event_reports_the_bindings_it_dropped(events: EventStore) -> None:

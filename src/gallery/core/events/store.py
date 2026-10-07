@@ -814,42 +814,38 @@ class EventStore:
                 removed += max(cursor.rowcount, 0)
         return removed
 
-    def move_binding(self, old: Path, new: Path) -> bool:
-        """照片改名之后把绑定一起搬过去（ADR 0043 决策 8）。
-
-        **纯写我们自己的库，不碰用户文件**，红线 1 管不到这里；而不搬的话绑定就指向一个不存在的
-        路径了 —— 索引里的 facet 行靠 ``(大小, 修改时间)`` 自动过期、用户无感，事件绑定是用户
-        一份心意，不能这么兜。
-        """
-        connection = self._connection
-        if connection is None:
-            return False
-        with self._lock, connection:
-            cursor = connection.execute(
-                f"UPDATE OR REPLACE {SCHEMA_NAME}.photo_events SET path = ? WHERE path = ?",
-                (str(new), str(old)),
-            )
-        return cursor.rowcount > 0
-
-    def move_bindings_under(self, old_dir: Path, new_dir: Path) -> int:
-        """相册改名之后把**它下面所有**绑定一起搬过去，返回搬了几条。
-
-        一条语句搞定（``substr`` 按字符数切后缀），不逐张照片去问 —— 一次相册改名可能牵动
-        几千张照片，逐条搬既慢又容易漏。**只搬相册自己的目录，不递归**（``子相册/…`` 由
-        ``path LIKE '…/%'`` 一并盖上），而改名只改一层目录名。
-        """
+    def _apply_moves(self, moves: Iterable[tuple[Path, Path, bool]]) -> int:
+        """真搬。**连接不可用就是 0 条** —— ``None`` 那个库由 :func:`follow_moves` 挡掉。"""
         connection = self._connection
         if connection is None:
             return 0
-        old_prefix, new_prefix = str(old_dir), str(new_dir)
+        pairs = [(Path(old), Path(new), is_dir) for old, new, is_dir in moves]
+        if not pairs:
+            return 0
+        moved = 0
         with self._lock, connection:
-            cursor = connection.execute(
-                f"UPDATE OR REPLACE {SCHEMA_NAME}.photo_events"
-                f" SET path = ? || substr(path, ?)"
-                f" WHERE path LIKE ? ESCAPE '\\' OR path = ?",
-                (new_prefix, len(old_prefix) + 1, like_pattern(old_prefix, "/%"), old_prefix),
-            )
-        return max(cursor.rowcount, 0)
+            for old, new, is_dir in pairs:
+                if is_dir:
+                    old_prefix, new_prefix = str(old), str(new)
+                    cursor = connection.execute(
+                        f"UPDATE OR REPLACE {SCHEMA_NAME}.{BINDINGS_TABLE}"
+                        f" SET path = ? || substr(path, ?)"
+                        f" WHERE path LIKE ? ESCAPE '\\' OR path = ?",
+                        (
+                            new_prefix,
+                            len(old_prefix) + 1,
+                            like_pattern(old_prefix, "/%"),
+                            old_prefix,
+                        ),
+                    )
+                else:
+                    cursor = connection.execute(
+                        f"UPDATE OR REPLACE {SCHEMA_NAME}.{BINDINGS_TABLE}"
+                        f" SET path = ? WHERE path = ?",
+                        (str(new), str(old)),
+                    )
+                moved += max(cursor.rowcount, 0)
+        return moved
 
     def _kind_of(self, event_id: int) -> str:
         """这一条事件是哪一类。改它之前要按类型拼扩展表的列，所以得先问一次。"""
@@ -874,6 +870,33 @@ def events_of_kind(events: Sequence[Event], kind_id: str) -> tuple[Event, ...]:
     return tuple(event for event in events if event.kind == kind_id)
 
 
+def follow_moves(events: EventStore | None, moves: Iterable[tuple[Path, Path, bool]]) -> int:
+    """一批「旧位置 → 新位置」，把事件绑定搬过去，返回搬了几条（ADR 0043 决策 8）。
+
+    **改了路径就要调它**：绑定按 ``path`` 记，而索引里的 facet 行靠 ``(大小, 修改时间)`` 自动
+    过期、`forget_paths`` 清孤儿行，所以丢索引对用户无感 —— **事件绑定是用户一份心意，不能这么
+    兜**。纯写我们自己的库，不碰用户文件，红线 1 管不到这里。
+
+    **三个调用点共用这一处**（判 ``None`` 与「不可用」也在这里，于是写错一处不会静默丢绑定）：
+    应用内改名、应用内移动到相册（撤销那两样同样走它），以及监听器报上来的外部改名与移动。
+
+    :param moves: ``(旧位置, 新位置, 是不是文件夹)``。**只收真的动了的那些** —— 跳过与失败
+        的那些路径压根没变。相册那一支按前缀改写后缀（``substr`` 按字符数切），一次相册改名
+        牵动几千张，一条就够，不逐张照片去问。
+    :param events: 事件库。``None`` 或不可用（配置目录建不出来的库）时**当没有这回事** ——
+        文件已经动了，绑定是附带信息，报错只会让用户以为照片没挪成功。
+
+    **一次事务**：一次「移动到相册」或一批外部变化可能是几百项，逐项一个事务就是几百次提交。
+    而**重复调用是安全的** —— 搬过的那一次源路径上已经没有绑定了，于是这一轮一条都不改。
+    应用内移动因此既自己搬一次、又被监听器报回来的那次搬一次（``MOVE`` 不做回声屏蔽，新文件的
+    上屏就是靠监听器），第二次是空操作。
+    """
+
+    if events is None or not events.available:
+        return 0
+    return events._apply_moves(moves)
+
+
 __all__ = [
     "CHUNK",
     "SCHEMA_NAME",
@@ -884,4 +907,5 @@ __all__ = [
     "EventStore",
     "attach",
     "events_of_kind",
+    "follow_moves",
 ]

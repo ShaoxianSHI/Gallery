@@ -25,7 +25,7 @@ from pathlib import Path
 
 from gallery.core import paths
 from gallery.core.errors import RenameError
-from gallery.core.events.store import EventStore
+from gallery.core.events.store import EventStore, follow_moves
 from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
 from gallery.core.metadata.failures import os_reason
 from gallery.core.metadata.journal import (
@@ -146,16 +146,8 @@ def rename_entry(
 
 
 def _follow_rename(events: EventStore | None, source: Path, target: Path, *, is_dir: bool) -> None:
-    """把事件绑定从旧路径搬到新路径上（ADR 0043 决策 8）。
-
-    **搬不动就当没有**：绑定是附带信息，而改名已经成了 —— 报错只会让用户以为照片没改成功。
-    """
-    if events is None or not events.available:
-        return
-    if is_dir:
-        events.move_bindings_under(source, target)
-    else:
-        events.move_binding(source, target)
+    """把事件绑定从旧路径搬到新路径上（ADR 0043 决策 8）。"""
+    follow_moves(events, [(source, target, is_dir)])
 
 
 def undo_rename_record(

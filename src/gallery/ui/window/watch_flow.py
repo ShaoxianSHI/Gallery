@@ -7,6 +7,9 @@ watchdog 的回调**不在主线程**，所以先由排队连接搬回来。搬�
 
 还管两件容易漏的事：**自家写操作的回声**（改名 / 移到废纸篓 / 撤销之后监听器会再报一次同一
 件事，见 :data:`WATCH_ECHO_TTL`）与**相册封面的作废**（封面是「里面第一张照片」）。
+
+**事件绑定在这一层跟一次外部改名 / 移动**（:meth:`WatchFlowMixin._follow_moved_bindings`）——
+它不碰界面，却必须在这里做，因为这是唯一知道「访达里改了路径」的地方。
 """
 
 from __future__ import annotations
@@ -16,6 +19,7 @@ import time
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
+from gallery.core.events.store import follow_moves
 from gallery.core.library.config import BROWSE_MODE_ALBUMS, BROWSE_MODE_FLAT
 from gallery.core.library.facade import Library
 from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
@@ -46,11 +50,32 @@ class WatchFlowMixin:
         if not changes:
             return
         logger.info("磁盘上有变化：%s", summarize(changes))
+        self._follow_moved_bindings(library, changes)
         if self._defer_watch_until_idle():
             waiting = self._watch_pending or ()
             self._watch_pending = (*waiting, *changes)
             return
         self._apply_watch_changes(library, changes)
+
+    def _follow_moved_bindings(self, library: Library, changes: Sequence[LibraryChange]) -> None:
+        """外部改名 / 移动之后把事件绑定跟过去（ADR 0043 决策 8）。
+
+        **在延后闸之前**：延后只该推迟「改界面」，不该推迟「修数据」—— 一批变化被攒进
+        ``_watch_pending`` 之后可能被直接丢掉（扫描一完成就 ``_watch_pending = None`` 再重扫
+        那一层），而绑定一旦跟着界面页面的状态走，那正是「照片还在、事件没了」的来路。
+
+        **自家写操作已经搬过一次，这里搬不到什么**：改名的回声被 :meth:`_is_echo` 滤掉；
+        移动到相册不屏蔽回声（新文件的上屏靠监听器），于是同一件事搬第二次 —— 源路径上已经
+        没有绑定了，那一轮一条都不改。
+        """
+        follow_moves(
+            library.events,
+            (
+                (change.path, change.dest_path, change.is_dir)
+                for change in changes
+                if change.kind is ChangeKind.MOVED and change.dest_path is not None
+            ),
+        )
 
     def _defer_watch_until_idle(self) -> bool:
         """现在还不能就地改网格吗？回答「是」，这批变化就该先攒着。
