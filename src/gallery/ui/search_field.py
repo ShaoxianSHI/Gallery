@@ -239,7 +239,7 @@ def magnifier(app_theme: AppTheme, ratio: float) -> QPixmap:
     radius = usable * 0.33
     center = ICON_INSET + usable * 0.4
     # 用 ``QRectF`` 那个重载：``drawEllipse(QPointF, w, h)`` 在 PySide6 里绑到的
-    # 不是「左上角 + 宽高」（实测圆被画到 0..8 而不是 2..9）。
+    # 不是「左上角 + 宽高」，画出来的圆会偏出去。
     painter.drawEllipse(QRectF(center - radius, center - radius, radius * 2, radius * 2))
     # 手柄从圆环的 45 度方向出发，走到那个内缩过的角上 —— 与圆环连得上，也不顶边。
     painter.drawLine(

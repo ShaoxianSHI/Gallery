@@ -325,7 +325,7 @@ class PhotoListModel(QAbstractListModel):
 
         只按**条目数**淘汰是不够的：每张的实际大小是 ``边长² × 4`` 字节，内存跟着边长的
         **平方**走 —— ``DEFAULT_PIXMAP_CACHE`` = 600 时，176 档约 66 MB 而 288 档是 237 MB，
-        用户只按了一下「大」。
+        换一档就是四倍内存，而换档只值一下点击。
         """
         total = sum(
             item.pixmap.width() * item.pixmap.height() * 4 for item in self._pixmaps.values()

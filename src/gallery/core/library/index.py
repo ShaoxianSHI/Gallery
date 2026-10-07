@@ -188,9 +188,11 @@ class FacetIndex:
         return self._connection is not None and self._path is not None
 
     def close(self) -> None:
-        """关掉连接，**连带把 ``_path`` 一起清掉**：过去只清了 ``_connection``，于是 ``_open`` 里那
-        两句 ``_path is None`` 的分支有一半永远走不到，下次 ``store`` 会在关掉的状态上重新
-        ``sqlite3.connect`` 同一个文件 —— 那是「已经关掉的东西被偷偷重新打开」。
+        """关掉连接，**连带把 ``_path`` 一起清掉**。
+
+        ``_path`` 留着就表示「这个索引是落盘的」，而 :meth:`_open` 与 :meth:`persistent`
+        都拿它当判据 —— 只清 ``_connection`` 的话，下一次 :meth:`store` 会在一个已经关掉的
+        对象上重新 ``sqlite3.connect`` 同一个文件，即「关掉的东西被偷偷打开」。
         """
         with self._lock:
             if self._connection is not None:

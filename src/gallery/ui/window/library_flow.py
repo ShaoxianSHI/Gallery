@@ -198,8 +198,7 @@ class LibraryFlowMixin:
         self._sync_order_actions()
         self._metadata_action.setChecked(self._metadata_visible)
         self._panel.setVisible(self._metadata_visible)
-        # 栈：开库 = 从头开始（只留根帧）。原来这句是 ``_current_dir = library.root``，
-        # 与「换浏览方式清栈」是同一件事的两条路，现在都归 :meth:`_set_root`。
+        # 栈：开库 = 从头开始（只留根帧）。与「换浏览方式清栈」是同一件事，都归 :meth:`_set_root`。
         self._set_root(self._level_stack.root)
         self._arm_focus()  # 打开库走的是自己那一套，不经过 _reload_level
         # 每一层都要重排（排序字段总是有的），所以扫出来的一律先攒着，等顺序定下来。

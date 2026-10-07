@@ -956,9 +956,9 @@ class PhotoGrid(QListView):
 
         **为什么不能继续用 Batched**：Batched 的滚动条范围只覆盖已排版的那一批，刚排完
         第一批那一刻小得离谱（切到大档后 800 张时 maximum 是 4272，正确的满范围是
-        62600）。用户在相册底部时范围一变小，当前位置就被 Qt **当场夹**到 4272 ——
-        整屏瞬间弹回顶部。SinglePass 同步算对且便宜：3000 张 7.9ms、30000 张 40.4ms。
-        平时**滚动**仍然完全不重排，Batched 在那里才有意义，所以排完要把它设回去。
+        62600）。范围一变小，当前位置就被 Qt **当场夹**到 4272，整屏瞬间弹回顶部。
+        SinglePass 同步算准且便宜：3000 张 7.9ms、30000 张 40.4ms。平时**滚动**仍然
+        完全不重排，Batched 在那里才有意义，所以排完要把它设回去。
         """
         self.setLayoutMode(QListView.LayoutMode.SinglePass)
         try:

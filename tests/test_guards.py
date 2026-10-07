@@ -353,6 +353,9 @@ def test_inline_comments_stay_short_or_carry_a_praisma() -> None:
     只量**函数体里**的行内注释：模块文档与类文档是说明文档，与行内注释不是一回事。
     过长的那一段要在**自己第一行**写上 :data:`LONG_COMMENT_PRAISMA` 与理由 ——
     红线、性能数字、跨文件耦合确实值得超过两行，而「值得」这件事本身要有人签字。
+
+    **只扫 ``src/``**（测试里同样长度、同样正当的注释有不少，加进来只是多一批签字而
+    没人受益）；考古短语那条则连测试一起扫 —— 症状叙述在测试里同样会过时。
     """
     offenders: list[str] = []
     for path in _iter_python_files(SRC_ROOT):
