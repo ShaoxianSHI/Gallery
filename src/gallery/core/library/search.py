@@ -37,14 +37,11 @@ from gallery.core.metadata.facets import (
     FACET_SIZE,
     relative_folder,
 )
+from gallery.core.sql import ESCAPE, like_pattern
 
 #: 取多少条结果。一万张全摆进模型会让整屏重排慢下来，而用户多半只是想看看前几百张。
 #: 命中总数由界面另行查出来显示，因此「被截断了」这件事用户看得见。
 RESULT_LIMIT: Final = 5000
-
-#: ``LIKE`` 里的通配符。用户搜 ``IMG_001`` 时 ``_`` 不该去顶替任何字符，
-#: 否则会多出一堆「IMGX001」那样的照片。转义了就必须同时写 ``ESCAPE``。
-_LIKE_ESCAPE: Final = "\\"
 
 type SearchKind = Literal["name", "album", "format", "text", "size", "number", "datetime", "event"]
 
@@ -676,13 +673,13 @@ def _clause(condition: SearchCondition) -> tuple[str, list[object]]:
     if field.is_event:
         return _event_clause(field, condition)
     if field.kind == "name":
-        return f"{field.column} LIKE ? ESCAPE '{_LIKE_ESCAPE}'", [f"%{_like(value)}%"]
+        return f"{field.column} LIKE ? ESCAPE '{ESCAPE}'", [f"%{like_pattern(value)}%"]
     if field.kind == "text":
-        return f"{field.column} LIKE ? ESCAPE '{_LIKE_ESCAPE}'", [f"%{_like(value)}%"]
+        return f"{field.column} LIKE ? ESCAPE '{ESCAPE}'", [f"%{like_pattern(value)}%"]
     if field.kind == "album":
         return (
-            f"({field.column} = ? OR {field.column} LIKE ? ESCAPE '{_LIKE_ESCAPE}')",
-            [value, f"{_like(value)}/%"],
+            f"({field.column} = ? OR {field.column} LIKE ? ESCAPE '{ESCAPE}')",
+            [value, like_pattern(value, "/%")],
         )
     if field.kind == "format":
         return f"{field.column} = ?", [value]
@@ -729,17 +726,9 @@ def _event_clause(field: SearchField, condition: SearchCondition) -> tuple[str, 
         comparator = condition.comparator or "="
         return f"EXISTS ({head} t.{field.column} {comparator} ?)", [float(value)]
     return (
-        f"EXISTS ({head} t.{field.column} LIKE ? ESCAPE '{_LIKE_ESCAPE}')",
-        [f"%{_like(value)}%"],
+        f"EXISTS ({head} t.{field.column} LIKE ? ESCAPE '{ESCAPE}')",
+        [f"%{like_pattern(value)}%"],
     )
-
-
-def _like(text: str) -> str:
-    """把 ``LIKE`` 的通配符转义掉（用户搜 ``IMG_001`` 时 ``_`` 不该顶替任何字符）。"""
-    escaped = text.replace(_LIKE_ESCAPE, _LIKE_ESCAPE * 2)
-    for character in ("%", "_"):
-        escaped = escaped.replace(character, _LIKE_ESCAPE + character)
-    return escaped
 
 
 def rows_to_refs(rows: Sequence[tuple[object, ...]]) -> list[PhotoRef]:

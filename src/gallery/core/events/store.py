@@ -48,6 +48,7 @@ from gallery.core.metadata.journal import (
     WriteRecord,
     append_record,
 )
+from gallery.core.sql import ESCAPE, like_pattern
 
 logger = logging.getLogger(__name__)
 
@@ -266,17 +267,6 @@ def _kind_schema(kind: EventKind) -> str:
 
 def _now() -> int:
     return int(time.time())
-
-
-def like_pattern(text: str, tail: str = "") -> str:
-    """把一段文字转成 ``LIKE … ESCAPE '\\'`` 的模式。
-
-    **下划线必须转义**：文件名里 ``IMG_0001`` 太常见，不转的话 ``_`` 会变成通配符，于是
-    「相册 A」这一条查询顺手把「相册 B」里的照片也搬了（与 ``core.library.search`` 的
-    ``_like`` 同一个坑）。
-    """
-    escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    return f"{escaped}{tail}"
 
 
 def _to_sql(field: EventField, value: str) -> SqlValue:
@@ -919,7 +909,7 @@ class EventStore:
                     cursor = connection.execute(
                         f"UPDATE OR REPLACE {SCHEMA_NAME}.{BINDINGS_TABLE}"
                         f" SET path = ? || substr(path, ?)"
-                        f" WHERE path LIKE ? ESCAPE '\\' OR path = ?",
+                        f" WHERE path LIKE ? ESCAPE '{ESCAPE}' OR path = ?",
                         (
                             new_prefix,
                             len(old_prefix) + 1,
