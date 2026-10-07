@@ -1,0 +1,194 @@
+"""窗口顶边那一行：摆位置、显示什么、按住拖动、双击铺满（ADR 0025 / 0037）。
+
+它只管那一条 —— 改名的输入框归 :class:`~gallery.ui.title_bar.TitleBar`，这一层不碰用户的
+文件。**双击做的是「铺满」不是真全屏**（见 :meth:`TitleBarFlowMixin._toggle_filled`），
+而 Qt 的鼠标覆写留在 :class:`~gallery.ui.main_window.MainWindow` 自己身上（Qt 按 MRO 找
+第一个实现）。
+"""
+
+from __future__ import annotations
+
+from typing import Final
+
+from PySide6.QtCore import QPointF
+
+from gallery.ui.external_button import BUTTON_GAP, BUTTON_WIDTH, button_rect
+from gallery.ui.search_field import HEIGHT as SEARCH_FIELD_HEIGHT
+from gallery.ui.search_field import MARGIN_RIGHT as SEARCH_FIELD_MARGIN_RIGHT
+from gallery.ui.search_field import TEXT_ALIGN_DROP as SEARCH_FIELD_TEXT_ALIGN_DROP
+from gallery.ui.search_field import TOGGLE_EDGE as SCOPE_TOGGLE_EDGE
+from gallery.ui.search_field import TOGGLE_GAP as SCOPE_TOGGLE_GAP
+from gallery.ui.search_field import WIDTH as SEARCH_FIELD_WIDTH
+from gallery.ui.title_bar import EXTRA_PADDING as TITLE_BAR_EXTRA
+from gallery.ui.title_bar import HEIGHT as TITLE_BAR_HEIGHT
+
+#: 网格页**右边**留多少（点），比左边窄得多：这一页最右边就是那条滚动条，它自己还带着
+#: :data:`~gallery.ui.scrollbar_style.HANDLE_GAP` 那 2 点，两段加起来才是滑块右缘到窗口右缘的
+#: 距离。**别把它并回** ``main_window._GRID_PAGE_MARGIN_H`` —— 左边那 10 点是给照片留的呼吸，
+#: 右边这 2 点是给滚动条的，两件事。网格页的布局也要它（``MainWindow`` 从这里取）。
+_GRID_PAGE_MARGIN_RIGHT: Final = 2
+
+
+class TitleBarFlowMixin:
+    """摆那一条的位置、决定它显示什么、按住拖窗口、双击铺满。"""
+
+    def _is_title_bar(self, point: QPointF) -> bool:
+        """这一点是不是落在标题栏那一段（窗口顶边与内容区之间）。
+
+        **真全屏时一律不是**（那一整条已经收起来了，见 :meth:`_layout_title_bar`），**铺满时
+        照旧是** —— 那只是窗口变大，于是双击铺满之后还能双击还原。
+        """
+        if not self._owns_title_bar or self.isFullScreen():
+            return False
+        central = self.centralWidget()
+        return central is not None and point.y() < central.geometry().top()
+
+    def _press_belongs_to_the_title_bar(self, position: QPointF) -> bool:
+        """这一次按下是不是**归标题栏**（「按住拖窗口」与「双击铺满」该轮到这里）。
+
+        **改到一半不算**：那一段上正摆着输入框，拖走它等于把正在改的名字甩到屏幕外。两件事
+        用同一句判据，于是不会出现「拖不动却能双击」这种半截状态。
+        """
+        return self._is_title_bar(position) and not self._title_bar.is_editing()
+
+    def _start_title_bar_drag(self) -> None:
+        """真的发起系统拖动 —— 已经等过一个双击周期，确认这一下不是双击。
+
+        **为什么非要等**：Qt 在 macOS 上把 ``startSystemMove`` 实现成
+        ``[NSWindow performWindowDragWithEvent:]``，那是一个**模态的事件跟踪循环**，拖完之前
+        不返回 —— 不设闸的话「双击标题栏铺满」一次都不会发生，而界面上看不出任何理由。
+
+        ``startSystemMove`` 返回假（平台不支持、或系统自己会拖）就什么都不做：这一次按下没有
+        别的含义，不该往下传成一次点空白处的点击。
+        """
+        if not self._title_bar_drag_armed:
+            return
+        self._title_bar_drag_armed = False
+        handle = self.windowHandle()
+        if handle is not None:
+            handle.startSystemMove()
+
+    def _toggle_filled(self) -> None:
+        """铺满 / 还原 —— 也就是 macOS 的**缩放**（AppKit 的 ``zoom:``，⌃⌘F 那个键）。
+
+        **占满的是菜单栏与 Dock 之间的那块地方，两样都还在**，也不另开 Space：
+        ``showMaximized`` 在 macOS 上正是 ``[NSWindow zoom:nil]``，落到 ``visibleFrame``。
+        **这不是 macOS 的「填满」**（那个会盖住菜单栏与 Dock），系统设置里那一档**不读**。
+
+        **还原回进铺满之前那一份几何**（``showNormal`` 恢复的正是它），而不是让系统按当前
+        屏幕随便给一个 —— 拖到一半再双击回来，窗口该回到刚才那个大小与位置。
+        """
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
+
+    def _refresh_title(self) -> None:
+        """窗口顶边那一行显示什么：**大图页是正在看的那张照片的文件名，其余是相册名**。
+
+        判据只有这一段（「现在在哪一页 + 那一格是谁」），于是翻图、改名（含 ⌘Z 撤回）、换库走
+        的都是同一段算术，不会有一处忘了更新而标题还写着旧名。
+        """
+        photo = self._model.photo_at(self._current_row) if self._in_detail_page() else None
+        if photo is not None:
+            name = photo.name
+        elif self._drill_photos is not None:
+            # 从日历某一格摊开的那一层：标题要说得清在看哪一格，否则与「全部照片」长得一模一样。
+            name = f"{self._drill_label} · {len(self._drill_photos)} 张"
+        else:
+            name = self._library_title
+        if self._owns_title_bar:
+            self._title_bar.set_text(name)
+        else:
+            # 标题栏那一段不归窗口（例如 Linux），照旧交给系统画（ADR 0025 决策 2）。
+            self.setWindowTitle(name)
+
+    def _layout_title_bar(self) -> None:
+        """把 ``TitleBar`` 与搜索胶囊摆在窗口顶边那一条上。
+
+        那一条的高度是**安全区**顶出来的那 28 点，不写死。**真全屏**时系统自己也不画标题栏，
+        这一条跟着收起来（否则会盖在照片上，ADR 0025 决策 2）；**铺满窗口不在此列**。
+
+        **两个控件是摆在一起的，不是一套布局**：``TitleBar`` 那一行由标题文字与改名字段自己
+        居中，胶囊贴右边，抢同一份布局反而互相挪（ADR 0026 决策 8）。**内容区让出多少也归
+        这里**（``_build_ui`` 只留初始值）：真全屏时那一段收起来，让出去的 12 点就该还回去 ——
+        不还回去的话，照片区顶上会压着一条什么都没有的空档。
+        """
+        if not self._owns_title_bar:
+            return
+        # 判据是**真全屏，不是铺满**：铺满只是窗口变大，那一条照旧在（见 :meth:`_toggle_filled`）。
+        full_screen = self.isFullScreen()
+        self._stack.setContentsMargins(0, 0 if full_screen else TITLE_BAR_EXTRA, 0, 0)
+        if full_screen:
+            # 高度给 0，于是它与胶囊都不会盖在照片上（ADR 0025 决策 2）。
+            self._title_bar.setGeometry(0, 0, self.width(), 0)
+            self._title_bar.hide()
+            self._search_field.hide()
+            self._external_button.hide()
+            self._scope_toggle.hide()
+            return
+        central = self.centralWidget()
+        top = central.geometry().top() if central is not None else 0
+        # 安全区之外**再加** :data:`TITLE_BAR_EXTRA`：三页的内容都从 ``安全区 + EXTRA`` 开始。
+        height = max(top + TITLE_BAR_EXTRA, TITLE_BAR_HEIGHT)
+        self._title_bar.setGeometry(0, 0, self.width(), height)
+        self._title_bar.setVisible(True)
+        # 胶囊摆在**这一条**里（内容区从 ``top + EXTRA`` 开始），再往下挪
+        # :data:`SEARCH_FIELD_TEXT_ALIGN_DROP`。
+        field_height = min(SEARCH_FIELD_HEIGHT, height - 4)
+        # guard: allow-long-comment（间距与同高只从 SCOPE_TOGGLE_GAP 一处出，各算各的会歪）
+        # **右上角那一块有两样东西**（ADR 0040 决策 5）：切换按钮贴着窗口右边，胶囊被推到它左边。
+        # 两者的间距与同高都由 :data:`SCOPE_TOGGLE_GAP` 与 ``field_height`` 一处给出 —— 各算各的
+        # 会「歪了一两个点」（见 ``external_button.button_rect``）。
+        block_right = self.width() - SEARCH_FIELD_MARGIN_RIGHT
+        toggle_width = min(SCOPE_TOGGLE_EDGE, max(0, field_height))
+        toggle_x = block_right - toggle_width
+        search_x = toggle_x - SCOPE_TOGGLE_GAP - SEARCH_FIELD_WIDTH
+        self._search_field.setGeometry(
+            search_x,
+            (height - field_height) // 2 + SEARCH_FIELD_TEXT_ALIGN_DROP,
+            SEARCH_FIELD_WIDTH,
+            field_height,
+        )
+        self._search_field.show()
+        # **要抬一次**：布局跑完之后，中央控件与菜单栏会被抬到「最后创建的子控件」之上把胶囊盖住。
+        self._search_field.raise_()
+        # 切换按钮**建在胶囊之后**（`_build_ui` 里），于是这一次抬就是为它准备的。
+        self._scope_toggle.setGeometry(toggle_x, self._search_field.y(), toggle_width, field_height)
+        self._scope_toggle.show()
+        self._scope_toggle.raise_()
+        #: **窗口右缘到胶囊右缘**有多远 —— 面包屑那几枚条件胶囊对齐的就是这条线（ADR 0026 决策
+        #: 8），这一个数是两者之间唯一的换算依据。
+        inset_to_capsule = SEARCH_FIELD_MARGIN_RIGHT + toggle_width + SCOPE_TOGGLE_GAP
+
+        # 「用外部应用打开」**从胶囊那一块往左长出来**（见 ``button_rect``），于是两者必然同高、同一
+        # 基线。**显隐的判据只有一处**（``is_available``）；真全屏时它整个不见。
+        if self._external_button.isVisible():
+            self._external_button.setGeometry(button_rect(self._search_field.geometry()))
+            self._external_button.raise_()
+        # 标题文字与 ⌘R 的输入框都要给右上角这一整块让出来（胶囊**加上左边的按钮**）。
+        self._title_bar.reserve_right(
+            inset_to_capsule
+            + SEARCH_FIELD_WIDTH
+            + SEARCH_FIELD_MARGIN_RIGHT
+            + (BUTTON_WIDTH + BUTTON_GAP if self._external_button.isVisible() else 0)
+        )
+
+        # guard: allow-long-comment（对齐的是胶囊不是那一整块；对齐到按钮右缘会在中间空出一截）
+        # 面包屑右端那几枚条件胶囊与这个胶囊**右缘对齐**；换算只在这一处做 —— 面包屑摆在一份有
+        # 边距的布局里，右缘比窗口右缘靠内 :data:`_GRID_PAGE_MARGIN_RIGHT` 点。
+        # **对齐的是胶囊而不是那一整块**：切换按钮在胶囊右边，让条件胶囊对齐到按钮的右缘会在
+        # 中间空出一截，看着像它们不属于任何一个框。
+        self._breadcrumb.set_right_inset(inset_to_capsule - _GRID_PAGE_MARGIN_RIGHT)
+
+    def _sync_fill_action(self) -> None:
+        """「铺满窗口 / 还原窗口」那一句跟着此刻的状态走。
+
+        **两处都要调**：菜单那一条平时跟着 :meth:`_update_action_states` 走，而双击标题栏与按
+        ⌃⌘F 都不经过那条路。**判据是「铺满」而不是「真全屏」** —— 菜单上这一条说的就是铺满，
+        与绿按钮悬停菜单里的「进入全屏幕」不是同一件事。
+        """
+        self._fill_action.setText("还原窗口" if self.isMaximized() else "铺满窗口")
+
+
+__all__ = ["TitleBarFlowMixin"]

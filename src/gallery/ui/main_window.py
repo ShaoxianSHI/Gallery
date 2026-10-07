@@ -11,7 +11,7 @@ from collections import OrderedDict
 from collections.abc import Sequence
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QPointF, Qt, QTimer
+from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
@@ -31,7 +31,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gallery.core import paths
 from gallery.core.events.store import EventRef
 from gallery.core.external import launch
 from gallery.core.library.config import (
@@ -64,38 +63,22 @@ from gallery.ui.browser.thumb_sizes import (
 )
 from gallery.ui.calendar import CalendarPage
 from gallery.ui.external_button import (
-    BUTTON_GAP,
-    BUTTON_WIDTH,
     ExternalAppsButton,
     ExternalEntry,
-    button_rect,
     calendar_icon,
     folder_icon,
 )
 from gallery.ui.navigation import (
-    ENTRY_KIND_PATH,
     EntryKey,
     LevelKey,
-    breadcrumb_parts,
-    entry_key,
-    level_key,
-    path_key,
-    row_of_entry_key,
 )
 from gallery.ui.panels.breadcrumb import BreadcrumbBar
 from gallery.ui.panels.metadata import MetadataPanel
 from gallery.ui.panels.welcome import WelcomeView
-from gallery.ui.search_field import HEIGHT as SEARCH_FIELD_HEIGHT
-from gallery.ui.search_field import MARGIN_RIGHT as SEARCH_FIELD_MARGIN_RIGHT
-from gallery.ui.search_field import TEXT_ALIGN_DROP as SEARCH_FIELD_TEXT_ALIGN_DROP
-from gallery.ui.search_field import TOGGLE_EDGE as SCOPE_TOGGLE_EDGE
-from gallery.ui.search_field import TOGGLE_GAP as SCOPE_TOGGLE_GAP
-from gallery.ui.search_field import WIDTH as SEARCH_FIELD_WIDTH
 from gallery.ui.search_field import ScopeToggle, SearchField
 from gallery.ui.tasks import TaskRunner
 from gallery.ui.thumbs.pipeline import ThumbnailPipeline
 from gallery.ui.title_bar import EXTRA_PADDING as TITLE_BAR_EXTRA
-from gallery.ui.title_bar import HEIGHT as TITLE_BAR_HEIGHT
 from gallery.ui.title_bar import TitleBar
 from gallery.ui.viewer.detail import DetailView
 from gallery.ui.watch import WatchBridge, WatchStarter, start_watch
@@ -104,20 +87,17 @@ from gallery.ui.window.calendar_flow import CalendarFlowMixin
 from gallery.ui.window.context_menu_flow import ContextMenuFlowMixin
 from gallery.ui.window.event_flow import EventFlowMixin
 from gallery.ui.window.level_stack import (
-    AlbumFrame,
-    CalendarFrame,
-    GroupFrame,
     LevelStack,
-    PhotoFrame,
     RootKind,
-    SearchFrame,
 )
 from gallery.ui.window.level_stack_mixin import LevelStackMixin
 from gallery.ui.window.library_flow import LibraryFlowMixin
 from gallery.ui.window.metadata_flow import MetadataFlowMixin
+from gallery.ui.window.navigation_flow import NavigationFlowMixin
 from gallery.ui.window.ordering import OrderingMixin
 from gallery.ui.window.search_flow import SearchFlowMixin
 from gallery.ui.window.thumbnail_flow import ThumbnailFlowMixin
+from gallery.ui.window.title_bar_flow import _GRID_PAGE_MARGIN_RIGHT, TitleBarFlowMixin
 from gallery.ui.window.viewer_flow import ViewerFlowMixin
 from gallery.ui.window.watch_flow import WatchFlowMixin
 from gallery.ui.write_ops import WriteOpsMixin, flattened_entries
@@ -125,18 +105,13 @@ from gallery.ui.write_ops import WriteOpsMixin, flattened_entries
 logger = logging.getLogger(__name__)
 
 #: 网格页**左边**留多少（点）。面包屑那一行也要知道它：条件胶囊要与搜索胶囊右对齐
-#: （见 :meth:`MainWindow._layout_title_bar`）。
+#: （见 :meth:`~gallery.ui.window.title_bar_flow.TitleBarFlowMixin._layout_title_bar`）。
 _GRID_PAGE_MARGIN_H = 10
-
-#: 网格页**右边**留多少（点），比左边窄得多：这一页最右边就是那条滚动条，它自己还带着
-#: :data:`~gallery.ui.scrollbar_style.HANDLE_GAP` 那 2 点，两段加起来才是滑块右缘到窗口右缘的
-#: 距离。**别把它并回 :data:`_GRID_PAGE_MARGIN_H`** —— 左边那 10 点是给照片留的呼吸，
-#: 右边这 2 点是给滚动条的，两件事。
-_GRID_PAGE_MARGIN_RIGHT = 2
 
 
 class MainWindow(
     LevelStackMixin,
+    NavigationFlowMixin,
     OrderingMixin,
     LibraryFlowMixin,
     SearchFlowMixin,
@@ -146,6 +121,7 @@ class MainWindow(
     ContextMenuFlowMixin,
     ViewerFlowMixin,
     BannerFlowMixin,
+    TitleBarFlowMixin,
     CalendarFlowMixin,
     WriteOpsMixin,
     EventFlowMixin,
@@ -852,308 +828,9 @@ class MainWindow(
         self._undo_label = library.next_undo_label() if library is not None else None
         self._update_undo_action()
 
-    def enter_folder(self, directory: Path, *, focus: EntryKey | None = None) -> None:
-        """进入一个相册（子文件夹）。库以外的路径一律拒绝。
-
-        :param focus: 到了这一层该选中哪一格；``Esc`` 退上去时传的是刚离开的那个相册。
-
-        **进目录就是退出整库检索**：两者都是「一层」（ADR 0026）—— 条件不清掉的话，下一次
-        ``_start_scan`` 里检索会抢在目录前面，点开一个相册看到的却是全库的检索结果。
-        **筛选不在此列**（ADR 0040 决策 1）：它收窄的正是「当前这一层」，所以进相册就是进到
-        「那个相册里符合条件的那部分」，条件要跟着走 —— 栈模型下它是**跟着这一帧走**，
-        弹回来时自动恢复（ADR 0041 决策 2）。
-
-        **存进去的是解析过的路径**：库路径里带软链接时，监听器报回来的是真路径而这里存的是
-        原写法，「是不是在当前这一层」就永远说不成 —— 访达里丢进来一张照片，网格当没看见。
-        """
-        library = self._library
-        if library is None:
-            return
-        target = Path(directory)
-        if not paths.is_within(library.root, target):
-            return
-        resolved = target.resolve()
-        # 进相册 = 退出整库检索（ADR 0041 决策 3）。**必须先弹搜索帧再压相册链**：搜索帧压在
-        # 相册链之上，而 ``_drop_search_frames`` 只从栈顶往上弹，反过来弹掉的是刚压上去的那一层。
-        leaving_search = self._search_frame is not None
-        if leaving_search:
-            self._leave_search_frame(self._search_frame, reload=False)
-            self._drop_search_frames()
-        self._push_album_chain(resolved)
-        # **只有整库检索要清条件**（理由见上面那段）：筛选要跟着走进这个相册。
-        self._reload_level(focus=focus)
-
-    def go_up(self) -> None:
-        """**弹掉栈顶一帧** —— 只管位置，与条件无关（ADR 0041 决策 1）。
-
-        「能退什么」不再由一串手写的 ``if`` 决定，而是**看弹掉的那一帧是什么**，四种情况在
-        :meth:`_leave_frame` 里分派。**加一种新层级只需在那一处加一支** —— 这是这条栈存在的
-        理由：判据写散在 ``go_up`` 与 ``_can_go_up`` 两处时，漏改一处不会报错，只是那一层
-        退不出去。
-
-        退上去时**把刚离开的那一级留在选中状态**（访达里退上一层就是这样）；只此一处例外 ——
-        再点进去是另一次浏览，那一层不留上一次的选中（见 :meth:`_arm_focus`）。
-        """
-        if self._library is None:
-            return
-        popped = self._pop_frame()
-        if popped is None:
-            return  # 只有根帧：退不动就安静地不动
-        self._leave_frame(popped.top)
-
-    def _leave_frame(self, frame: object) -> None:
-        """**刚弹掉的是哪一帧，就按那一帧做收尾**（重新列出这一层、必要时回日历 / 选中原卡片）。
-
-        **这是 ``go_up`` 唯一需要「认得帧」的地方**：弹栈是统一的，而不同帧的收尾差别很大
-        —— 日历格那一帧要回日历页、分组那一帧要把刚离开的卡片重新选中、相册与搜索帧只是重列
-        那一层。
-
-        **注意 :meth:`go_up` 是「先弹再收尾」** —— 所以这一支**不能**走 ``enter_folder``
-        （那会再压一帧，栈越退越深，实测退不出相册）。要退到哪一层是弹之前就决定的：
-        弹掉相册帧之后底下那一帧就是去处。
-        """
-        if isinstance(frame, AlbumFrame):
-            # 弹掉相册帧之后**底下那一帧**就是要去的地方（可能是根帧 = 库根）。
-            target = self._level_stack.top
-            focus = path_key(frame.path)
-            if isinstance(target, GroupFrame):
-                self._reload_level(focus=entry_key(target.group))
-                return
-            if isinstance(target, CalendarFrame):
-                self._leave_calendar_cell()
-                return
-            self._reload_level(focus=focus)
-            return
-        if isinstance(frame, GroupFrame):
-            self._reload_level(focus=entry_key(frame.group))
-            return
-        if isinstance(frame, CalendarFrame):
-            self._leave_calendar_cell()
-            return
-        if isinstance(frame, PhotoFrame):
-            # 照片帧底下是日历格就回日历，否则回网格 —— **大图页的「上一级」就是这里**。
-            if self._calendar_frame is not None:
-                self._back_to_calendar()
-                return
-            self.leave_detail_page()
-            return
-        if isinstance(frame, SearchFrame):
-            # 条件是那一帧的内容，所以帧没了条件也没了 —— 底下那一层恢复成「没搜过」的样子。
-            # **必须把刚弹掉的那一帧传进去**：弹完之后重查栈只会得到「压根没有搜索帧」。
-            self._leave_search_frame(frame)
-            return
-        self._reload_level()
-
-    def pop_last_condition(self) -> None:
-        """撤掉最后一条筛选条件（``⇧Esc``，或菜单里的那一行）。
-
-        **与 :meth:`go_up` 分开是用户选定的**：Esc 纯粹退位置，退不掉的时候什么也不做，也不
-        顺手撤掉一条条件 —— 「按 Esc 退一层，结果条件少了一条」这件事没法从屏幕上分辨出
-        「我退了」还是「我撤了一条」。
-        """
-        if not self._conditions:
-            return
-        self._conditions.pop()
-        self._editing_condition = None
-        self._sync_search_frame()  # 撤光了就不再是整库检索 → 弹掉搜索帧（ADR 0041 决策 3）
-        self._apply_conditions()
-
-    def _can_go_up(self) -> bool:
-        """现在退不退得回去。**就是「栈深 > 1」**（ADR 0041 决策 1）。
-
-        判据与 :meth:`go_up` 用**同一句话**（栈深），不各手写一遍那串 ``if`` ——「退错了一层」
-        不是任何一句能自检的东西。
-        """
-        if self._library is None or self._grid.is_renaming():
-            return False
-        return self._level_stack.can_pop()
-
-    def _on_background_activated(self) -> None:
-        """双击了网格里没有格子的地方：退回上一层，与 ``Esc`` 是同一件事。
-
-        这一层空着（空相册、空分组）时尤其需要它 —— 屏幕上根本没有可双击的东西。退不动时
-        安静地什么都不做：到了头本来就是一个合法状态。
-        """
-        if self._grid.is_renaming():
-            # 改到一半：这一下先归输入框。既不把人带走，也不打扰他。
-            return
-        self._cancel_condition_edit()  # 改到一半：这一下算放弃（ADR 0040 决策 12）
-        if self._can_go_up():
-            self.go_up()
-
-    def _on_breadcrumb_requested(self, directory: object) -> None:
-        if isinstance(directory, Path):
-            self.enter_folder(directory)
-
-    def _reload_level(self, *, focus: EntryKey | None = None) -> None:
-        """重新列出当前层（切模式、进入或返回相册时都走这里）。
-
-        :param focus: 到了这一层要选中哪一格；**只有往上一层退才会给**，其余由
-            :meth:`_arm_focus` 自己判断。
-        """
-        if self._scan_job is not None:
-            self._runner.cancel(self._scan_job)
-            self._scan_job = None
-        self._cancel_level_filter()
-        self._arm_focus(focus)
-        # 换代：让已经在路上的旧结果作废。
-        self._generation += 1
-        self._grid.cancel_rename()
-        self._cancel_facet_job()
-        self._facet_values = {}
-        self._model.clear()
-        # 网格先清干净：当前项留着的话，⌘R / ⌘⌫ 的可用性判据里它仍然算数（菜单亮着，对象却不存在）。
-        self._grid.reset_for_new_level()
-        self._preview_cache.clear()
-        self._metadata_cache.clear()
-        self._staged = []  # 换层要重扫，攒着，别先摆一屏旧顺序
-        self._level_notice = False
-        self._progress_notice = False
-        # 换层只把横幅收掉，**不打断**全库解析：它是整个库的事，与当前在哪一层无关。
-        self._place_notice_text = None
-        self._scan_issue = False
-        self._current_row = -1
-        self._detail.clear_image()
-        self._panel.clear()
-        self._banner.hide()
-        # 整库检索不是日历这一层的一部分：条件撤光之后 Esc 不该退到日历的那一格。
-        self._drop_calendar_cell_frame()
-        # **摆哪一页问的是状态**（浏览方式 + 有没有条件）：一律摆成网格页，勾与眼前那一页对不上。
-        self._update_breadcrumb()
-        if self._shows_calendar_page():
-            # 日历那一页自己收尾（标题、命令可用性、缩略图窗口），位置不动。
-            self._show_calendar()
-        else:
-            self._stack.setCurrentWidget(self._grid_page)
-            self._update_action_states()
-        self._start_scan()
-
-    # ---- 到了这一层该选中哪一格 ----------------------------------------------
-    # **往上一层退**时仍停在刚离开的那个相册 / 那个组；**还是这一层重排一遍**时跟着停着的那一格走；
-    # **换了层**时谁也不选 —— 留着上一次的选择，用户看到的是上一趟的高亮。三者都靠**标识**而不是
-    # 行号，比一比**层标识**就知道属于哪一种。
-
-    def _arm_focus(self, focus: EntryKey | None = None) -> None:
-        """记下到了新的一层该选中哪一格。
-
-        :param focus: 显式指定（往上一层退时给的那个相册 / 那个组）；不给就由下面的规则判断。
-
-        判断靠比层标识（``navigation.level_key``）：两个 ``enter_*`` 都是先改状态再重载，所以
-        问「现在在哪一层」得到的是**新的**那一层，正好拿来和 ``self._level_key`` 比。
-
-        **顺序要紧**：先把「还是同一层吗」问完，再换 ``self._level_key``；反过来两边永远相等，
-        「换了层就什么都不记」这条永远轮不到执行。
-        """
-        remembered = self._shown_entry_key()
-        self._level_key = self._current_level_key()
-        self._focus = focus if focus is not None else remembered
-        self._focus_restored = False
-
-    def _current_level_key(self) -> LevelKey:
-        """当前这一层的标识（见 ``navigation.level_key``）。"""
-        group = None if self._group_view is None else (self._group_view.facet, self._group_view.key)
-        conditions = [condition.identity for condition in self._conditions]
-        return level_key(
-            self._browse_mode,
-            self._current_dir,
-            group=group,
-            conditions=conditions,
-            scope=self._search_scope,
-        )
-
-    def _shown_entry_key(self) -> EntryKey | None:
-        """网格上此刻停着的那一格是谁；不是同一层（或者压根没有）就是 ``None``。"""
-        if self._level_key is None or self._level_key != self._current_level_key():
-            return None
-        entry = self._model.entry_at(self._grid.current_row())
-        return None if entry is None else entry_key(entry)
-
-    def _restore_focus(self) -> None:
-        """这一层排好之后，把该选中的一格选中。
-
-        **每一层只摆一次**：摆完之后就是用户自己的选择了，后台再重排（来了新照片、换排序）
-        不该把它拽回去 —— 那种重排由 ``_reorder_level`` 的锚点负责。找不到就什么都不选。
-        """
-        if self._focus_restored:
-            return
-        self._focus_restored = True
-        key, self._focus = self._focus, None
-        if key is None:
-            return
-        row = self._row_of_focus(key)
-        if row >= 0:
-            self._grid.select_row(row)  # 一并滚过去：这一层可能长到一屏之外
-
-    def _row_of_focus(self, key: EntryKey) -> int:
-        """该选中的那一格现在在第几行（``-1`` = 这一层里已经没有了）。
-
-        照片与相册走模型现成的路径索引；组卡片没有索引，扫一遍这一层 —— 两条路不能合成一条，
-        因为这一层里的照片可能有几万张。
-        """
-        if key[0] == ENTRY_KIND_PATH:
-            return self._model.row_of_path(Path(key[1]))
-        return row_of_entry_key(self._model.entries(), key)
-
     def _group_view_label(self) -> str | None:
         """当前所在分组的显示名（没在分组里就是 ``None``）。"""
         return None if self._group_view is None else self._group_view.label
-
-    def _update_breadcrumb(self) -> None:
-        """面包屑那一行写什么（**顺带把日历工具条上那几枚胶囊也摆好**）。
-
-        **两种作用域写的是两件不同的事**（ADR 0040 决策 4）：整库检索时报**只有库名** ——
-        范围真的变成整库了，留着「旅行 ▸ 2024」读起来就是「在这个文件夹里搜到 4 张」，而那 4 张
-        大半在别处（ADR 0026 决策 1b）；筛选时报**完整路径 + 那一组**，因为范围没变，藏掉路径
-        同样是在说一件不存在的事。
-        """
-        library = self._library
-        # 平铺模式下平时不显示面包屑，但**分组里与有条件时一律显示**（ADR 0026 决策 9）。
-        in_albums = self._browse_mode == BROWSE_MODE_ALBUMS
-        conditions = [condition.chip_text for condition in self._conditions]
-        editing = self._editing_condition if conditions else None
-        # guard: allow-long-comment（日历那几枚要摆在每一个早退之前，摆在末尾会漏掉「撤光条件」）
-        # **日历工具条那几枚先摆，且在每一个早退之前**（ADR 0040 决策 9）。摆在末尾就漏了
-        # 「撤光条件」那一步：早退在 ``conditions`` 为空时直接返回，那一枚撤掉的胶囊就一直挂着，
-        # 要切一次视图再切回来才走。
-        self._sync_calendar_conditions(conditions, editing)
-        if self._drill_photos is not None:
-            # 日历点出来的那一格不是文件夹，面包屑没有一段能指；标题里已经写着它在哪一段日子。
-            self._hide_breadcrumb()
-            return
-        if library is None or (not in_albums and self._group_view is None and not conditions):
-            self._hide_breadcrumb()
-            return
-        if self._is_library_search():
-            # **检索时只报库名：既不报当前文件夹，也不报当前那一组**（检索横跨整个库，ADR 0026
-            # 决策 1）。范围要收窄加一条「#相册 …」；``_group_view`` 与 ``_current_dir`` 都留着。
-            parts = [(library.display_name, library.root)]
-            group = None
-        else:
-            parts = (
-                breadcrumb_parts(library.root, self._current_dir or library.root)
-                if in_albums
-                else [(library.display_name, library.root)]
-            )
-            # 筛选时这一组**说的是真的**：它就是这一层的范围。
-            group = self._group_view_label()
-        self._breadcrumb.set_path(
-            parts,
-            group=group,
-            conditions=conditions,
-            result_count=self._search_total if conditions else None,
-            editing=editing,
-            scope=self._search_scope,
-        )
-        self._breadcrumb.show()
-
-    def _hide_breadcrumb(self) -> None:
-        """藏起来，**并且清空内容**。
-
-        ``hide()`` 只让控件不画，上一轮摆的那些还留在布局里（``set_path`` 开头就是 ``_clear()``）；
-        「不摆」与「摆成空的」不是同一件事。
-        """
-        self._breadcrumb.clear_content()
-        self._breadcrumb.hide()
 
     def _sync_calendar_conditions(self, conditions: Sequence[str], editing: int | None) -> None:
         """把同一批条件也摆到日历工具条上（ADR 0040 决策 9）。
@@ -1181,25 +858,6 @@ class MainWindow(
         self._pop_condition_action.setEnabled(bool(self._conditions))
 
     # ---- 窗口 --------------------------------------------------------------
-
-    def _is_title_bar(self, point: QPointF) -> bool:
-        """这一点是不是落在标题栏那一段（窗口顶边与内容区之间）。
-
-        **真全屏时一律不是**（那一整条已经收起来了，见 :meth:`_layout_title_bar`），**铺满时
-        照旧是** —— 那只是窗口变大，于是双击铺满之后还能双击还原。
-        """
-        if not self._owns_title_bar or self.isFullScreen():
-            return False
-        central = self.centralWidget()
-        return central is not None and point.y() < central.geometry().top()
-
-    def _press_belongs_to_the_title_bar(self, position: QPointF) -> bool:
-        """这一次按下是不是**归标题栏**（「按住拖窗口」与「双击铺满」该轮到这里）。
-
-        **改到一半不算**：那一段上正摆着输入框，拖走它等于把正在改的名字甩到屏幕外。两件事
-        用同一句判据，于是不会出现「拖不动却能双击」这种半截状态。
-        """
-        return self._is_title_bar(position) and not self._title_bar.is_editing()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         """按住标题栏那一段拖动窗口。
@@ -1247,141 +905,11 @@ class MainWindow(
             return
         super().mouseDoubleClickEvent(event)
 
-    def _start_title_bar_drag(self) -> None:
-        """真的发起系统拖动 —— 已经等过一个双击周期，确认这一下不是双击。
-
-        **为什么非要等**：Qt 在 macOS 上把 ``startSystemMove`` 实现成
-        ``[NSWindow performWindowDragWithEvent:]``，那是一个**模态的事件跟踪循环**，拖完之前
-        不返回 —— 不设闸的话「双击标题栏铺满」一次都不会发生，而界面上看不出任何理由。
-
-        ``startSystemMove`` 返回假（平台不支持、或系统自己会拖）就什么都不做：这一次按下没有
-        别的含义，不该往下传成一次点空白处的点击。
-        """
-        if not self._title_bar_drag_armed:
-            return
-        self._title_bar_drag_armed = False
-        handle = self.windowHandle()
-        if handle is not None:
-            handle.startSystemMove()
-
-    def _toggle_filled(self) -> None:
-        """铺满 / 还原 —— 也就是 macOS 的**缩放**（AppKit 的 ``zoom:``，⌃⌘F 那个键）。
-
-        **占满的是菜单栏与 Dock 之间的那块地方，两样都还在**，也不另开 Space：
-        ``showMaximized`` 在 macOS 上正是 ``[NSWindow zoom:nil]``，落到 ``visibleFrame``。
-        **这不是 macOS 的「填满」**（那个会盖住菜单栏与 Dock），系统设置里那一档**不读**。
-
-        **还原回进铺满之前那一份几何**（``showNormal`` 恢复的正是它），而不是让系统按当前
-        屏幕随便给一个 —— 拖到一半再双击回来，窗口该回到刚才那个大小与位置。
-        """
-        if self.isMaximized():
-            self.showNormal()
-        else:
-            self.showMaximized()
-
     # ---- 标题栏（见 ADR 0025）-----------------------------------------------
 
     def _in_detail_page(self) -> bool:
         """现在是不是大图页。「此刻作用于谁」的判据都问它（ADR 0021 决策 3）。"""
         return self._stack.currentWidget() is self._detail_page
-
-    def _refresh_title(self) -> None:
-        """窗口顶边那一行显示什么：**大图页是正在看的那张照片的文件名，其余是相册名**。
-
-        判据只有这一段（「现在在哪一页 + 那一格是谁」），于是翻图、改名（含 ⌘Z 撤回）、换库走
-        的都是同一段算术，不会有一处忘了更新而标题还写着旧名。
-        """
-        photo = self._model.photo_at(self._current_row) if self._in_detail_page() else None
-        if photo is not None:
-            name = photo.name
-        elif self._drill_photos is not None:
-            # 从日历某一格摊开的那一层：标题要说得清在看哪一格，否则与「全部照片」长得一模一样。
-            name = f"{self._drill_label} · {len(self._drill_photos)} 张"
-        else:
-            name = self._library_title
-        if self._owns_title_bar:
-            self._title_bar.set_text(name)
-        else:
-            # 标题栏那一段不归窗口（例如 Linux），照旧交给系统画（ADR 0025 决策 2）。
-            self.setWindowTitle(name)
-
-    def _layout_title_bar(self) -> None:
-        """把 ``TitleBar`` 与搜索胶囊摆在窗口顶边那一条上。
-
-        那一条的高度是**安全区**顶出来的那 28 点，不写死。**真全屏**时系统自己也不画标题栏，
-        这一条跟着收起来（否则会盖在照片上，ADR 0025 决策 2）；**铺满窗口不在此列**。
-
-        **两个控件是摆在一起的，不是一套布局**：``TitleBar`` 那一行由标题文字与改名字段自己
-        居中，胶囊贴右边，抢同一份布局反而互相挪（ADR 0026 决策 8）。**内容区让出多少也归
-        这里**（``_build_ui`` 只留初始值）：真全屏时那一段收起来，让出去的 12 点就该还回去 ——
-        不还回去的话，照片区顶上会压着一条什么都没有的空档。
-        """
-        if not self._owns_title_bar:
-            return
-        # 判据是**真全屏，不是铺满**：铺满只是窗口变大，那一条照旧在（见 :meth:`_toggle_filled`）。
-        full_screen = self.isFullScreen()
-        self._stack.setContentsMargins(0, 0 if full_screen else TITLE_BAR_EXTRA, 0, 0)
-        if full_screen:
-            # 高度给 0，于是它与胶囊都不会盖在照片上（ADR 0025 决策 2）。
-            self._title_bar.setGeometry(0, 0, self.width(), 0)
-            self._title_bar.hide()
-            self._search_field.hide()
-            self._external_button.hide()
-            self._scope_toggle.hide()
-            return
-        central = self.centralWidget()
-        top = central.geometry().top() if central is not None else 0
-        # 安全区之外**再加** :data:`TITLE_BAR_EXTRA`：三页的内容都从 ``安全区 + EXTRA`` 开始。
-        height = max(top + TITLE_BAR_EXTRA, TITLE_BAR_HEIGHT)
-        self._title_bar.setGeometry(0, 0, self.width(), height)
-        self._title_bar.setVisible(True)
-        # 胶囊摆在**这一条**里（内容区从 ``top + EXTRA`` 开始），再往下挪
-        # :data:`SEARCH_FIELD_TEXT_ALIGN_DROP`。
-        field_height = min(SEARCH_FIELD_HEIGHT, height - 4)
-        # guard: allow-long-comment（间距与同高只从 SCOPE_TOGGLE_GAP 一处出，各算各的会歪）
-        # **右上角那一块有两样东西**（ADR 0040 决策 5）：切换按钮贴着窗口右边，胶囊被推到它左边。
-        # 两者的间距与同高都由 :data:`SCOPE_TOGGLE_GAP` 与 ``field_height`` 一处给出 —— 各算各的
-        # 会「歪了一两个点」（见 ``external_button.button_rect``）。
-        block_right = self.width() - SEARCH_FIELD_MARGIN_RIGHT
-        toggle_width = min(SCOPE_TOGGLE_EDGE, max(0, field_height))
-        toggle_x = block_right - toggle_width
-        search_x = toggle_x - SCOPE_TOGGLE_GAP - SEARCH_FIELD_WIDTH
-        self._search_field.setGeometry(
-            search_x,
-            (height - field_height) // 2 + SEARCH_FIELD_TEXT_ALIGN_DROP,
-            SEARCH_FIELD_WIDTH,
-            field_height,
-        )
-        self._search_field.show()
-        # **要抬一次**：布局跑完之后，中央控件与菜单栏会被抬到「最后创建的子控件」之上把胶囊盖住。
-        self._search_field.raise_()
-        # 切换按钮**建在胶囊之后**（`_build_ui` 里），于是这一次抬就是为它准备的。
-        self._scope_toggle.setGeometry(toggle_x, self._search_field.y(), toggle_width, field_height)
-        self._scope_toggle.show()
-        self._scope_toggle.raise_()
-        #: **窗口右缘到胶囊右缘**有多远 —— 面包屑那几枚条件胶囊对齐的就是这条线（ADR 0026 决策
-        #: 8），这一个数是两者之间唯一的换算依据。
-        inset_to_capsule = SEARCH_FIELD_MARGIN_RIGHT + toggle_width + SCOPE_TOGGLE_GAP
-
-        # 「用外部应用打开」**从胶囊那一块往左长出来**（见 ``button_rect``），于是两者必然同高、同一
-        # 基线。**显隐的判据只有一处**（``is_available``）；真全屏时它整个不见。
-        if self._external_button.isVisible():
-            self._external_button.setGeometry(button_rect(self._search_field.geometry()))
-            self._external_button.raise_()
-        # 标题文字与 ⌘R 的输入框都要给右上角这一整块让出来（胶囊**加上左边的按钮**）。
-        self._title_bar.reserve_right(
-            inset_to_capsule
-            + SEARCH_FIELD_WIDTH
-            + SEARCH_FIELD_MARGIN_RIGHT
-            + (BUTTON_WIDTH + BUTTON_GAP if self._external_button.isVisible() else 0)
-        )
-
-        # guard: allow-long-comment（对齐的是胶囊不是那一整块；对齐到按钮右缘会在中间空出一截）
-        # 面包屑右端那几枚条件胶囊与这个胶囊**右缘对齐**；换算只在这一处做 —— 面包屑摆在一份有
-        # 边距的布局里，右缘比窗口右缘靠内 :data:`_GRID_PAGE_MARGIN_RIGHT` 点。
-        # **对齐的是胶囊而不是那一整块**：切换按钮在胶囊右边，让条件胶囊对齐到按钮的右缘会在
-        # 中间空出一截，看着像它们不属于任何一个框。
-        self._breadcrumb.set_right_inset(inset_to_capsule - _GRID_PAGE_MARGIN_RIGHT)
 
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         super().showEvent(event)
@@ -1410,15 +938,6 @@ class MainWindow(
             self._layout_title_bar()
             self._layout_banner()
             self._sync_fill_action()
-
-    def _sync_fill_action(self) -> None:
-        """「铺满窗口 / 还原窗口」那一句跟着此刻的状态走。
-
-        **两处都要调**：菜单那一条平时跟着 :meth:`_update_action_states` 走，而双击标题栏与按
-        ⌃⌘F 都不经过那条路。**判据是「铺满」而不是「真全屏」** —— 菜单上这一条说的就是铺满，
-        与绿按钮悬停菜单里的「进入全屏幕」不是同一件事。
-        """
-        self._fill_action.setText("还原窗口" if self.isMaximized() else "铺满窗口")
 
     def _on_scope_switched(self) -> None:
         """切换按钮被按了：把作用域**掉个头**（按钮自己不记状态，ADR 0042 决策 1）。

@@ -441,7 +441,7 @@ def test_only_three_things_can_take_a_condition_away() -> None:
         # ---- 明确是用户动作的那几件 ----
         ("src/gallery/ui/window/search_flow.py", "self._conditions.append(condition)"),  # 加一条
         ("src/gallery/ui/window/search_flow.py", "del self._conditions[position]"),  # 点 ✕
-        ("src/gallery/ui/main_window.py", "self._conditions.pop()"),  # ⇧Esc 撤一条
+        ("src/gallery/ui/window/navigation_flow.py", "self._conditions.pop()"),  # ⇧Esc 撤一条
         ("src/gallery/ui/window/search_flow.py", "self._conditions.clear()"),  # 清搜索框
         # 就地替换：长度不变，但它确实改内容 —— 单独放行。
         ("src/gallery/ui/window/search_flow.py", "self._conditions[editing] = condition"),
