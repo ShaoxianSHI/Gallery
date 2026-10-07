@@ -323,8 +323,9 @@ class DetailView(QGraphicsView):
         event.accept()
 
     def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
-        """⌘ + 滚轮缩放；普通滚动交给基类做平移（与 macOS 预览一致）。"""
-        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+        """⌘/Ctrl + 滚轮缩放；普通滚动交给基类做平移（与 macOS 预览一致）。"""
+        modifiers = event.modifiers()
+        if modifiers & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier):
             delta = event.angleDelta().y()
             if delta:
                 self.zoom_by(ZOOM_STEP if delta > 0 else 1 / ZOOM_STEP)

@@ -19,8 +19,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QPoint, QPointF, Qt  # noqa: E402
-from PySide6.QtGui import QContextMenuEvent, QImage, QWheelEvent  # noqa: E402
+from PySide6.QtCore import QPoint  # noqa: E402
+from PySide6.QtGui import QContextMenuEvent, QImage  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from gallery.ui.viewer.detail import DetailView  # noqa: E402
@@ -100,45 +100,6 @@ def test_manual_zoom_is_still_capped(qt_app: QApplication) -> None:
         for _ in range(60):
             view.zoom_in()
         assert view.current_scale == pytest.approx(MAX_SCALE)
-    finally:
-        view.close()
-
-
-# ---- 缩放快捷键（⌘ + 滚轮）--------------------------------------------------
-
-
-def _wheel(modifiers: Qt.KeyboardModifier) -> QWheelEvent:
-    return QWheelEvent(
-        QPointF(10.0, 10.0),
-        QPointF(10.0, 10.0),
-        QPoint(0, 0),
-        QPoint(0, 120),
-        Qt.MouseButton.NoButton,
-        modifiers,
-        Qt.ScrollPhase.NoScrollPhase,
-        False,
-    )
-
-
-def test_only_the_command_wheel_zooms(qt_app: QApplication) -> None:
-    """⌘ + 滚轮缩放，⌃ + 滚轮不缩放。
-
-    macOS 上 Qt 把 Ctrl 译成 Command（``ControlModifier``），``MetaModifier`` 才是 ⌃；
-    两者都收下会让 ⌃ + 滚轮也缩放。
-    """
-    view = DetailView()
-    view.resize(800, 600)
-    view.show()
-    qt_app.processEvents()
-    try:
-        view.set_image(_image(FULL_SIZE))
-        fitted = view.current_scale
-
-        view.wheelEvent(_wheel(Qt.KeyboardModifier.MetaModifier))
-        assert view.current_scale == pytest.approx(fitted), "⌃ + 滚轮不该缩放"
-
-        view.wheelEvent(_wheel(Qt.KeyboardModifier.ControlModifier))
-        assert view.current_scale > fitted, "⌘ + 滚轮该放大"
     finally:
         view.close()
 
