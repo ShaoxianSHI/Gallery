@@ -524,7 +524,7 @@ class EventStore:
 
     def event(self, event_id: int) -> Event | None:
         """按 id 取一个事件。"""
-        return next((event for event in self.all_events() if event.id == event_id), None)
+        return event_by_id(self.all_events(), event_id)
 
     def events_for_photos(self, paths: Sequence[Path]) -> dict[Path, tuple[EventRef, ...]]:
         """这些照片分别属于哪些事件（分组与筛选要的那一份）。
@@ -951,6 +951,16 @@ def events_of_kind(events: Sequence[Event], kind_id: str) -> tuple[Event, ...]:
     return tuple(event for event in events if event.kind == kind_id)
 
 
+def event_by_id(events: Sequence[Event], event_id: int) -> Event | None:
+    """从一份事件清单里按 id 挑一个。
+
+    **清单由调用方给**，因为两处各有一个正当的来源：:class:`EventStore` 是现查的，
+    ``Library`` 用的是它那份会话缓存（ADR 0043 决策 7）。所以这里只收清单、不收
+    store —— 收 store 就等于替调用方选了一边。
+    """
+    return next((event for event in events if event.id == event_id), None)
+
+
 def follow_moves(events: EventStore | None, moves: Iterable[tuple[Path, Path, bool]]) -> int:
     """一批「旧位置 → 新位置」，把事件绑定搬过去，返回搬了几条（ADR 0043 决策 8）。
 
@@ -988,6 +998,7 @@ __all__ = [
     "EventStore",
     "Orphan",
     "attach",
+    "event_by_id",
     "events_of_kind",
     "follow_moves",
 ]

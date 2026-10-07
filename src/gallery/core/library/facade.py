@@ -26,6 +26,7 @@ from gallery.core.events.store import (
     EventRef,
     EventStore,
     EventWriteOutcome,
+    event_by_id,
     events_of_kind,
 )
 from gallery.core.library.config import (
@@ -540,7 +541,7 @@ class Library:
 
     def event(self, event_id: int) -> Event | None:
         """按 id 取一个事件（从上面那份缓存里找，不查库）。"""
-        return next((event for event in self.all_events() if event.id == event_id), None)
+        return event_by_id(self.all_events(), event_id)
 
     def events_by_kind(self, kind_id: str) -> tuple[Event, ...]:
         """某一类的全部事件，顺序即菜单顺序（新→旧）。"""

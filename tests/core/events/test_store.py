@@ -17,6 +17,7 @@ from gallery.core.events.store import (
     EventDraft,
     EventRef,
     EventStore,
+    event_by_id,
     events_of_kind,
     follow_moves,
 )
@@ -470,3 +471,17 @@ def test_an_unreadable_kind_does_not_take_the_whole_list_down(events: EventStore
 
     assert [event.title for event in events.all_events()] == ["认得的"]
     assert kept.id > 0
+
+
+def test_event_by_id_finds_it_or_says_there_is_none(events: EventStore) -> None:
+    """按 id 取事件：找到就给那一条，找不到给 ``None``。
+
+    ``Library.event`` 与 :meth:`EventStore.event` 曾经各写一遍这个 ``next(...)``；
+    现在只剩 :func:`event_by_id` 一处，所以两个方向都在这里钉住 —— 「找不到」那一支
+    原先在整个仓库里没有一条用例直接量过（界面那条路靠 `assert ... is None` 间接覆盖）。
+    """
+    assert event_by_id((), 1) is None, "空清单上不该凭空冒出一条"
+
+    created = events.create("trip", EventDraft(values={"title": "京都五日"})).event
+    assert event_by_id(events.all_events(), created.id) == created
+    assert event_by_id(events.all_events(), created.id + 1) is None, "不存在的 id 必须给 None"
