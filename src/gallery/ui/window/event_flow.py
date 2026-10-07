@@ -187,31 +187,50 @@ class EventFlowMixin:
         return menu
 
     def edit_event_menu(self) -> QMenu:
-        """菜单栏「编辑 → 编辑事件」那一层：列已有的那些，点一个直接开那个事件的编辑面板。
+        """菜单栏「编辑 → 编辑事件 → 旅行 / 演出 → 具体那一个」——**先按类型分，再列具体事件**。
 
-        **平铺，不按类型分组** —— 用户想改的就是某一个具体的事件，类型他多半还记得但不影响他
-        要找的那一个；而这里只有一种类型（``kinds.EVENT_KINDS`` 目前一条），分组也分不出什么。
+        多出来的一层是因为**一个类型里的事件可能有很多**，平铺在一层里找起来费劲；类型本身是
+        稳定的，先按它分一次。每一类各挂一个子菜单，点第三层那一条直接开那个事件的编辑面板。
 
-        同样挂在 ``aboutToShow`` 上填（理由见 :meth:`new_event_menu`），**零个事件时置灰** ——
+        这一层与下面两层 QMenu **都在这里一次建完**（不能等 ``aboutToShow`` 才现建子菜单：
+        ``menu_style.apply_style`` 只在菜单建好那一刻递归下发样式表，后建的会留在系统默认样式里）。
+
+        同样挂在 ``aboutToShow`` 上刷灰度（理由见 :meth:`new_event_menu`），**零个事件时置灰** ——
         摆一个永远点不开的框只会让人以为软件坏了。
         """
         menu = ShortcutColumnMenu("编辑事件")
         menu.setToolTipsVisible(True)
+        for kind in EVENT_KINDS:
+            menu.addMenu(self._edit_event_picker(kind))
 
-        def fill() -> None:
-            menu.clear()
-            library = self._library
-            if library is None:
-                return
-            for event in library.all_events():
-                menu.addAction(event.display_name).setData(event.id)
-            # 展开那一刻按**同一个判据**再置一次灰（见 :meth:`_events_usable`）：建完第一个事件
-            # 之后 ``_update_action_states`` 可能还没被叫到，靠这一句菜单当场就是对的。
+        def refresh() -> None:
+            # 展开那一刻按**同一个判据**再置一次灰（见 :meth:`_edit_event_usable`）：建完第一个
+            # 事件之后 ``_update_action_states`` 可能还没被叫到，靠这一句菜单当场就是对的。
             menu.setEnabled(self._edit_event_usable())
 
-        menu.aboutToShow.connect(fill)
-        menu.triggered.connect(self._on_edit_event_picked)
+        menu.aboutToShow.connect(refresh)
         return menu
+
+    def _edit_event_picker(self, kind: EventKind) -> QMenu:
+        """「编辑事件 → 旅行」这一层：列这一类里已有的那些，点一个直接开那个事件的编辑面板。
+
+        顺序照 ``all_events``（**开始日期新→旧**，id 兜底）。**这一类一个事件都没有时整层置灰** ——
+        空的子菜单点开是个空框，只会让人以为软件坏了。
+        """
+        submenu = QMenu(kind.label)
+        submenu.setToolTipsVisible(True)
+
+        def fill() -> None:
+            submenu.clear()
+            library = self._library
+            existing = library.events_by_kind(kind.id) if library is not None else ()
+            for event in existing:
+                submenu.addAction(event.display_name).setData(event.id)
+            submenu.setEnabled(bool(existing))
+
+        submenu.aboutToShow.connect(fill)
+        submenu.triggered.connect(self._on_edit_event_picked)
+        return submenu
 
     def import_shows_menu(self) -> QMenu:
         """「文件 → 导入演出」那一层（ADR 0047）。目前只有「从「演迹」导入」一项。

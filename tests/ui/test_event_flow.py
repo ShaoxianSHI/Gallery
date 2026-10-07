@@ -772,6 +772,23 @@ def _open_submenu(window: MainWindow, menu: QMenu) -> list[QAction]:
     return menu.actions()
 
 
+def _kind_menu(menu: QMenu, kind: EventKind) -> QMenu:
+    """「编辑事件」下面那一层里，这一类对应的子菜单。"""
+    action = next(action for action in menu.actions() if action.text() == kind.label)
+    submenu = action.menu()
+    assert submenu is not None, f"「{kind.label}」那一层不是子菜单"
+    return submenu
+
+
+def _events_of_kind(window: MainWindow, kind: EventKind) -> list[QAction]:
+    """展开「编辑事件 → 这一类」，列出第三层里的条目。"""
+    menu = window._edit_event_menu
+    menu.aboutToShow.emit()
+    submenu = _kind_menu(menu, kind)
+    submenu.aboutToShow.emit()
+    return submenu.actions()
+
+
 def test_the_edit_menu_carries_the_two_event_entries(window: MainWindow) -> None:
     """这两条是**常驻**在「编辑」菜单里的（不是右键那一支）。"""
     titles = [action.text() for action in window.menuBar().actions()[1].menu().actions()]
@@ -816,16 +833,71 @@ def test_the_new_event_menu_opens_the_panel_without_any_photo_selected(
     assert opened == [EVENT_KINDS[0].id]
 
 
+def test_the_edit_event_menu_is_split_by_kind(window: MainWindow) -> None:
+    """**先按类型分**：第二层是「旅行 / 演出」，具体的那一个在第三层。"""
+    library = window._library
+    assert library is not None
+    library.create_event("trip", EventDraft(values={"title": "京都五日"}))
+
+    actions = _open_submenu(window, window._edit_event_menu)
+
+    assert [action.text() for action in actions] == [kind.label for kind in EVENT_KINDS]
+
+
 def test_the_edit_event_menu_lists_what_there_is(window: MainWindow) -> None:
-    """顺序照 ``all_events``：**新→旧**（两者都没填日期，于是按 id 从大到小）。"""
+    """第三层顺序照 ``all_events``：**开始日期新→旧**（两者都没填日期，于是按 id 从大到小）。"""
     library = window._library
     assert library is not None
     library.create_event("trip", EventDraft(values={"title": "京都五日"}))
     library.create_event("trip", EventDraft(values={"title": "奈良三日"}))
 
-    actions = _open_submenu(window, window._edit_event_menu)
+    actions = _events_of_kind(window, TRIP)
 
     assert [action.text() for action in actions] == ["奈良三日", "京都五日"]
+
+
+def test_the_edit_event_menu_orders_by_start_date(window: MainWindow) -> None:
+    """**按开始日期排**，与创建先后无关 —— 最近的那一次在最上面。"""
+    library = window._library
+    assert library is not None
+    library.create_event(
+        "trip", EventDraft(values={"title": "先建的、更早的", "started_on": "2026-05-01"})
+    )
+    library.create_event(
+        "trip", EventDraft(values={"title": "后建的、更晚的", "started_on": "2026-06-01"})
+    )
+
+    actions = _events_of_kind(window, TRIP)
+
+    assert [action.text() for action in actions] == ["后建的、更晚的", "先建的、更早的"]
+
+
+def test_the_edit_event_menu_keeps_the_kinds_apart(window: MainWindow) -> None:
+    """旅行与演出各列各的 —— 一层里塞不下时，某一类里没有的那一种不该混进来。"""
+    library = window._library
+    assert library is not None
+    library.create_event("trip", EventDraft(values={"title": "京都五日"}))
+    library.create_event("show", EventDraft(values={"title": "某场演唱会"}))
+
+    assert [action.text() for action in _events_of_kind(window, TRIP)] == ["京都五日"]
+    assert [action.text() for action in _events_of_kind(window, SHOW)] == ["某场演唱会"]
+
+
+def test_a_kind_with_no_events_is_greyed_out(window: MainWindow) -> None:
+    """**这一类一个事件都没有时整层置灰** —— 空框点开只会让人以为软件坏了。"""
+    library = window._library
+    assert library is not None
+    library.create_event("trip", EventDraft(values={"title": "京都五日"}))
+
+    menu = window._edit_event_menu
+    menu.aboutToShow.emit()
+    trip_menu = _kind_menu(menu, TRIP)
+    show_menu = _kind_menu(menu, SHOW)
+    trip_menu.aboutToShow.emit()
+    show_menu.aboutToShow.emit()
+
+    assert trip_menu.isEnabled() is True
+    assert show_menu.isEnabled() is False
 
 
 def test_the_edit_event_menu_is_greyed_out_with_nothing_to_edit(window: MainWindow) -> None:
@@ -892,7 +964,7 @@ def test_picking_one_from_the_edit_event_menu_opens_that_event(
     opened: list[int] = []
     monkeypatch.setattr(window, "edit_event", opened.append)
 
-    window._on_edit_event_picked(_open_submenu(window, window._edit_event_menu)[1])
+    window._on_edit_event_picked(_events_of_kind(window, TRIP)[1])
 
     assert opened == [trip.id]
 
