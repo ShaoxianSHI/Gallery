@@ -95,15 +95,23 @@ def _guard(root: Path, destination: Path) -> None:
         raise AlbumError(f"「{destination.name}」不是一个文件夹。", path=destination)
     try:
         paths.guard_within_root(root, destination, allow_root=True)
-    except ValueError as exc:
-        raise AlbumError(_album_reason(destination, str(exc)), path=destination) from exc
+    except paths.GuardError as exc:
+        raise AlbumError(_album_reason(destination, exc), path=destination) from exc
 
 
-def _album_reason(path: Path, reason: str) -> str:
-    """按闸门说的那一件事给一句中文 —— 理由见 :func:`rename._rename_reason`。"""
-    if "配置目录" in reason:
-        return "这是 Gallery 自己的配置目录，不能往里建相册。"
-    return f"只能在库里的文件夹中新建相册：{path}。"
+#: 闸门拒绝的每一种原因 → 给用户的那句话。见 :data:`rename._GUARD_MESSAGES`。
+#: **「库本身」这一条今天到不了**（库里任意一层都能建相册，库根也算），
+#: 理由同 :data:`transfer._GUARD_MESSAGES`：留着是为了这张表是全的。
+_GUARD_MESSAGES: Final = {
+    paths.GuardReason.OUTSIDE_ROOT: "只能在库里的文件夹中新建相册：{path}。",
+    paths.GuardReason.IS_ROOT: "不能在库本身里新建相册，请选一个文件夹。",
+    paths.GuardReason.IS_CONFIG_DIR: "这是 Gallery 自己的配置目录，不能往里建相册。",
+}
+
+
+def _album_reason(path: Path, error: paths.GuardError) -> str:
+    """按闸门给的**原因**给一句中文 —— 理由见 :func:`rename._rename_reason`。"""
+    return _GUARD_MESSAGES[error.reason].format(path=path)
 
 
 __all__ = ["DEFAULT_ALBUM_NAME", "CreatedAlbum", "create_album"]

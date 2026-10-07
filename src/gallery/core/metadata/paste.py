@@ -22,6 +22,7 @@ import shutil
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Final
 from uuid import uuid4
 
 from gallery.core import paths
@@ -290,15 +291,23 @@ def _guard(root: Path, destination: Path) -> None:
     root = Path(root)
     try:
         paths.guard_within_root(root, destination, allow_root=True)
-    except ValueError as exc:
-        raise PasteError(_paste_reason(destination, str(exc)), path=destination) from exc
+    except paths.GuardError as exc:
+        raise PasteError(_paste_reason(destination, exc), path=destination) from exc
 
 
-def _paste_reason(path: Path, reason: str) -> str:
-    """按闸门说的那一件事给一句中文 —— 理由见 :func:`rename._rename_reason`。"""
-    if "配置目录" in reason:
-        return "这是 Gallery 自己的配置目录，照片不该粘进去。"
-    return f"只能粘到库里的文件夹：{path}。"
+#: 闸门拒绝的每一种原因 → 给用户的那句话。见 :data:`rename._GUARD_MESSAGES`。
+#: **「库本身」这一条今天到不了**（库根本身是合法的粘贴目标），理由同
+#: :data:`transfer._GUARD_MESSAGES`：留着是为了这张表是全的。
+_GUARD_MESSAGES: Final = {
+    paths.GuardReason.OUTSIDE_ROOT: "只能粘到库里的文件夹：{path}。",
+    paths.GuardReason.IS_ROOT: "不能粘到库本身，请选一个文件夹。",
+    paths.GuardReason.IS_CONFIG_DIR: "这是 Gallery 自己的配置目录，照片不该粘进去。",
+}
+
+
+def _paste_reason(path: Path, error: paths.GuardError) -> str:
+    """按闸门给的**原因**给一句中文 —— 理由见 :func:`rename._rename_reason`。"""
+    return _GUARD_MESSAGES[error.reason].format(path=path)
 
 
 __all__ = [

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Final
 
 from gallery.core import paths
 from gallery.core.errors import RenameError
@@ -206,7 +207,7 @@ def _guard(root: Path, source: Path, target: Path) -> None:
     """确认这次改名落在允许的范围内。
 
     扫描器本来就不会把点开头的目录摆进网格，这里仍然挡一道：这是**会动用户文件的入口
-    之一**（改名 / 移到废纸篓 / 粘贴 / 移动到相册 / 新建相册 / 写回元数据，六处各有一份
+    之一**（改名 / 移到废纸篓 / 粘贴 / 移动到相册 / 新建相册 / 写回元数据，各有一份
     同名的 ``_guard``，都经 :func:`~gallery.core.paths.guard_within_root`），值得对
     「库根」「配置目录」多一层保险。
     """
@@ -215,19 +216,27 @@ def _guard(root: Path, source: Path, target: Path) -> None:
         try:
             # 库根本身这道闸就在下面那道里（``allow_root=False``），不必在前面另判一遍。
             paths.guard_within_root(root, _path, allow_root=False)
-        except ValueError as exc:
-            raise RenameError(_rename_reason(_path, str(exc)), path=_path) from exc
+        except paths.GuardError as exc:
+            raise RenameError(_rename_reason(_path, exc), path=_path) from exc
 
 
-def _rename_reason(path: Path, reason: str) -> str:
-    """按闸门说的那一件事给一句中文，而不是把它的内部措辞倒给用户 —— 三处 ``_guard`` 共用一句话
-    会把「配置目录」这种**具体且可行动**的原因降级成括号里的补充，而路径在句子里出现两次。
+#: 闸门拒绝的每一种原因 → 给用户的那句话。**三种都要在**：少一种是 ``KeyError``
+#: 而不是一句含糊的通用话 —— ``GuardReason`` 加了新成员时，这里会当场炸。
+_GUARD_MESSAGES: Final = {
+    paths.GuardReason.OUTSIDE_ROOT: "只能重命名库里的东西：{path}。",
+    paths.GuardReason.IS_ROOT: "这是库本身，改名会让 Gallery 找不到照片。",
+    paths.GuardReason.IS_CONFIG_DIR: "这是 Gallery 自己的配置目录，不能改名。",
+}
+
+
+def _rename_reason(path: Path, error: paths.GuardError) -> str:
+    """按闸门给的**原因**给一句中文，而不是把它的内部措辞倒给用户。
+
+    每个写入口各说各的一句话（「不能改名」对「不能删」），共用一句会把「配置目录」
+    这种**具体且可行动**的原因降级成括号里的补充。而按原因分支**不按消息文本**分支
+    是这里的要害：消息是给用户看的文案，改一个字不该让某一支静默地失效。
     """
-    if "配置目录" in reason:
-        return "这是 Gallery 自己的配置目录，不能改名。"
-    if "库本身" in reason:
-        return "这是库本身，改名会让 Gallery 找不到照片。"
-    return f"只能重命名库里的东西：{path}。"
+    return _GUARD_MESSAGES[error.reason].format(path=path)
 
 
 def _keep_suffix(entry: PhotoRef, cleaned: str) -> str:

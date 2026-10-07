@@ -28,6 +28,7 @@ import hashlib
 import os
 import sys
 from collections.abc import Sequence
+from enum import Enum
 from functools import lru_cache
 from pathlib import Path
 from typing import Final
@@ -119,12 +120,42 @@ def is_within(root: Path, candidate: Path) -> bool:
     return resolved == resolved_root or resolved_root in resolved.parents
 
 
+class GuardReason(Enum):
+    """:func:`guard_within_root` 拒绝一个路径的三种原因。
+
+    **调用方按它分支，不要按消息文本** —— 消息是给用户看的文案，改一个字的措辞
+    不该改变任何一处写操作的行为。
+    """
+
+    OUTSIDE_ROOT = "outside_root"
+    IS_ROOT = "is_root"
+    IS_CONFIG_DIR = "is_config_dir"
+
+
+class GuardError(ValueError):
+    """:func:`guard_within_root` 的拒绝，**原因在 :attr:`reason` 里**。
+
+    **为什么不是 :class:`~gallery.core.errors.GalleryError`**：这条不是给用户看的。
+    它只是写操作那一层内部的一个信号 —— 六个会动文件的入口各自要把它翻成自己那句话
+    （改名 / 删除 / 移动 / 粘贴 / 新建相册的说法各不相同），翻出来之前谁也不该展示它。
+    而 :class:`~gallery.core.errors.GalleryError` 的约定是「``message`` 直接给用户看」。
+
+    子类 ``ValueError`` 是因为这条闸门按约定就抛 ``ValueError``（「这个路径不在允许
+    范围内」本质上是一次值校验失败），历史调用点也因此都写得出来。
+    """
+
+    def __init__(self, reason: GuardReason, message: str) -> None:
+        super().__init__(message)
+        #: 被拒的原因。**这是接口**，消息只是为了让人在日志里一眼看懂。
+        self.reason = reason
+
+
 def guard_within_root(root: Path, path: Path, *, allow_root: bool = True) -> None:
     """确认 ``path`` 在库内、不是配置目录、也不是库根本身。
 
     :param allow_root: ``True`` 时允许 ``path == root``（粘贴的目标可以是库根）；
         ``False`` 时**禁止** —— 库根本身不能被改名或删除。
-    :raises ValueError: 不满足上面任何一条。
+    :raises GuardError: 不满足上面任何一条（它认 :attr:`GuardError.reason`）。
 
     **别再把「库根」写成静默返回。** 这条闸门是「确认」用的，而 ``return`` 什么都不
     确认 —— 文档写着「禁止」、代码却放行，读的人只能靠猜。
@@ -132,11 +163,11 @@ def guard_within_root(root: Path, path: Path, *, allow_root: bool = True) -> Non
     root = Path(root)
     path = Path(path)
     if not is_within(root, path):
-        raise ValueError(f"不在库内：{path}")
+        raise GuardError(GuardReason.OUTSIDE_ROOT, f"不在库内：{path}")
     if not allow_root and resolved_str(path) == resolved_str(root):
-        raise ValueError(f"这是库本身：{root}")
+        raise GuardError(GuardReason.IS_ROOT, f"这是库本身：{root}")
     if resolved_str(path) == resolved_str(config_dir(root)):
-        raise ValueError("这是 Gallery 自己的配置目录")
+        raise GuardError(GuardReason.IS_CONFIG_DIR, "这是 Gallery 自己的配置目录")
 
 
 #: :func:`resolved` 记多少条。够一个中型库一整轮，且不因为翻的库多而一直涨。
@@ -318,6 +349,8 @@ def app_icon_master() -> Path:
 __all__ = [
     "EXTRA_TOOL_DIRS",
     "RESOLVED_CACHE_SIZE",
+    "GuardError",
+    "GuardReason",
     "app_cache_root",
     "app_data_base",
     "app_icon_files",

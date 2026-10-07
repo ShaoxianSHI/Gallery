@@ -114,8 +114,10 @@ def test_the_guard_really_refuses_the_library_root(tmp_path: Path) -> None:
 
     paths.guard_within_root(root, root, allow_root=True)  # 粘贴的目标可以是库根
 
-    with pytest.raises(ValueError, match="库本身"):
+    with pytest.raises(paths.GuardError) as caught:
         paths.guard_within_root(root, root, allow_root=False)
+
+    assert caught.value.reason is paths.GuardReason.IS_ROOT
 
 
 def test_the_guard_refuses_the_config_dir(tmp_path: Path) -> None:
@@ -125,8 +127,10 @@ def test_the_guard_refuses_the_config_dir(tmp_path: Path) -> None:
     config = paths.config_dir(root)
     config.mkdir()
 
-    with pytest.raises(ValueError, match="配置目录"):
+    with pytest.raises(paths.GuardError) as caught:
         paths.guard_within_root(root, config)
+
+    assert caught.value.reason is paths.GuardReason.IS_CONFIG_DIR
 
 
 def test_the_guard_rejects_a_path_outside_the_library(tmp_path: Path) -> None:
@@ -135,8 +139,33 @@ def test_the_guard_rejects_a_path_outside_the_library(tmp_path: Path) -> None:
     outside = tmp_path / "别处"
     outside.mkdir()
 
-    with pytest.raises(ValueError, match="不在库内"):
+    with pytest.raises(paths.GuardError) as caught:
         paths.guard_within_root(root, outside)
+
+    assert caught.value.reason is paths.GuardReason.OUTSIDE_ROOT
+
+
+def test_the_reason_is_the_interface_not_the_message(tmp_path: Path) -> None:
+    """**改消息文本不该改变原因**（也不要动 ``ValueError`` 这条兼容）。
+
+    五个写入口按 :attr:`GuardError.reason` 分支，而不是拿消息文本去认。原先靠
+    ``"配置目录" in str(exc)`` 那套，改一个字的文案就会让某一支静默失效、报错说的话
+    与真正发生的事对不上 —— 而这是红线 1 的入口。
+
+    判据里连 ``str`` 一起量：消息是为了让人在日志里看懂，它**不是**接口。
+    """
+    root = tmp_path / "库"
+    root.mkdir()
+    outside = tmp_path / "别处"
+    outside.mkdir()
+
+    with pytest.raises(ValueError) as caught:  # 仍然兼容「拒绝一个路径」= 值校验失败
+        paths.guard_within_root(root, outside)
+
+    error = caught.value
+    assert isinstance(error, paths.GuardError)
+    assert error.reason is paths.GuardReason.OUTSIDE_ROOT
+    assert str(outside) in str(error), "消息里该带上那个路径，便于从日志里看出来"
 
 
 def test_the_hot_paths_do_not_resolve_the_same_string_twice(

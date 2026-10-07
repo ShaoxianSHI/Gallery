@@ -310,17 +310,21 @@ def _guard(root: Path, source: Path) -> None:
     root = Path(root)
     try:
         paths.guard_within_root(root, source, allow_root=False)
-    except ValueError as exc:
-        raise DeleteError(_trash_reason(source, str(exc)), path=source) from exc
+    except paths.GuardError as exc:
+        raise DeleteError(_trash_reason(source, exc), path=source) from exc
 
 
-def _trash_reason(path: Path, reason: str) -> str:
-    """按闸门说的那一件事给一句中文 —— 理由见 :func:`rename._rename_reason`。"""
-    if "配置目录" in reason:
-        return "这是 Gallery 自己的配置目录，不能删。"
-    if "库本身" in reason:
-        return "这是库本身，删掉它 Gallery 就找不到任何照片了。"
-    return f"只能移除库里的东西：{path}。"
+#: 闸门拒绝的每一种原因 → 给用户的那句话。见 :data:`rename._GUARD_MESSAGES`。
+_GUARD_MESSAGES: Final = {
+    paths.GuardReason.OUTSIDE_ROOT: "只能移除库里的东西：{path}。",
+    paths.GuardReason.IS_ROOT: "这是库本身，删掉它 Gallery 就找不到任何照片了。",
+    paths.GuardReason.IS_CONFIG_DIR: "这是 Gallery 自己的配置目录，不能删。",
+}
+
+
+def _trash_reason(path: Path, error: paths.GuardError) -> str:
+    """按闸门给的**原因**给一句中文 —— 理由见 :func:`rename._rename_reason`。"""
+    return _GUARD_MESSAGES[error.reason].format(path=path)
 
 
 def _free_name(candidate: Path, *, is_dir: bool) -> Path:
