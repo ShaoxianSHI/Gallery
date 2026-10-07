@@ -17,10 +17,11 @@ from functools import partial
 from pathlib import Path
 
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QDialog, QMenu, QMessageBox
+from PySide6.QtWidgets import QAbstractButton, QDialog, QMenu, QMessageBox
 
 from gallery.core.errors import EventsUnavailableError, GalleryError
 from gallery.core.events.kinds import EVENT_KINDS, EventKind, kind_by_id
+from gallery.core.events.orphans import OrphanScan
 from gallery.core.events.prefill import EventPrefill, prefill_from_photos
 from gallery.core.events.store import Event
 from gallery.core.library.photos import GridEntry, GroupRef, PhotoRef
@@ -262,6 +263,49 @@ class EventFlowMixin:
         self._after_events_changed()
         self._show_banner(banners.event_deleted_banner(outcome))
         self._refresh_undo_label()
+
+    def _confirm_orphan_cleanup(self, scan: OrphanScan) -> None:
+        """问用户要不要清掉那些孤儿绑定（ADR 0043 决策 9）。
+
+        **一个框分两档**（``banners.orphan_dialog`` 里说清了为什么），三个按钮：
+
+        - 「清掉这些」：只清 ``missing`` 那一档 —— 目录可读、清单里没有它，是**结论**
+        - 「连相册不存在的也清掉」：连 ``vanished`` 一起，**而那一档混着「那个盘没挂上」**
+        - 「先不清」：默认按下的那一个。删用户自己填过的数据，默认必须是保守的那一个。
+
+        **默认按钮是 Cancel**，与 :meth:`delete_event` 同一取向。**正文不许提 ⌘Z** ——
+        这里没有撤销，而 ``delete_event`` 那句「⌘Z 可以…」在这里是反的。
+        """
+        library = self._library
+        if library is None:
+            return
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle(banners.orphan_dialog_title(scan))
+        box.setText(banners.orphan_dialog(scan))
+        clear_all = box.addButton("先不清", QMessageBox.ButtonRole.RejectRole)
+        keep_vanished: QAbstractButton | None = None
+        if scan.missing:
+            clear_missing = box.addButton("清掉这些", QMessageBox.ButtonRole.AcceptRole)
+            if scan.vanished:
+                keep_vanished = box.addButton(
+                    "连相册不存在的也清掉", QMessageBox.ButtonRole.DestructiveRole
+                )
+        else:
+            # 没有 ``missing`` 可清时，那一个按钮会变成一句空话 —— 只给两档里的两个选择。
+            clear_missing = None
+            keep_vanished = box.addButton("连这些一起清掉", QMessageBox.ButtonRole.DestructiveRole)
+        box.setDefaultButton(clear_all)
+        box.exec()
+        if box.clickedButton() is clear_missing:
+            include_vanished = False
+        elif box.clickedButton() is keep_vanished:
+            include_vanished = True
+        else:
+            return
+        removed = library.forget_orphan_bindings(scan, include_vanished=include_vanished)
+        self._after_events_changed()
+        self._show_banner(banners.orphans_forgotten_banner(removed))
 
     def record_selected_as(self, kind_id: str, event_id: int) -> None:
         """把当前选中的照片记进这个事件。"""

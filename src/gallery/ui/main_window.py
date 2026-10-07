@@ -213,6 +213,9 @@ class MainWindow(
         self._detail_trashed: Path | None = None
         self._place_resolver: LazyPlaceResolver | None = None
         self._place_job: int | None = None
+        #: 在途的那一遍孤儿检查（ADR 0043 决策 9）。切库与关窗都要取消它 ——
+        #: 回来得晚的那份结果属于上一个库，而它带来的确认框会问在错的窗口上。
+        self._orphan_job: int | None = None
         #: 本次运行已经起过那一遍的库（是集合不是单个：来回切库不该把同一个库再起一遍空跑）。
         self._place_pass_roots: set[Path] = set()
         self._place_notice_text: str | None = None

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from gallery.core.events.orphans import OrphanScan
 from gallery.core.events.store import EventWriteOutcome
 from gallery.core.external.launch import OpenOutcome
 from gallery.core.library.facade import MetadataWriteOutcome
@@ -96,6 +97,73 @@ def event_undo_banner(result: UndoResult, kind_label: str) -> str:
     if not result.journaled:
         return f"{verb}{what}改回去，但没能记下操作日志，下一次 ⌘Z 不一定接得上。"
     return f"{verb}{what}改回去。"
+
+
+# ---- 孤儿绑定（ADR 0043 决策 9）------------------------------------------------
+
+#: 确认框里列事件名时最多列几个。**再多就只给个数** —— 那份清单是用来判断的，不是用来读的。
+MAX_LISTED_EVENTS: int = 3
+
+
+def orphan_dialog(scan: OrphanScan) -> str:
+    """开库时发现孤儿绑定，确认框的正文。**纯文本，不碰 Qt**（与本文件其余部分同一层）。
+
+    **两档分开说，理由写进正文**：「相册已不存在」那一档混着「那个盘没挂上」，用户只有看了
+    这句话才知道默认保留的是什么、以及勾了会失去什么。
+
+    **不许提 ⌘Z**：这里没有撤销 —— 把绑定恢复到一张不存在的照片上用户用不上，而
+    ``delete_event`` 那句「⌘Z 可以…」在这里是反的。
+    """
+    lines = [_orphan_headline(scan), "", _why_it_matters()]
+    if scan.missing:
+        lines += ["", f"要清掉这 {len(scan.missing)} 条吗？"]
+    if scan.vanished:
+        lines += ["", _vanished_paragraph(scan)]
+    return "\n".join(lines)
+
+
+def orphan_dialog_title(scan: OrphanScan) -> str:
+    """确认框的标题。**只提「照片没了」那一档** —— 另一个标题会让用户以为两档一样性质。"""
+    return f"{len(scan.missing)} 条事件记录指向已经不存在的照片"
+
+
+def orphans_forgotten_banner(removed: int) -> str:
+    """清完之后。**说清删的是记录、不是照片** —— 用户怕的是后者。"""
+    if removed <= 0:
+        return "没有清掉任何记录。"
+    return f"已清掉 {removed} 条指向已不存在照片的记录（照片本身没有动过）。"
+
+
+def _orphan_headline(scan: OrphanScan) -> str:
+    names = scan.event_titles(include_vanished=False)
+    if not names:
+        return "有一些事件记录指向已经不存在的照片。"
+    return f"{len(scan.missing)} 条事件记录指向已经不存在的照片，涉及{_list_names(names)}。"
+
+
+def _why_it_matters() -> str:
+    """说清「为什么值得清」—— 不说的话用户只会想「不动它不就完了」。"""
+    return (
+        "照片可能是在 Gallery 之外被删掉或移走的。留着没有坏处，\n"
+        "但同一个路径日后被另一张照片用上时，它会悄悄算进那个事件。"
+    )
+
+
+def _vanished_paragraph(scan: OrphanScan) -> str:
+    """第二档也要点名事件 —— 用户得知道「是哪个事件的照片不见了」才可能去核实。"""
+    names = scan.event_titles(include_vanished=True, only=("vanished",))
+    who = f"，涉及{_list_names(names)}" if names else ""
+    return (
+        f"另有 {len(scan.vanished)} 条指向已经不存在的相册{who}。\n"
+        "那也可能是那个磁盘没挂上，所以默认保留 —— 要连它们一起清掉吗？"
+    )
+
+
+def _list_names(names: Sequence[str]) -> str:
+    shown = "、".join(f"「{name}」" for name in names[:MAX_LISTED_EVENTS])
+    if len(names) > MAX_LISTED_EVENTS:
+        shown += f"等 {len(names)} 个事件"
+    return shown
 
 
 def paste_banner(result: PasteResult, target_name: str) -> str:

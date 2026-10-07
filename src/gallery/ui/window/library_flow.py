@@ -17,6 +17,7 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QFileDialog
 
 from gallery.core.errors import GalleryError
+from gallery.core.events.orphans import OrphanScan
 from gallery.core.library.config import BROWSE_MODE_ALBUMS, BROWSE_MODE_CALENDAR, LibraryUIState
 from gallery.core.library.facade import Library, PlacePass
 from gallery.core.library.groups import sort_photos
@@ -222,6 +223,45 @@ class LibraryFlowMixin:
         self._remember(library.root)
         self._watch.start(library)
         self._start_scan()
+        self._start_orphan_check(library)
+
+    # ---- 孤儿绑定（ADR 0043 决策 9）--------------------------------------------
+
+    def _start_orphan_check(self, library: Library) -> None:
+        """开库时查一遍有没有指向已不存在照片的绑定（ADR 0043 决策 9）。
+
+        **每次开库都查**：这一遍要抓的正是「Gallery 没开着的时候」发生的改动，所以记一个
+        「上次查过没有」的标记反而会漏掉它。D 次 ``scandir`` 在后台线程里，用户看不见。
+
+        **事件库不可用就压根不起这个任务**：那种库上没有事件，而一次开库不该白付磁盘开销
+        （「记录为」那一行本来就不出现，ADR 0043 决策 1）。
+        """
+        if not library.events_available:
+            return
+        generation = self._generation
+
+        def work(context: TaskContext) -> object:
+            return library.find_orphan_bindings(should_cancel=context.is_cancelled)
+
+        self._orphan_job = self._runner.submit(
+            work,
+            on_result=partial(self._on_orphan_checked, generation),
+            on_error=self._on_orphan_check_failed,
+        )
+
+    def _on_orphan_checked(self, generation: int, payload: object) -> None:
+        """查完了（**主线程**）。**什么都没找到就彻底静默** —— 不弹框、不挂横幅、不记日志。"""
+        self._orphan_job = None
+        if generation != self._generation or self._library is None:
+            return
+        if not isinstance(payload, OrphanScan) or not payload.found:
+            return
+        self._confirm_orphan_cleanup(payload)
+
+    def _on_orphan_check_failed(self, message: str) -> None:
+        """这一遍查不下去不该挡住浏览 —— 用户没损失什么，只是这一次的孤儿留着。"""
+        self._orphan_job = None
+        logger.info("查孤儿绑定失败：%s", message)
 
     def _teardown_library(self) -> None:
         # 监听器第一刀：它还在跑的时候，下面就把库和索引都拆了。
@@ -237,6 +277,7 @@ class LibraryFlowMixin:
         self._cancel_facet_job()
         self._cancel_calendar_job()
         self._cancel_place_pass()
+        self._cancel_orphan_check()
         # **写操作闸门也要收**：⌘V / 「移动到相册」在旧库的 ``Library`` 上跑，不取消的话收尾时
         # 会去问新库「下一次 ⌘Z 撤什么」，而记录在旧库里 —— 界面上一个都撤不掉。
         if self._write_job is not None:
@@ -534,6 +575,16 @@ class LibraryFlowMixin:
         if self._place_job is not None:
             self._runner.cancel(self._place_job)
             self._place_job = None
+
+    def _cancel_orphan_check(self) -> None:
+        """作废在途的孤儿检查（切库、关窗时）。
+
+        ``generation`` 那道闸已经能挡住结果落地，**取消是为了别白跑** —— 而更要紧的是别让一个
+        模态框在用户已经切到别的库之后才弹出来。
+        """
+        if self._orphan_job is not None:
+            self._runner.cancel(self._orphan_job)
+            self._orphan_job = None
 
     # ---- 会话（记在那个缓存目录里，下次启动沿用）----------------------------
 

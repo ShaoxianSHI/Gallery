@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Final
 from gallery.core import paths
 from gallery.core.errors import ConfigError, LibraryNotAccessibleError
 from gallery.core.events import store as events
+from gallery.core.events.orphans import OrphanScan, find_orphans, forget_orphans
 from gallery.core.events.store import (
     Event,
     EventDraft,
@@ -599,6 +600,24 @@ class Library:
             photo.path if isinstance(photo, PhotoRef) else Path(photo) for photo in photos
         ]
         return self.events.unbind(paths_to_remove, event_id)
+
+    def find_orphan_bindings(
+        self, *, should_cancel: Callable[[], bool] | None = None
+    ) -> OrphanScan:
+        """哪些绑定指向了已经不存在的照片（ADR 0043 决策 9）。**只读，跑在后台线程里。**
+
+        三档判定与「为什么读不到不等于没有」都在 :mod:`gallery.core.events.orphans` 里说；
+        界面这一侧只负责起任务、弹确认框、按下按钮之后删。
+        """
+        return find_orphans(self.events, should_cancel=should_cancel)
+
+    def forget_orphan_bindings(self, scan: OrphanScan, *, include_vanished: bool) -> int:
+        """按用户点头的范围删掉那些绑定，返回删了几条。
+
+        ``include_vanished`` 管的是「相册不存在」那一档 —— **它混着「那个盘没挂上」**，
+        所以默认 ``False``。
+        """
+        return forget_orphans(self.events, scan, include_vanished=include_vanished)
 
     def photo_facets(
         self,

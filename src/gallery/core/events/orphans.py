@@ -81,15 +81,25 @@ class OrphanScan:
     def paths(self, *, include_vanished: bool = True) -> tuple[Path, ...]:
         return tuple(orphan.path for orphan in self.chosen(include_vanished=include_vanished))
 
-    def event_titles(self, *, include_vanished: bool = True) -> tuple[str, ...]:
-        """涉及哪些事件，按首次出现顺序去重 —— 提示框里列给人看。"""
-        seen: dict[str, None] = {}
-        for orphan in self.chosen(include_vanished=include_vanished):
-            seen.setdefault(orphan.event_title or "（未命名）", None)
-        return tuple(seen)
-
     def chosen(self, *, include_vanished: bool) -> tuple[Orphan, ...]:
         return self.missing + (self.vanished if include_vanished else ())
+
+    def event_titles(self, *, include_vanished: bool = True, only: str = "") -> tuple[str, ...]:
+        """涉及哪些事件，按首次出现顺序去重 —— 提示框里列给人看。
+
+        ``only`` 收窄到某一档（``"missing"`` / ``"vanished"``）—— **两个档常常是两批不同的
+        事件**，混着列会让人以为同一个事件的照片既有没了的、又有找不到相册的。
+        """
+        if only == "missing":
+            source: tuple[Orphan, ...] = self.missing
+        elif only == "vanished":
+            source = self.vanished
+        else:
+            source = self.chosen(include_vanished=include_vanished)
+        seen: dict[str, None] = {}
+        for orphan in source:
+            seen.setdefault(orphan.event_title or "（未命名）", None)
+        return tuple(seen)
 
 
 def find_orphans(
