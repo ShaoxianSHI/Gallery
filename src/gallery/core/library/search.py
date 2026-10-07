@@ -108,16 +108,20 @@ EVENT_KIND_VALUES: Final[dict[str, str]] = {
 }
 
 
-def _event_fields() -> tuple[SearchField, ...]:
+def _event_fields(taken: Collection[str]) -> tuple[SearchField, ...]:
     """事件那一族的可搜字段，**由事件类型定义生成**（ADR 0043 决策 6）。
 
     加一类事件、给它加一个字段，搜索里就多一项 —— 不用在这里补一行，也就不会「加了字段却忘了
     能搜」。
 
-    **一条约束**：候选列表按 id 与中文名匹配（:func:`match_field`），所以两个事件类型里同名
-    的字段（比如两家都叫「备注」）只能有一个被选中。眼下只有旅行一类，将来加第二类时把重名的
-    改成更具体的名字。
+    **重名自动带上类型前缀**：候选列表按 id 与中文名匹配（:func:`match_field`），而两个事件类型
+    里同名的字段、或与照片那族撞名的字段（「城市」）只能有一个被选中。于是后来那个叫
+    「演出·城市」「演出·评分」。``taken`` 是已经用掉的标签（照片那族加事件公共那两条）。
+
+    ``id`` 一律带上类型（``event_trip_destination``）：两个类型的列可以同名（旅行的 ``rating``
+    与演出的 ``rating``），而条件的身份是 ``(id, 原文)``，不带类型就会让两条不同的条件撞成一条。
     """
+    used = set(taken)
     common = (
         SearchField(
             id="event_kind",
@@ -125,7 +129,7 @@ def _event_fields() -> tuple[SearchField, ...]:
             kind="event",
             column="kind",
             table=EVENTS_TABLE,
-            hint="旅行",
+            hint=" / ".join(kind.label for kind in EVENT_KINDS),
         ),
         SearchField(
             id="event",
@@ -136,27 +140,28 @@ def _event_fields() -> tuple[SearchField, ...]:
             hint="京都五日",
         ),
     )
-    per_kind = tuple(
-        SearchField(
-            id=f"event_{field.id}",
-            label=field.label,
-            kind="event",
-            column=field.column,
-            table=kind.table,
-            sql_type=field.sql_type,
-            hint=field.hint,
-        )
-        for kind in EVENT_KINDS
-        for field in kind.fields
-    )
+    used.update(field.label for field in common)
+    per_kind: list[SearchField] = []
+    for kind in EVENT_KINDS:
+        for field in kind.fields:
+            label = field.label if field.label not in used else f"{kind.label}·{field.label}"
+            used.add(label)
+            per_kind.append(
+                SearchField(
+                    id=f"event_{kind.id}_{field.id}",
+                    label=label,
+                    kind="event",
+                    column=field.column,
+                    table=kind.table,
+                    sql_type=field.sql_type,
+                    hint=field.hint,
+                )
+            )
     return (*common, *per_kind)
 
 
-#: 候选列表的顺序即这里里面的顺序。**不打乱 GROUP_FACET_IDS / SORT_FACET_IDS 的既有顺序**
-#: （字段与分组排序看到的是同一套字段），只把「不读 EXIF、立刻出结果」的四个提到最前面。
-#: ``column`` 写的是 **SQL 里的列名**而不是 ``PhotoFacets`` 的属性名 —— 只有拍摄时间两者不同
-#: （属性 ``captured_at``，列 ``captured``），写错要到 SQLite 执行时才报出来。
-SEARCH_FIELDS: Final[tuple[SearchField, ...]] = (
+#: 照片本身的那些字段。事件那一族接在它后面，重名消歧靠它的标签（见 :func:`_event_fields`）。
+_PHOTO_FIELDS: Final[tuple[SearchField, ...]] = (
     _field(FACET_NAME, "文件名", "name", "p.name"),
     _field(FACET_FOLDER, "相册", "album", "p.folder", hint="含子相册"),
     _field(FACET_FORMAT, "文件格式", "format", "p.suffix", hint="jpg 或 JPEG"),
@@ -175,7 +180,15 @@ SEARCH_FIELDS: Final[tuple[SearchField, ...]] = (
     _field(FACET_FOCAL, "焦距", "number", "f.focal", hint="35 或 <= 70"),
     _field(FACET_PIXELS, "像素尺寸", "number", "f.pixels", hint="12000000 或 >12MP"),
     _field(FACET_MODIFIED, "修改时间", "datetime", "p.mtime_ns", hint="2024 / 2024-05"),
-    *_event_fields(),
+)
+
+#: 候选列表的顺序即这里里面的顺序。**不打乱 GROUP_FACET_IDS / SORT_FACET_IDS 的既有顺序**
+#: （字段与分组排序看到的是同一套字段），只把「不读 EXIF、立刻出结果」的四个提到最前面。
+#: ``column`` 写的是 **SQL 里的列名**而不是 ``PhotoFacets`` 的属性名 —— 只有拍摄时间两者不同
+#: （属性 ``captured_at``，列 ``captured``），写错要到 SQLite 执行时才报出来。
+SEARCH_FIELDS: Final[tuple[SearchField, ...]] = (
+    *_PHOTO_FIELDS,
+    *_event_fields(frozenset(field.label for field in _PHOTO_FIELDS)),
 )
 
 _FIELDS_BY_ID: Final[dict[str, SearchField]] = {field.id: field for field in SEARCH_FIELDS}

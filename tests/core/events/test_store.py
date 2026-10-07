@@ -11,7 +11,7 @@ import pytest
 
 from gallery.core import paths
 from gallery.core.events import store as store_module
-from gallery.core.events.kinds import EVENT_KINDS, SQL_TYPES, TRIP, fields_of
+from gallery.core.events.kinds import EVENT_KINDS, SQL_TYPES, EventKind, fields_of
 from gallery.core.events.store import (
     Event,
     EventDraft,
@@ -86,6 +86,23 @@ _EXPECTED_TRIP = [
     ("rating", "INTEGER", 0),
 ]
 
+_EXPECTED_SHOW = [
+    ("event_id", "INTEGER", 0),
+    ("artist", "TEXT", 0),
+    ("guests", "TEXT", 0),
+    ("program", "TEXT", 0),
+    ("start_time", "TEXT", 0),
+    ("city", "TEXT", 0),
+    ("venue", "TEXT", 0),
+    ("ticket_price", "REAL", 0),
+    ("paid", "REAL", 0),
+    ("seat", "TEXT", 0),
+    ("rating", "INTEGER", 0),
+    ("show_type", "TEXT", 0),
+    ("channel", "TEXT", 0),
+    ("thoughts", "TEXT", 0),
+]
+
 
 def _table_info(connection: sqlite3.Connection, table: str) -> list[tuple[str, str, int]]:
     return [
@@ -101,18 +118,28 @@ def test_the_event_table_has_exactly_the_columns_we_agreed_on(
     assert _table_info(connection, "events") == _EXPECTED_EVENTS
 
 
+@pytest.mark.parametrize(
+    ("table", "expected"),
+    [("event_trip", _EXPECTED_TRIP), ("event_show", _EXPECTED_SHOW)],
+)
 def test_a_kind_table_has_exactly_the_columns_its_fields_declare(
-    connection: sqlite3.Connection, events: EventStore
+    connection: sqlite3.Connection,
+    events: EventStore,
+    table: str,
+    expected: list[tuple[str, str, int]],
 ) -> None:
     """类型扩展表逐列钉住 —— 列名与类型两样都要对。
 
     类型不是「好不好看」：花费存成 ``TEXT`` 的话 ``#花费 >3000`` 会被 SQLite 按文本比，
     于是 ``"900" > "3000"`` 为真。
     """
-    assert _table_info(connection, "event_trip") == _EXPECTED_TRIP
+    assert _table_info(connection, table) == expected
 
 
-def test_every_declared_column_is_readable_through_the_store(events: EventStore) -> None:
+@pytest.mark.parametrize("kind", EVENT_KINDS)
+def test_every_declared_column_is_readable_through_the_store(
+    events: EventStore, kind: EventKind
+) -> None:
     """**每个声明的字段都真的写得进、读得出**（ADR 0043 决策 3 的行为面）。
 
     上面两条钉的是表长什么样，这一条钉的是读写语句能不能跑 —— ADR 0026 那个 ``f.captured_at``
@@ -120,13 +147,13 @@ def test_every_declared_column_is_readable_through_the_store(events: EventStore)
     """
     filled = {
         field.id: "1" if field.sql_type in ("INTEGER", "REAL") else f"{field.id}-值"
-        for field in fields_of(TRIP)
+        for field in fields_of(kind)
     }
     filled["started_on"], filled["ended_on"] = "2026-05-16", "2026-05-20"
-    created = events.create("trip", EventDraft(values=filled)).event
+    created = events.create(kind.id, EventDraft(values=filled)).event
 
     assert events.event(created.id) == created
-    for field in fields_of(TRIP):
+    for field in fields_of(kind):
         assert created.text(field.id), field
 
     # 改一遍再读回来：两条语句（UPDATE 公共列 + REPLACE 扩展表）都真的落到了库里。

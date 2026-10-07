@@ -66,6 +66,29 @@ def _with_trips(library: Library) -> tuple[int, int]:
     return kyoto.id, osaka.id
 
 
+def _with_shows(library: Library) -> int:
+    """一场演出：艺人、城市、票价、实付、评分，绑一张照片。"""
+    show = library.create_event(
+        "show",
+        EventDraft(
+            values={
+                "title": "某音乐剧",
+                "started_on": "2026-05-16",
+                "artist": "某剧团",
+                "guests": "某嘉宾",
+                "city": "上海",
+                "venue": "某剧院",
+                "ticket_price": "380",
+                "paid": "360",
+                "rating": "5",
+            }
+        ),
+    ).event
+    library.bind_photos([library.root / "2026" / "京都-01.jpg"], show.id)
+    library.index_photos()
+    return show.id
+
+
 def test_the_candidate_list_offers_the_event_fields() -> None:
     """字段表由事件类型定义生成 —— 加一类事件、给它加一个字段，这里就多一项。"""
     labels = [field.label for field in suggestions("")]
@@ -74,12 +97,24 @@ def test_the_candidate_list_offers_the_event_fields() -> None:
     assert "事件" in labels
     assert "目的地" in labels
     assert "花费" in labels
+    assert "艺人" in labels
+    assert "场馆" in labels
+    assert "演出·评分" in labels
 
 
 def test_an_event_field_is_recognised_by_its_label_and_id() -> None:
-    assert match_field("目的地").id == "event_destination"
+    assert match_field("目的地").id == "event_trip_destination"
     assert match_field("event_kind").label == "事件类型"
     assert match_field("没有这个字段") is None
+
+
+def test_a_field_that_collides_gets_the_kind_prefix() -> None:
+    """候选里同名的字段各叫各的名字：EXIF 的「城市」不动，演出的叫「演出·城市」；
+    旅行先声明，「评分」留给它，演出那份叫「演出·评分」。"""
+    assert match_field("城市").is_event is False
+    assert match_field("演出·城市").id == "event_show_city"
+    assert match_field("评分").id == "event_trip_rating"
+    assert match_field("演出·评分").id == "event_show_rating"
 
 
 def test_an_event_field_does_not_need_exiftool() -> None:
@@ -161,8 +196,32 @@ def test_the_filtering_query_survives_the_real_schema(library: Library) -> None:
     assert sorted(path.name for path in paths) == ["京都-01.jpg", "京都-02.jpg"]
 
 
+def test_filtering_by_the_show_kind_and_its_fields(library: Library) -> None:
+    """演出的字段走它自己那张表 —— kind 与每一列都要能在真 schema 上跑。"""
+    _with_trips(library)
+    _with_shows(library)
+
+    assert _names(library, "#事件类型 演出") == ["京都-01.jpg"]
+    assert _names(library, "#艺人 某剧团") == ["京都-01.jpg"]
+    assert _names(library, "#场馆 某剧院") == ["京都-01.jpg"]
+    assert _names(library, "#演出·城市 上海") == ["京都-01.jpg"]
+    assert _names(library, "#演出·城市 京都") == []
+    # 数字那一列按数字比而不是按字符串：360 在 300 与 400 之间。
+    assert _names(library, "#实付 >300") == ["京都-01.jpg"]
+    assert _names(library, "#演出·评分 >4") == ["京都-01.jpg"]
+
+
+def test_the_two_kinds_rates_are_two_conditions(library: Library) -> None:
+    """旅行的「评分」与演出的「演出·评分」是两条不同的条件（身份不撞），能各筛各的。"""
+    _with_trips(library)
+    _with_shows(library)
+
+    assert _names(library, "#评分 5") == []  # 三类事件里没有评分为 5 的旅行
+    assert _names(library, "#演出·评分 5") == ["京都-01.jpg"]
+
+
 def test_a_kind_nobody_has_is_simply_empty(library: Library) -> None:
-    """还没加「演出」这一类时按它筛只是没有结果，不是报错。"""
+    """按一个认不出来的类型筛只是没有结果，不是报错。"""
     _with_trips(library)
 
-    assert _names(library, "#事件类型 演出") == []
+    assert _names(library, "#事件类型 聚会") == []

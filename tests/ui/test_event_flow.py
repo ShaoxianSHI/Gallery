@@ -38,7 +38,7 @@ from PySide6.QtWidgets import (  # noqa: E402
 )
 from waiting import wait_for_idle, wait_until  # noqa: E402
 
-from gallery.core.events.kinds import EVENT_KINDS, TRIP, fields_of  # noqa: E402
+from gallery.core.events.kinds import EVENT_KINDS, SHOW, TRIP, EventKind, fields_of  # noqa: E402
 from gallery.core.events.store import Event, EventDraft  # noqa: E402
 from gallery.core.library.config import BROWSE_MODE_ALBUMS, prepare_library  # noqa: E402
 from gallery.core.library.photos import GroupRef  # noqa: E402
@@ -1041,6 +1041,35 @@ def test_the_prefilled_name_grows_out_of_them(qt_app: QApplication, window: Main
     assert dialog._text("title") == "2026-05-16 · 杭州"
 
 
+def test_a_show_prefills_its_city_and_grows_a_name_from_the_artist(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """演出的地点进「城市」栏（不是旅行的「目的地」），名称先只有日期。"""
+    _place(window, "京都-01.jpg", city="上海", region="上海市", country="中国")
+    row = _select(window, "京都-01.jpg")
+
+    record_as = _submenu(_context(window, row), "记录为")
+    kinds = _submenu(record_as, "演出")
+    kinds.aboutToShow.emit()
+    dialog = _new_dialog(kinds)
+
+    assert dialog._text("city") == "上海"
+    assert "destination" not in dialog._fields
+    assert dialog._text("title") == "2026-05-16"
+
+
+def test_the_show_name_grows_from_the_program_then_the_artist(qt_app: QApplication) -> None:
+    """演出面板里那三栏联动与旅行同源：日期先行，剧目优先于艺人。"""
+    dialog = EventEditDialog(None, SHOW)
+    dialog._fields["started_on"].setText("2026-05-16")
+
+    dialog._fields["artist"].setText("某乐队")
+    assert dialog._text("title") == "2026-05-16 · 某乐队"
+
+    dialog._fields["program"].setText("某音乐剧")
+    assert dialog._text("title") == "2026-05-16 · 某音乐剧"
+
+
 def test_a_photo_without_a_capture_time_leaves_the_dates_blank(
     qt_app: QApplication, window: MainWindow
 ) -> None:
@@ -1095,12 +1124,15 @@ def test_editing_an_existing_event_does_not_prefill_from_the_selection(
 # ---- 面板自己（不碰任何一张照片）-----------------------------------------------
 
 
-def test_the_panel_is_built_from_the_field_definitions(qt_app: QApplication) -> None:
-    """**控件由事件的定义生成**：旅行的六个独有字段加上四个公共字段，一样不少
+@pytest.mark.parametrize("kind", EVENT_KINDS)
+def test_the_panel_is_built_from_the_field_definitions(
+    qt_app: QApplication, kind: EventKind
+) -> None:
+    """**控件由事件的定义生成**：每一类独有的字段加上四个公共字段，一样不少
     （ADR 0043 决策 3）。"""
-    dialog = EventEditDialog(None, TRIP)
+    dialog = EventEditDialog(None, kind)
 
-    assert sorted(dialog._fields) == sorted(field.id for field in fields_of(TRIP))
+    assert sorted(dialog._fields) == sorted(field.id for field in fields_of(kind))
 
 
 def test_the_fields_say_nothing_under_them(qt_app: QApplication) -> None:

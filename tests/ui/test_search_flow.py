@@ -640,17 +640,19 @@ def test_the_candidate_list_is_only_as_tall_as_its_rows(
     """列表底下不许留一截空白。
 
     高度按 ``sizeHintForRow`` 算而不是按某个常数：那一档字号下真正的行高是 23，按 26 算就是
-    每行多三点，十七条足以在最下面攒出几十点空白 —— 那一块不是留白，是算错的。
+    每行多三点 —— 那一块不是留白，是算错的。**字段多到现在自然高度已超过窗口**，于是那条公式
+    还要与「夹在窗口以内」取小；这里断的正是它取小的那两个值，一个都不能多。
     """
     window = _open_candidates(qt_app, tmp_path, "#")
     popup = window._search_field._popup
     rows = popup.topLevelItemCount()
     row_height = popup.sizeHintForRow(0)
-    expected = rows * row_height + POPUP_LIST_INSET * 2
+    natural = rows * row_height + POPUP_LIST_INSET * 2
+    available = max(0, window.height() - popup.geometry().top())
 
-    assert popup.height() == expected, (
-        f"列表高 {popup.height()}，{rows} 行内容该是 {expected} —— "
-        f"底下多出（或少了）{popup.height() - expected} 点"
+    assert popup.height() == min(natural, available), (
+        f"列表高 {popup.height()}，{rows} 行内容该是 {natural}，"
+        f"夹在窗口以内则 {available} —— 底下多出（或少了）一段空白"
     )
     window.close()
 

@@ -281,8 +281,8 @@ class EventEditDialog(QDialog):
         line.setMinimumWidth(FIELD_MIN_WIDTH)
         if field.multiple:
             line.setPlaceholderText("多个用逗号分开")
-        if field.id in ("title", "destination", "started_on"):
-            # 名称自动长成「日期 · 目的地」靠的就是这三栏互相看着（见 :meth:`_suggest_title`）。
+        if field.id in {"title", "started_on", *self._kind.title_parts}:
+            # 名称自动长成「日期 · 关键字段」靠的就是这几栏互相看着（见 :meth:`_suggest_title`）。
             line.textChanged.connect(self._suggest_title)
         return line
 
@@ -345,7 +345,7 @@ class EventEditDialog(QDialog):
         断的就是这一条）。
         """
         for field_id, text in (
-            ("destination", prefill.destination),
+            (self._kind.place_field, prefill.place),
             ("started_on", prefill.started_on),
             ("ended_on", prefill.ended_on),
         ):
@@ -363,9 +363,7 @@ class EventEditDialog(QDialog):
         current = self._text("title")
         if current != self._auto_title:
             return
-        suggestion = suggested_title(
-            self._kind, self._text("destination"), self._text("started_on")
-        )
+        suggestion = suggested_title(self._kind, self._values())
         if suggestion == current:
             return
         title = self._fields.get("title")
@@ -390,7 +388,11 @@ class EventEditDialog(QDialog):
             title_problem(self._kind, values.get("title", "")),
             started_on_problem(values.get("started_on", "")),
             ended_on_problem(values.get("started_on", ""), values.get("ended_on", "")),
-            cost_problem(values.get("cost", "")),
+            *(
+                cost_problem(values.get(field.id, ""), field.label)
+                for field in self._kind.fields
+                if field.sql_type == "REAL"
+            ),
         )
 
     def _values(self) -> dict[str, str]:

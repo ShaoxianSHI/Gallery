@@ -58,7 +58,7 @@ def test_nothing_to_go_on_leaves_the_dates_blank() -> None:
     assert prefill == EventPrefill()
 
 
-# ---- 目的地 ---------------------------------------------------------------------
+# ---- 地点 -----------------------------------------------------------------------
 
 
 def test_the_same_city_gives_the_city() -> None:
@@ -126,8 +126,8 @@ def test_nobody_has_a_place_at_all() -> None:
 # ---- 两者一起 -------------------------------------------------------------------
 
 
-def test_the_dates_and_the_destination_come_out_of_one_pass() -> None:
-    """日期与目的地由同一个入口给出 —— 调用点只管把那份默认值递给对话框。"""
+def test_the_dates_and_the_place_come_out_of_one_pass() -> None:
+    """日期与地点由同一个入口给出 —— 调用点只管把那份默认值递给对话框。"""
     prefill = prefill_from_photos(
         [
             _photo(day=16, city="杭州", region="浙江省", country="中国"),
@@ -137,7 +137,7 @@ def test_the_dates_and_the_destination_come_out_of_one_pass() -> None:
 
     assert prefill.started_on == "2026-05-16"
     assert prefill.ended_on == "2026-05-18"
-    assert prefill.destination == "浙江省"
+    assert prefill.place == "浙江省"
 
 
 def test_no_photos_at_all() -> None:

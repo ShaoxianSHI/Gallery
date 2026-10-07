@@ -16,6 +16,7 @@ SQLite 直到执行才说 ``no such column``，而那句话被包成「检索没
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
 from typing import Final
@@ -76,6 +77,10 @@ class EventKind:
     #: 存这一类独有字段的那张表的表名。
     table: str
     fields: tuple[EventField, ...]
+    #: 自动标题在日期之后接哪几栏：**取第一个非空的**（旅行是目的地，演出先剧目再艺人）。
+    title_parts: tuple[str, ...] = ()
+    #: 从选中照片预填地点时填进哪一栏（旅行填目的地，演出填城市）。
+    place_field: str = ""
     #: 没填名称时菜单里那一行写什么（分组的「空组」标题也用它）。
     empty_label: str = "未命名"
 
@@ -83,7 +88,9 @@ class EventKind:
 #: **公共列**：任何一类事件都问得出的那几个问题。它们住在 ``events`` 表里，于是「列出所有旅行」
 #: 「这张照片属于谁」都是一条 SQL，不必按类型 UNION。
 COMMON_FIELDS: Final[tuple[EventField, ...]] = (
-    EventField("title", "名称", "title", hint="不填的话按目的地与日期自动生成", required=True),
+    EventField(
+        "title", "名称", "title", hint="不填的话按日期与几个关键字段自动生成", required=True
+    ),
     EventField("started_on", "开始日期", "started_on", "DAY", hint="2026-05-16，只知道年月也可以"),
     EventField("ended_on", "结束日期", "ended_on", "DAY", hint="当天来回就与开始日期同一天"),
     EventField("note", "备注", "note"),
@@ -113,11 +120,43 @@ TRIP: Final = EventKind(
             choices=tuple(str(score) for score in range(RATING_MIN, RATING_MAX + 1)),
         ),
     ),
+    title_parts=("destination",),
+    place_field="destination",
     empty_label="未命名旅行",
 )
 
+SHOW: Final = EventKind(
+    id="show",
+    label="演出",
+    table="event_show",
+    fields=(
+        EventField("artist", "艺人", "artist", hint="多个用逗号分开", multiple=True),
+        EventField("guests", "嘉宾", "guests", hint="多个用逗号分开", multiple=True),
+        EventField("program", "剧目", "program", hint="话剧、音乐剧的剧目名"),
+        EventField("start_time", "开场时间", "start_time", hint="19:30"),
+        EventField("city", "城市", "city"),
+        EventField("venue", "场馆", "venue", hint="如 国家大剧院"),
+        EventField("ticket_price", "票价", "ticket_price", "REAL", hint="票面价，只填数字"),
+        EventField("paid", "实付", "paid", "REAL", hint="实际付款，只填数字"),
+        EventField("seat", "座位", "seat", hint="如 A区 12排 5号"),
+        EventField(
+            "rating",
+            "评分",
+            "rating",
+            "INTEGER",
+            choices=tuple(str(score) for score in range(RATING_MIN, RATING_MAX + 1)),
+        ),
+        EventField("show_type", "演出类型", "show_type", hint="演唱会、音乐剧、话剧……"),
+        EventField("channel", "购买渠道", "channel", hint="如 大麦、秀动"),
+        EventField("thoughts", "感想", "thoughts"),
+    ),
+    title_parts=("program", "artist"),
+    place_field="city",
+    empty_label="未命名演出",
+)
+
 #: 已知的事件类型。**顺序即菜单顺序**。
-EVENT_KINDS: Final[tuple[EventKind, ...]] = (TRIP,)
+EVENT_KINDS: Final[tuple[EventKind, ...]] = (TRIP, SHOW)
 
 KINDS_BY_ID: Final[dict[str, EventKind]] = {kind.id: kind for kind in EVENT_KINDS}
 
@@ -145,23 +184,37 @@ def join_multi(items: tuple[str, ...]) -> str:
     return MULTI_SEPARATOR.join(items)
 
 
-def suggested_title(kind: EventKind, destination: str, started_on: str) -> str:
-    """新建事件时给名称栏的一个默认值：「开始日期 · 目的地」。
+def suggested_title(kind: EventKind, values: Mapping[str, str]) -> str:
+    """新建事件时给名称栏的一个默认值：「开始日期 · 关键字段」。
 
-    比留空必填少一次决定 —— 参照的是系统日历新建事件时那个自动标题的行为。有内容就**不带
-    类型名**（用户刚从菜单点过来，已经知道是旅行）；什么都没填才退回一个能认出来的名字。
+    「关键字段」由 :attr:`EventKind.title_parts` 说了算，取第一个非空的（旅行是目的地，
+    演出先剧目再艺人）。比留空必填少一次决定 —— 参照的是系统日历新建事件时那个自动标题的
+    行为。有内容就**不带类型名**（用户刚从菜单点过来，已经知道是旅行还是演出）；什么都没填才
+    退回一个能认出来的名字。
     """
-    tail = " · ".join(
-        part for part in (started_on.strip(), join_multi(split_multi(destination))) if part
-    )
-    return tail or f"新的{kind.label}"
+    head = values.get("started_on", "").strip()
+    tail = _title_tail(kind, values)
+    parts = tuple(part for part in (head, tail) if part)
+    return " · ".join(parts) or f"新的{kind.label}"
+
+
+def _title_tail(kind: EventKind, values: Mapping[str, str]) -> str:
+    """``title_parts`` 里第一个非空的那一栏；多值字段先归一成顿号分隔。"""
+    fields = {field.id: field for field in kind.fields}
+    for field_id in kind.title_parts:
+        text = values.get(field_id, "").strip()
+        if not text:
+            continue
+        field = fields.get(field_id)
+        return join_multi(split_multi(text)) if field is not None and field.multiple else text
+    return ""
 
 
 def title_problem(kind: EventKind, title: str) -> str | None:
     """名称那一栏有什么不对就说清楚。``None`` 表示没问题。"""
     if title.strip():
         return None
-    return f"这一次{kind.label}得有个名字：以后只能靠它认出是哪一趟。"
+    return f"这一次{kind.label}得有个名字：以后只能靠它认出是哪一次。"
 
 
 def started_on_problem(text: str) -> str | None:
@@ -186,16 +239,16 @@ def ended_on_problem(started_on: str, ended_on: str) -> str | None:
     return None
 
 
-def cost_problem(text: str) -> str | None:
-    """花费那一栏有什么不对就说清楚。不记这一项就留空，所以空不是错。"""
+def cost_problem(text: str, label: str = "花费") -> str | None:
+    """某一栏金额有什么不对就说清楚（花费、票价、实付都走它）。不记这一项就留空，所以空不是错。"""
     stripped = text.strip()
     if not stripped:
         return None
     value = parse_cost(stripped)
     if value is None:
-        return f"花费不是一个数字：「{stripped}」。只填数字就行，比如 3280 或 3280.50。"
+        return f"{label}不是一个数字：「{stripped}」。只填数字就行，比如 3280 或 3280.50。"
     if value < 0:
-        return "花费不会是负的。"
+        return f"{label}不会是负的。"
     return None
 
 
@@ -247,6 +300,7 @@ __all__ = [
     "MULTI_SEPARATOR",
     "RATING_MAX",
     "RATING_MIN",
+    "SHOW",
     "SQL_TYPES",
     "TRIP",
     "EventField",
