@@ -10,7 +10,6 @@ from pathlib import Path
 import pytest
 
 from gallery.core.library.photos import PhotoRef
-from gallery.core.metadata.exif import _read_with_pillow
 from gallery.core.metadata.facets import (
     FACET_APERTURE,
     FACET_CAMERA,
@@ -39,6 +38,7 @@ from gallery.core.metadata.facets import (
     sort_facet,
     with_resolved_place,
 )
+from gallery.core.metadata.pillow_fallback import _read_with_pillow
 from gallery.core.places.resolver import ResolvedPlace
 
 #: 主 IFD 里的标签（写入文件时也用它）；下面那五个在 Exif 子 IFD 里。

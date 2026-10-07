@@ -158,7 +158,7 @@ class PillowBatchSource:
     拿不到 IPTC / XMP，界面据此把国家、省州、城市、关键词几项置灰）。"""
 
     def __init__(self) -> None:
-        from gallery.core.metadata.exif import PillowSource
+        from gallery.core.metadata.pillow_fallback import PillowSource
 
         self._source = PillowSource()
 

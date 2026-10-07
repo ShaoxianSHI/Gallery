@@ -310,7 +310,7 @@ def test_missing_file_is_reported(tmp_path: Path) -> None:
 
 def test_pillow_gps_is_converted_to_decimal() -> None:
     """Pillow 给的是 (度, 分, 秒) 三元组，要换算成十进制度。"""
-    from gallery.core.metadata.exif import _gps_fields
+    from gallery.core.metadata.pillow_fallback import _gps_fields
 
     fields = _gps_fields({1: "N", 2: (44.0, 50.0, 16.0), 3: "W", 4: (0.0, 34.0, 45.0), 6: 12.5})
 
@@ -322,7 +322,7 @@ def test_pillow_gps_is_converted_to_decimal() -> None:
 
 
 def test_pillow_gps_southern_hemisphere_is_negative() -> None:
-    from gallery.core.metadata.exif import _gps_fields
+    from gallery.core.metadata.pillow_fallback import _gps_fields
 
     fields = _gps_fields({1: "S", 2: (33.0, 51.0, 0.0), 3: "E", 4: (151.0, 12.0, 0.0)})
 
@@ -331,7 +331,7 @@ def test_pillow_gps_southern_hemisphere_is_negative() -> None:
 
 
 def test_pillow_gps_ignores_garbage() -> None:
-    from gallery.core.metadata.exif import _gps_fields
+    from gallery.core.metadata.pillow_fallback import _gps_fields
 
     assert _gps_fields({}) == {}
     assert _gps_fields({2: "不是坐标"}) == {}
