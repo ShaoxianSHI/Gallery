@@ -654,7 +654,7 @@ def test_answering_no_keeps_the_event(
 
 def _dialog_of(window: MainWindow, kind: TRIP, event: Event | None) -> EventEditDialog:
     """照面板真正被摆出来的样子造一个（缺这一步就量不到它自己那个布局）。"""
-    dialog = EventEditDialog(window, kind, event=event, selected=0)
+    dialog = EventEditDialog(window, kind, event=event)
     return dialog
 
 

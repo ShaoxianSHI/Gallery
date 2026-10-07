@@ -155,7 +155,6 @@ def dialog_style(app_theme: AppTheme, palette: QPalette) -> str:
     QDialog {{ background: {rgba(app_theme.background)}; }}
     QLabel {{ color: {rgba(app_theme.text_at(0.92))}; font-size: 12px; }}
     QLabel#eventEditTitle {{ font-size: 13px; font-weight: 600; }}
-    QLabel#eventEditHint {{ color: {rgba(app_theme.text_at(0.62))}; font-size: 11px; }}
     QLabel#eventEditError {{ color: {rgba(app_theme.error)}; font-size: 11px; }}
     QLineEdit {{
         color: {rgba(app_theme.text_at(0.92))};
@@ -192,7 +191,6 @@ class EventEditDialog(QDialog):
         kind: EventKind,
         *,
         event: Event | None = None,
-        selected: int = 0,
         prefill: EventPrefill | None = None,
     ) -> None:
         """``prefill`` 是从选中的照片推出来的默认值（见 :mod:`gallery.core.events.prefill`）。
@@ -212,7 +210,7 @@ class EventEditDialog(QDialog):
         self._watcher = theme.ensure_installed()
         self._watcher.changed.connect(self._apply_theme)
         self._apply_theme()
-        self._build(selected)
+        self._build()
         if event is not None:
             self._fill(event)
         else:
@@ -230,7 +228,7 @@ class EventEditDialog(QDialog):
 
     # ---- 搭建 --------------------------------------------------------------
 
-    def _build(self, selected: int) -> None:
+    def _build(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 14, 16, 12)
         layout.setSpacing(10)
@@ -245,7 +243,7 @@ class EventEditDialog(QDialog):
         heading.setObjectName("eventEditTitle")
         layout.addWidget(heading)
         layout.addLayout(self._build_form())
-        layout.addLayout(self._build_range(selected))
+        layout.addLayout(self._build_range())
 
         # 报错那一行在按钮上面：它说的是上面哪个框不对，放在那儿才找得回去。
         self._error = QLabel()
@@ -286,7 +284,7 @@ class EventEditDialog(QDialog):
             line.textChanged.connect(self._suggest_title)
         return line
 
-    def _build_range(self, selected: int) -> QVBoxLayout:
+    def _build_range(self) -> QVBoxLayout:
         """「把这段日期之间的照片都记进来」 —— 容器型事件最常用的那一步。
 
         **默认勾上**：填了起止日期的用户多半正是这个意思，而勾着的唯一后果就是「多记几张」，
@@ -298,8 +296,6 @@ class EventEditDialog(QDialog):
         self._include_range = QCheckBox("把开始到结束之间的照片都记进来")
         self._include_range.setChecked(self._event is None)
         column.addWidget(self._include_range)
-        if selected:
-            column.addWidget(_hint(f"当前选中的 {selected} 张照片也会被记进来。"))
         return column
 
     def _build_buttons(self) -> QHBoxLayout:
@@ -408,13 +404,6 @@ class EventEditDialog(QDialog):
 
     def _apply_theme(self) -> None:
         self.setStyleSheet(dialog_style(theme.current_theme(), self.palette()))
-
-
-def _hint(text: str) -> QLabel:
-    label = QLabel(text)
-    label.setObjectName("eventEditHint")
-    label.setWordWrap(True)
-    return label
 
 
 __all__ = [

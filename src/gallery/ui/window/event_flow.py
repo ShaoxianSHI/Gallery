@@ -430,7 +430,6 @@ class EventFlowMixin:
             self,
             kind,
             event=event,
-            selected=len(photos),
             prefill=None if event is not None else self._event_prefill(entries),
         )
         result = dialog.exec()
