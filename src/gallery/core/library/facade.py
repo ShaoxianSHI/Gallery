@@ -564,10 +564,7 @@ class Library:
         **必须在后台线程里调**：这是唯一一个随照片数增长的查询（一层可能五千张），而分组本身
         是在主线程同步算的（ADR 0043 决策 7）。
         """
-        paths_to_ask = [
-            photo.path if isinstance(photo, PhotoRef) else Path(photo) for photo in photos
-        ]
-        return self.events.events_for_photos(paths_to_ask)
+        return self.events.events_for_photos(_paths_of(photos))
 
     # ---- 事件的写入口（它不动用户文件，动的是我们自己的库）--------------------
 
@@ -590,17 +587,11 @@ class Library:
         **不上撤销栈**（ADR 0043 决策 5）：反向动作同样是一键（「记录为 → 无」），而「这一周
         的照片都算」一次就是几百张。
         """
-        paths_to_bind = [
-            photo.path if isinstance(photo, PhotoRef) else Path(photo) for photo in photos
-        ]
-        return self.events.bind(paths_to_bind, event_id)
+        return self.events.bind(_paths_of(photos), event_id)
 
     def unbind_photos(self, photos: Iterable[PhotoRef | Path], event_id: int) -> int:
         """把这些照片从这个事件里拿出来。"""
-        paths_to_remove = [
-            photo.path if isinstance(photo, PhotoRef) else Path(photo) for photo in photos
-        ]
-        return self.events.unbind(paths_to_remove, event_id)
+        return self.events.unbind(_paths_of(photos), event_id)
 
     def find_orphan_bindings(
         self, *, should_cancel: Callable[[], bool] | None = None
@@ -1048,6 +1039,15 @@ def _relative_posix(root: Path, path: Path) -> str | None:
     except (OSError, ValueError):
         return None
     return relative.as_posix() if relative.parts else None
+
+
+def _paths_of(photos: Iterable[PhotoRef | Path]) -> list[Path]:
+    """把「照片引用或裸路径」一律落成路径。
+
+    三个事件入口（查询归属、绑定、解绑）都要这一步：界面有时手上的是一整行
+    :class:`PhotoRef`，有时只有一个路径（拖进来的、从别处拼的）。
+    """
+    return [photo.path if isinstance(photo, PhotoRef) else Path(photo) for photo in photos]
 
 
 def _has_coordinates(facets: PhotoFacets) -> bool:
