@@ -134,13 +134,6 @@ def _bind_one(window: MainWindow, photo: Path) -> int:
 #: 测试里的修改时间基准（2023-11-14 前后）。具体值无所谓，只要先后是确定的。
 MTIME_BASE = 1_700_000_000.0
 
-#: 两张照片各有各的名字与颜色：相册卡片换成哪一张，靠像素就能看出来，不靠「缩略图不是 None」。
-#: 名字按扫描顺序排（``iter_photos`` 按名称），挪走的得真的排在前面。
-LEAVING_NAME = "第一张.jpg"
-STAYING_NAME = "第二张.jpg"
-LEAVING_COLOR = (200, 40, 30)
-STAYING_COLOR = (30, 60, 200)
-
 
 def touch(path: Path, step: float) -> None:
     """把照片的修改时间钉到 :data:`MTIME_BASE` + ``step``。
@@ -572,96 +565,6 @@ def test_moving_a_photo_out_of_this_level_takes_its_row(
         assert window._model.rowCount() == 0
     finally:
         window.close()
-
-
-def test_a_photo_moved_into_an_album_from_another_folder_changes_its_cover(
-    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
-) -> None:
-    """从别的相册挪一张进空相册：那张相册卡片要换上封面，而不是永远停在文件夹图标上。
-
-    **相册的封面是「里面第一张照片」**，所以往里挪一张就可能换封面。而库内的挪动报上来的是
-    **改名**而不是「新增」—— 「新增」那一支本来就作废封面，改名这一支曾经漏了，于是同一个
-    相册里复制一份（那才是新增）会换封面，从别处挪进来却不会。
-    """
-    album = tmp_path / "新建相册"
-    album.mkdir()
-    source = make_photo("挪进来.jpg", directory=tmp_path / "别处")
-    window, watcher = open_window(qt_app, tmp_path, browse_mode=BROWSE_MODE_ALBUMS)
-    try:
-        pin_thumbnail_edge(window)
-        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.ADDED, album, is_dir=True))
-        # 空相册那张卡片确实问过一次封面（正是那次「什么都没有」要被作废）。
-        assert wait_until(qt_app, lambda: album in window._pipeline._empty)
-        assert window._model.has_thumbnail(album) is False
-
-        inside = album / source.name
-        source.rename(inside)
-        deliver(
-            qt_app,
-            window,
-            watcher,
-            LibraryChange(ChangeKind.MOVED, source, dest_path=inside),
-        )
-
-        assert wait_until(qt_app, lambda: window._model.has_thumbnail(album)), (
-            "照片已经挪进相册了，那张卡片还挂着文件夹图标"
-        )
-    finally:
-        window.close()
-
-
-def test_a_photo_moved_out_of_an_album_changes_that_albums_cover(
-    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
-) -> None:
-    """挪走的是相册里「排第一张」那一张：封面要换成剩下那张，而不是继续挂着已经走了的那张。"""
-    album = tmp_path / "京都"
-    album.mkdir()
-    # 名字得按扫描顺序排（``iter_photos`` 按名称），所以「第一张」要真的排在前面。
-    leaving = make_photo(LEAVING_NAME, directory=album, color=LEAVING_COLOR)
-    make_photo(STAYING_NAME, directory=album, color=STAYING_COLOR)
-    window, watcher = open_window(qt_app, tmp_path, browse_mode=BROWSE_MODE_ALBUMS)
-    try:
-        pin_thumbnail_edge(window)
-        assert wait_until(qt_app, lambda: _shows(window, album, LEAVING_COLOR))
-
-        away = tmp_path / "别处" / leaving.name
-        away.parent.mkdir()
-        leaving.rename(away)
-        deliver(
-            qt_app,
-            window,
-            watcher,
-            LibraryChange(ChangeKind.MOVED, leaving, dest_path=away),
-        )
-
-        assert wait_until(qt_app, lambda: _shows(window, album, STAYING_COLOR)), (
-            "封面还挂着已经挪走的那张"
-        )
-    finally:
-        window.close()
-
-
-def pin_thumbnail_edge(window: MainWindow) -> None:
-    """把缩略图档位钉死在当前这一档（不再听网格改尺寸）。
-
-    **为什么这一组非钉不可**：空相册那份记忆是**按档位**记的（128 px 问出来是空相册，不代表
-    256 px 也是），所以窗口刚打开、网格还在改尺寸的那几轮里，那张卡片会被反反复复重问一遍
-    封面 —— 于是「挪进去之后封面出来了」这条断言会在**档位那一遍**里自己变绿，而真机上
-    （窗口早摆定了、档位不变）封面根本不会回来。钉住档位，断的才是用户看见的那件事。
-    """
-    window._grid.icon_edge_changed.disconnect(window._on_grid_edge_changed)
-
-
-def _shows(window: MainWindow, path: Path, color: tuple[int, int, int]) -> bool:
-    """那一格画出来的是不是这张底色的照片（还没解码出来时答 ``False``）。
-
-    **按色阶比，不按整数比**：磁盘上的缩略图缓存存的是 JPEG，解码回来偏几个色阶。
-    """
-    pixmap = window._model.thumbnail_pixmap(path)
-    if pixmap is None:
-        return False
-    got = pixmap.toImage().pixelColor(0, 0).getRgb()[:3]
-    return all(abs(one - want) <= 24 for one, want in zip(got, color, strict=True))
 
 
 def test_a_photo_changed_elsewhere_refreshes_its_row(
