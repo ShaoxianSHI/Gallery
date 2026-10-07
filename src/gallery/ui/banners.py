@@ -88,6 +88,18 @@ def photos_unbound_banner(count: int, event_name: str) -> str:
     return f"已把 {count} 张照片从「{event_name}」里拿出来。"
 
 
+def shows_imported_banner(created: int, skipped: int) -> str:
+    """从「演迹」导入演出之后（ADR 0047）。
+
+    **跳过的那几行也要说一声**，否则用户会以为自己的表格少了几场 —— 线索在这里，去查哪一行
+    由他自己定。**不提 ⌘Z**：一次导入不进撤销栈（它就是一串新建事件），承诺撤销是空话。
+    """
+    head = "表格里没有读到能记下来的演出" if created <= 0 else f"已从「演迹」导入 {created} 场演出"
+    if skipped:
+        head += f"，另有 {skipped} 行没导入"
+    return f"{head}。"
+
+
 def event_undo_banner(result: UndoResult, kind_label: str) -> str:
     """⌘Z 撤掉一次事件改动之后。**两种改动说法不一样** —— 撤的是删除就说「回来了」。"""
     what = (
@@ -440,6 +452,7 @@ __all__ = [
     "photos_bound_banner",
     "photos_unbound_banner",
     "rename_banner",
+    "shows_imported_banner",
     "transfer_banner",
     "trash_banner",
     "undo_banner",

@@ -112,6 +112,14 @@ class EventsUnavailableError(GalleryError):
     """
 
 
+class ShowImportError(GalleryError):
+    """从「演迹」导出的表格里读演出失败（文件不在、不是 .xlsx、或者不是演出列表）。
+
+    与 :class:`MetadataError` 分开：这条要用户做的动作是「换一个文件 / 从演迹重新导出一次」，
+    与「装 exiftool」完全不是一回事，混在一起只能给一句没用的提示（ADR 0047）。
+    """
+
+
 __all__ = [
     "AlbumError",
     "ConfigError",
@@ -125,5 +133,6 @@ __all__ = [
     "MetadataWriteError",
     "PasteError",
     "RenameError",
+    "ShowImportError",
     "TransferError",
 ]

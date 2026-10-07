@@ -1,4 +1,5 @@
-"""把照片「记录为」某个事件 —— 菜单、面板、写库、横幅（ADR 0043）。
+"""把照片「记录为」某个事件 —— 菜单、面板、写库、横幅（ADR 0043）。从「演迹」导入演出
+（ADR 0047）也住在这里：它同样只动 Gallery 自己的库。
 
 **这一层一个用户的文件都不碰**，所以它不住 ``write_ops``（那一个只管会动用户文件的入口，
 红线 1 的守护按文件名找它）。它动的是 Gallery 自己的库。
@@ -16,8 +17,9 @@ from collections.abc import Callable, Sequence
 from functools import partial
 from pathlib import Path
 
+from PySide6.QtCore import QStandardPaths
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QAbstractButton, QDialog, QMenu, QMessageBox
+from PySide6.QtWidgets import QAbstractButton, QDialog, QFileDialog, QMenu, QMessageBox
 
 from gallery.core.errors import EventsUnavailableError, GalleryError
 from gallery.core.events.kinds import EVENT_KINDS, EventKind, kind_by_id
@@ -41,6 +43,10 @@ NOTHING_TO_UNBIND = "先选中要从这次事件移出来的照片。"
 #: 点了菜单里的某一项要告诉窗口的事：**建一个新的**，还是**记到某一个已有名下**。
 #: 「新建」那一项的 ``data`` 是 ``None``，于是两种情形不需要两个回调。
 Submitter = Callable[[str, QAction], None]
+
+
+#: 「演迹」导出文件选择框认的后缀。
+_IMPORT_FILTER = "Excel 表格 (*.xlsx *.xlsm)"
 
 
 class EventFlowMixin:
@@ -75,6 +81,9 @@ class EventFlowMixin:
         edit_menu = getattr(self, "_edit_event_menu", None)
         if edit_menu is not None:
             edit_menu.setEnabled(self._edit_event_usable())
+        import_menu = getattr(self, "_import_shows_menu", None)
+        if import_menu is not None:
+            import_menu.setEnabled(self._events_usable())
         if getattr(self, "_edit_event_action", None) is None:
             return
         usable = self._group_card_event_id() is not None
@@ -202,6 +211,44 @@ class EventFlowMixin:
         menu.aboutToShow.connect(fill)
         menu.triggered.connect(self._on_edit_event_picked)
         return menu
+
+    def import_shows_menu(self) -> QMenu:
+        """「文件 → 导入演出」那一层（ADR 0047）。目前只有「从「演迹」导入」一项。
+
+        这一层是**常驻**的（菜单栏的子菜单），所以不挂 ``aboutToShow`` 现填 —— 它只有一项，
+        不像事件清单那样随时会变。会变的是可不可点：事件库用不上时由
+        :meth:`_update_event_actions` 置灰。
+        """
+        menu = QMenu("导入演出")
+        menu.setToolTipsVisible(True)
+        self._import_shows_action = QAction("从「演迹」导入", self)
+        self._import_shows_action.triggered.connect(self.import_shows_from_yanji)
+        menu.addAction(self._import_shows_action)
+        return menu
+
+    def import_shows_from_yanji(self) -> None:
+        """挑一个「演迹」导出的表格，把里面的演出读进事件库（ADR 0047）。
+
+        **一次导入建一批事件**，它们都不进撤销栈（``create_event`` 本来就不进）—— 导入错了
+        就去事件清单里逐个删。表格不合格时说清是哪一种不合格，而不是留一个空结果。
+        """
+        library = self._library
+        if library is None or not library.events_available:
+            self._show_banner("这个库这次用不了事件功能，没法导入演出。")
+            return
+        chosen, _ = QFileDialog.getOpenFileName(
+            self, "选择「演迹」导出的表格", _import_start_dir(), _IMPORT_FILTER
+        )
+        if not chosen:
+            return
+        try:
+            outcome = library.import_shows(Path(chosen))
+        except GalleryError as exc:
+            logger.info("导入演出失败：%s", exc.detail or exc.message)
+            self._show_banner(exc.message)
+            return
+        self._after_events_changed()
+        self._show_banner(banners.shows_imported_banner(outcome.created, len(outcome.skipped)))
 
     def _on_new_event_kind(self, action: QAction) -> None:
         """菜单栏那一条：选了哪个类型就摆那个类型的新建面板。
@@ -551,6 +598,12 @@ def _event_id_of(entry: GridEntry | None) -> int | None:
         return None
     _, separator, tail = entry.key.rpartition("#")
     return int(tail) if separator and tail.isdigit() else None
+
+
+def _import_start_dir() -> str:
+    """表格选择框从哪儿起。默认落在「下载」——「演迹」导出默认就放那儿。"""
+    download = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation)
+    return download or str(Path.home())
 
 
 def _lazy_menu(parent: QMenu, title: str, supplier: Callable[[], list[tuple[str, int]]]) -> QMenu:

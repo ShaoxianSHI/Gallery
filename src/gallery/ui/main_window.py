@@ -638,6 +638,9 @@ class MainWindow(
         file_menu = self.menuBar().addMenu("文件")
         file_menu.addAction(self._open_action)
         self._recent_menu = file_menu.addMenu("最近打开")
+        # 「导入演出」挨着「打开文件夹」：两者都是「把外面的东西拿进来」（ADR 0047）。
+        self._import_shows_menu = self.import_shows_menu()
+        file_menu.addMenu(self._import_shows_menu)
         file_menu.addSeparator()
         file_menu.addAction(self._search_action)
         file_menu.addAction(self._scope_action)

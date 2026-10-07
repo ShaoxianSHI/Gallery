@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Final
 from gallery.core import paths
 from gallery.core.errors import ConfigError, LibraryNotAccessibleError
 from gallery.core.events import store as events
+from gallery.core.events.import_shows import read_show_export
+from gallery.core.events.kinds import SHOW
 from gallery.core.events.orphans import OrphanScan, find_orphans, forget_orphans
 from gallery.core.events.store import (
     Event,
@@ -117,6 +119,17 @@ class MetadataWriteOutcome:
     journaled: bool = True
     #: 是否真的动过文件。什么都没改时为 ``False``，此时连日志也没记。
     written: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ShowImportOutcome:
+    """:meth:`Library.import_shows` 的结果。
+
+    ``skipped`` 是一行一句、可以直接念给用户听的跳过说明（含行号与原因）。
+    """
+
+    created: int
+    skipped: tuple[str, ...] = ()
 
 
 class Library:
@@ -580,6 +593,22 @@ class Library:
     def delete_event(self, event_id: int) -> EventWriteOutcome:
         """删一个事件，连带它那些绑定（返回值里带着，撤销要靠它放回去）。"""
         return self.events.delete(event_id)
+
+    def import_shows(self, path: Path) -> ShowImportOutcome:
+        """从「演迹」导出的 ``.xlsx`` 里把演出读进来（ADR 0047）。
+
+        每一行建一条演出事件，走的是 :meth:`create_event`，于是 journal、缓存作废与手工新建
+        完全一致。**一个用户的文件都不碰**（红线 1），只写 Gallery 自己的 ``events.db``；
+        新建事件本来就不进 ⌘Z 那一摞，一次导入因此也不进（导入错了去事件清单里逐个删）。
+
+        :raises ShowImportError: 文件读不出来，或者不是「演迹」的演出列表。
+        """
+        parsed = read_show_export(Path(path))
+        created = 0
+        for draft in parsed.drafts:
+            self.create_event(SHOW.id, draft)
+            created += 1
+        return ShowImportOutcome(created=created, skipped=parsed.skipped)
 
     def bind_photos(self, photos: Iterable[PhotoRef | Path], event_id: int) -> int:
         """把照片记进这个事件，返回新记进去几张。
