@@ -91,15 +91,15 @@ _EXPECTED_SHOW = [
     ("artist", "TEXT", 0),
     ("guests", "TEXT", 0),
     ("program", "TEXT", 0),
+    ("show_type", "TEXT", 0),
     ("start_time", "TEXT", 0),
     ("city", "TEXT", 0),
     ("venue", "TEXT", 0),
     ("ticket_price", "REAL", 0),
     ("paid", "REAL", 0),
     ("seat", "TEXT", 0),
-    ("rating", "INTEGER", 0),
-    ("show_type", "TEXT", 0),
     ("channel", "TEXT", 0),
+    ("rating", "INTEGER", 0),
     ("thoughts", "TEXT", 0),
 ]
 
