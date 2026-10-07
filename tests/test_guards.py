@@ -212,6 +212,9 @@ WRITE_METHODS_ON_LIBRARY = (
     "move_to_trash",
     "restore_entries",
     "copy_into",
+    # 「复制」⌘D（ADR 0044）：造副本也是往用户的文件夹里写文件，与粘贴同一条红线。
+    # **别漏掉它** —— 漏掉的话这个方法就是没有守护的，任何界面模块都能调它。
+    "duplicate",
     "move_into",
     "create_album",
     "undo_last_write",

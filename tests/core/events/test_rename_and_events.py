@@ -168,10 +168,14 @@ def test_moving_an_album_records_that_it_was_an_album(
     assert record.is_dir
 
 
-def test_a_skipped_move_leaves_the_bindings_alone(
+def test_a_copy_made_by_a_move_leaves_the_bindings_alone(
     library: Library, make_photo: Callable[..., Path]
 ) -> None:
-    """跳过的那一项（已经在那个相册里）压根没动，绑定不许跟着「搬」一次。"""
+    """「移动到相册」而目标正是它所在的那一层时复制一份（ADR 0044）。
+
+    **绑定不许跟着「搬」一次**：源路径原封不动，搬了就把原件的绑定弄丢了，
+    而副本是新文件 —— 用户没表达过「这份也算进那个事件」的心意（与「复制到相册」同一取向）。
+    """
     make_photo("海边-04.jpg", directory=library.root / "京都")
     event_id = _event(library)
     photo = library.root / "京都" / "海边-04.jpg"
@@ -179,6 +183,6 @@ def test_a_skipped_move_leaves_the_bindings_alone(
 
     result = library.move_into(library.root / "京都", [photo])
 
-    assert not result.did_anything
-    assert result.skipped
+    assert result.moved == (), "没有任何东西被移动"
+    assert [item.created for item in result.copied] == [library.root / "京都" / "海边-04的副本.jpg"]
     assert library.events.photos_of_event(event_id) == (photo,)

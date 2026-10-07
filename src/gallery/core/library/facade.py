@@ -68,7 +68,7 @@ from gallery.core.metadata.metadata_edit import (
     MetadataState,
     plan_metadata_edit,
 )
-from gallery.core.metadata.paste import PasteResult, copy_into
+from gallery.core.metadata.paste import PasteResult, copy_into, duplicate
 from gallery.core.metadata.rename import RenameResult, rename_entry
 from gallery.core.metadata.transfer import MoveResult, move_into
 from gallery.core.metadata.trash import TrashResult, trash_entries
@@ -966,6 +966,23 @@ class Library:
         return move_into(
             self._root, target, sources, should_cancel=should_cancel, events=self.events
         )
+
+    def duplicate(
+        self,
+        sources: Sequence[Path],
+        *,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> PasteResult:
+        """把 ``sources`` 各自**复制到它自己所在的那一层**（界面上是「复制」⌘D，ADR 0044）。
+
+        名字是 ``一张.jpg`` → ``一张的副本.jpg``，撞名退成 ``一张的副本 2.jpg``；
+        相册同理（``京都`` → ``京都的副本``，连同里面全部内容）。
+
+        规矩与 :meth:`copy_into` 完全一致，**因为它就是那一条路**：只增不改、绝不覆盖、
+        不在撤销栈里（撤销一次复制就是删文件，红线 1）。与「复制到相册」的差别只有一个 ——
+        目标目录不用挑，每一项的目标就是它自己的父目录。新副本由监听器（ADR 0013）自己上屏。
+        """
+        return duplicate(self._root, sources, should_cancel=should_cancel)
 
     def create_album(self, parent: Path, name: str = DEFAULT_ALBUM_NAME) -> CreatedAlbum:
         """在 ``parent`` 里新建一个空相册（界面上是「新建相册」⇧⌘N）。

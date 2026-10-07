@@ -2,6 +2,9 @@
 新建相册。读取只读（单张走 ``exif``、成批走 ``batch``，共用 ``facets`` 的取值规则）；那五样写操作
 一律先经 :mod:`~gallery.core.metadata.journal` 记账，而 ⌘Z 只认其中三样 —— 撤销粘贴与撤销新建相册
 都是删东西（红线 1：删除只允许用户亲手触发）。
+
+「复制」⌘D（:func:`~gallery.core.metadata.paste.duplicate`，ADR 0044）不算第六样写操作：
+它就是 :func:`~gallery.core.metadata.paste.copy_into` 那一段，目标目录改成每项自己的父目录。
 """
 
 from gallery.core.metadata.album import (
@@ -36,7 +39,7 @@ from gallery.core.metadata.facets import (
 from gallery.core.metadata.failures import Failure
 from gallery.core.metadata.journal import WriteRecord, append_record, read_records
 from gallery.core.metadata.naming import MAX_NAME_BYTES, clean_name, free_name_in
-from gallery.core.metadata.paste import PastedFile, PasteResult, Skipped, copy_into
+from gallery.core.metadata.paste import PastedFile, PasteResult, copy_into, duplicate
 from gallery.core.metadata.rename import (
     RenameResult,
     rename_entry,
@@ -82,7 +85,6 @@ __all__ = [
     "PillowBatchSource",
     "RenameResult",
     "RestoreResult",
-    "Skipped",
     "TrashResult",
     "UndoMoveResult",
     "UndoResult",
@@ -92,6 +94,7 @@ __all__ = [
     "clean_name",
     "copy_into",
     "create_album",
+    "duplicate",
     "extract",
     "free_name_in",
     "group_facet",

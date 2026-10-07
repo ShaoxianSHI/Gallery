@@ -1,4 +1,5 @@
-"""把文件**复制**进某个目录（界面上是「粘贴」⌘V，ADR 0018；「复制到相册」是同一个动作）。
+"""把文件**复制**进某个目录（界面上是「粘贴」⌘V，ADR 0018；「复制到相册」是同一个动作，
+「复制」⌘D 是把每一项复制到它自己所在的那一层，ADR 0044）。
 
 只增不改这一点与改名（ADR 0004）、移到废纸篓（ADR 0008）根本不同，写在这里免得日后有人
 照着前两个的规矩套错：
@@ -8,7 +9,9 @@
   （:data:`~gallery.core.metadata.journal.ACTION_PASTE`），但那一条**不进撤销栈**。
 - **绝不覆盖**：目标已有同名时不覆盖、也不把整批停下来（那会让十张里九张都粘不成），而是按
   **系统自己的规矩**改个名再粘：``一张.jpg`` → ``一张 2.jpg``（访达实测如此，文件夹同理）。
-- 已经在目标目录里的原样跳过（用户明确要求），**不把文件夹粘进它自己或它自己的子目录**。
+- **已经在目标目录里的那几项不再是「无操作」**，而是各复制一份：``一张.jpg`` → ``一张的副本.jpg``，
+  撞名再退成 ``一张的副本 2.jpg``（ADR 0044）。同一句规则也管「移动到相册」而目标正是它所在的
+  那个相册 —— 用户挑了「移动」却什么都没发生，那是**做错了事**，不是保护了什么。
 
 复制到一半失败时只删**本模块自己刚写了一半的那个文件**，不留给用户。
 """
@@ -32,7 +35,7 @@ from gallery.core.metadata.journal import (
     WriteRecord,
     append_record,
 )
-from gallery.core.metadata.naming import free_target, occupied_names
+from gallery.core.metadata.naming import duplicate_base, free_target, occupied_names
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,21 +54,11 @@ class PastedFile:
 
 
 @dataclass(frozen=True, slots=True)
-class Skipped:
-    """没有粘的一项，以及**为什么**（这句直接给用户看）。"""
-
-    source: Path
-    message: str
-
-
-@dataclass(frozen=True, slots=True)
 class PasteResult:
-    """一次粘贴的结果。三类分开摆，界面据此拼横幅。"""
+    """一次粘贴的结果。界面据此拼横幅。"""
 
-    #: 真的粘进去的（可能为空：全部跳过或全部失败）。
+    #: 真的粘进去的（可能为空：全部失败）。
     pasted: tuple[PastedFile, ...] = ()
-    #: 刻意没粘的（本来就在目标目录里、文件夹粘进自己）。
-    skipped: tuple[Skipped, ...] = ()
     #: 想粘没粘成的。
     failures: tuple[Failure, ...] = ()
     #: 是否都记下了账。记账失败**不撤销已经粘好的文件**（见 ``journal`` 模块文档）。
@@ -74,6 +67,20 @@ class PasteResult:
     @property
     def did_anything(self) -> bool:
         return bool(self.pasted)
+
+
+def wanted_name(source: Path, destination: Path) -> str:
+    """这一项在 ``destination`` 里该叫什么。
+
+    **已经在那一层的，给「的副本」而不是照原名再走一遍编号** —— 照原名会得到
+    ``一张 2.jpg``，用户分不出它是新粘来的还是自己早先就有的那一份。
+
+    「同一目录」这一判据在 :mod:`~gallery.core.metadata.transfer` 里也有一份调用，
+    两边共用这一个函数，否则两处会漂移。
+    """
+    if same_directory(source.parent, destination):
+        return duplicate_base(source.name, whole=source.is_dir())
+    return source.name
 
 
 def copy_into(
@@ -100,7 +107,6 @@ def copy_into(
     cancelled = should_cancel or never_cancel
     batch = uuid4().hex[:12]
     pasted: list[PastedFile] = []
-    skipped: list[Skipped] = []
     failures: list[Failure] = []
     journaled = True
     # **目录只扫一次**：逐项 ``exists()`` 加编号在这一层是「路径数 × 已有同名数」次系统调用。
@@ -112,53 +118,91 @@ def copy_into(
         if not source.exists():
             failures.append(Failure.at(source, message="源文件已经不在了。"))
             continue
-        if same_directory(source.parent, destination):
-            skipped.append(Skipped(source=source, message=f"已经在「{destination.name}」里了。"))
-            continue
         if source.is_dir() and paths.is_within(source, destination):
             failures.append(Failure.at(source, message="不能把文件夹粘进它自己或它自己的子目录。"))
             continue
         if cancelled():
             break
-        outcome = _copy_one(root, destination, source, batch, taken)
+        outcome = copy_one_into(root, destination, source, batch=batch, taken=taken)
         journaled = journaled and outcome.journaled
         if outcome.item is not None:
             pasted.append(outcome.item)
-        if outcome.skipped is not None:
-            skipped.append(outcome.skipped)
         if outcome.failure is not None:
             failures.append(outcome.failure)
     return PasteResult(
         pasted=tuple(pasted),
-        skipped=tuple(skipped),
+        failures=tuple(failures),
+        journaled=journaled,
+    )
+
+
+def duplicate(
+    root: Path,
+    sources: Sequence[Path],
+    *,
+    should_cancel: Callable[[], bool] | None = None,
+) -> PasteResult:
+    """把每一项**复制到它自己所在的那一层**（界面上是「复制」⌘D，ADR 0044）。
+
+    与 :func:`copy_into` 的区别只在于目标目录：这里每一项的目标是它自己的父目录，
+    于是**一次调用里可能有好几个目标目录**。所以按父目录分组，每组走一次
+    :func:`copy_into` —— 每个目录仍然只扫一次，而那套编号占用表也就地复用。
+
+    **取消不在这一层问**：每组进去后的第一项之前 :func:`copy_into` 自己就会问一次，
+    在这里多问一次只会让取消早一个「组」生效，与「只在项与项之间取消」不是一回事。
+    """
+    groups: dict[Path, list[Path]] = {}
+    for raw_source in sources:
+        source = Path(raw_source)
+        groups.setdefault(source.parent, []).append(source)
+
+    pasted: list[PastedFile] = []
+    failures: list[Failure] = []
+    journaled = True
+    for destination, group in groups.items():
+        outcome = copy_into(root, destination, group, should_cancel=should_cancel)
+        pasted.extend(outcome.pasted)
+        failures.extend(outcome.failures)
+        journaled = journaled and outcome.journaled
+    return PasteResult(
+        pasted=tuple(pasted),
         failures=tuple(failures),
         journaled=journaled,
     )
 
 
 @dataclass(frozen=True, slots=True)
-class _Outcome:
-    """单项的结果：粘成了、被跳过、还是失败了（外加记账成没成）。"""
+class CopyOutcome:
+    """复制一项的结果：成了、没成，还是记账没成（``failure`` 与 ``journaled`` 分开摆）。"""
 
     item: PastedFile | None = None
-    skipped: Skipped | None = None
     failure: Failure | None = None
     journaled: bool = True
 
 
-def _copy_one(
-    root: Path, destination: Path, source: Path, batch: str, taken: set[str] | None
-) -> _Outcome:
-    """把一项复制进 ``destination``。
+def copy_one_into(
+    root: Path,
+    destination: Path,
+    source: Path,
+    *,
+    batch: str,
+    taken: set[str] | None,
+) -> CopyOutcome:
+    """把**一项**复制进 ``destination`` —— 「复制」这件事在本项目里的**唯一实现**。
 
-    ``taken`` 是这一批共用的一份「已经被占掉的名字」，由调用方扫一次目录得到；
-    **目录读不了时它是 ``None``**（见 :func:`~gallery.core.metadata.naming.occupied_names`），
-    那时每项退回逐个 ``exists()``。
+    :func:`copy_into`（⌘V 与「复制到相册」）与 :func:`gallery.core.metadata.transfer.move_into`
+    里「移到本来就在的那个相册 → 复制一份」那一支都走它，否则会出现第二份
+    ``copy2`` / ``copytree`` / 半截清理，而那三样每一件都碰着红线 1。
+
+    :param batch: 记账用的批次号，由调用方生成（一批一次）。
+    :param taken: 这一批共用的一份「已经被占掉的名字」，由调用方扫一次目录得到；
+        **目录读不了时是 ``None``**（见 :func:`~gallery.core.metadata.naming.occupied_names`），
+        那时退回逐个 ``exists()``。
     """
     is_dir = source.is_dir()
-    created = free_target(destination, source.name, taken)
+    created = free_target(destination, wanted_name(source, destination), taken, whole=is_dir)
     if created is None:
-        return _Outcome(failure=Failure.at(source, message="这个名字太长，再加编号也放不下了。"))
+        return CopyOutcome(failure=Failure.at(source, message="这个名字太长，再加编号也放不下了。"))
     try:
         if is_dir:
             # copytree 目标已存在会直接报错（它不做覆盖），半途失败也会自己收尾。
@@ -170,8 +214,8 @@ def _copy_one(
     except FileExistsError:
         # 目标已经存在，**而那不是我们写了一半的东西，是用户自己放进去的** —— 绝不能清理它：
         # 清理那句 ``rmtree`` 删掉的是用户的文件夹连同里面所有照片（红线 1）。
-        message = "这个位置已经有同名的文件或文件夹了，粘贴没有动它。"
-        return _Outcome(
+        message = "这个位置已经有同名的文件或文件夹了，没有覆盖它。"
+        return CopyOutcome(
             failure=Failure.at(source, message=message),
             journaled=append_record(
                 root,
@@ -189,7 +233,7 @@ def _copy_one(
     except OSError as error:
         _remove_partial(created, is_dir)
         message = os_reason(error, action="复制")
-        return _Outcome(
+        return CopyOutcome(
             failure=Failure.at(source, message=message),
             journaled=append_record(
                 root,
@@ -199,12 +243,12 @@ def _copy_one(
                     target=created,
                     result=RESULT_FAILED,
                     message=message,
-                    is_dir=source.is_dir(),
+                    is_dir=is_dir,
                     batch=batch,
                 ),
             ),
         )
-    return _Outcome(
+    return CopyOutcome(
         item=PastedFile(source=source, created=created),
         journaled=append_record(
             root,
@@ -258,9 +302,12 @@ def _paste_reason(path: Path, reason: str) -> str:
 
 
 __all__ = [
+    "CopyOutcome",
     "Failure",
     "PasteResult",
     "PastedFile",
-    "Skipped",
     "copy_into",
+    "copy_one_into",
+    "duplicate",
+    "wanted_name",
 ]

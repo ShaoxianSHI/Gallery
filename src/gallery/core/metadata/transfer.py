@@ -10,6 +10,10 @@
   ``rename``：原子的、瞬时的，不产生第二份数据。
 - **绝不覆盖**：目标相册里已有同名时按访达的规矩另起一个名字（``一张 2.jpg``，
   见 :func:`~gallery.core.metadata.naming.free_name_in`），而不是让后来的那张凭空消失。
+- **目标正是它所在的相册时复制一份，而不是什么都不做**（ADR 0044）：``一张.jpg`` →
+  ``一张的副本.jpg``。用户挑了「移动」却什么都没发生，那是做错了事。这一份走
+  :func:`~gallery.core.metadata.paste.copy_one_into`、记 :data:`ACTION_PASTE`、
+  **不进撤销栈** —— 源文件从没动过，「挪回去」无从谈起，而删掉它就是红线 1。
 - **进撤销栈**：⌘Z 把它挪回原来的相册（:func:`undo_move_records`）。这是它与「粘贴」
   最大的区别 —— 撤销一次粘贴是删文件（红线 1 不允许），而**撤销一次移动仍然是一次
   移动**：东西一直都在，只是回到了它原来待着的地方。
@@ -54,6 +58,7 @@ from gallery.core.metadata.journal import (
     append_record,
 )
 from gallery.core.metadata.naming import free_target, occupied_names
+from gallery.core.metadata.paste import PastedFile, copy_one_into
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,21 +77,13 @@ class MovedItem:
 
 
 @dataclass(frozen=True, slots=True)
-class Skipped:
-    """没有移的一项，以及**为什么**（这句直接给用户看）。"""
-
-    source: Path
-    message: str
-
-
-@dataclass(frozen=True, slots=True)
 class MoveResult:
-    """一次移动的结果。三类分开摆，界面据此拼横幅。"""
+    """一次移动的结果。界面据此拼横幅。"""
 
-    #: 真的移过去的（可能为空：全部跳过或全部失败）。
+    #: 真的移过去的（可能为空：全部失败）。
     moved: tuple[MovedItem, ...] = ()
-    #: 刻意没移的（本来就在那个相册里、文件夹移进它自己的子目录）。
-    skipped: tuple[Skipped, ...] = ()
+    #: **本来就在那个相册里、因而被复制了一份**的那些（ADR 0044）。源文件原地未动。
+    copied: tuple[PastedFile, ...] = ()
     #: 想移没移成的。
     failures: tuple[Failure, ...] = ()
     #: 是否都记下了账。记账失败**不撤销已经移走的文件**（见 ``journal`` 模块文档），
@@ -95,7 +92,7 @@ class MoveResult:
 
     @property
     def did_anything(self) -> bool:
-        return bool(self.moved)
+        return bool(self.moved or self.copied)
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,7 +138,7 @@ def move_into(
     cancelled = should_cancel or never_cancel
     batch = uuid4().hex[:12]
     moved: list[MovedItem] = []
-    skipped: list[Skipped] = []
+    copied: list[PastedFile] = []
     failures: list[Failure] = []
     #: 真要跟着搬的绑定：``(旧位置, 新位置, 是不是文件夹)``，攒到整批结束再一次事务搬完。
     follow: list[tuple[Path, Path, bool]] = []
@@ -154,14 +151,21 @@ def move_into(
         if not source.exists():
             failures.append(Failure.at(source, message=SOURCE_GONE))
             continue
-        if same_directory(source.parent, destination):
-            skipped.append(Skipped(source=source, message=f"它已经在「{destination.name}」里了。"))
-            continue
         if source.is_dir() and paths.is_within(source, destination):
             failures.append(Failure.at(source, message="不能把相册移进它自己或它自己的子相册。"))
             continue
         if cancelled():
             break
+        if same_directory(source.parent, destination):
+            # 已经在这一层：移动无从谈起，于是**复制一份**。记账走 ACTION_PASTE 且不进撤销栈
+            # —— 源路径原封不动，撤销一次「移动」要么把它挪到它已经在的地方，要么删掉副本。
+            outcome = copy_one_into(root, destination, source, batch=batch, taken=taken)
+            journaled = journaled and outcome.journaled
+            if outcome.item is not None:
+                copied.append(outcome.item)
+            if outcome.failure is not None:
+                failures.append(outcome.failure)
+            continue
         created = free_target(destination, source.name, taken)
         if created is None:
             failures.append(Failure.at(source, message="这个名字太长，再加编号也放不下了。"))
@@ -201,12 +205,13 @@ def move_into(
         moved.append(MovedItem(source=source, created=created))
         follow.append((source, created, is_dir))
     # 绑定跟着走，且**一次事务搬完整批**（ADR 0043 决策 8）。只收真的移走的那些 ——
-    # 跳过与失败的那些路径压根没变。监听器随后还会把同一件事报回来一次（``MOVE`` 不做回声
-    # 屏蔽，新文件的上屏靠它），那一次搬不到什么：源路径上已经没有绑定了。
+    # 失败的那些路径压根没变，而复制出来的那些是新文件、与绑定无关（ADR 0044）。
+    # 监听器随后还会把同一件事报回来一次（``MOVE`` 不做回声屏蔽，新文件的上屏靠它），
+    # 那一次搬不到什么：源路径上已经没有绑定了。
     follow_moves(events, follow)
     return MoveResult(
         moved=tuple(moved),
-        skipped=tuple(skipped),
+        copied=tuple(copied),
         failures=tuple(failures),
         journaled=journaled,
     )
@@ -349,7 +354,7 @@ __all__ = [
     "Failure",
     "MoveResult",
     "MovedItem",
-    "Skipped",
+    "PastedFile",
     "UndoMoveResult",
     "move_into",
     "undo_move_records",

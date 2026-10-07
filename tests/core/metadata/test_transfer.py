@@ -82,23 +82,34 @@ def test_move_moves_the_whole_batch(library: Path) -> None:
     assert _names(library / "京都") == []
 
 
-def test_move_skips_what_is_already_there(library: Path) -> None:
-    """本来就在那个相册里的原样跳过，不凭空多出一份「一张 2.jpg」。"""
+def test_moving_where_it_already_is_copies_it(library: Path) -> None:
+    """目标正是它所在的那个相册时**复制一份**，而不是什么都不做（ADR 0044）。
+
+    用户挑了「移动」却什么都没发生，那是做错了事。这一份走粘贴那一条路：
+    名字是 ``一张的副本.jpg``、记 ``ACTION_PASTE``、**不进撤销栈**（源文件原封不动，
+    「挪回去」无从谈起，而删掉副本就是红线 1）。
+    """
     target = library / "京都"
     Image.new("RGB", (8, 6), (9, 9, 9)).save(target / "占位.jpg")
 
     result = _move(library, target, target / "一张.jpg", target / "占位.jpg")
 
-    assert result.moved == ()
-    assert [item.source.name for item in result.skipped] == ["一张.jpg", "占位.jpg"]
-    assert result.skipped[0].message == "它已经在「京都」里了。"
-    assert _names(target) == ["一张.jpg", "占位.jpg", "另一张.jpg"]
+    assert result.moved == (), "没有任何东西被移动"
+    assert [item.created.name for item in result.copied] == ["一张的副本.jpg", "占位的副本.jpg"]
+    assert _names(target) == [
+        "一张.jpg",
+        "一张的副本.jpg",
+        "占位.jpg",
+        "占位的副本.jpg",
+        "另一张.jpg",
+    ]
+    actions = {r.action for r in read_records(library)}
+    assert ACTION_MOVE not in actions, "没被移动的东西不许记成一次移动"
 
 
 def test_move_resolves_symlinks_before_comparing(library: Path) -> None:
     """「已经在那儿」要按**磁盘上的真实位置**比（macOS 上 ``/var`` 链到 ``/private/var``）：
-    不解析就会判成「不在同一个目录」，于是把照片原地又「移动」一次，多出一份「一张 2.jpg」。
-    """
+    不解析就会判成「不在同一个目录」，于是把照片真的移走，而用户要的只是留一份副本。"""
     source = library / "京都" / "一张.jpg"
     linked = library / "别名"
     os.symlink(library / "京都", linked)
@@ -106,7 +117,8 @@ def test_move_resolves_symlinks_before_comparing(library: Path) -> None:
     result = _move(library, linked, source)
 
     assert result.moved == ()
-    assert len(result.skipped) == 1
+    assert [item.created.name for item in result.copied] == ["一张的副本.jpg"]
+    assert source.exists()
 
 
 def test_move_refuses_to_put_an_album_inside_itself(library: Path) -> None:

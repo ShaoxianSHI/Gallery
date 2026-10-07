@@ -56,21 +56,76 @@ def test_paste_keeps_the_modified_time(library: Path) -> None:
     assert int((library / "奈良" / "一张.jpg").stat().st_mtime) == 1_600_000_000
 
 
-def test_paste_into_the_same_folder_does_nothing(library: Path) -> None:
-    """已经在目标目录里的原样跳过（用户明确要求）：不凭空多出一份「一张 2.jpg」。"""
+def test_pasting_where_it_already_is_makes_a_copy(library: Path) -> None:
+    """已经在目标目录里的那几项**不再是空操作**，而是各复制一份（ADR 0044）。
+
+    用户按了 ⌘V 却什么都没发生，那是做错了事而不是保护了什么 —— 而这一份要看得见名字：
+    ``一张.jpg`` → ``一张的副本.jpg``，不是照原名再编号得到的 ``一张 2.jpg``（那个名字用户
+    分不出是刚粘来的还是自己早先就有的那一份）。
+    """
     source = library / "京都" / "一张.jpg"
 
     result = _paste(library, library / "京都", source)
 
-    assert result.pasted == ()
-    assert [item.source for item in result.skipped] == [source]
-    assert sorted(p.name for p in (library / "京都").iterdir()) == ["一张.jpg", "另一张.jpg"]
+    assert [item.created for item in result.pasted] == [library / "京都" / "一张的副本.jpg"]
+    assert source.exists(), "源必须还在原地"
+    assert sorted(p.name for p in (library / "京都").iterdir()) == [
+        "一张.jpg",
+        "一张的副本.jpg",
+        "另一张.jpg",
+    ]
+
+
+def test_the_copy_of_a_copy_is_named_after_the_copy(library: Path) -> None:
+    """对一个副本再复制一次是 ``一张的副本的副本.jpg``：照字面再加一层（ADR 0044）。
+
+    刻意不剥掉已有的「的副本」退回编号 —— 那要用户先猜到「为什么它不叫副本的副本」。
+    """
+    source = library / "京都" / "一张.jpg"
+
+    _paste(library, library / "京都", source)
+    _paste(library, library / "京都", library / "京都" / "一张的副本.jpg")
+
+    assert (library / "京都" / "一张的副本的副本.jpg").exists()
+
+
+def test_a_copy_naming_collide_falls_back_to_the_numbering(library: Path) -> None:
+    """副本名也撞上了就按访达那套编号（ADR 0044）：``一张的副本 2.jpg``。
+
+    编号那一段**不另写一份** —— 它就是 :func:`~gallery.core.metadata.naming.free_name_in`。
+    """
+    source = library / "京都" / "一张.jpg"
+
+    _paste(library, library / "京都", source)
+    _paste(library, library / "京都", source)
+
+    assert (library / "京都" / "一张的副本 2.jpg").exists()
+    assert sorted(p.name for p in (library / "京都").iterdir()) == [
+        "一张.jpg",
+        "一张的副本 2.jpg",
+        "一张的副本.jpg",
+        "另一张.jpg",
+    ]
+
+
+def test_duplicating_an_album_treats_the_whole_name_as_the_name(library: Path) -> None:
+    """相册没有扩展名，所以**整个名字**后面加「的副本」：``京都.2024`` → ``京都.2024的副本``，
+    而不是 ``京都的副本.2024``（ADR 0018 决策 3 定的口径，ADR 0044 沿用）。"""
+    album = library / "京都.2024"
+    (album / "里面").mkdir(parents=True)
+    Image.new("RGB", (8, 6), (1, 2, 3)).save(album / "里面" / "一张.jpg")
+
+    result = _paste(library, library, album)
+
+    created = library / "京都.2024的副本"
+    assert [item.created for item in result.pasted] == [created]
+    assert (created / "里面" / "一张.jpg").exists(), "相册是整棵复制，不是空壳"
 
 
 def test_same_folder_check_survives_a_different_spelling(tmp_path: Path) -> None:
     """``/var`` 与 ``/private/var`` 在 macOS 上是同一个文件夹：不解析就比不相等，
-    于是「已经在同一目录」失效，粘出一堆重复文件。用符号链接造两种写法，不依赖 macOS 约定。
-    """
+    粘进去的会是 ``一张 2.jpg`` 而不是 ``一张的副本.jpg``。用符号链接造两种写法，
+    不依赖 macOS 约定。"""
     real = tmp_path / "真实"
     (real / "京都").mkdir(parents=True)
     Image.new("RGB", (8, 6), (1, 2, 3)).save(real / "京都" / "一张.jpg")
@@ -80,8 +135,7 @@ def test_same_folder_check_survives_a_different_spelling(tmp_path: Path) -> None
 
     result = copy_into(real, link / "京都", (link / "京都" / "一张.jpg",))
 
-    assert result.pasted == ()
-    assert len(result.skipped) == 1
+    assert [item.created.name for item in result.pasted] == ["一张的副本.jpg"]
 
 
 def test_renames_instead_of_overwriting(library: Path) -> None:

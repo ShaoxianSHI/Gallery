@@ -2,8 +2,8 @@
 
 这些函数散在几个写操作里各写一份时会各自漂移：改名要判名字合法性（要拿
 :data:`MAX_NAME_BYTES`），粘贴要在目标目录里找一个没被占用的名字（``一张.jpg`` →
-``一张 2.jpg``），移动与新建相册也要用同一套 —— 收到这里，**「不覆盖用户已有的文件」这条
-规矩只有一份实现**。
+``一张 2.jpg``），副本要先起 ``一张的副本.jpg``（:func:`duplicate_base`），移动与新建相册
+也要用同一套 —— 收到这里，**「不覆盖用户已有的文件」这条规矩只有一份实现**。
 
 本模块只回答「这个名字行不行 / 该用哪个」，**不碰磁盘**：唯一的例外是
 :func:`free_name_in` 与 :func:`occupied_names`，它们只**读**目标目录（``exists()``
@@ -23,6 +23,9 @@ MAX_NAME_BYTES: Final = 255
 
 #: 改名的编号从 2 起（与访达一致：原名是第一个，``名字 2`` 才是第二个）。
 FIRST_DUPLICATE_NUMBER: Final = 2
+
+#: 副本名的后缀（ADR 0044）：``一张.jpg`` → ``一张的副本.jpg``。
+DUPLICATE_SUFFIX: Final = "的副本"
 
 #: 名字里绝对不能出现的字符：路径分隔符，以及别的平台用的那一个。
 _FORBIDDEN_CHARS: Final = ("/", "\\")
@@ -71,6 +74,21 @@ def split_suffix(name: str, *, whole: bool = False) -> tuple[str, str]:
     if not dot or not stem:
         return name, ""
     return stem, f".{suffix}"
+
+
+def duplicate_base(name: str, *, whole: bool = False) -> str:
+    """副本的**首选名字**：``一张.jpg`` → ``一张的副本.jpg``。
+
+    **这只是首选，不是最终名字** —— 撞上已有的同名时照 :func:`free_name_in` 退成
+    ``一张的副本 2.jpg``。刻意不给编号规则另写一份：那份已经在那儿了。
+
+    对一个副本再复制一次是 ``一张的副本的副本.jpg``：照字面再加一层，
+    而不是把已有的「的副本」剥掉退回编号 —— 后者要用户先猜到「为什么它不叫副本的副本」。
+
+    :param whole: 传给 :func:`split_suffix`（相册那种没有扩展名的，整体算名字）。
+    """
+    stem, suffix = split_suffix(name, whole=whole)
+    return f"{stem}{DUPLICATE_SUFFIX}{suffix}"
 
 
 def occupied_names(directory: Path) -> set[str] | None:
@@ -142,7 +160,9 @@ def free_name_in(
         number += 1
 
 
-def free_target(directory: Path, wanted: str, occupied: set[str] | None = None) -> Path | None:
+def free_target(
+    directory: Path, wanted: str, occupied: set[str] | None = None, *, whole: bool = False
+) -> Path | None:
     """挑一个**此刻真的空着**的完整目标路径；加编号也还是太长就 ``None``。
 
     :func:`free_name_in` 只查 ``occupied`` 那张表，而那张表是**一批操作开始那一刻**的
@@ -153,11 +173,13 @@ def free_target(directory: Path, wanted: str, occupied: set[str] | None = None) 
     所以动手之前**再看一眼磁盘**：撞上了就重新加编号。一项一次 ``stat``，相对整批拷贝
     可以忽略，而这一项换来的是「绝不覆盖」这句话真的成立。
 
-    **粘贴与移动到相册都走这里** —— 「绝不覆盖」这条规矩只有一处实现。
+    **粘贴、移动到相册与造副本都走这里** —— 「绝不覆盖」这条规矩只有一处实现。
+
+    :param whole: 传给 :func:`free_name_in`（相册那种没有扩展名的，整体算名字）。
     """
     folder = Path(directory)
     while True:
-        name = free_name_in(folder, wanted, occupied=occupied)
+        name = free_name_in(folder, wanted, whole=whole, occupied=occupied)
         if name is None:
             return None
         if occupied is not None:
@@ -168,9 +190,11 @@ def free_target(directory: Path, wanted: str, occupied: set[str] | None = None) 
 
 
 __all__ = [
+    "DUPLICATE_SUFFIX",
     "FIRST_DUPLICATE_NUMBER",
     "MAX_NAME_BYTES",
     "clean_name",
+    "duplicate_base",
     "free_name_in",
     "free_target",
     "occupied_names",
