@@ -12,30 +12,61 @@
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 
 import pytest
 
 from gallery.core import paths
-from gallery.core.metadata import album, paste, rename, transfer, trash
+from gallery.core.metadata import album, paste, rename, transfer, trash, writeback
 
-#: 五个入口 → 它们的「原因 → 那句话」映射表。
+#: 六个入口 → 它们的「原因 → 那句话」映射表。
 GUARDS = {
     "rename": rename._GUARD_MESSAGES,
     "trash": trash._GUARD_MESSAGES,
     "transfer": transfer._GUARD_MESSAGES,
     "paste": paste._GUARD_MESSAGES,
     "album": album._GUARD_MESSAGES,
+    "writeback": writeback._GUARD_MESSAGES,
 }
 
-#: 五个 ``_reason`` 函数。
+#: 六个 ``_reason`` 函数。
 REASONS = {
     "rename": rename._rename_reason,
     "trash": trash._trash_reason,
     "transfer": transfer._transfer_reason,
     "paste": paste._paste_reason,
     "album": album._album_reason,
+    "writeback": writeback._writeback_reason,
 }
+
+#: 六个会动用户文件的入口模块（红线 1）。它们的 ``_guard`` 都必须走共用那道闸。
+GUARD_MODULES = {
+    "rename": rename,
+    "trash": trash,
+    "transfer": transfer,
+    "paste": paste,
+    "album": album,
+    "writeback": writeback,
+}
+
+
+@pytest.mark.parametrize("name", sorted(GUARD_MODULES))
+def test_every_write_guard_goes_through_the_shared_gate(name: str) -> None:
+    """**六个写入口都走同一道闸**，没有谁自己重写一遍。
+
+    曾经 ``writeback`` 是例外：它自己写着 ``paths.is_within`` 与
+    ``path == paths.config_dir(root)``（裸比较，不是闸门那种解析过的比较），而它的
+    文档字符串说「与改名的守卫同源」。那种复制品**不会跟着闸门一起变** —— 闸门加一条
+    判据、或把某条判据收紧时，它不会知道。
+
+    判据是源码里**真的调了** ``guard_within_root``：这条不靠「读起来像同源」。
+    """
+    source = inspect.getsource(GUARD_MODULES[name]._guard)
+
+    assert "guard_within_root(" in source, (
+        f"{name}._guard 没走共用那道闸，它可能又自己重写了一份判据"
+    )
 
 
 @pytest.mark.parametrize("name", sorted(GUARDS))

@@ -532,19 +532,38 @@ def _checked(assignments: Sequence[Assignment], path: Path) -> tuple[Assignment,
 
 
 def _guard(root: Path, path: Path) -> None:
-    """确认要改的文件在允许的范围内。与改名的守卫同源：网格里根本不会出现配置目录与库根本身，
-    这里仍然挡一道 —— 这是**会动用户文件**的入口（红线 1）。
+    """确认要改的文件在允许的范围内。**与其余五个写入口走同一道闸**（红线 1）。
+
+    网格里根本不会出现配置目录，这里仍然挡一道 —— 这是**会动用户文件**的入口。
+    三道判据的顺序照旧：先看它是不是照片，再过闸（库内 / 配置目录），最后看文件还在不在。
     """
     if not is_supported_photo(path):
         raise MetadataWriteError(
             f"「{path.name}」不是 Gallery 支持的照片格式，不改它的元数据。", path=path
         )
-    if not paths.is_within(root, path):
-        raise MetadataWriteError(f"只能修改库里的照片：{path}。", path=path)
-    if path == paths.config_dir(root):
-        raise MetadataWriteError("这是 Gallery 自己的配置目录。", path=path)
+    try:
+        # ``allow_root=True``：要挡的是「跑到库外」，不是「落在库里」。库根本身也不必另行禁止 ——
+        # 它不是照片，上面那一步就拦下了。
+        paths.guard_within_root(root, path, allow_root=True)
+    except paths.GuardError as exc:
+        raise MetadataWriteError(_writeback_reason(path, exc), path=path) from exc
     if not path.is_file():
         raise MetadataWriteError(f"找不到这个文件了：{path.name}。", path=path)
+
+
+#: 闸门拒绝的每一种原因 → 给用户的那句话。见 :data:`rename._GUARD_MESSAGES`。
+#: 上面第一步就要求扩展名是照片，所以后两条今天都到不了（库根本身与配置目录都不是照片后缀）；
+#: 留着是为了这张表是**全的** —— ``GuardReason`` 加成员时它当场炸。
+_GUARD_MESSAGES: Final = {
+    paths.GuardReason.OUTSIDE_ROOT: "只能修改库里的照片：{path}。",
+    paths.GuardReason.IS_ROOT: "这是库本身，不是一个照片文件。",
+    paths.GuardReason.IS_CONFIG_DIR: "这是 Gallery 自己的配置目录。",
+}
+
+
+def _writeback_reason(path: Path, error: paths.GuardError) -> str:
+    """按闸门给的**原因**给一句中文 —— 理由见 :func:`rename._rename_reason`。"""
+    return _GUARD_MESSAGES[error.reason].format(path=path)
 
 
 def _changes(before: Mapping[str, str], items: Sequence[Assignment]) -> tuple[FieldChange, ...]:
