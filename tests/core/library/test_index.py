@@ -463,8 +463,7 @@ def test_the_facet_table_matches_the_dataclass() -> None:
     declared = [field.name for field in dataclasses.fields(PhotoFacets)]
 
     assert sorted(listed) == sorted(declared), (
-        f"字段表与 dataclass 对不上：表里多/少的是"
-        f"{sorted(set(listed) ^ set(declared))}"
+        f"字段表与 dataclass 对不上：表里多/少的是{sorted(set(listed) ^ set(declared))}"
     )
     assert len(listed) == len(set(listed)), f"字段表里有重复的属性名：{listed}"
 

@@ -20,7 +20,7 @@ import logging
 import sqlite3
 import threading
 import time
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final, cast
@@ -456,6 +456,24 @@ class EventStore:
         self._root = Path(root)
         self._connection = connection
         self._lock = lock if lock is not None else threading.Lock()
+        # guard: allow-long-comment（漏接一处不报错：库写进去了，界面那份清单还是旧的）
+        #: 事件清单变了吗。**由写入方（:class:`~gallery.core.library.facade.Library`）
+        #: 挂上**，用来作废它那份会话缓存（ADR 0043 决策 7）。
+        #:
+        #: 放在这里而不是让调用方记得作废，是因为漏一处**不报错** —— 库写进去了，
+        #: 而界面上那份清单还是旧的。这类失效关系写在散文里迟早会漏，挂在唯一的
+        #: 写入方上就没有「漏掉的那一处」。
+        self.on_change: Callable[[], None] | None = None
+
+    def _changed(self) -> None:
+        """通知写入方：**事件清单**变了。
+
+        只在这四处调 —— 改事件的 :meth:`create` / :meth:`update` / :meth:`delete`
+        与撤销的 :meth:`undo_record`。绑定那三张表（:meth:`bind` 与两个姐妹）不在
+        这份缓存里，所以它们**不**调：多调一次不会错，只是白扔一次缓存。
+        """
+        if self.on_change is not None:
+            self.on_change()
 
     @property
     def available(self) -> bool:
@@ -614,6 +632,7 @@ class EventStore:
             self._write_extra(connection, kind, event_id, draft)
         created = self.event(event_id)
         assert created is not None
+        self._changed()
         return EventWriteOutcome(
             event=created,
             journaled=self._journal(ACTION_EVENT_CREATE, kind, created, None, ()),
@@ -639,6 +658,8 @@ class EventStore:
         assert updated is not None
         # 逐字段一样就不记：没有改动就没什么可撤的，而「记一条改回同样的值」只会在栈上白占一格。
         changed = updated.values != previous.values
+        if changed:
+            self._changed()
         return EventWriteOutcome(
             event=updated,
             journaled=self._journal(ACTION_EVENT, kind, previous, updated, ()) if changed else True,
@@ -684,6 +705,7 @@ class EventStore:
                 f"DELETE FROM {SCHEMA_NAME}.photo_events WHERE event_id = ?", (event_id,)
             )
             connection.execute(f"DELETE FROM {SCHEMA_NAME}.events WHERE id = ?", (event_id,))
+        self._changed()
         return EventWriteOutcome(
             event=previous,
             journaled=self._journal(ACTION_EVENT_DELETE, kind, previous, None, unbound),
@@ -743,6 +765,7 @@ class EventStore:
                 record.action, None, False, f"库里已经有一条 id 为 {event_id} 的事件，不敢覆盖。"
             )
         journaled = self._journal(ACTION_UNDO_EVENT, kind, None, restored, ())
+        self._changed()
         return EventUndoResult(record.action, restored, journaled)
 
     def _rewrite_event(

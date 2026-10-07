@@ -62,7 +62,6 @@ from gallery.core.metadata.facets import (
     mark_place_resolved,
     with_resolved_place,
 )
-from gallery.core.metadata.journal import ACTION_EVENT, ACTION_EVENT_DELETE
 from gallery.core.metadata.metadata_edit import (
     MetadataEdit,
     MetadataPlan,
@@ -511,9 +510,17 @@ class Library:
     def events(self) -> EventStore:
         """事件库（ADR 0043）。配置目录建不出来时**每一次都是不可用的那个** —— 与索引同源。"""
         attached = self.facet_index.attached
-        if isinstance(attached, EventStore):
-            return attached
-        return EventStore(self._root)
+        store = attached if isinstance(attached, EventStore) else EventStore(self._root)
+        # guard: allow-long-comment（漏接一处不报错：库写进去了，界面那份清单还是旧的）
+        # 清单缓存的作废**挂在唯一的写入方上**，而不是抄在每个写方法后面（见
+        # :meth:`EventStore.on_change`）。原先那四处手写的地方没有测试盯着，漏一处
+        # 不报错 —— 库写进去了，界面上那份清单还是旧的。
+        store.on_change = self._invalidate_events
+        return store
+
+    def _invalidate_events(self) -> None:
+        """:meth:`all_events` 那份会话缓存作废。**只有写入口会调它。**"""
+        self._events_cache = None
 
     @property
     def events_available(self) -> bool:
@@ -567,21 +574,15 @@ class Library:
     def create_event(self, kind_id: str, draft: EventDraft) -> EventWriteOutcome:
         """新建一个事件。**不写照片、不写 journal 之外的任何用户文件**；索引也不碰
         （索引是 EXIF 的投影，事件不是 EXIF）。"""
-        outcome = self.events.create(kind_id, draft)
-        self._events_cache = None
-        return outcome
+        return self.events.create(kind_id, draft)
 
     def update_event(self, event_id: int, draft: EventDraft) -> EventWriteOutcome:
         """改一个事件。公共列与类型独有字段在**同一次写**里改完，所以只值一次 ⌘Z。"""
-        outcome = self.events.update(event_id, draft)
-        self._events_cache = None
-        return outcome
+        return self.events.update(event_id, draft)
 
     def delete_event(self, event_id: int) -> EventWriteOutcome:
         """删一个事件，连带它那些绑定（返回值里带着，撤销要靠它放回去）。"""
-        outcome = self.events.delete(event_id)
-        self._events_cache = None
-        return outcome
+        return self.events.delete(event_id)
 
     def bind_photos(self, photos: Iterable[PhotoRef | Path], event_id: int) -> int:
         """把照片记进这个事件，返回新记进去几张。
@@ -1021,9 +1022,6 @@ class Library:
         result = undo_last_write(self._root, writer=self._writer, events=self.events)
         if result is not None and result.replaced is not None:
             self._relocate_thumbnail(result.replaced, result.entries[0])
-        if result is not None and result.action in (ACTION_EVENT, ACTION_EVENT_DELETE):
-            # 事件不是磁盘上的东西，网格里没有它的条目 —— 这份缓存就是唯一需要跟着动的地方。
-            self._events_cache = None
         return result
 
     def next_undo_label(self) -> str | None:
