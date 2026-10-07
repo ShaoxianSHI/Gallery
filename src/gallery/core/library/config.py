@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from types import MappingProxyType
-from typing import Final
+from typing import Any, Final, cast
 
 from gallery.core import paths
 from gallery.core.atomic import read_text_or_none, write_text_atomic
@@ -93,19 +93,7 @@ class LibraryUIState:
     @property
     def is_empty(self) -> bool:
         """一个都没记过。也用来判断旧 ``state.json`` 里的值要不要迁过来。"""
-        return all(
-            value is None
-            for value in (
-                self.browse_mode,
-                self.metadata_visible,
-                self.group_facet,
-                self.sort_facet,
-                self.sort_descending,
-                self.calendar_level,
-                self.thumbnail_edge,
-                self.search_scope,
-            )
-        )
+        return all(getattr(self, attribute) is None for _, attribute, _ in _UI_FIELDS)
 
     def with_thumbnail_edge(self, edge: int | None) -> LibraryUIState:
         """换个缩略图档位返回新的一份，原样不动（它是不可变的）。"""
@@ -175,17 +163,8 @@ class LibraryUIState:
         ]
         lines.extend(
             f"{key} = {_toml_value(value)}\n"
-            for key, value in (
-                ("browse_mode", self.browse_mode),
-                ("metadata_visible", self.metadata_visible),
-                ("group_facet", self.group_facet),
-                ("sort_facet", self.sort_facet),
-                ("sort_descending", self.sort_descending),
-                ("calendar_level", self.calendar_level),
-                ("thumbnail_edge", self.thumbnail_edge),
-                ("search_scope", self.search_scope),
-            )
-            if value is not None
+            for key, attribute, _ in _UI_FIELDS
+            if (value := getattr(self, attribute)) is not None
         )
         return "".join(lines)
 
@@ -194,19 +173,24 @@ class LibraryUIState:
         """读 ``[ui]`` 那张表。**值来路不明一律当「没记过」而不是报错**：这张表是软件自己写的，
         手改坏一个分组字段 id 不该让整个库打不开（顶层那几个键是公开接口，非法值必须报错）。
         """
-        browse = data.get("browse_mode")
-        level = data.get("calendar_level")
-        scope = data.get("search_scope")
         return cls(
-            browse_mode=browse if browse in BROWSE_MODES else None,
-            metadata_visible=_ui_bool(data.get("metadata_visible")),
-            group_facet=_ui_group_facet(data.get("group_facet")),
-            sort_facet=_ui_sort_facet(data.get("sort_facet")),
-            sort_descending=_ui_bool(data.get("sort_descending")),
-            calendar_level=level if level in CALENDAR_LEVELS else None,
-            thumbnail_edge=_ui_edge(data.get("thumbnail_edge")),
-            search_scope=scope if scope in SEARCH_SCOPES else None,
+            **cast(
+                "dict[str, Any]",
+                {attribute: validate(data.get(key)) for key, attribute, validate in _UI_FIELDS},
+            )
         )
+
+
+def _ui_browse_mode(value: object) -> str | None:
+    return value if value in BROWSE_MODES else None
+
+
+def _ui_calendar_level(value: object) -> str | None:
+    return value if value in CALENDAR_LEVELS else None
+
+
+def _ui_search_scope(value: object) -> str | None:
+    return value if value in SEARCH_SCOPES else None
 
 
 def _ui_bool(value: object) -> bool | None:
@@ -228,6 +212,25 @@ def _ui_edge(value: object) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         return None
     return value
+
+
+#: ``[ui]`` 那 8 个字段：``(toml 键名, dataclass 属性名, 读回来时的校验)``。
+#:
+#: **一份就是全部**：:attr:`LibraryUIState.is_empty`、:meth:`LibraryUIState.to_toml`
+#: 与 :meth:`LibraryUIState.from_mapping` 都由它推出来，写出去的顺序也是这个顺序
+#: （固定顺序让每次保存的 diff 没有噪音）。三处各写一遍时，加一个偏好要改四处，
+#: 而漏掉哪一处都不报错 —— 那一项要么存不下去、要么读不回来，界面上只是
+#: 「这个偏好没记住」。字段与 :class:`LibraryUIState` 对不对得上由一条测试盯着。
+_UI_FIELDS: Final = (
+    ("browse_mode", "browse_mode", _ui_browse_mode),
+    ("metadata_visible", "metadata_visible", _ui_bool),
+    ("group_facet", "group_facet", _ui_group_facet),
+    ("sort_facet", "sort_facet", _ui_sort_facet),
+    ("sort_descending", "sort_descending", _ui_bool),
+    ("calendar_level", "calendar_level", _ui_calendar_level),
+    ("thumbnail_edge", "thumbnail_edge", _ui_edge),
+    ("search_scope", "search_scope", _ui_search_scope),
+)
 
 
 @dataclass(frozen=True, slots=True)

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import tomllib
 from pathlib import Path
 
@@ -512,3 +513,46 @@ def test_the_empty_shell_is_removed_even_after_the_thumbs_are_gone(tmp_path: Pat
 
     assert discard_legacy_thumb_cache(tmp_path) == 0
     assert not paths.legacy_cache_dir(tmp_path).exists()
+
+
+def test_the_ui_field_table_matches_the_dataclass() -> None:
+    """**字段表与 :class:`LibraryUIState` 一一对应** —— 少一个、多一个、拼错一个都不行。
+
+    这张表是新加偏好的唯一落点：属性名拼错时 ``getattr`` / ``cls(**…)`` 会在**运行时**
+    抛，但那时库已经打开了；而漏掉一项则更安静 —— 那个偏好存不下去也读不回来，
+    界面上只表现为「换了库这个设置就丢了」。
+    """
+    from gallery.core.library import config as module
+
+    listed = [attribute for _, attribute, _ in module._UI_FIELDS]
+    declared = [field.name for field in dataclasses.fields(module.LibraryUIState)]
+
+    assert sorted(listed) == sorted(declared), (
+        f"字段表与 dataclass 对不上，多/少的是 {sorted(set(listed) ^ set(declared))}"
+    )
+    assert len(listed) == len(set(listed)), f"字段表里有重复的属性名：{listed}"
+
+
+def test_the_ui_field_table_preserves_the_written_order() -> None:
+    """``[ui]`` 写出去的顺序就是字段表的顺序 —— 每次保存的 diff 才没有噪音。
+
+    钉住顺序是有意的：把字段表排序一下会让所有老库的 ``config.toml`` 在下次保存时
+    整段重排，diff 里全是噪音。
+    """
+    from gallery.core.library import config as module
+
+    # 八个字段全给上值，写出去的行才与字段表一样长。
+    state = module.LibraryUIState(
+        browse_mode="albums",
+        metadata_visible=True,
+        group_facet="camera",
+        sort_facet="captured",
+        sort_descending=False,
+        calendar_level="month",
+        thumbnail_edge=512,
+        search_scope="level",
+    )
+    body = state.to_toml().split(f"[{module.UI_KEY}]", 1)[1]
+
+    written = [line.split("=")[0].strip() for line in body.splitlines() if "=" in line]
+    assert written == [key for key, _, _ in module._UI_FIELDS]
