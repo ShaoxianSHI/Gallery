@@ -391,7 +391,7 @@ def attach(
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         connection.execute(f"ATTACH DATABASE ? AS {SCHEMA_NAME}", (str(path),))
-        _relax_durability(connection)
+        _relax_journal_mode_only(connection)
         version = connection.execute(f"PRAGMA {SCHEMA_NAME}.user_version").fetchone()[0]
         if version != SCHEMA_VERSION:
             connection.executescript(_drop_script())
@@ -417,12 +417,14 @@ def _drop_script() -> str:
     return "".join(f"DROP TABLE IF EXISTS {SCHEMA_NAME}.{table};" for table in tables)
 
 
-def _relax_durability(connection: sqlite3.Connection) -> None:
-    """事件库的提交强度：**日志模式跟索引一样，持久性不跟**。
+def _relax_journal_mode_only(connection: sqlite3.Connection) -> None:
+    """**只动日志模式，不动持久性** —— 它叫 ``only`` 就是要挡住「与索引那一个合并」。
 
     ``journal_mode=DELETE`` 的理由与索引相同（ADR 0038 决策 5：``-wal`` / ``-shm`` 跟着用户的库
-    在云盘上互相覆盖）。而 ``synchronous`` 保持默认 —— 索引是丢了能重建的缓存，这里是用户自己
-    填的数据，为它付满额断电持久性不叫浪费。**失败只记日志**：落到 WAL 也只是多两个文件。
+    在云盘上互相覆盖），但 ``synchronous`` 必须保持默认。索引是丢了能重建的缓存
+    （``index._relax_cache_durability`` 连 ``synchronous`` 一起降），这里是用户自己填的数据，
+    两个函数名字长得像而策略**相反**，合成一个就会静默地降低事件的持久性。
+    **失败只记日志**：落到 WAL 也只是多两个文件。
     """
     try:
         connection.execute(f"PRAGMA {SCHEMA_NAME}.journal_mode=DELETE")

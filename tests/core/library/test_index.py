@@ -424,7 +424,7 @@ class _VolumeWithoutSharedMemory(sqlite3.Connection):
         return super().execute(sql, *args)
 
 
-def test_a_failure_to_relax_durability_does_not_take_the_index_down(
+def test_a_failure_to_relax_cache_durability_does_not_take_the_index_down(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """pragma 失败**只记一条日志**：那个索引仍然能用。

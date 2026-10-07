@@ -194,7 +194,7 @@ class FacetIndex:
             logger.info("facet 索引不可用（%s），改用内存缓存", exc)
             self._path = None
             return
-        _relax_durability(connection)
+        _relax_cache_durability(connection)
         try:
             version = connection.execute("PRAGMA user_version").fetchone()[0]
             if version != SCHEMA_VERSION:
@@ -512,7 +512,7 @@ class FacetIndex:
             return found
 
 
-def _relax_durability(connection: sqlite3.Connection) -> None:
+def _relax_cache_durability(connection: sqlite3.Connection) -> None:
     """把提交强度降到「缓存该有的强度」：``journal_mode=DELETE`` + ``synchronous=NORMAL``。
 
     **索引是缓存，不是数据**（红线 5）：默认设置下每次 ``commit`` 都要 ``fsync``，而存照片时是一张张
@@ -520,9 +520,12 @@ def _relax_durability(connection: sqlite3.Connection) -> None:
 
     **日志模式是 ``DELETE`` 而不是 ``WAL``（ADR 0038 决策 5）**：WAL 的卖点是读写不互斥，而这里一把
     Python 锁已经把访问串起来了；剩下的代价却实打实 —— ``-wal`` / ``-shm`` 跟着用户的库被云同步
-    来回传，两台机器互相覆盖有损坏索引的风险。实测批量路径没有差别，落盘文件数从 3 个降到 1 个。
+    来回传，两台机器互相覆盖有损坏索引的风险。落盘文件数从 3 个降到 1 个。
 
     **失败只记一条日志、绝不致命**：落到默认设置也只是多一个 ``-journal`` 文件。
+
+    **别把它与事件库那一个合并**（``events.store._relax_journal_mode_only``）：那个是
+    **用户自己填的数据**，只改日志模式、``synchronous`` 保持默认。
     """
     try:
         connection.execute("PRAGMA journal_mode=DELETE")
