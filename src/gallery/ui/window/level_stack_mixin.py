@@ -196,17 +196,19 @@ class LevelStackMixin:
         从库根直接点进 ``旅行/2024`` 要压两帧（旅行、2024），Esc 一次退到「旅行」、两次退到库根。
         压一帧不行：那样「旅行/2024」与「旅行/2025」在栈上长得一样，退一次就掉回库根。
 
-        **先弹掉原先那条相册链**（换相册等于换了一条路），而**搜索帧与日历格留着** —— 它们
-        不是相册链的一部分：那两条链互斥（ADR 0041 决策 1），而搜索帧可以压在相册上。
+        **先把原先那一摞弹掉**（换相册等于换了一条路）。判据是「栈顶是不是搜索帧」而**不是
+        「栈顶是不是相册帧」**：相册上面压着分组或照片帧，只看栈顶会一帧都不弹。
         """
         library = getattr(self, "_library", None)
         root = getattr(library, "root", None)
         if root is None:
             self._push_frame(AlbumFrame(target))
             return
-        # 弹到「栈上不再是相册链」为止。
-        while self._level_stack.can_pop() and isinstance(self._level_stack.top, AlbumFrame):
-            self._level_stack = self._level_stack.pop()
+        # 弹到「栈顶是搜索帧」为止 —— 整库检索帧是唯一该活下来的那一摞之上的东西。
+        # 日历格不在这里特意留住：``_reload_level`` 每一次都调 ``_drop_calendar_cell_frame``。
+        self._level_stack = self._level_stack.pop_until(
+            lambda stack: isinstance(stack.top, SearchFrame)
+        )
         # 从库根到目标的那几层，一层一帧压上去。
         try:
             relative = target.relative_to(root)

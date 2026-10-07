@@ -662,6 +662,61 @@ def test_clicking_the_album_leaves_the_group_and_lands_on_that_album(
     window.close()
 
 
+def test_clicking_the_library_leaves_the_group_and_lands_on_the_root(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path], fake_facet_source: object
+) -> None:
+    """点面包屑上的**库根**：退到根那一层，而不是把同一个分组又列一遍。
+
+    这一条盯的是「弹掉旧的那摞」：目标是库根时新链一帧都不压，于是旧链没弹掉就是**整个栈
+    没变**，重列一遍仍是那个分组 —— 症状是「点了没反应」。
+    """
+    root = tmp_path / "照片"
+    make_photo("三月.jpg", directory=root / "旅行")
+    prepare_library(root)
+    window = _open(
+        qt_app,
+        root,
+        session_base=tmp_path / "状态",
+        browse_mode=BROWSE_MODE_ALBUMS,
+        group_facet="captured_year",
+    )
+    _settle(qt_app, window)
+    at_root = _labels(window)
+    window.enter_folder(root / "旅行")
+    _settle(qt_app, window, groups=True)
+    window.enter_group(next(group for group in _groups(window) if group.label == "2024 年"))
+    _settle(qt_app, window)
+
+    window._on_breadcrumb_requested(root)
+    _settle(qt_app, window)
+
+    assert window._group_view is None, "点库根就该退出那一组"
+    assert window._current_dir is None, "根那一层没有相册帧"
+    assert _labels(window) == at_root, "回到的是库根那一层本身"
+    window.close()
+
+
+def test_escape_after_clicking_an_album_does_not_fall_back_into_the_group(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path], fake_facet_source: object
+) -> None:
+    """点面包屑上的相册之后按 Esc，退的是**上一层**，不是那个分组。
+
+    旧相册的帧若留在栈里（压在分组底下），弹掉新压的那一帧就直接回到分组了 ——
+    而「落地那一层对不对」量不出来：上一条用例那时也是绿的。
+    """
+    window = _album_with_a_group(qt_app, tmp_path, make_photo)
+
+    window._on_breadcrumb_requested(window._library.root / "旅行")
+    _settle(qt_app, window)
+
+    window.go_up()
+    _settle(qt_app, window)  # 库根那一层只有文件夹，没有组卡片
+
+    assert window._group_view is None, "退上去又回到那个分组了 —— 旧的那一帧没弹掉"
+    assert window._current_dir is None, "退上去退到了库根，不是那个相册"
+    window.close()
+
+
 def test_photos_are_sorted_by_modified_time_without_asking(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path], fake_facet_source: object
 ) -> None:

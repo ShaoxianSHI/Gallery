@@ -199,6 +199,22 @@ def _host_with(stack: LevelStack) -> LevelStackMixin:
     return host
 
 
+def _host_with_library(root: Path, stack: LevelStack) -> LevelStackMixin:
+    """同上，但带一个只报 ``root`` 的库 —— ``_push_album_chain`` 要从它那里取库根。"""
+
+    class _Library:
+        def __init__(self, library_root: Path) -> None:
+            self.root = library_root
+
+    class _Host(LevelStackMixin):
+        pass
+
+    host = _Host()
+    host._library = _Library(root)  # type: ignore[attr-defined]
+    host._level_stack = stack
+    return host
+
+
 def test_the_group_view_reads_the_top_frame_not_the_deepest_one() -> None:
     """``_group_view`` 是**栈顶那一帧** —— 因为搜索结果上不压分组（ADR 0041 决策 2a）。
 
@@ -244,6 +260,36 @@ def test_the_album_chain_and_the_calendar_chain_cannot_mix() -> None:
     with_album = _host_with(LevelStack(root=RootKind.CALENDAR).push(AlbumFrame(Path("/lib/x"))))
     assert with_album._calendar_frame is None, "换根之后还留着日历格 —— 清栈没做干净"
     assert with_album._from_calendar is False
+
+
+def test_switching_albums_replaces_the_whole_pile_not_just_the_album_frames() -> None:
+    """换相册要弹掉的是「相册 + 压在它上面的分组/照片」那一摞，不只是相册帧。
+
+    **只看栈顶是不是 ``AlbumFrame`` 就弹不出底下那条链**（栈顶是分组），于是旧链留着：
+    目标是库根时 ``relative.parts`` 是空的、什么也不压，栈整个没变 —— 点面包屑上的根目录
+    于是「没反应」。这里量的是弹完之后**再退一次不会退回那个分组**：落地那一层对不对，
+    光看返回值是量不出来的（旧链压在底下时，落地照样看着对）。
+    """
+    root = Path("/lib")
+    trip = root / "旅行"
+    home = root / "家庭"
+    group = GroupRef("captured_year", "2024", "2024 年", ())
+    host = _host_with_library(root, LevelStack(root=RootKind.ALBUMS).push(AlbumFrame(trip)))
+
+    host._push_album_chain(trip)  # 先退到相册本身
+    host._level_stack = host._level_stack.push(GroupFrame(group))
+
+    host._push_album_chain(root)
+    assert host._level_stack.frames == (), "点库根弹不干净 —— 那个分组还在栈上"
+    assert host._group_view is None
+    assert host._current_dir is None
+
+    host._level_stack = LevelStack(root=RootKind.ALBUMS).push(AlbumFrame(trip))
+    host._level_stack = host._level_stack.push(GroupFrame(group))
+    host._push_album_chain(home)
+    assert [type(frame) for frame in host._level_stack.frames] == [AlbumFrame]
+    host._level_stack = host._level_stack.pop()
+    assert host._group_view is None, "退一层就退回那个分组 —— 旧的那一帧还压在底下"
 
 
 def test_an_empty_cell_is_not_the_same_as_not_in_a_cell() -> None:
