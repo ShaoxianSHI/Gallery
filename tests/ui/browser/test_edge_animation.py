@@ -1121,7 +1121,11 @@ def _pinch(grid: PhotoGrid, value: float, device: QPointingDevice) -> None:
     QCoreApplication.sendEvent(grid, event)
 
 
-def _wheel(angle: float, pixel: float) -> QWheelEvent:
+def _wheel(
+    angle: float,
+    pixel: float,
+    modifiers: Qt.KeyboardModifier = Qt.KeyboardModifier.ControlModifier,
+) -> QWheelEvent:
     """一个 ⌘+滚轮事件，角度与像素增量**分开给**：传统滚轮是 ``(角度 120, 像素 0)``，
     魔法鼠标 / 触控板是 ``(角度 4, 像素 20)``（Qt 按 1 像素 = 2 个角度单位折算）。
     """
@@ -1131,7 +1135,7 @@ def _wheel(angle: float, pixel: float) -> QWheelEvent:
         QPoint(0, int(pixel)),
         QPoint(0, int(angle)),
         Qt.MouseButton.NoButton,
-        Qt.KeyboardModifier.ControlModifier,
+        modifiers,
         Qt.ScrollPhase.NoScrollPhase,
         False,
     )
@@ -1187,6 +1191,24 @@ def test_the_wheel_is_not_rate_limited(qt_app: QApplication, tmp_path: Path) -> 
         grid.wheelEvent(_wheel(120.0, 0.0))
 
     assert steps == [1, 1, 1]
+
+
+def test_ctrl_wheel_does_not_switch_the_size(qt_app: QApplication, tmp_path: Path) -> None:
+    """只留 ⌘ + 滚轮切档，⌃ + 滚轮不切。
+
+    macOS 上 Qt 把 Command 报成 ``ControlModifier``、⌃ 报成 ``MetaModifier``；
+    两者都收下会让 ⌃ + 滚轮也切档。
+    """
+    grid = make_grid(qt_app, tmp_path, 40)
+    settle_grid(qt_app, grid)
+    steps: list[int] = []
+    grid.size_step_requested.connect(steps.append)
+
+    grid.wheelEvent(_wheel(120.0, 0.0, modifiers=Qt.KeyboardModifier.MetaModifier))
+    assert steps == [], "⌃ + 滚轮不该切档"
+
+    grid.wheelEvent(_wheel(120.0, 0.0))
+    assert steps == [1], "⌘ + 滚轮该切档"
 
 
 def test_a_magic_mouse_notch_switches_one_step(qt_app: QApplication, tmp_path: Path) -> None:

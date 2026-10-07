@@ -1500,7 +1500,7 @@ class PhotoGrid(QListView):
         event.accept()
 
     def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
-        """⌘/Ctrl + 滚轮切换缩略图尺寸；普通滚动按像素自己走，不交给基类。
+        """⌘ + 滚轮切换缩略图尺寸；普通滚动按像素自己走，不交给基类。
 
         **为什么不能交给基类**：网格的竖直滚动是 ``ScrollPerPixel``，Qt 在这一支的算法
         是「角度增量 ÷ 120 × ``wheelScrollLines()``（macOS 上 3）× **一个格子高**」，于是
@@ -1513,8 +1513,7 @@ class PhotoGrid(QListView):
         经过 :meth:`scrollContentsBy`，行内改名输入框跟着滚、切档过渡让位、可见区去抖
         这三件都还在。
         """
-        modifiers = event.modifiers()
-        if modifiers & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier):
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             steps = self._wheel_steps.feed(
                 wheel_delta(float(event.pixelDelta().y()), float(event.angleDelta().y()))
             )
