@@ -11,7 +11,7 @@ from collections import OrderedDict
 from collections.abc import Sequence
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, Qt, QTimer
+from PySide6.QtCore import QEvent, QPointF, Qt, QTimer
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
@@ -170,12 +170,11 @@ class MainWindow(
         self._scan_job: int | None = None
         #: 选区变化后**攒一轮**再全量重算动作可用性（0ms 单次，理由见连接处）。
         self._action_states_timer = QTimer(self)
-        #: 拖窗口那一闸（见 :meth:`mousePressEvent`）：单次，一个双击周期之后还没等到第二下就真拖。
-        self._title_bar_drag_timer = QTimer(self)
-        self._title_bar_drag_timer.setSingleShot(True)
-        self._title_bar_drag_timer.setInterval(QApplication.doubleClickInterval())
-        self._title_bar_drag_timer.timeout.connect(self._start_title_bar_drag)
+        #: 「这一次按下还可能是双击的第一下」这个记号（见 :meth:`mousePressEvent`）。
+        #: 真正发起拖动要等鼠标动得够远，那时它才被摘掉（见 :meth:`mouseMoveEvent`）。
         self._title_bar_drag_armed = False
+        #: 那一次按下落在哪（全局坐标）：够不够远只跟它比。
+        self._title_bar_drag_origin: QPointF | None = None
         self._detail_job: int | None = None
         self._current_row = -1
         self._metadata_job: int | None = None
@@ -862,9 +861,10 @@ class MainWindow(
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         """按住标题栏那一段拖动窗口。
 
-        内容铺到标题栏底下之后那一条已经是本窗口的客户区，系统不再代劳拖动，得自己发起；按下
-        **先排一个闸**（见 :meth:`_start_title_bar_drag`），确认不是双击之后才真的发起 ——
-        不等这个双击周期，双击标题栏一次都不会生效（macOS 的原生标题栏也等）。
+        内容铺到标题栏底下之后那一条已经是本窗口的客户区，系统不再代劳拖动，得自己发起。
+        按下**只做记号**：这一下是同一次双击的第一下，还是一次拖动的开头，要等鼠标动起来
+        才知道 —— 所以真正发起的是 :meth:`mouseMoveEvent`，而它必须落在那一次鼠标事件里
+        （见 :meth:`~gallery.ui.window.title_bar_flow.TitleBarFlowMixin._start_title_bar_drag`）。
 
         **不用先问 ``TitleBar`` 在不在那儿**：不在编辑时它对鼠标是透明的，按下照旧落到窗口
         自己身上。
@@ -872,17 +872,30 @@ class MainWindow(
         if event.button() == Qt.MouseButton.LeftButton and self._press_belongs_to_the_title_bar(
             event.position()
         ):
-            self._title_bar_drag_armed = True
-            self._title_bar_drag_timer.start()
+            self._arm_title_bar_drag(event.globalPosition())
             event.accept()
             return
         super().mousePressEvent(event)
 
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
+        """按住之后动起来的那一下：够远了就真的发起窗口拖动。
+
+        **判据是移动距离，不是「等满一个双击周期」**：等定时器的话，用户得先按住不动
+        400ms 才等到窗口开始跟手，而正常的一拖早在这个时限之前就松手了 —— 表现出来就是
+        「拖不动」（见 :meth:`_start_title_bar_drag`）。双击那一点手抖远到不了这个距离。
+        """
+        if event.buttons() & Qt.MouseButton.LeftButton and self._title_bar_drag_began(
+            event.globalPosition()
+        ):
+            self._disarm_title_bar_drag()
+            self._start_title_bar_drag()
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
-        """松手就作废那一闸：拖动得**按住不放**，点一下标题栏什么也不该发生。"""
-        if self._title_bar_drag_armed:
-            self._title_bar_drag_armed = False
-            self._title_bar_drag_timer.stop()
+        """松手就作废那一次记号：拖动得**按住并动起来**，点一下标题栏什么也不该发生。"""
+        self._disarm_title_bar_drag()
         super().mouseReleaseEvent(event)
 
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
@@ -892,14 +905,13 @@ class MainWindow(
         这件事得自己做。**做的是「铺满」而不是真全屏**（见 :meth:`_toggle_filled`）：占满菜单栏
         与 Dock 之间的那块地方，两者都还在，也不另开 Space。
 
-        **这一下必须先于拖动到达**：拖动一发就是系统的模态拖动会话，会把这一串鼠标事件吃掉
-        —— 所以拖动那一路才要等过一个双击周期（见 :meth:`mousePressEvent`）。
+        **双击与拖动靠移动距离分家**：手没怎么动，第二下就走到这里（拖动那一路只认
+        :meth:`mouseMoveEvent` 里够远的那一次移动）。
         """
         if event.button() == Qt.MouseButton.LeftButton and self._press_belongs_to_the_title_bar(
             event.position()
         ):
-            self._title_bar_drag_armed = False
-            self._title_bar_drag_timer.stop()
+            self._disarm_title_bar_drag()
             self._toggle_filled()
             event.accept()
             return

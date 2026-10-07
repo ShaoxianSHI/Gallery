@@ -12,8 +12,9 @@
 的正是「两页看起来一样」，拆开就没有对象可断言了。
 
 第 5 块是**那一段上还发生的另外两件事**：按住拖窗口、双击**铺满**窗口（ADR 0037）。
-它们与改名一样归那一段管，所以也钉在这里 —— 而拖窗口那一路必须**等过一个双击周期**
-才发起，理由写在 :meth:`MainWindow.mousePressEvent` 里，症状是「双击标题栏一次都不生效」。
+它们与改名一样归那一段管，所以也钉在这里 —— 而拖动与双击靠**移动距离**分家：
+手没怎么动的那一下算双击，动得够远才算拖（理由写在 ``MainWindow.mouseMoveEvent`` 里，
+症状是「双击没事、拖动却一点不跟手」）。
 
 **「铺满」不是 macOS 的真全屏**，这两条要分清：铺满是窗口占满菜单栏与 Dock 之间的那一块，
 两样都还在；真全屏是另一个 Space，菜单栏与 Dock 都收起来了。用户要的是前者，
@@ -38,8 +39,8 @@ import pytest
 pytest.importorskip("PySide6")
 
 from library_helpers import set_library_ui  # noqa: E402
-from PySide6.QtCore import QPoint, QPointF, QRect, Qt  # noqa: E402
-from PySide6.QtGui import QFontMetrics, QKeySequence  # noqa: E402
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, Qt  # noqa: E402
+from PySide6.QtGui import QFontMetrics, QKeySequence, QMouseEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 from waiting import wait_for_idle, wait_until  # noqa: E402
@@ -472,42 +473,80 @@ def _double_click(qt_app: QApplication, window: MainWindow, point: QPoint) -> No
     qt_app.processEvents()
 
 
-def test_a_press_on_the_title_bar_waits_for_the_second_click_before_it_moves_the_window(
-    qt_app: QApplication, window: MainWindow
+def _move_holding_left(
+    qt_app: QApplication, window: MainWindow, point: QPoint, *, delta: QPoint
 ) -> None:
-    """**拖窗口这一路必须等过一个双击周期**（理由见 :meth:`MainWindow.mousePressEvent`）。
+    """按住左键把鼠标挪 ``delta``（一个真正的 ``MouseMove``，带按键状态）。
 
-    ``startSystemMove`` 一发起就是系统的窗口拖动会话，那一串鼠标事件被它整个吃掉 ——
-    不等这一下，双击标题栏就永远到不了 :meth:`mouseDoubleClickEvent`，
-    「双击全屏」于是一次都不会发生，而界面上看不出任何理由。
+    ``QTest.mouseMove`` 发出的移动**不带按键状态**，被测的那一路靠
+    ``event.buttons() & LeftButton`` 认「是不是还按着」—— 用它会空转绿。
     """
+    target = point + delta
+    event = QMouseEvent(
+        QEvent.Type.MouseMove,
+        QPointF(target),
+        QPointF(window.mapToGlobal(target)),
+        Qt.MouseButton.NoButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    QApplication.sendEvent(window, event)
+    qt_app.processEvents()
+
+
+def test_a_press_on_the_title_bar_starts_a_drag_only_after_the_mouse_moves_far_enough(
+    qt_app: QApplication, window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """拖动与双击靠**移动距离**分家（理由见 :meth:`MainWindow.mouseMoveEvent`）。
+
+    **按下那一刻还不能发起拖动**：那一下可能只是双击的第一下。手抖（移动不到
+    ``startDragDistance``）也不算拖动，否则双击会被吃掉一半。
+    """
+    started: list[int] = []
+    monkeypatch.setattr(MainWindow, "_start_title_bar_drag", lambda self: started.append(1))
+
     point = _top_point(window)
     assert window._is_title_bar(QPointF(point)), "前提不成立：这一点压根不在标题栏上"
 
     QTest.mousePress(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, point)
     qt_app.processEvents()
-
     assert window._title_bar_drag_armed is True
-    assert window._title_bar_drag_timer.isActive() is True
-    assert window.isMaximized() is False
+    assert started == [], "刚按下就发起拖动，双击就没有机会了"
+
+    _move_holding_left(qt_app, window, point, delta=QPoint(3, 0))
+    assert started == [], "手抖不该被当成拖动"
+
+    _move_holding_left(qt_app, window, point, delta=QPoint(40, 0))
+    assert started == [1], "按住并动得够远之后没有发起窗口拖动"
+
+    QTest.mouseRelease(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, point)
+    qt_app.processEvents()
+    assert window._title_bar_drag_armed is False
 
 
 def test_a_click_on_the_title_bar_that_is_not_held_does_nothing(
-    qt_app: QApplication, window: MainWindow
+    qt_app: QApplication, window: MainWindow, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """点一下（不按住）什么也不该发生 —— 拖窗口得按住不放。
+    """点一下（不按住）什么也不该发生 —— 拖窗口得按住并动起来。
 
-    顺带钉住「松手就作废」：这一闸没作废的话，一次普通单击会在双击间隔之后
-    莫名发起一次窗口拖动，而用户早就松开手了。
+    顺带钉住「松手就作废」：这一闸没作废的话，一次普通单击会在之后莫名的某一次移动里
+    发起窗口拖动，而用户早就松开手了。
     """
+    started: list[int] = []
+    monkeypatch.setattr(MainWindow, "_start_title_bar_drag", lambda self: started.append(1))
+
     point = _top_point(window)
 
     QTest.mouseClick(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, point)
     qt_app.processEvents()
 
     assert window._title_bar_drag_armed is False
-    assert window._title_bar_drag_timer.isActive() is False
+    assert started == []
     assert window.isMaximized() is False
+
+    # 松手之后即使鼠标再动，也不该发起拖动（那一下已经不作数了）。
+    _move_holding_left(qt_app, window, point, delta=QPoint(40, 0))
+    assert started == []
 
 
 def test_double_clicking_the_title_bar_fills_the_window_and_back(

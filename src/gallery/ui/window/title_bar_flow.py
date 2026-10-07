@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Final
 
 from PySide6.QtCore import QPointF
+from PySide6.QtWidgets import QApplication
 
 from gallery.ui.external_button import BUTTON_GAP, BUTTON_WIDTH, button_rect
 from gallery.ui.search_field import HEIGHT as SEARCH_FIELD_HEIGHT
@@ -51,19 +52,46 @@ class TitleBarFlowMixin:
         """
         return self._is_title_bar(position) and not self._title_bar.is_editing()
 
-    def _start_title_bar_drag(self) -> None:
-        """真的发起系统拖动 —— 已经等过一个双击周期，确认这一下不是双击。
+    def _arm_title_bar_drag(self, global_position: QPointF) -> None:
+        """记下这一次按下落在标题栏（全局坐标）。
 
-        **为什么非要等**：Qt 在 macOS 上把 ``startSystemMove`` 实现成
-        ``[NSWindow performWindowDragWithEvent:]``，那是一个**模态的事件跟踪循环**，拖完之前
-        不返回 —— 不设闸的话「双击标题栏铺满」一次都不会发生，而界面上看不出任何理由。
+        **先不做决定**：这一下可能是双击的第一下，也可能是一拖的开头 —— 判据是「接下来
+        动没动、动了多远」（见 :meth:`_title_bar_drag_began`），按下这一刻还看不出来。
+        """
+        self._title_bar_drag_armed = True
+        self._title_bar_drag_origin = global_position
+
+    def _title_bar_drag_began(self, global_position: QPointF) -> bool:
+        """鼠标已经移开够远，这一次按下可以确定是拖动而不是双击的一半。
+
+        **按距离判，不按时间**：定一个「等满双击周期」的定时器看着像在模仿系统，实际是
+        让窗口在这段时间里**一步都不跟手** —— 正常的一拖在这个时限之前就松手了，用户读到
+        的就是「拖不动」。macOS 自己的标题栏也是这么分的（动过就是拖，没动才算双击）。
+
+        距离用 :meth:`QApplication.startDragDistance`：拖动与手抖的分界线全应用一份。
+        """
+        if not self._title_bar_drag_armed or self._title_bar_drag_origin is None:
+            return False
+        moved = global_position - self._title_bar_drag_origin
+        return moved.manhattanLength() >= QApplication.startDragDistance()
+
+    def _disarm_title_bar_drag(self) -> None:
+        """把「这一次按下」清掉：松手、双击、或者已经真的拖起来了，三种情况都到这儿。"""
+        self._title_bar_drag_armed = False
+        self._title_bar_drag_origin = None
+
+    def _start_title_bar_drag(self) -> None:
+        """真的发起系统拖动 —— 鼠标已经动得够远，确认这一下不是双击。
+
+        **必须从一次鼠标事件里发起**：Qt 在 macOS 上把它实现成
+        ``performWindowDragWithEvent:``，而那个事件要么取自**当前**的 ``NSApp.currentEvent``
+        （旧版 Qt 只在它是鼠标事件时才动手，别的类型直接返回假），要么由 Qt 按当前指针位置
+        现合成一个（新版）。从一个定时器回调里调它两样都不成立：哪一种鼠标事件都没轮到，
+        这一次系统拖动根本不会开始。
 
         ``startSystemMove`` 返回假（平台不支持、或系统自己会拖）就什么都不做：这一次按下没有
         别的含义，不该往下传成一次点空白处的点击。
         """
-        if not self._title_bar_drag_armed:
-            return
-        self._title_bar_drag_armed = False
         handle = self.windowHandle()
         if handle is not None:
             handle.startSystemMove()
