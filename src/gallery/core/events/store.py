@@ -222,6 +222,20 @@ class EventRef:
 
 
 @dataclass(frozen=True, slots=True)
+class Orphan:
+    """一条绑定，外加它属于哪个事件。
+
+    **放在这儿而不是 ``orphans``**：它是 :meth:`EventStore.all_bindings` 造出来的，而那一头
+    要读绑定表 —— 放到 ``orphans`` 就是包内两个模块互相导入。孤儿检查
+    （:mod:`gallery.core.events.orphans`）从这里导入它。
+    """
+
+    path: Path
+    event_id: int
+    event_title: str
+
+
+@dataclass(frozen=True, slots=True)
 class EventDraft:
     """面板交出来的那一份：**每个字段一格文字**，键是 ``EventField.id``。
 
@@ -448,6 +462,11 @@ class EventStore:
         """事件库这次用不用得上。"""
         return self._connection is not None
 
+    @property
+    def root(self) -> Path:
+        """这个事件库属于哪个库。**孤儿检查要靠它**：库根读不了就整个不查（ADR 0043 决策 9）。"""
+        return self._root
+
     # ---- 读 ------------------------------------------------------------------
 
     def all_events(self) -> tuple[Event, ...]:
@@ -542,6 +561,29 @@ class EventStore:
                 f"SELECT path FROM {SCHEMA_NAME}.photo_events WHERE event_id = ?", (event_id,)
             ).fetchall()
         return tuple(Path(row[0]) for row in rows)
+
+    def all_bindings(self) -> tuple[Orphan, ...]:
+        """全部绑定，**带上事件名**（孤儿检查与它的提示框要的就是这两样）。
+
+        **一条 JOIN 读全**，而不是「按事件逐个问」：绑定可能上千条，逐个事件一次查询就是上千次
+        往返，而开库时每个库都要跑这一遍。
+
+        返回 :class:`Orphan` 而不是新造一个类型 —— 它要的就是「路径 + 事件 id + 事件名」，
+        而那正是这个类型的三列。
+        """
+        connection = self._connection
+        if connection is None:
+            return ()
+        with self._lock:
+            rows = connection.execute(
+                f"SELECT pe.path, e.id, e.title"
+                f"  FROM {SCHEMA_NAME}.photo_events pe"
+                f"  JOIN {SCHEMA_NAME}.events e ON e.id = pe.event_id"
+                f" ORDER BY pe.path"
+            ).fetchall()
+        return tuple(
+            Orphan(path=Path(row[0]), event_id=int(row[1]), event_title=str(row[2])) for row in rows
+        )
 
     # ---- 写 ------------------------------------------------------------------
 
@@ -814,6 +856,30 @@ class EventStore:
                 removed += max(cursor.rowcount, 0)
         return removed
 
+    def forget_bindings(self, paths: Sequence[Path]) -> int:
+        """删掉这些路径上的**全部**绑定，返回删了几条（孤儿清理，ADR 0043 决策 9）。
+
+        **按 path 删就够，不必按 ``(path, event_id)``**：照片没了，它身上每一条绑定都是孤儿，
+        而多带一个条件只会漏掉「同一张照片属于好几种事件」的情形。
+
+        ``path`` 是主键的前导列，所以 ``IN`` 走主键索引，不必扫全表。
+        """
+        connection = self._connection
+        if connection is None:
+            return 0
+        keys = [str(path) for path in paths]
+        removed = 0
+        with self._lock, connection:
+            for start in range(0, len(keys), CHUNK):
+                chunk = keys[start : start + CHUNK]
+                placeholders = ", ".join(["?"] * len(chunk))
+                cursor = connection.execute(
+                    f"DELETE FROM {SCHEMA_NAME}.{BINDINGS_TABLE} WHERE path IN ({placeholders})",
+                    chunk,
+                )
+                removed += max(cursor.rowcount, 0)
+        return removed
+
     def _apply_moves(self, moves: Iterable[tuple[Path, Path, bool]]) -> int:
         """真搬。**连接不可用就是 0 条** —— ``None`` 那个库由 :func:`follow_moves` 挡掉。"""
         connection = self._connection
@@ -905,6 +971,7 @@ __all__ = [
     "EventDraft",
     "EventRef",
     "EventStore",
+    "Orphan",
     "attach",
     "events_of_kind",
     "follow_moves",
