@@ -146,13 +146,13 @@ def join_multi(items: tuple[str, ...]) -> str:
 
 
 def suggested_title(kind: EventKind, destination: str, started_on: str) -> str:
-    """新建事件时给名称栏的一个默认值：「目的地 · 开始日期」。
+    """新建事件时给名称栏的一个默认值：「开始日期 · 目的地」。
 
     比留空必填少一次决定 —— 参照的是系统日历新建事件时那个自动标题的行为。有内容就**不带
     类型名**（用户刚从菜单点过来，已经知道是旅行）；什么都没填才退回一个能认出来的名字。
     """
     tail = " · ".join(
-        part for part in (join_multi(split_multi(destination)), started_on.strip()) if part
+        part for part in (started_on.strip(), join_multi(split_multi(destination))) if part
     )
     return tail or f"新的{kind.label}"
 

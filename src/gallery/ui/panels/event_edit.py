@@ -7,7 +7,7 @@
 
 两处判断写在代码里：
 
-- **名称给一个默认值**：填了目的地与日期之后名称栏自己长成「目的地 · 日期」，直到用户动手
+- **名称给一个默认值**：填了目的地与日期之后名称栏自己长成「日期 · 目的地」，直到用户动手
   改过它为止（见 :meth:`_suggest_title`）。
 - **「把这段日期之间的照片都记进来」** 摆在面板上而**不在右键菜单里** —— 多一级菜单会让
   「记录为 → 旅行 → 京都五日」变成四级，而这一步本来就只在做这件事的时候才想到（ADR 0043 决策 4）。
@@ -282,7 +282,7 @@ class EventEditDialog(QDialog):
         if field.multiple:
             line.setPlaceholderText("多个用逗号分开")
         if field.id in ("title", "destination", "started_on"):
-            # 名称自动长成「目的地 · 日期」靠的就是这三栏互相看着（见 :meth:`_suggest_title`）。
+            # 名称自动长成「日期 · 目的地」靠的就是这三栏互相看着（见 :meth:`_suggest_title`）。
             line.textChanged.connect(self._suggest_title)
         return line
 
@@ -354,7 +354,7 @@ class EventEditDialog(QDialog):
                 widget.setText(text)
 
     def _suggest_title(self) -> None:
-        """名称栏自动长成「目的地 · 日期」，**直到用户动手改过它为止**。
+        """名称栏自动长成「日期 · 目的地」，**直到用户动手改过它为止**。
 
         判据是「名称栏里那一句还是不是上次自动生成的那句」。不是了就归用户写 —— 手写的名字是
         他的意思，而**把这一栏删空同样是**（删空与「还没填」在字符上一样，靠 ``_auto_title``

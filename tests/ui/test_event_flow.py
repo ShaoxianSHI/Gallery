@@ -312,7 +312,7 @@ def test_recording_two_photos_under_a_new_trip(qt_app: QApplication, window: Mai
     _create(kind_menu, destination="京都, 奈良", started_on="2026-05-16")
 
     events = library.all_events()
-    assert [event.display_name for event in events] == ["京都、奈良 · 2026-05-16"]
+    assert [event.display_name for event in events] == ["2026-05-16 · 京都、奈良"]
     recorded = set(library.events.photos_of_event(events[0].id))
     assert recorded == set(_paths(window, "京都-01.jpg", "京都-02.jpg"))
 
@@ -1028,7 +1028,7 @@ def test_the_same_city_gives_the_city_itself(qt_app: QApplication, window: MainW
 
 
 def test_the_prefilled_name_grows_out_of_them(qt_app: QApplication, window: MainWindow) -> None:
-    """预填的日期与目的地会把名称栏带成「杭州 · 2026-05-16」—— 那是它本来就有的那一条联动。
+    """预填的日期与目的地会把名称栏带成「2026-05-16 · 杭州」—— 那是它本来就有的那一条联动。
 
     一张照片的最低公共位置**就是它自己的城市**（见 ``common_place``），所以名称栏里是「杭州」
     而不是「浙江省」：用户要改的正是这一句，写长了反而不好认。
@@ -1038,7 +1038,7 @@ def test_the_prefilled_name_grows_out_of_them(qt_app: QApplication, window: Main
 
     dialog = _new_dialog(_open_kind_menu(_context(window, row)))
 
-    assert dialog._text("title") == "杭州 · 2026-05-16"
+    assert dialog._text("title") == "2026-05-16 · 杭州"
 
 
 def test_a_photo_without_a_capture_time_leaves_the_dates_blank(
@@ -1194,11 +1194,11 @@ def _style_rule(sheet: str, selector: str) -> str:
 
 
 def test_the_name_grows_by_itself_until_the_user_types_one(qt_app: QApplication) -> None:
-    """名称栏自动长成「目的地 · 日期」，**用户动过它之后就不再自动改** —— 手写的名字是他的意思。"""
+    """名称栏自动长成「日期 · 目的地」，**用户动过它之后就不再自动改** —— 手写的名字是他的意思。"""
     dialog = EventEditDialog(None, TRIP)
     dialog._fields["destination"].setText("京都, 奈良")
     dialog._fields["started_on"].setText("2026-05-16")
-    assert dialog._text("title") == "京都、奈良 · 2026-05-16"
+    assert dialog._text("title") == "2026-05-16 · 京都、奈良"
 
     dialog._fields["title"].setText("我自己起的名字")
     dialog._fields["destination"].setText("大阪")

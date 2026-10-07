@@ -71,10 +71,10 @@ def test_several_places_travel_stored_as_one_cell() -> None:
     assert kinds.join_multi(("京都", "奈良")) == f"京都{kinds.MULTI_SEPARATOR}奈良"
 
 
-def test_the_suggested_title_names_the_place_and_the_day() -> None:
-    """新建时给一个能认出来的名字，省一次决定。"""
+def test_the_suggested_title_names_the_day_and_the_place() -> None:
+    """新建时给一个能认出来的名字，省一次决定。日期在前，地点在后。"""
     assert (
-        kinds.suggested_title(kinds.TRIP, "京都, 奈良", "2026-05-16") == "京都、奈良 · 2026-05-16"
+        kinds.suggested_title(kinds.TRIP, "京都, 奈良", "2026-05-16") == "2026-05-16 · 京都、奈良"
     )
 
 
