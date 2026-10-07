@@ -3,8 +3,8 @@
 模型里放的仍然是**整库**（日历只是叠在「全部照片」同一遍平铺扫描上的另一页），喂日历要跟着
 模型走而不是等扫描收工 —— 否则模型还空着时读出零张照片，整层日历空着而界面上看不出原因。
 
-日历是**浏览方式**而不是一层，摆不摆问 :meth:`CalendarFlowMixin._shows_calendar_page`；从日历
-点开的那一格要记得自己是怎么进来的，退回去回日历原来的那一段。
+日历是**浏览方式**而不是一层，摆不摆由栈算（``page_role_of``：栈底是日历且顶上没有摊开的层
+就是日历页）；从日历点开的那一格要记得自己是怎么进来的，退回去回日历原来的那一段。
 """
 
 from __future__ import annotations
@@ -63,7 +63,7 @@ class CalendarFlowMixin:
             if leaving_search is not None:
                 self._reload_level()
             else:
-                self._stack.setCurrentWidget(self._grid_page)
+                self._sync_page_to_stack()
                 self._apply_ordering()
                 self._refresh_title()
                 self._update_action_states()
@@ -76,21 +76,10 @@ class CalendarFlowMixin:
         # ``_search_total`` 算，摆在之前会停在中间态。
         self._update_breadcrumb()
 
-    def _shows_calendar_page(self) -> bool:
-        """「这一层」此刻该摆在日历那一页上吗。
-
-        日历是浏览方式而不是一层，唯一的例外是**整库检索**（ADR 0026 决策 1）。**筛选不换页**
-        —— 这正是它存在的理由：在月视图里加一条条件仍然是月视图（ADR 0040 决策 1）。
-
-        **问的是状态，不是「刚才是从哪儿进来的」** —— 后者会在换一次排序后掉到网格页上，
-        而菜单里的勾还留着日历。
-        """
-        return self._browse_mode == BROWSE_MODE_CALENDAR and not self._is_library_search()
-
     def _show_calendar(self) -> None:
         """把日历那一页摆到前面来。**只换页，不起扫描**（打开库时外面已经在扫了）。"""
         self._calendar_page.set_today(datetime.date.today())
-        self._stack.setCurrentWidget(self._calendar_page)
+        self._sync_page_to_stack()
         self._refresh_title()
         self._update_action_states()
         self._refresh_thumbnail_window()
@@ -200,7 +189,8 @@ class CalendarFlowMixin:
         # **先摆内容再换页**：反过来，换页那一刻拿的还是日历底下那一整库，算出来的可见行对不上。
         self._list_drill_photos(photos)
         self._grid.swallow_click()  # 见上面那段：双击的第二下属于日历那一下
-        self._stack.setCurrentWidget(self._grid_page)
+        # **摆内容之后才换页**：换早了那一刻网格算出来的可见行对不上（这一格的几张还没进模型）。
+        self._sync_page_to_stack()
         self._refresh_title()
         self._update_action_states()
         self._refresh_thumbnail_window()
@@ -247,7 +237,7 @@ class CalendarFlowMixin:
         """
         if self._browse_mode != BROWSE_MODE_CALENDAR:
             return
-        self._stack.setCurrentWidget(self._calendar_page)
+        self._sync_page_to_stack()
         self._calendar_page.set_today(datetime.date.today())
         self._refresh_title()
         self._update_action_states()

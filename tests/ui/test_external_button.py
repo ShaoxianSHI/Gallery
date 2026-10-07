@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (  # noqa: E402
 from waiting import wait_until  # noqa: E402
 
 from gallery.core.external import launch  # noqa: E402
-from gallery.core.library.config import prepare_library  # noqa: E402
+from gallery.core.library.config import BROWSE_MODE_CALENDAR, prepare_library  # noqa: E402
 from gallery.core.library.photos import GroupRef  # noqa: E402
 from gallery.ui import desktop  # noqa: E402
 from gallery.ui.external_button import (  # noqa: E402
@@ -289,7 +289,8 @@ def test_grid_page_offers_the_finder_not_the_calendar(window: MainWindow) -> Non
 
 def test_calendar_page_offers_only_the_calendar(window: MainWindow) -> None:
     """反过来也一样：日历页只有 Google 日历那一项。"""
-    window._enter_calendar()
+    # 页面是栈的函数：要真的在日历页上，栈底得是日历（``_enter_calendar`` 只负责喂内容）。
+    window.set_browse_mode(BROWSE_MODE_CALENDAR)
     assert _menu_texts(window._external_button) == ["Google 日历"]
 
 

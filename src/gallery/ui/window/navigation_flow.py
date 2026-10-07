@@ -113,6 +113,9 @@ class NavigationFlowMixin:
             self._leave_calendar_cell()
             return
         if isinstance(frame, PhotoFrame):
+            # **离开大图页就把横幅收掉**（那句话说的是刚才那一张照片）：在这里收，因为走到
+            # ``leave_detail_page`` 时照片帧已经弹掉，按栈判「刚才在不在大图页」永远为假。
+            self._clear_banner()
             # **大图页的「上一级」就是这里** —— 退到哪一层看照片帧底下压着什么。
             top = self._level_stack.top
             if isinstance(top, CalendarFrame) and not top.expanded:
@@ -212,13 +215,13 @@ class NavigationFlowMixin:
         self._banner.hide()
         # 整库检索不是日历这一层的一部分：条件撤光之后 Esc 不该退到日历的那一格。
         self._drop_calendar_cell_frame()
-        # **摆哪一页问的是状态**（浏览方式 + 有没有条件）：一律摆成网格页，勾与眼前那一页对不上。
+        # **摆哪一页由栈算出来**（`page_role_of`）：这一处只把栈改干净，页面是它的函数。
         self._update_breadcrumb()
-        if self._shows_calendar_page():
+        self._sync_page_to_stack()
+        if self._on_calendar_page():
             # 日历那一页自己收尾（标题、命令可用性、缩略图窗口），位置不动。
             self._show_calendar()
         else:
-            self._stack.setCurrentWidget(self._grid_page)
             self._update_action_states()
         self._start_scan()
 

@@ -32,7 +32,7 @@ class ThumbnailFlowMixin:
     def _refresh_thumbnail_window(self) -> None:
         if self._pipeline is None:
             return
-        if self._stack.currentWidget() is self._calendar_page:
+        if self._on_calendar_page():
             # 日历要的是「当前层、当前滚到的那几格」；「这批变没变」由
             # ``CalendarPage._refresh_window`` 自己判断。
             self._pipeline.set_window(
@@ -41,7 +41,7 @@ class ThumbnailFlowMixin:
                 target_edge=self._calendar_page.thumbnail_edge(),
             )
             return
-        if self._stack.currentWidget() is not self._grid_page:
+        if not self._on_grid_page():
             return
         visible_rows = self._grid.visible_rows()
         # guard: allow-long-comment（网格没重排时「可见行」是空的，而 set_window 是整份替换）

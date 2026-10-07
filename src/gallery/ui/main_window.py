@@ -88,6 +88,7 @@ from gallery.ui.window.context_menu_flow import ContextMenuFlowMixin
 from gallery.ui.window.event_flow import EventFlowMixin
 from gallery.ui.window.level_stack import (
     LevelStack,
+    PageRole,
     RootKind,
 )
 from gallery.ui.window.level_stack_mixin import LevelStackMixin
@@ -719,7 +720,7 @@ class MainWindow(
         self._update_navigation_actions()
         self._update_event_actions()
         in_detail = self._in_detail_page()
-        in_grid = self._stack.currentWidget() is self._grid_page
+        in_grid = self._on_grid_page()
         # 改名的过程中别启用会动文件的命令 —— 那时键盘归输入框，⌘⌫ 不该把正在编辑的那张删掉。
         # **三个输入框都算**：网格那个、标题栏那个改名框（ADR 0025）与搜索框。
         idle = (
@@ -755,7 +756,7 @@ class MainWindow(
         renaming_here = in_grid or (in_detail and self._title_bar.isVisible())
         # 移到废纸篓两边都成立（大图页删的是正在看的那一张）。**日历那一页两者都不是** —— 它没有
         # 行号，而网格的当前项还停着上一次点的那一格，拿它算可用性就会亮着一条指向别处的路。
-        in_calendar = self._stack.currentWidget() is self._calendar_page
+        in_calendar = self._on_calendar_page()
         # 「用外部应用打开」**只在有东西可开的时候出现**（ADR 0034，判据 ``is_available()``）。
         self._external_button.refresh()
         self._external_button.setVisible(
@@ -923,8 +924,16 @@ class MainWindow(
     # ---- 标题栏（见 ADR 0025）-----------------------------------------------
 
     def _in_detail_page(self) -> bool:
-        """现在是不是大图页。「此刻作用于谁」的判据都问它（ADR 0021 决策 3）。"""
-        return self._stack.currentWidget() is self._detail_page
+        """现在是不是大图页。「此刻作用于谁」的判据都问它（ADR 0021 决策 3）。
+
+        **读的是栈**（ADR 0041）：大图页就是栈顶那一帧是照片帧。页面由 ``_sync_page_to_stack``
+        按同一条栈摆出来，两处不可能各说一套。
+        """
+        return self._page_role is PageRole.DETAIL
+
+    def _on_grid_page(self) -> bool:
+        """现在是不是网格页 —— 与 :meth:`_in_detail_page` 同一个判据面。"""
+        return self._page_role is PageRole.GRID
 
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         super().showEvent(event)
@@ -1026,7 +1035,7 @@ class MainWindow(
 
     def _on_calendar_page(self) -> bool:
         """此刻是不是日历那一页。**下拉框那两页互斥的判据都在这一句里。**"""
-        return self._stack.currentWidget() is self._calendar_page
+        return self._page_role is PageRole.CALENDAR
 
     def _current_folder(self) -> Path | None:
         """此刻所在的那个文件夹，**没有库就是 ``None``**。

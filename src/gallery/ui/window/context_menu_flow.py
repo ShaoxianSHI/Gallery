@@ -68,7 +68,7 @@ class ContextMenuFlowMixin:
         拼之前先刷新一次动作的可用性：判据都依赖**此刻**的选区与层级，拿几十毫秒前的状态拼
         菜单，用户会看到一个与界面不一致的灰度。``None`` 表示这次右键不该有菜单。
         """
-        if self._stack.currentWidget() is not self._grid_page:
+        if not self._on_grid_page():
             return None
         entry = self._model.entry_at(row) if row >= 0 else None
         if row >= 0 and entry is None:
@@ -104,7 +104,7 @@ class ContextMenuFlowMixin:
         判据只有一条：现在在大图页，且**确实在看一张照片** —— 加载失败、画面还空着的时候
         右键一下也不该有菜单，里面每一条命令的对象都还不存在。
         """
-        if self._stack.currentWidget() is not self._detail_page:
+        if not self._in_detail_page():
             return None
         if self._model.photo_at(self._current_row) is None:
             return None
@@ -274,12 +274,12 @@ class ContextMenuFlowMixin:
 
     def _on_clipboard_changed(self) -> None:
         """剪贴板变了就重算一次 ⌘V 的可用性（只算这一条，不动别的）。"""
-        in_grid = self._stack.currentWidget() is self._grid_page
+        in_grid = self._on_grid_page()
         self._paste_action.setEnabled(in_grid and self._can_paste())
 
     def select_all_entries(self) -> None:
         """⌘A：全选当前这一层的所有格子（相册、照片、分组卡片都算）。"""
-        if self._stack.currentWidget() is not self._grid_page:
+        if not self._on_grid_page():
             return
         self._grid.selectAll()
         self._update_action_states()

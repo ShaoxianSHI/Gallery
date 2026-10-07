@@ -53,7 +53,7 @@ class ViewerFlowMixin:
         直接交给 :meth:`MainWindow.go_up` 的 ``_leave_frame`` —— 退到网格还是日历由照片帧底下
         压着的那一层决定，不在这里各写一遍。
         """
-        if self._stack.currentWidget() is self._calendar_page:
+        if self._on_calendar_page():
             # 日历与网格**同一时刻只有一个**：从日历按 Esc 出来就是把浏览方式换回「全部照片」，
             # 否则菜单里那个勾就成了假话，``Y`` / ``M`` / ``W`` 也没处可去。
             self.set_browse_mode(BROWSE_MODE_FLAT)
@@ -64,18 +64,17 @@ class ViewerFlowMixin:
         self.leave_detail_page()
 
     def leave_detail_page(self) -> None:
-        """**照片帧已经不在栈上了**：换页，并把大图页攒下的东西一次性收拾掉。
+        """**照片帧已经不在栈上了**：把页面收成网格，并把大图页攒下的东西一次性收拾掉。
 
         与 :meth:`show_grid` 分开是因为「弹栈」是统一的（「谁弹的都一样」），而收尾是
         「刚离开大图页」才做的事 —— 合成一处就会有一处得判「这一次是不是从大图页来的」。
+
+        **横幅那一句在 :meth:`~gallery.ui.window.navigation_flow.NavigationFlowMixin._leave_frame`
+        里收**（那是「刚弹掉一张照片」的现场）：走到这里栈上已经不是照片帧了，按栈判「刚才在不在
+        大图页」永远为假。
         """
-        # **离开大图页就把横幅收掉**（见 :meth:`_clear_banner`）：那句话说的是刚才那一张照片。
-        if self._stack.currentWidget() is self._detail_page:
-            self._clear_banner()
         self._title_bar.stop_edit()  # 切页时把改到一半的名字收起来（ADR 0025）
-        if self._stack.currentWidget() is self._grid_page:
-            return
-        self._stack.setCurrentWidget(self._grid_page)
+        self._sync_page_to_stack()  # 照片帧弹掉之后，这一条栈表示的就是网格页
         if self._current_row >= 0:
             self._grid.select_row(self._current_row)
         # 在大图页时攒下的外部变化：这里才是网格能改的地方（ADR 0013）。

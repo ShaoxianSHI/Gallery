@@ -84,11 +84,7 @@ class WatchFlowMixin:
         三种时候不能就地改：扫描还在流式上屏、条目还攒在暂存区等着定顺序、**当前页不是
         网格页**（大图页与日历页都算 —— 日历页上摆的是整库，不能就地往网格里插行）。
         """
-        return (
-            self._scan_job is not None
-            or self._staged is not None
-            or self._stack.currentWidget() is not self._grid_page
-        )
+        return self._scan_job is not None or self._staged is not None or not self._on_grid_page()
 
     def _flush_pending_watch(self) -> None:
         """把之前攒下的变化补上：重排一结束、或者人回到网格，都是合适的时候。"""
@@ -315,7 +311,7 @@ class WatchFlowMixin:
 
     def _reload_open_photo(self, stale: set[Path]) -> None:
         """正看着的那张被改了，就重新载入它 —— 否则大图区与面板显示的还是旧值。"""
-        if self._stack.currentWidget() is not self._detail_page or self._current_row < 0:
+        if not self._in_detail_page() or self._current_row < 0:
             return
         row = min(self._current_row, self._model.rowCount() - 1)
         photo = self._model.photo_at(row)

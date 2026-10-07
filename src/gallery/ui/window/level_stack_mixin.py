@@ -27,10 +27,12 @@ from gallery.ui.window.level_stack import (
     CalendarFrame,
     GroupFrame,
     LevelStack,
+    PageRole,
     PhotoFrame,
     RootKind,
     SearchFrame,
     browse_mode_of,
+    page_role_of,
 )
 
 
@@ -153,6 +155,43 @@ class LevelStackMixin:
         落在各自底部、不带任何残留，是用户明确要的：切走再切回来不回到刚才那个位置。
         """
         self._level_stack = self._level_stack.with_root(root)
+
+    # ---- 画哪一页：栈的函数，不是各条路径各自挑的 --------------------------------
+
+    @property
+    def _page_role(self) -> PageRole:
+        """这条栈此刻该画成哪一页（:func:`page_role_of` 的界面侧入口）。
+
+        「我在大图页 / 在网格页 / 在日历页」以及各处的动作可用性都问它 —— 一次算出来，
+        不必每一处各自看一遍控件。
+        """
+        library = getattr(self, "_library", None)
+        return page_role_of(self._level_stack, has_library=library is not None)
+
+    def _sync_page_to_stack(self) -> None:
+        """把当前页摆成这条栈所表示的那一页 —— **整个窗口只在这里给内容页换页**。
+
+        **页面不是各条路径各自决定的一件事，而是栈的函数**（:func:`page_role_of`）：各条路径
+        只改栈，该画哪一页由这一句算出来。守护测试盯着「除这里之外没有第二处换页」，于是
+        「页面与栈对不上」这一类 bug 没有生长的入口。
+
+        **不挂在四个写入口上自动跑**：``_enter_calendar_drill`` 要求「先把这一格的几张摆进
+        模型、再换页」（换早了那一刻算出来的可见行对不上），所以由每条路径在**该换的那一拍**
+        显式叫一声。
+        """
+        stack_widget = getattr(self, "_stack", None)
+        if stack_widget is None:
+            return  # 栈可以在没有界面的宿主上单独驱动（见 tests），那种宿主没有页面可摆
+        stack_widget.setCurrentWidget(self._page_for_role(self._page_role))
+
+    def _page_for_role(self, role: PageRole) -> object:
+        """那一页对应哪一个控件。"""
+        return {
+            PageRole.WELCOME: self._welcome,
+            PageRole.GRID: self._grid_page,
+            PageRole.CALENDAR: self._calendar_page,
+            PageRole.DETAIL: self._detail_page,
+        }[role]
 
     def _drop_search_frames(self) -> None:
         """弹掉栈上**所有**搜索结果帧（进相册时用 —— 进相册就是退出整库检索，ADR 0041 决策 3）。

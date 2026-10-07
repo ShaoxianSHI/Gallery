@@ -244,7 +244,7 @@ class MetadataFlowMixin:
             self._push_frame(PhotoFrame(photo.path), replace=True)
         else:
             self._push_frame(PhotoFrame(photo.path))
-        self._stack.setCurrentWidget(self._detail_page)
+        self._sync_page_to_stack()
         self._detail.setFocus()
         self._update_action_states()
         self._load_detail(row)

@@ -216,7 +216,7 @@ class LibraryFlowMixin:
         if self._browse_mode == BROWSE_MODE_CALENDAR:
             self._show_calendar()
         else:
-            self._stack.setCurrentWidget(self._grid_page)
+            self._sync_page_to_stack()
         self._refresh_title()  # 换库之后标题栏回到相册名（ADR 0025 决策 4）
         self._update_action_states()
         self._remember(library.root)
@@ -429,7 +429,7 @@ class LibraryFlowMixin:
         if self._browse_mode != BROWSE_MODE_CALENDAR or self._library is None:
             return
         # **日历那一页不在前面时不喂**：模型每次重排都会走到这里，而用户可能在日历点出来的那一层。
-        if self._stack.currentWidget() is not self._calendar_page:
+        if not self._on_calendar_page():
             return
         # **摊开的那一层更不能喂**：那一层是日历上一格里的几张，拿它分桶等于告诉日历「整个库就
         # 这几张」。换页发生在摆内容**之后**（``_list_drill_photos``），上面那条拦不住。

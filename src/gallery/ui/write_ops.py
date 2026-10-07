@@ -130,7 +130,7 @@ class WriteOpsMixin:
         **直接读真选区，不走 :meth:`PhotoGrid.selected_rows`**（那一位在选区为空时会退回当前
         项），也**不算大图页的选区**（ADR 0021）—— 粘文件进用户没选的地方是最坏的一种错。
         """
-        if self._stack.currentWidget() is not self._grid_page:
+        if not self._on_grid_page():
             return None
         selection = self._grid.selectionModel()
         if selection is None:
@@ -598,7 +598,7 @@ class WriteOpsMixin:
             一次 15.4 ms，而 :meth:`MainWindow._update_action_states` 一次里要问两遍
             （这一处与「改名」的判据各一遍）。那是纯重复劳动。
         """
-        if self._stack.currentWidget() is self._detail_page:
+        if self._in_detail_page():
             row = self._current_row
             entry = self._model.entry_at(row) if row >= 0 else None
             return [] if entry is None else [entry]
@@ -613,7 +613,7 @@ class WriteOpsMixin:
 
     def _focus_row(self) -> int:
         """「当前这一格」的行号：网格页是当前项，大图页是正在看的那一张（ADR 0021）。"""
-        if self._stack.currentWidget() is self._detail_page:
+        if self._in_detail_page():
             return self._current_row
         return self._grid.current_row()
 
@@ -631,7 +631,7 @@ class WriteOpsMixin:
         两处改的是同一个写操作入口（``_on_rename_committed``），所以记账、横幅、撤销、监听器回声
         在两边一样都不少。
         """
-        if self._stack.currentWidget() is self._detail_page:
+        if self._in_detail_page():
             # 没有标题栏那一段的平台上大图页没有改名字段，动作那边也是关着的（见
             # ``_update_action_states``）；这里只是不让一个看不见的输入框把键盘吃掉。
             if self._title_bar.isVisible():
@@ -681,8 +681,8 @@ class WriteOpsMixin:
             return
         if self._grid.is_renaming():
             return  # 键盘正在行内输入框里，删掉正在编辑的那一张只会让人以为出了错
-        in_detail = self._stack.currentWidget() is self._detail_page
-        if not in_detail and self._stack.currentWidget() is not self._grid_page:
+        in_detail = self._in_detail_page()
+        if not in_detail and not self._on_grid_page():
             return
         # 大图页作用的是正在看的那一张，网格页是整个选区（见 _selected_entries）；
         # 网格上的分组卡片摊平之后是它那批组员（ADR 0020）—— 大图页上不会遇到卡片。
@@ -835,14 +835,15 @@ class WriteOpsMixin:
         row = self._model.row_of_path(trashed)
         if row < 0 or self._model.photo_at(row) is None:
             return
-        self._current_row = row
         # 网格与大图从此指着同一格（与 ``_show_next_after_trash`` 那条约定一致）。
         self._grid.select_row(row, ensure_visible=False)
-        if self._stack.currentWidget() is not self._detail_page:
-            self._stack.setCurrentWidget(self._detail_page)
-            self._detail.setFocus()
-            self._update_action_states()
-        self._load_detail(row)
+        if self._in_detail_page():
+            self._current_row = row
+            self._load_detail(row)
+            return
+        # 已经退回网格（删的是这一层最后一张）：**重新打开它** —— 照片帧要真的压回去，
+        # 「在大图页」才是栈说了算，而不是画面上的一厢情愿。
+        self._open_detail(self._model.index(row, 0))
 
     def _apply_restore(self, result: UndoResult) -> None:
         """把撤销删除取回来的条目放回网格，然后按当前分组 / 排序重排一次。

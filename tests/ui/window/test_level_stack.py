@@ -19,10 +19,12 @@ from gallery.ui.window.level_stack import (
     CalendarFrame,
     GroupFrame,
     LevelStack,
+    PageRole,
     PhotoFrame,
     RootKind,
     SearchFrame,
     label_of,
+    page_role_of,
 )
 
 
@@ -318,3 +320,38 @@ def test_the_search_frame_has_no_short_label() -> None:
     占位的非空串只会让那句文案悄悄多出一截没头没尾的字。
     """
     assert label_of(SearchFrame(conditions=())) == ""
+
+
+def test_the_page_is_a_function_of_the_stack() -> None:
+    """画哪一页 = 栈（:func:`page_role_of`）：这是「页面」唯一的那份判据。
+
+    **未摊开的那一格归日历页**（``expanded=False``）：它是「日历格 + 照片」一起进出的一对，
+    屏幕上从没见过它的网格 —— 把它算成网格页正是「日历页摆在前面、标题却写着大图页」那类
+    不一致的来源。
+    """
+    assert page_role_of(LevelStack(root=RootKind.FLAT), has_library=False) is PageRole.WELCOME
+
+    detail = (
+        LevelStack(root=RootKind.ALBUMS)
+        .push(AlbumFrame(Path("/lib/a")))
+        .push(PhotoFrame(Path("/lib/a/x.jpg")))
+    )
+    assert page_role_of(detail, has_library=True) is PageRole.DETAIL
+
+    assert page_role_of(LevelStack(root=RootKind.CALENDAR), has_library=True) is PageRole.CALENDAR
+    single = LevelStack(root=RootKind.CALENDAR).push(
+        CalendarFrame(photos=(_photo(),), label="某天", expanded=False)
+    )
+    assert page_role_of(single, has_library=True) is PageRole.CALENDAR, (
+        "只有一张的那一格（从没摊成网格）被算成了网格页"
+    )
+
+    for stack in (
+        LevelStack(root=RootKind.CALENDAR).push(CalendarFrame(photos=(_photo(),), label="某天")),
+        LevelStack(root=RootKind.CALENDAR).push(SearchFrame(conditions=())),
+        LevelStack(root=RootKind.ALBUMS).push(AlbumFrame(Path("/lib/a"))),
+        LevelStack(root=RootKind.FLAT),
+    ):
+        assert page_role_of(stack, has_library=True) is PageRole.GRID, (
+            f"{stack.root} / {stack.top!r} 该画网格页"
+        )

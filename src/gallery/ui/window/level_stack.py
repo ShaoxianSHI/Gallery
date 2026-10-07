@@ -36,11 +36,13 @@ __all__ = [
     "Frame",
     "GroupFrame",
     "LevelStack",
+    "PageRole",
     "PhotoFrame",
     "RootKind",
     "SearchFrame",
     "browse_mode_of",
     "label_of",
+    "page_role_of",
     "root_for",
 ]
 
@@ -287,6 +289,40 @@ class LevelStack:
         才是可预期的 —— 留着相册链就等于让它在栈里悬空。
         """
         return LevelStack(root=root)
+
+
+class PageRole(Enum):
+    """这条栈该被画成哪一页 —— **页面的唯一判据**。
+
+    各条路径不再各自挑一页（那样「页面」与「我在哪」是两份记账，迟早对不上）：先改栈，
+    再由 :func:`page_role_of` 算出该画哪一页。四个值对应窗口里那四个内容页。
+    """
+
+    WELCOME = "welcome"
+    GRID = "grid"
+    CALENDAR = "calendar"
+    DETAIL = "detail"
+
+
+def page_role_of(stack: LevelStack, *, has_library: bool) -> PageRole:
+    """这一条栈此刻该画成哪一页（纯函数，不碰 Qt）。
+
+    - **没有库** → 欢迎页：一个库都没打开时没有「这一层」可言。
+    - **栈顶是照片帧** → 大图页（它是压在最上面的一层）。
+    - **栈底是日历、顶上没有摊开的层** → 日历页。未摊开的那一格（``expanded=False``）也算
+      「没有」：它是「日历格 + 照片」**一起进出的一对**，屏幕上从没见过它的网格。
+    - **其余**（相册 / 分组 / 摊开的日历格 / 搜索结果）→ 网格页。
+    """
+    if not has_library:
+        return PageRole.WELCOME
+    top = stack.top
+    if isinstance(top, PhotoFrame):
+        return PageRole.DETAIL
+    if stack.root is RootKind.CALENDAR and (
+        top is None or (isinstance(top, CalendarFrame) and not top.expanded)
+    ):
+        return PageRole.CALENDAR
+    return PageRole.GRID
 
 
 def label_of(frame: Frame | None) -> str:

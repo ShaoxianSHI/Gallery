@@ -308,3 +308,26 @@ def test_an_empty_cell_is_not_the_same_as_not_in_a_cell() -> None:
     # 不在那一格时才报 None。
     nowhere = _host_with(LevelStack(root=RootKind.CALENDAR))
     assert nowhere._drill_photos is None, "不在那一格却报了一个照片列表"
+
+
+def test_the_page_is_written_only_by_the_sync_method() -> None:
+    """**换页只有一处** —— ``ui/window/`` 里只有 ``level_stack_mixin.py`` 能换页。
+
+    页面是栈的函数（``page_role_of``）—— 别处一旦自己挑一页，「我在哪」就又变成两份记账，
+    而两份记录迟早对不上（症状：日历页摆在前面、标题却写着大图页）。
+    """
+    root = _source_root() / "window"
+    offenders: list[str] = []
+    for path in sorted(root.rglob("*.py")):
+        relative = path.relative_to(root).as_posix()
+        if relative == "level_stack_mixin.py":
+            continue
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if isinstance(func, ast.Attribute) and func.attr == "setCurrentWidget":
+                offenders.append(f"{relative}:{node.lineno}")
+    assert not offenders, (
+        "这些地方自己换了页，该交给 `_sync_page_to_stack()` 按栈摆：\n" + "\n".join(offenders)
+    )

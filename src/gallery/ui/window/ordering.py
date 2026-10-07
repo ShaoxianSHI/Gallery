@@ -466,10 +466,10 @@ class OrderingMixin:
         library = self._library
         if library is None:
             return
-        in_grid = self._stack.currentWidget() is self._grid_page
+        in_grid = self._on_grid_page()
         try:
             # 大图页上不重排（ADR 0025 决策 4）—— 但日历那一页仍然要喂。
-            if self._stack.currentWidget() is not self._detail_page:
+            if not self._in_detail_page():
                 self._reorder_level(library)
         finally:
             # 顺序定下来了，这才有资格回答「这一层是不是空的」。
