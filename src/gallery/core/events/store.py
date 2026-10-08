@@ -611,6 +611,7 @@ class EventStore:
         connection = self._require()
         keys = [str(path) for path in paths]
         removed = 0
+        cleared = 0
         with self._lock, connection:
             for start in range(0, len(keys), CHUNK):
                 chunk = keys[start : start + CHUNK]
@@ -621,7 +622,9 @@ class EventStore:
                     [event_id, *chunk],
                 )
                 removed += max(cursor.rowcount, 0)
-                self._clear_covers_in(connection, chunk, event_id=event_id)
+                cleared += self._clear_covers_in(connection, chunk, event_id=event_id)
+        if cleared:
+            self._changed()
         return removed
 
     def _clear_covers_in(
@@ -630,8 +633,8 @@ class EventStore:
         keys: Sequence[str],
         *,
         event_id: int | None = None,
-    ) -> None:
-        """这些路径不再被绑着，于是指向它们的封面要清空（ADR 0048 决策 1）。
+    ) -> int:
+        """这些路径不再被绑着，于是指向它们的封面要清空（ADR 0048 决策 1）。返回清掉几条。
 
         **与删绑定在同一个事务里**：分两次写的话，中间那一刻库里就有一个「封面指向一张不属于
         这次事件的照片」的瞬间 —— 而那正是崩在这条路上会留下的东西。
@@ -641,17 +644,18 @@ class EventStore:
         """
         placeholders = ", ".join(["?"] * len(keys))
         if event_id is None:
-            connection.execute(
+            cursor = connection.execute(
                 f"UPDATE {SCHEMA_NAME}.events SET {COVER.column} = NULL"
                 f" WHERE {COVER.column} IN ({placeholders})",
                 list(keys),
             )
         else:
-            connection.execute(
+            cursor = connection.execute(
                 f"UPDATE {SCHEMA_NAME}.events SET {COVER.column} = NULL"
                 f" WHERE id = ? AND {COVER.column} IN ({placeholders})",
                 [event_id, *keys],
             )
+        return max(cursor.rowcount, 0)
 
     def forget_bindings(self, paths: Sequence[Path]) -> int:
         """删掉这些路径上的**全部**绑定，返回删了几条（孤儿清理，ADR 0043 决策 9）。
@@ -670,6 +674,7 @@ class EventStore:
             return 0
         keys = [str(path) for path in paths]
         removed = 0
+        cleared = 0
         with self._lock, connection:
             for start in range(0, len(keys), CHUNK):
                 chunk = keys[start : start + CHUNK]
@@ -679,7 +684,9 @@ class EventStore:
                     chunk,
                 )
                 removed += max(cursor.rowcount, 0)
-                self._clear_covers_in(connection, chunk)
+                cleared += self._clear_covers_in(connection, chunk)
+        if cleared:
+            self._changed()
         return removed
 
     def _apply_moves(self, moves: Iterable[tuple[Path, Path, bool]]) -> int:
@@ -696,6 +703,7 @@ class EventStore:
         if not pairs:
             return 0
         moved = 0
+        covers = 0
         with self._lock, connection:
             for old, new, is_dir in pairs:
                 if is_dir:
@@ -712,37 +720,47 @@ class EventStore:
                         f" WHERE path LIKE ? ESCAPE '{ESCAPE}' OR path = ?",
                         parameters,
                     )
-                    self._move_covers(connection, is_dir=True, parameters=parameters)
+                    covers += self._move_covers(connection, is_dir=True, parameters=parameters)
                 else:
                     cursor = connection.execute(
                         f"UPDATE OR REPLACE {SCHEMA_NAME}.{BINDINGS_TABLE}"
                         f" SET path = ? WHERE path = ?",
                         (str(new), str(old)),
                     )
-                    self._move_covers(connection, is_dir=False, parameters=(str(new), str(old)))
+                    covers += self._move_covers(
+                        connection, is_dir=False, parameters=(str(new), str(old))
+                    )
                 moved += max(cursor.rowcount, 0)
+        # **搬了封面就要作废那份清单缓存**：封面是事件那一行上的值，而清单是会话里缓存住的一份
+        # （``Library.all_events``）。不作废的话，库里已经是新路径、界面上那份还是旧的 ——
+        # 症状是「改完名，面板里那个封面还指着上一个名字」，而用户没有任何办法把它刷新掉。
+        if covers:
+            self._changed()
         return moved
 
     def _move_covers(
         self, connection: sqlite3.Connection, *, is_dir: bool, parameters: tuple[object, ...]
-    ) -> None:
-        """把封面从旧位置改写到新位置。**参数与绑定那一句逐字相同**，于是两种形状各写一遍 SQL。
+    ) -> int:
+        """把封面从旧位置改写到新位置，返回改掉几条。
+
+        **参数与绑定那一句逐字相同**，于是两种形状各写一遍 SQL（相册那一支按前缀改写后缀）。
 
         单张照片的封面可能同时是**几个**事件的封面（一张照片属于好几种事件是成立的），
         所以这里不按事件逐个去改 —— 一句 ``WHERE cover_path = ?`` 改掉全部。
         """
         if is_dir:
-            connection.execute(
+            cursor = connection.execute(
                 f"UPDATE {SCHEMA_NAME}.events"
                 f" SET {COVER.column} = ? || substr({COVER.column}, ?)"
                 f" WHERE {COVER.column} LIKE ? ESCAPE '{ESCAPE}' OR {COVER.column} = ?",
                 parameters,
             )
         else:
-            connection.execute(
+            cursor = connection.execute(
                 f"UPDATE {SCHEMA_NAME}.events SET {COVER.column} = ? WHERE {COVER.column} = ?",
                 parameters,
             )
+        return max(cursor.rowcount, 0)
 
     def _kind_of(self, event_id: int) -> str:
         """这一条事件是哪一类。改它之前要按类型拼扩展表的列，所以得先问一次。"""

@@ -111,6 +111,15 @@ class MenuActions:
     edit_event: QAction | None = None
     #: 「从这次事件移出」——同上，作用对象是卡片背后的那批照片。
     leave_event: QAction | None = None
+    #: 「设为事件封面 →（它所属的那些事件）」（ADR 0048 决策 6）。**恰好选中一张照片、
+    #: 而它属于至少一个事件时才有**，否则 ``None``（不出现，不是置灰）。
+    #: 与 :attr:`set_cover` 同姿态（命令挂在照片上），但它是**子菜单**：一张照片可以同时
+    #: 属于一次演出与一次旅行，「设为哪一个事件的封面」这个问题是真实的。
+    #: 写的是 Gallery 自己的库，与「记录为…」同族，于是也摆在第四组。
+    set_event_cover: QMenu | None = None
+    #: 「清除事件封面」——**只在事件分组卡片上、且它真的被指定过封面时出现**。
+    #: 没有封面就没有需要撤销的东西（与 :attr:`clear_cover` 同一处置）。
+    clear_event_cover: QAction | None = None
 
 
 def build_photo_menu(actions: MenuActions, *, multiple: bool) -> QMenu:
@@ -170,7 +179,9 @@ def build_group_menu(actions: MenuActions) -> QMenu:
     与同段其余几条同一套摊平语义（ADR 0044）。
 
     **事件分组卡片**额外多两行（ADR 0043 决策 8）：那一组就是某个事件，于是「改个名」与
-    「把某张踢出去」在卡片上直接做得到，不必退回照片逐张右键。
+    「把某张踢出去」在卡片上直接做得到，不必退回照片逐张右键。真设过封面时还多一行
+    「清除事件封面」（ADR 0048 决策 6）—— 与相册那一条（ADR 0028）同一处置：
+    没设过就没有需要撤销的东西，所以那一行不出现而不是置灰。
     """
     menu = ShortcutColumnMenu()
     _add_look_group(menu, actions, multiple=False)
@@ -183,6 +194,8 @@ def build_group_menu(actions: MenuActions) -> QMenu:
         menu.addAction(actions.edit_event)
     if actions.leave_event is not None:
         menu.addAction(actions.leave_event)
+    if actions.clear_event_cover is not None:
+        menu.addAction(actions.clear_event_cover)
     menu.addAction(actions.copy_group)
     return menu
 
@@ -310,16 +323,20 @@ def _add_write_group(
 
 
 def _add_metadata_group(menu: ShortcutColumnMenu, actions: MenuActions, *, multiple: bool) -> None:
-    """第四组「它是什么」：记录为… · 显示元数据信息 · 复制元数据（ADR 0023、ADR 0043）。
+    """第四组「它是什么」：记录为… · 设为事件封面 · 显示元数据信息 · 复制元数据
+    （ADR 0023、ADR 0043、ADR 0048）。
 
     后两条都是只读问答。而「记录为…」放在这一组的**最前面**：它同样是在说「这几张照片是什么」，
     而且它动的是 Gallery 自己的库（一个用户的文件都不碰），所以它不属于第三组「会动文件」。
+    **「设为事件封面」紧跟其后、同属这一族** —— 它也是「这张照片在这个事件里扮演什么」，
+    写的还是 Gallery 自己的库；而放在第三组会让「改卡片长什么样」看起来像在动用户的文件。
 
     **多选时后两条不出现，而这一组的分隔线留着** —— 那道线是「它是什么」这一组的界标，
     少了它「记录为…」看起来就像第三组的一部分（可它一个字节都不动用户的文件）。
     「记录为…」多选时照样出现：一次记一批是这件事最自然的用法。
+    「设为事件封面」多选时不出现：**把哪一张当封面说不清**，与「重命名…」同一理由。
     """
-    if actions.record_as is not None or not multiple:
+    if actions.record_as is not None or actions.set_event_cover is not None or not multiple:
         menu.addSeparator()
     if actions.record_as is not None:
         # guard: allow-long-comment（addAction(menuAction()) 不接管所有权，临时包回收后菜单项悬空）
@@ -327,6 +344,8 @@ def _add_metadata_group(menu: ShortcutColumnMenu, actions: MenuActions, *, multi
         # 它在 ``MenuActions`` 这份临时包里一被回收就析构，留在菜单里的就成了悬空的 menuAction
         # （点开时报 ``Internal C++ object already deleted``）。相册那两个清单走的也是 addMenu。
         menu.addMenu(actions.record_as)
+    if actions.set_event_cover is not None:
+        menu.addMenu(actions.set_event_cover)
     if multiple:
         return
     menu.addAction(actions.metadata)

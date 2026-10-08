@@ -25,7 +25,7 @@ from gallery.core.errors import EventsUnavailableError, GalleryError
 from gallery.core.events.kinds import EVENT_KINDS, EventKind, kind_by_id
 from gallery.core.events.orphans import OrphanScan
 from gallery.core.events.prefill import EventPrefill, prefill_from_photos
-from gallery.core.events.store import Event
+from gallery.core.events.store import Event, EventRef
 from gallery.core.library.facade import ShowImportPlan
 from gallery.core.library.photos import GridEntry, GroupRef, PhotoRef
 from gallery.core.metadata.facets import FACET_EVENT
@@ -90,9 +90,15 @@ class EventFlowMixin:
         usable = self._group_card_event_id() is not None
         self._edit_event_action.setEnabled(usable)
         self._leave_event_action.setEnabled(usable)
+        # 「清除事件封面」按的是同一个判据（那一条摆在同一张卡片上），
+        # 但多一条「这一格背后的事件真的设过封面」—— 两样都在这里算，不在菜单拼装那一遍。
+        clear_cover = getattr(self, "_clear_cover_event_action", None)
+        if clear_cover is not None:
+            clear_cover.setEnabled(self.covered_event() is not None)
 
     def _ensure_event_actions(self) -> None:
-        """建那两个**常驻窗口**的动作（事件分组卡片上的「编辑事件…」与「从这次事件移出」）。
+        """建那三个**常驻窗口**的动作（事件分组卡片上的「编辑事件…」「从这次事件移出」
+        与「清除事件封面」）。
 
         它们常驻而不是每次现建：要挂到窗口上（否则快捷键不注册），也要能被
         ``_update_action_states`` 按「此刻有没有一个认得的事件」管灰度（与菜单里其余动作同一套）。
@@ -105,6 +111,31 @@ class EventFlowMixin:
         self._leave_event_action = QAction("从这次事件移出", self)
         self._leave_event_action.triggered.connect(self._leave_group_card)
         self.addAction(self._leave_event_action)
+        self._clear_cover_event_action = QAction("清除事件封面", self)
+        self._clear_cover_event_action.triggered.connect(self._clear_cover_of_group_card)
+        self.addAction(self._clear_cover_event_action)
+
+    def _clear_cover_of_group_card(self) -> None:
+        """把卡片背后那个事件的封面收掉，回到「组内第一张」。"""
+        event_id = self._group_card_event_id()
+        if event_id is None:
+            return
+        library = self._library
+        if library is None:
+            return
+        event = library.event(event_id)
+        if event is None:
+            self._show_banner("这个事件已经不在了。")
+            return
+        try:
+            library.clear_event_cover(event.id)
+        except GalleryError as exc:
+            logger.info("取消事件封面失败：%s", exc.detail or exc.message)
+            self._show_banner(exc.message)
+            return
+        self._after_events_changed()
+        self._show_banner(banners.event_cover_cleared_banner(event.display_name))
+        self._refresh_undo_label()
 
     def _group_card_event_id(self) -> int | None:
         """此刻光标所在那张组卡片背后的事件 id。"""
@@ -374,6 +405,142 @@ class EventFlowMixin:
             for ref in refs:
                 seen.setdefault(ref.id, ref.title)
         return [(title, event_id) for event_id, title in sorted(seen.items(), reverse=True)]
+
+    # ---- 封面 --------------------------------------------------------------
+
+    # guard: allow-long-comment（这一步踩过：同名方法静默失效，不是报错）
+    # **名字必须带 ``event_``**：``WriteOpsMixin`` 已经有一个 ``cover_candidate()``（相册封面，
+    # ADR 0028），而它在 ``MainWindow`` 的基类列表里排在 ``EventFlowMixin`` **前面** ——
+    # 于是同名的那一个永远不会被调用，而症状是「菜单里压根没有这一条」，没有任何报错。
+    def event_cover_candidate(self) -> Path | None:
+        """「设为事件封面」此刻作用于哪张照片 —— **恰好一张，且它属于至少一个事件**。
+
+        判据与 ADR 0028 决策 1 的相册那一支同款（照片侧的入口一按就是），多选时不出现：
+        **把哪一张当封面说不清**，与「重命名…」同一个理由。
+
+        「属于至少一个事件」是这一条与相册那条唯一的区别 —— 相册就是照片的父目录，
+        而照片可能同时属于一次演出与一次旅行，所以**还要问是哪一次**（子菜单那一层）。
+        """
+        library = self._library
+        entries = self._selected_entries()
+        if library is None or len(entries) != 1 or not isinstance(entries[0], PhotoRef):
+            return None
+        return entries[0].path if self._cover_events(entries[0].path) else None
+
+    def covered_event(self, entry: GridEntry | None = None) -> int | None:
+        """「清除事件封面」此刻作用于哪个事件 —— **卡片背后的那个事件，且它真的设过封面**。
+
+        没设过就返回 ``None``，于是那一行不出现（用户看得见自己设过，也就没有需要撤销的东西，
+        与 ADR 0028 决策 5 同一处置）。
+
+        :param entry: 那一格。传进来是因为菜单是**按右键按到的那一行**拼的，
+            而当前项未必是它（测试直接调 :meth:`context_menu_for` 时就是这样）。
+        """
+        library = self._library
+        event_id = _event_id_of(entry) if entry is not None else self._group_card_event_id()
+        if library is None or event_id is None:
+            return None
+        event = library.event(event_id)
+        return event_id if event is not None and event.cover_path is not None else None
+
+    def set_event_cover_menu(self) -> QMenu | None:
+        """「设为事件封面 →（它所属的那些事件）」那一层；此刻没有可设的对象就是 ``None``。
+
+        **只在选中恰好一张照片时才问库**：别的落点（空白处、相册、组卡片）在
+        :meth:`event_cover_candidate` 的第一道判据就返回了，一次 SQL 都不发。
+        """
+        events = self._cover_events_of_selection()
+        if not events:
+            return None
+        menu = self._ensure_cover_menu()
+        self._fill_cover_menu(menu, events)
+        return menu
+
+    def _ensure_cover_menu(self) -> QMenu:
+        """建那一层子菜单并挂上回调。**建一次就留着**：每次右键现建的话，
+        ``_cover_event_menu`` 那一份的所有权握在临时包里，一被回收菜单项就成了悬空的
+        （与 ``menus._add_metadata_group`` 里那条注释是同一个坑）。
+        """
+        menu = getattr(self, "_cover_event_menu", None)
+        if menu is not None:
+            return menu
+        menu = ShortcutColumnMenu("设为事件封面")
+        menu.setToolTipsVisible(True)
+        menu.aboutToShow.connect(self._on_cover_menu_about_to_show)
+        menu.triggered.connect(self._on_cover_event_chosen)
+        self._cover_event_menu = menu
+        return menu
+
+    def _on_cover_menu_about_to_show(self) -> None:
+        """展开那一刻按**此刻**的选区重填。"""
+
+        def fill() -> None:
+            self._fill_cover_menu(self._cover_event_menu, self._cover_events_of_selection())
+
+        fill()
+
+    def _fill_cover_menu(self, menu: QMenu, events: Sequence[tuple[str, int]]) -> None:
+        """清单与置灰**用同一份**：置灰再问一次库就是两次 SQL，而两者本该是同一个答案。"""
+        menu.clear()
+        for title, event_id in events:
+            menu.addAction(title).setData(event_id)
+        menu.setDisabled(not events)
+
+    def _cover_events_of_selection(self) -> list[tuple[str, int]]:
+        """当前选中的那张照片属于哪些事件（「设为事件封面 →」列的就是它）。**一次 SQL**。
+
+        顺序与「从这次事件移出」那一层一致（按 id 降序）：两处摆的是同一批事件，
+        而用户在这两处来回走，顺序不一样会以为它们是两批东西。
+        """
+        library = self._library
+        photo = self.event_cover_candidate()
+        if library is None or photo is None:
+            return []
+        refs = library.events_for_photos([photo]).get(photo, ())
+        return [(ref.label, ref.id) for ref in sorted(refs, key=lambda ref: ref.id, reverse=True)]
+
+    def _cover_events(self, photo: Path) -> tuple[EventRef, ...]:
+        """这张照片属于哪些事件。
+
+        **事件库不可用时当没有这回事**（与 :meth:`_events_usable` 同一判据）——
+        文件已经在那儿，用户并没有第三个有意义的选择。
+        """
+        library = self._library
+        if library is None or not self._events_usable():
+            return ()
+        return library.events_for_photos([photo]).get(photo, ())
+
+    def set_selected_as_event_cover(self, event_id: int) -> None:
+        """把当前选中的那张照片设成这个事件的封面（ADR 0048 决策 6）。
+
+        **写的是 Gallery 自己的库**，用户的照片一个字节都不动 —— 所以它不住 ``write_ops``
+        （那一个只管会动用户文件的入口）。可 ⌘Z：走的是与改事件同一条记 journal 的路。
+        """
+        library = self._library
+        photo = self.event_cover_candidate()
+        if library is None or photo is None:
+            return
+        event = library.event(event_id)
+        if event is None:
+            self._show_banner("这个事件已经不在了。")
+            return
+        try:
+            library.set_event_cover(event.id, photo)
+        except GalleryError as exc:
+            logger.info("设置事件封面失败：%s", exc.detail or exc.message)
+            self._show_banner(exc.message)
+            return
+        self._after_events_changed()
+        self._show_banner(banners.event_cover_set_banner(event.display_name, photo.name))
+        self._refresh_undo_label()
+
+    def _on_cover_event_chosen(self, action: QAction) -> None:
+        """子菜单里点了哪一个事件。``data`` 就是事件 id。"""
+        try:
+            event_id = int(action.data())  # type: ignore[arg-type]
+        except (TypeError, ValueError):  # pragma: no cover - 菜单里摆的都是整数
+            return
+        self.set_selected_as_event_cover(event_id)
 
     # ---- 动作 --------------------------------------------------------------
 

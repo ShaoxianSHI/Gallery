@@ -38,7 +38,14 @@ from PySide6.QtWidgets import (  # noqa: E402
 )
 from waiting import wait_for_idle, wait_until  # noqa: E402
 
-from gallery.core.events.kinds import EVENT_KINDS, SHOW, TRIP, EventKind, fields_of  # noqa: E402
+from gallery.core.events.kinds import (  # noqa: E402
+    COVER,
+    EVENT_KINDS,
+    SHOW,
+    TRIP,
+    EventKind,
+    fields_of,
+)
 from gallery.core.events.store import Event, EventDraft  # noqa: E402
 from gallery.core.library.config import BROWSE_MODE_ALBUMS, prepare_library  # noqa: E402
 from gallery.core.library.photos import GroupRef  # noqa: E402
@@ -1200,11 +1207,111 @@ def test_editing_an_existing_event_does_not_prefill_from_the_selection(
 def test_the_panel_is_built_from_the_field_definitions(
     qt_app: QApplication, kind: EventKind
 ) -> None:
-    """**控件由事件的定义生成**：每一类独有的字段加上四个公共字段，一样不少
-    （ADR 0043 决策 3）。"""
-    dialog = EventEditDialog(None, kind)
+    """**控件由事件的定义生成**：每一类独有的字段加上那几个公共字段，一样不少
+    （ADR 0043 决策 3）。
 
-    assert sorted(dialog._fields) == sorted(field.id for field in fields_of(kind))
+    **封面不在 ``_fields`` 里**：它不是一格文字，控件是 :meth:`EventEditDialog._build_cover`
+    单独摆的（``EventField.control`` 说了算，ADR 0048 决策 2）。所以这里的期望值是
+    **声明为文字的那些字段** —— 用 ``control`` 过滤，而不是把封面单独特判掉。
+    """
+    dialog = EventEditDialog(None, kind)
+    text_fields = [field.id for field in fields_of(kind) if not field.control]
+
+    assert sorted(dialog._fields) == sorted(text_fields)
+    assert COVER.control and COVER.id not in dialog._fields
+
+
+def test_saving_the_panel_does_not_clear_the_cover(qt_app: QApplication, tmp_path: Path) -> None:
+    """打开面板改个目的地按保存，**封面还在**。
+
+    这是整个封面功能里最容易犯的一处错（ADR 0048 决策 2）：``EventStore.update`` 拿整份草稿
+    写所有列，而面板若没把封面放进那份草稿，它就被写成 NULL —— 而界面上没有任何一句话
+    说过「保存会清掉封面」。
+    """
+    photo = tmp_path / "海边-01.jpg"
+    event = Event(
+        id=1,
+        kind="trip",
+        created_at=0,
+        modified_at=0,
+        values={
+            "title": "京都五日",
+            "started_on": None,
+            "ended_on": None,
+            "note": None,
+            "cover": str(photo),
+            "destination": "京都",
+        },
+    )
+    dialog = EventEditDialog(None, TRIP, event=event)
+    dialog._fields["destination"].setText("奈良")  # type: ignore[union-attr]
+
+    assert dialog.edit().draft.text(COVER.id) == str(photo)
+
+
+def test_clearing_the_cover_in_the_panel_takes_effect_on_save(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """面板里那个「清除封面」按下去之后，草稿里那一格是空的 —— 而**别的字段原样**。
+
+    顺带断一句「清除封面只动封面」：它是面板上的一个按钮，不是清空整个事件的快捷方式。
+    """
+    photo = tmp_path / "海边-01.jpg"
+    event = Event(
+        id=1,
+        kind="trip",
+        created_at=0,
+        modified_at=0,
+        values={
+            "title": "京都五日",
+            "started_on": None,
+            "ended_on": None,
+            "note": "带家人",
+            "cover": str(photo),
+            "destination": "京都",
+        },
+    )
+    dialog = EventEditDialog(None, TRIP, event=event)
+
+    dialog._clear_cover()
+
+    draft = dialog.edit().draft
+    assert draft.text(COVER.id) == ""
+    assert draft.text("title") == "京都五日"
+    assert draft.text("note") == "带家人"
+
+
+def test_the_cover_row_is_disabled_while_creating_an_event(qt_app: QApplication) -> None:
+    """新建时那一行禁用，**并且说清为什么** —— 摆着一个按不动的按钮只会被当成坏的。"""
+    dialog = EventEditDialog(None, TRIP)
+
+    assert not dialog._clear_cover_button.isEnabled()
+    assert "建好之后" in dialog._cover_label.text()
+
+
+def test_the_cover_row_shows_the_file_name_not_the_whole_path(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """那一行显示**文件名**：一行输入框那么宽，塞不下全路径，也没人要看它。"""
+    photo = tmp_path / "海边-01.jpg"
+    event = Event(
+        id=1,
+        kind="trip",
+        created_at=0,
+        modified_at=0,
+        values={
+            "title": "京都五日",
+            "started_on": None,
+            "ended_on": None,
+            "note": None,
+            "cover": str(photo),
+            "destination": "京都",
+        },
+    )
+
+    dialog = EventEditDialog(None, TRIP, event=event)
+
+    assert dialog._cover_label.text() == "海边-01.jpg"
 
 
 def test_the_fields_say_nothing_under_them(qt_app: QApplication) -> None:

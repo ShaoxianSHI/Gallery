@@ -201,6 +201,37 @@ def test_an_external_rename_reported_by_the_watcher_carries_the_cover(
     assert _cover_of(library, event_id) == library.root / "海边-09.jpg"
 
 
+def test_renaming_invalidates_the_cached_event_list(library: Library) -> None:
+    """改名之后 ``Library.all_events()`` 那份缓存要作废 —— **漏了不报错**。
+
+    症状是「库里已经是新路径、界面上那份清单还是旧的」：面板里那个封面还指着上一个名字，
+    而用户没有任何办法把它刷新掉（除非切库或改点别的）。缓存的作废挂在唯一的写入方上
+    （``EventStore.on_change``），而搬封面是第四个会改事件那一行的操作。
+    """
+    event_id = _event(library)
+    photo = library.root / "海边-01.jpg"
+    library.bind_photos([photo], event_id)
+    library.set_event_cover(event_id, photo)
+    assert library.all_events()[0].cover_path == photo  # 先把缓存填上
+
+    library.rename_entry(PhotoRef.from_path(photo), "新的名字.jpg")
+
+    assert library.all_events()[0].cover_path == library.root / "新的名字.jpg"
+
+
+def test_unbinding_the_cover_invalidates_the_cached_event_list(library: Library) -> None:
+    """同一条：解绑要清封面，清了就要作废那份缓存（与改名同一类症状）。"""
+    event_id = _event(library)
+    photo = library.root / "海边-01.jpg"
+    library.bind_photos([photo], event_id)
+    library.set_event_cover(event_id, photo)
+    assert library.all_events()[0].cover_path == photo
+
+    library.unbind_photos([photo], event_id)
+
+    assert library.all_events()[0].cover_path is None
+
+
 def test_a_photo_shared_by_two_events_is_the_cover_of_both(library: Library) -> None:
     """一张照片可以同时属于好几种事件，于是它可以是**两个**事件的封面。
 

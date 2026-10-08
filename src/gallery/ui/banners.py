@@ -88,6 +88,20 @@ def photos_unbound_banner(count: int, event_name: str) -> str:
     return f"已把 {count} 张照片从「{event_name}」里拿出来。"
 
 
+def event_cover_set_banner(event_name: str, photo_name: str) -> str:
+    """把某张照片设成事件封面之后（ADR 0048）。
+
+    **说清是哪一张**：用户刚点的是网格里那一张，而横幅出现在内容上方 ——
+    不点名的话，「已设置封面」在几十张缩略图之上等于没说。
+    """
+    return f"已把「{photo_name}」设为「{event_name}」的封面。⌘Z 可以撤销。"
+
+
+def event_cover_cleared_banner(event_name: str) -> str:
+    """取消事件封面之后。**说清回到哪儿去** —— 用户要的可能是「换一张」而不是「不要封面」。"""
+    return f"已取消「{event_name}」的封面，现在用的是第一张照片。⌘Z 可以撤销。"
+
+
 def shows_imported_banner(created: int, duplicates: int, skipped: int) -> str:
     """从「演迹」导入演出之后（ADR 0047）。
 
@@ -446,6 +460,8 @@ __all__ = [
     "album_cover_cleared_banner",
     "album_name",
     "duplicate_banner",
+    "event_cover_cleared_banner",
+    "event_cover_set_banner",
     "event_created_banner",
     "event_deleted_banner",
     "event_undo_banner",

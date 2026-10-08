@@ -5,17 +5,21 @@
 :func:`~gallery.core.events.kinds.fields_of` 摆出来，所以加一类事件、给它加一个字段，
 这里一个字都不用改 —— 面板与建表语句共用同一份定义（ADR 0043 决策 3）。
 
-两处判断写在代码里：
+三处判断写在代码里：
 
 - **名称给一个默认值**：填了目的地与日期之后名称栏自己长成「日期 · 目的地」，直到用户动手
   改过它为止（见 :meth:`_suggest_title`）。
 - **「把这段日期之间的照片都记进来」** 摆在面板上而**不在右键菜单里** —— 多一级菜单会让
   「记录为 → 旅行 → 京都五日」变成四级，而这一步本来就只在做这件事的时候才想到（ADR 0043 决策 4）。
+- **封面那一行不是输入框**（``EventField.control`` 说了算，ADR 0048 决策 2）：它显示当前是哪一张，
+  配一个「清除封面」；**挑选在网格里做**（照片右键菜单），新建时整行禁用并说明为什么。
+  它仍然要出现在 :meth:`_values` 里 —— 那份草稿是「写所有列」的依据，漏掉一格就是清空封面。
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Final
 
 from PySide6.QtCore import Qt
@@ -35,6 +39,7 @@ from PySide6.QtWidgets import (
 )
 
 from gallery.core.events.kinds import (
+    COVER,
     EventField,
     EventKind,
     cost_problem,
@@ -204,6 +209,9 @@ class EventEditDialog(QDialog):
         #: 上一次**自动生成**的名称。用户动过它之后就不再自动改了 —— 手写的名字是他的意思。
         self._auto_title = ""
         self._fields: dict[str, FieldWidget] = {}
+        #: 用户在面板里按了「清除封面」。**与「库里本来就没设」分开** ——
+        #: 前者是一次待写入的改动，后者什么都不用做。
+        self._cover_cleared = False
 
         self.setWindowTitle("编辑事件" if event is not None else f"新建{kind.label}")
         self.setModal(True)
@@ -266,10 +274,73 @@ class EventEditDialog(QDialog):
         form.setSpacing(6)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
         for field in fields_of(self._kind):
+            if field is COVER:
+                # 封面不是一格文字：它显示当前是哪一张，配一个「清除」，
+                # 而**新建时整行禁用**（见 :meth:`_build_cover`）。
+                form.addRow(field.label, self._build_cover())
+                continue
             widget = self._build_field(field)
             self._fields[field.id] = widget
             form.addRow(field.label, widget)
         return form
+
+    def _build_cover(self) -> QWidget:
+        """封面那一行：**当前封面的文件名 + 一个「清除封面」**，点后者直接收掉。
+
+        **v1 不做缩略图挑选器**（ADR 0048 决策 2）：新建时「哪些照片会被记进去」要到面板
+        关掉之后才定下来（``_bind_the_new_one``），那时候给一份不完整的候选列表比不给更坏；
+        而要一份完整的就是几千次 ``stat`` 加几千次解码 —— 网格里已经看得见那些照片，
+        「设为事件封面」就挂在那张照片的右键菜单上（决策 6）。
+
+        **新建时整行禁用并说明为什么**：这一行要是摆着却按不动，用户只会以为是坏的。
+        """
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        self._cover_label = QLabel()
+        layout.addWidget(self._cover_label)
+        layout.addStretch(1)
+        self._clear_cover_button = QPushButton("清除封面")
+        self._clear_cover_button.setObjectName("eventEditClearCover")
+        self._clear_cover_button.clicked.connect(self._clear_cover)
+        layout.addWidget(self._clear_cover_button)
+        # **顺序要紧**：`_cover_row_enabled` 在禁用时会改那行字（说清为什么），
+        # 所以它要走在 `_show_cover` 后面 —— 反过来就把「为什么禁用」那句盖掉了。
+        self._show_cover(self._event.cover_path if self._event is not None else None)
+        self._cover_row_enabled(self._event is not None)
+        return row
+
+    def _show_cover(self, path: Path | None) -> None:
+        """把当前封面显示成**文件名**（不显示全路径：一行输入框那么宽，塞不下也没人要看）。
+
+        **只取 ``name``，不 ``stat``**：这一行要在面板打开的那一刻就画出来，
+        而那是主线程 —— 一次 ``stat`` 在云盘上可能几十毫秒，而文件名就够了。
+        """
+        text = path.name if path is not None else "未设置（用第一张照片）"
+        self._cover_label.setText(text)
+        self._cover_label.setToolTip(str(path) if path is not None else "")
+
+    def _cover_row_enabled(self, enabled: bool) -> None:
+        """新建时那一行禁用，且**说清为什么**（见 :meth:`_build_cover`）。"""
+        self._cover_label.setEnabled(enabled)
+        self._clear_cover_button.setEnabled(enabled and self._cover() is not None)
+        if not enabled:
+            self._cover_label.setText("建好之后再设（新建时还没有这次事件）")
+
+    def _clear_cover(self) -> None:
+        """在面板里把封面收掉。**不立刻写库** —— 面板的规矩是一次编辑只写一次（ADR 0031），
+        所以这里只改面板上那一份，按「保存」才落。"""
+        self._show_cover(None)
+        self._cover_cleared = True
+        self._clear_cover_button.setEnabled(False)
+
+    def _cover(self) -> Path | None:
+        """面板上这一份封面。``None`` 就是「用第一张」。"""
+        if self._cover_cleared:
+            return None
+        stored = self._event.cover_path if self._event is not None else None
+        return stored
 
     def _build_field(self, field: EventField) -> FieldWidget:
         """一个字段摆成什么控件：有值域的一排按钮，其余输入框。"""
@@ -324,13 +395,16 @@ class EventEditDialog(QDialog):
     def _fill(self, event: Event) -> None:
         """把已有事件的那一份摆进各个框。"""
         for field in fields_of(self._kind):
-            widget = self._fields[field.id]
+            widget = self._fields.get(field.id)
+            if widget is None:
+                continue  # 封面那一行在 :meth:`_build_cover` 里摆好了
             text = event.text(field.id)
             if isinstance(widget, ChoiceButtons):
                 widget.set_value(text)
             else:
                 widget.setText(text)
         self._auto_title = event.title
+        self._show_cover(event.cover_path)
 
     def _prefill(self, prefill: EventPrefill) -> None:
         """把从选中的照片推出来的那几个默认值填进去。**空串跳过** —— 那是「推不出来」，
@@ -392,7 +466,14 @@ class EventEditDialog(QDialog):
         )
 
     def _values(self) -> dict[str, str]:
-        return {field.id: self._text(field.id) for field in fields_of(self._kind)}
+        """面板上这一份草稿。**封面必须在这里面**（ADR 0048 决策 2）——
+        ``EventStore.update`` 是拿整份草稿写所有列的，而这里少给一格就是把它写成 NULL：
+        用户「打开面板改个目的地、按保存」，回来发现封面没了，而界面上没有任何一句话说过这事。
+        """
+        values = {field.id: self._text(field.id) for field in fields_of(self._kind)}
+        cover = self._cover()
+        values[COVER.id] = str(cover) if cover is not None else ""
+        return values
 
     def _text(self, field_id: str) -> str:
         widget = self._fields.get(field_id)

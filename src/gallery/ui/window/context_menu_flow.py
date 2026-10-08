@@ -78,11 +78,16 @@ class ContextMenuFlowMixin:
         kind = TargetKind.BLANK if entry is None else _context_kind(entry)
         multiple = len(self._grid.selected_rows()) > 1
         actions = self._menu_actions(self._context_paste(kind, entry, multiple=multiple))
-        # 事件分组卡片上多两行（ADR 0043 决策 8）：判据是「这一格是哪个事件」，所以要在
-        # ``build_menu`` 之外按那一格来定。
-        edit_event, leave_event = self._event_card_actions(entry)
+        # 事件分组卡片上多几行（ADR 0043 决策 8、ADR 0048 决策 6）：判据是「这一格是哪个事件」，
+        # 所以要在 ``build_menu`` 之外按那一格来定。
+        edit_event, leave_event, clear_cover = self._event_card_actions(entry)
         if edit_event is not None or leave_event is not None:
-            actions = replace(actions, edit_event=edit_event, leave_event=leave_event)
+            actions = replace(
+                actions,
+                edit_event=edit_event,
+                leave_event=leave_event,
+                clear_event_cover=clear_cover,
+            )
         menu = build_menu(actions, kind, multiple=multiple)
         return self._dressed_menu(menu)
 
@@ -113,16 +118,21 @@ class ContextMenuFlowMixin:
         # 大图页没有「当前这一层」可粘，因此这一份动作包里压根不带「粘贴」（ADR 0018 决策 7）。
         return self._dressed_menu(build_menu(self._menu_actions(None), TargetKind.DETAIL))
 
-    def _event_card_actions(self, entry: GridEntry | None) -> tuple[QAction | None, QAction | None]:
-        """事件分组卡片上那两行的动作（ADR 0043 决策 8），别的卡片给 ``(None, None)``。
+    def _event_card_actions(
+        self, entry: GridEntry | None
+    ) -> tuple[QAction | None, QAction | None, QAction | None]:
+        """事件分组卡片上那几行的动作（ADR 0043 决策 8、ADR 0048 决策 6），别的卡片全给 ``None``。
 
         **动作本身常驻窗口**（不是每次现建），因为它们要挂快捷键、也要能被 ``_update_action_states``
         管 —— 判据只在这里算一次：那一格背后是不是一个认得的事件。
+
+        第三个是「清除事件封面」，判据多一层（那个事件真的设过封面）。
         """
         if _event_id_of(entry) is None:
-            return None, None
+            return None, None, None
         self._ensure_event_actions()
-        return self._edit_event_action, self._leave_event_action
+        clear_cover = self._clear_cover_event_action if self.covered_event(entry) else None
+        return self._edit_event_action, self._leave_event_action, clear_cover
 
     def _dressed_menu(self, menu: QMenu) -> QMenu:
         """刚拼好的菜单在下发之前要做的那几件事：底色、圆角行距、快捷键那一列。"""
@@ -207,6 +217,10 @@ class ContextMenuFlowMixin:
             # 「记录为…」**每弹一次都现建**（与两个相册清单同款）：它是三级菜单，而第三级要
             # 到展开时才知道该列哪些事件。
             record_as=self.record_as_candidate(),
+            # 「设为事件封面 →」同样只有选中一张照片、且它属于至少一个事件时才摆
+            # （ADR 0048 决策 6）。别的落点在 ``event_cover_candidate`` 第一道判据就返回了，
+            # 一次 SQL 都不发。
+            set_event_cover=self.set_event_cover_menu(),
         )
 
     def open_current_entry(self) -> None:
