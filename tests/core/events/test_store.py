@@ -10,8 +10,10 @@ from pathlib import Path
 import pytest
 
 from gallery.core import paths
+from gallery.core.events import schema
 from gallery.core.events import store as store_module
-from gallery.core.events.kinds import EVENT_KINDS, SQL_TYPES, EventKind, fields_of
+from gallery.core.events.kinds import COVER, EVENT_KINDS, SQL_TYPES, EventKind, fields_of
+from gallery.core.events.schema import _BINDINGS_SCHEMA, _EVENTS_SCHEMA
 from gallery.core.events.store import (
     Event,
     EventDraft,
@@ -65,6 +67,7 @@ TRIP_KEYS = ("destination", "companions", "transport", "lodging", "cost", "ratin
 #: 拿定义去比它自己生成的东西永远相等（这一条最初就是这么写的，改坏一个列名它照样绿）。
 #: 这里手写下来，于是「表形状变了」能被看见 —— 而那一句话的意思是
 #: **要么改回去，要么把 :data:`store.SCHEMA_VERSION` 加一**。
+#: ``cover_path`` 是封面那一列（ADR 0048），它排在 ``note`` 之后、公共字段声明的末尾。
 _EXPECTED_EVENTS = [
     ("id", "INTEGER", 0),
     ("kind", "TEXT", 1),
@@ -72,6 +75,7 @@ _EXPECTED_EVENTS = [
     ("started_on", "TEXT", 0),
     ("ended_on", "TEXT", 0),
     ("note", "TEXT", 0),
+    ("cover_path", "TEXT", 0),
     ("created_at", "INTEGER", 1),
     ("modified_at", "INTEGER", 1),
 ]
@@ -191,33 +195,159 @@ def test_the_event_library_never_uses_wal(
     assert str(mode).lower() == "delete"
 
 
-def test_a_version_mismatch_rebuilds_only_the_event_tables(tmp_path: Path) -> None:
-    """版本对不上时重建的是**事件库自己的表**，而那句重建脚本要连类型扩展表一起列出来。
+def _open_a_v1_events_db(root: Path) -> Path:
+    """造一份**版本 1 的事件库**：没有封面那一列，里面有一条事件与一条绑定。
 
-    漏写一个表名，用户那一类的事件就没了 —— 而索引那边的重建脚本同样只列它自己的两张表。
+    走真代码（建表语句 + 写入）而不是手写 DDL —— 于是这张表与「上一版程序建出来的那张」逐字同形，
+    唯一的差别是最后那句 ``DROP COLUMN``：加封面之前的那一版**确实没有这一列**，而用当前的
+    建表语句造 fixture 的话表里已经带着它，于是「迁移有没有真的补列」这条就验不到了
+    （症状是 fixture 自己变成了一个已经是最新版的库，迁移那一步全部跳过，用例照样绿）。
+    """
+    path = paths.events_file(root)
+    path.parent.mkdir(parents=True, exist_ok=True)  # attach 平时会建这个父目录，这里是直接开文件
+    legacy = sqlite3.connect(path)
+    try:
+        # 建表语句是给「挂在索引那条连接上」写的（带 ``ev.`` 前缀），这里去掉前缀直接建文件。
+        prefix = f"{schema.SCHEMA_NAME}."
+        legacy.executescript(_EVENTS_SCHEMA.replace(prefix, ""))
+        legacy.executescript(_BINDINGS_SCHEMA.replace(prefix, ""))
+        legacy.execute(f"ALTER TABLE events DROP COLUMN {COVER.column}")
+        legacy.execute(
+            "INSERT INTO events (kind, title, created_at, modified_at)"
+            " VALUES ('trip', '京都五日', 1, 1)"
+        )
+        legacy.execute("INSERT INTO photo_events (path, event_id) VALUES ('/海边-01.jpg', 1)")
+        legacy.execute("PRAGMA user_version = 1")
+        legacy.commit()
+        columns = [row[1] for row in legacy.execute("PRAGMA table_info(events)")]
+        assert COVER.column not in columns, "这份 fixture 必须真的是「还没有封面列」的那一版"
+    finally:
+        legacy.close()
+    return path
+
+
+def test_adding_the_cover_column_keeps_the_events(tmp_path: Path) -> None:
+    """**升一级版本只加一列，用户填的事件与绑定一个字节都不动**（ADR 0048 决策 3）。
+
+    这条是整个改动里唯一一处「做错了就是不可逆的数据损失」的地方：事件是唯一一份
+    重建不出来的数据（ADR 0043 决策 1），而原先「版本对不上就 ``DROP`` 全部表」那条老路
+    让「加一列」等于清空用户填的全部事件与绑定。
+
+    所以这里从**一份真的版本 1 的库**出发（:func:`_open_a_v1_events_db`），重开一次，
+    然后逐项断言：事件还在、绑定还在、封面列存在且为空。
+
+    **重开一次库**才测得到（一条连接只挂一次 ``ev``，见 :func:`attach`）。
+    """
+    _open_a_v1_events_db(tmp_path)
+
+    connection = sqlite3.connect(tmp_path / "index.db", check_same_thread=False)
+    try:
+        store = store_module.attach(connection, threading.Lock(), root=tmp_path)
+        assert store is not None
+        events = store.all_events()
+        assert [event.title for event in events] == ["京都五日"]
+        assert store.photos_of_event(events[0].id) == (Path("/海边-01.jpg"),)
+        # 旧行补出来的那一列必须是空的 —— 也就是「用组内第一张」，与加列之前的行为一样。
+        assert events[0].cover_path is None
+        columns = [
+            str(row[1])
+            for row in connection.execute(
+                f"PRAGMA {store_module.SCHEMA_NAME}.table_info({store_module.EVENTS_TABLE})"
+            )
+        ]
+        assert "cover_path" in columns
+        assert (
+            connection.execute(f"PRAGMA {store_module.SCHEMA_NAME}.user_version").fetchone()[0]
+            == store_module.SCHEMA_VERSION
+        )
+    finally:
+        connection.close()
+
+
+def test_migrating_twice_is_the_same_as_migrating_once(tmp_path: Path) -> None:
+    """迁移步是**幂等**的：新库建完表已经有封面那一列，再补一次就是 ``duplicate column name``。
+
+    而那正是新库**第一次打开**会走的路（版本 0 → 2），所以这一条是「新建库能不能打开」。
+    """
+    for _ in range(2):
+        connection = sqlite3.connect(tmp_path / "index.db", check_same_thread=False)
+        try:
+            assert store_module.attach(connection, threading.Lock(), root=tmp_path) is not None
+        finally:
+            connection.close()
+
+
+def test_a_newer_events_file_is_left_alone_instead_of_rebuilt(tmp_path: Path) -> None:
+    """库里的版本比这份程序新（用户降级了应用）时**不挂事件库，也不删它**。
+
+    「读不懂一份文件」不等于「可以删掉它」：事件是唯一一份重建不出来的数据。
+    界面据此让「记录为」那一行不出现（与配置目录建不出来时同一条降级路径，
+    ADR 0043 决策 1），而用户那份库**原样留在磁盘上**。
+    """
+    path = _open_a_v1_events_db(tmp_path)
+    newer = sqlite3.connect(path)
+    try:
+        newer.execute(f"PRAGMA user_version = {store_module.SCHEMA_VERSION + 1}")
+        newer.commit()
+    finally:
+        newer.close()
+
+    connection = sqlite3.connect(tmp_path / "index.db", check_same_thread=False)
+    try:
+        assert store_module.attach(connection, threading.Lock(), root=tmp_path) is None
+        surviving = sqlite3.connect(path)
+        try:
+            rows = surviving.execute("SELECT title FROM events").fetchall()
+        finally:
+            surviving.close()
+        assert rows == [("京都五日",)]
+    finally:
+        connection.close()
+
+
+def test_every_migration_step_says_what_it_does(tmp_path: Path) -> None:
+    """链条里**每一级都要有语句**（索引 0 那一级除外 —— 它是建表，由建表语句本身承担）。
+
+    空着的一级意味着「升到那一版时什么都不做」，而 ``SCHEMA_VERSION`` 已经写了那么大：
+    症状是新程序读旧库时列对不上，``no such column`` 要到第一次查询才报 ——
+    界面上表现为「事件那一族全空」，而用户看不出是迁移漏了一步。
+    """
+    steps = schema._MIGRATIONS
+
+    assert len(steps) == store_module.SCHEMA_VERSION
+    for index, step in enumerate(steps):
+        if index == 0:
+            continue
+        assert step, f"第 {index} 级迁移是空的"
+
+
+def test_the_event_tables_are_not_rebuilt_by_a_version_mismatch(tmp_path: Path) -> None:
+    """索引升版时重建的是**索引自己那两张表**，事件那几张一个都不许碰（ADR 0043 决策 1）。
 
     **重开一次库**才测得到这件事（一条连接只挂一次 ``ev``，见 :func:`attach`）。
     """
-    path = paths.events_file(tmp_path)
+    _open_a_v1_events_db(tmp_path)
     opened = sqlite3.connect(tmp_path / "index.db", check_same_thread=False)
     try:
-        first = store_module.attach(opened, threading.Lock(), root=tmp_path)
-        assert first is not None
-        first.create("trip", _draft())
+        assert store_module.attach(opened, threading.Lock(), root=tmp_path) is not None
     finally:
         opened.close()
 
-    # 下一次打开时版本是旧的：模拟将来事件库升了结构。
-    stale = sqlite3.connect(path)
-    stale.execute("PRAGMA user_version = 0")
-    stale.commit()
-    stale.close()
+    # 索引升版：它的 ``user_version`` 一变就整表重建，而 ``ev.`` 那一份一个字都不该动。
+    index = sqlite3.connect(tmp_path / "index.db")
+    try:
+        index.execute("DROP TABLE IF EXISTS facets")
+        index.execute("DROP TABLE IF EXISTS photos")
+        index.execute("PRAGMA user_version = 0")
+        index.commit()
+    finally:
+        index.close()
 
     reopened_connection = sqlite3.connect(tmp_path / "index.db", check_same_thread=False)
     try:
-        reopened = store_module.attach(reopened_connection, threading.Lock(), root=tmp_path)
-        assert reopened is not None
-        assert reopened.all_events() == ()  # 重建过了，东西不在了
+        store = store_module.attach(reopened_connection, threading.Lock(), root=tmp_path)
+        assert store is not None
+        assert [event.title for event in store.all_events()] == ["京都五日"]
         tables = {
             row[0]
             for row in reopened_connection.execute(

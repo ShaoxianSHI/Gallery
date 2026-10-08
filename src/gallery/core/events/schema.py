@@ -1,8 +1,13 @@
-"""事件库的建表与版本：表名、列清单、DDL 与连接上的那一条 pragma。
+"""事件库的建表与版本：表名、列清单、DDL、迁移步与连接上的那一条 pragma。
 
 它**只描述库长什么样**，不含读写（那在 :mod:`gallery.core.events.store`）。单独成模块是
 因为这里的几条约束各自都能静默出事：列清单必须从字段定义生成（手写一份就有两处会漂），
 而 ``user_version`` 与 ``journal_mode`` 都是**每个库各一份**、必须带 ``ev.`` 前缀。
+
+**版本对不上时是迁移，不是重建**（ADR 0048 决策 3）。原先这里是「版本不等于就 ``DROP`` 全部表」
+—— 对索引那张表是对的（它是丢了能重建的缓存），而事件是**唯一一份重建不出来的数据**，
+所以加一列就等于清空用户填的全部事件与绑定。认不出的版本（比这份程序新）改成**不挂事件库**：
+应用读不懂一份文件，不等于可以删掉它。
 """
 
 from __future__ import annotations
@@ -11,7 +16,7 @@ import logging
 import sqlite3
 from typing import Final
 
-from gallery.core.events.kinds import COMMON_FIELDS, EVENT_KINDS, EventField, EventKind
+from gallery.core.events.kinds import COMMON_FIELDS, COVER, EventField, EventKind
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +34,10 @@ BINDINGS_TABLE: Final = "photo_events"
 
 #: 事件库的表结构版本。**只管 events.db 自己那份** ``PRAGMA ev.user_version``，
 #: 与索引的 ``SCHEMA_VERSION`` 无关（索引升版会重建它的表，事件库不会）。
-SCHEMA_VERSION: Final = 1
+#:
+#: **升版只能加列**（ADR 0048 决策 3）：每加一列都要在 :data:`_MIGRATIONS` 里补一步，
+#: 而那一级不许空着（``tests/core/events/test_store.py`` 里有守护）。
+SCHEMA_VERSION: Final = 2
 
 
 #: 一条语句里最多塞多少个绑定变量。``IN (…)`` 与多列插入都按它分批：
@@ -104,14 +112,48 @@ def _kind_schema(kind: EventKind) -> str:
     )
 
 
-def _drop_script() -> str:
-    """版本对不上时重建的是**事件库自己的表**。
+def _has_column(connection: sqlite3.Connection, table: str, column: str) -> bool:
+    """这张表有没有这一列。**迁移步因此是幂等的**：新库走完建表语句已经有那一列，
+    再 ``ALTER`` 就是 ``duplicate column name``（那是新库第一次打开就报错）。"""
+    rows = connection.execute(f"PRAGMA {SCHEMA_NAME}.table_info({table})").fetchall()
+    return any(str(row[1]) == column for row in rows)
 
-    **只列事件库里的表名** —— 索引的重建脚本（``index.py``）同样只列它自己的两张。哪一边
-    漏写一个表名，用户填的东西就没了，而两边的守护测试各盯各的那一句。
+
+def _add_column(connection: sqlite3.Connection, table: str, column: str, declaration: str) -> None:
+    """给一张表补一列。**没有才补** —— 见 :func:`_has_column` 那条理由。"""
+    if not _has_column(connection, table, column):
+        connection.execute(f"ALTER TABLE {SCHEMA_NAME}.{table} ADD COLUMN {column} {declaration}")
+
+
+#: 迁移步：``_MIGRATIONS[i]`` 是把 ``ev.user_version`` 从 ``i`` 升到 ``i + 1`` 要做的事。
+#:
+#: **升版只加列，绝不重建表。** 事件是唯一一份重建不出来的数据（ADR 0043 决策 1），
+#: 而原先「版本对不上就 ``DROP`` 全部表」那条老路让「加一列」等于清空用户的全部事件与绑定。
+#: 将来真要重建某一张表，写成这一步里的一条显式语句（里面可以带 ``DROP``），
+#: **不再由「版本对不上」这个隐式条件触发**。
+#:
+#: 索引 0 是「建表」，由 :data:`_EVENTS_SCHEMA` 那几段建表语句本身承担（新库直接建出最新结构），
+#: 所以它是空的 —— **那是唯一允许为空的一级**（守护盯着其余每一级都要有语句）。
+_MIGRATIONS: Final[tuple[tuple[tuple[str, str, str], ...], ...]] = (
+    (),  # 0 → 1：建表语句自己就是这一步
+    ((EVENTS_TABLE, COVER.column, "TEXT"),),  # 1 → 2：封面那一列（ADR 0048）
+)
+
+
+def migrate(connection: sqlite3.Connection, version: int) -> None:
+    """把事件库从 ``version`` 升到 :data:`SCHEMA_VERSION`，**只加列**。
+
+    **调用方要已经建好表**（新库的那些 ``CREATE TABLE IF NOT EXISTS``），所以顺序是
+    「先建表、后迁移」：旧库的表已存在、建表语句什么都不做，迁移补上缺的那几列；
+    新库的表刚建出来、已经带着最新的列，迁移那一步看见它在就跳过（幂等）。
+
+    **整个链条在一个事务里**：``executescript`` 会隐式提交，用它跑迁移的话链条断在半路时
+    库就停在中间状态，而那正是「用户的事件少了一半」。所以这里只 ``execute``，
+    事务由调用方的 ``with connection:`` 给出。
     """
-    tables = [EVENTS_TABLE, BINDINGS_TABLE, *(kind.table for kind in EVENT_KINDS)]
-    return "".join(f"DROP TABLE IF EXISTS {SCHEMA_NAME}.{table};" for table in tables)
+    for step in range(max(version, 0), SCHEMA_VERSION):
+        for table, column, declaration in _MIGRATIONS[step]:
+            _add_column(connection, table, column, declaration)
 
 
 def _relax_journal_mode_only(connection: sqlite3.Connection) -> None:
@@ -136,4 +178,5 @@ __all__ = [
     "SCHEMA_NAME",
     "SCHEMA_VERSION",
     "declaration_of",
+    "migrate",
 ]

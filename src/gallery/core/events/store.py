@@ -53,9 +53,9 @@ from gallery.core.events.schema import (
     EVENTS_TABLE,
     SCHEMA_NAME,
     SCHEMA_VERSION,
-    _drop_script,
     _kind_schema,
     _relax_journal_mode_only,
+    migrate,
 )
 from gallery.core.metadata.journal import (
     ACTION_EVENT,
@@ -83,21 +83,31 @@ def attach(
 
     **一条连接只挂一次**（``ev`` 这个名字已经被占着时 ATTACH 会报错，于是返回 ``None``）。
     ``FacetIndex`` 只在建连接时调它一次，所以正常路径走不到那种情形。
+
+    **版本对不上时是迁移，不是重建**（ADR 0048 决策 3）：建表语句在前、迁移在后，于是新库走完
+    建表就已经是最新结构（迁移那一步看见列在就跳过），旧库则由迁移把缺的那几列补上。
+    版本**比这份程序新**时整个不挂 —— 读不懂一份文件不等于可以删掉它。
     """
     path = paths.events_file(root)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         connection.execute(f"ATTACH DATABASE ? AS {SCHEMA_NAME}", (str(path),))
         _relax_journal_mode_only(connection)
-        version = connection.execute(f"PRAGMA {SCHEMA_NAME}.user_version").fetchone()[0]
-        if version != SCHEMA_VERSION:
-            connection.executescript(_drop_script())
-            connection.execute(f"PRAGMA {SCHEMA_NAME}.user_version = {SCHEMA_VERSION}")
+        version = int(connection.execute(f"PRAGMA {SCHEMA_NAME}.user_version").fetchone()[0])
+        if version > SCHEMA_VERSION:
+            # 用户把应用降级了：那份库比我们认得的版本新。**宁可不挂，也不删** ——
+            # 读不懂一份文件不等于可以删掉它，而事件是唯一一份重建不出来的数据（ADR 0048 决策 3）。
+            logger.info("事件库的版本 %d 比这份程序新（%d），这次不挂它", version, SCHEMA_VERSION)
+            return None
+        # 建表在前、迁移在后：新库建完就已经是最新结构（迁移那一步看见列在就跳过），
+        # 旧库的表已存在、`IF NOT EXISTS` 什么都不做，迁移把缺的那几列补上（幂等）。
         connection.executescript(_EVENTS_SCHEMA)
         connection.executescript(_BINDINGS_SCHEMA)
         for kind in EVENT_KINDS:
             connection.executescript(_kind_schema(kind))
-        connection.commit()
+        with connection:
+            migrate(connection, version)
+            connection.execute(f"PRAGMA {SCHEMA_NAME}.user_version = {SCHEMA_VERSION}")
     except (OSError, sqlite3.Error) as exc:
         logger.info("事件库不可用（%s），事件功能这次不参与", exc)
         return None

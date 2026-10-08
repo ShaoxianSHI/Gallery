@@ -67,6 +67,9 @@ class EventField:
     multiple: bool = False
     #: 非空时面板把它画成下拉而不是输入框，值域就是这几项。
     choices: tuple[str, ...] = ()
+    #: 非空时面板**不画成输入框**，而是交给那一族专门的控件（现在是封面）。留着空串的是
+    #: 「就是一格文字」，与 :attr:`choices` 同一个约定：控件由字段自己的声明说了算。
+    control: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +89,12 @@ class EventKind:
     empty_label: str = "未命名"
 
 
+#: 事件的封面：一条指向照片的路径（ADR 0048）。**它是一个公共字段而不是结构列** ——
+#: 于是建表、读写、journal 前像、撤销与恢复全由字段定义生成，手写一列要在七个地方各写一遍，
+#: 而漏掉 ``_field_changes`` 那一处的症状是「改封面不进撤销栈」，不报错。
+COVER: Final = EventField("cover", "封面", "cover_path", control="cover")
+
+
 #: **公共列**：任何一类事件都问得出的那几个问题。它们住在 ``events`` 表里，于是「列出所有旅行」
 #: 「这张照片属于谁」都是一条 SQL，不必按类型 UNION。
 COMMON_FIELDS: Final[tuple[EventField, ...]] = (
@@ -95,6 +104,7 @@ COMMON_FIELDS: Final[tuple[EventField, ...]] = (
     EventField("started_on", "开始日期", "started_on", "DAY", hint="2026-05-16，只知道年月也可以"),
     EventField("ended_on", "结束日期", "ended_on", "DAY", hint="当天来回就与开始日期同一天"),
     EventField("note", "备注", "note"),
+    COVER,
 )
 
 TRIP: Final = EventKind(
@@ -296,6 +306,7 @@ def normalize_day(text: str) -> str:
 
 __all__ = [
     "COMMON_FIELDS",
+    "COVER",
     "EVENT_KINDS",
     "KINDS_BY_ID",
     "MULTI_SEPARATOR",

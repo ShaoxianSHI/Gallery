@@ -53,6 +53,16 @@ class Event:
         return self.text("note") or None
 
     @property
+    def cover_path(self) -> Path | None:
+        """封面照片的路径；没设就是 ``None``（界面上退回「组内第一张」，ADR 0048 决策 1）。
+
+        **返回 ``None`` 而不是空串**：这一列可空，而「没设封面」在渲染那一侧是一个分支，
+        空串会让那个分支写成 ``if event.cover_path != ""`` 这种没人会想到去看的形状。
+        """
+        stored = self.text("cover")
+        return Path(stored) if stored else None
+
+    @property
     def display_name(self) -> str:
         """界面上怎么称呼它。没填名称（只可能是从库里读到的旧数据）时退回类型名。"""
         if self.title:
