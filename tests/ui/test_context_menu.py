@@ -206,7 +206,9 @@ def window(
     root = tmp_path / "照片"
     album = root / "京都"
     album.mkdir(parents=True, exist_ok=True)
-    for name in PHOTO_NAMES:
+    # **倒着建**：默认排序是修改时间「新 → 旧」（ADR 0049），而后面许多用例都拿
+    # ``PHOTO_NAMES[0]`` 当第一行。倒着建让元组的先后与网格上的先后一致。
+    for name in reversed(PHOTO_NAMES):
         make_photo(name, directory=album)
     prepare_library(root)
     instance = _open_library(qt_app, root, tmp_path / "状态")

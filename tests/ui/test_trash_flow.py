@@ -193,7 +193,7 @@ def test_a_batch_is_one_undo(
 def test_undo_puts_a_restored_photo_back_in_its_sorted_place(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
 ) -> None:
-    """取回来之后，网格顺序仍然和扫描一致（相册在前、同类按名字）。"""
+    """取回来之后，网格顺序仍然与当前排序一致（默认修改时间，新→旧，ADR 0049）。"""
     for name in ("a", "b", "c"):
         make_photo(f"{name}.jpg")
     window = open_window(qt_app, tmp_path)
@@ -201,12 +201,13 @@ def test_undo_puts_a_restored_photo_back_in_its_sorted_place(
         select_rows(window, row_of(window, tmp_path / "b.jpg"))
         window.trash_selected()
         qt_app_process(window)
-        assert [entry.name for entry in window._model.entries()] == ["a.jpg", "c.jpg"]
+        # c 建得最晚 = 最新，所以它在最前面。
+        assert [entry.name for entry in window._model.entries()] == ["c.jpg", "a.jpg"]
 
         window.undo_last_write()
         qt_app_process(window)
 
-        assert [entry.name for entry in window._model.entries()] == ["a.jpg", "b.jpg", "c.jpg"]
+        assert [entry.name for entry in window._model.entries()] == ["c.jpg", "b.jpg", "a.jpg"]
     finally:
         window.close()
 
@@ -326,8 +327,11 @@ def test_undo_brings_the_deleted_photo_back_into_view(
     删掉之后界面会接着看下一张（看照片时最顺手的动作就是「这张不要，下一张」），于是
     撤回来时人正站在**另一张**上；而撤销会整层重排，刚取回来的那张完全可能落在视野
     之外。看照片时按 ⌘Z，期望是看回刚才那张。
+
+    照片**倒着建**，于是网格上是 a → b → c（默认按修改时间新→旧，ADR 0049），
+    「删掉 b 接着看 c」这件事与排序方向无关。
     """
-    for name in ("a", "b", "c"):
+    for name in ("c", "b", "a"):
         make_photo(f"{name}.jpg")
     window = open_window(qt_app, tmp_path)
     try:
@@ -365,7 +369,7 @@ def test_the_confirmation_survives_the_jump_to_the_next_photo(
     ``_show_banner`` 前面）。次序一旦反过来，用户看到的就是一句刚说完就消失的话：
     「已把「b.jpg」移到废纸篓」再也没人知道发生过。
     """
-    for name in ("a", "b", "c"):
+    for name in ("c", "b", "a"):  # 倒着建 → 网格上是 a、b、c（新→旧，ADR 0049）
         make_photo(f"{name}.jpg")
     window = open_window(qt_app, tmp_path)
     try:

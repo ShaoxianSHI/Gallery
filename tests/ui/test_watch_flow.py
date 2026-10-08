@@ -122,6 +122,17 @@ def names(window: MainWindow) -> list[str]:
     return [entry.name for entry in window._model.entries()]
 
 
+def _album_names(window: MainWindow) -> list[str]:
+    """这一层里**相册卡片**的名字（照片不算）。"""
+    return [entry.name for entry in window._model.entries() if isinstance(entry, FolderRef)]
+
+
+def _settle_level(qt_app: QApplication, window: MainWindow) -> None:
+    """等这一层重排完（换方向是同步的，等的是后台那一遍列层）。"""
+    assert wait_until(qt_app, lambda: window._scan_job is None), "这一层还没列完"
+    qt_app.processEvents()
+
+
 def _enter(qt_app: QApplication, window: MainWindow, directory: Path) -> None:
     """走进一个相册（用户双击那一格），并等那一层列完。"""
     window.enter_folder(directory)
@@ -163,8 +174,9 @@ STAYING_COLOR = (30, 60, 200)
 def touch(path: Path, step: float) -> None:
     """把照片的修改时间钉到 :data:`MTIME_BASE` + ``step``。
 
-    默认排序按**修改时间**（``DEFAULT_SORT_FACET``），于是顺序不能靠「谁先被创建」：
-    文件系统给的是真实时间，那不是断言能说清楚的东西。
+    默认排序按**修改时间**（``DEFAULT_SORT_FACET``），方向是**新 → 旧**（ADR 0049）——
+    ``step`` 越大越新，于是它排在越前面。顺序不能靠「谁先被创建」：文件系统给的是
+    真实时间，那不是断言能说清楚的东西。
     """
     os.utime(path, (MTIME_BASE + step, MTIME_BASE + step))
 
@@ -185,8 +197,8 @@ def test_a_photo_dropped_in_shows_up_without_reopening(
         deliver(qt_app, window, watcher, LibraryChange(ChangeKind.ADDED, newcomer))
 
         assert window._model.rowCount() == 2
-        # 默认按修改时间排：先在的那张在前。
-        assert names(window) == ["原来那张.jpg", "刚丢进来.jpg"]
+        # 默认按修改时间、新 → 旧排：刚丢进来的那张在前。
+        assert names(window) == ["刚丢进来.jpg", "原来那张.jpg"]
     finally:
         window.close()
 
@@ -218,7 +230,7 @@ def test_a_new_photo_lands_in_the_current_album_behind_a_symlink(
         touch(newcomer, 1)
         deliver(qt_app, window, watcher, LibraryChange(ChangeKind.ADDED, newcomer))
 
-        assert names(window) == ["原来那张.jpg", "刚丢进来.jpg"]
+        assert names(window) == ["刚丢进来.jpg", "原来那张.jpg"]
     finally:
         window.close()
 
@@ -236,7 +248,8 @@ def test_a_new_photo_lands_in_its_sorted_place_not_at_the_end(
 
         deliver(qt_app, window, watcher, LibraryChange(ChangeKind.ADDED, middle))
 
-        assert names(window) == ["a.jpg", "b.jpg", "c.jpg"]
+        # 新 → 旧：c 比 b 新、b 比 a 新，于是正好是插在中间而不是末尾。
+        assert names(window) == ["c.jpg", "b.jpg", "a.jpg"]
     finally:
         window.close()
 
@@ -249,13 +262,42 @@ def test_in_flat_mode_a_photo_from_a_subfolder_is_sorted_among_all(
     touch(make_photo("d.jpg"), 1)
     window, watcher = open_window(qt_app, tmp_path, browse_mode=BROWSE_MODE_FLAT)
     try:
-        assert names(window) == ["b.jpg", "d.jpg"]
+        assert names(window) == ["d.jpg", "b.jpg"]
         nested = make_photo("c.jpg", directory=tmp_path / "旅行")
         touch(nested, 0.5)
 
         deliver(qt_app, window, watcher, LibraryChange(ChangeKind.ADDED, nested))
 
-        assert names(window) == ["b.jpg", "c.jpg", "d.jpg"]
+        assert names(window) == ["d.jpg", "c.jpg", "b.jpg"]
+    finally:
+        window.close()
+
+
+def test_album_cards_follow_the_reverse_toggle(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """勾上「逆序」要把**相册卡片**也翻过来，而它们永远排在照片前面（ADR 0049）。
+
+    相册卡片不进排序字段（文件夹没有拍摄时间），但方向跟着那一档走 —— 否则同一层里
+    「照片翻了、相册没翻」，读起来像两样东西没对齐。
+    """
+    names_in = ["Bermuda", "Amsterdam", "Cairo"]
+    for name in names_in:
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "一张.jpg").write_bytes(b"x")
+    ascending = sorted(names_in)
+    make_photo("散着的一张.jpg")
+    window, watcher = open_window(qt_app, tmp_path, browse_mode=BROWSE_MODE_ALBUMS)
+    try:
+        _settle_level(qt_app, window)
+        assert _album_names(window) == ascending
+        assert names(window)[-1] == "散着的一张.jpg", "相册卡片永远排在照片前面"
+
+        window.set_sort_descending(True)
+        _settle_level(qt_app, window)
+
+        assert _album_names(window) == ascending[::-1]
+        assert names(window)[-1] == "散着的一张.jpg", "翻方向不该把相册卡片挪到照片后面"
     finally:
         window.close()
 

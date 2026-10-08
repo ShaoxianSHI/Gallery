@@ -285,10 +285,14 @@ class WriteOpsMixin:
             self._show_banner(exc.message)
             return
         self._note_self_write(created.path)
-        row = self._model.insert_entry(
+        self._model.insert_entry(
             created.album,
             whole_level=self._group_view is not None or self._browse_mode == BROWSE_MODE_FLAT,
         )
+        # 重排后再问行号，**不要拿 insert_entry 交回来的那个**：那一行是按「同名相邻、升序」
+        # 找的，而相册卡片的实际方向跟着「逆序」（ADR 0049）—— 勾了逆序时它是反的。
+        self._apply_ordering()
+        row = self._model.row_of_path(created.path)
         if row < 0:
             # 插不进去（理论上不会：这一层里还没有同一个路径）。宁可重扫一次，
             # 也不能让磁盘上多了一个文件夹而界面上看不见。

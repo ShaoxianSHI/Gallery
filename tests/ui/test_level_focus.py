@@ -273,21 +273,23 @@ def test_changing_the_sort_keeps_the_selection(
 ) -> None:
     """换排序字段会整层重排：选中的是那张照片，不是「第几行」。"""
     library = tmp_path / "库"
-    # 顺序按创建时间排，于是「按名字」这一次真的会换位置。
-    make_photo("c.jpg", directory=library / "海边")
+    # 按 a、b、c 建：默认那档（修改时间，新→旧，ADR 0049）是 c、b、a，
+    # 换「按名字」变成 a、b、c —— 两档给的先后真的不同，这一换才换得出东西。
     make_photo("a.jpg", directory=library / "海边")
     make_photo("b.jpg", directory=library / "海边")
+    make_photo("c.jpg", directory=library / "海边")
     window = open_window(qt_app, library)
     try:
         window.enter_folder(library / "海边")
         wait_for_level(window, qt_app, lambda: window._model.rowCount() == 3, what="相册内")
+        # 选中**最后一行**（默认档里的 a），它在「按名字」那一档会跑到第 0 行。
         window._grid.select_row(window._model.rowCount() - 1)
-        assert current_name(window) == "b.jpg"
+        assert current_name(window) == "a.jpg"
 
         window.set_sort_facet("name")
         wait_for_level(window, qt_app, lambda: window._model.rowCount() == 3, what="换排序之后")
 
         assert [entry.name for entry in window._model.entries()] == ["a.jpg", "b.jpg", "c.jpg"]
-        assert current_name(window) == "b.jpg", "重排之后该跟着照片走，而不是停在同一行"
+        assert current_name(window) == "a.jpg", "重排之后该跟着照片走，而不是停在同一行"
     finally:
         window.close()

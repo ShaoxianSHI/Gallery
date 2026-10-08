@@ -109,8 +109,11 @@ class Facet:
     sort: Callable[[FacetInput], SortValue | None] = lambda _input: None
     #: 组键怎么比较。``"2024-05"`` 这类日期键必须**当数字**比（按字典序排会得到「11 月排在
     #: 2 月前面」），其余按名称升序。返回数字的字段，组内所有键都是数字；返回字符串的反之。
-    group_order: Callable[[str], SortValue] | None = None
-    #: 组的默认排列方向。时间为真时是「新 → 旧」，其余按名称升序。
+    #: **交回 ``None`` 表示「这个组没有值」**，那一组沉在末尾（两个方向下都是）。
+    group_order: Callable[[str], SortValue | None] | None = None
+    #: 这个字段的**自然方向**是否为「新 → 旧」。时间为真（拍摄时间、年月日、事件），
+    #: 其余按名称升序。「逆序」是偏离它而不是字面的 ``reverse``（ADR 0049）——
+    #: 照片与组卡片共用这一个判据，所以同一层里两者永远朝着同一个方向。
     newest_first: bool = False
     #: 只有装了 exiftool 才读得到（Pillow 降级路径拿不到 IPTC / XMP）。
     needs_exiftool: bool = False
@@ -500,7 +503,7 @@ def _facet(
     *,
     group: Callable[[FacetInput], Sequence[tuple[str, str]]] | None = None,
     sort: Callable[[FacetInput], SortValue | None] | None = None,
-    group_order: Callable[[str], SortValue] | None = None,
+    group_order: Callable[[str], SortValue | None] | None = None,
     newest_first: bool = False,
     needs_exiftool: bool = False,
     empty_label: str = "未知",
@@ -527,12 +530,16 @@ def _event_group(item: FacetInput) -> Sequence[tuple[str, str]]:
     return tuple((ref.group_key, ref.label) for ref in item.events)
 
 
-def _event_group_order(key: str) -> float:
-    """``"2026-05-16#42"`` 按起始日期排。**没填日期的那一组一律沉底** —— 键以 ``#`` 开头，
-    这里给 0，而 :func:`~gallery.core.library.groups.build_groups` 会把新→旧取负，
-    于是 ``-0.0`` 大于任何负日期，正好排在最后。"""
+def _event_group_order(key: str) -> float | None:
+    """``"2026-05-16#42"`` 按起始日期排。**没填日期的那一组交回 ``None``**，于是它与
+    「未归入事件」一样沉在末尾。
+
+    **这里返回 ``None`` 而不是 0**：先前那一组靠 ``build_groups`` 把日期取负来沉底
+    （``-0.0`` 大于任何负日期）。方向改成跟着「逆序」之后取负这条路就不成立了 ——
+    「沉底」得由调用方显式摘出来，而不是靠键的大小在两个方向下都恰好对（ADR 0049）。
+    """
     date_part = key.partition("#")[0]
-    return _date_group_order(date_part) if date_part else 0.0
+    return _date_group_order(date_part) if date_part else None
 
 
 _FACETS: Final[tuple[Facet, ...]] = (
@@ -541,6 +548,7 @@ _FACETS: Final[tuple[Facet, ...]] = (
         "拍摄时间",
         "captured",
         sort=lambda item: item.facets.captured_at,
+        newest_first=True,
     ),
     _facet(
         FACET_YEAR,
@@ -642,7 +650,13 @@ _FACETS: Final[tuple[Facet, ...]] = (
     _facet(FACET_FORMAT, "文件格式", "text", group=_format_group, sort=_file_text("suffix")),
     _facet(FACET_NAME, "文件名", "text", sort=_file_text("name")),
     _facet(FACET_SIZE, "文件大小", "number", sort=_file_number("size")),
-    _facet(FACET_MODIFIED, "修改时间", "number", sort=_file_number("mtime_ns")),
+    _facet(
+        FACET_MODIFIED,
+        "修改时间",
+        "number",
+        sort=_file_number("mtime_ns"),
+        newest_first=True,
+    ),
     _facet(FACET_APERTURE, "光圈", "number", sort=_facet_number("aperture")),
     _facet(FACET_SHUTTER, "快门", "number", sort=_facet_number("shutter")),
     _facet(FACET_ISO, "ISO", "number", sort=_facet_number("iso")),

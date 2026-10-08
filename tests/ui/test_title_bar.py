@@ -31,6 +31,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -283,6 +284,9 @@ def test_the_title_follows_the_photo_you_step_to(qt_app: QApplication, window: M
     """翻到下一张，标题栏跟着换 —— 那一行写的必须是正在看的那一张。"""
     second = window._library.root / "另一张.jpg"
     second.write_bytes(window._library.root.joinpath(PHOTO).read_bytes())
+    # 默认排序是修改时间「新 → 旧」（ADR 0049），而 PHOTO 是先建的那张 —— 不补一下
+    # mtime 的话它排在第二行，「下一张」就没有下一张可翻了。
+    os.utime(window._library.root / PHOTO, None)
     window._reload_level()
     assert wait_until(qt_app, lambda: window._model.rowCount() == 2)
 

@@ -29,10 +29,10 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from waiting import wait_until, window_is_idle  # noqa: E402
 
 from gallery.core.library.config import (
-    BROWSE_MODE_FLAT,
+    BROWSE_MODE_ALBUMS,
     prepare_library,
 )  # noqa: E402
-from gallery.core.library.photos import PhotoRef  # noqa: E402
+from gallery.core.library.photos import FolderRef, PhotoRef  # noqa: E402
 from gallery.core.library.session import (
     SessionState,
     save_session,
@@ -72,10 +72,15 @@ def window(
     root.mkdir(parents=True, exist_ok=True)
     for name in NAMES:
         make_photo(name, directory=root)
+    # 两个相册：**相册模式**那一层里它们是相册卡片，而相册的顺序只受「逆序」影响
+    # （它们不进排序字段，见 ADR 0049）。平铺模式压根没有相册卡片，量不到。
+    for album in ("Yokohama", "Amsterdam"):
+        (root / album).mkdir()
+        make_photo(f"{album}.jpg", directory=root / album)
     prepare_library(root)
     session_base = tmp_path / "会话"
     save_session(SessionState(recent_roots=(root,)), base=session_base)
-    set_library_ui(root, browse_mode=BROWSE_MODE_FLAT)
+    set_library_ui(root, browse_mode=BROWSE_MODE_ALBUMS)
     win = MainWindow(session_base=session_base, initial_library=root)
     win.resize(900, 600)
     win.show()
@@ -83,6 +88,11 @@ def window(
     assert wait_until(qt_app, lambda: window_is_idle(win)), "扫描没有收工"
     qt_app.processEvents()
     return win
+
+
+def _album_names(window: MainWindow) -> list[str]:
+    """这一层里相册卡片的名字（照片不算）。"""
+    return [entry.name for entry in window._model.entries() if isinstance(entry, FolderRef)]
 
 
 @pytest.fixture
@@ -137,6 +147,28 @@ def test_changing_the_sort_direction_still_reorders(
 
     assert count_sorts != [], "改了排序方向却没排：顺序该变的没变"
     assert list(window._model.entries()) != before, "排了，但顺序没换过来"
+
+
+def test_changing_the_direction_also_moves_the_album_cards(
+    window: MainWindow, count_sorts: list[str]
+) -> None:
+    """翻方向时**相册卡片也要换位置**（ADR 0049）。
+
+    相册不参与排序字段，所以闸的指纹里没有它们的那一份 —— 少了这一段，相册卡片会在
+    「照片翻了、相册没翻」的状态下停住，而且此后没有任何东西会纠正它。
+    """
+    library = window._library
+    assert library is not None
+    window._reorder_level(library)
+    albums_before = _album_names(window)
+    assert len(albums_before) == 2, "这一层里得有相册卡片才量得到相册的顺序"
+    count_sorts.clear()
+
+    window._sort_descending = not window._sort_descending
+    window._reorder_level(library)
+
+    # **只量相册那一段**：照片本来就会重排，拿整层比的话即使相册根本没动也照样是「变了」。
+    assert _album_names(window) == albums_before[::-1], "翻了方向，相册卡片却没换位置"
 
 
 def test_a_fresh_facet_read_still_reorders(window: MainWindow, count_sorts: list[str]) -> None:

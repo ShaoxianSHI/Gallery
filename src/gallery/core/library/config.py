@@ -48,6 +48,8 @@ BROWSE_MODES: Final = (BROWSE_MODE_ALBUMS, BROWSE_MODE_FLAT, BROWSE_MODE_CALENDA
 
 #: 排序字段的**界面默认值**：用户从没选过排序字段时，按修改时间排 —— 时间是照片之间最实在的
 #: 线索，而且文件自己就带着它，不必等 exiftool（按拍摄时间排也有那一项，只是要读一次元数据）。
+#: **方向不在这里**：修改时间的自然方向就是「新 → 旧」（``facets.FACET_MODIFIED`` 的
+#: ``newest_first``），所以「逆序」没勾时读出来的正是最新在前（ADR 0049）。
 DEFAULT_SORT_FACET: Final = FACET_MODIFIED
 
 #: 日历视图停在哪一层的默认值。

@@ -5,6 +5,8 @@
 - 时间分组新 → 旧，其余按名字升序；没值的组永远在最后。
 - 排序里没值的一律沉底，正序逆序都一样（不然一堆没写拍摄时间的照片会霸占一整屏）。
 - 同一秒拍到的照片按文件名兜底，顺序稳定可预期。
+- **「逆序」偏离字段的自然方向，不是字面的 ``reverse``**（ADR 0049）：照片、组卡片、
+  相册卡片三者因此永远朝着同一个方向。
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ import pytest
 from gallery.core.library.groups import SortOrder, build_groups, flatten_groups, sort_photos
 from gallery.core.library.photos import GroupRef, PhotoRef
 from gallery.core.metadata.facets import (
+    FACET_CAMERA,
     FACET_CAPTURED,
     FACET_FOLDER,
     FACET_ISO,
@@ -25,6 +28,7 @@ from gallery.core.metadata.facets import (
     FACET_MONTH,
     FACET_NAME,
     FACET_SIZE,
+    Facet,
     PhotoFacets,
     group_facet,
     sort_facet,
@@ -97,6 +101,8 @@ def test_missing_values_sink_to_the_end_in_both_directions(tmp_path: Path) -> No
 
 
 def test_equal_values_fall_back_to_file_name(tmp_path: Path) -> None:
+    """同值时按文件名兜底 —— 但**方向仍跟着字段的自然方向**：拍摄时间是新→旧，
+    于是同样两个值下面文件名是降序的。别把它当成「兜底键决定方向」。"""
     photos = [_ref(tmp_path, "b.jpg"), _ref(tmp_path, "a.jpg")]
     values = {ref.path: PhotoFacets(captured_at=1000.0) for ref in photos}
     order = sort_facet(FACET_CAPTURED)
@@ -104,7 +110,10 @@ def test_equal_values_fall_back_to_file_name(tmp_path: Path) -> None:
 
     ordered = sort_photos(photos, order=SortOrder(order), root=tmp_path, values=values)
 
-    assert _by_name(ordered) == ["a.jpg", "b.jpg"]
+    assert _by_name(ordered) == ["b.jpg", "a.jpg"]
+    assert _by_name(
+        sort_photos(photos, order=SortOrder(order, descending=True), root=tmp_path, values=values)
+    ) == ["a.jpg", "b.jpg"]
 
 
 def test_sort_by_name_works_without_any_metadata(tmp_path: Path) -> None:
@@ -119,6 +128,50 @@ def test_sort_by_name_works_without_any_metadata(tmp_path: Path) -> None:
 
 
 # ---- 分组 ----------------------------------------------------------------------------
+
+
+def test_group_cards_follow_the_reverse_toggle(tmp_path: Path) -> None:
+    """「逆序」要**真的把组卡片翻过来**（ADR 0049）。
+
+    它原先只由字段自己声明，于是这一档对组卡片完全无效：同一层里照片翻了、组卡片没翻，
+    读起来像两样东西没对齐。时间类与名称类各测一只 —— 前者的自然方向本就是降序，
+    后者不是，两者的翻转方向因此相反。
+    """
+    months = [_ref(tmp_path, f"{月份}.jpg") for 月份 in ("三月", "十二月")]
+    values = {
+        months[0].path: PhotoFacets(year=2024, month=3),
+        months[1].path: PhotoFacets(year=2024, month=12),
+    }
+    by_month = group_facet(FACET_MONTH)
+    assert by_month is not None
+    # 名称类拿**相机**来测：按文件夹分组时同一个根目录下的照片全落进同一组，
+    # 造不出两个可比较的组键（那是 ``FACET_FOLDER`` 的定义，不是排序的问题）。
+    brand_of = ("富士", "佳能")
+    cameras = [_ref(tmp_path, f"{name}.jpg") for name in brand_of]
+    camera_values = {
+        ref.path: PhotoFacets(camera=name) for ref, name in zip(cameras, brand_of, strict=True)
+    }
+    by_camera = group_facet(FACET_CAMERA)
+    assert by_camera is not None
+
+    def labels(photos: list[PhotoRef], facet: Facet, values: dict[Path, PhotoFacets]) -> list[str]:
+        forward = build_groups(photos, facet=facet, root=tmp_path, values=values)
+        backward = build_groups(
+            photos,
+            facet=facet,
+            root=tmp_path,
+            values=values,
+            order=SortOrder(facet=None, descending=True),
+        )
+        assert [group.label for group in forward] == [
+            group.label for group in reversed(backward)
+        ], "组卡片的顺序没跟着「逆序」翻"
+        return [group.label for group in forward]
+
+    # 时间类：自然方向新→旧，所以默认是十二月、三月。
+    assert labels(months, by_month, values) == ["2024 年 12 月", "2024 年 3 月"]
+    # 名称类：自然方向是升序，所以默认是佳能、富士。
+    assert labels(cameras, by_camera, camera_values) == ["佳能", "富士"]
 
 
 def test_group_by_month_is_newest_first(tmp_path: Path) -> None:
@@ -147,6 +200,36 @@ def test_photos_without_value_land_in_one_last_group(tmp_path: Path) -> None:
 
     assert [group.label for group in groups] == ["2024 年 5 月", "时间未知"]
     assert groups[1].count == 1
+
+
+def test_the_last_group_stays_last_when_the_direction_flips(tmp_path: Path) -> None:
+    """「没值的那一组沉底」在**两个方向下都得成立**。
+
+    它原先是靠把日期键取负实现的（``-0.0`` 大于任何负日期），而取负只在新→旧时成立 ——
+    一翻方向那一组就窜到最前面去了。这条钉住的是「沉底」由显式摘出来实现，不是靠键的大小。
+    """
+    photos = [_ref(tmp_path, f"{月份}.jpg") for 月份 in ("一月", "十二月")]
+    values = {
+        photos[0].path: PhotoFacets(year=2024, month=1),
+        photos[1].path: PhotoFacets(year=2024, month=12),
+    }
+    undated = _ref(tmp_path, "没有时间.jpg")
+    photos.append(undated)
+    facet = group_facet(FACET_MONTH)
+    assert facet is not None
+
+    for descending in (False, True):
+        groups = build_groups(
+            photos,
+            facet=facet,
+            root=tmp_path,
+            values=values,
+            order=SortOrder(facet=None, descending=descending),
+        )
+
+        assert [group.label for group in groups][-1] == "时间未知", (
+            f"勾了逆序（{descending=}）时「时间未知」跑到了前面"
+        )
 
 
 def test_group_by_keyword_can_put_one_photo_in_several_groups(tmp_path: Path) -> None:
