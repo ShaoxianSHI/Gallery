@@ -329,6 +329,144 @@ def test_write_ops_does_not_touch_the_file_system_itself() -> None:
     assert not _opens_files(path), f"{WRITE_OPS_MODULE} 自己打开文件了；写操作一律走 core"
 
 
+# ---- mixin：同名方法会静默失效 ------------------------------------------------
+
+
+def test_two_main_window_mixins_never_define_the_same_method() -> None:
+    """**``MainWindow`` 的两个 mixin 不许有同名方法** —— Python 按 MRO 取第一个实现。
+
+    这不是风格问题，是**静默失效**：后写的那个方法永远不会被调用，而没有任何报错。
+    事件封面的 ``event_cover_candidate`` 就踩过一次 —— 它本来也叫 ``cover_candidate``，
+    而 ``WriteOpsMixin``（相册封面，ADR 0028）在基类列表里排在 ``EventFlowMixin`` 前面，
+    于是症状是「菜单里压根没有这一条」，查起来像是判据写错了。
+
+    **只扫 ``MainWindow`` 真正继承的那几个 mixin**，不扫别的类：``ui/`` 下大量 QWidget 子类
+    各自都有 ``paintEvent`` / ``__init__``，那是继承关系里正常的事，与 MRO 冲突无关。
+    """
+    import ast
+
+    bases = _main_window_bases()
+    owners: dict[str, list[str]] = {}
+    for class_name in bases:
+        module = _module_of_mixin(class_name)
+        if module is None:
+            continue
+        tree = ast.parse(module.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef) or node.name != class_name:
+                continue
+            for item in node.body:
+                if isinstance(item, ast.FunctionDef | ast.AsyncFunctionDef):
+                    owners.setdefault(item.name, []).append(class_name)
+
+    clashes = {name: names for name, names in owners.items() if len(names) > 1}
+    assert not clashes, (
+        f"这些方法名出现在 MainWindow 的不止一个 mixin 里（MRO 只认第一个）：{clashes}"
+    )
+
+
+def _main_window_bases() -> tuple[str, ...]:
+    """``MainWindow`` 继承的那些 mixin（Qt 基类不算）。"""
+    import ast
+
+    tree = ast.parse((UI_ROOT / "main_window.py").read_text(encoding="utf-8"))
+    window = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ClassDef) and node.name == "MainWindow"
+    )
+    return tuple(
+        base.id  # type: ignore[union-attr]
+        for base in window.bases
+        if isinstance(base, ast.Name) and base.id.endswith("Mixin")
+    )
+
+
+def _module_of_mixin(class_name: str) -> Path | None:
+    """这个 mixin 住在哪个文件里。``ui/window/`` 与 ``ui/`` 顶层各找一遍。
+
+    **认的是 ``class X`` 那一行，不要求有括号** —— ``class EventFlowMixin:``（无基类）
+    与 ``class WriteOpsMixin:`` 都是那种写法，而带括号的判据会把它们整个漏掉，
+    于是守护在干净树上「通过」而其实什么都没查（这一条第一版就是这么写的）。
+    """
+    import re
+
+    pattern = re.compile(rf"^class {re.escape(class_name)}\b", re.MULTILINE)
+    for candidate in sorted(UI_ROOT.glob("**/window/*.py")) + sorted(UI_ROOT.glob("*.py")):
+        if pattern.search(candidate.read_text(encoding="utf-8")):
+            return candidate
+    return None
+
+
+def test_the_mixin_guard_would_notice_a_clash() -> None:
+    """守护自己必须验过一次**：往一个 mixin 里注入一个同名方法，那条守护要红。
+
+    没有这一步，一条「永远为绿」的守护比没有更坏 —— 它让人以为 MRO 那件事有人看着。
+    """
+    bases = set(_main_window_bases())
+    assert len(bases) >= 2, "MainWindow 至少要有两个 mixin，这条守护才验得到"
+    clean = {name: names for name, names in _mixin_method_owners(bases).items() if len(names) > 1}
+    assert not clean, f"守护自己没验过：干净树上就已经有同名方法了（{clean}）"
+
+    mixin = UI_ROOT / "window" / "event_flow.py"
+    original = mixin.read_text(encoding="utf-8")
+    # **注入一个别的 mixin 已经有了的名字** —— 撞车要两个才成立，只往一个里塞不算。
+    victim = "_needs_facet_read"
+    injected = _inject_into_class(original, "EventFlowMixin", victim)
+    assert injected != original, "没找到 EventFlowMixin 的类体"
+    try:
+        mixin.write_text(injected, encoding="utf-8")
+        probe = _mixin_method_owners(bases)
+        assert len(probe.get(victim, [])) > 1, "注入了同名方法，守护却没报出来"
+    finally:
+        mixin.write_text(original, encoding="utf-8")
+
+
+def _inject_into_class(source: str, class_name: str, method: str) -> str:
+    """在 ``class_name`` 的类体末尾插一个方法。
+
+    **按 AST 找类体的末尾** —— 追加到文件末尾不行：这个文件里那个类后面还跟着几个模块级
+    函数，于是新方法落在类外面，解析时压根不算它的一个方法（第一版就是这么写的，守护没红）。
+    """
+    import ast
+
+    tree = ast.parse(source)
+    node = next(
+        item
+        for item in ast.walk(tree)
+        if isinstance(item, ast.ClassDef) and item.name == class_name
+    )
+    lines = source.splitlines()
+    return (
+        "\n".join(
+            [
+                *lines[: node.end_lineno],
+                f"    def {method}(self) -> None: ...",
+                *lines[node.end_lineno :],
+            ]
+        )
+        + "\n"
+    )
+
+
+def _mixin_method_owners(bases: set[str]) -> dict[str, list[str]]:
+    """方法名 → 定义了它的那些 mixin。**同一份解析，两处用例共用。**"""
+    import ast
+
+    owners: dict[str, list[str]] = {}
+    for class_name in bases:
+        module = _module_of_mixin(class_name)
+        if module is None:
+            continue
+        tree = ast.parse(module.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef) and node.name == class_name:
+                for item in node.body:
+                    if isinstance(item, ast.FunctionDef | ast.AsyncFunctionDef):
+                        owners.setdefault(item.name, []).append(class_name)
+    return owners
+
+
 # ---- 注释：别让它长成事故复盘 -----------------------------------------------
 
 #: 行内注释的连续行数上限。**到第三行就该拆成一个有名字的函数，或者删掉一半。**

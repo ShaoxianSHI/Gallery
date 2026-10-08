@@ -84,6 +84,10 @@ def build_groups(
 
     ``event_values`` 是「照片属于哪些事件」那一份，**只给 :data:`FACET_EVENT` 看**（ADR 0043
     决策 7）。分组的算法一个字没为它改 —— 多归属的那层循环本来就是为关键词写的。
+
+    **事件分组认领封面靠的是组键比对**（ADR 0048 决策 7）：一张照片属于好几个事件，
+    它带的那几份封面各属于其中一个（组键 = 日期#事件 id），只有组键等于当前这个键的那份
+    才是这一组的。**不把 id 从组键里解析出来** —— 那样「组键怎么拼」就有两处会漂。
     """
     if facet.group is None:
         raise ValueError(f"字段 {facet.id} 不能用来分组")
@@ -91,10 +95,7 @@ def build_groups(
     events = event_values if event_values is not None else {}
     buckets: dict[str, list[PhotoRef]] = {}
     labels: dict[str, str] = {}
-    #: 组键 → 这一组指定的封面路径（ADR 0048 决策 7）。**认领条件是组键对得上** ——
-    #: 一张照片属于好几个事件，于是它带的那几份封面各属于其中一个，只有组键等于这个键的那份
-    #: 才是这一组的。拿组键去比对而不是从组键里把 id 解析出来，是复用「事件组键 = 日期#id」
-    #: 那条已经写死的不变式（ADR 0043 决策 7），两个来源于是不会各自漂。
+    # 组键 → 这一组指定的封面路径。认领条件是组键对得上（理由见下面那个循环里的注释）。
     covers: dict[str, Path] = {}
     for ref in photos:
         members = facet.group(
@@ -110,6 +111,7 @@ def build_groups(
         for key, label in members:
             buckets.setdefault(key, []).append(ref)
             labels.setdefault(key, label)
+        # 只有组键对得上的那份封面才是这一组的（理由见上面那句 docstring）
         for event_ref in events.get(ref.path, ()):
             if event_ref.cover_path:
                 for key, _label in members:

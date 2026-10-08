@@ -731,9 +731,7 @@ class EventStore:
                         connection, is_dir=False, parameters=(str(new), str(old))
                     )
                 moved += max(cursor.rowcount, 0)
-        # **搬了封面就要作废那份清单缓存**：封面是事件那一行上的值，而清单是会话里缓存住的一份
-        # （``Library.all_events``）。不作废的话，库里已经是新路径、界面上那份还是旧的 ——
-        # 症状是「改完名，面板里那个封面还指着上一个名字」，而用户没有任何办法把它刷新掉。
+        # 搬了封面就要作废那份清单缓存（理由见 :meth:`_changed`）。
         if covers:
             self._changed()
         return moved
