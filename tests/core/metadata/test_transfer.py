@@ -87,7 +87,7 @@ def test_moving_where_it_already_is_copies_it(library: Path) -> None:
 
     用户挑了「移动」却什么都没发生，那是做错了事。这一份走粘贴那一条路：
     名字是 ``一张的副本.jpg``、记 ``ACTION_PASTE``、**不进撤销栈**（源文件原封不动，
-    「挪回去」无从谈起，而删掉副本就是红线 1）。
+    「挪回去」无从谈起，而删掉副本就是不删除、不移动用户照片那条）。
     """
     target = library / "京都"
     Image.new("RGB", (8, 6), (9, 9, 9)).save(target / "占位.jpg")
@@ -195,7 +195,7 @@ def test_undo_is_gone_after_it_ran(library: Path) -> None:
 
 
 def test_undo_refuses_when_the_original_place_is_taken(library: Path) -> None:
-    """原位置被占了就不动它（红线 1）—— 替用户腾位置等于删掉他放进去的东西，
+    """原位置被占了就不动它（不删除、不移动用户照片那条）—— 替用户腾位置等于删掉他放进去的东西，
     与取回废纸篓同一个取向：宁可撤不回来，也不替用户做删除的决定。
     """
     source = library / "京都" / "一张.jpg"
@@ -269,9 +269,9 @@ def test_move_reports_failure_for_an_unwritable_target(library: Path) -> None:
 
 
 def test_a_target_outside_the_library_is_refused(library: Path, tmp_path: Path) -> None:
-    """**移到库外一律拒绝** —— 那是「把用户的文件搬出 Gallery 管得着的地方」（红线 1）。
+    """**移到库外一律拒绝** —— 那是把用户的文件搬出 Gallery 管得着的地方（删除只许用户亲手触发）。
 
-    界面上够不到，但缺了这道闸，别的入口日后一旦露出来，照片就被搬走且撤不回来。"""
+    界面上够不到，但缺了这道检查，别的入口日后一旦露出来，照片就被搬走且撤不回来。"""
     outside = tmp_path / "库外"
     outside.mkdir()
 
@@ -291,7 +291,7 @@ def test_the_library_root_is_a_legal_target(library: Path) -> None:
 
 
 def test_the_config_directory_is_not_a_target_album(library: Path) -> None:
-    """配置目录里放东西 = 用户照片目录里多出一份非「只有缓存才有」的数据（红线 5）。"""
+    """配置目录里放东西 = 用户照片目录里多出一份非「只有缓存才有」的数据（硬性约束 5）。"""
     with pytest.raises(TransferError, match="配置目录"):
         _move(library, paths.config_dir(library), library / "京都" / "一张.jpg")
 
@@ -299,7 +299,7 @@ def test_the_config_directory_is_not_a_target_album(library: Path) -> None:
 def test_a_same_named_file_dropped_in_mid_batch_is_never_overwritten(
     library: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """移动到相册也绝不覆盖用户在途中放进来的照片（红线 1）。
+    """移动到相册也绝不覆盖用户进行中中放进来的照片（不删除、不移动用户照片那条）。
 
     ``occupied_names`` 是这一批开始那一刻的快照，而一批几百项、跨卷时要跑几分钟。
     期间落进来的同名文件那张表看不见 —— 而 ``Path.rename`` 在 POSIX 上是**原子替换**，

@@ -67,9 +67,9 @@ def days_in_month(month: datetime.date) -> int:
 
 
 def in_month(day: datetime.date, month: datetime.date) -> bool:
-    """这一天是不是 ``month`` 那个月**自己**的日子 —— 补位格不算。
+    """这一天是不是 ``month`` 那个月**自己**的日子 —— 占位格不算。
 
-    **判据只在这里写一处**（年月都算上，只比 ``month`` 会在跨年的补位上错）：界面不自己
+    **判据只在这里写一处**（年月都算上，只比 ``month`` 会把跨年的占位格判错）：界面不自己
     比较 ``day.month``，否则邻月的照片会被摆进邻月的格子里。
     """
     return (day.year, day.month) == (month.year, month.month)
@@ -85,9 +85,9 @@ def month_days(month: datetime.date) -> list[datetime.date]:
 
 
 def days_of(level: str, anchor: datetime.date) -> list[datetime.date]:
-    """这一层**自己**的那段日子（**不含**上下月补位）：年 365/366 天、月 29–31 天、周七天。
+    """这一层**自己**的那段日子（**不含**上下月的占位格）：年 365/366 天、月 29–31 天、周七天。
 
-    铺格子用的 6 × 7（含补位）是另一件事，见 :func:`month_matrix`。
+    铺格子用的 6 × 7（含占位格）是另一件事，见 :func:`month_matrix`。
     """
     if level == "year":
         first = datetime.date(anchor.year, 1, 1)
@@ -100,9 +100,9 @@ def days_of(level: str, anchor: datetime.date) -> list[datetime.date]:
 
 
 def month_matrix(anchor: datetime.date) -> list[datetime.date]:
-    """铺格子用的那 6 × 7 = 42 天（含上下月补位），从**当月 1 号所在那一周的周日**起算。
+    """铺格子用的那 6 × 7 = 42 天（含上下月的占位格），从**当月 1 号所在那一周的周日**起算。
 
-    **这张表是给格子用的，不是给照片用的**：补位格只为对齐星期几而存在，**只画一个
+    **这张表是给格子用的，不是给照片用的**：占位格只为对齐星期几而存在，**只画一个
     日期号**，点它什么都不做；摆不摆照片、这一月有几张问 :func:`in_month` 与
     :func:`month_days`。
     """
@@ -128,10 +128,8 @@ def shift(level: str, anchor: datetime.date, steps: int) -> datetime.date:
     """往前 / 往后翻一页（年翻一年、月翻一月、周翻七天），**保持同一个「日子」**。
 
     1 月 31 日往后翻一个月是 2 月 28 日，再往前翻回 1 月 28 日 —— 来回翻两下不会越翻越偏。
-
     **闰日也一样**：2 月 29 日翻到没有闰日的年份截到 2 月 28 日（直接 ``replace(year=…)`` 会在
-    2024-02-29 上抛 ``ValueError``，而三条入口 —— 工具条、方向键、两指横甩 —— 都走这里）。
-    与月视图同一套判据，不另立一份。
+    2024-02-29 上抛 ``ValueError``，而工具条、方向键、两指横甩三个入口都走这里）。
     """
     if steps == 0:
         return anchor

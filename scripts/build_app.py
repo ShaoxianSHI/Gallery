@@ -208,7 +208,7 @@ def _linked_libraries(binary: Path) -> set[str]:
         if name:
             names.add(name.rsplit("/", 1)[-1])
     # `otool` 把 LC_ID_DYLIB 也列成一条依赖，而库从不依赖自己 —— 不去掉它的话
-    # 每个 Qt 库都会「链接着」自己，闸门恒真。
+    # 每个 Qt 库都会「链接着」自己，这条判断恒真。
     names.discard(binary.name)
     return names
 
@@ -216,7 +216,7 @@ def _linked_libraries(binary: Path) -> set[str]:
 def _rejects_removal(bundle: Path, removing: tuple[Path, ...]) -> Path | None:
     """找出包内**留下来之后仍然链接着**待删 Qt 库的那个文件；没有就返回 ``None``。
 
-    这是删之前的一道闸：那三个库「只被已排除的插件拖进来」的判断会随 Qt 版本失效，
+    这是删之前的一道检查：那三个库「只被已排除的插件拖进来」的判断会随 Qt 版本失效，
     而删错只会在**运行期**炸（``dyld`` 找不到库，``codesign --verify`` 却绿）。
     待删的那几个文件本身要跳过：它们互相链接着，一起走掉，谁也不欠谁。
     """

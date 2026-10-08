@@ -68,7 +68,7 @@ def test_repeated_anchor_changes_still_land_on_the_first_photo(
 ) -> None:
     """连着按 ← / → 只定位一次，而且以**最后一次**的锚点为准。
 
-    这一条钉的是那个闩锁不许把定位吃掉：闸门一旦卡住（或者连按几下只排了第一次
+    这一条钉的是那个闩锁不许把定位忽略掉：前置条件一旦卡住（或者连按几下只排了第一次
     却没跑成），滚动条就永远停在 0，周视图里那一周明明有照片却一片空白。
     """
     view = WeekView(ThumbStore())
@@ -142,7 +142,7 @@ def test_a_landed_reveal_is_not_repeated_when_the_buckets_change(
 def test_a_second_reveal_while_one_is_pending_does_not_lose_it(
     qt_app: QApplication,  # noqa: ARG001
 ) -> None:
-    """已经排着一个的时候再排一次 —— 闸门**续期**而不是各排各的。
+    """已经排着一个的时候再排一次 —— 前置条件**续期**而不是各排各的。
 
     排成两个互不相干的定位没有害处，但会让「正好排了一个」这件事不再等于
     ``isActive()``；而那句判断正是「这一轮还有没有没落地的定位」的唯一依据。
@@ -171,7 +171,7 @@ def test_the_reveal_does_not_count_as_landed_before_the_scroll_bar_has_a_range(
 
     切到这一层时，报窗口与定位常常跑在**内部布局之前**（``setCurrentWidget`` 之后
     滚动区的布局是延后处理的）：那一刻滚动条的最大值还是 0，``setValue`` 设了也没用。
-    而「已落地」这道闸一关上，定位就再也补不回来 —— 这一层永远停在 00:00，而
+    而「已落地」这道前置条件一关上，定位就再也补不回来 —— 这一层永远停在 00:00，而
     「看得见哪些」又是按这个位置算的，照片所在的那些格子**压根没人要图**。
     """
     view = WeekView(ThumbStore())
@@ -198,7 +198,7 @@ def test_a_relayout_inside_the_week_reports_the_window_again(
     之后要是没人再报一次，那一批就永远没人要图 —— 屏幕上是占位灰。
 
     这里只动**内部那个时间轴**的宽度：整层尺寸没变（所以 `WeekView.resizeEvent` 不响），
-    滚动范围也没变（所以滚动去抖那一路不响）—— 能报出窗口的只有「盯着内部几何」这一路。
+    滚动范围也没变（所以滚动防抖那一路不响）—— 能报出窗口的只有「盯着内部几何」这一路。
     """
     view = WeekView(ThumbStore())
     view.set_buckets(*_two_photos())
@@ -227,7 +227,7 @@ def test_the_header_is_repainted_when_the_viewport_changes_width(
     变化时替它重画，于是表头停在旧列宽上 —— 表头与时间轴对不齐，往右越差越多，
     差值累到最后一列就是一条滚动条的宽度（1200 宽的窗口：149.14 vs 147.0）。
 
-    **只能靠「有没有人标脏」来钉**：``grab()`` / ``render()`` 会强制重画，屏幕上那份陈旧
+    **只能靠「有没有人标记为需要重绘」来钉**：``grab()`` / ``render()`` 会强制重画，屏幕上那份陈旧
     像素在像素探针里永远看不见。
     """
     view = WeekView(ThumbStore())
@@ -263,7 +263,7 @@ def test_a_delivered_thumbnail_asks_the_timeline_to_repaint(
     月 / 年视图画在自己身上，只有周视图要绕这一道（滚动与换层会强制重画那一块）。
 
     （测试环境里 ``update()`` 本来就不会产生 paint 事件 —— 离屏平台不会 expose 窗口。
-    所以这里钉的是**契约**：画格子的那个控件必须被标脏。）
+    所以这里钉的是**契约**：画格子的那个控件必须被标记为需要重绘。）
     """
     view = WeekView(ThumbStore())
     view.resize(900, 600)
@@ -500,7 +500,7 @@ def test_a_partial_repaint_only_draws_the_hours_it_can_show(
     而它高 2218 px、视口只有 724 px，**七成四的活画在屏幕外头**。
 
     之所以要紧，是因为 :meth:`WeekView.update` 在**每张缩略图回来时**都调一次
-    ``self._grid.update()``，而一次 ``update()`` 标脏的是整块。
+    ``self._grid.update()``，而一次 ``update()`` 标记为需要重绘的是整块。
 
     断的是**形状**：一次局部重画只许碰看得见的那几行。量时间会随机器飘，量格数不会。
     """

@@ -167,8 +167,8 @@ def test_resizing_the_window_does_not_animate(qt_app: QApplication, tmp_path: Pa
 def test_a_change_too_small_to_see_does_not_animate(qt_app: QApplication, tmp_path: Path) -> None:
     """差几个像素肉眼看不见，却要付一整轮全视口重绘 —— 直接落位。
 
-    增量由 :func:`~grid_helpers.largest_delta_that_keeps_columns` 找，不写死：换列
-    本身就**该**过渡（那是另一闸），写死一个数会让这条用例在滚动条一改宽度、
+    增量由 :func:`~grid_helpers.largest_delta_that_keeps_columns` 找，不硬编码：换列
+    本身就**该**过渡（那是另一前置条件），硬编码一个数会让这条用例在滚动条一改宽度、
     格子跨过换列边界时测的变成「换列该不该过渡」—— 那它一直是绿的，只是答错了题。
     """
     grid = make_grid(qt_app, tmp_path, 40)
@@ -358,7 +358,7 @@ def test_a_press_during_the_transition_makes_the_picture_agree_again(
     settle_grid(qt_app, grid)
 
     grid.set_target_edge(THUMBNAIL_SIZES[2])
-    step_transition(grid, 1 / 3)  # 停在途中，按钮按的是「正在飞」的那一帧
+    step_transition(grid, 1 / 3)  # 停进行中中，按钮按的是「正在飞」的那一帧
     assert grid._transition is not None
 
     QTest.mouseClick(grid.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(20, 20))
@@ -536,7 +536,7 @@ def test_the_transition_uses_the_measured_columns_not_the_intended_ones(
     用错会让每格整体漂一整列的位移。
     """
     grid = scrollable_grid(qt_app, tmp_path)
-    settle_grid(qt_app, grid)  # 等列数核对（COLUMN_CHECK_MS）跑完，落定之后才量
+    settle_grid(qt_app, grid)  # 等列数核对（COLUMN_CHECK_MS）跑完，稳定下来之后才量
     measured = grid._first_row_columns()
     assert measured == grid._laid_out_columns, "这个场景本来就该两者一致，否则测的不是它"
 
@@ -1196,7 +1196,7 @@ def test_ctrl_wheel_does_not_switch_the_size(qt_app: QApplication, tmp_path: Pat
     """只留 ⌘ + 滚轮切档，⌃ + 滚轮不切。
 
     macOS 上 Qt 把 Command 报成 ``ControlModifier``、⌃ 报成 ``MetaModifier``；
-    两者都收下会让 ⌃ + 滚轮也切档。
+    两者都记录会让 ⌃ + 滚轮也切档。
     """
     grid = make_grid(qt_app, tmp_path, 40)
     settle_grid(qt_app, grid)

@@ -191,8 +191,7 @@ class MetadataPanel(QWidget):
 
         **每轮换外观都要重设一遍，排在 :meth:`setStyleSheet` 之后，而且两者都要点名**：
         重设样式表会把这一支重新 polish 一遍，调色板在那一步被弹回上一轮的底色；而
-        ``setWidget`` 会把内容区设成 ``AutoFillBackground``，漏掉它就等于让它按旧调色板
-        铺满整块。
+        ``setWidget`` 会把内容区设成 ``AutoFillBackground``，漏掉它就等于让它铺满整块。
         """
         for widget in (self._scroll.viewport(), self._body):
             see_through = QPalette(widget.palette())

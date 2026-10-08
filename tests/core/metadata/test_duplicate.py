@@ -35,7 +35,7 @@ def test_each_item_lands_next_to_itself(library: Path) -> None:
 
 
 def test_the_sources_stay_exactly_where_they_were(library: Path) -> None:
-    """只增不改：原件一个字节都不动（红线 1）。"""
+    """只增不改：原件一个字节都不动（不删除、不移动用户照片）。"""
     source = library / "京都" / "一张.jpg"
     before = source.read_bytes()
 
@@ -89,8 +89,8 @@ def test_cancelling_stops_between_items(library: Path) -> None:
 
 
 def test_duplicating_never_enters_the_undo_stack(library: Path) -> None:
-    """**撤销一次复制就是删文件**（红线 1），所以这一条记了账却不进撤销栈 —— 与粘贴同一套
-    （``ACTION_PASTE`` 在 ``undo`` 的 ``_NEVER_UNDOABLE`` 里）。钉的是「真的没进栈」。
+    """**撤销一次复制就是删文件**（删除只许用户亲手触发），所以这一条记了账却不进撤销栈 —— 与粘贴
+    同一套（``ACTION_PASTE`` 在 ``undo`` 的 ``_NEVER_UNDOABLE`` 里）。量的是「真的没进栈」。
     """
     source = library / "京都" / "一张.jpg"
 

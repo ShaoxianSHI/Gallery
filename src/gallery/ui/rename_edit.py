@@ -36,15 +36,11 @@ def field_background(app_theme: AppTheme) -> QColor:
 
 
 def rename_edit_style(app_theme: AppTheme) -> str:
-    """改名的输入框长什么样。
-
-    **选区颜色交给调色板的 ``Highlight``，不写死任何一个蓝**：拿链接色当高亮底，深色下那一片
-    比正文还沉，「这一段已经选中了」反而看不出来。其余颜色从主题派生。
-
-    **这一份里没有 ``border``**：那一圈轮廓由 :meth:`RenameEdit.paintEvent` 自己填
-    （理由见 :mod:`gallery.ui.outline`）。这一处**不留那 1 点的占位** —— 量过：QLineEdit 的
-    文字位置只由 ``padding`` 决定，边框在不在都不动（有实色边框 / 透明 / 没有，三种都是
-    59..101）；而浮层那种形状删掉边框会让整个浮层缩 2 点、每行的字挪 1 点，所以那边要留。
+    """改名的输入框长什么样：**选区颜色交给调色板的 ``Highlight``，不硬编码任何一个蓝**，
+    拿链接色当高亮底时深色下那一片比正文还沉。**这一份里没有 ``border``**：轮廓由
+    :meth:`RenameEdit.paintEvent` 自己填（理由见 :mod:`gallery.ui.outline`）。这里**不留那 1 点
+    的占位** —— 量过：QLineEdit 的文字位置只由 ``padding`` 决定；浮层那种形状删掉边框会让整个
+    浮层缩 2 点，所以那边要留。
     """
     return f"""
     QLineEdit#renameEdit {{

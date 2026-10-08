@@ -67,8 +67,8 @@ def editor_rect(
 class TitleBar(QWidget):
     """窗口顶边那一条：显示当前这一层的名字，``⌘R`` 时原地改成输入框。
 
-    **它一个文件都不碰**（红线 1，ADR 0025 决策 3）：只回答「提交了一个新名字」与「用户放弃
-    了」，其余由 ``MainWindow`` 与 ``write_ops`` 决定。
+    **它一个文件都不碰**（改动用户的照片交由 ``write_ops``，ADR 0025 决策 3）：
+    只回答「提交了一个新名字」与「用户放弃了」，其余由 ``MainWindow`` 与 ``write_ops`` 决定。
     """
 
     #: 用户确认了新名字。
@@ -198,7 +198,7 @@ class TitleBar(QWidget):
         self.setToolTip(self._text)
 
     def _on_committed(self, text: str) -> None:
-        """输入框提交：交出去的是名字本身，改不改由外面说了算（红线 1）。"""
+        """输入框提交：交出去的是名字本身，改不改由外面说了算（写盘由 ``write_ops`` 动手）。"""
         self._settle()
         self.rename_committed.emit(text)
 

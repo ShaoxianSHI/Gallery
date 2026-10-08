@@ -62,7 +62,7 @@ from gallery.ui.search_field import (  # noqa: E402
 #: 测试库里每张照片的相机（按文件名对应）。没给的就是没写相机。
 CAMERAS = {"海边-01.jpg": "Canon EOS R5", "山.jpg": "Sony A7"}
 
-#: 每张照片的拍摄时间。**取「这个月」而不是写死的年份**：日历停在今天上，而
+#: 每张照片的拍摄时间。**取「这个月」而不是硬编码的年份**：日历停在今天上，而
 #: :meth:`CalendarPage.photo_count` 只数**当前那一段**里看得见的。
 TODAY = datetime.date.today()
 
@@ -158,7 +158,7 @@ def _library(tmp_path: Path, make_photo: Callable[..., Path]) -> Path:
 def _settle(qt_app: QApplication, window: MainWindow) -> None:
     """转到「这一层排好了、后台那一遍也跑完了」为止。
 
-    ``_filter_job`` 与 ``_search_job`` 一并等掉：切作用域时两者可能交替在途。
+    ``_filter_job`` 与 ``_search_job`` 一并等掉：切作用域时两者可能交替进行中。
     """
     wait_for_idle(
         qt_app,
@@ -310,7 +310,7 @@ def test_clearing_conditions_in_the_search_field_clears_the_toolbar(
 ) -> None:
     """**在搜索框里撤光**也要清掉工具条上那几枚 —— 与点 ✕ 同一个毛病的两条路。
 
-    点 ✕ 那条已经钉住，但撤光有几条独立的路（点 ✕、输入框里清空回车、``⇧Esc``），而它们各自走
+    点 ✕ 那条已经锁定，但撤光有几条独立的路（点 ✕、输入框里清空回车、``⇧Esc``），而它们各自走
     一遍 ``_apply_conditions``。只钉一条的话，另几条各自坏掉都没人看着 —— 而症状一样。
     """
     root = _library(tmp_path, make_photo)
@@ -321,7 +321,7 @@ def test_clearing_conditions_in_the_search_field_clears_the_toolbar(
     _settle(qt_app, window)
 
     # **先让输入框空下来**：`dismiss` 的第一件事是清空输入框（那是「这一下」），输入框空了才轮到
-    # 撤条件。**按到条件真的撤光为止**，不写死按几下。
+    # 撤条件。**按到条件真的撤光为止**，不硬编码按几下。
     while _chips(window):
         window._search_field.dismiss()
         _settle(qt_app, window)
@@ -398,7 +398,7 @@ def _is_conditions_mutation(node: ast.Call) -> bool:
     """这一次调用会不会改 ``self._conditions`` 的长度。
 
     **只认直接挂在 ``self._conditions`` 上的那几个方法**：``.append(x)`` 改长度，
-    ``.sort()`` 不改，``.index()`` 更不改 —— 混进判据会让这条守护变成「凡碰到它就红」。
+    ``.sort()`` 不改，``.index()`` 更不改 —— 混进判据会让这条回归测试变成「凡碰到它就红」。
     """
     call = node.func
     return (
@@ -603,7 +603,7 @@ def test_leaving_the_search_field_abandons_the_pending_change(
 ) -> None:
     """**焦点离开输入框 = 放弃**改这一条（ADR 0040 决策 12）。
 
-    用户要的就是这一条：「避免用户做了很多别的操作后忘记之前进了编辑模式」。兜底挂在
+    用户要的就是这一条：「避免用户做了很多别的操作后忘记之前进了编辑模式」。回退挂在
     ``editing_changed(False)`` 上而不是焦点事件上 —— 离屏下量不出焦点的先后顺序，而信号是
     「焦点已经离开」这件事本身。
     """
@@ -629,7 +629,7 @@ def test_leaving_the_field_while_typing_a_new_one_keeps_what_was_typed(
 ) -> None:
     """**正在输入一条全新的条件**时失焦，输入框里敲的字要留着。
 
-    这一条是上一条的必要反面：放弃修改的闸若不区分「在改已有的一条」与「在敲新的一条」，
+    这一条是上一条的必要反面：放弃修改的前置条件若不区分「在改已有的一条」与「在敲新的一条」，
     用户敲到一半点别处，**刚敲的字凭空消失** —— 丢的是没确认的东西。
     """
     root = _library(tmp_path, make_photo)
@@ -693,7 +693,7 @@ def test_switching_the_view_keeps_the_conditions_but_drops_the_pending_change(
     """
 
     def _no_cancel_on_blur(self: MainWindow) -> None:
-        """把**失焦那条兜底**按掉 —— 只让 ``set_browse_mode`` 里的那一处有机会干活。
+        """把**失焦那条回退**按掉 —— 只让 ``set_browse_mode`` 里的那一处有机会干活。
 
         **按的是 :meth:`_on_search_active_changed` 而不是 :meth:`_cancel_condition_edit` 本身**：
         后者会把 ``set_browse_mode`` 里那一处也一起按掉（它调的正是这个方法）。按「失焦的入口」
@@ -709,7 +709,7 @@ def test_switching_the_view_keeps_the_conditions_but_drops_the_pending_change(
     window._on_condition_edited(0)
     _settle(qt_app, window)
 
-    # 把失焦那条兜底彻底按掉，只让 ``set_browse_mode`` 里那一处有机会干活：否则切视图时
+    # 把失焦那条回退彻底按掉，只让 ``set_browse_mode`` 里那一处有机会干活：否则切视图时
     # ``focus_current_view`` 会顺手清掉编辑态，把那一处删掉本用例照样绿。
     monkeypatch.setattr(MainWindow, "_on_search_active_changed", _no_cancel_on_blur)
     window._editing_condition = 0
@@ -724,9 +724,9 @@ def test_switching_the_view_keeps_the_conditions_but_drops_the_pending_change(
 def test_switching_the_view_keeps_the_conditions_and_appends_the_next_one(
     qt_app: QApplication, tmp_path: Path, make_photo
 ) -> None:
-    """切视图之后敲的新条件是**追加** —— 与上一条一起把「切视图」这半边钉住。
+    """切视图之后敲的新条件是**追加** —— 与上一条一起把「切视图」这半边锁定。
 
-    上一条按掉了失焦那条兜底，所以它量的是「``set_browse_mode`` 自己有没有放弃」；这一条走真实
+    上一条按掉了失焦那条回退，所以它量的是「``set_browse_mode`` 自己有没有放弃」；这一条走真实
     路径，量的是**最终结果**：条件还在、新敲的接在后面而不是顶掉它。
     """
     root = _library(tmp_path, make_photo)
@@ -979,7 +979,7 @@ def test_escape_exits_the_search_after_walking_through_a_group(
 
     assert _chips(window) == [], f"Esc 没能退出搜索，条件还在：{_chips(window)}"
     # 退出搜索之后停在**相册视图的根**。断的是「回到了这一层」而不是「那一层恰好有哪些条目」
-    # —— 根上既有相册卡片也有散在根下的照片，写死那份清单就等于把断言骑在测试库的目录结构上。
+    # —— 根上既有相册卡片也有散在根下的照片，硬编码那份清单就等于把断言骑在测试库的目录结构上。
     assert window._level_stack.frames == (), (
         f"退出搜索之后栈上还有东西：{window._level_stack.frames}"
     )
@@ -1139,7 +1139,7 @@ def test_shift_escape_is_the_key_that_pops_a_condition(
     """``⇧Esc`` 这一键**真的按得动** —— 钉的是键，不只是那个方法。
 
     **量的是按键事件而不是直接调方法**：上面几条走的是 ``pop_last_condition()``，那与「这个键
-    接上了没有」是两件事 —— 快捷键没挂上、上下文写错、或者被输入框先吃掉，症状都是「按了没反应」，
+    接上了没有」是两件事 —— 快捷键没挂上、上下文写错、或者被输入框先忽略掉，症状都是「按了没反应」，
     而上面几条照样绿。
 
     按键发在**网格**上（条件生效时焦点通常在这儿），不在输入框里。
@@ -1459,7 +1459,7 @@ def test_the_button_has_no_hover_hint(qt_app: QApplication, tmp_path: Path, make
 def test_the_button_stays_the_same_in_both_scopes(
     qt_app: QApplication, tmp_path: Path, make_photo
 ) -> None:
-    """两种作用域下按钮**长得一模一样** —— 守护「它没有选中态」（ADR 0042 决策 1）。
+    """两种作用域下按钮**长得一模一样** —— 回归测试「它没有选中态」（ADR 0042 决策 1）。
 
     **量像素，不量样式表字符串**：只断 ``"background"`` 出现过量不到任何东西 —— 颜色写对了而
     Qt 没画（或者被别的规则盖掉）时它照样绿。这条量的是「按钮中心那一块到底是什么颜色」，
@@ -1480,7 +1480,7 @@ def test_the_button_stays_the_same_in_both_scopes(
     in_level = _button_center_color(toggle)
 
     assert in_library is not None and in_level is not None
-    # 兜底：两档真的切开了（按钮没被置灰）。少了这一行，两次量到同一个状态也会照样绿。
+    # 回退：两档真的切开了（按钮没被置灰）。少了这一行，两次量到同一个状态也会照样绿。
     assert window._search_scope == SEARCH_SCOPE_LEVEL
     assert _close(in_library, in_level, 0.01), (
         f"按钮的中心在两档之间变了：{in_library.name()} → {in_level.name()}"
@@ -1519,7 +1519,7 @@ def _button_center_color(button: object) -> QColor | None:
 
 
 def _close(left: QColor, right: QColor, tolerance: float) -> bool:
-    """两个颜色差得不算远（``lightnessF`` 上的差，阈值写死一个 ``tolerance``）。"""
+    """两个颜色差得不算远（``lightnessF`` 上的差，阈值硬编码一个 ``tolerance``）。"""
     return abs(left.lightnessF() - right.lightnessF()) <= tolerance and (
         abs(left.red() - right.red()) <= 2
         and abs(left.green() - right.green()) <= 2
@@ -1648,7 +1648,7 @@ def test_writing_commands_are_withheld_while_filtering(
 ) -> None:
     """筛选生效时 ⌘V 与 ⇧⌘N **禁掉**：这一层显示的不是全部内容，粘进去的可能一条都不出现。
 
-    而且它们是会动用户文件的那一类（红线 1），不该在用户看不清全貌时发生。
+    而且它们是会动用户文件的那一类（不删除、不移动用户照片那条），不该在用户看不清全貌时发生。
     """
     root = _library(tmp_path, make_photo)
     window = _open(qt_app, root, tmp_path / "会话", browse_mode=BROWSE_MODE_ALBUMS)
@@ -1686,7 +1686,7 @@ def test_writing_commands_come_back_when_the_filter_is_cleared(
 def test_filtering_before_the_index_is_built_still_finds_things(
     qt_app: QApplication, tmp_path: Path, make_photo
 ) -> None:
-    """用户看到空结果就再也不会筛选第二次了 —— 与整库检索同一道闸（ADR 0026 决策 5）。
+    """用户看到空结果就再也不会筛选第二次了 —— 与整库检索同一道前置条件（ADR 0026 决策 5）。
 
     文件表一行都没有时一条都命中不了，而用户看到的会是「当前这一层里没有符合这些条件的照片」
     —— 那不是答案，是索引还没建。那一遍跑完要自己把这次筛选补上。

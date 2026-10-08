@@ -1,12 +1,9 @@
 """本机装没装某个 Chrome PWA —— 按它自己的启动地址认，不按 ``.app`` 的名字认。
 
-那个包在本机叫「**Google 日历**」：名字跟着 Chrome 的界面语言走（英文系统上是
-``Google Calendar``）。拿名字去问 LaunchServices，在别人的机器上必然落空，于是
-判据换成**它自己的启动地址**：读 ``Contents/Info.plist`` 里的
-:data:`SHORTCUT_URL_KEY`，hostname 等于要找的站点即命中。与语言无关。
-
-**为什么非得知道装没装**：已安装的 PWA 在 macOS 上是一个真正的应用，能用它的图标、
-能占一个 Dock 位；没装的话就只能退回浏览器，图标也得换成画的那个（ADR 0034）。
+包名跟着 Chrome 的界面语言走（英文系统上是 ``Google Calendar``），拿名字问 LaunchServices
+在别人机器上必然落空；判据因此换成它自己的启动地址 —— 读 ``Contents/Info.plist`` 里的
+:data:`SHORTCUT_URL_KEY`，hostname 等于目标站点即命中，与语言无关。知道装没装才有图标与
+Dock 位可谈，否则只能退回浏览器（ADR 0034）。
 """
 
 from __future__ import annotations
@@ -90,7 +87,7 @@ def app_icon(app: Path) -> Path | None:
 def finder_icon() -> Path | None:
     """访达图标在哪儿；取不到（非 macOS）就 ``None``，界面那一层退回自画的轮廓。
 
-    **路径写死是有意的**：访达的位置在 macOS 上是一个长期稳定的约定，而为了它去起
+    **路径硬编码是有意的**：访达的位置在 macOS 上是一个长期稳定的约定，而为了它去起
     ``NSWorkspace`` 要把 AppKit 拖进来 —— 那是一条只在 macOS 上成立的依赖，换来的
     只是「多一层封装」。
     """

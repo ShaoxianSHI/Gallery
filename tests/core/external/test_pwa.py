@@ -46,7 +46,7 @@ def test_finds_the_calendar_pwa(tmp_path: Path) -> None:
 def test_localized_name_does_not_matter(tmp_path: Path) -> None:
     """**包的名字是本地化的**（本机叫「Google 日历」，英文系统上是 ``Google Calendar``）。
 
-    所以判据是它自己的启动地址，不是名字 —— 这条钉住「改名/换语言之后照样认得出」。
+    所以判据是它自己的启动地址，不是名字 —— 这条锁定「改名/换语言之后照样认得出」。
     """
     apps = tmp_path / "Chrome Apps.localized"
     make_app(apps, "Google Calendar", shortcut_url=f"https://{HOST}/calendar/r")

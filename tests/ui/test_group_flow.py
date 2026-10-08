@@ -178,7 +178,7 @@ def _open(
 
 
 def _row_of_group(window: MainWindow, label: str) -> int:
-    """名字是 ``label`` 的那张组卡片在第几行。**别写死第 0 行**：组卡片的顺序会变。"""
+    """名字是 ``label`` 的那张组卡片在第几行。**别硬编码第 0 行**：组卡片的顺序会变。"""
     for row in range(window._model.rowCount()):
         group = window._model.group_at(row)
         if group is not None and group.label == label:
@@ -300,7 +300,7 @@ def test_grouping_turns_the_level_into_group_cards(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path], fake_facet_source: object
 ) -> None:
     root = _library(tmp_path, make_photo, list(DATES))
-    _touch_all(root, sorted(DATES))  # 默认排序按修改时间，钉死这一层未分组的顺序
+    _touch_all(root, sorted(DATES))  # 默认排序按修改时间，固定这一层未分组的顺序
     window = _open(qt_app, root, session_base=tmp_path / "状态")
     _settle(qt_app, window)
     assert _labels(window) == sorted(DATES)
@@ -961,7 +961,7 @@ def test_entering_an_album_never_shows_the_ungrouped_photos_first(
 def test_switching_the_sort_never_shows_the_old_order_first(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path], fake_facet_source: object
 ) -> None:
-    """换排序字段同样先攒后摆：旧顺序一帧都不许出现。钉出来的修改时间顺序与按拍摄时间排
+    """换排序字段同样先累积后摆：旧顺序一帧都不许出现。钉出来的修改时间顺序与按拍摄时间排
     不一样，所以这一条真的在看「有没有闪」。
     """
     root = _library(tmp_path, make_photo, ["三月.jpg", "四月.jpg", "去年十二月.jpg"])
@@ -1038,7 +1038,7 @@ def test_group_cards_refuse_rename_and_trash(
 def test_a_group_card_acts_on_all_of_its_photos(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path], fake_facet_source: object
 ) -> None:
-    """选中卡片就是选中它代表的**全部**组员：分组那一层里只有相册与组卡片，照片被分组吃掉了，
+    """选中卡片就是选中它代表的**全部**组员：分组那一层里只有相册与组卡片，照片被分组忽略掉了，
     「只删组里一部分」只可能发生在**进组之后**选了几张。
     """
     root = _library(tmp_path, make_photo, list(DATES))
@@ -1046,7 +1046,7 @@ def test_a_group_card_acts_on_all_of_its_photos(
     _settle(qt_app, window, groups=True)
     year = next(group for group in _groups(window) if group.label == "2024 年")
     assert len(year.photos) == 2
-    # **点名选 2024 那一组**，不写死第 0 行：组卡片默认升序（ADR 0049），第 0 行是 2023。
+    # **点名选 2024 那一组**，不硬编码第 0 行：组卡片默认升序（ADR 0049），第 0 行是 2023。
     _select_rows(window, _row_of_group(window, "2024 年"))
     window._update_action_states()
 

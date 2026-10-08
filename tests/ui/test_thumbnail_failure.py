@@ -1,4 +1,4 @@
-"""缩略图在途失败时该不该报给用户。
+"""缩略图进行中失败时该不该报给用户。
 
 给一张照片改名，网格刚把它换到新路径上，而**改名之前**那次解码还在工作线程里跑着 ——
 它读的是旧路径，文件已经不在了，解码失败是必然的。所以失败这一侧必须与成功的回填
@@ -75,7 +75,7 @@ def test_a_broken_photo_still_on_screen_is_reported(
 def test_a_failure_for_a_photo_that_left_is_dropped_silently(
     qt_app: QApplication, window: MainWindow, wait_for: Callable[..., bool]
 ) -> None:
-    """改名 / 移走 / 删掉之后的在途失败：静默丢掉，绝不说「文件可能已损坏」。"""
+    """改名 / 移走 / 删掉之后的进行中失败：静默丢掉，绝不说「文件可能已损坏」。"""
     old = _first_path(window, wait_for)
     assert window._model.shows_path(old) is True
 

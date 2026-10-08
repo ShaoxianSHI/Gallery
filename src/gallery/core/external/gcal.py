@@ -1,12 +1,9 @@
 """Google 日历的深链：把「哪一层 + 哪一天」翻译成一个 URL。
 
-**月份是 1 起算的。** 网上大量教程说 Google 日历 URL 里的月份 0-based（``6`` 是七月），
-那是错的——本机实测：``/r/month/2026/6/29`` 渲染出来是「2026年6月」，``/r/week/2026/6/29``
-渲染出来是「2026年6月28日这周」。写反了会静默地跳到隔壁那个月，而界面上看不出错。
-
-**三层与 Gallery 的三层同名同义**（``year`` / ``month`` / ``week``），因此这里没有
-映射表。日期一律由调用方给一个具体的 :class:`datetime.date`：周视图把那一天递过去
-即可，Google 自己会算出包含它的那一周——两边的周都从周日起，别再引入第三套星期口径。
+**月份是 1 起算的**（网上说 0-based 是错的）：``/r/month/2026/6/29`` 实测渲染出来是
+「2026年6月」，写反了会静默跳到隔壁那个月而界面上看不出错。三层与 Gallery 同名同义
+（``year`` / ``month`` / ``week``），没有映射表；日期一律给具体的 :class:`datetime.date`，
+周视图把那一天递过去即可——两边都从周日起，别再引入第三套星期口径。
 """
 
 from __future__ import annotations
@@ -30,14 +27,9 @@ _VIEWS = ("year", *_DAY_VIEWS)
 def deep_link(level: str, day: dt.date, account: int = 0) -> str:
     """「日历停在哪一层、哪一天」对应的 Google 日历 URL。
 
-    :param level: :data:`_VIEWS` 之一。
-    :param day: 锚点那一天。年视图不看月日，但仍然要一个（那一年的 1 月 1 日即可）。
-    :param account: Google 账号序号，默认第一个。
-    :raises ValueError: ``level`` 不认识。
-
-    年视图**只带年份**（``/r/year/2026``）：实测带不带月日都行，而不带的那一份
-    渲染出来是干净的年视图。日与周带齐年月日；月视图的日号实测被忽略，但仍然给一个
-    落在那个月里的合法值——省得哪天 Google 开始较真时链接指向一个不存在的日子。
+    :param level: :data:`_VIEWS` 之一。:param day: 锚点那一天（年视图不看月日，但仍要一个）。
+    :param account: Google 账号序号，默认第一个。:raises ValueError: ``level`` 不认识。
+    年视图只带年份；日与周带齐年月日；月视图的日号实测被忽略，但仍给一个落在那个月里的合法值。
     """
     if level not in _VIEWS:
         raise ValueError(f"level 只能是 {_VIEWS} 之一，收到 {level!r}")

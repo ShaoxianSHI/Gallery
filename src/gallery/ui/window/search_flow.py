@@ -1,10 +1,9 @@
 """检索（ADR 0026）：把一串「``#字段 值``」变成一层照片，外加背后那个索引。
 
 没有索引就什么都搜不到，所以打开库时顺手把整库写进索引；这一遍与地点解析**串行**（两边各自
-要遍历整棵子树，同时跑等于把磁盘读两遍）。
-
-**检索结果接着走与扫描完全相同的那段收尾**（决策 7：排序、缩略图、焦点恢复、空层提示、监听
-增量），另写一条平行路径才是 bug 的来源；条件是**临时的**（决策 9），换库就清掉。
+要遍历整棵子树，同时跑等于把磁盘读两遍）。**检索结果接着走与扫描完全相同的那段收尾**
+（决策 7：排序、缩略图、焦点恢复、空层提示、监听增量），另写一条平行路径才是 bug 的来源；
+条件是**临时的**（决策 9），换库就清掉。
 """
 
 from __future__ import annotations
@@ -50,10 +49,9 @@ def _entry_survives(entry: GridEntry, matching: set[Path], kept_albums: frozense
 class SearchFlowMixin:
     """检索框那一套条件，以及「把整库写进索引」那一遍后台维护。
 
-    **条件有两种作用域**（ADR 0040 决策 1）：整库检索的结果**接管**当前层，而筛选只**收窄**
-    当前层、视图本身不动。整个窗口里凡是「条件非空就意味着什么」的地方一律问
-    :meth:`_is_library_search` —— 七个判据各自问一次 ``self._conditions`` 是这类 bug 的来源，
-    而症状（筛选时日历被换成网格页、进相册时条件被清掉）看起来都像「另一个功能坏了」。
+    **条件有两种作用域**（ADR 0040 决策 1）：整库检索的结果**接管**当前层，而筛选只**收窄**当前层、
+    视图本身不动。整个窗口里凡是「条件非空就意味着什么」的地方一律问 :meth:`_is_library_search`；
+    七个判据各自问一次 ``self._conditions`` 是这类 bug 的来源。
     """
 
     # ---- 作用域（ADR 0040）----------------------------------------------------
@@ -73,10 +71,8 @@ class SearchFlowMixin:
     def set_search_scope(self, scope: str) -> None:
         """切到哪一种作用域（切换按钮与菜单项都走这里）。
 
-        **条件不清空**：这是同一个胶囊里的同一批条件，用户改的只是「它们管到哪儿」。清掉等于
-        逼他重新敲一遍，而那串输入他刚刚才确认过。
-
-        **切到搜索 = 压一帧，切回筛选 = 弹掉那一帧**（ADR 0041 决策 3，纯粹的 push / pop，
+        **条件不清空**：这是同一个胶囊里的同一批条件，用户改的只是「它们管到哪儿」；清掉等于逼他重新
+        敲一遍。**切到搜索 = 压一帧，切回筛选 = 弹掉那一帧**（ADR 0041 决策 3，纯粹的 push / pop，
         不看栈顶原本是什么 —— 搜索可以从任何一层压进去）。
         """
         if scope not in SEARCH_SCOPES or scope == self._search_scope:
@@ -114,15 +110,10 @@ class SearchFlowMixin:
     def _start_level_filter(self) -> None:
         """把这一层按条件收窄（**不在筛选作用域时直接往下走**，见 :meth:`_order_now`）。
 
-        收窄是**一次相交**而不是另写一条列举链：这一层的照片照常枚举（相册 / 平铺 / 分组快照各
-        走各的现成路径），然后拿一份「命中路径集合」去求交。于是分桶、排序、缩略图预取、
-        焦点恢复、空层提示、监听增量全都原样复用 —— 与整库检索共用同一条收尾路径
-        （ADR 0026 决策 7 的同一条原则，另写一条平行路径才是 bug 的来源）。
-
-        **索引没建全时先把它建起来**（与 :meth:`_start_search` 同一道闸，理由也一样）：文件表
-        里没有行时，一条都命中不了，用户看到的是「这个视图里没有符合这些条件的照片」，而那
-        不是答案，是索引还没建。那一遍跑完会自己重跑这一遍（``_on_photo_index_done``）。
-        """
+        收窄是**一次相交**而不是另写一条列举链：这一层的照片照常枚举（相册 / 平铺 / 分组
+        快照各走各的现成路径），再拿一份「命中路径集合」求交。于是分桶、排序、缩略图预取、
+        焦点恢复、空层提示、监听增量全都原样复用（ADR 0026 决策 7）。**索引没建全时先把它
+        建起来**：文件表里没有行时一条都命中不了，那一遍跑完会自己重跑这一遍。"""
         library = self._library
         if not self._is_filtering() or library is None:
             self._apply_ordering()
@@ -153,7 +144,7 @@ class SearchFlowMixin:
     def _on_level_filtered(self, generation: int, payload: object) -> None:
         """命中集合回来了：把这一层收窄，然后照常往下走（排序、分桶、缩略图）。
 
-        **收窄落在 ``_staged`` 上而不是模型上**：这一层还没上屏（换层时暂存区优先），在那里收
+        **收窄落在 ``_staged`` 上而不是模型上**：这一层还没显示到界面（换层时暂存区优先），在那里收
         窄才不会出现「先摆一屏未筛选的、再换成筛过的」那种闪。
         """
         if generation != self._generation:
@@ -172,7 +163,7 @@ class SearchFlowMixin:
                 entry for entry in staged if _entry_survives(entry, matching, kept_albums)
             ]
         else:
-            # 已经上屏（监听器增量那一路）：就地换掉模型内容。
+            # 已经显示到界面（监听器增量那一路）：就地换掉模型内容。
             entries = self._model.entries()
             kept = [entry for entry in entries if _entry_survives(entry, matching, kept_albums)]
             if kept != list(entries):
@@ -195,14 +186,14 @@ class SearchFlowMixin:
         self._apply_ordering()
 
     def _cancel_level_filter(self) -> None:
-        """作废在途的筛选（换层、换库、关窗时）。"""
+        """作废进行中的筛选（换层、换库、关窗时）。"""
         if self._filter_job is not None:
             self._runner.cancel(self._filter_job)
             self._filter_job = None
 
     # ---- 检索（ADR 0026）------------------------------------------------------
     def _start_search(self, library: Library) -> None:
-        """按已生效的条件检索整个库，把命中的照片攒进这一层。
+        """按已生效的条件检索整个库，把命中的照片累积进这一层。
 
         **索引没建全时先把它建起来**（ADR 0026 决策 5）：否则用户看到的是「一条都没有」，
         而那不是答案，是索引还没建。那一遍跑完会自己重跑这次检索。
@@ -254,7 +245,7 @@ class SearchFlowMixin:
         self._apply_ordering()  # 把这一层按「没有结果」收尾，界面不至于卡在空白上
 
     def _cancel_search(self) -> None:
-        """作废在途的检索（换层、换库、关窗时）。"""
+        """作废进行中的检索（换层、换库、关窗时）。"""
         if self._search_job is not None:
             self._runner.cancel(self._search_job)
             self._search_job = None
@@ -277,7 +268,7 @@ class SearchFlowMixin:
             self._warn_unusable_input(parsed)
             return
         if self._library is None:
-            # 没有库的时候收下这条条件是**悄悄的**：面包屑不显示它，换库时又被清掉 —— 不如说一句。
+            # 没有库的时候记录这条条件是**悄悄的**：面包屑不显示它，换库时又被清掉 —— 不如说一句。
             self._show_banner(
                 "先打开一个照片文件夹，再筛选。"
                 if self._is_filtering()
@@ -297,17 +288,10 @@ class SearchFlowMixin:
     def _leave_search_frame(self, frame: object = None, *, reload: bool = True) -> None:  # type: ignore[assignment]
         """搜索结果帧已被弹掉（或即将被弹掉）—— **清条件，恢复底下那一层**。
 
-        **用传进来的那一帧，不重新查栈**：``go_up`` 是**先弹再收尾**的，而弹完之后
-        ``self._search_frame`` 已经是 ``None`` 了 —— 重新查会得到「没有搜索帧」，于是这一支
-        直接返回，条件留在原地而搜索框与作用域按钮还亮着。
-
-        **条件是那一帧的内容**（ADR 0041 决策 3），所以帧一没条件就得跟着没；清完之后
-        ``_is_library_search`` 自然变假，于是胶囊的占位文字、菜单项的勾、面包屑那一段
-        「搜索结果（N）」全都自己回到筛选那一边 —— **不必在这里逐个改回去**。
-
-        :param reload: ``False`` 给「已经要重列别的东西」的那些调用点（``enter_folder`` 要
-            压相册链并按新的那一层重列，重列两次会让网格无意义地闪一下）。
-        """
+        **用传进来的那一帧，不重新查栈**：``go_up`` 是**先弹再收尾**的，弹完之后
+        ``self._search_frame`` 已经是 ``None``，重新查会得到「没有搜索帧」而直接返回。
+        **条件是那一帧的内容**（ADR 0041 决策 3），帧一没条件就得跟着没；清完之后
+        ``_is_library_search`` 自然变假，胶囊文案、菜单勾、面包屑都自己回到筛选那一边。"""
         if not isinstance(frame, SearchFrame):
             return
         self._conditions.clear()
@@ -330,12 +314,9 @@ class SearchFlowMixin:
     def _sync_search_frame(self) -> None:
         """让栈上的**搜索结果帧**与「此刻在不在整库检索」对上（ADR 0041 决策 3）。
 
-        **整库检索是「换了一层」，所以是栈上的一帧；筛选不是**（它收窄的正是当前这一层，
-        决策 2）。这一句是那件事的**唯一**同步点：早先 `_is_library_search` 要同时看
-        ``_conditions`` 与 ``_search_scope`` 两个字段，七个调用点各问一次。
-
-        **压帧时把那一层当时的样子带进去**（``narrowing``）：弹回来时筛选条件恢复成压入之前的
-        样子 —— 用户在搜索结果里加的那条筛选不该留在底下的相册上（决策 2）。
+        **整库检索是「换了一层」，所以是栈上的一帧；筛选不是**（它收窄的正是当前这一层，决策 2）。
+        这一句是那件事的**唯一**同步点。**压帧时把那一层当时的样子带进去**（``narrowing``）：弹回来时
+        筛选条件恢复成压入之前的样子 —— 用户在搜索结果里加的那条筛选不该留在底下的相册上。
         """
         if self._is_library_search():
             if self._search_frame is None:
@@ -375,13 +356,10 @@ class SearchFlowMixin:
     def _on_search_dismissed(self) -> None:
         """搜索框里按 Esc 且里面是空的。
 
-        正在改某一条的时候，``Esc`` 是**放弃这一次改动**（那一条原样留着）—— 否则
-        「改到一半想溜」与「撤掉一条」是同一下，用户没法中途反悔。
-
-        **走的是 :meth:`pop_last_condition` 而不是 :meth:`go_up`**（ADR 0040 决策 11）：转给
-        ``go_up`` 的话，搜索框里那个 Esc 也会变成「退一层」—— 在子相册里点进搜索框按 Esc，
-        位置没退、反而少了一条条件。搜索框这一处的语境是**条件**，所以它撤条件。
-        """
+        正在改某一条的时候，``Esc`` 是**放弃这一次改动**（那一条原样留着），否则「改到一半想溜」与
+        「撤掉一条」是同一下。**走的是 :meth:`pop_last_condition` 而不是 :meth:`go_up`**（ADR 0040
+        决策 11）：转给 ``go_up`` 的话，搜索框里那个 Esc 也会变成「退一层」，在子相册里按 Esc 就
+        位置没退、反而少了一条条件；搜索框这一处的语境是**条件**。"""
         if self._editing_condition is not None:
             self._cancel_condition_edit()
             return
@@ -390,16 +368,10 @@ class SearchFlowMixin:
     def _on_search_active_changed(self, active: bool) -> None:
         """正在输入时别的命令让开 —— 与两个改名输入框同一件事（键盘归输入框）。
 
-        **失焦（``active`` 为假）顺带放弃「正在改哪一条」**（ADR 0040 决策 12）。这是整个筛选
-        机制的**兜底**：``_editing_condition`` 一旦设上，下一次回车走的是
-        ``self._conditions[editing] = …`` —— **就地替换，条目数不增加**；焦点离开时不清它的话，
-        用户点了一下胶囊、没接着改就去做别的，之后敲的每一条都在顶掉那一条。
-
-        **挂在 ``editing_changed(False)`` 上，而不是焦点事件上**：离屏下窗口拿不到真实焦点
-        （``QTest.mouseClick`` 在 offscreen 里不产生焦点切换），而 ``focusOutEvent`` 的**先后
-        顺序**量不出来 —— 一旦点胶囊本身被拆成「失焦 → 获焦」，功能会当场自毁。信号是「焦点
-        已经离开」这件事本身，稳。
-        """
+        **失焦（``active`` 为假）顺带放弃「正在改哪一条」**（ADR 0040 决策 12）：
+        ``_editing_condition`` 一旦设上，下一次回车就是**就地替换、条目数不增加**；
+        离开时不清它，之后敲的每一条都在顶掉那一条。**挂在 ``editing_changed(False)``
+        而不是焦点事件上**：离屏下 ``focusOutEvent`` 的先后顺序量不出来。"""
         self._update_action_states()
         if not active:
             self._cancel_condition_edit()
@@ -468,11 +440,9 @@ class SearchFlowMixin:
     def _maybe_start_photo_index(self) -> None:
         """把整个库的照片写进索引的文件表，**只有真的有活干才起**。
 
-        与 :meth:`_maybe_start_place_pass` 同一个套路（ADR 0010）：打开库时顺手填好，之后每次
-        检索就只是一次查表。第一遍跑完之前检索「什么都搜不到」，所以它自己会在结束时把在等的
-        检索重跑一次。
-
-        与地点那一遍**串行**（两边各自要遍历整棵子树），地点那遍先跑，它要起 exiftool 子进程。
+        与 :meth:`_maybe_start_place_pass` 同一个套路（ADR 0010）：打开库时顺手填好，之后
+        每次检索就只是一次查表。第一遍跑完之前检索「什么都搜不到」，所以它自己会在结束时
+        把在等的检索重跑一次。与地点那一遍**串行**（两边各自要遍历整棵子树），地点那遍先跑。
         """
         library = self._library
         if (
@@ -536,7 +506,7 @@ class SearchFlowMixin:
             )
 
     def _cancel_photo_index(self) -> None:
-        """作废在途的索引维护（切库、关窗时）。"""
+        """作废进行中的索引维护（切库、关窗时）。"""
         if self._index_job is not None:
             self._runner.cancel(self._index_job)
             self._index_job = None

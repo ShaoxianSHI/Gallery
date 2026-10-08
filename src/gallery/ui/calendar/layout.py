@@ -40,7 +40,7 @@ def cell_size(row: float) -> tuple[float, float]:
 def cell_rect(row_width: float, row: float) -> tuple[float, float, float, float]:
     """一格在行里的落位：``(x, y, 宽, 高)``，坐标相对这一行的左上角。
 
-    **永远居中**（不靠左、不摊开）；**窄列按列宽收窄而不是溢出**到隔壁那一天上去。
+    **永远居中**（不靠左、不铺满）；**窄列按列宽收窄而不是溢出**到隔壁那一天上去。
     """
     cell_w, cell_h = cell_size(row)
     available = max(1.0, row_width - 2 * CELL_GAP)
@@ -63,7 +63,7 @@ def fitted_size(source_w: int, source_h: int, box_w: float, box_h: float) -> tup
 def month_cells(level_days: int = 6, week_days: int = 7) -> int:
     """月视图要几格：6 行 × 7 列 = 42（与 ``calendar.month_matrix(…)`` 对齐）。
 
-    **这 42 格含上下月补位**；那一月自己的日子只有 29–31 天 —— 格子数与照片数是两回事。
+    **这 42 格含上下月占位**；那一月自己的日子只有 29–31 天 —— 格子数与照片数是两回事。
     """
     return level_days * week_days
 

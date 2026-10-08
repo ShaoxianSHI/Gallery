@@ -249,9 +249,9 @@ def test_a_record_nobody_can_read_back_says_so(tmp_path: Path) -> None:
 def test_an_event_record_never_falls_through_to_the_trash(
     store: EventStore, tmp_path: Path
 ) -> None:
-    """**落到兜底那一条就是拿 ``.gallery/events.db`` 去系统废纸篓里捞东西。**
+    """**落到回退那一条就是拿 ``.gallery/events.db`` 去系统废纸篓里捞东西。**
 
-    兜底的 ``_undo_delete`` 只认「这是删了一个文件」，而事件记录不是。所以
+    回退分支的 ``_undo_delete`` 只认「这是删了一个文件」，而事件记录不是。所以
     ``undo_last_write`` 必须显式分派它 —— 这条用例在事件库不可用时也断同一件事：
     报出来的是「打不开事件库」，而不是「废纸篓里已经没有它了」。
     """

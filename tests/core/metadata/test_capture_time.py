@@ -1,6 +1,6 @@
 """拍摄时间那一半的翻译（ADR 0032）：两个字段各自可留空，只写真正变了的那个。
 
-盯的是**写出去的字段**；最后一条真的走一遍写回（红线 4 要求每次写回都留下可回滚的记录）。"""
+盯的是**写出去的字段**；最后一条真的走一遍写回（每次都要留可回滚的 journal 记录）。"""
 
 from __future__ import annotations
 
@@ -143,7 +143,7 @@ def test_the_user_may_type_dashes_and_a_short_seconds(state: CaptureTime) -> Non
 
 
 def test_a_planned_edit_writes_back_and_leaves_a_journal_record(tmp_path: Path) -> None:
-    """**对着临时目录里现场造的照片走一遍真的写回**（红线 4）：计划交给
+    """**对着临时目录里现场造的照片走一遍真的写回**（必须先记账再动文件）：计划交给
     :func:`write_metadata` 要过白名单、路径、回读校验与记账四道关，漏一道就漏一个地方。"""
     root = tmp_path / "照片"
     root.mkdir()

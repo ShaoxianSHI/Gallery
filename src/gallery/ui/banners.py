@@ -139,11 +139,8 @@ MAX_LISTED_EVENTS: int = 3
 def orphan_dialog(scan: OrphanScan) -> str:
     """开库时发现孤儿绑定，确认框的正文。**纯文本，不碰 Qt**（与本文件其余部分同一层）。
 
-    **两档分开说，理由写进正文**：「相册已不存在」那一档混着「那个盘没挂上」，用户只有看了
-    这句话才知道默认保留的是什么、以及勾了会失去什么。
-
-    **不许提 ⌘Z**：这里没有撤销 —— 把绑定恢复到一张不存在的照片上用户用不上，而
-    ``delete_event`` 那句「⌘Z 可以…」在这里是反的。
+    **两档分开说，理由写进正文**：用户只有看了这句话才知道默认保留的是什么、勾了会失去什么。
+    **不许提 ⌘Z**：这里没有撤销 —— ``delete_event`` 那句承诺在这里是反的。
     """
     lines = [_orphan_headline(scan), "", _why_it_matters()]
     if scan.missing:
@@ -198,13 +195,10 @@ def _list_names(names: Sequence[str]) -> str:
 
 
 def paste_banner(result: PasteResult, target_name: str) -> str:
-    """粘贴之后的那行提示：粘了哪些、为什么没成。
+    """粘贴之后的那行提示：粘了哪些、为什么没成。拼法在 :func:`_into_album_parts`。
 
-    **改了名的要单独点出来**：用户要求的是「不覆盖」，而系统给出的新名字得让他看见。话怎么
-    拼在 :func:`_into_album_parts` 里，与「复制到相册 / 移动到相册」共用同一份。
-
-    **「本来就在这一层的那几项」不再是空操作**（ADR 0044），它们混在 ``pasted`` 里按
-    「一张的副本.jpg」报出来 —— 用户要的是「做了一件事」，横幅说「什么都没做」就是撒谎。
+    **改了名的要单独点出来**：用户要求的是「不覆盖」，系统给出的新名字得让他看见。
+    **「本来就在这一层的那几项」不是空操作**（ADR 0044），它们按副本报出来。
     """
     return _banner_line(
         _into_album_parts(
@@ -221,12 +215,9 @@ def paste_banner(result: PasteResult, target_name: str) -> str:
 def duplicate_banner(result: PasteResult) -> str:
     """「复制」⌘D 之后的那行提示（ADR 0044）。
 
-    **不套 :func:`_into_album_parts`**：那句话的骨架是「到「某个相册」」，而这里压根没有目标相册
-    —— 每一项的目标就是它自己所在的那一层，有几个不同的父目录就得说几个名字，凑成一句反而更绕。
-
-    单项时把新名字点出来（那一项往往就是用户刚点的那个），多项只报个数。
-
-    **这一句不承诺 ⌘Z**：撤销一次复制就是删文件，红线 1。
+    **不套 :func:`_into_album_parts`**：这里没有目标相册，每项的目标是它自己所在的那一层。
+    单项时把新名字点出来。**这一句不承诺 ⌘Z**：撤销一次复制就是删文件，违反「绝不删除、移动
+    用户照片」。
     """
     parts: list[str] = []
     if result.pasted:
@@ -244,12 +235,9 @@ def duplicate_banner(result: PasteResult) -> str:
 def transfer_banner(result: MoveResult | PasteResult, target_name: str, verb: str) -> str:
     """「复制到相册 / 移动到相册」之后的那行提示（ADR 0019）。
 
-    与 :func:`paste_banner` 一套说法（含「改了名的要单独点出来」）。移动比粘贴多一句
-    「⌘Z 可以撤销」—— 这是用户敢用它的前提（红线 1，见 ADR 0019 决策 3），也是两条路唯一
-    刻意不同的地方。
-
-    **那句话只在真的移走了东西时才说**（ADR 0044）：只复制的那一批没有任何东西进过撤销栈，
-    说「⌘Z 可以撤销」就是许了一个不存在的承诺。
+    与 :func:`paste_banner` 一套说法。移动比粘贴多一句「⌘Z 可以撤销」——这是用户敢用它的
+    前提（ADR 0019 决策 3 对「绝不移动用户照片」的豁免）。**那句话只在真的移走了东西时才说**
+    （ADR 0044）：只复制的那一批没东西进撤销栈，说「⌘Z 可以撤销」就是许一个不存在的承诺。
     """
     moved = result.moved if isinstance(result, MoveResult) else result.pasted
     parts = _into_album_parts(
@@ -298,10 +286,8 @@ def _into_album_parts(
 ) -> list[str]:
     """「把若干项搬进某个相册」之后那句话的**唯一一份算法**。
 
-    粘贴（ADR 0018）与复制 / 移动到相册（ADR 0019）说的是同一件事，于是按同一套说法报出来；
-    两处刻意不同的地方由参数带进来 —— ``done_verb`` / ``fail_verb`` 分成两个，因为粘贴那句是
-    「已**粘贴** 3 项」而失败那句是「没**粘**成」。返回**分段**而不是整句，是为了让调用方能
-    在后面追加自己那一句（移动的「⌘Z 可以撤销」、副本的那句「本来就在这里」）。
+    粘贴（ADR 0018）与复制 / 移动到相册（ADR 0019）共用它；两处刻意不同的地方由参数带进来，
+    ``done_verb`` / ``fail_verb`` 分成两个。返回**分段**而不是整句，是为了让调用方追加自己那句。
     """
     parts: list[str] = []
     if moved:
@@ -394,10 +380,8 @@ def album_cover_cleared_banner(album_name: str) -> str:
 def metadata_edit_banner(outcome: MetadataWriteOutcome, photo_name: str) -> str:
     """编辑元数据之后的那行提示（ADR 0030 / 0031 / 0032）。
 
-    **只有这一句。** 「接下来会发生什么」由对话框里那行小字负责（保存之前就说清了坐标怎么
-    写入）；横幅再说一遍是在动作**之后**才到的，那时它已经不能改变任何决定。横幅只回答三件
-    事：**改了哪一部分**、**成了吗**、**能不能撤** ——「改了哪一部分」不是啰嗦：只改时间或
-    只改位置时，**没改的那一部分一个字节都没动**。
+    「接下来会发生什么」由对话框里那行小字负责；横幅只回答**改了哪一部分**、**成了吗**、
+    **能不能撤**。只改时间或只改位置时，**没改的那一部分一个字节都没动**。
     """
     if not outcome.written:
         return f"「{photo_name}」的元数据没有改动。"

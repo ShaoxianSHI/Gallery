@@ -1,14 +1,9 @@
 """日历的工具条：``‹ › 今天`` / 标题 / 年 月 周，占掉原本放面包屑的那一行（ADR 0033 决策 5）。
 
 **这一行上的字色一律写进样式表**（被迫，不是偏好）：挂着样式表的控件拿到的是
-``QStyleSheetStyle`` 自己那份调色板，``apply_theme`` 下发的到不了 —— 漏写的那一处切到浅色
-之后就是看不见的白字。
-
-**这一行上还挂着生效中的筛选条件**（ADR 0040 决策 9），摆在年 / 月 / 周**左边**：这一行占掉的
-就是网格页那条面包屑，而筛选时用户看不到网格页 —— 条件不摆在这里就等于「加了但不知道加了
-什么」。摆左边而不是右边：胶囊按录入顺序从右往左排开的话会压在那三个按钮上。
-**胶囊与面包屑共用同一份**（:func:`~gallery.ui.panels.breadcrumb.build_chip`），两边接到同一个
-处理函数上。
+``QStyleSheetStyle`` 自己那份调色板，``apply_theme`` 下发的到不了 —— 漏写的那一处切到浅色之后
+就是看不见的白字。**这一行上还挂着生效中的筛选条件**（ADR 0040 决策 9），摆在年 / 月 / 周
+**左边**：筛选时用户看不到网格页那条面包屑，条件不摆在这里就等于「加了但不知道加了什么」。
 """
 
 from __future__ import annotations
@@ -81,7 +76,7 @@ class CalendarBar(QWidget):
         layout.addWidget(self._title)
         layout.addStretch(1)
 
-        # 胶囊区在分段选择器**左边**，但**不吃掉标题那一份弹性** —— 标题是「我在看哪一段」，
+        # 胶囊区在分段选择器**左边**，但**不忽略掉标题那一份弹性** —— 标题是「我在看哪一段」，
         # 条件是附注，所以空间不够时先让胶囊那几枚收缩（见 :meth:`set_conditions`）。
         self._chips = QWidget()
         self._chips.setObjectName("chips")
@@ -113,10 +108,9 @@ class CalendarBar(QWidget):
     def set_conditions(self, conditions: Sequence[str], *, editing: int | None = None) -> None:
         """摆出生效中的条件（``conditions`` 空 = 整块收起来）。
 
-        **与面包屑共用同一份胶囊**（:func:`~gallery.ui.panels.breadcrumb.build_chip`）——
-        两处各派生一遍样式，过一阵就是「日历上那几枚比网格上那几枚浅一档」。
-
-        宽度不够时**收掉排不下的那几枚**，而不是把每一枚都压成省略号 —— 见 :meth:`_refit`。
+        **与面包屑共用同一份胶囊**（:func:`~gallery.ui.panels.breadcrumb.build_chip`）—— 两处各
+        派生一遍样式，过一阵就是「日历上那几枚比网格上那几枚浅一档」。宽度不够时**收掉排不下的
+        那几枚**，而不是把每一枚都压成省略号 —— 见 :meth:`_refit`。
         """
         self._all_conditions = list(conditions)
         self._editing = editing
@@ -125,12 +119,9 @@ class CalendarBar(QWidget):
     def _refit(self) -> None:
         """按当前宽度决定**摆几枚**，摆出来的与留在模型里的必须是同一批。
 
-        **挤掉的必须是尾部那几枚，不能按比例压缩每一枚** —— 压缩到宽度以下时 ``QToolButton``
-        会省略文字，于是长条件变成「拍摄时…1 ✕」，用户读到的是一条**不存在的条件**。完整那条
-        留着、后面跟一枚「+N」，读起来才对：「还有两条没显示」。
-
-        **条件被点掉时按索引走**（:func:`~gallery.ui.panels.breadcrumb.build_chip` 传的是它在
-        **完整列表**里的序号），所以收起来的那几枚撤掉之后索引不会错位。
+        **挤掉的必须是尾部那几枚，不能按比例压缩每一枚** —— 压缩到宽度以下时 ``QToolButton`` 会
+        省略文字，于是长条件变成「拍摄时…1 ✕」，用户读到的是一条**不存在的条件**。完整那条留着、
+        后面跟一枚「+N」才对。**条件被点掉时按索引走**，所以收起来的那几枚撤掉后索引不会错位。
         """
         clear_layout(self._chips_layout)
         shown, overflow = self._how_many_fit()
@@ -206,7 +197,7 @@ class CalendarBar(QWidget):
 
         选中态用**强调色压淡的那一层**，与日历里「选中的一天」同一份颜色。**标题字号是系统默认
         那一档**：那条 22px 是按钮时代的遗留（标题当初是 ``QPushButton``），看着像顺手对上，
-        实际是放大一号；**每一处字色都在样式表里写死**，原因见模块文档。
+        实际是放大一号；**每一处字色都在样式表里硬编码**，原因见模块文档。
         """
         accent = colors.accent
         self.setStyleSheet(

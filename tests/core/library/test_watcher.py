@@ -1,4 +1,4 @@
-"""实时监听的纯逻辑：事件 → 变化、按路径合并、去抖、生命周期。
+"""实时监听的纯逻辑：事件 → 变化、按路径合并、防抖、生命周期。
 
 监听本身**不做任何读写**，所以这里全部在 ``tmp_path`` 里用假观察者跑：不挂真的
 watchdog 线程，也不等真的文件系统通知（那会把测试变成一场耐力赛）。被测的是三件事：
@@ -95,7 +95,7 @@ def make_watcher(
     debounce_ms: int = MANUAL_DEBOUNCE_MS,
     max_hold_ms: int = 30_000,
 ) -> tuple[LibraryWatcher, FakeObserver, list[tuple[LibraryChange, ...]]]:
-    """造一个监听器与它收下的一批批变化。
+    """造一个监听器与它记录下来的一批批变化。
 
     默认的静默期长得不会自然到期：映射类测试都显式 :meth:`flush` 取那一批，
     这样「一次发几个事件」和「收到几批」之间没有时序上的巧合。
@@ -386,11 +386,11 @@ def test_a_symlinked_folder_is_not_followed(tmp_path: Path) -> None:
     assert batches == []
 
 
-# ---- 去抖与生命周期 -----------------------------------------------------------
+# ---- 防抖与生命周期 -----------------------------------------------------------
 
 
 def test_a_burst_of_events_arrives_as_one_batch(tmp_path: Path) -> None:
-    """访达拷一批照片是连着来的事件；去抖之后只应该有一次界面改动。"""
+    """访达拷一批照片是连着来的事件；防抖之后只应该有一次界面改动。"""
     watcher, _observer, batches = make_watcher(tmp_path, debounce_ms=30)
     watcher.start()
 
@@ -677,7 +677,7 @@ def test_removed_then_modified_is_still_removed(tmp_path: Path) -> None:
 
 
 def test_coalesce_accepts_any_iterable(tmp_path: Path) -> None:
-    """传生成器也一样：上层不必先把一批变化攒成列表。"""
+    """传生成器也一样：上层不必先把一批变化累积成列表。"""
     changes = (LibraryChange(ChangeKind.ADDED, tmp_path / f"{i}.jpg") for i in range(3))
 
     assert len(coalesce(changes)) == 3

@@ -7,11 +7,11 @@
 「部分内容永远看不见」就是这么来的。所以这里钉的是**网格走自己的换算**：滚轮一格
 :data:`~gallery.ui.browser.grid.WHEEL_NOTCH_PIXELS` 像素（240，约等于过中档那一行）。
 
-触控板那一路另外钉住「用像素增量」：Qt 把 ``pixelDelta`` 整个丢掉了，于是 macOS 的
+触控板那一路另外锁定「用像素增量」：Qt 把 ``pixelDelta`` 整个丢掉了，于是 macOS 的
 「1 像素 = 2 个角度单位」那一层折算又被 5.5 再乘一遍 —— 手指走 40 像素、画面走 110。
 
 「自己走滚动条」这条路上最容易漏掉的是 :meth:`PhotoGrid.scrollContentsBy` 里那道
-「用户自己滚了 → 叫停正在跑的切档过渡」的闸（那里还挂着行内改名输入框与可见区去抖），
+「用户自己滚了 → 叫停正在跑的切档过渡」的前置条件（那里还挂着行内改名输入框与可见区防抖），
 所以它也钉一条：绕开基类的 ``wheelEvent`` 时最容易把那一段整个抄漏。
 """
 
@@ -38,7 +38,7 @@ from gallery.ui.browser.grid import (  # noqa: E402
 )
 from gallery.ui.browser.thumb_sizes import THUMBNAIL_SIZES  # noqa: E402
 
-#: 攒够这么多条目滚动条才有得滚。少于此的话「滚一次走多少」量到的是夹取而不是灵敏度。
+#: 累积够这么多条目滚动条才有得滚。少于此的话「滚一次走多少」量到的是夹取而不是灵敏度。
 ROWS = 400
 
 
@@ -70,8 +70,8 @@ def _scroll_event(
 def _middle(grid: PhotoGrid) -> int:
     """滚动条的中途。
 
-    **不许写死**：条目的行数与每行几张都随档位变（``_scrolled`` 那条用例就是改档位跑
-    的），写死的数字在某一档上会落到范围之外，而落在范围之外时 ``setValue`` 会当场夹住
+    **不许硬编码**：条目的行数与每行几张都随档位变（``_scrolled`` 那条用例就是改档位跑
+    的），硬编码的数字在某一档上会落到范围之外，而落在范围之外时 ``setValue`` 会当场夹住
     —— 量出来的就不是灵敏度，是夹取。
     """
     bar = grid.verticalScrollBar()
@@ -158,8 +158,8 @@ def test_the_trackpad_follows_the_fingers(qt_app: QApplication, tmp_path: Path) 
 def test_the_trackpad_is_not_faster_than_the_fingers(qt_app: QApplication, tmp_path: Path) -> None:
     """画面**不许跑得比手指快**。
 
-    这一条是给「灵敏度」兜底的：系数调反了或调大了，两种设备都会变成「动一下手指翻
-    一页」，而上面那条只钉住了一小段位移，量不出来。
+    这一条是给「灵敏度」回退的：系数调反了或调大了，两种设备都会变成「动一下手指翻
+    一页」，而上面那条只锁定了一小段位移，量不出来。
     """
     assert WHEEL_PIXEL_FACTOR <= 1.0
 
@@ -172,7 +172,7 @@ def test_the_trackpad_is_not_faster_than_the_fingers(qt_app: QApplication, tmp_p
 def test_a_slow_nudge_is_not_swallowed(qt_app: QApplication, tmp_path: Path) -> None:
     """轻推一下（1 像素的增量）不能一动不动：没走满一个像素的那点零头要留着。
 
-    直接取整的话，每次 0.5 像素都变成 0，而零头也没人攒 —— 慢速推十下纹丝不动，
+    直接取整的话，每次 0.5 像素都变成 0，而零头也没人累积 —— 慢速推十下纹丝不动，
     一下推猛了却动一大截。
     """
     grid = make_grid(qt_app, tmp_path, ROWS)
@@ -189,9 +189,9 @@ def test_a_slow_nudge_is_not_swallowed(qt_app: QApplication, tmp_path: Path) -> 
 
 
 def test_an_event_with_no_delta_at_all_moves_nothing(qt_app: QApplication, tmp_path: Path) -> None:
-    """两个字段都是 0 的事件（有些合成设备会发）不许变成一整格，也不许吃掉零头。
+    """两个字段都是 0 的事件（有些合成设备会发）不许变成一整格，也不许忽略掉零头。
 
-    顺带钉住零增量上不回退到 Qt 那一档 —— 那一档在零增量上是「翻页」。
+    顺带锁定零增量上不回退到 Qt 那一档 —— 那一档在零增量上是「翻页」。
     """
     grid = make_grid(qt_app, tmp_path, ROWS)
     settle_grid(qt_app, grid)
@@ -204,7 +204,7 @@ def test_an_event_with_no_delta_at_all_moves_nothing(qt_app: QApplication, tmp_p
     grid.wheelEvent(_scroll_event())
     grid.wheelEvent(_scroll_event())
 
-    # 零增量既没动画面，也没把攒着的那点零头清掉：仍然正好是 5 像素。
+    # 零增量既没动画面，也没把暂存的那点零头清掉：仍然正好是 5 像素。
     assert bar.value() == start - 5
 
 
@@ -215,14 +215,14 @@ def test_a_wheel_notch_still_cancels_a_running_transition(
 
     这一条盯的是 :meth:`~gallery.ui.browser.grid.PhotoGrid.scrollContentsBy` 那条路
     没被绕过去：走 ``setValue`` 而不是直接调 ``scrollContentsBy``，靠的就是它照样经过
-    那里，而那道闸就在里面。
+    那里，而那道前置条件就在里面。
     """
     grid = make_grid(qt_app, tmp_path, ROWS)
     settle_grid(qt_app, grid)
     # **先摆到中途**：停最顶上时往下滚会被 ``setValue`` 夹住，压根没有滚动发生，
-    # 而这道闸只在真的滚了的时候才该触发 —— 那样量出来的是「没滚」，不是「没让位」。
+    # 而这道前置条件只在真的滚了的时候才该触发 —— 那样量出来的是「没滚」，不是「没让位」。
     grid.verticalScrollBar().setValue(_middle(grid))
-    grid._start_transition(  # noqa: SLF001 - 钉住那条私有路径（与 edge_animation 同一处）
+    grid._start_transition(  # noqa: SLF001 - 锁定那条私有路径（与 edge_animation 同一处）
         float(THUMBNAIL_SIZES[2]), grid.verticalScrollBar().value(), animate=True
     )
     assert grid._transition_anim.state() == QAbstractAnimation.State.Running

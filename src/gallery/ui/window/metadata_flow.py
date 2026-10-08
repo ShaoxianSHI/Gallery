@@ -1,10 +1,9 @@
 """右侧那块元数据面板：显示当前这张照片的什么，以及地点是怎么得出的。
 
-⌘I 展开 / 收起，面板照着**当前这一张**显示 EXIF（读一次约 50ms，命中缓存直接显示，没命中
-就说「正在读取」—— **绝不把上一张的元数据留在屏幕上**，那是错的照片的数据）。
-
-**地点**是按坐标反查出来的，必须与分组显示的地点同一个说法（ADR 0010），查法是「先读索引，
-索引里没有才现场反查」。「编辑元数据」那个按钮只发信号（面板不碰文件，红线 1）。
+⌘I 展开 / 收起，面板照着**当前这一张**显示 EXIF（读一次约 50ms，命中缓存直接显示，没命中就说
+「正在读取」—— **绝不把上一张的元数据留在屏幕上**，那是错的照片的数据）。**地点**按坐标反查，
+必须与分组显示的地点同一个说法（ADR 0010），查法是「先读索引，索引里没有才现场反查」；
+「编辑元数据」那个按钮只发信号（面板不碰文件，界面改用户文件只许在 ``write_ops``）。
 """
 
 from __future__ import annotations
@@ -123,7 +122,7 @@ class MetadataFlowMixin:
         if ref is not None:
             self._cache_metadata(ref, payload)
         if generation != self._generation or row != self._current_row:
-            return  # 用户已经翻到别处了，这份结果只进缓存，不上屏
+            return  # 用户已经翻到别处了，这份结果只进缓存，不显示到界面
         self._panel.set_report(payload)
         self._prefetch_metadata(row)
         self._maybe_lookup_place(ref, payload, generation, announce=True)
@@ -143,13 +142,10 @@ class MetadataFlowMixin:
     ) -> None:
         """按坐标给出地点：**先读索引**，索引里没有才现场反查一次。
 
-        打开库时那一遍已经把结论存进索引了（ADR 0010），所以绝大多数照片在这里是一次同步
-        读缓存就显示到位。现场反查只兜两种情况：打开时那一遍还没轮到它，或者后来才加进库的
-        照片；那条路走 ``Library.resolve_photo_place``，**查完并回索引**。
-
-        ``announce`` 为真时才显示中间状态。预读与缓存命中都传 ``False``：那时面板上显示的
-        是当前这张照片，拿别的照片的中间状态去替换它，用户只会看到内容闪一下。
-        """
+        打开库时那一遍已把结论存进索引（ADR 0010），所以绝大多数照片在这里一次同步读缓存就显示到位。
+        现场反查只兜两种情况：打开时那一遍还没轮到它，或后来才加进库的照片；那条路走
+        ``Library.resolve_photo_place``，**查完并回索引**。``announce`` 为真时才显示中间状态；预读与
+        缓存命中都传 ``False``，否则会拿别的照片的中间状态替换当前这张，用户只看到内容闪一下。"""
         if report.latitude is None or report.longitude is None:
             return
         if not is_real_coordinate(report.latitude, report.longitude):
@@ -212,7 +208,7 @@ class MetadataFlowMixin:
     def _show_place(
         self, ref: PhotoRef, report: MetadataReport, generation: int, text: str
     ) -> None:
-        """把地点插进面板、入缓存，并且只在这张正是当前照片时才上屏。"""
+        """把地点插进面板、入缓存，并且只在这张正是当前照片时才显示到界面。"""
         enriched = report.with_place(text)
         self._cache_metadata(ref, enriched)
         if self._is_current_photo(ref, generation):

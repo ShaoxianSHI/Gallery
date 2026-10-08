@@ -1,7 +1,7 @@
 """「复制」⌘D 的界面测试（ADR 0044）。
 
 覆盖用户真正会经历的那条链：选中 → 右键「复制」或按 ⌘D → 原位置多出一个 ``的副本``、
-横幅说清造出来的是哪一个、**原件一个字节都没动**、**⌘Z 撤不回来**（撤销就是删文件，红线 1）。
+横幅说清造出来的是哪一个、**原件一个字节都没动**、**⌘Z 撤不回来**（撤销就是删文件）。
 
 四种落点都要有：单张照片、多张照片、单个相册、多个相册；大图页与分组卡片另各有各的判据。
 全部在 ``tmp_path`` 里进行，照片都是当场造的临时文件。
@@ -199,7 +199,7 @@ def test_the_key_really_makes_the_copy(qt_app: QApplication, window: MainWindow)
     """键是真按下去的，不是只查得到那串字符 —— ``addAction`` 漏了的话这里就红。"""
     _idle(qt_app, window)
     _select_photo(window, "一张.jpg")
-    # 置灰是**攒到这一轮事件循环结束**才重算的（``_schedule_action_states``）：不等它一下，
+    # 置灰是**累积到这一轮事件循环结束**才重算的（``_schedule_action_states``）：不等它一下，
     # 按键落在还灰着的动作上，Qt 什么都不做 —— 那一红量的是时序，不是产品。
     assert wait_until(qt_app, window._duplicate_action.isEnabled), "选区定了却还没亮"
 
@@ -215,7 +215,7 @@ def test_nothing_selected_leaves_the_shortcut_disabled(window: MainWindow) -> No
     """没有选区时 ⌘D 置灰：造副本一定得先有「造哪一份」。
 
     **光 ``clearSelection()`` 不够** —— ``selected_rows()`` 在真选区为空时会**退回当前项**
-    （网格刚打开时 Qt 可能顺手把第 0 行设成当前项），那是个兜底而不是「谁被选中了」。
+    （网格刚打开时 Qt 可能顺手把第 0 行设成当前项），那是个回退而不是「谁被选中了」。
     所以这里连当前项一起清掉，否则这条用例是在赌时序。
     """
     window._grid.clearSelection()
@@ -259,11 +259,11 @@ def test_the_group_card_menu_offers_the_duplicate_row(
     assert labels.index("复制") == labels.index("拷贝路径") + 1
 
 
-# ---- 红线 1：原件不动、撤销不得承诺 ----------------------------------------------
+# ---- 删除只许用户亲手触发：原件不动、撤销不得承诺 -------------------------------------------
 
 
 def test_the_copy_is_never_offered_to_undo(qt_app: QApplication, window: MainWindow) -> None:
-    """**撤销一次复制就是删文件**（红线 1），所以横幅不许出现「⌘Z 可以撤销」。"""
+    """**撤销一次复制就是删文件**（删除只许用户亲手触发），所以横幅不许出现「⌘Z 可以撤销」。"""
     _idle(qt_app, window)
     _select_photo(window, "一张.jpg")
 
@@ -297,7 +297,7 @@ def test_the_source_file_is_never_touched(qt_app: QApplication, window: MainWind
     assert (window._library.root / "京都" / "一张的副本.jpg").stat().st_mtime_ns == mtime
 
 
-# ---- 闸门与失败 ------------------------------------------------------------------
+# ---- 前置条件与失败 ------------------------------------------------------------------
 
 
 def test_a_second_run_is_refused_while_one_is_in_flight(

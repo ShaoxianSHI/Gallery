@@ -32,7 +32,7 @@ def test_the_events_live_in_their_own_file(tmp_path: Path, make_photo: Callable[
 def test_clearing_the_cache_does_not_touch_the_events(
     tmp_path: Path, make_photo: Callable[..., Path]
 ) -> None:
-    """**红线 5 有了一个例外，而这是它的可执行版本**（ADR 0043 决策 1）。
+    """**「``.gallery/`` 里除 ``config.toml`` 外都是缓存」这条硬性约束有了一个例外**（ADR 0043）。
 
     ``clear_cache`` 是「把缓存扔了重扫」那一个入口，它永远不许碰 events.db。这条用例改坏
     就会红 —— 它是这个例外唯一的守卫。

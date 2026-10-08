@@ -1,7 +1,7 @@
 """窗口底色只有一层的回归测试：标题框、相册路径那一层、最里头的照片区必须同色。
 
 这里不检查控件树，而是**量渲染出来的像素**：在同一张窗口截图上逐层取样，颜色必须相同，
-且等于主题给出的那一个底色。另有几条守「跟随系统主题」与「下发的调色板钉死那几个角色」。
+且等于主题给出的那一个底色。另有几条守「跟随系统主题」与「下发的调色板固定那几个角色」。
 """
 
 from __future__ import annotations
@@ -159,7 +159,7 @@ def _without_banner(qt_app: QApplication, window: MainWindow) -> None:
     """量底色之前先把横幅收干净。
 
     横幅是**浮在内容上面**的一层，它出现时照片区顶边那一圈是橙色的 —— 那既不是边框，也不是
-    「几层各铺各的底色」。所以先等后台收工（否则进度消息会在截图之前又冒出来），再清横幅。
+    「几层各铺各的底色」。所以先等后台结束（否则进度消息会在截图之前又冒出来），再清横幅。
     """
     wait_for_idle(qt_app, window)
     window._clear_banner()
@@ -269,7 +269,7 @@ def test_background_follows_the_system_both_ways(
     """系统在浅色 / 深色之间来回切，各层每次都要跟着走。
 
     回归的是真实缺陷：切换外观时只有 macOS 自己画的标题栏变了色，其余控件停在原处 ——
-    因为 ``QApplication.setPalette`` 把应用调色板钉死了，平台再写新颜色进来也进不到我们眼里。
+    因为 ``QApplication.setPalette`` 把应用调色板固定了，平台再写新颜色进来也进不到我们眼里。
     """
     try:
         for tag, window_colour, base_colour in (
@@ -340,7 +340,7 @@ def test_theme_leaves_the_application_palette_to_the_platform(
 ) -> None:
     """应用调色板是平台的地盘，我们只在控件上下发。
 
-    一旦回头去写应用调色板，就等于把它钉死：系统换外观时 Qt 不再更新它，界面从此跟不上系统。
+    一旦回头去写应用调色板，就等于把它固定：系统换外观时 Qt 不再更新它，界面从此跟不上系统。
     """
     try:
         appearance(window=DARK_WINDOW, base=DARK_BASE)
@@ -377,13 +377,13 @@ def test_drag_region_is_everything_above_the_content(window: MainWindow) -> None
 
 
 def test_the_pushed_palette_pins_the_popup_roles(qt_app: QApplication) -> None:
-    """下发给控件的那一份必须把 :data:`theme.RESOLVED_ROLES` **钉死**。
+    """下发给控件的那一份必须把 :data:`theme.RESOLVED_ROLES` **固定**。
 
     不写上的话 Qt 会按控件类型各解析一档 —— 实测 macOS 上同一份调色板，``QMenu`` 的
     ``Highlight`` 是 ``#548fff``、``QTreeWidget`` 是 ``#084ad9``，于是右键菜单与候选列表
     高亮成两种蓝，而两者的样式表是**同一份**生成的（ADR 0035 决策 2）。
 
-    **量的是「钉没钉死」而不是「是什么颜色」**：测试跑在 ``offscreen``（``fusion``）上，
+    **量的是「钉没固定」而不是「是什么颜色」**：测试跑在 ``offscreen``（``fusion``）上，
     那里每一类控件解析出来的都一样，bug 在测试里根本看不见。
     """
     pinned = theme.pushed_palette(qt_app)
@@ -474,7 +474,7 @@ def test_coming_back_to_light_gives_the_first_light_again(
 ) -> None:
     """浅 → 深 → 浅之后，浮层那几个角色**与第一轮逐项相同**。
 
-    任何一轮里被半路调色板带偏、又被钉死的东西，都会在这一条上露出来。
+    任何一轮里被半路调色板带偏、又被固定的东西，都会在这一条上露出来。
     """
     roles = tuple(theme.RESOLVED_ROLES) + (QPalette.ColorRole.Window,)
     popup = QWidget()
@@ -616,7 +616,7 @@ def test_the_separator_is_visible_on_both_appearances(
     """面包屑里那个 ``▸`` 在浅色与深色下都要看得见。
 
     原因：**拿 ``palette(mid)`` 当字色**。深色下那一档是 ``#585858``，压在 ``#171717``
-    的底上只有 2.52:1 —— 而 ``▸`` 是 11 点、笔画只有两三个像素宽的字，抗锯齿一摊开就
+    的底上只有 2.52:1 —— 而 ``▸`` 是 11 点、笔画只有两三个像素宽的字，抗锯齿一展开就
     彻底没了。**量的是渲染出来的像素，不是控件的调色板**：颜色是带透明度写进样式表的，
     Qt 不会把带透明度的 ``color`` 落到控件调色板的 ``Text`` 那一栏上，读那一栏永远读到
     的是正文色。判的是 **WCAG 对非文字内容那条 3:1**，量的是**画得最实的那个像素**。

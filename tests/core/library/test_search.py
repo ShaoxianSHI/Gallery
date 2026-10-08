@@ -150,7 +150,7 @@ def test_numbers_accept_comparators() -> None:
 
 
 def test_a_number_field_rejects_a_word() -> None:
-    """解析不了就是提交不了 —— 界面据此说一句人话，而不是收下一条永远查不到的条件。"""
+    """解析不了就是提交不了 —— 界面据此说一句人话，而不是记录一条永远查不到的条件。"""
     assert _condition("#ISO abc") is None
 
 
@@ -255,9 +255,9 @@ def test_a_range_can_be_put_back_into_the_box() -> None:
     ],
 )
 def test_a_range_is_refused_rather_than_half_honoured(typed: str) -> None:
-    """宁可提交不了，也不要收下一条意思不明的条件。
+    """宁可提交不了，也不要记录一条意思不明的条件。
 
-    收下了会怎样：``2024～2023`` 生成的 SQL 是 ``>= 大的 AND < 小的``，于是**安静地
+    记录下来会怎样：``2024～2023`` 生成的 SQL 是 ``>= 大的 AND < 小的``，于是**安静地
     返回 0 条** —— 与「条件太严」长得一模一样，正是最该避免的那种假答案。
     """
     assert _condition(typed) is None
@@ -335,7 +335,7 @@ def test_a_condition_can_be_put_back_into_the_box(typed: str, restored: str) -> 
     """胶囊放回搜索框时要**带字段前缀**。
 
     只放值的话用户看到的是「旅行」，不知道这一条是按哪个字段筛的 —— 而改条件多半正是
-    要换字段。顺带钉住字段名**不带空格**这条：搜索框按第一个空格分开，「#省 / 州 浙江」
+    要换字段。顺带锁定字段名**不带空格**这条：搜索框按第一个空格分开，「#省 / 州 浙江」
     会把「省」当成字段名而认不出，于是悄悄变成按文件名搜。
     """
     condition = _condition(typed)
@@ -363,7 +363,7 @@ def test_like_wildcards_in_the_input_are_escaped() -> None:
 
 
 def test_count_query_shares_the_conditions() -> None:
-    """总数与结果必须是同一次口径下的两句话，否则「共 N 张」会对不上屏幕上的格子。"""
+    """总数与结果必须是同一次口径下的两句话，否则「共 N 张」会对不显示幕上的格子。"""
     count_sql, _ = build_count_query([_condition("海边")])  # type: ignore[list-item]
     result_sql, _ = build_query([_condition("海边")])  # type: ignore[list-item]
 
@@ -565,7 +565,7 @@ def _connected(database: Path, root: Path) -> Iterator[sqlite3.Connection]:
     """连上索引并把事件库挂上去 —— **和 :class:`FacetIndex` 做法一致**。
 
     事件那一族的字段靠 ``EXISTS`` 子查询去读挂在同一条连接上的事件库（ADR 0043 决策 6），
-    所以这两条守护要一个挂着事件库的连接才测得到它们；不开挂载的话它们会报
+    所以这两条回归测试要一个挂着事件库的连接才测得到它们；不开挂载的话它们会报
     ``no such table: ev.events``，而那不是列名写错。
     """
     connection = sqlite3.connect(database)
@@ -577,7 +577,7 @@ def _connected(database: Path, root: Path) -> Iterator[sqlite3.Connection]:
 
 
 def test_every_searchable_field_survives_the_real_schema(tmp_path: Path, make_photo) -> None:
-    """每个可搜字段都拿真 schema 执行一遍 —— **守护**。
+    """每个可搜字段都拿真 schema 执行一遍 —— **回归测试**。
 
     ``SEARCH_FIELDS`` 里那些列名是手写的，抄成 ``PhotoFacets`` 上的属性名没有人看得出来，
     而错列名要等 SQLite 执行才说 ``no such column``。所以这里不问「查得对不对」，
@@ -610,7 +610,7 @@ def test_conditions_narrow_each_other(tmp_path: Path, make_photo) -> None:
 
 
 def test_the_match_query_survives_the_real_schema(tmp_path: Path, make_photo) -> None:
-    """筛选那条查询里**每一个可搜字段**都要拿真 schema 执行一遍 —— 守护。
+    """筛选那条查询里**每一个可搜字段**都要拿真 schema 执行一遍 —— 回归测试。
 
     与 :func:`test_every_searchable_field_survives_the_real_schema` 同源，但走的是
     :func:`build_match_query`：那条 SQL 有自己的一行 ``SELECT``，列名写错同样要到
@@ -633,7 +633,7 @@ def test_the_match_query_survives_the_real_schema(tmp_path: Path, make_photo) ->
 
 
 def test_the_match_query_is_never_truncated(tmp_path: Path, make_photo) -> None:
-    """那条 SQL **不许有 LIMIT** —— 守护。
+    """那条 SQL **不许有 LIMIT** —— 回归测试。
 
     截断在这里等于静默丢命中：命中八千张而当前层的那几张排在第 5001 名之后时，界面上
     是「一条都没有」，而那不是答案，是查询自己偷偷少给了 —— 没有任何线索指向它。
@@ -832,12 +832,12 @@ def _sample_for(field: SearchField) -> str:
 def test_every_search_field_can_both_parse_and_render() -> None:
     """**每个字段都解析得出、也渲染得出** —— 加一种 kind 而漏了某一条梯子，这里当场红。
 
-    原先 ``_condition`` 与 ``_clause`` 各是一条 if/elif 梯子，而**两条都以「时间」兜底**：
+    原先 ``_condition`` 与 ``_clause`` 各是一条 if/elif 梯子，而**两条都以「时间」回退**：
     加了新 kind 却忘了某一处不会报错 —— 那个字段会被当成日期解析（值照样解析得出来，
     只是含义完全不对），或者渲染成一段与它无关的 SQL，而查询照样出得来结果。
 
     这条用例逐个字段走一遍两半，并把每个 ``kind`` 的判据（``is_numeric`` / ``is_date``）
-    也一并钉住：它们是三个分派处共用的，改错一处不会有别的症状。
+    也一并锁定：它们是三个分派处共用的，改错一处不会有别的症状。
     """
     kinds = set()
     for field in SEARCH_FIELDS:
@@ -850,7 +850,7 @@ def test_every_search_field_can_both_parse_and_render() -> None:
         sql, values = _render_clause(condition)
         assert sql and values, f"{field.id} 渲染不出 SQL"
 
-        # 判据自身：数值一族与时间一族各只能由该族的字段认领。
+        # 判据自身：数值一族与时间一族各只能由该族的字段满足。
         if field.is_event:
             assert field.is_numeric == (field.sql_type in ("INTEGER", "REAL")), field.id
         else:

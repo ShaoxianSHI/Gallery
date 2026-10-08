@@ -2,7 +2,7 @@
 
 **这个文件最要紧的是「读不了」那几条。** 把「我读不了这个目录」当成「这里什么都没有」，
 后果是用户在盘没挂上或没权限的时候，眼睁睁看着自己填的事件记录被清掉 —— 而且不可逆。
-所以每一档都要有一条用例，且它们必须**真的分得开**（都断成同一个集合的话，守护就是空的）。
+所以每一档都要有一条用例，且它们必须**真的分得开**（都断成同一个集合的话，这些用例就白写了）。
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ def _gone() -> DirListing:
 
 
 def _unreadable() -> DirListing:
-    """没权限 / 网络抽风那一档：**不是结论**。"""
+    """没权限 / 网络临时不可用那一档：**不是结论**。"""
 
     return DirListing(names=None, gone=False)
 
@@ -86,7 +86,7 @@ def test_a_deleted_photo_in_a_readable_album_is_an_orphan(library: Library) -> N
 
 
 def test_an_unreadable_album_reports_nothing_at_all(library: Library) -> None:
-    """**没权限 / 网络抽风：不知道，不是结论。** 一条都不报，更谈不上删。
+    """**没权限 / 网络临时不可用：不知道，不是结论。** 一条都不报，更谈不上删。
 
     与上面那条的分别只在「目录读不读得到」—— 少判一次就是用户在盘没挂上时丢数据。
     """
@@ -126,8 +126,8 @@ def test_an_unmounted_volume_is_its_own_bucket_and_never_a_plain_orphan(
 def test_an_unreadable_library_root_checks_nothing(library: Library) -> None:
     """库根读不了就整个不查 —— 那说明这个库整体有问题，此刻报出来的每一条都可能是假的。
 
-    **这个闸只有在「根读不了、而某个子目录读得了」时才看得见**：只造一个「全都读不了」的库，
-    每一档自己就会跳过，于是这条用例会**因为错的原因**绿过去 —— 少了这道闸也照样绿。
+    **这个前置条件只有在「根读不了、而某个子目录读得了」时才看得见**：只造一个「全都读不了」的库，
+    每一档自己就会跳过，于是这条用例会**因为错的原因**绿过去 —— 少了这个条件判断也照样绿。
     """
     root = library.root
     _bind(library, [root / "京都" / "海边-02.jpg"])
@@ -135,7 +135,7 @@ def test_an_unreadable_library_root_checks_nothing(library: Library) -> None:
 
     def read(directory: Path) -> DirListing:
         asked.append(directory)
-        # 根读不了，子相册却读得了而且是空的 —— 没有这道闸的话下面那条会被报成孤儿。
+        # 根读不了，子相册却读得了而且是空的 —— 少掉这个判断的话下面那条会被报成孤儿。
         return _unreadable() if directory == root else _empty()
 
     assert not find_orphans(library.events, read=read).found
@@ -145,7 +145,7 @@ def test_an_unreadable_library_root_checks_nothing(library: Library) -> None:
 def test_the_root_is_not_read_a_second_time(
     library: Library, make_photo: Callable[..., Path]
 ) -> None:
-    """库根既当那道闸、又可能是绑定所在的目录 —— **同一份结果要复用**。"""
+    """库根既是「整个不查」那个前置条件、又可能是绑定所在的目录 —— **同一份结果要复用**。"""
     root = library.root
     _bind(
         library,

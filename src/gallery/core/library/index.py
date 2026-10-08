@@ -1,4 +1,4 @@
-"""分组 / 排序 / 检索的本地缓存（SQLite）。**它是缓存不是数据**（红线 5）：重扫一遍即回到等价状态。
+"""分组 / 排序 / 检索的本地缓存（SQLite）。**它是缓存不是数据**：删掉重扫一遍即可回到等价状态。
 ``facets`` 存从 EXIF 抽出的可比较值、``photos`` 存扫描时就有的东西；命中判据是
 ``(size, mtime_ns)`` 与扫描时一致，表结构一变就整表重建（缓存不值得迁移）。
 只有读过 EXIF 的照片才有 facet 行，所以搜文件名与相册走 ``photos``（ADR 0026）。访问一把锁串起来。
@@ -140,7 +140,7 @@ _BY_DATE_UNAVAILABLE: Final = (
 #: ``("facets", "photos")``，命名一次才不会漏。
 _FACET_TABLES: Final = ("facets", "photos")
 
-#: 每一行有几个值。**从列名里数出来，不要写死数字** —— 写死的那个曾经与列数差一个。
+#: 每一行有几个值。**从列名里数出来，不要硬编码数字** —— 硬编码的那个曾经与列数差一个。
 _COLUMN_COUNT = len(_COLUMNS.split(","))
 
 #: 单行插入用的占位符。
@@ -153,9 +153,7 @@ type SqlValue = str | int | float | None
 class FacetIndex:
     """按 ``(路径, 大小, 修改时间)`` 缓存 facet 值。
 
-    ``path`` 为 ``None`` 时**不落盘**：只在内存里缓存本次会话读到的值 ——
-    库所在卷只读、配置目录建不出来时（见 :mod:`gallery.core.library.facade`）。
-
+    ``path`` 为 ``None`` 时**不落盘**，只在内存里缓存本次会话读到的值（只读卷、建不出配置目录时）。
     **这是唯一一个 ``None`` 的来路**：ADR 0038 已删掉 ``cache_in_library`` 开关，别把它加回来。
     """
 
@@ -363,12 +361,9 @@ class FacetIndex:
     def match_paths(self, conditions: Sequence[SearchCondition]) -> set[str]:
         """这些条件命中了哪些路径 —— 当前层筛选要的那一份（ADR 0040 决策 2）。
 
-        **不截断**（SQL 在 :func:`~gallery.core.library.search.build_match_query` 里就没有
-        ``LIMIT``）：调用方拿它与手上那份列表求交，少给一条就等于凭空少一张照片，而那与
-        「文件被删了」长得一模一样。
-
-        :raises IndexUnavailableError: 索引没落盘。与 :meth:`search` 同一句提示：只读卷上建不出
-            缓存时，筛选与检索一样用不了（界面据此说清是哪一件，而不是让人对空结果猜）。
+        **不截断**（``build_match_query`` 里就没有 ``LIMIT``）：调用方拿它与手上那份列表求交，
+        少给一条就等于凭空少一张照片，而那与「文件被删了」长得一模一样。
+        :raises IndexUnavailableError: 索引没落盘。与 :meth:`search` 同一句提示。
         """
         connection = self._require_connection()
         sql, values = build_match_query(conditions)
@@ -383,14 +378,8 @@ class FacetIndex:
     def photos_in_days(self, first_day: str, last_day: str) -> list[PhotoRef]:
         """这几天里拍的那些照片（按**照片里记的那个日子**，ADR 0043）。
 
-        **比 ``captured`` 那个 epoch 上做区间更稳**：时区不换算，所以 epoch 反推出来的墙上时间
-        与照片里写的日子未必是同一件事（ADR 0032 / 0033 记着这个坑）。于是这里用 year / month /
-        day 三列拼出 ``YYYY-MM-DD`` 再比字符串 —— 没有索引可用（``printf`` 表达式走不了索引），
-        但那是对索引的一次扫描，几万行是毫秒级。
-
-        没有拍摄时间的照片（时间未知）``printf`` 出来是全零，落在区间之外，与「没记这一项」
-        是一回事。
-
+        用 year / month / day 三列拼 ``YYYY-MM-DD`` 比字符串，比 ``captured`` 的 epoch 区间更稳
+        （时区不换算，ADR 0032 / 0033）：走不了索引，但几万行是毫秒级，没时间的拼出来是全零。
         :raises IndexUnavailableError: 索引没落盘（只读卷）。
         """
         connection = self._require_connection(_BY_DATE_UNAVAILABLE)
@@ -533,17 +522,9 @@ class FacetIndex:
 def _relax_cache_durability(connection: sqlite3.Connection) -> None:
     """把提交强度降到「缓存该有的强度」：``journal_mode=DELETE`` + ``synchronous=NORMAL``。
 
-    **索引是缓存，不是数据**（红线 5）：默认设置下每次 ``commit`` 都要 ``fsync``，而存照片时是一张张
-    来的，等的是用户的耐心 —— 为一个随时可以重建的东西付满额断电持久性是白付。
-
-    **日志模式是 ``DELETE`` 而不是 ``WAL``（ADR 0038 决策 5）**：WAL 的卖点是读写不互斥，而这里一把
-    Python 锁已经把访问串起来了；剩下的代价却实打实 —— ``-wal`` / ``-shm`` 跟着用户的库被云同步
-    来回传，两台机器互相覆盖有损坏索引的风险。落盘文件数从 3 个降到 1 个。
-
-    **失败只记一条日志、绝不致命**：落到默认设置也只是多一个 ``-journal`` 文件。
-
-    **别把它与事件库那一个合并**（``events.store._relax_journal_mode_only``）：那个是
-    **用户自己填的数据**，只改日志模式、``synchronous`` 保持默认。
+    **索引是缓存，不是数据**（删掉可重扫恢复），不值得付满额断电持久性。**日志模式用 ``DELETE``
+    而不是 ``WAL``**（ADR 0038 决策 5）：``-wal`` / ``-shm`` 会被云同步来回传，两台机器互相覆盖
+    有损坏索引的风险。**失败只记日志绝不致命**；**别与事件库那个合并**（事件是用户填的数据）。
     """
     try:
         connection.execute("PRAGMA journal_mode=DELETE")
@@ -555,10 +536,8 @@ def _relax_cache_durability(connection: sqlite3.Connection) -> None:
 def _row_to_facets(values: Sequence[object]) -> PhotoFacets | None:
     """一行的后 22 列 → :class:`PhotoFacets`。字段与类型由 :data:`_FACET_FIELDS` 决定。
 
-     ``strict=True`` 是这条函数的重点：列数与字段数对不上时它当场抛，而不会按短的
-     那个安静地少读一列 —— 那正是「分组退化成全是时间未知、SQL 照样成功」的成因。
-     属性名与 :class:`PhotoFacets` 对不对得上由一条测试盯着（``test_the_facet_table
-    _matches_the_dataclass``），这里只管按表逐列解码。
+    ``zip(strict=True)`` 是重点：列数与字段数对不上时它当场抛，而不会安静地少读一列（那会退化成
+    「分组全是时间未知、SQL 照样成功」）。属性名与 :class:`PhotoFacets` 对不对得上由一条测试盯着。
     """
     decoded = {
         attribute: _decode_field(kind, value)

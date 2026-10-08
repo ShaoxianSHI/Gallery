@@ -1,6 +1,6 @@
 """菜单长什么样：样式表、快捷键列的排布、以及自绘的那几笔。
 
-颜色一律从控件自己的调色板读，那几个角色由 :mod:`gallery.ui.theme` 钉死（ADR 0035）。
+颜色一律从控件自己的调色板读，那几个角色由 :mod:`gallery.ui.theme` 固定（ADR 0035）。
 """
 
 from __future__ import annotations
@@ -478,7 +478,7 @@ def popup_menu_style(menu: QMenu) -> str:
         )
         + f"\nQMenu {{ font-size: {POPUP_FONT_PX}px;"
         f" border: {POPUP_LIST_BORDER}px solid {rgba(popup_edge_color(palette))}; }}"
-        # guard: allow-long-comment（QMenu::item 的字色必须写死：不写就是深色下近黑底压近黑字）
+        # guard: allow-long-comment（QMenu::item 的字色必须硬编码：不写就是深色下近黑底压近黑字）
         # 字色**必须自己写**：挂了样式表之后 Qt 不再按调色板给 item 上色（深色下调色板里明明是
         # ``#ffffff``，画出来却是近黑的 ``#000000``）。内边距**左右同档** —— 左内边距只管
         # 文字，图标那一侧归下面的 ``::icon`` 规则。

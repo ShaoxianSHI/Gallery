@@ -31,13 +31,9 @@ EDGE_ANIMATION_MIN_DELTA = 6
 class GridTransition:
     """换一档时，每一格从旧布局飞到新布局的那段位移。
 
-    **只描述画面，不描述逻辑状态**：``gridSize``、``visualRect``、``indexAt`` 在切换
-    那一刻就已经是最终值了，Qt 全程不知道有过过渡。**不用逐帧重排**：显式
-    ``doItemsLayout`` 会强制全量排版，几万条目时单次几十毫秒，60 帧装不下；而绘制时
-    改一块矩形只是 O(可见格数) 的几次整数加法。
-
-    两端的列数都是**量出来的**（见 :meth:`PhotoGrid._first_row_columns`）：
-    :meth:`PhotoGrid._columns_for` 给的只是「打算摆几列」，用错每格会整体漂移。
+    **只描述画面，不描述逻辑状态**：``gridSize``、``visualRect``、``indexAt`` 在切换那一刻
+    就已经是最终值了，Qt 全程不知道有过过渡。**不用逐帧重排**：显式 ``doItemsLayout`` 会
+    强制全量排版（几万条目单次几十毫秒，60 帧装不下），而绘制时改一块矩形只是几次整数加法。
     """
 
     old_columns: int
@@ -80,8 +76,7 @@ class GridTransition:
 
         **位置与尺寸一起插**：只插位置的话，卡片（选中底、角标、文件名）在切换那一刻
         就已经是新尺寸、只有照片在长（见 :meth:`PhotoDelegate.cell_rect`）。尺寸长到
-        ``final.size()`` 而不是 :attr:`new_cell`，因为那才是 Qt 真正排出来的那一格；
-        两端于是各自与切换前/后的那一帧完全一致，中间没有混血帧。
+        ``final.size()`` 而不是 :attr:`new_cell`，因为那才是 Qt 真正排出来的那一格。
         """
         size = QSize(
             round(self.old_cell.width() + (final.width() - self.old_cell.width()) * t),
@@ -116,13 +111,9 @@ class TransitionMixin:
     def _start_transition(self, drawn_edge: float, scroll_from: int, *, animate: bool) -> None:
         """发一次切档过渡（``animate`` 为假就直接落位）。
 
-        **过渡只碰「画成什么样」，别的都一步到位**：:attr:`_applied_edge` 与 ``gridSize``
-        一动，Batched 布局就得整个重排，格子飞过去靠的是委托另画一块矩形；而
-        ``icon_edge_changed`` 是**重新取缩略图**的信号，跟着动画走会按几十个中间尺寸
-        各要一遍图，磁盘上「一张照片只有几份缓存」的不变量当场作废；``visualRect``
-        全程是终值，代价是那 160ms 里画面与逻辑不一致，由「任何交互都立刻落位」来兜。
-
-        滚动起点要**夹进新范围**，否则插值中途会被 ``maximum()`` 削平、先平一段再动。
+        **过渡只碰「画成什么样」，别的都一步到位**：:attr:`_applied_edge` 与 ``gridSize`` 一动
+        Batched 布局就得整个重排，格子飞过去靠委托另画一块矩形；而 ``icon_edge_changed`` 是
+        **重新取缩略图**的信号，跟着动画走会按几十个中间尺寸各要一遍图，缓存不变量当场作废。
         """
         # 上一段还没跑完又换了一档就**不接第二段**（读状态必须在 ``stop()`` 之前）。
         still_running = self._transition_anim.state() != QAbstractAnimation.State.Stopped
@@ -168,12 +159,9 @@ class TransitionMixin:
     def _settle_transition(self, *, restore_scroll: bool = True) -> None:
         """过渡收尾：画面回到「就是逻辑几何」，绘制尺寸与几何对齐。
 
-        ``restore_scroll=False`` 是给「被用户打断」那条路用的：用户自己滚到了某处，
-        就该留在那里。**要恢复滚动目标**，因为动画可能一步都没走完就被判了落位，
-        那时滚动条还停在起点上。**取消也走这里** —— 格子用的还是旧布局算出来的位置，
-        停在半空等于画面在说一件假话。:attr:`transition_ended` 也在这里发（**只发真正
-        跑起来过的那一段**），于是「跑完」与「被掐断」是同一个出口：掐断时动画的
-        ``finished`` 不会来，由 :meth:`_cancel_transition` 走到这里来补。
+        ``restore_scroll=False`` 给「被用户打断」那条路：用户自己滚到某处就该留在那里。
+        **要恢复滚动目标**，因为动画可能一步没走完就被判了落位，那时滚动条还停在起点上。
+        **取消也走这里** —— 停在半空等于画面在说假话。:attr:`transition_ended` 也在这里发。
         """
         if restore_scroll:
             self._driving_scroll = True

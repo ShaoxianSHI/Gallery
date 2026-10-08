@@ -238,7 +238,7 @@ def test_clearing_the_coordinates_clears_the_altitude_too(library_state: PlaceSt
     有 GPS 定位时间、但没有经纬度」的记录 —— 而「改坐标」那条
     :func:`_coordinate_assignments` 的 docstring 恰好写着「留着一条 GPS 记录就自相矛盾」。
     **两条路各写一份清单，迟早分叉** —— 所以只写一份（``place_edit._all_coordinate_tags``），
-    这条用例钉住它们不再分叉。
+    这条用例锁定它们不再分叉。
     """
     from gallery.core.metadata.place_edit import _all_coordinate_tags
 

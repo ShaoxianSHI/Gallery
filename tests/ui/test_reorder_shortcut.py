@@ -1,15 +1,15 @@
-"""重排之前那道「这次会不会变」的闸（``_reorder_level`` 开头那道）。
+"""重排之前那道「这次会不会变」的前置条件（``_reorder_level`` 开头那道）。
 
-那道闸必须排在排序**之前**、而且比的是**输入**而不是结果：判据要是比 ``ordered``，那已经是刚
-花几十毫秒（三万张）算出来的东西，「监听器报了个自己写的回声、什么其实都没变」那条路上就会
+那道前置条件必须排在排序**之前**、而且比的是**输入**而不是结果：判据要是比 ``ordered``，那已经是刚
+花几十毫秒（三万张）算出来的东西，「监听器报了个自己写的回环、什么其实都没变」那条路上就会
 每次都白付一次整层排序。
 
 这组用例盯的是两件事：
 
 - 没变的时候**连排序都不调用**（省下来的就是那一次整层排序）
-- 变了的时候**一定真的重排**（闸不能为了快而把该做的活吃掉）
+- 变了的时候**一定真的重排**（前置条件不能为了快而把该做的活忽略掉）
 
-第二条更要紧：闸判错的后果是屏幕上的顺序悄悄不对，只当是程序抽风。
+第二条更要紧：前置条件判错的后果是屏幕上的顺序悄悄不对，只当是程序临时不可用。
 """
 
 from __future__ import annotations
@@ -121,8 +121,8 @@ def test_a_reorder_that_changes_nothing_skips_the_sort(
 ) -> None:
     """什么都不没变 → 连排序都不调用。
 
-    先空跑一次把闸的「上一次输入」记牢（开窗那次的记录可能赶在元数据读回来之前，
-    那样 ``_facet_values`` 就已经换了一份，闸理应放行）。之后才是要盯的那一次。
+    先空跑一次把前置条件的「上一次输入」记牢（开窗那次的记录可能赶在元数据读回来之前，
+    那样 ``_facet_values`` 就已经换了一份，前置条件理应放行）。之后才是要盯的那一次。
     """
     assert window._library is not None
     window._reorder_level(window._library)
@@ -136,7 +136,7 @@ def test_a_reorder_that_changes_nothing_skips_the_sort(
 def test_changing_the_sort_direction_still_reorders(
     window: MainWindow, count_sorts: list[str]
 ) -> None:
-    """改了排序方向 → 一定要真排。闸要是把这个也吃掉，屏幕上的顺序就悄悄错了。"""
+    """改了排序方向 → 一定要真排。前置条件要是把这个也忽略掉，屏幕上的顺序就悄悄错了。"""
     assert window._library is not None
     window._reorder_level(window._library)
     before = list(window._model.entries())
@@ -154,7 +154,7 @@ def test_changing_the_direction_also_moves_the_album_cards(
 ) -> None:
     """翻方向时**相册卡片也要换位置**（ADR 0049）。
 
-    相册不参与排序字段，所以闸的指纹里没有它们的那一份 —— 少了这一段，相册卡片会在
+    相册不参与排序字段，所以前置条件的指纹里没有它们的那一份 —— 少了这一段，相册卡片会在
     「照片翻了、相册没翻」的状态下停住，而且此后没有任何东西会纠正它。
     """
     library = window._library
@@ -174,9 +174,9 @@ def test_changing_the_direction_also_moves_the_album_cards(
 def test_a_fresh_facet_read_still_reorders(window: MainWindow, count_sorts: list[str]) -> None:
     """**元数据重读过一次 → 一定要真排。**
 
-    这是那道闸最容易判错的一处：重读回来的 ``_facet_values`` 内容可能和上一次**完全一样**
+    这是那道前置条件最容易判错的一处：重读回来的 ``_facet_values`` 内容可能和上一次**完全一样**
     （同一批照片又读了一遍 EXIF），可它确实是一份新对象。判据记 ``id(values)`` 是不行的 ——
-    Python 会复用已释放对象的地址，换库之后新那份完全可能落在同一个地址上，闸就会以为
+    Python 会复用已释放对象的地址，换库之后新那份完全可能落在同一个地址上，前置条件就会以为
     「没变」而跳过排序，而那一层恰恰刚重扫过。
     """
     assert window._library is not None
@@ -193,7 +193,7 @@ def test_a_fresh_event_mapping_still_reorders(window: MainWindow, count_sorts: l
     """**事件映射换了一份 → 一定要真排**（ADR 0043 决策 7）。
 
     与上面那条元数据同源，只是第二份输入：用户记完 / 移出一张照片之后，那份「照片各属于哪些
-    事件」是新对象，而内容可能与上一次一模一样。闸漏了它，用户看到的就是「记完什么都没发生」。
+    事件」是新对象，而内容可能与上一次一模一样。前置条件漏了它，用户看到的就是「记完什么都没发生」。
     """
     assert window._library is not None
     window._reorder_level(window._library)

@@ -37,7 +37,8 @@ def photo(library: Path) -> PhotoRef:
 def unwritable_journal(library: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """让记账写不进去（模拟只读磁盘 / 权限问题）：拦的是 ``journal`` 目录的 ``mkdir``。
 
-    **红线 4**：记不上账不能说「没改成」，只能说「撤销不了」—— 五个写操作都得能这么退化。"""
+    **写盘前必先写 journal**：记不上账不能说「没改成」，只能说「撤销不了」——
+    五个写操作都得能这么退化。"""
     real_mkdir = Path.mkdir
 
     def refuse(self: Path, *args: object, **kwargs: object) -> None:

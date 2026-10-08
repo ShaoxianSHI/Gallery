@@ -147,7 +147,7 @@ class PhotoFacets:
     place_inferred: bool = False
     #: 按坐标反查过了没有。**与「查到了什么」分开记，因为查不到也是结论** —— 每次重查既慢，
     #: 又可能因为城市数据刚好下好而给出不一样的答案。数据没下好那次不算（见
-    #: ``mark_place_resolved``）：那不是结论，记下来会把「未知」永久钉死。
+    #: ``mark_place_resolved``）：那不是结论，记下来会把「未知」永久固定。
     place_checked: bool = False
     #: 坐标离反查出来的城市有多远（公里）。界面靠它说清「这只是最近的城市」。
     place_distance_km: float | None = None
@@ -201,7 +201,7 @@ WANTED_TAGS: Final[tuple[str, ...]] = (
 _KEYWORD_SPLIT = re.compile(r"[;,、]")
 
 #: ``2024:05:16 20:52:02``（EXIF）与 ``2024-05-16T20:52:02+02:00``（XMP）都认。时区偏移**在同一个
-#: 正则里**一起吃掉：分开找 ``+`` 前面没有空格会漏掉，漏掉就是把东八区的照片当成 UTC。
+#: 正则里**一并匹配：分开找 ``+`` 前面没有空格会漏掉，漏掉就是把东八区的照片当成 UTC。
 _DATETIME = re.compile(
     r"(\d{4})[:\-](\d{2})[:\-](\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?"
     r"\s*(Z|[+-]\d{2}:?\d{2})?\s*$"
@@ -252,10 +252,9 @@ def extract(raw: Mapping[str, object]) -> PhotoFacets:
 class CaptureMoment:
     """照片记下的那个拍摄时刻。
 
-    ``timestamp`` 用来**排序**（真实的时间先后）；其余字段用来**分组**，取照片里记下的墙上时间、
+    ``timestamp`` 用来**排序**（真实的时间先后）；年月日时分用来**分组**，取照片里记下的墙上时间、
     **不换算到本机时区** —— 否则在东京拍的照片会被塞进相邻的某一天（ADR 0033 决策 3）。
-    ``hour`` / ``minute`` 与年月日同一口径（所以**不是**从 ``timestamp`` 反推的）：日历的小时
-    格子按它们摆，那是用户唯一认得的那个时间。
+    ``hour`` / ``minute`` 与年月日同一口径，不从 ``timestamp`` 反推。
     """
 
     timestamp: float
@@ -528,9 +527,8 @@ def _event_group_order(key: str) -> float | None:
     """``"2026-05-16#42"`` 按起始日期排。**没填日期的那一组交回 ``None``**，于是它与
     「未归入事件」一样沉在末尾。
 
-    **这里返回 ``None`` 而不是 0**：先前那一组靠 ``build_groups`` 把日期取负来沉底
-    （``-0.0`` 大于任何负日期）。方向改成跟着「逆序」之后取负这条路就不成立了 ——
-    「沉底」得由调用方显式摘出来，而不是靠键的大小在两个方向下都恰好对（ADR 0049）。
+    **这里返回 ``None`` 而不是 0**：「沉底」得由调用方显式摘出来，而不是靠键的大小在两个方向下
+    都恰好对（ADR 0049）。
     """
     date_part = key.partition("#")[0]
     return _date_group_order(date_part) if date_part else None
@@ -759,7 +757,7 @@ def mark_place_resolved(facets: PhotoFacets, *, usable: bool = True) -> PhotoFac
     """记下「已经按坐标反查过一次」，让索引不必为同一张照片反复反查。
 
     :param usable: 反查器当时的数据是不是可用。**不可用就别记** —— 数据没下好时 ``place_for``
-        也返回 ``None``，但那不是「附近没有城市」的结论，记下来等于把这张照片永久钉在「未知」上。
+        也返回 ``None``，但那不是「附近没有城市」的结论，记下来等于把这张照片永久固定为「未知」。
     """
     return facets if facets.place_checked == usable else replace(facets, place_checked=usable)
 

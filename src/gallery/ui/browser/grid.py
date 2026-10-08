@@ -83,7 +83,7 @@ WHEEL_NOTCH_PIXELS: Final = 240
 WHEEL_PIXEL_FACTOR: Final = 0.5
 
 
-#: 排完版多久之后核对实际列数（等布局彻底落定，避免读到半成品）。
+#: 排完版多久之后核对实际列数（等布局彻底稳定下来，避免读到半成品）。
 COLUMN_CHECK_MS = 50
 
 #: **每一列**额外让出的像素，理由见 :meth:`PhotoGrid._cell_size_for`。
@@ -95,14 +95,14 @@ LAYOUT_SAFETY = 40
 #: 「视口宽度 → 修正方案」的记忆条目上限。
 MAX_LAYOUT_MEMO = 32
 
-#: 拖动距离的兜底值。正常情况取平台自己的数字（见 :func:`_drag_threshold`）。
+#: 拖动距离的回退值。正常情况取平台自己的数字（见 :func:`_drag_threshold`）。
 _FALLBACK_DRAG_DISTANCE = 10
 
 
 def _drag_threshold() -> int:
     """鼠标按下后挪多远才算「拖动」。
 
-    用平台自己的数字（macOS 上是 10 像素），不写死常量；问不到时给一个保守的下限。
+    用平台自己的数字（macOS 上是 10 像素），不硬编码常量；问不到时给一个保守的下限。
     """
     hints = QGuiApplication.styleHints()
     distance = hints.startDragDistance() if hints is not None else 0
@@ -188,7 +188,7 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
         apply_scrollbar_style(self.verticalScrollBar())
         self._delegate = PhotoDelegate(self, icon_edge=icon_edge)
         self.setItemDelegate(self._delegate)
-        # 捏合与滚轮都是连续事件，必须攒够阈值才切一档；捏合另套一道最小间隔，否则手势快
+        # 捏合与滚轮都是连续事件，必须累积到阈值才切一档；捏合另套一道最小间隔，否则手势快
         # 时每次切档都把上一次的动画掐断。⌘+滚轮不限速，连按由 MainWindow 排队。
         self._pinch_steps = RateLimitedAccumulator(PINCH_THRESHOLD, MIN_PINCH_INTERVAL_MS)
         self._wheel_steps = StepAccumulator(WHEEL_STEP_PIXELS)
@@ -267,11 +267,9 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
     def setModel(self, model: QAbstractItemModel | None) -> None:  # noqa: N802
         """装上模型，并盯住「条目到齐」这个时刻。
 
-        :meth:`_examine_columns` 量不出实际列数只可能是**条目还没到齐**（扫库是分批塞的），
-        而漏掉的那次修正再也不会发生、右边就一直空着。决定格子宽度的是视口宽度而不是
-        条目数，所以这里不用重排版，只需给核对补一次机会。
-        换模型时**先摘掉上一个的连接**：``setModel`` 不是只调一次（切库、换浏览方式都会），
-        旧模型留着连接既不能被回收，也会来叫醒一个已经不显示它的控件。
+        漏掉那次列数核对就再也补不回来、右边一直空着 —— 决定格子宽度的是视口宽度而不是条目数，
+        所以这里不重排版，只给核对补一次机会。换模型时**先摘掉上一个的连接**：``setModel``
+        不止调一次，旧连接既让模型回不来，也会叫醒一个已经不显示它的控件。
         """
         previous = self.model()
         if previous is not None:
@@ -286,14 +284,9 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
     def _on_rows_inserted(self, *_args: object) -> None:
         """模型里多了一批条目（扫描、监听、粘贴取回…）。
 
-        给「核对实际列数」补一次机会（见 :meth:`setModel`）；**已经滚下去过的话，
-        顺手把这次插入引起的重排接管掉** —— Qt 为插入排的延迟重排每次都从第 0 条重新
-        排起，滚动条范围在排完第一批那一刻只剩一小块，正看到中间的人当场被夹回顶部。
-        停在最顶上时（扫库的常态）不花这笔钱。
-
-        **那一摞重排排成 0 ms 定时器，不在这里当场做**：监听器一次报一批新文件、模型一条一条
-        地插，于是这里被调「批大小」次，而每一次都是一次**全量排版**，其中绝大部分是重复劳动
-        —— 那一批要排的版是同一份。定时器在已排着时原地续期，于是合并成一次。
+        给列数核对补一次机会；已经滚下去过的话，把这次插入引起的重排接管掉 —— Qt 为插入
+        排的延迟重排每次从第 0 条重排起，正看到中间的人会被当场夹回顶部。**排成 0 ms 定时器
+        而不在这里当场做**：这里被调「批大小」次而每次都是全量排版，绝大部分是重复劳动。
         """
         # 插进来的新行没有「旧位置」可言，算不出它该从哪来 —— 过渡作废。
         self._cancel_transition()
@@ -353,10 +346,8 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
     def _cell_size_for(self, available: int) -> QSize:
         """按列数把可用宽度均分给各列，铺满一行。
 
-        **排版宽度不是视口宽度**：Qt 换行时会先扣掉纵向滚动条，再扣掉样式的默认视图边距
-        （macOS 下 16 + 1~6 像素）。直接拿视口宽去除会卡在边界上 —— 1260 // 6 = 210 正好
-        是 Qt 摆不下 6 个的那一处，它只摆 5 个，右边空出整整一列。所以扣两笔：滚动条预留
-        （见 :meth:`_scrollbar_reserve`）与每列 2 像素余量，剩下十几像素是本来就有的留白。
+        **排版宽度不是视口宽度**：Qt 先扣纵向滚动条，再扣样式的默认边距（macOS 下 16 + 1~6
+        像素）。直接除会在边界上卡住 —— 1260 // 6 = 210 正好是 Qt 摆不下 6 个的那一处，只摆 5 个。
         """
         columns = self._columns_for(available)
         fix = self._layout_fix.get(available)
@@ -376,11 +367,8 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
     def _layout_width(self) -> int:
         """排版用的视口宽度：**按「滚动条在」的那一版算**，不管它此刻在不在。
 
-        滚动条会随内容高矮自己开关，而切档恰好会把它推过临界点（缩小一档，内容就比
-        视口矮了）。直接拿 ``viewport().width()`` 排版，同一个窗口会因为「滚动条恰好
-        露不露头」算出不同的列数与格宽（1100 宽下小档 8 列 131 像素对 8 列 133）。
-        那次重排是切档自己的后果，却会按新几何把正在跑的过渡重算一遍、当场掐掉
-        （见 :meth:`_set_cell`）；按「滚动条在」算它根本不会发生。
+        切档恰好会把滚动条推过临界点，于是同一个窗口会按「露不露头」算出不同的列数与格宽，
+        而那次重排又会按新几何掐掉正在跑的过渡（见 :meth:`_set_cell`）。按「在」算就不会发生。
         """
         width = self.viewport().width()
         if self.verticalScrollBar().isVisible():
@@ -394,13 +382,9 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
     def _recompute_layout(self, *, animate: bool = False) -> None:
         """按当前视口宽度重排，让第一行铺满、右侧不留空白。
 
-        ``animate`` 只有「用户切了一档」那条路径会传 ``True``：拖窗口是连续事件。
-        这里**不**取消正在跑的过渡，连按两档要能正常接第二段（见 :meth:`_start_transition`）。
-
-        **宽度变了就一定要走一趟 :meth:`_set_cell`，哪怕算出来的格子尺寸一模一样。**
-        Qt 的 ``ResizeMode.Adjust`` 每次宽度变化都会排一次它自己的延迟重排，那次重排会
-        把滚动条范围缩回一批、顺手夹掉当前位置（拖窗口时从 6970 掉到 1620 就是这么来的）。
-        这一趟会把它取消掉，所以格子尺寸没变时它省下的是 Qt 那次重排，不是白跑。
+        ``animate`` 只有「用户切了一档」那条路径会传 ``True``（拖窗口是连续事件），这里**不**取消
+        正在跑的过渡。**宽度变了就一定要走一趟 :meth:`_set_cell`，哪怕格子尺寸算出来一模一样**：
+        Qt 的 ``ResizeMode.Adjust`` 每次宽度变化都会排一次延迟重排，把滚动条范围缩回一批。
         """
         if self._laying_out:
             return
@@ -422,13 +406,9 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
     def _examine_columns(self) -> None:
         """排完版之后核对一次实际列数。
 
-        Qt 的换行宽度与视口宽度并不严格相等（宽窗口下会少摆一列），猜公式不如实测：
-        真少了就按实测列数重算并留出安全边距。**修正不当成一次换档**（走
-        :meth:`_apply_geometry`，列数并没变），但格子高度变了，正跑着的过渡要跟着改
-        （见 :meth:`_rebuild_transition` 与 :meth:`_refresh_scroll_goal`），否则会按错的
-        位置去画、那一趟滚动也会停在一个偏移了几千像素的地方。
-        改完**必须把这一帧按动画自己的 ``t`` 重新摆一遍**：``set_icon_edge`` 顺手把绘制
-        尺寸对齐到了新几何，对刚起头的过渡来说那是终点，不摆回去会先闪到终点再被拽回来。
+        Qt 的换行宽度与视口宽度并不严格相等（宽窗口下会少摆一列），猜公式不如实测：真少了就按实测列
+        数重算并留出安全边距。**修正不当成一次换档**（列数并没变），但格子高度变了，正跑着的过渡要跟
+        着改。改完**必须按动画自己的 ``t`` 重摆那一帧**（``set_icon_edge`` 已把绘制尺寸对齐）。
         """
         available = self._layout_width()
         intended = self._laid_out_columns
@@ -479,11 +459,9 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
     def _set_cell(self, cell: QSize, *, animate: bool = False) -> None:
         """换一次格子尺寸：改几何、全量重排、位置留在原处，**换了行才重新定位**。
 
-        滚动位置在几何变化前后**一格都不动**：拖窗口、换档、核对列数都不该看见滚动条
-        自己走。唯一会动的是**列数真的变了**（:attr:`GridTransition.reflows`）—— 那时
-        「第 31 行」已经是另一批照片，于是把用户正看着的那一格摆到正中（见
-        :meth:`_focus_row`）。换行时过渡的**起点**也要换算法（见
-        :meth:`_anchored_scroll_value`），照搬旧的像素值会让第 0 帧闪到别的段落上去。
+        滚动位置在几何变化前后**一格都不动**（拖窗口、换档、核对列数都不该看见它自己走）。唯一会动的
+        是**列数真的变了**（:attr:`GridTransition.reflows`）—— 那时「第 31 行」已是另一批照片，于是
+        把用户正看着的那一格摆到正中。换行时过渡的**起点**也要换算法（:meth:`_anchored_scroll_value`）。
         """
         # 动画起点是「上一帧画出来」的那一档：上一次过渡可能还没跑完，从中间值接着走。
         drawn_edge = self._delegate.draw_edge
@@ -513,13 +491,9 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
     def _apply_geometry(self, cell: QSize, scroll: int) -> None:
         """设定格子几何、**全量**排一遍版，再把滚动位置摆回 ``scroll``。
 
-        ``scroll`` 由调用方在改几何**之前**读出来（见 :meth:`_set_cell`）。
-
-        **必须全量排版（:meth:`_layout_everything`）而不是 Batched**：Batched 的滚动条
-        范围只按已排过的那一批算，而每次重排都从第 0 条开始 —— 范围在排完第一批那一刻
-        缩成一小块（400 张、6 列时是 1620），Qt 会在那一刻**当场把当前位置夹进去**。
-        全量排版之后范围当场就是终值。代价是拖窗口时每一帧付一次全量排版（几万张也就
-        几十毫秒），换来的是滚动条不再一帧一跳。
+        ``scroll`` 由调用方在改几何**之前**读出来（见 :meth:`_set_cell`）。**必须全量排版而不是
+        Batched**：Batched 的滚动条范围只按已排过的那一批算，而每次重排都从第 0 条开始，范围在
+        排完第一批那一刻缩成一小块，Qt 会在那一刻**当场把当前位置夹进去**。
         """
         self._laying_out = True
         # 布局期间 Qt 因范围变小而夹一下当前位置是**布局的副作用**，不是「用户滚了」。
@@ -554,11 +528,9 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
     def _layout_everything(self) -> None:
         """把**全部**条目排一遍版。每一次几何变化都用它（见 :meth:`_apply_geometry`）。
 
-        **为什么不能继续用 Batched**：Batched 的滚动条范围只覆盖已排版的那一批，刚排完
-        第一批那一刻小得离谱（切到大档后 800 张时 maximum 是 4272，正确的满范围是
-        62600）。范围一变小，当前位置就被 Qt **当场夹**到 4272，整屏瞬间弹回顶部。
-        SinglePass 同步算准且便宜：3000 张 7.9ms、30000 张 40.4ms。平时**滚动**仍然
-        完全不重排，Batched 在那里才有意义，所以排完要把它设回去。
+        **为什么不能继续用 Batched**：它的滚动条范围只覆盖已排版的那一批，刚排完第一批那一刻
+        小得离谱（切到大档后 800 张时 maximum 是 4272，满范围是 62600），范围一变小当前位置就被
+        Qt **当场夹**回去，整屏瞬间弹回顶部。SinglePass 同步算准且便宜（3000 张 7.9 ms）。
         """
         self.setLayoutMode(QListView.LayoutMode.SinglePass)
         try:
@@ -626,12 +598,9 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
     def selected_rows(self) -> list[int]:
         """当前选中的行号（升序）。
 
-        删除按这个顺序取条目，但摘行要**从后往前**（见 ``PhotoListModel.remove_rows``）
-        —— 前面的行被摘掉之后，后面的行号就变了。
-
-        **选区为空时会退回当前项**（Qt 刚打开时可能顺手把第 0 行设成当前项），这个兜底
-        对「删除」「拷贝」这类命令是对的，但它**不是**「谁被选中了」的答案 —— 判可见性
-        或判右键落点要问真选区，见 :meth:`genuinely_selected_rows`。
+        删除按这个顺序取条目，但摘行要**从后往前**（见 ``PhotoListModel.remove_rows``）。
+        **选区为空时会退回当前项**，这个回退对「删除」「拷贝」这类命令是对的，但它**不是**
+        「谁被选中了」的答案 —— 判可见性与右键落点要问真选区，见 :meth:`genuinely_selected_rows`。
         """
         rows = self.genuinely_selected_rows()
         if rows:
@@ -640,7 +609,7 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
         return [row] if row >= 0 else []
 
     def genuinely_selected_rows(self) -> list[int]:
-        """**真选区**，没有当前项兜底（见 :meth:`selected_rows` 末尾那段）。"""
+        """**真选区**，没有当前项回退（见 :meth:`selected_rows` 末尾那段）。"""
         selection = self.selectionModel()
         if selection is None:
             return []
@@ -659,15 +628,9 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
     def sync_current_to_selection(self) -> None:
         """**当前项必须落在真选区里**，否则当场把它清掉。
 
-        界面上「选中」只有一种画法（``State_Selected``），而命令作用的对象读的是
-        :meth:`current_row`；两者一旦对不上，用户就拿到一个**屏幕上没有高亮、↵ 却进得去、
-        ⌘R 却改得了名**的格子（更糟的是 ⌘⌫：它会删掉一个看不见的对象）。
-
-        Qt 自己就会造出这种状态：**左键点空白处**（清掉选区，却把当前项原封不动留着）
-        与 **⌘ 点减掉最后一个选中项**。两条都在鼠标**抬起**那一步才落地，所以收口放在
-        ``super().mouseReleaseEvent`` 之后；橡皮筋那条路
-        （:meth:`_reassert_extended_selection`）由它自己再收一次口。右键那条路不需要 ——
-        :meth:`select_for_context` 已经把选区与当前项一起摆好了。
+        界面上「选中」只有一种画法（``State_Selected``），而命令作用的对象读 :meth:`current_row`；
+        两者对不上，用户就拿到一个**屏幕上没有高亮、↵ 却进得去、⌘R 却改得了名**的格子（⌘⌫ 更糟：
+        它会删掉一个看不见的对象）。Qt 自己就会造出这种状态：**点空白处**与 **⌘ 点减掉最后一个**。
         """
         row = self.current_row()
         model = self.model()
@@ -681,15 +644,14 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
     def swallow_click(self) -> None:
         """接下来**一个**按下（双击阈值之内）不算数：它是别处那次点击的尾巴。
 
-        **Qt 判定双击是应用级的事**（上一次按下的时间与位置记在应用里，不是控件上），
-        于是「在日历上点一格 → 那一格摊成一层网格」之后紧接着的那一下会被判成网格页里
-        的第二下；而那个位置多半是空白，于是「双击空白处退一层」当场把人带回日历。
-        逻辑上第一下属于日历，第二下不该算作新的一下。
+        **Qt 判定双击是应用级的事**（上一次按下的时间与位置记在应用里，不是控件上），于是「在
+        日历上点一格 → 那一格摊成一层网格」之后紧接着的那一下会被判成网格页里的第二下；而那个
+        位置多半是空白，于是「双击空白处退一层」当场把人带回日历。
         """
         self._swallow_until = time.monotonic() + QApplication.doubleClickInterval() / 1000
 
     def _swallowing(self) -> bool:
-        """这一下要不要当成「上一次点击的尾巴」吃掉（吃掉之后只这一次）。"""
+        """这一下要不要当成「上一次点击的尾巴」忽略掉（忽略掉之后只这一次）。"""
         if time.monotonic() < self._swallow_until:
             self._swallow_until = 0.0
             return True
@@ -707,14 +669,9 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
     def select_for_context(self, row: int) -> int:
         """右键之前的选区修正。返回菜单该作用于哪一行（``-1`` = 空白处）。
 
-        ``QListView`` 默认**不会**选中光标下的项，于是「右键 A、命令却作用在原来选中的
-        B 上」是 Qt 的默认行为。规则定死成三种（ADR 0014 决策 2）：未选中的那一格只选
-        它；已经选中的一格**不动**（菜单作用于整份选择）；空白处清掉选区与当前项
-        （与访达一致），菜单里只会有视图级命令。刻意**不挪扩选锚点** —— 那是「上一次
-        完成的普通左键点选」，挪了它「右键 A → ⇧ 点 D」就会从 A 铺开。
-
-        「已经选中」问的是**真选区**，不能用会退回当前项的 :meth:`selected_rows`：后者会把
-        「Qt 顺手把第 0 行设成当前项、但谁也没选中」误判成「已经选中了」而直接返回。
+        ``QListView`` 默认**不会**选中光标下的项，于是「右键 A、命令却作用在原来选中的 B」是 Qt
+        的默认行为。规则定死成三种（ADR 0014 决策 2）：未选中的一格只选它；已选中的一格**不动**；
+        空白处清掉选区与当前项。「已经选中」问的是**真选区**（不能用会退回当前项的那个）。
         """
         self._armed_row = -1
         self._rename_timer.stop()
@@ -785,11 +742,9 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
     def _end_rename_session(self) -> None:
         """一次行内重命名结束了（提交、Esc 取消，或外部强制收起）。
 
-        **不能靠「输入框现在还看得见吗」判断有没有东西要收尾**：按 Esc 走的是
-        ``RenameEdit._cancel``，它先 ``hide()``、**再**发 ``cancelled``，等这个槽跑起来时
-        输入框早就藏好了，于是「输入框收起来了」那条信号压根没发出去，菜单里 ⌘R / ⌘⌫ /
-        ⇧⌘N / ⌘⏎ 永远留在禁用态。所以 session 状态由这里自己记，与输入框可见性解耦；
-        守卫仍留着 —— 外部强制收起一个没在改的名字时不该广播。
+        **不能靠「输入框现在还看得见吗」判断有没有东西要收尾**：按 Esc 走 ``RenameEdit._cancel``，
+        它先 ``hide()``、**再**发 ``cancelled``，等这个槽跑起来时输入框早就藏好了，于是那条信号
+        压根没发出去，菜单里 ⌘R / ⌘⌫ 永远留在禁用态。session 状态由这里自己记，与可见性解耦。
         """
         if not self._rename_active:
             return
@@ -819,11 +774,9 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
     def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         """手抖不算拖动，扩选更不算。
 
-        图标视图里 Qt 在**按下瞬间**就进入框选状态，之后鼠标一动就画橡皮筋 —— 那 10
-        像素的拖动距离只管拖拽，不管它。带 `⇧` / `⌘` 点选时手总要抖上一两个像素，于是
-        「从 A 到 B 的连续区间」被悄悄换成矩形框选，落在分行排的网格上就成了「每行只选
-        中最边上那一两个格子」。所以带修饰键的一律当扩选（想框选就空着手拖），空着手
-        也要挪够平台自己的拖动距离，才把事件交给基类。
+        图标视图里 Qt 在**按下瞬间**就进入框选状态，之后鼠标一动就画橡皮筋 —— 那 10 像素的拖动
+        距离只管拖拽，不管它。带 `⇧` / `⌘` 点选时手总要抖上一两个像素，于是「从 A 到 B 的连续
+        区间」被悄悄换成矩形框选，落在分行排的网格上就成了「每行只选中最边上那一两个格子」。
         """
         point = self._press_point
         if point is not None and event.buttons() & Qt.MouseButton.LeftButton:
@@ -836,11 +789,9 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
     def _reassert_extended_selection(self, target: int, *, shift: bool) -> None:
         """抬起前把「这一下到底想要什么选择」自己算一遍，不指望基类没越权。
 
-        上一道只是**不让**橡皮筋画起来，这里再兜一层：即便它画了，抬起时也按用户的心意
-        重算一次。带修饰键点下去时意图毫无歧义 —— `⇧` 是锚点到落点的连续区间，`⌘` 是
-        加一个 / 减一个；含糊的代价是用户按 `⌘⌫` 删掉的不是他以为的那几张照片。
-        落点取**按下时**那一格：缩略图还在源源不断到货，等鼠标抬起来，底下的东西已经不是
-        用户刚才瞄准的那个了。
+        上一道只是**不让**橡皮筋画起来，这里再兜一层：即便它画了，抬起时也按用户的心意重算
+        一次。带修饰键点下去时意图毫无歧义 —— `⇧` 是锚点到落点的连续区间，`⌘` 是加一个 /
+        减一个；含糊的代价是用户按 `⌘⌫` 删掉的不是他以为的那几张照片。落点取**按下时**那一格。
         """
         model = self.model()
         selection = self.selectionModel()
@@ -865,10 +816,9 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         """第一次点击只是选中；对**已经选中**的格子再点一次才开始重命名。
 
-        第二次点击不立刻改名，而是按下双击阈值**等一等**：Qt 是在第二次「按下」时判定
-        双击的，而人的两下快慢不一（按下快、抬起慢时两次抬起的间隔会超过阈值），于是
-        「双击打开」会被误判成「再次点击改名」，照片没打开倒先弹了个输入框。
-        所以这里等 Qt 先说话：它认成双击就去打开照片，一直没等到才是重命名。
+        第二次点击不立刻改名，而是按下双击阈值**等一等**：Qt 是在第二次「按下」时判定双击的，
+        而人的两下快慢不一（按下快、抬起慢时两次抬起的间隔会超过阈值），于是「双击打开」会被
+        误判成「再次点击改名」。所以这里等 Qt 先说话：它认成双击就去打开照片。
         """
         super().mouseReleaseEvent(event)
         # 点空白处、⌘ 点减掉最后一项都会留下一个「屏幕上没高亮、命令却仍作用其上」的当前项。
@@ -915,12 +865,9 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         """双击一定要打开照片，而不是拉出一个输入框；落在空白处就退回上一层。
 
-        「双击空白处往回退」是访达里用惯了的手势，而逐层进入时它是最常用的动作之一
-        （照片没铺满一屏时右下角总有一大片空白）。视图只回答「这一下落在格子还是空白」，
-        要不要退、能不能退由窗口判断。
-
-        **落点必须在交给基类之前问**：``super()`` 会双击打开，而打开相册是**同步**的 ——
-        那之后再问「这一点底下还有没有格子」，问到的已经是新的一层。
+        「双击空白处往回退」是访达里用惯了的手势，而逐层进入时它最常用。视图只回答「这一下落在
+        格子还是空白」，要不要退由窗口判断。**落点必须在交给基类之前问**：``super()`` 会双击打开，
+        而打开相册是**同步**的，那之后再问「这一点底下还有没有格子」，问到的已经是新的一层。
         """
         if self._swallowing():
             # 双击的第二下属于**上一个页面**那次点击（见 `swallow_click`），两件都不做。
@@ -968,16 +915,9 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
     def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         """⌘ + 滚轮切换缩略图尺寸；普通滚动按像素自己走，不交给基类。
 
-        **为什么不能交给基类**：网格的竖直滚动是 ``ScrollPerPixel``，Qt 在这一支的算法
-        是「角度增量 ÷ 120 × ``wheelScrollLines()``（macOS 上 3）× **一个格子高**」，于是
-        滚轮一格 = 3 × 格子高（中档 660 像素，视口才 800 高），屏上正中的照片多半被直接
-        翻过去；格子再高一点那一格就够翻一整页，Qt 会索性当成翻页键。这里改成按像素走：
-        滚轮一格 :data:`WHEEL_NOTCH_PIXELS`，触控板按像素增量 × :data:`WHEEL_PIXEL_FACTOR`
-        （用 Qt 丢掉的 ``pixelDelta``，理由见那两个常量）。
-
-        **仍然走 ``setValue`` 而不是直接 ``scrollContentsBy``**：这样滚动条那一跳照样
-        经过 :meth:`scrollContentsBy`，行内改名输入框跟着滚、切档过渡让位、可见区去抖
-        这三件都还在。
+        **为什么不能交给基类**：Qt 在 ``ScrollPerPixel`` 这一支的算法是「角度增量 ÷ 120 ×
+        ``wheelScrollLines()``（macOS 上 3）× **一个格子高**」，于是滚轮一格 = 3 × 格子高（中档 660
+        像素，视口才 800 高），正中的照片多半被直接翻过去。改成按像素走（见那两个常量）。
         """
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             steps = self._wheel_steps.feed(
@@ -997,10 +937,9 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
     def _scroll_pixels(self, pixel: float, angle: float) -> int:
         """一次普通滚动该走多少**纵向像素**（两种设备的换算见上面那两个常量）。
 
-        **没走满一个像素的零头要留着**（:attr:`_wheel_remainder`）：触控板慢推一下只给
-        1 像素的增量，乘 0.5 之后直接取整就把**每一次**都抹成 0，轻推纹丝不动而且永远
-        攒不起来。向零截断（而不是四舍五入）让零头与增量**同号**，攒的永远是「同一方向
-        还差的那一点」。
+        **没走满一个像素的零头要留着**（:attr:`_wheel_remainder`）：触控板慢推一下只给 1 像素的
+        增量，乘 0.5 之后直接取整就把**每一次**都抹成 0，轻推纹丝不动而且永远累积不起来。向零
+        截断（而不是四舍五入）让零头与增量**同号**，累积的永远是「同一方向还差的那一点」。
         """
         exact = (
             pixel * WHEEL_PIXEL_FACTOR + self._wheel_remainder

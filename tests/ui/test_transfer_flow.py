@@ -8,7 +8,7 @@
 - **菜单上那两条摆在「拷贝路径」正下方**（用户指定的位置）；
 - **子菜单里列的是全库的相册**，标签是相对路径；
 - **库里一个相册都没有时那两条压根不出现**（空子菜单是个空框）；
-- **移动是能 ⌘Z 撤销的** —— 用户敢用它全靠这一条（红线 1）。
+- **移动是能 ⌘Z 撤销的** —— 用户敢用它全靠这一条（不删除、不移动用户照片那条）。
 
 全部在 ``tmp_path`` 里进行，照片都是当场造的临时文件。
 """
@@ -281,9 +281,9 @@ def test_album_menu_does_not_offer_them(qt_app: QApplication, window: MainWindow
 def test_switching_libraries_mid_transfer_does_not_leave_a_phantom_undo(
     qt_app: QApplication, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """搬一半换库：闸门必须跟着收，否则横幅骗人说「⌘Z 可以撤销」。
+    """搬一半换库：前置条件必须跟着收，否则横幅骗人说「⌘Z 可以撤销」。
 
-    换库时 `_teardown_library` 必须取消写操作闸门，否则那次复制接着在**旧库**上跑完；
+    换库时 `_teardown_library` 必须取消写操作前置条件，否则那次复制接着在**旧库**上跑完；
     收尾时 `_on_transfer_done` 拿着**新库**去问「下一次 ⌘Z 撤什么」—— 记录明明
     记在旧库的 journal 里，界面上却一条都撤不掉。
     """
@@ -483,7 +483,7 @@ def test_a_group_card_moves_the_photos_inside(qt_app: QApplication, window: Main
 def test_paste_and_copy_do_not_run_at_the_same_time(
     qt_app: QApplication, window: MainWindow
 ) -> None:
-    """三个写入类任务共用一道闸门：并发时后到的会把先到的盖掉（ADR 0019 决策 4）。"""
+    """三个写入类任务共用一道检查：并发时后到的会把先到的盖掉（ADR 0019 决策 4）。"""
     started = threading.Event()
     release = threading.Event()
     real = Library.move_into

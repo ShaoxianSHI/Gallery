@@ -70,7 +70,7 @@ class PlaceEdit:
 
 @dataclass(frozen=True, slots=True)
 class PlacePlan:
-    """一次编辑的落定结果。"""
+    """一次编辑的结果。"""
 
     #: 要写进文件的字段。**为空表示什么都没改**，调用方不该走到写盘那一步。
     assignments: tuple[Assignment, ...] = ()
@@ -98,14 +98,9 @@ def plan_place_edit(
 ) -> PlacePlan:
     """把「用户填完的那一份」翻译成要写进文件的字段。
 
+    **只写用户填的那几层，不再隐式跨层填充**（ADR 0039 决策 4）：跨层填充只发生在对话框的按钮上，
+    按钮改的就是框本身。``resolver`` 仍被接受但这里**不用它**，保留是为了签名与调用点不必跟着改。
     :raises MetadataWriteError: 坐标不合法（超出范围、只填了一个、填成了 0,0）。
-
-    **只写用户填的那几层，不再隐式跨层填充**（ADR 0039 决策 4）：坐标变了顺手反查地名、
-    地名变了顺手正查坐标，会让「对话框显示的那一份」与「真正写下去的那一份」在某些路上不是
-    同一份。跨层填充现在只发生在对话框那两个按钮上，而按钮改的就是框本身。
-
-    ``resolver`` 仍被接受（对话框那两个按钮用的就是同一个），但这里**不用它** ——
-    保留是为了让签名与调用点不必跟着改。
     """
     del resolver  # 跨层填充搬到了对话框的按钮上，这里不再需要反查（ADR 0039）
     names = edit.names()
@@ -140,9 +135,8 @@ def _clearing_coordinates(
     """「把坐标删掉，但地名留着」——定位漂了、地名没错时用户真正想要的那一下。
 
     **海拔与定位时间一并清掉**，与 :func:`_coordinate_assignments` 同一份定义
-    （:data:`~gallery.core.metadata.writeback.STALE_GPS_TAGS`）：只清经纬度那几条会在文件里
-    留下一条「有海拔、有 GPS 定位时间、但没有经纬度」的记录，读 EXIF 的软件看到都是一脸困惑。
-    两条路各写一份清单迟早分叉，现在只写一份。
+    （:data:`~gallery.core.metadata.writeback.STALE_GPS_TAGS`）：只清经纬度会在文件里留下
+    「有海拔、有 GPS 定位时间、但没有经纬度」的记录，读 EXIF 的软件看到都困惑。
     """
     assignments: list[Assignment] = [Assignment(tag, "") for tag in _all_coordinate_tags()]
     if names_changed:
@@ -186,12 +180,8 @@ def _coordinates(state: PlaceState, edit: PlaceEdit) -> tuple[float, float] | No
 def _all_coordinate_tags() -> tuple[str, ...]:
     """**改坐标**与**清空坐标**都要动的全部坐标标签。
 
-    海拔与定位时间记的是「另一个位置」上的测量值：坐标在杭州、海拔是珠峰，留着一条 GPS
-    记录就自相矛盾（ADR 0031 决策 6）。清掉比留着好，而清掉这件事必须说给用户听。
-
-    **只有这一处定义。** 两条路各写一份清单的代价已经付过一次：清空那条漏了
-    :data:`~gallery.core.metadata.writeback.STALE_GPS_TAGS`，于是清空之后文件里留下一条
-    「有海拔、有定位时间、没坐标」的记录。
+    海拔与定位时间记的是「另一个位置」上的测量值：坐标在杭州、海拔是珠峰，留着一条 GPS 记录就
+    自相矛盾（ADR 0031 决策 6）。**只有这一处定义** —— 两条路各写一份清单的代价已经付过一次。
     """
     return (*COORDINATE_TAGS, *STALE_GPS_TAGS)
 

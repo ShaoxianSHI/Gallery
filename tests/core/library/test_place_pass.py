@@ -368,7 +368,7 @@ def test_progress_is_reported_without_a_known_total(library_with_gps: Library) -
 
 
 def test_photo_facets_and_the_panel_share_one_answer(library_with_gps: Library) -> None:
-    """面板那条兜底路也写回索引：它算出来的东西不许只留在内存里。"""
+    """面板那条回退分支也写回索引：它算出来的东西不许只留在内存里。"""
     ref = PhotoRef.from_path(library_with_gps.root / "无坐标.jpg")
     # 假装索引里已经有这一行（整库那一遍跑过了），坐标由调用方给出。
     library_with_gps.facet_index.store([(ref, library_with_gps.photo_facets([ref])[ref.path])])

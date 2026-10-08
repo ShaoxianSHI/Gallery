@@ -572,9 +572,9 @@ def test_moving_a_whole_album_outside_carries_every_binding_under_it(
 def test_bindings_follow_a_move_even_while_the_level_is_frozen(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
 ) -> None:
-    """**延后闸只该推迟改界面，不该推迟修数据。**
+    """**延后前置条件只该推迟改界面，不该推迟修数据。**
 
-    日历页 / 大图页 / 扫描在途时这批变化会攒进 ``_watch_pending``，而它可能被直接丢掉
+    日历页 / 大图页 / 扫描进行中时这批变化会累积进 ``_watch_pending``，而它可能被直接丢掉
     （扫描一完成就 ``_watch_pending = None`` 再重扫那一层）。绑定要是跟着界面页面的状态走，
     那正是「照片还在、事件没了」的来路。
     """
@@ -752,12 +752,12 @@ def test_a_photo_moved_into_the_album_next_to_this_level_changes_its_cover(
 
 
 def pin_thumbnail_edge(window: MainWindow) -> None:
-    """把缩略图档位钉死在当前这一档（不再听网格改尺寸）。
+    """把缩略图档位固定在当前这一档（不再听网格改尺寸）。
 
     **为什么这一组非钉不可**：空相册那份记忆是**按档位**记的（128 px 问出来是空相册，不代表
     256 px 也是），所以窗口刚打开、网格还在改尺寸的那几轮里，那张卡片会被反反复复重问一遍
     封面 —— 于是「挪进去之后封面出来了」这条断言会在**档位那一遍**里自己变绿，而真机上
-    （窗口早摆定了、档位不变）封面根本不会回来。钉住档位，断的才是用户看见的那件事。
+    （窗口早摆定了、档位不变）封面根本不会回来。锁定档位，断的才是用户看见的那件事。
     """
     window._grid.icon_edge_changed.disconnect(window._on_grid_edge_changed)
 
@@ -835,7 +835,7 @@ def test_a_change_that_arrives_while_a_new_photo_fills_the_level(
     window, watcher = open_window(qt_app, tmp_path)
     try:
         newcomer = make_photo("b.jpg")
-        window._scan_job = 999  # 假装还有一次扫描在途
+        window._scan_job = 999  # 假装还有一次扫描进行中
         try:
             deliver(qt_app, window, watcher, LibraryChange(ChangeKind.ADDED, newcomer))
             assert window._model.rowCount() == 1, "扫描在途时不插行"
@@ -850,16 +850,16 @@ def test_a_change_that_arrives_while_a_new_photo_fills_the_level(
 def test_changes_that_had_to_wait_are_applied_later(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
 ) -> None:
-    """攒下来的那批变化不是丢掉，是等条件合适时补上（ADR 0013）。
+    """累积下来的那批变化不是丢掉，是等条件合适时补上（ADR 0013）。
 
-    这一条专门钉住「补」：之前只测了「先攒着」，攒着的东西没人兑现的话，
+    这一条专门锁定「补」：之前只测了「先暂存」，暂存的东西没人兑现的话，
     用户看到的就永远是那张少了照片的旧网格。
     """
     make_photo("a.jpg")
     window, watcher = open_window(qt_app, tmp_path)
     try:
         newcomer = make_photo("b.jpg")
-        window._scan_job = 999  # 假装还有一次扫描在途
+        window._scan_job = 999  # 假装还有一次扫描进行中
         try:
             deliver(qt_app, window, watcher, LibraryChange(ChangeKind.ADDED, newcomer))
             assert window._model.rowCount() == 1
@@ -898,7 +898,7 @@ def test_changes_that_arrive_in_the_detail_view_wait_for_the_grid(
         window.close()
 
 
-# ---- 自家写操作的回声 -----------------------------------------------------------
+# ---- 自家写操作的回环 -----------------------------------------------------------
 
 
 def test_renaming_here_is_not_applied_twice(
@@ -915,7 +915,7 @@ def test_renaming_here_is_not_applied_twice(
         renamed = tmp_path / "改成它.jpg"
         assert renamed.exists()
 
-        # 监听器随后报上来的回声：路径已经换过、文件也在，不该把那一格搞乱。
+        # 监听器随后报上来的回环：路径已经换过、文件也在，不该把那一格搞乱。
         deliver(
             qt_app,
             window,
@@ -980,7 +980,7 @@ def test_restoring_from_the_trash_is_not_inserted_twice(
 def test_a_genuinely_new_file_with_the_same_name_is_not_swallowed(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
 ) -> None:
-    """回声只在短时间内有效：之后用户真的新建一个同名文件，必须正常显示。"""
+    """回环只在短时间内有效：之后用户真的新建一个同名文件，必须正常显示。"""
     picture = make_photo("同名.jpg")
     window, watcher = open_window(qt_app, tmp_path)
     try:
@@ -1265,7 +1265,7 @@ def test_a_batch_arriving_after_the_bridge_is_gone_is_dropped_quietly(
 ) -> None:
     """桥已经没了的时候来一批变化：安静丢掉，不许把异常抛进监听线程。
 
-    关窗与切库都会和去抖定时器撞上：``stop()`` 取消得了还没到期的那个定时器，拦不住
+    关窗与切库都会和防抖定时器撞上：``stop()`` 取消得了还没到期的那个定时器，拦不住
     **已经开跑**的那一个。这一条钉的正是那个缝 —— 抛出去的 ``RuntimeError`` 会顺着
     监听线程一路逃出去（测试里表现为 ``PytestUnhandledThreadExceptionWarning``，
     产品里就是一个没人接的线程异常）。

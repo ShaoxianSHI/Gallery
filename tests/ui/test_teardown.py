@@ -46,7 +46,7 @@ def _open_window(tmp_path: Path, make_photo: Callable[..., Path]) -> MainWindow:
 def test_the_teardown_fixture_is_autouse_for_every_ui_test(
     request: pytest.FixtureRequest,
 ) -> None:
-    """这个模块里那几条只钉住了收尾**怎么做**；这一条钉住它**每个用例都会跑**。
+    """这个模块里那几条只锁定了收尾**怎么做**；这一条锁定它**每个用例都会跑**。
 
     ``autouse`` 一旦被摘掉，同一个模块里那几条照样绿，但整套界面测试会重新变成
     「进程收尾时掷硬币」。而现场看到的是退出码 139 的随机红灯，几乎没人能当场
@@ -120,7 +120,7 @@ def test_a_window_left_open_is_still_fully_torn_down(
 ) -> None:
     """窗口被收尾销毁时，必须走完真正的关窗流程，而不是只把像素擦掉。
 
-    这一条是「监听器有没有被停掉」的守护：真监听器带着一个 watchdog 观察者线程，
+    这一条是「监听器有没有被停掉」的回归测试：真监听器带着一个 watchdog 观察者线程，
     漏停一步，那个线程就会在进程收尾时去碰一个已经拆掉的窗口。
     """
     window = _open_window(tmp_path, make_photo)

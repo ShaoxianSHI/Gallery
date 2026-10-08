@@ -26,7 +26,7 @@ from gallery.ui.calendar.swipe import SwipeDetector, scroll_delta
 from gallery.ui.calendar.thumbs import ThumbStore
 from gallery.ui.theme import AppTheme, current_theme
 
-#: 「几何变了 → 重报一次看得见哪些」的闸门（毫秒）。与网格那一侧同一个数。
+#: 「几何变了 → 重报一次看得见哪些」的防抖间隔（毫秒）。与网格那一侧同一个数。
 #: 拖窗口边时 ``resizeEvent`` 连发几十次；单次定时器的 ``start()`` 会原地续期，于是只报一次。
 GEOMETRY_DEBOUNCE_MS = 60
 
@@ -55,7 +55,7 @@ class LevelView(QWidget):
         self._anchor = datetime.date.today()
         self._today = datetime.date.today()
         self._selected: datetime.date | None = datetime.date.today()
-        #: 「甩一下」的判据。**三层各留一份**：攒到一半切层再切回来，不该接着上次那半下算。
+        #: 「甩一下」的判据。**三层各留一份**：累积到一半切层再切回来，不该接着上次那半下算。
         self._swipe = SwipeDetector()
         # 构造时还没被 ``apply_theme`` 走过，而起手就得有底色（否则第一帧是黑的）。
         theme = current_theme()
@@ -99,7 +99,7 @@ class LevelView(QWidget):
         return self._anchor
 
     def days(self) -> list[datetime.date]:
-        """这一层**自己**的那几天（不含上下月补位）—— 「有几张」按这个数。"""
+        """这一层**自己**的那几天（不含上下月占位的格子）—— 「有几张」按这个数。"""
         return days_of(self._level, self._anchor)
 
     def title(self) -> str:
@@ -142,7 +142,7 @@ class LevelView(QWidget):
     def covers(self, day: datetime.date) -> bool:
         """这一天在这一层**自己的**那几天里吗（翻页之后据此收掉选中的高亮）。
 
-        口径就是 :meth:`days`：补位格点不动，也就没有「点中一个邻月的日子」这回事。
+        口径就是 :meth:`days`：占位的格子点不动，也就没有「点中一个邻月的日子」这回事。
         """
         return day in self.days()
 
@@ -153,11 +153,11 @@ class LevelView(QWidget):
         return list(self.photos_of(self._selected)) if self._selected is not None else []
 
     def select_day(self, day: datetime.date) -> None:
-        """只改选中，不摊开（周视图点格子时选中那天用的就是它）。"""
+        """只改选中，不展开（周视图点格子时选中那天用的就是它）。"""
         self.set_selected(day)
 
     def select_cell(self, photos: Sequence[PhotoRef], label: str) -> None:
-        """点到了有照片的一格：选中它，然后问外面「这一格怎么摊开」。"""
+        """点到了有照片的一格：选中它，然后问外面「这一格怎么展开」。"""
         if not photos:
             return
         self.cell_requested.emit(list(photos), label)
@@ -219,7 +219,7 @@ class LevelView(QWidget):
 
 
 def day_label(day: datetime.date) -> str:
-    """一格（一天）在标题里怎么写 —— 摊开成网格时那一层的名字。"""
+    """一格（一天）在标题里怎么写 —— 展开成网格时那一层的名字。"""
     return f"{day.month}月{day.day}日"
 
 

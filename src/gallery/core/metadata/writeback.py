@@ -1,6 +1,6 @@
 """把用户改过的坐标 / 地点**写回照片文件**（ADR 0030）—— 文件不搬家，内容被改。
 
-红线 1（只增不改）与红线 4（先记账再动文件、写完回读校验、失败回滚并如实报错）在这里最重：
+**只增不改**与**先记账再动文件、写完回读校验、失败回滚并如实报错**在这里最重：
 只写 :data:`WRITABLE_TAGS` 里的字段，每一步都记字段级的原值与新值，撤销按它逐字段写回。
 
 不弹窗、不问「要不要继续」：被拒绝就抛 :class:`~gallery.core.errors.MetadataWriteError`。
@@ -74,7 +74,7 @@ CAPTURE_TIME_TAGS: Final[tuple[str, ...]] = (
     "EXIF:OffsetTimeOriginal",
 )
 
-#: **可以写回的全部字段**（唯一来源）。加一个 tag 必须同时改这里与对应的守护测试。
+#: **可以写回的全部字段**（唯一来源）。加一个 tag 必须同时改这里与对应的回归测试。
 WRITABLE_TAGS: Final[frozenset[str]] = frozenset(
     COORDINATE_TAGS + STALE_GPS_TAGS + PLACE_TAGS + CAPTURE_TIME_TAGS
 )
@@ -227,15 +227,11 @@ class ExifToolWriter:
         *,
         timeout: float | None = None,
     ) -> None:
-        """写回。**先试原地改**（``-overwrite_original_in_place``）：只动对应的那几个字节，像素数据的
-        位置也不变。部分容器格式不支持它，那种情况退回普通覆盖 —— 失败后重试是安全的：
-        所有字段都会幂等地再写一遍。
+        """写回。**先试原地改**（``-overwrite_original_in_place``）：只动几个字节，像素位置不变；
+        部分容器不支持它，那种情况退回普通覆盖 —— 所有字段幂等，重试安全。
 
-        **回滚那次要传一个更短的 ``timeout``** —— 见 :func:`_apply` 里那段：那条路径上
-        用户正等着一个「照片恢复原样了吗」的答复，不能让它先等满两轮
-        :data:`EXIFTOOL_TIMEOUT_SECONDS`。协议（:class:`MetadataWriter`）里**没有**这个
-        参数，所以 :func:`_apply` 用 ``isinstance`` 判断而不是鸭子类型 ——
-        给协议加上它就得改所有假实现，而它们根本不起进程。
+        **回滚那次要传更短的 ``timeout``**（用户正等着「照片恢复原样了吗」的答复）。协议里没有这个
+        参数，所以 :func:`_apply` 用 ``isinstance`` 判断而不是给协议加参数（加了就得改所有假实现）。
         """
         path = Path(path)
         base = [self._executable, "-overwrite_original", *EXIFTOOL_CHARSET_ARGS, "-q", "-q"]
@@ -306,9 +302,9 @@ def write_metadata(
         # 与原来一模一样：不写盘也不记日志 —— 把「没改」记成一次改动，会让 ⌘Z 去撤一件空事。
         return WriteResult(entry=ref, journaled=True, written=False)
 
-    # guard: allow-long-comment（红线 4：先记账再动文件，中间断电就改没了而日志上没有）
+    # guard: allow-long-comment（硬性约束：先记账再动文件，中间断电就改没了而日志上没有）
     # **先记账，再动文件。** 落一条 pending 只要几十微秒，而 :func:`_apply` 要起一到两次 exiftool
-    # 子进程（几十到几百毫秒）—— 那个窗口里断电，原图就改了而日志上一条都没有（红线 4）。
+    # 子进程（几十到几百毫秒）—— 那个窗口里断电，原图就改了而日志上一条都没有。
     # 记不上账也照样往下走（报 ``journaled=False``）：不能因为记不上就把一次用户要求的写入拒掉。
     logged = _journal(root, path, changes, RESULT_PENDING, None)
     try:
@@ -417,13 +413,8 @@ def _write_for_rollback(
 ) -> None:
     """回滚那一次写回，**能用更短超时就用**（理由见 :func:`_apply`）。
 
-    ``MetadataWriter`` 是 :class:`Protocol`，签名里**没有** ``timeout`` ——
-    给协议加上它就得改所有假实现，而它们根本不起进程。所以这里问「这个工具接不接受
-    这个关键字」，而不是 ``isinstance(tool, ExifToolWriter)``：后者在测试里够不到
-    （测试注入的都是假实现），那条分支就成了**永远验不到的死代码**。
-
-    用 ``inspect`` 查签名而不是直接 ``getattr(tool, "write")`` 之后调用 —— 后者遇到一个
-    真的不支持该参数的第三种实现会当场 ``TypeError``，而那时照片已经被写坏过一次了。
+    ``MetadataWriter`` 签名里**没有** ``timeout``，所以这里用 ``inspect`` 查它接不接受这个关键字，
+    而不是 ``isinstance(tool, ExifToolWriter)``：测试注入的都是假实现，后者那条分支永远验不到。
     """
     try:
         supports = "timeout" in inspect.signature(tool.write).parameters
@@ -438,17 +429,9 @@ def _write_for_rollback(
 def _apply(path: Path, changes: Sequence[FieldChange], tool: MetadataWriter) -> None:
     """把 ``changes`` 的目标值写进去并**回读校验**；对不上就按原值写回去。
 
-    **正向与撤销共用这一段**：两者的差别只有「写什么」，校验与回滚的规矩一个字都不变 ——
-    各写各的时「撤销」那条路是不校验的。
-
-    **回滚本身也要回读校验**（红线 4）：「按原值写回去」是一次**请求**，不是保证 —— exiftool
-    在空间不够、写到一半被截断这些要处理的失败情形里照样返回 0。不回读就宣布「已恢复原样」，
-    用户拿回的就是一张坐标被写坏的照片，而记录里前后值都齐着、看上去一切正常。
-
-    **回滚那次用更短的超时**（:data:`_ROLLBACK_TIMEOUT_SECONDS`）。这一段最坏要起 6 个
-    exiftool（两次 ``write`` 各两个 + 两次 ``read``），每个能卡满
-    :data:`EXIFTOOL_TIMEOUT_SECONDS` —— 最坏一分半，而用户此刻正盯着一个不动的界面，
-    不知道他刚按的 ⌘Z 到底成没成。
+    **正向与撤销共用这一段**：差别只有「写什么」。**回滚也要回读校验**（硬性约束）：「按原值写回去」
+    是一次**请求**，不是保证 —— exiftool 在空间不够、写到一半被截断时照样返回 0。回滚用更短的超时
+    （:data:`ROLLBACK_TIMEOUT_SECONDS`）：这段最坏要起 6 个 exiftool，而用户正盯着不动的界面。
     """
     path = Path(path)
     assignments = [Assignment(change.tag, change.after or "") for change in changes]
@@ -497,10 +480,8 @@ def _argv(assignments: Sequence[Assignment]) -> list[str]:
 def _checked(assignments: Sequence[Assignment], path: Path) -> tuple[Assignment, ...]:
     """去重（同一个标签以最后一条为准）、逐条查白名单，再**去掉这个容器存不下的标签**。
 
-    **两道闸在同一个出口**：白名单管「该不该由 Gallery 改」，存储缺口管「这个文件里放不放得下」。
-
-    存不下的那条**静默跳过、不报错**：用户要的是「地点写进去」，而 HEIC 上 IPTC 那一份从来
-    就不是用户看得到的东西（ADR 0036 决策 1）。真全部被跳过时由 :func:`_nothing_to_write`
+    **两道检查在同一个出口**：白名单管「该不该由 Gallery 改」，存储缺口管「这个文件里放不放得下」。
+    存不下的那条**静默跳过、不报错**（ADR 0036 决策 1）；真全部被跳过时由 :func:`_nothing_to_write`
     说清是哪种「没东西可写」。
     """
     unstorable = unstorable_tags(path)
@@ -518,10 +499,10 @@ def _checked(assignments: Sequence[Assignment], path: Path) -> tuple[Assignment,
 
 
 def _guard(root: Path, path: Path) -> None:
-    """确认要改的文件在允许的范围内。**与其余五个写入口走同一道闸**（红线 1）。
+    """确认要改的文件在允许的范围内。**与其余五个写入口走同一道检查**（硬性约束：只增不改）。
 
     网格里根本不会出现配置目录，这里仍然挡一道 —— 这是**会动用户文件**的入口。
-    三道判据的顺序照旧：先看它是不是照片，再过闸（库内 / 配置目录），最后看文件还在不在。
+    三道判据的顺序照旧：先看它是不是照片，再过那道检查（库内 / 配置目录），最后看文件还在不在。
     """
     if not is_supported_photo(path):
         raise MetadataWriteError(
@@ -537,7 +518,7 @@ def _guard(root: Path, path: Path) -> None:
         raise MetadataWriteError(f"找不到这个文件了：{path.name}。", path=path)
 
 
-#: 闸门拒绝的每一种原因 → 给用户的那句话。见 :data:`rename._GUARD_MESSAGES`。
+#: 拒绝写回的那几种原因 → 给用户的那句话。见 :data:`rename._GUARD_MESSAGES`。
 #: 上面第一步就要求扩展名是照片，所以后两条今天都到不了（库根本身与配置目录都不是照片后缀）；
 #: 留着是为了这张表是**全的** —— ``GuardReason`` 加成员时它当场炸。
 _GUARD_MESSAGES: Final = {
@@ -548,7 +529,7 @@ _GUARD_MESSAGES: Final = {
 
 
 def _writeback_reason(path: Path, error: paths.GuardError) -> str:
-    """按闸门给的**原因**给一句中文 —— 理由见 :func:`rename._rename_reason`。"""
+    """按拒绝的**原因**给一句中文 —— 理由见 :func:`rename._rename_reason`。"""
     return _GUARD_MESSAGES[error.reason].format(path=path)
 
 

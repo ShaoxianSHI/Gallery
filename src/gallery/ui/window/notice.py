@@ -1,10 +1,9 @@
 """后台进度在横幅上占的那个槽 —— 一份记账，四个调用点。
 
-横幅只有一个，而进度有好几条。每一族各写一对 ``_show_x_notice`` / ``_clear_x_notice`` 的话，
+横幅只有一个而进度有好几条。每一族各写一对 ``_show_x_notice`` / ``_clear_x_notice`` 的话，
 同样三件事（**抢之前先看一眼**、写上去之后**记住自己写的是哪一句**、收尾时**只收自己那一句**）
-要各抄一遍；改判据就得改好几处，而漏一处极难归因。
-
-这一份只管记账，**不管说什么** —— 横幅本体在 :mod:`gallery.ui.banner_overlay`。
+要各抄一遍，改判据就得改好几处。这一份只管记账，**不管说什么** —— 横幅本体在
+:mod:`gallery.ui.banner_overlay`。
 """
 
 from __future__ import annotations
@@ -20,10 +19,7 @@ class NoticeSlot:
     :param owner: 窗口。槽要读写它的 ``_show_banner`` 与 ``_banner``。
     :param text_attr: **自己写上去的那句话**存在窗口上的哪个属性（``str | None``）。
     :param flag_attr: 另有一个「此刻占着没有」的布尔属性时给出它的名字。
-
-    属性名是**传进来**的而不是写死：``main_window.__init__``、测试与 ``write_ops`` 直接读写
-    那几个名字，搬进这里之后它们仍得是窗口上那几个名字。
-    """
+    属性名是**传进来**的而不是硬编码：``main_window.__init__``、测试与 ``write_ops`` 直接读写。"""
 
     def __init__(
         self,
@@ -60,11 +56,9 @@ class NoticeSlot:
         """把 ``text`` 写到横幅上，并记住自己写了什么。
 
         :param defer: 横幅上已经写着**别人**的话时退开等它说完（默认）。
-
-        **``defer=False`` 只给「读元数据」那一族用**：它连着好几条，退让的判据交给
-        ``_show_banner`` 里的 ``BANNER_STICKY_SECONDS`` 就够 —— 这道判据读的是「屏幕上现在
-        有没有字」，用户上一次动作早结束时它会一直挡着，整条进度一句都上不去。
-        """
+        **``defer=False`` 只给「读元数据」那一族用**：它连着好几条，退让判据交给
+        ``_show_banner`` 里的 ``BANNER_STICKY_SECONDS`` 就够 —— 后者读的是「屏幕上现在
+        有没有字」，用户上一次动作早结束时它会一直挡着，整条进度一句都上不去。"""
         banner = self._banner
         if defer:
             current = banner.text() if banner.isVisible() else ""

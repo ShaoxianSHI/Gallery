@@ -53,11 +53,9 @@ class MetadataError(GalleryError):
 class MetadataWriteError(GalleryError):
     """元数据写回被拒绝或失败（越权、格式不支持、exiftool 拒绝、写完校验不过）。
 
-    **抛出来的时候，文件已经回到写之前的样子**（除非 :attr:`GalleryError.detail` 里
-    说明了回滚本身也失败了 —— 那种情况横幅必须照实说，见 ``writeback.write_metadata``）。
-
-    与 :class:`MetadataError` 分开：那条是「读不到」，这条是「改不了」，界面给出的下一步
-    动作完全不同（装 exiftool / 解除只读 / 换个格式），混在一起只能给一句没用的提示。
+    **抛出来的时候，文件已经回到写之前的样子**（除非 :attr:`GalleryError.detail` 说明回滚
+    本身也失败了，横幅必须照实说，见 ``writeback.write_metadata``）。与 :class:`MetadataError`
+    分开：那条是「读不到」，这条是「改不了」，界面给出的下一步动作完全不同。
     """
 
 
@@ -72,12 +70,9 @@ class DeleteError(GalleryError):
 class AlbumError(GalleryError):
     """新建相册被拒绝或失败（目标不是一个文件夹、名字非法、没有写权限）。
 
-    建出来的东西落在 ``album.CreatedAlbum`` 里：它只回答「建没建得成」，
-    没有逐项的成败可言（与粘贴、移动到相册不同，那两个结果里有一堆条目）。
-
-    名字非法那一条与改名的判据、文案是**同一份实现**
-    （:func:`gallery.core.metadata.naming.clean_name`），只是抛出的类型不同 ——
-    两个入口的失败类型各自说得清自己做了什么。
+    建出来的东西落在 ``album.CreatedAlbum`` 里，只回答「建没建得成」，没有逐项成败可言（与粘贴、
+    移动到相册不同）。名字非法那一条与改名的判据、文案是**同一份实现**
+    （:func:`gallery.core.metadata.naming.clean_name`），只是抛出的类型不同。
     """
 
 

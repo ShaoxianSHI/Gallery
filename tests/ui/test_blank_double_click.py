@@ -277,7 +277,7 @@ def test_blank_double_click_at_the_library_root_says_nothing(
 
         assert window._current_folder() == library, "已经在库根，不能再往上"
         # 横幅是全局共享的一个槽，后台进度也会往里写（见 BANNER_STICKY_SECONDS）。这里要验的
-        # 是**自己**没有为「退不动」弹话，所以先等地点解析收工、再把横幅收干净。
+        # 是**自己**没有为「退不动」弹话，所以先等地点解析结束、再把横幅收干净。
         wait_for_level(window, qt_app, lambda: window._place_job is None)
         window._clear_banner()
         double_click_blank(window, qt_app)

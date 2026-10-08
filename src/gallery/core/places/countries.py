@@ -1,11 +1,9 @@
 """三段地点的拼装，以及中国省级行政区的中文名。
 
 ADR 0011 把规则收敛成「国内用中文、境外用当地语言」，ADR 0012 把整套判断挪进了城市库的
-**生成期**，于是运行时不再需要任何翻译，只剩下面这个拼装函数。
-
-:data:`CHINA_PROVINCES_ZH` 仍然留在这里：它是项目自有的省级中文名表，
-``scripts/build_places_db.py`` 生成城市库时要读它 —— **城市库里的省名就是它写进去的**，
-所以两边必须用同一份，``tests/core/places/test_countries.py`` 会核对。
+**生成期**，于是运行时不再需要翻译，只剩这个拼装函数。:data:`CHINA_PROVINCES_ZH` 留在这里，
+``scripts/build_places_db.py`` 生成城市库时要读它，两边必须用同一份
+（``tests/core/places/test_countries.py`` 会核对）。
 """
 
 from __future__ import annotations
@@ -53,12 +51,9 @@ CHINA_PROVINCES_ZH: Final[dict[str, str]] = {
 def place_label(city: str | None, region: str | None, country: str | None) -> str:
     """三段地点 → 一句展示文案：``中国 · 浙江省 · 杭州``（缺的层级自动省略）。
 
-    **索引里存的就是这三列**，元数据面板从库里读出来之后要用同一个函数拼成一句话。
-    两处各拼一次，早晚会漂成「面板写着杭州、分组写着 Bordeaux」——
-    同一个反查结论（ADR 0010），只该有一种说法。
-
-    直辖市、香港、澳门没有省级那一层，显示成 ``中国 · 上海``；
-    同名的层级（比如某座城市的「市」与「区」同名）只出现一次，重复反而更难读。
+    索引里存的就是这三列，元数据面板要从库里读出来并拼出**同一句话**，否则早晚漂成「面板写着
+    杭州、分组写着 Bordeaux」。直辖市、香港、澳门没有省级那层，显示成 ``中国 · 上海``；同名的
+    层级只出现一次，重复反而更难读。
     """
     parts: list[str] = []
     for part in (country, region, city):

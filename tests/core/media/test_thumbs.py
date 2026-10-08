@@ -294,7 +294,7 @@ def test_writes_do_not_rescan_the_directory(
 ) -> None:
     """上限宽松时，写再多张也只该数一次目录。
 
-    这条钉住的是「记账替代数目录」：旧实现每 64 张就 ``iterdir()`` 一次，代价随
+    这条锁定的是「记账替代数目录」：旧实现每 64 张就 ``iterdir()`` 一次，代价随
     缓存线性增长，在 2 GiB 上限下每张要白付近 10 ms。
     """
     refs = [PhotoRef.from_path(make_photo(f"{index}.jpg")) for index in range(12)]
@@ -498,7 +498,7 @@ def test_writing_a_thumbnail_never_fsyncs(
 
     缓存条目丢了可以重解一次，为它每次落盘等一次 fsync 纯属白付（那是用户每看一张图
     都要多等的一下）。但 ``durable`` 的**默认值不能动**：``config.toml`` 与 journal
-    记录全靠它，写坏了就是数据没了（红线 4）。
+    记录全靠它，写坏了就是数据没了（每次写盘前必须先写 journal）。
     """
     syncs: list[int] = []
     real_fsync = os.fsync
@@ -521,7 +521,7 @@ def test_a_torn_thumbnail_is_regenerated_without_fsync(
     """``durable=False`` 之后断电能留下的最坏结果，是半截文件 —— 而半截文件能自愈。
 
     缩略图缓存是**可再生的**，所以写它时不 fsync（见上一条）。代价是断电可能留下一条
-    内容不全的条目；这一条钉住的是「那份代价真的可接受」：PIL 解不开就删掉重生成
+    内容不全的条目；这一条锁定的是「那份代价真的可接受」：PIL 解不开就删掉重生成
     （``UnidentifiedImageError`` 也是 ``OSError``）。半截 JPEG 在 PIL 明确报错，
     不会解出一张少了几道扫描线的图来冒充正常缓存。
     """

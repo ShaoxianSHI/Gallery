@@ -16,7 +16,7 @@ import pytest
 pytest.importorskip("PySide6")
 
 # ``qt_app`` / ``settle`` 来自 ``conftest``，**别在这里 import**（共享基础设施只有一份，
-# 见 tests/ui/conftest.py 里那两条守护）。
+# 见 tests/ui/conftest.py 里那两条回归测试）。
 from grid_helpers import fake_photos, make_grid, settle_grid  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
@@ -66,7 +66,7 @@ def test_the_relayout_anchor_is_taken_when_the_insert_happens(
 
     Qt 紧接着就会从第 0 条重排一次，那时 ``bar.value()`` 已经是那个被夹小的值
     （400 张的库里 7037 → 1642）。拿它去重排就是拿错的基准去修 —— 而错基准与
-    「压根没修」在断言上完全一样，所以只能靠钉住取值的时机来防。
+    「压根没修」在断言上完全一样，所以只能靠锁定取值的时机来防。
 
     断的是 :meth:`_apply_geometry` **收到哪个数**，不是滚动条最后落在哪儿 ——
     后者由上面那条用例守着。

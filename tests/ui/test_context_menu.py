@@ -166,7 +166,7 @@ def test_right_click_does_not_move_range_anchor(qt_app: QApplication) -> None:
 def test_context_menu_event_reports_the_row(qt_app: QApplication) -> None:
     """真的把一个 ``ContextMenu`` 事件递进去：信号要带着那一行的行号出来。
 
-    上面几条直接调 ``select_for_context``，绕过了事件入口；这一条钉住
+    上面几条直接调 ``select_for_context``，绕过了事件入口；这一条锁定
     「Qt 的右键 → 视图 → 窗口」这段接线（包括 ``indexAt`` 与坐标换算）。
     """
     grid = _bare_grid(qt_app)
@@ -183,7 +183,7 @@ def test_context_menu_event_reports_the_row(qt_app: QApplication) -> None:
 
 
 def _settle(qt_app: QApplication, window: MainWindow) -> None:
-    """等扫描、分组、地点那一遍收工。判据与轮询循环都在 :mod:`waiting` 里，不成立**直接抛**。"""
+    """等扫描、分组、地点那一遍结束。判据与轮询循环都在 :mod:`waiting` 里，不成立**直接抛**。"""
     wait_for_idle(qt_app, window, what="扫描、分组与地点解析")
 
 
@@ -580,7 +580,7 @@ def test_background_menu_has_no_file_actions(window: MainWindow) -> None:
 
 
 def test_outdated_row_yields_no_menu(window: MainWindow) -> None:
-    """行号过期（扫描正在流式上屏）时宁可不弹，也不弹一份错的。"""
+    """行号过期（扫描正在流式显示）时宁可不弹，也不弹一份错的。"""
     assert window.context_menu_for(9999) is None
 
 
@@ -625,7 +625,7 @@ def test_open_says_return_on_every_level_that_has_it(
     assert _texts(group)[0] == "打开"
     assert _key_hint(group, "打开") == menus.OPEN_KEY_HINT
 
-    # 界面上的字面就钉死成**那个符号**：常量是从 Qt 要来的，万一它在别的平台上译成了别的字样，
+    # 界面上的字面就固定成**那个符号**：常量是从 Qt 要来的，万一它在别的平台上译成了别的字样，
     # 这里红一次总比菜单上写着「回车」两个字强。
     assert menus.OPEN_KEY_HINT == "↵"
     assert len(menus.OPEN_KEY_HINT) == 1, "是一个符号，不是「回车」两个字"
@@ -723,7 +723,7 @@ def test_copy_works_for_an_album_folder(qt_app: QApplication, window: MainWindow
 
 
 def _settle_actions(qt_app: QApplication) -> None:
-    """等动作可用性重算完 —— 它现在**攒一轮**再算。
+    """等动作可用性重算完 —— 它现在**累积一轮**再算。
 
     选区变化只把重算**排到这一轮事件循环结束时**（一次用户动作 Qt 会连发
     ``currentChanged`` 与 ``selectionChanged``，而全量重算里包含一次同步的剪贴板读）。
@@ -1195,7 +1195,7 @@ def test_detail_menu_differs_from_the_photo_menu_only_on_the_first_row(
 
 
 def test_detail_menu_says_escape_on_the_close_row(qt_app: QApplication, window: MainWindow) -> None:
-    """「退出」那一行最右列写着 ``⎋``，界面上的字面就钉死成**那个符号**。
+    """「退出」那一行最右列写着 ``⎋``，界面上的字面就固定成**那个符号**。
 
     与网格那张菜单的「打开 ↵」是同一件事的两面（``ShortcutColumnMenu.show_key``）：
     只画不生效的那枚提示，也让用户知道退出不必去菜单栏里找。

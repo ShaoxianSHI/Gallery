@@ -2,7 +2,7 @@
 
 **只增不改**：建出来的是全新的空文件夹，用户的照片一个字节都没动；目标已有同名时按访达的规矩
 改叫「新建相册 2」，绝不覆盖。**不进撤销栈** —— 撤销一次新建就是删文件夹，而删除只允许用户在
-界面上亲手触发（红线 1）；本模块仍然记账，紧接着给新相册起的那个名字是一次普通改名，可 ⌘Z。
+界面上亲手触发（硬性约束）；本模块仍然记账，紧接着给新相册起的那个名字是一次普通改名，可 ⌘Z。
 """
 
 from __future__ import annotations
@@ -99,7 +99,7 @@ def _guard(root: Path, destination: Path) -> None:
         raise AlbumError(_album_reason(destination, exc), path=destination) from exc
 
 
-#: 闸门拒绝的每一种原因 → 给用户的那句话。见 :data:`rename._GUARD_MESSAGES`。
+#: 拒绝新建的那几种原因 → 给用户的那句话。见 :data:`rename._GUARD_MESSAGES`。
 #: **「库本身」这一条今天到不了**（库里任意一层都能建相册，库根也算），
 #: 理由同 :data:`transfer._GUARD_MESSAGES`：留着是为了这张表是全的。
 _GUARD_MESSAGES: Final = {
@@ -110,7 +110,7 @@ _GUARD_MESSAGES: Final = {
 
 
 def _album_reason(path: Path, error: paths.GuardError) -> str:
-    """按闸门给的**原因**给一句中文 —— 理由见 :func:`rename._rename_reason`。"""
+    """按拒绝的**原因**给一句中文 —— 理由见 :func:`rename._rename_reason`。"""
     return _GUARD_MESSAGES[error.reason].format(path=path)
 
 

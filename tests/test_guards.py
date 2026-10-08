@@ -399,7 +399,7 @@ def _module_of_mixin(class_name: str) -> Path | None:
 
 
 def test_the_mixin_guard_would_notice_a_clash() -> None:
-    """守护自己必须验过一次**：往一个 mixin 里注入一个同名方法，那条守护要红。
+    """这条守护自己必须验过一次**：往一个 mixin 里注入一个同名方法，那条守护要红。
 
     没有这一步，一条「永远为绿」的守护比没有更坏 —— 它让人以为 MRO 那件事有人看着。
     """
@@ -634,15 +634,23 @@ def _write(path: Path, text: str) -> Path:
     return path
 
 
+def docstring(lines: int, *, released: bool = False) -> str:
+    """造一个 ``lines`` 行的函数文档字符串源码 —— 验守护认不认得出过长的那一份。"""
+    first = f"{LONG_COMMENT_PRAISMA}（跨文件耦合）" if released else "第一行"
+    content = [first, *(f"第 {number} 行" for number in range(2, lines + 1))]
+    return 'def f():\n    """' + "\n".join(content) + '"""\n    return 1\n'
+
+
 def test_the_comment_guards_would_notice_a_violation(tmp_path: Path) -> None:
-    """**这两条守护自己必须验过一次** —— 否则它们可能一直绿着而什么也没看住。
+    """**这几条规则自己必须验过一次** —— 否则它们可能一直绿着而什么也没看住。
 
     判据是往临时文件里注入违规：``_long_comment_blocks`` 认不认得出三行无放行的注释、
     认不认得出带放行的那一段、以及模块级的注释**不算**（它不在这条守护范围内）。
+    文档字符串与自造术语两条同理，各注入一次确认会红。
     """
 
     def block(indent: str, *, released: bool = False) -> str:
-        head = f"{indent}# {LONG_COMMENT_PRAISMA}（红线 4）\n" if released else ""
+        head = f"{indent}# {LONG_COMMENT_PRAISMA}（硬性约束 4）\n" if released else ""
         body = "".join(f"{indent}# 第 {number} 行\n" for number in range(1, 4))
         return head + body
 
@@ -679,6 +687,189 @@ def test_the_comment_guards_would_notice_a_violation(tmp_path: Path) -> None:
         f"def f():\n    x = 1  # 上面那个\n{pair}    y = 2  # 下面那个\n    return x, y\n",
     )
     assert _long_comment_blocks(ok_pair) == []
+
+    # 文档字符串：七行无放行要报，六行不报；放行写在引号那一行。
+    seven = _write(tmp_path / "seven.py", docstring(7))
+    assert _long_docstrings(seven) == ["f:2（7 行）"]
+    assert _long_docstrings(_write(tmp_path / "six.py", docstring(6))) == []
+    released = _write(tmp_path / "released_doc.py", docstring(7, released=True))
+    assert _long_docstrings(released) == []
+
+    # 收尾引号单独占一行时，那一行只有缩进 —— 不该把它算进行数（否则六行被量成七行）。
+    closing = _write(
+        tmp_path / "closing.py",
+        'def f():\n    """第一行\n\n    第二行\n    第三行\n    """\n    return 1\n',
+    )
+    assert _docstring_spans(closing) == [("f", 2, 4)], _docstring_spans(closing)
+
+    # 自造术语：注释里的、文档字符串里的、行尾注释里的都要报，字符串字面量里的不算。
+    jargon = _write(
+        tmp_path / "jargon.py",
+        '"""这个模块的闸门。"""\n'
+        "def f():\n"
+        "    # 落定之后才算\n"
+        "    x = 1  # 在途那次\n"
+        '    y = "闸门"\n'
+        "    return x, y\n",
+    )
+    hits = _self_invented_terms(jargon)
+    assert len(hits) == 3, hits
+    assert all(term in "".join(hits) for term in ("闸门", "落定", "在途"))
+    assert _self_invented_terms(_write(tmp_path / "plain.py", "x = 1\n")) == []
+
+
+#: 文档字符串的行数上限。**第七行开始要问的是「哪几行在复述代码」**，而不是「怎么写得
+#: 更简洁」—— 复述的那些删掉就够，剩下的多半是真约束，留着。
+MAX_DOCSTRING_LINES: Final = 6
+
+#: 自造词 → 该用的通用术语。报错的文本里直接把替换词写出来，省得再查一遍。
+#:
+#: **只收在这个仓库里不可能正当使用的词。** ``实测`` / ``曾经`` / ``记账`` / ``原地``
+#: 这些词正当用法不少，按词拉黑会误伤，而误报的守护会被忽略 —— 那比没有守护更坏。
+#: 判据是「读的人能不能不看别处就懂」：``闸``、``标脏``、``落定`` 要先在脑子里翻一遍
+#: 才接到代码上，而 ``条件``、``标记为需要重绘``、``稳定下来`` 不需要。
+PLAIN_TERMS: Final[tuple[tuple[str, str], ...]] = (
+    # 长词在前：``攒着`` 必须在 ``攒`` 之前判，否则报出来的是半个词。
+    ("闸门", "前置条件"),
+    ("攒着", "暂存"),
+    ("守护测试", "回归测试"),
+    ("钉死", "固定"),
+    ("钉住", "锁定"),
+    ("闸", "前置条件"),
+    ("红线", "硬性约束"),
+    ("守护", "回归测试"),
+    ("标脏", "标记为需要重绘"),
+    ("落定", "稳定下来"),
+    ("攒", "累积"),
+    ("在途", "进行中"),
+    ("回声", "回环"),
+    ("补位", "占位"),
+    ("抽风", "临时不可用"),
+    ("收工", "结束"),
+    ("收下", "记录"),
+    ("吃掉", "忽略掉"),
+    ("冒到", "传递到"),
+    ("漏接", "漏掉"),
+    ("兜底", "回退"),
+    ("去抖", "防抖"),
+    ("写死", "硬编码"),
+    ("上屏", "显示"),
+    ("认领", "适用"),
+    ("摊开", "展开"),
+)
+
+
+def _docstring_spans(path: Path) -> list[tuple[str, int, int]]:
+    """这个文件里每个文档字符串的 ``(名字, 起始行, 行数)``。"""
+    return [(name, first, len(lines)) for name, first, lines in _docstring_blocks(path)]
+
+
+def _docstring_blocks(path: Path) -> list[tuple[str, int, list[str]]]:
+    """这个文件里每个文档字符串的 ``(名字, 起始行, 逐行正文)``。
+
+    起始行取**第一条语句**那一行（文档字符串就挂在它前面），于是 ``docstring`` 那一行
+    自己也在区间里 —— 放行标记写在第一行才量得到。
+
+    **末尾那行只有缩进的要去掉**：收尾引号单独占一行时 ``get_docstring`` 的结果以
+    ``"\\n    "`` 结尾，``splitlines()`` 会把它算成一行，于是「看得见的六行」被量成七行。
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    found: list[tuple[str, int, list[str]]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        doc = ast.get_docstring(node, clean=False)
+        if not doc:
+            continue
+        lines = doc.splitlines()
+        if lines and not lines[-1].strip():
+            lines.pop()
+        found.append((getattr(node, "name", "<module>"), node.body[0].lineno, lines))
+    return found
+
+
+def test_docstrings_stay_short_or_carry_a_praisma() -> None:
+    """**文档字符串不超过六行** —— 第七行开始通常是在复述代码而不是解释它。
+
+    与 :func:`test_inline_comments_stay_short_or_carry_a_praisma` 一样，过长的要在
+    **自己第一行**写上 :data:`LONG_COMMENT_PRAISMA` 与理由。放行留给真约束：数据安全
+    的那几条、Qt 的反直觉行为、性能数字，它们值得占六行以上。同样只扫 ``src/``。
+    """
+    offenders: list[str] = []
+    for path in _iter_python_files(SRC_ROOT):
+        offenders += _long_docstrings(path)
+    assert not offenders, (
+        f"文档字符串超过 {MAX_DOCSTRING_LINES} 行，且没有 {LONG_COMMENT_PRAISMA} 放行"
+        "（放行要写在文档字符串第一行并附理由）：\n" + "\n".join(offenders)
+    )
+
+
+def _long_docstrings(path: Path) -> list[str]:
+    """这个文件里过长的文档字符串，每条给出 ``名字:起始行（行数）``。"""
+    source = path.read_text(encoding="utf-8").splitlines()
+    found: list[str] = []
+    for name, number, length in _docstring_spans(path):
+        if length > MAX_DOCSTRING_LINES and LONG_COMMENT_PRAISMA not in source[number - 1]:
+            found.append(f"{name}:{number}（{length} 行）")
+    return found
+
+
+def _prose_lines(path: Path) -> list[tuple[int, str]]:
+    """注释与文档字符串的正文，``(行号, 文本)`` —— 字符串字面量不算。
+
+    注释走 :mod:`tokenize`，于是引号里的 ``#`` 认得出来，而行尾注释也不必另开一支
+    （写在那儿的术语同样要换）；文档字符串走 :mod:`ast`，于是同样写着那几个字的一段
+    断言不会被算进来。
+    """
+    found: list[tuple[int, str]] = []
+    with path.open("rb") as handle:
+        for token in tokenize.tokenize(handle.readline):
+            if token.type == tokenize.COMMENT:
+                found.append((token.start[0], token.string.lstrip("#").strip()))
+    for _, first, lines in _docstring_blocks(path):
+        found += [(first + offset, line) for offset, line in enumerate(lines)]
+    return found
+
+
+def test_comments_speak_plain_software_terminology() -> None:
+    """**注释里不许有自造术语** —— 读的人要能不看别处就懂。
+
+    只收 :data:`PLAIN_TERMS` 里那些「在这个仓库里不可能正当使用」的词，所以这条守护
+    不会因为 ``实测``、``曾经``、``记账`` 这些正当用法而误报。``docs/`` 不扫 ——
+    ADR 记的是决策本身；本文件也跳过：它把这些词当字面量收着。
+    """
+    guard = Path(__file__).resolve()
+    offenders: list[str] = []
+    for root in (SRC_ROOT, guard.parent, PROJECT_ROOT / "scripts"):
+        for path in _iter_python_files(root):
+            if path == guard:
+                continue
+            offenders += [
+                f"{path.relative_to(PROJECT_ROOT)}:{row}" for row in _self_invented_terms(path)
+            ]
+    assert not offenders, (
+        "注释里用了自造术语，请换成通用软件术语（左边是本仓库的说法，右边是建议）：\n"
+        + "\n".join(offenders)
+    )
+
+
+def _self_invented_terms(path: Path) -> list[str]:
+    """这个文件里命中的自造术语，每条给出 ``行号「原词」→「建议」``。
+
+    一段话里同时命中长短两个词（``闸门`` 与 ``闸``）时只报长的那个 —— 报两遍是同一条
+    毛病说了两次，而修的人只要改一处。
+    """
+    terms = sorted(PLAIN_TERMS, key=lambda pair: -len(pair[0]))
+    found: list[str] = []
+    for number, text in _prose_lines(path):
+        matched = [(term, replacement) for term, replacement in terms if term in text]
+        longest = [
+            pair
+            for pair in matched
+            if not any(pair[0] != other[0] and pair[0] in other[0] for other in matched)
+        ]
+        found += [f"{number}「{term}」→「{replacement}」" for term, replacement in longest]
+    return found
 
 
 # ---- 编码：U+FFFD 替换字符 ----------------------------------------------------

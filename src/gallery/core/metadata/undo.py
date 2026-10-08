@@ -1,7 +1,8 @@
 """一摞统一的撤销栈：改名、移到废纸篓、移动到相册、元数据编辑都在里面（⌘Z 一次撤一摞）。
 
 栈**不存内存里**，照着 ``journal/`` 重放：写操作压栈、撤销弹栈，重开软件 ⌘Z 照样管用，
-也不会和磁盘上实际发生的事说两套话。**粘贴不在栈里** —— 撤销它就是删文件（红线 1）。
+也不会和磁盘上实际发生的事说两套话。**粘贴不在栈里** —— 撤销它就是删文件
+（硬性约束：删除只允许用户亲手触发）。
 一次删十张共用一个 ``batch``，仍只值一次 ⌘Z。
 """
 
@@ -46,7 +47,8 @@ _POP_ACTIONS: Final = frozenset(
 )
 
 #: **不收进撤销栈的动作** —— 一份显式的排除清单，而不是「不在压栈清单里就等于排除」。
-#: 这几个动作的「撤销」都是**删掉用户的东西**，而删除只许用户亲手触发（红线 1）。靠隐式成立
+#: 这几个动作的「撤销」都是**删掉用户的东西**，而删除只许用户亲手触发
+#: （硬性约束：删除只允许用户亲手触发）。靠隐式成立
 #: 不够：认不出的动作名也压栈，而这份清单少写一个成员是**静默**的。
 #:
 #: 新建事件与新建相册同款：撤销它就是删，而刚建的那一刻用户还没往里放东西。**它比别的更
@@ -93,13 +95,9 @@ class UndoResult:
 def pending_undo_runs(root: Path) -> list[list[WriteRecord]]:
     """重放日志，返回还没被撤销过的写操作，一摞一摞（栈顶是最后一摞）。
 
-    弹栈按**原路径**配对：只有那条撤销记录真正撤销掉的才离开栈，批量删除里取回失败的那
-    几张仍留在栈上，再按一次 ⌘Z 还能再试。
-
-    **pending 记录照样压栈**（见 :data:`RESULT_PENDING`）：正常写回在日志里成对（pending
-    + 终态，终态顶掉它，一次 ⌘Z 就够），剩下孤零零一条意味着进程死在记账与落盘之间 ——
-    文件可能已被改过，正是最需要撤销的时候。**只对元数据写回这么放行**：撤销写回是纯写入，
-    而改名 / 删除的撤销是反过来搬动用户文件，一条「打算动」的记录不说明动成了什么样。
+    弹栈按**原路径**配对：只有那条撤销记录真正撤销掉的才离开栈，批量删除里取回失败的几张仍留在栈上。
+    **pending 记录照样压栈**：孤零零一条意味着进程死在记账与落盘之间，文件可能已被改过。**只对元数据
+    写回这么放行** —— 撤销写回是纯写入，而改名 / 删除的撤销是反过来搬动用户文件。
     """
     runs: list[list[WriteRecord]] = []
     #: 还没等到终态的 pending 记录，按 ``(动作, 路径)`` 记着。
@@ -119,7 +117,7 @@ def pending_undo_runs(root: Path) -> list[list[WriteRecord]]:
         if record.action in _POP_ACTIONS:
             _pop(runs, record)
         else:
-            # guard: allow-long-comment（红线 4：动作名不认识也要压栈，否则那条被静默丢掉）
+            # guard: allow-long-comment（硬性约束：动作名不认识也要压栈，否则那条被静默丢掉）
             # **不是弹栈的就都压栈**，包括动作名不认识的那几条：按清单匹配时动作名缺失（日志被
             # 截断、外来的记录、新加的动作忘了登记）会把那条记录**静默丢掉**，用户刚做完的事从此
             # 再也撤不掉。压进去之后 :func:`_undo_delete` 会把它移回原处 —— 不认识动作名也能撤。
@@ -146,14 +144,10 @@ def undo_last_write(
     events: EventStore | None = None,
 ) -> UndoResult | None:
     """撤销最近一次还没被撤销过的写操作。
-
-    :param writer: 撤销位置编辑时用的写回工具（测试注入假实现）。其余动作用不上。
-    :param events: 事件库（撤销事件改动时用）。``None`` 表示事件库这次不可用。
+    :param writer: 撤销位置编辑时用的写回工具（测试注入假实现）。
+    :param events: 事件库；``None`` 表示事件库这次不可用。
     :return: 没有可撤销的记录时返回 ``None``。
-    :raises RenameError: 撤的是改名，但文件已经不在原处（或原处被别的文件占了）。
-    :raises DeleteError: 撤的是删除，但废纸篓里已经没有它（或原位置被占了）。单项失败不会
-        中断整批，结果里的 ``failures`` 会逐条说明。
-    :raises MetadataWriteError: 撤的是位置编辑，但文件没了、没装 exiftool，或写回原值失败。
+    :raises RenameError / DeleteError / MetadataWriteError: 目标已不在、废纸篓里没有它、或写回失败。
     """
     root = Path(root)
     runs = pending_undo_runs(root)
@@ -167,7 +161,7 @@ def undo_last_write(
     if run[0].action == ACTION_METADATA:
         return _undo_metadata(root, run[0], writer=writer)
     if run[0].action in (ACTION_EVENT, ACTION_EVENT_DELETE):
-        # **必须显式分派**：落到最后那条兜底（``_undo_delete``）就是拿事件记录里的
+        # **必须显式分派**：落到最后那条回退分支（``_undo_delete``）就是拿事件记录里的
         # 事件库那个文件当路径去系统废纸篓里捞东西。
         return _undo_event(run[0], events)
     return _undo_delete(root, run)
@@ -176,15 +170,9 @@ def undo_last_write(
 def _undo_metadata(root: Path, record: WriteRecord, *, writer: MetadataWriter | None) -> UndoResult:
     """把写回去的字段改回原值（ADR 0030）。
 
-    **冲突的字段留在原地并如实报告**：它们在 Gallery 之外被改过，按原值盖回去就是毁掉
-    别人的改动。
-
-    **弹不弹栈分两种情形**：
-
-    - **部分冲突**（有撤得成的字段）：撤成功的那几条记 ``ok`` → 这次撤销被弹栈。
-      它们确实回到原值了，再让用户按一次去重撤没有意义。
-    - **全冲突**（一项都撤不了）：记 ``failed`` → **不弹栈**，栈顶仍是当初那条写回，
-      再按一次会重试。留着是因为外部那一方可能改回去了。
+    **冲突的字段留在原地并如实报告**：它们在 Gallery 之外被改过，按原值盖回去就是毁掉别人的改动。
+    **部分冲突**（有撤得成的字段）记 ``ok`` → 弹栈；**全冲突**记 ``failed`` → 不弹栈，栈顶仍是当初
+    那条写回，再按一次会重试（外部那一方可能改回去了）。
     """
     result = undo_metadata(root, record, writer=writer)
     return UndoResult(
@@ -198,10 +186,8 @@ def _undo_metadata(root: Path, record: WriteRecord, *, writer: MetadataWriter | 
 def _undo_event(record: WriteRecord, events: EventStore | None) -> UndoResult:
     """把一次事件改动改回去（ADR 0043 决策 5）。
 
-    **网格里没有它的条目**（事件不是磁盘上的东西），所以 ``entries`` 恒为空 —— 界面按
-    ``action`` 决定刷新哪一处，别指望从 ``entries`` 里找到点什么。
-
-    事件库不可用时如实说一句，而不是当作「没什么可撤的」：那会让用户以为 ⌘Z 坏了。
+    **网格里没有它的条目**（事件不是磁盘上的东西），所以 ``entries`` 恒为空 —— 界面按 ``action``
+    决定刷新哪一处。事件库不可用时如实说一句，而不是当作「没什么可撤的」，那会让用户以为 ⌘Z 坏了。
     """
     if events is None or not events.available:
         return UndoResult(
@@ -237,10 +223,8 @@ def _undo_rename(root: Path, record: WriteRecord, events: EventStore | None) -> 
 def _undo_move(root: Path, run: Sequence[WriteRecord], events: EventStore | None) -> UndoResult:
     """把移动过的东西挪回原来的相册（ADR 0019）。
 
-    网格该显示什么交给界面重扫：挪回来的东西**可能不在当前这一层**，这里不替界面决定
-    插到哪一行。
-
-    事件绑定跟着搬回去（ADR 0043 决策 8）—— 撤销一次移动仍然是一次移动，而绑定按路径记。
+    网格该显示什么交给界面重扫：挪回来的东西**可能不在当前这一层**。事件绑定跟着搬回去
+    （ADR 0043 决策 8）—— 撤销一次移动仍然是一次移动，而绑定按路径记。
     """
     result = undo_move_records(root, run, events=events)
     return UndoResult(
@@ -264,7 +248,7 @@ def _undo_delete(root: Path, run: Sequence[WriteRecord]) -> UndoResult:
 def _pop(runs: list[list[WriteRecord]], record: WriteRecord) -> bool:
     """把 ``record`` 撤销掉的那几条从栈上摘下来。
 
-    返回是否摘到了。**对不上就什么都不做**：曾有一句「退一步」的兜底（``runs.pop()``），
+    返回是否摘到了。**对不上就什么都不做**：曾有一句「退一步」的回退（``runs.pop()``），
     那等于一次撤销都没做就把栈顶那一摞扔了，用户刚做的事从此再也撤不掉。宁可什么都不摘，
     让下一次 ⌘Z 仍指向那一摞。
     """

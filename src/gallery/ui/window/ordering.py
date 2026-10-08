@@ -1,10 +1,9 @@
 """分组与排序（ADR 0009）：这一层里的照片按什么归拢、按什么排队。
 
 它是一段**完整的流程**（换字段 → 后台读元数据 → 报进度 → 按快照重排），而**别的所有流程都要
-经过** :meth:`OrderingMixin._apply_ordering`（打开库、检索、监听到新照片）。
-
-它同时是「流程的总闸」：``_staged``（暂存区）、``_generation``、``_facet_values`` 都由这里
-维护 —— 混在别处的话，「扫出来的条目为什么还没上屏」就得跨三个文件去找。
+经过** :meth:`OrderingMixin._apply_ordering`（打开库、检索、监听到新照片）。它同时维护
+``_staged``（暂存区）、``_generation``、``_facet_values``，混在别处的话「扫出来的条目为什么
+还没显示到界面」就得跨三个文件去找。
 """
 
 from __future__ import annotations
@@ -140,15 +139,10 @@ class OrderingMixin:
     def _has_exiftool(self) -> bool:
         """exiftool 现在能不能用。
 
-        **只问 :class:`~gallery.core.library.facade.Library` 那一个判据**
-        （:meth:`Library.exiftool_available`），不要在界面层自己造一个
-        ``ExifToolReader`` 去探：同一个「装没装」的问题有过两套问法、一个探读侧
-        一个探写侧，答案可能不一致而没有任何地方会发现。
-
-        库还没打开时（``_build_actions`` 在构造期就会建这些菜单，而库是稍后才从会话里
-        恢复的）一律当作「能用」：那一刻菜单本来就是空的，那句「需要 exiftool 才能读取
-        这个字段」的提示没有对象；真打开库之后这条会被重新问到。
-        """
+        **只问 :meth:`Library.exiftool_available`**
+        （:class:`~gallery.core.library.facade.Library`）：不要在界面层自己造一个
+        ``ExifToolReader`` 去探 —— 同一个「装没装」的问题两套问法会有不一致的答案。
+        库还没打开时一律当作「能用」，真打开库之后这条会被重新问到。"""
         library = self._library
         return True if library is None else library.exiftool_available()
 
@@ -222,13 +216,9 @@ class OrderingMixin:
         """当前的选择是否必须真去读 EXIF 才能算出顺序 —— **或者才能算出筛选结果**。
 
         筛选那一半是 ADR 0040 决策 3：``#相机 Canon`` 要的是 ``facets.camera``，而 facet 表
-        只有读过 EXIF 的照片才有行。不把这一半算进来，筛选就等于拿一张空表去查，用户看到的
-        是「这个视图里没有符合这些条件的照片」—— 而那不是答案，是元数据还没读。
-
-        **事件分组也要走这个后台任务**（ADR 0043 决策 7），虽然它不读 EXIF：它要的是
-        「照片各属于哪些事件」，那份映射同样得在后台取回来，而 :func:`needs_metadata` 明确
-        不为它开口子（免得点一次「按事件分组」就重读一遍全库 EXIF）。
-        """
+        只有读过 EXIF 的照片才有行；不把这一半算进来，筛选就等于拿一张空表去查。
+        **事件分组也要走这个后台任务**（ADR 0043 决策 7）：它要的是「照片各属于哪些事件」，
+        而 :func:`needs_metadata` 不为它开口子。"""
         group = None if self._group_view is not None else self._current_group_facet()
         if needs_metadata((group, sort_facet(self._sort_facet))):
             return True
@@ -239,7 +229,7 @@ class OrderingMixin:
     def _conditions_need_metadata(self) -> bool:
         """生效中的条件里有没有一条必须真读 EXIF 才算得出来（只在筛选作用域下算数）。
 
-        整库检索不在这里算：它自己有一道「索引没建全就挂起」的闸（:meth:`_start_search`），
+        整库检索不在这里算：它自己有一道「索引没建全就挂起」的检查（:meth:`_start_search`），
         而筛选这一层是照常枚举出来的，facet 读取就挂在同一条链上（见 :meth:`_start_facet_read`）。
         """
         return self._is_filtering() and any(
@@ -255,7 +245,7 @@ class OrderingMixin:
         return "分组" if self._group_facet else "排序"
 
     def _groups_by_event(self) -> bool:
-        """当前是不是按事件分组（进了某个组之后不算 —— 那一层已经是摊开的那一批照片）。"""
+        """当前是不是按事件分组（进了某个组之后不算 —— 那一层已经是展开的那一批照片）。"""
         if self._group_view is not None:
             return False
         facet = self._current_group_facet()
@@ -266,12 +256,10 @@ class OrderingMixin:
     def enter_group(self, group: GroupRef, *, focus: EntryKey | None = None) -> None:
         """进入一个分组（双击组卡片）。
 
-        分组不是磁盘上的目录，因此不走 ``enter_folder``：它记不住路径，退出时直接回到进来
-        之前的那一层。
+        分组不是磁盘上的目录，因此不走 ``enter_folder``：它记不住路径，退出时直接回到
+        进来之前的那一层。
 
-        :param focus: 到了这一层选中哪一格。只有软件自己为了重新分组绕出去再回来时才给；
-            用户点进来的一律谁也不选。
-        """
+        :param focus: 到了这一层选中哪一格；用户点进来的一律谁也不选。"""
         self._push_frame(GroupFrame(group))
         self._reload_level(focus=focus)
 
@@ -288,11 +276,9 @@ class OrderingMixin:
     def _start_facet_read(self) -> None:
         """按当前选择给这一层补齐元数据，然后重排。
 
-        只有真的要读 EXIF 的字段才会走到这里（按文件名排序是纯算的）。读过一次的结果落进
-        索引，所以第二次换分组字段几乎立刻完成。
-
-        **筛选的条件要元数据时也走到这里**（:meth:`_needs_facet_read`）：facet 读取会**写**
-        索引，而筛选查询要**读**索引 —— 顺序反了就是拿一张空表去筛，用户看到「一条都没有」。
+        只有真的要读 EXIF 的字段才会走到这里（按文件名排序是纯算的）；读过一次的结果落进索引，第二次
+        换分组字段几乎立刻完成。**筛选的条件要元数据时也走到这里**（:meth:`_needs_facet_read`）：facet
+        读取会**写**索引，而筛选查询要**读**索引 —— 顺序反了就是拿一张空表去筛。
         """
         library = self._library
         if library is None or not self._needs_facet_read():
@@ -358,11 +344,9 @@ class OrderingMixin:
     def _update_level_notice(self) -> None:
         """这一层什么都没有时说一声；有了内容就把这句收回去。
 
-        **判据是「网格上有没有条目」，不是「有没有相册 / 照片」**：分组会把照片换成一张张组
-        卡片，只数相册和照片会把一屏组卡片误判成空。
-
-        **日历那一页不另说一句**：翻到没有照片的月份是常事，横幅冒出来等于把「翻过去了」说成
-        「出问题了」。
+        **判据是「网格上有没有条目」，不是「有没有相册 / 照片」**：分组会把照片换成一张张
+        组卡片，只数相册和照片会把一屏组卡片误判成空。**日历那一页不另说一句**：翻到没有
+        照片的月份是常事，横幅冒出来等于把「翻过去了」说成「出问题了」。
         """
         if self._library is None:
             return
@@ -390,7 +374,7 @@ class OrderingMixin:
             self._show_banner("没有找到可显示的照片。支持 JPEG、PNG、HEIC、TIFF、GIF、WebP、BMP。")
 
     def _cancel_facet_job(self) -> None:
-        """作废在途的元数据读取（换库、换层、换分组字段时）。"""
+        """作废进行中的元数据读取（换库、换层、换分组字段时）。"""
         if self._facet_job is not None:
             self._runner.cancel(self._facet_job)
             self._facet_job = None
@@ -425,7 +409,7 @@ class OrderingMixin:
         ready = payload if isinstance(payload, _LevelFacets) else _LevelFacets(values={})
         self._facet_values = ready.values
         # **每回都重新赋值**（哪怕是空的）：从「按事件分组」换到别的字段时，那份映射就该被丢掉，
-        # 否则它一直挂在内存里，而重排那道闸会以为输入没变。
+        # 否则它一直挂在内存里，而重排那道检查会以为输入没变。
         self._event_values = ready.events
         self._clear_progress_notice()
         self._order_now()
@@ -443,26 +427,21 @@ class OrderingMixin:
         self._maybe_start_photo_index()
 
     def _order_now(self) -> None:
-        """这一层摆上屏之前的**唯一**一个漏斗：先按条件收窄（只在筛选作用域下），再排序。
+        """这一层显示到界面之前的**唯一**一个漏斗：先按条件收窄（只在筛选作用域下），再排序。
 
-        **所有出口都必须走它**，不能直接调 :meth:`_apply_ordering` —— 那样每个调用点都要自己
-        判断一遍「现在是不是在筛选」，而漏掉一处就出现「这一层没被筛」或「没被筛的东西被筛掉
-        了」，两者都不像作用域出了问题。
-
-        :meth:`SearchFlowMixin._start_level_filter` 的**两端**调的是 :meth:`_apply_ordering`
-        而不是这里 —— 漏斗走完就该排序，排序完再回到漏斗就是递归到自己。
-        """
+        **所有出口都必须走它**，不能直接调 :meth:`_apply_ordering` —— 那样每个调用点都要
+        自己判断一遍「现在是不是在筛选」，漏一处就出现「这一层没被筛」或「没被筛的东西被
+        筛掉了」。相反，:meth:`SearchFlowMixin._start_level_filter` 的两端调的是
+        :meth:`_apply_ordering` 而不是这里 —— 漏斗走完就该排序，排序完再回到漏斗就是递归。"""
         self._start_level_filter()
 
     def _apply_ordering(self) -> None:
         """把当前这一层按分组 / 排序重排一次，然后一次性摆到网格上。
 
-        **大图页上不重排**（重排会让那一行的内容换掉，而标题栏还写着刚才那张的名字，ADR 0025
-        决策 4），**日历那一页要重排**（它的模型里装着整库，模型空着的话从日历点照片没反应）。
-
-        **日历在这里喂，不在扫描收工时喂**：排序要读元数据时，重排落在那个后台任务回来之后，
-        而「扫描完 → 喂日历」会在模型还空着时读出零张照片，整层日历从此空着。
-        """
+        **大图页上不重排**（重排会让那一行的内容换掉，而标题栏还写着刚才那张的名字，
+        ADR 0025 决策 4），**日历那一页要重排**（它的模型里装着整库，模型空着的话从日历点
+        照片没反应）。**日历在这里喂，不在扫描结束时喂**：排序要读元数据时重排落在那个
+        后台任务回来之后，而「扫描完 → 喂日历」会在模型还空着时读出零张照片。"""
         library = self._library
         if library is None:
             return
@@ -479,13 +458,13 @@ class OrderingMixin:
                 self._restore_focus()
                 # 分组视图里来了新照片时，这里是重新分组之后回到原处的地方（ADR 0013）。
                 self._maybe_reenter_group()
-            # 暂存区到这里才清空：攒着的变化从这一刻起才能安全地落到网格上。
+            # 暂存区到这里才清空：暂存的变化从这一刻起才能安全地落到网格上。
             self._flush_pending_watch()
             # 模型此刻摆着的就是这一层，**这时**喂日历才对得上（见上面那段）。
             self._feed_calendar()
 
     def _reorder_level(self, library: Library) -> None:
-        # 暂存的优先：那一层还没上屏，顺序就是这里算出来的。
+        # 暂存的优先：那一层还没显示到界面，顺序就是这里算出来的。
         staged = self._staged
         entries = staged if staged is not None else list(self._model.entries())
         self._staged = None
@@ -502,8 +481,8 @@ class OrderingMixin:
         values = self._facet_values
         events = self._event_values
 
-        # guard: allow-long-comment（这道闸排在排序之后就白付一次整层排序；判据取输入而不是输出）
-        # **先判「会不会变」，再排序**（这道闸排在排序之后就等于白付一次整层排序）。判据取
+        # guard: allow-long-comment（检查排在排序之后就白付一次整层排序；判据取输入）
+        # **先判「会不会变」，再排序**（这道检查排在排序之后就等于白付一次整层排序）。判据取
         # **输入**而不是输出（输出比的是刚算出来的 ``ordered``），比内容而不是比身份（``photos``
         # / ``albums`` 是现造的两个列表，指针比对永不命中，而模型里存的就是**同一批**
         # ``PhotoRef``，逐个 ``==`` 走的是身份捷径）。
@@ -517,7 +496,7 @@ class OrderingMixin:
             library.root,
         )
         # ``values`` 单独用 ``is`` 判并**持有强引用**（存在 ``self._reorder_values`` 里）—— 记
-        # ``id(values)`` 会踩到地址复用：换库后新 dict 落在同一个地址上，闸就会以为没变而跳过排序。
+        # ``id(values)`` 会踩到地址复用：换库后新 dict 落在同一地址上，这道检查就会跳过排序。
         if (
             staged is None
             and fingerprint == self._reorder_fingerprint
@@ -544,12 +523,12 @@ class OrderingMixin:
             ordered = [*albums, *sort_photos(photos, order=order, root=library.root, values=values)]
         self._reorder_fingerprint = fingerprint
         self._reorder_values = values
-        # **事件那份也要进这道闸**（ADR 0043 决策 7）：绑定变了一定要重排，否则用户记完照片
+        # **事件那份也要进这道检查**（ADR 0043 决策 7）：绑定变了一定要重排，否则用户记完照片
         # 看到的是「什么都没发生」。同样是判 ``is`` 且持有强引用，不记 ``id()``。
         self._reorder_events = events
         self._reorder_photos, self._reorder_albums = tuple(photos), tuple(albums)
         if staged is None and ordered == list(self._model.entries()):
-            return  # 什么都没攒、顺序也没变：让整屏重画一次毫无意义
+            return  # 什么都没暂存、顺序也没变：让整屏重画一次毫无意义
         selected = self._grid.selected_rows()
         anchor = self._model.photo_at(self._grid.current_row())
         self._model.reorder(ordered)

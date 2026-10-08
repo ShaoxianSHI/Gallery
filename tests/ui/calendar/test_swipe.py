@@ -95,7 +95,7 @@ def test_a_page_needs_the_finger_to_come_back_before_the_next_one() -> None:
 
 
 def test_a_pause_starts_a_fresh_swipe() -> None:
-    """停一阵再动 = 新的一轮手势（**兜底**：不报滚动阶段信息的平台上只有这一条路）。
+    """停一阵再动 = 新的一轮手势（**回退**：不报滚动阶段信息的平台上只有这一条路）。
 
     没有它就是「连着往左甩两下，第二下没反应」—— 因为上一次那次还占着「这一轮已经翻过」。
     """
@@ -165,7 +165,7 @@ def test_the_neutral_zone_is_a_fifth_of_the_threshold() -> None:
 def test_a_hair_short_of_the_threshold_still_does_not_page(
     threshold: float, with_pixels: bool
 ) -> None:
-    """差那一点也在「攒着」那一侧 —— 少 2% 就不是「一次甩动」。"""
+    """差那一点也在「暂存」那一侧 —— 少 2% 就不是「一次甩动」。"""
     clock = FakeClock()
     detector = SwipeDetector(clock)
 

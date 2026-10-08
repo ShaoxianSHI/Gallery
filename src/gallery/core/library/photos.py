@@ -122,7 +122,7 @@ class FolderRef:
 
     @property
     def display_name(self) -> str:
-        """文件夹名为空时的兜底（例如根目录）。"""
+        """文件夹名为空时的回退（例如根目录）。"""
         return self.path.name or str(self.path)
 
 

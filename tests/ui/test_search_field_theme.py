@@ -6,7 +6,7 @@
 
 **第三样「有没有焦点」仍然要留在判据里**，只是它管的不再是样式表：那一圈轮廓已经不在
 样式表里了（改由 :func:`~gallery.ui.search_field.draw_outline` 自己填），焦点那一下看得见
-的变化是**换了轮廓的颜色 + 标脏重画**。少了它缓存就会把这一次也吃掉，点进搜索框边框不变色
+的变化是**换了轮廓的颜色 + 标记为需要重绘**。少了它缓存就会把这一次也忽略掉，点进搜索框边框不变色
 —— 而这一条既不崩也不报错。
 """
 
@@ -72,7 +72,7 @@ def test_nothing_changed_means_nothing_is_republished(field: _CountingSearchFiel
 def test_focus_really_does_repaint_the_outline(field: _CountingSearchField) -> None:
     """焦点那一下**要**看得见：轮廓换高亮色，而且要真的重画一遍。
 
-    少了 ``focused`` 这个判据，缓存就会把这一次也吃掉，于是点进搜索框边框不变色 ——
+    少了 ``focused`` 这个判据，缓存就会把这一次也忽略掉，于是点进搜索框边框不变色 ——
     而这一条既不崩也不报错。
 
     **盯的是颜色与重画，不是样式表字符串**：那一圈轮廓已经不在样式表里了（自己填的，

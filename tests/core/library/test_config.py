@@ -536,7 +536,7 @@ def test_the_ui_field_table_matches_the_dataclass() -> None:
 def test_the_ui_field_table_preserves_the_written_order() -> None:
     """``[ui]`` 写出去的顺序就是字段表的顺序 —— 每次保存的 diff 才没有噪音。
 
-    钉住顺序是有意的：把字段表排序一下会让所有老库的 ``config.toml`` 在下次保存时
+    锁定顺序是有意的：把字段表排序一下会让所有老库的 ``config.toml`` 在下次保存时
     整段重排，diff 里全是噪音。
     """
     from gallery.core.library import config as module

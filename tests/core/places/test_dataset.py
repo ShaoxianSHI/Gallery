@@ -121,7 +121,7 @@ def test_missing_or_broken_file_returns_none_instead_of_raising(tmp_path: Path) 
 
 
 def test_parse_is_lazy_enough_not_to_materialize_everything() -> None:
-    """_parse 是生成器：解析两万条不该先在内存里攒成列表。"""
+    """_parse 是生成器：解析两万条不该先在内存里累积成列表。"""
     parsed = _parse("杭州\t浙江省\t中国\t30.29\t120.16\t100\n")
     assert not isinstance(parsed, list)
     assert len(list(parsed)) == 1
@@ -207,7 +207,7 @@ def test_equator_and_prime_meridian_are_real_places(latitude: float, longitude: 
 
 
 def test_records_at_null_island_are_dropped_when_parsing(tmp_path: Path) -> None:
-    """生成期已经丢掉了，但解析的是随包分发的文件，不该悄悄收下坏行。"""
+    """生成期已经丢掉了，但解析的是随包分发的文件，不该悄悄记录坏行。"""
     body = "广东省\t坏行\t中国\t0.0000\t0.0000\t100\n浙江省\t杭州\t中国\t30.2900\t120.1600\t100\n"
     path = tmp_path / "p.tsv.gz"
     path.write_bytes(gzip.compress(body.encode("utf-8"), 9))
@@ -275,7 +275,7 @@ def test_grid_matches_brute_force_on_every_query_point() -> None:
 
 
 def test_window_covers_more_than_any_accepted_answer() -> None:
-    """把「窗口半径」这件事钉住：它必须远大于会被采纳的最大距离。"""
+    """把「窗口半径」这件事锁定：它必须远大于会被采纳的最大距离。"""
     assert GRID_RADIUS * GRID_CELL_DEGREES * 111.0 > MAX_DISTANCE_KM
 
 

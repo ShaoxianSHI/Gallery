@@ -237,7 +237,7 @@ def test_something_the_user_typed_wrong_is_refused_with_a_reason(
 
 
 def test_one_save_writes_back_once_and_leaves_one_journal_run(tmp_path: Path) -> None:
-    """**一次保存 = 一次写回 = 一条 journal**（红线 4）。
+    """**一次保存 = 一次写回 = 一条 journal**（先记账再动文件）。
 
     两半合成一次写回，「按一次保存」与「⌘Z 撤一次」才一一对应；分开写会让撤销栈多出一摞。"""
     root = tmp_path / "照片"

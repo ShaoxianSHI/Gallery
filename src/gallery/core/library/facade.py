@@ -89,8 +89,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: 解析地点时一次处理多少张。与 exiftool 自己的批次（``batch.BATCH_SIZE``）对齐：攒满一批正好
-#: 起一次子进程，进度也一跳一跳地报，既不空转也不刷屏。
+#: 解析地点时一次处理多少张。与 exiftool 自己的批次（``batch.BATCH_SIZE``）对齐：累积到一批
+#: 正好起一次子进程，进度也一跳一跳地报，既不空转也不刷屏。
 PLACE_PASS_BATCH: Final = 400
 
 #: 写文件表时一批多少张。太大则一次占用索引锁的时间长，而那把锁界面读索引时也要用。
@@ -113,7 +113,7 @@ class MetadataWriteOutcome:
 
     #: 写完之后这张照片的引用。文件已经不在时为 ``None``。
     entry: PhotoRef | None
-    #: 落定的字段，以及写完之后文件里会有的拍摄时间与位置。
+    #: 已确定的字段，以及写完之后文件里会有的拍摄时间与位置。
     plan: MetadataPlan
     #: 是否留下了可回滚的日志记录。为 ``False`` 时界面要说明「⌘Z 撤销不了」。
     journaled: bool = True
@@ -194,11 +194,8 @@ class Library:
 
     @classmethod
     def open(cls, root: Path, *, cache_base: Path | None = None) -> Library:
-        """校验并打开库。**会做两件事，两件都只碰 Gallery 自己的文件**（ADR 0038 决策 2、决策 6）：
-
-        1. 保证配置目录存在（建不出来就退化成内存索引，见 :meth:`config_dir_ready`）；
-        2. 清掉**旧版**留在配置目录下的 ``cache/`` 里的缩略图 —— 那整块是「同一个库两份缓存」
-           里多出来的一份，全是可再生的缩略图。
+        """校验并打开库。**只碰 Gallery 自己的文件**：保证配置目录存在（建不出来就退化成内存索引，
+        见 :meth:`config_dir_ready`），并清掉**旧版**留在配置目录 ``cache/`` 下的可再生缩略图。
 
         :param cache_base: 系统级缩略图缓存根目录，测试用；``None`` 表示走平台默认位置。
         :raises LibraryNotAccessibleError: 目录不存在或没有读取权限。
@@ -258,12 +255,10 @@ class Library:
         return self._config.ui
 
     def set_ui_state(self, ui: LibraryUIState) -> None:
-        """把界面偏好写进 ``config.toml``，并让内存里那份跟着更新（ADR 0038 决策 4）。界面改排序、
-        改日历层级、捏缩略图档位都走这里，换库之后那些选择各自重来。
+        """把界面偏好写进 ``config.toml``，并让内存里那份跟着更新（ADR 0038 决策 4）。
 
-        **内存那份必须一起换**，理由与 :meth:`_write_covers` 一样：刚切的那一档要立刻生效，
-        等下一次打开库才变的话界面会与自己记的东西对不上。配置目录建不出来时**什么都不做
-        也不报错** —— 那台机器上本来就存不住这些。
+        **内存那份必须一起换**：刚切的那一档要立刻生效，等下次打开库才变界面会与自己记的
+        对不上。配置目录建不出来时**什么都不做也不报错** —— 那台机器上本来就存不住这些。
         """
         if ui == self._config.ui:
             return  # 没变就不写：一次没有变化的改写只是白费一次 fsync
@@ -317,13 +312,11 @@ class Library:
         return list(iter_albums(self._root, report=report))
 
     def has_albums(self) -> bool:
-        """库里**有没有**相册 —— 找到一个就停。**只为了「有没有」而问，却把它整列一遍**，那是把右键
-        菜单最贵的一步（3000 个相册约 120 ms 的遍历）又付回了构造菜单的那一刻，而用户点开那个
-        子菜单的时机才是真正需要清单的时候。
+        """库里**有没有**相册 —— 找到一个就停。**不要为「有没有」把整列一遍**：那会把右键菜单
+        最贵的一步（3000 个相册约 120 ms 的遍历）付在构造菜单时，而清单要到点开子菜单才需要。
 
-        判据在 :func:`~gallery.core.library.scanner.has_album`，可见性规则与
-        :func:`~gallery.core.library.scanner.iter_albums` 完全一致 —— 这两条必须一起看，
-        否则菜单会出现一个挑了也没用的条目。
+        判据在 :func:`~gallery.core.library.scanner.has_album`，可见性规则必须与
+        :func:`~gallery.core.library.scanner.iter_albums` 一致，否则菜单会出现挑了也没用的条目。
         """
         return has_album(self._root)
 
@@ -392,7 +385,7 @@ class Library:
 
     def set_album_cover(self, album: Path, photo: Path) -> None:
         """把 ``photo`` 记成 ``album`` 的封面，写进 ``config.toml``（ADR 0028）。**只写 Gallery
-        自己的配置文件**，用户的照片一个字节都不动（红线 1）—— 因此它既不记 journal 也不进
+        自己的配置文件**，用户的照片一个字节都不动 —— 因此它既不记 journal 也不进
         撤销栈，撤销由对称的 :meth:`clear_album_cover` 负责（决策 5）。
 
         :raises ConfigError: 封面照片不在这个相册里、不是一张受支持的照片，或这个库没有配置目录。
@@ -488,8 +481,8 @@ class Library:
         """清空本库的缩略图缓存，**连索引一起清**，返回删除的缩略图条目数。
 
         索引是另一份缓存，但它记的也是「像素之外的东西」，所以「清空缓存」在用户看来是一次操作，
-        在代码里就该是一次操作。**两张表一起清**：只清 facet 表的话，检索会立刻拿一份刚被丢掉的
-        文件表继续查。代价是下一次分组重读一遍元数据 —— 那本来就是「缓存没了」的应有之义（红线 5）。
+        在代码里就该是一次操作。**两张表一起清**：只清一张的话，检索会拿一份刚被丢掉的文件表
+        继续查。代价是下一次分组重读一遍元数据 —— 缓存删掉本来就可重扫恢复。
         """
         removed = self._thumbnails.clear()
         if self._index is not None:
@@ -546,7 +539,7 @@ class Library:
         """事件库（ADR 0043）。配置目录建不出来时**每一次都是不可用的那个** —— 与索引同源。"""
         attached = self.facet_index.attached
         store = attached if isinstance(attached, EventStore) else EventStore(self._root)
-        # guard: allow-long-comment（漏接一处不报错：库写进去了，界面那份清单还是旧的）
+        # guard: allow-long-comment（漏掉一处不报错：库写进去了，界面那份清单还是旧的）
         # 清单缓存的作废**挂在唯一的写入方上**，而不是抄在每个写方法后面（见
         # :meth:`EventStore.on_change`）。原先那四处手写的地方没有测试盯着，漏一处
         # 不报错 —— 库写进去了，界面上那份清单还是旧的。
@@ -584,9 +577,7 @@ class Library:
     def photos_in_days(self, first_day: str, last_day: str) -> tuple[PhotoRef, ...]:
         """这几天里拍的那些照片（容器型事件最常用的那一步：「这一周的都算」，ADR 0043 决策 4）。
 
-        **走索引、整库查** —— 旅行的照片不只在当前这一层，而只在这一层里挑的话用户会以为
-        自己的照片丢了。
-
+        **走索引、整库查**：旅行的照片不只在当前这一层，只在这一层里挑会让人以为照片丢了。
         :raises IndexUnavailableError: 索引没落盘（只读卷）。
         """
         return tuple(self.facet_index.photos_in_days(first_day, last_day))
@@ -619,10 +610,7 @@ class Library:
     def plan_show_import(self, path: Path) -> ShowImportPlan:
         """读一张「演迹」导出的 ``.xlsx``，**先不写库**，只算出会建哪些、其中几场是重复的。
 
-        重复按名称 + 日期 + 场馆判（见 :func:`~gallery.core.events.import_shows.show_identity`）。
-        界面拿这个数字决定要不要问用户一句，然后把同一个 :class:`ShowImportPlan` 交给
-        :meth:`import_shows`。
-
+        重复按名称 + 日期 + 场馆判，见 :func:`~gallery.core.events.import_shows.show_identity`。
         :raises ShowImportError: 文件读不出来，或者不是「演迹」的演出列表。
         """
         parsed = read_show_export(Path(path))
@@ -635,10 +623,9 @@ class Library:
     ) -> ShowImportOutcome:
         """按 :meth:`plan_show_import` 的预演把演出建进库里（ADR 0047）。
 
-        ``skip_duplicates`` 为真时，名称 + 日期 + 场馆与库里已有的相同的那几场不建。每一行建
-        一条演出事件，走的是 :meth:`create_event`，于是 journal、缓存作废与手工新建完全一致。
-        **一个用户的文件都不碰**（红线 1），只写 Gallery 自己的 ``events.db``；新建事件本来就
-        不进 ⌘Z 那一摞，一次导入因此也不进（导入错了去事件清单里逐个删）。
+        ``skip_duplicates`` 为真时，名称 + 日期 + 场馆与库里已有的相同的那几场不建。每一行走
+        :meth:`create_event` 建一条演出事件，于是 journal、缓存作废与手工新建完全一致。
+        **一个用户的文件都不碰**，只写 Gallery 自己的 ``events.db``。
         """
         existing = self._show_identities()
         created = 0
@@ -673,13 +660,10 @@ class Library:
         return self.events.unbind(_paths_of(photos), event_id)
 
     def set_event_cover(self, event_id: int, photo: PhotoRef | Path) -> EventWriteOutcome:
-        """把这个事件的封面设成某一张照片，**它必须已经绑在这个事件上**（ADR 0048 决策 1）。
+        """把这个事件的封面设成某一张照片，**它必须已经绑在这个事件上**（ADR 0048 决策 1）。**不进**
+        ``WRITE_METHODS_ON_LIBRARY``：写的是 Gallery 自己的 ``events.db``，不碰用户的照片。
 
-        **不进** ``WRITE_METHODS_ON_LIBRARY``：写的是 Gallery 自己的 ``events.db``，
-        用户的照片一个字节都不动 —— 与相册封面同一处置（ADR 0028 决策 5）。
-
-        :raises CoverNotBoundError: 那张照片不属于这个事件。卡片只能画组内那一张
-            （缩略图流水线拿的是 ``PhotoRef``），所以「设一个组外的封面」根本画不出来。
+        :raises CoverNotBoundError: 那张照片不属于这个事件（卡片只能画组内那一张）。
         """
         return self.events.set_cover(event_id, _paths_of([photo])[0])
 
@@ -715,13 +699,9 @@ class Library:
         source: BatchMetadataSource | None = None,
         resolver: PlaceResolver | None = None,
     ) -> dict[Path, PhotoFacets]:
-        """取这些照片的分组 / 排序字段，**只读**。先查缓存，只对没命中或已改过（大小 / 修改时间
-        变了）的那些去真读 EXIF；读到的新结果顺手写进索引，于是下一次切换分组字段几乎立刻完成。
-
-        **地点**：相机原图几乎不写 IPTC / XMP 地点，只写 GPS。给了 ``resolver`` 就会按坐标离线
-        反查一次，把国家 / 省州 / 城市补齐（文件里写了就以文件为准），结论同样进索引。没给
-        ``resolver`` 就只认文件里写的地点 —— 不悄悄替用户联网查点什么。
-
+        """取这些照片的分组 / 排序字段，**只读**。先查缓存，只对没命中或文件已改过的去真读 EXIF，
+        新结果顺手写进索引，于是下一次切换分组字段几乎立刻完成。**地点**：给了 ``resolver`` 就按
+        坐标离线反查补齐（文件里写了以文件为准），没给就只认文件里写的地点，不联网。
         :param status: 首次加载城市库时，用它把进度说给界面听。
         :raises MetadataError: 主来源整体失败（例如 exiftool 跑不起来）。
         """
@@ -785,12 +765,9 @@ class Library:
     def _iter_photo_batches(
         self, batch_size: int, should_cancel: Callable[[], bool] | None
     ) -> Iterator[tuple[list[PhotoRef], int]]:
-        """按 ``batch_size`` 成批产出照片，顺带给出「到此为止扫过多少张」。
+        """按 ``batch_size`` 成批产出照片，顺带给出「到此为止扫过多少张」，两条整库遍历共用。
 
-        两条整库遍历（:meth:`index_photos` 建索引、:meth:`resolve_places` 补地点）共用它。
-        **最后那半批只在没被取消时才产出** —— 取消了还写一次，等于用户按了停却停不下来。
-        这条判据是「非空 **且** 未取消」两个条件，原先在那两处各抄一遍，而抄漏一处不会报错：
-        只会在取消之后多写一批。
+        **最后那半批只在没被取消时才产出**：取消了还写一次，等于用户按了停却停不下来。
         """
         batch: list[PhotoRef] = []
         scanned = 0
@@ -813,14 +790,11 @@ class Library:
         on_work: Callable[[int], None] | None = None,
         on_progress: Callable[[int], None] | None = None,
     ) -> int:
-        """把整个库的照片写进索引的文件表，返回新写了多少行。
+        """把整个库的照片写进索引的文件表，返回新写了多少行。**只有真的有活干才起**（文件表一行都
+        没有），否则用户第一次搜索会看到「一条都没有」；幂等，``(大小, 修改时间)`` 对得上就不写。
 
-        **只有真的有活干才起**（文件表一行都没有），与 :meth:`resolve_places` 同一个套路
-        （ADR 0010、ADR 0026 决策 5）：否则用户第一次搜索看到的是「一条都没有」，而那不是答案。
-        幂等，第二次几乎不要钱：``(大小, 修改时间)`` 对得上的行根本不写。
-
-        :param on_work: ``(这次要写多少行)``，**只在真的找到活干时叫一次**（已经建好索引的库
-            这一遍是空跑，界面据此不该报进度）。``on_progress`` 是 ``(已扫过)``，总数事先不知道。
+        :param on_work: ``(这次要写多少行)``，**只在真的找到活干时叫一次**；``on_progress`` 是
+            ``(已扫过)``，总数事先不知道。
         """
         index = self.facet_index
         if index.count_photos() > 0:
@@ -843,11 +817,8 @@ class Library:
     def matching_paths(self, conditions: Sequence[SearchCondition]) -> set[Path]:
         """这些条件命中了哪些路径 —— **只读这一层摆着的那部分**的筛选（ADR 0040）。
 
-        范围不在这里收：收在调用方（它手上已经有这一层的照片了，求交即可）。所以这一份是整库的
-        命中集合 —— 用 :meth:`search_photos` 的那份代替不得，那份按 :data:`RESULT_LIMIT` 截断，
-        而相交**少一条就等于凭空少一张照片**（理由见
-        :meth:`~gallery.core.library.index.FacetIndex.match_paths`）。
-
+        范围收在调用方（它手上已有这一层的照片，求交即可），所以这一份是整库的命中集合。不能用
+        :meth:`search_photos` 那份额代替：那份按 :data:`RESULT_LIMIT` 截断，相交少一条就少一张照片。
         :raises IndexUnavailableError: 索引没落盘，界面据此说清是哪一件。
         """
         return {Path(key) for key in self.facet_index.match_paths(conditions)}
@@ -878,7 +849,7 @@ class Library:
         status: Status | None = None,
     ) -> PhotoFacets:
         """按坐标反查**这一张**的地点，并把结论并回索引。坐标由调用方给出（元数据面板手里已经读到了），
-        所以不必再读一次 EXIF；这是 :meth:`resolve_places` 之外的兜底（ADR 0010）。
+        所以不必再读一次 EXIF；这是 :meth:`resolve_places` 之外的回退（ADR 0010）。
 
         **只并进已有的那一行，不新写一行**：索引里还存着拍摄时间、相机那些字段，写半行会挡住
         以后那次完整的 EXIF 读取（那一行会被当成「已经读过了」）。没有有效行就只返回结论。
@@ -910,15 +881,10 @@ class Library:
         resolver: PlaceResolver | None = None,
         source: BatchMetadataSource | None = None,
     ) -> PlacePass:
-        """把整个库里还没有地点结论的照片补齐，**只读照片、只写自己的缓存**（ADR 0010）。
-
-        幂等，第二次几乎不要钱：已有结论的行（有坐标且 ``place_checked``）**连 EXIF 都不读**；
-        没有坐标的行同样跳过（永远没得反查）；文件被改过的行按 ``(大小, 修改时间)`` 判为过期，
-        重读一次（可能刚补上 GPS）。
-
-        :param on_work: ``(这次要处理多少张)``，**只在真的找到活干时叫一次** —— 库已经解析过时
-            这一遍是空跑，「正在解析…」这句话只在真有活时出现。``on_progress`` 是
-            ``(已扫过, 总数)``，边扫边数所以总数通常是 0（表示还不知道）。
+        """把整个库里还没有地点结论的照片补齐，**只读照片、只写自己的缓存**（ADR 0010）。幂等，已有
+        结论的行**不读 EXIF**，没有坐标的行同样跳过，文件被改过的行按 ``(大小, 修改时间)`` 重读。
+        :param on_work: ``(这次要处理多少张)``，**只在真的找到活干时叫一次**（空跑时不叫）。
+        :param on_progress: ``(已扫过, 总数)``，边扫边数所以总数通常是 0（表示还不知道）。
         """
         index = self.facet_index
         scanned = 0
@@ -959,13 +925,9 @@ class Library:
     def exiftool_available(self) -> bool:
         """exiftool 现在能不能用 —— **整个应用只有这一个判据**（界面层只问它）。
 
-        **探一次就记住**：这一条在每次弹出右键菜单、每次更新菜单可用性时都会被问到，
-        而探测是 ``shutil.which``，不该反复去问文件系统。装了 exiftool 之后要重启软件
-        才认。
-
-        ``None``（没注入 writer）**不是「能用」而是「还没探过」** —— 把它当成能用的话，
-        生产路径（``Library.open`` 从不传 writer）会恒为真，没装 exiftool 的机器上菜单
-        照样出现「编辑元数据…」，用户填完点保存才报错。
+        **探一次就记住**（探测是 ``shutil.which``，菜单每次弹出都会问）；``None``（没注入 writer）
+        **不是「能用」而是「还没探过」**：当成能用的话生产路径会恒为真，没装的机器上菜单照样出现
+        「编辑元数据…」，用户填完点保存才报错。
         """
         if self._exiftool_available is None:
             self._exiftool_available = (self._writer or ExifToolWriter()).available()
@@ -987,23 +949,11 @@ class Library:
         *,
         resolver: PlaceResolver | None = None,
     ) -> MetadataWriteOutcome:
-        """把用户编辑的元数据**写回照片文件**（ADR 0030 / 0031 / 0032）。四步都在这里做完，界面只管
-        「什么时候调」：
-
-        1. :func:`~gallery.core.metadata.metadata_edit.plan_metadata_edit` 把「照片此刻的值」与
-           「用户填完的那一份」翻译成一组字段；
-        2. :func:`~gallery.core.metadata.writeback.write_metadata` 写盘、**回读校验**、必要时
-           回滚、记账；
-        3. **缩略图缓存换键**：像素没变，把缓存条目挪到新键上，省掉一次重新解码；
-        4. 返回新的引用 —— **界面必须拿它换掉网格里那一行**，否则那一行挂的还是旧的大小与
-           修改时间（缓存与索引都按它判新旧）。
-
-        **一次编辑只写一次**：时间与位置在同一个对话框里，分成两次会让用户按一次保存却要撤两下
-        （ADR 0032 决策 4）。索引那一行**故意什么都不做**：``(大小, 修改时间)`` 对不上就自动作废，
-        索引因此永远是 EXIF 的投影，两处不可能说两套话。
-
-        :raises MetadataWriteError: 坐标不合法、时间或时区看不懂、写盘失败，或**写完校验不过**
-            （已回滚）。
+        """把用户编辑的元数据**写回照片文件**（ADR 0030 / 0031 / 0032），界面只管何时调它。
+        :func:`~gallery.core.metadata.metadata_edit.plan_metadata_edit` 翻译字段后交给
+        :func:`~gallery.core.metadata.writeback.write_metadata` 写盘、回读校验、必要时回滚。返回的
+        新引用**界面必须拿去换掉网格里那一行**，索引靠 ``(大小, 修改时间)`` 自动过期。
+        :raises MetadataWriteError: 坐标不合法、时间或时区看不懂、写盘失败，或**写完校验不过**。
         """
         plan = plan_metadata_edit(state, edit, resolver=resolver)
         if plan.is_empty:
@@ -1018,7 +968,7 @@ class Library:
     def rename_entry(self, entry: GridEntry, new_name: str) -> RenameResult:
         """给照片或相册改名，并把它的缩略图缓存挪到新路径。
 
-        这是少数会动用户文件的操作，规矩与红线见 ``core.rename`` 和 ADR 0004。
+        这是少数会动用户文件的操作，规矩见 ``core.rename`` 和 ADR 0004。
         """
         result = rename_entry(self._root, entry, new_name, events=self.events)
         if result.renamed:
@@ -1028,7 +978,7 @@ class Library:
     def move_to_trash(self, entries: Sequence[GridEntry]) -> TrashResult:
         """把照片或相册移进系统废纸篓（界面上就是「删除」）。
 
-        规矩与红线见 ``core.trash`` 与 ADR 0008：**不销毁文件**，同卷内只是一次改名。
+        规矩见 ``core.trash`` 与 ADR 0008：**不销毁文件**，同卷内只是一次改名。
         缩略图缓存刻意留着不删 —— 照片还在，撤销回来时直接命中，不必重新解码。
         """
         return trash_entries(self._root, entries)
@@ -1042,10 +992,9 @@ class Library:
     ) -> PasteResult:
         """把 ``sources`` **复制**进 ``target``（界面上是「粘贴」⌘V 与「复制到相册」）。
 
-        规矩与红线见 ``core.paste`` 与 ADR 0018：**只增不改**（源文件一个字节不动）、
-        **绝不覆盖**（同名就按访达的办法改叫「一张 2.jpg」）、**不在撤销栈里**
-        （撤销粘贴就是删文件）。新粘进来的文件由监听器（ADR 0013）自己发现并上屏，
-        这里刻意不去动界面那一层。
+        规矩见 ``core.paste`` 与 ADR 0018：**只增不改**（源文件一个字节不动）、**绝不覆盖**
+        （同名按访达的办法改叫「一张 2.jpg」）、**不在撤销栈里**（撤销粘贴就是删文件）。新粘
+        进来的文件由监听器（ADR 0013）自己发现并显示到界面，这里刻意不碰界面那一层。
         """
         return copy_into(self._root, target, sources, should_cancel=should_cancel)
 
@@ -1058,12 +1007,9 @@ class Library:
     ) -> MoveResult:
         """把 ``sources`` **移动**进 ``target``（界面上就是「移动到相册」）。
 
-        规矩与红线见 ``core.transfer`` 与 ADR 0019：这是唯一会让用户的文件**离开原处**
-        的操作，因此只在用户亲手点了菜单项时才发生，且**进撤销栈** —— ⌘Z 把它挪回原来的
-        相册（撤销一次移动仍然是一次移动，不是删除）。与粘贴一样**绝不覆盖**。
-
-        **事件绑定跟着走**（ADR 0043 决策 8），撤销也跟回来：移动改的是绝对路径，
-        而绑定按路径记 —— 与粘贴的差别就在这里，副本是用户没表达过心意的新照片。
+        规矩见 ``core.transfer`` 与 ADR 0019：这是唯一会让用户的文件**离开原处**的操作，只在用户
+        亲手点了菜单项时才发生，且**进撤销栈**（⌘Z 把它挪回原相册），与粘贴一样**绝不覆盖**。
+        **事件绑定跟着走**（ADR 0043 决策 8），撤销也跟回来：绑定按路径记，而移动改的是绝对路径。
         """
         return move_into(
             self._root, target, sources, should_cancel=should_cancel, events=self.events
@@ -1077,20 +1023,17 @@ class Library:
     ) -> PasteResult:
         """把 ``sources`` 各自**复制到它自己所在的那一层**（界面上是「复制」⌘D，ADR 0044）。
 
-        名字是 ``一张.jpg`` → ``一张的副本.jpg``，撞名退成 ``一张的副本 2.jpg``；
-        相册同理（``京都`` → ``京都的副本``，连同里面全部内容）。
-
-        规矩与 :meth:`copy_into` 完全一致，**因为它就是那一条路**：只增不改、绝不覆盖、
-        不在撤销栈里（撤销一次复制就是删文件，红线 1）。与「复制到相册」的差别只有一个 ——
-        目标目录不用挑，每一项的目标就是它自己的父目录。新副本由监听器（ADR 0013）自己上屏。
+        名字是 ``一张.jpg`` → ``一张的副本.jpg``，撞名退成 ``一张的副本 2.jpg``。规矩与
+        :meth:`copy_into` 完全一致，**因为它就是那一条路**：只增不改、绝不覆盖、不在撤销栈里
+        （撤销一次复制就是删文件，而删除只能用户亲手触发）；目标目录不用挑，新副本由监听器自己显示。
         """
         return duplicate(self._root, sources, should_cancel=should_cancel)
 
     def create_album(self, parent: Path, name: str = DEFAULT_ALBUM_NAME) -> CreatedAlbum:
         """在 ``parent`` 里新建一个空相册（界面上是「新建相册」⇧⌘N）。
 
-        规矩与红线见 ``core.metadata.album`` 与 ADR 0022：只增不改、绝不覆盖（同名改叫
-        「新建相册 2」）、**不进撤销栈**（撤销就是删文件夹，红线 1 不允许），但记账。
+        规矩见 ``core.metadata.album`` 与 ADR 0022：只增不改、绝不覆盖（同名改叫
+        「新建相册 2」）、**不进撤销栈**（撤销就是删文件夹，而删除只能用户亲手触发），但记账。
         新建出来的是**普通的空文件夹**，用户往里丢什么、怎么整理，Gallery 都不管。
         """
         return create_album(self._root, parent, name)

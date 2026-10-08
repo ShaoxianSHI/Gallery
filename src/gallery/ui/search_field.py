@@ -1,7 +1,8 @@
 """窗口标题栏右上角那个胶囊搜索框（ADR 0026）。
 
 **它与 :mod:`gallery.ui.title_bar` 是兄弟，不是子控件** —— ``TitleBar`` 的透明标志会罩住子控件。
-它只回答回车提交了什么、按了 Esc、是不是正在输入 —— 一个文件都不碰，只发信号（红线 1）。
+它只回答回车提交了什么、按了 Esc、是不是正在输入 —— 一个文件都不碰，只发信号（改动用户的
+照片必须由用户亲手触发）。
 """
 
 from __future__ import annotations
@@ -109,7 +110,7 @@ _TOGGLE_ICON_STROKE = 1.2
 _FONT_PX = POPUP_FONT_PX
 
 #: 候选那一行在行内边距为 0 时，文字**笔尖**离视口左沿还有多远（点）。**不是 0**：Qt 画
-#: ``::item`` 的文字之前还要让开一小段，QSS 的 ``padding`` 在那之后才叠加；只能量过写死。
+#: ``::item`` 的文字之前还要让开一小段，QSS 的 ``padding`` 在那之后才叠加；只能量过后硬编码。
 _ITEM_TEXT_BASELINE = 1
 
 #: 候选列表最窄还能是多少（点）：左沿是跟着输入框那一侧让开的，让开得太过就成了一条看不出
@@ -188,11 +189,10 @@ def outline_color(widget: QWidget, *, accent: bool) -> QColor:
 
 def search_field_style(app_theme: AppTheme, *, radius: int = 0) -> str:
     """胶囊长什么样。底色与改名的输入框同一个函数派生。
-    ``radius`` 由摆它的那一处按实际高度给过来：超过高度一半就整个不画，胶囊会变成方框。
 
-    **这一份里既没有 ``border`` 也不看有没有焦点**：那一圈轮廓由
-    :meth:`SearchField.paintEvent` 自己填（理由见 :mod:`gallery.ui.outline`），
-    于是「聚焦时换高亮色」也归那一处管。
+    ``radius`` 由摆它的那一处按实际高度给过来：超过高度一半 Qt 就整个不画，胶囊会变成方框。
+    **这里既没有 ``border`` 也不看有没有焦点**：轮廓由 :meth:`SearchField.paintEvent` 自己填
+    （理由见 :mod:`gallery.ui.outline`），「聚焦时换高亮色」也归那一处管。
     """
     corner = max(0, radius or HEIGHT // 2)
     return f"""
@@ -254,10 +254,8 @@ class CandidateList(QTreeWidget):
     """候选列表：**鼠标移到哪一行，那一行就高亮**（菜单也是这么做的）。
 
     挂了样式表之后 Qt 不再按 ``State_MouseOver`` 挑高亮色，所以自己把悬停那行设成当前项。
-
-    **那一圈轮廓不自己画**：``QTreeWidget`` 的 ``paintEvent`` 由 Qt 走视口，在这一层拿
-    ``QPainter`` 画不出来（实测 ``isActive()`` 为假）。于是走 :mod:`gallery.ui.outline`
-    的第二种画法：样式表照旧，只是边框色预先与底色合成成不透明的。
+    **轮廓不自己画**：``QTreeWidget`` 的 ``paintEvent`` 由 Qt 走视口，这一层拿 ``QPainter`` 画不
+    出来，于是走 :mod:`gallery.ui.outline` 的第二种画法（样式表照旧，只把边框色预先合成成不透明）。
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -291,7 +289,7 @@ class SearchField(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("searchField")
-        # **只定死宽度**（高度交给摆它的那一处）：``setFixedSize`` 会把高度也钉死，于是窗口
+        # **只定死宽度**（高度交给摆它的那一处）：``setFixedSize`` 会把高度也固定，于是窗口
         # 给不出 :data:`HEIGHT` 点时 ``setGeometry`` 改不动，胶囊就压到照片区顶边上。
         self.setFixedWidth(WIDTH)
         self.resize(WIDTH, HEIGHT)
@@ -477,7 +475,7 @@ class SearchField(QWidget):
     def _place_popup(self, rows: int) -> None:
         """把列表摆在胶囊下面，并**夹在窗口以内**。
 
-        高**按行高算**，不按「行数 × 一个写死的数」—— 写死的那个数并不是这一档字号下真正的
+        高**按行高算**，不按「行数 × 一个硬编码的数」—— 硬编码的那个数并不是这一档字号下真正的
         行高，于是最下面多出一截空白。上下各留 :data:`POPUP_LIST_INSET` 正好是视口留白。
         """
         # 位置换算到**窗口**坐标（列表是胶囊的兄弟，见 __init__ 那段）。
@@ -497,12 +495,9 @@ class SearchField(QWidget):
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 - Qt 定的
         """窗口变小的时候重新摆一次列表。
 
-        **列表挂在窗口上，而普通子控件不吃窗口的尺寸变化** —— 高度是填列表那一刻按当时的窗口
-        算的，于是窗口缩小之后它就伸到外面去了。
-
-        这一条以前一直成立只是因为字段少：18 个字段的自然高度恰好比窗口的最小高度还短，于是
-        那个夹取从来没有被考验过。加了几个字段它才露出来（守护见
-        ``tests/ui/test_search_flow.py::test_the_candidate_list_still_fits_a_short_window``）。
+        **列表挂在窗口上，而普通子控件不吃窗口的尺寸变化** —— 高度是填列表那一刻按当时的窗口算的，
+        于是窗口缩小之后它就伸到外面去了。回归测试见
+        ``tests/ui/test_search_flow.py::test_the_candidate_list_still_fits_a_short_window``。
         """
         if watched is self._host and event.type() == QEvent.Type.Resize and self._popup.isVisible():
             self._place_popup(self._popup.topLevelItemCount())
@@ -519,14 +514,14 @@ class SearchField(QWidget):
         """候选列表的左沿（**宿主**坐标）—— 让列表里那个 ``#`` 落在输入框里那个正下方。
 
         让开量 = 边框 + 内边距 + 行内边距 + Qt 自己让开的一小段，再减输入框里那个字的内缩。
-        **现量而不是写死**，任一样动了写死的数就不作数。
+        **现量而不是硬编码**，任一样动了硬编码的数就不作数。
         """
         inset = POPUP_LIST_INSET + self._item_padding() + _ITEM_TEXT_BASELINE
         return self.mapTo(self._host, QPoint(0, 0)).x() + max(0, self._text_inset() - inset)
 
     def _text_inset(self) -> int:
         """输入框里那个字离**胶囊左沿**多远（点），是 :meth:`_item_padding` 的另一半。
-        **现量而不是写死**：这一段是「左边距 + 放大镜 + 间距」三样加起来。
+        **现量而不是硬编码**：这一段是「左边距 + 放大镜 + 间距」三样加起来。
         """
         layout = self.layout()
         if layout is not None:
@@ -572,9 +567,9 @@ class SearchField(QWidget):
         ):
             return
         self.setStyleSheet(search_field_style(app_theme, radius=radius))
-        # guard: allow-long-comment（样式表里写死的是 rgba(...)，必须从刚推下去的调色板生成）
+        # guard: allow-long-comment（样式表里硬编码的是 rgba(...)，必须从刚推下去的调色板生成）
         # 候选列表是**建好之后**才存在的，主题早就下发过了，于是它一直拿着系统默认那一档。
-        # 先推调色板再生成样式表 —— **顺序不能换**：样式表里写死的是 ``rgba(...)``，必须从刚
+        # 先推调色板再生成样式表 —— **顺序不能换**：样式表里硬编码的是 ``rgba(...)``，必须从刚
         # 推下去的那份调色板生成。
         theme.push_palette(self._popup)
         self._popup.setStyleSheet(popup_style(self._popup, item_padding=self._item_padding()))
@@ -582,7 +577,7 @@ class SearchField(QWidget):
         self._applied_theme = app_theme
         self._applied_radius = radius
         self._applied_focused = self._focused
-        # 轮廓不在样式表里了，焦点与半径变了只能自己标脏（画它的是 paintEvent）。
+        # 轮廓不在样式表里了，焦点与半径变了只能自己标记为需要重绘（画它的是 paintEvent）。
         self.update()
 
     def focus_gained(self) -> None:
@@ -625,19 +620,11 @@ class SearchField(QWidget):
 
 
 def scope_arrows(app_theme: AppTheme, ratio: float) -> QPixmap:
-    """那两支反向的横向箭头（上下各一支，左上那支朝左、右下那支朝右）：**现画的**，
-    与 :func:`magnifier` 同一套规矩（坐标一律逻辑像素，仓库里不放图）。
+    """那两支反向的横向箭头（上下各一支）：**现画的**，坐标一律逻辑像素，仓库里不放图。
 
-    **只有一种画法**：按钮是一次性动作，界面上不摆「现在是哪一头」的状态（ADR 0042 决策 1），
-    所以墨色恒取输入面那一档 —— 悬停与按下由控件自己那一层去变，图标不跟着换。
-
-    **画布是 :data:`TOGGLE_ICON_EDGE` 而不是按钮边长**：画布给多大，图形就画多大，图标跟着
-    按钮一起变大就会顶到边框上。
-
-    **各段比例一律按画布算**，不写死点数 —— 换一档画布时形状跟着缩，放大镜那边同理。
-
-    **图形占画布 0.54、笔宽取 :data:`_TOGGLE_ICON_STROKE`**（比放大镜细一档）：两支箭头叠
-    在一起的墨迹本来就是放大镜的一倍多，占满画布会读成「图标被框住了」。
+    **只有一种画法**：按钮是一次性动作，界面上不摆「现在是哪一头」的状态（ADR 0042 决策 1）。
+    **画布是 :data:`TOGGLE_ICON_EDGE` 而不是按钮边长**，各段比例一律按画布算、不硬编码点数 ——
+    画布给多大图形就画多大。笔宽取 :data:`_TOGGLE_ICON_STROKE`（比放大镜细一档）。
     """
     size = TOGGLE_ICON_EDGE
     pixmap = QPixmap(round(size * ratio), round(size * ratio))
@@ -655,7 +642,7 @@ def scope_arrows(app_theme: AppTheme, ratio: float) -> QPixmap:
     # 笔宽画在路径两侧，收少了会被画布裁掉（与放大镜的 :data:`ICON_INSET` 同一件事）。
     head_len, head_half = size * 0.13, size * 0.11
     # ``back`` 是「箭头从尖端往箭杆那一头退多少」：两支箭头的分叉都朝箭杆内侧，尖端那一端
-    # 才不会被画布裁掉（写死成同一个方向的话，朝右那支的分叉正好戳到画布右缘上）。
+    # 才不会被画布裁掉（硬编码成同一个方向的话，朝右那支的分叉正好戳到画布右缘上）。
     for tip_x, other_x, back, y in (
         (left, right, head_len, size * 0.31),
         (right, left, -head_len, size * 0.69),
@@ -668,19 +655,10 @@ def scope_arrows(app_theme: AppTheme, ratio: float) -> QPixmap:
 
 
 def toggle_style(app_theme: AppTheme, *, radius: int = 0) -> str:
-    """切换按钮长什么样。
-
-    **底色恒是输入面那一档**（:func:`~gallery.ui.rename_edit.field_background`）——
-    输入面那一族统一是窗口底色靠那一圈边框显出边界（ADR 0035 决策 1）。按钮不再有「选中」这一态，
-    所以整枚按钮不会填满高亮色（ADR 0042 决策 1）；「此刻是哪一头」由胶囊里的占位文字与菜单里
-    那一项的勾说。
-
-    **按下去给一点反馈**（``:pressed`` 提亮一档）：它是**一次性**动作，而按下去之后按钮自己不会
-    变 —— 一点反馈都没有的话，用户会以为没按着。
-
-    **这一份里没有 ``border``，也没有 ``:hover``**：那一圈轮廓改由
-    :meth:`ScopeToggle.paintEvent` 自己填（理由见 :mod:`gallery.ui.outline`），于是悬停色也跟着
-    走 Python 那一侧的状态。
+    """切换按钮长什么样：**底色恒是输入面那一档**（:func:`~gallery.ui.rename_edit.field_background`），
+    按钮不再有「选中」这一态（ADR 0042 决策 1），「此刻是哪一头」由胶囊里的占位文字与菜单里那一项
+    的勾说。**按下去给一点反馈**（``:pressed`` 提亮一档），否则用户会以为没按着。**这里没有
+    ``border``，也没有 ``:hover``**：轮廓由 :meth:`ScopeToggle.paintEvent` 自己填。
     """
     corner = max(0, radius or TOGGLE_EDGE // 2)
     rest = QColor(field_background(app_theme))
@@ -702,11 +680,9 @@ def toggle_style(app_theme: AppTheme, *, radius: int = 0) -> str:
 class ScopeToggle(QToolButton):
     """胶囊右边那枚按钮：把搜索框在「搜索整个库」与「筛选当前视图」之间**掉个头**（ADR 0040）。
 
-    **它是一次性动作，不是可勾选的开关**（ADR 0042 决策 1）：按一下换一次，不留在任何一态上。
-    所以它**不 checkable**、也没有 :meth:`set_filtering` —— 「此刻是哪一头」由胶囊里的占位文字与
-    菜单里那一项的勾说，按钮这一枚两种情况下长得一模一样。悬停与按下照旧有反馈。
-
-    **一个文件都不碰**，只发 :attr:`switched` —— 与 :mod:`gallery.ui.rename_edit` 同一件事。
+    **它是一次性动作，不是可勾选的开关**（ADR 0042 决策 1）：按一下换一次，不留在任何一态上，
+    所以它**不 checkable**；「此刻是哪一头」由胶囊里的占位文字与菜单里那一项的勾说。**一个文件
+    都不碰**，只发 :attr:`switched` —— 与 :mod:`gallery.ui.rename_edit` 同一件事。
     """
 
     #: 用户按了它（**不带「现在是筛选吗」**：按钮自己不记状态，掉个头由外面按当前作用域算）。
@@ -730,8 +706,8 @@ class ScopeToggle(QToolButton):
         self._apply_theme()
 
     def _apply_theme(self) -> None:
-        """换过浅色 / 深色之后重下一次 —— 输入面那一族的颜色由 :mod:`gallery.ui.theme` 钉死，
-        别处不兜一层（ADR 0035 决策 2）。"""
+        """换过浅色 / 深色之后重下一次 —— 输入面那一族的颜色由 :mod:`gallery.ui.theme` 固定，
+        别处不回退一层（ADR 0035 决策 2）。"""
         app_theme = theme.current_theme()
         radius = self.height() // 2
         if self._applied_theme == app_theme and self._applied_radius == radius:

@@ -1,21 +1,9 @@
-"""重命名照片与相册。
+"""重命名照片与相册（ADR 0004）。**只改名，不搬家**：目标永远是源所在的同一目录。
 
-这是本项目里少数几个**会改动用户文件**的操作（见 ADR 0004），所以规矩最重：
-
-- **只改名，不搬家**：目标永远是源所在的同一个目录，永不跨越文件系统。
-- **绝不覆盖**：目标已存在就报错，让用户改个名字，而不是替用户决定谁该消失
-  （POSIX 的 ``rename`` 会静默覆盖，这一点必须由我们自己挡）。
-- **照片的扩展名不可改**：Gallery 按扩展名判断支持哪些格式，改了扩展名等于让一张
-  照片从库里凭空消失。
-- **不能以「.」开头**：扫描时以点开头的条目会被跳过（见 ``scanner.iter_entries``），
-  改完名字照片就从 Gallery 里「不见了」，而它明明还在硬盘上。
-- **每一步都记账**：成功、失败、撤销都写进配置目录下的 ``journal/``（见
-  ``core.metadata.journal``）。
-  撤销就是照着最后一条记录改回去；「该撤哪一条」由 ``metadata.undo`` 那一摞共用的栈决定
-  （改名与移到废纸篓共用同一个 ⌘Z，见 ADR 0008）。
-
-本模块不弹窗、不问「要不要继续」：被拒绝就抛 :class:`~gallery.core.errors.RenameError`，
-由界面决定怎么告诉用户。
+**绝不覆盖**：目标已存在就报错（POSIX 的 ``rename`` 会静默覆盖，必须自己挡）；也不许改扩展名、
+不许以「.」开头 —— 那两样都会让照片从 Gallery 里消失。**每一步都记账**：成功、失败、撤销都写进
+``journal/``，「该撤哪一条」由 ``metadata.undo`` 那一摞共用的栈决定（与移到废纸篓共用同一个 ⌘Z，
+ADR 0008）。被拒绝就抛 :class:`~gallery.core.errors.RenameError`，由界面决定怎么告诉用户。
 """
 
 from __future__ import annotations
@@ -59,11 +47,8 @@ def validate_name(name: str, entry: GridEntry) -> str:
     """把用户输入变成一个可以直接用的文件名，不合法就抛异常。
 
     与条目类型无关的那一半（空、以点开头、带分隔符、超长）在
-    :func:`~gallery.core.metadata.naming.clean_name` 里，**只有一份实现** —— 新建相册
-    （ADR 0022）也判这同一套规矩。这里只补上照片特有的一条：
-
-    - 没写扩展名的**补回原来的扩展名**（访达的习惯）；
-    - 写了别的扩展名的**直接拒绝** —— 改了扩展名，这个文件就不再是 Gallery 认得的照片。
+    :func:`~gallery.core.metadata.naming.clean_name` 里，**只有一份实现**。
+    这里只补照片特有的一条：没写扩展名就补回；写了别的直接拒绝 —— 改了就不再是 Gallery 认得的照片。
     """
     cleaned = clean_name(name, error=RenameError)
     if isinstance(entry, PhotoRef):
@@ -76,12 +61,8 @@ def rename_entry(
 ) -> RenameResult:
     """把一个条目改名，结果写进日志。
 
-    **事件绑定跟着一起搬**（ADR 0043 决策 8）：红线 1 豁免的这一改会改路径，而绑定是按路径记的。
-    索引里的 facet 行靠 ``(大小, 修改时间)`` 自动过期、用户无感，事件绑定是用户一份心意，
-    不能这么兜。相册改名要搬它下面**所有**照片的绑定 —— 一次改名牵动几千张。
-
-    :param events: 事件库（可换绑用）。``None`` 或不可用时跳过那一步 —— 配置目录建不出来的
-        库上压根没有事件。
+    **事件绑定跟着一起搬**（ADR 0043 决策 8）：改名会改路径，而绑定是按路径记的；相册改名要搬
+    下面**所有**照片的绑定。:param events: 事件库；``None`` 或不可用时跳过那一步。
     :raises RenameError: 名字不合法、目标已被占用、越权操作，或系统拒绝了这次改名。
     """
     root = Path(root)
@@ -156,9 +137,8 @@ def undo_rename_record(
 ) -> RenameResult:
     """把一条改名记录改回去。
 
-    「哪一条该撤」由 :mod:`gallery.core.metadata.undo` 照着日志重放决定，本模块只管
-    干活 —— 撤销栈不再藏在各自的模块里，改名与删除才能共用同一个 ⌘Z。
-
+    「哪一条该撤」由 :mod:`gallery.core.metadata.undo` 照着日志重放决定，本模块只管干活 ——
+    撤销栈不藏在各模块里，改名与删除才能共用同一个 ⌘Z。
     :raises RenameError: 记录在，但文件已经不在原处（或原处被别的文件占了）。
     """
     root = Path(root)
@@ -206,21 +186,20 @@ def undo_rename_record(
 def _guard(root: Path, source: Path, target: Path) -> None:
     """确认这次改名落在允许的范围内。
 
-    扫描器本来就不会把点开头的目录摆进网格，这里仍然挡一道：这是**会动用户文件的入口
-    之一**（改名 / 移到废纸篓 / 粘贴 / 移动到相册 / 新建相册 / 写回元数据，各有一份
-    同名的 ``_guard``，都经 :func:`~gallery.core.paths.guard_within_root`），值得对
-    「库根」「配置目录」多一层保险。
+    扫描器本就不会把点开头的目录摆进网格，这里仍然挡一道：这是**会动用户文件的入口之一**
+    （改名 / 移到废纸篓 / 粘贴 / 移动到相册 / 新建相册 / 写回元数据，各有一份同名 ``_guard``，
+    都经 :func:`~gallery.core.paths.guard_within_root`），值得对「库根」「配置目录」多一层保险。
     """
     root = Path(root)
     for _path in (source, target):
         try:
-            # 库根本身这道闸就在下面那道里（``allow_root=False``），不必在前面另判一遍。
+            # 库根本身这一条就在下面那次调用里（``allow_root=False``），不必在前面另判一遍。
             paths.guard_within_root(root, _path, allow_root=False)
         except paths.GuardError as exc:
             raise RenameError(_rename_reason(_path, exc), path=_path) from exc
 
 
-#: 闸门拒绝的每一种原因 → 给用户的那句话。**三种都要在**：少一种是 ``KeyError``
+#: 拒绝改名的那几种原因 → 给用户的那句话。**三种都要在**：少一种是 ``KeyError``
 #: 而不是一句含糊的通用话 —— ``GuardReason`` 加了新成员时，这里会当场炸。
 _GUARD_MESSAGES: Final = {
     paths.GuardReason.OUTSIDE_ROOT: "只能重命名库里的东西：{path}。",
@@ -230,7 +209,7 @@ _GUARD_MESSAGES: Final = {
 
 
 def _rename_reason(path: Path, error: paths.GuardError) -> str:
-    """按闸门给的**原因**给一句中文，而不是把它的内部措辞倒给用户。
+    """按拒绝的**原因**给一句中文，而不是把内部措辞倒给用户。
 
     每个写入口各说各的一句话（「不能改名」对「不能删」），共用一句会把「配置目录」
     这种**具体且可行动**的原因降级成括号里的补充。而按原因分支**不按消息文本**分支

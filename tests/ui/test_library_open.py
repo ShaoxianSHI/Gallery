@@ -77,7 +77,7 @@ def test_opening_a_fresh_folder_creates_the_config_dir_and_no_thumbnails_in_it(
 ) -> None:
     """配置目录自动建，而**缩略图不在里面**（ADR 0038 决策 1、决策 2）。
 
-    这一条把用户最初看到的那份重复钉死：照片文件夹里只该多出一个配置目录，
+    这一条把用户最初看到的那份重复固定：照片文件夹里只该多出一个配置目录，
     缩略图一律落在系统缓存里。
     """
     root = tmp_path / "照片"
@@ -273,7 +273,7 @@ def test_switching_to_a_library_with_another_size_does_switch(
 ) -> None:
     """反过来那半也要成立：档位**真的**不同时，必须换过去。
 
-    只钉「没变就不动」会把功能一起钉死 —— 库级的档位（ADR 0038 决策 4）就白做了。
+    只钉「没变就不动」会把功能一起固定 —— 库级的档位（ADR 0038 决策 4）就白做了。
     """
     first = tmp_path / "小档"
     second = tmp_path / "大档"

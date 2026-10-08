@@ -4,7 +4,7 @@
 **读却永远不返回**。那一个解码任务就把一个工作线程永久占住；占满之后整条缩略图流水线停摆，
 而关窗时 Qt 的线程池在析构时又要 join 它们 —— 窗口关了、事件循环退了，**进程却永远不结束**。
 
-这一组把「⌘Q 一定能收工」钉成两件事：
+这一组把「⌘Q 一定能结束」钉成两件事：
 
 1. 关窗要**丢掉排队里还没开始的任务**（``abandon``），否则一次丢进来几百张时，
    关窗要一个一个地等它们跑完；
@@ -165,7 +165,7 @@ def test_closing_drops_the_tasks_that_have_not_started_yet() -> None:
 
         assert done == [], "还没开始的任务在关窗时照样跑了 —— 关窗会被拖住"
     finally:
-        # 一定放行并**等它真的收工**：这个 TaskRunner 是个裸的局部变量，它被回收时会连带析构
+        # 一定放行并**等它真的结束**：这个 TaskRunner 是个裸的局部变量，它被回收时会连带析构
         # 线程池，而池里那个任务还卡在 ``gate.wait()`` 上 —— 形状见 ``tests/ui/conftest.py``
         # 里 qt_teardown 那段注释。
         gate.set()
@@ -175,7 +175,7 @@ def test_closing_drops_the_tasks_that_have_not_started_yet() -> None:
 
 
 def test_abandon_reports_whether_everything_finished() -> None:
-    """``abandon`` 的返回值要说实话：全部收工为 ``True``，否则调用方该记一条日志。"""
+    """``abandon`` 的返回值要说实话：全部结束为 ``True``，否则调用方该记一条日志。"""
     runner = TaskRunner()
     runner.submit(lambda _context: None)
 
@@ -185,7 +185,7 @@ def test_abandon_reports_whether_everything_finished() -> None:
 def test_a_window_closes_cleanly_while_photos_are_unreadable(
     qt_app: object, tmp_path: Path, make_photo: Callable[..., Path]
 ) -> None:
-    """真窗口走一遍：有读不出来的照片在场时，关窗照样收工。"""
+    """真窗口走一遍：有读不出来的照片在场时，关窗照样结束。"""
     root = tmp_path / "库"
     root.mkdir()
     make_photo("一张.jpg", directory=root)

@@ -1,20 +1,8 @@
 """编辑一个事件（旅行、演出……）—— 字段**由事件的定义生成**（ADR 0043）。
 
 这个对话框一个用户的文件都不碰：它只把用户填的那一份读成 :class:`EventEdit`，写库走
-``core.events``。**公共列与类型独有的字段一视同仁**：控件由
-:func:`~gallery.core.events.kinds.fields_of` 摆出来，所以加一类事件、给它加一个字段，
-这里一个字都不用改 —— 面板与建表语句共用同一份定义（ADR 0043 决策 3）。
-
-三处判断写在代码里：
-
-- **名称给一个默认值**：填了目的地与日期之后名称栏自己长成「日期 · 目的地」，直到用户动手
-  改过它为止（见 :meth:`_suggest_title`）。
-- **「把这段日期之间的照片都记进来」** 摆在面板上而**不在右键菜单里** —— 多一级菜单会让
-  「记录为 → 旅行 → 京都五日」变成四级，而这一步本来就只在做这件事的时候才想到（ADR 0043 决策 4）。
-- **封面那一行不是输入框**（``EventField.control`` 说了算，ADR 0048 决策 2）：它显示当前是哪一张，
-  配一个「清除封面」；**挑选在网格里做**（照片右键菜单），新建时整行禁用并说明为什么。
-  它仍然要出现在 :meth:`_values` 里 —— 那份草稿是「写所有列」的依据，漏掉一格就是清空封面。
-"""
+``core.events``。控件由 :func:`~gallery.core.events.kinds.fields_of` 摆出来，加一类事件、给它加
+一个字段，这里一个字都不用改（ADR 0043 决策 3）。"""
 
 from __future__ import annotations
 
@@ -145,11 +133,9 @@ class ChoiceButtons(QWidget):
 def dialog_style(app_theme: AppTheme, palette: QPalette) -> str:
     """对话框的样式。文字色全部从主题派生，与元数据编辑器同一份底色。
 
-    选中的评分按钮借用**与弹出菜单、候选列表同一档**的高亮（``Highlight`` / ``HighlightedText``，
-    由 :mod:`gallery.ui.theme` 钉死），所以要 ``palette`` 把那一份递进来 —— 不在这里另派生一份。
-
-    输入框那圈边框与它自己的底色**先合成成不透明的**（理由见 :mod:`gallery.ui.outline`）：
-    Qt 把样式表那一圈描成八段，半透明的颜色在接缝处被调两遍就深一点。
+    选中的评分按钮借用**与弹出菜单同一档**的高亮（由 :mod:`gallery.ui.theme` 固定），所以要
+    ``palette`` 把那一份递进来；输入框那圈边框与底色**先合成成不透明的**（理由见
+    :mod:`gallery.ui.outline`）：Qt 把样式表那一圈描成八段，半透明的颜色在接缝处被调两遍就深一点。
     """
     highlight = palette.color(QPalette.ColorRole.Highlight)
     highlighted_text = palette.color(QPalette.ColorRole.HighlightedText)
@@ -287,13 +273,10 @@ class EventEditDialog(QDialog):
     def _build_cover(self) -> QWidget:
         """封面那一行：**当前封面的文件名 + 一个「清除封面」**，点后者直接收掉。
 
-        **v1 不做缩略图挑选器**（ADR 0048 决策 2）：新建时「哪些照片会被记进去」要到面板
-        关掉之后才定下来（``_bind_the_new_one``），那时候给一份不完整的候选列表比不给更坏；
-        而要一份完整的就是几千次 ``stat`` 加几千次解码 —— 网格里已经看得见那些照片，
-        「设为事件封面」就挂在那张照片的右键菜单上（决策 6）。
+        **v1 不做缩略图挑选器**（ADR 0048 决策 2）：新建时哪些照片会被记进去要到面板关掉之后才
+        定下来，网格里已经看得见那些照片，「设为事件封面」就挂在那张照片的右键菜单上（决策 6）。
 
-        **新建时整行禁用并说明为什么**：这一行要是摆着却按不动，用户只会以为是坏的。
-        """
+        **新建时整行禁用并说明为什么**：摆着却按不动，用户只会以为是坏的。"""
         row = QWidget()
         layout = QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -411,8 +394,7 @@ class EventEditDialog(QDialog):
         不是「要清空用户填的」。
 
         **只在摆出来这一刻填一次**，之后那几栏归用户：不挂 ``textChanged``，免得用户敲下的
-        目的地被下一次触发顶回照片里那个（``test_what_the_user_types_afterwards_is_left_alone``
-        断的就是这一条）。
+        目的地被下一次触发顶回照片里那个。
         """
         for field_id, text in (
             (self._kind.place_field, prefill.place),

@@ -1,10 +1,9 @@
 """右键菜单（ADR 0014）与挂在菜单上的那几条只读命令。
 
 网格与大图页**共用同一套流程**：视图只报「按在了哪」，菜单在这一侧拼；两个 ``*_context_menu``
-只拼不弹，测试因此可以直接调它看内容。
-
-「粘到哪里」由**落点**决定而不是由菜单决定，递给菜单的是**同一枚动作**（菜单栏那个 ⌘V），所以
-不可能出现「写着 ⌘V、按下去却是另一个地方」的分裂；菜单里「有什么」在 :mod:`gallery.ui.menus`。
+只拼不弹，测试因此可以直接调它看内容。粘到哪里由**落点**决定而不是由菜单决定，递给菜单的是
+**同一枚动作**（菜单栏那个 ⌘V），所以不会出现「写着 ⌘V、按下去却是另一个地方」的分裂；
+菜单里「有什么」在 :mod:`gallery.ui.menus`。
 """
 
 from __future__ import annotations
@@ -72,7 +71,7 @@ class ContextMenuFlowMixin:
             return None
         entry = self._model.entry_at(row) if row >= 0 else None
         if row >= 0 and entry is None:
-            # 扫描还在流式上屏时，模型可能已经往前挪过：宁可不弹，也不弹一份错的。
+            # 扫描还在把结果流式显示到界面时，模型可能已经往前挪过：宁可不弹，也不弹一份错的。
             return None
         self._update_action_states()
         kind = TargetKind.BLANK if entry is None else _context_kind(entry)
@@ -124,9 +123,8 @@ class ContextMenuFlowMixin:
         """事件分组卡片上那几行的动作（ADR 0043 决策 8、ADR 0048 决策 6），别的卡片全给 ``None``。
 
         **动作本身常驻窗口**（不是每次现建），因为它们要挂快捷键、也要能被 ``_update_action_states``
-        管 —— 判据只在这里算一次：那一格背后是不是一个认得的事件。
-
-        第三个是「清除事件封面」，判据多一层（那个事件真的设过封面）。
+        管 —— 判据只在这里算一次：那一格背后是不是一个认得的事件。第三个是「清除事件封面」，
+        判据多一层（那个事件真的设过封面）。
         """
         if _event_id_of(entry) is None:
             return None, None, None
@@ -150,16 +148,10 @@ class ContextMenuFlowMixin:
     ) -> QAction | None:
         """这一下右键该递进去的那一条「粘贴」——**粘到哪里由落点决定**（ADR 0018 决策 7）。
 
-        | 落点 | 菜单里那一条 |
-        |------|--------------|
-        | **空白处** | 粘进**当前这一层** |
-        | **单个相册** | 粘进**这个相册内部**，不是它所在的这一层 |
-        | 照片 / 多选照片 / 分组卡片 / 多个相册 | **不出现** |
-        | 大图页 | 不出现（那一页连「当前这一层」都没有） |
-
-        前两处递进去的**是同一枚动作**（:attr:`_paste_action`，菜单栏那个 ⌘V），因此「点它」与
-        「按 ⌘V」是同一件事；粘到哪里一律由 :meth:`_paste_target` 按选区算。
-        """
+        空白处粘进**当前这一层**；单个相册粘进**这个相册内部**；照片 / 多选照片 / 分组卡片 /
+        多个相册 / 大图页都**不出现**。前两处递进去的**是同一枚动作**（:attr:`_paste_action`，
+        菜单栏那个 ⌘V），因此「点它」与「按 ⌘V」是同一件事；粘到哪里一律由
+        :meth:`_paste_target` 按选区算。"""
         if kind is TargetKind.ALBUM and not multiple and isinstance(entry, FolderRef):
             # 剪贴板里没有文件则整条不出现（ADR 0018 决策 6）。
             if not desktop.read_files_from_clipboard():
@@ -244,14 +236,10 @@ class ContextMenuFlowMixin:
     def reveal_selection(self) -> None:
         """「在访达中显示」：**照片**是在访达里选出来，**相册**是打开进去（见 ``ui.desktop``）。
 
-        两者不是一回事。``open -R`` 把文件夹在**它上一级**里选出来，而对着相册按这一下的
-        人想看的是它**里面**摆着什么 —— 所以整个选区都是相册时才走
-        ``open_folder_in_finder``。选区里混进了照片（或者本来就是照片、分组卡片）就仍然是
-        选出来：照片要的是「在访达里把**它**挑出来」。
-
-        选中的**分组卡片**摊平成它的组员（ADR 0020）：卡片自己没有路径，而它代表的
-        那批照片在访达里实实在在地摆着 —— 那是照片那一路。
-        """
+        两者不是一回事：``open -R`` 把文件夹在**它上一级**里选出来，而对着相册按这一下的人
+        想看的是它**里面**摆着什么，所以只有整个选区都是相册时才走
+        ``open_folder_in_finder``。混进照片（或本来就是照片、分组卡片）则仍是选出来；
+        选中的**分组卡片**摊平成它的组员（ADR 0020）。"""
         entries = self._selected_entries()
         paths = self._selected_paths()
         if not paths:

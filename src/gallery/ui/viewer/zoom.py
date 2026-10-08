@@ -49,9 +49,6 @@ def fit_scale(
     这里不能拿 :data:`MAX_SCALE` 当上限：它是给手动放大用的，而「适应窗口」要回答的是
     「这张图铺满视口需要几倍」—— 168 像素的缩略图在 2400 像素宽的窗口里要 12 倍以上。
     卡在 8 倍的话，缓存未命中时先用缩略图顶着显示、全分辨率图到了再「变大一圈」。
-
-    :param allow_upscale: 是否允许小图被放大到填满视口。默认允许 —— 看一张 200px 的
-        缩略图时用户期待它铺满窗口，而不是缩在角落。
     """
     image_width, image_height = image
     viewport_width, viewport_height = viewport

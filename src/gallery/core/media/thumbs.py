@@ -1,12 +1,9 @@
 """缩略图磁盘缓存。
 
-缓存是**可以随时删掉**的东西，所以每条路径都要能自愈（目录不存在就建、坏文件删掉重生成、
-超上限按修改时间淘汰）；写不进去（磁盘满、只读目录）只应导致「慢一点」，绝不能让看图失败。
-
-缓存 key 覆盖所有会影响像素的输入：``(绝对路径, mtime_ns, size, max_edge, spec_version)``。
-带透明通道的源图存 PNG（否则透明区域变黑），其余存 JPEG。**总量靠记账而不是靠数目录**
-（见 ``_total_bytes`` 与 ADR 0015）：靠 ``iterdir()`` 答「缓存有多大了」的话，每写一张图
-付一次 O(条目数)，在 2 GiB 上限下比编码加落盘还贵一倍。
+缓存**可以随时删掉**，所以每条路径都要能自愈（目录不存在就建、坏文件删掉重生成、超上限按修改时间淘汰）；写不进去只应导致「慢一点」，绝不能让看图失败。
+缓存 key 覆盖所有影响像素的输入（``绝对路径, mtime_ns, size, max_edge, spec_version``），
+带透明通道的源图存 PNG，其余存 JPEG。
+**总量靠记账而不是靠数目录**（见 ``_total_bytes`` 与 ADR 0015）：数目录比编码加落盘还贵得多。
 """
 
 from __future__ import annotations
@@ -66,12 +63,9 @@ _ORPHAN_PATTERN: Final = re.compile(
 def _is_orphan(name: str) -> bool:
     """这个文件名是不是一次**崩在半路的原子写**留下的孤儿？
 
-    ``write_bytes_atomic`` 的顺序是 ``mkstemp → 写 → fsync → os.replace``；进程被 SIGKILL
-    或机器断电会崩在中间，那个临时文件**永远留在缓存目录里**，可它实实在占着磁盘。
-
-    它过去对记账完全隐形（``_entries()`` 只认 ``.jpg`` / ``.png``），于是 ``total_bytes()``
-    少算、``enforce_limit()`` 够不着它、``clear()`` 报告「已清空」却留下它 —— 2 GiB 上限
-    因此不是真的上限。认了它就只是又一条可淘汰的条目。
+    ``write_bytes_atomic`` 的顺序是 ``mkstemp → 写 → fsync → os.replace``，进程被 SIGKILL 或
+    断电会崩在中间，那个临时文件**永远留在缓存目录里**，却实实在在占着磁盘。认了它（而不是
+    只认 ``.jpg`` / ``.png``）之后，记账、淘汰、清空三处才对得上，2 GiB 上限才是真的上限。
     """
     return _ORPHAN_PATTERN.fullmatch(name) is not None
 
@@ -256,10 +250,9 @@ class ThumbnailCache:
     def _entries(self) -> list[tuple[Path, int, float]]:
         """列出缓存条目：``(路径, 字节数, 修改时间)``。
 
-        **一次 ``stat()`` 走到底**：``Path.is_file()`` 本身就是一次 ``stat``，紧接着
-        ``path.stat()`` 又是同一个 inode 的第二次，而 :meth:`enforce_limit` 是最热的一处。
-        **孤儿（``.tmp``）也算条目**（见 :func:`_is_orphan`）：这里认它，记账、淘汰、清空
-        三处就一起对上了 —— 漏掉任何一处，2 GiB 上限都只是看着像上限。
+        **一次 ``stat()`` 走到底**：``Path.is_file()`` 与紧随的 ``path.stat()`` 是同一个 inode 的
+        两次 ``stat``，而 :meth:`enforce_limit` 是最热的一处。**孤儿（``.tmp``）也算条目**
+        （见 :func:`_is_orphan`）：这里认它，记账、淘汰、清空三处就一起对上了。
         """
         try:
             candidates = list(self._directory.iterdir())

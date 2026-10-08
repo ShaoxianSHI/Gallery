@@ -292,8 +292,8 @@ def test_a_failed_copy_is_journaled_as_failed(library: Path, monkeypatch) -> Non
 
 
 def test_paste_is_not_in_the_undo_stack(library: Path) -> None:
-    """粘进来的文件**不能 ⌘Z**：撤销粘贴就是删文件（红线 1）—— 这里最容易日后被人
-    「顺手补上」，所以钉住：粘完之后撤销栈仍然是空的，而新文件还在。
+    """粘进来的文件**不能 ⌘Z**：撤销粘贴就是删文件（删除只许用户亲手触发）—— 这里最容易日后被人
+    「顺手补上」，所以锁定：粘完之后撤销栈仍然是空的，而新文件还在。
     """
     _paste(library, library / "奈良", library / "京都" / "一张.jpg")
 
@@ -360,7 +360,7 @@ def test_the_library_root_is_a_legal_paste_target(library: Path, tmp_path: Path)
 
 def test_the_config_directory_is_not_a_paste_target(library: Path, tmp_path: Path) -> None:
     """配置目录里都是「只有 Gallery 自己看得见」的缓存：用户往里粘照片不会让它变得可见，
-    只会让下一次清理把它当垃圾（红线 5）。"""
+    只会让下一次清理把它当垃圾（``.gallery/`` 里除 ``config.toml`` 外都是缓存）。"""
     source = tmp_path / "从访达粘来的.jpg"
     Image.new("RGB", (8, 6), (30, 60, 90)).save(source)
 
@@ -371,7 +371,7 @@ def test_the_config_directory_is_not_a_paste_target(library: Path, tmp_path: Pat
 def test_an_unreadable_destination_never_deletes_the_folder_already_there(
     library: Path, tmp_path: Path
 ) -> None:
-    """**目录读不了的时候，绝不能把用户已有的同名文件夹连同照片删掉**（红线 1）。
+    """**目录读不了的时候，绝不能把用户已有的同名文件夹连同照片删掉**（不删除、不移动用户照片那条）。
 
     缺陷现场（已实测复现，用户目录连同 3 张照片一起消失）：
     ``occupied_names`` 在 ``scandir`` 失败时返回**空集**，而 ``free_name_in`` 的
@@ -410,7 +410,7 @@ def test_an_unreadable_destination_never_deletes_the_folder_already_there(
 def test_a_same_named_file_dropped_in_mid_batch_is_never_overwritten(
     library: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """**「绝不覆盖」得由磁盘保证，不能只靠批次开始时那张快照**（红线 1）。
+    """**「绝不覆盖」得由磁盘保证，不能只靠批次开始时那张快照**（不删除、不移动用户照片那条）。
 
     ``occupied_names`` 是操作开始那一刻的一次快照，而一批几百项、跨卷时要跑几分钟。
     期间用户或访达/同步工具放进去的同名文件，那张表看不见：``shutil.copy2`` 会

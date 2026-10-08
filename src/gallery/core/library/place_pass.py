@@ -2,9 +2,7 @@
 
 它只服务 :meth:`~gallery.core.library.facade.Library.resolve_places` 与
 :meth:`~gallery.core.library.facade.Library.photo_facets` 的「补齐」那一段，是一组纯函数：
-给一行 :class:`~gallery.core.metadata.facets.PhotoFacets`，判断还缺不缺地点、值不值得再读
-一次 EXIF、查完怎么记下「查过了（哪怕没查到）」。**删掉缓存里那一行就会整体重算**，所以
-「查不到也是结论」这条判据必须完整 —— 单独出来正是为了让这条界线一眼看得清。
+**删掉缓存里那一行就会整体重算**，所以「查不到也是结论」这条判据必须完整。
 """
 
 from __future__ import annotations
@@ -103,10 +101,10 @@ def _resolve_batch(
                 facets = _resolved(facets, resolver, status)
                 resolved += 1
         elif _has_coordinates(facets):
-            # guard: allow-long-comment（判据是「已经齐全」而不是「查过」，差一条就永久钉死）
+            # guard: allow-long-comment（判据是「已经齐全」而不是「查过」，差一条就永久固定）
             # **文件自己就写全了地点**（Lightroom 导出的 XMP 如此）：那份地点同样是结论而且更准，
             # 照 ADR 0010「文件里写了就以文件为准」记下来就是。判据是「**已经齐全**」而不是
-            # 「查过」—— 地点还缺着时不能记，否则等于把这张照片永久钉在「未知」上。
+            # 「查过」—— 地点还缺着时不能记，否则等于把这张照片永久固定在「未知」上。
             facets = mark_place_resolved(facets)
         rows.append((ref, facets))
     index.store(rows)

@@ -1,6 +1,6 @@
 """那六个字段**不再是字段** —— 它们是栈的投影，而栈只有四个写入口。
 
-**这一份是 ADR 0041 实施步骤 2 的守护**，盯的是「手工同步彻底消失」这件事本身。
+**这一份是 ADR 0041 实施步骤 2 的回归测试**，盯的是「手工同步彻底消失」这件事本身。
 
 原先「我在哪」由六个可变字段表达，而它们之间有一堆没人声明的互斥关系，于是每加一条路径都要
 靠人记住「这六个该一起清哪些」。漏掉一个的症状是**看起来完全正确的死路**（按 Esc 没反应），
@@ -46,7 +46,7 @@ def _source_root() -> Path:
 
     **``parents[3]`` 不是 ``[2]``**：本文件在 ``tests/ui/window/`` 下，往上三级才是仓库根。
     写成 ``[2]`` 时那个路径指向 ``tests/src/gallery/ui``（不存在），于是 ``rglob`` 扫到
-    **零个文件**而两条守护一路绿 —— 而「永远为绿的守护比没有更坏」（AGENTS.md）。
+    **零个文件**而两条回归测试一路绿 —— 而「永远为绿的回归测试比没有更坏」（AGENTS.md）。
     """
     root = Path(__file__).resolve().parents[3] / "src" / "gallery" / "ui"
     assert root.is_dir(), f"扫的目录不存在：{root}（守护会静默扫零个文件而一路绿）"
@@ -117,7 +117,7 @@ def test_the_stack_is_only_written_through_those_four_methods() -> None:
     """``self._level_stack = …`` 只允许出现在 ``level_stack_mixin.py`` 与建栈的那一处。
 
     放行**整个 mixin 文件**而不是行号范围 —— 行号会随注释增删漂移（实测：四个写入口分布在
-    163…190 之间，写死范围之后只是挪一行就红，而那红与被守的东西无关）。
+    163…190 之间，硬编码范围之后只是挪一行就红，而那红与被守的东西无关）。
     「四个写入口都在那个文件里」由 :func:`test_the_writers_exist_and_live_in_one_mixin`
     单独钉着，所以这里放行整个文件不构成漏洞。
 
@@ -221,7 +221,7 @@ def test_the_group_view_reads_the_top_frame_not_the_deepest_one() -> None:
     这条量的是「判断写在哪」：栈上若是「相册 → 分组」而搜索帧压在分组之上，早先那个
     「从底往上找最后一个分组帧」的版本会让 ``_group_view`` 仍非空，而它有 29 个调用点 ——
     任何一处把它读成「我在分组里」都会做出分组专用行为（典型的是写操作只作用在组内照片上，
-    那是红线 1 那条）。用户定的「搜索结果平铺」把那整类歧义消掉了，所以判据只能是栈顶。
+    那是删除那条）。用户定的「搜索结果平铺」把那整类歧义消掉了，所以判据只能是栈顶。
     """
     group = GroupRef("camera", "canon", "Canon", ())
     host = _host_with(LevelStack(root=RootKind.ALBUMS).push(GroupFrame(group)))
@@ -295,7 +295,7 @@ def test_switching_albums_replaces_the_whole_pile_not_just_the_album_frames() ->
 def test_an_empty_cell_is_not_the_same_as_not_in_a_cell() -> None:
     """**空元组与 ``None`` 是两件事** —— 合成一处会让「在那一格里但空的」变成「不在那一格」。
 
-    那一格摊开的内容是空的，而 :meth:`MainWindow._reload_level` 里要按「有没有日历格」决定
+    那一格展开的内容是空的，而 :meth:`MainWindow._reload_level` 里要按「有没有日历格」决定
     清不清它 —— 判据一旦变成「照片是不是空的」，那一格就会一直留着，而人以为还在那一格里。
     """
     empty = _host_with(

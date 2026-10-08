@@ -1,17 +1,9 @@
 """事件类型与字段的定义 —— **面板与 SQL 列名的唯一来源**（ADR 0043）。
 
-每一类事件（旅行、演出……）的字段都不一样，所以这里给每一类一份 :class:`EventKind`，
-里面列着它独有的 :class:`EventField`。两处都从这份定义生成，都不许手写：
-
-- 输入面板由 :data:`COMMON_FIELDS` 加 ``kind.fields`` **生成**控件；
-- SQLite 的建表语句与读写语句由 ``field.column`` **拼出**列名。
-
-**为什么强调「不许手写」**：ADR 0026 那一轮把拍摄时间的列名写成了 ``f.captured_at``（那是
-``PhotoFacets`` 上的属性名，列名其实是 ``captured``），解析层与生成 SQL 两层都察觉不到，
-SQLite 直到执行才说 ``no such column``，而那句话被包成「检索没能完成」——界面上与
-「条件太严」长得一模一样。加一个字段的守护测试因此是**拿真 schema 把每个声明的列跑一遍**。
-
-纯定义：不碰 SQLite、不碰文件、不依赖 Qt，因此可以直接单测。
+每一类事件的字段都不一样，这里给每一类一份 :class:`EventKind`。面板控件与 SQLite 的建表 /
+读写语句都从这份定义生成，**不许手写**：ADR 0026 那一轮把列名写错，两层都察觉不到，SQLite
+直到执行才报 ``no such column``，而界面把它显示成「条件太严」。纯定义，不碰 SQLite、不碰文件、
+不依赖 Qt，可直接单测。
 """
 
 from __future__ import annotations
@@ -45,11 +37,9 @@ SQL_TYPES: Final = frozenset({"TEXT", "INTEGER", "REAL", "DAY"})
 class EventField:
     """一类事件里的一个字段。
 
-    ``column`` 是它在扩展表里的列名，``id`` 是它在面板与筛选里的名字 —— 两者分开是因为
-    「目的地」那一栏可以填「京都、奈良」多项，列名于是成了复数。
-
-    ``sql_type`` 与 ``column`` 一样由这里声明、**不许在别处手写**：花费那一列存成 ``TEXT`` 的
-    话，``#花费 >3000`` 会被 SQLite 按文本比（``"900" > "3000"`` 为真）。
+    ``column`` 是扩展表里的列名，``id`` 是面板与筛选里的名字（两者分开：多值字段的列名成了复数）。
+    ``sql_type`` 与 ``column`` 一样由这里声明、**不许在别处手写**：花费那一列若存成 ``TEXT``，
+    ``#花费 >3000`` 会被 SQLite 按文本比（``"900" > "3000"`` 为真）。
     """
 
     id: str
@@ -198,10 +188,8 @@ def join_multi(items: tuple[str, ...]) -> str:
 def suggested_title(kind: EventKind, values: Mapping[str, str]) -> str:
     """新建事件时给名称栏的一个默认值：「开始日期 · 关键字段」。
 
-    「关键字段」由 :attr:`EventKind.title_parts` 说了算，取第一个非空的（旅行是目的地，
-    演出先剧目再艺人）。比留空必填少一次决定 —— 参照的是系统日历新建事件时那个自动标题的
-    行为。有内容就**不带类型名**（用户刚从菜单点过来，已经知道是旅行还是演出）；什么都没填才
-    退回一个能认出来的名字。
+    「关键字段」由 :attr:`EventKind.title_parts` 说了算，取第一个非空的。有内容就**不带类型名**
+    （用户刚从菜单点过来）；什么都没填才退回一个能认出来的名字 —— 参照系统日历新建事件的行为。
     """
     head = values.get("started_on", "").strip()
     tail = _title_tail(kind, values)
@@ -277,11 +265,8 @@ def parse_cost(text: str) -> float | None:
 def parse_calendar_day(text: str) -> date | None:
     """把用户填的日期读成 ``date``；看不懂就是 ``None``。
 
-    **月与日可以省**：``2026-05`` 读成那个月的 1 号 —— 旅行常常只知道「五月去的」，
-    逼用户补一个具体日子只会让人随便挑一个，而那个日子会跟着进日期筛选。
-
-    具体日子交给 :class:`datetime.date` 判（``2026-02-31`` 会被挡下来），手写「一个月最多
-    31 天」会把二月糊弄过去。
+    **月与日可以省**：``2026-05`` 读成那个月的 1 号 —— 旅行常常只知道「五月去的」，逼用户补一个
+    具体日子只会让人随便挑一个。具体日子交给 :class:`datetime.date` 判（``2026-02-31`` 会被挡下）。
     """
     parts = text.strip().split("-")
     if len(parts) not in (2, 3):

@@ -95,11 +95,11 @@ def test_config_dir_cannot_be_renamed(tmp_path: Path) -> None:
 
 
 def test_library_root_cannot_be_renamed(tmp_path: Path) -> None:
-    """**钉住这句文案**，不只是「提到库本身」。
+    """**锁定这句文案**，不只是「提到库本身」。
 
-    改名的入口按 :attr:`~gallery.core.paths.GuardError.reason` 把闸门的结论翻成这句话
+    改名的入口按 :attr:`~gallery.core.paths.GuardError.reason` 把前置条件的结论翻成这句话
     （``_rename_reason``），所以它是「改不了」时用户唯一会看到的东西 —— 文案本身值得
-    逐字钉住。**而它按原因分支、不按 ``core.paths`` 的消息文本**：那边改一个字的措辞
+    逐字锁定。**而它按原因分支、不按 ``core.paths`` 的消息文本**：那边改一个字的措辞
     不该动到这里（那一层是内部信号，见 :class:`~gallery.core.paths.GuardError`）。
     """
     with pytest.raises(RenameError) as caught:

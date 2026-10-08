@@ -37,7 +37,7 @@ GROUP_COUNT_ROLE = int(Qt.ItemDataRole.UserRole) + 5
 #: 默认缩略图边长，与档位定义（``ui.thumb_sizes``）同源。
 DEFAULT_ICON_EDGE = DEFAULT_EDGE
 
-#: 内存中最多保留多少张已缩放的缩略图。**这是兜底，不是主要的那个** ——
+#: 内存中最多保留多少张已缩放的缩略图。**这是回退上限，不是主要的那个** ——
 #: 真正的上限是 :data:`PIXMAP_MEMORY_BUDGET`，而这一条留着是为了「边长极小时张数无界」
 #: 那种情形（此时每张只占几 KB，按字节算会一直存下去）。
 DEFAULT_PIXMAP_CACHE = 600
@@ -120,7 +120,7 @@ class PhotoListModel(QAbstractListModel):
     def shows_path(self, path: Path) -> bool:
         """这一层里还有没有这个东西：作为条目本身，或者作为某个分组卡片的封面。
 
-        「在途的缩略图结果还该不该认」只由这一处说了算：回填与失败上报是同一件事的两面。
+        「进行中的缩略图结果还该不该接受」只由这一处说了算：回填与失败上报是同一件事的两面。
         """
         target = Path(path)
         return target in self._row_by_path or target in self._group_rows_by_cover
@@ -206,12 +206,9 @@ class PhotoListModel(QAbstractListModel):
     def insert_entry(self, entry: GridEntry, *, whole_level: bool = False) -> int:
         """把一条**取回来的**条目插回它该在的行，返回那一行的行号。
 
-        撤销删除之后用：按「同一目录内（相册在前，名字）」插到与扫描器排序一致的位置，
-        一个兄弟节点都不在屏幕上时追加到末尾。
-
-        :param whole_level: 这一层不是同一个目录时（平铺模式、分组视图）置 ``True``：
-            「兄弟节点」这个前提不成立，位置要在整层里按名字找；监听往平铺层里插一张
-            照片必须用它，否则会被追加到末尾而与旁边的照片错位（ADR 0013）。
+        撤销删除之后用：按「同一目录内（相册在前，名字）」插到与扫描器排序一致的位置。
+        ``whole_level`` 置真表示这一层不是同一个目录（平铺、分组），「兄弟节点」这个前提
+        不成立，位置要在整层里按名字找 —— 监听往平铺层插照片必须用它，否则会追加到末尾（ADR 0013）。
         """
         if isinstance(entry, GroupRef):
             # 撤销删除取回的是磁盘上的东西，不会有分组卡片从这里回来。
@@ -234,14 +231,9 @@ class PhotoListModel(QAbstractListModel):
     def _shift_rows_from(self, first: int) -> None:
         """插在 ``first`` 之前：**``first`` 及其后的每一行行号 +1**。
 
-        **不要整份重建**：一次插行把两张索引整个重扫一遍，而监听器一次报一批新文件，代价会随
-        行数放大。真正变的只有**后移的那一段** —— ``first`` 之前的行号一个字都没动；从 ``first``
-        起往后重登记，代价与「插在哪儿」成正比（通常插在末尾，那就是零）。
-
-        **分组卡片那本仍然整份重建**：它的值是**一个行号列表**，只会被追加，插行之后列表里那些
-        旧行号全都失效了，增量改不动 —— 一本「哪些行号指向这张照片」的历史清单没法逐条 +1。
-        好在分组视图里插行是少数情形（监听器往平铺层插照片时压根没有组卡片），
-        而 :meth:`_group_rows_by_cover` 只在真有组卡片时才扫。
+        **不要整份重建**：一次插行会把两张索引整个重扫，而监听器一次报一批新文件，代价随行数
+        放大。真正变的只有**后移的那一段**，从 ``first`` 起往后重登记（通常插在末尾，那就是零）。
+        **分组卡片那本仍然整份重建**：它的值是**一个行号列表**，插行之后那些旧行号全都失效。
         """
         self._group_rows_by_cover = {}
         for index in range(first, len(self._entries)):
@@ -254,7 +246,7 @@ class PhotoListModel(QAbstractListModel):
     def append(self, entries: Sequence[GridEntry]) -> None:
         """追加一批条目（扫描是流式的，界面不等整层扫完就能出图）。
 
-        已经在屏幕上的路径会被跳过：那张会由监听单独插进来（ADR 0013），两处都收下就会
+        已经在屏幕上的路径会被跳过：那张会由监听单独插进来（ADR 0013），两处都记录就会
         出现两格同一张照片。
         """
         known = set(self._row_by_path)
@@ -300,7 +292,7 @@ class PhotoListModel(QAbstractListModel):
 
         :param edge: 这张图是按哪个长边缩好的（见 ADR 0015）。``0`` 表示没缩过 ——
             退回按当前 :attr:`icon_edge` 在这里缩一次。**记账用的就是这个值**：边长与
-            当前档位对不上时 :meth:`needs_thumbnail` 会说还需要，在途的结果会被顶替。
+            当前档位对不上时 :meth:`needs_thumbnail` 会说还需要，进行中的结果会被顶替。
         """
         if not self.shows_path(path):
             return  # 条目已经被换层清掉了，直接丢弃
@@ -411,11 +403,8 @@ class PhotoListModel(QAbstractListModel):
         """这条条目该插在第几行：排在它后面的第一行，或末尾。
 
         默认只看**同一个目录**里的邻居（相册在前、同类按名字，与扫描一致）；``whole_level``
-        为真时在整层里按同一把尺子找位置。已经有分组 / 排序时改由调用方重排整层 ——
-        那时「排在哪里」由排出来的顺序说了算。
-
-        ``entry.path.parent`` 与 ``name.casefold()`` 都提到了循环外：写在 ``and`` 右边就是
-        每行重算一遍同一个值，而 :attr:`_keys` 让后者变成纯列表取值（三万行插一行 48 → 6 ms）。
+        为真时在整层里按同一把尺子找。已经在分组 / 排序时改由调用方重排整层。``entry.path.parent``
+        与 ``name.casefold()`` 都提到了循环外：写在 ``and`` 右边就是每行重算一遍。
         """
         key = _sort_key(entry)
         parent = entry.path.parent

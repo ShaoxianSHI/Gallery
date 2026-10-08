@@ -2,7 +2,7 @@
 
 只测纯函数那一层：**真跑会把访达与默认应用叫起来**，那是测试机上真实的副作用。这里把
 ``QDesktopServices`` 与 ``QProcess`` 换成假实现，于是「交给系统的是什么」与「系统不接时
-我们说什么」都能钉死，而一个文件也不必真的存在。
+我们说什么」都能固定，而一个文件也不必真的存在。
 
 窗口那一侧（什么时候可用、快捷键按不按得出来，以及**照片与相册走的是不是同一条**）在
 ``test_context_menu.py`` 里测 —— 它离不开真实的 ``MainWindow``。
@@ -88,7 +88,7 @@ def test_open_with_default_app_talks_to_the_system_exactly_once(
 
     ``QDesktopServices.openUrl`` 只吃一个 URL，所以「打开多张」要么逐个调、要么根本
     没实现 —— 这条命令在产品里只对当前这一张可用（多选时菜单里压根不出现），因此这里
-    钉死的就是**一张照片一次请求**，不多不少。
+    固定的就是**一张照片一次请求**，不多不少。
     """
     services = _DesktopServices(True)
     monkeypatch.setattr(desktop, "QDesktopServices", services)
@@ -102,7 +102,7 @@ def test_opening_a_folder_goes_inside_it(monkeypatch: pytest.MonkeyPatch) -> Non
     """对着文件夹走的是**不带 ``-R``** 的那个 ``open``：访达落到它**里面**去。
 
     这一行就是两条路的分界。带了 ``-R`` 访达会停在**上一级**里把这个文件夹选出来 ——
-    用户要看的是**里面**摆着什么，看到的是外面那一层。这条断言写死参数表就是为了让
+    用户要看的是**里面**摆着什么，看到的是外面那一层。这条断言硬编码参数表就是为了让
     任何人想把两条并成一条时立刻看见红。
     """
     process = _Process(True)

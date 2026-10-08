@@ -1,6 +1,6 @@
 """月视图：7 列 × 6 行，每格**一张照片**（当天最早的那张当封面，点它看那天全部）。
 
-**今天只写成蓝字，不加药丸**（周视图里今天才是蓝圆点，别抄混）；**补位格只有日期号、没有
+**今天只写成蓝字，不加药丸**（周视图里今天才是蓝圆点，别抄混）；**占位格只有日期号、没有
 照片** —— 那 6 × 7 是为了对齐星期几铺满的，而这一屏回答的是「这个月拍了什么」。
 """
 
@@ -104,7 +104,7 @@ class MonthView(LevelView):
             colors.accent if day == self.today() else (colors.faint if outside else colors.text),
             elide=False,
         )
-        # **补位格到此为止**：那几格是邻月的日子，摆照片就是把邻月的照片摆进这一月。
+        # **占位格到此为止**：那几格是邻月的日子，摆照片就是把邻月的照片摆进这一月。
         if outside:
             return
         photos = self.photos_of(day)
@@ -148,14 +148,14 @@ class MonthView(LevelView):
         row = int((point.y() - body_top) // row_height)
         if 0 <= column_index < 7 and 0 <= row < 6:
             day = month_matrix(self._anchor)[row * 7 + column_index]
-            # **补位格点了不动**：摊开邻月那天的照片会让人以为「这一格明明是空的」。
+            # **占位格点了不动**：展开邻月那天的照片会让人以为「这一格明明是空的」。
             if not in_month(day, self._anchor):
                 return
             self.set_selected(day)
             self.select_cell(self.photos_of(day), day_label(day))
 
     def visible_refs(self) -> list[PhotoRef]:
-        """一屏放得下的那些天，各要一张缩略图（**补位格不要**：那里不摆照片，解出来永远画不上）。"""
+        """一屏放得下的那些天，各要一张缩略图（**占位格不要**：那里不摆照片，解出来永远画不上）。"""
         refs: list[PhotoRef] = []
         for index, day in enumerate(month_matrix(self._anchor)):
             cell = self._day_cell(index)

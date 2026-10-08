@@ -410,7 +410,7 @@ def test_a_failure_is_said_out_loud_in_the_core_wording(
     共同点是**都已经想清楚了该怎么说** —— 界面这一侧只负责把它说出来，
     而且失败就是失败：不改内存里那份配置（否则封面会「记得」一个压根没存下来的路径）。
 
-    「绝不把配置目录偷偷建回来」那条红线由 ``tests/core/library/test_facade.py``
+    「绝不把配置目录偷偷建回来」那条硬性约束由 ``tests/core/library/test_facade.py``
     在真实文件系统上守着：那里删掉的是真的目录，不必与缩略图线程赛跑。
     """
     message = "这个库里没有 .gallery 目录，封面设置没有地方保存。"
@@ -445,7 +445,7 @@ UI_ROOT = Path(__file__).resolve().parents[2] / "src" / "gallery" / "ui"
 def test_setting_a_cover_happens_in_write_ops_and_nowhere_else() -> None:
     """界面上写封面的调用点只许出现在 ``ui/write_ops.py`` 里。
 
-    封面落在那里（它确实是那种写入），那就该被同样地钉住，否则下一条命令又会散回
+    封面落在那里（它确实是那种写入），那就该被同样地锁定，否则下一条命令又会散回
     几千行装配代码里，而那时只剩人记。
     """
     offenders: list[str] = []

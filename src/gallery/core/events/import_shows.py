@@ -1,12 +1,8 @@
 """从「演迹」导出的 ``.xlsx`` 里读出演出，翻成一批 :class:`EventDraft`（ADR 0047）。
 
-**纯解析**：它只把一张表格读成草稿，谁去建事件由
-:meth:`~gallery.core.library.facade.Library.import_shows` 决定 —— 于是这一层不碰事件库、不碰
-Qt，能直接单测。xlsx 用标准库的 ``zipfile`` + ``xml.etree`` 读（一个工作表、两种 XML），
-不为这一件小事引第三方依赖。
-
-表头就是「演迹」导出里的中文列名。**少一列不算错**（版本之间列会增减），但连
-``演出名称`` 都没有的话，看起来就不是这个格式 —— 那时说清楚，而不是猜着读下去。
+**纯解析**：谁去建事件由 :meth:`~gallery.core.library.facade.Library.import_shows` 决定 ——
+这一层不碰事件库、不碰 Qt，能直接单测。xlsx 用标准库的 ``zipfile`` + ``xml.etree`` 读，
+不为这件小事引第三方依赖。**少一列不算错**，但连 ``演出名称`` 都没有就说明不是这个格式。
 """
 
 from __future__ import annotations

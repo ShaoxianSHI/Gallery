@@ -47,9 +47,8 @@ def banner_width(area: QRect, *, avoid: QRect | None = None) -> int:
     """横幅在 ``area`` 里能有多宽。
 
     窗口窄到一行都放不下时就让文字换行，也不越出 ``area``。``avoid`` 是**要避开的那一块**
-    （大图页上的元数据面板），与 ``area`` 同一套坐标：横幅按 ``area`` 居中，只要会压到那一块
-    就把宽度收窄到「居中之后右边缘正好停在它左边」，**位置一分都不动**；收窄到
-    :data:`MIN_AVOID_WIDTH` 以下就不再让了。
+    （大图页上的元数据面板），与 ``area`` 同一套坐标：横幅居中照 ``area`` 算，会压到那一块
+    就收窄到右边缘正好停在它左边、**位置一分都不动**；窄到 :data:`MIN_AVOID_WIDTH` 就不再让。
     """
     room = area.width() - 2 * MARGIN_SIDE
     if avoid is not None and area.intersects(avoid):
@@ -97,14 +96,14 @@ class BannerOverlay(QLabel):
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # 几何完全由外面给（``setGeometry``），别让某个布局顺手改它。
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        # 纯提示，不该吃掉底下那一片的点击与拖动（它正压在网格上，挡住就变成点空处）。
+        # 纯提示，不该忽略掉底下那一片的点击与拖动（它正压在网格上，挡住就变成点空处）。
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self._area = QRect()
         self._avoid: QRect | None = None
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self.hide)
-        # 底色与边框是写死的那一对橙色，只有字色跟着主题走，所以换过外观之后要重下一份。
+        # 底色与边框是硬编码的那一对橙色，只有字色跟着主题走，所以换过外观之后要重下一份。
         self._watcher = theme.ensure_installed()
         self._watcher.changed.connect(self._apply_theme)
         self._apply_theme()

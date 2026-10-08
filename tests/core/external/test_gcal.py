@@ -28,7 +28,7 @@ def test_month_is_one_based() -> None:
     """**月份是 1 起算的** —— 网上大量教程说 0-based，那是错的。
 
     实测：`/r/month/2026/6/29` 渲染出来是「2026年6月」。写反了会静默地跳到隔壁那个月，
-    而界面上看不出错，所以这条钉死在这里。
+    而界面上看不出错，所以这里固定住这个值。
     """
     january = deep_link("month", datetime.date(2026, 1, 15))
     december = deep_link("month", datetime.date(2026, 12, 15))

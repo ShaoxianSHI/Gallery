@@ -37,10 +37,10 @@ def _blocking_job(started: threading.Event, gate: threading.Event):  # type: ign
 
 
 class _Closing:
-    """在另一条线程上跑 ``abandon`` —— 它要等那个还占着线程的活儿收工。
+    """在另一条线程上跑 ``abandon`` —— 它要等那个还占着线程的活儿结束。
 
-    放在主线程上等的话，用例得先放闸门再等它，而那一段等待没法拿条件等；
-    而这个场景本身是确定性的：**闸门不开，那一个线程就永远不会空出来**。
+    放在主线程上等的话，用例得先放前置条件再等它，而那一段等待没法拿条件等；
+    而这个场景本身是确定性的：**前置条件不开，那一个线程就永远不会空出来**。
     """
 
     def __init__(self, runner: TaskRunner) -> None:

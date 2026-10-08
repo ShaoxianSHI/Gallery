@@ -1,5 +1,5 @@
 """实时监听库目录树的变化（ADR 0013）：职责只有一条 —— 把文件系统的事件流归并成一批变化交给上层。
-这里只 ``stat`` 不写不删（红线 1），必须去抖，且不认识 Qt：回调在自己的线程上被调用。
+这里只 ``stat`` 不写不删，必须防抖，且不认识 Qt：回调在自己的线程上被调用。
 搬回主线程是界面层的事。「跳过什么」统一用 :func:`gallery.core.library.scanner.is_visible_path`，
 扫描与监听必须同一套，否则监听会报出扫描根本不看的文件。
 """
@@ -34,11 +34,11 @@ from gallery.core.library.scanner import is_visible_path
 
 logger = logging.getLogger(__name__)
 
-#: 静默这么久之后把攒下的一批交出去（毫秒）。要够大才不会把一次拷贝拆成几十次网格改动，
+#: 静默这么久之后把暂存的一批交出去（毫秒）。要够大才不会把一次拷贝拆成几十次网格改动，
 #: 又要够小，用户松手之后不该等太久才看到照片出现。
 DEBOUNCE_MS: Final = 400
 
-#: 一直有变化时最多攒这么久（毫秒）也交一批。没有它，一个慢慢拷进来的大目录会一直攒到拷完才
+#: 一直有变化时最多暂存这么久（毫秒）也交一批。没有它，一个慢慢拷进来的大目录会一直累积到拷完才
 #: 一起出现，那时用户早就以为没反应了。
 MAX_HOLD_MS: Final = 3000
 
@@ -96,17 +96,15 @@ _KIND_BY_EVENT: Final[dict[str, ChangeKind]] = {
 def coalesce(changes: Iterable[LibraryChange]) -> tuple[LibraryChange, ...]:
     """把一段时间里先后到达的变化合并成「每个路径一条」。纯函数，不碰线程也不碰 Qt，可以逐条单测。
 
-    三条合并规则：**新增之后又改** → 还是新增（界面反正要重新取一次）；**新增之后又删** → 什么都
-    不用做（拷贝中途取消、编辑器留下的临时文件）；**删掉又出现** → 当作内容变了（那一行一直在）。
-
-    改名的两端由 watchdog 合成 :class:`~watchdog.events.FileSystemMovedEvent` 一起送来，所以
-    不做「删除 + 新增 = 改名」的猜测 —— 访达拖 3 张照片进来也会长成那样。
+    三条规则：**新增之后又改** → 还是新增；**新增之后又删** → 什么都不用做（拷贝中途取消）；**删掉
+    又出现** → 当作内容变了。改名的两端由 watchdog 合成
+    :class:`~watchdog.events.FileSystemMovedEvent` 一起送来，所以不做「删除 + 新增 = 改名」的猜测。
     """
     merged: dict[Path, LibraryChange | None] = {}
     order: list[Path] = []
     for change in changes:
         if change.kind is ChangeKind.MOVED and change.dest_path is not None:
-            # 改名的旧身份结束、新身份开始：两端各自此前攒下的都作废。
+            # 改名的旧身份结束、新身份开始：两端各自此前暂存的都作废。
             for path in change.touches:
                 if path in merged:
                     merged[path] = None
@@ -224,7 +222,7 @@ def _moved_change(root: Path, event: FileSystemMovedEvent) -> LibraryChange | No
 class LibraryWatcher:
     """监听一个库目录树。
 
-    :param on_change: ``(一批变化)``，**在自己的线程上被调用**（去抖定时器线程）—— 回调里不许碰
+    :param on_change: ``(一批变化)``，**在自己的线程上被调用**（防抖定时器线程）—— 回调里不许碰
         界面，要用排队连接搬回主线程（见 ``ui/watch.py``）。
     """
 
@@ -283,7 +281,7 @@ class LibraryWatcher:
         observer.join(timeout=STOP_JOIN_SECONDS)
 
     def flush(self) -> None:
-        """把攒下的变化合并成一批交出去（公开出来是让测试不必真等 400 毫秒）。"""
+        """把暂存的变化合并成一批交出去（公开出来是让测试不必真等 400 毫秒）。"""
         with self._lock:
             timer, self._timer = self._timer, None
             pending, self._pending = self._pending, []
@@ -300,7 +298,7 @@ class LibraryWatcher:
                 self._on_error("监听到文件变化，但处理时出了问题，详情已写入日志。")
 
     def _ingest(self, change: LibraryChange) -> None:
-        """收下一条变化（watchdog 的线程在调）。"""
+        """记录一条变化（watchdog 的线程在调）。"""
         if change.kind is ChangeKind.MODIFIED and change.is_dir:
             # 目录的「内容变了」几乎总是某个子项变了 —— 那件事自己会报事件，目录不用管。
             return
@@ -320,7 +318,7 @@ class LibraryWatcher:
             self.flush()
 
     def _arm(self, deadline: float) -> None:
-        """（在锁内调用）重开去抖定时器。"""
+        """（在锁内调用）重开防抖定时器。"""
         if self._timer is not None:
             self._timer.cancel()
         timer = threading.Timer(max(0.0, deadline - time.monotonic()), self.flush)

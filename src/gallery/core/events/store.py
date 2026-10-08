@@ -1,16 +1,9 @@
 """事件库（配置目录下的 ``events.db``）：事件定义与照片↔事件的绑定（ADR 0043）。
 
-**它挂在索引那条 SQLite 连接上**（别名 ``ev``），于是 SQL 层仍然是一张库（``#旅行·目的地 京都``
-能走子查询），而生命周期上仍是两个文件、两份 ``user_version``。这么定是因为事件是用户手写
-的数据，而索引的表结构版本一对不上就**整表重建** —— 事件没有任何一条能从照片重扫出来。
-
-三件必须分别处理、否则会静默出事的事（ADR 0043 决策 1）：
-
-- ``PRAGMA user_version`` 与 ``journal_mode`` 都是**每个库各一份**，事件那份必须写成
-  ``ev.`` 前缀。裸写会读到索引的版本号，于是事件表的版本检查每开一次都整表重建一次。
-- events.db 是**数据**不是缓存：``synchronous`` 不跟着索引降级，只把 ``journal_mode``
-  钉成 ``DELETE``（``-wal`` / ``-shm`` 跟着用户的库在云盘上互相覆盖，ADR 0038 决策 5）。
-- 挂不上时只记一条日志，索引其余功能照常 —— 「记录为」那一行随之不出现。
+**它挂在索引那条 SQLite 连接上**（别名 ``ev``），于是 SQL 层仍是一张库（``#旅行·目的地 京都``
+能走子查询），而生命周期上仍是两个文件、两份 ``user_version``：事件是用户手写的数据，而索引的
+表结构版本一对不上就**整表重建**。三件必须分别处理的事：``user_version`` 与 ``journal_mode``
+都要写成 ``ev.`` 前缀；``synchronous`` 不跟着索引降级；挂不上时只记一条日志，其余功能照常。
 """
 
 from __future__ import annotations
@@ -77,16 +70,9 @@ def attach(
 ) -> EventStore | None:
     """把事件库挂到索引那条连接上并建好表。挂不上返回 ``None``，**索引其余功能不受影响**。
 
-    这是 :class:`~gallery.core.library.index.FacetIndex` 的 ``attach`` 挂钩：它不认识事件，
-    只是建完连接之后把返回值原样交出去（ADR 0043 决策 1）。位置按约定推（``paths.events_file``），
-    与 :meth:`FacetIndex.open` 同一种写法。
-
-    **一条连接只挂一次**（``ev`` 这个名字已经被占着时 ATTACH 会报错，于是返回 ``None``）。
-    ``FacetIndex`` 只在建连接时调它一次，所以正常路径走不到那种情形。
-
-    **版本对不上时是迁移，不是重建**（ADR 0048 决策 3）：建表语句在前、迁移在后，于是新库走完
-    建表就已经是最新结构（迁移那一步看见列在就跳过），旧库则由迁移把缺的那几列补上。
-    版本**比这份程序新**时整个不挂 —— 读不懂一份文件不等于可以删掉它。
+    这是 :class:`~gallery.core.library.index.FacetIndex` 的 ``attach`` 挂钩（ADR 0043 决策 1）。
+    **一条连接只挂一次**（``ev`` 已被占着时 ATTACH 报错，于是返回 ``None``）。**版本对不上时是迁移，
+    不是重建**（ADR 0048 决策 3）；版本**比这份程序新**时不挂 —— 读不懂一份文件不等于可以删掉它。
     """
     path = paths.events_file(root)
     try:
@@ -130,7 +116,7 @@ class EventStore:
         self._root = Path(root)
         self._connection = connection
         self._lock = lock if lock is not None else threading.Lock()
-        # guard: allow-long-comment（漏接一处不报错：库写进去了，界面那份清单还是旧的）
+        # guard: allow-long-comment（漏掉一处不报错：库写进去了，界面那份清单还是旧的）
         #: 事件清单变了吗。**由写入方（:class:`~gallery.core.library.facade.Library`）
         #: 挂上**，用来作废它那份会话缓存（ADR 0043 决策 7）。
         #:
@@ -162,7 +148,7 @@ class EventStore:
     # ---- 读 ------------------------------------------------------------------
 
     def all_events(self) -> tuple[Event, ...]:
-        """全部事件，按开始日期新→旧、id 兜底。**一次读全**：一个库的事件只有几十条，
+        """全部事件，按开始日期新→旧、同日期的用 id 定先后。**一次读全**：一个库的事件只有几十条，
         界面把它整个缓存住（菜单的第二三层、面板的初始值、分组标签都从那份缓存来）。"""
         connection = self._connection
         if connection is None:
@@ -211,11 +197,9 @@ class EventStore:
     def events_for_photos(self, paths: Sequence[Path]) -> dict[Path, tuple[EventRef, ...]]:
         """这些照片分别属于哪些事件（分组与筛选要的那一份）。
 
-        **按路径分批查**（``IN`` 一批放不下整个库），每张照片一个列表 —— 一张照片可以同时属于
-        一次演出与一次旅行。
-
-        **顺带把封面那一列取出来**（ADR 0048 决策 7）：分组要靠它知道这一组的卡片画哪一张，
-        而这是同一次 JOIN —— 多带一列的代价是零，多发一次查询不是。
+        **按路径分批查**（``IN`` 一批放不下整个库），每张一个列表 —— 一张照片可以同时属于演出与
+        一次旅行。**顺带把封面那一列取出来**（ADR 0048 决策 7）：分组要靠它知道卡片画哪一张，
+        而这是同一次 JOIN。
         """
         connection = self._connection
         if connection is None or not paths:
@@ -261,11 +245,8 @@ class EventStore:
     def all_bindings(self) -> tuple[Orphan, ...]:
         """全部绑定，**带上事件名**（孤儿检查与它的提示框要的就是这两样）。
 
-        **一条 JOIN 读全**，而不是「按事件逐个问」：绑定可能上千条，逐个事件一次查询就是上千次
-        往返，而开库时每个库都要跑这一遍。
-
-        返回 :class:`Orphan` 而不是新造一个类型 —— 它要的就是「路径 + 事件 id + 事件名」，
-        而那正是这个类型的三列。
+        **一条 JOIN 读全**，而不是「按事件逐个问」：绑定可能上千条，逐个事件一次查询就是上千次往返。
+        返回 :class:`Orphan` 而不是新造一个类型 —— 它要的就是「路径 + 事件 id + 事件名」这三列。
         """
         connection = self._connection
         if connection is None:
@@ -359,13 +340,9 @@ class EventStore:
     def delete(self, event_id: int) -> EventWriteOutcome:
         """删掉一个事件，连同它那些绑定。可 ⌘Z 完整恢复。
 
-        绑定**显式删掉**，不靠 ``ON DELETE CASCADE``：SQLite 的 ``foreign_keys`` 默认是关的，
-        级联一次都不会发生，而留下的孤儿绑定看不出来（查询都是从 ``events`` 那边 JOIN 过来的）。
-        ``AUTOINCREMENT`` 让 id 不会复用，所以孤儿也永远挂不上别的事件 —— 它只是垃圾，不是隐患。
-        外键声明留着是说清意图，删除的**正确性**不能指望它。
-
-        记进 journal 的那一份**含绑定清单** —— 事件回来了、照片关联没了的话，用户要等到某天
-        按事件筛才发现少了一堆（ADR 0043 决策 5）。
+        绑定**显式删掉**，不靠 ``ON DELETE CASCADE``：SQLite 的 ``foreign_keys`` 默认关，不会级联，
+        留下的孤儿绑定看不出来。``AUTOINCREMENT`` 让 id 不复用，孤儿也永远挂不上别的事件。
+        记进 journal 的那一份**含绑定清单**（ADR 0043 决策 5）。
         """
         connection = self._require()
         previous = self.event(event_id)
@@ -521,8 +498,7 @@ class EventStore:
 
         :raises CoverNotBoundError: 那张照片不属于这个事件 —— 卡片只能画组内那一张
             （缩略图流水线拿的是 ``PhotoRef``），所以「设一个组外的封面」在界面上根本画不出来。
-            界面那一条只对**已绑定的**照片开放（见 ``ui/window/event_flow.py``），这个异常是
-            那一层之外的兜底。
+            这个异常是界面那一层之外的回退。
         """
         if not self._is_bound(event_id, photo):
             raise CoverNotBoundError("只能从属于这次事件的照片里挑封面。", path=photo)
@@ -552,11 +528,9 @@ class EventStore:
     def _write_cover(self, kind: EventKind, event_id: int, photo: Path | None) -> EventWriteOutcome:
         """只写封面那一列 —— **不拿整份草稿去 UPDATE**。
 
-        那样做会把草稿里缺的字段写成 NULL：面板交上来的草稿只填了用户看见的那几格，
-        封面若不在其中就是「打开面板按一下保存，封面没了」（ADR 0048 决策 2）。
-
-        ``modified_at`` **不动**：换封面是一次绑定关系的调整，而绑定那张表压根没有时间戳
-        （ADR 0043 决策 2）；给事件记上一次「最后修改」会让菜单按日期排序时莫名其妙跳位置。
+        那样做会把草稿里缺的字段写成 NULL：面板交上来的草稿只填了看见的那几格，封面若不在其中就是
+        「打开面板按保存，封面没了」（ADR 0048 决策 2）。``modified_at`` **不动**：给事件记一次
+        「最后修改」会让菜单按日期排序时莫名其妙跳位置（ADR 0043 决策 2）。
         """
         connection = self._require()
         previous = self.event(event_id)
@@ -602,11 +576,8 @@ class EventStore:
     def unbind(self, paths: Iterable[Path], event_id: int) -> int:
         """把这些照片从这个事件里拿出来，返回拿掉几张。
 
-        ``event_id`` 在整次调用里是同一个，所以按它 + 路径的 ``IN`` 删就够 —— **不为同一件事
-        再拼一次 ``(path, event_id)`` 的行值**，那个写法在老版本 SQLite 上不认。
-
-        **被移出来的那几张里如果有封面，同一批里把它清空** —— 封面恒为绑定里的一张
-        （ADR 0048 决策 1）。少了这一步，卡片会指向一张已经不属于这次事件的照片。
+        ``event_id`` 全程相同，所以按它加路径的 ``IN`` 删即可。被移出来若有封面，同一批里清空
+        —— 封面恒为绑定里的一张（ADR 0048 决策 1），少了这一步卡片会指向一张不属于这次事件的照片。
         """
         connection = self._require()
         keys = [str(path) for path in paths]
@@ -636,11 +607,8 @@ class EventStore:
     ) -> int:
         """这些路径不再被绑着，于是指向它们的封面要清空（ADR 0048 决策 1）。返回清掉几条。
 
-        **与删绑定在同一个事务里**：分两次写的话，中间那一刻库里就有一个「封面指向一张不属于
-        这次事件的照片」的瞬间 —— 而那正是崩在这条路上会留下的东西。
-
-        :param event_id: 只清这一个事件的（``unbind``）；``None`` 表示清所有事件的
-            （``forget_bindings``：照片没了，它身上每一条绑定都是孤儿，封面同理）。
+        **与删绑定在同一个事务里**：分两次写的话，中间那一刻库里就有一个「封面指向一张不属于这次事件
+        的照片」的瞬间。:param event_id: 只清这一个事件的（``unbind``）；``None`` 表示清所有事件的。
         """
         placeholders = ", ".join(["?"] * len(keys))
         if event_id is None:
@@ -660,14 +628,9 @@ class EventStore:
     def forget_bindings(self, paths: Sequence[Path]) -> int:
         """删掉这些路径上的**全部**绑定，返回删了几条（孤儿清理，ADR 0043 决策 9）。
 
-        **按 path 删就够，不必按 ``(path, event_id)``**：照片没了，它身上每一条绑定都是孤儿，
-        而多带一个条件只会漏掉「同一张照片属于好几种事件」的情形。
-
-        ``path`` 是主键的前导列，所以 ``IN`` 走主键索引，不必扫全表。
-
-        **指向这些路径的封面也一并清空**（ADR 0048 决策 1）：照片没了，它不只不属于任何事件，
-        当过它的事件也不该再拿它当封面。返回值仍只是「清掉了几条绑定」——
-        封面退回「组内第一张」是用户看得见的结果，不必再报一个数。
+        **按 path 删就够，不必按 ``(path, event_id)``**：照片没了，它每一条绑定都是孤儿，多带一个
+        条件只会漏掉「同一张照片属于好几种事件」的情形。``path`` 是主键的前导列，``IN`` 走主键索引。
+        **指向这些路径的封面也一并清空**（ADR 0048 决策 1）；返回值仍只是「清掉了几条绑定」。
         """
         connection = self._connection
         if connection is None:
@@ -741,10 +704,8 @@ class EventStore:
     ) -> int:
         """把封面从旧位置改写到新位置，返回改掉几条。
 
-        **参数与绑定那一句逐字相同**，于是两种形状各写一遍 SQL（相册那一支按前缀改写后缀）。
-
-        单张照片的封面可能同时是**几个**事件的封面（一张照片属于好几种事件是成立的），
-        所以这里不按事件逐个去改 —— 一句 ``WHERE cover_path = ?`` 改掉全部。
+        **参数与绑定那句逐字相同**，两种形状各写一遍 SQL（相册那一支按前缀改写后缀）。单张照片可能
+        是**几个**事件的封面，不按事件逐个改 —— 一句 SQL 用 ``WHERE cover_path = ?`` 改全部。
         """
         if is_dir:
             cursor = connection.execute(
@@ -795,24 +756,10 @@ def event_by_id(events: Sequence[Event], event_id: int) -> Event | None:
 
 def follow_moves(events: EventStore | None, moves: Iterable[tuple[Path, Path, bool]]) -> int:
     """一批「旧位置 → 新位置」，把事件绑定搬过去，返回搬了几条（ADR 0043 决策 8）。
-
-    **改了路径就要调它**：绑定按 ``path`` 记，而索引里的 facet 行靠 ``(大小, 修改时间)`` 自动
-    过期、`forget_paths`` 清孤儿行，所以丢索引对用户无感 —— **事件绑定是用户一份心意，不能这么
-    兜**。纯写我们自己的库，不碰用户文件，红线 1 管不到这里。
-
-    **三个调用点共用这一处**（判 ``None`` 与「不可用」也在这里，于是写错一处不会静默丢绑定）：
-    应用内改名、应用内移动到相册（撤销那两样同样走它），以及监听器报上来的外部改名与移动。
-
-    :param moves: ``(旧位置, 新位置, 是不是文件夹)``。**只收真的动了的那些** —— 跳过与失败
-        的那些路径压根没变。相册那一支按前缀改写后缀（``substr`` 按字符数切），一次相册改名
-        牵动几千张，一条就够，不逐张照片去问。
-    :param events: 事件库。``None`` 或不可用（配置目录建不出来的库）时**当没有这回事** ——
-        文件已经动了，绑定是附带信息，报错只会让用户以为照片没挪成功。
-
-    **一次事务**：一次「移动到相册」或一批外部变化可能是几百项，逐项一个事务就是几百次提交。
-    而**重复调用是安全的** —— 搬过的那一次源路径上已经没有绑定了，于是这一轮一条都不改。
-    应用内移动因此既自己搬一次、又被监听器报回来的那次搬一次（``MOVE`` 不做回声屏蔽，新文件的
-    上屏就是靠监听器），第二次是空操作。
+    **改了路径就要调它**：绑定按 ``path`` 记，而索引靠 ``(大小, 修改时间)`` 过期，丢索引对用户无感
+    —— **事件绑定是用户一份心意**。纯写我们自己的库，不碰用户文件。**三个调用点共用这一处**：应用内
+    改名、应用内移动到相册，以及监听器报上来的外部改名与移动。:param moves: ``(旧位置, 新位置,
+    是不是文件夹)``；**只收真的动了的那些**。:param events: ``None`` 或不可用时**当没有这回事**。
     """
 
     if events is None or not events.available:

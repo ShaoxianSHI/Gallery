@@ -207,16 +207,11 @@ class TaskRunner(QObject):
             self._queued.discard(job_id)
 
     def _forget_never_started(self) -> None:
-        """把「投递了却一次都没开跑」的那些任务的账摘干净。
-
-        ``_callbacks`` / ``_tokens`` / ``_signals`` 都只在 :meth:`_handle_success` /
-        :meth:`_handle_failure` 里被 ``pop``，而 :meth:`abandon` 里的 ``QThreadPool.clear()``
-        把排队中的 ``QRunnable`` **直接删掉** —— 它们永远不会回报一次，每一批被丢掉的积压于是
-        留下三份条目（回调闭包、取消令牌、信号对象），关一次窗漏一批。
-
-        **只摘「确定没开跑」的**：``_Job.run()`` 的第一件事就是把自己从 ``_queued`` 里摘掉；
-        残留的窗口只有 Qt 内部把 ``QRunnable`` 摘出队列到调用 ``run()`` 之间的那几条指令，
-        真撞上了也只是那一格的结果回调不送（而这正是在关窗）。
+        """把「投递了却一次都没开跑」的那些任务的账摘干净：``_callbacks`` / ``_tokens`` /
+        ``_signals`` 只在成功 / 失败回调里被 ``pop``，而 :meth:`abandon` 里的
+        ``QThreadPool.clear()`` 把排队中的 ``QRunnable`` **直接删掉**，它们永远不会回报，
+        于是每批丢掉的积压都留下三份条目，关一次窗漏一批。**只摘「确定没开跑」的**：
+        ``_Job.run()`` 第一件事就是把自己从 ``_queued`` 里摘掉，残留窗口只有那几条指令。
         """
         with self._lock:
             dropped = tuple(self._queued)
@@ -230,10 +225,8 @@ class TaskRunner(QObject):
         """关窗要走的一整套：作废 → **丢掉排队积压** → 才等。
 
         ``cancel_all`` 只动令牌，**排队中还没开始的任务照样会一个个跑起来**（每个都可能是一次
-        几秒的解码），于是关窗要多等「排队的个数 × 每个的时长」。``QThreadPool.clear()`` 只清
-        **还没开始的**；已经在跑的仍然要靠令牌让它自己停下来。
-
-        :return: 是否在时限内全部收工（为 ``False`` 时调用方该记一条日志）。
+        几秒的解码）。``QThreadPool.clear()`` 只清**还没开始的**；已经在跑的仍然要靠令牌停下来。
+        :return: 是否在时限内全部结束（为 ``False`` 时调用方该记一条日志）。
         """
         self.cancel_all()
         self._pool.clear()

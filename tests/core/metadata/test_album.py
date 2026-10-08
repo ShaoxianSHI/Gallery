@@ -1,6 +1,6 @@
 """新建相册的测试（ADR 0022）：在 ``tmp_path`` 里进行。
 
-**只增不改、绝不覆盖**、写进 ``journal/`` 但不进撤销栈（红线 1）。"""
+**只增不改、绝不覆盖**、写进 ``journal/`` 但不进撤销栈（硬性约束：不删除、不移动用户照片）。"""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ def test_creates_an_empty_folder_where_it_should(library: Path) -> None:
 
 
 def test_nothing_else_on_that_level_is_touched(library: Path) -> None:
-    """只增不改（红线 1）：用户的目录里只多了一项，别的什么都没动。"""
+    """只增不改（不删除、不移动用户照片）：用户的目录里只多了一项，别的什么都没动。"""
     before = _listing(library)
     inside = _listing(library / "奈良")
     photo = library / "京都" / "一张.jpg"
@@ -56,7 +56,7 @@ def test_a_custom_name_is_honoured(library: Path) -> None:
 
 
 def test_the_new_folder_carries_no_gallery_sidecar(library: Path) -> None:
-    """建出来的相册是**干净的**：``.gallery`` 只出现在库根上（红线 6）。"""
+    """建出来的相册是**干净的**：``.gallery`` 只出现在库根上，不往照片目录写别的文件。"""
     create_album(library, library / "奈良")
 
     assert list((library / "奈良" / DEFAULT_ALBUM_NAME).iterdir()) == []
@@ -138,7 +138,7 @@ def test_refuses_names_that_may_not_be_used(library: Path, name: str, fragment: 
 
 
 def test_a_read_only_target_is_reported_not_swallowed(library: Path) -> None:
-    """没有写权限时说清楚为什么 —— 用户看得懂、能动手修（红线：可行动的中文提示）。"""
+    """没有写权限时说清楚为什么 —— 用户看得懂、能动手修（提示必须可行动）。"""
     target = library / "只读"
     target.mkdir()
     target.chmod(0o500)
@@ -167,7 +167,7 @@ def test_the_creation_is_journaled(library: Path) -> None:
 
 
 def test_creating_an_album_is_not_undoable(library: Path) -> None:
-    """撤销新建就是删文件夹，而删除只许用户亲手触发（红线 1）—— ``⌘Z`` 那一摞不收它。"""
+    """撤销新建就是删文件夹，而删除只许用户亲手触发 —— ``⌘Z`` 那一摞不收它。"""
     create_album(library, library / "奈良")
 
     assert next_undo_label(library) is None

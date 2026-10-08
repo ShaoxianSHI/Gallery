@@ -1,13 +1,9 @@
 """图像解码：把磁盘上的照片变成裸像素。
 
-``core`` 不认识 Qt，所以这里返回 RGBA 字节流，由界面层包装成 ``QImage``。GIF 只取第一帧；
-RAW 不支持（见 ADR 0001）。
-
-四个容易踩的坑：Pillow 打开文件是**惰性**的（解码在 ``load()`` / ``thumbnail()``），所以
-解码相关的异常都要包成 ``ImageDecodeError``；竖拍照片要按 EXIF Orientation 摆正，而那只
-改内存里的像素、绝不写回；``Image.draft`` 能让 JPEG 按 1/2、1/4、1/8 直接解码（快一个
-量级），但必须在任何解码动作之前调用；``open()`` 与 ``load()`` 可能永远不回来（见
-:func:`_within_deadline`）。
+``core`` 不认识 Qt，所以返回 RGBA 字节流，由界面层包装成 ``QImage``（GIF 只取第一帧，
+RAW 不支持，见 ADR 0001）。四个容易踩的坑：Pillow 打开文件是**惰性**的，解码异常要包成
+``ImageDecodeError``；竖拍要按 EXIF Orientation 摆正且只改内存像素、不写回；``Image.draft``
+必须在任何解码动作之前调用；``open()`` / ``load()`` 可能永远不回来（见 :func:`_within_deadline`）。
 """
 
 from __future__ import annotations
@@ -32,7 +28,7 @@ READ_TIMEOUT_SECONDS: Final = 20.0
 _READ_POLL_SECONDS: Final = 0.02
 
 #: 同时最多允许有多少个「已经超了时限、只能丢在那儿」的读。超时的那个**收不回来**（多半正卡在
-#: ``open()`` 里），没有这道闸，一批读不出来的照片就能攒出成百上千个线程把机器拖垮。
+#: ``open()`` 里），没有这道限制，一批读不出来的照片就能累积出成百上千个线程把机器拖垮。
 MAX_STUCK_READS: Final = 8
 
 #: 已经超了时限、还活着的读的个数。只由 :func:`_within_deadline` 在锁下改 —— 它是本模块
@@ -139,14 +135,10 @@ def _within_deadline(
     path: Path, work: Callable[[], RasterImage], *, cancelled: Callable[[], bool]
 ) -> RasterImage:
     """跑 ``work``，但最多只等 :data:`READ_TIMEOUT_SECONDS`。
-
-    **为什么非得有这一层**：``open()`` 与 ``load()`` 都是**不可打断**的系统调用。云盘里的
-    占位照片（OneDrive 之类）没有下完时读它，内核会一直等文件提供器拉数据 —— 没有网络就
-    永远不返回，于是一个解码任务会**永久**占住一个工作线程；占满之后 Qt 的线程池在析构时
-    要 join 它们，**进程永远退不出去**。
-
-    做法是把 ``work`` 丢进一个**守护线程**：到了时限就抛错走人，线程留在原地。守护线程
-    不会被 ``threading`` 收尾时 join，所以不会把进程拖住。实测开销可忽略（45 ms 多花 0.3 ms）。
+    **为什么非得有这一层**：``open()`` 与 ``load()`` 都是**不可打断**的系统调用。云盘里的占位照片
+    没下完时读它，内核可能永远不返回，于是解码任务**永久**占住工作线程；占满后 Qt 的线程池析构要
+    join 它们，**进程永远退不出去**。做法是把 ``work`` 丢进一个 **daemon 线程**：到时限就抛错走人，
+    线程留在原地（daemon 不会被 ``threading`` 收尾 join。实测开销可忽略，45 ms 多花 0.3 ms）。
     """
     global _stuck_reads
 
@@ -194,12 +186,11 @@ class _Outcome:
 
 
 def _decode_now(path: Path, *, max_edge: int | None, use_draft: bool) -> RasterImage:
-    """真正去解码：``open`` → ``draft`` → 摆正 → 缩放 → 取像素（**没有时限**，时限由外面
-    :func:`_within_deadline` 负责）。
+    """真正去解码：``open`` → ``draft`` → 摆正 → 缩放 → 取像素（时限见 :func:`_within_deadline`）。
 
-    **文件由我们自己打开**而不是交给 ``Image.open(path)``，才分得清「我们打不开」（没权限 /
-    云盘占位没下完 / 已被移走）与「打开了却读不出像素」（损坏、截断、编码器不认）。前者
-    绝不能被说成「已损坏」—— 用户很可能就此去抢救一个根本没坏的文件。顺带：失败时句柄一定被关掉。
+    **文件由我们自己打开**而不是交给 ``Image.open(path)``，才分得清「打不开」（没权限 / 云盘占位
+    没下完 / 已被移走）与「打开了却读不出像素」（损坏、截断、编码器不认）；前者绝不能被说成
+    「已损坏」，否则用户可能去抢救一个根本没坏的文件。顺带：失败时句柄一定被关掉。
     """
     try:
         stream = path.open("rb")
@@ -245,12 +236,9 @@ _NO_ROTATION = frozenset({None, 0, 1})
 def _oriented(image: Image.Image) -> Image.Image:
     """按 EXIF Orientation 把图摆正。**转不动时原样返回，不复制。**
 
-    :func:`PIL.ImageOps.exif_transpose` 不管有没有 Orientation 都会返回一张**新图**
-    （不转时是 ``image.copy()``），于是每解一张没标记方向的照片就白付一次全分辨率拷贝
-    —— 一张 50MP 的原图那是约 200 MB 的分配，而大图预览这条路上 ``use_draft`` 常常关着。
-    先读一次 Orientation（只解析 APP1，不触发解码），转不动就把原图交出去：``image`` 是
-    本地对象、由 ``with`` 关掉，没有别处共享它。转得动的仍交给 ``exif_transpose``，它顺手
-    摘掉 Orientation 标记 —— 「摆没摆正」是解码这层的责任，不该留给调用方各自判断。
+    不管有没有 Orientation，:func:`PIL.ImageOps.exif_transpose` 都会返回一张**新图**（不转时是
+    ``image.copy()``）——一张 50MP 原图约 200 MB 的分配。先读一次 Orientation（只解析 APP1），
+    转不动就把原图交出去，转得动的交给 ``exif_transpose`` 并顺手摘掉标记：摆没摆正是解码这层的责任。
     """
     try:
         orientation = image.getexif().get(ExifTags.Base.Orientation)

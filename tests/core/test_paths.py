@@ -139,8 +139,8 @@ def test_relative_posix_settles_a_symlinked_root(tmp_path: Path) -> None:
 def test_the_guard_really_refuses_the_library_root(tmp_path: Path) -> None:
     """``allow_root=False`` 是**禁止**，不是一个什么都不检查的静默返回。
 
-    这一支写成 ``return`` 就是文档与代码打架：这是一个「确认」用的闸门，别的调用点
-    未必都在前面自己查过一遍库根，读代码的人只能靠猜那道闸到底拦不拦。
+    这一支写成 ``return`` 就是文档与代码打架：这是一个「确认」用的前置条件，别的调用点
+    未必都在前面自己查过一遍库根，读代码的人只能靠猜那道前置条件到底拦不拦。
     """
     root = tmp_path / "库"
     root.mkdir()
@@ -183,7 +183,7 @@ def test_the_reason_is_the_interface_not_the_message(tmp_path: Path) -> None:
 
     五个写入口按 :attr:`GuardError.reason` 分支，而不是拿消息文本去认。原先靠
     ``"配置目录" in str(exc)`` 那套，改一个字的文案就会让某一支静默失效、报错说的话
-    与真正发生的事对不上 —— 而这是红线 1 的入口。
+    与真正发生的事对不上 —— 而这是不删除、不移动用户照片那条 的入口。
 
     判据里连 ``str`` 一起量：消息是为了让人在日志里看懂，它**不是**接口。
     """
@@ -204,7 +204,7 @@ def test_the_reason_is_the_interface_not_the_message(tmp_path: Path) -> None:
 def test_the_hot_paths_do_not_resolve_the_same_string_twice(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """**这道闸走带记忆的 ``resolved_str``** —— 它在粘贴 / 移动 / 改名的逐项循环里被问，
+    """**这道前置条件走带记忆的 ``resolved_str``** —— 它在粘贴 / 移动 / 改名的逐项循环里被问，
     而 ``root`` 在整场会话里不变。裸 ``resolve()`` 每次都要 ``lstat`` 路径上的每一段
     （实测十二段的库一次约 19 µs，带记忆那份约 0.08 µs）。
 
@@ -214,7 +214,7 @@ def test_the_hot_paths_do_not_resolve_the_same_string_twice(
     root = tmp_path / "库"
     (root / "相册").mkdir(parents=True)
     inside = root / "相册" / "一张.jpg"
-    # 先把这一批填进缓存（``config_dir`` 也算一个：闸门每次都要拿它比一比）。
+    # 先把这一批填进缓存（``config_dir`` 也算一个：前置条件每次都要拿它比一比）。
     paths.is_within(root, inside)
     paths.is_within(root, paths.config_dir(root))
     paths.is_within(root, root / "相册")

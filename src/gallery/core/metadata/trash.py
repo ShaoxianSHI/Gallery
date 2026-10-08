@@ -1,17 +1,9 @@
 """把照片与相册移进系统废纸篓，以及把它们取回来。
 
-Gallery 语境里的「删除」**不是**销毁文件，而是改名搬家到系统废纸篓（见 ADR 0008）：
-
-- 废纸篓就是访达读的那两个位置（启动卷上的 ``~/.Trash``，别的卷上的
-  ``<卷>/.Trashes/<uid>``），所以即使用户没开过 Gallery，照片也还在那儿；
-- 同卷内是一次 ``rename``：原子的、瞬时的，不产生第二份数据；
-- **本模块没有 ``unlink`` / ``rmtree``**，被删掉的东西永远只是「不在这个相册里了」。
-
-跨卷（照片在别的盘、废纸篓在同一个盘之外）时 ``rename`` 会返回 ``EXDEV``，这时才
-退化成拷贝 + 删除：拷贝失败原文件分毫未动，删除只在拷贝成功之后发生。
-
-本模块不弹窗、不问「要不要继续」：被拒绝就抛
-:class:`~gallery.core.errors.DeleteError`，由界面决定怎么告诉用户。
+Gallery 语境里的「删除」**不是**销毁文件，而是改名搬家到系统废纸篓（ADR 0008）：废纸篓就是访达
+读的那两个位置（``~/.Trash`` 与 ``<卷>/.Trashes/<uid>``），所以照片一直在；同卷内是一次原子
+``rename``，不产生第二份数据。**本模块没有 ``unlink`` / ``rmtree``**，被删掉的东西永远只是
+「不在这个相册里了」。跨卷时退化成拷贝 + 删除，删除只在拷贝成功之后发生。
 """
 
 from __future__ import annotations
@@ -103,9 +95,7 @@ def _same_volume(first: Path, second: Path) -> bool:
 def move_to_trash(entry_path: Path) -> Path:
     """把一个文件或目录移进废纸篓，返回它在废纸篓里的**实际**路径。
 
-    重名时另起一个名字（``照片 2.jpg``），绝不覆盖废纸篓里已有的东西 ——
-    那里面可能有用户自己扔进去的、还没还原的东西。
-
+    重名时另起一个名字（``照片 2.jpg``），绝不覆盖废纸篓里已有的东西。
     :raises DeleteError: 废纸篓不可用、系统拒绝了移动。
     """
     source = Path(entry_path)
@@ -146,13 +136,9 @@ def trash_entries(
 ) -> TrashResult:
     """把若干条目移进废纸篓，每一项都记一笔账。
 
-    批量删除时**部分失败是常态**（某个文件正被别的程序占用），所以单项失败不抛异常：
-    成功与失败一起返回，由界面决定怎么把话说清楚。越权操作（目标是库根、配置目录或库
-    外的东西）仍然抛 :class:`~gallery.core.errors.DeleteError`，而且在动任何东西**之前**
-    就抛 —— 那是程序缺陷，不是「这个文件动不了」。
-
-    :param batch: 同一次操作里多项共享的编号。``None`` 且一次传多项时自动生成，
-        这样一次 ⌘Z 能把整批取回来（见 ``undo.undo_last_write``）。
+    批量删除时**部分失败是常态**，所以单项失败不抛异常，成功与失败一起返回；越权操作（目标是库根、
+    配置目录或库外的东西）仍然抛 :class:`~gallery.core.errors.DeleteError`，且在动任何东西前就抛。
+    :param batch: 同一次操作里多项共享的编号；``None`` 且一次传多项时自动生成，一次 ⌘Z 取回整批。
     """
     root = Path(root)
     items = tuple(entries)
@@ -314,7 +300,7 @@ def _guard(root: Path, source: Path) -> None:
         raise DeleteError(_trash_reason(source, exc), path=source) from exc
 
 
-#: 闸门拒绝的每一种原因 → 给用户的那句话。见 :data:`rename._GUARD_MESSAGES`。
+#: 拒绝移到废纸篓的那几种原因 → 给用户的那句话。见 :data:`rename._GUARD_MESSAGES`。
 _GUARD_MESSAGES: Final = {
     paths.GuardReason.OUTSIDE_ROOT: "只能移除库里的东西：{path}。",
     paths.GuardReason.IS_ROOT: "这是库本身，删掉它 Gallery 就找不到任何照片了。",
@@ -323,7 +309,7 @@ _GUARD_MESSAGES: Final = {
 
 
 def _trash_reason(path: Path, error: paths.GuardError) -> str:
-    """按闸门给的**原因**给一句中文 —— 理由见 :func:`rename._rename_reason`。"""
+    """按拒绝的**原因**给一句中文 —— 理由见 :func:`rename._rename_reason`。"""
     return _GUARD_MESSAGES[error.reason].format(path=path)
 
 

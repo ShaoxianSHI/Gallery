@@ -1,33 +1,9 @@
-"""把照片**移动**进另一个相册，以及把它们挪回来（界面上是「移动到相册」，见 ADR 0019）。
-
-这是本项目里第四个会改动用户文件的操作，也是**第一个会让用户的文件离开原处**的
-（前三样见 ``core.metadata`` 的包文档：改名、移到废纸篓、粘贴）。红线 1 写的是
-「绝不删除、移动用户照片」，因此这一条比前三样都更需要一个站得住的理由：
-
-- **只在界面上由用户亲手触发**：入口是照片右键菜单里的「移动到相册」，点了才会动，
-  没有任何后台整理、批量脚本或「顺便做一下」（红线 1 排除的正是那些）。
-- **动的是位置，不是内容**：像素、EXIF、修改时间一个字节都不改。同卷内那是一次
-  ``rename``：原子的、瞬时的，不产生第二份数据。
-- **绝不覆盖**：目标相册里已有同名时按访达的规矩另起一个名字（``一张 2.jpg``，
-  见 :func:`~gallery.core.metadata.naming.free_name_in`），而不是让后来的那张凭空消失。
-- **目标正是它所在的相册时复制一份，而不是什么都不做**（ADR 0044）：``一张.jpg`` →
-  ``一张的副本.jpg``。用户挑了「移动」却什么都没发生，那是做错了事。这一份走
-  :func:`~gallery.core.metadata.paste.copy_one_into`、记 :data:`ACTION_PASTE`、
-  **不进撤销栈** —— 源文件从没动过，「挪回去」无从谈起，而删掉它就是红线 1。
-- **进撤销栈**：⌘Z 把它挪回原来的相册（:func:`undo_move_records`）。这是它与「粘贴」
-  最大的区别 —— 撤销一次粘贴是删文件（红线 1 不允许），而**撤销一次移动仍然是一次
-  移动**：东西一直都在，只是回到了它原来待着的地方。
-- **每一项都记账**（:data:`~gallery.core.metadata.journal.ACTION_MOVE`），与另外三个
-  写操作同一处；一次操作里的多项共用一个 ``batch``，于是一次 ⌘Z 撤一整批。
-- **事件绑定跟着走，撤销也跟回来**（ADR 0043 决策 8）：移动改的是绝对路径，而绑定按路径记。
-  撤销是一次移动，于是绑定也搬回去 —— 与撤销改名同一套道理，**不做这一步的话撤销会把事件弄丢**。
-
-跨卷（库在外接盘上，或相册横跨两个卷）时 ``rename`` 会返回 ``EXDEV``，这时才退化成
-拷贝 + 删除，且**删除只在拷贝成功之后发生** —— 与 ``core.metadata.trash`` 是同一套做法。
-
-本模块不弹窗、不问「要不要继续」：成与不成都落在返回值里（:class:`MoveResult`），
-由界面决定怎么把话说清楚。只有「目标压根不是一个文件夹」这种调用方的错才抛
-:class:`~gallery.core.errors.TransferError`。
+"""把照片**移动**进另一个相册，以及把它们挪回来（ADR 0019）。
+**只由用户在右键菜单里亲手触发**；**动的是位置不是内容**，同卷内是一次原子 ``rename``；**绝不
+覆盖**（撞名按访达规矩另起名字，见 :func:`~gallery.core.metadata.naming.free_name_in`）；目标正是
+它所在的相册时复制一份而不是什么都不做（ADR 0044）。**在撤销栈里**：⌘Z 挪回原处 —— 撤销粘贴要删
+文件（删除只允许用户亲手触发），移动不删；事件绑定跟着走、撤销也跟回来（ADR 0043 决策 8），跨卷
+退化成拷贝 + 删除，**删除只在拷贝成功之后发生**。
 """
 
 from __future__ import annotations
@@ -121,14 +97,9 @@ def move_into(
     events: EventStore | None = None,
 ) -> MoveResult:
     """把 ``sources`` **移动**进 ``target``，返回结果。
-
-    :param root: 库根。记账写在它下面（``journal/``），与另外三个写操作同一处。
-    :param target: 目标相册，必须已经存在且是个目录。
-    :param sources: 要移动的路径。界面上给的是网格里选中的照片；理论上也接受文件夹。
-    :param should_cancel: 每移一项之前问一次。只在**项与项之间**取消：移一半停下来会让
-        用户自己都说不清哪些被移了，那比移完更糟。
-    :param events: 事件库（可换绑用）。``None`` 或不可用时跳过那一步 —— 见
-        :func:`~gallery.core.metadata.rename.rename_entry` 的同一段说明。
+    :param root: 库根。记账写在它下面（``journal/``）。
+    :param should_cancel: 每移一项之前问一次；只在**项与项之间**取消。
+    :param events: 事件库（可换绑用）；``None`` 或不可用时跳过那一步。
     :raises TransferError: ``target`` 不是目录，或者它落在库外。
     """
     destination = Path(target)
@@ -141,7 +112,7 @@ def move_into(
     moved: list[MovedItem] = []
     copied: list[PastedFile] = []
     failures: list[Failure] = []
-    #: 真要跟着搬的绑定：``(旧位置, 新位置, 是不是文件夹)``，攒到整批结束再一次事务搬完。
+    #: 真要跟着搬的绑定：``(旧位置, 新位置, 是不是文件夹)``，累积到整批结束再一次事务搬完。
     follow: list[tuple[Path, Path, bool]] = []
     journaled = True
     # **目录只扫一次**（理由与偏差见 :func:`~gallery.core.metadata.naming.free_name_in`）。
@@ -205,10 +176,10 @@ def move_into(
         )
         moved.append(MovedItem(source=source, created=created))
         follow.append((source, created, is_dir))
-    # guard: allow-long-comment（红线 4：绑定与移动同一事务，漏一次就丢一批绑定）
+    # guard: allow-long-comment（硬性约束：绑定与移动同一事务，漏一次就丢一批绑定）
     # 绑定跟着走，且**一次事务搬完整批**（ADR 0043 决策 8）。只收真的移走的那些 ——
     # 失败的那些路径压根没变，而复制出来的那些是新文件、与绑定无关（ADR 0044）。
-    # 监听器随后还会把同一件事报回来一次（``MOVE`` 不做回声屏蔽，新文件的上屏靠它），
+    # 监听器随后还会把同一件事报回来一次（``MOVE`` 不做回环屏蔽，新文件显示到界面靠它），
     # 那一次搬不到什么：源路径上已经没有绑定了。
     follow_moves(events, follow)
     return MoveResult(
@@ -224,13 +195,9 @@ def undo_move_records(
 ) -> UndoMoveResult:
     """把 :mod:`gallery.core.metadata.undo` 挑出来的移动记录挪回原处。
 
-    与 :func:`trash.restore_entries` 对称：逐条还原，取不回来的如实报告，不静默跳过。
-
-    **原位置被占了就不动它**（与取回废纸篓同一个取向）：用户在这期间自己放了东西进去，
-    替他腾出位置等于删掉那个东西 —— 那需要用户亲手做。
-
-    :param events: 事件库（可换绑用）。撤销一次移动仍然是一次移动，绑定跟着搬回去
-        （方向与当初那次相反），与撤销改名同一套道理。
+    与 :func:`trash.restore_entries` 对称：逐条还原，取不回来的如实报告。**原位置被占了就不动它** ——
+    替用户腾位置等于删掉那个东西。:param events: 撤销一次移动仍是一次移动，绑定跟着搬回去
+    （与撤销改名同一套道理）。
     """
     root = Path(root)
     restored: list[MovedItem] = []
@@ -320,23 +287,9 @@ def _move(source: Path, target: Path) -> None:
 def _guard(root: Path, destination: Path) -> None:
     """确认目标相册落在允许的范围内。
 
-    **这里原本一道都没有**，而它是四个写操作里唯一没有的（改名
-    :mod:`~gallery.core.metadata.rename`、移到废纸篓 :mod:`~gallery.core.metadata.trash`、
-    新建相册 :mod:`~gallery.core.metadata.album` 都有）。理由也正是那几个写的那句：
-    网格里根本不会出现库根和配置目录，所以这一道今天**够不到** —— 但它是「让用户的
-    文件离开原处」的那个入口，红线 1 点名的正是它，值得对「库根」「配置目录」多一层
-    保险。
-
-    **源那一侧不查**：界面上给的是网格里选中的照片（必然在库内），而
-    :func:`undo_move_records` 要挪回的地方来自日志里那条移动的原路径。**目标必须查** ——
-    它一旦落到库外，就是把用户的照片搬出了 Gallery 管得着的地方，而那种事没有任何
-    一条后续流程能撤回。
-
-    **库根本身不挡**：守卫要挡的是「跑到库外」，不是「落在库里」。配置文件里写
-    ``rename._guard`` / ``trash._guard`` 挡库根，是因为它们查的是**源**（把库本身
-    改名或删掉，Gallery 就再也找不到照片了）；对目标来说那两件事都不成立。
-    配置目录仍然挡掉 —— 它里面放的每一样都是「只有 Gallery 自己看得见」的缓存，
-    用户的照片粘进去不会变得可见，只会成为下次清理的垃圾（红线 5）。
+    **源那一侧不查**（网格选中的照片必然在库内；撤销的目标来自日志的原路径），**目标必须查** ——
+    它落到库外就是把照片搬出 Gallery 管得着的地方，没有后续流程能撤回。**库根本身不挡**：要挡的是
+    「跑到库外」，不是「落在库里」；配置目录仍挡掉（里面只有 Gallery 自己看得见的缓存）。
     """
     root = Path(root)
     try:
@@ -345,8 +298,8 @@ def _guard(root: Path, destination: Path) -> None:
         raise TransferError(_transfer_reason(destination, exc), path=destination) from exc
 
 
-#: 闸门拒绝的每一种原因 → 给用户的那句话。见 :data:`rename._GUARD_MESSAGES`。
-#: **「库本身」这一条今天到不了**（上面那道闸是 ``allow_root=True``，库根本身是合法目标），
+#: 拒绝移动/复制的那几种原因 → 给用户的那句话。见 :data:`rename._GUARD_MESSAGES`。
+#: **「库本身」这一条今天到不了**（上面那道检查是 ``allow_root=True``，库根本身是合法目标），
 #: 留着是为了这张表是**全的**：``GuardReason`` 加成员时它当场炸，而不是让某天改了
 #: ``allow_root`` 的人得到一句含糊的通用话。
 _GUARD_MESSAGES: Final = {
@@ -357,7 +310,7 @@ _GUARD_MESSAGES: Final = {
 
 
 def _transfer_reason(path: Path, error: paths.GuardError) -> str:
-    """按闸门给的**原因**给一句中文 —— 理由见 :func:`rename._rename_reason`。"""
+    """按拒绝的**原因**给一句中文 —— 理由见 :func:`rename._rename_reason`。"""
     return _GUARD_MESSAGES[error.reason].format(path=path)
 
 

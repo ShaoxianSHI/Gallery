@@ -1,7 +1,7 @@
 """``ThumbnailPipeline`` 的结果契约（ADR 0015）。
 
 缩放搬进工作线程之后，流水线交回来的不再只是一张图，而是**一张图 + 它是缩到几
-才发出来的**。这条边长是整个改动里唯一的新约定，值得钉住两件事：
+才发出来的**。这条边长是整个改动里唯一的新约定，值得锁定两件事：
 
 1. 交回来的图确实已经缩到目标边长了（缩放真的在工作线程做完了）；
 2. 边界上是「按提交那一刻的边长」走完的 —— 切档不会让一张图说谎说自己是大档的。
@@ -73,7 +73,7 @@ def test_the_reported_edge_is_the_one_it_was_submitted_with(
     photo: PhotoRef,
     wait_for: Callable[..., bool],
 ) -> None:
-    """在途任务带着提交时的边长跑完 —— 不在完成时现读当前的档位。"""
+    """进行中任务带着提交时的边长跑完 —— 不在完成时现读当前的档位。"""
     thumbs, runner = pipeline
     got = _collect(thumbs)
 
@@ -200,7 +200,7 @@ def test_an_album_whose_every_photo_fails_says_why(
 
 
 def test_a_stale_result_does_not_release_the_new_jobs_slot(qt_app, tmp_path: Path) -> None:
-    """**旧一代的迟到结果不许摘掉新一代的在途登记。**
+    """**旧一代的迟到结果不许摘掉新一代的进行中登记。**
 
     ``shutdown()``（切库 / 关窗）会清空 ``_inflight`` 并换代。上一代还在路上的任务若晚
     回来、无条件 ``pop(entry.path)``，摘掉的就是新一代为同一格登记的那一条 ——
@@ -217,7 +217,7 @@ def test_a_stale_result_does_not_release_the_new_jobs_slot(qt_app, tmp_path: Pat
     runner = TaskRunner()
     pipeline = ThumbnailPipeline(runner=runner, library=Library.open(tmp_path))
 
-    # 手动造两个「在途登记」：先记旧的一代，再换代并登记新的那一代。
+    # 手动造两个「进行中登记」：先记旧的一代，再换代并登记新的那一代。
     pipeline._generation += 1
     old_generation = pipeline._generation
     pipeline._inflight[(entry.path, 0)] = 111
@@ -230,7 +230,7 @@ def test_a_stale_result_does_not_release_the_new_jobs_slot(qt_app, tmp_path: Pat
 
     assert pipeline._inflight.get((entry.path, 0)) == 222, "新任务的在途登记不该被旧回调摘掉"
 
-    # 而**自己那一次**的回调仍然要能正常摘掉，否则在途表永远清不干净。
+    # 而**自己那一次**的回调仍然要能正常摘掉，否则进行中表永远清不干净。
     pipeline._on_result(entry, pipeline._generation, _Job(job_id=222, edge=0), None)
     assert (entry.path, 0) not in pipeline._inflight
 
@@ -252,7 +252,7 @@ def test_the_reference_table_forgets_what_left_the_window(
     pipeline: tuple[ThumbnailPipeline, TaskRunner],
     wait_for: Callable[..., bool],
 ) -> None:
-    """滚走的那些不留着 —— 10 万张的平铺库滚一趟不能攒下 10 万条（约 5 MB）。
+    """滚走的那些不留着 —— 10 万张的平铺库滚一趟不能累积下 10 万条（约 5 MB）。
 
     ``_refs`` 唯一的作用是给**队列里**的路径找条目，而队列每次都整份换成可见 + 预读；
     窗外那些谁也够不着。所以每次换窗口都要重收一遍，不能只往后加。
@@ -271,11 +271,11 @@ def test_the_reference_table_forgets_what_left_the_window(
 def test_an_in_flight_entry_survives_the_window_rebuild(
     pipeline: tuple[ThumbnailPipeline, TaskRunner],
 ) -> None:
-    """**在途的那几条必须留着** —— 换封面那条路要回头找它的条目。
+    """**进行中的那几条必须留着** —— 换封面那条路要回头找它的条目。
 
     ``_on_error`` 在一张相册的封面读不出来时会「换下一张再试」，做法是重新把那个
     路径排进队列；``_dispatch`` 随即要能在 ``_refs`` 里找到那个条目。滚到一片空白
-    （``set_window([])``）就把在途的摘掉的话，一张云盘上没下完的照片会让整张卡片
+    （``set_window([])``）就把进行中的摘掉的话，一张云盘上没下完的照片会让整张卡片
     永远挂着上一张黑封面。
     """
     thumbs, _runner = pipeline
@@ -303,7 +303,7 @@ def test_the_bad_file_memory_outlives_the_window(
     broken = _refs(2, "d")
     thumbs.set_window(broken)
     # 先等**这批真的跑完**，再断言那笔账：``_failed`` 是在回调里记的，
-    # 而回调要等后台任务收工、经排队连接回到主线程才发生 —— 直接等那笔账
+    # 而回调要等后台任务结束、经排队连接回到主线程才发生 —— 直接等那笔账
     # 等到的报出来是「结论没记上」，而真正的原因是任务压根没回来。
     assert wait_for(lambda: not thumbs._inflight), "这批坏文件没有在时限内跑完"
     assert set(thumbs._failed) >= {ref.path for ref in broken}, "读不出来的结论没有记进 _failed"
@@ -327,7 +327,7 @@ def test_scrolling_back_to_a_bad_file_does_not_decode_it_again(
     占住线程池把好照片挤到后面，并且每次都再报一次错。
 
     判据用「``set_window`` 返回后 ``_inflight`` 仍为空」：``_dispatch`` 是在
-    ``set_window`` 末尾**同步**跑完的，而 ``_start`` 也是同步登记在途的，所以真要重解码
+    ``set_window`` 末尾**同步**跑完的，而 ``_start`` 也是同步登记进行中的，所以真要重解码
     的话这一刻 ``_inflight`` 必定非空 —— 不必去赌后台线程的时序。
     """
     thumbs, runner = pipeline
@@ -337,7 +337,7 @@ def test_scrolling_back_to_a_bad_file_does_not_decode_it_again(
     assert {ref.path for ref in broken} <= set(thumbs._failed), "前提不成立：没记上读不出来的结论"
 
     thumbs.set_window(_refs(2, "e"))  # 滚走
-    # 等这一批（"e" 那两个并不存在的路径）真的收工：不然断言里看到的在途登记是它们的，
+    # 等这一批（"e" 那两个并不存在的路径）真的结束：不然断言里看到的进行中登记是它们的，
     # 而不是「坏文件被重解码」这件事。
     assert wait_for(lambda: not thumbs._inflight), "滚走之后这批没有在时限内跑完"
 
@@ -352,7 +352,7 @@ def test_a_different_size_still_retries_what_the_previous_size_could_not_read(
     pipeline: tuple[ThumbnailPipeline, TaskRunner],
     wait_for: Callable[..., bool],
 ) -> None:
-    """换档**要**重试 —— 上一条别把闸门关过头了。
+    """换档**要**重试 —— 上一条别把前置条件关过头了。
 
     128 px 读不出来不代表 256 px 也读不出来（失败多半出在解码，而档位是解码之后才缩的，
     但结论不该替这一档打包票）。所以记账要带上「当时那个档位」：同档不重试，换档重试。

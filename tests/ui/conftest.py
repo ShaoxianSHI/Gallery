@@ -93,7 +93,7 @@ def _destroy_top_level_widgets(app: QApplication) -> None:
 
 @pytest.fixture
 def teardown_qt(qt_app: QApplication) -> Callable[[], None]:
-    """手动收尾一次（守护测试用得上；平时靠 autouse 的 :func:`qt_teardown` 就够了）。"""
+    """手动收尾一次（回归测试用得上；平时靠 autouse 的 :func:`qt_teardown` 就够了）。"""
     return lambda: _destroy_top_level_widgets(qt_app)
 
 
@@ -218,7 +218,7 @@ def test_no_test_module_reimplements_the_wait_helper() -> None:
 
     问题不在慢 —— 在于**同一件事有多种写法**：改一处不会改到其余几处，而「该等多久
     才算超时」这种数字一旦各处不同，偶发失败就很难归因（改好一处，另几处还在按旧
-    数字等）。等 MainWindow 背后那几个后台任务收工的判据也在 :mod:`waiting` 里
+    数字等）。等 MainWindow 背后那几个后台任务结束的判据也在 :mod:`waiting` 里
     （:func:`waiting.window_is_idle` / :func:`waiting.wait_for_idle`），不成立直接抛。
 
     **按「写法」判，不按函数名判**：按名字要有一份白名单，而白名单看着整齐，实际是

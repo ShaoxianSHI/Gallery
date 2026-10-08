@@ -1,43 +1,9 @@
 """用户在编辑器里改的**拍摄时间**，翻译成要写进文件的字段（ADR 0032）。
 
-**这一层只做翻译，不碰文件**：输入是「照片此刻的拍摄时间」与「用户填完的那一份」，输出是
-一组 :class:`~gallery.core.metadata.writeback.Assignment`。真正写盘的是
-:func:`gallery.core.metadata.writeback.write_metadata`，它记账、校验、回滚、可撤销。
-
-## 为什么时间可以改，而相机与曝光不行
-
-ADR 0030 的判据是「这条值是设备的事实记录，还是人的标注」，并据此把拍摄时间划进了
-「不可写」那一侧。那条判据本身不推翻，它的适用范围被收窄了（ADR 0032）：
-
-- 相机型号、光圈、快门、ISO、焦距是**测量结果** —— 机身测出来的客观量，改它等于伪造证据；
-- 拍摄时间是**机内时钟的一次读数** —— 对不对取决于用户有没有把时区设对、有没有换过电池、
-  GPS 有没有对过时。它**本来就需要人来校准**，而现实中有一整类照片的时间是确定错了的。
-
-## 时区：单独一个字段，**绝不替用户猜**
-
-EXIF 的 ``DateTimeOriginal`` 存的是**墙上时间**（拍照地的钟点，``2024:05:16 20:52:02``），
-既不是 UTC 也没有换算。时区在单独的可选字段 ``OffsetTimeOriginal`` 里，相机十有八九不写它。
-
-于是这里是两个字段、两个独立的问题：
-
-| 用户填的 | 写下去的结果 |
-|---|---|
-| 时间 + 偏移 | 两个字段都写 |
-| 时间，留空偏移 | 只写时间，偏移被**删掉** |
-| 两个都留空 | 两个字段都删掉 |
-| 只改偏移 | 只写偏移 —— 「相机时区设错了」正是这一种 |
-
-**留空 = 照片里不记这一项**，与位置那一侧的空框语义一致（ADR 0031）：编辑器始终是
-「访达的显示简介」那一种，打开时看到的就是最终状态，不需要另设「改了这一项」的勾。
-
-照片没写偏移时，编辑器的偏移栏就是空的 —— **绝不按本机时区补一个**。凭空替用户猜时区，
-猜错的后果是排序整体偏几个小时（见 :func:`~gallery.core.metadata.facets.parse_capture_time`
-对「没写偏移」的处置），比空着严重得多。
-
-## 只写 ``DateTimeOriginal``，不碰 ``CreateDate`` / ``DateTimeDigitized`` / ``ModifyDate``
-
-后几个记的是**文件处理过程**（「什么时候被创建的」「什么时候被数字化的」），与「这张照片
-什么时候拍的」不是一回事。用户改拍摄时间时不动它们。
+**这一层只做翻译，不碰文件**：输出一组 :class:`~gallery.core.metadata.writeback.Assignment`，
+写盘的是 :func:`gallery.core.metadata.writeback.write_metadata`（记账、校验、回滚、可撤销）。
+时区是单独的可选字段：**留空 = 照片里不记这一项，绝不按本机时区补一个** —— 猜错的后果是排序
+整体偏几个小时。只写 ``DateTimeOriginal``，不碰 ``CreateDate`` / ``ModifyDate`` 等日期字段。
 """
 
 from __future__ import annotations
@@ -74,12 +40,8 @@ class CaptureTimeEdit:
 def plan_capture_time_edit(state: CaptureTime, edit: CaptureTimeEdit) -> tuple[Assignment, ...]:
     """把「用户填完的那一份」翻译成要写进文件的字段。
 
-    **空串 = 把这个字段删掉**（exiftool 的写法）。
-
-    值没变的字段一个字都不写：那正是「打开对话框什么都没动就按保存」，把同样的值再写一遍
-    只会让日志里多一条空记录，而 ⌘Z 会因此去撤一件空事。
-
-    :raises MetadataWriteError: 时间或时区看不懂（不存在的日期也会在这里被挡住）。
+    **空串 = 把这个字段删掉**（exiftool 的写法）；值没变的字段一个字都不写 —— 否则日志里多一条
+    空记录，⌘Z 会去撤一件空事。:raises MetadataWriteError: 时间或时区看不懂。
     """
     taken = _time(edit.taken_at)
     offset = _offset(edit.offset)

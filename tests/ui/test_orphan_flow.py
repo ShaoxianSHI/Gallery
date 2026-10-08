@@ -1,6 +1,6 @@
 """开库时的孤儿绑定检查（ADR 0043 决策 9）。
 
-三件事要钉住：**什么都没找到时彻底静默**（绝大多数用户永远看不到这个功能）、
+三件事要锁定：**什么都没找到时彻底静默**（绝大多数用户永远看不到这个功能）、
 **「相册不存在」那一档默认保留**（它混着「那个盘没挂上」），以及切库之后回来的结果不许弹框。
 
 确认框本身是 Qt 的事，所以整个 ``QMessageBox`` 换成假的 —— 要断的是「点了哪个按钮 →
@@ -287,7 +287,7 @@ def test_a_library_without_events_never_starts_the_check(
     try:
         library = window._library
         assert library is not None
-        # 先等开库那一次自己收工，否则量到的是它而不是下面这一次的。
+        # 先等开库那一次自己结束，否则量到的是它而不是下面这一次的。
         assert wait_until(qt_app, lambda: window._orphan_job is None)
         library.events._connection = None  # 模拟配置目录建不出来的库
 

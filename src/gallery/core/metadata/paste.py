@@ -1,19 +1,9 @@
 """把文件**复制**进某个目录（界面上是「粘贴」⌘V，ADR 0018；「复制到相册」是同一个动作，
 「复制」⌘D 是把每一项复制到它自己所在的那一层，ADR 0044）。
-
-只增不改这一点与改名（ADR 0004）、移到废纸篓（ADR 0008）根本不同，写在这里免得日后有人
-照着前两个的规矩套错：
-
-- **只增不改**：粘进来的是**新文件**，源文件一个字节都不动。于是**没有「撤销」这一说** ——
-  撤销一次粘贴就是删文件，而删除在这个项目里只允许用户在界面上亲手触发（红线 1）。本模块仍然记账
-  （:data:`~gallery.core.metadata.journal.ACTION_PASTE`），但那一条**不进撤销栈**。
-- **绝不覆盖**：目标已有同名时不覆盖、也不把整批停下来（那会让十张里九张都粘不成），而是按
-  **系统自己的规矩**改个名再粘：``一张.jpg`` → ``一张 2.jpg``（访达实测如此，文件夹同理）。
-- **已经在目标目录里的那几项不再是「无操作」**，而是各复制一份：``一张.jpg`` → ``一张的副本.jpg``，
-  撞名再退成 ``一张的副本 2.jpg``（ADR 0044）。同一句规则也管「移动到相册」而目标正是它所在的
-  那个相册 —— 用户挑了「移动」却什么都没发生，那是**做错了事**，不是保护了什么。
-
-复制到一半失败时只删**本模块自己刚写了一半的那个文件**，不留给用户。
+**只增不改**：粘进来的是新文件，源文件一个字节不动，于是**没有「撤销」这一说** —— 撤销粘贴就是
+删文件，而删除只允许用户亲手触发（硬性约束）。**绝不覆盖**：目标已有同名时按访达的规矩改个名再粘
+（``一张.jpg`` → ``一张 2.jpg``）；已经在目标目录里的那几项各复制一份；复制到一半失败时只删**本模块
+自己刚写了一半的那个文件**，不留给用户。
 """
 
 from __future__ import annotations
@@ -73,11 +63,9 @@ class PasteResult:
 def wanted_name(source: Path, destination: Path) -> str:
     """这一项在 ``destination`` 里该叫什么。
 
-    **已经在那一层的，给「的副本」而不是照原名再走一遍编号** —— 照原名会得到
-    ``一张 2.jpg``，用户分不出它是新粘来的还是自己早先就有的那一份。
-
-    「同一目录」这一判据在 :mod:`~gallery.core.metadata.transfer` 里也有一份调用，
-    两边共用这一个函数，否则两处会漂移。
+    **已经在那一层的，给「的副本」而不是照原名再走一遍编号** —— 照原名会得到 ``一张 2.jpg``，
+    用户分不出它是新粘来的还是自己早先就有的那一份。「同一目录」这一判据与
+    :mod:`~gallery.core.metadata.transfer` 共用这一个函数，否则两处会漂移。
     """
     if same_directory(source.parent, destination):
         return duplicate_base(source.name, whole=source.is_dir())
@@ -94,10 +82,7 @@ def copy_into(
     """把 ``sources`` 复制进 ``target``，返回结果。
 
     :param root: 库根。记账写在它下面（``journal/``），与另外两个写操作同一处。
-    :param target: 目标目录，必须已经存在且是个目录。
-    :param sources: 剪贴板里的那些路径，可以来自库外（访达里 ⌘C 也算）。
-    :param should_cancel: 每粘一项之前问一次。只在**项与项之间**取消：粘到一半停下来会
-        留下半截文件，那比粘完更糟。
+    :param should_cancel: 每粘一项之前问一次；只在**项与项之间**取消，粘到一半会留下半截文件。
     :raises PasteError: ``target`` 不是目录，或者它落在库外。
     """
     destination = Path(target)
@@ -145,12 +130,9 @@ def duplicate(
 ) -> PasteResult:
     """把每一项**复制到它自己所在的那一层**（界面上是「复制」⌘D，ADR 0044）。
 
-    与 :func:`copy_into` 的区别只在于目标目录：这里每一项的目标是它自己的父目录，
-    于是**一次调用里可能有好几个目标目录**。所以按父目录分组，每组走一次
-    :func:`copy_into` —— 每个目录仍然只扫一次，而那套编号占用表也就地复用。
-
-    **取消不在这一层问**：每组进去后的第一项之前 :func:`copy_into` 自己就会问一次，
-    在这里多问一次只会让取消早一个「组」生效，与「只在项与项之间取消」不是一回事。
+    与 :func:`copy_into` 的区别只在于目标目录：这里每一项的目标是它自己的父目录，于是**一次调用里
+    可能有好几个目标目录**。所以按父目录分组，每组走一次 :func:`copy_into` —— 每个目录仍只扫一次。
+    **取消不在这一层问**：每组进去后的第一项之前 :func:`copy_into` 自己就会问一次。
     """
     groups: dict[Path, list[Path]] = {}
     for raw_source in sources:
@@ -190,15 +172,10 @@ def copy_one_into(
     taken: set[str] | None,
 ) -> CopyOutcome:
     """把**一项**复制进 ``destination`` —— 「复制」这件事在本项目里的**唯一实现**。
-
-    :func:`copy_into`（⌘V 与「复制到相册」）与 :func:`gallery.core.metadata.transfer.move_into`
-    里「移到本来就在的那个相册 → 复制一份」那一支都走它，否则会出现第二份
-    ``copy2`` / ``copytree`` / 半截清理，而那三样每一件都碰着红线 1。
-
-    :param batch: 记账用的批次号，由调用方生成（一批一次）。
-    :param taken: 这一批共用的一份「已经被占掉的名字」，由调用方扫一次目录得到；
-        **目录读不了时是 ``None``**（见 :func:`~gallery.core.metadata.naming.occupied_names`），
-        那时退回逐个 ``exists()``。
+    :func:`copy_into`（⌘V 与「复制到相册」）与 :func:`gallery.core.metadata.transfer.move_into` 里
+    「移到本来就在的那个相册 → 复制一份」那一支都走它，否则会出现第二份 ``copy2`` / ``copytree`` /
+    半截清理，而那三样每一件都碰着「删除只允许用户亲手触发」这条硬性约束。
+    :param taken: 这一批共用的一份「已经被占掉的名字」；**目录读不了时是 ``None``**。
     """
     is_dir = source.is_dir()
     created = free_target(destination, wanted_name(source, destination), taken, whole=is_dir)
@@ -214,7 +191,7 @@ def copy_one_into(
             shutil.copy2(source, created)
     except FileExistsError:
         # 目标已经存在，**而那不是我们写了一半的东西，是用户自己放进去的** —— 绝不能清理它：
-        # 清理那句 ``rmtree`` 删掉的是用户的文件夹连同里面所有照片（红线 1）。
+        # 清理那句 ``rmtree`` 删掉的是用户的文件夹连同里面所有照片（删除只允许用户亲手触发）。
         message = "这个位置已经有同名的文件或文件夹了，没有覆盖它。"
         return CopyOutcome(
             failure=Failure.at(source, message=message),
@@ -282,10 +259,8 @@ def _remove_partial(created: Path, is_dir: bool) -> None:
 
 def _guard(root: Path, destination: Path) -> None:
     """粘贴的守卫：**只查目标**。与 :func:`~gallery.core.metadata.transfer._guard` 正好相反：源
-    **可以**在库外（访达里 ⌘C 复制进来的就是，ADR 0018）；目标必须在库内，落到库外则是谁都看不见、
-    谁也不会清理的孤儿文件。配置目录仍然挡掉：往里粘照片只会被下一次清理当成垃圾。
-
-    **库根本身是合法的目标**（没有选中项时粘的就是库根）：要挡的是「跑到库外」，不是「落在库里」。
+    **可以**在库外（访达里 ⌘C 复制进来的就是，ADR 0018）；目标必须在库内，落到库外则是孤儿文件。
+    配置目录仍然挡掉。**库根本身是合法的目标**：要挡的是「跑到库外」，不是「落在库里」。
     「不覆盖」不归这里管 —— 那是 :mod:`~gallery.core.metadata.naming` 的活。
     """
     root = Path(root)
@@ -295,7 +270,7 @@ def _guard(root: Path, destination: Path) -> None:
         raise PasteError(_paste_reason(destination, exc), path=destination) from exc
 
 
-#: 闸门拒绝的每一种原因 → 给用户的那句话。见 :data:`rename._GUARD_MESSAGES`。
+#: 拒绝粘贴的那几种原因 → 给用户的那句话。见 :data:`rename._GUARD_MESSAGES`。
 #: **「库本身」这一条今天到不了**（库根本身是合法的粘贴目标），理由同
 #: :data:`transfer._GUARD_MESSAGES`：留着是为了这张表是全的。
 _GUARD_MESSAGES: Final = {
@@ -306,7 +281,7 @@ _GUARD_MESSAGES: Final = {
 
 
 def _paste_reason(path: Path, error: paths.GuardError) -> str:
-    """按闸门给的**原因**给一句中文 —— 理由见 :func:`rename._rename_reason`。"""
+    """按拒绝的**原因**给一句中文 —— 理由见 :func:`rename._rename_reason`。"""
     return _GUARD_MESSAGES[error.reason].format(path=path)
 
 

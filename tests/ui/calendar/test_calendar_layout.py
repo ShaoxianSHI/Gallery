@@ -72,7 +72,7 @@ def test_a_very_narrow_column_still_centres_what_is_left() -> None:
 
 
 def test_the_cell_keeps_its_own_ratio_as_the_column_grows() -> None:
-    """格子是定的 3:2；列变宽只是让它周围的白更多，不是格子自己横向摊开。"""
+    """格子是定的 3:2；列变宽只是让它周围的白更多，不是格子自己横向展开。"""
     small_w, small_h = cell_size(row_height(200.0))
     large_w, large_h = cell_size(row_height(600.0))
     assert large_w > small_w

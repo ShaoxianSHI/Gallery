@@ -36,7 +36,7 @@ def begin(widget: QWidget, background: QColor | str) -> QPainter:
 
 
 def font_px(size: int, weight: QFont.Weight = QFont.Weight.Normal) -> QFont:
-    """一个按**像素**定大小的字体（跟着格子走，写死了也不会在 2x 屏上偏小一档）。
+    """一个按**像素**定大小的字体（跟着格子走，硬编码了也不会在 2x 屏上偏小一档）。
 
     **同一个 ``(字号, 字重)`` 永远返回同一个对象：只许直接交给 :func:`draw_text`，不许就地改**
     —— PySide6 的 ``QFont`` 按值返回，改一次就把缓存里那一份一起改了，整轮字号跟着变。
@@ -177,10 +177,9 @@ def paint_cell_photo(
 ) -> None:
     """日历里的一格：一张圆角照片，不止一张时右下角写「N 张」。
 
-    **月 / 周两层共用这一份**：不压渐变、不写标题（「这一格是几点」左窄条已经写着）；
-    张数写「N 张」是因为看的人要问「一共几张」，不是「除了这张还有几张」。
-
-    **年视图不走它** —— 那一层的格子只有二十几像素，走 :func:`paint_photo` 再自己叠一个日期徽标。
+    **月 / 周两层共用这一份**：不压渐变、不写标题（「这一格是几点」左窄条已经写着）；张数写
+    「N 张」是因为看的人要问「一共几张」。**年视图不走它** —— 那一层的格子只有二十几像素，
+    走 :func:`paint_photo` 再自己叠一个日期徽标。
     """
     paint_photo(painter, rect, image, radius=radius)
     if count <= 1:

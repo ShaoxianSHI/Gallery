@@ -51,7 +51,7 @@ def test_draw_text_only_reads_the_font_it_is_given(qt_app: QApplication) -> None
 
     ``font_px`` 返回的是共享的那一份，而 PySide6 的 ``QFont`` 按值传递 ——
     真被改一次，整轮的字号都跟着变（某些格子的字忽然变大），极难往这一行上想。
-    所以这条钉住「唯一的消费方只读它」。
+    所以这条锁定「唯一的消费方只读它」。
     """
     del qt_app
     font = font_px(13)

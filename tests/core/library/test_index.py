@@ -341,7 +341,7 @@ def test_the_index_runs_in_delete_with_normal_sync(tmp_path: Path) -> None:
     """索引是缓存，提交强度就该按缓存配：``DELETE`` + ``synchronous=NORMAL``。
 
     默认设置下每次 ``commit`` 都要 fsync，而存照片是一张张来的 —— 等的是用户的耐心，
-    存的是一份随时可以删掉重扫就回来的东西（红线 5）。
+    存的是一份随时可以删掉重扫就回来的东西（``.gallery/`` 里除 ``config.toml`` 外都是缓存）。
 
     **日志模式钉的是 ``delete`` 而不是 ``wal``**（ADR 0038 决策 5）：索引住在用户的
     库里，而库常常在云盘上 —— WAL 的 ``-wal`` / ``-shm`` 两个文件会跟着一起同步，
@@ -452,7 +452,7 @@ def test_a_failure_to_relax_cache_durability_does_not_take_the_index_down(
 def test_the_facet_table_matches_the_dataclass() -> None:
     """**字段表与 :class:`PhotoFacets` 一一对应** —— 少一个、多一个、拼错一个都不行。
 
-    这条守护是 :data:`_FACET_FIELDS` 那份单一来源的兑现处。字段表是手写的，而
+    这条回归测试是 :data:`_FACET_FIELDS` 那份单一来源的兑现处。字段表是手写的，而
     :class:`PhotoFacets` 是另一个文件里的 dataclass，两边对不上时 SQL 照样执行成功，
     症状是那一列永远空着、分组退化成「全是时间未知」。这条布局原来手写了五遍，
     那次故障就是这么来的。
@@ -490,7 +490,7 @@ def test_the_column_list_agrees_with_the_generated_schema() -> None:
 def test_a_row_of_the_wrong_length_is_rejected() -> None:
     """**列数对不上就当场抛**，而不是按短的安静地少读一列。
 
-    ``zip(strict=True)`` 就是这条守护的兑现处：它把「字段表与列清单悄悄错开」这件事
+    ``zip(strict=True)`` 就是这条回归测试的兑现处：它把「字段表与列清单悄悄错开」这件事
     从一个运行很久之后才显出来的症状，变成了一次立即的失败。
     """
     from gallery.core.library import index as module

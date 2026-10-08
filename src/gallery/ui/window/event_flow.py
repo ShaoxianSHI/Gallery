@@ -1,13 +1,9 @@
-"""把照片「记录为」某个事件 —— 菜单、面板、写库、横幅（ADR 0043）。从「演迹」导入演出
-（ADR 0047）也住在这里：它同样只动 Gallery 自己的库。
+"""把照片「记录为」某个事件 —— 菜单、面板、写库、横幅（ADR 0043）；从「演迹」导入演出
+（ADR 0047）也住在这里，它同样只动 Gallery 自己的库。
 
-**这一层一个用户的文件都不碰**，所以它不住 ``write_ops``（那一个只管会动用户文件的入口，
-红线 1 的守护按文件名找它）。它动的是 Gallery 自己的库。
-
-菜单是三级的：「记录为 → 旅行 → 京都五日」。而**三层 QMenu 必须先全建出来**再填内容 ——
-``menu_style.apply_style`` 是在菜单建好那一刻一次性递归给所有子菜单下发样式表的，建完再补第三层
-的话，那一层会是一张系统默认的白底菜单（与 ``menus.build_lazy_album_picker`` 同一个坑）。清单
-的填充一律挂 ``aboutToShow``，与相册清单那一支同一写法。
+**这一层一个用户的文件都不碰**，所以它不住 ``write_ops``（界面改用户文件只许在那里，回归
+测试按文件名找它）。菜单三级且**三层 QMenu 必须先全建出来**再填内容：
+``menu_style.apply_style`` 在菜单建好那一刻递归下发样式表；清单填充一律挂 ``aboutToShow``。
 """
 
 from __future__ import annotations
@@ -70,12 +66,10 @@ class EventFlowMixin:
     def _update_event_actions(self) -> None:
         """事件那几处的灰度，分两种判据。
 
-        **事件分组卡片上那两行**：只有当光标落在认得的事件卡片上才可点 —— 它只是「当前项背后
-        有没有一个事件 id」这一个是非问题，不必去查库。
-
-        **菜单栏那两条**：见 :meth:`_events_usable` —— **不是「有没有选中照片」**，与右键那一支
-        不同，那一条是「把这批照片记进去」，这一条是「建一个事件 / 改一个事件」。
-        """
+        **事件分组卡片上那两行**：只有光标落在认得的事件卡片上才可点，判据是「当前项背后
+        有没有一个事件 id」，不必查库。**菜单栏那两条**（见 :meth:`_events_usable`）
+        **不是「有没有选中照片」** —— 右键那一条是「把这批照片记进去」，这一条是
+        「建一个事件 / 改一个事件」。"""
         new_menu = getattr(self, "_new_event_menu", None)
         if new_menu is not None:
             new_menu.setEnabled(self._events_usable())
@@ -220,15 +214,10 @@ class EventFlowMixin:
     def edit_event_menu(self) -> QMenu:
         """菜单栏「编辑 → 编辑事件 → 旅行 / 演出 → 具体那一个」——**先按类型分，再列具体事件**。
 
-        多出来的一层是因为**一个类型里的事件可能有很多**，平铺在一层里找起来费劲；类型本身是
-        稳定的，先按它分一次。每一类各挂一个子菜单，点第三层那一条直接开那个事件的编辑面板。
-
+        多一层是因为**一个类型里的事件可能有很多**，平铺在一层里找起来费劲；类型本身稳定，先按它分。
         这一层与下面两层 QMenu **都在这里一次建完**（不能等 ``aboutToShow`` 才现建子菜单：
         ``menu_style.apply_style`` 只在菜单建好那一刻递归下发样式表，后建的会留在系统默认样式里）。
-
-        同样挂在 ``aboutToShow`` 上刷灰度（理由见 :meth:`new_event_menu`），**零个事件时置灰** ——
-        摆一个永远点不开的框只会让人以为软件坏了。
-        """
+        挂在 ``aboutToShow`` 上刷灰度（理由见 :meth:`new_event_menu`），**零个事件时置灰**。"""
         menu = ShortcutColumnMenu("编辑事件")
         menu.setToolTipsVisible(True)
         for kind in EVENT_KINDS:
@@ -245,7 +234,7 @@ class EventFlowMixin:
     def _edit_event_picker(self, kind: EventKind) -> QMenu:
         """「编辑事件 → 旅行」这一层：列这一类里已有的那些，点一个直接开那个事件的编辑面板。
 
-        顺序照 ``all_events``（**开始日期新→旧**，id 兜底）。**这一类一个事件都没有时整层置灰** ——
+        顺序照 ``all_events``（**开始日期新→旧**，再按 id）。**这一类一个事件都没有时整层置灰** ——
         空的子菜单点开是个空框，只会让人以为软件坏了。
         """
         submenu = QMenu(kind.label)
@@ -415,11 +404,9 @@ class EventFlowMixin:
     def event_cover_candidate(self) -> Path | None:
         """「设为事件封面」此刻作用于哪张照片 —— **恰好一张，且它属于至少一个事件**。
 
-        判据与 ADR 0028 决策 1 的相册那一支同款（照片侧的入口一按就是），多选时不出现：
-        **把哪一张当封面说不清**，与「重命名…」同一个理由。
-
-        「属于至少一个事件」是这一条与相册那条唯一的区别 —— 相册就是照片的父目录，
-        而照片可能同时属于一次演出与一次旅行，所以**还要问是哪一次**（子菜单那一层）。
+        判据与 ADR 0028 决策 1 的相册那一支同款，多选时不出现：**把哪一张当封面说不清**，
+        与「重命名…」同一个理由。「属于至少一个事件」是与相册那条唯一的区别：相册就是
+        照片的父目录，而照片可能同时属于一次演出与一次旅行，所以**还要问是哪一次**。
         """
         library = self._library
         entries = self._selected_entries()
@@ -430,12 +417,10 @@ class EventFlowMixin:
     def covered_event(self, entry: GridEntry | None = None) -> int | None:
         """「清除事件封面」此刻作用于哪个事件 —— **卡片背后的那个事件，且它真的设过封面**。
 
-        没设过就返回 ``None``，于是那一行不出现（用户看得见自己设过，也就没有需要撤销的东西，
-        与 ADR 0028 决策 5 同一处置）。
+        没设过就返回 ``None``，那一行于是不出现（与 ADR 0028 决策 5 同一处置）。
 
-        :param entry: 那一格。传进来是因为菜单是**按右键按到的那一行**拼的，
-            而当前项未必是它（测试直接调 :meth:`context_menu_for` 时就是这样）。
-        """
+        :param entry: 那一格。菜单是**按右键按到的那一行**拼的，当前项未必是它（测试直接调
+            :meth:`context_menu_for` 时就是这样）。"""
         library = self._library
         event_id = _event_id_of(entry) if entry is not None else self._group_card_event_id()
         if library is None or event_id is None:
@@ -629,15 +614,10 @@ class EventFlowMixin:
     def _confirm_orphan_cleanup(self, scan: OrphanScan) -> None:
         """问用户要不要清掉那些孤儿绑定（ADR 0043 决策 9）。
 
-        **一个框分两档**（``banners.orphan_dialog`` 里说清了为什么），三个按钮：
-
-        - 「清掉这些」：只清 ``missing`` 那一档 —— 目录可读、清单里没有它，是**结论**
-        - 「连相册不存在的也清掉」：连 ``vanished`` 一起，**而那一档混着「那个盘没挂上」**
-        - 「先不清」：默认按下的那一个。删用户自己填过的数据，默认必须是保守的那一个。
-
-        **默认按钮是 Cancel**，与 :meth:`delete_event` 同一取向。**正文不许提 ⌘Z** ——
-        这里没有撤销，而 ``delete_event`` 那句「⌘Z 可以…」在这里是反的。
-        """
+        一个框分两档（``banners.orphan_dialog`` 里说清了为什么）：「清掉这些」只清
+        ``missing``（目录可读、清单里没有它是结论）；「连相册不存在的也清掉」连 ``vanished``
+        一起，而那一档混着「那个盘没挂上」。**删用户自己填过的数据，默认按钮必须是保守的
+        ``Cancel``**（与 :meth:`delete_event` 同一取向）；**正文不许提 ⌘Z**，这里没有撤销。"""
         library = self._library
         if library is None:
             return
@@ -791,20 +771,10 @@ class EventFlowMixin:
     def _after_events_changed(self) -> None:
         """事件变了之后要跟着动的那几样。
 
-        **按事件分组时要重新取一次那份映射**，然后再重排。原因在重排那道闸：它判的是
-        「对象换了没有」，而绑定变了之后手上那一份**仍是旧的那个对象** —— 它不会因为库里的行
-        变了就变。于是直接 ``_order_now()`` 会被闸挡掉，用户看到的是「记完什么都没发生」
-        （ADR 0043 决策 7）。
-
-        顺带一件不显然的：**此刻模型里摆的是组卡片而不是照片**，而重排是从模型里取照片的 ——
-        不喂一份进去就算出「一个组都没有」，整屏卡片会瞬间消失。上一次分组时的那批照片
-        还留着（``_reorder_photos``），拿来当输入正是它当初的用途。
-
-        **菜单栏那两层的灰度也在这里刷**：它们按「事件库用不用得上」与「有没有事件」置灰
-        （见 :meth:`_events_usable`），而事件一变就该跟着变 —— 走 ``_update_action_states``
-        覆盖的那些路（右键「记录为」那几条）都会刷，建 / 改 / 删走的面板那几条不会，
-        所以**放在这里**：所有事件的改动都经过这个方法，不必每处记得补一句。
-        """
+        **按事件分组时要重新取一次那份映射**再重排：重排的检查判的是「对象换了没有」，
+        而绑定变了之后手上那一份**仍是旧对象**，直接 ``_order_now()`` 会被挡掉
+        （ADR 0043 决策 7）。重排还要喂一份照片进去（此刻模型里摆的是组卡片），
+        **菜单栏那两层的灰度也在这里刷**，所有事件改动都经过这里。"""
         self._update_event_actions()
         if not self._groups_by_event():
             return

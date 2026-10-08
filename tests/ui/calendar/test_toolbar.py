@@ -156,7 +156,7 @@ def test_light_to_dark_keeps_the_title_readable(
 def shown_page(qt_app: QApplication) -> Iterator[CalendarPage]:
     """造一个**真的显示着**的页面。
 
-    ``isVisible()`` 要求祖先全都可见，而这些用例没把页面放上屏幕 —— 于是一条
+    ``isVisible()`` 要求祖先全都可见，而这些用例没把页面放显示幕 —— 于是一条
     「有条件时那一块该可见」会红，而它其实已经 ``setVisible(True)`` 了。问「有没有被显式收起来」
     （``isHidden()``）才量的是我们真正写下的那一句。
     """
@@ -231,7 +231,7 @@ def test_clearing_the_conditions_takes_the_chips_away(
 def test_every_chip_stays_whole_when_they_do_not_all_fit(
     qt_app: QApplication, shown_page: CalendarPage
 ) -> None:
-    """摆不下时**收掉尾部那几枚**，而不是把每一枚都压成省略号 —— 守护。
+    """摆不下时**收掉尾部那几枚**，而不是把每一枚都压成省略号 —— 回归测试。
 
     ``QToolButton`` 窄到尺寸提示以下会把文字省略掉，于是「拍摄时…1 ✕」这样一条
     **不存在的条件**摆在那里 —— 读到的是错的，而且点它撤掉的是另一条。
@@ -259,7 +259,7 @@ def test_every_chip_stays_whole_when_they_do_not_all_fit(
 
     # 排不下的那些要说清楚还有几条，而不是假装条件只有那么几条。
     # **只钉「+N 与 ``_overflow`` 对得上」而不钉具体是几条** —— 那个数取决于字体度量，
-    # 换个平台就变，写死会让这条用例偶尔红，而它红的原因与被守的东西无关。
+    # 换个平台就变，硬编码会让这条用例偶尔红，而它红的原因与被守的东西无关。
     overflow_labels = [
         label.text()
         for label in page._bar._chips.findChildren(QLabel)
@@ -296,7 +296,7 @@ def test_the_chips_stay_readable_in_both_appearances(
     qt_app: QApplication,
     page_in: Callable[..., CalendarPage],
 ) -> None:
-    """浅色与深色下胶囊都得读得出来 —— 守护。
+    """浅色与深色下胶囊都得读得出来 —— 回归测试。
 
     **这一条量的是画出来的像素，不是 ``chip.palette()``**，理由与上面那个标题的用例一样：
     工具条带着样式表，而样式表会让这一支拿到 ``QStyleSheetStyle`` **自己那份**调色板 ——
@@ -390,7 +390,7 @@ def test_the_title_keeps_the_default_font_size(
     那一档。所以修字色时别把它「一并对上」：那会把字号凭空放大一号。
 
     量的是「标签的字体与应用默认字体相等」，而不是某个具体数字 —— 默认字号跟平台
-    与系统设置走，写死一个数只会在换机器时红。
+    与系统设置走，硬编码一个数只会在换机器时红。
     """
     page = page_in(window=LIGHT_WINDOW, base=LIGHT_BASE)
     label = page._bar._title

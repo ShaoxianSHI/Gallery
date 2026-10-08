@@ -88,7 +88,7 @@ def _open(qt_app: QApplication, root: Path, *, browse_mode: str = BROWSE_MODE_AL
     instance = MainWindow(session_base=session_base, initial_library=root)
     instance.resize(900, 600)
     instance.show()
-    # 等扫描真正收工（「这一层排好了」的唯一判据是 ``_scan_job is None``，同 test_context_menu /
+    # 等扫描真正结束（「这一层排好了」的唯一判据是 ``_scan_job is None``，同 test_context_menu /
     # test_group_flow / test_blank_double_click 用的都是它），不是「屏幕上已经有东西了」：
     # 收尾那一下 ``_apply_ordering`` 会重排整个模型并**把选区收掉**。
     assert wait_until(qt_app, lambda: instance._model.rowCount() > 0), "扫描没有在时限内完成"
@@ -107,9 +107,9 @@ def _enter(qt_app: QApplication, window: MainWindow, folder: Path) -> None:
     重排，行数会跳一下再回来，断言就成了在赌时序。
 
     **还要等 ``_defer_watch_until_idle()`` 为假**：那是产品自己回答「现在能不能
-    就地改网格」的那句判断（扫描在途 / 条目还攒在暂存区 / 人正看着大图，三种
+    就地改网格」的那句判断（扫描进行中 / 条目还累积在暂存区 / 人正看着大图，三种
     时候都不行）。``test_new_file_shows_up_in_the_grid`` 断言的正是「监听器把
-    新照片直接添进来」，而那句话为假时那一批变化会被**攒进** ``_watch_pending``，
+    新照片直接添进来」，而那句话为假时那一批变化会被**累积进** ``_watch_pending``，
     等下一次重排才补上 —— 空相册这一层未必还有下一次重排，于是断言就成了一场
     没赢面的等待。
     """
@@ -607,7 +607,7 @@ def test_new_file_shows_up_in_the_grid(
 ) -> None:
     """粘完不用手动刷新：监听器（ADR 0013）自己把新照片添进来。
 
-    这条正是监听器当初要解决的场景（访达拷一批照片进来），所以这里钉住它。
+    这条正是监听器当初要解决的场景（访达拷一批照片进来），所以这里锁定它。
     """
     desktop.copy_files_to_clipboard([root / "京都" / "一张.jpg"])
     _enter(qt_app, window, root / "奈良")

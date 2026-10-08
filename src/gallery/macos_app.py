@@ -1,27 +1,9 @@
-"""把 Gallery 打包成 macOS 的 ``Gallery.app``。
+"""把 Gallery 打包成 macOS 的 ``Gallery.app``，让 Dock、访达、⌘Tab 用上应用图标。
 
-**为什么需要它：** ``uv run gallery`` 起的只是一个普通进程，Dock、访达、``⌘Tab`` 里
-显示的都是系统给通用 Python 进程的占位图标。要让系统认得出这是 Gallery，
-进程必须从 ``.app`` 包里启动 —— Dock 图标来自包内 ``Info.plist`` 的 ``CFBundleIconFile``。
-
-**这里生成的是开发用的包：** 它不打包 Python 依赖，而是在启动器里指向本仓库的
-``.venv``。代价是包与构建时的仓库路径绑定；仓库移动或 ``uv sync`` 重建之后，
-重新生成一次即可。
-
-用法::
-
-    uv run python -m gallery.macos_app            # 生成 dist/Gallery.app
-    uv run python -m gallery.macos.app ~/Applications
-
-**启动器为什么长这样：** ``Contents/MacOS/python`` 是指向解释器的符号链接，
-启动器 ``exec`` 的正是这个链接 —— 只有最终运行的那个进程映像位于包内，
-系统才会把它当成这个应用（直接 ``exec`` 到 ``.venv`` 里的解释器，图标就丢了）。
-代价是此时解释器找不到 ``.venv`` 的 ``pyvenv.cfg``，因此用 CPython 认得的
-``__PYVENV_LAUNCHER__`` 把前缀指回 ``.venv``。这两件事必须成对出现，缺一不可。
-
-启动器还会补一次 ``PATH``（见 ``EXTRA_PATH_DIRS``）：从访达 / Dock 启动的进程
-只拿到系统目录，Homebrew 装的 exiftool 因此找不到，Gallery 会误报「没有 exiftool」
-并降级成只读模式。
+**启动器为什么长这样**：``Contents/MacOS/python`` 是指向解释器的符号链接，启动器 ``exec`` 的
+正是这个链接 —— 只有最终运行的那个进程映像位于包内，系统才认得出是这个应用（直接 ``exec``
+到 ``.venv`` 里的解释器，图标就丢了）；代价是此时解释器找不到 ``pyvenv.cfg``，要用 CPython
+认得的 ``__PYVENV_LAUNCHER__`` 把前缀指回 ``.venv``，这两件事必须成对出现。
 """
 
 from __future__ import annotations
@@ -73,7 +55,7 @@ ICONSET_ENTRIES: Final = (
 MINIMUM_SYSTEM_VERSION: Final = "13.0"
 
 #: 启动时补进 PATH 的常见安装目录。从访达 / Dock 启动的进程只拿到系统那几个目录，Homebrew
-#: 装的 exiftool 因此不在里面（读不全元数据，还会一路降级成只读模式）。写死在这里是刻意的：
+#: 装的 exiftool 因此不在里面（读不全元数据，还会一路降级成只读模式）。硬编码在这里是刻意的：
 #: 启动器没有登录 shell 的上下文，只能这样把常见安装位置补回去。
 EXTRA_PATH_DIRS: Final = (
     "/opt/homebrew/bin",

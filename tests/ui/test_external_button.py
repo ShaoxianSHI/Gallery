@@ -333,7 +333,7 @@ def test_the_finder_entry_opens_that_folder(
 ) -> None:
     """走的是右键菜单对**相册**那一条 ``open_folder_in_finder`` —— 落到**里面**去。
 
-    钉住的是「**不是** ``reveal_in_finder``」：``open -R`` 弹出来的访达停在当前这一层的
+    锁定的是「**不是** ``reveal_in_finder``」：``open -R`` 弹出来的访达停在当前这一层的
     **上一级**，而这个按钮的用处就是看一眼**这一层里面**摆着什么。
     """
     opened: list[list[Path]] = []
@@ -540,12 +540,12 @@ def test_the_dropdown_is_the_same_colour_as_the_search_popup(
     这三样是三个不同的控件，样式表都由 :mod:`gallery.ui.menu_style` 从**各自的**调色板生成 ——
     而 macOS 上 Qt 会按控件类型把高亮、正文色解析成不同的值（同一份调色板：``QMenu`` 的
     ``Highlight`` 是 ``#548fff``、``QTreeWidget`` 是 ``#084ad9``），于是同一套生成逻辑画出了
-    两种蓝。钉死那几档之后（ADR 0035 决策 2）它们只可能同色。
+    两种蓝。固定那几档之后（ADR 0035 决策 2）它们只可能同色。
 
     **在测试里这一条是绿的、而真机上量得出差别**：测试默认跑在 ``offscreen`` 上（``fusion``），
     那里每一类控件解析出来的都一样。真正把住那条不变式的是
     ``tests/ui/test_theme.py::test_the_pushed_palette_pins_the_popup_roles`` ——
-    它量的是「钉没钉死」，与平台无关。
+    它量的是「钉没固定」，与平台无关。
     """
     dropdown = window._external_button._menu.palette()
     candidate_list = window._search_field._popup.palette()

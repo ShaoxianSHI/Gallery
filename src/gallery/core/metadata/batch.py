@@ -142,7 +142,7 @@ class ExifToolBatchSource:
                         detail=f"命令：{' '.join(argv[:3])} …",
                     )
         finally:
-            if process.poll() is None:  # pragma: no cover - 兜底，正常路径走不到
+            if process.poll() is None:  # pragma: no cover - 回退分支，正常路径走不到
                 _terminate(process)
 
         if process.returncode not in (0, None) and not stdout:
@@ -180,17 +180,10 @@ class PillowBatchSource:
 
 class _BySourceFile:
     """按 ``SourceFile`` 把 exiftool 的 JSON 输出归位。
-
-    **先用字面量查，查不到才付 ``realpath`` 的钱。** exiftool 把 ``SourceFile``
-    原样回填成我们拼进 argv 的那个字符串，而那个字符串已经是 ``resolve()`` 过的
-    了 —— 于是绝大多数记录一次 ``normcase``（纯字符串操作，零系统调用）就能对上。
-    真的对不上时（exiftool 归一化了写法、或路径里有符号链接）再退回去按
-    ``realpath`` 建一份慢表，**而且只在那种情况下才建**。
-
-    这不是可有可无的优化：``realpath`` 要 ``lstat`` 路径上的每一段，一个五层的
-    库就是五次系统调用。原实现对每张照片做三次（拼 argv 一次、查一次、给回填的
-    ``SourceFile`` 建索引一次），五千张就是一万五千次 —— 比 exiftool 自己跑完
-    那一批还贵。
+    **先用字面量查，查不到才建一份按 ``realpath`` 的慢表。** exiftool 把 ``SourceFile`` 原样
+    回填成我们拼进 argv 的那个字符串，而那个字符串已经 ``resolve()`` 过 —— 绝大多数记录一次
+    ``normcase``（零系统调用）就能对上。``realpath`` 要 ``lstat`` 路径上每一段，五层的库就是五次
+    系统调用；原实现对每张照片做三次，五千张就是一万五千次，比 exiftool 跑完那一批还贵。
     """
 
     __slots__ = ("_literal", "_resolved")
@@ -253,7 +246,6 @@ def read_facets(
     on_progress: Callable[[int, int], None] | None = None,
 ) -> dict[Path, PhotoFacets]:
     """读取这批照片的分组 / 排序字段。
-
     :param source: 替换默认的 exiftool 批量来源（测试用）。
     :param fallback: 主来源不可用时用谁（默认 Pillow）。
     :param on_progress: ``(已读, 总数)``，每批之后回调一次，供界面报进度。

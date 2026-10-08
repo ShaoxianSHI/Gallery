@@ -321,10 +321,8 @@ def capture_time_parts(raw: Mapping[str, str]) -> tuple[str | None, str | None]:
 class CoordinateAxis:
     """一个坐标轴：数值标签、半球标签，以及两个半球各写哪个字母。
 
-    纬度与经度**只差这几个字面量**，而它们原先在五处各写了一遍（``writeback`` 的标签
-    元组、``place_edit`` 的赋值、``facets`` 的请求清单、``pillow_fallback`` 的兜底，以及
-    ``writeback`` 里那两条分派梯子）。写坐标时少写一个标签的后果是另一半留着上一个
-    位置的值 —— 一个自信的错答案，比没有坐标糟糕得多。
+    纬度与经度只差这几个字面量，写坐标时少写一个标签的后果是另一半留着上一个位置的值 ——
+    一个自信的错答案，比没有坐标糟糕得多。
     """
 
     value_tag: str
@@ -416,15 +414,9 @@ def _degrees_to_decimal(value: str) -> float | None:
 class PlaceField:
     """地名的一层：**三个标签**，读写各用其中的一些。
 
-    ``XMP`` 有两种写法要分清，这不是笔误：
-
-    - **写**用一级名 ``XMP:City`` —— exiftool 的 ``-G`` 按**一级族**回填键，写全名会让
-      **每一次成功的写入都被判成没写进去**（ADR 0030 决策 2）；
-    - **读**要认 ``XMP-photoshop:City``（``-G`` 回填给的就是这个）与 ``XMP:City`` 两种 ——
-      相机原图与 Lightroom 导出的键名不一样，只认一种就会有一类照片读不到地点。
-
-    IPTC 那一份永远照原样。子地点（``_sub_location``）不在这里：它用的是另一个 XMP 族
-    （``XMP-iptcCore``），而且只用来显示，不参与写回与分组。
+    ``XMP`` 有两种写法不是笔误：**写**用一级名 ``XMP:City`` —— exiftool 的 ``-G`` 按一级族
+    回填键，写全名会让每一次成功的写入都被判成没写进去（ADR 0030 决策 2）；**读**要同时认
+    ``XMP-photoshop:City`` 与 ``XMP:City``，只认一种就会有一类照片读不到地点。IPTC 照原样。
     """
 
     xmp_tag: str

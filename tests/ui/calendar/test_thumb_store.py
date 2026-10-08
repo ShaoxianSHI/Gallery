@@ -52,7 +52,7 @@ def test_the_default_keeps_exactly_as_many_edges_as_the_calendar_has(
 ) -> None:
     """**默认配置下淘汰分支走不到**：日历三层三档，而 :data:`DEFAULT_EDGES` 正是 3。
 
-    钉住这个前提 —— 一旦有人把日历的档位数改了（比如加一档），这一档就该跟着动，
+    锁定这个前提 —— 一旦有人把日历的档位数改了（比如加一档），这一档就该跟着动，
     而 :meth:`ThumbStore._evict_extra_edges` 那个「不看当前档」的策略就会开始咬人
     （见下一条）。
     """
@@ -74,7 +74,7 @@ def test_eviction_drops_the_largest_edges_and_may_drop_the_one_in_use(
     原先那句 docstring 写的是「扔掉离当前档最远的、仍在用的最后才扔」，那是一个
     **没有实现**的策略：代码只按边长升序排、留前 N 档。照它去改代码的人会以为已有保护。
 
-    顺带钉住次序问题：:meth:`set_edge` 是**先**淘汰、**后**换当前档，所以刚切过去的
+    顺带锁定次序问题：:meth:`set_edge` 是**先**淘汰、**后**换当前档，所以刚切过去的
     那一档可能已经被上一轮淘汰掉了（这里存 48/192/288、只留 2 档，切到 48 时它已经不在）。
     """
     store = ThumbStore(capacity=1, edges=2)  # 只留两档

@@ -1,7 +1,7 @@
 """年视图：4 × 3 张小月，日期格里铺照片（365 个数字表达不了「这一天拍了几十张」的密度，
 ADR 0033 决策 2）—— 有照片的那天铺**最早**的一张当封面 + 日期徽标。
 
-**每张小月里只有它自己那个月的日子有照片、「今天」和高亮** —— 12 张小月都含上下月补位，不按
+**每张小月里只有它自己那个月的日子有照片、「今天」和高亮** —— 12 张小月都含上下月占位，不按
 :func:`~gallery.core.library.calendar.in_month` 判就会把邻月的照片和张数算进来。
 """
 
@@ -99,7 +99,7 @@ class YearView(LevelView):
     ) -> None:
         colors = self.colors
         first = datetime.date(self._anchor.year, month, 1)
-        # **只数这一月自己的日子**（``month_days``）：那 42 天含邻月补位，数进来就是把 10 月的照片
+        # **只数这一月自己的日子**（``month_days``）：那 42 天含邻月占位，数进来就是把 10 月的照片
         # 算进标题写着「9 月」的那一张。
         count = count_days(self._by_day, month_days(first))
         title = QRectF(box.left(), box.top(), box.width(), _TITLE_HEIGHT)
@@ -137,7 +137,7 @@ class YearView(LevelView):
         self, painter: QPainter, cell: QRectF, day: datetime.date, month: datetime.date
     ) -> None:
         colors = self.colors
-        # **补位格只有日期号**：那几格是邻月的日子，摆照片就是把邻月的照片摆进这一张小月。
+        # **占位格只有日期号**：那几格是邻月的日子，摆照片就是把邻月的照片摆进这一张小月。
         own = in_month(day, month)
         # **点一天就高亮那一天，且只画在它自己那个月的格子里**（10 月 1 日在「9 月」末尾也出现
         # 一次，两处都涂就成了「选中了两天」）。格子只有二十几像素，底色之外还要补一圈描边。
@@ -172,7 +172,7 @@ class YearView(LevelView):
             )
         if selected:
             outline_rounded(painter, cell, colors.accent, 2.0, radius=_CELL_RADIUS)
-        # **「今天」也只在它自己那个月里圈一次**：矩阵含上下月补位，两处都圈就成了两个「今天」。
+        # **「今天」也只在它自己那个月里圈一次**：矩阵含上下月占位，两处都圈就成了两个「今天」。
         elif own and day == self.today():
             outline_rounded(painter, cell, colors.accent, 1.6, radius=_CELL_RADIUS)
 
@@ -190,7 +190,7 @@ class YearView(LevelView):
         index = row * 4 + column + 1
         month = datetime.date(self._anchor.year, index, 1)
         picked = self._day_at(point, self._box(index - 1), month)
-        # **补位格点了不动**：那一格是邻月的日子，而这一屏是这一年的 12 个月。
+        # **占位格点了不动**：那一格是邻月的日子，而这一屏是这一年的 12 个月。
         if picked is not None and in_month(picked, month):
             self.set_selected(picked)
             self.select_cell(self.photos_of(picked), day_label(picked))

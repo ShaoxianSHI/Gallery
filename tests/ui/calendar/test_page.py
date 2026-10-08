@@ -144,7 +144,7 @@ def test_swiping_left_pages_one_period(
 ) -> None:
     """**两指往左甩一下 = 往后翻一段**（年 ± 一年、月 ± 一月、周 ± 七天），三层都成立。
 
-    方向在这一条里是钉住的：那是把那一页纸往左拖的手感，屏幕上的内容跟着走，
+    方向在这一条里是锁定的：那是把那一页纸往左拖的手感，屏幕上的内容跟着走，
     右边那一份露出来。反过来（「手势 = 同方向的那个按键」）读起来是反的。
     """
     page.set_level(level)
@@ -171,7 +171,7 @@ def test_one_flick_pages_once_and_the_momentum_after_it_pages_nothing(
 ) -> None:
     """一次甩动**只翻一页**，手指抬起来之后系统补的那一截惯性**一页都不翻**。
 
-    惯性那一截常有上百像素，没有这道闸就是「手已经离板子了，它自己又跳了三个月」。
+    惯性那一截常有上百像素，没有这道前置条件就是「手已经离板子了，它自己又跳了三个月」。
     """
     page.set_level("month")
     view = page.current_view()
@@ -491,7 +491,7 @@ def test_coming_back_to_the_page_leaves_no_day_highlighted(
     qt_app.processEvents()
     view = page.current_view()
     days_before = list(view.days())
-    # 周视图里点的是**某一小时那一格**（那一格有照片 → 会摊开），不是整天
+    # 周视图里点的是**某一小时那一格**（那一格有照片 → 会展开），不是整天
     view.select_hour(WEDNESDAY, 14)  # 点的是周三，不是起手那个锚点（今天）
     assert view.is_selected_cell(WEDNESDAY, 14), "前提不成立：点过的那一格没被选中"
     assert page.anchor() == TODAY, "前提不成立：锚点一开始就是点过的那一天"
@@ -521,7 +521,7 @@ def test_the_cell_you_come_back_from_is_where_the_next_level_opens(
     page.set_level("year")
     page.show()
     qt_app.processEvents()
-    page.current_view().select_day(picked)  # 外面接上去摊开那一格
+    page.current_view().select_day(picked)  # 外面接上去展开那一格
 
     page.hide()
     page.show()
@@ -568,7 +568,7 @@ def test_today_is_highlighted_once_in_the_year_view(
     view.resize(1200, 800)
     view.render(QPixmap(view.size()))
 
-    # 9 月那张小月确实也画到了这一天（补位），但高亮只有一次
+    # 9 月那张小月确实也画到了这一天（占位），但高亮只有一次
     september = [day for day in month_matrix(datetime.date(2026, 9, 1)) if day == today]
     assert september, "前提不成立：补位格里没有今天"
     assert len(outlined) == 1, f"今天被高亮了 {len(outlined)} 次"
@@ -736,7 +736,7 @@ def test_a_burst_of_thumbnails_is_painted_exactly_once(
     image.fill(0x336699)
     edge = page.thumbnail_edge()
     arriving = view.visible_refs()
-    # 40 张落在 9 月 12 日 – 10 月 9 日这 28 天上，横跨两张小月；补位格不画照片，
+    # 40 张落在 9 月 12 日 – 10 月 9 日这 28 天上，横跨两张小月；占位格不画照片，
     # 所以每张只报一次。
     assert len(arriving) == 28, "前提不成立：这一层要的那一批不是这 28 天"
     assert len(set(arriving)) == len(arriving), "同一张照片报了两遍"
@@ -776,7 +776,7 @@ def test_switching_levels_lands_on_the_day_that_was_picked(page: CalendarPage) -
 
     「在年视图里点 5 月 16 号 → 按 W」要看到 5 月 16 号那一周，而不是上周剩下那几天。
     三条入口（``Y`` / ``M`` / ``W``、工具条、会话恢复）都走 :meth:`CalendarPage.set_level`，
-    所以这里一条就钉住了全部。
+    所以这里一条就锁定了全部。
     """
     picked = datetime.date(2021, 5, 16)
     page.set_level("year")

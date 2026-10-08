@@ -9,7 +9,7 @@
 
 等待分两种，别混：确认「某事发生了」一律等**条件成立**（面板出内容与预读填满都是几十毫秒级，
 无脑等满 1 秒就是十倍空转）；确认「某事没发生」才等**固定时长** —— 那种时长本身就是断言的
-一部分，不能提前收工。
+一部分，不能提前结束。
 """
 
 from __future__ import annotations
@@ -102,7 +102,7 @@ def window(
         "照片没能在时限内扫出来，后面几条测的都不是这条路径"
     )
     window._open_detail(window._model.index(0, 0))
-    # 等首张真的解码上屏，而不是干等 0.6 秒 —— 这条 fixture 每条测试都要跑一遍。
+    # 等首张真的解码显示，而不是干等 0.6 秒 —— 这条 fixture 每条测试都要跑一遍。
     wait_for(lambda: window._detail.has_image, timeout=DEFAULT_TIMEOUT_SECONDS)
     yield window  # type: ignore[misc]
     window.close()
@@ -523,7 +523,7 @@ def test_opening_a_photo_does_not_show_the_previous_one(
         return image.pixelColor(viewport.width() // 2, viewport.height() // 2)
 
     window._open_detail(window._model.index(0, 0))
-    # 等第一张真的解码上屏再取色，否则取到的是还没画出来的空画面。
+    # 等第一张真的解码显示再取色，否则取到的是还没画出来的空画面。
     wait_for(lambda: window._detail.has_image, timeout=DEFAULT_TIMEOUT_SECONDS)
     settle(0.1)  # 让最后一帧真的刷到 viewport 上
     first = centre_colour()
@@ -556,7 +556,7 @@ def test_the_panel_keeps_switching_photos_with_the_arrow_keys(
 ) -> None:
     """焦点停在面板里，← / → 仍然换照片 —— 大图页上。
 
-    按「复制全部」之后焦点就落在面板的按钮上，方向键本来会被它吃掉，于是还看着同一张照片。
+    按「复制全部」之后焦点就落在面板的按钮上，方向键本来会被它忽略掉，于是还看着同一张照片。
     """
     window._metadata_action.setChecked(True)
     ready()

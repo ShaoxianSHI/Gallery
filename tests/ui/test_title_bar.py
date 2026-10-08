@@ -22,7 +22,7 @@
 把动作换成 ``showFullScreen`` 时它必须变红。
 
 第3 块里每条写操作都对着 ``tmp_path`` 里的副本，并且断言 journal 里记了一笔
-（红线 4：任何写回都必须可回滚）。
+（写回必须先记账再动文件那条：任何写回都必须可回滚）。
 
 **这一条只存在于 macOS**（ADR 0025 决策 2）：标题栏的高度来自安全区。所以下面凡是要
 断言「大图页能改名」的用例，都先摆明 ``window._owns_title_bar`` —— 拿一个不成立的前提
@@ -223,7 +223,7 @@ def test_nothing_to_rename_means_no_editor(qt_app: QApplication) -> None:
 
 
 def _settle(qt_app: QApplication, window: MainWindow) -> None:
-    """等扫描、分组、地点那一遍都收工（那几个任务都在后台线程上）。
+    """等扫描、分组、地点那一遍都结束（那几个任务都在后台线程上）。
 
     判据与轮询循环都在 :mod:`waiting` 里（五个模块共用同一份，见那里的
     :func:`waiting.wait_for_idle`）—— 不成立**直接抛**，而不是超时也返回。
@@ -426,7 +426,7 @@ def test_the_round_corners_and_the_highlight_live_on_the_shared_editor(
 ) -> None:
     """样式挂在 :class:`RenameEdit` 自己身上 —— 两处摆的是同一个控件。
 
-    **高亮那一行最要紧**：它写死过一次（拿链接色当选区底色），深色下那一片比正文还沉，
+    **高亮那一行最要紧**：它硬编码过一次（拿链接色当选区底色），深色下那一片比正文还沉，
     「主干已经选中了」反而看不出来。走调色板的 ``Highlight``，就永远与系统一致 ——
     网格那一处本来就是系统样式。
     """
@@ -501,7 +501,7 @@ def test_a_press_on_the_title_bar_starts_a_drag_only_after_the_mouse_moves_far_e
     """拖动与双击靠**移动距离**分家（理由见 :meth:`MainWindow.mouseMoveEvent`）。
 
     **按下那一刻还不能发起拖动**：那一下可能只是双击的第一下。手抖（移动不到
-    :data:`DRAG_THRESHOLD`）也不算拖动，否则双击会被吃掉一半。
+    :data:`DRAG_THRESHOLD`）也不算拖动，否则双击会被忽略掉一半。
 
     **这条线必须比拖放那条（``startDragDistance``，10 点）小得多**：拖动要立刻跟手，
     拿 10 点当线的话，窗口要先等光标走满 10 点才动 —— 读起来就是「拖之前得先动一会儿」。
@@ -537,7 +537,7 @@ def test_a_click_on_the_title_bar_that_is_not_held_does_nothing(
 ) -> None:
     """点一下（不按住）什么也不该发生 —— 拖窗口得按住并动起来。
 
-    顺带钉住「松手就作废」：这一闸没作废的话，一次普通单击会在之后莫名的某一次移动里
+    顺带锁定「松手就作废」：这一前置条件没作废的话，一次普通单击会在之后莫名的某一次移动里
     发起窗口拖动，而用户早就松开手了。
     """
     started: list[int] = []

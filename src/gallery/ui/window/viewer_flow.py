@@ -1,10 +1,9 @@
 """大图页（ADR 0021）：一张一张地看，以及为了「翻过去不白屏」而做的那点预读。
 
-取舍几乎全在**延迟**上：先命中缓存给一张缩略图顶着，再起后台解码预览图，再换全分辨率的那
-一张 —— 每一步都让用户马上看到点什么，而**没有一步是在主线程上解码的**。
-
-``_preview_cache`` 与 ``_metadata_cache`` 各记一份账，文件一改键就自然对不上。预读元数据
-**顺带把地点也推断好**，否则切到那张时面板要先显示一遍没有地点的版本再被替换。
+取舍几乎全在**延迟**上：先命中缓存给一张缩略图顶着，再起后台解码预览图，再换全分辨率的那一张 ——
+每一步都让用户马上看到点什么，而**没有一步是在主线程上解码的**。``_preview_cache`` 与
+``_metadata_cache`` 各记一份账，文件一改键就自然对不上；预读元数据**顺带把地点也推断好**，
+否则切到那张时面板要先显示一遍没有地点的版本再被替换。
 """
 
 from __future__ import annotations
@@ -49,9 +48,8 @@ class ViewerFlowMixin:
         """回到网格，并让当前照片保持选中。
 
         关大图、删掉最后一张之后退回这两条路走这里；``Esc``（菜单里那一条「上一级」）走
-        :meth:`MainWindow.go_up`。**两条路只在栈顶上投影出同一件事**（弹掉照片帧），所以这里
-        直接交给 :meth:`MainWindow.go_up` 的 ``_leave_frame`` —— 退到网格还是日历由照片帧底下
-        压着的那一层决定，不在这里各写一遍。
+        :meth:`MainWindow.go_up`。两条路在栈顶投影出同一件事（弹掉照片帧），所以退到网格
+        还是日历由照片帧底下压着的那一层决定。
         """
         if self._on_calendar_page():
             # 日历与网格**同一时刻只有一个**：从日历按 Esc 出来就是把浏览方式换回「全部照片」，
@@ -64,20 +62,17 @@ class ViewerFlowMixin:
         self.leave_detail_page()
 
     def leave_detail_page(self) -> None:
-        """**照片帧已经不在栈上了**：把页面收成网格，并把大图页攒下的东西一次性收拾掉。
+        """**照片帧已经不在栈上了**：把页面收成网格，并把大图页暂存的东西一次性收拾掉。
 
-        与 :meth:`show_grid` 分开是因为「弹栈」是统一的（「谁弹的都一样」），而收尾是
-        「刚离开大图页」才做的事 —— 合成一处就会有一处得判「这一次是不是从大图页来的」。
-
-        **横幅那一句在 :meth:`~gallery.ui.window.navigation_flow.NavigationFlowMixin._leave_frame`
-        里收**（那是「刚弹掉一张照片」的现场）：走到这里栈上已经不是照片帧了，按栈判「刚才在不在
-        大图页」永远为假。
-        """
+        与 :meth:`show_grid` 分开是因为「弹栈」是统一的，而收尾是「刚离开大图页」才做的
+        事 —— 合成一处就得判「这一次是不是从大图页来的」。**横幅那一句在
+        :meth:`~gallery.ui.window.navigation_flow.NavigationFlowMixin._leave_frame` 里收**
+        （那是「刚弹掉一张照片」的现场）：走到这里栈上已经不是照片帧，按栈判永远为假。"""
         self._title_bar.stop_edit()  # 切页时把改到一半的名字收起来（ADR 0025）
         self._sync_page_to_stack()  # 照片帧弹掉之后，这一条栈表示的就是网格页
         if self._current_row >= 0:
             self._grid.select_row(self._current_row)
-        # 在大图页时攒下的外部变化：这里才是网格能改的地方（ADR 0013）。
+        # 在大图页时暂存的外部变化：这里才是网格能改的地方（ADR 0013）。
         self._flush_pending_watch()
         self._refresh_title()
         self._update_action_states()

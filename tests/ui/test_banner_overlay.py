@@ -336,7 +336,7 @@ def test_hiding_it_from_outside_stops_the_countdown(
 ) -> None:
     """换层、换库、进度收尾都是从外面直接 ``hide()`` 的（见 ``MainWindow``）。
 
-    那时定时器必须一起停：不然它会在**下一条**消息刚上屏时原样再收一次。
+    那时定时器必须一起停：不然它会在**下一条**消息刚显示时原样再收一次。
     """
     banner = BannerOverlay(host)
     banner.reposition(QRect(0, 0, 800, 600))

@@ -1,6 +1,7 @@
 """``gallery.core.metadata.journal``：每一次会动用户文件的操作都要在这里留一笔。
 
-红线 4 的落点：「写不进去也不能让操作失败，但必须如实说撤销不了」；还要守住崩溃只丢最后一行。"""
+「写回前必须先记账再动文件」这条硬性约束的落点：「写不进去也不能让操作失败，但必须如实说撤销
+不了」；还要守住崩溃只丢最后一行。"""
 
 from __future__ import annotations
 
@@ -83,7 +84,7 @@ def test_a_missing_journal_directory_is_created(library: Path) -> None:
 def test_an_unwritable_journal_reports_failure_instead_of_raising(
     library: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """**记账失败绝不抛异常**（红线 4）：返回 ``False``，由调用方决定要不要提示 ——
+    """**记账失败绝不抛异常**（先记账再动文件）：返回 ``False``，由调用方决定要不要提示 ——
     已经改好的文件不能因为记不上账就被说成没改成。"""
     real_mkdir = Path.mkdir
 
@@ -160,7 +161,7 @@ def test_from_json_rejects_bad_lines(payload: str, reason: str) -> None:
 def test_from_json_defaults_are_conservative() -> None:
     """缺字段时往「不确定」那边倒：没写结果就当没成功。
 
-    动作默认空串（未知），这样撤销时走 ``_undo_delete`` 兜底，
+    动作默认空串（未知），这样撤销时走 ``_undo_delete`` 回退分支，
     比误当成改名更安全（改名会真的动文件）。
     """
     record = WriteRecord.from_json('{"from": "/a.jpg", "to": "/b.jpg"}')

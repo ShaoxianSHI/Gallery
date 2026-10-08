@@ -164,7 +164,7 @@ def _blocking_photo(tmp_path: Path) -> Path:
 
     命名管道是唯一能确定性地造出「内核一直等」的东西：没有写端，读它就永远挂着。
     云盘上还没下完的占位照片是同一个形状（``open()`` 要等文件提供器把数据拉回来，
-    没有网络就不返回），而那正是本组用例要钉住的情形。
+    没有网络就不返回），而那正是本组用例要锁定的情形。
     """
     path = tmp_path / "拉不下来.jpg"
     os.mkfifo(path)
@@ -215,9 +215,9 @@ def test_a_cancelled_read_gives_up_at_once(tmp_path: Path, monkeypatch: pytest.M
 def test_too_many_stuck_reads_stop_starting_new_ones(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """超时的读收不回来，得有个闸：不然一批下不下来的照片能攒出成百上千个线程。
+    """超时的读收不回来，得有个前置条件：不然一批下不下来的照片能累积出成百上千个线程。
 
-    这条钉的是**闸本身**：先把计数顶到上限，再看新来的读是不是立刻报错 ——
+    这条锁定的是**那个条件判断本身**：先把计数顶到上限，再看新来的读是不是立刻报错 ——
     真到了那一步，机器已经读不动了，多等那 20 秒毫无意义。
     """
     monkeypatch.setattr(decode_module, "READ_TIMEOUT_SECONDS", 0.2)
@@ -291,7 +291,7 @@ def test_concurrent_first_use_of_pillow_does_not_crash(
         make_photo(f"IMG_{index:04d}.jpg", directory=library_root)
     # **缩略图缓存也要指到临时目录**：这是个子进程，父进程里那条 autouse 的
     # ``isolated_app_data`` 管不到它 —— 不传的话它会往用户的真实缓存目录里丢下一个
-    # 摘要目录，而那是没人认领、也没人淘汰的（ADR 0038 那条已知遗留）。
+    # 摘要目录，而那是没人负责、也没人淘汰的（ADR 0038 那条已知遗留）。
     cache_base = tmp_path / "系统缓存"
 
     completed = _run_fresh_python(

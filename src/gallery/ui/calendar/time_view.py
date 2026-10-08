@@ -51,10 +51,10 @@ _DATE_FONT_PX = 15
 #: 缩略图按一格的大小要（约一百七十像素）。
 THUMB_EDGE = 192
 
-#: 可见区上下再多要几小时：滚动去抖之后才重报窗口，那一段留白会露出来。
+#: 可见区上下再多要几小时：滚动防抖之后才重报窗口，那一段留白会露出来。
 PREFETCH_HOURS = 3
 
-#: 滚动去抖：一次快速滚动会连发几十次 ``valueChanged``，每次都重算一遍可见区。
+#: 滚动防抖：一次快速滚动会连发几十次 ``valueChanged``，每次都重算一遍可见区。
 SCROLL_DEBOUNCE_MS = 80
 
 #: 「滚到第一张照片上方」的定位延后多久（毫秒）。**0 = 下一轮事件循环**：要等的只是布局跑过。
@@ -73,9 +73,9 @@ class WeekView(LevelView):
         area.setFrameShape(QFrame.Shape.NoFrame)
         area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         area.setStyleSheet("QScrollArea { background: transparent; }")
-        # guard: allow-long-comment（横向滚轮必须冒到 WeekView，滚动区与滚动条都不接焦点）
+        # guard: allow-long-comment（横向滚轮必须传递到 WeekView，滚动区与滚动条都不接焦点）
         # **横向的滚轮事件正好落在这个滚动区上，却不会停在这儿**：``QScrollArea`` 对「横向为主」的
-        # 事件直接 ignore，于是冒到 :class:`WeekView` 自己翻页 —— 别加横向滚动条把它截下来。
+        # 事件直接 ignore，于是传递到 :class:`WeekView` 自己翻页 —— 别加横向滚动条把它截下来。
         # 滚动区与竖滚动条都**不接焦点**：Qt 在鼠标按下时把焦点给「按到的那一层里第一个能接焦点
         # 的控件」，不设 NoFocus 的话点一下时间轴（含点滚动条）就把 ← / → 抢去滚时间轴。
         area.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -98,7 +98,7 @@ class WeekView(LevelView):
         # 定，而切层那次报窗口常常跑在布局前面，布局跑完却没有人再报一次。
         area.viewport().installEventFilter(self)
         self._grid.installEventFilter(self)
-        # 「滚到第一张照片上方」的定位闸门（见 :meth:`_reveal_photos`）。**自己的子定时器**比
+        # 「滚到第一张照片上方」那一步的防抖定时器（见 :meth:`_reveal_photos`）。**用子定时器**比
         # ``QTimer.singleShot(0, ...)`` 好：「按了 W → 同一轮 ⌘Q 关窗」会让它去调已析构的槽。
         self._reveal = QTimer(self)
         self._reveal.setSingleShot(True)
@@ -221,7 +221,7 @@ class WeekView(LevelView):
             return  # 这一周还没有照片：算「没落地」，等桶到了再补一次
         if bar.maximum() <= 0:
             # **布局还没跑过**：滚动条一个范围都没有，设了也没用 —— 关键是**别把这一次算成
-            # 「已落地」**（`_revealed` 是那道「补一次」的闸），几何定下来 ``eventFilter`` 会补。
+            # 「已落地」**（`_revealed` 决定要不要补一次），几何定下来 ``eventFilter`` 会补。
             return
         self._revealed = True
         row = self.row_height()
@@ -233,7 +233,7 @@ class WeekView(LevelView):
     def visible_refs(self) -> list[PhotoRef]:
         """滚到看得见的那几小时里的照片，每小时一张（**挑哪一张问 ``cell_cover``**）。
 
-        **上下再多要三小时**（:data:`PREFETCH_HOURS`）：滚动去抖之后才重报窗口，那一段如果正好
+        **上下再多要三小时**（:data:`PREFETCH_HOURS`）：滚动防抖之后才重报窗口，那一段如果正好
         有照片，用户会看见格子空着再被填上。
         """
         refs: list[PhotoRef] = []
@@ -257,7 +257,7 @@ class WeekView(LevelView):
     def repaint_content(self) -> None:
         """重画**时间轴与表头**——格子是它们画的，不是 ``WeekView`` 自己画的。
 
-        ``WeekView.update()`` 只把自己那一块标脏：缩略图一张一张回来时漏了它，图在手上而屏是灰。
+        ``WeekView.update()`` 只把自己那一块标记为需要重绘：缩略图回来时漏了它，图在手上而屏是灰。
         """
         self._grid.update()
         self._header.update()
@@ -359,7 +359,7 @@ class _TimeGrid(QWidget):
 
         # guard: allow-long-comment（裁剪区只能从 event 取，写成 painter.clipRect() 会一格都不画）
         # **只画看得见的那几行**（下方两段循环都按这个范围收口）：整条时间轴比视口高三倍，而
-        # :meth:`WeekView.update` 每张缩略图回来都标脏整块，逐格走满是纯浪费。
+        # :meth:`WeekView.update` 每张缩略图回来都标记为需要重绘整块，逐格走满是纯浪费。
         # 裁剪区**只能从 ``event`` 上取** —— Qt 不会把它设到我们自己新建的 painter 上
         # （``painter.clipBoundingRect()`` 是空矩形），写成 ``painter.clipRect()`` 会算出
         # 「第一行 0、最后一行 -1」，于是**一格都不画**。光栅层面早被 ``QBackingStore`` 裁掉了。
@@ -457,7 +457,7 @@ class _TimeGrid(QWidget):
         day = days[index]
         hour = int(point.y() // self._view.row_height())
         self._view.setFocus()
-        # **空白的那一格也选中**：那一格点得中，高亮就该跟着它走；没有照片就不摊开任何东西。
+        # **空白的那一格也选中**：那一格点得中，高亮就该跟着它走；没有照片就不展开任何东西。
         self._view.select_hour(day, hour)
         photos = list(self._view.photos_in_hour(day, hour))
         if not photos:

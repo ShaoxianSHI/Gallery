@@ -132,7 +132,7 @@ def test_a_new_level_starts_without_a_selection(qt_app: QApplication, tmp_path: 
     grid = make_grid(qt_app, tmp_path, count=6)
     grid.select_row(4)
     qt_app.processEvents()
-    assert grid.genuinely_selected_rows() == [4], "前置条件：那一格是选中的"
+    assert grid.genuinely_selected_rows() == [4], "前置条件没摆对：那一格应当是选中的"
 
     grid.reset_for_new_level()
     qt_app.processEvents()
@@ -477,7 +477,7 @@ def test_repeated_shift_clicks_keep_the_same_anchor(qt_app: QApplication, tmp_pa
 def test_range_is_rebuilt_from_the_press_state_even_if_the_band_won(
     qt_app: QApplication, tmp_path: Path
 ) -> None:
-    """直接钉住「自己算」那一层：不管中间被谁改过，抬起时按锚点重建区间。"""
+    """直接锁定「自己算」那一层：不管中间被谁改过，抬起时按锚点重建区间。"""
     grid = make_grid(qt_app, tmp_path, count=40)
     model = grid.model()
     assert model is not None
@@ -610,7 +610,7 @@ def test_entering_a_folder_on_double_click_is_not_read_as_blank(
 
     打开**之后**再问「这一下是不是落在空白上」就晚了：刚进去的相册（模型已清空、
     版面已重排）在那一点底下什么都不剩，于是紧接着的「双击空白处」会把人弹回来，
-    屏幕上只剩一闪。这里照着真实的打开动作接一个「当场清空模型」的处理函数，把它钉死。
+    屏幕上只剩一闪。这里照着真实的打开动作接一个「当场清空模型」的处理函数，把它固定。
     """
     grid = make_grid(qt_app, tmp_path, count=3)
     model = grid.model()
@@ -673,7 +673,7 @@ def test_right_clicking_the_current_item_actually_selects_it(
     grid.setCurrentIndex(model.index(0, 0))
     selection.clearSelection()  # 只留当前项，选区空着
     qt_app.processEvents()
-    assert grid.genuinely_selected_rows() == [], "前置条件：此刻一个都没选中"
+    assert grid.genuinely_selected_rows() == [], "前置条件没摆对：此刻应当一个都没选中"
     assert grid.selected_rows() == [0], "但 selected_rows() 会拿当前项兜底"
 
     assert grid.select_for_context(0) == 0
@@ -733,8 +733,8 @@ def test_clicking_the_blank_clears_the_current_item_too(
     settle_grid(qt_app, grid)
     _click(grid, 2)
     qt_app.processEvents()
-    assert grid.genuinely_selected_rows() == [2], "前置条件：那一格是选中的"
-    assert grid.current_row() == 2, "前置条件：它同时也是当前项"
+    assert grid.genuinely_selected_rows() == [2], "前置条件没摆对：那一格应当是选中的"
+    assert grid.current_row() == 2, "前置条件没摆对：它同时应当也是当前项"
 
     QTest.mouseClick(
         grid.viewport(),
@@ -824,7 +824,7 @@ def test_after_clearing_everything_the_arrow_keys_start_from_the_top(
         _blank_point(grid),
     )
     qt_app.processEvents()
-    assert grid.current_row() == -1, "前置条件：此刻一个都没选中"
+    assert grid.current_row() == -1, "前置条件没摆对：此刻应当一个都没选中"
 
     QTest.keyClick(grid.viewport(), Qt.Key.Key_Down)
     qt_app.processEvents()

@@ -171,7 +171,7 @@ class TestWheelDelta:
         assert wheel_delta(*PRECISE_NOTCH) > WHEEL_STEP_PIXELS
 
     def test_a_movement_below_the_threshold_is_not_a_notch(self) -> None:
-        """攒着是为了连着来的一串小增量，不是为了把「没滚到位」也当一格。"""
+        """暂存是为了连着来的一串小增量，不是为了把「没滚到位」也当一格。"""
         accumulator = StepAccumulator(WHEEL_STEP_PIXELS)
 
         assert accumulator.feed(wheel_delta(*PRECISE_NOTCH) / 3) == 0
@@ -182,7 +182,7 @@ class TestRateLimitedAccumulator:
 
     这条规矩是为了动画而存在的 —— 网格那边「上一段过渡没跑完就不接第二段、直接落位」，
     手势快起来切档比动画还快，于是每一次切档都掐断上一次，画面只是一连串跳变。
-    所以这里量的不是「攒得对不对」，而是「该丢的有没有丢」。
+    所以这里量的不是「累积得对不对」，而是「该丢的有没有丢」。
     """
 
     def test_the_first_step_is_not_delayed(self) -> None:
@@ -201,7 +201,7 @@ class TestRateLimitedAccumulator:
         assert accumulator.feed(PINCH_THRESHOLD) == 0, "差一毫秒也不行：动画还没跑完"
 
     def test_a_dropped_step_does_not_accumulate(self) -> None:
-        """丢掉的是这一下，不是「攒起来等下次」——否则限速只是把跳变推迟到了后面。"""
+        """丢掉的是这一下，不是「累积起来等下次」——否则限速只是把跳变推迟到了后面。"""
         clock = FakeClock()
         accumulator = RateLimitedAccumulator(PINCH_THRESHOLD, MIN_PINCH_INTERVAL_MS, clock)
         accumulator.feed(PINCH_THRESHOLD)
@@ -220,7 +220,7 @@ class TestRateLimitedAccumulator:
         assert accumulator.feed(PINCH_THRESHOLD) == 1
 
     def test_the_interval_only_starts_from_the_last_step_not_the_last_call(self) -> None:
-        """攒阈值的那几下不该把间隔重新推后 —— 推后就永远攒不满一次切档。"""
+        """累积阈值的那几下不该把间隔重新推后 —— 推后就永远累积不满一次切档。"""
         clock = FakeClock()
         accumulator = RateLimitedAccumulator(PINCH_THRESHOLD, MIN_PINCH_INTERVAL_MS, clock)
         accumulator.feed(PINCH_THRESHOLD / 2)
@@ -229,7 +229,7 @@ class TestRateLimitedAccumulator:
         assert accumulator.feed(PINCH_THRESHOLD / 2) == 1, "攒够阈值就切档，间隔从这一刻起算"
 
     def test_a_slow_gesture_is_not_rate_limited(self) -> None:
-        """慢捏时每一次切档都隔得开限速，行为与不带限速的攒器一样。"""
+        """慢捏时每一次切档都隔得开限速，行为与不带限速的累积器一样。"""
         clock = FakeClock()
         accumulator = RateLimitedAccumulator(PINCH_THRESHOLD, MIN_PINCH_INTERVAL_MS, clock)
 
@@ -251,7 +251,7 @@ class TestRateLimitedAccumulator:
             RateLimitedAccumulator(PINCH_THRESHOLD, -1, FakeClock())
 
     def test_the_interval_is_a_real_limit_and_not_merely_a_smaller_threshold(self) -> None:
-        """限速与「攒够阈值」是两件事：一次事件量再大也不该突破最小间隔。"""
+        """限速与「累积够阈值」是两件事：一次事件量再大也不该突破最小间隔。"""
         clock = FakeClock()
         accumulator = RateLimitedAccumulator(PINCH_THRESHOLD, MIN_PINCH_INTERVAL_MS, clock)
         accumulator.feed(PINCH_THRESHOLD * 100)

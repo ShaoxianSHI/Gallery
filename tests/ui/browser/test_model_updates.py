@@ -1,7 +1,7 @@
 """模型上的「增量改动」：实时监听靠它把一格照片就地换掉（ADR 0013）。
 
 网格要重新排版才有感，但整层重排会让整屏闪回占位框再一张张弹回来 —— 各处注释里
-反复回避的正是这件事。所以这里钉住的是「同一个路径在网格上只可能有一行」，
+反复回避的正是这件事。所以这里锁定的是「同一个路径在网格上只可能有一行」，
 以及插进去的那一行**位置是对的**。
 """
 
@@ -64,7 +64,7 @@ def test_an_entry_is_never_on_two_rows(tmp_path: Path, model: PhotoListModel) ->
 
 
 def test_append_skips_what_is_already_there(tmp_path: Path, model: PhotoListModel) -> None:
-    """扫描在途时用户又丢进来一张：两处都收下就会出现两格同一张照片。"""
+    """扫描进行中时用户又丢进来一张：两处都记录就会出现两格同一张照片。"""
     model.append([_photo(tmp_path, "一张.jpg")])
 
     model.append([_photo(tmp_path, "一张.jpg"), _photo(tmp_path, "两张.jpg")])
@@ -136,7 +136,7 @@ def test_forget_thumbnails_makes_the_row_ask_again(tmp_path: Path, model: PhotoL
 
 
 def test_group_cards_are_counted_apart_from_albums_still(tmp_path: Path, model: PhotoListModel):
-    """模型原有的分组计数不受影响（这里只补一条钉住，别让后面的改动碰坏它）。"""
+    """模型原有的分组计数不受影响（这里只补一条锁定，别让后面的改动碰坏它）。"""
     photo = _photo(tmp_path, "a.jpg")
     model.reorder(
         [

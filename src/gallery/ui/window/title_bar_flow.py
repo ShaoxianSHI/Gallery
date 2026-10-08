@@ -70,12 +70,9 @@ class TitleBarFlowMixin:
     def _title_bar_drag_began(self, global_position: QPointF) -> bool:
         """鼠标已经移开够远，这一次按下可以确定是拖动而不是双击的一半。
 
-        **按距离判，不按时间**：定一个「等满双击周期」的定时器看着像在模仿系统，实际是
-        让窗口在这段时间里**一步都不跟手** —— 正常的一拖在这个时限之前就松手了，用户读到
-        的就是「拖不动」。macOS 自己的标题栏也是这么分的（动过就是拖，没动才算双击）。
-
-        这条线是 :data:`DRAG_THRESHOLD`（一个很小的数），**不是拖放那条 10 点**：拖动要
-        立刻跟手，双击那一点手抖却远到不了 3 点，两者在这个尺度上刚好分得开。
+        **按距离判，不按时间**：定一个「等满双击周期」的定时器看着像在模仿系统，实际是让
+        窗口在这段时间里**一步都不跟手**，正常的一拖在时限之前就松手了。这条线是
+        :data:`DRAG_THRESHOLD`（一个很小的数），**不是拖放那条 10 点**。
         """
         if not self._title_bar_drag_armed or self._title_bar_drag_origin is None:
             return False
@@ -91,14 +88,9 @@ class TitleBarFlowMixin:
         """真的发起系统拖动 —— 鼠标已经动得够远，确认这一下不是双击。
 
         **必须从一次鼠标事件里发起**：Qt 在 macOS 上把它实现成
-        ``performWindowDragWithEvent:``，而那个事件要么取自**当前**的 ``NSApp.currentEvent``
-        （旧版 Qt 只在它是鼠标事件时才动手，别的类型直接返回假），要么由 Qt 按当前指针位置
-        现合成一个（新版）。从一个定时器回调里调它两样都不成立：哪一种鼠标事件都没轮到，
-        这一次系统拖动根本不会开始。
-
-        ``startSystemMove`` 返回假（平台不支持、或系统自己会拖）就什么都不做：这一次按下没有
-        别的含义，不该往下传成一次点空白处的点击。
-        """
+        ``performWindowDragWithEvent:``，那个事件要么取自**当前**的 ``NSApp.currentEvent``，
+        要么由 Qt 按当前指针位置现合成一个；从定时器回调里调它两样都不成立。
+        ``startSystemMove`` 返回假（平台不支持、或系统自己会拖）就什么都不做。"""
         handle = self.windowHandle()
         if handle is not None:
             handle.startSystemMove()
@@ -106,13 +98,10 @@ class TitleBarFlowMixin:
     def _toggle_filled(self) -> None:
         """铺满 / 还原 —— 也就是 macOS 的**缩放**（AppKit 的 ``zoom:``，⌃⌘F 那个键）。
 
-        **占满的是菜单栏与 Dock 之间的那块地方，两样都还在**，也不另开 Space：
-        ``showMaximized`` 在 macOS 上正是 ``[NSWindow zoom:nil]``，落到 ``visibleFrame``。
-        **这不是 macOS 的「填满」**（那个会盖住菜单栏与 Dock），系统设置里那一档**不读**。
-
-        **还原回进铺满之前那一份几何**（``showNormal`` 恢复的正是它），而不是让系统按当前
-        屏幕随便给一个 —— 拖到一半再双击回来，窗口该回到刚才那个大小与位置。
-        """
+        **占满的是菜单栏与 Dock 之间的那块地方，两样都还在**，也不另开 Space：``showMaximized`` 在
+        macOS 上正是 ``[NSWindow zoom:nil]``，落到 ``visibleFrame``。**这不是 macOS 的「填满」**
+        （那个会盖住菜单栏与 Dock），系统设置里那一档**不读**。**还原回进铺满之前那一份几何**
+        （``showNormal`` 恢复的正是它），拖到一半再双击回来，窗口该回到刚才那个大小与位置。"""
         if self.isMaximized():
             self.showNormal()
         else:
@@ -128,7 +117,7 @@ class TitleBarFlowMixin:
         if photo is not None:
             name = photo.name
         elif self._drill_photos is not None:
-            # 从日历某一格摊开的那一层：标题要说得清在看哪一格，否则与「全部照片」长得一模一样。
+            # 从日历某一格展开的那一层：标题要说得清在看哪一格，否则与「全部照片」长得一模一样。
             name = f"{self._drill_label} · {len(self._drill_photos)} 张"
         else:
             name = self._library_title
@@ -141,14 +130,10 @@ class TitleBarFlowMixin:
     def _layout_title_bar(self) -> None:
         """把 ``TitleBar`` 与搜索胶囊摆在窗口顶边那一条上。
 
-        那一条的高度是**安全区**顶出来的那 28 点，不写死。**真全屏**时系统自己也不画标题栏，
-        这一条跟着收起来（否则会盖在照片上，ADR 0025 决策 2）；**铺满窗口不在此列**。
-
-        **两个控件是摆在一起的，不是一套布局**：``TitleBar`` 那一行由标题文字与改名字段自己
-        居中，胶囊贴右边，抢同一份布局反而互相挪（ADR 0026 决策 8）。**内容区让出多少也归
-        这里**（``_build_ui`` 只留初始值）：真全屏时那一段收起来，让出去的 12 点就该还回去 ——
-        不还回去的话，照片区顶上会压着一条什么都没有的空档。
-        """
+        那一条的高度是**安全区**顶出来的那 28 点，不硬编码。**真全屏**时系统自己也不画
+        标题栏，这一条跟着收起来（否则会盖在照片上，ADR 0025 决策 2）；铺满窗口不在此列。
+        **两个控件是摆在一起的，不是一套布局**（ADR 0026 决策 8）。**内容区让出多少也归
+        这里**：真全屏时那一段收起来，让出去的 12 点就该还回去。"""
         if not self._owns_title_bar:
             return
         # 判据是**真全屏，不是铺满**：铺满只是窗口变大，那一条照旧在（见 :meth:`_toggle_filled`）。

@@ -50,7 +50,7 @@ def sort_photos(
     """按 ``order`` 排一组照片，返回新列表（不改动入参）。
 
     **没值的一律沉到最后**，正序逆序都一样 —— 一堆没写拍摄时间的照片不该在「时间升序」里
-    霸占最前面，逆序时把它们提到最前面同样没道理（ADR 0009）。同值时按文件名兜底，
+    霸占最前面，逆序时把它们提到最前面同样没道理（ADR 0009）。同值时按文件名排序，
     否则同一秒拍到的几十张照片每次重排网格都要抖一下。
     """
     facets = values if values is not None else {}
@@ -82,12 +82,9 @@ def build_groups(
 ) -> list[GroupRef]:
     """按 ``facet`` 把照片分组，组内按 ``order`` 排好序。
 
-    ``event_values`` 是「照片属于哪些事件」那一份，**只给 :data:`FACET_EVENT` 看**（ADR 0043
-    决策 7）。分组的算法一个字没为它改 —— 多归属的那层循环本来就是为关键词写的。
-
-    **事件分组认领封面靠的是组键比对**（ADR 0048 决策 7）：一张照片属于好几个事件，
-    它带的那几份封面各属于其中一个（组键 = 日期#事件 id），只有组键等于当前这个键的那份
-    才是这一组的。**不把 id 从组键里解析出来** —— 那样「组键怎么拼」就有两处会漂。
+    ``event_values`` 只给 :data:`FACET_EVENT` 看（ADR 0043 决策 7），分组算法没为它改。
+    **事件分组的封面靠组键比对**（ADR 0048 决策 7）：只有组键等于当前这个键的那份封面才是
+    这一组的，**不把 id 从组键里解析出来** —— 那样「组键怎么拼」就有两处会漂。
     """
     if facet.group is None:
         raise ValueError(f"字段 {facet.id} 不能用来分组")
@@ -95,7 +92,7 @@ def build_groups(
     events = event_values if event_values is not None else {}
     buckets: dict[str, list[PhotoRef]] = {}
     labels: dict[str, str] = {}
-    # 组键 → 这一组指定的封面路径。认领条件是组键对得上（理由见下面那个循环里的注释）。
+    # 组键 → 这一组指定的封面路径。适用条件是组键对得上（理由见下面那个循环里的注释）。
     covers: dict[str, Path] = {}
     for ref in photos:
         members = facet.group(
@@ -152,10 +149,8 @@ def _pinned_cover(wanted: Path | None, members: Sequence[PhotoRef]) -> PhotoRef 
     """把一个封面**路径**解析成组内那一张引用；解析不出就是 ``None``。
 
     **解析不出时宁可不钉**（而不是拿第一张顶上）：第一张本来就是 :attr:`GroupRef.cover`
-    的兜底，钉上去只会让「这一组有封面」与「没有」在数据上分不开，而界面要靠这个区别
-    决定「清除封面」那一行摆不摆。
-
-    组内路径比对走 ``str()``：``PhotoRef.path`` 是同一个 ``Path`` 对象，比对两次是常数。
+    的回退，钉上去会让「这一组有封面」与「没有」在数据上分不开，而界面要靠这个区别决定
+    「清除封面」那一行摆不摆。组内路径比对走 ``str()``，两次比对是常数。
     """
     if wanted is None:
         return None

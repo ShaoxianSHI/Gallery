@@ -339,7 +339,7 @@ def test_the_first_click_after_opening_still_only_selects(
 ) -> None:
     """反过来也得守住：刚打开时第一下点击只能选中，不能一碰就弹出输入框。
 
-    这是上面那条的红线：Qt 在行插进来的那一轮事件循环里会把第 0 行设成当前项，用户看到的
+    这是上面那条的硬性约束：Qt 在行插进来的那一轮事件循环里会把第 0 行设成当前项，用户看到的
     已经是一个高亮的格子；判据若写成「点当前项就是改名」，**打开应用后随手点一下照片就直接
     改名**了。
     """
@@ -661,8 +661,8 @@ def test_escape_leaves_the_other_actions_usable_too(
 ) -> None:
     """与上一条同一根因，但看的是另一侧：Esc 之后 ⌘⌫ / ⇧⌘N / ⌘⏎ 也得一起回来。
 
-    ``idle`` 是这几条动作**共用**的判据，所以 Esc 之后一起失灵 —— 把这一条钉住，才能说明
-    钉住的是那条接线而不是某一条动作。
+    ``idle`` 是这几条动作**共用**的判据，所以 Esc 之后一起失灵 —— 把这一条锁定，才能说明
+    锁定的是那条接线而不是某一条动作。
     """
     make_photo("IMG_0001.jpg", directory=tmp_path)
     window = open_window(qt_app, tmp_path)

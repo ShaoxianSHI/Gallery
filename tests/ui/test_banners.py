@@ -138,7 +138,7 @@ def test_the_duplicate_banner_counts_when_there_are_many(tmp_path: Path) -> None
 
 
 def test_the_duplicate_banner_never_promises_undo(tmp_path: Path) -> None:
-    """**撤销一次复制就是删文件**（红线 1），所以这句话不许出现「⌘Z 可以撤销」。"""
+    """**撤销一次复制就是删文件**（删除只许用户亲手触发），所以这句话不许出现「⌘Z 可以撤销」。"""
     result = PasteResult(
         pasted=(PastedFile(source=tmp_path / "a.jpg", created=tmp_path / "a的副本.jpg"),)
     )
@@ -149,7 +149,7 @@ def test_the_duplicate_banner_never_promises_undo(tmp_path: Path) -> None:
 def test_the_duplicate_banner_says_about_the_journal_when_it_could_not_write_it(
     tmp_path: Path,
 ) -> None:
-    """记不上账不等于没做成，但用户得知道 ⌘Z 这条路在这里不存在（红线 4）。"""
+    """记不上账不等于没做成，但用户得知道 ⌘Z 这条路在这里不存在（写回必须先记账再动文件那条）。"""
     result = PasteResult(
         pasted=(PastedFile(source=tmp_path / "a.jpg", created=tmp_path / "a的副本.jpg"),),
         journaled=False,
@@ -248,7 +248,7 @@ def test_a_transfer_that_only_partly_happened_says_so(tmp_path: Path) -> None:
 
 
 def test_moving_promises_that_it_can_be_undone(tmp_path: Path) -> None:
-    """移动比粘贴多一句「⌘Z 可以撤销」—— **这是用户敢用它的前提**（红线 1，ADR 0019）。"""
+    """移动比粘贴多一句「⌘Z 可以撤销」—— **这是用户敢用它的前提**（ADR 0019）。"""
     result = MoveResult(
         moved=(MovedItem(source=tmp_path / "a.jpg", created=tmp_path / "京都" / "a.jpg"),)
     )

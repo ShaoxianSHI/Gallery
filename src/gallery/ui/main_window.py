@@ -1,6 +1,7 @@
 """主窗口：界面与动作的装配在这里，各条流程住在 :mod:`gallery.ui.window` 下的 mixin 里；Qt 的覆写
 必须留在 ``MainWindow`` 自己身上 —— Qt 按 MRO 找第一个实现，拆进 mixin 会有一处永远不生效。
-会动用户文件的入口只在 :mod:`gallery.ui.write_ops`（红线 1）；状态集中在这个窗口对象上并显式传递。
+会动用户文件的入口只在 :mod:`gallery.ui.write_ops` —— 改动用户的照片必须由用户亲手触发、
+且集中在这一处；状态集中在这个窗口对象上并显式传递。
 """
 
 from __future__ import annotations
@@ -130,7 +131,8 @@ class MainWindow(
 ):
     # 这些 mixin 就是这个窗口的目录：每一条流程各住一间（各模块的文档说清自己管哪一块），
     # 这一份文件留装配、Qt 覆写与跨流程的那几条线。``WriteOpsMixin`` 带进来的是**会动用户
-    # 文件的那些入口**（红线 1），它必须留在 ``ui/write_ops.py`` —— 守护测试按文件名找它。
+    # 文件的那些入口**（绝不删除、移动用户照片，改名是唯一豁免），它必须留在 ``ui/write_ops.py``
+    # —— 回归测试按文件名找它。
     # ``EventFlowMixin`` 反过来：它一个用户的文件都不碰（动的是 Gallery 自己的事件库）。
 
     """应用主窗口。"""
@@ -147,7 +149,7 @@ class MainWindow(
         super().__init__(parent)
         self._session_base = session_base
         #: 系统级缩略图缓存根目录（``None`` = 平台默认位置）；**测试必须注入它**：
-        #: 否则会在真实缓存目录里留下几百个没人认领的库摘要目录。
+        #: 否则会在真实缓存目录里留下几百个没有对应库的摘要目录。
         self._cache_base = cache_base
         self._session: SessionState = load_session(base=session_base)
         self._runner = TaskRunner(self)
@@ -159,7 +161,7 @@ class MainWindow(
         self._watch_echoes: dict[Path, float] = {}
         #: 用户触发的那条横幅要让后台消息让位到什么时候（见 BANNER_STICKY_SECONDS）。
         self._banner_sticky_until = 0.0
-        #: 攒着没落地的变化（扫描在途 / 条目还在暂存区 / 人正在大图页），条件合适时补做。
+        #: 暂存着没稳定下来的变化（扫描进行中 / 条目还在暂存区 / 人正在大图页），条件合适时补做。
         self._watch_pending: tuple[LibraryChange, ...] | None = None
         #: 分组视图里来了新照片：重新分组之后要回到哪个组（ADR 0013）。
         self._pending_group: str | None = None
@@ -169,7 +171,7 @@ class MainWindow(
         self._pipeline: ThumbnailPipeline | None = None
         self._generation = 0
         self._scan_job: int | None = None
-        #: 选区变化后**攒一轮**再全量重算动作可用性（0ms 单次，理由见连接处）。
+        #: 选区变化后**合并成一轮**再全量重算动作可用性（0ms 单次，理由见连接处）。
         self._action_states_timer = QTimer(self)
         #: 「这一次按下还可能是双击的第一下」这个记号（见 :meth:`mousePressEvent`）。
         #: 真正发起拖动要等鼠标动得够远，那时它才被摘掉（见 :meth:`mouseMoveEvent`）。
@@ -189,7 +191,7 @@ class MainWindow(
         self._detail_trashed: Path | None = None
         self._place_resolver: LazyPlaceResolver | None = None
         self._place_job: int | None = None
-        #: 在途的那一遍孤儿检查（ADR 0043 决策 9）。切库与关窗都要取消它 ——
+        #: 进行中的那一遍孤儿检查（ADR 0043 决策 9）。切库与关窗都要取消它 ——
         #: 回来得晚的那份结果属于上一个库，而它带来的确认框会问在错的窗口上。
         self._orphan_job: int | None = None
         #: 本次运行已经起过那一遍的库（是集合不是单个：来回切库不该把同一个库再起一遍空跑）。
@@ -198,7 +200,7 @@ class MainWindow(
         self._preview_cache: OrderedDict[Path, QImage] = OrderedDict()
         self._metadata_cache: OrderedDict[Path, tuple[int, int, MetadataReport]] = OrderedDict()
         self._thumbnail_failures = 0
-        #: 「清空缩略图缓存」在途的那一次（O(n) 的 unlink 循环跑在工作线程上，否则冻住窗口）。
+        #: 「清空缩略图缓存」进行中的那一次（O(n) 的 unlink 循环跑在工作线程上，否则冻住窗口）。
         self._cache_job: int | None = None
         # 下一次 ⌘Z 会撤掉什么；只在写操作之后刷新，否则每次翻图都要重放一遍日志。
         self._undo_label: str | None = None
@@ -235,9 +237,9 @@ class MainWindow(
         #: facet 读取那个后台任务一起回来 —— 分组是在主线程同步算的，不能在那里现发一次随层
         #: 大小线性增长的查询（那一层可能五千张）。
         self._event_values: dict[Path, tuple[EventRef, ...]] = {}
-        # guard: allow-long-comment（判「会不会变」用输入；少了它监听器每次回声都白付一次整层排序）
+        # guard: allow-long-comment（判「会不会变」用输入；少了它监听器每次回环都白付一次整层排序）
         #: **上一次重排的输入** —— 用来在排序**之前**判「这次会不会变」（见
-        #: :meth:`ordering.OrderingMixin._reorder_level`），少了它监听器每报一次自己写的回声
+        #: :meth:`ordering.OrderingMixin._reorder_level`），少了它监听器每报一次自己写操作的回环
         #: 就要白付一次整层排序。``_reorder_values`` 存的是**对象本身**（不是 ``id()``），
         #: 这样它不会被回收、地址不会被复用，判 ``is`` 才靠得住。
         self._reorder_fingerprint: tuple[object, ...] | None = None
@@ -249,7 +251,7 @@ class MainWindow(
         #: 日历页读整库拍摄时间的任务；与 :attr:`_facet_job` 分开（取消时机不同，会互相作废）。
         self._calendar_job: int | None = None
         # 从日历点开的那一层 —— `_drill_*` 三个字段是栈上 ``CalendarFrame`` 的投影（ADR 0041）。
-        #: 这一层还没摆上屏的条目（顺序定下来再一次给出去，ADR 0009 决策 6）；``None`` = 已经排好。
+        #: 这一层还没显示到界面的条目（顺序定下来再给出去，ADR 0009 决策 6）；``None`` = 已排好。
         self._staged: list[GridEntry] | None = None
         self._level_notice = False
         self._progress_notice = False
@@ -266,7 +268,7 @@ class MainWindow(
         self._search_total: int | None = None
         self._search_job: int | None = None
         #: 「按条件收窄当前这一层」那一次筛选的任务（ADR 0040）。**与检索那个是分开的两份**：
-        #: 它们互不同时在途（条件非空时只走其中一条），但取消时机不同 —— 换层时两个都要作废。
+        #: 它们不会同时进行（条件非空时只走其中一条），但取消时机不同 —— 换层时两个都要作废。
         self._filter_job: int | None = None
         #: 「把整库的照片写进索引」那一遍的任务（见 ``_maybe_start_photo_index``）。
         self._index_job: int | None = None
@@ -337,7 +339,7 @@ class MainWindow(
         self._grid.rename_active_changed.connect(self._on_rename_active_changed)
         self._grid.context_requested.connect(self._show_context_menu)
         # 「重命名」「移到废纸篓」能不能用，取决于当前有没有选中东西。**只接 `selectionChanged`，
-        # 并且攒一轮再算**：一次算要全量重算十八枚动作，其中 ⌘V 还要同步读一次系统剪贴板。
+        # 并且合并成一轮再算**：一次算要全量重算十八枚动作，其中 ⌘V 还要同步读一次系统剪贴板。
         selection_model = self._grid.selectionModel()
         if selection_model is not None:
             selection_model.selectionChanged.connect(self._schedule_action_states)
@@ -383,7 +385,8 @@ class MainWindow(
         self._stack.addWidget(self._calendar_page)
         self._panel = MetadataPanel()
         self._panel.hide()
-        # 「编辑元数据」那个按钮只发信号（面板不碰文件，红线 1）；写盘在 ``write_ops``。
+        # 「编辑元数据」那个按钮只发信号（面板不碰文件，改动用户的照片必须由用户亲手触发）；
+        # 写盘在 ``write_ops``。
         self._panel.edit_metadata_requested.connect(self.edit_metadata_of_current)
         # 焦点停在面板上时，← / → 仍然换照片（大图页走它自己那条路，网格上挪当前项）。
         self._panel.photo_step_requested.connect(self.step_photo_from_panel)
@@ -510,7 +513,7 @@ class MainWindow(
         self._new_album_action = QAction("新建相册", self)
         self._new_album_action.setShortcut(QKeySequence("Ctrl+Shift+N"))
         self._new_album_action.triggered.connect(self.create_album)
-        # **必须挂到窗口上**（理由见 ``_reveal_action``）；挂窗口不会让它冒到菜单栏。
+        # **必须挂到窗口上**（理由见 ``_reveal_action``）；挂窗口不会让它冒泡到菜单栏。
         self.addAction(self._new_album_action)
 
         self._rename_action = QAction("重命名…", self)
@@ -561,7 +564,7 @@ class MainWindow(
         self._copy_path_action.triggered.connect(self.copy_selected_paths)
 
         # ⌘D：在**原位置**造一份副本（ADR 0044），与访达的「复制项目」同一个键。
-        # **不进撤销栈** —— 撤销一次复制就是删文件（红线 1），所以横幅也不承诺 ⌘Z。
+        # **不进撤销栈**：撤销一次复制就是删文件，违反「绝不删除、移动用户照片」，横幅也不承诺 ⌘Z。
         self._duplicate_action = QAction("复制", self)
         self._duplicate_action.setShortcut(QKeySequence("Ctrl+D"))
         self._duplicate_action.triggered.connect(self.duplicate_selected)
@@ -569,7 +572,7 @@ class MainWindow(
         self.addAction(self._duplicate_action)
 
         # ⌘V 与访达一致：把剪贴板里的文件**复制**进当前这一层（ADR 0018），是这几个写操作里唯一
-        # 不进撤销栈的（撤销粘贴就是删文件，红线 1）；**相册菜单里那一条也是它**。
+        # 不进撤销栈的（撤销粘贴即删文件，违反「绝不删除、移动用户照片」）；相册菜单里那条也是它。
         self._paste_action = QAction("粘贴", self)
         self._paste_action.setShortcut(QKeySequence("Ctrl+V"))
         self._paste_action.triggered.connect(self.paste_into_current_folder)
@@ -790,10 +793,11 @@ class MainWindow(
         # 所以按了分组卡片也会把那一组各复制一份 —— 与卡片上的废纸篓同一套语义。
         # **不受筛选影响**（与 ⌘V 那两条相反）：复制的是用户看得见的选区，不是这一层的内容。
         self._duplicate_action.setEnabled(bool(flat) and idle)
-        # guard: allow-long-comment（红线 1：筛选生效时写操作不亮，用户看不清全貌时不该动他的文件）
+        # guard: allow-long-comment（绝不删除、移动用户照片：筛选生效时写操作不亮，
+        # 用户看不清全貌时不该动他的文件）
         # ⌘V 与选区无关；**大图页不粘** —— 那一页没有「当前这一层」（ADR 0021）。
         # **筛选生效时两条写操作都不亮**（ADR 0040 决策 7）：这一层显示的不是全部内容，粘进去 /
-        # 新建出来的照片可能一条都不出现，而它们恰恰是**会动用户文件**的那一类（红线 1），
+        # 新建出来的照片可能一条都不出现，而它们恰恰是**会动用户文件的写操作，只许由用户亲手触发**，
         # 不该在用户看不清全貌时发生 —— 真要粘，先撤掉筛选。
         writes_hidden = self._is_filtering()
         self._paste_action.setEnabled(in_grid and not writes_hidden and self._can_paste())
@@ -815,7 +819,7 @@ class MainWindow(
         self._update_undo_action()
 
     def _schedule_action_states(self, *_args: object) -> None:
-        """选区变了：把全量重算**攒到这一轮事件循环结束时**做一次。"""
+        """选区变了：把全量重算**合并到这一轮事件循环结束时**做一次。"""
         self._action_states_timer.start()
 
     def _update_undo_action(self) -> None:
@@ -838,11 +842,9 @@ class MainWindow(
     def _sync_calendar_conditions(self, conditions: Sequence[str], editing: int | None) -> None:
         """把同一批条件也摆到日历工具条上（ADR 0040 决策 9）。
 
-        **两处摆的是同一批条件**：这一行占掉的就是网格页那条面包屑（ADR 0033 决策 5），而筛选时
-        用户看不到网格页 —— 只摆面包屑上，条件就等于「加了但不知道加了什么」。
-
-        **无论当前在哪一页都要更新**：条件可能是在网格页上改的（那边改完切到日历页要立刻看见），
-        所以判据是「条件现在是什么样」，不是「日历页此刻在不在线」。
+        **两处摆的是同一批条件**：这一行占掉的就是网格页那条面包屑（ADR 0033 决策 5），只摆一处
+        用户就等于「加了但不知道加了什么」。**无论当前在哪一页都要更新**：判据是「条件现在是什么样」，
+        不是「日历页此刻在不在线」——条件可能是在网格页上改的。
         """
         self._calendar_page.set_conditions(conditions, editing=editing)
 
@@ -863,15 +865,11 @@ class MainWindow(
     # ---- 窗口 --------------------------------------------------------------
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
-        """按住标题栏那一段拖动窗口。
-
-        内容铺到标题栏底下之后那一条已经是本窗口的客户区，系统不再代劳拖动，得自己发起。
-        按下**只做记号**：这一下是同一次双击的第一下，还是一次拖动的开头，要等鼠标动起来
-        才知道 —— 所以真正发起的是 :meth:`mouseMoveEvent`，而它必须落在那一次鼠标事件里
-        （见 :meth:`~gallery.ui.window.title_bar_flow.TitleBarFlowMixin._start_title_bar_drag`）。
-
-        **不用先问 ``TitleBar`` 在不在那儿**：不在编辑时它对鼠标是透明的，按下照旧落到窗口
-        自己身上。
+        """按住标题栏那一段拖动窗口：内容铺到标题栏底下之后那一条已经是本窗口的客户区，
+        系统不再代劳拖动，得自己发起。按下**只做记号**：是同一次双击的第一下还是拖动的开头，
+        要等鼠标动起来才知道 —— 真正发起的是 :meth:`mouseMoveEvent`（见
+        :meth:`~gallery.ui.window.title_bar_flow.TitleBarFlowMixin._start_title_bar_drag`）。
+        **不用先问 ``TitleBar`` 在不在那儿**：不在编辑时它对鼠标是透明的。
         """
         if event.button() == Qt.MouseButton.LeftButton and self._press_belongs_to_the_title_bar(
             event.position()
@@ -905,12 +903,9 @@ class MainWindow(
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         """双击标题栏：把窗口**铺满**，再双击一次还原（macOS 的标准动作）。
 
-        那一段已经归窗口了（ADR 0025 决策 1），系统设置里「双击标题栏」那一档也就不生效，
-        这件事得自己做。**做的是「铺满」而不是真全屏**（见 :meth:`_toggle_filled`）：占满菜单栏
-        与 Dock 之间的那块地方，两者都还在，也不另开 Space。
-
-        **双击与拖动靠移动距离分家**：手没怎么动，第二下就走到这里（拖动那一路只认
-        :meth:`mouseMoveEvent` 里够远的那一次移动）。
+        那一段已经归窗口了（ADR 0025 决策 1），系统设置里「双击标题栏」那一档也就不生效，得自己做。
+        **做的是「铺满」而不是真全屏**（见 :meth:`_toggle_filled`）：占满菜单栏与 Dock 之间的地方，
+        两者都还在，也不另开 Space。**双击与拖动靠移动距离分家**：手没怎么动，第二下就走到这里。
         """
         if event.button() == Qt.MouseButton.LeftButton and self._press_belongs_to_the_title_bar(
             event.position()
@@ -948,11 +943,9 @@ class MainWindow(
     def changeEvent(self, event: QEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         """窗口状态一变（铺满、还原、真全屏）就把窗口顶边那一行重摆一次。
 
-        **铺满时其实什么都不用动**，但**真全屏要动**（见 :meth:`_layout_title_bar`），而判据
-        不能只挑那个来 —— 一并跟着 ``WindowStateChange`` 走，少一处判断也就少一处走错的机会。
-
-        **外部按钮的显隐也要补一次**：真全屏那一支把它藏起来了，而退出真全屏不经过
-        ``_update_action_states``，不补这一句它就没了。别的 ``changeEvent``（例如激活状态）不重摆。
+        **真全屏要动**（见 :meth:`_layout_title_bar`），判据不挑状态、一并跟着 ``WindowStateChange``
+        走。**外部按钮的显隐也要补一次**：真全屏把它藏起来，而退出真全屏不经过
+        ``_update_action_states``，不补这一句它就没了。别的 ``changeEvent`` 不重摆。
         """
         super().changeEvent(event)
         if event.type() == QEvent.Type.WindowStateChange:
@@ -977,7 +970,7 @@ class MainWindow(
         """标题栏里确认了一个新名字。
 
         **与网格那个输入框走同一个写操作入口**（``write_ops._on_rename_committed``），因此记账、
-        横幅、撤销、监听器回声一样都不少（红线 1、ADR 0025 决策 3）。
+        横幅、撤销、监听器回环一样都不少（用户亲手触发的改名也要记账、可撤销，ADR 0025 决策 3）。
         """
         self._on_rename_committed(self._focus_row(), text)
 
@@ -1004,7 +997,7 @@ class MainWindow(
         )
 
     def _on_external_entry(self, entry: object) -> None:
-        """下拉框里点了哪一项。**按 id 分派**，不在按钮那一侧写死（理由见 ``ExternalEntry``）。"""
+        """下拉框里点了哪一项。**按 id 分派**，不在按钮那一侧硬编码（理由见 ``ExternalEntry``）。"""
         if not isinstance(entry, ExternalEntry):
             return
         if entry.id == "google_calendar":
@@ -1051,10 +1044,9 @@ class MainWindow(
     def _open_finder(self) -> None:
         """在访达里**打开**当前这个文件夹 —— 落到它**里面**去，看的是里面摆着什么。
 
-        走 ``desktop.open_folder_in_finder``，与右键菜单对**相册**走的是同一件事（同一个
-        入口，同一句话的措辞）。**与「在访达中显示」不是同一件事**：那条是照片那一路，
-        ``open -R`` 把东西在它所在的目录里选出来（ADR 0014 决策 3）；对着文件夹用它，
-        用户看到的是文件夹**外面**那一层。
+        走 ``desktop.open_folder_in_finder``，与右键菜单对**相册**走的是同一件事。**与「在访达中
+        显示」不是同一件事**：那条是照片那一路，``open -R`` 把东西在它所在的目录里选出来
+        （ADR 0014 决策 3）；对着文件夹用它，用户看到的是文件夹**外面**那一层。
         """
         folder = self._current_folder()
         if folder is None:
@@ -1071,7 +1063,7 @@ class MainWindow(
     def quit_app(self) -> None:
         """⌘Q：收完尾之后退出**整个应用**（与 :meth:`close` 那一半是两件事，ADR 0037）。
 
-        **必须先 ``close()``**：会话落盘、监听器停掉、后台任务收工全在 :meth:`closeEvent` 里，
+        **必须先 ``close()``**：会话落盘、监听器停掉、后台任务的结束全在 :meth:`closeEvent` 里，
         而 ``QApplication.quit()`` 压根不发它 —— 直接调它的话那三样一步都不走。后半句是为
         ``app.keep_running_without_windows`` 准备的（关掉最后一个窗口不再自动退出应用）。
         """
@@ -1084,7 +1076,7 @@ class MainWindow(
         self._save_session()
         self._teardown_library()
         # ``abandon`` 而不是「取消 + 等」：排队里还没开始的任务必须丢掉，否则每跑掉一个就再等一个
-        # （几百张照片就是好几分钟）。已经跑起来的那几个靠令牌收工，连「云盘上没下完」也能立刻放手。
+        # （几百张照片就是好几分钟）。已经跑起来的那几个靠令牌结束，连「云盘上没下完」也能立刻放手。
         if not self._runner.abandon():
             logger.warning("仍有后台任务未结束，已放弃等待")
         # 剪贴板那个连接**不显式断开**：PySide 会在接收者析构时自动摘掉，显式 disconnect 反而报错。

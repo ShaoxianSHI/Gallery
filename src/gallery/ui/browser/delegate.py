@@ -45,7 +45,7 @@ class PhotoDelegate(QStyledItemDelegate):
         """几何尺寸变了 —— 绘制尺寸先跟它对齐。
 
         动画是在 :meth:`PhotoGrid._set_cell` 里、几何定下来**之后**另行发起的，它会把
-        :meth:`draw_edge` 拨回旧尺寸再往新尺寸走，所以这里顺手对齐不会吃掉动画的起点。
+        :meth:`draw_edge` 拨回旧尺寸再往新尺寸走，所以这里顺手对齐不会丢掉动画的起点。
         """
         self._icon_edge = edge
         self._draw_edge = float(edge)
@@ -129,7 +129,7 @@ class PhotoDelegate(QStyledItemDelegate):
 
             pixmap = index.data(Qt.ItemDataRole.DecorationRole)
             if isinstance(pixmap, QPixmap) and not pixmap.isNull():
-                # 照片落的那一块算一次（角标仍钉取景框角，见 :meth:`_draw_badge`）。
+                # 照片落的那一块算一次（角标仍对齐取景框角，见 :meth:`_draw_badge`）。
                 photo = self.target_rect(image_rect, pixmap)
                 self._draw_thumbnail(painter, photo, pixmap)
                 if is_album:
@@ -181,7 +181,6 @@ class PhotoDelegate(QStyledItemDelegate):
         尺寸刚切换时手里的图还是按旧边长缩放的，这里就地缩放到新框，于是每一格始终
         有图、大小也对得上。**刻意不走** :func:`gallery.ui.imaging.scale_pixmap`：那一处
         是把缩略图缩成新位图存起来，这里是绘制时按目标矩形画，不额外产出中间位图。
-        圆角用 clip 裁而不是蒙版抠 —— 后者每格多产出一张等大位图，而且抠出来还是锯齿。
         """
         clip = QPainterPath()
         clip.addRoundedRect(target, self.THUMB_RADIUS, self.THUMB_RADIUS)
@@ -228,10 +227,9 @@ class PhotoDelegate(QStyledItemDelegate):
     def _draw_badge(self, painter: QPainter, frame: QRect, text: str) -> None:
         """在**取景框**左上角盖一个小标签。
 
-        钉取景框而不是钉照片：照片按比例居中，横竖封面的左边缘落在不同的横坐标上，
-        跟着照片走一屏卡片的角标就参差不齐。代价是封面不是正方形时角标会落在照片之外
-        的留白上 —— 为了整齐认下的取舍。取景框本身跟着过渡插值，所以角标照样跟着卡片
-        一起挪、一起长（见 :meth:`PhotoDelegate.cell_rect`）。
+        对齐取景框而不是照片：照片按比例居中，横竖封面的左边缘落在不同的横坐标上，跟着照片走
+        一屏卡片的角标就参差不齐。代价是封面不是正方形时角标会落在照片之外的留白上。取景框
+        本身跟着过渡插值，所以角标照样跟着卡片一起挪、一起长（见 :meth:`PhotoDelegate.cell_rect`）。
         """
         metrics = painter.fontMetrics()
         width = metrics.horizontalAdvance(text) + 12

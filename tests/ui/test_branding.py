@@ -20,7 +20,7 @@ def test_window_icon_is_set(qt_app: QApplication) -> None:
 
 
 def test_icon_files_are_all_readable(qt_app: QApplication) -> None:
-    """``QIcon`` 只收下真正读得到的档位；缺一档就等于那一档没配。"""
+    """``QIcon`` 只记录真正读得到的档位；缺一档就等于那一档没配。"""
     apply_app_branding(qt_app)
 
     assert all(path.is_file() for path in app_icon_files())

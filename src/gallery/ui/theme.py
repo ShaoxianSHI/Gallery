@@ -1,6 +1,6 @@
 """窗口底色的唯一来源：``Window`` / ``Base`` / ``AlternateBase`` 都指向一个颜色，再逐控件下发。
 
-不碰应用调色板；浮层那几档颜色由 :data:`RESOLVED_ROLES` 钉死（ADR 0035）。
+不碰应用调色板；浮层那几档颜色由 :data:`RESOLVED_ROLES` 固定（ADR 0035）。
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ BACKGROUND_ROLES = (
     QPalette.ColorRole.AlternateBase,
 )
 
-#: 铺底色之外**也要钉死**的那几个角色，正是弹出菜单与弹出列表读的（正文色、高亮色、
+#: 铺底色之外**也要固定**的那几个角色，正是弹出菜单与弹出列表读的（正文色、高亮色、
 #: 高亮之下的字色、置灰行的字色）。三处浮层拿的是同一份下发的调色板（ADR 0035）。
 RESOLVED_ROLES = (
     QPalette.ColorRole.Highlight,
@@ -88,7 +88,7 @@ def _application(app: QApplication | None = None) -> QApplication:
 def current_theme(app: QApplication | None = None) -> AppTheme:
     """按应用当前的调色板算出一份主题。
 
-    **不能**调用 ``QApplication.setPalette``：那会把这份颜色钉死。
+    **不能**调用 ``QApplication.setPalette``：那会把这份颜色固定。
     """
     palette = _application(app).palette()
     background = QColor(palette.color(BACKGROUND_ROLE))

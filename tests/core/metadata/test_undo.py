@@ -185,7 +185,7 @@ def test_another_library_never_leaks_into_the_stack(tmp_path: Path, fake_trash: 
 def test_a_record_with_an_unknown_action_is_still_undoable(
     tmp_path: Path, two_photos: tuple[PhotoRef, PhotoRef]
 ) -> None:
-    """**动作名缺失的那条也要能撤** —— 红线 4 要的是「每次写回都留得下可回滚记录」。
+    """**动作名缺失的那条也要能撤** —— 「每次写回都留得下可回滚记录」要的就是这个。
 
     「在压栈清单里就压栈、在弹栈清单里就弹栈」的话，两张清单都不含的动作名（日志被
     截断、外来的记录、以后新加的动作忘了登记）就**静默丢掉** —— 用户刚做完的事从此
@@ -225,14 +225,14 @@ def test_a_record_with_an_unknown_action_is_still_undoable(
 def test_the_actions_whose_undo_would_delete_something_stay_off_the_stack(
     tmp_path: Path, action: str
 ) -> None:
-    """**撤销 = 删文件的那两个动作不进栈**（红线 1）。
+    """**撤销 = 删文件的那两个动作不进栈**（不删除、不移动用户照片那条）。
 
     ``create_album`` 与 ``copy_into`` 都会记账，而它们的对撤销意味着「删掉那个文件夹」
-    与「删掉刚粘进来的照片」—— 删除只许用户亲手触发（红线 1，模块文档里那句
+    与「删掉刚粘进来的照片」—— 删除只许用户亲手触发（不删除、不移动用户照片那条，模块文档里那句
     「粘贴不在栈里」）。
 
     只靠「不在压栈清单里」**隐式**排除的话，「把不认识的动作也压栈」那个规则一改
-    就会连带把它们放进来。所以排除写成了显式的 :data:`_NEVER_UNDOABLE`，这里钉住它
+    就会连带把它们放进来。所以排除写成了显式的 :data:`_NEVER_UNDOABLE`，这里锁定它
     仍然生效 —— 清单少写一个不会报错，只会让用户按一次 ⌘Z 就删掉自己的东西。
     """
     first = tmp_path / "一.jpg"

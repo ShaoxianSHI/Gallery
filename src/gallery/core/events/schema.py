@@ -1,13 +1,9 @@
 """事件库的建表与版本：表名、列清单、DDL、迁移步与连接上的那一条 pragma。
 
-它**只描述库长什么样**，不含读写（那在 :mod:`gallery.core.events.store`）。单独成模块是
-因为这里的几条约束各自都能静默出事：列清单必须从字段定义生成（手写一份就有两处会漂），
-而 ``user_version`` 与 ``journal_mode`` 都是**每个库各一份**、必须带 ``ev.`` 前缀。
-
-**版本对不上时是迁移，不是重建**（ADR 0048 决策 3）。原先这里是「版本不等于就 ``DROP`` 全部表」
-—— 对索引那张表是对的（它是丢了能重建的缓存），而事件是**唯一一份重建不出来的数据**，
-所以加一列就等于清空用户填的全部事件与绑定。认不出的版本（比这份程序新）改成**不挂事件库**：
-应用读不懂一份文件，不等于可以删掉它。
+它**只描述库长什么样**，不含读写（那在 :mod:`gallery.core.events.store`）。单独成模块是因为这里
+几条约束各自都能静默出事：列清单必须从字段定义生成，而 ``user_version`` 与 ``journal_mode`` 都是
+**每个库各一份**、必须带 ``ev.`` 前缀。**版本对不上时是迁移，不是重建**（ADR 0048 决策 3）：事件
+是唯一一份重建不出来的数据，认不出的版本（比这份程序新）改成**不挂事件库**。
 """
 
 from __future__ import annotations
@@ -36,7 +32,7 @@ BINDINGS_TABLE: Final = "photo_events"
 #: 与索引的 ``SCHEMA_VERSION`` 无关（索引升版会重建它的表，事件库不会）。
 #:
 #: **升版只能加列**（ADR 0048 决策 3）：每加一列都要在 :data:`_MIGRATIONS` 里补一步，
-#: 而那一级不许空着（``tests/core/events/test_store.py`` 里有守护）。
+#: 而那一级不许空着（``tests/core/events/test_store.py`` 里有回归测试）。
 SCHEMA_VERSION: Final = 2
 
 
@@ -45,7 +41,7 @@ SCHEMA_VERSION: Final = 2
 CHUNK: Final = 400
 
 
-#: 绑定表。它与类型无关，所以写死在这儿（扩展表按类型生成，见 :func:`_kind_schema`）。
+#: 绑定表。它与类型无关，所以硬编码在这儿（扩展表按类型生成，见 :func:`_kind_schema`）。
 _BINDINGS_SCHEMA: Final = f"""
 CREATE TABLE IF NOT EXISTS ev.{BINDINGS_TABLE} (
     path     TEXT NOT NULL,
@@ -74,7 +70,7 @@ def _event_columns() -> tuple[tuple[str, str], ...]:
 
     **从 :data:`COMMON_FIELDS` 生成**，与扩展表同一个道理：手写一份列清单就有两处会漂，
     而漂的那一处要到 SQLite 执行才报错。``required`` 的字段带上 ``NOT NULL`` ——
-    校验在面板那一层，这里是兜底。
+    校验在面板那一层，这里只是最后一层保险。
     """
     return (
         *_EVENT_HEAD,
@@ -133,7 +129,7 @@ def _add_column(connection: sqlite3.Connection, table: str, column: str, declara
 #: **不再由「版本对不上」这个隐式条件触发**。
 #:
 #: 索引 0 是「建表」，由 :data:`_EVENTS_SCHEMA` 那几段建表语句本身承担（新库直接建出最新结构），
-#: 所以它是空的 —— **那是唯一允许为空的一级**（守护盯着其余每一级都要有语句）。
+#: 所以它是空的 —— **那是唯一允许为空的一级**（回归测试盯着其余每一级都要有语句）。
 _MIGRATIONS: Final[tuple[tuple[tuple[str, str, str], ...], ...]] = (
     (),  # 0 → 1：建表语句自己就是这一步
     ((EVENTS_TABLE, COVER.column, "TEXT"),),  # 1 → 2：封面那一列（ADR 0048）
@@ -143,13 +139,9 @@ _MIGRATIONS: Final[tuple[tuple[tuple[str, str, str], ...], ...]] = (
 def migrate(connection: sqlite3.Connection, version: int) -> None:
     """把事件库从 ``version`` 升到 :data:`SCHEMA_VERSION`，**只加列**。
 
-    **调用方要已经建好表**（新库的那些 ``CREATE TABLE IF NOT EXISTS``），所以顺序是
-    「先建表、后迁移」：旧库的表已存在、建表语句什么都不做，迁移补上缺的那几列；
-    新库的表刚建出来、已经带着最新的列，迁移那一步看见它在就跳过（幂等）。
-
-    **整个链条在一个事务里**：``executescript`` 会隐式提交，用它跑迁移的话链条断在半路时
-    库就停在中间状态，而那正是「用户的事件少了一半」。所以这里只 ``execute``，
-    事务由调用方的 ``with connection:`` 给出。
+    **调用方要已经建好表**，所以顺序是「先建表、后迁移」：旧库补上缺的那几列，新库已经带着最新列、
+    迁移看见它在就跳过（幂等）。**整个链条在一个事务里**：``executescript`` 会隐式提交，用它跑迁移
+    断在半路时库就停在中间状态。所以这里只 ``execute``，事务由调用方的 ``with connection:`` 给出。
     """
     for step in range(max(version, 0), SCHEMA_VERSION):
         for table, column, declaration in _MIGRATIONS[step]:
@@ -159,11 +151,9 @@ def migrate(connection: sqlite3.Connection, version: int) -> None:
 def _relax_journal_mode_only(connection: sqlite3.Connection) -> None:
     """**只动日志模式，不动持久性** —— 它叫 ``only`` 就是要挡住「与索引那一个合并」。
 
-    ``journal_mode=DELETE`` 的理由与索引相同（ADR 0038 决策 5：``-wal`` / ``-shm`` 跟着用户的库
-    在云盘上互相覆盖），但 ``synchronous`` 必须保持默认。索引是丢了能重建的缓存
-    （``index._relax_cache_durability`` 连 ``synchronous`` 一起降），这里是用户自己填的数据，
-    两个函数名字长得像而策略**相反**，合成一个就会静默地降低事件的持久性。
-    **失败只记日志**：落到 WAL 也只是多两个文件。
+    ``journal_mode=DELETE`` 的理由与索引相同（ADR 0038 决策 5），但 ``synchronous`` 必须保持默认：
+    索引是丢了能重建的缓存（``index._relax_cache_durability`` 连 ``synchronous`` 降），这里是用户
+    自己填的数据，两个策略**相反**，合成一个就会静默地降低事件的持久性。**失败只记日志**。
     """
     try:
         connection.execute(f"PRAGMA {SCHEMA_NAME}.journal_mode=DELETE")

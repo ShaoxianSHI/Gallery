@@ -34,7 +34,7 @@ _KEY_LEVELS = {
     Qt.Key.Key_W: "week",
 }
 
-#: 「来了一张图，重画一次」那个闸门的间隔（毫秒）。**0 = 下一轮事件循环**。
+#: 「来了一张图，重画一次」那个防抖间隔（毫秒）。**0 = 下一轮事件循环**。
 REPAINT_INTERVAL_MS = 0
 
 
@@ -100,8 +100,8 @@ class CalendarPage(QWidget):
         # ``QApplication`` 上，而 ``findChild`` 只找自己的子孙 —— 找不到就永远不连接。
         self._watcher = ensure_installed()
         self._watcher.changed.connect(self._on_theme_changed)
-        # 「来了一张缩略图 → 重画当前那层」的闸门。**必须闸**：``update()`` 立刻排一次整页重绘，而
-        # 流水线是**一张一张**送图回来的（实测一张一张送 1890 ms，一次全送到 0.1 ms）。
+        # 「来了一张缩略图 → 重画当前那层」的防抖定时器。**必须防抖**：``update()`` 立刻排一次整页
+        # 重绘，而流水线是**一张一张**送图回来的（实测一张一张送 1890 ms，一次全送到 0.1 ms）。
         self._repaint_timer = QTimer(self)
         self._repaint_timer.setSingleShot(True)
         self._repaint_timer.setInterval(REPAINT_INTERVAL_MS)
@@ -209,10 +209,9 @@ class CalendarPage(QWidget):
     def _reset_selection(self) -> None:
         """**静默**地收掉高亮，而把点过的那一天挪成锚点（外面没人要听「这一页刚露出来」）。
 
-        **高亮与锚点是两件事**：那一格已经摊开，退回来时留着的高亮是一块点不掉的底色；可它**仍然
-        是用户刚指着的那一天**，按 ``Y`` / ``M`` / ``W`` 该翻到它所在的那一层。**只挪页面这一份**：
-        让周视图重新定位会把用户刚找到的滚动位置弄丢。它与 :meth:`clear_selection` 只差
-        ``selection_changed``，而那一发**不许从 :meth:`showEvent` 发** —— 本页一个接收方都没有。
+        **高亮与锚点是两件事**：高亮是「刚点了哪一格」，那一格展开后退回来时它是一块点不掉
+        的底色；而**锚点是用户刚指着的那一天**，按 ``Y`` / ``M`` / ``W`` 该翻到它所在的那一层。
+        **只挪页面这一份** —— 让周视图重新定位会把用户刚找到的滚动位置弄丢。
         """
         pointed = self._selected
         if pointed is not None:
@@ -224,7 +223,7 @@ class CalendarPage(QWidget):
         """把键盘焦点交给当前那层 —— **必须点名，不能指望 Qt 自己挪**。
 
         从大图页退回来时 Qt 会把焦点交给页面上**第一个**能接焦点的控件，周视图里那是
-        ``QScrollArea``，它会把 ← / → 当成滚动时间轴吃掉。
+        ``QScrollArea``，它会把 ← / → 当成滚动时间轴忽略掉。
         """
         self.current_view().setFocus()
 
@@ -243,8 +242,7 @@ class CalendarPage(QWidget):
 
         「在年视图里点 5 月 16 号 → 按 W」必须看到 5 月 16 号那一周，所以切层前先把锚点挪到那一天
         上。「那一天」按新鲜程度取：还在高亮的那一天，否则是**退回来时留下的锚点**（见
-        :meth:`_reset_selection`），没有点过就一天都不动。``Y`` / ``M`` / ``W``、工具条、会话恢复
-        三条入口都走这里。
+        :meth:`_reset_selection`）。``Y`` / ``M`` / ``W``、工具条、会话恢复三条入口都走这里。
         """
         if level not in self._views:
             return

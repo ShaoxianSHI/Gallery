@@ -1,10 +1,9 @@
 """元数据读取（单张 / 批量），以及五样会动用户文件的操作：改名、移到废纸篓、粘贴、移动到相册、
 新建相册。读取只读（单张走 ``exif``、成批走 ``batch``，共用 ``facets`` 的取值规则）；那五样写操作
 一律先经 :mod:`~gallery.core.metadata.journal` 记账，而 ⌘Z 只认其中三样 —— 撤销粘贴与撤销新建相册
-都是删东西（红线 1：删除只允许用户亲手触发）。
-
-「复制」⌘D（:func:`~gallery.core.metadata.paste.duplicate`，ADR 0044）不算第六样写操作：
-它就是 :func:`~gallery.core.metadata.paste.copy_into` 那一段，目标目录改成每项自己的父目录。
+都是删东西（硬性约束：删除只允许用户亲手触发）。「复制」⌘D
+（:func:`~gallery.core.metadata.paste.duplicate`，ADR 0044）不算第六样：它就是
+:func:`~gallery.core.metadata.paste.copy_into` 那一段，目标目录改成每项自己的父目录。
 """
 
 from gallery.core.metadata.album import (

@@ -124,7 +124,7 @@ def calendar_window(
 
 
 def _settle(qt_app: QApplication, window: MainWindow) -> None:
-    """转到「后台任务都收工」为止。"""
+    """转到「后台任务都结束」为止。"""
     assert wait_until(qt_app, lambda: window_is_idle(window)), "后台任务没有收工"
     qt_app.processEvents()
 
@@ -145,7 +145,7 @@ def _cell_of(window: MainWindow, month: int) -> tuple[list[object], str]:
 def _click_a_cell(view: MonthView, day: datetime.date) -> None:
     """在月视图里**真的点一下**那一格（走鼠标事件，与用户点下去同一条路）。
 
-    **不直接调 ``select_cell``**：那样子跳过了「先选中、再摊开」的前半截，而下面那一条
+    **不直接调 ``select_cell``**：那样子跳过了「先选中、再展开」的前半截，而下面那一条
     要验的恰恰是前半截留在页面上的那一天（事件坐标要过一遍 Qt，所以按控件坐标发）。
     """
     point: QPointF = view._day_cell(month_matrix(view.anchor()).index(day)).center()  # type: ignore[attr-defined]
@@ -218,7 +218,7 @@ def test_several_photos_in_a_cell_are_laid_out_in_a_grid(
 def test_opening_a_photo_from_a_drill_grid_comes_back_to_that_grid(
     qt_app: QApplication, calendar_window: MainWindow
 ) -> None:
-    """摊开的那一格网格里点开一张照片：`Esc` 退回**那一层网格**，不是直接回日历。
+    """展开的那一格网格里点开一张照片：`Esc` 退回**那一层网格**，不是直接回日历。
 
     日历链是「日历页 → 日历格 → 照片」三层栈（ADR 0041 决策 1）：照片帧底下压着的就是那张
     网格。跳过它直接回日历，屏幕上露出日历页而标题还写着那一格的名字 —— 两层对不上，要再按
@@ -239,11 +239,11 @@ def test_opening_a_photo_from_a_drill_grid_comes_back_to_that_grid(
     window._open_detail(window._model.index(row, 0))
     qt_app.processEvents()
     assert window._stack.currentWidget() is window._detail_page
-    assert window._drill_photos is not None, "前置条件：不在那一格摊开的网格里"
+    assert window._drill_photos is not None, "前置条件没摆对：不在那一格展开的网格里"
 
     window.go_up()
     _settle(qt_app, window)
-    # **退回的是摊开的那一层**：模型里还是那一格的几张，标题也还是那一格。
+    # **退回的是展开的那一层**：模型里还是那一格的几张，标题也还是那一格。
     assert window._stack.currentWidget() is window._grid_page, "Esc 跳过了网格直接回日历"
     assert window._model.rowCount() == 2, "退回的是整库，不是摊开的那一格"
     assert window._drill_label == label
@@ -297,8 +297,8 @@ def test_the_cell_you_come_back_from_becomes_the_anchor(
 ) -> None:
     """点开一格 → 退回来：**那一格成为锚点，而高亮不回来**。
 
-    摊开的只有**有照片的那一格**，而退回来时「点过的那一天」必须一起留着：丢了它，按 ``W``
-    翻到的就是与那一格毫无关系的那一周（点空格子不会摊开，只走空格子那条路看不出这个
+    展开的只有**有照片的那一格**，而退回来时「点过的那一天」必须一起留着：丢了它，按 ``W``
+    翻到的就是与那一格毫无关系的那一周（点空格子不会展开，只走空格子那条路看不出这个
     不对称）。**锚点挪的是那一天，摆着的那一段不动**。
     """
     window = calendar_window
@@ -337,7 +337,7 @@ def _days_total(page: object) -> int:
 def test_entering_a_drill_does_not_repoint_the_calendar_at_those_photos(
     qt_app: QApplication, calendar_window: MainWindow
 ) -> None:
-    """摊开的那一层**不是**「这一层的照片」，拿它分桶等于告诉日历整个库就那几张。
+    """展开的那一层**不是**「这一层的照片」，拿它分桶等于告诉日历整个库就那几张。
 
     进网格是「先摆内容再换页」，换页那一刻日历还在前面而模型已经被换成那几张，于是其余
     格子当场空掉，要等退回来之后那一遍重扫才恢复。**这里不扫完就断言**。
@@ -362,9 +362,9 @@ def test_entering_a_drill_does_not_repoint_the_calendar_at_those_photos(
 def test_a_scan_in_flight_does_not_land_on_the_drill_layer(
     qt_app: QApplication, calendar_window: MainWindow
 ) -> None:
-    """扫描在途时点一格，那一遍扫描的结果**不许**把这一层换成整库。
+    """扫描进行中时点一格，那一遍扫描的结果**不许**把这一层换成整库。
 
-    这里把「在途」摆出来而不是等它真的在途：测试库太小扫描一瞬间就完了，等不到那一刻；
+    这里把「进行中」摆出来而不是等它真的进行中：测试库太小扫描一瞬间就完了，等不到那一刻；
     而要验的正是**迟到的那一批**落地时会怎样。
     """
     from gallery.core.library.scanner import ScanReport
@@ -513,7 +513,7 @@ def test_leaving_the_calendar_selects_nothing(
     assert window._model.rowCount() == 2
     row = window._model.row_of_path(photos[0].path)
     window._grid.select_row(row)
-    assert window._grid.genuinely_selected_rows() == [row], "前置条件：那一格是选中的"
+    assert window._grid.genuinely_selected_rows() == [row], "前置条件没摆对：那一格应当是选中的"
 
     window.set_browse_mode("albums")
     assert wait_until(qt_app, lambda: window_is_idle(window)), "切到相册视图后没有收工"
@@ -599,7 +599,7 @@ def _click_hour_cell(
 
 
 def _week_at(qt_app: QApplication, window: MainWindow, day: datetime.date) -> None:
-    """切到周视图，并等它把滚动定位完 —— 点那一格时它早就落定了。"""
+    """切到周视图，并等它把滚动定位完 —— 点那一格时它早就稳定下来了。"""
     page = window._calendar_page
     page.set_today(day)
     page.go_today()
@@ -716,7 +716,7 @@ def test_coming_back_from_a_photo_leaves_the_arrows_working(
     """周视图里点进一张照片再退出来，**← / → 要还能翻周**。
 
     焦点必须点名交给周视图：退回来时 Qt 把焦点交给页面上第一个能接焦点的控件 —— 那一页
-    里那是那个 ``QScrollArea``，它把 ← / → 当成滚动时间轴吃掉。月视图里落到的恰好是视图
+    里那是那个 ``QScrollArea``，它把 ← / → 当成滚动时间轴忽略掉。月视图里落到的恰好是视图
     自己，所以只有周视图犯病。
     """
     window = calendar_window
@@ -847,7 +847,7 @@ def test_the_level_survives_a_reopen(
 
 
 def _settle_everything(qt_app: QApplication, window: MainWindow) -> None:
-    """连检索那一遍与索引维护一起等到收工（``_settle`` 只管日历那几条链）。"""
+    """连检索那一遍与索引维护一起等到结束（``_settle`` 只管日历那几条链）。"""
     wait_for_idle(qt_app, window, also=("_search_job", "_index_job", "_staged"))
 
 
@@ -856,7 +856,7 @@ def test_a_search_from_the_calendar_shows_its_results_on_the_grid(
 ) -> None:
     """检索结果横跨整库，所以它**只在网格页上摆**，日历那一页不参与。
 
-    钉住这一半才钉得住另一半：撤掉条件之后回到日历，靠的是「条件没了」，
+    锁定这一半才钉得住另一半：撤掉条件之后回到日历，靠的是「条件没了」，
     不是「从日历进来的就回去」。
     """
     window = calendar_window
@@ -973,7 +973,7 @@ def test_a_search_inside_a_calendar_cell_keeps_the_search_frame(
     photos, label = _cell_of(window, 5)
     page.current_view().select_cell(photos, label)
     qt_app.processEvents()
-    assert window._drill_photos is not None, "前置条件：日历那一格没有摊开"
+    assert window._drill_photos is not None, "前置条件没摆对：日历那一格没有展开"
 
     window._on_search_submitted("三月")
     _settle_everything(qt_app, window)
@@ -1038,7 +1038,7 @@ def test_a_search_on_the_calendar_page_still_reloads_when_leaving_it(
 def test_a_search_from_a_calendar_cell_forgets_that_cell(
     qt_app: QApplication, calendar_window: MainWindow
 ) -> None:
-    """在日历摊开的那一格上检索：那一格**不再是**「上一层」。
+    """在日历展开的那一格上检索：那一格**不再是**「上一层」。
 
     网格页上摆的是横跨整库的结果；留着那份记账，条件撤光之后按 ``Esc`` 会退到这一趟没去过的层。
     """
@@ -1047,7 +1047,7 @@ def test_a_search_from_a_calendar_cell_forgets_that_cell(
     photos, label = _cell_of(window, 5)  # 五月两张挤在同一个小时 → 摊成一层网格
     page.current_view().select_cell(photos, label)
     qt_app.processEvents()
-    assert window._drill_photos is not None, "前置条件：日历那一格没有摊开"
+    assert window._drill_photos is not None, "前置条件没摆对：日历那一格没有展开"
 
     window._on_search_submitted("三月")
     _settle_everything(qt_app, window)

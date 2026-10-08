@@ -196,7 +196,7 @@ def test_the_selected_row_wears_the_highlighted_text(
         f"前提：那一行铺的是高亮色，实测 {selected_background.name()}"
     )
     assert plain_background != selected_background, "参照行没有被点亮，这一对就没得比"
-    # 字色离哪一档更近，就说明这一行实际用的是哪一档 —— 不用写死阈值。
+    # 字色离哪一档更近，就说明这一行实际用的是哪一档 —— 不用硬编码阈值。
     assert _closer(selected_ink, highlighted_text, text), (
         f"选中行的字还是 {selected_ink.name()}（压在高亮底上），该是 "
         f"{highlighted_text.name()} —— 用户报的就是黑字压蓝底"
@@ -419,7 +419,7 @@ def test_each_shortcut_column_lines_up(qt_app: QApplication, window: MainWindow)
 def test_a_lone_modifier_hugs_the_key(qt_app: QApplication, window: MainWindow) -> None:
     """**只有一个**修饰符的那一行占内侧那一列，不占自己那一列。
 
-    「在默认应用中打开」的 ``⇧⏎`` 就是这么一行；按「每个修饰符钉死一列」来画，它的 ⇧ 会落到
+    「在默认应用中打开」的 ``⇧⏎`` 就是这么一行；按「每个修饰符固定一列」来画，它的 ⇧ 会落到
     ⌘ 的外侧，中间隔着一格空白。两个修饰符的 ``⇧⌘C`` 则各占一格、依次往外排。
     """
     window._stack.setCurrentWidget(window._grid_page)
@@ -843,7 +843,7 @@ def test_the_plain_menu_is_sized_like_the_search_popup(qt_app: QApplication) -> 
 
 
 def test_the_plain_menu_spells_out_its_text_colour(qt_app: QApplication) -> None:
-    """**item 的字色必须写死。** 挂了样式表之后 Qt 不再按调色板给 item 上色：深色下调色板里
+    """**item 的字色必须硬编码。** 挂了样式表之后 Qt 不再按调色板给 item 上色：深色下调色板里
     ``WindowText`` 明明白白是 ``#ffffff``，画出来却是 ``#000000``；而只写在 ``:hover`` /
     ``:selected`` 里会让**没被指到的那些行全是黑的**。
     """
@@ -872,7 +872,7 @@ def test_the_icon_sits_evenly_between_edge_and_text(qt_app: QApplication) -> Non
     量的是「没高亮」那一张：高亮那张里抗锯齿的边缘落在哪一列全看阈值，能差出 3 点。
     """
     menu = QMenu()
-    # 颜色钉死：`Window` / `WindowText` 在系统主题下是什么值不定，量的时候要有确定判据。
+    # 颜色固定：`Window` / `WindowText` 在系统主题下是什么值不定，量的时候要有确定判据。
     palette = QPalette(menu.palette())
     palette.setColor(QPalette.ColorRole.Window, QColor("#f6f6f6"))
     palette.setColor(QPalette.ColorRole.WindowText, QColor("#000000"))

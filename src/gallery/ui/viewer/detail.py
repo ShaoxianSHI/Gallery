@@ -118,7 +118,7 @@ class DetailView(QGraphicsView):
         self._animation.finished.connect(self._animation_finished)
 
     def _apply_theme(self) -> None:
-        """底色跟着主题走：写死深色会让浅色主题下点开照片突然变一块黑。"""
+        """底色跟着主题走：硬编码深色会让浅色主题下点开照片突然变一块黑。"""
         color = theme.current_theme().background
         self.setBackgroundBrush(color)
         self._scene.setBackgroundBrush(color)

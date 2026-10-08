@@ -1,16 +1,9 @@
 """实时监听（ADR 0013）：磁盘上变了什么，就把它落到当前这一层上。
 
-watchdog 的回调**不在主线程**，所以先由排队连接搬回来。搬回来之后有三个坎（流式扫描还在跑、
-条目还攒在暂存区等着定顺序、**当前页不是网格页**），撞上就**攒着**，等能改的那一刻一次补上。
-第三个坎不只大图页：日历那一页同样不能就地改网格（它上面摆的是整库，而补上要动的是当前
-网格的行，漏了它会让日历页一收到变化就往网格里插行）。
-
-还管两件容易漏的事：**自家写操作的回声**（改名 / 移到废纸篓 / 撤销之后监听器会再报一次同一
-件事，见 :data:`WATCH_ECHO_TTL`）与**相册封面的作废**（封面是「里面第一张照片」——**哪怕那个
-相册此刻不在这一层上也要作废**，理由见 :meth:`WatchFlowMixin._albums_touched_by`）。
-
-**事件绑定在这一层跟一次外部改名 / 移动**（:meth:`WatchFlowMixin._follow_moved_bindings`）——
-它不碰界面，却必须在这里做，因为这是唯一知道「访达里改了路径」的地方。
+watchdog 的回调**不在主线程**，由排队连接搬回来；搬回来之后有三个坎（流式扫描还在跑、条目还
+暂存在暂存区等着定顺序、**当前页不是网格页**），撞上就先暂存，等能改的那一刻一次补上。
+还管两件容易漏的事：**自家写操作的回环**（改名 / 移到废纸篓 / 撤销之后监听器会再报一次同一件事，
+见 :data:`WATCH_ECHO_TTL`）与**相册封面的作废、以及把事件绑定跟一次外部改名 / 移动**。
 """
 
 from __future__ import annotations
@@ -30,7 +23,7 @@ from gallery.core.library.watcher import ChangeKind, LibraryChange, summarize
 logger = logging.getLogger(__name__)
 
 #: 自家写操作（改名 / 移到废纸篓 / 撤销）之后，监听器报回来的同一件事在这段时间内不再重复
-#: 应用：漏掉一次回声会让同一行被改两遍；过期之后用户真的在访达里新建同名文件又该正常显示。
+#: 应用：漏掉一次回环会让同一行被改两遍；过期之后用户真的在访达里新建同名文件又该正常显示。
 WATCH_ECHO_TTL = 2.0
 
 
@@ -61,14 +54,10 @@ class WatchFlowMixin:
     def _follow_moved_bindings(self, library: Library, changes: Sequence[LibraryChange]) -> None:
         """外部改名 / 移动之后把事件绑定跟过去（ADR 0043 决策 8）。
 
-        **在延后闸之前**：延后只该推迟「改界面」，不该推迟「修数据」—— 一批变化被攒进
-        ``_watch_pending`` 之后可能被直接丢掉（扫描一完成就 ``_watch_pending = None`` 再重扫
-        那一层），而绑定一旦跟着界面页面的状态走，那正是「照片还在、事件没了」的来路。
-
-        **自家写操作已经搬过一次，这里搬不到什么**：改名的回声被 :meth:`_is_echo` 滤掉；
-        移动到相册不屏蔽回声（新文件的上屏靠监听器），于是同一件事搬第二次 —— 源路径上已经
-        没有绑定了，那一轮一条都不改。
-        """
+        **在延后判断之前**：延后只该推迟「改界面」，不该推迟「修数据」—— 一批变化被暂存进
+        ``_watch_pending`` 之后可能被直接丢掉（扫描一完成就 ``_watch_pending = None``
+        再重扫那一层），而绑定一旦跟着界面状态走，那正是「照片还在、事件没了」的来路。
+        **自家写操作已经搬过一次，这里搬不到什么**：改名的回环被滤掉，移动不屏蔽回环。"""
         follow_moves(
             library.events,
             (
@@ -79,15 +68,15 @@ class WatchFlowMixin:
         )
 
     def _defer_watch_until_idle(self) -> bool:
-        """现在还不能就地改网格吗？回答「是」，这批变化就该先攒着。
+        """现在还不能就地改网格吗？回答「是」，这批变化就该先暂存。
 
-        三种时候不能就地改：扫描还在流式上屏、条目还攒在暂存区等着定顺序、**当前页不是
+        三种时候不能就地改：扫描还在流式显示到界面、条目还在暂存区等着定顺序、**当前页不是
         网格页**（大图页与日历页都算 —— 日历页上摆的是整库，不能就地往网格里插行）。
         """
         return self._scan_job is not None or self._staged is not None or not self._on_grid_page()
 
     def _flush_pending_watch(self) -> None:
-        """把之前攒下的变化补上：重排一结束、或者人回到网格，都是合适的时候。"""
+        """把之前暂存的变化补上：重排一结束、或者人回到网格，都是合适的时候。"""
         changes, self._watch_pending = self._watch_pending, None
         if changes is None:
             return
@@ -258,12 +247,9 @@ class WatchFlowMixin:
     def _albums_touched_by(self, change: LibraryChange) -> tuple[Path, ...]:
         """这次变化落在哪些相册**里面** —— 那些相册的封面要重新找一次。
 
-        **答案不看「那个相册是不是正好在屏幕上」**：改完之后用户退回去就会看到它，而模型是
-        换层时重扫出来的、流水线上「这个相册是空的」那份记忆却活过换层。不作废，那张卡片
-        会一直停在文件夹图标上（只有改一次缩略图尺寸才会重新问一遍）。
-
-        **一路问到库根**：``folder_cover`` 找的是「里面（**含更深层级**）第一张照片」，所以往
-        空的 ``A/B`` 里丢一张，``A`` 的封面也跟着变。库根本身不是网格上的一张卡片，不算。
+        **答案不看「那个相册是不是正好在屏幕上」**：模型是换层时重扫出来的，流水线上
+        「这个相册是空的」那份记忆却活过换层；不作废，那张卡片会一直停在文件夹图标上。
+        **一路问到库根**：往空的 ``A/B`` 里丢一张，``A`` 的封面也跟着变。
         """
         return (*self._albums_above(change.path), *self._albums_above(change.dest_path))
 
@@ -272,7 +258,7 @@ class WatchFlowMixin:
 
         库外的路径给不出任何东西（监听器把移出库的那一端解析成绝对路径，见
         :func:`gallery.core.library.watcher._normalize`）：第一层就出库时 ``found`` 还是空的，
-        往上走过了库根时收在已经收下的那几层上。
+        往上走过了库根时停在已经记下的那几层上。
         """
         library = self._library
         if library is None or path is None:
@@ -346,18 +332,16 @@ class WatchFlowMixin:
     def _note_self_write(self, *paths: Path) -> None:
         """记下自家刚动过的路径：监听器随后报上来的同一件事不重复应用（ADR 0013）。
 
-        **撤销也走这里**（:meth:`~gallery.ui.write_ops.WriteOpsMixin._apply_restore`）——
+        **撤销也走这里**（:meth:`~gallery.ui.write_ops.WriteOpsMixin._apply_restore`），
         这一条决定 :data:`WATCH_ECHO_TTL` 该取多少。代价要说清：撤销改名之后那
-        ``WATCH_ECHO_TTL`` 秒内，用户**真的**从外面改了同一个文件，那次变化会被当成回声
-        吞掉，直到下一次扫描才补上。取小一点窗口就短一点，取大一点就少漏一次回声；
-        现在这档是权衡出来的。
-        """
+        ``WATCH_ECHO_TTL`` 秒内，用户**真的**从外面改了同一个文件，那次变化会被当成回环
+        吞掉，直到下一次扫描才补上；取小窗口就短、取大就少漏一次。"""
         deadline = time.monotonic() + WATCH_ECHO_TTL
         for path in paths:
             self._watch_echoes[Path(path)] = deadline
 
     def _is_echo(self, change: LibraryChange) -> bool:
-        """这次变化是不是自家写操作的回声。"""
+        """这次变化是不是自家写操作的回环。"""
         now = time.monotonic()
         for path, deadline in list(self._watch_echoes.items()):
             if deadline <= now:

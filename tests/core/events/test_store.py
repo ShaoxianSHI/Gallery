@@ -132,7 +132,7 @@ def test_a_kind_table_has_exactly_the_columns_its_fields_declare(
     table: str,
     expected: list[tuple[str, str, int]],
 ) -> None:
-    """类型扩展表逐列钉住 —— 列名与类型两样都要对。
+    """类型扩展表逐列锁定 —— 列名与类型两样都要对。
 
     类型不是「好不好看」：花费存成 ``TEXT`` 的话 ``#花费 >3000`` 会被 SQLite 按文本比，
     于是 ``"900" > "3000"`` 为真。
@@ -559,7 +559,8 @@ def test_an_event_without_a_date_gets_a_key_that_sinks(events: EventStore) -> No
 
 
 def test_renaming_a_photo_carries_its_events_over(events: EventStore) -> None:
-    """改名是红线 1 唯一豁免的操作，而它会让路径变 —— 绑定跟着搬，否则用户那份心意就丢了
+    """改名是「不删除、不移动用户照片」那条硬性约束唯一豁免的操作，而它会让路径变 ——
+    绑定跟着搬，否则用户那份心意就丢了
     （ADR 0043 决策 8）。"""
     event = _create(events)
     old, new = Path("/库/旧名.jpg"), Path("/库/新名.jpg")
@@ -634,7 +635,7 @@ def test_event_by_id_finds_it_or_says_there_is_none(events: EventStore) -> None:
     """按 id 取事件：找到就给那一条，找不到给 ``None``。
 
     ``Library.event`` 与 :meth:`EventStore.event` 曾经各写一遍这个 ``next(...)``；
-    现在只剩 :func:`event_by_id` 一处，所以两个方向都在这里钉住 —— 「找不到」那一支
+    现在只剩 :func:`event_by_id` 一处，所以两个方向都在这里锁定 —— 「找不到」那一支
     原先在整个仓库里没有一条用例直接量过（界面那条路靠 `assert ... is None` 间接覆盖）。
     """
     assert event_by_id((), 1) is None, "空清单上不该凭空冒出一条"

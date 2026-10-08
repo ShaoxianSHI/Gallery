@@ -22,7 +22,7 @@ BANNER_STICKY_SECONDS = 2.0
 
 
 class BannerFlowMixin:
-    """横幅那一句怎么上屏、摆在哪、什么时候自己收起来。"""
+    """横幅那一句怎么显示、摆在哪、什么时候自己收起来。"""
 
     # ---- 提示 --------------------------------------------------------------
     def _show_banner(self, text: str, *, background: bool = False, auto_hide: bool = False) -> bool:

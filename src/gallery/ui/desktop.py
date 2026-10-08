@@ -2,11 +2,8 @@
 
 ``QDesktopServices`` 没有「在访达里选中并露出它」那个动作，所以走 ``open -R``，起不来就降级成
 打开所在文件夹（ADR 0014 决策 3）；剪贴板放的是**文件引用**（``QMimeData.setUrls``，ADR 0017）。
-这里只读，不做粘进剪贴板（那是 ``core.metadata.paste`` 的事）。
-
-**「在访达里显示」与「在访达里打开文件夹」是两件不同的事**（:func:`reveal_in_finder` 与
-:func:`open_folder_in_finder`）：``-R`` 把文件夹在**它上一级**里选出来，而对着一个文件夹
-按这一下的人想看的是它**里面**摆着什么 —— 那是不带 ``-R`` 的那个 ``open``。
+**「在访达里显示」（带 ``-R``，在上一级里选中它）与「打开文件夹」（不带 ``-R``，落到里面）
+是两件不同的事**，见 :func:`reveal_in_finder` 与 :func:`open_folder_in_finder`。
 """
 
 from __future__ import annotations
@@ -32,12 +29,8 @@ def copy_to_clipboard(text: str) -> None:
 def copy_files_to_clipboard(paths: Sequence[Path]) -> str:
     """把这些**文件**放进剪贴板，返回一句说清实际做了什么的中文文案。
 
-    放的是文件引用，不是路径文字、也不是像素：访达里 ⌘V 得到一份拷贝，粘到邮件里是附件
-    （ADR 0017 决策 1）。相册是文件夹，同样算。
-
-    **不需要 pyobjc**：``QMimeData.setUrls`` 写的 ``public.file-url`` 与
-    ``NSFilenamesPboardType`` 正是访达认的那几个**公开**类型（ADR 0014 里那句「Qt 放不进去」
-    是错的）。放引用而不是数据，因此**拷多少张、每张多大都是同一次系统调用**，也不读原图。
+    放的是文件引用，不是路径文字、也不是像素：访达里 ⌘V 得到一份拷贝（ADR 0017 决策 1）。
+    **不需要 pyobjc**：``QMimeData.setUrls`` 写的正是访达认的公开类型，放引用不读原图。
     """
     targets = [Path(path) for path in paths]
     if not targets:
@@ -70,10 +63,8 @@ def format_paths(paths: Sequence[Path]) -> str:
 def open_with_default_app(path: Path) -> str | None:
     """用系统为这类文件设定的**默认应用**打开它，返回一句需要说出口的话（成功时没有）。
 
-    与 :func:`reveal_in_finder` 相反的那一头（那个留在访达里挑出来，这个交给别的程序）。
-    **成功时不说话**：那个应用自己会弹到前台，那就是反馈；失败必须说一句 —— 静默不动会被
-    当成程序卡住了。**没有「打开方式…」那种选应用的版本**：那会改掉系统对这个类型的默认
-    设置，不该由 Gallery 的一个菜单项顺手做掉。
+    **成功时不说话**：那个应用自己弹到前台就是反馈；失败必须说一句，静默不动会被当成卡住。
+    **没有「打开方式…」那种选应用的版本**：那会改掉系统对这个类型的默认设置。
     """
     target = Path(path)
     if QDesktopServices.openUrl(QUrl.fromLocalFile(str(target))):
@@ -84,12 +75,9 @@ def open_with_default_app(path: Path) -> str | None:
 def reveal_in_finder(paths: Sequence[Path]) -> str:
     """在访达里选中并露出这些路径，返回一句说清**实际做了什么**的中文文案。
 
-    **这一条是给照片用的**：用户在网格里挑中几张照片要的是「在访达里把它们选出来」，
-    于是弹出来的访达停在照片**所在的目录**。对着文件夹别用它 —— 那是
-    :func:`open_folder_in_finder` 的事。
-
-    降级只有两级：``open -R`` 起不来 → 用 ``QDesktopServices`` 打开所在文件夹。文案必须与
-    实际动作一致：弹出访达却什么都没选中，比明说「只打开了文件夹」糟糕得多。
+    **这一条是给照片用的**（要选中文件本身，不是打开它里面）；文件夹走
+    :func:`open_folder_in_finder`。降级只有两级：``open -R`` 起不来 → 用 ``QDesktopServices``
+    打开所在文件夹。文案必须与实际动作一致：弹出访达却什么都没选中，比明说更糟。
     """
     targets = [Path(path) for path in paths]
     if not targets:
@@ -108,16 +96,9 @@ def reveal_in_finder(paths: Sequence[Path]) -> str:
 def open_folder_in_finder(paths: Sequence[Path]) -> str:
     """在访达里**打开这些文件夹**（落到它们**里面**去），返回一句中文文案。
 
-    与 :func:`reveal_in_finder` 那一头正好相反，也因此**不能互相顶替**：
-    ``open -R`` 把文件夹在**它上一级**里选出来（用户看到的仍是外面那一层），
-    而对着相册按这一下的人要看的恰恰是**里面**摆着什么。访达自己「打开文件夹」走的就是
-    不带 ``-R`` 的那个 ``open``。
-
-    **只对文件夹用** —— ``open`` 递一个文件进去是交给默认应用打开它（那是
-    :func:`open_with_default_app` 的事），所以照片一律走 ``reveal_in_finder``。
-
-    降级与 :func:`reveal_in_finder` 同级：进程起不来就逐个用 ``QDesktopServices`` 打开。
-    两条路在 macOS 上落地的结果**都是「打开这个文件夹」**，所以文案是同一句。
+    与 :func:`reveal_in_finder` 正好相反，也因此**不能互相顶替**：用户对着相册要看的是里面
+    摆着什么。**只对文件夹用** —— ``open`` 递一个文件进去是交给默认应用打开它（那是
+    :func:`open_with_default_app` 的事）。降级同级：起不来就逐个用 ``QDesktopServices`` 打开。
     """
     targets = [Path(path) for path in paths]
     if not targets:

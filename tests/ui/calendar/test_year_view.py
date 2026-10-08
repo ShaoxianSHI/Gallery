@@ -4,7 +4,7 @@
 （``days_of``）与画格子（``month_matrix``）要共用同一份，否则每帧重建 24 × 42 = 1008 个
 ``date`` —— 而这只是一次 ``paintEvent``。
 
-另一半是那 12 张小月都是**含上下月补位**的 6 × 7：10 月 1 号既在「9 月」那张的末尾，
+另一半是那 12 张小月都是**含上下月占位**的 6 × 7：10 月 1 号既在「9 月」那张的末尾，
 也在「10 月」那张的开头。照片因此摆了两遍、张数数了两遍，而 9 月那个数字里混着
 十月的照片。
 """
@@ -31,7 +31,7 @@ from gallery.ui.calendar.page import CalendarPage  # noqa: E402
 
 #: 九月自己的一天。
 SEPTEMBER_12 = datetime.date(2021, 9, 12)
-#: **补位格**：10 月 1 号既在「9 月」那张小月的末尾，也在「10 月」那张的开头。
+#: **占位格**：10 月 1 号既在「9 月」那张小月的末尾，也在「10 月」那张的开头。
 OCTOBER_1 = datetime.date(2021, 10, 1)
 
 
@@ -102,7 +102,7 @@ def test_a_frame_still_draws_every_day_of_the_year(
     assert sum(1 for text in drawn if text.endswith("月")) == 12, len(drawn)
 
 
-# ---- 补位格：每张小月只摆自己那个月的照片 -----------------------------------
+# ---- 占位格：每张小月只摆自己那个月的照片 -----------------------------------
 
 
 @pytest.fixture
@@ -153,7 +153,7 @@ def _asked_days(view: object, monkeypatch: pytest.MonkeyPatch) -> list[datetime.
 def test_the_filler_day_really_is_in_two_mini_months() -> None:
     """前提：10 月 1 号**确实**既在 9 月那张小月的末尾，也在 10 月那张的开头。
 
-    钉这一条是因为下面几条都在说「它只该出现一次」—— 哪天那张表真的不再补位了，
+    钉这一条是因为下面几条都在说「它只该出现一次」—— 哪天那张表真的不再占位了，
     它们会空转成绿的，而「一张照片摆两遍」这个毛病却还在原地。
     """
     september = month_matrix(datetime.date(2021, 9, 1))
@@ -199,7 +199,7 @@ def test_a_mini_month_counts_only_its_own_photos(
 
 
 def test_the_thumbnail_window_reports_each_photo_once(two_months: CalendarPage) -> None:
-    """补位格不报：那张照片本来就该在它自己那张小月里报一次。"""
+    """占位格不报：那张照片本来就该在它自己那张小月里报一次。"""
     refs = two_months.current_view().visible_refs()
     assert len(refs) == 2, refs
     assert len(set(refs)) == 2, refs
@@ -208,7 +208,7 @@ def test_the_thumbnail_window_reports_each_photo_once(two_months: CalendarPage) 
 def test_clicking_a_filler_cell_lays_nothing_out(two_months: CalendarPage) -> None:
     """9 月那张小月末尾那几格点下去不摊东西 —— 它们是十月的日子。
 
-    点的是**有照片的那一格**：点一格没有照片的补位格本来就什么都不会发生，
+    点的是**有照片的那一格**：点一格没有照片的占位格本来就什么都不会发生，
     那样这条用例会在「点错了地方」的情况下空转成绿的。
     """
     view = two_months.current_view()
@@ -218,7 +218,7 @@ def test_clicking_a_filler_cell_lays_nothing_out(two_months: CalendarPage) -> No
     _click_cell(view, view._box(8), month_matrix(datetime.date(2021, 9, 1)).index(OCTOBER_1))
     assert opened == [], "9 月那张小月末尾那几格摊出了十月的照片"
 
-    # 同一张照片在 10 月自己那张小月里点得动 —— 钉住坐标没算错（上面那条不是空转）
+    # 同一张照片在 10 月自己那张小月里点得动 —— 锁定坐标没算错（上面那条不是空转）
     _click_cell(view, view._box(9), month_matrix(datetime.date(2021, 10, 1)).index(OCTOBER_1))
     assert [label for _, label in opened] == ["10月1日"]
 
@@ -296,7 +296,7 @@ def test_a_picked_day_is_painted_as_selected(
 def _cell_of(view, day: datetime.date, month: int | None = None):  # type: ignore[no-untyped-def]
     """年视图里某一天那一格（12 张小月的矩阵与格子一一对应）。
 
-    ``month`` 指定看**哪一张**小月：同一天会在两张小月里各出现一次（补位），
+    ``month`` 指定看**哪一张**小月：同一天会在两张小月里各出现一次（占位），
     不指明就拿排在前面那一张。
     """
     for index in range(12):
@@ -321,7 +321,7 @@ def test_a_picked_day_is_highlighted_in_one_mini_month_only(
 
     10 月 5 日既在「9 月」那张小月的末尾，也在「10 月」那张里。两处都涂，那一屏上
     就是「刚刚点了一天，怎么亮了两天」，用户会以为点错了 —— 与照片、「今天」是同一处
-    补位造成的重复（照片那次已修，次高亮是新加的）。
+    占位造成的重复（照片那次已修，次高亮是新加的）。
     """
     from PySide6.QtGui import QImage
 

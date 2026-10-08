@@ -1,10 +1,9 @@
 """面包屑导航条：库名 ▸ 子目录 ▸ 当前目录，右端挂着生效中的筛选条件（ADR 0026）。
 
-有筛选条件时一律显示。路径段都可点击跳回；「当前所在」是路径**后面**跟着的那一段
-（分组名或结果段），因此它之前的每一段都点得动（见 :meth:`BreadcrumbBar.set_path`）。
+「当前所在」是路径**后面**跟着的那一段，它之前的每一段都可点击跳回（见 :meth:`set_path`）。
 
-**结果那一段有两种说法**（ADR 0040 决策 4）：整库检索报「搜索结果（128）」而只报库名，筛选报
-「筛选后（12）」而**照旧报完整路径** —— 范围变了才藏路径，范围没变时藏路径是在说一件不存在的事。
+**结果那一段有两种说法**（ADR 0040 决策 4）：整库检索报「搜索结果（128）」而只报库名，
+筛选报「筛选后（12）」而**照旧报完整路径** —— 范围没变时藏路径是在说一件不存在的事。
 """
 
 from __future__ import annotations
@@ -24,7 +23,7 @@ from gallery.ui.theme import rgba
 SEPARATOR = "▸"
 
 #: 分隔符的字色取正文色的这一档不透明度。不能写 ``palette(mid)``：深色下那是 ``#585858``，
-#: 一枚 11 点的 ``▸`` 抗锯齿一摊开就看不见了；0.55 按非文字内容的 3:1 那条线挑。
+#: 一枚 11 点的 ``▸`` 抗锯齿一展开就看不见了；0.55 按非文字内容的 3:1 那条线挑。
 SEPARATOR_ALPHA = 0.55
 
 DISMISS_MARK = "✕"
@@ -53,10 +52,8 @@ QToolButton:hover { text-decoration: underline; }
 def chip_style(*, editing: bool) -> str:
     """条件胶囊的样式：它不是链接、是正在生效的东西，所以不用链接色。
 
-    ``editing`` 那一枚（已放进搜索框）边框换高亮、底色压深一档，让用户看出回车是改。
-
     **不私有**是因为日历那一页也要摆同样的胶囊（ADR 0040 决策 9）：两处各派生一遍样式，
-    过一阵就是「日历上那几枚比网格上那几枚浅一档」，而没人说得清哪一档是对的。
+    过一阵就是「日历上那几枚比网格上那几枚浅一档」。
     """
     border = "palette(highlight)" if editing else "palette(mid)"
     hover = "palette(alternate-base)" if not editing else ""
@@ -137,7 +134,7 @@ class BreadcrumbBar(QWidget):
         self._layout.setContentsMargins(_PAD, _PAD, _PAD, _PAD)
         self._layout.setSpacing(0)
         self._theme = theme.current_theme()
-        # 收下 ``ensure_installed()`` 返回的监听器：``findChild`` 翻不到挂在 ``QApplication``
+        # 记下 ``ensure_installed()`` 返回的监听器：``findChild`` 翻不到挂在 ``QApplication``
         # 上的它。
         self._watcher = theme.ensure_installed()
         self._watcher.changed.connect(self._apply_theme)
@@ -173,15 +170,10 @@ class BreadcrumbBar(QWidget):
     ) -> None:
         """重建整条路径。``parts`` 由 ``ui.navigation.breadcrumb_parts`` 给出。
 
-        ``group`` 是分组名（ADR 0009），``conditions`` / ``result_count`` 是生效中的筛选
-        条件与命中数（ADR 0026），``editing`` 是正在改的那一条的序号，``scope`` 是条件的
-        作用域（ADR 0040）。「当前所在」是路径后面跟着的那一段（分组名或结果段），于是它之前的
-        每一段都点得动。
+        「当前所在」是路径**后面**跟着的那一段（分组名或结果段），于是它之前的每一段都点得动。
 
-        **作用域只改那一段的说法，不改路径本身**（ADR 0040 决策 4）：整库检索时调用方只传库名
-        —— 范围真的变成整库了，报出「旅行 ▸ 2024」就是在说一件不存在的事；而筛选时范围没变，
-        藏掉路径同样是在说一件不存在的事。
-        """
+        **作用域只改那一段的说法，不改路径本身**（ADR 0040 决策 4）：整库检索时调用方只传库名，
+        报出「旅行 ▸ 2024」就是在说一件范围真变了的事。"""
         self._clear()
         # 「当前所在」落在路径上，仅当后面既没有分组也没有结果段可指。
         current = None if (group or conditions) else len(parts) - 1
@@ -267,11 +259,8 @@ class BreadcrumbBar(QWidget):
         """**清空这一行的内容**（给「这一行此刻不该出现」的那些调用点用）。
 
         **与 :meth:`_clear` 的区别是公开**：``_clear`` 是「我要重摆一遍」的第一步，而这一句是
-        「这一行现在什么都不该有」。存在的理由：``hide()`` 只让控件不画，**它们还留在布局里** ——
-        于是「藏起来」与「摆成空的」会被当成同一件事，之后有人读这一行（比如量它摆了什么）就量到
-        了上一层的残留。
-
-        **别拿它当「顺便刷新」**：真要摆内容走 :meth:`set_path`（它开头就清）。
+        「这一行现在什么都不该有」。``hide()`` 只让控件不画、**它们还留在布局里**，于是「藏起来」
+        与「摆成空的」会被当成同一件事，之后有人读这一行就量到了上一层的残留。
         """
         self._clear()
 

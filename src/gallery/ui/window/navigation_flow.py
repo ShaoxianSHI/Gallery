@@ -38,16 +38,9 @@ class NavigationFlowMixin:
         """进入一个相册（子文件夹）。库以外的路径一律拒绝。
 
         :param focus: 到了这一层该选中哪一格；``Esc`` 退上去时传的是刚离开的那个相册。
-
-        **进目录就是退出整库检索**：两者都是「一层」（ADR 0026）—— 条件不清掉的话，下一次
-        ``_start_scan`` 里检索会抢在目录前面，点开一个相册看到的却是全库的检索结果。
-        **筛选不在此列**（ADR 0040 决策 1）：它收窄的正是「当前这一层」，所以进相册就是进到
-        「那个相册里符合条件的那部分」，条件要跟着走 —— 栈模型下它是**跟着这一帧走**，
-        弹回来时自动恢复（ADR 0041 决策 2）。
-
-        **存进去的是解析过的路径**：库路径里带软链接时，监听器报回来的是真路径而这里存的是
-        原写法，「是不是在当前这一层」就永远说不成 —— 访达里丢进来一张照片，网格当没看见。
-        """
+        **进目录就是退出整库检索**，但**筛选不在此列**（ADR 0040 决策 1）：条件跟着这一帧
+        走、弹回来时自动恢复。**存进去的是解析过的路径**：不解析就对不上「是不是在当前
+        这一层」。"""
         library = self._library
         if library is None:
             return
@@ -68,14 +61,10 @@ class NavigationFlowMixin:
     def go_up(self) -> None:
         """**弹掉栈顶一帧** —— 只管位置，与条件无关（ADR 0041 决策 1）。
 
-        「能退什么」不再由一串手写的 ``if`` 决定，而是**看弹掉的那一帧是什么**，四种情况在
-        :meth:`_leave_frame` 里分派。**加一种新层级只需在那一处加一支** —— 这是这条栈存在的
-        理由：判据写散在 ``go_up`` 与 ``_can_go_up`` 两处时，漏改一处不会报错，只是那一层
-        退不出去。
-
-        退上去时**把刚离开的那一级留在选中状态**（访达里退上一层就是这样）；只此一处例外 ——
-        再点进去是另一次浏览，那一层不留上一次的选中（见 :meth:`_arm_focus`）。
-        """
+        「能退什么」不看一串手写的 ``if``，而是**看弹掉的那一帧是什么**，四种情况在
+        :meth:`_leave_frame` 里分派：加一种新层级只需在那一处加一支。退上去时**把刚离开的那一级留在
+        选中状态**（访达里退上一层就是这样）；只此一处例外 —— 再点进去是另一次浏览，那一层不留上一次
+        的选中（见 :meth:`_arm_focus`）。"""
         if self._library is None:
             return
         popped = self._pop_frame()
@@ -86,13 +75,9 @@ class NavigationFlowMixin:
     def _leave_frame(self, frame: object) -> None:
         """**刚弹掉的是哪一帧，就按那一帧做收尾**（重新列出这一层、必要时回日历 / 选中原卡片）。
 
-        **这是 ``go_up`` 唯一需要「认得帧」的地方**：弹栈是统一的，而不同帧的收尾差别很大
-        —— 日历格那一帧要回日历页、分组那一帧要把刚离开的卡片重新选中、相册与搜索帧只是重列
-        那一层。
-
-        **注意 :meth:`go_up` 是「先弹再收尾」** —— 所以这一支**不能**走 ``enter_folder``
-        （那会再压一帧，栈越退越深，实测退不出相册）。要退到哪一层是弹之前就决定的：
-        弹掉相册帧之后底下那一帧就是去处。
+        **这是 ``go_up`` 唯一需要「认得帧」的地方**：日历格那一帧要回日历页、分组那一帧
+        要把刚离开的卡片重新选中、相册与搜索帧只是重列那一层。**``go_up`` 是「先弹再收尾」**，
+        所以这一支**不能**走 ``enter_folder``（那会再压一帧，栈越退越深）。
         """
         if isinstance(frame, AlbumFrame):
             # 弹掉相册帧之后**底下那一帧**就是要去的地方（可能是根帧 = 库根）。
@@ -125,7 +110,7 @@ class NavigationFlowMixin:
                 self._back_to_calendar()
                 return
             if isinstance(top, CalendarFrame):
-                # 底下压着摊开的网格：退回那一层（模型里还是这一格的几张）。
+                # 底下压着展开的网格：退回那一层（模型里还是这一格的几张）。
                 self.leave_detail_page()
                 return
             if top is None and self._level_stack.root is RootKind.CALENDAR:
@@ -203,7 +188,7 @@ class NavigationFlowMixin:
         self._grid.reset_for_new_level()
         self._preview_cache.clear()
         self._metadata_cache.clear()
-        self._staged = []  # 换层要重扫，攒着，别先摆一屏旧顺序
+        self._staged = []  # 换层要重扫，先暂存，别先摆一屏旧顺序
         self._level_notice = False
         self._progress_notice = False
         # 换层只把横幅收掉，**不打断**全库解析：它是整个库的事，与当前在哪一层无关。
@@ -234,13 +219,9 @@ class NavigationFlowMixin:
         """记下到了新的一层该选中哪一格。
 
         :param focus: 显式指定（往上一层退时给的那个相册 / 那个组）；不给就由下面的规则判断。
-
-        判断靠比层标识（``navigation.level_key``）：两个 ``enter_*`` 都是先改状态再重载，所以
-        问「现在在哪一层」得到的是**新的**那一层，正好拿来和 ``self._level_key`` 比。
-
-        **顺序要紧**：先把「还是同一层吗」问完，再换 ``self._level_key``；反过来两边永远相等，
-        「换了层就什么都不记」这条永远轮不到执行。
-        """
+        判断靠比层标识（``navigation.level_key``）：``enter_*`` 先改状态再重载，所以问
+        「现在在哪一层」得到的是**新的**那一层，正好拿来和 ``self._level_key`` 比。
+        **顺序要紧**：先把「还是同一层吗」问完再换 ``self._level_key``。"""
         remembered = self._shown_entry_key()
         self._level_key = self._current_level_key()
         self._focus = focus if focus is not None else remembered
@@ -294,10 +275,9 @@ class NavigationFlowMixin:
     def _update_breadcrumb(self) -> None:
         """面包屑那一行写什么（**顺带把日历工具条上那几枚胶囊也摆好**）。
 
-        **两种作用域写的是两件不同的事**（ADR 0040 决策 4）：整库检索时报**只有库名** ——
-        范围真的变成整库了，留着「旅行 ▸ 2024」读起来就是「在这个文件夹里搜到 4 张」，而那 4 张
-        大半在别处（ADR 0026 决策 1b）；筛选时报**完整路径 + 那一组**，因为范围没变，藏掉路径
-        同样是在说一件不存在的事。
+        **两种作用域写的是两件不同的事**（ADR 0040 决策 4）：整库检索时只报**库名**（范围真的变成
+        整库了，留着「旅行 ▸ 2024」读起来像「只在这个文件夹里搜到 4 张」，而那 4 张大半在别处，
+        ADR 0026 决策 1b）；筛选时报**完整路径 + 那一组**，因为范围没变。
         """
         library = self._library
         # 平铺模式下平时不显示面包屑，但**分组里与有条件时一律显示**（ADR 0026 决策 9）。

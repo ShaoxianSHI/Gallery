@@ -25,7 +25,7 @@ class _ScrollAnchor:
 
 
 class AnchoringMixin:
-    """把「用户正看着的那一格」在几何变化前后钉在原处。"""
+    """把「用户正看着的那一格」在几何变化前后保持在原处。"""
 
     def _anchor(self) -> _ScrollAnchor:
         """视口正中那一格：行号 + 它这一刻在屏幕上的纵向位置。
@@ -41,12 +41,9 @@ class AnchoringMixin:
     def _anchored_scroll_value(self, anchor: _ScrollAnchor, columns: int) -> int | None:
         """把 ``anchor`` 那一格摆回它换几何之前所在的位置时，滚动条该在的值。
 
-        这是过渡**第 0 帧**要落的地方。滚动位置是内容坐标，格子高矮与每行张数一变，
-        同一个像素值指的就是**另一批照片** —— 照搬旧值，末尾放大一档时滚动条会一上来
-        从 100% 跳到 46%（屏上正中的那一格从第 795 张变成第 366 张），然后才一路滑
-        回来。缩小方向同样会闪。画面本身要与它配合（见
-        :attr:`GridTransition.scroll_shift`），否则第 0 帧画出来的是「旧画面 + 新滚动
-        位置」。量不出那一格（``row < 0``）时返回 ``None``，调用方退回像素值。
+        滚动位置是内容坐标，格子高矮与每行张数一变，同一个像素值指的是**另一批照片** ——
+        照搬旧值，末尾放大一档时滚动条会从 100% 跳到 46% 再一路滑回来。量不出那一格
+        （``row < 0``）时返回 ``None``，调用方退回像素值。
         """
         if anchor.row < 0 or columns <= 0:
             return None

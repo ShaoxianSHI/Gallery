@@ -429,7 +429,7 @@ def _groups(window: MainWindow) -> list[GroupRef]:
 
 
 def test_recording_a_photo_regroups_right_away(qt_app: QApplication, window: MainWindow) -> None:
-    """**记完之后组卡片当场就变了** —— 那一道重排闸（``_reorder_events``）漏了的话，
+    """**记完之后组卡片当场就变了** —— 那一道重排前置条件（``_reorder_events``）漏了的话，
     用户看到的就是「记完什么都没发生」（ADR 0043 决策 7）。"""
     library = window._library
     assert library is not None
@@ -437,7 +437,7 @@ def test_recording_a_photo_regroups_right_away(qt_app: QApplication, window: Mai
     window.set_group_facet("event")
     # **先把这一层等定**：按事件分组要起一个后台任务去取那份映射，而它在飞的时候绑定一张照片，
     # 那个任务回来时会带着新数据 —— 于是「分组变了」是它干的，不是 :meth:`_after_events_changed`，
-    # 这条守护就成了恒真的（注入违规照样绿）。
+    # 这条回归测试就成了恒真的（注入违规照样绿）。
     wait_for_idle(qt_app, window, what="按事件分组")
     assert "京都五日" not in [group.label for group in _groups(window)]
 
@@ -1381,7 +1381,7 @@ def test_a_rating_field_comes_up_as_a_row_of_five_buttons(qt_app: QApplication) 
 
 def test_the_checked_rating_wears_the_popup_highlight(qt_app: QApplication) -> None:
     """评分按钮选中时用**与弹出菜单、候选列表同一档**的高亮：底色 ``Highlight``、字色
-    ``HighlightedText``（由 ``theme`` 钉死，ADR 0035）。判据是「与下发的那一份相等」，不写死颜色。
+    ``HighlightedText``（由 ``theme`` 固定，ADR 0035）。判据是「与下发的那一份相等」，不硬编码颜色。
     """
     dialog = EventEditDialog(None, TRIP)
     palette = dialog.palette()

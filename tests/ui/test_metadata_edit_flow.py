@@ -383,8 +383,8 @@ def test_the_journal_has_the_field_level_record(
     )
 
     records = read_records(root)
-    # **成对**：先记「打算改」，动完文件再记终态（红线 4 —— 写入与落盘之间那一下崩溃不能
-    # 什么都不留下）。两记的是同一件事，撤销栈按「终态顶掉 pending」处理，用户按一次 ⌘Z 就够。
+    # **成对**：先记「打算改」，动完文件再记终态（写入与落盘之间那一下崩溃不能什么都不留下）。
+    # 两记的是同一件事，撤销栈按「终态顶掉 pending」处理，用户按一次 ⌘Z 就够。
     assert [record.action for record in records] == ["metadata", "metadata"]
     assert [record.result for record in records] == ["pending", "ok"]
     assert records[0].changes == records[1].changes
@@ -619,7 +619,7 @@ class _Place:
 
 
 class _StaleAreaResolver(StubResolver):
-    """只有「不按范围查」才找得到 —— 用来钉住上面那条兜底重查。"""
+    """只有「不按范围查」才找得到 —— 用来锁定上面那条回退重查。"""
 
     def place_named(
         self,

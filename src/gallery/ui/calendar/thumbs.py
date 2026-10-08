@@ -43,10 +43,9 @@ class ThumbStore:
     def _evict_extra_edges(self) -> None:
         """留不下那么多档时，**只按边长留最小的 :attr:`_edges` 档**。
 
-        **不看当前档，也不保正在用的那一档** —— 别把这句读成「仍在用的最后才扔」，代码只按
-        边长升序排、留前 N 档。次序上 :meth:`set_edge` 也是**先**淘汰、**后**换当前档，
-        所以刚切过去的那一档可能已经被上一轮淘汰掉了；要改这个策略得连着 :meth:`set_edge` 一起改。
-        默认三档（年 48 / 周 192 / 月 288）下走不到这里。
+        **不看当前档，也不保正在用的那一档** —— 代码只按边长升序排、留前 N 档。次序上
+        :meth:`set_edge` 也是**先**淘汰、**后**换当前档，所以刚切过去的那一档可能已经被上一轮
+        淘汰掉了；要改这个策略得连着 :meth:`set_edge` 一起改。默认三档下走不到这里。
         """
         by_edge: dict[int, list[_Key]] = {}
         for key in self._images:
@@ -76,10 +75,8 @@ class ThumbStore:
     def forget(self, paths: Iterable[Path]) -> None:
         """这些路径上的文件变了：所有档位上的那几份都忘掉（与流水线的 ``forget`` 配对）。
 
-        收**真的** ``Iterable``，而不是靠 ``isinstance`` 猜来的是列表还是单个路径：
-        :meth:`page.CalendarPage.forget_thumbnails` 原样透传，传一个**生成器**（最自然的
-        写法）时按类型分流会把它当成单个路径交给 ``Path()``。``list(...)`` 一次收干净，
-        下面那个循环才拿得到真路径。
+        收**真的** ``Iterable``，而不是靠 ``isinstance`` 猜来的是列表还是单个路径：传一个**生成器**
+        （最自然的写法）时按类型分流会把它当成单个路径交给 ``Path()``。
         """
         dropped = {Path(path) for path in paths}
         # **一次遍历过滤掉，不要「每个路径扫一遍全表」**：后者是 O(路径数 × 仓库条目数)，而

@@ -87,7 +87,7 @@ def test_a_cover_outside_the_group_is_not_pinned(event_facet: Facet) -> None:
 
 
 def test_one_photos_cover_is_claimed_only_by_the_group_it_belongs_to(event_facet: Facet) -> None:
-    """一张照片属于两个事件时，两份封面各归各的组 —— 认领条件是**组键对得上**。
+    """一张照片属于两个事件时，两份封面各归各的组 —— 适用条件是**组键对得上**。
 
     判据是 :attr:`EventRef.group_key` 与组键逐字相等，于是「组键 = 日期#事件 id」
     这条不变式（ADR 0043 决策 7）只有一处说了算，两边不会各自漂。
@@ -117,7 +117,7 @@ def test_one_photos_cover_is_claimed_only_by_the_group_it_belongs_to(event_facet
     )
     by_key = {group.key: group for group in groups}
 
-    # 封面属于第二个事件（岚山演出），所以那一组钉住它，第一组退回第一张。
+    # 封面属于第二个事件（岚山演出），所以那一组锁定它，第一组退回第一张。
     assert by_key[f"{second}#2"].pinned_cover is photos[0]
     assert by_key[f"{first}#1"].pinned_cover is None
 

@@ -58,16 +58,10 @@ HALF_WIDTH_RANGE_SEPARATOR: Final = "~"
 @dataclass(frozen=True, slots=True)
 class SearchField:
     """``#`` 后面能选的一项：它是哪个字段、落到哪一列、怎么匹配。
-
-    :param label: 候选列表里显示的名字。**只有别名会与 ``Facet.label`` 不同**（「所在文件夹」
-        在搜索里叫「相册」）。
-    :param column: SQL 里的列（``p.`` = 文件表，``f.`` = facet 表）。事件那族写的是**它那张
-        事件表里的列名**，要配 :attr:`table` 一起看。
-    :param table: 事件库里的那张表（ADR 0043）。非空表示这一条走 ``EXISTS`` 子查询而不是
-        直接比某一列 —— 因为照片与事件是多对多的。
-    :param sql_type: 事件那一列声明的类型（``TEXT`` / ``DAY`` / ``INTEGER`` / ``REAL``）。
-        **匹配方式由它分派**，与 facet 那一族「一个 kind 决定一切」的做法不同：同一个
-        ``kind="event"`` 里既有文字也有数值。
+    :param label: 候选列表里的名字；只有别名与 ``Facet.label`` 不同（「所在文件夹」叫「相册」）。
+    :param column: SQL 列（``p.`` = 文件表，``f.`` = facet 表），事件那族要配 :attr:`table` 看。
+    :param table: 事件库里的那张表（ADR 0043）；非空表示走 ``EXISTS`` 子查询而不是直接比某一列。
+    :param sql_type: 事件列的类型（``TEXT`` / ``DAY`` / ``INTEGER`` / ``REAL``），匹配方式由它定。
     """
 
     id: str
@@ -95,13 +89,9 @@ class SearchField:
     def is_numeric(self) -> bool:
         """这一列是不是数值 —— **匹配方式由它分派**。
 
-        三个分派处都要问它：:func:`_condition` 决定「解析成数还是当文本」，:func:`_clause`
-        与 :func:`_event_clause` 决定「比较式还是 ``LIKE``」。原先三处各写各的判据
-        （照片那一族按 ``kind``、事件那一族按 ``sql_type``），改一处漏一处**不会报错** ——
-        只是在某一族上换了匹配方式，而查询照样出得来结果。
-
-        事件那一族按**列声明的类型**判：同一个 ``kind="event"`` 里既有文字（多值的
-        ``Tags``）也有数值（``评分``），``kind`` 说不了这件事。
+        三个分派处都要问它：:func:`_condition`、:func:`_clause` 与 :func:`_event_clause`。
+        三处各写各的判据时，改一处漏一处**不会报错**。事件那一族按**列声明的类型**判（同一个
+        ``kind="event"`` 里既有文字也有数值，``kind`` 说不了这件事）。
         """
         if self.is_event:
             return self.sql_type in ("INTEGER", "REAL")
@@ -144,17 +134,9 @@ EVENT_KIND_VALUES: Final[dict[str, str]] = {
 def _event_fields() -> tuple[SearchField, ...]:
     """事件那一族的可搜字段，**由事件类型定义生成**（ADR 0043 决策 6、0046）。
 
-    加一类事件、给它加一个字段，搜索里就多一项 —— 不用在这里补一行，也就不会「加了字段却忘了
-    能搜」。
-
-    **每类独有的字段一律带类型前缀**（``旅行·目的地``、``演出·评分``）：候选列表是全局的，用户
-    一眼要看出这一项属于哪一类；两类里同名的字段（都有 ``评分``）也因此天然分得开，不必再靠
-    「先声明的那一类不带前缀」那种位置相关的规则。敲 ``#旅行`` 就筛出旅行那一组候选。
-
-    公共那两条（``事件类型`` / ``事件``）不带前缀：它们对每一类都成立，没有某一个类型可挂。
-
-    ``id`` 同样带上类型（``event_trip_destination``）：两个类型的列可以同名（旅行的 ``rating``
-    与演出的 ``rating``），而条件的身份是 ``(id, 原文)``，不带类型就会让两条不同的条件撞成一条。
+    **每类独有的字段一律带类型前缀**（``旅行·目的地``、``演出·评分``）：候选列表是全局的，要让人
+    一眼看出属于哪一类，两类里同名字段也因此分得开；公共那两条（``事件类型`` / ``事件``）不带前缀。
+    ``id`` 同样带类型（``event_trip_destination``），否则两类同名拼出的条件会撞成一条。
     """
     common = (
         SearchField(
@@ -401,7 +383,7 @@ def unusable_reason(field: SearchField, value: str) -> str:
 def _condition(field: SearchField, text: str) -> SearchCondition | None:
     """``#字段 值`` → 一条条件；解析不出来返回 ``None``（界面照 :func:`unusable_reason` 说话）。
 
-    **每一种 ``kind`` 都在这里有名字**，没有兜底那一条：原先时间那一族是 ``if`` 链末尾的
+    **每一种 ``kind`` 都在这里有名字**，没有回退那一条：原先时间那一族是 ``if`` 链末尾的
     fallthrough，于是新加一种 kind 却忘了在这里写规则时，它会**被当成日期解析** ——
     值照样解析得出来（``2024`` 那种），只是含义完全不对。
     """
@@ -489,18 +471,16 @@ def _parse_size(text: str) -> tuple[str, str] | None:
 def _parse_datetime(text: str) -> tuple[str, str] | None:
     """``2024`` / ``2024-05`` / ``2024-05-16`` / ``2023～2024`` → 那一段的时间区间。
 
-    **不带比较符时取的是「那一段之内」**：``#拍摄时间 2024`` 是「2024 年拍的」，不是「大于 2024」。
-    ``2023～2024`` 是**两端各含自己那一整段**，所以它就是「2023 与 2024 两年」；空格与全角半角
-    都无所谓（见 :data:`RANGE_SEPARATOR`）。
-
-    **区间里不认比较符**（``>2023～2024`` 提交不了）：一句话里塞两个比较符说的是两件不同的事。
+    **不带比较符时取「那一段之内」**：``#拍摄时间 2024`` 是「2024 年拍的」，不是「大于 2024」；
+    ``2023～2024`` 两端各含自己那一整段；全角半角都认（见 :data:`RANGE_SEPARATOR`）。
+    **区间里不认比较符**（``>2023～2024`` 提交不了）：一句话里两个比较符说的是两件事。
     """
     pieces = _split_range(text)
     if len(pieces) > 2:
         return None
     if len(pieces) == 2:
         # 「什么算写反了」只有 :func:`_is_reversed` 一处定义 —— 界面要靠它说那句话，
-        # 这里要靠它收下条件；两边各判一次，迟早判成两样。
+        # 这里要靠它判定是否写反；两边各判一次，迟早判成两样。
         if _is_reversed(*pieces):
             return None
         low, high = _period(pieces[0]), _period(pieces[1])
@@ -535,11 +515,9 @@ def _split_range(text: str) -> list[str]:
 def _period(text: str) -> tuple[datetime.datetime, datetime.datetime] | None:
     """一段日期 → 它那一段的起止（左闭右开）。写不成一个日期就是 ``None``。
 
-    **只写了哪几级，段就有多长**：``2024`` 是一整年、``2024-05`` 是一整个月、``2024-05-16``
-    是那一天 —— 于是「那一段之内」有确定的落点。
-
-    **不存在的日子返回 ``None`` 而不是抛**：``2023-02-30`` 光看「1 <= 日 <= 31」是过得去的，真去
-    造 ``datetime`` 才炸，而炸出去的地方是界面上的回车 —— 那时用户只看到「按了回车什么也没发生」。
+    **只写了哪几级，段就有多长**：``2024`` 一整年、``2024-05`` 一整月、``2024-05-16`` 就是那一天。
+    **不存在的日子返回 ``None`` 而不是抛**：``2023-02-30`` 真去造 ``datetime`` 才炸，而炸出去的地方
+    是界面上的回车，用户只看到「按了回车什么也没发生」。
     """
     match = _DATE.match(text.strip())
     if match is None:
@@ -602,10 +580,8 @@ def _compact(text: str) -> str:
 def _where(conditions: Sequence[SearchCondition]) -> tuple[str, list[object]]:
     """这些条件 → ``WHERE`` 那一段与它的绑定值。
 
-    **三个查询共用它**（:func:`build_query` 取结果、:func:`build_count_query` 取总数、
-    :func:`build_match_query` 取路径），于是「命中」这件事在代码里只有一处 —— 整库检索与当前层
-    筛选（ADR 0040 决策 2）不可能对同一条条件给出不一样的答案。各写一份 ``WHERE`` 时，
-    改条件语义就一定会漏掉一处，而漏掉的那处表现为「筛选比搜索多出几张」，极难分辨。
+    **三个查询共用它**（``build_query`` / ``build_count_query`` / ``build_match_query``），
+    于是「命中」这件事只有一处 —— 整库检索与当前层筛选（ADR 0040 决策 2）不可能给出不一样的答案。
     """
     clauses: list[str] = []
     values: list[object] = []
@@ -643,14 +619,8 @@ def build_count_query(conditions: Sequence[SearchCondition]) -> tuple[str, list[
 def build_match_query(conditions: Sequence[SearchCondition]) -> tuple[str, list[object]]:
     """这些条件命中了**哪些路径** —— 当前层筛选（ADR 0040 决策 2）要的那一份。
 
-    与 :func:`build_query` 的差别只有两点，**都别去掉**：
-
-    - **只取路径**：调用方要的是与手上那份列表求交，一个字符串就够，不必带回大小与修改时间
-      （那两列在筛选这一侧没人用）。
-    - **既不排序也不截断**：:data:`RESULT_LIMIT` 在这里等于**静默丢命中** —— 命中八千张而当前
-      层的那三张排在第五千零一张时，用户看到的是「一条都没有」，而那不是答案，是查询自己偷偷
-      少给了。整库检索可以截断（那一层的结果本来就是给人浏览的前几百张），相交不行：
-      **交出来的每一张都得是对的**。
+    与 :func:`build_query` 差两点，**都别去掉**：**只取路径**（求交只需一个字符串）；**既不排序也
+    不截断**（:data:`RESULT_LIMIT` 在这里等于静默丢命中，会表现成「一条都没有」而不是答案）。
     """
     where, values = _where(conditions)
     return _SELECT_PATHS + where, values
@@ -661,15 +631,9 @@ def albums_kept(
 ) -> list[FolderRef]:
     """相册模式下留下哪些卡片：**子树里有命中的那些**（ADR 0040 决策 3）。
 
-    筛选回答的是「哪些照片符合条件」，而卡片不是照片 —— 所以一张都不命中照片的子相册不该摆出来，
-    而摆着一个空相册等于骗用户点进去看一个空层。命中的那张照片在不在卡片**自己这一层**里不算：
-    卡片的含义是它的整棵子树。
-
-    一次遍历把命中按「相对 ``root`` 的第一段」分桶，于是代价是 O(命中数) 而不是 O(卡片 × 命中数)
-    —— 一层几百张卡片配八千条命中时，后者是四百万次前缀比较。
-
-    **只在这一层直接列出来的那些卡片里判**（``albums`` 是这一层的 ``FolderRef``），不在的地方一律
-    留：``root`` 之外或已经收走的东西不该由这个函数替界面决定。
+    一张都不命中照片的子相册不该摆出来（摆着空相册等于骗用户点进去）；命中的照片在不在卡片自己
+    这一层不算，卡片的含义是它的整棵子树。一次遍历按「相对 ``root`` 的第一段」分桶，代价 O(命中数)
+    而不是 O(卡片 × 命中数)。**只在这一层直接列出来的卡片里判**，``root`` 之外的一律留。
     """
     if not albums:
         return []
@@ -699,18 +663,11 @@ def _directory_prefix(path: Path, root: Path) -> str:
 
 
 def _clause(condition: SearchCondition) -> tuple[str, list[object]]:
-    """一条条件 → ``(SQL 片段, 绑定值)``。**匹配方式逐字段定死**（ADR 0026 决策 6），唯一一份：
+    """一条条件 → ``(SQL 片段, 绑定值)``。**匹配方式逐字段定死**（ADR 0026 决策 6），唯一一份。
 
-    ==============  ==========================================================
-    字段            匹配
-    ==============  ==========================================================
-    文件名          ``LIKE '%q%'``
-    相册            ``= q`` 或 ``LIKE 'q/%'``（含子相册）
-    文件格式        ``= '.jpg'``
-    文本一族        ``LIKE '%q%'``
-    大小 / 数值     比较式（等于是空比较符）
-    时间            区间；``f.captured`` 是秒，``p.mtime_ns`` 是纳秒
-    ==============  ==========================================================
+    文件名与文本一族走 ``LIKE '%q%'``；相册是 ``= q`` 或 ``LIKE 'q/%'``（含子相册）；文件格式是
+    ``= '.jpg'``；大小与数值是比较式（等于是空比较符）；时间是区间（``f.captured`` 是秒，
+    ``p.mtime_ns`` 是纳秒）。
     """
     field = condition.field
     value = condition.value
@@ -762,10 +719,8 @@ def _join_column(table: str) -> str:
 def _event_clause(field: SearchField, condition: SearchCondition) -> tuple[str, list[object]]:
     """事件条件 → ``EXISTS`` 子查询（ADR 0043 决策 6）。
 
-    **走 EXISTS 而不是 ``JOIN``**：一张照片可以同时属于几个事件，可能好几行都满足条件，而
-    ``JOIN`` 会让它在结果里重复出现 —— 我们要的只是「它是不是属于某个满足条件的事件」。
-
-    事件库挂在索引那条连接上（别名取自 ``core.events.store``，不在这儿另写一遍）。
+    **走 EXISTS 而不是 ``JOIN``**：一张照片可属于几个事件，``JOIN`` 会让它在结果里重复出现，
+    而我们要的只是「它是不是属于某个满足条件的事件」。事件库挂在索引那条连接上。
     """
     value = condition.value
     head = (

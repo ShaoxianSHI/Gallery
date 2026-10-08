@@ -44,7 +44,7 @@ def test_free_name_works_for_folders_too(tmp_path: Path) -> None:
 
 
 def test_free_name_gives_up_rather_than_truncating(tmp_path: Path) -> None:
-    """名字长到加编号也放不下时如实说不行：绝不截断用户的文件名（红线 1：宁可不做）。"""
+    """名字长到加编号也放不下时如实说不行：绝不截断用户的文件名（宁可不做，也不要改坏原名）。"""
     long_stem = "很长的名字" * 40  # 远超 255 字节
     _touch(tmp_path, f"{long_stem}.jpg")
 

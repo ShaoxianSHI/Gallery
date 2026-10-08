@@ -374,14 +374,9 @@ def prepare_library(root: Path, *, config: LibraryConfig | None = None) -> Path 
 
 
 def discard_legacy_thumb_cache(root: Path) -> int:
-    """删掉**旧版**的库内缩略图缓存目录，返回删掉的文件数（ADR 0038 决策 6）。
-
-    里面全是可再生的缩略图，删掉最坏结果是重新解码一遍（红线 5）。**只删 Gallery 自己写的那个
-    子目录**：配置目录里的 ``config.toml``、``index.db`` 与 ``journal/`` 一个都不碰。
-
-    收完 ``thumbs`` 还要再收只装过它的父目录 ``cache/``（判据是它空不空）。这一步**不能挂在
-    「thumbs 还在不在」这个早退后面** —— 一次开库之后 thumbs 就没了，第二次打开时那个空壳还在。
-
+    """删掉**旧版**的库内缩略图缓存目录，返回删掉的文件数（ADR 0038 决策 6）。里面全是可再生的
+    缩略图，**只删 Gallery 自己写的那个子目录**：``config.toml``、``index.db`` 与 ``journal/``
+    一个都不碰；``thumbs`` 收完还要收只装过它的空父目录 ``cache/``，**不能挂在 thumbs 早退后面**。
     :returns: 删掉的**文件**数；没有文件可删时是 0（空壳目录照收不误）。
     """
     directory = paths.legacy_thumbnail_cache_dir(root)
@@ -407,9 +402,8 @@ def discard_legacy_thumb_cache(root: Path) -> int:
 def discard_legacy_external_index() -> int:
     """删掉**旧版**的库外索引目录，返回删掉的文件数（ADR 0038 决策 6）。
 
-    只删目录名确实是旧索引那一个、且只删 ``.db``，免得将来 ``<app cache>/`` 底下多出别的东西
-    时被误删。它是**整台机器一份**的，与当前打开的是哪个库无关。
-
+    只删目录名确实是旧索引那一个、且只删 ``.db``，免得将来 ``<app cache>/`` 底下多出别的东西时
+    被误删。它是**整台机器一份**的，与当前打开的是哪个库无关。
     :returns: 删掉的文件数；目录本来就不存在时是 0。
     """
     directory = paths.app_index_cache_dir()

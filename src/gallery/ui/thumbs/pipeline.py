@@ -1,16 +1,9 @@
 """缩略图流水线：把「当前窗口需要的图」变成主线程上可用的 ``QImage``。
 
-界面线程只调用 :meth:`ThumbnailPipeline.set_window`，解码、缩放、编码落盘全在线程池里，
-结果用代次号过滤（切库之后旧库的任务跑完也不会画到新界面上）。缩放也在工作线程做
-（ADR 0015）：``QImage.scaled`` 线程安全，界面线程只剩一次 ``QPixmap.fromImage``；结果连同
-「缩到几」一起交回，尺寸对不上的会被重取。
-
-``_failed`` / ``_empty`` / ``_covers`` 是「这个文件读不出来」这种结论的记忆，只在切库时清：
-按窗口清掉的话，用户每滚回去一次就要把同一个坏文件重新解码一遍，而坏文件恰恰是最贵的那种
-失败。文件被外部换掉时由 :meth:`forget` 作废那一条。
-
-前两个**按档位记账**（``路径 -> 当时那个档位``）：128 px 读不出来不代表 256 px 也读不出来，
-所以换档要重试；而同一档位下坏文件就是坏文件，重试再多次也是同一个结果。
+界面线程只调用 :meth:`ThumbnailPipeline.set_window`，解码、缩放、编码落盘全在线程池里，结果用代次号
+过滤（切库之后旧库的任务跑完也不会画到新界面上）。缩放也在工作线程做（ADR 0015）：``QImage.scaled``
+线程安全，界面线程只剩一次 ``QPixmap.fromImage``。``_failed`` / ``_empty`` / ``_covers`` 是「这个
+文件读不出来」的结论记忆，只在切库时清。
 """
 
 from __future__ import annotations
@@ -87,7 +80,7 @@ class ThumbnailPipeline(QObject):
         self._generation = 0
         #: 当前要缩到多长。在**提交任务时**定格进闭包（见 :meth:`_start`）。
         self._target_edge = NO_EDGE
-        # 在途任务不超过线程数，保证线程池永远满载，同时让「可见」优先级真正生效。
+        # 进行中的任务不超过线程数，保证线程池永远满载，同时让「可见」优先级真正生效。
         self._max_inflight = max(1, runner.thread_count)
 
     def set_window(
@@ -99,16 +92,14 @@ class ThumbnailPipeline(QObject):
     ) -> None:
         """声明当前窗口：``visible`` 先出图，``prefetch`` 次之，其余请求全部丢弃。
 
-        条目可能是照片、相册或分组卡片，三者在这里都被归一成「一条路径 + 一个能出图的引用」
-        （相册的封面要现去找，分组卡片的封面早就知道）。
-
-        :param target_edge: 缩略图要缩到多长。在工作线程里做，``0`` 表示不缩放。
+        条目可能是照片、相册或分组卡片，三者在这里都被归一成「一条路径 + 一个能出图的引用」。
+        ``target_edge`` 是缩略图要缩到多长，在工作线程里做，``0`` 表示不缩放。
         """
         self._target_edge = max(NO_EDGE, int(target_edge))
         targets = [target for entry in visible if (target := _thumbnail_target(entry))]
         ahead = [target for entry in prefetch if (target := _thumbnail_target(entry))]
         # 已在解码的路径不再重新入队 —— 不同档位互相独立，由 _dispatch
-        # 按 (path, edge) 区分；同档位在途的请求自然被挡住。
+        # 按 (path, edge) 区分；同档位进行中的请求自然被挡住。
         inflight_paths = {path for path, _ in self._inflight}
         self._queue.set_window(
             [target.path for target in targets if target.path not in inflight_paths],
@@ -118,7 +109,7 @@ class ThumbnailPipeline(QObject):
         self._dispatch()
 
     def shutdown(self) -> None:
-        """切库或关窗：作废所有在途结果，并请求取消它们的任务。"""
+        """切库或关窗：作废所有进行中的结果，并请求取消它们的任务。"""
         self._generation += 1
         for job_id in self._inflight.values():
             self._runner.cancel(job_id)
@@ -133,10 +124,8 @@ class ThumbnailPipeline(QObject):
         """这些路径上的文件变了：忘掉「读不出来 / 是空相册」的结论。
 
         那两个集合是记忆，为的是别对同一个坏文件反复重试；文件被外部替换之后记忆就过期了 ——
-        不清掉，那一格会永远停在占位图上（ADR 0012）。
-
-        **一批一次过，不逐条重扫所有封面**：内层逐个 ``_covers`` 遍历时，云盘上大量读不出来的
-        占位文件会让 ``_covers`` 变得很大，而监听器一次能报几十条。收成集合之后只走一遍。
+        不清掉那一格会永远停在占位图上（ADR 0012）。**一批一次过，不逐条重扫所有封面**：逐个
+        遍历时云盘上大量读不出来的占位文件会让 ``_covers`` 变得很大，而监听器一次能报几十条。
         """
         targets = {Path(path) for path in paths}
         for target in targets:
@@ -148,9 +137,9 @@ class ThumbnailPipeline(QObject):
     def _remember_window(self, entries: tuple[GridEntry, ...]) -> None:
         """把 ``_refs`` 换成当前窗口那一份。
 
-        不能一直往后加：只有 :meth:`_dispatch` 查它，而它查的全是队列里的路径，队列同样每
-        次都整份换掉 —— 于是窗外那些条目谁也够不着却一直留着（十万张的库滚一遍，实测约
-        5.2 MB）。在途的那几条必须留着：``_refs`` 同时是换封面那条路回头找条目的地方。
+        不能一直往后加：只有 :meth:`_dispatch` 查它，而它查的全是队列里的路径，队列同样每次
+        都整份换掉 —— 于是窗外那些条目谁也够不着却一直留着（十万张的库滚一遍，实测约
+        5.2 MB）。进行中的那几条必须留着：``_refs`` 同时是换封面那条路回头找条目的地方。
         """
         refs = {entry.path: entry for entry in entries}
         for path, _ in self._inflight:
@@ -216,7 +205,7 @@ class ThumbnailPipeline(QObject):
         self._inflight[(entry.path, edge)] = job_id
 
     def _release(self, entry: GridEntry, holder: _Job) -> None:
-        """收尾时把这一格从「在途」里摘出去，且只摘自己那一次。
+        """收尾时把这一格从「进行中」里摘出去，且只摘自己那一次。
 
         ``shutdown()`` 会清空 ``_inflight`` 并换代；旧一代的任务晚回来时若无条件
         ``pop(entry.path)``，摘掉的就是新一代登记的那一条 —— ``_inflight`` 少数了，

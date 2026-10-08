@@ -136,7 +136,7 @@ def _settle(qt_app: QApplication, window: MainWindow, *, index: bool = True) -> 
     「索引还没建好时用户提交了条件」那条路。
     """
     # 除了 :func:`waiting.BACKGROUND_JOBS` 那三个，检索这一遍（``_search_job``）、尚未提交的
-    # 暂存选择（``_staged``）与索引那一遍也按「是 ``None`` 算收工」判，一并交给
+    # 暂存选择（``_staged``）与索引那一遍也按「是 ``None`` 算结束」判，一并交给
     # :func:`waiting.wait_for_idle`。不成立**直接抛**。
     also = ("_search_job", "_staged", "_index_job") if index else ("_search_job", "_staged")
     wait_for_idle(qt_app, window, also=also, what="检索、排序与索引")
@@ -593,8 +593,8 @@ def test_the_candidate_list_follows_the_capsule_layout(
 ) -> None:
     """胶囊左边多出一截，列表的左沿要**跟着挪那么多**。
 
-    这条盯的是「让开的那一段是**量出来的**，不是写死的常数」（见
-    ``SearchField._popup_left``）：写死的话这里不会红，而换过放大镜之后两个 ``#`` 就对不齐了
+    这条盯的是「让开的那一段是**量出来的**，不是硬编码的常数」（见
+    ``SearchField._popup_left``）：硬编码的话这里不会红，而换过放大镜之后两个 ``#`` 就对不齐了
     —— 那一档 8 点内边距不变，挪的是框，框挪多少全看输入框那一侧有多宽。
     """
     window = _open_candidates(qt_app, tmp_path, "#")
@@ -701,7 +701,7 @@ def _click_candidate(field: object, row: int = 0) -> None:
 def test_clicking_a_candidate_completes_it(qt_app: QApplication, tmp_path: Path) -> None:
     """点候选与回车补全是同一件事，而且**补完焦点要回到输入框**。
 
-    这一条最容易坏：候选列表不吃焦点，点它时输入框会失焦 —— 收得太快就吃掉了这一次点击
+    这一条最容易坏：候选列表不吃焦点，点它时输入框会失焦 —— 收得太快就忽略掉了这一次点击
     （列表在 ``itemClicked`` 之前就没了），收得太慢列表又会赖着不走。
     """
     window = MainWindow(session_base=tmp_path / "会话")
@@ -1130,7 +1130,7 @@ def test_going_into_an_album_leaves_the_search(
 ) -> None:
     """进目录就是退出检索：两者都是「一层」，面包屑上只有一个是当前所在。
 
-    顺带钉住另一件事：**平铺模式下进目录是进不去的**（那一层永远是整库），
+    顺带锁定另一件事：**平铺模式下进目录是进不去的**（那一层永远是整库），
     所以这条用例得在相册模式下说 —— 换个模式就换了语义，不是同一个东西。
     """
     root = _library(tmp_path, make_photo)
@@ -1205,7 +1205,7 @@ def test_a_word_where_a_number_belongs_is_refused_with_a_word(
 
 
 def test_searching_without_a_library_says_so(qt_app: QApplication, tmp_path: Path) -> None:
-    """没有库时收下条件是悄悄的：面包屑压根不显示，换库时又清掉。
+    """没有库时记录条件是悄悄的：面包屑压根不显示，换库时又清掉。
 
     与其让用户对着一个什么都没发生的输入框，不如说一句「还没有库可搜」。
     """

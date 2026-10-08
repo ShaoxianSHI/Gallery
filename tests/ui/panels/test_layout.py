@@ -43,7 +43,7 @@ def test_a_cleared_widget_is_not_left_showing(qt_app: QApplication) -> None:
     host, layout, added = _host_with(1)
     host.show()
     qt_app.processEvents()
-    assert added[0].isVisible(), "前置条件：拆之前它是可见的"
+    assert added[0].isVisible(), "前置条件没摆对：拆之前它应当是可见的"
 
     clear_layout(layout)
     qt_app.processEvents()

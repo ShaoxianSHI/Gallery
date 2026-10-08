@@ -726,7 +726,7 @@ class _TimeoutRecordingWriter(FakeWriter):
 
     它**接受** ``timeout``，于是 :func:`_write_for_rollback` 的能力探测会命中 ——
     那正是这条用例要验的那条路。所以探测不能写成 ``isinstance(tool, ExifToolWriter)``：
-    测试注入的都是假实现，那样**永远验不到**，而写出来永远为绿的守护比没有更坏。
+    测试注入的都是假实现，那样**永远验不到**，而写出来永远为绿的回归测试比没有更坏。
     """
 
     def __init__(self, fields: dict[str, str] | None = None) -> None:
@@ -774,7 +774,7 @@ def test_a_plain_writer_is_not_poked_with_a_timeout_it_does_not_take(
 
     :class:`~gallery.core.metadata.writeback.MetadataWriter` 是 ``Protocol``，
     加上那个参数就得改所有假实现 —— 而它们根本不起进程。所以 ``_apply`` 用
-    ``isinstance`` 判断：这条钉住那条分支走的正是「不传」。
+    ``isinstance`` 判断：这条锁定那条分支走的正是「不传」。
     """
     writer = FakeWriter({"XMP:City": "波尔多"})
     writer.silently_ignores = True

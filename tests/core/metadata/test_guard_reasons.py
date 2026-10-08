@@ -1,7 +1,7 @@
 """``guard_within_root`` 的拒绝原因 → 每个写入口自己那句话。
 
-这五个入口都会动用户的文件（红线 1），所以「为什么不行」必须说得准 —— 而它们
-**按原因分支，不按消息文本**。这一份就是那条契约的守护：
+这六个入口都会动用户的文件（不删除、不移动用户照片），所以「为什么不行」必须说得准 ——
+而它们**按原因分支，不按消息文本**。这一份就是那条契约的回归测试：
 
 - 每个入口的映射表必须是**全的**（``GuardReason`` 有几个成员就有几条）：少一条是
   ``KeyError``，不是一句含糊的通用话；
@@ -40,7 +40,7 @@ REASONS = {
     "writeback": writeback._writeback_reason,
 }
 
-#: 六个会动用户文件的入口模块（红线 1）。它们的 ``_guard`` 都必须走共用那道闸。
+#: 六个会动用户文件的入口模块（不删除、不移动用户照片）。它们的 ``_guard`` 都必须走共用那个检查。
 GUARD_MODULES = {
     "rename": rename,
     "trash": trash,
@@ -53,11 +53,11 @@ GUARD_MODULES = {
 
 @pytest.mark.parametrize("name", sorted(GUARD_MODULES))
 def test_every_write_guard_goes_through_the_shared_gate(name: str) -> None:
-    """**六个写入口都走同一道闸**，没有谁自己重写一遍。
+    """**六个写入口都走同一个共用检查**，没有谁自己重写一遍。
 
     曾经 ``writeback`` 是例外：它自己写着 ``paths.is_within`` 与
-    ``path == paths.config_dir(root)``（裸比较，不是闸门那种解析过的比较），而它的
-    文档字符串说「与改名的守卫同源」。那种复制品**不会跟着闸门一起变** —— 闸门加一条
+    ``path == paths.config_dir(root)``（裸比较，不是共用检查那种解析过的比较），而它的
+    文档字符串说「与改名的守卫同源」。那种复制品**不会跟着共用检查一起变** —— 共用检查加一条
     判据、或把某条判据收紧时，它不会知道。
 
     判据是源码里**真的调了** ``guard_within_root``：这条不靠「读起来像同源」。
@@ -74,7 +74,7 @@ def test_every_guard_maps_every_reason(name: str) -> None:
     """**映射表是全的** —— 缺口是当场炸，不是静默退成通用话。
 
     ``GuardReason`` 加一个成员时，这五张表都得补上：不补的话用户会拿到一句与真正
-    发生的事对不上的提示，而那条路径是红线 1 里的写操作。
+    发生的事对不上的提示，而那条路径是「不删除、不移动用户照片」的硬性约束里的写操作。
     """
     table = GUARDS[name]
 

@@ -1,10 +1,9 @@
 """打开一个库、把它的内容列出来、以及把这一次运行的状态记进会话。
 
 三种浏览方式各走一遍列举（分组视图铺开组内、平铺递归整库、相册模式只列当前层），流式分批
-送回，扫完再交给排序那一条链。
-
-**切换库的那一刀**（:meth:`LibraryFlowMixin._teardown_library`）也在这里：它要作废的每一样
-东西都是上面这些流程起头的 —— 尤其是那个会往目标目录里**落文件**的 ⌘V / 「移动到相册」。
+送回，扫完再交给排序那一条链。**切换库的那一刀**（:meth:`LibraryFlowMixin._teardown_library`）
+也在这里：它要作废的东西都是上面这些流程起头的 —— 尤其是那个会往目标目录里**落文件**的
+⌘V / 「移动到相册」。
 """
 
 from __future__ import annotations
@@ -72,13 +71,9 @@ class LibraryFlowMixin:
         """打开一个库。返回是否成功。
 
         **不再问「缓存放哪里」**（ADR 0038 决策 2）：配置目录由 :meth:`Library.open` 自动建，
-        缩略图固定在系统目录。**建不出来时只在横幅上说一声**（决策 3）—— 只读卷、SMB 共享上
-        浏览照旧，只是索引退成内存缓存。
+        缩略图固定在系统目录；**建不出来时只在横幅上说一声**（决策 3），只读卷上浏览照旧。
 
-        :param silent: 启动时自动恢复上次那个库时为 ``True``：**开不起来也不弹框**，只记一条
-            日志，让用户留在欢迎页上（那个库可能已经被移走或删掉）。用户自己点「最近打开」时
-            走默认的 ``False``：那一下必须说清楚。
-        """
+        :param silent: 启动时自动恢复上次的库时为 ``True``：开不起来也不弹框，只记日志。"""
         try:
             library = Library.open(Path(root), cache_base=self._cache_base)
         except GalleryError as exc:
@@ -99,12 +94,9 @@ class LibraryFlowMixin:
     def _apply_ui_state(self, library: Library) -> bool:
         """把这个库记着的界面偏好套到窗口上，返回**缩略图档位有没有变**。
 
-        **套的时机在这里而不是 ``_restore_session``**：那些偏好存在这个库自己的
-        ``config.toml`` 里，「是哪个库」要等 :meth:`open_library` 才知道。顺带做一次性迁移
-        （ADR 0038 决策 4）：库里还没有 ``[ui]`` 表时，把老版本的排序与浏览方式从
-        ``state.json`` 搬过来。
-
-        返回值是给调用方省一次多余的换档：档位没变也叫一次的话，网格会带**动画**重排一下。
+        **套的时机在这里而不是 ``_restore_session``**：偏好存在这个库自己的 ``config.toml``
+        里，「是哪个库」要等 :meth:`open_library` 才知道。顺带做一次性迁移（ADR 0038 决策 4）：
+        库里还没有 ``[ui]`` 表时，把老版本排序与浏览方式搬过来，返回值用于省一次多余的换档。
         """
         ui = self._adopt_legacy_ui(library)
         changed_edge = edge_for_index(self._size_index) != edge_for_index(
@@ -201,7 +193,7 @@ class LibraryFlowMixin:
         # 栈：开库 = 从头开始（只留根帧）。与「换浏览方式清栈」是同一件事，都归 :meth:`_set_root`。
         self._set_root(self._level_stack.root)
         self._arm_focus()  # 打开库走的是自己那一套，不经过 _reload_level
-        # 每一层都要重排（排序字段总是有的），所以扫出来的一律先攒着，等顺序定下来。
+        # 每一层都要重排（排序字段总是有的），所以扫出来的一律先暂存，等顺序定下来。
         self._staged = []
         self._level_notice = False
         self._progress_notice = False
@@ -229,11 +221,9 @@ class LibraryFlowMixin:
     def _start_orphan_check(self, library: Library) -> None:
         """开库时查一遍有没有指向已不存在照片的绑定（ADR 0043 决策 9）。
 
-        **每次开库都查**：这一遍要抓的正是「Gallery 没开着的时候」发生的改动，所以记一个
-        「上次查过没有」的标记反而会漏掉它。D 次 ``scandir`` 在后台线程里，用户看不见。
-
-        **事件库不可用就压根不起这个任务**：那种库上没有事件，而一次开库不该白付磁盘开销
-        （「记录为」那一行本来就不出现，ADR 0043 决策 1）。
+        **每次开库都查**：这一遍要抓的正是「Gallery 没开着的时候」发生的改动，记「上次查过没有」的
+        标记反而会漏掉它；扫描在后台线程里，用户看不见。**事件库不可用就压根不起这个任务**（那种库
+        上没有事件，一次开库不该白付磁盘开销，ADR 0043 决策 1）。
         """
         if not library.events_available:
             return
@@ -277,7 +267,7 @@ class LibraryFlowMixin:
         self._cancel_calendar_job()
         self._cancel_place_pass()
         self._cancel_orphan_check()
-        # **写操作闸门也要收**：⌘V / 「移动到相册」在旧库的 ``Library`` 上跑，不取消的话收尾时
+        # **写操作也要取消**：⌘V / 「移动到相册」在旧库的 ``Library`` 上跑，不取消的话收尾时
         # 会去问新库「下一次 ⌘Z 撤什么」，而记录在旧库里 —— 界面上一个都撤不掉。
         if self._write_job is not None:
             self._runner.cancel(self._write_job)
@@ -318,12 +308,10 @@ class LibraryFlowMixin:
     def _start_scan(self) -> None:
         """按当前浏览方式列出内容：平铺模式递归整库，相册模式只列当前一层。
 
-        **只有整库检索才接管这一层**（ADR 0040 决策 1）：筛选是照常枚举这一层、随后收窄
+        **只有整库检索才接管这一层**（ADR 0040 决策 1）：筛选照常枚举这一层、随后收窄
         （收窄在那条链的末尾，见 :meth:`OrderingMixin._order_now`），所以这里问的是
-        :meth:`_is_library_search` 而不是「有没有条件」—— 问错了的话，月视图里加一条条件就会
-        被换成网格页，而那正是筛选要避免的那件事。
-        已经进入某个分组时不再扫盘 —— 这一组是上一次分组算出来的，直接铺开即可。
-        """
+        :meth:`_is_library_search` 而不是「有没有条件」—— 问错了，月视图里加一条条件就会
+        被换成网格页。已经进入某个分组时不再扫盘，直接铺开。"""
         library = self._library
         if library is None:
             return
@@ -431,7 +419,7 @@ class LibraryFlowMixin:
         # **日历那一页不在前面时不喂**：模型每次重排都会走到这里，而用户可能在日历点出来的那一层。
         if not self._on_calendar_page():
             return
-        # **摊开的那一层更不能喂**：那一层是日历上一格里的几张，拿它分桶等于告诉日历「整个库就
+        # **展开的那一层更不能喂**：那一层是日历上一格里的几张，拿它分桶等于告诉日历「整个库就
         # 这几张」。换页发生在摆内容**之后**（``_list_drill_photos``），上面那条拦不住。
         if self._drill_photos is not None:
             return
@@ -444,7 +432,7 @@ class LibraryFlowMixin:
             return
         batch = payload if isinstance(payload, tuple) else ()
         if self._staged is not None:
-            # 扫描期间一律先攒着：**边扫边出图在这里等于闪一下** —— 先看到一屏按扫描顺序排的
+            # 扫描期间一律先暂存：**边扫边出图在这里等于闪一下** —— 先看到一屏按扫描顺序排的
             # 照片，下一秒全变样。
             self._staged.extend(batch)
             return
@@ -459,10 +447,10 @@ class LibraryFlowMixin:
         if report.has_issues:
             self._scan_issue = True
             self._show_banner(f"部分内容没能读取：{report.summary}")
-        # 「这一层空不空」**不在这里判断**：要重排时条目还攒着没上屏（见 _staged），
+        # 「这一层空不空」**不在这里判断**：要重排时条目还暂存着没显示到界面（见 _staged），
         # 照模型判断会把相册 / 组卡片误报成「空」。
         if self._watch_pending:
-            # 扫描在途时收到过外部变化：流式扫描没法在半路上改，干脆重来这一层。
+            # 扫描进行中时收到过外部变化：流式扫描没法在半路上改，干脆重来这一层。
             self._watch_pending = None
             self._reload_level()
             return
@@ -477,7 +465,7 @@ class LibraryFlowMixin:
         self._scan_job = None
         self._scan_issue = True
         self._show_banner(f"扫描失败：{message}")
-        # 已经攒到的条目照常摆出来：扫到一半失败时给一屏能看的东西，比一屏空白有用。
+        # 已经累积到的条目照常摆出来：扫到一半失败时给一屏能看的东西，比一屏空白有用。
         self._order_now()
 
     # ---- 打开库时把地点解析一遍（ADR 0010）------------------------------------
@@ -485,11 +473,9 @@ class LibraryFlowMixin:
     def _maybe_start_place_pass(self) -> None:
         """第一次打开一个库时，在后台把整库的地点算出来存进索引。
 
-        **为什么是打开时而不是等用户去分组**：分组与元数据面板要的是同一份反查结论，两处各算
-        一次就必然漂（面板写着杭州、分组写着 Bordeaux）—— 详见 ADR 0010。
-
-        一个库里只跑一次（``_place_pass_roots`` 记着起过哪些库）；扫描本身出问题时、以及本层
-        正在读元数据（读的是同一批照片的 EXIF）时都先让着。
+        **为什么是打开时而不是等用户去分组**：分组与元数据面板要的是同一份反查结论，两处各算一次
+        就必然漂（面板写着杭州、分组写着 Bordeaux，ADR 0010）。一个库里只跑一次
+        （``_place_pass_roots`` 记着起过哪些库）；扫描出问题、或本层正在读元数据时先让着。
         """
         library = self._library
         if (
@@ -554,10 +540,9 @@ class LibraryFlowMixin:
     def _show_place_notice(self, text: str) -> None:
         """进度消息**不许抢**横幅：上面正有别人的话就等它说完。
 
-        抢了会怎样：用户刚丢掉三张照片，横幅上「已把 3 项移到废纸篓」被后台进度顶掉，那条确认
-        就此消失。两条判据：上面已经有别人的话（比文字），或者刚刚有用户动作（比时间，见
-        :data:`BANNER_STICKY_SECONDS`）—— 前者由 :class:`~gallery.ui.window.notice.NoticeSlot`
-        记账。
+        抢了会怎样：用户刚丢掉三张照片，横幅上「已把 3 项移到废纸篓」被后台进度顶掉，那条确认就此
+        消失。两条判据：上面已经有别人的话（比文字），或刚刚有用户动作（比时间，见
+        :data:`BANNER_STICKY_SECONDS`）；前者由 :class:`~gallery.ui.window.notice.NoticeSlot` 记账。
         """
         self._place_slot.show(text)
 
@@ -570,15 +555,15 @@ class LibraryFlowMixin:
         return NoticeSlot(self, text_attr="_place_notice_text")
 
     def _cancel_place_pass(self) -> None:
-        """作废在途的全库解析（切库、关窗时）。"""
+        """作废进行中的全库解析（切库、关窗时）。"""
         if self._place_job is not None:
             self._runner.cancel(self._place_job)
             self._place_job = None
 
     def _cancel_orphan_check(self) -> None:
-        """作废在途的孤儿检查（切库、关窗时）。
+        """作废进行中的孤儿检查（切库、关窗时）。
 
-        ``generation`` 那道闸已经能挡住结果落地，**取消是为了别白跑** —— 而更要紧的是别让一个
+        ``generation`` 的条件判断已经能挡住结果落地，**取消是为了别白跑** —— 而更要紧的是别让一个
         模态框在用户已经切到别的库之后才弹出来。
         """
         if self._orphan_job is not None:

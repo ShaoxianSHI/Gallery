@@ -124,7 +124,7 @@ def test_only_the_command_wheel_zooms(qt_app: QApplication) -> None:
     """⌘ + 滚轮缩放，⌃ + 滚轮不缩放。
 
     macOS 上 Qt 把 Ctrl 译成 Command（``ControlModifier``），``MetaModifier`` 才是 ⌃；
-    两者都收下会让 ⌃ + 滚轮也缩放。
+    两者都记录会让 ⌃ + 滚轮也缩放。
     """
     view = DetailView()
     view.resize(800, 600)
@@ -161,7 +161,7 @@ def _right_click(view: DetailView, *, pos: QPoint, global_pos: QPoint) -> None:
 def test_right_click_reports_where_it_happened(qt_app: QApplication) -> None:
     """右键照片 → 窗口收到的是**屏幕坐标**（``QMenu.exec`` 直接吃它）。
 
-    传视口坐标的话菜单会贴在大图左上角，而这一条就是钉住「传的是哪一个」。
+    传视口坐标的话菜单会贴在大图左上角，而这一条就是锁定「传的是哪一个」。
     """
     view = DetailView()
     view.resize(800, 600)

@@ -1,14 +1,8 @@
 """原子写盘小工具。
 
-配置文件与会话状态都是「小、偶尔写、写完必须完整」的文件。直接覆盖写入在崩溃或断电时
-会留下半截文件，因此统一走「同目录临时文件 → fsync → ``os.replace``」。
-
-``os.replace`` 在同一文件系统上是原子的，这正是临时文件必须放在目标同目录的原因。
-本模块只抛 ``OSError``，由调用方翻译成面向用户的中文错误。
-
-**默认每次都 fsync**（``durable=True``）。只有「丢了也能自己长回来」的东西才该显式传
-``durable=False`` 去省掉那次 fsync（目前是缩略图缓存），因为 fsync 的代价会按写入次数
-一分不少地落在用户等的每一张图上。
+走「同目录临时文件 → fsync → ``os.replace``」：``os.replace`` 在同一文件系统上才是原子的，
+所以临时文件必须与目标同目录。本模块只抛 ``OSError``，由调用方翻译成用户可读的中文。
+**默认每次都 fsync**（``durable=True``），只有丢了也能自己长回来的缓存才传 ``durable=False``。
 """
 
 from __future__ import annotations
@@ -29,12 +23,9 @@ def write_text_atomic(path: Path, text: str) -> None:
 def write_bytes_atomic(path: Path, data: bytes, *, durable: bool = True) -> None:
     """把 ``data`` 原子地写进 ``path``（父目录会被创建）。
 
-    :param durable: 默认 ``True``，写完落 ``fsync``，断电后这一份也还在。
-        传 ``False`` 只是省掉那次 fsync —— ``os.replace`` 的原子性**照旧**（读者不会
-        读到半截文件，崩了也不会留下改名到一半的目录），弱化的只是「断电之后字节还在」。
-
-        因此它只配给**丢了也能重新长出来**的写入（可再生的缓存）。``config.toml``、
-        journal 记录这类一旦丢了就没了的东西必须留着默认值。
+    :param durable: 默认 ``True``，写完落 ``fsync``，断电后这一份也还在。传 ``False``
+        只省掉那次 fsync，``os.replace`` 的原子性照旧，只是「断电之后字节还在」变弱；
+        因此只配给丢了也能重新长出来的缓存，``config.toml``、journal 这类必须留默认值。
     """
     _write_atomic(path, data, durable=durable)
 

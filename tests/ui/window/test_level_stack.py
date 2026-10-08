@@ -325,7 +325,7 @@ def test_the_search_frame_has_no_short_label() -> None:
 def test_the_page_is_a_function_of_the_stack() -> None:
     """画哪一页 = 栈（:func:`page_role_of`）：这是「页面」唯一的那份判据。
 
-    **未摊开的那一格归日历页**（``expanded=False``）：它是「日历格 + 照片」一起进出的一对，
+    **未展开的那一格归日历页**（``expanded=False``）：它是「日历格 + 照片」一起进出的一对，
     屏幕上从没见过它的网格 —— 把它算成网格页正是「日历页摆在前面、标题却写着大图页」那类
     不一致的来源。
     """

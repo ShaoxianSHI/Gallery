@@ -25,7 +25,6 @@ def to_scaled_qimage(raster: RasterImage, edge: int) -> QImage:
 
     **合成一步是有意的**：``QImage(bytes, …)`` 不复制缓冲区，而 ``scaled()`` 返回的新图自己
     拥有内存，中间那张只要活过这一次调用就行，不必再整幅 ``copy()`` 一遍。
-
     :param edge: 目标长边；``<= 0`` 表示不缩放。
     """
     return _scale(_wrap(raster), edge)
@@ -34,7 +33,7 @@ def to_scaled_qimage(raster: RasterImage, edge: int) -> QImage:
 def scale_image(image: QImage, edge: int) -> QImage:
     """把 ``QImage`` 缩到长边不超过 ``edge``（只缩不放），与 :func:`scale_pixmap` 同一个实现。
 
-    日历那一侧存的是 ``QImage``，换档时那次兜底缩放也走这里 —— 不另写一份，免得换算法漏掉。
+    日历那一侧存的是 ``QImage``，换档时那次回退缩放也走这里 —— 不另写一份，免得换算法漏掉。
     """
     return _scale(image, edge)
 

@@ -212,7 +212,7 @@ def test_it_is_absent_inside_a_group(qt_app: QApplication, window: MainWindow) -
     assert "新建相册" not in _texts(_context_on_blank(window))
 
 
-# ---- 建完：上屏 + 立刻改名 ---------------------------------------------------
+# ---- 建完：显示 + 立刻改名 ---------------------------------------------------
 
 
 def test_the_new_album_shows_up_selected(
@@ -323,7 +323,7 @@ def test_the_watcher_does_not_add_a_second_row(
 
     window.create_album()
     qt_app.processEvents()
-    # 给监听器留出跑一趟的时间（它有合并去抖，见 ADR 0013）。
+    # 给监听器留出跑一趟的时间（它有合并防抖，见 ADR 0013）。
     assert wait_until(qt_app, lambda: window._model.rowCount() > before, timeout=2.0)
 
     assert window._model.rowCount() == before + 1
@@ -394,7 +394,7 @@ def test_undo_takes_the_name_back_but_keeps_the_folder(
 ) -> None:
     """⌘Z 撤的是**那一次改名**：名字改回去，空文件夹留在原地。
 
-    撤掉文件夹等于删除，红线 1 说那只能由用户亲手触发（选中它按 ⌘⌫，那条路有日志）。
+    撤掉文件夹等于删除，删除只许用户亲手触发（选中它按 ⌘⌫，那条路有日志）。
     """
     _enter(qt_app, window, root / "奈良")
 

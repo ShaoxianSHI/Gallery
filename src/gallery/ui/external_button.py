@@ -1,13 +1,9 @@
 """标题条上那个「用外部应用打开」的入口：**两个按钮**，不是一个。
 
 浮在窗口顶边那一行上、不进任何布局，且只存在于 macOS（ADR 0025 / 0034）。左半直接打开
-默认那一项，右半才弹出一列应用。
-
-**药丸、边框、中间那条分隔线与箭头全由容器的 ``paintEvent`` 画**，不是靠 ``QToolButton``
-的 ``menu-indicator`` 凑出来的：给了菜单 Qt 会自己画一个实心三角与我们画的 V 叠在一起，
-而给 ``::menu-indicator`` 写任何样式那个三角又整个消失。样式表也表达不了
-「两半共享一个圆角轮廓」。
-开哪一个、横幅写什么都由外面按 :attr:`ExternalEntry.id` 分派。
+默认那一项，右半才弹出一列应用。**药丸、边框、分隔线与箭头全由容器的 ``paintEvent`` 画**：
+给 ``QToolButton`` 挂菜单，Qt 会画一个实心三角与我们的 V 叠在一起，而给 ``::menu-indicator``
+写样式那个三角又整个消失。开哪一个、横幅写什么都由外面按 :attr:`ExternalEntry.id` 分派。
 """
 
 from __future__ import annotations
@@ -33,7 +29,7 @@ from PySide6.QtWidgets import QMenu, QToolButton, QWidget
 from gallery.ui import menu_style, theme
 from gallery.ui.rename_edit import field_background
 
-#: 按钮的**高**跟着搜索胶囊走（不写死，见 :func:`button_rect`），这是它的**宽**。
+#: 按钮的**高**跟着搜索胶囊走（不硬编码，见 :func:`button_rect`），这是它的**宽**。
 #: **不是正方形**：里面放的是「图标 + 下拉箭头」两样东西 —— 22×22 只画得出一个孤零零的箭头。
 BUTTON_WIDTH = 44
 
@@ -70,9 +66,7 @@ ICON_KINDS = (ICON_CALENDAR, ICON_FOLDER)
 @dataclass(frozen=True)
 class ExternalEntry:
     """下拉框里的一项。
-
-    :param id: 这一项的标识。**点下去之后做什么由外面按它分派** —— 日历那一项要等浏览器起来
-        （好几秒），必须进后台线程，而访达那一项是当场一条 ``open``（打开当前那一层文件夹）。
+    :param id: 这一项的标识；点下去之后做什么由外面按它分派。
     :param name: **全称**，下拉框里显示的就是它。
     :param icon: 图标；``None`` 就是画的那个中性图标。
     :param enabled: 此刻该不该出现在下拉框里（这一页有没有它要的东西）。
@@ -247,12 +241,8 @@ class ExternalAppsButton(QWidget):
     """标题条上那个入口。**它是两个按钮**，不是一个。
 
     **左半（图标）**直接打开默认的那一项；**右半（箭头）**弹出那一列 :class:`ExternalEntry`。
-    这两半是两件不同的事，做成一个按钮就挤在一格里，所以它们是两个控件、各自接各自的鼠标事件，
-    而不是靠 ``QToolButton`` 的 ``menu-indicator`` 去凑（实测：给了菜单 Qt 会自己画一个实心
-    三角与我们画的 V 叠在一起，而给 ``::menu-indicator`` 写任何样式那个三角又整个消失）。
-
-    容器自己画那一整个药丸（底色、边框、中间那条分隔线、右半的箭头），两个分段都是透明的
-    —— 于是两段共享同一个圆角轮廓。
+    做成一个按钮就挤在一格里，所以它们是两个控件、各自接各自的鼠标事件。容器自己画整个药丸
+    （底色、边框、分隔线、箭头），两个分段都透明，于是两段共享同一个圆角轮廓。
     """
 
     #: 用户选了哪一项（带的是那一项，具体的动作与横幅交给外面）。
@@ -362,7 +352,7 @@ class ExternalAppsButton(QWidget):
     def _apply_theme(self) -> None:
         """换过浅色 / 深色之后重画一遍。
 
-        **自绘图标也要重画**：它们跟着 :attr:`AppTheme.text` 变色。菜单那份样式表里写死了颜色，
+        **自绘图标也要重画**：它们跟着 :attr:`AppTheme.text` 变色。菜单那份样式表里硬编码了颜色，
         换主题时不重下发就还是上一套深浅。
         """
         # 菜单是**主题下发之后才建的控件**（``theme.apply_theme`` 只走那一刻已存在的顶层控件），

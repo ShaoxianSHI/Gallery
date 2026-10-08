@@ -75,7 +75,7 @@ def _within(actual: QColor, expected: QColor, tolerance: int = 1) -> bool:
 
     **留这一格余量是因为 Qt 的合成取整与 Python 的 ``round`` 不同**：同一个
     ``rgba(0, 0, 0, 0.32)`` 压在白底上，Qt 落成 174、``round(0.68 * 255)`` 落成 173。
-    钉死到 0 就是在测 Qt 的取整实现，而不是测「它是不是正文色压出来的」。
+    固定到 0 就是在测 Qt 的取整实现，而不是测「它是不是正文色压出来的」。
     """
     return all(
         abs(getattr(actual, channel)() - getattr(expected, channel)()) <= tolerance
@@ -158,7 +158,7 @@ def test_the_track_is_gone_and_only_the_handle_is_left(qt_app: QApplication) -> 
     """滑块以外的地方必须与底色一模一样 —— 那条常驻的实心轨道就是用户看见的那一层。
 
     **同一段代码里顺带量一次原生的**：它证明这条断言不是空转的。若哪天原生那一份也
-    恰好透明了，这个对照组会先变红，而不是让守护悄悄失去意义。
+    恰好透明了，这个对照组会先变红，而不是让回归测试悄悄失去意义。
     """
     theme.ensure_installed(qt_app)
     background = theme.current_theme(qt_app).background
@@ -169,7 +169,7 @@ def test_the_track_is_gone_and_only_the_handle_is_left(qt_app: QApplication) -> 
         native.pixelColor(native.width() // 2, y).name() for y in range(native.height())
     }
     assert background.name() not in native_colors, (
-        "前置条件失效：原生滚动条在离屏下也画成了透明 —— 这条用例量不到它要治的那个毛病"
+        "这条用例的前置条件没摆对：原生滚动条在离屏下也画成了透明 —— 量不到它要治的毛病"
     )
     area.close()
 
@@ -177,8 +177,8 @@ def test_the_track_is_gone_and_only_the_handle_is_left(qt_app: QApplication) -> 
     image = bar.grab().toImage()
     top, bottom = _handle_span(image, background)
     assert top >= 0, "整条滚动条上一个非底色像素都没有，滑块根本没画出来"
-    # **先钉住「确实量得到轨道那一段」**：滑块一铺满整条，下面那个 ``beyond`` 就是空列表，
-    # 而 ``all([])`` 恒为真 —— 守护于是变成空转，轨道回来了它照样绿。
+    # **先锁定「确实量得到轨道那一段」**：滑块一铺满整条，下面那个 ``beyond`` 就是空列表，
+    # 而 ``all([])`` 恒为真 —— 回归测试于是变成空转，轨道回来了它照样绿。
     beyond = [y for y in range(image.height()) if not top <= y <= bottom]
     assert beyond, "滑块铺满了整条，量不到轨道那一段"
 
@@ -306,7 +306,7 @@ def test_the_bar_is_narrower_than_the_native_one(qt_app: QApplication) -> None:
     :meth:`PhotoGrid._scrollbar_reserve` 问的正是 ``sizeHint().width()``，所以这条
     样式会**真的**把每一格挪宽几像素 —— 那是该得的（少掉的原本是照片的），但也意味着
     格宽一变列数就可能变，而列数一变就该走切档过渡（见 ``grid_helpers`` 里那个
-    「找一个不换列的增量」）。钉住「预留的宽度确实变窄了」，免得哪天它悄悄回到 18
+    「找一个不换列的增量」）。锁定「预留的宽度确实变窄了」，免得哪天它悄悄回到 18
     而省下的那几像素白扔了。
     """
     theme.ensure_installed(qt_app)
@@ -382,7 +382,7 @@ def test_the_corner_radius_is_exactly_half_the_handle_width(qt_app: QApplication
 
     **让步的是宽度，不是圆角**：一半要落在整数上，所以 :data:`HANDLE_WIDTH` 取偶数；
     而 ``2 × 5 = 10`` 正好压在那条判据上 —— 它是 ``>`` 不是 ``≥``，所以保住。
-    这条用例同时钉住三件事：一半、整数、偶数宽度。
+    这条用例同时锁定三件事：一半、整数、偶数宽度。
     """
     theme.ensure_installed(qt_app)
     assert HANDLE_WIDTH % 2 == 0, "滑块宽度必须是偶数，圆角才可能正好是一半且落在整数上"
@@ -409,10 +409,10 @@ def test_the_grid_scrollbar_keeps_only_a_slit_to_the_window_edge(
     **量的是窗口而不是滚动区**：只量「滚动条右缘 = 滚动区右缘」那一层是对的，漏掉的恰恰是
     滚动区到窗口之间这一段。两个右缘相减，就是要守的那个数。
 
-    **「2」在这条用例里是写死的**：只跟 :data:`_GRID_PAGE_MARGIN_RIGHT` 比是空转 ——
+    **「2」在这条用例里是硬编码的**：只跟 :data:`_GRID_PAGE_MARGIN_RIGHT` 比是空转 ——
     常量一改，布局与断言一起变，永远绿。
     """
-    # 2 点是这一档定下来的取值，在这儿独立写一遍才是守护。
+    # 2 点是这一档定下来的取值，在这儿独立写一遍才是回归测试。
     assert _GRID_PAGE_MARGIN_RIGHT == 2, (
         f"网格页右边距改成了 {_GRID_PAGE_MARGIN_RIGHT} 点，用户要的是 2 点"
     )
@@ -447,7 +447,7 @@ def _gap_to_window_right(window: MainWindow, bar: QScrollBar) -> int:
     """滚动条右缘到**窗口**右缘有几像素（点）。
 
     **对着窗口量，而不是滚动区或面板**：滚动区外面还包着一圈页面边距，而面板右缘此刻
-    贴着窗口右缘只是 ``detail_layout`` 边距为 0 的结果 —— 量窗口把这两段一起钉住。
+    贴着窗口右缘只是 ``detail_layout`` 边距为 0 的结果 —— 量窗口把这两段一起锁定。
     """
     bar_right = bar.mapToGlobal(QPoint(bar.width(), 0)).x()
     window_right = window.mapToGlobal(QPoint(window.width(), 0)).x()
@@ -479,9 +479,9 @@ def test_the_panel_scrollbar_sits_where_the_grid_one_does(
     （``_CONTENT_PAD_RIGHT``），所以量得到变化的只有滚动条那一处。
 
     **走真的大图页而不是一个孤零零的面板**：面板右缘此刻正好压在窗口右缘上，量面板等于
-    量窗口，可那是 ``detail_layout`` 边距为 0 的结果 —— 这一条把它一起钉住。
+    量窗口，可那是 ``detail_layout`` 边距为 0 的结果 —— 这一条把它一起锁定。
     """
-    # 2 点是这一档定下来的取值，在这儿独立写一遍才是守护（理由同上面那条）。
+    # 2 点是这一档定下来的取值，在这儿独立写一遍才是回归测试（理由同上面那条）。
     assert SCROLLBAR_EDGE_GAP == 2, (
         f"面板滚动条离窗口右缘改成了 {SCROLLBAR_EDGE_GAP} 点，用户要的是 2 点"
     )

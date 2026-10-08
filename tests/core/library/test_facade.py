@@ -1,6 +1,6 @@
 """``gallery.core.library.facade`` 的测试。
 
-重点是那条红线：**打开库不得写入任何东西**。写盘必须由用户在弹窗里明确同意后的
+重点是那条硬性约束：**打开库不得写入任何东西**。写盘必须由用户在弹窗里明确同意后的
 ``prepare_library`` 触发。
 """
 
@@ -93,7 +93,7 @@ def test_open_makes_the_config_dir_and_keeps_thumbs_out_of_it(
 ) -> None:
     """``.gallery/`` 自动建（ADR 0038 决策 2），**缩略图不进它**（决策 1）。
 
-    一条断言把两件事都钉住：照片目录里只多出一个 ``.gallery``，而缩略图落在
+    一条断言把两件事都锁定：照片目录里只多出一个 ``.gallery``，而缩略图落在
     注入的系统目录下 —— 「同一个库两份缓存」那个局面正是这两条凑出来的。
     """
     make_photo("a.jpg")
@@ -103,7 +103,7 @@ def test_open_makes_the_config_dir_and_keeps_thumbs_out_of_it(
 
     assert paths.has_config_dir(tmp_path) is True
     assert library.config_dir_ready is True
-    # 用常量而不是字面量：写死的话，常量改名时这个断言会在一个与改名无关的
+    # 用常量而不是字面量：硬编码的话，常量改名时这个断言会在一个与改名无关的
     # 目录里凭空造出一个配置目录，然后照样全绿（tests/test_guards.py 守着这条）。
     assert sorted(path.name for path in tmp_path.iterdir()) == [CONFIG_DIR_NAME, "a.jpg"]
     assert library.thumbnails.directory == paths.thumbnail_cache_dir(tmp_path, base=system)
