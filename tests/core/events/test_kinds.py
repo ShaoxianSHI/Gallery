@@ -34,6 +34,34 @@ def test_the_common_fields_come_first() -> None:
     assert kinds.COMMON_FIELDS[0].column == "title"
 
 
+def test_the_cover_is_a_common_field_and_no_kind_repeats_it() -> None:
+    """封面是**公共**字段，而它不属于任何一类（ADR 0048 决策 2）。
+
+    两半都要断：进 ``COMMON_FIELDS`` 才有一份列清单（建表、journal、撤销、恢复全由它生成），
+    而它一旦混进某一类的 ``fields``，那一类的扩展表就会多出一列，而面板会多画一个输入框 ——
+    用户可以在那里手敲一个路径，而敲错的路径画不出图。
+    """
+    assert kinds.COVER in kinds.COMMON_FIELDS
+    assert kinds.COVER.control == "cover"
+    for kind in kinds.EVENT_KINDS:
+        assert kinds.COVER not in kind.fields
+        assert not {f.column for f in kind.fields} & {kinds.COVER.column}
+
+
+def test_the_cover_is_not_a_search_field() -> None:
+    """**候选列表里不许出现「封面」** —— 它的值是一条绝对路径，没有人会敲（ADR 0048 决策 8）。
+
+    今天它进不去，是因为 ``search._event_fields`` 只把**每类独有的字段**生成成搜索字段，
+    公共那两条是手写的（事件类型 / 事件）。将来有人把公共字段也生成一遍，这条就会红 ——
+    而症状是候选里多一项没人会用的条件，不是报错。
+    """
+    from gallery.core.library.search import SEARCH_FIELDS
+
+    labels = {field.label for field in SEARCH_FIELDS}
+
+    assert not any("封面" in label for label in labels)
+
+
 def test_a_trip_keeps_its_own_fields_in_its_own_table() -> None:
     """类型独有的字段不混进公共列 —— 它们住在自己那张表里，于是公共问题不用 UNION。"""
     common_columns = {field.column for field in kinds.COMMON_FIELDS}
