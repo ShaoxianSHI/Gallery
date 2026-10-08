@@ -285,10 +285,13 @@ def test_clearing_the_cover_puts_the_first_photo_back(
     window._grid.setCurrentIndex(window._model.index(_row_of_card(window, event_id), 0))
     window._ensure_event_actions()
     window._clear_cover_of_group_card()
-    wait_until(qt_app, lambda: _cover_name(window, event_id) == "京都-01.jpg")
+    # **不写死「第一张是哪一张」**：那是组内当前排序的第一张，而排序方向是另一条线的事
+    # （ADR 0049 把默认改成新→旧）。所以只等「pinned_cover 没了」。
+    wait_until(qt_app, lambda: _group_card_of(window, event_id).pinned_cover is None)
 
+    card = _group_card_of(window, event_id)
     assert library.event(event_id).cover_path is None  # type: ignore[union-attr]
-    assert _cover_name(window, event_id) == "京都-01.jpg"
+    assert card.cover == card.photos[0]
 
 
 def test_the_cover_survives_a_rename_and_the_card_still_shows_it(
