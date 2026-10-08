@@ -102,12 +102,20 @@ class EventUndoResult:
 
 @dataclass(frozen=True, slots=True)
 class EventRef:
-    """照片属于哪些事件时只需要带这么几样：分组要组键与显示名，菜单要名字。"""
+    """照片属于哪些事件时只需要带这么几样：分组要组键与显示名，菜单要名字。
+
+    :attr:`cover_path` 是**这个事件的封面**（ADR 0048），**不是这张照片的** ——
+    于是一张照片属于几个事件，就带着几份封面，每一个都属于它自己那个事件。
+    分组靠它认出「这一组该画哪一张」，认领的条件是组键对得上（见
+    :mod:`gallery.core.library.groups`）。
+    """
 
     id: int
     kind: str
     title: str
     started_on: str | None
+    #: 封面照片的路径（库里存的是文本）；没设就是 ``None``。
+    cover_path: str | None = None
 
     @property
     def group_key(self) -> str:

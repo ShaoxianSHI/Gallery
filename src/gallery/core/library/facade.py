@@ -672,6 +672,21 @@ class Library:
         """把这些照片从这个事件里拿出来。"""
         return self.events.unbind(_paths_of(photos), event_id)
 
+    def set_event_cover(self, event_id: int, photo: PhotoRef | Path) -> EventWriteOutcome:
+        """把这个事件的封面设成某一张照片，**它必须已经绑在这个事件上**（ADR 0048 决策 1）。
+
+        **不进** ``WRITE_METHODS_ON_LIBRARY``：写的是 Gallery 自己的 ``events.db``，
+        用户的照片一个字节都不动 —— 与相册封面同一处置（ADR 0028 决策 5）。
+
+        :raises CoverNotBoundError: 那张照片不属于这个事件。卡片只能画组内那一张
+            （缩略图流水线拿的是 ``PhotoRef``），所以「设一个组外的封面」根本画不出来。
+        """
+        return self.events.set_cover(event_id, _paths_of([photo])[0])
+
+    def clear_event_cover(self, event_id: int) -> bool:
+        """取消封面：回到「组内第一张」。**没设过就是 ``False``** —— 界面据此不摆那一行。"""
+        return self.events.clear_cover(event_id)
+
     def find_orphan_bindings(
         self, *, should_cancel: Callable[[], bool] | None = None
     ) -> OrphanScan:

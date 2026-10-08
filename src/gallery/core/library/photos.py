@@ -142,6 +142,10 @@ class GroupRef:
     label: str
     #: 组内的照片，**已按当前排序排好**。
     photos: tuple[PhotoRef, ...]
+    #: 显式指定的封面（目前只有事件分组有，ADR 0048）。**已经解析成组内那一张** ——
+    #: 存路径的话每次读封面都要在组里线性找一遍，而 ``data(DecorationRole)`` 每帧每张卡片
+    #: 都读一次。解析不出（指定的照片不在这组里）是 ``None``，于是 :attr:`cover` 退回第一张。
+    pinned_cover: PhotoRef | None = None
 
     @property
     def name(self) -> str:
@@ -154,8 +158,12 @@ class GroupRef:
 
     @property
     def cover(self) -> PhotoRef | None:
-        """封面：组内第一张（已经排好序，也就是「这一组的代表」）。"""
-        return self.photos[0] if self.photos else None
+        """封面：指定的那张，没有就用组内第一张（已经排好序，也就是「这一组的代表」）。
+
+        **卡片永远有一张封面**：指定的那张读不出来、不属于这组了、事件取消了封面 ——
+        三种情形都退回第一张，而不是让这一格空着（与相册封面同一取向，ADR 0028 决策 4）。
+        """
+        return self.pinned_cover or (self.photos[0] if self.photos else None)
 
     @property
     def display_name(self) -> str:

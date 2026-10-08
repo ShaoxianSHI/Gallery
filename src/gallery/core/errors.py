@@ -112,6 +112,14 @@ class EventsUnavailableError(GalleryError):
     """
 
 
+class CoverNotBoundError(GalleryError):
+    """要把一张照片设成事件封面，而它不属于这个事件（ADR 0048 决策 1）。
+
+    界面那一处只对**已绑定的**照片开放，所以这条多半来自别的入口或者手工改过的库。
+    它与 :class:`EventsUnavailableError` 分开：事件库这一次完全正常，是**这一张**挑错了。
+    """
+
+
 class ShowImportError(GalleryError):
     """从「演迹」导出的表格里读演出失败（文件不在、不是 .xlsx、或者不是演出列表）。
 
@@ -123,6 +131,7 @@ class ShowImportError(GalleryError):
 __all__ = [
     "AlbumError",
     "ConfigError",
+    "CoverNotBoundError",
     "DeleteError",
     "EventsUnavailableError",
     "GalleryError",

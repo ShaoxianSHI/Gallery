@@ -91,6 +91,11 @@ def build_groups(
     events = event_values if event_values is not None else {}
     buckets: dict[str, list[PhotoRef]] = {}
     labels: dict[str, str] = {}
+    #: 组键 → 这一组指定的封面路径（ADR 0048 决策 7）。**认领条件是组键对得上** ——
+    #: 一张照片属于好几个事件，于是它带的那几份封面各属于其中一个，只有组键等于这个键的那份
+    #: 才是这一组的。拿组键去比对而不是从组键里把 id 解析出来，是复用「事件组键 = 日期#id」
+    #: 那条已经写死的不变式（ADR 0043 决策 7），两个来源于是不会各自漂。
+    covers: dict[str, Path] = {}
     for ref in photos:
         members = facet.group(
             input_for(
@@ -105,6 +110,11 @@ def build_groups(
         for key, label in members:
             buckets.setdefault(key, []).append(ref)
             labels.setdefault(key, label)
+        for event_ref in events.get(ref.path, ()):
+            if event_ref.cover_path:
+                for key, _label in members:
+                    if event_ref.group_key == key:
+                        covers[key] = Path(event_ref.cover_path)
 
     effective = order if order is not None else SortOrder(facet=None)
     groups = [
@@ -113,6 +123,7 @@ def build_groups(
             key=key,
             label=labels[key],
             photos=tuple(sort_photos(members, order=effective, root=root, values=facets)),
+            pinned_cover=_pinned_cover(covers.get(key), members),
         )
         for key, members in buckets.items()
     ]
@@ -133,6 +144,21 @@ def build_groups(
     valued.sort(key=itemgetter(0), reverse=descending)
     unvalued.sort(key=lambda group: group.label.casefold())
     return [group for _, group in valued] + unvalued
+
+
+def _pinned_cover(wanted: Path | None, members: Sequence[PhotoRef]) -> PhotoRef | None:
+    """把一个封面**路径**解析成组内那一张引用；解析不出就是 ``None``。
+
+    **解析不出时宁可不钉**（而不是拿第一张顶上）：第一张本来就是 :attr:`GroupRef.cover`
+    的兜底，钉上去只会让「这一组有封面」与「没有」在数据上分不开，而界面要靠这个区别
+    决定「清除封面」那一行摆不摆。
+
+    组内路径比对走 ``str()``：``PhotoRef.path`` 是同一个 ``Path`` 对象，比对两次是常数。
+    """
+    if wanted is None:
+        return None
+    target = str(wanted)
+    return next((ref for ref in members if str(ref.path) == target), None)
 
 
 def _group_value(group: GroupRef, facet: Facet) -> float | str | None:

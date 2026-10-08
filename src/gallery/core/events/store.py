@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import cast
 
 from gallery.core import paths
-from gallery.core.errors import EventsUnavailableError
+from gallery.core.errors import CoverNotBoundError, EventsUnavailableError
 from gallery.core.events.conversions import (
     _before_values,
     _event_from_common,
@@ -33,7 +33,7 @@ from gallery.core.events.conversions import (
     _now,
     _parse_payload,
 )
-from gallery.core.events.kinds import COMMON_FIELDS, EVENT_KINDS, EventKind, kind_by_id
+from gallery.core.events.kinds import COMMON_FIELDS, COVER, EVENT_KINDS, EventKind, kind_by_id
 from gallery.core.events.models import (
     Event,
     EventDraft,
@@ -213,12 +213,15 @@ class EventStore:
 
         **按路径分批查**（``IN`` 一批放不下整个库），每张照片一个列表 —— 一张照片可以同时属于
         一次演出与一次旅行。
+
+        **顺带把封面那一列取出来**（ADR 0048 决策 7）：分组要靠它知道这一组的卡片画哪一张，
+        而这是同一次 JOIN —— 多带一列的代价是零，多发一次查询不是。
         """
         connection = self._connection
         if connection is None or not paths:
             return {}
         statement = (
-            f"SELECT pe.path, e.id, e.kind, e.title, e.started_on"
+            f"SELECT pe.path, e.id, e.kind, e.title, e.started_on, e.{COVER.column}"
             f"  FROM {SCHEMA_NAME}.photo_events pe"
             f"  JOIN {SCHEMA_NAME}.events e ON e.id = pe.event_id"
             f" WHERE pe.path IN ({{placeholders}})"
@@ -239,6 +242,7 @@ class EventStore:
                             kind=str(row[2]),
                             title=str(row[3]),
                             started_on=row[4],
+                            cover_path=row[5],
                         )
                     )
         return {path: tuple(refs) for path, refs in found.items()}
@@ -512,6 +516,69 @@ class EventStore:
         assert restored is not None
         return restored
 
+    def set_cover(self, event_id: int, photo: Path) -> EventWriteOutcome:
+        """把这个事件的封面设成某一张照片。**它必须已经绑在这个事件上**（ADR 0048 决策 1）。
+
+        :raises CoverNotBoundError: 那张照片不属于这个事件 —— 卡片只能画组内那一张
+            （缩略图流水线拿的是 ``PhotoRef``），所以「设一个组外的封面」在界面上根本画不出来。
+            界面那一条只对**已绑定的**照片开放（见 ``ui/window/event_flow.py``），这个异常是
+            那一层之外的兜底。
+        """
+        if not self._is_bound(event_id, photo):
+            raise CoverNotBoundError("只能从属于这次事件的照片里挑封面。", path=photo)
+        kind = kind_by_id(self._kind_of(event_id))
+        if kind is None:
+            raise ValueError(f"认不出的事件类型：{self._kind_of(event_id)}")
+        return self._write_cover(kind, event_id, photo)
+
+    def clear_cover(self, event_id: int) -> bool:
+        """取消封面：回到「组内第一张」。**没设过就是 ``False``**（界面据此不摆那一行）。"""
+        kind = kind_by_id(self._kind_of(event_id))
+        if kind is None:
+            raise ValueError(f"认不出的事件类型：{self._kind_of(event_id)}")
+        outcome = self._write_cover(kind, event_id, None)
+        return outcome.changed
+
+    def _is_bound(self, event_id: int, photo: Path) -> bool:
+        """这张照片绑在这个事件上吗（不变式的那一半，ADR 0048 决策 1）。"""
+        connection = self._require()
+        with self._lock:
+            row = connection.execute(
+                f"SELECT 1 FROM {SCHEMA_NAME}.{BINDINGS_TABLE} WHERE event_id = ? AND path = ?",
+                (event_id, str(photo)),
+            ).fetchone()
+        return row is not None
+
+    def _write_cover(self, kind: EventKind, event_id: int, photo: Path | None) -> EventWriteOutcome:
+        """只写封面那一列 —— **不拿整份草稿去 UPDATE**。
+
+        那样做会把草稿里缺的字段写成 NULL：面板交上来的草稿只填了用户看见的那几格，
+        封面若不在其中就是「打开面板按一下保存，封面没了」（ADR 0048 决策 2）。
+
+        ``modified_at`` **不动**：换封面是一次绑定关系的调整，而绑定那张表压根没有时间戳
+        （ADR 0043 决策 2）；给事件记上一次「最后修改」会让菜单按日期排序时莫名其妙跳位置。
+        """
+        connection = self._require()
+        previous = self.event(event_id)
+        if previous is None:
+            raise KeyError(f"没有 id 为 {event_id} 的事件")
+        with self._lock, connection:
+            connection.execute(
+                f"UPDATE {SCHEMA_NAME}.events SET {COVER.column} = ? WHERE id = ?",
+                (str(photo) if photo is not None else None, event_id),
+            )
+        updated = self.event(event_id)
+        assert updated is not None
+        # 与 update 同一套：逐字段一样就不记，没有改动就没什么可撤的。
+        changed = updated.cover_path != previous.cover_path
+        if changed:
+            self._changed()
+        return EventWriteOutcome(
+            event=updated,
+            journaled=self._journal(ACTION_EVENT, kind, previous, updated, ()) if changed else True,
+            changed=changed,
+        )
+
     def bind(self, paths: Iterable[Path], event_id: int) -> int:
         """把照片记进这个事件，返回新记进去几张（已经记着的算没动）。"""
         connection = self._require()
@@ -537,6 +604,9 @@ class EventStore:
 
         ``event_id`` 在整次调用里是同一个，所以按它 + 路径的 ``IN`` 删就够 —— **不为同一件事
         再拼一次 ``(path, event_id)`` 的行值**，那个写法在老版本 SQLite 上不认。
+
+        **被移出来的那几张里如果有封面，同一批里把它清空** —— 封面恒为绑定里的一张
+        （ADR 0048 决策 1）。少了这一步，卡片会指向一张已经不属于这次事件的照片。
         """
         connection = self._require()
         keys = [str(path) for path in paths]
@@ -551,7 +621,37 @@ class EventStore:
                     [event_id, *chunk],
                 )
                 removed += max(cursor.rowcount, 0)
+                self._clear_covers_in(connection, chunk, event_id=event_id)
         return removed
+
+    def _clear_covers_in(
+        self,
+        connection: sqlite3.Connection,
+        keys: Sequence[str],
+        *,
+        event_id: int | None = None,
+    ) -> None:
+        """这些路径不再被绑着，于是指向它们的封面要清空（ADR 0048 决策 1）。
+
+        **与删绑定在同一个事务里**：分两次写的话，中间那一刻库里就有一个「封面指向一张不属于
+        这次事件的照片」的瞬间 —— 而那正是崩在这条路上会留下的东西。
+
+        :param event_id: 只清这一个事件的（``unbind``）；``None`` 表示清所有事件的
+            （``forget_bindings``：照片没了，它身上每一条绑定都是孤儿，封面同理）。
+        """
+        placeholders = ", ".join(["?"] * len(keys))
+        if event_id is None:
+            connection.execute(
+                f"UPDATE {SCHEMA_NAME}.events SET {COVER.column} = NULL"
+                f" WHERE {COVER.column} IN ({placeholders})",
+                list(keys),
+            )
+        else:
+            connection.execute(
+                f"UPDATE {SCHEMA_NAME}.events SET {COVER.column} = NULL"
+                f" WHERE id = ? AND {COVER.column} IN ({placeholders})",
+                [event_id, *keys],
+            )
 
     def forget_bindings(self, paths: Sequence[Path]) -> int:
         """删掉这些路径上的**全部**绑定，返回删了几条（孤儿清理，ADR 0043 决策 9）。
@@ -560,6 +660,10 @@ class EventStore:
         而多带一个条件只会漏掉「同一张照片属于好几种事件」的情形。
 
         ``path`` 是主键的前导列，所以 ``IN`` 走主键索引，不必扫全表。
+
+        **指向这些路径的封面也一并清空**（ADR 0048 决策 1）：照片没了，它不只不属于任何事件，
+        当过它的事件也不该再拿它当封面。返回值仍只是「清掉了几条绑定」——
+        封面退回「组内第一张」是用户看得见的结果，不必再报一个数。
         """
         connection = self._connection
         if connection is None:
@@ -575,10 +679,16 @@ class EventStore:
                     chunk,
                 )
                 removed += max(cursor.rowcount, 0)
+                self._clear_covers_in(connection, chunk)
         return removed
 
     def _apply_moves(self, moves: Iterable[tuple[Path, Path, bool]]) -> int:
-        """真搬。**连接不可用就是 0 条** —— ``None`` 那个库由 :func:`follow_moves` 挡掉。"""
+        """真搬。**连接不可用就是 0 条** —— ``None`` 那个库由 :func:`follow_moves` 挡掉。
+
+        **封面跟着搬，同一个事务**（ADR 0048 决策 4）。它与绑定在同一个库里、同一套路径空间，
+        所以这一句和撤销那一遍（方向相反）就是全部 —— 没有第二个真相源要同步。
+        封面那一列**没有索引**，而它是至多几十行里的一列，全表扫与走索引同一个量级。
+        """
         connection = self._connection
         if connection is None:
             return 0
@@ -590,25 +700,49 @@ class EventStore:
             for old, new, is_dir in pairs:
                 if is_dir:
                     old_prefix, new_prefix = str(old), str(new)
+                    parameters: tuple[object, ...] = (
+                        new_prefix,
+                        len(old_prefix) + 1,
+                        like_pattern(old_prefix, "/%"),
+                        old_prefix,
+                    )
                     cursor = connection.execute(
                         f"UPDATE OR REPLACE {SCHEMA_NAME}.{BINDINGS_TABLE}"
                         f" SET path = ? || substr(path, ?)"
                         f" WHERE path LIKE ? ESCAPE '{ESCAPE}' OR path = ?",
-                        (
-                            new_prefix,
-                            len(old_prefix) + 1,
-                            like_pattern(old_prefix, "/%"),
-                            old_prefix,
-                        ),
+                        parameters,
                     )
+                    self._move_covers(connection, is_dir=True, parameters=parameters)
                 else:
                     cursor = connection.execute(
                         f"UPDATE OR REPLACE {SCHEMA_NAME}.{BINDINGS_TABLE}"
                         f" SET path = ? WHERE path = ?",
                         (str(new), str(old)),
                     )
+                    self._move_covers(connection, is_dir=False, parameters=(str(new), str(old)))
                 moved += max(cursor.rowcount, 0)
         return moved
+
+    def _move_covers(
+        self, connection: sqlite3.Connection, *, is_dir: bool, parameters: tuple[object, ...]
+    ) -> None:
+        """把封面从旧位置改写到新位置。**参数与绑定那一句逐字相同**，于是两种形状各写一遍 SQL。
+
+        单张照片的封面可能同时是**几个**事件的封面（一张照片属于好几种事件是成立的），
+        所以这里不按事件逐个去改 —— 一句 ``WHERE cover_path = ?`` 改掉全部。
+        """
+        if is_dir:
+            connection.execute(
+                f"UPDATE {SCHEMA_NAME}.events"
+                f" SET {COVER.column} = ? || substr({COVER.column}, ?)"
+                f" WHERE {COVER.column} LIKE ? ESCAPE '{ESCAPE}' OR {COVER.column} = ?",
+                parameters,
+            )
+        else:
+            connection.execute(
+                f"UPDATE {SCHEMA_NAME}.events SET {COVER.column} = ? WHERE {COVER.column} = ?",
+                parameters,
+            )
 
     def _kind_of(self, event_id: int) -> str:
         """这一条事件是哪一类。改它之前要按类型拼扩展表的列，所以得先问一次。"""
