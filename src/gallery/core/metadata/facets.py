@@ -111,10 +111,6 @@ class Facet:
     #: 2 月前面」），其余按名称升序。返回数字的字段，组内所有键都是数字；返回字符串的反之。
     #: **交回 ``None`` 表示「这个组没有值」**，那一组沉在末尾（两个方向下都是）。
     group_order: Callable[[str], SortValue | None] | None = None
-    #: 这个字段的**自然方向**是否为「新 → 旧」。时间为真（拍摄时间、年月日、事件），
-    #: 其余按名称升序。「逆序」是偏离它而不是字面的 ``reverse``（ADR 0049）——
-    #: 照片与组卡片共用这一个判据，所以同一层里两者永远朝着同一个方向。
-    newest_first: bool = False
     #: 只有装了 exiftool 才读得到（Pillow 降级路径拿不到 IPTC / XMP）。
     needs_exiftool: bool = False
     #: 取不到值时那张组卡片的标题。
@@ -504,7 +500,6 @@ def _facet(
     group: Callable[[FacetInput], Sequence[tuple[str, str]]] | None = None,
     sort: Callable[[FacetInput], SortValue | None] | None = None,
     group_order: Callable[[str], SortValue | None] | None = None,
-    newest_first: bool = False,
     needs_exiftool: bool = False,
     empty_label: str = "未知",
 ) -> Facet:
@@ -515,7 +510,6 @@ def _facet(
         group=group,
         sort=sort if sort is not None else (lambda _item: None),
         group_order=group_order if group_order is not None else _text_group_order,
-        newest_first=newest_first,
         needs_exiftool=needs_exiftool,
         empty_label=empty_label,
     )
@@ -548,7 +542,6 @@ _FACETS: Final[tuple[Facet, ...]] = (
         "拍摄时间",
         "captured",
         sort=lambda item: item.facets.captured_at,
-        newest_first=True,
     ),
     _facet(
         FACET_YEAR,
@@ -556,7 +549,6 @@ _FACETS: Final[tuple[Facet, ...]] = (
         "captured",
         group=_group_by_year,
         group_order=_date_group_order,
-        newest_first=True,
         empty_label="时间未知",
     ),
     _facet(
@@ -565,7 +557,6 @@ _FACETS: Final[tuple[Facet, ...]] = (
         "captured",
         group=_group_by_month,
         group_order=_date_group_order,
-        newest_first=True,
         empty_label="时间未知",
     ),
     _facet(
@@ -574,7 +565,6 @@ _FACETS: Final[tuple[Facet, ...]] = (
         "captured",
         group=_group_by_day,
         group_order=_date_group_order,
-        newest_first=True,
         empty_label="时间未知",
     ),
     _facet(
@@ -599,7 +589,6 @@ _FACETS: Final[tuple[Facet, ...]] = (
         "text",
         group=_event_group,
         group_order=_event_group_order,
-        newest_first=True,
         empty_label="未归入事件",
     ),
     _facet(
@@ -655,7 +644,6 @@ _FACETS: Final[tuple[Facet, ...]] = (
         "修改时间",
         "number",
         sort=_file_number("mtime_ns"),
-        newest_first=True,
     ),
     _facet(FACET_APERTURE, "光圈", "number", sort=_facet_number("aperture")),
     _facet(FACET_SHUTTER, "快门", "number", sort=_facet_number("shutter")),

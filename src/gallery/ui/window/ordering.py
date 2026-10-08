@@ -493,8 +493,8 @@ class OrderingMixin:
         photos = [entry for entry in entries if isinstance(entry, PhotoRef)]
         # 相册卡片永远排在前面：先看文件夹、再看按元数据归拢出来的组，是既有心智。
         order = self._current_order()
-        # 相册卡片**只按名称排，方向直接看「逆序」**（ADR 0049）：它们不进 `sort_facet`，原先连
-        # 「逆序」都不看。**别用 ``order.newest_first``** —— 那是排序字段的自然方向。
+        # 相册卡片**只按名称排，方向跟着「逆序」**（ADR 0049）：它们不进 `sort_facet`（文件夹没有
+        # 拍摄时间与相机），而原先连「逆序」都不看，于是「照片翻了、相册没翻」。
         albums.sort(key=lambda folder: folder.name.casefold(), reverse=order.descending)
         # 分组只在这一层摆卡片时才有（判据只有 :meth:`_level_shows_group_cards` 一处）：
         # 已经在分组里面就再分不出来，而日历那一页自己按日期归拢、要装整库照片。

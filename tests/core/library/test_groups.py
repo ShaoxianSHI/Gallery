@@ -2,11 +2,11 @@
 
 这里定的是「用户看到什么顺序」，所以测的都是**看得见的性质**：
 
-- 时间分组新 → 旧，其余按名字升序；没值的组永远在最后。
+- **默认一律升序**（名称 A→Z、数字小→大、时间旧→新）；「逆序」是字面的 ``reverse``。
+- 没值的组永远在最后，正序逆序都一样。
 - 排序里没值的一律沉底，正序逆序都一样（不然一堆没写拍摄时间的照片会霸占一整屏）。
 - 同一秒拍到的照片按文件名兜底，顺序稳定可预期。
-- **「逆序」偏离字段的自然方向，不是字面的 ``reverse``**（ADR 0049）：照片、组卡片、
-  相册卡片三者因此永远朝着同一个方向。
+- 照片、组卡片、相册卡片三者共用同一个方向开关（ADR 0049）。
 """
 
 from __future__ import annotations
@@ -28,9 +28,11 @@ from gallery.core.metadata.facets import (
     FACET_MONTH,
     FACET_NAME,
     FACET_SIZE,
+    SORT_FACET_IDS,
     Facet,
     PhotoFacets,
     group_facet,
+    input_for,
     sort_facet,
 )
 
@@ -101,8 +103,6 @@ def test_missing_values_sink_to_the_end_in_both_directions(tmp_path: Path) -> No
 
 
 def test_equal_values_fall_back_to_file_name(tmp_path: Path) -> None:
-    """同值时按文件名兜底 —— 但**方向仍跟着字段的自然方向**：拍摄时间是新→旧，
-    于是同样两个值下面文件名是降序的。别把它当成「兜底键决定方向」。"""
     photos = [_ref(tmp_path, "b.jpg"), _ref(tmp_path, "a.jpg")]
     values = {ref.path: PhotoFacets(captured_at=1000.0) for ref in photos}
     order = sort_facet(FACET_CAPTURED)
@@ -110,10 +110,7 @@ def test_equal_values_fall_back_to_file_name(tmp_path: Path) -> None:
 
     ordered = sort_photos(photos, order=SortOrder(order), root=tmp_path, values=values)
 
-    assert _by_name(ordered) == ["b.jpg", "a.jpg"]
-    assert _by_name(
-        sort_photos(photos, order=SortOrder(order, descending=True), root=tmp_path, values=values)
-    ) == ["a.jpg", "b.jpg"]
+    assert _by_name(ordered) == ["a.jpg", "b.jpg"]
 
 
 def test_sort_by_name_works_without_any_metadata(tmp_path: Path) -> None:
@@ -130,12 +127,117 @@ def test_sort_by_name_works_without_any_metadata(tmp_path: Path) -> None:
 # ---- 分组 ----------------------------------------------------------------------------
 
 
+def test_every_sort_field_reverses_cleanly_with_the_toggle(tmp_path: Path) -> None:
+    """**每一个可排序字段，「逆序」都恰好是默认顺序的反面**（ADR 0049）。
+
+    方向只有 :attr:`SortOrder.descending` 一处，没有任何字段能自己另立一档。
+    这条遍历整张表而不是挑几个字段：菜单里只要有一个字段默认降序，界面上就仍然读作
+    「其余升序、时间那几个是特例」—— 而特例正是「相册和分组方向相反」的由来。
+    将来有人给某个字段加回「它天生新→旧」，这里立刻变红。
+    """
+    small, large = _ascending_pair(tmp_path)
+    values = _every_field_values(small, large)
+
+    offenders = [
+        facet_id
+        for facet_id in SORT_FACET_IDS
+        if _not_a_clean_reversal(facet_id, (small, large), tmp_path, values)
+    ]
+
+    assert offenders == [], f"这些字段的「逆序」不是默认顺序的反面：{offenders}"
+
+
+def _not_a_clean_reversal(
+    facet_id: str, photos: tuple[PhotoRef, PhotoRef], root: Path, values: Mapping[Path, PhotoFacets]
+) -> bool:
+    """这个字段勾上「逆序」之后，是不是**恰好**把默认顺序倒过来。"""
+    facet = sort_facet(facet_id)
+    assert facet is not None
+    forward = sort_photos(photos, order=SortOrder(facet), root=root, values=values)
+    backward = sort_photos(
+        photos, order=SortOrder(facet, descending=True), root=root, values=values
+    )
+    return backward != list(reversed(forward))
+
+
+def _ascending_pair(root: Path) -> tuple[PhotoRef, PhotoRef]:
+    """两张照片，**每个可排序字段上**前者都更小 —— 于是一切升序都该把前者排前面。
+
+    文件夹与扩展名也得分出大小（`a/x.jpg` 与 `b/y.png`），否则那两档是同值、
+    退回文件名兜底，下面那条守护就成了「碰巧对」（它自己盯着这件事）。
+    """
+    return (
+        PhotoRef(path=root / "a" / "x.jpg", size=10, mtime_ns=100),
+        PhotoRef(path=root / "b" / "y.png", size=20, mtime_ns=200),
+    )
+
+
+def _every_field_values(small: PhotoRef, large: PhotoRef) -> dict[Path, PhotoFacets]:
+    """给那两张照片的**全部元数据字段**都配上「小的 / 大的」两份值。"""
+    return {small.path: _one_side(small=True), large.path: _one_side(small=False)}
+
+
+def _one_side(*, small: bool) -> PhotoFacets:
+    number = 1.0 if small else 2.0
+    return PhotoFacets(
+        captured_at=number,
+        year=2000 if small else 2001,
+        month=1 if small else 2,
+        day=1 if small else 2,
+        camera="a" if small else "b",
+        lens="a" if small else "b",
+        city="a" if small else "b",
+        region="a" if small else "b",
+        country="a" if small else "b",
+        keywords=("a",) if small else ("b",),
+        aperture=number,
+        shutter=number,
+        iso=int(number),
+        focal=number,
+        pixels=number * 1000,
+    )
+
+
+def test_the_pair_really_differs_on_every_field(tmp_path: Path) -> None:
+    """上面那对照片必须在**每一个**可排序字段上分出大小，否则那条守护是空转的。
+
+    给成一样的值时那一档会退回文件名兜底，于是「逆序是默认顺序的反面」照样成立 ——
+    而真正有问题的字段（自己另立了一档方向的那种）反而量不到。
+    """
+    small, large = _ascending_pair(tmp_path)
+    values = _every_field_values(small, large)
+    indistinguishable = [
+        facet_id
+        for facet_id in SORT_FACET_IDS
+        if not _strictly_smaller(
+            facet_id, values[small.path], values[large.path], small, large, tmp_path
+        )
+    ]
+
+    assert indistinguishable == [], f"这些字段分不出大小：{indistinguishable}"
+
+
+def _strictly_smaller(
+    facet_id: str,
+    small: PhotoFacets,
+    large: PhotoFacets,
+    small_ref: PhotoRef,
+    large_ref: PhotoRef,
+    root: Path,
+) -> bool:
+    facet = sort_facet(facet_id)
+    assert facet is not None
+    one = facet.sort(input_for(small_ref, small, root))
+    other = facet.sort(input_for(large_ref, large, root))
+    return one is not None and other is not None and one < other
+
+
 def test_group_cards_follow_the_reverse_toggle(tmp_path: Path) -> None:
     """「逆序」要**真的把组卡片翻过来**（ADR 0049）。
 
     它原先只由字段自己声明，于是这一档对组卡片完全无效：同一层里照片翻了、组卡片没翻，
-    读起来像两样东西没对齐。时间类与名称类各测一只 —— 前者的自然方向本就是降序，
-    后者不是，两者的翻转方向因此相反。
+    读起来像两样东西没对齐。时间类与名称类各测一只 —— 两者的键一个是数字一个是字符串，
+    只测一类就分不清「翻了」与「碰巧对」。
     """
     months = [_ref(tmp_path, f"{月份}.jpg") for 月份 in ("三月", "十二月")]
     values = {
@@ -168,13 +270,13 @@ def test_group_cards_follow_the_reverse_toggle(tmp_path: Path) -> None:
         ], "组卡片的顺序没跟着「逆序」翻"
         return [group.label for group in forward]
 
-    # 时间类：自然方向新→旧，所以默认是十二月、三月。
-    assert labels(months, by_month, values) == ["2024 年 12 月", "2024 年 3 月"]
-    # 名称类：自然方向是升序，所以默认是佳能、富士。
+    # **默认一律升序**（ADR 0049）：时间类是旧→新，名称类是 A→Z。
+    assert labels(months, by_month, values) == ["2024 年 3 月", "2024 年 12 月"]
+    # 名称类：升序，所以默认是佳能、富士。
     assert labels(cameras, by_camera, camera_values) == ["佳能", "富士"]
 
 
-def test_group_by_month_is_newest_first(tmp_path: Path) -> None:
+def test_group_by_month_is_oldest_first(tmp_path: Path) -> None:
     photos = [_ref(tmp_path, f"{name}.jpg") for name in ("三月", "十二月", "一月")]
     values = {
         photos[0].path: PhotoFacets(year=2024, month=3),
@@ -186,8 +288,8 @@ def test_group_by_month_is_newest_first(tmp_path: Path) -> None:
 
     groups = build_groups(photos, facet=facet, root=tmp_path, values=values)
 
-    assert [group.label for group in groups] == ["2024 年 12 月", "2024 年 3 月", "2023 年 1 月"]
-    assert groups[0].photos[0].name == "十二月.jpg"
+    assert [group.label for group in groups] == ["2023 年 1 月", "2024 年 3 月", "2024 年 12 月"]
+    assert groups[0].photos[0].name == "一月.jpg"
 
 
 def test_photos_without_value_land_in_one_last_group(tmp_path: Path) -> None:

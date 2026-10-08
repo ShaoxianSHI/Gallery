@@ -177,6 +177,15 @@ def _open(
     return window
 
 
+def _row_of_group(window: MainWindow, label: str) -> int:
+    """名字是 ``label`` 的那张组卡片在第几行。**别写死第 0 行**：组卡片的顺序会变。"""
+    for row in range(window._model.rowCount()):
+        group = window._model.group_at(row)
+        if group is not None and group.label == label:
+            return row
+    raise AssertionError(f"这一层上没有名为「{label}」的组卡片")
+
+
 def _select_rows(window: MainWindow, *rows: int) -> None:
     """按代码选中若干行（等价于用户按住 ⌘ 连点）。**先设当前项再选**：
     ``setCurrentIndex`` 会把选区收成那一格，顺序反了多选就只剩一格。
@@ -294,17 +303,16 @@ def test_grouping_turns_the_level_into_group_cards(
     _touch_all(root, sorted(DATES))  # 默认排序按修改时间，钉死这一层未分组的顺序
     window = _open(qt_app, root, session_base=tmp_path / "状态")
     _settle(qt_app, window)
-    # 默认方向是**新 → 旧**（ADR 0049），而 ``_touch_all`` 让名字越大越新。
-    assert _labels(window) == sorted(DATES, reverse=True)
+    assert _labels(window) == sorted(DATES)
 
     window.set_group_facet("captured_month")
     _settle(qt_app, window, groups=True)
 
     groups = _groups(window)
     assert [(group.label, group.count) for group in groups] == [
-        ("2024 年 4 月", 1),
-        ("2024 年 3 月", 1),
         ("2023 年 12 月", 1),
+        ("2024 年 3 月", 1),
+        ("2024 年 4 月", 1),
         ("时间未知", 1),
     ]
     window.close()
@@ -344,7 +352,7 @@ def test_groups_are_remembered_across_restarts(
 
     again = _open(qt_app, root, session_base=session_base, remember=False)
     _settle(qt_app, again, groups=True)
-    assert [group.label for group in _groups(again)] == ["2024 年", "2023 年", "时间未知"]
+    assert [group.label for group in _groups(again)] == ["2023 年", "2024 年", "时间未知"]
     again.close()
 
 
@@ -560,7 +568,7 @@ def test_escape_leaves_the_group(
     _settle(qt_app, window, groups=True)
 
     assert window._group_view is None
-    assert [group.label for group in _groups(window)] == ["2024 年", "2023 年", "时间未知"]
+    assert [group.label for group in _groups(window)] == ["2023 年", "2024 年", "时间未知"]
     window.close()
 
 
@@ -728,8 +736,7 @@ def test_photos_are_sorted_by_modified_time_without_asking(
     window = _open(qt_app, root, session_base=tmp_path / "状态")
     _settle(qt_app, window)
 
-    # 新 → 旧，且「逆序」这一档默认**没有勾上**（自然方向就是新→旧，ADR 0049）。
-    assert _labels(window) == ["去年十二月.jpg", "四月.jpg", "没有时间.jpg", "三月.jpg"]
+    assert _labels(window) == ["三月.jpg", "没有时间.jpg", "四月.jpg", "去年十二月.jpg"]
     assert window._sort_actions["modified"].isChecked()
     assert window._descending_action.isChecked() is False
     assert window._descending_action.isEnabled() is True
@@ -745,8 +752,7 @@ def test_the_default_sort_needs_no_metadata_read(
     _settle(qt_app, window)
 
     assert window._needs_facet_read() is False
-    # 这两张刚创建，四月更新 → 新→旧，于是四月在前。
-    assert _labels(window) == ["四月.jpg", "三月.jpg"]
+    assert _labels(window) == ["三月.jpg", "四月.jpg"]
     window.close()
 
 
@@ -812,17 +818,17 @@ def test_sorting_reorders_without_grouping(
 def test_the_default_sort_shows_the_newest_photo_first(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path], fake_facet_source: object
 ) -> None:
-    """默认那一档（修改时间）打开就是**最新在前**，而「逆序」没有勾（ADR 0049）。
+    """默认那一档（修改时间）**升序**（旧 → 新），而「逆序」没有勾（ADR 0049）。
 
     这两半必须一起钉：只钉顺序的话，把「逆序」的默认值翻成勾上也能过 —— 那读起来
-    仍然是最新在前，而用户点一下「逆序」会看到顺序没变。
+    同样是「最新那张不在最前」，而用户点一下「逆序」会看到顺序没变。
     """
     root = _library(tmp_path, make_photo, ["最早.jpg", "最新.jpg", "中间.jpg"])
     _touch_all(root, ["最早.jpg", "中间.jpg", "最新.jpg"])
     window = _open(qt_app, root, session_base=tmp_path / "状态")
     _settle(qt_app, window)
 
-    assert _labels(window) == ["最新.jpg", "中间.jpg", "最早.jpg"]
+    assert _labels(window) == ["最早.jpg", "中间.jpg", "最新.jpg"]
     assert window._descending_action.isChecked() is False
     window.close()
 
@@ -962,15 +968,13 @@ def test_switching_the_sort_never_shows_the_old_order_first(
     _touch_all(root, ["三月.jpg", "去年十二月.jpg", "四月.jpg"])
     window = _open(qt_app, root, session_base=tmp_path / "状态")
     _settle(qt_app, window)
-    # 默认方向新→旧：四月最新、去年十二月次之、三月最旧。
-    assert _names(window) == ["四月.jpg", "去年十二月.jpg", "三月.jpg"]
+    assert _names(window) == ["三月.jpg", "去年十二月.jpg", "四月.jpg"]
 
     window.set_sort_facet("captured")
     seen = _watch_names(qt_app, window, lambda: window._model.rowCount() > 0)
 
-    # 拍摄时间同样新→旧，而它与修改时间给的顺序**确实不同**（去年十二月在这里垫底）。
-    assert _names(window) == ["四月.jpg", "三月.jpg", "去年十二月.jpg"]
-    assert seen == [(), ("四月.jpg", "三月.jpg", "去年十二月.jpg")]
+    assert _names(window) == ["去年十二月.jpg", "三月.jpg", "四月.jpg"]
+    assert seen == [(), ("去年十二月.jpg", "三月.jpg", "四月.jpg")]
     window.close()
 
 
@@ -980,27 +984,27 @@ def test_entering_a_group_also_waits_for_the_metadata_sort(
     """进组之后再换排序字段，同样不能先闪一屏旧顺序。"""
     root = _library(tmp_path, make_photo, ["三月.jpg", "四月.jpg", "去年十二月.jpg"])
     # 默认排序（修改时间）下这一组与按拍摄时间排**反过来**——换字段才有东西可换。
-    # 两档的方向都是新→旧（ADR 0049），所以「反过来」只可能来自两个字段给出的先后不同。
+    # 两档都是升序（ADR 0049），所以「反过来」只可能来自两个字段给出的先后不同。
     _touch_all(root, ["去年十二月.jpg", "四月.jpg", "三月.jpg"])
     window = _open(qt_app, root, session_base=tmp_path / "状态", group_facet="captured_year")
     _settle(qt_app, window, groups=True)
     window.enter_group(next(group for group in _groups(window) if group.label == "2024 年"))
     _settle(qt_app, window)
     before = _names(window)
-    # 三月的修改时间比四月新，而拍摄时间比四月旧 —— 两档给的先后正好相反。
-    assert before == ["三月.jpg", "四月.jpg"]
+    # 三月的修改时间比四月**新**，而拍摄时间比四月**旧** —— 两档给的先后正好相反。
+    assert before == ["四月.jpg", "三月.jpg"]
 
-    window.set_sort_facet("captured")  # 四月（04-16）在三月（03-16）之前
+    window.set_sort_facet("captured")  # 三月（03-16）在四月（04-16）之前
     _settle(qt_app, window)
-    assert _names(window) == ["四月.jpg", "三月.jpg"]
+    assert _names(window) == ["三月.jpg", "四月.jpg"]
 
     window.set_sort_descending(True)
     seen = _watch_names(qt_app, window, lambda: window._model.rowCount() > 0)
 
-    # 逆序偏离「拍摄时间」的自然方向（新→旧），于是变成三月在前。
-    assert _names(window) == ["三月.jpg", "四月.jpg"]
-    # 关键在这一行：**旧顺序一帧都不许出现**（先摆一屏四月/三月、下一帧才换成三月/四月也不行）。
-    assert seen == [(), ("三月.jpg", "四月.jpg")]
+    # 勾了逆序：拍摄时间降序，于是变成四月在前。
+    assert _names(window) == ["四月.jpg", "三月.jpg"]
+    # 关键在这一行：**旧顺序一帧都不许出现**（先摆一屏三月/四月、下一帧才换成四月/三月也不行）。
+    assert seen == [(), ("四月.jpg", "三月.jpg")]
     window.close()
 
 
@@ -1042,7 +1046,8 @@ def test_a_group_card_acts_on_all_of_its_photos(
     _settle(qt_app, window, groups=True)
     year = next(group for group in _groups(window) if group.label == "2024 年")
     assert len(year.photos) == 2
-    window._grid.select_row(0)
+    # **点名选 2024 那一组**，不写死第 0 行：组卡片默认升序（ADR 0049），第 0 行是 2023。
+    _select_rows(window, _row_of_group(window, "2024 年"))
     window._update_action_states()
 
     assert window._trash_action.isEnabled() is True
@@ -1077,6 +1082,5 @@ def test_group_cards_are_kept_when_photos_inside_are_deleted(
     window.trash_selected()
     _settle(qt_app, window)
 
-    # 两张都是刚创建的，四月的修改时间略新 → 新→旧，于是第 0 行是四月，删掉它剩三月。
-    assert _labels(window) == ["三月.jpg"]
+    assert _labels(window) == ["四月.jpg"]
     window.close()

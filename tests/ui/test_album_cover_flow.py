@@ -66,8 +66,6 @@ def root(tmp_path: Path) -> Path:
     """一个库：``京都`` 里两张颜色不同的照片，配置目录已建好。"""
     library = tmp_path / "照片"
     (library / ALBUM).mkdir(parents=True)
-    # SECOND 后写 = 更新，而默认方向是「新 → 旧」（ADR 0049）—— 于是网格第一行是 SECOND。
-    # 下面那些用例都拿 FIRST 当「翻过去之后到的那一张」，靠的正是这个先后。
     Image.new("RGB", (16, 12), FIRST_COLOR).save(library / ALBUM / FIRST)
     Image.new("RGB", (16, 12), SECOND_COLOR).save(library / ALBUM / SECOND)
     prepare_library(library)
@@ -325,8 +323,7 @@ def test_the_viewer_sets_the_cover_of_the_photo_you_are_looking_at(
     翻过图之后网格的选区早就停在第一张了 —— 设成别的照片的封面，是这一页最容易出的错。
     """
     _enter_album(qt_app, window, root)
-    # 从网格的第一行（SECOND）翻到下一张（FIRST）：翻过去之后正在看的**不是**选中的那张。
-    row = _select(window, root / ALBUM / SECOND)
+    row = _select(window, root / ALBUM / FIRST)
     window._open_detail(window._model.index(row, 0))
     assert wait_until(qt_app, lambda: window._detail.has_image), "大图没有在时限内显示出来"
     window.step_detail(1)
@@ -336,7 +333,7 @@ def test_the_viewer_sets_the_cover_of_the_photo_you_are_looking_at(
 
     window.set_selected_as_album_cover()
 
-    assert load_config(root).album_covers == {ALBUM: f"{ALBUM}/{FIRST}"}
+    assert load_config(root).album_covers == {ALBUM: f"{ALBUM}/{SECOND}"}
 
 
 def test_a_cover_from_a_sub_album_reaches_the_parent(

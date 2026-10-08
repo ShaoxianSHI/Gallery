@@ -174,8 +174,8 @@ STAYING_COLOR = (30, 60, 200)
 def touch(path: Path, step: float) -> None:
     """把照片的修改时间钉到 :data:`MTIME_BASE` + ``step``。
 
-    默认排序按**修改时间**（``DEFAULT_SORT_FACET``），方向是**新 → 旧**（ADR 0049）——
-    ``step`` 越大越新，于是它排在越前面。顺序不能靠「谁先被创建」：文件系统给的是
+    默认排序按**修改时间**（``DEFAULT_SORT_FACET``），**升序**（ADR 0049）——
+    ``step`` 越大越新，于是它排在越后面。顺序不能靠「谁先被创建」：文件系统给的是
     真实时间，那不是断言能说清楚的东西。
     """
     os.utime(path, (MTIME_BASE + step, MTIME_BASE + step))
@@ -197,8 +197,8 @@ def test_a_photo_dropped_in_shows_up_without_reopening(
         deliver(qt_app, window, watcher, LibraryChange(ChangeKind.ADDED, newcomer))
 
         assert window._model.rowCount() == 2
-        # 默认按修改时间、新 → 旧排：刚丢进来的那张在前。
-        assert names(window) == ["刚丢进来.jpg", "原来那张.jpg"]
+        # 默认按修改时间升序：先在的那张在前。
+        assert names(window) == ["原来那张.jpg", "刚丢进来.jpg"]
     finally:
         window.close()
 
@@ -230,7 +230,7 @@ def test_a_new_photo_lands_in_the_current_album_behind_a_symlink(
         touch(newcomer, 1)
         deliver(qt_app, window, watcher, LibraryChange(ChangeKind.ADDED, newcomer))
 
-        assert names(window) == ["刚丢进来.jpg", "原来那张.jpg"]
+        assert names(window) == ["原来那张.jpg", "刚丢进来.jpg"]
     finally:
         window.close()
 
@@ -248,8 +248,7 @@ def test_a_new_photo_lands_in_its_sorted_place_not_at_the_end(
 
         deliver(qt_app, window, watcher, LibraryChange(ChangeKind.ADDED, middle))
 
-        # 新 → 旧：c 比 b 新、b 比 a 新，于是正好是插在中间而不是末尾。
-        assert names(window) == ["c.jpg", "b.jpg", "a.jpg"]
+        assert names(window) == ["a.jpg", "b.jpg", "c.jpg"]
     finally:
         window.close()
 
@@ -262,13 +261,13 @@ def test_in_flat_mode_a_photo_from_a_subfolder_is_sorted_among_all(
     touch(make_photo("d.jpg"), 1)
     window, watcher = open_window(qt_app, tmp_path, browse_mode=BROWSE_MODE_FLAT)
     try:
-        assert names(window) == ["d.jpg", "b.jpg"]
+        assert names(window) == ["b.jpg", "d.jpg"]
         nested = make_photo("c.jpg", directory=tmp_path / "旅行")
         touch(nested, 0.5)
 
         deliver(qt_app, window, watcher, LibraryChange(ChangeKind.ADDED, nested))
 
-        assert names(window) == ["d.jpg", "c.jpg", "b.jpg"]
+        assert names(window) == ["b.jpg", "c.jpg", "d.jpg"]
     finally:
         window.close()
 
