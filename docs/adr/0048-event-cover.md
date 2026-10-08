@@ -254,6 +254,15 @@ for event_ref in events.get(ref.path, ()):
   **`_values()` 必须把封面带上** —— 漏了就是「打开面板按一下保存，封面没了」。
 - `ui/browser/{model,delegate}.py`、`ui/thumbs/pipeline.py`、`ui/window/thumbnail_flow.py`
   **一字不改**（决策 7）。`core/metadata/{rename,transfer}.py` **一字不改**（决策 4）。
+- **搬封面与清封面都要作废 `Library.all_events()` 那份会话缓存**（`_changed()`）。原先 `_changed()`
+  只在 create / update / delete / undo 四处调，因为只有那四处会改事件本体；现在封面是**第四类**
+  会改那一行的操作，漏掉的症状是「库里已经是新路径、面板里那个封面还指着上一个名字」，
+  而用户没有任何办法把它刷新掉（除非切库或改点别的）。
+- **界面上那个方法叫 `event_cover_candidate`，不叫 `cover_candidate`** —— `WriteOpsMixin`
+  已经有一个同名的那份（相册封面，ADR 0028），而它在 `MainWindow` 的基类列表里排在
+  `EventFlowMixin` **前面**：同名的那一个永远不会被调用，**而没有任何报错**。症状是
+  「菜单里压根没有这一条」，查起来像是判据写错了。为此加了一条守护
+  （`tests/test_guards.py`）：`MainWindow` 的两个 mixin 不许有同名方法。
 - **测试**（每条对应上面某个「否则会静默出事」）：
 
   | 用例 | 守的是什么 |
@@ -268,6 +277,7 @@ for event_ref in events.get(ref.path, ()):
   | `test_saving_the_panel_does_not_clear_the_cover` | 面板带上封面那一份（决策 2 最后一行） |
   | 菜单：没事件时不出现、列出所属事件、卡片清除 | 落点与 ADR 0028 同一张表（决策 6） |
   | 事件库不可用时 | 封面那一列同样不出现（`events_available` 那条既有判据） |
+| 「两个 mixin 不许有同名方法」 | MRO 只认第一个实现，同名的那个**静默**不生效（决策 6 末尾那条） |
 
 - **性能**：`events_for_photos` 多带一列（同一次 JOIN，不多发查询）；`build_groups` 每个成员多几次
   字典查找；渲染路径零变化。
