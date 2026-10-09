@@ -202,7 +202,7 @@ class ThumbnailFlowMixin:
         )
 
     def _on_thumbnail_cache_cleared(self, generation: int, payload: object) -> None:
-        self._cache_job: int | None = None
+        self._finish_job("_cache_job")
         if generation != self._generation:
             return  # 已经换库了：删的是上一个库的缓存，别去动新库的模型
         removed = payload if isinstance(payload, int) else 0
@@ -211,7 +211,7 @@ class ThumbnailFlowMixin:
         self._show_banner(f"已清除 {removed} 个缩略图缓存文件。", auto_hide=True)
 
     def _on_thumbnail_cache_failed(self, message: str) -> None:
-        self._cache_job = None
+        self._finish_job("_cache_job")
         logger.info("清空缩略图缓存失败：%s", message)
         # 这一句**不自动收起**：它是「要用户动手处理」的（换个地方、腾点空间再试）。
         self._show_banner(f"没能清空缩略图缓存：{message.rstrip('。')}")

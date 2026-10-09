@@ -139,7 +139,7 @@ class SearchFlowMixin:
         """
         if generation != self._generation:
             return
-        self._filter_job: int | None = None
+        self._finish_job("_filter_job")
         if not isinstance(payload, tuple) or len(payload) != 2:
             self._apply_ordering()
             return
@@ -170,7 +170,7 @@ class SearchFlowMixin:
         """筛选没能完成。**说清是哪一件**，别让用户对着一个空层猜。"""
         if generation != self._generation:
             return
-        self._filter_job = None
+        self._finish_job("_filter_job")
         self._show_banner(f"筛选没能完成：{message}")
         # 照常把这一层排出来：一片空白比未筛选的内容更没用，而横幅已经说清发生了什么。
         self._apply_ordering()
@@ -212,7 +212,7 @@ class SearchFlowMixin:
         """
         if generation != self._generation:
             return
-        self._search_job: int | None = None
+        self._finish_job("_search_job")
         total = payload if isinstance(payload, int) else 0
         # 命中数变了要刷新面包屑：它就写在那枚「搜索结果（128）」里。
         if total != self._search_total or self._search_total is None:
@@ -223,7 +223,7 @@ class SearchFlowMixin:
     def _on_search_failed(self, generation: int, message: str) -> None:
         if generation != self._generation:
             return
-        self._search_job = None
+        self._finish_job("_search_job")
         self._filters.set_total(0)
         self._sync_ui()
         self._show_banner(f"检索没能完成：{message}")
@@ -441,7 +441,7 @@ class SearchFlowMixin:
             self._show_index_notice(f"正在建立检索索引…已处理 {payload} 张")
 
     def _on_photo_index_done(self, payload: object) -> None:
-        self._index_job: int | None = None
+        self._finish_job("_index_job")
         self._clear_index_notice()
         written = payload if isinstance(payload, int) else 0
         logger.info("检索索引：写入 %d 张", written)
@@ -451,7 +451,7 @@ class SearchFlowMixin:
             self._apply_conditions()
 
     def _on_photo_index_failed(self, message: str) -> None:
-        self._index_job = None
+        self._finish_job("_index_job")
         self._clear_index_notice()
         # 建不了索引不该让浏览不可用。**把库名从「起过」里拿掉**，下次换回这个库还能再试一次。
         self._forget_indexed_root()

@@ -529,24 +529,15 @@ def test_two_main_window_mixins_never_define_the_same_method() -> None:
 
     **只扫 ``MainWindow`` 真正继承的那几个 mixin**，不扫别的类：``ui/`` 下大量 QWidget 子类
     各自都有 ``paintEvent`` / ``__init__``，那是继承关系里正常的事，与 MRO 冲突无关。
+
+    **一个 mixin 里同一个名字出现多次不算冲突**（``@property`` 的 getter 与 setter
+    是**一处**定义）—— 判据在 :func:`_mixin_method_owners` 里。
     """
-    import ast
-
-    bases = _main_window_bases()
-    owners: dict[str, list[str]] = {}
-    for class_name in bases:
-        module = _module_of_mixin(class_name)
-        if module is None:
-            continue
-        tree = ast.parse(module.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.ClassDef) or node.name != class_name:
-                continue
-            for item in node.body:
-                if isinstance(item, ast.FunctionDef | ast.AsyncFunctionDef):
-                    owners.setdefault(item.name, []).append(class_name)
-
-    clashes = {name: names for name, names in owners.items() if len(names) > 1}
+    clashes = {
+        name: sorted(names)
+        for name, names in _mixin_method_owners(set(_main_window_bases())).items()
+        if len(names) > 1
+    }
     assert not clashes, (
         f"这些方法名出现在 MainWindow 的不止一个 mixin 里（MRO 只认第一个）：{clashes}"
     )
@@ -636,11 +627,16 @@ def _inject_into_class(source: str, class_name: str, method: str) -> str:
     )
 
 
-def _mixin_method_owners(bases: set[str]) -> dict[str, list[str]]:
-    """方法名 → 定义了它的那些 mixin。**同一份解析，两处用例共用。**"""
+def _mixin_method_owners(bases: set[str]) -> dict[str, set[str]]:
+    """方法名 → 定义了它的那些 mixin。**同一份解析，两处用例共用。**
+
+    **一个 mixin 里同一名字只算一次** —— ``@property`` 展开成 getter 与 setter 两个
+    ``FunctionDef``，而那是**一处**定义（``JobsMixin`` 上那 13 个转发 property，
+    ADR 0058 阶段 1）。要断的是「不止一个 mixin 定义它」。
+    """
     import ast
 
-    owners: dict[str, list[str]] = {}
+    owners: dict[str, set[str]] = {}
     for class_name in bases:
         module = _module_of_mixin(class_name)
         if module is None:
@@ -650,7 +646,7 @@ def _mixin_method_owners(bases: set[str]) -> dict[str, list[str]]:
             if isinstance(node, ast.ClassDef) and node.name == class_name:
                 for item in node.body:
                     if isinstance(item, ast.FunctionDef | ast.AsyncFunctionDef):
-                        owners.setdefault(item.name, []).append(class_name)
+                        owners.setdefault(item.name, set()).add(class_name)
     return owners
 
 

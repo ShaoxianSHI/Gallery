@@ -408,7 +408,7 @@ class OrderingMixin:
     def _on_facets_ready(self, generation: int, payload: object) -> None:
         if generation != self._generation:
             return
-        self._facet_job: int | None = None
+        self._finish_job("_facet_job")
         ready = payload if isinstance(payload, _LevelFacets) else _LevelFacets(values={})
         self._facet_values = ready.values
         # **每回都重新赋值**（哪怕是空的）：从「按事件分组」换到别的字段时，那份映射就该被丢掉，
@@ -423,7 +423,7 @@ class OrderingMixin:
     def _on_facets_failed(self, generation: int, message: str) -> None:
         if generation != self._generation:
             return
-        self._facet_job = None
+        self._finish_job("_facet_job")
         self._show_banner(f"读取元数据失败，按默认顺序显示：{message}")
         self._order_now()
         self._maybe_start_place_pass()

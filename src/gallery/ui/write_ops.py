@@ -199,7 +199,7 @@ class WriteOpsMixin:
         )
 
     def _on_paste_done(self, target: Path, payload: object) -> None:
-        self._write_job: int | None = None
+        self._finish_job("_write_job")
         if isinstance(payload, PasteResult):
             # 做完的确认**说过就走**，除非这句话里还有用户要处理的东西：没粘成的那些、
             # 没能记下的操作日志（判据见 ADR 0029 决策 3）。
@@ -209,7 +209,7 @@ class WriteOpsMixin:
             )
 
     def _on_paste_failed(self, message: str) -> None:
-        self._write_job = None
+        self._finish_job("_write_job")
         logger.info("粘贴失败：%s", message)
         self._show_banner(f"没能粘贴：{message.rstrip('。')}")
 
@@ -244,7 +244,7 @@ class WriteOpsMixin:
         )
 
     def _on_duplicate_done(self, payload: object) -> None:
-        self._write_job = None
+        self._finish_job("_write_job")
         if isinstance(payload, PasteResult):
             # 判据与粘贴同一套（ADR 0029 决策 3）：失败项与「没记下账」都要留在屏幕上。
             self._show_banner(
@@ -253,7 +253,7 @@ class WriteOpsMixin:
             )
 
     def _on_duplicate_failed(self, message: str) -> None:
-        self._write_job = None
+        self._finish_job("_write_job")
         logger.info("复制副本失败：%s", message)
         self._show_banner(f"没能复制：{message.rstrip('。')}")
 
@@ -429,7 +429,7 @@ class WriteOpsMixin:
         )
 
     def _on_metadata_read_for_edit(self, ref: PhotoRef, generation: int, payload: object) -> None:
-        self._metadata_copy_job: int | None = None
+        self._finish_job("_metadata_copy_job")
         if not isinstance(payload, MetadataReport) or generation != self._generation:
             return  # 已经换库或换照片了：这份元数据不该再跑到界面上
         self._cache_metadata(ref, payload)
@@ -439,7 +439,7 @@ class WriteOpsMixin:
         self._open_metadata_editor(ref, payload)
 
     def _on_metadata_edit_read_failed(self, ref: PhotoRef, generation: int, message: str) -> None:
-        self._metadata_copy_job = None
+        self._finish_job("_metadata_copy_job")
         logger.info("编辑元数据前的元数据读取失败：%s", message)
         if generation == self._generation:
             self._show_banner(f"读不出「{ref.name}」的元数据，改不了它。")
@@ -569,7 +569,7 @@ class WriteOpsMixin:
         )
 
     def _on_transfer_done(self, target: Path, verb: str, payload: object) -> None:
-        self._write_job = None
+        self._finish_job("_write_job")
         if not isinstance(payload, (MoveResult, PasteResult)):
             return
         # 与粘贴同一判据（ADR 0029 决策 3）：确认说过就走，出了岔子就留着。
@@ -581,7 +581,7 @@ class WriteOpsMixin:
             self._refresh_undo_label()
 
     def _on_transfer_failed(self, verb: str, message: str) -> None:
-        self._write_job = None
+        self._finish_job("_write_job")
         logger.info("%s到相册失败：%s", verb, message)
         self._show_banner(f"没能{verb}：{message.rstrip('。')}")
 

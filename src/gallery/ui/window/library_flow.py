@@ -102,13 +102,9 @@ class LibraryFlowMixin:
     _banner: BannerOverlay
     _metadata_action: QAction
     _detail: DetailView
-    _orphan_job: int | None
-    _scan_job: int | None
-    _place_job: int | None
     _filters: FilterState
     _focus_state: FocusState
     _banner_text: BannerText
-    _facet_job: int | None
     # guard: allow-long-comment（方法桩共三十多个，拆成几个块就看不出哪些是同一族的了）
     #
     # **方法用 ``TYPE_CHECKING`` 桩，不是类级注解**：注解只能写成 ``Callable[...]``，
@@ -386,7 +382,7 @@ class LibraryFlowMixin:
 
     def _on_orphan_checked(self, generation: int, payload: object) -> None:
         """查完了（**主线程**）。**什么都没找到就彻底静默** —— 不弹框、不挂横幅、不记日志。"""
-        self._orphan_job: int | None = None
+        self._finish_job("_orphan_job")
         if generation != self._generation or self._library is None:
             return
         if not isinstance(payload, OrphanScan) or not payload.found:
@@ -395,7 +391,7 @@ class LibraryFlowMixin:
 
     def _on_orphan_check_failed(self, message: str) -> None:
         """这一遍查不下去不该挡住浏览 —— 用户没损失什么，只是这一次的孤儿留着。"""
-        self._orphan_job = None
+        self._finish_job("_orphan_job")
         logger.info("查孤儿绑定失败：%s", message)
 
     def _teardown_library(self) -> None:
@@ -571,7 +567,7 @@ class LibraryFlowMixin:
     def _on_scan_done(self, generation: int, payload: object) -> None:
         if generation != self._generation:
             return
-        self._scan_job: int | None = None
+        self._finish_job("_scan_job")
         report = payload if isinstance(payload, ScanReport) else ScanReport()
         if report.has_issues:
             self._banner_text.note_scan_issue()
@@ -591,7 +587,7 @@ class LibraryFlowMixin:
     def _on_scan_failed(self, generation: int, message: str) -> None:
         if generation != self._generation:
             return
-        self._scan_job = None
+        self._finish_job("_scan_job")
         self._banner_text.note_scan_issue()
         self._show_banner(f"扫描失败：{message}")
         # 已经累积到的条目照常摆出来：扫到一半失败时给一屏能看的东西，比一屏空白有用。
@@ -654,14 +650,14 @@ class LibraryFlowMixin:
         self._show_place_notice(f"正在解析 {count} 张照片的地点…")
 
     def _on_place_pass_done(self, payload: object) -> None:
-        self._place_job: int | None = None
+        self._finish_job("_place_job")
         self._clear_place_notice()
         result = payload if isinstance(payload, PlacePass) else PlacePass()
         logger.info("地点解析完成：扫过 %d 张，反查 %d 张", result.scanned, result.resolved)
         self._maybe_start_photo_index()
 
     def _on_place_pass_failed(self, message: str) -> None:
-        self._place_job = None
+        self._finish_job("_place_job")
         self._clear_place_notice()
         # 解析失败不影响浏览：分组与面板都会在自己要用的时候再试一次。
         logger.info("解析地点失败：%s", message)

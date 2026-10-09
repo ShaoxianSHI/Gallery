@@ -261,7 +261,7 @@ class CalendarFlowMixin:
     ) -> None:
         if generation != self._generation or not isinstance(payload, dict):
             return
-        self._calendar_job: int | None = None
+        self._finish_job("_calendar_job")
         self._clear_progress_notice()
         self._calendar_page.set_photos(refs, payload)
         self._update_level_notice()
@@ -270,7 +270,7 @@ class CalendarFlowMixin:
     def _on_calendar_facets_failed(self, generation: int, message: str) -> None:
         if generation != self._generation:
             return
-        self._calendar_job = None
+        self._finish_job("_calendar_job")
         self._clear_progress_notice()
         self._show_banner(f"日历没能读到拍摄时间：{message}")
 

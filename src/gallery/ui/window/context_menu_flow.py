@@ -312,14 +312,14 @@ class ContextMenuFlowMixin:
         )
 
     def _on_metadata_copied(self, ref: PhotoRef, generation: int, payload: object) -> None:
-        self._metadata_copy_job: int | None = None
+        self._finish_job("_metadata_copy_job")
         if not isinstance(payload, MetadataReport) or generation != self._generation:
             return  # 已经换库了：这份元数据不该再跑到界面上
         self._cache_metadata(ref, payload)
         self._put_metadata_on_clipboard(payload, ref)
 
     def _on_metadata_copy_failed(self, message: str) -> None:
-        self._metadata_copy_job = None
+        self._finish_job("_metadata_copy_job")
         logger.info("复制用的元数据读取失败：%s", message)
         self._show_banner(f"没能读出元数据：{message.rstrip('。')}")
 

@@ -52,18 +52,17 @@ def test_the_two_level_groups_keep_the_members_they_have_today() -> None:
 
 
 def test_every_registered_job_is_declared_once_and_started_empty() -> None:
-    """注册表里每个名字都得**在类级别声明过**，且 ``_init_jobs`` 把它置空。
+    """注册表里每个名字都得**在 :class:`JobSlots` 上声明过**，且开窗时它是空的。
 
     注册表与字段是两处知识：多一个名字会写进一个没人声明过的属性（读回来是 ``AttributeError``），
     少一个则那个任务没有取消时机 —— 两种都不报错，只是到那天才炸。
 
-    **声明在类级别而不在 :meth:`_init_jobs` 里**（理由见 ``jobs.py`` 那段注释）：那些 mixin 各自
-    在回调末尾写 ``self._x_job = None``，而声明写在方法里时 mypy 会把**那一句**当成
-    「这个 mixin 把它定义成了 ``None``」，于是同一个字段在两个基类里类型不一致。
+    **声明在 :class:`JobSlots` 的类级别，槽由它的 ``__init__`` 置空**（ADR 0058 阶段 1）：
+    那 13 个槽搬进了那个对象，而 ``JobsMixin`` 只剩一组同名 property 转发。
     """
     tree = ast.parse((_source_root() / "window" / "jobs.py").read_text("utf-8"))
     cls = next(
-        node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "JobsMixin"
+        node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "JobSlots"
     )
     # 类级别的形状是 ``_x_job: int | None``（纯声明，没有值），所以取的是 ``Name.id``。
     declared = {
@@ -73,18 +72,16 @@ def test_every_registered_job_is_declared_once_and_started_empty() -> None:
     }
     init = next(
         node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef) and node.name == "_init_jobs"
+        for node in ast.walk(cls)
+        if isinstance(node, ast.FunctionDef) and node.name == "__init__"
     )
-    initialised = {
-        target.attr
+    # 置空照着注册表走（``for name in _JOBS: setattr(...)``）—— 断的就是这一点。
+    loops_registry = any(
+        isinstance(node, ast.For) and isinstance(node.iter, ast.Name) and node.iter.id == "_JOBS"
         for node in ast.walk(init)
-        if isinstance(node, ast.Assign)
-        for target in node.targets
-        if isinstance(target, ast.Attribute)
-    }
-    assert set(_JOBS) == declared, "注册表与类级别的声明对不上"
-    assert set(_JOBS) == initialised, "有任务没在 `_init_jobs` 里置空（开窗时它压根不存在）"
+    )
+    assert set(_JOBS) == declared, "注册表与 `JobSlots` 的声明对不上"
+    assert loops_registry, "`JobSlots.__init__` 没照着注册表置空（有槽开窗时压根不存在）"
 
 
 def test_a_cancel_that_forgets_the_root_is_not_a_cancel() -> None:
@@ -128,3 +125,41 @@ def test_the_mixin_offers_the_three_entry_points() -> None:
     """搬进来的三样都在：声明、提交、取消。少一样就说明这一根只搬了一半。"""
     for name in ("_init_jobs", "_start_job", "_cancel_job", "_cancel_tier"):
         assert callable(getattr(JobsMixin, name, None)), f"JobsMixin 缺 {name}"
+
+
+def test_the_thirteen_slots_have_exactly_one_storage() -> None:
+    """**每个槽只有一个存储** —— 转发 property 不许变成第二份（ADR 0058 阶段 1）。
+
+    这条回归测试盯的是「转发层会不会悄悄变成两份状态」：窗口上的 ``_scan_job`` 是个 property，
+    值在 ``self._jobs`` 里。**如果有人绕过它把 ``_JOBS`` 复制一份到窗口的 ``__dict__``**，
+    就变成两份，症状是「一边改了另一边没动」。
+
+    判据用 AST：``JobsMixin`` 里这 13 个名字必须是 ``property``（有 setter），
+    而不是普通属性或方法；而唯一的真存储在 ``JobSlots`` 的 ``__init__`` 里。
+    """
+    tree = ast.parse((_source_root() / "window" / "jobs.py").read_text("utf-8"))
+    by_name = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
+    mixin, slots = by_name["JobsMixin"], by_name["JobSlots"]
+
+    forwarded = {
+        item.name
+        for item in mixin.body
+        if isinstance(item, ast.FunctionDef)
+        and any(
+            isinstance(d, ast.Name)
+            and d.id == "property"
+            or isinstance(d, ast.Attribute)
+            and d.attr == "setter"
+            for d in item.decorator_list
+        )
+    }
+    missing = set(_JOBS) - forwarded
+    assert not missing, f"这 13 个槽在 JobsMixin 上该是转发 property，现在不是：{missing}"
+
+    # 真存储那一份：JobSlots 的类级别声明 + __init__ 里照注册表置空。
+    stored = {
+        item.target.id
+        for item in slots.body
+        if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name)
+    }
+    assert set(_JOBS) <= stored, f"JobSlots 上少了这些槽的存储：{set(_JOBS) - stored}"
