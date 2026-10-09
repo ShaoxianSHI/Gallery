@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 
 from gallery.core.metadata.report import MetadataGroup, MetadataReport
 from gallery.ui import theme
-from gallery.ui.panels.layout import clear_layout
+from gallery.ui.layout import clear_layout
 from gallery.ui.scrollbar_style import apply_scrollbar_style
 from gallery.ui.theme import AppTheme, rgba
 
@@ -327,7 +327,7 @@ class MetadataPanel(QWidget):
         return label
 
     def _fill(self, widgets: Sequence[QWidget]) -> None:
-        # 「先藏、再摘、再排队删」的三步顺序与理由写在 ``panels.layout`` 里，规矩只有一份。
+        # 「先藏、再摘、再排队删」的三步顺序与理由写在 :mod:`gallery.ui.layout` 里，规矩只有一份。
         clear_layout(self._body_layout)
         for widget in widgets:
             self._body_layout.addWidget(widget)

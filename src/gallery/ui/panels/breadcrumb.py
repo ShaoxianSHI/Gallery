@@ -17,7 +17,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QToolButton, QWidget
 
 from gallery.core.library.config import SEARCH_SCOPE_LEVEL, SEARCH_SCOPE_LIBRARY
 from gallery.ui import theme
-from gallery.ui.panels.layout import clear_layout
+from gallery.ui.layout import clear_layout
 from gallery.ui.theme import rgba
 
 SEPARATOR = "▸"
@@ -252,7 +252,7 @@ class BreadcrumbBar(QWidget):
         return widget
 
     def _clear(self) -> None:
-        # 每换一次目录就整个重摆，所以顺序上的那个坑在这里一样踩得到（见 panels.layout）。
+        # 每换一次目录就整个重摆，顺序上的那个坑在这里一样踩得到（见 :mod:`gallery.ui.layout`）。
         clear_layout(self._layout)
 
     def clear_content(self) -> None:

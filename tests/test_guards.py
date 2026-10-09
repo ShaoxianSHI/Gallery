@@ -567,6 +567,7 @@ def _top_level_consumers(module: str) -> set[str]:
 #: 登记**，否则那条守护会红 —— 这一条是 ADR 0059 承诺过、而 ``8451df0`` 从未落地的那条。
 TOP_LEVEL_MODULES: Final[dict[str, str | None]] = {
     "imaging": None,  # browser / calendar / thumbs / window 四个包都用它
+    "layout": None,  # calendar 的工具条与窗口那几个面板都要拆控件（顺序错了会留下顶层小白窗）
     "outline": None,  # panels（对话框）与 window（搜索框、菜单）两族
     "rename_edit": None,  # browser 的格子与 window 的标题栏共用同一个输入框
     "scrollbar_style": None,  # 网格、周视图、元数据面板三条滚动条

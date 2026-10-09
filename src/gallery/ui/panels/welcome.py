@@ -13,7 +13,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QLabel, QPushButton, QVBoxLayout, QWidget
 
 from gallery.ui import theme
-from gallery.ui.panels.layout import clear_layout
+from gallery.ui.layout import clear_layout
 from gallery.ui.theme import AppTheme, rgba
 
 MAX_RECENT_SHOWN = 5

@@ -22,8 +22,8 @@ from PySide6.QtWidgets import (
 
 from gallery.core.library.calendar import LEVEL_NAMES, LEVELS, title
 from gallery.ui.calendar.colors import CalendarColors
+from gallery.ui.layout import clear_layout
 from gallery.ui.panels.breadcrumb import DISMISS_MARK, build_chip
-from gallery.ui.panels.layout import clear_layout
 
 _BAR_HEIGHT = 60
 

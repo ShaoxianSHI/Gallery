@@ -1,4 +1,4 @@
-"""``gallery.ui.panels.layout``：拆控件只有一份实现，三个面板共用。
+"""``gallery.ui.layout``：拆控件只有一份实现，三个面板共用。
 
 这里守的是拆完之后的状态：控件**不在布局里、不再有父、也不会显示出来**。
 三处面板（面包屑、元数据、欢迎页）每换一次内容都要拆一次控件，所以它们共用
@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QWidget
 
-from gallery.ui.panels.layout import clear_layout, clear_widgets
+from gallery.ui.layout import clear_layout, clear_widgets
 
 
 def _host_with(count: int = 3) -> tuple[QWidget, QHBoxLayout, list[QLabel]]:
