@@ -9,8 +9,8 @@ from __future__ import annotations
 import ast
 import pathlib
 
-from gallery.ui.window.app_session import AppSession
-from gallery.ui.window.library_slot import LibrarySlot
+from gallery.ui.window.state.app_session import AppSession
+from gallery.ui.window.state.library_slot import LibrarySlot
 
 #: 「现在开着哪个库」这一族。
 SLOT_FIELDS = ("_library", "_pipeline", "_library_title", "_legacy_ui")
@@ -47,7 +47,7 @@ def _property_names(body: list[ast.stmt]) -> set[str]:
 
 def test_the_slot_owns_the_open_library() -> None:
     """**「开着哪个库」这一族每个字段都在 ``LibrarySlot`` 上** —— 少一个就没人拥有。"""
-    cls = _class_body("window/library_slot.py", "LibrarySlot")
+    cls = _class_body("window/state/library_slot.py", "LibrarySlot")
     declared = {
         node.target.id
         for node in cls.body
@@ -58,7 +58,7 @@ def test_the_slot_owns_the_open_library() -> None:
 
 def test_the_app_session_owns_the_run_state() -> None:
     """**「这一次运行」这一族在 ``AppSession`` 上** —— 它由 ``__init__`` 的两个形参交进来。"""
-    cls = _class_body("window/app_session.py", "AppSession")
+    cls = _class_body("window/state/app_session.py", "AppSession")
     declared = {
         node.target.id
         for node in cls.body

@@ -10,7 +10,7 @@ from __future__ import annotations
 import ast
 import pathlib
 
-from gallery.ui.window.ordering_state import OrderingState
+from gallery.ui.window.state.ordering_state import OrderingState
 
 #: 这一族全部字段的名字 —— 注册表式的单一来源，测试与实现都对着它。
 SLOTS = (
@@ -63,7 +63,7 @@ def test_the_state_owns_every_slot_of_the_family() -> None:
     这是「一份状态一个主人」那条判据的直接落点：以前它们是 ``main_window`` /
     ``ordering`` / ``library_flow`` 三个模块各自在写的窗口字段。
     """
-    tree = ast.parse((_source_root() / "window" / "ordering_state.py").read_text("utf-8"))
+    tree = ast.parse((_source_root() / "window" / "state" / "ordering_state.py").read_text("utf-8"))
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "OrderingState")
     declared = {
         node.target.id

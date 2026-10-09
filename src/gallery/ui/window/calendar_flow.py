@@ -17,7 +17,7 @@ from gallery.core.library.photos import GridEntry, GroupRef, PhotoRef
 from gallery.core.library.scanner import describe_entry
 from gallery.ui.tasks import TaskContext
 from gallery.ui.window.jobs import LEVEL_CALENDAR
-from gallery.ui.window.level_stack import CalendarFrame, root_for
+from gallery.ui.window.state.level_stack import CalendarFrame, root_for
 
 
 def _photos_on_this_level(entries: Iterable[GridEntry]) -> list[PhotoRef]:

@@ -16,7 +16,8 @@ from pathlib import Path
 import pytest
 
 from gallery.core.library.photos import GroupRef
-from gallery.ui.window.level_stack import (
+from gallery.ui.window.level_stack_mixin import LevelStackMixin
+from gallery.ui.window.state.level_stack import (
     AlbumFrame,
     CalendarFrame,
     GroupFrame,
@@ -25,7 +26,6 @@ from gallery.ui.window.level_stack import (
     RootKind,
     SearchFrame,
 )
-from gallery.ui.window.level_stack_mixin import LevelStackMixin
 
 #: 「我在哪」的六个字段（ADR 0041）。它们**都该是只读属性**。
 LEVEL_FIELDS = (

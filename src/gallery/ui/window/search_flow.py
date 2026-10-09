@@ -26,8 +26,8 @@ from gallery.core.library.search import (
     unusable_reason,
 )
 from gallery.ui.tasks import TaskContext
-from gallery.ui.window.level_stack import SearchFrame
 from gallery.ui.window.library_flow import SCAN_BATCH_SIZE
+from gallery.ui.window.state.level_stack import SearchFrame
 
 logger = logging.getLogger(__name__)
 

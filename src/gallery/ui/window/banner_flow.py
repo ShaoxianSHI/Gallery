@@ -15,7 +15,7 @@ from PySide6.QtCore import QRect
 from PySide6.QtWidgets import QMessageBox
 
 from gallery.ui.banner_overlay import AUTO_HIDE_SECONDS as BANNER_AUTO_HIDE_SECONDS
-from gallery.ui.window.banner_text import BannerText
+from gallery.ui.window.state.banner_text import BannerText
 
 logger = logging.getLogger(__name__)
 

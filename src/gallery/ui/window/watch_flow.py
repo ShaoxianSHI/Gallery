@@ -19,7 +19,7 @@ from gallery.core.library.facade import Library
 from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
 from gallery.core.library.scanner import describe_entry
 from gallery.core.library.watcher import ChangeKind, LibraryChange, summarize
-from gallery.ui.window.pending_watch import PendingWatch
+from gallery.ui.window.state.pending_watch import PendingWatch
 
 logger = logging.getLogger(__name__)
 

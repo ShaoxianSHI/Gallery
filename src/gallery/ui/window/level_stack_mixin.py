@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Protocol
 
 from gallery.core.library.photos import GroupRef, PhotoRef
-from gallery.ui.window.level_stack import (
+from gallery.ui.window.state.level_stack import (
     AlbumFrame,
     CalendarFrame,
     GroupFrame,

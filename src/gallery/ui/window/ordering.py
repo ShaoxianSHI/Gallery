@@ -35,9 +35,9 @@ from gallery.core.metadata.facets import (
 from gallery.core.places.resolver import LazyPlaceResolver
 from gallery.ui.navigation import EntryKey, entry_key
 from gallery.ui.tasks import TaskContext
-from gallery.ui.window.level_stack import GroupFrame
-from gallery.ui.window.ordering_state import OrderingState
-from gallery.ui.window.staging import Staging
+from gallery.ui.window.state.level_stack import GroupFrame
+from gallery.ui.window.state.ordering_state import OrderingState
+from gallery.ui.window.state.staging import Staging
 
 #: 「正在读取 N 张照片的元数据，用于…」—— **只在真的缺东西时才报**（见 ``_start_facet_read``）。
 #: 放在模板里是因为它现在从工作线程里发出去，而那一侧拿不到 ``self``。

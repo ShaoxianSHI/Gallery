@@ -52,7 +52,7 @@ from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.search_field import MARGIN_RIGHT as SEARCH_FIELD_MARGIN_RIGHT  # noqa: E402
 from gallery.ui.search_field import TOGGLE_EDGE, TOGGLE_GAP  # noqa: E402
 from gallery.ui.search_field import WIDTH as SEARCH_FIELD_WIDTH  # noqa: E402
-from gallery.ui.window.level_stack import AlbumFrame, GroupFrame  # noqa: E402
+from gallery.ui.window.state.level_stack import AlbumFrame, GroupFrame  # noqa: E402
 
 #: 搜索胶囊摆好之后的那一块。**按钮是从它往左长出来的**，所以这一块就是唯一的输入。
 FIELD = QRect(300, 7, 208, 22)

@@ -46,15 +46,15 @@ from gallery.ui.tasks import TaskContext, TaskRunner
 from gallery.ui.thumbs.pipeline import ThumbnailPipeline
 from gallery.ui.viewer.detail import DetailView
 from gallery.ui.watch import WatchBridge
-from gallery.ui.window.app_session import AppSession
-from gallery.ui.window.banner_text import BannerText
 from gallery.ui.window.filters import FilterState
 from gallery.ui.window.focus import FocusState
 from gallery.ui.window.jobs import LIBRARY
-from gallery.ui.window.level_stack import LevelStack, RootKind, root_for
-from gallery.ui.window.library_slot import LibrarySlot
-from gallery.ui.window.pending_watch import PendingWatch
-from gallery.ui.window.staging import Staging
+from gallery.ui.window.state.app_session import AppSession
+from gallery.ui.window.state.banner_text import BannerText
+from gallery.ui.window.state.level_stack import LevelStack, RootKind, root_for
+from gallery.ui.window.state.library_slot import LibrarySlot
+from gallery.ui.window.state.pending_watch import PendingWatch
+from gallery.ui.window.state.staging import Staging
 
 logger = logging.getLogger(__name__)
 

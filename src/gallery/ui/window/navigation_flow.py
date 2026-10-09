@@ -23,7 +23,7 @@ from gallery.ui.navigation import (
     row_of_entry_key,
 )
 from gallery.ui.window.jobs import LEVEL
-from gallery.ui.window.level_stack import (
+from gallery.ui.window.state.level_stack import (
     AlbumFrame,
     CalendarFrame,
     GroupFrame,

@@ -74,17 +74,17 @@ from gallery.ui.window.event_flow import EventFlowMixin
 from gallery.ui.window.filters import FiltersMixin
 from gallery.ui.window.focus import FocusMixin
 from gallery.ui.window.jobs import JobsMixin
-from gallery.ui.window.level_stack import (
-    LevelStack,
-    PageRole,
-    RootKind,
-)
 from gallery.ui.window.level_stack_mixin import LevelStackMixin
 from gallery.ui.window.library_flow import LibraryFlowMixin
 from gallery.ui.window.metadata_flow import MetadataFlowMixin
 from gallery.ui.window.navigation_flow import NavigationFlowMixin
 from gallery.ui.window.ordering import OrderingMixin
 from gallery.ui.window.search_flow import SearchFlowMixin
+from gallery.ui.window.state.level_stack import (
+    LevelStack,
+    PageRole,
+    RootKind,
+)
 from gallery.ui.window.state_sync import StateSyncMixin
 from gallery.ui.window.thumbnail_flow import ThumbnailFlowMixin
 from gallery.ui.window.title_bar_flow import _GRID_PAGE_MARGIN_RIGHT, TitleBarFlowMixin

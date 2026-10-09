@@ -341,7 +341,7 @@ def test_the_job_lifecycle_guard_would_notice_a_violation() -> None:
 FILTERS_MODULE = Path("window") / "filters.py"
 
 #: 横幅那一族的**写**已经从窗口上搬走了（ADR 0054）：七个字段现在住在
-#: ``ui/window/banner_text.py``。这里守的是「别让写入口散回来」—— ``_thumbnail_failures``
+#: ``ui/window/state/banner_text.py``。这里守的是「别让写入口散回来」—— ``_thumbnail_failures``
 #: 留了一个**只读属性**（三处测试在读那个数字），而 ``property`` 本身不是赋值，所以放行。
 BANNER_TEXT_MODULE = Path("window") / "banner_text.py"
 BANNER_TEXT_WRITE_PATTERNS = tuple(
@@ -420,7 +420,7 @@ def test_only_the_focus_module_writes_the_current_row() -> None:
 
 
 def test_only_the_banner_text_module_writes_the_banner_fields() -> None:
-    """**横幅那七个字段的写只许在 ``ui/window/banner_text.py`` 里**（ADR 0054）。
+    """**横幅那七个字段的写只许在 ``ui/window/state/banner_text.py`` 里**（ADR 0054）。
 
     它们原先在窗口上分七个字段，而「清屏」与「清账」必须同时做这件事只有
     ``_clear_banner`` 一处知道 —— 换层与换库那六处各手写一遍，**漏掉哪一个都不会立刻

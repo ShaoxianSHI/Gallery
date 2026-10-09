@@ -13,7 +13,7 @@
 
 from __future__ import annotations
 
-from gallery.ui.window.banner_text import BannerText
+from gallery.ui.window.state.banner_text import BannerText
 
 #: 让位期：一段假的时钟（秒），第一份从 100.0 起。
 NOW = 100.0

@@ -18,7 +18,7 @@ from PySide6.QtWidgets import QMessageBox
 from gallery.core.library.photos import GridEntry, GroupRef
 from gallery.ui.browser.grid import PREFETCH_MARGIN
 from gallery.ui.tasks import TaskContext
-from gallery.ui.window.thumbnail_size import ThumbnailSize
+from gallery.ui.window.state.thumbnail_size import ThumbnailSize
 
 logger = logging.getLogger(__name__)
 
