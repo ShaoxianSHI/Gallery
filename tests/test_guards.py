@@ -25,6 +25,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = PROJECT_ROOT / "src" / "gallery"
 CORE_ROOT = SRC_ROOT / "core"
 UI_ROOT = SRC_ROOT / "ui"
+UI_DOTTED = "gallery.ui"
 
 #: 核心层禁止触碰的模块前缀。
 FORBIDDEN_IN_CORE = ("PySide6", "PyQt5", "PyQt6", "shiboken6")
@@ -514,6 +515,133 @@ def test_write_ops_does_not_touch_the_file_system_itself() -> None:
     """
     path = UI_ROOT / WRITE_OPS_MODULE
     assert not _opens_files(path), f"{WRITE_OPS_MODULE} 自己打开文件了；写操作一律走 core"
+
+
+# ---- 顶层只许留跨包共享的模块（ADR 0059 承诺、ADR 0060 落地）--------------------
+
+
+def _ui_top_level_module_imported_by(path: Path) -> set[str]:
+    """这个文件 import 了 ``ui/`` 顶层的哪些模块（两种写法都认）。
+
+    两种形状都要认：``from gallery.ui import theme`` 与 ``from gallery.ui.theme import AppTheme``
+    说的是同一件事，而只认一种的话那条守护会对一半的顶层模块恒绿。
+    """
+    names: set[str] = set()
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            if node.module.startswith(f"{UI_DOTTED}."):
+                rest = node.module[len(UI_DOTTED) + 1 :]
+                if "." not in rest:
+                    names.add(rest)
+            elif node.module == UI_DOTTED:
+                names.update(alias.name for alias in node.names)
+    return names
+
+
+def _subpackage_of(path: Path) -> str:
+    """这个文件属于哪个子包；顶层模块本身记成 ``""``。"""
+    relative = path.relative_to(UI_ROOT)
+    return relative.parts[0] if len(relative.parts) > 1 else ""
+
+
+def _top_level_consumers(module: str) -> set[str]:
+    """``ui/<module>.py`` 被哪几个**子包** import（顶层模块之间的 import 不算）。
+
+    判据是「有几个子包用它」而不是「有几个文件用它」—— 同一包里十个文件用它是**一个**包在用，
+    按文件数算的话一个子包内部的自相依赖会被当成「跨包共享」。
+    """
+    consumers: set[str] = set()
+    for path in _iter_python_files(UI_ROOT):
+        package = _subpackage_of(path)
+        if package == module:
+            continue
+        if module in _ui_top_level_module_imported_by(path):
+            consumers.add(package)
+    return consumers
+
+
+#: ``ui/`` 顶层只许留**跨包共享**的模块（AGENTS.md：「只有确实跨领域共享的才放顶层」）。
+#:
+#: 值是「不搬它的理由」；``None`` 表示它确实被两个以上子包用。**新加一个顶层模块必须在这里
+#: 登记**，否则那条守护会红 —— 这一条是 ADR 0059 承诺过、而 ``8451df0`` 从未落地的那条。
+TOP_LEVEL_MODULES: Final[dict[str, str | None]] = {
+    "imaging": None,  # browser / calendar / thumbs / window 四个包都用它
+    "outline": None,  # panels（对话框）与 window（搜索框、菜单）两族
+    "rename_edit": None,  # browser 的格子与 window 的标题栏共用同一个输入框
+    "scrollbar_style": None,  # 网格、周视图、元数据面板三条滚动条
+    "tasks": None,  # thumbs 与 window 都要起后台任务
+    "theme": None,  # 全部四个子包都从它派生颜色
+    "banners": "写操作结果的用户可见措辞，与窗口无关：write_ops 与各条 flow 都调它",
+    "desktop": "访达与剪贴板那一座桥，与窗口无关：右键菜单、打开文件夹、拷贝都调它",
+    "write_ops": "「只增不改」那条数据安全守护按文件名找它，搬了它那条守护就悄悄失效",
+}
+
+#: 入口模块：它们本来就不该被别人 import，进了共享登记表反而会逼人去 import 它们。
+UI_ENTRYPOINTS: Final = ("app", "main_window")
+
+
+def _present_top_level_modules(root: Path = UI_ROOT) -> set[str]:
+    """顶层有哪些模块（不含包的 ``__init__`` 与两个入口）。
+
+    ``root`` 是参数而不是写死：验这条守护自己会红的那条用例要在 ``tmp_path`` 里摆一个
+    假的顶层出来，而**摆假的就等于没验** —— 真正要验的是「读目录」这一段认不认得出违规。
+    """
+    return {
+        path.stem for path in root.glob("*.py") if path.stem not in (*UI_ENTRYPOINTS, "__init__")
+    }
+
+
+def _unregistered_top_level(root: Path = UI_ROOT) -> list[str]:
+    """顶层有哪些模块没进登记表；``root`` 只给验守护自己会红的那条用例用。"""
+    return sorted(_present_top_level_modules(root) - TOP_LEVEL_MODULES.keys())
+
+
+def test_ui_top_level_only_holds_shared_modules() -> None:
+    """**顶层只许留被两个以上子包用的模块**（ADR 0059 决策，ADR 0060 落地）。
+
+    不登记的话这条规矩就只剩文档里的一句话 —— 而它已经这样失效过一次：0059 把
+    ``menu_style`` 等四个搬进 ``window/``，提交信息说加了这条守护，而那个 commit
+    没有碰过本文件（``git show 8451df0 --stat`` 里没有它）。
+    """
+    unregistered = _unregistered_top_level()
+    assert not unregistered, (
+        f"这些顶层模块不在登记表里：{unregistered}；要么搬进唯一用它的那个子包，"
+        f"要么在 TOP_LEVEL_MODULES 里登记并写明不搬的理由（ADR 0059）"
+    )
+    vanished = sorted(TOP_LEVEL_MODULES.keys() - _present_top_level_modules())
+    assert not vanished, f"登记表里的顶层模块已经不在了，删掉那一行：{vanished}"
+
+
+def test_a_shared_top_level_module_is_actually_shared() -> None:
+    """**登记为「共享」的那个，至少要有两个子包真的用它**（ADR 0060）。
+
+    这是上一条的反面：搬走一个模块的**消费者**不会让上一条变红（模块还在，登记还在），
+    而它已经不再是共享的了 —— 症状是有人照着目录结构以为还有别的包在用它。
+    """
+    lonely = {
+        name: sorted(_top_level_consumers(name))
+        for name, reason in TOP_LEVEL_MODULES.items()
+        if reason is None and len(_top_level_consumers(name)) < 2
+    }
+    assert not lonely, (
+        f"这些顶层模块登记为跨包共享，实际只有一个子包在用：{lonely}；"
+        f"搬进那个子包，或把理由改成一条具名的例外"
+    )
+
+
+def test_the_top_level_guard_would_notice_a_violation(tmp_path: Path) -> None:
+    """上一条自己必须验过一次 —— 扫目录的守护最容易出的错就是「扫不到东西而恒绿」。
+
+    造一个**真的**顶层模块出来（不是往集合里塞一个名字）：要验的是「读目录」这一段，
+    而集合里塞名字验的是同一段代码之外的另一件事。
+    """
+    (tmp_path / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "widget_menu.py").write_text("", encoding="utf-8")
+    assert _unregistered_top_level(tmp_path) == ["widget_menu"], (
+        "注入了一个没登记的顶层模块，这条守护没有反应"
+    )
+    assert not _unregistered_top_level(), "真实的 ui/ 顶层被这条用例自己判成违规了"
 
 
 # ---- mixin：同名方法会静默失效 ------------------------------------------------
