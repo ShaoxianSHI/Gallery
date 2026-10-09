@@ -3,7 +3,7 @@
 网格与大图页**共用同一套流程**：视图只报「按在了哪」，菜单在这一侧拼；两个 ``*_context_menu``
 只拼不弹，测试因此可以直接调它看内容。粘到哪里由**落点**决定而不是由菜单决定，递给菜单的是
 **同一枚动作**（菜单栏那个 ⌘V），所以不会出现「写着 ⌘V、按下去却是另一个地方」的分裂；
-菜单里「有什么」在 :mod:`gallery.ui.menus`。
+菜单里「有什么」在 :mod:`gallery.ui.window.menus`。
 """
 
 from __future__ import annotations
@@ -20,9 +20,10 @@ from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
 from gallery.core.metadata.exif import read_metadata
 from gallery.core.metadata.facets import group_facet
 from gallery.core.metadata.report import MetadataReport
-from gallery.ui import desktop, menu_style
-from gallery.ui.menus import MenuActions, TargetKind, build_menu
+from gallery.ui import desktop
 from gallery.ui.tasks import TaskContext
+from gallery.ui.window import menu_style
+from gallery.ui.window.menus import MenuActions, TargetKind, build_menu
 from gallery.ui.write_ops import NOTHING_SELECTED
 
 logger = logging.getLogger(__name__)

@@ -26,8 +26,8 @@ from gallery.core.library.facade import ShowImportPlan
 from gallery.core.library.photos import GridEntry, GroupRef, PhotoRef
 from gallery.core.metadata.facets import FACET_EVENT
 from gallery.ui import banners
-from gallery.ui.menu_style import ShortcutColumnMenu
 from gallery.ui.panels.event_edit import DELETE_REQUESTED, EventEdit, EventEditDialog
+from gallery.ui.window.menu_style import ShortcutColumnMenu
 from gallery.ui.write_ops import flattened_entries
 
 logger = logging.getLogger(__name__)

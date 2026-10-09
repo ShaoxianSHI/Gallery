@@ -316,7 +316,7 @@ def test_a_second_run_is_refused_while_one_is_in_flight(
 
 def test_the_menu_row_is_the_same_action_as_the_shortcut(window: MainWindow) -> None:
     """菜单栏与右键菜单共用同一份 ``QAction`` —— 置灰只有一处逻辑（ADR 0014 决策 1）。"""
-    from gallery.ui import menus as menus_module
+    from gallery.ui.window import menus as menus_module
 
     actions = menus_module.build_photo_menu(window._menu_actions(paste=None), multiple=False)
     try:

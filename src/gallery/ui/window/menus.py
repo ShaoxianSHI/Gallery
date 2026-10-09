@@ -14,7 +14,7 @@ from pathlib import Path
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMenu
 
-from gallery.ui.menu_style import (
+from gallery.ui.window.menu_style import (
     CLOSE_KEY_HINT,
     OPEN_KEY_HINT,
     ShortcutColumnMenu,

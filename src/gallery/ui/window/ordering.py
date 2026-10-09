@@ -33,8 +33,8 @@ from gallery.core.metadata.facets import (
     sort_facet,
 )
 from gallery.core.places.resolver import LazyPlaceResolver
-from gallery.ui.navigation import EntryKey, entry_key
 from gallery.ui.tasks import TaskContext
+from gallery.ui.window.navigation import EntryKey, entry_key
 from gallery.ui.window.state.level_stack import GroupFrame
 from gallery.ui.window.state.ordering_state import OrderingState
 from gallery.ui.window.state.staging import Staging

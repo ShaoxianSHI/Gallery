@@ -56,7 +56,6 @@ from gallery.ui.panels.metadata import MetadataPanel
 from gallery.ui.panels.welcome import WelcomeView
 from gallery.ui.tasks import TaskRunner
 from gallery.ui.viewer.detail import DetailView
-from gallery.ui.watch import WatchBridge, WatchStarter, start_watch
 from gallery.ui.window.banner_flow import BannerFlowMixin
 from gallery.ui.window.calendar_flow import CalendarFlowMixin
 from gallery.ui.window.context_menu_flow import ContextMenuFlowMixin
@@ -79,6 +78,7 @@ from gallery.ui.window.state_sync import StateSyncMixin
 from gallery.ui.window.thumbnail_flow import ThumbnailFlowMixin
 from gallery.ui.window.title_bar_flow import _GRID_PAGE_MARGIN_RIGHT, TitleBarFlowMixin
 from gallery.ui.window.viewer_flow import ViewerFlowMixin
+from gallery.ui.window.watch import WatchBridge, WatchStarter, start_watch
 from gallery.ui.window.watch_flow import WatchFlowMixin
 from gallery.ui.window.widgets.banner_overlay import BannerOverlay
 from gallery.ui.window.widgets.external_button import (

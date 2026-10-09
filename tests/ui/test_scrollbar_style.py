@@ -2,7 +2,7 @@
 
 三处（网格最右缘、日历周视图的时间轴、大图页的元数据面板）分属三个包，用户在它们
 之间来回走，所以「长什么样」只从 :mod:`gallery.ui.scrollbar_style` 一处解析 ——
-与 :mod:`gallery.ui.menu_style` 当初要解决的是同一件事。
+与 :mod:`gallery.ui.window.menu_style` 当初要解决的是同一件事。
 
 **这里量的是像素，不是样式表字符串**：样式表写着 ``::add-page { background: transparent }``
 只说明它写对了，不代表屏幕上真的没画。原生滚动条那一份在离屏下轨道是一条 ``#e6e6e6`` 的

@@ -26,15 +26,16 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QMenu, QToolButton, QWidget
 
-from gallery.ui import menu_style, theme
+from gallery.ui import theme
 from gallery.ui.rename_edit import field_background
+from gallery.ui.window import menu_style
 
 #: 按钮的**高**跟着搜索胶囊走（不硬编码，见 :func:`button_rect`），这是它的**宽**。
 #: **不是正方形**：里面放的是「图标 + 下拉箭头」两样东西 —— 22×22 只画得出一个孤零零的箭头。
 BUTTON_WIDTH = 44
 
 #: 圆角（点）。**不是正圆**（正圆就是 11，而它是 22 高的一半）—— 与弹出列表那一层的
-#: :data:`~gallery.ui.menu_style.MENU_CORNER_RADIUS`（8）是同一个量级。
+#: :data:`~gallery.ui.window.menu_style.MENU_CORNER_RADIUS`（8）是同一个量级。
 BUTTON_RADIUS = 6
 
 #: 按钮里那个图标的边长（点）。**与搜索框那个放大镜（13）同一档**（给 16 就明显粗一圈）。

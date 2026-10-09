@@ -1321,8 +1321,9 @@ def test_the_icon_is_smaller_than_the_button(qt_app: QApplication, tmp_path: Pat
     """图标**不许画满整个按钮** —— 22 点画布上画 22 点的东西会顶到边框上。
 
     钉的是「图标比按钮小」这个关系，不是某个数：真要盯住的是图标画布与按钮边长之间留着
-    余量，而两者都由 :data:`~gallery.ui.search_field.TOGGLE_ICON_EDGE` 与
-    :data:`~gallery.ui.search_field.TOGGLE_EDGE` 推出来 —— 有人把图标又改回跟着按钮走时，
+    余量，而两者都由 :data:`~gallery.ui.window.widgets.search_field.TOGGLE_ICON_EDGE` 与
+    :data:`~gallery.ui.window.widgets.search_field.TOGGLE_EDGE` 推出来 ——
+    有人把图标又改回跟着按钮走时，
     这条会立刻变红。
     """
     window = MainWindow(session_base=tmp_path / "会话")

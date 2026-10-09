@@ -1,6 +1,7 @@
 """窗口标题栏右上角那个胶囊搜索框（ADR 0026）。
 
-**它与 :mod:`gallery.ui.title_bar` 是兄弟，不是子控件** —— ``TitleBar`` 的透明标志会罩住子控件。
+**它与 :mod:`gallery.ui.window.widgets.title_bar` 是兄弟，不是子控件** ——
+``TitleBar`` 的透明标志会罩住子控件。
 它只回答回车提交了什么、按了 Esc、是不是正在输入 —— 一个文件都不碰，只发信号（改动用户的
 照片必须由用户亲手触发）。
 """
@@ -45,15 +46,15 @@ from gallery.core.library.search import (
     suggestions,
 )
 from gallery.ui import theme
-from gallery.ui.menu_style import (
+from gallery.ui.outline import draw_outline
+from gallery.ui.rename_edit import field_background
+from gallery.ui.theme import AppTheme, rgba
+from gallery.ui.window.menu_style import (
     POPUP_FONT_PX,
     POPUP_LIST_INSET,
     POPUP_LIST_ITEM_PAD,
     popup_list_style,
 )
-from gallery.ui.outline import draw_outline
-from gallery.ui.rename_edit import field_background
-from gallery.ui.theme import AppTheme, rgba
 
 #: 胶囊多宽。够放下「搜索照片…」与十来个字，又不至于从标题正中伸到交通灯那边。
 WIDTH = 208
@@ -76,7 +77,8 @@ TOGGLE_EDGE = 22
 #: ``external_button.ICON_EDGE`` 同一档 —— 标题条上三个图标要是一套。
 TOGGLE_ICON_EDGE = 13
 
-#: 切换按钮与胶囊之间的缝（点）。与 :data:`~gallery.ui.external_button.BUTTON_GAP`（9）同一档：
+#: 切换按钮与胶囊之间的缝（点）。与
+#: :data:`~gallery.ui.window.widgets.external_button.BUTTON_GAP`（9）同一档：
 #: 挤在一起读起来像胶囊自带的一个零件，而它是另一样东西。
 TOGGLE_GAP = 8
 
@@ -214,7 +216,8 @@ def search_field_style(app_theme: AppTheme, *, radius: int = 0) -> str:
 
 
 def popup_style(list_widget: QTreeWidget, *, item_padding: int = POPUP_LIST_ITEM_PAD) -> str:
-    """候选列表长什么样 —— 样式表由 :mod:`gallery.ui.menu_style` 生成，这里只补字号与行内边距。"""
+    """候选列表长什么样 —— 样式表由 :mod:`gallery.ui.window.menu_style` 生成，
+    这里只补字号与行内边距。"""
     return (
         f"{popup_list_style(list_widget, item_padding=item_padding)}\n"
         f"QTreeWidget#searchPopup {{ font-size: {_FONT_PX}px; }}"

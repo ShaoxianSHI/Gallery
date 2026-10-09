@@ -48,9 +48,9 @@ from gallery.core.metadata import batch  # noqa: E402
 from gallery.core.places.resolver import LazyPlaceResolver, ResolvedPlace  # noqa: E402
 from gallery.ui import theme  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
-from gallery.ui.menu_style import POPUP_LIST_INSET  # noqa: E402
 from gallery.ui.panels.breadcrumb import ChipButton  # noqa: E402
 from gallery.ui.theme import rgba  # noqa: E402
+from gallery.ui.window.menu_style import POPUP_LIST_INSET  # noqa: E402
 from gallery.ui.window.widgets.search_field import (  # noqa: E402
     HEIGHT,
     MARGIN_RIGHT,
@@ -554,7 +554,7 @@ def test_the_candidate_hash_lines_up_with_the_typed_one(
     边框、内边距与行内边距。**这一条是像素对拍**（见 :func:`_hash_columns` 为什么要
     量像素）—— 控件位置量出来是齐的，界面上仍然可以差着八点，那八点就出在这中间。
 
-    :data:`~gallery.ui.search_field._ITEM_TEXT_BASELINE` 那个量出来的常数由这条盯着：
+    :data:`~gallery.ui.window.widgets.search_field._ITEM_TEXT_BASELINE` 那个量出来的常数由这条盯着：
     哪天真变了，先变红的是它。
     """
     window = _open_candidates(qt_app, tmp_path, "#")

@@ -30,13 +30,11 @@ from gallery.core.library.session import (
     SessionState,
     save_session,
 )  # noqa: E402
-from gallery.ui import (
-    desktop,  # noqa: E402
-    menus,  # noqa: E402
-)
+from gallery.ui import desktop  # noqa: E402
 from gallery.ui.browser.grid import PhotoGrid  # noqa: E402
 from gallery.ui.browser.model import PhotoListModel  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
+from gallery.ui.window import menus  # noqa: E402
 
 #: 测试库里的两张照片，按扫描顺序（相册内按名称）。
 PHOTO_NAMES = ("一张.jpg", "另一张.jpg")

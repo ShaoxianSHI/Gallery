@@ -13,7 +13,7 @@
 
 from __future__ import annotations
 
-from gallery.ui.navigation import EntryKey, LevelKey
+from gallery.ui.window.navigation import EntryKey, LevelKey
 
 __all__ = ["FocusMixin", "FocusState"]
 
@@ -51,7 +51,7 @@ class FocusState:
         """模型里摆的是否仍是 ``level_key`` 那一层（换过层就是 ``False``）。
 
         「换了一层」与「还是这一层重排一遍」在屏幕上长得一样，只有比**层标识**才分得开
-        （见 :func:`gallery.ui.navigation.level_key`）。
+        （见 :func:`gallery.ui.window.navigation.level_key`）。
         """
         return self._level_key is not None and self._level_key == level_key
 

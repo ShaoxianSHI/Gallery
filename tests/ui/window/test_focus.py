@@ -11,12 +11,12 @@
 
 from __future__ import annotations
 
-from gallery.ui.navigation import ENTRY_KIND_PATH, EntryKey
 from gallery.ui.window.focus import FocusState
+from gallery.ui.window.navigation import ENTRY_KIND_PATH, EntryKey
 
 
 #: 层标识在这一族里只当**不透明的标记**用：这一份测的是「换没换层」这件事的处理，
-#: 不测层标识怎么算出来的（那是 :func:`gallery.ui.navigation.level_key` 的事）。
+#: 不测层标识怎么算出来的（那是 :func:`gallery.ui.window.navigation.level_key` 的事）。
 def _level(name: str) -> tuple[str, ...]:
     return ("flat", name)
 

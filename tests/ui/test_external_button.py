@@ -539,7 +539,7 @@ def test_the_dropdown_is_the_same_colour_as_the_search_popup(
 ) -> None:
     """下拉框与搜索框的候选列表**同一套颜色**：那四个角色都要一样。
 
-    这三样是三个不同的控件，样式表都由 :mod:`gallery.ui.menu_style` 从**各自的**调色板生成 ——
+    这三样是三个不同的控件，样式表都由 :mod:`gallery.ui.window.menu_style` 从**各自的**调色板生成 ——
     而 macOS 上 Qt 会按控件类型把高亮、正文色解析成不同的值（同一份调色板：``QMenu`` 的
     ``Highlight`` 是 ``#548fff``、``QTreeWidget`` 是 ``#084ad9``），于是同一套生成逻辑画出了
     两种蓝。固定那几档之后（ADR 0035 决策 2）它们只可能同色。

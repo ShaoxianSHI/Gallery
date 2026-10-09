@@ -5,7 +5,8 @@
 而这一次下发的输入只有两个：主题与圆角半径（按胶囊高度算）。都没变时应当**什么都不做**。
 
 **第三样「有没有焦点」仍然要留在判据里**，只是它管的不再是样式表：那一圈轮廓已经不在
-样式表里了（改由 :func:`~gallery.ui.search_field.draw_outline` 自己填），焦点那一下看得见
+样式表里了（改由
+    :func:`~gallery.ui.window.widgets.search_field.draw_outline` 自己填），焦点那一下看得见
 的变化是**换了轮廓的颜色 + 标记为需要重绘**。少了它缓存就会把这一次也忽略掉，点进搜索框边框不变色
 —— 而这一条既不崩也不报错。
 """
@@ -76,7 +77,8 @@ def test_focus_really_does_repaint_the_outline(field: _CountingSearchField) -> N
     而这一条既不崩也不报错。
 
     **盯的是颜色与重画，不是样式表字符串**：那一圈轮廓已经不在样式表里了（自己填的，
-    理由见 :func:`~gallery.ui.search_field.draw_outline`），字符串在焦点那一下根本不变。
+    理由见
+    :func:`~gallery.ui.window.widgets.search_field.draw_outline`），字符串在焦点那一下根本不变。
     """
     before = len(field.applied)
     resting = outline_color(field, accent=False)

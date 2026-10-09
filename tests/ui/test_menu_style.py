@@ -1,6 +1,7 @@
 """菜单面板的底色必须跟窗口是同一块（README 设计原则第 6 条）。
 
-菜单是主题下发**之后**才建出来的，一直用系统菜单色；「菜单长什么样」全在 ``gallery.ui.menu_style``。
+菜单是主题下发**之后**才建出来的，一直用系统菜单色；
+「菜单长什么样」全在 ``gallery.ui.window.menu_style``。
 """
 
 from __future__ import annotations
@@ -33,9 +34,10 @@ from gallery.core.library.config import (
     prepare_library,
 )  # noqa: E402
 from gallery.core.library.photos import GroupRef, PhotoRef  # noqa: E402
-from gallery.ui import menu_style, theme  # noqa: E402
+from gallery.ui import theme  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.theme import rgba  # noqa: E402
+from gallery.ui.window import menu_style  # noqa: E402
 from gallery.ui.window.widgets.external_button import calendar_icon  # noqa: E402
 
 #: 「假装系统换成了深色」用的底色：只要与当前不同，具体是哪个数与这条测试无关。

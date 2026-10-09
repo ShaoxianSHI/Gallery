@@ -223,7 +223,7 @@ class LibraryWatcher:
     """监听一个库目录树。
 
     :param on_change: ``(一批变化)``，**在自己的线程上被调用**（防抖定时器线程）—— 回调里不许碰
-        界面，要用排队连接搬回主线程（见 ``ui/watch.py``）。
+        界面，要用排队连接搬回主线程（见 ``ui/window/watch.py``）。
     """
 
     def __init__(

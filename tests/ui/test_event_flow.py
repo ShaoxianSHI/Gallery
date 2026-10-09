@@ -51,9 +51,8 @@ from gallery.core.library.config import BROWSE_MODE_ALBUMS, prepare_library  # n
 from gallery.core.library.photos import GroupRef  # noqa: E402
 from gallery.core.library.session import SessionState, save_session  # noqa: E402
 from gallery.core.metadata.facets import PhotoFacets  # noqa: E402
-from gallery.ui import menu_style, theme  # noqa: E402
+from gallery.ui import theme  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
-from gallery.ui.menu_style import ShortcutColumnMenu  # noqa: E402
 from gallery.ui.outline import opaque_over  # noqa: E402
 from gallery.ui.panels.event_edit import (  # noqa: E402
     DELETE_REQUESTED,
@@ -63,6 +62,8 @@ from gallery.ui.panels.event_edit import (  # noqa: E402
     EventEditDialog,
 )
 from gallery.ui.theme import rgba  # noqa: E402
+from gallery.ui.window import menu_style  # noqa: E402
+from gallery.ui.window.menu_style import ShortcutColumnMenu  # noqa: E402
 
 #: DateTimeOriginal 的标签编号与它在**Exif 子 IFD** 里（塞进主 IFD 读不出来）。
 DATETIME_ORIGINAL = 0x9003

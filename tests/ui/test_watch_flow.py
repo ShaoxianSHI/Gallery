@@ -4,7 +4,7 @@
 用别的工具改完 EXIF 再回来 —— **都不用重开 Gallery**。这一组测试就把监听器换成假的，
 好让这条链同步跑完：真等文件系统通知，那是一场耐力赛。
 
-假监听器仍然经过真正的桥（:class:`~gallery.ui.watch.WatchBridge`）与排队连接，
+假监听器仍然经过真正的桥（:class:`~gallery.ui.window.watch.WatchBridge`）与排队连接，
 所以「回调在别的线程上到达」这件事本身也是被测到的。
 """
 
@@ -42,7 +42,7 @@ from gallery.core.library.watcher import (  # noqa: E402
 from gallery.core.metadata.facets import PhotoFacets  # noqa: E402
 from gallery.core.metadata.report import MetadataReport  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
-from gallery.ui.watch import WatchBridge  # noqa: E402
+from gallery.ui.window.watch import WatchBridge  # noqa: E402
 from gallery.ui.window.watch_flow import WATCH_ECHO_TTL  # noqa: E402  （常量跟着监听那一段搬了家）
 
 #: 等待异步扫描 / 缩略图完成的时限。

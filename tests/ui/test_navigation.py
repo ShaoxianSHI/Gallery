@@ -1,4 +1,4 @@
-"""``gallery.ui.navigation`` 的测试：面包屑、上级推导、层与格的标识，都不需要 Qt。"""
+"""``gallery.ui.window.navigation`` 的测试：面包屑、上级推导、层与格的标识，都不需要 Qt。"""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from gallery.core.library.config import (
     BROWSE_MODE_FLAT,
 )  # noqa: E402
 from gallery.core.library.photos import FolderRef, GroupRef, PhotoRef
-from gallery.ui.navigation import (
+from gallery.ui.window.navigation import (
     breadcrumb_parts,
     entry_key,
     level_key,

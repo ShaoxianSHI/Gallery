@@ -1,7 +1,7 @@
 """窗口顶边那一行：摆位置、显示什么、按住拖动、双击铺满（ADR 0025 / 0037）。
 
-它只管那一条 —— 改名的输入框归 :class:`~gallery.ui.title_bar.TitleBar`，这一层不碰用户的
-文件。**双击做的是「铺满」不是真全屏**（见 :meth:`TitleBarFlowMixin._toggle_filled`），
+它只管那一条 —— 改名的输入框归 :class:`~gallery.ui.window.widgets.title_bar.TitleBar`。
+**双击做的是「铺满」不是真全屏**（见 :meth:`TitleBarFlowMixin._toggle_filled`），
 而 Qt 的鼠标覆写留在 :class:`~gallery.ui.main_window.MainWindow` 自己身上（Qt 按 MRO 找
 第一个实现）。
 """

@@ -12,7 +12,8 @@ from pathlib import Path
 from gallery.core import paths
 from gallery.core.library.config import BROWSE_MODE_ALBUMS
 from gallery.core.metadata.facets import PhotoFacets
-from gallery.ui.navigation import (
+from gallery.ui.window.jobs import LEVEL
+from gallery.ui.window.navigation import (
     ENTRY_KIND_PATH,
     EntryKey,
     LevelKey,
@@ -22,7 +23,6 @@ from gallery.ui.navigation import (
     path_key,
     row_of_entry_key,
 )
-from gallery.ui.window.jobs import LEVEL
 from gallery.ui.window.state.level_stack import (
     AlbumFrame,
     CalendarFrame,

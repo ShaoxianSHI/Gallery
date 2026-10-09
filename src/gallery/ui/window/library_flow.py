@@ -38,22 +38,22 @@ from gallery.core.places.resolver import LazyPlaceResolver
 from gallery.ui.browser.model import PhotoListModel
 from gallery.ui.browser.thumb_sizes import edge_for_index, nearest_index
 from gallery.ui.calendar.page import CalendarPage
-from gallery.ui.navigation import EntryKey
 from gallery.ui.panels.metadata import MetadataPanel
 from gallery.ui.panels.welcome import WelcomeView
 from gallery.ui.tasks import TaskContext, TaskRunner
 from gallery.ui.thumbs.pipeline import ThumbnailPipeline
 from gallery.ui.viewer.detail import DetailView
-from gallery.ui.watch import WatchBridge
 from gallery.ui.window.filters import FilterState
 from gallery.ui.window.focus import FocusState
 from gallery.ui.window.jobs import LIBRARY
+from gallery.ui.window.navigation import EntryKey
 from gallery.ui.window.state.app_session import AppSession
 from gallery.ui.window.state.banner_text import BannerText
 from gallery.ui.window.state.level_stack import LevelStack, RootKind, root_for
 from gallery.ui.window.state.library_slot import LibrarySlot
 from gallery.ui.window.state.pending_watch import PendingWatch
 from gallery.ui.window.state.staging import Staging
+from gallery.ui.window.watch import WatchBridge
 from gallery.ui.window.widgets.banner_overlay import BannerOverlay
 
 logger = logging.getLogger(__name__)
