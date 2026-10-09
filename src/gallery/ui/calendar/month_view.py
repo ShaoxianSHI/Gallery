@@ -22,7 +22,7 @@ from gallery.core.library.photos import PhotoRef
 from gallery.ui.calendar.base import LevelView, day_label
 from gallery.ui.calendar.layout import fitted_size
 from gallery.ui.calendar.painting import dot, draw_text, fill_rounded, font_px, paint_cell_photo
-from gallery.ui.calendar.thumbs import ThumbStore
+from gallery.ui.calendar.thumb_store import ThumbStore
 
 _HEAD_HEIGHT = 26.0
 _CELL_GAP = 6.0

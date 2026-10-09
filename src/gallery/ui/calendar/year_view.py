@@ -29,7 +29,7 @@ from gallery.ui.calendar.painting import (
     outline_rounded,
     paint_photo,
 )
-from gallery.ui.calendar.thumbs import ThumbStore
+from gallery.ui.calendar.thumb_store import ThumbStore
 
 _BOX_GAP = 22.0
 _ROW_GAP = 3.0

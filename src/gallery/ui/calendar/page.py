@@ -21,7 +21,7 @@ from gallery.core.metadata.facets import PhotoFacets
 from gallery.ui.calendar.base import LevelView
 from gallery.ui.calendar.colors import CalendarColors
 from gallery.ui.calendar.month_view import MonthView
-from gallery.ui.calendar.thumbs import ThumbStore
+from gallery.ui.calendar.thumb_store import ThumbStore
 from gallery.ui.calendar.time_view import WeekView
 from gallery.ui.calendar.toolbar import CalendarBar
 from gallery.ui.calendar.year_view import YearView

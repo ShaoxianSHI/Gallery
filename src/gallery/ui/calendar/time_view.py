@@ -38,7 +38,7 @@ from gallery.ui.calendar.painting import (
     font_px,
     paint_cell_photo,
 )
-from gallery.ui.calendar.thumbs import ThumbStore
+from gallery.ui.calendar.thumb_store import ThumbStore
 from gallery.ui.scrollbar_style import apply_scrollbar_style
 
 #: 左窄条（写钟点）多宽。

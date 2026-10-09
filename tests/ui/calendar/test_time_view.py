@@ -26,7 +26,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from gallery.core.library.photos import PhotoRef  # noqa: E402
 from gallery.core.metadata.facets import PhotoFacets  # noqa: E402
-from gallery.ui.calendar.thumbs import ThumbStore  # noqa: E402
+from gallery.ui.calendar.thumb_store import ThumbStore  # noqa: E402
 from gallery.ui.calendar.time_view import HOURS_PER_DAY, WeekView  # noqa: E402
 
 ANCHOR = datetime.date(2021, 9, 12)

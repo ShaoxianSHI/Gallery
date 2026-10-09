@@ -23,7 +23,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtGui import QImage  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from gallery.ui.calendar.thumbs import DEFAULT_EDGES, ThumbStore  # noqa: E402
+from gallery.ui.calendar.thumb_store import DEFAULT_EDGES, ThumbStore  # noqa: E402
 
 #: 日历三层各自的档位。
 YEAR_EDGE, WEEK_EDGE, MONTH_EDGE = 48, 192, 288

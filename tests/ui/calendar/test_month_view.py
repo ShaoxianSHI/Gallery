@@ -26,7 +26,7 @@ from gallery.core.library.calendar import month_matrix  # noqa: E402
 from gallery.core.library.photos import PhotoRef  # noqa: E402
 from gallery.core.metadata.facets import PhotoFacets  # noqa: E402
 from gallery.ui.calendar.month_view import MonthView  # noqa: E402
-from gallery.ui.calendar.thumbs import ThumbStore  # noqa: E402
+from gallery.ui.calendar.thumb_store import ThumbStore  # noqa: E402
 
 TODAY = datetime.date(2021, 9, 12)
 #: 九月自己的一天 —— 它那一格就该有照片。

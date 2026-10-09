@@ -39,7 +39,7 @@ from gallery.core.metadata.report import (  # noqa: E402
 )
 from gallery.ui import scrollbar_style, theme  # noqa: E402
 from gallery.ui.browser.grid import PhotoGrid  # noqa: E402
-from gallery.ui.calendar.thumbs import ThumbStore  # noqa: E402
+from gallery.ui.calendar.thumb_store import ThumbStore  # noqa: E402
 from gallery.ui.calendar.time_view import WeekView  # noqa: E402
 from gallery.ui.main_window import _GRID_PAGE_MARGIN_RIGHT, MainWindow  # noqa: E402
 from gallery.ui.panels.metadata import SCROLLBAR_EDGE_GAP, MetadataPanel  # noqa: E402

@@ -2,6 +2,8 @@
 
 **按 ``(路径, 边长)`` 记账**：三层要的尺寸差得很远，同一张照片会在两个档位上各要一次；
 **换档不清空** —— 清空会让 ``Y`` / ``M`` / ``W`` 来回翻时把同一批照片重新解码一遍。
+**别与 :mod:`gallery.ui.thumbs` 混起来**：那边是解码流水线，这边是已解码好的图的仓库，
+网格那一份在 :mod:`gallery.ui.browser.model`（ADR 0060）。
 """
 
 from __future__ import annotations

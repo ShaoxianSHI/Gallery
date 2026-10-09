@@ -23,7 +23,7 @@ from gallery.core.library.photos import PhotoRef
 from gallery.ui.calendar.colors import CalendarColors
 from gallery.ui.calendar.painting import begin as begin_painter
 from gallery.ui.calendar.swipe import SwipeDetector, scroll_delta
-from gallery.ui.calendar.thumbs import ThumbStore
+from gallery.ui.calendar.thumb_store import ThumbStore
 from gallery.ui.theme import AppTheme, current_theme
 
 #: 「几何变了 → 重报一次看得见哪些」的防抖间隔（毫秒）。与网格那一侧同一个数。
