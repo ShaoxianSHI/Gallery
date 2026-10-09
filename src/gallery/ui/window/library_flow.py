@@ -9,31 +9,49 @@
 from __future__ import annotations
 
 import logging
+from collections import OrderedDict
+from collections.abc import Callable
 from functools import partial
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast, overload
 
-from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QFileDialog
+from PySide6.QtCore import QObject, QRect
+from PySide6.QtGui import QAction, QImage
+from PySide6.QtWidgets import QFileDialog, QMenu, QWidget
 
 from gallery.core.errors import GalleryError
 from gallery.core.events.orphans import OrphanScan
 from gallery.core.library.config import BROWSE_MODE_ALBUMS, BROWSE_MODE_CALENDAR, LibraryUIState
 from gallery.core.library.facade import Library, PlacePass
-from gallery.core.library.groups import sort_photos
-from gallery.core.library.photos import GridEntry, PhotoRef
+from gallery.core.library.groups import SortOrder, sort_photos
+from gallery.core.library.photos import GridEntry, GroupRef, PhotoRef
 from gallery.core.library.scanner import ScanReport
 from gallery.core.library.session import (
+    SessionState,
     WindowGeometry,
     legacy_ui_state,
     save_session,
 )
 from gallery.core.library.watcher import LibraryChange
 from gallery.core.metadata.facets import PhotoFacets
+from gallery.core.metadata.report import MetadataReport
+from gallery.core.places.resolver import LazyPlaceResolver
+from gallery.ui.banner_overlay import BannerOverlay
+from gallery.ui.browser.model import PhotoListModel
 from gallery.ui.browser.thumb_sizes import edge_for_index, nearest_index
-from gallery.ui.tasks import TaskContext
+from gallery.ui.calendar.page import CalendarPage
+from gallery.ui.navigation import EntryKey
+from gallery.ui.panels.metadata import MetadataPanel
+from gallery.ui.panels.welcome import WelcomeView
+from gallery.ui.tasks import TaskContext, TaskRunner
 from gallery.ui.thumbs.pipeline import ThumbnailPipeline
+from gallery.ui.viewer.detail import DetailView
+from gallery.ui.watch import WatchBridge
+from gallery.ui.window.banner_text import BannerText
+from gallery.ui.window.filters import FilterState
+from gallery.ui.window.focus import FocusState
 from gallery.ui.window.jobs import LIBRARY
-from gallery.ui.window.level_stack import root_for
+from gallery.ui.window.level_stack import LevelStack, RootKind, root_for
 
 logger = logging.getLogger(__name__)
 
@@ -52,9 +70,126 @@ class LibraryFlowMixin:
     _watch_pending: tuple[LibraryChange, ...] | None
     _pending_group: str | None
     _group_facet: str | None
-    _sort_facet: str | None
+    _sort_facet: str
     _facet_values: dict[Path, PhotoFacets]
     _staged: list[GridEntry] | None
+
+    # ---- 宿主提供的另一样东西（ADR 0057）------------------------------------
+    #
+    # 上面那些是**这一间自己初始化**的字段，声明在这里是因为关库/换库会给它们置 ``None``。
+    # 下面这些是**窗口上别的 mixin 初始化**的：写入口在那边，这一间只读。
+    _metadata_cache: OrderedDict[Path, tuple[int, int, MetadataReport]]
+    _place_pass_roots: set[Path]
+    _preview_cache: OrderedDict[Path, QImage]
+    _watch_echoes: dict[Path, float]
+    _session: SessionState
+    _session_base: Path | None
+    _generation: int
+    _level_stack: LevelStack
+    _model: PhotoListModel
+    _watch: WatchBridge
+    _panel: MetadataPanel
+    _welcome: WelcomeView
+    _recent_menu: QMenu
+    _library_title: str
+    _size_index: int
+    _sort_descending: bool
+    _metadata_visible: bool
+    _calendar_level: str
+    _calendar_page: CalendarPage
+    _cache_base: Path | None
+    _runner: TaskRunner
+    _banner: BannerOverlay
+    _metadata_action: QAction
+    _detail: DetailView
+    _orphan_job: int | None
+    _scan_job: int | None
+    _place_job: int | None
+    _filters: FilterState
+    _focus_state: FocusState
+    _banner_text: BannerText
+    _facet_job: int | None
+    # guard: allow-long-comment（方法桩共三十多个，拆成几个块就看不出哪些是同一族的了）
+    #
+    # **方法用 ``TYPE_CHECKING`` 桩，不是类级注解**：注解只能写成 ``Callable[...]``，
+    # 而那与真定义对不上 —— 组合根会报「两个基类里定义不一致」（实测）。
+    # 桩必须**逐字复刻**真签名，包括关键字字与默认值。
+    #
+    # 桩写错的后果是**当场报红**，不是悄悄放过：把 ``_show_banner`` 的 ``text`` 写成 ``int``，
+    # 组合根立刻在三个调用点报 ``arg-type``。所以这份复制品是被守着的。
+    if TYPE_CHECKING:
+
+        def _apply_thumbnail_size(self) -> None: ...
+        def _arm_focus(self, focus: EntryKey | None = None) -> None: ...
+        def _cancel_tier(self, group: str) -> None: ...
+        def _clear_index_notice(self) -> None: ...
+        def _confirm_orphan_cleanup(self, scan: OrphanScan) -> None: ...
+        @property
+        def _search_scope(self) -> str: ...
+        @property
+        def _browse_mode(self) -> str: ...
+        @property
+        def _current_dir(self) -> Path | None: ...
+        def _current_order(self) -> SortOrder: ...
+        @property
+        def _drill_photos(self) -> tuple[PhotoRef, ...] | None: ...
+        @property
+        def _group_view(self) -> GroupRef | None: ...
+        def _is_library_search(self) -> bool: ...
+        def _maybe_start_photo_index(self) -> None: ...
+        def _on_calendar_page(self) -> bool: ...
+        def _on_thumbnail_failed(self, path: object, message: str) -> None: ...
+        def _on_thumbnail_ready(self, path: object, image: object, edge: int = 0) -> None: ...
+        def _order_now(self) -> None: ...
+        def _place_lookup(self) -> LazyPlaceResolver: ...
+        def _refresh_thumbnail_window(self) -> None: ...
+        def _refresh_undo_label(self) -> None: ...
+        def _report_error(self, message: str) -> None: ...
+        def _set_root(self, root: RootKind) -> None: ...
+        def _show_banner(
+            self, text: str, *, background: bool = False, auto_hide: bool = False
+        ) -> bool: ...
+        def _show_calendar(self) -> None: ...
+        def _start_calendar_load(self) -> None: ...
+        def _start_facet_read(self) -> None: ...
+
+        def _start_job(
+            self,
+            name: str,
+            work: Callable[[TaskContext], Any],
+            *,
+            on_result: Callable[[object], None] | None = None,
+            on_error: Callable[[str], None] | None = None,
+            on_progress: Callable[[object], None] | None = None,
+        ) -> None: ...
+
+        def _start_search(self, library: Library) -> None: ...
+        def _sync_search_scope(self) -> None: ...
+        def _sync_ui(self) -> None: ...
+        def _update_metadata_editable(self) -> None: ...
+        def _update_mode_actions(self) -> None: ...
+
+        # ``_reload_level`` 的真定义在 ``navigation_flow.py``（那里带完整的
+        # ``EntryKey | None`` 标注）；``level_stack_mixin.py`` 里另有一份 ``object`` 标注的
+        # 声明。**这里跟着真定义写**，否则组合根会报两个基类不一致。
+        def _reload_level(self, *, focus: EntryKey | None = None) -> None: ...
+
+        # 这四个是 ``QMainWindow`` 带来的（Qt 基类），**不是别的 mixin**。
+        # 声明它们是为了这一间单独查时能过。签名**逐字复刻 Qt 的 .pyi**（含位置参数标记
+        # ``/`` 与重载）—— 写松一点组合根就会报「与 ``QWidget`` 的定义不一致」。
+        # 注意 ``geometry()`` 在 ``QWidget`` 上返回 ``QRect``、在 ``QGraphicsItem`` 上才是
+        # ``QRectF``：这里要跟 ``QWidget`` 对齐。
+        def geometry(self, /) -> QRect: ...
+        def isMaximized(self, /) -> bool: ...  # noqa: N802 - 名字是 Qt 定的
+        # 重载要多写一个实现行，否则 mypy 报 ``no-overload-impl``（运行时不执行）。
+        @overload
+        def setGeometry(self, arg__1: QRect, /) -> None: ...  # noqa: N802 - 名字是 Qt 定的
+        @overload
+        def setGeometry(  # noqa: N802 - 名字是 Qt 定的
+            self, x: int, y: int, w: int, h: int, /
+        ) -> None: ...
+        def setGeometry(self, *args: object, **kwargs: object) -> None: ...  # noqa: N802
+        def showMaximized(self, /) -> None: ...  # noqa: N802 - 名字是 Qt 定的  # noqa: N802 - 名字是 Qt 定的
 
     # ---- 恢复上一次的运行状态 ------------------------------------------------
 
@@ -77,7 +212,9 @@ class LibraryFlowMixin:
     def choose_folder(self) -> None:
         """弹出系统文件夹选择框。"""
         start = str(self._library.root) if self._library is not None else str(Path.home())
-        chosen = QFileDialog.getExistingDirectory(self, "选择照片文件夹", start)
+        # ``cast`` ：``self`` 静态上是这个 mixin，而运行时是 ``MainWindow``（一个
+        # ``QMainWindow``）。ADR 0057 记了为什么这里只能 cast 而不能声明。
+        chosen = QFileDialog.getExistingDirectory(cast("QWidget", self), "选择照片文件夹", start)
         if chosen:
             self.open_library(Path(chosen))
 
@@ -181,7 +318,7 @@ class LibraryFlowMixin:
         self._facet_values = {}
         self._model.clear()
 
-        self._pipeline = ThumbnailPipeline(library, self._runner, self)
+        self._pipeline = ThumbnailPipeline(library, self._runner, cast("QObject", self))
         self._pipeline.ready.connect(self._on_thumbnail_ready)
         self._pipeline.failed.connect(self._on_thumbnail_failed)
 
@@ -565,12 +702,12 @@ class LibraryFlowMixin:
         self._recent_menu.clear()
         roots = [root for root in self._session.recent_roots if root.is_dir()]
         if not roots:
-            empty = QAction("（还没有）", self)
+            empty = QAction("（还没有）", cast("QWidget", self))
             empty.setEnabled(False)
             self._recent_menu.addAction(empty)
             return
         for root in roots:
-            action = QAction(str(root), self)
+            action = QAction(str(root), cast("QWidget", self))
             action.triggered.connect(lambda _checked=False, path=root: self.open_library(path))
             self._recent_menu.addAction(action)
 

@@ -71,7 +71,7 @@ class OrderingMixin:
     _facet_values: dict[Path, PhotoFacets]
     _event_values: dict[Path, tuple[EventRef, ...]]
     _group_facet: str | None
-    _sort_facet: str | None
+    _sort_facet: str
     _reorder_fingerprint: tuple[object, ...] | None
     _reorder_values: dict[Path, PhotoFacets] | None
     _reorder_events: dict[Path, tuple[EventRef, ...]] | None

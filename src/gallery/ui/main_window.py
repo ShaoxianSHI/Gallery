@@ -206,7 +206,7 @@ class MainWindow(
         self._level_stack = LevelStack(root=RootKind.FLAT)
         # 分组 / 排序（ADR 0009）：字段 id 存在库的 config.toml 里，下次打开这个库沿用；空值走默认。
         self._group_facet: str | None = None
-        self._sort_facet: str | None = DEFAULT_SORT_FACET
+        self._sort_facet: str = DEFAULT_SORT_FACET
         self._sort_descending: bool = False
         #: 大图页右侧的元数据面板是否展开。**同样是库级的**（ADR 0038 决策 4）。
         self._metadata_visible: bool = False

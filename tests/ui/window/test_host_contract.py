@@ -729,7 +729,8 @@ def test_this_guard_would_notice_a_new_dependency() -> None:
     assert "setGeometry" not in measured["window/title_bar_flow.py:TitleBarFlowMixin"]
 
 
-#: ``mypy --strict src/gallery/ui/window`` 在 2026-10-10 的实测值（ADR 0056 修完那 85 条之后）。
+#: ``mypy --strict src/gallery/ui/window`` 在 2026-10-10 的实测值（ADR 0057 补完
+#: ``library_flow`` 那一间之后）。**它只会往下走** —— 每补完一间的声明就少一批。
 #:
 #: **它和上面那张表量的是同一片依赖，但不是一个数**：表里 489 条是**不重复的成员**，
 #: 而 mypy 报的是**使用点**且按它自己的口径逐类去重。所以这里**不做交叉断言** ——
@@ -738,10 +739,9 @@ def test_this_guard_would_notice_a_new_dependency() -> None:
 #: **另一个口径是 ``main_window.py`**（组合根，现在是 0 条，ADR 0056）—— 但它有个
 #: 必须说清的性质：**mypy 只报目标文件自己的错**，被 import 的 18 个 mixin 只是被跟进
 #: 来做类型推导。所以它守的是「那一层组装得起来」，**不是「mixin 的函数体干净」**。
-#: 想看后者得用全覆盖口径（``mypy --strict src/gallery/ui``，现在 1225 条）。
-#: 剩下这 869 条 ``[attr-defined]`` 是 ADR 0055 那 489 条声明没做的直接后果。
-MYPY_TOTAL_ERRORS = 921
-MYPY_ATTR_DEFINED = 869
+#: 想看后者得用全覆盖口径（``mypy --strict src/gallery/ui``，现在 1109 条）。
+MYPY_TOTAL_ERRORS = 805
+MYPY_ATTR_DEFINED = 762
 
 #: 真跑一次 mypy 的开关。跑一次要几秒，而这一份每次测试都会跑 —— **别每次都跑**。
 UI_WINDOW_MYPY_RECHECK = "UI_WINDOW_MYPY_RECHECK"
@@ -782,6 +782,37 @@ def test_the_composition_root_is_type_clean() -> None:
     )
     assert result.returncode == 0, "组合根在 --strict 下不干净了：\n" + "\n".join(
         line for line in result.stdout.splitlines() if " error: " in line
+    )
+
+
+#: 已经按 ADR 0057 补完声明、``--strict`` 下**一条不报**的那些 mixin。
+#: 每一间补完就把文件名加进来 —— 这个清单只会变长。
+TYPED_MODULES = ("library_flow.py",)
+
+
+def test_the_finished_modules_stay_type_clean() -> None:
+    """**补完声明的那几间，一条都不许再报** —— 清单只增不减。
+
+    与 ``test_the_composition_root_is_type_clean`` 盯的不是同一件事：那一间守的是
+    「组装得起来」，这一间守的是「**这个文件自己**干净」。ADR 0057 就是按这个清单
+    一间一间往前推的，每补完一间加一行。
+    """
+    if os.environ.get(UI_WINDOW_MYPY_RECHECK) != "1":
+        pytest.skip("要真跑 mypy：设 UI_WINDOW_MYPY_RECHECK=1")
+    dirty: list[str] = []
+    for name in TYPED_MODULES:
+        result = subprocess.run(
+            [sys.executable, "-m", "mypy", f"src/gallery/ui/window/{name}", "--strict"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            dirty.append(name)
+            print(f"--- {name}\n" + result.stdout)
+    assert not dirty, (
+        f"这几间已经补完声明了，不该再报：{dirty}。"
+        "新出现的多半是**真问题**（类型变了、或者用了还没声明的宿主成员）—— 别用 ignore 盖掉。"
     )
 
 
