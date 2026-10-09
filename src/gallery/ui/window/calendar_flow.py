@@ -95,7 +95,7 @@ class CalendarFlowMixin:
         self._level_notice = False
         self._progress_notice = False
         self._scan_issue = False
-        self._current_row = -1
+        self._focus_state.clear_current()
         self._detail.clear_image()
         self._panel.clear()
         self._banner.hide()
@@ -182,7 +182,7 @@ class CalendarFlowMixin:
         self._grid.reset_for_new_level()
         self._preview_cache.clear()
         self._metadata_cache.clear()
-        self._current_row = -1
+        self._focus_state.clear_current()
         self._detail.clear_image()
         self._panel.clear()
         self._banner.hide()
@@ -205,7 +205,7 @@ class CalendarFlowMixin:
         """
         self._model.clear()
         self._grid.reset_for_new_level()
-        self._current_row = -1
+        self._focus_state.clear_current()
         self._back_to_calendar()
         self._start_scan()
 

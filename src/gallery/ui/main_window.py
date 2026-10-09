@@ -68,10 +68,6 @@ from gallery.ui.external_button import (
     calendar_icon,
     folder_icon,
 )
-from gallery.ui.navigation import (
-    EntryKey,
-    LevelKey,
-)
 from gallery.ui.panels.breadcrumb import BreadcrumbBar
 from gallery.ui.panels.metadata import MetadataPanel
 from gallery.ui.panels.welcome import WelcomeView
@@ -87,6 +83,7 @@ from gallery.ui.window.calendar_flow import CalendarFlowMixin
 from gallery.ui.window.context_menu_flow import ContextMenuFlowMixin
 from gallery.ui.window.event_flow import EventFlowMixin
 from gallery.ui.window.filters import FiltersMixin
+from gallery.ui.window.focus import FocusMixin
 from gallery.ui.window.jobs import JobsMixin
 from gallery.ui.window.level_stack import (
     LevelStack,
@@ -116,6 +113,7 @@ _GRID_PAGE_MARGIN_H = 10
 class MainWindow(
     JobsMixin,
     FiltersMixin,
+    FocusMixin,
     LevelStackMixin,
     NavigationFlowMixin,
     OrderingMixin,
@@ -139,7 +137,8 @@ class MainWindow(
     # 文件的那些入口**（绝不删除、移动用户照片，改名是唯一豁免），它必须留在 ``ui/write_ops.py``
     # —— 回归测试按文件名找它。
     # ``EventFlowMixin`` 反过来：它一个用户的文件都不碰（动的是 Gallery 自己的事件库）。
-    # ``FiltersMixin`` 只贡献四个**只读**属性（ADR 0052）：写入口是 ``self._filters`` 上的方法。
+    # ``FiltersMixin`` 与 ``FocusMixin`` 各贡献几个**只读**属性（ADR 0052、0053）：
+    # 写入口是 ``self._filters`` / ``self._focus_state`` 上的方法。
 
     """应用主窗口。"""
 
@@ -171,7 +170,8 @@ class MainWindow(
         self._watch_pending: tuple[LibraryChange, ...] | None = None
         #: 分组视图里来了新照片：重新分组之后要回到哪个组（ADR 0013）。
         self._pending_group: str | None = None
-        self._pending_focus: EntryKey | None = None
+        # 大图页指着哪一行、这一层该选中哪一格：那几笔记账与它们的写入口（ADR 0053）。
+        self._init_focus()
 
         self._library: Library | None = None
         self._pipeline: ThumbnailPipeline | None = None
@@ -186,7 +186,6 @@ class MainWindow(
         self._title_bar_drag_armed = False
         #: 那一次按下落在哪（全局坐标）：够不够远只跟它比。
         self._title_bar_drag_origin: QPointF | None = None
-        self._current_row = -1
         #: **在大图页上删掉的那一张**（``None`` = 没删过 / 已取回）：⌘Z 之后要跳回它，
         #: **只对紧接着的那一次撤销有效**。
         self._detail_trashed: Path | None = None
@@ -218,12 +217,7 @@ class MainWindow(
         #: 旧 ``state.json`` 里的库级偏好，整个进程只读一次（``None`` = 还没读）。
         self._legacy_ui: LibraryUIState | None = None
         # 已经进入的分组（`_group_view`）不再是字段 —— 它是栈上最近一个 ``GroupFrame``。
-        #: 模型里此刻摆着的是哪一层：用来分清「换了一层」（选区清空）与「还是这一层，重排一遍」。
-        self._level_key: LevelKey | None = None
-        #: 这一层第一次排好时该选中的一格（``None`` = 谁也不选，见 :meth:`_arm_focus`）。
-        self._focus: EntryKey | None = None
-        #: 上面那一格摆出来了吗。一层只摆一次，免得跟用户后来的点选抢当前项。
-        self._focus_restored = False
+        # 「摆的是哪一层」与「该选中哪一格」同住一根轴（ADR 0053）：层标识与那一格一并重置。
         self._facet_values: dict[Path, PhotoFacets] = {}
         # guard: allow-long-comment（必须跟着 facet 那个后台任务回来，不能在主线程现发整层查询）
         #: 这一层的照片各属于哪些事件（ADR 0043）。**只给「按事件分组」看**，而它必须跟着

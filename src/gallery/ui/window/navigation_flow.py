@@ -189,7 +189,7 @@ class NavigationFlowMixin:
         # 换层只把横幅收掉，**不打断**全库解析：它是整个库的事，与当前在哪一层无关。
         self._place_notice_text = None
         self._scan_issue = False
-        self._current_row = -1
+        self._focus_state.clear_current()
         self._detail.clear_image()
         self._panel.clear()
         self._banner.hide()
@@ -213,12 +213,8 @@ class NavigationFlowMixin:
 
         :param focus: 显式指定（往上一层退时给的那个相册 / 那个组）；不给就由下面的规则判断。
         判断靠比层标识（``navigation.level_key``）：``enter_*`` 先改状态再重载，所以问
-        「现在在哪一层」得到的是**新的**那一层，正好拿来和 ``self._level_key`` 比。
-        **顺序要紧**：先把「还是同一层吗」问完再换 ``self._level_key``。"""
-        remembered = self._shown_entry_key()
-        self._level_key = self._current_level_key()
-        self._focus = focus if focus is not None else remembered
-        self._focus_restored = False
+        「现在在哪一层」得到的是**新的**那一层，正好拿来和轴上记着的那份比。"""
+        self._focus_state.arm(self._current_level_key(), self._shown_entry_key(), focus)
 
     def _current_level_key(self) -> LevelKey:
         """当前这一层的标识（见 ``navigation.level_key``）。"""
@@ -233,7 +229,7 @@ class NavigationFlowMixin:
 
     def _shown_entry_key(self) -> EntryKey | None:
         """网格上此刻停着的那一格是谁；不是同一层（或者压根没有）就是 ``None``。"""
-        if self._level_key is None or self._level_key != self._current_level_key():
+        if not self._focus_state.is_same_level(self._current_level_key()):
             return None
         entry = self._model.entry_at(self._grid.current_row())
         return None if entry is None else entry_key(entry)
@@ -244,10 +240,7 @@ class NavigationFlowMixin:
         **每一层只摆一次**：摆完之后就是用户自己的选择了，后台再重排（来了新照片、换排序）
         不该把它拽回去 —— 那种重排由 ``_reorder_level`` 的锚点负责。找不到就什么都不选。
         """
-        if self._focus_restored:
-            return
-        self._focus_restored = True
-        key, self._focus = self._focus, None
+        key = self._focus_state.take_focus()
         if key is None:
             return
         row = self._row_of_focus(key)

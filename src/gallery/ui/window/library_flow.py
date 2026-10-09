@@ -162,7 +162,7 @@ class LibraryFlowMixin:
         self._generation += 1
         self._thumbnail_failures = 0
         self._refresh_undo_label()
-        self._current_row = -1
+        self._focus_state.clear_current()
         self._preview_cache.clear()
         self._metadata_cache.clear()
         self._facet_values = {}
@@ -257,11 +257,9 @@ class LibraryFlowMixin:
         self._watch_echoes.clear()
         self._watch_pending = None
         self._pending_group = None
-        self._pending_focus = None
         # 「到了这一层该选中哪一格」与「现在摆的是哪一层」都是上一个库留下的，
         # 不作废会把上一库的选中搬过来。
-        self._focus = None
-        self._level_key = None
+        self._focus_state.forget_level()
         # guard: allow-long-comment（约束 1：为什么写操作必须在这里取消，换层时又为什么不能）
         # 切库与关窗取消**全部**任务，包括 :attr:`_write_job` —— ⌘V /「移动到相册」在旧库的
         # ``Library`` 上跑，不取消的话收尾时会去问新库「下一次 ⌘Z 撤什么」，而记录在旧库里。

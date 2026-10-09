@@ -340,6 +340,14 @@ def test_the_job_lifecycle_guard_would_notice_a_violation() -> None:
 #: 筛选 / 检索那四个字段的写入口只许在 ``ui/window/filters.py`` 里（ADR 0052）。
 FILTERS_MODULE = Path("window") / "filters.py"
 
+#: 焦点 / 当前行那一族的写入口只许在 ``ui/window/focus.py`` 里（ADR 0053）。
+#:
+#: ``_current_row`` 在窗口上是**只读属性**，所以任何一处赋值都是绕过轴 —— 而它原先是 11 处裸赋值，
+#: 其中 6 处是同一个意思（换层了，没人正看着任何一张）。那一族其余三个字段已经不在窗口上了，
+#: 写它们会直接 ``AttributeError``，所以只盯这一个。
+FOCUS_MODULE = Path("window") / "focus.py"
+FOCUS_WRITE_PATTERNS = (re.compile(r"self\._current_row\s*(=[^=]|\+=|-=)"),)
+
 #: 那四个字段在窗口上仍是**只读属性**，所以任何一处赋值都是绕过轴 —— 四支都拦：
 #: 整个属性（``=``）、下标（``[i] =``）、``del``，以及改长度的调用。
 FILTER_FIELD_NAMES = ("_conditions", "_search_scope", "_editing_condition", "_search_total")
@@ -372,6 +380,38 @@ def test_only_the_filters_module_writes_the_filter_fields() -> None:
     assert not offenders, (
         f"那四个筛选字段的写入口只许在 ui/{FILTERS_MODULE}（ADR 0052）：{offenders}"
     )
+
+
+def test_only_the_focus_module_writes_the_current_row() -> None:
+    """**``_current_row`` 只许在 ``ui/window/focus.py`` 里写**（ADR 0053）。
+
+    它原先是 11 处裸赋值，其中 **6 处是完全同一句话**（「这一层换了，没人正看着任何一张」，
+    散在换层、换库、换浏览方式、点日历格、摊开日历格、收日历格）。收成 ``clear_current()``
+    与 ``set_current()`` 两个入口之后，「换层时忘了清」在代码里就长得不一样了。
+    """
+    offenders: list[str] = []
+    for path in _iter_python_files(UI_ROOT):
+        if path.name == FOCUS_MODULE.name:
+            continue
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if any(pat.search(line) for pat in FOCUS_WRITE_PATTERNS):
+                offenders.append(f"{path.relative_to(PROJECT_ROOT)}:{number}")
+    assert not offenders, (
+        f"``_current_row`` 的写入口只许在 ui/{FOCUS_MODULE}（ADR 0053）：{offenders}"
+    )
+
+
+def test_the_focus_row_guard_would_notice_a_violation() -> None:
+    """上一条自己必须验过一次 —— 扫正则最容易出的错是「扫不到东西而恒绿」。"""
+    assert FOCUS_WRITE_PATTERNS[0].search("        self._current_row = -1")
+    assert FOCUS_WRITE_PATTERNS[0].search("        self._current_row = row")
+    # 读与比较不算 —— 那正是要放行的（25 处读一个字都没改）。
+    for line in (
+        "        if self._current_row < 0:",
+        "            return self._current_row",
+        "        row = self._current_row",
+    ):
+        assert not FOCUS_WRITE_PATTERNS[0].search(line), f"误伤：{line!r}"
 
 
 def test_the_filter_field_guard_would_notice_a_violation() -> None:

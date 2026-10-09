@@ -722,7 +722,7 @@ class WriteOpsMixin:
         row = self._grid.current_row()
         # 网格的选区已经落到下一格：大图页与网格从此必须指着同一格（``_current_row`` 与
         # 网格当前项对不上时，⌘Z 取回来的照片会插到别处去）。
-        self._current_row = row
+        self._focus_state.set_current(row)
         if self._model.photo_at(row) is None:
             self.show_grid()
             return
@@ -830,7 +830,7 @@ class WriteOpsMixin:
         # 网格与大图从此指着同一格（与 ``_show_next_after_trash`` 那条约定一致）。
         self._grid.select_row(row, ensure_visible=False)
         if self._in_detail_page():
-            self._current_row = row
+            self._focus_state.set_current(row)
             self._load_detail(row)
             return
         # 已经退回网格（删的是这一层最后一张）：**重新打开它** —— 照片帧要真的压回去，

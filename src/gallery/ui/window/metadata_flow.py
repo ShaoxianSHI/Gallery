@@ -234,7 +234,7 @@ class MetadataFlowMixin:
         photo = self._model.photo_at(row)
         if photo is None:
             return
-        self._current_row = row
+        self._focus_state.set_current(row)
         # 照片帧只在大图页里翻页时换掉栈顶 —— 往深里压的话 Esc 要按几十次才退得回去。
         if self._photo_frame is not None:
             self._push_frame(PhotoFrame(photo.path), replace=True)

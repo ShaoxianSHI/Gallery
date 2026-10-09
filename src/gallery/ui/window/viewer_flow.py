@@ -85,7 +85,7 @@ class ViewerFlowMixin:
         # **换一张照片就把横幅收掉**（见 :meth:`_clear_banner`）：那句「已把它移到废纸篓」
         # 说的是刚才那一张。
         self._clear_banner()
-        self._current_row = row
+        self._focus_state.set_current(row)
         self._load_detail(row)
 
     def step_photo_from_panel(self, delta: int) -> None:

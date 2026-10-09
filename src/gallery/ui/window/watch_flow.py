@@ -302,7 +302,7 @@ class WatchFlowMixin:
         row = min(self._current_row, self._model.rowCount() - 1)
         photo = self._model.photo_at(row)
         if photo is not None and photo.path in stale:
-            self._current_row = row
+            self._focus_state.set_current(row)
             self._load_detail(row)
 
     def _reenter_group_later(self, key: str) -> None:
@@ -313,7 +313,7 @@ class WatchFlowMixin:
         就被甩掉了。
         """
         self._pending_group = key
-        self._pending_focus = self._shown_entry_key()
+        self._focus_state.remember_pending(self._shown_entry_key())
         # 栈：退到分组之前那一层（分组的帧被弹掉，而**底下那层原样留着**）。
         self._pop_to(lambda stack: self._group_view is None)
         self._reload_level()
@@ -321,7 +321,7 @@ class WatchFlowMixin:
     def _maybe_reenter_group(self) -> None:
         """重排之后回到刚才那个组（它不在了就留在这一层，由横幅说明为什么）。"""
         key, self._pending_group = self._pending_group, None
-        focus, self._pending_focus = self._pending_focus, None
+        focus = self._focus_state.take_pending()
         if key is None:
             return
         for entry in self._model.entries():
