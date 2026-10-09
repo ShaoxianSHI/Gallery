@@ -196,7 +196,6 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
             "_banner",
             "_banner_text",
             "_browse_mode",
-            "_calendar_level",
             "_calendar_page",
             "_cancel_tier",
             "_clear_index_notice",
@@ -218,7 +217,6 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
             "_maybe_start_photo_index",
             "_metadata_action",
             "_metadata_cache",
-            "_metadata_visible",
             "_model",
             "_on_calendar_page",
             "_on_thumbnail_failed",
@@ -457,8 +455,7 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
             "_search_field",
             "_stack",
             "_title_bar",
-            "_title_bar_drag_armed",
-            "_title_bar_drag_origin",
+            "_title_bar_drag",
         }
     ),
     "window/viewer_flow.py:ViewerFlowMixin": frozenset(

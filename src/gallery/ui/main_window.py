@@ -12,7 +12,7 @@ from collections import OrderedDict
 from collections.abc import Sequence
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QPointF, Qt, QTimer
+from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
@@ -37,7 +37,6 @@ from gallery.core.library.config import (
     BROWSE_MODE_ALBUMS,
     BROWSE_MODE_CALENDAR,
     BROWSE_MODE_FLAT,
-    DEFAULT_CALENDAR_LEVEL,
     SEARCH_SCOPE_LEVEL,
     SEARCH_SCOPE_LIBRARY,
 )
@@ -145,6 +144,7 @@ class MainWindow(
         self._init_opening(session_base, cache_base)
         self._runner = TaskRunner(self)
         self._init_pending_watch()
+        self._init_title_bar_drag()
         #: 外部文件变化 → 网格。回调在 watchdog 的线程上到达，必须用排队连接接。
         self._watch = WatchBridge(self, starter=watch_starter or start_watch)
         self._watch.changed.connect(self._on_watch_changed, Qt.ConnectionType.QueuedConnection)
@@ -162,11 +162,6 @@ class MainWindow(
         self._init_jobs()
         #: 选区变化后**合并成一轮**再全量重算动作可用性（0ms 单次，理由见连接处）。
         self._action_states_timer = QTimer(self)
-        #: 「这一次按下还可能是双击的第一下」这个记号（见 :meth:`mousePressEvent`）。
-        #: 真正发起拖动要等鼠标动得够远，那时它才被摘掉（见 :meth:`mouseMoveEvent`）。
-        self._title_bar_drag_armed = False
-        #: 那一次按下落在哪（全局坐标）：够不够远只跟它比。
-        self._title_bar_drag_origin: QPointF | None = None
         #: **在大图页上删掉的那一张**（``None`` = 没删过 / 已取回）：⌘Z 之后要跳回它，
         #: **只对紧接着的那一次撤销有效**。
         self._detail_trashed: Path | None = None
@@ -181,12 +176,6 @@ class MainWindow(
         #: 「我在哪一层」—— **一条栈**（ADR 0041）。浏览方式、当前目录、分组、日历那一格
         #: 及其标志位都是从这条栈算出来的属性，见 ``LevelStackMixin``。
         self._level_stack = LevelStack(root=RootKind.FLAT)
-        # 分组 / 排序（ADR 0009）：字段 id 存在库的 config.toml 里，下次打开这个库沿用；空值走默认。
-        #: 大图页右侧的元数据面板是否展开。**同样是库级的**（ADR 0038 决策 4）。
-        self._metadata_visible: bool = False
-        #: 日历停在哪一层。也是库级的。
-        self._calendar_level: str = DEFAULT_CALENDAR_LEVEL
-        #: 旧 ``state.json`` 里的库级偏好，整个进程只读一次（``None`` = 还没读）。
         #: 这一层还没显示到界面的条目（顺序定下来再给出去，ADR 0009 决策 6）；``None`` = 已排好。
         self._staged: list[GridEntry] | None = None
         # 分组 / 排序这一族在 ``OrderingState`` 里（ADR 0058 阶段 2）：用户选了什么、

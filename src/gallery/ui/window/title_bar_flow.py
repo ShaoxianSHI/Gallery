@@ -37,6 +37,20 @@ DRAG_THRESHOLD: Final = 3
 
 
 class TitleBarFlowMixin:
+    _title_bar_drag: TitleBarDrag
+
+    def _init_title_bar_drag(self) -> None:
+        self._title_bar_drag = TitleBarDrag()
+
+    # 这两个是转发 —— ``tests/ui/test_title_bar.py`` 直接摸它们断言「按下了」与「没在拖」。
+    @property
+    def _title_bar_drag_armed(self) -> bool:
+        return self._title_bar_drag._armed
+
+    @property
+    def _title_bar_drag_origin(self) -> QPointF | None:
+        return self._title_bar_drag._origin
+
     _title_bar_drag_origin: QPointF | None
 
     """摆那一条的位置、决定它显示什么、按住拖窗口、双击铺满。"""
@@ -66,8 +80,7 @@ class TitleBarFlowMixin:
         **先不做决定**：这一下可能是双击的第一下，也可能是一拖的开头 —— 判据是「接下来
         动没动、动了多远」（见 :meth:`_title_bar_drag_began`），按下这一刻还看不出来。
         """
-        self._title_bar_drag_armed = True
-        self._title_bar_drag_origin = global_position
+        self._title_bar_drag.arm(global_position)
 
     def _title_bar_drag_began(self, global_position: QPointF) -> bool:
         """鼠标已经移开够远，这一次按下可以确定是拖动而不是双击的一半。
@@ -76,15 +89,11 @@ class TitleBarFlowMixin:
         窗口在这段时间里**一步都不跟手**，正常的一拖在时限之前就松手了。这条线是
         :data:`DRAG_THRESHOLD`（一个很小的数），**不是拖放那条 10 点**。
         """
-        if not self._title_bar_drag_armed or self._title_bar_drag_origin is None:
-            return False
-        moved = global_position - self._title_bar_drag_origin
-        return moved.manhattanLength() >= DRAG_THRESHOLD
+        return self._title_bar_drag.moved_far_enough(global_position)
 
     def _disarm_title_bar_drag(self) -> None:
         """把「这一次按下」清掉：松手、双击、或者已经真的拖起来了，三种情况都到这儿。"""
-        self._title_bar_drag_armed = False
-        self._title_bar_drag_origin = None
+        self._title_bar_drag.disarm()
 
     def _start_title_bar_drag(self) -> None:
         """真的发起系统拖动 —— 鼠标已经动得够远，确认这一下不是双击。
@@ -214,3 +223,39 @@ class TitleBarFlowMixin:
 
 
 __all__ = ["DRAG_THRESHOLD", "TitleBarFlowMixin"]
+
+
+class TitleBarDrag:
+    """**「这一次按下」的状态**（ADR 0058 阶段 4）。
+
+    按下落在标题栏只说明「可能是拖的开头」，这一下也可能是双击的第一下 ——
+    判据是接下来动没动、动了多远（见 :meth:`moved_far_enough`）。
+
+    那两个字段原先在 ``MainWindow`` 上，而只有这一间改它们。
+    """
+
+    __slots__ = ("_armed", "_origin")
+
+    def __init__(self) -> None:
+        self._armed = False
+        self._origin: QPointF | None = None
+
+    def arm(self, position: QPointF) -> None:
+        """记下这一次按下落在哪（全局坐标）。**先不做决定**。"""
+        self._armed = True
+        self._origin = position
+
+    def moved_far_enough(self, position: QPointF) -> bool:
+        """移开够远就确定是拖动。
+
+        **按距离判，不按时间**：定一个「等满双击周期」的定时器看着像在模仿系统，实际是
+        让窗口在这段时间里**一步都不跟手**，正常的一拖在时限之前就松手了。
+        """
+        if not self._armed or self._origin is None:
+            return False
+        return (position - self._origin).manhattanLength() >= DRAG_THRESHOLD
+
+    def disarm(self) -> None:
+        """清掉「这一次按下」：松手、双击、或已经真的拖起来了，三种都到这儿。"""
+        self._armed = False
+        self._origin = None

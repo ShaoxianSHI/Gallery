@@ -125,6 +125,22 @@ class LibraryFlowMixin:
         self._app_session._session = value
 
     @property
+    def _metadata_visible(self) -> bool:
+        return self._slot._metadata_visible
+
+    @_metadata_visible.setter
+    def _metadata_visible(self, value: bool) -> None:
+        self._slot._metadata_visible = value
+
+    @property
+    def _calendar_level(self) -> str:
+        return self._slot._calendar_level
+
+    @_calendar_level.setter
+    def _calendar_level(self, value: str) -> None:
+        self._slot._calendar_level = value
+
+    @property
     def _session_base(self) -> Path | None:
         return self._app_session._session_base
 
@@ -158,8 +174,6 @@ class LibraryFlowMixin:
     _welcome: WelcomeView
     _recent_menu: QMenu
     _sort_descending: bool
-    _metadata_visible: bool
-    _calendar_level: str
     _calendar_page: CalendarPage
     _runner: TaskRunner
     _banner: BannerOverlay

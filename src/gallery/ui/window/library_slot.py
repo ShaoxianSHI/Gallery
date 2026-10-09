@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 
-from gallery.core.library.config import LibraryUIState
+from gallery.core.library.config import DEFAULT_CALENDAR_LEVEL, LibraryUIState
 from gallery.core.library.facade import Library
 
 if True:  # TYPE_CHECKING
@@ -20,7 +20,7 @@ __all__ = ["LibrarySlot"]
 class LibrarySlot:
     """**当前打开的库**这一族的唯一存储（ADR 0058 阶段 3）。
 
-    关库就是调 :meth:`clear` —— 四样一起清，而不是各处记得自己置 ``None``。
+    关库就是调 :meth:`clear` —— 一起清，而不是各处记得自己置 ``None``。
     """
 
     #: 打开着的库（``None`` = 还没开或者已经关了）。
@@ -32,12 +32,20 @@ class LibrarySlot:
     _library_title: str
     #: 旧 ``state.json`` 里的库级偏好，**整个进程只读一次**（``None`` = 还没读）。
     _legacy_ui: LibraryUIState | None
+    #: 大图页右侧的元数据面板是否展开。**库级**（ADR 0038 决策 4），跟着这个库存。
+    _metadata_visible: bool
+    #: 日历停在哪一层。也是库级的。
+    _calendar_level: str
 
     def __init__(self) -> None:
         self._library = None
         self._pipeline = None
         self._library_title = "Gallery"
+        self._metadata_visible = False
+        self._calendar_level = DEFAULT_CALENDAR_LEVEL
         self._legacy_ui = None
+        self._metadata_visible = False
+        self._calendar_level = DEFAULT_CALENDAR_LEVEL
 
     def clear(self) -> None:
         """**关库**：把这一族清回「没开库」。
@@ -48,3 +56,5 @@ class LibrarySlot:
         self._library = None
         self._pipeline = None
         self._library_title = "Gallery"
+        self._metadata_visible = False
+        self._calendar_level = DEFAULT_CALENDAR_LEVEL
