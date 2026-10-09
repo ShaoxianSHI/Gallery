@@ -88,11 +88,9 @@ class SearchFlowMixin:
             self._pop_to(lambda stack: not isinstance(stack.top, SearchFrame))
         self._sync_search_scope()
         # **有条件才重列这一层**：没有条件时两种作用域的显示完全一样（都是这一层的全部内容），
-        # 重列只是让网格无意义地闪一下。
+        # 重列只是让网格无意义地闪一下。没有条件时界面已经由上面那句 `_sync_search_scope` 重算过。
         if self._conditions:
             self._reload_level()
-        else:
-            self._update_action_states()
 
     def _sync_search_scope(self) -> None:
         """胶囊上的那句话与菜单项的勾，两处一起跟着作用域走。
@@ -103,7 +101,9 @@ class SearchFlowMixin:
         filtering = self._search_scope == SEARCH_SCOPE_LEVEL
         self._search_field.set_scope(filtering)
         self._scope_action.setChecked(filtering)
-        self._update_action_states()
+        # 作用域还决定菜单上那两句话写「筛选」还是「搜索」（`_update_action_states` 里读的），
+        # 所以余下那几份映射一并重算，而不是只挑这一份。
+        self._sync_ui()
 
     # ---- 筛选（ADR 0040 决策 3）------------------------------------------------
 
@@ -172,7 +172,7 @@ class SearchFlowMixin:
         self._search_total = (
             len(self._staged) if self._staged is not None else self._model.rowCount()
         )
-        self._update_breadcrumb()
+        self._sync_ui()
         # **直接排**：筛选已经做完，再绕回 ``_order_now`` 会再筛一次（同一个漏斗递归到自己）。
         self._apply_ordering()
 
@@ -232,7 +232,7 @@ class SearchFlowMixin:
         # 命中数变了要刷新面包屑：它就写在那枚「搜索结果（128）」里。
         if total != self._search_total or self._search_total is None:
             self._search_total = total
-            self._update_breadcrumb()
+            self._sync_ui()
         self._on_scan_done(generation, ScanReport())
 
     def _on_search_failed(self, generation: int, message: str) -> None:
@@ -240,7 +240,7 @@ class SearchFlowMixin:
             return
         self._search_job = None
         self._search_total = 0
-        self._update_breadcrumb()
+        self._sync_ui()
         self._show_banner(f"检索没能完成：{message}")
         self._apply_ordering()  # 把这一层按「没有结果」收尾，界面不至于卡在空白上
 
@@ -372,7 +372,7 @@ class SearchFlowMixin:
         ``_editing_condition`` 一旦设上，下一次回车就是**就地替换、条目数不增加**；
         离开时不清它，之后敲的每一条都在顶掉那一条。**挂在 ``editing_changed(False)``
         而不是焦点事件上**：离屏下 ``focusOutEvent`` 的先后顺序量不出来。"""
-        self._update_action_states()
+        self._sync_ui()
         if not active:
             self._cancel_condition_edit()
 
@@ -386,7 +386,7 @@ class SearchFlowMixin:
             return
         self._editing_condition = position
         self._search_field.load(self._conditions[position].as_input)
-        self._update_breadcrumb()
+        self._sync_ui()
 
     def _cancel_condition_edit(self) -> None:
         """放弃这一次改动：胶囊原样留着，输入框清空。
@@ -399,7 +399,7 @@ class SearchFlowMixin:
             return
         self._editing_condition = None
         self._search_field.stop_edit()
-        self._update_breadcrumb()
+        self._sync_ui()
 
     def _on_condition_removed(self, position: int) -> None:
         """撤掉第 ``position`` 枚条件胶囊（点它右端的 ✕，或改到一半清空后回车）。"""

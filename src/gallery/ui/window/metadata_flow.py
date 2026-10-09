@@ -240,10 +240,8 @@ class MetadataFlowMixin:
             self._push_frame(PhotoFrame(photo.path), replace=True)
         else:
             self._push_frame(PhotoFrame(photo.path))
-        self._sync_page_to_stack()
         self._detail.setFocus()
-        self._update_action_states()
-        self._load_detail(row)
+        self._load_detail(row)  # 换页与标题都在它那句 `_sync_ui` 里
 
 
 __all__ = ["MetadataFlowMixin"]

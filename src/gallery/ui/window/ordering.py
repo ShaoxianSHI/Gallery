@@ -151,11 +151,10 @@ class OrderingMixin:
         if facet_id is not None and group_facet(facet_id) is None:
             return  # 非法 id：会话文件里的旧值也可能走到这里，静默忽略
         if facet_id == self._group_facet:
-            self._sync_order_actions()
+            self._sync_ui()
             return
         self._group_facet = facet_id
         self._remember_ordering()
-        self._sync_order_actions()
         # 换分组字段等于换了一组组卡片，原来进入的那个组已经不存在了。
         # 栈：弹到没有分组帧为止（分组只可能压一层，所以至多弹一帧）。
         self._pop_to(lambda stack: self._group_view is None)
@@ -166,11 +165,10 @@ class OrderingMixin:
         if facet_id is None or sort_facet(facet_id) is None:
             return  # 没有「不排序」这个选择；非法 id 只可能来自旧会话，静默忽略
         if facet_id == self._sort_facet:
-            self._sync_order_actions()
+            self._sync_ui()
             return
         self._sort_facet = facet_id
         self._remember_ordering()
-        self._sync_order_actions()
         self._reload_level()
 
     def set_sort_descending(self, descending: bool) -> None:
@@ -179,7 +177,6 @@ class OrderingMixin:
             return
         self._sort_descending = descending
         self._remember_ordering()
-        self._sync_order_actions()
         self._reload_level()
 
     def _remember_ordering(self) -> None:

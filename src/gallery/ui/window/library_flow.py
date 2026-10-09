@@ -185,9 +185,8 @@ class LibraryFlowMixin:
         # 把模型也换掉）。**档位没变就别叫它** —— 那会让网格带动画重排一下而尺寸一模一样。
         if changed_edge:
             self._apply_thumbnail_size()
-        # **分组 / 排序那两张菜单的勾也要跟着换**：那句 ``_sync_order_actions`` 跑在打开库
-        # 之前，切库后会勾着上一个库那一项。
-        self._sync_order_actions()
+        # 分组 / 排序那两张菜单的勾跟着换：`_apply_ui_state` 刚把这两个字段读成新库的，
+        # 而开窗时那句 `_sync_order_actions` 勾的是上一个库那一项。末尾的 `_sync_ui` 一并重算。
         self._metadata_action.setChecked(self._metadata_visible)
         self._panel.setVisible(self._metadata_visible)
         # 栈：开库 = 从头开始（只留根帧）。与「换浏览方式清栈」是同一件事，都归 :meth:`_set_root`。
@@ -200,17 +199,15 @@ class LibraryFlowMixin:
         self._progress_notice_text = None
         self._place_notice_text = None
         self._scan_issue = False
-        self._update_breadcrumb()
         self._update_mode_actions()
         self._library_title = library.display_name
         self._calendar_page.set_level(self._calendar_level)
         # **只换页**：末尾本来就有一句 `_start_scan()`，再起一遍就是两遍扫描同时塞进模型。
+        # 换库之后标题栏回到相册名（ADR 0025 决策 4）—— `_refresh_title` 在 `_sync_ui` 里。
         if self._browse_mode == BROWSE_MODE_CALENDAR:
             self._show_calendar()
         else:
-            self._sync_page_to_stack()
-        self._refresh_title()  # 换库之后标题栏回到相册名（ADR 0025 决策 4）
-        self._update_action_states()
+            self._sync_ui()
         self._remember(library.root)
         self._watch.start(library)
         self._start_scan()

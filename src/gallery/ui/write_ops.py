@@ -642,7 +642,7 @@ class WriteOpsMixin:
 
     def _on_rename_active_changed(self, _active: bool) -> None:
         """改名的这段时间里 Esc 是「取消改名」，菜单里的「上一级」也跟着让开。"""
-        self._update_action_states()
+        self._sync_ui()
 
     def _on_rename_committed(self, row: int, text: str) -> None:
         entry = self._model.entry_at(row)
@@ -865,8 +865,8 @@ class WriteOpsMixin:
         else:
             self._reload_level()
         # 大图页上标题栏那一行显示的就是这个名字 —— 改完不刷新的话，用户改完却看到旧名字
-        # （⌘Z 撤回时同理，ADR 0025 决策 4）。
-        self._refresh_title()
+        # （⌘Z 撤回时同理，ADR 0025 决策 4；`_refresh_title` 在 `_sync_ui` 里）。
+        self._sync_ui()
         # 记上了才说过就走：没记上时那句话里有一句「⌘Z 撤销不了」，那是用户必须知道的
         # （ADR 0029 决策 3）。撤销回来时传进来的是撤销那句话，判据一样成立。
         self._show_banner(banner or banners.rename_banner(result), auto_hide=result.journaled)

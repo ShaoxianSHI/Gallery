@@ -201,13 +201,11 @@ class NavigationFlowMixin:
         # 整库检索不是日历这一层的一部分：条件撤光之后 Esc 不该退到日历的那一格。
         self._drop_calendar_cell_frame()
         # **摆哪一页由栈算出来**（`page_role_of`）：这一处只把栈改干净，页面是它的函数。
-        self._update_breadcrumb()
-        self._sync_page_to_stack()
         if self._on_calendar_page():
-            # 日历那一页自己收尾（标题、命令可用性、缩略图窗口），位置不动。
+            # 日历自己那份缩略图窗口要等换页之后才算得对（它读此刻是哪一页），所以整条尾巴归它。
             self._show_calendar()
         else:
-            self._update_action_states()
+            self._sync_ui()
         self._start_scan()
 
     # ---- 到了这一层该选中哪一格 ----------------------------------------------

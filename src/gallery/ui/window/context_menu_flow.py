@@ -73,7 +73,7 @@ class ContextMenuFlowMixin:
         if row >= 0 and entry is None:
             # 扫描还在把结果流式显示到界面时，模型可能已经往前挪过：宁可不弹，也不弹一份错的。
             return None
-        self._update_action_states()
+        self._sync_ui()
         kind = TargetKind.BLANK if entry is None else _context_kind(entry)
         multiple = len(self._grid.selected_rows()) > 1
         actions = self._menu_actions(self._context_paste(kind, entry, multiple=multiple))
@@ -113,7 +113,7 @@ class ContextMenuFlowMixin:
         if self._model.photo_at(self._current_row) is None:
             return None
         # 与网格那一侧一样先刷新一次可用性：菜单里的 QAction 是共享的，灰度得是「此刻」的。
-        self._update_action_states()
+        self._sync_ui()
         # 大图页没有「当前这一层」可粘，因此这一份动作包里压根不带「粘贴」（ADR 0018 决策 7）。
         return self._dressed_menu(build_menu(self._menu_actions(None), TargetKind.DETAIL))
 
@@ -282,7 +282,7 @@ class ContextMenuFlowMixin:
         if not self._on_grid_page():
             return
         self._grid.selectAll()
-        self._update_action_states()
+        self._sync_ui()
 
     def copy_current_metadata(self) -> None:
         """「复制元数据」：把当前这张的元数据拷成文本。

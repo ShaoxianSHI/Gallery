@@ -74,8 +74,7 @@ class ViewerFlowMixin:
             self._grid.select_row(self._current_row)
         # 在大图页时暂存的外部变化：这里才是网格能改的地方（ADR 0013）。
         self._flush_pending_watch()
-        self._refresh_title()
-        self._update_action_states()
+        self._sync_ui()
         self._refresh_thumbnail_window()
 
     def step_detail(self, delta: int) -> None:
@@ -111,9 +110,11 @@ class ViewerFlowMixin:
         ref = self._model.photo_at(row)
         if library is None or ref is None:
             return
+        # guard: allow-long-comment（五个调用点都靠这一句换页，少一句就是「画面换了而页面没换」）
         # 标题栏那一行从此是这张照片的文件名（ADR 0025 决策 4）：翻图、打开、
-        # 删掉一张之后接着看，走的都是这一段。
-        self._refresh_title()
+        # 删掉一张之后接着看，走的都是这一段。**换页也在 `_sync_ui` 里**，所以调用点
+        # （每一个都先改了 ``_current_row``）不必自己换页。
+        self._sync_ui()
         generation = self._generation
 
         if self._detail_job is not None:

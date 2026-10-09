@@ -61,25 +61,18 @@ class CalendarFlowMixin:
             if leaving_search is not None:
                 self._reload_level()
             else:
-                self._sync_page_to_stack()
                 self._apply_ordering()
-                self._refresh_title()
-                self._update_action_states()
+                self._sync_ui()
         else:
             # 从日历切到「相册」要重列当前目录：模型里此刻摆的是整库照片。
             if was_calendar:
                 self._cancel_calendar_job()
             self._reload_level()
-        # 摆胶囊的唯一入口。在三条分支之后：分支自己也会调，而「搜索结果（N）」按
-        # ``_search_total`` 算，摆在之前会停在中间态。
-        self._update_breadcrumb()
 
     def _show_calendar(self) -> None:
         """把日历那一页摆到前面来。**只换页，不起扫描**（打开库时外面已经在扫了）。"""
         self._calendar_page.set_today(datetime.date.today())
-        self._sync_page_to_stack()
-        self._refresh_title()
-        self._update_action_states()
+        self._sync_ui()
         self._refresh_thumbnail_window()
 
     def _enter_calendar(self) -> None:
@@ -185,9 +178,7 @@ class CalendarFlowMixin:
         self._list_drill_photos(photos)
         self._grid.swallow_click()  # 见上面那段：双击的第二下属于日历那一下
         # **摆内容之后才换页**：换早了那一刻网格算出来的可见行对不上（这一格的几张还没进模型）。
-        self._sync_page_to_stack()
-        self._refresh_title()
-        self._update_action_states()
+        self._sync_ui()
         self._refresh_thumbnail_window()
 
     def _list_drill_photos(self, photos: Sequence[PhotoRef]) -> None:
@@ -232,10 +223,8 @@ class CalendarFlowMixin:
         """
         if self._browse_mode != BROWSE_MODE_CALENDAR:
             return
-        self._sync_page_to_stack()
         self._calendar_page.set_today(datetime.date.today())
-        self._refresh_title()
-        self._update_action_states()
+        self._sync_ui()
         self._refresh_thumbnail_window()
 
     def _start_calendar_load(self) -> None:

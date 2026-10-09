@@ -98,6 +98,7 @@ from gallery.ui.window.metadata_flow import MetadataFlowMixin
 from gallery.ui.window.navigation_flow import NavigationFlowMixin
 from gallery.ui.window.ordering import OrderingMixin
 from gallery.ui.window.search_flow import SearchFlowMixin
+from gallery.ui.window.state_sync import StateSyncMixin
 from gallery.ui.window.thumbnail_flow import ThumbnailFlowMixin
 from gallery.ui.window.title_bar_flow import _GRID_PAGE_MARGIN_RIGHT, TitleBarFlowMixin
 from gallery.ui.window.viewer_flow import ViewerFlowMixin
@@ -127,6 +128,7 @@ class MainWindow(
     CalendarFlowMixin,
     WriteOpsMixin,
     EventFlowMixin,
+    StateSyncMixin,
     QMainWindow,
 ):
     # 这些 mixin 就是这个窗口的目录：每一条流程各住一间（各模块的文档说清自己管哪一块），
@@ -288,11 +290,10 @@ class MainWindow(
         # 而「此刻有没有一个认得的事件卡片」这个判据由 `_update_event_actions` 管。
         self._ensure_event_actions()
         self._restore_session()
-        self._sync_order_actions()
         self._metadata_action.setChecked(self._metadata_visible)
         self._panel.setVisible(self._metadata_visible)
         self._sync_size_actions()
-        self._update_action_states()
+        self._sync_ui()
 
         if initial_library is not None:
             self.open_library(initial_library)
@@ -345,6 +346,8 @@ class MainWindow(
             selection_model.selectionChanged.connect(self._schedule_action_states)
         self._action_states_timer.setSingleShot(True)
         self._action_states_timer.setInterval(0)
+        # 选区变了**只重算命令可用性**，不跑 `_sync_ui`：拖选时标题、面包屑与页面都不变，
+        # 而 `_update_breadcrumb` 会把胶囊整排重建一遍（`_schedule_action_states` 那一句的由来）。
         self._action_states_timer.timeout.connect(self._update_action_states)
 
         self._breadcrumb = BreadcrumbBar()
@@ -429,7 +432,8 @@ class MainWindow(
         self._banner = BannerOverlay(self)
         self._stack.currentChanged.connect(self._on_page_changed)
 
-        self._refresh_title()
+        # 标题那一行不在这里摆：`__init__` 建完动作之后末尾那句 `_sync_ui` 一并重算（那时
+        # 标题栏与动作都已经在场）。
         # 刻意不建状态栏：扫描进度与缩放百分比换不来照片区少 20 来像素；出错信息有横幅（ADR 0029）。
 
     def _build_actions(self) -> None:
