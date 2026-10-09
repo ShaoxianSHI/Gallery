@@ -46,7 +46,6 @@ from gallery.core.library.config import (
 )
 from gallery.core.library.facade import Library
 from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
-from gallery.core.library.search import SearchCondition
 from gallery.core.library.session import SessionState, load_session
 from gallery.core.library.watcher import LibraryChange
 from gallery.core.metadata.facets import PhotoFacets
@@ -87,6 +86,7 @@ from gallery.ui.window.banner_flow import BannerFlowMixin
 from gallery.ui.window.calendar_flow import CalendarFlowMixin
 from gallery.ui.window.context_menu_flow import ContextMenuFlowMixin
 from gallery.ui.window.event_flow import EventFlowMixin
+from gallery.ui.window.filters import FiltersMixin
 from gallery.ui.window.jobs import JobsMixin
 from gallery.ui.window.level_stack import (
     LevelStack,
@@ -115,6 +115,7 @@ _GRID_PAGE_MARGIN_H = 10
 
 class MainWindow(
     JobsMixin,
+    FiltersMixin,
     LevelStackMixin,
     NavigationFlowMixin,
     OrderingMixin,
@@ -138,6 +139,7 @@ class MainWindow(
     # 文件的那些入口**（绝不删除、移动用户照片，改名是唯一豁免），它必须留在 ``ui/write_ops.py``
     # —— 回归测试按文件名找它。
     # ``EventFlowMixin`` 反过来：它一个用户的文件都不碰（动的是 Gallery 自己的事件库）。
+    # ``FiltersMixin`` 只贡献四个**只读**属性（ADR 0052）：写入口是 ``self._filters`` 上的方法。
 
     """应用主窗口。"""
 
@@ -205,9 +207,6 @@ class MainWindow(
         #: 「我在哪一层」—— **一条栈**（ADR 0041）。浏览方式、当前目录、分组、日历那一格及
         #: 其标志位都是从这条栈算出来的属性，见 ``LevelStackMixin``。
         self._level_stack = LevelStack(root=RootKind.FLAT)
-        #: 检索条件的作用域（ADR 0040）：整库检索还是筛选当前这一层。**库级**偏好，
-        #: 打开库时由 ``_apply_ui_state`` 从那个库的 ``config.toml`` 覆盖。
-        self._search_scope: str = SEARCH_SCOPE_LIBRARY
         # 分组 / 排序（ADR 0009）：字段 id 存在库的 config.toml 里，下次打开这个库沿用；空值走默认。
         self._group_facet: str | None = None
         self._sort_facet: str | None = DEFAULT_SORT_FACET
@@ -251,12 +250,8 @@ class MainWindow(
         #: 扫描本身出过问题（跳过的目录 / 读不了的文件）。它比「这里是空的」更该说。
         self._scan_issue = False
         # ---- 搜索（ADR 0026）-------------------------------------------------
-        #: 已生效的筛选条件，按录入顺序。**空列表 = 不在搜索**（普通的一层）。
-        self._conditions: list[SearchCondition] = []
-        #: 正在搜索框里改的是第几条条件（``None`` = 没在改）。改完回车**就地替换**它。
-        self._editing_condition: int | None = None
-        #: 上一次检索命中了多少张（面包屑上那个「搜索结果（128）」；``None`` = 还没查过）。
-        self._search_total: int | None = None
+        # 条件、编辑下标、作用域、命中数：四个字段与它们的写入口都在轴上（ADR 0052）。
+        self._init_filters()
         #: 已经起过那一遍的库。**是集合不是单个**：来回切库不该把同一个库再起一遍空跑。
         #: **取消 :attr:`_index_job` 必须同时把根拿掉** —— 见 :meth:`JobsMixin._cancel_job`。
         self._index_roots: set[Path] = set()

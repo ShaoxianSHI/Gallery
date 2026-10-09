@@ -134,10 +134,8 @@ class NavigationFlowMixin:
         顺手撤掉一条条件 —— 「按 Esc 退一层，结果条件少了一条」这件事没法从屏幕上分辨出
         「我退了」还是「我撤了一条」。
         """
-        if not self._conditions:
+        if not self._filters.pop_last():
             return
-        self._conditions.pop()
-        self._editing_condition = None
         self._sync_search_frame()  # 撤光了就不再是整库检索 → 弹掉搜索帧（ADR 0041 决策 3）
         self._apply_conditions()
 
@@ -225,12 +223,11 @@ class NavigationFlowMixin:
     def _current_level_key(self) -> LevelKey:
         """当前这一层的标识（见 ``navigation.level_key``）。"""
         group = None if self._group_view is None else (self._group_view.facet, self._group_view.key)
-        conditions = [condition.identity for condition in self._conditions]
         return level_key(
             self._browse_mode,
             self._current_dir,
             group=group,
-            conditions=conditions,
+            conditions=self._filters.identities(),
             scope=self._search_scope,
         )
 
@@ -277,7 +274,7 @@ class NavigationFlowMixin:
         library = self._library
         # 平铺模式下平时不显示面包屑，但**分组里与有条件时一律显示**（ADR 0026 决策 9）。
         in_albums = self._browse_mode == BROWSE_MODE_ALBUMS
-        conditions = [condition.chip_text for condition in self._conditions]
+        conditions = self._filters.chip_texts()
         editing = self._editing_condition if conditions else None
         # guard: allow-long-comment（日历那几枚要摆在每一个早退之前，摆在末尾会漏掉「撤光条件」）
         # **日历工具条那几枚先摆，且在每一个早退之前**（ADR 0040 决策 9）。摆在末尾就漏了

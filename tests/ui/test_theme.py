@@ -572,9 +572,9 @@ def test_condition_chip_ink_follows_the_theme_at_once(
     一层停在原处。
     """
     try:
-        window._conditions = [
+        window._filters.submit(
             SearchCondition(field=DEFAULT_FIELD, text="海边", comparator="contains", value="海边")
-        ]
+        )
         window._update_breadcrumb()
         qt_app.processEvents()
         for tag, window_colour, base_colour in (
@@ -622,9 +622,9 @@ def test_the_separator_is_visible_on_both_appearances(
     的是正文色。判的是 **WCAG 对非文字内容那条 3:1**，量的是**画得最实的那个像素**。
     """
     try:
-        window._conditions = [
+        window._filters.submit(
             SearchCondition(field=DEFAULT_FIELD, text="海边", comparator="contains", value="海边")
-        ]
+        )
         window._update_breadcrumb()
         qt_app.processEvents()
         for tag, window_colour, base_colour in (

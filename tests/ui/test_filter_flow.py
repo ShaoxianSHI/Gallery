@@ -411,6 +411,23 @@ def _is_conditions_mutation(node: ast.Call) -> bool:
     )
 
 
+def _changes_the_conditions(node: ast.AST) -> bool:
+    """这一句会不会改动条件列表 —— 赋值 / ``del`` / 改长度的调用，三支合起来。
+
+    **读不算**：迭代、``len(...)``、下标取值与 ``.sort()``（改顺序不改长度）都走不到这三支。
+    """
+    if isinstance(node, ast.Assign | ast.AnnAssign):
+        targets: tuple[ast.expr, ...] = (
+            tuple(node.targets) if isinstance(node, ast.Assign) else (node.target,)
+        )
+        return any(_is_conditions_target(target) for target in targets)
+    if isinstance(node, ast.Delete):
+        return any(_is_conditions_target(target) for target in node.targets)
+    if isinstance(node, ast.Call):
+        return _is_conditions_mutation(node)
+    return False
+
+
 def _the_line_about_conditions(block: str) -> str:
     """从 ``ast.unparse`` 的整块里取出**提到 ``_conditions`` 的那一句**。
 
@@ -422,11 +439,34 @@ def _the_line_about_conditions(block: str) -> str:
     return lines[0] if lines else block.strip()
 
 
-def test_only_three_things_can_take_a_condition_away() -> None:
-    """条件只有三个下场：**点 ✕ / 改这一条时回车替换 / 换库**（ADR 0040 决策 12）。
+#: 唯一允许改动条件列表的那个模块（ADR 0052）。四个字段与它们的写入口都在那里，
+#: 所以「谁可以改条件」现在是一句模块名，而不再是三个文件里的六处写法。
+FILTERS_MODULE = "src/gallery/ui/window/filters.py"
 
-    「除了手动点叉之外任何情况下不消失」的**可查形式**：扫出全仓库每一处改动
-    ``self._conditions`` 长度的写法，只允许那三样。清单外的写法一律红。
+#: 那一个模块里**确实存在**的写法，逐条列出来。清单的价值是双向的：清单外多一处会红，
+#: 清单里少一条（被挪走或改名了）也会红 —— 后者防的是「这条测试从此扫不到东西」。
+EXPECTED_MUTATIONS = (
+    # 初始化
+    "self._conditions: list[SearchCondition] = []",
+    # 明确是用户动作的那几件
+    "self._conditions.append(condition)",  # 加一条
+    "del self._conditions[position]",  # 点 ✕
+    "self._conditions.pop()",  # ⇧Esc 撤一条
+    "self._conditions.clear()",  # 清搜索框 / 换库
+    # 就地替换：长度不变，但它确实改内容 —— 单独放行。
+    "self._conditions[editing] = condition",
+    # 弹掉搜索帧之后，把底下那一帧自己那份筛选整体装回（ADR 0041 决策 2）。
+    # 这与「点 ✕ 撤一条」是两件事：那一条从列表里删一条，这一条装回某一帧存的那份。
+    "self._conditions = list(conditions) if self._scope == SEARCH_SCOPE_LEVEL else []",
+)
+
+
+def test_only_the_filters_module_changes_the_conditions() -> None:
+    """条件只由 ``ui/window/filters.py`` 改动 —— 四个字段与写入口都在那里（ADR 0052）。
+
+    「除了手动点叉之外任何情况下条件不消失」的**可查形式**：扫出全仓库每一处改动
+    ``self._conditions`` 的写法，只允许出现在那一个模块里，且只允许 :data:`EXPECTED_MUTATIONS`
+    里列出的那几种。
 
     **为什么非要扫一遍而不靠几条行为用例**：这个 bug 的形状是「某处 ``_editing_condition``
     粘住 → 下一次提交静默替换」，而任何一条行为用例都只能盯住**它已知的那几条路径**。新加一条
@@ -435,72 +475,32 @@ def test_only_three_things_can_take_a_condition_away() -> None:
     **扫的是 AST 而不是文本**：文档里 ``self._conditions[editing] = …`` 这样的代码片段到处都有
     （写清楚为什么是「就地替换」就得写它），按行扫会把注释与 docstring 一起算进来。
     """
-    allowed = {
-        # ---- 初始化 ----
-        ("src/gallery/ui/main_window.py", "self._conditions: list[SearchCondition] = []"),
-        # ---- 明确是用户动作的那几件 ----
-        ("src/gallery/ui/window/search_flow.py", "self._conditions.append(condition)"),  # 加一条
-        ("src/gallery/ui/window/search_flow.py", "del self._conditions[position]"),  # 点 ✕
-        ("src/gallery/ui/window/navigation_flow.py", "self._conditions.pop()"),  # ⇧Esc 撤一条
-        ("src/gallery/ui/window/search_flow.py", "self._conditions.clear()"),  # 清搜索框
-        # 就地替换：长度不变，但它确实改内容 —— 单独放行。
-        ("src/gallery/ui/window/search_flow.py", "self._conditions[editing] = condition"),
-        # ---- 弹掉搜索帧之后，把底下那一帧自己那份筛选放回去（ADR 0041 决策 2）----
-        # 条件**随帧存**，所以弹出搜索帧时底下那一帧的 ``narrowing`` 要整体装回 ``_conditions``。
-        # 这与「点 ✕ 撤一条」是两件事：那一条从列表里删一条，这一条装回某一帧存的那份。
-        (
-            "src/gallery/ui/window/search_flow.py",
-            "self._conditions = list(conditions) "
-            "if self._search_scope == SEARCH_SCOPE_LEVEL else []",
-        ),
-        # ---- 换场合，不是「主动撤掉了」：换库时清掉它 ----
-        # 条件是**临时的**（ADR 0026 决策 9）：换库之后还留着上一座库的胶囊，检索结果就属于一个
-        # 已关掉的文件夹。
-        #
-        # 「换浏览方式」并进 :meth:`SearchFlowMixin._leave_search_frame` 了（那个入口清条件**并**
-        # 弹掉栈上的搜索帧），所以清单里只剩这一条 —— 少一条不是放松，是那个场合已经并进去。
-        ("src/gallery/ui/window/library_flow.py", "self._conditions.clear()"),
-    }
-
     root = Path(__file__).resolve().parents[2]
-    found: set[tuple[str, str]] = set()
+    found: set[str] = set()
+    elsewhere: list[str] = []
     for path in sorted((root / "src" / "gallery").rglob("*.py")):
         relative = path.relative_to(root).as_posix()
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
-            # **判据是「这一句会不会改它」**：读（迭代、``len(...)``、下标取值）与改顺序
-            # （``.sort()``）走的不是下面三支，天然不算。
-            if isinstance(node, ast.Assign | ast.AnnAssign):
-                targets: tuple[ast.expr, ...] = (
-                    tuple(node.targets) if isinstance(node, ast.Assign) else (node.target,)
-                )
-                if not any(_is_conditions_target(target) for target in targets):
-                    continue
-            elif isinstance(node, ast.Delete):
-                if not any(_is_conditions_target(target) for target in node.targets):
-                    continue
-            elif isinstance(node, ast.Call):
-                # ``self._conditions.append(x)`` —— **方法调用那一支**，与赋值分开判。
-                if not _is_conditions_mutation(node):
-                    continue
-            else:
+            if not _changes_the_conditions(node):
                 continue
             # **只取「涉及它的那一句」**：``ast.unparse`` 出的是整块（含 ``if``/``else``），
-            # 同一个字符串于是与清单对不上。清单按源码那一行写，逐行比才有意义。
+            # 同一个字符串于是与源码对不上。清单按源码那一行写，逐行比才有意义。
             code = _the_line_about_conditions(ast.unparse(node))
-            found.add((relative, code))
-            if (relative, code) not in allowed:
-                pytest.fail(
-                    f"{relative}:{node.lineno} 多了一处改动筛选条件的地方：{code!r}\n"
-                    "条件只该由三件事动：点 ✕（_on_condition_removed）、改这一条时回车"
-                    "（_on_search_submitted 里就地替换）、换库 / 换作用域。"
-                    "\n真要加第四条，请连同这里与 ADR 0040 决策 12 一起改 —— "
-                    "否则就是又一条「条件自己消失了」而没人说得清为什么。"
-                )
+            if relative != FILTERS_MODULE:
+                elsewhere.append(f"{relative}:{node.lineno} {code!r}")
+                continue
+            found.add(code)
 
-    # 清单本身也要看着点：允许项被挪走或改名了时这里会红，而不是悄悄放行。
-    unused = allowed - found
-    assert not unused, f"清单里有几条已经不存在了（挪走或改名了）：{sorted(unused)}"
+    assert not elsewhere, (
+        "这些地方自己动了条件列表；四个字段与它们的写入口归 ui/window/filters.py 管"
+        f"（ADR 0052）：\n{chr(10).join(elsewhere)}"
+    )
+    # 清单本身也要看着点：允许项被挪走或改名了时这里会红，而不是悄悄扫不到东西。
+    assert found == set(EXPECTED_MUTATIONS), (
+        f"filters.py 里改动条件的写法与清单对不上：多出 {sorted(found - set(EXPECTED_MUTATIONS))}，"
+        f"少了 {sorted(set(EXPECTED_MUTATIONS) - found)}"
+    )
 
 
 def test_only_one_place_ends_a_library_search() -> None:
@@ -508,15 +508,15 @@ def test_only_one_place_ends_a_library_search() -> None:
 
     **清条件与弹搜索帧是同一件事的两半**，所以必须走同一个入口 —— 这条盯的是那个「半」：
 
-    写 ``self._conditions.clear()`` 而不弹帧，眼下常常看不出差别（换浏览方式时栈已经被换根
-    清空了，于是清条件就够了）。但那是**靠别人顺手清了栈**才成立的隐性耦合：谁把换根挪到
-    条件清理之后，症状就是「条件没了、栈上还挂着一个什么都不接管的搜索帧」，而 Esc 弹掉的正是
-    它 —— 用户看到的是「按 Esc 什么都没发生」，界面上还看不出任何异常。
+    只清条件而不弹帧，眼下常常看不出差别（换浏览方式时栈已经被换根清空了，于是清条件就够了）。
+    但那是**靠别人顺手清了栈**才成立的隐性耦合：谁把换根挪到条件清理之后，症状就是「条件没了、
+    栈上还挂着一个什么都不接管的搜索帧」，而 Esc 弹掉的正是它 —— 用户看到的是「按 Esc 什么都没
+    发生」，界面上还看不出任何异常。
 
-    与 :func:`test_only_three_things_can_take_a_condition_away` 的分工：那条盯「谁可以改条件」，
+    与 :func:`test_only_the_filters_module_changes_the_conditions` 的分工：那条盯「谁可以改条件」，
     这条盯「改条件时栈跟不跟得上」。
 
-    **``library_flow.py``（换库）是另一个正当场合**：那里栈也被 ``_set_root`` 清空了，而条件是
+    **换库（``library_flow.py``）是另一个正当场合**：那里栈也被 ``_set_root`` 清空了，而条件是
     **上一座库的**（ADR 0026 决策 9），压根不存在「要不要弹搜索帧」这个问题 —— 整条栈都没了。
     所以它不在本条的眼里，由上一条清单管着。
     """
@@ -543,7 +543,7 @@ def test_only_one_place_ends_a_library_search() -> None:
                 isinstance(func, ast.Attribute)
                 and func.attr == "clear"
                 and isinstance(func.value, ast.Attribute)
-                and func.value.attr == "_conditions"
+                and func.value.attr == "_filters"
             ):
                 continue
             offenders.append(f"{relative}:{node.lineno}")
@@ -712,7 +712,7 @@ def test_switching_the_view_keeps_the_conditions_but_drops_the_pending_change(
     # 把失焦那条回退彻底按掉，只让 ``set_browse_mode`` 里那一处有机会干活：否则切视图时
     # ``focus_current_view`` 会顺手清掉编辑态，把那一处删掉本用例照样绿。
     monkeypatch.setattr(MainWindow, "_on_search_active_changed", _no_cancel_on_blur)
-    window._editing_condition = 0
+    window._filters.begin_edit(0)
     window.set_browse_mode(BROWSE_MODE_CALENDAR)
     qt_app.processEvents()
 

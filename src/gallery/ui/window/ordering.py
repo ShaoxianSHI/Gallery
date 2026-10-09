@@ -229,9 +229,7 @@ class OrderingMixin:
         整库检索不在这里算：它自己有一道「索引没建全就挂起」的检查（:meth:`_start_search`），
         而筛选这一层是照常枚举出来的，facet 读取就挂在同一条链上（见 :meth:`_start_facet_read`）。
         """
-        return self._is_filtering() and any(
-            condition.field.needs_metadata for condition in self._conditions
-        )
+        return self._is_filtering() and self._filters.needs_metadata()
 
     def _facet_read_purpose(self) -> str:
         """那句「用于…」的话。**说清这一次读是为了什么** —— 读元数据有几件不同的理由，

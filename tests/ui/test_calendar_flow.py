@@ -1009,7 +1009,7 @@ def test_a_search_on_the_calendar_page_still_reloads_when_leaving_it(
     """
     window = calendar_window
 
-    window._search_scope = SEARCH_SCOPE_LIBRARY
+    window._filters.set_scope(SEARCH_SCOPE_LIBRARY)
     window._sync_search_scope()
     window.focus_search()
     qt_app.processEvents()

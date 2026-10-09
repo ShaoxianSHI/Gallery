@@ -337,6 +337,62 @@ def test_the_job_lifecycle_guard_would_notice_a_violation() -> None:
     assert not any(pat.search("        self._scan_job = None") for pat in JOB_LIFECYCLE_PATTERNS)
 
 
+#: 筛选 / 检索那四个字段的写入口只许在 ``ui/window/filters.py`` 里（ADR 0052）。
+FILTERS_MODULE = Path("window") / "filters.py"
+
+#: 那四个字段在窗口上仍是**只读属性**，所以任何一处赋值都是绕过轴 —— 四支都拦：
+#: 整个属性（``=``）、下标（``[i] =``）、``del``，以及改长度的调用。
+FILTER_FIELD_NAMES = ("_conditions", "_search_scope", "_editing_condition", "_search_total")
+
+#: 判据只认 ``self.<字段>``：``window._conditions`` 是测试在做的事，而那一侧不受这条约束。
+FILTER_WRITE_PATTERNS = tuple(
+    re.compile(pattern)
+    for name in FILTER_FIELD_NAMES
+    for pattern in (
+        rf"self\.{name}\s*(\[[^\]]*\])?\s*(=[^=]|\+=|-=|\.append|\.clear|\.pop)",
+        rf"del\s+self\.{name}\b",
+    )
+)
+
+
+def test_only_the_filters_module_writes_the_filter_fields() -> None:
+    """**那四个字段只许在 ``ui/window/filters.py`` 里写**（ADR 0052）。
+
+    不收进那一处的话，「动条件要连带做哪几件事」就只剩注释在写 —— 而漏一处的症状是
+    **静默**的：``_editing_condition`` 是**下标**，删掉一条不跟着挪的话，下一次回车会
+    就地替换掉另一条条件（用户看到的是「刚敲的那条没生效」）。
+    """
+    offenders: list[str] = []
+    for path in _iter_python_files(UI_ROOT):
+        if path.name == FILTERS_MODULE.name:
+            continue
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if any(pat.search(line) for pat in FILTER_WRITE_PATTERNS):
+                offenders.append(f"{path.relative_to(PROJECT_ROOT)}:{number}")
+    assert not offenders, (
+        f"那四个筛选字段的写入口只许在 ui/{FILTERS_MODULE}（ADR 0052）：{offenders}"
+    )
+
+
+def test_the_filter_field_guard_would_notice_a_violation() -> None:
+    """上一条自己必须验过一次 —— 扫正则最容易出的错是「扫不到东西而恒绿」。"""
+    # 三支都拦：整个属性、下标赋值、改长度的调用。
+    for line in (
+        "        self._editing_condition = None",
+        "        self._conditions[position] = condition",
+        "        self._conditions.clear()",
+        "        del self._conditions[position]",
+    ):
+        assert any(pat.search(line) for pat in FILTER_WRITE_PATTERNS), f"没拦下来：{line!r}"
+    # 读与比较不算 —— 那三支正是要放行的。
+    for line in (
+        "        if not self._conditions:",
+        "        editing = self._editing_condition if conditions else None",
+        "        return self._search_scope == SEARCH_SCOPE_LEVEL",
+    ):
+        assert not any(pat.search(line) for pat in FILTER_WRITE_PATTERNS), f"误伤：{line!r}"
+
+
 def test_only_write_ops_calls_the_methods_that_change_user_files() -> None:
     """**界面上改用户文件的地方，只许在 ``ui/write_ops.py`` 里**（红线 1）。
 

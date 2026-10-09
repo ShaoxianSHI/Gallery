@@ -106,7 +106,7 @@ class LibraryFlowMixin:
         self._set_root(root_for(ui.browse_mode or self._browse_mode))
         # 检索作用域（ADR 0040）：**每个库各记各的** —— 「我习惯用筛选」是关于这个库的偏好，
         # 与分组、排序那几项一样，切库不该把 A 库的用法传染给 B 库。
-        self._search_scope = ui.resolved_search_scope()
+        self._filters.set_scope(ui.resolved_search_scope())
         self._size_index = self._edge_to_index(ui.thumbnail_edge)
         self._metadata_visible = bool(ui.metadata_visible)
         self._group_facet = ui.group_facet
@@ -282,9 +282,7 @@ class LibraryFlowMixin:
         self._update_metadata_editable()
         # 条件是**临时的**（ADR 0026 决策 9）：换库之后还留着上一座库的胶囊，
         # 检索结果就属于一个已关掉的文件夹。
-        self._conditions.clear()
-        self._editing_condition = None
-        self._search_total = None
+        self._filters.clear()
 
     # ---- 扫描 --------------------------------------------------------------
 

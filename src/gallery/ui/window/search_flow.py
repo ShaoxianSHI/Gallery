@@ -56,18 +56,6 @@ class SearchFlowMixin:
 
     # ---- 作用域（ADR 0040）----------------------------------------------------
 
-    def _is_library_search(self) -> bool:
-        """条件正**接管**这一层（整库检索），而不是在收窄它。
-
-        **全窗口唯一的那句判据**：``bool(self._conditions)`` 只说明「有条件」，不说明条件管到
-        哪儿 —— 两者在筛选下必须分开，而分开的地方多了就一定会漏一处。
-        """
-        return bool(self._conditions) and self._search_scope != SEARCH_SCOPE_LEVEL
-
-    def _is_filtering(self) -> bool:
-        """条件正**收窄**这一层，且这一层仍然是它自己（月视图仍然是月视图）。"""
-        return bool(self._conditions) and self._search_scope == SEARCH_SCOPE_LEVEL
-
     def set_search_scope(self, scope: str) -> None:
         """切到哪一种作用域（切换按钮与菜单项都走这里）。
 
@@ -78,10 +66,10 @@ class SearchFlowMixin:
         if scope not in SEARCH_SCOPES or scope == self._search_scope:
             self._sync_search_scope()
             return
-        self._search_scope = scope
+        self._filters.set_scope(scope)
         self._remember_ordering()  # 作用域是库级偏好（ADR 0040 决策 6）
         if self._is_library_search():
-            self._push_frame(SearchFrame(conditions=tuple(self._conditions)))
+            self._push_frame(SearchFrame(conditions=self._filters.snapshot()))
         else:
             # 切回筛选 = 弹掉搜索帧。**弹不掉时什么都不做**：那时栈上没有搜索帧（用户是在
             # 相册或分组里把按钮拨到筛选那一档），而那一档压根不需要换一层。
@@ -122,7 +110,7 @@ class SearchFlowMixin:
             self._maybe_start_photo_index()
             return
         generation = self._generation
-        conditions = tuple(self._conditions)
+        conditions = self._filters.snapshot()
 
         def work(context: TaskContext) -> object:
             matching = library.matching_paths(conditions)
@@ -170,7 +158,7 @@ class SearchFlowMixin:
             if kept != list(entries):
                 self._model.clear()
                 self._model.append(kept)
-        self._search_total = (
+        self._filters.set_total(
             len(self._staged) if self._staged is not None else self._model.rowCount()
         )
         self._sync_ui()
@@ -197,7 +185,7 @@ class SearchFlowMixin:
             self._maybe_start_photo_index()
             return
         generation = self._generation
-        conditions = tuple(self._conditions)
+        conditions = self._filters.snapshot()
 
         def work(context: TaskContext) -> object:
             outcome = library.search_photos(conditions, limit=RESULT_LIMIT)
@@ -227,7 +215,7 @@ class SearchFlowMixin:
         total = payload if isinstance(payload, int) else 0
         # 命中数变了要刷新面包屑：它就写在那枚「搜索结果（128）」里。
         if total != self._search_total or self._search_total is None:
-            self._search_total = total
+            self._filters.set_total(total)
             self._sync_ui()
         self._on_scan_done(generation, ScanReport())
 
@@ -235,7 +223,7 @@ class SearchFlowMixin:
         if generation != self._generation:
             return
         self._search_job = None
-        self._search_total = 0
+        self._filters.set_total(0)
         self._sync_ui()
         self._show_banner(f"检索没能完成：{message}")
         self._apply_ordering()  # 把这一层按「没有结果」收尾，界面不至于卡在空白上
@@ -265,12 +253,7 @@ class SearchFlowMixin:
                 else "先打开一个照片文件夹，再搜索。"
             )
             return
-        if editing is not None and 0 <= editing < len(self._conditions):
-            # **就地替换**：改一条条件的结果仍是那一条、位置也不变 —— 否则面包屑上的顺序会跳。
-            self._conditions[editing] = condition
-        else:
-            self._conditions.append(condition)
-        self._editing_condition = None
+        self._filters.submit(condition)
         self._warn_metadata_without_exiftool(condition)
         self._sync_search_frame()
         self._apply_conditions()
@@ -284,22 +267,12 @@ class SearchFlowMixin:
         ``_is_library_search`` 自然变假，胶囊文案、菜单勾、面包屑都自己回到筛选那一边。"""
         if not isinstance(frame, SearchFrame):
             return
-        self._conditions.clear()
-        self._editing_condition = None
-        self._search_total = None
+        self._filters.clear()
         self._search_field.stop_edit()
         # 底层那一帧的筛选恢复成压入之前那份（栈上它那份 ``narrowing`` 就是）。
-        self._restore_narrowing(self._level_stack.narrowing_top)
+        self._filters.restore(self._level_stack.narrowing_top)
         if reload:
             self._reload_level()
-
-    def _restore_narrowing(self, conditions: tuple[object, ...]) -> None:
-        """把某一帧自己那份筛选条件装回 ``_conditions``。
-
-        **只有切回「筛选」那一档才装**：此刻是整库检索的话，条件属于搜索帧而不是底下那一帧 ——
-        装回去就成了「弹掉了搜索帧，条件却还在」。
-        """
-        self._conditions = list(conditions) if self._search_scope == SEARCH_SCOPE_LEVEL else []
 
     def _sync_search_frame(self) -> None:
         """让栈上的**搜索结果帧**与「此刻在不在整库检索」对上（ADR 0041 决策 3）。
@@ -310,9 +283,9 @@ class SearchFlowMixin:
         """
         if self._is_library_search():
             if self._search_frame is None:
-                self._push_frame(SearchFrame(conditions=tuple(self._conditions)))
+                self._push_frame(SearchFrame(conditions=self._filters.snapshot()))
             else:
-                self._push_frame(SearchFrame(conditions=tuple(self._conditions)), replace=True)
+                self._push_frame(SearchFrame(conditions=self._filters.snapshot()), replace=True)
         elif self._search_frame is not None:
             self._pop_to(lambda stack: not isinstance(stack.top, SearchFrame))
 
@@ -372,9 +345,8 @@ class SearchFlowMixin:
         **不是就地改**：胶囊上改不了字，所以把原文放回搜索框，由用户敲完回车（那时才就地
         替换那一条）。按钮上会标出「正在改这一条」。
         """
-        if not 0 <= position < len(self._conditions):
+        if not self._filters.begin_edit(position):
             return
-        self._editing_condition = position
         self._search_field.load(self._conditions[position].as_input)
         self._sync_ui()
 
@@ -387,21 +359,14 @@ class SearchFlowMixin:
         """
         if self._editing_condition is None:
             return
-        self._editing_condition = None
+        self._filters.cancel_edit()
         self._search_field.stop_edit()
         self._sync_ui()
 
     def _on_condition_removed(self, position: int) -> None:
         """撤掉第 ``position`` 枚条件胶囊（点它右端的 ✕，或改到一半清空后回车）。"""
-        if not 0 <= position < len(self._conditions):
+        if not self._filters.remove(position):
             return
-        del self._conditions[position]
-        # 序号会往前挪一位 —— 不跟着挪，正在改的那一条就变成了另一条。
-        editing = self._editing_condition
-        if editing == position:
-            self._editing_condition = None
-        elif editing is not None and editing > position:
-            self._editing_condition = editing - 1
         self._sync_search_frame()  # 可能是最后一条 → 弹掉搜索帧（ADR 0041 决策 3）
         self._apply_conditions()
 
@@ -409,8 +374,7 @@ class SearchFlowMixin:
         """「清除搜索条件」：一条不剩，回到普通的一层。"""
         if not self._conditions:
             return
-        self._conditions.clear()
-        self._editing_condition = None
+        self._filters.clear()
         self._sync_search_frame()  # 条件全清 → 弹掉搜索帧（ADR 0041 决策 3）
         self._apply_conditions()
 
@@ -421,8 +385,12 @@ class SearchFlowMixin:
         self._search_field.focus_search()
 
     def _apply_conditions(self) -> None:
-        """条件变了（加一条、撤一条、清空）之后重新列出这一层。"""
-        self._search_total = None
+        """条件变了（加一条、撤一条、清空）之后重新列出这一层。
+
+        **命中数先归零**：它上一次的值是**上一批条件**的答案，而面包屑就写在那枚
+        「搜索结果（128）」上 —— 不清的话用户会看到刚撤掉条件的旧数字。
+        """
+        self._filters.set_total(None)
         self._reload_level()
 
     # ---- 建立检索索引（ADR 0026 决策 5、ADR 0040 决策 3）---------------------------
