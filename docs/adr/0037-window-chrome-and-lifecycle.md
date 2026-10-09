@@ -61,9 +61,9 @@ Qt 上就是 `showMaximized()`：它在 macOS 上落到 `[NSWindow zoom:nil]`
 
 > **这一条改过一次。** 最初实现成 `showFullScreen()`（真全屏），用户当场纠正：
 > 「不是 mac 上真的铺满屏幕那个全屏，而是保留 dock 栏和上面菜单栏，窗口只铺满中间的这部分」。
-> 症状与钉它的测试见 `tests/ui/test_title_bar.py` ——
+> 症状与管住它的那条测试见 `tests/ui/test_title_bar.py` ——
 > `test_double_clicking_the_title_bar_fills_the_window_and_back` **两行都断言**
-> （`isMaximized()` 与 `not isFullScreen()`）：只钉第一行的话，把动作换回 `showFullScreen()`
+> （`isMaximized()` 与 `not isFullScreen()`）：只断第一行的话，把动作换回 `showFullScreen()`
 > 那条照样绿。
 
 **不读系统设置里「双击标题栏」那一档**（可选「缩放 / 填满 / 无操作」）：那一段已经是我们的
@@ -82,7 +82,7 @@ Qt 上就是 `showMaximized()`：它在 macOS 上落到 `[NSWindow zoom:nil]`
 
 ### 2. 拖窗口按**移动距离**发起（不是「等过一个双击周期」）
 
-`startSystemMove` 一发起就是系统的窗口拖动会话，那一串鼠标事件被它整个吃掉 ——
+`startSystemMove` 一发起就是系统的窗口拖动会话，那一串鼠标事件被它整个忽略掉 ——
 双击标题栏于是永远到不了 `mouseDoubleClickEvent`。所以拖动不能在第一下按下时就发起；
 但「什么时候算拖动」的判据是**鼠标动了多远**，不是**等了多久**。
 
@@ -104,7 +104,7 @@ Qt 上就是 `showMaximized()`：它在 macOS 上落到 `[NSWindow zoom:nil]`
   要么由 Qt 按当前指针位置现合成一个（Qt 6.11 起）。定时器回调里哪一种鼠标事件都没
   轮到，于是这一次系统拖动根本不会开始。
 - **用户得先按住不动到双击周期过去，窗口才开始跟手**：正常的一拖在这个时限之前就
-  松手了，`mouseReleaseEvent` 把闸一撤，窗口一步都没动 —— 读起来就是「拖不动」。
+  松手了，`mouseReleaseEvent` 把前置条件一撤，窗口一步都没动 —— 读起来就是「拖不动」。
 
 macOS 自己的标题栏也是按距离分的（动过就是拖，没动才算双击），没有「先等半秒」这一步。
 所以这一版与系统手感一致，也不需要那个定时器了。
@@ -145,10 +145,10 @@ macOS 自己的标题栏也是按距离分的（动过就是拖，没动才算�
 
 - **⌘W** → `MainWindow.close()`。与「退出」挨着摆在「文件」菜单末尾（访达与文本编辑都是这个位置）。
 - **⌘Q** → `MainWindow.quit_app()`：**先 `close()`，再 `app.quit()`**。
-  顺序不能反：会话落盘、监听器停掉、后台任务收工全在 `closeEvent` 里，
+  顺序不能反：会话落盘、监听器停掉、后台任务结束全在 `closeEvent` 里，
   而 `QApplication.quit()` 压根不发 `closeEvent` —— 直接调它，那三样一步都不走。
 
-**两者的键都显式写死，不抄 `StandardKey`**（`Ctrl+W` / `Ctrl+Q`）：上面那张表里的两处就是这么错的。
+**两者的键都显式硬编码，不抄 `StandardKey`**（`Ctrl+W` / `Ctrl+Q`）：上面那张表里的两处就是这么错的。
 
 ### 6. 应用允许「一个窗口都没有」，并叫得回来
 

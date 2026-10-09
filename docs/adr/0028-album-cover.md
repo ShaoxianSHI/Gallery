@@ -3,7 +3,7 @@
 - 状态：已接受
 - 日期：2026-10-18
 - 相关代码：`src/gallery/core/library/config.py`、`src/gallery/core/library/facade.py`、`src/gallery/ui/write_ops.py`、`src/gallery/ui/menus.py`、`src/gallery/ui/banners.py`
-- 相关：[ADR 0023](0023-menu-groups.md)（四段分组，它给第一段加了两行）、[ADR 0014](0014-context-menu.md)（右键菜单的取向）、[ADR 0021](0021-viewer-context-menu.md)（大图页作用的是正在看的那一张）、[ADR 0004](0004-rename-on-disk.md)（红线 1：只许用户亲手触发）、[ADR 0013](0013-filesystem-watch.md)（`.gallery` 是隐藏目录，扫描与监听都看不见它）
+- 相关：[ADR 0023](0023-menu-groups.md)（四段分组，它给第一段加了两行）、[ADR 0014](0014-context-menu.md)（右键菜单的取向）、[ADR 0021](0021-viewer-context-menu.md)（大图页作用的是正在看的那一张）、[ADR 0004](0004-rename-on-disk.md)（约束 1：只许用户亲手触发）、[ADR 0013](0013-filesystem-watch.md)（`.gallery` 是隐藏目录，扫描与监听都看不见它）
 
 ## 背景
 
@@ -89,7 +89,7 @@
 
 `config.toml` 是 Gallery 自己的文件，用户的照片一个字节都不动，因此：
 
-- **不触犯红线 1**，也不必进 `tests/test_guards.py` 那份「界面上会动用户文件的地方」的清单
+- **不触犯约束 1**，也不必进 `tests/test_guards.py` 那份「界面上会动用户文件的地方」的清单
   （那份守的是 `rename_entry` / `move_to_trash` / `copy_into` / `move_into` / `create_album` /
   `undo_last_write` 六个方法，封面一个都不属于）。
 - **不记 journal**：那一摞记录的是「已经发生在硬盘上」的改动，而封面没有改动任何用户文件。

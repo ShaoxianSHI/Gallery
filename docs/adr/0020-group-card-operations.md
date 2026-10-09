@@ -3,7 +3,7 @@
 - 状态：已接受
 - 日期：2026-10-12
 - 相关代码：`src/gallery/ui/menus.py`、`src/gallery/ui/main_window.py`
-- 相关：[ADR 0014](0014-context-menu.md)（决策 4：分组卡片只留打开与复制分组条件）、[ADR 0019](0019-copy-move-to-album.md)（决策 5：两条「到相册」只给照片菜单）、[ADR 0008](0008-delete-to-trash.md)（界面上的删除）、[ADR 0004](0004-rename-on-disk.md)（红线 1）、[ADR 0009](0009-metadata-grouping-and-sorting.md)（分组是什么）
+- 相关：[ADR 0014](0014-context-menu.md)（决策 4：分组卡片只留打开与复制分组条件）、[ADR 0019](0019-copy-move-to-album.md)（决策 5：两条「到相册」只给照片菜单）、[ADR 0008](0008-delete-to-trash.md)（界面上的删除）、[ADR 0004](0004-rename-on-disk.md)（约束 1）、[ADR 0009](0009-metadata-grouping-and-sorting.md)（分组是什么）
 
 ## 背景
 
@@ -58,9 +58,9 @@ ADR 0014 决策 4 把分组卡片的菜单收窄成「打开」与「复制分�
 - 组里的照片**全部**被移走 → 这一行本来就代表一个「这些照片」，一张不剩的组不该还摆在那儿，摘掉它。
 - 只被移走一部分 → 卡片留着，张数在**下一次列这一层**时更新（与今天在分组视图里删掉组内几张照片的行为完全一样，见 `tests/ui/test_group_flow.py::test_group_cards_are_kept_when_photos_inside_are_deleted`）。刻意不在这里重算分组：重算意味着重扫整层，选中与滚动位置全丢，而监听器（ADR 0013）已经负责把该做的做完了。
 
-### 5. 两条红线怎么讲
+### 5. 两条约束怎么讲
 
-| 红线 | 摊平之后怎么满足 |
+| 约束 | 摊平之后怎么满足 |
 |---|---|
 | 不主动动用户文件 | 摊平只发生在用户点了菜单项 / 按下快捷键的那一刻，没有任何后台整理 |
 | 有据可查 | 每一项都进 journal；移到废纸篓可 ⌘Z 取回，移动到相册可 ⌘Z 一次撤整批（ADR 0019 决策 3） |

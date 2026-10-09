@@ -34,7 +34,7 @@ HEIF 家族的 item 体系里根本没有 IPTC；exiftool 收到 IPTC 赋值时*
 这个「两份都写」本身没错 —— 它是给只读 IPTC 的老软件留的。错的是**不看你往哪种容器里写**。
 
 于是加一张**按容器的存储缺口表**（`UNSTORABLE_TAGS`），在 `_checked()` 里过滤掉存不下的
-标签 —— 那一处本来就是白名单的唯一出口，把能力检查放在同一个闸门上，不另开一条路。
+标签 —— 那一处本来就是白名单的唯一出口，把能力检查放在同一个前置条件上，不另开一条路。
 
 **HEIC / HEIF / WebP / GIF 只写 XMP，不写 IPTC。** 这不是降级到一个次要的副本：读取侧本来
 就是 XMP 优先（`_xmp_value(raw, "City") or first_value(raw, "IPTC:City")`），
