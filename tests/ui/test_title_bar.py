@@ -50,7 +50,8 @@ from gallery.core.library.session import SessionState, save_session  # noqa: E40
 from gallery.core.metadata.journal import ACTION_RENAME, read_records  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.rename_edit import RADIUS, RenameEdit  # noqa: E402
-from gallery.ui.title_bar import (  # noqa: E402
+from gallery.ui.window.title_bar_flow import DRAG_THRESHOLD  # noqa: E402
+from gallery.ui.window.widgets.title_bar import (  # noqa: E402
     EXTRA_PADDING,
     HEIGHT,
     MAX_EDITOR_WIDTH,
@@ -58,7 +59,6 @@ from gallery.ui.title_bar import (  # noqa: E402
     TitleBar,
     editor_rect,
 )
-from gallery.ui.window.title_bar_flow import DRAG_THRESHOLD  # noqa: E402
 
 #: 测试库里的照片名。
 PHOTO = "海边日落.jpg"

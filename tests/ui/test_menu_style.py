@@ -34,9 +34,9 @@ from gallery.core.library.config import (
 )  # noqa: E402
 from gallery.core.library.photos import GroupRef, PhotoRef  # noqa: E402
 from gallery.ui import menu_style, theme  # noqa: E402
-from gallery.ui.external_button import calendar_icon  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.theme import rgba  # noqa: E402
+from gallery.ui.window.widgets.external_button import calendar_icon  # noqa: E402
 
 #: 「假装系统换成了深色」用的底色：只要与当前不同，具体是哪个数与这条测试无关。
 FLIPPED_BACKGROUND = QColor(23, 23, 23)
@@ -856,7 +856,7 @@ def test_the_search_popup_and_the_plain_menu_share_one_font_size(qt_app: QApplic
     """字号只有一处来源：改 ``POPUP_FONT_PX`` 两边一起变。各写一个字面量的话，改了其中一处
     另一处不会报错也不会变红，只会**看起来不是一套东西**。
     """
-    from gallery.ui import search_field
+    from gallery.ui.window.widgets import search_field
 
     popup = search_field.popup_style(QTreeWidget())
     assert f"font-size: {menu_style.POPUP_FONT_PX}px" in popup
@@ -938,7 +938,7 @@ def test_the_popup_edge_is_already_mixed_with_the_background(
     **量的是像素，不是那句 ``rgba(...)``**：只断「颜色不透明」量不到「重叠看不出来」，
     而只断「八个等分点一样深」在控件压根没画轮廓时又恒真。
     """
-    from gallery.ui.search_field import CandidateList, popup_style
+    from gallery.ui.window.widgets.search_field import CandidateList, popup_style
 
     list_widget = CandidateList()
     list_widget.setObjectName("searchPopup")

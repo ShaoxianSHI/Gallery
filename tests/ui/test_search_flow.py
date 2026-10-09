@@ -50,15 +50,15 @@ from gallery.ui import theme  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.menu_style import POPUP_LIST_INSET  # noqa: E402
 from gallery.ui.panels.breadcrumb import ChipButton  # noqa: E402
-from gallery.ui.search_field import (  # noqa: E402
+from gallery.ui.theme import rgba  # noqa: E402
+from gallery.ui.window.widgets.search_field import (  # noqa: E402
     HEIGHT,
     MARGIN_RIGHT,
     WIDTH,
     SearchField,
     magnifier,
 )
-from gallery.ui.theme import rgba  # noqa: E402
-from gallery.ui.title_bar import EXTRA_PADDING as TITLE_BAR_EXTRA  # noqa: E402
+from gallery.ui.window.widgets.title_bar import EXTRA_PADDING as TITLE_BAR_EXTRA  # noqa: E402
 
 #: 测试库里每张照片的相机（按文件名对应）。没给的就是没写相机。
 CAMERAS = {"海边-01.jpg": "Canon EOS R5", "山.jpg": "Sony A7"}

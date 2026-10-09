@@ -20,7 +20,7 @@ from PySide6.QtGui import QColor  # noqa: E402
 from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
 from gallery.ui import theme  # noqa: E402
-from gallery.ui.search_field import SearchField, outline_color  # noqa: E402
+from gallery.ui.window.widgets.search_field import SearchField, outline_color  # noqa: E402
 
 
 class _CountingSearchField(SearchField):

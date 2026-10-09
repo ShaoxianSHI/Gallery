@@ -12,15 +12,15 @@ from typing import Final
 
 from PySide6.QtCore import QPointF
 
-from gallery.ui.external_button import BUTTON_GAP, BUTTON_WIDTH, button_rect
-from gallery.ui.search_field import HEIGHT as SEARCH_FIELD_HEIGHT
-from gallery.ui.search_field import MARGIN_RIGHT as SEARCH_FIELD_MARGIN_RIGHT
-from gallery.ui.search_field import TEXT_ALIGN_DROP as SEARCH_FIELD_TEXT_ALIGN_DROP
-from gallery.ui.search_field import TOGGLE_EDGE as SCOPE_TOGGLE_EDGE
-from gallery.ui.search_field import TOGGLE_GAP as SCOPE_TOGGLE_GAP
-from gallery.ui.search_field import WIDTH as SEARCH_FIELD_WIDTH
-from gallery.ui.title_bar import EXTRA_PADDING as TITLE_BAR_EXTRA
-from gallery.ui.title_bar import HEIGHT as TITLE_BAR_HEIGHT
+from gallery.ui.window.widgets.external_button import BUTTON_GAP, BUTTON_WIDTH, button_rect
+from gallery.ui.window.widgets.search_field import HEIGHT as SEARCH_FIELD_HEIGHT
+from gallery.ui.window.widgets.search_field import MARGIN_RIGHT as SEARCH_FIELD_MARGIN_RIGHT
+from gallery.ui.window.widgets.search_field import TEXT_ALIGN_DROP as SEARCH_FIELD_TEXT_ALIGN_DROP
+from gallery.ui.window.widgets.search_field import TOGGLE_EDGE as SCOPE_TOGGLE_EDGE
+from gallery.ui.window.widgets.search_field import TOGGLE_GAP as SCOPE_TOGGLE_GAP
+from gallery.ui.window.widgets.search_field import WIDTH as SEARCH_FIELD_WIDTH
+from gallery.ui.window.widgets.title_bar import EXTRA_PADDING as TITLE_BAR_EXTRA
+from gallery.ui.window.widgets.title_bar import HEIGHT as TITLE_BAR_HEIGHT
 
 #: 网格页**右边**留多少（点），比左边窄得多：这一页最右边就是那条滚动条，它自己还带着
 #: :data:`~gallery.ui.scrollbar_style.HANDLE_GAP` 那 2 点，两段加起来才是滑块右缘到窗口右缘的

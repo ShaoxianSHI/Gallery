@@ -46,11 +46,11 @@ from gallery.core.library.session import (  # noqa: E402
 from gallery.core.metadata import batch  # noqa: E402
 from gallery.core.places.resolver import LazyPlaceResolver, ResolvedPlace  # noqa: E402
 from gallery.ui import theme  # noqa: E402
-from gallery.ui.external_button import ICON_EDGE as EXTERNAL_ICON_EDGE  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.panels.breadcrumb import ChipButton  # noqa: E402
 from gallery.ui.rename_edit import field_background  # noqa: E402
-from gallery.ui.search_field import (  # noqa: E402
+from gallery.ui.window.widgets.external_button import ICON_EDGE as EXTERNAL_ICON_EDGE  # noqa: E402
+from gallery.ui.window.widgets.search_field import (  # noqa: E402
     ICON_EDGE,
     PLACEHOLDER_FILTER,
     PLACEHOLDER_SEARCH,

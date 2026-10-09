@@ -43,7 +43,6 @@ from gallery.core.library.config import (
 from gallery.core.library.photos import GroupRef, PhotoRef
 from gallery.core.metadata.report import MetadataReport
 from gallery.ui import banners, desktop, theme
-from gallery.ui.banner_overlay import BannerOverlay
 from gallery.ui.browser.grid import PhotoGrid
 from gallery.ui.browser.model import PhotoListModel
 from gallery.ui.browser.thumb_sizes import (
@@ -52,19 +51,10 @@ from gallery.ui.browser.thumb_sizes import (
     label_for_index,
 )
 from gallery.ui.calendar import CalendarPage
-from gallery.ui.external_button import (
-    ExternalAppsButton,
-    ExternalEntry,
-    calendar_icon,
-    folder_icon,
-)
 from gallery.ui.panels.breadcrumb import BreadcrumbBar
 from gallery.ui.panels.metadata import MetadataPanel
 from gallery.ui.panels.welcome import WelcomeView
-from gallery.ui.search_field import ScopeToggle, SearchField
 from gallery.ui.tasks import TaskRunner
-from gallery.ui.title_bar import EXTRA_PADDING as TITLE_BAR_EXTRA
-from gallery.ui.title_bar import TitleBar
 from gallery.ui.viewer.detail import DetailView
 from gallery.ui.watch import WatchBridge, WatchStarter, start_watch
 from gallery.ui.window.banner_flow import BannerFlowMixin
@@ -90,6 +80,16 @@ from gallery.ui.window.thumbnail_flow import ThumbnailFlowMixin
 from gallery.ui.window.title_bar_flow import _GRID_PAGE_MARGIN_RIGHT, TitleBarFlowMixin
 from gallery.ui.window.viewer_flow import ViewerFlowMixin
 from gallery.ui.window.watch_flow import WatchFlowMixin
+from gallery.ui.window.widgets.banner_overlay import BannerOverlay
+from gallery.ui.window.widgets.external_button import (
+    ExternalAppsButton,
+    ExternalEntry,
+    calendar_icon,
+    folder_icon,
+)
+from gallery.ui.window.widgets.search_field import ScopeToggle, SearchField
+from gallery.ui.window.widgets.title_bar import EXTRA_PADDING as TITLE_BAR_EXTRA
+from gallery.ui.window.widgets.title_bar import TitleBar
 from gallery.ui.write_ops import WriteOpsMixin, flattened_entries
 
 logger = logging.getLogger(__name__)

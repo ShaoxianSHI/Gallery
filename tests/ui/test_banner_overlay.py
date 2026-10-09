@@ -26,7 +26,8 @@ from PySide6.QtGui import QColor, QFontMetrics, QImage  # noqa: E402
 from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
 from gallery.ui import theme  # noqa: E402
-from gallery.ui.banner_overlay import (  # noqa: E402
+from gallery.ui.panels.metadata import PANEL_WIDTH  # noqa: E402
+from gallery.ui.window.widgets.banner_overlay import (  # noqa: E402
     AUTO_HIDE_SECONDS,
     MARGIN_TOP,
     MAX_WIDTH,
@@ -36,7 +37,6 @@ from gallery.ui.banner_overlay import (  # noqa: E402
     banner_width,
     text_height,
 )
-from gallery.ui.panels.metadata import PANEL_WIDTH  # noqa: E402
 
 #: 算术测试用的那一块「内容区」。
 AREA = QRect(0, 100, 1200, 700)

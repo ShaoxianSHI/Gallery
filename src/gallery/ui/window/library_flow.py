@@ -35,7 +35,6 @@ from gallery.core.library.session import (
 from gallery.core.metadata.facets import PhotoFacets
 from gallery.core.metadata.report import MetadataReport
 from gallery.core.places.resolver import LazyPlaceResolver
-from gallery.ui.banner_overlay import BannerOverlay
 from gallery.ui.browser.model import PhotoListModel
 from gallery.ui.browser.thumb_sizes import edge_for_index, nearest_index
 from gallery.ui.calendar.page import CalendarPage
@@ -55,6 +54,7 @@ from gallery.ui.window.state.level_stack import LevelStack, RootKind, root_for
 from gallery.ui.window.state.library_slot import LibrarySlot
 from gallery.ui.window.state.pending_watch import PendingWatch
 from gallery.ui.window.state.staging import Staging
+from gallery.ui.window.widgets.banner_overlay import BannerOverlay
 
 logger = logging.getLogger(__name__)
 
