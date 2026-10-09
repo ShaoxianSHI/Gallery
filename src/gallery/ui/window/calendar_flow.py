@@ -35,8 +35,6 @@ def _photos_on_this_level(entries: Iterable[GridEntry]) -> list[PhotoRef]:
 
 
 class CalendarFlowMixin:
-    _staged: list[GridEntry] | None
-
     """三种浏览方式之间的切换，以及日历那一页与「点一格」的来回。"""
 
     # ---- 浏览方式与相册导航 ------------------------------------------------
@@ -93,7 +91,7 @@ class CalendarFlowMixin:
         self._grid.reset_for_new_level()
         self._preview_cache.clear()
         self._metadata_cache.clear()
-        self._staged = []
+        self._staging.stage([])
         self._banner_text.reset_level()
         self._banner_text.clear_scan_issue()
         self._focus_state.clear_current()
@@ -168,7 +166,7 @@ class CalendarFlowMixin:
         if self._scan_job is not None:
             self._cancel_job("_scan_job")
             self._generation += 1
-            self._staged = []
+            self._staging.stage([])
         # **先摆内容再换页**：反过来，换页那一刻拿的还是日历底下那一整库，算出来的可见行对不上。
         self._list_drill_photos(photos)
         self._grid.swallow_click()  # 见上面那段：双击的第二下属于日历那一下
@@ -189,10 +187,10 @@ class CalendarFlowMixin:
         self._banner.hide()
         root = library.root if library is not None else Path.home()
         entries = [describe_entry(root, ref.path) or ref for ref in photos]
-        self._staged = entries
+        self._staging.stage(entries)
         if library is None:
             self._model.append(entries)
-            self._staged = []
+            self._staging.stage([])
             return
         self._apply_ordering()
         self._start_facet_read()

@@ -46,8 +46,6 @@ def _entry_survives(entry: GridEntry, matching: set[Path], kept_albums: frozense
 
 
 class SearchFlowMixin:
-    _staged: list[GridEntry] | None
-
     """检索框那一套条件，以及「把整库写进索引」那一遍后台维护。
 
     **条件有两种作用域**（ADR 0040 决策 1）：整库检索的结果**接管**当前层，而筛选只**收窄**当前层、
@@ -119,7 +117,9 @@ class SearchFlowMixin:
                 return None
             # 相册卡片不是照片，但一张照片都不在它子树里的卡片该收起来 —— 否则用户点进去
             # 看到的是个空层。判据是「子树里有没有命中」，由 core 一次算完（ADR 0040 决策 3）。
-            staged = self._staged if self._staged is not None else self._model.entries()
+            staged = self._staging.peek()
+            if staged is None:
+                staged = self._model.entries()
             albums = [entry for entry in staged if isinstance(entry, FolderRef)]
             kept_albums = {album.path for album in albums_kept(albums, matching, root=library.root)}
             return (matching, frozenset(kept_albums))
@@ -147,11 +147,11 @@ class SearchFlowMixin:
         if not isinstance(matching, set) or not isinstance(kept_albums, frozenset):
             self._apply_ordering()
             return
-        staged = self._staged
+        staged = self._staging.peek()
         if staged is not None:
-            self._staged = [
-                entry for entry in staged if _entry_survives(entry, matching, kept_albums)
-            ]
+            self._staging.stage(
+                [entry for entry in staged if _entry_survives(entry, matching, kept_albums)]
+            )
         else:
             # 已经显示到界面（监听器增量那一路）：就地换掉模型内容。
             entries = self._model.entries()
@@ -159,9 +159,7 @@ class SearchFlowMixin:
             if kept != list(entries):
                 self._model.clear()
                 self._model.append(kept)
-        self._filters.set_total(
-            len(self._staged) if self._staged is not None else self._model.rowCount()
-        )
+        self._filters.set_total(len(staged) if staged is not None else self._model.rowCount())
         self._sync_ui()
         # **直接排**：筛选已经做完，再绕回 ``_order_now`` 会再筛一次（同一个漏斗递归到自己）。
         self._apply_ordering()

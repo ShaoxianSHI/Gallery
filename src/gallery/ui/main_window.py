@@ -40,7 +40,7 @@ from gallery.core.library.config import (
     SEARCH_SCOPE_LEVEL,
     SEARCH_SCOPE_LIBRARY,
 )
-from gallery.core.library.photos import GridEntry, GroupRef, PhotoRef
+from gallery.core.library.photos import GroupRef, PhotoRef
 from gallery.core.metadata.report import MetadataReport
 from gallery.ui import banners, desktop, theme
 from gallery.ui.banner_overlay import BannerOverlay
@@ -176,11 +176,8 @@ class MainWindow(
         #: 「我在哪一层」—— **一条栈**（ADR 0041）。浏览方式、当前目录、分组、日历那一格
         #: 及其标志位都是从这条栈算出来的属性，见 ``LevelStackMixin``。
         self._level_stack = LevelStack(root=RootKind.FLAT)
-        #: 这一层还没显示到界面的条目（顺序定下来再给出去，ADR 0009 决策 6）；``None`` = 已排好。
-        self._staged: list[GridEntry] | None = None
-        # 分组 / 排序这一族在 ``OrderingState`` 里（ADR 0058 阶段 2）：用户选了什么、
-        # 这一层读到了什么、上一次重排的输入。``ordering`` 上留着一组同名 property 转发。
-        self._init_ordering()
+        self._init_staging()  # 扫出来还没排好的那些条目（ADR 0058 阶段 5）
+        self._init_ordering()  # 分组 / 排序这一族（ADR 0058 阶段 2）
         # ---- 搜索（ADR 0026）-------------------------------------------------
         # 条件、编辑下标、作用域、命中数：四个字段与它们的写入口都在轴上（ADR 0052）。
         self._init_filters()

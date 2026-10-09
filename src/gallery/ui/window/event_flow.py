@@ -47,8 +47,6 @@ _IMPORT_FILTER = "Excel 表格 (*.xlsx *.xlsm)"
 
 
 class EventFlowMixin:
-    _staged: list[GridEntry] | None
-
     """:class:`~gallery.ui.main_window.MainWindow` 上与事件有关的那几条。"""
 
     def _events_usable(self) -> bool:
@@ -783,7 +781,7 @@ class EventFlowMixin:
         if not self._reorder_photos:
             self._reload_level()
             return
-        self._staged = list(self._reorder_photos)
+        self._staging.stage(list(self._reorder_photos))
         self._start_facet_read()
 
 

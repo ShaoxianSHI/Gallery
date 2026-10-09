@@ -37,6 +37,7 @@ from gallery.ui.navigation import EntryKey, entry_key
 from gallery.ui.tasks import TaskContext
 from gallery.ui.window.level_stack import GroupFrame
 from gallery.ui.window.ordering_state import OrderingState
+from gallery.ui.window.staging import Staging
 
 #: 「正在读取 N 张照片的元数据，用于…」—— **只在真的缺东西时才报**（见 ``_start_facet_read``）。
 #: 放在模板里是因为它现在从工作线程里发出去，而那一侧拿不到 ``self``。
@@ -64,6 +65,21 @@ def _events_of(library: Library, refs: Sequence[PhotoRef]) -> dict[Path, tuple[E
 
 
 class OrderingMixin:
+    _staging: Staging
+
+    def _init_staging(self) -> None:
+        self._staging = Staging()
+
+    # 转发 —— 测试直接摸 ``window._staged``（`tests/ui/test_calendar_flow.py` 有一处
+    # 直接赋值造「正在暂存」的样子）。
+    @property
+    def _staged(self) -> list[GridEntry] | None:
+        return self._staging.peek()
+
+    @_staged.setter
+    def _staged(self, value: list[GridEntry] | None) -> None:
+        self._staging._staged = value
+
     """「视图 → 分组 / 排序」两个菜单，以及把当前这一层重排一遍的那条链。
 
     存储住在 :class:`~gallery.ui.window.ordering_state.OrderingState` 里
@@ -72,8 +88,6 @@ class OrderingMixin:
     """
 
     _ordering: OrderingState
-
-    _staged: list[GridEntry] | None
 
     def _init_ordering(self) -> None:
         """建这一族的状态；``MainWindow.__init__`` 里只留这一句。"""
@@ -369,7 +383,8 @@ class OrderingMixin:
             self._order_now()
             return
         # 暂存优先：刚扫完的这一层还在暂存区里，模型上一条也没有。
-        entries = self._staged if self._staged is not None else self._model.entries()
+        staged = self._staging.peek()
+        entries = staged if staged is not None else self._model.entries()
         refs = [entry for entry in entries if isinstance(entry, PhotoRef)]
         if not refs:
             self._order_now()
@@ -546,9 +561,8 @@ class OrderingMixin:
 
     def _reorder_level(self, library: Library) -> None:
         # 暂存的优先：那一层还没显示到界面，顺序就是这里算出来的。
-        staged = self._staged
+        staged = self._staging.take()
         entries = staged if staged is not None else list(self._model.entries())
-        self._staged = None
         albums = [entry for entry in entries if isinstance(entry, FolderRef)]
         photos = [entry for entry in entries if isinstance(entry, PhotoRef)]
         # 相册卡片永远排在前面：先看文件夹、再看按元数据归拢出来的组，是既有心智。

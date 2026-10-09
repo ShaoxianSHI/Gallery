@@ -11,7 +11,6 @@ from pathlib import Path
 
 from gallery.core import paths
 from gallery.core.library.config import BROWSE_MODE_ALBUMS
-from gallery.core.library.photos import GridEntry
 from gallery.core.metadata.facets import PhotoFacets
 from gallery.ui.navigation import (
     ENTRY_KIND_PATH,
@@ -35,7 +34,6 @@ from gallery.ui.window.level_stack import (
 
 
 class NavigationFlowMixin:
-    _staged: list[GridEntry] | None
     _facet_values: dict[Path, PhotoFacets]
 
     """进入 / 退出层级，以及到时该停在哪一格。"""
@@ -188,7 +186,7 @@ class NavigationFlowMixin:
         self._grid.reset_for_new_level()
         self._preview_cache.clear()
         self._metadata_cache.clear()
-        self._staged = []  # 换层要重扫，先暂存，别先摆一屏旧顺序
+        self._staging.stage([])  # 换层要重扫，先暂存，别先摆一屏旧顺序
         # 横幅那一个槽的账归零（含地点与索引那两个槽 —— 换层只把横幅收掉，**不打断**全库解析：
         # 它是整个库的事，与当前在哪一层无关，所以清的是「横幅上写着什么」而不是任务本身）。
         self._banner_text.reset_level()

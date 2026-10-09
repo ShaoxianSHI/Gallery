@@ -100,7 +100,7 @@ class WatchFlowMixin:
         三种时候不能就地改：扫描还在流式显示到界面、条目还在暂存区等着定顺序、**当前页不是
         网格页**（大图页与日历页都算 —— 日历页上摆的是整库，不能就地往网格里插行）。
         """
-        return self._scan_job is not None or self._staged is not None or not self._on_grid_page()
+        return self._scan_job is not None or self._staging.is_staging or not self._on_grid_page()
 
     def _flush_pending_watch(self) -> None:
         """把之前暂存的变化补上：重排一结束、或者人回到网格，都是合适的时候。"""

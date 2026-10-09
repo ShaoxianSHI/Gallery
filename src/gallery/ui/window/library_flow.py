@@ -156,7 +156,6 @@ class LibraryFlowMixin:
     _group_facet: str | None
     _sort_facet: str
     _facet_values: dict[Path, PhotoFacets]
-    _staged: list[GridEntry] | None
 
     # ---- 宿主提供的另一样东西（ADR 0057）------------------------------------
     #
@@ -417,7 +416,7 @@ class LibraryFlowMixin:
         self._set_root(self._level_stack.root)
         self._arm_focus()  # 打开库走的是自己那一套，不经过 _reload_level
         # 每一层都要重排（排序字段总是有的），所以扫出来的一律先暂存，等顺序定下来。
-        self._staged = []
+        self._staging.stage([])
         self._banner_text.reset_level()
         self._banner_text.clear_scan_issue()
         self._update_mode_actions()
@@ -553,10 +552,10 @@ class LibraryFlowMixin:
         if generation != self._generation:
             return
         entries = payload if isinstance(payload, tuple) else ()
-        if self._staged is None:
+        if not self._staging.is_staging:
             self._model.append(entries)
         else:
-            self._staged.extend(entries)
+            self._staging.extend(entries)
         self._on_scan_done(generation, ScanReport())
 
     def _start_level_scan(self, library: Library) -> None:
@@ -632,10 +631,10 @@ class LibraryFlowMixin:
         if generation != self._generation:
             return
         batch = payload if isinstance(payload, tuple) else ()
-        if self._staged is not None:
+        if self._staging.is_staging:
             # 扫描期间一律先暂存：**边扫边出图在这里等于闪一下** —— 先看到一屏按扫描顺序排的
             # 照片，下一秒全变样。
-            self._staged.extend(batch)
+            self._staging.extend(batch)
             return
         self._model.append(batch)
         self._refresh_thumbnail_window()
