@@ -27,6 +27,8 @@ from gallery.core.library.session import (
     legacy_ui_state,
     save_session,
 )
+from gallery.core.library.watcher import LibraryChange
+from gallery.core.metadata.facets import PhotoFacets
 from gallery.ui.browser.thumb_sizes import edge_for_index, nearest_index
 from gallery.ui.tasks import TaskContext
 from gallery.ui.thumbs.pipeline import ThumbnailPipeline
@@ -41,6 +43,18 @@ SCAN_BATCH_SIZE = 64
 
 class LibraryFlowMixin:
     """打开库 / 关闭库 / 列内容 / 记会话。窗口的入口流程都在这里。"""
+
+    # 声明在类级别：关库与换库在这里给好几个字段置 ``None``，而声明写在方法里时 mypy 会把
+    # **那一句**当成「这个 mixin 把它定义成了 ``None``」，于是同一字段在两个基类里类型不一致。
+    _library: Library | None
+    _legacy_ui: LibraryUIState | None
+    _pipeline: ThumbnailPipeline | None
+    _watch_pending: tuple[LibraryChange, ...] | None
+    _pending_group: str | None
+    _group_facet: str | None
+    _sort_facet: str | None
+    _facet_values: dict[Path, PhotoFacets]
+    _staged: list[GridEntry] | None
 
     # ---- 恢复上一次的运行状态 ------------------------------------------------
 
@@ -235,7 +249,7 @@ class LibraryFlowMixin:
 
     def _on_orphan_checked(self, generation: int, payload: object) -> None:
         """查完了（**主线程**）。**什么都没找到就彻底静默** —— 不弹框、不挂横幅、不记日志。"""
-        self._orphan_job = None
+        self._orphan_job: int | None = None
         if generation != self._generation or self._library is None:
             return
         if not isinstance(payload, OrphanScan) or not payload.found:
@@ -420,7 +434,7 @@ class LibraryFlowMixin:
     def _on_scan_done(self, generation: int, payload: object) -> None:
         if generation != self._generation:
             return
-        self._scan_job = None
+        self._scan_job: int | None = None
         report = payload if isinstance(payload, ScanReport) else ScanReport()
         if report.has_issues:
             self._banner_text.note_scan_issue()
@@ -503,7 +517,7 @@ class LibraryFlowMixin:
         self._show_place_notice(f"正在解析 {count} 张照片的地点…")
 
     def _on_place_pass_done(self, payload: object) -> None:
-        self._place_job = None
+        self._place_job: int | None = None
         self._clear_place_notice()
         result = payload if isinstance(payload, PlacePass) else PlacePass()
         logger.info("地点解析完成：扫过 %d 张，反查 %d 张", result.scanned, result.resolved)

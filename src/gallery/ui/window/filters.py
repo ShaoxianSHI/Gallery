@@ -63,8 +63,11 @@ class FilterState:
         """条件正**收窄**这一层，且这一层仍然是它自己（月视图仍然是月视图）。"""
         return bool(self._conditions) and self._scope == SEARCH_SCOPE_LEVEL
 
-    def identities(self) -> list[str]:
-        """每条条件的标识（``level_key`` 用它判「还是这一层吗」）。"""
+    def identities(self) -> list[tuple[str, str]]:
+        """每条条件的标识（``level_key`` 用它判「还是这一层吗」）。
+
+        **是「字段 id + 原文」两段** —— 写成 ``list[str]`` 的话声明在说谎。
+        """
         return [condition.identity for condition in self._conditions]
 
     def chip_texts(self) -> list[str]:
@@ -129,7 +132,7 @@ class FilterState:
         self._editing = None
         self._total = None
 
-    def restore(self, conditions: tuple[object, ...]) -> None:
+    def restore(self, conditions: tuple[SearchCondition, ...]) -> None:
         """把某一帧自己那份筛选条件装回来（弹掉搜索帧之后，ADR 0041 决策 2）。
 
         **只有切回「筛选」那一档才装**：此刻是整库检索的话，条件属于搜索帧而不是底下

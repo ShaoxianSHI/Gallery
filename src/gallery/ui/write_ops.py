@@ -77,13 +77,15 @@ def shared_parent(photos: Sequence[PhotoRef]) -> Path | None:
     return first if resolved_first is None else resolved_first
 
 
-def flattened_entries(entries: Sequence[GridEntry]) -> list[GridEntry]:
+def flattened_entries(entries: Sequence[GridEntry]) -> list[PhotoRef | FolderRef]:
     """把选区里的**分组卡片换成组员**（按路径去重、保持网格顺序），相册保持相册。
 
     卡片不是磁盘上的东西、它代表的那批照片是，所以「对选区做点什么」的命令都该作用在摊平后的
     结果上（ADR 0020）。**不动选区** —— 界面上仍然是那张卡片被选着。
+
+    **返回类型里没有 :class:`GroupRef`** —— 卡片在下面就被换成组员了。
     """
-    flat: list[GridEntry] = []
+    flat: list[PhotoRef | FolderRef] = []
     seen: set[Path] = set()
     for entry in entries:
         for item in entry.photos if isinstance(entry, GroupRef) else (entry,):
@@ -197,7 +199,7 @@ class WriteOpsMixin:
         )
 
     def _on_paste_done(self, target: Path, payload: object) -> None:
-        self._write_job = None
+        self._write_job: int | None = None
         if isinstance(payload, PasteResult):
             # 做完的确认**说过就走**，除非这句话里还有用户要处理的东西：没粘成的那些、
             # 没能记下的操作日志（判据见 ADR 0029 决策 3）。
@@ -427,7 +429,7 @@ class WriteOpsMixin:
         )
 
     def _on_metadata_read_for_edit(self, ref: PhotoRef, generation: int, payload: object) -> None:
-        self._metadata_copy_job = None
+        self._metadata_copy_job: int | None = None
         if not isinstance(payload, MetadataReport) or generation != self._generation:
             return  # 已经换库或换照片了：这份元数据不该再跑到界面上
         self._cache_metadata(ref, payload)

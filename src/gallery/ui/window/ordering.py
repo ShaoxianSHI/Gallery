@@ -65,6 +65,18 @@ def _events_of(library: Library, refs: Sequence[PhotoRef]) -> dict[Path, tuple[E
 class OrderingMixin:
     """「视图 → 分组 / 排序」两个菜单，以及把当前这一层重排一遍的那条链。"""
 
+    # 声明在类级别：这一间给这几个字段赋的值比它们的初始值宽（``_place_resolver`` 一开始是
+    # ``None``、用起来才造），而声明写在方法里时 mypy 会把**第一次裸赋值**当成定义。
+    _staged: list[GridEntry] | None
+    _facet_values: dict[Path, PhotoFacets]
+    _event_values: dict[Path, tuple[EventRef, ...]]
+    _group_facet: str | None
+    _sort_facet: str | None
+    _reorder_fingerprint: tuple[object, ...] | None
+    _reorder_values: dict[Path, PhotoFacets] | None
+    _reorder_events: dict[Path, tuple[EventRef, ...]] | None
+    _place_resolver: LazyPlaceResolver | None
+
     # ---- 分组与排序（见 ADR 0009）--------------------------------------------
     def _build_order_menus(self, view_menu: QMenu) -> None:
         """「视图 → 分组 / 排序」两个子菜单。
@@ -396,7 +408,7 @@ class OrderingMixin:
     def _on_facets_ready(self, generation: int, payload: object) -> None:
         if generation != self._generation:
             return
-        self._facet_job = None
+        self._facet_job: int | None = None
         ready = payload if isinstance(payload, _LevelFacets) else _LevelFacets(values={})
         self._facet_values = ready.values
         # **每回都重新赋值**（哪怕是空的）：从「按事件分组」换到别的字段时，那份映射就该被丢掉，

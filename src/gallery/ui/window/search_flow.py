@@ -46,6 +46,8 @@ def _entry_survives(entry: GridEntry, matching: set[Path], kept_albums: frozense
 
 
 class SearchFlowMixin:
+    _staged: list[GridEntry] | None
+
     """检索框那一套条件，以及「把整库写进索引」那一遍后台维护。
 
     **条件有两种作用域**（ADR 0040 决策 1）：整库检索的结果**接管**当前层，而筛选只**收窄**当前层、
@@ -137,7 +139,7 @@ class SearchFlowMixin:
         """
         if generation != self._generation:
             return
-        self._filter_job = None
+        self._filter_job: int | None = None
         if not isinstance(payload, tuple) or len(payload) != 2:
             self._apply_ordering()
             return
@@ -210,7 +212,7 @@ class SearchFlowMixin:
         """
         if generation != self._generation:
             return
-        self._search_job = None
+        self._search_job: int | None = None
         total = payload if isinstance(payload, int) else 0
         # 命中数变了要刷新面包屑：它就写在那枚「搜索结果（128）」里。
         if total != self._search_total or self._search_total is None:
@@ -439,7 +441,7 @@ class SearchFlowMixin:
             self._show_index_notice(f"正在建立检索索引…已处理 {payload} 张")
 
     def _on_photo_index_done(self, payload: object) -> None:
-        self._index_job = None
+        self._index_job: int | None = None
         self._clear_index_notice()
         written = payload if isinstance(payload, int) else 0
         logger.info("检索索引：写入 %d 张", written)

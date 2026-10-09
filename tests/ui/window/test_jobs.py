@@ -51,25 +51,40 @@ def test_the_two_level_groups_keep_the_members_they_have_today() -> None:
     assert set(_GROUPS[LEVEL_CALENDAR]) == {"_scan_job", "_facet_job", "_calendar_job"}
 
 
-def test_every_registered_job_is_an_attribute_the_window_declares() -> None:
-    """注册表里每个名字都得是 `_init_jobs` 真正声明过的字段。
+def test_every_registered_job_is_declared_once_and_started_empty() -> None:
+    """注册表里每个名字都得**在类级别声明过**，且 ``_init_jobs`` 把它置空。
 
     注册表与字段是两处知识：多一个名字会写进一个没人声明过的属性（读回来是 ``AttributeError``），
     少一个则那个任务没有取消时机 —— 两种都不报错，只是到那天才炸。
+
+    **声明在类级别而不在 :meth:`_init_jobs` 里**（理由见 ``jobs.py`` 那段注释）：那些 mixin 各自
+    在回调末尾写 ``self._x_job = None``，而声明写在方法里时 mypy 会把**那一句**当成
+    「这个 mixin 把它定义成了 ``None``」，于是同一个字段在两个基类里类型不一致。
     """
     tree = ast.parse((_source_root() / "window" / "jobs.py").read_text("utf-8"))
+    cls = next(
+        node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "JobsMixin"
+    )
+    # 类级别的形状是 ``_x_job: int | None``（纯声明，没有值），所以取的是 ``Name.id``。
+    declared = {
+        node.target.id
+        for node in cls.body
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
+    }
     init = next(
         node
         for node in ast.walk(tree)
         if isinstance(node, ast.FunctionDef) and node.name == "_init_jobs"
     )
-    # 声明的形状是 ``self._x_job: int | None = None``，所以取的是 ``Attribute.attr``。
-    declared = {
-        node.target.attr
+    initialised = {
+        target.attr
         for node in ast.walk(init)
-        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Attribute)
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Attribute)
     }
-    assert set(_JOBS) == declared
+    assert set(_JOBS) == declared, "注册表与类级别的声明对不上"
+    assert set(_JOBS) == initialised, "有任务没在 `_init_jobs` 里置空（开窗时它压根不存在）"
 
 
 def test_a_cancel_that_forgets_the_root_is_not_a_cancel() -> None:

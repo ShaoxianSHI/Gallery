@@ -88,32 +88,50 @@ class JobsMixin:
     它与界面无关（ADR 0051 决策 5）。
     """
 
+    # guard: allow-long-comment（13 个槽 + 三个必须同行的记账，拆开写就看不出哪几个是成对的）
+    # **声明在类级别而不是 :meth:`_init_jobs` 里** —— 那些 mixin 各自在回调末尾写
+    # ``self._scan_job = None``（那是任务自己结束），而声明写在方法里时 mypy 会把**那一句**
+    # 当成「这个 mixin 把它定义成了 ``None``」，于是同一个字段在两个基类里类型不一致。
+    # 声明提到类级别之后，全树的类型只有这一处说了算。
+    _scan_job: int | None
+    #: 日历页读整库拍摄时间的任务；与 :attr:`_facet_job` 分开 —— 取消时机不同，会互相作废。
+    _calendar_job: int | None
+    _facet_job: int | None
+    #: 「按条件收窄当前这一层」那一次筛选的任务（ADR 0040）。**与检索那个是分开的两份**：
+    #: 它们不会同时进行（条件非空时只走其中一条），但取消时机不同 —— 换层时两个都要作废。
+    _filter_job: int | None
+    _detail_job: int | None
+    _metadata_job: int | None
+    #: 「复制元数据」现读元数据用的那次任务（面板的读取消了就没人要那份结果）。
+    _metadata_copy_job: int | None
+    _search_job: int | None
+    _place_job: int | None
+    _index_job: int | None
+    #: 进行中的那一遍孤儿检查（ADR 0043 决策 9）。切库与关窗都要取消它 ——
+    #: 回来得晚的那份结果属于上一个库，而它带来的确认框会问在错的窗口上。
+    _orphan_job: int | None
+    #: 「清空缩略图缓存」进行中的那一次（O(n) 的 unlink 循环跑在工作线程上，否则冻住窗口）。
+    _cache_job: int | None
+    #: **会往某个目录里落文件**的后台任务（⌘V / 复制到相册 / 移动到相册，ADR 0018、0019）：
+    #: 三者同时只允许一个（会争同一个目标名字）。**不在换层那组** —— 换层时掐掉它就是
+    #: 文件搬到一半（约束 1「只增不改」）。
+    _write_job: int | None
+
     def _init_jobs(self) -> None:
-        """声明那 13 个任务槽；``MainWindow.__init__`` 里只留这一句。"""
-        self._scan_job: int | None = None
-        #: 日历页读整库拍摄时间的任务；与 :attr:`_facet_job` 分开 —— 取消时机不同，会互相作废。
-        self._calendar_job: int | None = None
-        self._facet_job: int | None = None
-        #: 「按条件收窄当前这一层」那一次筛选的任务（ADR 0040）。**与检索那个是分开的两份**：
-        #: 它们不会同时进行（条件非空时只走其中一条），但取消时机不同 —— 换层时两个都要作废。
-        self._filter_job: int | None = None
-        self._detail_job: int | None = None
-        self._metadata_job: int | None = None
-        #: 「复制元数据」现读元数据用的那次任务（面板的读取消了就没人要那份结果）。
-        self._metadata_copy_job: int | None = None
-        self._search_job: int | None = None
-        self._place_job: int | None = None
-        self._index_job: int | None = None
-        #: 进行中的那一遍孤儿检查（ADR 0043 决策 9）。切库与关窗都要取消它 ——
-        #: 回来得晚的那份结果属于上一个库，而它带来的确认框会问在错的窗口上。
-        self._orphan_job: int | None = None
-        #: 「清空缩略图缓存」进行中的那一次（O(n) 的 unlink 循环跑在工作线程上，否则冻住窗口）。
-        self._cache_job: int | None = None
-        # guard: allow-long-comment（约束 1：换层时掐掉它就是文件搬到一半）
-        #: **会往某个目录里落文件**的后台任务（⌘V / 复制到相册 / 移动到相册，ADR 0018、0019）：
-        #: 三者同时只允许一个（会争同一个目标名字）。**不在换层那组** —— 换层时掐掉它就是
-        #: 文件搬到一半（约束 1「只增不改」）。
-        self._write_job: int | None = None
+        """把那 13 个任务槽置空；``MainWindow.__init__`` 里只留这一句。"""
+        self._scan_job = None
+        self._calendar_job = None
+        self._facet_job = None
+        self._filter_job = None
+        self._detail_job = None
+        self._metadata_job = None
+        self._metadata_copy_job = None
+        self._search_job = None
+        self._place_job = None
+        self._index_job = None
+        self._orphan_job = None
+        self._cache_job = None
+        self._write_job = None
 
     def _start_job(
         self,

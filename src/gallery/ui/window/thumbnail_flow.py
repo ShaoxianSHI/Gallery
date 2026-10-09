@@ -202,7 +202,7 @@ class ThumbnailFlowMixin:
         )
 
     def _on_thumbnail_cache_cleared(self, generation: int, payload: object) -> None:
-        self._cache_job = None
+        self._cache_job: int | None = None
         if generation != self._generation:
             return  # 已经换库了：删的是上一个库的缓存，别去动新库的模型
         removed = payload if isinstance(payload, int) else 0

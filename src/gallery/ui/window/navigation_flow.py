@@ -11,6 +11,8 @@ from pathlib import Path
 
 from gallery.core import paths
 from gallery.core.library.config import BROWSE_MODE_ALBUMS
+from gallery.core.library.photos import GridEntry
+from gallery.core.metadata.facets import PhotoFacets
 from gallery.ui.navigation import (
     ENTRY_KIND_PATH,
     EntryKey,
@@ -33,6 +35,9 @@ from gallery.ui.window.level_stack import (
 
 
 class NavigationFlowMixin:
+    _staged: list[GridEntry] | None
+    _facet_values: dict[Path, PhotoFacets]
+
     """进入 / 退出层级，以及到时该停在哪一格。"""
 
     def enter_folder(self, directory: Path, *, focus: EntryKey | None = None) -> None:

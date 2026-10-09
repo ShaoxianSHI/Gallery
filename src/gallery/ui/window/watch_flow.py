@@ -30,6 +30,10 @@ WATCH_ECHO_TTL = 2.0
 class WatchFlowMixin:
     """外部文件变化怎么落到网格、内存缓存与索引上。"""
 
+    # 声明在类级别 —— 与 ``jobs.py`` 同一个理由（回调末尾把暂存放掉的那一句会被当成定义）。
+    _watch_pending: tuple[LibraryChange, ...] | None
+    _pending_group: str | None
+
     # ---- 实时监听（ADR 0013）------------------------------------------------
     def _on_watch_changed(self, payload: object) -> None:
         """把一批外部变化落到当前这一层上（**主线程**：排队连接搬过来的）。"""

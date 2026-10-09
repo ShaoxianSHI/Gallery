@@ -37,6 +37,8 @@ DRAG_THRESHOLD: Final = 3
 
 
 class TitleBarFlowMixin:
+    _title_bar_drag_origin: QPointF | None
+
     """摆那一条的位置、决定它显示什么、按住拖窗口、双击铺满。"""
 
     def _is_title_bar(self, point: QPointF) -> bool:

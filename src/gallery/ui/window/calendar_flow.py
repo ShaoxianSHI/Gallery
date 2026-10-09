@@ -35,6 +35,8 @@ def _photos_on_this_level(entries: Iterable[GridEntry]) -> list[PhotoRef]:
 
 
 class CalendarFlowMixin:
+    _staged: list[GridEntry] | None
+
     """三种浏览方式之间的切换，以及日历那一页与「点一格」的来回。"""
 
     # ---- 浏览方式与相册导航 ------------------------------------------------
@@ -259,7 +261,7 @@ class CalendarFlowMixin:
     ) -> None:
         if generation != self._generation or not isinstance(payload, dict):
             return
-        self._calendar_job = None
+        self._calendar_job: int | None = None
         self._clear_progress_notice()
         self._calendar_page.set_photos(refs, payload)
         self._update_level_notice()

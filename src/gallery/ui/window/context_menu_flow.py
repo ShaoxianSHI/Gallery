@@ -312,7 +312,7 @@ class ContextMenuFlowMixin:
         )
 
     def _on_metadata_copied(self, ref: PhotoRef, generation: int, payload: object) -> None:
-        self._metadata_copy_job = None
+        self._metadata_copy_job: int | None = None
         if not isinstance(payload, MetadataReport) or generation != self._generation:
             return  # 已经换库了：这份元数据不该再跑到界面上
         self._cache_metadata(ref, payload)

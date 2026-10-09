@@ -23,6 +23,8 @@ import re
 import subprocess
 import sys
 
+import pytest
+
 #: 每个 mixin 的宿主耦合面 —— **这份表就是那道**。按需求从多到少排：前四间是耦合最深的，
 #: 而它们也正是最该定期问一句「这一间还该存在吗」的地方。
 #:
@@ -727,15 +729,19 @@ def test_this_guard_would_notice_a_new_dependency() -> None:
     assert "setGeometry" not in measured["window/title_bar_flow.py:TitleBarFlowMixin"]
 
 
-#: ``mypy --strict src/gallery/ui/window`` 在 2026-10-09 的实测值。
+#: ``mypy --strict src/gallery/ui/window`` 在 2026-10-10 的实测值（ADR 0056 修完那 85 条之后）。
 #:
-#: **它和上面那张表量的是同一片依赖，但不是一个数**：表里 489 条是**不重复的成员**
-#: （`library_flow` 要 73 样这样的东西），而 mypy 报的是**使用点**且按它自己的口径
-#: 逐类去重 —— 同一份依赖三处数出来三个数（1290 个使用点 / 489 个成员 / 863 条错误），
-#: 互不相等。所以这里**不做交叉断言**：那等于声称两个数必须相等，而它们本来就不该相等。
-#: 留着的意义只是**锁定基线** —— 「比上次多了几条、多了在哪」这个问题得有人问。
-MYPY_TOTAL_ERRORS = 948
-MYPY_ATTR_DEFINED = 863
+#: **它和上面那张表量的是同一片依赖，但不是一个数**：表里 489 条是**不重复的成员**，
+#: 而 mypy 报的是**使用点**且按它自己的口径逐类去重。所以这里**不做交叉断言** ——
+#: 那等于声称两个数必须相等，而它们本来就不该相等。留着的意义只是**锁定基线**。
+#:
+#: **另一个口径是 ``main_window.py`**（组合根，现在是 0 条，ADR 0056）—— 但它有个
+#: 必须说清的性质：**mypy 只报目标文件自己的错**，被 import 的 18 个 mixin 只是被跟进
+#: 来做类型推导。所以它守的是「那一层组装得起来」，**不是「mixin 的函数体干净」**。
+#: 想看后者得用全覆盖口径（``mypy --strict src/gallery/ui``，现在 1225 条）。
+#: 剩下这 869 条 ``[attr-defined]`` 是 ADR 0055 那 489 条声明没做的直接后果。
+MYPY_TOTAL_ERRORS = 921
+MYPY_ATTR_DEFINED = 869
 
 #: 真跑一次 mypy 的开关。跑一次要几秒，而这一份每次测试都会跑 —— **别每次都跑**。
 UI_WINDOW_MYPY_RECHECK = "UI_WINDOW_MYPY_RECHECK"
@@ -756,13 +762,37 @@ def _mypy_errors() -> tuple[int, int]:
     return sum(counts.values()), counts.get("attr-defined", 0)
 
 
+def test_the_composition_root_is_type_clean() -> None:
+    """**``main_window.py``（组合根）在 ``--strict`` 下一条不报** —— 守的是「那一层组装得起来」。
+
+    它 import 全部 mixin，全部字段声明都在它的 ``__init__`` 里，所以同一字段在两个基类里
+    类型不一致这类错，在这里才会报出来（逐个 mixin 单独查时它们互相看不见，反而不报）。
+
+    **它不证明 mixin 的函数体干净** —— mypy 只报目标文件自己的错，被 import 的模块只是被
+    跟进来做推导。实测：在 ``filters.py`` 里注入一条 ``return "x"`` 给 ``-> int`` 的错，
+    这一条仍然 ``Success``；要看后者得用 ``mypy --strict src/gallery/ui``（ADR 0056 后果）。
+    """
+    if os.environ.get(UI_WINDOW_MYPY_RECHECK) != "1":
+        pytest.skip("要真跑 mypy：设 UI_WINDOW_MYPY_RECHECK=1")
+    result = subprocess.run(
+        [sys.executable, "-m", "mypy", "src/gallery/ui/main_window.py", "--strict"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, "组合根在 --strict 下不干净了：\n" + "\n".join(
+        line for line in result.stdout.splitlines() if " error: " in line
+    )
+
+
 def test_the_mypy_baseline_is_still_current() -> None:
     """**锁定的那两个数字与实测吻合** —— 默认不跑 mypy（要几秒）。
 
     带 ``UI_WINDOW_MYPY_RECHECK=1`` 时真跑一遍：报的是「比上次多了几条」。
-    **剩下的** ``MYPY_TOTAL_ERRORS - MYPY_ATTR_DEFINED`` 条不是这一张表 ——
-    那是真的类型问题（``ordering.py`` 两处 ``QAction(text, self)`` 只有因为
-    ``MainWindow`` 是 ``QObject`` 才成立），ADR 0055 记着它们为什么这一轮没修。
+    **剩下的** ``MYPY_TOTAL_ERRORS - MYPY_ATTR_DEFINED`` 条不是这一张表 —— 那是
+    ``attr-defined`` 的下游（字段看不见 → 类型推不出来）与「mixin 里的 ``self`` 静态上
+    不是 ``QWidget``」那一族（``QMessageBox`` / ``QFileDialog`` / ``QAction`` 传 ``self``），
+    ADR 0056 记着它们各自为什么留着。
     """
     if os.environ.get(UI_WINDOW_MYPY_RECHECK) != "1":
         return
