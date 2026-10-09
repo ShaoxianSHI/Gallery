@@ -22,8 +22,8 @@ from PySide6.QtWidgets import (
 
 from gallery.core.library.calendar import LEVEL_NAMES, LEVELS, title
 from gallery.ui.calendar.colors import CalendarColors
+from gallery.ui.chips import DISMISS_MARK, build_chip
 from gallery.ui.layout import clear_layout
-from gallery.ui.panels.breadcrumb import DISMISS_MARK, build_chip
 
 _BAR_HEIGHT = 60
 
@@ -108,7 +108,7 @@ class CalendarBar(QWidget):
     def set_conditions(self, conditions: Sequence[str], *, editing: int | None = None) -> None:
         """摆出生效中的条件（``conditions`` 空 = 整块收起来）。
 
-        **与面包屑共用同一份胶囊**（:func:`~gallery.ui.panels.breadcrumb.build_chip`）—— 两处各
+        **与面包屑共用同一份胶囊**（:func:`~gallery.ui.chips.build_chip`）—— 两处各
         派生一遍样式，过一阵就是「日历上那几枚比网格上那几枚浅一档」。宽度不够时**收掉排不下的
         那几枚**，而不是把每一枚都压成省略号 —— 见 :meth:`_refit`。
         """

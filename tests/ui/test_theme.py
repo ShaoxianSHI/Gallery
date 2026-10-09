@@ -35,8 +35,8 @@ from gallery.core.library.session import (
     save_session,
 )  # noqa: E402
 from gallery.ui import rename_edit, theme  # noqa: E402
+from gallery.ui.chips import ChipButton  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
-from gallery.ui.panels.breadcrumb import ChipButton  # noqa: E402
 
 #: 取样点离右边多远。相册只有两个，右边整片是空的，取到的就是底色本身。
 SAMPLE_FROM_RIGHT = 24

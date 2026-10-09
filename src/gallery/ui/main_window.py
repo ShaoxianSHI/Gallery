@@ -51,7 +51,6 @@ from gallery.ui.browser.thumb_sizes import (
     label_for_index,
 )
 from gallery.ui.calendar import CalendarPage
-from gallery.ui.panels.breadcrumb import BreadcrumbBar
 from gallery.ui.panels.metadata import MetadataPanel
 from gallery.ui.panels.welcome import WelcomeView
 from gallery.ui.tasks import TaskRunner
@@ -81,6 +80,7 @@ from gallery.ui.window.viewer_flow import ViewerFlowMixin
 from gallery.ui.window.watch import WatchBridge, WatchStarter, start_watch
 from gallery.ui.window.watch_flow import WatchFlowMixin
 from gallery.ui.window.widgets.banner_overlay import BannerOverlay
+from gallery.ui.window.widgets.breadcrumb import BreadcrumbBar
 from gallery.ui.window.widgets.external_button import (
     ExternalAppsButton,
     ExternalEntry,

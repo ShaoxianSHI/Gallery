@@ -1,9 +1,9 @@
 """面包屑导航条：库名 ▸ 子目录 ▸ 当前目录，右端挂着生效中的筛选条件（ADR 0026）。
 
 「当前所在」是路径**后面**跟着的那一段，它之前的每一段都可点击跳回（见 :meth:`set_path`）。
-
 **结果那一段有两种说法**（ADR 0040 决策 4）：整库检索报「搜索结果（128）」而只报库名，
 筛选报「筛选后（12）」而**照旧报完整路径** —— 范围没变时藏路径是在说一件不存在的事。
+**胶囊不住在这里**：网格页与日历页摆的是同一批，:mod:`gallery.ui.chips` 才是那一份（ADR 0060）。
 """
 
 from __future__ import annotations
@@ -11,12 +11,12 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Qt, Signal
-from PySide6.QtGui import QFontMetrics, QMouseEvent
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QToolButton, QWidget
 
 from gallery.core.library.config import SEARCH_SCOPE_LEVEL, SEARCH_SCOPE_LIBRARY
 from gallery.ui import theme
+from gallery.ui.chips import build_chip
 from gallery.ui.layout import clear_layout
 from gallery.ui.theme import rgba
 
@@ -26,15 +26,10 @@ SEPARATOR = "▸"
 #: 一枚 11 点的 ``▸`` 抗锯齿一展开就看不见了；0.55 按非文字内容的 3:1 那条线挑。
 SEPARATOR_ALPHA = 0.55
 
-DISMISS_MARK = "✕"
-
 #: 这一行四边的留白；右边那一格是默认值，有条件胶囊时由 ``set_right_inset`` 换算。
 _PAD = 2
 
 _SEPARATOR_OBJECT_NAME = "separator"
-
-#: 胶囊左右各留多少（点）。热区算它（见 :meth:`ChipButton._hits_mark`），改样式表时同步。
-_CHIP_PADDING_H = 8
 
 #: 路径段按钮不画自己的底色，否则每一段都是一块比周围深一档的系统按钮色圆角块。
 _BUTTON_STYLE = """
@@ -47,77 +42,6 @@ QToolButton {
 }
 QToolButton:hover { text-decoration: underline; }
 """
-
-
-def chip_style(*, editing: bool) -> str:
-    """条件胶囊的样式：它不是链接、是正在生效的东西，所以不用链接色。
-
-    **不私有**是因为日历那一页也要摆同样的胶囊（ADR 0040 决策 9）：两处各派生一遍样式，
-    过一阵就是「日历上那几枚比网格上那几枚浅一档」。
-    """
-    border = "palette(highlight)" if editing else "palette(mid)"
-    hover = "palette(alternate-base)" if not editing else ""
-    return f"""
-    QToolButton#searchChip {{
-        border: 1px solid {border};
-        border-radius: 9px;
-        background: transparent;
-        padding: 1px {_CHIP_PADDING_H}px;
-        color: palette(text);
-        font-size: 11px;
-    }}
-    QToolButton#searchChip:hover {{ background: {hover}; }}
-    """
-
-
-class ChipButton(QToolButton):
-    """一枚筛选条件胶囊：点文字是改，点 ✕ 是撤掉。
-
-    两件事挤在一个按钮上，所以按位置分热区：``✕`` 那一段是撤掉，其余是改（键盘走「改」，
-    因为键盘没有「点 ✕」这回事）。
-    """
-
-    edited = Signal()
-    removed = Signal()
-
-    def __init__(self, text: str, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setObjectName("searchChip")
-        self.setText(f"{text} {DISMISS_MARK}")
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.clicked.connect(self.edited)
-
-    def _hits_mark(self, x: float) -> bool:
-        """这一点是不是落在右端那个 ``✕`` 上。"""
-        text = self.text()
-        body = text[: -len(DISMISS_MARK)].rstrip()  # 去掉标记与它前面那个空格
-        metrics = QFontMetrics(self.font())
-        # 文字起点 + 文字宽 + 一个空格 ≈ 标记起点；再往左留两像素容差。
-        mark_start = _CHIP_PADDING_H + metrics.horizontalAdvance(body) + 4
-        return x >= mark_start - 2
-
-    def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
-        if self._hits_mark(event.position().x()):
-            self.removed.emit()
-        else:
-            self.edited.emit()
-        event.accept()
-
-
-def build_chip(
-    text: str, position: int, *, editing: bool, parent: QWidget, owner: QObject
-) -> ChipButton:
-    """造一枚条件胶囊，并把它的两个信号接到 ``owner`` 的 ``condition_edited`` /
-    ``condition_removed`` 上（带的是它在条件列表里的序号）。
-
-    **两处摆胶囊的地方（面包屑右端、日历工具条）都走这一个出口**（ADR 0040 决策 9）——
-    网格页与日历页各派生一遍样式的话，过一阵就是「日历上那几枚比网格上那几枚浅一档」。
-    """
-    button = ChipButton(text, parent)
-    button.setStyleSheet(chip_style(editing=editing))
-    button.edited.connect(lambda index=position: owner.condition_edited.emit(index))
-    button.removed.connect(lambda index=position: owner.condition_removed.emit(index))
-    return button
 
 
 class BreadcrumbBar(QWidget):
@@ -170,8 +94,7 @@ class BreadcrumbBar(QWidget):
     ) -> None:
         """重建整条路径。``parts`` 由 ``ui.navigation.breadcrumb_parts`` 给出。
 
-        「当前所在」是路径**后面**跟着的那一段（分组名或结果段），于是它之前的每一段都点得动。
-
+        「当前所在」落在路径上，仅当后面既没有分组也没有结果段可指。
         **作用域只改那一段的说法，不改路径本身**（ADR 0040 决策 4）：整库检索时调用方只传库名，
         报出「旅行 ▸ 2024」就是在说一件范围真变了的事。"""
         self._clear()
@@ -215,7 +138,7 @@ class BreadcrumbBar(QWidget):
         widget.setStyleSheet("font-size: 12px; font-weight: 600; padding: 2px 6px;")
         return widget
 
-    def _chip(self, position: int, text: str, editing: bool) -> ChipButton:
+    def _chip(self, position: int, text: str, editing: bool) -> QToolButton:
         return build_chip(text, position, editing=editing, parent=self, owner=self)
 
     def _separator(self) -> QLabel:
@@ -244,9 +167,9 @@ class BreadcrumbBar(QWidget):
         widget.setStyleSheet("font-size: 12px; font-weight: 600; padding: 2px 6px;")
         return widget
 
-    def _group_label(self, label: str) -> QLabel:
+    def _group_label(self, group: str) -> QLabel:
         """分组名：和当前目录一样的重体，只是不可点（点它没有对应的目录可回）。"""
-        widget = QLabel(label)
+        widget = QLabel(group)
         widget.setToolTip("当前分组（Esc 返回上一层）")
         widget.setStyleSheet("font-size: 12px; font-weight: 600; padding: 2px 6px;")
         return widget
@@ -265,4 +188,4 @@ class BreadcrumbBar(QWidget):
         self._clear()
 
 
-__all__ = ["DISMISS_MARK", "SEPARATOR", "BreadcrumbBar", "ChipButton", "build_chip", "chip_style"]
+__all__ = ["SEPARATOR", "BreadcrumbBar"]
