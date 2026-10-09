@@ -87,6 +87,7 @@ from gallery.ui.window.banner_flow import BannerFlowMixin
 from gallery.ui.window.calendar_flow import CalendarFlowMixin
 from gallery.ui.window.context_menu_flow import ContextMenuFlowMixin
 from gallery.ui.window.event_flow import EventFlowMixin
+from gallery.ui.window.jobs import JobsMixin
 from gallery.ui.window.level_stack import (
     LevelStack,
     PageRole,
@@ -113,6 +114,7 @@ _GRID_PAGE_MARGIN_H = 10
 
 
 class MainWindow(
+    JobsMixin,
     LevelStackMixin,
     NavigationFlowMixin,
     OrderingMixin,
@@ -171,8 +173,10 @@ class MainWindow(
 
         self._library: Library | None = None
         self._pipeline: ThumbnailPipeline | None = None
+        #: 「层或库换过了」—— 后台回调带一份进来再比，比不过就作废（ADR 0051）。
         self._generation = 0
-        self._scan_job: int | None = None
+        #: 13 个后台任务槽 + 「谁属于哪一组取消」（ADR 0051），声明与初始化都在那一处。
+        self._init_jobs()
         #: 选区变化后**合并成一轮**再全量重算动作可用性（0ms 单次，理由见连接处）。
         self._action_states_timer = QTimer(self)
         #: 「这一次按下还可能是双击的第一下」这个记号（见 :meth:`mousePressEvent`）。
@@ -180,30 +184,18 @@ class MainWindow(
         self._title_bar_drag_armed = False
         #: 那一次按下落在哪（全局坐标）：够不够远只跟它比。
         self._title_bar_drag_origin: QPointF | None = None
-        self._detail_job: int | None = None
         self._current_row = -1
-        self._metadata_job: int | None = None
-        #: 「复制元数据」现读元数据用的那次任务（面板的读取消了就没人要那份结果）。
-        self._metadata_copy_job: int | None = None
-        #: **会往某个目录里落文件**的后台任务（⌘V / 复制到相册 / 移动到相册，ADR 0018、0019）：
-        #: 三者同时只允许一个（会争同一个目标名字），切库时必须取消。
-        self._write_job: int | None = None
         #: **在大图页上删掉的那一张**（``None`` = 没删过 / 已取回）：⌘Z 之后要跳回它，
         #: **只对紧接着的那一次撤销有效**。
         self._detail_trashed: Path | None = None
         self._place_resolver: LazyPlaceResolver | None = None
-        self._place_job: int | None = None
-        #: 进行中的那一遍孤儿检查（ADR 0043 决策 9）。切库与关窗都要取消它 ——
-        #: 回来得晚的那份结果属于上一个库，而它带来的确认框会问在错的窗口上。
-        self._orphan_job: int | None = None
         #: 本次运行已经起过那一遍的库（是集合不是单个：来回切库不该把同一个库再起一遍空跑）。
+        #: **取消 :attr:`_place_job` 必须同时把根拿掉** —— 见 :meth:`JobsMixin._cancel_job`。
         self._place_pass_roots: set[Path] = set()
         self._place_notice_text: str | None = None
         self._preview_cache: OrderedDict[Path, QImage] = OrderedDict()
         self._metadata_cache: OrderedDict[Path, tuple[int, int, MetadataReport]] = OrderedDict()
         self._thumbnail_failures = 0
-        #: 「清空缩略图缓存」进行中的那一次（O(n) 的 unlink 循环跑在工作线程上，否则冻住窗口）。
-        self._cache_job: int | None = None
         # 下一次 ⌘Z 会撤掉什么；只在写操作之后刷新，否则每次翻图都要重放一遍日志。
         self._undo_label: str | None = None
 
@@ -249,9 +241,6 @@ class MainWindow(
         self._reorder_events: dict[Path, tuple[EventRef, ...]] | None = None
         self._reorder_photos: tuple[PhotoRef, ...] = ()
         self._reorder_albums: tuple[FolderRef, ...] = ()
-        self._facet_job: int | None = None
-        #: 日历页读整库拍摄时间的任务；与 :attr:`_facet_job` 分开（取消时机不同，会互相作废）。
-        self._calendar_job: int | None = None
         # 从日历点开的那一层 —— `_drill_*` 三个字段是栈上 ``CalendarFrame`` 的投影（ADR 0041）。
         #: 这一层还没显示到界面的条目（顺序定下来再给出去，ADR 0009 决策 6）；``None`` = 已排好。
         self._staged: list[GridEntry] | None = None
@@ -268,13 +257,8 @@ class MainWindow(
         self._editing_condition: int | None = None
         #: 上一次检索命中了多少张（面包屑上那个「搜索结果（128）」；``None`` = 还没查过）。
         self._search_total: int | None = None
-        self._search_job: int | None = None
-        #: 「按条件收窄当前这一层」那一次筛选的任务（ADR 0040）。**与检索那个是分开的两份**：
-        #: 它们不会同时进行（条件非空时只走其中一条），但取消时机不同 —— 换层时两个都要作废。
-        self._filter_job: int | None = None
-        #: 「把整库的照片写进索引」那一遍的任务（见 ``_maybe_start_photo_index``）。
-        self._index_job: int | None = None
         #: 已经起过那一遍的库。**是集合不是单个**：来回切库不该把同一个库再起一遍空跑。
+        #: **取消 :attr:`_index_job` 必须同时把根拿掉** —— 见 :meth:`JobsMixin._cancel_job`。
         self._index_roots: set[Path] = set()
         self._index_notice_text: str | None = None
         #: 顶边那一条归不归这个窗口（``theme.unify_title_bar``）；不归就用 ``setWindowTitle``。

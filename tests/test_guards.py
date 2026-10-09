@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import ast
+import re
 import tokenize
 from pathlib import Path, PurePosixPath
 from typing import Final
@@ -296,6 +297,44 @@ WRITE_METHODS_ON_LIBRARY = (
 
 #: 唯一一个「只组装、不写」的例外：它负责挑目标目录（见 ``_paste_target``）。
 WRITE_OPS_MODULE = "write_ops.py"
+
+#: 后台任务的提交与取消只许出现在这一个模块里（ADR 0051 实施）。
+JOBS_MODULE = Path("window") / "jobs.py"
+
+#: 「起一个后台任务」与「取消一个后台任务」这两句的形状。
+#:
+#: **回调末尾的 ``self._x_job = None`` 不在守卫范围内** —— 那是任务自己结束时把句柄放掉，
+#: 不是取消。把它一起拦掉的话，每个回调都得改写成 ``_finish_job``，而那不换来任何东西。
+JOB_LIFECYCLE_PATTERNS = (
+    re.compile(r"self\._\w+_job\s*=\s*self\._runner\.submit\("),
+    re.compile(r"self\._runner\.cancel\(\s*self\._\w+_job\s*\)"),
+)
+
+
+def test_only_the_jobs_module_starts_or_cancels_a_background_job() -> None:
+    """**起任务与取消任务只许走 ``ui/window/jobs.py``**（ADR 0051 决策 4）。
+
+    不收进那一处的话，「取消时机」就只剩注释在写 —— 而漏一处的症状是**静默**的：
+    把「层」那一组写成「取消全部」，就会在换层时掐掉一个进行中的文件写操作（红线 1）。
+    """
+    offenders: list[str] = []
+    for path in _iter_python_files(UI_ROOT):
+        if path.name == JOBS_MODULE.name:
+            continue
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if any(pat.search(line) for pat in JOB_LIFECYCLE_PATTERNS):
+                offenders.append(f"{path.relative_to(PROJECT_ROOT)}:{number}")
+    assert not offenders, (
+        f"起后台任务与取消后台任务只许出现在 ui/{JOBS_MODULE}（ADR 0051）：{offenders}"
+    )
+
+
+def test_the_job_lifecycle_guard_would_notice_a_violation() -> None:
+    """上一条自己必须验过一次 —— 一条永远为绿的测试比没有更坏。"""
+    line = "        self._scan_job = self._runner.submit(work)"
+    assert any(pat.search(line) for pat in JOB_LIFECYCLE_PATTERNS)
+    # 回调末尾放句柄的那一句**不该**被它拦下来（那是任务自己结束，不是取消）。
+    assert not any(pat.search("        self._scan_job = None") for pat in JOB_LIFECYCLE_PATTERNS)
 
 
 def test_only_write_ops_calls_the_methods_that_change_user_files() -> None:

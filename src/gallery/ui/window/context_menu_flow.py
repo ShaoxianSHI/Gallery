@@ -304,7 +304,8 @@ class ContextMenuFlowMixin:
                 return None
             return read_metadata(ref.path)
 
-        self._metadata_copy_job = self._runner.submit(
+        self._start_job(
+            "_metadata_copy_job",
             work,
             on_result=partial(self._on_metadata_copied, ref, generation),
             on_error=self._on_metadata_copy_failed,

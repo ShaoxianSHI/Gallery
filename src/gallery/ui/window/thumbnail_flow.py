@@ -194,7 +194,8 @@ class ThumbnailFlowMixin:
             return library.clear_cache()
 
         self._show_banner("正在清空缩略图缓存…", background=True)
-        self._cache_job = self._runner.submit(
+        self._start_job(
+            "_cache_job",
             work,
             on_result=partial(self._on_thumbnail_cache_cleared, self._generation),
             on_error=self._on_thumbnail_cache_failed,

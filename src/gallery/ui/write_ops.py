@@ -189,7 +189,8 @@ class WriteOpsMixin:
             return library.copy_into(target, sources, should_cancel=context.is_cancelled)
 
         self._show_banner(f"正在把 {len(sources)} 项粘贴到「{target.name}」…")
-        self._write_job = self._runner.submit(
+        self._start_job(
+            "_write_job",
             work,
             on_result=partial(self._on_paste_done, target),
             on_error=self._on_paste_failed,
@@ -233,7 +234,8 @@ class WriteOpsMixin:
             return library.duplicate(sources, should_cancel=context.is_cancelled)
 
         self._show_banner(f"正在复制 {len(sources)} 份副本…")
-        self._write_job = self._runner.submit(
+        self._start_job(
+            "_write_job",
             work,
             on_result=self._on_duplicate_done,
             on_error=self._on_duplicate_failed,
@@ -417,7 +419,8 @@ class WriteOpsMixin:
             return read_metadata(ref.path)
 
         self._show_banner(f"正在读取 {ref.name} 的元数据…")
-        self._metadata_copy_job = self._runner.submit(
+        self._start_job(
+            "_metadata_copy_job",
             work,
             on_result=partial(self._on_metadata_read_for_edit, ref, generation),
             on_error=partial(self._on_metadata_edit_read_failed, ref, generation),
@@ -556,7 +559,8 @@ class WriteOpsMixin:
             return library.copy_into(target, sources, should_cancel=context.is_cancelled)
 
         self._show_banner(f"正在把 {len(sources)} 项{verb}到「{target.name}」…")
-        self._write_job = self._runner.submit(
+        self._start_job(
+            "_write_job",
             work,
             on_result=partial(self._on_transfer_done, target, verb),
             on_error=partial(self._on_transfer_failed, verb),

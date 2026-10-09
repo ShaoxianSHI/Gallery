@@ -117,9 +117,7 @@ class ViewerFlowMixin:
         self._sync_ui()
         generation = self._generation
 
-        if self._detail_job is not None:
-            self._runner.cancel(self._detail_job)
-            self._detail_job = None
+        self._cancel_job("_detail_job")
         if self._panel.isVisible():
             self._load_metadata()
 
@@ -150,7 +148,8 @@ class ViewerFlowMixin:
                 library.preview(ref, max_edge=max_edge, should_cancel=context.is_cancelled)
             )
 
-        self._detail_job = self._runner.submit(
+        self._start_job(
+            "_detail_job",
             work_preview,
             on_result=partial(self._on_preview_ready, ref, row, generation),
             on_error=partial(self._on_detail_failed, ref, row, generation),
@@ -177,7 +176,8 @@ class ViewerFlowMixin:
                 return None
             return to_qimage(library.full(ref, should_cancel=context.is_cancelled))
 
-        self._detail_job = self._runner.submit(
+        self._start_job(
+            "_detail_job",
             work_full,
             on_result=partial(self._on_full_ready, ref, row, generation),
             on_error=partial(self._on_detail_failed, ref, row, generation),

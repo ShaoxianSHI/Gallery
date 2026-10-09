@@ -135,7 +135,8 @@ class SearchFlowMixin:
             kept_albums = {album.path for album in albums_kept(albums, matching, root=library.root)}
             return (matching, frozenset(kept_albums))
 
-        self._filter_job = self._runner.submit(
+        self._start_job(
+            "_filter_job",
             work,
             on_result=partial(self._on_level_filtered, generation),
             on_error=partial(self._on_filter_failed, generation),
@@ -185,12 +186,6 @@ class SearchFlowMixin:
         # 照常把这一层排出来：一片空白比未筛选的内容更没用，而横幅已经说清发生了什么。
         self._apply_ordering()
 
-    def _cancel_level_filter(self) -> None:
-        """作废进行中的筛选（换层、换库、关窗时）。"""
-        if self._filter_job is not None:
-            self._runner.cancel(self._filter_job)
-            self._filter_job = None
-
     # ---- 检索（ADR 0026）------------------------------------------------------
     def _start_search(self, library: Library) -> None:
         """按已生效的条件检索整个库，把命中的照片累积进这一层。
@@ -212,7 +207,8 @@ class SearchFlowMixin:
                 context.progress(tuple(refs[start : start + SCAN_BATCH_SIZE]))
             return outcome.total
 
-        self._search_job = self._runner.submit(
+        self._start_job(
+            "_search_job",
             work,
             on_progress=partial(self._on_scan_batch, generation),
             on_result=partial(self._on_search_done, generation),
@@ -243,12 +239,6 @@ class SearchFlowMixin:
         self._sync_ui()
         self._show_banner(f"检索没能完成：{message}")
         self._apply_ordering()  # 把这一层按「没有结果」收尾，界面不至于卡在空白上
-
-    def _cancel_search(self) -> None:
-        """作废进行中的检索（换层、换库、关窗时）。"""
-        if self._search_job is not None:
-            self._runner.cancel(self._search_job)
-            self._search_job = None
 
     def _on_search_submitted(self, raw: str) -> None:
         """搜索框里回车了：把这一串变成一条条件，然后重新列出这一层。
@@ -464,7 +454,8 @@ class SearchFlowMixin:
             )
 
         # 横幅**不在这儿亮**：已经建过索引的库这一遍是空跑，先亮等于在说一件没发生的事。
-        self._index_job = self._runner.submit(
+        self._start_job(
+            "_index_job",
             work,
             on_progress=self._on_photo_index_progress,
             on_result=self._on_photo_index_done,
@@ -504,15 +495,6 @@ class SearchFlowMixin:
                 if self._is_filtering()
                 else "这个库没法建立检索索引，搜索暂时用不了。"
             )
-
-    def _cancel_photo_index(self) -> None:
-        """作废进行中的索引维护（切库、关窗时）。"""
-        if self._index_job is not None:
-            self._runner.cancel(self._index_job)
-            self._index_job = None
-            # 半途取消等于这一遍**没做完**：留在 ``_index_roots`` 里它就再也起不来了。
-            self._forget_indexed_root()
-        self._clear_index_notice()
 
     def _forget_indexed_root(self) -> None:
         """把这个库从「索引维护起过」那份名单里拿掉（取消或失败之后）。"""

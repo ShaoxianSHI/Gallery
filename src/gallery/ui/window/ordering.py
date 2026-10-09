@@ -314,7 +314,8 @@ class OrderingMixin:
                 events=events,
             )
 
-        self._facet_job = self._runner.submit(
+        self._start_job(
+            "_facet_job",
             work,
             on_progress=partial(self._on_facet_progress, generation),
             on_result=partial(self._on_facets_ready, generation),
@@ -369,12 +370,6 @@ class OrderingMixin:
             self._show_banner("这个文件夹里既没有子文件夹，也没有可显示的照片。")
         else:
             self._show_banner("没有找到可显示的照片。支持 JPEG、PNG、HEIC、TIFF、GIF、WebP、BMP。")
-
-    def _cancel_facet_job(self) -> None:
-        """作废进行中的元数据读取（换库、换层、换分组字段时）。"""
-        if self._facet_job is not None:
-            self._runner.cancel(self._facet_job)
-            self._facet_job = None
 
     def _place_lookup(self) -> LazyPlaceResolver:
         """共用的地点反查器：分组、元数据面板、打开库时那一遍都用这一个。

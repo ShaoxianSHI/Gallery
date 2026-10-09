@@ -21,6 +21,7 @@ from gallery.ui.navigation import (
     path_key,
     row_of_entry_key,
 )
+from gallery.ui.window.jobs import LEVEL
 from gallery.ui.window.level_stack import (
     AlbumFrame,
     CalendarFrame,
@@ -173,15 +174,11 @@ class NavigationFlowMixin:
         :param focus: 到了这一层要选中哪一格；**只有往上一层退才会给**，其余由
             :meth:`_arm_focus` 自己判断。
         """
-        if self._scan_job is not None:
-            self._runner.cancel(self._scan_job)
-            self._scan_job = None
-        self._cancel_level_filter()
+        self._cancel_tier(LEVEL)
         self._arm_focus(focus)
         # 换代：让已经在路上的旧结果作废。
         self._generation += 1
         self._grid.cancel_rename()
-        self._cancel_facet_job()
         self._facet_values = {}
         self._model.clear()
         # 网格先清干净：当前项留着的话，⌘R / ⌘⌫ 的可用性判据里它仍然算数（菜单亮着，对象却不存在）。

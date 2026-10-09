@@ -16,6 +16,7 @@ from gallery.core.library.config import BROWSE_MODE_CALENDAR, BROWSE_MODE_FLAT
 from gallery.core.library.photos import GridEntry, GroupRef, PhotoRef
 from gallery.core.library.scanner import describe_entry
 from gallery.ui.tasks import TaskContext
+from gallery.ui.window.jobs import LEVEL_CALENDAR
 from gallery.ui.window.level_stack import CalendarFrame, root_for
 
 
@@ -82,14 +83,10 @@ class CalendarFlowMixin:
         （``_load_detail``），所以这里走与「全部照片」同一遍平铺扫描。换页即换层：进行中的
         扫描与元数据读取一律作废重开。**还要把这一层记成日历那一层**
         （ADR 0033 决策 11 末尾引的 ADR 0025 决策 6），否则退回相册时会答成「还是这一层」。"""
-        if self._scan_job is not None:
-            self._runner.cancel(self._scan_job)
-            self._scan_job = None
+        self._cancel_tier(LEVEL_CALENDAR)
         self._generation += 1
         self._arm_focus()
         self._grid.cancel_rename()
-        self._cancel_facet_job()
-        self._cancel_calendar_job()
         self._model.clear()
         self._grid.reset_for_new_level()
         self._preview_cache.clear()
@@ -107,9 +104,7 @@ class CalendarFlowMixin:
 
     def _cancel_calendar_job(self) -> None:
         """作废日历那次读拍摄时间（换库、换浏览方式时）。"""
-        if self._calendar_job is not None:
-            self._runner.cancel(self._calendar_job)
-            self._calendar_job = None
+        self._cancel_job("_calendar_job")
 
     def _on_calendar_window_changed(self) -> None:
         """日历换层 / 翻页 / 滚动：重新向流水线要这一层看得见的那几张。
@@ -170,8 +165,7 @@ class CalendarFlowMixin:
         self._push_frame(CalendarFrame(photos=photos, label=label))
         # **进行中的扫描作废**：这一层不是整库，那一遍扫描落上来会把这一格的几张换回整库照片。
         if self._scan_job is not None:
-            self._runner.cancel(self._scan_job)
-            self._scan_job = None
+            self._cancel_job("_scan_job")
             self._generation += 1
             self._staged = []
         # **先摆内容再换页**：反过来，换页那一刻拿的还是日历底下那一整库，算出来的可见行对不上。
@@ -253,7 +247,8 @@ class CalendarFlowMixin:
                 on_progress=lambda done, total: context.progress((done, total)),
             )
 
-        self._calendar_job = self._runner.submit(
+        self._start_job(
+            "_calendar_job",
             work,
             on_progress=partial(self._on_facet_progress, generation),
             on_result=partial(self._on_calendar_facets_ready, generation, refs),

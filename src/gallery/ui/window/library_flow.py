@@ -30,6 +30,7 @@ from gallery.core.library.session import (
 from gallery.ui.browser.thumb_sizes import edge_for_index, nearest_index
 from gallery.ui.tasks import TaskContext
 from gallery.ui.thumbs.pipeline import ThumbnailPipeline
+from gallery.ui.window.jobs import LIBRARY
 from gallery.ui.window.level_stack import root_for
 from gallery.ui.window.notice import NoticeSlot
 
@@ -229,7 +230,8 @@ class LibraryFlowMixin:
         def work(context: TaskContext) -> object:
             return library.find_orphan_bindings(should_cancel=context.is_cancelled)
 
-        self._orphan_job = self._runner.submit(
+        self._start_job(
+            "_orphan_job",
             work,
             on_result=partial(self._on_orphan_checked, generation),
             on_error=self._on_orphan_check_failed,
@@ -260,28 +262,12 @@ class LibraryFlowMixin:
         # 不作废会把上一库的选中搬过来。
         self._focus = None
         self._level_key = None
-        self._cancel_facet_job()
-        self._cancel_calendar_job()
-        self._cancel_place_pass()
-        self._cancel_orphan_check()
-        # **写操作也要取消**：⌘V / 「移动到相册」在旧库的 ``Library`` 上跑，不取消的话收尾时
-        # 会去问新库「下一次 ⌘Z 撤什么」，而记录在旧库里 —— 界面上一个都撤不掉。
-        if self._write_job is not None:
-            self._runner.cancel(self._write_job)
-            self._write_job = None
-        # 清空缩略图缓存同理：它删的是**旧库**缓存目录里的文件，取消只是为了别让它继续白花几秒。
-        if self._cache_job is not None:
-            self._runner.cancel(self._cache_job)
-            self._cache_job = None
-        if self._scan_job is not None:
-            self._runner.cancel(self._scan_job)
-            self._scan_job = None
-        if self._detail_job is not None:
-            self._runner.cancel(self._detail_job)
-            self._detail_job = None
-        self._cancel_search()
-        self._cancel_level_filter()
-        self._cancel_photo_index()
+        # guard: allow-long-comment（约束 1：为什么写操作必须在这里取消，换层时又为什么不能）
+        # 切库与关窗取消**全部**任务，包括 :attr:`_write_job` —— ⌘V /「移动到相册」在旧库的
+        # ``Library`` 上跑，不取消的话收尾时会去问新库「下一次 ⌘Z 撤什么」，而记录在旧库里。
+        # **换层那两组不含它**（见 :mod:`gallery.ui.window.jobs`），否则文件会搬到一半。
+        self._cancel_tier(LIBRARY)
+        self._clear_index_notice()
         if self._pipeline is not None:
             self._pipeline.shutdown()
             self._pipeline.deleteLater()
@@ -340,7 +326,8 @@ class LibraryFlowMixin:
         def work(context: TaskContext) -> object:
             return tuple(ordered)
 
-        self._scan_job = self._runner.submit(
+        self._start_job(
+            "_scan_job",
             work,
             on_result=partial(self._on_group_listed, generation),
             on_error=partial(self._on_scan_failed, generation),
@@ -376,7 +363,8 @@ class LibraryFlowMixin:
                 context.progress(tuple(batch))
             return report
 
-        self._scan_job = self._runner.submit(
+        self._start_job(
+            "_scan_job",
             work,
             on_progress=partial(self._on_scan_batch, generation),
             on_result=partial(self._on_scan_done, generation),
@@ -398,7 +386,8 @@ class LibraryFlowMixin:
                 context.progress(tuple(batch))
             return report
 
-        self._scan_job = self._runner.submit(
+        self._start_job(
+            "_scan_job",
             work,
             on_progress=partial(self._on_scan_batch, generation),
             on_result=partial(self._on_scan_done, generation),
@@ -495,7 +484,8 @@ class LibraryFlowMixin:
             )
 
         # **横幅不在这儿亮**：这一遍多半是空跑，先亮等于在说一件没有发生的事。
-        self._place_job = self._runner.submit(
+        self._start_job(
+            "_place_job",
             work,
             on_progress=self._on_place_pass_progress,
             on_result=self._on_place_pass_done,
@@ -551,21 +541,14 @@ class LibraryFlowMixin:
     def _place_slot(self) -> NoticeSlot:
         return NoticeSlot(self, text_attr="_place_notice_text")
 
-    def _cancel_place_pass(self) -> None:
-        """作废进行中的全库解析（切库、关窗时）。"""
-        if self._place_job is not None:
-            self._runner.cancel(self._place_job)
-            self._place_job = None
+    def _forget_place_pass_root(self) -> None:
+        """把当前库从「地点解析起过」那份名单里拿掉。
 
-    def _cancel_orphan_check(self) -> None:
-        """作废进行中的孤儿检查（切库、关窗时）。
-
-        ``generation`` 的条件判断已经能挡住结果落地，**取消是为了别白跑** —— 而更要紧的是别让一个
-        模态框在用户已经切到别的库之后才弹出来。
+        **只有取消才调**：半途取消等于那一遍**没做完**，而根还留在集合里它就再也起不来 ——
+        面板不出地名、按地点分组也空，而这两处都不报错。
         """
-        if self._orphan_job is not None:
-            self._runner.cancel(self._orphan_job)
-            self._orphan_job = None
+        if self._library is not None:
+            self._place_pass_roots.discard(self._library.root)
 
     # ---- 会话（记在那个缓存目录里，下次启动沿用）----------------------------
 

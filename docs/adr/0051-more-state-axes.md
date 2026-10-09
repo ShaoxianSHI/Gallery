@@ -27,6 +27,9 @@ ADR 0041 把「我在哪一层」收成一条栈，ADR 0050 把「界面怎么�
 置 `None`；`submit` → 存句柄）。「有进行中的就取消」那个 `if` 在代码里出现 **22 遍**，
 `_runner.cancel(` **18 遍**，而 `main_window.py` 里那 13 个字段的声明与初始化逐字重复。
 
+（64 处赋值里**只有 19 处是提交**，另 45 处是回调末尾的 `= None` —— 任务自己跑完把句柄放掉。
+「收拢写入口」的真实工作量是 **19 + 22**，别拿 64 那个数去估。）
+
 最能说明问题的是 `_editing_condition`（筛选族，**10 处写**）：它是**下标**，删掉第 `i` 枚条件
 之后后面全部要前移 —— 代码里已经在手工挪了，而挪错是**静默**的。
 
@@ -71,7 +74,7 @@ ADR 0041 与 0050 修的正是这一类。
 jobs.start(name, work, ...)   /   jobs.cancel(name)   /   jobs.cancel_tier(LEVEL)
 ```
 
-如果写入口仍是 64 处 `self._x_job = self._runner.submit(...)`，那只是把 64 处判断换个地方写，
+如果写入口仍是那 19 处 `self._x_job = self._runner.submit(...)`，那只是把判断换个地方写，
 **净收益是零**。这一条决定本设计成不成，做的时候先对着它看。
 
 ### 5. 三样带副作用的继续留在显式处
@@ -83,21 +86,53 @@ jobs.start(name, work, ...)   /   jobs.cancel(name)   /   jobs.cancel_tier(LEVEL
 
 **范围**：13 个 `*_job` + `_generation`。其余三根各另开一条，不要一起做。
 
-### 两层取消 —— 这条关系到数据安全
+### 三组取消，不是两组 —— 「层」那一组比想象的窄
 
-现状是**两组不同的取消集合**，而它们**不等价**：
+现状是**三处成组取消的集合**，而它们**互不等价**：
 
-| 层 | 取消时机 | 成员 |
+| 组 | 取消时机 | 成员 |
 |---|---|---|
-| **层** | `_reload_level`（换层、换浏览方式、换筛选） | `_scan_job` `_facet_job` `_filter_job` `_search_job` `_calendar_job` `_place_pass` |
-| **库** | `_teardown_library`（切库、关窗） | 上面全部 **+** `_write_job` `_cache_job` `_detail_job` `_index_job` `_orphan_job` `_metadata_job` `_metadata_copy_job` |
+| **层** | `_reload_level`（换层、换浏览方式、换筛选） | `_scan_job` `_facet_job` `_filter_job` |
+| **层 · 日历** | `_enter_calendar`（摊开日历那一页） | `_scan_job` `_facet_job` `_calendar_job` |
+| **库** | `_teardown_library`（切库、关窗） | 全部 13 个 |
 
-**`_write_job` 在动用户文件**（粘贴 / 复制 / 移动 / 建相册，见 `ui/write_ops.py`）。把「层」
-那一组写成「取消全部」，就会在**换层时掐掉一个进行中的文件写操作** —— 那是约束 1
-（只增不改）直接受损，症状是文件搬到一半。
+**前两组的成员本来就不一样**（第二组多一个日历、少一个筛选），所以是**两张白名单**而不是一张。
+合成一张就是行为变更 —— 换层会多取消一次日历读取。**别把它当机械替换做。**
 
-所以 `Jobs` 必须把这两层**显式分开**，并且 `cancel_tier(LEVEL)` **不得**碰库那一组。
-建议形状：一个按名字索引的注册表 + 一个「名字 → 层」的常量表，`start()` 时登记层。
+**其余那些为什么都不在「层」组里**：
+
+- **`_place_job`（全库地点解析）**：换层只把横幅收掉，**不打断**它 —— 它是整个库的事，
+  与当前在哪一层无关（`navigation_flow.py` 里 `_reload_level` 上方写着这条）。
+- **`_search_job`（整库检索）**：换层靠 `_generation` 作废它的结果，不靠取消。
+- **`_detail_job` 与两个元数据任务**：由大图页翻图与面板显隐**各自按名字**取消，
+  那些调用点凑不成一组 —— 硬凑成一组的话，收起元数据面板会连带掐掉大图页的全分辨率解码。
+
+**`_write_job` 在动用户文件**（粘贴 / 复制 / 移动 / 建相册，见 `ui/write_ops.py`）。把任何一组
+写成「取消全部」，就会在**换层时掐掉一个进行中的文件写操作** —— 那是约束 1
+（只增不改）直接受损，症状是文件搬到一半。所以「层」那两组实现成**白名单**：
+`_write_job` 不在里面，于是 `cancel_tier(LEVEL)` 在结构上就够不着它。
+
+**形状：仍然用那 13 个属性名，不用 `jobs["scan"]` 那样按字符串取。**
+`ui/window/` 的规矩是「方法名与属性名一个字都不改」—— 测试直接摸私有成员
+（`tests/ui/waiting.py` 的 `BACKGROUND_JOBS` 用 `getattr(window, name)`，下游 59 处
+`wait_for_idle`；另有 5 处**直接赋值**假扮进行中，`window._scan_job = 999`）。
+改成字符串索引，这一整套都要重写，而重写它换来的收益是零 —— 名字变得能查了，可读性反而更差。
+注册表是**名字 → 组 + 取消时的同行动作**，字段本身留在窗口上。
+
+### 取消不是只有「取消」—— 有两个任务带一条必须同行的记账
+
+`_cancel_photo_index` 取消之后要额外调 `_forget_indexed_root()`：**半途取消等于那一遍没做完**，
+而根还留在 `_index_roots` 里的话它就再也起不来。这条不是可有可无的收尾，它是那个取消的一部分。
+
+**同样的坑 `_place_job` 早就踩在下面了，只是没人动它**：`_place_pass_roots` 全仓库只 `.add()`、
+**从不 `discard()`**（`library_flow.py`）。今天没出事只因为 `_place_job` 只在切库时取消，
+而切库时下一轮 `_maybe_start_place_pass` 会因为「换了库」重新起。**一旦按上面那张表把
+`_place_job` 挪进「层」组，换层就会静默地弄坏地点解析**：取消掉了，而根还在那份集合里，
+于是这个库在本进程里再也起不来那一遍 —— 面板不出地名、按地点分组也空。
+
+所以注册表里每个任务除了「属于哪一组」，还要能带一条**取消时必须同行的动作**。
+「取消」与「那遍算不算起过」**是同一件事的两半**，注册表只记前一半就等于把坑留在原地。
+`_index_job` 与 `_place_job` 各带一条（前者另加收掉索引那条横幅）。
 
 ### 另有两条容易丢的语义
 
@@ -114,19 +149,28 @@ jobs.start(name, work, ...)   /   jobs.cancel(name)   /   jobs.cancel_tier(LEVEL
 1. 新建 `src/gallery/ui/window/jobs.py`（一个 mixin，`JobsMixin`），**先只做生命周期，不接信号**。
 2. 字段搬进 `JobsMixin`，MainWindow 的 `__init__` 里那 13 行声明换成一处。
 3. 写入口改成 `start(name, ...)` / `cancel(name)`，**逐个族搬**，每搬一族跑一次测试。
-4. 搬完 13 族之后，把 `_reload_level` 与 `_teardown_library` 里那两串 `if` 换成
-   `cancel_tier(LEVEL)` / `cancel_tier(LIBRARY)`。
-5. **回归测试**：`tests/test_guards.py` 加一条 —— 扫 `src/gallery/ui/`，`self._\w+_job =`
-   与 `self._runner.cancel(self._\w+_job)` 这两句**只许出现在 `jobs.py` 里**。
-   **这条测试自己必须验过一次**：先注入一处违规（在某个 flow 里留一句 `self._scan_job = ...`），
+   **真实工作量是 19 处提交 + 22 处判空取消**，不是「64 处写」—— 那 64 处里有 45 处是
+   回调末尾的 `= None`（任务自己跑完了把句柄放掉），它们不构成「写入口」。
+4. 搬完 13 族之后，把 `_reload_level`、`_enter_calendar` 与 `_teardown_library` 里那三串 `if`
+   换成 `cancel_tier(...)`。
+   **注意前两处的子集本来就不一样**：`_reload_level` 取消「层」组三样，
+   `_enter_calendar` 取消 `_scan_job` `_facet_job` `_calendar_job`（多一个日历、少一个筛选）。
+   **合成同一个 `cancel_tier(LEVEL)` 就是行为变更**（换层会多取消一次日历读取），所以要么
+   注册表分两组（「层」与「层·日历」），要么把差异当作决策写下来。**别当机械替换做。**
+5. **回归测试**：`tests/test_guards.py` 加一条 —— 扫 `src/gallery/ui/`，`self._\w+_job = self\._runner\.submit`
+   与 `self._runner.cancel\(self\._\w+_job\)` 这两句**只许出现在 `jobs.py` 里**。
+   **回调末尾的 `= None` 不在守卫范围内**：那是任务自己收工，不是取消。
+   **这条测试自己必须验过一次**：先注入一处违规（在某个 flow 里留一句 `self._scan_job = self._runner.submit(...)`），
    确认它变红，否则它就是一条永远为绿的测试。
 6. 本轴**不接 `changed` 信号** —— 它与界面无关。触发自动化留给「三根轴都搬完之后」那一条。
 
 ### 这一根做完能得到什么
 
 `main_window.py` 少 13 行声明；`navigation_flow` / `library_flow` / `calendar_flow` 里那 22 遍
-「判空 → 取消 → 置 None」变成两行。**而且「哪些任务属于哪一层」从代码里的顺序变成注册表里的一行** ——
-那一处现在没有任何地方写着，是本条最实在的收获。
+「判空 → 取消 → 置 None」变成两行。**而且「哪些任务属于哪一组」从代码里的顺序变成注册表里的一行** ——
+那一处现在没有任何地方写着，是本条最实在的收获。**顺带钉住两条至今只靠注释的账**：
+`_index_job` 与 `_place_job` 取消时必须各忘掉「起过哪些库」，否则「取消」与「那遍算不算起过」
+会被拆成两半。
 
 ## 后果
 

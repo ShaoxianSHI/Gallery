@@ -515,6 +515,34 @@ def test_switching_back_and_forth_does_not_start_it_twice(
     window.close()
 
 
+def test_a_cancelled_place_pass_can_start_again(
+    qt_app: QApplication,
+    tmp_path: Path,
+    make_photo: Callable[..., Path],
+    fake_facet_source: object,
+    fake_places: Callable[[], int],
+) -> None:
+    """**取消那一遍之后还能再起**（ADR 0051 实施）。
+
+    半途取消等于那一遍**没做完**，所以「起过哪些库」那份记账里必须把根拿掉 ——
+    而 `_place_pass_roots` 原本只 `.add()` 从不 `discard()`，于是这个库在本进程里
+    再也起不来那一遍：面板不出地名、按地点分组也空，**而这两处都不报错**。
+    """
+    root = _library(tmp_path / "一", make_photo, ["三月.jpg"])
+    window = _open(qt_app, root, session_base=tmp_path / "状态")
+    _settle(qt_app, window)
+    assert root in window._place_pass_roots
+
+    window._place_job = 999  # 假装那一遍还在跑（同 test_watch_flow 那个手法）
+    window._cancel_job("_place_job")
+
+    assert window._place_job is None
+    assert root not in window._place_pass_roots, (
+        "取消的那一遍没做完，根还留在「起过」名单里就再也起不来"
+    )
+    window.close()
+
+
 def test_the_pass_does_not_steal_the_banner_from_someone_else(
     qt_app: QApplication,
     tmp_path: Path,

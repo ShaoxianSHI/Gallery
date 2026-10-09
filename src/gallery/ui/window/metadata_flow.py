@@ -72,12 +72,11 @@ class MetadataFlowMixin:
         )
 
     def _cancel_metadata_job(self) -> None:
-        if self._metadata_job is not None:
-            self._runner.cancel(self._metadata_job)
-            self._metadata_job = None
-        if self._metadata_copy_job is not None:
-            self._runner.cancel(self._metadata_copy_job)
-            self._metadata_copy_job = None
+        """作废面板那两次读（收起面板、换照片）。**不含 :attr:`_detail_job`** ——
+        那是大图页的全分辨率解码，面板显隐与它无关。
+        """
+        self._cancel_job("_metadata_job")
+        self._cancel_job("_metadata_copy_job")
 
     def _load_metadata(self) -> None:
         """读当前这张照片的元数据；面板没展开就什么都不做。
@@ -109,7 +108,8 @@ class MetadataFlowMixin:
                 return None
             return read_metadata(ref.path)
 
-        self._metadata_job = self._runner.submit(
+        self._start_job(
+            "_metadata_job",
             work,
             on_result=partial(self._on_metadata_ready, row, generation),
             on_error=partial(self._on_metadata_failed, row, generation),
