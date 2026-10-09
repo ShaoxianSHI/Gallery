@@ -17,14 +17,39 @@ from PySide6.QtWidgets import QMessageBox
 
 from gallery.core.library.photos import GridEntry, GroupRef
 from gallery.ui.browser.grid import PREFETCH_MARGIN
-from gallery.ui.browser.thumb_sizes import edge_for_index, shifted_index
 from gallery.ui.tasks import TaskContext
+from gallery.ui.window.thumbnail_size import ThumbnailSize
 
 logger = logging.getLogger(__name__)
 
 
 class ThumbnailFlowMixin:
-    """网格与日历向缩略图流水线要图的入口，以及缩略图档位的切换。"""
+    """网格与日历向缩略图流水线要图的入口，以及缩略图档位的切换。
+
+    档位住在 :class:`~gallery.ui.window.thumbnail_size.ThumbnailSize` 里
+    （ADR 0058 阶段 4）—— 窗口上留着一组同名 property 转发。
+    """
+
+    _thumb_size: ThumbnailSize
+
+    def _init_thumb_size(self, index: int | None = None) -> None:
+        self._thumb_size = ThumbnailSize(index)
+
+    @property
+    def _size_index(self) -> int:
+        return self._thumb_size._size_index
+
+    @_size_index.setter
+    def _size_index(self, value: int) -> None:
+        self._thumb_size._size_index = value
+
+    @property
+    def _pending_size_step(self) -> int:
+        return self._thumb_size._pending_size_step
+
+    @_pending_size_step.setter
+    def _pending_size_step(self, value: int) -> None:
+        self._thumb_size._pending_size_step = value
 
     # ---- 缩略图 ------------------------------------------------------------
     def _refresh_thumbnail_window(self) -> None:
@@ -87,12 +112,9 @@ class ThumbnailFlowMixin:
         **明确选了一档，排着的那些就都作废**：否则「动画期间按了 ⇧⌘↑（正好在顶上，本来
         什么也不该发生），接着又从菜单点了某一档」会让那一下在动画结束后才生效。
         """
-        self._pending_size_step = 0
-        if index == self._size_index:
-            return
-        self._size_index = index
-        self._apply_thumbnail_size()
-        self._remember_thumbnail_size()
+        if self._thumb_size.select(index):
+            self._apply_thumbnail_size()
+            self._remember_thumbnail_size()
 
     def step_thumbnail_size(self, step: int) -> None:
         """按档位加减一档（捏合、⌘+滚轮、⇧⌘↑ / ⇧⌘↓ 用）。
@@ -102,11 +124,9 @@ class ThumbnailFlowMixin:
         意图本来就是连续的），而快捷键与 ⌘+滚轮是**每一下都独立的意图**。**排不排队的判据
         是「算上已排着的之后，这一下还会不会换档」**，而不是「当前在不在头尾」。"""
         if self._grid.is_transitioning:
-            effective = shifted_index(self._size_index, self._pending_size_step)
-            if shifted_index(effective, step) != effective:
-                self._pending_size_step += step
+            self._thumb_size.queue_step(step)
             return
-        target = shifted_index(self._size_index, step)
+        target = self._thumb_size.step(step)
         if target == self._size_index:
             return  # 已经在头尾：以前会提示「已经是最大尺寸」，随状态条一起去掉
         self.set_thumbnail_size(target)
@@ -117,7 +137,7 @@ class ThumbnailFlowMixin:
         排队的档数是**累加**出来的，所以这里一次 ``shifted_index`` 就跨到头。**先清空再执行**：
         执行途中会再起一段新的过渡，不先清空就会一次调用套一次调用地往下钻。
         """
-        step, self._pending_size_step = self._pending_size_step, 0
+        step = self._thumb_size.take_pending()
         if step:
             self.step_thumbnail_size(step)
 
@@ -126,7 +146,7 @@ class ThumbnailFlowMixin:
 
         网格算完会通过 ``icon_edge_changed`` 回来，届时再作废并重取缩略图。
         """
-        self._grid.set_target_edge(edge_for_index(self._size_index))
+        self._grid.set_target_edge(self._thumb_size.edge)
         self._sync_size_actions()
 
     def _on_grid_edge_changed(self, edge: int) -> None:

@@ -51,7 +51,6 @@ from gallery.ui.browser.thumb_sizes import (
     THUMBNAIL_SIZES,
     edge_for_index,
     label_for_index,
-    nearest_index,
 )
 from gallery.ui.calendar import CalendarPage
 from gallery.ui.external_button import (
@@ -179,11 +178,8 @@ class MainWindow(
         # 下一次 ⌘Z 会撤掉什么；只在写操作之后刷新，否则每次翻图都要重放一遍日志。
         self._undo_label: str | None = None
 
-        # 缩略图档位、浏览方式、分组 / 排序都是**库级配置**（ADR 0038 决策 4）：这里先给界面
-        # 默认值，打开库时由 ``_apply_ui_state`` 覆盖。
-        self._size_index = nearest_index(None)
-        #: 「我在哪一层」—— **一条栈**（ADR 0041）。浏览方式、当前目录、分组、日历那一格及
-        #: 其标志位都是从这条栈算出来的属性，见 ``LevelStackMixin``。
+        #: 「我在哪一层」—— **一条栈**（ADR 0041）。浏览方式、当前目录、分组、日历那一格
+        #: 及其标志位都是从这条栈算出来的属性，见 ``LevelStackMixin``。
         self._level_stack = LevelStack(root=RootKind.FLAT)
         # 分组 / 排序（ADR 0009）：字段 id 存在库的 config.toml 里，下次打开这个库沿用；空值走默认。
         #: 大图页右侧的元数据面板是否展开。**同样是库级的**（ADR 0038 决策 4）。
@@ -206,9 +202,9 @@ class MainWindow(
         self._owns_title_bar = False
         #: 不在大图页时窗口顶边那一行显示的名字（ADR 0025 决策 4）。
         self._library_title = "Gallery"
-        self._model = PhotoListModel(self, icon_edge=edge_for_index(self._size_index))
+        self._init_thumb_size()
+        self._model = PhotoListModel(self, icon_edge=self._thumb_size.edge)
         #: 「等上一段切档动画跑完再执行」的档数（0 = 没有排着的）；方向相反的连按会互相抵掉。
-        self._pending_size_step = 0
         self._build_ui()
         self._build_actions()
         # 事件分组卡片上那两行的动作**开窗时就建**（不懒建）：它们要挂到窗口上才能有快捷键，

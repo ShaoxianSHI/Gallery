@@ -157,7 +157,6 @@ class LibraryFlowMixin:
     _panel: MetadataPanel
     _welcome: WelcomeView
     _recent_menu: QMenu
-    _size_index: int
     _sort_descending: bool
     _metadata_visible: bool
     _calendar_level: str
