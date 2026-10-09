@@ -32,7 +32,6 @@ from gallery.ui.tasks import TaskContext
 from gallery.ui.thumbs.pipeline import ThumbnailPipeline
 from gallery.ui.window.jobs import LIBRARY
 from gallery.ui.window.level_stack import root_for
-from gallery.ui.window.notice import NoticeSlot
 
 logger = logging.getLogger(__name__)
 
@@ -160,7 +159,7 @@ class LibraryFlowMixin:
         self._teardown_library()
         self._library = library
         self._generation += 1
-        self._thumbnail_failures = 0
+        self._banner_text.reset_thumbnail_failures()
         self._refresh_undo_label()
         self._focus_state.clear_current()
         self._preview_cache.clear()
@@ -195,11 +194,8 @@ class LibraryFlowMixin:
         self._arm_focus()  # 打开库走的是自己那一套，不经过 _reload_level
         # 每一层都要重排（排序字段总是有的），所以扫出来的一律先暂存，等顺序定下来。
         self._staged = []
-        self._level_notice = False
-        self._progress_notice = False
-        self._progress_notice_text = None
-        self._place_notice_text = None
-        self._scan_issue = False
+        self._banner_text.reset_level()
+        self._banner_text.clear_scan_issue()
         self._update_mode_actions()
         self._library_title = library.display_name
         self._calendar_page.set_level(self._calendar_level)
@@ -427,7 +423,7 @@ class LibraryFlowMixin:
         self._scan_job = None
         report = payload if isinstance(payload, ScanReport) else ScanReport()
         if report.has_issues:
-            self._scan_issue = True
+            self._banner_text.note_scan_issue()
             self._show_banner(f"部分内容没能读取：{report.summary}")
         # 「这一层空不空」**不在这里判断**：要重排时条目还暂存着没显示到界面（见 _staged），
         # 照模型判断会把相册 / 组卡片误报成「空」。
@@ -445,7 +441,7 @@ class LibraryFlowMixin:
         if generation != self._generation:
             return
         self._scan_job = None
-        self._scan_issue = True
+        self._banner_text.note_scan_issue()
         self._show_banner(f"扫描失败：{message}")
         # 已经累积到的条目照常摆出来：扫到一半失败时给一屏能看的东西，比一屏空白有用。
         self._order_now()
@@ -463,7 +459,7 @@ class LibraryFlowMixin:
         if (
             library is None
             or library.root in self._place_pass_roots
-            or self._scan_issue
+            or not self._banner_text.may_show_progress
             or self._facet_job is not None
         ):
             return
@@ -492,7 +488,7 @@ class LibraryFlowMixin:
         if isinstance(payload, tuple) and len(payload) == 2 and payload[0] == "work":
             self._on_place_pass_work(payload[1])
             return
-        if self._place_notice_text is None or self._scan_issue:
+        if not self._banner_text.place.is_ours or not self._banner_text.may_show_progress:
             return
         if isinstance(payload, str):
             self._show_place_notice(payload)  # 「正在加载城市库…」这类说明
@@ -502,7 +498,7 @@ class LibraryFlowMixin:
 
     def _on_place_pass_work(self, count: object) -> None:
         """真的找到活干了才亮横幅：空跑的库不该让用户看见「正在解析…」。"""
-        if self._scan_issue or not isinstance(count, int):
+        if not self._banner_text.may_show_progress or not isinstance(count, int):
             return
         self._show_place_notice(f"正在解析 {count} 张照片的地点…")
 
@@ -525,17 +521,14 @@ class LibraryFlowMixin:
 
         抢了会怎样：用户刚丢掉三张照片，横幅上「已把 3 项移到废纸篓」被后台进度顶掉，那条确认就此
         消失。两条判据：上面已经有别人的话（比文字），或刚刚有用户动作（比时间，见
-        :data:`BANNER_STICKY_SECONDS`）；前者由 :class:`~gallery.ui.window.notice.NoticeSlot` 记账。
+        :data:`BANNER_STICKY_SECONDS`）；前者由
+        :class:`~gallery.ui.window.banner_text.NoticeSlot` 记账。
         """
-        self._place_slot.show(text)
+        self._banner_text.place.show(text)
 
     def _clear_place_notice(self) -> None:
         """收掉自己那一条 —— **而且只在自己还占着的时候收**（理由见 ``NoticeSlot.clear``）。"""
-        self._place_slot.clear()
-
-    @property
-    def _place_slot(self) -> NoticeSlot:
-        return NoticeSlot(self, text_attr="_place_notice_text")
+        self._banner_text.place.clear()
 
     def _forget_place_pass_root(self) -> None:
         """把当前库从「地点解析起过」那份名单里拿掉。

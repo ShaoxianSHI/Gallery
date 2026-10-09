@@ -36,7 +36,6 @@ from gallery.core.places.resolver import LazyPlaceResolver
 from gallery.ui.navigation import EntryKey, entry_key
 from gallery.ui.tasks import TaskContext
 from gallery.ui.window.level_stack import GroupFrame
-from gallery.ui.window.notice import NoticeSlot
 
 #: 「正在读取 N 张照片的元数据，用于…」—— **只在真的缺东西时才报**（见 ``_start_facet_read``）。
 #: 放在模板里是因为它现在从工作线程里发出去，而那一侧拿不到 ``self``。
@@ -327,15 +326,11 @@ class OrderingMixin:
         更新」，紧接着的 facet 重读把它顶掉、读完再收走 —— 那句话他就永远看不到了，而它是
         唯一告诉他「坐标被动过」的地方（ADR 0030）。
         """
-        self._progress_slot.show(text, defer=False)
+        self._banner_text.progress.show(text, defer=False)
 
     def _clear_progress_notice(self) -> None:
         """收掉「正在读取元数据…」那条 —— **只在自己还占着的时候收**（见 ``NoticeSlot.clear``）。"""
-        self._progress_slot.clear()
-
-    @property
-    def _progress_slot(self) -> NoticeSlot:
-        return NoticeSlot(self, text_attr="_progress_notice_text", flag_attr="_progress_notice")
+        self._banner_text.progress.clear()
 
     def _update_level_notice(self) -> None:
         """这一层什么都没有时说一声；有了内容就把这句收回去。
@@ -346,28 +341,34 @@ class OrderingMixin:
         """
         if self._library is None:
             return
-        if self._scan_issue:
+        if not self._banner_text.may_show_progress:
             # 扫描出过问题时横幅归它：那句「哪些内容没读到」更该说，这里也不许把它收掉。
             return
         if self._model.rowCount():
-            if self._level_notice:
-                self._level_notice = False
+            if self._banner_text.level_notice:
+                # 有了内容就把那句收回去 —— **只在自己还占着的时候收**，否则会把别人的话收掉。
+                self._banner_text.level_notice = False
                 self._banner.hide()
             return
-        self._level_notice = True
         if self._is_filtering():
             # **说的是「这一层里没有」而不是「这些条件下没有」**（ADR 0040 决策 4）：整库检索
             # 的那句话在这个视图里是骗人的 —— 用户看到的正是这一层，而整库里明明有照片。
-            self._show_banner("当前这一层里没有符合这些条件的照片。")
+            self._say_level_is_empty("当前这一层里没有符合这些条件的照片。")
         elif self._is_library_search():
             # 检索没命中时**不要说那句格式清单**：它与此刻无关，用户会以为文件格式不对。
-            self._show_banner("这些筛选条件下没有照片。")
+            self._say_level_is_empty("这些筛选条件下没有照片。")
         elif self._group_view is not None:
-            self._show_banner("这个分组里没有照片了。")
+            self._say_level_is_empty("这个分组里没有照片了。")
         elif self._browse_mode == BROWSE_MODE_ALBUMS:
-            self._show_banner("这个文件夹里既没有子文件夹，也没有可显示的照片。")
+            self._say_level_is_empty("这个文件夹里既没有子文件夹，也没有可显示的照片。")
         else:
-            self._show_banner("没有找到可显示的照片。支持 JPEG、PNG、HEIC、TIFF、GIF、WebP、BMP。")
+            self._say_level_is_empty(
+                "没有找到可显示的照片。支持 JPEG、PNG、HEIC、TIFF、GIF、WebP、BMP。"
+            )
+
+    def _say_level_is_empty(self, text: str) -> None:
+        """空层那一句**经轴去说** —— 于是「这一句是我们说的」这个记号只有一处会置（ADR 0054）。"""
+        self._banner_text.say_level_is_empty(text)
 
     def _place_lookup(self) -> LazyPlaceResolver:
         """共用的地点反查器：分组、元数据面板、打开库时那一遍都用这一个。

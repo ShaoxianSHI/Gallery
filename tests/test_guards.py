@@ -340,6 +340,24 @@ def test_the_job_lifecycle_guard_would_notice_a_violation() -> None:
 #: 筛选 / 检索那四个字段的写入口只许在 ``ui/window/filters.py`` 里（ADR 0052）。
 FILTERS_MODULE = Path("window") / "filters.py"
 
+#: 横幅那一族的**写**已经从窗口上搬走了（ADR 0054）：七个字段现在住在
+#: ``ui/window/banner_text.py``。这里守的是「别让写入口散回来」—— ``_thumbnail_failures``
+#: 留了一个**只读属性**（三处测试在读那个数字），而 ``property`` 本身不是赋值，所以放行。
+BANNER_TEXT_MODULE = Path("window") / "banner_text.py"
+BANNER_TEXT_WRITE_PATTERNS = tuple(
+    re.compile(rf"self\.{name}\s*(=[^=]|\+=|-=)")
+    for name in (
+        "_level_notice",
+        "_progress_notice",
+        "_progress_notice_text",
+        "_place_notice_text",
+        "_index_notice_text",
+        "_scan_issue",
+        "_thumbnail_failures",
+        "_banner_sticky_until",
+    )
+)
+
 #: 焦点 / 当前行那一族的写入口只许在 ``ui/window/focus.py`` 里（ADR 0053）。
 #:
 #: ``_current_row`` 在窗口上是**只读属性**，所以任何一处赋值都是绕过轴 —— 而它原先是 11 处裸赋值，
@@ -399,6 +417,40 @@ def test_only_the_focus_module_writes_the_current_row() -> None:
     assert not offenders, (
         f"``_current_row`` 的写入口只许在 ui/{FOCUS_MODULE}（ADR 0053）：{offenders}"
     )
+
+
+def test_only_the_banner_text_module_writes_the_banner_fields() -> None:
+    """**横幅那七个字段的写只许在 ``ui/window/banner_text.py`` 里**（ADR 0054）。
+
+    它们原先在窗口上分七个字段，而「清屏」与「清账」必须同时做这件事只有
+    ``_clear_banner`` 一处知道 —— 换层与换库那六处各手写一遍，**漏掉哪一个都不会立刻
+    看出错**：漏 ``_level_notice`` 时「这一层是空的」就再也说不出来，漏 ``_scan_issue``
+    时进度会去抢那句「哪些内容没读到」。
+    """
+    offenders: list[str] = []
+    for path in _iter_python_files(UI_ROOT):
+        if path.name == BANNER_TEXT_MODULE.name:
+            continue
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if any(pat.search(line) for pat in BANNER_TEXT_WRITE_PATTERNS):
+                offenders.append(f"{path.relative_to(PROJECT_ROOT)}:{number}")
+    assert not offenders, (
+        f"横幅那七个字段的写只许在 ui/{BANNER_TEXT_MODULE}（ADR 0054）：{offenders}"
+    )
+
+
+def test_the_banner_field_guard_would_notice_a_violation() -> None:
+    """上一条自己必须验过一次 —— 而这一条尤其要验：它是「别让它们回来」的守卫，
+    而七个字段搬走之后**代码里一个都不剩**，扫不到东西的守护是恒绿的。"""
+    assert BANNER_TEXT_WRITE_PATTERNS[0].search("        self._level_notice = False")
+    assert BANNER_TEXT_WRITE_PATTERNS[5].search("            self._scan_issue = True")
+    assert BANNER_TEXT_WRITE_PATTERNS[2].search("        self._progress_notice_text = None")
+    # 读不算 —— ``_thumbnail_failures`` 那个只读属性正是走这一支。
+    for line in (
+        "        if self._scan_issue:",
+        "        return self._thumbnail_failures",
+    ):
+        assert not any(pat.search(line) for pat in BANNER_TEXT_WRITE_PATTERNS), f"误伤：{line!r}"
 
 
 def test_the_focus_row_guard_would_notice_a_violation() -> None:

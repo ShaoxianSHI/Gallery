@@ -156,10 +156,10 @@ class ThumbnailFlowMixin:
                 # 别把它记成「这文件读不出来」：照片是好的。
                 self._pipeline.forget([path])
             return
-        self._thumbnail_failures += 1
+        failed = self._banner_text.note_thumbnail_failure()
         logger.info("缩略图失败：%s", message)
         self._show_banner(
-            f"有 {self._thumbnail_failures} 张照片无法显示缩略图：{message}",
+            f"有 {failed} 张照片无法显示缩略图：{message}",
             background=True,
             auto_hide=True,
         )

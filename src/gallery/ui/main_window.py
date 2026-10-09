@@ -164,8 +164,8 @@ class MainWindow(
         self._watch.failed.connect(self._on_watch_failed, Qt.ConnectionType.QueuedConnection)
         #: 自家刚写过的路径与它们的过期时刻（见 ``WATCH_ECHO_TTL``）。
         self._watch_echoes: dict[Path, float] = {}
-        #: 用户触发的那条横幅要让后台消息让位到什么时候（见 BANNER_STICKY_SECONDS）。
-        self._banner_sticky_until = 0.0
+        # 横幅那一个槽的记账：四族的记号、让位期、扫描门闩、失败张数（ADR 0054）。
+        self._init_banner()
         #: 暂存着没稳定下来的变化（扫描进行中 / 条目还在暂存区 / 人正在大图页），条件合适时补做。
         self._watch_pending: tuple[LibraryChange, ...] | None = None
         #: 分组视图里来了新照片：重新分组之后要回到哪个组（ADR 0013）。
@@ -193,10 +193,8 @@ class MainWindow(
         #: 本次运行已经起过那一遍的库（是集合不是单个：来回切库不该把同一个库再起一遍空跑）。
         #: **取消 :attr:`_place_job` 必须同时把根拿掉** —— 见 :meth:`JobsMixin._cancel_job`。
         self._place_pass_roots: set[Path] = set()
-        self._place_notice_text: str | None = None
         self._preview_cache: OrderedDict[Path, QImage] = OrderedDict()
         self._metadata_cache: OrderedDict[Path, tuple[int, int, MetadataReport]] = OrderedDict()
-        self._thumbnail_failures = 0
         # 下一次 ⌘Z 会撤掉什么；只在写操作之后刷新，否则每次翻图都要重放一遍日志。
         self._undo_label: str | None = None
 
@@ -237,19 +235,12 @@ class MainWindow(
         # 从日历点开的那一层 —— `_drill_*` 三个字段是栈上 ``CalendarFrame`` 的投影（ADR 0041）。
         #: 这一层还没显示到界面的条目（顺序定下来再给出去，ADR 0009 决策 6）；``None`` = 已排好。
         self._staged: list[GridEntry] | None = None
-        self._level_notice = False
-        self._progress_notice = False
-        #: 进度那条自己写上去的话（收尾时**只收自己那一句**，见 ``_clear_progress_notice``）。
-        self._progress_notice_text: str | None = None
-        #: 扫描本身出过问题（跳过的目录 / 读不了的文件）。它比「这里是空的」更该说。
-        self._scan_issue = False
         # ---- 搜索（ADR 0026）-------------------------------------------------
         # 条件、编辑下标、作用域、命中数：四个字段与它们的写入口都在轴上（ADR 0052）。
         self._init_filters()
         #: 已经起过那一遍的库。**是集合不是单个**：来回切库不该把同一个库再起一遍空跑。
         #: **取消 :attr:`_index_job` 必须同时把根拿掉** —— 见 :meth:`JobsMixin._cancel_job`。
         self._index_roots: set[Path] = set()
-        self._index_notice_text: str | None = None
         #: 顶边那一条归不归这个窗口（``theme.unify_title_bar``）；不归就用 ``setWindowTitle``。
         self._owns_title_bar = False
         #: 不在大图页时窗口顶边那一行显示的名字（ADR 0025 决策 4）。

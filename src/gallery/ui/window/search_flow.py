@@ -28,7 +28,6 @@ from gallery.core.library.search import (
 from gallery.ui.tasks import TaskContext
 from gallery.ui.window.level_stack import SearchFrame
 from gallery.ui.window.library_flow import SCAN_BATCH_SIZE
-from gallery.ui.window.notice import NoticeSlot
 
 logger = logging.getLogger(__name__)
 
@@ -409,7 +408,7 @@ class SearchFlowMixin:
             or library.root in self._index_roots
             or self._facet_job is not None
             or self._place_job is not None
-            or self._scan_issue
+            or not self._banner_text.may_show_progress
         ):
             return
         self._index_roots.add(library.root)
@@ -431,7 +430,7 @@ class SearchFlowMixin:
         )
 
     def _on_photo_index_progress(self, payload: object) -> None:
-        if self._index_notice_text is None or self._scan_issue:
+        if not self._banner_text.index.is_ours or not self._banner_text.may_show_progress:
             return
         if isinstance(payload, tuple) and len(payload) == 2 and payload[0] == "work":
             self._show_index_notice(f"正在建立检索索引…{payload[1]} 张")
@@ -471,14 +470,10 @@ class SearchFlowMixin:
 
     def _show_index_notice(self, text: str) -> None:
         """进度消息不许抢横幅 —— 理由与 :meth:`_show_place_notice` 一模一样。"""
-        self._index_slot.show(text)
+        self._banner_text.index.show(text)
 
     def _clear_index_notice(self) -> None:
-        self._index_slot.clear()
-
-    @property
-    def _index_slot(self) -> NoticeSlot:
-        return NoticeSlot(self, text_attr="_index_notice_text")
+        self._banner_text.index.clear()
 
 
 __all__ = ["SearchFlowMixin"]

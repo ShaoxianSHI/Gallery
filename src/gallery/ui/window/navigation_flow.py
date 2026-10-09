@@ -184,11 +184,10 @@ class NavigationFlowMixin:
         self._preview_cache.clear()
         self._metadata_cache.clear()
         self._staged = []  # 换层要重扫，先暂存，别先摆一屏旧顺序
-        self._level_notice = False
-        self._progress_notice = False
-        # 换层只把横幅收掉，**不打断**全库解析：它是整个库的事，与当前在哪一层无关。
-        self._place_notice_text = None
-        self._scan_issue = False
+        # 横幅那一个槽的账归零（含地点与索引那两个槽 —— 换层只把横幅收掉，**不打断**全库解析：
+        # 它是整个库的事，与当前在哪一层无关，所以清的是「横幅上写着什么」而不是任务本身）。
+        self._banner_text.reset_level()
+        self._banner_text.clear_scan_issue()
         self._focus_state.clear_current()
         self._detail.clear_image()
         self._panel.clear()

@@ -92,9 +92,8 @@ class CalendarFlowMixin:
         self._preview_cache.clear()
         self._metadata_cache.clear()
         self._staged = []
-        self._level_notice = False
-        self._progress_notice = False
-        self._scan_issue = False
+        self._banner_text.reset_level()
+        self._banner_text.clear_scan_issue()
         self._focus_state.clear_current()
         self._detail.clear_image()
         self._panel.clear()
