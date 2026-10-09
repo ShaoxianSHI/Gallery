@@ -42,7 +42,6 @@ from gallery.ui.browser.grid import PhotoGrid  # noqa: E402
 from gallery.ui.calendar.thumb_store import ThumbStore  # noqa: E402
 from gallery.ui.calendar.time_view import WeekView  # noqa: E402
 from gallery.ui.main_window import _GRID_PAGE_MARGIN_RIGHT, MainWindow  # noqa: E402
-from gallery.ui.panels.metadata import SCROLLBAR_EDGE_GAP, MetadataPanel  # noqa: E402
 from gallery.ui.scrollbar_style import (  # noqa: E402
     HANDLE_ALPHA,
     HANDLE_GAP,
@@ -51,6 +50,7 @@ from gallery.ui.scrollbar_style import (  # noqa: E402
     HANDLE_WIDTH,
     SCROLLBAR_WIDTH,
 )
+from gallery.ui.viewer.metadata import SCROLLBAR_EDGE_GAP, MetadataPanel  # noqa: E402
 
 #: 每行多高、总共几行（内容共 8000 像素，视口 400）。按比例算出来的滑块只剩 20 像素
 #: 上下 —— 正好把 :data:`HANDLE_MIN` 那个下限顶起来。
@@ -473,7 +473,7 @@ def test_the_panel_scrollbar_sits_where_the_grid_one_does(
 ) -> None:
     """大图页那条滚动条到**窗口**右缘的距离与网格那条**一样**：都是 2 点。
 
-    面板原来留的是 :data:`~gallery.ui.panels.metadata.CONTENT_PAD` 那 12 点内容内边距，
+    面板原来留的是 :data:`~gallery.ui.viewer.metadata.CONTENT_PAD` 那 12 点内容内边距，
     滑块因此比网格那条靠里 10 点 —— 用户在两页之间来回走，看得出那是两根不一样的东西。
     **正文与页脚的留白没有跟着变窄**：面板那一档窄缝补进了滚动区与页脚自己的右边距
     （``_CONTENT_PAD_RIGHT``），所以量得到变化的只有滚动条那一处。

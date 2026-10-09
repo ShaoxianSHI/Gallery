@@ -51,10 +51,10 @@ from gallery.ui.browser.thumb_sizes import (
     label_for_index,
 )
 from gallery.ui.calendar import CalendarPage
-from gallery.ui.panels.metadata import MetadataPanel
 from gallery.ui.panels.welcome import WelcomeView
 from gallery.ui.tasks import TaskRunner
 from gallery.ui.viewer.detail import DetailView
+from gallery.ui.viewer.metadata import MetadataPanel
 from gallery.ui.window.banner_flow import BannerFlowMixin
 from gallery.ui.window.calendar_flow import CalendarFlowMixin
 from gallery.ui.window.context_menu_flow import ContextMenuFlowMixin

@@ -26,7 +26,7 @@ from PySide6.QtGui import QColor, QFontMetrics, QImage  # noqa: E402
 from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
 from gallery.ui import theme  # noqa: E402
-from gallery.ui.panels.metadata import PANEL_WIDTH  # noqa: E402
+from gallery.ui.viewer.metadata import PANEL_WIDTH  # noqa: E402
 from gallery.ui.window.widgets.banner_overlay import (  # noqa: E402
     AUTO_HIDE_SECONDS,
     MARGIN_TOP,

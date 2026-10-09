@@ -53,8 +53,8 @@ from gallery.core.metadata.writeback import Assignment  # noqa: E402
 from gallery.ui import theme  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.outline import opaque_over  # noqa: E402
-from gallery.ui.panels.metadata import CONTENT_PAD, MetadataPanel  # noqa: E402
 from gallery.ui.panels.metadata_edit import FIELD_RADIUS, MetadataEditDialog  # noqa: E402
+from gallery.ui.viewer.metadata import CONTENT_PAD, MetadataPanel  # noqa: E402
 
 PHOTO = "一张.jpg"
 
@@ -1304,7 +1304,7 @@ def test_the_three_footer_widgets_fill_the_row(qt_app: QApplication) -> None:
     """复制全部 / 编辑元数据 / 显示全部字段**平分整行**，右边不空出一小条。
 
     **扣掉的是两层边距**：面板自己那一层与页脚自己那一层 —— 页脚的右边距补的是滚动条挪到
-    窗口边上之后少掉的那一档内容留白（见 ``panels.metadata._CONTENT_PAD_RIGHT``），
+    窗口边上之后少掉的那一档内容留白（见 ``viewer.metadata._CONTENT_PAD_RIGHT``），
     只扣面板那一层的话，扣掉的数与实际可用的宽度对不上。
     """
     panel = _panel(qt_app)

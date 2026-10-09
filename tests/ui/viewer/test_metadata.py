@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (  # noqa: E402
 
 from gallery.core.metadata.report import build_report  # noqa: E402
 from gallery.ui import theme  # noqa: E402
-from gallery.ui.panels.metadata import MetadataPanel  # noqa: E402
+from gallery.ui.viewer.metadata import MetadataPanel  # noqa: E402
 
 #: 可读性的最低对比度（WCAG AA 对正文的要求）。
 MIN_CONTRAST = 4.5
