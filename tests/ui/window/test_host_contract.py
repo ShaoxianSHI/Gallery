@@ -697,19 +697,19 @@ def test_this_guard_would_notice_a_new_dependency() -> None:
     assert "setGeometry" not in measured["window/title_bar_flow.py:TitleBarFlowMixin"]
 
 
-#: ``mypy --strict src/gallery/ui/window`` 在 2026-10-10 的实测值（ADR 0057 补完
-#: ``library_flow`` 那一间之后）。**它只会往下走** —— 每补完一间的声明就少一批。
+#: ``mypy --strict src/gallery/ui/window`` 的实测值（ADR 0058 七个阶段之后）。
 #:
-#: **它和上面那张表量的是同一片依赖，但不是一个数**：表里 489 条是**不重复的成员**，
-#: 而 mypy 报的是**使用点**且按它自己的口径逐类去重。所以这里**不做交叉断言** ——
-#: 那等于声称两个数必须相等，而它们本来就不该相等。留着的意义只是**锁定基线**。
+#: **这个数从 921 涨到了这里，而耦合面从 489 降到了 457** —— 两件事不矛盾，因为它们量的
+#: 不是同一件事：ADR 0058 把状态收进对象之后，转发用的 **property 只对它自己那间可见**，
+#: 于是「用到一个转发名字」的 mixin 单独查时又看不见它了。**声明去重了，报错就回来了。**
 #:
-#: **另一个口径是 ``main_window.py`**（组合根，现在是 0 条，ADR 0056）—— 但它有个
-#: 必须说清的性质：**mypy 只报目标文件自己的错**，被 import 的 18 个 mixin 只是被跟进
-#: 来做类型推导。所以它守的是「那一层组装得起来」，**不是「mixin 的函数体干净」**。
-#: 想看后者得用全覆盖口径（``mypy --strict src/gallery/ui``，现在 1109 条）。
-MYPY_TOTAL_ERRORS = 805
-MYPY_ATTR_DEFINED = 762
+#: **该盯的数字是耦合面（上面那张表，457）与组合根（0 条）**，不是这个总数。
+#: 留着的意义只是**锁定基线** —— 「比上次多了几条、多了在哪」这个问题得有人问。
+#:
+#: 它和上面那张表量的是同一片依赖，但不是一个数：表里是**不重复的成员**，而 mypy 报的是
+#: **使用点**且按它自己的口径逐类去重。所以这里**不做交叉断言**。
+MYPY_TOTAL_ERRORS = 830
+MYPY_ATTR_DEFINED = 785
 
 #: 真跑一次 mypy 的开关。跑一次要几秒，而这一份每次测试都会跑 —— **别每次都跑**。
 UI_WINDOW_MYPY_RECHECK = "UI_WINDOW_MYPY_RECHECK"

@@ -53,6 +53,8 @@ from gallery.ui.window.focus import FocusState
 from gallery.ui.window.jobs import LIBRARY
 from gallery.ui.window.level_stack import LevelStack, RootKind, root_for
 from gallery.ui.window.library_slot import LibrarySlot
+from gallery.ui.window.pending_watch import PendingWatch
+from gallery.ui.window.staging import Staging
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +167,18 @@ class LibraryFlowMixin:
     _place_pass_roots: set[Path]
     _preview_cache: OrderedDict[Path, QImage]
     _watch_echoes: dict[Path, float]
+    # 转发过来的那几个：真存储在别处（ADR 0058），而 **property 只对它自己那间可见**,
+    # 这一间单独查时它们仍然不存在，所以这里各写一份标注（与真定义同型即可）。
+    _staging: Staging
+    _pending_watch: PendingWatch
+    _finish_job: Callable[[str], None]
+    _scan_job: int | None
+    _orphan_job: int | None
+    _place_job: int | None
+    _facet_job: int | None
+    _sort_descending: bool
+    _size_index: int
+    _staged: list[GridEntry] | None
     _generation: int
     _level_stack: LevelStack
     _model: PhotoListModel
@@ -172,7 +186,6 @@ class LibraryFlowMixin:
     _panel: MetadataPanel
     _welcome: WelcomeView
     _recent_menu: QMenu
-    _sort_descending: bool
     _calendar_page: CalendarPage
     _runner: TaskRunner
     _banner: BannerOverlay

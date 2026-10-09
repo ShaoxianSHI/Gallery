@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from gallery.core.library.photos import GridEntry
 
 __all__ = ["Staging"]
@@ -45,11 +47,12 @@ class Staging:
         """**现在这一层还没排好吗** —— 「这一层空不空」不该用暂存区判（见 ``library_flow``）。"""
         return self._staged is not None
 
-    def extend(self, entries: list[GridEntry]) -> None:
+    def extend(self, entries: Iterable[GridEntry]) -> None:
         """**扫到一批就往暂存区里加** —— 流式出图，不等整层扫完。
 
-        没在暂存（已经排好了）就**先开一个空的**：调用点判的是「这一层要不要重排」，
-        而流式扫描来的时候答案一定是「要」。
+        收 ``Iterable``：扫描回调交来的是元组，一批一批的。
+        没在暂存（已经排好了）就**先开一个空的** —— 流式扫描来的时候，
+        「这一层要不要重排」的答案一定是「要」。
         """
         if self._staged is None:
             self._staged = []
