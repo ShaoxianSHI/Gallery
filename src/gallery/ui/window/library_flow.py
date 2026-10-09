@@ -32,7 +32,6 @@ from gallery.core.library.session import (
     legacy_ui_state,
     save_session,
 )
-from gallery.core.library.watcher import LibraryChange
 from gallery.core.metadata.facets import PhotoFacets
 from gallery.core.metadata.report import MetadataReport
 from gallery.core.places.resolver import LazyPlaceResolver
@@ -135,12 +134,9 @@ class LibraryFlowMixin:
 
     # 声明在类级别：关库与换库在这里给好几个字段置 ``None``，而声明写在方法里时 mypy 会把
     # **那一句**当成「这个 mixin 把它定义成了 ``None``」，于是同一字段在两个基类里类型不一致。
-    _watch_pending: tuple[LibraryChange, ...] | None
 
     # 声明在类级别：关库与换库在这里给好几个字段置 ``None``，而声明写在方法里时 mypy 会把
     # **那一句**当成「这个 mixin 把它定义成了 ``None``」，于是同一字段在两个基类里类型不一致。
-    _watch_pending: tuple[LibraryChange, ...] | None
-    _pending_group: str | None
     _group_facet: str | None
     _sort_facet: str
     _facet_values: dict[Path, PhotoFacets]
@@ -466,8 +462,7 @@ class LibraryFlowMixin:
         # 监听器第一刀：它还在跑的时候，下面就把库和索引都拆了。
         self._watch.stop()
         self._watch_echoes.clear()
-        self._watch_pending = None
-        self._pending_group = None
+        self._pending_watch.forget_all()
         # 「到了这一层该选中哪一格」与「现在摆的是哪一层」都是上一个库留下的，
         # 不作废会把上一库的选中搬过来。
         self._focus_state.forget_level()
@@ -642,9 +637,9 @@ class LibraryFlowMixin:
             self._show_banner(f"部分内容没能读取：{report.summary}")
         # 「这一层空不空」**不在这里判断**：要重排时条目还暂存着没显示到界面（见 _staged），
         # 照模型判断会把相册 / 组卡片误报成「空」。
-        if self._watch_pending:
+        if self._pending_watch.has_pending():
             # 扫描进行中时收到过外部变化：流式扫描没法在半路上改，干脆重来这一层。
-            self._watch_pending = None
+            self._pending_watch.take()
             self._reload_level()
             return
         self._refresh_thumbnail_window()

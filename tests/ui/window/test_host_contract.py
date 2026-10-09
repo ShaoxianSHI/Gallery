@@ -225,7 +225,7 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
             "_on_thumbnail_ready",
             "_order_now",
             "_panel",
-            "_pending_group",
+            "_pending_watch",
             "_place_lookup",
             "_place_pass_roots",
             "_preview_cache",
@@ -255,7 +255,6 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
             "_update_mode_actions",
             "_watch",
             "_watch_echoes",
-            "_watch_pending",
             "_welcome",
         }
     ),
@@ -509,7 +508,7 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
             "_metadata_cache",
             "_model",
             "_on_grid_page",
-            "_pending_group",
+            "_pending_watch",
             "_pipeline",
             "_pop_to",
             "_preview_cache",
@@ -523,7 +522,6 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
             "_start_facet_read",
             "_update_level_notice",
             "_watch_echoes",
-            "_watch_pending",
             "enter_group",
         }
     ),

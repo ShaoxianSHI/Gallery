@@ -42,7 +42,6 @@ from gallery.core.library.config import (
     SEARCH_SCOPE_LIBRARY,
 )
 from gallery.core.library.photos import GridEntry, GroupRef, PhotoRef
-from gallery.core.library.watcher import LibraryChange
 from gallery.core.metadata.report import MetadataReport
 from gallery.ui import banners, desktop, theme
 from gallery.ui.banner_overlay import BannerOverlay
@@ -146,6 +145,7 @@ class MainWindow(
         super().__init__(parent)
         self._init_opening(session_base, cache_base)
         self._runner = TaskRunner(self)
+        self._init_pending_watch()
         #: 外部文件变化 → 网格。回调在 watchdog 的线程上到达，必须用排队连接接。
         self._watch = WatchBridge(self, starter=watch_starter or start_watch)
         self._watch.changed.connect(self._on_watch_changed, Qt.ConnectionType.QueuedConnection)
@@ -154,11 +154,8 @@ class MainWindow(
         self._watch_echoes: dict[Path, float] = {}
         # 横幅那一个槽的记账：四族的记号、让位期、扫描门闩、失败张数（ADR 0054）。
         self._init_banner()
-        #: 暂存着没稳定下来的变化（扫描进行中 / 条目还在暂存区 / 人正在大图页），条件合适时补做。
-        self._watch_pending: tuple[LibraryChange, ...] | None = None
-        #: 分组视图里来了新照片：重新分组之后要回到哪个组（ADR 0013）。
-        self._pending_group: str | None = None
-        # 大图页指着哪一行、这一层该选中哪一格：那几笔记账与它们的写入口（ADR 0053）。
+        self._init_pending_watch()  # 暂存的变化 + 重新分组之后要回到哪个组（ADR 0013）
+        #: 大图页指着哪一行、这一层该选中哪一格：那几笔记账与它们的写入口（ADR 0053）。
         self._init_focus()
         #: 「层或库换过了」—— 后台回调带一份进来再比，比不过就作废（ADR 0051）。
         self._generation = 0

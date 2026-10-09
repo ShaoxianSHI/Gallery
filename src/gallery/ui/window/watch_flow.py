@@ -19,6 +19,7 @@ from gallery.core.library.facade import Library
 from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
 from gallery.core.library.scanner import describe_entry
 from gallery.core.library.watcher import ChangeKind, LibraryChange, summarize
+from gallery.ui.window.pending_watch import PendingWatch
 
 logger = logging.getLogger(__name__)
 
@@ -28,11 +29,34 @@ WATCH_ECHO_TTL = 2.0
 
 
 class WatchFlowMixin:
-    """外部文件变化怎么落到网格、内存缓存与索引上。"""
+    """外部文件变化怎么落到网格、内存缓存与索引上。
+
+    「暂存着还没落地的那批」住在 :class:`~gallery.ui.window.pending_watch.PendingWatch` 里
+    （ADR 0058 阶段 4）—— 这一间与 ``main_window`` / ``library_flow`` 都碰过那两个字段。
+    """
 
     # 声明在类级别 —— 与 ``jobs.py`` 同一个理由（回调末尾把暂存放掉的那一句会被当成定义）。
-    _watch_pending: tuple[LibraryChange, ...] | None
-    _pending_group: str | None
+    # **真存储在 :class:`PendingWatch` 里**，这两个是转发 —— 测试直接摸它们。
+    @property
+    def _watch_pending(self) -> tuple[LibraryChange, ...] | None:
+        return self._pending_watch._watch_pending
+
+    @_watch_pending.setter
+    def _watch_pending(self, value: tuple[LibraryChange, ...] | None) -> None:
+        self._pending_watch._watch_pending = value
+
+    @property
+    def _pending_group(self) -> str | None:
+        return self._pending_watch._pending_group
+
+    @_pending_group.setter
+    def _pending_group(self, value: str | None) -> None:
+        self._pending_watch._pending_group = value
+
+    _pending_watch: PendingWatch
+
+    def _init_pending_watch(self) -> None:
+        self._pending_watch = PendingWatch()
 
     # ---- 实时监听（ADR 0013）------------------------------------------------
     def _on_watch_changed(self, payload: object) -> None:
@@ -50,8 +74,7 @@ class WatchFlowMixin:
         logger.info("磁盘上有变化：%s", summarize(changes))
         self._follow_moved_bindings(library, changes)
         if self._defer_watch_until_idle():
-            waiting = self._watch_pending or ()
-            self._watch_pending = (*waiting, *changes)
+            self._pending_watch.put(changes)
             return
         self._apply_watch_changes(library, changes)
 
@@ -81,14 +104,14 @@ class WatchFlowMixin:
 
     def _flush_pending_watch(self) -> None:
         """把之前暂存的变化补上：重排一结束、或者人回到网格，都是合适的时候。"""
-        changes, self._watch_pending = self._watch_pending, None
+        changes = self._pending_watch.take()
         if changes is None:
             return
         library = self._library
         if library is None:
             return
         if self._defer_watch_until_idle():
-            self._watch_pending = changes  # 还是不行，继续等
+            self._pending_watch.put(changes)  # 还是不行，继续等
             return
         self._apply_watch_changes(library, changes)
 
@@ -316,7 +339,7 @@ class WatchFlowMixin:
         一格要记下来，等回到同一个组时重新选中 —— 不然库里只是多了一张照片，人正在看的那张
         就被甩掉了。
         """
-        self._pending_group = key
+        self._pending_watch.remember_group(key)
         self._focus_state.remember_pending(self._shown_entry_key())
         # 栈：退到分组之前那一层（分组的帧被弹掉，而**底下那层原样留着**）。
         self._pop_to(lambda stack: self._group_view is None)
@@ -324,7 +347,7 @@ class WatchFlowMixin:
 
     def _maybe_reenter_group(self) -> None:
         """重排之后回到刚才那个组（它不在了就留在这一层，由横幅说明为什么）。"""
-        key, self._pending_group = self._pending_group, None
+        key = self._pending_watch.forget_group()
         focus = self._focus_state.take_pending()
         if key is None:
             return
