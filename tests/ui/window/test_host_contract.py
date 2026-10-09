@@ -10,14 +10,17 @@
 
 **这不是类型检查**：它不知道那些成员的**类型**，也不检查方法体。它换来的是
 「耦合面可见 + 不可静默增长」，而真正要的类型检查是另一件事 —— ADR 0055 记了它要多少
-工作量（`ui/window` 开 `--strict` 是 948 条，其中 863 条是「这份清单」）以及为什么
-这一轮没做。
+工作量（`ui/window` 开 `--strict` 是 948 条，其中 863 条是 ``[attr-defined]``：
+「这个 mixin 用到了一个别人提供的东西」）以及为什么这一轮没做。
 """
 
 from __future__ import annotations
 
 import ast
+import os
 import pathlib
+import re
+import subprocess
 import sys
 
 #: 每个 mixin 的宿主耦合面 —— **这份表就是那道**。按需求从多到少排：前四间是耦合最深的，
@@ -722,3 +725,54 @@ def test_this_guard_would_notice_a_new_dependency() -> None:
     # Qt 基类的方法**不算**耦合 —— 判据算错的话这一条会立刻变成误报满天飞。
     assert "_grid" in measured["write_ops.py:WriteOpsMixin"], "判据根本没在工作"
     assert "setGeometry" not in measured["window/title_bar_flow.py:TitleBarFlowMixin"]
+
+
+#: ``mypy --strict src/gallery/ui/window`` 在 2026-10-09 的实测值。
+#:
+#: **它和上面那张表量的是同一片依赖，但不是一个数**：表里 489 条是**不重复的成员**
+#: （`library_flow` 要 73 样这样的东西），而 mypy 报的是**使用点**且按它自己的口径
+#: 逐类去重 —— 同一份依赖三处数出来三个数（1290 个使用点 / 489 个成员 / 863 条错误），
+#: 互不相等。所以这里**不做交叉断言**：那等于声称两个数必须相等，而它们本来就不该相等。
+#: 留着的意义只是**锁定基线** —— 「比上次多了几条、多了在哪」这个问题得有人问。
+MYPY_TOTAL_ERRORS = 948
+MYPY_ATTR_DEFINED = 863
+
+#: 真跑一次 mypy 的开关。跑一次要几秒，而这一份每次测试都会跑 —— **别每次都跑**。
+UI_WINDOW_MYPY_RECHECK = "UI_WINDOW_MYPY_RECHECK"
+
+
+def _mypy_errors() -> tuple[int, int]:
+    """跑一次 ``mypy --strict src/gallery/ui/window``，返回 ``(总数, attr-defined 条数)``。"""
+    result = subprocess.run(
+        [sys.executable, "-m", "mypy", "src/gallery/ui/window", "--strict"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    counts: dict[str, int] = {}
+    for line in result.stdout.splitlines():
+        for code in re.findall(r"error: .*\[([a-z-]+)\]$", line):
+            counts[code] = counts.get(code, 0) + 1
+    return sum(counts.values()), counts.get("attr-defined", 0)
+
+
+def test_the_mypy_baseline_is_still_current() -> None:
+    """**锁定的那两个数字与实测吻合** —— 默认不跑 mypy（要几秒）。
+
+    带 ``UI_WINDOW_MYPY_RECHECK=1`` 时真跑一遍：报的是「比上次多了几条」。
+    **剩下的** ``MYPY_TOTAL_ERRORS - MYPY_ATTR_DEFINED`` 条不是这一张表 ——
+    那是真的类型问题（``ordering.py`` 两处 ``QAction(text, self)`` 只有因为
+    ``MainWindow`` 是 ``QObject`` 才成立），ADR 0055 记着它们为什么这一轮没修。
+    """
+    if os.environ.get(UI_WINDOW_MYPY_RECHECK) != "1":
+        return
+    total, attr_defined = _mypy_errors()
+    assert attr_defined == MYPY_ATTR_DEFINED, (
+        f"[attr-defined] 从 {MYPY_ATTR_DEFINED} 变成 {attr_defined}"
+        f"（{attr_defined - MYPY_ATTR_DEFINED:+d}）"
+    )
+    assert total == MYPY_TOTAL_ERRORS, (
+        f"总数从 {MYPY_TOTAL_ERRORS} 变成 {total}（{total - MYPY_TOTAL_ERRORS:+d}）—— "
+        f"其中不是 [attr-defined] 的那 {MYPY_TOTAL_ERRORS - MYPY_ATTR_DEFINED} 条里多了或少了东西，"
+        "那些是**真的**类型问题。"
+    )
