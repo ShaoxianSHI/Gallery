@@ -40,11 +40,8 @@ from gallery.core.library.config import (
     DEFAULT_CALENDAR_LEVEL,
     SEARCH_SCOPE_LEVEL,
     SEARCH_SCOPE_LIBRARY,
-    LibraryUIState,
 )
-from gallery.core.library.facade import Library
 from gallery.core.library.photos import GridEntry, GroupRef, PhotoRef
-from gallery.core.library.session import SessionState, load_session
 from gallery.core.library.watcher import LibraryChange
 from gallery.core.metadata.report import MetadataReport
 from gallery.ui import banners, desktop, theme
@@ -69,7 +66,6 @@ from gallery.ui.panels.metadata import MetadataPanel
 from gallery.ui.panels.welcome import WelcomeView
 from gallery.ui.search_field import ScopeToggle, SearchField
 from gallery.ui.tasks import TaskRunner
-from gallery.ui.thumbs.pipeline import ThumbnailPipeline
 from gallery.ui.title_bar import EXTRA_PADDING as TITLE_BAR_EXTRA
 from gallery.ui.title_bar import TitleBar
 from gallery.ui.viewer.detail import DetailView
@@ -148,11 +144,7 @@ class MainWindow(
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self._session_base = session_base
-        #: 系统级缩略图缓存根目录（``None`` = 平台默认位置）；**测试必须注入它**：
-        #: 否则会在真实缓存目录里留下几百个没有对应库的摘要目录。
-        self._cache_base = cache_base
-        self._session: SessionState = load_session(base=session_base)
+        self._init_opening(session_base, cache_base)
         self._runner = TaskRunner(self)
         #: 外部文件变化 → 网格。回调在 watchdog 的线程上到达，必须用排队连接接。
         self._watch = WatchBridge(self, starter=watch_starter or start_watch)
@@ -168,9 +160,6 @@ class MainWindow(
         self._pending_group: str | None = None
         # 大图页指着哪一行、这一层该选中哪一格：那几笔记账与它们的写入口（ADR 0053）。
         self._init_focus()
-
-        self._library: Library | None = None
-        self._pipeline: ThumbnailPipeline | None = None
         #: 「层或库换过了」—— 后台回调带一份进来再比，比不过就作废（ADR 0051）。
         self._generation = 0
         #: 13 个后台任务槽 + 「谁属于哪一组取消」（ADR 0051），声明与初始化都在那一处。
@@ -205,7 +194,6 @@ class MainWindow(
         #: 日历停在哪一层。也是库级的。
         self._calendar_level: str = DEFAULT_CALENDAR_LEVEL
         #: 旧 ``state.json`` 里的库级偏好，整个进程只读一次（``None`` = 还没读）。
-        self._legacy_ui: LibraryUIState | None = None
         #: 这一层还没显示到界面的条目（顺序定下来再给出去，ADR 0009 决策 6）；``None`` = 已排好。
         self._staged: list[GridEntry] | None = None
         # 分组 / 排序这一族在 ``OrderingState`` 里（ADR 0058 阶段 2）：用户选了什么、

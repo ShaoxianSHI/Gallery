@@ -47,11 +47,13 @@ from gallery.ui.tasks import TaskContext, TaskRunner
 from gallery.ui.thumbs.pipeline import ThumbnailPipeline
 from gallery.ui.viewer.detail import DetailView
 from gallery.ui.watch import WatchBridge
+from gallery.ui.window.app_session import AppSession
 from gallery.ui.window.banner_text import BannerText
 from gallery.ui.window.filters import FilterState
 from gallery.ui.window.focus import FocusState
 from gallery.ui.window.jobs import LIBRARY
 from gallery.ui.window.level_stack import LevelStack, RootKind, root_for
+from gallery.ui.window.library_slot import LibrarySlot
 
 logger = logging.getLogger(__name__)
 
@@ -60,13 +62,83 @@ SCAN_BATCH_SIZE = 64
 
 
 class LibraryFlowMixin:
-    """打开库 / 关闭库 / 列内容 / 记会话。窗口的入口流程都在这里。"""
+    """guard: allow-long-comment（两族各在哪个对象、转发层为什么留着，值得说满）
+
+    打开库 / 关闭库 / 列内容 / 记会话。窗口的入口流程都在这里。
+
+    「现在开着哪个库」与「这一次运行」这两族的状态住在
+    :class:`~gallery.ui.window.library_slot.LibrarySlot` 与
+    :class:`~gallery.ui.window.app_session.AppSession` 里（ADR 0058 阶段 3），
+    本 mixin 只管流程。窗口上留着一组同名 property 转发 ——
+    **转发不产生第二份存储**。
+    """
+
+    _slot: LibrarySlot
+    _app_session: AppSession
+
+    def _init_opening(self, session_base: Path | None, cache_base: Path | None) -> None:
+        """建这两族的状态；``MainWindow.__init__`` 里只留这一句。"""
+        self._slot = LibrarySlot()
+        self._app_session = AppSession(session_base=session_base, cache_base=cache_base)
+
+    # guard: allow-long-comment（7 组转发，拆开就没法一眼看出「名字 ↔ 槽」一一对应）
+    # **为什么留这一层** —— 测试直接摸 ``window._library`` / ``_session``，
+    # 而属性名一个字都不改是本包的规矩。
+
+    @property
+    def _library(self) -> Library | None:
+        return self._slot._library
+
+    @_library.setter
+    def _library(self, value: Library | None) -> None:
+        self._slot._library = value
+
+    @property
+    def _pipeline(self) -> ThumbnailPipeline | None:
+        return self._slot._pipeline
+
+    @_pipeline.setter
+    def _pipeline(self, value: ThumbnailPipeline | None) -> None:
+        self._slot._pipeline = value
+
+    @property
+    def _library_title(self) -> str:
+        return self._slot._library_title
+
+    @_library_title.setter
+    def _library_title(self, value: str) -> None:
+        self._slot._library_title = value
+
+    @property
+    def _legacy_ui(self) -> LibraryUIState | None:
+        return self._slot._legacy_ui
+
+    @_legacy_ui.setter
+    def _legacy_ui(self, value: LibraryUIState | None) -> None:
+        self._slot._legacy_ui = value
+
+    @property
+    def _session(self) -> SessionState:
+        return self._app_session._session
+
+    @_session.setter
+    def _session(self, value: SessionState) -> None:
+        self._app_session._session = value
+
+    @property
+    def _session_base(self) -> Path | None:
+        return self._app_session._session_base
+
+    @property
+    def _cache_base(self) -> Path | None:
+        return self._app_session._cache_base
 
     # 声明在类级别：关库与换库在这里给好几个字段置 ``None``，而声明写在方法里时 mypy 会把
     # **那一句**当成「这个 mixin 把它定义成了 ``None``」，于是同一字段在两个基类里类型不一致。
-    _library: Library | None
-    _legacy_ui: LibraryUIState | None
-    _pipeline: ThumbnailPipeline | None
+    _watch_pending: tuple[LibraryChange, ...] | None
+
+    # 声明在类级别：关库与换库在这里给好几个字段置 ``None``，而声明写在方法里时 mypy 会把
+    # **那一句**当成「这个 mixin 把它定义成了 ``None``」，于是同一字段在两个基类里类型不一致。
     _watch_pending: tuple[LibraryChange, ...] | None
     _pending_group: str | None
     _group_facet: str | None
@@ -82,8 +154,6 @@ class LibraryFlowMixin:
     _place_pass_roots: set[Path]
     _preview_cache: OrderedDict[Path, QImage]
     _watch_echoes: dict[Path, float]
-    _session: SessionState
-    _session_base: Path | None
     _generation: int
     _level_stack: LevelStack
     _model: PhotoListModel
@@ -91,13 +161,11 @@ class LibraryFlowMixin:
     _panel: MetadataPanel
     _welcome: WelcomeView
     _recent_menu: QMenu
-    _library_title: str
     _size_index: int
     _sort_descending: bool
     _metadata_visible: bool
     _calendar_level: str
     _calendar_page: CalendarPage
-    _cache_base: Path | None
     _runner: TaskRunner
     _banner: BannerOverlay
     _metadata_action: QAction
