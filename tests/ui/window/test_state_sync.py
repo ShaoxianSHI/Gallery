@@ -77,19 +77,42 @@ def test_no_function_hand_assembles_a_tail() -> None:
     )
 
 
+#: 唯一获准「单独调一个成员」的地方：提前换页。
+ALLOWED_SINGLE_CALL = "leave_detail_page"
+
+
 def test_the_early_page_switch_is_the_only_exception_and_it_is_documented() -> None:
-    """唯一那处「单独调一个成员」是 ``leave_detail_page`` 的提前换页，**理由必须写在旁边**。
+    """**全树**唯一那处「单独调一个成员」是 ``leave_detail_page`` 的提前换页。
 
     它换页早于 ``_flush_pending_watch``：那一句判的是「当前页是不是网格页」，晚一步这批暂存的
-    变化会被再推迟一次。判据在代码里（``_defer_watch_until_idle``），所以这一条盯的是**注释**
+    变化会被再推迟一次。判据在代码里（``_defer_watch_until_idle``），所以这一条盯的是**位置**
     而不是行为 —— 免得后来的人把它挪到 ``_sync_ui`` 之后，症状是「照片变了但网格不更新」。
+
+    **扫的是整棵 ``ui/``，不只是 ``viewer_flow.py``**：只扫那一个文件时，在别的模块里新加一处
+    单独调用会一路绿 —— 而那正是这条要拦的（单调用是「这一处精确需要」，可它一旦开始复制，
+    编排点就退化回「各条路径自己挑」）。
     """
-    root = _source_root() / "window" / "viewer_flow.py"
-    for name, names in _members_called_in(root).items():
-        if len(names) == 1:
-            assert name == "leave_detail_page", (
-                f"{name} 单独调了 {sorted(names)}，而唯一获准的那一处是 leave_detail_page"
-            )
+    root = _source_root()
+    singles: list[str] = []
+    viewer_singles: dict[str, set[str]] = {}
+    for path in sorted(root.rglob("*.py")):
+        relative = path.relative_to(root).as_posix()
+        if relative == ORCHESTRATOR:
+            continue
+        called = _members_called_in(path)
+        if relative == "window/viewer_flow.py":
+            viewer_singles = called
+        for name, names in called.items():
+            if len(names) == 1 and name != ALLOWED_SINGLE_CALL:
+                singles.append(f"{relative}:{name} 单独调了 {sorted(names)}")
+    assert not singles, (
+        "单独调一个成员只有 leave_detail_page 获准（提前换页），其余都该交给 `_sync_ui()`：\n"
+        + "\n".join(singles)
+    )
+    # 顺带确认那一处真的还在 —— 上面断的是「没有别人」，这一条断的是「它没被顺手删掉」。
+    assert ALLOWED_SINGLE_CALL in viewer_singles, (
+        f"{ALLOWED_SINGLE_CALL} 不再单独换页了，提前换页的理由要重新写"
+    )
 
 
 def _by_at(pair: tuple[str, int]) -> int:
