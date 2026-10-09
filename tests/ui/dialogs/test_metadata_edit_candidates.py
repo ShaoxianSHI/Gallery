@@ -17,7 +17,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from gallery.core.metadata.capture_time import CaptureTime  # noqa: E402
 from gallery.core.metadata.metadata_edit import MetadataState  # noqa: E402
 from gallery.core.metadata.place_edit import PlaceState  # noqa: E402
-from gallery.ui.panels.metadata_edit import MetadataEditDialog  # noqa: E402
+from gallery.ui.dialogs.metadata_edit import MetadataEditDialog  # noqa: E402
 
 
 class _Place:

@@ -37,7 +37,7 @@ from gallery.core.metadata.report import MetadataReport
 from gallery.core.metadata.transfer import MoveResult
 from gallery.core.metadata.undo import UndoResult
 from gallery.ui import banners, desktop
-from gallery.ui.panels.metadata_edit import MetadataEditDialog
+from gallery.ui.dialogs import MetadataEditDialog
 from gallery.ui.tasks import TaskContext
 from gallery.ui.window import menus
 

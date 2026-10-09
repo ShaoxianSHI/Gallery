@@ -52,15 +52,15 @@ from gallery.core.library.photos import GroupRef  # noqa: E402
 from gallery.core.library.session import SessionState, save_session  # noqa: E402
 from gallery.core.metadata.facets import PhotoFacets  # noqa: E402
 from gallery.ui import theme  # noqa: E402
-from gallery.ui.main_window import MainWindow  # noqa: E402
-from gallery.ui.outline import opaque_over  # noqa: E402
-from gallery.ui.panels.event_edit import (  # noqa: E402
+from gallery.ui.dialogs.event_edit import (  # noqa: E402
     DELETE_REQUESTED,
     FIELD_RADIUS,
     ChoiceButtons,
     EventEdit,
     EventEditDialog,
 )
+from gallery.ui.main_window import MainWindow  # noqa: E402
+from gallery.ui.outline import opaque_over  # noqa: E402
 from gallery.ui.theme import rgba  # noqa: E402
 from gallery.ui.window import menu_style  # noqa: E402
 from gallery.ui.window.menu_style import ShortcutColumnMenu  # noqa: E402

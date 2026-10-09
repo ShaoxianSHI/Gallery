@@ -51,9 +51,9 @@ from gallery.core.metadata.place_edit import PlaceEdit, PlaceState, plan_place_e
 from gallery.core.metadata.report import build_report  # noqa: E402
 from gallery.core.metadata.writeback import Assignment  # noqa: E402
 from gallery.ui import theme  # noqa: E402
+from gallery.ui.dialogs.metadata_edit import FIELD_RADIUS, MetadataEditDialog  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.outline import opaque_over  # noqa: E402
-from gallery.ui.panels.metadata_edit import FIELD_RADIUS, MetadataEditDialog  # noqa: E402
 from gallery.ui.viewer.metadata import CONTENT_PAD, MetadataPanel  # noqa: E402
 
 PHOTO = "一张.jpg"
