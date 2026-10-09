@@ -36,6 +36,7 @@ from gallery.core.places.resolver import LazyPlaceResolver
 from gallery.ui.navigation import EntryKey, entry_key
 from gallery.ui.tasks import TaskContext
 from gallery.ui.window.level_stack import GroupFrame
+from gallery.ui.window.ordering_state import OrderingState
 
 #: 「正在读取 N 张照片的元数据，用于…」—— **只在真的缺东西时才报**（见 ``_start_facet_read``）。
 #: 放在模板里是因为它现在从工作线程里发出去，而那一侧拿不到 ``self``。
@@ -63,19 +64,96 @@ def _events_of(library: Library, refs: Sequence[PhotoRef]) -> dict[Path, tuple[E
 
 
 class OrderingMixin:
-    """「视图 → 分组 / 排序」两个菜单，以及把当前这一层重排一遍的那条链。"""
+    """「视图 → 分组 / 排序」两个菜单，以及把当前这一层重排一遍的那条链。
 
-    # 声明在类级别：这一间给这几个字段赋的值比它们的初始值宽（``_place_resolver`` 一开始是
-    # ``None``、用起来才造），而声明写在方法里时 mypy 会把**第一次裸赋值**当成定义。
+    存储住在 :class:`~gallery.ui.window.ordering_state.OrderingState` 里
+    （ADR 0058 阶段 2），本 mixin 只管「怎么排」。窗口上留着一组同名 property 转发 ——
+    **转发不产生第二份存储**。
+    """
+
+    _ordering: OrderingState
+
     _staged: list[GridEntry] | None
-    _facet_values: dict[Path, PhotoFacets]
-    _event_values: dict[Path, tuple[EventRef, ...]]
-    _group_facet: str | None
-    _sort_facet: str
-    _reorder_fingerprint: tuple[object, ...] | None
-    _reorder_values: dict[Path, PhotoFacets] | None
-    _reorder_events: dict[Path, tuple[EventRef, ...]] | None
-    _place_resolver: LazyPlaceResolver | None
+
+    def _init_ordering(self) -> None:
+        """建这一族的状态；``MainWindow.__init__`` 里只留这一句。"""
+        self._ordering = OrderingState()
+
+    # guard: allow-long-comment（9 组转发，拆开就没法一眼看出「名字 ↔ 槽」一一对应）
+    # **为什么留这一层** —— 测试直接摸 ``window._group_facet`` / ``_sort_facet``，
+    # 而属性名一个字都不改是本包的规矩。
+
+    @property
+    def _facet_values(self) -> dict[Path, PhotoFacets]:
+        return self._ordering._facet_values
+
+    @_facet_values.setter
+    def _facet_values(self, value: dict[Path, PhotoFacets]) -> None:
+        self._ordering._facet_values = value
+
+    @property
+    def _event_values(self) -> dict[Path, tuple[EventRef, ...]]:
+        return self._ordering._event_values
+
+    @_event_values.setter
+    def _event_values(self, value: dict[Path, tuple[EventRef, ...]]) -> None:
+        self._ordering._event_values = value
+
+    @property
+    def _group_facet(self) -> str | None:
+        return self._ordering._group_facet
+
+    @_group_facet.setter
+    def _group_facet(self, value: str | None) -> None:
+        self._ordering._group_facet = value
+
+    @property
+    def _sort_facet(self) -> str:
+        return self._ordering._sort_facet
+
+    @_sort_facet.setter
+    def _sort_facet(self, value: str) -> None:
+        self._ordering._sort_facet = value
+
+    @property
+    def _sort_descending(self) -> bool:
+        return self._ordering._sort_descending
+
+    @_sort_descending.setter
+    def _sort_descending(self, value: bool) -> None:
+        self._ordering._sort_descending = value
+
+    @property
+    def _place_resolver(self) -> LazyPlaceResolver | None:
+        return self._ordering._place_resolver
+
+    @_place_resolver.setter
+    def _place_resolver(self, value: LazyPlaceResolver | None) -> None:
+        self._ordering._place_resolver = value
+
+    @property
+    def _reorder_fingerprint(self) -> tuple[object, ...] | None:
+        return self._ordering._reorder_fingerprint
+
+    @_reorder_fingerprint.setter
+    def _reorder_fingerprint(self, value: tuple[object, ...] | None) -> None:
+        self._ordering._reorder_fingerprint = value
+
+    @property
+    def _reorder_values(self) -> dict[Path, PhotoFacets] | None:
+        return self._ordering._reorder_values
+
+    @_reorder_values.setter
+    def _reorder_values(self, value: dict[Path, PhotoFacets] | None) -> None:
+        self._ordering._reorder_values = value
+
+    @property
+    def _reorder_events(self) -> dict[Path, tuple[EventRef, ...]] | None:
+        return self._ordering._reorder_events
+
+    @_reorder_events.setter
+    def _reorder_events(self, value: dict[Path, tuple[EventRef, ...]] | None) -> None:
+        self._ordering._reorder_events = value
 
     # ---- 分组与排序（见 ADR 0009）--------------------------------------------
     def _build_order_menus(self, view_menu: QMenu) -> None:

@@ -32,25 +32,21 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gallery.core.events.store import EventRef
 from gallery.core.external import launch
 from gallery.core.library.config import (
     BROWSE_MODE_ALBUMS,
     BROWSE_MODE_CALENDAR,
     BROWSE_MODE_FLAT,
     DEFAULT_CALENDAR_LEVEL,
-    DEFAULT_SORT_FACET,
     SEARCH_SCOPE_LEVEL,
     SEARCH_SCOPE_LIBRARY,
     LibraryUIState,
 )
 from gallery.core.library.facade import Library
-from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
+from gallery.core.library.photos import GridEntry, GroupRef, PhotoRef
 from gallery.core.library.session import SessionState, load_session
 from gallery.core.library.watcher import LibraryChange
-from gallery.core.metadata.facets import PhotoFacets
 from gallery.core.metadata.report import MetadataReport
-from gallery.core.places.resolver import LazyPlaceResolver
 from gallery.ui import banners, desktop, theme
 from gallery.ui.banner_overlay import BannerOverlay
 from gallery.ui.browser.grid import PhotoGrid
@@ -189,7 +185,6 @@ class MainWindow(
         #: **在大图页上删掉的那一张**（``None`` = 没删过 / 已取回）：⌘Z 之后要跳回它，
         #: **只对紧接着的那一次撤销有效**。
         self._detail_trashed: Path | None = None
-        self._place_resolver: LazyPlaceResolver | None = None
         #: 本次运行已经起过那一遍的库（是集合不是单个：来回切库不该把同一个库再起一遍空跑）。
         #: **取消 :attr:`_place_job` 必须同时把根拿掉** —— 见 :meth:`JobsMixin._cancel_job`。
         self._place_pass_roots: set[Path] = set()
@@ -205,36 +200,17 @@ class MainWindow(
         #: 其标志位都是从这条栈算出来的属性，见 ``LevelStackMixin``。
         self._level_stack = LevelStack(root=RootKind.FLAT)
         # 分组 / 排序（ADR 0009）：字段 id 存在库的 config.toml 里，下次打开这个库沿用；空值走默认。
-        self._group_facet: str | None = None
-        self._sort_facet: str = DEFAULT_SORT_FACET
-        self._sort_descending: bool = False
         #: 大图页右侧的元数据面板是否展开。**同样是库级的**（ADR 0038 决策 4）。
         self._metadata_visible: bool = False
         #: 日历停在哪一层。也是库级的。
         self._calendar_level: str = DEFAULT_CALENDAR_LEVEL
         #: 旧 ``state.json`` 里的库级偏好，整个进程只读一次（``None`` = 还没读）。
         self._legacy_ui: LibraryUIState | None = None
-        # 已经进入的分组（`_group_view`）不再是字段 —— 它是栈上最近一个 ``GroupFrame``。
-        # 「摆的是哪一层」与「该选中哪一格」同住一根轴（ADR 0053）：层标识与那一格一并重置。
-        self._facet_values: dict[Path, PhotoFacets] = {}
-        # guard: allow-long-comment（必须跟着 facet 那个后台任务回来，不能在主线程现发整层查询）
-        #: 这一层的照片各属于哪些事件（ADR 0043）。**只给「按事件分组」看**，而它必须跟着
-        #: facet 读取那个后台任务一起回来 —— 分组是在主线程同步算的，不能在那里现发一次随层
-        #: 大小线性增长的查询（那一层可能五千张）。
-        self._event_values: dict[Path, tuple[EventRef, ...]] = {}
-        # guard: allow-long-comment（判「会不会变」用输入；少了它监听器每次回环都白付一次整层排序）
-        #: **上一次重排的输入** —— 用来在排序**之前**判「这次会不会变」（见
-        #: :meth:`ordering.OrderingMixin._reorder_level`），少了它监听器每报一次自己写操作的回环
-        #: 就要白付一次整层排序。``_reorder_values`` 存的是**对象本身**（不是 ``id()``），
-        #: 这样它不会被回收、地址不会被复用，判 ``is`` 才靠得住。
-        self._reorder_fingerprint: tuple[object, ...] | None = None
-        self._reorder_values: dict[Path, PhotoFacets] | None = None
-        self._reorder_events: dict[Path, tuple[EventRef, ...]] | None = None
-        self._reorder_photos: tuple[PhotoRef, ...] = ()
-        self._reorder_albums: tuple[FolderRef, ...] = ()
-        # 从日历点开的那一层 —— `_drill_*` 三个字段是栈上 ``CalendarFrame`` 的投影（ADR 0041）。
         #: 这一层还没显示到界面的条目（顺序定下来再给出去，ADR 0009 决策 6）；``None`` = 已排好。
         self._staged: list[GridEntry] | None = None
+        # 分组 / 排序这一族在 ``OrderingState`` 里（ADR 0058 阶段 2）：用户选了什么、
+        # 这一层读到了什么、上一次重排的输入。``ordering`` 上留着一组同名 property 转发。
+        self._init_ordering()
         # ---- 搜索（ADR 0026）-------------------------------------------------
         # 条件、编辑下标、作用域、命中数：四个字段与它们的写入口都在轴上（ADR 0052）。
         self._init_filters()
