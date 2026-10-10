@@ -348,6 +348,14 @@ class PhotoListModel(QAbstractListModel):
         cached = self._pixmaps.get(path)
         return cached.pixmap if cached is not None else None
 
+    def cover_pixmap(self, entry: GridEntry) -> QPixmap | None:
+        """这一格已经缓存好的缩略图 —— **按封面那张取**，别按卡片自己的路径。
+
+        分组卡片的缩略图存在组员那一张的路径下（见 :func:`_cover_of`），所以问错了路径
+        拿到的是空的那一份，画出来就是一个占位框。
+        """
+        return self.thumbnail_pixmap(_cover_of(entry))
+
     def needs_thumbnail(self, path: Path) -> bool:
         """这个条目是否需要（重新）取缩略图：没有，或手里的不是当前尺寸。"""
         cached = self._pixmaps.get(path)
@@ -370,6 +378,20 @@ class PhotoListModel(QAbstractListModel):
         if parent is not None and parent.isValid():
             return 0
         return len(self._entries)
+
+    def flags(self, index: QModelIndex) -> Qt.ItemFlag:
+        """照片与分组卡片可拖，**相册不可拖**（ADR 0062 决策 4）。
+
+        **漏了这一位整套拖放都不会发生**：``QAbstractItemView`` 越过拖动距离后先问
+        ``flags`` 有没有 ``ItemIsDragEnabled``，没有就直接回去画橡皮筋，``startDrag``
+        压根不会被调用 —— 症状是「代码全对、拖起来没反应」。
+        """
+        flags = super().flags(index)
+        if not index.isValid() or not 0 <= index.row() < len(self._entries):
+            return flags
+        if isinstance(self._entries[index.row()], FolderRef):
+            return flags
+        return flags | Qt.ItemFlag.ItemIsDragEnabled
 
     def data(self, index: QModelIndex, role: int = int(Qt.ItemDataRole.DisplayRole)) -> object:
         if not index.isValid():

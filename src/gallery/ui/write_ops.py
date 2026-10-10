@@ -519,6 +519,14 @@ class WriteOpsMixin:
         if isinstance(target, Path):
             self._transfer_selected(target, move=True)
 
+    def move_selected_into(self, target: Path) -> None:
+        """把选中的照片移进 ``target`` —— 拖到相册卡片上落下的那一下（ADR 0062）。
+
+        与菜单那条**共用** :meth:`_transfer_selected`：同一个后台任务、同一份 journal、
+        同一次 ⌘Z、同一条横幅。拖放因此不新增任何数据安全面，它只是多了一个入口。
+        """
+        self._transfer_selected(target, move=True)
+
     def _album_picker(
         self, title: str, supplier: Callable[[], Sequence[tuple[str, Path]]]
     ) -> QMenu:
