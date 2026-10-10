@@ -267,7 +267,7 @@ class NavigationFlowMixin:
         ADR 0026 决策 1b）；筛选时报**完整路径 + 那一组**，因为范围没变。
         """
         library = self._library
-        # 平铺模式下平时不显示面包屑，但**分组里与有条件时一律显示**（ADR 0026 决策 9）。
+        # 平铺模式下平时不显示面包屑，但**分组里与有条件时一律显示**（ADR 0026 决策 1b）。
         in_albums = self._browse_mode == BROWSE_MODE_ALBUMS
         conditions = self._filters.chip_texts()
         editing = self._editing_condition if conditions else None

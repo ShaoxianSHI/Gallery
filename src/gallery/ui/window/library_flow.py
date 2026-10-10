@@ -509,7 +509,7 @@ class LibraryFlowMixin:
         self._set_root(self._level_stack.root)
         self._facet_values = {}
         self._update_metadata_editable()
-        # 条件是**临时的**（ADR 0026 决策 9）：换库之后还留着上一座库的胶囊，
+        # 条件是**临时的**（ADR 0026 决策 10）：换库之后还留着上一座库的胶囊，
         # 检索结果就属于一个已关掉的文件夹。
         self._filters.clear()
 
