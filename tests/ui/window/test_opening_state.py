@@ -7,7 +7,8 @@
 from __future__ import annotations
 
 import ast
-import pathlib
+
+from source_scan import source_root
 
 from gallery.ui.window.state.app_session import AppSession
 from gallery.ui.window.state.library_slot import LibrarySlot
@@ -19,12 +20,8 @@ SLOT_FIELDS = ("_library", "_pipeline", "_library_title", "_legacy_ui")
 FORWARDED = SLOT_FIELDS + ("_session",)
 
 
-def _source_root() -> pathlib.Path:
-    return pathlib.Path(__file__).resolve().parents[3] / "src" / "gallery" / "ui"
-
-
 def _class_body(module: str, name: str) -> ast.ClassDef:
-    tree = ast.parse((_source_root() / module).read_text("utf-8"))
+    tree = ast.parse((source_root() / module).read_text("utf-8"))
     return next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == name)
 
 
@@ -121,7 +118,7 @@ def test_the_window_builds_both_families_in_one_place() -> None:
     散开建就意味着「哪几个字段是一族的」只存在于读代码的人脑子里 —— 而少建一个的
     症状是那个槽压根不存在，读回来是 ``None``，不报错。
     """
-    tree = ast.parse((_source_root() / "main_window.py").read_text("utf-8"))
+    tree = ast.parse((source_root() / "main_window.py").read_text("utf-8"))
     init = next(
         n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "__init__"
     )

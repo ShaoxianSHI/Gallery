@@ -24,6 +24,7 @@ import subprocess
 import sys
 
 import pytest
+from source_scan import source_root
 
 #: 每个 mixin 的宿主耦合面 —— **这份表就是那道**。按需求从多到少排：前四间是耦合最深的，
 #: 而它们也正是最该定期问一句「这一间还该存在吗」的地方。
@@ -566,13 +567,6 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
 }
 
 
-def _source_root() -> pathlib.Path:
-    """``src/gallery/ui`` 那一层（``parents[3]``，理由见 ``test_state_sync`` 里同一句）。"""
-    root = pathlib.Path(__file__).resolve().parents[3] / "src" / "gallery" / "ui"
-    assert root.is_dir(), f"扫的目录不存在：{root}（回归测试会静默扫零个文件而一路绿）"
-    return root
-
-
 def _qt_api() -> set[str]:
     """Qt 基类自己提供的那些名字 —— **必须真的问 Qt 要一份**。
 
@@ -619,7 +613,7 @@ def _main_window_mixins() -> dict[str, type]:
     """
     from gallery.ui.main_window import MainWindow
 
-    root = _source_root().resolve()
+    root = source_root().resolve()
     found: dict[str, type] = {}
     for cls in MainWindow.__mro__:
         if not cls.__name__.endswith("Mixin"):

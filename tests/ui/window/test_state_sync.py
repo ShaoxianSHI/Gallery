@@ -15,6 +15,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+from source_scan import source_root
+
 from gallery.ui.window.state_sync import StateSyncMixin
 
 #: 「从状态到界面」那几份映射。**编排只在 `_sync_ui` 里**（ADR 0050）。
@@ -28,18 +30,6 @@ SYNC_MEMBERS = (
 
 #: 编排点自己那份文件（豁免）。
 ORCHESTRATOR = "window/state_sync.py"
-
-
-def _source_root() -> Path:
-    """``src/gallery/ui`` 那一层。
-
-    **``parents[3]`` 不是 ``[2]``**：本文件在 ``tests/ui/window/`` 下，往上三级才是仓库根。
-    写成 ``[2]`` 时那个路径指向 ``tests/src/gallery/ui``（不存在），于是 ``rglob`` 扫到
-    **零个文件**而回归测试一路绿 —— 而「永远为绿的回归测试比没有更坏」（AGENTS.md）。
-    """
-    root = Path(__file__).resolve().parents[3] / "src" / "gallery" / "ui"
-    assert root.is_dir(), f"扫的目录不存在：{root}（守护会静默扫零个文件而一路绿）"
-    return root
 
 
 def _members_called_in(path: Path) -> dict[str, set[str]]:
@@ -63,7 +53,7 @@ def _members_called_in(path: Path) -> dict[str, set[str]]:
 
 def test_no_function_hand_assembles_a_tail() -> None:
     """**一个函数里不许同时调两个以上成员** —— 那就是又一条手拼的尾巴。"""
-    root = _source_root()
+    root = source_root()
     offenders: list[str] = []
     for path in sorted(root.rglob("*.py")):
         relative = path.relative_to(root).as_posix()
@@ -92,7 +82,7 @@ def test_the_early_page_switch_is_the_only_exception_and_it_is_documented() -> N
     单独调用会一路绿 —— 而那正是这条要拦的（单调用是「这一处精确需要」，可它一旦开始复制，
     编排点就退化回「各条路径自己挑」）。
     """
-    root = _source_root()
+    root = source_root()
     singles: list[str] = []
     viewer_singles: dict[str, set[str]] = {}
     for path in sorted(root.rglob("*.py")):
@@ -125,7 +115,7 @@ def test_the_sync_runs_every_member_with_the_page_first() -> None:
 
     其余几份映射都读「现在在哪一页」，晚一步就按上一页摆 —— 次序不是随意的。
     """
-    body = (_source_root() / ORCHESTRATOR).read_text(encoding="utf-8").split("def _sync_ui", 1)[1]
+    body = (source_root() / ORCHESTRATOR).read_text(encoding="utf-8").split("def _sync_ui", 1)[1]
     positions = [body.find(f"self.{member}()") for member in SYNC_MEMBERS]
     missing = [member for member, at in zip(SYNC_MEMBERS, positions, strict=True) if at < 0]
     assert not missing, f"`_sync_ui` 少了这几份映射：{missing}"

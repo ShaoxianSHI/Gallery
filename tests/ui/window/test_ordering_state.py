@@ -8,7 +8,8 @@
 from __future__ import annotations
 
 import ast
-import pathlib
+
+from source_scan import source_root
 
 from gallery.ui.window.state.ordering_state import OrderingState
 
@@ -29,10 +30,6 @@ SLOTS = (
 
 #: 转发的那几个。``_reorder_photos`` / ``_reorder_albums`` 只有一个写者，留给窗口。
 FORWARDED = tuple(n for n in SLOTS if n not in {"_reorder_photos", "_reorder_albums"})
-
-
-def _source_root() -> pathlib.Path:
-    return pathlib.Path(__file__).resolve().parents[3] / "src" / "gallery" / "ui"
 
 
 def _forwarded_names(source: str) -> set[str]:
@@ -63,7 +60,7 @@ def test_the_state_owns_every_slot_of_the_family() -> None:
     这是「一份状态一个主人」那条判据的直接落点：以前它们是 ``main_window`` /
     ``ordering`` / ``library_flow`` 三个模块各自在写的窗口字段。
     """
-    tree = ast.parse((_source_root() / "window" / "state" / "ordering_state.py").read_text("utf-8"))
+    tree = ast.parse((source_root() / "window" / "state" / "ordering_state.py").read_text("utf-8"))
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "OrderingState")
     declared = {
         node.target.id
@@ -75,14 +72,14 @@ def test_the_state_owns_every_slot_of_the_family() -> None:
 
 def test_the_mixin_forwards_instead_of_storing() -> None:
     """**转发的那几个必须真的是 property** —— 变成普通属性就是第二份存储。"""
-    source = (_source_root() / "window" / "ordering.py").read_text("utf-8")
+    source = (source_root() / "window" / "ordering.py").read_text("utf-8")
     missing = set(FORWARDED) - _forwarded_names(source)
     assert not missing, f"这些该是 OrderingMixin 上的转发 property，现在不是：{missing}"
 
 
 def test_the_guard_would_notice_a_second_storage() -> None:
     """这条回归测试自己必须验过一次：把转发 property 换成普通属性，上面那条要红。"""
-    source = (_source_root() / "window" / "ordering.py").read_text("utf-8")
+    source = (source_root() / "window" / "ordering.py").read_text("utf-8")
     injected = source.replace(
         "    @property\n    def _sort_descending(self) -> bool:",
         "    _sort_descending: bool\n    def _unused_descending(self) -> bool:",
@@ -142,7 +139,7 @@ def test_the_window_only_builds_this_family_in_one_place() -> None:
     散开建就意味着「哪几个字段是一族的」这件事只存在于读代码的人脑子里
     —— 而少建一个的症状是那个槽压根不存在，读回来是 ``None``，不报错。
     """
-    tree = ast.parse((_source_root() / "main_window.py").read_text("utf-8"))
+    tree = ast.parse((source_root() / "main_window.py").read_text("utf-8"))
     init = next(
         n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "__init__"
     )

@@ -14,6 +14,7 @@ import ast
 from pathlib import Path
 
 import pytest
+from source_scan import source_root
 
 from gallery.core.library.photos import GroupRef
 from gallery.ui.window.level_stack_mixin import LevelStackMixin
@@ -39,18 +40,6 @@ LEVEL_FIELDS = (
 
 #: 栈的写入口。**只有这四个** —— 别的地方一律不许直接动 ``_level_stack``。
 STACK_WRITERS = ("_push_frame", "_pop_frame", "_pop_to", "_set_root")
-
-
-def _source_root() -> Path:
-    """``src/gallery/ui`` 那一层。
-
-    **``parents[3]`` 不是 ``[2]``**：本文件在 ``tests/ui/window/`` 下，往上三级才是仓库根。
-    写成 ``[2]`` 时那个路径指向 ``tests/src/gallery/ui``（不存在），于是 ``rglob`` 扫到
-    **零个文件**而两条回归测试一路绿 —— 而「永远为绿的回归测试比没有更坏」（AGENTS.md）。
-    """
-    root = Path(__file__).resolve().parents[3] / "src" / "gallery" / "ui"
-    assert root.is_dir(), f"扫的目录不存在：{root}（守护会静默扫零个文件而一路绿）"
-    return root
 
 
 def _class_defining(path: Path, name: str) -> ast.ClassDef | None:
@@ -90,8 +79,8 @@ def test_the_stack_is_the_only_place_the_level_lives() -> None:
     「为什么这里原本要清它」就得写它），按行扫会把注释与 docstring 一起算进来。
     """
     offenders: list[str] = []
-    for path in sorted(_source_root().rglob("*.py")):
-        relative = path.relative_to(_source_root().parents[3]).as_posix()
+    for path in sorted(source_root().rglob("*.py")):
+        relative = path.relative_to(source_root().parents[3]).as_posix()
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             targets: tuple[ast.expr, ...] = ()
@@ -124,8 +113,8 @@ def test_the_stack_is_only_written_through_those_four_methods() -> None:
     那一处例外是 ``MainWindow.__init__`` 里的建栈（还没有栈才能初始化它）。
     """
     offenders: list[str] = []
-    for path in sorted(_source_root().rglob("*.py")):
-        relative = path.relative_to(_source_root()).as_posix()
+    for path in sorted(source_root().rglob("*.py")):
+        relative = path.relative_to(source_root()).as_posix()
         if relative == "window/level_stack_mixin.py":
             continue
         source = path.read_text(encoding="utf-8")
@@ -176,7 +165,7 @@ def test_the_writers_exist_and_live_in_one_mixin() -> None:
     for name in STACK_WRITERS:
         assert callable(getattr(LevelStackMixin, name, None)), f"少了写入口 {name}"
 
-    root = _source_root()
+    root = source_root()
     for path in sorted(root.rglob("*.py")):
         relative = path.relative_to(root).as_posix()
         if relative == "window/level_stack_mixin.py":
@@ -316,7 +305,7 @@ def test_the_page_is_written_only_by_the_sync_method() -> None:
     页面是栈的函数（``page_role_of``）—— 别处一旦自己挑一页，「我在哪」就又变成两份记账，
     而两份记录迟早对不上（症状：日历页摆在前面、标题却写着大图页）。
     """
-    root = _source_root() / "window"
+    root = source_root() / "window"
     offenders: list[str] = []
     for path in sorted(root.rglob("*.py")):
         relative = path.relative_to(root).as_posix()
