@@ -31,8 +31,8 @@ from gallery.core.library.session import (  # noqa: E402
     SessionState,
     save_session,
 )
-from gallery.ui.browser.thumb_sizes import DEFAULT_EDGE, edge_for_index  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
+from gallery.ui.thumb_sizes import DEFAULT_EDGE, edge_for_index  # noqa: E402
 
 
 @pytest.fixture

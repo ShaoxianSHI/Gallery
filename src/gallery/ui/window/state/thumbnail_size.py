@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 
-from gallery.ui.browser.thumb_sizes import edge_for_index, nearest_index, shifted_index
+from gallery.ui.thumb_sizes import edge_for_index, nearest_index, shifted_index
 
 __all__ = ["ThumbnailSize"]
 

@@ -11,8 +11,8 @@ from PySide6.QtGui import QColor, QPainter, QPainterPath, QPalette, QPen, QPixma
 from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem, QWidget
 
 from gallery.ui.browser.model import ALBUM_ROLE, GROUP_COUNT_ROLE, GROUP_ROLE
-from gallery.ui.browser.thumb_sizes import DEFAULT_EDGE
 from gallery.ui.browser.transition import GridTransition
+from gallery.ui.thumb_sizes import DEFAULT_EDGE
 
 #: 格子相对缩略图多出来的留白：横向是卡片内边距，纵向还要放下文件名。
 GRID_PADDING_X = 28

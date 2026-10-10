@@ -16,8 +16,8 @@ from PySide6.QtCore import QAbstractListModel, QModelIndex, QObject, QSize, Qt
 from PySide6.QtGui import QImage, QPixmap
 
 from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
-from gallery.ui.browser.thumb_sizes import DEFAULT_EDGE
 from gallery.ui.imaging import scale_pixmap
+from gallery.ui.thumb_sizes import DEFAULT_EDGE
 
 #: 取条目本身（``PhotoRef`` 或 ``FolderRef``）的角色。
 ENTRY_ROLE = int(Qt.ItemDataRole.UserRole) + 1

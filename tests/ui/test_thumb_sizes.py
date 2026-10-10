@@ -1,11 +1,11 @@
-"""``gallery.ui.browser.thumb_sizes`` 的测试：档位与手势累加，都不需要 Qt。"""
+"""``gallery.ui.thumb_sizes`` 的测试：档位与手势累加，都不需要 Qt。"""
 
 from __future__ import annotations
 
 import pytest
 
 from gallery.core.constants import DEFAULT_THUMBNAIL_MAX_EDGE
-from gallery.ui.browser.thumb_sizes import (
+from gallery.ui.thumb_sizes import (
     DEFAULT_EDGE,
     DEFAULT_INDEX,
     MIN_PINCH_INTERVAL_MS,
@@ -294,7 +294,7 @@ class TestFitColumns:
 
 
 def test_describe_actual_reports_the_measured_size() -> None:
-    from gallery.ui.browser.thumb_sizes import describe_actual
+    from gallery.ui.thumb_sizes import describe_actual
 
     text = describe_actual(2, 285)
 

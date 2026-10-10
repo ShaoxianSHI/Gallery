@@ -43,9 +43,9 @@ from gallery.core.library.session import (
     save_session,
 )  # noqa: E402
 from gallery.core.paths import app_state_file  # noqa: E402
-from gallery.ui.browser.thumb_sizes import DEFAULT_INDEX, THUMBNAIL_SIZES  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.rename_edit import RenameEdit  # noqa: E402
+from gallery.ui.thumb_sizes import DEFAULT_INDEX, THUMBNAIL_SIZES  # noqa: E402
 
 #: ⇧⌘↑ / ⇧⌘↓。Qt 在 macOS 上把 Command 写作 Ctrl，不要手动换成 Meta。
 _ZOOM_IN = Qt.Key.Key_Up, Qt.KeyboardModifier.ShiftModifier | Qt.KeyboardModifier.ControlModifier

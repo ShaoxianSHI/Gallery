@@ -578,6 +578,7 @@ TOP_LEVEL_MODULES: Final[dict[str, str | None]] = {
     "scrollbar_style": None,  # 网格、周视图、元数据面板三条滚动条
     "tasks": None,  # thumbs 与 window 都要起后台任务
     "theme": None,  # 全部四个子包都从它派生颜色
+    "thumb_sizes": None,  # browser 排版、calendar 甩动、window 那一族档位状态都要它
     "banners": "写操作结果的用户可见措辞，与窗口无关：write_ops 与各条 flow 都调它",
     "desktop": "访达与剪贴板那一座桥，与窗口无关：右键菜单、打开文件夹、拷贝都调它",
     "write_ops": "「只增不改」那条数据安全守护按文件名找它，搬了它那条守护就悄悄失效",
@@ -652,6 +653,105 @@ def test_the_top_level_guard_would_notice_a_violation(tmp_path: Path) -> None:
         "注入了一个没登记的顶层模块，这条守护没有反应"
     )
     assert not _unregistered_top_level(), "真实的 ui/ 顶层被这条用例自己判成违规了"
+
+
+#: **留在子包里而不上顶层**的那些跨包模块，理由逐个写清（ADR 0061）。
+#:
+#: 上一条守的是「顶层不许留下只被一个包用的」，**反方向当时没人管** —— 于是一个跨包共享的
+#: 模块可以舒舒服服地躺在某个包里。``browser.thumb_sizes`` 就是这么住了一段时间的，
+#: 而它顺带逼出一条反向依赖：``window/state/thumbnail_size.py`` 为了拿三个函数得伸手进
+#: 一个页面包的内部。
+#:
+#: **两条豁免是同一件事**：那个页面包**对外暴露的那一个控件**，而窗口拥有它 ——
+#: 「谁拥有」与「谁属于哪个包」不是同一件事。``viewer.detail`` 与 ``browser.grid`` 同理，
+#: 它们之所以没被列进来，是因为包内没有第二个模块 import 它们。
+SHARED_MODULES_STAYING_IN_A_PACKAGE: Final[dict[str, str]] = {
+    "browser.model": "网格的列表模型 —— 页面包对外暴露的那一个控件，窗口拥有它",
+    "calendar.page": "日历那一页 —— 同上，窗口建它并连到内容区",
+}
+
+
+def test_a_shared_module_is_not_hidden_in_a_package() -> None:
+    """**被两个以上子包用的模块，要么在顶层，要么在表里写明为什么留在那**（ADR 0061）。
+
+    顶层那条规矩的**反方向**：顶层不许留下只被一个包用的，而跨包共享的模块躲进某个包
+    同样不对 —— 症状是别的包得伸手进那个包的内部，而它并不是那个包的东西。
+    """
+    hidden = {
+        module: sorted(packages)
+        for module, packages in _shared_modules_outside_top_level().items()
+        if module not in SHARED_MODULES_STAYING_IN_A_PACKAGE
+    }
+    assert not hidden, (
+        f"这些模块被多个子包用，却不在顶层也不在豁免表里：{hidden}；"
+        f"搬上去，或在 SHARED_MODULES_STAYING_IN_A_PACKAGE 里写明为什么留在那（ADR 0061）"
+    )
+    stale = sorted(
+        name
+        for name in SHARED_MODULES_STAYING_IN_A_PACKAGE
+        if name not in _shared_modules_outside_top_level()
+    )
+    assert not stale, f"豁免表里这些模块已经不上顶层共享了，删掉那一行：{stale}"
+
+
+def _shared_modules_outside_top_level() -> dict[str, set[str]]:
+    """不在顶层、却被两个以上子包 import 的模块 → 用它的那些子包。
+
+    **组合根与入口不算消费者** —— ``main_window.py`` import 一切，把它算进去，
+    每个页面模块都会变成「被两个包用」，而那条判据问的其实是「除了装配之外还有谁要它」。
+    """
+    packages: dict[str, set[str]] = {}
+    for path in _iter_python_files(UI_ROOT):
+        if path.stem in UI_ENTRYPOINTS:
+            continue
+        consumer = path.relative_to(UI_ROOT).parts
+        package = consumer[0] if len(consumer) > 1 else ""
+        for module in _ui_modules_imported_by(path):
+            if "." not in module:
+                continue  # 顶层模块归上一条管
+            packages.setdefault(module, set()).add(package)
+    return {module: users for module, users in packages.items() if len(users) > 1}
+
+
+def _ui_modules_imported_by(path: Path) -> set[str]:
+    """这个文件 import 了 ``gallery.ui`` 下的哪些**模块**（含子包里的），两种写法都认。
+
+    ``from gallery.ui.browser.model import X`` 给的是 ``browser.model``，
+    ``from gallery.ui import theme`` 给的是 ``theme`` —— 只认一种的话有一半的边会消失。
+    """
+    names: set[str] = set()
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom) or node.level:
+            continue
+        module = node.module or ""
+        if module.startswith(f"{UI_DOTTED}."):
+            names.add(module[len(UI_DOTTED) + 1 :])
+        elif module == UI_DOTTED:
+            names.update(
+                alias.name
+                for alias in node.names
+                if (UI_ROOT / f"{alias.name}.py").is_file() or (UI_ROOT / alias.name).is_dir()
+            )
+    return names
+
+
+def test_the_hidden_shared_module_guard_would_notice_a_violation() -> None:
+    """上一条自己必须验过一次 —— 这一条最容易恒绿：绝大多数模块只被一个包用。"""
+    found = _shared_modules_outside_top_level()
+    assert found, "一个跨包共享的模块都没扫出来，这条守护恒绿"
+    # 藏在包里的那两个确实扫到了，而且确实被两个包用（包内一个 + window 一个）。
+    assert set(found["browser.model"]) == {"browser", "window"}
+    assert set(found["calendar.page"]) == {"calendar", "window"}
+    # 只被一个包用的不算进来 —— 判据要是「>1」而不是「>=1」。
+    assert all(len(packages) > 1 for packages in found.values())
+    # **豁免表是承重的**：拿掉其中一行，那一条就该红 —— 否则这张表可以整张删掉。
+    without_one = set(found) - SHARED_MODULES_STAYING_IN_A_PACKAGE.keys()
+    assert not without_one, f"表外的模块：{without_one}"
+    shrunk = set(found) - (set(SHARED_MODULES_STAYING_IN_A_PACKAGE.keys()) - {"browser.model"})
+    assert shrunk == {"browser.model"}, f"去掉 browser.model 那行后应当只剩它，实际 {shrunk}"
+    # 理由不能是空串 —— 空串等于没写。
+    assert all(reason.strip() for reason in SHARED_MODULES_STAYING_IN_A_PACKAGE.values())
 
 
 # ---- 四个页面各住一处，与 PageRole 一一对应（ADR 0060）-------------------------

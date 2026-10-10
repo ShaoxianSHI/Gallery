@@ -45,13 +45,13 @@ from gallery.core.metadata.report import MetadataReport
 from gallery.ui import banners, desktop, theme
 from gallery.ui.browser.grid import PhotoGrid
 from gallery.ui.browser.model import PhotoListModel
-from gallery.ui.browser.thumb_sizes import (
+from gallery.ui.calendar import CalendarPage
+from gallery.ui.tasks import TaskRunner
+from gallery.ui.thumb_sizes import (
     THUMBNAIL_SIZES,
     edge_for_index,
     label_for_index,
 )
-from gallery.ui.calendar import CalendarPage
-from gallery.ui.tasks import TaskRunner
 from gallery.ui.viewer.detail import DetailView
 from gallery.ui.viewer.metadata import MetadataPanel
 from gallery.ui.window.banner_flow import BannerFlowMixin

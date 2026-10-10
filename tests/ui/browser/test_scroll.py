@@ -36,7 +36,7 @@ from gallery.ui.browser.grid import (  # noqa: E402
     WHEEL_PIXEL_FACTOR,
     PhotoGrid,
 )
-from gallery.ui.browser.thumb_sizes import THUMBNAIL_SIZES  # noqa: E402
+from gallery.ui.thumb_sizes import THUMBNAIL_SIZES  # noqa: E402
 
 #: 累积够这么多条目滚动条才有得滚。少于此的话「滚一次走多少」量到的是夹取而不是灵敏度。
 ROWS = 400

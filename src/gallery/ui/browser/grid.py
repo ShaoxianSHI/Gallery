@@ -43,7 +43,16 @@ from PySide6.QtWidgets import (
 from gallery.ui.browser.anchoring import AnchoringMixin
 from gallery.ui.browser.delegate import GRID_PADDING_X, GRID_PADDING_Y, PhotoDelegate
 from gallery.ui.browser.model import ALBUM_ROLE
-from gallery.ui.browser.thumb_sizes import (
+from gallery.ui.browser.transition import (
+    EDGE_ANIMATION_CURVE,
+    EDGE_ANIMATION_MS,
+    EDGE_SETTLE_MS,
+    GridTransition,
+    TransitionMixin,
+)
+from gallery.ui.rename_edit import RenameEdit
+from gallery.ui.scrollbar_style import apply_scrollbar_style
+from gallery.ui.thumb_sizes import (
     DEFAULT_EDGE,
     MIN_EDGE,
     MIN_PINCH_INTERVAL_MS,
@@ -54,15 +63,6 @@ from gallery.ui.browser.thumb_sizes import (
     fit_columns,
     wheel_delta,
 )
-from gallery.ui.browser.transition import (
-    EDGE_ANIMATION_CURVE,
-    EDGE_ANIMATION_MS,
-    EDGE_SETTLE_MS,
-    GridTransition,
-    TransitionMixin,
-)
-from gallery.ui.rename_edit import RenameEdit
-from gallery.ui.scrollbar_style import apply_scrollbar_style
 
 #: 滚动后延迟多久重算可见区。避免每滚一个像素就重排一次缩略图请求。
 VIEWPORT_DEBOUNCE_MS = 60
