@@ -84,15 +84,19 @@ thumbs/      342         2 模块   ← 名字有歧义
 | `panels/breadcrumb.py` | `window/widgets/breadcrumb.py` | 窗口顶部那一行，与 `title_bar` 同级 |
 | `panels/metadata.py` | `viewer/metadata.py` | 宿主是大图页，跟着 `detail.py` |
 | `panels/metadata_edit.py`<br>`panels/event_edit.py` | 新包 `dialogs/` | 806 + 481 行，各够独立；两者都不碰文件，只把用户填的那份读成 dataclass 交出去 |
-| `panels/welcome.py` | `panels` 的位置 → **`welcome.py`（顶层）** | 它是**页面**不是面板 |
+| `panels/welcome.py` | `window/widgets/welcome.py` | 它是**页面**不是面板；只被窗口用 → 与 `breadcrumb` 同处 |
 
 **胶囊那一部分必须留一份共享的**：`build_chip` / `chip_style` / `ChipButton` 被
 `calendar/toolbar.py` 用（ADR 0040 决策 9：两处摆胶囊的地方走同一个出口，否则过一阵就是
 「日历上那几枚比网格上那几枚浅一档」）。搬 `breadcrumb` 时**最容易踩空的就是这里** ——
 胶囊跟着搬走，条件就在日历上少了一排。
 
-因此 `ChipButton` / `build_chip` / `chip_style` 留在**顶层** `chips.py`（两个包都用 → 跨包共享），
-`window/widgets/breadcrumb.py` 只留 `BreadcrumbBar` 自己那部分。
+因此 `ChipButton` / `build_chip` / `chip_style` 拆成**顶层** `chips.py`（两个包都用 →
+跨包共享），`window/widgets/breadcrumb.py` 只留 `BreadcrumbBar` 自己那部分。
+
+**`welcome` 没有上顶层**：它是页面，可它只被窗口用，而顶层那条规矩问的是
+「有几个**子包**用它」—— 一个子包就该搬进那个子包。这条是补上那条守护之后才暴露的：
+写 ADR 时按「页面就该与另三个页面平级」想，落地时那条守护直接否掉了。
 
 ### 2. `calendar/thumbs.py` → `calendar/thumb_store.py`
 
@@ -120,9 +124,16 @@ thumbs/      342         2 模块   ← 名字有歧义
 
 ### 6. 加第二条守护：`PageRole` 的四个值 ↔ 四个页面模块
 
-拆完 `panels/` 之后，四个页面各住一处（`welcome` / `browser.grid` / `calendar.page` /
-`viewer.detail`），而 `PageRole` 是**页面的唯一判据**（`state/level_stack.py`）。这两者一一对应
-是可以在代码里断言的 —— 加一种页面而忘了建控件那条会红。
+拆完 `panels/` 之后，四个页面各住一处，而 `PageRole` 是**页面的唯一判据**
+（`state/level_stack.py`）。这条守护有三层判据，任一层都不能省：
+
+- `PageRole` 的每个成员都在 `PAGE_MODULES` 里有登记，且**模块两两不同**（一页一处）；
+- 那个模块存在，且里面**有一个 QWidget 子类**（页面得是控件）；
+- 角色 ↔ 控件 ↔ 内容区三层对得上：`_page_for_role` 那张表的四个值与 `PageRole` 一致，
+  而它们摆的控件确实被 `addWidget` 进了那个 `QStackedWidget`。
+
+最后那层是**从 `main_window.py` 的 `addWidget` 读出来的**，不是从 `_page_for_role` 读的：
+后者是一张「角色 → 已有控件」的表，四个值它当然一个都不缺。
 
 ## 执行顺序
 
@@ -141,9 +152,12 @@ thumbs/      342         2 模块   ← 名字有歧义
 - `panels/` 这个包**不存在了**；四个页面各住一处，`PageRole` ↔ 页面模块一一对应且有回归测试。
 - `thumbs` 在仓库里只有一个意思。
 - AGENTS.md 的清单与代码一致（它此前把 `filters` / `focus` 错列在 `state/` 下）。
-- `ui/` 顶层多两个（`layout` / `chips`），少一个包；顶层总数由 12 变 13，全部在登记表里。
-- 顶层 `write_ops.py` → `dialogs/` 的反向依赖变成 `write_ops` → `dialogs`，与
-  `write_ops` → `window.menus` 同类，**记在 `dialogs/__init__.py` 的文档里**。
+- `ui/` 顶层多两个（`layout` / `chips`），少一个包（`panels`），全部在登记表里。
+- 顶层 `write_ops.py` → `dialogs/` 的反向依赖与 `write_ops` → `window.menus` 同类，
+  **记在 `dialogs/__init__.py` 的文档里**，不为了方向好看往上搬。
+- **`welcome` 最终没有上顶层**，而是进了 `window/widgets/` —— 写这条 ADR 时按「四个页面
+  平级」想，补上守护之后那条顶层规矩直接否掉了它。ADR 与代码不一致视为缺陷，所以这一条
+  在这里改掉而不是留着。
 
 ## 被否决的方案
 

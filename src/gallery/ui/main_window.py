@@ -51,7 +51,6 @@ from gallery.ui.browser.thumb_sizes import (
     label_for_index,
 )
 from gallery.ui.calendar import CalendarPage
-from gallery.ui.panels.welcome import WelcomeView
 from gallery.ui.tasks import TaskRunner
 from gallery.ui.viewer.detail import DetailView
 from gallery.ui.viewer.metadata import MetadataPanel
@@ -90,6 +89,7 @@ from gallery.ui.window.widgets.external_button import (
 from gallery.ui.window.widgets.search_field import ScopeToggle, SearchField
 from gallery.ui.window.widgets.title_bar import EXTRA_PADDING as TITLE_BAR_EXTRA
 from gallery.ui.window.widgets.title_bar import TitleBar
+from gallery.ui.window.widgets.welcome import WelcomeView
 from gallery.ui.write_ops import WriteOpsMixin, flattened_entries
 
 logger = logging.getLogger(__name__)

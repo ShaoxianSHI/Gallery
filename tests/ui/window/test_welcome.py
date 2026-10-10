@@ -29,7 +29,7 @@ from PySide6.QtGui import QColor, QPalette  # noqa: E402
 from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
 from gallery.ui import theme as theme_module  # noqa: E402
-from gallery.ui.panels.welcome import (  # noqa: E402
+from gallery.ui.window.widgets.welcome import (  # noqa: E402
     SECONDARY_ALPHA,
     SUBTITLE_ALPHA,
     WelcomeView,

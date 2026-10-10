@@ -569,7 +569,7 @@ TOP_LEVEL_MODULES: Final[dict[str, str | None]] = {
     "imaging": None,  # browser / calendar / thumbs / window 四个包都用它
     "chips": None,  # 网格页的面包屑与日历的工具条摆同一批条件胶囊
     "layout": None,  # calendar 的工具条与窗口那几个面板都要拆控件（顺序错了会留下顶层小白窗）
-    "outline": None,  # panels（对话框）与 window（搜索框、菜单）两族
+    "outline": None,  # dialogs（两个编辑器）与 window（搜索框、菜单）两族
     "rename_edit": None,  # browser 的格子与 window 的标题栏共用同一个输入框
     "scrollbar_style": None,  # 网格、周视图、元数据面板三条滚动条
     "tasks": None,  # thumbs 与 window 都要起后台任务
@@ -581,6 +581,10 @@ TOP_LEVEL_MODULES: Final[dict[str, str | None]] = {
 
 #: 入口模块：它们本来就不该被别人 import，进了共享登记表反而会逼人去 import 它们。
 UI_ENTRYPOINTS: Final = ("app", "main_window")
+
+
+#: ``main_window.py`` 的源码：页面模块那条守护要确认「登记的模块真的被它 import 了」。
+_MAIN_WINDOW_SOURCE: Final = (UI_ROOT / "main_window.py").read_text(encoding="utf-8")
 
 
 def _present_top_level_modules(root: Path = UI_ROOT) -> set[str]:
@@ -644,6 +648,168 @@ def test_the_top_level_guard_would_notice_a_violation(tmp_path: Path) -> None:
         "注入了一个没登记的顶层模块，这条守护没有反应"
     )
     assert not _unregistered_top_level(), "真实的 ui/ 顶层被这条用例自己判成违规了"
+
+
+# ---- 四个页面各住一处，与 PageRole 一一对应（ADR 0060）-------------------------
+
+
+def test_every_page_role_has_a_page_module() -> None:
+    """**``PageRole`` 的每个值都要有一个页面模块，而它们住在四个不同的地方**（ADR 0060）。
+
+    ``panels/`` 那六件东西能混在一个包里，是因为它们**都不是页面** —— 一个页面（欢迎）、
+    一栏侧板、一行面包屑、两个对话框、一个助手。拆完之后「四个页面」与 ``PageRole`` 的四个值
+    又一一对应上了，于是这条可以断言：**加一种页面而忘了建控件**、**把某个页面塞进另一个包**、
+    **把两个页面塞进同一个模块**，都红。
+
+    判据有三层，任一层都不能省：模块在不在、模块里有没有 QWidget 子类、
+    以及 ``main_window`` 是不是真的 import 了它（最后那层挡的是「登记了一个没人用的模块」）。
+    """
+    from gallery.ui.window.state.level_stack import PageRole
+
+    missing = sorted(role.name for role in PageRole if role.name not in PAGE_MODULES)
+    assert not missing, f"这些 PageRole 没有对应的页面模块：{missing}；加一种页面就要建它的控件"
+    extra = sorted(set(PAGE_MODULES) - {role.name for role in PageRole})
+    assert not extra, f"这些页面模块没有对应的 PageRole：{extra}；删掉，或给那一页加一个枚举值"
+
+    modules = {
+        name: UI_ROOT.joinpath(*module.split(".")).with_suffix(".py")
+        for name, module in PAGE_MODULES.items()
+    }
+    absent = sorted(name for name, path in modules.items() if not path.is_file())
+    assert not absent, f"这些页面模块不在了（ADR 0060 搬过一轮）：{absent}"
+    no_widget = sorted(name for name, path in modules.items() if not _has_widget_class(path))
+    assert not no_widget, f"这些页面模块里没有 QWidget 子类：{no_widget}"
+
+    # 一页一处：模块两两不同。判据是「改了它牵连不牵连另一个页面」。
+    by_module: dict[str, list[str]] = {}
+    for name, module in PAGE_MODULES.items():
+        by_module.setdefault(module, []).append(name)
+    shared = sorted(module for module, names in by_module.items() if len(names) > 1)
+    assert not shared, f"这些页面住在同一个模块里：{by_module}；一页一处"
+
+    # 角色 ↔ 控件 ↔ 内容区：加一种页面要在这三处各落一次，漏一处就红。
+    roles = _page_attributes_by_role()
+    assert set(roles) == {role.name for role in PageRole}, (
+        f"_page_for_role 那张表与 PageRole 对不上：{roles}"
+    )
+    stacked = _stacked_page_attributes()
+    unstacked = sorted(set(roles.values()) - stacked)
+    assert not unstacked, f"这些页面没有被摆进内容区：{unstacked}"
+    unmapped = sorted(stacked - set(roles.values()))
+    assert not unmapped, f"内容区里摆了这些页，而 PageRole 里没有对应的一个：{unmapped}"
+
+
+#: ``_page_for_role`` 那张表的源码（它在 :mod:`~gallery.ui.window.level_stack_mixin` 里，
+#: 而那张表的另一半 —— 控件本身 —— 在 ``main_window.py``）。
+_PAGE_ROLE_SOURCE: Final = (UI_ROOT / "window" / "level_stack_mixin.py").read_text(encoding="utf-8")
+
+
+def _page_attributes_by_role() -> dict[str, str]:
+    """``_page_for_role`` 那张表：``PageRole`` 的成员名 → 它摆的是哪个控件。"""
+    table: dict[str, str] = {}
+    for node in ast.walk(ast.parse(_PAGE_ROLE_SOURCE)):
+        if not isinstance(node, ast.FunctionDef) or node.name != "_page_for_role":
+            continue
+        for child in ast.walk(node):
+            if not isinstance(child, ast.Dict):
+                continue
+            for key, value in zip(child.keys, child.values, strict=True):
+                if isinstance(key, ast.Attribute) and isinstance(value, ast.Attribute):
+                    table[key.attr] = value.attr
+    return table
+
+
+def _stacked_page_attributes() -> set[str]:
+    """``main_window`` 往内容区（那个 ``QStackedWidget``）里摆的是哪几个控件。
+
+    **从 ``addWidget`` 读出来而不是从 ``_page_for_role`` 读**：后者是一张「角色 → 已有控件」
+    的表，四个值它当然一个都不缺；真正说明「这一页存在」的是它被摆进了内容区。
+    栈那个属性名也不写死 —— 找 ``QStackedWidget()`` 那个赋值。
+    """
+    tree = ast.parse(_MAIN_WINDOW_SOURCE)
+    stack_attr = next(
+        (
+            node.targets[0].attr
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == "QStackedWidget"
+            and isinstance(node.targets[0], ast.Attribute)
+        ),
+        None,
+    )
+    if stack_attr is None:
+        return set()
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "addWidget"
+            and isinstance(node.func.value, ast.Attribute)
+            and node.func.value.attr == stack_attr
+            and node.args
+            and isinstance(node.args[0], ast.Attribute)
+        ):
+            found.add(node.args[0].attr)
+    return found
+
+
+def _all_add_widget_arguments() -> set[str]:
+    """``main_window`` 里所有 ``addWidget`` 的第一个参数 —— 不分摆进哪个布局。
+
+    只给验守护自己会红的那条用例用：它证明 :func:`_stacked_page_attributes` 真的在筛。
+    """
+    found: set[str] = set()
+    for node in ast.walk(ast.parse(_MAIN_WINDOW_SOURCE)):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "addWidget"
+            and node.args
+            and isinstance(node.args[0], ast.Attribute)
+        ):
+            found.add(node.args[0].attr)
+    return found
+
+
+def _has_widget_class(path: Path) -> bool:
+    """这个模块里有没有 QWidget 子类（页面得是控件，别的不是）。"""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    return any(isinstance(node, ast.ClassDef) and node.bases for node in ast.walk(tree))
+
+
+#: ``PageRole`` 的四个值 ↔ 各自的页面模块（ADR 0060）。**只在这里写一份** ——
+#: 上面那条守护是唯一读它的地方，改名改路径都只动这一处。
+PAGE_MODULES: Final[dict[str, str]] = {
+    "WELCOME": "window.widgets.welcome",
+    "GRID": "browser.grid",
+    "CALENDAR": "calendar.page",
+    "DETAIL": "viewer.detail",
+}
+
+
+def test_the_page_module_guard_would_notice_a_violation() -> None:
+    """上一条自己必须验过一次 —— 每一层判据都可能恒真，逐条注入一遍。"""
+    from gallery.ui.window.state.level_stack import PageRole
+
+    # 「模块在不在」：`browser` 是包、`grid` 才是模块 —— 分不清这两种就等于没查。
+    assert (UI_ROOT / "browser" / "grid.py").is_file()
+    assert not (UI_ROOT / "browser.grid.py").exists()
+    # 「有没有 QWidget 子类」：一个只有函数的模块要被抓出来。
+    assert not _has_widget_class(UI_ROOT / "layout.py")
+    assert _has_widget_class(UI_ROOT / "calendar" / "page.py")
+    # 「四个角色都在」：少登记一个就该被 `missing` 抓到。
+    assert set(PAGE_MODULES) == {role.name for role in PageRole}
+    assert set(PAGE_MODULES) - {"MAP"}  # 真的少一个时非空
+    # 「角色 ↔ 控件 ↔ 内容区」三层对得上，且只认真正摆进 QStackedWidget 的那几个。
+    roles = _page_attributes_by_role()
+    assert set(roles) == {role.name for role in PageRole}
+    stacked = _stacked_page_attributes()
+    assert set(roles.values()) <= stacked
+    # 摆进别的布局的不算页面（面包屑就摆在网格页那一行的布局里）。
+    assert "_breadcrumb" in _all_add_widget_arguments() - stacked
 
 
 # ---- mixin：同名方法会静默失效 ------------------------------------------------

@@ -38,7 +38,6 @@ from gallery.core.places.resolver import LazyPlaceResolver
 from gallery.ui.browser.model import PhotoListModel
 from gallery.ui.browser.thumb_sizes import edge_for_index, nearest_index
 from gallery.ui.calendar.page import CalendarPage
-from gallery.ui.panels.welcome import WelcomeView
 from gallery.ui.tasks import TaskContext, TaskRunner
 from gallery.ui.thumbs.pipeline import ThumbnailPipeline
 from gallery.ui.viewer.detail import DetailView
@@ -55,6 +54,7 @@ from gallery.ui.window.state.pending_watch import PendingWatch
 from gallery.ui.window.state.staging import Staging
 from gallery.ui.window.watch import WatchBridge
 from gallery.ui.window.widgets.banner_overlay import BannerOverlay
+from gallery.ui.window.widgets.welcome import WelcomeView
 
 logger = logging.getLogger(__name__)
 
