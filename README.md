@@ -48,17 +48,12 @@ uv run --group build python scripts/build_app.py ~/Applications     # 直接放�
 uv run --group build python scripts/build_app.py --dry-run          # 只看将要执行的命令
 ```
 
-自包含版把解释器、Python 依赖与 Qt 插件一起编译进包里（约 103 MiB，首次编译要几分钟），
+自包含版把解释器、Python 依赖与 Qt 插件一起编译进包里（约 104 MiB，首次编译要几分钟），
 拷到别的 Mac 上双击即可运行。另有开发版，一秒生成、启动器指向本仓库的 `.venv`：
 
 ```bash
 uv run python -m gallery.macos_app
 ```
-
-两种包都能双击启动，Dock 与访达里显示的是同一枚图标。包默认用 ad-hoc 签名（`-`），只在本机
-双击可用；要分发给别人，把 `scripts/build_app.py` 里的签名身份换成自己的开发者证书，打包后
-自行签名与公证。从访达 / Dock 启动时 Gallery 会自己把常见的安装目录补回 `PATH`，所以终端里
-能用的 `exiftool` 在双击启动时也能用。
 
 ## 基本用法
 
