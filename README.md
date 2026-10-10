@@ -117,11 +117,8 @@ uv run python -m gallery.macos_app
 副本（相册封面、界面偏好）。
 
 **`events.db` 不是缓存**：事件是你自己填的，删掉之后没有任何办法能重建回来 —— 所以清缓存与
-重建索引都不会碰它，Gallery 升级时也只往上加列、绝不重建它那张表。事件的可靠边界就是
-「这个 `.gallery/` 还在」，备份它请连 `events.db` 一起带上。
-
-缩略图不放在库里，而是按库路径摘要放在 `~/Library/Application Support/Gallery/cache/thumbs/`
-—— 照片文件夹常常挂在云盘上，几万个小文件跟着同步是白白折腾。
+重建索引都不会碰它，Gallery 升级时也只往上加列、绝不重建它那张表。备份它请连 `events.db`
+一起带上。
 
 ## 支持的照片格式
 
@@ -132,8 +129,6 @@ uv run python -m gallery.macos_app
 | 只能写 XMP 里的三层地名（EXIF 与 IPTC 都放不下） | GIF |
 | 只能看，改不动 | BMP |
 | **尚不支持** | 常见 RAW（CR2/CR3、NEF、ARW、DNG）与视频 |
-
-每种容器到底存得下哪些标签是逐格式实测出来的，不是照文档推的。
 
 ## 已知限制
 
@@ -161,5 +156,4 @@ uv run mypy            # 类型检查（只查 core/）
 
 ## 许可证
 
-[MIT](LICENSE) —— 可以自由使用、修改、再分发与商用，只需保留版权声明与许可声明。
-软件按「原样」提供，不附带任何担保。
+[MIT](LICENSE)
