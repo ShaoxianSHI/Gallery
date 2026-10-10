@@ -107,9 +107,22 @@ thumbs/      342         2 模块   ← 名字有歧义
 
 `FilterState` / `FocusState` / `JobSlots` / `JobSpec`。**AGENTS.md 的清单同步改**。
 
-### 4. `ShortcutColumnMenu` 进 `window/widgets/`
+### 4. `ShortcutColumnMenu` **留在 `menu_style.py`**（原计划搬进 `widgets/`，被实测否掉）
 
-按 0059 决策 2 自己写的判据。`ShortcutColumns`（数据类）与样式解析留在 `menu_style.py`。
+0059 决策 2 的判据是「**QWidget 子类**与 mixin 是两种东西」。照那条判据它是该搬的 ——
+**但那条判据的前提是那个模块装的是 mixin，而 `menu_style.py` 装的不是**：
+它答的是「弹出菜单长什么样」，而这个类答的是同一个问题（见下）。实测两点：
+
+- `apply_style` **从这个类算样式表**：`check_gutter=0 if has_checkable else MENU_CHECK_GUTTER`
+  与 `own_arrow=isinstance(current, ShortcutColumnMenu) and current.owns_submenu_arrows()`。
+  搬走就得让 `menu_style` 反过来 import `widgets/`，而 `widgets/search_field.py` 与
+  `widgets/external_button.py` 已经 import `menu_style` —— **要么成环，要么把六份数字各抄一份。**
+- `ShortcutColumnMenu.reserve_shortcut_columns` 里那句
+  「文字左边距恒为 `MENU_INSET + MENU_CHECK_GUTTER`……**两种都得算**」——
+  样式表发出的 padding 与自绘画的左边距**必须是同一个数**，拆开就是两处各派生一遍，
+  而症状是「自绘的那一列压到标签上」（这一族已经踩过：`AGENTS.md` 里滚动条圆角那条）。
+
+拆开的代价是「同一个不变式住在两个文件」，比「一个 QMenu 子类与其样式表住在一起」糟。
 
 ### 5. 补上 0059 承诺的那条守护
 
@@ -141,9 +154,9 @@ thumbs/      342         2 模块   ← 名字有歧义
 |---|---|---|
 | **0** | 补 0059 承诺的那条守护 | **后面每一步的判据来源**；不先补，搬完也没有东西看着 |
 | **1** | `calendar/thumbs.py` → `thumb_store.py` | 一个文件，零风险，先把名字的歧义去掉 |
-| **2** | 拆 `panels/`（五步纯移动，每件一次提交） | import 面最宽，但每一件都是纯移动 |
-| **3** | 四个状态对象进 `window/state/` | 纯移动，**但 `tests/test_guards.py` 按文件名找 `filters.py` / `focus.py`**，路径要同步 |
-| **4** | `ShortcutColumnMenu` 进 `window/widgets/` | 最后做，纯移动 |
+| **2** | 拆 `panels/`（五件各一次提交） | import 面最宽，但每一件都是纯移动 |
+| **3** | 三个状态对象进 `window/state/` | 纯移动，**但 `tests/test_guards.py` 与 `test_filter_flow.py` 按路径找它们**，判据要跟着改 |
+| **4** | ~~`ShortcutColumnMenu` 进 `window/widgets/`~~ **被否** | 见决策 4 |
 
 **每一步单独提交**，每一步之后 `pytest` 与 `ruff` 必须干净。
 
@@ -161,6 +174,8 @@ thumbs/      342         2 模块   ← 名字有歧义
 
 ## 被否决的方案
 
+- **把 `ShortcutColumnMenu` 搬进 `window/widgets/`** —— 决策 4 里量过了：样式表是从这个类
+  算出来的，搬走要么成环、要么把六份数字各抄一份。
 - **把四个页面合成一个 `pages/` 大包** —— `browser` / `calendar` / `viewer` 之间零 import、
   依赖单调，正是想要的样子；合起来只会让 6600 行挤进一个目录。
 - **把三份缩略图缓存合并成一份** —— 三者的淘汰策略是**故意不同**的（网格按内存字节、
@@ -170,3 +185,12 @@ thumbs/      342         2 模块   ← 名字有歧义
   硬塞进 `tests/ui/window/` 名字会骗人。
 - **搬 `write_ops.py`** —— 同 0059 决策 4。
 - **一次性全搬** —— 五步各自可验证、可回退；一次改三十个文件，出了问题定位不到是哪一步。
+
+## 一条被顺手改掉的判据
+
+`tests/test_guards.py` 里 `FILTERS_MODULE` / `FOCUS_MODULE` / `BANNER_TEXT_MODULE`
+原来比的是 `path.name`，而这一步之后仓库里有两个叫 `filters.py` 的文件 ——
+**按文件名放行会把两个都放行**，只该放行写入口所在的那一个。三条改成比整条相对路径。
+
+顺带发现 `BANNER_TEXT_MODULE` 声明的路径（`window/banner_text.py`）本来就与实际
+（`window/state/banner_text.py`）不符，一直靠「比文件名」蒙对。
