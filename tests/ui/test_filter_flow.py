@@ -439,9 +439,10 @@ def _the_line_about_conditions(block: str) -> str:
     return lines[0] if lines else block.strip()
 
 
-#: 唯一允许改动条件列表的那个模块（ADR 0052）。四个字段与它们的写入口都在那里，
+#: 唯一允许改动条件列表的那个模块（ADR 0052 / 0060）。四个字段与它们的写入口都在那里，
 #: 所以「谁可以改条件」现在是一句模块名，而不再是三个文件里的六处写法。
-FILTERS_MODULE = "src/gallery/ui/window/filters.py"
+#: ADR 0060 把它与那个只读 mixin 分开住，于是 ``window/filters.py`` 里一个都不剩。
+FILTERS_MODULE = "src/gallery/ui/window/state/filters.py"
 
 #: 那一个模块里**确实存在**的写法，逐条列出来。清单的价值是双向的：清单外多一处会红，
 #: 清单里少一条（被挪走或改名了）也会红 —— 后者防的是「这条测试从此扫不到东西」。
@@ -462,7 +463,7 @@ EXPECTED_MUTATIONS = (
 
 
 def test_only_the_filters_module_changes_the_conditions() -> None:
-    """条件只由 ``ui/window/filters.py`` 改动 —— 四个字段与写入口都在那里（ADR 0052）。
+    """条件只由 ``ui/window/state/filters.py`` 改动 —— 四个字段与写入口都在那里（ADR 0052）。
 
     「除了手动点叉之外任何情况下条件不消失」的**可查形式**：扫出全仓库每一处改动
     ``self._conditions`` 的写法，只允许出现在那一个模块里，且只允许 :data:`EXPECTED_MUTATIONS`
@@ -493,12 +494,13 @@ def test_only_the_filters_module_changes_the_conditions() -> None:
             found.add(code)
 
     assert not elsewhere, (
-        "这些地方自己动了条件列表；四个字段与它们的写入口归 ui/window/filters.py 管"
+        "这些地方自己动了条件列表；四个字段与它们的写入口归 ui/window/state/filters.py 管"
         f"（ADR 0052）：\n{chr(10).join(elsewhere)}"
     )
     # 清单本身也要看着点：允许项被挪走或改名了时这里会红，而不是悄悄扫不到东西。
     assert found == set(EXPECTED_MUTATIONS), (
-        f"filters.py 里改动条件的写法与清单对不上：多出 {sorted(found - set(EXPECTED_MUTATIONS))}，"
+        f"state/filters.py 里改动条件的写法与清单对不上："
+        f"多出 {sorted(found - set(EXPECTED_MUTATIONS))}，"
         f"少了 {sorted(set(EXPECTED_MUTATIONS) - found)}"
     )
 

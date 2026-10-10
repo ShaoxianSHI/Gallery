@@ -14,7 +14,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from gallery.ui.window.jobs import _GROUPS, _JOBS, LEVEL, LEVEL_CALENDAR, LIBRARY, JobsMixin
+from gallery.ui.window.jobs import LEVEL, LEVEL_CALENDAR, LIBRARY, JobsMixin
+from gallery.ui.window.state.jobs import _GROUPS, _JOBS
 
 #: 换层时**绝对不能**取消的任务：它正在往用户的文件夹里落文件。
 MUST_SURVIVE_A_LEVEL_CHANGE = ("_write_job",)
@@ -60,7 +61,7 @@ def test_every_registered_job_is_declared_once_and_started_empty() -> None:
     **声明在 :class:`JobSlots` 的类级别，槽由它的 ``__init__`` 置空**（ADR 0058 阶段 1）：
     那 13 个槽搬进了那个对象，而 ``JobsMixin`` 只剩一组同名 property 转发。
     """
-    tree = ast.parse((_source_root() / "window" / "jobs.py").read_text("utf-8"))
+    tree = ast.parse((_source_root() / "window" / "state" / "jobs.py").read_text("utf-8"))
     cls = next(
         node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "JobSlots"
     )
@@ -137,9 +138,17 @@ def test_the_thirteen_slots_have_exactly_one_storage() -> None:
     判据用 AST：``JobsMixin`` 里这 13 个名字必须是 ``property``（有 setter），
     而不是普通属性或方法；而唯一的真存储在 ``JobSlots`` 的 ``__init__`` 里。
     """
-    tree = ast.parse((_source_root() / "window" / "jobs.py").read_text("utf-8"))
-    by_name = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
-    mixin, slots = by_name["JobsMixin"], by_name["JobSlots"]
+    root = _source_root()
+    mixin = next(
+        node
+        for node in ast.parse((root / "window" / "jobs.py").read_text("utf-8")).body
+        if isinstance(node, ast.ClassDef) and node.name == "JobsMixin"
+    )
+    slots = next(
+        node
+        for node in ast.parse((root / "window" / "state" / "jobs.py").read_text("utf-8")).body
+        if isinstance(node, ast.ClassDef) and node.name == "JobSlots"
+    )
 
     forwarded = {
         item.name

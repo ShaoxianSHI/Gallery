@@ -320,7 +320,7 @@ def test_only_the_jobs_module_starts_or_cancels_a_background_job() -> None:
     """
     offenders: list[str] = []
     for path in _iter_python_files(UI_ROOT):
-        if path.name == JOBS_MODULE.name:
+        if path.relative_to(UI_ROOT) == JOBS_MODULE:
             continue
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
             if any(pat.search(line) for pat in JOB_LIFECYCLE_PATTERNS):
@@ -338,13 +338,17 @@ def test_the_job_lifecycle_guard_would_notice_a_violation() -> None:
     assert not any(pat.search("        self._scan_job = None") for pat in JOB_LIFECYCLE_PATTERNS)
 
 
-#: 筛选 / 检索那四个字段的写入口只许在 ``ui/window/filters.py`` 里（ADR 0052）。
-FILTERS_MODULE = Path("window") / "filters.py"
+#: 筛选 / 检索那四个字段的写入口只许在 ``ui/window/state/filters.py`` 里（ADR 0052 / 0060）。
+#:
+#: **按整条相对路径比，不按文件名** —— ADR 0060 把 :class:`FilterState` 与那个 mixin 分开住，
+#: 于是仓库里有两个叫 ``filters.py`` 的文件（``window/filters.py`` 只剩只读属性）。按文件名放行
+#: 会把**两个**都放行，而只该放行写入口所在的那一个。
+FILTERS_MODULE = Path("window") / "state" / "filters.py"
 
-#: 横幅那一族的**写**已经从窗口上搬走了（ADR 0054）：七个字段现在住在
+#: 横幅那一族的**写**已经从窗口上搬走了（ADR 0054）：七个字段住在
 #: ``ui/window/state/banner_text.py``。这里守的是「别让写入口散回来」—— ``_thumbnail_failures``
 #: 留了一个**只读属性**（三处测试在读那个数字），而 ``property`` 本身不是赋值，所以放行。
-BANNER_TEXT_MODULE = Path("window") / "banner_text.py"
+BANNER_TEXT_MODULE = Path("window") / "state" / "banner_text.py"
 BANNER_TEXT_WRITE_PATTERNS = tuple(
     re.compile(rf"self\.{name}\s*(=[^=]|\+=|-=)")
     for name in (
@@ -359,12 +363,12 @@ BANNER_TEXT_WRITE_PATTERNS = tuple(
     )
 )
 
-#: 焦点 / 当前行那一族的写入口只许在 ``ui/window/focus.py`` 里（ADR 0053）。
+#: 焦点 / 当前行那一族的写入口只许在 ``ui/window/state/focus.py`` 里（ADR 0053 / 0060）。
 #:
 #: ``_current_row`` 在窗口上是**只读属性**，所以任何一处赋值都是绕过轴 —— 而它原先是 11 处裸赋值，
 #: 其中 6 处是同一个意思（换层了，没人正看着任何一张）。那一族其余三个字段已经不在窗口上了，
-#: 写它们会直接 ``AttributeError``，所以只盯这一个。
-FOCUS_MODULE = Path("window") / "focus.py"
+#: 写它们会直接 ``AttributeError``，所以只盯这一个。同样按整条相对路径比（同上）。
+FOCUS_MODULE = Path("window") / "state" / "focus.py"
 FOCUS_WRITE_PATTERNS = (re.compile(r"self\._current_row\s*(=[^=]|\+=|-=)"),)
 
 #: 那四个字段在窗口上仍是**只读属性**，所以任何一处赋值都是绕过轴 —— 四支都拦：
@@ -391,7 +395,7 @@ def test_only_the_filters_module_writes_the_filter_fields() -> None:
     """
     offenders: list[str] = []
     for path in _iter_python_files(UI_ROOT):
-        if path.name == FILTERS_MODULE.name:
+        if path.relative_to(UI_ROOT) == FILTERS_MODULE:
             continue
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
             if any(pat.search(line) for pat in FILTER_WRITE_PATTERNS):
@@ -410,7 +414,7 @@ def test_only_the_focus_module_writes_the_current_row() -> None:
     """
     offenders: list[str] = []
     for path in _iter_python_files(UI_ROOT):
-        if path.name == FOCUS_MODULE.name:
+        if path.relative_to(UI_ROOT) == FOCUS_MODULE:
             continue
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
             if any(pat.search(line) for pat in FOCUS_WRITE_PATTERNS):
@@ -430,7 +434,7 @@ def test_only_the_banner_text_module_writes_the_banner_fields() -> None:
     """
     offenders: list[str] = []
     for path in _iter_python_files(UI_ROOT):
-        if path.name == BANNER_TEXT_MODULE.name:
+        if path.relative_to(UI_ROOT) == BANNER_TEXT_MODULE:
             continue
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
             if any(pat.search(line) for pat in BANNER_TEXT_WRITE_PATTERNS):
