@@ -697,19 +697,24 @@ def test_this_guard_would_notice_a_new_dependency() -> None:
     assert "setGeometry" not in measured["window/title_bar_flow.py:TitleBarFlowMixin"]
 
 
-#: ``mypy --strict src/gallery/ui/window`` 的实测值（ADR 0058 七个阶段之后）。
+#: ``mypy --strict src/gallery/ui/window`` 的实测值（ADR 0060 搬完模块之后）。
 #:
 #: **这个数从 921 涨到了这里，而耦合面从 489 降到了 457** —— 两件事不矛盾，因为它们量的
 #: 不是同一件事：ADR 0058 把状态收进对象之后，转发用的 **property 只对它自己那间可见**，
 #: 于是「用到一个转发名字」的 mixin 单独查时又看不见它了。**声明去重了，报错就回来了。**
+#:
+#: 上一次涨是 ADR 0058 的七个阶段；这一次是 **ADR 0059/0060 往 ``window/`` 里搬了八个模块**，
+#: 而这一条扫的正是这个目录 —— 多扫进来几间，就多几处「mixin 里的 ``self`` 静态上不是
+#: ``QWidget``」。新增的四条全是那一族（``Key_Return`` / ``Key_Escape`` / ``menuAction`` /
+#: ``widgetAt``），没有一条是新性质。
 #:
 #: **该盯的数字是耦合面（上面那张表，457）与组合根（0 条）**，不是这个总数。
 #: 留着的意义只是**锁定基线** —— 「比上次多了几条、多了在哪」这个问题得有人问。
 #:
 #: 它和上面那张表量的是同一片依赖，但不是一个数：表里是**不重复的成员**，而 mypy 报的是
 #: **使用点**且按它自己的口径逐类去重。所以这里**不做交叉断言**。
-MYPY_TOTAL_ERRORS = 830
-MYPY_ATTR_DEFINED = 785
+MYPY_TOTAL_ERRORS = 841
+MYPY_ATTR_DEFINED = 789
 
 #: 真跑一次 mypy 的开关。跑一次要几秒，而这一份每次测试都会跑 —— **别每次都跑**。
 UI_WINDOW_MYPY_RECHECK = "UI_WINDOW_MYPY_RECHECK"

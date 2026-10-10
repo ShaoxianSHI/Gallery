@@ -42,12 +42,12 @@ from gallery.ui.thumb_sizes import edge_for_index, nearest_index
 from gallery.ui.thumbs.pipeline import ThumbnailPipeline
 from gallery.ui.viewer.detail import DetailView
 from gallery.ui.viewer.metadata import MetadataPanel
-from gallery.ui.window.filters import FilterState
-from gallery.ui.window.focus import FocusState
 from gallery.ui.window.jobs import LIBRARY
 from gallery.ui.window.navigation import EntryKey
 from gallery.ui.window.state.app_session import AppSession
 from gallery.ui.window.state.banner_text import BannerText
+from gallery.ui.window.state.filters import FilterState
+from gallery.ui.window.state.focus import FocusState
 from gallery.ui.window.state.level_stack import LevelStack, RootKind, root_for
 from gallery.ui.window.state.library_slot import LibrarySlot
 from gallery.ui.window.state.pending_watch import PendingWatch
