@@ -7,8 +7,6 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Sequence
-from pathlib import Path
 from typing import Final
 
 from PySide6.QtCore import (
@@ -16,7 +14,6 @@ from PySide6.QtCore import (
     QAbstractItemModel,
     QEvent,
     QItemSelectionModel,
-    QMimeData,
     QModelIndex,
     QObject,
     QPoint,
@@ -28,16 +25,10 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QContextMenuEvent,
-    QDrag,
-    QDragEnterEvent,
-    QDragLeaveEvent,
-    QDragMoveEvent,
-    QDropEvent,
     QGuiApplication,
     QKeyEvent,
     QMouseEvent,
     QNativeGestureEvent,
-    QPixmap,
     QResizeEvent,
     QWheelEvent,
 )
@@ -49,11 +40,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
 from gallery.ui.browser.anchoring import AnchoringMixin
 from gallery.ui.browser.delegate import GRID_PADDING_X, GRID_PADDING_Y, PhotoDelegate
-from gallery.ui.browser.drag import drag_pixmap
-from gallery.ui.browser.model import ALBUM_ROLE, ENTRY_ROLE
+from gallery.ui.browser.model import ALBUM_ROLE
 from gallery.ui.browser.transition import (
     EDGE_ANIMATION_CURVE,
     EDGE_ANIMATION_MS,
@@ -109,10 +98,6 @@ MAX_LAYOUT_MEMO = 32
 #: 拖动距离的回退值。正常情况取平台自己的数字（见 :func:`_drag_threshold`）。
 _FALLBACK_DRAG_DISTANCE = 10
 
-#: 拖动里带的那份数据的格式名。**只认这一种**（ADR 0062 决策 1）：外面拖进来的文件、
-#: 别的应用的数据一律不接 —— 落到相册上要移动用户文件，触发条件必须是我们自己发起的。
-PHOTO_MIME_TYPE = "application/x-gallery-photo-entries"
-
 
 def _drag_threshold() -> int:
     """鼠标按下后挪多远才算「拖动」。
@@ -154,9 +139,6 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
     rename_active_changed = Signal(bool)
     #: 用户在网格上按了右键：**该作用于哪一行**，``-1`` 表示落在空白处（选区由视图摆正）。
     context_requested = Signal(int)
-    #: 照片被放到了某个相册上：该相册的**目录路径**（ADR 0062）。视图只报落点，
-    #: 搬文件由 :mod:`gallery.ui.write_ops` 做 —— 与右键菜单那条同一条路。
-    album_dropped = Signal(object)
 
     def __init__(self, parent: QWidget | None = None, *, icon_edge: int = DEFAULT_EDGE) -> None:
         super().__init__(parent)
@@ -206,15 +188,6 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
         apply_scrollbar_style(self.verticalScrollBar())
         self._delegate = PhotoDelegate(self, icon_edge=icon_edge)
         self.setItemDelegate(self._delegate)
-        # 拖到相册卡片上就移动（ADR 0062）。**自己接 drop 而不是用内置重排**：模型里没有
-        # ``dropMimeData``，于是「落空回原处」是无事发生，而不是一段要写的撤销。
-        self._drop_row = -1
-        self.setAcceptDrops(True)
-        self.setDragEnabled(True)
-        self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
-        self.setDefaultDropAction(Qt.DropAction.MoveAction)
-        # 落点高亮自己画（委托那一圈），不要 Qt 那个插入线。
-        self.setDropIndicatorShown(False)
         # 捏合与滚轮都是连续事件，必须累积到阈值才切一档；捏合另套一道最小间隔，否则手势快
         # 时每次切档都把上一次的动画掐断。⌘+滚轮不限速，连按由 MainWindow 排队。
         self._pinch_steps = RateLimitedAccumulator(PINCH_THRESHOLD, MIN_PINCH_INTERVAL_MS)
@@ -923,126 +896,6 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
         index = model.index(row, 0)
         if index == self.currentIndex() and not self._rename_edit.is_editing():
             self.rename_requested.emit(index)
-
-    # ---- 拖放（ADR 0062）----------------------------------------------------
-
-    def startDrag(self, supported_actions: Qt.DropAction) -> None:  # noqa: N802 - Qt 定的
-        """把选中的照片拖起来。**相册卡片拖不动**（直接返回，一个拖动都不发）。
-
-        「把相册拖进另一个相册」要移动整棵子树，是另一件事，不在这里顺手做掉。
-        """
-        entries = self._draggable_entries()
-        if not entries:
-            return
-        drag = QDrag(self)
-        drag.setMimeData(self._drag_mime(entries))
-        drag.setPixmap(self._drag_image(entries))
-        # 落点由 dragEnter/dragMove/drop 三个事件答；``exec`` 返回时拖动已经结束。
-        drag.exec(Qt.DropAction.MoveAction, supported_actions)
-
-    def dragEnterEvent(self, event: QDragEnterEvent) -> None:  # noqa: N802 - Qt 定的
-        """只认我们自己发起的拖动 —— 外面拖进来的文件不接（触发移动的必须是这一种）。"""
-        if event.mimeData().hasFormat(PHOTO_MIME_TYPE):
-            event.acceptProposedAction()
-            return
-        event.ignore()
-
-    def dragMoveEvent(self, event: QDragMoveEvent) -> None:  # noqa: N802 - Qt 定的
-        """光标下不是相册卡片就 ``ignore()`` —— 于是 ``dropEvent`` 压根不会来。
-
-        「落到照片上 / 空白处 / 分组卡片上什么都不发生」因此不需要在这里写判断。
-        """
-        target = self._album_row_at(event.position().toPoint())
-        if target < 0:
-            self._clear_drop_target()
-            event.ignore()
-            return
-        if target != self._drop_row:
-            self._set_drop_target(target)
-        event.acceptProposedAction()
-
-    def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:  # noqa: N802 - Qt 定的
-        self._clear_drop_target()
-        event.accept()
-
-    def dropEvent(self, event: QDropEvent) -> None:  # noqa: N802 - Qt 定的
-        """把落点交给窗口。**不碰文件、也不动模型的一行** —— 移动由 ``write_ops`` 做。"""
-        self._clear_drop_target()
-        target = self._album_at(event.position().toPoint())
-        if target is None:
-            event.ignore()
-            return
-        event.acceptProposedAction()
-        self.album_dropped.emit(target)
-
-    def _album_row_at(self, point: QPoint) -> int:
-        """光标下是不是相册卡片；是就返回行号，不是就 ``-1``。"""
-        index = self.indexAt(point)
-        if not index.isValid() or not index.data(ALBUM_ROLE):
-            return -1
-        return index.row()
-
-    def _album_at(self, point: QPoint) -> Path | None:
-        """光标下那个相册的目录路径（不是相册就 ``None``）。"""
-        row = self._album_row_at(point)
-        entry = self._entry_at(row)
-        return entry.path if isinstance(entry, FolderRef) else None
-
-    def _entry_at(self, row: int) -> GridEntry | None:
-        if row < 0:
-            return None
-        model = self.model()
-        if model is None or not 0 <= row < model.rowCount():
-            return None
-        entry = model.index(row, 0).data(ENTRY_ROLE)
-        if isinstance(entry, (PhotoRef, FolderRef, GroupRef)):
-            return entry
-        return None
-
-    def _draggable_entries(self) -> list[GridEntry]:
-        """这次拖动带的是哪些条目（选区里的照片与分组卡片，相册不算）。"""
-        model = self.model()
-        if model is None:
-            return []
-        entries: list[GridEntry] = []
-        for row in self.selected_rows():
-            entry = self._entry_at(row)
-            if entry is not None and not isinstance(entry, FolderRef):
-                entries.append(entry)
-        return entries
-
-    def _drag_mime(self, entries: Sequence[GridEntry]) -> QMimeData:
-        mime = QMimeData()
-        mime.setData(PHOTO_MIME_TYPE, "\n".join(str(e.path) for e in entries).encode())
-        return mime
-
-    def _drag_image(self, entries: Sequence[GridEntry]) -> QPixmap:
-        """跟着光标走的那张图：整张卡片，多选叠一摞（见 :mod:`gallery.ui.browser.drag`）。"""
-        model = self.model()
-        head = entries[0]
-        pixmap = model.cover_pixmap(head) if model is not None else None
-        return drag_pixmap(pixmap, head.name, self.palette(), count=len(entries))
-
-    def _set_drop_target(self, row: int) -> None:
-        self._drop_row = row
-        self._delegate.set_drop_target(row)
-        self._repaint_drop_target(row)
-
-    def _clear_drop_target(self) -> None:
-        """收起落点高亮（拖动结束或移出网格时）。"""
-        previous, self._drop_row = self._drop_row, -1
-        if previous < 0:
-            return
-        self._delegate.set_drop_target(-1)
-        self._repaint_drop_target(previous)
-
-    def _repaint_drop_target(self, row: int) -> None:
-        model = self.model()
-        if model is None or not 0 <= row < model.rowCount():
-            return
-        # 走 ``update`` 而不是让模型发 ``dataChanged``：高亮是**拖动期间**的界面状态，
-        # 不是数据变了，重画那一格就够（发信号会惊动监听器与缩略图流水线）。
-        self.viewport().update(self.visualRect(model.index(row, 0)))
 
     def contextMenuEvent(self, event: QContextMenuEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         """右键：先把选区摆正，再把「这一下落在哪」告诉窗口。

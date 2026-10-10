@@ -435,42 +435,6 @@ def test_nothing_is_overwritten_in_the_target(qt_app: QApplication, window: Main
     assert "改名为「一张 2.jpg」" in window._banner.text()
 
 
-def test_dropping_a_photo_on_an_album_card_moves_it(
-    qt_app: QApplication, window: MainWindow
-) -> None:
-    """拖到相册卡片上：**文件真的搬过去了**，横幅与撤销都与右键菜单那条一样（ADR 0062）。
-
-    这一族里最要紧的不是「能不能拖」，而是**拖放没有另起一条写盘的路**：它接的正是
-    :meth:`_transfer_selected`，所以 journal、横幅与 ⌘Z 全部是同一样东西。
-    """
-    _enter(qt_app, window, window._library.root / "京都")
-    _select_photo(window, "一张.jpg")
-    album = window._library.root / "奈良"
-
-    window._grid.album_dropped.emit(album)
-
-    assert wait_until(qt_app, lambda: window._write_job is None), "移动没有在时限内结束"
-    assert (album / "一张.jpg").exists(), "拖放之后目标里应当有那张照片"
-    assert not (window._library.root / "京都" / "一张.jpg").exists(), "源必须不在原地"
-    assert "已移动 1 项到「奈良」" in window._banner.text()
-
-
-def test_a_dropped_move_can_be_undone(qt_app: QApplication, window: MainWindow) -> None:
-    """拖放移动的那一次，⌘Z 照样撤得回来 —— 用户敢拖全靠这一条。"""
-    _enter(qt_app, window, window._library.root / "京都")
-    _select_photo(window, "一张.jpg")
-    photo = window._library.root / "京都" / "一张.jpg"
-    album = window._library.root / "奈良"
-
-    window._grid.album_dropped.emit(album)
-    assert wait_until(qt_app, lambda: window._write_job is None)
-
-    window.undo_last_write()
-
-    assert photo.exists(), "⌘Z 没有把照片挪回原来的相册"
-    assert not (album / "一张.jpg").exists()
-
-
 def test_moving_into_the_album_it_is_already_in_makes_a_copy(
     qt_app: QApplication, window: MainWindow
 ) -> None:

@@ -246,8 +246,6 @@ class MainWindow(
         self._grid.rename_committed.connect(self._on_rename_committed)
         self._grid.rename_active_changed.connect(self._on_rename_active_changed)
         self._grid.context_requested.connect(self._show_context_menu)
-        # 拖到相册卡片上：视图只报落点，搬文件走 write_ops，与右键菜单那条同一条路（ADR 0062）。
-        self._grid.album_dropped.connect(self.move_selected_into)
         # 「重命名」「移到废纸篓」能不能用，取决于当前有没有选中东西。**只接 `selectionChanged`，
         # 并且合并成一轮再算**：一次算要全量重算十八枚动作，其中 ⌘V 还要同步读一次系统剪贴板。
         selection_model = self._grid.selectionModel()

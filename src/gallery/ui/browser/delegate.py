@@ -40,8 +40,6 @@ class PhotoDelegate(QStyledItemDelegate):
         #: 切档过渡：这一帧相对最终位置往回挪多少。``None`` 表示不偏移（常态）。
         self._transition: GridTransition | None = None
         self._t = 1.0
-        #: 正被拖进来的那一格（``-1`` 表示没有，见 :meth:`set_drop_target`）。
-        self._drop_target = -1
 
     def set_icon_edge(self, edge: int) -> None:
         """几何尺寸变了 —— 绘制尺寸先跟它对齐。
@@ -101,14 +99,6 @@ class PhotoDelegate(QStyledItemDelegate):
             self.LABEL_HEIGHT,
         )
 
-    def set_drop_target(self, row: int) -> None:
-        """正被拖进来的那一格（``-1`` 表示没有，ADR 0062）。
-
-        **由视图问「光标下是不是相册」后转进来**：拖放期间 Qt 持续发 ``dragMoveEvent``，
-        那一格要一直亮着，落点一变就得重画。
-        """
-        self._drop_target = row
-
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
         painter.save()
         try:
@@ -163,18 +153,6 @@ class PhotoDelegate(QStyledItemDelegate):
             if selected:
                 pen = QPen(highlight)
                 pen.setWidth(2)
-                painter.setPen(pen)
-                painter.setBrush(Qt.BrushStyle.NoBrush)
-                painter.drawRoundedRect(rect, self.RADIUS, self.RADIUS)
-            if index.row() == self._drop_target:
-                # 落点：比选中态更重的一圈，外加一层淡底 —— 两者可能同时成立。
-                fill = QColor(highlight)
-                fill.setAlpha(60)
-                painter.setPen(Qt.PenStyle.NoPen)
-                painter.setBrush(fill)
-                painter.drawRoundedRect(rect, self.RADIUS, self.RADIUS)
-                pen = QPen(highlight)
-                pen.setWidth(3)
                 painter.setPen(pen)
                 painter.setBrush(Qt.BrushStyle.NoBrush)
                 painter.drawRoundedRect(rect, self.RADIUS, self.RADIUS)
