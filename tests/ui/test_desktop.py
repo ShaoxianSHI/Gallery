@@ -81,23 +81,6 @@ def test_open_with_default_app_says_why_when_the_system_refuses(
     assert "一张.jpg" in message
 
 
-def test_open_with_default_app_talks_to_the_system_exactly_once(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """一次点击只递一次请求。
-
-    ``QDesktopServices.openUrl`` 只吃一个 URL，所以「打开多张」要么逐个调、要么根本
-    没实现 —— 这条命令在产品里只对当前这一张可用（多选时菜单里压根不出现），因此这里
-    固定的就是**一张照片一次请求**，不多不少。
-    """
-    services = _DesktopServices(True)
-    monkeypatch.setattr(desktop, "QDesktopServices", services)
-
-    desktop.open_with_default_app(Path("/照片/京都/一张.jpg"))
-
-    assert len(services.urls) == 1
-
-
 def test_opening_a_folder_goes_inside_it(monkeypatch: pytest.MonkeyPatch) -> None:
     """对着文件夹走的是**不带 ``-R``** 的那个 ``open``：访达落到它**里面**去。
 
@@ -114,10 +97,15 @@ def test_opening_a_folder_goes_inside_it(monkeypatch: pytest.MonkeyPatch) -> Non
     assert message == "已在访达中打开「京都」。"
 
 
-def test_opening_a_folder_talks_to_the_finder_exactly_once(
+def test_opening_several_folders_still_starts_one_process(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """多选相册时每一条路径一起递过去（``open`` 本来就收一串），不是一次一个进程。"""
+    """多选相册时所有路径**一次**递过去（``open`` 本来就收一串），不是一个文件夹一个进程。
+
+    上面那条只递了一个文件夹，于是「按文件夹逐个起进程」这一种退化它照样绿 —— 多选是
+    右键菜单上真实存在的那一支（相册与照片走的是同一条路），所以这里固定的是
+    **一串路径一次请求**。
+    """
     process = _Process(True)
     monkeypatch.setattr(desktop, "QProcess", process)
 

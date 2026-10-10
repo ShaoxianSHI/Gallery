@@ -35,7 +35,9 @@ from gallery.core.metadata.report import build_report  # noqa: E402
 from gallery.core.places.resolver import ResolvedPlace  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.viewer import metadata as panel_module  # noqa: E402
-from gallery.ui.window.viewer_flow import METADATA_PREFETCH_RADIUS  # noqa: E402  （同上）
+
+#: 面板自己往里写的地方（下面那条「预读半径跟着一起搬」要改的就是它的常量表）。
+from gallery.ui.window.viewer_flow import METADATA_PREFETCH_RADIUS  # noqa: E402
 
 #: 「元数据已读进缓存」的判定：当前这张加上前后预读窗口都填满。
 PREFETCHED_ENTRIES = METADATA_PREFETCH_RADIUS + 1

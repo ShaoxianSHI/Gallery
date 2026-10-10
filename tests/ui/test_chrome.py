@@ -78,7 +78,7 @@ def _viewer_window(
     ``step_detail`` 与 ``show_grid`` 那几条走的并不是界面上真走的那条路。
 
     **末尾还要等后台那一遍结束（``_index_job`` 一并等上）**：横幅是**一个槽**，动作的说明与
-    后台进度都往里写（见 :mod:`gallery.ui.window.notice`）。打开一个库时后台排着一条链：
+    后台进度都往里写（见 :mod:`gallery.ui.window.state.banner_text`）。打开一个库时后台排着一条链：
     扫描 → 元数据 → 地点解析 → 检索索引，地点与索引各自在跑的时候都会把「正在解析 N 张照片的
     地点…」这类进度往那一个槽上写。
 

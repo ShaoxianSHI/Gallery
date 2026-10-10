@@ -143,13 +143,14 @@ def test_the_calendar_is_not_re_bucketed_while_its_page_is_hidden(
     page = window._calendar_page
     window._feed_calendar()
     buckets_before = dict(page.current_view()._by_day)
+    # 前置条件：桶里真有东西。两边都空的字典也相等，那样这条就是在断「还是空」。
+    assert buckets_before, "日历那一页压根没分桶，下面那句比较断不了任何东西"
 
     # 摆一个别的页在前面，重排一次：不该动日历
     window._stack.setCurrentWidget(window._grid_page)
     window._apply_ordering()
     qt_app.processEvents()
     assert page.current_view()._by_day == buckets_before
-    assert page.photo_count() >= 0  # 桶还在，只是没有重算
 
 
 def test_the_calendar_reports_again_after_its_pictures_are_dropped(

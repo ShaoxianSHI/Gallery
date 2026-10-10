@@ -62,7 +62,6 @@ def open_window(
     session_base = root.parent / "状态"
     save_session(SessionState(recent_roots=(root,)), base=session_base)
     set_library_ui(root, browse_mode=browse_mode, group_facet=group_facet)
-    _unused = ()
     # 先把配置目录准备好：没有它时 MainWindow 会问「缓存放哪」，
     # 那个模态框在测试里没人点，窗口就永远卡在构造中。
     prepare_library(root)
