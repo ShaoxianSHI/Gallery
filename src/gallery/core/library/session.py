@@ -64,6 +64,14 @@ class SessionState:
         others = tuple(item for item in self.recent_roots if item != root)
         return replace(self, recent_roots=(root, *others)[:MAX_RECENT_ROOTS])
 
+    def without_recent_root(self, root: Path) -> SessionState:
+        """把 ``root`` 从名单里拿掉；它本来就不在里面时原样返回。"""
+        return replace(self, recent_roots=tuple(item for item in self.recent_roots if item != root))
+
+    def without_recent_roots(self) -> SessionState:
+        """把整份名单清掉。"""
+        return replace(self, recent_roots=())
+
     def with_window(self, window: WindowGeometry) -> SessionState:
         return replace(self, window=window)
 

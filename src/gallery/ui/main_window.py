@@ -12,7 +12,7 @@ from collections import OrderedDict
 from collections.abc import Sequence
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
@@ -553,6 +553,8 @@ class MainWindow(
         file_menu = self.menuBar().addMenu("文件")
         file_menu.addAction(self._open_action)
         self._recent_menu = file_menu.addMenu("最近打开")
+        # 菜单项的右键没有对应的信号，得由窗口自己盯（见 ``MainWindow.eventFilter``）。
+        self._recent_menu.installEventFilter(self)
         # 「导入演出」挨着「打开文件夹」：两者都是「把外面的东西拿进来」（ADR 0047）。
         self._import_shows_menu = self.import_shows_menu()
         file_menu.addMenu(self._import_shows_menu)
@@ -840,6 +842,16 @@ class MainWindow(
     def _on_grid_page(self) -> bool:
         """现在是不是网格页 —— 与 :meth:`_in_detail_page` 同一个判据面。"""
         return self._page_role is PageRole.GRID
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 - 名字是 Qt 定的
+        """右键「最近打开」里的某一条 = 从那份名单里拿掉它。
+
+        **Qt 的覆写只写在组合根上**（写在 mixin 里时哪一处生效取决于 MRO 顺序），所以这一段
+        只回答「是不是那件事、要不要吞掉这一下」，那件事本身归 ``library_flow``。
+        """
+        if watched is self._recent_menu and self._recent_removal_at(event):
+            return True
+        return super().eventFilter(watched, event)
 
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         super().showEvent(event)

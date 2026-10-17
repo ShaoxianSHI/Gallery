@@ -94,6 +94,28 @@ def test_recent_roots_are_deduped_and_capped(tmp_path: Path) -> None:
     assert again.recent_roots.count(Path("/照片/5")) == 1
 
 
+def test_forgetting_one_root_keeps_the_others() -> None:
+    state = SessionState(recent_roots=(Path("/照片/一"), Path("/照片/二"), Path("/照片/三")))
+
+    assert state.without_recent_root(Path("/照片/二")).recent_roots == (
+        Path("/照片/一"),
+        Path("/照片/三"),
+    )
+
+
+def test_forgetting_a_root_that_is_not_there_changes_nothing() -> None:
+    """不在名单里的那个拿掉不该顺手改掉别的 —— 名单是按位置比对的，不是按名字。"""
+    state = SessionState(recent_roots=(Path("/照片/一"),))
+
+    assert state.without_recent_root(Path("/照片/别的")) == state
+
+
+def test_forgetting_every_root_leaves_an_empty_list() -> None:
+    state = SessionState(recent_roots=(Path("/照片/一"), Path("/照片/二")))
+
+    assert state.without_recent_roots().recent_roots == ()
+
+
 def test_non_string_roots_are_ignored(tmp_path: Path) -> None:
     file = paths.app_state_file(base=tmp_path)
     file.parent.mkdir(parents=True)
