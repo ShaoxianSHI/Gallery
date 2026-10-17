@@ -1,7 +1,8 @@
 """应用装配与启动。
 
 创建 ``QApplication``、构造主窗口、进入事件循环；**窗口的生老病死也归这一层**
-（:class:`WindowHost`）：「⌘W 关窗」与「⌘Q 退出」是应用级的事。
+（:class:`WindowHost`）：「⌘W 关窗」与「⌘Q 退出」是应用级的事；从外面指过来一个文件夹
+（Dock 右键菜单里那份最近项目）也落在这儿 —— 它可能**在窗口还没有的时候到达**。
 """
 
 from __future__ import annotations
@@ -11,8 +12,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import cast
 
-from PySide6.QtCore import QObject, Qt
-from PySide6.QtGui import QIcon
+from PySide6.QtCore import QEvent, QObject, Qt
+from PySide6.QtGui import QFileOpenEvent, QIcon
 from PySide6.QtWidgets import QApplication
 
 from gallery.core.constants import APP_NAME
@@ -77,22 +78,40 @@ class WindowHost(QObject):
         self._library = library
         self._window: MainWindow | None = None
         app.applicationStateChanged.connect(self._on_application_state_changed)
+        # 从应用外面指过来一个文件夹时，Qt 把 Apple Event 转成 ``QFileOpenEvent`` 发给
+        # ``QApplication``；窗口可能一个都还没有，所以接在这层（ADR 0062）。
+        app.installEventFilter(self)
 
     @property
     def window(self) -> MainWindow | None:
         """此刻手上那一个窗口（``None`` = 一个都还没有）。"""
         return self._window
 
-    def open_window(self) -> MainWindow:
-        """开出一个新窗口并摆出来，返回它。"""
+    def open_window(self, library: Path | None = None) -> MainWindow:
+        """开出一个新窗口并摆出来，返回它。
+
+        :param library: 这个窗口先打开哪个库；省略则用启动时指定的那个。
+        """
         window = MainWindow(
             session_base=self._session_base,
             cache_base=self._cache_base,
-            initial_library=self._library,
+            initial_library=self._library if library is None else library,
         )
         window.show()
         self._window = window
         return window
+
+    def open_library(self, root: Path) -> MainWindow:
+        """把 ``root`` 摆到用户面前：窗口在就换库，不在就开一个带上它。
+
+        这条路只有「应用外面的人点了这个库」会走（Dock 右键菜单、访达的「打开方式」）。
+        """
+        window = self._window
+        if window is not None and window.isVisible():
+            window.open_library(root)
+            return window
+        self._drop_closed_window()
+        return self.open_window(root)
 
     def reopen_if_needed(self) -> None:
         """应用回到前台而屏幕上一个窗口都没有时，重新开一个（**还在就不动**，否则用户面前会
@@ -100,12 +119,25 @@ class WindowHost(QObject):
         window = self._window
         if window is not None and window.isVisible():
             return
-        if window is not None:
-            # 关掉的那一个已经收干净了，留着只是个永远不会再显示的顶层控件。
-            # **排队删而不是直接删**：直接删会拆掉正在派发的那一轮事件里的控件。
-            window.deleteLater()
-            self._window = None
+        self._drop_closed_window()
         self.open_window()
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 - 名字是 Qt 定的
+        """接住「从外面打开一个文件夹」（见 :meth:`open_library`）。"""
+        if event.type() == QEvent.Type.FileOpen and isinstance(event, QFileOpenEvent):
+            root = Path(event.url().toLocalFile() or event.file())
+            if root.is_dir():
+                self.open_library(root)
+                return True
+        return super().eventFilter(watched, event)
+
+    def _drop_closed_window(self) -> None:
+        """把关掉的那个窗口排进删除队列（直接删会拆掉正在派发的那一轮事件里的控件）。"""
+        window = self._window
+        if window is None:
+            return
+        self._window = None
+        window.deleteLater()
 
     def _on_application_state_changed(self, state: Qt.ApplicationState) -> None:
         if state == Qt.ApplicationState.ApplicationActive:

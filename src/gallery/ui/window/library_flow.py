@@ -21,6 +21,7 @@ from PySide6.QtWidgets import QFileDialog, QMenu, QWidget
 
 from gallery.core.errors import GalleryError
 from gallery.core.events.orphans import OrphanScan
+from gallery.core.external import recent_documents
 from gallery.core.library.config import BROWSE_MODE_ALBUMS, BROWSE_MODE_CALENDAR, LibraryUIState
 from gallery.core.library.facade import Library, PlacePass
 from gallery.core.library.groups import SortOrder, sort_photos
@@ -784,6 +785,8 @@ class LibraryFlowMixin:
 
     def _rebuild_recent_menu(self) -> None:
         self._recent_menu.clear()
+        # 系统那份（Dock 右键菜单读它）与这一份是同一个来源的两次投影（ADR 0062）。
+        recent_documents.publish(self._session.recent_roots)
         roots = [root for root in self._session.recent_roots if root.is_dir()]
         if not roots:
             empty = QAction("（还没有）", cast("QWidget", self))

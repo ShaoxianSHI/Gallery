@@ -23,6 +23,7 @@ import os
 import subprocess
 import sys
 import textwrap
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -31,7 +32,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QCoreApplication, QEvent  # noqa: E402
+from PySide6.QtCore import QCoreApplication, QEvent, QUrl  # noqa: E402
+from PySide6.QtGui import QFileOpenEvent  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from gallery.ui.app import WindowHost, keep_running_without_windows  # noqa: E402
@@ -181,3 +183,76 @@ def test_the_host_keeps_a_reference_to_the_window_it_opened(
         assert isinstance(window, MainWindow)
     finally:
         _discard(host)
+
+
+def test_a_folder_from_outside_is_opened_in_the_window_that_is_already_there(
+    qt_app: QApplication,
+    tmp_path: Path,
+    make_photo: Callable[..., Path],
+) -> None:
+    """Dock 右键菜单里点一个库，系统发 Apple Event，Qt 交给我们一个 ``QFileOpenEvent``。
+
+    窗口摆着的时候就**换库**，不再开一个 —— 它与「⌘W 之后从 Dock 点回来」不是同一件事
+    （那一条是要一个窗口，这一条是要这个库）。
+    """
+    other = _library_with_a_photo(tmp_path, make_photo, "另一个库")
+    host = WindowHost(qt_app, session_base=tmp_path / "状态")
+    try:
+        window = host.open_window()
+        qt_app.processEvents()
+
+        handled = qt_app.sendEvent(qt_app, QFileOpenEvent(str(other)))
+        qt_app.processEvents()
+
+        assert handled is True
+        assert host.window is window, "库是换到手上这个窗口里的，不是另开一个"
+        assert window._library is not None
+        assert window._library.root == other
+    finally:
+        _discard(host)
+
+
+def test_a_folder_from_outside_opens_a_window_when_there_is_none(
+    qt_app: QApplication,
+    tmp_path: Path,
+    make_photo: Callable[..., Path],
+) -> None:
+    """一个窗口都没有时（刚启动、或⌘W 之后）：**开一个带上这个库**，而不是回到欢迎页。
+
+    这一条走 URL 那一支（系统送来的是 ``file://`` 开头的 URL），上一条走 ``file()`` 那一支。
+    """
+    root = _library_with_a_photo(tmp_path, make_photo, "照片")
+    host = WindowHost(qt_app, session_base=tmp_path / "状态")
+    try:
+        handled = qt_app.sendEvent(qt_app, QFileOpenEvent(QUrl.fromLocalFile(str(root))))
+        qt_app.processEvents()
+
+        assert handled is True
+        assert host.window is not None
+        assert host.window._library is not None
+        assert host.window._library.root == root
+    finally:
+        _discard(host)
+
+
+def test_a_file_from_outside_is_not_ours(qt_app: QApplication, tmp_path: Path) -> None:
+    """送来的是文件而不是文件夹时不管 —— Gallery 打开的是库，不是一个文件。"""
+    photo = tmp_path / "一张.jpg"
+    photo.write_bytes(b"jpg")
+    host = WindowHost(qt_app, session_base=tmp_path / "状态")
+    try:
+        handled = qt_app.sendEvent(qt_app, QFileOpenEvent(str(photo)))
+        qt_app.processEvents()
+
+        assert handled is False
+        assert host.window is None
+    finally:
+        _discard(host)
+
+
+def _library_with_a_photo(tmp_path: Path, make_photo: Callable[..., Path], name: str) -> Path:
+    """造一个有照片的库目录，返回它 —— 空目录也算库，但真的开得起来才说明这一路是通的。"""
+    root = tmp_path / name
+    root.mkdir()
+    make_photo("一张.jpg", directory=root)
+    return root

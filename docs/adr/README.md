@@ -89,3 +89,4 @@
 | [0059](0059-ui-layout.md) | 界面层的目录结构：`window/` 按依赖方向分三层 | 已接受 |
 | [0060](0060-ui-layout-consolidation.md) | 界面层目录的收口：拆掉 `panels/`，补上 0059 承诺的那条守护 | 已接受 |
 | [0061](0061-thumb-sizes-to-top-level.md) | 缩略图档位上顶层，并补上反方向那条守护 | 已接受 |
+| [0062](0062-dock-recent-libraries.md) | 最近打开的库登记进系统那份「最近项目」：Dock 右键菜单在应用没运行时也在 | 已接受 |

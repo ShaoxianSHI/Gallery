@@ -18,15 +18,12 @@ from pathlib import Path
 from typing import Final
 
 from gallery import __version__
-from gallery.core.constants import APP_NAME
+from gallery.core.constants import APP_NAME, BUNDLE_IDENTIFIER
 from gallery.core.errors import GalleryError
 from gallery.core.paths import app_icon_master
 
 #: 打包产物的默认落点（相对仓库根），与 ``.gitignore`` 里的 ``dist/`` 对应。
 BUILD_DIR_NAME: Final = "dist"
-
-#: 逆向域名标识符（包标识符不能含大写字母）。换签名或公证时改这里的前缀。
-BUNDLE_IDENTIFIER: Final = f"com.example.{APP_NAME.lower()}"
 
 #: ``Contents/MacOS/`` 下的启动脚本名，也就是 ``CFBundleExecutable``。
 LAUNCHER_NAME: Final = "Gallery"
@@ -172,6 +169,16 @@ def build_info_plist(version: str) -> dict[str, object]:
         "LSMinimumSystemVersion": MINIMUM_SYSTEM_VERSION,
         "LSApplicationCategoryType": "public.app-category.photography",
         "NSHighResolutionCapable": True,
+        # 「能打开文件夹」是 Gallery 的事实，也是系统把目录当成文档送回来的前提（ADR 0062）。
+        # ``LSHandlerRank`` 取 ``Alternate``：访达右键的「打开方式」里多一条，双击仍归访达。
+        "CFBundleDocumentTypes": [
+            {
+                "CFBundleTypeName": "Folder",
+                "CFBundleTypeRole": "Viewer",
+                "LSHandlerRank": "Alternate",
+                "LSItemContentTypes": ["public.folder"],
+            }
+        ],
     }
 
 

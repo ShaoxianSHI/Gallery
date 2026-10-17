@@ -40,6 +40,10 @@ LEGACY_INDEX_CACHE_DIR_NAME: Final = "index"
 #: 应用在系统目录（macOS 为 ``~/Library/Application Support``）下的目录名。
 APP_NAME: Final = "Gallery"
 
+#: 应用在 macOS 上的逆向域名标识符（包标识符不能含大写字母）。``Gallery.app`` 的
+#: ``Info.plist`` 与「此刻跑的是不是真正的 Gallery.app」都问这一处；换签名或公证时改这里的前缀。
+BUNDLE_IDENTIFIER: Final = f"com.example.{APP_NAME.lower()}"
+
 #: 随包分发的只读资源目录名，位于 ``src/gallery/`` 内（应用图标、自带的城市库）。
 RESOURCES_DIR_NAME: Final = "resources"
 
@@ -68,6 +72,7 @@ __all__ = [
     "APP_ICON_BASENAME",
     "APP_ICON_SIZES",
     "APP_NAME",
+    "BUNDLE_IDENTIFIER",
     "CACHE_DIR_NAME",
     "CONFIG_DIR_NAME",
     "CONFIG_FILE_NAME",

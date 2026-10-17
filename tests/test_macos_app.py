@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from gallery import macos_app
-from gallery.core.constants import APP_NAME
+from gallery.core.constants import APP_NAME, BUNDLE_IDENTIFIER
 from gallery.macos_app import BundleError, build_bundle
 
 
@@ -73,9 +73,31 @@ def test_info_plist_points_at_the_icon(project_root: Path, tmp_path: Path, fake_
 
 
 def test_bundle_identifier_follows_the_app_name() -> None:
-    """包标识符不能含大写字母，也不能和应用名脱节；组织名要改就改这里。"""
+    """包标识符不能含大写字母，也不能和应用名脱节；组织名要改就改 ``core.constants``。
+
+    **唯一来源在 core**：``core/external/recent_documents.py`` 要靠它认出「此刻跑的是不是
+    真正的 Gallery.app」（ADR 0062），``macos_app`` 从那儿引进来。
+    """
     assert macos_app.BUNDLE_IDENTIFIER == "com.example.gallery"
     assert macos_app.BUNDLE_IDENTIFIER.endswith(APP_NAME.lower())
+    assert BUNDLE_IDENTIFIER == macos_app.BUNDLE_IDENTIFIER
+
+
+def test_info_plist_says_it_can_open_folders(
+    project_root: Path, tmp_path: Path, fake_icns: Path
+) -> None:
+    """声明「能打开文件夹」（ADR 0062）。
+
+    ``LSHandlerRank`` 必须是 ``Alternate``：访达右键的「打开方式」里多一条 Gallery，
+    而双击文件夹仍归访达 —— 抢走那一手就等于把用户的 Finder 换掉了。
+    """
+    destination = build_bundle(tmp_path / "Gallery.app", project_root=project_root, icns=fake_icns)
+
+    info = plistlib.loads((_bundle(destination) / "Info.plist").read_bytes())
+
+    (folder_types,) = info["CFBundleDocumentTypes"]
+    assert folder_types["LSItemContentTypes"] == ["public.folder"]
+    assert folder_types["LSHandlerRank"] == "Alternate"
 
 
 def test_launcher_execs_the_in_bundle_symlink(
