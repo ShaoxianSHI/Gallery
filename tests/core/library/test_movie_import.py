@@ -1,7 +1,7 @@
-"""``Library`` 的影片导入：抓元数据、下封面、写文件、建事件（ADR 0063）。
+"""``Library`` 的影片导入：抓元数据、下封面、写文件、建事件（ADR 0063 / 0068）。
 
-**不联网**：传输是假实现。重点盯三件事：封面确实是写进目标文件夹的**新文件**（只增不改）、
-事件与绑定都建起来了、以及每一步都在 journal 里留了记录。
+**不联网**：来源是假实现（它自己走真的解析）。重点盯三件事：封面确实是写进目标文件夹的**新文件**
+（只增不改）、事件与绑定都建起来了、以及每一步都在 journal 里留了记录。
 """
 
 from __future__ import annotations
@@ -11,6 +11,8 @@ from pathlib import Path
 import pytest
 
 from gallery.core import paths
+from gallery.core.events import jav
+from gallery.core.events.models import EventDraft, MovieInfo, MovieRef
 from gallery.core.library.facade import Library
 from gallery.core.metadata.journal import ACTION_DOWNLOAD, read_records
 
@@ -35,17 +37,25 @@ DETAIL_HTML = (
 
 
 class FakeSource:
-    """按 URL 返回页面 / 封面字节。"""
+    """一个够用的「来源」：**真的走 jav 那套解析**，传输是假的（不必联网）。
+
+    它实现的是 :class:`gallery.core.events.sources.MovieSource` —— 抓元数据与下封面分开，
+    正是 ``Library`` 那两步各自要用的东西。
+    """
 
     def __init__(self, cover_url: str = "https://c0.example.com/covers/ar/Arbam.jpg") -> None:
         self._cover_url = cover_url
         self.cover_hits = 0
 
-    def get_text(self, url: str, *, referer: str | None = None) -> str:
-        return DETAIL_HTML if "/v/" in url else SEARCH_HTML
+    def fetch(self, ref: MovieRef) -> MovieInfo:
+        hits = jav.parse_search_items(SEARCH_HTML, jav.DEFAULT_SOURCE_BASE)
+        hit = jav.locate(hits, ref.code)
+        return jav.parse_detail(
+            DETAIL_HTML, ref.code, base=jav.DEFAULT_SOURCE_BASE, hit=hit
+        )
 
-    def get_bytes(self, url: str, *, referer: str | None = None) -> bytes:
-        assert url == self._cover_url
+    def cover_bytes(self, movie: MovieInfo) -> bytes:
+        assert movie.cover_urls == (self._cover_url,)
         self.cover_hits += 1
         return COVER_BYTES
 
@@ -125,10 +135,12 @@ def test_a_second_plan_reports_the_code_as_a_duplicate(library: Library, tmp_pat
 
 def test_a_missing_code_lands_in_failures(library: Library) -> None:
     class EmptySource:
-        def get_text(self, url: str, *, referer: str | None = None) -> str:
-            return "<div></div>"
+        """搜索页上一条结果都没有（源站给的是那份「暫無內容」的空页）。"""
 
-        def get_bytes(self, url: str, *, referer: str | None = None) -> bytes:  # pragma: no cover
+        def fetch(self, ref: MovieRef) -> MovieInfo:  # pragma: no cover - 一定会抛
+            raise jav.no_search_results('<div class="empty-message">暫無內容</div>', ref.code)
+
+        def cover_bytes(self, movie: MovieInfo) -> bytes:  # pragma: no cover
             return b""
 
     plan = library.plan_movie_import(["NOPE-001"], client=EmptySource())
@@ -146,3 +158,26 @@ def test_movie_url_uses_the_configured_site(library: Library, tmp_path: Path) ->
     )
     event = library.events_by_kind("movie")[0]
     assert library.movie_url(event) == "https://jable.tv/videos/ipx-660/"
+
+
+def test_movie_url_follows_the_source(library: Library) -> None:
+    """三个来源各打开各的那一页；没填来源的当 JavDB（手写的草稿、以及早于 ADR 0068 的那些）。"""
+    moments = {
+        "YouTube": "dQw4w9WgXcQ",
+        "Bilibili": "BV1GJ411x7h7",
+        "": "IPX-660",
+    }
+    opened = {
+        source: library.movie_url(
+            library.event(
+                library.create_event(
+                    "movie", EventDraft.of(title="一部影片", source=source, code=code)
+                ).event.id
+            )
+        )
+        for source, code in moments.items()
+    }
+
+    assert opened["YouTube"] == "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    assert opened["Bilibili"] == "https://www.bilibili.com/video/BV1GJ411x7h7/"
+    assert opened[""] == "https://jable.tv/videos/ipx-660/"

@@ -21,10 +21,11 @@ from uuid import uuid4
 
 from gallery.core import paths
 from gallery.core.errors import ConfigError, GalleryError, LibraryNotAccessibleError
-from gallery.core.events import jav
+from gallery.core.events import sources
 from gallery.core.events import store as events
 from gallery.core.events.import_shows import read_show_export, show_identity
 from gallery.core.events.kinds import MOVIE, SHOW
+from gallery.core.events.models import MovieInfo, MovieRef
 from gallery.core.events.orphans import OrphanScan, find_orphans, forget_orphans
 from gallery.core.events.store import (
     Event,
@@ -185,12 +186,12 @@ class ShowImportOutcome:
 
 @dataclass(frozen=True, slots=True)
 class MovieImportPlan:
-    """「导入影片」的**预演**：抓到的影片元数据，以及其中几部与库里已有番号重复。
+    """「导入影片」的**预演**：抓到的影片元数据，以及其中几部与库里已有编号重复。
 
-    ``failures`` 是一行一句的中文（哪一条番号为什么没抓到），可以直接念给用户听。
+    ``failures`` 是一行一句的中文（哪一条编号为什么没抓到），可以直接念给用户听。
     """
 
-    movies: tuple[jav.JavMovie, ...] = ()
+    movies: tuple[MovieInfo, ...] = ()
     duplicates: int = 0
     failures: tuple[str, ...] = ()
 
@@ -757,45 +758,49 @@ class Library:
         """取消封面：回到「组内第一张」。**没设过就是 ``False``** —— 界面据此不摆那一行。"""
         return self.events.clear_cover(event_id)
 
-    # ---- 影片：按番号抓取与导入（ADR 0063）-----------------------------------
+    # ---- 影片：按编号抓取与导入（ADR 0063 / 0068）----------------------------
 
     def movie_url(self, event: Event) -> str | None:
-        """这个影片事件该打开的网址；没有番号就是 ``None``。
+        """这个影片事件该打开的网址；没有编号就是 ``None``。
 
-        站点前缀来自 ``config.toml`` 的 ``movie_site``，番号接在后面（见
-        :func:`gallery.core.events.jav.movie_url`）。
+        JavDB 那一栏的站点前缀来自 ``config.toml`` 的 ``movie_site``；YouTube 与 B 站的地址形状
+        是固定的（见 :func:`gallery.core.events.sources.movie_url`）。
         """
-        code = jav.normalize_code(event.text("code"))
-        return jav.movie_url(self._config.movie_site, code) if code else None
+        code = event.text("code").strip()
+        if not code:
+            return None
+        ref = MovieRef(source=sources.source_of(event.text("source")), code=code)
+        return sources.movie_url(ref, jav_site=self._config.movie_site)
 
     def plan_movie_import(
         self,
-        codes: Sequence[str],
+        entries: Sequence[str],
         *,
         should_cancel: Callable[[], bool] | None = None,
         on_progress: Callable[[int, int], None] | None = None,
-        client: jav.JavSource | None = None,
+        client: sources.MovieSource | None = None,
     ) -> MovieImportPlan:
-        """按番号抓一遍元数据（**只读**），算出一份预演。
+        """把用户敲的那一批「编号或链接」抓一遍元数据（**只读**），算出一份预演。
 
-        **要联网，跑在后台线程里**。逐条抓，抓不到的那条记进 ``failures``（不中断其余）。
-        :param client: 抓取用的客户端，测试注入假实现；``None`` 表示默认的 JavDB 客户端。
+        **要联网，跑在后台线程里**。逐条抓，抓不到的那条记进 ``failures``（不中断其余）——
+        认不出是哪一行的、源站上没有的，都在里面。
+        :param client: 抓取用的入口，测试注入假实现；``None`` 表示默认的三个来源。
         """
-        getter = client if client is not None else jav.JavHttp()
-        total = len(codes)
-        movies: list[jav.JavMovie] = []
+        getter = client if client is not None else sources.HttpSources()
+        total = len(entries)
+        movies: list[MovieInfo] = []
         failures: list[str] = []
-        for index, raw in enumerate(codes, start=1):
+        for index, raw in enumerate(entries, start=1):
             if should_cancel is not None and should_cancel():
                 break
             try:
-                movies.append(jav.fetch_movie(raw, client=getter))
+                movies.append(getter.fetch(sources.parse_ref(raw)))
             except GalleryError as exc:
                 failures.append(f"{raw}：{exc.message}")
             if on_progress is not None:
                 on_progress(index, total)
-        existing = self._movie_codes()
-        duplicates = sum(1 for movie in movies if jav.normalize_code(movie.code) in existing)
+        existing = self._movie_keys()
+        duplicates = sum(1 for movie in movies if movie.ref in existing)
         return MovieImportPlan(
             movies=tuple(movies), duplicates=duplicates, failures=tuple(failures)
         )
@@ -807,7 +812,7 @@ class Library:
         target: Path,
         skip_duplicates: bool = False,
         should_cancel: Callable[[], bool] | None = None,
-        client: jav.JavSource | None = None,
+        client: sources.MovieSource | None = None,
     ) -> MovieImportOutcome:
         """按预演把影片建进库里：下封面 → 在 ``target`` 写成一个新文件 → 建事件 → 绑定封面。
 
@@ -815,8 +820,8 @@ class Library:
         :func:`~gallery.core.metadata.download.save_downloaded_file` 并记 journal。**要联网**，
         跑在后台线程里；逐部做，失败的那部记进 ``failures`` 不中断其余。
         """
-        getter = client if client is not None else jav.JavHttp()
-        existing = self._movie_codes()
+        getter = client if client is not None else sources.HttpSources()
+        existing = self._movie_keys()
         batch = uuid4().hex[:12]
         created = 0
         duplicates = 0
@@ -826,17 +831,16 @@ class Library:
         for movie in plan.movies:
             if should_cancel is not None and should_cancel():
                 break
-            code = jav.normalize_code(movie.code)
-            if skip_duplicates and code in existing:
+            if skip_duplicates and movie.ref in existing:
                 duplicates += 1
                 continue
             try:
-                data = getter.get_bytes(movie.cover_url, referer=movie.page_url)
+                data = getter.cover_bytes(movie)
                 saved = save_downloaded_file(
                     self._root, target, _cover_name(movie), data, batch=batch
                 )
             except GalleryError as exc:
-                failures.append(f"{code}：{exc.message}")
+                failures.append(f"{movie.code}：{exc.message}")
                 continue
             journaled = journaled and saved.journaled
             outcome = self.create_event(MOVIE.id, movie.to_draft())
@@ -845,10 +849,10 @@ class Library:
             try:
                 self.set_event_cover(outcome.event.id, saved.created)
             except GalleryError as exc:
-                failures.append(f"{code}：没能设成封面（{exc.message}）")
+                failures.append(f"{movie.code}：没能设成封面（{exc.message}）")
             created += 1
             files.append(saved.created)
-            existing.add(code)
+            existing.add(movie.ref)
         return MovieImportOutcome(
             created=created,
             duplicates=duplicates,
@@ -857,10 +861,16 @@ class Library:
             files=tuple(files),
         )
 
-    def _movie_codes(self) -> set[str]:
-        """库里已有影片的番号集合（判重键就是番号）。"""
+    def _movie_keys(self) -> set[MovieRef]:
+        """库里已有影片的「（来源, 编号）」集合（判重键就是它，ADR 0068）。
+
+        **编号按来源自己的规矩比**：YouTube 与 B 站的编号大小写敏感，拿归一过的 JavDB 番号去比
+        会把两部不同的片子当成同一部。
+        """
         return {
-            jav.normalize_code(event.text("code"))
+            MovieRef(
+                source=sources.source_of(event.text("source")), code=event.text("code").strip()
+            )
             for event in self.events_by_kind(MOVIE.id)
             if event.text("code").strip()
         }
@@ -1272,10 +1282,11 @@ def _draft_identity(draft: EventDraft) -> tuple[str, str, str]:
 _COVER_SUFFIXES: Final = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif")
 
 
-def _cover_name(movie: jav.JavMovie) -> str:
-    """封面写进用户文件夹时叫什么：``IPX-660.jpg``（番号 + 从 URL 认出来的后缀）。"""
-    code = jav.normalize_code(movie.code) or "cover"
-    lowered = movie.cover_url.lower().split("?", 1)[0]
+def _cover_name(movie: MovieInfo) -> str:
+    """封面写进用户文件夹时叫什么：``IPX-660.jpg``（编号 + 从地址认出来的后缀）。"""
+    code = movie.code.strip() or "cover"
+    first = movie.cover_urls[0] if movie.cover_urls else ""
+    lowered = first.lower().split("?", 1)[0]
     suffix = next((item for item in _COVER_SUFFIXES if lowered.endswith(item)), ".jpg")
     return f"{code}{suffix}"
 

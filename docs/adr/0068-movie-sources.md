@@ -125,7 +125,8 @@ Bilibili  https://www.bilibili.com/video/ + <BV 号> + /
 「只增不改」的守护（`WRITE_METHODS_ON_LIBRARY` 里的 `import_movies`）仍然只有一处调用点。
 
 封面文件名还是「编号 + 后缀」。YouTube 的 `maxresdefault.jpg` 不是每个视频都有，按
-`maxresdefault → sddefault → hqdefault` 回退；B 站的 `pic` 给的就是原图（把它从 `http` 升成 `https`）。
+`maxresdefault → hq720 → sddefault → mqdefault` 逐档回退，最后垫上 oEmbed 给的那一个
+（它是 `hqdefault`，4:3、上下带黑边，但一定有）；B 站的 `pic` 给的就是原图（把它从 `http` 升成 `https`）。
 
 ### 7. 字段改名要走迁移，等号右边不许静默丢掉
 

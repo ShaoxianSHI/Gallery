@@ -133,11 +133,25 @@ class EventNotFoundError(GalleryError):
 
 
 class MovieImportError(GalleryError):
-    """按番号抓取影片元数据、或把封面写进库里失败。
+    """按编号抓取影片元数据、或把封面写进库里失败。
 
-    两种来路分开说：找源网站要么是网络不通/被挡，要么是番号在源站查不到；写封面则是目标文件夹
-    写不进去。合并成一条只会让用户没法判断下一步该改什么（重试 / 换个番号 / 检查目录权限）。
+    两种来路分开说：找源网站要么是网络不通/被挡，要么是编号在源站查不到；写封面则是目标文件夹
+    写不进去。合并成一条只会让用户没法判断下一步该改什么（重试 / 换个编号 / 检查目录权限）。
     """
+
+
+class SourcePageError(MovieImportError):
+    """源站对这次请求给了一个非 2xx 的状态码（404 / 401 / 403 …）。
+
+    **带着状态码**：同一件事在三个来源里的说法不一样 —— 404 在 JavDB 是「这一页不在」，
+    在 YouTube 的 oEmbed 是「这个视频没了或不公开」，在 B 站是「稿件不可见」。所以传输那一层
+    只如实带上号，翻译交给各自的来源模块（ADR 0068）。
+    """
+
+    def __init__(self, status: int, url: str, message: str = "") -> None:
+        super().__init__(message or f"源站没有这个页面：{url}")
+        self.status = status
+        self.url = url
 
 
 __all__ = [
@@ -157,5 +171,6 @@ __all__ = [
     "PasteError",
     "RenameError",
     "ShowImportError",
+    "SourcePageError",
     "TransferError",
 ]

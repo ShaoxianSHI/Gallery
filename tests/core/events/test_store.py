@@ -13,8 +13,16 @@ from gallery.core import paths
 from gallery.core.errors import EventNotFoundError
 from gallery.core.events import schema
 from gallery.core.events import store as store_module
-from gallery.core.events.kinds import COVER, EVENT_KINDS, SQL_TYPES, EventKind, fields_of
-from gallery.core.events.schema import _BINDINGS_SCHEMA, _EVENTS_SCHEMA
+from gallery.core.events.kinds import (
+    COVER,
+    EVENT_KINDS,
+    MOVIE,
+    SOURCE_JAV,
+    SQL_TYPES,
+    EventKind,
+    fields_of,
+)
+from gallery.core.events.schema import _BINDINGS_SCHEMA, _EVENTS_SCHEMA, _kind_schema
 from gallery.core.events.store import (
     Event,
     EventDraft,
@@ -276,6 +284,63 @@ def test_migrating_twice_is_the_same_as_migrating_once(tmp_path: Path) -> None:
             assert store_module.attach(connection, threading.Lock(), root=tmp_path) is not None
         finally:
             connection.close()
+
+
+def _open_a_v2_events_db(root: Path) -> Path:
+    """造一份**版本 2 的事件库**：影片那一张表里还叫 ``studio``、还没有 ``source`` 那一列。
+
+    与 :func:`_open_a_v1_events_db` 同一个道理 —— 走真代码建出最新的结构，再把 2 → 3 那一步加上去的
+    两样**反着做回去**。不这么做的话 fixture 自己就是最新版，迁移那一步全部跳过，用例照样绿。
+    """
+    path = paths.events_file(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    legacy = sqlite3.connect(path)
+    try:
+        prefix = f"{schema.SCHEMA_NAME}."
+        legacy.executescript(_EVENTS_SCHEMA.replace(prefix, ""))
+        legacy.executescript(_BINDINGS_SCHEMA.replace(prefix, ""))
+        legacy.execute(_kind_schema(MOVIE).replace(prefix, ""))
+        legacy.execute(f"ALTER TABLE {MOVIE.table} DROP COLUMN source")
+        legacy.execute(f"ALTER TABLE {MOVIE.table} RENAME COLUMN creator TO studio")
+        legacy.execute(
+            "INSERT INTO events (kind, title, created_at, modified_at)"
+            " VALUES ('movie', '一部影片', 1, 1)"
+        )
+        legacy.execute(
+            f"INSERT INTO {MOVIE.table} (event_id, code, studio)"
+            " VALUES (1, 'IPX-660', 'IDEA POCKET')"
+        )
+        legacy.execute("PRAGMA user_version = 2")
+        legacy.commit()
+        columns = [row[1] for row in legacy.execute(f"PRAGMA table_info({MOVIE.table})")]
+        assert "studio" in columns and "source" not in columns, (
+            "这份 fixture 必须真的是版本 2 那一版"
+        )
+    finally:
+        legacy.close()
+    return path
+
+
+def test_the_movie_migration_carries_the_author_over_and_fills_the_source(tmp_path: Path) -> None:
+    """2 → 3 那一步：``studio`` 的**值要跟着改名过去**，已有的行补上「来源 = JavDB」
+    （ADR 0068 决策 7）。
+
+    回填那一条不许省：不补的话，「库里已有的影片」与「这次要导入的同一部」在判重时对不上，
+    用户会拿到两份一样的影片 —— 而改名丢值是另一种静默的数据损失。
+    """
+    _open_a_v2_events_db(tmp_path)
+
+    connection = sqlite3.connect(tmp_path / "index.db", check_same_thread=False)
+    try:
+        store = store_module.attach(connection, threading.Lock(), root=tmp_path)
+        assert store is not None
+        events = store.all_events()
+        assert [event.title for event in events] == ["一部影片"]
+        assert events[0].text("code") == "IPX-660"
+        assert events[0].text("creator") == "IDEA POCKET"
+        assert events[0].text("source") == SOURCE_JAV
+    finally:
+        connection.close()
 
 
 def test_a_newer_events_file_is_left_alone_instead_of_rebuilt(tmp_path: Path) -> None:

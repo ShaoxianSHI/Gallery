@@ -10,9 +10,17 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from dataclasses import dataclass
 from typing import Final
 
-from gallery.core.events.kinds import COMMON_FIELDS, COVER, EventField, EventKind
+from gallery.core.events.kinds import (
+    COMMON_FIELDS,
+    COVER,
+    MOVIE,
+    SOURCE_JAV,
+    EventField,
+    EventKind,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,9 +39,9 @@ BINDINGS_TABLE: Final = "photo_events"
 #: 事件库的表结构版本。**只管 events.db 自己那份** ``PRAGMA ev.user_version``，
 #: 与索引的 ``SCHEMA_VERSION`` 无关（索引升版会重建它的表，事件库不会）。
 #:
-#: **升版只能加列**（ADR 0048 决策 3）：每加一列都要在 :data:`_MIGRATIONS` 里补一步，
-#: 而那一级不许空着（``tests/core/events/test_store.py`` 里有回归测试）。
-SCHEMA_VERSION: Final = 2
+#: **升版只做「加列 / 改名 / 一条显式语句」**（ADR 0048 决策 3、ADR 0068 决策 7）：每一步都要在
+#: :data:`_MIGRATIONS` 里补一条，而那一级不许空着（``test_store`` 里有回归测试）。
+SCHEMA_VERSION: Final = 3
 
 
 #: 一条语句里最多塞多少个绑定变量。``IN (…)`` 与多列插入都按它分批：
@@ -121,31 +129,93 @@ def _add_column(connection: sqlite3.Connection, table: str, column: str, declara
         connection.execute(f"ALTER TABLE {SCHEMA_NAME}.{table} ADD COLUMN {column} {declaration}")
 
 
+@dataclass(frozen=True, slots=True)
+class _AddColumn:
+    """给一张表补一列（ADR 0048 起就有这一种步子）。"""
+
+    table: str
+    column: str
+    declaration: str
+
+
+@dataclass(frozen=True, slots=True)
+class _RenameColumn:
+    """把一列改名。
+
+    **旧列在新列不在时才改**：新库第一次打开时建表语句已经建的是新列名，这时改名会报
+    ``no such column``（与加列同一个幂等理由）。
+    """
+
+    table: str
+    old: str
+    new: str
+
+
+@dataclass(frozen=True, slots=True)
+class _RunSql:
+    """一条显式语句。
+
+    **只在加列与改名表达不了的时候用**（回填一列的值；将来真要重建某一张表也走它）。
+    写在这里的语句同样要幂等 —— 每个库都会把它跑一遍。
+    """
+
+    statement: str
+
+
+#: 迁移步里能做的一件事。三种都是**幂等**的，理由见各自的类。
+type _MigrationStep = _AddColumn | _RenameColumn | _RunSql
+
+
 #: 迁移步：``_MIGRATIONS[i]`` 是把 ``ev.user_version`` 从 ``i`` 升到 ``i + 1`` 要做的事。
 #:
-#: **升版只加列，绝不重建表。** 事件是唯一一份重建不出来的数据（ADR 0043 决策 1），
-#: 而原先「版本对不上就 ``DROP`` 全部表」那条老路让「加一列」等于清空用户的全部事件与绑定。
-#: 将来真要重建某一张表，写成这一步里的一条显式语句（里面可以带 ``DROP``），
+#: **升版只加列 / 改名 / 跑一条显式语句，绝不重建表。** 事件是唯一一份重建不出来的数据
+#: （ADR 0043 决策 1），而原先「版本对不上就 ``DROP`` 全部表」那条老路让「加一列」等于清空
+#: 用户的全部事件与绑定。将来真要重建某一张表，写成这一步里的一条显式语句（里面可以带 ``DROP``），
 #: **不再由「版本对不上」这个隐式条件触发**。
 #:
 #: 索引 0 是「建表」，由 :data:`_EVENTS_SCHEMA` 那几段建表语句本身承担（新库直接建出最新结构），
 #: 所以它是空的 —— **那是唯一允许为空的一级**（回归测试盯着其余每一级都要有语句）。
-_MIGRATIONS: Final[tuple[tuple[tuple[str, str, str], ...], ...]] = (
+_MIGRATIONS: Final[tuple[tuple[_MigrationStep, ...], ...]] = (
     (),  # 0 → 1：建表语句自己就是这一步
-    ((EVENTS_TABLE, COVER.column, "TEXT"),),  # 1 → 2：封面那一列（ADR 0048）
+    (_AddColumn(EVENTS_TABLE, COVER.column, "TEXT"),),  # 1 → 2：封面那一列（ADR 0048）
+    (  # 2 → 3：影片的来源，以及那三栏改取中性词（ADR 0068 决策 2 与决策 7）
+        _AddColumn(MOVIE.table, "source", "TEXT"),
+        _RenameColumn(MOVIE.table, "studio", "creator"),
+        # 这一条之前，影片只有 JavDB 一个来路，所以已有的行补上它。**不许省**：不补的话，
+        # 「库里已有的影片」与「这次要导入的同一部」在判重时对不上，用户会拿到两份一样的。
+        _RunSql(
+            f"UPDATE {SCHEMA_NAME}.{MOVIE.table} SET source = '{SOURCE_JAV}'"
+            " WHERE source IS NULL OR source = ''"
+        ),
+    ),
 )
 
 
+def _run_step(connection: sqlite3.Connection, step: _MigrationStep) -> None:
+    """做迁移步里的一件事。**认不出的种类就是缺陷**（加了一种却忘了在这里分派）。"""
+    if isinstance(step, _AddColumn):
+        _add_column(connection, step.table, step.column, step.declaration)
+    elif isinstance(step, _RenameColumn):
+        if _has_column(connection, step.table, step.old) and not _has_column(
+            connection, step.table, step.new
+        ):
+            connection.execute(
+                f"ALTER TABLE {SCHEMA_NAME}.{step.table} RENAME COLUMN {step.old} TO {step.new}"
+            )
+    else:
+        connection.execute(step.statement)
+
+
 def migrate(connection: sqlite3.Connection, version: int) -> None:
-    """把事件库从 ``version`` 升到 :data:`SCHEMA_VERSION`，**只加列**。
+    """把事件库从 ``version`` 升到 :data:`SCHEMA_VERSION`。
 
     **调用方要已经建好表**，所以顺序是「先建表、后迁移」：旧库补上缺的那几列，新库已经带着最新列、
     迁移看见它在就跳过（幂等）。**整个链条在一个事务里**：``executescript`` 会隐式提交，用它跑迁移
     断在半路时库就停在中间状态。所以这里只 ``execute``，事务由调用方的 ``with connection:`` 给出。
     """
     for step in range(max(version, 0), SCHEMA_VERSION):
-        for table, column, declaration in _MIGRATIONS[step]:
-            _add_column(connection, table, column, declaration)
+        for action in _MIGRATIONS[step]:
+            _run_step(connection, action)
 
 
 def _relax_journal_mode_only(connection: sqlite3.Connection) -> None:

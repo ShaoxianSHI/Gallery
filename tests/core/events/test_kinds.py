@@ -100,12 +100,13 @@ def test_a_show_takes_its_place_next_to_the_trip() -> None:
 
 
 def test_the_movie_kind_lists_its_own_columns() -> None:
-    """「影片」这一类独有的字段（ADR 0063）—— 番号、时长、片商、演员、类别等。"""
+    """「影片」这一类独有的字段（ADR 0063 / 0068）—— 来源、编号、时长、作者、标签等。"""
     assert kinds.MOVIE.table == "event_movie"
     assert {
+        "source",
         "code",
         "duration",
-        "studio",
+        "creator",
         "label",
         "series",
         "director",
@@ -113,6 +114,14 @@ def test_the_movie_kind_lists_its_own_columns() -> None:
         "tags",
         "rating",
     } == {field.column for field in kinds.MOVIE.fields}
+
+
+def test_the_movie_source_is_a_closed_set() -> None:
+    """「来源」画成下拉，值域就是那三个 —— 它同时是**判重与打开影片网站的键**（ADR 0068 决策 1），
+    所以多一个少一个都不只是多一栏的事。"""
+    source = next(field for field in kinds.MOVIE.fields if field.id == "source")
+
+    assert source.choices == kinds.MOVIE_SOURCES == ("JavDB", "YouTube", "Bilibili")
 
 
 def test_an_unknown_kind_is_none_rather_than_a_key_error() -> None:

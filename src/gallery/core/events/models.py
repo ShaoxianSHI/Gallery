@@ -1,4 +1,5 @@
-"""事件的数据类型：一个事件、一份草稿、一条引用与一条绑定（ADR 0043）。
+"""事件的数据类型：一个事件、一份草稿、一条引用与一条绑定（ADR 0043），
+以及抓回来的一份影片元数据（ADR 0068）。
 
 它们是**值对象**（字段随类型增删，所以用 ``values`` 字典），不含任何 SQL —— 建表在
 :mod:`gallery.core.events.schema`、读写与 journal 在 :mod:`gallery.core.events.store`。
@@ -10,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final
 
-from gallery.core.events.kinds import kind_by_id
+from gallery.core.events.kinds import join_multi, kind_by_id
 
 type SqlValue = str | int | float | None
 
@@ -179,6 +180,73 @@ class EventDraft:
         return cls(values=dict(fields))
 
 
+@dataclass(frozen=True, slots=True)
+class MovieRef:
+    """一部影片是**哪儿的哪一个**：抓取与判重都按它（ADR 0068）。
+
+    编号已经按来源自己的规矩归一过了（YouTube 与 B 站的编号**大小写敏感**，归一那一层不许
+    顺手 ``upper()``），这里只负责带着它走，不再动它一个字符。
+    """
+
+    source: str
+    code: str
+
+
+@dataclass(frozen=True, slots=True)
+class MovieInfo:
+    """从网站上抓到的一部影片。:meth:`to_draft` 把它翻成「影片」事件的草稿。
+
+    三个来源共用这一个形状：**抓不到的那几栏留空**（YouTube 与 B 站没有导演、发行商）。
+    于是「字段 → 事件」的那份映射只有一处，来源模块只管把网页读成它（ADR 0068 决策 4）。
+    """
+
+    source: str
+    code: str
+    title: str = ""
+    #: 封面图的候选地址，**按顺序试第一个能下来的**。三个来源里只有 YouTube 会给多个：
+    #: ``maxresdefault`` 不是每个视频都有，而 ``hqdefault`` 是 4:3 带黑边的。
+    cover_urls: tuple[str, ...] = ()
+    page_url: str = ""
+    release_date: str = ""
+    duration_minutes: int | None = None
+    creator: str = ""
+    label: str = ""
+    series: str = ""
+    director: str = ""
+    actors: tuple[str, ...] = ()
+    tags: tuple[str, ...] = ()
+    rating: float | None = None
+
+    @property
+    def ref(self) -> MovieRef:
+        """「哪儿的哪一个」—— 判重、以及 ⇧ 点开时再拼一次网址都按它。"""
+        return MovieRef(source=self.source, code=self.code)
+
+    def to_draft(self) -> EventDraft:
+        """翻成一份「影片」事件草稿。键都是字段的 id。"""
+        return EventDraft(
+            values={
+                "title": self.title or self.code,
+                "source": self.source,
+                "code": self.code,
+                "started_on": self.release_date,
+                "duration": "" if self.duration_minutes is None else str(self.duration_minutes),
+                "creator": self.creator,
+                "label": self.label,
+                "series": self.series,
+                "director": self.director,
+                "actors": join_multi(self.actors),
+                "tags": join_multi(self.tags),
+                "rating": "" if self.rating is None else _number_text(self.rating),
+            }
+        )
+
+
+def _number_text(value: float) -> str:
+    """一个浮点数写成面板里的文字：整数不带小数点。"""
+    return str(int(value)) if float(value).is_integer() else str(value)
+
+
 def shorten_name(name: str) -> str:
     """事件名太长时从中间省略（两头是日期与地点，比中间那一截更有信息量）。"""
     if len(name) <= DISPLAY_NAME_MAX:
@@ -195,6 +263,8 @@ __all__ = [
     "EventRef",
     "EventUndoResult",
     "EventWriteOutcome",
+    "MovieInfo",
+    "MovieRef",
     "Orphan",
     "SqlValue",
     "shorten_name",

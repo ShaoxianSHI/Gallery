@@ -6,14 +6,11 @@
 
 from __future__ import annotations
 
-import http.client
-import urllib.error
-import urllib.request
-
 import pytest
 
 from gallery.core.errors import MovieImportError
 from gallery.core.events import jav
+from gallery.core.events.kinds import SOURCE_JAV
 
 #: 搜索页里那一条结果卡片（形状照 JavDB 的搜索结果）。
 SEARCH_HTML = """
@@ -46,7 +43,8 @@ DETAIL_HTML = """
 
 
 class FakeSource:
-    """按 URL 返回预先备好的页面 / 字节（:class:`jav.JavSource` 的假实现）。"""
+    """按 URL 返回预先备好的页面 / 字节（:class:`gallery.core.events.transport.Transport`
+    的假实现）。"""
 
     def __init__(self, pages: dict[str, str], images: dict[str, bytes] | None = None) -> None:
         self._pages = pages
@@ -87,6 +85,22 @@ def test_the_movie_url_appends_a_lowercase_code() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("IPX-660", True),
+        ("IPX660", True),
+        ("ABCDE-12345", True),
+        ("dQw4w9WgXcQ", False),
+        ("BV1GJ411x7h7", False),
+        ("", False),
+    ],
+)
+def test_the_code_shape_is_letters_then_digits(text: str, expected: bool) -> None:
+    """识别那一层靠它把「恰好 11 位、又长成番号」的东西留给 JavDB（ADR 0068 决策 3）。"""
+    assert jav.code_shape(text) is expected
+
+
 def test_the_search_page_lists_its_hits() -> None:
     hits = jav.parse_search_items(SEARCH_HTML, jav.DEFAULT_SOURCE_BASE)
     assert len(hits) == 1
@@ -109,12 +123,13 @@ def test_locate_reports_a_missing_code() -> None:
 
 def test_the_detail_page_yields_a_movie() -> None:
     movie = jav.parse_detail(DETAIL_HTML, "IPX-660", base=jav.DEFAULT_SOURCE_BASE)
+    assert movie.source == SOURCE_JAV
     assert movie.code == "IPX-660"
     assert movie.title == "一个标题"
-    assert movie.cover_url == "https://c0.example.com/covers/ar/Arbam.jpg"
+    assert movie.cover_urls == ("https://c0.example.com/covers/ar/Arbam.jpg",)
     assert movie.release_date == "2021-05-13"
     assert movie.duration_minutes == 170
-    assert movie.studio == "IDEA POCKET"
+    assert movie.creator == "IDEA POCKET"
     assert movie.director == "キョウセイ"
     assert movie.actors == ("桃乃木かな", "武田大樹")
     assert movie.tags == ("單體作品", "放尿", "口交")
@@ -125,9 +140,11 @@ def test_the_draft_matches_the_movie_event_fields() -> None:
     movie = jav.parse_detail(DETAIL_HTML, "IPX-660", base=jav.DEFAULT_SOURCE_BASE)
     values = movie.to_draft().values
     assert values["title"] == "一个标题"
+    assert values["source"] == SOURCE_JAV
     assert values["code"] == "IPX-660"
     assert values["started_on"] == "2021-05-13"
     assert values["duration"] == "170"
+    assert values["creator"] == "IDEA POCKET"
     assert values["actors"] == "桃乃木かな、武田大樹"
     assert values["tags"] == "單體作品、放尿、口交"
     assert values["rating"] == "4.59"
@@ -140,7 +157,7 @@ def test_fetch_movie_walks_search_then_detail() -> None:
             "https://javdb.com/v/Arbam": DETAIL_HTML,
         }
     )
-    movie = jav.fetch_movie("ipx660", client=source)
+    movie = jav.fetch("ipx660", client=source)
     assert movie.code == "IPX-660"
     assert movie.title == "一个标题"
     assert source.text_urls[0].endswith("search?f=all&q=IPX-660")
@@ -161,114 +178,25 @@ def test_fetch_movie_refuses_a_page_without_a_cover() -> None:
         }
     )
     with pytest.raises(MovieImportError):
-        jav.fetch_movie("IPX-660", client=source)
-
-
-# ---- 网络那一半：断了要重试，读到的不是搜索结果页要说清是哪一种（ADR 0064）----------
-
-
-class _FakeResponse:
-    """一个够用的响应对象：``urlopen`` 的上下文管理器协议 + ``read`` / ``geturl``。"""
-
-    headers = {"Content-Encoding": None}
-
-    def __init__(self, body: bytes = b"<html>ok</html>") -> None:
-        self._body = body
-
-    def read(self) -> bytes:
-        return self._body
-
-    def geturl(self) -> str:
-        return "https://javdb.com/x"
-
-    def __enter__(self) -> _FakeResponse:
-        return self
-
-    def __exit__(self, *args: object) -> bool:
-        return False
-
-
-def _no_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
-    """退避等待在测试里没有意义（真等就是几秒），而重试次数与判定才是要验的。"""
-    monkeypatch.setattr(jav.time, "sleep", lambda _seconds: None)
-
-
-def test_a_connection_dropped_mid_answer_is_retried(monkeypatch: pytest.MonkeyPatch) -> None:
-    """限速与反爬常常直接掐连接（``RemoteDisconnected`` / ``IncompleteRead``）。
-
-    它们**不是** ``URLError`` 的子类，原先会一路传递到界面那句「出现了一个未预期的问题」——
-    而重试一次多半就好了。
-    """
-    _no_sleep(monkeypatch)
-    calls: list[str] = []
-
-    def fake_urlopen(request: urllib.request.Request, timeout: float) -> _FakeResponse:
-        calls.append(request.full_url)
-        if len(calls) == 1:
-            raise http.client.RemoteDisconnected("Remote end closed connection without response")
-        return _FakeResponse()
-
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
-
-    raw, _ = jav.JavHttp(delay=0, retries=3)._get("https://javdb.com/x", None)
-
-    assert raw == b"<html>ok</html>"
-    assert len(calls) == 2
-
-
-def test_a_half_read_body_is_retried(monkeypatch: pytest.MonkeyPatch) -> None:
-    """正文说到一半就没了（``IncompleteRead``，连 ``OSError`` 都不是）也算网络抖动。"""
-    _no_sleep(monkeypatch)
-
-    def fake_urlopen(request: urllib.request.Request, timeout: float) -> _FakeResponse:
-        raise http.client.IncompleteRead(b"half", 100)
-
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
-
-    with pytest.raises(MovieImportError) as excinfo:
-        jav.JavHttp(delay=0, retries=2)._get("https://javdb.com/x", None)
-
-    assert "稍后再试" in excinfo.value.message
-    assert "IncompleteRead" in excinfo.value.message
-
-
-def test_a_truncated_body_is_retried(monkeypatch: pytest.MonkeyPatch) -> None:
-    """``Content-Encoding: gzip`` 而正文被截断：解压炸掉，也是等一会儿再试的那一种。"""
-    _no_sleep(monkeypatch)
-    calls: list[str] = []
-
-    def fake_urlopen(request: urllib.request.Request, timeout: float) -> _FakeResponse:
-        calls.append(request.full_url)
-        if len(calls) == 1:
-            response = _FakeResponse(b"not gzip at all")
-            response.headers = {"Content-Encoding": "gzip"}
-            return response
-        return _FakeResponse()
-
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
-
-    raw, _ = jav.JavHttp(delay=0, retries=3)._get("https://javdb.com/x", None)
-
-    assert raw == b"<html>ok</html>"
-    assert len(calls) == 2
+        jav.fetch("IPX-660", client=source)
 
 
 def test_a_search_page_with_no_results_at_all_says_which_kind_it_is() -> None:
-    """源站那一段「暫無內容」在不在，决定说的是「换番号」还是「等一会儿再试」。"""
+    """源站那一段「暫無內容」在不在，决定说的是「换编号」还是「等一会儿再试」。"""
     empty = jav.no_search_results('<div class="empty-message">暫無內容</div>', "ZZZZ-99999")
     blocked = jav.no_search_results("<html><body>请稍候…</body></html>", "PRED-375")
 
-    assert "没有这个番号" in empty.message
+    assert "没有这个编号" in empty.message
     assert "限速" in blocked.message
 
 
 def test_fetch_movie_tells_a_blocked_search_page_from_a_missing_code() -> None:
-    """抓取这一层也要把两种情形分开 —— 「在源站查不到番号」会把用户支到换番号那条路上。"""
+    """抓取这一层也要把两种情形分开 —— 「在源站查不到编号」会把用户支到换编号那条路上。"""
     source = FakeSource(
         {"https://javdb.com/search?f=all&q=PRED-375": "<html><body>请稍候…</body></html>"}
     )
 
     with pytest.raises(MovieImportError) as excinfo:
-        jav.fetch_movie("PRED-375", client=source)
+        jav.fetch("PRED-375", client=source)
 
     assert "限速" in excinfo.value.message

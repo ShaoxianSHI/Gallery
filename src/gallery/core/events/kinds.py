@@ -156,19 +156,30 @@ SHOW: Final = EventKind(
     empty_label="未命名演出",
 )
 
+#: 「来源」那一栏的值域：这部影片是从哪个网站抓来的（ADR 0068）。**它同时是打开影片网站与判重的
+#: 键**，所以三个值都要稳定；用网站自己的名字是因为译成中文反而认不出（YouTube 就是 YouTube）。
+SOURCE_JAV: Final = "JavDB"
+SOURCE_YOUTUBE: Final = "YouTube"
+SOURCE_BILIBILI: Final = "Bilibili"
+
+#: 已知的来源。**顺序即下拉里的顺序**。
+MOVIE_SOURCES: Final = (SOURCE_JAV, SOURCE_YOUTUBE, SOURCE_BILIBILI)
+
 MOVIE: Final = EventKind(
     id="movie",
     label="影片",
     table="event_movie",
     fields=(
-        EventField("code", "番号", "code", hint="如 IPX-660"),
+        EventField("source", "来源", "source", choices=MOVIE_SOURCES),
+        EventField("code", "编号", "code", hint="番号、YouTube 的 videoId、B 站的 BV 号"),
         EventField("duration", "时长", "duration", "INTEGER", hint="分钟，只填数字"),
-        EventField("studio", "片商", "studio"),
+        # 三栏都取中性词：同一栏要装下片商、频道与 UP 主（ADR 0068 决策 2）。
+        EventField("creator", "作者", "creator", hint="片商、频道、UP 主"),
         EventField("label", "发行商", "label"),
-        EventField("series", "系列", "series"),
+        EventField("series", "系列", "series", hint="系列、合集"),
         EventField("director", "导演", "director"),
         EventField("actors", "演员", "actors", hint="多个用逗号分开", multiple=True),
-        EventField("tags", "类别", "tags", hint="多个用逗号分开", multiple=True),
+        EventField("tags", "标签", "tags", hint="多个用逗号分开", multiple=True),
         EventField("rating", "评分", "rating", "REAL", hint="只填数字"),
     ),
     # 发行日期复用公共列 ``started_on``：菜单排序与「按事件分组」的组键都读它，
@@ -310,16 +321,31 @@ def normalize_day(text: str) -> str:
     return text.strip() if parsed is None else parsed.isoformat()
 
 
+def minutes_of_seconds(seconds: int | None) -> int | None:
+    """秒 → 「时长」那一栏的分钟（四舍五入）。**不足半分钟的就是空**。
+
+    YouTube 与 B 站给的都是秒，而那一栏是给人看的整数：170 分钟比 10200 秒好读。
+    两个来源共用这一条规则，各写一份的话总有一天一个四舍五入、另一个向下取整。
+    """
+    if not seconds or seconds < 0:
+        return None
+    return round(seconds / 60) or None
+
+
 __all__ = [
     "COMMON_FIELDS",
     "COVER",
     "EVENT_KINDS",
     "KINDS_BY_ID",
     "MOVIE",
+    "MOVIE_SOURCES",
     "MULTI_SEPARATOR",
     "RATING_MAX",
     "RATING_MIN",
     "SHOW",
+    "SOURCE_BILIBILI",
+    "SOURCE_JAV",
+    "SOURCE_YOUTUBE",
     "SQL_TYPES",
     "TRIP",
     "EventField",
@@ -329,6 +355,7 @@ __all__ = [
     "fields_of",
     "join_multi",
     "kind_by_id",
+    "minutes_of_seconds",
     "normalize_day",
     "parse_calendar_day",
     "parse_cost",
