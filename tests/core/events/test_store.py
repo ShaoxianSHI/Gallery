@@ -548,6 +548,24 @@ def test_the_group_key_leads_with_the_date_and_ends_with_the_id(events: EventSto
     assert ref.group_key == f"2026-05-16#{event.id}"
 
 
+def test_a_ref_carries_the_kind_fields_for_grouping(events: EventStore) -> None:
+    """分组要按「旅行·目的地」这类字段归拢，所以每条引用顺带带出这类事件的字段值。
+
+    **公共列不在其中**：名称与日期已有同名字段，重复带一份只会让「值从哪儿来」多一条路。
+    """
+    event = _create(events, destination="京都、奈良", cost="3,280.50", rating="5")
+    photo = Path("/库/a.jpg")
+    events.bind([photo], event.id)
+
+    ref = events.events_for_photos([photo])[photo][0]
+
+    assert ref.text("destination") == "京都、奈良"
+    assert ref.text("cost") == "3280.5"
+    assert ref.text("rating") == "5"
+    assert ref.text("transport") == ""  # 没填的字段不进来
+    assert "title" not in dict(ref.values)
+
+
 def test_an_event_without_a_date_gets_a_key_that_sinks(events: EventStore) -> None:
     """没填日期的那个组要沉到最后：组键以 ``#`` 开头（分组的排序函数据此给 0）。"""
     event = _create(events)

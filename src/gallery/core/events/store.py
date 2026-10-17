@@ -14,7 +14,7 @@ import sqlite3
 import threading
 from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
-from typing import cast
+from typing import Final, cast
 
 from gallery.core import paths
 from gallery.core.errors import CoverNotBoundError, EventNotFoundError, EventsUnavailableError
@@ -63,6 +63,44 @@ from gallery.core.metadata.journal import (
 from gallery.core.sql import ESCAPE, file_identity, like_pattern
 
 logger = logging.getLogger(__name__)
+
+#: 每条绑定顺带取出的**类型独有字段**：按事件类型各接一张扩展表，列名带别名前缀。
+#: 分组要的就是它们（「按旅行·目的地分组」），而事件只有几十条、绑定按层查一次。
+_KIND_JOINS: Final = " ".join(
+    f"LEFT JOIN {SCHEMA_NAME}.{kind.table} k_{kind.id} ON k_{kind.id}.event_id = e.id"
+    for kind in EVENT_KINDS
+)
+
+#: 顺带选出的列：每一类独有字段一个，顺序与 :data:`_KIND_JOINS` 一致。
+_FIELD_SELECTORS: Final = tuple(
+    f"k_{kind.id}.{field.column}" for kind in EVENT_KINDS for field in kind.fields
+)
+
+
+def _field_starts() -> dict[str, int]:
+    """每一类在 ``SELECT`` 里的起始下标：路径、id、类型、名称、开始日期、封面六列之后。"""
+    starts: dict[str, int] = {}
+    start = 6
+    for kind in EVENT_KINDS:
+        starts[kind.id] = start
+        start += len(kind.fields)
+    return starts
+
+
+_FIELD_STARTS: Final = _field_starts()
+
+
+def _event_field_values(row: Sequence[object], kind_id: str) -> tuple[tuple[str, str], ...]:
+    """一行查询结果里这类事件独有字段的文字值。没填的字段不进元组。"""
+    kind = kind_by_id(kind_id)
+    start = _FIELD_STARTS.get(kind_id)
+    if kind is None or start is None:
+        return ()
+    return tuple(
+        (field.id, str(row[start + index]))
+        for index, field in enumerate(kind.fields)
+        if row[start + index] is not None
+    )
 
 
 def attach(
@@ -210,10 +248,12 @@ class EventStore:
         connection = self._live_connection()
         if connection is None or not paths:
             return {}
+        base = ("pe.path", "e.id", "e.kind", "e.title", "e.started_on", f"e.{COVER.column}")
         statement = (
-            f"SELECT pe.path, e.id, e.kind, e.title, e.started_on, e.{COVER.column}"
+            f"SELECT {', '.join((*base, *_FIELD_SELECTORS))}"
             f"  FROM {SCHEMA_NAME}.photo_events pe"
             f"  JOIN {SCHEMA_NAME}.events e ON e.id = pe.event_id"
+            f"  {_KIND_JOINS}"
             f" WHERE pe.path IN ({{placeholders}})"
             f" ORDER BY e.started_on DESC, e.id DESC"
         )
@@ -226,13 +266,15 @@ class EventStore:
                     statement.format(placeholders=", ".join(["?"] * len(chunk))), chunk
                 ).fetchall()
                 for row in rows:
+                    kind_id = str(row[2])
                     found.setdefault(Path(row[0]), []).append(
                         EventRef(
                             id=int(row[1]),
-                            kind=str(row[2]),
+                            kind=kind_id,
                             title=str(row[3]),
                             started_on=row[4],
                             cover_path=row[5],
+                            values=_event_field_values(row, kind_id),
                         )
                     )
         return {path: tuple(refs) for path, refs in found.items()}

@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from gallery.core.events.store import EventRef
 from gallery.core.library.photos import PhotoRef
 from gallery.core.metadata.facets import (
     FACET_APERTURE,
@@ -29,9 +30,12 @@ from gallery.core.metadata.facets import (
     SORT_FACETS,
     WANTED_TAGS,
     PhotoFacets,
+    event_field_facet,
+    event_field_facet_id,
     extract,
     group_facet,
     input_for,
+    is_event_facet,
     mark_place_resolved,
     needs_metadata,
     parse_capture_time,
@@ -434,3 +438,93 @@ def test_the_full_xmp_name_wins_over_the_primary_one_and_iptc() -> None:
     # 三层各自独立，一层缺失不影响另两层。
     partial = extract({"IPTC:City": "Bordeaux", "XMP-photoshop:Country": "France"})
     assert (partial.city, partial.region, partial.country) == ("Bordeaux", None, "France")
+
+
+# ---- 事件字段（按旅行·目的地这类分组）-------------------------------------------
+
+
+def _event(kind: str, event_id: int = 1, **values: str) -> EventRef:
+    return EventRef(
+        id=event_id, kind=kind, title="t", started_on=None, values=tuple(values.items())
+    )
+
+
+def _with_events(tmp_path: Path, *events: EventRef) -> object:
+    return input_for(_ref(tmp_path, "a.jpg"), PhotoFacets(), tmp_path, events=events)
+
+
+def test_grouping_by_an_event_field_reads_only_that_kind(tmp_path: Path) -> None:
+    """「旅行·目的地」只看旅行那一类；别类的事件不该漏进来。"""
+    facet = event_field_facet("trip", "destination")
+    assert facet is not None and facet.group is not None
+
+    groups = facet.group(
+        _with_events(
+            tmp_path, _event("trip", 1, destination="京都"), _event("show", 2, city="京都")
+        )
+    )
+
+    assert list(groups) == [("京都", "京都")]
+    assert facet.label == "旅行 · 目的地"
+
+
+def test_a_field_of_one_kind_can_be_read_from_several_events_at_once(tmp_path: Path) -> None:
+    """同一类的两个事件都写了同一个值，只算一次 —— 否则那一组里会出现同一张照片两遍。"""
+    facet = event_field_facet("trip", "destination")
+    assert facet is not None and facet.group is not None
+
+    groups = facet.group(
+        _with_events(
+            tmp_path, _event("trip", 1, destination="京都"), _event("trip", 2, destination="京都")
+        )
+    )
+
+    assert list(groups) == [("京都", "京都")]
+
+
+def test_a_multiple_event_field_splits_into_one_group_each(tmp_path: Path) -> None:
+    """多值字段（「京都、奈良」）与关键词同款：一张照片同时进两组。"""
+    facet = event_field_facet("trip", "destination")
+    assert facet is not None and facet.group is not None
+
+    groups = facet.group(_with_events(tmp_path, _event("trip", 1, destination="京都、奈良")))
+
+    assert list(groups) == [("京都", "京都"), ("奈良", "奈良")]
+
+
+def test_an_unfilled_event_field_makes_no_group(tmp_path: Path) -> None:
+    facet = event_field_facet("trip", "destination")
+    assert facet is not None and facet.group is not None
+
+    assert list(facet.group(_with_events(tmp_path))) == []
+    assert facet.empty_label == "未填目的地"
+
+
+def test_an_event_number_field_orders_as_a_number(tmp_path: Path) -> None:
+    """花费、评分类字段按数字比：按文字比会把 900 排到 3000 之后。"""
+    facet = event_field_facet("trip", "cost")
+    assert facet is not None and facet.group_order is not None
+
+    cheap, pricey = facet.group_order("900.0"), facet.group_order("3000.0")
+
+    assert isinstance(cheap, float) and isinstance(pricey, float)
+    assert pricey > cheap
+
+
+def test_event_field_ids_round_trip_through_group_facet() -> None:
+    """配置里存的是字段 id，读回来必须还是同一个字段。"""
+    facet_id = event_field_facet_id("trip", "destination")
+
+    assert group_facet(facet_id) is event_field_facet("trip", "destination")
+    assert group_facet(event_field_facet_id("trip", "没有这一栏")) is None
+    assert group_facet(event_field_facet_id("没有这一类", "destination")) is None
+
+
+def test_event_fields_do_not_need_exiftool() -> None:
+    facet = event_field_facet("show", "venue")
+    assert facet is not None
+
+    assert needs_metadata((facet,)) is False
+    assert is_event_facet(facet.id) is True
+    assert is_event_facet("event") is True
+    assert is_event_facet(FACET_CAMERA) is False

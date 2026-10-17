@@ -102,7 +102,8 @@ class EventRef:
 
     :attr:`cover_path` 是**这个事件的封面**（ADR 0048），**不是这张照片的** —— 一张照片属于几个
     事件，就带着几份封面。分组靠它认出「这一组该画哪一张」，适用的条件是组键对得上（见
-    :mod:`gallery.core.library.groups`）。
+    :mod:`gallery.core.library.groups`）。:attr:`values` 是这类事件独有字段的文字值，
+    「按旅行·目的地分组」要靠它；没值的字段不进来，于是空元组也很常见。
     """
 
     id: int
@@ -111,6 +112,13 @@ class EventRef:
     started_on: str | None
     #: 封面照片的路径（库里存的是文本）；没设就是 ``None``。
     cover_path: str | None = None
+    #: 这类事件独有字段的文字值：``(字段 id, 文字)``。**公共列不在其中** —— 名称与日期
+    #: 已有同名字段，重复带一份只会让「值从哪儿来」多一条路。
+    values: tuple[tuple[str, str], ...] = ()
+
+    def text(self, field_id: str) -> str:
+        """这个事件某一栏的文字值；没填就是空串。"""
+        return next((value for key, value in self.values if key == field_id), "")
 
     @property
     def group_key(self) -> str:

@@ -51,7 +51,7 @@ from gallery.core.library.config import BROWSE_MODE_ALBUMS, prepare_library  # n
 from gallery.core.library.facade import Library  # noqa: E402
 from gallery.core.library.photos import GroupRef  # noqa: E402
 from gallery.core.library.session import SessionState, save_session  # noqa: E402
-from gallery.core.metadata.facets import PhotoFacets  # noqa: E402
+from gallery.core.metadata.facets import PhotoFacets, event_field_facet_id  # noqa: E402
 from gallery.ui import theme  # noqa: E402
 from gallery.ui.dialogs.event_edit import (  # noqa: E402
     DELETE_REQUESTED,
@@ -428,6 +428,70 @@ def test_grouping_by_event_shows_a_card_per_event(qt_app: QApplication, window: 
 
 def _groups(window: MainWindow) -> list[GroupRef]:
     return [entry for entry in window._model.entries() if isinstance(entry, GroupRef)]
+
+
+def test_the_group_menu_offers_each_kinds_fields(qt_app: QApplication, window: MainWindow) -> None:
+    """「分组 → 旅行 / 演出 / 影片」，每一层右侧是这一类自己的字段（与事件面板同源）。"""
+    view = next(action.menu() for action in window.menuBar().actions() if action.text() == "视图")
+    group_menu = next(
+        menu
+        for menu in (action.menu() for action in view.actions())
+        if menu is not None and menu.title() == "分组"
+    )
+    submenus = {
+        action.menu().title(): action.menu()
+        for action in group_menu.actions()
+        if action.menu() is not None
+    }
+
+    assert {"旅行", "演出", "影片"} <= set(submenus)
+    assert [action.text() for action in submenus["旅行"].actions()] == [
+        field.label for field in TRIP.fields
+    ]
+    assert event_field_facet_id("trip", "destination") in window._group_actions
+
+
+def test_grouping_by_a_trip_field_shows_a_card_per_value(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """按「旅行·目的地」分组：同一次旅行的那几张归一组，没填那栏的沉到末尾。"""
+    library = window._library
+    assert library is not None
+    kyoto = library.create_event(
+        "trip", EventDraft(values={"title": "京都五日", "destination": "京都"})
+    ).event
+    osaka = library.create_event(
+        "trip", EventDraft(values={"title": "大阪一日", "destination": "大阪"})
+    ).event
+    library.bind_photos(_paths(window, "京都-01.jpg"), kyoto.id)
+    library.bind_photos(_paths(window, "大阪-01.jpg"), osaka.id)
+
+    window.set_group_facet(event_field_facet_id("trip", "destination"))
+    wait_until(qt_app, lambda: len(_groups(window)) == 3)
+
+    assert [(group.label, group.count) for group in _groups(window)] == [
+        ("京都", 1),
+        ("大阪", 1),
+        ("未填目的地", 1),
+    ]
+
+
+def test_editing_a_trip_regroups_by_its_field(qt_app: QApplication, window: MainWindow) -> None:
+    """改一次事件之后按它字段分的那一层要当场跟着变（``_after_events_changed`` 的重排前置条件）。"""
+    library = window._library
+    assert library is not None
+    trip = library.create_event(
+        "trip", EventDraft(values={"title": "京都五日", "destination": "京都"})
+    ).event
+    library.bind_photos(_paths(window, "京都-01.jpg"), trip.id)
+    window.set_group_facet(event_field_facet_id("trip", "destination"))
+    wait_for_idle(qt_app, window, what="按旅行·目的地分组")
+
+    library.update_event(trip.id, EventDraft(values={"title": "京都五日", "destination": "奈良"}))
+    window._after_events_changed()
+    wait_until(qt_app, lambda: "奈良" in [group.label for group in _groups(window)])
+
+    assert "奈良" in [group.label for group in _groups(window)]
 
 
 def test_recording_a_photo_regroups_right_away(qt_app: QApplication, window: MainWindow) -> None:

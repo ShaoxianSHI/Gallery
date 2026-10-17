@@ -130,6 +130,9 @@ EXISTS (… JOIN ev.event_trip t ON t.event_id = pe.event_id
 整个缓存在会话里**（零 IO），**绑定表只走 SQL** 且必须跟着 `_start_facet_read` 那个后台任务一起取 ——
 分组是在主线程同步算的，不能在那里现发一次随层大小线性增长的查询。
 
+**延伸**：「按某一类事件的某个字段分组」（目的地、艺人、番号……）见 ADR 0065 —— 同一条路，
+`EventRef` 多带一份这类字段的值，判据收成一个 `is_event_facet`。
+
 ### 8. 改了路径就要把绑定一起搬 —— 四条路，一个入口
 
 绑定是按 `path` 记的，而 facets / photos 靠 `(size, mtime_ns)` 让 facet 行自动过期、`forget_paths` 清孤儿

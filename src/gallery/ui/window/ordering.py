@@ -17,6 +17,7 @@ from typing import Final
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMenu
 
+from gallery.core.events.kinds import EVENT_KINDS
 from gallery.core.events.store import EventRef
 from gallery.core.library.config import BROWSE_MODE_ALBUMS, BROWSE_MODE_CALENDAR
 from gallery.core.library.facade import Library
@@ -28,7 +29,9 @@ from gallery.core.metadata.facets import (
     SORT_FACETS,
     Facet,
     PhotoFacets,
+    event_field_facet,
     group_facet,
+    is_event_facet,
     needs_metadata,
     sort_facet,
 )
@@ -188,6 +191,9 @@ class OrderingMixin:
                 self.set_group_facet,
                 unavailable=self._unavailable_hint(facet),
             )
+            if facet.id == FACET_EVENT:
+                # 紧接着「事件」摆三类的字段子菜单：它们都是「照片属于哪次事件」的延伸。
+                self._add_event_field_menus(group_menu)
 
         sort_menu = view_menu.addMenu("排序")
         sort_menu.setToolTipsVisible(True)
@@ -207,6 +213,23 @@ class OrderingMixin:
         self._descending_action.setCheckable(True)
         self._descending_action.toggled.connect(self.set_sort_descending)
         sort_menu.addAction(self._descending_action)
+
+    def _add_event_field_menus(self, group_menu: QMenu) -> None:
+        """「分组 → 旅行 / 演出 / 影片」，每一层右侧是这一类事件自己的字段（ADR 0043 决策 7）。
+
+        字段清单来自 :attr:`EventKind.fields`，与事件面板同源；**只有类型独有的字段** ——
+        名称与日期按「事件」分组已经有了。挑一个就是把这一层按那一栏归拢（「按旅行·目的地」）。
+        """
+        for kind in EVENT_KINDS:
+            submenu = group_menu.addMenu(kind.label)
+            submenu.setToolTipsVisible(True)
+            for declared in kind.fields:
+                facet = event_field_facet(kind.id, declared.id)
+                if facet is None:
+                    continue
+                self._group_actions[facet.id] = self._order_choice(
+                    submenu, declared.label, facet.id, self.set_group_facet
+                )
 
     def _order_choice(
         self,
@@ -322,7 +345,7 @@ class OrderingMixin:
         group = None if self._group_view is not None else self._current_group_facet()
         if needs_metadata((group, sort_facet(self._sort_facet))):
             return True
-        if group is not None and group.id == FACET_EVENT:
+        if group is not None and is_event_facet(group.id):
             return True
         return self._conditions_need_metadata()
 
@@ -343,11 +366,14 @@ class OrderingMixin:
         return "分组" if self._group_facet else "排序"
 
     def _groups_by_event(self) -> bool:
-        """当前是不是按事件分组（进了某个组之后不算 —— 那一层已经是展开的那一批照片）。"""
+        """当前是不是按事件那一族分组（事件本身，或某一类事件的某个字段）。
+
+        进了某个组之后不算 —— 那一层已经是展开的那一批照片。
+        """
         if self._group_view is not None:
             return False
         facet = self._current_group_facet()
-        return facet is not None and facet.id == FACET_EVENT
+        return facet is not None and is_event_facet(facet.id)
 
     # ---- 进入与退出分组 ------------------------------------------------------
 

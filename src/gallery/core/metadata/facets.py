@@ -12,10 +12,12 @@ import datetime
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
+from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, Literal
 
 from gallery.core import paths
+from gallery.core.events.kinds import EventField, EventKind, kind_by_id, split_multi
 from gallery.core.events.store import EventRef
 from gallery.core.library.photos import PhotoRef
 
@@ -534,6 +536,100 @@ def _event_group_order(key: str) -> float | None:
     return _date_group_order(date_part) if date_part else None
 
 
+# ---- 事件字段（ADR 0043 决策 7 的延伸）-----------------------------------------------
+
+#: 事件独有字段的分组字段 id 前缀：``event_field:旅行 id:字段 id``。
+EVENT_FIELD_PREFIX: Final = "event_field"
+
+
+def event_field_facet_id(kind_id: str, field_id: str) -> str:
+    """某个事件类型里某一栏的分组字段 id。"""
+    return f"{EVENT_FIELD_PREFIX}:{kind_id}:{field_id}"
+
+
+def _event_field_ids(facet_id: str) -> tuple[str, str] | None:
+    """事件字段的分组 id 拆成 ``(类型 id, 字段 id)``；不是这种形状就是 ``None``。"""
+    head, separator, rest = facet_id.partition(":")
+    if head != EVENT_FIELD_PREFIX or not separator:
+        return None
+    kind_id, separator, field_id = rest.partition(":")
+    if not separator or not kind_id or not field_id:
+        return None
+    return kind_id, field_id
+
+
+@cache
+def event_field_facet(kind_id: str, field_id: str) -> Facet | None:
+    """某一类事件里某个字段的分组字段；认不出来就是 ``None``。
+
+    **只有类型独有的字段**（:attr:`EventKind.fields`）：名称与日期是公共列，按它们分组与
+    「事件」那一档重合，按备注分组则没有意义。
+    """
+    kind = kind_by_id(kind_id)
+    if kind is None:
+        return None
+    field = next((declared for declared in kind.fields if declared.id == field_id), None)
+    if field is None:
+        return None
+    return _facet(
+        event_field_facet_id(kind.id, field.id),
+        f"{kind.label} · {field.label}",
+        _event_field_kind(field),
+        group=_event_field_group(kind, field),
+        group_order=_event_field_order(field),
+        empty_label=f"未填{field.label}",
+    )
+
+
+def _event_field_kind(field: EventField) -> FacetKind:
+    if field.sql_type == "DAY":
+        return "captured"
+    return "number" if field.sql_type in ("INTEGER", "REAL") else "text"
+
+
+def _event_field_group(
+    kind: EventKind, field: EventField
+) -> Callable[[FacetInput], Sequence[tuple[str, str]]]:
+    """这张照片所属的、``kind`` 这一类事件里 ``field`` 那一栏的取值。
+
+    **一张照片属于同一类的几个事件时，同名的值只算一次**：两个旅行都写了「京都」不该让
+    这张照片在那一组里出现两遍。多值字段按 :func:`split_multi` 拆开，于是「京都、奈良」的
+    那趟旅行把照片同时归进两组（与关键词同款的多归属）。
+    """
+
+    def group(item: FacetInput) -> Sequence[tuple[str, str]]:
+        found: dict[str, str] = {}
+        for event in item.events:
+            if event.kind != kind.id:
+                continue
+            text = event.text(field.id).strip()
+            if not text:
+                continue
+            pieces = split_multi(text) if field.multiple else (text,)
+            for piece in pieces:
+                if piece:
+                    found.setdefault(piece, piece)
+        return tuple(found.items())
+
+    return group
+
+
+def _event_field_order(field: EventField) -> Callable[[str], SortValue | None]:
+    """组键怎么比较：日期与数字当数值比，其余按名称。"""
+    if field.sql_type == "DAY":
+        return _date_group_order
+    if field.sql_type in ("INTEGER", "REAL"):
+
+        def numeric(key: str) -> SortValue | None:
+            try:
+                return float(key)
+            except ValueError:
+                return None
+
+        return numeric
+    return _text_group_order
+
+
 _FACETS: Final[tuple[Facet, ...]] = (
     _facet(
         FACET_CAPTURED,
@@ -700,10 +796,27 @@ SORT_FACETS: Final[tuple[Facet, ...]] = tuple(FACETS_BY_ID[fid] for fid in SORT_
 
 
 def group_facet(facet_id: str | None) -> Facet | None:
-    """按 id 取可分组的字段；``None`` 表示不分组。非法 id 也返回 ``None``。"""
-    if facet_id is None or facet_id not in GROUP_FACET_IDS:
+    """按 id 取可分组的字段；``None`` 表示不分组。非法 id 也返回 ``None``。
+
+    事件独有字段那一族**不在** :data:`GROUP_FACET_IDS` 里（它们按事件定义动态生成），
+    所以这里多问一次 :func:`event_field_facet`。
+    """
+    if facet_id is None:
         return None
-    return FACETS_BY_ID[facet_id]
+    if facet_id in GROUP_FACET_IDS:
+        return FACETS_BY_ID[facet_id]
+    parsed = _event_field_ids(facet_id)
+    return event_field_facet(*parsed) if parsed is not None else None
+
+
+def is_event_facet(facet_id: str | None) -> bool:
+    """这个分组字段是不是「照片属于哪些事件」那一族（事件本身，或某一类事件的某个字段）。
+
+    **判据只有这一处**：界面据此决定「要不要去后台取那份事件映射」以及「事件改了要不要重排」。
+    """
+    if facet_id is None:
+        return False
+    return facet_id == FACET_EVENT or _event_field_ids(facet_id) is not None
 
 
 def sort_facet(facet_id: str | None) -> Facet | None:
@@ -716,14 +829,15 @@ def sort_facet(facet_id: str | None) -> Facet | None:
 def needs_metadata(facets: Sequence[Facet | None]) -> bool:
     """这些字段里有没有一个必须真去读 EXIF 才能拿到。
 
-    **事件那一族不算**：它不来自照片，而来自我们自己的库。不放它过去的话，用户点一次「按事件
-    分组」会先起一个后台任务把整库 EXIF 重读一遍 + 报一条「正在读取 N 张照片…」——而事件值
-    只是几毫秒的 SQL（ADR 0043 决策 7）。
+    **事件那一族不算**（含「按旅行·目的地分组」这类事件字段）：它不来自照片，而来自我们自己的
+    库。不放它过去的话，用户点一次「按事件分组」会先起一个后台任务把整库 EXIF 重读一遍 + 报
+    一条「正在读取 N 张照片…」——而事件值只是几毫秒的 SQL（ADR 0043 决策 7）。
     """
     return any(
         facet is not None
         and facet.id not in FILE_FACET_IDS
         and facet.id not in GALLERY_OWN_FACET_IDS
+        and not is_event_facet(facet.id)
         for facet in facets
     )
 
@@ -770,6 +884,7 @@ def input_for(
 
 
 __all__ = [
+    "EVENT_FIELD_PREFIX",
     "FACETS_BY_ID",
     "FACET_APERTURE",
     "FACET_CAMERA",
@@ -803,9 +918,12 @@ __all__ = [
     "FacetKind",
     "PhotoFacets",
     "SortValue",
+    "event_field_facet",
+    "event_field_facet_id",
     "extract",
     "group_facet",
     "input_for",
+    "is_event_facet",
     "mark_place_resolved",
     "needs_metadata",
     "parse_capture_time",
