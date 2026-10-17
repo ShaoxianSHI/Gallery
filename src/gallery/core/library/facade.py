@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+import threading
 from collections.abc import Callable, Container, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from functools import partial, wraps
@@ -237,6 +238,9 @@ class Library:
         self._config_dir_ready = paths.has_config_dir(root)
         # 索引只在真的用到分组 / 排序时才打开（ADR 0009）—— 打开它本身不写任何文件。
         self._index: FacetIndex | None = None
+        #: 打开 / 关掉索引那把连接时的锁，**开与关共用**：几个线程同时第一次访问时只许有一条连接
+        #: —— 两条连接抢同一份 ``index.db`` / ``events.db``，写的时候会报 ``database is locked``。
+        self._index_lock = threading.Lock()
         #: 整份事件清单的会话缓存（ADR 0043 决策 7）。``None`` = 还没读过或刚被写操作作废。
         self._events_cache: tuple[Event, ...] | None = None
 
@@ -584,14 +588,18 @@ class Library:
     def facet_index(self) -> FacetIndex:
         """facet 缓存（首次调用时才打开数据库）。配置目录建不出来时**不开盘** —— 退回纯内存缓存，
         本次会话照常能用，只是下次打开要重读一遍 EXIF。
+
+        **打开这一步要串行**：几个线程同时第一次进来会各建一条连接，于是同一份 ``index.db`` /
+        ``events.db`` 上有两条连接，其中一条写的时候报 ``database is locked``（ADR 0064）。
         """
-        if self._index is None:
-            path = paths.index_file(self._root) if self._config_dir_ready else None
-            # 事件库挂在**索引这条连接**上（ADR 0043 决策 1）：SQL 层仍然是一张库，而生命周期
-            # 上仍是两个文件、两份 ``user_version``。挂钩只有这一处接线 —— ``index.py`` 不认识事件。
-            self._index = FacetIndex(path, attach=partial(events.attach, root=self._root))
-            self._events_cache = None
-        return self._index
+        with self._index_lock:
+            if self._index is None:
+                path = paths.index_file(self._root) if self._config_dir_ready else None
+                # 事件库挂在**索引这条连接**上（ADR 0043 决策 1）：SQL 层仍然是一张库，
+                # 生命周期上仍是两个文件、两份 ``user_version``。挂钩只有这一处接线。
+                self._index = FacetIndex(path, attach=partial(events.attach, root=self._root))
+                self._events_cache = None
+            return self._index
 
     @property
     def events(self) -> EventStore:
@@ -1101,10 +1109,11 @@ class Library:
         return PlacePass(scanned=scanned, resolved=resolved)
 
     def close_index(self) -> None:
-        """关掉索引连接（切库 / 关窗）。"""
-        if self._index is not None:
-            self._index.close()
-            self._index = None
+        """关掉索引连接（切库 / 关窗）。与打开走同一把锁：**别在别人正在开的时候关**。"""
+        with self._index_lock:
+            if self._index is not None:
+                self._index.close()
+                self._index = None
 
     # ---- 写操作（唯一会改动用户文件的一类）------------------------------------
 

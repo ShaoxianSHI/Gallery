@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -25,6 +27,7 @@ from gallery.core.library.config import (
     save_config,
 )
 from gallery.core.library.facade import Library
+from gallery.core.library.index import FacetIndex
 from gallery.core.library.photos import FolderRef, PhotoRef
 
 
@@ -694,3 +697,40 @@ def test_a_write_refused_with_a_readonly_database_is_retried_once(tmp_path: Path
 
     assert written.event.text("title") == "京都五日"
     assert [event.text("title") for event in library.all_events()] == ["京都五日"]
+
+
+def test_the_index_connection_is_opened_once_under_threads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """几个线程同时第一次访问 ``facet_index``，只许建出**一条**连接。
+
+    原先那里是「没有就建」而没有锁：几个线程会各建一个 ``FacetIndex``，于是同一份 ``index.db`` /
+    ``events.db`` 上出现两条连接，其中一条写的时候报 ``database is locked`` —— 又一次冒充
+    「未预期的问题」。把构造拉长一点，这条竞态才是**必然**发生而不是碰运气。
+    """
+    prepare_library(tmp_path)
+    library = Library.open(tmp_path)
+    built: list[FacetIndex] = []
+    original = FacetIndex.__init__
+
+    def counting(self: FacetIndex, *args: object, **kwargs: object) -> None:
+        time.sleep(0.01)
+        original(self, *args, **kwargs)  # type: ignore[arg-type]
+        built.append(self)
+
+    monkeypatch.setattr(FacetIndex, "__init__", counting)
+    started = threading.Barrier(8)
+    opened: list[FacetIndex] = []
+
+    def open_it() -> None:
+        started.wait()
+        opened.append(library.facet_index)
+
+    threads = [threading.Thread(target=open_it) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert len(built) == 1
+    assert len(set(map(id, opened))) == 1
