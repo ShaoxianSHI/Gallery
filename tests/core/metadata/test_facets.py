@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from gallery.core.events.kinds import TRIP
 from gallery.core.events.store import EventRef
 from gallery.core.library.photos import PhotoRef
 from gallery.core.metadata.facets import (
@@ -34,6 +35,7 @@ from gallery.core.metadata.facets import (
     event_field_facet_id,
     extract,
     group_facet,
+    groupable_event_fields,
     input_for,
     is_event_facet,
     mark_place_resolved,
@@ -443,9 +445,11 @@ def test_the_full_xmp_name_wins_over_the_primary_one_and_iptc() -> None:
 # ---- 事件字段（按旅行·目的地这类分组）-------------------------------------------
 
 
-def _event(kind: str, event_id: int = 1, **values: str) -> EventRef:
+def _event(
+    kind: str, event_id: int = 1, *, started_on: str | None = None, **values: str
+) -> EventRef:
     return EventRef(
-        id=event_id, kind=kind, title="t", started_on=None, values=tuple(values.items())
+        id=event_id, kind=kind, title="t", started_on=started_on, values=tuple(values.items())
     )
 
 
@@ -511,11 +515,35 @@ def test_an_event_number_field_orders_as_a_number(tmp_path: Path) -> None:
     assert pricey > cheap
 
 
+def test_the_event_kinds_fields_lead_with_the_start_date() -> None:
+    """子菜单里公共的「开始日期」排在最前，类型独有的字段跟在后面。"""
+    fields = groupable_event_fields(TRIP)
+
+    assert fields[0].id == "started_on"
+    assert [field.id for field in fields[1:]] == [field.id for field in TRIP.fields]
+
+
+def test_grouping_by_the_event_start_date_orders_as_a_date(tmp_path: Path) -> None:
+    """开始日期记的是事件本身的日期，按它分组与按照片拍摄时间不是一回事。"""
+    facet = event_field_facet("trip", "started_on")
+    assert facet is not None and facet.group is not None and facet.group_order is not None
+
+    groups = facet.group(_with_events(tmp_path, _event("trip", 1, started_on="2026-05-16")))
+
+    assert list(groups) == [("2026-05-16", "2026-05-16")]
+    assert facet.empty_label == "未填开始日期"
+    assert facet.group_order("2026-11-02") > facet.group_order("2026-05-16")
+
+
 def test_event_field_ids_round_trip_through_group_facet() -> None:
     """配置里存的是字段 id，读回来必须还是同一个字段。"""
     facet_id = event_field_facet_id("trip", "destination")
 
     assert group_facet(facet_id) is event_field_facet("trip", "destination")
+    assert group_facet(event_field_facet_id("trip", "started_on")) is not None
+    # 名称与备注不进这一族：前者与「事件」重合，后者分组没有意义。
+    assert group_facet(event_field_facet_id("trip", "title")) is None
+    assert group_facet(event_field_facet_id("trip", "note")) is None
     assert group_facet(event_field_facet_id("trip", "没有这一栏")) is None
     assert group_facet(event_field_facet_id("没有这一类", "destination")) is None
 

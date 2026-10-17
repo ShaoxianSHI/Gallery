@@ -31,6 +31,7 @@ from gallery.core.metadata.facets import (
     PhotoFacets,
     event_field_facet,
     group_facet,
+    groupable_event_fields,
     is_event_facet,
     needs_metadata,
     sort_facet,
@@ -215,15 +216,15 @@ class OrderingMixin:
         sort_menu.addAction(self._descending_action)
 
     def _add_event_field_menus(self, group_menu: QMenu) -> None:
-        """「分组 → 旅行 / 演出 / 影片」，每一层右侧是这一类事件自己的字段（ADR 0043 决策 7）。
+        """「分组 → 旅行 / 演出 / 影片」，每一层右侧是这一类事件的字段（ADR 0043 决策 7）。
 
-        字段清单来自 :attr:`EventKind.fields`，与事件面板同源；**只有类型独有的字段** ——
-        名称与日期按「事件」分组已经有了。挑一个就是把这一层按那一栏归拢（「按旅行·目的地」）。
+        清单来自 :func:`groupable_event_fields`：公共的「开始日期」在前，类型独有的字段在后。
+        挑一个就是把这一层按那一栏归拢（「按旅行·目的地」）。
         """
         for kind in EVENT_KINDS:
             submenu = group_menu.addMenu(kind.label)
             submenu.setToolTipsVisible(True)
-            for declared in kind.fields:
+            for declared in groupable_event_fields(kind):
                 facet = event_field_facet(kind.id, declared.id)
                 if facet is None:
                     continue

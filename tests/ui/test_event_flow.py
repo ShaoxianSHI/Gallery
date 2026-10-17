@@ -446,9 +446,11 @@ def test_the_group_menu_offers_each_kinds_fields(qt_app: QApplication, window: M
 
     assert {"旅行", "演出", "影片"} <= set(submenus)
     assert [action.text() for action in submenus["旅行"].actions()] == [
-        field.label for field in TRIP.fields
+        "开始日期",
+        *(field.label for field in TRIP.fields),
     ]
     assert event_field_facet_id("trip", "destination") in window._group_actions
+    assert event_field_facet_id("trip", "started_on") in window._group_actions
 
 
 def test_grouping_by_a_trip_field_shows_a_card_per_value(

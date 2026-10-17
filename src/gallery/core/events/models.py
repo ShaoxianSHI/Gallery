@@ -117,7 +117,13 @@ class EventRef:
     values: tuple[tuple[str, str], ...] = ()
 
     def text(self, field_id: str) -> str:
-        """这个事件某一栏的文字值；没填就是空串。"""
+        """这个事件某一栏的文字值；没填就是空串。
+
+        「开始日期」这类公共列不在 :attr:`values` 里，**从各自的属性上答**；于是分组那一层
+        对公共列与独有字段只有一条取值路径。
+        """
+        if field_id == "started_on":
+            return self.started_on or ""
         return next((value for key, value in self.values if key == field_id), "")
 
     @property

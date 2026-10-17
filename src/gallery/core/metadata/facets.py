@@ -17,7 +17,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Final, Literal
 
 from gallery.core import paths
-from gallery.core.events.kinds import EventField, EventKind, kind_by_id, split_multi
+from gallery.core.events.kinds import (
+    COMMON_FIELDS,
+    EventField,
+    EventKind,
+    kind_by_id,
+    split_multi,
+)
 from gallery.core.events.store import EventRef
 from gallery.core.library.photos import PhotoRef
 
@@ -541,6 +547,17 @@ def _event_group_order(key: str) -> float | None:
 #: 事件独有字段的分组字段 id 前缀：``event_field:旅行 id:字段 id``。
 EVENT_FIELD_PREFIX: Final = "event_field"
 
+#: 公共列里也值得当作分组依据的那几条。**开始日期**记的是事件本身的日期（旅行的出发日、
+#: 影片的发行日），与按照片拍摄时间分组不是一回事；名称与备注要么与「事件」重合、要么无意义。
+EVENT_FIELD_EXTRA_IDS: Final = ("started_on",)
+
+_COMMON_EVENT_FIELDS: Final = {field.id: field for field in COMMON_FIELDS}
+
+
+def groupable_event_fields(kind: EventKind) -> tuple[EventField, ...]:
+    """某一类在「分组」子菜单里列出的字段：公共的开始日期在前，类型独有的在后。"""
+    return (*(_COMMON_EVENT_FIELDS[field_id] for field_id in EVENT_FIELD_EXTRA_IDS), *kind.fields)
+
 
 def event_field_facet_id(kind_id: str, field_id: str) -> str:
     """某个事件类型里某一栏的分组字段 id。"""
@@ -562,13 +579,14 @@ def _event_field_ids(facet_id: str) -> tuple[str, str] | None:
 def event_field_facet(kind_id: str, field_id: str) -> Facet | None:
     """某一类事件里某个字段的分组字段；认不出来就是 ``None``。
 
-    **只有类型独有的字段**（:attr:`EventKind.fields`）：名称与日期是公共列，按它们分组与
-    「事件」那一档重合，按备注分组则没有意义。
+    可取的是 :func:`groupable_event_fields` 那一批 —— 类型独有的字段，加上公共的「开始日期」。
     """
     kind = kind_by_id(kind_id)
     if kind is None:
         return None
-    field = next((declared for declared in kind.fields if declared.id == field_id), None)
+    field = next(
+        (declared for declared in groupable_event_fields(kind) if declared.id == field_id), None
+    )
     if field is None:
         return None
     return _facet(
@@ -884,6 +902,7 @@ def input_for(
 
 
 __all__ = [
+    "EVENT_FIELD_EXTRA_IDS",
     "EVENT_FIELD_PREFIX",
     "FACETS_BY_ID",
     "FACET_APERTURE",
@@ -922,6 +941,7 @@ __all__ = [
     "event_field_facet_id",
     "extract",
     "group_facet",
+    "groupable_event_fields",
     "input_for",
     "is_event_facet",
     "mark_place_resolved",
