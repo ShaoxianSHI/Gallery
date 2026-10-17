@@ -46,6 +46,7 @@ from gallery.core.events.kinds import (  # noqa: E402
     EventKind,
     fields_of,
 )
+from gallery.core.events.models import DISPLAY_NAME_MAX, shorten_name  # noqa: E402
 from gallery.core.events.store import Event, EventDraft  # noqa: E402
 from gallery.core.library.config import BROWSE_MODE_ALBUMS, prepare_library  # noqa: E402
 from gallery.core.library.facade import Library  # noqa: E402
@@ -385,6 +386,37 @@ def test_recording_again_under_an_existing_trip(qt_app: QApplication, window: Ma
     chosen.trigger()
 
     assert library.events.photos_of_event(event.id) == tuple(_paths(window, "京都-01.jpg"))
+
+
+def test_every_right_click_menu_elides_a_long_event_name(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """右键那几层列的都是同一个截短后的名字 —— 记录为 / 从这次事件移出 / 设为事件封面 /
+    编辑事件。"""
+    library = window._library
+    assert library is not None
+    long_name = "超长的旅行名字" * 5
+    event = library.create_event("trip", EventDraft(values={"title": long_name})).event
+    library.bind_photos(_paths(window, "京都-01.jpg"), event.id)
+    row = _select(window, "京都-01.jpg")
+    expected = shorten_name(long_name)
+
+    record_as = _submenu(_context(window, row), "记录为")
+    trip = _submenu(record_as, "旅行")
+    trip.aboutToShow.emit()
+    leave = _submenu(record_as, "从这次事件移出")
+    leave.aboutToShow.emit()
+    edit = _submenu(_context(window, row), "编辑事件")
+    cover = _submenu(_context(window, row), "设为事件封面")
+    cover.aboutToShow.emit()
+
+    def texts(menu: QMenu) -> list[str]:
+        return [action.text() for action in menu.actions() if not action.isSeparator()]
+
+    assert expected in texts(trip)
+    assert texts(leave) == [expected]
+    assert texts(edit) == [expected]
+    assert texts(cover) == [expected]
 
 
 def test_leaving_an_event(qt_app: QApplication, window: MainWindow) -> None:
@@ -1033,6 +1065,19 @@ def test_the_edit_event_menu_lists_what_there_is(window: MainWindow) -> None:
     actions = _events_of_kind(window, TRIP)
 
     assert [action.text() for action in actions] == ["奈良三日", "京都五日"]
+
+
+def test_a_long_event_name_is_elided_in_the_edit_event_menu(window: MainWindow) -> None:
+    """菜单栏「编辑事件 → 旅行」里的名字同样截短 —— 菜单、横幅、元数据面板共用一个长度。"""
+    library = window._library
+    assert library is not None
+    long_name = "超长的旅行名字" * 5
+    library.create_event("trip", EventDraft(values={"title": long_name}))
+
+    actions = _events_of_kind(window, TRIP)
+
+    assert [action.text() for action in actions] == [shorten_name(long_name)]
+    assert len(actions[0].text()) == DISPLAY_NAME_MAX
 
 
 def test_the_edit_event_menu_orders_by_start_date(window: MainWindow) -> None:

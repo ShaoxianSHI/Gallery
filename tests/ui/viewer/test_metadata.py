@@ -37,7 +37,7 @@ from PySide6.QtWidgets import (  # noqa: E402
     QWidget,
 )
 
-from gallery.core.events.models import Event  # noqa: E402
+from gallery.core.events.models import Event, shorten_name  # noqa: E402
 from gallery.core.metadata.report import build_report  # noqa: E402
 from gallery.ui import theme  # noqa: E402
 from gallery.ui.viewer.metadata import (  # noqa: E402
@@ -362,6 +362,16 @@ def test_event_fields_skip_the_name_and_the_cover() -> None:
 
 def test_event_title_carries_the_kind_and_the_name() -> None:
     assert event_title(_trip_event()) == "旅行 · 京都五日"
+
+
+def test_a_long_event_name_is_elided_in_the_event_title() -> None:
+    """那个组标题里的事件名同样截短 —— 与菜单、横幅共用同一个长度。"""
+    long_name = "超长的旅行名字" * 5
+
+    title = event_title(_trip_event(title=long_name))
+
+    assert title == f"旅行 · {shorten_name(long_name)}"
+    assert long_name not in title
 
 
 def test_an_event_of_an_unknown_kind_shows_just_its_name() -> None:

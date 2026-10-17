@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from gallery.core.events.kinds import COVER, EventField, fields_of, kind_by_id
-from gallery.core.events.models import Event
+from gallery.core.events.models import Event, shorten_name
 from gallery.core.metadata.report import MetadataField, MetadataGroup, MetadataReport
 from gallery.ui import theme
 from gallery.ui.layout import clear_layout
@@ -62,10 +62,11 @@ _CONTENT_PAD_RIGHT = CONTENT_PAD - SCROLLBAR_EDGE_GAP
 
 def event_title(event: Event) -> str:
     """事件那一块的组标题：``旅行 · 京都五日``。带上类型名 —— 一张照片可以同时属于一次旅行与
-    一场演出，只写名字分不出那是哪一类。
+    一场演出，只写名字分不出那是哪一类。名称太长时中间省略，与菜单、横幅同一档。
     """
     kind = kind_by_id(event.kind)
-    return f"{kind.label} · {event.display_name}" if kind is not None else event.display_name
+    name = shorten_name(event.display_name)
+    return f"{kind.label} · {name}" if kind is not None else name
 
 
 def event_fields(event: Event) -> tuple[MetadataField, ...]:

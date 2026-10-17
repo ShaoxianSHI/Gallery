@@ -8,10 +8,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Final
 
 from gallery.core.events.kinds import kind_by_id
 
 type SqlValue = str | int | float | None
+
+#: 界面上摆一个事件名时最长这么多字符，超了从中间省略。菜单、横幅、元数据面板共用这一个数 ——
+#: 各写一份的话，同一个事件在三处会被截得不一样长。
+DISPLAY_NAME_MAX: Final = 20
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,7 +179,17 @@ class EventDraft:
         return cls(values=dict(fields))
 
 
+def shorten_name(name: str) -> str:
+    """事件名太长时从中间省略（两头是日期与地点，比中间那一截更有信息量）。"""
+    if len(name) <= DISPLAY_NAME_MAX:
+        return name
+    head = (DISPLAY_NAME_MAX - 1) // 2
+    tail = DISPLAY_NAME_MAX - 1 - head
+    return f"{name[:head]}…{name[-tail:]}"
+
+
 __all__ = [
+    "DISPLAY_NAME_MAX",
     "Event",
     "EventDraft",
     "EventRef",
@@ -182,4 +197,5 @@ __all__ = [
     "EventWriteOutcome",
     "Orphan",
     "SqlValue",
+    "shorten_name",
 ]

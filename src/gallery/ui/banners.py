@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from gallery.core.events.models import shorten_name
 from gallery.core.events.orphans import OrphanScan
 from gallery.core.events.store import EventWriteOutcome
 from gallery.core.external.launch import OpenOutcome
@@ -56,16 +57,17 @@ def undo_note(journaled: bool) -> str:
 
 def event_created_banner(outcome: EventWriteOutcome) -> str:
     """记完一次之后的那一句。**新建不在撤销栈里**（撤销它就是删），所以这一句不承诺 ⌘Z。"""
-    return f"已记为「{outcome.event.display_name}」。"
+    return f"已记为「{shorten_name(outcome.event.display_name)}」。"
 
 
 def event_updated_banner(outcome: EventWriteOutcome) -> str:
     """改了事件之后。**一句里说清成没成与能不能撤** —— 与元数据那一族同一套规矩。"""
+    name = shorten_name(outcome.event.display_name)
     if not outcome.changed:
-        return f"「{outcome.event.display_name}」没有改动。"
+        return f"「{name}」没有改动。"
     if not outcome.journaled:
-        return f"已更新「{outcome.event.display_name}」。⌘Z 撤销不了：没能记下操作日志。"
-    return f"已更新「{outcome.event.display_name}」。⌘Z 可以撤销。"
+        return f"已更新「{name}」。⌘Z 撤销不了：没能记下操作日志。"
+    return f"已更新「{name}」。⌘Z 可以撤销。"
 
 
 def event_deleted_banner(outcome: EventWriteOutcome) -> str:
@@ -74,7 +76,7 @@ def event_deleted_banner(outcome: EventWriteOutcome) -> str:
     撤销**能把绑定放回来**，所以这一句要**承诺 ⌘Z** ——「删掉 37 张照片上的记录」那句话读着
     吓人，而它其实撤得回来。
     """
-    what = f"「{outcome.event.display_name}」"
+    what = f"「{shorten_name(outcome.event.display_name)}」"
     photos = f"，连带从 {len(outcome.unbound)} 张照片上移掉了它的记录" if outcome.unbound else ""
     note = "。⌘Z 可以撤销" if outcome.journaled else "。⌘Z 撤销不了：没能记下操作日志"
     return f"已删除{what}{photos}{note}。"
@@ -85,17 +87,19 @@ def photos_bound_banner(count: int, event_name: str, *, by_range: bool = False) 
 
     ``by_range`` 为真时提一句「按日期」：那是几百张的批量操作，用户该知道它为什么这么多。
     """
+    name = shorten_name(event_name)
     if count <= 0:
-        return f"这些照片已经在「{event_name}」里了，没有改动。"
+        return f"这些照片已经在「{name}」里了，没有改动。"
     how = "按日期范围把" if by_range else "已把"
-    return f"{how} {count} 张照片记进「{event_name}」。"
+    return f"{how} {count} 张照片记进「{name}」。"
 
 
 def photos_unbound_banner(count: int, event_name: str) -> str:
     """把照片从一个事件里拿出来之后。"""
+    name = shorten_name(event_name)
     if count <= 0:
-        return f"这些照片本来就不在「{event_name}」里，没有改动。"
-    return f"已把 {count} 张照片从「{event_name}」里拿出来。"
+        return f"这些照片本来就不在「{name}」里，没有改动。"
+    return f"已把 {count} 张照片从「{name}」里拿出来。"
 
 
 def event_cover_set_banner(event_name: str, photo_name: str) -> str:
@@ -104,12 +108,12 @@ def event_cover_set_banner(event_name: str, photo_name: str) -> str:
     **说清是哪一张**：用户刚点的是网格里那一张，而横幅出现在内容上方 ——
     不点名的话，「已设置封面」在几十张缩略图之上等于没说。
     """
-    return f"已把「{photo_name}」设为「{event_name}」的封面。⌘Z 可以撤销。"
+    return f"已把「{photo_name}」设为「{shorten_name(event_name)}」的封面。⌘Z 可以撤销。"
 
 
 def event_cover_cleared_banner(event_name: str) -> str:
     """取消事件封面之后。**说清回到哪儿去** —— 用户要的可能是「换一张」而不是「不要封面」。"""
-    return f"已取消「{event_name}」的封面，现在用的是第一张照片。⌘Z 可以撤销。"
+    return f"已取消「{shorten_name(event_name)}」的封面，现在用的是第一张照片。⌘Z 可以撤销。"
 
 
 def shows_imported_banner(created: int, duplicates: int, skipped: int) -> str:
@@ -160,7 +164,9 @@ def movie_site_opened_banner(code: str, outcome: OpenOutcome) -> str:
 def event_undo_banner(result: UndoResult, kind_label: str) -> str:
     """⌘Z 撤掉一次事件改动之后。**两种改动说法不一样** —— 撤的是删除就说「回来了」。"""
     what = (
-        f"{kind_label}「{result.event.display_name}」" if result.event is not None else kind_label
+        f"{kind_label}「{shorten_name(result.event.display_name)}」"
+        if result.event is not None
+        else kind_label
     )
     verb = "已恢复" if result.action == ACTION_EVENT_DELETE else "已把"
     if not result.journaled:

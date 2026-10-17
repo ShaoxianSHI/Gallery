@@ -19,6 +19,7 @@ from PySide6.QtWidgets import QAbstractButton, QDialog, QFileDialog, QMenu, QMes
 
 from gallery.core.errors import EventsUnavailableError, GalleryError
 from gallery.core.events.kinds import EVENT_KINDS, MOVIE, EventKind, kind_by_id
+from gallery.core.events.models import shorten_name
 from gallery.core.events.orphans import OrphanScan
 from gallery.core.events.prefill import EventPrefill, prefill_from_photos
 from gallery.core.events.store import Event, EventRef
@@ -260,7 +261,7 @@ class EventFlowMixin:
         menu.setToolTipsVisible(True)
         menu.triggered.connect(self._on_edit_event_picked)
         for title, event_id in events:
-            menu.addAction(title).setData(event_id)
+            menu.addAction(shorten_name(title)).setData(event_id)
         return menu
 
     def new_event_menu(self) -> QMenu:
@@ -316,7 +317,7 @@ class EventFlowMixin:
             library = self._library
             existing = library.events_by_kind(kind.id) if library is not None else ()
             for event in existing:
-                submenu.addAction(event.display_name).setData(event.id)
+                submenu.addAction(shorten_name(event.display_name)).setData(event.id)
             submenu.setEnabled(bool(existing))
 
         submenu.aboutToShow.connect(fill)
@@ -442,7 +443,7 @@ class EventFlowMixin:
                 return
             submenu.addSeparator()
             for event in existing:
-                submenu.addAction(event.display_name).setData(event.id)
+                submenu.addAction(shorten_name(event.display_name)).setData(event.id)
 
         submenu = QMenu(kind.label)
         submenu.setToolTipsVisible(True)
@@ -454,6 +455,7 @@ class EventFlowMixin:
         """当前选中的照片属于哪些事件（「从这次事件移出」那一层列的就是它）。
 
         **按事件平铺，不再按类型分组** —— 要离开哪一次旅行，用户自己知道是哪一次。
+        名字按界面上那一档截短 —— 这一层列的就是菜单里的字。
         """
         library = self._library
         if library is None:
@@ -466,7 +468,10 @@ class EventFlowMixin:
         for refs in found.values():
             for ref in refs:
                 seen.setdefault(ref.id, ref.title)
-        return [(title, event_id) for event_id, title in sorted(seen.items(), reverse=True)]
+        return [
+            (shorten_name(title), event_id)
+            for event_id, title in sorted(seen.items(), reverse=True)
+        ]
 
     # ---- 封面 --------------------------------------------------------------
 
@@ -541,7 +546,7 @@ class EventFlowMixin:
         """清单与置灰**用同一份**：置灰再问一次库就是两次 SQL，而两者本该是同一个答案。"""
         menu.clear()
         for title, event_id in events:
-            menu.addAction(title).setData(event_id)
+            menu.addAction(shorten_name(title)).setData(event_id)
         menu.setDisabled(not events)
 
     def _cover_events_of_selection(self) -> list[tuple[str, int]]:

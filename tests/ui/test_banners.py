@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from gallery.core.events.models import shorten_name
 from gallery.core.events.store import Event, EventWriteOutcome
 from gallery.core.external.launch import WHERE_APP, WHERE_BROWSER, OpenOutcome
 from gallery.core.library.facade import MetadataWriteOutcome
@@ -451,6 +452,17 @@ def test_binding_says_how_many_were_new() -> None:
     assert banners.photos_bound_banner(0, "京都五日").startswith("这些照片已经在")
 
 
+def test_a_long_event_name_is_elided_on_the_banner() -> None:
+    """横幅里的事件名超过固定长度就中间省略 —— 免得一个名字把横幅拉成一条。"""
+    long_name = "超长的旅行名字" * 5
+    outcome = EventWriteOutcome(event=_event(title=long_name), journaled=True)
+
+    text = banners.event_created_banner(outcome)
+
+    assert shorten_name(long_name) in text
+    assert long_name not in text
+
+
 def test_binding_by_a_date_range_says_why_there_are_so_many() -> None:
     """按日期范围是几百张的批量操作，用户该知道它为什么这么多。"""
     assert banners.photos_bound_banner(312, "京都五日", by_range=True).startswith("按日期范围把")
@@ -471,3 +483,18 @@ def test_undoing_a_delete_says_it_came_back() -> None:
     assert "恢复" in banners.event_undo_banner(restored, "事件")
     assert "改回去" in banners.event_undo_banner(changed, "事件")
     assert "京都五日" in banners.event_undo_banner(changed, "事件")
+
+
+def test_a_long_event_name_is_elided_in_the_undo_banner() -> None:
+    """撤销那一句里的事件名同样截短 —— 与其余横幅共用一个长度。"""
+    from gallery.core.metadata.journal import ACTION_EVENT
+
+    long_name = "超长的旅行名字" * 5
+    result = UndoResult(
+        action=ACTION_EVENT, entries=(), event=_event(title=long_name), journaled=True
+    )
+
+    text = banners.event_undo_banner(result, "旅行")
+
+    assert shorten_name(long_name) in text
+    assert long_name not in text
