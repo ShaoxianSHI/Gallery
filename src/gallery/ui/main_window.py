@@ -10,6 +10,7 @@ import datetime
 import logging
 from collections import OrderedDict
 from collections.abc import Sequence
+from functools import partial
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, Qt, QTimer
@@ -32,7 +33,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gallery.core.external import launch, qspace
+from gallery.core.external import App, apps, launch
 from gallery.core.library.config import (
     BROWSE_MODE_ALBUMS,
     BROWSE_MODE_CALENDAR,
@@ -85,7 +86,7 @@ from gallery.ui.window.widgets.external_button import (
     ExternalEntry,
     calendar_icon,
     folder_icon,
-    qspace_icon,
+    icon_for,
 )
 from gallery.ui.window.widgets.search_field import ScopeToggle, SearchField
 from gallery.ui.window.widgets.title_bar import EXTRA_PADDING as TITLE_BAR_EXTRA
@@ -912,18 +913,49 @@ class MainWindow(
                 enabled=lambda: not self._on_calendar_page() and self._current_folder() is not None,
             ),
             ExternalEntry(
-                id="qspace",
-                name="QSpace",
-                icon=qspace_icon(),
+                id=apps.QSPACE.id,
+                name=apps.QSPACE.name,
+                icon=icon_for(apps.QSPACE),
                 # **没装它就不摆这一项**（与「访达」同一条判据：摆一个点下去没反应的灰条目
                 # 只会让人以为软件坏了）。访达仍是第一个可用的 —— 左半那一下打开的默认还是它。
                 enabled=lambda: (
-                    not self._on_calendar_page()
-                    and self._current_folder() is not None
-                    and qspace.find_qspace() is not None
+                    self._has_folder_to_open() and apps.find_app(apps.QSPACE) is not None
                 ),
             ),
+            *(
+                ExternalEntry(
+                    id=viewer.id,
+                    name=viewer.name,
+                    icon=icon_for(viewer),
+                    # 与上面那两项**互斥**：它们是「这一层文件夹」，这一列是「我看的这一张」。
+                    enabled=partial(self._viewer_ready, viewer),
+                )
+                for viewer in apps.VIEWERS
+            ),
         )
+
+    def _viewer_ready(self, viewer: App) -> bool:
+        """图片应用那一项此刻该不该出现：**大图页上正看着一张照片，而且本机装着它**。
+
+        网格页上不摆 —— 那里没有「正在看的那一张」，用某个软件打开**选区**是右键菜单那一组
+        回答的问题（ADR 0067）。
+        """
+        return self._detail_photo_path() is not None and apps.find_app(viewer) is not None
+
+    def _has_folder_to_open(self) -> bool:
+        """此刻有没有「当前这一层文件夹」可开 —— 访达与 QSpace 共用的那半条判据。"""
+        return not self._on_calendar_page() and self._current_folder() is not None
+
+    def _detail_photo_path(self) -> Path | None:
+        """大图页上正在看的那一张的路径；不在大图页（或那一格不是照片）就是 ``None``。
+
+        与右键那条「在默认应用中打开」问的是同一个东西（``photo_at(_focus_row())``，ADR 0021），
+        于是分组卡片与相册都被它挡在外面。
+        """
+        if not self._in_detail_page():
+            return None
+        ref = self._model.photo_at(self._focus_row())
+        return None if ref is None else ref.path
 
     def _on_external_entry(self, entry: object) -> None:
         """下拉框里点了哪一项。**按 id 分派**，不在按钮那一侧硬编码（理由见 ``ExternalEntry``）。"""
@@ -933,8 +965,12 @@ class MainWindow(
             self._open_google_calendar()
         elif entry.id == "finder":
             self._open_finder()
-        elif entry.id == "qspace":
+        elif entry.id == apps.QSPACE.id:
             self._open_qspace()
+        else:
+            viewer = next((one for one in apps.VIEWERS if one.id == entry.id), None)
+            if viewer is not None:
+                self._open_in_viewer(viewer)
 
     def _open_google_calendar(self) -> None:
         """把 Google 日历开到与当前这一页一致的那一层、那一天。
@@ -991,12 +1027,12 @@ class MainWindow(
     def _open_qspace(self) -> None:
         """在 QSpace 里打开下拉框指的那一样东西 —— 与「访达」那一项是同一件事的两个软件。
 
-        递过去的是一条 ``file://`` 地址（QSpace 认这个，见 ``core.external.qspace``）；真起进程
+        递过去的是一条 ``file://`` 地址（QSpace 认这个，见 ``core.external.apps``）；真起进程
         那一步在 ``desktop``，这一层只回答「作用在哪些路径、哪个应用包」。**大图页那一支没有
         ``open -R`` 可用**，递的是**文件**自己的地址，由 QSpace 打开所在的那一层并选中它
         （见 ``ui.desktop.reveal_in_qspace``）。
         """
-        app = qspace.find_qspace()
+        app = apps.find_app(apps.QSPACE)
         if app is None:
             self._show_banner("没有找到 QSpace，它可能已经被移走或卸载了。")
             return
@@ -1010,8 +1046,22 @@ class MainWindow(
         )
         self._show_banner(message, auto_hide=True)
 
+    def _open_in_viewer(self, viewer: App) -> None:
+        """用**点名的那个图片应用**打开大图页上正在看的那一张。
+
+        与右键那条「在默认应用中打开」相邻但不同：那条递的是系统为这个类型设定的那个应用，
+        这一条是用户在下拉框里亲手挑的（ADR 0067）。递过去的是**照片自己的路径** —— 用户要看的
+        是这一张，不是它所在的目录。
+        """
+        app = apps.find_app(viewer)
+        photo = self._detail_photo_path()
+        if app is None or photo is None:
+            self._show_banner(f"没有找到{viewer.name}，它可能已经被移走或卸载了。")
+            return
+        self._show_banner(desktop.open_with_app([photo], app=app, name=viewer.name), auto_hide=True)
+
     def _external_targets(self) -> tuple[list[Path], bool]:
-        """下拉框里那两项要作用在什么上：路径，以及**要不要把它选出来**。
+        """访达与 QSpace 那两项要作用在什么上：路径，以及**要不要把它选出来**。
 
         网格页（全部照片 / 相册）给**当前这一层文件夹**，用户看的是它**里面**摆着什么；大图页
         给**正在看的那一张**（:meth:`_selected_paths` 在大图页上就是它，ADR 0021）。判据只此一处

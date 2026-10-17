@@ -1,4 +1,4 @@
-"""与桌面系统打交道的那几个动作：在访达或 QSpace 里打开、往剪贴板里放文本或文件。
+"""与桌面系统打交道的那几个动作：在访达或 QSpace 里打开、用指名的应用打开、往剪贴板里放东西。
 
 ``QDesktopServices`` 没有「在访达里选中并露出它」那个动作，所以走 ``open -R``，起不来就降级成
 打开所在文件夹（ADR 0014 决策 3）；剪贴板放的是**文件引用**（``QMimeData.setUrls``，ADR 0017）。
@@ -70,6 +70,26 @@ def open_with_default_app(path: Path) -> str | None:
     if QDesktopServices.openUrl(QUrl.fromLocalFile(str(target))):
         return None
     return f"没能用默认应用打开「{target.name}」，请检查它是否还在原处。"
+
+
+def open_with_app(paths: Sequence[Path], *, app: Path, name: str) -> str:
+    """用**指名的那个应用**打开这些文件，返回一句说清实际做了什么的中文文案。
+
+    ``app`` 是 ``core.external`` 从名册上查到的**应用包路径**、``name`` 是写进文案的名字 ——
+    **不能把名字递给 ``open -a``**：它不认中文显示名（实测「预览」会被它拒掉）。起不来就退回
+    系统默认应用并照实说，静默不动会被当成卡住。
+    """
+    targets = [Path(path) for path in paths]
+    if not targets:
+        return "没有可打开的文件。"
+    if not QProcess.startDetached(REVEAL_PROGRAM, ["-a", str(app), *map(str, targets)]):
+        refusal = open_with_default_app(targets[0])
+        if refusal is not None:
+            return refusal
+        return f"没能交给{name}，已改用默认应用打开「{targets[0].name}」。"
+    if len(targets) == 1:
+        return f"已在{name}中打开「{targets[0].name}」。"
+    return f"已在{name}中打开 {len(targets)} 项。"
 
 
 def reveal_in_finder(paths: Sequence[Path]) -> str:
@@ -164,6 +184,7 @@ __all__ = [
     "format_paths",
     "open_folder_in_finder",
     "open_folder_in_qspace",
+    "open_with_app",
     "open_with_default_app",
     "read_files_from_clipboard",
     "reveal_in_finder",

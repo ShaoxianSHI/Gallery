@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (  # noqa: E402
 )
 from waiting import wait_until  # noqa: E402
 
-from gallery.core.external import launch, qspace  # noqa: E402
+from gallery.core.external import apps, launch  # noqa: E402
 from gallery.core.library.config import BROWSE_MODE_CALENDAR, prepare_library  # noqa: E402
 from gallery.core.library.photos import GroupRef  # noqa: E402
 from gallery.ui import desktop  # noqa: E402
@@ -59,18 +59,29 @@ from gallery.ui.window.widgets.search_field import WIDTH as SEARCH_FIELD_WIDTH  
 #: 搜索胶囊摆好之后的那一块。**按钮是从它往左长出来的**，所以这一块就是唯一的输入。
 FIELD = QRect(300, 7, 208, 22)
 
-#: 「装了 QSpace」那一支用的假应用包。开发机上真装着它、CI 上没有，于是**默认一律当作没装**
-#: （见 :func:`no_qspace`），要摆出这一项的用例自己点名。
+#: 「装了」那一支用的假应用包。开发机上真装着它们、CI 上没有，于是**默认一律当作没装**
+#: （见 :func:`no_external_apps`），要摆出某一项的用例自己用 :func:`_only` 点名。
 QSPACE_APP = Path("/Applications/QSpace Pro.app")
+IMAGEGLASS_APP = Path("/Applications/ImageGlass.app")
+PREVIEW_APP = Path("/System/Applications/Preview.app")
 
 
 @pytest.fixture(autouse=True)
-def no_qspace(monkeypatch: pytest.MonkeyPatch) -> None:
-    """下拉框里有没有 QSpace 这一项**不该取决于跑测试的这台机器装没装它**。
+def no_external_apps(monkeypatch: pytest.MonkeyPatch) -> None:
+    """下拉框里有哪几项**不该取决于跑测试的这台机器装没装它们**。
 
-    不假装的话，装了它的开发机上菜单里多一项、CI 上少一项 —— 同一份断言在两边必然一红一绿。
+    不假装的话，装了 QSpace / ImageGlass 的开发机上菜单里多两项、CI 上少两项 —— 同一份断言在
+    两边必然一红一绿。
     """
-    monkeypatch.setattr(qspace, "find_qspace", lambda: None)
+    monkeypatch.setattr(apps, "find_app", lambda app: None)
+
+
+def _only(monkeypatch: pytest.MonkeyPatch, **installed: Path) -> None:
+    """把名册换成「只装了这几个」，键是那一项的 id（``qspace`` / ``preview`` / ``imageglass``）。
+
+    整份名册一起换，「装了预览」这类用例才不会连带把真实机器上装着的那些也摆出来。
+    """
+    monkeypatch.setattr(apps, "find_app", lambda app: installed.get(app.id))
 
 
 def _set_anchor(window: MainWindow, day: datetime.date) -> None:
@@ -398,7 +409,7 @@ def test_the_qspace_entry_only_shows_up_when_it_is_installed(
     """
     assert "QSpace" not in _menu_texts(window._external_button)
 
-    monkeypatch.setattr(qspace, "find_qspace", lambda: QSPACE_APP)
+    _only(monkeypatch, qspace=QSPACE_APP)
     window._external_button.refresh()
 
     assert _menu_texts(window._external_button) == ["访达", "QSpace"]
@@ -410,7 +421,7 @@ def test_the_qspace_entry_opens_that_folder(
     window: MainWindow, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """递出去的是**当前这一层那个文件夹**与 core 查到的那个应用包。"""
-    monkeypatch.setattr(qspace, "find_qspace", lambda: QSPACE_APP)
+    _only(monkeypatch, qspace=QSPACE_APP)
     opened: list[tuple[list[Path], Path]] = []
     monkeypatch.setattr(
         desktop,
@@ -427,7 +438,7 @@ def test_the_qspace_entry_follows_the_folder_the_window_is_in(
     window: MainWindow, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """进到相册里之后按它，开的同样是**当前这一层**，不是永远开着库根。"""
-    monkeypatch.setattr(qspace, "find_qspace", lambda: QSPACE_APP)
+    _only(monkeypatch, qspace=QSPACE_APP)
     opened: list[list[Path]] = []
     monkeypatch.setattr(
         desktop,
@@ -479,7 +490,7 @@ def test_the_qspace_entry_reveals_the_photo_the_detail_page_is_showing(
     QSpace 认的是地址里那一样东西：给文件就打开所在的那一层并把它选出来，给文件夹才会落到
     里面去（见 ``ui.desktop.reveal_in_qspace``）。所以这里递的必须是照片本身。
     """
-    monkeypatch.setattr(qspace, "find_qspace", lambda: QSPACE_APP)
+    _only(monkeypatch, qspace=QSPACE_APP)
     revealed: list[list[Path]] = []
     opened: list[list[Path]] = []
     monkeypatch.setattr(
@@ -504,11 +515,104 @@ def test_the_qspace_entry_stays_off_the_calendar_page(
     window: MainWindow, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """日历页上没有它 —— 那一页没有「当前这一层文件夹」可开（与访达同一条判据）。"""
-    monkeypatch.setattr(qspace, "find_qspace", lambda: QSPACE_APP)
+    _only(monkeypatch, qspace=QSPACE_APP)
 
     window.set_browse_mode(BROWSE_MODE_CALENDAR)
 
     assert _menu_texts(window._external_button) == ["Google 日历"]
+
+
+# ---- 大图页那一列图片应用（ADR 0067）-----------------------------------
+
+
+def test_every_installed_app_is_listed_in_a_fixed_order(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """装了哪几项就摆哪几项，**次序固定**：访达与 QSpace 在前，图片应用往后排。
+
+    左半那一下打开的仍然是**访达**（第一项可用的）：新来的几项都排在后面，默认那一个不动。
+    """
+    _only(monkeypatch, qspace=QSPACE_APP, preview=PREVIEW_APP, imageglass=IMAGEGLASS_APP)
+    window._open_detail(window._model.index(0, 0))
+    window._external_button.refresh()
+
+    assert _menu_texts(window._external_button) == ["访达", "QSpace", "预览", "ImageGlass"]
+    default = window._external_button.default_entry()
+    assert default is not None and default.name == "访达"
+
+
+def test_a_viewer_entry_only_shows_up_on_the_detail_page(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**网格页上不摆**：那里没有「正在看的那一张」，用某个软件打开**选区**是右键菜单那一组
+    回答的问题（ADR 0067）。只装了预览时 ImageGlass 也不出现 —— 没装就不摆，与「访达」同一条。
+    """
+    _only(monkeypatch, preview=PREVIEW_APP)
+    assert "预览" not in _menu_texts(window._external_button)
+
+    window._open_detail(window._model.index(0, 0))
+    window._external_button.refresh()
+
+    assert _menu_texts(window._external_button) == ["访达", "预览"]
+
+
+def test_the_viewer_entry_opens_the_photo_the_detail_page_is_showing(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """递出去的是**正在看的那一张**、名册上那个应用包，以及写进文案的那个名字。
+
+    递的**不是**它所在的文件夹 —— 用户要看的正是这一张；名字也**不是**给 ``open -a`` 的
+    （它不认中文名），只是横幅里那一句要说的。
+    """
+    _only(monkeypatch, imageglass=IMAGEGLASS_APP)
+    calls: list[tuple[list[Path], Path, str]] = []
+    monkeypatch.setattr(
+        desktop,
+        "open_with_app",
+        lambda paths, app, name: calls.append((list(paths), app, name)) or "已在ImageGlass中打开。",
+    )
+    window._open_detail(window._model.index(0, 0))
+
+    window._open_in_viewer(apps.VIEWERS[1])
+
+    assert calls == [([window._library.root / "一张.jpg"], IMAGEGLASS_APP, "ImageGlass")]
+
+
+def test_clicking_a_viewer_entry_reaches_the_same_action(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """点菜单里那一项走的是**按 id 分派**那条路（与「访达」「QSpace」同一处）。
+
+    不接这一下的话，下拉框里会摆出一项点下去什么都不会发生的条目。
+    """
+    _only(monkeypatch, preview=PREVIEW_APP)
+    opened: list[list[Path]] = []
+    monkeypatch.setattr(
+        desktop,
+        "open_with_app",
+        lambda paths, app, name: opened.append(list(paths)) or "已在预览中打开。",
+    )
+    window._open_detail(window._model.index(0, 0))
+
+    window._on_external_entry(_entry("preview", "预览", True))
+
+    assert opened == [[window._library.root / "一张.jpg"]]
+
+
+def test_an_unknown_entry_reaches_no_action(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """认不出来的 id 谁也不碰 —— 分派那一串的末尾**不能顺手把最后那一项当默认**。"""
+    reached: list[str] = []
+    monkeypatch.setattr(desktop, "open_with_app", lambda *a, **k: reached.append("viewer") or "x")
+    monkeypatch.setattr(desktop, "reveal_in_finder", lambda *a: reached.append("finder") or "x")
+    monkeypatch.setattr(
+        desktop, "open_folder_in_finder", lambda *a: reached.append("finder") or "x"
+    )
+
+    window._on_external_entry(_entry("某个以后才有的应用", "以后", True))
+
+    assert reached == []
 
 
 def test_button_appears_on_the_calendar_page(window: MainWindow) -> None:

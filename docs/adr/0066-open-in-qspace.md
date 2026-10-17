@@ -4,7 +4,7 @@
 - 日期：2026-10-17
 - 相关 ADR：0034（用外部应用打开的入口）、0014（`open -R` 那条右键命令）、0021（大图页的当前项）、
   0038（东西只放两个位置）
-- 相关代码：`src/gallery/core/external/qspace.py`、`src/gallery/ui/desktop.py`、
+- 相关代码：`src/gallery/core/external/apps.py`、`src/gallery/ui/desktop.py`、
   `src/gallery/ui/main_window.py`、`src/gallery/ui/window/widgets/external_button.py`
 
 ## 背景

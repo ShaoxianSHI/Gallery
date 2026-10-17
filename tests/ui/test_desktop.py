@@ -167,7 +167,7 @@ def test_opening_a_folder_in_qspace_hands_a_file_url_and_the_app(
 ) -> None:
     """交给 QSpace 的是**应用包 + 一条 ``file://`` 地址**，不是路径文字。
 
-    QSpace 自己注册了 ``file`` URL 方案（见 ``core.external.qspace``），它认的就是地址。
+    QSpace 自己注册了 ``file`` URL 方案（见 ``core.external.apps``），它认的就是地址。
     路径用纯 ASCII 的，那一条地址于是可以逐字断言 —— 中文名会被百分号转义成一串 ``%E2…``，
     断言里就只剩「我抄了一遍编码器」。
     """
@@ -249,3 +249,61 @@ def test_showing_a_photo_in_qspace_falls_back_to_the_finder_and_says_so(
 
     assert services.urls == ["/照片/京都"]
     assert message == "没能交给 QSpace，没能选中这些文件，已改为在访达里打开「/照片/京都」。"
+
+
+# ---- 大图页那一列图片应用（ADR 0067）-----------------------------------
+
+
+def test_using_a_named_app_hands_it_the_path_and_the_bundle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """递出去的是**应用包 + 文件路径**（不是 ``file://`` 地址、更不是名字）。
+
+    路径用纯 ASCII 的，那一条命令于是可以逐字断言。**名字一个字节都没进命令** ——
+    ``open -a`` 不认中文显示名（实测「预览」会被它拒掉），它只用来写横幅。
+    """
+    process = _Process(True)
+    monkeypatch.setattr(desktop, "QProcess", process)
+
+    message = desktop.open_with_app(
+        [Path("/photos/kyoto/one.jpg")], app=Path("/Applications/ImageGlass.app"), name="ImageGlass"
+    )
+
+    assert process.calls == [
+        ("open", ["-a", "/Applications/ImageGlass.app", "/photos/kyoto/one.jpg"])
+    ]
+    assert message == "已在ImageGlass中打开「one.jpg」。"
+
+
+def test_using_a_named_app_falls_back_to_the_default_one_and_says_so(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``open`` 起不来就退回**系统默认应用**，并且说清换的是哪一个。
+
+    含糊不得：用户以为照片开在 ImageGlass 里、看到的却是别的软件，比明说换过更难查。
+    """
+    services = _DesktopServices(True)
+    monkeypatch.setattr(desktop, "QProcess", _Process(False))
+    monkeypatch.setattr(desktop, "QDesktopServices", services)
+
+    message = desktop.open_with_app(
+        [Path("/照片/京都/一张.jpg")], app=Path("/Applications/ImageGlass.app"), name="ImageGlass"
+    )
+
+    assert services.urls == ["/照片/京都/一张.jpg"]
+    assert message == "没能交给ImageGlass，已改用默认应用打开「一张.jpg」。"
+
+
+def test_using_a_named_app_says_why_when_nothing_responds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """两条路都不通时说的是**默认应用那一句** —— 用户看得见的那个软件真的没被叫起来。"""
+    monkeypatch.setattr(desktop, "QProcess", _Process(False))
+    monkeypatch.setattr(desktop, "QDesktopServices", _DesktopServices(False))
+
+    message = desktop.open_with_app(
+        [Path("/照片/京都/一张.jpg")], app=Path("/Applications/ImageGlass.app"), name="ImageGlass"
+    )
+
+    assert message is not None
+    assert "一张.jpg" in message

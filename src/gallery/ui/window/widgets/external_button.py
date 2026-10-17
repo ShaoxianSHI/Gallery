@@ -26,6 +26,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QMenu, QToolButton, QWidget
 
+from gallery.core.external import App
 from gallery.ui import theme
 from gallery.ui.rename_edit import field_background
 from gallery.ui.window import menu_style
@@ -179,15 +180,15 @@ def folder_icon(size: int = ICON_EDGE) -> QIcon:
     return drawn_icon(ICON_FOLDER, size)
 
 
-def qspace_icon(size: int = ICON_EDGE) -> QIcon:
-    """QSpace 那一项的图标：**用应用包里那个真的**（同上）。
+def icon_for(app: App, size: int = ICON_EDGE) -> QIcon:
+    """某一项外部应用的图标：**用应用包里那个真的**（与访达、日历那两项同一个规矩）。
 
-    这一项**只在装了 QSpace 时才摆出来**（判据在 ``core.external.qspace``），所以走到这里的
-    退路很少见：包在但图标文件读不出来。
+    这一项**只在装了它时才摆出来**（判据在 ``core.external.apps``），所以走到这里的退路很少见：
+    包在、但图标文件读不出来。那时宁可画一个中性的轮廓，也不画一个「像它但不是」的。
     """
-    from gallery.core.external import qspace_icon as icon_path
+    from gallery.core.external import icon_path
 
-    path = icon_path()
+    path = icon_path(app)
     if path is not None:
         icon = QIcon(str(path))
         if not icon.isNull():
@@ -460,6 +461,6 @@ __all__ = [
     "calendar_icon",
     "drawn_icon",
     "folder_icon",
+    "icon_for",
     "menu_origin",
-    "qspace_icon",
 ]
