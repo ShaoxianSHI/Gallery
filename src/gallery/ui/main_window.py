@@ -625,8 +625,8 @@ class MainWindow(
             self._size_actions.append(action)
 
         # 「导入」挨着「视图」右边（ADR 0063）：把外面的东西拿进来 —— 抓影片、从「演迹」导入演出。
+        # **建在菜单栏自己名下**（见 `import_menu`），与上面三条同一条路。
         self._import_menu = self.import_menu()
-        self.menuBar().addMenu(self._import_menu)
 
         # 不加工具栏：这些命令在 macOS 顶部菜单里都有，再重复一遍只会挤掉照片。
         self._rebuild_recent_menu()

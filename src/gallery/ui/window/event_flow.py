@@ -296,10 +296,11 @@ class EventFlowMixin:
     def import_menu(self) -> QMenu:
         """菜单栏「导入」那一层（ADR 0063）：把外面的东西拿进来 —— 抓影片、导入演出。
 
-        这一层是**常驻**的（菜单栏的子菜单），所以不挂 ``aboutToShow`` 现填。会变的是可不可点：
-        事件库用不上时由 :meth:`_update_event_actions` 置灰 —— 两条导入都要事件库。
+        **用 ``menuBar().addMenu("导入")`` 建**，与「文件 / 编辑 / 视图」逐字同一条路：那样菜单
+        才是菜单栏的亲儿子（``addMenu(QMenu)`` 不会把它认到菜单栏名下），在 macOS 的原生菜单栏里
+        才会按原生样式画 —— 一个没有父的 ``QMenu`` 会退成 Qt 自己画的那一份，与相邻几个不一样。
         """
-        menu = QMenu("导入")
+        menu = self.menuBar().addMenu("导入")
         menu.setToolTipsVisible(True)
         self._import_movies_action = QAction("导入影片…", self)
         self._import_movies_action.triggered.connect(self.import_movies_from_dialog)
