@@ -931,21 +931,21 @@ class Library:
         on_work: Callable[[int], None] | None = None,
         on_progress: Callable[[int], None] | None = None,
     ) -> int:
-        """把整个库的照片写进索引的文件表，返回新写了多少行。**只有真的有活干才起**（文件表一行都
-        没有），否则用户第一次搜索会看到「一条都没有」；幂等，``(大小, 修改时间)`` 对得上就不写。
+        """把整个库的照片与索引的文件表**对一遍**，返回新写了多少行。
 
-        :param on_work: ``(这次要写多少行)``，**只在真的找到活干时叫一次**；``on_progress`` 是
-            ``(已扫过)``，总数事先不知道。
+        **是「对账」不是「首次建表」**：应用没开着时外部加进来的照片、监听器没来得及写的，都靠它
+        补上 —— 只认「表空不空」的话，表里有一行之后就再也不补，那些照片在搜索里永远不存在。幂等
+        （``(大小, 修改时间)`` 对得上就不写），所以对一遍只花一次遍历、几乎不写。
+        ``on_work`` 只在真的写了行时叫一次；``on_progress`` 是已扫过多少。
         """
         index = self.facet_index
-        if index.count_photos() > 0:
-            return 0
         written = 0
         announced = False
         scanned = 0
         for batch, scanned in self._iter_photo_batches(PHOTO_INDEX_BATCH, should_cancel):
-            written += index.store_photos(batch, root=self._root)
-            if not announced:
+            newly = index.store_photos(batch, root=self._root)
+            written += newly
+            if not announced and newly:
                 announced = True
                 if on_work is not None:
                     on_work(scanned)

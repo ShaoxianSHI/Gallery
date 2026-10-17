@@ -427,6 +427,21 @@ def test_the_second_pass_writes_nothing(tmp_path: Path, make_photo) -> None:
     assert library.index_photos() == 0
 
 
+def test_a_photo_added_later_gets_a_row(tmp_path: Path, make_photo) -> None:
+    """表里已经有行时，后加进来的照片也要补上。
+
+    只认「表空不空」的话，表里有一行之后整库那一遍就再也不补，那些照片在搜索里永远不存在
+    —— 应用没开着时加进来的照片正是这样。
+    """
+    library = _library(tmp_path, make_photo)
+    library.index_photos()
+    make_photo("新来的一张.jpg", directory=library.root)
+
+    assert library.index_photos() == 1
+    found = library.search_photos([_condition("新来的")])  # type: ignore[list-item]
+    assert _names(found.refs) == ["新来的一张.jpg"]
+
+
 def test_a_changed_file_gets_a_fresh_row(tmp_path: Path, make_photo) -> None:
     library = _library(tmp_path, make_photo)
     library.index_photos()

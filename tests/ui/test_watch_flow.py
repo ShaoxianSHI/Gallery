@@ -31,6 +31,7 @@ from gallery.core.library.config import (
     prepare_library,
 )  # noqa: E402
 from gallery.core.library.photos import FolderRef, GroupRef, PhotoRef  # noqa: E402
+from gallery.core.library.search import make_condition, parse_input  # noqa: E402
 from gallery.core.library.session import (
     SessionState,
     save_session,
@@ -199,6 +200,31 @@ def test_a_photo_dropped_in_shows_up_without_reopening(
         assert window._model.rowCount() == 2
         # 默认按修改时间升序：先在的那张在前。
         assert names(window) == ["原来那张.jpg", "刚丢进来.jpg"]
+    finally:
+        window.close()
+
+
+def test_a_photo_dropped_in_is_searchable_right_away(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """丢进来的照片**这一次检索**就要搜得到，不必重开库。
+
+    没有检索条件时监听器过去不更新索引的文件表，而打开库那一遍只在表为空时才跑 —— 于是新照片
+    在搜索里永远不存在，重开也补不上（表已经非空）。
+    """
+    touch(make_photo("原来那张.jpg"), 0)
+    window, watcher = open_window(qt_app, tmp_path)
+    try:
+        wait_for_idle(qt_app, window, also=("_index_job",), what="建立检索索引")
+        newcomer = make_photo("刚丢进来.jpg")
+        touch(newcomer, 1)
+
+        deliver(qt_app, window, watcher, LibraryChange(ChangeKind.ADDED, newcomer))
+
+        library = window._library
+        assert library is not None
+        found = library.search_photos([make_condition(parse_input("刚丢进来"))])
+        assert [ref.name for ref in found.refs] == ["刚丢进来.jpg"]
     finally:
         window.close()
 

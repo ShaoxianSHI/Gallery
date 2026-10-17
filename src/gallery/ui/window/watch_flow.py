@@ -129,12 +129,14 @@ class WatchFlowMixin:
             covers.update(self._albums_touched_by(change))
         if covers:
             self._refresh_album_covers(covers)
+        # 索引的文件表**整库口径**跟上（不只当前这一层）—— 两条路都要，见 :meth:`_sync_index`。
+        self._sync_index(library, changes)
         if self._conditions:
             # guard: allow-long-comment（有条件时增量逻辑接不上，两种作用域都重跑一遍）
             # 有条件时增量逻辑一律接不上，于是两种作用域都重跑一遍：整库检索重跑一次查询，筛选
             # 重新枚举这一层再收窄一次（ADR 0040 决策 6）。真增量仍要逐张判断「新照片命中吗」，
             # 那还是得查索引，而 ``_reload_level`` 已经把整条链接通了。
-            self._apply_search_changes(library, changes)
+            self._apply_search_changes(changes)
             return
         added: list[GridEntry] = []
         gone: list[Path] = []
@@ -170,7 +172,6 @@ class WatchFlowMixin:
         rows = sorted(row for path in gone if (row := self._model.row_of_path(path)) >= 0)
         if rows:
             self._model.remove_paths(gone)
-            library.forget_paths(gone)  # 索引里的孤儿行：照片不在了，那一行也不该留着
             self._select_after_removal(rows)
         if stale:
             self._forget_caches(stale)
@@ -196,33 +197,47 @@ class WatchFlowMixin:
         self._update_level_notice()
         self._refresh_thumbnail_window()
 
-    def _apply_search_changes(self, library: Library, changes: Sequence[LibraryChange]) -> None:
-        """条件生效时这一层的变化：先把索引跟上，再重跑一次。
+    def _apply_search_changes(self, changes: Sequence[LibraryChange]) -> None:
+        """条件生效时这一层的变化：索引已由 :meth:`_sync_index` 跟上，这里重跑一次条件。
 
-        **两种作用域都走这里**（ADR 0040 决策 6）：索引先跟上、界面后跟上 —— 重跑时读的就是它，
+        **两种作用域都走这里**（ADR 0040 决策 6）：重跑时读的是索引，所以索引必须先更新 ——
         不先更新的话新照片筛不到、删掉的照片还在结果里。变化落在两层之下时**照样重跑**：
         条件能不能命中它取决于条件本身。
         """
+        stale = {path for change in changes for path in change.touches}
+        if stale:
+            self._forget_caches(stale)
+        self._apply_conditions()
+
+    def _sync_index(self, library: Library, changes: Sequence[LibraryChange]) -> None:
+        """把这一批变化落到索引的文件表上（**整库口径**，不只当前这一层）。
+
+        监听器那条路原先只在「有检索条件」时才更新文件表，于是没有条件时新来的照片进不了检索 ——
+        而打开库那一遍过去只在表为空时才跑，补不上，于是搜索永远找不到它们。**删掉 / 改名走掉的
+        那一端按事件说的算**（那时文件已经不在了），新增 / 改名来到的那一端按磁盘实况算。变化落在
+        当前这一层之外时照样跟上，因为搜索看的是整个库。
+        """
         gone: list[Path] = []
         fresh: list[PhotoRef] = []
-        stale: set[Path] = set()
         for change in changes:
-            for path in (change.path, change.dest_path):
-                if path is None:
-                    continue
-                entry = describe_entry(library.root, path)
+            if change.kind is ChangeKind.MOVED and change.dest_path is not None:
+                gone.append(change.path)
+                entry = describe_entry(library.root, change.dest_path)
                 if isinstance(entry, PhotoRef):
                     fresh.append(entry)
-                else:
-                    gone.append(path)
-            stale.update(change.touches)
+                continue
+            if change.kind is ChangeKind.REMOVED:
+                gone.append(change.path)
+                continue
+            entry = describe_entry(library.root, change.path)
+            if isinstance(entry, PhotoRef):
+                fresh.append(entry)
+            else:
+                gone.append(change.path)
         if gone:
             library.forget_paths(gone)
         if fresh:
             library.remember_photos(fresh)
-        if stale:
-            self._forget_caches(stale)
-        self._apply_conditions()
 
     def _apply_watch_move(
         self,
