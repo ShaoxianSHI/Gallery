@@ -107,6 +107,10 @@ class MenuActions:
     #: 事件库不可用（只读卷），或者压根没选中照片。**它内部是三层的**，
     #: 三层都得在下发样式表之前建出来（理由见 ``ui.window.event_flow`` 的模块文档）。
     record_as: QMenu | None = None
+    #: 「编辑事件 →（这张照片所属的那些事件）」。与 :attr:`set_event_cover` 同一份清单
+    #: （都是「这张照片属于哪些事件」），**只在它属于至少一个事件时才有**，否则 ``None``。
+    #: 写的是 Gallery 自己的库，与「记录为…」同族，于是也摆在第四组。
+    edit_photo_event: QMenu | None = None
     #: 「编辑事件…」——**只在事件分组卡片上出现**（ADR 0043 决策 8）：那一组就是某个事件。
     edit_event: QAction | None = None
     #: 「从这次事件移出」——同上，作用对象是卡片背后的那批照片。
@@ -316,13 +320,14 @@ def _add_write_group(
 
 
 def _add_metadata_group(menu: ShortcutColumnMenu, actions: MenuActions, *, multiple: bool) -> None:
-    """第四组「它是什么」：记录为… · 设为事件封面 · 显示元数据信息 · 复制元数据
+    """第四组「它是什么」：记录为… · 编辑事件… · 设为事件封面 · 显示元数据信息 · 复制元数据
     （ADR 0023、ADR 0043、ADR 0048）。
 
-    后两条是只读问答；「记录为…」与「设为事件封面」写的都是 Gallery 自己的库，但要按「这几张
-    照片是什么」来理解，所以归这一组。多选时后两条不出现、分隔线留着；「设为事件封面」多选时不出现。
+    后两条是只读问答；前三条写的都是 Gallery 自己的库，但按「这几张照片是什么」来理解，
+    所以归这一组。多选时后两条不出现、分隔线留着；「编辑事件…」紧跟「记录为…」——
+    一条把它记进去，一条改它。
     """
-    if actions.record_as is not None or actions.set_event_cover is not None or not multiple:
+    if actions.record_as is not None or actions.edit_photo_event is not None or not multiple:
         menu.addSeparator()
     if actions.record_as is not None:
         # guard: allow-long-comment（addAction(menuAction()) 不接管所有权，临时包回收后菜单项悬空）
@@ -330,6 +335,8 @@ def _add_metadata_group(menu: ShortcutColumnMenu, actions: MenuActions, *, multi
         # 它在 ``MenuActions`` 这份临时包里一被回收就析构，留在菜单里的就成了悬空的 menuAction
         # （点开时报 ``Internal C++ object already deleted``）。相册那两个清单走的也是 addMenu。
         menu.addMenu(actions.record_as)
+    if actions.edit_photo_event is not None:
+        menu.addMenu(actions.edit_photo_event)
     if actions.set_event_cover is not None:
         menu.addMenu(actions.set_event_cover)
     if multiple:

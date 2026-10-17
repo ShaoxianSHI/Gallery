@@ -210,6 +210,9 @@ class ContextMenuFlowMixin:
             # 「记录为…」**每弹一次都现建**（与两个相册清单同款）：它是三级菜单，而第三级要
             # 到展开时才知道该列哪些事件。
             record_as=self.record_as_candidate(),
+            # 「编辑事件 →」只有选中一张、且它属于至少一个事件时才摆（与「设为事件封面」同一份
+            # 清单），不属于任何事件时是 ``None``。
+            edit_photo_event=self.edit_photo_event_menu(),
             # 「设为事件封面 →」只有选中一张照片、且它属于至少一个事件时才摆（ADR 0048 决策 6）。
             set_event_cover=self.set_event_cover_menu(),
         )

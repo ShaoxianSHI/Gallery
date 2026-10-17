@@ -137,6 +137,7 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
             "cover_candidate",
             "covered_album",
             "covered_event",
+            "edit_photo_event_menu",
             "metadata_edit_candidate",
             "record_as_candidate",
             "set_event_cover_menu",
@@ -676,7 +677,9 @@ def test_the_widest_mixins_keep_their_ceiling() -> None:
     """
     ceiling = {
         "window/library_flow.py:LibraryFlowMixin": 73,
-        "window/context_menu_flow.py:ContextMenuFlowMixin": 56,
+        # 56 → 57：「编辑事件…」那一行让这一间多要一个 `edit_photo_event_menu`
+        # （事件清单按哪张照片算归 EventFlowMixin，这一间只把菜单摆进去）。
+        "window/context_menu_flow.py:ContextMenuFlowMixin": 57,
         "window/ordering.py:OrderingMixin": 45,
         "window/navigation_flow.py:NavigationFlowMixin": 44,
     }

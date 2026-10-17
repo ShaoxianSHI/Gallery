@@ -681,6 +681,110 @@ def test_editing_an_event_from_its_card(qt_app: QApplication, window: MainWindow
     assert library.all_events()[0].title == "京都七日"
 
 
+# ---- 照片右键的「编辑事件」（与「设为事件封面」同一份清单）----------------------
+
+
+def test_the_photo_menu_offers_editing_the_event_it_belongs_to(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """选中一张属于某个事件的照片 → 「编辑事件」在，就摆在「记录为」下面，子菜单列那次事件。"""
+    library = window._library
+    assert library is not None
+    trip = library.create_event("trip", EventDraft(values={"title": "京都五日"})).event
+    library.bind_photos(_paths(window, "京都-01.jpg"), trip.id)
+    row = _select(window, "京都-01.jpg")
+
+    menu = _context(window, row)
+    texts = _texts(menu)
+    events = _submenu(menu, "编辑事件")
+
+    assert texts.index("编辑事件") == texts.index("记录为") + 1
+    assert [action.text() for action in events.actions()] == ["京都五日"]
+
+
+def test_the_edit_entry_stays_away_from_a_photo_in_no_event(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """不属于任何事件的照片上**不出现**（不是置灰）—— 与「设为事件封面」同一处置：没有对象
+    就没有这条命令。"""
+    library = window._library
+    assert library is not None
+    library.create_event("trip", EventDraft(values={"title": "京都五日"}))
+    row = _select(window, "大阪-01.jpg")
+
+    menu = _context(window, row)
+
+    assert "编辑事件" not in _texts(menu)
+
+
+def test_the_edit_entry_stays_away_when_several_photos_are_selected(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """多选时不出现 —— 一张照片属于哪几个事件才说得清（与「设为事件封面」同一个理由）。"""
+    library = window._library
+    assert library is not None
+    trip = library.create_event("trip", EventDraft(values={"title": "京都五日"})).event
+    library.bind_photos(_paths(window, "京都-01.jpg", "京都-02.jpg"), trip.id)
+    row = _select(window, "京都-01.jpg", "京都-02.jpg")
+
+    menu = _context(window, row)
+
+    assert "编辑事件" not in _texts(menu)
+
+
+def test_the_edit_submenu_lists_every_event_that_photo_belongs_to(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """一张照片可以同时属于一次演出与一次旅行，两层都列出来。"""
+    library = window._library
+    assert library is not None
+    trip = library.create_event("trip", EventDraft(values={"title": "京都五日"})).event
+    show = library.create_event("show", EventDraft(values={"title": "岚山演出"})).event
+    library.bind_photos(_paths(window, "京都-01.jpg"), trip.id)
+    library.bind_photos(_paths(window, "京都-01.jpg"), show.id)
+    row = _select(window, "京都-01.jpg")
+
+    events = _submenu(_context(window, row), "编辑事件")
+
+    assert sorted(action.text() for action in events.actions()) == ["京都五日", "岚山演出"]
+
+
+def test_picking_an_event_from_the_photo_menu_opens_its_editor(
+    qt_app: QApplication, window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """点那一层里的某个事件 → 开的是**那个事件**的编辑面板（``data`` 就是事件 id）。"""
+    library = window._library
+    assert library is not None
+    trip = library.create_event("trip", EventDraft(values={"title": "京都五日"})).event
+    library.bind_photos(_paths(window, "京都-01.jpg"), trip.id)
+    row = _select(window, "京都-01.jpg")
+    opened: list[int] = []
+    monkeypatch.setattr(window, "edit_event", opened.append)
+
+    events = _submenu(_context(window, row), "编辑事件")
+    next(action for action in events.actions() if action.text() == "京都五日").trigger()
+
+    assert opened == [trip.id]
+
+
+def test_the_detail_page_menu_carries_the_edit_entry(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """大图页那一份也有 —— 与网格共用同一份动作包（``_menu_actions``）。"""
+    library = window._library
+    assert library is not None
+    trip = library.create_event("trip", EventDraft(values={"title": "京都五日"})).event
+    library.bind_photos(_paths(window, "京都-01.jpg"), trip.id)
+    row = _select(window, "京都-01.jpg")
+
+    window._open_detail(window._model.index(row, 0))
+    assert wait_until(qt_app, lambda: window._detail.has_image)
+    menu = window.detail_context_menu()
+
+    assert menu is not None
+    assert "编辑事件" in _texts(menu)
+
+
 # ---- 删除 ---------------------------------------------------------------------
 
 

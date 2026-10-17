@@ -247,6 +247,22 @@ class EventFlowMixin:
         self._event_leave_menu.setDisabled(not leaving)
         return menu
 
+    def edit_photo_event_menu(self) -> QMenu | None:
+        """「编辑事件 →（这张照片所属的那些事件）」那一层，摆在「记录为」下面。
+
+        清单与「设为事件封面 →」同一份（都是 :meth:`_cover_events_of_selection`），点一个就开
+        那个事件的编辑面板。**不属于任何事件时整行不出现**（``None``）—— 与封面那一条同一处置。
+        """
+        events = self._cover_events_of_selection()
+        if not events:
+            return None
+        menu = QMenu("编辑事件")
+        menu.setToolTipsVisible(True)
+        menu.triggered.connect(self._on_edit_event_picked)
+        for title, event_id in events:
+            menu.addAction(title).setData(event_id)
+        return menu
+
     def new_event_menu(self) -> QMenu:
         """菜单栏「编辑 → 新增事件」那一层：按类型列一行（ADR 0043）。
 
@@ -529,7 +545,8 @@ class EventFlowMixin:
         menu.setDisabled(not events)
 
     def _cover_events_of_selection(self) -> list[tuple[str, int]]:
-        """当前选中的那张照片属于哪些事件（「设为事件封面 →」列的就是它）。**一次 SQL**。
+        """当前选中的那张照片属于哪些事件（「设为事件封面 →」与「编辑事件 →」列的都是它）。
+        **一次 SQL**。
 
         顺序与「从这次事件移出」那一层一致（按 id 降序）：两处摆的是同一批事件，
         而用户在这两处来回走，顺序不一样会以为它们是两批东西。
