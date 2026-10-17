@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import datetime
 import json
 import logging
 import re
@@ -47,7 +48,9 @@ _THUMBNAIL_NAMES: Final = ("maxresdefault", "hq720", "sddefault", "mqdefault")
 #: watch 页里那三样。**每一项单独取**：页面上少一样不该让另外两样也没了。
 _STRING: Final = r'"((?:[^"\\]|\\.)*)"'
 _LENGTH_RE: Final = re.compile(r'"lengthSeconds":"(\d+)"')
-_DATE_RE: Final = re.compile(r'"publishDate":"(\d{4}-\d{2}-\d{2})"')
+#: 页面上那串**自带上传者的时区偏移**（``2009-10-24T23:57:33-07:00``），不是光秃秃的日期。
+#: 两个字段名都认：``publishDate`` 与 ``uploadDate`` 是同一份时间，站方两边都写过。
+_DATE_RE: Final = re.compile(r'"(?:publishDate|uploadDate)":"([^"]+)"')
 _CHANNEL_RE: Final = re.compile(r'"ownerChannelName":' + _STRING)
 _KEYWORDS_RE: Final = re.compile(r'"keywords":\[(.*?)\]', re.S)
 _QUOTED_RE: Final = re.compile(_STRING)
@@ -111,11 +114,30 @@ def with_page(html: str, movie: MovieInfo) -> MovieInfo:
     channel = movie.creator or _unquote(_first(_CHANNEL_RE, html))
     return replace(
         movie,
-        release_date=_first(_DATE_RE, html),
+        release_date=_day(_first(_DATE_RE, html)),
         duration_minutes=minutes_of_seconds(_int(_first(_LENGTH_RE, html))),
         creator=channel,
         tags=_keywords(html),
     )
+
+
+def _day(stamp: str) -> str:
+    """``publishDate`` → ``YYYY-MM-DD``，**取 UTC 那一天**。
+
+    页面上那串自带上传者的时区偏移（``2009-10-24T23:57:33-07:00``）—— 照原样取前 10 位会得到
+    24 日，而官方 Data API 的 ``publishedAt`` 是 UTC（那支视频在 UTC 是 25 日，也是它到处被
+    引用的日期）。**没带时区的或认不出的都不猜**：前者它自己写的就是哪一天，后者退回前 10 位。
+    """
+    if not stamp:
+        return ""
+    try:
+        moment = datetime.datetime.fromisoformat(stamp)
+    except ValueError:
+        return stamp[:10]
+    if moment.tzinfo is None:
+        # 没带时区时**不许拿本机时区去换算** —— 换一台机器就换一天。
+        return moment.date().isoformat()
+    return moment.astimezone(datetime.UTC).date().isoformat()
 
 
 def _covers(code: str, fallback: str) -> tuple[str, ...]:

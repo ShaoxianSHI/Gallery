@@ -23,12 +23,14 @@ OEMBED_JSON = (
     '"thumbnail_width":480,"thumbnail_height":360,"type":"video"}'
 )
 
-#: watch 页里那份 ``ytInitialPlayerResponse``（只留这一层要抠的几项）。
+#: watch 页里那份 ``ytInitialPlayerResponse``（只留这一层要抠的几项）。**日期是带时区偏移的**
+#: 完整时间戳，与真实页面一样 —— 按原样取前 10 位会差一天。
 WATCH_HTML = (
     '<script>var ytInitialPlayerResponse = {"videoDetails":{"videoId":"dQw4w9WgXcQ",'
     '"lengthSeconds":"213","ownerChannelName":"Rick Astley",'
     '"keywords":["rick astley","never gonna give you up","\\u30ea\\u30c3\\u30af"]},'
-    '"microformat":{"playerMicroformatRenderer":{"publishDate":"2009-10-25"}}};</script>'
+    '"microformat":{"playerMicroformatRenderer":'
+    '{"publishDate":"2009-10-24T23:57:33-07:00"}}};</script>'
 )
 
 OEMBED_URL = (
@@ -109,6 +111,7 @@ def test_the_watch_page_fills_in_the_duration_date_and_tags() -> None:
     movie = youtube.with_page(WATCH_HTML, youtube.oembed_of(json.loads(OEMBED_JSON), CODE))
 
     assert movie.duration_minutes == 4  # 213 秒 → 4 分钟（四舍五入）
+    # 页面上写的是 ``2009-10-24T23:57:33-07:00``，按 UTC 取那一天是 25 日（官方 API 也是 25 日）。
     assert movie.release_date == "2009-10-25"
     # 页面上那一串是 JSON 里的一段，**要解码一次**（``\\u30ea\\u30c3\\u30af`` → リック）。
     assert movie.tags == ("rick astley", "never gonna give you up", "リック")
@@ -160,6 +163,13 @@ def test_a_teaser_too_short_to_be_a_minute_stays_empty() -> None:
     empty = youtube.oembed_of({}, CODE)
     assert youtube.with_page('"lengthSeconds":"20"', empty).duration_minutes is None
     assert youtube.with_page('"lengthSeconds":"40"', empty).duration_minutes == 1
+
+
+def test_a_date_without_an_offset_keeps_the_day_it_says() -> None:
+    """认不出、或者没带时区的都不猜：前者退回前 10 位，后者它自己写的就是哪一天。"""
+    empty = youtube.oembed_of({}, CODE)
+    assert youtube.with_page('"uploadDate":"2009-10-25"', empty).release_date == "2009-10-25"
+    assert youtube.with_page('"publishDate":"不是时间"', empty).release_date == "不是时间"
 
 
 def test_fetch_refuses_something_that_is_not_a_video_id() -> None:
