@@ -973,41 +973,57 @@ class MainWindow(
         return self._current_dir or library.root
 
     def _open_finder(self) -> None:
-        """在访达里**打开**当前这个文件夹 —— 落到它**里面**去，看的是里面摆着什么。
+        """在访达里打开下拉框指的那一样东西。
 
-        走 ``desktop.open_folder_in_finder``，与右键菜单对**相册**走的是同一件事。**与「在访达中
-        显示」不是同一件事**：那条是照片那一路，``open -R`` 把东西在它所在的目录里选出来
-        （ADR 0014 决策 3）；对着文件夹用它，用户看到的是文件夹**外面**那一层。
+        网格页给的是**当前这一层文件夹**（落到它**里面**去，看它里面摆着什么）；大图页给的是
+        **正在看的那一张**，与右键那条「在访达中显示」是同一个对象 —— ``open -R`` 把它在所在的
+        目录里选出来（ADR 0014 决策 3）。两页要的不是一件东西，判据由 :meth:`_external_targets`
+        统一给出。
         """
-        folder = self._folder_to_open()
-        if folder is None:
+        paths, reveal = self._external_targets()
+        if not paths:
             return
-        self._show_banner(desktop.open_folder_in_finder([folder]), auto_hide=True)
+        message = (
+            desktop.reveal_in_finder(paths) if reveal else desktop.open_folder_in_finder(paths)
+        )
+        self._show_banner(message, auto_hide=True)
 
     def _open_qspace(self) -> None:
-        """在 QSpace 里**打开**当前这个文件夹 —— 与「访达」那一项是同一件事的两个软件。
+        """在 QSpace 里打开下拉框指的那一样东西 —— 与「访达」那一项是同一件事的两个软件。
 
         递过去的是一条 ``file://`` 地址（QSpace 认这个，见 ``core.external.qspace``）；真起进程
-        那一步在 ``desktop``，这一层只回答「哪个文件夹、哪个应用包」。
+        那一步在 ``desktop``，这一层只回答「作用在哪些路径、哪个应用包」。**大图页那一支没有
+        ``open -R`` 可用**，递的是**文件**自己的地址，由 QSpace 打开所在的那一层并选中它
+        （见 ``ui.desktop.reveal_in_qspace``）。
         """
-        folder = self._folder_to_open()
-        if folder is None:
-            return
         app = qspace.find_qspace()
         if app is None:
             self._show_banner("没有找到 QSpace，它可能已经被移走或卸载了。")
             return
-        self._show_banner(desktop.open_folder_in_qspace([folder], app=app), auto_hide=True)
+        paths, reveal = self._external_targets()
+        if not paths:
+            return
+        message = (
+            desktop.reveal_in_qspace(paths, app=app)
+            if reveal
+            else desktop.open_folder_in_qspace(paths, app=app)
+        )
+        self._show_banner(message, auto_hide=True)
 
-    def _folder_to_open(self) -> Path | None:
-        """下拉框里那两项要打开的那个文件夹；**没有库就在横幅上说一句并给 ``None``**。
+    def _external_targets(self) -> tuple[list[Path], bool]:
+        """下拉框里那两项要作用在什么上：路径，以及**要不要把它选出来**。
 
-        两项打开的是同一个文件夹，判据也只有一处 —— 分开写迟早会有一边忘了这句提示。
+        网格页（全部照片 / 相册）给**当前这一层文件夹**，用户看的是它**里面**摆着什么；大图页
+        给**正在看的那一张**（:meth:`_selected_paths` 在大图页上就是它，ADR 0021）。判据只此一处
+        —— 两项各写一套，迟早有一边忘了大图页那一条。没有库时在横幅上说一句并给空列表。
         """
+        if self._in_detail_page():
+            return self._selected_paths(), True
         folder = self._current_folder()
         if folder is None:
             self._show_banner("还没有打开相册库，没有可以打开的文件夹。")
-        return folder
+            return [], False
+        return [folder], False
 
     def _on_external_failed(self, message: str) -> None:
         # 走到这里的是「起进程这一步整个炸了」；``core.external.launch`` 自己的降级路径不抛异常。

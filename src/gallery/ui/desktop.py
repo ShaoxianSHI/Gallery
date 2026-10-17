@@ -2,8 +2,8 @@
 
 ``QDesktopServices`` 没有「在访达里选中并露出它」那个动作，所以走 ``open -R``，起不来就降级成
 打开所在文件夹（ADR 0014 决策 3）；剪贴板放的是**文件引用**（``QMimeData.setUrls``，ADR 0017）。
-**「在访达里显示」（带 ``-R``）与「打开文件夹」（不带 ``-R``）是两件不同的事**，见
-:func:`reveal_in_finder` 与 :func:`open_folder_in_finder`（QSpace 那一份与之同族）。
+**「显示」与「打开文件夹」是两件不同的事**：访达靠 ``-R`` 分，QSpace 靠递**文件**还是递**文件夹**
+分 —— 见 :func:`reveal_in_finder` / :func:`open_folder_in_finder` 与那两个 ``_in_qspace``。
 """
 
 from __future__ import annotations
@@ -136,6 +136,26 @@ def open_folder_in_qspace(paths: Sequence[Path], *, app: Path) -> str:
     return f"已在 QSpace 中打开 {len(targets)} 个文件夹。"
 
 
+def reveal_in_qspace(paths: Sequence[Path], *, app: Path) -> str:
+    """在 QSpace 里**选中并露出这些文件**（打开它们所在的那一层），返回一句中文文案。
+
+    **QSpace 没有 ``-R`` 那一支**：``-R`` 是访达自己的语义，把它连着 ``-a QSpace`` 一起递过去，
+    弹出来的仍然是访达（实测）。QSpace 认的是**地址里的那一样东西** —— 递一个文件过去，它打开
+    所在的那一层并把这个文件选出来，于是与 :func:`reveal_in_finder` 效果一致。
+    """
+    targets = [Path(path) for path in paths]
+    if not targets:
+        return "没有可显示的路径。"
+    urls = [QUrl.fromLocalFile(str(target)).toString() for target in targets]
+    if not QProcess.startDetached(REVEAL_PROGRAM, ["-a", str(app), *urls]):
+        # 降级借 ``reveal_in_finder``：它自己还有第二级（选不中就打开所在文件夹），
+        # 抄一份下来就成了两条各自演化的降级链。
+        return f"没能交给 QSpace，{reveal_in_finder(targets)}"
+    if len(targets) == 1:
+        return f"已在 QSpace 中显示「{targets[0].name}」。"
+    return f"已在 QSpace 中显示 {len(targets)} 项。"
+
+
 __all__ = [
     "REVEAL_FLAG",
     "REVEAL_PROGRAM",
@@ -147,4 +167,5 @@ __all__ = [
     "open_with_default_app",
     "read_files_from_clipboard",
     "reveal_in_finder",
+    "reveal_in_qspace",
 ]

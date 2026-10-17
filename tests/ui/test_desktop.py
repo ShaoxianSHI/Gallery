@@ -209,3 +209,43 @@ def test_qspace_says_why_when_nothing_responds(monkeypatch: pytest.MonkeyPatch) 
 
     assert message is not None
     assert "QSpace" in message
+
+
+def test_showing_a_photo_in_qspace_hands_that_files_url_and_the_app(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """露出一张照片递的是**这个文件自己的**地址 —— QSpace 打开它所在的那一层并把它选出来。
+
+    **不能递它所在的文件夹**：那样只会落到文件夹**里面**，与「打开这一层」那一支就没区别了。
+    路径用纯 ASCII 的，那一条地址于是可以逐字断言（同上面那条的理由）。
+    """
+    process = _Process(True)
+    monkeypatch.setattr(desktop, "QProcess", process)
+    app = Path("/Applications/QSpace Pro.app")
+
+    message = desktop.reveal_in_qspace([Path("/photos/kyoto/one.jpg")], app=app)
+
+    assert process.calls == [
+        ("open", ["-a", "/Applications/QSpace Pro.app", "file:///photos/kyoto/one.jpg"])
+    ]
+    assert message == "已在 QSpace 中显示「one.jpg」。"
+
+
+def test_showing_a_photo_in_qspace_falls_back_to_the_finder_and_says_so(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``open`` 起不来就交给访达去选，**并且说清换的是哪一个**（与打开文件夹那一条同一个理由）。
+
+    降级用的是 ``reveal_in_finder`` 自己的那一句，于是它还有的第二级（选不中就打开所在文件夹）
+    也一并跟来 —— 这里把两次 ``open`` 都挡回去，落到的正是最后那一级。
+    """
+    services = _DesktopServices(True)
+    monkeypatch.setattr(desktop, "QProcess", _Process(False, False))
+    monkeypatch.setattr(desktop, "QDesktopServices", services)
+
+    message = desktop.reveal_in_qspace(
+        [Path("/照片/京都/一张.jpg")], app=Path("/Applications/Q.app")
+    )
+
+    assert services.urls == ["/照片/京都"]
+    assert message == "没能交给 QSpace，没能选中这些文件，已改为在访达里打开「/照片/京都」。"

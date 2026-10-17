@@ -348,10 +348,11 @@ def test_grouping_still_reaches_the_folder_behind_it(window: MainWindow) -> None
 def test_the_finder_entry_opens_that_folder(
     window: MainWindow, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """走的是右键菜单对**相册**那一条 ``open_folder_in_finder`` —— 落到**里面**去。
+    """**网格页**走的是右键菜单对**相册**那一条 ``open_folder_in_finder`` —— 落到**里面**去。
 
     锁定的是「**不是** ``reveal_in_finder``」：``open -R`` 弹出来的访达停在当前这一层的
-    **上一级**，而这个按钮的用处就是看一眼**这一层里面**摆着什么。
+    **上一级**，而这个按钮的用处就是看一眼**这一层里面**摆着什么。大图页那一支是反过来的
+    （见 ``test_the_finder_entry_reveals_the_photo_the_detail_page_is_showing``）。
     """
     opened: list[list[Path]] = []
     revealed: list[list[Path]] = []
@@ -439,6 +440,64 @@ def test_the_qspace_entry_follows_the_folder_the_window_is_in(
     window._open_qspace()
 
     assert opened == [[album]]
+
+
+def test_the_finder_entry_reveals_the_photo_the_detail_page_is_showing(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """大图页上按「访达」：要的是**正在看的那一张**在所在目录里被选出来。
+
+    与右键那条「在访达中显示」是同一个对象 —— 网格页回答「这一层里摆着什么」，大图页回答
+    「我看的这一张是磁盘上哪一个」（ADR 0021 / 0014 决策 3）。递当前文件夹过去会让访达落到
+    它**外面**那一层，用户看到的东西完全对不上。
+    """
+    revealed: list[list[Path]] = []
+    opened: list[list[Path]] = []
+    monkeypatch.setattr(
+        desktop,
+        "reveal_in_finder",
+        lambda paths: revealed.append(list(paths)) or "已在访达中显示。",
+    )
+    monkeypatch.setattr(
+        desktop,
+        "open_folder_in_finder",
+        lambda paths: opened.append(list(paths)) or "已在访达中打开。",
+    )
+    window._open_detail(window._model.index(0, 0))
+
+    window._open_finder()
+
+    assert revealed == [[window._library.root / "一张.jpg"]]
+    assert opened == []
+
+
+def test_the_qspace_entry_reveals_the_photo_the_detail_page_is_showing(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """大图页上按「QSpace」递的是**那张照片自己的**地址 —— 它没有 ``-R`` 那一支可借。
+
+    QSpace 认的是地址里那一样东西：给文件就打开所在的那一层并把它选出来，给文件夹才会落到
+    里面去（见 ``ui.desktop.reveal_in_qspace``）。所以这里递的必须是照片本身。
+    """
+    monkeypatch.setattr(qspace, "find_qspace", lambda: QSPACE_APP)
+    revealed: list[list[Path]] = []
+    opened: list[list[Path]] = []
+    monkeypatch.setattr(
+        desktop,
+        "reveal_in_qspace",
+        lambda paths, app: revealed.append(list(paths)) or "已在 QSpace 中显示。",
+    )
+    monkeypatch.setattr(
+        desktop,
+        "open_folder_in_qspace",
+        lambda paths, app: opened.append(list(paths)) or "已在 QSpace 中打开。",
+    )
+    window._open_detail(window._model.index(0, 0))
+
+    window._open_qspace()
+
+    assert revealed == [[window._library.root / "一张.jpg"]]
+    assert opened == []
 
 
 def test_the_qspace_entry_stays_off_the_calendar_page(
