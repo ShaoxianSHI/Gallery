@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import dataclasses
+import os
 import sqlite3
 from pathlib import Path
 
@@ -498,3 +499,73 @@ def test_a_row_of_the_wrong_length_is_rejected() -> None:
     short = tuple(None for _ in module._FACET_FIELDS)[:-1]
     with pytest.raises(ValueError):
         module._row_to_facets(short)
+
+
+# ---- 库文件被别的程序换掉（ADR 0064）-----------------------------------------
+
+
+def _replace_with_an_empty_database(target: Path, tmp_path: Path) -> None:
+    """把 ``target`` 换成**另一份同名的空库** —— 云盘同步与「另存为」都是这个形状。"""
+    other = tmp_path / "换上去的那一份"
+    sqlite3.connect(other).close()
+    os.replace(other, target)
+
+
+def test_a_replaced_index_file_is_reopened(tmp_path: Path) -> None:
+    """文件被换掉之后读到的还是旧内容 —— 先看身份，不是我们打开的那一份就重开。
+
+    不重开的后果不是报错：写会抛 ``attempt to write a readonly database``，而读一直给旧值
+    （症状是「下载封面成功、事件却没建起来」与「删掉的东西还在」）。
+    """
+    target = paths.index_file(tmp_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    index = FacetIndex(target)
+    ref = _ref(tmp_path)
+    index.store([(ref, FULL)])
+    assert index.lookup([ref]) == {ref.path: FULL}
+
+    _replace_with_an_empty_database(target, tmp_path)
+
+    assert index.ensure_current() is True
+    assert index.lookup([ref]) == {}  # 读到的是换上去的那一份，不是旧 inode
+    assert index.store([(ref, FULL)]) == 1  # 重开之后照常能写
+
+
+def test_an_untouched_index_file_is_not_reopened(tmp_path: Path) -> None:
+    """文件没被换掉时**什么也不做**：每读一次都重开一遍等于把缓存全丢。"""
+    target = paths.index_file(tmp_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    index = FacetIndex(target)
+    connection = index.connection
+
+    assert index.ensure_current() is False
+    assert index.connection is connection
+
+
+def test_reopening_re_runs_the_attach_hook(tmp_path: Path) -> None:
+    """重开之后挂在连接上的东西要跟着换新的 —— 留着旧的，症状是每次写都抛
+    ``Cannot operate on a closed database``（事件库就是这样挂在索引上的）。"""
+    target = paths.index_file(tmp_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    attached: list[sqlite3.Connection] = []
+    index = FacetIndex(
+        target, attach=lambda connection, _lock: attached.append(connection) or connection
+    )
+
+    _replace_with_an_empty_database(target, tmp_path)
+
+    assert index.ensure_current() is True
+    assert len(attached) == 2
+    assert index.attached is attached[-1]
+
+
+def test_closing_the_index_drops_what_was_attached(tmp_path: Path) -> None:
+    """关掉之后 ``attached`` 必须跟着空：留着就是「说有事件库，而它的连接已经关了」。"""
+    target = paths.index_file(tmp_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    index = FacetIndex(target, attach=lambda connection, _lock: connection)
+
+    index.close()
+
+    assert index.attached is None
+    assert index.connection is None

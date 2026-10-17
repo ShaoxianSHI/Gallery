@@ -40,6 +40,13 @@ LEGACY_INDEX_CACHE_DIR_NAME: Final = "index"
 #: 应用在系统目录（macOS 为 ``~/Library/Application Support``）下的目录名。
 APP_NAME: Final = "Gallery"
 
+#: 应用日志目录名（``<app data>/Gallery/logs/``）。**与库无关**，所以不在 ``.gallery/`` 下：
+#: 一个进程同时只开一个库，而日志要覆盖「库还没打开就出错」的那一段（见 ``core.logs``）。
+LOG_DIR_NAME: Final = "logs"
+
+#: 应用日志文件名（``<app data>/Gallery/logs/gallery.log``），带轮转。
+LOG_FILE_NAME: Final = "gallery.log"
+
 #: 应用在 macOS 上的逆向域名标识符（包标识符不能含大写字母）。``Gallery.app`` 的
 #: ``Info.plist`` 与「此刻跑的是不是真正的 Gallery.app」都问这一处；换签名或公证时改这里的前缀。
 BUNDLE_IDENTIFIER: Final = f"com.example.{APP_NAME.lower()}"
@@ -87,6 +94,8 @@ __all__ = [
     "INDEX_FILE_NAME",
     "JOURNAL_DIR_NAME",
     "LEGACY_INDEX_CACHE_DIR_NAME",
+    "LOG_DIR_NAME",
+    "LOG_FILE_NAME",
     "PLACES_DB_FILENAME",
     "RESOURCES_DIR_NAME",
     "THUMBNAIL_DIR_NAME",

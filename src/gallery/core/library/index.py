@@ -26,6 +26,7 @@ from gallery.core.library.search import (
     rows_to_refs,
 )
 from gallery.core.metadata.facets import PhotoFacets, relative_folder
+from gallery.core.sql import file_identity
 
 logger = logging.getLogger(__name__)
 
@@ -162,9 +163,13 @@ class FacetIndex:
         self._lock = threading.Lock()
         self._connection: sqlite3.Connection | None = None
         self._memory: dict[str, tuple[tuple[int, int], PhotoFacets]] = {}
+        #: 挂钩，**重开时要再跑一遍** —— 挂在连接上的东西（事件库）跟着一起换新的。
+        self._attach = attach
         #: 挂在这条连接上的东西（事件库，ADR 0043）。**索引不认识它** —— 只把返回值原样收着，
         #: 由 ``Library`` 接线、取走。没挂上或挂失败都是 ``None``。
         self._attached: object | None = None
+        #: 打开那一刻这份文件的身份（见 :func:`~gallery.core.sql.file_identity`）。变了就是被换了。
+        self._identity: tuple[int, int] | None = None
         self._open(attach)
 
     # ---- 生命周期 -----------------------------------------------------------
@@ -193,13 +198,14 @@ class FacetIndex:
         对象上重新 ``sqlite3.connect`` 同一个文件，即「关掉的东西被偷偷打开」。
         """
         with self._lock:
-            if self._connection is not None:
-                self._connection.close()
-                self._connection = None
+            self._close_locked()
             self._path = None
             self._memory.clear()
 
     def _open(self, attach: AttachHook | None = None) -> None:
+        # 两条失败路径都会提前返回，所以先把上一轮那两样清掉，别让它们看起来还活着。
+        self._attached = None
+        self._identity = None
         if self._path is None:
             return
         try:
@@ -227,6 +233,7 @@ class FacetIndex:
             self._path = None
             return
         self._connection = connection
+        self._identity = file_identity(self._path)
         if attach is not None:
             # 挂钩在**建表之后**才跑：两边的表各自建各的，谁也不需要先看见谁。
             # 挂钩自己吞掉失败（返回 ``None``），索引照常可用（ADR 0043 决策 1）。
@@ -237,6 +244,57 @@ class FacetIndex:
         """挂在连接上的东西（事件库）。类型由挂钩决定，所以这里是 ``object``。"""
         return self._attached
 
+    @property
+    def connection(self) -> sqlite3.Connection | None:
+        """这条连接（事件库挂在它上面）。**用的地方先过 :meth:`ensure_current`**。"""
+        return self._connection
+
+    def ensure_current(self) -> bool:
+        """磁盘上那份库文件被别的程序（云盘）换掉时重开一次连接，返回是否真的重开了。
+
+        **读写都要先走它**：文件被换掉之后，写会报 ``attempt to write a readonly database``，
+        而读还在给旧内容 —— 症状正是「封面下来了事件却没建起来」与「删掉的东西还在」。
+        判据是文件身份（``st_dev`` + ``st_ino``）变了，**不是 mtime**：内容变了该照常接着用。
+        整份不见了时也重开 —— 索引是可再生的缓存，重建一份正是它该有的活法。
+        """
+        with self._lock:
+            path = self._path
+            if path is None or self._connection is None:
+                return False
+            if file_identity(path) == self._identity:
+                return False
+            self._reopen()
+            return True
+
+    def reopen(self) -> sqlite3.Connection | None:
+        """**无条件**关掉再开一次，返回新连接；这份索引本来就没落盘（或文件不在了）返回 ``None``。
+
+        与 :meth:`ensure_current` 分开：那个按文件身份自己判断，这个的判据来自**一次真实的写失败**
+        （错误码说连接底下的文件不对了），所以不看身份，直接重来。
+        """
+        with self._lock:
+            if self._path is None or not self._path.exists():
+                return None
+            self._reopen()
+            return self._connection
+
+    def _reopen(self) -> None:
+        """关掉再开一次。**调用方要已经拿着锁**（见 :meth:`ensure_current` / :meth:`reopen`）。"""
+        self._close_locked()
+        self._open(self._attach)
+
+    def _close_locked(self) -> None:
+        """关掉连接并清掉挂在它上面的东西（``_attached`` / ``_identity``）。
+
+        **调用方要已经拿着锁**。``attached`` 留着最坏：它还会说有事件库，而它的连接已经关了 ——
+        症状是每次写都抛 ``Cannot operate on a closed database``。
+        """
+        if self._connection is not None:
+            self._connection.close()
+            self._connection = None
+        self._attached = None
+        self._identity = None
+
     # ---- 读写 ---------------------------------------------------------------
 
     def lookup(self, refs: Sequence[PhotoRef]) -> dict[Path, PhotoFacets]:
@@ -245,6 +303,7 @@ class FacetIndex:
         """
         if not refs:
             return {}
+        self.ensure_current()
         wanted = {str(ref.path): (ref.size, ref.mtime_ns) for ref in refs}
         result: dict[Path, PhotoFacets] = {}
         for key, size, mtime_ns, values in self._select(list(wanted)):
@@ -259,6 +318,7 @@ class FacetIndex:
         """写回一批结果，返回真正写入的行数。"""
         if not items:
             return 0
+        self.ensure_current()
         rows: list[tuple[SqlValue, ...]] = [
             (str(ref.path), ref.size, ref.mtime_ns, *_facets_to_row(facets))
             for ref, facets in items
@@ -320,6 +380,7 @@ class FacetIndex:
 
     def count_photos(self) -> int:
         """文件表里有多少行。**用来回答「打开库时那一遍还有没有活干」**（ADR 0026 决策 5）。"""
+        self.ensure_current()
         with self._lock:
             if self._connection is None:
                 return 0
@@ -334,6 +395,7 @@ class FacetIndex:
         **检索与筛选用同一句提示** —— 它们是同一件事的两面，各写一份迟早会说成两套话。
         :meth:`photos_in_days` 传自己那一句，因为它多一个「按日期挑不到照片」的后果要说清。
         """
+        self.ensure_current()
         if self._connection is None:
             raise IndexUnavailableError(message)
         return self._connection
@@ -406,6 +468,7 @@ class FacetIndex:
         目前唯一的调用者是它自己的测试 —— 接口留着，「清掉已不存在照片那一行」是索引该有的能力。
         """
         keep = {str(path) for path in live}
+        self.ensure_current()
         with self._lock:
             if self._connection is None:
                 stale = [key for key in self._memory if key not in keep]
@@ -439,6 +502,7 @@ class FacetIndex:
         keys = {str(path) for path in gone}
         if not keys:
             return 0
+        self.ensure_current()
         with self._lock:
             if self._connection is None:
                 stale = [key for key in self._memory if key in keys]
@@ -465,6 +529,7 @@ class FacetIndex:
         """清空缓存（清缩略图缓存时一并清掉）。**两张表都清**：只清 facet 的话，检索会立刻
         拿一份刚被丢掉的文件表继续查，用户看到的是「缩略图清了但搜索还在」。
         """
+        self.ensure_current()
         with self._lock:
             self._memory.clear()
             if self._connection is None:

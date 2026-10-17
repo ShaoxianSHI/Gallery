@@ -129,6 +129,18 @@ uv run python -m gallery.macos_app
 重建索引都不会碰它，Gallery 升级时也只往上加列、绝不重建它那张表。备份它请连 `events.db`
 一起带上。
 
+## 日志
+
+Gallery 自己的经过（含出错时的完整调用栈）写在一份日志里，**它不在库里**，在应用数据目录下：
+
+```
+~/Library/Application Support/Gallery/logs/gallery.log          # macOS
+$XDG_DATA_HOME/Gallery/logs/gallery.log（默认 ~/.local/share）   # Linux
+```
+
+带轮转：单份超过 1 MiB 就换一份，最多留三份。界面说「详情写进了日志文件」时指的就是它 ——
+报告问题时把它带上，比自己复述一遍有用。
+
 ## 支持的照片格式
 
 | | 格式 |

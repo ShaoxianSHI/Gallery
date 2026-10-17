@@ -60,7 +60,7 @@ from gallery.core.metadata.journal import (
     WriteRecord,
     append_record,
 )
-from gallery.core.sql import ESCAPE, like_pattern
+from gallery.core.sql import ESCAPE, file_identity, like_pattern
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +116,9 @@ class EventStore:
         self._root = Path(root)
         self._connection = connection
         self._lock = lock if lock is not None else threading.Lock()
+        #: 打开那一刻事件库那份文件的身份。**云盘换掉的是它**（索引那边一点察觉都没有），
+        #: 所以这里自己看一眼（见 :meth:`_live_connection`）。
+        self._identity: tuple[int, int] | None = file_identity(paths.events_file(self._root))
         # guard: allow-long-comment（漏掉一处不报错：库写进去了，界面那份清单还是旧的）
         #: 事件清单变了吗。**由写入方（:class:`~gallery.core.library.facade.Library`）
         #: 挂上**，用来作废它那份会话缓存（ADR 0043 决策 7）。
@@ -124,6 +127,9 @@ class EventStore:
         #: 而界面上那份清单还是旧的。这类失效关系写在散文里迟早会漏，挂在唯一的
         #: 写入方上就没有「漏掉的那一处」。
         self.on_change: Callable[[], None] | None = None
+        #: **无条件**重开索引连接并交回新连接，**同一个写入方接线**。事件库挂在索引那条连接上，
+        #: 所以重开的是索引；漏掉的症状是每次写都失败而界面看不出来。
+        self.reopen: Callable[[], sqlite3.Connection | None] | None = None
 
     def _changed(self) -> None:
         """通知写入方：**事件清单**变了。
@@ -150,7 +156,7 @@ class EventStore:
     def all_events(self) -> tuple[Event, ...]:
         """全部事件，按开始日期新→旧、同日期的用 id 定先后。**一次读全**：一个库的事件只有几十条，
         界面把它整个缓存住（菜单的第二三层、面板的初始值、分组标签都从那份缓存来）。"""
-        connection = self._connection
+        connection = self._live_connection()
         if connection is None:
             return ()
         with self._lock:
@@ -201,7 +207,7 @@ class EventStore:
         一次旅行。**顺带把封面那一列取出来**（ADR 0048 决策 7）：分组要靠它知道卡片画哪一张，
         而这是同一次 JOIN。
         """
-        connection = self._connection
+        connection = self._live_connection()
         if connection is None or not paths:
             return {}
         statement = (
@@ -233,7 +239,7 @@ class EventStore:
 
     def photos_of_event(self, event_id: int) -> tuple[Path, ...]:
         """这个事件下面有哪些照片。"""
-        connection = self._connection
+        connection = self._live_connection()
         if connection is None:
             return ()
         with self._lock:
@@ -248,7 +254,7 @@ class EventStore:
         **一条 JOIN 读全**，而不是「按事件逐个问」：绑定可能上千条，逐个事件一次查询就是上千次往返。
         返回 :class:`Orphan` 而不是新造一个类型 —— 它要的就是「路径 + 事件 id + 事件名」这三列。
         """
-        connection = self._connection
+        connection = self._live_connection()
         if connection is None:
             return ()
         with self._lock:
@@ -632,7 +638,7 @@ class EventStore:
         条件只会漏掉「同一张照片属于好几种事件」的情形。``path`` 是主键的前导列，``IN`` 走主键索引。
         **指向这些路径的封面也一并清空**（ADR 0048 决策 1）；返回值仍只是「清掉了几条绑定」。
         """
-        connection = self._connection
+        connection = self._live_connection()
         if connection is None:
             return 0
         keys = [str(path) for path in paths]
@@ -659,7 +665,7 @@ class EventStore:
         所以这一句和撤销那一遍（方向相反）就是全部 —— 没有第二个真相源要同步。
         封面那一列**没有索引**，而它是至多几十行里的一列，全表扫与走索引同一个量级。
         """
-        connection = self._connection
+        connection = self._live_connection()
         if connection is None:
             return 0
         pairs = [(Path(old), Path(new), is_dir) for old, new, is_dir in moves]
@@ -733,10 +739,27 @@ class EventStore:
         return str(row[0])
 
     def _require(self) -> sqlite3.Connection:
-        connection = self._connection
+        connection = self._live_connection()
         if connection is None:
             raise EventsUnavailableError("事件库这次不可用：这个库的文件夹建不出配置目录。")
         return connection
+
+    def _live_connection(self) -> sqlite3.Connection | None:
+        """这一趟该用的连接。**读写都先走这里** —— 事件库那份文件被别的程序（云盘）换掉时，
+        写会失败、而读会一直给旧内容（症状是「删掉的东西还在」），所以先看一眼文件还是不是我们
+        打开的那一份，不是就先重开一次（ADR 0064）。
+        """
+        path = paths.events_file(self._root)
+        current = file_identity(path)
+        if (
+            current is not None
+            and self._identity is not None
+            and current != self._identity
+            and self.reopen is not None
+        ):
+            self._connection = self.reopen()
+            self._identity = file_identity(path)
+        return self._connection
 
 
 def events_of_kind(events: Sequence[Event], kind_id: str) -> tuple[Event, ...]:

@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import os
+import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
@@ -15,6 +17,7 @@ from PIL import Image
 from gallery.core import paths
 from gallery.core.constants import CONFIG_DIR_NAME
 from gallery.core.errors import ConfigError, LibraryNotAccessibleError
+from gallery.core.events.models import EventDraft
 from gallery.core.library.config import (
     LibraryConfig,
     load_config,
@@ -633,3 +636,61 @@ def test_the_relative_path_helpers_share_one_calculation_but_not_their_edges(
     assert facade_module._relative_posix(root, root / "旅行") == "旅行"
     assert relative_folder(root / "旅行" / "a.jpg", root) == "旅行"
     assert _directory_prefix(root / "旅行", root) == "旅行"
+
+
+# ---- 库文件被别的程序（云盘）换掉（ADR 0064）---------------------------------
+
+
+def _replace_with_an_empty_database(target: Path, tmp_path: Path) -> None:
+    """把 ``target`` 换成**另一份同名的空库**：云盘同步与「另存为」都是这个形状。"""
+    other = tmp_path / "换上去的那一份"
+    sqlite3.connect(other).close()
+    os.replace(other, target)
+
+
+def test_a_replaced_events_database_is_reopened(tmp_path: Path) -> None:
+    """云盘换掉 ``events.db`` 之后：读要看见换上去的那一份，写要落进它。
+
+    这就是那次事故的形状 —— 封面下载成功（纯文件操作），事件却没建起来；而读还一直给旧内容，
+    于是「删掉的东西还在」「重复导入说库里已经有了」。
+    """
+    prepare_library(tmp_path)
+    library = Library.open(tmp_path)
+    library.create_event("trip", EventDraft(values={"title": "京都五日"}))
+
+    _replace_with_an_empty_database(paths.events_file(tmp_path), tmp_path)
+
+    assert library.all_events() == ()
+    written = library.create_event("trip", EventDraft(values={"title": "奈良一日"}))
+    assert written.event.id == 1  # 落进了换上去的那一份
+    assert [event.text("title") for event in library.all_events()] == ["奈良一日"]
+
+
+def test_replacing_the_index_keeps_the_events_readable(tmp_path: Path) -> None:
+    """索引那份被换掉、连接重开之后，事件库要跟着重新挂上 —— 不然事件整段用不了。"""
+    prepare_library(tmp_path)
+    library = Library.open(tmp_path)
+    library.create_event("trip", EventDraft(values={"title": "京都五日"}))
+
+    _replace_with_an_empty_database(paths.index_file(tmp_path), tmp_path)
+
+    assert library.facet_index.count_photos() == 0  # 读到的是换上去的那一份
+    assert [event.text("title") for event in library.events.all_events()] == ["京都五日"]
+
+
+def test_a_write_refused_with_a_readonly_database_is_retried_once(tmp_path: Path) -> None:
+    """一次真的 ``SQLITE_READONLY``：重开一次连接再试一遍，那一次就接着干完了。
+
+    拿 ``PRAGMA query_only`` 造这个错 —— 重开出来的连接不带这个开关，重试因此会成功，
+    与真实事故里「文件被换掉，重开一次接着干」是同一条路。
+    """
+    prepare_library(tmp_path)
+    library = Library.open(tmp_path)
+    connection = library.facet_index.connection
+    assert connection is not None
+    connection.execute("PRAGMA query_only=1")
+
+    written = library.create_event("trip", EventDraft(values={"title": "京都五日"}))
+
+    assert written.event.text("title") == "京都五日"
+    assert [event.text("title") for event in library.all_events()] == ["京都五日"]

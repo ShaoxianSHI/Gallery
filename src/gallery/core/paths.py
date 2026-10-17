@@ -28,6 +28,8 @@ from gallery.core.constants import (
     INDEX_FILE_NAME,
     JOURNAL_DIR_NAME,
     LEGACY_INDEX_CACHE_DIR_NAME,
+    LOG_DIR_NAME,
+    LOG_FILE_NAME,
     PLACES_DB_FILENAME,
     RESOURCES_DIR_NAME,
     THUMBNAIL_DIR_NAME,
@@ -220,6 +222,15 @@ def app_cache_root(*, base: Path | None = None) -> Path:
     return app_state_dir(base=base) / CACHE_DIR_NAME
 
 
+def app_log_file(*, base: Path | None = None) -> Path:
+    """应用日志文件（``<app data>/Gallery/logs/gallery.log``）。
+
+    **它不在库的配置目录里**：日志是应用自己的东西，一个进程也只开一个库；而「库还没打开
+    就出事」那一段没有库根可依附（见 ``core.logs``）。
+    """
+    return app_state_dir(base=base) / LOG_DIR_NAME / LOG_FILE_NAME
+
+
 def app_index_cache_dir(*, base: Path | None = None) -> Path:
     """**旧版**的库外索引目录：``<app cache>/index``。
 
@@ -324,6 +335,7 @@ __all__ = [
     "app_icon_files",
     "app_icon_master",
     "app_index_cache_dir",
+    "app_log_file",
     "app_state_dir",
     "app_state_file",
     "augment_external_tool_path",

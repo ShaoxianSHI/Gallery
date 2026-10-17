@@ -18,6 +18,7 @@ from typing import Any
 
 from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, Signal, SignalInstance, Slot
 
+from gallery.core import paths
 from gallery.core.errors import GalleryError
 
 logger = logging.getLogger(__name__)
@@ -117,7 +118,7 @@ class _Job(QRunnable):
             self._emit(
                 self._signals.failed,
                 self._job_id,
-                "出现了一个未预期的问题，详情已写入日志。",
+                f"出现了一个没料到的问题，详情写进了日志文件：{paths.app_log_file()}。",
                 traceback.format_exc(),
             )
         else:

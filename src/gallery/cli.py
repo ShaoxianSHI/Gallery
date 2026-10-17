@@ -39,6 +39,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Python {sys.version.split()[0]}")
         return 0
 
+    # 日志先落地再干别的：起不来的那一段（认不出参数、没装 Qt）最需要它。
+    from gallery.core.logs import configure_logging
+
+    configure_logging()
+
     # 延迟导入：--version 不应该拖着 Qt 一起加载。
     from gallery.ui.app import run
 

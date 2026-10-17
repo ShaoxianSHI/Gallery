@@ -10,11 +10,12 @@ from __future__ import annotations
 
 import logging
 import os
+import sqlite3
 from collections.abc import Callable, Container, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
-from functools import partial
+from functools import partial, wraps
 from pathlib import Path
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Concatenate, Final, cast
 from uuid import uuid4
 
 from gallery.core import paths
@@ -86,6 +87,7 @@ from gallery.core.metadata.transfer import MoveResult, move_into
 from gallery.core.metadata.trash import TrashResult, trash_entries
 from gallery.core.metadata.undo import UndoResult, next_undo_label, undo_last_write
 from gallery.core.metadata.writeback import ExifToolWriter, MetadataWriter, write_metadata
+from gallery.core.sql import is_stale_or_locked
 
 if TYPE_CHECKING:
     from gallery.core.places.resolver import PlaceResolver, Status
@@ -98,6 +100,29 @@ PLACE_PASS_BATCH: Final = 400
 
 #: 写文件表时一批多少张。太大则一次占用索引锁的时间长，而那把锁界面读索引时也要用。
 PHOTO_INDEX_BATCH: Final = 2000
+
+
+def _retries_after_reopening[**P, R](
+    method: Callable[Concatenate[Library, P], R],
+) -> Callable[Concatenate[Library, P], R]:
+    """写库的入口套一层：底下的库文件被换掉（或连接被占住）就重开一次再跑一遍。
+
+    :meth:`Library.facet_index` 与 :meth:`Library.events` 都是**按连接现取**的，所以重跑
+    自然拿到新连接；换连接只能换在整段事务之外 —— 半途换会把同一笔事务的前半截留在旧连接上。
+    **只套单笔事务的写**：下载封面、搬用户文件那些重跑一遍会多出一个文件。
+    """
+
+    @wraps(method)
+    def wrapper(self: Library, *args: P.args, **kwargs: P.kwargs) -> R:
+        try:
+            return method(self, *args, **kwargs)
+        except sqlite3.Error as exc:
+            if not is_stale_or_locked(exc) or self._reopen_index() is None:
+                raise
+            return method(self, *args, **kwargs)
+
+    # ``wraps`` 交回来的是 ``_Wrapped``，类型检查器认不出它与原签名的关系。
+    return cast("Callable[Concatenate[Library, P], R]", wrapper)
 
 
 @dataclass(frozen=True, slots=True)
@@ -542,6 +567,7 @@ class Library:
             on_error=on_error,
         )
 
+    @_retries_after_reopening
     def forget_paths(self, gone: Sequence[Path]) -> int:
         """把已经不在库里的路径从索引中抹掉，返回删掉了几行。
 
@@ -577,11 +603,23 @@ class Library:
         # :meth:`EventStore.on_change`）。原先那四处手写的地方没有测试盯着，漏一处
         # 不报错 —— 库写进去了，界面上那份清单还是旧的。
         store.on_change = self._invalidate_events
+        store.reopen = self._reopen_index
         return store
 
     def _invalidate_events(self) -> None:
         """:meth:`all_events` 那份会话缓存作废。**只有写入口会调它。**"""
         self._events_cache = None
+
+    def _reopen_index(self) -> sqlite3.Connection | None:
+        """**无条件**重开索引连接（事件库跟着一起重挂），返回新连接，换不上返回 ``None``。
+
+        判据来自一次真实的写失败，或事件库那份文件被换掉了（见 ``store._live_connection``）。
+        """
+        index = self._index
+        if index is None:
+            return None
+        self._events_cache = None
+        return index.reopen()
 
     @property
     def events_available(self) -> bool:
@@ -627,15 +665,18 @@ class Library:
 
     # ---- 事件的写入口（它不动用户文件，动的是我们自己的库）--------------------
 
+    @_retries_after_reopening
     def create_event(self, kind_id: str, draft: EventDraft) -> EventWriteOutcome:
         """新建一个事件。**不写照片、不写 journal 之外的任何用户文件**；索引也不碰
         （索引是 EXIF 的投影，事件不是 EXIF）。"""
         return self.events.create(kind_id, draft)
 
+    @_retries_after_reopening
     def update_event(self, event_id: int, draft: EventDraft) -> EventWriteOutcome:
         """改一个事件。公共列与类型独有字段在**同一次写**里改完，所以只值一次 ⌘Z。"""
         return self.events.update(event_id, draft)
 
+    @_retries_after_reopening
     def delete_event(self, event_id: int) -> EventWriteOutcome:
         """删一个事件，连带它那些绑定（返回值里带着，撤销要靠它放回去）。"""
         return self.events.delete(event_id)
@@ -680,6 +721,7 @@ class Library:
             for event in self.events_by_kind(SHOW.id)
         }
 
+    @_retries_after_reopening
     def bind_photos(self, photos: Iterable[PhotoRef | Path], event_id: int) -> int:
         """把照片记进这个事件，返回新记进去几张。
 
@@ -688,10 +730,12 @@ class Library:
         """
         return self.events.bind(_paths_of(photos), event_id)
 
+    @_retries_after_reopening
     def unbind_photos(self, photos: Iterable[PhotoRef | Path], event_id: int) -> int:
         """把这些照片从这个事件里拿出来。"""
         return self.events.unbind(_paths_of(photos), event_id)
 
+    @_retries_after_reopening
     def set_event_cover(self, event_id: int, photo: PhotoRef | Path) -> EventWriteOutcome:
         """把这个事件的封面设成某一张照片，**它必须已经绑在这个事件上**（ADR 0048 决策 1）。**不进**
         ``WRITE_METHODS_ON_LIBRARY``：写的是 Gallery 自己的 ``events.db``，不碰用户的照片。
@@ -700,6 +744,7 @@ class Library:
         """
         return self.events.set_cover(event_id, _paths_of([photo])[0])
 
+    @_retries_after_reopening
     def clear_event_cover(self, event_id: int) -> bool:
         """取消封面：回到「组内第一张」。**没设过就是 ``False``** —— 界面据此不摆那一行。"""
         return self.events.clear_cover(event_id)
