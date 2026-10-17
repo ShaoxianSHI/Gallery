@@ -156,8 +156,29 @@ SHOW: Final = EventKind(
     empty_label="未命名演出",
 )
 
+MOVIE: Final = EventKind(
+    id="movie",
+    label="影片",
+    table="event_movie",
+    fields=(
+        EventField("code", "番号", "code", hint="如 IPX-660"),
+        EventField("duration", "时长", "duration", "INTEGER", hint="分钟，只填数字"),
+        EventField("studio", "片商", "studio"),
+        EventField("label", "发行商", "label"),
+        EventField("series", "系列", "series"),
+        EventField("director", "导演", "director"),
+        EventField("actors", "演员", "actors", hint="多个用逗号分开", multiple=True),
+        EventField("tags", "类别", "tags", hint="多个用逗号分开", multiple=True),
+        EventField("rating", "评分", "rating", "REAL", hint="只填数字"),
+    ),
+    # 发行日期复用公共列 ``started_on``：菜单排序与「按事件分组」的组键都读它，
+    # 单独开一列会让影片全落到「无日期」那一组里。
+    title_parts=("code",),
+    empty_label="未命名影片",
+)
+
 #: 已知的事件类型。**顺序即菜单顺序**。
-EVENT_KINDS: Final[tuple[EventKind, ...]] = (TRIP, SHOW)
+EVENT_KINDS: Final[tuple[EventKind, ...]] = (TRIP, SHOW, MOVIE)
 
 KINDS_BY_ID: Final[dict[str, EventKind]] = {kind.id: kind for kind in EVENT_KINDS}
 
@@ -294,6 +315,7 @@ __all__ = [
     "COVER",
     "EVENT_KINDS",
     "KINDS_BY_ID",
+    "MOVIE",
     "MULTI_SEPARATOR",
     "RATING_MAX",
     "RATING_MIN",

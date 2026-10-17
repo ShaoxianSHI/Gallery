@@ -13,15 +13,16 @@ from collections.abc import Callable, Sequence
 from functools import partial
 from pathlib import Path
 
-from PySide6.QtCore import QStandardPaths
+from PySide6.QtCore import QModelIndex, QStandardPaths
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QAbstractButton, QDialog, QFileDialog, QMenu, QMessageBox
 
 from gallery.core.errors import EventsUnavailableError, GalleryError
-from gallery.core.events.kinds import EVENT_KINDS, EventKind, kind_by_id
+from gallery.core.events.kinds import EVENT_KINDS, MOVIE, EventKind, kind_by_id
 from gallery.core.events.orphans import OrphanScan
 from gallery.core.events.prefill import EventPrefill, prefill_from_photos
 from gallery.core.events.store import Event, EventRef
+from gallery.core.external import launch
 from gallery.core.library.facade import ShowImportPlan
 from gallery.core.library.photos import GridEntry, GroupRef, PhotoRef
 from gallery.core.metadata.facets import FACET_EVENT
@@ -76,7 +77,7 @@ class EventFlowMixin:
         edit_menu = getattr(self, "_edit_event_menu", None)
         if edit_menu is not None:
             edit_menu.setEnabled(self._edit_event_usable())
-        import_menu = getattr(self, "_import_shows_menu", None)
+        import_menu = getattr(self, "_import_menu", None)
         if import_menu is not None:
             import_menu.setEnabled(self._events_usable())
         if getattr(self, "_edit_event_action", None) is None:
@@ -161,6 +162,46 @@ class EventFlowMixin:
             return
         self._after_events_changed()
         self._show_banner(banners.photos_unbound_banner(count, event.display_name))
+
+    # ---- 影片：⌥ 点开网站（ADR 0063）----------------------------------------
+
+    def open_movie_for_row(self, index: QModelIndex) -> None:
+        """⌥ 点了网格里一格：打开它所属影片事件的网站。"""
+        entry = self._model.entry_at(index.row())
+        if isinstance(entry, PhotoRef):
+            self._open_movie_for_photo(entry.path)
+
+    def open_movie_for_current(self) -> None:
+        """⌥ 点了大图页：打开正在看的那张所属影片的网站。"""
+        ref = self._model.photo_at(self._focus_row())
+        if ref is not None:
+            self._open_movie_for_photo(ref.path)
+
+    def _open_movie_for_photo(self, photo: Path) -> None:
+        """这张照片属于某个影片事件就打开它的网站；不属于任何影片就什么也不做（不打扰）。
+
+        **不是影片照片时静默** —— ⌥ 点一下是个轻量手势，为一张普通照片弹一句「不属于影片」
+        只会吵人。真的属于影片而缺番号时才说一句（那时用户确实想知道为什么没反应）。
+        """
+        library = self._library
+        if library is None:
+            return
+        refs = library.events_for_photos([photo]).get(photo, ())
+        movie = next((ref for ref in refs if ref.kind == MOVIE.id), None)
+        if movie is None:
+            return
+        event = library.event(movie.id)
+        url = library.movie_url(event) if event is not None else None
+        if event is None:
+            self._show_banner("这个事件已经不在了。")
+            return
+        if url is None:
+            self._show_banner("这个影片事件还没有番号，打开不了影片网站。")
+            return
+        outcome = launch.open_in_browser(url)
+        self._show_banner(
+            banners.movie_site_opened_banner(event.text("code"), outcome), auto_hide=True
+        )
 
     # ---- 菜单 --------------------------------------------------------------
 
@@ -252,16 +293,18 @@ class EventFlowMixin:
         submenu.triggered.connect(self._on_edit_event_picked)
         return submenu
 
-    def import_shows_menu(self) -> QMenu:
-        """「文件 → 导入演出」那一层（ADR 0047）。目前只有「从「演迹」导入」一项。
+    def import_menu(self) -> QMenu:
+        """菜单栏「导入」那一层（ADR 0063）：把外面的东西拿进来 —— 抓影片、导入演出。
 
-        这一层是**常驻**的（菜单栏的子菜单），所以不挂 ``aboutToShow`` 现填 —— 它只有一项，
-        不像事件清单那样随时会变。会变的是可不可点：事件库用不上时由
-        :meth:`_update_event_actions` 置灰。
+        这一层是**常驻**的（菜单栏的子菜单），所以不挂 ``aboutToShow`` 现填。会变的是可不可点：
+        事件库用不上时由 :meth:`_update_event_actions` 置灰 —— 两条导入都要事件库。
         """
-        menu = QMenu("导入演出")
+        menu = QMenu("导入")
         menu.setToolTipsVisible(True)
-        self._import_shows_action = QAction("从「演迹」导入", self)
+        self._import_movies_action = QAction("导入影片…", self)
+        self._import_movies_action.triggered.connect(self.import_movies_from_dialog)
+        menu.addAction(self._import_movies_action)
+        self._import_shows_action = QAction("从「演迹」导入演出…", self)
         self._import_shows_action.triggered.connect(self.import_shows_from_yanji)
         menu.addAction(self._import_shows_action)
         return menu

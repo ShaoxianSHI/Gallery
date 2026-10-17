@@ -72,6 +72,8 @@ class DetailView(QGraphicsView):
     zoom_changed = Signal(float)
     #: 用户在照片上按了右键。位置是**窗口坐标**（``QMenu.exec`` 直接吃它）。
     context_requested = Signal(QPoint)
+    #: 用户按住 ⌥ 点了照片：打开它所属影片事件的网站（ADR 0063）。
+    movie_open_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -309,6 +311,18 @@ class DetailView(QGraphicsView):
             event.accept()
             return
         super().mouseDoubleClickEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
+        """按住 ⌥ 点一下：打开这一张所属影片的网站（ADR 0063）。"""
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and event.modifiers() & Qt.KeyboardModifier.AltModifier
+            and not self._pixmap.isNull()
+        ):
+            self.movie_open_requested.emit()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
 
     def contextMenuEvent(self, event: QContextMenuEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         """右键照片：把位置告诉窗口，菜单由 ``MainWindow`` 拼（ADR 0021）。

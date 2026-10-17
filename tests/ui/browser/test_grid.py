@@ -883,3 +883,30 @@ def test_in_the_window_clicking_the_blank_leaves_nothing_to_rename_or_to_open(
         assert opened == [], "↵ 也不该再进得去那个相册"
     finally:
         window.close()
+
+
+def test_alt_click_asks_to_open_the_movie(qt_app: QApplication, tmp_path: Path) -> None:
+    """按住 ⌥ 点一格会发开影片的信号（ADR 0063）；普通点一下不会。
+
+    ⌥ 不在扩选那组修饰键里，所以它本来只是一次普通点选 —— 这里钉的是「网格把它接管过来、
+    发一次信号」，而**普通点击一个都不发**（否则每次选中照片都会去开浏览器）。
+    """
+    grid = make_grid(qt_app, tmp_path, count=3)
+    settle_grid(qt_app, grid)
+    model = grid.model()
+    assert model is not None
+    seen: list[int] = []
+    grid.movie_open_requested.connect(lambda index: seen.append(index.row()))
+
+    point = grid.visualRect(model.index(1, 0)).center()
+    QTest.mouseClick(
+        grid.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.AltModifier, point
+    )
+    qt_app.processEvents()
+    assert seen == [1]
+
+    QTest.mouseClick(
+        grid.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, point
+    )
+    qt_app.processEvents()
+    assert seen == [1], "普通点击不该发开影片的信号"

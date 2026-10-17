@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from gallery.core.events.orphans import OrphanScan
 from gallery.core.events.store import EventWriteOutcome
 from gallery.core.external.launch import OpenOutcome
-from gallery.core.library.facade import MetadataWriteOutcome
+from gallery.core.library.facade import MetadataWriteOutcome, MovieImportOutcome
 from gallery.core.library.photos import FolderRef, GridEntry
 from gallery.core.metadata.failures import Failure
 from gallery.core.metadata.journal import (
@@ -117,6 +117,34 @@ def shows_imported_banner(created: int, duplicates: int, skipped: int) -> str:
     if skipped > 0:
         head += f"，另有 {skipped} 行没导入"
     return f"{head}。"
+
+
+def movies_imported_banner(outcome: MovieImportOutcome) -> str:
+    """按番号导入影片之后（ADR 0063）。
+
+    **跳过的那几部、与抓不到 / 写不下的都要说一声**：用户敲了一批番号，总得知道哪几个成了。
+    **不提 ⌘Z**：一次导入不进撤销栈（它就是一串新建事件加几个新文件），承诺撤销是空话。
+    """
+    parts: list[str] = []
+    if outcome.created:
+        parts.append(f"已导入 {outcome.created} 部影片")
+    if outcome.duplicates:
+        parts.append(f"跳过 {outcome.duplicates} 部已存在的")
+    if not outcome.journaled:
+        parts.append("没能记下操作日志")
+    if outcome.failures:
+        more = f"，共 {len(outcome.failures)} 部" if len(outcome.failures) > 1 else ""
+        parts.append(f"{outcome.failures[0]}{more}")
+    if not parts:
+        return "没有导入任何影片。"
+    return "；".join(parts) + "。"
+
+
+def movie_site_opened_banner(code: str, outcome: OpenOutcome) -> str:
+    """按住 ⌥ 点开一部影片的网站之后（ADR 0063）。"""
+    if outcome.detail:
+        return f"没能打开「{code}」的影片网站：{outcome.detail}。"
+    return f"已在浏览器中打开「{code}」的影片网站。"
 
 
 def event_undo_banner(result: UndoResult, kind_label: str) -> str:
@@ -453,6 +481,8 @@ __all__ = [
     "external_app_opened",
     "first_reason",
     "metadata_edit_banner",
+    "movie_site_opened_banner",
+    "movies_imported_banner",
     "paste_banner",
     "photos_bound_banner",
     "photos_unbound_banner",

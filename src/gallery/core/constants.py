@@ -68,6 +68,10 @@ DEFAULT_THUMBNAIL_MAX_EDGE: Final = 512
 #: 缩略图缓存默认上限（2 GiB）。0 表示不限制。
 DEFAULT_MAX_CACHE_BYTES: Final = 2 * 1024**3
 
+#: 「影片」事件里「打开影片网站」的地址前缀，可在 ``config.toml`` 的 ``movie_site`` 里改。
+#: 番号接在它后面（小写、带连字符）：``https://jable.tv/videos/`` + ``ipx-660`` + ``/``。
+DEFAULT_MOVIE_SITE: Final = "https://jable.tv/videos/"
+
 __all__ = [
     "APP_ICON_BASENAME",
     "APP_ICON_SIZES",
@@ -77,6 +81,7 @@ __all__ = [
     "CONFIG_DIR_NAME",
     "CONFIG_FILE_NAME",
     "DEFAULT_MAX_CACHE_BYTES",
+    "DEFAULT_MOVIE_SITE",
     "DEFAULT_THUMBNAIL_MAX_EDGE",
     "EVENTS_FILE_NAME",
     "INDEX_FILE_NAME",

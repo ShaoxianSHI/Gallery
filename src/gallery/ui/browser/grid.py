@@ -139,6 +139,8 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
     rename_active_changed = Signal(bool)
     #: 用户在网格上按了右键：**该作用于哪一行**，``-1`` 表示落在空白处（选区由视图摆正）。
     context_requested = Signal(int)
+    #: 用户按住 ⌥ 点了一格：打开这一格所属影片事件的网站（ADR 0063）。
+    movie_open_requested = Signal(QModelIndex)
 
     def __init__(self, parent: QWidget | None = None, *, icon_edge: int = DEFAULT_EDGE) -> None:
         super().__init__(parent)
@@ -828,6 +830,25 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
             self._swallow_press = False
             self._armed_row = -1
             self._rename_timer.stop()
+            return
+        # 按住 ⌥ 点一格：打开它所属影片的网站（ADR 0063）。**Alt 不在扩选那组里**，
+        # 所以这一下本来只是一次普通点选 —— 这里把它接管过来，且不 arm 重命名。
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and event.modifiers() & Qt.KeyboardModifier.AltModifier
+            and not self._press_extends
+            and self._press_point is not None
+            and (event.position().toPoint() - self._press_point).manhattanLength()
+            < _drag_threshold()
+        ):
+            index = self.indexAt(event.position().toPoint())
+            self._press_point = None
+            self._press_target = -1
+            self._press_shift = False
+            self._armed_row = -1
+            self._rename_timer.stop()
+            if index.isValid():
+                self.movie_open_requested.emit(index)
             return
         # 修饰键按下与抬起时**都**看一眼：「先按下鼠标、再补上 ⇧」也是常见手势。
         modifiers = event.modifiers()

@@ -246,6 +246,8 @@ class MainWindow(
         self._grid.rename_committed.connect(self._on_rename_committed)
         self._grid.rename_active_changed.connect(self._on_rename_active_changed)
         self._grid.context_requested.connect(self._show_context_menu)
+        # ⌥ 点一格：打开它所属影片的网站（ADR 0063）。
+        self._grid.movie_open_requested.connect(self.open_movie_for_row)
         # 「重命名」「移到废纸篓」能不能用，取决于当前有没有选中东西。**只接 `selectionChanged`，
         # 并且合并成一轮再算**：一次算要全量重算十八枚动作，其中 ⌘V 还要同步读一次系统剪贴板。
         selection_model = self._grid.selectionModel()
@@ -276,6 +278,8 @@ class MainWindow(
         self._detail.request_step.connect(self.step_detail)
         # 大图页上的右键：视图只报位置，菜单在这一侧拼（与网格同一个流程，见 ADR 0021）。
         self._detail.context_requested.connect(self._show_detail_context_menu)
+        # ⌥ 点一下大图页：打开正在看的那张所属影片的网站（ADR 0063）。
+        self._detail.movie_open_requested.connect(self.open_movie_for_current)
 
         # 日历那一页**自己带着工具条**（占掉的就是网格那页面包屑那一行，ADR 0033 决策 5）。
         self._calendar_page = CalendarPage()
@@ -553,9 +557,6 @@ class MainWindow(
         file_menu = self.menuBar().addMenu("文件")
         file_menu.addAction(self._open_action)
         self._recent_menu = file_menu.addMenu("最近打开")
-        # 「导入演出」挨着「打开文件夹」：两者都是「把外面的东西拿进来」（ADR 0047）。
-        self._import_shows_menu = self.import_shows_menu()
-        file_menu.addMenu(self._import_shows_menu)
         file_menu.addSeparator()
         file_menu.addAction(self._search_action)
         file_menu.addAction(self._scope_action)
@@ -622,6 +623,10 @@ class MainWindow(
             )
             size_menu.addAction(action)
             self._size_actions.append(action)
+
+        # 「导入」挨着「视图」右边（ADR 0063）：把外面的东西拿进来 —— 抓影片、从「演迹」导入演出。
+        self._import_menu = self.import_menu()
+        self.menuBar().addMenu(self._import_menu)
 
         # 不加工具栏：这些命令在 macOS 顶部菜单里都有，再重复一遍只会挤掉照片。
         self._rebuild_recent_menu()

@@ -15,11 +15,12 @@ from pathlib import Path
 
 from PySide6.QtCore import QModelIndex
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QDialog, QMenu
+from PySide6.QtWidgets import QDialog, QMenu, QMessageBox
 
 from gallery.core import paths
 from gallery.core.errors import GalleryError
 from gallery.core.library.config import BROWSE_MODE_ALBUMS, BROWSE_MODE_FLAT
+from gallery.core.library.facade import MovieImportOutcome, MovieImportPlan
 from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
 from gallery.core.metadata.capture_time import CaptureTime
 from gallery.core.metadata.exif import read_metadata
@@ -37,7 +38,7 @@ from gallery.core.metadata.report import MetadataReport
 from gallery.core.metadata.transfer import MoveResult
 from gallery.core.metadata.undo import UndoResult
 from gallery.ui import banners, desktop
-from gallery.ui.dialogs import MetadataEditDialog
+from gallery.ui.dialogs import MetadataEditDialog, MovieImportDialog
 from gallery.ui.tasks import TaskContext
 from gallery.ui.window import menus
 
@@ -877,6 +878,128 @@ class WriteOpsMixin:
         # 记上了才说过就走：没记上时那句话里有一句「⌘Z 撤销不了」，那是用户必须知道的
         # （ADR 0029 决策 3）。撤销回来时传进来的是撤销那句话，判据一样成立。
         self._show_banner(banner or banners.rename_banner(result), auto_hide=result.journaled)
+
+    # ---- 导入影片（ADR 0063）-------------------------------------------------
+
+    def import_movies_from_dialog(self) -> None:
+        """「导入 → 导入影片…」：敲一批番号，抓元数据与封面，建成影片事件（ADR 0063）。
+
+        **封面会作为新文件写进当前这一层**（「只增不改」，绝不覆盖），所以这个入口住在
+        ``write_ops``。**要联网，分两步走**：先抓一遍元数据（只读）→ 有重复就问一句 →
+        再下载封面、写文件、建事件。
+        """
+        library = self._library
+        if library is None or not library.events_available:
+            self._show_banner("这个库这次用不了事件功能，没法导入影片。")
+            return
+        if self._movie_import_job is not None:
+            self._show_banner("上一次导入还没结束。")
+            return
+        target = self._current_folder()
+        if target is None:
+            self._show_banner("先打开一个相册库，再导入影片。")
+            return
+        dialog = MovieImportDialog(self, target=target)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        codes = dialog.codes()
+        if codes:
+            self._plan_movies(codes, target)
+
+    def _plan_movies(self, codes: Sequence[str], target: Path) -> None:
+        """第一步：按番号抓一遍元数据（只读）。"""
+        library = self._library
+        if library is None:
+            return
+        generation = self._generation
+
+        def work(context: TaskContext) -> object:
+            return library.plan_movie_import(codes, should_cancel=context.is_cancelled)
+
+        self._show_banner(f"正在抓取 {len(codes)} 个番号的资料…")
+        self._start_job(
+            "_movie_import_job",
+            work,
+            on_result=partial(self._on_movies_planned, target, generation),
+            on_error=self._on_movie_import_failed,
+        )
+
+    def _on_movies_planned(self, target: Path, generation: int, payload: object) -> None:
+        self._finish_job("_movie_import_job")
+        if generation != self._generation or not isinstance(payload, MovieImportPlan):
+            return
+        if not payload.movies:
+            self._show_banner(
+                banners.movies_imported_banner(MovieImportOutcome(failures=payload.failures))
+            )
+            return
+        skip = False
+        if payload.duplicates:
+            answer = self._ask_about_duplicate_movies(payload)
+            if answer is None:
+                return
+            skip = answer
+        self._write_movies(payload, target, skip)
+
+    def _write_movies(self, plan: MovieImportPlan, target: Path, skip_duplicates: bool) -> None:
+        """第二步：下载封面、写文件、建事件。"""
+        library = self._library
+        if library is None:
+            return
+        generation = self._generation
+
+        def work(context: TaskContext) -> object:
+            return library.import_movies(
+                plan,
+                target=target,
+                skip_duplicates=skip_duplicates,
+                should_cancel=context.is_cancelled,
+            )
+
+        self._show_banner(f"正在下载并写入 {plan.total} 部影片的封面…")
+        self._start_job(
+            "_movie_import_job",
+            work,
+            on_result=partial(self._on_movies_imported, generation),
+            on_error=self._on_movie_import_failed,
+        )
+
+    def _on_movies_imported(self, generation: int, payload: object) -> None:
+        self._finish_job("_movie_import_job")
+        if generation != self._generation or not isinstance(payload, MovieImportOutcome):
+            return
+        self._after_events_changed()
+        # 有没导入的、或者没记上账时那句提示要留着（判据同粘贴那一支）。
+        self._show_banner(
+            banners.movies_imported_banner(payload),
+            auto_hide=payload.journaled and not payload.failures,
+        )
+
+    def _on_movie_import_failed(self, message: str) -> None:
+        self._finish_job("_movie_import_job")
+        logger.info("导入影片失败：%s", message)
+        self._show_banner(f"导入影片失败：{message.rstrip('。')}")
+
+    def _ask_about_duplicate_movies(self, plan: MovieImportPlan) -> bool | None:
+        """发现库里已有同番号时问一句：跳过返回 ``True``，全部导入返回 ``False``，取消 ``None``。"""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("导入影片")
+        box.setText(
+            f"抓到 {plan.total} 部影片，其中 {plan.duplicates} 部的番号库里已经有了。\n\n"
+            "要跳过这些，还是全部再建一遍？"
+        )
+        skip = box.addButton("跳过重复", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("全部导入", QMessageBox.ButtonRole.DestructiveRole)
+        cancel = box.addButton("取消", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(skip)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is skip:
+            return True
+        if clicked is cancel:
+            return None
+        return False
 
 
 __all__ = [

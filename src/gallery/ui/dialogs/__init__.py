@@ -7,5 +7,12 @@
 
 from gallery.ui.dialogs.event_edit import DELETE_REQUESTED, EventEdit, EventEditDialog
 from gallery.ui.dialogs.metadata_edit import MetadataEditDialog
+from gallery.ui.dialogs.movie_import import MovieImportDialog
 
-__all__ = ["DELETE_REQUESTED", "EventEdit", "EventEditDialog", "MetadataEditDialog"]
+__all__ = [
+    "DELETE_REQUESTED",
+    "EventEdit",
+    "EventEditDialog",
+    "MetadataEditDialog",
+    "MovieImportDialog",
+]

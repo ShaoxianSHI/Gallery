@@ -54,6 +54,10 @@ ACTION_METADATA: Final = "metadata"
 #: 记 ``failed`` → 栈上**留着**当初那条写回，再按一次 ⌘Z 会重试。冲突的字段一律留在原处。
 ACTION_UNDO_METADATA: Final = "undo_metadata"
 
+#: 日志里的动作名：把一次下载下来的封面**作为一个新文件**写进用户的文件夹（ADR 0063）。
+#: 与 :data:`ACTION_PASTE` 同属「只增不改」：写出的是新文件，**不在撤销栈里**。
+ACTION_DOWNLOAD: Final = "download"
+
 #: 日志里的动作名：改一个事件的内容（ADR 0043）。它**动的是我们自己的库**，不是用户的照片，
 #: 但一样可 ⌘Z —— 事件是唯一一份重扫重建不出来的数据。前后值在 :attr:`WriteRecord.changes`
 #: 里逐字段记着，而 ``payload`` 里记着是哪一条事件。
@@ -310,6 +314,7 @@ def read_records(root: Path) -> list[WriteRecord]:
 
 __all__ = [
     "ACTION_CREATE",
+    "ACTION_DOWNLOAD",
     "ACTION_METADATA",
     "ACTION_MOVE",
     "ACTION_PASTE",

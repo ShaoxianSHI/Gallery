@@ -1,4 +1,4 @@
-"""「文件 → 导入演出 → 从「演迹」导入」那条路（ADR 0047）。
+"""「导入 → 从「演迹」导入演出」那条路（ADR 0047；菜单位置见 ADR 0063）。
 
 真正的解析在 ``tests/core/events/test_import_shows.py`` 里测；这里测的是**接线**：菜单里有没有
 那一项、点下去认不认选中的文件、结果有没有变成事件与一句话。
@@ -84,23 +84,16 @@ def window(qt_app: QApplication, root: Path) -> Iterator[MainWindow]:
     instance.close()
 
 
-def _file_menu(window: MainWindow) -> QMenu:
-    menu = window.menuBar().actions()[0].menu()
-    assert menu is not None
-    return menu
-
-
-def _submenu(menu: QMenu, title: str) -> QMenu:
-    for action in menu.actions():
-        submenu = action.menu()
-        if submenu is not None and submenu.title() == title:
-            return submenu
-    raise AssertionError(f"菜单上没有「{title}」：{[a.text() for a in menu.actions()]}")
+def _import_menu(window: MainWindow) -> QMenu:
+    return window._import_menu
 
 
 def _import_action(window: MainWindow):
-    menu = _submenu(_file_menu(window), "导入演出")
-    return next(action for action in menu.actions() if action.text() == "从「演迹」导入")
+    return next(
+        action
+        for action in _import_menu(window).actions()
+        if action.text() == "从「演迹」导入演出…"
+    )
 
 
 def _choose(monkeypatch: pytest.MonkeyPatch, path: Path | None) -> None:
@@ -108,11 +101,11 @@ def _choose(monkeypatch: pytest.MonkeyPatch, path: Path | None) -> None:
     monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *args, **kwargs: answer)
 
 
-def test_the_file_menu_carries_the_import_entry(window: MainWindow) -> None:
-    """「文件」里有一层「导入演出」，里面那一条叫「从「演迹」导入」。"""
-    menu = _submenu(_file_menu(window), "导入演出")
+def test_the_import_menu_carries_the_shows_entry(window: MainWindow) -> None:
+    """「导入」菜单里那一条叫「从「演迹」导入演出…」（ADR 0063 把它从「文件」挪了过来）。"""
+    labels = [action.text() for action in _import_menu(window).actions()]
 
-    assert [action.text() for action in menu.actions()] == ["从「演迹」导入"]
+    assert labels == ["导入影片…", "从「演迹」导入演出…"]
 
 
 def test_choosing_a_table_creates_the_shows(
@@ -174,7 +167,7 @@ def test_the_entry_is_greyed_without_an_event_store(
 
     window._update_event_actions()
 
-    assert _submenu(_file_menu(window), "导入演出").isEnabled() is False
+    assert _import_menu(window).isEnabled() is False
 
 
 # ---- 重复（ADR 0047：写库之前先问一句）-----------------------------------------

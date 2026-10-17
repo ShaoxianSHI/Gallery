@@ -2,7 +2,7 @@
 
 **写入口只有这一处**。注册表与存储住在 :mod:`~gallery.ui.window.state.jobs` 里
 （ADR 0058 阶段 1、ADR 0060 分开住），本模块只管「什么时候起、什么时候停」。
-13 个 ``*_job`` 字段的活法完全一样：提交时存句柄、结束时置 ``None``、取消时先判空 ——
+14 个 ``*_job`` 字段的活法完全一样：提交时存句柄、结束时置 ``None``、取消时先判空 ——
 原先那套写法散在十个模块里，于是「哪些任务属于哪一层」与「取消一个还要顺手做哪件事」
 两处知识都只存在于读代码的人脑子里。收进注册表之后，它们各占一行。
 
@@ -30,7 +30,7 @@ __all__ = ["LEVEL", "LEVEL_CALENDAR", "LIBRARY", "JobsMixin"]
 
 
 class JobsMixin:
-    """guard: allow-long-comment（转发层为什么必须留着，值得说满）—— 13 个后台任务的提交与取消。
+    """guard: allow-long-comment（转发层为什么必须留着，值得说满）—— 14 个后台任务的提交与取消。
 
     窗口上仍留着一组**同名 property** 转发过去：本包规矩属性名一个字都不改，
     ``tests/ui/waiting.py`` 用 ``getattr(window, name)`` 取它们（59 处）。
@@ -45,8 +45,8 @@ class JobsMixin:
         """建这一族的状态；``MainWindow.__init__`` 里只留这一句。"""
         self._jobs = JobSlots()
 
-    # ---- 那 13 个槽的转发 property ------------------------------------------
-    # guard: allow-long-comment（13 组读写对，拆开就没法一眼看出「名字 ↔ 槽」一一对应）
+    # ---- 那 14 个槽的转发 property ------------------------------------------
+    # guard: allow-long-comment（14 组读写对，拆开就没法一眼看出「名字 ↔ 槽」一一对应）
     # **为什么留这一层** —— ``tests/ui/waiting.py`` 按名字 ``getattr(window, name)``，
     # 测试里另有 56 处直接摸 ``window._scan_job``（含几处 ``= 999`` 假扮进行中）。
     # 属性名一个字都不改是本包的规矩，而删掉它们等于删测试。
@@ -155,6 +155,14 @@ class JobsMixin:
     def _write_job(self, job_id: int | None) -> None:
         self._jobs.set("_write_job", job_id)
 
+    @property
+    def _movie_import_job(self) -> int | None:
+        return self._jobs.get("_movie_import_job")
+
+    @_movie_import_job.setter
+    def _movie_import_job(self, job_id: int | None) -> None:
+        self._jobs.set("_movie_import_job", job_id)
+
     def _start_job(
         self,
         name: str,
@@ -164,7 +172,7 @@ class JobsMixin:
         on_error: Callable[[str], None] | None = None,
         on_progress: Callable[[object], None] | None = None,
     ) -> None:
-        """提交一个后台任务并存下句柄（``name`` 是那 13 个槽名之一）。"""
+        """提交一个后台任务并存下句柄（``name`` 是那 14 个槽名之一）。"""
         if name not in _JOBS:
             raise KeyError(f"没有登记的后台任务：{name}")
         self._jobs.set(

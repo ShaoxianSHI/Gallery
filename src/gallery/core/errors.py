@@ -123,6 +123,14 @@ class ShowImportError(GalleryError):
     """
 
 
+class MovieImportError(GalleryError):
+    """按番号抓取影片元数据、或把封面写进库里失败。
+
+    两种来路分开说：找源网站要么是网络不通/被挡，要么是番号在源站查不到；写封面则是目标文件夹
+    写不进去。合并成一条只会让用户没法判断下一步该改什么（重试 / 换个番号 / 检查目录权限）。
+    """
+
+
 __all__ = [
     "AlbumError",
     "ConfigError",
@@ -135,6 +143,7 @@ __all__ = [
     "LibraryNotAccessibleError",
     "MetadataError",
     "MetadataWriteError",
+    "MovieImportError",
     "PasteError",
     "RenameError",
     "ShowImportError",

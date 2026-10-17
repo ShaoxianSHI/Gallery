@@ -74,7 +74,7 @@
 | [0044](0044-duplicate-in-place.md) | 「复制」⌘D 在原位置造副本；副本不可撤销 | 已接受 |
 | [0045](0045-show-events.md) | 第二类事件「演出」：只复用名称 / 日期 / 备注三个公共字段 | 已接受（决策 4 由 0046 取代） |
 | [0046](0046-event-search-field-prefixes.md) | 搜索候选里每类事件独有的字段一律带类型前缀 | 已接受 |
-| [0047](0047-import-shows-from-yanji.md) | 从「演迹」导出的 .xlsx 导入演出（不进撤销栈） | 已接受 |
+| [0047](0047-import-shows-from-yanji.md) | 从「演迹」导出的 .xlsx 导入演出（不进撤销栈） | 已接受（菜单位置由 0063 取代） |
 | [0048](0048-event-cover.md) | 事件封面存在 `events.cover_path`，跟着改名与移动一起搬 | 已接受 |
 | [0049](0049-one-sort-direction-for-everything.md) | 相册、组卡片、照片共用一个排序方向 | 已接受（决策 1 由本条自己修订过） |
 | [0050](0050-one-sync-entry-point.md) | 界面由状态算出来的那几份映射只有一个编排点（`_sync_ui`） | 已接受 |
@@ -90,3 +90,4 @@
 | [0060](0060-ui-layout-consolidation.md) | 界面层目录的收口：拆掉 `panels/`，补上 0059 承诺的那条守护 | 已接受 |
 | [0061](0061-thumb-sizes-to-top-level.md) | 缩略图档位上顶层，并补上反方向那条守护 | 已接受 |
 | [0062](0062-dock-recent-libraries.md) | 最近打开的库登记进系统那份「最近项目」：Dock 右键菜单在应用没运行时也在 | 已接受 |
+| [0063](0063-movie-events-and-import.md) | 影片事件、按番号从 JavDB 导入、⌥ 点开影片网站（封面是新文件） | 已接受 |

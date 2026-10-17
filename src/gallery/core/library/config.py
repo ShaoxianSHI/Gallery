@@ -17,7 +17,11 @@ from typing import Any, Final, cast
 
 from gallery.core import paths
 from gallery.core.atomic import read_text_or_none, write_text_atomic
-from gallery.core.constants import DEFAULT_MAX_CACHE_BYTES, DEFAULT_THUMBNAIL_MAX_EDGE
+from gallery.core.constants import (
+    DEFAULT_MAX_CACHE_BYTES,
+    DEFAULT_MOVIE_SITE,
+    DEFAULT_THUMBNAIL_MAX_EDGE,
+)
 from gallery.core.errors import ConfigError
 from gallery.core.library.calendar import LEVELS as CALENDAR_LEVELS
 from gallery.core.metadata.facets import FACET_MODIFIED, group_facet, sort_facet
@@ -244,6 +248,9 @@ class LibraryConfig:
     thumbnail_max_edge: int = DEFAULT_THUMBNAIL_MAX_EDGE
     #: 缩略图缓存上限（字节）。0 表示不限制。
     max_cache_bytes: int = DEFAULT_MAX_CACHE_BYTES
+    #: 「影片」事件里「打开影片网站」的地址前缀（ADR 0063）。番号接在它后面，
+    #: 例如 ``https://jable.tv/videos/`` → ``https://jable.tv/videos/ipx-660/``。
+    movie_site: str = DEFAULT_MOVIE_SITE
     #: **相册封面**（ADR 0028）：相册相对库根的路径 → 封面照片相对库根的路径。空 = 一个都没指定，
     #: 于是每个相册都用「里面第一张照片」。存相对路径是必须的：绝对路径在库里挪个位置、换台
     #: 机器就全废了，而这份文件用户会手改、也会跟着库提交。
@@ -263,6 +270,7 @@ class LibraryConfig:
             + f"recursive = {_toml_bool(self.recursive)}\n"
             + f"thumbnail_max_edge = {self.thumbnail_max_edge}\n"
             + f"max_cache_bytes = {self.max_cache_bytes}  # 0 表示不限制\n"
+            + f"movie_site = {_toml_string(self.movie_site)}  # 「影片」打开影片网站的前缀\n"
             + self._album_covers_toml()
             + self.ui.to_toml()
         )
@@ -309,6 +317,7 @@ class LibraryConfig:
             recursive=recursive,
             thumbnail_max_edge=edge,
             max_cache_bytes=max_bytes,
+            movie_site=_read_movie_site(data, defaults.movie_site, source=source),
             album_covers=_read_album_covers(data, source=source),
             ui=LibraryUIState.from_mapping(_read_ui(data, source=source)),
         )
@@ -496,6 +505,27 @@ def _read_int(data: Mapping[str, object], key: str, default: int, *, source: Pat
             path=source,
         )
     return value
+
+
+def _read_movie_site(data: Mapping[str, object], default: str, *, source: Path | None) -> str:
+    """``movie_site``：影片网站的前缀。**非空、且是 http(s) 地址** —— 它会被拼进一个真去打开的
+    URL，一个手滑写进去的 ``jav`` 只会让「打开影片」点了没反应（ADR 0063）。
+    """
+    value = data.get("movie_site", default)
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigError(
+            f"配置项 movie_site 必须是影片网站的前缀，例如 "
+            f'"{DEFAULT_MOVIE_SITE}"，当前是 {value!r}。',
+            path=source,
+        )
+    text = value.strip()
+    if not text.startswith(("http://", "https://")):
+        raise ConfigError(
+            f"配置项 movie_site 要以 http:// 或 https:// 开头，当前是 {value!r}。"
+            f'例如 "{DEFAULT_MOVIE_SITE}"。',
+            path=source,
+        )
+    return text
 
 
 def _toml_bool(value: bool) -> str:

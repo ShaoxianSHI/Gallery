@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from gallery.core import paths
-from gallery.core.constants import DEFAULT_MAX_CACHE_BYTES
+from gallery.core.constants import DEFAULT_MAX_CACHE_BYTES, DEFAULT_MOVIE_SITE
 from gallery.core.errors import ConfigError
 from gallery.core.library.config import (
     ALBUM_COVERS_KEY,
@@ -104,6 +104,37 @@ def test_zero_cache_limit_means_unlimited(tmp_path: Path) -> None:
     assert load_config(tmp_path).max_cache_bytes == 0
 
 
+# ---- 影片网站前缀（ADR 0063）------------------------------------------------
+
+
+def test_movie_site_defaults_to_jable(tmp_path: Path) -> None:
+    from gallery.core.constants import DEFAULT_MOVIE_SITE
+
+    assert load_config(tmp_path).movie_site == DEFAULT_MOVIE_SITE
+    assert DEFAULT_MOVIE_SITE == "https://jable.tv/videos/"
+
+
+def test_movie_site_round_trips_through_the_file(tmp_path: Path) -> None:
+    save_config(tmp_path, LibraryConfig(movie_site="https://example.com/movies/"))
+
+    assert load_config(tmp_path).movie_site == "https://example.com/movies/"
+
+
+@pytest.mark.parametrize(
+    "body",
+    ['movie_site = ""\n', "movie_site = 3\n", 'movie_site = "jable.tv"\n'],
+)
+def test_a_bad_movie_site_is_rejected(tmp_path: Path, body: str) -> None:
+    file = paths.config_file(tmp_path)
+    file.parent.mkdir(parents=True)
+    file.write_text(body, encoding="utf-8")
+
+    with pytest.raises(ConfigError) as excinfo:
+        load_config(tmp_path)
+
+    assert "movie_site" in excinfo.value.message
+
+
 def test_prepare_library_creates_config(tmp_path: Path) -> None:
     root = tmp_path / "库"
 
@@ -138,6 +169,7 @@ def test_album_covers_round_trip_through_the_file(tmp_path: Path) -> None:
         "recursive": True,
         "thumbnail_max_edge": 512,
         "max_cache_bytes": DEFAULT_MAX_CACHE_BYTES,
+        "movie_site": DEFAULT_MOVIE_SITE,
         "album_covers": {"2025-苏州": "2025-苏州/一张.jpg"},
     }
 
