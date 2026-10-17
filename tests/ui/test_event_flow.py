@@ -1393,6 +1393,31 @@ def test_the_panel_is_built_from_the_field_definitions(
     assert COVER.control and COVER.id not in dialog._fields
 
 
+def test_a_long_title_does_not_widen_the_panel(qt_app: QApplication) -> None:
+    """标题再长也不许把面板顶宽（用户起的名字不该决定窗口大小）—— 那一行**中间省略**，
+    全文挂在提示气泡上；窗口宽度与短标题那一份逐点相同。
+    """
+
+    def dialog_with(title: str) -> EventEditDialog:
+        event = Event(id=1, kind=TRIP.id, created_at=0, modified_at=0, values={"title": title})
+        return EventEditDialog(None, TRIP, event=event)
+
+    short = dialog_with("京都五日")
+    long = dialog_with("京都五日" * 40)
+    for dialog in (short, long):
+        dialog.show()
+    qt_app.processEvents()
+
+    heading = long.findChild(QLabel, "eventEditTitle")
+    assert heading is not None
+    assert long.width() == short.width()
+    assert "…" in heading.text()
+    assert heading.toolTip() == f"编辑「{'京都五日' * 40}」"
+
+    short.close()
+    long.close()
+
+
 def test_saving_the_panel_does_not_clear_the_cover(qt_app: QApplication, tmp_path: Path) -> None:
     """打开面板改个目的地按保存，**封面还在**。
 

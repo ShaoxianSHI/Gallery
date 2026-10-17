@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Final
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QKeySequence, QPalette
+from PySide6.QtGui import QAction, QKeySequence, QPalette, QResizeEvent
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -130,6 +130,31 @@ class ChoiceButtons(QWidget):
             button.setChecked(choice == text)
 
 
+class ElidedLabel(QLabel):
+    """一行文字放不下时**从中间省略**，全文挂在提示气泡上。
+
+    **这一行的长短不参与布局**（水平方向 ``QSizePolicy.Ignored``）：它写的是用户起的名字，而
+    窗口的宽该由那几个输入框定 —— 否则一个长名字就把面板顶成一条（中间省略，事件名两头最有
+    信息量）。与标题条那一行同一档做法（:mod:`gallery.ui.window.widgets.title_bar`）。
+    """
+
+    def __init__(self, text: str, parent: QWidget | None = None) -> None:
+        super().__init__(text, parent)
+        self._full = text
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.setToolTip(text)
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
+        super().resizeEvent(event)
+        self._elide()
+
+    def _elide(self) -> None:
+        """按当前宽度摆一次。宽度是布局给的（``Ignored`` 不参与定宽），所以每次改大小都重来。"""
+        self.setText(
+            self.fontMetrics().elidedText(self._full, Qt.TextElideMode.ElideMiddle, self.width())
+        )
+
+
 def dialog_style(app_theme: AppTheme, palette: QPalette) -> str:
     """对话框的样式。文字色全部从主题派生，与元数据编辑器同一份底色。
 
@@ -229,7 +254,7 @@ class EventEditDialog(QDialog):
         # 不能改变大小：用户拖一下窗口边就该是同样大小。
         layout.setSizeConstraint(QVBoxLayout.SizeConstraint.SetFixedSize)
 
-        heading = QLabel(
+        heading = ElidedLabel(
             f"编辑「{self._event.display_name}」"
             if self._event is not None
             else f"新建{self._kind.label}"
@@ -475,6 +500,7 @@ __all__ = [
     "FIELD_MIN_WIDTH",
     "FIELD_RADIUS",
     "ChoiceButtons",
+    "ElidedLabel",
     "EventEdit",
     "EventEditDialog",
     "dialog_style",
