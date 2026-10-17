@@ -7,7 +7,8 @@
 - 相关 ADR：0043（事件体系）、0048（事件封面）、0038（东西只放两个位置）、0065（按事件字段分组）
 - 相关代码：`src/gallery/core/events/sources.py`、`src/gallery/core/events/transport.py`、
   `src/gallery/core/events/youtube.py`、`src/gallery/core/events/bilibili.py`、
-  `src/gallery/core/events/jav.py`、`src/gallery/core/events/kinds.py`、
+  `src/gallery/core/events/jav.py`、`src/gallery/core/events/models.py`（`MovieInfo` / `MovieRef`）、
+  `src/gallery/core/errors.py`（`SourcePageError`）、`src/gallery/core/events/kinds.py`、
   `src/gallery/core/events/schema.py`、`src/gallery/core/library/facade.py`、
   `src/gallery/ui/dialogs/movie_import.py`、`src/gallery/ui/write_ops.py`
 
