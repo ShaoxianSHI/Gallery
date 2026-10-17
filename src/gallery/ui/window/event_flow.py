@@ -197,7 +197,7 @@ class EventFlowMixin:
 
     def _open_movie_event(self, event_id: int) -> None:
         """打开这个影片事件的网站。**不是影片事件时静默**（与不是影片的照片同一取向）：
-        ⌥ 点一下是个轻量手势，为一次旅行或一场演出弹一句只会吵人。真的属于影片而缺番号时
+        ⌥ 点一下是个轻量手势，为一次旅行或一场演出弹一句只会吵人。真的属于影片而缺编号时
         才说一句（那时用户确实想知道为什么没反应）。
         """
         library = self._library
@@ -211,7 +211,7 @@ class EventFlowMixin:
             return
         url = library.movie_url(event)
         if url is None:
-            self._show_banner("这个影片事件还没有番号，打开不了影片网站。")
+            self._show_banner("这个影片事件还没有编号，打开不了影片网站。")
             return
         outcome = launch.open_in_browser(url)
         self._show_banner(

@@ -134,9 +134,9 @@ def shows_imported_banner(created: int, duplicates: int, skipped: int) -> str:
 
 
 def movies_imported_banner(outcome: MovieImportOutcome) -> str:
-    """按番号导入影片之后（ADR 0063）。
+    """按编号或链接导入影片之后（ADR 0063 / 0068）。
 
-    **跳过的那几部、与抓不到 / 写不下的都要说一声**：用户敲了一批番号，总得知道哪几个成了。
+    **跳过的那几部、与抓不到 / 写不下的都要说一声**：用户敲了一批条目，总得知道哪几个成了。
     **不提 ⌘Z**：一次导入不进撤销栈（它就是一串新建事件加几个新文件），承诺撤销是空话。
     """
     parts: list[str] = []

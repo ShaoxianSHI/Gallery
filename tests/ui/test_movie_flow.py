@@ -1,4 +1,4 @@
-"""「导入影片」与「⌥ 点开影片网站」的界面接线（ADR 0063）。
+"""「导入影片」与「⌥ 点开影片网站」的界面接线（ADR 0063 / 0068）。
 
 **不联网**：`launch.open_in_browser` 被换掉，事件库是现场建的临时库。这一份盯的是**接线** ——
 菜单在不在、⌥ 点一下会不会去开那个网址、普通照片会不会被误触发。
@@ -130,6 +130,26 @@ def test_alt_clicking_a_movie_photo_opens_the_site(
     window.open_movie_for_row(window._model.index(row, 0))
 
     assert opened == ["https://jable.tv/videos/ipx-660/"]
+
+
+def test_alt_clicking_a_youtube_movie_opens_that_page(
+    window: MainWindow, root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """来源是 YouTube 的影片要打开视频页，而不是拼到 ``movie_site`` 上（ADR 0068 决策 5）。"""
+    library = window._library
+    assert library is not None
+    cover = library.root / "封面.jpg"
+    outcome = library.create_event(
+        "movie", EventDraft.of(title="一个视频", source="YouTube", code="dQw4w9WgXcQ")
+    )
+    library.bind_photos([cover], outcome.event.id)
+    library.set_event_cover(outcome.event.id, cover)
+    opened = _spy_on_browser(monkeypatch)
+    row = window._model.row_of_path(cover)
+
+    window.open_movie_for_row(window._model.index(row, 0))
+
+    assert opened == ["https://www.youtube.com/watch?v=dQw4w9WgXcQ"]
 
 
 def test_alt_clicking_a_movie_group_card_opens_the_site(

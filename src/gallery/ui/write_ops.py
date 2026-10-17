@@ -879,10 +879,10 @@ class WriteOpsMixin:
         # （ADR 0029 决策 3）。撤销回来时传进来的是撤销那句话，判据一样成立。
         self._show_banner(banner or banners.rename_banner(result), auto_hide=result.journaled)
 
-    # ---- 导入影片（ADR 0063）-------------------------------------------------
+    # ---- 导入影片（ADR 0063 / 0068）------------------------------------------
 
     def import_movies_from_dialog(self) -> None:
-        """「导入 → 导入影片…」：敲一批番号，抓元数据与封面，建成影片事件（ADR 0063）。
+        """「导入 → 导入影片…」：敲一批编号或链接，抓元数据与封面，建成影片事件。
 
         **封面会作为新文件写进当前这一层**（「只增不改」，绝不覆盖），所以这个入口住在
         ``write_ops``。**要联网，分两步走**：先抓一遍元数据（只读）→ 有重复就问一句 →
@@ -902,21 +902,21 @@ class WriteOpsMixin:
         dialog = MovieImportDialog(self, target=target)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        codes = dialog.codes()
-        if codes:
-            self._plan_movies(codes, target)
+        entries = dialog.entries()
+        if entries:
+            self._plan_movies(entries, target)
 
-    def _plan_movies(self, codes: Sequence[str], target: Path) -> None:
-        """第一步：按番号抓一遍元数据（只读）。"""
+    def _plan_movies(self, entries: Sequence[str], target: Path) -> None:
+        """第一步：按编号或链接抓一遍元数据（只读）。"""
         library = self._library
         if library is None:
             return
         generation = self._generation
 
         def work(context: TaskContext) -> object:
-            return library.plan_movie_import(codes, should_cancel=context.is_cancelled)
+            return library.plan_movie_import(entries, should_cancel=context.is_cancelled)
 
-        self._show_banner(f"正在抓取 {len(codes)} 个番号的资料…")
+        self._show_banner(f"正在抓取 {len(entries)} 项影片的资料…")
         self._start_job(
             "_movie_import_job",
             work,
@@ -981,13 +981,13 @@ class WriteOpsMixin:
         self._show_banner(f"导入影片失败：{message.rstrip('。')}")
 
     def _ask_about_duplicate_movies(self, plan: MovieImportPlan) -> bool | None:
-        """发现库里已有同番号时问一句：跳过返回 ``True``，全部导入返回 ``False``，取消 ``None``。"""
+        """发现库里已有同一部时问一句：跳过返回 ``True``，全部导入返回 ``False``，取消 ``None``。"""
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Question)
         box.setWindowTitle("导入影片")
         box.setText(
-            f"抓到 {plan.total} 部影片，其中 {plan.duplicates} 部的番号库里已经有了。\n\n"
-            "要跳过这些，还是全部再建一遍？"
+            f"抓到 {plan.total} 部影片，其中 {plan.duplicates} 部库里已经有了"
+            "（来源与编号都一样）。\n\n要跳过这些，还是全部再建一遍？"
         )
         skip = box.addButton("跳过重复", QMessageBox.ButtonRole.AcceptRole)
         box.addButton("全部导入", QMessageBox.ButtonRole.DestructiveRole)

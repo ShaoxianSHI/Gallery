@@ -59,7 +59,7 @@ _JOBS: dict[str, JobSpec] = {
     "_orphan_job": JobSpec(LIBRARY),
     "_cache_job": JobSpec(LIBRARY),
     "_write_job": JobSpec(LIBRARY),
-    # 按番号导入影片（ADR 0063）：抓元数据 / 下封面都是网络 + 写盘，切库与关窗要停 ——
+    # 按编号或链接导入影片（ADR 0063 / 0068）：抓元数据 / 下封面都是网络 + 写盘，切库与关窗要停 ——
     # **不在换层那组**，与 `_write_job` 同一条理由（它也会往用户的文件夹里落文件）。
     "_movie_import_job": JobSpec(LIBRARY),
 }
@@ -105,7 +105,7 @@ class JobSlots:
     #: 三者同时只允许一个（会争同一个目标名字）。**不在换层那组** —— 换层时掐掉它就是
     #: 文件搬到一半（约束 1「只增不改」）。
     _write_job: int | None
-    #: 按番号导入影片的那一次（ADR 0063）：抓元数据 → 下封面 → 写文件 → 建事件。
+    #: 按编号或链接导入影片的那一次（ADR 0063 / 0068）：抓元数据 → 下封面 → 写文件 → 建事件。
     #: 与 :attr:`_write_job` 一样会往用户的文件夹里落文件，同样**不在换层那组**。
     _movie_import_job: int | None
 
