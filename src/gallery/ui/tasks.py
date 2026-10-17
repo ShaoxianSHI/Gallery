@@ -18,8 +18,8 @@ from typing import Any
 
 from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, Signal, SignalInstance, Slot
 
-from gallery.core import paths
 from gallery.core.errors import GalleryError
+from gallery.ui import banners
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +118,7 @@ class _Job(QRunnable):
             self._emit(
                 self._signals.failed,
                 self._job_id,
-                f"出现了一个没料到的问题，详情写进了日志文件：{paths.app_log_file()}。",
+                banners.unexpected_problem(),
                 traceback.format_exc(),
             )
         else:

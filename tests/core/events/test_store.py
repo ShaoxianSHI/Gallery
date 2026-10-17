@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from gallery.core import paths
+from gallery.core.errors import EventNotFoundError
 from gallery.core.events import schema
 from gallery.core.events import store as store_module
 from gallery.core.events.kinds import COVER, EVENT_KINDS, SQL_TYPES, EventKind, fields_of
@@ -643,3 +644,26 @@ def test_event_by_id_finds_it_or_says_there_is_none(events: EventStore) -> None:
     created = events.create("trip", EventDraft(values={"title": "京都五日"})).event
     assert event_by_id(events.all_events(), created.id) == created
     assert event_by_id(events.all_events(), created.id + 1) is None, "不存在的 id 必须给 None"
+
+
+def test_deleting_an_event_that_is_already_gone_is_a_chinese_error(events: EventStore) -> None:
+    """删一个**库里已经没有**的事件：要抛 ``GalleryError``，不是裸 ``KeyError``。
+
+    界面先拿手上那份清单判一次，而那份是会话缓存的、可能已经过期 —— 于是这条很平常地上门。
+    抛裸异常上去，跑在主线程的槽里没有第二个人接得住，用户看到的是「点了删除什么也没发生」。
+    """
+    trip = _create(events)
+    events.delete(trip.id)
+
+    with pytest.raises(EventNotFoundError) as excinfo:
+        events.delete(trip.id)
+
+    assert "不在了" in excinfo.value.message
+
+
+def test_updating_an_event_that_is_already_gone_is_a_chinese_error(events: EventStore) -> None:
+    """改也一样：同一处 ``_kind_of`` 原先也抛 ``KeyError``。"""
+    with pytest.raises(EventNotFoundError) as excinfo:
+        events.update(999, _draft())
+
+    assert "不在了" in excinfo.value.message

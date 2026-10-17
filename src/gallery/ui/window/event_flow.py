@@ -650,6 +650,11 @@ class EventFlowMixin:
             logger.info("删除事件失败：%s", exc.detail or exc.message)
             self._show_banner(exc.message)
             return
+        except Exception:
+            # 写操作跑在主线程的槽里：逃出去没有第二个人接得住，界面看起来就是「点了没反应」。
+            logger.exception("删除事件时抛出未预期异常")
+            self._show_banner(banners.unexpected_problem())
+            return
         self._after_events_changed()
         self._show_banner(banners.event_deleted_banner(outcome))
         self._refresh_undo_label()

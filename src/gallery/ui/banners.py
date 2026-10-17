@@ -25,6 +25,16 @@ from gallery.core.metadata.rename import RenameResult
 from gallery.core.metadata.transfer import MovedItem, MoveResult
 from gallery.core.metadata.trash import TrashResult
 from gallery.core.metadata.undo import UndoResult
+from gallery.core.paths import app_log_file
+
+#: 「我们没料到」那一句共用的开头：写操作跑在工作线程里（``ui/tasks.py``）还是主线程的槽里
+#: （``window/event_flow.py``）都一样 —— 两处各写一份，迟早会说成两套话。
+_UNEXPECTED = "出现了一个没料到的问题"
+
+
+def unexpected_problem() -> str:
+    """程序缺陷那一类失败的横幅：**说清去哪儿看详情**，日志现在真的有一份。"""
+    return f"{_UNEXPECTED}，详情写进了日志文件：{app_log_file()}。"
 
 
 def rename_banner(result: RenameResult) -> str:
@@ -492,4 +502,5 @@ __all__ = [
     "trash_banner",
     "undo_banner",
     "undo_note",
+    "unexpected_problem",
 ]

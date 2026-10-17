@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import cast
 
 from gallery.core import paths
-from gallery.core.errors import CoverNotBoundError, EventsUnavailableError
+from gallery.core.errors import CoverNotBoundError, EventNotFoundError, EventsUnavailableError
 from gallery.core.events.conversions import (
     _before_values,
     _event_from_common,
@@ -308,9 +308,12 @@ class EventStore:
         所以它只值一次 ⌘Z。"""
         # 先读一遍原值：撤销要的正是它。**在同一次写之前读**，所以拿到的一定是改之前的样子。
         previous = self.event(event_id)
-        kind = kind_by_id(self._kind_of(event_id))
-        if previous is None or kind is None:
-            raise ValueError(f"认不出的事件类型：{self._kind_of(event_id)}")
+        if previous is None:
+            raise EventNotFoundError("这个事件已经不在了。")
+        kind_id = self._kind_of(event_id)
+        kind = kind_by_id(kind_id)
+        if kind is None:
+            raise ValueError(f"认不出的事件类型：{kind_id}")
         connection = self._require()
         assignments = ", ".join(f"{field.column} = ?" for field in COMMON_FIELDS)
         with self._lock, connection:
@@ -352,9 +355,12 @@ class EventStore:
         """
         connection = self._require()
         previous = self.event(event_id)
-        kind = kind_by_id(self._kind_of(event_id))
-        if previous is None or kind is None:
-            raise ValueError(f"认不出的事件类型：{self._kind_of(event_id)}")
+        if previous is None:
+            raise EventNotFoundError("这个事件已经不在了。")
+        kind_id = self._kind_of(event_id)
+        kind = kind_by_id(kind_id)
+        if kind is None:
+            raise ValueError(f"认不出的事件类型：{kind_id}")
         unbound = self.photos_of_event(event_id)
         with self._lock, connection:
             # 三张表各删各的。**扩展表那一行不能忘**：它是孤儿，而它会挡住撤销 —— 恢复时按
@@ -508,16 +514,18 @@ class EventStore:
         """
         if not self._is_bound(event_id, photo):
             raise CoverNotBoundError("只能从属于这次事件的照片里挑封面。", path=photo)
-        kind = kind_by_id(self._kind_of(event_id))
+        kind_id = self._kind_of(event_id)
+        kind = kind_by_id(kind_id)
         if kind is None:
-            raise ValueError(f"认不出的事件类型：{self._kind_of(event_id)}")
+            raise ValueError(f"认不出的事件类型：{kind_id}")
         return self._write_cover(kind, event_id, photo)
 
     def clear_cover(self, event_id: int) -> bool:
         """取消封面：回到「组内第一张」。**没设过就是 ``False``**（界面据此不摆那一行）。"""
-        kind = kind_by_id(self._kind_of(event_id))
+        kind_id = self._kind_of(event_id)
+        kind = kind_by_id(kind_id)
         if kind is None:
-            raise ValueError(f"认不出的事件类型：{self._kind_of(event_id)}")
+            raise ValueError(f"认不出的事件类型：{kind_id}")
         outcome = self._write_cover(kind, event_id, None)
         return outcome.changed
 
@@ -727,16 +735,18 @@ class EventStore:
             )
         return max(cursor.rowcount, 0)
 
-    def _kind_of(self, event_id: int) -> str:
-        """这一条事件是哪一类。改它之前要按类型拼扩展表的列，所以得先问一次。"""
+    def _kind_of(self, event_id: int) -> str | None:
+        """这一条事件是哪一类。改它之前要按类型拼扩展表的列，所以得先问一次。
+
+        **没有这一条就是 ``None``** —— 抛 ``KeyError`` 出去没人接得住（跑在主线程的槽里），
+        而这一条最可能来自「界面拿着一份过期的清单」那种正常情形（见 ``EventNotFoundError``）。
+        """
         connection = self._require()
         with self._lock:
             row = connection.execute(
                 f"SELECT kind FROM {SCHEMA_NAME}.events WHERE id = ?", (event_id,)
             ).fetchone()
-        if row is None:
-            raise KeyError(f"没有 id 为 {event_id} 的事件")
-        return str(row[0])
+        return None if row is None else str(row[0])
 
     def _require(self) -> sqlite3.Connection:
         connection = self._live_connection()

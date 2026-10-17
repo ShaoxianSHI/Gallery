@@ -48,6 +48,7 @@ from gallery.core.events.kinds import (  # noqa: E402
 )
 from gallery.core.events.store import Event, EventDraft  # noqa: E402
 from gallery.core.library.config import BROWSE_MODE_ALBUMS, prepare_library  # noqa: E402
+from gallery.core.library.facade import Library  # noqa: E402
 from gallery.core.library.photos import GroupRef  # noqa: E402
 from gallery.core.library.session import SessionState, save_session  # noqa: E402
 from gallery.core.metadata.facets import PhotoFacets  # noqa: E402
@@ -1511,3 +1512,49 @@ def test_one_end_day_is_used_when_the_end_is_left_empty(qt_app: QApplication) ->
     dialog._fields["started_on"].setText("2026-05-16")
 
     assert dialog.edit().last_day == "2026-05-16"
+
+
+def test_deleting_an_event_that_is_already_gone_says_so(
+    qt_app: QApplication, window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """界面拿着**一份过期的清单**点了删除：要有话说，不能什么都不发生。
+
+    这里真的走到核心那一层（缓存里还有它、库里已经没了）。原先那里抛裸 ``KeyError``，
+    而同步这条路只接 ``GalleryError`` —— 界面看起来就是「点了删除没反应」。
+    """
+    library = window._library
+    assert library is not None
+    trip = library.create_event("trip", EventDraft(values={"title": "京都五日"})).event
+    assert library.event(trip.id) is not None  # 窗口手上那份清单里有它
+    elsewhere = Library.open(library.root)  # 别处把它删了（另一个实例 / 云盘换掉了库文件）
+    elsewhere.delete_event(trip.id)
+    elsewhere.close_index()
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.Yes
+    )
+
+    window.delete_event(trip.id)
+
+    assert window._banner.text() == "这个事件已经不在了。"
+
+
+def test_an_unexpected_failure_while_deleting_says_where_the_log_is(
+    qt_app: QApplication, window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """删除跑在主线程的槽里：**什么意外都要接住**并说一句，而不是静默地什么都不做。"""
+    library = window._library
+    assert library is not None
+    trip = library.create_event("trip", EventDraft(values={"title": "京都五日"})).event
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.Yes
+    )
+
+    def explode(_event_id: int) -> None:
+        raise RuntimeError("库文件被换掉了")
+
+    monkeypatch.setattr(library, "delete_event", explode)
+
+    window.delete_event(trip.id)
+
+    assert "日志文件" in window._banner.text()
+    assert library.event(trip.id) is not None  # 那一次删除没成，事件还在

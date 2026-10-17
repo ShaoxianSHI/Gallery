@@ -123,6 +123,15 @@ class ShowImportError(GalleryError):
     """
 
 
+class EventNotFoundError(GalleryError):
+    """按 id 找一个事件，而库里没有这一条。
+
+    界面通常先拿手上那份清单判一次（清单是缓存的，可能已经过期），所以这一条多半来自
+    「看着旧的清单点了删除」：**必须给一句中文**，不能抛裸的 ``KeyError`` ——
+    跑在主线程的槽里，逃出去没有第二个人接得住，用户看到的是「点了没反应」。
+    """
+
+
 class MovieImportError(GalleryError):
     """按番号抓取影片元数据、或把封面写进库里失败。
 
@@ -136,6 +145,7 @@ __all__ = [
     "ConfigError",
     "CoverNotBoundError",
     "DeleteError",
+    "EventNotFoundError",
     "EventsUnavailableError",
     "GalleryError",
     "ImageDecodeError",

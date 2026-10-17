@@ -75,8 +75,6 @@ def test_an_unwritable_log_file_does_not_raise(
     """装不上文件处理器时返回 ``None``，**不抛也不报** —— 记不成日志是小事，起不来是大事。"""
     blocker = tmp_path / "这不是目录"
     blocker.write_text("x", encoding="utf-8")
-    monkeypatch.setattr(
-        paths, "app_log_file", lambda **_: blocker / "logs" / "gallery.log"
-    )
+    monkeypatch.setattr(paths, "app_log_file", lambda **_: blocker / "logs" / "gallery.log")
 
     assert configure_logging() is None
