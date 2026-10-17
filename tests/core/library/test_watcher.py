@@ -342,6 +342,32 @@ def test_renaming_one_inside_the_library_reports_nothing(tmp_path: Path, name: s
     assert batches == []
 
 
+def test_an_atomic_write_shows_up_as_a_new_photo(tmp_path: Path) -> None:
+    """原子写盘（临时文件 + ``os.replace``）落下的照片必须报成「新增」。
+
+    这是很多程序（含 Gallery 自己的「导入影片」）存文件的形状：先写一个扫描不收的临时文件，
+    再把它改名成真名字。两端都在库里，但只有目的地是照片 —— 那不是改名，是「新来了一张」。
+    """
+    watcher, observer, batches = make_watcher(tmp_path)
+    watcher.start()
+
+    send(observer, FileMovedEvent(str(tmp_path / "封面.jpg.a1b2.tmp"), str(tmp_path / "封面.jpg")))
+    watcher.flush()
+
+    assert batches == [(LibraryChange(ChangeKind.ADDED, tmp_path / "封面.jpg"),)]
+
+
+def test_a_photo_renamed_to_a_temp_name_disappears(tmp_path: Path) -> None:
+    """反过来的那一半：照片被改名成扫描不收的临时名字，界面上它就没有了。"""
+    watcher, observer, batches = make_watcher(tmp_path)
+    watcher.start()
+
+    send(observer, FileMovedEvent(str(tmp_path / "a.jpg"), str(tmp_path / "a.jpg.a1b2.tmp")))
+    watcher.flush()
+
+    assert batches == [(LibraryChange(ChangeKind.REMOVED, tmp_path / "a.jpg"),)]
+
+
 def test_moving_a_photo_in_from_outside_is_reported(tmp_path: Path) -> None:
     """上面两条的对照：照片拖进来必须照报，否则新照片不会自己从网格里长出来。"""
     outside = tmp_path.parent / f"{tmp_path.name}-外面"

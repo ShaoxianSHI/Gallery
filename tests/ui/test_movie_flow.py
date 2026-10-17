@@ -19,12 +19,13 @@ pytest.importorskip("PySide6")
 from library_helpers import set_library_ui  # noqa: E402
 from PIL import Image  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
-from waiting import wait_for_idle  # noqa: E402
+from waiting import wait_for_idle, wait_until  # noqa: E402
 
 from gallery.core.events.store import EventDraft  # noqa: E402
 from gallery.core.external import launch  # noqa: E402
 from gallery.core.library.config import BROWSE_MODE_ALBUMS, prepare_library  # noqa: E402
 from gallery.core.library.session import SessionState, save_session  # noqa: E402
+from gallery.core.metadata.download import save_downloaded_file  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 
 
@@ -37,6 +38,10 @@ def _photo(root: Path, name: str) -> Path:
     finally:
         image.close()
     return path
+
+
+#: 一张最小的合法 JPEG（测试里只关心它作为一个「照片文件」出现，不解码）。
+_JPEG = bytes.fromhex("ffd8ffe000104a46494600010100000100010000ffd9")
 
 
 @pytest.fixture
@@ -114,3 +119,21 @@ def test_alt_clicking_a_plain_photo_does_nothing(
     window.open_movie_for_row(window._model.index(row, 0))
 
     assert opened == []
+
+
+def test_an_imported_cover_appears_by_itself(qt_app: QApplication, window: MainWindow) -> None:
+    """导入写的封面（临时文件 + ``os.replace``）要**自己**出现在网格里，不必切换浏览方式。
+
+    这是「导入成功后不出现、改浏览方式才出现」那条的回归测试：原子写盘留下的是一对
+    临时文件 → 真文件，监听器过去把这种移动当成改名丢掉，于是网格一直等下一次整层重扫。
+    """
+    library = window._library
+    assert library is not None
+    target = window._current_folder()
+    assert target is not None
+
+    created = save_downloaded_file(library.root, target, "新封面.jpg", _JPEG).created
+
+    shown = wait_until(qt_app, lambda: window._model.row_of_path(created) >= 0)
+
+    assert shown, "新封面没有自动出现在网格里"

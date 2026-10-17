@@ -190,24 +190,29 @@ def _moved_change(root: Path, event: FileSystemMovedEvent) -> LibraryChange | No
     """移动的两端可能一端在库内、一端在库外，各自报成不同语义：两端都在 → 改名，移进来 → 新增，
     移出去 → 消失（移进移出废纸篓与别的盘走的正是后两条路）。
 
-    「扫描看不见的就不报」这条规矩在这里同样成立，**两端都要判**：从库外移进来的看**目的地**，
-    移出去的那一端网格上马上就没有了，报出来没有意义。
+    「扫描看不见的就不报」两端都要判。两端都在库里、但**只有一端是扫描会显示的东西**时，
+    那不是改名而是一次「出现 / 消失」—— 原子写盘（临时文件 + ``os.replace``）正是这个形状：
+    临时文件扫描不收，落在它上面的那张照片却是新的。
     """
     source = _normalize(root, os.fsdecode(event.src_path))
     destination = _normalize(root, os.fsdecode(event.dest_path))
     here = is_visible_path(root, source)
     there = is_visible_path(root, destination)
     if here and there:
-        if not event.is_directory and not (
-            is_supported_photo(source) and is_supported_photo(destination)
-        ):
-            return None
-        return LibraryChange(
-            kind=ChangeKind.MOVED,
-            path=source,
-            dest_path=destination,
-            is_dir=event.is_directory,
-        )
+        source_seen = event.is_directory or is_supported_photo(source)
+        destination_seen = event.is_directory or is_supported_photo(destination)
+        if source_seen and destination_seen:
+            return LibraryChange(
+                kind=ChangeKind.MOVED,
+                path=source,
+                dest_path=destination,
+                is_dir=event.is_directory,
+            )
+        if destination_seen:
+            return LibraryChange(kind=ChangeKind.ADDED, path=destination, is_dir=event.is_directory)
+        if source_seen:
+            return LibraryChange(kind=ChangeKind.REMOVED, path=source, is_dir=event.is_directory)
+        return None
     if there:
         if not event.is_directory and not is_supported_photo(destination):
             return None
