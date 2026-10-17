@@ -76,7 +76,8 @@ DEFAULT_THUMBNAIL_MAX_EDGE: Final = 512
 DEFAULT_MAX_CACHE_BYTES: Final = 2 * 1024**3
 
 #: 「影片」事件里「打开影片网站」的地址前缀，可在 ``config.toml`` 的 ``movie_site`` 里改。
-#: 番号接在它后面（小写、带连字符）：``https://jable.tv/videos/`` + ``ipx-660`` + ``/``。
+#: **只管 JavDB 来的影片**（ADR 0068）：番号接在它后面（小写、带连字符），
+#: ``https://jable.tv/videos/`` + ``ipx-660`` + ``/``。YouTube 与 B 站的地址形状是固定的。
 DEFAULT_MOVIE_SITE: Final = "https://jable.tv/videos/"
 
 __all__ = [

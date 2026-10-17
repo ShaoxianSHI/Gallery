@@ -248,8 +248,8 @@ class LibraryConfig:
     thumbnail_max_edge: int = DEFAULT_THUMBNAIL_MAX_EDGE
     #: 缩略图缓存上限（字节）。0 表示不限制。
     max_cache_bytes: int = DEFAULT_MAX_CACHE_BYTES
-    #: 「影片」事件里「打开影片网站」的地址前缀（ADR 0063）。番号接在它后面，
-    #: 例如 ``https://jable.tv/videos/`` → ``https://jable.tv/videos/ipx-660/``。
+    #: 「影片」事件里「打开影片网站」的地址前缀（ADR 0063），**只管 JavDB 来的影片**（ADR 0068）：
+    #: 番号接在它后面，例如 ``https://jable.tv/videos/`` → ``https://jable.tv/videos/ipx-660/``。
     movie_site: str = DEFAULT_MOVIE_SITE
     #: **相册封面**（ADR 0028）：相册相对库根的路径 → 封面照片相对库根的路径。空 = 一个都没指定，
     #: 于是每个相册都用「里面第一张照片」。存相对路径是必须的：绝对路径在库里挪个位置、换台
