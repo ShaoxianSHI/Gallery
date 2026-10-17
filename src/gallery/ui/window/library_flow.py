@@ -15,8 +15,8 @@ from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast, overload
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt, QTimer
-from PySide6.QtGui import QAction, QImage, QMouseEvent
+from PySide6.QtCore import QObject, QRect
+from PySide6.QtGui import QAction, QImage
 from PySide6.QtWidgets import QFileDialog, QMenu, QWidget
 
 from gallery.core.errors import GalleryError
@@ -781,14 +781,15 @@ class LibraryFlowMixin:
         self._session = self._session.with_recent_root(root)
         self._apply_recent_roots()
 
-    def _forget_recent_root(self, root: Path) -> None:
-        """把一条从「最近打开」里拿掉。**只动我们自己那份名单**，磁盘上什么都不碰。"""
-        self._session = self._session.without_recent_root(root)
-        self._apply_recent_roots()
-
     def _forget_all_recent_roots(self) -> None:
-        """清空「最近打开」。"""
+        """清空「最近打开」。
+
+        **当前正开着的这个库要留下** —— 它是开着的，本来就该在名单里，清完立刻又出现在最前面。
+        """
+        current = None if self._library is None else self._library.root
         self._session = self._session.without_recent_roots()
+        if current is not None:
+            self._session = self._session.with_recent_root(current)
         self._apply_recent_roots()
 
     def _apply_recent_roots(self) -> None:
@@ -812,52 +813,12 @@ class LibraryFlowMixin:
             return
         for root in roots:
             action = QAction(str(root), cast("QWidget", self))
-            # 「右键拿掉这一条」靠它把那一条认回来（见 ``_recent_removal_at``）。
-            action.setData(str(root))
             action.triggered.connect(lambda _checked=False, path=root: self.open_library(path))
             self._recent_menu.addAction(action)
         self._recent_menu.addSeparator()
         clear = QAction("清除最近打开", cast("QWidget", self))
         clear.triggered.connect(self._forget_all_recent_roots)
         self._recent_menu.addAction(clear)
-
-    def _recent_removal_at(self, event: QEvent) -> bool:
-        """这一下是不是「右键了最近打开里的某一条」？是就安排那个小菜单并返回 ``True``。
-
-        返回 ``True`` 的那个事件会被丢掉 —— 否则 ``QMenu`` 会把它当成一次「打开这个库」。
-        **小菜单安排到下一轮事件循环**：这一下自己的松开还没送到，而它会把刚弹出来的菜单
-        当场收掉。
-        """
-        if event.type() != QEvent.Type.MouseButtonPress:
-            return False
-        press = cast(QMouseEvent, event)
-        if press.button() != Qt.MouseButton.RightButton:
-            return False
-        action = self._recent_menu.actionAt(press.position().toPoint())
-        data = None if action is None else action.data()
-        if not data:
-            return False
-        root = Path(str(data))
-        at = press.globalPosition().toPoint()
-        QTimer.singleShot(0, lambda: self._offer_recent_removal(root, at))
-        return True
-
-    def _offer_recent_removal(self, root: Path, at: QPoint) -> None:
-        """在 ``at`` 处弹「从列表中移除」那一个小菜单：拼、弹、用完即弃。"""
-        menu = self._recent_item_menu(root)
-        chosen = menu.exec(at)
-        menu.deleteLater()
-        if chosen is None:
-            return
-        # 下面要重建那份还开着的老菜单，而在正显示的菜单上删条目不是它支持的用法。
-        self._recent_menu.close()
-        self._forget_recent_root(root)
-
-    def _recent_item_menu(self, root: Path) -> QMenu:
-        """右键那一条时弹出来的菜单（现在只有一项）。**单独一个方法是为了测**。"""
-        menu = QMenu()
-        menu.addAction(f"从列表中移除「{root.name}」")
-        return menu
 
     def _on_recent_requested(self, root: object) -> None:
         if isinstance(root, Path):
