@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import gzip
 import html as _html
+import http.client
 import re
 import time
 import unicodedata
@@ -147,6 +148,13 @@ _FIELD_RE: Final = re.compile(
     re.S,
 )
 
+#: 搜索页的结果区为空时源站给的那一段（``暫無內容``）。**它不在时那条搜索页就不是搜索结果页** ——
+#: 限速 / 反爬给的往往是别的页面，两者要用户做的事完全不一样（换番号 vs 等一会儿再试）。
+_EMPTY_PAGE_RE: Final = re.compile(r'class="empty-message"', re.I)
+
+#: 无论怎么重试都值得再试一次的 HTTP 状态码：限速、被挡、源站自己 5xx。
+_RETRY_STATUS: Final = frozenset({403, 429, 500, 502, 503, 504})
+
 
 def strip_tags(fragment: str) -> str:
     """一段 HTML 里的可见文字（去标签、解实体、压空白）。"""
@@ -199,8 +207,21 @@ def locate(hits: Sequence[SearchHit], code: str) -> SearchHit:
     if len(hits) == 1:
         return hits[0]
     if not hits:
-        raise MovieImportError(f"在源站查不到番号 {code}。")
+        raise MovieImportError(f"源站没有这个番号：{code}。")
     raise MovieImportError(f"番号 {code} 找到多条近似结果，没法确定是哪一部。")
+
+
+def no_search_results(html: str, code: str) -> MovieImportError:
+    """搜索页里一条结果都没有时给用户的那一句。**看源站那一段「暫無內容」在不在**：
+
+    在 = 确实没有这个番号（换一个试试）；不在 = 这一页根本不是搜索结果页（多半被限速或挡住了，
+    等一会儿再试）—— 混成一句「查不到番号」会把人支到错的那条路上。
+    """
+    if _EMPTY_PAGE_RE.search(html):
+        return MovieImportError(f"源站没有这个番号：{code}。换一个试试，或者确认番号的写法。")
+    return MovieImportError(
+        f"源站没给出搜索结果（{code}）：多半是被限速或挡住了，等一会儿再试一次。"
+    )
 
 
 def parse_detail(html: str, code: str, *, base: str, hit: SearchHit | None = None) -> JavMovie:
@@ -296,16 +317,24 @@ class JavHttp:
                 if exc.code == 404:
                     raise MovieImportError(f"源站没有这个页面：{url}") from exc
                 last = f"HTTP {exc.code}"
-                if exc.code in (403, 429, 500, 502, 503, 504) and attempt < self.retries:
+                if exc.code in _RETRY_STATUS and attempt < self.retries:
                     time.sleep(min(2**attempt, 30))
                     continue
             except urllib.error.URLError as exc:
                 self._last = time.time()
-                last = str(exc.reason)
+                last = f"{exc.reason}"
                 if attempt < self.retries:
                     time.sleep(min(2**attempt, 30))
                     continue
-        raise MovieImportError(f"连不上源站（{last or '未知原因'}），稍后再试。")
+            except (OSError, http.client.HTTPException, zlib.error) as exc:
+                # 请求发出**之后**断掉的那几种（掐连接、话说一半、正文被截断）都不是 ``URLError``
+                # 的子类 —— 网络抖动原先也走界面那句「未预期的问题」，重试一次多半就好了。
+                self._last = time.time()
+                last = type(exc).__name__
+                if attempt < self.retries:
+                    time.sleep(min(2**attempt, 30))
+                    continue
+        raise MovieImportError(f"连不上源站，稍后再试（{last or '未知原因'}）。")
 
     def _throttle(self) -> None:
         if self.delay <= 0:
@@ -356,7 +385,10 @@ def fetch_movie(code: str, *, client: JavSource, base: str = DEFAULT_SOURCE_BASE
         raise MovieImportError("番号不能为空。")
     getter = client.get_text
     search_html = getter(urllib.parse.urljoin(base + "/", f"search?f=all&q={norm}"))
-    hit = locate(parse_search_items(search_html, base), norm)
+    hits = parse_search_items(search_html, base)
+    if not hits:
+        raise no_search_results(search_html, norm)
+    hit = locate(hits, norm)
     detail_html = getter(hit.url, referer=urllib.parse.urljoin(base + "/", "search"))
     movie = parse_detail(detail_html, norm, base=base, hit=hit)
     if not movie.cover_url:
@@ -374,6 +406,7 @@ __all__ = [
     "fetch_movie",
     "locate",
     "movie_url",
+    "no_search_results",
     "normalize_code",
     "parse_detail",
     "parse_search_items",
