@@ -1,9 +1,9 @@
-"""与桌面系统打交道的那几个动作：在访达里显示或打开、往剪贴板里放文本或文件。
+"""与桌面系统打交道的那几个动作：在访达或 QSpace 里打开、往剪贴板里放文本或文件。
 
 ``QDesktopServices`` 没有「在访达里选中并露出它」那个动作，所以走 ``open -R``，起不来就降级成
 打开所在文件夹（ADR 0014 决策 3）；剪贴板放的是**文件引用**（``QMimeData.setUrls``，ADR 0017）。
-**「在访达里显示」（带 ``-R``，在上一级里选中它）与「打开文件夹」（不带 ``-R``，落到里面）
-是两件不同的事**，见 :func:`reveal_in_finder` 与 :func:`open_folder_in_finder`。
+**「在访达里显示」（带 ``-R``）与「打开文件夹」（不带 ``-R``）是两件不同的事**，见
+:func:`reveal_in_finder` 与 :func:`open_folder_in_finder`（QSpace 那一份与之同族）。
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from pathlib import Path
 from PySide6.QtCore import QMimeData, QProcess, QUrl
 from PySide6.QtGui import QDesktopServices, QGuiApplication
 
-#: 访达里「在访达中显示」「打开文件夹」用的系统命令。找不到它就降级去开文件夹。
+#: 「在访达中显示」「打开文件夹」「在 QSpace 里打开」用的系统命令。找不到它就降级。
 REVEAL_PROGRAM = "open"
 
 #: 同一个 ``open`` 命令的「reveal」选项：在访达里**选中**它们，而不是打开它们。
@@ -112,6 +112,30 @@ def open_folder_in_finder(paths: Sequence[Path]) -> str:
     return f"已在访达中打开 {len(targets)} 个文件夹。"
 
 
+def open_folder_in_qspace(paths: Sequence[Path], *, app: Path) -> str:
+    """在 QSpace 里**打开这些文件夹**（落到它们**里面**去），返回一句中文文案。
+
+    与 :func:`open_folder_in_finder` 是同一件事的两个软件，同样**不能拿 :func:`reveal_in_finder`
+    顶替**：用户对着相册想看的是它**里面**摆着什么。递过去的是 ``file://`` 地址（QSpace 自己
+    注册的 URL 方案，路径文字不是它认的输入）；``app`` 是 core 查到的应用包 —— 这一层不许
+    import core，于是由 ``MainWindow`` 递进来，起不来时降级成访达并照实说。
+    """
+    targets = [Path(path) for path in paths]
+    if not targets:
+        return "没有可打开的文件夹。"
+    urls = [QUrl.fromLocalFile(str(target)).toString() for target in targets]
+    if not QProcess.startDetached(REVEAL_PROGRAM, ["-a", str(app), *urls]):
+        opened = [QDesktopServices.openUrl(QUrl.fromLocalFile(str(t))) for t in targets]
+        if not all(opened):
+            return "QSpace 没能响应，访达也没能打开，请检查系统的权限设置。"
+        if len(targets) == 1:
+            return f"没能交给 QSpace，已改用访达打开「{targets[0].name}」。"
+        return f"没能交给 QSpace，已改用访达打开 {len(targets)} 个文件夹。"
+    if len(targets) == 1:
+        return f"已在 QSpace 中打开「{targets[0].name}」。"
+    return f"已在 QSpace 中打开 {len(targets)} 个文件夹。"
+
+
 __all__ = [
     "REVEAL_FLAG",
     "REVEAL_PROGRAM",
@@ -119,6 +143,7 @@ __all__ = [
     "copy_to_clipboard",
     "format_paths",
     "open_folder_in_finder",
+    "open_folder_in_qspace",
     "open_with_default_app",
     "read_files_from_clipboard",
     "reveal_in_finder",

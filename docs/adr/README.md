@@ -93,3 +93,4 @@
 | [0063](0063-movie-events-and-import.md) | 影片事件、按番号从 JavDB 导入、⌥ 点开影片网站（封面是新文件） | 已接受 |
 | [0064](0064-library-files-replaced-by-cloud-sync.md) | 库文件被云盘换掉之后自愈（按文件身份重开连接 + 写失败重试）、应用日志落盘 | 已接受 |
 | [0065](0065-group-by-event-fields.md) | 按事件字段分组：「分组 → 旅行 / 演出 / 影片」各一层字段子菜单 | 已接受 |
+| [0066](0066-open-in-qspace.md) | 第二个外部应用：在 QSpace 里打开当前这一层文件夹 | 已接受 |

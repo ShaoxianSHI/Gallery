@@ -160,3 +160,52 @@ def test_opening_a_folder_says_why_when_the_finder_refuses(
 
     assert message is not None
     assert "访达" in message
+
+
+def test_opening_a_folder_in_qspace_hands_a_file_url_and_the_app(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """交给 QSpace 的是**应用包 + 一条 ``file://`` 地址**，不是路径文字。
+
+    QSpace 自己注册了 ``file`` URL 方案（见 ``core.external.qspace``），它认的就是地址。
+    路径用纯 ASCII 的，那一条地址于是可以逐字断言 —— 中文名会被百分号转义成一串 ``%E2…``，
+    断言里就只剩「我抄了一遍编码器」。
+    """
+    process = _Process(True)
+    monkeypatch.setattr(desktop, "QProcess", process)
+    app = Path("/Applications/QSpace Pro.app")
+
+    message = desktop.open_folder_in_qspace([Path("/photos/kyoto")], app=app)
+
+    assert process.calls == [
+        ("open", ["-a", "/Applications/QSpace Pro.app", "file:///photos/kyoto"])
+    ]
+    assert message == "已在 QSpace 中打开「kyoto」。"
+
+
+def test_qspace_falls_back_to_the_finder_and_says_so(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``open`` 起不来就改用访达打开，**并且说清换的是哪一个**。
+
+    含糊不得：用户以为东西开在 QSpace 里、看到的却是访达，比明说换过更难查。
+    """
+    services = _DesktopServices(True)
+    monkeypatch.setattr(desktop, "QProcess", _Process(False))
+    monkeypatch.setattr(desktop, "QDesktopServices", services)
+
+    message = desktop.open_folder_in_qspace([Path("/照片/京都")], app=Path("/Applications/Q.app"))
+
+    assert services.urls == ["/照片/京都"]
+    assert message == "没能交给 QSpace，已改用访达打开「京都」。"
+
+
+def test_qspace_says_why_when_nothing_responds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """两条路都不通时同样必须说一句。"""
+    monkeypatch.setattr(desktop, "QProcess", _Process(False))
+    monkeypatch.setattr(desktop, "QDesktopServices", _DesktopServices(False))
+
+    message = desktop.open_folder_in_qspace([Path("/照片/京都")], app=Path("/Applications/Q.app"))
+
+    assert message is not None
+    assert "QSpace" in message

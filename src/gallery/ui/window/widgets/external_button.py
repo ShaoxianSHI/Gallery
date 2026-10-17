@@ -179,6 +179,22 @@ def folder_icon(size: int = ICON_EDGE) -> QIcon:
     return drawn_icon(ICON_FOLDER, size)
 
 
+def qspace_icon(size: int = ICON_EDGE) -> QIcon:
+    """QSpace 那一项的图标：**用应用包里那个真的**（同上）。
+
+    这一项**只在装了 QSpace 时才摆出来**（判据在 ``core.external.qspace``），所以走到这里的
+    退路很少见：包在但图标文件读不出来。
+    """
+    from gallery.core.external import qspace_icon as icon_path
+
+    path = icon_path()
+    if path is not None:
+        icon = QIcon(str(path))
+        if not icon.isNull():
+            return icon
+    return drawn_icon(ICON_FOLDER, size)
+
+
 def _draw_folder(size: int, accent: QColor) -> QIcon:
     """一个文件夹：上面一个小挂头，下面一个圆角身子。"""
     ratio = 2
@@ -445,4 +461,5 @@ __all__ = [
     "drawn_icon",
     "folder_icon",
     "menu_origin",
+    "qspace_icon",
 ]

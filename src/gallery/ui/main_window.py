@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gallery.core.external import launch
+from gallery.core.external import launch, qspace
 from gallery.core.library.config import (
     BROWSE_MODE_ALBUMS,
     BROWSE_MODE_CALENDAR,
@@ -85,6 +85,7 @@ from gallery.ui.window.widgets.external_button import (
     ExternalEntry,
     calendar_icon,
     folder_icon,
+    qspace_icon,
 )
 from gallery.ui.window.widgets.search_field import ScopeToggle, SearchField
 from gallery.ui.window.widgets.title_bar import EXTRA_PADDING as TITLE_BAR_EXTRA
@@ -910,6 +911,18 @@ class MainWindow(
                 # **与日历那一项互补**：日历页给 Google 日历，其余页给访达（每一页只有一样可开的）。
                 enabled=lambda: not self._on_calendar_page() and self._current_folder() is not None,
             ),
+            ExternalEntry(
+                id="qspace",
+                name="QSpace",
+                icon=qspace_icon(),
+                # **没装它就不摆这一项**（与「访达」同一条判据：摆一个点下去没反应的灰条目
+                # 只会让人以为软件坏了）。访达仍是第一个可用的 —— 左半那一下打开的默认还是它。
+                enabled=lambda: (
+                    not self._on_calendar_page()
+                    and self._current_folder() is not None
+                    and qspace.find_qspace() is not None
+                ),
+            ),
         )
 
     def _on_external_entry(self, entry: object) -> None:
@@ -920,6 +933,8 @@ class MainWindow(
             self._open_google_calendar()
         elif entry.id == "finder":
             self._open_finder()
+        elif entry.id == "qspace":
+            self._open_qspace()
 
     def _open_google_calendar(self) -> None:
         """把 Google 日历开到与当前这一页一致的那一层、那一天。
@@ -964,11 +979,35 @@ class MainWindow(
         显示」不是同一件事**：那条是照片那一路，``open -R`` 把东西在它所在的目录里选出来
         （ADR 0014 决策 3）；对着文件夹用它，用户看到的是文件夹**外面**那一层。
         """
+        folder = self._folder_to_open()
+        if folder is None:
+            return
+        self._show_banner(desktop.open_folder_in_finder([folder]), auto_hide=True)
+
+    def _open_qspace(self) -> None:
+        """在 QSpace 里**打开**当前这个文件夹 —— 与「访达」那一项是同一件事的两个软件。
+
+        递过去的是一条 ``file://`` 地址（QSpace 认这个，见 ``core.external.qspace``）；真起进程
+        那一步在 ``desktop``，这一层只回答「哪个文件夹、哪个应用包」。
+        """
+        folder = self._folder_to_open()
+        if folder is None:
+            return
+        app = qspace.find_qspace()
+        if app is None:
+            self._show_banner("没有找到 QSpace，它可能已经被移走或卸载了。")
+            return
+        self._show_banner(desktop.open_folder_in_qspace([folder], app=app), auto_hide=True)
+
+    def _folder_to_open(self) -> Path | None:
+        """下拉框里那两项要打开的那个文件夹；**没有库就在横幅上说一句并给 ``None``**。
+
+        两项打开的是同一个文件夹，判据也只有一处 —— 分开写迟早会有一边忘了这句提示。
+        """
         folder = self._current_folder()
         if folder is None:
             self._show_banner("还没有打开相册库，没有可以打开的文件夹。")
-            return
-        self._show_banner(desktop.open_folder_in_finder([folder]), auto_hide=True)
+        return folder
 
     def _on_external_failed(self, message: str) -> None:
         # 走到这里的是「起进程这一步整个炸了」；``core.external.launch`` 自己的降级路径不抛异常。

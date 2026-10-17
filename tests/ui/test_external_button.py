@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (  # noqa: E402
 )
 from waiting import wait_until  # noqa: E402
 
-from gallery.core.external import launch  # noqa: E402
+from gallery.core.external import launch, qspace  # noqa: E402
 from gallery.core.library.config import BROWSE_MODE_CALENDAR, prepare_library  # noqa: E402
 from gallery.core.library.photos import GroupRef  # noqa: E402
 from gallery.ui import desktop  # noqa: E402
@@ -58,6 +58,19 @@ from gallery.ui.window.widgets.search_field import WIDTH as SEARCH_FIELD_WIDTH  
 
 #: 搜索胶囊摆好之后的那一块。**按钮是从它往左长出来的**，所以这一块就是唯一的输入。
 FIELD = QRect(300, 7, 208, 22)
+
+#: 「装了 QSpace」那一支用的假应用包。开发机上真装着它、CI 上没有，于是**默认一律当作没装**
+#: （见 :func:`no_qspace`），要摆出这一项的用例自己点名。
+QSPACE_APP = Path("/Applications/QSpace Pro.app")
+
+
+@pytest.fixture(autouse=True)
+def no_qspace(monkeypatch: pytest.MonkeyPatch) -> None:
+    """下拉框里有没有 QSpace 这一项**不该取决于跑测试的这台机器装没装它**。
+
+    不假装的话，装了它的开发机上菜单里多一项、CI 上少一项 —— 同一份断言在两边必然一红一绿。
+    """
+    monkeypatch.setattr(qspace, "find_qspace", lambda: None)
 
 
 def _set_anchor(window: MainWindow, day: datetime.date) -> None:
@@ -286,7 +299,9 @@ def test_button_is_visible_on_the_grid_page(window: MainWindow) -> None:
 
 def test_grid_page_offers_the_finder_not_the_calendar(window: MainWindow) -> None:
     """日历那一项**只在日历页出现** —— 网格页上压根没有「哪一天」可开。"""
-    assert _menu_texts(window._external_button) == ["访达"]
+    texts = _menu_texts(window._external_button)
+    assert "访达" in texts
+    assert "Google 日历" not in texts
 
 
 def test_calendar_page_offers_only_the_calendar(window: MainWindow) -> None:
@@ -371,6 +386,70 @@ def test_the_finder_entry_follows_the_folder_the_window_is_in(
     window._open_finder()
 
     assert opened == [[album]]
+
+
+def test_the_qspace_entry_only_shows_up_when_it_is_installed(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**没装就不摆这一项**（与「访达」同一套判据：灰着点不动的条目只会让人以为坏了）。
+
+    装了之后左半那一下打开的**仍然是访达** —— 新来的一项排在后面，不动默认那一个。
+    """
+    assert "QSpace" not in _menu_texts(window._external_button)
+
+    monkeypatch.setattr(qspace, "find_qspace", lambda: QSPACE_APP)
+    window._external_button.refresh()
+
+    assert _menu_texts(window._external_button) == ["访达", "QSpace"]
+    default = window._external_button.default_entry()
+    assert default is not None and default.name == "访达"
+
+
+def test_the_qspace_entry_opens_that_folder(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """递出去的是**当前这一层那个文件夹**与 core 查到的那个应用包。"""
+    monkeypatch.setattr(qspace, "find_qspace", lambda: QSPACE_APP)
+    opened: list[tuple[list[Path], Path]] = []
+    monkeypatch.setattr(
+        desktop,
+        "open_folder_in_qspace",
+        lambda paths, app: opened.append((list(paths), app)) or "已在 QSpace 中打开。",
+    )
+
+    window._open_qspace()
+
+    assert opened == [([window._library.root], QSPACE_APP)]
+
+
+def test_the_qspace_entry_follows_the_folder_the_window_is_in(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """进到相册里之后按它，开的同样是**当前这一层**，不是永远开着库根。"""
+    monkeypatch.setattr(qspace, "find_qspace", lambda: QSPACE_APP)
+    opened: list[list[Path]] = []
+    monkeypatch.setattr(
+        desktop,
+        "open_folder_in_qspace",
+        lambda paths, app: opened.append(list(paths)) or "已在 QSpace 中打开。",
+    )
+    album = window._library.root / "京都"
+    window._push_frame(AlbumFrame(album))
+
+    window._open_qspace()
+
+    assert opened == [[album]]
+
+
+def test_the_qspace_entry_stays_off_the_calendar_page(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """日历页上没有它 —— 那一页没有「当前这一层文件夹」可开（与访达同一条判据）。"""
+    monkeypatch.setattr(qspace, "find_qspace", lambda: QSPACE_APP)
+
+    window.set_browse_mode(BROWSE_MODE_CALENDAR)
+
+    assert _menu_texts(window._external_button) == ["Google 日历"]
 
 
 def test_button_appears_on_the_calendar_page(window: MainWindow) -> None:
