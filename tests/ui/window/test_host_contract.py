@@ -156,6 +156,7 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
             "_leave_event_action",
             "_library",
             "_model",
+            "_refresh_panel_events",
             "_refresh_undo_label",
             "_reload_level",
             "_reorder_photos",

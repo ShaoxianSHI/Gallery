@@ -27,7 +27,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import Qt  # noqa: E402
-from PySide6.QtGui import QColor, QImage, QPalette  # noqa: E402
+from PySide6.QtGui import QColor, QGuiApplication, QImage, QPalette  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
@@ -37,9 +37,14 @@ from PySide6.QtWidgets import (  # noqa: E402
     QWidget,
 )
 
+from gallery.core.events.models import Event  # noqa: E402
 from gallery.core.metadata.report import build_report  # noqa: E402
 from gallery.ui import theme  # noqa: E402
-from gallery.ui.viewer.metadata import MetadataPanel  # noqa: E402
+from gallery.ui.viewer.metadata import (  # noqa: E402
+    MetadataPanel,
+    event_fields,
+    event_title,
+)
 
 #: 可读性的最低对比度（WCAG AA 对正文的要求）。
 MIN_CONTRAST = 4.5
@@ -319,3 +324,114 @@ def test_a_text_box_inside_the_panel_keeps_its_arrow_keys(qt_app: QApplication) 
     QTest.keyClick(editor, Qt.Key.Key_Right)
 
     assert seen == []
+
+
+# ---- 照片所属事件的元数据 -----------------------------------------------------
+
+
+def _trip_event(**overrides: str | int | float | None) -> Event:
+    values: dict[str, str | int | float | None] = {
+        "title": "京都五日",
+        "started_on": "2026-05-16",
+        "destination": "京都、奈良",
+        "companions": "小王",
+        "cost": 3280.0,
+        "cover": "/照片/京都-01.jpg",
+    }
+    values.update(overrides)
+    return Event(id=1, kind="trip", created_at=0, modified_at=0, values=values)
+
+
+def _body_labels(panel: MetadataPanel) -> list[str]:
+    """面板正文里的文字，**按摆放顺序**（事件是不是真的在照片元数据下面靠它判）。"""
+    texts: list[str] = []
+    for index in range(panel._body_layout.count()):
+        widget = panel._body_layout.itemAt(index).widget()
+        if widget is not None:
+            texts.extend(label.text() for label in widget.findChildren(QLabel))
+    return texts
+
+
+def test_event_fields_skip_the_name_and_the_cover() -> None:
+    """名称已经在组标题里，封面只是一串文件名，两者都不再占一行；空着的字段也跳过。"""
+    fields = event_fields(_trip_event())
+
+    assert [field.label for field in fields] == ["开始日期", "目的地", "同行者", "花费"]
+    assert (fields[-1].label, fields[-1].value) == ("花费", "3280")
+
+
+def test_event_title_carries_the_kind_and_the_name() -> None:
+    assert event_title(_trip_event()) == "旅行 · 京都五日"
+
+
+def test_an_event_of_an_unknown_kind_shows_just_its_name() -> None:
+    """库里存着的那一类定义没了（以后删掉一类事件就是这么回事）：退回名称，字段一个不摆。"""
+    orphan = Event(id=2, kind="nope", created_at=0, modified_at=0, values={"title": "旧记录"})
+
+    assert event_title(orphan) == "旧记录"
+    assert event_fields(orphan) == ()
+
+
+def test_the_panel_shows_events_below_the_photo_metadata(
+    qt_app: QApplication, report: object
+) -> None:
+    panel = MetadataPanel()
+    panel.resize(300, 600)
+    panel.set_report(report)  # type: ignore[arg-type]
+    panel.set_events((_trip_event(),))
+    panel.show()
+    qt_app.processEvents()
+
+    texts = _body_labels(panel)
+    assert "旅行 · 京都五日" in texts
+    assert "京都、奈良" in texts
+    assert texts.index("文件") < texts.index("旅行 · 京都五日"), "事件应当摆在照片自己的元数据下面"
+    panel.deleteLater()
+
+
+def test_events_survive_a_report_swap(qt_app: QApplication, tmp_path: Path) -> None:
+    """地点反查会再交一份报告进来：换报告不该把下面的事件一起丢掉。"""
+    panel = MetadataPanel()
+    panel.set_events((_trip_event(),))
+    panel.set_report(
+        build_report({}, path=tmp_path / "IMG_0001.JPG", size=1, mtime_ns=0, source="exiftool")
+    )
+    assert "旅行 · 京都五日" in _body_labels(panel)
+
+    panel.set_report(
+        build_report(
+            {"EXIF:Make": "Canon"},
+            path=tmp_path / "IMG_0001.JPG",
+            size=1,
+            mtime_ns=0,
+            source="exiftool",
+        )
+    )
+
+    assert "旅行 · 京都五日" in _body_labels(panel), "换一份报告把事件弄丢了"
+    panel.deleteLater()
+
+
+def test_clear_drops_the_events(qt_app: QApplication, report: object) -> None:
+    panel = MetadataPanel()
+    panel.set_report(report)  # type: ignore[arg-type]
+    panel.set_events((_trip_event(),))
+    assert "旅行 · 京都五日" in _body_labels(panel)
+
+    panel.clear()
+
+    assert "旅行 · 京都五日" not in _body_labels(panel)
+    panel.deleteLater()
+
+
+def test_copy_all_includes_the_events(qt_app: QApplication, report: object) -> None:
+    panel = MetadataPanel()
+    panel.set_report(report)  # type: ignore[arg-type]
+    panel.set_events((_trip_event(),))
+
+    panel._copy_all()
+
+    copied = QGuiApplication.clipboard().text()
+    assert "【旅行 · 京都五日】" in copied
+    assert "目的地：京都、奈良" in copied
+    panel.deleteLater()

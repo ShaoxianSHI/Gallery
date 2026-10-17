@@ -823,6 +823,7 @@ class EventFlowMixin:
         而绑定变了之后手上那一份**仍是旧对象**，直接 ``_order_now()`` 会被挡掉
         （ADR 0043 决策 7）。重排还要喂一份照片进去（此刻模型里摆的是组卡片），
         **菜单栏那两层的灰度也在这里刷**，所有事件改动都经过这里。"""
+        self._refresh_panel_events()
         self._update_event_actions()
         if not self._groups_by_event():
             return

@@ -2,6 +2,7 @@
 
 推挤式而不是浮层：面板占掉宽度、图片区域缩小并重新适配，任何照片都不会被挡住。
 值一律可选中复制；底部「显示全部字段」展开来源返回的原始键值（ICC 配置等在那里也能翻到）。
+照片自己的元数据下面接着摆它所属的那些事件，一个事件一组。
 """
 
 from __future__ import annotations
@@ -28,7 +29,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gallery.core.metadata.report import MetadataGroup, MetadataReport
+from gallery.core.events.kinds import COVER, EventField, fields_of, kind_by_id
+from gallery.core.events.models import Event
+from gallery.core.metadata.report import MetadataField, MetadataGroup, MetadataReport
 from gallery.ui import theme
 from gallery.ui.layout import clear_layout
 from gallery.ui.scrollbar_style import apply_scrollbar_style
@@ -55,6 +58,41 @@ SCROLLBAR_EDGE_GAP = 2
 #: 边上之后，正文与页脚靠外的留白得在这一层补回来 —— 文本紧贴窗口右缘比一条宽缝难看得多，
 #: 而这一档补的是位置，那一份宽度一分不少。
 _CONTENT_PAD_RIGHT = CONTENT_PAD - SCROLLBAR_EDGE_GAP
+
+
+def event_title(event: Event) -> str:
+    """事件那一块的组标题：``旅行 · 京都五日``。带上类型名 —— 一张照片可以同时属于一次旅行与
+    一场演出，只写名字分不出那是哪一类。
+    """
+    kind = kind_by_id(event.kind)
+    return f"{kind.label} · {event.display_name}" if kind is not None else event.display_name
+
+
+def event_fields(event: Event) -> tuple[MetadataField, ...]:
+    """一个事件在面板上摆的那几行：**只摆填过的，跳过名称与封面**。
+
+    名称已经在组标题里了；封面是一条路径，摆出来只是一串文件名。空着的那几格是用户没记的，
+    摆一排占位文字只会把有用的信息挤下去。
+    """
+    kind = kind_by_id(event.kind)
+    if kind is None:
+        return ()
+    fields: list[MetadataField] = []
+    for field in fields_of(kind):
+        if field is COVER or field.id == "title":
+            continue
+        value = _event_value(event, field)
+        if value:
+            fields.append(MetadataField(label=field.label, value=value))
+    return tuple(fields)
+
+
+def _event_value(event: Event, field: EventField) -> str:
+    """一格值按文字给出。``REAL`` 去掉浮点尾巴（``3280.0`` → ``3280``）。"""
+    value = event.values.get(field.id)
+    if value is None:
+        return ""
+    return f"{value:g}" if isinstance(value, float) else str(value)
 
 
 def panel_style(app_theme: AppTheme) -> str:
@@ -106,6 +144,7 @@ class MetadataPanel(QWidget):
         # **首次下发挪到滚动区建好之后**：:meth:`_apply_theme` 要点名视口，那会儿它还不存在。
 
         self._report: MetadataReport | None = None
+        self._events: tuple[Event, ...] = ()
         self._metadata_editable = False
         self._metadata_reason = ""
 
@@ -212,6 +251,7 @@ class MetadataPanel(QWidget):
     def clear(self) -> None:
         """还没有选中照片。"""
         self._report = None
+        self._events = ()
         self._footer.hide()
         self._fill((self._message("尚未打开照片", "metadataEmpty"),))
 
@@ -229,6 +269,15 @@ class MetadataPanel(QWidget):
         """展示一份读好的元数据。"""
         self._report = report
         self._footer.show()
+        self._render()
+
+    def set_events(self, events: Sequence[Event]) -> None:
+        """这张照片属于哪些事件，摆在它自己的元数据下面。
+
+        **与 :meth:`set_report` 分开**：元数据是异步读回来的，还会被地点反查替换几次，而事件
+        来自索引里那份缓存、一次定下来 —— 换报告时不该把事件一起丢掉。
+        """
+        self._events = tuple(events)
         self._render()
 
     def set_metadata_editable(self, editable: bool, *, reason: str = "") -> None:
@@ -263,7 +312,15 @@ class MetadataPanel(QWidget):
             groups.append(MetadataGroup(title="全部字段", fields=report.all_fields))
         for group in groups:
             widgets.append(self._group_widget(group))
+        for event in self._events:
+            widgets.append(self._event_widget(event))
         self._fill(widgets)
+
+    def _event_widget(self, event: Event) -> QWidget:
+        """一个事件那一块，摆在照片自己的元数据下面。"""
+        return self._group_widget(
+            MetadataGroup(title=event_title(event), fields=event_fields(event))
+        )
 
     def _group_widget(self, group: MetadataGroup) -> QWidget:
         container = QWidget()
@@ -343,6 +400,10 @@ class MetadataPanel(QWidget):
             lines.append("")
             lines.append("【全部字段】")
             lines.extend(f"{field.label}：{field.value}" for field in report.all_fields)
+        for event in self._events:
+            lines.append("")
+            lines.append(f"【{event_title(event)}】")
+            lines.extend(f"{field.label}：{field.value}" for field in event_fields(event))
         QGuiApplication.clipboard().setText("\n".join(lines))
         self._copy_button.setText("已复制")
         self._hint_timer.start(COPIED_HINT_MS)
@@ -355,5 +416,7 @@ __all__ = [
     "PANEL_WIDTH",
     "SCROLLBAR_EDGE_GAP",
     "MetadataPanel",
+    "event_fields",
+    "event_title",
     "panel_style",
 ]

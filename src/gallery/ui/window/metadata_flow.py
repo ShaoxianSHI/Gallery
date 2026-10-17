@@ -12,6 +12,7 @@ from functools import partial
 
 from PySide6.QtCore import QModelIndex
 
+from gallery.core.events.models import Event
 from gallery.core.library.photos import FolderRef, GroupRef, PhotoRef
 from gallery.core.metadata.exif import read_metadata
 from gallery.core.metadata.facets import PhotoFacets
@@ -78,6 +79,33 @@ class MetadataFlowMixin:
         self._cancel_job("_metadata_job")
         self._cancel_job("_metadata_copy_job")
 
+    def _photo_events(self, ref: PhotoRef) -> tuple[Event, ...]:
+        """这张照片属于哪些事件（最近的在前）。
+
+        **一次只查一张照片的路径**，所以主线程上做也无妨 —— 随照片数增长的那一次是分组，
+        见 ``Library.events_for_photos``。
+        """
+        library = self._library
+        if library is None or not library.events_available:
+            return ()
+        refs = library.events_for_photos([ref]).get(ref.path, ())
+        found: list[Event] = []
+        for event_ref in refs:
+            event = library.event(event_ref.id)
+            if event is not None:
+                found.append(event)
+        return tuple(found)
+
+    def _refresh_panel_events(self) -> None:
+        """只把面板上「所属事件」那一块换成最新的，**不重读照片元数据**（不闪「正在读取」）。"""
+        if not self._panel.isVisible():
+            return
+        ref = self._model.photo_at(self._current_row)
+        if ref is None:
+            self._panel.set_events(())
+        else:
+            self._panel.set_events(self._photo_events(ref))
+
     def _load_metadata(self) -> None:
         """读当前这张照片的元数据；面板没展开就什么都不做。
 
@@ -92,6 +120,7 @@ class MetadataFlowMixin:
         if ref is None:
             self._panel.clear()
             return
+        self._panel.set_events(self._photo_events(ref))
         generation = self._generation
         cached = self._cached_metadata(ref)
         if cached is not None:

@@ -26,9 +26,10 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import QApplication, QLabel  # noqa: E402
 from waiting import DEFAULT_TIMEOUT_SECONDS
 
+from gallery.core.events.store import EventDraft  # noqa: E402
 from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.metadata.facets import PhotoFacets  # noqa: E402
 from gallery.core.metadata.report import build_report  # noqa: E402
@@ -588,3 +589,57 @@ def test_the_focus_stays_in_the_panel_after_stepping(
     QTest.keyClick(window._panel._copy_button, Qt.Key.Key_Right)
 
     assert QApplication.focusWidget() is window._panel._copy_button
+
+
+def test_the_panel_shows_the_photos_events(
+    window: MainWindow,
+    ready: Callable[[], None],
+) -> None:
+    """当前照片所属的事件摆在它自己的元数据下面（一个事件一组）。
+
+    事件读的是索引里那份缓存，所以绑定完之后要重新走一次 :meth:`_load_metadata` —— 真实路径
+    是切照片或换事件时由窗口触发的。
+    """
+    window._metadata_action.setChecked(True)
+    ready()
+    library = window._library
+    assert library is not None
+    ref = window._model.photo_at(window._current_row)
+    assert ref is not None
+    trip = library.create_event(
+        "trip", EventDraft(values={"title": "京都五日", "started_on": "2026-05-16"})
+    ).event
+    library.bind_photos([ref], trip.id)
+
+    window._load_metadata()
+
+    texts = [label.text() for label in window._panel.findChildren(QLabel)]
+    assert "旅行 · 京都五日" in texts
+    assert "2026-05-16" in texts
+
+
+def test_changing_an_event_refreshes_the_panel(
+    window: MainWindow,
+    ready: Callable[[], None],
+) -> None:
+    """事件改了之后面板上「所属事件」那一块跟着换 —— 用户正看着这张照片的详情页。
+
+    事件改动都经过 :meth:`_after_events_changed`，面板那一块在那里刷新。
+    """
+    window._metadata_action.setChecked(True)
+    ready()
+    library = window._library
+    assert library is not None
+    ref = window._model.photo_at(window._current_row)
+    assert ref is not None
+    trip = library.create_event("trip", EventDraft(values={"title": "京都五日"})).event
+    library.bind_photos([ref], trip.id)
+    window._after_events_changed()
+    assert "旅行 · 京都五日" in [label.text() for label in window._panel.findChildren(QLabel)]
+
+    library.update_event(trip.id, EventDraft(values={"title": "京都六日"}))
+    window._after_events_changed()
+
+    texts = [label.text() for label in window._panel.findChildren(QLabel)]
+    assert "旅行 · 京都六日" in texts
+    assert "旅行 · 京都五日" not in texts
