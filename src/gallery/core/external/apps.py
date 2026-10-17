@@ -1,34 +1,31 @@
-"""Gallery 会递东西过去的那几个外部应用：本机装没装、图标在哪儿。
+"""Gallery 会递东西过去的那几个外部应用：本机装没装、图标长什么样。
 
 **按 bundle id 认，不按 ``.app`` 的名字认**：包叫「QSpace」还是「QSpace Pro」都认得出，
 Launch Services 才是系统认账的那份名册（与 PWA 那条同一个理由，ADR 0034 决策 2）。**显示名
 只进菜单与横幅** —— ``open -a`` 不认中文名（实测「预览」会被它拒掉），递给它的永远是名册给的
-那个路径。这一层**不碰用户的照片**，只问一次名册、读一次应用包的 ``Info.plist``。
+那个路径。这一层**不碰用户的照片**，只问一次名册、让系统画一次图标。
 """
 
 from __future__ import annotations
 
 import importlib
-import plistlib
 from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
 from typing import Any
 
-#: 图标文件名写在 ``Info.plist`` 的这一项里，展开目录是它旁边那个 ``Resources``
-#: （与 PWA 读 ``CrAppModeShortcutURL`` 同一个道理：名字由应用自己说，不照着本机那一个拼）。
-ICON_KEY = "CFBundleIconFile"
-
-INFO_PLIST = Path("Contents") / "Info.plist"
-ICONS_DIR = Path("Contents") / "Resources"
+#: 向系统要图标时给多大（**点**，不是像素 —— Retina 上拿回来的是两倍像素）。菜单里最大也就
+#: 16 点；而系统手上那张原图是 1024，编码一次要一百多毫秒、快 2 MB，不能直接往上递。
+ICON_EDGE = 64
 
 
 @dataclass(frozen=True)
 class App:
     """下拉框里用得到的一项外部应用。
+
     :param id: 这一项的标识；点下去做什么由界面按它分派。
-    :param name: 菜单与横幅里写的名字（:data:`VIEWERS` 里那两项是中文的）。
+    :param name: 菜单与横幅里写的名字（:data:`PREVIEW` 那一项是中文的）。
     :param bundle_ids: **按优先级排**的 bundle id，认第一个真的还在那儿的。
     """
 
@@ -45,13 +42,19 @@ QSPACE = App(
     bundle_ids=("com.jinghaoshe.qspace.pro", "com.jinghaoshe.qspace"),
 )
 
-#: 大图页那一列「用哪个软件看这一张」，按显示顺序。**这是一份手写的白名单** ——
-#: 系统那份「打开方式」名单里还躺着 ColorSync Utility / Chrome / Safari / QuickTime，
-#: 它们声明能开图，递一张照片过去得到的却是别的东西（浏览器标签、一帧画面）。
-VIEWERS: tuple[App, ...] = (
-    App(id="preview", name="预览", bundle_ids=("com.apple.Preview",)),
-    App(id="imageglass", name="ImageGlass", bundle_ids=("com.duongdieuphap.imageglass",)),
+#: 大图页那一列「用哪个软件看这一张」。名字可能是中文，而它**只进菜单与横幅**。
+PREVIEW = App(id="preview", name="预览", bundle_ids=("com.apple.Preview",))
+IMAGEGLASS = App(
+    id="imageglass",
+    name="ImageGlass",
+    bundle_ids=("com.duongdieuphap.imageglass",),
 )
+
+#: 图片应用那一份白名单 —— **这是一份手写的名单，不是问 Launch Services 要来的**：系统那份
+#: 「打开方式」名单里还躺着 ColorSync Utility / Chrome / Safari / QuickTime，它们声明能开图，
+#: 递一张照片过去得到的却是别的东西（浏览器标签、一帧画面）。**次序不表示摆出来的次序**，
+#: 下拉框里那几项的先后由 :meth:`MainWindow._external_entries` 写定（ADR 0067）。
+VIEWERS: tuple[App, ...] = (PREVIEW, IMAGEGLASS)
 
 
 @cache
@@ -67,43 +70,35 @@ def find_app(app: App) -> Path | None:
     return _lookup(appkit.NSWorkspace.sharedWorkspace(), app.bundle_ids)
 
 
-def icon_path(app: App) -> Path | None:
-    """这个应用的图标在哪儿；取不到就是 ``None``，界面那一层退回自画的轮廓（与访达同一套）。
+def icon_png(app: App, edge: int = ICON_EDGE) -> bytes | None:
+    """这个应用的图标，**让系统画好的那一张**（PNG 字节）；取不到就是 ``None``。
 
-    别人的商标**不随包分发**（ADR 0034 决策 6），所以一律读系统里那一份。
+    **别自己从包里那个 ``.icns`` 拆**：同一个应用包，macOS 在 Dock 里画的那一张与文件里存的
+    那一份可以不一样 —— 老式图标把圆角外面那片填成不透明白色，系统画的时候会替它套上自己的
+    遮罩，自己拆就把那圈白带出来了（本机实测 ImageGlass 的四角是纯白、不透明）。
     """
+    appkit = _appkit()
     found = find_app(app)
-    if found is None:
+    if appkit is None or found is None:
         return None
-    return icon_in(found)
-
-
-def icon_in(bundle: Path) -> Path | None:
-    """一个应用包里那个图标文件；读不到就是 ``None``。
-
-    读不出来不是错误：包可能正在被更新、``Info.plist`` 也可能损坏 —— 那只是少一个图标，
-    不该把整个下拉框弄挂。
-    """
     try:
-        with (bundle / INFO_PLIST).open("rb") as handle:
-            info = plistlib.load(handle)
-    except (OSError, ValueError, plistlib.InvalidFileException):
+        image = appkit.NSWorkspace.sharedWorkspace().iconForFile_(str(found))
+        canvas = appkit.NSImage.alloc().initWithSize_(appkit.NSMakeSize(edge, edge))
+        canvas.lockFocus()
+        image.drawInRect_(appkit.NSMakeRect(0, 0, edge, edge))
+        canvas.unlockFocus()
+        rep = appkit.NSBitmapImageRep.imageRepWithData_(canvas.TIFFRepresentation())
+        data = rep.representationUsingType_properties_(appkit.NSBitmapImageFileTypePNG, {})
+    except Exception:  # 图标是这个应用的一部分，不是它本身 —— 少一个图标不该把窗口弄挂
         return None
-    name = info.get(ICON_KEY)
-    if not isinstance(name, str) or not name:
-        return None
-    # 这一项有的包写 ``QSpace Pro``、有的写 ``QSpace Pro.icns``，两种都认。
-    icon = bundle / ICONS_DIR / name
-    if icon.suffix != ".icns":
-        icon = icon.with_suffix(".icns")
-    return icon if icon.is_file() else None
+    return None if data is None else bytes(data)
 
 
 def _lookup(workspace: Any, bundle_ids: Sequence[str]) -> Path | None:
     """按名册逐个问 bundle id，返回第一个**真的还在那儿**的应用包。
 
     名册里可能留着一条指向已删除应用的记录，所以拿到路径还要问一句它是不是目录
-    —— 不然那一项会一直在下拉框里，点下去什么都不会发生。
+    —— 不然那一项会一直挂在下拉框里，点下去什么都不会发生。
     """
     for bundle_id in bundle_ids:
         url = workspace.URLForApplicationWithBundleIdentifier_(bundle_id)
@@ -116,7 +111,7 @@ def _lookup(workspace: Any, bundle_ids: Sequence[str]) -> Path | None:
 
 
 def _appkit() -> Any:
-    """导入 AppKit。没装 pyobjc（非 macOS）时返回 ``None``，这一项就整个不出现。
+    """导入 AppKit。没装 pyobjc（非 macOS）时返回 ``None``，这几项就整个不出现。
 
     用 ``importlib`` 而不是 ``import``：pyobjc 没有类型桩，而 ``core/`` 是 ``mypy --strict``
     （与 ``recent_documents`` 同一个做法）。
@@ -128,13 +123,12 @@ def _appkit() -> Any:
 
 
 __all__ = [
-    "ICONS_DIR",
-    "ICON_KEY",
-    "INFO_PLIST",
+    "ICON_EDGE",
+    "IMAGEGLASS",
+    "PREVIEW",
     "QSPACE",
     "VIEWERS",
     "App",
     "find_app",
-    "icon_in",
-    "icon_path",
+    "icon_png",
 ]

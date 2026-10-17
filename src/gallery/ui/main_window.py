@@ -895,8 +895,11 @@ class MainWindow(
         # ---- 用外部应用打开（ADR 0034）------------------------------------
 
     def _external_entries(self) -> tuple[ExternalEntry, ...]:
-        """下拉框里那几项。**每一项自己判自己此刻该不该出现**（``ExternalEntry.enabled``），
-        于是列表不用随页面变化重建，翻页时 ``refresh`` 问一遍就够。
+        """下拉框里那几项，**次序就是摆出来的次序**（最前面那个可用的就是左半那一下）。
+
+        每一项自己判自己此刻该不该出现（``ExternalEntry.enabled``），于是列表不用随页面变化
+        重建，翻页时 ``refresh`` 问一遍就够。**预览排在最前**是有意的：大图页上最常用的就是
+        「用某个软件看这一张」，于是左半那一下在大图页也就是它（ADR 0067）。
         """
         return (
             ExternalEntry(
@@ -905,41 +908,42 @@ class MainWindow(
                 icon=calendar_icon(),
                 enabled=self._on_calendar_page,
             ),
+            self._viewer_entry(apps.PREVIEW),
             ExternalEntry(
                 id="finder",
                 name="访达",
                 icon=folder_icon(),
                 # **与日历那一项互补**：日历页给 Google 日历，其余页给访达（每一页只有一样可开的）。
-                enabled=lambda: not self._on_calendar_page() and self._current_folder() is not None,
+                enabled=self._has_folder_to_open,
             ),
             ExternalEntry(
                 id=apps.QSPACE.id,
                 name=apps.QSPACE.name,
                 icon=icon_for(apps.QSPACE),
                 # **没装它就不摆这一项**（与「访达」同一条判据：摆一个点下去没反应的灰条目
-                # 只会让人以为软件坏了）。访达仍是第一个可用的 —— 左半那一下打开的默认还是它。
+                # 只会让人以为软件坏了）。
                 enabled=lambda: (
                     self._has_folder_to_open() and apps.find_app(apps.QSPACE) is not None
                 ),
             ),
-            *(
-                ExternalEntry(
-                    id=viewer.id,
-                    name=viewer.name,
-                    icon=icon_for(viewer),
-                    # 与上面那两项**互斥**：它们是「这一层文件夹」，这一列是「我看的这一张」。
-                    enabled=partial(self._viewer_ready, viewer),
-                )
-                for viewer in apps.VIEWERS
-            ),
+            self._viewer_entry(apps.IMAGEGLASS),
+        )
+
+    def _viewer_entry(self, viewer: App) -> ExternalEntry:
+        """图片应用那一项：**只在大图页上摆**，而且本机装着它。
+
+        网格页上没有「正在看的那一张」—— 用某个软件打开**选区**是右键菜单那一组回答的问题
+        （ADR 0067）；没装就不摆，则与「访达」「QSpace」同一条判据。
+        """
+        return ExternalEntry(
+            id=viewer.id,
+            name=viewer.name,
+            icon=icon_for(viewer),
+            enabled=partial(self._viewer_ready, viewer),
         )
 
     def _viewer_ready(self, viewer: App) -> bool:
-        """图片应用那一项此刻该不该出现：**大图页上正看着一张照片，而且本机装着它**。
-
-        网格页上不摆 —— 那里没有「正在看的那一张」，用某个软件打开**选区**是右键菜单那一组
-        回答的问题（ADR 0067）。
-        """
+        """大图页上正看着一张照片，而且本机装着这个应用。"""
         return self._detail_photo_path() is not None and apps.find_app(viewer) is not None
 
     def _has_folder_to_open(self) -> bool:

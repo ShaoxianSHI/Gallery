@@ -15,12 +15,13 @@ from gallery.core.external.applescript import (
     set_window_url,
 )
 from gallery.core.external.apps import (
+    IMAGEGLASS,
+    PREVIEW,
     QSPACE,
     VIEWERS,
     App,
     find_app,
-    icon_in,
-    icon_path,
+    icon_png,
 )
 from gallery.core.external.gcal import HOST, deep_link
 from gallery.core.external.launch import (
@@ -36,6 +37,8 @@ from gallery.core.external.runner import CommandResult, Runner, subprocess_runne
 
 __all__ = [
     "HOST",
+    "IMAGEGLASS",
+    "PREVIEW",
     "QSPACE",
     "VIEWERS",
     "WHERE_APP",
@@ -52,8 +55,7 @@ __all__ = [
     "find_chrome_pwa",
     "find_pwa_window",
     "finder_icon",
-    "icon_in",
-    "icon_path",
+    "icon_png",
     "is_pwa_window",
     "list_windows",
     "open_google_calendar",

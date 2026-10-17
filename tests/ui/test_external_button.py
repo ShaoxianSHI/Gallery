@@ -37,6 +37,7 @@ from gallery.core.library.photos import GroupRef  # noqa: E402
 from gallery.ui import desktop  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.window.state.level_stack import AlbumFrame, GroupFrame  # noqa: E402
+from gallery.ui.window.widgets import external_button  # noqa: E402
 from gallery.ui.window.widgets.external_button import (  # noqa: E402
     BUTTON_GAP,
     BUTTON_WIDTH,
@@ -48,6 +49,7 @@ from gallery.ui.window.widgets.external_button import (  # noqa: E402
     button_rect,
     calendar_icon,
     folder_icon,
+    icon_for,
     menu_origin,
 )
 from gallery.ui.window.widgets.search_field import (
@@ -528,17 +530,18 @@ def test_the_qspace_entry_stays_off_the_calendar_page(
 def test_every_installed_app_is_listed_in_a_fixed_order(
     window: MainWindow, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """装了哪几项就摆哪几项，**次序固定**：访达与 QSpace 在前，图片应用往后排。
+    """装了哪几项就摆哪几项，**次序固定**：预览在最前，然后是访达、QSpace、ImageGlass。
 
-    左半那一下打开的仍然是**访达**（第一项可用的）：新来的几项都排在后面，默认那一个不动。
+    **左半那一下在大图页上因此是「预览」**（它开的是列表里第一个可用的）—— 大图页上最常用的
+    就是「用图片软件看这一张」；网格页上图片应用不摆，左半仍是访达。
     """
     _only(monkeypatch, qspace=QSPACE_APP, preview=PREVIEW_APP, imageglass=IMAGEGLASS_APP)
     window._open_detail(window._model.index(0, 0))
     window._external_button.refresh()
 
-    assert _menu_texts(window._external_button) == ["访达", "QSpace", "预览", "ImageGlass"]
+    assert _menu_texts(window._external_button) == ["预览", "访达", "QSpace", "ImageGlass"]
     default = window._external_button.default_entry()
-    assert default is not None and default.name == "访达"
+    assert default is not None and default.name == "预览"
 
 
 def test_a_viewer_entry_only_shows_up_on_the_detail_page(
@@ -549,11 +552,13 @@ def test_a_viewer_entry_only_shows_up_on_the_detail_page(
     """
     _only(monkeypatch, preview=PREVIEW_APP)
     assert "预览" not in _menu_texts(window._external_button)
+    grid_default = window._external_button.default_entry()
+    assert grid_default is not None and grid_default.name == "访达"
 
     window._open_detail(window._model.index(0, 0))
     window._external_button.refresh()
 
-    assert _menu_texts(window._external_button) == ["访达", "预览"]
+    assert _menu_texts(window._external_button) == ["预览", "访达"]
 
 
 def test_the_viewer_entry_opens_the_photo_the_detail_page_is_showing(
@@ -573,7 +578,7 @@ def test_the_viewer_entry_opens_the_photo_the_detail_page_is_showing(
     )
     window._open_detail(window._model.index(0, 0))
 
-    window._open_in_viewer(apps.VIEWERS[1])
+    window._open_in_viewer(apps.IMAGEGLASS)
 
     assert calls == [([window._library.root / "一张.jpg"], IMAGEGLASS_APP, "ImageGlass")]
 
@@ -761,6 +766,43 @@ def test_folder_icon_falls_back_to_a_drawn_one(
     monkeypatch.setattr(external, "finder_icon", lambda: None)
 
     icon = folder_icon()
+    assert not icon.isNull()
+
+
+def test_an_app_icon_is_the_one_the_system_drew(
+    qt_app: QApplication, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """系统画的那一张就**用它**，不是自己画的轮廓。
+
+    **判据是画出来的颜色**：那份 PNG 整张涂成 ``#ff0000``，自画的轮廓是主题那几个灰阶 ——
+    只断言「不是 None」的话，退回自画那一支照样绿。
+
+    这一条同时守着那圈白边：要的是**系统画好的那张 PNG**（它自己套过遮罩），不是从应用包里
+    那个 ``.icns`` 里拆出来的那一份（老式图标四角是不透明白色）。
+    """
+    art = QImage(16, 16, QImage.Format.Format_ARGB32)
+    art.fill(QColor(255, 0, 0))
+    from_system = tmp_path / "preview.png"
+    assert art.save(str(from_system))
+    png = from_system.read_bytes()
+    monkeypatch.setattr(external_button, "icon_png", lambda app: png)
+
+    rendered = icon_for(apps.PREVIEW).pixmap(QSize(ICON_EDGE, ICON_EDGE)).toImage()
+    center = rendered.pixelColor(rendered.width() // 2, rendered.height() // 2)
+
+    assert (center.red(), center.green(), center.blue()) == (255, 0, 0), (
+        "画出来的不是系统那张 —— 退回自画那一支了"
+    )
+
+
+def test_an_app_icon_falls_back_to_a_drawn_one(
+    qt_app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """取不到系统那一张（没装、非 macOS、系统给不出图）就退回自画的轮廓，**而不是一个空图标**。"""
+    monkeypatch.setattr(external_button, "icon_png", lambda app: None)
+
+    icon = icon_for(apps.PREVIEW)
+
     assert not icon.isNull()
 
 
