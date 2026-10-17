@@ -24,6 +24,7 @@ from waiting import wait_for_idle, wait_until  # noqa: E402
 from gallery.core.events.store import EventDraft  # noqa: E402
 from gallery.core.external import launch  # noqa: E402
 from gallery.core.library.config import BROWSE_MODE_ALBUMS, prepare_library  # noqa: E402
+from gallery.core.library.photos import GroupRef  # noqa: E402
 from gallery.core.library.session import SessionState, save_session  # noqa: E402
 from gallery.core.metadata.download import save_downloaded_file  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
@@ -67,14 +68,35 @@ def window(qt_app: QApplication, root: Path) -> Iterator[MainWindow]:
     instance.close()
 
 
-def _make_movie(window: MainWindow, root: Path) -> None:
-    """建一个影片事件，把封面绑进去并设为封面。"""
+def _make_movie(window: MainWindow, root: Path) -> int:
+    """建一个影片事件，把封面绑进去并设为封面，返回它的 id。"""
     library = window._library
     assert library is not None
     cover = library.root / "封面.jpg"
     outcome = library.create_event("movie", EventDraft.of(title="一部影片", code="IPX-660"))
     library.bind_photos([cover], outcome.event.id)
     library.set_event_cover(outcome.event.id, cover)
+    return outcome.event.id
+
+
+def _row_of_event_card(window: MainWindow, event_id: int) -> int:
+    """屏幕上那张事件卡片的行号（**按事件 id 认**，不按位置）。"""
+    for row in range(window._model.rowCount()):
+        entry = window._model.entry_at(row)
+        if isinstance(entry, GroupRef) and entry.key.endswith(f"#{event_id}"):
+            return row
+    raise AssertionError(f"屏幕上没有事件 {event_id} 的卡片")
+
+
+def _spy_on_browser(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    opened: list[str] = []
+
+    def fake_open(url: str, **_kwargs: object) -> launch.OpenOutcome:
+        opened.append(url)
+        return launch.OpenOutcome(target_id="movie", where=launch.WHERE_BROWSER)
+
+    monkeypatch.setattr("gallery.ui.window.event_flow.launch.open_in_browser", fake_open)
+    return opened
 
 
 def test_the_import_menu_sits_after_view(window: MainWindow) -> None:
@@ -101,13 +123,7 @@ def test_alt_clicking_a_movie_photo_opens_the_site(
     window: MainWindow, root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _make_movie(window, root)
-    opened: list[str] = []
-
-    def fake_open(url: str, **_kwargs: object) -> launch.OpenOutcome:
-        opened.append(url)
-        return launch.OpenOutcome(target_id="movie", where=launch.WHERE_BROWSER)
-
-    monkeypatch.setattr("gallery.ui.window.event_flow.launch.open_in_browser", fake_open)
+    opened = _spy_on_browser(monkeypatch)
     row = window._model.row_of_path(window._library.root / "封面.jpg")  # type: ignore[union-attr]
     assert row >= 0
 
@@ -116,16 +132,49 @@ def test_alt_clicking_a_movie_photo_opens_the_site(
     assert opened == ["https://jable.tv/videos/ipx-660/"]
 
 
+def test_alt_clicking_a_movie_group_card_opens_the_site(
+    qt_app: QApplication, window: MainWindow, root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """按事件分组时，⌥ 点**影片卡片本身**也要打开那个影片网站（ADR 0063 决策 6）。
+
+    这一格背后就是那个影片事件，不必再从照片反查 —— 而卡片不是 ``PhotoRef``，
+    照旧只认照片的那条路会把它整个跳过。
+    """
+    event_id = _make_movie(window, root)
+    window.set_group_facet("event")
+    assert wait_until(qt_app, lambda: window._model.group_count() > 0)
+    opened = _spy_on_browser(monkeypatch)
+    row = _row_of_event_card(window, event_id)
+
+    window.open_movie_for_row(window._model.index(row, 0))
+
+    assert opened == ["https://jable.tv/videos/ipx-660/"]
+
+
+def test_alt_clicking_a_non_movie_group_card_does_nothing(
+    qt_app: QApplication, window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """旅行卡片上的 ⌥ 点要静默（与普通照片同一取向）—— 只有影片卡片才去开网站。"""
+    library = window._library
+    assert library is not None
+    trip = library.create_event(
+        "trip", EventDraft(values={"title": "京都五日", "started_on": "2026-05-16"})
+    ).event
+    library.bind_photos([library.root / "普通照片.jpg"], trip.id)
+    window.set_group_facet("event")
+    assert wait_until(qt_app, lambda: window._model.group_count() > 0)
+    opened = _spy_on_browser(monkeypatch)
+    row = _row_of_event_card(window, trip.id)
+
+    window.open_movie_for_row(window._model.index(row, 0))
+
+    assert opened == []
+
+
 def test_alt_clicking_a_plain_photo_does_nothing(
     window: MainWindow, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    opened: list[str] = []
-
-    def fake_open(url: str, **_kwargs: object) -> launch.OpenOutcome:
-        opened.append(url)
-        return launch.OpenOutcome(target_id="movie", where=launch.WHERE_BROWSER)
-
-    monkeypatch.setattr("gallery.ui.window.event_flow.launch.open_in_browser", fake_open)
+    opened = _spy_on_browser(monkeypatch)
     row = window._model.row_of_path(window._library.root / "普通照片.jpg")  # type: ignore[union-attr]
 
     window.open_movie_for_row(window._model.index(row, 0))

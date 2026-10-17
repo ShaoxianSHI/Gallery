@@ -166,9 +166,16 @@ class EventFlowMixin:
     # ---- 影片：⌥ 点开网站（ADR 0063）----------------------------------------
 
     def open_movie_for_row(self, index: QModelIndex) -> None:
-        """⌥ 点了网格里一格：打开它所属影片事件的网站。"""
+        """⌥ 点了网格里一格：打开它所属影片事件的网站。
+
+        **事件分组卡片本身就是那个事件**（按事件分组时格子里摆的是卡片，不是照片），
+        于是这一格不必再从照片反查 —— 直接按卡片背后的 id 打开。
+        """
         entry = self._model.entry_at(index.row())
-        if isinstance(entry, PhotoRef):
+        event_id = _event_id_of(entry)
+        if event_id is not None:
+            self._open_movie_event(event_id)
+        elif isinstance(entry, PhotoRef):
             self._open_movie_for_photo(entry.path)
 
     def open_movie_for_current(self) -> None:
@@ -178,23 +185,30 @@ class EventFlowMixin:
             self._open_movie_for_photo(ref.path)
 
     def _open_movie_for_photo(self, photo: Path) -> None:
-        """这张照片属于某个影片事件就打开它的网站；不属于任何影片就什么也不做（不打扰）。
-
-        **不是影片照片时静默** —— ⌥ 点一下是个轻量手势，为一张普通照片弹一句「不属于影片」
-        只会吵人。真的属于影片而缺番号时才说一句（那时用户确实想知道为什么没反应）。
-        """
+        """这张照片属于某个影片事件就打开它的网站；不属于任何影片就什么也不做（不打扰）。"""
         library = self._library
         if library is None:
             return
         refs = library.events_for_photos([photo]).get(photo, ())
         movie = next((ref for ref in refs if ref.kind == MOVIE.id), None)
-        if movie is None:
+        if movie is not None:
+            self._open_movie_event(movie.id)
+
+    def _open_movie_event(self, event_id: int) -> None:
+        """打开这个影片事件的网站。**不是影片事件时静默**（与不是影片的照片同一取向）：
+        ⌥ 点一下是个轻量手势，为一次旅行或一场演出弹一句只会吵人。真的属于影片而缺番号时
+        才说一句（那时用户确实想知道为什么没反应）。
+        """
+        library = self._library
+        if library is None:
             return
-        event = library.event(movie.id)
-        url = library.movie_url(event) if event is not None else None
+        event = library.event(event_id)
         if event is None:
             self._show_banner("这个事件已经不在了。")
             return
+        if event.kind != MOVIE.id:
+            return
+        url = library.movie_url(event)
         if url is None:
             self._show_banner("这个影片事件还没有番号，打开不了影片网站。")
             return
