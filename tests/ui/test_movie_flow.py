@@ -88,8 +88,8 @@ def test_the_import_menu_sits_after_view(window: MainWindow) -> None:
 def test_every_top_level_menu_belongs_to_the_menu_bar(window: MainWindow) -> None:
     """每个顶层菜单都要**认在菜单栏名下** —— 与「文件 / 编辑 / 视图」同一条路。
 
-    一个没有父的 ``QMenu`` 加进菜单栏也不会被认成它的子菜单，于是 macOS 的原生菜单栏不按原生
-    样式画它（「导入」曾经就是这么建出来的，看上去与相邻几个不一样）。
+    ``menuBar().addMenu(title)`` 把菜单建在菜单栏名下；``addMenu(QMenu)`` 不会，那只菜单会留在
+    外面。四条菜单用同一种建法，父子关系才一致。
     """
     for action in window.menuBar().actions():
         menu = action.menu()

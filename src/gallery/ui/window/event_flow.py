@@ -296,9 +296,8 @@ class EventFlowMixin:
     def import_menu(self) -> QMenu:
         """菜单栏「导入」那一层（ADR 0063）：把外面的东西拿进来 —— 抓影片、导入演出。
 
-        **用 ``menuBar().addMenu("导入")`` 建**，与「文件 / 编辑 / 视图」逐字同一条路：那样菜单
-        才是菜单栏的亲儿子（``addMenu(QMenu)`` 不会把它认到菜单栏名下），在 macOS 的原生菜单栏里
-        才会按原生样式画 —— 一个没有父的 ``QMenu`` 会退成 Qt 自己画的那一份，与相邻几个不一样。
+        与「文件 / 编辑 / 视图」用同一种建法（``menuBar().addMenu(title)``）：``addMenu(QMenu)``
+        不会把菜单认到菜单栏名下，那只菜单会留在外面，四条顶层菜单的父子关系于是不一致。
         """
         menu = self.menuBar().addMenu("导入")
         menu.setToolTipsVisible(True)
