@@ -91,9 +91,9 @@ def _row_of_event_card(window: MainWindow, event_id: int) -> int:
 def _spy_on_browser(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     opened: list[str] = []
 
-    def fake_open(url: str, **_kwargs: object) -> launch.OpenOutcome:
+    def fake_open(url: str) -> launch.OpenOutcome:
         opened.append(url)
-        return launch.OpenOutcome(target_id="movie", where=launch.WHERE_BROWSER)
+        return launch.OpenOutcome(where=launch.WHERE_BROWSER)
 
     monkeypatch.setattr("gallery.ui.window.event_flow.launch.open_in_browser", fake_open)
     return opened

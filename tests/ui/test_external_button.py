@@ -681,7 +681,7 @@ def test_calendar_entry_carries_the_current_level_and_day(
 
     def fake(level: str, day: datetime.date, **_kwargs: object) -> launch.OpenOutcome:
         seen.append((level, day))
-        return launch.OpenOutcome(target_id="google_calendar", where=launch.WHERE_BROWSER)
+        return launch.OpenOutcome(where=launch.WHERE_BROWSER)
 
     monkeypatch.setattr(launch, "open_google_calendar", fake)
     window._enter_calendar()
@@ -700,7 +700,7 @@ def test_selected_day_wins_over_the_anchor(
 
     def fake(level: str, day: datetime.date, **_kwargs: object) -> launch.OpenOutcome:
         seen.append((level, day))
-        return launch.OpenOutcome(target_id="google_calendar", where=launch.WHERE_APP)
+        return launch.OpenOutcome(where=launch.WHERE_APP)
 
     monkeypatch.setattr(launch, "open_google_calendar", fake)
     window._enter_calendar()

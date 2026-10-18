@@ -43,8 +43,6 @@ POLL_SECONDS = 0.4
 class OpenOutcome:
     """打开之后的结果。横幅上那一句由它拼（``ui.banners``），不在这里。"""
 
-    #: 打开的是哪个应用（下拉框里那几项的 id）。
-    target_id: str
     #: 开在 :data:`WHERE_APP` 还是 :data:`WHERE_BROWSER`。
     where: str
     #: 降级或出错的**中文说明**，用户可照着做。没有就是 ``None``。
@@ -78,18 +76,17 @@ def _wait_until(
 
 
 def open_in_browser(url: str, *, runner: Runner | None = None) -> OpenOutcome:
-    """交给系统默认浏览器。**这是降级后的那条路，也是没装 PWA 时的那条。**"""
+    """交给系统默认浏览器。**降级走到这里，没装 PWA 时走到这里，影片网站也走这里。**"""
     run = runner or subprocess_runner
     result = run(["open", url])
     detail = None if result.returncode == 0 else "没能打开浏览器"
-    return OpenOutcome(target_id="google_calendar", where=WHERE_BROWSER, detail=detail)
+    return OpenOutcome(where=WHERE_BROWSER, detail=detail)
 
 
 def open_in_app(
     app: Path,
     url: str,
     *,
-    target_id: str = "google_calendar",
     runner: Runner | None = None,
     sleeper: Callable[[float], None] = time.sleep,
     now: Callable[[], float] = time.monotonic,
@@ -105,11 +102,11 @@ def open_in_app(
     run = runner or subprocess_runner
     launched = run(["open", "-a", str(app)])
     if launched.returncode != 0:
-        return _fallback(url, target_id, "没能启动那个应用", run=run)
+        return _fallback(url, "没能启动那个应用", run=run)
 
     up = _wait_until(lambda: chrome_is_up(run), timeout=chrome_wait, sleeper=sleeper, now=now)
     if not up:
-        return _fallback(url, target_id, "等不到浏览器启动", run=run)
+        return _fallback(url, "等不到浏览器启动", run=run)
 
     # 探针只跑一次，最后那个序号从闭包里取 —— 每多枚举一轮就是多跑一次 AppleScript，
     # 而这一轮里用户正等着。
@@ -123,10 +120,10 @@ def open_in_app(
         return True
 
     if not _wait_until(probe, timeout=window_wait, sleeper=sleeper, now=now):
-        return _fallback(url, target_id, "没认出那个应用的窗口", run=run)
+        return _fallback(url, "没认出那个应用的窗口", run=run)
     if not set_window_url(found[0], url, run):
-        return _fallback(url, target_id, "没能改写那个窗口的地址", run=run)
-    return OpenOutcome(target_id=target_id, where=WHERE_APP)
+        return _fallback(url, "没能改写那个窗口的地址", run=run)
+    return OpenOutcome(where=WHERE_APP)
 
 
 def _peek_pwa_window(runner: Runner) -> int | None:
@@ -134,7 +131,7 @@ def _peek_pwa_window(runner: Runner) -> int | None:
     return find_pwa_window(list_windows(runner), HOST)
 
 
-def _fallback(url: str, target_id: str, reason: str, *, run: Runner) -> OpenOutcome:
+def _fallback(url: str, reason: str, *, run: Runner) -> OpenOutcome:
     """降级：**真的去开浏览器**，并把「为什么降级」一起带回去。
 
     别只改一个 ``where=WHERE_BROWSER`` 就完事 —— 那样横幅会说「已改用浏览器打开」，
@@ -142,12 +139,8 @@ def _fallback(url: str, target_id: str, reason: str, *, run: Runner) -> OpenOutc
     """
     outcome = open_in_browser(url, runner=run)
     if outcome.detail:
-        return OpenOutcome(
-            target_id=target_id, where=WHERE_BROWSER, detail=f"{reason}，浏览器也没能打开"
-        )
-    return OpenOutcome(
-        target_id=target_id, where=WHERE_BROWSER, detail=f"{reason}，已改用浏览器打开"
-    )
+        return OpenOutcome(where=WHERE_BROWSER, detail=f"{reason}，浏览器也没能打开")
+    return OpenOutcome(where=WHERE_BROWSER, detail=f"{reason}，已改用浏览器打开")
 
 
 def open_google_calendar(
@@ -170,7 +163,7 @@ def open_google_calendar(
     app = find_chrome_pwa(HOST, search_dirs=search_dirs)
     if app is None:
         return open_in_browser(url, runner=run)
-    return open_in_app(app, url, target_id="google_calendar", runner=run, sleeper=sleeper, now=now)
+    return open_in_app(app, url, runner=run, sleeper=sleeper, now=now)
 
 
 __all__ = [

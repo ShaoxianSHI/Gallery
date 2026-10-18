@@ -370,7 +370,7 @@ def test_undo_banner_for_a_clean_place_undo_says_it_is_back() -> None:
 
 
 def test_external_banner_says_it_opened_in_the_app() -> None:
-    outcome = OpenOutcome(target_id="google_calendar", where=WHERE_APP)
+    outcome = OpenOutcome(where=WHERE_APP)
     assert (
         banners.external_app_opened(outcome, "Google 日历") == "已在 Google 日历中打开当前这一页。"
     )
@@ -379,14 +379,13 @@ def test_external_banner_says_it_opened_in_the_app() -> None:
 def test_external_banner_says_it_opened_in_the_browser() -> None:
     """**开在浏览器里也要说出来**：那是浏览器里的一个网页，标签栏还在，
     与那个独立窗口完全不是一回事；说成同一句话，下次他就以为出了故障。"""
-    outcome = OpenOutcome(target_id="google_calendar", where=WHERE_BROWSER)
+    outcome = OpenOutcome(where=WHERE_BROWSER)
     assert banners.external_app_opened(outcome, "Google 日历") == "已在浏览器中打开 Google 日历。"
 
 
 def test_external_banner_keeps_the_reason_of_a_fallback() -> None:
     """降级时那句「为什么」是主语 —— 横幅照实说，别把它吞成一句「已打开」。"""
     outcome = OpenOutcome(
-        target_id="google_calendar",
         where=WHERE_BROWSER,
         detail="没认出那个应用的窗口，已改用浏览器打开",
     )
