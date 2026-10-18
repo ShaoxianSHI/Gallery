@@ -59,7 +59,7 @@ def os_reason(exc: OSError, *, is_dir: bool = False, action: str | None = None) 
             if is_dir
             else "请检查它是不是只读，或者正被别的程序打开着。"
         )
-        return f"没有权限（{reason}）。{hint}"
+        return f"没有权限，系统返回 {reason}。{hint}"
     if exc.errno == errno.ENAMETOOLONG or "File name too long" in reason or "文件名太长" in reason:
         return "名字太长，这个磁盘放不下。"
     prefix = f"{action}失败：" if action else ""

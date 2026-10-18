@@ -452,7 +452,7 @@ def test_moving_into_the_album_it_is_already_in_makes_a_copy(
     root = window._library.root
     assert (root / "京都" / "一张.jpg").exists(), "源必须还在原地"
     assert (root / "京都" / "一张的副本.jpg").exists()
-    assert "已复制一份（一张的副本.jpg）" in window._banner.text()
+    assert "已复制一份，新名字是「一张的副本.jpg」" in window._banner.text()
     assert "⌘Z" not in window._banner.text(), "没有东西进过撤销栈，不许许这个诺"
 
 

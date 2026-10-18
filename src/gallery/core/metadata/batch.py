@@ -138,7 +138,7 @@ class ExifToolBatchSource:
                 if time.monotonic() > deadline:
                     _terminate(process)
                     raise MetadataError(
-                        f"读取元数据超时（超过 {self._timeout:g} 秒）：这一批照片。",
+                        f"读取元数据超时，超过 {self._timeout:g} 秒：这一批照片。",
                         detail=f"命令：{' '.join(argv[:3])} …",
                     )
         finally:

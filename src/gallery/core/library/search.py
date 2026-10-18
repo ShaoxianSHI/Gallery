@@ -374,8 +374,8 @@ def unusable_reason(field: SearchField, value: str) -> str:
             return f"的区间写反了：「{left}」在「{right}」后面，起始要写在前面。"
         return (
             "要一个日期：2024、2024-05、2024-05-16；"
-            f"要一段区间就写成 2023{RANGE_SEPARATOR}2024"
-            f"（{RANGE_SEPARATOR} 前后可以有空格，{HALF_WIDTH_RANGE_SEPARATOR} 也认）。"
+            f"要一段区间就写成 2023{RANGE_SEPARATOR}2024，"
+            f"{RANGE_SEPARATOR} 前后可以有空格，{HALF_WIDTH_RANGE_SEPARATOR} 也认。"
         )
     return f"这一栏要一个值，例如 {field.hint or '关键词'}。"
 

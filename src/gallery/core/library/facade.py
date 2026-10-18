@@ -849,7 +849,7 @@ class Library:
             try:
                 self.set_event_cover(outcome.event.id, saved.created)
             except GalleryError as exc:
-                failures.append(f"{movie.code}：没能设成封面（{exc.message}）")
+                failures.append(f"{movie.code}：没能设成封面，{exc.message}")
             created += 1
             files.append(saved.created)
             existing.add(movie.ref)

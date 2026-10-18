@@ -42,7 +42,7 @@ class ScanReport:
             parts.append(f"{len(self.unreadable_files)} 个文件无法读取")
         if not parts:
             return ""
-        return "、".join(parts) + "（可能是权限问题，或外接盘已断开）"
+        return "、".join(parts) + "，可能是权限问题或外接盘已断开。"
 
 
 def iter_photos(

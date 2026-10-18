@@ -148,7 +148,8 @@ def movies_imported_banner(outcome: MovieImportOutcome) -> str:
         parts.append("没能记下操作日志")
     if outcome.failures:
         more = f"，共 {len(outcome.failures)} 部" if len(outcome.failures) > 1 else ""
-        parts.append(f"{outcome.failures[0]}{more}")
+        # 失败原因通常会带句号，这里去掉：拼接用的是分号，末尾还会再补一个句号。
+        parts.append(f"{outcome.failures[0].rstrip('。')}{more}")
     if not parts:
         return "没有导入任何影片。"
     return "；".join(parts) + "。"
@@ -203,7 +204,7 @@ def orphans_forgotten_banner(removed: int) -> str:
     """清完之后。**说清删的是记录、不是照片** —— 用户怕的是后者。"""
     if removed <= 0:
         return "没有清掉任何记录。"
-    return f"已清掉 {removed} 条指向已不存在照片的记录（照片本身没有动过）。"
+    return f"已清掉 {removed} 条指向已不存在照片的记录，照片本身没有动过。"
 
 
 def _orphan_headline(scan: OrphanScan) -> str:
@@ -267,7 +268,7 @@ def duplicate_banner(result: PasteResult) -> str:
     if result.pasted:
         head = f"已复制 {len(result.pasted)} 份副本"
         if len(result.pasted) == 1:
-            head += f"（{result.pasted[0].created.name}）"
+            head += f"，新名字是「{result.pasted[0].created.name}」"
         parts.append(head)
     if result.failures:
         parts.append(_failure_clause(result.failures, fail_verb="复制"))
@@ -304,7 +305,10 @@ def _stayed_put_clause(copied: Sequence[PastedFile], target_name: str) -> str:
     """「移动到相册」而目标正是它所在的那一层：不说跳过，说复制了一份（ADR 0044）。"""
     if len(copied) == 1:
         item = copied[0]
-        return f"{item.source.name} 本来就在「{target_name}」里，已复制一份（{item.created.name}）"
+        return (
+            f"{item.source.name} 本来就在「{target_name}」里，"
+            f"已复制一份，新名字是「{item.created.name}」"
+        )
     return f"另有 {len(copied)} 项本来就在「{target_name}」里，各复制了一份"
 
 
@@ -338,9 +342,9 @@ def _into_album_parts(
         head = f"已{done_verb} {len(moved)} 项到「{target_name}」"
         renamed = [item for item in moved if item.renamed]
         if len(renamed) == 1:
-            head += f"（「{renamed[0].source.name}」改名为「{renamed[0].created.name}」）"
+            head += f"，「{renamed[0].source.name}」改名为「{renamed[0].created.name}」"
         elif renamed:
-            head += f"（其中 {len(renamed)} 项改了名，免得覆盖已有的）"
+            head += f"，其中 {len(renamed)} 项改了名，免得覆盖已有的"
         parts.append(head)
     if failures:
         parts.append(_failure_clause(failures, fail_verb=fail_verb))

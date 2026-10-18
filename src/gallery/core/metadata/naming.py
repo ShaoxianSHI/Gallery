@@ -44,10 +44,10 @@ def clean_name(name: str, *, error: type[GalleryError]) -> str:
         if char in cleaned:
             raise error("名字里不能带「/」：改名只改名字，不会移动文件。")
     if any(ord(char) < 32 or ord(char) == 127 for char in cleaned):
-        raise error("名字里不能有控制字符（回车、Tab 等）。")
+        raise error("名字里不能有回车、Tab 等控制字符。")
     size = len(cleaned.encode("utf-8"))
     if size > MAX_NAME_BYTES:
-        raise error(f"名字太长了（{size} 字节）：单个文件名最多 {MAX_NAME_BYTES} 字节。")
+        raise error(f"名字太长了：{size} 字节，最多只能 {MAX_NAME_BYTES} 字节。")
     return cleaned
 
 

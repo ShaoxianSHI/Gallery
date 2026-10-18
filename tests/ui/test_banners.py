@@ -15,7 +15,7 @@ import pytest
 from gallery.core.events.models import shorten_name
 from gallery.core.events.store import Event, EventWriteOutcome
 from gallery.core.external.launch import WHERE_APP, WHERE_BROWSER, OpenOutcome
-from gallery.core.library.facade import MetadataWriteOutcome
+from gallery.core.library.facade import MetadataWriteOutcome, MovieImportOutcome
 from gallery.core.library.photos import FolderRef, PhotoRef
 from gallery.core.metadata.failures import Failure
 from gallery.core.metadata.journal import ACTION_METADATA, ACTION_MOVE, ACTION_RENAME
@@ -121,7 +121,29 @@ def test_the_duplicate_banner_names_the_copy_it_made(tmp_path: Path) -> None:
 
     text = banners.duplicate_banner(result)
 
-    assert text == "已复制 1 份副本（a的副本.jpg）。"
+    assert text == "已复制 1 份副本，新名字是「a的副本.jpg」。"
+    assert "（" not in text, "横幅不放括号解释，名字也要写成一句话"
+
+
+def test_the_movie_import_banner_does_not_double_the_final_stop() -> None:
+    """失败原因自带句号，拼进来的那一句不该再补一个 —— 「。。」与「。，」都是坏标点。"""
+    outcome = MovieImportOutcome(created=1, failures=("ABC-123：源站没有这个编号。",))
+
+    text = banners.movies_imported_banner(outcome)
+
+    assert text == "已导入 1 部影片；ABC-123：源站没有这个编号。"
+    assert "。。" not in text
+
+
+def test_the_movie_import_banner_lists_the_count_after_the_first_failure() -> None:
+    """多条失败只报第一条与条数 —— 条数要接在去掉句号的那一句后面，不能出现「。，」。"""
+    outcome = MovieImportOutcome(failures=("ABC-123：源站没有这个编号。", "DEF-456：网络不通。"))
+
+    text = banners.movies_imported_banner(outcome)
+
+    assert text == "ABC-123：源站没有这个编号，共 2 部。"
+    assert "。，" not in text
+    assert "。。" not in text
 
 
 def test_the_duplicate_banner_counts_when_there_are_many(tmp_path: Path) -> None:
@@ -497,3 +519,11 @@ def test_a_long_event_name_is_elided_in_the_undo_banner() -> None:
 
     assert shorten_name(long_name) in text
     assert long_name not in text
+
+
+def test_forgetting_orphans_says_the_photos_were_not_touched() -> None:
+    """「照片本身没有动过」要留着 —— 但写成一个分句，不放进括号里。"""
+    text = banners.orphans_forgotten_banner(3)
+
+    assert text == "已清掉 3 条指向已不存在照片的记录，照片本身没有动过。"
+    assert "（" not in text

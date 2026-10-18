@@ -62,7 +62,7 @@ def save_downloaded_file(
         write_bytes_atomic(created, data)
     except OSError as exc:
         raise MovieImportError(
-            f"没能把封面写进「{destination.name}」（{exc.strerror}）。", path=destination
+            f"没能把封面写进「{destination.name}」：{exc.strerror}。", path=destination
         ) from exc
 
     journaled = append_record(

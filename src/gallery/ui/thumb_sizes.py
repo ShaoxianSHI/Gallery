@@ -101,7 +101,7 @@ def nearest_index(edge: int | None) -> int:
 
 def describe(index: int) -> str:
     """刚切档时的提示：说出档位与目标长边。"""
-    return f"缩略图：{label_for_index(index)}（目标 {edge_for_index(index)} 像素）"
+    return f"缩略图：{label_for_index(index)}，目标 {edge_for_index(index)} 像素"
 
 
 def describe_actual(index: int, edge: int) -> str:

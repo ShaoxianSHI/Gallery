@@ -102,7 +102,7 @@ class HttpTransport:
                 if attempt < self.retries:
                     time.sleep(min(2**attempt, 30))
                     continue
-        raise MovieImportError(f"连不上源站，稍后再试（{last or '未知原因'}）。")
+        raise MovieImportError(f"连不上源站，稍后再试：{last or '未知原因'}。")
 
     def _throttle(self) -> None:
         if self.delay <= 0:

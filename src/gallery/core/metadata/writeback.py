@@ -258,7 +258,7 @@ class ExifToolWriter:
             )
         except subprocess.TimeoutExpired as exc:
             raise MetadataWriteError(
-                f"{action}元数据超时（超过 {self._timeout:g} 秒）：{path.name}。稍后再试一次。",
+                f"{action}元数据超时，超过 {self._timeout:g} 秒：{path.name}。稍后再试一次。",
                 path=path,
                 detail=str(exc),
             ) from exc
@@ -403,7 +403,7 @@ def _nothing_to_write(assignments: Sequence[Assignment], path: Path) -> str:
     if not dropped:
         return "没有要写入的改动。"
     return (
-        f"「{Path(path).name}」存不下要写的字段（{'、'.join(dropped)}）："
+        f"「{Path(path).name}」存不下要写的字段：{'、'.join(dropped)}。"
         f"这种格式放不了它们，一个字都没写进去。"
     )
 
@@ -450,7 +450,7 @@ def _apply(path: Path, changes: Sequence[FieldChange], tool: MetadataWriter) -> 
     except MetadataWriteError as exc:
         raise MetadataWriteError(
             f"写入没有生效，而且没能恢复原值：{'、'.join(mismatched)}。"
-            f"请检查这张照片（{exc.message}）。",
+            f"请检查这张照片：{exc.message.rstrip('。')}。",
             path=path,
             detail=f"{detail}；回滚也失败了：{exc.detail}",
         ) from exc
@@ -462,7 +462,7 @@ def _apply(path: Path, changes: Sequence[FieldChange], tool: MetadataWriter) -> 
     if unrestored:
         raise MetadataWriteError(
             f"写入没有生效，而且这几个字段的原值没能恢复：{'、'.join(unrestored)}。"
-            f"请打开这张照片核对一下这几个值（{'、'.join(mismatched)} 本次没有写成功）。",
+            f"请打开这张照片核对这几个值：{'、'.join(mismatched)} 本次没有写成功。",
             path=path,
             detail=f"{detail}；回滚之后这些字段仍然不是原值：{unrestored}",
         )
@@ -667,7 +667,7 @@ def _explain(stderr: str, *, path: Path, action: str) -> str:
     if "no space left" in lowered or "磁盘空间不足" in lowered:
         return f"磁盘满了，写不进「{path.name}」：腾出点空间再试。"
     if any(marker in lowered for marker in _UNSUPPORTED_MARKERS):
-        return f"这个格式改不了「{path.name}」的元数据（{_first_line(stderr)}）。"
+        return f"这个格式改不了「{path.name}」的元数据：{_first_line(stderr)}。"
     if "not enough room" in lowered or "truncated" in lowered:
         return f"「{path.name}」写不下了：文件结构没有足够的空间放这个字段。"
     if "error" in lowered:

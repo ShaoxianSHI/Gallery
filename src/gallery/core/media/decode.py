@@ -261,14 +261,14 @@ def _unreachable_message(path: Path) -> str:
     「已损坏」去抢救文件只会白忙一场。
     """
     return (
-        f"读不出 {path.name}：文件可能还没下载完（云盘同步中的照片），"
-        f"或者正被别的程序占用。等它下载完再打开即可。"
+        f"读不出 {path.name}：文件可能还没下载完，比如云盘同步中的照片，"
+        f"也可能正被别的程序占用。等它下载完再打开即可。"
     )
 
 
 def _unidentified_message(path: Path) -> str:
     if path.suffix.lower() in {".heic", ".heif"} and not HEIF_SUPPORT:
-        return f"缺少 HEIC/HEIF 解码支持，无法打开 {path.name}（需要 pillow-heif）。"
+        return f"缺少 HEIC/HEIF 解码支持，无法打开 {path.name}。安装 pillow-heif 后即可。"
     return f"这不是一张能识别的图片：{path.name}。文件内容可能与扩展名不符。"
 
 

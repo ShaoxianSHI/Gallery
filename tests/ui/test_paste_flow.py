@@ -516,7 +516,7 @@ def test_pasting_in_the_same_folder_makes_a_copy(
         "一张的副本.jpg",
         "另一张.jpg",
     ]
-    assert message == "已粘贴 1 项到「京都」（「一张.jpg」改名为「一张的副本.jpg」）。"
+    assert message == "已粘贴 1 项到「京都」，「一张.jpg」改名为「一张的副本.jpg」。"
 
 
 def test_a_group_inside_one_album_pastes_into_that_album(
@@ -559,7 +559,7 @@ def test_pasting_a_photo_of_that_same_album_from_a_group_makes_a_copy(
     message = _paste_and_wait(qt_app, window)
 
     assert (root / "京都" / "另一张的副本.jpg").is_file()
-    assert message == "已粘贴 1 项到「京都」（「另一张.jpg」改名为「另一张的副本.jpg」）。"
+    assert message == "已粘贴 1 项到「京都」，「另一张.jpg」改名为「另一张的副本.jpg」。"
 
 
 def test_a_group_spanning_albums_has_nowhere_to_paste(
@@ -636,7 +636,7 @@ def test_renamed_duplicate_is_named_in_the_banner(
     message = _paste_and_wait(qt_app, window)
 
     assert (root / "奈良" / "一张 2.jpg").is_file()
-    assert message == "已粘贴 1 项到「奈良」（「一张.jpg」改名为「一张 2.jpg」）。"
+    assert message == "已粘贴 1 项到「奈良」，「一张.jpg」改名为「一张 2.jpg」。"
 
 
 def test_saying_so_when_the_clipboard_is_empty(qt_app: QApplication, window: MainWindow) -> None:

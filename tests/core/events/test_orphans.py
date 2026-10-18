@@ -300,7 +300,7 @@ def test_an_unnamed_event_still_gets_a_word_in_the_prompt() -> None:
         missing=(Orphan(path=Path("/库/a.jpg"), event_id=1, event_title=""),),
     )
 
-    assert scan.event_titles() == ("（未命名）",)
+    assert scan.event_titles() == ("未命名",)
 
 
 def test_an_empty_scan_says_so_and_deletes_nothing(library: Library) -> None:

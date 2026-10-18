@@ -324,7 +324,7 @@ class LibraryFlowMixin:
             # 摆在 ``_activate_library`` **之后**：它开头就把横幅收干净了。
             self._show_banner(
                 f"「{library.display_name}」这个文件夹写不进去，Gallery 没法在里面建配置目录。"
-                "浏览、分组、搜索都正常，只是元数据索引这次不落盘 —— 下次打开要重读一遍。"
+                "浏览、分组、搜索都正常，只是索引这次不落盘，下次打开要重读一遍。"
             )
         return True
 

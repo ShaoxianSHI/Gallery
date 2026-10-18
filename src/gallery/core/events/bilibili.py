@@ -34,10 +34,10 @@ SITE: Final = "https://www.bilibili.com"
 #: 所以「删了」「私密」「还在审核」分得清楚 —— 混成一句「取不到」会把人支到错的下一步。
 _PROBLEMS: Final[dict[int, str]] = {
     -400: "B 站说这个编号不合法",
-    -403: "B 站不让看这个稿件（权限不足）",
+    -403: "B 站不让看这个稿件，权限不足",
     -404: "B 站上没有这个稿件",
-    -352: "B 站这次的风控没放行，过一会儿再试（也可以先在浏览器里打开它）",
-    62002: "这个稿件不可见（可能删掉了或设成了私密）",
+    -352: "B 站这次的风控没放行，过一会儿再试，也可以先在浏览器里打开它",
+    62002: "这个稿件不可见，可能删掉了或设成了私密",
     62004: "这个稿件还在审核中，过一会儿再试",
     62012: "这个稿件只有 UP 主自己看得见",
 }
@@ -153,9 +153,9 @@ def problem_of(payload: Mapping[str, object], code: str) -> MovieImportError:
     status = payload.get("code")
     known = _PROBLEMS.get(status) if isinstance(status, int) else None
     if known is not None:
-        return MovieImportError(f"{known}（{code}）。")
+        return MovieImportError(f"{known}：{code}。")
     message = _text(payload.get("message"))
-    tail = f"（{message}）" if message else ""
+    tail = f"，{message}" if message else ""
     return MovieImportError(f"B 站没给出这个稿件的资料：错误码 {status}{tail}。")
 
 
@@ -169,7 +169,7 @@ def view_of(payload: Mapping[str, object], code: str) -> MovieInfo:
         raise problem_of(payload, code)
     data = payload.get("data")
     if not isinstance(data, Mapping):
-        raise MovieImportError(f"B 站没给出这个稿件的资料（{code}）。")
+        raise MovieImportError(f"B 站没给出这个稿件的资料：{code}。")
     bvid = _text(data.get("bvid")) or code
     owner = data.get("owner")
     season = data.get("ugc_season")
@@ -248,9 +248,9 @@ def _json(raw: str, code: str) -> Mapping[str, object]:
     try:
         payload = json.loads(raw)
     except ValueError as exc:
-        raise MovieImportError(f"B 站给出的资料读不懂（{code}）。") from exc
+        raise MovieImportError(f"B 站给出的资料读不懂：{code}。") from exc
     if not isinstance(payload, Mapping):
-        raise MovieImportError(f"B 站给出的资料不是一份稿件信息（{code}）。")
+        raise MovieImportError(f"B 站给出的资料不是一份稿件信息：{code}。")
     return payload
 
 

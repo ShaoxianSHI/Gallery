@@ -134,7 +134,7 @@ def test_one_photo_gets_one_copy(qt_app: QApplication, window: MainWindow) -> No
         "另一张.jpg",
     ]
     assert (window._library.root / "京都" / "一张.jpg").read_bytes() == before
-    assert message == "已复制 1 份副本（一张的副本.jpg）。"
+    assert message == "已复制 1 份副本，新名字是「一张的副本.jpg」。"
 
 
 def test_several_photos_each_get_a_copy(qt_app: QApplication, window: MainWindow) -> None:

@@ -311,8 +311,8 @@ class SearchFlowMixin:
         if not self._has_exiftool or not condition.field.needs_metadata:
             return
         self._show_banner(
-            f"没装 exiftool，「{condition.field.label}」这个字段读不出来"
-            "（文件名、相册、格式、大小不受影响）。安装后即可使用：brew install exiftool"
+            f"没装 exiftool，「{condition.field.label}」这个字段读不出来。"
+            "文件名、相册、格式、大小不受影响。安装后即可使用：brew install exiftool"
         )
 
     def _on_search_dismissed(self) -> None:

@@ -134,7 +134,7 @@ def read_metadata(
         stat = path.stat()
     except OSError as exc:
         raise MetadataError(
-            f"读不到这个文件：{path.name}（{exc.strerror or exc}）。",
+            f"读不到这个文件：{path.name}，{exc.strerror or exc}。",
             path=path,
             detail=str(exc),
         ) from exc

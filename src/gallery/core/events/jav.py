@@ -190,9 +190,7 @@ def no_search_results(html: str, code: str) -> MovieImportError:
     """
     if _EMPTY_PAGE_RE.search(html):
         return MovieImportError(f"源站没有这个编号：{code}。换一个试试，或者确认它的写法。")
-    return MovieImportError(
-        f"源站没给出搜索结果（{code}）：多半是被限速或挡住了，等一会儿再试一次。"
-    )
+    return MovieImportError(f"源站没给出搜索结果：{code}。多半是被限速或挡住了，等一会儿再试一次。")
 
 
 def parse_detail(html: str, code: str, *, base: str, hit: SearchHit | None = None) -> MovieInfo:

@@ -77,7 +77,7 @@ class OrphanScan:
             source = self.chosen(include_vanished=include_vanished)
         seen: dict[str, None] = {}
         for orphan in source:
-            seen.setdefault(orphan.event_title or "（未命名）", None)
+            seen.setdefault(orphan.event_title or "未命名", None)
         return tuple(seen)
 
 
