@@ -26,6 +26,8 @@ SYNC_MEMBERS = (
     "_update_breadcrumb",
     "_update_action_states",
     "_sync_order_actions",
+    # 设置菜单的勾选态也由「当前偏好 + 这个库的配置」算出来（ADR 0073），换库后要跟着变。
+    "_sync_settings",
 )
 
 #: 编排点自己那份文件（豁免）。

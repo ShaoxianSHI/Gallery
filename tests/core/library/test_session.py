@@ -2,7 +2,7 @@
 
 会话状态不是数据：损坏、乱填、缺字段都必须静默回退，绝不能因为它打不开软件。
 
-**这里只测应用级的那两样**（最近打开过哪些库、窗口几何）。库级的界面偏好在
+**这里只测应用级的那几样**（最近打开过哪些库、窗口几何、与库无关的偏好）。库级的界面偏好在
 ``config.toml`` 里，见 ``test_config.py`` —— 拆开的那一刀是 ADR 0038 决策 4。
 """
 
@@ -15,6 +15,7 @@ from gallery.core import paths
 from gallery.core.library.session import (
     MAX_RECENT_ROOTS,
     SESSION_VERSION,
+    Preferences,
     SessionState,
     WindowGeometry,
     legacy_ui_state,
@@ -116,8 +117,8 @@ def test_save_creates_parent_directory(tmp_path: Path) -> None:
     assert paths.app_state_file(base=base).is_file()
 
 
-def test_the_written_file_holds_only_the_two_app_level_fields(tmp_path: Path) -> None:
-    """**写出去的只有最近打开列表与窗口几何**（ADR 0038 决策 4）。
+def test_the_written_file_holds_only_the_app_level_fields(tmp_path: Path) -> None:
+    """**写出去的只有应用级的东西**（ADR 0038 决策 4、ADR 0073）。
 
     库级的七个字段由 :func:`legacy_ui_state` 读，但**再也不会被写回来** ——
     留着它们就等于同一个值有两处来源，下次读的时候说不清听谁的。
@@ -126,7 +127,68 @@ def test_the_written_file_holds_only_the_two_app_level_fields(tmp_path: Path) ->
 
     payload = json.loads(paths.app_state_file(base=tmp_path).read_text(encoding="utf-8"))
 
-    assert set(payload) == {"version", "recent_roots", "window"}
+    assert set(payload) == {"version", "recent_roots", "window", "preferences"}
+    assert payload["preferences"] == {
+        "animation_speed": "normal",
+        "appearance": "system",
+        "slideshow_seconds": 3,
+        "open_last_library": True,
+    }
+
+
+def test_preferences_round_trip(tmp_path: Path) -> None:
+    preferences = Preferences(
+        animation_speed="off",
+        appearance="dark",
+        slideshow_seconds=8,
+        open_last_library=False,
+    )
+
+    save_session(SessionState(preferences=preferences), base=tmp_path)
+
+    assert load_session(base=tmp_path).preferences == preferences
+
+
+def test_an_old_session_without_preferences_gets_the_defaults(tmp_path: Path) -> None:
+    """加字段不是版本变更：老文件没有这一项，读出来就是默认值。"""
+    path = paths.app_state_file(base=tmp_path)
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        json.dumps({"version": SESSION_VERSION, "recent_roots": ["/照片/一"]}),
+        encoding="utf-8",
+    )
+
+    state = load_session(base=tmp_path)
+
+    assert state.preferences == Preferences()
+    assert state.recent_roots == (Path("/照片/一"),)
+
+
+def test_unknown_preference_values_fall_back_one_by_one(tmp_path: Path) -> None:
+    """一项坏了只回它自己的默认值，不牵连其余几项（手改过的文件很常见）。"""
+    path = paths.app_state_file(base=tmp_path)
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        json.dumps(
+            {
+                "version": SESSION_VERSION,
+                "preferences": {
+                    "animation_speed": "turbo",
+                    "appearance": "深色",
+                    "slideshow_seconds": 0,
+                    "open_last_library": "no",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    preferences = load_session(base=tmp_path).preferences
+
+    assert preferences.resolved_animation_speed() == "normal"
+    assert preferences.resolved_appearance() == "system"
+    assert preferences.resolved_slideshow_seconds() == 3
+    assert preferences.open_last_library is True
 
 
 def test_a_file_from_another_version_is_not_parsed_as_this_one(tmp_path: Path) -> None:

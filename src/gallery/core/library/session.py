@@ -1,14 +1,14 @@
-"""应用级会话状态：最近打开的库、窗口几何。
+"""应用级会话状态：最近打开的库、窗口几何、与库无关的偏好。
 
 它**不是数据**：会话文件损坏、字段缺失、路径已不存在，都静默回退到默认值 —— 绝不能让
-「记不住上次开了哪个文件夹」变成打不开软件。这里只剩应用级的那两样（ADR 0038 决策 4），
+「记不住上次开了哪个文件夹」变成打不开软件。这里只剩应用级的那几样（ADR 0038 决策 4），
 判据是「打开软件时还不知道要开哪个库」；库级偏好在库的 ``config.toml`` 的 ``[ui]`` 表里。
 """
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Final
 
@@ -36,6 +36,80 @@ LEGACY_UI_KEYS: Final = (
 )
 
 
+#: 动画速度的档位：慢、中、快、关（ADR 0073）。**应用级**，换库不该把它重置。
+ANIMATION_SPEEDS: Final = ("slow", "normal", "fast", "off")
+DEFAULT_ANIMATION_SPEED: Final = "normal"
+
+#: 外观档位：跟随系统、浅色、深色。
+APPEARANCES: Final = ("system", "light", "dark")
+DEFAULT_APPEARANCE: Final = "system"
+
+#: 放映自动前进的默认间隔（秒）。界面上的档位是 3 / 5 / 8 / 15。
+DEFAULT_SLIDESHOW_SECONDS: Final = 3
+MIN_SLIDESHOW_SECONDS: Final = 1
+MAX_SLIDESHOW_SECONDS: Final = 60
+
+
+@dataclass(frozen=True, slots=True)
+class Preferences:
+    """与打开哪个库无关的偏好（ADR 0073），因此进不了任何一份 ``config.toml``。
+
+    每一项都自带「值来路不明就回默认」的解析：这份文件会被手改，也会被老版本写坏。
+    """
+
+    animation_speed: str = DEFAULT_ANIMATION_SPEED
+    appearance: str = DEFAULT_APPEARANCE
+    slideshow_seconds: int = DEFAULT_SLIDESHOW_SECONDS
+    open_last_library: bool = True
+
+    def resolved_animation_speed(self) -> str:
+        """这一档该用的动画速度；不认识的值（老版本、手改坏）回默认。"""
+        if self.animation_speed in ANIMATION_SPEEDS:
+            return self.animation_speed
+        return DEFAULT_ANIMATION_SPEED
+
+    def resolved_appearance(self) -> str:
+        """这一档该用的外观；不认识的值回「跟随系统」。"""
+        if self.appearance in APPEARANCES:
+            return self.appearance
+        return DEFAULT_APPEARANCE
+
+    def resolved_slideshow_seconds(self) -> int:
+        """放映间隔（秒）；越界或类型不对回默认。"""
+        seconds = self.slideshow_seconds
+        if isinstance(seconds, bool) or not isinstance(seconds, int):
+            return DEFAULT_SLIDESHOW_SECONDS
+        if MIN_SLIDESHOW_SECONDS <= seconds <= MAX_SLIDESHOW_SECONDS:
+            return seconds
+        return DEFAULT_SLIDESHOW_SECONDS
+
+    def to_json(self) -> dict[str, object]:
+        return {
+            "animation_speed": self.resolved_animation_speed(),
+            "appearance": self.resolved_appearance(),
+            "slideshow_seconds": self.resolved_slideshow_seconds(),
+            "open_last_library": self.open_last_library,
+        }
+
+    @classmethod
+    def from_mapping(cls, value: object) -> Preferences:
+        """读那张表。**任何一项来路不明都只回它自己的默认值**，不牵连其余几项。"""
+        if not isinstance(value, dict):
+            return cls()
+        speed = value.get("animation_speed")
+        appearance = value.get("appearance")
+        seconds = value.get("slideshow_seconds")
+        open_last = value.get("open_last_library")
+        return cls(
+            animation_speed=speed if isinstance(speed, str) else DEFAULT_ANIMATION_SPEED,
+            appearance=appearance if isinstance(appearance, str) else DEFAULT_APPEARANCE,
+            slideshow_seconds=seconds
+            if isinstance(seconds, int) and not isinstance(seconds, bool)
+            else DEFAULT_SLIDESHOW_SECONDS,
+            open_last_library=open_last if isinstance(open_last, bool) else True,
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class WindowGeometry:
     """窗口位置与大小。刻意用普通整数表达，避免 core 依赖 Qt。"""
@@ -57,6 +131,12 @@ class SessionState:
 
     recent_roots: tuple[Path, ...] = ()
     window: WindowGeometry | None = None
+    #: 与库无关的那几项（ADR 0073）。默认值就是「什么都没改过」。
+    preferences: Preferences = field(default_factory=Preferences)
+
+    def with_preferences(self, preferences: Preferences) -> SessionState:
+        """换一份偏好返回新的一份，其余字段原样带过去。"""
+        return replace(self, preferences=preferences)
 
     def with_recent_root(self, root: Path) -> SessionState:
         """把 ``root`` 提到最前面，去重并截断到上限。"""
@@ -80,6 +160,7 @@ def load_session(*, base: Path | None = None) -> SessionState:
     return SessionState(
         recent_roots=_parse_roots(data.get("recent_roots")),
         window=_parse_window(data.get("window")),
+        preferences=Preferences.from_mapping(data.get("preferences")),
     )
 
 
@@ -93,6 +174,7 @@ def save_session(state: SessionState, *, base: Path | None = None) -> None:
         "version": SESSION_VERSION,
         "recent_roots": [str(path) for path in state.recent_roots],
         "window": _window_to_json(state.window),
+        "preferences": state.preferences.to_json(),
     }
     write_text_atomic(
         paths.app_state_file(base=base),
@@ -185,9 +267,17 @@ def _parse_window(value: object) -> WindowGeometry | None:
 
 
 __all__ = [
+    "ANIMATION_SPEEDS",
+    "APPEARANCES",
+    "DEFAULT_ANIMATION_SPEED",
+    "DEFAULT_APPEARANCE",
+    "DEFAULT_SLIDESHOW_SECONDS",
     "LEGACY_UI_KEYS",
     "MAX_RECENT_ROOTS",
+    "MAX_SLIDESHOW_SECONDS",
+    "MIN_SLIDESHOW_SECONDS",
     "SESSION_VERSION",
+    "Preferences",
     "SessionState",
     "WindowGeometry",
     "legacy_ui_state",

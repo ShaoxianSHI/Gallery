@@ -507,11 +507,13 @@ def _read_int(data: Mapping[str, object], key: str, default: int, *, source: Pat
     return value
 
 
-def _read_movie_site(data: Mapping[str, object], default: str, *, source: Path | None) -> str:
-    """``movie_site``：影片网站的前缀。**非空、且是 http(s) 地址** —— 它会被拼进一个真去打开的
-    URL，一个手滑写进去的 ``jav`` 只会让「打开影片」点了没反应（ADR 0063）。
+def normalize_movie_site(value: object, *, source: Path | None = None) -> str:
+    """校验影片网站前缀。**非空、且是 http(s) 地址** —— 它会被拼进一个真去打开的 URL，一个
+    手滑写进去的 ``jav`` 只会让「打开影片」点了没反应（ADR 0063）。
+
+    写配置与读配置共用这一处：两边的判据一旦分叉，手改得进去的值界面就存不进去。尾斜杠
+    不在这里去掉 —— 拼地址时 ``jav.movie_url`` 自己会去，而配置文件要原样读回用户写的。
     """
-    value = data.get("movie_site", default)
     if not isinstance(value, str) or not value.strip():
         raise ConfigError(
             f"配置项 movie_site 必须是影片网站的前缀，例如 "
@@ -525,7 +527,18 @@ def _read_movie_site(data: Mapping[str, object], default: str, *, source: Path |
             f'例如 "{DEFAULT_MOVIE_SITE}"。',
             path=source,
         )
+    # ``https://`` 本身也以 http(s) 开头，却拼不出任何地址。
+    if not text.split("://", 1)[1]:
+        raise ConfigError(
+            f"配置项 movie_site 只有协议头、没有站点，当前是 {value!r}。"
+            f'例如 "{DEFAULT_MOVIE_SITE}"。',
+            path=source,
+        )
     return text
+
+
+def _read_movie_site(data: Mapping[str, object], default: str, *, source: Path | None) -> str:
+    return normalize_movie_site(data.get("movie_site", default), source=source)
 
 
 def _toml_bool(value: bool) -> str:
@@ -569,6 +582,7 @@ __all__ = [
     "LibraryUIState",
     "discard_legacy_thumb_cache",
     "load_config",
+    "normalize_movie_site",
     "prepare_library",
     "save_config",
 ]

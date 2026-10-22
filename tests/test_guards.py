@@ -576,6 +576,7 @@ TOP_LEVEL_MODULES: Final[dict[str, str | None]] = {
     "imaging": None,  # browser / calendar / thumbs / window 四个包都用它
     "chips": None,  # 网格页的面包屑与日历的工具条摆同一批条件胶囊
     "layout": None,  # calendar 的工具条与窗口那几个面板都要拆控件（顺序错了会留下顶层小白窗）
+    "motion": None,  # browser 的切档过渡与 viewer 的淡入淡出共用同一份速度缩放
     "outline": None,  # dialogs（两个编辑器）与 window（搜索框、菜单）两族
     "rename_edit": None,  # browser 的格子与 window 的标题栏共用同一个输入框
     "scrollbar_style": None,  # 网格、周视图、元数据面板三条滚动条

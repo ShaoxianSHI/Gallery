@@ -362,6 +362,58 @@ def test_setting_a_cover_needs_the_config_dir(tmp_path: Path) -> None:
     assert "没有地方保存" in excinfo.value.message
 
 
+# ---- 设置菜单的库级两项（ADR 0073）-----------------------------------------
+
+
+def test_set_movie_site_writes_the_config(tmp_path: Path) -> None:
+    library = Library.open(tmp_path)
+
+    library.set_movie_site("https://missav.com/en")
+
+    assert library.config.movie_site == "https://missav.com/en"
+    assert load_config(tmp_path).movie_site == "https://missav.com/en"
+
+
+def test_a_bad_movie_site_leaves_the_file_alone(tmp_path: Path) -> None:
+    library = Library.open(tmp_path)
+    before = paths.config_file(tmp_path).read_bytes()
+
+    with pytest.raises(ConfigError):
+        library.set_movie_site("jable.tv")
+
+    assert paths.config_file(tmp_path).read_bytes() == before
+
+
+def test_setting_a_movie_site_needs_the_config_dir(tmp_path: Path) -> None:
+    library = Library.open(tmp_path)
+    library._config_dir_ready = False
+
+    with pytest.raises(ConfigError) as excinfo:
+        library.set_movie_site("https://missav.com/en")
+
+    assert "写不进去" in excinfo.value.message
+
+
+def test_set_cache_limit_reaches_both_the_config_and_the_cache(
+    tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    make_photo("a.jpg")
+    library = Library.open(tmp_path)
+
+    library.set_cache_limit(1024)
+
+    assert library.config.max_cache_bytes == 1024
+    assert library.thumbnails.max_bytes == 1024
+    assert load_config(tmp_path).max_cache_bytes == 1024
+
+
+def test_a_negative_cache_limit_is_refused(tmp_path: Path) -> None:
+    library = Library.open(tmp_path)
+
+    with pytest.raises(ConfigError):
+        library.set_cache_limit(-1)
+
+
 def test_a_cover_from_another_album_is_refused(library_with_album: Library) -> None:
     """兄弟相册里的照片不是这个相册的封面 —— 与解析配置时那条校验同一个判据，
     否则写进去的东西下一次打开库就会变成一句报错。"""

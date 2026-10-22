@@ -14,7 +14,7 @@ __all__ = ["StateSyncMixin"]
 class StateSyncMixin:
     """把「从状态到界面」那几份映射收成一处。
 
-    下面五个方法是**别处那些 mixin 提供的**（``LevelStackMixin._sync_page_to_stack``、
+    下面六个方法是**别处那些 mixin 提供的**（``LevelStackMixin._sync_page_to_stack``、
     ``TitleBarFlowMixin._refresh_title`` 等），本模块不实现它们 —— 它只决定按什么次序调。
     """
 
@@ -30,3 +30,4 @@ class StateSyncMixin:
         self._update_breadcrumb()
         self._update_action_states()
         self._sync_order_actions()
+        self._sync_settings()

@@ -99,6 +99,18 @@ class ThumbnailCache:
     def max_edge(self) -> int:
         return self._max_edge
 
+    @property
+    def max_bytes(self) -> int:
+        return self._max_bytes
+
+    def set_max_bytes(self, max_bytes: int) -> None:
+        """改上限并**当场**按新上限淘汰一次：等下一次写入才生效的话，用户会以为设置没生效。
+
+        0 表示不限制，与配置文件里的口径一致。
+        """
+        self._max_bytes = max_bytes
+        self.enforce_limit()
+
     def get(self, ref: PhotoRef, *, should_cancel: Callable[[], bool] | None = None) -> RasterImage:
         """取缩略图：命中缓存直接读，未命中则解码并落盘。
 

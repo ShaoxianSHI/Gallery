@@ -829,7 +829,8 @@ class LibraryFlowMixin:
         if isinstance(root, Path):
             self.open_library(root)
 
-    def _save_session(self) -> None:
+    def _save_session(self) -> bool:
+        """写出会话状态；返回是否成功。窗口几何记不住不值得打断用户，**改设置则要告诉他**。"""
         geometry = self.geometry()
         self._session = self._session.with_window(
             WindowGeometry(
@@ -843,8 +844,9 @@ class LibraryFlowMixin:
         try:
             save_session(self._session, base=self._session_base)
         except OSError as exc:
-            # 记不住窗口位置不值得打断用户。
             logger.debug("会话状态写入失败：%s", exc)
+            return False
+        return True
 
 
 __all__ = ["LibraryFlowMixin"]

@@ -183,6 +183,17 @@ class RateLimitedAccumulator(StepAccumulator):
         #: 上一次**真的切了档**的时刻（毫秒）；还没切过时是 ``None``。
         self._last_step_at: int | None = None
 
+    @property
+    def min_interval_ms(self) -> int:
+        return self._min_interval_ms
+
+    def set_min_interval(self, min_interval_ms: int) -> None:
+        """换一道最小间隔（动画速度变了）。**不重置上一次切档的时刻**：那条限速原本就是为
+        「上一段动画还没跑完」设的，新的那一段只会更长。"""
+        if min_interval_ms < 0:
+            raise ValueError("最小间隔不能为负数")
+        self._min_interval_ms = min_interval_ms
+
     def feed(self, delta: float) -> int:
         """喂入一个增量，返回本次应切换的档数；**间隔不足时直接返回 0**，增量也不累加。"""
         now = self._clock()

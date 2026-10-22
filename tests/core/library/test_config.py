@@ -29,6 +29,7 @@ from gallery.core.library.config import (
     discard_legacy_external_index,
     discard_legacy_thumb_cache,
     load_config,
+    normalize_movie_site,
     prepare_library,
     save_config,
 )
@@ -122,7 +123,12 @@ def test_movie_site_round_trips_through_the_file(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     "body",
-    ['movie_site = ""\n', "movie_site = 3\n", 'movie_site = "jable.tv"\n'],
+    [
+        'movie_site = ""\n',
+        "movie_site = 3\n",
+        'movie_site = "jable.tv"\n',
+        'movie_site = "https://"\n',
+    ],
 )
 def test_a_bad_movie_site_is_rejected(tmp_path: Path, body: str) -> None:
     file = paths.config_file(tmp_path)
@@ -133,6 +139,12 @@ def test_a_bad_movie_site_is_rejected(tmp_path: Path, body: str) -> None:
         load_config(tmp_path)
 
     assert "movie_site" in excinfo.value.message
+
+
+def test_normalizing_a_movie_site_only_trims_the_whitespace() -> None:
+    """尾斜杠留给拼地址那一步去掉：配置文件要原样读回用户写的（ADR 0063）。"""
+    assert normalize_movie_site("  https://jable.tv/videos/  ") == "https://jable.tv/videos/"
+    assert normalize_movie_site("https://missav.com/en") == "https://missav.com/en"
 
 
 def test_prepare_library_creates_config(tmp_path: Path) -> None:

@@ -32,7 +32,9 @@ class SlideshowFlowMixin:
         """建放映的状态与计时器；``MainWindow.__init__`` 里只留这一句。"""
         self._slideshow = SlideshowState()
         self._slideshow_timer = QTimer(self)
-        self._slideshow_timer.setInterval(AUTO_ADVANCE_MS)
+        # 间隔是应用级偏好（ADR 0073）；常数只是它从没被改过时的默认值。
+        seconds = self._session.preferences.resolved_slideshow_seconds()
+        self._slideshow_timer.setInterval(seconds * 1000)
         self._slideshow_timer.timeout.connect(self._advance_slideshow)
 
     # ---- 入口 --------------------------------------------------------------

@@ -130,7 +130,13 @@ class TransitionMixin:
 
         reflows = self._transition is not None and self._transition.reflows
         grows = abs(self._edge_to - self._edge_from) >= EDGE_ANIMATION_MIN_DELTA
-        if not animate or still_running or not (reflows or grows):
+        # 「关」档是 0 毫秒：走落位那一条，别启动一个一步也走不了的动画。
+        if (
+            not animate
+            or still_running
+            or not (reflows or grows)
+            or self._transition_duration_ms() <= 0
+        ):
             self._settle_transition()
             return
 

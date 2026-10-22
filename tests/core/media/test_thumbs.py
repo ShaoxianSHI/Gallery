@@ -260,6 +260,31 @@ def test_enforce_limit_evicts_oldest(
     assert limited.total_bytes() == 0
 
 
+def test_raising_the_limit_keeps_the_entries(
+    cache: ThumbnailCache, make_photo: Callable[..., Path]
+) -> None:
+    cache.get(PhotoRef.from_path(make_photo("a.jpg")))
+
+    cache.set_max_bytes(0)
+
+    assert cache.max_bytes == 0
+    assert len(entries(cache)) == 1
+
+
+def test_setting_a_lower_limit_evicts_immediately(
+    cache: ThumbnailCache, make_photo: Callable[..., Path]
+) -> None:
+    """**当场生效**：等下一次写入才淘汰的话，用户会以为设置没生效。"""
+    for index in range(2):
+        cache.get(PhotoRef.from_path(make_photo(f"{index}.jpg", size=(400, 200))))
+    assert len(entries(cache)) == 2
+
+    cache.set_max_bytes(1)
+
+    assert cache.max_bytes == 1
+    assert entries(cache) == []
+
+
 def test_zero_limit_disables_eviction(
     cache: ThumbnailCache, make_photo: Callable[..., Path]
 ) -> None:

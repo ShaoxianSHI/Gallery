@@ -42,6 +42,7 @@ from gallery.core.library.config import (
     discard_legacy_external_index,
     discard_legacy_thumb_cache,
     load_config,
+    normalize_movie_site,
     prepare_library,
     save_config,
 )
@@ -330,6 +331,45 @@ class Library:
         updated = replace(self._config, ui=ui)
         save_config(self._root, updated)
         self._config = updated
+
+    def set_movie_site(self, value: str) -> None:
+        """改「打开影片网站」的前缀并写进 ``config.toml``（ADR 0073）。
+
+        :raises ConfigError: 前缀不合法，或这个库的配置目录写不进去。
+        """
+        site = normalize_movie_site(value)
+        if site == self._config.movie_site:
+            return
+        self._require_writable_config()
+        updated = replace(self._config, movie_site=site)
+        save_config(self._root, updated)
+        self._config = updated
+
+    def set_cache_limit(self, max_bytes: int) -> None:
+        """改缩略图缓存上限（0 = 不限制），并**立刻**按新上限淘汰一次。
+
+        等下一次写入才生效的话，用户会以为设置没生效；而调小上限时该马上腾出空间。
+
+        :raises ConfigError: 取值非法，或这个库的配置目录写不进去。
+        """
+        if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes < 0:
+            raise ConfigError("缩略图缓存上限必须是不小于 0 的整数（0 表示不限制）。")
+        if max_bytes == self._config.max_cache_bytes:
+            return
+        self._require_writable_config()
+        updated = replace(self._config, max_cache_bytes=max_bytes)
+        save_config(self._root, updated)
+        self._config = updated
+        self._thumbnails.set_max_bytes(max_bytes)
+
+    def _require_writable_config(self) -> None:
+        """设置类写入的前置条件：配置目录建得出来才谈得上保存。"""
+        if self._config_dir_ready:
+            return
+        raise ConfigError(
+            f"这个库的配置目录写不进去，设置无法保存：{paths.config_dir(self._root)}。"
+            "只读卷或网络共享上的库只能浏览，改不了设置。"
+        )
 
     def iter_photos(
         self,

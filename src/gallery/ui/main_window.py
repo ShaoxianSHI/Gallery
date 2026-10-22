@@ -68,6 +68,7 @@ from gallery.ui.window.metadata_flow import MetadataFlowMixin
 from gallery.ui.window.navigation_flow import NavigationFlowMixin
 from gallery.ui.window.ordering import OrderingMixin
 from gallery.ui.window.search_flow import SearchFlowMixin
+from gallery.ui.window.settings_flow import SettingsFlowMixin
 from gallery.ui.window.slideshow_flow import SlideshowFlowMixin
 from gallery.ui.window.state.level_stack import (
     LevelStack,
@@ -123,6 +124,7 @@ class MainWindow(
     CalendarFlowMixin,
     WriteOpsMixin,
     EventFlowMixin,
+    SettingsFlowMixin,
     StateSyncMixin,
     QMainWindow,
 ):
@@ -211,7 +213,11 @@ class MainWindow(
 
         if initial_library is not None:
             self.open_library(initial_library)
-        elif self._session.recent_roots and self._session.recent_roots[0].is_dir():
+        elif (
+            self._session.preferences.open_last_library
+            and self._session.recent_roots
+            and self._session.recent_roots[0].is_dir()
+        ):
             # 下次启动回到上次打开的库；**开不起来就静默留在欢迎页** —— 那个库可能只是被移走了。
             self.open_library(self._session.recent_roots[0], silent=True)
 
@@ -221,6 +227,8 @@ class MainWindow(
         self.resize(1280, 860)
         self.setMinimumSize(720, 480)
 
+        # 外观要在建控件之前定下来：那一轮 palette 是逐控件下发的。
+        theme.apply_appearance(self._session.preferences.resolved_appearance())
         theme.ensure_installed()
         # 标题栏那一段交给窗口自己画（否则 macOS 会铺一层半透明材质，与底色差一档），**标题文字**
         # 也得自己画，否则系统那份会与 ``TitleBar`` 叠在一起（ADR 0025）。
@@ -241,7 +249,10 @@ class MainWindow(
         self._welcome.open_requested.connect(self.choose_folder)
         self._welcome.recent_requested.connect(self._on_recent_requested)
 
-        self._grid = PhotoGrid(icon_edge=edge_for_index(self._size_index))
+        self._grid = PhotoGrid(
+            icon_edge=edge_for_index(self._size_index),
+            animation_speed=self._session.preferences.resolved_animation_speed(),
+        )
         self._grid.setModel(self._model)
         self._grid.activated_index.connect(self._on_entry_activated)
         self._grid.background_activated.connect(self._on_background_activated)
@@ -280,7 +291,9 @@ class MainWindow(
         grid_layout.addWidget(self._breadcrumb)
         grid_layout.addWidget(self._grid, 1)
 
-        self._detail = DetailView()
+        self._detail = DetailView(
+            animation_speed=self._session.preferences.resolved_animation_speed()
+        )
         self._detail.request_close.connect(self.show_grid)
         self._detail.request_step.connect(self.step_detail)
         self._detail.pause_requested.connect(self._on_space_pressed)
@@ -625,6 +638,8 @@ class MainWindow(
             )
             size_menu.addAction(action)
             self._size_actions.append(action)
+
+        self.build_settings_menu()
 
         # 不加工具栏：这些命令在 macOS 顶部菜单里都有，再重复一遍只会挤掉照片。
         self._rebuild_recent_menu()

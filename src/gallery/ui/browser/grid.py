@@ -51,6 +51,7 @@ from gallery.ui.browser.transition import (
     GridTransition,
     TransitionMixin,
 )
+from gallery.ui.motion import pinch_interval_ms, scaled_ms
 from gallery.ui.rename_edit import RenameEdit
 from gallery.ui.scrollbar_style import apply_scrollbar_style
 from gallery.ui.thumb_sizes import (
@@ -143,8 +144,15 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
     #: 用户按住 ⌥ 点了一格：打开这一格所属影片事件的网站（ADR 0063）。
     movie_open_requested = Signal(QModelIndex)
 
-    def __init__(self, parent: QWidget | None = None, *, icon_edge: int = DEFAULT_EDGE) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        icon_edge: int = DEFAULT_EDGE,
+        animation_speed: str = "normal",
+    ) -> None:
         super().__init__(parent)
+        self._animation_speed = animation_speed
         self._target_edge = icon_edge
         self._applied_edge = icon_edge
         self._emitted_edge = icon_edge
@@ -193,7 +201,10 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
         self.setItemDelegate(self._delegate)
         # 捏合与滚轮都是连续事件，必须累积到阈值才切一档；捏合另套一道最小间隔，否则手势快
         # 时每次切档都把上一次的动画掐断。⌘+滚轮不限速，连按由 MainWindow 排队。
-        self._pinch_steps = RateLimitedAccumulator(PINCH_THRESHOLD, MIN_PINCH_INTERVAL_MS)
+        self._pinch_steps = RateLimitedAccumulator(
+            PINCH_THRESHOLD,
+            pinch_interval_ms(EDGE_ANIMATION_MS, animation_speed, minimum=MIN_PINCH_INTERVAL_MS),
+        )
         self._wheel_steps = StepAccumulator(WHEEL_STEP_PIXELS)
         #: 滚动时**没走满一个像素**的那一点零头（见 :meth:`_scroll_pixels`）。
         self._wheel_remainder = 0.0
@@ -249,7 +260,7 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
         self._transition_anim.setStartValue(0.0)
         self._transition_anim.setEndValue(1.0)
         self._transition_anim.setEasingCurve(EDGE_ANIMATION_CURVE)
-        self._transition_anim.setDuration(EDGE_ANIMATION_MS)
+        self._transition_anim.setDuration(self._transition_duration_ms())
         self._transition_anim.valueChanged.connect(self._on_transition_step)
         self._transition_anim.finished.connect(self._settle_transition)
         self._transition: GridTransition | None = None
@@ -332,6 +343,17 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
         等 :attr:`transition_ended` 再来。
         """
         return self._transition_anim.state() != QAbstractAnimation.State.Stopped
+
+    def set_animation_speed(self, speed: str) -> None:
+        """换一档动画速度：下一段过渡就用新时长，正在跑的那一段不打断。"""
+        self._animation_speed = speed
+        self._transition_anim.setDuration(self._transition_duration_ms())
+        self._pinch_steps.set_min_interval(
+            pinch_interval_ms(EDGE_ANIMATION_MS, speed, minimum=MIN_PINCH_INTERVAL_MS)
+        )
+
+    def _transition_duration_ms(self) -> int:
+        return scaled_ms(EDGE_ANIMATION_MS, self._animation_speed)
 
     def set_target_edge(self, edge: int) -> None:
         """换一档目标尺寸。真正的格子宽度由视口宽度决定，见 :meth:`_recompute_layout`。"""

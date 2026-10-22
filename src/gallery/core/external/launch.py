@@ -83,6 +83,15 @@ def open_in_browser(url: str, *, runner: Runner | None = None) -> OpenOutcome:
     return OpenOutcome(where=WHERE_BROWSER, detail=detail)
 
 
+def open_folder(path: Path, *, runner: Runner | None = None) -> bool:
+    """在访达里打开一个文件夹（日志目录这类），返回是否成功。
+
+    与「打开网址」分开：这里不降级、不需要 ``OpenOutcome`` —— 打不开就只值得一句中文。
+    """
+    result = (runner or subprocess_runner)(["open", str(path)])
+    return result.returncode == 0
+
+
 def open_in_app(
     app: Path,
     url: str,
@@ -173,6 +182,7 @@ __all__ = [
     "WHERE_BROWSER",
     "WINDOW_WAIT_SECONDS",
     "OpenOutcome",
+    "open_folder",
     "open_google_calendar",
     "open_in_app",
     "open_in_browser",

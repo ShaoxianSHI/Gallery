@@ -161,6 +161,20 @@ def apply_theme(app: QApplication) -> AppTheme:
     return current_theme(app)
 
 
+def apply_appearance(mode: str, app: QApplication | None = None) -> None:
+    """强制浅色 / 深色，或交还系统（``system``）。
+
+    走 ``QStyleHints.setColorScheme``（Qt 6.8+），之后由 :class:`ThemeWatcher` 收
+    ``colorSchemeChanged`` 再下发一轮 —— **这里不手动调** :func:`apply_theme`，否则会把
+    信号发出那一刻的半路调色板钉进整棵控件树。
+    """
+    scheme = {
+        "light": Qt.ColorScheme.Light,
+        "dark": Qt.ColorScheme.Dark,
+    }.get(mode, Qt.ColorScheme.Unknown)
+    _application(app).styleHints().setColorScheme(scheme)
+
+
 def push_palette(widget: QWidget, *, app: QApplication | None = None) -> None:
     """把当前主题的调色板下发到一棵控件树上：主题下发之后才建的控件（搜索框的候选列表）靠它补。"""
     instance = _application(app) if app is None else app
@@ -241,6 +255,7 @@ __all__ = [
     "RESOLVED_ROLES",
     "AppTheme",
     "ThemeWatcher",
+    "apply_appearance",
     "apply_theme",
     "current_theme",
     "ensure_installed",

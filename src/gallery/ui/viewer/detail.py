@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
 )
 
 from gallery.ui import theme
+from gallery.ui.motion import scaled_ms
 from gallery.ui.viewer.zoom import MAX_FIT_SCALE, MAX_SCALE, ZOOM_STEP, clamp_scale, fit_scale
 
 OVERLAY_FONT_SIZE = 13
@@ -120,8 +121,9 @@ class DetailView(QGraphicsView):
     #: 用户按住 ⌥ 点了照片：打开它所属影片事件的网站（ADR 0063）。
     movie_open_requested = Signal()
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, *, animation_speed: str = "normal") -> None:
         super().__init__(parent)
+        self._animation_speed = animation_speed
         self._scene = QGraphicsScene(self)
         self.setScene(self._scene)
         self._item = QGraphicsPixmapItem()
@@ -159,7 +161,7 @@ class DetailView(QGraphicsView):
         self._anim_from_center = QPointF()
         self._anim_to_center = QPointF()
         self._animation = QVariantAnimation(self)
-        self._animation.setDuration(FIT_ANIMATION_MS)
+        self._animation.setDuration(self._animation_ms(FIT_ANIMATION_MS))
         self._animation.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._animation.valueChanged.connect(self._animation_frame)
         self._animation.finished.connect(self._animation_finished)
@@ -168,12 +170,12 @@ class DetailView(QGraphicsView):
         #: 所以新图在底下重新适配窗口时，旧画面不会跟着缩放或移动。
         self._fade_layer: _FadeLayer | None = None
         self._fade_animation = QVariantAnimation(self)
-        self._fade_animation.setDuration(FADE_OUT_MS)
+        self._fade_animation.setDuration(self._animation_ms(FADE_OUT_MS))
         self._fade_animation.setEasingCurve(QEasingCurve.Type.Linear)
         self._fade_animation.valueChanged.connect(self._fade_frame)
         self._fade_animation.finished.connect(self._fade_finished)
         self._fade_in_animation = QVariantAnimation(self)
-        self._fade_in_animation.setDuration(FADE_IN_MS)
+        self._fade_in_animation.setDuration(self._animation_ms(FADE_IN_MS))
         self._fade_in_animation.setEasingCurve(QEasingCurve.Type.Linear)
         self._fade_in_animation.valueChanged.connect(self._fade_in_frame)
         self._fade_in_animation.finished.connect(self._fade_in_finished)
@@ -250,6 +252,16 @@ class DetailView(QGraphicsView):
         self._scene.setSceneRect(QRectF())
         self.resetTransform()
 
+    def set_animation_speed(self, speed: str) -> None:
+        """换一档动画速度：正在跑的那一段不打断，下一段用新时长。"""
+        self._animation_speed = speed
+        self._animation.setDuration(self._animation_ms(FIT_ANIMATION_MS))
+        self._fade_animation.setDuration(self._animation_ms(FADE_OUT_MS))
+        self._fade_in_animation.setDuration(self._animation_ms(FADE_IN_MS))
+
+    def _animation_ms(self, base_ms: int) -> int:
+        return scaled_ms(base_ms, self._animation_speed)
+
     def _start_fade(self, previous: QPixmap) -> None:
         """先让上一张淡出；它完全消失之后才开始新图淡入。
 
@@ -257,6 +269,8 @@ class DetailView(QGraphicsView):
         但**这一阶段一直保持透明**，所以旧画面既不会缩放 / 移位，也不会被下一张提前顶掉。
         """
         self._clear_fade()
+        if self._animation_ms(FADE_OUT_MS) <= 0:
+            return  # 「关」档：直接显示新图，不铺快照
         self._item.setOpacity(0.0)
         layer = _FadeLayer(self.viewport())
         layer.set_snapshot(previous)
@@ -365,6 +379,11 @@ class DetailView(QGraphicsView):
             self.stop_animation()
             self._fit_mode = True
             self._emit_scale()
+            return
+
+        if self._animation_ms(FIT_ANIMATION_MS) <= 0:
+            self._apply_scale(target_scale, fitting=True)
+            self.centerOn(target_center)
             return
 
         self._anim_from_scale = start_scale

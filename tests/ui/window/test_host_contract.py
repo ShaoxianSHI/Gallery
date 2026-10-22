@@ -418,6 +418,22 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
             "pop_last_condition",
         }
     ),
+    "window/settings_flow.py:SettingsFlowMixin": frozenset(
+        {
+            "_detail",
+            "_grid",
+            "_library",
+            "_library_setting_actions",
+            "_report_error",
+            "_save_session",
+            "_session",
+            "_settings_actions",
+            "_settings_extras",
+            "_show_banner",
+            "_slideshow_timer",
+            "_sync_ui",
+        }
+    ),
     "window/slideshow_flow.py:SlideshowFlowMixin": frozenset(
         {
             "_clear_banner",
@@ -433,6 +449,7 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
             "_owns_title_bar",
             "_panel",
             "_play_button",
+            "_session",
             "_show_banner",
             "_slideshow",
             "_slideshow_timer",
@@ -444,6 +461,7 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
             "_refresh_title",
             "_sync_order_actions",
             "_sync_page_to_stack",
+            "_sync_settings",
             "_update_action_states",
             "_update_breadcrumb",
         }
