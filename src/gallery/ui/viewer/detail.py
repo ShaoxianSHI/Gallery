@@ -48,8 +48,10 @@ OVERLAY_MARGIN = 16
 #: 回到默认视图的动画时长。再长就显得拖沓，再短就看不出是「平滑」过去的。
 FIT_ANIMATION_MS = 220
 
-#: 两张照片交叉淡入淡出的时长。放映时逐张切换用它，短到不耽误观看，长到能看出是过渡。
-CROSSFADE_MS = 320
+#: 两张照片之间先淡出、再淡入，各用这么长（毫秒）。放映逐张切换用它：慢到能看清是一次
+#: 真正的过渡，又不至于让三秒一张的节奏等太久。
+FADE_OUT_MS = 450
+FADE_IN_MS = 450
 
 #: 判断「已经处于默认视图」的容差：比例用相对误差，位置用屏幕像素。
 SCALE_EPSILON = 0.002
@@ -125,13 +127,18 @@ class DetailView(QGraphicsView):
         self._animation.valueChanged.connect(self._animation_frame)
         self._animation.finished.connect(self._animation_finished)
 
-        #: 上一张照片盖在新照片之上，透明度从 1 降到 0 —— 交叉淡入淡出就是这一层。
+        #: 上一张先独立地淡出，淡完才轮到新照片淡入 —— 两段各一个动画。
         self._fade_item: QGraphicsPixmapItem | None = None
         self._fade_animation = QVariantAnimation(self)
-        self._fade_animation.setDuration(CROSSFADE_MS)
+        self._fade_animation.setDuration(FADE_OUT_MS)
         self._fade_animation.setEasingCurve(QEasingCurve.Type.Linear)
         self._fade_animation.valueChanged.connect(self._fade_frame)
         self._fade_animation.finished.connect(self._fade_finished)
+        self._fade_in_animation = QVariantAnimation(self)
+        self._fade_in_animation.setDuration(FADE_IN_MS)
+        self._fade_in_animation.setEasingCurve(QEasingCurve.Type.Linear)
+        self._fade_in_animation.valueChanged.connect(self._fade_in_frame)
+        self._fade_in_animation.finished.connect(self._fade_in_finished)
 
     def _apply_theme(self) -> None:
         """底色跟着主题走：硬编码深色会让浅色主题下点开照片突然变一块黑。"""
@@ -158,10 +165,10 @@ class DetailView(QGraphicsView):
 
         :param refit: 是否重新适配窗口。替换图像（预览 → 全分辨率）时传 ``False``，
             可以保住用户当前的缩放与位置。
-        :param fade: 是否让**上一张**盖在新图上淡出。放映逐张切换时用它；同一张的
+        :param fade: 是否先让**上一张**淡出、再让新图淡入。放映逐张切换时用它；同一张的
             预览 → 全分辨率替换不该淡入，否则画面会来回闪。
         """
-        previous = self._pixmap if fade else QPixmap()
+        previous = self._visible_pixmap() if fade else QPixmap()
         self.hide_overlay()
         self.stop_animation()
         pixmap = QPixmap.fromImage(image)
@@ -205,12 +212,14 @@ class DetailView(QGraphicsView):
         self.resetTransform()
 
     def _start_fade(self, previous: QPixmap, size: QSize) -> None:
-        """把上一张盖在新图之上淡出。
+        """先让上一张淡出；它完全消失之后才开始新图淡入。
 
-        新图按它自己的尺寸铺满场景，上一张按**中心对齐**摆进来；两张比例不同时用户看到的
-        是「旧画面退去、新画面露出来」，而不是旧图被从左上角裁掉一块。
+        新图按它自己的尺寸铺满场景，但**这一阶段一直保持透明**，所以用户不会在旧画面
+        底下提前看到下一张。上一张按**中心对齐**摆进来；两张比例不同时，旧画面是从中心
+        退去，而不是被从左上角裁掉一块。
         """
         self._clear_fade()
+        self._item.setOpacity(0.0)
         width, height = size.width(), size.height()
         item = QGraphicsPixmapItem(previous)
         item.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
@@ -228,15 +237,34 @@ class DetailView(QGraphicsView):
             self._fade_item.setOpacity(float(value))  # type: ignore[arg-type]
 
     def _fade_finished(self) -> None:
+        """上一张已经彻底消失：撤掉它，再让新图从透明淡入。"""
         if self._fade_item is not None:
             self._scene.removeItem(self._fade_item)
             self._fade_item = None
+        self._fade_in_animation.stop()
+        self._fade_in_animation.setStartValue(0.0)
+        self._fade_in_animation.setEndValue(1.0)
+        self._fade_in_animation.start()
+
+    def _fade_in_frame(self, value: object) -> None:
+        self._item.setOpacity(float(value))  # type: ignore[arg-type]
+
+    def _fade_in_finished(self) -> None:
+        self._item.setOpacity(1.0)
+
+    def _visible_pixmap(self) -> QPixmap:
+        """此刻屏幕上真正能看到的那一张：淡出阶段是盖在上面的旧图，其余是新图。"""
+        if self._fade_item is not None:
+            return self._fade_item.pixmap()
+        return self._pixmap
 
     def _clear_fade(self) -> None:
         self._fade_animation.stop()
+        self._fade_in_animation.stop()
         if self._fade_item is not None:
             self._scene.removeItem(self._fade_item)
             self._fade_item = None
+        self._item.setOpacity(1.0)
 
     def _show_overlay(self) -> None:
         self._overlay.setText(self._overlay_text)
@@ -456,7 +484,8 @@ class DetailView(QGraphicsView):
 
 
 __all__ = [
-    "CROSSFADE_MS",
+    "FADE_IN_MS",
+    "FADE_OUT_MS",
     "FIT_ANIMATION_MS",
     "OVERLAY_MARGIN",
     "DetailView",

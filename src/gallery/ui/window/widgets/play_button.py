@@ -1,26 +1,27 @@
-"""标题条上的放映按钮：一颗经典的三角形，摆在「用外部应用打开」左边。
+"""标题条上的放映按钮：一颗经典的「圆圈 + 三角」，摆在「用外部应用打开」左边。
 
-外观与外部按钮那个药丸同一套（底色、边框、圆角都从 :mod:`gallery.ui.theme` 与
-:data:`~gallery.ui.window.widgets.external_button.BUTTON_RADIUS` 来），**图标来自 Qt**
-（``QStyle.SP_MediaPlay`` / ``SP_MediaPause``），只按主题的正文色重新上色 —— 标准图标在
-深色底上是一颗近黑的三角，直接用会看不见。
+**图标自己画**：Qt 的 ``SP_MediaPlay`` 在 22 点的按钮里只占很小一块，而且带一圈内边距，
+看上去既小又偏心。这里按按钮的几何中心直接铺一颗三角（暂停时换成两根竖条），尺寸、位置
+都不再受标准图标的留白影响。底色、边框、圆角仍与外部按钮同一套主题色。
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QRect, QRectF, QSize, Qt
-from PySide6.QtGui import QColor, QIcon, QPainter, QPaintEvent, QPen, QPixmap
-from PySide6.QtWidgets import QStyle, QToolButton, QWidget
+from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt
+from PySide6.QtGui import QColor, QPainter, QPaintEvent, QPen, QPolygonF
+from PySide6.QtWidgets import QToolButton, QWidget
 
 from gallery.ui import theme
 from gallery.ui.rename_edit import field_background
-from gallery.ui.window.widgets.external_button import BUTTON_RADIUS
 
-#: 按钮宽度（点）。比外部按钮窄：里面只有一颗图标，没有下拉箭头。
-PLAY_BUTTON_WIDTH = 30
+#: 按钮宽度（点）。与高度相同，画出来是一颗圆。
+PLAY_BUTTON_WIDTH = 22
 
-#: 图标的边长（点）。与外部按钮里那颗图标同一档。
-PLAY_ICON_EDGE = 12
+#: 按钮高度（点）。与搜索胶囊同高。
+PLAY_BUTTON_HEIGHT = 22
+
+#: 三角占圆圈直径的比例。这个尺寸在 22 点的圆里一眼就能认出来。
+TRIANGLE_SCALE = 0.46
 
 #: 提示气泡上的文案。
 TOOLTIP = "放映当前层级的所有照片"
@@ -32,28 +33,6 @@ TOOLTIP_PAUSE = "暂停放映"
 TOOLTIP_RESUME = "继续放映"
 
 
-def _tinted_icon(source: QIcon, color: QColor, size: int) -> QIcon:
-    """把 Qt 的标准图标按 ``color`` 重新上色，保留它自己的透明轮廓。"""
-    raw = source.pixmap(QSize(size * 2, size * 2)).toImage()
-    raw = raw.scaled(
-        size * 2,
-        size * 2,
-        Qt.AspectRatioMode.KeepAspectRatio,
-        Qt.TransformationMode.SmoothTransformation,
-    )
-    canvas = QPixmap(raw.size())
-    canvas.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(canvas)
-    try:
-        painter.drawImage(0, 0, raw)
-        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
-        painter.fillRect(canvas.rect(), color)
-    finally:
-        painter.end()
-    canvas.setDevicePixelRatio(2)
-    return QIcon(canvas)
-
-
 class PlayButton(QToolButton):
     """放映 / 暂停那一颗按钮。**点击信号由外面接**：这里只管画成什么样。"""
 
@@ -61,7 +40,6 @@ class PlayButton(QToolButton):
         super().__init__(parent)
         self._running = False
         self._paused = False
-        self._icon = QIcon()
         self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -69,13 +47,12 @@ class PlayButton(QToolButton):
         self.setAccessibleName("放映")
         self._watcher = theme.ensure_installed()
         self._watcher.changed.connect(self._apply_theme)
-        self._apply_theme()
 
     def sizeHint(self) -> QSize:  # noqa: N802 - 名字是 Qt 定的
-        return QSize(PLAY_BUTTON_WIDTH, 22)
+        return QSize(PLAY_BUTTON_WIDTH, PLAY_BUTTON_HEIGHT)
 
     def set_running(self, running: bool, *, paused: bool = False) -> None:
-        """放映中与已暂停两种状态各自换图标与提示。"""
+        """放映中与已暂停两种状态各自换图形与提示。"""
         if self._running == running and self._paused == paused:
             return
         self._running = running
@@ -83,52 +60,65 @@ class PlayButton(QToolButton):
         self.setToolTip(
             TOOLTIP_PAUSE if running and not paused else TOOLTIP_RESUME if paused else TOOLTIP
         )
-        self._apply_icon()
         self.update()
 
     def _apply_theme(self) -> None:
-        self._apply_icon()
         self.update()
 
-    def _apply_icon(self) -> None:
-        pixmap = (
-            QStyle.StandardPixmap.SP_MediaPause
-            if self._running and not self._paused
-            else QStyle.StandardPixmap.SP_MediaPlay
+    def _body_rect(self) -> QRectF:
+        return QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+
+    def _play_polygon(self) -> QPolygonF:
+        """居中的三角。**光心略往右偏**：等边三角的重心偏左，摆在几何中心反而看着偏左。"""
+        body = self._body_rect()
+        size = min(body.width(), body.height()) * TRIANGLE_SCALE
+        center = body.center()
+        left = center.x() - size * 0.38
+        return QPolygonF(
+            [
+                QPointF(left, center.y() - size / 2),
+                QPointF(left, center.y() + size / 2),
+                QPointF(left + size * 0.88, center.y()),
+            ]
         )
-        source = self.style().standardIcon(pixmap)
-        color = theme.current_theme().text_at(0.78)
-        self._icon = _tinted_icon(source, color, PLAY_ICON_EDGE) if not source.isNull() else QIcon()
 
     def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
-        """药丸底色 + 边框 + 居中的那颗图标。"""
+        """圆底 + 边框 + 居中的三角（放映中换成两根竖条）。"""
         app_theme = theme.current_theme()
         painter = QPainter(self)
         try:
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            radius = min(BUTTON_RADIUS, self.height() / 2)
-            body = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+            body = self._body_rect()
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(field_background(app_theme))
-            painter.drawRoundedRect(body, radius, radius)
+            painter.drawEllipse(body)
             if self.underMouse():
                 hover = QColor(app_theme.background)
                 painter.setBrush(hover.lighter(112) if app_theme.is_dark else hover.darker(104))
-                painter.drawRoundedRect(body, radius, radius)
+                painter.drawEllipse(body)
             painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.setPen(QPen(app_theme.text_at(0.28), 1))
-            painter.drawRoundedRect(body, radius, radius)
-            if not self._icon.isNull():
-                edge = min(PLAY_ICON_EDGE, max(0, self.height() - 4))
-                area = QRect(
-                    (self.width() - edge) // 2,
-                    (self.height() - edge) // 2,
-                    edge,
-                    edge,
-                )
-                self._icon.paint(painter, area, Qt.AlignmentFlag.AlignCenter)
+            painter.setPen(QPen(app_theme.text_at(0.30), 1))
+            painter.drawEllipse(body)
+
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(app_theme.text_at(0.78))
+            if self._running and not self._paused:
+                self._paint_pause(painter)
+            else:
+                painter.drawPolygon(self._play_polygon())
         finally:
             painter.end()
+
+    def _paint_pause(self, painter: QPainter) -> None:
+        """暂停：两根圆角竖条，宽度与三角同一档。"""
+        body = self._body_rect()
+        height = min(body.width(), body.height()) * TRIANGLE_SCALE
+        width = height * 0.32
+        gap = width * 0.9
+        top = body.center().y() - height / 2
+        left = body.center().x() - gap / 2 - width
+        for x in (left, left + width + gap):
+            painter.drawRoundedRect(QRectF(x, top, width, height), width / 2, width / 2)
 
     def enterEvent(self, event: QEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         self.update()
@@ -140,10 +130,11 @@ class PlayButton(QToolButton):
 
 
 __all__ = [
+    "PLAY_BUTTON_HEIGHT",
     "PLAY_BUTTON_WIDTH",
-    "PLAY_ICON_EDGE",
     "TOOLTIP",
     "TOOLTIP_PAUSE",
     "TOOLTIP_RESUME",
+    "TRIANGLE_SCALE",
     "PlayButton",
 ]

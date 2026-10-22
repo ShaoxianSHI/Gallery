@@ -17,7 +17,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from library_helpers import set_library_ui  # noqa: E402
-from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtCore import QAbstractAnimation, Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 from waiting import wait_for_idle, wait_until  # noqa: E402
@@ -29,11 +29,15 @@ from gallery.core.library.config import (  # noqa: E402
     prepare_library,
 )
 from gallery.ui.main_window import MainWindow  # noqa: E402
-from gallery.ui.viewer.detail import CROSSFADE_MS  # noqa: E402
+from gallery.ui.viewer.detail import FADE_IN_MS, FADE_OUT_MS  # noqa: E402
 from gallery.ui.window.slideshow_flow import AUTO_ADVANCE_MS  # noqa: E402
 from gallery.ui.window.state.slideshow import SlideshowState  # noqa: E402
 from gallery.ui.window.widgets.external_button import BUTTON_GAP  # noqa: E402
-from gallery.ui.window.widgets.play_button import PLAY_BUTTON_WIDTH  # noqa: E402
+from gallery.ui.window.widgets.play_button import (  # noqa: E402
+    PLAY_BUTTON_HEIGHT,
+    PLAY_BUTTON_WIDTH,
+    TRIANGLE_SCALE,
+)
 
 #: 这一层的照片（名字决定网格里的先后）。
 PHOTOS = ("a.jpg", "b.jpg", "c.jpg")
@@ -80,12 +84,21 @@ def test_the_play_button_sits_left_of_the_external_one(window: MainWindow) -> No
     external = window._external_button.geometry()
 
     assert play.width() == PLAY_BUTTON_WIDTH
+    assert play.height() == PLAY_BUTTON_HEIGHT
     assert play.left() + play.width() + BUTTON_GAP == external.left()
 
 
-def test_the_play_button_has_a_triangle_icon(window: MainWindow) -> None:
-    """按钮里放的是 Qt 那颗标准三角，不是空图标。"""
-    assert window._play_button._icon.isNull() is False
+def test_the_play_button_draws_a_big_centered_triangle(window: MainWindow) -> None:
+    """三角是自绘的：占够圆圈的高度，光心落在按钮中心附近。"""
+    button = window._play_button
+    polygon = button._play_polygon()
+    body = button._body_rect()
+    bounds = polygon.boundingRect()
+
+    assert polygon.count() == 3
+    assert bounds.height() >= min(button.width(), button.height()) * TRIANGLE_SCALE - 0.5
+    assert abs(bounds.center().x() - body.center().x()) <= 1.0
+    assert abs(bounds.center().y() - body.center().y()) <= 1.0
 
 
 def test_the_button_is_away_on_the_calendar_page(window: MainWindow, qt_app: QApplication) -> None:
@@ -127,7 +140,7 @@ def test_it_starts_from_the_photo_the_detail_page_is_showing(
 def test_the_first_photo_does_not_fade_in_from_an_old_one(
     window: MainWindow, qt_app: QApplication
 ) -> None:
-    """从网格开始放映时，首张不跟大图页上一次留下的画面交叉淡入。"""
+    """从网格开始放映时，首张不跟大图页上一次留下的画面淡入。"""
     row = window._model.row_of_path(window._library.root / PHOTOS[2])
     window._open_detail(window._model.index(row, 0))
     assert wait_until(qt_app, lambda: window._detail.has_image)
@@ -195,15 +208,28 @@ def test_arrow_keys_step_and_wrap_around(window: MainWindow) -> None:
     assert _current_name(window) == PHOTOS[0]
 
 
-def test_a_step_crossfades_from_the_previous_photo(window: MainWindow) -> None:
-    """切换时上一张先留在画面上淡出，而不是当场消失。"""
+def test_a_step_fades_the_old_photo_out_before_the_new_one_appears(window: MainWindow) -> None:
+    """先整张淡出，再整张淡入：旧图没退干净之前，新图一直是透明的。"""
     _start(window)
 
     window.step_detail(1)
+    detail = window._detail
 
-    assert window._detail._fade_item is not None
-    window._detail._fade_animation.setCurrentTime(CROSSFADE_MS)
-    assert window._detail._fade_item is None
+    assert detail._fade_item is not None
+    assert detail._item.opacity() == 0.0
+    detail._fade_animation.setCurrentTime(FADE_OUT_MS // 2)
+    assert detail._fade_item is not None
+    assert detail._fade_item.opacity() > 0.0
+    assert detail._item.opacity() == 0.0, "旧图还没消失，新图不该提前出现"
+
+    detail._fade_animation.setCurrentTime(FADE_OUT_MS)
+    assert detail._fade_item is None
+    assert detail._fade_in_animation.state() == QAbstractAnimation.State.Running
+    assert detail._item.opacity() == 0.0
+
+    detail._fade_in_animation.setCurrentTime(FADE_IN_MS)
+    assert detail._item.opacity() == 1.0
+    assert _current_name(window) == PHOTOS[1]
 
 
 def test_space_pauses_and_resumes(window: MainWindow, qt_app: QApplication) -> None:
