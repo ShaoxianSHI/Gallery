@@ -149,7 +149,7 @@ def test_the_first_photo_does_not_fade_in_from_an_old_one(
 
     _start(window)
 
-    assert window._detail._fade_item is None
+    assert window._detail._fade_layer is None
     assert _current_name(window) == PHOTOS[0]
 
 
@@ -215,15 +215,15 @@ def test_a_step_fades_the_old_photo_out_before_the_new_one_appears(window: MainW
     window.step_detail(1)
     detail = window._detail
 
-    assert detail._fade_item is not None
+    assert detail._fade_layer is not None
     assert detail._item.opacity() == 0.0
     detail._fade_animation.setCurrentTime(FADE_OUT_MS // 2)
-    assert detail._fade_item is not None
-    assert detail._fade_item.opacity() > 0.0
+    assert detail._fade_layer is not None
+    assert detail._fade_layer.opacity() > 0.0
     assert detail._item.opacity() == 0.0, "旧图还没消失，新图不该提前出现"
 
     detail._fade_animation.setCurrentTime(FADE_OUT_MS)
-    assert detail._fade_item is None
+    assert detail._fade_layer is None
     assert detail._fade_in_animation.state() == QAbstractAnimation.State.Running
     assert detail._item.opacity() == 0.0
 

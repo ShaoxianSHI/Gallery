@@ -20,10 +20,16 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QPoint, QPointF, Qt  # noqa: E402
-from PySide6.QtGui import QContextMenuEvent, QImage, QWheelEvent  # noqa: E402
+from PySide6.QtGui import (  # noqa: E402
+    QColor,
+    QContextMenuEvent,
+    QImage,
+    QPainter,
+    QWheelEvent,
+)
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from gallery.ui.viewer.detail import DetailView  # noqa: E402
+from gallery.ui.viewer.detail import FADE_IN_MS, FADE_OUT_MS, DetailView  # noqa: E402
 from gallery.ui.viewer.zoom import MAX_SCALE  # noqa: E402
 
 #: 视口尺寸：故意开到很大，否则小图铺满只需要几倍，卡不出上限那条路径。
@@ -42,6 +48,19 @@ def _displayed_size(view: DetailView) -> tuple[float, float]:
 
 def _image(size: tuple[int, int]) -> QImage:
     return QImage(size[0], size[1], QImage.Format.Format_RGB32)
+
+
+def _pattern(size: tuple[int, int], color: str) -> QImage:
+    """一块带明显边角的图：纯色图缩放了也看不出来，这里要能比对位置与大小。"""
+    image = QImage(size[0], size[1], QImage.Format.Format_RGB32)
+    image.fill(QColor(color))
+    painter = QPainter(image)
+    try:
+        painter.fillRect(0, 0, size[0] // 2, size[1] // 2, QColor("white"))
+        painter.fillRect(size[0] // 2, size[1] // 2, size[0] // 4, size[1] // 4, QColor("black"))
+    finally:
+        painter.end()
+    return image
 
 
 def test_placeholder_thumbnail_fills_the_view_like_the_full_image(
@@ -64,6 +83,38 @@ def test_placeholder_thumbnail_fills_the_view_like_the_full_image(
         assert placeholder[1] == pytest.approx(full[1], rel=0.02), (
             f"占位缩略图高 {placeholder[1]}，全图高 {full[1]} —— 大小不一致"
         )
+    finally:
+        view.close()
+
+
+def test_fade_keeps_the_previous_frame_in_place(
+    qt_app: QApplication,
+) -> None:
+    """切换后的第一帧仍是旧画面，而且缩放与位置都没变。
+
+    旧图如果继续挂在场景里，视图为了适配新图改缩放 / 中心时，它会跟着一起跳。
+    这里比对切换前后抓到的视口：淡出开始时必须和上一帧完全一致。
+    """
+    view = DetailView()
+    view.resize(900, 600)
+    view.show()
+    qt_app.processEvents()
+    try:
+        view.set_image(_pattern((1200, 600), "#b04040"))
+        qt_app.processEvents()
+        before = view.viewport().grab().toImage()
+
+        view.set_image(_pattern((600, 1200), "#4060b0"), fade=True)
+        qt_app.processEvents()
+        during = view.viewport().grab().toImage()
+
+        assert view._fade_layer is not None
+        assert during == before, "淡出开始时旧画面移动或缩放了"
+
+        view._fade_animation.setCurrentTime(FADE_OUT_MS)
+        assert view._fade_layer is None
+        view._fade_in_animation.setCurrentTime(FADE_IN_MS)
+        assert view._item.opacity() == 1.0
     finally:
         view.close()
 

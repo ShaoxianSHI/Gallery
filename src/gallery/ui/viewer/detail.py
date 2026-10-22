@@ -13,7 +13,6 @@ from PySide6.QtCore import (
     QPoint,
     QPointF,
     QRectF,
-    QSize,
     Qt,
     QVariantAnimation,
     Signal,
@@ -25,6 +24,7 @@ from PySide6.QtGui import (
     QMouseEvent,
     QNativeGestureEvent,
     QPainter,
+    QPaintEvent,
     QPixmap,
     QResizeEvent,
     QTransform,
@@ -68,6 +68,43 @@ QLabel#detailOverlay {{
     font-size: {OVERLAY_FONT_SIZE}px;
 }}
 """
+
+
+class _FadeLayer(QWidget):
+    """淡出阶段盖在视口上的旧画面快照。
+
+    **不参与场景变换**：视图已经按新图重新适配，如果让旧图继续做场景里的 item，它会跟着
+    新的缩放与中心一起跳一下。这里只把切换前那一帧原样画在视口坐标里，旧画面就不会动。
+    """
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self._pixmap = QPixmap()
+        self._opacity = 1.0
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.hide()
+
+    def set_snapshot(self, pixmap: QPixmap) -> None:
+        self._pixmap = pixmap
+        self.setGeometry(self.parentWidget().rect())
+
+    def set_opacity(self, opacity: float) -> None:
+        self._opacity = max(0.0, min(1.0, opacity))
+        self.update()
+
+    def opacity(self) -> float:
+        return self._opacity
+
+    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
+        if self._pixmap.isNull():
+            return
+        painter = QPainter(self)
+        try:
+            painter.setOpacity(self._opacity)
+            painter.drawPixmap(self.rect(), self._pixmap)
+        finally:
+            painter.end()
 
 
 class DetailView(QGraphicsView):
@@ -127,8 +164,9 @@ class DetailView(QGraphicsView):
         self._animation.valueChanged.connect(self._animation_frame)
         self._animation.finished.connect(self._animation_finished)
 
-        #: 上一张先独立地淡出，淡完才轮到新照片淡入 —— 两段各一个动画。
-        self._fade_item: QGraphicsPixmapItem | None = None
+        #: 上一张先独立地淡出，淡完才轮到新照片淡入 —— 两段各一个动画。淡出的是**视口快照**，
+        #: 所以新图在底下重新适配窗口时，旧画面不会跟着缩放或移动。
+        self._fade_layer: _FadeLayer | None = None
         self._fade_animation = QVariantAnimation(self)
         self._fade_animation.setDuration(FADE_OUT_MS)
         self._fade_animation.setEasingCurve(QEasingCurve.Type.Linear)
@@ -168,9 +206,10 @@ class DetailView(QGraphicsView):
         :param fade: 是否先让**上一张**淡出、再让新图淡入。放映逐张切换时用它；同一张的
             预览 → 全分辨率替换不该淡入，否则画面会来回闪。
         """
-        previous = self._visible_pixmap() if fade else QPixmap()
         self.hide_overlay()
         self.stop_animation()
+        # **在改场景之前抓**：旧图现在的缩放、位置、留白都还在这一帧里。
+        previous = self.viewport().grab() if fade else QPixmap()
         pixmap = QPixmap.fromImage(image)
         # 先放开上一张：32MP 照片的全分辨率副本约 128 MB，新旧同时存在会翻倍内存峰值。
         self._item.setPixmap(QPixmap())
@@ -180,7 +219,7 @@ class DetailView(QGraphicsView):
         self._item.setPixmap(pixmap)
         self._scene.setSceneRect(QRectF(pixmap.rect()))
         if not previous.isNull():
-            self._start_fade(previous, pixmap.size())
+            self._start_fade(previous)
         if refit or self._fit_mode:
             self.fit_to_window()
         else:
@@ -211,36 +250,31 @@ class DetailView(QGraphicsView):
         self._scene.setSceneRect(QRectF())
         self.resetTransform()
 
-    def _start_fade(self, previous: QPixmap, size: QSize) -> None:
+    def _start_fade(self, previous: QPixmap) -> None:
         """先让上一张淡出；它完全消失之后才开始新图淡入。
 
-        新图按它自己的尺寸铺满场景，但**这一阶段一直保持透明**，所以用户不会在旧画面
-        底下提前看到下一张。上一张按**中心对齐**摆进来；两张比例不同时，旧画面是从中心
-        退去，而不是被从左上角裁掉一块。
+        旧画面是一张**视口快照**，不跟着场景变换走；新图在底下按自己的尺寸适配窗口，
+        但**这一阶段一直保持透明**，所以旧画面既不会缩放 / 移位，也不会被下一张提前顶掉。
         """
         self._clear_fade()
         self._item.setOpacity(0.0)
-        width, height = size.width(), size.height()
-        item = QGraphicsPixmapItem(previous)
-        item.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
-        item.setZValue(1.0)
-        item.setPos(QPointF((width - previous.width()) / 2, (height - previous.height()) / 2))
-        self._scene.addItem(item)
-        self._fade_item = item
+        layer = _FadeLayer(self.viewport())
+        layer.set_snapshot(previous)
+        layer.show()
+        layer.raise_()
+        self._fade_layer = layer
         self._fade_animation.stop()
         self._fade_animation.setStartValue(1.0)
         self._fade_animation.setEndValue(0.0)
         self._fade_animation.start()
 
     def _fade_frame(self, value: object) -> None:
-        if self._fade_item is not None:
-            self._fade_item.setOpacity(float(value))  # type: ignore[arg-type]
+        if self._fade_layer is not None:
+            self._fade_layer.set_opacity(float(value))  # type: ignore[arg-type]
 
     def _fade_finished(self) -> None:
-        """上一张已经彻底消失：撤掉它，再让新图从透明淡入。"""
-        if self._fade_item is not None:
-            self._scene.removeItem(self._fade_item)
-            self._fade_item = None
+        """上一张已经彻底消失：撤掉快照，再让新图从透明淡入。"""
+        self._remove_fade_layer()
         self._fade_in_animation.stop()
         self._fade_in_animation.setStartValue(0.0)
         self._fade_in_animation.setEndValue(1.0)
@@ -252,18 +286,17 @@ class DetailView(QGraphicsView):
     def _fade_in_finished(self) -> None:
         self._item.setOpacity(1.0)
 
-    def _visible_pixmap(self) -> QPixmap:
-        """此刻屏幕上真正能看到的那一张：淡出阶段是盖在上面的旧图，其余是新图。"""
-        if self._fade_item is not None:
-            return self._fade_item.pixmap()
-        return self._pixmap
+    def _remove_fade_layer(self) -> None:
+        self._fade_animation.stop()
+        layer = self._fade_layer
+        self._fade_layer = None
+        if layer is not None:
+            layer.hide()
+            layer.deleteLater()
 
     def _clear_fade(self) -> None:
-        self._fade_animation.stop()
         self._fade_in_animation.stop()
-        if self._fade_item is not None:
-            self._scene.removeItem(self._fade_item)
-            self._fade_item = None
+        self._remove_fade_layer()
         self._item.setOpacity(1.0)
 
     def _show_overlay(self) -> None:
@@ -471,6 +504,8 @@ class DetailView(QGraphicsView):
         super().resizeEvent(event)
         if self._fit_mode and not self._animating:
             self.fit_to_window()
+        if self._fade_layer is not None:
+            self._fade_layer.setGeometry(self.viewport().rect())
         self._reposition_overlay()
 
     def _reposition_overlay(self) -> None:
