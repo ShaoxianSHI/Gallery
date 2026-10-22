@@ -99,12 +99,34 @@ def _spy_on_browser(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return opened
 
 
-def test_the_import_menu_sits_after_view(window: MainWindow) -> None:
+def test_the_import_menus_sit_in_the_file_menu(window: MainWindow) -> None:
     titles = [action.text() for action in window.menuBar().actions()]
-    assert titles[-1] == "导入", f"「导入」应当在最后（视图右边），实际菜单栏是 {titles}"
-    assert "视图" in titles
-    labels = [action.text() for action in window._import_menu.actions()]
-    assert labels == ["导入影片…", "从「演迹」导入演出…"]
+    assert "导入" not in titles, f"不该再有顶层「导入」菜单，实际菜单栏是 {titles}"
+    file_menu = next(
+        action.menu() for action in window.menuBar().actions() if action.text() == "文件"
+    )
+    assert file_menu is not None
+    labels = [action.text() for action in file_menu.actions()]
+    assert "导入影片" in labels and "导入演出" in labels
+    assert labels.index("导入影片") > labels.index("最近打开")
+    assert [action.text() for action in window._import_movies_menu.actions()] == [
+        "导入 Bilibili…",
+        "导入 YouTube…",
+        "导入 JavDB…",
+    ]
+    assert [action.text() for action in window._import_shows_menu.actions()] == ["从「演迹」导入…"]
+
+
+def test_each_movie_entry_hands_its_source_to_the_dialog(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[str] = []
+    monkeypatch.setattr(window, "import_movies_from_dialog", seen.append)
+
+    for action in window._import_movies_menu.actions():
+        action.trigger()
+
+    assert seen == ["Bilibili", "YouTube", "JavDB"]
 
 
 def test_every_top_level_menu_belongs_to_the_menu_bar(window: MainWindow) -> None:

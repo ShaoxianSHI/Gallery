@@ -1,4 +1,4 @@
-"""「导入 → 从「演迹」导入演出」那条路（ADR 0047；菜单位置见 ADR 0063）。
+"""「文件 → 导入演出 → 从「演迹」导入…」那条路（ADR 0047 / 0072）。
 
 真正的解析在 ``tests/core/events/test_import_shows.py`` 里测；这里测的是**接线**：菜单里有没有
 那一项、点下去认不认选中的文件、结果有没有变成事件与一句话。
@@ -85,14 +85,12 @@ def window(qt_app: QApplication, root: Path) -> Iterator[MainWindow]:
 
 
 def _import_menu(window: MainWindow) -> QMenu:
-    return window._import_menu
+    return window._import_shows_menu
 
 
 def _import_action(window: MainWindow):
     return next(
-        action
-        for action in _import_menu(window).actions()
-        if action.text() == "从「演迹」导入演出…"
+        action for action in _import_menu(window).actions() if action.text() == "从「演迹」导入…"
     )
 
 
@@ -102,10 +100,10 @@ def _choose(monkeypatch: pytest.MonkeyPatch, path: Path | None) -> None:
 
 
 def test_the_import_menu_carries_the_shows_entry(window: MainWindow) -> None:
-    """「导入」菜单里那一条叫「从「演迹」导入演出…」（ADR 0063 把它从「文件」挪了过来）。"""
+    """「导入演出」子菜单里只放「从「演迹」导入…」这一条（ADR 0072）。"""
     labels = [action.text() for action in _import_menu(window).actions()]
 
-    assert labels == ["导入影片…", "从「演迹」导入演出…"]
+    assert labels == ["从「演迹」导入…"]
 
 
 def test_choosing_a_table_creates_the_shows(
@@ -168,6 +166,7 @@ def test_the_entry_is_greyed_without_an_event_store(
     window._update_event_actions()
 
     assert _import_menu(window).isEnabled() is False
+    assert window._import_movies_menu.isEnabled() is False
 
 
 # ---- 重复（ADR 0047：写库之前先问一句）-----------------------------------------

@@ -18,7 +18,15 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QAbstractButton, QDialog, QFileDialog, QMenu, QMessageBox
 
 from gallery.core.errors import EventsUnavailableError, GalleryError
-from gallery.core.events.kinds import EVENT_KINDS, MOVIE, EventKind, kind_by_id
+from gallery.core.events.kinds import (
+    EVENT_KINDS,
+    MOVIE,
+    SOURCE_BILIBILI,
+    SOURCE_JAV,
+    SOURCE_YOUTUBE,
+    EventKind,
+    kind_by_id,
+)
 from gallery.core.events.models import shorten_name
 from gallery.core.events.orphans import OrphanScan
 from gallery.core.events.prefill import EventPrefill, prefill_from_photos
@@ -46,6 +54,9 @@ Submitter = Callable[[str, QAction], None]
 
 #: 「演迹」导出文件选择框认的后缀。
 _IMPORT_FILTER = "Excel 表格 (*.xlsx *.xlsm)"
+
+#: 「导入影片」子菜单里的顺序：用户最先想到的那两个主站在前，番号那一项在后。
+_MOVIE_IMPORT_SOURCES = (SOURCE_BILIBILI, SOURCE_YOUTUBE, SOURCE_JAV)
 
 
 class EventFlowMixin:
@@ -78,9 +89,11 @@ class EventFlowMixin:
         edit_menu = getattr(self, "_edit_event_menu", None)
         if edit_menu is not None:
             edit_menu.setEnabled(self._edit_event_usable())
-        import_menu = getattr(self, "_import_menu", None)
-        if import_menu is not None:
-            import_menu.setEnabled(self._events_usable())
+        import_menus = ("_import_movies_menu", "_import_shows_menu")
+        for name in import_menus:
+            menu = getattr(self, name, None)
+            if menu is not None:
+                menu.setEnabled(self._events_usable())
         if getattr(self, "_edit_event_action", None) is None:
             return
         usable = self._group_card_event_id() is not None
@@ -324,21 +337,26 @@ class EventFlowMixin:
         submenu.triggered.connect(self._on_edit_event_picked)
         return submenu
 
-    def import_menu(self) -> QMenu:
-        """菜单栏「导入」那一层（ADR 0063）：把外面的东西拿进来 —— 抓影片、导入演出。
+    def build_import_menus(self, file_menu: QMenu) -> None:
+        """「文件」里的「导入影片」「导入演出」两层（ADR 0072）：把外面的东西拿进来。
 
-        与「文件 / 编辑 / 视图」用同一种建法（``menuBar().addMenu(title)``）：``addMenu(QMenu)``
-        不会把菜单认到菜单栏名下，那只菜单会留在外面，四条顶层菜单的父子关系于是不一致。
+        「导入影片」按来源分三个入口，打开的是同一张面板、只是提示跟着来源走；「导入演出」现在
+        只有「演迹」一个来源，仍单独占一层 —— 将来加别的来源时不必再动菜单结构。
         """
-        menu = self.menuBar().addMenu("导入")
-        menu.setToolTipsVisible(True)
-        self._import_movies_action = QAction("导入影片…", self)
-        self._import_movies_action.triggered.connect(self.import_movies_from_dialog)
-        menu.addAction(self._import_movies_action)
-        self._import_shows_action = QAction("从「演迹」导入演出…", self)
+        movies = file_menu.addMenu("导入影片")
+        self._import_movies_menu = movies
+        for source in _MOVIE_IMPORT_SOURCES:
+            action = QAction(f"导入 {source}…", self)
+            action.triggered.connect(
+                lambda _checked=False, chosen=source: self.import_movies_from_dialog(chosen)
+            )
+            movies.addAction(action)
+
+        shows = file_menu.addMenu("导入演出")
+        self._import_shows_menu = shows
+        self._import_shows_action = QAction("从「演迹」导入…", self)
         self._import_shows_action.triggered.connect(self.import_shows_from_yanji)
-        menu.addAction(self._import_shows_action)
-        return menu
+        shows.addAction(self._import_shows_action)
 
     def import_shows_from_yanji(self) -> None:
         """挑一个「演迹」导出的表格，把里面的演出读进事件库（ADR 0047）。

@@ -558,6 +558,8 @@ class MainWindow(
         file_menu = self.menuBar().addMenu("文件")
         file_menu.addAction(self._open_action)
         self._recent_menu = file_menu.addMenu("最近打开")
+        # 导入在「最近打开」之后：都是把外面的东西拿进来（ADR 0072）。
+        self.build_import_menus(file_menu)
         file_menu.addSeparator()
         file_menu.addAction(self._search_action)
         # 没有条件时**整条不出现**（``QAction.setVisible`` 就是「不进菜单」，ADR 0014 决策 4）。
@@ -623,10 +625,6 @@ class MainWindow(
             )
             size_menu.addAction(action)
             self._size_actions.append(action)
-
-        # 「导入」挨着「视图」右边（ADR 0063）：把外面的东西拿进来 —— 抓影片、从「演迹」导入演出。
-        # **建在菜单栏自己名下**（见 `import_menu`），与上面三条同一条路。
-        self._import_menu = self.import_menu()
 
         # 不加工具栏：这些命令在 macOS 顶部菜单里都有，再重复一遍只会挤掉照片。
         self._rebuild_recent_menu()

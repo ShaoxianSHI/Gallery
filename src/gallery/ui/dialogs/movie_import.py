@@ -1,4 +1,4 @@
-"""「导入影片」的输入面板：粘贴一批编号或链接，写进哪个文件夹（ADR 0063 / 0068）。
+"""「导入影片」的输入面板：粘贴一批编号或链接，写进哪个文件夹（ADR 0063 / 0068 / 0072）。
 
 **一个文件都不碰**：它只把用户敲的那一份读成一组条目交出去，编号怎么认交给
 ``core.events.sources.parse_ref``，抓取与写盘走 ``ui.write_ops``（与元数据编辑器、
@@ -8,7 +8,9 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Final
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence
@@ -22,6 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from gallery.core.events.kinds import SOURCE_BILIBILI, SOURCE_JAV, SOURCE_YOUTUBE
 from gallery.ui import theme
 from gallery.ui.dialogs.event_edit import ERROR_LINES, dialog_style
 from gallery.ui.theme import rgba
@@ -31,6 +34,42 @@ INPUT_LINES = 8
 
 #: 条目之间的分隔符：换行、空格、中英文逗号都算。
 _SEPARATORS = re.compile(r"[\s,，、]+")
+
+
+@dataclass(frozen=True, slots=True)
+class SourceCopy:
+    """一个导入来源在面板上的那几句话。**只有提示不同，拆条与识别三条路共用一份。**"""
+
+    title: str
+    heading: str
+    hint: str
+    placeholder: str
+
+
+#: 三个入口各自的说法。进例子的东西必须和这个来源对得上：B 站给 BV 号，YouTube 给视频地址，
+#: JavDB 给番号 —— 否则用户会拿另一个站的编号去试，然后在抓取失败时才看到原因。
+_SOURCE_COPY: Final[dict[str, SourceCopy]] = {
+    SOURCE_BILIBILI: SourceCopy(
+        title="导入 Bilibili 影片",
+        heading="按 BV 号或链接导入 Bilibili 影片",
+        hint="每行一个 BV 号或 B 站视频地址（b23.tv 短链请先在浏览器里打开，把完整地址粘进来）。"
+        "封面会存进下面这个文件夹。",
+        placeholder="BV1GJ411x7h7\nhttps://www.bilibili.com/video/BV1GJ411x7h7",
+    ),
+    SOURCE_YOUTUBE: SourceCopy(
+        title="导入 YouTube 影片",
+        heading="按链接或 videoId 导入 YouTube 影片",
+        hint="每行一个 YouTube 地址或 11 位 videoId（youtu.be 与 watch 链接都行）。"
+        "封面会存进下面这个文件夹。",
+        placeholder="https://www.youtube.com/watch?v=dQw4w9WgXcQ\ndQw4w9WgXcQ",
+    ),
+    SOURCE_JAV: SourceCopy(
+        title="导入 JavDB 影片",
+        heading="按番号导入 JavDB 影片",
+        hint="每行一个番号，例如 IPX-660；大小写与连字符都可以按习惯写。封面会存进下面这个文件夹。",
+        placeholder="IPX-660\nDSOD-040",
+    ),
+}
 
 
 def split_entries(text: str) -> list[str]:
@@ -52,10 +91,11 @@ def split_entries(text: str) -> list[str]:
 class MovieImportDialog(QDialog):
     """问「哪些编号或链接、写到哪个文件夹」。:meth:`entries` 给出用户敲的那一批。"""
 
-    def __init__(self, parent: QWidget | None, *, target: Path) -> None:
+    def __init__(self, parent: QWidget | None, *, target: Path, source: str) -> None:
         super().__init__(parent)
         self._target = Path(target)
-        self.setWindowTitle("导入影片")
+        self._copy = _SOURCE_COPY[source]
+        self.setWindowTitle(self._copy.title)
         self.setModal(True)
         self._watcher = theme.ensure_installed()
         self._watcher.changed.connect(self._apply_theme)
@@ -71,21 +111,16 @@ class MovieImportDialog(QDialog):
         layout.setContentsMargins(16, 14, 16, 12)
         layout.setSpacing(8)
 
-        heading = QLabel("按编号或链接导入影片")
+        heading = QLabel(self._copy.heading)
         heading.setObjectName("eventEditTitle")
         layout.addWidget(heading)
 
-        hint = QLabel(
-            "每行一个编号或链接（番号、YouTube 的地址、B 站的地址都行），也可以逗号或空格分开。"
-            "封面会存进下面这个文件夹。"
-        )
+        hint = QLabel(self._copy.hint)
         hint.setWordWrap(True)
         layout.addWidget(hint)
 
         self._input = QPlainTextEdit()
-        self._input.setPlaceholderText(
-            "IPX-660\nhttps://www.youtube.com/watch?v=dQw4w9WgXcQ\nBV1GJ411x7h7"
-        )
+        self._input.setPlaceholderText(self._copy.placeholder)
         self._input.setFixedHeight(self.fontMetrics().height() * INPUT_LINES)
         layout.addWidget(self._input)
 
@@ -122,7 +157,8 @@ class MovieImportDialog(QDialog):
 
     def _on_accept(self) -> None:
         if not self.entries():
-            self._error.setText("先填至少一个编号或链接，例如 IPX-660 或 https://youtu.be/…。")
+            example = self._copy.placeholder.splitlines()[0]
+            self._error.setText(f"先填至少一个编号或链接，例如 {example}。")
             return
         self.accept()
 

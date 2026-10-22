@@ -881,12 +881,12 @@ class WriteOpsMixin:
 
     # ---- 导入影片（ADR 0063 / 0068）------------------------------------------
 
-    def import_movies_from_dialog(self) -> None:
-        """「导入 → 导入影片…」：敲一批编号或链接，抓元数据与封面，建成影片事件。
+    def import_movies_from_dialog(self, source: str) -> None:
+        """「文件 → 导入影片 → 导入 <来源>…」：敲一批编号或链接，抓元数据与封面，建成影片事件。
 
-        **封面会作为新文件写进当前这一层**（「只增不改」，绝不覆盖），所以这个入口住在
-        ``write_ops``。**要联网，分两步走**：先抓一遍元数据（只读）→ 有重复就问一句 →
-        再下载封面、写文件、建事件。
+        ``source`` 只决定面板上那几句提示（ADR 0072）；哪一条属于哪个来源仍由
+        ``core.events.sources.parse_ref`` 按内容认。封面是新文件、绝不覆盖，所以入口住在这里；
+        抓取与写盘分两步，中间有重复会先问一句。
         """
         library = self._library
         if library is None or not library.events_available:
@@ -899,7 +899,7 @@ class WriteOpsMixin:
         if target is None:
             self._show_banner("先打开一个相册库，再导入影片。")
             return
-        dialog = MovieImportDialog(self, target=target)
+        dialog = MovieImportDialog(self, target=target, source=source)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         entries = dialog.entries()
