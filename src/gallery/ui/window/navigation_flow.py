@@ -76,6 +76,13 @@ class NavigationFlowMixin:
             return  # 只有根帧：退不动就安静地不动
         self._leave_frame(popped.top)
 
+    def _on_escape(self) -> None:
+        """``Esc``：退得回去就退一层，退不动就取消选中。"""
+        if self._can_go_up():
+            self.go_up()
+        else:
+            self.cancel_selection()
+
     def _leave_frame(self, frame: object) -> None:
         """**刚弹掉的是哪一帧，就按那一帧做收尾**（重新列出这一层、必要时回日历 / 选中原卡片）。
 
@@ -130,11 +137,34 @@ class NavigationFlowMixin:
             return
         self._reload_level()
 
+    def cancel_selection(self) -> None:
+        """``Esc`` 退不动时：取消当前选中的那个对象（文件夹 / 分组 / 照片 / 日历的一格）。
+
+        退得回去时 ``Esc`` 只退位置（ADR 0040 决策 11），这一条只在退不动时接手。
+        """
+        if self._library is None:
+            return
+        if self._on_calendar_page():
+            self._calendar_page.clear_selection()
+            return
+        self._grid.deselect()
+
+    def _can_cancel_selection(self) -> bool:
+        """现在屏幕上有没有一个选中的对象可以取消。"""
+        if self._library is None or self._grid.is_renaming():
+            return False
+        if self._on_calendar_page():
+            return self._calendar_page.selected_day() is not None
+        # 只认真选区：当前项不等于选中（Qt 摆模型时可能顺手给第 0 行一个当前项，屏幕上却没有高亮）。
+        # 也别问 ``selected_rows()``：三万张全选时它要 15 毫秒，而 `_update_action_states` 已经问过。
+        selection = self._grid.selectionModel()
+        return bool(selection is not None and selection.hasSelection())
+
     def pop_last_condition(self) -> None:
         """撤掉最后一条筛选条件（``⇧Esc``，或菜单里的那一行）。
 
-        **与 :meth:`go_up` 分开是用户选定的**：Esc 纯粹退位置，退不掉的时候什么也不做，也不
-        顺手撤掉一条条件 —— 「按 Esc 退一层，结果条件少了一条」这件事没法从屏幕上分辨出
+        **与 :meth:`go_up` 分开是用户选定的**：Esc 退位置（退不掉时改去取消选中，ADR 0070），
+        不顺手撤掉一条条件 —— 「按 Esc 退一层，结果条件少了一条」这件事没法从屏幕上分辨出
         「我退了」还是「我撤了一条」。
         """
         if not self._filters.pop_last():
@@ -153,10 +183,11 @@ class NavigationFlowMixin:
         return self._level_stack.can_pop()
 
     def _on_background_activated(self) -> None:
-        """双击了网格里没有格子的地方：退回上一层，与 ``Esc`` 是同一件事。
+        """双击了网格里没有格子的地方：退回上一层，退得动时与 ``Esc`` 走同一条 ``go_up``。
 
         这一层空着（空相册、空分组）时尤其需要它 —— 屏幕上根本没有可双击的东西。退不动时
-        安静地什么都不做：到了头本来就是一个合法状态。
+        安静地什么都不做：双击空白处没有「取消选中」这层含义（那一下本来就在空白上），
+        而 ``Esc`` 退不动时改去取消选中（ADR 0070）。
         """
         if self._grid.is_renaming():
             # 改到一半：这一下先归输入框。既不把人带走，也不打扰他。

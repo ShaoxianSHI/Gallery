@@ -1113,13 +1113,14 @@ def test_escape_returns_to_the_calendar_without_touching_the_conditions(
     window.close()
 
 
-def test_escape_does_nothing_when_there_is_nowhere_to_go(
+def test_going_up_does_nothing_when_there_is_nowhere_to_go(
     qt_app: QApplication, tmp_path: Path, make_photo
 ) -> None:
-    """在最外层（有条件、没进任何东西）按 `Esc`：**什么也不做**，也不撤条件。
+    """在最外层（有条件、没进任何东西）调用退一层：**位置不动**，也不撤条件。
 
-    **这一条钉的是「退不动就安静地不动」**：撤条件那条路挪到 ``⇧Esc`` 之后，``Esc`` 就没有
-    「顺手做点什么」的理由了。
+    **这一条钉的是「退不动就安静地不动」**：撤条件那条路挪到 ``⇧Esc`` 之后，退一层
+    就没有「顺手做点什么」的理由了。Esc 本身退不动时会去取消选中（ADR 0070），
+    那是另一条路，这一条只守 ``go_up`` 不碰条件。
     """
     root = _library(tmp_path, make_photo)
     window = _open(qt_app, root, tmp_path / "会话")

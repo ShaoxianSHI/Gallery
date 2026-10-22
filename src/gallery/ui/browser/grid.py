@@ -627,6 +627,16 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
         self.clearSelection()
         self.setCurrentIndex(QModelIndex())
 
+    def deselect(self) -> None:
+        """用户主动取消选中（``Esc`` 退不动时）：选区、当前项与扩选锚点一起清掉。
+
+        **扩选锚点也要清**：留着它，下一次 ``⇧`` 点会从刚取消掉的那一格铺开。
+        """
+        self.clear_current()
+        self._range_anchor = -1
+        self._armed_row = -1
+        self._rename_timer.stop()
+
     def sync_current_to_selection(self) -> None:
         """**当前项必须落在真选区里**，否则当场把它清掉。
 

@@ -6,7 +6,7 @@ Esc 同时还管着「行内重命名取消」，所以这里把两者的边界�
 
 1. Esc 在大图页退回网格、在网格页退上一层，全程只有「上一级」这一条命令；
 2. 改到一半按 Esc 只取消改名，不会顺手跳到上一层；
-3. 连按 Esc，目录会一层层退到库根，到根上就不再动了。
+3. 连按 Esc，目录会一层层退到库根；到了根上它改成取消选中，而不是按下去什么也不发生。
 
 **缩略图一档一档挪：⇧⌘↑ / ⇧⌘↓。** 捏合与 ⌘+滚轮要手搭在触控板上，这两条给的是键盘那一路。
 它们只作用在**网格**上：大图页里 ⌘+ / ⌘- 才是缩放，那边只有倍率、没有「档」。
@@ -121,11 +121,11 @@ def test_escape_leaves_the_detail_view_first(
 def test_the_view_menu_has_exactly_one_escape_command(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
 ) -> None:
-    """「视图」菜单里**只有一条 `Esc` 命令**，文案是「上一级」。
+    """「视图」菜单里**只有一条 `Esc` 命令**；退得动时它叫「上一级」。
 
     **守卫的是「同一个键不能有两个主人」**：合并不是省了一行菜单，而是因为大图页退一层与
-    网格页退一层本来就是同一件事（栈上都是弹顶帧，ADR 0041 决策 1）。哪天又添一条 `Esc`
-    命令，症状是「有时按 Esc 没反应」—— 加载顺序决定谁先触发，界面看不出错。
+    网格页退一层本来就是同一件事（栈上都是弹顶帧，ADR 0041 决策 1）。退不动时它改名
+    「取消选中」并取消当前对象（ADR 0070），仍然是同一条命令、同一个键。
     """
     library = tmp_path / "库"
     make_photo("IMG_0001.jpg", directory=library / "海边")
@@ -151,7 +151,7 @@ def test_the_view_menu_has_exactly_one_escape_command(
 def test_escape_walks_up_one_level_at_a_time(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
 ) -> None:
-    """网格下按 Esc 上一层；到了库根就没有上一层了，Esc 也不再有动作。"""
+    """网格下按 Esc 上一层；到了库根它改成取消选中，位置不再动。"""
     library = tmp_path / "库"
     make_photo("IMG_0001.jpg", directory=library / "海边")
     window = open_window(qt_app, library)
@@ -162,14 +162,19 @@ def test_escape_walks_up_one_level_at_a_time(
         QTest.keyClick(window, Qt.Key.Key_Escape)
         qt_app.processEvents()
         wait_for_level(window, qt_app, lambda: window._model.rowCount() == 1, what="扫描")
+        wait_until(qt_app, lambda: window._grid.genuinely_selected_rows() == [0])
 
         assert window._current_folder() == library
-        assert window._up_action.isEnabled() is False
+        assert window._can_go_up() is False
+        assert window._up_action.text() == "取消选中", "退不动时那一行该说它此刻做什么"
 
+        # 退回来的那一格（海边）还选中着；库根上这一下把它收掉，但位置不动。
         QTest.keyClick(window, Qt.Key.Key_Escape)
         qt_app.processEvents()
 
         assert window._current_folder() == library, "已经在库根，不能再往上"
+        assert window._grid.genuinely_selected_rows() == [], "库根上 Esc 没有取消选中"
+        assert window._up_action.isEnabled() is False
     finally:
         window.close()
 

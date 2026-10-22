@@ -293,6 +293,8 @@ class MainWindow(
         self._calendar_page.condition_removed.connect(self._on_condition_removed)
         # 换层 / 翻页 / 滚动都会改变「现在看得见哪些」，据此重新要缩略图。
         self._calendar_page.window_changed.connect(self._on_calendar_window_changed)
+        # 日历上选中了哪一天也算「有对象可取消」：退不动的 Esc 靠这份状态决定能不能按（ADR 0070）。
+        self._calendar_page.selection_changed.connect(self._schedule_action_states)
         self._calendar_page.set_today(datetime.date.today())
 
         self._stack = QStackedWidget()
@@ -397,10 +399,11 @@ class MainWindow(
         # 回上一层用 Esc（⌘↑ 被 macOS 占着）：**大图页与网格页共用这一条**——大图页也是栈上
         # 一帧，退掉它就是回网格（ADR 0041 决策 1），所以「返回网格」不再另立一个动作。
         # **Esc 只管位置，不管条件**（ADR 0040 决策 11）：判据里条件排在最前时，只要有条件就永远
-        # 退不出那一层。撤条件挪到 ⇧Esc，两者彻底分开，绝不互相抢。
+        # 退不出那一层。撤条件挪到 ⇧Esc，两者彻底分开，绝不互相抢。**退不动时改去取消选中**
+        # （ADR 0070）：在最外层它仍有对象可收，而不是按下去什么也不发生。
         self._up_action = QAction("上一级", self)
         self._up_action.setShortcut(QKeySequence("Esc"))
-        self._up_action.triggered.connect(self.go_up)
+        self._up_action.triggered.connect(self._on_escape)
 
         self._pop_condition_action = QAction("撤掉最后一条筛选条件", self)
         self._pop_condition_action.setShortcut(QKeySequence("Shift+Esc"))
@@ -757,9 +760,12 @@ class MainWindow(
 
     def _update_navigation_actions(self) -> None:
         # 「上一级」是**弹栈顶一帧**，大图页那一帧也压在上面，所以那里同样成立（ADR 0041 决策 1）。
-        # 改到一半不启用：那一刻 Esc 归输入框（「取消改名」）。
+        # 退不动时它改成「取消选中」仍然要有得按（ADR 0070）；改到一半不启用，那一刻 Esc 归输入框。
         idle = not self._grid.is_renaming() and not self._title_bar.is_editing()
-        self._up_action.setEnabled(idle and self._can_go_up())
+        can_go_up = self._can_go_up()
+        can_cancel = self._can_cancel_selection()
+        self._up_action.setEnabled(idle and (can_go_up or can_cancel))
+        self._up_action.setText("上一级" if can_go_up or not can_cancel else "取消选中")
         # **「撤掉最后一条」不限于网格页**：条件是跨页的，在日历那一页也还在，于是那条 ⇧Esc 在
         # 任何一页都要能用（ADR 0040 决策 11）。没条件时关掉，而不是按下去什么也不发生。
         self._pop_condition_action.setEnabled(bool(self._conditions))

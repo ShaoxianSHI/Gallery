@@ -296,6 +296,7 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
             "_banner_text",
             "_breadcrumb",
             "_browse_mode",
+            "_calendar_page",
             "_cancel_condition_edit",
             "_cancel_tier",
             "_clear_banner",
@@ -680,7 +681,9 @@ def test_the_widest_mixins_keep_their_ceiling() -> None:
         # （事件清单按哪张照片算归 EventFlowMixin，这一间只把菜单摆进去）。
         "window/context_menu_flow.py:ContextMenuFlowMixin": 57,
         "window/ordering.py:OrderingMixin": 45,
-        "window/navigation_flow.py:NavigationFlowMixin": 44,
+        # 44 → 45：Esc 退不动时要取消日历上选中的那一天（ADR 0070），而「选中哪一天」
+        # 只有 CalendarPage 知道；这一间因此多了一条对日历页的依赖。
+        "window/navigation_flow.py:NavigationFlowMixin": 45,
     }
     measured = _measured()
     for key, limit in ceiling.items():

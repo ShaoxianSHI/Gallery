@@ -97,3 +97,4 @@
 | [0067](0067-detail-page-viewers.md) | 大图页那一列图片应用：手写的白名单，按 bundle id 认装没装 | 已接受 |
 | [0068](0068-movie-sources.md) | 影片导入扩到 YouTube 与 Bilibili：`来源` 字段、大小写敏感的编号、三个字段改名 | 已接受 |
 | [0069](0069-scope-switches-only-from-the-toggle.md) | 作用域只从胶囊右边那枚按钮切换，文件菜单不再摆勾选项 | 已接受 |
+| [0070](0070-escape-deselects.md) | `Esc` 退不动时取消选中，菜单那一行跟着改叫「取消选中」 | 已接受 |
