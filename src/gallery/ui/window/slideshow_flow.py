@@ -14,7 +14,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QMessageBox
 
 from gallery.core.library.photos import PhotoRef
 from gallery.ui.window.state.slideshow import SlideshowState
@@ -48,13 +47,13 @@ class SlideshowFlowMixin:
     def start_slideshow(self) -> None:
         """从当前层级的第一张开始放映；**大图页上从正在看的那一张开始**。
 
-        这一层没有照片（例如全是相册或全是分组）时弹窗说明，不进入大图页。
+        这一层没有照片（例如全是相册或全是分组）时用横幅说明，不进入大图页。
         """
         if self._library is None or self._on_calendar_page():
             return
         photos = [entry for entry in self._model.entries() if isinstance(entry, PhotoRef)]
         if not photos:
-            QMessageBox.information(self, "放映", "当前层级没有照片。")
+            self._show_banner("当前层级没有照片。")
             return
         paths = tuple(photo.path for photo in photos)
         index = 0

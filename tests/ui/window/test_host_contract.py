@@ -432,6 +432,7 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
             "_owns_title_bar",
             "_panel",
             "_play_button",
+            "_show_banner",
             "_slideshow",
             "_slideshow_timer",
             "step_detail",

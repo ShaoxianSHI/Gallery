@@ -19,7 +19,7 @@ pytest.importorskip("PySide6")
 from library_helpers import set_library_ui  # noqa: E402
 from PySide6.QtCore import QAbstractAnimation, Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
-from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
+from PySide6.QtWidgets import QApplication  # noqa: E402
 from waiting import wait_for_idle, wait_until  # noqa: E402
 
 from gallery.core.library.config import (  # noqa: E402
@@ -157,9 +157,8 @@ def test_a_level_without_photos_says_so(
     qt_app: QApplication,
     tmp_path: Path,
     make_photo: Callable[..., Path],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """全是相册或全是分组时弹窗说明，不进入大图页。"""
+    """全是相册或全是分组时用横幅说明，不进入大图页。"""
     root = tmp_path / "只有相册"
     album = root / "子相册"
     album.mkdir(parents=True)
@@ -171,15 +170,10 @@ def test_a_level_without_photos_says_so(
     wait_for_idle(qt_app, window, what="扫描")
     assert window._model.rowCount() == 1
 
-    seen: list[str] = []
-    monkeypatch.setattr(
-        QMessageBox,
-        "information",
-        lambda *_args, **_kwargs: seen.append(str(_args[2])) or QMessageBox.StandardButton.Ok,
-    )
     window.start_slideshow()
 
-    assert seen == ["当前层级没有照片。"]
+    assert window._banner.isVisible()
+    assert window._banner.text() == "当前层级没有照片。"
     assert window._slideshow.active is False
     assert window._stack.currentWidget() is not window._detail_page
     window.close()
