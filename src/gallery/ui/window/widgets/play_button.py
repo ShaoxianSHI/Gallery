@@ -20,8 +20,8 @@ PLAY_BUTTON_WIDTH = 22
 #: 按钮高度（点）。与搜索胶囊同高。
 PLAY_BUTTON_HEIGHT = 22
 
-#: 三角占圆圈直径的比例。这个尺寸在 22 点的圆里一眼就能认出来。
-TRIANGLE_SCALE = 0.46
+#: 三角占圆圈直径的比例。留出一圈空白，不把按钮塞满。
+TRIANGLE_SCALE = 0.38
 
 #: 提示气泡上的文案。
 TOOLTIP = "放映当前层级的所有照片"
