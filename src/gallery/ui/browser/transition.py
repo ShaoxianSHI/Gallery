@@ -1,15 +1,19 @@
 """切档过渡：换一档缩略图尺寸时，每一格从旧布局飞到新布局的那一段。
 
 它**只描述画面，不描述逻辑状态**：``gridSize`` / ``visualRect`` / ``indexAt`` 在切换那一刻
-就已经是最终值，Qt 全程不知道有过过渡。单独成模块是因为这套算术（:class:`GridTransition`）
-与驱动它的那几条方法是一条独立的时序链，混在网格的排版代码里很难看出「画面与逻辑何时对齐」。
+就已经是最终值，Qt 全程不知道有过过渡。**过渡这一帧由
+:meth:`TransitionMixin._paint_transition_viewport` 自己画**：Qt 只画最终布局落在视口里的
+条目，而这一帧的格子按旧位置摆，交给它就会缺掉一整块。
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from PySide6.QtCore import QAbstractAnimation, QEasingCurve, QPoint, QRect, QSize
+from PySide6.QtGui import QPainter, QPaintEvent, QPalette
+from PySide6.QtWidgets import QStyle, QStyleOptionViewItem
 
 #: 视口停止变化多久之后才真正通知界面重取缩略图（拖动窗口时的防抖）。
 EDGE_SETTLE_MS = 120
@@ -155,6 +159,100 @@ class TransitionMixin:
         finally:
             self._driving_scroll = False
         self.viewport().update()
+
+    def _frame_top(self, transition: GridTransition, row: int, t: float) -> float:
+        """第 ``row`` 格在第 ``t`` 帧的顶边（视口坐标）。"""
+        old_top = (row // transition.old_columns) * transition.old_cell.height()
+        new_top = (row // transition.new_columns) * transition.new_cell.height()
+        old_scroll = self._scroll_from - transition.scroll_shift
+        old_screen = old_top - old_scroll
+        new_screen = new_top - self._scroll_to
+        return old_screen + (new_screen - old_screen) * t
+
+    def _rows_in_transition_frame(self, transition: GridTransition, t: float) -> range:
+        """第 ``t`` 帧落在视口里的行号范围。
+
+        **逐帧自己算**，不能问 Qt：这一帧的格子在视口里，逻辑位置上却可能在视口外
+        （见 :meth:`_paint_transition_viewport`）。顶边随行号单调，二分即可。
+        """
+        model = self.model()
+        count = model.rowCount() if model is not None else 0
+        if count <= 0:
+            return range(0)
+        bottom = self.viewport().height()
+        height = (
+            transition.old_cell.height()
+            + (transition.new_cell.height() - transition.old_cell.height()) * t
+        )
+        start = self._first_row_matching(
+            count, lambda row: self._frame_top(transition, row, t) + height > 0
+        )
+        stop = self._first_row_matching(
+            count, lambda row: self._frame_top(transition, row, t) >= bottom
+        )
+        # 首尾各多画一行：取整误差和格子的内边距可能让它还露出一角。
+        return range(max(0, start - 1), min(count, stop + 1))
+
+    @staticmethod
+    def _first_row_matching(count: int, predicate: Callable[[int], bool]) -> int:
+        """满足 ``predicate`` 的第一行（它随行号单调）；都不满足时返回 ``count``。"""
+        low, high = 0, count
+        while low < high:
+            middle = (low + high) // 2
+            if predicate(middle):
+                high = middle
+            else:
+                low = middle + 1
+        return low
+
+    def _final_rect(self, row: int, transition: GridTransition) -> QRect:
+        """第 ``row`` 格在最终布局里的矩形（视口坐标）。"""
+        model = self.model()
+        index = model.index(row, 0) if model is not None else None
+        if index is not None and index.isValid():
+            rect = self.visualRect(index)
+            if rect.isValid() and not rect.isEmpty():
+                return rect
+        columns = max(1, transition.new_columns)
+        cell = transition.new_cell
+        return QRect(
+            (row % columns) * cell.width(),
+            (row // columns) * cell.height() - self.verticalScrollBar().value(),
+            cell.width(),
+            cell.height(),
+        )
+
+    def _paint_transition_viewport(self, event: QPaintEvent) -> None:
+        """过渡期间自己画整个视口。
+
+        **不能只靠 Qt 的条目绘制**：它只画**最终布局**里落在视口内的条目，而这一帧的格子
+        是按旧位置摆的 —— 旧位置在屏上、最终位置在屏外的那些就整块空掉（放大一档时最容易
+        看见）。**要画哪些行按这一帧的位置自己算**。
+        """
+        transition = self._transition
+        if transition is None:
+            return
+        model = self.model()
+        if model is None:
+            return
+        t = self._delegate.transition_t
+        painter = QPainter(self.viewport())
+        selection = self.selectionModel()
+        try:
+            painter.setClipRect(event.rect())
+            painter.fillRect(event.rect(), self.viewport().palette().brush(QPalette.ColorRole.Base))
+            for row in self._rows_in_transition_frame(transition, t):
+                index = model.index(row, 0)
+                if not index.isValid():
+                    continue
+                option = QStyleOptionViewItem()
+                option.initFrom(self.viewport())
+                option.rect = self._final_rect(row, transition)
+                if selection is not None and selection.isSelected(index):
+                    option.state |= QStyle.StateFlag.State_Selected
+                self._delegate.paint(painter, option, index)
+        finally:
+            painter.end()
 
     def _settle_transition(self, *, restore_scroll: bool = True) -> None:
         """过渡收尾：画面回到「就是逻辑几何」，绘制尺寸与几何对齐。

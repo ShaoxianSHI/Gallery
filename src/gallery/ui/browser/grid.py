@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import time
-from typing import Final
+from typing import Final, cast
 
 from PySide6.QtCore import (
     QAbstractAnimation,
@@ -29,6 +29,7 @@ from PySide6.QtGui import (
     QKeyEvent,
     QMouseEvent,
     QNativeGestureEvent,
+    QPaintEvent,
     QResizeEvent,
     QWheelEvent,
 )
@@ -1028,6 +1029,14 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
         # 版面（:meth:`_layout_width` 只认宽度），:meth:`_recompute_layout` 直接返回。
         self._recompute_layout()
         self._debounce.start()
+
+    def viewportEvent(self, event: QEvent) -> bool:  # noqa: N802 - 名字是 Qt 定的
+        # 过渡这一帧由委托自己摆；Qt 只会画最终布局落在视口里的条目，见
+        # :meth:`TransitionMixin._paint_transition_viewport`。
+        if event.type() == QEvent.Type.Paint and self._transition is not None:
+            self._paint_transition_viewport(cast(QPaintEvent, event))
+            return True
+        return super().viewportEvent(event)
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 - 名字是 Qt 定的
         if watched is self.viewport() and event.type() == QEvent.Type.Resize:

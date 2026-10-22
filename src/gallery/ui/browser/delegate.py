@@ -68,6 +68,11 @@ class PhotoDelegate(QStyledItemDelegate):
         self._transition = transition
         self._t = t if transition is not None else 1.0
 
+    @property
+    def transition_t(self) -> float:
+        """这一帧的动画进度（已过缓动曲线）。"""
+        return self._t
+
     def cell_offset(self, row: int) -> QPoint:
         """第 ``row`` 格相对 ``option.rect`` 的额外位移（没有过渡时是原点）。
 

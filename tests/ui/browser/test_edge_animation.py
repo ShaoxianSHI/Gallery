@@ -389,6 +389,60 @@ COVER = QColor(200, 40, 40)
 CARD_INSET = 3
 
 
+def _solid_covers(model: PhotoListModel, photos: list[PhotoRef]) -> None:
+    """给每张照片一张填满整格的纯色缩略图：量得到某一行的画面有没有被画出来。"""
+    cover = QImage(300, 300, QImage.Format.Format_RGB32)
+    cover.fill(COVER)
+    for photo in photos:
+        model.set_thumbnail(photo.path, cover)
+
+
+def _painted_bands(grid: PhotoGrid) -> list[tuple[int, int]]:
+    """视口里**有画面**的那些连续行区间（自上而下）。空白区间会原样留出缺口。"""
+    image = grid.viewport().grab().toImage()
+    target = COVER.rgb()
+    painted: list[bool] = []
+    for y in range(image.height()):
+        painted.append(any(image.pixel(x, y) == target for x in range(0, image.width(), 7)))
+    bands: list[tuple[int, int]] = []
+    start = -1
+    for y, has_paint in enumerate(painted):
+        if has_paint and start < 0:
+            start = y
+        elif not has_paint and start >= 0:
+            bands.append((start, y - 1))
+            start = -1
+    if start >= 0:
+        bands.append((start, len(painted) - 1))
+    return bands
+
+
+@pytest.mark.parametrize("selected", [True, False])
+def test_the_first_frame_of_a_zoom_in_still_shows_the_whole_old_screen(
+    qt_app: QApplication, tmp_path: Path, selected: bool
+) -> None:
+    """放大一档的第 0 帧必须还是切换前那一屏。
+
+    Qt 只画**最终布局**里落在视口内的条目，而第 0 帧的格子按旧位置摆：交给它画，
+    旧位置在屏上、最终位置在屏外的那几行就整块空掉 —— 选中第一行时最显眼。
+    """
+    grid = make_grid(qt_app, tmp_path, 60)
+    model = grid.model()
+    assert isinstance(model, PhotoListModel)
+    _solid_covers(model, fake_photos(60, tmp_path))
+    settle_grid(qt_app, grid)
+    if selected:
+        grid.select_row(0)
+        settle_grid(qt_app, grid)
+
+    before = _painted_bands(grid)
+    assert len(before) >= 3, f"前提没摆出来：这一屏只量到 {before}"
+
+    grid.set_target_edge(THUMBNAIL_SIZES[2])
+    assert grid._transition is not None, "前提没摆出来：这一档没有换行，就没有第 0 帧可查"
+    assert _painted_bands(grid) == before, "第 0 帧缺了几行：那一整块在屏幕上就是空的"
+
+
 def _painted_top(
     model: PhotoListModel,
     row: int,
