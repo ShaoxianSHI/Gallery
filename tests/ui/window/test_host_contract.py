@@ -260,6 +260,7 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
             "_watch",
             "_watch_echoes",
             "_welcome",
+            "stop_slideshow",
         }
     ),
     "window/metadata_flow.py:MetadataFlowMixin": frozenset(
@@ -335,6 +336,7 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
             "_sync_search_frame",
             "_sync_ui",
             "leave_detail_page",
+            "stop_slideshow",
         }
     ),
     "window/ordering.py:OrderingMixin": frozenset(
@@ -415,6 +417,26 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
             "pop_last_condition",
         }
     ),
+    "window/slideshow_flow.py:SlideshowFlowMixin": frozenset(
+        {
+            "_clear_banner",
+            "_current_row",
+            "_focus_state",
+            "_in_detail_page",
+            "_library",
+            "_load_detail",
+            "_metadata_visible",
+            "_model",
+            "_on_calendar_page",
+            "_open_detail",
+            "_owns_title_bar",
+            "_panel",
+            "_play_button",
+            "_slideshow",
+            "_slideshow_timer",
+            "step_detail",
+        }
+    ),
     "window/state_sync.py:StateSyncMixin": frozenset(
         {
             "_refresh_title",
@@ -457,6 +479,7 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
             "_library_title",
             "_model",
             "_owns_title_bar",
+            "_play_button",
             "_scope_toggle",
             "_search_field",
             "_stack",
@@ -485,12 +508,15 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
             "_preview_cache",
             "_refresh_thumbnail_window",
             "_runner",
+            "_show_slideshow_delta",
+            "_slideshow",
             "_start_job",
             "_sync_page_to_stack",
             "_sync_ui",
             "_title_bar",
             "go_up",
             "set_browse_mode",
+            "stop_slideshow",
         }
     ),
     "window/watch_flow.py:WatchFlowMixin": frozenset(
@@ -676,14 +702,16 @@ def test_the_widest_mixins_keep_their_ceiling() -> None:
     那种变化（它说明那一间该拆了）。
     """
     ceiling = {
-        "window/library_flow.py:LibraryFlowMixin": 73,
+        # 73 → 74：切库 / 关库要先收掉放映（`stop_slideshow`），否则旧快照会去新模型里找行号。
+        "window/library_flow.py:LibraryFlowMixin": 74,
         # 56 → 57：「编辑事件…」那一行让这一间多要一个 `edit_photo_event_menu`
         # （事件清单按哪张照片算归 EventFlowMixin，这一间只把菜单摆进去）。
         "window/context_menu_flow.py:ContextMenuFlowMixin": 57,
         "window/ordering.py:OrderingMixin": 45,
         # 44 → 45：Esc 退不动时要取消日历上选中的那一天（ADR 0070），而「选中哪一天」
         # 只有 CalendarPage 知道；这一间因此多了一条对日历页的依赖。
-        "window/navigation_flow.py:NavigationFlowMixin": 45,
+        # 45 → 46：换层时先收掉放映（`stop_slideshow`），放映的快照属于上一层。
+        "window/navigation_flow.py:NavigationFlowMixin": 46,
     }
     measured = _measured()
     for key, limit in ceiling.items():

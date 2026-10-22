@@ -68,6 +68,7 @@ from gallery.ui.window.metadata_flow import MetadataFlowMixin
 from gallery.ui.window.navigation_flow import NavigationFlowMixin
 from gallery.ui.window.ordering import OrderingMixin
 from gallery.ui.window.search_flow import SearchFlowMixin
+from gallery.ui.window.slideshow_flow import SlideshowFlowMixin
 from gallery.ui.window.state.level_stack import (
     LevelStack,
     PageRole,
@@ -88,6 +89,7 @@ from gallery.ui.window.widgets.external_button import (
     folder_icon,
     icon_for,
 )
+from gallery.ui.window.widgets.play_button import PlayButton
 from gallery.ui.window.widgets.search_field import ScopeToggle, SearchField
 from gallery.ui.window.widgets.title_bar import EXTRA_PADDING as TITLE_BAR_EXTRA
 from gallery.ui.window.widgets.title_bar import TitleBar
@@ -115,6 +117,7 @@ class MainWindow(
     MetadataFlowMixin,
     ContextMenuFlowMixin,
     ViewerFlowMixin,
+    SlideshowFlowMixin,
     BannerFlowMixin,
     TitleBarFlowMixin,
     CalendarFlowMixin,
@@ -158,6 +161,8 @@ class MainWindow(
         self._init_pending_watch()  # 暂存的变化 + 重新分组之后要回到哪个组（ADR 0013）
         #: 大图页指着哪一行、这一层该选中哪一格：那几笔记账与它们的写入口（ADR 0053）。
         self._init_focus()
+        #: 放映：一批照片的快照、放到第几张，以及自动前进那个计时器。
+        self._init_slideshow()
         #: 「层或库换过了」—— 后台回调带一份进来再比，比不过就作废（ADR 0051）。
         self._generation = 0
         #: 13 个后台任务槽 + 「谁属于哪一组取消」（ADR 0051），声明与初始化都在那一处。
@@ -278,6 +283,7 @@ class MainWindow(
         self._detail = DetailView()
         self._detail.request_close.connect(self.show_grid)
         self._detail.request_step.connect(self.step_detail)
+        self._detail.pause_requested.connect(self._on_space_pressed)
         # 大图页上的右键：视图只报位置，菜单在这一侧拼（与网格同一个流程，见 ADR 0021）。
         self._detail.context_requested.connect(self._show_detail_context_menu)
         # ⌥ 点一下大图页：打开正在看的那张所属影片的网站（ADR 0063）。
@@ -323,6 +329,10 @@ class MainWindow(
 
         # 「用外部应用打开」按钮摆在搜索胶囊**左边**（ADR 0034），与胶囊同一手法：不进布局、摆位由
         # ``_layout_title_bar`` 算、要抬一次（Qt 按创建顺序叠兄弟控件）；**建在搜索框之前**。
+        self._play_button = PlayButton(self)
+        self._play_button.clicked.connect(self._on_play_clicked)
+        self._play_button.hide()
+
         self._external_button = ExternalAppsButton(self)
         self._external_button.set_entries(self._external_entries())
         self._external_button.entry_activated.connect(self._on_external_entry)
@@ -670,6 +680,8 @@ class MainWindow(
         self._external_button.setVisible(
             self._owns_title_bar and self._external_button.is_available()
         )
+        # 放映按钮只在有库、且不在日历页时摆出来 —— 放映的是**这一层的照片网格**。
+        self._sync_play_button()
         self._layout_title_bar()
         # **网格选区整轮只问一次** —— `selected_rows()` 要为每一个选中项新建一个 `QModelIndex`
         # 再收成列表（三万张全选时一次 15.4 ms），问两遍是纯重复劳动。
@@ -860,6 +872,7 @@ class MainWindow(
             # **先把外部按钮叫回来，再摆**：真全屏把它藏起来了，而退出真全屏
             # 不经过 ``_update_action_states``。
             self._external_button.setVisible(self._external_button.is_available())
+            self._sync_play_button()
             self._layout_title_bar()
             self._layout_banner()
             self._sync_fill_action()

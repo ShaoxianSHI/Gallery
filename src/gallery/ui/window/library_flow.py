@@ -255,6 +255,9 @@ class LibraryFlowMixin:
         def _update_metadata_editable(self) -> None: ...
         def _update_mode_actions(self) -> None: ...
 
+        # 放映那一间的方法；`_teardown_library` 切库前先把它收掉。
+        def stop_slideshow(self) -> None: ...
+
         # ``_reload_level`` 的真定义在 ``navigation_flow.py``（那里带完整的
         # ``EntryKey | None`` 标注）；``level_stack_mixin.py`` 里另有一份 ``object`` 标注的
         # 声明。**这里跟着真定义写**，否则组合根会报两个基类不一致。
@@ -485,6 +488,8 @@ class LibraryFlowMixin:
         logger.info("查孤儿绑定失败：%s", message)
 
     def _teardown_library(self) -> None:
+        # 放映认的是上一个库的那些照片，切库时先收掉，别让它拿旧快照去新库的模型里找行号。
+        self.stop_slideshow()
         # 监听器第一刀：它还在跑的时候，下面就把库和索引都拆了。
         self._watch.stop()
         self._watch_echoes.clear()

@@ -156,7 +156,7 @@ class NavigationFlowMixin:
         if self._on_calendar_page():
             return self._calendar_page.selected_day() is not None
         # 只认真选区：当前项不等于选中（Qt 摆模型时可能顺手给第 0 行一个当前项，屏幕上却没有高亮）。
-        # 也别问 ``selected_rows()``：三万张全选时它要 15 毫秒，而 `_update_action_states` 已经问过。
+        # 也别问 ``selected_rows()``：三万张全选时它要 15 毫秒，而 `_update_action_states` 问过了。
         selection = self._grid.selectionModel()
         return bool(selection is not None and selection.hasSelection())
 
@@ -206,6 +206,7 @@ class NavigationFlowMixin:
         :param focus: 到了这一层要选中哪一格；**只有往上一层退才会给**，其余由
             :meth:`_arm_focus` 自己判断。
         """
+        self.stop_slideshow()
         self._cancel_tier(LEVEL)
         self._arm_focus(focus)
         # 换代：让已经在路上的旧结果作废。

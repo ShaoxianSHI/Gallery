@@ -51,6 +51,7 @@ class ViewerFlowMixin:
         :meth:`MainWindow.go_up`。两条路在栈顶投影出同一件事（弹掉照片帧），所以退到网格
         还是日历由照片帧底下压着的那一层决定。
         """
+        self.stop_slideshow()
         if self._on_calendar_page():
             # 日历与网格**同一时刻只有一个**：从日历按 Esc 出来就是把浏览方式换回「全部照片」，
             # 否则菜单里那个勾就成了假话，``Y`` / ``M`` / ``W`` 也没处可去。
@@ -69,6 +70,7 @@ class ViewerFlowMixin:
         :meth:`~gallery.ui.window.navigation_flow.NavigationFlowMixin._leave_frame` 里收**
         （那是「刚弹掉一张照片」的现场）：走到这里栈上已经不是照片帧，按栈判永远为假。"""
         self._title_bar.stop_edit()  # 切页时把改到一半的名字收起来（ADR 0025）
+        self.stop_slideshow()
         self._sync_page_to_stack()  # 照片帧弹掉之后，这一条栈表示的就是网格页
         if self._current_row >= 0:
             self._grid.select_row(self._current_row)
@@ -79,6 +81,9 @@ class ViewerFlowMixin:
 
     def step_detail(self, delta: int) -> None:
         """上一张 / 下一张。相册模式下会跳过相册格子。"""
+        if self._slideshow.active:
+            self._show_slideshow_delta(delta)
+            return
         row = self._neighbour_photo_row(self._current_row, delta)
         if row is None:
             return
@@ -105,11 +110,13 @@ class ViewerFlowMixin:
             row += delta
         return None
 
-    def _load_detail(self, row: int) -> None:
+    def _load_detail(self, row: int, *, fade: bool = False) -> None:
         library = self._library
         ref = self._model.photo_at(row)
         if library is None or ref is None:
             return
+        # 放映途中任何一次换照片都该淡入淡出，不管是谁发起的（自动、← / →、监听器换页）。
+        fade = fade or self._slideshow.active
         # guard: allow-long-comment（五个调用点都靠这一句换页，少一句就是「画面换了而页面没换」）
         # 标题栏那一行从此是这张照片的文件名（ADR 0025 决策 4）：翻图、打开、
         # 删掉一张之后接着看，走的都是这一段。**换页也在 `_sync_ui` 里**，所以调用点
@@ -124,7 +131,7 @@ class ViewerFlowMixin:
         cached = self._preview_cache.get(ref.path)
         if cached is not None:
             self._preview_cache.move_to_end(ref.path)
-            self._detail.set_image(cached, refit=True)
+            self._detail.set_image(cached, refit=True, fade=fade)
             self._request_full(ref, row, generation)
             # 命中也必须继续预读前后：只预读未命中的那张，连续翻图会每隔一张先闪一下缩略图。
             self._prefetch_neighbours(row)
@@ -135,7 +142,7 @@ class ViewerFlowMixin:
         # 先用这张照片自己的缩略图顶上，小一点但至少是对的。
         thumbnail = self._model.thumbnail_pixmap(ref.path)
         if thumbnail is not None:
-            self._detail.set_image(thumbnail.toImage(), refit=True)
+            self._detail.set_image(thumbnail.toImage(), refit=True, fade=fade)
         else:
             self._detail.clear_image()
         max_edge = self._preview_edge()

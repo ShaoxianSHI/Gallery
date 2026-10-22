@@ -13,6 +13,7 @@ from PySide6.QtCore import (
     QPoint,
     QPointF,
     QRectF,
+    QSize,
     Qt,
     QVariantAnimation,
     Signal,
@@ -47,6 +48,9 @@ OVERLAY_MARGIN = 16
 #: 回到默认视图的动画时长。再长就显得拖沓，再短就看不出是「平滑」过去的。
 FIT_ANIMATION_MS = 220
 
+#: 两张照片交叉淡入淡出的时长。放映时逐张切换用它，短到不耽误观看，长到能看出是过渡。
+CROSSFADE_MS = 320
+
 #: 判断「已经处于默认视图」的容差：比例用相对误差，位置用屏幕像素。
 SCALE_EPSILON = 0.002
 CENTER_TOLERANCE_PX = 2.0
@@ -69,6 +73,8 @@ class DetailView(QGraphicsView):
 
     request_close = Signal()
     request_step = Signal(int)
+    #: 按了空格：放映中归「暂停 / 继续」，其余时候与右方向键一样换下一张（由窗口决定）。
+    pause_requested = Signal()
     zoom_changed = Signal(float)
     #: 用户在照片上按了右键。位置是**窗口坐标**（``QMenu.exec`` 直接吃它）。
     context_requested = Signal(QPoint)
@@ -119,6 +125,14 @@ class DetailView(QGraphicsView):
         self._animation.valueChanged.connect(self._animation_frame)
         self._animation.finished.connect(self._animation_finished)
 
+        #: 上一张照片盖在新照片之上，透明度从 1 降到 0 —— 交叉淡入淡出就是这一层。
+        self._fade_item: QGraphicsPixmapItem | None = None
+        self._fade_animation = QVariantAnimation(self)
+        self._fade_animation.setDuration(CROSSFADE_MS)
+        self._fade_animation.setEasingCurve(QEasingCurve.Type.Linear)
+        self._fade_animation.valueChanged.connect(self._fade_frame)
+        self._fade_animation.finished.connect(self._fade_finished)
+
     def _apply_theme(self) -> None:
         """底色跟着主题走：硬编码深色会让浅色主题下点开照片突然变一块黑。"""
         color = theme.current_theme().background
@@ -139,12 +153,15 @@ class DetailView(QGraphicsView):
             return (0, 0)
         return (self._pixmap.width(), self._pixmap.height())
 
-    def set_image(self, image: QImage, *, refit: bool = True) -> None:
+    def set_image(self, image: QImage, *, refit: bool = True, fade: bool = False) -> None:
         """显示一张图像。
 
         :param refit: 是否重新适配窗口。替换图像（预览 → 全分辨率）时传 ``False``，
             可以保住用户当前的缩放与位置。
+        :param fade: 是否让**上一张**盖在新图上淡出。放映逐张切换时用它；同一张的
+            预览 → 全分辨率替换不该淡入，否则画面会来回闪。
         """
+        previous = self._pixmap if fade else QPixmap()
         self.hide_overlay()
         self.stop_animation()
         pixmap = QPixmap.fromImage(image)
@@ -155,6 +172,8 @@ class DetailView(QGraphicsView):
         self._pixmap = pixmap
         self._item.setPixmap(pixmap)
         self._scene.setSceneRect(QRectF(pixmap.rect()))
+        if not previous.isNull():
+            self._start_fade(previous, pixmap.size())
         if refit or self._fit_mode:
             self.fit_to_window()
         else:
@@ -177,12 +196,47 @@ class DetailView(QGraphicsView):
 
     def clear_image(self) -> None:
         """真正清空画面（切库或没有可显示内容时用），会释放全分辨率副本。"""
+        self._clear_fade()
         self.hide_overlay()
         self.stop_animation()
         self._pixmap = QPixmap()
         self._item.setPixmap(QPixmap())
         self._scene.setSceneRect(QRectF())
         self.resetTransform()
+
+    def _start_fade(self, previous: QPixmap, size: QSize) -> None:
+        """把上一张盖在新图之上淡出。
+
+        新图按它自己的尺寸铺满场景，上一张按**中心对齐**摆进来；两张比例不同时用户看到的
+        是「旧画面退去、新画面露出来」，而不是旧图被从左上角裁掉一块。
+        """
+        self._clear_fade()
+        width, height = size.width(), size.height()
+        item = QGraphicsPixmapItem(previous)
+        item.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
+        item.setZValue(1.0)
+        item.setPos(QPointF((width - previous.width()) / 2, (height - previous.height()) / 2))
+        self._scene.addItem(item)
+        self._fade_item = item
+        self._fade_animation.stop()
+        self._fade_animation.setStartValue(1.0)
+        self._fade_animation.setEndValue(0.0)
+        self._fade_animation.start()
+
+    def _fade_frame(self, value: object) -> None:
+        if self._fade_item is not None:
+            self._fade_item.setOpacity(float(value))  # type: ignore[arg-type]
+
+    def _fade_finished(self) -> None:
+        if self._fade_item is not None:
+            self._scene.removeItem(self._fade_item)
+            self._fade_item = None
+
+    def _clear_fade(self) -> None:
+        self._fade_animation.stop()
+        if self._fade_item is not None:
+            self._scene.removeItem(self._fade_item)
+            self._fade_item = None
 
     def _show_overlay(self) -> None:
         self._overlay.setText(self._overlay_text)
@@ -365,8 +419,11 @@ class DetailView(QGraphicsView):
         if key == Qt.Key.Key_Left:
             self.request_step.emit(-1)
             return
-        if key in (Qt.Key.Key_Right, Qt.Key.Key_Space):
+        if key == Qt.Key.Key_Right:
             self.request_step.emit(1)
+            return
+        if key == Qt.Key.Key_Space:
+            self.pause_requested.emit()
             return
         if key in (Qt.Key.Key_Plus, Qt.Key.Key_Equal):
             self.zoom_in()
@@ -399,6 +456,7 @@ class DetailView(QGraphicsView):
 
 
 __all__ = [
+    "CROSSFADE_MS",
     "FIT_ANIMATION_MS",
     "OVERLAY_MARGIN",
     "DetailView",

@@ -13,6 +13,7 @@ from typing import Final
 from PySide6.QtCore import QPointF
 
 from gallery.ui.window.widgets.external_button import BUTTON_GAP, BUTTON_WIDTH, button_rect
+from gallery.ui.window.widgets.play_button import PLAY_BUTTON_WIDTH
 from gallery.ui.window.widgets.search_field import HEIGHT as SEARCH_FIELD_HEIGHT
 from gallery.ui.window.widgets.search_field import MARGIN_RIGHT as SEARCH_FIELD_MARGIN_RIGHT
 from gallery.ui.window.widgets.search_field import TEXT_ALIGN_DROP as SEARCH_FIELD_TEXT_ALIGN_DROP
@@ -156,6 +157,7 @@ class TitleBarFlowMixin:
             self._title_bar.hide()
             self._search_field.hide()
             self._external_button.hide()
+            self._play_button.hide()
             self._scope_toggle.hide()
             return
         central = self.centralWidget()
@@ -194,15 +196,23 @@ class TitleBarFlowMixin:
 
         # 「用外部应用打开」**从胶囊那一块往左长出来**（见 ``button_rect``），于是两者必然同高、同一
         # 基线。**显隐的判据只有一处**（``is_available``）；真全屏时它整个不见。
-        if self._external_button.isVisible():
-            self._external_button.setGeometry(button_rect(self._search_field.geometry()))
+        anchor = self._search_field.geometry()
+        external_visible = self._external_button.isVisible()
+        if external_visible:
+            anchor = button_rect(anchor)
+            self._external_button.setGeometry(anchor)
             self._external_button.raise_()
+        # 放映按钮再往左一格；外部按钮收起来时它就贴着胶囊，不留一段空出来的位置。
+        if self._play_button.isVisible():
+            self._play_button.setGeometry(button_rect(anchor, PLAY_BUTTON_WIDTH, BUTTON_GAP))
+            self._play_button.raise_()
         # 标题文字与 ⌘R 的输入框都要给右上角这一整块让出来（胶囊**加上左边的按钮**）。
         self._title_bar.reserve_right(
             inset_to_capsule
             + SEARCH_FIELD_WIDTH
             + SEARCH_FIELD_MARGIN_RIGHT
-            + (BUTTON_WIDTH + BUTTON_GAP if self._external_button.isVisible() else 0)
+            + (BUTTON_WIDTH + BUTTON_GAP if external_visible else 0)
+            + (PLAY_BUTTON_WIDTH + BUTTON_GAP if self._play_button.isVisible() else 0)
         )
 
         # guard: allow-long-comment（对齐的是胶囊不是那一整块；对齐到按钮右缘会在中间空出一截）
