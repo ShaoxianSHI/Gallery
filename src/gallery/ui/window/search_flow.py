@@ -80,14 +80,13 @@ class SearchFlowMixin:
             self._reload_level()
 
     def _sync_search_scope(self) -> None:
-        """胶囊上的那句话与菜单项的勾，两处一起跟着作用域走。
+        """胶囊上的那句话跟着作用域走。
 
         **切换按钮不在其中**：它是一次性动作，界面上不摆状态（ADR 0042 决策 1），所以没有
-        「要同步过去的那一份」。
+        「要同步过去的那一份」。**界面上说「此刻是哪一头」的只剩占位文字**（ADR 0069）。
         """
         filtering = self._search_scope == SEARCH_SCOPE_LEVEL
         self._search_field.set_scope(filtering)
-        self._scope_action.setChecked(filtering)
         # 作用域还决定菜单上那两句话写「筛选」还是「搜索」（`_update_action_states` 里读的），
         # 所以余下那几份映射一并重算，而不是只挑这一份。
         self._sync_ui()

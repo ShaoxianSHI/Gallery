@@ -403,7 +403,6 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
             "_push_frame",
             "_reload_level",
             "_remember_ordering",
-            "_scope_action",
             "_search_field",
             "_search_frame",
             "_search_scope",

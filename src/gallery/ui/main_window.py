@@ -542,26 +542,11 @@ class MainWindow(
         self._clear_search_action = QAction("清除搜索条件", self)
         self._clear_search_action.triggered.connect(self.clear_search_conditions)
 
-        # guard: allow-long-comment（菜单上唯一的「此刻是哪一头」，与胶囊占位文字必须准）
-        # 「筛选当前视图」：切换按钮在菜单里的那条路（ADR 0040 决策 5）。**与按钮走同一个入口**，
-        # 所以两处永远说同一句话。按钮自己不再摆状态（ADR 0042 决策 1），**这一项的勾是菜单上
-        # 唯一的「此刻是哪一头」** —— 与胶囊里的占位文字一起，那两处必须一直是准的。
-        self._scope_action = QAction("筛选当前视图", self)
-        self._scope_action.setCheckable(True)
-        # **``toggled`` 递过来的是 ``checked``（一个 bool），不是作用域那个字符串** —— 直接接
-        # ``set_search_scope`` 会让一个非法的值走到它开头那道校验里，于是按了没反应。
-        self._scope_action.toggled.connect(
-            lambda checked=False: self.set_search_scope(
-                SEARCH_SCOPE_LEVEL if checked else SEARCH_SCOPE_LIBRARY
-            )
-        )
-
         file_menu = self.menuBar().addMenu("文件")
         file_menu.addAction(self._open_action)
         self._recent_menu = file_menu.addMenu("最近打开")
         file_menu.addSeparator()
         file_menu.addAction(self._search_action)
-        file_menu.addAction(self._scope_action)
         # 没有条件时**整条不出现**（``QAction.setVisible`` 就是「不进菜单」，ADR 0014 决策 4）。
         self._clear_search_action.setVisible(False)
         file_menu.addAction(self._clear_search_action)
@@ -672,7 +657,6 @@ class MainWindow(
         # 切换按钮同理（它就摆在那一行上），并且要一直跟得上库级偏好。
         self._scope_toggle.setVisible(self._owns_title_bar)
         self._scope_toggle.setEnabled(self._library is not None)
-        self._scope_action.setEnabled(self._library is not None)
         # 「改名」落在哪儿：大图页改的是标题栏那一行（ADR 0025），网格里是行内编辑。
         renaming_here = in_grid or (in_detail and self._title_bar.isVisible())
         # 移到废纸篓两边都成立（大图页删的是正在看的那一张）。**日历那一页两者都不是** —— 它没有

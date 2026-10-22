@@ -1274,7 +1274,7 @@ def test_the_breadcrumb_keeps_the_group_while_filtering(
 def test_the_button_switches_the_scope_and_the_words(
     qt_app: QApplication, tmp_path: Path, make_photo
 ) -> None:
-    """按钮一按：占位文字、勾、菜单文案一起换。**这几处说同一句话**，否则用户会以为是两个设置。
+    """按钮一按：占位文字与菜单文案一起换。**这几处说同一句话**，否则用户会以为是两个设置。
 
     按钮**按一次掉个头**（ADR 0042 决策 1）：它是动作，不是可勾选的开关，所以这里发的是真的
     ``click`` 而不是 ``setChecked``。**要开着库** —— 没有库时按钮是置灰的
@@ -1291,7 +1291,6 @@ def test_the_button_switches_the_scope_and_the_words(
     qt_app.processEvents()
 
     assert window._search_field._edit.placeholderText() == PLACEHOLDER_FILTER
-    assert window._scope_action.isChecked() is True
     assert window._search_action.text() == "筛选…"
     assert window._clear_search_action.text() == "清除筛选条件"
     window.close()
@@ -1530,21 +1529,21 @@ def _close(left: QColor, right: QColor, tolerance: float) -> bool:
     )
 
 
-def test_the_menu_item_and_the_button_are_one_setting(qt_app: QApplication, tmp_path: Path) -> None:
-    """从菜单切过去，胶囊那句话也跟着换 —— 两条路走同一个入口，所以两处永远一致。
+def test_the_file_menu_no_longer_offers_the_scope(qt_app: QApplication, tmp_path: Path) -> None:
+    """作用域只从胶囊右边那一枚按钮切换（ADR 0069）。
 
-    **按钮不再有可断言的状态**（ADR 0042 决策 1），所以这一条量的是那两处仍然在说话的地方：
-    菜单项的勾与胶囊的占位文字。按钮那一侧断言的是「它不会成为第三个说法」。
+    菜单里不再摆那个勾选项，「此刻是哪一头」只说在胶囊的占位文字里。
     """
     window = MainWindow(session_base=tmp_path / "会话")
     window.show()
     qt_app.processEvents()
 
-    window._scope_action.setChecked(True)
-    qt_app.processEvents()
-
-    assert window._search_scope == SEARCH_SCOPE_LEVEL
-    assert window._search_field._edit.placeholderText() == PLACEHOLDER_FILTER
+    file_menu = next(
+        action.menu()
+        for action in window.menuBar().actions()
+        if action.text() == "文件" and action.menu() is not None
+    )
+    assert "筛选当前视图" not in [action.text() for action in file_menu.actions()]
     window.close()
 
 

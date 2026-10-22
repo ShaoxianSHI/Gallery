@@ -27,7 +27,7 @@ ADR 0040 决策 5 那枚按钮是**可勾选**的：整枚按钮填满高亮色�
 | 位置 | 说什么 |
 |---|---|
 | 胶囊里的占位文字 | 「搜索照片…」/「筛选照片…」（ADR 0040 决策 5 的那两句，两句一眼能分） |
-| 菜单里「筛选当前视图」那一项 | 勾 |
+| 菜单里「筛选当前视图」那一项 | 勾（**这一项已由 [ADR 0069](0069-scope-switches-only-from-the-toggle.md) 删掉**） |
 
 状态仍照旧是**库级偏好**、仍由 `set_search_scope` 这一个入口改、仍然记在 `config.toml` 的
 `[ui]`（ADR 0040 决策 6）—— 变的只是它不再**显示**自己。**方向由外面算**：`switched` **不带参数**，
@@ -61,7 +61,7 @@ ADR 0040 决策 5「不挂提示」的理由随决策 1 一起失效，所以这
 
 - `ScopeToggle` 少三个字段（`_active`、`_applied_active`、`set_filtering`），信号由
   `toggled(bool)` 变成 `switched()`，`toggle_style` / `scope_arrows` 少一个 `active` 参
-  数；`_sync_search_scope` 同步**两处**（占位文字与菜单勾），`_on_scope_toggled(filtering)` 变成
+  数；`_sync_search_scope` 同步**两处**（占位文字与菜单勾，后者已由 ADR 0069 删掉），`_on_scope_toggled(filtering)` 变成
   `_on_scope_switched()`，判据从信号带来的 bool 变成「当前作用域取反」。机制**一个字没变**（仍是
   ADR 0040 决策 1 的两档、库级偏好、单一入口、不清条件）。
 - 测试：`tests/ui/test_filter_flow.py` 那一族换一条加一条，其余用例改用 `click()`（**要开着库**）。
