@@ -1,6 +1,6 @@
 # ADR 0077：国内坐标交给 Google 前转 GCJ-02，Apple 保持 WGS-84
 
-- 状态：已接受
+- 状态：已接受（决策 2 由 0078 取代）
 - 日期：2026-10-24
 - 相关 ADR：0075（大图页把拍摄位置开到地图里）、0076（Google 地图那一项走 PWA）
 - 相关代码：`src/gallery/core/places/gcj.py`、`src/gallery/core/external/maps.py`

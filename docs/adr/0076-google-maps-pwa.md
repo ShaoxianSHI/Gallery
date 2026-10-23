@@ -2,7 +2,7 @@
 
 - 状态：已接受
 - 日期：2026-10-24
-- 相关 ADR：0075（大图页把拍摄位置开到地图里）、0077（国内坐标先转 GCJ-02）、
+- 相关 ADR：0075（大图页把拍摄位置开到地图里）、0077 / 0078（国内坐标先转 GCJ-02）、
   0034（用外部应用打开：PWA 那条路）、0067（大图页那一列图片应用）
 - 相关代码：`src/gallery/core/external/launch.py`、`src/gallery/core/external/pwa.py`、
   `src/gallery/core/external/applescript.py`、`src/gallery/core/external/maps.py`、

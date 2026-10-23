@@ -3,7 +3,7 @@
 - 状态：已接受（Google 地图那一项由 0076 扩成 PWA）
 - 日期：2026-10-24
 - 相关 ADR：0034（用外部应用打开）、0067（大图页那一列图片应用）、0021（大图页的当前项）、
-  0010（地点按坐标推断）、0077（国内坐标先转 GCJ-02）
+  0010（地点按坐标推断）、0077 / 0078（国内坐标先转 GCJ-02）
 - 相关代码：`src/gallery/core/external/maps.py`、`src/gallery/core/external/apps.py`、
   `src/gallery/core/external/launch.py`、`src/gallery/ui/main_window.py`、
   `src/gallery/ui/banners.py`、`src/gallery/ui/window/widgets/external_button.py`

@@ -221,8 +221,8 @@ def test_a_browser_that_never_starts_falls_back() -> None:
 def test_maps_is_opened_with_one_open_call() -> None:
     """**只起一个 ``open`` 进程**：系统「地图」认 ``maps://``，不需要轮询窗口。"""
     runner = FakeRunner()
-    outcome = open_in_maps(39.908722, 116.397499, runner=runner)
-    assert runner.calls == [["open", "maps://?ll=39.908722,116.397499&q=39.908722,116.397499"]]
+    outcome = open_in_maps(48.8584, 2.2945, runner=runner)
+    assert runner.calls == [["open", "maps://?ll=48.858400,2.294500&q=48.858400,2.294500"]]
     assert outcome.where == WHERE_APP
     assert outcome.detail is None
 

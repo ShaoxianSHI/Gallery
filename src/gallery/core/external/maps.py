@@ -2,8 +2,7 @@
 
 **macOS 上只有系统自带的「地图」认坐标**：高德地图的 Mac 版没有注册任何 URL scheme
 （iOS 那个 ``iosamap://`` 直接报找不到应用），百度 / 腾讯也没有 Mac 端点。
-**两家对国内底图的口径不同**：Apple 自己按 WGS-84 收，Google 的路网是 GCJ-02，
-所以只有 Google 那条在拼链接之前换算一次（ADR 0077）。
+**两家的国内底图都是 GCJ-02**：EXIF 的 WGS-84 必须先转一次，否则落点偏几百米（ADR 0077 / 0078）。
 """
 
 from __future__ import annotations
@@ -41,8 +40,9 @@ def apple_deep_link(latitude: float, longitude: float) -> str:
 
     **``q`` 不能省**：只给 ``ll`` 是把地图中心挪过去，用户看到的是「那附近」；
     ``q`` 给同一个坐标才在那里落一个标记点，地图上能直接读出「就是这里」。
-    **坐标按 WGS-84 原样交出去**：Apple 自己处理国内底图那一层偏移，预先转成 GCJ 反而偏。
+    **国内坐标先换成 GCJ-02**：它的底图用 GCJ-02，直接递 WGS-84 会偏几百米（ADR 0078）。
     """
+    latitude, longitude = wgs_to_gcj(latitude, longitude)
     lat, lon = _coordinate_text(latitude, longitude)
     return f"{APPLE_SCHEME}?ll={lat},{lon}&q={lat},{lon}"
 

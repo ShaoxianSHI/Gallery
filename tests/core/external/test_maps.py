@@ -9,16 +9,28 @@ from gallery.core.external.maps import apple_deep_link, google_web_link
 
 def test_apple_link_centers_the_map_and_drops_a_pin() -> None:
     """**``ll`` 与 ``q`` 都要**：前者挪中心，后者落标记点。"""
-    assert (
-        apple_deep_link(39.908722, 116.397499)
-        == "maps://?ll=39.908722,116.397499&q=39.908722,116.397499"
-    )
+    assert apple_deep_link(48.8584, 2.2945) == "maps://?ll=48.858400,2.294500&q=48.858400,2.294500"
 
 
 def test_google_link_uses_the_documented_search_endpoint() -> None:
     assert (
         google_web_link(48.8584, 2.2945)
         == "https://www.google.com/maps/search/?api=1&query=48.858400,2.294500"
+    )
+
+
+def test_apple_link_converts_mainland_coordinates_to_gcj() -> None:
+    """Apple 的国内底图同样是 GCJ-02：WGS 点上去会偏几百米（ADR 0078）。"""
+    assert (
+        apple_deep_link(31.2304, 121.4737)
+        == "maps://?ll=31.228458,121.478223&q=31.228458,121.478223"
+    )
+
+
+def test_apple_link_leaves_hong_kong_alone() -> None:
+    assert (
+        apple_deep_link(22.2819, 114.1582)
+        == "maps://?ll=22.281900,114.158200&q=22.281900,114.158200"
     )
 
 
@@ -34,14 +46,6 @@ def test_google_link_leaves_hong_kong_alone() -> None:
     assert (
         google_web_link(22.2819, 114.1582)
         == "https://www.google.com/maps/search/?api=1&query=22.281900,114.158200"
-    )
-
-
-def test_apple_link_keeps_wgs84() -> None:
-    """Apple 自己处理国内底图偏移；这里换成 GCJ 会让它偏到另一边去。"""
-    assert (
-        apple_deep_link(31.2304, 121.4737)
-        == "maps://?ll=31.230400,121.473700&q=31.230400,121.473700"
     )
 
 
