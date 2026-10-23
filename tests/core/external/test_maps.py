@@ -22,6 +22,29 @@ def test_google_link_uses_the_documented_search_endpoint() -> None:
     )
 
 
+def test_google_link_converts_mainland_coordinates_to_gcj() -> None:
+    """Google 的国内路网是 GCJ-02：递 WGS 会偏几百米（ADR 0077）。"""
+    assert (
+        google_web_link(31.2304, 121.4737)
+        == "https://www.google.com/maps/search/?api=1&query=31.228458,121.478223"
+    )
+
+
+def test_google_link_leaves_hong_kong_alone() -> None:
+    assert (
+        google_web_link(22.2819, 114.1582)
+        == "https://www.google.com/maps/search/?api=1&query=22.281900,114.158200"
+    )
+
+
+def test_apple_link_keeps_wgs84() -> None:
+    """Apple 自己处理国内底图偏移；这里换成 GCJ 会让它偏到另一边去。"""
+    assert (
+        apple_deep_link(31.2304, 121.4737)
+        == "maps://?ll=31.230400,121.473700&q=31.230400,121.473700"
+    )
+
+
 @pytest.mark.parametrize(
     ("latitude", "longitude"),
     [(90.1, 0.0), (-90.1, 0.0), (0.0, 180.1), (0.0, -180.1)],

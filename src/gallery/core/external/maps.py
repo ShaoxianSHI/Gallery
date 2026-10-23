@@ -1,11 +1,14 @@
 """地图链接：把一张照片的坐标翻译成「地图」或 Google 地图能打开的地址。
 
 **macOS 上只有系统自带的「地图」认坐标**：高德地图的 Mac 版没有注册任何 URL scheme
-（iOS 那个 ``iosamap://`` 在 macOS 上直接报找不到应用），百度 / 腾讯也没有 Mac 端点。
-坐标是 EXIF 里的 WGS-84；``ll`` 把地图中心挪过去，``q`` 才落下一个标记点。
+（iOS 那个 ``iosamap://`` 直接报找不到应用），百度 / 腾讯也没有 Mac 端点。
+**两家对国内底图的口径不同**：Apple 自己按 WGS-84 收，Google 的路网是 GCJ-02，
+所以只有 Google 那条在拼链接之前换算一次（ADR 0077）。
 """
 
 from __future__ import annotations
+
+from gallery.core.places.gcj import wgs_to_gcj
 
 #: Apple 地图注册的 URL scheme（bundle id ``com.apple.Maps``）。
 APPLE_SCHEME = "maps://"
@@ -38,13 +41,19 @@ def apple_deep_link(latitude: float, longitude: float) -> str:
 
     **``q`` 不能省**：只给 ``ll`` 是把地图中心挪过去，用户看到的是「那附近」；
     ``q`` 给同一个坐标才在那里落一个标记点，地图上能直接读出「就是这里」。
+    **坐标按 WGS-84 原样交出去**：Apple 自己处理国内底图那一层偏移，预先转成 GCJ 反而偏。
     """
     lat, lon = _coordinate_text(latitude, longitude)
     return f"{APPLE_SCHEME}?ll={lat},{lon}&q={lat},{lon}"
 
 
 def google_web_link(latitude: float, longitude: float) -> str:
-    """Google 地图的网页地址。**Mac 上没有它的应用**，这一条永远开在默认浏览器里。"""
+    """Google 地图的网页地址（装了 PWA 时会开在应用里）。
+
+    **国内坐标先换成 GCJ-02**：它的路网用 GCJ-02，直接递 WGS-84 会偏几百米；
+    港澳台与国外原样递过去（见 :func:`gallery.core.places.gcj.wgs_to_gcj`）。
+    """
+    latitude, longitude = wgs_to_gcj(latitude, longitude)
     lat, lon = _coordinate_text(latitude, longitude)
     return f"{GOOGLE_BASE}{lat},{lon}"
 

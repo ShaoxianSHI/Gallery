@@ -104,3 +104,4 @@
 | [0074](0074-pinyin-name-order.md) | 按名称排序时中文走拼音字母序（同音再按原字） | 已接受 |
 | [0075](0075-external-map-links.md) | 在大图页把拍摄位置开到地图里：只有系统「地图」认坐标 | 已接受（Google 地图那一项由 0076 扩成 PWA） |
 | [0076](0076-google-maps-pwa.md) | Google 地图那一项也走 Chrome PWA：认窗口要连路径一起认 | 已接受 |
+| [0077](0077-gcj02-for-google-maps.md) | 国内坐标交给 Google 前转 GCJ-02，Apple 保持 WGS-84 | 已接受 |
