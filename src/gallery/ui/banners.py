@@ -482,7 +482,7 @@ def map_opened(outcome: OpenOutcome, name: str) -> str:
     if outcome.detail:
         return f"{outcome.detail}。"
     if outcome.in_app:
-        return f"已在{name}中打开这张照片的拍摄位置。"
+        return f"已在「{name}」中打开这张照片的拍摄位置。"
     return f"已在浏览器中打开 {name}。"
 
 

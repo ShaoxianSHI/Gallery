@@ -14,6 +14,7 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 from gallery.core.external.applescript import (
     chrome_is_up,
@@ -22,7 +23,12 @@ from gallery.core.external.applescript import (
     set_window_url,
 )
 from gallery.core.external.gcal import HOST, deep_link
-from gallery.core.external.maps import apple_deep_link, google_web_link
+from gallery.core.external.maps import (
+    MAPS_HOST,
+    MAPS_PATH,
+    apple_deep_link,
+    google_web_link,
+)
 from gallery.core.external.pwa import DEFAULT_SEARCH_DIRS, find_chrome_pwa
 from gallery.core.external.runner import Runner, subprocess_runner
 
@@ -96,14 +102,27 @@ def open_in_maps(latitude: float, longitude: float, *, runner: Runner | None = N
 
 
 def open_in_google_maps(
-    latitude: float, longitude: float, *, runner: Runner | None = None
+    latitude: float,
+    longitude: float,
+    *,
+    runner: Runner | None = None,
+    search_dirs: Sequence[Path] = DEFAULT_SEARCH_DIRS,
+    sleeper: Callable[[float], None] = time.sleep,
+    now: Callable[[], float] = time.monotonic,
 ) -> OpenOutcome:
-    """在默认浏览器里打开 Google 地图的这个坐标。
+    """把坐标交给 Google 地图。**装了 PWA 就开在应用里，没装就开在默认浏览器。**
 
-    **Mac 上没有 Google 地图的应用**，这一条永远走浏览器；与日历那条不同，它没有
-    「开在应用里」的路径可以降级。
+    它的 PWA 装在 ``www.google.com`` 上，于是认应用包与认窗口都要带上 ``/maps`` ——
+    只按域名会把同一域名下别的 Google 应用认成地图。
     """
-    return open_in_browser(google_web_link(latitude, longitude), runner=runner)
+    url = google_web_link(latitude, longitude)
+    run = runner or subprocess_runner
+    if sys.platform != "darwin":
+        return open_in_browser(url, runner=run)
+    app = find_chrome_pwa(MAPS_HOST, path_prefix=MAPS_PATH, search_dirs=search_dirs)
+    if app is None:
+        return open_in_browser(url, runner=run)
+    return open_in_app(app, url, path_prefix=MAPS_PATH, runner=run, sleeper=sleeper, now=now)
 
 
 def open_folder(path: Path, *, runner: Runner | None = None) -> bool:
@@ -119,6 +138,7 @@ def open_in_app(
     app: Path,
     url: str,
     *,
+    path_prefix: str = "",
     runner: Runner | None = None,
     sleeper: Callable[[float], None] = time.sleep,
     now: Callable[[], float] = time.monotonic,
@@ -127,9 +147,9 @@ def open_in_app(
 ) -> OpenOutcome:
     """启动那个应用，把它开在 ``url`` 上；开不到就降级到浏览器。
 
-    顺序**不能换**：先 ``open`` 再等浏览器（``open`` 立刻返回，把它带起来要几秒）；
-    等浏览器用 ``pgrep`` 而不是 AppleScript（后者会自动启动目标应用，把「查一下在不在」
-    变成「把它启动一遍」，还会顺带开出一个「新标签页」窗口）。
+    顺序**不能换**：先 ``open`` 再等浏览器（``open`` 立刻返回，把它带起来要几秒）；等浏览器
+    用 ``pgrep`` 而不是 AppleScript（后者会自动启动目标应用）。认窗口用 ``url`` 自己的域名
+    与 ``path_prefix``：地图的 PWA 装在 ``www.google.com`` 上，只按域名会认错别的 Google 窗口。
     """
     run = runner or subprocess_runner
     launched = run(["open", "-a", str(app)])
@@ -140,12 +160,13 @@ def open_in_app(
     if not up:
         return _fallback(url, "等不到浏览器启动", run=run)
 
+    host = urlparse(url).hostname or ""
     # 探针只跑一次，最后那个序号从闭包里取 —— 每多枚举一轮就是多跑一次 AppleScript，
     # 而这一轮里用户正等着。
     found: list[int] = []
 
     def probe() -> bool:
-        window = _peek_pwa_window(run)
+        window = _peek_pwa_window(run, host, path_prefix)
         if window is None:
             return False
         found.append(window)
@@ -158,9 +179,9 @@ def open_in_app(
     return OpenOutcome(where=WHERE_APP)
 
 
-def _peek_pwa_window(runner: Runner) -> int | None:
+def _peek_pwa_window(runner: Runner, host: str, path_prefix: str) -> int | None:
     """枚举窗口并认出 PWA 的那个序号。"""
-    return find_pwa_window(list_windows(runner), HOST)
+    return find_pwa_window(list_windows(runner), host, path_prefix=path_prefix)
 
 
 def _fallback(url: str, reason: str, *, run: Runner) -> OpenOutcome:

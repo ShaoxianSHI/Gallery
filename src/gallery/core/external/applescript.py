@@ -101,24 +101,26 @@ def list_windows(runner: Runner) -> list[ChromeWindow]:
     return _parse_listing(result.stdout)
 
 
-def is_pwa_window(window: ChromeWindow, host: str) -> bool:
+def is_pwa_window(window: ChromeWindow, host: str, *, path_prefix: str = "") -> bool:
     """这个窗口是不是那个 PWA（纯函数，不碰 subprocess）。
 
     三个条件缺一不可：**窗口名为空**（无标签栏的应用窗口才没有标题，否则会把开着日历标签的
     普通窗口误认，改地址就改到用户正在看的那一页）、**只有一页**、**是目标站点**（认站点，
-    不是某一条具体地址）。
+    不是某一条具体地址）。``path_prefix`` 再收一道：Google 地图的 PWA 在
+    ``www.google.com/maps``，只按 host 会认错同一域名下别的 Google 应用窗口。
     """
-    return (
-        window.name.strip() == ""
-        and len(window.urls) == 1
-        and urlparse(window.urls[0]).hostname == host
-    )
+    if window.name.strip() != "" or len(window.urls) != 1:
+        return False
+    parsed = urlparse(window.urls[0])
+    return parsed.hostname == host and parsed.path.startswith(path_prefix)
 
 
-def find_pwa_window(windows: Sequence[ChromeWindow], host: str) -> int | None:
+def find_pwa_window(
+    windows: Sequence[ChromeWindow], host: str, *, path_prefix: str = ""
+) -> int | None:
     """认出那个 PWA 窗口的序号，认不出就是 ``None``（**不猜、不挑一个差不多的**）。"""
     for window in windows:
-        if is_pwa_window(window, host):
+        if is_pwa_window(window, host, path_prefix=path_prefix):
             return window.index
     return None
 

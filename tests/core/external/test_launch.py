@@ -16,6 +16,7 @@ from gallery.core.external.launch import (
     open_in_google_maps,
     open_in_maps,
 )
+from gallery.core.external.maps import MAPS_HOST, MAPS_PATH
 from gallery.core.external.pwa import SHORTCUT_URL_KEY
 from gallery.core.external.runner import CommandResult
 
@@ -90,6 +91,12 @@ def make_installed_pwa(tmp_path: Path) -> tuple[Path, Path]:
 
 
 DAY = datetime.date(2026, 6, 29)
+
+#: Google 地图 PWA 的窗口：窗口名为空、只有一页、落在 ``www.google.com/maps``。
+MAPS_WINDOW = (
+    f"W2\nN\nThttps://{MAPS_HOST}{MAPS_PATH}/@22.35,114.13,10z\n"
+    "W1\nN普通窗口\nThttps://example.com/\n"
+)
 
 
 def test_installed_pwa_opens_in_the_app(tmp_path: Path) -> None:
@@ -226,15 +233,63 @@ def test_a_missing_maps_app_says_what_to_do() -> None:
     assert outcome.detail == "没能打开地图，请确认系统「地图」还在"
 
 
-def test_google_maps_goes_through_the_browser() -> None:
-    """Mac 上没有 Google 地图的应用，于是永远只有浏览器这一条路。"""
+def make_installed_maps_pwa(tmp_path: Path) -> tuple[Path, Path]:
+    """造一个「装了 Google 地图 PWA」的搜索目录，并返回（目录, 应用包）。"""
+    apps = tmp_path / "Chrome Apps.localized"
+    app = apps / "Google 地图.app"
+    (app / "Contents" / "Resources").mkdir(parents=True)
+    (app / "Contents" / "Info.plist").write_bytes(
+        plistlib.dumps(
+            {"CrAppModeShortcutURL": f"https://{MAPS_HOST}{MAPS_PATH}?force=tt&source=ttpwa"}
+        )
+    )
+    return apps, app
+
+
+def test_installed_maps_pwa_opens_in_the_app(tmp_path: Path) -> None:
+    """装了 PWA 就开在应用里：启动它、认出 ``/maps`` 那个窗口、再改写地址。"""
+    apps, app = make_installed_maps_pwa(tmp_path)
+    runner = FakeRunner(windows=MAPS_WINDOW)
+    outcome = open_in_google_maps(
+        48.8584, 2.2945, runner=runner, search_dirs=[apps], sleeper=lambda _: None
+    )
+    assert outcome.where == WHERE_APP
+    assert outcome.detail is None
+    assert ["open", "-a", str(app)] in runner.calls
+    assert any("set URL of tab 1 of window 2" in " ".join(c) for c in runner.calls)
+
+
+def test_without_the_maps_pwa_it_opens_the_browser(tmp_path: Path) -> None:
     runner = FakeRunner()
-    outcome = open_in_google_maps(48.8584, 2.2945, runner=runner)
+    outcome = open_in_google_maps(
+        48.8584,
+        2.2945,
+        runner=runner,
+        search_dirs=[tmp_path / "空的"],
+        sleeper=lambda _: None,
+    )
     assert runner.calls == [
         ["open", "https://www.google.com/maps/search/?api=1&query=48.858400,2.294500"]
     ]
     assert outcome.where == WHERE_BROWSER
     assert outcome.detail is None
+
+
+def test_a_google_window_on_another_path_is_not_maps(tmp_path: Path) -> None:
+    """同一个域名下的别的 Google 应用窗口**不许改写** —— 认错就改了用户正在看的那一页。"""
+    apps, _ = make_installed_maps_pwa(tmp_path)
+    clock = FakeClock()
+    runner = FakeRunner(windows=f"W1\nN\nThttps://{MAPS_HOST}/keep/\n")
+    outcome = open_in_google_maps(
+        48.8584,
+        2.2945,
+        runner=runner,
+        search_dirs=[apps],
+        sleeper=clock.sleep,
+        now=clock.now,
+    )
+    assert outcome.where == WHERE_BROWSER
+    assert outcome.detail == "没认出那个应用的窗口，已改用浏览器打开"
 
 
 def test_shortcut_key_is_the_one_detection_reads() -> None:

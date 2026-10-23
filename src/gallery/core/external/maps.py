@@ -10,6 +10,13 @@ from __future__ import annotations
 #: Apple 地图注册的 URL scheme（bundle id ``com.apple.Maps``）。
 APPLE_SCHEME = "maps://"
 
+#: Google 地图的站点。**桌面 PWA 装在 ``www.google.com`` 上**，不是 ``maps.google.com``。
+MAPS_HOST = "www.google.com"
+
+#: Google 地图在站点里的路径前缀：PWA 的启动地址与应用窗口都从 ``/maps`` 开始。
+#: **认包与认窗口都要带上它** —— 只按 host 会把同一域名下别的 Google 应用认成地图。
+MAPS_PATH = "/maps"
+
 #: Google 官方那份跨平台链接格式（``query`` 里直接给坐标）。
 GOOGLE_BASE = "https://www.google.com/maps/search/?api=1&query="
 
@@ -42,4 +49,11 @@ def google_web_link(latitude: float, longitude: float) -> str:
     return f"{GOOGLE_BASE}{lat},{lon}"
 
 
-__all__ = ["APPLE_SCHEME", "GOOGLE_BASE", "apple_deep_link", "google_web_link"]
+__all__ = [
+    "APPLE_SCHEME",
+    "GOOGLE_BASE",
+    "MAPS_HOST",
+    "MAPS_PATH",
+    "apple_deep_link",
+    "google_web_link",
+]

@@ -183,6 +183,25 @@ def folder_icon(size: int = ICON_EDGE) -> QIcon:
     return drawn_icon(ICON_FOLDER, size)
 
 
+def google_maps_icon(size: int = ICON_EDGE) -> QIcon:
+    """Google 地图那一项的图标：**装了 PWA 就用它包里那一份**，没装才画中性折页。
+
+    与日历那一项同一个规矩（ADR 0034 决策 6）：别人的图标不随仓库分发，但系统里
+    已经有一份现成的，用它永远比临摹得像。
+    """
+    from gallery.core.external import app_icon, find_chrome_pwa
+    from gallery.core.external.maps import MAPS_HOST, MAPS_PATH
+
+    app = find_chrome_pwa(MAPS_HOST, path_prefix=MAPS_PATH)
+    if app is not None:
+        path = app_icon(app)
+        if path is not None:
+            icon = QIcon(str(path))
+            if not icon.isNull():
+                return icon
+    return drawn_icon(ICON_MAP, size)
+
+
 def icon_for(app: App, size: int = ICON_EDGE, *, fallback: str = ICON_FOLDER) -> QIcon:
     """某一项外部应用的图标：**用系统画好的那一张**（与访达、日历那两项同一个规矩）。
 
@@ -506,6 +525,7 @@ __all__ = [
     "calendar_icon",
     "drawn_icon",
     "folder_icon",
+    "google_maps_icon",
     "icon_for",
     "menu_origin",
 ]

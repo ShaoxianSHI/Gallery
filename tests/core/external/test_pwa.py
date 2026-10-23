@@ -9,6 +9,7 @@ import pytest
 
 from gallery.core.external import pwa
 from gallery.core.external.gcal import HOST
+from gallery.core.external.maps import MAPS_HOST, MAPS_PATH
 from gallery.core.external.pwa import ICON_RELATIVE, app_icon, find_chrome_pwa
 
 
@@ -63,6 +64,24 @@ def test_other_site_is_not_a_match(tmp_path: Path) -> None:
     apps = tmp_path / "Chrome Apps.localized"
     make_app(apps, "YouTube", shortcut_url="https://www.youtube.com/")
     assert find_chrome_pwa(HOST, search_dirs=[apps]) is None
+
+
+def test_finds_the_maps_pwa_by_host_and_path(tmp_path: Path) -> None:
+    """Google 地图装在 ``www.google.com/maps``，同一域名下还有别的 Google 应用。"""
+    apps = tmp_path / "Chrome Apps.localized"
+    make_app(apps, "Google Keep", shortcut_url=f"https://{MAPS_HOST}/keep/")
+    wanted = make_app(
+        apps,
+        "Google 地图",
+        shortcut_url=f"https://{MAPS_HOST}{MAPS_PATH}?force=tt&source=ttpwa",
+    )
+    assert find_chrome_pwa(MAPS_HOST, path_prefix=MAPS_PATH, search_dirs=[apps]) == wanted
+
+
+def test_a_google_pwa_on_another_path_is_not_maps(tmp_path: Path) -> None:
+    apps = tmp_path / "Chrome Apps.localized"
+    make_app(apps, "Google Keep", shortcut_url=f"https://{MAPS_HOST}/keep/")
+    assert find_chrome_pwa(MAPS_HOST, path_prefix=MAPS_PATH, search_dirs=[apps]) is None
 
 
 def test_missing_search_dir_is_silent(tmp_path: Path) -> None:

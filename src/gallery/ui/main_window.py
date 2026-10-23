@@ -9,7 +9,7 @@ from __future__ import annotations
 import datetime
 import logging
 from collections import OrderedDict
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from functools import partial
 from pathlib import Path
 
@@ -89,8 +89,8 @@ from gallery.ui.window.widgets.external_button import (
     ExternalAppsButton,
     ExternalEntry,
     calendar_icon,
-    drawn_icon,
     folder_icon,
+    google_maps_icon,
     icon_for,
 )
 from gallery.ui.window.widgets.play_button import PlayButton
@@ -960,8 +960,8 @@ class MainWindow(
             ExternalEntry(
                 id="google_maps",
                 name="Google 地图",
-                icon=drawn_icon(ICON_MAP),
-                # 浏览器永远在，于是只问「这张照片有没有坐标」。
+                icon=google_maps_icon(),
+                # 开在 PWA 还是浏览器都只要坐标，于是只问「这张照片有没有坐标」。
                 enabled=lambda: self._map_point() is not None,
             ),
             ExternalEntry(
@@ -1044,26 +1044,42 @@ class MainWindow(
         return _real_point(facets.latitude, facets.longitude)
 
     def _open_in_maps(self) -> None:
-        """把这张照片的拍摄位置交给系统「地图」。"""
-        self._open_map_with(launch.open_in_maps, apps.MAPS.name)
+        """把这张照片的拍摄位置交给系统「地图」。**只起一个 ``open`` 进程**，不必进后台。"""
+        point = self._map_point_or_warn()
+        if point is None:
+            return
+        outcome = launch.open_in_maps(*point)
+        self._show_banner(banners.map_opened(outcome, apps.MAPS.name), auto_hide=True)
 
     def _open_in_google_maps(self) -> None:
-        """把拍摄位置交给浏览器里的 Google 地图（Mac 上没有它的应用）。"""
-        self._open_map_with(launch.open_in_google_maps, "Google 地图")
+        """把拍摄位置交给 Google 地图；装了它的 PWA 就开在应用里。
 
-    def _open_map_with(
-        self, opener: Callable[[float, float], launch.OpenOutcome], name: str
-    ) -> None:
-        """两项地图共用的那一半：拿坐标、开、照实说。
-
-        **按钮只在有坐标时才摆**，走到「没有坐标」那一支说明界面与索引对不上（例如文件
-        刚被改写），此时说出来比静默不动更容易查。
+        **整个过程进后台线程**：装了 PWA 时要等浏览器起来、再认出那个窗口（与日历那条
+        同一条路，最坏二十秒），不能占住主线程。
         """
+        point = self._map_point_or_warn()
+        if point is None:
+            return
+        latitude, longitude = point
+        self._runner.submit(
+            lambda _context: launch.open_in_google_maps(latitude, longitude),
+            on_result=self._on_google_maps_opened,
+            on_error=self._on_google_maps_failed,
+        )
+
+    def _map_point_or_warn(self) -> tuple[float, float] | None:
+        """有坐标就交出来；没有就说一句 —— 按钮本来只在有坐标时才摆。"""
         point = self._map_point()
         if point is None:
             self._show_banner("这张照片没有拍摄位置，打不开地图。", auto_hide=True)
-            return
-        self._show_banner(banners.map_opened(opener(*point), name), auto_hide=True)
+        return point
+
+    def _on_google_maps_opened(self, outcome: object) -> None:
+        if isinstance(outcome, launch.OpenOutcome):
+            self._show_banner(banners.map_opened(outcome, "Google 地图"), auto_hide=True)
+
+    def _on_google_maps_failed(self, message: str) -> None:
+        self._show_banner(f"没能打开 Google 地图：{message}")
 
     def _on_external_entry(self, entry: object) -> None:
         """下拉框里点了哪一项。**按 id 分派**，不在按钮那一侧硬编码（理由见 ``ExternalEntry``）。"""

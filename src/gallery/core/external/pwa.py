@@ -31,8 +31,8 @@ DEFAULT_SEARCH_DIRS: tuple[Path, ...] = (
 )
 
 
-def _shortcut_host(app: Path) -> str | None:
-    """读一个应用包的启动地址，取出它的 hostname。读不到就是 ``None``。
+def _shortcut_url(app: Path) -> str | None:
+    """读一个应用包的启动地址。读不到就是 ``None``。
 
     **读不出来不是错误**：`.app` 可能正在被改写、可能压根不是 PWA（那个目录里还
     躺着别的东西）、plist 也可能损坏。跳过去继续扫下一个——「没找到」本来就该是
@@ -45,31 +45,40 @@ def _shortcut_host(app: Path) -> str | None:
     except (OSError, ValueError, plistlib.InvalidFileException):
         return None
     url = info.get(SHORTCUT_URL_KEY)
-    if not isinstance(url, str):
-        return None
-    return urlparse(url).hostname
+    return url if isinstance(url, str) else None
 
 
 @cache
-def _find(host: str, search_dirs: tuple[Path, ...]) -> Path | None:
+def _find(host: str, path_prefix: str, search_dirs: tuple[Path, ...]) -> Path | None:
     for base in search_dirs:
         if not base.is_dir():
             continue
         # 排序是为了**结果稳定**：目录里的顺序由文件系统决定，而「先找到哪个」
         # 不该随机器上的创建先后变化。
         for app in sorted(base.glob("*.app")):
-            if _shortcut_host(app) == host:
+            url = _shortcut_url(app)
+            if url is None:
+                continue
+            parsed = urlparse(url)
+            if parsed.hostname == host and parsed.path.startswith(path_prefix):
                 return app
     return None
 
 
-def find_chrome_pwa(host: str, *, search_dirs: Sequence[Path] = DEFAULT_SEARCH_DIRS) -> Path | None:
+def find_chrome_pwa(
+    host: str,
+    *,
+    path_prefix: str = "",
+    search_dirs: Sequence[Path] = DEFAULT_SEARCH_DIRS,
+) -> Path | None:
     """本机装的那个 PWA 应用包在哪儿，没装就是 ``None``。
 
-    **同一个 (站点, 目录) 只扫一次**：Chrome 更新会改那个目录，而一次会话里
+    ``path_prefix`` 是给装在通用域名上的应用用的：Google 地图的 PWA 在
+    ``www.google.com/maps``，只按 host 认会把同一域名下别的 Google 应用当成它。
+    **同一个 (站点, 路径, 目录) 只扫一次**：Chrome 更新会改那个目录，而一次会话里
     问一次就够——真要问第二次，早先那个答案多半也还没过期。
     """
-    return _find(host, tuple(search_dirs))
+    return _find(host, path_prefix, tuple(search_dirs))
 
 
 #: 访达自己那个图标。**从系统里读，仓库里不放** —— 与 PWA 那个 ``app.icns``

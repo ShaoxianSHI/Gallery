@@ -725,7 +725,7 @@ def test_clicking_the_maps_entry_passes_the_coordinates(
     window._on_external_entry(_entry("maps", "地图", True))
 
     assert calls == [EARTH]
-    assert window._banner.text() == "已在地图中打开这张照片的拍摄位置。"
+    assert window._banner.text() == "已在「地图」中打开这张照片的拍摄位置。"
 
 
 def test_clicking_the_google_maps_entry_says_it_opened_the_browser(
@@ -742,7 +742,28 @@ def test_clicking_the_google_maps_entry_says_it_opened_the_browser(
 
     window._on_external_entry(_entry("google_maps", "Google 地图", True))
 
+    # 开了 PWA 时这条会等浏览器与窗口，所以它走后台线程；横幅晚一步才显示。
+    wait_until(QApplication.instance(), lambda: "Google 地图" in window._banner.text())
     assert window._banner.text() == "已在浏览器中打开 Google 地图。"
+
+
+def test_clicking_the_google_maps_entry_in_the_app_says_so(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """装了 PWA 之后那一句不再说「浏览器」—— 用户看到的是独立窗口。"""
+    _only(monkeypatch)
+    _cache_coordinates(window, *EARTH)
+    window._open_detail(window._model.index(0, 0))
+    monkeypatch.setattr(
+        launch,
+        "open_in_google_maps",
+        lambda latitude, longitude: launch.OpenOutcome(where=launch.WHERE_APP),
+    )
+
+    window._on_external_entry(_entry("google_maps", "Google 地图", True))
+
+    wait_until(QApplication.instance(), lambda: "Google 地图" in window._banner.text())
+    assert window._banner.text() == "已在「Google 地图」中打开这张照片的拍摄位置。"
 
 
 def test_opening_maps_without_a_location_says_so(

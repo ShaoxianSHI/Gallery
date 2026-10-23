@@ -13,6 +13,7 @@ from gallery.core.external.applescript import (
     set_window_url,
 )
 from gallery.core.external.gcal import HOST
+from gallery.core.external.maps import MAPS_HOST, MAPS_PATH
 from gallery.core.external.runner import CommandResult
 
 CALENDAR = f"https://{HOST}/calendar/u/0/r/week/2026/6/29"
@@ -89,6 +90,15 @@ def test_window_with_several_tabs_is_not_the_app() -> None:
 
 def test_window_on_another_site_is_not_the_app() -> None:
     assert is_pwa_window(ChromeWindow(1, "", ("https://example.com/",)), HOST) is False
+
+
+def test_a_shared_host_still_needs_its_path() -> None:
+    """Google 地图的 PWA 在 ``www.google.com``：只按域名会把别的 Google 应用当成它。"""
+    maps = ChromeWindow(1, "", (f"https://{MAPS_HOST}{MAPS_PATH}/@1,2,10z",))
+    other = ChromeWindow(2, "", (f"https://{MAPS_HOST}/calendar/r",))
+    assert is_pwa_window(maps, MAPS_HOST, path_prefix=MAPS_PATH) is True
+    assert is_pwa_window(other, MAPS_HOST, path_prefix=MAPS_PATH) is False
+    assert find_pwa_window((other, maps), MAPS_HOST, path_prefix=MAPS_PATH) == 1
 
 
 def test_find_picks_the_first_match() -> None:
