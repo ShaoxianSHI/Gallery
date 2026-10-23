@@ -109,7 +109,10 @@ def test_an_empty_source_means_javdb(text: str, expected: str) -> None:
     [
         (MovieRef(SOURCE_JAV, "IPX-660"), "https://jable.tv/videos/ipx-660/"),
         (MovieRef(SOURCE_YOUTUBE, "dQw4w9WgXcQ"), "https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
-        (MovieRef(SOURCE_BILIBILI, "BV1GJ411x7h7"), "https://www.bilibili.com/video/BV1GJ411x7h7/"),
+        (
+            MovieRef(SOURCE_BILIBILI, "BV1GJ411x7h7"),
+            "https://www.bilibili.com/video/BV1GJ411x7h7/?t=0.001",
+        ),
     ],
 )
 def test_each_source_opens_its_own_page(ref: MovieRef, expected: str) -> None:

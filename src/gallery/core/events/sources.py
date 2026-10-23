@@ -71,14 +71,15 @@ def movie_url(ref: MovieRef, *, jav_site: str) -> str | None:
     """这个影片该打开的网址；**来源认不出就是 ``None``**。
 
     ``jav_site`` 只管 JavDB 那一栏（用户可以把它换成 jable.tv 之类的镜像）；YouTube 与 B 站的
-    地址形状是固定的，没有可配置的余地。
+    地址形状是固定的，没有可配置的余地。**B 站那一页带上 ``t``**，于是打开时从开头播放，
+    而不是接上 B 站自己的「上次播放位置」。
     """
     if ref.source == SOURCE_JAV:
         return jav.movie_url(jav_site, ref.code)
     if ref.source == SOURCE_YOUTUBE:
         return youtube.movie_url(ref.code)
     if ref.source == SOURCE_BILIBILI:
-        return bilibili.movie_url(ref.code)
+        return bilibili.movie_url(ref.code, start_at_beginning=True)
     return None
 
 

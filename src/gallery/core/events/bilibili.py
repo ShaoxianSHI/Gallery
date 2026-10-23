@@ -67,15 +67,20 @@ _PATH_RE: Final = re.compile(r"/video/(BV[1-9A-HJ-NP-Za-km-z]{10}|av\d+)")
 #: 发布时间戳按北京时间取日期（B 站是国内站，用户看到的就是那一天）。
 _CST: Final = datetime.timezone(datetime.timedelta(hours=8))
 
+#: 打开稿件时用来覆盖「上次播放位置」的起点（秒）。**B 站的 ``t`` 只在大于 0 时生效**，
+#: 写 0 会被当成没给，播放器照样接上次的位置。
+START_AT_BEGINNING: Final = "0.001"
+
 
 def transport() -> HttpTransport:
     """B 站的传输：接口域名加 B 站的 ``Referer``（**不带它接口会当你是爬虫**）。"""
     return HttpTransport(base=BASE, referer=SITE + "/")
 
 
-def movie_url(code: str) -> str:
-    """稿件页的地址。"""
-    return f"{SITE}/video/{code}/"
+def movie_url(code: str, *, start_at_beginning: bool = False) -> str:
+    """稿件页的地址。``start_at_beginning`` 时带上 ``t``，让播放器从头开始。"""
+    url = f"{SITE}/video/{code}/"
+    return f"{url}?t={START_AT_BEGINNING}" if start_at_beginning else url
 
 
 # --------------------------------------------------------------------------- #
@@ -285,6 +290,7 @@ def _tags(code: str, client: Transport) -> tuple[str, ...]:
 __all__ = [
     "BASE",
     "SITE",
+    "START_AT_BEGINNING",
     "av_to_bv",
     "bv_to_av",
     "fetch",

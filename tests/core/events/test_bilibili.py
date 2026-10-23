@@ -111,6 +111,14 @@ def test_the_number_comes_out_of_a_url(url: str, expected: str | None) -> None:
     assert bilibili.id_from_url(url) == expected
 
 
+def test_the_watch_url_can_start_from_the_beginning() -> None:
+    """``t=0`` 会被 B 站忽略，所以起点用一个小正数；**资料页的地址不带它**。"""
+    assert bilibili.movie_url("BV1GJ411x7h7", start_at_beginning=True) == (
+        "https://www.bilibili.com/video/BV1GJ411x7h7/?t=0.001"
+    )
+    assert bilibili.movie_url("BV1GJ411x7h7") == "https://www.bilibili.com/video/BV1GJ411x7h7/"
+
+
 def test_the_view_payload_yields_a_movie() -> None:
     movie = bilibili.view_of(json.loads(VIEW_JSON), "BV1GJ411x7h7")
 

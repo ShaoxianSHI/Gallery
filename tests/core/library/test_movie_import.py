@@ -179,5 +179,5 @@ def test_movie_url_follows_the_source(library: Library) -> None:
     }
 
     assert opened["YouTube"] == "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-    assert opened["Bilibili"] == "https://www.bilibili.com/video/BV1GJ411x7h7/"
+    assert opened["Bilibili"] == "https://www.bilibili.com/video/BV1GJ411x7h7/?t=0.001"
     assert opened[""] == "https://jable.tv/videos/ipx-660/"
