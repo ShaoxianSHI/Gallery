@@ -4,6 +4,7 @@
 用法::
 
     uv run --group build python scripts/build_app.py            # 生成 dist/Gallery.app
+    uv run --group build python scripts/build_app.py ~/Applications  # 放进该文件夹
     uv run --group build python scripts/build_app.py --dry-run  # 只打印将要执行的命令
 
 exiftool 不在包里：它是运行时外部依赖，程序启动时由
@@ -98,6 +99,19 @@ class BuildResult:
     command: tuple[str, ...]
     #: 裁剪阶段从包里删掉的 Qt 库（为空表示那几个库本来就没进包）。
     removed: tuple[str, ...] = ()
+
+
+def resolve_bundle(destination: Path) -> Path:
+    """把「放包的文件夹」补成其中的 ``Gallery.app``；以 ``.app`` 结尾的路径原样返回。
+
+    这样 ``~/Applications`` 这种写法不必先确认目录存不存在：它永远被当成容器，
+    而不是一个名字里没有扩展名的应用包。
+    """
+    if destination.suffix.lower() == ".app":
+        return destination
+    if destination.exists() and not destination.is_dir():
+        return destination  # 交给 _check_destination 报「这里已经有东西」
+    return destination / f"{APP_NAME}.app"
 
 
 def _check_destination(bundle: Path) -> None:
@@ -287,12 +301,13 @@ def trim_unused_libraries(bundle: Path) -> tuple[str, ...]:
 
 
 def build(destination: Path, *, dry_run: bool = False) -> BuildResult:
-    """执行打包，返回产物路径与用到的命令。"""
+    """执行打包，返回产物路径与用到的命令。``destination`` 可以是包路径或放包的文件夹。"""
     if sys.platform != "darwin":
         raise BuildError(
             f"Nuitka 的应用包只在 macOS 上生成，当前系统是 {sys.platform}。",
         )
 
+    destination = resolve_bundle(Path(destination))
     _check_destination(destination)
 
     icns = _prepare_icns(_PROJECT_ROOT / BUILD_DIR_NAME / _ICNS_RELPATH)
@@ -326,7 +341,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         "destination",
         nargs="?",
         type=Path,
-        help=f"生成位置（默认 <项目目录>/{DIST_DIR_NAME}/{APP_NAME}.app）",
+        help=(
+            "生成位置：.app 包路径，或放包的文件夹"
+            f"（默认 <项目目录>/{DIST_DIR_NAME}/{APP_NAME}.app）"
+        ),
     )
     parser.add_argument(
         "--dry-run",
@@ -364,6 +382,7 @@ __all__ = [
     "build",
     "build_command",
     "main",
+    "resolve_bundle",
     "trim_unused_libraries",
 ]
 

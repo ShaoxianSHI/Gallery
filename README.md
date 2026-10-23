@@ -45,7 +45,7 @@ uv run gallery --version
 ```bash
 uv sync --group build
 uv run --group build python scripts/build_app.py                    # 产物在 dist/Gallery.app
-uv run --group build python scripts/build_app.py ~/Applications     # 直接放进「应用程序」
+uv run --group build python scripts/build_app.py ~/Applications     # 产物在 ~/Applications/Gallery.app
 uv run --group build python scripts/build_app.py --dry-run          # 只看将要执行的命令
 ```
 
