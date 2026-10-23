@@ -15,6 +15,7 @@ from pathlib import Path
 from PySide6.QtCore import QAbstractListModel, QModelIndex, QObject, QSize, Qt
 from PySide6.QtGui import QImage, QPixmap
 
+from gallery.core.collation import collation_key
 from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
 from gallery.ui.imaging import scale_pixmap
 from gallery.ui.thumb_sizes import DEFAULT_EDGE
@@ -73,7 +74,7 @@ class PhotoListModel(QAbstractListModel):
         self._show_extensions = show_extensions
         # guard: allow-long-comment（与 _entries 逐行平行的不变量，任何改动它的地方都要同步）
         #: 与 :attr:`_entries` **逐行平行**的排序键（见 :func:`_sort_key`）。存在的理由只有
-        #: 一个：键里的 ``name.casefold()`` 不记下来就得每行现算（三万行插一行要好几秒）。
+        #: 一个：键里的拼音转换不记下来就得每行现算（三万行插一行要好几秒）。
         #: **任何改动 ``_entries`` 的地方都要同步它。**
         self._keys: list[tuple[int, str]] = []
         self._row_by_path: dict[Path, int] = {}
@@ -426,7 +427,7 @@ class PhotoListModel(QAbstractListModel):
 
         默认只看**同一个目录**里的邻居（相册在前、同类按名字，与扫描一致）；``whole_level``
         为真时在整层里按同一把尺子找。已经在分组 / 排序时改由调用方重排整层。``entry.path.parent``
-        与 ``name.casefold()`` 都提到了循环外：写在 ``and`` 右边就是每行重算一遍。
+        与 ``collation_key(name)`` 都提到了循环外：写在 ``and`` 右边就是每行重算一遍。
         """
         key = _sort_key(entry)
         parent = entry.path.parent
@@ -463,8 +464,8 @@ class PhotoListModel(QAbstractListModel):
 
 
 def _sort_key(entry: GridEntry) -> tuple[int, str]:
-    """网格里的排序键：相册在前，同一类按名字。"""
-    return (0 if isinstance(entry, FolderRef) else 1, entry.name.casefold())
+    """网格里的排序键：相册在前，同一类按名字（汉字按拼音）。"""
+    return (0 if isinstance(entry, FolderRef) else 1, collation_key(entry.name))
 
 
 def _cover_of(entry: GridEntry) -> Path:

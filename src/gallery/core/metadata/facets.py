@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Final, Literal
 
 from gallery.core import paths
+from gallery.core.collation import collation_key
 from gallery.core.events.kinds import (
     COMMON_FIELDS,
     EventField,
@@ -446,7 +447,7 @@ def _date_group_order(key: str) -> float:
 
 
 def _text_group_order(key: str) -> str:
-    return key.casefold()
+    return collation_key(key)
 
 
 def _folder_group(item: FacetInput) -> Sequence[tuple[str, str]]:
@@ -472,7 +473,7 @@ def _facet_number(attribute: str) -> Callable[[FacetInput], float | None]:
 def _facet_text(attribute: str) -> Callable[[FacetInput], str | None]:
     def value(item: FacetInput) -> str | None:
         text = getattr(item.facets, attribute)
-        return text.casefold() if text else None
+        return collation_key(text) if text else None
 
     return value
 
@@ -487,13 +488,13 @@ def _file_number(attribute: str) -> Callable[[FacetInput], float | None]:
 def _file_text(attribute: str) -> Callable[[FacetInput], str | None]:
     def value(item: FacetInput) -> str | None:
         text = str(getattr(item.ref, attribute))
-        return text.casefold() if text else None
+        return collation_key(text) if text else None
 
     return value
 
 
 def _folder_sort(item: FacetInput) -> str:
-    return _relative_folder(item).casefold()
+    return collation_key(_relative_folder(item))
 
 
 # ---- 字段表 -------------------------------------------------------------------------

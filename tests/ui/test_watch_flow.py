@@ -164,10 +164,11 @@ def _bind_one(window: MainWindow, photo: Path) -> int:
 MTIME_BASE = 1_700_000_000.0
 
 #: 挪来挪去的那张照片，以及挪走 / 留下那两张：颜色各不相同，靠像素就能认出卡片上挂着谁。
+#: 相册封面用扫描顺序的第一张，前缀因此写成 ``1-`` / ``2-``，不依赖汉字怎么排。
 MOVED_NAME = "挪来挪去.jpg"
 MOVED_COLOR = (40, 160, 60)
-LEAVING_NAME = "第一张.jpg"
-STAYING_NAME = "第二张.jpg"
+LEAVING_NAME = "1-第一张.jpg"
+STAYING_NAME = "2-第二张.jpg"
 LEAVING_COLOR = (200, 40, 30)
 STAYING_COLOR = (30, 60, 200)
 

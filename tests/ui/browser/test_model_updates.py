@@ -52,6 +52,16 @@ def test_the_first_of_all_still_lands_first(tmp_path: Path, model: PhotoListMode
     assert model.insert_entry(_photo(tmp_path, "a.jpg")) == 0
 
 
+def test_a_new_entry_lands_by_pinyin_among_chinese_names(
+    tmp_path: Path, model: PhotoListModel
+) -> None:
+    """插行用的是同一套拼音键：王（wang）要落在李（li）与张（zhang）中间。"""
+    model.append([_photo(tmp_path, "李.jpg"), _photo(tmp_path, "张.jpg")])
+
+    assert model.insert_entry(_photo(tmp_path, "王.jpg")) == 1
+    assert [entry.name for entry in model.entries()] == ["李.jpg", "王.jpg", "张.jpg"]
+
+
 def test_an_entry_is_never_on_two_rows(tmp_path: Path, model: PhotoListModel) -> None:
     """监听报上来的新增与撤销取回可能撞上同一张：只该有一行。"""
     picture = _photo(tmp_path, "一张.jpg")

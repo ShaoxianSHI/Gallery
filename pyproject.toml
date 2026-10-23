@@ -12,6 +12,7 @@ dependencies = [
     "pillow-heif>=1.0",
     "watchdog>=6.0",
     "pyobjc-framework-cocoa>=12.2.2 ; sys_platform == 'darwin'",
+    "pypinyin>=0.55.0",
 ]
 
 [project.scripts]

@@ -379,7 +379,8 @@ def test_clearing_puts_the_first_photo_back(
     assert window._model.has_thumbnail(root / ALBUM) is False, "旧封面没有当场作废"
     row = _wait_for_cover(qt_app, window, root / ALBUM)
 
-    assert _shows(window, row, FIRST_COLOR)
+    # 扫描顺序按拼音：「另一张」排在「一张」前面，所以回退到的是前者。
+    assert _shows(window, row, SECOND_COLOR)
     assert load_config(root).album_covers == {}
 
 

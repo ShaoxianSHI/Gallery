@@ -124,6 +124,20 @@ def test_sort_by_name_works_without_any_metadata(tmp_path: Path) -> None:
     ]
 
 
+def test_sort_by_name_uses_pinyin_for_chinese_names(tmp_path: Path) -> None:
+    """按名称排中文时用拼音字母序，而不是 Unicode 码点（部首 / 笔画）。"""
+    photos = [_ref(tmp_path, name) for name in ("张.jpg", "李.jpg", "王.jpg", "赵.jpg")]
+    order = sort_facet(FACET_NAME)
+    assert order is not None
+
+    assert _by_name(sort_photos(photos, order=SortOrder(order), root=tmp_path)) == [
+        "李.jpg",
+        "王.jpg",
+        "张.jpg",
+        "赵.jpg",
+    ]
+
+
 # ---- 分组 ----------------------------------------------------------------------------
 
 
@@ -272,8 +286,8 @@ def test_group_cards_follow_the_reverse_toggle(tmp_path: Path) -> None:
 
     # **默认一律升序**（ADR 0049）：时间类是旧→新，名称类是 A→Z。
     assert labels(months, by_month, values) == ["2024 年 3 月", "2024 年 12 月"]
-    # 名称类：升序，所以默认是佳能、富士。
-    assert labels(cameras, by_camera, camera_values) == ["佳能", "富士"]
+    # 名称类：升序，所以默认是富士（fu）、佳能（jia）。
+    assert labels(cameras, by_camera, camera_values) == ["富士", "佳能"]
 
 
 def test_group_by_month_is_oldest_first(tmp_path: Path) -> None:
@@ -345,7 +359,7 @@ def test_group_by_keyword_can_put_one_photo_in_several_groups(tmp_path: Path) ->
 
     groups = build_groups(photos, facet=facet, root=tmp_path, values=values)
 
-    assert [(group.label, group.count) for group in groups] == [("夜景", 1), ("海边", 2)]
+    assert [(group.label, group.count) for group in groups] == [("海边", 2), ("夜景", 1)]
     assert len(flatten_groups(groups)) == 2  # 摊平后按路径去重
 
 

@@ -12,6 +12,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Final
 
+from gallery.core.collation import collation_key
 from gallery.core.library.photos import PhotoRef
 from gallery.core.metadata.facets import PhotoFacets
 
@@ -216,7 +217,7 @@ def group_by_day(
         if day is None:
             continue
         moment = facets.captured_at if facets.captured_at is not None else 0.0
-        buckets.setdefault(day, []).append((moment, ref.name.casefold(), ref))
+        buckets.setdefault(day, []).append((moment, collation_key(ref.name), ref))
     return {
         day: [ref for _, _, ref in sorted(items, key=lambda item: (item[0], item[1]))]
         for day, items in buckets.items()
@@ -238,7 +239,7 @@ def group_by_hour(
         if key is None:
             continue
         moment = facets.captured_at if facets.captured_at is not None else 0.0
-        buckets.setdefault(key, []).append((moment, ref.name.casefold(), ref))
+        buckets.setdefault(key, []).append((moment, collation_key(ref.name), ref))
     return {
         key: [ref for _, _, ref in sorted(items, key=lambda item: (item[0], item[1]))]
         for key, items in buckets.items()

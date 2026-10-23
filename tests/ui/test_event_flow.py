@@ -504,8 +504,8 @@ def test_grouping_by_a_trip_field_shows_a_card_per_value(
     wait_until(qt_app, lambda: len(_groups(window)) == 3)
 
     assert [(group.label, group.count) for group in _groups(window)] == [
-        ("京都", 1),
         ("大阪", 1),
+        ("京都", 1),
         ("未填目的地", 1),
     ]
 

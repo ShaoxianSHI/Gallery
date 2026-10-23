@@ -368,10 +368,10 @@ def test_grouping_by_country_resolves_places_from_gps(
     window = _open(qt_app, root, session_base=tmp_path / "状态", group_facet="country")
     _settle(qt_app, window, groups=True)
 
-    # 国家之间按名称升序（时间类分组才是新 → 旧）
+    # 国家之间按名称升序（时间类分组才是新 → 旧）：法（fa）在中国（zhong）前面。
     assert [(group.label, group.count) for group in _groups(window)] == [
-        ("中国", 1),
         ("法国", 2),
+        ("中国", 1),
     ]
     # 问的是**几个不同的坐标**而不是几张照片：另外两张在同一个巴黎坐标上（解析器按坐标缓存）。
     assert fake_places() == 2
@@ -814,14 +814,15 @@ def test_the_chosen_sort_facet_is_remembered_across_restarts(
 
     window.set_sort_facet("name")
     _settle(qt_app, window)
-    assert _labels(window) == sorted(DATES)
+    by_pinyin = ["没有时间.jpg", "去年十二月.jpg", "三月.jpg", "四月.jpg"]
+    assert _labels(window) == by_pinyin
     window.close()
 
     again = _open(qt_app, root, session_base=session_base, remember=False)
     _settle(qt_app, again)
 
     assert again._sort_actions["name"].isChecked()
-    assert _labels(again) == sorted(DATES)
+    assert _labels(again) == by_pinyin
     again.close()
 
 

@@ -326,7 +326,8 @@ def test_clear_album_cover_puts_the_first_photo_back(library_with_album: Library
 
     cover = library_with_album.folder_cover(album)
     assert cover is not None
-    assert cover.path == album / "一张.jpg"
+    # 「第一张」是扫描顺序的第一张：汉字按拼音排，所以「另」在「一」前面。
+    assert cover.path == album / "另一张.jpg"
     assert load_config(library_with_album.root).album_covers == {}
 
 

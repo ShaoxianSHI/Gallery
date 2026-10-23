@@ -13,6 +13,7 @@ from pathlib import Path
 from stat import S_ISDIR, S_ISREG
 
 from gallery.core.cancellation import never_cancel
+from gallery.core.collation import collation_key
 from gallery.core.errors import LibraryNotAccessibleError
 from gallery.core.library.photos import FolderRef, GridEntry, PhotoRef, is_supported_photo
 from gallery.core.paths import resolved
@@ -213,7 +214,7 @@ def iter_albums(
 
 def _album_sort_key(folder: FolderRef) -> tuple[str, ...]:
     """相册的路径序：按**每一段**比，于是父相册后面紧跟着它自己的子树。"""
-    return folder.path.parts
+    return tuple(collation_key(part) for part in folder.path.parts)
 
 
 def is_visible_path(root: Path, path: Path) -> bool:
@@ -294,7 +295,7 @@ def _note_file(report: ScanReport | None, path: str, exc: OSError) -> None:
 
 
 def _sort_key(entry: os.DirEntry[str]) -> str:
-    return entry.name.lower()
+    return collation_key(entry.name)
 
 
 __all__ = [

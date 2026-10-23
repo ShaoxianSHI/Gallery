@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from operator import itemgetter
 from pathlib import Path
 
+from gallery.core.collation import collation_key
 from gallery.core.events.store import EventRef
 from gallery.core.library.photos import GroupRef, PhotoRef
 from gallery.core.metadata.facets import Facet, PhotoFacets, SortValue, input_for
@@ -36,7 +37,7 @@ class SortOrder:
     ) -> SortValue | None:
         """这张照片的排序值；没有值就是 ``None``（一律排在最后，正序逆序都一样）。"""
         if self.facet is None:
-            return ref.name.casefold()
+            return collation_key(ref.name)
         return self.facet.sort(input_for(ref, values.get(ref.path, EMPTY_FACETS), root))
 
 
@@ -55,7 +56,7 @@ def sort_photos(
     """
     facets = values if values is not None else {}
     if order.facet is None:
-        return sorted(photos, key=lambda ref: ref.name.casefold(), reverse=order.descending)
+        return sorted(photos, key=lambda ref: collation_key(ref.name), reverse=order.descending)
     # **每张照片的排序值只算一次**：分区时问一遍、排序的 key 里再问一遍等于每张两次，
     # 五万张的库每次重排就多付五万遍（实测 3000 张 = 6000 次调用）。所以值顺手揣着。
     known: list[tuple[SortValue, str, PhotoRef]] = []
@@ -65,9 +66,9 @@ def sort_photos(
         if value is None:
             unknown.append(ref)
         else:
-            known.append((value, ref.name.casefold(), ref))
+            known.append((value, collation_key(ref.name), ref))
     known.sort(key=lambda item: (item[0], item[1]), reverse=order.descending)
-    unknown.sort(key=lambda ref: ref.name.casefold())
+    unknown.sort(key=lambda ref: collation_key(ref.name))
     return [ref for _, _, ref in known] + unknown
 
 
@@ -141,7 +142,7 @@ def build_groups(
         else:
             valued.append((value, group))
     valued.sort(key=itemgetter(0), reverse=descending)
-    unvalued.sort(key=lambda group: group.label.casefold())
+    unvalued.sort(key=lambda group: collation_key(group.label))
     return [group for _, group in valued] + unvalued
 
 
