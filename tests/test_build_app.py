@@ -46,3 +46,12 @@ def test_an_existing_file_is_not_mistaken_for_a_folder(tmp_path: Path) -> None:
     occupied.write_text("", encoding="utf-8")
 
     assert module.resolve_bundle(occupied) == occupied
+
+
+def test_pypinyin_data_files_are_included(tmp_path: Path) -> None:
+    """拼音词典是包内 JSON，不显式带上，打包后的应用一启动就会 FileNotFoundError。"""
+    module = _load()
+
+    command = module.build_command(tmp_path / "Gallery.icns", tmp_path / "dist")
+
+    assert "--include-package-data=pypinyin" in command

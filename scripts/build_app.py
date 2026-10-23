@@ -168,6 +168,8 @@ def build_command(icns: Path, output_dir: Path) -> list[str]:
         "--enable-plugin=pyside6",
         f"--include-package={_NUITKA_STEM}",
         f"--include-data-dir={_RESOURCES_SOURCE}={_RESOURCES_TARGET}",
+        # pypinyin 的词典是包内 JSON：Nuitka 只跟 Python 代码，不会自己带上它们。
+        "--include-package-data=pypinyin",
         # ---- 裁掉用不到的依赖 ----
         # 只排得掉「文件」；它们拖进来的 Qt 库由 trim_unused_libraries() 事后删。
         *_TRIM_OPTIONS,
