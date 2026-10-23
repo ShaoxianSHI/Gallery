@@ -133,6 +133,7 @@ def test_the_written_file_holds_only_the_app_level_fields(tmp_path: Path) -> Non
         "appearance": "system",
         "slideshow_seconds": 3,
         "open_last_library": True,
+        "show_file_extensions": True,
     }
 
 
@@ -142,6 +143,7 @@ def test_preferences_round_trip(tmp_path: Path) -> None:
         appearance="dark",
         slideshow_seconds=8,
         open_last_library=False,
+        show_file_extensions=False,
     )
 
     save_session(SessionState(preferences=preferences), base=tmp_path)
@@ -177,6 +179,7 @@ def test_unknown_preference_values_fall_back_one_by_one(tmp_path: Path) -> None:
                     "appearance": "深色",
                     "slideshow_seconds": 0,
                     "open_last_library": "no",
+                    "show_file_extensions": "yes",
                 },
             }
         ),
@@ -189,6 +192,7 @@ def test_unknown_preference_values_fall_back_one_by_one(tmp_path: Path) -> None:
     assert preferences.resolved_appearance() == "system"
     assert preferences.resolved_slideshow_seconds() == 3
     assert preferences.open_last_library is True
+    assert preferences.show_file_extensions is True
 
 
 def test_a_file_from_another_version_is_not_parsed_as_this_one(tmp_path: Path) -> None:

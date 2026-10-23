@@ -41,9 +41,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from gallery.core.library.photos import GridEntry
 from gallery.ui.browser.anchoring import AnchoringMixin
 from gallery.ui.browser.delegate import GRID_PADDING_X, GRID_PADDING_Y, PhotoDelegate
-from gallery.ui.browser.model import ALBUM_ROLE
+from gallery.ui.browser.model import ALBUM_ROLE, ENTRY_ROLE
 from gallery.ui.browser.transition import (
     EDGE_ANIMATION_CURVE,
     EDGE_ANIMATION_MS,
@@ -744,7 +745,9 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
         model = self.model()
         if model is None or not index.isValid():
             return False
-        text = str(model.data(index, int(Qt.ItemDataRole.DisplayRole)) or "")
+        # 名字取自条目本身而不是 DisplayRole：隐藏扩展名时后者是主干，拿它去改名会把扩展名弄丢。
+        entry = cast(GridEntry, model.data(index, ENTRY_ROLE))
+        text = entry.name
         if not text:
             return False
         cell = self.visualRect(index).adjusted(3, 3, -3, -3)

@@ -65,9 +65,12 @@ class PhotoListModel(QAbstractListModel):
         *,
         icon_edge: int = DEFAULT_ICON_EDGE,
         cache_size: int = DEFAULT_PIXMAP_CACHE,
+        show_extensions: bool = True,
     ) -> None:
         super().__init__(parent)
         self._entries: list[GridEntry] = []
+        #: 卡片与标题上写不写文件扩展名；排序不受它影响（排序键用完整名字）。
+        self._show_extensions = show_extensions
         # guard: allow-long-comment（与 _entries 逐行平行的不变量，任何改动它的地方都要同步）
         #: 与 :attr:`_entries` **逐行平行**的排序键（见 :func:`_sort_key`）。存在的理由只有
         #: 一个：键里的 ``name.casefold()`` 不记下来就得每行现算（三万行插一行要好几秒）。
@@ -85,6 +88,25 @@ class PhotoListModel(QAbstractListModel):
     @property
     def icon_size(self) -> QSize:
         return QSize(self._icon_edge, self._icon_edge)
+
+    def display_name(self, entry: GridEntry) -> str:
+        """这一格现在显示成什么：隐藏扩展名时照片只写主干，相册与分组照旧。"""
+        if self._show_extensions or not isinstance(entry, PhotoRef):
+            return entry.name
+        return Path(entry.name).stem or entry.name
+
+    def set_show_extensions(self, show: bool) -> None:
+        """切换扩展名显示并重画文字。**不重排**：排序键用的始终是完整名字。"""
+        if show == self._show_extensions:
+            return
+        self._show_extensions = show
+        if not self._entries:
+            return
+        self.dataChanged.emit(
+            self.index(0, 0),
+            self.index(len(self._entries) - 1, 0),
+            [int(Qt.ItemDataRole.DisplayRole)],
+        )
 
     def entries(self) -> tuple[GridEntry, ...]:
         return tuple(self._entries)
@@ -379,7 +401,7 @@ class PhotoListModel(QAbstractListModel):
             return None
         entry = self._entries[row]
         if role == int(Qt.ItemDataRole.DisplayRole):
-            return entry.name
+            return self.display_name(entry)
         # ToolTipRole 刻意不答：卡片不提供悬停提示，理由见模块文档那一段。
         if role == int(Qt.ItemDataRole.DecorationRole):
             # 没有缩略图时返回 None，由委托画占位（相册与分组画文件夹图标），不阻塞等待。

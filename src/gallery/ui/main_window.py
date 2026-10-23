@@ -198,7 +198,11 @@ class MainWindow(
         #: 不在大图页时窗口顶边那一行显示的名字（ADR 0025 决策 4）。
         self._library_title = "Gallery"
         self._init_thumb_size()
-        self._model = PhotoListModel(self, icon_edge=self._thumb_size.edge)
+        self._model = PhotoListModel(
+            self,
+            icon_edge=self._thumb_size.edge,
+            show_extensions=self._session.preferences.show_file_extensions,
+        )
         #: 「等上一段切档动画跑完再执行」的档数（0 = 没有排着的）；方向相反的连按会互相抵掉。
         self._build_ui()
         self._build_actions()
@@ -449,6 +453,11 @@ class MainWindow(
         self._metadata_action.setShortcut(QKeySequence("Ctrl+I"))
         self._metadata_action.toggled.connect(self.toggle_metadata)
 
+        self._show_extensions_action = QAction("显示文件扩展名", self)
+        self._show_extensions_action.setCheckable(True)
+        self._show_extensions_action.setChecked(self._session.preferences.show_file_extensions)
+        self._show_extensions_action.toggled.connect(self.set_show_file_extensions)
+
         self._clear_cache_action = QAction("清空缩略图缓存", self)
         self._clear_cache_action.triggered.connect(self.clear_thumbnail_cache)
 
@@ -624,6 +633,7 @@ class MainWindow(
         view_menu.addAction(self._zoom_in_action)
         view_menu.addAction(self._zoom_out_action)
         view_menu.addSeparator()
+        view_menu.addAction(self._show_extensions_action)
         view_menu.addAction(self._metadata_action)
         view_menu.addSeparator()
         view_menu.addAction(self._thumb_zoom_in_action)

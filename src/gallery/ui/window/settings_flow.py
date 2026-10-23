@@ -166,6 +166,13 @@ class SettingsFlowMixin:
         self._store_preferences(prefs)
         self._sync_ui()
 
+    def set_show_file_extensions(self, enabled: bool) -> None:
+        """视图菜单的「显示文件扩展名」：应用级偏好，换库不重置（ADR 0073 的判据）。"""
+        prefs = replace(self._session.preferences, show_file_extensions=enabled)
+        self._store_preferences(prefs)
+        self._model.set_show_extensions(enabled)
+        self._sync_ui()
+
     def _store_preferences(self, preferences: Preferences) -> None:
         self._session = self._session.with_preferences(preferences)  # type: ignore[attr-defined]
         if not self._save_session():  # type: ignore[attr-defined]

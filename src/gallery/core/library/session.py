@@ -61,6 +61,8 @@ class Preferences:
     appearance: str = DEFAULT_APPEARANCE
     slideshow_seconds: int = DEFAULT_SLIDESHOW_SECONDS
     open_last_library: bool = True
+    #: 网格与大图页标题上写不写文件扩展名（视图菜单里那一项）。
+    show_file_extensions: bool = True
 
     def resolved_animation_speed(self) -> str:
         """这一档该用的动画速度；不认识的值（老版本、手改坏）回默认。"""
@@ -89,6 +91,7 @@ class Preferences:
             "appearance": self.resolved_appearance(),
             "slideshow_seconds": self.resolved_slideshow_seconds(),
             "open_last_library": self.open_last_library,
+            "show_file_extensions": self.show_file_extensions,
         }
 
     @classmethod
@@ -100,6 +103,7 @@ class Preferences:
         appearance = value.get("appearance")
         seconds = value.get("slideshow_seconds")
         open_last = value.get("open_last_library")
+        show_extensions = value.get("show_file_extensions")
         return cls(
             animation_speed=speed if isinstance(speed, str) else DEFAULT_ANIMATION_SPEED,
             appearance=appearance if isinstance(appearance, str) else DEFAULT_APPEARANCE,
@@ -107,6 +111,7 @@ class Preferences:
             if isinstance(seconds, int) and not isinstance(seconds, bool)
             else DEFAULT_SLIDESHOW_SECONDS,
             open_last_library=open_last if isinstance(open_last, bool) else True,
+            show_file_extensions=show_extensions if isinstance(show_extensions, bool) else True,
         )
 
 

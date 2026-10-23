@@ -126,15 +126,17 @@ class TitleBarFlowMixin:
         的都是同一段算术，不会有一处忘了更新而标题还写着旧名。
         """
         photo = self._model.photo_at(self._current_row) if self._in_detail_page() else None
+        edit_name = None
         if photo is not None:
-            name = photo.name
+            name = self._model.display_name(photo)
+            edit_name = photo.name
         elif self._drill_photos is not None:
             # 从日历某一格展开的那一层：标题要说得清在看哪一格，否则与「全部照片」长得一模一样。
             name = f"{self._drill_label} · {len(self._drill_photos)} 张"
         else:
             name = self._library_title
         if self._owns_title_bar:
-            self._title_bar.set_text(name)
+            self._title_bar.set_text(name, edit_text=edit_name)
         else:
             # 标题栏那一段不归窗口（例如 Linux），照旧交给系统画（ADR 0025 决策 2）。
             self.setWindowTitle(name)

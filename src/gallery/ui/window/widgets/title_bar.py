@@ -82,6 +82,9 @@ class TitleBar(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._text = ""
+        #: 改名前输入框里放的名字。平时与 ``_text`` 相同；隐藏扩展名时它是完整文件名，
+        #: 否则直接回车会把扩展名改没。
+        self._edit_text = ""
         #: 右边那一段被别的东西占着多宽（右上角的搜索胶囊，ADR 0026 决策 8）。
         #: 标题文字与 ``⌘R`` 的输入框都要给它让出来 —— 否则一个长名字会从胶囊底下穿过去。
         self._right_reserved = 0
@@ -133,9 +136,13 @@ class TitleBar(QWidget):
         """这一行上正显示的名字。"""
         return self._text
 
-    def set_text(self, text: str) -> None:
-        """显示 ``text``。正在编辑时不去动输入框 —— 那里面是用户敲到一半的字。"""
+    def set_text(self, text: str, *, edit_text: str | None = None) -> None:
+        """显示 ``text``；``edit_text`` 是改名时放进输入框的名字（默认与显示的一致）。
+
+        正在编辑时不去动输入框 —— 那里面是用户敲到一半的字。
+        """
         self._text = text
+        self._edit_text = text if edit_text is None else edit_text
         self._update_label()
 
     def begin_edit(self) -> None:
@@ -143,11 +150,11 @@ class TitleBar(QWidget):
 
         没有名字可改时不进编辑（大图页那一格是相册或分组卡片时，窗口不给它起名字）。
         """
-        if not self._text:
+        if not self._edit_text:
             return
         self._label.hide()
         self._set_mouse_transparent(False)
-        self._editor.start(self._place_editor(), self._text, keep_suffix=True)
+        self._editor.start(self._place_editor(), self._edit_text, keep_suffix=True)
         self._editor.raise_()
         self.edit_active_changed.emit(True)
 
@@ -183,7 +190,7 @@ class TitleBar(QWidget):
         """输入框该在哪儿（见 :func:`editor_rect`）。"""
         return editor_rect(
             self.rect(),
-            self._text,
+            self._edit_text,
             QFontMetrics(self._editor.font()),
             left=TRAFFIC_LIGHTS_WIDTH,
             right=self._right_reserved,

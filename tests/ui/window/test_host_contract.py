@@ -424,6 +424,7 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
             "_grid",
             "_library",
             "_library_setting_actions",
+            "_model",
             "_report_error",
             "_save_session",
             "_session",
