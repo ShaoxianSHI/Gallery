@@ -13,6 +13,8 @@ from gallery.core.external.launch import (
     WHERE_BROWSER,
     open_google_calendar,
     open_in_app,
+    open_in_google_maps,
+    open_in_maps,
 )
 from gallery.core.external.pwa import SHORTCUT_URL_KEY
 from gallery.core.external.runner import CommandResult
@@ -207,6 +209,32 @@ def test_a_browser_that_never_starts_falls_back() -> None:
     )
     assert outcome.where == WHERE_BROWSER
     assert outcome.detail == "等不到浏览器启动，已改用浏览器打开"
+
+
+def test_maps_is_opened_with_one_open_call() -> None:
+    """**只起一个 ``open`` 进程**：系统「地图」认 ``maps://``，不需要轮询窗口。"""
+    runner = FakeRunner()
+    outcome = open_in_maps(39.908722, 116.397499, runner=runner)
+    assert runner.calls == [["open", "maps://?ll=39.908722,116.397499&q=39.908722,116.397499"]]
+    assert outcome.where == WHERE_APP
+    assert outcome.detail is None
+
+
+def test_a_missing_maps_app_says_what_to_do() -> None:
+    runner = FakeRunner(open_url_rc=1)
+    outcome = open_in_maps(39.9, 116.4, runner=runner)
+    assert outcome.detail == "没能打开地图，请确认系统「地图」还在"
+
+
+def test_google_maps_goes_through_the_browser() -> None:
+    """Mac 上没有 Google 地图的应用，于是永远只有浏览器这一条路。"""
+    runner = FakeRunner()
+    outcome = open_in_google_maps(48.8584, 2.2945, runner=runner)
+    assert runner.calls == [
+        ["open", "https://www.google.com/maps/search/?api=1&query=48.858400,2.294500"]
+    ]
+    assert outcome.where == WHERE_BROWSER
+    assert outcome.detail is None
 
 
 def test_shortcut_key_is_the_one_detection_reads() -> None:

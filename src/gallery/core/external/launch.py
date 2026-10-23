@@ -22,6 +22,7 @@ from gallery.core.external.applescript import (
     set_window_url,
 )
 from gallery.core.external.gcal import HOST, deep_link
+from gallery.core.external.maps import apple_deep_link, google_web_link
 from gallery.core.external.pwa import DEFAULT_SEARCH_DIRS, find_chrome_pwa
 from gallery.core.external.runner import Runner, subprocess_runner
 
@@ -81,6 +82,28 @@ def open_in_browser(url: str, *, runner: Runner | None = None) -> OpenOutcome:
     result = run(["open", url])
     detail = None if result.returncode == 0 else "没能打开浏览器"
     return OpenOutcome(where=WHERE_BROWSER, detail=detail)
+
+
+def open_in_maps(latitude: float, longitude: float, *, runner: Runner | None = None) -> OpenOutcome:
+    """在系统「地图」里打开这个坐标。**只起一个 ``open`` 进程**，不轮询窗口。
+
+    失败只可能是那个应用不在、或者系统不认 ``maps`` 这个 scheme —— 都是用户可修复的，
+    因此把原因带回去让横幅照实说，不静默吞掉。
+    """
+    result = (runner or subprocess_runner)(["open", apple_deep_link(latitude, longitude)])
+    detail = None if result.returncode == 0 else "没能打开地图，请确认系统「地图」还在"
+    return OpenOutcome(where=WHERE_APP, detail=detail)
+
+
+def open_in_google_maps(
+    latitude: float, longitude: float, *, runner: Runner | None = None
+) -> OpenOutcome:
+    """在默认浏览器里打开 Google 地图的这个坐标。
+
+    **Mac 上没有 Google 地图的应用**，这一条永远走浏览器；与日历那条不同，它没有
+    「开在应用里」的路径可以降级。
+    """
+    return open_in_browser(google_web_link(latitude, longitude), runner=runner)
 
 
 def open_folder(path: Path, *, runner: Runner | None = None) -> bool:
@@ -186,4 +209,6 @@ __all__ = [
     "open_google_calendar",
     "open_in_app",
     "open_in_browser",
+    "open_in_google_maps",
+    "open_in_maps",
 ]

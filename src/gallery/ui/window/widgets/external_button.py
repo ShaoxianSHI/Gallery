@@ -62,7 +62,8 @@ TOOLTIP = "用外部应用打开当前这一页"
 #: 自绘图标有哪几样。**只认形状，不认品牌**（见 :func:`drawn_icon`）。
 ICON_CALENDAR = "calendar"
 ICON_FOLDER = "folder"
-ICON_KINDS = (ICON_CALENDAR, ICON_FOLDER)
+ICON_MAP = "map"
+ICON_KINDS = (ICON_CALENDAR, ICON_FOLDER, ICON_MAP)
 
 
 @dataclass(frozen=True)
@@ -112,6 +113,8 @@ def drawn_icon(kind: str, size: int = ICON_EDGE) -> QIcon:
     accent = theme.current_theme().text
     if kind == ICON_FOLDER:
         return _draw_folder(size, accent)
+    if kind == ICON_MAP:
+        return _draw_map(size, accent)
     return _draw_calendar(size, accent)
 
 
@@ -180,19 +183,19 @@ def folder_icon(size: int = ICON_EDGE) -> QIcon:
     return drawn_icon(ICON_FOLDER, size)
 
 
-def icon_for(app: App, size: int = ICON_EDGE) -> QIcon:
+def icon_for(app: App, size: int = ICON_EDGE, *, fallback: str = ICON_FOLDER) -> QIcon:
     """某一项外部应用的图标：**用系统画好的那一张**（与访达、日历那两项同一个规矩）。
 
     **别自己从应用包里那个 ``.icns`` 拆** —— 同一个包，macOS 画在 Dock 里的那一张与文件里存的
     那一份可以不一样（有的包把圆角外面那片填成不透明白色）。取不到才退回自画的轮廓：宁可画一个
-    中性的，也不画一个「像它但不是」的。
+    中性的，也不画一个「像它但不是」的。``fallback`` 由调用方点名那一样东西像什么。
     """
     data = icon_png(app)
     if data is not None:
         pixmap = QPixmap()
         if pixmap.loadFromData(data):
             return QIcon(pixmap)
-    return drawn_icon(ICON_FOLDER, size)
+    return drawn_icon(fallback, size)
 
 
 def _draw_folder(size: int, accent: QColor) -> QIcon:
@@ -220,6 +223,48 @@ def _draw_folder(size: int, accent: QColor) -> QIcon:
         painter.drawLine(int(tab.left()), int(tab.top()), int(tab.left()), int(body.top()))
         painter.drawLine(int(tab.left()), int(tab.top()), int(tab.right()), int(tab.top()))
         painter.drawLine(int(tab.right()), int(tab.top()), int(tab.right()), int(body.top()))
+    finally:
+        painter.end()
+    return QIcon(pixmap)
+
+
+def _draw_map(size: int, accent: QColor) -> QIcon:
+    """一张折成三折的地图。**中性的**：不临摹任何一家的商标，只画出「这是一张地图」。"""
+    ratio = 2
+    pixmap = QPixmap(size * ratio, size * ratio)
+    pixmap.setDevicePixelRatio(ratio)
+    pixmap.fill(Qt.GlobalColor.transparent)
+
+    painter = QPainter(pixmap)
+    try:
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(accent)
+        pen.setWidthF(max(1.0, size * 0.06))
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        margin = size * 0.15
+        left, right = margin, size - margin
+        top, bottom = margin, size - margin
+        step = (right - left) / 3
+        fold = (bottom - top) * 0.12
+
+        path = QPainterPath()
+        path.moveTo(left, top + fold)
+        path.lineTo(left + step, top)
+        path.lineTo(left + 2 * step, top + fold)
+        path.lineTo(right, top)
+        path.lineTo(right, bottom - fold)
+        path.lineTo(left + 2 * step, bottom)
+        path.lineTo(left + step, bottom - fold)
+        path.lineTo(left, bottom)
+        path.closeSubpath()
+        painter.drawPath(path)
+
+        # 两道折痕：每一道连它那一侧的上下两个折点。
+        painter.drawLine(QPointF(left + step, top), QPointF(left + step, bottom - fold))
+        painter.drawLine(QPointF(left + 2 * step, top + fold), QPointF(left + 2 * step, bottom))
     finally:
         painter.end()
     return QIcon(pixmap)
@@ -452,6 +497,7 @@ __all__ = [
     "ICON_EDGE",
     "ICON_FOLDER",
     "ICON_KINDS",
+    "ICON_MAP",
     "MENU_EDGE",
     "TOOLTIP",
     "ExternalAppsButton",

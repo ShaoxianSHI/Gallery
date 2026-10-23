@@ -473,6 +473,19 @@ def album_name(entries: Sequence[GridEntry]) -> str:
     return ""
 
 
+def map_opened(outcome: OpenOutcome, name: str) -> str:
+    """「在地图中打开拍摄位置」做完之后的那一句。
+
+    **与 :func:`external_app_opened` 分开**：那句说的是「当前这一页」，而这里打开的是
+    这一张照片的拍摄位置，套上去会说错对象。开在浏览器里的那一支照旧说清。
+    """
+    if outcome.detail:
+        return f"{outcome.detail}。"
+    if outcome.in_app:
+        return f"已在{name}中打开这张照片的拍摄位置。"
+    return f"已在浏览器中打开 {name}。"
+
+
 def external_app_opened(outcome: OpenOutcome, name: str) -> str:
     """「用外部应用打开当前这一页」做完之后的那一句（ADR 0034）。
 
@@ -500,6 +513,7 @@ __all__ = [
     "event_updated_banner",
     "external_app_opened",
     "first_reason",
+    "map_opened",
     "metadata_edit_banner",
     "movie_site_opened_banner",
     "movies_imported_banner",

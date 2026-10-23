@@ -9,7 +9,7 @@ from __future__ import annotations
 import datetime
 import logging
 from collections import OrderedDict
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from functools import partial
 from pathlib import Path
 
@@ -43,6 +43,7 @@ from gallery.core.library.config import (
 )
 from gallery.core.library.photos import GroupRef, PhotoRef
 from gallery.core.metadata.report import MetadataReport
+from gallery.core.places.dataset import is_real_coordinate
 from gallery.ui import banners, desktop, theme
 from gallery.ui.browser.grid import PhotoGrid
 from gallery.ui.browser.model import PhotoListModel
@@ -84,9 +85,11 @@ from gallery.ui.window.watch_flow import WatchFlowMixin
 from gallery.ui.window.widgets.banner_overlay import BannerOverlay
 from gallery.ui.window.widgets.breadcrumb import BreadcrumbBar
 from gallery.ui.window.widgets.external_button import (
+    ICON_MAP,
     ExternalAppsButton,
     ExternalEntry,
     calendar_icon,
+    drawn_icon,
     folder_icon,
     icon_for,
 )
@@ -102,6 +105,15 @@ logger = logging.getLogger(__name__)
 #: 网格页**左边**留多少（点）。面包屑那一行也要知道它：条件胶囊要与搜索胶囊右对齐
 #: （见 :meth:`~gallery.ui.window.title_bar_flow.TitleBarFlowMixin._layout_title_bar`）。
 _GRID_PAGE_MARGIN_H = 10
+
+
+def _real_point(latitude: float | None, longitude: float | None) -> tuple[float, float] | None:
+    """两个数能不能当成一个地点：缺一个、或者两个都是 0 的占位写法都不算。"""
+    if latitude is None or longitude is None:
+        return None
+    if not is_real_coordinate(latitude, longitude):
+        return None
+    return (latitude, longitude)
 
 
 class MainWindow(
@@ -925,7 +937,8 @@ class MainWindow(
 
         每一项自己判自己此刻该不该出现（``ExternalEntry.enabled``），于是列表不用随页面变化
         重建，翻页时 ``refresh`` 问一遍就够。**预览排在最前**是有意的：大图页上最常用的就是
-        「用某个软件看这一张」，于是左半那一下在大图页也就是它（ADR 0067）。
+        「用某个软件看这一张」，于是左半那一下在大图页也就是它（ADR 0067）。地图排在它后面，
+        于是「有坐标」不会把大图页的左半从预览换成地图。
         """
         return (
             ExternalEntry(
@@ -935,6 +948,22 @@ class MainWindow(
                 enabled=self._on_calendar_page,
             ),
             self._viewer_entry(apps.PREVIEW),
+            ExternalEntry(
+                id=apps.MAPS.id,
+                name=apps.MAPS.name,
+                icon=icon_for(apps.MAPS, fallback=ICON_MAP),
+                # 没装（或是别的平台）就不摆：与预览、QSpace 同一条判据。
+                enabled=lambda: (
+                    apps.find_app(apps.MAPS) is not None and self._map_point() is not None
+                ),
+            ),
+            ExternalEntry(
+                id="google_maps",
+                name="Google 地图",
+                icon=drawn_icon(ICON_MAP),
+                # 浏览器永远在，于是只问「这张照片有没有坐标」。
+                enabled=lambda: self._map_point() is not None,
+            ),
             ExternalEntry(
                 id="finder",
                 name="访达",
@@ -976,16 +1005,65 @@ class MainWindow(
         """此刻有没有「当前这一层文件夹」可开 —— 访达与 QSpace 共用的那半条判据。"""
         return not self._on_calendar_page() and self._current_folder() is not None
 
-    def _detail_photo_path(self) -> Path | None:
-        """大图页上正在看的那一张的路径；不在大图页（或那一格不是照片）就是 ``None``。
+    def _detail_photo_ref(self) -> PhotoRef | None:
+        """大图页上正在看的那一张；不在大图页（或那一格不是照片）就是 ``None``。
 
         与右键那条「在默认应用中打开」问的是同一个东西（``photo_at(_focus_row())``，ADR 0021），
         于是分组卡片与相册都被它挡在外面。
         """
         if not self._in_detail_page():
             return None
-        ref = self._model.photo_at(self._focus_row())
+        return self._model.photo_at(self._focus_row())
+
+    def _detail_photo_path(self) -> Path | None:
+        """大图页上正在看的那一张的路径；不在大图页就是 ``None``。"""
+        ref = self._detail_photo_ref()
         return None if ref is None else ref.path
+
+    def _map_point(self) -> tuple[float, float] | None:
+        """这张照片的经纬度；**没有坐标就没有地点可开**。
+
+        先读面板那份缓存，没有再问索引（扫描那一遍已经把坐标存好，纯读缓存、不碰 EXIF，
+        因此可以在主线程上问）。两处都走 :func:`_real_point`：``(0,0)`` 是「没定到 GPS」
+        的占位写法，不能拿去当地点。
+        """
+        ref = self._detail_photo_ref()
+        if ref is None:
+            return None
+        report = self._cached_metadata(ref)
+        if report is not None:
+            point = _real_point(report.latitude, report.longitude)
+            if point is not None:
+                return point
+        library = self._library
+        if library is None:
+            return None
+        facets = library.cached_facets([ref]).get(ref.path)
+        if facets is None:
+            return None
+        return _real_point(facets.latitude, facets.longitude)
+
+    def _open_in_maps(self) -> None:
+        """把这张照片的拍摄位置交给系统「地图」。"""
+        self._open_map_with(launch.open_in_maps, apps.MAPS.name)
+
+    def _open_in_google_maps(self) -> None:
+        """把拍摄位置交给浏览器里的 Google 地图（Mac 上没有它的应用）。"""
+        self._open_map_with(launch.open_in_google_maps, "Google 地图")
+
+    def _open_map_with(
+        self, opener: Callable[[float, float], launch.OpenOutcome], name: str
+    ) -> None:
+        """两项地图共用的那一半：拿坐标、开、照实说。
+
+        **按钮只在有坐标时才摆**，走到「没有坐标」那一支说明界面与索引对不上（例如文件
+        刚被改写），此时说出来比静默不动更容易查。
+        """
+        point = self._map_point()
+        if point is None:
+            self._show_banner("这张照片没有拍摄位置，打不开地图。", auto_hide=True)
+            return
+        self._show_banner(banners.map_opened(opener(*point), name), auto_hide=True)
 
     def _on_external_entry(self, entry: object) -> None:
         """下拉框里点了哪一项。**按 id 分派**，不在按钮那一侧硬编码（理由见 ``ExternalEntry``）。"""
@@ -997,6 +1075,10 @@ class MainWindow(
             self._open_finder()
         elif entry.id == apps.QSPACE.id:
             self._open_qspace()
+        elif entry.id == apps.MAPS.id:
+            self._open_in_maps()
+        elif entry.id == "google_maps":
+            self._open_in_google_maps()
         else:
             viewer = next((one for one in apps.VIEWERS if one.id == entry.id), None)
             if viewer is not None:

@@ -34,6 +34,8 @@ from waiting import wait_until  # noqa: E402
 from gallery.core.external import apps, launch  # noqa: E402
 from gallery.core.library.config import BROWSE_MODE_CALENDAR, prepare_library  # noqa: E402
 from gallery.core.library.photos import GroupRef  # noqa: E402
+from gallery.core.metadata.facets import PhotoFacets  # noqa: E402
+from gallery.core.metadata.report import MetadataReport  # noqa: E402
 from gallery.ui import desktop  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.window.state.level_stack import AlbumFrame, GroupFrame  # noqa: E402
@@ -67,6 +69,7 @@ FIELD = QRect(300, 7, 208, 22)
 QSPACE_APP = Path("/Applications/QSpace Pro.app")
 IMAGEGLASS_APP = Path("/Applications/ImageGlass.app")
 PREVIEW_APP = Path("/System/Applications/Preview.app")
+MAPS_APP = Path("/System/Applications/Maps.app")
 
 
 @pytest.fixture(autouse=True)
@@ -619,6 +622,139 @@ def test_an_unknown_entry_reaches_no_action(
     window._on_external_entry(_entry("某个以后才有的应用", "以后", True))
 
     assert reached == []
+
+
+# ---- 大图页那一列地图（ADR 0075）----------------------------------------
+
+#: 天安门。**这是 WGS-84（EXIF 的口径）**，不是地图底图那份 GCJ-02。
+EARTH = (39.908722, 116.397499)
+
+
+def _cache_coordinates(window: MainWindow, latitude: float, longitude: float) -> None:
+    """把坐标放进面板那份缓存 —— 大图页不展开面板时，地图那一项问的就是它。"""
+    ref = window._model.photo_at(0)
+    assert ref is not None
+    window._cache_metadata(
+        ref,
+        MetadataReport(
+            path=ref.path,
+            groups=(),
+            all_fields=(),
+            source="exiftool",
+            latitude=latitude,
+            longitude=longitude,
+        ),
+    )
+
+
+def test_the_map_entries_need_a_photo_with_coordinates(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """网格页上没有「这一张的坐标」，没有坐标的照片也没有地点可开。"""
+    _only(monkeypatch, maps=MAPS_APP, preview=PREVIEW_APP)
+    assert "地图" not in _menu_texts(window._external_button)
+    assert "Google 地图" not in _menu_texts(window._external_button)
+
+    window._open_detail(window._model.index(0, 0))
+    window._external_button.refresh()
+    assert _menu_texts(window._external_button) == ["预览", "访达"]
+
+    _cache_coordinates(window, *EARTH)
+    window._external_button.refresh()
+    assert _menu_texts(window._external_button) == ["预览", "地图", "Google 地图", "访达"]
+    default = window._external_button.default_entry()
+    assert default is not None and default.name == "预览", "地图不能把左半那一下从预览换走"
+
+
+def test_the_coordinates_can_come_from_the_index(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """不展开元数据面板时，坐标就在索引里（扫描那一遍存好的）—— 那条路也要认得出来。"""
+    _only(monkeypatch)
+    ref = window._model.photo_at(0)
+    assert ref is not None
+    monkeypatch.setattr(
+        window._library,
+        "cached_facets",
+        lambda refs: {ref.path: PhotoFacets(latitude=EARTH[0], longitude=EARTH[1])},
+    )
+    window._open_detail(window._model.index(0, 0))
+    window._external_button.refresh()
+
+    assert "Google 地图" in _menu_texts(window._external_button)
+
+
+def test_null_island_is_not_a_location(window: MainWindow, monkeypatch: pytest.MonkeyPatch) -> None:
+    """经纬度同时为 0 是「没定到 GPS」的占位写法，不能当成几内亚湾里的一个点。"""
+    _only(monkeypatch, maps=MAPS_APP)
+    _cache_coordinates(window, 0.0, 0.0)
+    window._open_detail(window._model.index(0, 0))
+    window._external_button.refresh()
+
+    assert "地图" not in _menu_texts(window._external_button)
+    assert "Google 地图" not in _menu_texts(window._external_button)
+
+
+def test_google_maps_shows_even_without_the_native_app(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """浏览器永远在；系统「地图」不在就不摆那一项（与预览、QSpace 同一条判据）。"""
+    _only(monkeypatch)
+    _cache_coordinates(window, *EARTH)
+    window._open_detail(window._model.index(0, 0))
+    window._external_button.refresh()
+
+    assert _menu_texts(window._external_button) == ["Google 地图", "访达"]
+
+
+def test_clicking_the_maps_entry_passes_the_coordinates(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _only(monkeypatch, maps=MAPS_APP)
+    _cache_coordinates(window, *EARTH)
+    window._open_detail(window._model.index(0, 0))
+    calls: list[tuple[float, float]] = []
+    monkeypatch.setattr(
+        launch,
+        "open_in_maps",
+        lambda latitude, longitude: (
+            calls.append((latitude, longitude)) or launch.OpenOutcome(where=launch.WHERE_APP)
+        ),
+    )
+
+    window._on_external_entry(_entry("maps", "地图", True))
+
+    assert calls == [EARTH]
+    assert window._banner.text() == "已在地图中打开这张照片的拍摄位置。"
+
+
+def test_clicking_the_google_maps_entry_says_it_opened_the_browser(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _only(monkeypatch)
+    _cache_coordinates(window, *EARTH)
+    window._open_detail(window._model.index(0, 0))
+    monkeypatch.setattr(
+        launch,
+        "open_in_google_maps",
+        lambda latitude, longitude: launch.OpenOutcome(where=launch.WHERE_BROWSER),
+    )
+
+    window._on_external_entry(_entry("google_maps", "Google 地图", True))
+
+    assert window._banner.text() == "已在浏览器中打开 Google 地图。"
+
+
+def test_opening_maps_without_a_location_says_so(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """按钮只在有坐标时摆，但界面与索引对不上时也要说一句，不能静默不动。"""
+    monkeypatch.setattr(launch, "open_in_maps", lambda *a: pytest.fail("不该去开地图"))
+    window._open_detail(window._model.index(0, 0))
+
+    window._open_in_maps()
+
+    assert "没有拍摄位置" in window._banner.text()
 
 
 def test_button_appears_on_the_calendar_page(window: MainWindow) -> None:

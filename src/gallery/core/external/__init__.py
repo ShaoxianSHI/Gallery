@@ -16,6 +16,7 @@ from gallery.core.external.applescript import (
 )
 from gallery.core.external.apps import (
     IMAGEGLASS,
+    MAPS,
     PREVIEW,
     QSPACE,
     VIEWERS,
@@ -31,13 +32,17 @@ from gallery.core.external.launch import (
     open_google_calendar,
     open_in_app,
     open_in_browser,
+    open_in_google_maps,
+    open_in_maps,
 )
+from gallery.core.external.maps import apple_deep_link, google_web_link
 from gallery.core.external.pwa import app_icon, find_chrome_pwa, finder_icon
 from gallery.core.external.runner import CommandResult, Runner, subprocess_runner
 
 __all__ = [
     "HOST",
     "IMAGEGLASS",
+    "MAPS",
     "PREVIEW",
     "QSPACE",
     "VIEWERS",
@@ -49,18 +54,22 @@ __all__ = [
     "OpenOutcome",
     "Runner",
     "app_icon",
+    "apple_deep_link",
     "chrome_is_up",
     "deep_link",
     "find_app",
     "find_chrome_pwa",
     "find_pwa_window",
     "finder_icon",
+    "google_web_link",
     "icon_png",
     "is_pwa_window",
     "list_windows",
     "open_google_calendar",
     "open_in_app",
     "open_in_browser",
+    "open_in_google_maps",
+    "open_in_maps",
     "set_window_url",
     "subprocess_runner",
 ]

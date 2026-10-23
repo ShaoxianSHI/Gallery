@@ -42,6 +42,10 @@ QSPACE = App(
     bundle_ids=("com.jinghaoshe.qspace.pro", "com.jinghaoshe.qspace"),
 )
 
+#: 系统自带的「地图」：**macOS 上唯一认坐标的地图应用**（见 ``external.maps``）。
+#: 它注册了 ``maps`` URL scheme；别的 Mac 地图应用接不了带位置的链接。
+MAPS = App(id="maps", name="地图", bundle_ids=("com.apple.Maps",))
+
 #: 大图页那一列「用哪个软件看这一张」。名字可能是中文，而它**只进菜单与横幅**。
 PREVIEW = App(id="preview", name="预览", bundle_ids=("com.apple.Preview",))
 IMAGEGLASS = App(
@@ -125,6 +129,7 @@ def _appkit() -> Any:
 __all__ = [
     "ICON_EDGE",
     "IMAGEGLASS",
+    "MAPS",
     "PREVIEW",
     "QSPACE",
     "VIEWERS",
