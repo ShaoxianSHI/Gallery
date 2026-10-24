@@ -152,3 +152,70 @@ def test_stop_releases_the_source_and_the_controls(
 
 def _key(key: Qt.Key) -> QKeyEvent:
     return QKeyEvent(QEvent.Type.KeyPress, key, Qt.KeyboardModifier.NoModifier)
+
+
+def test_the_progress_bar_does_not_move_between_play_and_pause(
+    qt_app: QApplication, make_video: Callable[..., Path], tmp_path: Path
+) -> None:
+    """▶ 与 ❚❚ 的字形宽度不同：按钮不定宽时，进度条左端会随播放状态左右跳。"""
+    path = make_video(frames=100, directory=tmp_path)
+    view = _view(qt_app)
+    try:
+        view.play(PhotoRef.from_path(path))
+        assert wait_until(
+            qt_app,
+            lambda: view._player.playbackState() == QMediaPlayer.PlaybackState.PlayingState,
+            timeout=5,
+        )
+        playing = view._slider.geometry()
+
+        view.toggle_playback()
+        paused = view._slider.geometry()
+
+        assert paused == playing
+        assert view._play_button.width() == 26
+    finally:
+        view.stop()
+        view.close()
+
+
+def test_reopening_the_same_video_fits_again(
+    qt_app: QApplication, make_video: Callable[..., Path], tmp_path: Path
+) -> None:
+    """同一个尺寸的视频再打开时 ``nativeSizeChanged`` 不会再发；场景矩形与适配要自己补。"""
+    path = make_video(frames=100, size=(160, 120), directory=tmp_path)
+    ref = PhotoRef.from_path(path)
+    view = _view(qt_app)
+    try:
+        view.play(ref)
+        assert wait_until(qt_app, lambda: view.transform().m11() > 1.5, timeout=5)
+        first = view.transform().m11()
+
+        view.stop()
+        assert view.transform().m11() == pytest.approx(1.0)
+
+        view.play(ref)
+        assert wait_until(qt_app, lambda: view.transform().m11() > 1.5, timeout=5)
+        assert view.transform().m11() == pytest.approx(first)
+    finally:
+        view.stop()
+        view.close()
+
+
+def test_the_controls_sit_inside_the_viewport_after_showing(
+    qt_app: QApplication, make_video: Callable[..., Path], tmp_path: Path
+) -> None:
+    """第一次打开时布局还没稳定下来：控件要补算一次，不能停在视口外面。"""
+    path = make_video(frames=100, directory=tmp_path)
+    view = _view(qt_app)
+    try:
+        view.play(PhotoRef.from_path(path))
+        assert wait_until(
+            qt_app,
+            lambda: view._controls.geometry().bottom() <= view.viewport().rect().bottom(),
+            timeout=5,
+        )
+        assert view._controls.geometry().left() >= 0
+    finally:
+        view.stop()
+        view.close()
