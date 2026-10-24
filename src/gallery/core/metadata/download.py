@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Final
 
 from gallery.core import paths
 from gallery.core.atomic import write_bytes_atomic
@@ -31,6 +32,27 @@ class SavedFile:
     created: Path
     #: 是否留下了可回滚的日志记录。为 ``False`` 时界面要说明「没能记下操作日志」。
     journaled: bool = True
+
+
+#: 认得出的图片格式。**按字节认，不按地址猜**：同一个来源会混着给 PNG 与 JPEG，
+#: 而有的地址连后缀都没有（格式写在查询串里）。写错后缀的那张封面解不出来，却不报错。
+_MAGIC: Final[tuple[tuple[bytes, str], ...]] = (
+    (b"\xff\xd8\xff", ".jpg"),
+    (b"\x89PNG\r\n\x1a\n", ".png"),
+    (b"GIF8", ".gif"),
+)
+
+
+def image_suffix(data: bytes) -> str | None:
+    """这一串字节是什么格式的图片（``.jpg`` / ``.png`` / …）；认不出就是 ``None``。"""
+    for magic, suffix in _MAGIC:
+        if data.startswith(magic):
+            return suffix
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return ".webp"
+    if data[4:12] in (b"ftypavif", b"ftypavis"):
+        return ".avif"
+    return None
 
 
 def save_downloaded_file(
@@ -78,4 +100,4 @@ def save_downloaded_file(
     return SavedFile(created=created, journaled=journaled)
 
 
-__all__ = ["SavedFile", "save_downloaded_file"]
+__all__ = ["SavedFile", "image_suffix", "save_downloaded_file"]

@@ -884,9 +884,9 @@ class WriteOpsMixin:
     def import_movies_from_dialog(self, source: str) -> None:
         """「文件 → 导入影片 → 导入 <来源>…」：敲一批编号或链接，抓元数据与封面，建成影片事件。
 
-        ``source`` 只决定面板上那几句提示（ADR 0072）；哪一条属于哪个来源仍由
-        ``core.events.sources.parse_ref`` 按内容认。封面是新文件、绝不覆盖，所以入口住在这里；
-        抓取与写盘分两步，中间有重复会先问一句。
+        ``source`` 决定面板上那几句提示，也参与裸编号的识别（ADR 0072 / 0082）：网址仍按域名认，
+        而没有网址时（例如腾讯的 vid 与 YouTube 的 videoId 同形）只能靠用户点的这一项。
+        封面是新文件、绝不覆盖，所以入口住在这里；抓取与写盘分两步，中间有重复会先问一句。
         """
         library = self._library
         if library is None or not library.events_available:
@@ -904,17 +904,23 @@ class WriteOpsMixin:
             return
         entries = dialog.entries()
         if entries:
-            self._plan_movies(entries, target)
+            self._plan_movies(entries, target, source)
 
-    def _plan_movies(self, entries: Sequence[str], target: Path) -> None:
-        """第一步：按编号或链接抓一遍元数据（只读）。"""
+    def _plan_movies(self, entries: Sequence[str], target: Path, source: str) -> None:
+        """第一步：按编号或链接抓一遍元数据（只读）。
+
+        ``source`` 也传下去：腾讯的 vid 与 YouTube 的 videoId 同形，裸编号只能靠「用户点的是
+        哪一个来源」来认（ADR 0082 决策 2）。
+        """
         library = self._library
         if library is None:
             return
         generation = self._generation
 
         def work(context: TaskContext) -> object:
-            return library.plan_movie_import(entries, should_cancel=context.is_cancelled)
+            return library.plan_movie_import(
+                entries, source=source, should_cancel=context.is_cancelled
+            )
 
         self._show_banner(f"正在抓取 {len(entries)} 项影片的资料…")
         self._start_job(

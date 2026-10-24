@@ -1,9 +1,8 @@
-"""影片是「哪儿的哪一个」：编号怎么认、按来源分派抓取、打开哪一页（ADR 0068）。
+"""影片是「哪儿的哪一个」：编号怎么认、按来源分派抓取、打开哪一页（ADR 0068 / 0082）。
 
-用户粘进来的是一坨自由文本，每一行可能是番号、是链接、也可能是一句抱怨。识别规则按**可靠性**
-排序（ADR 0068 决策 3）：认网址 → 认 ``BV`` / ``av`` 这两种不可能与番号撞的形状 → 认 11 位的
-videoId（把番号那个形状排除在外）→ 剩下的当番号。**识别是纯函数**，不联网 —— 所以 ``b23.tv``
-那种要展开的短链在这里只能给一句中文。
+识别按可靠性排序：网址 → 面板选的来源 → ``BV`` / ``av`` → 11 位 videoId → 番号，纯函数不联网。
+**裸编号的歧义靠面板消**：腾讯的 vid 与 YouTube 的 videoId 同形，芒果与 Netflix 都是纯数字，
+只凭形状分不出来；网址仍然优先（粘错站也照粘的那一站认）。
 """
 
 from __future__ import annotations
@@ -14,13 +13,41 @@ from dataclasses import dataclass, field
 from typing import Final, Protocol
 
 from gallery.core.errors import MovieImportError
-from gallery.core.events import bilibili, jav, youtube
-from gallery.core.events.kinds import SOURCE_BILIBILI, SOURCE_JAV, SOURCE_YOUTUBE
+from gallery.core.events import bilibili, iqiyi, jav, mango, tencent, youku, youtube
+from gallery.core.events.kinds import (
+    SOURCE_BILIBILI,
+    SOURCE_IQIYI,
+    SOURCE_JAV,
+    SOURCE_MANGO,
+    SOURCE_TENCENT,
+    SOURCE_YOUKU,
+    SOURCE_YOUTUBE,
+)
 from gallery.core.events.models import MovieInfo, MovieRef
 from gallery.core.events.transport import Transport
 
 #: 像网址的东西。**带不带的 ``scheme`` 都算**（用户从地址栏复制时多半带着，手打时多半不带）。
 _URL_RE: Final = re.compile(r"^(?:[a-z][a-z0-9+.-]*://)?[\w-]+(?:\.[\w-]+)+(?:[/:?#]|$)", re.I)
+
+#: 按域名认来源。**顺序无关**（每个域名只属于一家），按导入菜单的习惯排。
+_URL_PARSERS: Final[tuple[tuple[str, Callable[[str], str | None]], ...]] = (
+    (SOURCE_YOUTUBE, youtube.id_from_url),
+    (SOURCE_BILIBILI, bilibili.id_from_url),
+    (SOURCE_TENCENT, tencent.id_from_url),
+    (SOURCE_IQIYI, iqiyi.id_from_url),
+    (SOURCE_YOUKU, youku.id_from_url),
+    (SOURCE_MANGO, mango.id_from_url),
+)
+
+#: 按面板选的来源认裸编号。**JavDB 不在里面**：番号是回退，什么形状都能当番号。
+_TEXT_PARSERS: Final[dict[str, Callable[[str], str | None]]] = {
+    SOURCE_YOUTUBE: lambda text: text if youtube.is_video_id(text) else None,
+    SOURCE_BILIBILI: bilibili.id_from_text,
+    SOURCE_TENCENT: tencent.id_from_text,
+    SOURCE_IQIYI: iqiyi.id_from_text,
+    SOURCE_YOUKU: youku.id_from_text,
+    SOURCE_MANGO: mango.id_from_text,
+}
 
 
 def source_of(text: str) -> str:
@@ -33,9 +60,11 @@ def source_of(text: str) -> str:
     return (text or "").strip() or SOURCE_JAV
 
 
-def parse_ref(text: str) -> MovieRef:
+def parse_ref(text: str, *, source: str | None = None) -> MovieRef:
     """把用户敲的一行读成「哪儿的哪一个」。
 
+    :param source: 面板上选的那个来源。**它只在「这一行不是网址」时起作用** —— 腾讯的 vid 与
+        YouTube 的 videoId 同形，只凭形状会认错（ADR 0082 决策 2）。
     :raises MovieImportError: 空行，或者认不出来（例如 ``b23.tv`` 短链）。
     """
     cleaned = (text or "").strip()
@@ -43,6 +72,12 @@ def parse_ref(text: str) -> MovieRef:
         raise MovieImportError("编号或链接不能为空。")
     if _URL_RE.match(cleaned):
         return _ref_from_url(cleaned)
+    if source is not None:
+        parser = _TEXT_PARSERS.get(source)
+        if parser is not None:
+            code = parser(cleaned)
+            if code:
+                return MovieRef(source=source, code=code)
     # 不是网址：先把「与番号不可能撞」的形状认掉。
     code = bilibili.id_from_text(cleaned)
     if code:
@@ -56,22 +91,21 @@ def parse_ref(text: str) -> MovieRef:
 
 def _ref_from_url(url: str) -> MovieRef:
     """网址里的编号。**认不出就给一句中文**，不猜是哪个站。"""
-    video_id = youtube.id_from_url(url)
-    if video_id:
-        return MovieRef(source=SOURCE_YOUTUBE, code=video_id)
-    code = bilibili.id_from_url(url)
-    if code:
-        return MovieRef(source=SOURCE_BILIBILI, code=code)
+    for source, parser in _URL_PARSERS:
+        code = parser(url)
+        if code:
+            return MovieRef(source=source, code=code)
     raise MovieImportError(
-        f"这个地址认不出来：{url}。B 站的短链请先在浏览器里打开，把完整地址粘进来。"
+        f"这个地址认不出来：{url}。短链请先在浏览器里打开，把完整地址粘进来；"
+        "整部剧的合集页也请先点开某一集再复制。"
     )
 
 
 def movie_url(ref: MovieRef, *, jav_site: str) -> str | None:
     """这个影片该打开的网址；**来源认不出就是 ``None``**。
 
-    ``jav_site`` 只管 JavDB 那一栏（用户可以把它换成 jable.tv 之类的镜像）；YouTube 与 B 站的
-    地址形状是固定的，没有可配置的余地。**B 站那一页带上 ``t``**，于是打开时从开头播放，
+    ``jav_site`` 只管 JavDB 那一栏（用户可以把它换成 jable.tv 之类的镜像）；其余来源的地址形状
+    是固定的，没有可配置的余地。**B 站那一页带上 ``t``**，于是打开时从开头播放，
     而不是接上 B 站自己的「上次播放位置」。
     """
     if ref.source == SOURCE_JAV:
@@ -80,6 +114,14 @@ def movie_url(ref: MovieRef, *, jav_site: str) -> str | None:
         return youtube.movie_url(ref.code)
     if ref.source == SOURCE_BILIBILI:
         return bilibili.movie_url(ref.code, start_at_beginning=True)
+    if ref.source == SOURCE_TENCENT:
+        return tencent.movie_url(ref.code)
+    if ref.source == SOURCE_IQIYI:
+        return iqiyi.movie_url(ref.code)
+    if ref.source == SOURCE_YOUKU:
+        return youku.movie_url(ref.code)
+    if ref.source == SOURCE_MANGO:
+        return mango.movie_url(ref.code)
     return None
 
 
@@ -95,29 +137,37 @@ class MovieSource(Protocol):
     def cover_bytes(self, movie: MovieInfo) -> bytes: ...
 
 
-#: 来源 → 抓取那一份元数据的函数。三个模块的函数签名是同一个形状（``code`` + ``client=``），
-#: 所以分派是一张表而不是三行 ``if``。
+#: 来源 → 抓取那一份元数据的函数。各模块的函数签名是同一个形状（``code`` + ``client=``），
+#: 所以分派是一张表而不是七行 ``if``。
 _FETCHERS: Final[dict[str, Callable[..., MovieInfo]]] = {
     SOURCE_JAV: jav.fetch,
     SOURCE_YOUTUBE: youtube.fetch,
     SOURCE_BILIBILI: bilibili.fetch,
+    SOURCE_TENCENT: tencent.fetch,
+    SOURCE_IQIYI: iqiyi.fetch,
+    SOURCE_YOUKU: youku.fetch,
+    SOURCE_MANGO: mango.fetch,
 }
 
 
 def _default_transports() -> dict[str, Transport]:
-    """三条传输。**每个来源只在自己的 ``base`` / ``Referer`` / cookie 上不同。**"""
+    """每个来源各一条传输。**每个来源只在自己的 ``base`` / ``Referer`` / cookie / UA 上不同。**"""
     return {
         SOURCE_JAV: jav.transport(),
         SOURCE_YOUTUBE: youtube.transport(),
         SOURCE_BILIBILI: bilibili.transport(),
+        SOURCE_TENCENT: tencent.transport(),
+        SOURCE_IQIYI: iqiyi.transport(),
+        SOURCE_YOUKU: youku.transport(),
+        SOURCE_MANGO: mango.transport(),
     }
 
 
 @dataclass
 class HttpSources:
-    """三个来源各一条传输，按 ``ref.source`` 分派。
+    """每个来源一条传输，按 ``ref.source`` 分派。
 
-    **三条传输活在同一份对象里**：限速的「上一次请求是什么时候」记在每条传输上，所以一次导入里的
+    **所有传输活在同一份对象里**：限速的「上一次请求是什么时候」记在每条传输上，所以一次导入里的
     二十部影片共用同一份节奏，而不是每部新建一个客户端从头开始。
     """
 

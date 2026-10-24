@@ -24,6 +24,7 @@ from waiting import wait_for_idle, wait_until  # noqa: E402
 from gallery.core.events.store import EventDraft  # noqa: E402
 from gallery.core.external import launch  # noqa: E402
 from gallery.core.library.config import BROWSE_MODE_ALBUMS, prepare_library  # noqa: E402
+from gallery.core.library.facade import MovieImportPlan  # noqa: E402
 from gallery.core.library.photos import GroupRef  # noqa: E402
 from gallery.core.library.session import SessionState, save_session  # noqa: E402
 from gallery.core.metadata.download import save_downloaded_file  # noqa: E402
@@ -113,6 +114,10 @@ def test_the_import_menus_sit_in_the_file_menu(window: MainWindow) -> None:
         "导入 Bilibili…",
         "导入 YouTube…",
         "导入 JavDB…",
+        "导入爱奇艺…",
+        "导入腾讯视频…",
+        "导入优酷…",
+        "导入芒果TV…",
     ]
     assert [action.text() for action in window._import_shows_menu.actions()] == ["从「演迹」导入…"]
 
@@ -126,7 +131,27 @@ def test_each_movie_entry_hands_its_source_to_the_dialog(
     for action in window._import_movies_menu.actions():
         action.trigger()
 
-    assert seen == ["Bilibili", "YouTube", "JavDB"]
+    assert seen == ["Bilibili", "YouTube", "JavDB", "爱奇艺", "腾讯视频", "优酷", "芒果TV"]
+
+
+def test_the_chosen_source_reaches_the_planner(
+    window: MainWindow, root: Path, qt_app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """面板上点的那个来源要一路传到 ``plan_movie_import`` —— 裸编号的歧义就靠它消（ADR 0082）。"""
+    library = window._library
+    assert library is not None
+    seen: list[tuple[tuple[str, ...], str | None]] = []
+
+    def fake_plan(entries, *, source=None, should_cancel=None, on_progress=None, client=None):
+        seen.append((tuple(entries), source))
+        return MovieImportPlan(movies=(), duplicates=0, failures=())
+
+    monkeypatch.setattr(library, "plan_movie_import", fake_plan)
+
+    window._plan_movies(["d4102jjf5cm"], root, "腾讯视频")
+    wait_until(qt_app, lambda: bool(seen))
+
+    assert seen == [(("d4102jjf5cm",), "腾讯视频")]
 
 
 def test_every_top_level_menu_belongs_to_the_menu_bar(window: MainWindow) -> None:

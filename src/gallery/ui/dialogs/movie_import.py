@@ -24,7 +24,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gallery.core.events.kinds import SOURCE_BILIBILI, SOURCE_JAV, SOURCE_YOUTUBE
+from gallery.core.events.kinds import (
+    SOURCE_BILIBILI,
+    SOURCE_IQIYI,
+    SOURCE_JAV,
+    SOURCE_MANGO,
+    SOURCE_TENCENT,
+    SOURCE_YOUKU,
+    SOURCE_YOUTUBE,
+)
 from gallery.ui import theme
 from gallery.ui.dialogs.event_edit import ERROR_LINES, dialog_style
 from gallery.ui.theme import rgba
@@ -46,7 +54,7 @@ class SourceCopy:
     placeholder: str
 
 
-#: 三个入口各自的说法。进例子的东西必须和这个来源对得上：B 站给 BV 号，YouTube 给视频地址，
+#: 七个入口各自的说法。进例子的东西必须和这个来源对得上：B 站给 BV 号，YouTube 给视频地址，
 #: JavDB 给番号 —— 否则用户会拿另一个站的编号去试，然后在抓取失败时才看到原因。
 _SOURCE_COPY: Final[dict[str, SourceCopy]] = {
     SOURCE_BILIBILI: SourceCopy(
@@ -68,6 +76,33 @@ _SOURCE_COPY: Final[dict[str, SourceCopy]] = {
         heading="按番号导入 JavDB 影片",
         hint="每行一个番号，例如 IPX-660；大小写与连字符都可以按习惯写。封面会存进下面这个文件夹。",
         placeholder="IPX-660\nDSOD-040",
+    ),
+    SOURCE_IQIYI: SourceCopy(
+        title="导入爱奇艺影片",
+        heading="按链接导入爱奇艺影片",
+        hint="每行一个爱奇艺视频地址，地址里 v_ 后面那一串就是编号；整部剧的专辑地址（a_ 开头）"
+        "不行，请点开某一集再复制。封面会存进下面这个文件夹。",
+        placeholder="https://www.iqiyi.com/v_19rqxr146g.html\nv_19rqxr146g",
+    ),
+    SOURCE_TENCENT: SourceCopy(
+        title="导入腾讯视频影片",
+        heading="按链接或 vid 导入腾讯视频影片",
+        hint="每行一个腾讯视频地址或 11 位 vid；整部剧的合集地址不行，请点开某一集再复制。"
+        "封面会存进下面这个文件夹。",
+        placeholder="https://v.qq.com/x/page/d4102jjf5cm.html\nd4102jjf5cm",
+    ),
+    SOURCE_YOUKU: SourceCopy(
+        title="导入优酷影片",
+        heading="按链接或编号导入优酷影片",
+        hint="每行一个优酷视频地址或编号（X 开头那一串）。封面会存进下面这个文件夹。",
+        placeholder="https://v.youku.com/v_show/id_XNjQ3MjkwNTUwNA==.html",
+    ),
+    SOURCE_MANGO: SourceCopy(
+        title="导入芒果 TV 影片",
+        heading="按链接或编号导入芒果 TV 影片",
+        hint="每行一个芒果 TV 地址或纯数字编号。芒果 TV 不公开上映日期，那一栏会空着。"
+        "封面会存进下面这个文件夹。",
+        placeholder="https://www.mgtv.com/h/14544857.html\n14544857",
     ),
 }
 

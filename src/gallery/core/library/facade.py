@@ -72,7 +72,7 @@ from gallery.core.media.decode import RasterImage, decode_rgba
 from gallery.core.media.thumbs import ThumbnailCache
 from gallery.core.metadata.album import DEFAULT_ALBUM_NAME, CreatedAlbum, create_album
 from gallery.core.metadata.batch import BatchMetadataSource, read_facets
-from gallery.core.metadata.download import save_downloaded_file
+from gallery.core.metadata.download import image_suffix, save_downloaded_file
 from gallery.core.metadata.facets import (
     PhotoFacets,
     mark_place_resolved,
@@ -816,6 +816,7 @@ class Library:
         self,
         entries: Sequence[str],
         *,
+        source: str | None = None,
         should_cancel: Callable[[], bool] | None = None,
         on_progress: Callable[[int, int], None] | None = None,
         client: sources.MovieSource | None = None,
@@ -824,7 +825,8 @@ class Library:
 
         **要联网，跑在后台线程里**。逐条抓，抓不到的那条记进 ``failures``（不中断其余）——
         认不出是哪一行的、源站上没有的，都在里面。
-        :param client: 抓取用的入口，测试注入假实现；``None`` 表示默认的三个来源。
+        :param source: 面板上选的那个来源。它只在「这一行不是网址」时参与识别（ADR 0082 决策 2）。
+        :param client: 抓取用的入口，测试注入假实现；``None`` 表示默认的那些来源。
         """
         getter = client if client is not None else sources.HttpSources()
         total = len(entries)
@@ -834,7 +836,7 @@ class Library:
             if should_cancel is not None and should_cancel():
                 break
             try:
-                movies.append(getter.fetch(sources.parse_ref(raw)))
+                movies.append(getter.fetch(sources.parse_ref(raw, source=source)))
             except GalleryError as exc:
                 failures.append(f"{raw}：{exc.message}")
             if on_progress is not None:
@@ -877,7 +879,7 @@ class Library:
             try:
                 data = getter.cover_bytes(movie)
                 saved = save_downloaded_file(
-                    self._root, target, _cover_name(movie), data, batch=batch
+                    self._root, target, _cover_name(movie, data), data, batch=batch
                 )
             except GalleryError as exc:
                 failures.append(f"{movie.code}：{exc.message}")
@@ -1322,13 +1324,21 @@ def _draft_identity(draft: EventDraft) -> tuple[str, str, str]:
 _COVER_SUFFIXES: Final = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif")
 
 
-def _cover_name(movie: MovieInfo) -> str:
-    """封面写进用户文件夹时叫什么：``IPX-660.jpg``（编号 + 从地址认出来的后缀）。"""
+def _cover_name(movie: MovieInfo, data: bytes) -> str:
+    """封面写进用户文件夹时叫什么：``IPX-660.jpg``。
+
+    **后缀先按字节认，认不出才退回地址里写的那个**：同一个来源会混着给 PNG 与 JPEG，
+    而有的地址连后缀都没有。写错后缀的那张封面解不出来，却不报错。
+    """
     code = movie.code.strip() or "cover"
+    return f"{code}{image_suffix(data) or _suffix_of(movie)}"
+
+
+def _suffix_of(movie: MovieInfo) -> str:
+    """地址里写的后缀；认不出就是 ``.jpg``。"""
     first = movie.cover_urls[0] if movie.cover_urls else ""
     lowered = first.lower().split("?", 1)[0]
-    suffix = next((item for item in _COVER_SUFFIXES if lowered.endswith(item)), ".jpg")
-    return f"{code}{suffix}"
+    return next((item for item in _COVER_SUFFIXES if lowered.endswith(item)), ".jpg")
 
 
 def _paths_of(photos: Iterable[PhotoRef | Path]) -> list[Path]:

@@ -22,7 +22,11 @@ from gallery.core.events.kinds import (
     EVENT_KINDS,
     MOVIE,
     SOURCE_BILIBILI,
+    SOURCE_IQIYI,
     SOURCE_JAV,
+    SOURCE_MANGO,
+    SOURCE_TENCENT,
+    SOURCE_YOUKU,
     SOURCE_YOUTUBE,
     EventKind,
     kind_by_id,
@@ -55,8 +59,21 @@ Submitter = Callable[[str, QAction], None]
 #: 「演迹」导出文件选择框认的后缀。
 _IMPORT_FILTER = "Excel 表格 (*.xlsx *.xlsm)"
 
-#: 「导入影片」子菜单里的顺序：用户最先想到的那两个主站在前，番号那一项在后。
-_MOVIE_IMPORT_SOURCES = (SOURCE_BILIBILI, SOURCE_YOUTUBE, SOURCE_JAV)
+#: 「导入影片」子菜单里的顺序：用户最先想到的那几个主站在前，番号那一项在后。
+_MOVIE_IMPORT_SOURCES = (
+    SOURCE_BILIBILI,
+    SOURCE_YOUTUBE,
+    SOURCE_JAV,
+    SOURCE_IQIYI,
+    SOURCE_TENCENT,
+    SOURCE_YOUKU,
+    SOURCE_MANGO,
+)
+
+
+def _import_movie_label(source: str) -> str:
+    """菜单那一行的写法：中文来源名不加空格，拉丁字母的名字照中英混排加一个。"""
+    return f"导入 {source}…" if source.isascii() else f"导入{source}…"
 
 
 class EventFlowMixin:
@@ -346,7 +363,7 @@ class EventFlowMixin:
         movies = file_menu.addMenu("导入影片")
         self._import_movies_menu = movies
         for source in _MOVIE_IMPORT_SOURCES:
-            action = QAction(f"导入 {source}…", self)
+            action = QAction(_import_movie_label(source), self)
             action.triggered.connect(
                 lambda _checked=False, chosen=source: self.import_movies_from_dialog(chosen)
             )

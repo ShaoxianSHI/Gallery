@@ -156,14 +156,27 @@ SHOW: Final = EventKind(
     empty_label="未命名演出",
 )
 
-#: 「来源」那一栏的值域：这部影片是从哪个网站抓来的（ADR 0068）。**它同时是打开影片网站与判重的
-#: 键**，所以三个值都要稳定；用网站自己的名字是因为译成中文反而认不出（YouTube 就是 YouTube）。
+#: 「来源」那一栏的值域：这部影片是从哪个网站抓来的（ADR 0068 / 0082）。**它同时是打开影片网站与
+#: 判重的键**，所以值都要稳定；用网站自己的名字是因为译成中文反而认不出（YouTube 就是 YouTube），
+#: 而中文站本来就以中文示人。
 SOURCE_JAV: Final = "JavDB"
 SOURCE_YOUTUBE: Final = "YouTube"
 SOURCE_BILIBILI: Final = "Bilibili"
+SOURCE_TENCENT: Final = "腾讯视频"
+SOURCE_IQIYI: Final = "爱奇艺"
+SOURCE_YOUKU: Final = "优酷"
+SOURCE_MANGO: Final = "芒果TV"
 
 #: 已知的来源。**顺序即下拉里的顺序**。
-MOVIE_SOURCES: Final = (SOURCE_JAV, SOURCE_YOUTUBE, SOURCE_BILIBILI)
+MOVIE_SOURCES: Final = (
+    SOURCE_JAV,
+    SOURCE_YOUTUBE,
+    SOURCE_BILIBILI,
+    SOURCE_TENCENT,
+    SOURCE_IQIYI,
+    SOURCE_YOUKU,
+    SOURCE_MANGO,
+)
 
 MOVIE: Final = EventKind(
     id="movie",
@@ -171,7 +184,12 @@ MOVIE: Final = EventKind(
     table="event_movie",
     fields=(
         EventField("source", "来源", "source", choices=MOVIE_SOURCES),
-        EventField("code", "编号", "code", hint="番号、YouTube 的 videoId、B 站的 BV 号"),
+        EventField(
+            "code",
+            "编号",
+            "code",
+            hint="番号、YouTube 的 videoId、B 站 BV 号，或腾讯 / 爱奇艺 / 优酷 / 芒果的编号",
+        ),
         EventField("duration", "时长", "duration", "INTEGER", hint="分钟，只填数字"),
         # 三栏都取中性词：同一栏要装下片商、频道与 UP 主（ADR 0068 决策 2）。
         EventField("creator", "作者", "creator", hint="片商、频道、UP 主"),
@@ -344,7 +362,11 @@ __all__ = [
     "RATING_MIN",
     "SHOW",
     "SOURCE_BILIBILI",
+    "SOURCE_IQIYI",
     "SOURCE_JAV",
+    "SOURCE_MANGO",
+    "SOURCE_TENCENT",
+    "SOURCE_YOUKU",
     "SOURCE_YOUTUBE",
     "SQL_TYPES",
     "TRIP",

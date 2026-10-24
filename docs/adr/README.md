@@ -109,3 +109,4 @@
 | [0079](0079-apple-calendar-via-applescript.md) | 系统「日历」也能开：只能靠 AppleScript，年映射到月 | 已接受 |
 | [0080](0080-external-app-order.md) | 外部应用的次序由用户定：三个位置各一份，第一项就是左半那一下 | 已接受（决策 2 的交互由 0081 换成拖动对话框） |
 | [0081](0081-external-order-drag-dialog.md) | 外部应用顺序改成三页可拖动列表的对话框 | 已接受 |
+| [0082](0082-more-movie-sources.md) | 影片导入接上腾讯视频、爱奇艺、优酷、芒果 TV | 已接受 |

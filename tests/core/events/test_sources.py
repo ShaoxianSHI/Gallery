@@ -12,7 +12,15 @@ import pytest
 
 from gallery.core.errors import MovieImportError
 from gallery.core.events import jav, sources
-from gallery.core.events.kinds import SOURCE_BILIBILI, SOURCE_JAV, SOURCE_YOUTUBE
+from gallery.core.events.kinds import (
+    SOURCE_BILIBILI,
+    SOURCE_IQIYI,
+    SOURCE_JAV,
+    SOURCE_MANGO,
+    SOURCE_TENCENT,
+    SOURCE_YOUKU,
+    SOURCE_YOUTUBE,
+)
 from gallery.core.events.models import MovieRef
 
 URL = "https://jable.tv/videos/"
@@ -56,6 +64,26 @@ DETAIL_HTML = (
         ),
         ("https://youtu.be/dQw4w9WgXcQ?t=1", MovieRef(SOURCE_YOUTUBE, "dQw4w9WgXcQ")),
         ("youtube.com/shorts/dQw4w9WgXcQ", MovieRef(SOURCE_YOUTUBE, "dQw4w9WgXcQ")),
+        (
+            "https://v.qq.com/x/page/d4102jjf5cm.html",
+            MovieRef(SOURCE_TENCENT, "d4102jjf5cm"),
+        ),
+        (
+            "https://v.qq.com/x/cover/mzc002001bk7moh/d4102jjf5cm.html",
+            MovieRef(SOURCE_TENCENT, "d4102jjf5cm"),
+        ),
+        (
+            "https://www.iqiyi.com/v_19rqxr146g.html",
+            MovieRef(SOURCE_IQIYI, "19rqxr146g"),
+        ),
+        (
+            "https://v.youku.com/v_show/id_XNjQ3MjkwNTUwNA==.html",
+            MovieRef(SOURCE_YOUKU, "XNjQ3MjkwNTUwNA"),
+        ),
+        (
+            "https://www.mgtv.com/b/336727/14544857.html",
+            MovieRef(SOURCE_MANGO, "14544857"),
+        ),
     ],
 )
 def test_a_line_is_read_as_a_source_and_a_code(text: str, expected: MovieRef | None) -> None:
@@ -91,6 +119,41 @@ def test_an_eleven_character_code_shaped_like_a_number_stays_a_number() -> None:
 
 
 @pytest.mark.parametrize(
+    ("text", "source", "expected"),
+    [
+        # 腾讯的 vid 与 YouTube 的 videoId 同形 —— 只凭形状会认成 YouTube（ADR 0082 决策 2）。
+        ("d4102jjf5cm", None, MovieRef(SOURCE_YOUTUBE, "d4102jjf5cm")),
+        ("d4102jjf5cm", SOURCE_TENCENT, MovieRef(SOURCE_TENCENT, "d4102jjf5cm")),
+        ("d4102jjf5cm", SOURCE_YOUTUBE, MovieRef(SOURCE_YOUTUBE, "d4102jjf5cm")),
+        # 纯数字在芒果与爱奇艺那里都可能是编号，面板说了算。
+        ("14544857", SOURCE_MANGO, MovieRef(SOURCE_MANGO, "14544857")),
+        ("19rqxr146g", SOURCE_IQIYI, MovieRef(SOURCE_IQIYI, "19rqxr146g")),
+        ("XNjQ3MjkwNTUwNA==", SOURCE_YOUKU, MovieRef(SOURCE_YOUKU, "XNjQ3MjkwNTUwNA")),
+    ],
+)
+def test_the_chosen_source_decides_an_ambiguous_bare_code(
+    text: str, source: str | None, expected: MovieRef
+) -> None:
+    """网址优先，**裸编号才看面板选的来源**：粘错站的链接仍按粘的那一站认。"""
+    assert sources.parse_ref(text, source=source) == expected
+
+
+def test_a_url_still_wins_over_the_source_the_panel_offers() -> None:
+    """在「导入腾讯视频」里粘一条 B 站链接，认出来的还是 B 站 —— 网址比面板上的选择可靠。"""
+    assert sources.parse_ref(
+        "https://www.bilibili.com/video/BV1GJ411x7h7/", source=SOURCE_TENCENT
+    ) == MovieRef(SOURCE_BILIBILI, "BV1GJ411x7h7")
+
+
+def test_an_album_address_is_turned_away_with_a_usable_hint() -> None:
+    """整部剧的合集页没有具体某一集，认不出 —— 提示要说清「点开某一集再复制」。"""
+    with pytest.raises(MovieImportError) as excinfo:
+        sources.parse_ref("https://www.iqiyi.com/a_1fkgtbddd2x.html")
+
+    assert "合集" in excinfo.value.message
+
+
+@pytest.mark.parametrize(
     ("text", "expected"),
     [
         ("", SOURCE_JAV),
@@ -113,6 +176,19 @@ def test_an_empty_source_means_javdb(text: str, expected: str) -> None:
             MovieRef(SOURCE_BILIBILI, "BV1GJ411x7h7"),
             "https://www.bilibili.com/video/BV1GJ411x7h7/?t=0.001",
         ),
+        (
+            MovieRef(SOURCE_TENCENT, "d4102jjf5cm"),
+            "https://v.qq.com/x/page/d4102jjf5cm.html",
+        ),
+        (
+            MovieRef(SOURCE_IQIYI, "19rqxr146g"),
+            "https://www.iqiyi.com/v_19rqxr146g.html",
+        ),
+        (
+            MovieRef(SOURCE_YOUKU, "XNjQ3MjkwNTUwNA"),
+            "https://v.youku.com/v_show/id_XNjQ3MjkwNTUwNA.html",
+        ),
+        (MovieRef(SOURCE_MANGO, "14544857"), "https://www.mgtv.com/h/14544857.html"),
     ],
 )
 def test_each_source_opens_its_own_page(ref: MovieRef, expected: str) -> None:
@@ -160,9 +236,7 @@ def test_a_source_we_have_no_transport_for_says_so() -> None:
     with pytest.raises(MovieImportError):
         fetchers.fetch(MovieRef(SOURCE_YOUTUBE, "dQw4w9WgXcQ"))
     with pytest.raises(MovieImportError):
-        fetchers.cover_bytes(
-            jav.parse_detail(DETAIL_HTML, "IPX-660", base=jav.DEFAULT_SOURCE_BASE)
-        )
+        fetchers.cover_bytes(jav.parse_detail(DETAIL_HTML, "IPX-660", base=jav.DEFAULT_SOURCE_BASE))
 
 
 def test_the_cover_falls_through_to_the_next_candidate() -> None:
@@ -171,7 +245,12 @@ def test_the_cover_falls_through_to_the_next_candidate() -> None:
     movie = jav.parse_detail(DETAIL_HTML, "IPX-660", base=jav.DEFAULT_SOURCE_BASE)
     fetchers = sources.HttpSources(transports={SOURCE_JAV: transport})
 
-    assert fetchers.cover_bytes(
-        replace(movie, cover_urls=("https://c.example/first.jpg", "https://c.example/second.jpg"))
-    ) == b"cover"
+    assert (
+        fetchers.cover_bytes(
+            replace(
+                movie, cover_urls=("https://c.example/first.jpg", "https://c.example/second.jpg")
+            )
+        )
+        == b"cover"
+    )
     assert transport.urls[-1] == "https://c.example/second.jpg"

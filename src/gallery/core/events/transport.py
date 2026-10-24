@@ -1,7 +1,7 @@
 """影片抓取共用的 HTTP：浏览器 UA、限速、退避重试、gzip（ADR 0068）。
 
-三个来源与反爬相处的方式是同一套：**每个来源自己的 ``base`` / ``Referer`` / cookie**，加上请求
-之间留一秒、限速与 5xx 退避重试。抄三份就是三处会各自漂，所以它单独成模块。
+七个来源与反爬相处的方式是同一套：**每个来源自己的 ``base`` / ``Referer`` / cookie / UA**，加上请求
+之间留一秒、限速与 5xx 退避重试。各写一份就是七处会各自漂，所以它单独成模块。
 """
 
 from __future__ import annotations
@@ -17,10 +17,16 @@ from typing import Final, Protocol
 
 from gallery.core.errors import MovieImportError, SourcePageError
 
-#: 浏览器 UA。三个源站都按它放行，空 UA 会被挡。
+#: 浏览器 UA。源站都按它放行，空 UA 会被挡。
 UA: Final = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+)
+
+#: 移动浏览器的 UA。爱奇艺的 ``m.`` 站点按它给服务端渲染的那一版，用桌面 UA 只会拿回一个空壳。
+MOBILE_UA: Final = (
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 "
+    "(KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
 )
 
 #: 无论怎么重试都值得再试一次的 HTTP 状态码：限速、被挡、源站自己 5xx。
@@ -48,6 +54,8 @@ class HttpTransport:
     cookie: str = ""
     #: 不给 ``Referer`` 时的那个。**B 站要 ``bilibili.com`` 而不是接口那个域名**。
     referer: str = ""
+    #: 这一次请求用的 UA。绝大多数源站用桌面 UA 就行；爱奇艺要移动版（见 :data:`MOBILE_UA`）。
+    ua: str = UA
     language: str = "zh-CN,zh;q=0.9,en;q=0.8"
     timeout: float = 30.0
     delay: float = 1.0
@@ -56,7 +64,7 @@ class HttpTransport:
 
     def _headers(self, referer: str | None) -> dict[str, str]:
         return {
-            "User-Agent": UA,
+            "User-Agent": self.ua,
             "Accept": _ACCEPT,
             "Accept-Language": self.language,
             "Accept-Encoding": "gzip, deflate",
@@ -135,6 +143,7 @@ def _decompress(raw: bytes, encoding: str | None) -> bytes:
 
 
 __all__ = [
+    "MOBILE_UA",
     "UA",
     "HttpTransport",
     "Transport",

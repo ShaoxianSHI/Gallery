@@ -50,9 +50,7 @@ class FakeSource:
     def fetch(self, ref: MovieRef) -> MovieInfo:
         hits = jav.parse_search_items(SEARCH_HTML, jav.DEFAULT_SOURCE_BASE)
         hit = jav.locate(hits, ref.code)
-        return jav.parse_detail(
-            DETAIL_HTML, ref.code, base=jav.DEFAULT_SOURCE_BASE, hit=hit
-        )
+        return jav.parse_detail(DETAIL_HTML, ref.code, base=jav.DEFAULT_SOURCE_BASE, hit=hit)
 
     def cover_bytes(self, movie: MovieInfo) -> bytes:
         assert movie.cover_urls == (self._cover_url,)
@@ -131,6 +129,24 @@ def test_a_second_plan_reports_the_code_as_a_duplicate(library: Library, tmp_pat
     assert outcome.created == 0
     assert outcome.duplicates == 1
     assert source.cover_hits == 1  # 跳过的没再去下封面
+
+
+def test_the_planner_hands_the_chosen_source_to_the_recognition(library: Library) -> None:
+    """面板选的那个来源要传到 ``parse_ref``：纯数字在芒果与别处都可能是编号（ADR 0082 决策 2）。"""
+    seen: list[MovieRef] = []
+
+    class Recorder:
+        def fetch(self, ref: MovieRef) -> MovieInfo:
+            seen.append(ref)
+            raise jav.no_search_results('<div class="empty-message">暫無內容</div>', ref.code)
+
+        def cover_bytes(self, movie: MovieInfo) -> bytes:  # pragma: no cover
+            return b""
+
+    plan = library.plan_movie_import(["14544857"], source="芒果TV", client=Recorder())
+
+    assert seen == [MovieRef("芒果TV", "14544857")]
+    assert len(plan.failures) == 1
 
 
 def test_a_missing_code_lands_in_failures(library: Library) -> None:

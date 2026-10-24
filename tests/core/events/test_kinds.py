@@ -117,11 +117,23 @@ def test_the_movie_kind_lists_its_own_columns() -> None:
 
 
 def test_the_movie_source_is_a_closed_set() -> None:
-    """「来源」画成下拉，值域就是那三个 —— 它同时是**判重与打开影片网站的键**（ADR 0068 决策 1），
+    """「来源」画成下拉，值域就是那七个 —— 它同时是**判重与打开影片网站的键**（ADR 0068 决策 1），
     所以多一个少一个都不只是多一栏的事。"""
     source = next(field for field in kinds.MOVIE.fields if field.id == "source")
 
-    assert source.choices == kinds.MOVIE_SOURCES == ("JavDB", "YouTube", "Bilibili")
+    assert (
+        source.choices
+        == kinds.MOVIE_SOURCES
+        == (
+            "JavDB",
+            "YouTube",
+            "Bilibili",
+            "腾讯视频",
+            "爱奇艺",
+            "优酷",
+            "芒果TV",
+        )
+    )
 
 
 def test_an_unknown_kind_is_none_rather_than_a_key_error() -> None:

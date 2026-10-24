@@ -17,7 +17,11 @@ from PySide6.QtWidgets import QLabel, QPlainTextEdit  # noqa: E402
 
 from gallery.core.events.kinds import (  # noqa: E402
     SOURCE_BILIBILI,
+    SOURCE_IQIYI,
     SOURCE_JAV,
+    SOURCE_MANGO,
+    SOURCE_TENCENT,
+    SOURCE_YOUKU,
     SOURCE_YOUTUBE,
 )
 from gallery.ui.dialogs.movie_import import MovieImportDialog, split_entries  # noqa: E402
@@ -69,6 +73,30 @@ def test_duplicate_entries_collapse_keeping_order() -> None:
             "导入 JavDB 影片",
             "按番号导入 JavDB 影片",
             "IPX-660\nDSOD-040",
+        ),
+        (
+            SOURCE_IQIYI,
+            "导入爱奇艺影片",
+            "按链接导入爱奇艺影片",
+            "https://www.iqiyi.com/v_19rqxr146g.html\nv_19rqxr146g",
+        ),
+        (
+            SOURCE_TENCENT,
+            "导入腾讯视频影片",
+            "按链接或 vid 导入腾讯视频影片",
+            "https://v.qq.com/x/page/d4102jjf5cm.html\nd4102jjf5cm",
+        ),
+        (
+            SOURCE_YOUKU,
+            "导入优酷影片",
+            "按链接或编号导入优酷影片",
+            "https://v.youku.com/v_show/id_XNjQ3MjkwNTUwNA==.html",
+        ),
+        (
+            SOURCE_MANGO,
+            "导入芒果 TV 影片",
+            "按链接或编号导入芒果 TV 影片",
+            "https://www.mgtv.com/h/14544857.html\n14544857",
         ),
     ],
 )
