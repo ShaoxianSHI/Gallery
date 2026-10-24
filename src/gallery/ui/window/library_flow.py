@@ -352,6 +352,7 @@ class LibraryFlowMixin:
         self._size_index = self._edge_to_index(ui.thumbnail_edge)
         self._metadata_visible = bool(ui.metadata_visible)
         self._group_facet = ui.group_facet
+        self._group_layout = ui.resolved_group_layout()
         self._sort_facet = ui.resolved_sort_facet()
         self._sort_descending = bool(ui.sort_descending)
         self._calendar_level = ui.resolved_calendar_level()
@@ -395,6 +396,7 @@ class LibraryFlowMixin:
             .with_calendar_level(self._calendar_level)
             .with_thumbnail_edge(edge_for_index(self._size_index))
             .with_ordering(self._group_facet, self._sort_facet, self._sort_descending)
+            .with_group_layout(self._group_layout)
             .with_search_scope(self._search_scope)
         )
 

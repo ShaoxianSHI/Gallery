@@ -121,6 +121,7 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
             "_paste_action",
             "_rename_action",
             "_reveal_action",
+            "_section_copy_action",
             "_select_all_action",
             "_selected_entries",
             "_selected_paths",
@@ -139,6 +140,7 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
             "edit_photo_event_menu",
             "metadata_edit_candidate",
             "record_as_candidate",
+            "section_event_actions",
             "set_event_cover_menu",
         }
     ),
@@ -156,6 +158,9 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
             "_import_shows_menu",
             "_leave_event_action",
             "_library",
+            "_section_clear_event_cover_action",
+            "_section_edit_event_action",
+            "_section_leave_event_action",
             "_model",
             "_refresh_panel_events",
             "_refresh_undo_label",
@@ -219,6 +224,7 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
             "_forget_indexed_root",
             "_generation",
             "_group_facet",
+            "_group_layout",
             "_group_view",
             "_is_library_search",
             "_level_stack",
@@ -346,9 +352,10 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
         {
             "_banner",
             "_banner_text",
-            "_browse_mode",
-            "_descending_action",
             "_ascending_action",
+            "_browse_mode",
+            "_cards_layout_action",
+            "_descending_action",
             "_feed_calendar",
             "_filters",
             "_finish_job",
@@ -374,6 +381,7 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
             "_reload_level",
             "_reorder_albums",
             "_reorder_photos",
+            "_sections_layout_action",
             "_restore_focus",
             "_save_ui_state",
             "_show_banner",
@@ -555,7 +563,7 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
             "_group_view",
             "_in_detail_page",
             "_is_library_search",
-            "_level_shows_group_cards",
+            "_level_is_grouped",
             "_library",
             "_load_detail",
             "_metadata_cache",
@@ -735,9 +743,12 @@ def test_the_widest_mixins_keep_their_ceiling() -> None:
         # （事件清单按哪张照片算归 EventFlowMixin，这一间只把菜单摆进去）。
         # 57 → 56：「分组」「排序」两张子菜单改由窗口现建（与菜单栏逐行一致），
         # 这一间少要三个动作 / 字典、多要两个构造方法，净少一条依赖。
-        "window/context_menu_flow.py:ContextMenuFlowMixin": 56,
+        # 56 → 58：分区标题上的组级命令（ADR 0089）要一枚自己的「复制分组条件」动作，
+        # 以及一个「把这一组写进动作里」的工厂 —— 标题不是当前项，共用卡片那枚会复制错组。
+        "window/context_menu_flow.py:ContextMenuFlowMixin": 58,
         # 45 → 46：方向从「一个勾选项」变成「升序 / 降序」两项，多一个动作要同步勾选态。
-        "window/ordering.py:OrderingMixin": 46,
+        # 46 → 48：分组形态（卡片式 / 分区式，ADR 0089）也是两项互斥的勾选项。
+        "window/ordering.py:OrderingMixin": 48,
         # 44 → 45：Esc 退不动时要取消日历上选中的那一天（ADR 0070），而「选中哪一天」
         # 只有 CalendarPage 知道；这一间因此多了一条对日历页的依赖。
         # 45 → 46：换层时先收掉放映（`stop_slideshow`），放映的快照属于上一层。

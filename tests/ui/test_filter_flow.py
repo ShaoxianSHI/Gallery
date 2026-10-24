@@ -1778,3 +1778,28 @@ def test_the_condition_chips_stay_clickable_while_filtering(
     # 那几枚控件 —— 它整条不可见，留着无害，拿 ``findChildren`` 去断会量到一件与界面无关的事。
     assert window._breadcrumb.isVisible() is False
     window.close()
+
+
+def test_the_filter_total_counts_photos_not_rows(tmp_path: Path) -> None:
+    """面包屑上的「筛选后（N）」是**照片数**：组卡片按成员算，分区标题一行都不算。
+
+    分区式里照片是行、标题也是行，拿 ``rowCount`` 去报会把标题也数成照片；卡片式里一行
+    是一整组，不展开成员就永远只报一两张。
+    """
+    from gallery.core.library.photos import SectionRef
+    from gallery.ui.window.search_flow import _photo_total
+
+    photos = [
+        PhotoRef(path=tmp_path / f"{index}.jpg", size=1, mtime_ns=index) for index in range(3)
+    ]
+    card = GroupRef(
+        facet="captured_month",
+        key="2024-05",
+        label="2024 年 5 月",
+        photos=(photos[0], photos[1]),
+    )
+    section = SectionRef(group=card, count=2)
+
+    assert _photo_total([photos[0], photos[1], photos[2]]) == 3
+    assert _photo_total([card, photos[2]]) == 3
+    assert _photo_total([section, photos[0], photos[1], photos[2]]) == 3

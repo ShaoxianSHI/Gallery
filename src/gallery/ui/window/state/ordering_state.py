@@ -8,7 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from gallery.core.events.models import EventRef
-from gallery.core.library.config import DEFAULT_SORT_FACET
+from gallery.core.library.config import DEFAULT_GROUP_LAYOUT, DEFAULT_SORT_FACET
 from gallery.core.library.photos import FolderRef, PhotoRef
 from gallery.core.metadata.facets import PhotoFacets
 from gallery.core.places.resolver import LazyPlaceResolver
@@ -25,6 +25,8 @@ class OrderingState:
 
     #: 分组字段 id（``None`` = 不分组）。存进库的 ``config.toml``，下次打开沿用。
     _group_facet: str | None
+    #: 分组形态（卡片式 / 分区式，ADR 0089）。同样是库级偏好。
+    _group_layout: str
     #: 排序字段 id。**恒为真字段 id** —— 菜单里没有「不排序」可退回（``set_sort_facet`` 对
     #: ``None`` 直接 return，``resolved_sort_facet`` 也交回一个能用的值）。
     _sort_facet: str
@@ -50,6 +52,7 @@ class OrderingState:
     def __init__(self) -> None:
         """初始状态：不分组、按默认字段升序、这一层什么都还没读。"""
         self._group_facet = None
+        self._group_layout = DEFAULT_GROUP_LAYOUT
         self._sort_facet = DEFAULT_SORT_FACET
         self._sort_descending = False
         self._facet_values = {}

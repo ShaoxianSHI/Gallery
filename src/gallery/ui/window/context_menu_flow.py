@@ -16,7 +16,7 @@ from PySide6.QtCore import QPoint
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMenu
 
-from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
+from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef, SectionRef
 from gallery.core.metadata.exif import read_metadata
 from gallery.core.metadata.facets import group_facet
 from gallery.core.metadata.report import MetadataReport
@@ -30,9 +30,11 @@ logger = logging.getLogger(__name__)
 
 
 def _context_kind(entry: GridEntry) -> TargetKind:
-    """这一格是照片、相册还是分组 —— 右键菜单据此拼不同的一份（ADR 0014）。"""
+    """这一格是照片、相册、分组还是分区标题 —— 右键菜单据此拼不同的一份（ADR 0014）。"""
     if isinstance(entry, GroupRef):
         return TargetKind.GROUP
+    if isinstance(entry, SectionRef):
+        return TargetKind.SECTION
     if isinstance(entry, FolderRef):
         return TargetKind.ALBUM
     return TargetKind.PHOTO
@@ -75,6 +77,12 @@ class ContextMenuFlowMixin:
             # 扫描还在把结果流式显示到界面时，模型可能已经往前挪过：宁可不弹，也不弹一份错的。
             return None
         self._sync_ui()
+        if isinstance(entry, SectionRef):
+            # 分区标题：只摆**这一组**的组级命令（ADR 0089）。作用对象在拼菜单时写进动作里，
+            # 不靠「当前项」—— 标题永远不是当前项，而选区压根不该被它带动。
+            return self._dressed_menu(
+                build_menu(self._section_menu_actions(entry), TargetKind.SECTION)
+            )
         kind = TargetKind.BLANK if entry is None else _context_kind(entry)
         multiple = len(self._grid.selected_rows()) > 1
         actions = self._menu_actions(self._context_paste(kind, entry, multiple=multiple))
@@ -336,13 +344,48 @@ class ContextMenuFlowMixin:
 
         组卡片本身只是磁盘上那批照片的一个切面，粘到别处也得说得出它是哪一组。
         """
-        group = self._model.group_at(self._grid.current_row())
+        self._copy_group(self._model.group_at(self._grid.current_row()))
+
+    def _copy_group(self, group: GroupRef | None) -> None:
+        """把**这一组**的分组条件抄走（卡片与分区标题共用）。"""
         if group is None:
             return
         facet = group_facet(group.facet)
         field = facet.label if facet is not None else group.facet
         desktop.copy_to_clipboard(f"按「{field}」分组：{group.label} · {group.count} 张")
         self._show_banner(f"已复制分组条件：按「{field}」分组。", auto_hide=True)
+
+    def _section_menu_actions(self, section: SectionRef) -> MenuActions:
+        """分区标题那一份动作：三条组级命令都绑在**这一条标题**代表的组上。"""
+        self._ensure_section_copy_action()
+        self._section_copy_action.setText(self._copy_group_action.text())
+        self._section_copy_action.setData(section.group)
+        edit, leave, clear = self.section_event_actions(section.group)
+        return replace(
+            self._menu_actions(None),
+            edit_event=edit,
+            leave_event=leave,
+            clear_event_cover=clear,
+            copy_group=self._section_copy_action,
+        )
+
+    def _ensure_section_copy_action(self) -> None:
+        """建「复制分组条件」在分区标题上用的那一枚动作。
+
+        **不与卡片共用同一个对象**：那一枚在触发时按「当前项」找组，而标题不是当前项；
+        共用就得在两张菜单之间来回改它的作用对象，漏改一次就复制错组。
+        """
+        if getattr(self, "_section_copy_action", None) is not None:
+            return
+        self._section_copy_action = QAction(self._copy_group_action.text(), self)
+        self._section_copy_action.triggered.connect(
+            lambda _checked=False: self._copy_section_group()
+        )
+
+    def _copy_section_group(self) -> None:
+        group = self._section_copy_action.data()
+        if isinstance(group, GroupRef):
+            self._copy_group(group)
 
 
 __all__ = ["ContextMenuFlowMixin"]

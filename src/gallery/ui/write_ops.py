@@ -704,6 +704,10 @@ class WriteOpsMixin:
         removed = [row for row in rows if self._is_row_moved(row, moved_paths)]
         self._model.remove_rows(removed)
         self._select_after_removal(removed)
+        if self._model.sectioned:
+            # 分区式里标题上的张数与归属都是派生出来的：删掉的行要立刻重算，别让一条
+            # 「还剩 3 张」的标题挂到监听器回来为止（卡片式删不到这一层，不必走这一遍）。
+            self._apply_ordering()
         # **大图页上删掉的那一张记下来**：⌘Z 之后要跳回它（见 ``_jump_back_to_restored``）。
         # 网格页上删的不记 —— 撤回来之后留在网格上才是对的。只记**真正移走的**那一张。
         self._detail_trashed = None

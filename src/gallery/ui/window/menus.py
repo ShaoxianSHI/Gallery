@@ -31,6 +31,8 @@ class TargetKind(Enum):
     ALBUM = "album"
     #: 一个分组卡片（不是磁盘上的东西）。
     GROUP = "group"
+    #: 一条分区标题（分区式里的分组，ADR 0089）。
+    SECTION = "section"
     #: 网格的空白处：不作用于任何条目。
     BLANK = "blank"
     #: 大图页里正看着的那张照片（ADR 0021）：菜单与网格那张只差第一行。
@@ -200,6 +202,25 @@ def build_group_menu(actions: MenuActions) -> QMenu:
     return menu
 
 
+def build_section_menu(actions: MenuActions) -> QMenu:
+    """分区标题：只摆**这一组**的组级命令（ADR 0089）。
+
+    标题不进选区，所以作用在选区上的命令一概不出现 —— 否则它们会作用在用户看不见的
+    上一次选区上。事件分组时多三行，与卡片那张是同一套文案（动作由窗口按这条标题现绑）。
+    """
+    menu = ShortcutColumnMenu()
+    if actions.edit_event is not None:
+        menu.addAction(actions.edit_event)
+    if actions.leave_event is not None:
+        menu.addAction(actions.leave_event)
+    if actions.clear_event_cover is not None:
+        menu.addAction(actions.clear_event_cover)
+    if actions.edit_event is not None or actions.leave_event is not None:
+        menu.addSeparator()
+    menu.addAction(actions.copy_group)
+    return menu
+
+
 def build_background_menu(actions: MenuActions) -> QMenu:
     """网格空白处：「新建相册」与「粘贴」在最上面，其余是视图级命令。
 
@@ -232,6 +253,8 @@ def build_menu(actions: MenuActions, kind: TargetKind, *, multiple: bool = False
         return build_album_menu(actions, multiple=multiple)
     if kind is TargetKind.GROUP:
         return build_group_menu(actions)
+    if kind is TargetKind.SECTION:
+        return build_section_menu(actions)
     return build_background_menu(actions)
 
 
@@ -402,4 +425,5 @@ __all__ = [
     "build_lazy_album_picker",
     "build_menu",
     "build_photo_menu",
+    "build_section_menu",
 ]

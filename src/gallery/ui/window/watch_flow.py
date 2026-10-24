@@ -182,9 +182,9 @@ class WatchFlowMixin:
             self._update_level_notice()
             self._refresh_thumbnail_window()
             return
-        if self._level_shows_group_cards():
-            # 这一层的照片不在模型的行里，所以只能整层重算 —— 「就地把新照片并进卡片」
-            # 不成立（ADR 0013 决策 3 的那条例外，理由见那条 ADR）。
+        if self._level_is_grouped():
+            # 这一层按分组铺开（卡片或分区），照片的归属是派生出来的，所以只能整层重算
+            # —— 「就地把新照片并进某一组」不成立（ADR 0013 决策 3 的那条例外）。
             self._reload_level()
             return
         if added:

@@ -820,10 +820,9 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
             self.clear_current()
             return -1
         if self._is_header(row):
-            # 分区标题不是可操作的一格：与空白处同一处理（它的组级命令是另一份菜单，
-            # 由窗口按标题行去拼，见 ADR 0089）。
-            self.clear_current()
-            return -1
+            # 分区标题不是可操作的一格，但它有自己的组级菜单（ADR 0089）：**不动选区与当前项**
+            # —— 那份菜单作用的是标题代表的那一组，与选区无关。
+            return row
         model = self.model()
         selection = self.selectionModel()
         if model is None or selection is None or not 0 <= row < model.rowCount():

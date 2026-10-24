@@ -17,6 +17,7 @@ pytest.importorskip("PySide6")
 
 from library_helpers import set_library_ui  # noqa: E402
 from PySide6.QtCore import QItemSelectionModel  # noqa: E402
+from PySide6.QtGui import QGuiApplication  # noqa: E402
 from PySide6.QtWidgets import QApplication, QToolButton  # noqa: E402
 from waiting import wait_until, wait_while_watching, window_is_idle
 
@@ -25,7 +26,7 @@ from gallery.core.library.config import (  # noqa: E402
     load_config,
     prepare_library,
 )
-from gallery.core.library.photos import GroupRef, PhotoRef  # noqa: E402
+from gallery.core.library.photos import GroupRef, PhotoRef, SectionRef  # noqa: E402
 from gallery.core.library.session import (
     SessionState,
     save_session,
@@ -156,6 +157,7 @@ def _open(
     group_facet: str | None = None,
     sort_facet: str | None = None,
     sort_descending: bool = False,
+    group_layout: str | None = None,
     remember: bool = True,
 ) -> MainWindow:
     """开一个窗口。``remember=False`` 表示沿用上一次写进会话的那份，否则测试自己
@@ -169,6 +171,7 @@ def _open(
             group_facet=group_facet,
             sort_facet=sort_facet,
             sort_descending=sort_descending,
+            group_layout=group_layout,
         )
     window = MainWindow(session_base=session_base, initial_library=root)
     window.resize(900, 600)
@@ -1146,4 +1149,231 @@ def test_group_cards_are_kept_when_photos_inside_are_deleted(
     _settle(qt_app, window)
 
     assert _labels(window) == ["四月.jpg"]
+    window.close()
+
+
+# ---- 分区式（ADR 0089）-------------------------------------------------------------
+
+
+def _sections(window: MainWindow) -> list[SectionRef]:
+    return [entry for entry in window._model.entries() if isinstance(entry, SectionRef)]
+
+
+def _settle_sections(qt_app: QApplication, window: MainWindow) -> None:
+    """等到「扫描结束、元数据读完、这一层已经按分区式排好」。"""
+    assert wait_until(
+        qt_app,
+        lambda: window_is_idle(window) and bool(window._model.header_rows()),
+    ), "分区式没有在时限内排好"
+    qt_app.processEvents()
+
+
+def _sectioned_window(
+    qt_app: QApplication,
+    tmp_path: Path,
+    make_photo: Callable[..., Path],
+    fake_facet_source: object,
+) -> MainWindow:
+    """一个按「拍摄月份」分区铺开的窗口（四张照片各在一个月）。"""
+    root = _library(tmp_path, make_photo, list(DATES))
+    _touch_all(root, sorted(DATES))
+    window = _open(
+        qt_app,
+        root,
+        session_base=tmp_path / "状态",
+        group_facet="captured_month",
+    )
+    _settle(qt_app, window, groups=True)
+    window.set_group_layout("sections")
+    _settle_sections(qt_app, window)
+    return window
+
+
+def test_the_group_menu_offers_the_two_layouts(qt_app: QApplication, tmp_path: Path) -> None:
+    """两项互斥、可勾选，位置与「升序 / 降序」同一套（在「分组」子菜单末尾）。"""
+    window = MainWindow(session_base=tmp_path / "状态")
+
+    assert window._cards_layout_action.text() == "卡片式"
+    assert window._sections_layout_action.text() == "分区式"
+    assert window._cards_layout_action.isChecked()
+    assert not window._sections_layout_action.isChecked()
+    # 没选分组字段时无从谈起：两项置灰（勾选态仍记住着）。
+    assert not window._cards_layout_action.isEnabled()
+    assert not window._sections_layout_action.isEnabled()
+    window.close()
+
+
+def test_choosing_a_group_field_enables_the_layouts(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path], fake_facet_source: object
+) -> None:
+    root = _library(tmp_path, make_photo, list(DATES))
+    window = _open(qt_app, root, session_base=tmp_path / "状态", group_facet="captured_month")
+
+    assert window._cards_layout_action.isEnabled()
+    assert window._sections_layout_action.isEnabled()
+
+    window.set_group_layout("sections")
+
+    assert window._sections_layout_action.isChecked()
+    assert not window._cards_layout_action.isChecked()
+    window.close()
+
+
+def test_sections_put_a_header_before_each_group(
+    qt_app: QApplication,
+    tmp_path: Path,
+    make_photo: Callable[..., Path],
+    fake_facet_source: object,
+) -> None:
+    window = _sectioned_window(qt_app, tmp_path, make_photo, fake_facet_source)
+
+    assert window._model.sectioned is True
+    assert window._model.group_count() == 0, "分区式里不该再有组卡片"
+    assert [(type(entry).__name__, entry.name) for entry in window._model.entries()] == [
+        ("SectionRef", "2023 年 12 月"),
+        ("PhotoRef", "去年十二月.jpg"),
+        ("SectionRef", "2024 年 3 月"),
+        ("PhotoRef", "三月.jpg"),
+        ("SectionRef", "2024 年 4 月"),
+        ("PhotoRef", "四月.jpg"),
+        ("SectionRef", "时间未知"),
+        ("PhotoRef", "没有时间.jpg"),
+    ]
+    assert [section.count for section in _sections(window)] == [1, 1, 1, 1]
+    window.close()
+
+
+def test_a_section_header_is_not_a_stack_frame(
+    qt_app: QApplication,
+    tmp_path: Path,
+    make_photo: Callable[..., Path],
+    fake_facet_source: object,
+) -> None:
+    """双击 / 回车落在标题上什么都不发生：它进不了栈，也退不出这一层。"""
+    window = _sectioned_window(qt_app, tmp_path, make_photo, fake_facet_source)
+    header = window._model.header_rows()[0]
+
+    window._on_entry_activated(window._model.index(header, 0))
+    qt_app.processEvents()
+
+    assert window._group_view is None
+    assert window._level_stack.frames == ()
+    assert window._page_role.value == "grid"
+    window.close()
+
+
+def test_switching_to_sections_leaves_the_group_you_were_in(
+    qt_app: QApplication,
+    tmp_path: Path,
+    make_photo: Callable[..., Path],
+    fake_facet_source: object,
+) -> None:
+    """卡片式里点进一个组，再切分区式：那一帧弹掉（新形态里没有「进入分组」这回事）。"""
+    root = _library(tmp_path, make_photo, list(DATES))
+    _touch_all(root, sorted(DATES))
+    window = _open(qt_app, root, session_base=tmp_path / "状态", group_facet="captured_month")
+    _settle(qt_app, window, groups=True)
+    row = _row_of_group(window, "2024 年 3 月")
+    group = window._model.group_at(row)
+    assert group is not None
+    window.enter_group(group)
+    assert wait_until(qt_app, lambda: window_is_idle(window) and window._group_view is not None), (
+        "没有进入那个组"
+    )
+
+    window.set_group_layout("sections")
+    _settle_sections(qt_app, window)
+
+    assert window._group_view is None
+    assert window._level_stack.frames == ()
+    assert [section.label for section in _sections(window)][0] == "2023 年 12 月"
+    window.close()
+
+
+def test_the_layout_preference_survives_a_restart(
+    qt_app: QApplication,
+    tmp_path: Path,
+    make_photo: Callable[..., Path],
+    fake_facet_source: object,
+) -> None:
+    """分区式是库级偏好（与分组字段、排序方向同一处）：重开这个库还该是分区式。"""
+    root = _library(tmp_path, make_photo, list(DATES))
+    _touch_all(root, sorted(DATES))
+    window = _open(qt_app, root, session_base=tmp_path / "状态", group_facet="captured_month")
+    _settle(qt_app, window, groups=True)
+    window.set_group_layout("sections")
+    _settle_sections(qt_app, window)
+    window.close()
+
+    reopened = _open(qt_app, root, session_base=tmp_path / "状态", remember=False)
+    assert reopened._group_layout == "sections"
+    _settle_sections(qt_app, reopened)
+    assert reopened._model.sectioned is True
+    assert reopened._sections_layout_action.isChecked()
+    reopened.close()
+
+
+def test_right_clicking_a_header_copies_that_group_condition(
+    qt_app: QApplication,
+    tmp_path: Path,
+    make_photo: Callable[..., Path],
+    fake_facet_source: object,
+) -> None:
+    """标题那张菜单只摆**这一组**的命令，作用对象是标题代表的那一组。"""
+    window = _sectioned_window(qt_app, tmp_path, make_photo, fake_facet_source)
+    header = window._model.header_rows()[0]
+
+    assert window._grid.select_for_context(header) == header
+    menu = window.context_menu_for(header)
+    assert menu is not None
+    texts = [action.text() for action in menu.actions() if not action.isSeparator()]
+    assert texts == ["复制分组条件"]
+
+    QGuiApplication.clipboard().clear()
+    menu.actions()[-1].trigger()
+
+    assert QGuiApplication.clipboard().text() == "按「拍摄月份」分组：2023 年 12 月 · 1 张"
+    window.close()
+
+
+def test_the_layout_is_part_of_what_makes_a_level_change(
+    qt_app: QApplication,
+    tmp_path: Path,
+    make_photo: Callable[..., Path],
+    fake_facet_source: object,
+) -> None:
+    """切形态也要重排：重排的输入判据里少了它，切完会「什么都没有变」。"""
+    window = _sectioned_window(qt_app, tmp_path, make_photo, fake_facet_source)
+    cards = [entry for entry in window._model.entries() if isinstance(entry, GroupRef)]
+    assert cards == []
+
+    window.set_group_layout("cards")
+    _settle(qt_app, window, groups=True)
+
+    assert window._model.sectioned is False
+    assert window._model.group_count() == 4
+    window.close()
+
+
+def test_deleting_a_photo_updates_its_section(
+    qt_app: QApplication,
+    tmp_path: Path,
+    make_photo: Callable[..., Path],
+    fake_facet_source: object,
+) -> None:
+    """分区式里删掉一张照片：它那一段的标题与照片一起消失，不等监听器回来。"""
+    window = _sectioned_window(qt_app, tmp_path, make_photo, fake_facet_source)
+    root = window._library.root  # type: ignore[union-attr]
+    row = window._model.row_of_path(root / "四月.jpg")
+    assert row >= 0
+    _select_rows(window, row)
+
+    window.trash_selected()
+
+    assert wait_until(
+        qt_app, lambda: "2024 年 4 月" not in [section.label for section in _sections(window)]
+    ), "空掉的标题（或旧张数）留在了网格上"
+    assert window._model.sectioned is True
+    labels = [section.label for section in _sections(window)]
+    assert labels == ["2023 年 12 月", "2024 年 3 月", "时间未知"]
     window.close()

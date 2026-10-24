@@ -150,7 +150,11 @@ class EventFlowMixin:
 
     def _clear_cover_of_group_card(self) -> None:
         """把卡片背后那个事件的封面收掉，回到「组内第一张」。"""
-        event_id = self._group_card_event_id()
+        self._clear_cover_of(self._model.group_at(self._grid.current_row()))
+
+    def _clear_cover_of(self, group: GroupRef | None) -> None:
+        """把**这一组**背后那个事件的封面收掉（卡片与分区标题共用）。"""
+        event_id = _event_id_of(group)
         if event_id is None:
             return
         library = self._library
@@ -176,21 +180,28 @@ class EventFlowMixin:
         return _event_id_of(self._model.entry_at(row))
 
     def _edit_event_of_group_card(self) -> None:
-        event_id = self._group_card_event_id()
+        self._edit_event_of(self._model.group_at(self._grid.current_row()))
+
+    def _edit_event_of(self, group: GroupRef | None) -> None:
+        event_id = _event_id_of(group)
         if event_id is not None:
             self.edit_event(event_id)
 
     def _leave_group_card(self) -> None:
         """把卡片背后的**那批照片**从这个事件里拿出来（不是一个都不动，也不是整个事件删掉）。"""
+        self._leave_event_of(self._model.group_at(self._grid.current_row()))
+
+    def _leave_event_of(self, group: GroupRef | None) -> None:
+        """把**这一组**代表的照片从这个事件里拿出来（卡片与分区标题共用）。"""
         library = self._library
-        event_id = self._group_card_event_id()
-        if library is None or event_id is None:
+        event_id = _event_id_of(group)
+        if library is None or event_id is None or group is None:
             return
         event = library.event(event_id)
         if event is None:
             self._show_banner("这个事件已经不在了。")
             return
-        photos = [entry.path for entry in self._model.group_at(self._grid.current_row()).photos]  # type: ignore[union-attr]
+        photos = [entry.path for entry in group.photos]
         if not photos:
             return
         try:
@@ -200,6 +211,65 @@ class EventFlowMixin:
             return
         self._after_events_changed()
         self._show_banner(banners.photos_unbound_banner(count, event.display_name))
+
+    # ---- 分区标题上的组级命令（ADR 0089）-------------------------------------
+
+    def _ensure_section_event_actions(self) -> None:
+        """建分区标题上那三个动作。**文案与卡片上那三个同源**（建的时候抄一次）。
+
+        它们与卡片上的动作**不是同一批**：那几个在触发时按「当前项」找组，而标题永远
+        不是当前项 —— 作用对象必须在拼菜单时写进动作的 ``data()`` 里。
+        """
+        if getattr(self, "_section_edit_event_action", None) is not None:
+            return
+        self._ensure_event_actions()
+        self._section_edit_event_action = QAction(self._edit_event_action.text(), self)
+        self._section_edit_event_action.triggered.connect(
+            lambda _checked=False: self._edit_event_of(self._section_action_group(0))
+        )
+        self._section_leave_event_action = QAction(self._leave_event_action.text(), self)
+        self._section_leave_event_action.triggered.connect(
+            lambda _checked=False: self._leave_event_of(self._section_action_group(1))
+        )
+        self._section_clear_event_cover_action = QAction(
+            self._clear_cover_event_action.text(), self
+        )
+        self._section_clear_event_cover_action.triggered.connect(
+            lambda _checked=False: self._clear_cover_of(self._section_action_group(2))
+        )
+
+    def _section_action_group(self, which: int) -> GroupRef | None:
+        """分区动作在 ``data()`` 里带着的那一组（``0/1/2`` = 编辑 / 移出 / 清除封面）。"""
+        actions = (
+            self._section_edit_event_action,
+            self._section_leave_event_action,
+            self._section_clear_event_cover_action,
+        )
+        group = actions[which].data()
+        return group if isinstance(group, GroupRef) else None
+
+    def section_event_actions(
+        self, group: GroupRef
+    ) -> tuple[QAction | None, QAction | None, QAction | None]:
+        """分区标题上那三条：把**这一组**写进动作里，并算好灰度。
+
+        不是事件分组就整组返回 ``None`` —— 那几行**不出现**（与卡片同一处置，不是置灰）。
+        「清除事件封面」还多一条「这一组背后的事件真的设过封面」。
+        """
+        self._ensure_section_event_actions()
+        if _event_id_of(group) is None:
+            return None, None, None
+        for action in (self._section_edit_event_action, self._section_leave_event_action):
+            action.setData(group)
+            action.setEnabled(True)
+        self._section_clear_event_cover_action.setData(group)
+        covered = self.covered_event(group) is not None
+        self._section_clear_event_cover_action.setEnabled(covered)
+        return (
+            self._section_edit_event_action,
+            self._section_leave_event_action,
+            self._section_clear_event_cover_action if covered else None,
+        )
 
     # ---- 影片：⌥ 点开网站（ADR 0063）----------------------------------------
 

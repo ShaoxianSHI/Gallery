@@ -20,9 +20,15 @@ from PySide6.QtWidgets import QMenu
 from gallery.core.collation import collation_key
 from gallery.core.events.kinds import EVENT_KINDS, EventKind
 from gallery.core.events.store import EventRef
-from gallery.core.library.config import BROWSE_MODE_ALBUMS, BROWSE_MODE_CALENDAR
+from gallery.core.library.config import (
+    BROWSE_MODE_ALBUMS,
+    BROWSE_MODE_CALENDAR,
+    GROUP_LAYOUT_CARDS,
+    GROUP_LAYOUT_SECTIONS,
+    GROUP_LAYOUTS,
+)
 from gallery.core.library.facade import Library
-from gallery.core.library.groups import SortOrder, build_groups, sort_photos
+from gallery.core.library.groups import SortOrder, build_groups, build_sections, sort_photos
 from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
 from gallery.core.metadata.facets import (
     FACET_EVENT,
@@ -143,6 +149,14 @@ class OrderingMixin:
         self._ordering._sort_descending = value
 
     @property
+    def _group_layout(self) -> str:
+        return self._ordering._group_layout
+
+    @_group_layout.setter
+    def _group_layout(self, value: str) -> None:
+        self._ordering._group_layout = value
+
+    @property
     def _place_resolver(self) -> LazyPlaceResolver | None:
         return self._ordering._place_resolver
 
@@ -216,6 +230,13 @@ class OrderingMixin:
         direction_group.setExclusive(True)
         self._ascending_action = self._direction_choice(direction_group, "升序", False)
         self._descending_action = self._direction_choice(direction_group, "降序", True)
+        # 分组的两种形态（ADR 0089）也互斥，位置与机制与升序 / 降序同一套。
+        layout_group = QActionGroup(self)
+        layout_group.setExclusive(True)
+        self._cards_layout_action = self._layout_choice(layout_group, "卡片式", GROUP_LAYOUT_CARDS)
+        self._sections_layout_action = self._layout_choice(
+            layout_group, "分区式", GROUP_LAYOUT_SECTIONS
+        )
 
         self._fill_group_menu(view_menu.addMenu("分组"))
         self._fill_sort_menu(view_menu.addMenu("排序"))
@@ -233,7 +254,7 @@ class OrderingMixin:
         return menu
 
     def _fill_group_menu(self, menu: QMenu) -> None:
-        """「分组」的全部行：字段一列，事件字段那三层紧跟「事件」。"""
+        """「分组」的全部行：字段一列，事件字段那三层紧跟「事件」，末尾是两种形态。"""
         menu.setToolTipsVisible(True)
         menu.addAction(self._group_actions[None])
         for facet in GROUP_FACETS:
@@ -245,6 +266,9 @@ class OrderingMixin:
                 submenu.setToolTipsVisible(True)
                 for action in self._event_field_actions(kind):
                     submenu.addAction(action)
+        menu.addSeparator()
+        menu.addAction(self._cards_layout_action)
+        menu.addAction(self._sections_layout_action)
 
     def _event_field_actions(self, kind: EventKind) -> tuple[QAction, ...]:
         """这一类事件在「分组」里那几项 —— 动作已建好，这里只按声明顺序取。"""
@@ -269,6 +293,14 @@ class OrderingMixin:
         action = QAction(label, self)
         action.setCheckable(True)
         action.triggered.connect(lambda _checked=False: self.set_sort_descending(descending))
+        group.addAction(action)
+        return action
+
+    def _layout_choice(self, group: QActionGroup, label: str, layout: str) -> QAction:
+        """「卡片式 / 分区式」里的一项；两项互斥。"""
+        action = QAction(label, self)
+        action.setCheckable(True)
+        action.triggered.connect(lambda _checked=False: self.set_group_layout(layout))
         group.addAction(action)
         return action
 
@@ -344,6 +376,22 @@ class OrderingMixin:
         self._remember_ordering()
         self._reload_level()
 
+    def set_group_layout(self, layout: str) -> None:
+        """切换分组的形态（卡片式 / 分区式，ADR 0089）。
+
+        分区式里分组不再是一格可以点进去的卡片，所以**栈上的分组帧要弹掉** —— 与换分组
+        字段是同一句：原来进入的那个组在新形态里已经没有落点了。
+        """
+        if layout not in GROUP_LAYOUTS:
+            return  # 非法值：会话文件里的旧值也可能走到这里，静默忽略
+        if layout == self._group_layout:
+            self._sync_ui()
+            return
+        self._group_layout = layout
+        self._remember_ordering()
+        self._pop_to(lambda stack: self._group_view is None)
+        self._reload_level()
+
     def _remember_ordering(self) -> None:
         # 分组 / 排序是**库级**偏好（ADR 0038 决策 4）：切库时不该把 A 库的分组法传染给 B 库。
         self._save_ui_state()
@@ -356,6 +404,13 @@ class OrderingMixin:
             action.setChecked(facet_id == self._sort_facet)
         self._ascending_action.setChecked(not self._sort_descending)
         self._descending_action.setChecked(self._sort_descending)
+        # 形态两项只在真的选了分组字段时才有意义（没分组就无从谈起），于是置灰；
+        # 勾选态照旧跟着记住的那一档走，重新分组时不用再选一次。
+        grouped = self._group_facet is not None
+        self._cards_layout_action.setEnabled(grouped)
+        self._sections_layout_action.setEnabled(grouped)
+        self._cards_layout_action.setChecked(self._group_layout == GROUP_LAYOUT_CARDS)
+        self._sections_layout_action.setChecked(self._group_layout == GROUP_LAYOUT_SECTIONS)
 
     def _current_order(self) -> SortOrder:
         return SortOrder(facet=sort_facet(self._sort_facet), descending=self._sort_descending)
@@ -363,11 +418,12 @@ class OrderingMixin:
     def _current_group_facet(self) -> Facet | None:
         return group_facet(self._group_facet)
 
-    def _level_shows_group_cards(self) -> bool:
-        """这一层的行是不是**组卡片** —— 于是「往里插一行照片」在这里根本不成立。
+    def _level_is_grouped(self) -> bool:
+        """这一层是不是按分组铺开（卡片式或分区式）。
 
-        照片只存在于 ``GroupRef.photos`` 里，模型的行不是这一层的照片列表，所以派生视图的
-        变化只能整层重算（ADR 0013 决策 3 的那条例外）。
+        判据只有一处：不在某个组的内部、不是日历页、选了分组字段。**两种形态都算** ——
+        照片的归属是派生出来的，来了新照片只能整层重算（ADR 0013 决策 3 的那条例外），
+        分区式里连标题也在行里，就地插一行同样是半截状态。
         """
         return (
             self._group_view is None
@@ -636,9 +692,10 @@ class OrderingMixin:
         # 相册卡片**只按名称排，方向跟着「降序」**（ADR 0049）：它们不进 `sort_facet`（文件夹没有
         # 拍摄时间与相机），而原先连「降序」都不看，于是「照片翻了、相册没翻」。
         albums.sort(key=lambda folder: collation_key(folder.name), reverse=order.descending)
-        # 分组只在这一层摆卡片时才有（判据只有 :meth:`_level_shows_group_cards` 一处）：
+        # 分组只在这一层按分组铺开时才有（判据只有 :meth:`_level_is_grouped` 一处）：
         # 已经在分组里面就再分不出来，而日历那一页自己按日期归拢、要装整库照片。
-        group = self._current_group_facet() if self._level_shows_group_cards() else None
+        group = self._current_group_facet() if self._level_is_grouped() else None
+        sectioned = group is not None and self._group_layout == GROUP_LAYOUT_SECTIONS
         values = self._facet_values
         events = self._event_values
 
@@ -649,9 +706,11 @@ class OrderingMixin:
         # ``PhotoRef``，逐个 ``==`` 走的是身份捷径）。
         # 判据里刻意有的几样：``library.root`` 也要记（``sort_photos`` / ``build_groups`` 靠它算
         # 相对路径那类字段的排序值）；分组字段只记 ``id``；**不记** ``self._group_view``
-        # （它在非空时 ``group`` 必为 ``None``，两个组视图来回换不影响输出）。
+        # （它在非空时 ``group`` 必为 ``None``，两个组视图来回换不影响输出）。分组形态也进去：
+        # 否则切「卡片式 / 分区式」会命中「输入没变」而什么都不做。
         fingerprint = (
             group.id if group is not None else None,
+            self._group_layout,
             self._sort_facet,
             self._sort_descending,
             library.root,
@@ -669,16 +728,17 @@ class OrderingMixin:
             return  # 输入逐字没变，顺序也就逐字没变：连排序都不必算
 
         if group is not None:
+            groups = build_groups(
+                photos,
+                facet=group,
+                order=order,
+                root=library.root,
+                values=values,
+                event_values=events,
+            )
             ordered: list[GridEntry] = [
                 *albums,
-                *build_groups(
-                    photos,
-                    facet=group,
-                    order=order,
-                    root=library.root,
-                    values=values,
-                    event_values=events,
-                ),
+                *(build_sections(groups) if sectioned else groups),
             ]
         else:
             ordered = [*albums, *sort_photos(photos, order=order, root=library.root, values=values)]
@@ -692,7 +752,7 @@ class OrderingMixin:
             return  # 什么都没暂存、顺序也没变：让整屏重画一次毫无意义
         selected = self._grid.selected_rows()
         anchor = self._model.photo_at(self._grid.current_row())
-        self._model.reorder(ordered)
+        self._model.reorder(ordered, sectioned=sectioned)
         if anchor is not None:
             row = self._model.row_of_path(anchor.path)
             if row >= 0:

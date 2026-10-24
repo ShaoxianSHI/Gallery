@@ -1873,3 +1873,35 @@ def test_an_unexpected_failure_while_deleting_says_where_the_log_is(
 
     assert "日志文件" in window._banner.text()
     assert library.event(trip.id) is not None  # 那一次删除没成，事件还在
+
+
+def test_a_section_header_offers_the_event_commands(
+    qt_app: QApplication, window: MainWindow
+) -> None:
+    """分区式里「这一组就是那个事件」照样成立：标题上右键是这一组的命令（ADR 0089）。
+
+    标题永远不是当前项，所以作用对象是拼菜单那一刻写进动作里的那一组 —— 与卡片那张
+    （触发时按当前项找组）不是同一批动作。
+    """
+    library = window._library
+    assert library is not None
+    trip = library.create_event("trip", EventDraft(values={"title": "京都五日"})).event
+    library.bind_photos(_paths(window, "京都-01.jpg", "京都-02.jpg"), trip.id)
+    window.set_group_facet("event")
+    wait_until(qt_app, lambda: window._model.rowCount() > 0)
+    window.set_group_layout("sections")
+    assert wait_until(qt_app, lambda: bool(window._model.header_rows())), "分区式没排好"
+    header = window._model.header_rows()[0]
+
+    menu = _context(window, header)
+    texts = _texts(menu)
+    assert "编辑事件…" in texts
+    assert "从这次事件移出" in texts
+    assert "复制分组条件" in texts
+    assert "在访达中显示" not in texts, "标题不在选区里，作用在选区上的命令不该出现"
+
+    next(action for action in menu.actions() if action.text() == "从这次事件移出").trigger()
+    wait_until(qt_app, lambda: library.events.photos_of_event(trip.id) == ())
+
+    assert library.event(trip.id) is not None
+    assert library.events.photos_of_event(trip.id) == ()

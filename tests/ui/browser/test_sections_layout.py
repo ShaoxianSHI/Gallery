@@ -186,9 +186,12 @@ def test_a_header_cannot_be_selected_activated_or_renamed(
     assert activated == [], "双击标题发出了「打开」"
 
     grid.selectAll()
-    assert header not in grid.selected_rows()
+    selected = grid.genuinely_selected_rows()
+    assert selected and header not in selected
     assert grid.begin_rename(index) is False
-    assert grid.select_for_context(header) == -1, "右键标题该按空白处处理"
+    # 右键标题返回它自己（窗口据此拼分区菜单），但**不动选区**。
+    assert grid.select_for_context(header) == header
+    assert grid.genuinely_selected_rows() == selected
 
 
 def test_clicking_a_header_leaves_the_selection_alone(qt_app: QApplication, tmp_path: Path) -> None:

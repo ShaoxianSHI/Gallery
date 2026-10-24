@@ -9,12 +9,13 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from functools import partial
 from pathlib import Path
 
 from gallery.core.library.config import SEARCH_SCOPE_LEVEL, SEARCH_SCOPES
 from gallery.core.library.facade import Library
-from gallery.core.library.photos import FolderRef, GridEntry, PhotoRef
+from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
 from gallery.core.library.scanner import ScanReport
 from gallery.core.library.search import (
     RESULT_LIMIT,
@@ -30,6 +31,20 @@ from gallery.ui.window.library_flow import SCAN_BATCH_SIZE
 from gallery.ui.window.state.level_stack import SearchFrame
 
 logger = logging.getLogger(__name__)
+
+
+def _photo_total(entries: Sequence[GridEntry]) -> int:
+    """这一批条目里有多少张**照片**：卡片按成员算（按路径去重），分区标题不算。
+
+    「剩下的行数」不是照片数：卡片式里一行是一整组，分区式里还夹着标题行。
+    """
+    paths: set[Path] = set()
+    for entry in entries:
+        if isinstance(entry, PhotoRef):
+            paths.add(entry.path)
+        elif isinstance(entry, GroupRef):
+            paths.update(photo.path for photo in entry.photos)
+    return len(paths)
 
 
 def _entry_survives(entry: GridEntry, matching: set[Path], kept_albums: frozenset[Path]) -> bool:
@@ -148,17 +163,18 @@ class SearchFlowMixin:
             return
         staged = self._staging.peek()
         if staged is not None:
-            self._staging.stage(
-                [entry for entry in staged if _entry_survives(entry, matching, kept_albums)]
-            )
+            survivors = [entry for entry in staged if _entry_survives(entry, matching, kept_albums)]
+            self._staging.stage(survivors)
         else:
             # 已经显示到界面（监听器增量那一路）：就地换掉模型内容。
             entries = self._model.entries()
-            kept = [entry for entry in entries if _entry_survives(entry, matching, kept_albums)]
-            if kept != list(entries):
+            survivors = [
+                entry for entry in entries if _entry_survives(entry, matching, kept_albums)
+            ]
+            if survivors != list(entries):
                 self._model.clear()
-                self._model.append(kept)
-        self._filters.set_total(len(staged) if staged is not None else self._model.rowCount())
+                self._model.append(survivors)
+        self._filters.set_total(_photo_total(survivors))
         self._sync_ui()
         # **直接排**：筛选已经做完，再绕回 ``_order_now`` 会再筛一次（同一个漏斗递归到自己）。
         self._apply_ordering()
