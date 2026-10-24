@@ -159,15 +159,15 @@ SOURCE_YOUKU: Final = "优酷"
 SOURCE_MANGO: Final = "芒果TV"
 SOURCE_PORNHUB: Final = "Pornhub"
 
-#: 已知的来源。**顺序即下拉里的顺序**。
+#: 已知的来源。**顺序即面板里那一排按钮的顺序**（每行四个）。
 MOVIE_SOURCES: Final = (
-    SOURCE_JAV,
-    SOURCE_YOUTUBE,
-    SOURCE_BILIBILI,
-    SOURCE_TENCENT,
     SOURCE_IQIYI,
+    SOURCE_TENCENT,
     SOURCE_YOUKU,
     SOURCE_MANGO,
+    SOURCE_BILIBILI,
+    SOURCE_YOUTUBE,
+    SOURCE_JAV,
     SOURCE_PORNHUB,
 )
 
