@@ -100,9 +100,10 @@ _SOURCE_COPY: Final[dict[str, SourceCopy]] = {
     SOURCE_MANGO: SourceCopy(
         title="导入芒果 TV 影片",
         heading="按链接或编号导入芒果 TV 影片",
-        hint="每行一个芒果 TV 地址或纯数字编号。芒果 TV 不公开上映日期，那一栏会空着。"
+        hint="每行一个芒果 TV 视频地址（/b/… 那一页）或单集编号。整部剧的页面（/h/ 开头）"
+        "不行，请点开某一集再复制。有的片子芒果不给上映日期，那一栏会空着。"
         "封面会存进下面这个文件夹。",
-        placeholder="https://www.mgtv.com/h/14544857.html\n14544857",
+        placeholder="https://www.mgtv.com/b/294541/3779644.html",
     ),
 }
 

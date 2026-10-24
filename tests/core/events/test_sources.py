@@ -82,7 +82,7 @@ DETAIL_HTML = (
         ),
         (
             "https://www.mgtv.com/b/336727/14544857.html",
-            MovieRef(SOURCE_MANGO, "14544857"),
+            MovieRef(SOURCE_MANGO, "336727/14544857"),
         ),
     ],
 )
@@ -188,7 +188,10 @@ def test_an_empty_source_means_javdb(text: str, expected: str) -> None:
             MovieRef(SOURCE_YOUKU, "XNjQ3MjkwNTUwNA"),
             "https://v.youku.com/v_show/id_XNjQ3MjkwNTUwNA.html",
         ),
-        (MovieRef(SOURCE_MANGO, "14544857"), "https://www.mgtv.com/h/14544857.html"),
+        (
+            MovieRef(SOURCE_MANGO, "294541/3779644"),
+            "https://www.mgtv.com/b/294541/3779644.html",
+        ),
     ],
 )
 def test_each_source_opens_its_own_page(ref: MovieRef, expected: str) -> None:

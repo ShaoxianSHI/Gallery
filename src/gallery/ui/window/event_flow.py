@@ -241,7 +241,9 @@ class EventFlowMixin:
             return
         url = library.movie_url(event)
         if url is None:
-            self._show_banner("这个影片事件还没有编号，打开不了影片网站。")
+            self._show_banner(
+                "这个影片没有能打开的网页：要么还没填编号，要么它在站上只有 App 里有页面。"
+            )
             return
         outcome = launch.open_in_browser(url)
         self._show_banner(

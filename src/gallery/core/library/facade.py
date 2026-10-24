@@ -1330,7 +1330,8 @@ def _cover_name(movie: MovieInfo, data: bytes) -> str:
     **后缀先按字节认，认不出才退回地址里写的那个**：同一个来源会混着给 PNG 与 JPEG，
     而有的地址连后缀都没有。写错后缀的那张封面解不出来，却不报错。
     """
-    code = movie.code.strip() or "cover"
+    # 编号可能是网址里的一小段路径（芒果是「合集/单集」），不能让它变成子目录。
+    code = movie.code.strip().replace("/", "_").replace("\\", "_") or "cover"
     return f"{code}{image_suffix(data) or _suffix_of(movie)}"
 
 

@@ -96,7 +96,7 @@ def test_duplicate_entries_collapse_keeping_order() -> None:
             SOURCE_MANGO,
             "导入芒果 TV 影片",
             "按链接或编号导入芒果 TV 影片",
-            "https://www.mgtv.com/h/14544857.html\n14544857",
+            "https://www.mgtv.com/b/294541/3779644.html",
         ),
     ],
 )

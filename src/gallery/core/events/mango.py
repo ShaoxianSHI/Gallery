@@ -1,7 +1,8 @@
 """按 vid 从芒果 TV 抓影片元数据（ADR 0082）。
 
-一个 JSON 请求就够：``pcweb.api.mgtv.com/video/info`` 给标题、封面、时长与所属剧集。
-**没有发布日期** —— 那个接口不给，所以这一栏留空（ADR 0082 决策 4）。
+一个 JSON 请求给标题、封面、时长与剧集，正式剧集另有一份 ``detail``（日期、类型、导演、主持）。
+**影片页要「合集 + 单集」两个编号**（``/b/<合集>/<单集>.html``，只给单集是 404），合集 id 在
+``info.clipId`` 里；UGC 片段没有合集 id，它在网页上本来就没有页面。
 """
 
 from __future__ import annotations
@@ -26,11 +27,8 @@ API: Final = "https://pcweb.api.mgtv.com"
 #: vid：纯数字（``14544857``）。
 _VID_RE: Final = re.compile(r"\d{6,10}")
 
-#: 影片页地址里的 vid：``/h/<vid>.html`` 与 ``/b/<合集>/<vid>.html`` 两种。
-_PATH_RES: Final = (
-    re.compile(r"/h/(\d{6,10})\.html"),
-    re.compile(r"/b/\d+/(\d{6,10})\.html"),
-)
+#: 影片页地址里的两个编号。**单集那一段是 vid，前一段是合集 id。**
+_PATH_RE: Final = re.compile(r"/b/(\d{4,8})/(\d{6,10})\.html")
 
 #: 影片页的域名（``m`` 也认）。
 _HOST_RE: Final = re.compile(r"(?:^|\.)mgtv\.com$", re.I)
@@ -40,33 +38,43 @@ _PROBLEMS: Final[dict[int, str]] = {
     10008: "芒果 TV 上没有这个视频",
 }
 
+#: 「编号」里那两段之间的分隔符。**与网址里那一小段同序**：先说合集，再说单集。
+SEPARATOR: Final = "/"
+
 
 def transport() -> HttpTransport:
     """芒果 TV 的传输。"""
     return HttpTransport(base=SITE)
 
 
-def movie_url(code: str) -> str:
-    """影片页的地址。``/h/`` 那一档只凭 vid 就能打开。"""
-    return f"{SITE}/h/{code}.html"
+def movie_url(code: str) -> str | None:
+    """影片页的地址。**编号里没有合集 id 就打不开** —— UGC 片段只有 App 里有页面。"""
+    return f"{SITE}/b/{code}.html" if SEPARATOR in code else None
+
+
+def page_code(clip: str, video: str) -> str:
+    """``编号`` 的标准写法：``合集/单集``。"""
+    return SEPARATOR.join((clip, video))
 
 
 def id_from_text(text: str) -> str | None:
-    """裸的 vid（纯数字）；别的形状就是 ``None``。"""
+    """裸的 vid（纯数字）；别的形状就是 ``None``。**它打不开网页**，只能拿来抓元数据。"""
     stripped = text.strip()
     return stripped if _VID_RE.fullmatch(stripped) else None
 
 
 def id_from_url(url: str) -> str | None:
-    """芒果 TV 网址里的 vid。"""
+    """芒果 TV 网址里的「合集/单集」。**``/h/`` 那种整部剧的页面认不出来。**"""
     parts = urllib.parse.urlsplit(url if "://" in url else "https://" + url)
     if not _HOST_RE.search(parts.netloc.split(":")[0]):
         return None
-    for pattern in _PATH_RES:
-        match = pattern.search(parts.path)
-        if match:
-            return match.group(1)
-    return None
+    match = _PATH_RE.search(parts.path)
+    return page_code(match.group(1), match.group(2)) if match else None
+
+
+def video_id_of(code: str) -> str:
+    """编号里那一截 vid。``294541/3779644`` 与 ``3779644`` 都给 ``3779644``。"""
+    return code.rsplit(SEPARATOR, 1)[-1].strip()
 
 
 # --------------------------------------------------------------------------- #
@@ -96,17 +104,27 @@ def view_of(payload: Mapping[str, object], code: str) -> MovieInfo:
     info = data.get("info") if isinstance(data, Mapping) else None
     if not isinstance(info, Mapping):
         raise MovieImportError(f"芒果 TV 没给出这个视频的资料：{code}。")
-    title = _text(info.get("title")) or _text(info.get("videoName"))
+    title = _text(info.get("videoName")) or _text(info.get("title"))
     if not title:
         raise MovieImportError(f"芒果 TV 没给出这个视频的资料：{code}。")
+    clip = _text(info.get("clipId"))
+    video = video_id_of(code)
+    full = page_code(clip, video) if clip.isdigit() and clip != "0" else video
+    detail_raw = info.get("detail")
+    detail = detail_raw if isinstance(detail_raw, Mapping) else {}
+    show = _text(info.get("title"))
     return MovieInfo(
         source=SOURCE_MANGO,
-        code=code,
+        code=full,
         title=title,
         cover_urls=_covers(info.get("videoImage") or info.get("clipImage")),
-        page_url=movie_url(code),
+        page_url=movie_url(full) or SITE + "/",
+        release_date=_day(detail.get("releaseTime")),
         duration_minutes=minutes_of_seconds(_seconds(info.get("time"))),
-        series=_text(info.get("plName")),
+        series=show if show and show != title else "",
+        director=_text(detail.get("director")) if detail.get("director") != "未知" else "",
+        actors=_names(detail.get("presenter")),
+        tags=_names(detail.get("kind")),
     )
 
 
@@ -120,6 +138,19 @@ def _covers(picture: object) -> tuple[str, ...]:
     elif url.startswith("http://"):
         url = "https://" + url[len("http://") :]
     return (url,)
+
+
+def _names(raw: object) -> tuple[str, ...]:
+    """``王姬 / 陆立``、``真人秀 / 纪实`` 这种写法：按斜杠拆开。**``未知`` 不算一项。**"""
+    return tuple(
+        part.strip() for part in _text(raw).split("/") if part.strip() and part.strip() != "未知"
+    )
+
+
+def _day(value: object) -> str:
+    """``2006-09-04`` 取那一天；认不出的不猜。"""
+    match = re.match(r"(\d{4}-\d{2}-\d{2})", _text(value))
+    return match.group(1) if match else ""
 
 
 def _seconds(value: object) -> int | None:
@@ -157,13 +188,14 @@ def _text(value: object) -> str:
 
 
 def fetch(code: str, *, client: Transport) -> MovieInfo:
-    """按 vid 抓一部影片。**不下载封面**（那要写文件，由调用方决定）。
+    """按编号抓一部影片。**不下载封面**（那要写文件，由调用方决定）。
 
     :raises MovieImportError: 编号不合法、视频不存在、网络失败。
     """
-    if not _VID_RE.fullmatch(code):
+    video = video_id_of(code)
+    if not _VID_RE.fullmatch(video):
         raise MovieImportError(f"这不是一个芒果 TV 的 vid：{code}。")
-    return view_of(_json(client.get_text(_info_url(code))), code)
+    return view_of(_json(client.get_text(_info_url(video))), code)
 
 
 def _info_url(code: str) -> str:
@@ -182,12 +214,15 @@ def _json(raw: str) -> Mapping[str, object]:
 
 __all__ = [
     "API",
+    "SEPARATOR",
     "SITE",
     "fetch",
     "id_from_text",
     "id_from_url",
     "movie_url",
+    "page_code",
     "problem_of",
     "transport",
+    "video_id_of",
     "view_of",
 ]
