@@ -316,11 +316,22 @@ def test_an_album_is_normalised() -> None:
     assert condition is not None and condition.value == "旅行"
 
 
-def test_a_format_is_normalised_to_a_suffix() -> None:
-    for text in ("#文件格式 jpg", "#文件格式 JPEG", "#文件格式 .png"):
-        condition = _condition(text)
-        assert condition is not None, text
-        assert condition.value.startswith("."), text
+@pytest.mark.parametrize(
+    ("typed", "expected"),
+    [
+        ("#文件格式 jpg", (".jpeg", ".jpg")),
+        ("#文件格式 JPEG", (".jpeg", ".jpg")),
+        ("#文件格式 .jpeg", (".jpeg", ".jpg")),
+        ("#文件格式 tif", (".tif", ".tiff")),
+        ("#文件格式 .png", (".png",)),
+    ],
+)
+def test_a_format_name_covers_every_extension_of_it(typed: str, expected: tuple[str, ...]) -> None:
+    """格式名与扩展名都认成**格式**：jpg 与 jpeg 是同一件事，不该搜出一个漏掉另一个。"""
+    condition = _condition(typed)
+
+    assert condition is not None, typed
+    assert tuple(condition.value.split("|")) == expected, typed
 
 
 @pytest.mark.parametrize(
@@ -494,6 +505,23 @@ def test_album_search_includes_sub_albums(tmp_path: Path, make_photo) -> None:
     found = library.search_photos([_condition("#相册 旅行")])  # type: ignore[list-item]
 
     assert _names(found.refs) == ["山.jpg", "海边-03.jpg"]
+
+
+def test_a_format_condition_finds_every_extension_of_it(tmp_path: Path, make_photo) -> None:
+    """``.jpeg`` 与 ``.jpg`` 在检索里是同一个格式 —— 分组只给一张「JPEG」卡片，搜索也得一致。"""
+    library = _library(tmp_path, make_photo)
+    make_photo("另一张.jpeg", directory=library.root)
+    library.index_photos()
+
+    found = library.search_photos([_condition("#文件格式 JPEG")])  # type: ignore[list-item]
+
+    assert set(_names(found.refs)) == {
+        "另一张.jpeg",
+        "山.jpg",
+        "海边-01.jpg",
+        "海边-02.jpg",
+        "海边-03.jpg",
+    }
 
 
 def test_metadata_conditions_use_the_facet_rows(tmp_path: Path, make_photo) -> None:

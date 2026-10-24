@@ -455,8 +455,9 @@ def _folder_group(item: FacetInput) -> Sequence[tuple[str, str]]:
 
 
 def _format_group(item: FacetInput) -> Sequence[tuple[str, str]]:
+    # 组键取格式名而不是后缀：.jpg 与 .jpeg 是同一个格式，按后缀分会得到两张同名卡片。
     label = item.ref.format_label
-    return ((item.ref.suffix, label),)
+    return ((label, label),)
 
 
 # ---- 排序取值 -----------------------------------------------------------------------
@@ -495,6 +496,11 @@ def _file_text(attribute: str) -> Callable[[FacetInput], str | None]:
 
 def _folder_sort(item: FacetInput) -> str:
     return collation_key(_relative_folder(item))
+
+
+def _format_sort(item: FacetInput) -> str:
+    """按格式名排：同一个格式的几个扩展名不该被排成两拨。"""
+    return collation_key(item.ref.format_label)
 
 
 # ---- 字段表 -------------------------------------------------------------------------
@@ -749,7 +755,7 @@ _FACETS: Final[tuple[Facet, ...]] = (
         sort=_folder_sort,
         empty_label="（根目录）",
     ),
-    _facet(FACET_FORMAT, "文件格式", "text", group=_format_group, sort=_file_text("suffix")),
+    _facet(FACET_FORMAT, "文件格式", "text", group=_format_group, sort=_format_sort),
     _facet(FACET_NAME, "文件名", "text", sort=_file_text("name")),
     _facet(FACET_SIZE, "文件大小", "number", sort=_file_number("size")),
     _facet(

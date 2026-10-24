@@ -17,7 +17,7 @@ from typing import Final, Literal, NamedTuple
 from gallery.core import paths
 from gallery.core.events.kinds import EVENT_KINDS
 from gallery.core.events.store import BINDINGS_TABLE, EVENTS_TABLE, SCHEMA_NAME
-from gallery.core.library.photos import FolderRef, PhotoRef, normalize_suffix
+from gallery.core.library.photos import FolderRef, PhotoRef, format_suffixes
 from gallery.core.metadata.facets import (
     FACET_APERTURE,
     FACET_CAMERA,
@@ -406,10 +406,11 @@ def _condition(field: SearchField, text: str) -> SearchCondition | None:
             return None
         return SearchCondition(field=field, text=cleaned, comparator="", value=cleaned)
     if field.kind == "format":
-        suffix = normalize_suffix(value)
-        if suffix is None:
+        suffixes = format_suffixes(value)
+        if suffixes is None:
             return None
-        return SearchCondition(field=field, text=value, comparator="", value=suffix)
+        # 一个格式可能对应几个扩展名（jpg / jpeg），拼成 ``a|b`` 交给 SQL 渲染。
+        return SearchCondition(field=field, text=value, comparator="", value="|".join(suffixes))
     if field.kind == "size":
         parsed = _parse_size(value)
     elif field.kind == "number":
@@ -676,8 +677,8 @@ def _clause(condition: SearchCondition, *, root: Path | None = None) -> tuple[st
     """一条条件 → ``(SQL 片段, 绑定值)``。**匹配方式逐字段定死**（ADR 0026 决策 6），唯一一份。
 
     文件名与文本一族走 ``LIKE '%q%'``；相册是 ``= q`` 或 ``LIKE 'q/%'``（含子相册）；文件格式是
-    ``= '.jpg'``；大小与数值是比较式（等于是空比较符）；时间是区间（``f.captured`` 是秒，
-    ``p.mtime_ns`` 是纳秒）。
+    ``IN ('.jpg', '.jpeg')``（一个格式可能有好几个扩展名）；大小与数值是比较式（等于是空比较符）；
+    时间是区间（``f.captured`` 是秒，``p.mtime_ns`` 是纳秒）。
     """
     field = condition.field
     value = condition.value
@@ -692,7 +693,9 @@ def _clause(condition: SearchCondition, *, root: Path | None = None) -> tuple[st
             [value, like_pattern(value, "/%")],
         )
     if field.kind == "format":
-        return f"{field.column} = ?", [value]
+        suffixes = value.split("|")
+        placeholders = ", ".join("?" for _ in suffixes)
+        return f"{field.column} IN ({placeholders})", list(suffixes)
     if field.is_numeric:
         return f"{field.column} {condition.comparator or '='} ?", [float(value)]
     if field.is_date:

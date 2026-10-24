@@ -6,7 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from gallery.core.library.photos import PhotoRef, format_label, is_supported_photo
+from gallery.core.library.photos import (
+    PhotoRef,
+    format_label,
+    format_suffixes,
+    is_supported_photo,
+)
 
 
 @pytest.mark.parametrize(
@@ -40,6 +45,27 @@ def test_photo_ref_from_path(tmp_path: Path) -> None:
 def test_format_label_known_and_unknown() -> None:
     assert format_label(".heic") == "HEIC"
     assert format_label(".dng") == "DNG"
+
+
+@pytest.mark.parametrize(
+    ("typed", "expected"),
+    [
+        ("jpg", (".jpeg", ".jpg")),
+        ("JPEG", (".jpeg", ".jpg")),
+        (".jpeg", (".jpeg", ".jpg")),
+        ("tif", (".tif", ".tiff")),
+        ("TIFF", (".tif", ".tiff")),
+        (".png", (".png",)),
+        ("WebP", (".webp",)),
+        ("dng", None),
+        ("回想", None),
+    ],
+)
+def test_format_suffixes_covers_every_extension_of_a_format(
+    typed: str, expected: tuple[str, ...] | None
+) -> None:
+    """认格式不认扩展名：jpg 与 jpeg 归到一个格式下，搜索与分组才有同一个判据。"""
+    assert format_suffixes(typed) == expected
 
 
 def test_photo_ref_is_hashable_and_frozen(tmp_path: Path) -> None:

@@ -395,7 +395,31 @@ def test_group_by_format_uses_readable_label(tmp_path: Path) -> None:
 
     groups = list(facet.group(input_for(_ref(tmp_path, "a.jpg"), PhotoFacets(), tmp_path)))
 
-    assert groups == [(".jpg", "JPEG")]
+    assert groups == [("JPEG", "JPEG")]
+
+
+def test_group_by_format_merges_the_extensions_of_one_format(tmp_path: Path) -> None:
+    """``.jpg`` 与 ``.jpeg`` 是同一个格式：按后缀分会得到两张都叫「JPEG」的卡片。"""
+    facet = group_facet(FACET_FORMAT)
+    assert facet is not None and facet.group is not None
+    group = facet.group
+
+    def group_of(name: str) -> list[tuple[str, str]]:
+        return list(group(input_for(_ref(tmp_path, name), PhotoFacets(), tmp_path)))
+
+    assert group_of("a.jpg") == group_of("b.jpeg") == [("JPEG", "JPEG")]
+    assert group_of("c.tif") == group_of("d.tiff") == [("TIFF", "TIFF")]
+    assert group_of("e.png") == [("PNG", "PNG")]
+    assert group_of("f.heic") != group_of("g.heif"), "HEIC 与 HEIF 的格式名本来就不同"
+
+
+def test_sort_by_format_does_not_split_one_format(tmp_path: Path) -> None:
+    facet = sort_facet(FACET_FORMAT)
+    assert facet is not None
+
+    assert facet.sort(_input(tmp_path, "a.jpeg", PhotoFacets())) == facet.sort(
+        _input(tmp_path, "b.jpg", PhotoFacets())
+    )
 
 
 def test_sort_values_are_comparable_types(tmp_path: Path) -> None:

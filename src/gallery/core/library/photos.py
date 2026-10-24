@@ -46,10 +46,10 @@ def format_label(suffix: str) -> str:
 
 
 def normalize_suffix(text: str) -> str | None:
-    """用户敲的那个格式名 → 扩展名（``jpg`` / ``JPEG`` / ``.jpg`` 都认成 ``.jpg``）。
+    """用户敲的格式名或扩展名 → 它的一个扩展名；``None`` 表示认不出来。
 
-    ``None`` 表示认不出来。它与 :func:`format_label` 恰好互逆、共用一张表，于是「格式叫
-    什么」只有一处说了算（搜索的「#文件格式」条件与分组的格式字段都用它）。
+    **返回值不承诺唯一**：``JPEG`` 交回 ``.jpg`` 或 ``.jpeg`` 都只说明它属于哪个格式。
+    要「这个格式的全部扩展名」用 :func:`format_suffixes`。
     """
     cleaned = text.strip().casefold().lstrip(".")
     if not cleaned:
@@ -61,6 +61,19 @@ def normalize_suffix(text: str) -> str | None:
         if label.casefold() == cleaned.casefold():
             return known
     return None
+
+
+def format_suffixes(text: str) -> tuple[str, ...] | None:
+    """用户敲的格式名或扩展名 → 这个格式的全部扩展名（``JPEG`` → ``(".jpeg", ".jpg")``）。
+
+    ``None`` 表示认不出来。**同一个格式可能有好几个扩展名**（jpg / jpeg、tif / tiff），
+    搜索的「#文件格式」与分组都按格式名认，于是 ``jpg`` 与 ``jpeg`` 不会变成两件事。
+    """
+    suffix = normalize_suffix(text)
+    if suffix is None:
+        return None
+    label = format_label(suffix)
+    return tuple(sorted(known for known, name in _FORMAT_LABELS.items() if name == label))
 
 
 def is_supported_photo(path: Path) -> bool:
@@ -181,6 +194,7 @@ __all__ = [
     "GroupRef",
     "PhotoRef",
     "format_label",
+    "format_suffixes",
     "is_supported_photo",
     "normalize_suffix",
 ]
