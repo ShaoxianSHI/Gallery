@@ -32,7 +32,11 @@ from PySide6.QtWidgets import QApplication, QStyleOptionViewItem  # noqa: E402
 
 from gallery.core.library.groups import build_sections  # noqa: E402
 from gallery.core.library.photos import GridEntry, GroupRef  # noqa: E402
-from gallery.ui.browser.delegate import SECTION_HEIGHT, PhotoDelegate  # noqa: E402
+from gallery.ui.browser.delegate import (  # noqa: E402
+    SECTION_GAP,
+    SECTION_HEIGHT,
+    PhotoDelegate,
+)
 from gallery.ui.browser.grid import PhotoGrid  # noqa: E402
 from gallery.ui.browser.model import PhotoListModel  # noqa: E402
 from gallery.ui.browser.transition import GridTransition  # noqa: E402
@@ -250,13 +254,18 @@ def test_a_header_draws_a_separator_and_its_label(qt_app: QApplication, tmp_path
     first, second = _header_rows(model)
 
     top = _paint_header(delegate, model, first, size, palette=grid.palette())
-    assert top.pixelColor(size.width() // 2, 0) == QColor(255, 255, 255), (
+    assert top.pixelColor(size.width() // 2, SECTION_GAP) == QColor(255, 255, 255), (
         "第一条标题上方不该有分隔线（上面没有东西可分）"
     )
     other = _paint_header(delegate, model, second, size, palette=grid.palette())
-    assert other.pixelColor(size.width() // 2, 0) != QColor(255, 255, 255), (
+    assert other.pixelColor(size.width() // 2, SECTION_GAP) != QColor(255, 255, 255), (
         "第二条标题上方该有一条分隔线"
     )
+    # 线与上一组照片之间留了空隙：线上方那几行还是底色。
+    for y in range(0, SECTION_GAP):
+        assert other.pixelColor(size.width() // 2, y) == QColor(255, 255, 255), (
+            f"分隔线上方第 {y} 像素不是空隙"
+        )
     # 左边有字（不是纯底色）—— 数一下比底色暗的像素。
     dark = sum(
         1

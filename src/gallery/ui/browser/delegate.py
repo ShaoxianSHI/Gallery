@@ -23,9 +23,11 @@ from gallery.ui.thumb_sizes import DEFAULT_EDGE
 GRID_PADDING_X = 28
 GRID_PADDING_Y = 56
 
-#: 分区标题那一行的高度与左右内边距（ADR 0089）。**不随缩略图档位缩放**：标题是文字，
-#: 不是图；跟着放大只会让大档位下的版面变得空。
-SECTION_HEIGHT = 36
+#: 分区标题那一行的高度、上方空隙与左右内边距（ADR 0089）。**不随缩略图档位缩放**：
+#: 标题是文字，不是图；跟着放大只会让大档位下的版面变得空。``SECTION_GAP`` 是分隔线与
+#: 上一组照片之间的那段空白 —— 线贴着照片画会把两段挤在一起。
+SECTION_HEIGHT = 46
+SECTION_GAP = 10
 SECTION_PAD_X = 12
 
 
@@ -306,11 +308,13 @@ class PhotoDelegate(QStyledItemDelegate):
             if index.row() > 0:
                 line = QColor(text)
                 line.setAlpha(40)
-                painter.fillRect(QRect(rect.left(), rect.top(), rect.width(), 1), line)
+                painter.fillRect(
+                    QRect(rect.left(), rect.top() + SECTION_GAP, rect.width(), 1), line
+                )
 
             painter.setFont(self._section_font_for(painter.font()))
             metrics = painter.fontMetrics()
-            area = rect.adjusted(SECTION_PAD_X, 0, -SECTION_PAD_X, 0)
+            area = rect.adjusted(SECTION_PAD_X, SECTION_GAP, -SECTION_PAD_X, 0)
             count = str(index.data(GROUP_COUNT_ROLE) or "")
             label_width = area.width() - (metrics.horizontalAdvance(count) + 12 if count else 0)
             label = metrics.elidedText(
