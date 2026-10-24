@@ -1,6 +1,6 @@
 # ADR 0007：用 Nuitka 编译出自包含的 Gallery.app
 
-- 状态：已接受（2026-10-06 追加「裁掉用不到的依赖」一节）
+- 状态：已接受（2026-10-06 追加「裁掉用不到的依赖」一节；2026-10-25 追加「视频播放的多媒体后端」一节）
 - 日期：2026-10-06
 - 相关代码：`scripts/build_app.py`、`src/gallery/core/paths.py`、`src/gallery/ui/app.py`
 
@@ -21,7 +21,8 @@ uv sync --group build
 uv run --group build python scripts/build_app.py
 ```
 
-约 110 MiB，编译几分钟；`macos_app` 的开发包仍然保留（一秒生成，用于日常本机调试）。编译还带来
+约 140 MiB（视频播放的多媒体后端又带进来约 37 MiB），编译几分钟；`macos_app` 的开发包仍然保留
+（一秒生成，用于日常本机调试）。编译还带来
 两个必须处理的问题，都属于「源码原本没考虑被打包」。
 
 ### 1. `resources_dir()` 不能只靠 `__file__`
@@ -39,7 +40,7 @@ Nuitka 把 `gallery` 整个编译成 dist 目录里的单个扩展模块，模�
 模式。修法是把这个逻辑收进 `core.paths.augment_external_tool_path()`，在 `ui/app.py` 的 `run()` 里、建
 `QApplication` 之前调用一次：两条打包路径共用同一份逻辑。
 
-### 3. 裁掉用不到的依赖（117 → 103 MiB）
+### 3. 裁掉用不到的依赖（117 → 103 MiB，视频之前）
 
 包里最大的几项**是被拖进来的，不是用到的** —— 源码只 import `QtCore`/`QtGui`/`QtWidgets`，可 Nuitka 的
 PySide6 插件默认把整个「sensible」插件家族都带上：
@@ -48,13 +49,13 @@ PySide6 插件默认把整个「sensible」插件家族都带上：
 |---|---|---|
 | `QtPdf` | 7.0 MiB | `imageformats/libqpdf.dylib`（把 PDF 当图片读） |
 | `libavif` + `PIL/_avif.so` | 3.0 MiB | Pillow 的 AVIF 插件，而 `SUPPORTED_SUFFIXES` 里没有 AVIF |
-| `QtNetwork` | 1.6 MiB | `tls/*` 三个插件，而这个应用不联网 |
 | `QtSvg` | 560 KiB | `libqsvg.dylib` + `libqsvgicon.dylib` |
 | `liblcms2` + `PIL/_imagingcms.so` | 600 KiB | `PIL.ImageCms`（色彩管理，从未调用） |
 | `tls/*`、`libqoffscreen`、`libqminimal`、`libqpdf`、`libqsvg`、`libqsvgicon` | 1.2 MiB | 见上 |
 
-**`QtDBus`（680 KiB）动不了**：macOS 上 `QtGui` 用 `LC_LOAD_DYLIB` 硬链它，不是 dlopen，删了 `QtGui`
-就起不来。
+**`QtNetwork` 原先在这张表里，现在必须留着**：视频播放引入后，`QtMultimedia` 与多媒体插件都用
+`LC_LOAD_DYLIB` 链着它（见第 4 节）。**`QtDBus`（680 KiB）动不了**：macOS 上 `QtGui` 用
+`LC_LOAD_DYLIB` 硬链它，不是 dlopen，删了 `QtGui` 就起不来。
 
 #### 两步才能裁干净
 
@@ -66,7 +67,7 @@ PySide6 插件默认把整个「sensible」插件家族都带上：
 **第二步：编译完再删那几个 Qt 库。** Nuitka 的依赖图算得比 `--noinclude-dlls` 生效早，所以排掉插件
 **不会**连带排掉它拖进来的库 —— `--report` 里 `libqpdf.dylib` 已标 `ignored="yes"`，`QtPdf` 却还标着
 `ignored="no"`，理由仍是 `Used by 'PySide6/qt-plugins/imageformats/libqpdf.dylib'`。因此
-`trim_unused_libraries()` 在 `_finalize_bundle()` 之后把 `QtPdf`/`QtSvg`/`QtNetwork` 删掉，**再重新
+`trim_unused_libraries()` 在 `_finalize_bundle()` 之后把 `QtPdf`/`QtSvg` 删掉，**再重新
 `codesign`**（Nuitka 签好的包是密封的，动了就失效）。
 
 #### 三个坑
@@ -80,10 +81,33 @@ PySide6 插件默认把整个「sensible」插件家族都带上：
    时 `except ImportError: pass` —— 排掉它**不报错、不崩溃，只是 GIF 永远解不出来**。Pillow 内部模块之间
    的隐式依赖只有实测发现得了（判据是拿未裁剪的包跑同一组样本做对照）；`PIL.ImageCms` 只在 `Image.py`
    的**函数体里**惰性引用，排在名单里是安全的。
-3. **前置条件要自己验过一次。** 删之前逐个读包内 Mach-O 的依赖，确认没有**留下来的**文件还链着那三个
-   库；待删的那几个本身要跳过（`QtPdf` 链 `QtNetwork`，一起走掉，谁也不欠谁），而 `otool -L` 会把
+3. **前置条件要自己验过一次。** 删之前逐个读包内 Mach-O 的依赖，确认没有**留下来的**文件还链着待删
+   的库；待删的文件本身要跳过（它们互相链接着，一起走掉，谁也不欠谁），而 `otool -L` 会把
    `LC_ID_DYLIB` 也列成一条依赖 —— 不去掉自身名字的话每个库都「链接着自己」，前置条件恒真。这道前置
    条件必须存在：判据会随 Qt 版本变，而删错的症状是**运行期** `dyld` 找不到库、整个包起不来，签名却绿。
+
+### 4. 视频播放的多媒体后端（ADR 0091）
+
+视频页用 `QMediaPlayer`，而 `QtMultimedia` 只是库，**真正的播放后端是插件**。这里有两处必须显式写：
+
+- **Qt6 的多媒体插件家族叫 `multimedia`**，而 Nuitka 的「sensible」名单里只有 Qt5 的 `mediaservice`。
+  不点名要，包里只有 `QtMultimedia` 这个库、一个后端也没有：视频页打开就报找不到后端。构建命令里
+  因此有 `--include-qt-plugins=multimedia`。
+- **`QtNetwork` 不能再裁**（第 3 节那张表里它原先在裁剪名单上）：`QtMultimedia` 与两个多媒体插件都
+  链着它。`QtPdf` / `QtSvg` 照旧删。
+
+产物里会同时出现 `libdarwinmediaplugin.dylib`（AVFoundation）与 `libffmpegmediaplugin.dylib`；
+Qt 默认用后者，Nuitka 会把插件依赖的 `libavcodec` / `libavformat` / `libavutil` /
+`libswresample` / `libswscale` 一起拷进来，并把 `@rpath` 改写成 `@executable_path`。产物因此从
+约 103 MiB 涨到约 140 MiB。
+
+**验证打包版有没有把后端带齐**：`QT_DEBUG_PLUGINS=1` 从终端启动包内的
+`Contents/MacOS/gallery`，日志里应当出现 `libffmpegmediaplugin.dylib ... loaded library` 与
+`Using Qt multimedia with FFmpeg version ...`。窗口在启动时就建了 `VideoView`（也就建了
+`QMediaPlayer`），所以**不打开视频也能看到后端有没有加载**。
+
+只带 `libdarwinmediaplugin.dylib` 的替代方案被否决：它能省下 FFmpeg 那几个库，但 4K 240fps 的
+HEVC 实测只有 55fps（FFmpeg 是 239fps），而且 `.avi` / `.3gp` 的覆盖不如 FFmpeg 稳。
 
 ## 后果
 
@@ -91,6 +115,7 @@ PySide6 插件默认把整个「sensible」插件家族都带上：
   并公证后即可对外分发。
 - **代价**：构建链路多了一个重量级工具（编译期依赖 clang、会下载 ccache），因此 `nuitka` 单独放在
   `[dependency-groups] build`，不拖慢日常的 `uv sync`；日常本机调试仍用 `macos_app` 的开发包（秒级）。
+  视频播放的多媒体后端让产物从约 103 MiB 涨到约 140 MiB（第 4 节）。
 - exiftool 仍然**不进包**，保持运行时外部依赖，缺失时降级为只读模式。
 - 裁剪清单是**写在代码里的显式决定**而不是自动推导，每一条都要能回答「谁在用、为什么不用」；判据会随
   Qt 版本变，`trim_unused_libraries()` 的前置条件是为此留的。
