@@ -116,3 +116,4 @@
 | [0086](0086-relative-event-bindings.md) | 事件绑定与封面改存相对库根的键：整个库搬走或复制之后关联还在 | 已接受 |
 | [0087](0087-refresh-current-level.md) | ⌘R 在没选中东西时刷新当前层，并让索引重新对账 | 已接受 |
 | [0088](0088-format-groups-by-format-name.md) | 文件格式按格式名归组与检索，jpg 与 jpeg 是同一组 | 已接受 |
+| [0089](0089-grouping-section-layout.md) | 分组的第二种形态「分区式」：整行标题 + 分隔线，标题不是层级栈的一帧 | 已接受 |
