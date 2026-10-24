@@ -42,6 +42,7 @@ from gallery.core.events.kinds import (  # noqa: E402
     COVER,
     EVENT_KINDS,
     MOVIE,
+    MOVIE_SOURCES,
     SHOW,
     TRIP,
     EventKind,
@@ -1525,11 +1526,11 @@ def test_clearing_the_cover_in_the_panel_takes_effect_on_save(
 
 
 def test_the_cover_row_is_disabled_while_creating_an_event(qt_app: QApplication) -> None:
-    """新建时那一行禁用，**并且说清为什么** —— 摆着一个按不动的按钮只会被当成坏的。"""
+    """新建时那一行禁用，只留一个「（待定）」—— 摆着一个按不动的按钮只会被当成坏的。"""
     dialog = EventEditDialog(None, TRIP)
 
     assert not dialog._clear_cover_button.isEnabled()
-    assert "建好之后" in dialog._cover_label.text()
+    assert dialog._cover_label.text() == "（待定）"
 
 
 def test_the_cover_row_shows_the_file_name_not_the_whole_path(
@@ -1631,6 +1632,58 @@ def test_a_movie_rating_is_the_same_row_of_five_buttons_as_a_show(
 
     assert isinstance(rating, ChoiceButtons)
     assert list(rating._buttons) == ["1", "2", "3", "4", "5"]
+
+
+def test_the_pending_cover_is_grey(qt_app: QApplication) -> None:
+    """「（待定）」要**灰下去**，不能与用户填的值一样黑 —— 它不是一个可以读的值。"""
+    dialog = EventEditDialog(None, MOVIE)
+
+    rule = _style_rule(dialog.styleSheet(), "QLabel:disabled")
+
+    assert f"color: {rgba(theme.current_theme().text_at(0.38))}" in rule
+
+
+def test_the_clear_cover_button_lines_up_with_the_inputs(qt_app: QApplication) -> None:
+    """「清除封面」的右缘要与其余输入框的右缘在同一条线上，不许顶出去。"""
+    dialog = EventEditDialog(None, MOVIE)
+    dialog.show()
+    qt_app.processEvents()
+
+    button_right = dialog._clear_cover_button.mapTo(
+        dialog, dialog._clear_cover_button.rect().topRight()
+    ).x()
+
+    assert button_right == dialog._fields["title"].geometry().right()
+
+
+def test_the_movie_source_wraps_into_two_rows_that_line_up_with_the_inputs(
+    qt_app: QApplication,
+) -> None:
+    """八个来源分两行，**每一行的左右两端都贴着输入框那一列**（来源太长会把面板顶宽）。"""
+    dialog = EventEditDialog(None, MOVIE)
+    dialog.show()
+    qt_app.processEvents()
+    source = dialog._fields["source"]
+    assert isinstance(source, ChoiceButtons)
+    buttons = [source._buttons[name] for name in MOVIE_SOURCES]
+    code = dialog._fields["code"]
+
+    # 第二行确实掉到下一行：第一行四个、第二行四个。
+    first_row = buttons[:4]
+    second_row = buttons[4:]
+    assert second_row[0].mapTo(dialog, QPoint(0, 0)).y() > (
+        first_row[0].mapTo(dialog, QPoint(0, 0)).y() + first_row[0].height()
+    )
+
+    def left_of(button: QPushButton) -> int:
+        return button.mapTo(dialog, QPoint(0, 0)).x()
+
+    def right_of(button: QPushButton) -> int:
+        return button.mapTo(dialog, button.rect().topRight()).x()
+
+    assert {left_of(first_row[0]), left_of(second_row[0])} == {code.geometry().left()}
+    assert {right_of(first_row[-1]), right_of(second_row[-1])} == {code.geometry().right()}
+    assert source.width() == code.width()
 
 
 def test_the_checked_rating_wears_the_popup_highlight(qt_app: QApplication) -> None:

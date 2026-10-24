@@ -52,6 +52,9 @@ FIELD_MIN_WIDTH: Final = 220
 #: 输入框那一圈的圆角半径（点）—— 与搜索胶囊、改名输入框同一档手感。
 FIELD_RADIUS: Final = 5
 
+#: 一排最多摆几个选择按钮。五个评分正好一行，八个来源分成两行。
+MAX_CHOICES_PER_ROW: Final = 5
+
 #: 每一个字段是哪种控件 —— 一排按钮还是输入框。**由字段自己的声明说了算**，没有第三种。
 type FieldWidget = QLineEdit | ChoiceButtons
 
@@ -83,37 +86,54 @@ class EventEdit:
         return self.draft.text("ended_on") or self.first_day
 
 
-class ChoiceButtons(QWidget):
-    """有值域的字段摆成一排按钮：点一下选中，再点一下取消（都不选 = 不记这一项）。
+def _row_counts(total: int) -> tuple[int, ...]:
+    """每行摆几个按钮：行数尽量少，各行的个数尽量平均。"""
+    if total <= 0:
+        return ()
+    rows = (total + MAX_CHOICES_PER_ROW - 1) // MAX_CHOICES_PER_ROW
+    columns = (total + rows - 1) // rows
+    return (columns,) * (rows - 1) + (total - columns * (rows - 1),)
 
-    比下拉少一次展开的动作，五个评分也一眼全在。**单选由这一层自己管**（``QButtonGroup``
+
+class ChoiceButtons(QWidget):
+    """有值域的字段摆成按钮：点一下选中，再点一下取消（都不选 = 不记这一项）。
+
+    不超过 :data:`MAX_CHOICES_PER_ROW` 项时只占一排；多了就按行铺开，**每一行都铺满整个字段列**
+    （八个来源分两行，最右那个按钮与输入框的右缘对齐）。**单选由这一层自己管**（``QButtonGroup``
     设成非互斥）：互斥的组不给「再点一下把当前那个取消」，而评分是可不记的。
     """
 
     def __init__(self, choices: tuple[str, ...], parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._buttons: dict[str, QPushButton] = {}
-        row = QHBoxLayout(self)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(4)
+        column = QVBoxLayout(self)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(4)
         group = QButtonGroup(self)
         group.setExclusive(False)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         # 与其余字段同宽：这一排要铺满输入框那一列，不是各占自己那一小块。
         self.setMinimumWidth(FIELD_MIN_WIDTH)
-        for choice in choices:
-            button = QPushButton(choice)
-            button.setObjectName("eventEditChoice")
-            button.setCheckable(True)
-            # 每个按钮都 Expanding：五个平分这一排（用户要的就是「铺满这一排」）。
-            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-            # 过一层 lambda：``clicked`` 那个 bool 穿不过 ``partial`` 的参数自省。
-            button.clicked.connect(
-                lambda checked=False, chosen=choice: self._on_pressed(chosen, checked)
-            )
-            row.addWidget(button)
-            self._buttons[choice] = button
-            group.addButton(button)
+        index = 0
+        for count in _row_counts(len(choices)):
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(4)
+            for choice in choices[index : index + count]:
+                button = QPushButton(choice)
+                button.setObjectName("eventEditChoice")
+                button.setCheckable(True)
+                # 每个按钮都 Expanding：这一行的几个平分宽度，于是每行左右两端都对齐字段列。
+                button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+                # 过一层 lambda：``clicked`` 那个 bool 穿不过 ``partial`` 的参数自省。
+                button.clicked.connect(
+                    lambda checked=False, chosen=choice: self._on_pressed(chosen, checked)
+                )
+                row.addWidget(button)
+                self._buttons[choice] = button
+                group.addButton(button)
+            index += count
+            column.addLayout(row)
 
     def _on_pressed(self, choice: str, checked: bool) -> None:
         if checked:
@@ -170,6 +190,7 @@ def dialog_style(app_theme: AppTheme, palette: QPalette) -> str:
     return f"""
     QDialog {{ background: {rgba(app_theme.background)}; }}
     QLabel {{ color: {rgba(app_theme.text_at(0.92))}; font-size: 12px; }}
+    QLabel:disabled {{ color: {rgba(app_theme.text_at(0.38))}; }}
     QLabel#eventEditTitle {{ font-size: 13px; font-weight: 600; }}
     QLabel#eventEditError {{ color: {rgba(app_theme.error)}; font-size: 11px; }}
     QLineEdit {{
@@ -301,20 +322,23 @@ class EventEditDialog(QDialog):
         **v1 不做缩略图挑选器**（ADR 0048 决策 2）：新建时哪些照片会被记进去要到面板关掉之后才
         定下来，网格里已经看得见那些照片，「设为事件封面」就挂在那张照片的右键菜单上（决策 6）。
 
-        **新建时整行禁用并说明为什么**：摆着却按不动，用户只会以为是坏的。"""
+        **新建时整行禁用**，只留一个灰色的「（待定）」：摆着却按不动，用户只会以为是坏的。
+        """
         row = QWidget()
+        row.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         layout = QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
         self._cover_label = QLabel()
-        layout.addWidget(self._cover_label)
-        layout.addStretch(1)
+        # 长文件名不许把这一列顶宽：它会占满按钮左边的空位，放不下就裁掉（全文在提示气泡里）。
+        self._cover_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        layout.addWidget(self._cover_label, 1)
         self._clear_cover_button = QPushButton("清除封面")
         self._clear_cover_button.setObjectName("eventEditClearCover")
         self._clear_cover_button.clicked.connect(self._clear_cover)
         layout.addWidget(self._clear_cover_button)
-        # **顺序要紧**：`_cover_row_enabled` 在禁用时会改那行字（说清为什么），
-        # 所以它要走在 `_show_cover` 后面 —— 反过来就把「为什么禁用」那句盖掉了。
+        # **顺序要紧**：`_cover_row_enabled` 在禁用时会改那行字（改成「（待定）」），
+        # 所以它要走在 `_show_cover` 后面 —— 反过来就把「（待定）」那句盖掉了。
         self._show_cover(self._event.cover_path if self._event is not None else None)
         self._cover_row_enabled(self._event is not None)
         return row
@@ -330,11 +354,11 @@ class EventEditDialog(QDialog):
         self._cover_label.setToolTip(str(path) if path is not None else "")
 
     def _cover_row_enabled(self, enabled: bool) -> None:
-        """新建时那一行禁用，且**说清为什么**（见 :meth:`_build_cover`）。"""
+        """新建时那一行禁用，只显示灰色的「（待定）」（见 :meth:`_build_cover`）。"""
         self._cover_label.setEnabled(enabled)
         self._clear_cover_button.setEnabled(enabled and self._cover() is not None)
         if not enabled:
-            self._cover_label.setText("建好之后再设（新建时还没有这次事件）")
+            self._cover_label.setText("（待定）")
 
     def _clear_cover(self) -> None:
         """在面板里把封面收掉。**不立刻写库** —— 面板的规矩是一次编辑只写一次（ADR 0031），
@@ -499,6 +523,7 @@ __all__ = [
     "ERROR_LINES",
     "FIELD_MIN_WIDTH",
     "FIELD_RADIUS",
+    "MAX_CHOICES_PER_ROW",
     "ChoiceButtons",
     "ElidedLabel",
     "EventEdit",
