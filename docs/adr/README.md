@@ -107,4 +107,5 @@
 | [0077](0077-gcj02-for-google-maps.md) | 国内坐标交给 Google 前转 GCJ-02，Apple 保持 WGS-84 | 已接受（决策 2 由 0078 取代） |
 | [0078](0078-apple-also-converts-to-gcj.md) | 修正 0077：Apple 地图的落点同样要 GCJ-02 | 已接受 |
 | [0079](0079-apple-calendar-via-applescript.md) | 系统「日历」也能开：只能靠 AppleScript，年映射到月 | 已接受 |
-| [0080](0080-external-app-order.md) | 外部应用的次序由用户定：三个位置各一份，第一项就是左半那一下 | 已接受 |
+| [0080](0080-external-app-order.md) | 外部应用的次序由用户定：三个位置各一份，第一项就是左半那一下 | 已接受（决策 2 的交互由 0081 换成拖动对话框） |
+| [0081](0081-external-order-drag-dialog.md) | 外部应用顺序改成三页可拖动列表的对话框 | 已接受 |

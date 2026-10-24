@@ -16,7 +16,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QApplication, QInputDialog, QMenu, QMessageBox  # noqa: E402
+from PySide6.QtWidgets import QApplication, QDialog, QInputDialog, QMessageBox  # noqa: E402
 from waiting import wait_for_idle  # noqa: E402
 
 from gallery import __version__  # noqa: E402
@@ -75,18 +75,6 @@ def _settings_menu(window: MainWindow):
     return window.menuBar().actions()[-1].menu()
 
 
-def _order_menu(window: MainWindow) -> QMenu:
-    return next(
-        action.menu()
-        for action in _settings_menu(window).actions()
-        if action.text() == "外部应用顺序"
-    )
-
-
-def _page_order_menu(window: MainWindow, label: str) -> QMenu:
-    return next(action.menu() for action in _order_menu(window).actions() if action.text() == label)
-
-
 def test_settings_is_the_last_top_level_menu(window: MainWindow) -> None:
     assert [action.text() for action in window.menuBar().actions()] == [
         "文件",
@@ -101,7 +89,7 @@ def test_the_submenus_are_grouped_in_a_stable_order(window: MainWindow) -> None:
         action.text() for action in _settings_menu(window).actions() if action.menu() is not None
     ]
 
-    assert titles == ["动画速度", "外观", "外部应用顺序", "影片网站", "缓存上限", "放映间隔"]
+    assert titles == ["动画速度", "外观", "影片网站", "缓存上限", "放映间隔"]
 
 
 def test_medium_is_checked_by_default(window: MainWindow) -> None:
@@ -307,7 +295,7 @@ def test_about_reports_the_version(window: MainWindow, monkeypatch: pytest.Monke
     assert shown and __version__ in shown[0]
 
 
-# ---- 外部应用顺序（ADR 0080）-----------------------------------------------
+# ---- 外部应用顺序（ADR 0081）-----------------------------------------------
 
 
 def _only_calendar(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -319,37 +307,75 @@ def _only_calendar(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-def test_the_three_pages_each_have_their_own_order_submenu(window: MainWindow) -> None:
-    assert [action.text() for action in _order_menu(window).actions()] == ["图片", "网格", "日历"]
+def _fake_dialog(
+    monkeypatch: pytest.MonkeyPatch,
+    orders: dict[str, tuple[str, ...]],
+    *,
+    accepted: bool = True,
+) -> dict[str, object]:
+    """把对话框换成一个按剧本返回答案的桩，并记下窗口递给它的那三页。"""
+    seen: dict[str, object] = {}
+
+    class Fake:
+        def __init__(self, parent: object, pages: object) -> None:
+            seen["pages"] = tuple(pages)  # type: ignore[arg-type]
+
+        def exec(self) -> QDialog.DialogCode:
+            return QDialog.DialogCode.Accepted if accepted else QDialog.DialogCode.Rejected
+
+        def orders(self) -> dict[str, tuple[str, ...]]:
+            return dict(orders)
+
+    monkeypatch.setattr(settings_flow, "ExternalOrderDialog", Fake)
+    return seen
 
 
-def test_the_order_menu_lists_the_apps_in_their_current_order(
+def test_the_external_order_entry_sits_right_after_appearance(window: MainWindow) -> None:
+    texts = [action.text() for action in _settings_menu(window).actions()]
+
+    assert texts.index("外部应用顺序…") == texts.index("外观") + 1
+
+
+def test_the_dialog_gets_three_pages_in_their_current_order(
     window: MainWindow, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _only_calendar(monkeypatch)
-    menu = _page_order_menu(window, "日历")
+    seen = _fake_dialog(monkeypatch, {})
 
-    menu.aboutToShow.emit()
+    window._settings_extras["external_order"].trigger()
 
-    assert [action.text() for action in menu.actions() if action.text()] == [
-        "点某一项，把它移到最前",
-        "日历",
-        "Google 日历",
-        "恢复默认顺序",
-    ]
-    checked = [action.text() for action in menu.actions() if action.isChecked()]
-    assert checked == ["日历"]  # 第一项就是左半那一下
+    pages = seen["pages"]
+    assert [page.label for page in pages] == ["图片", "网格", "日历"]  # type: ignore[attr-defined]
+    calendar = next(page for page in pages if page.page == "calendar")  # type: ignore[attr-defined]
+    assert [item.id for item in calendar.items] == ["apple_calendar", "google_calendar"]
+    assert calendar.builtin == ("apple_calendar", "google_calendar")
 
 
-def test_choosing_a_later_app_moves_it_to_the_front_and_saves(
+def test_the_dialog_only_gets_the_apps_installed_for_that_page(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """装没装是 ``available`` 的事，与「现在看着哪张照片」无关。"""
+    _only_calendar(monkeypatch)
+    seen = _fake_dialog(monkeypatch, {})
+
+    window._settings_extras["external_order"].trigger()
+
+    pages = seen["pages"]
+    detail = next(page for page in pages if page.page == "detail")  # type: ignore[attr-defined]
+    ids = [item.id for item in detail.items]
+    assert "preview" not in ids
+    assert "imageglass" not in ids
+    assert "finder" in ids
+    assert "google_maps" in ids
+
+
+def test_saving_the_dragged_order_writes_it_to_the_session(
     window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _only_calendar(monkeypatch)
-    menu = _page_order_menu(window, "日历")
-    menu.aboutToShow.emit()
-    google = next(action for action in menu.actions() if action.text() == "Google 日历")
+    _fake_dialog(monkeypatch, {"calendar": ("google_calendar", "apple_calendar")})
 
-    google.trigger()
+    window._settings_extras["external_order"].trigger()
 
     assert window._session.preferences.order_for("calendar") == (
         "google_calendar",
@@ -361,49 +387,25 @@ def test_choosing_a_later_app_moves_it_to_the_front_and_saves(
     )
 
 
-def test_choosing_the_one_already_first_keeps_the_default(
-    window: MainWindow, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """点本来就在最前的那一项不该把「恢复默认顺序」点亮。"""
-    _only_calendar(monkeypatch)
-    menu = _page_order_menu(window, "日历")
-    menu.aboutToShow.emit()
-    apple = next(action for action in menu.actions() if action.text() == "日历")
-
-    apple.trigger()
-
-    assert window._session.preferences.order_for("calendar") == ()
-
-
-def test_restoring_the_default_order_only_touches_that_page(
+def test_cancelling_the_dialog_writes_nothing(
     window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _only_calendar(monkeypatch)
-    prefs = window._session.preferences.with_external_order(
-        "detail", ("preview",)
-    ).with_external_order("calendar", ("google_calendar", "apple_calendar"))
-    window._session = window._session.with_preferences(prefs)
-    menu = _page_order_menu(window, "日历")
-    menu.aboutToShow.emit()
-    reset = next(action for action in menu.actions() if action.text() == "恢复默认顺序")
+    _fake_dialog(monkeypatch, {"calendar": ("google_calendar", "apple_calendar")}, accepted=False)
 
-    reset.trigger()
+    window._settings_extras["external_order"].trigger()
 
-    saved = load_session(base=tmp_path / "会话").preferences
-    assert saved.order_for("calendar") == ()
-    assert saved.order_for("detail") == ("preview",)
+    assert window._session.preferences.order_for("calendar") == ()
+    assert load_session(base=tmp_path / "会话").preferences.order_for("calendar") == ()
 
 
-def test_an_app_that_is_not_installed_is_not_in_the_order_menu(
+def test_an_order_equal_to_the_builtin_one_stores_nothing(
     window: MainWindow, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """名单按「这一页会摆什么」来：装了才列，点下去才会真有一个图标可换。"""
+    """拖回原样不该留下一条「自定义」——「恢复默认」也就不会亮着。"""
     _only_calendar(monkeypatch)
-    menu = _page_order_menu(window, "图片")
+    _fake_dialog(monkeypatch, {"calendar": ("apple_calendar", "google_calendar")})
 
-    menu.aboutToShow.emit()
+    window._settings_extras["external_order"].trigger()
 
-    texts = [action.text() for action in menu.actions()]
-    assert "ImageGlass" not in texts
-    assert "预览" not in texts  # 这台机器上没装预览（桩里只认日历）
-    assert "访达" in texts
+    assert window._session.preferences.order_for("calendar") == ()
