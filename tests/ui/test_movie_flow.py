@@ -113,6 +113,8 @@ def test_the_import_menus_sit_in_the_file_menu(window: MainWindow) -> None:
     assert [action.text() for action in window._import_movies_menu.actions()] == [
         "导入 Bilibili…",
         "导入 YouTube…",
+        "导入抖音…",
+        "导入 TikTok…",
         "导入爱奇艺…",
         "导入腾讯视频…",
         "导入优酷…",
@@ -135,6 +137,8 @@ def test_each_movie_entry_hands_its_source_to_the_dialog(
     assert seen == [
         "Bilibili",
         "YouTube",
+        "抖音",
+        "TikTok",
         "爱奇艺",
         "腾讯视频",
         "优酷",

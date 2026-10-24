@@ -139,6 +139,47 @@ def test_a_retryable_status_gives_up_as_a_connection_problem(
     assert "稍后再试" in excinfo.value.message
 
 
+class _CookieHeaders(dict[str, object]):
+    """``http.client.HTTPMessage`` 那一半的接口：``get`` 取一个，``get_all`` 取一串。"""
+
+    def get_all(self, name: str) -> list[str]:
+        value = self.get(name)
+        if value is None:
+            return []
+        return value if isinstance(value, list) else [str(value)]
+
+
+def test_a_cookie_the_site_sets_comes_back_on_the_next_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """抖音的分享页要先拿到 ``ttwid`` 才会给服务端渲染的那一版（ADR 0085）。"""
+    seen: list[str | None] = []
+
+    def fake_urlopen(request: urllib.request.Request, timeout: float) -> _FakeResponse:
+        seen.append(request.get_header("Cookie"))
+        response = _FakeResponse()
+        response.headers = _CookieHeaders(
+            {"Content-Encoding": None, "Set-Cookie": ["ttwid=abc123; Path=/; HttpOnly"]}
+        )
+        return response
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    transport = HttpTransport(base=BASE, delay=0)
+
+    transport.get_text(f"{BASE}/first")
+    transport.get_text(f"{BASE}/second")
+
+    assert seen[0] is None
+    assert seen[1] == "ttwid=abc123"
+
+
+def test_the_final_url_is_the_one_after_redirects(monkeypatch: pytest.MonkeyPatch) -> None:
+    """分享短链的编号只在跳转后的地址里（ADR 0085），所以这一条要单独给出来。"""
+    monkeypatch.setattr(urllib.request, "urlopen", lambda request, timeout: _FakeResponse())
+
+    assert HttpTransport(base=BASE, delay=0).get_final_url(f"{BASE}/short") == f"{BASE}/x"
+
+
 def test_a_page_instead_of_an_image_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
     """封面下回来一个网页（多半是被挡住了给的拦截页）：说清是图片这一步出的问题。"""
     _no_sleep(monkeypatch)

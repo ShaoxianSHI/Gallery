@@ -1657,10 +1657,10 @@ def test_the_clear_cover_button_lines_up_with_the_inputs(qt_app: QApplication) -
     assert button_right == dialog._fields["title"].geometry().right()
 
 
-def test_the_movie_source_wraps_into_two_rows_that_line_up_with_the_inputs(
+def test_the_movie_source_wraps_into_three_rows_that_line_up_with_the_inputs(
     qt_app: QApplication,
 ) -> None:
-    """八个来源分两行，**每一行的左右两端都贴着输入框那一列**（来源太长会把面板顶宽）。"""
+    """十个来源分三行（4 / 4 / 2），**每一行左右两端都贴着输入框那一列**（来源太长会顶宽面板）。"""
     dialog = EventEditDialog(None, MOVIE)
     dialog.show()
     qt_app.processEvents()
@@ -1669,12 +1669,11 @@ def test_the_movie_source_wraps_into_two_rows_that_line_up_with_the_inputs(
     buttons = [source._buttons[name] for name in MOVIE_SOURCES]
     code = dialog._fields["code"]
 
-    # 第二行确实掉到下一行：第一行四个、第二行四个。
-    first_row = buttons[:4]
-    second_row = buttons[4:]
-    assert second_row[0].mapTo(dialog, QPoint(0, 0)).y() > (
-        first_row[0].mapTo(dialog, QPoint(0, 0)).y() + first_row[0].height()
-    )
+    rows = (buttons[:4], buttons[4:8], buttons[8:])
+    for previous, following in zip(rows, rows[1:], strict=False):
+        assert following[0].mapTo(dialog, QPoint(0, 0)).y() > (
+            previous[0].mapTo(dialog, QPoint(0, 0)).y() + previous[0].height()
+        )
 
     def left_of(button: QPushButton) -> int:
         return button.mapTo(dialog, QPoint(0, 0)).x()
@@ -1682,8 +1681,8 @@ def test_the_movie_source_wraps_into_two_rows_that_line_up_with_the_inputs(
     def right_of(button: QPushButton) -> int:
         return button.mapTo(dialog, button.rect().topRight()).x()
 
-    assert {left_of(first_row[0]), left_of(second_row[0])} == {code.geometry().left()}
-    assert {right_of(first_row[-1]), right_of(second_row[-1])} == {code.geometry().right()}
+    assert {left_of(row[0]) for row in rows} == {code.geometry().left()}
+    assert {right_of(row[-1]) for row in rows} == {code.geometry().right()}
     assert source.width() == code.width()
 
 

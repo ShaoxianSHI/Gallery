@@ -17,11 +17,13 @@ from PySide6.QtWidgets import QLabel, QPlainTextEdit  # noqa: E402
 
 from gallery.core.events.kinds import (  # noqa: E402
     SOURCE_BILIBILI,
+    SOURCE_DOUYIN,
     SOURCE_IQIYI,
     SOURCE_JAV,
     SOURCE_MANGO,
     SOURCE_PORNHUB,
     SOURCE_TENCENT,
+    SOURCE_TIKTOK,
     SOURCE_YOUKU,
     SOURCE_YOUTUBE,
 )
@@ -68,6 +70,19 @@ def test_duplicate_entries_collapse_keeping_order() -> None:
             "导入 YouTube 影片",
             "按链接或 videoId 导入 YouTube 影片",
             "https://www.youtube.com/watch?v=dQw4w9WgXcQ\ndQw4w9WgXcQ",
+        ),
+        (
+            SOURCE_DOUYIN,
+            "导入抖音影片",
+            "按链接或编号导入抖音影片",
+            "https://www.douyin.com/video/7345678901234567890\nhttps://v.douyin.com/iRNBho6u/",
+        ),
+        (
+            SOURCE_TIKTOK,
+            "导入 TikTok 影片",
+            "按链接或编号导入 TikTok 影片",
+            "https://www.tiktok.com/@scout2015/video/6718335390845095173\n"
+            "https://vm.tiktok.com/ZMabc123/",
         ),
         (
             SOURCE_JAV,

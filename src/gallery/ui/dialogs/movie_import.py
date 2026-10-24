@@ -26,11 +26,13 @@ from PySide6.QtWidgets import (
 
 from gallery.core.events.kinds import (
     SOURCE_BILIBILI,
+    SOURCE_DOUYIN,
     SOURCE_IQIYI,
     SOURCE_JAV,
     SOURCE_MANGO,
     SOURCE_PORNHUB,
     SOURCE_TENCENT,
+    SOURCE_TIKTOK,
     SOURCE_YOUKU,
     SOURCE_YOUTUBE,
 )
@@ -71,6 +73,21 @@ _SOURCE_COPY: Final[dict[str, SourceCopy]] = {
         hint="每行一个 YouTube 地址或 11 位 videoId（youtu.be 与 watch 链接都行）。"
         "封面会存进下面这个文件夹。",
         placeholder="https://www.youtube.com/watch?v=dQw4w9WgXcQ\ndQw4w9WgXcQ",
+    ),
+    SOURCE_DOUYIN: SourceCopy(
+        title="导入抖音影片",
+        heading="按链接或编号导入抖音影片",
+        hint="每行一个抖音视频地址或分享短链（v.douyin.com 开头），也可以直接填视频编号。"
+        "短链要联网展开一次才知道是哪一个视频。封面会存进下面这个文件夹。",
+        placeholder="https://www.douyin.com/video/7345678901234567890\nhttps://v.douyin.com/iRNBho6u/",
+    ),
+    SOURCE_TIKTOK: SourceCopy(
+        title="导入 TikTok 影片",
+        heading="按链接或编号导入 TikTok 影片",
+        hint="每行一个 TikTok 视频地址或分享链接（vm.tiktok.com、tiktok.com/t 开头都行），"
+        "也可以直接填视频 id。封面会存进下面这个文件夹。",
+        placeholder="https://www.tiktok.com/@scout2015/video/6718335390845095173\n"
+        "https://vm.tiktok.com/ZMabc123/",
     ),
     SOURCE_JAV: SourceCopy(
         title="导入 JavDB 影片",

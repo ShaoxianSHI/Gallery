@@ -14,11 +14,13 @@ from gallery.core.errors import MovieImportError
 from gallery.core.events import jav, sources
 from gallery.core.events.kinds import (
     SOURCE_BILIBILI,
+    SOURCE_DOUYIN,
     SOURCE_IQIYI,
     SOURCE_JAV,
     SOURCE_MANGO,
     SOURCE_PORNHUB,
     SOURCE_TENCENT,
+    SOURCE_TIKTOK,
     SOURCE_YOUKU,
     SOURCE_YOUTUBE,
 )
@@ -93,6 +95,25 @@ DETAIL_HTML = (
             "https://www.pornhub.com/embed/ph5af5fef7c2aa7",
             MovieRef(SOURCE_PORNHUB, "ph5af5fef7c2aa7"),
         ),
+        (
+            "https://www.douyin.com/video/7345678901234567890",
+            MovieRef(SOURCE_DOUYIN, "7345678901234567890"),
+        ),
+        (
+            "https://www.douyin.com/user/MS4wLjAB?modal_id=7345678901234567890",
+            MovieRef(SOURCE_DOUYIN, "7345678901234567890"),
+        ),
+        # 短链里只有 token，编号要等抓取那一步联网展开（ADR 0085）。
+        ("https://v.douyin.com/iRNBho6u/", MovieRef(SOURCE_DOUYIN, "iRNBho6u")),
+        (
+            "https://www.tiktok.com/@scout2015/video/6718335390845095173",
+            MovieRef(SOURCE_TIKTOK, "6718335390845095173"),
+        ),
+        (
+            "https://www.tiktok.com/embed/v2/6718335390845095173",
+            MovieRef(SOURCE_TIKTOK, "6718335390845095173"),
+        ),
+        ("https://vm.tiktok.com/ZMabc123/", MovieRef(SOURCE_TIKTOK, "ZMabc123")),
     ],
 )
 def test_a_line_is_read_as_a_source_and_a_code(text: str, expected: MovieRef | None) -> None:
@@ -205,6 +226,14 @@ def test_an_empty_source_means_javdb(text: str, expected: str) -> None:
         (
             MovieRef(SOURCE_PORNHUB, "ph5af5fef7c2aa7"),
             "https://www.pornhub.com/view_video.php?viewkey=ph5af5fef7c2aa7",
+        ),
+        (
+            MovieRef(SOURCE_DOUYIN, "7345678901234567890"),
+            "https://www.douyin.com/video/7345678901234567890",
+        ),
+        (
+            MovieRef(SOURCE_TIKTOK, "6718335390845095173"),
+            "https://www.tiktok.com/@i/video/6718335390845095173",
         ),
     ],
 )

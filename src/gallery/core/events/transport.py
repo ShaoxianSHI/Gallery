@@ -1,7 +1,7 @@
 """影片抓取共用的 HTTP：浏览器 UA、限速、退避重试、gzip（ADR 0068）。
 
-八个来源与反爬相处的方式是同一套：**每个来源自己的 ``base`` / ``Referer`` / cookie / UA**，加上请求
-之间留一秒、限速与 5xx 退避重试。各写一份就是七处会各自漂，所以它单独成模块。
+各来源与反爬相处的方式是同一套：**每个来源自己的 ``base`` / ``Referer`` / cookie / UA**，加上请求
+之间留一秒、限速与 5xx 退避重试。各写一份就会各自漂，所以它单独成模块。
 """
 
 from __future__ import annotations
@@ -29,6 +29,12 @@ MOBILE_UA: Final = (
     "(KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
 )
 
+#: 安卓的 UA。**抖音的分享页只按它给服务端渲染的那一版**（iPhone 与桌面 UA 都只有空壳）。
+ANDROID_UA: Final = (
+    "Mozilla/5.0 (Linux; Android 8.0.0; SM-G955U Build/R16NW) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36"
+)
+
 #: 无论怎么重试都值得再试一次的 HTTP 状态码：限速、被挡、源站自己 5xx。
 #: **其余的非 2xx 立刻如实报出去**：401 / 404 再试一百次也是同一个答案。
 _RETRY_STATUS: Final = frozenset({403, 429, 500, 502, 503, 504})
@@ -42,6 +48,8 @@ class Transport(Protocol):
     def get_text(self, url: str, *, referer: str | None = None) -> str: ...
 
     def get_bytes(self, url: str, *, referer: str | None = None) -> bytes: ...
+
+    def get_final_url(self, url: str, *, referer: str | None = None) -> str: ...
 
 
 @dataclass
@@ -61,16 +69,34 @@ class HttpTransport:
     delay: float = 1.0
     retries: int = 3
     _last: float = field(default=0.0, repr=False)
+    #: 源站自己种下的 cookie（抖音的 ``ttwid`` 就是它）。**按来源各存一份**，不跨来源。
+    _cookies: dict[str, str] = field(default_factory=dict, repr=False)
 
     def _headers(self, referer: str | None) -> dict[str, str]:
+        cookie = "; ".join(part for part in (self.cookie, self._cookie_header()) if part)
         return {
             "User-Agent": self.ua,
             "Accept": _ACCEPT,
             "Accept-Language": self.language,
             "Accept-Encoding": "gzip, deflate",
             "Referer": referer or self.referer or self.base.rstrip("/") + "/",
-            **({"Cookie": self.cookie} if self.cookie else {}),
+            **({"Cookie": cookie} if cookie else {}),
         }
+
+    def _cookie_header(self) -> str:
+        """把源站种下的那几格拼回请求头。"""
+        return "; ".join(f"{name}={value}" for name, value in self._cookies.items())
+
+    def _remember_cookies(self, response: object) -> None:
+        """记下 ``Set-Cookie``。**不带 cookie 时抖音的分享页只给一个空壳**。"""
+        headers = getattr(response, "headers", None)
+        get_all = getattr(headers, "get_all", None)
+        if get_all is None:
+            return
+        for raw in get_all("Set-Cookie") or ():
+            name, separator, rest = raw.partition("=")
+            if separator and name.strip():
+                self._cookies[name.strip()] = rest.split(";", 1)[0].strip()
 
     def _get(self, url: str, referer: str | None) -> tuple[bytes, str]:
         headers = self._headers(referer)
@@ -81,6 +107,7 @@ class HttpTransport:
             try:
                 with urllib.request.urlopen(request, timeout=self.timeout) as response:
                     self._last = time.time()
+                    self._remember_cookies(response)
                     raw = _decompress(response.read(), response.headers.get("Content-Encoding"))
                     return raw, response.geturl()
             except urllib.error.HTTPError as exc:
@@ -129,6 +156,11 @@ class HttpTransport:
             raise MovieImportError("封面下载回来的是一个网页，不是图片。")
         return raw
 
+    def get_final_url(self, url: str, *, referer: str | None = None) -> str:
+        """跟完跳转之后落在哪一页。**分享短链里的编号只在这里拿得到**（抖音与 TikTok）。"""
+        _, final = self._get(url, referer)
+        return final
+
 
 def _decompress(raw: bytes, encoding: str | None) -> bytes:
     kind = (encoding or "").lower()
@@ -143,6 +175,7 @@ def _decompress(raw: bytes, encoding: str | None) -> bytes:
 
 
 __all__ = [
+    "ANDROID_UA",
     "MOBILE_UA",
     "UA",
     "HttpTransport",

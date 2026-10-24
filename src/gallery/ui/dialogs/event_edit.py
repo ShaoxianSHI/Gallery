@@ -52,8 +52,11 @@ FIELD_MIN_WIDTH: Final = 220
 #: 输入框那一圈的圆角半径（点）—— 与搜索胶囊、改名输入框同一档手感。
 FIELD_RADIUS: Final = 5
 
-#: 一排最多摆几个选择按钮。五个评分正好一行，八个来源分成两行。
+#: 一排最多摆几个选择按钮。五个评分正好一行。
 MAX_CHOICES_PER_ROW: Final = 5
+
+#: 放不下一排时每行摆几个。**来源那一排按四个铺**（十个来源于是 4 / 4 / 2 三行）。
+WRAPPED_CHOICES_PER_ROW: Final = 4
 
 #: 每一个字段是哪种控件 —— 一排按钮还是输入框。**由字段自己的声明说了算**，没有第三种。
 type FieldWidget = QLineEdit | ChoiceButtons
@@ -87,10 +90,12 @@ class EventEdit:
 
 
 def _row_counts(total: int) -> tuple[int, ...]:
-    """每行摆几个按钮：行数尽量少，各行的个数尽量平均。"""
+    """每行摆几个按钮：放得下就一排，放不下时行数尽量少、各行的个数尽量平均。"""
     if total <= 0:
         return ()
-    rows = (total + MAX_CHOICES_PER_ROW - 1) // MAX_CHOICES_PER_ROW
+    if total <= MAX_CHOICES_PER_ROW:
+        return (total,)
+    rows = (total + WRAPPED_CHOICES_PER_ROW - 1) // WRAPPED_CHOICES_PER_ROW
     columns = (total + rows - 1) // rows
     return (columns,) * (rows - 1) + (total - columns * (rows - 1),)
 
@@ -99,7 +104,7 @@ class ChoiceButtons(QWidget):
     """有值域的字段摆成按钮：点一下选中，再点一下取消（都不选 = 不记这一项）。
 
     不超过 :data:`MAX_CHOICES_PER_ROW` 项时只占一排；多了就按行铺开，**每一行都铺满整个字段列**
-    （八个来源分两行，最右那个按钮与输入框的右缘对齐）。**单选由这一层自己管**（``QButtonGroup``
+    （十个来源分三行，最右那个按钮与输入框的右缘对齐）。**单选由这一层自己管**（``QButtonGroup``
     设成非互斥）：互斥的组不给「再点一下把当前那个取消」，而评分是可不记的。
     """
 

@@ -13,14 +13,27 @@ from dataclasses import dataclass, field
 from typing import Final, Protocol
 
 from gallery.core.errors import MovieImportError
-from gallery.core.events import bilibili, iqiyi, jav, mango, pornhub, tencent, youku, youtube
+from gallery.core.events import (
+    bilibili,
+    douyin,
+    iqiyi,
+    jav,
+    mango,
+    pornhub,
+    tencent,
+    tiktok,
+    youku,
+    youtube,
+)
 from gallery.core.events.kinds import (
     SOURCE_BILIBILI,
+    SOURCE_DOUYIN,
     SOURCE_IQIYI,
     SOURCE_JAV,
     SOURCE_MANGO,
     SOURCE_PORNHUB,
     SOURCE_TENCENT,
+    SOURCE_TIKTOK,
     SOURCE_YOUKU,
     SOURCE_YOUTUBE,
 )
@@ -33,6 +46,8 @@ _URL_RE: Final = re.compile(r"^(?:[a-z][a-z0-9+.-]*://)?[\w-]+(?:\.[\w-]+)+(?:[/
 #: 按域名认来源。**顺序无关**（每个域名只属于一家），按导入菜单的习惯排。
 _URL_PARSERS: Final[tuple[tuple[str, Callable[[str], str | None]], ...]] = (
     (SOURCE_YOUTUBE, youtube.id_from_url),
+    (SOURCE_DOUYIN, douyin.id_from_url),
+    (SOURCE_TIKTOK, tiktok.id_from_url),
     (SOURCE_BILIBILI, bilibili.id_from_url),
     (SOURCE_TENCENT, tencent.id_from_url),
     (SOURCE_IQIYI, iqiyi.id_from_url),
@@ -44,6 +59,8 @@ _URL_PARSERS: Final[tuple[tuple[str, Callable[[str], str | None]], ...]] = (
 #: 按面板选的来源认裸编号。**JavDB 不在里面**：番号是回退，什么形状都能当番号。
 _TEXT_PARSERS: Final[dict[str, Callable[[str], str | None]]] = {
     SOURCE_YOUTUBE: lambda text: text if youtube.is_video_id(text) else None,
+    SOURCE_DOUYIN: douyin.id_from_text,
+    SOURCE_TIKTOK: tiktok.id_from_text,
     SOURCE_BILIBILI: bilibili.id_from_text,
     SOURCE_TENCENT: tencent.id_from_text,
     SOURCE_IQIYI: iqiyi.id_from_text,
@@ -115,6 +132,10 @@ def movie_url(ref: MovieRef, *, jav_site: str) -> str | None:
         return jav.movie_url(jav_site, ref.code)
     if ref.source == SOURCE_YOUTUBE:
         return youtube.movie_url(ref.code)
+    if ref.source == SOURCE_DOUYIN:
+        return douyin.movie_url(ref.code)
+    if ref.source == SOURCE_TIKTOK:
+        return tiktok.movie_url(ref.code)
     if ref.source == SOURCE_BILIBILI:
         return bilibili.movie_url(ref.code, start_at_beginning=True)
     if ref.source == SOURCE_TENCENT:
@@ -147,6 +168,8 @@ class MovieSource(Protocol):
 _FETCHERS: Final[dict[str, Callable[..., MovieInfo]]] = {
     SOURCE_JAV: jav.fetch,
     SOURCE_YOUTUBE: youtube.fetch,
+    SOURCE_DOUYIN: douyin.fetch,
+    SOURCE_TIKTOK: tiktok.fetch,
     SOURCE_BILIBILI: bilibili.fetch,
     SOURCE_TENCENT: tencent.fetch,
     SOURCE_IQIYI: iqiyi.fetch,
@@ -161,6 +184,8 @@ def _default_transports() -> dict[str, Transport]:
     return {
         SOURCE_JAV: jav.transport(),
         SOURCE_YOUTUBE: youtube.transport(),
+        SOURCE_DOUYIN: douyin.transport(),
+        SOURCE_TIKTOK: tiktok.transport(),
         SOURCE_BILIBILI: bilibili.transport(),
         SOURCE_TENCENT: tencent.transport(),
         SOURCE_IQIYI: iqiyi.transport(),

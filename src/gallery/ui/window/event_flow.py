@@ -22,11 +22,13 @@ from gallery.core.events.kinds import (
     EVENT_KINDS,
     MOVIE,
     SOURCE_BILIBILI,
+    SOURCE_DOUYIN,
     SOURCE_IQIYI,
     SOURCE_JAV,
     SOURCE_MANGO,
     SOURCE_PORNHUB,
     SOURCE_TENCENT,
+    SOURCE_TIKTOK,
     SOURCE_YOUKU,
     SOURCE_YOUTUBE,
     EventKind,
@@ -60,10 +62,13 @@ Submitter = Callable[[str, QAction], None]
 #: 「演迹」导出文件选择框认的后缀。
 _IMPORT_FILTER = "Excel 表格 (*.xlsx *.xlsm)"
 
-#: 「导入影片」子菜单里的顺序：用户最先想到的那几个主站在前，JavDB 与 Pornhub 在最后两行。
+#: 「导入影片」子菜单里的顺序：用户最先想到的那几个主站在前，JavDB 与 Pornhub 在最后。
+#: **抖音与 TikTok 各占一行**，紧跟在 YouTube 后面。
 _MOVIE_IMPORT_SOURCES = (
     SOURCE_BILIBILI,
     SOURCE_YOUTUBE,
+    SOURCE_DOUYIN,
+    SOURCE_TIKTOK,
     SOURCE_IQIYI,
     SOURCE_TENCENT,
     SOURCE_YOUKU,

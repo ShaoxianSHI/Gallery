@@ -157,9 +157,11 @@ SOURCE_TENCENT: Final = "腾讯视频"
 SOURCE_IQIYI: Final = "爱奇艺"
 SOURCE_YOUKU: Final = "优酷"
 SOURCE_MANGO: Final = "芒果TV"
+SOURCE_DOUYIN: Final = "抖音"
+SOURCE_TIKTOK: Final = "TikTok"
 SOURCE_PORNHUB: Final = "Pornhub"
 
-#: 已知的来源。**顺序即面板里那一排按钮的顺序**（每行四个）。
+#: 已知的来源。**顺序即面板里那一排按钮的顺序**（每行四个，最后一行两个）。
 MOVIE_SOURCES: Final = (
     SOURCE_IQIYI,
     SOURCE_TENCENT,
@@ -167,6 +169,8 @@ MOVIE_SOURCES: Final = (
     SOURCE_MANGO,
     SOURCE_BILIBILI,
     SOURCE_YOUTUBE,
+    SOURCE_DOUYIN,
+    SOURCE_TIKTOK,
     SOURCE_JAV,
     SOURCE_PORNHUB,
 )
@@ -182,7 +186,7 @@ MOVIE: Final = EventKind(
             "编号",
             "code",
             hint="番号、YouTube 的 videoId、B 站 BV 号，或腾讯 / 爱奇艺 / 优酷 / 芒果 / "
-            "Pornhub 的编号",
+            "抖音 / TikTok / Pornhub 的编号",
         ),
         EventField("duration", "时长", "duration", "INTEGER", hint="分钟，只填数字"),
         # 三栏都取中性词：同一栏要装下片商、频道与 UP 主（ADR 0068 决策 2）。
@@ -369,11 +373,13 @@ __all__ = [
     "RATING_MIN",
     "SHOW",
     "SOURCE_BILIBILI",
+    "SOURCE_DOUYIN",
     "SOURCE_IQIYI",
     "SOURCE_JAV",
     "SOURCE_MANGO",
     "SOURCE_PORNHUB",
     "SOURCE_TENCENT",
+    "SOURCE_TIKTOK",
     "SOURCE_YOUKU",
     "SOURCE_YOUTUBE",
     "SQL_TYPES",
