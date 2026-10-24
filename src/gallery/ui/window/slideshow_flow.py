@@ -63,16 +63,15 @@ class SlideshowFlowMixin:
             self._show_banner("当前层级没有照片。")
             return
         paths = tuple(photo.path for photo in photos)
-        index = 0
-        if self._in_detail_page():
-            current = self._model.photo_at(self._current_row)
-            if current is not None:
-                index = _index_of(paths, current.path)
+        current = self._model.photo_at(self._current_row) if self._in_detail_page() else None
+        # 视频不进放映：从视频页按播放键要从这一层第一张照片重新开始。
+        in_detail_photo = current is not None and not current.is_video
+        index = _index_of(paths, current.path) if in_detail_photo else 0
         # **先收起元信息页再打开大图**：`_load_detail` 看面板可见性决定读不读元数据。
         self._panel.hide()
         # 从网格起步时**先把大图打开、再进放映**：那一刻 `_load_detail` 还看不到放映状态，
         # 首张就不会从大图页上一次留下的旧画面淡入（淡入淡出只发生在放映中的两张之间）。
-        if not self._in_detail_page():
+        if not in_detail_photo:
             row = self._model.row_of_path(paths[index])
             if row < 0:
                 # 这一瞬间模型变了：把面板按偏好放回去，别留下一个被收起来的空布局。

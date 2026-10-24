@@ -61,6 +61,7 @@ from gallery.ui.thumb_sizes import (
 )
 from gallery.ui.viewer.detail import DetailView
 from gallery.ui.viewer.metadata import MetadataPanel
+from gallery.ui.viewer.video import VideoView
 from gallery.ui.window.banner_flow import BannerFlowMixin
 from gallery.ui.window.calendar_flow import CalendarFlowMixin
 from gallery.ui.window.context_menu_flow import ContextMenuFlowMixin
@@ -323,6 +324,21 @@ class MainWindow(
         self._detail.context_requested.connect(self._show_detail_context_menu)
         # ⌥ 点一下大图页：打开正在看的那张所属影片的网站（ADR 0063）。
         self._detail.movie_open_requested.connect(self.open_movie_for_current)
+        # 视频与照片共用大图页的位置：视频有自己的播放器与进度条（ADR 0091）。
+        self._video = VideoView()
+        self._video.request_close.connect(self.show_grid)
+        self._video.request_step.connect(self.step_detail)
+        self._video.context_requested.connect(self._show_detail_context_menu)
+        self._video.movie_open_requested.connect(self.open_movie_for_current)
+        # 视频与照片**同一个位置二选一显示**：用 show / hide 而不是第二个 QStackedWidget，
+        # 内容区那个栈仍然只有一处（换页只归 `_sync_page_to_stack`，见 ADR 0041）。
+        self._detail_slot = QWidget()
+        slot_layout = QHBoxLayout(self._detail_slot)
+        slot_layout.setContentsMargins(0, 0, 0, 0)
+        slot_layout.setSpacing(0)
+        slot_layout.addWidget(self._detail)
+        slot_layout.addWidget(self._video)
+        self._video.hide()
 
         # 日历那一页**自己带着工具条**（占掉的就是网格那页面包屑那一行，ADR 0033 决策 5）。
         self._calendar_page = CalendarPage()
@@ -353,7 +369,7 @@ class MainWindow(
         detail_layout = QHBoxLayout(self._detail_page)
         detail_layout.setContentsMargins(0, 0, 0, 0)
         detail_layout.setSpacing(0)
-        detail_layout.addWidget(self._detail, 1)
+        detail_layout.addWidget(self._detail_slot, 1)
         detail_layout.addWidget(self._panel)
         self._stack.addWidget(self._detail_page)
         self.setCentralWidget(self._stack)
@@ -704,6 +720,9 @@ class MainWindow(
         self._update_event_actions()
         in_detail = self._in_detail_page()
         in_grid = self._on_grid_page()
+        # 视频页没有缩放：适配窗口由播放器那一侧算，⌘+ / ⌘- 在这里没有对象。
+        detail_ref = self._model.photo_at(self._current_row) if in_detail else None
+        video_page = detail_ref is not None and detail_ref.is_video
         # 改名的过程中别启用会动文件的命令 —— 那时键盘归输入框，⌘⌫ 不该把正在编辑的那张删掉。
         # **三个输入框都算**：网格那个、标题栏那个改名框（ADR 0025）与搜索框。
         idle = (
@@ -717,7 +736,7 @@ class MainWindow(
             self._zoom_in_action,
             self._zoom_out_action,
         ):
-            action.setEnabled(in_detail)
+            action.setEnabled(in_detail and not video_page)
         # 缩略图那两条只在网格页亮着；改到一半也不亮 —— 换档会重排网格，把正在编辑的那一格挪走。
         for action in (self._thumb_zoom_in_action, self._thumb_zoom_out_action):
             action.setEnabled(in_grid and idle)
@@ -795,7 +814,9 @@ class MainWindow(
         self._open_entry_action.setEnabled(current is not None)
         # ⇧⏎ 比 ⌘⏎ 更窄（这一格得是**照片**、没在改名）；**大图页上也可用**（ADR 0021）。
         self._open_default_action.setEnabled(idle and isinstance(current, PhotoRef))
-        self._copy_metadata_action.setEnabled(isinstance(current, PhotoRef))
+        self._copy_metadata_action.setEnabled(
+            isinstance(current, PhotoRef) and not current.is_video
+        )
         # 「编辑元数据」在右键菜单里是「不出现」、在菜单栏是「置灰」（那一处永远摆着，否则 ⇧⌘I
         # 没地方显示提示），两条判据同源：``metadata_edit_candidate``。
         self._edit_metadata_action.setEnabled(self.metadata_edit_candidate() is not None and idle)
@@ -1045,8 +1066,9 @@ class MainWindow(
         )
 
     def _viewer_ready(self, viewer: App) -> bool:
-        """大图页上正看着一张照片，而且本机装着这个应用。"""
-        return self._detail_photo_path() is not None and self._installed(viewer)
+        """大图页上正看着一张**照片**（视频不归图片应用），而且本机装着它。"""
+        ref = self._detail_photo_ref()
+        return ref is not None and not ref.is_video and self._installed(viewer)
 
     def _installed(self, app: App) -> bool:
         """这台机器上装着它没有 —— 与「此刻这一页有没有东西可开」是两件事。

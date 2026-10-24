@@ -19,7 +19,6 @@ from gallery.core.metadata.facets import PhotoFacets
 from gallery.core.metadata.report import MetadataReport
 from gallery.core.places.countries import place_label
 from gallery.core.places.dataset import is_real_coordinate
-from gallery.ui import desktop
 from gallery.ui.tasks import TaskContext
 from gallery.ui.window.state.level_stack import PhotoFrame
 
@@ -120,6 +119,10 @@ class MetadataFlowMixin:
         ref = self._model.photo_at(row)
         if ref is None:
             self._panel.clear()
+            return
+        if ref.is_video:
+            # 视频没有可读的 EXIF；⌘I 在视频页展开时也只该看到这一句（ADR 0091）。
+            self._panel.show_notice("视频没有可读的元数据。")
             return
         self._panel.set_events(self._photo_events(ref))
         generation = self._generation
@@ -250,7 +253,7 @@ class MetadataFlowMixin:
         self._show_place(ref, report, generation, f"未能推断地点：{message}")
 
     def _on_entry_activated(self, index: QModelIndex) -> None:
-        """双击一个格子：相册或分组就进去，照片打开大图，视频交给默认应用。"""
+        """双击一个格子：相册或分组就进去，照片与视频打开大图页。"""
         entry = self._model.entry_at(index.row())
         if isinstance(entry, FolderRef):
             self.enter_folder(entry.path)
@@ -259,19 +262,10 @@ class MetadataFlowMixin:
         else:
             self._open_detail(index)
 
-    def _open_video(self, ref: PhotoRef) -> None:
-        """视频没有大图页：交给系统默认应用。成功时不出声 —— 那个应用自己会弹到前台。"""
-        message = desktop.open_with_default_app(ref.path)
-        if message is not None:
-            self._show_banner(message)
-
     def _open_detail(self, index: QModelIndex) -> None:
         row = index.row()
         photo = self._model.photo_at(row)
         if photo is None:
-            return
-        if photo.is_video:
-            self._open_video(photo)
             return
         self._focus_state.set_current(row)
         # 照片帧只在大图页里翻页时换掉栈顶 —— 往深里压的话 Esc 要按几十次才退得回去。

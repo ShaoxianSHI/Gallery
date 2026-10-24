@@ -71,6 +71,7 @@ class ViewerFlowMixin:
         （那是「刚弹掉一张照片」的现场）：走到这里栈上已经不是照片帧，按栈判永远为假。"""
         self._title_bar.stop_edit()  # 切页时把改到一半的名字收起来（ADR 0025）
         self.stop_slideshow()
+        self._leave_video()
         self._sync_page_to_stack()  # 照片帧弹掉之后，这一条栈表示的就是网格页
         if self._current_row >= 0:
             self._grid.select_row(self._current_row)
@@ -105,8 +106,7 @@ class ViewerFlowMixin:
     def _neighbour_photo_row(self, start: int, delta: int) -> int | None:
         row = start + delta
         while 0 <= row < self._model.rowCount():
-            ref = self._model.photo_at(row)
-            if ref is not None and not ref.is_video:
+            if self._model.photo_at(row) is not None:
                 return row
             row += delta
         return None
@@ -126,6 +126,10 @@ class ViewerFlowMixin:
         generation = self._generation
 
         self._cancel_job("_detail_job")
+        if ref.is_video:
+            self._show_video(ref)
+            return
+        self._leave_video()
         if self._panel.isVisible():
             self._load_metadata()
 
@@ -163,6 +167,23 @@ class ViewerFlowMixin:
             on_error=partial(self._on_detail_failed, ref, row, generation),
         )
         self._prefetch_neighbours(row)
+
+    def _show_video(self, ref: PhotoRef) -> None:
+        """视频页：播放器摆到前面，首帧到达前用网格里那张缩略图垫着。"""
+        self._detail.clear_image()
+        self._detail.hide()
+        self._video.show()
+        if self._panel.isVisible():
+            self._panel.show_notice("视频没有可读的元数据。")
+        thumbnail = self._model.thumbnail_pixmap(ref.path)
+        self._video.play(ref, None if thumbnail is None else thumbnail.toImage())
+        self._video.setFocus()
+
+    def _leave_video(self) -> None:
+        """从视频页翻回照片：收掉播放器，把照片视图摆回来。"""
+        self._video.stop()
+        self._video.hide()
+        self._detail.show()
 
     def _on_preview_ready(self, ref: PhotoRef, row: int, generation: int, payload: object) -> None:
         if generation != self._generation or row != self._current_row:

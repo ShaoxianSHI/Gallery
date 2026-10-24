@@ -1,7 +1,7 @@
-"""视频在界面上的接线（ADR 0090）：双击交给默认应用、翻图与放映跳过它。
+"""视频在界面上的接线（ADR 0090 / 0091）：双击进播放页、翻图能翻到、放映跳过它。
 
-**不真的去开应用**：``desktop.open_with_default_app`` 被换成记录调用的假实现。这一份盯的是
-「哪条路认识视频」—— 视频不进大图页，因为它没有大图；其余操作与照片完全一样。
+**不真的去开应用**：``desktop.open_with_default_app`` 被换成记录调用的假实现。
+播放器本身不在这里验（见 ``tests/ui/viewer/test_video.py``），这一份只盯「哪条路认识视频」。
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from PIL import Image  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 from waiting import wait_for_idle  # noqa: E402
 
+from gallery.core.external import apps  # noqa: E402
 from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.library.session import SessionState, save_session  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
@@ -40,7 +41,7 @@ def root(tmp_path: Path, make_video: Callable[..., Path]) -> Path:
     library = tmp_path / "库"
     library.mkdir(parents=True)
     _photo(library, "a.jpg")
-    make_video("b.avi", frames=3, directory=library)
+    make_video("b.avi", frames=100, directory=library)
     _photo(library, "c.jpg")
     prepare_library(library)
     return library
@@ -66,7 +67,7 @@ def opened(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
         calls.append(Path(path))
         return None
 
-    monkeypatch.setattr("gallery.ui.window.metadata_flow.desktop.open_with_default_app", fake_open)
+    monkeypatch.setattr("gallery.ui.desktop.open_with_default_app", fake_open)
     return calls
 
 
@@ -76,36 +77,37 @@ def _row(window: MainWindow, name: str) -> int:
     return row
 
 
-def test_double_clicking_a_video_hands_it_to_the_default_app(
-    window: MainWindow, opened: list[Path]
-) -> None:
-    row = _row(window, "b.avi")
-
-    window._on_entry_activated(window._model.index(row, 0))
-
-    assert opened == [window._library.root / "b.avi"]  # type: ignore[union-attr]
-    assert window._photo_frame is None, "视频没有大图页，不该压一层照片帧"
-    assert window._in_detail_page() is False
+def _open(window: MainWindow, name: str) -> None:
+    window._on_entry_activated(window._model.index(_row(window, name), 0))
 
 
-def test_double_clicking_a_photo_still_opens_the_detail_page(
-    window: MainWindow, opened: list[Path]
-) -> None:
-    row = _row(window, "a.jpg")
+def _on_video_page(window: MainWindow) -> bool:
+    return window._video.isVisible() and window._video.current_ref is not None
 
-    window._on_entry_activated(window._model.index(row, 0))
 
-    assert opened == []
+def test_double_clicking_a_video_opens_the_player(window: MainWindow) -> None:
+    _open(window, "b.avi")
+
     assert window._in_detail_page() is True
+    assert _on_video_page(window)
+    current = window._video.current_ref
+    assert current is not None
+    assert current.path.name == "b.avi"
 
 
-def test_the_open_command_takes_the_same_route(window: MainWindow, opened: list[Path]) -> None:
+def test_double_clicking_a_photo_still_opens_the_photo_view(window: MainWindow) -> None:
+    _open(window, "a.jpg")
+
+    assert window._in_detail_page() is True
+    assert not _on_video_page(window)
+
+
+def test_the_open_command_takes_the_same_route(window: MainWindow) -> None:
     window._grid.select_row(_row(window, "b.avi"))
 
     window.open_current_entry()
 
-    assert opened == [window._library.root / "b.avi"]  # type: ignore[union-attr]
-    assert window._in_detail_page() is False
+    assert _on_video_page(window)
 
 
 def test_a_video_has_no_metadata_editor(
@@ -123,15 +125,16 @@ def test_a_video_has_no_metadata_editor(
     assert window.metadata_edit_candidate() is not None
 
 
-def test_step_detail_skips_videos(window: MainWindow) -> None:
-    """← / → 在大图页里翻的是**照片**：视频要交给默认应用，不该在这里被当大图解。"""
-    window._on_entry_activated(window._model.index(_row(window, "a.jpg"), 0))
+def test_step_detail_walks_into_videos_too(window: MainWindow) -> None:
+    """← / → 走的是这一层的顺序：视频也有页，不该被跳过。"""
+    _open(window, "a.jpg")
 
     window.step_detail(1)
 
     current = window._model.photo_at(window._current_row)
     assert current is not None
-    assert current.path.name == "c.jpg"
+    assert current.path.name == "b.avi"
+    assert _on_video_page(window)
 
 
 def test_the_slideshow_leaves_videos_out(window: MainWindow) -> None:
@@ -140,14 +143,54 @@ def test_the_slideshow_leaves_videos_out(window: MainWindow) -> None:
     assert [path.name for path in window._slideshow.paths] == ["a.jpg", "c.jpg"]
 
 
-def test_a_calendar_cell_with_one_video_does_not_push_a_frame(
-    window: MainWindow, opened: list[Path]
-) -> None:
+def test_a_calendar_cell_with_one_video_opens_the_video_page(window: MainWindow) -> None:
     library = window._library
     assert library is not None
     video = next(ref for ref in library.iter_photos() if ref.path.name == "b.avi")
 
     window._on_calendar_cell_requested([video], "一格")
 
-    assert opened == [video.path]
-    assert window._photo_frame is None
+    assert window._in_detail_page() is True
+    assert _on_video_page(window)
+
+
+def test_escape_from_a_video_page_stops_the_player(window: MainWindow) -> None:
+    _open(window, "b.avi")
+
+    window._video.request_close.emit()
+
+    assert window._in_detail_page() is False
+    assert window._video.current_ref is None
+
+
+def test_open_in_default_app_still_works_on_a_video_page(
+    window: MainWindow, opened: list[Path]
+) -> None:
+    _open(window, "b.avi")
+    window._grid.select_row(_row(window, "b.avi"))
+
+    window.open_current_in_default_app()
+
+    assert opened == [window._library.root / "b.avi"]  # type: ignore[union-attr]
+
+
+def test_zoom_actions_have_nothing_to_do_on_a_video_page(window: MainWindow) -> None:
+    _open(window, "b.avi")
+    window._update_action_states()
+    assert window._fit_action.isEnabled() is False
+
+    _open(window, "a.jpg")
+    window._update_action_states()
+    assert window._fit_action.isEnabled() is True
+
+
+def test_image_viewers_are_not_offered_for_videos(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """视频不归「预览 / ImageGlass」：它们打不开它，摆出来只会让人以为软件坏了。"""
+    monkeypatch.setattr(window, "_installed", lambda app: True)
+    _open(window, "b.avi")
+    assert window._viewer_ready(apps.PREVIEW) is False
+
+    _open(window, "a.jpg")
+    assert window._viewer_ready(apps.PREVIEW) is True
