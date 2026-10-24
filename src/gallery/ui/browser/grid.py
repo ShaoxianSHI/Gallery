@@ -551,6 +551,20 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
         # 它可能是在量出错列数时建出来的，而滚动目标必须对着真正排出来的版面。
         self._scroll_to = self._centered_scroll_value(self._centered_row, self._layout())
 
+    def _columns_now(self, *, old: bool) -> int:
+        """这套几何下实际的列数：量得到就用量的，量不到就用打算摆的。
+
+        分区式里可能**每一段都短于一行**（按天分组、一天两张），那时量不出来，但排版
+        照样按打算的列数在走 —— 过渡与锚点不该因此整段失效。旧端优先用上一次排过版的
+        列数（``_layout_fix`` 可能刚被这次换宽度清掉，重算会算出新宽度那一档）。
+        """
+        measured = self._first_row_columns()
+        if measured > 0:
+            return measured
+        if old and self._laid_out_columns > 0:
+            return self._laid_out_columns
+        return max(1, self._columns_for(self._layout_width()))
+
     def _first_row_columns(self) -> int:
         """实际排在一行里的**照片**数（标题行不算）；量不出来时返回 0。
 
@@ -597,11 +611,11 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
         drawn_edge = self._delegate.draw_edge
         # 三件都必须在**改几何之前**读：那次延迟重排会把滚动位置夹到已排版那一批的末尾。
         scroll_from = self.verticalScrollBar().value()
-        old_columns = self._first_row_columns()
+        old_columns = self._columns_now(old=True)
         old_layout = self._layout(columns=old_columns, cell=self._cell)
         anchor = self._anchor()
         self._apply_geometry(cell, scroll_from)
-        new_columns = self._first_row_columns()
+        new_columns = self._columns_now(old=False)
         new_layout = self._layout(columns=new_columns, cell=cell)
         scroll_shift = 0
         if old_columns > 0 and new_columns > 0 and old_columns != new_columns:

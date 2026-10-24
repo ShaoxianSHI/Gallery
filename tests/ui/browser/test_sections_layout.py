@@ -385,3 +385,26 @@ def test_a_transition_without_sections_still_reads_the_old_fields() -> None:
     assert transition.old_cell == QSize(200, 220)
     assert transition.new_cell == QSize(160, 180)
     assert transition.reflows
+
+
+def test_every_section_being_short_still_gets_the_zoom_animation(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """按天分组时每一段都可能只有一两张 —— 量不出列数，但切档照样要动。
+
+    这条是「量列数」那个改动的反面：量不出来时若把列数当成 0，整段过渡会被判成
+    「没有旧布局」而直接落位，用户看到的就是一下跳变。
+    """
+    grid, model = make_sectioned_grid(qt_app, tmp_path, counts=(2,) * 8)
+    assert grid._first_row_columns() == 0, "前提：每一段都短于一行，量不出列数"
+
+    before = {
+        row: grid.visualRect(model.index(row, 0)).topLeft() for row in range(model.rowCount())
+    }
+    grid.set_target_edge(THUMBNAIL_SIZES[2])
+    transition = grid._transition
+
+    assert transition is not None, "量不出列数时过渡整段失效了"
+    for row, was in before.items():
+        painted = grid.visualRect(model.index(row, 0)).topLeft() + transition.offset(row, 0.0)
+        assert painted == was, f"第 {row} 行第 0 帧画在了 {painted}，原来在 {was}"
