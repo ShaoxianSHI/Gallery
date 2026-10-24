@@ -577,16 +577,19 @@ def _compact(text: str) -> str:
 # ---- 生成 SQL --------------------------------------------------------------------
 
 
-def _where(conditions: Sequence[SearchCondition]) -> tuple[str, list[object]]:
+def _where(
+    conditions: Sequence[SearchCondition], *, root: Path | None = None
+) -> tuple[str, list[object]]:
     """这些条件 → ``WHERE`` 那一段与它的绑定值。
 
     **三个查询共用它**（``build_query`` / ``build_count_query`` / ``build_match_query``），
     于是「命中」这件事只有一处 —— 整库检索与当前层筛选（ADR 0040 决策 2）不可能给出不一样的答案。
+    ``root`` 只有事件条件用得上：绑定存的是相对库根的键（ADR 0086）。
     """
     clauses: list[str] = []
     values: list[object] = []
     for condition in conditions:
-        clause, bound = _clause(condition)
+        clause, bound = _clause(condition, root=root)
         clauses.append(f"({clause})")
         values.extend(bound)
     if not clauses:
@@ -595,34 +598,41 @@ def _where(conditions: Sequence[SearchCondition]) -> tuple[str, list[object]]:
 
 
 def build_query(
-    conditions: Sequence[SearchCondition], *, limit: int = RESULT_LIMIT
+    conditions: Sequence[SearchCondition],
+    *,
+    limit: int = RESULT_LIMIT,
+    root: Path | None = None,
 ) -> tuple[str, list[object]]:
     """这些条件 → 一条 SQL 与它的绑定值。
 
     **条件一律 ``AND``**（ADR 0026 决策 1），每提交一条就再收窄一层。排序留给界面，这里只保证
     同一批结果的先后稳定，于是 ``PhotoRef`` 造出来时是确定的。
     """
-    where, values = _where(conditions)
+    where, values = _where(conditions, root=root)
     sql = _SELECT + where
     sql += f" ORDER BY p.name LIMIT {max(1, int(limit))}"
     return sql, values
 
 
-def build_count_query(conditions: Sequence[SearchCondition]) -> tuple[str, list[object]]:
+def build_count_query(
+    conditions: Sequence[SearchCondition], *, root: Path | None = None
+) -> tuple[str, list[object]]:
     """同样这些条件的**命中总数**，与 :func:`build_query` 共用同一个 ``WHERE``，两处不可能算出不一样
     的条件。界面拿它说清「共 12345 张，只显示前 5000 张」—— 被截断了这件事用户必须看得见。
     """
-    where, values = _where(conditions)
+    where, values = _where(conditions, root=root)
     return _SELECT_COUNT + where, values
 
 
-def build_match_query(conditions: Sequence[SearchCondition]) -> tuple[str, list[object]]:
+def build_match_query(
+    conditions: Sequence[SearchCondition], *, root: Path | None = None
+) -> tuple[str, list[object]]:
     """这些条件命中了**哪些路径** —— 当前层筛选（ADR 0040 决策 2）要的那一份。
 
     与 :func:`build_query` 差两点，**都别去掉**：**只取路径**（求交只需一个字符串）；**既不排序也
     不截断**（:data:`RESULT_LIMIT` 在这里等于静默丢命中，会表现成「一条都没有」而不是答案）。
     """
-    where, values = _where(conditions)
+    where, values = _where(conditions, root=root)
     return _SELECT_PATHS + where, values
 
 
@@ -662,7 +672,7 @@ def _directory_prefix(path: Path, root: Path) -> str:
     return str(path) if relative is None else relative
 
 
-def _clause(condition: SearchCondition) -> tuple[str, list[object]]:
+def _clause(condition: SearchCondition, *, root: Path | None = None) -> tuple[str, list[object]]:
     """一条条件 → ``(SQL 片段, 绑定值)``。**匹配方式逐字段定死**（ADR 0026 决策 6），唯一一份。
 
     文件名与文本一族走 ``LIKE '%q%'``；相册是 ``= q`` 或 ``LIKE 'q/%'``（含子相册）；文件格式是
@@ -672,7 +682,7 @@ def _clause(condition: SearchCondition) -> tuple[str, list[object]]:
     field = condition.field
     value = condition.value
     if field.is_event:
-        return _event_clause(field, condition)
+        return _event_clause(field, condition, root=root)
     if field.kind in ("name", "text"):
         # 文件名与文本一族用同一条规则 —— 原先写成两支逐字相同的分支。
         return f"{field.column} LIKE ? ESCAPE '{ESCAPE}'", [f"%{like_pattern(value)}%"]
@@ -716,25 +726,34 @@ def _join_column(table: str) -> str:
     return "id" if table == EVENTS_TABLE else "event_id"
 
 
-def _event_clause(field: SearchField, condition: SearchCondition) -> tuple[str, list[object]]:
+def _event_clause(
+    field: SearchField, condition: SearchCondition, *, root: Path | None = None
+) -> tuple[str, list[object]]:
     """事件条件 → ``EXISTS`` 子查询（ADR 0043 决策 6）。
 
     **走 EXISTS 而不是 ``JOIN``**：一张照片可属于几个事件，``JOIN`` 会让它在结果里重复出现，
     而我们要的只是「它是不是属于某个满足条件的事件」。事件库挂在索引那条连接上。
+    **绑定存的是相对库根的键**（ADR 0086），所以拿 ``root`` 拼出的前缀去接回绝对路径。
     """
+    if root is None:
+        raise ValueError("事件条件需要库根才能生成 SQL。")
+    prefix = paths.library_key_prefix(root)
     value = condition.value
     head = (
         f"SELECT 1 FROM {SCHEMA_NAME}.{BINDINGS_TABLE} pe"
         f" JOIN {SCHEMA_NAME}.{field.table} t ON t.{_join_column(field.table)} = pe.event_id"
-        f" WHERE pe.path = p.path AND "
+        f" WHERE p.path = ? || pe.path AND "
     )
     if field.stores_event_kind_id:
-        return f"EXISTS ({head} t.kind = ?)", [EVENT_KIND_VALUES.get(value, value)]
+        return f"EXISTS ({head} t.kind = ?)", [prefix, EVENT_KIND_VALUES.get(value, value)]
     if field.is_numeric:
-        return f"EXISTS ({head} t.{field.column} {condition.comparator or '='} ?)", [float(value)]
+        return (
+            f"EXISTS ({head} t.{field.column} {condition.comparator or '='} ?)",
+            [prefix, float(value)],
+        )
     return (
         f"EXISTS ({head} t.{field.column} LIKE ? ESCAPE '{ESCAPE}')",
-        [f"%{like_pattern(value)}%"],
+        [prefix, f"%{like_pattern(value)}%"],
     )
 
 

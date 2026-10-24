@@ -1067,7 +1067,7 @@ class Library:
         :meth:`search_photos` 那份额代替：那份按 :data:`RESULT_LIMIT` 截断，相交少一条就少一张照片。
         :raises IndexUnavailableError: 索引没落盘，界面据此说清是哪一件。
         """
-        return {Path(key) for key in self.facet_index.match_paths(conditions)}
+        return {Path(key) for key in self.facet_index.match_paths(conditions, root=self._root)}
 
     def search_photos(
         self, conditions: Sequence[SearchCondition], *, limit: int = RESULT_LIMIT
@@ -1078,7 +1078,7 @@ class Library:
             或者 :meth:`index_photos` 那一遍还没跑完 —— 界面据此说清是哪一件，
             而不是让用户对着一个空结果猜。
         """
-        outcome = self.facet_index.search(conditions, limit=limit)
+        outcome = self.facet_index.search(conditions, limit=limit, root=self._root)
         if len(outcome.refs) < outcome.total:
             return outcome  # 截断了：总数只能照索引说的报
         # 没截断时总数可以给准的：索引里可能留着文件早已被删掉的行，逐条问一次还在不在。

@@ -11,8 +11,10 @@ from __future__ import annotations
 import logging
 import sqlite3
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Final
 
+from gallery.core import paths
 from gallery.core.events.kinds import (
     COMMON_FIELDS,
     COVER,
@@ -21,6 +23,7 @@ from gallery.core.events.kinds import (
     EventField,
     EventKind,
 )
+from gallery.core.sql import ESCAPE, like_pattern
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +44,7 @@ BINDINGS_TABLE: Final = "photo_events"
 #:
 #: **升版只做「加列 / 改名 / 一条显式语句」**（ADR 0048 决策 3、ADR 0068 决策 7）：每一步都要在
 #: :data:`_MIGRATIONS` 里补一条，而那一级不许空着（``test_store`` 里有回归测试）。
-SCHEMA_VERSION: Final = 4
+SCHEMA_VERSION: Final = 5
 
 
 #: 一条语句里最多塞多少个绑定变量。``IN (…)`` 与多列插入都按它分批：
@@ -162,8 +165,13 @@ class _RunSql:
     statement: str
 
 
-#: 迁移步里能做的一件事。三种都是**幂等**的，理由见各自的类。
-type _MigrationStep = _AddColumn | _RenameColumn | _RunSql
+@dataclass(frozen=True, slots=True)
+class _RelativizePaths:
+    """把绝对路径改成相对库根的键（ADR 0086）。**要库根，所以语句在运行时才拼**。"""
+
+
+#: 迁移步里能做的一件事。四种都是**幂等**的，理由见各自的类。
+type _MigrationStep = _AddColumn | _RenameColumn | _RunSql | _RelativizePaths
 
 
 #: 迁移步：``_MIGRATIONS[i]`` 是把 ``ev.user_version`` 从 ``i`` 升到 ``i + 1`` 要做的事。
@@ -196,10 +204,13 @@ _MIGRATIONS: Final[tuple[tuple[_MigrationStep, ...], ...]] = (
             " WHERE rating IS NOT NULL"
         ),
     ),
+    (  # 4 → 5：绑定与封面改存相对库根的键，整个文件夹搬走也还指得对（ADR 0086）
+        _RelativizePaths(),
+    ),
 )
 
 
-def _run_step(connection: sqlite3.Connection, step: _MigrationStep) -> None:
+def _run_step(connection: sqlite3.Connection, step: _MigrationStep, root: Path) -> None:
     """做迁移步里的一件事。**认不出的种类就是缺陷**（加了一种却忘了在这里分派）。"""
     if isinstance(step, _AddColumn):
         _add_column(connection, step.table, step.column, step.declaration)
@@ -210,11 +221,30 @@ def _run_step(connection: sqlite3.Connection, step: _MigrationStep) -> None:
             connection.execute(
                 f"ALTER TABLE {SCHEMA_NAME}.{step.table} RENAME COLUMN {step.old} TO {step.new}"
             )
+    elif isinstance(step, _RelativizePaths):
+        _relativize(connection, root)
     else:
         connection.execute(step.statement)
 
 
-def migrate(connection: sqlite3.Connection, version: int) -> None:
+def _relativize(connection: sqlite3.Connection, root: Path) -> None:
+    """把库内那些绝对路径改成相对库根的键。**库外的不动** —— 那是旧记录或明确绑在外面的。"""
+    prefix = paths.library_key_prefix(root)
+    pattern = like_pattern(prefix, "%")
+    offset = len(prefix) + 1
+    connection.execute(
+        f"UPDATE {SCHEMA_NAME}.{BINDINGS_TABLE} SET path = substr(path, ?)"
+        f" WHERE path LIKE ? ESCAPE '{ESCAPE}'",
+        (offset, pattern),
+    )
+    connection.execute(
+        f"UPDATE {SCHEMA_NAME}.events SET {COVER.column} = substr({COVER.column}, ?)"
+        f" WHERE {COVER.column} LIKE ? ESCAPE '{ESCAPE}'",
+        (offset, pattern),
+    )
+
+
+def migrate(connection: sqlite3.Connection, version: int, *, root: Path) -> None:
     """把事件库从 ``version`` 升到 :data:`SCHEMA_VERSION`。
 
     **调用方要已经建好表**，所以顺序是「先建表、后迁移」：旧库补上缺的那几列，新库已经带着最新列、
@@ -223,7 +253,7 @@ def migrate(connection: sqlite3.Connection, version: int) -> None:
     """
     for step in range(max(version, 0), SCHEMA_VERSION):
         for action in _MIGRATIONS[step]:
-            _run_step(connection, action)
+            _run_step(connection, action, root)
 
 
 def _relax_journal_mode_only(connection: sqlite3.Connection) -> None:

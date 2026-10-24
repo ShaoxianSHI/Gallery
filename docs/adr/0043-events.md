@@ -3,7 +3,7 @@
 - 状态：已接受
 - 日期：2026-10-06
 - 修改：[约束 5](README.md) 里「`.gallery/` 中除 `config.toml` 外都是缓存」那一条 —— 事件数据是
-  它的第一个例外
+  它的第一个例外；决策 8 的绑定路径由 [0086](0086-relative-event-bindings.md) 改成相对库根的键
 - 相关 ADR：0009（分组与排序的 facet 机制）、0026（`photos` 文件表与检索）、0038（东西只放两个位置、
   不开 WAL）、0031（元数据编辑：一个对话框只写一次）、0032（拍摄时间与时区）、0040（筛选的两种作用域）
 - 相关代码：`src/gallery/core/events/{kinds,store}.py`、`src/gallery/core/library/index.py`（`attach` 挂钩）、
@@ -135,7 +135,8 @@ EXISTS (… JOIN ev.event_trip t ON t.event_id = pe.event_id
 
 ### 8. 改了路径就要把绑定一起搬 —— 四条路，一个入口
 
-绑定是按 `path` 记的，而 facets / photos 靠 `(size, mtime_ns)` 让 facet 行自动过期、`forget_paths` 清孤儿
+绑定是按相对库根的 `path` 键记的（[0086](0086-relative-event-bindings.md)），而 facets / photos 靠
+`(size, mtime_ns)` 让 facet 行自动过期、`forget_paths` 清孤儿
 行，所以改路径丢索引对用户无感；**事件绑定是用户一份心意，不能这么兜**。纯写我们自己的库，不碰用户
 文件，约束 1 管不到这里。会改路径的操作有四条，全部汇到 `EventStore.follow_moves`（一次事务、一批一起
 搬、重复调用是空操作），而不是 `rename.py` 里那个私有的 `_follow_rename`：

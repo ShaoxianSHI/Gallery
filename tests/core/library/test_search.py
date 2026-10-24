@@ -607,7 +607,7 @@ def test_every_searchable_field_survives_the_real_schema(tmp_path: Path, make_ph
         for field in SEARCH_FIELDS:
             condition = _condition(f"#{field.label} {_sample(field)}")
             assert condition is not None, field.label
-            sql, values = build_query([condition])
+            sql, values = build_query([condition], root=library.root)
             # 列名不对时这里抛的正是 `no such column: …`，读得懂。
             connection.execute(sql, values).fetchall()
 
@@ -643,7 +643,7 @@ def test_the_match_query_survives_the_real_schema(tmp_path: Path, make_photo) ->
         for field in SEARCH_FIELDS:
             condition = _condition(f"#{field.label} {_sample(field)}")
             assert condition is not None, field.label
-            sql, values = build_match_query([condition])
+            sql, values = build_match_query([condition], root=library.root)
             connection.execute(sql, values).fetchall()
 
 
@@ -862,7 +862,7 @@ def test_every_search_field_can_both_parse_and_render() -> None:
         condition = _parse_field(field, text)
         assert condition is not None, f"{field.id} 解析不出「{text}」"
 
-        sql, values = _render_clause(condition)
+        sql, values = _render_clause(condition, root=Path("/库"))
         assert sql and values, f"{field.id} 渲染不出 SQL"
 
         # 判据自身：数值一族与时间一族各只能由该族的字段满足。

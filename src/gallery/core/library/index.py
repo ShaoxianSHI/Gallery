@@ -401,16 +401,21 @@ class FacetIndex:
         return self._connection
 
     def search(
-        self, conditions: Sequence[SearchCondition], *, limit: int = RESULT_LIMIT
+        self,
+        conditions: Sequence[SearchCondition],
+        *,
+        limit: int = RESULT_LIMIT,
+        root: Path | None = None,
     ) -> SearchOutcome:
         """按这些条件检索（SQL 在 :mod:`gallery.core.library.search` 里生成）。
 
+        :param root: 库根。**事件条件靠它把相对键接回绝对路径**（ADR 0086）；没有事件条件时可省。
         :raises IndexUnavailableError: 索引没落盘（库所在卷只读）。**分组与排序在同样情况下照常
             可用** —— 那是把读到的值揣在内存里算的，不需要索引。
         """
         connection = self._require_connection()
-        sql, values = build_query(conditions, limit=limit)
-        count_sql, count_values = build_count_query(conditions)
+        sql, values = build_query(conditions, limit=limit, root=root)
+        count_sql, count_values = build_count_query(conditions, root=root)
         with self._lock:
             try:
                 rows = connection.execute(sql, values).fetchall()
@@ -420,7 +425,9 @@ class FacetIndex:
                 raise IndexUnavailableError("检索没能完成，请再试一次。", detail=str(exc)) from exc
         return SearchOutcome(refs=rows_to_refs(rows), total=total)
 
-    def match_paths(self, conditions: Sequence[SearchCondition]) -> set[str]:
+    def match_paths(
+        self, conditions: Sequence[SearchCondition], *, root: Path | None = None
+    ) -> set[str]:
         """这些条件命中了哪些路径 —— 当前层筛选要的那一份（ADR 0040 决策 2）。
 
         **不截断**（``build_match_query`` 里就没有 ``LIMIT``）：调用方拿它与手上那份列表求交，
@@ -428,7 +435,7 @@ class FacetIndex:
         :raises IndexUnavailableError: 索引没落盘。与 :meth:`search` 同一句提示。
         """
         connection = self._require_connection()
-        sql, values = build_match_query(conditions)
+        sql, values = build_match_query(conditions, root=root)
         with self._lock:
             try:
                 rows = connection.execute(sql, values).fetchall()

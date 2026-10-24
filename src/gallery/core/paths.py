@@ -121,6 +121,33 @@ def relative_posix(root: Path, path: Path, *, resolve: bool = True) -> str | Non
     return relative.as_posix() if relative.parts else ""
 
 
+def library_key(root: Path, path: Path, *, resolve: bool = True) -> str:
+    """库里的一条路径在库文件里存成什么：库内是相对库根的 posix 串，库外原样。
+
+    **前导 ``/`` 是分辨这两档的唯一判据** —— 相对键不会以它开头。事件绑定与撤销日志
+    都按它存，于是整个文件夹搬走或复制之后，键仍然指对文件（ADR 0086）。
+    """
+    if not path.is_absolute():
+        return str(path)
+    relative = relative_posix(root, path, resolve=resolve)
+    return str(path) if relative is None else relative
+
+
+def path_of_library_key(root: Path, key: str) -> Path:
+    """把 :func:`library_key` 存下的键还原成路径。绝对键（旧记录、库外）原样返回。"""
+    path = Path(key)
+    return path if path.is_absolute() else Path(root) / path
+
+
+def library_key_prefix(root: Path) -> str:
+    """索引里的绝对路径去掉这个前缀，就是 :func:`library_key` 的键。**末尾一定带 ``/``**。
+
+    检索要拿它把 ``photos.path`` 与事件绑定放在一起比（``p.path = ? || pe.path``）；
+    前缀只在这一处算，别再让 SQL 自己拼。
+    """
+    return str(root).rstrip("/") + "/"
+
+
 class GuardReason(Enum):
     """:func:`guard_within_root` 拒绝一个路径的三种原因。
 
@@ -350,6 +377,9 @@ __all__ = [
     "legacy_cache_dir",
     "legacy_thumbnail_cache_dir",
     "library_digest",
+    "library_key",
+    "library_key_prefix",
+    "path_of_library_key",
     "places_db_file",
     "relative_posix",
     "resolved",

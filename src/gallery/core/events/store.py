@@ -1,5 +1,5 @@
 """事件库（配置目录下的 ``events.db``）：事件定义与照片↔事件的绑定（ADR 0043）。
-
+**绑定与封面按相对库根的键存**（ADR 0086），整个库搬走或复制之后还指得对。
 **它挂在索引那条 SQLite 连接上**（别名 ``ev``），于是 SQL 层仍是一张库（``#旅行·目的地 京都``
 能走子查询），而生命周期上仍是两个文件、两份 ``user_version``：事件是用户手写的数据，而索引的
 表结构版本一对不上就**整表重建**。三件必须分别处理的事：``user_version`` 与 ``journal_mode``
@@ -13,6 +13,7 @@ import logging
 import sqlite3
 import threading
 from collections.abc import Callable, Iterable, Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Final, cast
 
@@ -130,7 +131,7 @@ def attach(
         for kind in EVENT_KINDS:
             connection.executescript(_kind_schema(kind))
         with connection:
-            migrate(connection, version)
+            migrate(connection, version, root=root)
             connection.execute(f"PRAGMA {SCHEMA_NAME}.user_version = {SCHEMA_VERSION}")
     except (OSError, sqlite3.Error) as exc:
         logger.info("事件库不可用（%s），事件功能这次不参与", exc)
@@ -179,6 +180,48 @@ class EventStore:
         if self.on_change is not None:
             self.on_change()
 
+    # ---- 路径键（ADR 0086）-----------------------------------------------------
+
+    def _key(self, path: Path) -> str:
+        """路径 → 库里存的键。**库外与已经相对的都原样**，于是旧记录与日志里的键都能读。"""
+        return paths.library_key(self._root, path)
+
+    def _path_of(self, key: str) -> Path:
+        return paths.path_of_library_key(self._root, key)
+
+    def _key_text(self, text: str | None) -> str | None:
+        return self._key(Path(text)) if text else None
+
+    def _stored_draft(self, draft: EventDraft) -> EventDraft:
+        """草稿里的封面换成键；其余字段不动 —— 封面是唯一一条路径。"""
+        cover = draft.text(COVER.id)
+        if not cover:
+            return draft
+        return EventDraft(values={**draft.values, COVER.id: self._key(Path(cover))})
+
+    def _stored_changes(
+        self, kind: EventKind, before: Event | None, after: Event | None
+    ) -> tuple[FieldChange, ...]:
+        """journal 的前像与后像：封面存键，其余字段照旧。"""
+        return tuple(
+            FieldChange(
+                tag=change.tag,
+                before=self._key_text(change.before),
+                after=self._key_text(change.after),
+            )
+            if change.tag == COVER.id
+            else change
+            for change in _field_changes(kind, before, after)
+        )
+
+    def _stored_before(self, changes: tuple[FieldChange, ...]) -> dict[str, str | None]:
+        """撤销日志里的原值 → 能直接写库的值。**旧记录里的封面是绝对路径**，一并归成键。"""
+        before = {change.tag: change.before for change in changes}
+        cover = before.get(COVER.id)
+        if cover:
+            before[COVER.id] = self._key(Path(cover))
+        return before
+
     @property
     def available(self) -> bool:
         """事件库这次用不用得上。"""
@@ -211,9 +254,14 @@ class EventStore:
                     # 一条看不懂的记录不该让整份清单打不开。
                     logger.info("跳过一条认不出的事件（kind=%s）", common["kind"])
                     continue
-                events.append(
-                    _event_from_common(kind, common, self._extra_row(kind, int(common["id"])))
-                )
+                event = _event_from_common(kind, common, self._extra_row(kind, int(common["id"])))
+                # 封面在库里是键，界面那一层一律拿绝对路径。
+                cover = event.values.get(COVER.id)
+                if isinstance(cover, str) and cover:
+                    event = replace(
+                        event, values={**event.values, COVER.id: str(self._path_of(cover))}
+                    )
+                events.append(event)
             return tuple(events)
 
     def _extra_row(self, kind: EventKind, event_id: int) -> list[SqlValue]:
@@ -258,8 +306,9 @@ class EventStore:
             f" ORDER BY e.started_on DESC, e.id DESC"
         )
         found: dict[Path, list[EventRef]] = {}
+        keys = [self._key(path) for path in paths]
+        wanted = dict(zip(keys, paths, strict=True))
         with self._lock:
-            keys = [str(path) for path in paths]
             for start in range(0, len(keys), CHUNK):
                 chunk = keys[start : start + CHUNK]
                 rows = connection.execute(
@@ -267,13 +316,16 @@ class EventStore:
                 ).fetchall()
                 for row in rows:
                     kind_id = str(row[2])
-                    found.setdefault(Path(row[0]), []).append(
+                    key = str(row[0])
+                    photo = wanted[key] if key in wanted else self._path_of(key)
+                    cover = row[5]
+                    found.setdefault(photo, []).append(
                         EventRef(
                             id=int(row[1]),
                             kind=kind_id,
                             title=str(row[3]),
                             started_on=row[4],
-                            cover_path=row[5],
+                            cover_path=str(self._path_of(str(cover))) if cover else None,
                             values=_event_field_values(row, kind_id),
                         )
                     )
@@ -288,7 +340,7 @@ class EventStore:
             rows = connection.execute(
                 f"SELECT path FROM {SCHEMA_NAME}.photo_events WHERE event_id = ?", (event_id,)
             ).fetchall()
-        return tuple(Path(row[0]) for row in rows)
+        return tuple(self._path_of(str(row[0])) for row in rows)
 
     def all_bindings(self) -> tuple[Orphan, ...]:
         """全部绑定，**带上事件名**（孤儿检查与它的提示框要的就是这两样）。
@@ -307,7 +359,12 @@ class EventStore:
                 f" ORDER BY pe.path"
             ).fetchall()
         return tuple(
-            Orphan(path=Path(row[0]), event_id=int(row[1]), event_title=str(row[2])) for row in rows
+            Orphan(
+                path=self._path_of(str(row[0])),
+                event_id=int(row[1]),
+                event_title=str(row[2]),
+            )
+            for row in rows
         )
 
     # ---- 写 ------------------------------------------------------------------
@@ -323,6 +380,7 @@ class EventStore:
             raise ValueError(f"认不出的事件类型：{kind_id}")
         connection = self._require()
         stamp = _now()
+        stored = self._stored_draft(draft)
         with self._lock, connection:
             written = (
                 "kind",
@@ -333,10 +391,10 @@ class EventStore:
             cursor = connection.execute(
                 f"INSERT INTO {SCHEMA_NAME}.events ({', '.join(written)})"
                 f" VALUES ({', '.join(['?'] * len(written))})",
-                (kind.id, *_field_values(COMMON_FIELDS, draft), stamp, stamp),
+                (kind.id, *_field_values(COMMON_FIELDS, stored), stamp, stamp),
             )
             event_id = int(cursor.lastrowid or 0)
-            self._write_extra(connection, kind, event_id, draft)
+            self._write_extra(connection, kind, event_id, stored)
         created = self.event(event_id)
         assert created is not None
         self._changed()
@@ -357,13 +415,14 @@ class EventStore:
         if kind is None:
             raise ValueError(f"认不出的事件类型：{kind_id}")
         connection = self._require()
+        stored = self._stored_draft(draft)
         assignments = ", ".join(f"{field.column} = ?" for field in COMMON_FIELDS)
         with self._lock, connection:
             connection.execute(
                 f"UPDATE {SCHEMA_NAME}.events SET {assignments}, modified_at = ? WHERE id = ?",
-                (*_field_values(COMMON_FIELDS, draft), _now(), event_id),
+                (*_field_values(COMMON_FIELDS, stored), _now(), event_id),
             )
-            self._write_extra(connection, kind, event_id, draft)
+            self._write_extra(connection, kind, event_id, stored)
         updated = self.event(event_id)
         assert updated is not None
         # 逐字段一样就不记：没有改动就没什么可撤的，而「记一条改回同样的值」只会在栈上白占一格。
@@ -439,7 +498,7 @@ class EventStore:
             {
                 "event_id": anchor.id,
                 "kind": kind.id,
-                "bindings": [str(path) for path in bindings],
+                "bindings": [self._key(path) for path in bindings],
             },
             ensure_ascii=False,
         )
@@ -448,7 +507,7 @@ class EventStore:
             source=paths.events_file(self._root),
             target=paths.events_file(self._root),
             result=RESULT_OK,
-            changes=_field_changes(kind, before, after),
+            changes=self._stored_changes(kind, before, after),
             payload=payload,
         )
         return append_record(self._root, record)
@@ -482,7 +541,7 @@ class EventStore:
     ) -> Event:
         """把字段写回 ``changes`` 里的原值（撤销一次改动）。"""
         connection = self._require()
-        before = {change.tag: change.before for change in changes}
+        before = self._stored_before(changes)
         assignments = ", ".join(f"{field.column} = ?" for field in COMMON_FIELDS)
         extra_columns = ", ".join(field.column for field in kind.fields)
         with self._lock, connection:
@@ -515,7 +574,7 @@ class EventStore:
         id 显式写回是安全的：``AUTOINCREMENT`` 保证它不会被后来新建的事件占走。
         """
         connection = self._require()
-        before = {change.tag: change.before for change in changes}
+        before = self._stored_before(changes)
         columns = (
             "id",
             "kind",
@@ -577,7 +636,7 @@ class EventStore:
         with self._lock:
             row = connection.execute(
                 f"SELECT 1 FROM {SCHEMA_NAME}.{BINDINGS_TABLE} WHERE event_id = ? AND path = ?",
-                (event_id, str(photo)),
+                (event_id, self._key(photo)),
             ).fetchone()
         return row is not None
 
@@ -595,7 +654,7 @@ class EventStore:
         with self._lock, connection:
             connection.execute(
                 f"UPDATE {SCHEMA_NAME}.events SET {COVER.column} = ? WHERE id = ?",
-                (str(photo) if photo is not None else None, event_id),
+                (self._key(photo) if photo is not None else None, event_id),
             )
         updated = self.event(event_id)
         assert updated is not None
@@ -612,7 +671,7 @@ class EventStore:
     def bind(self, paths: Iterable[Path], event_id: int) -> int:
         """把照片记进这个事件，返回新记进去几张（已经记着的算没动）。"""
         connection = self._require()
-        keys = [str(path) for path in paths]
+        keys = [self._key(path) for path in paths]
         written = 0
         with self._lock, connection:
             for start in range(0, len(keys), CHUNK):
@@ -636,7 +695,7 @@ class EventStore:
         —— 封面恒为绑定里的一张（ADR 0048 决策 1），少了这一步卡片会指向一张不属于这次事件的照片。
         """
         connection = self._require()
-        keys = [str(path) for path in paths]
+        keys = [self._key(path) for path in paths]
         removed = 0
         cleared = 0
         with self._lock, connection:
@@ -691,7 +750,7 @@ class EventStore:
         connection = self._live_connection()
         if connection is None:
             return 0
-        keys = [str(path) for path in paths]
+        keys = [self._key(path) for path in paths]
         removed = 0
         cleared = 0
         with self._lock, connection:
@@ -718,15 +777,15 @@ class EventStore:
         connection = self._live_connection()
         if connection is None:
             return 0
-        pairs = [(Path(old), Path(new), is_dir) for old, new, is_dir in moves]
+        pairs = [(self._key(Path(old)), self._key(Path(new)), is_dir) for old, new, is_dir in moves]
+        pairs = [pair for pair in pairs if pair[0]]
         if not pairs:
             return 0
         moved = 0
         covers = 0
         with self._lock, connection:
-            for old, new, is_dir in pairs:
+            for old_prefix, new_prefix, is_dir in pairs:
                 if is_dir:
-                    old_prefix, new_prefix = str(old), str(new)
                     parameters: tuple[object, ...] = (
                         new_prefix,
                         len(old_prefix) + 1,
@@ -744,10 +803,10 @@ class EventStore:
                     cursor = connection.execute(
                         f"UPDATE OR REPLACE {SCHEMA_NAME}.{BINDINGS_TABLE}"
                         f" SET path = ? WHERE path = ?",
-                        (str(new), str(old)),
+                        (new_prefix, old_prefix),
                     )
                     covers += self._move_covers(
-                        connection, is_dir=False, parameters=(str(new), str(old))
+                        connection, is_dir=False, parameters=(new_prefix, old_prefix)
                     )
                 moved += max(cursor.rowcount, 0)
         # 搬了封面就要作废那份清单缓存（理由见 :meth:`_changed`）。

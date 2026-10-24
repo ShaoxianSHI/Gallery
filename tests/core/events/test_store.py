@@ -406,6 +406,65 @@ def test_the_movie_rating_migration_rounds_old_values_into_the_five_buttons(
         connection.close()
 
 
+def _open_a_v4_events_db(root: Path) -> Path:
+    """造一份**版本 4 的事件库**：绑定与封面还是绝对路径（ADR 0086 之前）。"""
+    path = paths.events_file(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    inner = root / "京都" / "海边-01.jpg"
+    outside = Path("/库外/a.jpg")
+    legacy = sqlite3.connect(path)
+    try:
+        prefix = f"{schema.SCHEMA_NAME}."
+        legacy.executescript(_EVENTS_SCHEMA.replace(prefix, ""))
+        legacy.executescript(_BINDINGS_SCHEMA.replace(prefix, ""))
+        legacy.execute(
+            f"INSERT INTO events (kind, title, created_at, modified_at, {COVER.column})"
+            " VALUES ('trip', '京都五日', 1, 1, ?)",
+            (str(inner),),
+        )
+        legacy.executemany(
+            "INSERT INTO photo_events (path, event_id) VALUES (?, 1)",
+            [(str(inner),), (str(outside),)],
+        )
+        legacy.execute("PRAGMA user_version = 4")
+        legacy.commit()
+    finally:
+        legacy.close()
+    return path
+
+
+def test_the_path_migration_makes_in_library_paths_relative(tmp_path: Path) -> None:
+    """4 → 5 那一步：库内的绝对路径改成键，**库外的不动**（那是旧记录或明确绑在外面的）。
+
+    这条迁移只改值、不重建表：事件与绑定一条都不能少，读出来也仍然是原来的绝对路径。
+    """
+    _open_a_v4_events_db(tmp_path)
+
+    connection = sqlite3.connect(tmp_path / "index.db", check_same_thread=False)
+    try:
+        store = store_module.attach(connection, threading.Lock(), root=tmp_path)
+        assert store is not None
+        keys = {
+            str(row[0])
+            for row in connection.execute(
+                f"SELECT path FROM {store_module.SCHEMA_NAME}.{store_module.BINDINGS_TABLE}"
+            )
+        }
+        assert keys == {"京都/海边-01.jpg", "/库外/a.jpg"}
+        cover = connection.execute(
+            f"SELECT {COVER.column} FROM {store_module.SCHEMA_NAME}.{store_module.EVENTS_TABLE}"
+        ).fetchone()[0]
+        assert cover == "京都/海边-01.jpg"
+        assert set(store.photos_of_event(1)) == {
+            tmp_path / "京都" / "海边-01.jpg",
+            Path("/库外/a.jpg"),
+        }
+        event = store.event(1)
+        assert event is not None and event.cover_path == tmp_path / "京都" / "海边-01.jpg"
+    finally:
+        connection.close()
+
+
 def test_a_newer_events_file_is_left_alone_instead_of_rebuilt(tmp_path: Path) -> None:
     """库里的版本比这份程序新（用户降级了应用）时**不挂事件库，也不删它**。
 

@@ -136,6 +136,19 @@ def test_relative_posix_settles_a_symlinked_root(tmp_path: Path) -> None:
     assert paths.relative_posix(real, link / "旅行", resolve=False) is None
 
 
+def test_library_keys_round_trip_and_keep_outside_paths_absolute(tmp_path: Path) -> None:
+    """库内是相对键、库外原样绝对 —— 读取靠前导 ``/`` 分辨这两档（ADR 0086）。"""
+    root = tmp_path / "库"
+    inside = root / "京都" / "a.jpg"
+    outside = tmp_path / "别处" / "b.jpg"
+
+    assert paths.library_key(root, inside) == "京都/a.jpg"
+    assert paths.path_of_library_key(root, "京都/a.jpg") == inside
+    assert paths.library_key(root, outside) == str(outside)
+    assert paths.path_of_library_key(root, str(outside)) == outside
+    assert str(inside) == paths.library_key_prefix(root) + "京都/a.jpg"
+
+
 def test_the_guard_really_refuses_the_library_root(tmp_path: Path) -> None:
     """``allow_root=False`` 是**禁止**，不是一个什么都不检查的静默返回。
 
