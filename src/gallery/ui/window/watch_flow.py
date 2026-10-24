@@ -118,7 +118,10 @@ class WatchFlowMixin:
     def _on_watch_failed(self, message: str) -> None:
         """监听本身出问题不该挡住浏览，但界面从此不是最新的，得说出来。"""
         logger.info("文件监听出错：%s", message)
-        self._show_banner(f"{message.rstrip('。')}。界面暂时不会自动更新，重新打开这个库即可恢复。")
+        self._show_banner(
+            f"{message.rstrip('。')}。界面暂时不会自动更新，按 ⌘R 可以重新扫描这一层；"
+            "重新打开这个库可恢复自动更新。"
+        )
 
     def _apply_watch_changes(self, library: Library, changes: Sequence[LibraryChange]) -> None:
         """按当前这一层的形状，把一批变化落到网格、内存缓存与索引上。"""

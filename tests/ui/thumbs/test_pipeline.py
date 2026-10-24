@@ -199,6 +199,26 @@ def test_an_album_whose_every_photo_fails_says_why(
     runner.wait_for_done(2000)
 
 
+def test_forget_all_makes_a_previously_failed_photo_retry(
+    pipeline: tuple[ThumbnailPipeline, TaskRunner],
+    photo: PhotoRef,
+    wait_for: Callable[..., bool],
+) -> None:
+    """刷新要能重试「读不出来」：云盘上半截的照片下完之后不该永远停在占位图上。"""
+    thumbs, runner = pipeline
+    got = _collect(thumbs)
+    thumbs._failed[photo.path] = 64
+    thumbs.set_window([photo], target_edge=64)
+    runner.wait_for_done(2000)
+    assert got == [], "前提：失败结论还在的时候这一格不该再解码"
+
+    thumbs.forget_all()
+    thumbs.set_window([photo], target_edge=64)
+
+    assert wait_for(lambda: bool(got), timeout=DEFAULT_TIMEOUT_SECONDS), "忘掉结论之后没有重试"
+    runner.wait_for_done(2000)
+
+
 def test_a_stale_result_does_not_release_the_new_jobs_slot(qt_app, tmp_path: Path) -> None:
     """**旧一代的迟到结果不许摘掉新一代的进行中登记。**
 

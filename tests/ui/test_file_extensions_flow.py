@@ -1,4 +1,4 @@
-"""视图菜单里的「显示文件扩展名」：摆在元数据信息上面，立刻生效，并且不碰改名的输入框。
+"""显示菜单里的「显示文件扩展名」：摆在元数据信息上面，立刻生效，并且不碰改名的输入框。
 
 隐藏扩展名只是**显示**：排序仍按完整名字，改名时输入框里也必须是完整名字 —— 否则用户
 直接回车就把 ``.jpg`` 改没了（那是在改用户的文件）。
@@ -47,10 +47,10 @@ def window(
 
 def _view_menu(window: MainWindow):
     for action in window.menuBar().actions():
-        if action.text() == "视图":
+        if action.text() == "显示":
             assert action.menu() is not None
             return action.menu()
-    raise AssertionError("菜单栏里没有「视图」")
+    raise AssertionError("菜单栏里没有「显示」")
 
 
 def _display(window: MainWindow, row: int) -> object:

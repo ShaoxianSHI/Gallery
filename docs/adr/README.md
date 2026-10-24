@@ -114,3 +114,4 @@
 | [0084](0084-movie-rating-in-five-buttons.md) | 影片评分改成与演出一致的 1–5 选择按钮 | 已接受 |
 | [0085](0085-douyin-and-tiktok-sources.md) | 影片导入接上抖音与 TikTok：短链在抓取时才展开 | 已接受 |
 | [0086](0086-relative-event-bindings.md) | 事件绑定与封面改存相对库根的键：整个库搬走或复制之后关联还在 | 已接受 |
+| [0087](0087-refresh-current-level.md) | ⌘R 在没选中东西时刷新当前层，并让索引重新对账 | 已接受 |

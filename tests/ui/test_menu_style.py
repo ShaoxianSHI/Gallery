@@ -88,7 +88,7 @@ def test_menu_bar_menus_share_window_background(window: MainWindow) -> None:
 
     menus = (
         _bar_menu(window, "文件"),
-        _bar_menu(window, "视图"),
+        _bar_menu(window, "显示"),
         _submenu(_bar_menu(window, "文件"), "最近打开"),
     )
     for menu in menus:
@@ -789,16 +789,16 @@ def test_menu_bar_menus_are_left_native(window: MainWindow) -> None:
     """菜单栏那边**不该**被右键菜单的样式波及。
 
     ``QAction`` 是全局复用的，``some_action.menu()`` 可能指向菜单栏里的子菜单；递归时若不认
-    「这个子菜单的 ``menuAction()`` 是不是当前这条 action」，「视图 → 排序」会被顺带改掉。
+    「这个子菜单的 ``menuAction()`` 是不是当前这条 action」，「显示 → 排序」会被顺带改掉。
     """
     window._stack.setCurrentWidget(window._grid_page)
     row = window._model.row_of_path(window._library.root / "一张.jpg")
     assert row >= 0
     assert window.context_menu_for(row) is not None
 
-    for title in ("文件", "编辑", "视图"):
+    for title in ("文件", "编辑", "显示"):
         assert _bar_menu(window, title).styleSheet() == ""
-    view = _bar_menu(window, "视图")
+    view = _bar_menu(window, "显示")
     for title in ("浏览方式", "分组", "排序", "缩略图大小"):
         assert _submenu(view, title).styleSheet() == ""
 

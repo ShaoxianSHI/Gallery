@@ -479,6 +479,12 @@ class MainWindow(
         self._clear_cache_action = QAction("清空缩略图缓存", self)
         self._clear_cache_action.triggered.connect(self.clear_thumbnail_cache)
 
+        # **⌘R 的两个主人**：选中一格时归「重命名」，没选中时归「刷新」（ADR 0087）。
+        # 两条同时可用会被 Qt 判成歧义快捷键、两条都不触发，所以可用性必须互斥。
+        self._refresh_action = QAction("刷新", self)
+        self._refresh_action.setShortcut(QKeySequence("Ctrl+R"))
+        self._refresh_action.triggered.connect(self.refresh_current_level)
+
         # ⇧⌘N：与访达一致（ADR 0022）。建完立刻进行内重命名，因此**不进后台线程** —— 一次 mkdir。
         self._new_album_action = QAction("新建相册", self)
         self._new_album_action.setShortcut(QKeySequence("Ctrl+Shift+N"))
@@ -632,8 +638,11 @@ class MainWindow(
         edit_menu.addSeparator()
         edit_menu.addAction(self._undo_action)
 
-        view_menu = self.menuBar().addMenu("视图")
-        # **「上一级」一条管两处**（大图页 / 网格页），所以视图菜单里没有第二条同键的命令。
+        view_menu = self.menuBar().addMenu("显示")
+        # 刷新单独一组摆最上面：它重新读的是磁盘，与下面「怎么摆」的命令不是一类。
+        view_menu.addAction(self._refresh_action)
+        view_menu.addSeparator()
+        # **「上一级」一条管两处**（大图页 / 网格页），所以这一栏里没有第二条同键的命令。
         view_menu.addAction(self._up_action)
         # 挨着「上一级」：两者是同一族的「往回退」，但一个退位置、一个退条件（ADR 0040 决策 11）。
         view_menu.addAction(self._pop_condition_action)
@@ -675,6 +684,20 @@ class MainWindow(
         theme.ensure_installed()
 
     # ---- 每一条命令此刻能不能按 ----------------------------------------------
+
+    def _can_refresh(self, grid_rows: Sequence[int], *, idle: bool) -> bool:
+        """⌘R 此刻归不归「刷新」—— 归了重命名就按不动，反之亦然。
+
+        没有选中任何一格才归刷新；搜索结果是查询、日历格是那一天，都不是「当前文件目录」。
+        大图页不刷新：⌘R 在那里改的是标题栏那一行。
+        """
+        if not idle or self._library is None:
+            return False
+        if self._search_frame is not None or self._drill_photos is not None:
+            return False
+        if self._on_calendar_page():
+            return True
+        return self._on_grid_page() and not grid_rows
 
     def _update_action_states(self) -> None:
         self._update_navigation_actions()
@@ -729,6 +752,8 @@ class MainWindow(
         # **网格选区整轮只问一次** —— `selected_rows()` 要为每一个选中项新建一个 `QModelIndex`
         # 再收成列表（三万张全选时一次 15.4 ms），问两遍是纯重复劳动。
         grid_rows = self._grid.selected_rows() if in_grid else []
+        # 刷新与重命名共用 ⌘R，可用性必须互斥（见 `_can_refresh`）。
+        self._refresh_action.setEnabled(self._can_refresh(grid_rows, idle=idle))
         entries = [] if in_calendar else self._selected_entries(grid_rows if in_grid else None)
         focus_row = -1 if in_calendar else self._focus_row()
         # 「改名」只对磁盘上的**某一个**东西成立（组卡片改不了名，一次只改一条，ADR 0009 / 0004）。

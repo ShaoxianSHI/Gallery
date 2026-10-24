@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import datetime
+import os
 import sqlite3
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -16,6 +17,7 @@ import pytest
 from gallery.core import paths
 from gallery.core.errors import IndexUnavailableError
 from gallery.core.events.store import SCHEMA_NAME
+from gallery.core.library import scanner
 from gallery.core.library.facade import Library
 from gallery.core.library.index import FacetIndex
 from gallery.core.library.photos import FolderRef, PhotoRef
@@ -452,6 +454,37 @@ def test_a_changed_file_gets_a_fresh_row(tmp_path: Path, make_photo) -> None:
 
     assert library.remember_photos(changed) == 1
     assert library.index_photos() == 0
+
+
+def test_a_removed_photo_leaves_the_index(tmp_path: Path, make_photo) -> None:
+    """对账要**两个方向都对**：磁盘上已经删掉的那一行也得走，否则搜索到一张打不开的照片。"""
+    library = _library(tmp_path, make_photo)
+    library.index_photos()
+    (library.root / "海边-01.jpg").unlink()
+
+    assert library.index_photos() == 0
+    assert library.indexed_photos() == 3
+    assert library.search_photos([_condition("海边-01")]).refs == []  # type: ignore[list-item]
+
+
+def test_a_scan_with_unreadable_directories_does_not_prune(
+    tmp_path: Path, make_photo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """「没看见」不等于「已经没了」：跳过目录时保留索引行，别把外接盘掉线当成用户删了照片。"""
+    library = _library(tmp_path, make_photo)
+    library.index_photos()
+    blocked = library.root / "旅行" / "2023"
+    real_scandir = scanner.os.scandir
+
+    def fake_scandir(path: str | os.PathLike[str]) -> Iterator[os.DirEntry[str]]:
+        if Path(path) == blocked:
+            raise PermissionError(13, "Permission denied")
+        return real_scandir(path)
+
+    monkeypatch.setattr(scanner.os, "scandir", fake_scandir)
+
+    assert library.index_photos() == 0
+    assert library.indexed_photos() == 4, "无权限的目录仍算「没看见」，不该删它的行"
 
 
 def test_album_search_includes_sub_albums(tmp_path: Path, make_photo) -> None:

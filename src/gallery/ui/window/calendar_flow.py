@@ -231,6 +231,8 @@ class CalendarFlowMixin:
             return
         refs = _photos_on_this_level(self._model.entries())
         if not refs:
+            # **空也要报**：刷新之后整库都没了（或筛没了）时，不报等于日历还挂着上一批。
+            self._calendar_page.set_photos([], {})
             return
         generation = self._generation
 

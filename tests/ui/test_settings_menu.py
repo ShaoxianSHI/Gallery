@@ -79,7 +79,7 @@ def test_settings_is_the_last_top_level_menu(window: MainWindow) -> None:
     assert [action.text() for action in window.menuBar().actions()] == [
         "文件",
         "编辑",
-        "视图",
+        "显示",
         "设置",
     ]
 

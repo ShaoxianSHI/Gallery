@@ -204,6 +204,7 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
             "_banner_text",
             "_browse_mode",
             "_calendar_page",
+            "_cancel_job",
             "_cancel_tier",
             "_clear_index_notice",
             "_confirm_orphan_cleanup",
@@ -216,6 +217,7 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
             "_filters",
             "_finish_job",
             "_focus_state",
+            "_forget_indexed_root",
             "_generation",
             "_group_facet",
             "_group_view",
@@ -235,6 +237,7 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
             "_place_pass_roots",
             "_preview_cache",
             "_recent_menu",
+            "_reenter_group_later",
             "_refresh_thumbnail_window",
             "_refresh_undo_label",
             "_reload_level",
@@ -725,7 +728,9 @@ def test_the_widest_mixins_keep_their_ceiling() -> None:
     """
     ceiling = {
         # 73 → 74：切库 / 关库要先收掉放映（`stop_slideshow`），否则旧快照会去新模型里找行号。
-        "window/library_flow.py:LibraryFlowMixin": 74,
+        # 74 → 77：⌘R 刷新（ADR 0087）要掐掉旧索引那一遍、让索引重新对账，分组视图里还要
+        # 弹回上一层再回到同一个组 —— 三样都属于别的流程，只能从窗口上要。
+        "window/library_flow.py:LibraryFlowMixin": 77,
         # 56 → 57：「编辑事件…」那一行让这一间多要一个 `edit_photo_event_menu`
         # （事件清单按哪张照片算归 EventFlowMixin，这一间只把菜单摆进去）。
         "window/context_menu_flow.py:ContextMenuFlowMixin": 57,

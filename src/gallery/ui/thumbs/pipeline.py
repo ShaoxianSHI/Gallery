@@ -120,6 +120,15 @@ class ThumbnailPipeline(QObject):
         self._empty.clear()
         self._covers.clear()
 
+    def forget_all(self) -> None:
+        """把所有「读不出来 / 是空相册」的结论丢掉，让每一格重新试一次（刷新用）。
+
+        **不动进行中的任务**：它们回来时模型可能已经换了，``set_thumbnail`` 自己会按路径丢弃。
+        """
+        self._failed.clear()
+        self._empty.clear()
+        self._covers.clear()
+
     def forget(self, paths: Iterable[Path]) -> None:
         """这些路径上的文件变了：忘掉「读不出来 / 是空相册」的结论。
 

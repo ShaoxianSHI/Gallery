@@ -8,6 +8,9 @@ Esc 同时还管着「行内重命名取消」，所以这里把两者的边界�
 2. 改到一半按 Esc 只取消改名，不会顺手跳到上一层；
 3. 连按 Esc，目录会一层层退到库根；到了根上它改成取消选中，而不是按下去什么也不发生。
 
+**⌘R 按选区分工：** 选中一格时是重命名，没有选中任何一格时是刷新当前层（ADR 0087）。
+两条命令共用同一个键，所以可用性必须互斥 —— 同时启用时 Qt 会判成歧义快捷键、两条都不触发。
+
 **缩略图一档一档挪：⇧⌘↑ / ⇧⌘↓。** 捏合与 ⌘+滚轮要手搭在触控板上，这两条给的是键盘那一路。
 它们只作用在**网格**上：大图页里 ⌘+ / ⌘- 才是缩放，那边只有倍率、没有「档」。
 
@@ -121,7 +124,7 @@ def test_escape_leaves_the_detail_view_first(
 def test_the_view_menu_has_exactly_one_escape_command(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
 ) -> None:
-    """「视图」菜单里**只有一条 `Esc` 命令**；退得动时它叫「上一级」。
+    """「显示」菜单里**只有一条 `Esc` 命令**；退得动时它叫「上一级」。
 
     **守卫的是「同一个键不能有两个主人」**：合并不是省了一行菜单，而是因为大图页退一层与
     网格页退一层本来就是同一件事（栈上都是弹顶帧，ADR 0041 决策 1）。退不动时它改名
@@ -134,7 +137,7 @@ def test_the_view_menu_has_exactly_one_escape_command(
         view_menu = next(
             action.menu()
             for action in window.menuBar().actions()
-            if action.text() == "视图" and action.menu() is not None
+            if action.text() == "显示" and action.menu() is not None
         )
 
         escape_rows = [
@@ -509,13 +512,13 @@ def test_thumbnail_size_keys_live_next_to_the_size_submenu(
         view_menu = next(
             action.menu()
             for action in window.menuBar().actions()
-            if action.text() == "视图" and action.menu() is not None
+            if action.text() == "显示" and action.menu() is not None
         )
 
         labels = [action.text() for action in view_menu.actions()]
         assert labels.count("放大缩略图") == 1
         assert labels.count("缩小缩略图") == 1
-        # 「缩略图大小」子菜单在「视图」里只出现一次（右键菜单那一份是现搭的，不在这里）。
+        # 「缩略图大小」子菜单在「显示」里只出现一次（右键菜单那一份是现搭的，不在这里）。
         assert labels.count("缩略图大小") == 1
         assert labels.index("缩小缩略图") < labels.index("缩略图大小")
     finally:

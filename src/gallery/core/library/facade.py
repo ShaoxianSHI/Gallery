@@ -1009,7 +1009,10 @@ class Library:
         return self.facet_index.store_photos(refs, root=self._root)
 
     def _iter_photo_batches(
-        self, batch_size: int, should_cancel: Callable[[], bool] | None
+        self,
+        batch_size: int,
+        should_cancel: Callable[[], bool] | None,
+        report: ScanReport | None = None,
     ) -> Iterator[tuple[list[PhotoRef], int]]:
         """按 ``batch_size`` 成批产出照片，顺带给出「到此为止扫过多少张」，两条整库遍历共用。
 
@@ -1017,7 +1020,7 @@ class Library:
         """
         batch: list[PhotoRef] = []
         scanned = 0
-        for ref in self.iter_photos(should_cancel=should_cancel):
+        for ref in self.iter_photos(should_cancel=should_cancel, report=report):
             scanned += 1
             batch.append(ref)
             if len(batch) < batch_size:
@@ -1038,17 +1041,21 @@ class Library:
     ) -> int:
         """把整个库的照片与索引的文件表**对一遍**，返回新写了多少行。
 
-        **是「对账」不是「首次建表」**：应用没开着时外部加进来的照片、监听器没来得及写的，都靠它
-        补上 —— 只认「表空不空」的话，表里有一行之后就再也不补，那些照片在搜索里永远不存在。幂等
-        （``(大小, 修改时间)`` 对得上就不写），所以对一遍只花一次遍历、几乎不写。
+        **两个方向都对**：补上应用没开着时加进来的照片，也删掉已经不在的 —— 后者只在这次
+        扫描没有跳过任何目录 / 文件时才做（「没看见」可能是权限或外接盘掉线，不等于没了）。
         ``on_work`` 只在真的写了行时叫一次；``on_progress`` 是已扫过多少。
         """
         index = self.facet_index
+        report = ScanReport()
+        live: list[Path] = []
         written = 0
         announced = False
         scanned = 0
-        for batch, scanned in self._iter_photo_batches(PHOTO_INDEX_BATCH, should_cancel):
+        for batch, scanned in self._iter_photo_batches(
+            PHOTO_INDEX_BATCH, should_cancel, report=report
+        ):
             newly = index.store_photos(batch, root=self._root)
+            live.extend(ref.path for ref in batch)
             written += newly
             if not announced and newly:
                 announced = True
@@ -1058,6 +1065,8 @@ class Library:
                 on_progress(scanned)
         if on_progress is not None:
             on_progress(scanned)
+        if (should_cancel is None or not should_cancel()) and not report.has_issues:
+            index.prune(live)
         return written
 
     def matching_paths(self, conditions: Sequence[SearchCondition]) -> set[Path]:

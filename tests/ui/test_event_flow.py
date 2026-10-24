@@ -467,7 +467,7 @@ def _groups(window: MainWindow) -> list[GroupRef]:
 
 def test_the_group_menu_offers_each_kinds_fields(qt_app: QApplication, window: MainWindow) -> None:
     """「分组 → 旅行 / 演出 / 影片」，每一层右侧是这一类自己的字段（与事件面板同源）。"""
-    view = next(action.menu() for action in window.menuBar().actions() if action.text() == "视图")
+    view = next(action.menu() for action in window.menuBar().actions() if action.text() == "显示")
     group_menu = next(
         menu
         for menu in (action.menu() for action in view.actions())
