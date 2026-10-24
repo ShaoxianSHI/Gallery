@@ -84,7 +84,7 @@ DEFAULT_GROUP_LAYOUT: Final = GROUP_LAYOUT_CARDS
 _CONFIG_HEADER: Final = (
     "# Gallery 库级配置。\n"
     "# 这是配置目录中唯一建议纳入版本控制的文件，其余内容都是可重建的缓存。\n"
-    "# 字段含义见 README.md；改坏不会损坏照片，删掉本文件会恢复默认值。\n"
+    "# 改坏不会损坏照片，删掉本文件会恢复默认值。\n"
 )
 
 
