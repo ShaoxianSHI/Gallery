@@ -55,3 +55,22 @@ def test_pypinyin_data_files_are_included(tmp_path: Path) -> None:
     command = module.build_command(tmp_path / "Gallery.icns", tmp_path / "dist")
 
     assert "--include-package-data=pypinyin" in command
+
+
+def test_the_qt_multimedia_plugins_are_included(tmp_path: Path) -> None:
+    """Qt6 的多媒体后端目录叫 multimedia（Nuitka 的 sensible 名单里只有 Qt5 的 mediaservice）。
+
+    不点名要，包里就只有 QtMultimedia 这个库、一个播放后端也没有：视频页一打开就报找不到后端。
+    """
+    module = _load()
+
+    command = module.build_command(tmp_path / "Gallery.icns", tmp_path / "dist")
+
+    assert "--include-qt-plugins=multimedia" in command
+
+
+def test_qt_network_is_not_trimmed_away() -> None:
+    """QtMultimedia 与多媒体插件都链接着 QtNetwork —— 删了它，视频就放不了。"""
+    module = _load()
+
+    assert "QtNetwork" not in module._ORPHANED_QT_LIBS

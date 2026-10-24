@@ -75,10 +75,11 @@ _TRIM_OPTIONS: Final[tuple[str, ...]] = (
 )
 
 #: 上面那些插件排掉之后，就**没有任何东西再链接**的 Qt 库，必须跟着一起删（QtCore / QtGui /
-#: QtWidgets 是应用自己在用的；QtDBus 是 QtGui 在 macOS 上的硬依赖）。
+#: QtWidgets 是应用自己在用的；QtDBus 是 QtGui 在 macOS 上的硬依赖）。**QtNetwork 不在其中**：
+#: QtMultimedia 与它的多媒体插件都链接着它，删了视频就放不了。
 #: **不能靠命令行参数删** —— Nuitka 在 ``--noinclude-dlls`` 生效之前就把依赖图算完了，
 #: 这一步只能编译完再做。
-_ORPHANED_QT_LIBS: Final[tuple[str, ...]] = ("QtPdf", "QtSvg", "QtNetwork")
+_ORPHANED_QT_LIBS: Final[tuple[str, ...]] = ("QtPdf", "QtSvg")
 
 #: 重新签名用的身份。Nuitka 默认是 ad-hoc 签名，这里跟着用 ``-``；将来若加了真证书，
 #: 这里要改成同一个身份 —— 用 ad-hoc 重签会把前一步的开发者签名降级掉。
@@ -166,6 +167,9 @@ def build_command(icns: Path, output_dir: Path) -> list[str]:
         # pyside6 插件负责 Qt 插件（图像格式、平台插件等）的收集；显式写出来免得以后插件改名了
         # 只剩一句不好查的警告。
         "--enable-plugin=pyside6",
+        # Nuitka 的「常用插件」名单是 Qt5 的 mediaservice；Qt6 的多媒体后端目录叫 multimedia。
+        # 不点名要，包里就只有 QtMultimedia 这个库、**一个播放后端也没有**（打开视频报找不到后端）。
+        "--include-qt-plugins=multimedia",
         f"--include-package={_NUITKA_STEM}",
         f"--include-data-dir={_RESOURCES_SOURCE}={_RESOURCES_TARGET}",
         # pypinyin 的词典是包内 JSON：Nuitka 只跟 Python 代码，不会自己带上它们。
