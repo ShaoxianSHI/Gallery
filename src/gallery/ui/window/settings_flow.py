@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from typing import cast
 
@@ -168,8 +168,9 @@ class SettingsFlowMixin:
         builtins = {page.page: page.builtin for page in pages}
         prefs = self._session.preferences  # type: ignore[attr-defined]
         for page, ids in dialog.orders().items():
+            clean = _complete_order(ids, builtins[page])
             # 拖回内置次序就存空：不为一个等于默认的结果留下自定义记录。
-            prefs = prefs.with_external_order(page, () if ids == builtins[page] else ids)
+            prefs = prefs.with_external_order(page, () if clean == builtins[page] else clean)
         self._store_preferences(prefs)
         self._sync_ui()
 
@@ -332,6 +333,21 @@ def _cache_label(max_bytes: int) -> str:
         if size == max_bytes:
             return label
     return "自定义大小"
+
+
+def _complete_order(ids: Sequence[str], builtin: Sequence[str]) -> tuple[str, ...]:
+    """把对话框交出来的 id 收成一个**一个不缺的排列**：去重、丢掉不认识的，缺的补在最后。
+
+    正常路径上它什么也不改。留着它是为了让「对话框少了一行」这种缺陷只让那一项排到最后，
+    而不是变成一份缺项设置。
+    """
+    known = set(builtin)
+    ordered: list[str] = []
+    for entry_id in ids:
+        if entry_id in known and entry_id not in ordered:
+            ordered.append(entry_id)
+    ordered.extend(entry_id for entry_id in builtin if entry_id not in ordered)
+    return tuple(ordered)
 
 
 __all__ = [

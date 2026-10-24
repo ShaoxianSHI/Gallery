@@ -409,3 +409,32 @@ def test_an_order_equal_to_the_builtin_one_stores_nothing(
     window._settings_extras["external_order"].trigger()
 
     assert window._session.preferences.order_for("calendar") == ()
+
+
+def test_a_partial_or_duplicated_answer_is_completed_before_saving(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """对话框万一少给一项、或者给重复了，存下去仍要是一个一个不缺的排列。"""
+    _only_calendar(monkeypatch)
+    _fake_dialog(monkeypatch, {"calendar": ("google_calendar", "google_calendar")})
+
+    window._settings_extras["external_order"].trigger()
+
+    assert window._session.preferences.order_for("calendar") == (
+        "google_calendar",
+        "apple_calendar",
+    )
+
+
+def test_an_unknown_id_from_the_dialog_is_dropped(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _only_calendar(monkeypatch)
+    _fake_dialog(monkeypatch, {"calendar": ("不存在", "google_calendar")})
+
+    window._settings_extras["external_order"].trigger()
+
+    assert window._session.preferences.order_for("calendar") == (
+        "google_calendar",
+        "apple_calendar",
+    )

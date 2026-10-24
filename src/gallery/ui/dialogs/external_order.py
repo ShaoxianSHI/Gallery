@@ -10,10 +10,25 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Final
 
-from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QAction, QIcon, QKeySequence, QPalette
+from PySide6.QtCore import QMimeData, QPoint, QSize, Qt
+from PySide6.QtGui import (
+    QAction,
+    QDrag,
+    QDragEnterEvent,
+    QDragLeaveEvent,
+    QDragMoveEvent,
+    QDropEvent,
+    QIcon,
+    QKeySequence,
+    QMouseEvent,
+    QPainter,
+    QPaintEvent,
+    QPalette,
+    QPen,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QDialog,
     QHBoxLayout,
     QLabel,
@@ -62,6 +77,156 @@ class OrderPage:
     label: str
     items: tuple[OrderItem, ...]
     builtin: tuple[str, ...]
+
+
+#: 拖动时带的自定义格式。**不用 Qt 的 internal move**：那条路上「落在某一行身上」会把
+#: 目标那一行整个换成拖来的那一项（`QListWidget.dropMimeData` 的覆盖语义），那个应用就从
+#: 列表里消失了。这里自己起拖、自己算插入位置，落点永远在行与行之间。
+DRAG_MIME: Final = "application/x-gallery-external-order"
+
+
+class _OrderList(QListWidget):
+    """一页的列表：拖动只改先后，**不会覆盖任何一行**。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        # 拖由这一层自己起：Qt 的 internal move 落到行上会覆盖（见 :data:`DRAG_MIME`）。
+        # ``DropOnly`` 是「接别人递过来的拖，不自己起 Qt 的拖」—— 起拖在 ``mouseMoveEvent``。
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DropOnly)
+        self.setDragEnabled(False)
+        self.viewport().setAcceptDrops(True)
+        self.setDropIndicatorShown(False)
+        self._press_row = -1
+        self._press_pos = QPoint()
+        self._drag_row = -1
+        self._drop_row: int | None = None
+
+    # ---- 拖 ---------------------------------------------------------------
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._press_row = self.row(self.itemAt(event.position().toPoint()))
+            self._press_pos = event.position().toPoint()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
+        if self._press_row >= 0 and event.buttons() & Qt.MouseButton.LeftButton:
+            offset = event.position().toPoint() - self._press_pos
+            if offset.manhattanLength() >= QApplication.startDragDistance():
+                row, self._press_row = self._press_row, -1
+                self._start_drag(row)
+                return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
+        self._press_row = -1
+        super().mouseReleaseEvent(event)
+
+    def _start_drag(self, row: int) -> None:
+        item = self.item(row)
+        if item is None:
+            return
+        drag = QDrag(self)
+        payload = QMimeData()
+        payload.setData(DRAG_MIME, b"1")
+        drag.setMimeData(payload)
+        pixmap = self.viewport().grab(self.visualItemRect(item))
+        if not pixmap.isNull():
+            drag.setPixmap(pixmap)
+            drag.setHotSpot(QPoint(pixmap.width() // 2, pixmap.height() // 2))
+        self._drag_row = row
+        drag.exec(Qt.DropAction.MoveAction)
+        self._drag_row = -1
+        self._drop_row = None
+        self.viewport().update()
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
+        if self._accepts(event):
+            event.setDropAction(Qt.DropAction.MoveAction)
+            event.accept()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event: QDragMoveEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
+        if not self._accepts(event):
+            event.ignore()
+            return
+        self._drop_row = self._insertion_row(event.position().toPoint())
+        self.viewport().update()
+        event.setDropAction(Qt.DropAction.MoveAction)
+        event.accept()
+
+    def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
+        self._drop_row = None
+        self.viewport().update()
+        event.accept()
+
+    def dropEvent(self, event: QDropEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
+        if not self._accepts(event):
+            event.ignore()
+            return
+        target = self._insertion_row(event.position().toPoint())
+        if self._drag_row >= 0:
+            self.move_row(self._drag_row, target)
+        self._drop_row = None
+        self.viewport().update()
+        event.setDropAction(Qt.DropAction.MoveAction)
+        event.accept()
+
+    def _accepts(self, event: QDragEnterEvent | QDragMoveEvent | QDropEvent) -> bool:
+        return event.source() is self and event.mimeData().hasFormat(DRAG_MIME)
+
+    # ---- 行与落点 ----------------------------------------------------------
+
+    def move_row(self, source: int, target: int) -> None:
+        """把第 ``source`` 行搬到第 ``target`` 个插入位（``0..count()``，含两端）。
+
+        **一次 take + insert**：搬的是那一项本身，不经过 mime 编解码，于是 id、图标、名字
+        都原样跟着走。``target`` 说的是「插到它前面」，因此在被搬的那一行之后时要先减一。
+        """
+        if not (0 <= source < self.count()) or not (0 <= target <= self.count()):
+            return
+        item = self.takeItem(source)
+        if item is None:
+            return
+        if target > source:
+            target -= 1
+        self.insertItem(target, item)
+        self.setCurrentItem(item)
+
+    def _insertion_row(self, position: QPoint) -> int:
+        """落点对应插到第几行之前；**落在某一行身上看上下半**，落在空白处就是末尾。"""
+        index = self.indexAt(position)
+        if not index.isValid():
+            return self.count()
+        rect = self.visualItemRect(self.item(index.row()))
+        return index.row() + (1 if position.y() > rect.center().y() else 0)
+
+    def _indicator_y(self, row: int) -> int:
+        if row < self.count():
+            return max(self.visualItemRect(self.item(row)).top(), 1)
+        last = self.count() - 1
+        if last < 0:
+            return 1
+        return min(self.visualItemRect(self.item(last)).bottom(), self.viewport().height() - 2)
+
+    # ---- 画那条插入线 ------------------------------------------------------
+
+    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
+        super().paintEvent(event)
+        if self._drop_row is None:
+            return
+        painter = QPainter(self.viewport())
+        try:
+            # 用正文色而不是高亮色：插入线常常就落在被选中那一行的边上，两样都是同一档蓝时
+            # 那条线等于看不见。
+            line = self.palette().color(QPalette.ColorRole.WindowText)
+            line.setAlphaF(0.75)
+            painter.setPen(QPen(line, 2))
+            y = self._indicator_y(self._drop_row)
+            painter.drawLine(3, y, self.viewport().width() - 4, y)
+        finally:
+            painter.end()
 
 
 class ExternalOrderDialog(QDialog):
@@ -124,15 +289,11 @@ class ExternalOrderDialog(QDialog):
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
 
-        listing = QListWidget()
+        listing = _OrderList()
         listing.setMinimumWidth(MIN_WIDTH)
         listing.setFixedHeight(LIST_HEIGHT)
         listing.setIconSize(QSize(ICON_EDGE, ICON_EDGE))
         listing.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        # **只在同一个列表里拖**：跨页拖过去没有意义，那会把两个位置的次序混成一条。
-        listing.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
-        listing.setDefaultDropAction(Qt.DropAction.MoveAction)
-        listing.setDropIndicatorShown(True)
         self._fill(listing, page.items)
         self._lists[page.page] = listing
         layout.addWidget(listing)
@@ -174,12 +335,6 @@ class ExternalOrderDialog(QDialog):
             if item.icon is not None:
                 entry.setIcon(item.icon)
             entry.setData(Qt.ItemDataRole.UserRole, item.id)
-            entry.setFlags(
-                Qt.ItemFlag.ItemIsEnabled
-                | Qt.ItemFlag.ItemIsSelectable
-                | Qt.ItemFlag.ItemIsDragEnabled
-                | Qt.ItemFlag.ItemIsDropEnabled
-            )
             listing.addItem(entry)
 
     def _restore_default(self, page: str) -> None:
