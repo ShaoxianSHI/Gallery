@@ -343,11 +343,9 @@ class PhotoListModel(QAbstractListModel):
     def reorder(self, entries: Sequence[GridEntry], *, sectioned: bool = False) -> None:
         """把这一层按新顺序重排（分组 / 排序之后调用）。
 
-        ``sectioned`` 与内容**一起**给进来：分区式是「这些行里有分区标题」这件事本身，
-        拆成两个入口迟早出现「模型说分区、行里却没有标题」的半截状态。
-
-        **刻意不清缩略图缓存**：重排只是同一批照片换位置，而缓存按路径索引，清掉等于
-        让整屏从磁盘缓存重读重缩放一遍。
+        ``sectioned`` 与内容**一起**给进来：分区式是「这些行里有分区标题」这件事本身，拆成
+        两个入口迟早出现「模型说分区、行里却没有标题」的半截状态。**刻意不清缩略图缓存**：
+        重排只是同一批照片换位置，而缓存按路径索引，清掉等于让整屏重读重缩放一遍。
         """
         self.beginResetModel()
         self._entries = list(entries)

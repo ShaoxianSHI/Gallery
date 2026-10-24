@@ -25,6 +25,7 @@ from grid_helpers import (  # noqa: E402
     make_grid,
     settle_grid,
     step_transition,
+    uniform_layout,
 )
 from PySide6.QtCore import (  # noqa: E402
     QAbstractAnimation,
@@ -538,7 +539,10 @@ def test_the_card_really_is_drawn_along_the_way(tmp_path: Path, qt_app: QApplica
         model.set_thumbnail(photo.path, cover)
 
     # 2 列 → 4 列：第 4 格从第 2 行挪到第 1 行，纵向正好差一个旧行高，横向还在画布里。
-    transition = GridTransition(2, QSize(300, 320), 4, QSize(180, 200))
+    transition = GridTransition(
+        uniform_layout(2, QSize(300, 320), 8),
+        uniform_layout(4, QSize(180, 200), 8),
+    )
     cell, canvas, row = QSize(180, 200), QSize(400, 800), 4
 
     start = _painted_top(model, row, cell, transition, 0.0, canvas)
@@ -562,7 +566,10 @@ def test_the_card_itself_grows_with_the_photo(tmp_path: Path, qt_app: QApplicati
 
     # 2 列 → 4 列、格子同时变大：位置与尺寸两头都在动。
     old_cell, new_cell = QSize(300, 320), QSize(180, 200)
-    transition = GridTransition(2, old_cell, 4, new_cell)
+    transition = GridTransition(
+        uniform_layout(2, old_cell, 8),
+        uniform_layout(4, new_cell, 8),
+    )
     canvas, row = QSize(760, 1000), 4
 
     start = _painted_card_rect(model, row, new_cell, transition, 0.0, canvas)

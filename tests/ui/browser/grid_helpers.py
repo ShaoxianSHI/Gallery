@@ -23,6 +23,7 @@ from waiting import wait_until
 
 from gallery.core.library.photos import PhotoRef
 from gallery.ui.browser.grid import PhotoGrid  # noqa: E402
+from gallery.ui.browser.layout import GridLayout
 from gallery.ui.browser.model import PhotoListModel
 from gallery.ui.browser.transition import EDGE_ANIMATION_MIN_DELTA, EDGE_ANIMATION_MS  # noqa: E402
 
@@ -52,6 +53,20 @@ def make_grid(qt_app: QApplication, tmp_path: Path, count: int, *, width: int = 
     grid.show()
     qt_app.processEvents()
     return grid
+
+
+def uniform_layout(columns: int, cell: QSize, rows: int) -> GridLayout:
+    """整层没有分区标题时的一份位置表（列表头给零尺寸，用不到）。
+
+    给过渡的单测用：这类用例要的只是「``columns`` 列、每格 ``cell``」，与分区无关。
+    """
+    return GridLayout.of(
+        row_count=rows,
+        header_rows=(),
+        columns=columns,
+        cell=cell,
+        header=QSize(0, 0),
+    )
 
 
 def largest_delta_that_keeps_columns(

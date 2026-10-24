@@ -390,3 +390,16 @@ def test_a_different_size_still_retries_what_the_previous_size_could_not_read(
     assert thumbs._inflight, "换档之后没有重试 —— 128 px 的结论不该替 256 px 打包票"
     assert wait_for(lambda: not thumbs._inflight), "换档后的重试没有在时限内跑完"
     runner.wait_for_done(2000)
+
+
+def test_a_section_header_has_no_thumbnail_target(tmp_path: Path) -> None:
+    """分区标题那一行只有字：流水线要跳过它，别拿一个不存在的路径去排队（ADR 0089）。"""
+    from gallery.core.library.photos import GroupRef, SectionRef
+    from gallery.ui.thumbs.pipeline import _thumbnail_target
+
+    photo = PhotoRef(path=tmp_path / "a.jpg", size=10, mtime_ns=1)
+    group = GroupRef(facet="captured_month", key="2024-05", label="2024 年 5 月", photos=(photo,))
+    header = SectionRef(group=group, count=1)
+
+    assert _thumbnail_target(header) is None
+    assert _thumbnail_target(photo) is photo

@@ -15,7 +15,7 @@ from pathlib import Path
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QMessageBox
 
-from gallery.core.library.photos import GridEntry, GroupRef
+from gallery.core.library.photos import GridEntry, GroupRef, SectionRef
 from gallery.ui.browser.grid import PREFETCH_MARGIN
 from gallery.ui.tasks import TaskContext
 from gallery.ui.window.state.thumbnail_size import ThumbnailSize
@@ -90,8 +90,8 @@ class ThumbnailFlowMixin:
         entries: list[GridEntry] = []
         for row in rows:
             entry = self._model.entry_at(row)
-            if entry is None:
-                continue
+            if entry is None or isinstance(entry, SectionRef):
+                continue  # 分区标题那一行只有字，没有图
             cover = entry.cover if isinstance(entry, GroupRef) else None
             path = cover.path if cover is not None else entry.path
             if self._model.needs_thumbnail(path):

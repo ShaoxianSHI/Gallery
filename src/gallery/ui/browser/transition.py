@@ -1,9 +1,9 @@
 """切档过渡：换一档缩略图尺寸时，每一格从旧布局飞到新布局的那一段。
 
-它**只描述画面，不描述逻辑状态**：``gridSize`` / ``visualRect`` / ``indexAt`` 在切换那一刻
-就已经是最终值，Qt 全程不知道有过过渡。**过渡这一帧由
-:meth:`TransitionMixin._paint_transition_viewport` 自己画**：Qt 只画最终布局落在视口里的
-条目，而这一帧的格子按旧位置摆，交给它就会缺掉一整块。
+它**只描述画面，不描述逻辑状态**：``visualRect`` / ``indexAt`` 在切换那一刻就已经是最终值。
+**这一帧由 :meth:`TransitionMixin._paint_transition_viewport` 自己画**：Qt 只画最终布局落在
+视口里的条目，而这一帧的格子按旧位置摆，交给它就会缺掉一整块。两端位置来自两份
+:class:`~gallery.ui.browser.layout.GridLayout`，分区式与卡片式因此是同一套。
 """
 
 from __future__ import annotations
@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from PySide6.QtCore import QAbstractAnimation, QEasingCurve, QPoint, QRect, QSize
 from PySide6.QtGui import QPainter, QPaintEvent, QPalette
 from PySide6.QtWidgets import QStyle, QStyleOptionViewItem
+
+from gallery.ui.browser.layout import GridLayout
 
 #: 视口停止变化多久之后才真正通知界面重取缩略图（拖动窗口时的防抖）。
 EDGE_SETTLE_MS = 120
@@ -35,17 +37,34 @@ EDGE_ANIMATION_MIN_DELTA = 6
 class GridTransition:
     """换一档时，每一格从旧布局飞到新布局的那段位移。
 
-    **只描述画面，不描述逻辑状态**：``gridSize``、``visualRect``、``indexAt`` 在切换那一刻
-    就已经是最终值了，Qt 全程不知道有过过渡。**不用逐帧重排**：显式 ``doItemsLayout`` 会
-    强制全量排版（几万条目单次几十毫秒，60 帧装不下），而绘制时改一块矩形只是几次整数加法。
+    **只描述画面，不描述逻辑状态**：``visualRect``、``indexAt`` 在切换那一刻就已经是最终值，
+    Qt 全程不知道有过过渡。**不用逐帧重排**：显式 ``doItemsLayout`` 会强制全量排版（几万
+    条目单次几十毫秒，60 帧装不下），而绘制时改一块矩形只是几次整数加法。
     """
 
-    old_columns: int
-    old_cell: QSize
-    new_columns: int
-    new_cell: QSize
+    #: 切换之前那一套布局（列数已按**量出来**的实际列数算）。
+    old: GridLayout
+    #: 切换之后那一套（同上）。
+    new: GridLayout
     #: 旧画面整体要跟着挪多少像素（内容坐标）：不补这一笔，第 0 帧整幅画会挪到屏幕外面去。
     scroll_shift: int = 0
+
+    # 旧的读法：既有测试与锚点算术按这两个数值问问题，所以留成派生属性。
+    @property
+    def old_columns(self) -> int:
+        return self.old.columns
+
+    @property
+    def new_columns(self) -> int:
+        return self.new.columns
+
+    @property
+    def old_cell(self) -> QSize:
+        return self.old.cell
+
+    @property
+    def new_cell(self) -> QSize:
+        return self.new.cell
 
     @property
     def reflows(self) -> bool:
@@ -54,21 +73,16 @@ class GridTransition:
         **只看列数**：格子大小差几个像素时肉眼根本看不出来，却要白付一整轮全视口
         重绘（那正是 :data:`EDGE_ANIMATION_MIN_DELTA` 管的事）。
         """
-        return self.old_columns != self.new_columns
-
-    @staticmethod
-    def _position(columns: int, cell: QSize, row: int) -> QPoint:
-        """第 ``row`` 格在「``columns`` 列、每格 ``cell``」这套布局里的左上角。"""
-        return QPoint((row % columns) * cell.width(), (row // columns) * cell.height())
+        return self.old.columns != self.new.columns
 
     def offset(self, row: int, t: float) -> QPoint:
-        """第 ``row`` 格相对**最终位置**要往回挪多少，才能落在第 ``t`` 帧。
+        """第 ``row`` 行相对**最终位置**要往回挪多少，才能落在第 ``t`` 帧。
 
         ``t=0`` 给回旧位置，``t=1`` 给 0。坐标是**内容坐标**：视图的滚动平移由 Qt
         统一叠在上面。
         """
-        old = self._position(self.old_columns, self.old_cell, row)
-        new = self._position(self.new_columns, self.new_cell, row)
+        old = self.old.rect(row)
+        new = self.new.rect(row)
         k = 1.0 - t
         return QPoint(
             round((old.x() - new.x()) * k),
@@ -76,15 +90,16 @@ class GridTransition:
         )
 
     def frame_rect(self, final: QRect, row: int, t: float) -> QRect:
-        """第 ``row`` 格在第 ``t`` 帧该画成的那块矩形（``final`` 是 Qt 给的终态）。
+        """第 ``row`` 行在第 ``t`` 帧该画成的那块矩形（``final`` 是 Qt 给的终态）。
 
         **位置与尺寸一起插**：只插位置的话，卡片（选中底、角标、文件名）在切换那一刻
-        就已经是新尺寸、只有照片在长（见 :meth:`PhotoDelegate.cell_rect`）。尺寸长到
-        ``final.size()`` 而不是 :attr:`new_cell`，因为那才是 Qt 真正排出来的那一格。
+        就已经是新尺寸、只有照片在长（见 :meth:`PhotoDelegate.cell_rect`）。分区标题在两端
+        尺寸相同，于是它只平移 —— 正好是想要的。
         """
+        old = self.old.rect(row)
         size = QSize(
-            round(self.old_cell.width() + (final.width() - self.old_cell.width()) * t),
-            round(self.old_cell.height() + (final.height() - self.old_cell.height()) * t),
+            round(old.width() + (final.width() - old.width()) * t),
+            round(old.height() + (final.height() - old.height()) * t),
         )
         return QRect(final.topLeft() + self.offset(row, t), size)
 
@@ -105,10 +120,8 @@ class TransitionMixin:
         if columns <= 0:
             return
         self._transition = GridTransition(
-            self._transition.old_columns,
-            self._transition.old_cell,
-            columns,
-            cell,
+            self._transition.old,
+            self._layout(columns=columns, cell=cell),
             self._transition.scroll_shift,
         )
 
@@ -168,11 +181,8 @@ class TransitionMixin:
 
     def _frame_top(self, transition: GridTransition, row: int, t: float) -> float:
         """第 ``row`` 格在第 ``t`` 帧的顶边（视口坐标）。"""
-        old_top = (row // transition.old_columns) * transition.old_cell.height()
-        new_top = (row // transition.new_columns) * transition.new_cell.height()
-        old_scroll = self._scroll_from - transition.scroll_shift
-        old_screen = old_top - old_scroll
-        new_screen = new_top - self._scroll_to
+        old_screen = transition.old.rect(row).top() - (self._scroll_from - transition.scroll_shift)
+        new_screen = transition.new.rect(row).top() - self._scroll_to
         return old_screen + (new_screen - old_screen) * t
 
     def _rows_in_transition_frame(self, transition: GridTransition, t: float) -> range:
@@ -219,14 +229,8 @@ class TransitionMixin:
             rect = self.visualRect(index)
             if rect.isValid() and not rect.isEmpty():
                 return rect
-        columns = max(1, transition.new_columns)
-        cell = transition.new_cell
-        return QRect(
-            (row % columns) * cell.width(),
-            (row // columns) * cell.height() - self.verticalScrollBar().value(),
-            cell.width(),
-            cell.height(),
-        )
+        rect = transition.new.rect(row)
+        return rect.translated(0, -self.verticalScrollBar().value())
 
     def _paint_transition_viewport(self, event: QPaintEvent) -> None:
         """过渡期间自己画整个视口。

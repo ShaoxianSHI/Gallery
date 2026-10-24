@@ -7,16 +7,26 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QModelIndex, QPoint, QRect, QSize, Qt
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPalette, QPen, QPixmap
+from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPalette, QPen, QPixmap
 from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem, QWidget
 
-from gallery.ui.browser.model import ALBUM_ROLE, GROUP_COUNT_ROLE, GROUP_ROLE
+from gallery.ui.browser.model import (
+    ALBUM_ROLE,
+    GROUP_COUNT_ROLE,
+    GROUP_ROLE,
+    SECTION_ROLE,
+)
 from gallery.ui.browser.transition import GridTransition
 from gallery.ui.thumb_sizes import DEFAULT_EDGE
 
 #: 格子相对缩略图多出来的留白：横向是卡片内边距，纵向还要放下文件名。
 GRID_PADDING_X = 28
 GRID_PADDING_Y = 56
+
+#: 分区标题那一行的高度与左右内边距（ADR 0089）。**不随缩略图档位缩放**：标题是文字，
+#: 不是图；跟着放大只会让大档位下的版面变得空。
+SECTION_HEIGHT = 36
+SECTION_PAD_X = 12
 
 
 class PhotoDelegate(QStyledItemDelegate):
@@ -40,6 +50,14 @@ class PhotoDelegate(QStyledItemDelegate):
         #: 切档过渡：这一帧相对最终位置往回挪多少。``None`` 表示不偏移（常态）。
         self._transition: GridTransition | None = None
         self._t = 1.0
+        #: 分区标题那一行有多宽（由视图按排版宽度写进来）。
+        self._section_width = 0
+        #: 标题用的字体。**建一次缓存**：绘制路径上不现造 ``QFont``；缓存之后只读。
+        self._section_font: QFont | None = None
+
+    def set_section_width(self, width: int) -> None:
+        """分区标题那一行有多宽（整行，所以它一定会换到新的一行）。"""
+        self._section_width = max(1, width)
 
     def set_icon_edge(self, edge: int) -> None:
         """几何尺寸变了 —— 绘制尺寸先跟它对齐。
@@ -105,6 +123,9 @@ class PhotoDelegate(QStyledItemDelegate):
         )
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
+        if bool(index.data(SECTION_ROLE)):
+            self._paint_section(painter, self.cell_rect(option.rect, index.row()), option, index)
+            return
         painter.save()
         try:
             # 过渡中这一格画在「旧布局与最终布局之间」的那一帧，位置与**大小**一起插值。
@@ -260,8 +281,70 @@ class PhotoDelegate(QStyledItemDelegate):
         painter.drawRoundedRect(rect.adjusted(6, 6, -6, -6), radius, radius)
 
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:  # noqa: N802
-        del option, index
+        # 测试里会直接传 ``None`` 量默认尺寸（见 tests/ui/browser/test_edge_animation.py）。
+        if index is not None and index.isValid() and bool(index.data(SECTION_ROLE)):
+            return QSize(self._section_width, SECTION_HEIGHT)
         return QSize(self._icon_edge + GRID_PADDING_X, self._icon_edge + GRID_PADDING_Y)
+
+    def _paint_section(
+        self,
+        painter: QPainter,
+        rect: QRect,
+        option: QStyleOptionViewItem,
+        index: QModelIndex,
+    ) -> None:
+        """分区标题：一条分隔线 + 左边的组名 + 右边的张数。
+
+        底色**不透明**：切档动画里各条目位移不同，标题会短暂压到上一段最后一行照片上，
+        透明底会让照片从字里透出来。正常状态下看不出区别（底下本来就是底色）。
+        """
+        palette = option.palette
+        painter.save()
+        try:
+            painter.fillRect(rect, palette.color(QPalette.ColorRole.Base))
+            text = palette.color(QPalette.ColorRole.WindowText)
+            if index.row() > 0:
+                line = QColor(text)
+                line.setAlpha(40)
+                painter.fillRect(QRect(rect.left(), rect.top(), rect.width(), 1), line)
+
+            painter.setFont(self._section_font_for(painter.font()))
+            metrics = painter.fontMetrics()
+            area = rect.adjusted(SECTION_PAD_X, 0, -SECTION_PAD_X, 0)
+            count = str(index.data(GROUP_COUNT_ROLE) or "")
+            label_width = area.width() - (metrics.horizontalAdvance(count) + 12 if count else 0)
+            label = metrics.elidedText(
+                str(index.data(Qt.ItemDataRole.DisplayRole) or ""),
+                Qt.TextElideMode.ElideMiddle,
+                max(0, label_width),
+            )
+            muted = QColor(text)
+            muted.setAlpha(215)
+            painter.setPen(muted)
+            painter.drawText(
+                area,
+                int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+                label,
+            )
+            if count:
+                faded = QColor(text)
+                faded.setAlpha(130)
+                painter.setPen(faded)
+                painter.drawText(
+                    area,
+                    int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
+                    count,
+                )
+        finally:
+            painter.restore()
+
+    def _section_font_for(self, base: QFont) -> QFont:
+        """标题用的字体（加粗），第一次用时建好并缓存。**拿到之后只读**。"""
+        if self._section_font is None:
+            font = QFont(base)
+            font.setBold(True)
+            self._section_font = font
+        return self._section_font
 
 
 __all__ = ["GRID_PADDING_X", "GRID_PADDING_Y", "PhotoDelegate"]

@@ -43,8 +43,14 @@ from PySide6.QtWidgets import (
 
 from gallery.core.library.photos import GridEntry
 from gallery.ui.browser.anchoring import AnchoringMixin
-from gallery.ui.browser.delegate import GRID_PADDING_X, GRID_PADDING_Y, PhotoDelegate
-from gallery.ui.browser.model import ALBUM_ROLE, ENTRY_ROLE
+from gallery.ui.browser.delegate import (
+    GRID_PADDING_X,
+    GRID_PADDING_Y,
+    SECTION_HEIGHT,
+    PhotoDelegate,
+)
+from gallery.ui.browser.layout import GridLayout
+from gallery.ui.browser.model import ALBUM_ROLE, ENTRY_ROLE, PhotoListModel
 from gallery.ui.browser.transition import (
     EDGE_ANIMATION_CURVE,
     EDGE_ANIMATION_MS,
@@ -157,9 +163,19 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
         self._target_edge = icon_edge
         self._applied_edge = icon_edge
         self._emitted_edge = icon_edge
-        self._laying_out = False
+        #: 这套几何下的格子尺寸。**分区式里 ``gridSize()`` 是空的**（逐条尺寸），所以内部
+        #: 一律读这一份，别去问 Qt。
+        self._cell = QSize(icon_edge + GRID_PADDING_X, icon_edge + GRID_PADDING_Y)
+        #: 分区标题那一行的尺寸（宽度 = 排版宽度，由 :meth:`_apply_geometry` 写入）。
+        self._section_size = QSize(0, SECTION_HEIGHT)
         self._laid_out_width = 0
         self._laid_out_columns = 0
+        #: 上一次排版用的是哪种形态 —— 模型换了形态就得按新形态重排一次（切换分组样式）。
+        self._laid_out_sectioned = False
+        #: 上一次算出来的位置表与它的判据。滚动与预取每次防抖都问一遍，重算一遍
+        #: 是 O(行数) —— 而「主线程上不许做随库的大小线性增长的事」。
+        self._layout_cache: tuple[tuple[object, ...], GridLayout] | None = None
+        self._laying_out = False
         self._layout_fix: dict[int, tuple[int, int]] = {}
         #: 「这一格已经处在『再点一下就是改名』的状态」——**不等于「它被选中了」**。
         #: arm 是交互状态：得是用户自己指过的那一格，⌘R 进来又 Esc 出去的那格也要记。
@@ -295,6 +311,8 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
             # 扫描每来一批就重启一次 50ms 的定时器，一屏之内最多多核对一次，代价可以忽略。
             model.rowsInserted.connect(self._on_rows_inserted)
             model.modelReset.connect(self._on_model_reset)
+        # 装上的模型可能已经是分区式（测试与「先建模型再挂视图」两条路）：下一轮按它重排。
+        QTimer.singleShot(0, self, self._sync_layout_mode)
 
     def _on_rows_inserted(self, *_args: object) -> None:
         """模型里多了一批条目（扫描、监听、粘贴取回…）。
@@ -323,6 +341,9 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
         """
         self._armed_row = -1
         self._cancel_transition()
+        # 换分组样式（卡片式 ↔ 分区式）也是走模型重置这条路的：两种形态的排版方式不同
+        # （固定网格 vs 逐条尺寸），要等这一轮重置稳定下来之后按新形态重排一次。
+        QTimer.singleShot(0, self, self._sync_layout_mode)
 
     # ---- 尺寸档位与自适应排版 ----------------------------------------------
 
@@ -405,12 +426,13 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
         edge = max(MIN_EDGE, cell_width - GRID_PADDING_X)
         return QSize(edge + GRID_PADDING_X, edge + GRID_PADDING_Y)
 
-    def _recompute_layout(self, *, animate: bool = False) -> None:
+    def _recompute_layout(self, *, animate: bool = False, force: bool = False) -> None:
         """按当前视口宽度重排，让第一行铺满、右侧不留空白。
 
         ``animate`` 只有「用户切了一档」那条路径会传 ``True``（拖窗口是连续事件），这里**不**取消
         正在跑的过渡。**宽度变了就一定要走一趟 :meth:`_set_cell`，哪怕格子尺寸算出来一模一样**：
         Qt 的 ``ResizeMode.Adjust`` 每次宽度变化都会排一次延迟重排，把滚动条范围缩回一批。
+        ``force`` 给「格子算出来一样、但形态变了」（卡片式 ↔ 分区式）用。
         """
         if self._laying_out:
             return
@@ -422,12 +444,74 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
             self._layout_fix.clear()
         columns = self._columns_for(available)
         # 视口宽度变了就必须重排：列数是按视口宽度算的，不重排会沿用旧列数。
-        if available == self._laid_out_width and columns == self._laid_out_columns:
+        if (
+            not force
+            and available == self._laid_out_width
+            and columns == self._laid_out_columns
+            and self._is_sectioned() == self._laid_out_sectioned
+        ):
             return
         self._set_cell(self._cell_size_for(available), animate=animate)
         self._laid_out_width = available
         self._laid_out_columns = columns
+        self._laid_out_sectioned = self._is_sectioned()
         self._examiner.start()
+
+    def _sync_layout_mode(self) -> None:
+        """模型换了形态（卡片式 ↔ 分区式）之后按新形态重排一次。
+
+        两种形态的排版方式不同：卡片式用固定网格（``gridSize``），分区式用逐条尺寸
+        （标题要整行宽）。判据只有模型的 :attr:`PhotoListModel.sectioned` 一处。
+        """
+        if self._is_sectioned() == self._laid_out_sectioned:
+            return
+        self._recompute_layout(force=True)
+
+    def _is_sectioned(self) -> bool:
+        """这一层是不是分区式。模型说了算（内容与模式一起给进来，见 ``reorder``）。"""
+        model = self.model()
+        return isinstance(model, PhotoListModel) and model.sectioned
+
+    def _is_header(self, row: int) -> bool:
+        """这一行是不是分区标题：不可选中、不能改名、右键按空白处理。"""
+        model = self.model()
+        return isinstance(model, PhotoListModel) and model.is_header(row)
+
+    def _layout(self, *, columns: int = 0, cell: QSize | None = None) -> GridLayout:
+        """当前这套几何的位置表（过渡、锚点与可视区共用）。
+
+        ``columns`` 为 0 时用排过版的列数；量不出来时退回「这个宽度下打算摆几列」。
+        **按判据缓存一份**：滚动与预取每次防抖都会问它。
+        """
+        model = self.model()
+        row_count = model.rowCount() if model is not None else 0
+        header_rows: tuple[int, ...] = ()
+        if isinstance(model, PhotoListModel) and model.sectioned:
+            header_rows = model.header_rows()
+        resolved = max(
+            1, columns or self._laid_out_columns or self._columns_for(self._layout_width())
+        )
+        target = cell or self._cell
+        key = (
+            row_count,
+            header_rows,
+            resolved,
+            target.width(),
+            target.height(),
+            self._section_size.width(),
+            self._section_size.height(),
+        )
+        if self._layout_cache is not None and self._layout_cache[0] == key:
+            return self._layout_cache[1]
+        layout = GridLayout.of(
+            row_count=row_count,
+            header_rows=header_rows,
+            columns=resolved,
+            cell=target,
+            header=self._section_size,
+        )
+        self._layout_cache = (key, layout)
+        return layout
 
     def _examine_columns(self) -> None:
         """排完版之后核对一次实际列数。
@@ -439,10 +523,6 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
         available = self._layout_width()
         intended = self._laid_out_columns
         if available != self._laid_out_width or intended <= 0:
-            return
-        matrix = self.model()
-        if matrix is None or matrix.rowCount() < intended:
-            # 条目还不够摆满一行时「第一行的格子数」等于条目总数，根本量不出真实列数。
             return
         measured = self._first_row_columns()
         if measured <= 0 or measured >= intended:
@@ -467,20 +547,44 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
             return
         if self._centered_row < 0 or self._scroll_to == self._scroll_from:
             return
-        self._scroll_to = self._centered_scroll_value(self._centered_row, self._laid_out_columns)
+        # 用排过版的那份几何（``_laid_out_columns`` 刚被修正过），不用过渡里那一份：
+        # 它可能是在量出错列数时建出来的，而滚动目标必须对着真正排出来的版面。
+        self._scroll_to = self._centered_scroll_value(self._centered_row, self._layout())
 
     def _first_row_columns(self) -> int:
-        """实际排在第一行的格子数（只采样一行，代价与库大小无关）。"""
+        """实际排在一行里的**照片**数（标题行不算）；量不出来时返回 0。
+
+        分区式里不能量第一行：第一行可能是标题，也可能因为标题要整行而少摆一格。要量
+        **一段成员数够了的分区**的第一行。卡片式里整层就是一段，与原来逐字相同。
+        """
         matrix = self.model()
         if matrix is None or matrix.rowCount() == 0:
             return 0
-        top = self.visualRect(matrix.index(0, 0)).top()
-        count = 0
-        for row in range(matrix.rowCount()):
-            if self.visualRect(matrix.index(row, 0)).top() != top:
-                break
-            count += 1
-        return count
+        intended = max(1, self._columns_for(self._layout_width()))
+        rows = matrix.rowCount()
+        headers: tuple[int, ...] = ()
+        if isinstance(matrix, PhotoListModel) and matrix.sectioned:
+            headers = matrix.header_rows()
+        segments: list[tuple[int, int]] = []
+        if not headers:
+            segments.append((0, rows))
+        else:
+            if headers[0] > 0:
+                segments.append((0, headers[0]))
+            for index, header in enumerate(headers):
+                end = headers[index + 1] if index + 1 < len(headers) else rows
+                segments.append((header + 1, end))
+        for first, end in segments:
+            if end - first < intended:
+                continue  # 太短的一段量不出真实列数（最后一行本来就没摆满）
+            top = self.visualRect(matrix.index(first, 0)).top()
+            count = 0
+            for row in range(first, end):
+                if self.visualRect(matrix.index(row, 0)).top() != top:
+                    break
+                count += 1
+            return count
+        return 0
 
     def _set_cell(self, cell: QSize, *, animate: bool = False) -> None:
         """换一次格子尺寸：改几何、全量重排、位置留在原处，**换了行才重新定位**。
@@ -494,20 +598,21 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
         # 三件都必须在**改几何之前**读：那次延迟重排会把滚动位置夹到已排版那一批的末尾。
         scroll_from = self.verticalScrollBar().value()
         old_columns = self._first_row_columns()
-        old_cell = self.gridSize()
+        old_layout = self._layout(columns=old_columns, cell=self._cell)
         anchor = self._anchor()
         self._apply_geometry(cell, scroll_from)
         new_columns = self._first_row_columns()
+        new_layout = self._layout(columns=new_columns, cell=cell)
         scroll_shift = 0
         if old_columns > 0 and new_columns > 0 and old_columns != new_columns:
             # **只在真的换行时居中**：Qt 会顺手把当前项设成第 0 行，无条件居中会拽回顶部。
-            anchored = self._anchored_scroll_value(anchor, new_columns)
+            anchored = self._anchored_scroll_value(anchor, new_layout)
             if anchored is not None:
                 scroll_shift = anchored - scroll_from
                 scroll_from = anchored
-            self._center_on_row(self._focus_row(anchor.row), new_columns)
+            self._center_on_row(self._focus_row(anchor.row), new_layout)
         self._transition = (
-            GridTransition(old_columns, old_cell, new_columns, cell, scroll_shift)
+            GridTransition(old_layout, new_layout, scroll_shift)
             if old_columns > 0 and new_columns > 0
             else None
         )
@@ -517,18 +622,26 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
     def _apply_geometry(self, cell: QSize, scroll: int) -> None:
         """设定格子几何、**全量**排一遍版，再把滚动位置摆回 ``scroll``。
 
-        ``scroll`` 由调用方在改几何**之前**读出来（见 :meth:`_set_cell`）。**必须全量排版而不是
-        Batched**：Batched 的滚动条范围只按已排过的那一批算，而每次重排都从第 0 条开始，范围在
-        排完第一批那一刻缩成一小块，Qt 会在那一刻**当场把当前位置夹进去**。
+        ``scroll`` 由调用方在改几何**之前**读出来。**必须全量排版而不是 Batched**：它的滚动条
+        范围只按已排过的那一批算，排完第一批那一刻小得离谱，Qt 会当场把当前位置夹回去。
+        **分区式不用固定网格**：标题要整行宽，只能逐条给尺寸（``gridSize`` 会让所有条目一样大）。
         """
         self._laying_out = True
         # 布局期间 Qt 因范围变小而夹一下当前位置是**布局的副作用**，不是「用户滚了」。
         self._driving_scroll = True
         try:
             self._applied_edge = cell.width() - GRID_PADDING_X
+            self._cell = cell
+            self._section_size = QSize(max(1, self._layout_width()), SECTION_HEIGHT)
             self._delegate.set_icon_edge(self._applied_edge)
+            self._delegate.set_section_width(self._section_size.width())
             self.setIconSize(QSize(self._applied_edge, self._applied_edge))
-            self.setGridSize(cell)
+            if self._is_sectioned():
+                self.setUniformItemSizes(False)
+                self.setGridSize(QSize())
+            else:
+                self.setUniformItemSizes(True)
+                self.setGridSize(cell)
             self._layout_everything()
         finally:
             self._laying_out = False
@@ -567,33 +680,23 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
     # ---- 可见区计算 --------------------------------------------------------
 
     def visible_rows(self, *, margin_ratio: float = 0.0) -> list[int]:
-        """返回当前可见的行号（``margin_ratio`` 让结果向四周外扩）。
+        """返回当前可见的行号（``margin_ratio`` 让结果向上下外扩）。
 
-        用采样而不是遍历：采样点数只与可见格子数成正比，与库的大小无关。
+        位置来自 :class:`~gallery.ui.browser.layout.GridLayout`：分区式里标题行夹在照片行中间，
+        按格高步长采样 ``indexAt`` 会逐渐漂移、整行照片漏掉；二分那份位置表与库的大小无关。
         """
         rect = self.viewport().rect()
         if rect.isEmpty():
             return []
-        grid = self.gridSize()
-        step_x = max(1, grid.width())
-        step_y = max(1, grid.height())
-        pad_x = int(rect.width() * margin_ratio)
-        pad_y = int(rect.height() * margin_ratio)
-        rows: list[int] = []
-        seen: set[int] = set()
-        y = rect.top() - pad_y
-        bottom = rect.bottom() + pad_y
-        while y <= bottom:
-            x = rect.left() - pad_x
-            right = rect.right() + pad_x
-            while x <= right:
-                index = self.indexAt(QPoint(x, y))
-                if index.isValid() and index.row() not in seen:
-                    seen.add(index.row())
-                    rows.append(index.row())
-                x += step_x
-            y += step_y
-        return rows
+        layout = self._layout()
+        if not layout.blocks:
+            return []
+        bar = self.verticalScrollBar()
+        pad = int(rect.height() * margin_ratio)
+        return layout.rows_near(
+            bar.value() + rect.top() - pad,
+            bar.value() + rect.bottom() + pad,
+        )
 
     # ---- 选中与当前行 ------------------------------------------------------
 
@@ -605,6 +708,8 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
         model = self.model()
         if model is None or not 0 <= row < model.rowCount():
             return
+        if self._is_header(row):
+            return  # 标题当不了当前项（模型也没让它可选）
         index = model.index(row, 0)
         self.setCurrentIndex(index)
         # 代码里指定选中同样算「一次普通点选」：接下来的 `⇧` 点应该从这一格铺开。
@@ -714,6 +819,11 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
         if row < 0:
             self.clear_current()
             return -1
+        if self._is_header(row):
+            # 分区标题不是可操作的一格：与空白处同一处理（它的组级命令是另一份菜单，
+            # 由窗口按标题行去拼，见 ADR 0089）。
+            self.clear_current()
+            return -1
         model = self.model()
         selection = self.selectionModel()
         if model is None or selection is None or not 0 <= row < model.rowCount():
@@ -745,6 +855,8 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
         model = self.model()
         if model is None or not index.isValid():
             return False
+        if self._is_header(index.row()):
+            return False  # 标题没有名字可改
         # 名字取自条目本身而不是 DisplayRole：隐藏扩展名时后者是主干，拿它去改名会把扩展名弄丢。
         entry = cast(GridEntry, model.data(index, ENTRY_ROLE))
         text = entry.name
