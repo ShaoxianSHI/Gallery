@@ -98,7 +98,6 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
             "_copy_metadata_action",
             "_copy_path_action",
             "_current_row",
-            "_descending_action",
             "_duplicate_action",
             "_edit_event_action",
             "_edit_metadata_action",
@@ -107,7 +106,6 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
             "_focus_row",
             "_generation",
             "_grid",
-            "_group_actions",
             "_in_detail_page",
             "_leave_event_action",
             "_library",
@@ -129,11 +127,12 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
             "_set_cover_action",
             "_show_banner",
             "_size_actions",
-            "_sort_actions",
             "_start_job",
             "_sync_ui",
             "_trash_action",
             "_up_action",
+            "build_group_menu",
+            "build_sort_menu",
             "cover_candidate",
             "covered_album",
             "covered_event",
@@ -349,6 +348,7 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
             "_banner_text",
             "_browse_mode",
             "_descending_action",
+            "_ascending_action",
             "_feed_calendar",
             "_filters",
             "_finish_job",
@@ -733,8 +733,11 @@ def test_the_widest_mixins_keep_their_ceiling() -> None:
         "window/library_flow.py:LibraryFlowMixin": 77,
         # 56 → 57：「编辑事件…」那一行让这一间多要一个 `edit_photo_event_menu`
         # （事件清单按哪张照片算归 EventFlowMixin，这一间只把菜单摆进去）。
-        "window/context_menu_flow.py:ContextMenuFlowMixin": 57,
-        "window/ordering.py:OrderingMixin": 45,
+        # 57 → 56：「分组」「排序」两张子菜单改由窗口现建（与菜单栏逐行一致），
+        # 这一间少要三个动作 / 字典、多要两个构造方法，净少一条依赖。
+        "window/context_menu_flow.py:ContextMenuFlowMixin": 56,
+        # 45 → 46：方向从「一个勾选项」变成「升序 / 降序」两项，多一个动作要同步勾选态。
+        "window/ordering.py:OrderingMixin": 46,
         # 44 → 45：Esc 退不动时要取消日历上选中的那一天（ADR 0070），而「选中哪一天」
         # 只有 CalendarPage 知道；这一间因此多了一条对日历页的依赖。
         # 45 → 46：换层时先收掉放映（`stop_slideshow`），放映的快照属于上一层。

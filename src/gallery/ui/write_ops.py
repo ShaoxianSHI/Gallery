@@ -285,7 +285,7 @@ class WriteOpsMixin:
             whole_level=self._group_view is not None or self._browse_mode == BROWSE_MODE_FLAT,
         )
         # 重排后再问行号，**不要拿 insert_entry 交回来的那个**：那一行是按「同名相邻、升序」
-        # 找的，而相册卡片的实际方向跟着「逆序」（ADR 0049）—— 勾了逆序时它是反的。
+        # 找的，而相册卡片的实际方向跟着「降序」（ADR 0049）—— 选了降序时它是反的。
         self._apply_ordering()
         row = self._model.row_of_path(created.path)
         if row < 0:

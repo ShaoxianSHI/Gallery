@@ -302,7 +302,7 @@ def test_in_flat_mode_a_photo_from_a_subfolder_is_sorted_among_all(
 def test_album_cards_follow_the_reverse_toggle(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
 ) -> None:
-    """勾上「逆序」要把**相册卡片**也翻过来，而它们永远排在照片前面（ADR 0049）。
+    """选了「降序」要把**相册卡片**也翻过来，而它们永远排在照片前面（ADR 0049）。
 
     相册卡片不进排序字段（文件夹没有拍摄时间），但方向跟着那一档走 —— 否则同一层里
     「照片翻了、相册没翻」，读起来像两样东西没对齐。

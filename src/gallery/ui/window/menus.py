@@ -1,6 +1,7 @@
 """菜单里该有哪些条目 —— 五张菜单各自的拼法，四组的分法与顺序见 ADR 0023。
 
 每次弹出时现建、用完即弃，但用的都是菜单栏里那份 ``QAction``，所以快捷键文字与置灰状态只有一处逻辑。
+「分组」「排序」两张子菜单由窗口现建（动作能共享、菜单本身不能），这样右键那两张与菜单栏逐行一致。
 **本模块只 ``addAction``**：不要把菜单栏的 ``QMenu`` 直接 ``addMenu`` 进来（会把它搬走）。
 """
 
@@ -84,12 +85,12 @@ class MenuActions:
     select_all: QAction
     #: 「上一级」Esc —— **大图页与网格页共用这一条**（ADR 0041 决策 6）。
     up: QAction
-    #: 「分组」子菜单里的单选项，顺序即菜单栏里的顺序（先是「不分组」）。
-    group_choices: tuple[QAction, ...]
-    #: 「排序」子菜单里的单选项。
-    sort_choices: tuple[QAction, ...]
-    #: 「逆序」。
-    descending: QAction
+    #: 现建一份「分组」子菜单，挂到给定的父菜单上。**与菜单栏那份逐行一致**
+    #: （含「旅行 / 演出 / 影片」三层）：动作可以同时挂在两张菜单上，菜单本身不行，
+    #: 所以这里递的是「怎么建」而不是菜单。
+    group_menu: Callable[[QMenu], QMenu]
+    #: 现建一份「排序」子菜单（字段一列，分隔线，升序 / 降序）。
+    sort_menu: Callable[[QMenu], QMenu]
     #: 「缩略图大小」子菜单里的档位。
     size_choices: tuple[QAction, ...]
     #: 「设为相册封面」（ADR 0028）。**此刻没有可设的对象就是 ``None``**。
@@ -213,14 +214,8 @@ def build_background_menu(actions: MenuActions) -> QMenu:
         menu.addSeparator()
     menu.addAction(actions.select_all)
     menu.addSeparator()
-    menu.addMenu(_submenu("分组", actions.group_choices))
-    menu.addMenu(
-        _submenu(
-            "排序",
-            (*actions.sort_choices, actions.descending),
-            split_before=len(actions.sort_choices),
-        )
-    )
+    menu.addMenu(actions.group_menu(menu))
+    menu.addMenu(actions.sort_menu(menu))
     menu.addMenu(_submenu("缩略图大小", actions.size_choices))
     menu.addSeparator()
     menu.addAction(actions.up)
@@ -385,13 +380,11 @@ def _fill_album_picker(menu: QMenu, supplier: Callable[[], Sequence[tuple[str, P
         action.setData(path)
 
 
-def _submenu(title: str, actions: tuple[QAction, ...], *, split_before: int = 0) -> QMenu:
+def _submenu(title: str, actions: tuple[QAction, ...]) -> QMenu:
     """用已有动作现建一个子菜单。"""
     menu = QMenu(title)
     menu.setToolTipsVisible(True)
-    for position, action in enumerate(actions):
-        if position == split_before:
-            menu.addSeparator()
+    for action in actions:
         menu.addAction(action)
     return menu
 

@@ -281,7 +281,8 @@ def test_menus_expose_group_and_sort_fields(qt_app: QApplication, tmp_path: Path
     assert set(group_menu) >= {"captured_month", "captured_year", "camera", "keyword"}
     assert set(sort_menu) >= {"name", "size", "captured"}
     assert None not in sort_menu  # 没有「不排序」：网格永远按某个字段排
-    assert window._descending_action.text() == "逆序"
+    assert window._ascending_action.text() == "升序"
+    assert window._descending_action.text() == "降序"
     window.close()
 
 
@@ -837,7 +838,7 @@ def test_sorting_reorders_without_grouping(
     _settle(qt_app, window)
     assert _labels(window) == ["a.jpg", "b.jpg", "c.jpg"]
 
-    # 名称类的自然方向是升序，所以「逆序」把它翻成降序。
+    # 名称类的自然方向是升序，所以「降序」把它翻过来。
     window.set_sort_descending(True)
     _settle(qt_app, window)
     assert _labels(window) == ["c.jpg", "b.jpg", "a.jpg"]
@@ -847,10 +848,10 @@ def test_sorting_reorders_without_grouping(
 def test_the_default_sort_shows_the_newest_photo_first(
     qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path], fake_facet_source: object
 ) -> None:
-    """默认那一档（修改时间）**升序**（旧 → 新），而「逆序」没有勾（ADR 0049）。
+    """默认那一档（修改时间）**升序**（旧 → 新），菜单里勾着「升序」（ADR 0049）。
 
-    这两半必须一起钉：只钉顺序的话，把「逆序」的默认值翻成勾上也能过 —— 那读起来
-    同样是「最新那张不在最前」，而用户点一下「逆序」会看到顺序没变。
+    这两半必须一起钉：只钉顺序的话，把方向默认值翻成降序也能过 —— 那读起来
+    同样是「最新那张不在最前」，而用户点一下「降序」会看到顺序没变。
     """
     root = _library(tmp_path, make_photo, ["最早.jpg", "最新.jpg", "中间.jpg"])
     _touch_all(root, ["最早.jpg", "中间.jpg", "最新.jpg"])
@@ -858,6 +859,39 @@ def test_the_default_sort_shows_the_newest_photo_first(
     _settle(qt_app, window)
 
     assert _labels(window) == ["最早.jpg", "中间.jpg", "最新.jpg"]
+    assert window._ascending_action.isChecked() is True
+    assert window._descending_action.isChecked() is False
+    window.close()
+
+
+def test_the_direction_items_are_mutually_exclusive(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path], fake_facet_source: object
+) -> None:
+    """「升序 / 降序」两项互斥：点一个另一个就取消，点已勾上的那一个不会把两项都取消。"""
+    root = _library(tmp_path, make_photo, ["a.jpg", "b.jpg", "c.jpg"])
+    window = _open(qt_app, root, session_base=tmp_path / "状态")
+    _settle(qt_app, window)
+    window.set_sort_facet("name")
+    _settle(qt_app, window)
+
+    window._descending_action.trigger()
+    _settle(qt_app, window)
+    assert window._sort_descending is True
+    assert _labels(window) == ["c.jpg", "b.jpg", "a.jpg"]
+    assert window._descending_action.isChecked() is True
+    assert window._ascending_action.isChecked() is False
+
+    window._ascending_action.trigger()
+    _settle(qt_app, window)
+    assert window._sort_descending is False
+    assert _labels(window) == ["a.jpg", "b.jpg", "c.jpg"]
+    assert window._ascending_action.isChecked() is True
+    assert window._descending_action.isChecked() is False
+
+    window._ascending_action.trigger()  # 已勾上的那一项：状态不变，也不能两项全空
+    _settle(qt_app, window)
+    assert window._sort_descending is False
+    assert window._ascending_action.isChecked() is True
     assert window._descending_action.isChecked() is False
     window.close()
 
@@ -1030,7 +1064,7 @@ def test_entering_a_group_also_waits_for_the_metadata_sort(
     window.set_sort_descending(True)
     seen = _watch_names(qt_app, window, lambda: window._model.rowCount() > 0)
 
-    # 勾了逆序：拍摄时间降序，于是变成四月在前。
+    # 选了降序：拍摄时间从新到旧，于是变成四月在前。
     assert _names(window) == ["四月.jpg", "三月.jpg"]
     # 关键在这一行：**旧顺序一帧都不许出现**（先摆一屏三月/四月、下一帧才换成四月/三月也不行）。
     assert seen == [(), ("四月.jpg", "三月.jpg")]

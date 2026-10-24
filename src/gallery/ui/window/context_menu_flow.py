@@ -195,9 +195,9 @@ class ContextMenuFlowMixin:
             copy_group=self._copy_group_action,
             select_all=self._select_all_action,
             up=self._up_action,
-            group_choices=tuple(self._group_actions.values()),
-            sort_choices=tuple(self._sort_actions.values()),
-            descending=self._descending_action,
+            # 「分组」「排序」由窗口现建：右键那两张必须与菜单栏逐行一致（含事件字段那三层）。
+            group_menu=self.build_group_menu,
+            sort_menu=self.build_sort_menu,
             size_choices=tuple(self._size_actions),
             # 封面那两条（ADR 0028）没有对象就是 ``None``，不出现这一行；
             # 对象是谁由 ``WriteOpsMixin`` 回答。

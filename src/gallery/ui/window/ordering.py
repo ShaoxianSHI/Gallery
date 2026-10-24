@@ -14,11 +14,11 @@ from functools import partial
 from pathlib import Path
 from typing import Final
 
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QActionGroup
 from PySide6.QtWidgets import QMenu
 
 from gallery.core.collation import collation_key
-from gallery.core.events.kinds import EVENT_KINDS
+from gallery.core.events.kinds import EVENT_KINDS, EventKind
 from gallery.core.events.store import EventRef
 from gallery.core.library.config import BROWSE_MODE_ALBUMS, BROWSE_MODE_CALENDAR
 from gallery.core.library.facade import Library
@@ -178,64 +178,102 @@ class OrderingMixin:
     def _build_order_menus(self, view_menu: QMenu) -> None:
         """「视图 → 分组 / 排序」两个子菜单。
 
-        放菜单而不是窗口上的控件：照片区那点高度不该拿来放两个下拉。
+        放菜单而不是窗口上的控件：照片区那点高度不该拿来放两个下拉。**右键空白处那两份也走
+        :meth:`build_group_menu` / :meth:`build_sort_menu`** —— 两处各写一遍的话，
+        「旅行 / 演出 / 影片」那三层迟早只长在一边。
         """
-        group_menu = view_menu.addMenu("分组")
-        group_menu.setToolTipsVisible(True)
         self._group_actions: dict[str | None, QAction] = {
-            None: self._order_choice(group_menu, "不分组", None, self.set_group_facet)
+            None: self._order_choice("不分组", None, self.set_group_facet)
         }
         for facet in GROUP_FACETS:
             self._group_actions[facet.id] = self._order_choice(
-                group_menu,
                 facet.label,
                 facet.id,
                 self.set_group_facet,
                 unavailable=self._unavailable_hint(facet),
             )
-            if facet.id == FACET_EVENT:
-                # 紧接着「事件」摆三类的字段子菜单：它们都是「照片属于哪次事件」的延伸。
-                self._add_event_field_menus(group_menu)
-
-        sort_menu = view_menu.addMenu("排序")
-        sort_menu.setToolTipsVisible(True)
-        # 菜单里**没有「不排序」**：扫描顺序是内部实现，摆成选项只会让人在两种
-        # 看不懂的顺序之间来回试。
-        self._sort_actions: dict[str, QAction] = {}
-        for facet in SORT_FACETS:
-            self._sort_actions[facet.id] = self._order_choice(
-                sort_menu,
-                facet.label,
-                facet.id,
-                self.set_sort_facet,
-                unavailable=self._unavailable_hint(facet),
-            )
-        sort_menu.addSeparator()
-        self._descending_action = QAction("逆序", self)
-        self._descending_action.setCheckable(True)
-        self._descending_action.toggled.connect(self.set_sort_descending)
-        sort_menu.addAction(self._descending_action)
-
-    def _add_event_field_menus(self, group_menu: QMenu) -> None:
-        """「分组 → 旅行 / 演出 / 影片」，每一层右侧是这一类事件的字段（ADR 0043 决策 7）。
-
-        清单来自 :func:`groupable_event_fields`：公共的「开始日期」在前，类型独有的字段在后。
-        挑一个就是把这一层按那一栏归拢（「按旅行·目的地」）。
-        """
         for kind in EVENT_KINDS:
-            submenu = group_menu.addMenu(kind.label)
-            submenu.setToolTipsVisible(True)
             for declared in groupable_event_fields(kind):
                 facet = event_field_facet(kind.id, declared.id)
                 if facet is None:
                     continue
                 self._group_actions[facet.id] = self._order_choice(
-                    submenu, declared.label, facet.id, self.set_group_facet
+                    declared.label, facet.id, self.set_group_facet
                 )
+
+        # 菜单里**没有「不排序」**：扫描顺序是内部实现，摆成选项只会让人在两种
+        # 看不懂的顺序之间来回试。
+        self._sort_actions: dict[str, QAction] = {}
+        for facet in SORT_FACETS:
+            self._sort_actions[facet.id] = self._order_choice(
+                facet.label,
+                facet.id,
+                self.set_sort_facet,
+                unavailable=self._unavailable_hint(facet),
+            )
+        # 方向两项互斥；勾选态只由 ``_sync_order_actions`` 写，点已勾上的那一项不会把它取消。
+        direction_group = QActionGroup(self)
+        direction_group.setExclusive(True)
+        self._ascending_action = self._direction_choice(direction_group, "升序", False)
+        self._descending_action = self._direction_choice(direction_group, "降序", True)
+
+        self._fill_group_menu(view_menu.addMenu("分组"))
+        self._fill_sort_menu(view_menu.addMenu("排序"))
+
+    def build_group_menu(self, parent: QMenu) -> QMenu:
+        """现建一份「分组」子菜单 —— 与菜单栏那份逐行一致，右键空白处用它。"""
+        menu = QMenu("分组", parent)
+        self._fill_group_menu(menu)
+        return menu
+
+    def build_sort_menu(self, parent: QMenu) -> QMenu:
+        """现建一份「排序」子菜单 —— 同上。"""
+        menu = QMenu("排序", parent)
+        self._fill_sort_menu(menu)
+        return menu
+
+    def _fill_group_menu(self, menu: QMenu) -> None:
+        """「分组」的全部行：字段一列，事件字段那三层紧跟「事件」。"""
+        menu.setToolTipsVisible(True)
+        menu.addAction(self._group_actions[None])
+        for facet in GROUP_FACETS:
+            menu.addAction(self._group_actions[facet.id])
+            if facet.id != FACET_EVENT:
+                continue
+            for kind in EVENT_KINDS:
+                submenu = menu.addMenu(kind.label)
+                submenu.setToolTipsVisible(True)
+                for action in self._event_field_actions(kind):
+                    submenu.addAction(action)
+
+    def _event_field_actions(self, kind: EventKind) -> tuple[QAction, ...]:
+        """这一类事件在「分组」里那几项 —— 动作已建好，这里只按声明顺序取。"""
+        actions: list[QAction] = []
+        for declared in groupable_event_fields(kind):
+            facet = event_field_facet(kind.id, declared.id)
+            if facet is not None and facet.id in self._group_actions:
+                actions.append(self._group_actions[facet.id])
+        return tuple(actions)
+
+    def _fill_sort_menu(self, menu: QMenu) -> None:
+        """「排序」的全部行：字段一列，分隔线之后是方向两项。"""
+        menu.setToolTipsVisible(True)
+        for action in self._sort_actions.values():
+            menu.addAction(action)
+        menu.addSeparator()
+        menu.addAction(self._ascending_action)
+        menu.addAction(self._descending_action)
+
+    def _direction_choice(self, group: QActionGroup, label: str, descending: bool) -> QAction:
+        """「升序 / 降序」里的一项；两项互斥。"""
+        action = QAction(label, self)
+        action.setCheckable(True)
+        action.triggered.connect(lambda _checked=False: self.set_sort_descending(descending))
+        group.addAction(action)
+        return action
 
     def _order_choice(
         self,
-        menu: QMenu,
         label: str,
         facet_id: str | None,
         handler: Callable[[str | None], None],
@@ -250,7 +288,6 @@ class OrderingMixin:
             action.setToolTip(unavailable)
         else:
             action.triggered.connect(lambda _checked=False, target=facet_id: handler(target))
-        menu.addAction(action)
         return action
 
     def _unavailable_hint(self, facet: Facet) -> str | None:
@@ -300,7 +337,7 @@ class OrderingMixin:
         self._reload_level()
 
     def set_sort_descending(self, descending: bool) -> None:
-        """切换正序 / 逆序。只重排当前这一层，不必重新读元数据。"""
+        """切换升序 / 降序。只重排当前这一层，不必重新读元数据。"""
         if descending == self._sort_descending:
             return
         self._sort_descending = descending
@@ -317,6 +354,7 @@ class OrderingMixin:
             action.setChecked(facet_id == self._group_facet)
         for facet_id, action in self._sort_actions.items():
             action.setChecked(facet_id == self._sort_facet)
+        self._ascending_action.setChecked(not self._sort_descending)
         self._descending_action.setChecked(self._sort_descending)
 
     def _current_order(self) -> SortOrder:
@@ -595,8 +633,8 @@ class OrderingMixin:
         photos = [entry for entry in entries if isinstance(entry, PhotoRef)]
         # 相册卡片永远排在前面：先看文件夹、再看按元数据归拢出来的组，是既有心智。
         order = self._current_order()
-        # 相册卡片**只按名称排，方向跟着「逆序」**（ADR 0049）：它们不进 `sort_facet`（文件夹没有
-        # 拍摄时间与相机），而原先连「逆序」都不看，于是「照片翻了、相册没翻」。
+        # 相册卡片**只按名称排，方向跟着「降序」**（ADR 0049）：它们不进 `sort_facet`（文件夹没有
+        # 拍摄时间与相机），而原先连「降序」都不看，于是「照片翻了、相册没翻」。
         albums.sort(key=lambda folder: collation_key(folder.name), reverse=order.descending)
         # 分组只在这一层摆卡片时才有（判据只有 :meth:`_level_shows_group_cards` 一处）：
         # 已经在分组里面就再分不出来，而日历那一页自己按日期归拢、要装整库照片。

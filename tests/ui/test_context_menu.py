@@ -549,6 +549,40 @@ def test_multi_selection_hides_single_item_actions(
     ]
 
 
+def _submenu(menu: QMenu, title: str) -> QMenu:
+    """按标题取子菜单 —— 那一行本身就是那个 ``QMenu`` 的菜单动作。"""
+    for action in menu.actions():
+        submenu = action.menu()
+        if submenu is not None and action.text() == title:
+            return submenu
+    raise AssertionError(f"「{title}」不在菜单里：{_texts(menu)}")
+
+
+def _menu_tree(menu: QMenu) -> list[object]:
+    """逐行读一份菜单；子菜单展开成 ``(标题, 子项)``，两处一比就知道有没有多一行。"""
+    tree: list[object] = []
+    for action in menu.actions():
+        submenu = action.menu()
+        tree.append(action.text() if submenu is None else (action.text(), _menu_tree(submenu)))
+    return tree
+
+
+def test_blank_menu_duplicates_the_menu_bar_submenus(window: MainWindow) -> None:
+    """右键空白处那三张子菜单与「显示」菜单里的逐行一致（含事件字段那三层）。
+
+    两处各写一遍的话，「分组 → 旅行 / 演出 / 影片」那三层会只长在菜单栏里。
+    """
+    blank = _context_on_blank(window)
+    assert blank is not None
+    bar = next(action.menu() for action in window.menuBar().actions() if action.text() == "显示")
+    assert bar is not None
+    for title in ("分组", "排序", "缩略图大小"):
+        assert _menu_tree(_submenu(blank, title)) == _menu_tree(_submenu(bar, title)), title
+    # 一致性之外还得锁定「那一份长什么样」：平铺也能自洽，而事件字段本来就该是三层子菜单。
+    group = _submenu(blank, "分组")
+    assert any(action.text() == "旅行" and action.menu() is not None for action in group.actions())
+
+
 def test_background_menu_has_no_file_actions(window: MainWindow) -> None:
     """空白处：「新建相册」在最上面，其余仍是视图级命令。
 

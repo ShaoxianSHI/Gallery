@@ -28,7 +28,7 @@ class OrderingState:
     #: 排序字段 id。**恒为真字段 id** —— 菜单里没有「不排序」可退回（``set_sort_facet`` 对
     #: ``None`` 直接 return，``resolved_sort_facet`` 也交回一个能用的值）。
     _sort_facet: str
-    #: 逆序就是字面的 ``reverse``；所有字段默认一律升序（ADR 0049）。
+    #: 降序就是字面的 ``reverse``；所有字段默认一律升序（ADR 0049）。
     _sort_descending: bool
     #: 这一层的照片各有哪些 facet 值。跟着 facet 那个后台任务回来，不在主线程现查。
     _facet_values: dict[Path, PhotoFacets]

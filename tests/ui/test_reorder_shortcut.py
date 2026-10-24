@@ -72,7 +72,7 @@ def window(
     root.mkdir(parents=True, exist_ok=True)
     for name in NAMES:
         make_photo(name, directory=root)
-    # 两个相册：**相册模式**那一层里它们是相册卡片，而相册的顺序只受「逆序」影响
+    # 两个相册：**相册模式**那一层里它们是相册卡片，而相册的顺序只受「降序」影响
     # （它们不进排序字段，见 ADR 0049）。平铺模式压根没有相册卡片，量不到。
     for album in ("Yokohama", "Amsterdam"):
         (root / album).mkdir()
