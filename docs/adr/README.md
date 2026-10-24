@@ -117,3 +117,4 @@
 | [0087](0087-refresh-current-level.md) | ⌘R 在没选中东西时刷新当前层，并让索引重新对账 | 已接受 |
 | [0088](0088-format-groups-by-format-name.md) | 文件格式按格式名归组与检索，jpg 与 jpeg 是同一组 | 已接受 |
 | [0089](0089-grouping-section-layout.md) | 分组的第二种形态「分区式」：整行标题 + 分隔线，标题不是层级栈的一帧 | 已接受 |
+| [0090](0090-videos-in-the-library.md) | 库里的视频：扫描、第一帧缩略图、双击交给默认应用 | 已接受 |

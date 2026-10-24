@@ -234,6 +234,17 @@ def test_events_become_the_four_kinds(tmp_path: Path) -> None:
     ]
 
 
+def test_a_new_video_is_reported_like_a_photo(tmp_path: Path) -> None:
+    """视频是扫描收的东西，监听就得跟着报 —— 两边共用 ``is_supported_media``（ADR 0090）。"""
+    watcher, observer, batches = make_watcher(tmp_path)
+    watcher.start()
+
+    send(observer, FileCreatedEvent(str(tmp_path / "片子.mp4")))
+    watcher.flush()
+
+    assert batches == [(LibraryChange(ChangeKind.ADDED, tmp_path / "片子.mp4"),)]
+
+
 def test_opening_and_closing_a_file_is_not_a_change(tmp_path: Path) -> None:
     """只是有人读了一下这个文件：macOS 上事件多得是，报上去界面就白重画。"""
     watcher, observer, batches = make_watcher(tmp_path)
@@ -290,6 +301,7 @@ def test_renaming_inside_the_library_is_a_move(tmp_path: Path) -> None:
         f"{CONFIG_DIR_NAME}/cache/thumbs/a.jpg",  # 我们自己写缓存的那一层
         "读我.txt",  # 不是照片
         "raw.cr2",  # RAW 还不在支持范围里
+        "片子.mkv",  # 系统解不开的容器（ADR 0090）
     ],
 )
 def test_paths_the_scanner_never_shows_are_never_reported(tmp_path: Path, name: str) -> None:

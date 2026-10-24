@@ -18,7 +18,7 @@ from PIL import Image
 
 from gallery.core import paths
 from gallery.core.constants import CONFIG_DIR_NAME
-from gallery.core.errors import ConfigError, LibraryNotAccessibleError
+from gallery.core.errors import ConfigError, ImageDecodeError, LibraryNotAccessibleError
 from gallery.core.events.models import EventDraft
 from gallery.core.library.config import (
     LibraryConfig,
@@ -138,6 +138,21 @@ def test_thumbnail_preview_and_full(tmp_path: Path, make_photo: Callable[..., Pa
     assert library.thumbnail(ref).size == (512, 256)
     assert library.preview(ref, max_edge=100).size == (100, 50)
     assert library.full(ref).size == (800, 400)
+
+
+def test_a_video_has_a_thumbnail_but_no_preview_or_full(
+    tmp_path: Path, make_video: Callable[..., Path]
+) -> None:
+    """视频只有第一帧；「大图」那两条路必须拒绝，别把 4K 当预览解出来（ADR 0090）。"""
+    make_video(frames=1, directory=tmp_path)
+    library = Library.open(tmp_path)
+    ref = next(iter(library.iter_photos()))
+
+    assert library.thumbnail(ref).width == 64
+    with pytest.raises(ImageDecodeError):
+        library.preview(ref, max_edge=32)
+    with pytest.raises(ImageDecodeError):
+        library.full(ref)
 
 
 def test_clear_cache(tmp_path: Path, make_photo: Callable[..., Path]) -> None:
@@ -274,6 +289,19 @@ def test_the_cover_is_found_in_a_sub_album(library_with_album: Library) -> None:
 
     assert cover is not None
     assert cover.path == photo
+
+
+def test_a_video_can_be_an_album_cover(library_with_album: Library) -> None:
+    """视频有第一帧缩略图，当封面与照片没有区别（ADR 0090）。"""
+    album = library_with_album.root / "京都"
+    clip = album / "片子.mp4"
+    clip.write_bytes(b"\x00" * 8)
+
+    library_with_album.set_album_cover(album, clip)
+
+    assert load_config(library_with_album.root).album_covers == {"京都": "京都/片子.mp4"}
+    cover = library_with_album.album_cover(album)
+    assert cover is not None and cover.is_video is True
 
 
 def test_a_cover_that_is_gone_falls_back_to_the_first_photo(
@@ -448,7 +476,7 @@ def test_an_unsupported_file_is_not_a_cover(library_with_album: Library) -> None
     with pytest.raises(ConfigError) as excinfo:
         library_with_album.set_album_cover(album, album / "读我.txt")
 
-    assert "支持的照片格式" in excinfo.value.message
+    assert "支持的格式" in excinfo.value.message
 
 
 def test_a_hand_edited_cover_that_is_not_a_photo_is_ignored(

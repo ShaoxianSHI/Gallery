@@ -63,6 +63,28 @@ def _ref(tmp_path: Path, name: str = "a.jpg", size: int = 100) -> PhotoRef:
     return PhotoRef(path=path, size=size, mtime_ns=1)
 
 
+def test_extract_reads_quicktime_dates_and_pixels_from_videos() -> None:
+    """视频只有容器标签：本地墙钟优先，UTC 只作回退（ADR 0090）。"""
+    raw = {
+        "SourceFile": "/照片/片子.mov",
+        "QuickTime:CreationDate": "2024:05:16 20:52:02+08:00",
+        "QuickTime:CreateDate": "2024:05:16 12:52:02",
+        "QuickTime:ImageWidth": 3840,
+        "QuickTime:ImageHeight": 2160,
+    }
+
+    facets = extract(raw)
+
+    assert (facets.year, facets.month, facets.day, facets.hour) == (2024, 5, 16, 20)
+    assert facets.pixels == 3840 * 2160
+
+
+def test_extract_falls_back_to_the_utc_quicktime_date() -> None:
+    facets = extract({"QuickTime:CreateDate": "2024:05:16 12:52:02"})
+
+    assert (facets.year, facets.month, facets.day) == (2024, 5, 16)
+
+
 def test_extract_reads_exif_fields() -> None:
     raw = {
         "SourceFile": "/照片/a.jpg",
@@ -176,6 +198,17 @@ def test_extract_honours_the_hemisphere() -> None:
 def test_gps_tags_are_requested() -> None:
     """回归测试：漏掉这几行，每张照片的地点字段就都是空的。"""
     for tag in ("EXIF:GPSLatitude", "EXIF:GPSLongitude", "EXIF:GPSLatitudeRef"):
+        assert tag in WANTED_TAGS
+
+
+def test_quicktime_tags_are_requested() -> None:
+    """视频的日期与尺寸只在容器标签里；不点名要，exiftool 就不会给（ADR 0090）。"""
+    for tag in (
+        "QuickTime:CreationDate",
+        "QuickTime:CreateDate",
+        "QuickTime:ImageWidth",
+        "QuickTime:ImageHeight",
+    ):
         assert tag in WANTED_TAGS
 
 

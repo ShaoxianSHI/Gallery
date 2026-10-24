@@ -20,7 +20,12 @@ from typing import TYPE_CHECKING, Concatenate, Final, cast
 from uuid import uuid4
 
 from gallery.core import paths
-from gallery.core.errors import ConfigError, GalleryError, LibraryNotAccessibleError
+from gallery.core.errors import (
+    ConfigError,
+    GalleryError,
+    ImageDecodeError,
+    LibraryNotAccessibleError,
+)
 from gallery.core.events import sources
 from gallery.core.events import store as events
 from gallery.core.events.import_shows import read_show_export, show_identity
@@ -51,7 +56,7 @@ from gallery.core.library.photos import (
     FolderRef,
     GridEntry,
     PhotoRef,
-    is_supported_photo,
+    is_supported_media,
 )
 from gallery.core.library.place_pass import (
     _needs_lookup,
@@ -377,7 +382,7 @@ class Library:
         should_cancel: Callable[[], bool] | None = None,
         report: ScanReport | None = None,
     ) -> Iterator[PhotoRef]:
-        """按库配置递归（或不递归）遍历照片。"""
+        """按库配置递归（或不递归）遍历照片与视频。"""
         return iter_photos(
             self._root,
             recursive=self._config.recursive,
@@ -392,7 +397,7 @@ class Library:
         should_cancel: Callable[[], bool] | None = None,
         report: ScanReport | None = None,
     ) -> Iterator[FolderRef | PhotoRef]:
-        """列出某一层的内容（相册在前，照片在后）。
+        """列出某一层的内容（相册在前，照片与视频在后）。
 
         :param directory: 要列出的目录，默认是库根目录。
         :raises LibraryNotAccessibleError: 目录不存在，或不在库内 ——
@@ -470,7 +475,7 @@ class Library:
             return None
         path = self._root / stored
         # 先按扩展名与「是不是文件」筛掉，再 stat：读不出来的那张留给流水线去报错。
-        if not is_supported_photo(path) or not path.is_file():
+        if not is_supported_media(path) or not path.is_file():
             return None
         try:
             return PhotoRef.from_path(path)
@@ -498,10 +503,8 @@ class Library:
         photo_key = _relative_posix(self._root, photo)
         if photo_key is None:
             raise ConfigError(f"「{photo.name}」不在这个库里，没法拿它当封面。", path=photo)
-        if not is_supported_photo(photo):
-            raise ConfigError(
-                f"「{photo.name}」不是 Gallery 支持的照片格式，换一张试试。", path=photo
-            )
+        if not is_supported_media(photo):
+            raise ConfigError(f"「{photo.name}」不是 Gallery 支持的格式，换一张试试。", path=photo)
         if not photo_key.startswith(f"{album_key}/"):
             # 与 ``config.from_mapping`` 里那条校验同一个判据：写进去的与读得出来的必须是同一种键。
             raise ConfigError(
@@ -567,8 +570,10 @@ class Library:
     ) -> RasterImage:
         """取用于「适配窗口」的预览图，不落盘。
 
-        与缩略图不同，预览的尺寸随窗口变化，缓存它只会把缓存撑爆。
+        与缩略图不同，预览的尺寸随窗口变化，缓存它只会把缓存撑爆。**视频不走这条路**：
+        它没有「大图」，画面由播放器或系统默认应用提供，解一帧 4K 只会白占内存。
         """
+        _refuse_video(ref)
         return decode_rgba(ref.path, max_edge=max_edge, use_draft=True, should_cancel=should_cancel)
 
     def full(
@@ -576,8 +581,9 @@ class Library:
     ) -> RasterImage:
         """取全分辨率像素，用于 100% 查看。
 
-        调用方必须自己控制内存：12MP 照片的 RGBA 约 48 MB。
+        调用方必须自己控制内存：12MP 照片的 RGBA 约 48 MB。视频同 :meth:`preview`，不走图片解码。
         """
+        _refuse_video(ref)
         return decode_rgba(ref.path, should_cancel=should_cancel)
 
     def clear_cache(self) -> int:
@@ -1312,6 +1318,19 @@ class Library:
         """改名不改变像素，但缓存 key 含路径 —— 不挪就会留下永远命不中的孤儿条目。"""
         if isinstance(previous, PhotoRef) and isinstance(entry, PhotoRef):
             self._thumbnails.relocate(previous, entry)
+
+
+def _refuse_video(ref: PhotoRef) -> None:
+    """视频不走图片解码：它没有「大图」，画面由播放器或系统默认应用提供。
+
+    界面本来就不会把视频送到这两条路，这一道是给将来漏掉的调用点一个说得清的错误，
+    而不是把一帧 4K 当预览解出来。
+    """
+    if ref.is_video:
+        raise ImageDecodeError(
+            f"视频不走图片解码：{ref.name} 的画面由播放器提供。",
+            path=ref.path,
+        )
 
 
 def _relative_posix(root: Path, path: Path) -> str | None:

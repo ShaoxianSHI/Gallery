@@ -1,9 +1,8 @@
-"""图像解码：把磁盘上的照片变成裸像素。
-
-``core`` 不认识 Qt，所以返回 RGBA 字节流，由界面层包装成 ``QImage``（GIF 只取第一帧，
-RAW 不支持，见 ADR 0001）。四个容易踩的坑：Pillow 打开文件是**惰性**的，解码异常要包成
-``ImageDecodeError``；竖拍要按 EXIF Orientation 摆正且只改内存像素、不写回；``Image.draft``
-必须在任何解码动作之前调用；``open()`` / ``load()`` 可能永远不回来（见 :func:`_within_deadline`）。
+"""图像与视频解码：把磁盘上的文件变成裸像素（GIF 只取第一帧，RAW 不支持，见 ADR 0001；
+视频取第一帧，见 ADR 0090）。``core`` 不认识 Qt，所以返回 RGBA 字节流，由界面层包装成
+``QImage``。四个容易踩的坑：Pillow 打开文件是**惰性**的，解码异常要包成 ``ImageDecodeError``；
+竖拍要按 EXIF Orientation 摆正且只改内存像素、不写回；``Image.draft`` 必须在任何解码动作
+之前调用；``open()`` / ``load()`` 可能永远不回来（见 :func:`_within_deadline`）。
 """
 
 from __future__ import annotations
@@ -19,6 +18,8 @@ from PIL import ExifTags, Image, ImageOps, UnidentifiedImageError
 
 from gallery.core.cancellation import never_cancel
 from gallery.core.errors import ImageDecodeError
+from gallery.core.library.photos import is_video
+from gallery.core.media.video import first_frame
 
 #: 读一张照片最多等多久（秒）。给得不算小：50MP 的照片冷解码就要好几秒，云盘上第一次拉下来
 #: 更慢。超过它就当「这张根本读不出来」，报一句**用户可修复**的话，而不是继续占着工作线程。
@@ -119,16 +120,18 @@ def decode_rgba(
 ) -> RasterImage:
     """解码 ``path`` 为 RGBA 像素（``max_edge`` 只缩不放）。
 
+    **视频走另一条解码器**：取第 0 秒那一帧（ADR 0090），``use_draft`` 对它没有意义。
     :param use_draft: 允许 JPEG 走 DCT 缩放快速解码，仅在 ``max_edge`` 远小于原图时有意义。
     :param should_cancel: 读的过程中问一句「还要继续吗」（切库、关窗时用）。
     :raises ImageDecodeError: 文件损坏、被截断、读不出来，或格式不受支持。
     """
     path = Path(path)
-    return _within_deadline(
-        path,
-        lambda: _decode_now(path, max_edge=max_edge, use_draft=use_draft),
-        cancelled=should_cancel or never_cancel,
+    work = (
+        (lambda: _decode_video_now(path, max_edge=max_edge))
+        if is_video(path)
+        else (lambda: _decode_now(path, max_edge=max_edge, use_draft=use_draft))
     )
+    return _within_deadline(path, work, cancelled=should_cancel or never_cancel)
 
 
 def _within_deadline(
@@ -227,6 +230,12 @@ def _decode_now(path: Path, *, max_edge: int | None, use_draft: bool) -> RasterI
             path=path,
             detail=str(exc),
         ) from exc
+
+
+def _decode_video_now(path: Path, *, max_edge: int | None) -> RasterImage:
+    """视频那条路：一帧就是它的全部像素，没有 Orientation、没有 draft（见 ``media.video``）。"""
+    width, height, rgba = first_frame(path, max_edge=max_edge)
+    return RasterImage(width=width, height=height, rgba=rgba)
 
 
 #: EXIF Orientation 里「不用转」的那几个值（缺省、正常、以及只带镜像标记的 0/1）。

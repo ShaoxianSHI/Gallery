@@ -53,7 +53,12 @@ class SlideshowFlowMixin:
         """
         if self._library is None or self._on_calendar_page():
             return
-        photos = [entry for entry in self._model.entries() if isinstance(entry, PhotoRef)]
+        # 视频不进放映：它自己有多长，与固定秒数是两套节奏。
+        photos = [
+            entry
+            for entry in self._model.entries()
+            if isinstance(entry, PhotoRef) and not entry.is_video
+        ]
         if not photos:
             self._show_banner("当前层级没有照片。")
             return

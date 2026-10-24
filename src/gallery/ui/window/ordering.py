@@ -590,7 +590,8 @@ class OrderingMixin:
             self._say_level_is_empty("这个文件夹里既没有子文件夹，也没有可显示的照片。")
         else:
             self._say_level_is_empty(
-                "没有找到可显示的照片。支持 JPEG、PNG、HEIC、TIFF、GIF、WebP、BMP。"
+                "没有找到可显示的照片或视频。支持 JPEG、PNG、HEIC、TIFF、GIF、WebP、BMP 与 "
+                "MP4、MOV、M4V、AVI、3GP。"
             )
 
     def _say_level_is_empty(self, text: str) -> None:

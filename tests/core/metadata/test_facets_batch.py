@@ -154,6 +154,18 @@ def test_read_facets_falls_back_when_source_is_missing(tmp_path: Path) -> None:
     assert fallback.batch_sizes == [1]
 
 
+def test_pillow_fallback_records_an_empty_snapshot_for_videos(tmp_path: Path) -> None:
+    """没有 exiftool 时视频也要留一行「看过了」，否则每次切分组都重读（ADR 0090）。"""
+    path = tmp_path / "片子.mp4"
+    path.write_bytes(b"\x00" * 8)
+
+    result = read_facets([path], source=PillowBatchSource())
+
+    assert path in result
+    assert result[path].captured_at is None
+    assert result[path].pixels is None
+
+
 def test_read_facets_respects_cancellation(tmp_path: Path) -> None:
     paths = _paths(tmp_path, 5)
     source = FakeSource({path.name: {"EXIF:ISO": "100"} for path in paths})

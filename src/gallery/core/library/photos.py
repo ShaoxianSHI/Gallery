@@ -1,7 +1,8 @@
-"""照片的识别与轻量描述。
+"""照片与视频的识别、轻量描述。
 
 ``PhotoRef`` 只携带「定位 + 判断缓存是否失效」所需的信息（路径、大小、修改时间），
 **不读像素、不读 EXIF**：扫描几万张照片时，任何一次多余的 open() 都会让首屏变慢。
+视频与照片共用同一个引用：网格、改名、事件、检索都只认「一条路径」。
 """
 
 from __future__ import annotations
@@ -37,7 +38,19 @@ _FORMAT_LABELS: Final[dict[str, str]] = {
     ".gif": "GIF",
     ".webp": "WebP",
     ".bmp": "BMP",
+    ".mp4": "MP4",
+    ".m4v": "MP4",
+    ".mov": "MOV",
+    ".avi": "AVI",
+    ".3gp": "3GP",
 }
+
+#: 能取第一帧的视频扩展名（ADR 0090）。**只收系统能解的容器**：AVFoundation 没有
+#: Matroska 的解复用器，mkv / webm 进来只会得到一格灰。
+VIDEO_SUFFIXES: Final[frozenset[str]] = frozenset({".mp4", ".m4v", ".mov", ".avi", ".3gp"})
+
+#: 扫描与网格认的全部文件。**写回元数据仍然只认** :data:`SUPPORTED_SUFFIXES`。
+MEDIA_SUFFIXES: Final[frozenset[str]] = SUPPORTED_SUFFIXES | VIDEO_SUFFIXES
 
 
 def format_label(suffix: str) -> str:
@@ -49,13 +62,14 @@ def normalize_suffix(text: str) -> str | None:
     """用户敲的格式名或扩展名 → 它的一个扩展名；``None`` 表示认不出来。
 
     **返回值不承诺唯一**：``JPEG`` 交回 ``.jpg`` 或 ``.jpeg`` 都只说明它属于哪个格式。
-    要「这个格式的全部扩展名」用 :func:`format_suffixes`。
+    要「这个格式的全部扩展名」用 :func:`format_suffixes`。视频也算 —— 检索的「#文件格式」
+    与分组要能把 ``mp4`` 认出来。
     """
     cleaned = text.strip().casefold().lstrip(".")
     if not cleaned:
         return None
     suffix = f".{cleaned}"
-    if suffix in SUPPORTED_SUFFIXES:
+    if suffix in MEDIA_SUFFIXES:
         return suffix
     for known, label in _FORMAT_LABELS.items():
         if label.casefold() == cleaned.casefold():
@@ -77,13 +91,27 @@ def format_suffixes(text: str) -> tuple[str, ...] | None:
 
 
 def is_supported_photo(path: Path) -> bool:
-    """按扩展名判断是否为 v1 支持的照片。不检查文件是否真的能解码。"""
+    """按扩展名判断是不是**图片**。不检查文件是否真的能解码。
+
+    写回元数据那条路只认它：视频没有可写的 EXIF，也绝不能被当成照片写进去。
+    扫描与网格用 :func:`is_supported_media`。
+    """
     return Path(path).suffix.lower() in SUPPORTED_SUFFIXES
+
+
+def is_supported_media(path: Path) -> bool:
+    """按扩展名判断扫描要不要收它：照片或视频都算。不检查文件是否真的能解码。"""
+    return Path(path).suffix.lower() in MEDIA_SUFFIXES
+
+
+def is_video(path: Path) -> bool:
+    """按扩展名判断它是不是视频。"""
+    return Path(path).suffix.lower() in VIDEO_SUFFIXES
 
 
 @dataclass(frozen=True, slots=True)
 class PhotoRef:
-    """对一张照片的轻量引用。"""
+    """对一张照片或视频的轻量引用。"""
 
     path: Path
     size: int
@@ -108,8 +136,12 @@ class PhotoRef:
     def format_label(self) -> str:
         return format_label(self.suffix)
 
+    @property
+    def is_video(self) -> bool:
+        return self.suffix in VIDEO_SUFFIXES
+
     def is_supported(self) -> bool:
-        return self.suffix in SUPPORTED_SUFFIXES
+        return self.suffix in MEDIA_SUFFIXES
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,7 +251,9 @@ type GridEntry = PhotoRef | FolderRef | GroupRef | SectionRef
 
 
 __all__ = [
+    "MEDIA_SUFFIXES",
     "SUPPORTED_SUFFIXES",
+    "VIDEO_SUFFIXES",
     "FolderRef",
     "GridEntry",
     "GroupRef",
@@ -227,6 +261,8 @@ __all__ = [
     "SectionRef",
     "format_label",
     "format_suffixes",
+    "is_supported_media",
     "is_supported_photo",
+    "is_video",
     "normalize_suffix",
 ]

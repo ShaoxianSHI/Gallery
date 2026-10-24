@@ -203,6 +203,18 @@ def test_an_unsupported_format_is_refused(tmp_path: Path) -> None:
         write_metadata(root, ref, list(HANGZHOU), writer=FakeWriter())
 
 
+def test_a_video_is_not_writable(tmp_path: Path) -> None:
+    """视频能浏览、能改名，但没有可写的 EXIF —— 写回那条路只认图片（ADR 0090）。"""
+    root = tmp_path / "照片"
+    root.mkdir()
+    (root / "片子.mp4").write_bytes(b"\x00" * 8)
+    paths.config_dir(root).mkdir()
+    ref = PhotoRef.from_path(root / "片子.mp4")
+
+    with pytest.raises(MetadataWriteError, match="不是 Gallery 支持的照片格式"):
+        write_metadata(root, ref, list(HANGZHOU), writer=FakeWriter())
+
+
 def test_without_exiftool_it_says_so_instead_of_failing_obscurely(
     library: Path, photo: PhotoRef
 ) -> None:

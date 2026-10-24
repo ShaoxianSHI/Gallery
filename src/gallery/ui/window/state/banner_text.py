@@ -105,7 +105,7 @@ class BannerText:
         #: 「这一层是空的」那句话是不是我们说的。**它只记一句是谁说的，不记原文** ——
         #: 那一句每次都不一样（有内容 / 在分组 / 在相册），而收它的时候是整条横幅一起收。
         self.level_notice = False
-        #: 这一轮解码失败了几张（「有 3 张照片无法显示缩略图」那个数字）。**换库归零**。
+        #: 这一轮解码失败了几张（「有 3 个文件无法显示缩略图」那个数字）。**换库归零**。
         self._thumbnail_failures = 0
         self.progress = NoticeSlot(self._show_background, self._current, self._hide)
         # **地点与索引这两族受扫描门闩管**（「哪些内容没读到」比它们更要紧），而「读元数据」

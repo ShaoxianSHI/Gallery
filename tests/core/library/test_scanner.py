@@ -53,9 +53,28 @@ def test_ignores_unsupported_files(tmp_path: Path, make_photo: Callable[..., Pat
     make_photo("a.jpg")
     (tmp_path / "notes.txt").write_text("不是照片", encoding="utf-8")
     (tmp_path / "raw.cr3").write_bytes(b"\x00" * 8)
-    (tmp_path / "movie.mp4").write_bytes(b"\x00" * 8)
+    (tmp_path / "movie.mkv").write_bytes(b"\x00" * 8)
 
     assert names(iter_photos(tmp_path)) == ["a.jpg"]
+
+
+def test_videos_are_scanned_like_photos(tmp_path: Path, make_photo: Callable[..., Path]) -> None:
+    """视频与照片共用同一个 ``PhotoRef``：网格、改名、事件都只认路径（ADR 0090）。"""
+    make_photo("a.jpg")
+    for name in ("b.mp4", "c.MOV", "d.m4v", "e.avi", "f.3gp"):
+        (tmp_path / name).write_bytes(b"\x00" * 8)
+
+    refs = list(iter_photos(tmp_path))
+
+    assert [ref.path.name for ref in refs] == [
+        "a.jpg",
+        "b.mp4",
+        "c.MOV",
+        "d.m4v",
+        "e.avi",
+        "f.3gp",
+    ]
+    assert [ref.is_video for ref in refs] == [False, True, True, True, True, True]
 
 
 def test_order_is_deterministic(tmp_path: Path, make_photo: Callable[..., Path]) -> None:

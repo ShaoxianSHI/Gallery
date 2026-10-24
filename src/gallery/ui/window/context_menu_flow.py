@@ -226,7 +226,7 @@ class ContextMenuFlowMixin:
         )
 
     def open_current_entry(self) -> None:
-        """「打开」：照片开大图，相册与分组进去 —— 与双击是同一件事。"""
+        """「打开」：照片开大图，视频交给默认应用，相册与分组进去 —— 与双击是同一件事。"""
         index = self._grid.currentIndex()
         if index.isValid():
             self._on_entry_activated(index)

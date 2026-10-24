@@ -15,7 +15,12 @@ from stat import S_ISDIR, S_ISREG
 from gallery.core.cancellation import never_cancel
 from gallery.core.collation import collation_key
 from gallery.core.errors import LibraryNotAccessibleError
-from gallery.core.library.photos import FolderRef, GridEntry, PhotoRef, is_supported_photo
+from gallery.core.library.photos import (
+    FolderRef,
+    GridEntry,
+    PhotoRef,
+    is_supported_media,
+)
 from gallery.core.paths import resolved
 
 
@@ -53,7 +58,7 @@ def iter_photos(
     should_cancel: Callable[[], bool] | None = None,
     report: ScanReport | None = None,
 ) -> Iterator[PhotoRef]:
-    """遍历 ``root`` 下受支持的照片。
+    """遍历 ``root`` 下受支持的照片与视频（视频按扩展名认，同一个 ``PhotoRef``）。
 
     隐藏项（以 ``.`` 开头，含配置目录）一律跳过；产出顺序按名称排序，保证同一目录树每次结果一致。
     :raises LibraryNotAccessibleError: 根目录不存在、不是目录或没有读取权限。
@@ -84,7 +89,7 @@ def iter_photos(
                     continue
                 if not entry.is_file(follow_symlinks=False):
                     continue
-                if not is_supported_photo(Path(name)):
+                if not is_supported_media(Path(name)):
                     continue
                 stat = entry.stat(follow_symlinks=False)
             except OSError as exc:
@@ -101,7 +106,7 @@ def iter_entries(
     should_cancel: Callable[[], bool] | None = None,
     report: ScanReport | None = None,
 ) -> Iterator[FolderRef | PhotoRef]:
-    """列出**一个目录**的内容：子文件夹在前，照片在后，各自按名称排序。
+    """列出**一个目录**的内容：子文件夹在前，照片与视频在后，各自按名称排序。
 
     相册模式逐层展开用它，平铺模式仍用 :func:`iter_photos` 一次递归到底；文件夹在前是刻意的。
     :raises LibraryNotAccessibleError: 目录不存在或没有读取权限。
@@ -128,7 +133,7 @@ def iter_entries(
                 continue
             if not entry.is_file(follow_symlinks=False):
                 continue
-            if not is_supported_photo(Path(name)):
+            if not is_supported_media(Path(name)):
                 continue
             stat = entry.stat(follow_symlinks=False)
         except OSError as exc:
@@ -222,7 +227,7 @@ def is_visible_path(root: Path, path: Path) -> bool:
 
     隐藏项（以 ``.`` 开头，含配置目录与 ``._`` 资源分叉）不算；**必须在库内**，且**不跟符号链接**
     （先解析成真正指向的地方再判，链到库外自动被拒）。**扩展名那条不在这里**：目录没扩展名，判不了，
-    由调用方各自判（见 :func:`~gallery.core.library.photos.is_supported_photo`）。
+    由调用方各自判（见 :func:`~gallery.core.library.photos.is_supported_media`）。
     """
     try:
         relative = resolved(path).relative_to(resolved(root))
@@ -236,7 +241,7 @@ def describe_entry(root: Path, path: Path) -> GridEntry | None:
 
     供实时监听使用：事件只给路径，大小与修改时间现 stat 一次。这里**不读像素、不读 EXIF**，
     产出与扫描完全同构，因此插进网格的东西和扫出来的没有区别。
-    :return: 扫描看不见它、已经不在了、或者压根不是照片时返回 ``None``。
+    :return: 扫描看不见它、已经不在了、或者压根不是受支持的媒体时返回 ``None``。
     """
     target = Path(path)
     if not is_visible_path(root, target):
@@ -251,7 +256,7 @@ def describe_entry(root: Path, path: Path) -> GridEntry | None:
         return FolderRef(path=target, mtime_ns=info.st_mtime_ns)
     if not S_ISREG(info.st_mode):
         return None  # 符号链接与其它特殊文件，扫描同样不收
-    if not is_supported_photo(target):
+    if not is_supported_media(target):
         return None
     return PhotoRef(path=target, size=info.st_size, mtime_ns=info.st_mtime_ns)
 

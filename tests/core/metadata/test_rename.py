@@ -134,6 +134,28 @@ def test_rename_moves_the_file(tmp_path: Path, photo: PhotoRef) -> None:
     assert result.entry.size == photo.size
 
 
+def test_rename_moves_a_video_too(tmp_path: Path) -> None:
+    """视频走同一套：保扩展名、记 journal、能撤销（ADR 0090）。"""
+    path = tmp_path / "clip.mp4"
+    path.write_bytes(b"\x00" * 32)
+    video = PhotoRef.from_path(path)
+
+    result = rename_entry(tmp_path, video, "海边的片子")
+
+    assert result.entry.name == "海边的片子.mp4"
+    assert result.entry.is_video is True
+    assert read_records(tmp_path)[-1].result == RESULT_OK
+
+
+def test_a_video_cannot_change_its_extension(tmp_path: Path) -> None:
+    path = tmp_path / "clip.mp4"
+    path.write_bytes(b"\x00" * 32)
+    video = PhotoRef.from_path(path)
+
+    with pytest.raises(RenameError, match="不能改扩展名"):
+        validate_name("clip.mov", video)
+
+
 def test_rename_album_keeps_its_children(tmp_path: Path) -> None:
     album = make_album(tmp_path)
     (album.path / "第一张.jpg").write_bytes(b"x")

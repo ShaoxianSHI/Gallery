@@ -1,7 +1,7 @@
-"""重命名照片与相册（ADR 0004）。**只改名，不搬家**：目标永远是源所在的同一目录。
+"""重命名文件与相册（ADR 0004）。**只改名，不搬家**：目标永远是源所在的同一目录。
 
 **绝不覆盖**：目标已存在就报错（POSIX 的 ``rename`` 会静默覆盖，必须自己挡）；也不许改扩展名、
-不许以「.」开头 —— 那两样都会让照片从 Gallery 里消失。**每一步都记账**：成功、失败、撤销都写进
+不许以「.」开头 —— 那两样都会让文件从 Gallery 里消失。**每一步都记账**：成功、失败、撤销都写进
 ``journal/``，「该撤哪一条」由 ``metadata.undo`` 那一摞共用的栈决定（与移到废纸篓共用同一个 ⌘Z，
 ADR 0008）。被拒绝就抛 :class:`~gallery.core.errors.RenameError`，由界面决定怎么告诉用户。
 """
@@ -48,7 +48,8 @@ def validate_name(name: str, entry: GridEntry) -> str:
 
     与条目类型无关的那一半（空、以点开头、带分隔符、超长）在
     :func:`~gallery.core.metadata.naming.clean_name` 里，**只有一份实现**。
-    这里只补照片特有的一条：没写扩展名就补回；写了别的直接拒绝 —— 改了就不再是 Gallery 认得的照片。
+    这里只补文件特有的一条：没写扩展名就补回；写了别的直接拒绝 ——
+    改了就不再是 Gallery 认得的格式。
     """
     cleaned = clean_name(name, error=RenameError)
     if isinstance(entry, PhotoRef):
@@ -227,14 +228,14 @@ def _rename_reason(path: Path, error: paths.GuardError) -> str:
 
 
 def _keep_suffix(entry: PhotoRef, cleaned: str) -> str:
-    """照片改名不许换扩展名；只写主干时把原扩展名补回去。"""
+    """改名不许换扩展名；只写主干时把原扩展名补回去。"""
     suffix = Path(cleaned).suffix
     if not suffix:
         return cleaned + entry.suffix
     if suffix.lower() != entry.suffix:
         raise RenameError(
             f"不能改扩展名：{entry.suffix} 换成 {suffix} 之后，"
-            "这个文件就不再是 Gallery 认得的照片了。",
+            "这个文件就不再是 Gallery 认得的格式了。",
             path=entry.path,
         )
     return cleaned

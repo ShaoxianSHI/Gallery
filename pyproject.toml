@@ -74,4 +74,11 @@ addopts = "-q --dist loadfile -n auto"
 # 监听线程、去抖定时器、解码 worker 全在那边：异常在界面上的表现往往只是「某张图
 # 一直不出来」，默认配置下没人会看见。写探针验证这条规则时记得 `join` 那个线程，
 # 否则 pytest 收尾时那个异常对象还没被处理，看不出效果。
-filterwarnings = ["error::pytest.PytestUnhandledThreadExceptionWarning"]
+#
+# `ObjCPointerWarning` 是 PyObjC 把 CGImageRef 当裸指针返回时的固定警告（没有装 Quartz
+# 包装，见 core/media/video.py），每次取视频第一帧都有一句，与测试结果无关。按消息前缀
+# 忽略而不是按类别：类别要靠 import objc 才认得，而那不是 macOS 上的依赖。
+filterwarnings = [
+    "error::pytest.PytestUnhandledThreadExceptionWarning",
+    "ignore:PyObjCPointer created",
+]

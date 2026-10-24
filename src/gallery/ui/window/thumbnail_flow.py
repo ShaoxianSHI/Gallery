@@ -179,7 +179,7 @@ class ThumbnailFlowMixin:
         failed = self._banner_text.note_thumbnail_failure()
         logger.info("缩略图失败：%s", message)
         self._show_banner(
-            f"有 {failed} 张照片无法显示缩略图：{message}",
+            f"有 {failed} 个文件无法显示缩略图：{message}",
             background=True,
             auto_hide=True,
         )

@@ -1,12 +1,15 @@
 """测试共享工具。
 
 测试数据一律现场构造：仓库里不放真实照片，也不放任何大尺寸二进制；
-需要真实文件时用 Pillow 当场生成最小的合法图片。
+需要真实文件时用 Pillow 当场生成最小的合法图片，视频用 ``make_video`` 现场拼一个
+几百字节的 AVI（AVFoundation 与 Qt 都能解它）。
 """
 
 from __future__ import annotations
 
+import io
 import itertools
+import struct
 from collections.abc import Callable
 from pathlib import Path
 
@@ -109,6 +112,108 @@ def make_photo(tmp_path: Path) -> Callable[..., Path]:
                 image.save(path, exif=tags)
         finally:
             image.close()
+        return path
+
+    return _make
+
+
+#: 夹具视频的帧率。25 是 AVI 的常见默认值；3 帧就是 120 ms，够一次「播完了」的断言。
+VIDEO_FPS = 25
+
+
+def _jpeg_frame(width: int, height: int, color: tuple[int, int, int]) -> bytes:
+    buffer = io.BytesIO()
+    image = Image.new("RGB", (width, height), color)
+    try:
+        image.save(buffer, format="JPEG", quality=85)
+    finally:
+        image.close()
+    return buffer.getvalue()
+
+
+def _riff_chunk(tag: bytes, payload: bytes) -> bytes:
+    padding = b"\x00" if len(payload) % 2 else b""
+    return tag + struct.pack("<I", len(payload)) + payload + padding
+
+
+def _avi_bytes(frames: list[bytes], width: int, height: int, fps: int) -> bytes:
+    """若干 JPEG 帧 → AVI/MJPEG。只有 RIFF 必需的那几段，播放器与取帧都用得上。"""
+    largest = max(len(frame) for frame in frames)
+    avih = struct.pack(
+        "<IIIIIIIIII4I",
+        1_000_000 // fps,
+        0,
+        0,
+        0x10,  # AVIF_HASINDEX
+        len(frames),
+        0,
+        1,
+        largest,
+        width,
+        height,
+        0,
+        0,
+        0,
+        0,
+    )
+    strh = struct.pack(
+        "<4s4sIHHIIIIIIIIhhhh",
+        b"vids",
+        b"MJPG",
+        0,
+        0,
+        0,
+        0,
+        1,
+        fps,
+        0,
+        len(frames),
+        largest,
+        0xFFFFFFFF,
+        0,
+        0,
+        0,
+        width,
+        height,
+    )
+    strf = struct.pack("<IiiHH4sIiiII", 40, width, height, 1, 24, b"MJPG", largest, 0, 0, 0, 0)
+    strl = _riff_chunk(b"LIST", b"strl" + _riff_chunk(b"strh", strh) + _riff_chunk(b"strf", strf))
+    hdrl = _riff_chunk(b"LIST", b"hdrl" + _riff_chunk(b"avih", avih) + strl)
+    chunks = b"".join(_riff_chunk(b"00dc", frame) for frame in frames)
+    movi = _riff_chunk(b"LIST", b"movi" + chunks)
+    entries = []
+    offset = 4
+    for frame in frames:
+        entries.append(struct.pack("<4sIII", b"00dc", 0x10, offset, len(frame)))
+        offset += 8 + len(frame) + (len(frame) % 2)
+    idx1 = _riff_chunk(b"idx1", b"".join(entries))
+    body = b"AVI " + hdrl + movi + idx1
+    return b"RIFF" + struct.pack("<I", len(body)) + body
+
+
+@pytest.fixture
+def make_video(tmp_path: Path) -> Callable[..., Path]:
+    """返回一个「造视频」的工厂：``make_video("clip.avi", frames=3, color=(255, 0, 0))``。
+
+    容器是 AVI/MJPEG（RIFF + 几段 JPEG），几百字节，纯标准库拼出来 —— 仓库里不放视频
+    二进制。AVFoundation 与 Qt 的 FFmpeg 后端都认它，所以取帧与播放测试共用同一个造法。
+    """
+
+    def _make(
+        name: str = "clip.avi",
+        *,
+        frames: int = 1,
+        size: tuple[int, int] = (64, 48),
+        color: tuple[int, int, int] = (200, 40, 40),
+        colors: list[tuple[int, int, int]] | None = None,
+        directory: Path | None = None,
+    ) -> Path:
+        target_dir = tmp_path if directory is None else directory
+        target_dir.mkdir(parents=True, exist_ok=True)
+        path = target_dir / name
+        palette = colors if colors is not None else [color] * frames
+        jpegs = [_jpeg_frame(size[0], size[1], item) for item in palette]
+        path.write_bytes(_avi_bytes(jpegs, size[0], size[1], VIDEO_FPS))
         return path
 
     return _make

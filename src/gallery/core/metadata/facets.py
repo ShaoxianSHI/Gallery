@@ -204,6 +204,12 @@ WANTED_TAGS: Final[tuple[str, ...]] = (
     # ``_keywords`` 认 Dublin Core 的 ``dc:subject``（Lightroom / Capture One 把它当主要的关键词
     # 字段），不列在这里它就永远收不到 —— 键在读取端、没在请求端，是一条走不到的路。
     "XMP-dc:Subject",
+    # 视频的容器标签（ADR 0090）：只取日期与尺寸。**CreationDate 是本地墙钟、CreateDate 是 UTC**，
+    # 两栏都点名要，取值时先本地（见 :func:`extract`）。
+    "QuickTime:CreationDate",
+    "QuickTime:CreateDate",
+    "QuickTime:ImageWidth",
+    "QuickTime:ImageHeight",
 )
 
 #: IPTC 的关键词字段可能是数组或用分号分隔的字符串。
@@ -229,10 +235,31 @@ def extract(raw: Mapping[str, object]) -> PhotoFacets:
     latitude, longitude = coordinates_decimal(text)
     city, region, country = place_parts(text)
     when = parse_capture_time(
-        first_value(text, "EXIF:DateTimeOriginal", "EXIF:CreateDate", "EXIF:DateTimeDigitized")
+        first_value(
+            text,
+            "EXIF:DateTimeOriginal",
+            "EXIF:CreateDate",
+            "EXIF:DateTimeDigitized",
+            # 视频只有 QuickTime 那两栏。先本地墙钟再 UTC：反过来会让东八区晚上拍的片子
+            # 落进前一天（与 ADR 0033 决策 3 同一取向）。
+            "QuickTime:CreationDate",
+            "QuickTime:CreateDate",
+        )
     )
-    width = _number(text, "EXIF:ExifImageWidth", "File:ImageWidth", "EXIF:ImageWidth")
-    height = _number(text, "EXIF:ExifImageHeight", "File:ImageHeight", "EXIF:ImageLength")
+    width = _number(
+        text,
+        "EXIF:ExifImageWidth",
+        "File:ImageWidth",
+        "EXIF:ImageWidth",
+        "QuickTime:ImageWidth",
+    )
+    height = _number(
+        text,
+        "EXIF:ExifImageHeight",
+        "File:ImageHeight",
+        "EXIF:ImageLength",
+        "QuickTime:ImageHeight",
+    )
     return PhotoFacets(
         captured_at=when.timestamp if when else None,
         year=when.year if when else None,

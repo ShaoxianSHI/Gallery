@@ -130,6 +130,10 @@ class CalendarFlowMixin:
         if not all(isinstance(ref, PhotoRef) for ref in photos):
             return
         if len(photos) == 1:
+            if photos[0].is_video:
+                # 视频没有大图页，也就不该压一层「只有这一格」的日历帧。
+                self._open_video(photos[0])
+                return
             # **日历格与照片是一起进出的一对**（``expanded=False``）：那一格从没摊成网格，
             # 点开直接进大图，``Esc`` 把两帧一起收掉、回日历。多张的那一格才是独立的一层。
             self._push_frame(

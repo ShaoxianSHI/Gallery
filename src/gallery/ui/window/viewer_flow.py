@@ -105,7 +105,8 @@ class ViewerFlowMixin:
     def _neighbour_photo_row(self, start: int, delta: int) -> int | None:
         row = start + delta
         while 0 <= row < self._model.rowCount():
-            if self._model.photo_at(row) is not None:
+            ref = self._model.photo_at(row)
+            if ref is not None and not ref.is_video:
                 return row
             row += delta
         return None
@@ -229,7 +230,7 @@ class ViewerFlowMixin:
             if offset == 0:
                 continue
             ref = self._model.photo_at(row + offset)
-            if ref is None or self._cached_metadata(ref) is not None:
+            if ref is None or ref.is_video or self._cached_metadata(ref) is not None:
                 continue
 
             def work(context: TaskContext, target: PhotoRef = ref) -> object:
@@ -265,7 +266,7 @@ class ViewerFlowMixin:
         max_edge = self._preview_edge()
         for neighbour in (row - 1, row + 1):
             ref = self._model.photo_at(neighbour)
-            if ref is None or ref.path in self._preview_cache:
+            if ref is None or ref.is_video or ref.path in self._preview_cache:
                 continue
 
             def work(context: TaskContext, target: PhotoRef = ref) -> object:

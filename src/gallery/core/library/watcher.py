@@ -30,7 +30,7 @@ from watchdog.observers import Observer
 from watchdog.observers.api import BaseObserver
 
 from gallery.core import paths
-from gallery.core.library.photos import is_supported_photo
+from gallery.core.library.photos import is_supported_media
 from gallery.core.library.scanner import is_visible_path
 
 logger = logging.getLogger(__name__)
@@ -168,8 +168,9 @@ def _to_change(root: Path, event: FileSystemEvent) -> LibraryChange | None:
     if path == root or not is_visible_path(root, path):
         # 库根本身不是网格上的一条（它是这一层的容器）；macOS 开监听先报一条根目录「创建」。
         return None
-    if not event.is_directory and not is_supported_photo(path):
-        # 扫描同样不收它：``读我.txt``、``.cr2``、编辑器临时文件……目录无扩展名，故这条只对文件成立。
+    if not event.is_directory and not is_supported_media(path):
+        # 扫描同样不收它：``读我.txt``、``.cr2``、``.mkv``、编辑器临时文件……
+        # 目录没有扩展名，所以这条只对文件成立。
         return None
     return LibraryChange(kind=kind, path=path, is_dir=event.is_directory)
 
@@ -200,8 +201,8 @@ def _moved_change(root: Path, event: FileSystemMovedEvent) -> LibraryChange | No
     here = is_visible_path(root, source)
     there = is_visible_path(root, destination)
     if here and there:
-        source_seen = event.is_directory or is_supported_photo(source)
-        destination_seen = event.is_directory or is_supported_photo(destination)
+        source_seen = event.is_directory or is_supported_media(source)
+        destination_seen = event.is_directory or is_supported_media(destination)
         if source_seen and destination_seen:
             return LibraryChange(
                 kind=ChangeKind.MOVED,
@@ -215,11 +216,11 @@ def _moved_change(root: Path, event: FileSystemMovedEvent) -> LibraryChange | No
             return LibraryChange(kind=ChangeKind.REMOVED, path=source, is_dir=event.is_directory)
         return None
     if there:
-        if not event.is_directory and not is_supported_photo(destination):
+        if not event.is_directory and not is_supported_media(destination):
             return None
         return LibraryChange(kind=ChangeKind.ADDED, path=destination, is_dir=event.is_directory)
     if here:
-        if not event.is_directory and not is_supported_photo(source):
+        if not event.is_directory and not is_supported_media(source):
             return None
         return LibraryChange(kind=ChangeKind.REMOVED, path=source, is_dir=event.is_directory)
     return None

@@ -398,12 +398,13 @@ class WriteOpsMixin:
 
     def metadata_edit_candidate(self) -> PhotoRef | None:
         """「编辑元数据」此刻作用于哪张照片；不该出现这一条时返回 ``None``（判据同
-        :meth:`cover_candidate`：**恰好是一张照片**且此刻改得动，即装了 exiftool）。"""
+        :meth:`cover_candidate`：**恰好是一张照片**且此刻改得动，即装了 exiftool）。
+        视频没有可写的 EXIF，所以不算。"""
         library = self._library
         if library is None or not library.can_write_metadata():
             return None
         entry = self._model.entry_at(self._focus_row())
-        return entry if isinstance(entry, PhotoRef) else None
+        return entry if isinstance(entry, PhotoRef) and not entry.is_video else None
 
     def edit_metadata_of_current(self) -> None:
         """「编辑元数据…」：先把元数据读到手，再弹对话框，保存后写回。

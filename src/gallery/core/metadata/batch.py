@@ -19,6 +19,7 @@ from typing import Final, Protocol
 from gallery.core import paths
 from gallery.core.cancellation import never_cancel
 from gallery.core.errors import MetadataError
+from gallery.core.library.photos import is_video
 from gallery.core.metadata.exif import (
     EXIFTOOL_CHARSET_ARGS,
     EXIFTOOL_EXECUTABLE,
@@ -172,6 +173,11 @@ class PillowBatchSource:
         for path in paths:
             if cancelled():
                 return
+            if is_video(path):
+                # 视频的元信息在容器里，Pillow 读不了。给一份空快照，索引才会记住「看过了」；
+                # 交 ``None`` 的话每次切分组都要把这些视频重读一遍。
+                yield Path(path), {}
+                continue
             try:
                 yield Path(path), self._source.read(path)
             except MetadataError:
