@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Final
@@ -49,6 +50,17 @@ DEFAULT_SLIDESHOW_SECONDS: Final = 3
 MIN_SLIDESHOW_SECONDS: Final = 1
 MAX_SLIDESHOW_SECONDS: Final = 60
 
+#: 「用外部应用打开」的三个位置（ADR 0080）。与 ``PageRole`` 同一套名字：
+#: 大图页 / 网格页 / 日历页。次序**只对这个应用有意义**，所以进会话偏好而不进库配置。
+EXTERNAL_PAGE_DETAIL: Final = "detail"
+EXTERNAL_PAGE_GRID: Final = "grid"
+EXTERNAL_PAGE_CALENDAR: Final = "calendar"
+EXTERNAL_PAGES: Final = (
+    EXTERNAL_PAGE_DETAIL,
+    EXTERNAL_PAGE_GRID,
+    EXTERNAL_PAGE_CALENDAR,
+)
+
 
 @dataclass(frozen=True, slots=True)
 class Preferences:
@@ -63,6 +75,8 @@ class Preferences:
     open_last_library: bool = True
     #: 网格与大图页标题上写不写文件扩展名（视图菜单里那一项）。
     show_file_extensions: bool = True
+    #: 三个位置各自的「用外部应用打开」次序（页面 → 应用 id）。空就是内置次序（ADR 0080）。
+    external_orders: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
     def resolved_animation_speed(self) -> str:
         """这一档该用的动画速度；不认识的值（老版本、手改坏）回默认。"""
@@ -85,6 +99,25 @@ class Preferences:
             return seconds
         return DEFAULT_SLIDESHOW_SECONDS
 
+    def order_for(self, page: str) -> tuple[str, ...]:
+        """这一页的次序；没设过就是空元组 —— 空元组的意思是「照内置次序」。"""
+        for name, ids in self.external_orders:
+            if name == page:
+                return ids
+        return ()
+
+    def with_external_order(self, page: str, ids: Sequence[str]) -> Preferences:
+        """换掉某一页的次序；``ids`` 为空表示恢复内置次序。
+
+        **只按 :data:`EXTERNAL_PAGES` 那三个位置存**，于是写出去的 JSON 每次都是同一个形状。
+        """
+        if page not in EXTERNAL_PAGES:
+            raise ValueError(f"page 只能是 {EXTERNAL_PAGES} 之一，收到 {page!r}")
+        orders = dict(self.external_orders)
+        orders[page] = tuple(ids)
+        kept = tuple((name, orders[name]) for name in EXTERNAL_PAGES if orders.get(name))
+        return replace(self, external_orders=kept)
+
     def to_json(self) -> dict[str, object]:
         return {
             "animation_speed": self.resolved_animation_speed(),
@@ -92,6 +125,7 @@ class Preferences:
             "slideshow_seconds": self.resolved_slideshow_seconds(),
             "open_last_library": self.open_last_library,
             "show_file_extensions": self.show_file_extensions,
+            "external_orders": {name: list(ids) for name, ids in self.external_orders},
         }
 
     @classmethod
@@ -112,7 +146,23 @@ class Preferences:
             else DEFAULT_SLIDESHOW_SECONDS,
             open_last_library=open_last if isinstance(open_last, bool) else True,
             show_file_extensions=show_extensions if isinstance(show_extensions, bool) else True,
+            external_orders=_parse_external_orders(value.get("external_orders")),
         )
+
+
+def _parse_external_orders(value: object) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """只认那三个位置与字符串 id —— 手改坏的、老版本的、多出来的键一律静默丢掉。"""
+    if not isinstance(value, dict):
+        return ()
+    kept: list[tuple[str, tuple[str, ...]]] = []
+    for page in EXTERNAL_PAGES:
+        ids = value.get(page)
+        if not isinstance(ids, list):
+            continue
+        names = tuple(item for item in ids if isinstance(item, str))
+        if names:
+            kept.append((page, names))
+    return tuple(kept)
 
 
 @dataclass(frozen=True, slots=True)

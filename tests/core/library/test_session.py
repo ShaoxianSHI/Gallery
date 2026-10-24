@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from gallery.core import paths
 from gallery.core.library.session import (
     MAX_RECENT_ROOTS,
@@ -134,6 +136,7 @@ def test_the_written_file_holds_only_the_app_level_fields(tmp_path: Path) -> Non
         "slideshow_seconds": 3,
         "open_last_library": True,
         "show_file_extensions": True,
+        "external_orders": {},
     }
 
 
@@ -193,6 +196,66 @@ def test_unknown_preference_values_fall_back_one_by_one(tmp_path: Path) -> None:
     assert preferences.resolved_slideshow_seconds() == 3
     assert preferences.open_last_library is True
     assert preferences.show_file_extensions is True
+
+
+def test_the_external_order_is_stored_per_page(tmp_path: Path) -> None:
+    """三个位置各存一份；存进去的是应用 id，界面按它排（ADR 0080）。"""
+    preferences = (
+        Preferences()
+        .with_external_order("detail", ("imageglass", "preview"))
+        .with_external_order("calendar", ("google_calendar", "apple_calendar"))
+    )
+
+    save_session(SessionState(preferences=preferences), base=tmp_path)
+    loaded = load_session(base=tmp_path).preferences
+
+    assert loaded.order_for("detail") == ("imageglass", "preview")
+    assert loaded.order_for("calendar") == ("google_calendar", "apple_calendar")
+    assert loaded.order_for("grid") == ()
+
+
+def test_an_empty_order_means_the_builtin_one() -> None:
+    """「恢复默认顺序」写的是空元组 —— 空元组本身不必进文件。"""
+    preferences = Preferences().with_external_order("grid", ("qspace", "finder"))
+
+    restored = preferences.with_external_order("grid", ())
+
+    assert restored.order_for("grid") == ()
+    assert restored.external_orders == ()
+
+
+def test_only_the_three_known_pages_can_hold_an_order() -> None:
+    """页面名写错要当场报错，不能静默存成一条永远不会被读到的记录。"""
+    with pytest.raises(ValueError):
+        Preferences().with_external_order("welcome", ("preview",))
+
+
+def test_a_broken_order_is_dropped_per_page(tmp_path: Path) -> None:
+    path = paths.app_state_file(base=tmp_path)
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        json.dumps(
+            {
+                "version": SESSION_VERSION,
+                "preferences": {
+                    "external_orders": {
+                        "grid": ["qspace", 3, "finder"],
+                        "calendar": ["google_calendar"],
+                        "detail": "不是列表",
+                        "welcome": ["preview"],
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    preferences = load_session(base=tmp_path).preferences
+
+    assert preferences.order_for("grid") == ("qspace", "finder")
+    assert preferences.order_for("calendar") == ("google_calendar",)
+    assert preferences.order_for("detail") == ()
+    assert preferences.order_for("welcome") == ()
 
 
 def test_a_file_from_another_version_is_not_parsed_as_this_one(tmp_path: Path) -> None:

@@ -34,6 +34,11 @@ from waiting import wait_until  # noqa: E402
 from gallery.core.external import apps, launch  # noqa: E402
 from gallery.core.library.config import BROWSE_MODE_CALENDAR, prepare_library  # noqa: E402
 from gallery.core.library.photos import GroupRef  # noqa: E402
+from gallery.core.library.session import (  # noqa: E402
+    EXTERNAL_PAGE_CALENDAR,
+    EXTERNAL_PAGE_DETAIL,
+    EXTERNAL_PAGE_GRID,
+)
 from gallery.core.metadata.facets import PhotoFacets  # noqa: E402
 from gallery.core.metadata.report import MetadataReport  # noqa: E402
 from gallery.ui import desktop  # noqa: E402
@@ -242,6 +247,32 @@ def test_the_left_half_opens_the_first_available_one(qt_app: QApplication) -> No
     assert button.default_entry() is on
 
 
+def test_an_order_puts_the_named_entry_first(qt_app: QApplication) -> None:
+    """次序是这一页的另一半状态：**排在最前的那一项决定左半的图标**（ADR 0080）。"""
+    button = ExternalAppsButton()
+    first = _entry("a", "一", True)
+    second = _entry("b", "二", True)
+    third = _entry("c", "三", True)
+    button.set_entries([first, second, third])
+
+    button.set_order(["c", "a"])
+    button.refresh()
+
+    assert _menu_texts(button) == ["三", "一", "二"]
+    assert button.default_entry() is third
+
+
+def test_an_id_that_is_not_there_does_not_drop_the_others(qt_app: QApplication) -> None:
+    """装过的应用后来卸了：存下来的那个 id 认不出来时，其余项照内置次序排在后面。"""
+    button = ExternalAppsButton()
+    button.set_entries([_entry("a", "一", True), _entry("b", "二", True), _entry("c", "三", True)])
+
+    button.set_order(["不存在", "b"])
+    button.refresh()
+
+    assert _menu_texts(button) == ["二", "一", "三"]
+
+
 def test_the_left_half_is_disabled_with_nothing_to_open(qt_app: QApplication) -> None:
     button = ExternalAppsButton()
     button.set_entries([_entry("x", "某应用", False)])
@@ -349,6 +380,58 @@ def test_the_system_calendar_stays_off_the_grid_page(
     _only(monkeypatch, calendar=CALENDAR_APP)
 
     assert "日历" not in _menu_texts(window._external_button)
+
+
+def test_each_page_reads_its_own_order(window: MainWindow) -> None:
+    """三个位置各一份 —— 翻页时读的是那一页的那份（ADR 0080）。"""
+    prefs = (
+        window._session.preferences.with_external_order(
+            EXTERNAL_PAGE_DETAIL, ("imageglass", "preview")
+        )
+        .with_external_order(EXTERNAL_PAGE_GRID, ("qspace", "finder"))
+        .with_external_order(EXTERNAL_PAGE_CALENDAR, ("google_calendar", "apple_calendar"))
+    )
+    window._session = window._session.with_preferences(prefs)
+
+    assert window._external_order_ids() == ("qspace", "finder")
+    window._open_detail(window._model.index(0, 0))
+    assert window._external_order_ids() == ("imageglass", "preview")
+    window.set_browse_mode(BROWSE_MODE_CALENDAR)
+    assert window._external_order_ids() == ("google_calendar", "apple_calendar")
+
+
+def test_the_saved_order_decides_the_left_half(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """把 ImageGlass 排到最前，大图页左半那一下就是它（不是默认的预览）。"""
+    _only(monkeypatch, preview=PREVIEW_APP, imageglass=IMAGEGLASS_APP)
+    prefs = window._session.preferences.with_external_order(
+        EXTERNAL_PAGE_DETAIL, ("imageglass", "preview")
+    )
+    window._session = window._session.with_preferences(prefs)
+
+    window._open_detail(window._model.index(0, 0))
+    window._sync_ui()
+
+    default = window._external_button.default_entry()
+    assert default is not None and default.name == "ImageGlass"
+    assert _menu_texts(window._external_button) == ["ImageGlass", "预览", "访达"]
+
+
+def test_the_saved_calendar_order_decides_which_calendar_is_on_the_left(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _only(monkeypatch, calendar=CALENDAR_APP)
+    prefs = window._session.preferences.with_external_order(
+        EXTERNAL_PAGE_CALENDAR, ("google_calendar", "apple_calendar")
+    )
+    window._session = window._session.with_preferences(prefs)
+
+    window.set_browse_mode(BROWSE_MODE_CALENDAR)
+
+    assert _menu_texts(window._external_button) == ["Google 日历", "日历"]
+    default = window._external_button.default_entry()
+    assert default is not None and default.name == "Google 日历"
 
 
 def test_no_library_means_the_button_stays_out(window: MainWindow) -> None:

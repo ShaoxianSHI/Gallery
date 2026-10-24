@@ -1,14 +1,15 @@
 """「设置」菜单：界面与播放的偏好，以及这个库自己的几项配置（ADR 0073）。
 
-三组东西放同一张菜单，但**存的地方不同**：动画速度、外观、放映间隔、启动行为属于这个应用，
-写进会话文件；影片网站与缓存上限属于**这个库**，经 ``Library`` 写进 ``config.toml``。
-**本模块一个用户的照片文件都不碰**；两个库级入口都只调 ``Library`` 的公开方法。
+三组东西放同一张菜单，但**存的地方不同**：动画速度、外观、外部应用顺序、放映间隔、启动行为
+属于这个应用，写进会话文件；影片网站与缓存上限属于**这个库**，经 ``Library`` 写进
+``config.toml``。**本模块一个用户的照片文件都不碰**；两个库级入口都只调 ``Library`` 的公开方法。
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import replace
+from functools import partial
 from typing import cast
 
 from PySide6.QtGui import QAction, QActionGroup
@@ -19,7 +20,12 @@ from gallery.core import paths
 from gallery.core.constants import APP_NAME
 from gallery.core.errors import GalleryError
 from gallery.core.external import launch
-from gallery.core.library.session import Preferences
+from gallery.core.library.session import (
+    EXTERNAL_PAGE_CALENDAR,
+    EXTERNAL_PAGE_DETAIL,
+    EXTERNAL_PAGE_GRID,
+    Preferences,
+)
 from gallery.ui import theme
 
 #: 影片网站预设：**只收「前缀 + 番号」拼得出地址的站点**。JavDB 按内部 id 或搜索参数走，
@@ -51,6 +57,13 @@ APPEARANCE_LABELS: dict[str, str] = {
 }
 SLIDESHOW_SECONDS: tuple[int, ...] = (3, 5, 8, 15)
 
+#: 「外部应用顺序」那三个子菜单的名字 —— 与 ``PageRole`` 一一对应（ADR 0080）。
+EXTERNAL_ORDER_LABELS: dict[str, str] = {
+    EXTERNAL_PAGE_DETAIL: "图片",
+    EXTERNAL_PAGE_GRID: "网格",
+    EXTERNAL_PAGE_CALENDAR: "日历",
+}
+
 
 class SettingsFlowMixin:
     """拼「设置」菜单、处理它的动作，并把当前值映射回勾选态。"""
@@ -66,6 +79,7 @@ class SettingsFlowMixin:
                 menu, "外观", self._set_appearance, APPEARANCE_LABELS
             ),
         }
+        self._add_external_order_menu(menu)
         menu.addSeparator()
         self._settings_actions["movie_site"] = self._add_choice_menu(
             menu,
@@ -140,6 +154,54 @@ class SettingsFlowMixin:
         parent.addMenu(menu)
         return actions
 
+    def _add_external_order_menu(self, parent: QMenu) -> QMenu:
+        """三个位置各一个子菜单。**内容展开时才填**：能摆哪几项、当前什么次序都会变。"""
+        menu = QMenu("外部应用顺序", cast("QWidget", self))
+        for page, label in EXTERNAL_ORDER_LABELS.items():
+            submenu = QMenu(label, cast("QWidget", self))
+            submenu.aboutToShow.connect(partial(self._fill_external_order_menu, submenu, page))
+            menu.addMenu(submenu)
+        parent.addMenu(menu)
+        return menu
+
+    def _fill_external_order_menu(self, menu: QMenu, page: str) -> None:
+        """按当前的条目与次序重建这一页的子菜单：**第一项就是左半那一下**。"""
+        menu.clear()
+        hint = QAction("点某一项，把它移到最前", cast("QWidget", self))
+        hint.setEnabled(False)
+        menu.addAction(hint)
+        menu.addSeparator()
+        group = QActionGroup(menu)
+        group.setExclusive(True)
+        for index, (entry_id, name) in enumerate(self._external_order_candidates(page)):
+            action = QAction(name, cast("QWidget", self))
+            action.setCheckable(True)
+            action.setChecked(index == 0)
+            action.triggered.connect(
+                lambda _checked=False, target=entry_id: self._set_external_order(page, target)
+            )
+            group.addAction(action)
+            menu.addAction(action)
+        menu.addSeparator()
+        reset = QAction("恢复默认顺序", cast("QWidget", self))
+        reset.setEnabled(bool(self._session.preferences.order_for(page)))  # type: ignore[attr-defined]
+        reset.triggered.connect(lambda _checked=False: self._reset_external_order(page))
+        menu.addAction(reset)
+
+    def _external_order_candidates(self, page: str) -> list[tuple[str, str]]:
+        """这一页能摆的那几项（id, 名字），按当前保存的次序 —— 装没装是 ``available`` 的事。"""
+        ranked = {
+            entry_id: index
+            for index, entry_id in enumerate(self._session.preferences.order_for(page))  # type: ignore[attr-defined]
+        }
+        entries = [
+            entry
+            for entry in self._external_button.entries()  # type: ignore[attr-defined]
+            if page in entry.pages and entry.available()
+        ]
+        entries.sort(key=lambda entry: ranked.get(entry.id, len(ranked)))
+        return [(entry.id, entry.name) for entry in entries]
+
     # ---- 应用级：写会话文件，立刻生效 ----------------------------------------
 
     def _set_animation_speed(self, speed: object) -> None:
@@ -162,7 +224,34 @@ class SettingsFlowMixin:
         self._sync_ui()
 
     def _set_open_last_library(self, enabled: bool) -> None:
-        prefs = replace(self._session.preferences, open_last_library=enabled)
+        prefs = replace(self._session.preferences, open_last_library=enabled)  # type: ignore[attr-defined]
+        self._store_preferences(prefs)
+        self._sync_ui()
+
+    def _set_external_order(self, page: str, entry_id: str) -> None:
+        """把这一项挪到那一页的最前面 —— 左半那一下与下拉框第一行都跟着它。"""
+        ids = [candidate for candidate, _name in self._external_order_candidates(page)]
+        if entry_id not in ids:
+            return
+        ids.remove(entry_id)
+        ids.insert(0, entry_id)
+        # 挪完正好就是内置次序（点了本来就在最前的那一项）时存空：没改过就别留下一条自定义。
+        stored: tuple[str, ...] = () if ids == self._external_builtin_order(page) else tuple(ids)
+        prefs = self._session.preferences.with_external_order(page, stored)  # type: ignore[attr-defined]
+        self._store_preferences(prefs)
+        self._sync_ui()
+
+    def _external_builtin_order(self, page: str) -> list[str]:
+        """内置次序 —— 条目建出来的那个先后，设置里没改过时看到的就是它。"""
+        return [
+            entry.id
+            for entry in self._external_button.entries()  # type: ignore[attr-defined]
+            if page in entry.pages and entry.available()
+        ]
+
+    def _reset_external_order(self, page: str) -> None:
+        """恢复内置次序；**只清这一页**，另外两页的设定不动。"""
+        prefs = self._session.preferences.with_external_order(page, ())  # type: ignore[attr-defined]
         self._store_preferences(prefs)
         self._sync_ui()
 
@@ -286,6 +375,7 @@ def _cache_label(max_bytes: int) -> str:
 __all__ = [
     "APPEARANCE_LABELS",
     "CACHE_LIMIT_PRESETS",
+    "EXTERNAL_ORDER_LABELS",
     "MOVIE_SITE_PRESETS",
     "SLIDESHOW_SECONDS",
     "SPEED_LABELS",

@@ -421,6 +421,7 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
     "window/settings_flow.py:SettingsFlowMixin": frozenset(
         {
             "_detail",
+            "_external_button",
             "_grid",
             "_library",
             "_library_setting_actions",

@@ -68,17 +68,20 @@ ICON_KINDS = (ICON_CALENDAR, ICON_FOLDER, ICON_MAP)
 
 @dataclass(frozen=True)
 class ExternalEntry:
-    """下拉框里的一项。
-    :param id: 这一项的标识；点下去之后做什么由外面按它分派。
+    """:param id: 这一项的标识；点下去之后做什么由外面按它分派。
     :param name: **全称**，下拉框里显示的就是它。
     :param icon: 图标；``None`` 就是画的那个中性图标。
     :param enabled: 此刻该不该出现在下拉框里（这一页有没有它要的东西）。
+    :param pages: 会出现在哪几页（detail / grid / calendar）；设置菜单按它分三份。
+    :param available: 这台机器上装没装 —— 与「此刻这一页有没有东西可开」是两件事。
     """
 
     id: str
     name: str
     icon: QIcon | None
     enabled: Callable[[], bool]
+    pages: tuple[str, ...] = ()
+    available: Callable[[], bool] = lambda: True
 
 
 def button_rect(field: QRect, width: int = BUTTON_WIDTH, gap: int = BUTTON_GAP) -> QRect:
@@ -332,6 +335,8 @@ class ExternalAppsButton(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._entries: tuple[ExternalEntry, ...] = ()
+        #: 这一页的次序（应用 id）。**只由 :meth:`set_order` 改**，:meth:`refresh` 照着它排。
+        self._order: tuple[str, ...] = ()
         self._hovered: QWidget | None = None
 
         self._primary = _Segment(self)
@@ -451,12 +456,26 @@ class ExternalAppsButton(QWidget):
         self._entries = tuple(entries)
         self.refresh()
 
-    def default_entry(self) -> ExternalEntry | None:
-        """左半那一下打开的是哪一项 —— **第一个此刻可用的**。
+    def entries(self) -> tuple[ExternalEntry, ...]:
+        """建好之后那一整份条目。设置菜单按页挑，用不着再建一份带图标的。"""
+        return self._entries
 
-        现在每一页只有一项，以后加了第二项，左边仍然是「最常用的那个」、右边的菜单里是全部。
+    def set_order(self, ids: Sequence[str]) -> None:
+        """这一页的次序（应用 id）。**没提到的项保持内置次序排在后面**，下一次
+        :meth:`refresh` 才生效。"""
+        self._order = tuple(ids)
+
+    def _ordered(self) -> tuple[ExternalEntry, ...]:
+        """按当前次序排好的条目；排序是稳定的，于是没提到的项相对位置不变。"""
+        rank = {entry_id: index for index, entry_id in enumerate(self._order)}
+        return tuple(sorted(self._entries, key=lambda entry: rank.get(entry.id, len(rank))))
+
+    def default_entry(self) -> ExternalEntry | None:
+        """左半那一下打开的是哪一项 —— **按这一页的次序，第一个此刻可用的**。
+
+        用户可以在「设置 › 外部应用顺序」里挪次序，于是左半的图标也跟着换。
         """
-        for entry in self._entries:
+        for entry in self._ordered():
             if entry.enabled():
                 return entry
         return None
@@ -472,7 +491,7 @@ class ExternalAppsButton(QWidget):
         没反应的灰条目只会让人以为坏了。"""
         self._menu.clear()
         self._primary.setIcon(self.default_icon())
-        for entry in self._entries:
+        for entry in self._ordered():
             if not entry.enabled():
                 continue
             action = QAction(entry.icon or calendar_icon(), entry.name, self._menu)

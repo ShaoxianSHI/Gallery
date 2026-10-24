@@ -42,6 +42,11 @@ from gallery.core.library.config import (
     SEARCH_SCOPE_LIBRARY,
 )
 from gallery.core.library.photos import GroupRef, PhotoRef
+from gallery.core.library.session import (
+    EXTERNAL_PAGE_CALENDAR,
+    EXTERNAL_PAGE_DETAIL,
+    EXTERNAL_PAGE_GRID,
+)
 from gallery.core.metadata.report import MetadataReport
 from gallery.core.places.dataset import is_real_coordinate
 from gallery.ui import banners, desktop, theme
@@ -712,6 +717,8 @@ class MainWindow(
         # 行号，而网格的当前项还停着上一次点的那一格，拿它算可用性就会亮着一条指向别处的路。
         in_calendar = self._on_calendar_page()
         # 「用外部应用打开」**只在有东西可开的时候出现**（ADR 0034，判据 ``is_available()``）。
+        # 次序随页面走（设置里那三份，ADR 0080），左半那一下是排在最前的可用项。
+        self._external_button.set_order(self._external_order_ids())
         self._external_button.refresh()
         self._external_button.setVisible(
             self._owns_title_bar and self._external_button.is_available()
@@ -947,15 +954,16 @@ class MainWindow(
                 name=apps.CALENDAR.name,
                 icon=icon_for(apps.CALENDAR, fallback=ICON_CALENDAR),
                 # 没装（或是别的平台）就不摆：与预览、QSpace 同一条判据。
-                enabled=lambda: (
-                    self._on_calendar_page() and apps.find_app(apps.CALENDAR) is not None
-                ),
+                enabled=lambda: self._on_calendar_page() and self._installed(apps.CALENDAR),
+                pages=(EXTERNAL_PAGE_CALENDAR,),
+                available=partial(self._installed, apps.CALENDAR),
             ),
             ExternalEntry(
                 id="google_calendar",
                 name="Google 日历",
                 icon=calendar_icon(),
                 enabled=self._on_calendar_page,
+                pages=(EXTERNAL_PAGE_CALENDAR,),
             ),
             self._viewer_entry(apps.PREVIEW),
             ExternalEntry(
@@ -963,9 +971,9 @@ class MainWindow(
                 name=apps.MAPS.name,
                 icon=icon_for(apps.MAPS, fallback=ICON_MAP),
                 # 没装（或是别的平台）就不摆：与预览、QSpace 同一条判据。
-                enabled=lambda: (
-                    apps.find_app(apps.MAPS) is not None and self._map_point() is not None
-                ),
+                enabled=lambda: self._installed(apps.MAPS) and self._map_point() is not None,
+                pages=(EXTERNAL_PAGE_DETAIL,),
+                available=partial(self._installed, apps.MAPS),
             ),
             ExternalEntry(
                 id="google_maps",
@@ -973,13 +981,15 @@ class MainWindow(
                 icon=google_maps_icon(),
                 # 开在 PWA 还是浏览器都只要坐标，于是只问「这张照片有没有坐标」。
                 enabled=lambda: self._map_point() is not None,
+                pages=(EXTERNAL_PAGE_DETAIL,),
             ),
             ExternalEntry(
                 id="finder",
                 name="访达",
                 icon=folder_icon(),
-                # **与日历那一项互补**：日历页给 Google 日历，其余页给访达（每一页只有一样可开的）。
+                # **与日历那一项互补**：日历页给日历，其余页给访达（每一页只有一样可开的）。
                 enabled=self._has_folder_to_open,
+                pages=(EXTERNAL_PAGE_DETAIL, EXTERNAL_PAGE_GRID),
             ),
             ExternalEntry(
                 id=apps.QSPACE.id,
@@ -987,9 +997,9 @@ class MainWindow(
                 icon=icon_for(apps.QSPACE),
                 # **没装它就不摆这一项**（与「访达」同一条判据：摆一个点下去没反应的灰条目
                 # 只会让人以为软件坏了）。
-                enabled=lambda: (
-                    self._has_folder_to_open() and apps.find_app(apps.QSPACE) is not None
-                ),
+                enabled=lambda: self._has_folder_to_open() and self._installed(apps.QSPACE),
+                pages=(EXTERNAL_PAGE_DETAIL, EXTERNAL_PAGE_GRID),
+                available=partial(self._installed, apps.QSPACE),
             ),
             self._viewer_entry(apps.IMAGEGLASS),
         )
@@ -1005,11 +1015,20 @@ class MainWindow(
             name=viewer.name,
             icon=icon_for(viewer),
             enabled=partial(self._viewer_ready, viewer),
+            pages=(EXTERNAL_PAGE_DETAIL,),
+            available=partial(self._installed, viewer),
         )
 
     def _viewer_ready(self, viewer: App) -> bool:
         """大图页上正看着一张照片，而且本机装着这个应用。"""
-        return self._detail_photo_path() is not None and apps.find_app(viewer) is not None
+        return self._detail_photo_path() is not None and self._installed(viewer)
+
+    def _installed(self, app: App) -> bool:
+        """这台机器上装着它没有 —— 与「此刻这一页有没有东西可开」是两件事。
+
+        设置菜单要把「这一组能调的应用」列出来，而那份名单不该随「现在看着哪张照片」变。
+        """
+        return apps.find_app(app) is not None
 
     def _has_folder_to_open(self) -> bool:
         """此刻有没有「当前这一层文件夹」可开 —— 访达与 QSpace 共用的那半条判据。"""
@@ -1160,6 +1179,18 @@ class MainWindow(
     def _on_calendar_page(self) -> bool:
         """此刻是不是日历那一页。**下拉框那两页互斥的判据都在这一句里。**"""
         return self._page_role is PageRole.CALENDAR
+
+    def _external_page_kind(self) -> str:
+        """「用外部应用打开」此刻按哪一页的次序排 —— 与 ``PageRole`` 同一套名字。"""
+        if self._on_calendar_page():
+            return EXTERNAL_PAGE_CALENDAR
+        if self._in_detail_page():
+            return EXTERNAL_PAGE_DETAIL
+        return EXTERNAL_PAGE_GRID
+
+    def _external_order_ids(self) -> tuple[str, ...]:
+        """这一页的次序（应用 id）；没设过就是空元组，等于内置次序。"""
+        return self._session.preferences.order_for(self._external_page_kind())
 
     def _current_folder(self) -> Path | None:
         """此刻所在的那个文件夹，**没有库就是 ``None``**。
