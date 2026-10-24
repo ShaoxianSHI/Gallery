@@ -4,6 +4,9 @@
 
 from __future__ import annotations
 
+import os
+import time
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -48,3 +51,19 @@ def unwritable_journal(library: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
     monkeypatch.setattr(Path, "mkdir", refuse, raising=True)
     return library
+
+
+@pytest.fixture
+def beijing_timezone(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """把本机时区固定成 +08:00：视频的 ``CreateDate`` 是 UTC，换算结果要有确定答案。"""
+    previous = os.environ.get("TZ")
+    monkeypatch.setenv("TZ", "Asia/Shanghai")
+    time.tzset()
+    try:
+        yield
+    finally:
+        if previous is None:
+            monkeypatch.delenv("TZ", raising=False)
+        else:
+            monkeypatch.setenv("TZ", previous)
+        time.tzset()

@@ -700,3 +700,79 @@ class TestPlaceResolvedFlag:
         resolved = report.with_place("波尔多")
 
         assert dataclasses.replace(resolved).place_resolved is True
+
+
+# ---- 视频的 QuickTime 标签（ADR 0092）---------------------------------------------
+
+
+def test_a_video_report_shows_quicktime_fields(tmp_path: Path, beijing_timezone: None) -> None:
+    """视频的拍摄时间、位置、设备与编码都要进面板，且与照片用同一套中文标签。"""
+    raw = {
+        "QuickTime:CreationDate": "2024:05:16 20:52:02+08:00",
+        "QuickTime:CreateDate": "2024:05:16 12:52:02",
+        "QuickTime:GPSCoordinates": (
+            "31 deg 13' 49.44\" N, 121 deg 28' 25.32\" E, 10 m Above Sea Level"
+        ),
+        "QuickTime:Make": "Apple",
+        "QuickTime:Model": "iPhone 15 Pro",
+        "QuickTime:Duration": "0:01:30",
+        "QuickTime:VideoFrameRate": "30.001",
+        "QuickTime:CompressorID": "hvc1",
+        "QuickTime:AvgBitrate": "7.3 Mbps",
+        "QuickTime:ImageWidth": "3840",
+        "QuickTime:ImageHeight": "2160",
+    }
+    report = build_report(raw, path=tmp_path / "片子.mov", size=1024, mtime_ns=0, source="exiftool")
+
+    fields = field_map(report.groups)
+    assert fields["拍摄时间"] == "2024-05-16 20:52:02+08:00"
+    assert fields["相机"] == "Apple iPhone 15 Pro"
+    assert fields["坐标"] == "31.23040° N，121.47370° E"
+    assert fields["像素尺寸"] == "3840 × 2160"
+    assert fields["时长"] == "0:01:30"
+    assert fields["帧率"] == "30 fps"
+    assert fields["编码"] == "HEVC"
+    assert fields["码率"] == "7.3 Mbps"
+    assert (report.latitude, report.longitude) == pytest.approx((31.2304, 121.4737))
+
+
+def test_a_utc_only_video_time_is_shown_in_local_time(
+    tmp_path: Path, beijing_timezone: None
+) -> None:
+    """只有 ``CreateDate`` 时它是 UTC：面板要换成本机时区，不能原样当墙钟。"""
+    report = build_report(
+        {"QuickTime:CreateDate": "2024:05:16 12:52:02"},
+        path=tmp_path / "片子.mp4",
+        size=1,
+        mtime_ns=0,
+        source="exiftool",
+    )
+
+    assert field_map(report.groups)["拍摄时间"] == "2024-05-16 20:52:02+08:00"
+
+
+def test_a_zero_video_time_is_not_shown(tmp_path: Path) -> None:
+    """导出工具填的 ``0000:00:00`` 与照片那条路一样当「没有」。"""
+    report = build_report(
+        {"QuickTime:CreateDate": "0000:00:00 00:00:00"},
+        path=tmp_path / "片子.mp4",
+        size=1,
+        mtime_ns=0,
+        source="exiftool",
+    )
+
+    assert "拍摄时间" not in field_map(report.groups)
+
+
+def test_a_video_gps_in_iso_6709_is_understood(tmp_path: Path) -> None:
+    """文件里存的是 ISO 6709；exiftool 有时也原样给，两种都要认。"""
+    report = build_report(
+        {"QuickTime:GPSCoordinates": "+31.2304+121.4737/"},
+        path=tmp_path / "片子.mp4",
+        size=1,
+        mtime_ns=0,
+        source="exiftool",
+    )
+
+    assert (report.latitude, report.longitude) == pytest.approx((31.2304, 121.4737))
+    assert field_map(report.groups)["坐标"] == "31.23040° N，121.47370° E"

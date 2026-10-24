@@ -266,13 +266,6 @@ class MetadataPanel(QWidget):
         self._footer.hide()
         self._fill((self._message(message, "metadataError"),))
 
-    def show_notice(self, text: str) -> None:
-        """不是错误，只是这一页没有这类信息（视频没有可读的 EXIF）。"""
-        self._report = None
-        self._events = ()
-        self._footer.hide()
-        self._fill((self._message(text, "metadataEmpty"),))
-
     def set_report(self, report: MetadataReport) -> None:
         """展示一份读好的元数据。"""
         self._report = report

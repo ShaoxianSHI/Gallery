@@ -79,10 +79,29 @@ def test_extract_reads_quicktime_dates_and_pixels_from_videos() -> None:
     assert facets.pixels == 3840 * 2160
 
 
-def test_extract_falls_back_to_the_utc_quicktime_date() -> None:
+def test_extract_turns_the_utc_quicktime_date_into_local_time(
+    beijing_timezone: None,
+) -> None:
+    """``CreateDate`` 是 UTC：分组用的是本机墙钟，不能把 12:52 UTC 当成 12:52 摆格子。"""
     facets = extract({"QuickTime:CreateDate": "2024:05:16 12:52:02"})
 
-    assert (facets.year, facets.month, facets.day) == (2024, 5, 16)
+    assert (facets.year, facets.month, facets.day, facets.hour) == (2024, 5, 16, 20)
+
+
+def test_extract_reads_gps_and_camera_from_quicktime() -> None:
+    """GPS 与设备也要进索引：视频才能和照片一样按相机分、按城市分（ADR 0092）。"""
+    raw = {
+        "QuickTime:GPSCoordinates": (
+            "31 deg 13' 49.44\" N, 121 deg 28' 25.32\" E, 10 m Above Sea Level"
+        ),
+        "QuickTime:Make": "Apple",
+        "QuickTime:Model": "iPhone 15 Pro",
+    }
+
+    facets = extract(raw)
+
+    assert (facets.latitude, facets.longitude) == pytest.approx((31.2304, 121.4737))
+    assert facets.camera == "Apple iPhone 15 Pro"
 
 
 def test_extract_reads_exif_fields() -> None:
@@ -208,6 +227,9 @@ def test_quicktime_tags_are_requested() -> None:
         "QuickTime:CreateDate",
         "QuickTime:ImageWidth",
         "QuickTime:ImageHeight",
+        "QuickTime:GPSCoordinates",
+        "QuickTime:Make",
+        "QuickTime:Model",
     ):
         assert tag in WANTED_TAGS
 

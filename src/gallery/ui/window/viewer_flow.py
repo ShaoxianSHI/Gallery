@@ -128,6 +128,8 @@ class ViewerFlowMixin:
         self._cancel_job("_detail_job")
         if ref.is_video:
             self._show_video(ref)
+            if self._panel.isVisible():
+                self._load_metadata()
             return
         self._leave_video()
         if self._panel.isVisible():
@@ -173,8 +175,6 @@ class ViewerFlowMixin:
         self._detail.clear_image()
         self._detail.hide()
         self._video.show()
-        if self._panel.isVisible():
-            self._panel.show_notice("视频没有可读的元数据。")
         thumbnail = self._model.thumbnail_pixmap(ref.path)
         self._video.play(ref, None if thumbnail is None else thumbnail.toImage())
         self._video.setFocus()

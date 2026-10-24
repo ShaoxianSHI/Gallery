@@ -814,9 +814,7 @@ class MainWindow(
         self._open_entry_action.setEnabled(current is not None)
         # ⇧⏎ 比 ⌘⏎ 更窄（这一格得是**照片**、没在改名）；**大图页上也可用**（ADR 0021）。
         self._open_default_action.setEnabled(idle and isinstance(current, PhotoRef))
-        self._copy_metadata_action.setEnabled(
-            isinstance(current, PhotoRef) and not current.is_video
-        )
+        self._copy_metadata_action.setEnabled(isinstance(current, PhotoRef))
         # 「编辑元数据」在右键菜单里是「不出现」、在菜单栏是「置灰」（那一处永远摆着，否则 ⇧⌘I
         # 没地方显示提示），两条判据同源：``metadata_edit_candidate``。
         self._edit_metadata_action.setEnabled(self.metadata_edit_candidate() is not None and idle)

@@ -314,7 +314,7 @@ class ContextMenuFlowMixin:
         def work(context: TaskContext) -> object:
             if context.is_cancelled():
                 return None
-            return read_metadata(ref.path)
+            return read_metadata(ref.path, allow_fallback=not ref.is_video)
 
         self._start_job(
             "_metadata_copy_job",

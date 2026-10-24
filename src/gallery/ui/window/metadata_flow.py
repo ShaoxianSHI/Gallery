@@ -64,6 +64,10 @@ class MetadataFlowMixin:
         按钮比没有更糟，而只字不提又会让用户以为 Gallery 压根不管这件事。
         """
         library = self._library
+        ref = self._model.photo_at(self._current_row)
+        if ref is not None and ref.is_video:
+            self._panel.set_metadata_editable(False, reason="视频的元数据是只读的。")
+            return
         if library is not None and library.can_write_metadata():
             self._panel.set_metadata_editable(True)
             return
@@ -120,10 +124,7 @@ class MetadataFlowMixin:
         if ref is None:
             self._panel.clear()
             return
-        if ref.is_video:
-            # 视频没有可读的 EXIF；⌘I 在视频页展开时也只该看到这一句（ADR 0091）。
-            self._panel.show_notice("视频没有可读的元数据。")
-            return
+        self._update_metadata_editable()
         self._panel.set_events(self._photo_events(ref))
         generation = self._generation
         cached = self._cached_metadata(ref)
@@ -139,7 +140,8 @@ class MetadataFlowMixin:
         def work(context: TaskContext) -> object:
             if context.is_cancelled():
                 return None
-            return read_metadata(ref.path)
+            # 视频没有 EXIF 可降级：没装 exiftool 时要说「装 exiftool」而不是「文件读不出来」。
+            return read_metadata(ref.path, allow_fallback=not ref.is_video)
 
         self._start_job(
             "_metadata_job",

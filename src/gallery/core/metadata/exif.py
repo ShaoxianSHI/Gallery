@@ -232,8 +232,8 @@ def positive_value(value: str | None) -> str | None:
 
 
 def camera_name(raw: Mapping[str, str]) -> str | None:
-    make = first_value(raw, "EXIF:Make")
-    model = first_value(raw, "EXIF:Model")
+    make = first_value(raw, "EXIF:Make", "QuickTime:Make")
+    model = first_value(raw, "EXIF:Model", "QuickTime:Model")
     if make and model:
         # 「Canon」+「Canon EOS R6」不该重复写成「Canon Canon EOS R6」
         return model if model.lower().startswith(make.lower()) else f"{make} {model}"
@@ -255,6 +255,12 @@ CAPTURE_TIME_FIELDS: Final[tuple[str, ...]] = (
 
 #: 时区偏移的那两个标签。``OffsetTime`` 是没有 Original 的那些机型的写法。
 OFFSET_TIME_FIELDS: Final[tuple[str, ...]] = ("EXIF:OffsetTimeOriginal", "EXIF:OffsetTime")
+
+#: 导出工具常把时间填成这个零值；显示与解析都当「没有」。
+_ZERO_DATETIME: Final = re.compile(r"^0{4}:0{2}:0{2}(?:[ T]0{2}:0{2}:0{2})?$")
+
+#: 日期时间开头那三段（EXIF 用 ``:``，界面用 ``-``），只换日期那两处。
+_DISPLAY_DATE: Final = re.compile(r"^(\d{4})[:\-](\d{2})[:\-](\d{2})(.*)$")
 
 #: 分隔符不限（EXIF 用 ``:``，界面与 XMP 用 ``-``），秒可省。
 _DATETIME_TEXT: Final = re.compile(
@@ -317,6 +323,46 @@ def capture_time_parts(raw: Mapping[str, str]) -> tuple[str | None, str | None]:
     )
 
 
+def local_video_capture_text(raw: Mapping[str, str]) -> str | None:
+    """视频的拍摄时间，**统一成本机时区的墙钟**（``YYYY-MM-DD HH:MM:SS+08:00``）。
+
+    ``CreationDate`` 是拍摄地墙钟（带偏移），原样给出；只有 ``CreateDate`` 时它是 UTC，
+    按本机时区换算 —— 与照片「显示文件里记下的墙钟」同一口径，也避免 UTC 的晚上落到前一天。
+    """
+    local = first_value(raw, "QuickTime:CreationDate")
+    if local and not _ZERO_DATETIME.match(local.strip()):
+        return _display_time(local)
+    utc = first_value(raw, "QuickTime:CreateDate")
+    if not utc or _ZERO_DATETIME.match(utc.strip()):
+        return None
+    parsed = _parse_quicktime_utc(utc)
+    if parsed is None:
+        return None
+    converted = parsed.astimezone()
+    offset = normalize_offset(converted.strftime("%z"))
+    return f"{converted:%Y-%m-%d %H:%M:%S}{offset or ''}"
+
+
+def _parse_quicktime_utc(value: str) -> datetime.datetime | None:
+    """``2024:05:16 12:52:02`` → 带 UTC 时区的 datetime；看不懂返回 ``None``。"""
+    text = value.strip()
+    for fmt in ("%Y:%m:%d %H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.datetime.strptime(text, fmt).replace(tzinfo=datetime.UTC)
+        except ValueError:
+            continue
+    return None
+
+
+def _display_time(value: str) -> str:
+    """``2024:05:16 20:52:02+08:00`` → ``2024-05-16 20:52:02+08:00``（只换日期那两处）。"""
+    text = value.strip()
+    match = _DISPLAY_DATE.match(text)
+    if match is None:
+        return text
+    return f"{match.group(1)}-{match.group(2)}-{match.group(3)}{match.group(4)}"
+
+
 @dataclass(frozen=True, slots=True)
 class CoordinateAxis:
     """一个坐标轴：数值标签、半球标签，以及两个半球各写哪个字母。
@@ -358,6 +404,44 @@ def coordinates_decimal(raw: Mapping[str, str]) -> tuple[float | None, float | N
     if latitude is None or longitude is None:
         return (None, None)
     return (latitude, longitude)
+
+
+#: 文件里存的 ISO 6709 坐标（``+31.2304+121.4737/``）。
+_ISO6709: Final = re.compile(r"^([+-]\d+(?:\.\d+)?)([+-]\d+(?:\.\d+)?)")
+
+
+def quicktime_coordinates(raw: Mapping[str, str]) -> tuple[float | None, float | None]:
+    """``QuickTime:GPSCoordinates`` → 十进制度（纬度, 经度）。
+
+    exiftool 默认给度分秒（``31 deg 13' 49.44" N, 121 deg 28' 25.32" E, 10 m``），
+    文件里存的是 ISO 6709（``+31.2304+121.4737/``）—— 两种都认，第三种就当作没有。
+    """
+    value = first_value(raw, "QuickTime:GPSCoordinates")
+    if value is None:
+        return (None, None)
+    iso = _ISO6709.match(value.strip())
+    if iso is not None:
+        return (float(iso.group(1)), float(iso.group(2)))
+    parts = [part.strip() for part in value.split(",")]
+    if len(parts) < 2:
+        return (None, None)
+    latitude = _hemisphere_degrees(parts[0], "NS")
+    longitude = _hemisphere_degrees(parts[1], "EW")
+    if latitude is None or longitude is None:
+        return (None, None)
+    return (latitude, longitude)
+
+
+def _hemisphere_degrees(value: str, letters: str) -> float | None:
+    """``31 deg 13' 49.44" N`` → 十进制度；末尾的半球字母决定正负。"""
+    text = value.strip()
+    hemisphere = text[-1:].upper()
+    if hemisphere in letters:
+        decimal = _degrees_to_decimal(text[:-1].strip())
+        if decimal is None:
+            return None
+        return -abs(decimal) if hemisphere in "SW" else abs(decimal)
+    return _degrees_to_decimal(text)
 
 
 def latitude_decimal(raw: Mapping[str, str]) -> float | None:
@@ -484,10 +568,12 @@ __all__ = [
     "first_value",
     "latitude_decimal",
     "leading_number",
+    "local_video_capture_text",
     "longitude_decimal",
     "normalize_capture_time",
     "normalize_offset",
     "place_parts",
     "positive_value",
+    "quicktime_coordinates",
     "read_metadata",
 ]

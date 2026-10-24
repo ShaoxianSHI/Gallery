@@ -18,11 +18,16 @@ pytest.importorskip("PySide6")
 
 from PIL import Image  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
-from waiting import wait_for_idle  # noqa: E402
+from waiting import wait_for_idle, wait_until  # noqa: E402
 
 from gallery.core.external import apps  # noqa: E402
 from gallery.core.library.config import prepare_library  # noqa: E402
 from gallery.core.library.session import SessionState, save_session  # noqa: E402
+from gallery.core.metadata.report import (  # noqa: E402
+    MetadataField,
+    MetadataGroup,
+    MetadataReport,
+)
 from gallery.ui.main_window import MainWindow  # noqa: E402
 
 
@@ -194,3 +199,46 @@ def test_image_viewers_are_not_offered_for_videos(
 
     _open(window, "a.jpg")
     assert window._viewer_ready(apps.PREVIEW) is True
+
+
+def test_the_panel_keeps_the_edit_button_off_for_videos(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """视频能看元数据，但写不了：面板那个按钮对视频必须一直灰着。"""
+    library = window._library
+    assert library is not None
+    monkeypatch.setattr(library, "can_write_metadata", lambda: True)
+    window.toggle_metadata(True)  # 面板默认是收着的；这条盯的是它在视频页上的状态
+
+    _open(window, "b.avi")
+    assert window._panel.metadata_editable is False
+
+    _open(window, "a.jpg")
+    assert window._panel.metadata_editable is True
+
+
+def test_the_panel_shows_a_video_report(
+    window: MainWindow, qt_app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """视频页也要读报告：exiftool 的 QuickTime 标签在报告层已经映射成中文分组。"""
+    report = MetadataReport(
+        path=Path("片子.mp4"),
+        groups=(MetadataGroup("视频", (MetadataField("时长", "0:01:30"),)),),
+        all_fields=(),
+        source="exiftool",
+    )
+    monkeypatch.setattr(
+        "gallery.ui.window.metadata_flow.read_metadata",
+        lambda path, *, allow_fallback=True: report,
+    )
+    window.toggle_metadata(True)
+
+    _open(window, "b.avi")
+
+    assert wait_until(
+        qt_app,
+        lambda: (
+            window._panel.report is not None
+            and any(group.title == "视频" for group in window._panel.report.groups)
+        ),
+    )

@@ -22,8 +22,10 @@ from gallery.core.metadata.exif import (
     capture_time_parts,
     coordinates_decimal,
     first_value,
+    local_video_capture_text,
     place_parts,
     positive_value,
+    quicktime_coordinates,
 )
 from gallery.core.places.countries import place_label
 
@@ -122,6 +124,8 @@ def build_report(
     """把来源的原始键值整理成分组报告（纯函数，测试直接喂字典）。"""
     normalized = {key: as_text(value) for key, value in raw.items()}
     latitude, longitude = coordinates_decimal(normalized)
+    if latitude is None or longitude is None:
+        latitude, longitude = quicktime_coordinates(normalized)
     groups: list[MetadataGroup] = []
     for title, specs in _CURATED_GROUPS:
         fields: list[MetadataField] = []
@@ -155,12 +159,14 @@ def build_report(
 
 
 def _shooting_time(raw: Mapping[str, str]) -> str | None:
-    """面板上那一行「拍摄时间」。**原样显示墙上时间，不换算到本机时区**，带得上偏移就跟在后面
-    （``2022-04-16 20:52:02 +08:00``）—— 那正是照片自己记下的说法，换算一遍只会让用户对不上。
+    """面板上那一行「拍摄时间」。
+
+    照片的 EXIF 是墙钟，原样显示；视频只有 ``CreateDate`` 时那是 UTC，已在
+    :func:`~gallery.core.metadata.exif.local_video_capture_text` 里换成本机时区。
     """
     value = first_value(raw, *CAPTURE_TIME_FIELDS)
     if value is None:
-        return None
+        return local_video_capture_text(raw)
     text = value.replace(":", "-", 2)  # 2022:04:16 20:52:02 → 2022-04-16 20:52:02
     offset = first_value(raw, *OFFSET_TIME_FIELDS)
     return f"{text} {offset}" if offset else text
@@ -229,14 +235,65 @@ def _focal_length(raw: Mapping[str, str]) -> str | None:
 
 def _pixel_size(raw: Mapping[str, str]) -> str | None:
     width = positive_value(
-        first_value(raw, "EXIF:ExifImageWidth", "File:ImageWidth", "EXIF:ImageWidth")
+        first_value(
+            raw,
+            "EXIF:ExifImageWidth",
+            "File:ImageWidth",
+            "EXIF:ImageWidth",
+            "QuickTime:ImageWidth",
+        )
     )
     height = positive_value(
-        first_value(raw, "EXIF:ExifImageHeight", "File:ImageHeight", "EXIF:ImageLength")
+        first_value(
+            raw,
+            "EXIF:ExifImageHeight",
+            "File:ImageHeight",
+            "EXIF:ImageLength",
+            "QuickTime:ImageHeight",
+        )
     )
     if width and height:
         return f"{width} × {height}"
     return None
+
+
+#: 视频编码那几串编号 → 用户认得的名字。认不出就原样显示。
+_CODEC_LABELS: Final[dict[str, str]] = {
+    "avc1": "H.264",
+    "hvc1": "HEVC",
+    "hev1": "HEVC",
+    "mp4v": "MPEG-4",
+    "jpeg": "Motion JPEG",
+    "mjpg": "Motion JPEG",
+}
+
+
+def _duration(raw: Mapping[str, str]) -> str | None:
+    return first_value(raw, "QuickTime:Duration")
+
+
+def _frame_rate(raw: Mapping[str, str]) -> str | None:
+    value = first_value(raw, "QuickTime:VideoFrameRate")
+    if value is None:
+        return None
+    try:
+        rate = float(value)
+    except ValueError:
+        return f"{value} fps"
+    # 30.001 这种是容器里的小数误差，别照抄给用户。
+    rounded = round(rate)
+    return f"{rounded} fps" if abs(rate - rounded) < 0.05 else f"{rate:g} fps"
+
+
+def _codec(raw: Mapping[str, str]) -> str | None:
+    value = first_value(raw, "QuickTime:CompressorID", "QuickTime:CompressorName")
+    if value is None:
+        return None
+    return _CODEC_LABELS.get(value.casefold(), value)
+
+
+def _bitrate(raw: Mapping[str, str]) -> str | None:
+    return first_value(raw, "QuickTime:AvgBitrate")
 
 
 def _iso(raw: Mapping[str, str]) -> str | None:
@@ -270,6 +327,8 @@ def _place_from_file(raw: Mapping[str, str]) -> str | None:
 def _coordinates(raw: Mapping[str, str]) -> str | None:
     """统一显示成十进制：度分秒是给机器看的，复制出去也没法直接粘进地图。"""
     latitude, longitude = coordinates_decimal(raw)
+    if latitude is None or longitude is None:
+        latitude, longitude = quicktime_coordinates(raw)
     if latitude is None and longitude is None:
         return None
     parts: list[str] = []
@@ -370,6 +429,15 @@ _CURATED_GROUPS: Final[tuple[tuple[str, tuple[_FieldSpec, ...]], ...]] = (
             _FieldSpec("像素尺寸", _pixel_size),
             _FieldSpec("色彩空间", _color_space),
             _FieldSpec("处理软件", _pick("EXIF:Software")),
+        ),
+    ),
+    (
+        "视频",
+        (
+            _FieldSpec("时长", _duration),
+            _FieldSpec("帧率", _frame_rate),
+            _FieldSpec("编码", _codec),
+            _FieldSpec("码率", _bitrate),
         ),
     ),
     (

@@ -40,8 +40,10 @@ from gallery.core.metadata.exif import (
     coordinates_decimal,
     first_value,
     leading_number,
+    local_video_capture_text,
     place_parts,
     positive_value,
+    quicktime_coordinates,
 )
 
 # ---- 字段 id -----------------------------------------------------------------------
@@ -204,12 +206,15 @@ WANTED_TAGS: Final[tuple[str, ...]] = (
     # ``_keywords`` 认 Dublin Core 的 ``dc:subject``（Lightroom / Capture One 把它当主要的关键词
     # 字段），不列在这里它就永远收不到 —— 键在读取端、没在请求端，是一条走不到的路。
     "XMP-dc:Subject",
-    # 视频的容器标签（ADR 0090）：只取日期与尺寸。**CreationDate 是本地墙钟、CreateDate 是 UTC**，
-    # 两栏都点名要，取值时先本地（见 :func:`extract`）。
+    # 视频的容器标签（ADR 0090 / 0092）：日期、尺寸、GPS 与设备。**CreationDate 是本地墙钟、
+    # CreateDate 是 UTC** —— 两栏都点名要，取值时统一成本机墙钟（见 :func:`extract`）。
     "QuickTime:CreationDate",
     "QuickTime:CreateDate",
     "QuickTime:ImageWidth",
     "QuickTime:ImageHeight",
+    "QuickTime:GPSCoordinates",
+    "QuickTime:Make",
+    "QuickTime:Model",
 )
 
 #: IPTC 的关键词字段可能是数组或用分号分隔的字符串。
@@ -233,6 +238,8 @@ def extract(raw: Mapping[str, object]) -> PhotoFacets:
     values = {key: value for key, value in raw.items() if key != "SourceFile"}
     text = {key: as_text(value) for key, value in values.items()}
     latitude, longitude = coordinates_decimal(text)
+    if latitude is None or longitude is None:
+        latitude, longitude = quicktime_coordinates(text)
     city, region, country = place_parts(text)
     when = parse_capture_time(
         first_value(
@@ -240,12 +247,11 @@ def extract(raw: Mapping[str, object]) -> PhotoFacets:
             "EXIF:DateTimeOriginal",
             "EXIF:CreateDate",
             "EXIF:DateTimeDigitized",
-            # 视频只有 QuickTime 那两栏。先本地墙钟再 UTC：反过来会让东八区晚上拍的片子
-            # 落进前一天（与 ADR 0033 决策 3 同一取向）。
-            "QuickTime:CreationDate",
-            "QuickTime:CreateDate",
         )
     )
+    if when is None:
+        # 视频的日期统一成本机墙钟：CreationDate 本来是拍摄地墙钟，只有 CreateDate 时它是 UTC。
+        when = parse_capture_time(local_video_capture_text(text))
     width = _number(
         text,
         "EXIF:ExifImageWidth",
