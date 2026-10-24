@@ -269,3 +269,17 @@ def test_restore_brings_back_the_whole_album(tmp_path: Path, fake_trash: Path) -
 def _write(path: Path, data: bytes) -> Path:
     path.write_bytes(data)
     return path
+
+
+def test_a_section_header_is_reported_as_not_on_disk(tmp_path: Path, photo: PhotoRef) -> None:
+    """分区标题移不走：如实报一句失败，而不是去读一个不存在的路径。"""
+    from gallery.core.library.photos import GroupRef, SectionRef
+
+    group = GroupRef(facet="captured_month", key="2024-05", label="2024 年 5 月", photos=(photo,))
+    header = SectionRef(group=group, count=1)
+
+    result = trash_entries(tmp_path, [header])
+
+    assert result.failures
+    assert "分区标题" in result.failures[0].message
+    assert photo.path.exists(), "照片一个字节都不许动"

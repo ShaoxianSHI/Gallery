@@ -356,3 +356,19 @@ def test_library_rename_and_undo(tmp_path: Path, make_photo: Callable[..., Path]
     assert undone is not None
     assert undone.entries[0].name == "海边.jpg"
     assert picture.exists()
+
+
+def test_a_section_header_cannot_be_renamed(tmp_path: Path, photo: PhotoRef) -> None:
+    """分区标题不是磁盘上的文件：rename 要抛一句人话，而不是在别处炸出 AttributeError。
+
+    界面不会把当前项落在标题上；这一条是第二道防线（API 也可能被别的调用方用到）。
+    """
+    from gallery.core.library.photos import GroupRef, SectionRef
+
+    group = GroupRef(facet="captured_month", key="2024-05", label="2024 年 5 月", photos=(photo,))
+    header = SectionRef(group=group, count=1)
+
+    with pytest.raises(RenameError, match="分区的标题"):
+        rename_entry(tmp_path, header, "新的名字")
+
+    assert photo.path.exists(), "什么都还没动，照片必须还在"
