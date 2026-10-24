@@ -15,7 +15,7 @@ from typing import Final
 from gallery.core import paths
 from gallery.core.errors import RenameError
 from gallery.core.events.store import EventStore, follow_moves
-from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
+from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef, SectionRef
 from gallery.core.metadata.failures import os_reason
 from gallery.core.metadata.journal import (
     ACTION_RENAME,
@@ -66,6 +66,14 @@ def rename_entry(
     :raises RenameError: 名字不合法、目标已被占用、越权操作，或系统拒绝了这次改名。
     """
     root = Path(root)
+    if isinstance(entry, SectionRef):
+        # 分区标题只是分组在网格里的一条分界线，不是磁盘上的文件。界面也不会把当前项落在
+        # 它身上；真漏到这里要给一句说人话的错，而不是 AttributeError。
+        cover = entry.group.cover
+        raise RenameError(
+            f"「{entry.label}」是分区的标题，不是磁盘上的文件，改不了名。选中它下面的照片再改名。",
+            path=cover.path if cover is not None else None,
+        )
     if isinstance(entry, GroupRef):
         # 分组不是磁盘上的东西，改名没有对象。界面已经拦了一道，这里是第二道：
         # 漏了也必须是句说人话的错，而不是在别处炸出一个 AttributeError。

@@ -201,11 +201,7 @@ def tags_of(payload: Mapping[str, object]) -> tuple[str, ...]:
     data = payload.get("data")
     if not isinstance(data, list):
         return ()
-    names = (
-        _text(entry.get("tag_name"))
-        for entry in data
-        if isinstance(entry, Mapping)
-    )
+    names = (_text(entry.get("tag_name")) for entry in data if isinstance(entry, Mapping))
     return tuple(name for name in names if name)
 
 

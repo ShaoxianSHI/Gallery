@@ -17,8 +17,14 @@ from pathlib import Path
 
 import pytest
 
-from gallery.core.library.groups import SortOrder, build_groups, flatten_groups, sort_photos
-from gallery.core.library.photos import GroupRef, PhotoRef
+from gallery.core.library.groups import (
+    SortOrder,
+    build_groups,
+    build_sections,
+    flatten_groups,
+    sort_photos,
+)
+from gallery.core.library.photos import GroupRef, PhotoRef, SectionRef
 from gallery.core.metadata.facets import (
     FACET_CAMERA,
     FACET_CAPTURED,
@@ -414,6 +420,90 @@ def test_empty_input_produces_nothing(tmp_path: Path) -> None:
     assert facet is not None
 
     assert build_groups([], facet=facet, root=tmp_path) == []
+
+
+# ---- 分区式（ADR 0089）----------------------------------------------------------------
+
+
+def test_sections_interleave_one_header_per_group(tmp_path: Path) -> None:
+    """分区 = 一条标题 + 它的成员，按组的先后铺开。"""
+    photos = [_ref(tmp_path, "a.jpg"), _ref(tmp_path, "b.jpg"), _ref(tmp_path, "c.jpg")]
+    values = {
+        photos[0].path: PhotoFacets(year=2024, month=5),
+        photos[1].path: PhotoFacets(year=2024, month=6),
+        photos[2].path: PhotoFacets(year=2024, month=5),
+    }
+    facet = group_facet(FACET_MONTH)
+    assert facet is not None
+    groups = build_groups(photos, facet=facet, root=tmp_path, values=values)
+
+    rows = build_sections(groups)
+
+    assert [type(row).__name__ for row in rows] == [
+        "SectionRef",
+        "PhotoRef",
+        "PhotoRef",
+        "SectionRef",
+        "PhotoRef",
+    ]
+    headers = [row for row in rows if isinstance(row, SectionRef)]
+    assert [(header.label, header.count) for header in headers] == [
+        ("2024 年 5 月", 2),
+        ("2024 年 6 月", 1),
+    ]
+    # 标题同时认得自己代表的那个组（标题上的组级命令要用它）。
+    assert headers[0].group is groups[0]
+
+
+def test_a_photo_in_several_groups_lands_in_the_first_section_only(tmp_path: Path) -> None:
+    """按关键词分组时一张照片属于多个组，而模型只允许一行一个路径。
+
+    取第一个分区（组的先后就是用户看到的先后），标题上的张数是**实际显示**的张数 ——
+    所有分区的张数加起来等于照片数。
+    """
+    photos = [
+        _ref(tmp_path, "共有.jpg"),
+        _ref(tmp_path, "海边.jpg"),
+        _ref(tmp_path, "夜景.jpg"),
+    ]
+    values = {
+        photos[0].path: PhotoFacets(keywords=("海边", "夜景")),
+        photos[1].path: PhotoFacets(keywords=("海边",)),
+        photos[2].path: PhotoFacets(keywords=("夜景",)),
+    }
+    facet = group_facet(FACET_KEYWORD)
+    assert facet is not None
+    groups = build_groups(photos, facet=facet, root=tmp_path, values=values)
+    assert [(group.label, group.count) for group in groups] == [("海边", 2), ("夜景", 2)]
+
+    rows = build_sections(groups)
+
+    headers = [row for row in rows if isinstance(row, SectionRef)]
+    # 夜景那一组本来两张，共有的那张已经在海边那一段里出现过，于是只剩一张。
+    assert [(header.label, header.count) for header in headers] == [("海边", 2), ("夜景", 1)]
+    shown = [row.path for row in rows if isinstance(row, PhotoRef)]
+    assert shown == [photos[0].path, photos[1].path, photos[2].path]
+
+
+def test_a_section_whose_members_were_all_taken_earlier_is_not_emitted(tmp_path: Path) -> None:
+    """成员全被前面的分区拿走的组**不产生标题** —— 否则会连着出现两条标题、其中一条下面空着。"""
+    shared = _ref(tmp_path, "共有.jpg")
+    facet = group_facet(FACET_KEYWORD)
+    assert facet is not None
+    groups = [
+        GroupRef(facet=FACET_KEYWORD, key="海边", label="海边", photos=(shared,)),
+        GroupRef(facet=FACET_KEYWORD, key="夜景", label="夜景", photos=(shared,)),
+    ]
+
+    rows = build_sections(groups)
+
+    headers = [row for row in rows if isinstance(row, SectionRef)]
+    assert [header.label for header in headers] == ["海边"]
+    assert sum(1 for row in rows if isinstance(row, PhotoRef)) == 1
+
+
+def test_sections_of_an_empty_group_list_are_empty(tmp_path: Path) -> None:
+    assert build_sections([]) == []
 
 
 def test_the_sort_value_is_computed_once_per_photo(tmp_path: Path) -> None:

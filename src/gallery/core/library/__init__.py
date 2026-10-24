@@ -26,12 +26,13 @@ from gallery.core.library.config import (
     save_config,
 )
 from gallery.core.library.facade import Library
-from gallery.core.library.groups import SortOrder, build_groups, sort_photos
+from gallery.core.library.groups import SortOrder, build_groups, build_sections, sort_photos
 from gallery.core.library.photos import (
     FolderRef,
     GridEntry,
     GroupRef,
     PhotoRef,
+    SectionRef,
     format_label,
     is_supported_photo,
 )
@@ -49,8 +50,10 @@ __all__ = [
     "LibraryConfig",
     "LibraryUIState",
     "PhotoRef",
+    "SectionRef",
     "SortOrder",
     "build_groups",
+    "build_sections",
     "days_of",
     "format_label",
     "group_by_day",

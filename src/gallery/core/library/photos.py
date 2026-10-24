@@ -183,8 +183,39 @@ class GroupRef:
         return self.label
 
 
-#: 网格里可能出现的东西：一张照片，一个相册（子文件夹），或一个分组。
-type GridEntry = PhotoRef | FolderRef | GroupRef
+@dataclass(frozen=True, slots=True)
+class SectionRef:
+    """分区标题：分组在分区式下占的那一行（不是卡片）。
+
+    与 :class:`GroupRef` 的差别只在界面：卡片可以双击进入，标题只是一条分界线与一行字。
+    ``group`` 留着是为了标题上的组级命令（复制分组条件、事件封面）不必再查一遍。
+    """
+
+    group: GroupRef
+    #: 这一行下面**实际显示**的张数。一张照片属于多个组时只算第一个分区，所以它可能小于
+    #: ``group.count``；所有分区的张数加起来等于这一层的照片数。
+    count: int
+
+    @property
+    def facet(self) -> str:
+        return self.group.facet
+
+    @property
+    def key(self) -> str:
+        return self.group.key
+
+    @property
+    def label(self) -> str:
+        return self.group.label
+
+    @property
+    def name(self) -> str:
+        """网格里的显示名（与卡片、相册同一套读法）。"""
+        return self.group.label
+
+
+#: 网格里可能出现的东西：一张照片，一个相册（子文件夹），一个分组，或一条分区标题。
+type GridEntry = PhotoRef | FolderRef | GroupRef | SectionRef
 
 
 __all__ = [
@@ -193,6 +224,7 @@ __all__ = [
     "GridEntry",
     "GroupRef",
     "PhotoRef",
+    "SectionRef",
     "format_label",
     "format_suffixes",
     "is_supported_photo",

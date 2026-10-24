@@ -21,6 +21,8 @@ from gallery.core.library.config import (
     BROWSE_MODE_FLAT,
     DEFAULT_CALENDAR_LEVEL,
     DEFAULT_SORT_FACET,
+    GROUP_LAYOUT_CARDS,
+    GROUP_LAYOUT_SECTIONS,
     SEARCH_SCOPE_LEVEL,
     SEARCH_SCOPE_LIBRARY,
     UI_KEY,
@@ -339,6 +341,27 @@ def test_the_search_scope_alone_means_the_ui_table_is_not_empty() -> None:
     assert "search_scope" in ui.to_toml()
 
 
+def test_the_group_layout_survives_a_round_trip(tmp_path: Path) -> None:
+    """分组形态是**库级偏好**（ADR 0089）：重开这个库还该是分区式。"""
+    config = LibraryConfig(ui=LibraryUIState(group_layout=GROUP_LAYOUT_SECTIONS))
+
+    save_config(tmp_path, config)
+
+    assert load_config(tmp_path).ui.group_layout == GROUP_LAYOUT_SECTIONS
+    assert load_config(tmp_path).ui.resolved_group_layout() == GROUP_LAYOUT_SECTIONS
+
+
+def test_an_unknown_group_layout_falls_back_to_cards() -> None:
+    """来路不明的值不写进去，读回来也回默认的卡片式（老库升级上来看到的就是它）。"""
+    assert LibraryUIState().with_group_layout("编出来的").group_layout is None
+    assert LibraryUIState().resolved_group_layout() == GROUP_LAYOUT_CARDS
+    assert LibraryUIState(group_layout="编出来的").resolved_group_layout() == GROUP_LAYOUT_CARDS
+    assert (
+        LibraryUIState().with_group_layout(GROUP_LAYOUT_SECTIONS).resolved_group_layout()
+        == GROUP_LAYOUT_SECTIONS
+    )
+
+
 def test_a_fresh_library_writes_no_ui_table(tmp_path: Path) -> None:
     """没人设过的东西不该在文件里留下一行 —— 那一行会被读成「设过，只是设成这个」。"""
     save_config(tmp_path, LibraryConfig())
@@ -585,7 +608,7 @@ def test_the_ui_field_table_preserves_the_written_order() -> None:
     """
     from gallery.core.library import config as module
 
-    # 八个字段全给上值，写出去的行才与字段表一样长。
+    # 九个字段全给上值，写出去的行才与字段表一样长。
     state = module.LibraryUIState(
         browse_mode="albums",
         metadata_visible=True,
@@ -595,6 +618,7 @@ def test_the_ui_field_table_preserves_the_written_order() -> None:
         calendar_level="month",
         thumbnail_edge=512,
         search_scope="level",
+        group_layout="sections",
     )
     body = state.to_toml().split(f"[{module.UI_KEY}]", 1)[1]
 

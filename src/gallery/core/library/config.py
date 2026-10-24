@@ -68,6 +68,19 @@ SEARCH_SCOPE_LEVEL: Final = "level"
 #: 允许的作用域。界面上只有这两种，不给「不选」—— 没有条件时两者是一回事。
 SEARCH_SCOPES: Final = (SEARCH_SCOPE_LIBRARY, SEARCH_SCOPE_LEVEL)
 
+#: 分组的形态之一：每组在网格里占一格（封面 + 组名 + 张数），双击进入（ADR 0009）。
+GROUP_LAYOUT_CARDS: Final = "cards"
+
+#: 分组的形态之一：每组开头一条整行标题 + 分隔线，照片连续铺开（ADR 0089）。
+GROUP_LAYOUT_SECTIONS: Final = "sections"
+
+#: 允许的分组形态。界面上只有这两种，不给「不选」—— 默认是卡片式（老库升级上来看到的
+#: 与升级之前一模一样）。
+GROUP_LAYOUTS: Final = (GROUP_LAYOUT_CARDS, GROUP_LAYOUT_SECTIONS)
+
+#: 没选过分组形态时用哪一档。
+DEFAULT_GROUP_LAYOUT: Final = GROUP_LAYOUT_CARDS
+
 _CONFIG_HEADER: Final = (
     "# Gallery 库级配置。\n"
     "# 这是配置目录中唯一建议纳入版本控制的文件，其余内容都是可重建的缓存。\n"
@@ -94,6 +107,8 @@ class LibraryUIState:
     #: 检索条件的作用域（ADR 0040 决策 1）。**只记作用域，不记条件本身** —— 条件是临时的，
     #: 换库就清空（ADR 0026 决策 10），而「我习惯用筛选而不是搜索」是个关于这个库的偏好。
     search_scope: str | None = None
+    #: 分组是卡片式还是分区式（ADR 0089）。与分组字段一样是**库级**偏好。
+    group_layout: str | None = None
 
     @property
     def is_empty(self) -> bool:
@@ -119,6 +134,15 @@ class LibraryUIState:
     def with_search_scope(self, scope: str) -> LibraryUIState:
         """记下检索条件的作用域（ADR 0040）。同样只记合法值。"""
         return replace(self, search_scope=scope if scope in SEARCH_SCOPES else None)
+
+    def with_group_layout(self, layout: str) -> LibraryUIState:
+        """记下分组是卡片式还是分区式（ADR 0089）。只记合法值，与其余几项同一个取向。"""
+        return replace(self, group_layout=layout if layout in GROUP_LAYOUTS else None)
+
+    def resolved_group_layout(self) -> str:
+        """这一档该用的分组形态。没选过、或存着的值来路不明（老版本、手改过）就交回默认值。"""
+        layout = self.group_layout
+        return layout if layout in GROUP_LAYOUTS else DEFAULT_GROUP_LAYOUT
 
     def resolved_search_scope(self) -> str:
         """这一档该用的检索作用域。没选过、或值来路不明（老版本、手改过）就交回
@@ -198,6 +222,11 @@ def _ui_search_scope(value: object) -> str | None:
     return value if value in SEARCH_SCOPES else None
 
 
+def _ui_group_layout(value: object) -> str | None:
+    """合法的分组形态，否则 ``None``（没选过，由默认值接手）。"""
+    return value if value in GROUP_LAYOUTS else None
+
+
 def _ui_bool(value: object) -> bool | None:
     return value if isinstance(value, bool) else None
 
@@ -219,13 +248,14 @@ def _ui_edge(value: object) -> int | None:
     return value
 
 
-#: ``[ui]`` 那 8 个字段：``(toml 键名, dataclass 属性名, 读回来时的校验)``。
+#: ``[ui]`` 那 9 个字段：``(toml 键名, dataclass 属性名, 读回来时的校验)``。
 #:
 #: **一份就是全部**：:attr:`LibraryUIState.is_empty`、:meth:`LibraryUIState.to_toml`
 #: 与 :meth:`LibraryUIState.from_mapping` 都由它推出来，写出去的顺序也是这个顺序
 #: （固定顺序让每次保存的 diff 没有噪音）。三处各写一遍时，加一个偏好要改四处，
 #: 而漏掉哪一处都不报错 —— 那一项要么存不下去、要么读不回来，界面上只是
 #: 「这个偏好没记住」。字段与 :class:`LibraryUIState` 对不对得上由一条测试盯着。
+#: **新字段接在末尾**：插在中间会让老库下次保存时整段重排。
 _UI_FIELDS: Final = (
     ("browse_mode", "browse_mode", _ui_browse_mode),
     ("metadata_visible", "metadata_visible", _ui_bool),
@@ -235,6 +265,7 @@ _UI_FIELDS: Final = (
     ("calendar_level", "calendar_level", _ui_calendar_level),
     ("thumbnail_edge", "thumbnail_edge", _ui_edge),
     ("search_scope", "search_scope", _ui_search_scope),
+    ("group_layout", "group_layout", _ui_group_layout),
 )
 
 

@@ -19,7 +19,7 @@ from uuid import uuid4
 
 from gallery.core import paths
 from gallery.core.errors import DeleteError
-from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
+from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef, SectionRef
 from gallery.core.metadata.failures import Failure, os_reason
 from gallery.core.metadata.journal import (
     ACTION_RESTORE,
@@ -143,8 +143,8 @@ def trash_entries(
     root = Path(root)
     items = tuple(entries)
     for entry in items:
-        if isinstance(entry, GroupRef):
-            continue  # 分组不是磁盘上的东西，没有可移动的路径（下面逐项记成失败）
+        if isinstance(entry, (GroupRef, SectionRef)):
+            continue  # 分组与分区标题不是磁盘上的东西，没有可移动的路径（下面逐项记成失败）
         _guard(root, Path(entry.path))
     if len(items) > 1 and batch is None:
         batch = _new_batch_id()
@@ -152,6 +152,14 @@ def trash_entries(
     failures: list[Failure] = []
     journaled = True
     for entry in items:
+        if isinstance(entry, SectionRef):
+            failures.append(
+                Failure(
+                    name=entry.name,
+                    message="分区标题不是磁盘上的东西，移不走；选中它下面的照片再删。",
+                )
+            )
+            continue
         if isinstance(entry, GroupRef):
             # 界面已经拦过一道；真漏到这里也要**如实说**，不能悄悄少删一个。
             failures.append(

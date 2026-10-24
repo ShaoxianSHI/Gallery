@@ -13,7 +13,7 @@ from pathlib import Path
 
 from gallery.core.collation import collation_key
 from gallery.core.events.store import EventRef
-from gallery.core.library.photos import GroupRef, PhotoRef
+from gallery.core.library.photos import GroupRef, PhotoRef, SectionRef
 from gallery.core.metadata.facets import Facet, PhotoFacets, SortValue, input_for
 
 #: 没有元数据时的占位：任何照片都能用它算 key，只是排到最后。
@@ -185,10 +185,29 @@ def flatten_groups(groups: Sequence[GroupRef]) -> list[PhotoRef]:
     return result
 
 
+def build_sections(groups: Sequence[GroupRef]) -> list[SectionRef | PhotoRef]:
+    """把分组摊成分区：每组一条标题 + 它的成员，按路径去重、保持组的先后。
+
+    **一张照片只出现在第一个分区里**：模型靠「同一路径只有一行」撑着，而按关键词分组时
+    一张照片可以属于多个组。成员全被前面的分区拿走的组不产生标题（否则会连着两条空标题）。
+    """
+    seen: set[Path] = set()
+    rows: list[SectionRef | PhotoRef] = []
+    for group in groups:
+        members = [ref for ref in group.photos if ref.path not in seen]
+        if not members:
+            continue
+        seen.update(ref.path for ref in members)
+        rows.append(SectionRef(group=group, count=len(members)))
+        rows.extend(members)
+    return rows
+
+
 __all__ = [
     "EMPTY_FACETS",
     "SortOrder",
     "build_groups",
+    "build_sections",
     "flatten_groups",
     "sort_photos",
 ]
