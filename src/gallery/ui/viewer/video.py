@@ -191,6 +191,11 @@ class VideoView(QGraphicsView):
         self._set_play_icon(playing=False)
         self.resetTransform()
 
+    def pause(self) -> None:
+        """暂停（交给外部播放器时用）；**不放开文件**，回来还能接着放。"""
+        if self._ref is not None:
+            self._player.pause()
+
     def toggle_playback(self) -> None:
         if self._ref is None:
             return

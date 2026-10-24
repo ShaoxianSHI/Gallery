@@ -445,3 +445,28 @@ def test_copy_all_includes_the_events(qt_app: QApplication, report: object) -> N
     assert "【旅行 · 京都五日】" in copied
     assert "目的地：京都、奈良" in copied
     panel.deleteLater()
+
+
+def test_a_video_only_greys_the_edit_button_without_a_reason(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """视频只读：按钮灰着，但面板里不再多一行「视频的元数据是只读的」（ADR 0093）。"""
+    panel = MetadataPanel()
+    report = build_report(
+        {"QuickTime:GPSCoordinates": "+31.2304+121.4737/"},
+        path=tmp_path / "片子.mp4",
+        size=1,
+        mtime_ns=0,
+        source="exiftool",
+    )
+    panel.set_report(report)
+    panel.set_metadata_editable(False, notice=False)
+
+    texts = [label.text() for label in panel.findChildren(QLabel)]
+    assert "此处不能编辑" not in texts
+    assert all("只读" not in text for text in texts)
+    assert panel._edit_button.isEnabled() is False
+
+    panel.set_metadata_editable(False, reason="需要 exiftool 才能修改照片里的位置。")
+    assert any("exiftool" in label.text() for label in panel.findChildren(QLabel))
+    panel.deleteLater()

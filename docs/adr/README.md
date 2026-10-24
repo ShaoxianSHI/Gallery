@@ -119,4 +119,5 @@
 | [0089](0089-grouping-section-layout.md) | 分组的第二种形态「分区式」：整行标题 + 分隔线，标题不是层级栈的一帧 | 已接受 |
 | [0090](0090-videos-in-the-library.md) | 库里的视频：扫描、第一帧缩略图、双击交给默认应用 | 已接受（决策 4 由 0091 取代） |
 | [0091](0091-video-detail-page.md) | 视频大图页：在应用里播放，而不是交给默认应用 | 已接受 |
-| [0092](0092-video-metadata-panel.md) | 视频的元数据面板：QuickTime 标签、UTC 换本机时区、GPS 进索引 | 已接受 |
+| [0092](0092-video-metadata-panel.md) | 视频的元数据面板：QuickTime 标签、UTC 换本机时区、GPS 进索引 | 已接受（决策 4 的只读提示由 0093 去掉） |
+| [0093](0093-iina-video-external-player.md) | 视频的外部播放器 IINA：固定在详情页第一位 | 已接受 |

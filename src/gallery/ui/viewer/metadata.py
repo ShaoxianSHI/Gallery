@@ -148,6 +148,8 @@ class MetadataPanel(QWidget):
         self._events: tuple[Event, ...] = ()
         self._metadata_editable = False
         self._metadata_reason = ""
+        #: 不能编辑时要不要在「位置」标题旁摆那句理由（视频页不摆，只把按钮置灰）。
+        self._metadata_notice = True
 
         layout = QVBoxLayout(self)
         # 右边那一档比左边窄得多：滚动区要贴到窗口边上，让它的滚动条与网格页那条对齐。
@@ -281,12 +283,15 @@ class MetadataPanel(QWidget):
         self._events = tuple(events)
         self._render()
 
-    def set_metadata_editable(self, editable: bool, *, reason: str = "") -> None:
+    def set_metadata_editable(
+        self, editable: bool, *, reason: str = "", notice: bool = True
+    ) -> None:
         """「编辑元数据」此刻能不能用；不能用时（没装 exiftool）把理由说出来 ——
         摆着一个点下去只会报错的按钮比没有更糟（ADR 0014）。
         """
         self._metadata_editable = editable
         self._metadata_reason = reason
+        self._metadata_notice = notice
         self._edit_button.setEnabled(editable)
         self._edit_button.setToolTip(
             reason if not editable else "改拍摄时间或位置，会写回这张照片（⌘Z 可以撤销）"
@@ -349,7 +354,7 @@ class MetadataPanel(QWidget):
         label.setObjectName("metadataGroupTitle")
         layout.addWidget(label)
         layout.addStretch(1)
-        if title == PLACE_GROUP_TITLE and not self._metadata_editable:
+        if title == PLACE_GROUP_TITLE and not self._metadata_editable and self._metadata_notice:
             hint = QLabel(self._metadata_reason or "此处不能编辑")
             hint.setObjectName("metadataNotice")
             hint.setWordWrap(True)

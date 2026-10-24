@@ -58,6 +58,10 @@ IMAGEGLASS = App(
     bundle_ids=("com.duongdieuphap.imageglass",),
 )
 
+#: IINA：视频播放器。只在「正在看一个视频」的大图页上摆，且固定在第一位（ADR 0093）。
+#: bundle id 取自它自己的 Info.plist；显示名是拉丁字母，不译。
+IINA = App(id="iina", name="IINA", bundle_ids=("com.colliderli.iina",))
+
 #: 图片应用那一份白名单 —— **这是一份手写的名单，不是问 Launch Services 要来的**：系统那份
 #: 「打开方式」名单里还躺着 ColorSync Utility / Chrome / Safari / QuickTime，它们声明能开图，
 #: 递一张照片过去得到的却是别的东西（浏览器标签、一帧画面）。**次序不表示摆出来的次序**，
@@ -133,6 +137,7 @@ def _appkit() -> Any:
 __all__ = [
     "CALENDAR",
     "ICON_EDGE",
+    "IINA",
     "IMAGEGLASS",
     "MAPS",
     "PREVIEW",

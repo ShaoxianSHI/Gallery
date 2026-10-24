@@ -37,10 +37,11 @@ type AttachHook = Callable[[sqlite3.Connection, threading.Lock], object]
 
 #: 表结构版本。表结构或存进去的结论变了就 +1（老表整表重建，缓存不值得迁移）—— 地点结论改过几轮，
 #: 不升版本的话老库里那些旧地名会永远留着（``place_ok`` 记着「已经查过了」）；7 增了
-#: ``hour`` / ``minute``（日历按墙上钟点摆格子，ADR 0033 决策 3）。
+#: ``hour`` / ``minute``（日历按墙上钟点摆格子，ADR 0033 决策 3）；8 增了视频的 GPS 与相机
+#: （ADR 0092）—— 老行里没有这两栏，不整表重建就永远读不到。
 #: 后加的 ``photos`` 表**没有**升版本（ADR 0026 决策 3）：语句全带 ``IF NOT EXISTS``，老库连上来
 #: 自动多出这张表；将来要**改**它的列时那才升版本。
-SCHEMA_VERSION: Final = 7
+SCHEMA_VERSION: Final = 8
 
 #: 一次 ``UPSERT`` 最多写多少行。太大则一条语句过长，太小则语句条数多。
 WRITE_CHUNK: Final = 500

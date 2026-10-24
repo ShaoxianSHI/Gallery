@@ -66,7 +66,8 @@ class MetadataFlowMixin:
         library = self._library
         ref = self._model.photo_at(self._current_row)
         if ref is not None and ref.is_video:
-            self._panel.set_metadata_editable(False, reason="视频的元数据是只读的。")
+            # 视频只读，但**不摆那句理由**：按钮灰着就够了，别在面板里多一行字。
+            self._panel.set_metadata_editable(False, notice=False)
             return
         if library is not None and library.can_write_metadata():
             self._panel.set_metadata_editable(True)

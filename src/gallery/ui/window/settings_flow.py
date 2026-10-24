@@ -27,6 +27,7 @@ from gallery.core.library.session import (
 )
 from gallery.ui import theme
 from gallery.ui.dialogs import ExternalOrderDialog, OrderItem, OrderPage
+from gallery.ui.window.widgets.external_button import order_for_page
 
 #: 影片网站预设：**只收「前缀 + 番号」拼得出地址的站点**。JavDB 按内部 id 或搜索参数走，
 #: 拼 ``javdb.com/v/ipx-660`` 是死链，所以它当不了预设（它是抓取源，不是番号页）。
@@ -185,7 +186,7 @@ class SettingsFlowMixin:
         ranked = {
             entry_id: index
             for index, entry_id in enumerate(
-                self._session.preferences.order_for(page)  # type: ignore[attr-defined]
+                order_for_page(self._session.preferences, page)  # type: ignore[attr-defined]
             )
         }
         ordered = sorted(entries, key=lambda entry: ranked.get(entry.id, len(ranked)))

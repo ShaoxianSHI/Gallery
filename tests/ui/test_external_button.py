@@ -395,7 +395,8 @@ def test_each_page_reads_its_own_order(window: MainWindow) -> None:
 
     assert window._external_order_ids() == ("qspace", "finder")
     window._open_detail(window._model.index(0, 0))
-    assert window._external_order_ids() == ("imageglass", "preview")
+    # IINA 是详情页固定第一项（ADR 0093）：存下的旧次序里没有它，也要补在最前。
+    assert window._external_order_ids() == ("iina", "imageglass", "preview")
     window.set_browse_mode(BROWSE_MODE_CALENDAR)
     assert window._external_order_ids() == ("google_calendar", "apple_calendar")
 

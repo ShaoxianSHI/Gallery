@@ -26,7 +26,8 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QMenu, QToolButton, QWidget
 
-from gallery.core.external import App, icon_png
+from gallery.core.external import App, apps, icon_png
+from gallery.core.library.session import EXTERNAL_PAGE_DETAIL, Preferences
 from gallery.ui import theme
 from gallery.ui.rename_edit import field_background
 from gallery.ui.window import menu_style
@@ -321,6 +322,16 @@ class _Segment(QToolButton):
         super().leaveEvent(event)
 
 
+def order_for_page(preferences: Preferences, page: str) -> tuple[str, ...]:
+    """这一页的次序。**IINA 固定在最前**（ADR 0093）：用户存下的旧次序里没有它，
+    不补在最前的话，新装的视频播放器会排到最后。用户自己排过之后以存下的为准。
+    """
+    ids = preferences.order_for(page)
+    if page == EXTERNAL_PAGE_DETAIL and apps.IINA.id not in ids:
+        return (apps.IINA.id, *ids)
+    return ids
+
+
 class ExternalAppsButton(QWidget):
     """标题条上那个入口。**它是两个按钮**，不是一个。
 
@@ -547,4 +558,5 @@ __all__ = [
     "google_maps_icon",
     "icon_for",
     "menu_origin",
+    "order_for_page",
 ]

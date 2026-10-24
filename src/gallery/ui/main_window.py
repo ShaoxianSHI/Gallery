@@ -99,6 +99,7 @@ from gallery.ui.window.widgets.external_button import (
     folder_icon,
     google_maps_icon,
     icon_for,
+    order_for_page,
 )
 from gallery.ui.window.widgets.play_button import PlayButton
 from gallery.ui.window.widgets.search_field import ScopeToggle, SearchField
@@ -988,11 +989,19 @@ class MainWindow(
         """下拉框里那几项，**次序就是摆出来的次序**（最前面那个可用的就是左半那一下）。
 
         每一项自己判自己此刻该不该出现（``ExternalEntry.enabled``），于是列表不用随页面变化
-        重建，翻页时 ``refresh`` 问一遍就够。**预览排在最前**是有意的：大图页上最常用的就是
-        「用某个软件看这一张」（ADR 0067），地图排在它后面才不会把有坐标那一张的左半换成地图；
-        日历页最前则是系统「日历」——与地图那一组同一个次序，Apple 在前（ADR 0079）。
+        重建，翻页时 ``refresh`` 问一遍就够。**IINA 排在最前**（视频专用的播放器，ADR 0093），
+        然后才是预览：大图页上最常用的就是「用某个软件看这一张」（ADR 0067），地图排在它后面
+        才不会把有坐标那一张的左半换成地图；日历页最前则是系统「日历」（ADR 0079）。
         """
         return (
+            ExternalEntry(
+                id=apps.IINA.id,
+                name=apps.IINA.name,
+                icon=icon_for(apps.IINA),
+                enabled=self._iina_ready,
+                pages=(EXTERNAL_PAGE_DETAIL,),
+                available=partial(self._installed, apps.IINA),
+            ),
             ExternalEntry(
                 id="apple_calendar",
                 name=apps.CALENDAR.name,
@@ -1067,6 +1076,11 @@ class MainWindow(
         """大图页上正看着一张**照片**（视频不归图片应用），而且本机装着它。"""
         ref = self._detail_photo_ref()
         return ref is not None and not ref.is_video and self._installed(viewer)
+
+    def _iina_ready(self) -> bool:
+        """大图页上正看着一个**视频**，而且本机装着 IINA。"""
+        ref = self._detail_photo_ref()
+        return ref is not None and ref.is_video and self._installed(apps.IINA)
 
     def _installed(self, app: App) -> bool:
         """这台机器上装着它没有 —— 与「此刻这一页有没有东西可开」是两件事。
@@ -1171,6 +1185,8 @@ class MainWindow(
             self._open_in_maps()
         elif entry.id == "google_maps":
             self._open_in_google_maps()
+        elif entry.id == apps.IINA.id:
+            self._open_in_iina()
         else:
             viewer = next((one for one in apps.VIEWERS if one.id == entry.id), None)
             if viewer is not None:
@@ -1235,7 +1251,7 @@ class MainWindow(
 
     def _external_order_ids(self) -> tuple[str, ...]:
         """这一页的次序（应用 id）；没设过就是空元组，等于内置次序。"""
-        return self._session.preferences.order_for(self._external_page_kind())
+        return order_for_page(self._session.preferences, self._external_page_kind())
 
     def _current_folder(self) -> Path | None:
         """此刻所在的那个文件夹，**没有库就是 ``None``**。
@@ -1285,6 +1301,21 @@ class MainWindow(
             else desktop.open_folder_in_qspace(paths, app=app)
         )
         self._show_banner(message, auto_hide=True)
+
+    def _open_in_iina(self) -> None:
+        """把正在看的视频交给 IINA。**先暂停应用里的播放器**：不暂停的话两边会同时出声。
+
+        与应用包那一套同源：路径由名册给，起不来就退回系统默认应用并如实说。
+        """
+        app = apps.find_app(apps.IINA)
+        ref = self._detail_photo_ref()
+        if app is None or ref is None or not ref.is_video:
+            self._show_banner("没有找到 IINA，它可能已经被移走或卸载了。")
+            return
+        self._video.pause()
+        self._show_banner(
+            desktop.open_with_app([ref.path], app=app, name=apps.IINA.name), auto_hide=True
+        )
 
     def _open_in_viewer(self, viewer: App) -> None:
         """用**点名的那个图片应用**打开大图页上正在看的那一张。

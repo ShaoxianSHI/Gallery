@@ -242,3 +242,48 @@ def test_the_panel_shows_a_video_report(
             and any(group.title == "视频" for group in window._panel.report.groups)
         ),
     )
+
+
+def _menu_texts(window: MainWindow) -> list[str]:
+    return [action.text() for action in window._external_button._menu.actions()]
+
+
+def test_iina_is_first_on_a_video_page_and_not_on_a_photo_page(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """IINA 只给视频，且固定第一 —— 用户存下来的旧次序里没有它（ADR 0093）。"""
+    iina_app = Path("/Applications/IINA.app")
+    monkeypatch.setattr(apps, "find_app", lambda app: iina_app if app.id == apps.IINA.id else None)
+
+    _open(window, "b.avi")
+    window._update_action_states()
+
+    assert _menu_texts(window)[0] == "IINA"
+    default = window._external_button.default_entry()
+    assert default is not None and default.id == apps.IINA.id
+
+    calls: list[tuple[list[Path], Path, str]] = []
+    monkeypatch.setattr(
+        "gallery.ui.desktop.open_with_app",
+        lambda paths, *, app, name: calls.append((list(paths), app, name)) or "已在 IINA 中打开。",
+    )
+    window._open_in_iina()
+    assert calls == [([window._library.root / "b.avi"], iina_app, "IINA")]  # type: ignore[union-attr]
+
+    _open(window, "a.jpg")
+    window._update_action_states()
+    assert "IINA" not in _menu_texts(window)
+
+
+def test_the_two_maps_are_offered_on_a_video_page(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """视频有坐标时与照片一样摆「地图」与「Google 地图」——`_map_point` 不看文件类型。"""
+    monkeypatch.setattr(window, "_map_point", lambda: (31.2304, 121.4737))
+    monkeypatch.setattr(window, "_installed", lambda app: True)
+
+    _open(window, "b.avi")
+    window._update_action_states()
+
+    texts = _menu_texts(window)
+    assert "地图" in texts and "Google 地图" in texts

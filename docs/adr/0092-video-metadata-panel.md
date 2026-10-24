@@ -4,6 +4,8 @@
 - 日期：2026-10-25
 - 相关 ADR：0090（视频进库）、0091（视频播放页）、0002（元数据面板）、0003（离线地名）、
   0032（拍摄时间）、0038（缓存位置）
+- 修改：[0093](0093-iina-video-external-player.md) 去掉决策 4 里「视频面板写一句只读理由」，
+  改成只把按钮置灰。
 - 相关代码：`src/gallery/core/metadata/exif.py`、`src/gallery/core/metadata/report.py`、
   `src/gallery/core/metadata/facets.py`、`src/gallery/core/metadata/batch.py`、
   `src/gallery/ui/window/metadata_flow.py`、`src/gallery/ui/window/context_menu_flow.py`
