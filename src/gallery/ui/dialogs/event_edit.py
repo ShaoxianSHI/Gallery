@@ -305,6 +305,9 @@ class EventEditDialog(QDialog):
         form = QFormLayout()
         form.setSpacing(6)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
+        # macOS 的默认值是 FieldsStayAtSizeHint：输入框按自己的尺寸提示停住，而来源那一排按钮
+        # 的最小宽度更大 —— 于是它比其余输入框多出一截。这里显式让所有字段铺满同一列。
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         for field in fields_of(self._kind):
             if field is COVER:
                 # 封面不是一格文字：它显示当前是哪一张，配一个「清除」，

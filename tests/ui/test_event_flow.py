@@ -31,6 +31,7 @@ from PySide6.QtGui import QAction, QPalette  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
     QDialog,
+    QFormLayout,
     QLabel,
     QMenu,
     QMessageBox,
@@ -1684,6 +1685,16 @@ def test_the_movie_source_wraps_into_two_rows_that_line_up_with_the_inputs(
     assert {left_of(first_row[0]), left_of(second_row[0])} == {code.geometry().left()}
     assert {right_of(first_row[-1]), right_of(second_row[-1])} == {code.geometry().right()}
     assert source.width() == code.width()
+
+
+def test_form_fields_fill_the_same_column_on_every_platform(qt_app: QApplication) -> None:
+    """macOS 的 ``QFormLayout`` 默认让字段停在自己的尺寸提示上（``FieldsStayAtSizeHint``）——
+    来源那一排按钮的最小宽度更大，于是它比其余输入框长出一截。**显式要求所有字段铺满同一列**。"""
+    dialog = EventEditDialog(None, MOVIE)
+    form = dialog.findChild(QFormLayout)
+
+    assert form is not None
+    assert form.fieldGrowthPolicy() == QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow
 
 
 def test_the_checked_rating_wears_the_popup_highlight(qt_app: QApplication) -> None:
