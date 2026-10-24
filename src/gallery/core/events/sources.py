@@ -1,4 +1,4 @@
-"""影片是「哪儿的哪一个」：编号怎么认、按来源分派抓取、打开哪一页（ADR 0068 / 0082）。
+"""影片是「哪儿的哪一个」：编号怎么认、按来源分派抓取、打开哪一页（ADR 0068 / 0082 / 0083）。
 
 识别按可靠性排序：网址 → 面板选的来源 → ``BV`` / ``av`` → 11 位 videoId → 番号，纯函数不联网。
 **裸编号的歧义靠面板消**：腾讯的 vid 与 YouTube 的 videoId 同形，芒果与 Netflix 都是纯数字，
@@ -13,12 +13,13 @@ from dataclasses import dataclass, field
 from typing import Final, Protocol
 
 from gallery.core.errors import MovieImportError
-from gallery.core.events import bilibili, iqiyi, jav, mango, tencent, youku, youtube
+from gallery.core.events import bilibili, iqiyi, jav, mango, pornhub, tencent, youku, youtube
 from gallery.core.events.kinds import (
     SOURCE_BILIBILI,
     SOURCE_IQIYI,
     SOURCE_JAV,
     SOURCE_MANGO,
+    SOURCE_PORNHUB,
     SOURCE_TENCENT,
     SOURCE_YOUKU,
     SOURCE_YOUTUBE,
@@ -37,6 +38,7 @@ _URL_PARSERS: Final[tuple[tuple[str, Callable[[str], str | None]], ...]] = (
     (SOURCE_IQIYI, iqiyi.id_from_url),
     (SOURCE_YOUKU, youku.id_from_url),
     (SOURCE_MANGO, mango.id_from_url),
+    (SOURCE_PORNHUB, pornhub.id_from_url),
 )
 
 #: 按面板选的来源认裸编号。**JavDB 不在里面**：番号是回退，什么形状都能当番号。
@@ -47,6 +49,7 @@ _TEXT_PARSERS: Final[dict[str, Callable[[str], str | None]]] = {
     SOURCE_IQIYI: iqiyi.id_from_text,
     SOURCE_YOUKU: youku.id_from_text,
     SOURCE_MANGO: mango.id_from_text,
+    SOURCE_PORNHUB: pornhub.id_from_text,
 }
 
 
@@ -122,6 +125,8 @@ def movie_url(ref: MovieRef, *, jav_site: str) -> str | None:
         return youku.movie_url(ref.code)
     if ref.source == SOURCE_MANGO:
         return mango.movie_url(ref.code)
+    if ref.source == SOURCE_PORNHUB:
+        return pornhub.movie_url(ref.code)
     return None
 
 
@@ -138,7 +143,7 @@ class MovieSource(Protocol):
 
 
 #: 来源 → 抓取那一份元数据的函数。各模块的函数签名是同一个形状（``code`` + ``client=``），
-#: 所以分派是一张表而不是七行 ``if``。
+#: 所以分派是一张表而不是一串 ``if``。
 _FETCHERS: Final[dict[str, Callable[..., MovieInfo]]] = {
     SOURCE_JAV: jav.fetch,
     SOURCE_YOUTUBE: youtube.fetch,
@@ -147,6 +152,7 @@ _FETCHERS: Final[dict[str, Callable[..., MovieInfo]]] = {
     SOURCE_IQIYI: iqiyi.fetch,
     SOURCE_YOUKU: youku.fetch,
     SOURCE_MANGO: mango.fetch,
+    SOURCE_PORNHUB: pornhub.fetch,
 }
 
 
@@ -160,6 +166,7 @@ def _default_transports() -> dict[str, Transport]:
         SOURCE_IQIYI: iqiyi.transport(),
         SOURCE_YOUKU: youku.transport(),
         SOURCE_MANGO: mango.transport(),
+        SOURCE_PORNHUB: pornhub.transport(),
     }
 
 

@@ -156,9 +156,9 @@ SHOW: Final = EventKind(
     empty_label="未命名演出",
 )
 
-#: 「来源」那一栏的值域：这部影片是从哪个网站抓来的（ADR 0068 / 0082）。**它同时是打开影片网站与
-#: 判重的键**，所以值都要稳定；用网站自己的名字是因为译成中文反而认不出（YouTube 就是 YouTube），
-#: 而中文站本来就以中文示人。
+#: 「来源」那一栏的值域：这部影片是从哪个网站抓来的（ADR 0068 / 0082 / 0083）。
+#: **它同时是打开影片网站与判重的键**，所以值都要稳定；用网站自己的名字是因为译成中文反而
+#: 认不出（YouTube 就是 YouTube），而中文站本来就以中文示人。
 SOURCE_JAV: Final = "JavDB"
 SOURCE_YOUTUBE: Final = "YouTube"
 SOURCE_BILIBILI: Final = "Bilibili"
@@ -166,6 +166,7 @@ SOURCE_TENCENT: Final = "腾讯视频"
 SOURCE_IQIYI: Final = "爱奇艺"
 SOURCE_YOUKU: Final = "优酷"
 SOURCE_MANGO: Final = "芒果TV"
+SOURCE_PORNHUB: Final = "Pornhub"
 
 #: 已知的来源。**顺序即下拉里的顺序**。
 MOVIE_SOURCES: Final = (
@@ -176,6 +177,7 @@ MOVIE_SOURCES: Final = (
     SOURCE_IQIYI,
     SOURCE_YOUKU,
     SOURCE_MANGO,
+    SOURCE_PORNHUB,
 )
 
 MOVIE: Final = EventKind(
@@ -188,7 +190,8 @@ MOVIE: Final = EventKind(
             "code",
             "编号",
             "code",
-            hint="番号、YouTube 的 videoId、B 站 BV 号，或腾讯 / 爱奇艺 / 优酷 / 芒果的编号",
+            hint="番号、YouTube 的 videoId、B 站 BV 号，或腾讯 / 爱奇艺 / 优酷 / 芒果 / "
+            "Pornhub 的编号",
         ),
         EventField("duration", "时长", "duration", "INTEGER", hint="分钟，只填数字"),
         # 三栏都取中性词：同一栏要装下片商、频道与 UP 主（ADR 0068 决策 2）。
@@ -365,6 +368,7 @@ __all__ = [
     "SOURCE_IQIYI",
     "SOURCE_JAV",
     "SOURCE_MANGO",
+    "SOURCE_PORNHUB",
     "SOURCE_TENCENT",
     "SOURCE_YOUKU",
     "SOURCE_YOUTUBE",

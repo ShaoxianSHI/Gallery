@@ -20,6 +20,7 @@ from gallery.core.events.kinds import (  # noqa: E402
     SOURCE_IQIYI,
     SOURCE_JAV,
     SOURCE_MANGO,
+    SOURCE_PORNHUB,
     SOURCE_TENCENT,
     SOURCE_YOUKU,
     SOURCE_YOUTUBE,
@@ -97,6 +98,12 @@ def test_duplicate_entries_collapse_keeping_order() -> None:
             "导入芒果 TV 影片",
             "按链接或编号导入芒果 TV 影片",
             "https://www.mgtv.com/b/294541/3779644.html",
+        ),
+        (
+            SOURCE_PORNHUB,
+            "导入 Pornhub 影片",
+            "按链接或编号导入 Pornhub 影片",
+            "https://www.pornhub.com/view_video.php?viewkey=ph5af5fef7c2aa7\nph5af5fef7c2aa7",
         ),
     ],
 )

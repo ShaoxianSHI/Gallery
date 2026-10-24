@@ -113,11 +113,12 @@ def test_the_import_menus_sit_in_the_file_menu(window: MainWindow) -> None:
     assert [action.text() for action in window._import_movies_menu.actions()] == [
         "导入 Bilibili…",
         "导入 YouTube…",
-        "导入 JavDB…",
         "导入爱奇艺…",
         "导入腾讯视频…",
         "导入优酷…",
         "导入芒果TV…",
+        "导入 JavDB…",
+        "导入 Pornhub…",
     ]
     assert [action.text() for action in window._import_shows_menu.actions()] == ["从「演迹」导入…"]
 
@@ -131,7 +132,16 @@ def test_each_movie_entry_hands_its_source_to_the_dialog(
     for action in window._import_movies_menu.actions():
         action.trigger()
 
-    assert seen == ["Bilibili", "YouTube", "JavDB", "爱奇艺", "腾讯视频", "优酷", "芒果TV"]
+    assert seen == [
+        "Bilibili",
+        "YouTube",
+        "爱奇艺",
+        "腾讯视频",
+        "优酷",
+        "芒果TV",
+        "JavDB",
+        "Pornhub",
+    ]
 
 
 def test_the_chosen_source_reaches_the_planner(

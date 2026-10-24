@@ -17,6 +17,7 @@ from gallery.core.events.kinds import (
     SOURCE_IQIYI,
     SOURCE_JAV,
     SOURCE_MANGO,
+    SOURCE_PORNHUB,
     SOURCE_TENCENT,
     SOURCE_YOUKU,
     SOURCE_YOUTUBE,
@@ -84,6 +85,14 @@ DETAIL_HTML = (
             "https://www.mgtv.com/b/336727/14544857.html",
             MovieRef(SOURCE_MANGO, "336727/14544857"),
         ),
+        (
+            "https://www.pornhub.com/view_video.php?viewkey=ph5af5fef7c2aa7",
+            MovieRef(SOURCE_PORNHUB, "ph5af5fef7c2aa7"),
+        ),
+        (
+            "https://www.pornhub.com/embed/ph5af5fef7c2aa7",
+            MovieRef(SOURCE_PORNHUB, "ph5af5fef7c2aa7"),
+        ),
     ],
 )
 def test_a_line_is_read_as_a_source_and_a_code(text: str, expected: MovieRef | None) -> None:
@@ -129,6 +138,7 @@ def test_an_eleven_character_code_shaped_like_a_number_stays_a_number() -> None:
         ("14544857", SOURCE_MANGO, MovieRef(SOURCE_MANGO, "14544857")),
         ("19rqxr146g", SOURCE_IQIYI, MovieRef(SOURCE_IQIYI, "19rqxr146g")),
         ("XNjQ3MjkwNTUwNA==", SOURCE_YOUKU, MovieRef(SOURCE_YOUKU, "XNjQ3MjkwNTUwNA")),
+        ("ph5af5fef7c2aa7", SOURCE_PORNHUB, MovieRef(SOURCE_PORNHUB, "ph5af5fef7c2aa7")),
     ],
 )
 def test_the_chosen_source_decides_an_ambiguous_bare_code(
@@ -191,6 +201,10 @@ def test_an_empty_source_means_javdb(text: str, expected: str) -> None:
         (
             MovieRef(SOURCE_MANGO, "294541/3779644"),
             "https://www.mgtv.com/b/294541/3779644.html",
+        ),
+        (
+            MovieRef(SOURCE_PORNHUB, "ph5af5fef7c2aa7"),
+            "https://www.pornhub.com/view_video.php?viewkey=ph5af5fef7c2aa7",
         ),
     ],
 )

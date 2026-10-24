@@ -29,6 +29,7 @@ from gallery.core.events.kinds import (
     SOURCE_IQIYI,
     SOURCE_JAV,
     SOURCE_MANGO,
+    SOURCE_PORNHUB,
     SOURCE_TENCENT,
     SOURCE_YOUKU,
     SOURCE_YOUTUBE,
@@ -54,7 +55,7 @@ class SourceCopy:
     placeholder: str
 
 
-#: 七个入口各自的说法。进例子的东西必须和这个来源对得上：B 站给 BV 号，YouTube 给视频地址，
+#: 八个入口各自的说法。进例子的东西必须和这个来源对得上：B 站给 BV 号，YouTube 给视频地址，
 #: JavDB 给番号 —— 否则用户会拿另一个站的编号去试，然后在抓取失败时才看到原因。
 _SOURCE_COPY: Final[dict[str, SourceCopy]] = {
     SOURCE_BILIBILI: SourceCopy(
@@ -104,6 +105,14 @@ _SOURCE_COPY: Final[dict[str, SourceCopy]] = {
         "不行，请点开某一集再复制。有的片子芒果不给上映日期，那一栏会空着。"
         "封面会存进下面这个文件夹。",
         placeholder="https://www.mgtv.com/b/294541/3779644.html",
+    ),
+    SOURCE_PORNHUB: SourceCopy(
+        title="导入 Pornhub 影片",
+        heading="按链接或编号导入 Pornhub 影片",
+        hint="每行一个 Pornhub 视频地址，或地址里 viewkey= 后面那一串编号"
+        "（view_video.php 与 /embed/ 两种地址都行）。作者页与合集页请先点开某一部再复制。"
+        "封面会存进下面这个文件夹。",
+        placeholder="https://www.pornhub.com/view_video.php?viewkey=ph5af5fef7c2aa7\nph5af5fef7c2aa7",
     ),
 }
 
