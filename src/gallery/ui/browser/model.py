@@ -16,7 +16,7 @@ from PySide6.QtCore import QAbstractListModel, QModelIndex, QObject, QSize, Qt
 from PySide6.QtGui import QImage, QPixmap
 
 from gallery.core.collation import collation_key
-from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
+from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef, SectionRef
 from gallery.ui.imaging import scale_pixmap
 from gallery.ui.thumb_sizes import DEFAULT_EDGE
 
@@ -34,6 +34,9 @@ GROUP_ROLE = int(Qt.ItemDataRole.UserRole) + 4
 
 #: 分组卡片里有多少张照片（给委托画徽标）。
 GROUP_COUNT_ROLE = int(Qt.ItemDataRole.UserRole) + 5
+
+#: 这一行是不是**分区标题**（ADR 0089）：整行宽、只有一行字，不是可交互的条目。
+SECTION_ROLE = int(Qt.ItemDataRole.UserRole) + 6
 
 #: 默认缩略图边长，与档位定义（``ui.thumb_sizes``）同源。
 DEFAULT_ICON_EDGE = DEFAULT_EDGE
@@ -70,6 +73,11 @@ class PhotoListModel(QAbstractListModel):
     ) -> None:
         super().__init__(parent)
         self._entries: list[GridEntry] = []
+        #: 这一层是不是**分区式**（ADR 0089）：网格据此决定排版方式（逐条尺寸 vs 固定网格）。
+        #: 内容由 :meth:`reorder` 一起给进来 —— 两者不一致时界面会摆出半截状态。
+        self._sectioned = False
+        #: 标题行的行号缓存（升序）。**懒算**：只有排版与可视区会问，而它们每次几何变化问一次。
+        self._header_rows: tuple[int, ...] | None = None
         #: 卡片与标题上写不写文件扩展名；排序不受它影响（排序键用完整名字）。
         self._show_extensions = show_extensions
         # guard: allow-long-comment（与 _entries 逐行平行的不变量，任何改动它的地方都要同步）
@@ -123,15 +131,43 @@ class PhotoListModel(QAbstractListModel):
         return entry if isinstance(entry, PhotoRef) else None
 
     def counts(self) -> tuple[int, int]:
-        """``(相册数, 照片数)``。分组卡片既不是相册也不是照片，不计入。"""
+        """``(相册数, 照片数)``。分组卡片与分区标题既不是相册也不是照片，不计入。
+
+        **直接数 ``PhotoRef``** —— 「总行数减去别的」在分区式里会把标题也算成照片。
+        """
         albums = sum(1 for entry in self._entries if isinstance(entry, FolderRef))
-        groups = sum(1 for entry in self._entries if isinstance(entry, GroupRef))
-        return albums, len(self._entries) - albums - groups
+        photos = sum(1 for entry in self._entries if isinstance(entry, PhotoRef))
+        return albums, photos
 
     def group_at(self, row: int) -> GroupRef | None:
-        """第 ``row`` 行如果是分组卡片就返回它。"""
+        """第 ``row`` 行如果是分组卡片就返回它。**分区标题不是卡片**，这里返回 ``None``。"""
         entry = self.entry_at(row)
         return entry if isinstance(entry, GroupRef) else None
+
+    def section_at(self, row: int) -> SectionRef | None:
+        """第 ``row`` 行如果是分区标题就返回它（标题上的组级命令要用它）。"""
+        entry = self.entry_at(row)
+        return entry if isinstance(entry, SectionRef) else None
+
+    def is_header(self, row: int) -> bool:
+        """这一行是不是分区标题。**不能选中、不能改名、不取缩略图**，问的都是这一处。"""
+        entry = self.entry_at(row)
+        return isinstance(entry, SectionRef)
+
+    @property
+    def sectioned(self) -> bool:
+        """这一层是不是分区式（网格据此选择排版方式，见 :meth:`reorder`）。"""
+        return self._sectioned
+
+    def header_rows(self) -> tuple[int, ...]:
+        """标题行的行号（升序）。没分区时是空元组。"""
+        if not self._sectioned:
+            return ()
+        if self._header_rows is None:
+            self._header_rows = tuple(
+                row for row, entry in enumerate(self._entries) if isinstance(entry, SectionRef)
+            )
+        return self._header_rows
 
     def group_count(self) -> int:
         return sum(1 for entry in self._entries if isinstance(entry, GroupRef))
@@ -155,9 +191,11 @@ class PhotoListModel(QAbstractListModel):
 
         **不重新扫描**：改个名字而已。已经缩放好的缩略图顺手搬到新键上，这一格连闪都不闪。
         """
-        if not 0 <= row < len(self._entries) or isinstance(entry, GroupRef):
+        if not 0 <= row < len(self._entries):
             return False
         previous = self._entries[row]
+        if isinstance(entry, (GroupRef, SectionRef)) or isinstance(previous, SectionRef):
+            return False
         self._row_by_path.pop(previous.path, None)
         self._entries[row] = entry
         self._keys[row] = _sort_key(entry)
@@ -192,7 +230,7 @@ class PhotoListModel(QAbstractListModel):
             del self._entries[row]
             del self._keys[row]
             self.endRemoveRows()
-            if not isinstance(entry, GroupRef):
+            if not isinstance(entry, (GroupRef, SectionRef)):
                 # 分组卡片的封面照片还在组里活着，缩略图不能跟着这一行一起丢。
                 self._row_by_path.pop(entry.path, None)
                 self._pixmaps.pop(entry.path, None)
@@ -233,8 +271,8 @@ class PhotoListModel(QAbstractListModel):
         ``whole_level`` 置真表示这一层不是同一个目录（平铺、分组），「兄弟节点」这个前提
         不成立，位置要在整层里按名字找 —— 监听往平铺层插照片必须用它，否则会追加到末尾（ADR 0013）。
         """
-        if isinstance(entry, GroupRef):
-            # 撤销删除取回的是磁盘上的东西，不会有分组卡片从这里回来。
+        if isinstance(entry, (GroupRef, SectionRef)):
+            # 撤销删除取回的是磁盘上的东西，不会有卡片或标题从这里回来。
             return -1
         existing = self._row_by_path.get(entry.path, -1)
         if existing >= 0:
@@ -259,9 +297,10 @@ class PhotoListModel(QAbstractListModel):
         **分组卡片那本仍然整份重建**：它的值是**一个行号列表**，插行之后那些旧行号全都失效。
         """
         self._group_rows_by_cover = {}
+        self._header_rows = None
         for index in range(first, len(self._entries)):
             entry = self._entries[index]
-            if isinstance(entry, GroupRef):
+            if isinstance(entry, (GroupRef, SectionRef)):
                 self._track(entry, index)
             else:
                 self._row_by_path[entry.path] = index
@@ -275,12 +314,13 @@ class PhotoListModel(QAbstractListModel):
         known = set(self._row_by_path)
         fresh: list[GridEntry] = []
         for entry in entries:
-            if isinstance(entry, GroupRef) or entry.path in known:
+            if isinstance(entry, (GroupRef, SectionRef)) or entry.path in known:
                 continue
             known.add(entry.path)  # 同一批里的重复也要挡住
             fresh.append(entry)
         if not fresh:
             return
+        self._header_rows = None
         start = len(self._entries)
         self.beginInsertRows(QModelIndex(), start, start + len(fresh) - 1)
         for offset, entry in enumerate(fresh):
@@ -296,16 +336,23 @@ class PhotoListModel(QAbstractListModel):
         self._row_by_path.clear()
         self._group_rows_by_cover.clear()
         self._pixmaps.clear()
+        self._sectioned = False
+        self._header_rows = None
         self.endResetModel()
 
-    def reorder(self, entries: Sequence[GridEntry]) -> None:
+    def reorder(self, entries: Sequence[GridEntry], *, sectioned: bool = False) -> None:
         """把这一层按新顺序重排（分组 / 排序之后调用）。
+
+        ``sectioned`` 与内容**一起**给进来：分区式是「这些行里有分区标题」这件事本身，
+        拆成两个入口迟早出现「模型说分区、行里却没有标题」的半截状态。
 
         **刻意不清缩略图缓存**：重排只是同一批照片换位置，而缓存按路径索引，清掉等于
         让整屏从磁盘缓存重读重缩放一遍。
         """
         self.beginResetModel()
         self._entries = list(entries)
+        self._sectioned = sectioned
+        self._header_rows = None
         self._keys = [_sort_key(entry) for entry in entries]
         self._reindex()
         self.endResetModel()
@@ -394,6 +441,17 @@ class PhotoListModel(QAbstractListModel):
             return 0
         return len(self._entries)
 
+    def flags(self, index: QModelIndex) -> Qt.ItemFlag:  # noqa: N802 - Qt 命名
+        """条目的可交互性。**分区标题既不可选也不启用** —— Qt 于是自己跳过它。
+
+        这一处是「标题不能改名、不能删、不能打开」的唯一实现：点按、双击、``⌘`` / ``⇧`` 点、
+        ``⌘A``、方向键、橡皮筋框选与 ``setCurrentIndex`` 都不会落到它身上。
+        """
+        base = super().flags(index)
+        if index.isValid() and isinstance(self.entry_at(index.row()), SectionRef):
+            return base & ~Qt.ItemFlag.ItemIsEnabled & ~Qt.ItemFlag.ItemIsSelectable
+        return base
+
     def data(self, index: QModelIndex, role: int = int(Qt.ItemDataRole.DisplayRole)) -> object:
         if not index.isValid():
             return None
@@ -406,18 +464,27 @@ class PhotoListModel(QAbstractListModel):
         # ToolTipRole 刻意不答：卡片不提供悬停提示，理由见模块文档那一段。
         if role == int(Qt.ItemDataRole.DecorationRole):
             # 没有缩略图时返回 None，由委托画占位（相册与分组画文件夹图标），不阻塞等待。
+            # 分区标题不画图：它是整行的一条字。
+            if isinstance(entry, SectionRef):
+                return None
             cached = self._pixmaps.get(_cover_of(entry))
             return cached.pixmap if cached is not None else None
         if role == ENTRY_ROLE:
             return entry
+        if role == SECTION_ROLE:
+            return isinstance(entry, SectionRef)
         if role == PATH_ROLE:
-            return str(entry.path) if not isinstance(entry, GroupRef) else str(entry.key)
+            return (
+                str(entry.path) if not isinstance(entry, (GroupRef, SectionRef)) else str(entry.key)
+            )
         if role == ALBUM_ROLE:
             return isinstance(entry, FolderRef)
         if role == GROUP_ROLE:
             return isinstance(entry, GroupRef)
         if role == GROUP_COUNT_ROLE:
-            return f"{entry.count} 张" if isinstance(entry, GroupRef) else None
+            if isinstance(entry, (GroupRef, SectionRef)):
+                return f"{entry.count} 张"
+            return None
         if role == int(Qt.ItemDataRole.TextAlignmentRole):
             return int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
         return None
@@ -434,8 +501,8 @@ class PhotoListModel(QAbstractListModel):
         keys = self._keys
         position = len(self._entries)
         for row, other in enumerate(self._entries):
-            if isinstance(other, GroupRef):
-                continue  # 组卡片不是兄弟节点
+            if isinstance(other, (GroupRef, SectionRef)):
+                continue  # 卡片与分区标题不是兄弟节点
             if not whole_level and other.path.parent != parent:
                 continue  # 不相邻的目录插在它前后都不对
             if keys[row] > key:
@@ -455,7 +522,7 @@ class PhotoListModel(QAbstractListModel):
         if isinstance(entry, GroupRef):
             cover = _cover_of(entry)
             self._group_rows_by_cover.setdefault(cover, []).append(row)
-        else:
+        elif not isinstance(entry, SectionRef):
             self._row_by_path[entry.path] = row
 
     def _notify_row(self, row: int) -> None:
@@ -469,10 +536,13 @@ def _sort_key(entry: GridEntry) -> tuple[int, str]:
 
 
 def _cover_of(entry: GridEntry) -> Path:
-    """这一格画哪张照片当封面：分组卡片用组内第一张，其余就是它自己。"""
-    if isinstance(entry, GroupRef):
-        cover = entry.cover
-        return cover.path if cover is not None else entry.path
+    """这一格画哪张照片当封面：分组卡片用组内第一张，其余就是它自己。
+
+    分区标题没有自己的图（委托不画），给它封面只是为了让「封面路径」这个问题总有一个答案。
+    """
+    if isinstance(entry, (GroupRef, SectionRef)):
+        cover = entry.group.cover if isinstance(entry, SectionRef) else entry.cover
+        return cover.path if cover is not None else Path()
     return entry.path
 
 
@@ -484,5 +554,6 @@ __all__ = [
     "GROUP_COUNT_ROLE",
     "GROUP_ROLE",
     "PATH_ROLE",
+    "SECTION_ROLE",
     "PhotoListModel",
 ]

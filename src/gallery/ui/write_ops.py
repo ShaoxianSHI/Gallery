@@ -21,7 +21,7 @@ from gallery.core import paths
 from gallery.core.errors import GalleryError
 from gallery.core.library.config import BROWSE_MODE_ALBUMS, BROWSE_MODE_FLAT
 from gallery.core.library.facade import MovieImportOutcome, MovieImportPlan
-from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
+from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef, SectionRef
 from gallery.core.metadata.capture_time import CaptureTime
 from gallery.core.metadata.exif import read_metadata
 from gallery.core.metadata.journal import (
@@ -90,7 +90,11 @@ def flattened_entries(entries: Sequence[GridEntry]) -> list[PhotoRef | FolderRef
     flat: list[PhotoRef | FolderRef] = []
     seen: set[Path] = set()
     for entry in entries:
+        # 分区标题不在选区里（模型不让选）；真漏进来也**一个路径都不出**，别把一条标题
+        # 当成磁盘上的东西递给写操作。
         for item in entry.photos if isinstance(entry, GroupRef) else (entry,):
+            if isinstance(item, SectionRef):
+                continue
             if item.path not in seen:
                 seen.add(item.path)
                 flat.append(item)
@@ -736,7 +740,7 @@ class WriteOpsMixin:
         """这一行是不是已经不在磁盘上了（分组卡片没有路径可比：整组都进了废纸篓才算「这一行没
         了」，只走了一部分的话卡片留着，ADR 0020 决策 4）。"""
         entry = self._model.entry_at(row)
-        if entry is None:
+        if entry is None or isinstance(entry, SectionRef):
             return False
         if isinstance(entry, GroupRef):
             return bool(entry.photos) and all(photo.path in moved_paths for photo in entry.photos)

@@ -15,7 +15,7 @@ from gallery.core.library.config import (
     SEARCH_SCOPE_LEVEL,
     SEARCH_SCOPE_LIBRARY,
 )
-from gallery.core.library.photos import GridEntry, GroupRef
+from gallery.core.library.photos import GridEntry, GroupRef, SectionRef
 
 #: 一层的标识（见 :func:`level_key`）。是元组而不是字符串：只为了能哈希、能当键用。
 type LevelKey = tuple[str, ...]
@@ -121,10 +121,10 @@ def path_key(path: Path) -> EntryKey:
 def entry_key(entry: GridEntry) -> EntryKey:
     """这一格的标识：重扫、重排、换完排序之后都认得出是同一条。
 
-    照片与相册按**路径**认（它们在磁盘上有唯一的位置）；分组卡片按「字段 + 组标识」认，
-    否则「2024 年」与「2024 年 5 月」这类会互相顶掉。
+    照片与相册按**路径**认（它们在磁盘上有唯一的位置）；分组卡片与分区标题按「字段 + 组标识」
+    认，否则「2024 年」与「2024 年 5 月」这类会互相顶掉。
     """
-    if isinstance(entry, GroupRef):
+    if isinstance(entry, (GroupRef, SectionRef)):
         return (ENTRY_KIND_GROUP, entry.facet, entry.key)
     return path_key(entry.path)
 

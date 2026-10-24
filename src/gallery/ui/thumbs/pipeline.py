@@ -16,7 +16,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Signal
 
 from gallery.core.library.facade import Library
-from gallery.core.library.photos import GridEntry, GroupRef, PhotoRef
+from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef, SectionRef
 from gallery.ui.imaging import to_scaled_qimage
 from gallery.ui.tasks import TaskContext, TaskRunner
 from gallery.ui.thumbs.queue import VISIBLE, ThumbnailQueue
@@ -257,14 +257,16 @@ class ThumbnailPipeline(QObject):
         self._dispatch()
 
 
-def _thumbnail_target(entry: GridEntry) -> GridEntry | None:
+def _thumbnail_target(entry: GridEntry) -> PhotoRef | FolderRef | None:
     """这一格要显示谁的缩略图。
 
     分组卡片换成它组内第一张照片：封面不是现场去找的，于是它和普通照片走完全一样的解码与
-    缓存路径。空分组返回 ``None``。
+    缓存路径。空分组与**分区标题**返回 ``None``（标题那一行只有字，没有图）。
     """
     if isinstance(entry, GroupRef):
         return entry.cover
+    if isinstance(entry, SectionRef):
+        return None
     return entry
 
 
