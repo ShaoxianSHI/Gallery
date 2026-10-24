@@ -551,25 +551,21 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
         # 它可能是在量出错列数时建出来的，而滚动目标必须对着真正排出来的版面。
         self._scroll_to = self._centered_scroll_value(self._centered_row, self._layout())
 
-    def _columns_now(self, *, old: bool) -> int:
-        """这套几何下实际的列数：量得到就用量的，量不到就用打算摆的。
+    def _measured_columns(self, cell: QSize, *, viewport_width: int | None = None) -> int:
+        """这套几何下 Qt 实际排出来的列数 —— **由视口宽度与格子宽度直接除出来**。
 
-        分区式里可能**每一段都短于一行**（按天分组、一天两张），那时量不出来，但排版
-        照样按打算的列数在走 —— 过渡与锚点不该因此整段失效。旧端优先用上一次排过版的
-        列数（``_layout_fix`` 可能刚被这次换宽度清掉，重算会算出新宽度那一档）。
+        IconMode 的换行宽度就是视口宽度，而每一格的宽度都相同。**别去数量第一行有几格**：
+        分区式里一行可能被段尾截断，量出来的是「这一段有几张」，不是列数（按天分组、
+        一天两张时每一行都只有两张）。
         """
-        measured = self._first_row_columns()
-        if measured > 0:
-            return measured
-        if old and self._laid_out_columns > 0:
-            return self._laid_out_columns
-        return max(1, self._columns_for(self._layout_width()))
+        width = self.viewport().width() if viewport_width is None else viewport_width
+        return max(1, width // max(1, cell.width()))
 
     def _first_row_columns(self) -> int:
-        """实际排在一行里的**照片**数（标题行不算）；量不出来时返回 0。
+        """量一段够长的分区第一行有几格（标题行不算）；量不出来时返回 0。
 
-        分区式里不能量第一行：第一行可能是标题，也可能因为标题要整行而少摆一格。要量
-        **一段成员数够了的分区**的第一行。卡片式里整层就是一段，与原来逐字相同。
+        **只给列数核对用**（``_examine_columns`` 拿它与打算摆的列数比）。过渡与锚点问
+        :meth:`_measured_columns`：分区式里一行可能被段尾截断，逐格数会数成段长。
         """
         matrix = self.model()
         if matrix is None or matrix.rowCount() == 0:
@@ -611,11 +607,12 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
         drawn_edge = self._delegate.draw_edge
         # 三件都必须在**改几何之前**读：那次延迟重排会把滚动位置夹到已排版那一批的末尾。
         scroll_from = self.verticalScrollBar().value()
-        old_columns = self._columns_now(old=True)
-        old_layout = self._layout(columns=old_columns, cell=self._cell)
+        old_cell = self._cell
+        old_columns = self._measured_columns(old_cell, viewport_width=self.viewport().width())
+        old_layout = self._layout(columns=old_columns, cell=old_cell)
         anchor = self._anchor()
         self._apply_geometry(cell, scroll_from)
-        new_columns = self._columns_now(old=False)
+        new_columns = self._measured_columns(cell)
         new_layout = self._layout(columns=new_columns, cell=cell)
         scroll_shift = 0
         if old_columns > 0 and new_columns > 0 and old_columns != new_columns:

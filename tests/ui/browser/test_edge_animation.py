@@ -593,23 +593,24 @@ def test_the_transition_uses_the_measured_columns_not_the_intended_ones(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """两端必须用**量出来**的列数：``_columns_for`` 给的是打算摆几列，Qt 实际可能少摆一列，
-    用错会让每格整体漂一整列的位移。
+    """两端必须用**实际排出来**的列数（视口宽 ÷ 格子宽），不是「打算摆几列」。
+
+    两者在边界上会差一列，用错会让每格整体漂一整列的位移。
     """
     grid = scrollable_grid(qt_app, tmp_path)
     settle_grid(qt_app, grid)  # 等列数核对（COLUMN_CHECK_MS）跑完，稳定下来之后才量
-    measured = grid._first_row_columns()
+    measured = grid._measured_columns(grid._cell)
     assert measured == grid._laid_out_columns, "这个场景本来就该两者一致，否则测的不是它"
 
-    real = grid._first_row_columns
+    real = grid._measured_columns
     calls: list[int] = []
 
-    def faked() -> int:
-        value = real()
+    def faked(cell: QSize, **kwargs: object) -> int:
+        value = real(cell, **kwargs)  # type: ignore[arg-type]
         calls.append(value)
         return value - 1 if len(calls) == 1 else value
 
-    monkeypatch.setattr(grid, "_first_row_columns", faked)
+    monkeypatch.setattr(grid, "_measured_columns", faked)
 
     grid.set_target_edge(THUMBNAIL_SIZES[2])
 

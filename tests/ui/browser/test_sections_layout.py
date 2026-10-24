@@ -408,3 +408,36 @@ def test_every_section_being_short_still_gets_the_zoom_animation(
     for row, was in before.items():
         painted = grid.visualRect(model.index(row, 0)).topLeft() + transition.offset(row, 0.0)
         assert painted == was, f"第 {row} 行第 0 帧画在了 {painted}，原来在 {was}"
+
+
+def test_a_short_section_still_centers_the_selection_when_zooming(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """按天分组（每段两张）时切到大档：选中那张仍要摆到正中。
+
+    列数如果去数「一段的第一行有几格」，数到的是这一段有几张（2），而实际一行能摆三格。
+    过渡与锚点按 2 列算，选中项就会被滚到屏幕外面 —— 列数只能由视口宽与格子宽算。
+    """
+    grid, model = make_sectioned_grid(qt_app, tmp_path, counts=(2,) * 80, width=1000)
+    row = 121  # 中段某一段的第一张照片（每段 = 标题 + 两张）
+    assert not model.is_header(row)
+    grid.select_row(row)
+    settle_grid(qt_app, grid)
+    bar = grid.verticalScrollBar()
+    bar.setValue(0)
+    qt_app.processEvents()
+    assert grid.visualRect(model.index(row, 0)).top() > grid.viewport().height(), (
+        "前提没摆出来：选中项该在屏外"
+    )
+
+    grid.set_target_edge(THUMBNAIL_SIZES[2])
+    step_transition(grid, 1.0)
+
+    rect = grid.visualRect(model.index(row, 0))
+    assert rect.top() >= 0 and rect.bottom() < grid.viewport().height(), (
+        f"选中项被滚到了屏幕外：{rect}"
+    )
+    middle = grid.viewport().height() // 2
+    assert abs(rect.center().y() - middle) <= 2, (
+        f"选中项停在了 y={rect.center().y()}，视口正中是 {middle}"
+    )
