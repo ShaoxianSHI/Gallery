@@ -219,3 +219,28 @@ def test_the_controls_sit_inside_the_viewport_after_showing(
     finally:
         view.stop()
         view.close()
+
+
+def test_the_poster_stays_out_of_the_scene(
+    qt_app: QApplication, make_video: Callable[..., Path], tmp_path: Path
+) -> None:
+    """海报挂在视口上：场景里只有视频那一格，缩略图的宽高比不该把场景撑大。
+
+    海报留在场景里时，它的缩放矩形（缩略图取整后与视频差千分之几）会被算进
+    ``itemsBoundingRect``，重开时画面就偏了。
+    """
+    path = make_video(frames=100, size=(160, 256), directory=tmp_path)
+    view = _view(qt_app)
+    try:
+        view.play(PhotoRef.from_path(path), _poster(size=(30, 48)))
+
+        assert view._poster.isVisible()
+        assert len(view._scene.items()) == 1
+
+        assert wait_until(qt_app, lambda: not view._poster.isVisible(), timeout=5)
+        rect = view._scene.itemsBoundingRect()
+        assert (round(rect.width()), round(rect.height())) == (160, 256)
+        assert view._video_item.boundingRect().height() == pytest.approx(256)
+    finally:
+        view.stop()
+        view.close()

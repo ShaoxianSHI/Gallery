@@ -24,7 +24,6 @@ from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer, QVideoFrame
 from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
 from PySide6.QtWidgets import (
     QFrame,
-    QGraphicsPixmapItem,
     QGraphicsScene,
     QGraphicsView,
     QHBoxLayout,
@@ -35,6 +34,10 @@ from PySide6.QtWidgets import (
 )
 
 from gallery.core.library.photos import PhotoRef
+
+#: ``QGraphicsView.fitInView`` 会在视口四边各留 2 像素。海报要按同一个矩形缩放，
+#: 首帧换上时才不会缩一下。
+_FIT_MARGIN = 2
 
 #: 进度条那一层的边距与底色。半透明黑让它在亮画面上也读得清。
 CONTROLS_MARGIN = 16
@@ -95,16 +98,21 @@ class VideoView(QGraphicsView):
         self._ref: PhotoRef | None = None
         self._poster_pixmap = QPixmap()
         self._at_end = False
+        #: 这个源的原生尺寸已经落到 item 上了吗。**不能用 sceneRect 判**：清空之后它会
+        #: 退成 itemsBoundingRect（被海报撑大过），重开时就会以为尺寸已经设好。
+        self._size_applied = False
 
         self._scene = QGraphicsScene(self)
         self.setScene(self._scene)
         self._video_item = QGraphicsVideoItem()
         self._scene.addItem(self._video_item)
-        # 首帧到达前盖着网格里那张缩略图：直接黑屏会让人以为点错了文件。
-        self._poster = QGraphicsPixmapItem()
-        self._poster.setZValue(1)
-        self._poster.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
-        self._scene.addItem(self._poster)
+        # 首帧到达前盖着网格缩略图。**挂在视口上而不是场景里**：场景里的 item（哪怕隐藏）
+        # 会被算进 itemsBoundingRect，缩略图的宽高比会把场景撑大、把画面挤偏。
+        self._poster = QLabel(self.viewport())
+        self._poster.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._poster.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._poster.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._poster.hide()
 
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -154,9 +162,11 @@ class VideoView(QGraphicsView):
         self._ref = ref
         self._error.hide()
         self._controls.show()
+        # 新源的第一帧到之前先不画旧的最后一帧：先上海报（没有海报就是黑底）。
+        self._video_item.setVisible(False)
         if poster is not None and not poster.isNull():
             self._poster_pixmap = QPixmap.fromImage(poster)
-            self._poster.setPixmap(self._poster_pixmap)
+            self._update_poster()
             self._poster.show()
         self._player.setSource(QUrl.fromLocalFile(str(ref.path)))
         self._player.play()
@@ -166,11 +176,13 @@ class VideoView(QGraphicsView):
         """停下来并放开文件（切页、换片、切库、关窗都走这里）。"""
         self._ref = None
         self._at_end = False
+        self._size_applied = False
         self._player.stop()
         self._player.setSource(QUrl())
         self._poster_pixmap = QPixmap()
-        self._poster.setPixmap(QPixmap())
+        self._poster.clear()
         self._poster.hide()
+        self._video_item.setVisible(False)
         self._scene.setSceneRect(QRectF())
         self._controls.hide()
         self._error.hide()
@@ -244,6 +256,20 @@ class VideoView(QGraphicsView):
             height,
         )
 
+    def _update_poster(self) -> None:
+        """把海报按视口大小等比缩放并居中（只在首帧到达前可见）。"""
+        if self._poster_pixmap.isNull() or self.viewport().width() <= 0:
+            return
+        area = self.viewport().rect().adjusted(_FIT_MARGIN, _FIT_MARGIN, -_FIT_MARGIN, -_FIT_MARGIN)
+        self._poster.setGeometry(self.viewport().rect())
+        self._poster.setPixmap(
+            self._poster_pixmap.scaled(
+                area.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+
     def _reposition_error(self) -> None:
         area = self.viewport().rect()
         self._error.setMaximumWidth(max(200, area.width() - 2 * CONTROLS_MARGIN))
@@ -257,9 +283,14 @@ class VideoView(QGraphicsView):
     # ---- 播放器信号 --------------------------------------------------------
 
     def _on_frame(self, frame: QVideoFrame) -> None:
-        if self._ref is not None and frame.isValid():
+        if self._ref is None or not frame.isValid():
+            return
+        self._video_item.setVisible(True)
+        if self._poster.isVisible():
             self._poster.hide()
-            self._ensure_size()
+            self._poster_pixmap = QPixmap()
+            self._poster.clear()
+        self._ensure_size()
 
     def _on_native_size(self, size: QSizeF) -> None:
         self._apply_native_size(size)
@@ -267,10 +298,9 @@ class VideoView(QGraphicsView):
     def _apply_native_size(self, size: QSizeF) -> None:
         if self._ref is None or size.isEmpty():
             return
+        self._size_applied = True
         self._video_item.setSize(size)
         self._scene.setSceneRect(QRectF(0.0, 0.0, size.width(), size.height()))
-        if not self._poster_pixmap.isNull():
-            self._poster.setScale(size.width() / self._poster_pixmap.width())
         self._schedule_layout()
 
     def _ensure_size(self) -> None:
@@ -279,7 +309,7 @@ class VideoView(QGraphicsView):
         不补这一下，``stop()`` 清掉场景矩形之后重新打开一个同尺寸的视频，画面就停在
         1:1 的左上角（实测重开第二次必定这样）。
         """
-        if self._ref is None or not self._scene.sceneRect().isEmpty():
+        if self._ref is None or self._size_applied:
             return
         size = self._video_item.nativeSize()
         if not size.isEmpty():
@@ -339,8 +369,12 @@ class VideoView(QGraphicsView):
     # ---- 视图 --------------------------------------------------------------
 
     def _fit(self) -> None:
-        if not self._scene.sceneRect().isEmpty():
-            self.fitInView(self._scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+        """按**视频自己那一格**适配，不看场景矩形 —— 海报等其它 item 不该影响它。"""
+        if self._ref is None:
+            return
+        rect = self._video_item.boundingRect()
+        if not rect.isEmpty():
+            self.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
 
     def _relayout(self) -> None:
         """按此刻的视口重算适配比例与控件位置。**迟到的布局也算一次**，见 ``_schedule_layout``。"""
@@ -365,6 +399,7 @@ class VideoView(QGraphicsView):
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         super().resizeEvent(event)
         self._relayout()
+        self._update_poster()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         if event.button() == Qt.MouseButton.LeftButton and self._ref is not None:
