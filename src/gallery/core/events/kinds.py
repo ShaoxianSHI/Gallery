@@ -22,9 +22,12 @@ _MULTI_SPLIT_CHARS: Final = ",，、"
 #: 把上面那几种分隔符统一成英文逗号，于是拆分只有一条路。
 _SEPARATOR_TABLE = str.maketrans({character: "," for character in _MULTI_SPLIT_CHARS})
 
-#: 评分的取值范围（旅行这一类用它；将来别的类型也用同一档）。
+#: 评分的取值范围。旅行、演出、影片三类共用这一档。
 RATING_MIN: Final = 1
 RATING_MAX: Final = 5
+
+#: 面板里那一排评分按钮的文字。**顺序即按钮顺序**，值域之外不给。
+RATING_CHOICES: Final = tuple(str(score) for score in range(RATING_MIN, RATING_MAX + 1))
 
 #: 字段的列允许是哪几种类型。建表与读写都按它分派，别处不再判断类型名。
 #:
@@ -113,13 +116,7 @@ TRIP: Final = EventKind(
         EventField("transport", "交通方式", "transport"),
         EventField("lodging", "住宿", "lodging"),
         EventField("cost", "花费", "cost", "REAL", hint="只填数字；不记这一项就留空"),
-        EventField(
-            "rating",
-            "评分",
-            "rating",
-            "INTEGER",
-            choices=tuple(str(score) for score in range(RATING_MIN, RATING_MAX + 1)),
-        ),
+        EventField("rating", "评分", "rating", "INTEGER", choices=RATING_CHOICES),
     ),
     title_parts=("destination",),
     place_field="destination",
@@ -142,13 +139,7 @@ SHOW: Final = EventKind(
         EventField("paid", "实付", "paid", "REAL", hint="实际付款，只填数字"),
         EventField("seat", "座位", "seat", hint="如 A区 12排 5号"),
         EventField("channel", "购买渠道", "channel", hint="如 大麦、秀动"),
-        EventField(
-            "rating",
-            "评分",
-            "rating",
-            "INTEGER",
-            choices=tuple(str(score) for score in range(RATING_MIN, RATING_MAX + 1)),
-        ),
+        EventField("rating", "评分", "rating", "INTEGER", choices=RATING_CHOICES),
         EventField("thoughts", "感想", "thoughts"),
     ),
     title_parts=("program", "artist"),
@@ -201,7 +192,7 @@ MOVIE: Final = EventKind(
         EventField("director", "导演", "director"),
         EventField("actors", "演员", "actors", hint="多个用逗号分开", multiple=True),
         EventField("tags", "标签", "tags", hint="多个用逗号分开", multiple=True),
-        EventField("rating", "评分", "rating", "REAL", hint="只填数字"),
+        EventField("rating", "评分", "rating", "INTEGER", choices=RATING_CHOICES),
     ),
     # 发行日期复用公共列 ``started_on``：菜单排序与「按事件分组」的组键都读它，
     # 单独开一列会让影片全落到「无日期」那一组里。
@@ -315,6 +306,18 @@ def parse_cost(text: str) -> float | None:
         return None
 
 
+def rating_text(value: float | None) -> str:
+    """把评分（来源站常给小数）收进 1–5 这一档；收不进去就是空 —— 那就是没评分。
+
+    **四舍五入到整数**：面板上只有五个按钮，没有半星；留着小数的话那一格读回来谁也选不中。
+    ``0`` 与 6 以上都当没评分（来源站用 0 表示「还没有人评」）。
+    """
+    if value is None:
+        return ""
+    score = int(value + 0.5)
+    return str(score) if RATING_MIN <= score <= RATING_MAX else ""
+
+
 def parse_calendar_day(text: str) -> date | None:
     """把用户填的日期读成 ``date``；看不懂就是 ``None``。
 
@@ -361,6 +364,7 @@ __all__ = [
     "MOVIE",
     "MOVIE_SOURCES",
     "MULTI_SEPARATOR",
+    "RATING_CHOICES",
     "RATING_MAX",
     "RATING_MIN",
     "SHOW",
@@ -385,6 +389,7 @@ __all__ = [
     "normalize_day",
     "parse_calendar_day",
     "parse_cost",
+    "rating_text",
     "split_multi",
     "started_on_problem",
     "suggested_title",

@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final
 
-from gallery.core.events.kinds import join_multi, kind_by_id
+from gallery.core.events.kinds import join_multi, kind_by_id, rating_text
 
 type SqlValue = str | int | float | None
 
@@ -237,14 +237,9 @@ class MovieInfo:
                 "director": self.director,
                 "actors": join_multi(self.actors),
                 "tags": join_multi(self.tags),
-                "rating": "" if self.rating is None else _number_text(self.rating),
+                "rating": rating_text(self.rating),
             }
         )
-
-
-def _number_text(value: float) -> str:
-    """一个浮点数写成面板里的文字：整数不带小数点。"""
-    return str(int(value)) if float(value).is_integer() else str(value)
 
 
 def shorten_name(name: str) -> str:

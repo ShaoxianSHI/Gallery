@@ -111,3 +111,4 @@
 | [0081](0081-external-order-drag-dialog.md) | 外部应用顺序改成三页可拖动列表的对话框 | 已接受 |
 | [0082](0082-more-movie-sources.md) | 影片导入接上腾讯视频、爱奇艺、优酷、芒果 TV | 已接受 |
 | [0083](0083-pornhub-source.md) | 影片导入接上 Pornhub | 已接受 |
+| [0084](0084-movie-rating-in-five-buttons.md) | 影片评分改成与演出一致的 1–5 选择按钮 | 已接受 |

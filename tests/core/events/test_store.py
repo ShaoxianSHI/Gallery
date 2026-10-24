@@ -343,6 +343,69 @@ def test_the_movie_migration_carries_the_author_over_and_fills_the_source(tmp_pa
         connection.close()
 
 
+def _open_a_v3_events_db(root: Path) -> Path:
+    """造一份**版本 3 的事件库**：影片的评分列还是 ``REAL``，里面是来源站给的小数。
+
+    与上面两份 fixture 同一个道理：把 3 → 4 那一步**反着做回去** —— 评分列声明成 ``REAL``
+    （迁移只改值、不改列的类型），并放进两条真实会遇到的旧值（4.59 与 0）。
+    """
+    path = paths.events_file(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    legacy = sqlite3.connect(path)
+    try:
+        prefix = f"{schema.SCHEMA_NAME}."
+        legacy.executescript(_EVENTS_SCHEMA.replace(prefix, ""))
+        legacy.executescript(_BINDINGS_SCHEMA.replace(prefix, ""))
+        old_schema = _kind_schema(MOVIE).replace(prefix, "")
+        legacy.execute(old_schema.replace("rating INTEGER", "rating REAL"))
+        legacy.executemany(
+            "INSERT INTO events (kind, title, created_at, modified_at) VALUES ('movie', ?, 1, 1)",
+            [("一部影片",), ("还没人评",)],
+        )
+        legacy.executemany(
+            f"INSERT INTO {MOVIE.table} (event_id, code, rating) VALUES (?, ?, ?)",
+            [(1, "IPX-660", 4.59), (2, "ABC-001", 0)],
+        )
+        legacy.execute("PRAGMA user_version = 3")
+        legacy.commit()
+        kinds = {
+            str(row[1]): str(row[2]).upper()
+            for row in legacy.execute(f"PRAGMA table_info({MOVIE.table})")
+        }
+        assert kinds["rating"] == "REAL", "这份 fixture 必须真的是评分列还是 REAL 的那一版"
+    finally:
+        legacy.close()
+    return path
+
+
+def test_the_movie_rating_migration_rounds_old_values_into_the_five_buttons(
+    tmp_path: Path,
+) -> None:
+    """3 → 4 那一步：来源站的小数收进 1–5，``0`` 当没评分；事件与其余字段一个都不动。
+
+    影片评分在面板上变成五个按钮之后，``4.59`` 与任何一个按钮都对不上 —— 不迁的话，用户打开
+    那个事件按保存就把评分清空了，而界面上一个字都不说。
+    """
+    _open_a_v3_events_db(tmp_path)
+
+    connection = sqlite3.connect(tmp_path / "index.db", check_same_thread=False)
+    try:
+        store = store_module.attach(connection, threading.Lock(), root=tmp_path)
+        assert store is not None
+        by_title = {event.title: event for event in store.all_events()}
+        assert by_title["一部影片"].text("rating") == "5"
+        assert by_title["还没人评"].text("rating") == ""
+
+        # 旧列声明是 REAL，写进去的整数会被读成 4.0 —— 读回来仍要能与按钮上的「4」对上。
+        updated = store.update(
+            by_title["一部影片"].id,
+            EventDraft(values={"title": "一部影片", "code": "IPX-660", "rating": "4"}),
+        ).event
+        assert updated.text("rating") == "4"
+    finally:
+        connection.close()
+
+
 def test_a_newer_events_file_is_left_alone_instead_of_rebuilt(tmp_path: Path) -> None:
     """库里的版本比这份程序新（用户降级了应用）时**不挂事件库，也不删它**。
 

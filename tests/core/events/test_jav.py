@@ -147,7 +147,7 @@ def test_the_draft_matches_the_movie_event_fields() -> None:
     assert values["creator"] == "IDEA POCKET"
     assert values["actors"] == "桃乃木かな、武田大樹"
     assert values["tags"] == "單體作品、放尿、口交"
-    assert values["rating"] == "4.59"
+    assert values["rating"] == "5"
 
 
 def test_fetch_movie_walks_search_then_detail() -> None:

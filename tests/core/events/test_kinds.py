@@ -263,11 +263,30 @@ def test_a_negative_cost_is_reported_and_an_empty_one_is_not() -> None:
     assert kinds.cost_problem("0") is None
 
 
-@pytest.mark.parametrize("kind", [kinds.TRIP, kinds.SHOW])
+@pytest.mark.parametrize("kind", [kinds.TRIP, kinds.SHOW, kinds.MOVIE])
 def test_the_rating_choices_run_from_one_to_five(kind: kinds.EventKind) -> None:
-    """评分画成下拉，值域就是这一个闭区间 —— 不给 0 与半星；两类事件的评分是同一档。"""
+    """评分画成一排按钮，值域就是这一个闭区间 —— 不给 0 与半星；三类事件的评分是同一档。"""
     rating = next(field for field in kind.fields if field.id == "rating")
 
     assert rating.choices == ("1", "2", "3", "4", "5")
     assert rating.choices[0] == str(kinds.RATING_MIN)
     assert rating.choices[-1] == str(kinds.RATING_MAX)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (None, ""),
+        (0.0, ""),
+        (4.2, "4"),
+        (4.5, "5"),
+        (4.59, "5"),
+        (5.0, "5"),
+        (5.5, ""),
+    ],
+)
+def test_a_source_rating_is_rounded_into_the_five_buttons(
+    value: float | None, expected: str
+) -> None:
+    """来源站给的是小数（JavDB 的 4.59），面板只有五个按钮 —— 四舍五入，收不进去就当没评分。"""
+    assert kinds.rating_text(value) == expected

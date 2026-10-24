@@ -41,7 +41,7 @@ BINDINGS_TABLE: Final = "photo_events"
 #:
 #: **升版只做「加列 / 改名 / 一条显式语句」**（ADR 0048 决策 3、ADR 0068 决策 7）：每一步都要在
 #: :data:`_MIGRATIONS` 里补一条，而那一级不许空着（``test_store`` 里有回归测试）。
-SCHEMA_VERSION: Final = 3
+SCHEMA_VERSION: Final = 4
 
 
 #: 一条语句里最多塞多少个绑定变量。``IN (…)`` 与多列插入都按它分批：
@@ -186,6 +186,14 @@ _MIGRATIONS: Final[tuple[tuple[_MigrationStep, ...], ...]] = (
         _RunSql(
             f"UPDATE {SCHEMA_NAME}.{MOVIE.table} SET source = '{SOURCE_JAV}'"
             " WHERE source IS NULL OR source = ''"
+        ),
+    ),
+    (  # 3 → 4：影片评分从「随便填的数字」收进 1–5 这一档（ADR 0084）
+        _RunSql(
+            f"UPDATE {SCHEMA_NAME}.{MOVIE.table} SET rating ="
+            " CASE WHEN ROUND(rating) BETWEEN 1 AND 5 THEN CAST(ROUND(rating) AS INTEGER)"
+            " ELSE NULL END"
+            " WHERE rating IS NOT NULL"
         ),
     ),
 )

@@ -45,9 +45,15 @@ def _to_sql(field: EventField, value: str) -> SqlValue:
 
 
 def _from_sql(field: EventField, value: object) -> SqlValue:
-    """库里的一格 → 事件上那个字段的值。类型由 :attr:`EventField.sql_type` 说了算。"""
+    """库里的一格 → 事件上那个字段的值。类型由 :attr:`EventField.sql_type` 说了算。
+
+    ``INTEGER`` 那一支要接收整数值的浮点：旧库的影片评分列声明是 ``REAL``（ADR 0084），
+    SQLite 按列声明的亲和性把它读成 ``5.0``，而面板上那个按钮叫「5」。
+    """
     if value is None:
         return None
+    if field.sql_type == "INTEGER" and isinstance(value, float) and value.is_integer():
+        return int(value)
     return str(value) if field.sql_type in ("TEXT", "DAY") else value  # type: ignore[return-value]
 
 

@@ -41,6 +41,7 @@ from waiting import wait_for_idle, wait_until  # noqa: E402
 from gallery.core.events.kinds import (  # noqa: E402
     COVER,
     EVENT_KINDS,
+    MOVIE,
     SHOW,
     TRIP,
     EventKind,
@@ -1619,6 +1620,17 @@ def test_a_rating_field_comes_up_as_a_row_of_five_buttons(qt_app: QApplication) 
     assert choice.value() == "1"
     buttons[0].click()
     assert choice.value() == ""
+
+
+def test_a_movie_rating_is_the_same_row_of_five_buttons_as_a_show(
+    qt_app: QApplication,
+) -> None:
+    """影片的评分与演出是**同一种控件**：点一下选一分，不是一个可以随便敲的输入框。"""
+    dialog = EventEditDialog(None, MOVIE)
+    rating = dialog._fields["rating"]
+
+    assert isinstance(rating, ChoiceButtons)
+    assert list(rating._buttons) == ["1", "2", "3", "4", "5"]
 
 
 def test_the_checked_rating_wears_the_popup_highlight(qt_app: QApplication) -> None:
