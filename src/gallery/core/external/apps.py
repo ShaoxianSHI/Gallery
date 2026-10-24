@@ -46,6 +46,10 @@ QSPACE = App(
 #: 它注册了 ``maps`` URL scheme；别的 Mac 地图应用接不了带位置的链接。
 MAPS = App(id="maps", name="地图", bundle_ids=("com.apple.Maps",))
 
+#: 系统自带的「日历」：**没有日期 URL scheme**，只能靠 AppleScript 导航
+#: （见 ``external.apple_calendar``）。
+CALENDAR = App(id="calendar", name="日历", bundle_ids=("com.apple.iCal",))
+
 #: 大图页那一列「用哪个软件看这一张」。名字可能是中文，而它**只进菜单与横幅**。
 PREVIEW = App(id="preview", name="预览", bundle_ids=("com.apple.Preview",))
 IMAGEGLASS = App(
@@ -127,6 +131,7 @@ def _appkit() -> Any:
 
 
 __all__ = [
+    "CALENDAR",
     "ICON_EDGE",
     "IMAGEGLASS",
     "MAPS",

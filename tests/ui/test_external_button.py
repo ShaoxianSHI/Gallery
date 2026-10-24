@@ -70,6 +70,7 @@ QSPACE_APP = Path("/Applications/QSpace Pro.app")
 IMAGEGLASS_APP = Path("/Applications/ImageGlass.app")
 PREVIEW_APP = Path("/System/Applications/Preview.app")
 MAPS_APP = Path("/System/Applications/Maps.app")
+CALENDAR_APP = Path("/System/Applications/Calendar.app")
 
 
 @pytest.fixture(autouse=True)
@@ -321,11 +322,33 @@ def test_grid_page_offers_the_finder_not_the_calendar(window: MainWindow) -> Non
     assert "Google 日历" not in texts
 
 
-def test_calendar_page_offers_only_the_calendar(window: MainWindow) -> None:
-    """反过来也一样：日历页只有 Google 日历那一项。"""
+def test_calendar_page_offers_the_google_calendar(window: MainWindow) -> None:
+    """没装系统「日历」（或不是 macOS）时，日历页上那一项仍是 Google 日历。"""
     # 页面是栈的函数：要真的在日历页上，栈底得是日历（``_enter_calendar`` 只负责喂内容）。
     window.set_browse_mode(BROWSE_MODE_CALENDAR)
     assert _menu_texts(window._external_button) == ["Google 日历"]
+
+
+def test_the_system_calendar_comes_before_the_google_one(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """装了系统「日历」就排在 Google 前面 —— **左半那一下因此是苹果的，图标也是**。"""
+    _only(monkeypatch, calendar=CALENDAR_APP)
+
+    window.set_browse_mode(BROWSE_MODE_CALENDAR)
+
+    assert _menu_texts(window._external_button) == ["日历", "Google 日历"]
+    default = window._external_button.default_entry()
+    assert default is not None and default.name == "日历"
+
+
+def test_the_system_calendar_stays_off_the_grid_page(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """与 Google 那一项同一条判据：别的页上没有「哪一天」可开。"""
+    _only(monkeypatch, calendar=CALENDAR_APP)
+
+    assert "日历" not in _menu_texts(window._external_button)
 
 
 def test_no_library_means_the_button_stays_out(window: MainWindow) -> None:
@@ -875,6 +898,27 @@ def test_selected_day_wins_over_the_anchor(
     window._open_google_calendar()
     wait_until(QApplication.instance(), lambda: bool(seen))
     assert seen == [("month", datetime.date(2026, 3, 12))]
+
+
+def test_the_apple_calendar_entry_reaches_the_same_kind_of_action(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """按 id 分派到苹果那一条：递出去的同样是**当前那一层、那一天**。"""
+    seen: list[tuple[str, datetime.date]] = []
+
+    def fake(level: str, day: datetime.date, **_kwargs: object) -> launch.OpenOutcome:
+        seen.append((level, day))
+        return launch.OpenOutcome(where=launch.WHERE_APP)
+
+    monkeypatch.setattr(launch, "open_apple_calendar", fake)
+    window._enter_calendar()
+    window._calendar_page.set_level("week")
+    _set_anchor(window, datetime.date(2026, 6, 29))
+    window._on_external_entry(
+        ExternalEntry(id="apple_calendar", name="日历", icon=None, enabled=lambda: True)
+    )
+    wait_until(QApplication.instance(), lambda: bool(seen))
+    assert seen == [("week", datetime.date(2026, 6, 29))]
 
 
 def test_the_menu_hangs_off_the_right_edge_of_the_arrow_half() -> None:

@@ -85,6 +85,7 @@ from gallery.ui.window.watch_flow import WatchFlowMixin
 from gallery.ui.window.widgets.banner_overlay import BannerOverlay
 from gallery.ui.window.widgets.breadcrumb import BreadcrumbBar
 from gallery.ui.window.widgets.external_button import (
+    ICON_CALENDAR,
     ICON_MAP,
     ExternalAppsButton,
     ExternalEntry,
@@ -937,10 +938,19 @@ class MainWindow(
 
         每一项自己判自己此刻该不该出现（``ExternalEntry.enabled``），于是列表不用随页面变化
         重建，翻页时 ``refresh`` 问一遍就够。**预览排在最前**是有意的：大图页上最常用的就是
-        「用某个软件看这一张」，于是左半那一下在大图页也就是它（ADR 0067）。地图排在它后面，
-        于是「有坐标」不会把大图页的左半从预览换成地图。
+        「用某个软件看这一张」（ADR 0067），地图排在它后面才不会把有坐标那一张的左半换成地图；
+        日历页最前则是系统「日历」——与地图那一组同一个次序，Apple 在前（ADR 0079）。
         """
         return (
+            ExternalEntry(
+                id="apple_calendar",
+                name=apps.CALENDAR.name,
+                icon=icon_for(apps.CALENDAR, fallback=ICON_CALENDAR),
+                # 没装（或是别的平台）就不摆：与预览、QSpace 同一条判据。
+                enabled=lambda: (
+                    self._on_calendar_page() and apps.find_app(apps.CALENDAR) is not None
+                ),
+            ),
             ExternalEntry(
                 id="google_calendar",
                 name="Google 日历",
@@ -1085,7 +1095,9 @@ class MainWindow(
         """下拉框里点了哪一项。**按 id 分派**，不在按钮那一侧硬编码（理由见 ``ExternalEntry``）。"""
         if not isinstance(entry, ExternalEntry):
             return
-        if entry.id == "google_calendar":
+        if entry.id == "apple_calendar":
+            self._open_apple_calendar()
+        elif entry.id == "google_calendar":
             self._open_google_calendar()
         elif entry.id == "finder":
             self._open_finder()
@@ -1100,20 +1112,44 @@ class MainWindow(
             if viewer is not None:
                 self._open_in_viewer(viewer)
 
+    def _open_apple_calendar(self) -> None:
+        """把系统「日历」开到与当前这一页一致的那一层、那一天。
+
+        与 Google 那条同一个口径，**也进后台线程**：冷启动一秒上下，第一次还要等自动化授权框。
+        """
+        level, day = self._calendar_target()
+        self._runner.submit(
+            lambda _context: launch.open_apple_calendar(level, day),
+            on_result=self._on_apple_calendar_opened,
+            on_error=self._on_apple_calendar_failed,
+        )
+
+    def _on_apple_calendar_opened(self, outcome: object) -> None:
+        if isinstance(outcome, launch.OpenOutcome):
+            self._show_banner(banners.calendar_opened(outcome, apps.CALENDAR.name), auto_hide=True)
+
+    def _on_apple_calendar_failed(self, message: str) -> None:
+        self._show_banner(f"没能打开「日历」：{message}")
+
     def _open_google_calendar(self) -> None:
         """把 Google 日历开到与当前这一页一致的那一层、那一天。
 
-        **日期取「选中的一天，没有选中就取锚点」**；周视图把那一天递过去即可（两边的周都从
-        周日起）。**整个过程进后台线程** —— 装没装 PWA 要扫一遍应用包，实测冷启动一两秒。
+        **整个过程进后台线程** —— 装没装 PWA 要扫一遍应用包，实测冷启动一两秒。
         """
-        page = self._calendar_page
-        level = page.level()
-        day = page.selected_day() or page.anchor()
+        level, day = self._calendar_target()
         self._runner.submit(
             lambda _context: launch.open_google_calendar(level, day),
             on_result=self._on_external_opened,
             on_error=self._on_external_failed,
         )
+
+    def _calendar_target(self) -> tuple[str, datetime.date]:
+        """「打开到日历」那两项共用的日期口径：**选中的一天，没有选中就取锚点**。
+
+        周视图把那一天递过去即可（两边的周都从周日起）。
+        """
+        page = self._calendar_page
+        return page.level(), page.selected_day() or page.anchor()
 
     def _on_external_opened(self, outcome: object) -> None:
         if not isinstance(outcome, launch.OpenOutcome):

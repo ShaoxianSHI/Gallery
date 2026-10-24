@@ -416,6 +416,23 @@ def test_external_banner_keeps_the_reason_of_a_fallback() -> None:
     )
 
 
+def test_calendar_banner_names_the_app_without_a_leading_space() -> None:
+    """苹果那一项的名字是汉字：应用名前面不留空格，那份带空格的是给拉丁名字的。"""
+    outcome = OpenOutcome(where=WHERE_APP)
+    assert banners.calendar_opened(outcome, "日历") == "已在「日历」中打开这一页对应的日期。"
+
+
+def test_calendar_banner_keeps_the_reason_it_could_not_open() -> None:
+    """打不开时那句原因原样出来 —— 授权被拒的提示是用户唯一能照着做的东西。"""
+    outcome = OpenOutcome(
+        where=WHERE_APP,
+        detail="没能控制「日历」：请在「系统设置 › 隐私与安全性 › 自动化」里允许",
+    )
+    assert banners.calendar_opened(outcome, "日历") == (
+        "没能控制「日历」：请在「系统设置 › 隐私与安全性 › 自动化」里允许。"
+    )
+
+
 # ---- 事件（ADR 0043）----------------------------------------------------------
 
 

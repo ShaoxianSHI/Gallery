@@ -500,10 +500,22 @@ def external_app_opened(outcome: OpenOutcome, name: str) -> str:
     return f"已在浏览器中打开 {name}。"
 
 
+def calendar_opened(outcome: OpenOutcome, name: str) -> str:
+    """「打开到这一页对应的日期」做完之后的那一句。
+
+    **与 :func:`external_app_opened` 分开**：那句说的是「当前这一页」，而这里打开的是那一天；
+    也**不在应用名前面留空格** —— 这一项的名字是汉字，「已在 日历中」读着断一口气。
+    """
+    if outcome.detail:
+        return f"{outcome.detail}。"
+    return f"已在「{name}」中打开这一页对应的日期。"
+
+
 __all__ = [
     "album_cover_banner",
     "album_cover_cleared_banner",
     "album_name",
+    "calendar_opened",
     "duplicate_banner",
     "event_cover_cleared_banner",
     "event_cover_set_banner",

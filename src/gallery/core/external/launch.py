@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
+from gallery.core.external.apple_calendar import failure_detail as calendar_failure
+from gallery.core.external.apple_calendar import script as calendar_script
 from gallery.core.external.applescript import (
     chrome_is_up,
     find_pwa_window,
@@ -41,6 +43,9 @@ WHERE_BROWSER = "browser"
 CHROME_WAIT_SECONDS = 20.0
 #: 「窗口开出来」最多等多久（秒）。窗口一出现就该被认出来，12 秒足够。
 WINDOW_WAIT_SECONDS = 12.0
+#: 等「日历」响应最多多久（秒）。**比 :data:`runner.COMMAND_TIMEOUT_SECONDS` 长得多**：
+#: 第一次点会先弹自动化授权，用户什么时候点「好」说不准，超时会把那个框一起撤掉。
+CALENDAR_TIMEOUT_SECONDS = 120.0
 #: 两次查看之间隔多久。**只是一个不让循环空转的间隔**，不是「等这么久」——
 #: 下面的等待全部都是「条件满足就走」（见 :func:`_wait_until`）。
 POLL_SECONDS = 0.4
@@ -219,13 +224,30 @@ def open_google_calendar(
     return open_in_app(app, url, runner=run, sleeper=sleeper, now=now)
 
 
+def open_apple_calendar(level: str, day: dt.date, *, runner: Runner | None = None) -> OpenOutcome:
+    """把系统「日历」开到「哪一层 + 哪一天」。**整个动作是一次 AppleScript**。
+
+    它是唯一一条能定位日期的路：日历没有日期 URL scheme，``ical`` 只能订阅（见
+    ``external.apple_calendar``）。**超时给得比别处长**，第一次那条路上有个授权框。
+    """
+    result = (runner or subprocess_runner)(
+        ["osascript", "-e", calendar_script(level, day)],
+        timeout=CALENDAR_TIMEOUT_SECONDS,
+    )
+    if result.returncode == 0:
+        return OpenOutcome(where=WHERE_APP)
+    return OpenOutcome(where=WHERE_APP, detail=calendar_failure(result))
+
+
 __all__ = [
+    "CALENDAR_TIMEOUT_SECONDS",
     "CHROME_WAIT_SECONDS",
     "POLL_SECONDS",
     "WHERE_APP",
     "WHERE_BROWSER",
     "WINDOW_WAIT_SECONDS",
     "OpenOutcome",
+    "open_apple_calendar",
     "open_folder",
     "open_google_calendar",
     "open_in_app",

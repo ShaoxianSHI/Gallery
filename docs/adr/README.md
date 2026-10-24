@@ -106,3 +106,4 @@
 | [0076](0076-google-maps-pwa.md) | Google 地图那一项也走 Chrome PWA：认窗口要连路径一起认 | 已接受 |
 | [0077](0077-gcj02-for-google-maps.md) | 国内坐标交给 Google 前转 GCJ-02，Apple 保持 WGS-84 | 已接受（决策 2 由 0078 取代） |
 | [0078](0078-apple-also-converts-to-gcj.md) | 修正 0077：Apple 地图的落点同样要 GCJ-02 | 已接受 |
+| [0079](0079-apple-calendar-via-applescript.md) | 系统「日历」也能开：只能靠 AppleScript，年映射到月 | 已接受 |

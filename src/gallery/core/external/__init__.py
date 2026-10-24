@@ -1,9 +1,9 @@
-"""把 Gallery 交给别的程序去做的那几件事：开 Google 日历、把窗口交给别的应用看。
+"""把 Gallery 交给别的程序去做的那几件事：开系统「日历」、开 Google 日历、把窗口交给别的应用看。
 
 这一层**一个字节都不碰用户的照片**（绝不删除、移动用户照片），只读应用包的 ``Info.plist``、
 写「另一个程序下一步该开哪个窗口」这一句话。**每一处要跑别的程序的地方都收在
-:class:`Runner` 后面**，测试因此不依赖本机环境；子模块 ``apps`` / ``gcal`` / ``pwa`` /
-``applescript`` / ``launch`` / ``runner`` 各自的职责见各自那一份模块文档。
+:class:`Runner` 后面**，测试因此不依赖本机环境；子模块 ``apps`` / ``apple_calendar`` /
+``gcal`` / ``pwa`` / ``applescript`` / ``launch`` / ``runner`` 各自的职责见各自那一份模块文档。
 """
 
 from gallery.core.external.applescript import (
@@ -15,6 +15,7 @@ from gallery.core.external.applescript import (
     set_window_url,
 )
 from gallery.core.external.apps import (
+    CALENDAR,
     IMAGEGLASS,
     MAPS,
     PREVIEW,
@@ -29,6 +30,7 @@ from gallery.core.external.launch import (
     WHERE_APP,
     WHERE_BROWSER,
     OpenOutcome,
+    open_apple_calendar,
     open_google_calendar,
     open_in_app,
     open_in_browser,
@@ -40,6 +42,7 @@ from gallery.core.external.pwa import app_icon, find_chrome_pwa, finder_icon
 from gallery.core.external.runner import CommandResult, Runner, subprocess_runner
 
 __all__ = [
+    "CALENDAR",
     "HOST",
     "IMAGEGLASS",
     "MAPS",
@@ -65,6 +68,7 @@ __all__ = [
     "icon_png",
     "is_pwa_window",
     "list_windows",
+    "open_apple_calendar",
     "open_google_calendar",
     "open_in_app",
     "open_in_browser",

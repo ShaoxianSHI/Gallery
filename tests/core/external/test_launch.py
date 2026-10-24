@@ -9,8 +9,10 @@ from pathlib import Path
 
 from gallery.core.external.gcal import HOST
 from gallery.core.external.launch import (
+    CALENDAR_TIMEOUT_SECONDS,
     WHERE_APP,
     WHERE_BROWSER,
+    open_apple_calendar,
     open_google_calendar,
     open_in_app,
     open_in_google_maps,
@@ -18,7 +20,7 @@ from gallery.core.external.launch import (
 )
 from gallery.core.external.maps import MAPS_HOST, MAPS_PATH
 from gallery.core.external.pwa import SHORTCUT_URL_KEY
-from gallery.core.external.runner import CommandResult
+from gallery.core.external.runner import COMMAND_TIMEOUT_SECONDS, CommandResult
 
 CALENDAR_WINDOW = f"W2\nN\nThttps://{HOST}/calendar/u/0/r\n"
 
@@ -295,3 +297,36 @@ def test_a_google_window_on_another_path_is_not_maps(tmp_path: Path) -> None:
 def test_shortcut_key_is_the_one_detection_reads() -> None:
     """检测认的是 plist 里这一项 —— 改它名字就等于让 PWA 认不出来（ADR 0034 决策 2）。"""
     assert SHORTCUT_URL_KEY == "CrAppModeShortcutURL"
+
+
+# ---- 系统「日历」（ADR 0079）----------------------------------------------
+
+
+def test_apple_calendar_runs_one_osascript_with_a_long_timeout() -> None:
+    """**只起一个 ``osascript``**；超时比别处长 —— 第一次那条路上有个自动化授权框。"""
+    calls: list[tuple[list[str], float | None]] = []
+
+    def run(argv: Sequence[str], *, timeout: float | None = None) -> CommandResult:
+        calls.append((list(argv), timeout))
+        return CommandResult(0)
+
+    outcome = open_apple_calendar("week", DAY, runner=run)
+
+    assert outcome.where == WHERE_APP
+    assert outcome.detail is None
+    assert len(calls) == 1
+    argv, timeout = calls[0]
+    assert argv[:2] == ["osascript", "-e"]
+    assert "switch view to week view" in argv[2]
+    assert timeout == CALENDAR_TIMEOUT_SECONDS
+    assert CALENDAR_TIMEOUT_SECONDS > COMMAND_TIMEOUT_SECONDS
+
+
+def test_apple_calendar_reports_a_refused_automation_grant() -> None:
+    def run(argv: Sequence[str], *, timeout: float | None = None) -> CommandResult:
+        return CommandResult(1, stderr="execution error: 未获授权 (-1743)")
+
+    outcome = open_apple_calendar("month", DAY, runner=run)
+
+    assert outcome.detail is not None
+    assert "自动化" in outcome.detail
