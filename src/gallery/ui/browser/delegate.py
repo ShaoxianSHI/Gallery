@@ -305,7 +305,9 @@ class PhotoDelegate(QStyledItemDelegate):
         painter.save()
         try:
             # 标题底一定要实心（见 docstring），但不能拿视口的调色板 —— 那一份是透明的（ADR 0096）。
-            theme.paint_background(painter, rect)
+            viewport = option.widget
+            origin = viewport.mapTo(viewport.window(), QPoint(0, 0)) if viewport else None
+            theme.paint_background(painter, rect, origin=origin)
             text = palette.color(QPalette.ColorRole.WindowText)
             if index.row() > 0:
                 line = QColor(text)

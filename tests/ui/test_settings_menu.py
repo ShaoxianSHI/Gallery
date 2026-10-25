@@ -334,11 +334,21 @@ def _appearance_submenu(window: MainWindow):
 
 
 def test_the_background_entry_sits_at_the_end_of_the_appearance_menu(window: MainWindow) -> None:
-    """它是**第 4 项、单独一段**：那三个单选决定「哪一档」，这一项只给这一档挑个底色。"""
+    """三个单选决定「哪一档」，后面四行与两组子菜单只管这一档的底长什么样（ADR 0097 / 0098）。"""
     actions = _appearance_submenu(window).actions()
     labels = [action.text() for action in actions if not action.isSeparator()]
 
-    assert labels == ["跟随系统", "浅色", "深色", "自定义背景色…"]
+    assert labels == [
+        "跟随系统",
+        "浅色",
+        "深色",
+        "自定义背景色…",
+        "生成背景…",
+        "用照片做背景…",
+        "管理背景…",
+        "浅色背景",
+        "深色背景",
+    ]
 
 
 def test_custom_backgrounds_are_saved_and_take_effect(

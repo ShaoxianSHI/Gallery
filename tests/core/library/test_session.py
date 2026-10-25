@@ -136,6 +136,8 @@ def test_the_written_file_holds_only_the_app_level_fields(tmp_path: Path) -> Non
         "appearance": "system",
         "light_background": "",
         "dark_background": "",
+        "light_backdrop": "",
+        "dark_backdrop": "",
         "slideshow_seconds": 3,
         "open_last_library": True,
         "show_file_extensions": True,

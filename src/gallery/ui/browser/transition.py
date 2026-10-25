@@ -252,7 +252,11 @@ class TransitionMixin:
         try:
             painter.setClipRect(event.rect())
             # 这一帧**必须自己铺满**：视口是透明的，不铺就留着上一帧的旧格子（ADR 0096）。
-            theme.paint_background(painter, event.rect())
+            # 背景是图的话要按窗口坐标取那一块，视口原点不等于窗口原点。
+            viewport = self.viewport()
+            theme.paint_background(
+                painter, event.rect(), origin=viewport.mapTo(viewport.window(), QPoint(0, 0))
+            )
             for row in self._rows_in_transition_frame(transition, t):
                 index = model.index(row, 0)
                 if not index.isValid():

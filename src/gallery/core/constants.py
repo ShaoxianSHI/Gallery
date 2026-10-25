@@ -33,6 +33,14 @@ INDEX_FILE_NAME: Final = "index.db"
 #: 第一条例外。
 EVENTS_FILE_NAME: Final = "events.db"
 
+#: 背景图的缓存目录名（``<app cache>/backdrops/``）。**应用级、少量大文件、可重建**，
+#: 与缩略图同一个判据的反面：那里怕的是文件数，这里一个库只有几张图。
+BACKDROP_DIR_NAME: Final = "backdrops"
+
+#: 背景清单文件名（``<app data>/Gallery/backdrops.json``）。**不在缓存里**：名字是用户
+#: 填的，重扫重建不出来。图片丢了能靠它自愈，它自己丢了就什么也没有了。
+BACKDROP_REGISTRY_FILE_NAME: Final = "backdrops.json"
+
 #: 旧版库外索引子目录名（``<app cache>/index/``）。索引固定回库里后它只剩一个用途：认出这个目录
 #: 好删掉（``config.discard_legacy_external_index``），留着常量好让「旧目录叫什么」仍是单一来源。
 LEGACY_INDEX_CACHE_DIR_NAME: Final = "index"

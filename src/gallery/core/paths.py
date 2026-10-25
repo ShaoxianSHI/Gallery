@@ -21,6 +21,8 @@ from gallery.core.constants import (
     APP_ICON_BASENAME,
     APP_ICON_SIZES,
     APP_NAME,
+    BACKDROP_DIR_NAME,
+    BACKDROP_REGISTRY_FILE_NAME,
     CACHE_DIR_NAME,
     CONFIG_DIR_NAME,
     CONFIG_FILE_NAME,
@@ -249,6 +251,24 @@ def app_cache_root(*, base: Path | None = None) -> Path:
     return app_state_dir(base=base) / CACHE_DIR_NAME
 
 
+def app_backdrop_dir(*, base: Path | None = None) -> Path:
+    """背景图的缓存目录（``<app cache>/backdrops/``）。
+
+    **图本身是缓存**：生成图能按配方重算，照片能按记下的来源重新导入。清单不在这里
+    （见 :func:`app_backdrop_registry`）—— 名字是用户填的，重扫重建不出来。
+    """
+    return app_cache_root(base=base) / BACKDROP_DIR_NAME
+
+
+def app_backdrop_registry(*, base: Path | None = None) -> Path:
+    """背景清单（``<app data>/Gallery/backdrops.json``）：名字、类型、配方、来源。
+
+    它与 ``state.json`` 并列而不是并进去：清单会随用户保存而增长，而会话文件每次改偏好
+    都要整份重写 —— 一份读不懂的清单不该连带把「上次开了哪个库」也一起弄丢。
+    """
+    return app_state_dir(base=base) / BACKDROP_REGISTRY_FILE_NAME
+
+
 def app_log_file(*, base: Path | None = None) -> Path:
     """应用日志文件（``<app data>/Gallery/logs/gallery.log``）。
 
@@ -357,6 +377,8 @@ __all__ = [
     "RESOLVED_CACHE_SIZE",
     "GuardError",
     "GuardReason",
+    "app_backdrop_dir",
+    "app_backdrop_registry",
     "app_cache_root",
     "app_data_base",
     "app_icon_files",

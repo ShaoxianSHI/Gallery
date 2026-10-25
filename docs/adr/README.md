@@ -125,3 +125,4 @@
 | [0095](0095-quicktime-player-on-the-video-page.md) | 视频页第一项换成系统 QuickTime Player：预览打不开视频 | 已接受 |
 | [0096](0096-one-background-painter.md) | 整块窗口只在窗口上铺一次底，其余各层不铺 | 已接受 |
 | [0097](0097-custom-background-colours.md) | 「外观」里可以自己挑两档背景色，各收自己那一侧 | 已接受 |
+| [0098](0098-backdrop-images.md) | 两档背景图（生成 / 照片）：图在缓存、清单在应用状态，遮罩保证可读性 | 已接受 |

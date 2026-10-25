@@ -6,6 +6,11 @@
 """
 
 from gallery.ui.dialogs.appearance import BackgroundColorDialog
+from gallery.ui.dialogs.backdrop import (
+    BackdropGenerateDialog,
+    BackdropManageDialog,
+    BackdropNameDialog,
+)
 from gallery.ui.dialogs.event_edit import DELETE_REQUESTED, EventEdit, EventEditDialog
 from gallery.ui.dialogs.external_order import ExternalOrderDialog, OrderItem, OrderPage
 from gallery.ui.dialogs.metadata_edit import MetadataEditDialog
@@ -13,6 +18,9 @@ from gallery.ui.dialogs.movie_import import MovieImportDialog
 
 __all__ = [
     "DELETE_REQUESTED",
+    "BackdropGenerateDialog",
+    "BackdropManageDialog",
+    "BackdropNameDialog",
     "BackgroundColorDialog",
     "EventEdit",
     "EventEditDialog",

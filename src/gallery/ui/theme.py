@@ -10,9 +10,11 @@ import sys
 from dataclasses import dataclass
 from typing import cast
 
-from PySide6.QtCore import QObject, QRect, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QPainter, QPalette
+from PySide6.QtCore import QObject, QPoint, QRect, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QImage, QPainter, QPalette, QPixmap
 from PySide6.QtWidgets import QApplication, QMenu, QWidget
+
+from gallery.core.backdrops.scrim import scrim_alpha
 
 #: 统一底色取自调色板的哪个角色：``Base`` 是内容区色，浅色下白、深色下 ``#171717``。
 BACKGROUND_ROLE = QPalette.ColorRole.Base
@@ -57,12 +59,37 @@ def rgba(color: QColor) -> str:
     return f"rgba({color.red()}, {color.green()}, {color.blue()}, {alpha})"
 
 
-def paint_background(painter: QPainter, rect: QRect) -> None:
+def paint_background(painter: QPainter, rect: QRect, *, origin: QPoint | None = None) -> None:
     """整块窗口的底色**只在这里铺一次**，上面每一层都不铺（ADR 0096）。
 
     各层各铺一次的话，接缝处迟早差一档；要换一种背景也只有这一处要改。
+    :param origin: 这块矩形左上角在**窗口**里的位置。默认 ``(0, 0)``，即窗口自己；
+        网格视口与分区标题传它自己那份，否则图片会从错的地方开始画。
     """
-    painter.fillRect(rect, current_theme().background)
+    watcher = _watcher()
+    pixmap = watcher.backdrop_pixmap() if watcher is not None else None
+    if pixmap is None:
+        painter.fillRect(rect, current_theme().background)
+        return
+    offset = origin if origin is not None else QPoint(0, 0)
+    size = watcher.backdrop_size()
+    target = QRect(QPoint(-offset.x(), -offset.y()), size)
+    painter.drawPixmap(target, pixmap)
+    scrim = watcher.backdrop_scrim()
+    if scrim.alpha() > 0:
+        painter.fillRect(rect, scrim)
+
+
+def _watcher(app: QApplication | None = None) -> ThemeWatcher | None:
+    return _application(app).findChild(ThemeWatcher)
+
+
+@dataclass(frozen=True)
+class BackdropImage:
+    """一档要用的背景图，以及它的平均亮度（遮罩压多厚由后者算）。"""
+
+    image: QImage
+    mean_lightness: float
 
 
 @dataclass(frozen=True)
@@ -132,6 +159,20 @@ def _custom_background(app: QApplication, *, dark: bool) -> QColor | None:
         return None
     color = QColor(value)
     return color if color.isValid() else None
+
+
+def _cover_pixmap(image: QImage, size: QSize) -> QPixmap:
+    """按 cover 裁到窗口尺寸：铺满、居中、不拉伸变形。"""
+    if size.isEmpty():
+        size = image.size()
+    scaled = image.scaled(
+        size,
+        Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    left = (scaled.width() - size.width()) // 2
+    top = (scaled.height() - size.height()) // 2
+    return QPixmap.fromImage(scaled.copy(left, top, size.width(), size.height()))
 
 
 def _push_one(widget: QWidget, palette: QPalette) -> None:
@@ -273,6 +314,12 @@ class ThemeWatcher(QObject):
         self._pending = False
         #: 两档自定义背景色（``#rrggbb``），空串 = 用系统那一档（ADR 0097）。
         self._backgrounds: dict[bool, str] = {False: "", True: ""}
+        #: 两档背景图；``None`` 表示这一档用背景色。
+        self._backdrops: dict[bool, BackdropImage | None] = {False: None, True: None}
+        #: 预缩放到窗口尺寸的那一份。**重建发生在尺寸变了之后**，绘制路径上不再缩放。
+        self._backdrop_pixmap: QPixmap | None = None
+        self._backdrop_window = QSize(0, 0)
+        self._backdrop_key: tuple[int, int, int, int] | None = None
         app.paletteChanged.connect(self._on_system_theme_changed)
         # macOS 换外观时还会单独报一次 colorSchemeChanged。两个都接：谁先谁后各平台不同，
         # 少接一个就可能漏掉一整轮。
@@ -286,6 +333,53 @@ class ThemeWatcher(QObject):
         """换掉两档自定义背景色（``None`` = 跟随系统），并立刻按新的重下发一轮。"""
         self._backgrounds = {False: light or "", True: dark or ""}
         self.refresh()
+
+    def backdrop_size(self) -> QSize:
+        """背景图按哪个尺寸裁 —— 窗口大小。窗口还没量出来时用主图尺寸。"""
+        return self._backdrop_window
+
+    def set_window_size(self, size: QSize) -> None:
+        """窗口改大小了。**这里不重建**：拖动过程中每帧重建一次太贵，等它停下来。"""
+        self._backdrop_window = QSize(size)
+
+    def set_backdrops(self, *, light: BackdropImage | None, dark: BackdropImage | None) -> None:
+        """换掉两档背景图（``None`` = 用背景色），并立刻按新的重下发一轮。"""
+        self._backdrops = {False: light, True: dark}
+        self._backdrop_key = None
+        self.refresh()
+
+    def backdrop_pixmap(self) -> QPixmap | None:
+        """当前这一档的背景图，已按窗口尺寸裁好缩好；没有就是 ``None``。"""
+        backdrop = self._current_backdrop()
+        if backdrop is None:
+            return None
+        dark = current_theme(self._app).is_dark
+        key = (
+            id(backdrop.image),
+            self._backdrop_window.width(),
+            self._backdrop_window.height(),
+            int(dark),
+        )
+        if self._backdrop_pixmap is None or self._backdrop_key != key:
+            self._backdrop_pixmap = _cover_pixmap(backdrop.image, self._backdrop_window)
+            self._backdrop_key = key
+        return self._backdrop_pixmap
+
+    def backdrop_scrim(self) -> QColor:
+        """这一档要压的那层遮罩；不需要压时是全透明的。"""
+        backdrop = self._current_backdrop()
+        if backdrop is None:
+            return QColor(0, 0, 0, 0)
+        app_theme = current_theme(self._app)
+        alpha = scrim_alpha(
+            backdrop.mean_lightness, app_theme.background.lightnessF(), dark=app_theme.is_dark
+        )
+        color = QColor(app_theme.background)
+        color.setAlphaF(alpha)
+        return color
+
+    def _current_backdrop(self) -> BackdropImage | None:
+        return self._backdrops.get(current_theme(self._app).is_dark)
 
     def refresh(self) -> None:
         """重下发一轮主题：调色板 + 自绘控件。**与系统换外观走的是同一条**。"""
@@ -329,6 +423,7 @@ __all__ = [
     "RESOLVED_ROLES",
     "SEE_THROUGH_PROPERTY",
     "AppTheme",
+    "BackdropImage",
     "ThemeWatcher",
     "apply_appearance",
     "apply_theme",

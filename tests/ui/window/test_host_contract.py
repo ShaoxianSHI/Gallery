@@ -431,6 +431,8 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
     ),
     "window/settings_flow.py:SettingsFlowMixin": frozenset(
         {
+            # 背景图那一族（ADR 0098）：仓库、两组菜单、启动自愈的说明装在一个对象里。
+            "_backdrops",
             "_detail",
             "_external_button",
             "_grid",

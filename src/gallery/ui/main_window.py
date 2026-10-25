@@ -237,6 +237,8 @@ class MainWindow(
         self._panel.setVisible(self._metadata_visible)
         self._sync_size_actions()
         self._sync_ui()
+        if self._backdrops.notes:
+            self._show_banner(self._backdrops.notes[0], auto_hide=True)
 
         if initial_library is not None:
             self.open_library(initial_library)
@@ -264,6 +266,13 @@ class MainWindow(
         watcher.set_backgrounds(
             light=prefs.background_for(dark=False), dark=prefs.background_for(dark=True)
         )
+        # 背景图同理：两档各自一张，第一帧就要对。**先记窗口尺寸再装图** —— 装图那一轮就会
+        # 按窗口裁一次，尺寸还是 0 的话第一帧会被画成空的。
+        self._init_backdrops(
+            session_base=self._app_session._session_base, cache_base=self._cache_base
+        )
+        watcher.set_window_size(self.size())
+        self._apply_backdrops()
         # 标题栏那一段交给窗口自己画（否则 macOS 会铺一层半透明材质，与底色差一档），**标题文字**
         # 也得自己画，否则系统那份会与 ``TitleBar`` 叠在一起（ADR 0025）。
         self._owns_title_bar = theme.unify_title_bar(self)
@@ -970,6 +979,8 @@ class MainWindow(
         super().resizeEvent(event)
         self._layout_title_bar()
         self._layout_banner()
+        # 背景图按窗口裁。**重建按需发生**（下一次绘制时），这里只把新尺寸记下来。
+        theme.ensure_installed().set_window_size(self.size())
 
     def changeEvent(self, event: QEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         """窗口状态一变（铺满、还原、真全屏）就把窗口顶边那一行重摆一次。

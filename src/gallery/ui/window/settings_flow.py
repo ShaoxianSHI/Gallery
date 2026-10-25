@@ -7,15 +7,19 @@
 
 from __future__ import annotations
 
+import random
 from collections.abc import Callable, Sequence
-from dataclasses import replace
-from typing import cast
+from dataclasses import dataclass, field, replace
+from pathlib import Path
+from typing import Final, cast
 
 from PySide6.QtGui import QAction, QActionGroup
-from PySide6.QtWidgets import QDialog, QInputDialog, QMenu, QMessageBox, QWidget
+from PySide6.QtWidgets import QDialog, QFileDialog, QInputDialog, QMenu, QMessageBox, QWidget
 
 from gallery import __version__
 from gallery.core import paths
+from gallery.core.backdrops import BackdropError, BackdropStore
+from gallery.core.backdrops.scrim import mean_lightness
 from gallery.core.constants import APP_NAME
 from gallery.core.errors import GalleryError
 from gallery.core.external import launch
@@ -26,8 +30,16 @@ from gallery.core.library.session import (
     EXTERNAL_PAGE_VIDEO,
     Preferences,
 )
-from gallery.ui import theme
-from gallery.ui.dialogs import BackgroundColorDialog, ExternalOrderDialog, OrderItem, OrderPage
+from gallery.ui import imaging, theme
+from gallery.ui.dialogs import (
+    BackdropGenerateDialog,
+    BackdropManageDialog,
+    BackdropNameDialog,
+    BackgroundColorDialog,
+    ExternalOrderDialog,
+    OrderItem,
+    OrderPage,
+)
 from gallery.ui.window.widgets.external_button import order_for_page
 
 #: 影片网站预设：**只收「前缀 + 番号」拼得出地址的站点**。JavDB 按内部 id 或搜索参数走，
@@ -59,6 +71,10 @@ APPEARANCE_LABELS: dict[str, str] = {
 }
 SLIDESHOW_SECONDS: tuple[int, ...] = (3, 5, 8, 15)
 
+#: 「用照片做背景」那个文件选择框里认的扩展名。HEIC 靠 ``core.media.decode`` 注册的
+#: 那一条 opener 打开，与缩略图走同一个解码器。
+PHOTO_FILTER: Final = "图片 (*.jpg *.jpeg *.png *.heic *.heif *.tif *.tiff *.webp);;所有文件 (*)"
+
 #: 「外部应用顺序」对话框里那四个标签页的名字 —— 与 ``PageRole`` 一一对应（ADR 0081 / 0094）。
 EXTERNAL_ORDER_LABELS: dict[str, str] = {
     EXTERNAL_PAGE_DETAIL: "图片",
@@ -66,6 +82,20 @@ EXTERNAL_ORDER_LABELS: dict[str, str] = {
     EXTERNAL_PAGE_GRID: "网格",
     EXTERNAL_PAGE_CALENDAR: "日历",
 }
+
+
+@dataclass(slots=True)
+class BackdropMenus:
+    """背景图这一族：仓库、两档各一组子菜单、以及启动时自愈做过的事。
+
+    **一个字段装下五样东西**：窗口上的耦合面按「用到一个新成员」计，而这几样从来一起出现。
+    """
+
+    store: BackdropStore
+    menus: dict[bool, QMenu] = field(default_factory=dict)
+    actions: dict[bool, dict[str, QAction]] = field(default_factory=dict)
+    groups: dict[bool, QActionGroup] = field(default_factory=dict)
+    notes: list[str] = field(default_factory=list)
 
 
 class SettingsFlowMixin:
@@ -85,6 +115,7 @@ class SettingsFlowMixin:
                 self._set_appearance,
                 APPEARANCE_LABELS,
                 extra=self._build_background_action(),
+                extras=self._build_backdrop_items(),
             ),
         }
         order_action = QAction("外部应用顺序…", cast("QWidget", self))
@@ -139,6 +170,26 @@ class SettingsFlowMixin:
         self._settings_extras["background"] = action
         return action
 
+    def _build_backdrop_items(self) -> tuple[QAction | QMenu, ...]:
+        """「外观」子菜单末尾再挂的几项：生成、用照片、管理，以及两档各自的背景图清单。"""
+        separator = QAction(cast("QWidget", self))
+        separator.setSeparator(True)
+        generate = QAction("生成背景…", cast("QWidget", self))
+        generate.triggered.connect(self._generate_backdrop)
+        photo = QAction("用照片做背景…", cast("QWidget", self))
+        photo.triggered.connect(self._pick_backdrop_photo)
+        manage = QAction("管理背景…", cast("QWidget", self))
+        manage.triggered.connect(self._manage_backdrops)
+        self._settings_extras["backdrop_generate"] = generate
+        self._settings_extras["backdrop_photo"] = photo
+        self._settings_extras["backdrop_manage"] = manage
+        for dark, label in ((False, "浅色背景"), (True, "深色背景")):
+            self._backdrops.menus[dark] = QMenu(label, cast("QWidget", self))
+        self._rebuild_backdrop_menus()
+        divider = QAction(cast("QWidget", self))
+        divider.setSeparator(True)
+        return (separator, generate, photo, manage, divider, *self._backdrops.menus.values())
+
     def _add_choice_menu(
         self,
         parent: QMenu,
@@ -148,6 +199,7 @@ class SettingsFlowMixin:
         *,
         custom: bool = False,
         extra: QAction | None = None,
+        extras: Sequence[QAction | QMenu] = (),
     ) -> dict[object, QAction]:
         """建一个单选子菜单，返回「值 → 动作」。**单选靠 ``QActionGroup``，勾选态只由同步写。**"""
         menu = QMenu(title, cast("QWidget", self))
@@ -173,6 +225,11 @@ class SettingsFlowMixin:
             # 与上面那三个单选是两种东西：它不改变「哪一档」，只是给这一档再挑个底色。
             menu.addSeparator()
             menu.addAction(extra)
+        for tail in extras:
+            if isinstance(tail, QMenu):
+                menu.addMenu(tail)
+            else:
+                menu.addAction(tail)
         parent.addMenu(menu)
         return actions
 
@@ -245,6 +302,153 @@ class SettingsFlowMixin:
         )
         theme.ensure_installed().set_backgrounds(light=light, dark=dark)
         self._sync_ui()
+
+    # ---- 背景图（ADR 0098）---------------------------------------------------
+
+    def _init_backdrops(self, *, session_base: Path | None, cache_base: Path | None) -> None:
+        """建背景库，顺手把缓存里丢掉的那几张补回来。窗口建界面时调一次。
+
+        两个路径由组合根递进来（与 ``AppSession`` 同一对），于是这一族只往窗口上留一个字段。
+        """
+        store = BackdropStore(
+            cache_dir=paths.app_backdrop_dir(base=cache_base),
+            registry=paths.app_backdrop_registry(base=session_base),
+        )
+        self._backdrops = BackdropMenus(store=store, notes=list(store.repair()))  # type: ignore[attr-defined]
+
+    def _apply_backdrops(self) -> None:
+        """把两档选中的背景图装进主题。认不出来的 id 静默退回背景色。"""
+        prefs = self._session.preferences  # type: ignore[attr-defined]
+        images = {
+            dark: self._load_backdrop(prefs.backdrop_for(dark=dark)) for dark in (False, True)
+        }
+        theme.ensure_installed().set_backdrops(light=images[False], dark=images[True])
+
+    def _load_backdrop(self, backdrop_id: str) -> theme.BackdropImage | None:
+        if not backdrop_id:
+            return None
+        item = self._backdrops.store.get(backdrop_id)  # type: ignore[attr-defined]
+        if item is None:
+            return None
+        try:
+            raster = self._backdrops.store.load(item)  # type: ignore[attr-defined]
+        except BackdropError:
+            return None
+        return theme.BackdropImage(
+            image=imaging.to_qimage(raster), mean_lightness=mean_lightness(raster)
+        )
+
+    def _assign_backdrop(self, dark: bool, backdrop_id: str) -> None:
+        prefs = self._session.preferences.with_backdrop(backdrop_id, dark=dark)  # type: ignore[attr-defined]
+        self._store_preferences(prefs)
+        self._apply_backdrops()
+        self._sync_ui()
+        item = self._backdrops.store.get(backdrop_id) if backdrop_id else None  # type: ignore[attr-defined]
+        if item is None:
+            self._show_banner("这一档回到背景色。", auto_hide=True)  # type: ignore[attr-defined]
+        else:
+            slot = "深色" if dark else "浅色"
+            self._show_banner(f"{slot}背景换成了「{item.name}」。", auto_hide=True)  # type: ignore[attr-defined]
+
+    def _generate_backdrop(self) -> None:
+        seed = random.SystemRandom().randrange(1, 2**31)
+        dialog = BackdropGenerateDialog(cast("QWidget", self), seed=seed)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        try:
+            item = self._backdrops.store.add_generated(  # type: ignore[attr-defined]
+                dialog.recipe(), dialog.name()
+            )
+        except BackdropError as exc:
+            self._report_error(exc.message)  # type: ignore[attr-defined]
+            return
+        self._after_backdrop_saved(item, dialog.outcome())
+
+    def _pick_backdrop_photo(self) -> None:
+        chosen, _ = QFileDialog.getOpenFileName(
+            cast("QWidget", self), "选择一张照片作为背景", str(Path.home()), PHOTO_FILTER
+        )
+        if not chosen:
+            return
+        source = Path(chosen)
+        dialog = BackdropNameDialog(cast("QWidget", self), default_name=source.stem)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        try:
+            item = self._backdrops.store.add_photo(source, dialog.name())  # type: ignore[attr-defined]
+        except BackdropError as exc:
+            self._report_error(exc.message)  # type: ignore[attr-defined]
+            return
+        self._after_backdrop_saved(item, dialog.outcome())
+
+    def _after_backdrop_saved(self, item: object, outcome: str) -> None:
+        """存下之后共用的一段：重建菜单，按用户的决定赋值。"""
+        self._rebuild_backdrop_menus()
+        if outcome in ("light", "dark"):
+            self._assign_backdrop(outcome == "dark", item.id)  # type: ignore[attr-defined]
+            return
+        self._sync_ui()
+        self._show_banner(  # type: ignore[attr-defined]
+            f"背景「{item.name}」已保存，在「外观 › 浅色 / 深色背景」里挑它。",  # type: ignore[attr-defined]
+            auto_hide=True,
+        )
+
+    def _manage_backdrops(self) -> None:
+        items = tuple((entry.id, entry.name) for entry in self._backdrops.store.items())  # type: ignore[attr-defined]
+        if not items:
+            self._show_banner("还没有保存过背景图。", auto_hide=True)  # type: ignore[attr-defined]
+            return
+        dialog = BackdropManageDialog(cast("QWidget", self), items)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        for backdrop_id in dialog.removed():
+            self._backdrops.store.remove(backdrop_id)  # type: ignore[attr-defined]
+        for backdrop_id, name in dialog.renames().items():
+            try:
+                self._backdrops.store.rename(backdrop_id, name)  # type: ignore[attr-defined]
+            except BackdropError as exc:
+                self._report_error(exc.message)  # type: ignore[attr-defined]
+                break
+        self._drop_missing_backdrops()
+        self._rebuild_backdrop_menus()
+        self._apply_backdrops()
+        self._sync_ui()
+
+    def _drop_missing_backdrops(self) -> None:
+        """删掉的那张如果正被某一档用着，那一档退回背景色。"""
+        known = {entry.id for entry in self._backdrops.store.items()}  # type: ignore[attr-defined]
+        prefs = self._session.preferences  # type: ignore[attr-defined]
+        for dark in (False, True):
+            value = prefs.backdrop_for(dark=dark)
+            if value and value not in known:
+                prefs = prefs.with_backdrop("", dark=dark)
+        if prefs != self._session.preferences:  # type: ignore[attr-defined]
+            self._store_preferences(prefs)
+
+    def _rebuild_backdrop_menus(self) -> None:
+        """两档各自的背景图清单。**每次背景库一变就整份重建** —— 名字与顺序都由它决定。"""
+        items = [(entry.id, entry.name) for entry in self._backdrops.store.items()]  # type: ignore[attr-defined]
+        for dark, submenu in self._backdrops.menus.items():
+            submenu.clear()
+            group = QActionGroup(submenu)
+            group.setExclusive(True)
+            actions: dict[str, QAction] = {}
+            for value, label in [("", "用背景色"), *items]:
+                action = QAction(label, submenu)
+                action.setCheckable(True)
+                action.triggered.connect(
+                    lambda _checked=False, target=value, slot=dark: self._assign_backdrop(
+                        slot, target
+                    )
+                )
+                group.addAction(action)
+                submenu.addAction(action)
+                actions[str(value)] = action
+            if not items:
+                empty = submenu.addAction("还没有保存过背景图")
+                empty.setEnabled(False)
+            self._backdrops.actions[dark] = actions
+            self._backdrops.groups[dark] = group
 
     def _set_slideshow_seconds(self, seconds: object) -> None:
         prefs = replace(self._session.preferences, slideshow_seconds=int(seconds))
@@ -348,6 +552,12 @@ class SettingsFlowMixin:
             self._check("cache", library.config.max_cache_bytes)  # type: ignore[attr-defined]
         for action in self._library_setting_actions:
             action.setEnabled(library is not None)
+        # 背景图那两组：认不出来的 id（背景库被清空过）按「用背景色」显示。
+        for dark, actions in self._backdrops.actions.items():
+            wanted = prefs.backdrop_for(dark=dark)
+            chosen = wanted if wanted in actions else ""
+            for value, action in actions.items():
+                action.setChecked(value == chosen)
 
     def _check(self, group: str, value: object, *, fallback: object | None = None) -> None:
         """勾上这一组的这一档；**值不在预设里就勾 ``fallback``**（手改过的配置）。"""

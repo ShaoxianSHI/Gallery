@@ -81,6 +81,10 @@ class Preferences:
     #: 两档自定义背景色（``#rrggbb``），空串 = 用系统那一档（ADR 0097）。
     light_background: str = ""
     dark_background: str = ""
+    #: 两档各自的背景图（背景库里的 id），空串 = 用背景色（ADR 0098）。
+    #: 认不出来的 id 只让那一档退回颜色，不当成错误 —— 背景库可能被整个清掉。
+    light_backdrop: str = ""
+    dark_backdrop: str = ""
     slideshow_seconds: int = DEFAULT_SLIDESHOW_SECONDS
     open_last_library: bool = True
     #: 网格与大图页标题上写不写文件扩展名（视图菜单里那一项）。
@@ -121,6 +125,18 @@ class Preferences:
             return replace(self, dark_background=clean)
         return replace(self, light_background=clean)
 
+    def backdrop_for(self, *, dark: bool) -> str:
+        """这一档该用哪张背景图；空串表示用背景色。"""
+        value = self.dark_backdrop if dark else self.light_backdrop
+        return value if isinstance(value, str) else ""
+
+    def with_backdrop(self, backdrop_id: str | None, *, dark: bool) -> Preferences:
+        """设 / 清某一档的背景图；``None`` 或空串表示回到背景色。"""
+        clean = "" if backdrop_id is None else backdrop_id.strip()
+        if dark:
+            return replace(self, dark_backdrop=clean)
+        return replace(self, light_backdrop=clean)
+
     def order_for(self, page: str) -> tuple[str, ...]:
         """这一页的次序；没设过就是空元组 —— 空元组的意思是「照内置次序」。"""
         for name, ids in self.external_orders:
@@ -146,6 +162,8 @@ class Preferences:
             "appearance": self.resolved_appearance(),
             "light_background": self.background_for(dark=False) or "",
             "dark_background": self.background_for(dark=True) or "",
+            "light_backdrop": self.backdrop_for(dark=False),
+            "dark_backdrop": self.backdrop_for(dark=True),
             "slideshow_seconds": self.resolved_slideshow_seconds(),
             "open_last_library": self.open_last_library,
             "show_file_extensions": self.show_file_extensions,
@@ -167,6 +185,8 @@ class Preferences:
             appearance=appearance if isinstance(appearance, str) else DEFAULT_APPEARANCE,
             light_background=normalize_background(value.get("light_background"), dark=False) or "",
             dark_background=normalize_background(value.get("dark_background"), dark=True) or "",
+            light_backdrop=_text(value.get("light_backdrop")),
+            dark_backdrop=_text(value.get("dark_backdrop")),
             slideshow_seconds=seconds
             if isinstance(seconds, int) and not isinstance(seconds, bool)
             else DEFAULT_SLIDESHOW_SECONDS,
@@ -195,6 +215,11 @@ def normalize_background(value: object, *, dark: bool) -> str | None:
     if (lightness < BACKGROUND_LIGHTNESS_SPLIT) != dark:
         return None
     return f"#{red:02x}{green:02x}{blue:02x}"
+
+
+def _text(value: object) -> str:
+    """用户会手改这份文件：不是字符串就当没设过。"""
+    return value.strip() if isinstance(value, str) else ""
 
 
 def _parse_external_orders(value: object) -> tuple[tuple[str, tuple[str, ...]], ...]:
