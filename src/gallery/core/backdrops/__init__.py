@@ -11,6 +11,7 @@ from gallery.core.backdrops.recipe import (
     Palette,
     Recipe,
     palette_from_color,
+    palette_from_colors,
 )
 from gallery.core.backdrops.store import (
     KIND_INK,
@@ -36,4 +37,5 @@ __all__ = [
     "Recipe",
     "name_suggestion",
     "palette_from_color",
+    "palette_from_colors",
 ]

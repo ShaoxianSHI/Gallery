@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QPoint, QSize, Qt
 from PySide6.QtGui import QColor, QPalette, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -33,7 +34,7 @@ from gallery.core.backdrops import (
     Palette,
     Recipe,
     name_suggestion,
-    palette_from_color,
+    palette_from_colors,
 )
 from gallery.core.backdrops.generate import colorize, render_field
 from gallery.ui import imaging, theme
@@ -52,6 +53,10 @@ MANAGE_LIST_HEIGHT = 200
 
 #: 色板按钮里那块小色块的尺寸。
 CHIP_SIZE = QSize(34, 22)
+
+#: 自定义配色最多几个颜色。再多就不是「一两个色相在墨里化开」，而是一块花布；
+#: 那颗 34×22 的色块也放不下。
+MAX_CUSTOM_COLORS = 3
 
 
 class BackdropGenerateDialog(QDialog):
@@ -76,6 +81,8 @@ class BackdropGenerateDialog(QDialog):
         self._swatches: dict[str, QPushButton] = {}
         #: 用户挑颜色建出来的那一套；没挑过是 ``None``。
         self._custom_palette: Palette | None = None
+        #: 已经挑了几个颜色（按挑选次序，最多 :data:`MAX_CUSTOM_COLORS` 个）。
+        self._custom_colors: list[str] = []
         self._custom_chip: QPushButton | None = None
         self._add_chip: QPushButton | None = None
         self._watcher = theme.ensure_installed()
@@ -147,7 +154,7 @@ class BackdropGenerateDialog(QDialog):
             swatch.setFixedSize(CHIP_SIZE)
             swatch.setCursor(Qt.CursorShape.PointingHandCursor)
             swatch.setToolTip(palette.title)
-            swatch.setStyleSheet(_chip_style(_chip_color(palette)))
+            swatch.setStyleSheet(_chip_style([_chip_color(palette)]))
             swatch.setChecked(palette.name == self._palette.name)
             swatch.clicked.connect(lambda _checked=False, item=palette: self._choose(item))
             group.addButton(swatch)
@@ -160,7 +167,7 @@ class BackdropGenerateDialog(QDialog):
         self._add_chip.setFixedSize(CHIP_SIZE)
         self._add_chip.setCursor(Qt.CursorShape.PointingHandCursor)
         self._add_chip.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._add_chip.setToolTip("选一个颜色，生成同色系的背景")
+        self._add_chip.setToolTip("选一个颜色；已有颜色时追加为渐变色")
         self._add_chip.clicked.connect(self._pick_custom_color)
         row.addWidget(self._add_chip)
         row.addStretch(1)
@@ -198,22 +205,64 @@ class BackdropGenerateDialog(QDialog):
         self._refresh(palette_changed=True)
 
     def _pick_custom_color(self) -> None:
-        """「+」那一格：挑一个颜色，按它生成一套同色系的配色。"""
-        start = (
-            QColor(self._custom_palette.colors[-1][1])
-            if self._custom_palette is not None
-            else QColor("#8ea8bf")
-        )
+        """「+」那一格：挑一个颜色，**追加**到自定义配色里（最多 :data:`MAX_CUSTOM_COLORS` 个）。
+
+        第一个颜色给出整条渐变的色相；再加的就是「另一头」的色相 —— 一条 1 维的调色板，
+        见 ADR 0102。
+        """
+        if len(self._custom_colors) >= MAX_CUSTOM_COLORS:
+            return
+        start = QColor(self._custom_colors[-1]) if self._custom_colors else QColor("#8ea8bf")
         chosen = QColorDialog.getColor(start, self, "自定义背景颜色")
         if not chosen.isValid():
             return
-        palette = palette_from_color(chosen.name())
+        self._custom_colors.append(chosen.name())
+        palette = palette_from_colors(self._custom_colors)
         self._custom_palette = palette
         chip = self._ensure_custom_chip()
-        chip.setToolTip(palette.title)
-        chip.setStyleSheet(_chip_style(chosen.name()))
+        chip.setToolTip(f"{palette.title}（右键可重新挑选）")
+        chip.setStyleSheet(_chip_style(self._custom_colors))
         chip.setChecked(True)
+        self._sync_add_chip()
         self._choose(palette)
+
+    def _sync_add_chip(self) -> None:
+        """到了上限就按不动：「+」只有一个意思，不让它悄悄变成「替换」。"""
+        if self._add_chip is None:
+            return
+        at_limit = len(self._custom_colors) >= MAX_CUSTOM_COLORS
+        self._add_chip.setEnabled(not at_limit)
+        self._add_chip.setToolTip(
+            "最多三个颜色（右键自定义色块可重新挑选）"
+            if at_limit
+            else "选一个颜色；已有颜色时追加为渐变色"
+        )
+
+    def _reset_custom_colors(self) -> None:
+        """清掉自定义那一套，回到预设里第一套。右键自定义色块走这里。"""
+        chip = self._custom_chip
+        if chip is not None:
+            self._group.removeButton(chip)
+            self._palette_row.removeWidget(chip)
+            chip.setParent(None)
+            chip.deleteLater()
+        self._custom_chip = None
+        self._custom_palette = None
+        self._custom_colors.clear()
+        self._sync_add_chip()
+        first = PALETTES[0]
+        self._swatches[first.name].setChecked(True)
+        self._choose(first)
+
+    def _show_custom_menu(self, point: QPoint) -> None:
+        """右键自定义色块：菜单里只放「重新挑选」，没有第二条命令。"""
+        chip = self._custom_chip
+        if chip is None:
+            return
+        menu = QMenu(self)
+        reset = menu.addAction("重新挑选颜色…")
+        reset.triggered.connect(self._reset_custom_colors)
+        menu.exec(chip.mapToGlobal(point))
 
     def _ensure_custom_chip(self) -> QPushButton:
         """自定义那一格只在第一次挑颜色时出现，之后一直留在「+」左边。"""
@@ -225,6 +274,8 @@ class BackdropGenerateDialog(QDialog):
         chip.setFixedSize(CHIP_SIZE)
         chip.setCursor(Qt.CursorShape.PointingHandCursor)
         chip.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        chip.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        chip.customContextMenuRequested.connect(self._show_custom_menu)
 
         def pick(_checked: bool = False) -> None:
             if self._custom_palette is not None:
@@ -564,19 +615,39 @@ def _chip_color(palette: Palette) -> str:
     return palette.colors[-2][1] if len(palette.colors) > 1 else palette.colors[0][1]
 
 
-def _chip_style(color: str) -> str:
-    """色板小方块：底就是那套配色的末端颜色，勾选时描一圈。
+def _chip_style(colors: Sequence[str]) -> str:
+    """色板小方块：一个颜色是纯色，多个是从左到右的渐变；勾选时描一圈。
 
-    **边框颜色预先与自己的底色合成成不透明的**：半透明的圆角边框会被 Qt 描成八段，
-    接缝处调两遍就叠成更深的点（ADR 0035）。
+    **边框颜色预先与底色合成成不透明的**：半透明的圆角边框会被 Qt 描成八段，
+    接缝处调两遍就叠成更深的点（ADR 0035）。渐变时按平均色合成 —— 一圈 1 点宽的
+    边框跨不出那么大的色差。
     """
-    base = QColor(color)
+    background = _chip_gradient(colors) if len(colors) > 1 else colors[0]
+    base = _average_color(colors)
     edge = opaque_over(QColor(0, 0, 0, 30), base)
     checked = opaque_over(QColor(0, 0, 0, 140), base)
     return (
-        f"QPushButton {{ background: {color}; border: 1px solid {edge.name()};"
+        f"QPushButton {{ background: {background}; border: 1px solid {edge.name()};"
         f" border-radius: 5px; }}"
         f"QPushButton:checked {{ border: 2px solid {checked.name()}; }}"
+    )
+
+
+def _chip_gradient(colors: Sequence[str]) -> str:
+    """色块的渐变底：Qt 样式表的 ``qlineargradient``，停点按颜色个数均分。"""
+    step = 1.0 / (len(colors) - 1)
+    stops = ", ".join(f"stop:{index * step:.3f} {color}" for index, color in enumerate(colors))
+    return f"qlineargradient(x1:0, y1:0, x2:1, y2:0, {stops})"
+
+
+def _average_color(colors: Sequence[str]) -> QColor:
+    """这几个颜色的平均色：渐变时拿它算边框那一档（边框比色块窄得多）。"""
+    samples = [QColor(color) for color in colors]
+    count = len(samples)
+    return QColor(
+        round(sum(sample.red() for sample in samples) / count),
+        round(sum(sample.green() for sample in samples) / count),
+        round(sum(sample.blue() for sample in samples) / count),
     )
 
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Final
 
@@ -266,7 +267,7 @@ PALETTES_BY_NAME: Final[dict[str, Palette]] = {palette.name: palette for palette
 #: 读回时不需要、也不该去预设表里找它。
 CUSTOM_PRESET: Final = "ink-custom"
 
-#: 自定义配色的停点：(位置, 这里用户选的颜色占多少)，其余部分与白色混合。
+#: 一个颜色时的停点：(位置, 这里用户选的颜色占多少)，其余部分与白色混合。
 #: 最深一档也只到 0.60 —— 再浓正文就压不住了（ADR 0098 的遮罩管亮度，不管「整张一个色」）。
 _CUSTOM_STOPS: Final = (
     (0.00, 0.06),
@@ -277,20 +278,78 @@ _CUSTOM_STOPS: Final = (
     (1.00, 0.60),
 )
 
+#: 好几个颜色时的停点：**整体抬高**。一个颜色只要末端浓就够了；几个颜色里第一个若还从 6% 起，
+#: 它只出现在最亮的那一小片里，屏幕上几乎只剩最后一个颜色（浓度分布见 ADR 0102）。
+_MULTI_STOPS: Final = (
+    (0.00, 0.18),
+    (0.28, 0.26),
+    (0.50, 0.34),
+    (0.72, 0.44),
+    (0.88, 0.52),
+    (1.00, 0.60),
+)
+
 _HEX_COLOR: Final = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
-def palette_from_color(color: str) -> Palette:
-    """一个颜色 → 一套同色系、由浅到深的晕染配色。"""
-    red, green, blue = _hex_channels(color)
-    stops = tuple((position, _tint(red, green, blue, weight)) for position, weight in _CUSTOM_STOPS)
+def palette_from_colors(colors: Sequence[str]) -> Palette:
+    """一到几个颜色 → 一套由浅到深、穿过这些色相的晕染配色。
+
+    每个停点先在这几个颜色之间取一个中间色，再按停点把它兑进白色：越靠后越浓。**每个颜色
+    各占一段浓度**，过渡只发生在两段之间 —— 否则最后一个颜色会把前面几个吞掉（它站在最浓
+    的那一头）。界面上看到的仍是「几色交织的丝缕」，不是按位置分开的色块（ADR 0102）。
+    """
+    if not colors:
+        raise ValueError("至少要一个颜色")
+    channels = [_hex_channels(color) for color in colors]
+    stops = tuple(
+        (
+            position,
+            _tint(_blend(channels, _hue_position(position, len(channels))), weight),
+        )
+        for position, weight in (_CUSTOM_STOPS if len(colors) == 1 else _MULTI_STOPS)
+    )
     return Palette(
         name=CUSTOM_PRESET,
-        title=f"自定义 · {color.lower()}",
+        title="自定义 · " + " → ".join(color.lower() for color in colors),
         colors=stops,
         warp=1.20,
         scale=2.8,
         contrast=4.4,
+    )
+
+
+def palette_from_color(color: str) -> Palette:
+    """一个颜色 → 一套同色系、由浅到深的晕染配色。"""
+    return palette_from_colors([color])
+
+
+def _hue_position(position: float, count: int) -> float:
+    """0..1 → 「颜色序号」（0..count-1）：每个颜色各占一段，过渡只发生在两段之间。"""
+    if count <= 1:
+        return 0.0
+    band = 1.0 / count
+    transition = band / 2
+    for index in range(count - 1):
+        left = band * (index + 1) - transition / 2
+        if position < left:
+            return float(index)
+        if position <= left + transition:
+            return index + (position - left) / transition
+    return float(count - 1)
+
+
+def _blend(channels: Sequence[tuple[int, int, int]], position: float) -> tuple[int, int, int]:
+    """按「颜色序号」（可以是小数）在几个颜色之间取一个中间色。"""
+    if len(channels) == 1:
+        return channels[0]
+    index = min(int(position), len(channels) - 2)
+    fraction = position - index
+    left, right = channels[index], channels[index + 1]
+    return (
+        round(left[0] + (right[0] - left[0]) * fraction),
+        round(left[1] + (right[1] - left[1]) * fraction),
+        round(left[2] + (right[2] - left[2]) * fraction),
     )
 
 
@@ -300,9 +359,9 @@ def _hex_channels(color: str) -> tuple[int, int, int]:
     return (int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16))
 
 
-def _tint(red: int, green: int, blue: int, weight: float) -> str:
+def _tint(rgb: tuple[int, int, int], weight: float) -> str:
     """把颜色按 ``weight`` 兑进白色；停点越靠后越浓。"""
-    channels = (round(255 - (255 - value) * weight) for value in (red, green, blue))
+    channels = (round(255 - (255 - value) * weight) for value in rgb)
     return "#" + "".join(f"{value:02x}" for value in channels)
 
 
@@ -321,5 +380,6 @@ __all__ = [
     "Palette",
     "Recipe",
     "palette_from_color",
+    "palette_from_colors",
     "palette_of",
 ]
