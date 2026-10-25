@@ -90,7 +90,7 @@ def test_the_submenus_are_grouped_in_a_stable_order(window: MainWindow) -> None:
         action.text() for action in _settings_menu(window).actions() if action.menu() is not None
     ]
 
-    assert titles == ["主题", "背景", "动画速度", "放映间隔", "影片网站", "缓存上限"]
+    assert titles == ["主题", "语言", "背景", "动画速度", "放映间隔", "影片网站", "缓存上限"]
 
 
 def test_the_menu_reads_top_to_bottom_in_three_groups(window: MainWindow) -> None:
@@ -103,6 +103,7 @@ def test_the_menu_reads_top_to_bottom_in_three_groups(window: MainWindow) -> Non
 
     assert labels == [
         "主题",
+        "语言",
         "背景",
         "动画速度",
         "放映间隔",
@@ -650,3 +651,20 @@ def test_an_unknown_id_from_the_dialog_is_dropped(
         "google_calendar",
         "apple_calendar",
     )
+
+
+def test_the_language_menu_offers_the_system_and_both_catalogs(window: MainWindow) -> None:
+    actions = window._settings_actions["language"]
+
+    assert [action.text() for action in actions.values()] == ["跟随系统", "简体中文", "English"]
+    assert actions["system"].isChecked()
+
+
+def test_changing_the_language_is_saved_and_asks_for_a_restart(
+    window: MainWindow, tmp_path: Path
+) -> None:
+    _trigger(window, "language", "en")
+
+    assert load_session(base=tmp_path / "会话").preferences.language == "en"
+    assert window._settings_actions["language"]["en"].isChecked()
+    assert "重启 Gallery 后生效" in window._banner.text()

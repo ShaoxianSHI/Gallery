@@ -36,6 +36,22 @@ def set_language(code: str) -> str:
     return _current
 
 
+def resolve_language(preference: str, system_name: str) -> str:
+    """把偏好与系统语言收成一个目录里有的代码（ADR 0106 决策 6）。
+
+    ``system`` 只看主语言标签：``zh`` 开头是中文，其余走英文（与产品先上中英一致）。
+    认不出的偏好回源语言 —— 手改坏的会话文件不该让界面变成一堆键。
+    """
+    if preference in CATALOGS:
+        return preference
+    if preference == "system":
+        primary = system_name.replace("_", "-").split("-")[0].lower()
+        if primary == "zh":
+            return "zh_CN"
+        return "en" if "en" in CATALOGS else DEFAULT_LANGUAGE
+    return DEFAULT_LANGUAGE
+
+
 def t(key: str, /, **params: object) -> str:
     """查一条普通文案。缺键回退到源语言，再缺就返回键本身。"""
     message = _lookup(key)
@@ -62,4 +78,11 @@ def _lookup(key: str) -> Message | None:
     return None
 
 
-__all__ = ["available_languages", "current_language", "set_language", "t", "t_plural"]
+__all__ = [
+    "available_languages",
+    "current_language",
+    "resolve_language",
+    "set_language",
+    "t",
+    "t_plural",
+]

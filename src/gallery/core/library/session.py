@@ -45,6 +45,10 @@ DEFAULT_ANIMATION_SPEED: Final = "normal"
 APPEARANCES: Final = ("system", "light", "dark")
 DEFAULT_APPEARANCE: Final = "system"
 
+#: 语言偏好：跟随系统 / 简体中文 / English（ADR 0106）。**应用级**：换库不该把它重置。
+LANGUAGE_PREFERENCES: Final = ("system", "zh_CN", "en")
+DEFAULT_LANGUAGE_PREFERENCE: Final = "system"
+
 #: 背景色的分界（HSL 的 ``L``）：浅色那一档要亮于它、深色那一档要暗于它。
 #: 只换底不换字，所以两档各自被限制在自己那一侧 —— 否则正文压在背景上看不清（ADR 0097）。
 BACKGROUND_LIGHTNESS_SPLIT: Final = 0.5
@@ -78,6 +82,7 @@ class Preferences:
 
     animation_speed: str = DEFAULT_ANIMATION_SPEED
     appearance: str = DEFAULT_APPEARANCE
+    language: str = DEFAULT_LANGUAGE_PREFERENCE
     #: 两档自定义背景色（``#rrggbb``），空串 = 用系统那一档（ADR 0097）。
     light_background: str = ""
     dark_background: str = ""
@@ -103,6 +108,12 @@ class Preferences:
         if self.appearance in APPEARANCES:
             return self.appearance
         return DEFAULT_APPEARANCE
+
+    def resolved_language(self) -> str:
+        """这一档该用的语言偏好；不认识的值（老版本、手改坏）回「跟随系统」。"""
+        if self.language in LANGUAGE_PREFERENCES:
+            return self.language
+        return DEFAULT_LANGUAGE_PREFERENCE
 
     def resolved_slideshow_seconds(self) -> int:
         """放映间隔（秒）；越界或类型不对回默认。"""
@@ -160,6 +171,7 @@ class Preferences:
         return {
             "animation_speed": self.resolved_animation_speed(),
             "appearance": self.resolved_appearance(),
+            "language": self.resolved_language(),
             "light_background": self.background_for(dark=False) or "",
             "dark_background": self.background_for(dark=True) or "",
             "light_backdrop": self.backdrop_for(dark=False),
@@ -177,12 +189,14 @@ class Preferences:
             return cls()
         speed = value.get("animation_speed")
         appearance = value.get("appearance")
+        language = value.get("language")
         seconds = value.get("slideshow_seconds")
         open_last = value.get("open_last_library")
         show_extensions = value.get("show_file_extensions")
         return cls(
             animation_speed=speed if isinstance(speed, str) else DEFAULT_ANIMATION_SPEED,
             appearance=appearance if isinstance(appearance, str) else DEFAULT_APPEARANCE,
+            language=language if isinstance(language, str) else DEFAULT_LANGUAGE_PREFERENCE,
             light_background=normalize_background(value.get("light_background"), dark=False) or "",
             dark_background=normalize_background(value.get("dark_background"), dark=True) or "",
             light_backdrop=_text(value.get("light_backdrop")),
@@ -399,7 +413,9 @@ __all__ = [
     "BACKGROUND_LIGHTNESS_SPLIT",
     "DEFAULT_ANIMATION_SPEED",
     "DEFAULT_APPEARANCE",
+    "DEFAULT_LANGUAGE_PREFERENCE",
     "DEFAULT_SLIDESHOW_SECONDS",
+    "LANGUAGE_PREFERENCES",
     "LEGACY_UI_KEYS",
     "MAX_RECENT_ROOTS",
     "MAX_SLIDESHOW_SECONDS",

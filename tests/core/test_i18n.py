@@ -13,6 +13,7 @@ from gallery.core import i18n
 from gallery.core.i18n import (
     available_languages,
     current_language,
+    resolve_language,
     set_language,
     t,
     t_plural,
@@ -85,3 +86,20 @@ def test_missing_translation_falls_back_to_the_source_language(fake_catalogs: No
 def test_a_plain_string_serves_every_count(fake_catalogs: None) -> None:
     set_language("en")
     assert t_plural("banner.greet", 5, name="Kyoto") == "Hello, Kyoto."
+
+
+@pytest.mark.parametrize(
+    ("preference", "system", "expected"),
+    [
+        ("zh_CN", "en_US", "zh_CN"),
+        ("en", "zh_CN", "en"),
+        ("system", "zh-Hans-CN", "zh_CN"),
+        ("system", "zh_CN", "zh_CN"),
+        ("system", "en_GB", "en"),
+        ("system", "ja_JP", "en"),
+        ("de", "zh_CN", "zh_CN"),
+    ],
+)
+def test_language_resolution(preference: str, system: str, expected: str) -> None:
+    """显式选择优先于系统；``system`` 只看主语言标签，认不出的偏好回源语言。"""
+    assert resolve_language(preference, system) == expected

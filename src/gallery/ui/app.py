@@ -10,15 +10,19 @@ from __future__ import annotations
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
-from PySide6.QtCore import QEvent, QObject, Qt
+from PySide6.QtCore import QEvent, QLibraryInfo, QLocale, QObject, Qt, QTranslator
 from PySide6.QtGui import QFileOpenEvent, QIcon
 from PySide6.QtWidgets import QApplication
 
 from gallery.core.constants import APP_NAME
+from gallery.core.i18n import current_language, resolve_language, set_language
+from gallery.core.library.session import load_session
 from gallery.core.paths import app_icon_files, augment_external_tool_path
-from gallery.ui.main_window import MainWindow
+
+if TYPE_CHECKING:
+    from gallery.ui.main_window import MainWindow
 
 
 def apply_app_branding(app: QApplication) -> None:
@@ -44,6 +48,27 @@ def create_application(argv: Sequence[str] | None = None) -> QApplication:
     app = QApplication(list(argv) if argv is not None else list(sys.argv))
     apply_app_branding(app)
     return app
+
+
+def activate_language(session_base: Path | None = None) -> str:
+    """在导入界面模块之前定语言（ADR 0106 决策 6）。
+
+    有些文案常量在模块导入时求值；语言必须在第一次 import 界面之前就位。
+    """
+    preferences = load_session(base=session_base).preferences
+    return set_language(resolve_language(preferences.language, QLocale.system().name()))
+
+
+def install_qt_translations(app: QApplication) -> None:
+    """让 Qt 自己的标准按钮跟着应用语言走（ADR 0106 决策 6）。
+
+    这一套与 ``core/locales`` 是两份来源：``QMessageBox`` / ``QFileDialog`` 的按钮由 Qt 提供。
+    找不到对应的 ``.qm`` 就静默跳过 —— 界面照常起来。
+    """
+    path = QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)
+    translator = QTranslator(app)
+    if translator.load(f"qtbase_{current_language()}", path):
+        app.installTranslator(translator)
 
 
 def keep_running_without_windows(app: QApplication) -> None:
@@ -92,6 +117,9 @@ class WindowHost(QObject):
 
         :param library: 这个窗口先打开哪个库；省略则用启动时指定的那个。
         """
+        # 延迟导入：语言要在 ``MainWindow`` 那一串模块导入之前定下来（见 activate_language）。
+        from gallery.ui.main_window import MainWindow
+
         window = MainWindow(
             session_base=self._session_base,
             cache_base=self._cache_base,
@@ -154,8 +182,10 @@ def run(
     """启动界面，返回进程退出码。"""
     # 在建 QApplication 之前补 PATH：从访达 / Dock 启动时 exiftool 不在系统目录里，
     # 不补的话主窗口一开就去读元数据，会一路降级成只读模式。
+    activate_language(session_base)
     augment_external_tool_path()
     app = create_application(argv)
+    install_qt_translations(app)
     # ⌘W 关窗与 ⌘Q 退出的分工（ADR 0037）。**必须在造窗口之前**。
     keep_running_without_windows(app)
     host = WindowHost(app, session_base=session_base, cache_base=cache_base, library=library)
@@ -166,8 +196,10 @@ def run(
 
 __all__ = [
     "WindowHost",
+    "activate_language",
     "apply_app_branding",
     "create_application",
+    "install_qt_translations",
     "keep_running_without_windows",
     "run",
 ]

@@ -31,6 +31,7 @@ from gallery.core.library.session import (
     EXTERNAL_PAGE_VIDEO,
     Preferences,
 )
+from gallery.core.locales import LANGUAGE_NAMES
 from gallery.ui import imaging, theme
 from gallery.ui.dialogs import (
     BackdropGenerateDialog,
@@ -102,6 +103,12 @@ class SettingsFlowMixin:
             t("settings.theme"),
             self._set_appearance,
             {value: t(key) for value, key in APPEARANCE_LABEL_KEYS.items()},
+        )
+        self._settings_actions["language"] = self._add_choice_menu(
+            menu,
+            t("settings.language"),
+            self._set_language_preference,
+            {"system": t("settings.language.system"), **LANGUAGE_NAMES},
         )
         self._build_background_menu(menu)
         self._settings_actions["animation"] = self._add_choice_menu(
@@ -459,6 +466,13 @@ class SettingsFlowMixin:
         self._slideshow_timer.setInterval(int(seconds) * 1000)  # type: ignore[attr-defined]
         self._sync_ui()
 
+    def _set_language_preference(self, value: object) -> None:
+        """语言是应用级偏好，**改完要重启才生效**（ADR 0106 决策 6）。"""
+        prefs = replace(self._session.preferences, language=str(value))
+        self._store_preferences(prefs)
+        self._sync_ui()
+        self._show_banner(t("settings.language.restart"), auto_hide=True)
+
     def _set_open_last_library(self, enabled: bool) -> None:
         prefs = replace(self._session.preferences, open_last_library=enabled)  # type: ignore[attr-defined]
         self._store_preferences(prefs)
@@ -545,6 +559,7 @@ class SettingsFlowMixin:
         prefs = self._session.preferences  # type: ignore[attr-defined]
         self._check("animation", prefs.resolved_animation_speed())
         self._check("appearance", prefs.resolved_appearance())
+        self._check("language", prefs.resolved_language())
         self._check("slideshow", prefs.resolved_slideshow_seconds())
         self._settings_extras["open_last_library"].setChecked(prefs.open_last_library)
         library = self._library

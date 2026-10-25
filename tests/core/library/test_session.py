@@ -134,6 +134,7 @@ def test_the_written_file_holds_only_the_app_level_fields(tmp_path: Path) -> Non
     assert payload["preferences"] == {
         "animation_speed": "normal",
         "appearance": "system",
+        "language": "system",
         "light_background": "",
         "dark_background": "",
         "light_backdrop": "",
@@ -157,6 +158,13 @@ def test_preferences_round_trip(tmp_path: Path) -> None:
     save_session(SessionState(preferences=preferences), base=tmp_path)
 
     assert load_session(base=tmp_path).preferences == preferences
+
+
+def test_the_language_preference_round_trips(tmp_path: Path) -> None:
+    """语言是应用级偏好（ADR 0106）：写进会话，换库不重置。"""
+    save_session(SessionState(preferences=Preferences(language="en")), base=tmp_path)
+
+    assert load_session(base=tmp_path).preferences.resolved_language() == "en"
 
 
 def test_an_old_session_without_preferences_gets_the_defaults(tmp_path: Path) -> None:
@@ -185,6 +193,7 @@ def test_unknown_preference_values_fall_back_one_by_one(tmp_path: Path) -> None:
                 "preferences": {
                     "animation_speed": "turbo",
                     "appearance": "深色",
+                    "language": "klingon",
                     "slideshow_seconds": 0,
                     "open_last_library": "no",
                     "show_file_extensions": "yes",
@@ -198,6 +207,7 @@ def test_unknown_preference_values_fall_back_one_by_one(tmp_path: Path) -> None:
 
     assert preferences.resolved_animation_speed() == "normal"
     assert preferences.resolved_appearance() == "system"
+    assert preferences.resolved_language() == "system"
     assert preferences.resolved_slideshow_seconds() == 3
     assert preferences.open_last_library is True
     assert preferences.show_file_extensions is True
