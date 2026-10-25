@@ -40,7 +40,9 @@ MESSAGES: Final[Mapping[str, Message]] = {
     "settings.movie_site.prompt": "番号页的地址前缀（例如 https://jable.tv/videos）：",
     "settings.log_folder.failed": "未能打开日志文件夹：{folder}",
     "settings.no_library": "尚未打开库",
-    "settings.photo_filter": "图片 (*.jpg *.jpeg *.png *.heic *.heif *.tif *.tiff *.webp);;所有文件 (*)",
+    "settings.photo_filter": (
+        "图片 (*.jpg *.jpeg *.png *.heic *.heif *.tif *.tiff *.webp);;所有文件 (*)"
+    ),
     "settings.background.solid": "设置纯色背景…",
     "settings.background.light": "浅色背景",
     "settings.background.dark": "深色背景",

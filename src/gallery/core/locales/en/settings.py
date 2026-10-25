@@ -36,13 +36,13 @@ MESSAGES: Final[Mapping[str, Message]] = {
     "settings.cache.custom": "Custom Size",
     "settings.cache.set": "Thumbnail cache limit set to {label}.",
     "settings.seconds": "{seconds} s",
-    "settings.save_failed": (
-        "The settings could not be saved; they still apply to this run."
-    ),
+    "settings.save_failed": ("The settings could not be saved; they still apply to this run."),
     "settings.movie_site.prompt": "Address prefix for code pages (for example https://jable.tv/videos):",
     "settings.log_folder.failed": "Could not open the log folder: {folder}",
     "settings.no_library": "No library is open",
-    "settings.photo_filter": "Images (*.jpg *.jpeg *.png *.heic *.heif *.tif *.tiff *.webp);;All Files (*)",
+    "settings.photo_filter": (
+        "Images (*.jpg *.jpeg *.png *.heic *.heif *.tif *.tiff *.webp);;All Files (*)"
+    ),
     "settings.background.solid": "Set Solid Background…",
     "settings.background.light": "Light Background",
     "settings.background.dark": "Dark Background",

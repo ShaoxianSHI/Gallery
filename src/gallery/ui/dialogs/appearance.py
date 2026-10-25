@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from gallery.core.i18n import t
 from gallery.core.library.session import normalize_background
 from gallery.ui import theme
 from gallery.ui.theme import AppTheme, rgba
@@ -32,10 +33,6 @@ STARTER_COLORS = {False: "#f5f5f5", True: "#1c1c1e"}
 #: 色块上的字色：底浅压深字、底深压浅字。**这一处故意不跟主题**：它要读的是那块颜色本身。
 INK_ON_LIGHT = "#111111"
 INK_ON_DARK = "#f2f2f2"
-
-WRONG_SIDE = "浅色背景请选浅色，深色背景请选深色：正文颜色不随背景改变，选反会导致看不清。"
-
-SLOT_LABELS = {False: "浅色模式", True: "深色模式"}
 
 
 class BackgroundColorDialog(QDialog):
@@ -52,7 +49,7 @@ class BackgroundColorDialog(QDialog):
         #: 键是「是不是深色那一档」，值是 ``#rrggbb`` 或空串（跟随系统）。
         self._values: dict[bool, str] = {False: light or "", True: dark or ""}
         self._swatches: dict[bool, QPushButton] = {}
-        self.setWindowTitle("背景色")
+        self.setWindowTitle(t("dialog.appearance.title"))
         self.setModal(True)
         self.setMinimumWidth(MIN_WIDTH)
         self._watcher = theme.ensure_installed()
@@ -73,7 +70,7 @@ class BackgroundColorDialog(QDialog):
         layout.setContentsMargins(16, 14, 16, 12)
         layout.setSpacing(10)
 
-        hint = QLabel("两档各选一个颜色；「默认」表示使用系统浅色 / 深色模式。")
+        hint = QLabel(t("dialog.appearance.hint"))
         hint.setObjectName("backgroundHint")
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -95,7 +92,7 @@ class BackgroundColorDialog(QDialog):
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(10)
 
-        name = QLabel(SLOT_LABELS[dark])
+        name = QLabel(_slot_label(dark))
         name.setFixedWidth(64)
         row.addWidget(name)
 
@@ -111,16 +108,16 @@ class BackgroundColorDialog(QDialog):
     def _build_buttons(self) -> QHBoxLayout:
         row = QHBoxLayout()
         row.setContentsMargins(0, 2, 0, 0)
-        reset = QPushButton("恢复默认")
+        reset = QPushButton(t("dialog.appearance.reset"))
         reset.setObjectName("backgroundReset")
         reset.clicked.connect(self._reset)
         self._reset_button = reset
         row.addWidget(reset)
         row.addStretch(1)
-        cancel = QPushButton("取消")
+        cancel = QPushButton(t("dialog.cancel"))
         cancel.setObjectName("cancelButton")
         cancel.clicked.connect(self.reject)
-        save = QPushButton("保存")
+        save = QPushButton(t("dialog.save"))
         save.setObjectName("saveButton")
         save.setDefault(True)
         save.clicked.connect(self.accept)
@@ -133,12 +130,14 @@ class BackgroundColorDialog(QDialog):
     def _pick(self, dark: bool) -> None:
         """开系统取色器挑这一档。挑反了留在对话框里说清楚，**不改任何值**。"""
         current = self._values[dark] or STARTER_COLORS[dark]
-        chosen = QColorDialog.getColor(QColor(current), self, f"{SLOT_LABELS[dark]}的背景色")
+        chosen = QColorDialog.getColor(
+            QColor(current), self, t("dialog.appearance.slot_title", slot=_slot_label(dark))
+        )
         if not chosen.isValid():
             return
         clean = normalize_background(chosen.name(), dark=dark)
         if clean is None:
-            self._error.setText(WRONG_SIDE)
+            self._error.setText(t("dialog.appearance.wrong_side"))
             self._error.show()
             return
         self._values[dark] = clean
@@ -155,9 +154,13 @@ class BackgroundColorDialog(QDialog):
         app_theme = theme.current_theme()
         for dark, swatch in self._swatches.items():
             value = self._values[dark]
-            swatch.setText(value or "默认")
+            swatch.setText(value or t("dialog.appearance.default"))
             swatch.setStyleSheet(_swatch_style(value, app_theme))
-            swatch.setToolTip("跟随系统的浅色 / 深色" if not value else f"{value}（点击更换）")
+            swatch.setToolTip(
+                t("dialog.appearance.follow_system")
+                if not value
+                else t("dialog.appearance.change", value=value)
+            )
 
     # ---- 外观 --------------------------------------------------------------
 
@@ -165,6 +168,10 @@ class BackgroundColorDialog(QDialog):
         self.setStyleSheet(dialog_style(theme.current_theme(), self.palette()))
         if self._swatches:
             self._sync_swatches()
+
+
+def _slot_label(dark: bool) -> str:
+    return t(f"dialog.appearance.{'dark' if dark else 'light'}_slot")
 
 
 def _swatch_style(value: str, app_theme: AppTheme) -> str:

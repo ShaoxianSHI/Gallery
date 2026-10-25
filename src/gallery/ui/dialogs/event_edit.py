@@ -39,6 +39,7 @@ from gallery.core.events.kinds import (
 )
 from gallery.core.events.prefill import EventPrefill
 from gallery.core.events.store import Event, EventDraft
+from gallery.core.i18n import t
 from gallery.ui import theme
 from gallery.ui.outline import opaque_over
 from gallery.ui.theme import AppTheme, rgba
@@ -250,7 +251,11 @@ class EventEditDialog(QDialog):
         #: 前者是一次待写入的改动，后者什么都不用做。
         self._cover_cleared = False
 
-        self.setWindowTitle("编辑事件" if event is not None else f"新建{kind.label}")
+        self.setWindowTitle(
+            t("dialog.event.edit_title")
+            if event is not None
+            else t("dialog.event.new_title", kind=kind.label)
+        )
         self.setModal(True)
         self._watcher = theme.ensure_installed()
         self._watcher.changed.connect(self._apply_theme)
@@ -281,9 +286,9 @@ class EventEditDialog(QDialog):
         layout.setSizeConstraint(QVBoxLayout.SizeConstraint.SetFixedSize)
 
         heading = ElidedLabel(
-            f"编辑「{self._event.display_name}」"
+            t("dialog.event.edit_named_title", name=self._event.display_name)
             if self._event is not None
-            else f"新建{self._kind.label}"
+            else t("dialog.event.new_title", kind=self._kind.label)
         )
         heading.setObjectName("eventEditTitle")
         layout.addWidget(heading)
@@ -301,7 +306,7 @@ class EventEditDialog(QDialog):
 
         # ⌘W 关闭：不挂这一条的话它会一路走到主窗口，在模态对话框里关掉整个窗口。
         # 显式写出来而不写 ``StandardKey.Close`` —— Qt 在 macOS 上把后者解析成 ⌘F4。
-        close_action = QAction("关闭", self)
+        close_action = QAction(t("dialog.close"), self)
         close_action.setShortcut(QKeySequence("Ctrl+W"))
         close_action.triggered.connect(self.reject)
         self.addAction(close_action)
@@ -341,7 +346,7 @@ class EventEditDialog(QDialog):
         # 长文件名不许把这一列顶宽：它会占满按钮左边的空位，放不下就裁掉（全文在提示气泡里）。
         self._cover_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         layout.addWidget(self._cover_label, 1)
-        self._clear_cover_button = QPushButton("清除封面")
+        self._clear_cover_button = QPushButton(t("dialog.event.clear_cover"))
         self._clear_cover_button.setObjectName("eventEditClearCover")
         self._clear_cover_button.clicked.connect(self._clear_cover)
         layout.addWidget(self._clear_cover_button)
@@ -357,7 +362,7 @@ class EventEditDialog(QDialog):
         **只取 ``name``，不 ``stat``**：这一行要在面板打开的那一刻就画出来，
         而那是主线程 —— 一次 ``stat`` 在云盘上可能几十毫秒，而文件名就够了。
         """
-        text = path.name if path is not None else "未设置（使用第一张照片）"
+        text = path.name if path is not None else t("dialog.event.no_cover")
         self._cover_label.setText(text)
         self._cover_label.setToolTip(str(path) if path is not None else "")
 
@@ -366,7 +371,7 @@ class EventEditDialog(QDialog):
         self._cover_label.setEnabled(enabled)
         self._clear_cover_button.setEnabled(enabled and self._cover() is not None)
         if not enabled:
-            self._cover_label.setText("（待定）")
+            self._cover_label.setText(t("dialog.event.cover_pending"))
 
     def _clear_cover(self) -> None:
         """在面板里把封面收掉。**不立刻写库** —— 面板的规矩是一次编辑只写一次（ADR 0031），
@@ -389,7 +394,7 @@ class EventEditDialog(QDialog):
         line = QLineEdit()
         line.setMinimumWidth(FIELD_MIN_WIDTH)
         if field.multiple:
-            line.setPlaceholderText("多个用逗号分隔")
+            line.setPlaceholderText(t("dialog.event.multi_values"))
         if field.id in {"title", "started_on", *self._kind.title_parts}:
             # 名称自动长成「日期 · 关键字段」靠的就是这几栏互相看着（见 :meth:`_suggest_title`）。
             line.textChanged.connect(self._suggest_title)
@@ -404,7 +409,7 @@ class EventEditDialog(QDialog):
         column = QVBoxLayout()
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(4)
-        self._include_range = QCheckBox("把开始到结束之间的照片都记入")
+        self._include_range = QCheckBox(t("dialog.event.include_range"))
         self._include_range.setChecked(self._event is None)
         column.addWidget(self._include_range)
         return column
@@ -414,15 +419,15 @@ class EventEditDialog(QDialog):
         row.setContentsMargins(0, 2, 0, 0)
         if self._event is not None:
             # **只有编辑已有事件时才摆**：新建的那个还不存在，删了它没有对象。
-            delete = QPushButton("删除事件…")
+            delete = QPushButton(t("dialog.event.delete"))
             delete.setObjectName("eventEditDelete")
             delete.clicked.connect(lambda: self.done(DELETE_REQUESTED))
             row.addWidget(delete)
         row.addStretch(1)
-        cancel = QPushButton("取消")
+        cancel = QPushButton(t("dialog.cancel"))
         cancel.setObjectName("cancelButton")
         cancel.clicked.connect(self.reject)
-        save = QPushButton("保存")
+        save = QPushButton(t("dialog.save"))
         save.setObjectName("saveButton")
         save.setDefault(True)
         save.clicked.connect(self._on_accept)

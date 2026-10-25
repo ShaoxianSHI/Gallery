@@ -154,6 +154,7 @@ MESSAGES: Final[Mapping[str, Message]] = {
     ),
     "banner.album_cover.set": "已将「{photo}」设为「{album}」的封面。",
     "banner.album_cover.cleared": "「{album}」已恢复为使用第一张照片作封面。",
+    "banner.metadata.photo": "照片",
     "banner.metadata.none": "「{name}」的元数据未做改动。",
     "banner.metadata.journaled": "已更新「{name}」的{what}；⌘Z 可撤销。",
     "banner.metadata.not_journaled": "已更新「{name}」的{what}；未能记录操作日志，⌘Z 不可撤销。",

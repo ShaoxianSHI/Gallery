@@ -15,6 +15,7 @@ from pathlib import Path
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMenu
 
+from gallery.core.i18n import t
 from gallery.ui.window.menu_style import (
     CLOSE_KEY_HINT,
     OPEN_KEY_HINT,
@@ -237,7 +238,7 @@ def build_background_menu(actions: MenuActions) -> QMenu:
     menu.addSeparator()
     menu.addMenu(actions.group_menu(menu))
     menu.addMenu(actions.sort_menu(menu))
-    menu.addMenu(_submenu("缩略图大小", actions.size_choices))
+    menu.addMenu(_submenu(t("menu.thumbnail_size"), actions.size_choices))
     menu.addSeparator()
     menu.addAction(actions.up)
     return menu

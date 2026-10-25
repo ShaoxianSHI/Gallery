@@ -43,6 +43,7 @@ from gallery.core.backdrops import (
     palette_id,
 )
 from gallery.core.backdrops.generate import colorize, render_field
+from gallery.core.i18n import t
 from gallery.ui import imaging, theme
 from gallery.ui.dialogs.appearance import dialog_style
 from gallery.ui.layout import clear_layout
@@ -130,7 +131,7 @@ class BackdropGenerateDialog(QDialog):
         self._reset_chip: QPushButton | None = None
         self._watcher = theme.ensure_installed()
         self._watcher.changed.connect(self._apply_theme)
-        self.setWindowTitle("生成水墨背景")
+        self.setWindowTitle(t("dialog.backdrop.generate_title"))
         self.setModal(True)
         self.setMinimumWidth(MIN_WIDTH)
         self._build()
@@ -170,10 +171,7 @@ class BackdropGenerateDialog(QDialog):
         self._preview.setFixedSize(PREVIEW_SIZE)
         layout.addWidget(self._preview, 0, Qt.AlignmentFlag.AlignHCenter)
 
-        hint = QLabel(
-            "选择配色；双击色块可以编辑它的颜色，也可以删掉这一套。"
-            "「+」新增的配色与改过的预设都会保存下来。"
-        )
+        hint = QLabel(t("dialog.backdrop.palette_hint"))
         hint.setObjectName("backdropHint")
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -183,7 +181,7 @@ class BackdropGenerateDialog(QDialog):
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(8)
-        row.addWidget(QLabel("名称"))
+        row.addWidget(QLabel(t("dialog.name")))
         self._name_field = QLineEdit(name_suggestion(self._recipe, fallback=self._palette.title))
         self._name_field.setMaxLength(MAX_NAME_LENGTH)
         self._name_field.setObjectName("backdropName")
@@ -211,7 +209,7 @@ class BackdropGenerateDialog(QDialog):
         self._add_chip.setFixedSize(CHIP_SIZE)
         self._add_chip.setCursor(Qt.CursorShape.PointingHandCursor)
         self._add_chip.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._add_chip.setToolTip("新增一套配色")
+        self._add_chip.setToolTip(t("dialog.backdrop.add_palette"))
         self._add_chip.clicked.connect(self._add_palette)
         for index, palette in enumerate(self._palettes):
             row.addWidget(self._new_chip(index, palette))
@@ -222,11 +220,11 @@ class BackdropGenerateDialog(QDialog):
     def _build_palette_actions(self) -> QHBoxLayout:
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
-        self._reset_chip = QPushButton("恢复预设配色")
+        self._reset_chip = QPushButton(t("dialog.backdrop.reset_palettes"))
         self._reset_chip.setObjectName("backdropReset")
         self._reset_chip.setCursor(Qt.CursorShape.PointingHandCursor)
         self._reset_chip.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._reset_chip.setToolTip("把八套预设恢复成原样；「+」新增的配色不受影响")
+        self._reset_chip.setToolTip(t("dialog.backdrop.reset_palettes_tip"))
         self._reset_chip.clicked.connect(self._restore_presets)
         self._reset_chip.setEnabled(False)
         row.addWidget(self._reset_chip, 0, Qt.AlignmentFlag.AlignLeft)
@@ -264,26 +262,26 @@ class BackdropGenerateDialog(QDialog):
 
     def _sync_chip(self, index: int, chip: _PaletteChip) -> None:
         palette = self._palettes[index]
-        chip.setToolTip(f"{palette.title}（双击可编辑颜色）")
+        chip.setToolTip(t("dialog.backdrop.chip_tip", title=palette.title))
         chip.setStyleSheet(_chip_style([color for _, color in palette.colors]))
 
     def _build_buttons(self) -> QHBoxLayout:
         row = QHBoxLayout()
         row.setContentsMargins(0, 2, 0, 0)
-        reroll = QPushButton("换一张")
+        reroll = QPushButton(t("dialog.backdrop.reroll"))
         reroll.setObjectName("backdropReroll")
         reroll.clicked.connect(self._reroll)
         row.addWidget(reroll)
         row.addStretch(1)
-        close = QPushButton("关闭")
+        close = QPushButton(t("dialog.close"))
         close.setObjectName("cancelButton")
         close.clicked.connect(self.reject)
         row.addWidget(close)
-        save = QPushButton("保存")
+        save = QPushButton(t("dialog.save"))
         save.setObjectName("saveButton")
         save.clicked.connect(lambda: self._finish("save"))
         row.addWidget(save)
-        for outcome, label in (("light", "设为浅色"), ("dark", "设为深色")):
+        for outcome, label in (("light", t("dialog.light")), ("dark", t("dialog.dark"))):
             button = QPushButton(label)
             button.setObjectName(f"backdrop{outcome.title()}")
             button.clicked.connect(lambda _checked=False, value=outcome: self._finish(value))
@@ -311,7 +309,7 @@ class BackdropGenerateDialog(QDialog):
         colours = [color for _, color in palette.colors]
         dialog = BackdropPaletteDialog(
             self,
-            title=f"编辑颜色 · {palette.title}",
+            title=t("dialog.backdrop.edit_title", title=palette.title),
             colours=colours,
             can_delete=len(self._rows) > 1,
         )
@@ -353,12 +351,14 @@ class BackdropGenerateDialog(QDialog):
         starter = palette_from_color("#8ea8bf")
         dialog = BackdropPaletteDialog(
             self,
-            title="新增配色",
+            title=t("dialog.backdrop.new_palette"),
             colours=[color for _, color in starter.colors],
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        palette = palette_from_colors(dialog.colours(), title=self._free_title("自定义"))
+        palette = palette_from_colors(
+            dialog.colours(), title=self._free_title(t("dialog.backdrop.custom"))
+        )
         self._rows.append(_Row(palette_id(), PALETTE_CUSTOM, palette))
         chip = self._new_chip(len(self._rows) - 1, palette)
         self._palette_row.insertWidget(self._palette_row.indexOf(self._add_chip), chip)
@@ -403,9 +403,9 @@ class BackdropGenerateDialog(QDialog):
         at_limit = self._custom_count() >= MAX_ADDED_PALETTES
         self._add_chip.setEnabled(not at_limit)
         self._add_chip.setToolTip(
-            f"最多新增 {MAX_ADDED_PALETTES} 套配色（删掉一套自己的可以再添）"
+            t("dialog.backdrop.palette_limit", count=MAX_ADDED_PALETTES)
             if at_limit
-            else "新增一套配色"
+            else t("dialog.backdrop.add_palette")
         )
 
     def _sync_reset_button(self) -> None:
@@ -422,7 +422,7 @@ class BackdropGenerateDialog(QDialog):
 
     def _finish(self, outcome: str) -> None:
         if not self.name():
-            self._error.setText("请为这张背景填写名称。")
+            self._error.setText(t("dialog.backdrop.name_required"))
             self._error.show()
             self._name_field.setFocus()
             return
@@ -509,7 +509,7 @@ class BackdropPaletteDialog(QDialog):
         layout.setContentsMargins(16, 14, 16, 12)
         layout.setSpacing(10)
 
-        hint = QLabel("从上到下就是从浅到深的次序；至少两个颜色，点色块可以换色。")
+        hint = QLabel(t("dialog.backdrop.palette_colors_hint"))
         hint.setObjectName("paletteHint")
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -519,7 +519,7 @@ class BackdropPaletteDialog(QDialog):
         self._rows_box.setSpacing(6)
         layout.addLayout(self._rows_box)
 
-        self._add_button = QPushButton("添加颜色…")
+        self._add_button = QPushButton(t("dialog.backdrop.add_color"))
         self._add_button.setObjectName("paletteAdd")
         self._add_button.clicked.connect(self._add_colour)
         layout.addWidget(self._add_button, 0, Qt.AlignmentFlag.AlignLeft)
@@ -531,17 +531,17 @@ class BackdropPaletteDialog(QDialog):
         row = QHBoxLayout()
         row.setContentsMargins(0, 2, 0, 0)
         if self._can_delete:
-            remove = QPushButton("删除这套配色")
+            remove = QPushButton(t("dialog.backdrop.delete_palette"))
             remove.setObjectName("paletteDelete")
-            remove.setToolTip("删掉这一套配色；已经保存的背景图不受影响")
+            remove.setToolTip(t("dialog.backdrop.delete_palette_tip"))
             remove.clicked.connect(self._delete_palette)
             row.addWidget(remove)
         row.addStretch(1)
-        cancel = QPushButton("取消")
+        cancel = QPushButton(t("dialog.cancel"))
         cancel.setObjectName("cancelButton")
         cancel.clicked.connect(self.reject)
         row.addWidget(cancel)
-        save = QPushButton("保存")
+        save = QPushButton(t("dialog.save"))
         save.setObjectName("saveButton")
         save.setDefault(True)
         save.clicked.connect(self.accept)
@@ -559,11 +559,11 @@ class BackdropPaletteDialog(QDialog):
             swatch.setObjectName("paletteSwatch")
             swatch.setFixedHeight(SWATCH_HEIGHT)
             swatch.setCursor(Qt.CursorShape.PointingHandCursor)
-            swatch.setToolTip(f"{colour}（点击换色）")
+            swatch.setToolTip(t("dialog.backdrop.colour_swatch_tip", colour=colour))
             swatch.setStyleSheet(_chip_style([colour]))
             swatch.clicked.connect(lambda _checked=False, item=index: self._change_colour(item))
             row.addWidget(swatch, 1)
-            remove = QPushButton("移除")
+            remove = QPushButton(t("dialog.remove"))
             remove.setObjectName("paletteRemove")
             remove.setEnabled(len(self._colours) > MIN_PALETTE_COLOURS)
             remove.clicked.connect(lambda _checked=False, item=index: self._remove_colour(item))
@@ -574,7 +574,9 @@ class BackdropPaletteDialog(QDialog):
     # ---- 增删改 ------------------------------------------------------------
 
     def _change_colour(self, index: int) -> None:
-        chosen = QColorDialog.getColor(QColor(self._colours[index]), self, "配色里的颜色")
+        chosen = QColorDialog.getColor(
+            QColor(self._colours[index]), self, t("dialog.backdrop.colour_dialog_title")
+        )
         if not chosen.isValid():
             return
         self._colours[index] = chosen.name()
@@ -583,7 +585,9 @@ class BackdropPaletteDialog(QDialog):
     def _add_colour(self) -> None:
         if len(self._colours) >= MAX_PALETTE_COLOURS:
             return
-        chosen = QColorDialog.getColor(QColor(self._colours[-1]), self, "加一个颜色")
+        chosen = QColorDialog.getColor(
+            QColor(self._colours[-1]), self, t("dialog.backdrop.add_colour_title")
+        )
         if not chosen.isValid():
             return
         self._colours.append(chosen.name())
@@ -619,14 +623,14 @@ class BackdropNameDialog(QDialog):
     def __init__(self, parent: QWidget | None, *, default_name: str) -> None:
         super().__init__(parent)
         self._outcome = ""
-        self.setWindowTitle("使用照片背景")
+        self.setWindowTitle(t("dialog.backdrop.photo_title"))
         self.setModal(True)
         self.setMinimumWidth(420)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 14, 16, 12)
         layout.setSpacing(10)
 
-        hint = QLabel("照片将复制一份到 Gallery 缓存，原文件不变。")
+        hint = QLabel(t("dialog.backdrop.photo_hint"))
         hint.setObjectName("backdropHint")
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -634,7 +638,7 @@ class BackdropNameDialog(QDialog):
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(8)
-        row.addWidget(QLabel("名称"))
+        row.addWidget(QLabel(t("dialog.name")))
         self._name_field = QLineEdit(default_name[:MAX_NAME_LENGTH])
         self._name_field.setMaxLength(MAX_NAME_LENGTH)
         row.addWidget(self._name_field, 1)
@@ -642,15 +646,15 @@ class BackdropNameDialog(QDialog):
 
         buttons = QHBoxLayout()
         buttons.addStretch(1)
-        cancel = QPushButton("取消")
+        cancel = QPushButton(t("dialog.cancel"))
         cancel.setObjectName("cancelButton")
         cancel.clicked.connect(self.reject)
         buttons.addWidget(cancel)
-        save = QPushButton("仅保存")
+        save = QPushButton(t("dialog.backdrop.save_only"))
         save.setObjectName("saveButton")
         save.clicked.connect(lambda: self._finish("save"))
         buttons.addWidget(save)
-        for outcome, label in (("light", "设为浅色"), ("dark", "设为深色")):
+        for outcome, label in (("light", t("dialog.light")), ("dark", t("dialog.dark"))):
             button = QPushButton(label)
             button.clicked.connect(lambda _checked=False, value=outcome: self._finish(value))
             buttons.addWidget(button)
@@ -679,7 +683,7 @@ class BackdropManageDialog(QDialog):
         self._original: dict[str, str] = dict(items)
         self._removed: list[str] = []
         self._filling = False
-        self.setWindowTitle("管理背景")
+        self.setWindowTitle(t("dialog.backdrop.manage_title"))
         self.setModal(True)
         self.setMinimumWidth(MANAGE_MIN_WIDTH)
         self._watcher = theme.ensure_installed()
@@ -705,10 +709,7 @@ class BackdropManageDialog(QDialog):
         layout.setContentsMargins(16, 14, 16, 12)
         layout.setSpacing(10)
 
-        hint = QLabel(
-            "改名与删除只作用于 Gallery 缓存中的副本，原照片不变；"
-            "点「完成」后生效，取消则不保存任何改动。"
-        )
+        hint = QLabel(t("dialog.backdrop.manage_hint"))
         hint.setObjectName("backdropHint")
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -730,16 +731,16 @@ class BackdropManageDialog(QDialog):
         row = QHBoxLayout()
         row.setContentsMargins(0, 2, 0, 0)
         row.setSpacing(8)
-        rename = QPushButton("重命名…")
+        rename = QPushButton(t("dialog.rename"))
         rename.setObjectName("backdropRename")
         rename.clicked.connect(self._rename)
-        remove = QPushButton("删除")
+        remove = QPushButton(t("dialog.delete"))
         remove.setObjectName("backdropRemove")
         remove.clicked.connect(self._delete)
         row.addWidget(rename)
         row.addWidget(remove)
         row.addStretch(1)
-        done = QPushButton("完成")
+        done = QPushButton(t("dialog.done"))
         done.setObjectName("saveButton")
         done.setDefault(True)
         done.clicked.connect(self.accept)
@@ -767,7 +768,7 @@ class BackdropManageDialog(QDialog):
         """删光之后留一行说明，而不是一个空白的框。"""
         if self._list.count():
             return
-        placeholder = QListWidgetItem("暂无已保存的背景图")
+        placeholder = QListWidgetItem(t("dialog.backdrop.empty"))
         placeholder.setFlags(Qt.ItemFlag.NoItemFlags)
         self._list.addItem(placeholder)
 

@@ -185,6 +185,7 @@ MESSAGES: Final[Mapping[str, Message]] = {
     ),
     "banner.album_cover.set": "Set “{photo}” as the cover of “{album}”.",
     "banner.album_cover.cleared": "“{album}” uses its first photo as the cover again.",
+    "banner.metadata.photo": "photo",
     "banner.metadata.none": "The metadata of “{name}” was left unchanged.",
     "banner.metadata.journaled": "Updated the {what} of “{name}”; ⌘Z can undo this.",
     "banner.metadata.not_journaled": (

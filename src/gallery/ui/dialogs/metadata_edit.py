@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from gallery.core.i18n import t
 from gallery.core.metadata.capture_time import CaptureTimeEdit
 from gallery.core.metadata.exif import normalize_capture_time, normalize_offset
 from gallery.core.metadata.metadata_edit import MetadataEdit, MetadataState
@@ -116,7 +117,7 @@ class MetadataEditDialog(QDialog):
         #: 上一次查过之后，两侧各自是什么 —— 只有真变了才再去查。
         self._seen_names: tuple[str, str, str] = ("", "", "")
         self._seen_coordinates: tuple[float | None, float | None] = (None, None)
-        self.setWindowTitle("编辑元数据")
+        self.setWindowTitle(t("dialog.metadata.title"))
         self.setModal(True)
         self._theme_watcher = theme.ensure_installed()
         self._theme_watcher.changed.connect(self._apply_theme)
@@ -132,7 +133,11 @@ class MetadataEditDialog(QDialog):
         # 不能改变大小：用户拖一下窗口边就该是同样大小。
         layout.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
 
-        title = QLabel(f"编辑「{photo_name}」的元数据" if photo_name else "编辑元数据")
+        title = QLabel(
+            t("dialog.metadata.title_named", name=photo_name)
+            if photo_name
+            else t("dialog.metadata.title")
+        )
         title.setObjectName("metadataEditTitle")
         layout.addWidget(title)
 
@@ -148,19 +153,19 @@ class MetadataEditDialog(QDialog):
         # ---- 拍摄时间（ADR 0032）：最上面两栏 ------------------------------
         # 下面不摆小字提示：标签已经写着「拍摄时间」「时区」，改自己的照片不需要被先教育一遍。
         self._taken_at = QLineEdit(_display_time(state.capture.taken_at))
-        form.addRow("拍摄时间", self._taken_at)
+        form.addRow(t("dialog.metadata.capture_time"), self._taken_at)
         self._offset = QLineEdit(state.capture.offset or "")
-        form.addRow("时区", self._offset)
+        form.addRow(t("dialog.metadata.timezone"), self._offset)
 
         self._country = QLineEdit(state.place.country or "")
         self._country.setObjectName("country")
         self._country.textChanged.connect(self._on_names_changed)
-        form.addRow("国家", self._country)
+        form.addRow(t("dialog.metadata.country"), self._country)
 
         self._region = QLineEdit(state.place.region or "")
         self._region.setObjectName("region")
         self._region.textChanged.connect(self._on_names_changed)
-        form.addRow("省 / 州", self._region)
+        form.addRow(t("dialog.metadata.region"), self._region)
 
         # 普通的输入框而不是下拉：城市库里没有的名字（门牌、景区）恰恰是最该能填进去的。
         self._city = QLineEdit(state.place.city or "")
@@ -174,17 +179,17 @@ class MetadataEditDialog(QDialog):
         self._candidate_model = QStringListModel(self)
         self._city.setCompleter(self._completer)
         self._completer.activated[str].connect(self._on_picked)
-        form.addRow("城市", self._city)
+        form.addRow(t("dialog.metadata.city"), self._city)
 
         coordinates = state.place.coordinates()
         self._latitude = QLineEdit(_format(coordinates[0] if coordinates else None))
         self._latitude.setObjectName("latitude")
         self._latitude.textChanged.connect(self._on_coordinates_changed)
-        form.addRow("纬度", self._latitude)
+        form.addRow(t("dialog.metadata.latitude"), self._latitude)
         self._longitude = QLineEdit(_format(coordinates[1] if coordinates else None))
         self._longitude.setObjectName("longitude")
         self._longitude.textChanged.connect(self._on_coordinates_changed)
-        form.addRow("经度", self._longitude)
+        form.addRow(t("dialog.metadata.longitude"), self._longitude)
         layout.addLayout(form)
 
         # 报错那一行在按钮上面：它说的是上面哪个框不对，放在那儿才找得回去。
@@ -198,7 +203,7 @@ class MetadataEditDialog(QDialog):
 
         # ⌘W 关闭：不挂这一条的话它会一路走到主窗口，在模态对话框里关掉整个窗口。
         # 显式写出来而不写 ``StandardKey.Close`` —— Qt 在 macOS 上把后者解析成 ⌘F4。
-        close_action = QAction("关闭", self)
+        close_action = QAction(t("dialog.close"), self)
         close_action.setShortcut(QKeySequence("Ctrl+W"))
         close_action.triggered.connect(self.reject)
         self.addAction(close_action)
@@ -234,17 +239,11 @@ class MetadataEditDialog(QDialog):
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(6)
 
-        self._names_to_coordinates_button = QPushButton("地点 → 经纬度")
-        self._names_to_coordinates_button.setToolTip(
-            "按城市框中的名称，从城市库查出该市的省、国家与坐标并填入其余字段"
-            "（城市库未收录的层级将被清空）。"
-        )
+        self._names_to_coordinates_button = QPushButton(t("dialog.metadata.names_to_coordinates"))
+        self._names_to_coordinates_button.setToolTip(t("dialog.metadata.names_to_coordinates_hint"))
         self._names_to_coordinates_button.clicked.connect(self._on_names_to_coordinates)
-        self._coordinates_to_names_button = QPushButton("经纬度 → 地点")
-        self._coordinates_to_names_button.setToolTip(
-            "按下方两个坐标框中的位置，从城市库查出最近的城市并填入上方三个地名框"
-            "（城市库未收录的层级将被清空，例如直辖市没有省级行政区）。"
-        )
+        self._coordinates_to_names_button = QPushButton(t("dialog.metadata.coordinates_to_names"))
+        self._coordinates_to_names_button.setToolTip(t("dialog.metadata.coordinates_to_names_hint"))
         self._coordinates_to_names_button.clicked.connect(self._on_coordinates_to_names)
 
         for button in (self._names_to_coordinates_button, self._coordinates_to_names_button):
@@ -259,28 +258,28 @@ class MetadataEditDialog(QDialog):
         grid.setHorizontalSpacing(6)
         grid.setVerticalSpacing(6)
 
-        self._copy_button = QPushButton("复制")
+        self._copy_button = QPushButton(t("dialog.metadata.copy"))
         self._copy_button.clicked.connect(self._on_copy)
-        self._copy_time_button = QPushButton("复制时间")
+        self._copy_time_button = QPushButton(t("dialog.metadata.copy_time"))
         self._copy_time_button.clicked.connect(self._on_copy_time)
-        self._copy_place_button = QPushButton("复制位置")
+        self._copy_place_button = QPushButton(t("dialog.metadata.copy_place"))
         self._copy_place_button.clicked.connect(self._on_copy_place)
 
-        self._paste_button = QPushButton("粘贴")
+        self._paste_button = QPushButton(t("dialog.metadata.paste"))
         self._paste_button.clicked.connect(self._on_paste)
-        self._paste_time_button = QPushButton("粘贴时间")
+        self._paste_time_button = QPushButton(t("dialog.metadata.paste_time"))
         self._paste_time_button.clicked.connect(self._on_paste_time)
-        self._paste_place_button = QPushButton("粘贴位置")
+        self._paste_place_button = QPushButton(t("dialog.metadata.paste_place"))
         self._paste_place_button.clicked.connect(self._on_paste_place)
 
         # 第三行三个动作：清空只清位置，拍摄时间不该被它顺手删掉。
-        self._clear_button = QPushButton("清空位置")
+        self._clear_button = QPushButton(t("dialog.metadata.clear_place"))
         self._clear_button.clicked.connect(self._on_clear)
 
-        cancel = QPushButton("取消")
+        cancel = QPushButton(t("dialog.cancel"))
         cancel.setObjectName("cancelButton")
         cancel.clicked.connect(self.reject)
-        save = QPushButton("保存")
+        save = QPushButton(t("dialog.save"))
         save.setObjectName("saveButton")
         save.clicked.connect(self._on_accept)
         save.setDefault(True)
@@ -332,7 +331,7 @@ class MetadataEditDialog(QDialog):
         self._error.clear()
         city, region, country = self._names()
         if self._resolver is None or len(city) < MIN_LOOKUP_LENGTH:
-            self._error.setText("请先填写城市：城市库按市名查询。")
+            self._error.setText(t("dialog.metadata.error.city_required"))
             return
         found = self._resolver.place_named(city, region=region or None, country=country or None)
         if not found and (region or country):
@@ -340,7 +339,7 @@ class MetadataEditDialog(QDialog):
             # 敲一个「苏州」进去），按那个过期范围查当然查不到。
             found = self._resolver.place_named(city)
         if not found:
-            self._error.setText(f"城市库里没有「{city}」，省与国家、坐标都保持原样。")
+            self._error.setText(t("dialog.metadata.error.city_not_found", city=city))
             return
         place = found[0]
         self._programmatic = True
@@ -364,11 +363,11 @@ class MetadataEditDialog(QDialog):
         self._error.clear()
         latitude, longitude = self._coordinates()
         if self._resolver is None or latitude is None or longitude is None:
-            self._error.setText("请先填写经纬度，两项均必填。")
+            self._error.setText(t("dialog.metadata.error.coordinates_required"))
             return
         place = self._resolver.place_for(latitude, longitude)
         if place is None:
-            self._error.setText("附近没有城市记录，地名未做改动。")
+            self._error.setText(t("dialog.metadata.error.no_nearby_city"))
             return
         self._programmatic = True
         try:
@@ -467,17 +466,17 @@ class MetadataEditDialog(QDialog):
             place_only=place_only,
         )
         if not text:
-            self._error.setText("这张照片没有可复制的内容。")
+            self._error.setText(t("dialog.metadata.error.nothing_to_copy"))
             return
         self._error.clear()
         QGuiApplication.clipboard().setText(text)
-        button.setText("已复制")
+        button.setText(t("dialog.metadata.copied"))
         self._copy_timer.start(COPIED_HINT_MS)
 
     def _restore_copy_labels(self) -> None:
-        self._copy_button.setText("复制")
-        self._copy_time_button.setText("复制时间")
-        self._copy_place_button.setText("复制位置")
+        self._copy_button.setText(t("dialog.metadata.copy"))
+        self._copy_time_button.setText(t("dialog.metadata.copy_time"))
+        self._copy_place_button.setText(t("dialog.metadata.copy_place"))
 
     def _on_paste(self) -> None:
         self._paste(time_only=False, place_only=False)
@@ -495,7 +494,7 @@ class MetadataEditDialog(QDialog):
         """
         parsed = _parse_clipboard(QGuiApplication.clipboard().text())
         if parsed is None:
-            self._error.setText("剪贴板中没有可用的内容。")
+            self._error.setText(t("dialog.metadata.error.clipboard_empty"))
             return
         if not self._apply_parsed(parsed, time_only=time_only, place_only=place_only):
             return
@@ -510,10 +509,10 @@ class MetadataEditDialog(QDialog):
         wants_time = not place_only
         wants_place = not time_only
         if wants_time and not wants_place and parsed.capture is None:
-            self._error.setText("剪贴板中没有可用的拍摄时间。")
+            self._error.setText(t("dialog.metadata.error.clipboard_no_time"))
             return False
         if wants_place and not wants_time and parsed.coordinates is None and not parsed.names:
-            self._error.setText("剪贴板中没有可用的位置。")
+            self._error.setText(t("dialog.metadata.error.clipboard_no_place"))
             return False
         self._programmatic = True
         try:
@@ -767,7 +766,7 @@ def _capture_time_problem(text: str) -> str | None:
     stripped = text.strip()
     if not stripped or normalize_capture_time(stripped) is not None:
         return None
-    return f"无法识别拍摄时间「{stripped}」。请使用 2024-05-16 20:52:02 格式，秒可省略。"
+    return t("dialog.metadata.error.bad_time", text=stripped)
 
 
 def _offset_problem(text: str) -> str | None:
@@ -775,21 +774,24 @@ def _offset_problem(text: str) -> str | None:
     stripped = text.strip()
     if not stripped or normalize_offset(stripped) is not None:
         return None
-    return f"无法识别时区「{stripped}」。请使用 +08:00 或 -05:00 格式；留空表示不记录时区。"
+    return t("dialog.metadata.error.bad_timezone", text=stripped)
 
 
 def _coordinate_problem(latitude: str, longitude: str) -> str | None:
     """两个框里有一处不对就说清楚是哪一处。**不弹框**：对话框里那行红字就够。"""
-    for label, text, limit in (("纬度", latitude, 90.0), ("经度", longitude, 180.0)):
+    for label, text, limit in (
+        (t("dialog.metadata.latitude"), latitude, 90.0),
+        (t("dialog.metadata.longitude"), longitude, 180.0),
+    ):
         if not text.strip():
             continue
         value = _parse(text)
         if value is None:
-            return f"{label}不是有效数字「{text.strip()}」。请填十进制度，例如 30.27415。"
+            return t("dialog.metadata.error.not_a_number", label=label, text=text.strip())
         if abs(value) > limit:
-            return f"{label}超出范围（{limit}）：填入 {value}。"
+            return t("dialog.metadata.error.out_of_range", label=label, limit=limit, value=value)
     if bool(latitude.strip()) != bool(longitude.strip()):
-        return "经度与纬度需同时填写：只填一项无法确定位置。"
+        return t("dialog.metadata.error.coordinates_pair")
     return None
 
 

@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from gallery.core.i18n import t
 from gallery.ui import theme
 from gallery.ui.outline import opaque_over
 from gallery.ui.theme import AppTheme, rgba
@@ -238,7 +239,7 @@ class ExternalOrderDialog(QDialog):
         self._pages = tuple(pages)
         self._lists: dict[str, QListWidget] = {}
         self._reset_buttons: dict[str, QPushButton] = {}
-        self.setWindowTitle("外部应用顺序")
+        self.setWindowTitle(t("dialog.order.title"))
         self.setModal(True)
         self._watcher = theme.ensure_installed()
         self._watcher.changed.connect(self._apply_theme)
@@ -264,7 +265,7 @@ class ExternalOrderDialog(QDialog):
         layout.setContentsMargins(16, 14, 16, 12)
         layout.setSpacing(10)
 
-        hint = QLabel("拖动调整先后；排在第一项的应用显示在按钮左半。")
+        hint = QLabel(t("dialog.order.hint"))
         hint.setObjectName("externalOrderHint")
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -279,7 +280,7 @@ class ExternalOrderDialog(QDialog):
         layout.addLayout(self._build_buttons())
 
         # ⌘W 关闭：不挂这一条的话它会一路走到主窗口，在模态对话框里关掉整个窗口。
-        close_action = QAction("关闭", self)
+        close_action = QAction(t("dialog.close"), self)
         close_action.setShortcut(QKeySequence("Ctrl+W"))
         close_action.triggered.connect(self.reject)
         self.addAction(close_action)
@@ -299,7 +300,7 @@ class ExternalOrderDialog(QDialog):
         self._lists[page.page] = listing
         layout.addWidget(listing)
 
-        reset = QPushButton("恢复这一页的默认顺序")
+        reset = QPushButton(t("dialog.order.reset"))
         reset.setObjectName("externalOrderReset")
         reset.clicked.connect(
             lambda _checked=False, target=page.page: self._restore_default(target)
@@ -316,10 +317,10 @@ class ExternalOrderDialog(QDialog):
         row = QHBoxLayout()
         row.setContentsMargins(0, 2, 0, 0)
         row.addStretch(1)
-        cancel = QPushButton("取消")
+        cancel = QPushButton(t("dialog.cancel"))
         cancel.setObjectName("cancelButton")
         cancel.clicked.connect(self.reject)
-        save = QPushButton("保存")
+        save = QPushButton(t("dialog.save"))
         save.setObjectName("saveButton")
         save.setDefault(True)
         save.clicked.connect(self.accept)

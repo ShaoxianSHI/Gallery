@@ -423,7 +423,7 @@ def undo_banner(result: UndoResult) -> str:
         # 用户会以为照片已经整个回到刚才那样了。
         if result.failures:
             return t_plural("banner.undo.partial", len(result.failures), note=note)
-        name = result.entries[0].name if result.entries else "照片"
+        name = result.entries[0].name if result.entries else t("banner.metadata.photo")
         return t("banner.undo.metadata", name=name, note=note)
     if result.action == ACTION_RENAME:
         return t("banner.undo.rename", name=result.entries[0].name, note=note)
