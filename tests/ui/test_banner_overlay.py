@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Callable
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -22,13 +23,15 @@ import pytest  # noqa: E402
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QRect, QSize  # noqa: E402
-from PySide6.QtGui import QColor, QFontMetrics, QImage  # noqa: E402
+from PySide6.QtGui import QColor, QFontMetrics, QImage, QPainter, QPaintEvent  # noqa: E402
 from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
 from gallery.ui import theme  # noqa: E402
 from gallery.ui.viewer.metadata import PANEL_WIDTH  # noqa: E402
 from gallery.ui.window.widgets.banner_overlay import (  # noqa: E402
     AUTO_HIDE_SECONDS,
+    FILL_RGB,
+    FILL_SHARE,
     MARGIN_TOP,
     MAX_WIDTH,
     MIN_AVOID_WIDTH,
@@ -36,6 +39,7 @@ from gallery.ui.window.widgets.banner_overlay import (  # noqa: E402
     banner_rect,
     banner_width,
     text_height,
+    tinted,
 )
 
 #: 算术测试用的那一块「内容区」。
@@ -43,6 +47,23 @@ AREA = QRect(0, 100, 1200, 700)
 
 #: 大图页上摆着元数据面板时的那一块（**与内容区同一套坐标** —— 两者都量在窗口上）。
 PANEL = QRect(900, 0, PANEL_WIDTH, 800)
+
+#: macOS 深浅两套系统色，与 ``tests/ui/test_theme.py`` 那份同源：底是 ``Base``，字是
+#: ``WindowText``。横幅的底色与字色就是从这两个角色算出来的，所以两套都得量。
+LIGHT_BACKGROUND = QColor(0xFF, 0xFF, 0xFF)
+DARK_BACKGROUND = QColor(0x17, 0x17, 0x17)
+LIGHT_TEXT = QColor(0x1A, 0x1A, 0x1A)
+DARK_TEXT = QColor(0xEC, 0xEC, 0xEE)
+APPEARANCES = [
+    pytest.param(LIGHT_BACKGROUND, LIGHT_TEXT, id="light"),
+    pytest.param(DARK_BACKGROUND, DARK_TEXT, id="dark"),
+]
+
+#: WCAG AA 对正文的对比度下限。
+MIN_CONTRAST = 4.5
+
+#: 样式表里 ``rgba(r, g, b, a)`` 那一种写法。
+RGBA = re.compile(r"rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)")
 
 
 # ---- 1. 算术 ----------------------------------------------------------------
@@ -160,6 +181,75 @@ def test_a_panel_that_is_not_there_changes_nothing() -> None:
     assert banner_width(area, avoid=QRect(1400, 0, 300, 800)) == banner_width(area)
 
 
+# ---- 1c. 实色底 -------------------------------------------------------------
+
+
+def _declared_colors(sheet: str) -> tuple[QColor, QColor, QColor]:
+    """样式表里那三个颜色，按写进去的顺序：底、边框、字。"""
+    colors: list[QColor] = []
+    for match in RGBA.finditer(sheet):
+        color = QColor(*(int(part) for part in match.groups()[:3]))
+        color.setAlphaF(float(match.group(4)))
+        colors.append(color)
+    assert len(colors) == 3, f"样式表里的颜色不止这三个：{sheet}"
+    return colors[0], colors[1], colors[2]
+
+
+def _luminance(color: QColor) -> float:
+    def channel(value: int) -> float:
+        level = value / 255
+        return level / 12.92 if level <= 0.04045 else ((level + 0.055) / 1.055) ** 2.4
+
+    return (
+        0.2126 * channel(color.red())
+        + 0.7152 * channel(color.green())
+        + 0.0722 * channel(color.blue())
+    )
+
+
+def _contrast(first: QColor, second: QColor) -> float:
+    """两个颜色之间的对比度（WCAG 那一条算式）。"""
+    high, low = sorted((_luminance(first), _luminance(second)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
+def test_the_stylesheet_asks_for_no_transparency(qt_app: QApplication) -> None:
+    """写进样式表的底、边框、字都是实色 —— 留着 alpha 就等于让底下那张照片掺进来。"""
+    fill, edge, text = _declared_colors(BannerOverlay().styleSheet())
+    assert fill.alpha() == 255
+    assert edge.alpha() == 255
+    assert text.alpha() == 255
+
+
+def test_the_flat_colour_is_the_old_one_laid_on_the_background() -> None:
+    """实底取的是「同一个比例铺在主题底色上」—— 从前那一片橙的观感没换。
+
+    浅色下是那片淡奶白，深色下是那片深棕，两者的分量都锁定在这里：改了比例就是在改用户
+    每天看到的那对橙色，那该是一次有意的改动。
+    """
+    light = tinted(LIGHT_BACKGROUND, FILL_RGB, FILL_SHARE)
+    dark = tinted(DARK_BACKGROUND, FILL_RGB, FILL_SHARE)
+    assert light.alpha() == 255 and dark.alpha() == 255
+    assert (light.red(), light.green(), light.blue()) == (255, 242, 219)
+    assert (dark.red(), dark.green(), dark.blue()) == (60, 47, 24)
+
+
+@pytest.mark.parametrize(("background", "text"), APPEARANCES)
+def test_the_words_are_far_enough_from_the_flat_colour(background: QColor, text: QColor) -> None:
+    """深浅两套主题下，正文色对这块实底的对比度都够读（WCAG AA）。
+
+    底色跟着照片走、字色只跟着主题走时，这两个变量会各自落到一头去；实底之后这一对由
+    主题算出来，这条守住「算出来之后也够远」。
+    """
+    assert _contrast(tinted(background, FILL_RGB, FILL_SHARE), text) >= MIN_CONTRAST
+
+
+def test_the_css_colour_is_readable_on_the_theme_it_runs_on(qt_app: QApplication) -> None:
+    """上面那两条用的是平台色；这一条量的是控件**此刻真的写进去**的那一对。"""
+    fill, _, text = _declared_colors(BannerOverlay().styleSheet())
+    assert _contrast(fill, text) >= MIN_CONTRAST
+
+
 # ---- 2. 控件 ----------------------------------------------------------------
 
 
@@ -250,23 +340,24 @@ def test_opening_the_thing_it_avoids_shortens_it_in_place(
 def _columns_with_ink(image: QImage) -> tuple[int, int]:
     """图里带字的列，最左与最右各是哪一列。
 
-    判据是「这一列里有没有一个像素**足够接近字色**」—— 不去猜底色是什么（它跟着主题，
-    还掺了 16% 的橙），于是浅色深色两套主题下都是同一份判法。
+    判据是「这一列里有没有一个像素明显**不同于横幅自己的底色**」。不按「离字色有多近」判：
+    抗锯齿的边是字色与底色的混合，离纯字色可以很远，于是细笔画那一端会整列漏掉、首尾不对称。
+    底与边框的差远小于字与底的差（外层两行边框因此不算），深浅两套主题都是同一份判法。
     """
-    text = theme.current_theme().text
+    # 左内边距里那一块：越过边框，离第一个字还远。
+    background = image.pixelColor(6, image.height() // 2)
 
-    def distance(color: QColor) -> int:
+    def distance(color: QColor) -> float:
         return (
-            (color.red() - text.red()) ** 2
-            + (color.green() - text.green()) ** 2
-            + (color.blue() - text.blue()) ** 2
-        )
+            (color.red() - background.red()) ** 2
+            + (color.green() - background.green()) ** 2
+            + (color.blue() - background.blue()) ** 2
+        ) ** 0.5
 
-    limit = 60**2
     columns = [
         x
         for x in range(image.width())
-        if min(distance(image.pixelColor(x, y)) for y in range(image.height())) < limit
+        if max(distance(image.pixelColor(x, y)) for y in range(1, image.height() - 1)) > 100
     ]
     return (columns[0], columns[-1]) if columns else (-1, -1)
 
@@ -291,6 +382,57 @@ def test_the_words_sit_in_the_middle_of_the_banner(qt_app: QApplication, host: Q
     slack = max(4, width // 40)
     assert abs(left - (width - 1 - right)) <= slack, (
         f"字没有居中：左 {left} / 右 {width - 1 - right}（横幅宽 {width}）"
+    )
+
+
+# ---- 2b. 压在照片上 ----------------------------------------------------------
+
+
+class _Backdrop(QWidget):
+    """一块自己刷成纯色的底：横幅压在照片上，这里用深 / 浅两块代替照片。"""
+
+    def __init__(self, color: QColor) -> None:
+        super().__init__()
+        self._color = color
+        self.resize(1200, 800)
+
+    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), self._color)
+
+
+def _fill_over(qt_app: QApplication, photo: QColor) -> QColor:
+    """把横幅摆在 ``photo`` 那么一块底的上面，取一个只剩底色、还没有字的像素。"""
+    host = _Backdrop(photo)
+    host.show()
+    banner = BannerOverlay(host)
+    banner.reposition(QRect(0, 0, 1200, 800))
+    banner.show_message("已重命名为「海边日落.jpg」。")
+    qt_app.processEvents()
+
+    rect = banner.geometry()
+    # 左边那条内边距：越过边框，离第一个字还隔着 PADDING_X 那么宽。
+    color = host.grab().toImage().pixelColor(rect.left() + 6, rect.center().y())
+    assert color.isValid(), "没取到像素"
+    host.close()
+    return color
+
+
+def test_the_flat_background_hides_whatever_photo_is_behind_it(qt_app: QApplication) -> None:
+    """**画出来是实的**：同一句话压在深色与浅色照片上，看到的必须是同一个颜色。
+
+    底色半透明时，字清不清楚由底下那张照片决定 —— 实底之后这个变量就不存在了。
+    顺带锁定颜色：它得是从前 16% 的橙压在本应用底色上那一片，别换成另一套橙。
+    """
+    over_light = _fill_over(qt_app, QColor(0xFF, 0xFF, 0xFF))
+    over_dark = _fill_over(qt_app, QColor(0x00, 0x00, 0x00))
+    assert over_light == over_dark, (
+        f"底色还透着底下那张照片：{over_light.name()} / {over_dark.name()}"
+    )
+
+    expected = tinted(theme.current_theme().background, FILL_RGB, FILL_SHARE)
+    assert over_light == expected, (
+        f"实底是 {over_light.name()}，从前那一片橙是 {expected.name()} —— 看着已经不像原来那对了"
     )
 
 

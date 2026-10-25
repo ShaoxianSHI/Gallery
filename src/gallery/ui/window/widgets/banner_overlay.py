@@ -37,10 +37,26 @@ BORDER = 1
 
 #: 横幅那两个橙色的分量（RGB）。**就是原来那一对** —— 用户每天看惯了它。
 FILL_RGB = (255, 176, 32)
-#: 底色留 16% 不透明：它盖在照片与缩略图上，压得太实就等于把那一块内容藏起来了。
-FILL_ALPHA = 0.16
-#: 边框留 45% —— 比底色实，才看得出横幅有这么一块边界。
-EDGE_ALPHA = 0.45
+#: 底色里这一对橙占多少（原来是不透明度）。合成基准是主题底色：算出来的那一块就是它从前
+#: 半透明地压在窗口空白处时的观感，于是换成实底之后颜色看着还是那一对。
+FILL_SHARE = 0.16
+#: 边框占多少 —— 比底色浓，才看得出横幅有这么一块边界。
+EDGE_SHARE = 0.45
+
+
+def tinted(base: QColor, rgb: tuple[int, int, int], share: float) -> QColor:
+    """``rgb`` 按 ``share`` 的比例铺在 ``base`` 上，返回**不透明**的合成色。
+
+    横幅压在照片上，留透明度就等于让底下那张照片决定字与底色的对比度，所以颜色必须
+    一次算成实色。
+    """
+    channels = (
+        round(base_channel * (1 - share) + mix * share)
+        for base_channel, mix in zip((base.red(), base.green(), base.blue()), rgb, strict=True)
+    )
+    color = QColor(*channels)
+    color.setAlpha(255)
+    return color
 
 
 def banner_width(area: QRect, *, avoid: QRect | None = None) -> int:
@@ -103,7 +119,7 @@ class BannerOverlay(QLabel):
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self.hide)
-        # 底色与边框是硬编码的那一对橙色，只有字色跟着主题走，所以换过外观之后要重下一份。
+        # 底色与边框由那一对橙色按主题底色合成，所以换过外观之后要重下一份；字色同理。
         self._watcher = theme.ensure_installed()
         self._watcher.changed.connect(self._apply_theme)
         self._apply_theme()
@@ -165,22 +181,21 @@ class BannerOverlay(QLabel):
         self.setGeometry(banner_rect(area, QSize(width, height), avoid=self._avoid))
 
     def _apply_theme(self) -> None:
-        """样式表就是**原来那一份**：浅橙的底 + 深一点的橙边，16% / 45% 两档不透明。
+        """样式表：同一对橙色按主题底色合成出实底与实边，只有字色跟着主题走。
 
-        底色压得淡是有意的 —— 它盖在照片与缩略图上，压实了就等于把那一块内容藏起来。只有
-        **字色**跟着主题走（样式表里的 ``palette(text)`` 并不成立，实际走的是控件默认色）。
+        合成基准取主题底色 —— 那正是它从前半透明地盖在窗口空白处时的那片颜色。样式表里的
+        ``palette(text)`` 并不成立，字色只能自己算出来写进去。
         """
-        fill = QColor(*FILL_RGB)
-        fill.setAlphaF(FILL_ALPHA)
-        edge = QColor(*FILL_RGB)
-        edge.setAlphaF(EDGE_ALPHA)
+        current = theme.current_theme()
+        fill = tinted(current.background, FILL_RGB, FILL_SHARE)
+        edge = tinted(current.background, FILL_RGB, EDGE_SHARE)
         self.setStyleSheet(
             f"QLabel#banner {{"
             f"  background: {rgba(fill)};"
             f"  border: {BORDER}px solid {rgba(edge)};"
             f"  border-radius: 6px;"
             f"  padding: {PADDING_Y}px {PADDING_X}px;"
-            f"  color: {rgba(theme.current_theme().text)};"
+            f"  color: {rgba(current.text)};"
             f"}}"
         )
 
@@ -197,9 +212,9 @@ class BannerOverlay(QLabel):
 __all__ = [
     "AUTO_HIDE_SECONDS",
     "BORDER",
-    "EDGE_ALPHA",
-    "FILL_ALPHA",
+    "EDGE_SHARE",
     "FILL_RGB",
+    "FILL_SHARE",
     "MARGIN_SIDE",
     "MARGIN_TOP",
     "MAX_WIDTH",
@@ -210,4 +225,5 @@ __all__ = [
     "banner_rect",
     "banner_width",
     "text_height",
+    "tinted",
 ]
