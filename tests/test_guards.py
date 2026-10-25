@@ -1557,3 +1557,130 @@ def test_no_text_file_carries_the_replacement_character() -> None:
     assert not offenders, "以下文件里有编码坏掉的中文（U+FFFD），请改回原字：\n" + "\n".join(
         offenders
     )
+
+
+# ---- 文案只能住在 core/locales/（ADR 0106）------------------------------------
+
+#: 中文、假名、谚文都算：用户可见文案必须是英文键，值在目录里。
+_CJK_TEXT: Final = re.compile(
+    r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff]"
+)
+
+#: 这些调用里的中文不是界面文案：日志与开发者错误。
+_NOT_COPY_CALLS: Final = frozenset(
+    {
+        "debug",
+        "info",
+        "warning",
+        "error",
+        "exception",
+        "critical",
+        "print",
+        "ValueError",
+        "KeyError",
+        "IndexError",
+        "RuntimeError",
+        "AssertionError",
+        "TypeError",
+    }
+)
+
+#: 允许保留中文的文件与理由。**每一条都要是「不是界面文案」**，不是「暂时还没空」。
+CJK_ALLOWED: Final[dict[str, str]] = {
+    "core/backdrops/recipe.py": "预设配色的名字是写进清单的数据；其余是内部校验错误",
+    "core/backdrops/store.py": "背景默认名是数据；其余是内部校验错误",
+    "core/events/import_shows.py": "演迹表格的列名是数据，不是界面文案",
+    "core/events/jav.py": "来源站的字段别名是抓取数据",
+    "core/events/kinds.py": "来源专有名词与默认类型名是写进库的数据",
+    "core/events/mango.py": "缺少字段的判据是站点返回的原话",
+    "core/external/apple_calendar.py": "内部参数校验（level 只能是……）",
+    "core/external/apps.py": "App.name 是数据；显示名走 label 与 app 域",
+    "core/external/gcal.py": "内部参数校验",
+    "core/external/maps.py": "内部参数校验",
+    "core/external/runner.py": "内部 stderr 的超时标记",
+    "core/library/config.py": "config.toml 的注释写进用户文件，不跟着界面语言变",
+    "core/library/groups.py": "内部字段校验",
+    "core/library/index.py": "建表 SQL 与注释",
+    "core/library/search.py": "内部解析规则缺口的断言",
+    "core/library/session.py": "内部参数校验",
+    "core/library/watcher.py": "summarize 只给日志用",
+    "core/metadata/album.py": "DEFAULT_ALBUM_NAME 是旧常量，创建时按语言取",
+    "core/metadata/failures.py": "识别系统返回的英文/中文原话",
+    "core/metadata/writeback.py": "回读不一致的 detail 只进日志；系统原话用于匹配",
+    "core/paths.py": "GuardError 的原因不直接上屏",
+    "macos_app.py": "写进 .app 的启动脚本与其中注释",
+    "core/places/countries.py": "中国省级地名是数据",
+    "ui/calendar/toolbar.py": "样式表里的注释",
+    "ui/dialogs/event_edit.py": "样式表里的注释",
+    "ui/dialogs/metadata_edit.py": "方位正则里要认的汉字",
+    "ui/window/jobs.py": "内部 KeyError",
+    "ui/window/state/jobs.py": "内部 KeyError",
+    "ui/window/state/level_stack.py": "内部断言/索引错误",
+    "ui/write_ops.py": "日志里用的「移动 / 复制」动词",
+}
+
+
+def _cjk_literals(path: Path) -> list[tuple[int, str]]:
+    """文件里**用户可见的中文串**；文档字符串、日志与开发者异常不算。
+
+    裸字符串表达式（文档、类体里的说明）一律跳过；``logger.info(...)``、``print(...)``、
+    ``ValueError(...)`` 这类调用的参数也跳过 —— 它们不经过界面。
+    """
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (SyntaxError, UnicodeDecodeError):
+        return []
+    parents: dict[int, ast.AST] = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[id(child)] = node
+    found: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+            continue
+        if not _CJK_TEXT.search(node.value):
+            continue
+        parent = parents.get(id(node))
+        if isinstance(parent, ast.Expr):
+            continue
+        if isinstance(parent, ast.Call):
+            func = parent.func
+            name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
+            if name in _NOT_COPY_CALLS:
+                continue
+        found.append((node.lineno, node.value))
+    return found
+
+
+def test_user_facing_copy_lives_in_the_catalog() -> None:
+    """中文文案只许住进 ``core/locales/``（ADR 0106）。
+
+    漏网的新文案不会让任何功能坏掉，只会让英文界面里突然冒出一句中文。**这条测试是那件事的
+    唯一看守**；例外必须在上面的表里写理由。
+    """
+    offenders: list[str] = []
+    for path in _iter_python_files(SRC_ROOT):
+        if "locales" in path.parts:
+            continue
+        relative = path.relative_to(SRC_ROOT).as_posix()
+        if relative in CJK_ALLOWED:
+            continue
+        for line, text in _cjk_literals(path):
+            offenders.append(f"{relative}:{line}: {text!r}")
+    assert not offenders, "以下中文不在 core/locales/ 里，也不是日志/数据：\n" + "\n".join(
+        offenders
+    )
+
+
+def test_the_copy_guard_would_notice_a_violation(tmp_path: Path) -> None:
+    """守一条永远为绿的规则比没有更坏：先确认它真的会红。"""
+    sample = tmp_path / "sample.py"
+    sample.write_text(
+        '"""文档里的中文不算。"""\n'
+        'logger.info("日志里的中文不算：%s", "值")\n'
+        'raise ValueError("内部错误不算")\n'
+        'LABEL = "用户可见的中文"\n',
+        encoding="utf-8",
+    )
+
+    assert [text for _, text in _cjk_literals(sample)] == ["用户可见的中文"]

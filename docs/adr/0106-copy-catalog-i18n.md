@@ -87,6 +87,11 @@ t("banner.rename.not_journaled", name=entry.name)
 切换要遍访每个控件与动作，而画出来的文字（日历、卡片）与建出来的控件是两套时序 —— 那是另一条
 ADR 的事。
 
+**语言必须在导入界面模块之前定下来**：有些文案常量在模块导入时求值（事件字段、日历表头、
+缩略图档位名）。`ui/app.activate_language()` 在创建窗口之前读会话偏好并 `set_language()`，
+`MainWindow` 因此改成延迟导入。**新加模块级 `t()` 之前先想清楚这一条**；最好写成函数，
+在调用时再查表。
+
 `QMessageBox` / `QFileDialog` 自己的按钮文案由 Qt 提供，**要另外载入 `qtbase_<语言>.qm`**，
 否则中文界面里会冒出英文 `Cancel`。它与本目录是两套来源，不能互相替代。
 

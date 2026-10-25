@@ -46,23 +46,48 @@ def _python_files(roots: tuple[Path, ...] | list[Path]) -> list[Path]:
     return files
 
 
-def _docstrings(tree: ast.AST) -> set[int]:
-    """文档字符串那些 ``Constant`` 的 id —— 它们不是用户可见文案。"""
-    found: set[int] = set()
+#: 这些调用里的字符串不是界面文案：日志、开发者异常、调试输出。
+_NOT_COPY_CALLS: Final = frozenset(
+    {
+        "debug",
+        "info",
+        "warning",
+        "error",
+        "exception",
+        "critical",
+        "print",
+        "ValueError",
+        "KeyError",
+        "IndexError",
+        "RuntimeError",
+        "AssertionError",
+        "TypeError",
+    }
+)
+
+
+def _silent_nodes(tree: ast.AST) -> set[int]:
+    """不属于用户文案的 ``Constant`` 的 id：文档/说明性裸字符串、日志与开发者异常的参数。"""
+    silent: set[int] = set()
+    parents: dict[int, ast.AST] = {}
     for node in ast.walk(tree):
-        if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+        for child in ast.iter_child_nodes(node):
+            parents[id(child)] = node
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
             continue
-        body = getattr(node, "body", None)
-        if not body:
+        parent = parents.get(id(node))
+        # 裸字符串表达式：文档字符串或类体里的说明文字，不是界面文案。
+        if isinstance(parent, ast.Expr):
+            silent.add(id(node))
             continue
-        first = body[0]
-        if (
-            isinstance(first, ast.Expr)
-            and isinstance(first.value, ast.Constant)
-            and isinstance(first.value.value, str)
-        ):
-            found.add(id(first.value))
-    return found
+        if not isinstance(parent, ast.Call):
+            continue
+        func = parent.func
+        name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
+        if name in _NOT_COPY_CALLS:
+            silent.add(id(node))
+    return silent
 
 
 def literals(path: Path) -> list[tuple[int, str]]:
@@ -72,7 +97,7 @@ def literals(path: Path) -> list[tuple[int, str]]:
     except SyntaxError as exc:  # pragma: no cover - 源文件写坏时 ruff 先报
         print(f"{path}: {exc}", file=sys.stderr)
         return []
-    skip = _docstrings(tree)
+    skip = _silent_nodes(tree)
     out: list[tuple[int, str]] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
