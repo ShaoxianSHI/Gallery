@@ -12,7 +12,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from PySide6.QtCore import QEvent, QLibraryInfo, QLocale, QObject, Qt, QTranslator
+from PySide6.QtCore import QEvent, QLibraryInfo, QLocale, QObject, Qt, QTimer, QTranslator
 from PySide6.QtGui import QFileOpenEvent, QIcon
 from PySide6.QtWidgets import QApplication, QMainWindow
 
@@ -121,19 +121,54 @@ def _drop_full_screen(menu: object) -> None:
         menu.removeItem_(last)  # type: ignore[attr-defined]
 
 
-def _observe_additions(menu: object, drop: object) -> object:
+def _hide_autofill_and_below(menu: object) -> None:
+    items = list(menu.itemArray())  # type: ignore[attr-defined]
+    start = next((index for index, item in enumerate(items) if item.title() == "AutoFill"), None)
+    if start is None:
+        undo = t("menu.undo")
+        undo_index = next(
+            (index for index, item in enumerate(items) if item.title().startswith(undo)), None
+        )
+        if undo_index is None:
+            return
+        start = undo_index + 1
+    for item in items[start:]:
+        item.setHidden_(True)
+
+
+def _hide_full_screen(menu: object) -> None:
+    for item in list(menu.itemArray()):  # type: ignore[attr-defined]
+        if str(item.action()) == "toggleFullScreen:" or item.title() in {
+            "Enter Full Screen",
+            "Exit Full Screen",
+        }:
+            item.setHidden_(True)
+
+
+def _after_system_insert(menu: object, drop: object, hide: object) -> None:
+    """**不能在增加通知里直接 removeItem**：AppKit 正在同一轮插入，删了会抛
+    ``NSInternalInconsistencyException``。先隐藏（只改属性），下一轮主队列里再删。"""
+    from Foundation import NSOperationQueue
+
+    hide(menu)  # type: ignore[operator]
+    NSOperationQueue.mainQueue().addOperationWithBlock_(lambda: drop(menu))  # type: ignore[operator]
+
+
+def _observe_additions(menu: object, drop: object, hide: object) -> object:
     """系统往这个菜单里加东西时立刻删一遍；返回的 token 必须由调用方保活。"""
     from Foundation import NSNotificationCenter
 
-    def _on_added(_note: object, *, target: object = menu, fn: object = drop) -> None:
-        fn(target)  # type: ignore[operator]
+    def _on_added(
+        _note: object, *, target: object = menu, fn: object = drop, hide: object = hide
+    ) -> None:
+        _after_system_insert(target, fn, hide)
 
     return NSNotificationCenter.defaultCenter().addObserverForName_object_queue_usingBlock_(
         "NSMenuDidAddItemNotification", menu, None, _on_added
     )
 
 
-def install_system_menu_cleanup(window: QMainWindow) -> None:
+def _install_system_menu_cleanup(window: QMainWindow) -> None:
     """去掉 macOS 自动塞进菜单栏的两段：编辑里的 AutoFill、显示里的 Full Screen。
 
     **不能替换 NSMenu 的 delegate**：Qt 自己的 ``QCocoaNSMenuDelegate`` 就在那里，换掉它菜单
@@ -150,7 +185,8 @@ def install_system_menu_cleanup(window: QMainWindow) -> None:
     main_menu = NSApplication.sharedApplication().mainMenu()
     if main_menu is None:
         return
-    observers: list[object] = []
+    observers: list[object] = list(getattr(window, "_system_menu_observers", []))
+    installed: set[str] = set(getattr(window, "_system_menu_installed", set()))
     for title, drop in (
         (t("menu.edit"), _drop_autofill_and_below),
         (t("menu.view"), _drop_full_screen),
@@ -169,10 +205,39 @@ def install_system_menu_cleanup(window: QMainWindow) -> None:
         native = item.submenu()
         if native is None:
             continue
+        if title in installed:
+            continue
         drop(native)
         menu.aboutToShow.connect(lambda target=native, fn=drop: fn(target))
-        observers.append(_observe_additions(native, drop))
+        observers.append(
+            _observe_additions(
+                native,
+                drop,
+                _hide_autofill_and_below if drop is _drop_autofill_and_below else _hide_full_screen,
+            )
+        )
+        installed.add(title)
     window._system_menu_observers = observers  # type: ignore[attr-defined]
+    window._system_menu_installed = installed  # type: ignore[attr-defined]
+
+
+def schedule_system_menu_cleanup(window: QMainWindow) -> None:
+    """菜单栏要等这一轮事件走完才在原生侧建好，所以晚一点装；没装全再试几次。"""
+    attempts = 10
+
+    def attempt() -> None:
+        nonlocal attempts
+        try:
+            _install_system_menu_cleanup(window)
+        except RuntimeError:  # 窗口已经关掉（Python 包装还在、C++ 侧没了）
+            return
+        done = getattr(window, "_system_menu_installed", set())
+        attempts -= 1
+        if len(done) >= 2 or attempts <= 0:
+            return
+        QTimer.singleShot(100, attempt)
+
+    QTimer.singleShot(0, attempt)
 
 
 def keep_running_without_windows(app: QApplication) -> None:
@@ -231,7 +296,7 @@ class WindowHost(QObject):
         )
         window.show()
         self._window = window
-        install_system_menu_cleanup(window)
+        schedule_system_menu_cleanup(window)
         return window
 
     def open_library(self, root: Path) -> MainWindow:
@@ -305,7 +370,7 @@ __all__ = [
     "apply_app_branding",
     "create_application",
     "install_qt_translations",
-    "install_system_menu_cleanup",
     "keep_running_without_windows",
     "run",
+    "schedule_system_menu_cleanup",
 ]

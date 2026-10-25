@@ -9,6 +9,8 @@ import pytest
 from gallery.ui.app import (
     _drop_autofill_and_below,
     _drop_full_screen,
+    _hide_autofill_and_below,
+    _hide_full_screen,
     _observe_additions,
 )
 
@@ -54,17 +56,20 @@ def test_autofill_and_everything_below_it_is_gone() -> None:
     assert _titles(menu) == ["全选", "新增事件", "撤销"]
 
 
-def test_items_added_after_startup_are_removed_immediately() -> None:
-    """**系统项是在菜单展开时加的**：只删一次没用，必须盯着增加通知。"""
+def test_items_added_after_startup_are_hidden_immediately() -> None:
+    """**系统项是在菜单展开时加的**：先隐藏，再等 AppKit 插完才删（不能当轮 remove）。"""
     from AppKit import NSMenuItem
 
     menu = _menu(_item("撤销"))
-    token = _observe_additions(menu, _drop_autofill_and_below)
+    token = _observe_additions(menu, _drop_autofill_and_below, _hide_autofill_and_below)
 
     menu.addItem_(NSMenuItem.separatorItem())
     menu.addItem_(_item("AutoFill", "submenuAction:"))
     menu.addItem_(_item("Passwords"))
 
+    tail = menu.itemArray()[1:]
+    assert tail and all(item.isHidden() for item in tail)
+    _drop_autofill_and_below(menu)
     assert _titles(menu) == ["撤销"]
     assert token is not None
 
@@ -81,12 +86,15 @@ def test_full_screen_is_removed_from_the_view_menu() -> None:
     assert _titles(menu) == ["Larger Thumbnails", "Thumbnail Size"]
 
 
-def test_a_late_localized_full_screen_is_removed_by_selector() -> None:
+def test_a_late_localized_full_screen_is_hidden_by_selector() -> None:
     menu = _menu(_item("刷新"))
-    token = _observe_additions(menu, _drop_full_screen)
+    token = _observe_additions(menu, _drop_full_screen, _hide_full_screen)
 
     menu.addItem_(_item("进入全屏幕", "toggleFullScreen:"))
 
+    added = menu.itemArray()[-1]
+    assert added.isHidden()
+    _drop_full_screen(menu)
     assert _titles(menu) == ["刷新"]
     assert token is not None
 
