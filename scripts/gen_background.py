@@ -1,22 +1,37 @@
-"""生成「墨水晕染」与「极光」两种背景的样张，用来比对效果。
+"""生成「墨水晕染」风格的背景图。
 
-两条算法都是纯函数式的：给定尺寸、种子与调色板就地算出像素，不采样任何外部素材。
-产物进应用级缓存目录（``<app cache>/backgrounds/``），删掉随时能重新生成。
+只有一条产出路径：先把配方（``Recipe``）算成一张固定 16:10 的主图，再按需要裁剪。
+**配方就是缓存键** —— 同样的配方永远落成同一个文件名，改任何一项（包括调色板里一个
+hex）都会换一张。产物只进应用级缓存目录，删掉随时能重新生成。
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import math
 import random
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
-from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont, PngImagePlugin
 
 from gallery.core.paths import app_cache_root
+
+# 算法版本。**改了任何一处「像素是怎么算出来的」就要 +1** —— 它进了配方的哈希，
+# 于是旧缓存自动失配，而不是静默地拿旧图冒充新算法。
+VERSION = 2
+
+FIELD_WIDTH = 320
+FIELD_HEIGHT = 200
+MASTER_WIDTH = 1920
+MASTER_HEIGHT = 1200
+
+GRAIN_TILE = 256
 
 # ---------------------------------------------------------------- 色彩
 
@@ -67,7 +82,9 @@ def _oklab_to_byte(lab: tuple[float, float, float]) -> tuple[int, int, int]:
         -1.2684380046 * l_ + 2.6097574011 * m_ - 0.3413193965 * s_,
         -0.0041960863 * l_ - 0.7034186147 * m_ + 1.7076147010 * s_,
     )
-    return tuple(_TO_BYTE[round(_clamp01(_linear_to_srgb(v)) * 1023)] for v in linear)  # type: ignore[return-value]
+    return tuple(  # type: ignore[return-value]
+        _TO_BYTE[round(_clamp01(_linear_to_srgb(v)) * 1023)] for v in linear
+    )
 
 
 def _palette_lut(stops: Sequence[tuple[float, str]], size: int = 512) -> list[tuple[int, int, int]]:
@@ -97,6 +114,15 @@ def _palette_lut(stops: Sequence[tuple[float, str]], size: int = 512) -> list[tu
 
 _LATTICE = 256
 _MASK = _LATTICE - 1
+
+
+def stream(seed: int, name: str) -> int:
+    """把「一个种子 + 一个用途名」派生出一个独立种子。
+
+    用哈希而不是 ``seed + 11`` 这类偏移：加一条新流时不会把别的流整体挪位。
+    """
+    digest = hashlib.sha1(f"gallery-bg/v{VERSION}/{seed}/{name}".encode()).digest()
+    return int.from_bytes(digest[:8], "big")
 
 
 class ValueNoise:
@@ -158,7 +184,73 @@ class Fbm:
         return total / self._norm
 
 
-# ---------------------------------------------------------------- 墨
+# ---------------------------------------------------------------- 配方
+
+
+@dataclass(frozen=True)
+class Recipe:
+    """一次生成所需的全部输入。**它就是缓存键**，也是能重放的最小信息。
+
+    颜色整份写进来而不是只记预设名：否则以后调了一个 hex，旧缓存会静默对不上。
+    """
+
+    preset: str
+    seed: int
+    colors: tuple[tuple[float, str], ...]
+    warp: float
+    scale: float
+    contrast: float
+    plume: float
+    detail: float
+    octaves: int
+    grain: float
+    field: tuple[int, int] = (FIELD_WIDTH, FIELD_HEIGHT)
+    master: tuple[int, int] = (MASTER_WIDTH, MASTER_HEIGHT)
+    version: int = VERSION
+
+    def to_json(self) -> str:
+        payload: dict[str, Any] = {
+            "version": self.version,
+            "preset": self.preset,
+            "seed": self.seed,
+            "palette": [[position, color] for position, color in self.colors],
+            "shape": {
+                "warp": self.warp,
+                "scale": self.scale,
+                "contrast": self.contrast,
+                "plume": self.plume,
+                "detail": self.detail,
+                "octaves": self.octaves,
+            },
+            "field": list(self.field),
+            "master": list(self.master),
+            "grain": self.grain,
+        }
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+    @classmethod
+    def from_json(cls, text: str) -> Recipe:
+        data = json.loads(text)
+        shape = data["shape"]
+        return cls(
+            preset=data["preset"],
+            seed=int(data["seed"]),
+            colors=tuple((float(position), str(color)) for position, color in data["palette"]),
+            warp=float(shape["warp"]),
+            scale=float(shape["scale"]),
+            contrast=float(shape["contrast"]),
+            plume=float(shape["plume"]),
+            detail=float(shape["detail"]),
+            octaves=int(shape["octaves"]),
+            grain=float(data["grain"]),
+            field=tuple(data["field"]),
+            master=tuple(data["master"]),
+            version=int(data["version"]),
+        )
+
+    def digest(self) -> str:
+        """配方内容的短哈希，用作缓存文件名。"""
+        return hashlib.sha1(self.to_json().encode("utf-8")).hexdigest()[:12]
 
 
 @dataclass(frozen=True)
@@ -172,6 +264,21 @@ class InkPreset:
     plume: float = 0.5
     detail: float = 0.10
     octaves: int = 5
+    grain: float = 1.6
+
+    def recipe(self, seed: int) -> Recipe:
+        return Recipe(
+            preset=self.name,
+            seed=seed,
+            colors=self.colors,
+            warp=self.warp,
+            scale=self.scale,
+            contrast=self.contrast,
+            plume=self.plume,
+            detail=self.detail,
+            octaves=self.octaves,
+            grain=self.grain,
+        )
 
 
 INK_PRESETS: tuple[InkPreset, ...] = (
@@ -301,27 +408,34 @@ INK_PRESETS: tuple[InkPreset, ...] = (
     ),
 )
 
+PRESETS_BY_NAME = {preset.name: preset for preset in INK_PRESETS}
 
-def render_ink(preset: InkPreset, width: int, height: int, seed: int) -> Image.Image:
-    """域扭曲的 fBm 当成浓度场，再按调色板取色。
+
+# ---------------------------------------------------------------- 渲染
+
+
+def render_ink(recipe: Recipe) -> Image.Image:
+    """域扭曲的 fBm 当浓度场，再按调色板取色。
 
     三层位移场（q、r、f）是「墨」与「雾」的分界：位移越大，边界被拉得越细长。
+    场总是算在固定的 16:10 分辨率上，于是同一个配方在任何窗口比例下都是同一幅画。
     """
-    field_width = 320
-    field_height = max(1, round(field_width * height / width))
+    field_width, field_height = recipe.field
+    master_width, master_height = recipe.master
     aspect = field_width / field_height
-    scale = preset.scale
-    octaves = preset.octaves
-    qx = Fbm(seed + 11, octaves)
-    qy = Fbm(seed + 23, octaves)
-    rx = Fbm(seed + 41, octaves)
-    ry = Fbm(seed + 53, octaves)
-    fz = Fbm(seed + 71, octaves)
-    detail = Fbm(seed + 97, 4)
-    plume = Fbm(seed + 131, 2)
-    warp = preset.warp
-    detail_strength = preset.detail
-    plume_strength = preset.plume
+    scale = recipe.scale
+    octaves = recipe.octaves
+    seed = recipe.seed
+    qx = Fbm(stream(seed, "warp_x"), octaves)
+    qy = Fbm(stream(seed, "warp_y"), octaves)
+    rx = Fbm(stream(seed, "warp_x2"), octaves)
+    ry = Fbm(stream(seed, "warp_y2"), octaves)
+    fz = Fbm(stream(seed, "shape"), octaves)
+    detail = Fbm(stream(seed, "detail"), 4)
+    plume = Fbm(stream(seed, "plume"), 2)
+    warp = recipe.warp
+    detail_strength = recipe.detail
+    plume_strength = recipe.plume
 
     values: list[list[float]] = []
     densities: list[list[float]] = []
@@ -350,9 +464,9 @@ def render_ink(preset: InkPreset, width: int, height: int, seed: int) -> Image.I
     count = field_width * field_height
     mean = total / count
     deviation = math.sqrt(max(0.0, total_sq / count - mean * mean)) or 1e-6
-    lut = _palette_lut(preset.colors)
+    lut = _palette_lut(recipe.colors)
     last = len(lut) - 1
-    spread = deviation * preset.contrast
+    spread = deviation * recipe.contrast
 
     pixels = bytearray()
     for row, row_density in zip(values, densities, strict=True):
@@ -364,180 +478,56 @@ def render_ink(preset: InkPreset, width: int, height: int, seed: int) -> Image.I
             pixels += bytes(lut[min(last, int(t * last))])
 
     image = Image.frombytes("RGB", (field_width, field_height), bytes(pixels))
-    image = image.resize((width, height), Image.Resampling.BICUBIC)
-    return image.filter(ImageFilter.GaussianBlur(0.5))
+    image = image.resize((master_width, master_height), Image.Resampling.BICUBIC)
+    image = image.filter(ImageFilter.GaussianBlur(0.5))
+    return add_grain(image, recipe.grain, stream(seed, "grain"))
 
 
-# ---------------------------------------------------------------- 极光
+def add_grain(image: Image.Image, sigma: float, seed: int) -> Image.Image:
+    """加一层零均值细噪声。低对比渐变在 8 bit 下必然出现色带，这层专门盖它。
 
-
-@dataclass(frozen=True)
-class AuroraPreset:
-    name: str
-    title: str
-    base_top: str
-    base_bottom: str
-    #: 竖直方向的颜色渐变，**从画面下沿往上是正的 t**。
-    colors: tuple[tuple[float, str], ...]
-    strength: float
-    threshold: float
-    stretch: float
-    dark: bool = False
-
-
-AURORA_PRESETS: tuple[AuroraPreset, ...] = (
-    AuroraPreset(
-        "aurora-01-pastel",
-        "淡彩 · 绿 / 青 / 紫",
-        "#fbfcfe",
-        "#f3f0f8",
-        (
-            (0.00, "#8fdcae"),
-            (0.35, "#86cfd6"),
-            (0.65, "#9bb8e4"),
-            (1.00, "#bfa8e2"),
-        ),
-        strength=0.85,
-        threshold=0.46,
-        stretch=0.55,
-    ),
-    AuroraPreset(
-        "aurora-02-rose",
-        "淡彩 · 金 / 粉 / 紫",
-        "#fdfbf9",
-        "#f6eff2",
-        (
-            (0.00, "#eec39b"),
-            (0.35, "#eba9b4"),
-            (0.65, "#d5a3d1"),
-            (1.00, "#ae9fd8"),
-        ),
-        strength=0.85,
-        threshold=0.48,
-        stretch=0.75,
-    ),
-    AuroraPreset(
-        "aurora-03-dawn",
-        "淡彩 · 金 / 珊瑚 / 青",
-        "#fffdfa",
-        "#f5f2ee",
-        (
-            (0.00, "#f5cf90"),
-            (0.35, "#f0ac96"),
-            (0.65, "#cfa5cc"),
-            (1.00, "#9ab4dc"),
-        ),
-        strength=0.85,
-        threshold=0.47,
-        stretch=0.95,
-    ),
-    AuroraPreset(
-        "aurora-04-night",
-        "夜空（深色对照）",
-        "#070a12",
-        "#141c2c",
-        (
-            (0.00, "#38e08c"),
-            (0.35, "#2fc8d8"),
-            (0.65, "#3f8fe0"),
-            (1.00, "#8c6cf0"),
-        ),
-        strength=1.00,
-        threshold=0.44,
-        stretch=0.55,
-        dark=True,
-    ),
-)
-
-
-def _smoothstep(edge_low: float, edge_high: float, x: float) -> float:
-    t = _clamp01((x - edge_low) / (edge_high - edge_low))
-    return t * t * (3.0 - 2.0 * t)
-
-
-def render_aurora(preset: AuroraPreset, width: int, height: int, seed: int) -> Image.Image:
-    """把域扭曲的 fBm 在竖直方向拉长，取它的等值线当帘幕。
-
-    **拉伸比就是「极光」与「雾」的分界**：x 走得快、y 走得慢，等值线才连成竖条。
+    **不借助 Pillow 的 ``effect_noise``**：它用的是进程内不受控的 C 随机数，同一套参数
+    第二次调用结果就变了，重放会失败。这里用一块自己播种的小噪声平铺。
     """
-    field_width = 320
-    field_height = max(1, round(field_width * height / width))
-    shape = Fbm(seed, 5)
-    warp_x = Fbm(seed + 11, 3)
-    warp_y = Fbm(seed + 23, 3)
-    fine = Fbm(seed + 37, 3)
-    ramp = _palette_lut(preset.colors)
-    last = len(ramp) - 1
-    top = _hex_to_rgb01(preset.base_top)
-    bottom = _hex_to_rgb01(preset.base_bottom)
-    strength = preset.strength
-    threshold = preset.threshold
-    stretch = preset.stretch
-
-    canvas: list[list[tuple[float, float, float]]] = []
-    for row_index in range(field_height):
-        y = row_index / max(1, field_height - 1)
-        base = (
-            top[0] + (bottom[0] - top[0]) * y,
-            top[1] + (bottom[1] - top[1]) * y,
-            top[2] + (bottom[2] - top[2]) * y,
-        )
-        envelope = _smoothstep(0.04, 0.70, y) * (1.0 - 0.72 * _smoothstep(0.90, 1.0, y))
-        colour = ramp[min(last, int((1.0 - y) * last))]
-        tint = (colour[0] / 255, colour[1] / 255, colour[2] / 255)
-        row: list[tuple[float, float, float]] = []
-        for column in range(field_width):
-            x = column / field_width
-            dx = (warp_x(x * 4.0, y * 1.2) - 0.5) * 0.85
-            dy = (warp_y(x * 4.0, y * 1.2) - 0.5) * 0.30
-            value = shape(x * 6.0 + dx, y * stretch + dy)
-            value += 0.10 * (fine(x * 9.0 + dx, y * stretch * 2.6) - 0.5)
-            mask = _smoothstep(threshold, threshold + 0.13, value)
-            if mask <= 0.001:
-                row.append(base)
-                continue
-            alpha = min(1.0, mask * envelope * strength)
-            if preset.dark:
-                row.append(
-                    (
-                        min(1.0, base[0] + tint[0] * alpha),
-                        min(1.0, base[1] + tint[1] * alpha),
-                        min(1.0, base[2] + tint[2] * alpha),
-                    )
-                )
-            else:
-                row.append(
-                    (
-                        base[0] + (tint[0] - base[0]) * alpha,
-                        base[1] + (tint[1] - base[1]) * alpha,
-                        base[2] + (tint[2] - base[2]) * alpha,
-                    )
-                )
-        canvas.append(row)
-
-    pixels = bytearray()
-    for row in canvas:
-        for r, g, b in row:
-            pixels += bytes(
-                (
-                    _TO_BYTE[round(r * 1023)],
-                    _TO_BYTE[round(g * 1023)],
-                    _TO_BYTE[round(b * 1023)],
-                )
-            )
-
-    image = Image.frombytes("RGB", (field_width, field_height), bytes(pixels))
-    image = image.resize((width, height), Image.Resampling.BICUBIC)
-    return image.filter(ImageFilter.GaussianBlur(1.0 if preset.dark else 1.6))
+    rng = random.Random(seed)
+    tile = bytes(
+        128 + max(-127, min(127, round(rng.gauss(0.0, sigma)))) for _ in range(GRAIN_TILE**2)
+    )
+    patch = Image.frombytes("L", (GRAIN_TILE, GRAIN_TILE), tile)
+    canvas = Image.new("L", image.size)
+    for y in range(0, image.height, GRAIN_TILE):
+        for x in range(0, image.width, GRAIN_TILE):
+            canvas.paste(patch, (x, y))
+    return ImageChops.add(image, Image.merge("RGB", (canvas, canvas, canvas)), 1.0, -128)
 
 
-# ---------------------------------------------------------------- 收尾
+# ---------------------------------------------------------------- 落盘
 
 
-def add_grain(image: Image.Image, sigma: float) -> Image.Image:
-    """加一层零均值细噪声。低对比渐变在 8 bit 下必然出现色带，这层专门盖它。"""
-    noise = Image.effect_noise(image.size, sigma)
-    return ImageChops.add(image, Image.merge("RGB", (noise, noise, noise)), 1.0, -128)
+def cover(image: Image.Image, width: int, height: int) -> Image.Image:
+    """居中裁剪到目标比例。**不做非等比拉伸** —— 那会把晕染的圆斑压成椭圆。"""
+    scale = max(width / image.width, height / image.height)
+    size = (max(width, round(image.width * scale)), max(height, round(image.height * scale)))
+    if size != image.size:
+        image = image.resize(size, Image.Resampling.LANCZOS)
+    left = (image.width - width) // 2
+    top = (image.height - height) // 2
+    return image.crop((left, top, left + width, top + height))
+
+
+def save_png(image: Image.Image, recipe: Recipe, path: Path) -> None:
+    """把配方写进 PNG 的文本块，于是看文件就能重放，不必回头找命令行。"""
+    info = PngImagePlugin.PngInfo()
+    info.add_text("gallery-recipe", recipe.to_json())
+    image.save(path, pnginfo=info)
+
+
+def read_recipe(path: Path) -> Recipe:
+    with Image.open(path) as image:
+        text = image.text.get("gallery-recipe")
+    if not text:
+        raise SystemExit(f"{path} 里没有内嵌生成配方，无法从它重放")
+    return Recipe.from_json(text)
 
 
 def contact_sheet(images: Sequence[tuple[str, Image.Image]], columns: int = 4) -> Image.Image:
@@ -579,51 +569,69 @@ def contact_sheet(images: Sequence[tuple[str, Image.Image]], columns: int = 4) -
     return sheet
 
 
+def title_of(name: str) -> str:
+    preset = PRESETS_BY_NAME.get(name)
+    return preset.title if preset is not None else name
+
+
+# ---------------------------------------------------------------- 命令行
+
+
+def _parse_size(text: str) -> tuple[int, int]:
+    width_text, _, height_text = text.partition("x")
+    return int(width_text), int(height_text)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="生成背景样张")
-    parser.add_argument("--out", type=Path, default=None)
-    parser.add_argument("--size", default="1536x1024")
+    parser = argparse.ArgumentParser(description="生成墨水晕染风格的背景图")
+    parser.add_argument("--out", type=Path, default=None, help="输出目录，默认应用级缓存")
+    parser.add_argument("--size", default="", help="裁剪到 WxH，默认输出 16:10 主图")
     parser.add_argument("--seed", type=int, default=20261025)
-    parser.add_argument("--only", default="", help="逗号分隔的名字前缀")
+    parser.add_argument("--only", default="", help="逗号分隔的预设名前缀")
+    parser.add_argument("--recipe", default="", help="配方 JSON，或 @文件名")
+    parser.add_argument("--from", dest="source", type=Path, default=None, help="从既有 PNG 重放")
+    parser.add_argument("--print-recipe", action="store_true", help="打印完整配方")
+    parser.add_argument("--no-sheet", dest="sheet", action="store_false", help="不生成总览图")
     args = parser.parse_args(argv)
 
-    width_text, _, height_text = args.size.partition("x")
-    width, height = int(width_text), int(height_text)
     output = args.out or app_cache_root() / "backgrounds"
     output.mkdir(parents=True, exist_ok=True)
+    size = _parse_size(args.size) if args.size else None
 
-    prefixes = [item.strip() for item in args.only.split(",") if item.strip()]
-
-    def wanted(name: str) -> bool:
-        return not prefixes or any(name.startswith(prefix) for prefix in prefixes)
+    if args.recipe or args.source is not None:
+        if args.recipe.startswith("@"):
+            text = Path(args.recipe[1:]).read_text(encoding="utf-8")
+        elif args.recipe:
+            text = args.recipe
+        else:
+            text = read_recipe(args.source).to_json()  # type: ignore[union-attr]
+        recipes = [Recipe.from_json(text)]
+    else:
+        prefixes = [item.strip() for item in args.only.split(",") if item.strip()]
+        recipes = [
+            preset.recipe(args.seed)
+            for preset in INK_PRESETS
+            if not prefixes or any(preset.name.startswith(prefix) for prefix in prefixes)
+        ]
 
     rendered: list[tuple[str, Image.Image]] = []
-    for preset in INK_PRESETS:
-        if not wanted(preset.name):
-            continue
+    for recipe in recipes:
         started = time.perf_counter()
-        image = add_grain(render_ink(preset, width, height, args.seed), 1.6)
-        path = output / f"{preset.name}.png"
-        image.save(path)
+        master = render_ink(recipe)
+        image = cover(master, *size) if size else master
+        suffix = "" if image.size == recipe.master else f"-{image.width}x{image.height}"
+        path = output / f"{recipe.preset}-{recipe.digest()}{suffix}.png"
+        save_png(image, recipe, path)
         elapsed = time.perf_counter() - started
-        print(f"{path.name:24s} {elapsed:5.2f}s  {preset.title}")
-        rendered.append((preset.title, image))
+        print(f"{path.name:28s} {elapsed:5.2f}s  {title_of(recipe.preset)}")
+        if args.print_recipe:
+            print(recipe.to_json())
+        rendered.append((title_of(recipe.preset), image))
 
-    for preset in AURORA_PRESETS:
-        if not wanted(preset.name):
-            continue
-        started = time.perf_counter()
-        image = add_grain(render_aurora(preset, width, height, args.seed), 1.4)
-        path = output / f"{preset.name}.png"
-        image.save(path)
-        elapsed = time.perf_counter() - started
-        print(f"{path.name:24s} {elapsed:5.2f}s  {preset.title}")
-        rendered.append((preset.title, image))
-
-    if len(rendered) > 1:
+    if args.sheet and len(rendered) > 1:
         sheet_path = output / "contact-sheet.png"
         contact_sheet(rendered).save(sheet_path)
-        print(f"{sheet_path.name:24s}         {output}")
+        print(f"{sheet_path.name:28s}         {output}")
     return 0
 
 
