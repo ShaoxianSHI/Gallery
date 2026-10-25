@@ -25,6 +25,21 @@ if TYPE_CHECKING:
     from gallery.ui.main_window import MainWindow
 
 
+def disable_menu_action_images() -> None:
+    """关掉 macOS 26 自动加到菜单项前的系统图标。
+
+    用 ``registerDefaults`` 而不是写全局 defaults：只影响本进程，也不落盘。
+    **必须在 QApplication / 菜单创建之前调用**，否则这一轮已经画上了。
+    """
+    if sys.platform != "darwin":
+        return
+    try:
+        from Foundation import NSUserDefaults
+    except ImportError:  # pragma: no cover - macOS 上 pyobjc 是依赖
+        return
+    NSUserDefaults.standardUserDefaults().registerDefaults_({"NSMenuEnableActionImages": False})
+
+
 def apply_app_branding(app: QApplication) -> None:
     """给应用安上名字与图标（``⌘Tab``、访达里那一枚属于 ``.app`` 包）。资源缺失时静默跳过 ——
     图标不该让应用起不来。"""
@@ -350,6 +365,8 @@ def run(
     cache_base: Path | None = None,
 ) -> int:
     """启动界面，返回进程退出码。"""
+    # 系统菜单图标要在造菜单之前关掉；它只影响本进程，不改用户的全局 defaults。
+    disable_menu_action_images()
     # 在建 QApplication 之前补 PATH：从访达 / Dock 启动时 exiftool 不在系统目录里，
     # 不补的话主窗口一开就去读元数据，会一路降级成只读模式。
     activate_language(session_base)
@@ -369,6 +386,7 @@ __all__ = [
     "activate_language",
     "apply_app_branding",
     "create_application",
+    "disable_menu_action_images",
     "install_qt_translations",
     "keep_running_without_windows",
     "run",

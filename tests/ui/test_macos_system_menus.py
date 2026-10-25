@@ -110,3 +110,14 @@ def test_our_own_submenus_are_left_alone() -> None:
     _drop_full_screen(menu)
 
     assert _titles(menu) == ["新增事件", "编辑事件", "撤销"]
+
+
+def test_menu_action_images_are_disabled_for_this_process() -> None:
+    """系统给菜单项自动加图标；关掉它只影响本进程，不写全局 defaults。"""
+    from Foundation import NSUserDefaults
+
+    from gallery.ui.app import disable_menu_action_images
+
+    disable_menu_action_images()
+
+    assert NSUserDefaults.standardUserDefaults().boolForKey_("NSMenuEnableActionImages") is False
