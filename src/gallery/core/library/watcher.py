@@ -30,6 +30,7 @@ from watchdog.observers import Observer
 from watchdog.observers.api import BaseObserver
 
 from gallery.core import paths
+from gallery.core.i18n import t
 from gallery.core.library.photos import is_supported_media
 from gallery.core.library.scanner import is_visible_path
 
@@ -302,9 +303,7 @@ class LibraryWatcher:
         except Exception:
             logger.exception("处理文件变化时抛出未预期异常")
             if self._on_error is not None:
-                self._on_error(
-                    f"监听到文件变化，但处理时出了问题，详情写进了日志文件：{paths.app_log_file()}。"
-                )
+                self._on_error(t("library.watcher.processing_failed", path=paths.app_log_file()))
 
     def _ingest(self, change: LibraryChange) -> None:
         """记录一条变化（watchdog 的线程在调）。"""

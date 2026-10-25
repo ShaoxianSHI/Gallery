@@ -12,21 +12,22 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from gallery import __version__
+from gallery.core.i18n import t
 
 
 def build_parser() -> argparse.ArgumentParser:
     """构造命令行解析器。"""
     parser = argparse.ArgumentParser(
         prog="gallery",
-        description="Gallery —— 本地优先的相册软件：照片留在你自己的文件夹里。",
+        description=t("app.cli.description"),
     )
     parser.add_argument(
         "library",
         nargs="?",
         type=Path,
-        help="启动时打开的库目录（省略则显示欢迎页并回到上次打开的库）",
+        help=t("app.cli.library_help"),
     )
-    parser.add_argument("--version", action="store_true", help="打印版本信息后退出")
+    parser.add_argument("--version", action="store_true", help=t("app.cli.version_help"))
     return parser
 
 

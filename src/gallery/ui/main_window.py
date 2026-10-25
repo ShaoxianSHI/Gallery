@@ -1040,7 +1040,7 @@ class MainWindow(
         return (
             ExternalEntry(
                 id=apps.QUICKTIME.id,
-                name=apps.QUICKTIME.name,
+                name=apps.QUICKTIME.label,
                 icon=icon_for(apps.QUICKTIME),
                 enabled=partial(self._video_player_ready, apps.QUICKTIME),
                 pages=(EXTERNAL_PAGE_VIDEO,),
@@ -1048,7 +1048,7 @@ class MainWindow(
             ),
             ExternalEntry(
                 id=apps.IINA.id,
-                name=apps.IINA.name,
+                name=apps.IINA.label,
                 icon=icon_for(apps.IINA),
                 enabled=partial(self._video_player_ready, apps.IINA),
                 pages=(EXTERNAL_PAGE_VIDEO,),
@@ -1059,7 +1059,7 @@ class MainWindow(
             self._viewer_entry(apps.IMAGEGLASS),
             ExternalEntry(
                 id=apps.MAPS.id,
-                name=apps.MAPS.name,
+                name=apps.MAPS.label,
                 icon=icon_for(apps.MAPS, fallback=ICON_MAP),
                 # 没装（或是别的平台）就不摆：与预览、QSpace 同一条判据。
                 enabled=lambda: self._installed(apps.MAPS) and self._map_point() is not None,
@@ -1068,7 +1068,7 @@ class MainWindow(
             ),
             ExternalEntry(
                 id="google_maps",
-                name="Google 地图",
+                name=t("app.google_maps"),
                 icon=google_maps_icon(),
                 # 开在 PWA 还是浏览器都只要坐标，于是只问「这张照片有没有坐标」。
                 enabled=lambda: self._map_point() is not None,
@@ -1076,7 +1076,7 @@ class MainWindow(
             ),
             ExternalEntry(
                 id="finder",
-                name="访达",
+                name=t("app.finder"),
                 icon=folder_icon(),
                 # **与日历那一项互补**：日历页给日历，其余页给访达（每一页只有一样可开的）。
                 enabled=self._has_folder_to_open,
@@ -1084,7 +1084,7 @@ class MainWindow(
             ),
             ExternalEntry(
                 id=apps.QSPACE.id,
-                name=apps.QSPACE.name,
+                name=apps.QSPACE.label,
                 icon=icon_for(apps.QSPACE),
                 # **没装它就不摆这一项**（与「访达」同一条判据：摆一个点下去没反应的灰条目
                 # 只会让人以为软件坏了）。
@@ -1094,7 +1094,7 @@ class MainWindow(
             ),
             ExternalEntry(
                 id="apple_calendar",
-                name=apps.CALENDAR.name,
+                name=apps.CALENDAR.label,
                 icon=icon_for(apps.CALENDAR, fallback=ICON_CALENDAR),
                 # 没装（或是别的平台）就不摆：与预览、QSpace 同一条判据。
                 enabled=lambda: self._on_calendar_page() and self._installed(apps.CALENDAR),
@@ -1103,7 +1103,7 @@ class MainWindow(
             ),
             ExternalEntry(
                 id="google_calendar",
-                name="Google 日历",
+                name=t("app.google_calendar"),
                 icon=calendar_icon(),
                 enabled=self._on_calendar_page,
                 pages=(EXTERNAL_PAGE_CALENDAR,),
@@ -1118,7 +1118,7 @@ class MainWindow(
         """
         return ExternalEntry(
             id=viewer.id,
-            name=viewer.name,
+            name=viewer.label,
             icon=icon_for(viewer),
             enabled=partial(self._viewer_ready, viewer),
             pages=(EXTERNAL_PAGE_DETAIL,),
@@ -1190,7 +1190,7 @@ class MainWindow(
         if point is None:
             return
         outcome = launch.open_in_maps(*point)
-        self._show_banner(banners.map_opened(outcome, apps.MAPS.name), auto_hide=True)
+        self._show_banner(banners.map_opened(outcome, apps.MAPS.label), auto_hide=True)
 
     def _open_in_google_maps(self) -> None:
         """把拍摄位置交给 Google 地图；装了它的 PWA 就开在应用里。
@@ -1212,15 +1212,21 @@ class MainWindow(
         """有坐标就交出来；没有就说一句 —— 按钮本来只在有坐标时才摆。"""
         point = self._map_point()
         if point is None:
-            self._show_banner("这张照片没有拍摄位置，无法打开地图。", auto_hide=True)
+            self._show_banner(t("window.map.no_location"), auto_hide=True)
         return point
 
     def _on_google_maps_opened(self, outcome: object) -> None:
         if isinstance(outcome, launch.OpenOutcome):
-            self._show_banner(banners.map_opened(outcome, "Google 地图"), auto_hide=True)
+            self._show_banner(banners.map_opened(outcome, t("app.google_maps")), auto_hide=True)
 
     def _on_google_maps_failed(self, message: str) -> None:
-        self._show_banner(f"未能打开 Google 地图：{message}")
+        self._show_banner(
+            t(
+                "window.external.open_failed",
+                name=t("app.google_maps"),
+                detail=message,
+            )
+        )
 
     def _on_external_entry(self, entry: object) -> None:
         """下拉框里点了哪一项。**按 id 分派**，不在按钮那一侧硬编码（理由见 ``ExternalEntry``）。"""
@@ -1261,10 +1267,10 @@ class MainWindow(
 
     def _on_apple_calendar_opened(self, outcome: object) -> None:
         if isinstance(outcome, launch.OpenOutcome):
-            self._show_banner(banners.calendar_opened(outcome, apps.CALENDAR.name), auto_hide=True)
+            self._show_banner(banners.calendar_opened(outcome, apps.CALENDAR.label), auto_hide=True)
 
     def _on_apple_calendar_failed(self, message: str) -> None:
-        self._show_banner(f"未能打开「日历」：{message}")
+        self._show_banner(t("window.calendar.apple_open_failed", detail=message))
 
     def _open_google_calendar(self) -> None:
         """把 Google 日历开到与当前这一页一致的那一层、那一天。
@@ -1290,7 +1296,10 @@ class MainWindow(
         if not isinstance(outcome, launch.OpenOutcome):
             return
         # **说过就走**：开都开完了，用户看的应该是那个窗口而不是这条消息（ADR 0029）。
-        self._show_banner(banners.external_app_opened(outcome, "Google 日历"), auto_hide=True)
+        self._show_banner(
+            banners.external_app_opened(outcome, t("app.google_calendar")),
+            auto_hide=True,
+        )
 
     def _on_calendar_page(self) -> bool:
         """此刻是不是日历那一页。**下拉框那两页互斥的判据都在这一句里。**"""
@@ -1352,7 +1361,7 @@ class MainWindow(
         """
         app = apps.find_app(apps.QSPACE)
         if app is None:
-            self._show_banner("未找到 QSpace：它可能已被移动或卸载。")
+            self._show_banner(t("window.external.app_not_found", name=t("app.qspace")))
             return
         paths, reveal = self._external_targets()
         if not paths:
@@ -1381,11 +1390,11 @@ class MainWindow(
         app = apps.find_app(player)
         ref = self._detail_photo_ref()
         if app is None or ref is None or not ref.is_video:
-            self._show_banner(f"未找到 {player.name}：它可能已被移动或卸载。")
+            self._show_banner(t("window.external.app_not_found", name=player.label))
             return
         self._video.pause()
         self._show_banner(
-            desktop.open_with_app([ref.path], app=app, name=player.name), auto_hide=True
+            desktop.open_with_app([ref.path], app=app, name=player.label), auto_hide=True
         )
 
     def _open_in_viewer(self, viewer: App) -> None:
@@ -1398,9 +1407,11 @@ class MainWindow(
         app = apps.find_app(viewer)
         photo = self._detail_photo_path()
         if app is None or photo is None:
-            self._show_banner(f"未找到 {viewer.name}：它可能已被移动或卸载。")
+            self._show_banner(t("window.external.app_not_found", name=viewer.label))
             return
-        self._show_banner(desktop.open_with_app([photo], app=app, name=viewer.name), auto_hide=True)
+        self._show_banner(
+            desktop.open_with_app([photo], app=app, name=viewer.label), auto_hide=True
+        )
 
     def _external_targets(self) -> tuple[list[Path], bool]:
         """访达与 QSpace 那两项要作用在什么上：路径，以及**要不要把它选出来**。
@@ -1413,13 +1424,19 @@ class MainWindow(
             return self._selected_paths(), True
         folder = self._current_folder()
         if folder is None:
-            self._show_banner("尚未打开库，没有可打开的文件夹。")
+            self._show_banner(t("window.folder.no_library"))
             return [], False
         return [folder], False
 
     def _on_external_failed(self, message: str) -> None:
         # 走到这里的是「起进程这一步整个炸了」；``core.external.launch`` 自己的降级路径不抛异常。
-        self._show_banner(f"未能打开 Google 日历：{message}")
+        self._show_banner(
+            t(
+                "window.external.open_failed",
+                name=t("app.google_calendar"),
+                detail=message,
+            )
+        )
 
     # ---- 关闭 --------------------------------------------------------------
 

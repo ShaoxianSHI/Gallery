@@ -15,6 +15,7 @@ from pathlib import Path
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QMessageBox
 
+from gallery.core.i18n import t, t_plural
 from gallery.core.library.photos import GridEntry, GroupRef, SectionRef
 from gallery.ui.browser.grid import PREFETCH_MARGIN
 from gallery.ui.tasks import TaskContext
@@ -179,7 +180,7 @@ class ThumbnailFlowMixin:
         failed = self._banner_text.note_thumbnail_failure()
         logger.info("缩略图失败：%s", message)
         self._show_banner(
-            f"有 {failed} 个文件无法显示缩略图：{message}",
+            t_plural("flow.thumbnail_flow.failed", failed, reason=message),
             background=True,
             auto_hide=True,
         )
@@ -198,22 +199,21 @@ class ThumbnailFlowMixin:
             return
         answer = QMessageBox.question(
             self,
-            "清空缩略图缓存",
-            f"将删除「{library.display_name}」的缩略图缓存。\n"
-            "照片本身不受影响，缓存会在下次浏览时自动重建。",
+            t("flow.thumbnail_flow.clear_title"),
+            t("flow.thumbnail_flow.clear_body", name=library.display_name),
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
         if self._cache_job is not None:
             # 两次清空是同一个意思，跑两遍只会让第二个的「已清除 N 个」覆盖第一个的。
-            self._show_banner("上一次清空尚未结束。")
+            self._show_banner(t("flow.thumbnail_flow.clear_busy"))
             return
 
         def work(context: TaskContext) -> object:
             # ``clear_cache`` 不接取消令牌：半途停下来只会留下**一半**的缓存目录，那比慢更难解释。
             return library.clear_cache()
 
-        self._show_banner("正在清空缩略图缓存…", background=True)
+        self._show_banner(t("flow.thumbnail_flow.clearing"), background=True)
         self._start_job(
             "_cache_job",
             work,
@@ -228,13 +228,13 @@ class ThumbnailFlowMixin:
         removed = payload if isinstance(payload, int) else 0
         self._model.clear_thumbnails()
         self._refresh_thumbnail_window()
-        self._show_banner(f"已清除 {removed} 个缩略图缓存文件。", auto_hide=True)
+        self._show_banner(t_plural("flow.thumbnail_flow.cleared", removed), auto_hide=True)
 
     def _on_thumbnail_cache_failed(self, message: str) -> None:
         self._finish_job("_cache_job")
         logger.info("清空缩略图缓存失败：%s", message)
         # 这一句**不自动收起**：它是「要用户动手处理」的（换个地方、腾点空间再试）。
-        self._show_banner(f"未能清空缩略图缓存：{message.rstrip('。')}")
+        self._show_banner(t("flow.thumbnail_flow.clear_failed", reason=message.rstrip("。")))
 
 
 __all__ = ["ThumbnailFlowMixin"]

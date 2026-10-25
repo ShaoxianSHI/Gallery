@@ -31,6 +31,7 @@ from gallery.core.backdrops.recipe import (
     palette_of,
 )
 from gallery.core.errors import GalleryError
+from gallery.core.i18n import t
 from gallery.core.media.decode import RasterImage
 
 #: 清单格式版本。v2 起多一份 ``palettes``（ADR 0105）；**v1 照样读** —— 只认当前版本会把
@@ -201,7 +202,9 @@ class BackdropStore:
                 return RasterImage.from_pil(image.convert("RGBA"), has_alpha=False)
         except OSError as exc:
             raise BackdropError(
-                f"无法读取这张背景图：{path.name}", path=path, detail=str(exc)
+                t("library.backdrop.read_image", name=path.name),
+                path=path,
+                detail=str(exc),
             ) from exc
 
     # ---- 写 ----------------------------------------------------------------
@@ -220,7 +223,9 @@ class BackdropStore:
             write_bytes_atomic(self._cache_dir / file_name, _png_bytes(raster), durable=False)
         except OSError as exc:
             raise BackdropError(
-                f"背景图未能写进缓存：{self._cache_dir}", path=self._cache_dir, detail=str(exc)
+                t("library.backdrop.write_cache", path=self._cache_dir),
+                path=self._cache_dir,
+                detail=str(exc),
             ) from exc
         backdrop = Backdrop(
             id=backdrop_id,
@@ -241,7 +246,9 @@ class BackdropStore:
             payload = source.read_bytes()
         except OSError as exc:
             raise BackdropError(
-                f"无法读取这张照片：{source}", path=source, detail=str(exc)
+                t("library.backdrop.read_photo", path=source),
+                path=source,
+                detail=str(exc),
             ) from exc
         backdrop_id = f"{KIND_PHOTO}-{hashlib.sha1(payload).hexdigest()[:12]}"
         existing = self.get(backdrop_id)
@@ -253,7 +260,9 @@ class BackdropStore:
             write_bytes_atomic(self._cache_dir / file_name, _photo_bytes(source), durable=False)
         except OSError as exc:
             raise BackdropError(
-                f"无法解码这张照片，请更换后重试：{source}", path=source, detail=str(exc)
+                t("library.backdrop.decode_photo", path=source),
+                path=source,
+                detail=str(exc),
             ) from exc
         backdrop = Backdrop(
             id=backdrop_id,
@@ -276,7 +285,7 @@ class BackdropStore:
             items[index] = replace(item, name=_dedupe(clean, others))
             self._commit(tuple(items), self.palettes())
             return items[index]
-        raise BackdropError("这张背景已不存在，可能刚被删除。")
+        raise BackdropError(t("library.backdrop.missing"))
 
     def remove(self, backdrop_id: str) -> None:
         """删一张。**只删缓存目录下的自有文件**，用户的照片一个字节都不碰。"""
@@ -318,13 +327,13 @@ class BackdropStore:
                 if item.kind == KIND_INK and item.recipe is not None:
                     raster = render(item.recipe)
                     write_bytes_atomic(self.path_of(item), _png_bytes(raster), durable=False)
-                    done.append(f"背景「{item.name}」已按配方重新生成")
+                    done.append(t("library.backdrop.rebuilt_recipe", name=item.name))
                     changed = True
                 elif item.kind == KIND_PHOTO and item.source:
                     source = Path(item.source)
                     if source.is_file():
                         write_bytes_atomic(self.path_of(item), _photo_bytes(source), durable=False)
-                        done.append(f"背景「{item.name}」已从原图重新导入")
+                        done.append(t("library.backdrop.rebuilt_source", name=item.name))
                         changed = True
             except (OSError, GalleryError):
                 continue
@@ -365,7 +374,7 @@ class BackdropStore:
             write_text_atomic(self._registry_path, text)
         except OSError as exc:
             raise BackdropError(
-                f"背景清单不可写入：{self._registry_path}",
+                t("library.backdrop.registry_unwritable", path=self._registry_path),
                 path=self._registry_path,
                 detail=str(exc),
             ) from exc
@@ -375,7 +384,7 @@ class BackdropStore:
     def _clean_name(self, name: str) -> str:
         clean = " ".join(name.split())[:MAX_NAME_LENGTH]
         if not clean:
-            raise BackdropError("请为这张背景填写名称。")
+            raise BackdropError(t("library.backdrop.name_required"))
         return clean
 
     def _unique_name(self, name: str) -> str:
@@ -435,13 +444,17 @@ def _photo_bytes(source: Path) -> bytes:
         return buffer.getvalue()
 
 
-def name_suggestion(recipe: Recipe, *, fallback: str = "背景") -> str:
+def name_suggestion(recipe: Recipe, *, fallback: str | None = None) -> str:
     """生成图的默认名字：配色名。用户在对话框里可以改。
 
     自定义配色不在预设表里，名字取不到 —— 由调用方把它那套配色的标题当 ``fallback`` 递进来。
     """
     palette = palette_of(recipe)
-    return palette.title if palette is not None else fallback
+    return (
+        palette.title
+        if palette is not None
+        else (fallback if fallback is not None else t("library.backdrop.default_name"))
+    )
 
 
 __all__ = [

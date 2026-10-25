@@ -19,6 +19,7 @@ from uuid import uuid4
 
 from gallery.core import paths
 from gallery.core.errors import DeleteError
+from gallery.core.i18n import t
 from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef, SectionRef
 from gallery.core.metadata.failures import Failure, os_reason
 from gallery.core.metadata.journal import (
@@ -106,7 +107,7 @@ def move_to_trash(entry_path: Path) -> Path:
         target = _free_name(directory / source.name, is_dir=is_dir)
     except OSError as exc:
         raise DeleteError(
-            f"无法使用废纸篓：{os_reason(exc, is_dir=True)}",
+            t("metadata.trash.unavailable", reason=os_reason(exc, is_dir=True)),
             path=source,
             detail=repr(exc),
         ) from exc
@@ -115,7 +116,7 @@ def move_to_trash(entry_path: Path) -> Path:
     except OSError as exc:
         if exc.errno != errno.EXDEV:
             raise DeleteError(
-                f"无法移到废纸篓：{os_reason(exc, is_dir=is_dir)}",
+                t("metadata.trash.move_failed", reason=os_reason(exc, is_dir=is_dir)),
                 path=source,
                 detail=repr(exc),
             ) from exc
@@ -124,7 +125,7 @@ def move_to_trash(entry_path: Path) -> Path:
             shutil.move(str(source), str(target))
         except OSError as copy_exc:
             raise DeleteError(
-                f"无法移到废纸篓：{os_reason(copy_exc, is_dir=is_dir)}",
+                t("metadata.trash.move_failed", reason=os_reason(copy_exc, is_dir=is_dir)),
                 path=source,
                 detail=repr(copy_exc),
             ) from copy_exc
@@ -156,7 +157,7 @@ def trash_entries(
             failures.append(
                 Failure(
                     name=entry.name,
-                    message="分区标题不是磁盘上的文件，无法移除；请选中它下面的照片后再移到废纸篓。",
+                    message=t("metadata.trash.section"),
                 )
             )
             continue
@@ -166,7 +167,7 @@ def trash_entries(
                 Failure(
                     # 分组没有路径 —— 它不是磁盘上的东西（photos.GroupRef），移不走。
                     name=entry.name,
-                    message="分组不是磁盘上的文件，无法移除；请双击进入分组，选中其中的照片后再移到废纸篓。",
+                    message=t("metadata.trash.group"),
                 )
             )
             continue
@@ -256,12 +257,12 @@ def _restore_one(record: WriteRecord) -> GridEntry:
     original, trashed = record.source, record.target
     if not trashed.exists():
         raise DeleteError(
-            f"废纸篓中已找不到「{original.name}」；废纸篓可能已被清空，或你已在访达中还原。",
+            t("metadata.trash.restore.missing", name=original.name),
             path=original,
         )
     if original.exists():
         raise DeleteError(
-            f"「{original.name}」所在位置已有其他文件。",
+            t("metadata.trash.restore.occupied", name=original.name),
             path=original,
         )
     # 移动不改内容也不改时间：先从废纸篓里把引用读出来，再让它指回原路径。
@@ -310,15 +311,15 @@ def _guard(root: Path, source: Path) -> None:
 
 #: 拒绝移到废纸篓的那几种原因 → 给用户的那句话。见 :data:`rename._GUARD_MESSAGES`。
 _GUARD_MESSAGES: Final = {
-    paths.GuardReason.OUTSIDE_ROOT: "只能移除库中的项目：{path}。",
-    paths.GuardReason.IS_ROOT: "这是库本身，删除后 Gallery 将找不到任何照片。",
-    paths.GuardReason.IS_CONFIG_DIR: "这是 Gallery 的配置目录，不能删除。",
+    paths.GuardReason.OUTSIDE_ROOT: "metadata.trash.guard.outside_root",
+    paths.GuardReason.IS_ROOT: "metadata.trash.guard.is_root",
+    paths.GuardReason.IS_CONFIG_DIR: "metadata.trash.guard.is_config_dir",
 }
 
 
 def _trash_reason(path: Path, error: paths.GuardError) -> str:
     """按拒绝的**原因**给一句中文 —— 理由见 :func:`rename._rename_reason`。"""
-    return _GUARD_MESSAGES[error.reason].format(path=path)
+    return t(_GUARD_MESSAGES[error.reason], path=path)
 
 
 def _free_name(candidate: Path, *, is_dir: bool) -> Path:
@@ -333,7 +334,7 @@ def _free_name(candidate: Path, *, is_dir: bool) -> Path:
     free = free_name_in(candidate.parent, candidate.name, whole=is_dir)
     if free is None:
         raise DeleteError(
-            f"「{candidate.name}」名称过长，在废纸篓中加上编号后仍超出限制。",
+            t("metadata.trash.name_too_long", name=candidate.name),
             path=candidate,
         )
     return candidate.parent / free

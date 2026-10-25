@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+from gallery.core.i18n import t
+
 #: v1 支持的图片扩展名（小写，含点）。RAW 明确不在其中（ADR 0001）。
 SUPPORTED_SUFFIXES: Final[frozenset[str]] = frozenset(
     {
@@ -55,7 +57,9 @@ MEDIA_SUFFIXES: Final[frozenset[str]] = SUPPORTED_SUFFIXES | VIDEO_SUFFIXES
 
 def format_label(suffix: str) -> str:
     """把扩展名转成界面展示用的格式名（``.jpg`` → ``JPEG``）。"""
-    return _FORMAT_LABELS.get(suffix.lower(), suffix.lstrip(".").upper() or "未知")
+    return _FORMAT_LABELS.get(
+        suffix.lower(), suffix.lstrip(".").upper() or t("library.photos.unknown_format")
+    )
 
 
 def normalize_suffix(text: str) -> str | None:

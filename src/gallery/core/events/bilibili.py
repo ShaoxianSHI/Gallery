@@ -21,6 +21,7 @@ from gallery.core.errors import MovieImportError
 from gallery.core.events.kinds import SOURCE_BILIBILI, minutes_of_seconds
 from gallery.core.events.models import MovieInfo
 from gallery.core.events.transport import HttpTransport, Transport
+from gallery.core.i18n import t
 
 logger = logging.getLogger(__name__)
 
@@ -33,13 +34,13 @@ SITE: Final = "https://www.bilibili.com"
 #: 接口自己的错误码 → 给用户的一句中文。**HTTP 是 200，错在 JSON 里**，
 #: 所以「删了」「私密」「还在审核」分得清楚 —— 混成一句「取不到」会把人支到错的下一步。
 _PROBLEMS: Final[dict[int, str]] = {
-    -400: "B 站返回：编号不合法",
-    -403: "B 站不让看该稿件，权限不足",
-    -404: "B 站未收录该稿件",
-    -352: "B 站风控未放行，请稍后重试，或先在浏览器中打开",
-    62002: "该稿件不可见，可能已删除或设为私密",
-    62004: "该稿件仍在审核中，请稍后重试",
-    62012: "该稿件仅 UP 主可见",
+    -400: "event.bilibili.problem.invalid_code",
+    -403: "event.bilibili.problem.forbidden",
+    -404: "event.bilibili.problem.not_found",
+    -352: "event.bilibili.problem.risk_control",
+    62002: "event.bilibili.problem.unavailable",
+    62004: "event.bilibili.problem.under_review",
+    62012: "event.bilibili.problem.up_only",
 }
 
 #: BV 号的 base58 字母表（`av` ↔ BV 互转用）。**它不含 ``0 I O l``**，字母表的顺序是算法的一部分。
@@ -156,12 +157,15 @@ def id_from_url(url: str) -> str | None:
 def problem_of(payload: Mapping[str, object], code: str) -> MovieImportError:
     """接口报错时给用户的那一句。**认不出的码原样带上**（用户报问题时能照着搜）。"""
     status = payload.get("code")
-    known = _PROBLEMS.get(status) if isinstance(status, int) else None
+    known = t(_PROBLEMS[status]) if isinstance(status, int) and status in _PROBLEMS else None
     if known is not None:
-        return MovieImportError(f"{known}：{code}。")
+        return MovieImportError(t("event.bilibili.problem_known", reason=known, code=code))
     message = _text(payload.get("message"))
-    tail = f"，{message}" if message else ""
-    return MovieImportError(f"B 站未提供该稿件的信息：错误码 {status}{tail}。")
+    if message:
+        return MovieImportError(
+            t("event.bilibili.problem_unknown_message", status=status, message=message)
+        )
+    return MovieImportError(t("event.bilibili.problem_unknown", status=status))
 
 
 def view_of(payload: Mapping[str, object], code: str) -> MovieInfo:
@@ -174,7 +178,7 @@ def view_of(payload: Mapping[str, object], code: str) -> MovieInfo:
         raise problem_of(payload, code)
     data = payload.get("data")
     if not isinstance(data, Mapping):
-        raise MovieImportError(f"B 站未提供该稿件的信息：{code}。")
+        raise MovieImportError(t("event.bilibili.no_info", code=code))
     bvid = _text(data.get("bvid")) or code
     owner = data.get("owner")
     season = data.get("ugc_season")
@@ -249,9 +253,9 @@ def _json(raw: str, code: str) -> Mapping[str, object]:
     try:
         payload = json.loads(raw)
     except ValueError as exc:
-        raise MovieImportError(f"B 站返回的信息无法解析：{code}。") from exc
+        raise MovieImportError(t("event.bilibili.unparsable", code=code)) from exc
     if not isinstance(payload, Mapping):
-        raise MovieImportError(f"B 站返回的信息不是有效的稿件信息：{code}。")
+        raise MovieImportError(t("event.bilibili.invalid_payload", code=code))
     return payload
 
 
@@ -264,7 +268,7 @@ def fetch(code: str, *, client: Transport) -> MovieInfo:
     :raises MovieImportError: 稿件不存在 / 不可见 / 编号不合法 / 网络失败。
     """
     if not _BV_RE.fullmatch(code):
-        raise MovieImportError(f"不是有效的 BV 号：{code}。")
+        raise MovieImportError(t("event.bilibili.invalid_code", code=code))
     movie = view_of(_json(client.get_text(_view_url(code)), code), code)
     tags = _tags(code, client)
     return replace(movie, tags=tags) if tags else movie

@@ -12,6 +12,8 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+from gallery.core.i18n import t
+
 
 @dataclass(frozen=True, slots=True)
 class Failure:
@@ -36,34 +38,43 @@ class Failure:
 
 #: 「源已经不在原来的位置了」那一句。``os_reason`` 的 ``ENOENT`` 分支与 ``transfer`` 动手前
 #: 发现源不存在时引用同一句，而不是各抄一份（测试锁定两边一致）。
-SOURCE_GONE = "该文件已不在原位置，可能刚被其他程序移动。"
+SOURCE_GONE = "metadata.failure.source_gone"
 
 
-def os_reason(exc: OSError, *, is_dir: bool = False, action: str | None = None) -> str:
+def os_reason(
+    exc: OSError,
+    *,
+    is_dir: bool = False,
+    action: str | None = None,
+    action_key: str | None = None,
+) -> str:
     """把系统错误翻译成一句用户看得懂、且**指向下一步**的话。
 
     五种情况全仓库统一说法：磁盘满、东西不在了、没权限（分文件与文件夹）、名字太长、源与目标是
     同一个。判据既认 ``errno`` 也认系统原话里那几个词（macOS / Linux 的部分错误不带 ``errno``）；
     其余带上 ``strerror``。:param is_dir: 只影响没权限那一条。:param action: 只加在说不清原因时。
+    :param action_key: 操作名在文案目录里的后缀（``copy`` / ``move``）；与 ``action`` 二选一。
     """
     reason = exc.strerror or str(exc) or exc.__class__.__name__
     if isinstance(exc, shutil.SameFileError):
-        return "源和目标是同一个东西。"
+        return t("metadata.failure.same_file")
     if exc.errno == errno.ENOSPC or "No space left" in reason or "磁盘空间不足" in reason:
-        return "磁盘已满，请释放空间后重试。"
+        return t("metadata.failure.disk_full")
     if exc.errno == errno.ENOENT or "No such file" in reason:
-        return SOURCE_GONE
+        return t(SOURCE_GONE)
     if isinstance(exc, PermissionError) or exc.errno in (errno.EACCES, errno.EPERM):
-        hint = (
-            "请检查「系统设置 → 隐私与安全性 → 文件与文件夹」里有没有授权。"
+        hint = t(
+            "metadata.failure.permission_folder_hint"
             if is_dir
-            else "请检查它是否为只读，或正被其他程序占用。"
+            else "metadata.failure.permission_file_hint"
         )
-        return f"没有权限，系统返回 {reason}。{hint}"
+        return t("metadata.failure.permission", reason=reason, hint=hint)
     if exc.errno == errno.ENAMETOOLONG or "File name too long" in reason or "文件名太长" in reason:
-        return "文件名过长，超出当前磁盘的限制。"
-    prefix = f"{action}失败：" if action else ""
-    return f"{prefix}{reason}。它可能正在被其他程序使用。"
+        return t("metadata.failure.name_too_long")
+    label = t(f"metadata.failure.action.{action_key}") if action_key else action
+    if label:
+        return t("metadata.failure.action_failed", action=label, reason=reason)
+    return t("metadata.failure.unknown", reason=reason)
 
 
 def same_directory(left: Path, right: Path) -> bool:

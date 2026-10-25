@@ -13,13 +13,14 @@ from PySide6.QtCore import QEvent, QObject, QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import QFont, QMouseEvent, QPainter
 from PySide6.QtWidgets import QFrame, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
+from gallery.core.i18n import t
 from gallery.core.library.calendar import (
-    WEEKDAY_NAMES,
     DayBuckets,
     HourBuckets,
     cell_cover,
     week_index,
     week_start,
+    weekday_names,
 )
 from gallery.core.library.photos import PhotoRef
 from gallery.ui import theme
@@ -296,7 +297,7 @@ class _TimeHeader(QWidget):
                 QRectF(slot.left(), 4, slot.width(), 18),
                 # **按「周日打头」数出来的列号取名字**：``WEEKDAY_NAMES`` 是周日 0 … 周六 6，
                 # 而 ``weekday()`` 是周一 0 … 周日 6，直接索引会让表头第一列（周日）写成「周六」。
-                f"周{WEEKDAY_NAMES[week_index(day)]}",
+                t("calendar.week_header", name=weekday_names()[week_index(day)]),
                 font_px(_WEEKDAY_FONT_PX),
                 colors.accent if day == self._view.today() else colors.muted,
                 Qt.AlignmentFlag.AlignCenter,

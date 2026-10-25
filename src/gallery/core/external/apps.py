@@ -15,6 +15,8 @@ from functools import cache
 from pathlib import Path
 from typing import Any
 
+from gallery.core.i18n import t
+
 #: 向系统要图标时给多大（**点**，不是像素 —— Retina 上拿回来的是两倍像素）。菜单里最大也就
 #: 16 点；而系统手上那张原图是 1024，编码一次要一百多毫秒、快 2 MB，不能直接往上递。
 ICON_EDGE = 64
@@ -32,6 +34,11 @@ class App:
     id: str
     name: str
     bundle_ids: tuple[str, ...]
+
+    @property
+    def label(self) -> str:
+        """菜单与横幅里显示的本地化名字。**``name`` 是数据**，``open -a`` 那条路径不碰它。"""
+        return t(f"app.{self.id}")
 
 
 #: QSpace 的 bundle id：同一个作者有两个发行版，Pro 在前（本机实测那个包就叫「QSpace Pro」）；

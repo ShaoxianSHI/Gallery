@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from functools import partial
 from pathlib import Path
 
+from gallery.core.i18n import t, t_plural
 from gallery.core.library.config import SEARCH_SCOPE_LEVEL, SEARCH_SCOPES
 from gallery.core.library.facade import Library
 from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
@@ -184,7 +185,7 @@ class SearchFlowMixin:
         if generation != self._generation:
             return
         self._finish_job("_filter_job")
-        self._show_banner(f"筛选未能完成：{message}")
+        self._show_banner(t("flow.search_flow.filter_failed", reason=message))
         # 照常把这一层排出来：一片空白比未筛选的内容更没用，而横幅已经说清发生了什么。
         self._apply_ordering()
 
@@ -239,7 +240,7 @@ class SearchFlowMixin:
         self._finish_job("_search_job")
         self._filters.set_total(0)
         self._sync_ui()
-        self._show_banner(f"检索未能完成：{message}")
+        self._show_banner(t("flow.search_flow.search_failed", reason=message))
         self._apply_ordering()  # 把这一层按「没有结果」收尾，界面不至于卡在空白上
 
     def _on_search_submitted(self, raw: str) -> None:
@@ -262,7 +263,9 @@ class SearchFlowMixin:
         if self._library is None:
             # 没有库的时候记录这条条件是**悄悄的**：面包屑不显示它，换库时又被清掉 —— 不如说一句。
             self._show_banner(
-                "请先打开一个库，再筛选。" if self._is_filtering() else "请先打开一个库，再搜索。"
+                t("flow.search_flow.no_library.filter")
+                if self._is_filtering()
+                else t("flow.search_flow.no_library.search")
             )
             return
         self._filters.submit(condition)
@@ -311,8 +314,11 @@ class SearchFlowMixin:
         if not isinstance(parsed, ParsedInput) or parsed.selecting or parsed.field is None:
             return
         self._show_banner(
-            f"「{parsed.field.label}」{unusable_reason(parsed.field, parsed.value)}"
-            "无法识别的部分不会加入筛选条件。"
+            t(
+                "flow.search_flow.unusable",
+                field=parsed.field.label,
+                reason=unusable_reason(parsed.field, parsed.value),
+            )
         )
 
     def _warn_metadata_without_exiftool(self, condition: SearchCondition) -> None:
@@ -323,10 +329,7 @@ class SearchFlowMixin:
         """
         if not self._has_exiftool or not condition.field.needs_metadata:
             return
-        self._show_banner(
-            f"未安装 exiftool，无法读取「{condition.field.label}」字段。"
-            "文件名、相册、格式与大小不受影响。安装命令：brew install exiftool"
-        )
+        self._show_banner(t("flow.search_flow.exiftool_required", field=condition.field.label))
 
     def _on_search_dismissed(self) -> None:
         """搜索框里按 Esc 且里面是空的。
@@ -446,10 +449,10 @@ class SearchFlowMixin:
         if not self._banner_text.index.is_ours or not self._banner_text.may_show_progress:
             return
         if isinstance(payload, tuple) and len(payload) == 2 and payload[0] == "work":
-            self._show_index_notice(f"正在建立检索索引…{payload[1]} 张")
+            self._show_index_notice(t_plural("flow.search_flow.index_progress", payload[1]))
             return
         if isinstance(payload, int) and payload > 0:
-            self._show_index_notice(f"正在建立检索索引…已处理 {payload} 张")
+            self._show_index_notice(t_plural("flow.search_flow.index_progress_processed", payload))
 
     def _on_photo_index_done(self, payload: object) -> None:
         self._finish_job("_index_job")
@@ -471,9 +474,9 @@ class SearchFlowMixin:
             # **说清是哪一种条件**：两个功能坏在同一个原因上（那个卷不许写缓存），而用户看到的
             # 是他自己刚才做的那件事 —— 把话说成他正在用的那个功能，他才不会去别处找原因。
             self._show_banner(
-                "当前库无法建立检索索引，筛选暂不可用。"
+                t("flow.search_flow.index_unavailable.filter")
                 if self._is_filtering()
-                else "当前库无法建立检索索引，搜索暂不可用。"
+                else t("flow.search_flow.index_unavailable.search")
             )
 
     def _forget_indexed_root(self) -> None:

@@ -12,11 +12,11 @@ from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QFont, QMouseEvent, QPainter
 
 from gallery.core.library.calendar import (
-    WEEKDAY_HEADERS,
     cell_cover,
     in_month,
     month_matrix,
     week_index,
+    weekday_headers,
 )
 from gallery.core.library.photos import PhotoRef
 from gallery.ui.calendar.base import LevelView, day_label
@@ -68,7 +68,7 @@ class MonthView(LevelView):
         body_top = grid.top() + _HEAD_HEIGHT
         days = month_matrix(self._anchor)
 
-        for index, label in enumerate(WEEKDAY_HEADERS):
+        for index, label in enumerate(weekday_headers()):
             draw_text(
                 painter,
                 QRectF(

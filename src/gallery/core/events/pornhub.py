@@ -18,6 +18,7 @@ from gallery.core.errors import MovieImportError, SourcePageError
 from gallery.core.events.kinds import SOURCE_PORNHUB, minutes_of_seconds
 from gallery.core.events.models import MovieInfo
 from gallery.core.events.transport import HttpTransport, Transport
+from gallery.core.i18n import t
 
 #: 影片页的域名（``page_url`` 与 ``Referer`` 用它）。
 SITE: Final = "https://www.pornhub.com"
@@ -186,9 +187,7 @@ def view_of(html: str, code: str) -> MovieInfo:
     video = video_object_of(html)
     title = _title_of(html, meta)
     if not title:
-        raise MovieImportError(
-            f"Pornhub 这一页未提供影片信息：{code}。站点可能更改了页面结构，请在浏览器中打开确认。"
-        )
+        raise MovieImportError(t("event.pornhub.no_info_reason", code=code))
     duration = (
         _seconds(flash.get("video_duration"))
         or _seconds(meta.get("og:duration"))
@@ -211,9 +210,9 @@ def view_of(html: str, code: str) -> MovieInfo:
 def _raise_if_unavailable(html: str, code: str) -> None:
     """页面自己说了「不在」的时候给一句中文，别让用户去查编号。"""
     if any(mark in html for mark in _GEO_MARKS):
-        raise MovieImportError(f"该视频在当前的网络所在地看不到：{code}。")
+        raise MovieImportError(t("event.pornhub.geo_blocked", code=code))
     if _MISSING_RE.search(html):
-        raise MovieImportError(f"Pornhub 未收录该视频，或它已被删除 / 设为私密：{code}。")
+        raise MovieImportError(t("event.pornhub.unavailable", code=code))
 
 
 def _title_of(html: str, meta: Mapping[str, str]) -> str:
@@ -321,12 +320,12 @@ def fetch(code: str, *, client: Transport) -> MovieInfo:
     """
     normalized = normalize_code(code)
     if not _ID_RE.fullmatch(normalized):
-        raise MovieImportError(f"不是有效的 Pornhub 编号：{code}。")
+        raise MovieImportError(t("event.pornhub.invalid_code", code=code))
     try:
         html = client.get_text(movie_url(normalized))
     except SourcePageError as exc:
         if exc.status == 404:
-            raise MovieImportError(f"Pornhub 未收录该视频：{normalized}。") from exc
+            raise MovieImportError(t("event.pornhub.not_found", code=normalized)) from exc
         raise
     return view_of(html, normalized)
 

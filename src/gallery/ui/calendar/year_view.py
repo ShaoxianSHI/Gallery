@@ -12,13 +12,14 @@ import datetime
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QFont, QMouseEvent, QPainter
 
+from gallery.core.i18n import t, t_plural
 from gallery.core.library.calendar import (
-    WEEKDAY_HEADERS,
     cell_cover,
     count_days,
     in_month,
     month_days,
     month_matrix,
+    weekday_headers,
 )
 from gallery.core.library.photos import PhotoRef
 from gallery.ui.calendar.base import LevelView, day_label
@@ -106,21 +107,21 @@ class YearView(LevelView):
         draw_text(
             painter,
             title,
-            f"{month}月",
+            t("calendar.month_label", month=month),
             font_px(_TITLE_FONT_PX, QFont.Weight.DemiBold),
             colors.text,
         )
         draw_text(
             painter,
             title,
-            f"{count} 张" if count else "",
+            t_plural("calendar.photo_count", count) if count else "",
             font_px(_COUNT_FONT_PX),
             colors.muted if count else colors.faint,
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
         )
         column = box.width() / 7
         head = QRectF(box.left(), box.top() + _TITLE_HEIGHT, box.width(), _WEEKDAY_HEIGHT)
-        for index, label in enumerate(WEEKDAY_HEADERS):
+        for index, label in enumerate(weekday_headers()):
             draw_text(
                 painter,
                 QRectF(box.left() + index * column, head.top(), column, head.height()),

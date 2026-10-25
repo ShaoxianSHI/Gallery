@@ -55,9 +55,9 @@ def test_the_cover_is_not_a_search_field() -> None:
     公共那两条是手写的（事件类型 / 事件）。将来有人把公共字段也生成一遍，这条就会红 ——
     而症状是候选里多一项没人会用的条件，不是报错。
     """
-    from gallery.core.library.search import SEARCH_FIELDS
+    from gallery.core.library.search import search_fields
 
-    labels = {field.label for field in SEARCH_FIELDS}
+    labels = {field.label for field in search_fields()}
 
     assert not any("封面" in label for label in labels)
 

@@ -22,21 +22,21 @@ from gallery.core.library.facade import Library
 from gallery.core.library.index import FacetIndex
 from gallery.core.library.photos import FolderRef, PhotoRef
 from gallery.core.library.search import (
-    DEFAULT_FIELD,
     HALF_WIDTH_RANGE_SEPARATOR,
-    SEARCH_FIELDS,
     SearchCondition,
     SearchField,
     albums_kept,
     build_count_query,
     build_match_query,
     build_query,
+    default_field,
     make_condition,
     match_field,
     parse_input,
     partial_field,
     relative_folder_path,
     rows_to_refs,
+    search_fields,
     suggestions,
     unusable_reason,
 )
@@ -106,7 +106,7 @@ def test_an_unknown_field_falls_back_to_the_file_name() -> None:
 
 
 def test_the_default_field_is_the_first_one_offered() -> None:
-    assert SEARCH_FIELDS[0] is DEFAULT_FIELD
+    assert search_fields()[0] is default_field()
 
 
 def test_a_field_matches_both_its_id_and_its_chinese_name() -> None:
@@ -122,7 +122,7 @@ def test_spaces_inside_a_field_name_do_not_matter() -> None:
 
 def test_suggestions_filter_as_the_user_types() -> None:
     """边打边筛：敲「文件格」就该看见「文件格式」，而不是整个列表。"""
-    assert len(suggestions("")) == len(SEARCH_FIELDS)
+    assert len(suggestions("")) == len(search_fields())
     assert [field.id for field in suggestions("文件格")] == [FACET_FORMAT]
     assert [field.id for field in suggestions("cam")] == [FACET_CAMERA]
     assert suggestions("压根没有这个字段") == []
@@ -655,7 +655,7 @@ def _connected(database: Path, root: Path) -> Iterator[sqlite3.Connection]:
 def test_every_searchable_field_survives_the_real_schema(tmp_path: Path, make_photo) -> None:
     """每个可搜字段都拿真 schema 执行一遍 —— **回归测试**。
 
-    ``SEARCH_FIELDS`` 里那些列名是手写的，抄成 ``PhotoFacets`` 上的属性名没有人看得出来，
+    :func:`search_fields` 里那些列名是手写的，抄成 ``PhotoFacets`` 上的属性名没有人看得出来，
     而错列名要等 SQLite 执行才说 ``no such column``。所以这里不问「查得对不对」，
     只问「这句 SQL 能不能跑」。
     """
@@ -665,7 +665,7 @@ def test_every_searchable_field_survives_the_real_schema(tmp_path: Path, make_ph
     assert database is not None
 
     with _connected(database, library.root) as connection:
-        for field in SEARCH_FIELDS:
+        for field in search_fields():
             condition = _condition(f"#{field.label} {_sample(field)}")
             assert condition is not None, field.label
             sql, values = build_query([condition], root=library.root)
@@ -701,7 +701,7 @@ def test_the_match_query_survives_the_real_schema(tmp_path: Path, make_photo) ->
     assert database is not None
 
     with _connected(database, library.root) as connection:
-        for field in SEARCH_FIELDS:
+        for field in search_fields():
             condition = _condition(f"#{field.label} {_sample(field)}")
             assert condition is not None, field.label
             sql, values = build_match_query([condition], root=library.root)
@@ -916,7 +916,7 @@ def test_every_search_field_can_both_parse_and_render() -> None:
     也一并锁定：它们是三个分派处共用的，改错一处不会有别的症状。
     """
     kinds = set()
-    for field in SEARCH_FIELDS:
+    for field in search_fields():
         kinds.add(field.kind)
         text = _sample_for(field)
 

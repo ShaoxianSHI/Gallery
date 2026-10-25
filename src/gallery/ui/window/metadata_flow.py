@@ -13,6 +13,7 @@ from functools import partial
 from PySide6.QtCore import QModelIndex
 
 from gallery.core.events.models import Event
+from gallery.core.i18n import t
 from gallery.core.library.photos import FolderRef, GroupRef, PhotoRef
 from gallery.core.metadata.exif import read_metadata
 from gallery.core.metadata.facets import PhotoFacets
@@ -35,11 +36,11 @@ def _place_text(facets: PhotoFacets) -> str:
     """
     label = place_label(facets.city, facets.region, facets.country)
     if not label:
-        return "坐标附近没有城市记录"
+        return t("flow.metadata_flow.no_city")
     distance = facets.place_distance_km
     if distance is None or distance < PLACE_DISTANCE_NOTICE_KM:
         return label
-    return f"{label}（最近城市约 {distance:.0f} 公里外）"
+    return t("flow.metadata_flow.distance", label=label, distance=distance)
 
 
 class MetadataFlowMixin:
@@ -74,7 +75,7 @@ class MetadataFlowMixin:
             return
         self._panel.set_metadata_editable(
             False,
-            reason="修改照片位置需要使用 exiftool。安装命令：brew install exiftool",
+            reason=t("flow.metadata_flow.exiftool_required"),
         )
 
     def _cancel_metadata_job(self) -> None:
@@ -198,7 +199,7 @@ class MetadataFlowMixin:
             self._show_place(ref, report, generation, _place_text(stored))
             return
         if announce:
-            self._panel.set_report(report.with_place("正在查询最近的城市…"))
+            self._panel.set_report(report.with_place(t("flow.metadata_flow.looking_up_city")))
         resolver = self._place_lookup()
         latitude, longitude = report.latitude, report.longitude
 
@@ -237,7 +238,7 @@ class MetadataFlowMixin:
     ) -> None:
         """``Library.resolve_photo_place`` 的结论：直接拿来显示。"""
         if not isinstance(payload, PhotoFacets):
-            self._show_place(ref, report, generation, "无法推断地点：未读到坐标")
+            self._show_place(ref, report, generation, t("flow.metadata_flow.no_coordinates"))
             return
         self._show_place(ref, report, generation, _place_text(payload))
 
@@ -253,7 +254,9 @@ class MetadataFlowMixin:
     def _on_place_failed(
         self, ref: PhotoRef, report: MetadataReport, generation: int, message: str
     ) -> None:
-        self._show_place(ref, report, generation, f"未能推断地点：{message}")
+        self._show_place(
+            ref, report, generation, t("flow.metadata_flow.lookup_failed", reason=message)
+        )
 
     def _on_entry_activated(self, index: QModelIndex) -> None:
         """双击一个格子：相册或分组就进去，照片与视频打开大图页。"""

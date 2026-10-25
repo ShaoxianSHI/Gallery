@@ -14,6 +14,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QToolButton, QWidget
 
+from gallery.core.i18n import t
 from gallery.core.library.config import SEARCH_SCOPE_LEVEL, SEARCH_SCOPE_LIBRARY
 from gallery.ui import theme
 from gallery.ui.chips import build_chip
@@ -127,13 +128,17 @@ class BreadcrumbBar(QWidget):
         4 张」，而实际那 4 张大半在别处。
         """
         filtering = scope == SEARCH_SCOPE_LEVEL
-        title = "筛选后" if filtering else "搜索结果"
-        text = title if result_count is None else f"{title}（{result_count}）"
+        title = t("widget.breadcrumb.filtered" if filtering else "widget.breadcrumb.search_results")
+        text = (
+            title
+            if result_count is None
+            else t("widget.breadcrumb.count", title=title, count=result_count)
+        )
         widget = QLabel(text)
         widget.setToolTip(
-            "当前层级中符合筛选条件的照片；按 Esc 逐条撤销条件"
+            t("widget.breadcrumb.filtered_tooltip")
             if filtering
-            else "整个库的检索结果（不限于某个文件夹）；按 Esc 逐条撤销条件"
+            else t("widget.breadcrumb.search_tooltip")
         )
         widget.setStyleSheet("font-size: 12px; font-weight: 600; padding: 2px 6px;")
         return widget
@@ -170,7 +175,7 @@ class BreadcrumbBar(QWidget):
     def _group_label(self, group: str) -> QLabel:
         """分组名：和当前目录一样的重体，只是不可点（点它没有对应的目录可回）。"""
         widget = QLabel(group)
-        widget.setToolTip("当前分组（按 Esc 返回上一层级）")
+        widget.setToolTip(t("widget.breadcrumb.group_tooltip"))
         widget.setStyleSheet("font-size: 12px; font-weight: 600; padding: 2px 6px;")
         return widget
 

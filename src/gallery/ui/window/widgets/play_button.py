@@ -11,6 +11,7 @@ from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QPainter, QPaintEvent, QPen, QPolygonF
 from PySide6.QtWidgets import QToolButton, QWidget
 
+from gallery.core.i18n import t
 from gallery.ui import theme
 from gallery.ui.rename_edit import field_background
 
@@ -24,13 +25,13 @@ PLAY_BUTTON_HEIGHT = 22
 TRIANGLE_SCALE = 0.38
 
 #: 提示气泡上的文案。
-TOOLTIP = "放映当前层级的所有照片"
+TOOLTIP = t("widget.play_button.tooltip")
 
 #: 放映中的提示：按它暂停。
-TOOLTIP_PAUSE = "暂停放映"
+TOOLTIP_PAUSE = t("widget.play_button.tooltip_pause")
 
 #: 已暂停的提示：按它继续。
-TOOLTIP_RESUME = "继续放映"
+TOOLTIP_RESUME = t("widget.play_button.tooltip_resume")
 
 
 class PlayButton(QToolButton):
@@ -44,7 +45,7 @@ class PlayButton(QToolButton):
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip(TOOLTIP)
-        self.setAccessibleName("放映")
+        self.setAccessibleName(t("widget.play_button.accessible_name"))
         self._watcher = theme.ensure_installed()
         self._watcher.changed.connect(self._apply_theme)
 

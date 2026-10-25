@@ -41,6 +41,7 @@ from gallery.core.events.store import (
     event_by_id,
     events_of_kind,
 )
+from gallery.core.i18n import t
 from gallery.core.library.config import (
     LibraryConfig,
     LibraryUIState,
@@ -75,7 +76,7 @@ from gallery.core.library.search import RESULT_LIMIT, SearchCondition, SearchOut
 from gallery.core.library.watcher import LibraryChange, LibraryWatcher
 from gallery.core.media.decode import RasterImage, decode_rgba
 from gallery.core.media.thumbs import ThumbnailCache
-from gallery.core.metadata.album import DEFAULT_ALBUM_NAME, CreatedAlbum, create_album
+from gallery.core.metadata.album import CreatedAlbum, create_album
 from gallery.core.metadata.batch import BatchMetadataSource, read_facets
 from gallery.core.metadata.download import image_suffix, save_downloaded_file
 from gallery.core.metadata.facets import (
@@ -273,18 +274,17 @@ class Library:
         root = Path(root).expanduser().resolve()
         if not root.exists():
             raise LibraryNotAccessibleError(
-                f"无法打开该文件夹：{root}。它可能已被移动、重命名或删除。",
+                t("library.facade.open.missing", path=root),
                 path=root,
             )
         if not root.is_dir():
             raise LibraryNotAccessibleError(
-                f"该路径不是文件夹：{root}。请选择包含照片的文件夹。",
+                t("library.facade.open.not_folder", path=root),
                 path=root,
             )
         if not os.access(root, os.R_OK | os.X_OK):
             raise LibraryNotAccessibleError(
-                f"没有读取该文件夹的权限：{root}。"
-                "请在「系统设置 → 隐私与安全性 → 文件与文件夹」中授权后重试。",
+                t("library.facade.open.no_permission", path=root),
                 path=root,
             )
 
@@ -358,7 +358,7 @@ class Library:
         :raises ConfigError: 取值非法，或这个库的配置目录写不进去。
         """
         if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes < 0:
-            raise ConfigError("缩略图缓存上限必须是不小于 0 的整数（0 表示不限制）。")
+            raise ConfigError(t("library.facade.cache_limit_invalid"))
         if max_bytes == self._config.max_cache_bytes:
             return
         self._require_writable_config()
@@ -372,8 +372,10 @@ class Library:
         if self._config_dir_ready:
             return
         raise ConfigError(
-            f"当前库的配置目录不可写入，设置无法保存：{paths.config_dir(self._root)}。"
-            "只读卷或网络共享上的库只能浏览，改不了设置。"
+            t(
+                "library.facade.config_not_writable",
+                path=paths.config_dir(self._root),
+            )
         )
 
     def iter_photos(
@@ -406,7 +408,7 @@ class Library:
         target = self._root if directory is None else Path(directory)
         if not paths.is_within(self._root, target):
             raise LibraryNotAccessibleError(
-                f"不能浏览库以外的文件夹：{target}。",
+                t("library.facade.outside_library", path=target),
                 path=target,
             )
         return iter_entries(target, should_cancel=should_cancel, report=report)
@@ -502,15 +504,17 @@ class Library:
         photo = Path(photo)
         photo_key = _relative_posix(self._root, photo)
         if photo_key is None:
-            raise ConfigError(f"「{photo.name}」不在当前库里，无法用作封面。", path=photo)
+            raise ConfigError(t("library.facade.cover.photo_outside", name=photo.name), path=photo)
         if not is_supported_media(photo):
-            raise ConfigError(
-                f"「{photo.name}」不是 Gallery 支持的格式，请更换后重试。", path=photo
-            )
+            raise ConfigError(t("library.facade.cover.unsupported", name=photo.name), path=photo)
         if not photo_key.startswith(f"{album_key}/"):
             # 与 ``config.from_mapping`` 里那条校验同一个判据：写进去的与读得出来的必须是同一种键。
             raise ConfigError(
-                f"封面得是「{Path(album).name}」里的照片，「{photo.name}」不在这个相册里。",
+                t(
+                    "library.facade.cover.not_in_album",
+                    album=Path(album).name,
+                    photo=photo.name,
+                ),
                 path=photo,
             )
         self._write_covers({**self._config.album_covers, album_key: photo_key})
@@ -531,15 +535,15 @@ class Library:
         """相册在配置文件里的那把键：相对库根的 posix 路径。"""
         album = Path(album)
         if not album.is_dir():
-            raise ConfigError(f"「{album.name}」不是一个文件夹，无法设置封面。", path=album)
+            raise ConfigError(t("library.facade.cover.not_folder", name=album.name), path=album)
         key = _relative_posix(self._root, album)
         if key is None:
             if paths.resolved(album) == paths.resolved(self._root):
                 raise ConfigError(
-                    "库根目录不是一个相册，它在网格上不是一张卡片，没有封面可设。",
+                    t("library.facade.cover.root"),
                     path=album,
                 )
-            raise ConfigError(f"「{album.name}」不在当前库里，无法设置封面。", path=album)
+            raise ConfigError(t("library.facade.cover.album_outside", name=album.name), path=album)
         return key
 
     def _write_covers(self, covers: Mapping[str, str]) -> None:
@@ -549,8 +553,10 @@ class Library:
         if not self._config_dir_ready:
             # 只读卷上配置目录建不出来，封面设置没有地方存 —— 那台机器上本来也存不住，所以不硬写。
             raise ConfigError(
-                f"当前库无法创建 {paths.config_dir(self._root).name} 目录，封面设置无处保存。"
-                "请将文件夹移动到可写入的位置后重试。",
+                t(
+                    "library.facade.cover.no_config_dir",
+                    name=paths.config_dir(self._root).name,
+                ),
                 path=self._root,
             )
         updated = replace(self._config, album_covers=dict(covers))
@@ -890,7 +896,9 @@ class Library:
                     self._root, target, _cover_name(movie, data), data, batch=batch
                 )
             except GalleryError as exc:
-                failures.append(f"{movie.code}：{exc.message}")
+                failures.append(
+                    t("library.facade.movie.failure", code=movie.code, reason=exc.message)
+                )
                 continue
             journaled = journaled and saved.journaled
             outcome = self.create_event(MOVIE.id, movie.to_draft())
@@ -899,7 +907,13 @@ class Library:
             try:
                 self.set_event_cover(outcome.event.id, saved.created)
             except GalleryError as exc:
-                failures.append(f"{movie.code}：未能设成封面，{exc.message}")
+                failures.append(
+                    t(
+                        "library.facade.movie.cover_failure",
+                        code=movie.code,
+                        reason=exc.message,
+                    )
+                )
             created += 1
             files.append(saved.created)
             existing.add(movie.ref)
@@ -1293,7 +1307,7 @@ class Library:
         """
         return duplicate(self._root, sources, should_cancel=should_cancel)
 
-    def create_album(self, parent: Path, name: str = DEFAULT_ALBUM_NAME) -> CreatedAlbum:
+    def create_album(self, parent: Path, name: str | None = None) -> CreatedAlbum:
         """在 ``parent`` 里新建一个空相册（界面上是「新建相册」⇧⌘N）。
 
         规矩见 ``core.metadata.album`` 与 ADR 0022：只增不改、绝不覆盖（同名改叫
@@ -1330,7 +1344,7 @@ def _refuse_video(ref: PhotoRef) -> None:
     """
     if ref.is_video:
         raise ImageDecodeError(
-            f"视频不走图片解码：{ref.name} 的画面由播放器提供。",
+            t("library.facade.video_decode", name=ref.name),
             path=ref.path,
         )
 

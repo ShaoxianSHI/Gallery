@@ -14,6 +14,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QLabel, QPushButton, QVBoxLayout, QWidget
 
 from gallery.core import paths
+from gallery.core.i18n import t
 from gallery.ui import theme
 from gallery.ui.layout import clear_layout
 from gallery.ui.theme import AppTheme, rgba
@@ -70,29 +71,26 @@ class WelcomeView(QWidget):
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
 
-        subtitle = QLabel("照片保存在你自己的文件夹中，Gallery 只提供浏览。")
+        subtitle = QLabel(t("widget.welcome.subtitle"))
         subtitle.setObjectName("welcomeSubtitle")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(subtitle)
 
         layout.addSpacing(18)
-        self._open_button = QPushButton("打开文件夹…")
+        self._open_button = QPushButton(t("widget.welcome.open_button"))
         self._open_button.setObjectName("openButton")
         self._open_button.setDefault(True)
         self._open_button.clicked.connect(self.open_requested.emit)
         layout.addWidget(self._open_button, alignment=Qt.AlignmentFlag.AlignCenter)
 
         layout.addSpacing(6)
-        hint = QLabel(
-            "Gallery 不会自行移动、修改或删除照片；重命名与移入废纸篓只在你亲自操作时执行。"
-            f"首次打开会在库内创建 {paths.CONFIG_DIR_NAME} 目录存放运行时数据。"
-        )
+        hint = QLabel(t("widget.welcome.hint", config_dir=paths.CONFIG_DIR_NAME))
         hint.setObjectName("welcomeHint")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(hint)
 
         layout.addSpacing(26)
-        self._recent_title = QLabel("最近打开")
+        self._recent_title = QLabel(t("widget.welcome.recent_title"))
         self._recent_title.setObjectName("recentTitle")
         self._recent_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._recent_title)

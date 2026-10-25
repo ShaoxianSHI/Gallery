@@ -51,6 +51,7 @@ from gallery.core.events.schema import (
     _relax_journal_mode_only,
     migrate,
 )
+from gallery.core.i18n import t
 from gallery.core.metadata.journal import (
     ACTION_EVENT,
     ACTION_EVENT_CREATE,
@@ -377,7 +378,7 @@ class EventStore:
         """
         kind = kind_by_id(kind_id)
         if kind is None:
-            raise ValueError(f"认不出的事件类型：{kind_id}")
+            raise ValueError(t("event.error.unknown_kind", kind=kind_id))
         connection = self._require()
         stamp = _now()
         stored = self._stored_draft(draft)
@@ -409,11 +410,11 @@ class EventStore:
         # 先读一遍原值：撤销要的正是它。**在同一次写之前读**，所以拿到的一定是改之前的样子。
         previous = self.event(event_id)
         if previous is None:
-            raise EventNotFoundError("该事件已不存在。")
+            raise EventNotFoundError(t("event.error.not_found"))
         kind_id = self._kind_of(event_id)
         kind = kind_by_id(kind_id)
         if kind is None:
-            raise ValueError(f"认不出的事件类型：{kind_id}")
+            raise ValueError(t("event.error.unknown_kind", kind=kind_id))
         connection = self._require()
         stored = self._stored_draft(draft)
         assignments = ", ".join(f"{field.column} = ?" for field in COMMON_FIELDS)
@@ -457,11 +458,11 @@ class EventStore:
         connection = self._require()
         previous = self.event(event_id)
         if previous is None:
-            raise EventNotFoundError("该事件已不存在。")
+            raise EventNotFoundError(t("event.error.not_found"))
         kind_id = self._kind_of(event_id)
         kind = kind_by_id(kind_id)
         if kind is None:
-            raise ValueError(f"认不出的事件类型：{kind_id}")
+            raise ValueError(t("event.error.unknown_kind", kind=kind_id))
         unbound = self.photos_of_event(event_id)
         with self._lock, connection:
             # 三张表各删各的。**扩展表那一行不能忘**：它是孤儿，而它会挡住撤销 —— 恢复时按
@@ -516,11 +517,16 @@ class EventStore:
         """把一条事件记录改回去。**改与删都能撤，新建那一条走不到这里**（它不入栈）。"""
         payload = _parse_payload(record.payload)
         if payload is None:
-            return EventUndoResult(record.action, None, False, "该事件记录无法读取，无法撤销。")
+            return EventUndoResult(record.action, None, False, t("event.error.undo_unreadable"))
         event_id, kind_id = payload["event_id"], payload["kind"]
         kind = kind_by_id(kind_id)
         if kind is None:
-            return EventUndoResult(record.action, None, False, f"认不出的事件类型：{kind_id}。")
+            return EventUndoResult(
+                record.action,
+                None,
+                False,
+                t("event.error.undo_unknown_kind", kind=kind_id),
+            )
         try:
             if record.action == ACTION_EVENT_DELETE:
                 restored = self._restore_event(kind, event_id, record.changes, payload["bindings"])
@@ -530,7 +536,10 @@ class EventStore:
             # id 被占了 —— 只可能是手工改过数据库。说清楚，别把别人的事件覆盖掉。
             logger.info("撤销事件时 id 已经被占了：%s", event_id)
             return EventUndoResult(
-                record.action, None, False, f"库里已经有一条 id 为 {event_id} 的事件，不敢覆盖。"
+                record.action,
+                None,
+                False,
+                t("event.error.undo_id_taken", event_id=event_id),
             )
         journaled = self._journal(ACTION_UNDO_EVENT, kind, None, restored, ())
         self._changed()
@@ -614,11 +623,11 @@ class EventStore:
             这个异常是界面那一层之外的回退。
         """
         if not self._is_bound(event_id, photo):
-            raise CoverNotBoundError("只能从该事件的照片中选择封面。", path=photo)
+            raise CoverNotBoundError(t("event.error.cover_not_bound"), path=photo)
         kind_id = self._kind_of(event_id)
         kind = kind_by_id(kind_id)
         if kind is None:
-            raise ValueError(f"认不出的事件类型：{kind_id}")
+            raise ValueError(t("event.error.unknown_kind", kind=kind_id))
         return self._write_cover(kind, event_id, photo)
 
     def clear_cover(self, event_id: int) -> bool:
@@ -626,7 +635,7 @@ class EventStore:
         kind_id = self._kind_of(event_id)
         kind = kind_by_id(kind_id)
         if kind is None:
-            raise ValueError(f"认不出的事件类型：{kind_id}")
+            raise ValueError(t("event.error.unknown_kind", kind=kind_id))
         outcome = self._write_cover(kind, event_id, None)
         return outcome.changed
 
@@ -650,7 +659,7 @@ class EventStore:
         connection = self._require()
         previous = self.event(event_id)
         if previous is None:
-            raise KeyError(f"没有 id 为 {event_id} 的事件")
+            raise KeyError(t("event.error.event_missing", event_id=event_id))
         with self._lock, connection:
             connection.execute(
                 f"UPDATE {SCHEMA_NAME}.events SET {COVER.column} = ? WHERE id = ?",
@@ -852,7 +861,7 @@ class EventStore:
     def _require(self) -> sqlite3.Connection:
         connection = self._live_connection()
         if connection is None:
-            raise EventsUnavailableError("事件库当前不可用：当前库无法创建配置目录。")
+            raise EventsUnavailableError(t("event.error.events_unavailable"))
         return connection
 
     def _live_connection(self) -> sqlite3.Connection | None:

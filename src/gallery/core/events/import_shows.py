@@ -17,6 +17,7 @@ from xml.etree import ElementTree
 from gallery.core.errors import ShowImportError
 from gallery.core.events.kinds import RATING_MAX, RATING_MIN, SHOW, normalize_day, suggested_title
 from gallery.core.events.models import EventDraft
+from gallery.core.i18n import t
 
 #: xlsx 里每张 XML 都挂的名字空间。
 _MAIN = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
@@ -87,10 +88,7 @@ def read_show_export(path: Path) -> ShowImport:
     grid = _cell_rows(path)
     header = _find_header(grid)
     if header is None:
-        raise ShowImportError(
-            "该表格中未找到「演出名称」列，可能不是「演迹」导出的演出列表。",
-            path=path,
-        )
+        raise ShowImportError(t("event.import_shows.not_show_export"), path=path)
     index, head = header
     letter_for: dict[str, str] = {}
     for letter, name in head.items():
@@ -130,8 +128,8 @@ def _draft_of(row: dict[str, str]) -> EventDraft | None:
 def _skip_note(number: int, cells: dict[str, str], activity_letters: set[str]) -> str:
     """这一行为什么没被当成演出 —— 分「是活动」与「什么都没有」两种说法。"""
     if _has_activity(cells, activity_letters):
-        return f"第 {number} 行是活动而非演出，已跳过。"
-    return f"第 {number} 行缺少演出名称，已跳过。"
+        return t("event.import_shows.skipped_activity", row=number)
+    return t("event.import_shows.skipped_no_title", row=number)
 
 
 def _has_activity(cells: dict[str, str], activity_letters: set[str]) -> bool:
@@ -174,10 +172,12 @@ def _cell_rows(path: Path) -> list[tuple[int, dict[str, str]]]:
             shared = _shared_strings(archive)
             sheet = _sheet_xml(archive)
     except FileNotFoundError as exc:
-        raise ShowImportError(f"找不到这个文件：{path.name}。", path=path, detail=str(exc)) from exc
+        raise ShowImportError(
+            t("event.import_shows.file_missing", name=path.name), path=path, detail=str(exc)
+        ) from exc
     except (OSError, zipfile.BadZipFile, KeyError) as exc:
         raise ShowImportError(
-            f"「{path.name}」不是「演迹」导出的 .xlsx 表格。", path=path, detail=str(exc)
+            t("event.import_shows.not_xlsx", name=path.name), path=path, detail=str(exc)
         ) from exc
 
     rows: list[tuple[int, dict[str, str]]] = []

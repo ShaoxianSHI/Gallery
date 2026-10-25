@@ -12,6 +12,7 @@ import datetime as dt
 import re
 
 from gallery.core.external.runner import CommandResult
+from gallery.core.i18n import t
 
 #: 脚本里的应用标识。**用 bundle id 而不是名字**：名字跟着界面语言走，id 不会。
 APP_IDENTIFIER = "com.apple.iCal"
@@ -24,9 +25,7 @@ _VIEWS = {"year": "month view", "month": "month view", "week": "week view"}
 _ERROR_CODE = re.compile(r"\((-?\d+)\)\s*$")
 
 #: 被拒绝的自动化授权。**这是这三条里唯一要用户动手的**，所以给全路径。
-_NOT_AUTHORIZED = (
-    "未能控制「日历」：请在「系统设置 › 隐私与安全性 › 自动化」里允许 Gallery 控制「日历」"
-)
+_NOT_AUTHORIZED = "external.apple_calendar.not_authorized"
 
 
 def script(level: str, day: dt.date) -> str:
@@ -58,15 +57,15 @@ def script(level: str, day: dt.date) -> str:
 def failure_detail(result: CommandResult) -> str:
     """``osascript`` 的报错 → 用户照着能做的一句话（不带句号，横幅会补）。"""
     if result.returncode == -1:
-        return "「日历」未响应"
+        return t("external.apple_calendar.not_responding")
     code = _code_of(result.stderr)
     if code == -1743:
-        return _NOT_AUTHORIZED
+        return t(_NOT_AUTHORIZED)
     if code == -1712:
-        return "「日历」未响应"
+        return t("external.apple_calendar.not_responding")
     if code in (-1728, -10814):
-        return "未找到系统「日历」"
-    return "未能打开系统「日历」"
+        return t("external.apple_calendar.not_found")
+    return t("external.apple_calendar.open_failed")
 
 
 def _code_of(stderr: str) -> int | None:

@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Final, Protocol
 
 from gallery.core.errors import MetadataError
+from gallery.core.i18n import t
 from gallery.core.metadata.pillow_fallback import _read_with_pillow
 
 if TYPE_CHECKING:
@@ -85,13 +86,13 @@ class ExifToolReader:
             )
         except subprocess.TimeoutExpired as exc:
             raise MetadataError(
-                f"读取元数据超时（超过 {self._timeout:g} 秒）：{path.name}。",
+                t("metadata.exif.timeout", seconds=self._timeout, name=path.name),
                 path=path,
                 detail=str(exc),
             ) from exc
         except OSError as exc:
             raise MetadataError(
-                f"无法运行 exiftool：{exc.strerror or exc}。",
+                t("metadata.exif.cannot_run", reason=exc.strerror or exc),
                 path=path,
                 detail=str(exc),
             ) from exc
@@ -101,13 +102,13 @@ class ExifToolReader:
             parsed = json.loads(payload)
         except json.JSONDecodeError as exc:
             raise MetadataError(
-                f"exiftool 的输出无法解析：{path.name}。",
+                t("metadata.exif.unparsable", name=path.name),
                 path=path,
-                detail=f"{exc}；输出前 200 字：{payload[:200]}",
+                detail=t("metadata.exif.detail_output", error=exc, output=payload[:200]),
             ) from exc
         if not isinstance(parsed, list) or not parsed or not isinstance(parsed[0], dict):
             raise MetadataError(
-                f"exiftool 没有返回可用信息：{path.name}。",
+                t("metadata.exif.no_payload", name=path.name),
                 path=path,
                 detail=payload[:200],
             )
@@ -134,7 +135,7 @@ def read_metadata(
         stat = path.stat()
     except OSError as exc:
         raise MetadataError(
-            f"读不到这个文件：{path.name}，{exc.strerror or exc}。",
+            t("metadata.exif.unreadable", name=path.name, reason=exc.strerror or exc),
             path=path,
             detail=str(exc),
         ) from exc
@@ -148,7 +149,7 @@ def read_metadata(
             if not allow_fallback:
                 raise
             raw = _read_with_pillow(path)
-            notice = f"exiftool 读取失败（{exc.message}），下面显示的是基础信息。"
+            notice = t("metadata.exif.fallback_notice", reason=exc.message)
             return build_report(
                 raw,
                 path=path,
@@ -167,7 +168,7 @@ def read_metadata(
 
     if not allow_fallback:
         raise MetadataError(
-            "未找到 exiftool，无法读取完整元数据。安装后重试：brew install exiftool",
+            t("metadata.exif.not_installed"),
             path=path,
         )
     return build_report(
@@ -176,10 +177,7 @@ def read_metadata(
         size=stat.st_size,
         mtime_ns=stat.st_mtime_ns,
         source="pillow",
-        notice=(
-            "未安装 exiftool，只显示基础 EXIF（读不到 IPTC / XMP / 制造商注释）。"
-            "安装后可看到完整信息：brew install exiftool"
-        ),
+        notice=t("metadata.exif.pillow_notice"),
     )
 
 

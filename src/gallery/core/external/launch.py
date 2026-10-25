@@ -33,6 +33,7 @@ from gallery.core.external.maps import (
 )
 from gallery.core.external.pwa import DEFAULT_SEARCH_DIRS, find_chrome_pwa
 from gallery.core.external.runner import Runner, subprocess_runner
+from gallery.core.i18n import t
 
 #: 开在应用里。
 WHERE_APP = "app"
@@ -91,7 +92,7 @@ def open_in_browser(url: str, *, runner: Runner | None = None) -> OpenOutcome:
     """交给系统默认浏览器。**降级走到这里，没装 PWA 时走到这里，影片网站也走这里。**"""
     run = runner or subprocess_runner
     result = run(["open", url])
-    detail = None if result.returncode == 0 else "未能打开浏览器"
+    detail = None if result.returncode == 0 else t("external.launch.browser_failed")
     return OpenOutcome(where=WHERE_BROWSER, detail=detail)
 
 
@@ -102,7 +103,7 @@ def open_in_maps(latitude: float, longitude: float, *, runner: Runner | None = N
     因此把原因带回去让横幅照实说，不静默吞掉。
     """
     result = (runner or subprocess_runner)(["open", apple_deep_link(latitude, longitude)])
-    detail = None if result.returncode == 0 else "未能打开地图，请确认系统「地图」仍已安装"
+    detail = None if result.returncode == 0 else t("external.launch.maps_failed")
     return OpenOutcome(where=WHERE_APP, detail=detail)
 
 
@@ -159,11 +160,11 @@ def open_in_app(
     run = runner or subprocess_runner
     launched = run(["open", "-a", str(app)])
     if launched.returncode != 0:
-        return _fallback(url, "未能启动该应用", run=run)
+        return _fallback(url, t("external.launch.app_failed"), run=run)
 
     up = _wait_until(lambda: chrome_is_up(run), timeout=chrome_wait, sleeper=sleeper, now=now)
     if not up:
-        return _fallback(url, "浏览器未能启动", run=run)
+        return _fallback(url, t("external.launch.browser_not_started"), run=run)
 
     host = urlparse(url).hostname or ""
     # 探针只跑一次，最后那个序号从闭包里取 —— 每多枚举一轮就是多跑一次 AppleScript，
@@ -178,9 +179,9 @@ def open_in_app(
         return True
 
     if not _wait_until(probe, timeout=window_wait, sleeper=sleeper, now=now):
-        return _fallback(url, "未识别该应用窗口", run=run)
+        return _fallback(url, t("external.launch.window_unrecognized"), run=run)
     if not set_window_url(found[0], url, run):
-        return _fallback(url, "未能改写该窗口的地址", run=run)
+        return _fallback(url, t("external.launch.window_rewrite_failed"), run=run)
     return OpenOutcome(where=WHERE_APP)
 
 
@@ -197,8 +198,13 @@ def _fallback(url: str, reason: str, *, run: Runner) -> OpenOutcome:
     """
     outcome = open_in_browser(url, runner=run)
     if outcome.detail:
-        return OpenOutcome(where=WHERE_BROWSER, detail=f"{reason}，浏览器也未能打开")
-    return OpenOutcome(where=WHERE_BROWSER, detail=f"{reason}，已改用浏览器打开")
+        return OpenOutcome(
+            where=WHERE_BROWSER,
+            detail=t("external.launch.fallback_both_failed", reason=reason),
+        )
+    return OpenOutcome(
+        where=WHERE_BROWSER, detail=t("external.launch.fallback_browser", reason=reason)
+    )
 
 
 def open_google_calendar(

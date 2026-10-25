@@ -13,6 +13,7 @@ from typing import Final
 
 from gallery.core import paths
 from gallery.core.errors import AlbumError
+from gallery.core.i18n import t
 from gallery.core.library.photos import FolderRef
 from gallery.core.metadata.failures import os_reason
 from gallery.core.metadata.journal import (
@@ -45,7 +46,7 @@ class CreatedAlbum:
         return self.album.name
 
 
-def create_album(root: Path, parent: Path, name: str = DEFAULT_ALBUM_NAME) -> CreatedAlbum:
+def create_album(root: Path, parent: Path, name: str | None = None) -> CreatedAlbum:
     """在 ``parent`` 里建一个叫 ``name`` 的空相册（同名自动改叫「新建相册 2」）。
 
     :raises AlbumError: 目标不是文件夹、不在库内、名字非法，或系统拒绝了这次创建。
@@ -53,10 +54,12 @@ def create_album(root: Path, parent: Path, name: str = DEFAULT_ALBUM_NAME) -> Cr
     root = Path(root)
     destination = Path(parent)
     _guard(root, destination)
-    wanted = clean_name(name, error=AlbumError)
+    wanted = clean_name(
+        name if name is not None else t("metadata.default_album_name"), error=AlbumError
+    )
     chosen = free_name_in(destination, wanted)
     if chosen is None:
-        raise AlbumError(f"「{wanted}」名称过长，加上编号后仍超出限制。", path=destination)
+        raise AlbumError(t("metadata.album.name_too_long", name=wanted), path=destination)
     created = destination / chosen
     try:
         # 一次系统调用，不搬数据 —— 界面上不必为它开后台线程（粘贴一次几百 MB 才需要）。
@@ -64,13 +67,13 @@ def create_album(root: Path, parent: Path, name: str = DEFAULT_ALBUM_NAME) -> Cr
     except FileExistsError as error:
         # 有人刚好在同一刻建出了同名目录：如实说不行，不替用户决定谁该消失。
         raise AlbumError(
-            f"「{chosen}」已存在。",
+            t("metadata.album.exists", name=chosen),
             path=created,
             detail=repr(error),
         ) from error
     except OSError as error:
         raise AlbumError(
-            f"未能新建相册：{os_reason(error, is_dir=True)}",
+            t("metadata.album.create_failed", reason=os_reason(error, is_dir=True)),
             path=created,
             detail=repr(error),
         ) from error
@@ -92,7 +95,7 @@ def create_album(root: Path, parent: Path, name: str = DEFAULT_ALBUM_NAME) -> Cr
 def _guard(root: Path, destination: Path) -> None:
     """确认这一层可以往里建东西（界面上只传当前层，这里是第二道保险）。"""
     if not destination.is_dir():
-        raise AlbumError(f"「{destination.name}」不是一个文件夹。", path=destination)
+        raise AlbumError(t("metadata.album.not_folder", name=destination.name), path=destination)
     try:
         paths.guard_within_root(root, destination, allow_root=True)
     except paths.GuardError as exc:
@@ -103,15 +106,15 @@ def _guard(root: Path, destination: Path) -> None:
 #: **「库本身」这一条今天到不了**（库里任意一层都能建相册，库根也算），
 #: 理由同 :data:`transfer._GUARD_MESSAGES`：留着是为了这张表是全的。
 _GUARD_MESSAGES: Final = {
-    paths.GuardReason.OUTSIDE_ROOT: "只能在库里的文件夹中新建相册：{path}。",
-    paths.GuardReason.IS_ROOT: "不能在库本身里新建相册，请选一个文件夹。",
-    paths.GuardReason.IS_CONFIG_DIR: "这是 Gallery 自己的配置目录，不能往里建相册。",
+    paths.GuardReason.OUTSIDE_ROOT: "metadata.album.guard.outside_root",
+    paths.GuardReason.IS_ROOT: "metadata.album.guard.is_root",
+    paths.GuardReason.IS_CONFIG_DIR: "metadata.album.guard.is_config_dir",
 }
 
 
 def _album_reason(path: Path, error: paths.GuardError) -> str:
     """按拒绝的**原因**给一句中文 —— 理由见 :func:`rename._rename_reason`。"""
-    return _GUARD_MESSAGES[error.reason].format(path=path)
+    return t(_GUARD_MESSAGES[error.reason], path=path)
 
 
 __all__ = ["DEFAULT_ALBUM_NAME", "CreatedAlbum", "create_album"]

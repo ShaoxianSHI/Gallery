@@ -8,13 +8,15 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from gallery.core.i18n import t
+
 _UNITS = ("B", "KB", "MB", "GB", "TB")
 
 
 def format_bytes(count: int) -> str:
     """把字节数格式化成人读的大小，例如 ``1.2 MB``。"""
     if count < 0:
-        return "未知大小"
+        return t("metadata.format.unknown_size")
     size = float(count)
     for unit in _UNITS:
         if size < 1024 or unit == _UNITS[-1]:

@@ -29,7 +29,7 @@ from gallery.core.library.config import (
     BROWSE_MODE_CALENDAR,
     prepare_library,
 )  # noqa: E402
-from gallery.core.library.search import DEFAULT_FIELD, SearchCondition  # noqa: E402
+from gallery.core.library.search import SearchCondition, default_field  # noqa: E402
 from gallery.core.library.session import (
     SessionState,
     save_session,
@@ -674,7 +674,7 @@ def test_condition_chip_ink_follows_the_theme_at_once(
     """
     try:
         window._filters.submit(
-            SearchCondition(field=DEFAULT_FIELD, text="海边", comparator="contains", value="海边")
+            SearchCondition(field=default_field(), text="海边", comparator="contains", value="海边")
         )
         window._update_breadcrumb()
         qt_app.processEvents()
@@ -724,7 +724,7 @@ def test_the_separator_is_visible_on_both_appearances(
     """
     try:
         window._filters.submit(
-            SearchCondition(field=DEFAULT_FIELD, text="海边", comparator="contains", value="海边")
+            SearchCondition(field=default_field(), text="海边", comparator="contains", value="海边")
         )
         window._update_breadcrumb()
         qt_app.processEvents()

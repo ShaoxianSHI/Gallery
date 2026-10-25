@@ -20,6 +20,7 @@ from PySide6.QtWidgets import QMenu
 from gallery.core.collation import collation_key
 from gallery.core.events.kinds import EVENT_KINDS, EventKind
 from gallery.core.events.store import EventRef
+from gallery.core.i18n import t, t_plural
 from gallery.core.library.config import (
     BROWSE_MODE_ALBUMS,
     BROWSE_MODE_CALENDAR,
@@ -52,7 +53,7 @@ from gallery.ui.window.state.staging import Staging
 
 #: 「正在读取 N 张照片的元数据，用于…」—— **只在真的缺东西时才报**（见 ``_start_facet_read``）。
 #: 放在模板里是因为它现在从工作线程里发出去，而那一侧拿不到 ``self``。
-_FACET_PROGRESS: Final = "正在读取 {} 张照片的元数据，用于{}…"
+_FACET_PROGRESS: Final = "flow.ordering.facet_progress"
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,7 +198,7 @@ class OrderingMixin:
         「旅行 / 演出 / 影片」那三层迟早只长在一边。
         """
         self._group_actions: dict[str | None, QAction] = {
-            None: self._order_choice("不分组", None, self.set_group_facet)
+            None: self._order_choice(t("flow.ordering.group.none"), None, self.set_group_facet)
         }
         for facet in GROUP_FACETS:
             self._group_actions[facet.id] = self._order_choice(
@@ -228,28 +229,34 @@ class OrderingMixin:
         # 方向两项互斥；勾选态只由 ``_sync_order_actions`` 写，点已勾上的那一项不会把它取消。
         direction_group = QActionGroup(self)
         direction_group.setExclusive(True)
-        self._ascending_action = self._direction_choice(direction_group, "升序", False)
-        self._descending_action = self._direction_choice(direction_group, "降序", True)
+        self._ascending_action = self._direction_choice(
+            direction_group, t("flow.ordering.ascending"), False
+        )
+        self._descending_action = self._direction_choice(
+            direction_group, t("flow.ordering.descending"), True
+        )
         # 分组的两种形态（ADR 0089）也互斥，位置与机制与升序 / 降序同一套。
         layout_group = QActionGroup(self)
         layout_group.setExclusive(True)
-        self._cards_layout_action = self._layout_choice(layout_group, "卡片式", GROUP_LAYOUT_CARDS)
+        self._cards_layout_action = self._layout_choice(
+            layout_group, t("flow.ordering.layout.cards"), GROUP_LAYOUT_CARDS
+        )
         self._sections_layout_action = self._layout_choice(
-            layout_group, "分区式", GROUP_LAYOUT_SECTIONS
+            layout_group, t("flow.ordering.layout.sections"), GROUP_LAYOUT_SECTIONS
         )
 
-        self._fill_group_menu(view_menu.addMenu("分组"))
-        self._fill_sort_menu(view_menu.addMenu("排序"))
+        self._fill_group_menu(view_menu.addMenu(t("flow.ordering.group")))
+        self._fill_sort_menu(view_menu.addMenu(t("flow.ordering.sort")))
 
     def build_group_menu(self, parent: QMenu) -> QMenu:
         """现建一份「分组」子菜单 —— 与菜单栏那份逐行一致，右键空白处用它。"""
-        menu = QMenu("分组", parent)
+        menu = QMenu(t("flow.ordering.group"), parent)
         self._fill_group_menu(menu)
         return menu
 
     def build_sort_menu(self, parent: QMenu) -> QMenu:
         """现建一份「排序」子菜单 —— 同上。"""
-        menu = QMenu("排序", parent)
+        menu = QMenu(t("flow.ordering.sort"), parent)
         self._fill_sort_menu(menu)
         return menu
 
@@ -330,7 +337,7 @@ class OrderingMixin:
         """
         if not facet.needs_exiftool or self._has_exiftool:
             return None
-        return "读取该字段需要使用 exiftool。安装命令：brew install exiftool"
+        return t("flow.ordering.exiftool_required")
 
     @property
     def _has_exiftool(self) -> bool:
@@ -458,8 +465,12 @@ class OrderingMixin:
         说错一件用户就不知道进度条在忙什么。
         """
         if self._conditions_need_metadata():
-            return "筛选"
-        return "分组" if self._group_facet else "排序"
+            return t("flow.ordering.purpose.filter")
+        return (
+            t("flow.ordering.purpose.group")
+            if self._group_facet
+            else t("flow.ordering.purpose.sort")
+        )
 
     def _groups_by_event(self) -> bool:
         """当前是不是按事件那一族分组（事件本身，或某一类事件的某个字段）。
@@ -526,7 +537,13 @@ class OrderingMixin:
                 return _LevelFacets(values=cached, events=events)
             # 缺东西才起横幅：起后台线程、报「正在读取 N 张照片的元数据」都是在说一件
             # 没发生的事，用户没法分辨是又在干活还是软件出了毛病。
-            context.progress(_FACET_PROGRESS.format(len(refs), self._facet_read_purpose()))
+            context.progress(
+                t_plural(
+                    _FACET_PROGRESS,
+                    len(refs),
+                    purpose=self._facet_read_purpose(),
+                )
+            )
             return _LevelFacets(
                 values=library.photo_facets(
                     refs,
@@ -580,19 +597,16 @@ class OrderingMixin:
         if self._is_filtering():
             # **说的是「这一层里没有」而不是「这些条件下没有」**（ADR 0040 决策 4）：整库检索
             # 的那句话在这个视图里是骗人的 —— 用户看到的正是这一层，而整库里明明有照片。
-            self._say_level_is_empty("当前层级中没有符合筛选条件的照片。")
+            self._say_level_is_empty(t("flow.ordering.empty.filtered"))
         elif self._is_library_search():
             # 检索没命中时**不要说那句格式清单**：它与此刻无关，用户会以为文件格式不对。
-            self._say_level_is_empty("当前筛选条件下没有照片。")
+            self._say_level_is_empty(t("flow.ordering.empty.search"))
         elif self._group_view is not None:
-            self._say_level_is_empty("该分组中没有照片。")
+            self._say_level_is_empty(t("flow.ordering.empty.group"))
         elif self._browse_mode == BROWSE_MODE_ALBUMS:
-            self._say_level_is_empty("该文件夹中没有子文件夹，也没有可显示的照片。")
+            self._say_level_is_empty(t("flow.ordering.empty.album"))
         else:
-            self._say_level_is_empty(
-                "未找到可显示的照片或视频。支持 JPEG、PNG、HEIC、TIFF、GIF、WebP、BMP 与 "
-                "MP4、MOV、M4V、AVI、3GP。"
-            )
+            self._say_level_is_empty(t("flow.ordering.empty.level"))
 
     def _say_level_is_empty(self, text: str) -> None:
         """空层那一句**经轴去说** —— 于是「这一句是我们说的」这个记号只有一处会置（ADR 0054）。"""
@@ -619,7 +633,7 @@ class OrderingMixin:
             return
         done, total = payload if len(payload) == 2 else (0, 0)
         if isinstance(done, int) and isinstance(total, int) and total:
-            self._show_progress_notice(f"正在读取元数据…{done} / {total}")
+            self._show_progress_notice(t("flow.ordering.progress", done=done, total=total))
 
     def _on_facets_ready(self, generation: int, payload: object) -> None:
         if generation != self._generation:
@@ -640,7 +654,7 @@ class OrderingMixin:
         if generation != self._generation:
             return
         self._finish_job("_facet_job")
-        self._show_banner(f"读取元数据失败，已按默认顺序显示：{message}")
+        self._show_banner(t("flow.ordering.facet_failed", reason=message))
         self._order_now()
         self._maybe_start_place_pass()
         self._maybe_start_photo_index()

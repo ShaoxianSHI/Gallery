@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from gallery.core.i18n import t
 from gallery.core.library.photos import FolderRef, PhotoRef
 from gallery.core.metadata.journal import (
     ACTION_CREATE,
@@ -213,7 +214,7 @@ def test_a_record_with_an_unknown_action_is_still_undoable(
     # 断的是「这条记录在不在栈上」，不是「按一次 ⌘Z 之后文件在不在」——
     # 栈上还有上面那条改名记录，一次 ⌘Z 撤的可能是它，那样这条缺陷就看不见了。
     assert len(pending_undo_runs(tmp_path)) == 2, "动作名不认识的那条被静默丢掉了"
-    assert next_undo_label(tmp_path) == FALLBACK_LABEL, "认不出的动作也得让人看见能撤"
+    assert next_undo_label(tmp_path) == t(FALLBACK_LABEL), "认不出的动作也得让人看见能撤"
 
     undo_last_write(tmp_path)
 

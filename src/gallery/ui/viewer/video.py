@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from gallery.core.i18n import t
 from gallery.core.library.photos import PhotoRef
 
 #: ``QGraphicsView.fitInView`` 会在视口四边各留 2 像素。海报要按同一个矩形缩放，
@@ -227,7 +228,7 @@ class VideoView(QGraphicsView):
         self._play_button = QToolButton(self._controls)
         self._play_button.setObjectName("videoPlay")
         self._play_button.setText("▶")
-        self._play_button.setToolTip("播放 / 暂停（空格）")
+        self._play_button.setToolTip(t("viewer.video.play_tooltip"))
         self._play_button.setAutoRaise(True)
         self._play_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         # ▶ 与 ❚❚ 的字形宽度不同：按钮不定宽的话，进度条左端会随播放状态左右跳。
@@ -351,15 +352,15 @@ class VideoView(QGraphicsView):
         ):
             self._ensure_size()
         elif status == QMediaPlayer.MediaStatus.InvalidMedia:
-            self.show_error(self._unplayable_text("无法播放该视频"))
+            self.show_error(self._unplayable_text(t("viewer.video.unplayable")))
 
     def _on_error(self, error: QMediaPlayer.Error, message: str) -> None:
         if self._ref is None or error == QMediaPlayer.Error.NoError:
             return
-        self.show_error(self._unplayable_text(message or "无法播放该视频"))
+        self.show_error(self._unplayable_text(message or t("viewer.video.unplayable")))
 
     def _unplayable_text(self, reason: str) -> str:
-        return f"{reason}。按 ⇧⏎ 使用系统默认应用打开。"
+        return t("viewer.video.unplayable.hint", reason=reason)
 
     def _update_time(self, position: int) -> None:
         self._time.setText(f"{_clock(position)} / {_clock(self._player.duration())}")

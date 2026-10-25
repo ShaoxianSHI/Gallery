@@ -19,6 +19,7 @@ from typing import Any, Final
 from PIL import Image
 
 from gallery.core.errors import ImageDecodeError
+from gallery.core.i18n import t
 
 #: 系统框架路径。**不能写 ``import AVFoundation``**：那要另一个 PyObjC 子包。
 _FRAMEWORK: Final = "/System/Library/Frameworks/AVFoundation.framework"
@@ -89,10 +90,7 @@ def first_frame(path: Path, *, max_edge: int | None) -> tuple[int, int, bytes]:
     path = Path(path)
     binding = _BINDING
     if binding is None:
-        raise ImageDecodeError(
-            f"这台机器上取不了视频画面：{path.name}。",
-            path=path,
-        )
+        raise ImageDecodeError(t("media.video.unsupported", name=path.name), path=path)
     try:
         url = binding.url.fileURLWithPath_(str(path))
         asset = binding.asset.URLAssetWithURL_options_(url, None)
@@ -119,10 +117,7 @@ def first_frame(path: Path, *, max_edge: int | None) -> tuple[int, int, bytes]:
 
 def _unreadable_message(path: Path) -> str:
     """取不到帧时说的话。**不把「编码不支持」说死**：云盘上没下完也是同一个结果。"""
-    return (
-        f"无法读取 {path.name} 的第一帧：系统不支持其编码格式，"
-        "或文件尚未下载完成。请等待下载完成后再打开。"
-    )
+    return t("media.video.unreadable", name=path.name)
 
 
 __all__ = ["VIDEO_SUPPORT", "first_frame"]

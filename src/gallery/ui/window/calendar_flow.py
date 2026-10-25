@@ -12,6 +12,7 @@ from collections.abc import Iterable, Sequence
 from functools import partial
 from pathlib import Path
 
+from gallery.core.i18n import t, t_plural
 from gallery.core.library.config import BROWSE_MODE_CALENDAR, BROWSE_MODE_FLAT
 from gallery.core.library.photos import GridEntry, GroupRef, PhotoRef
 from gallery.core.library.scanner import describe_entry
@@ -241,7 +242,7 @@ class CalendarFlowMixin:
             cached = library.cached_facets(refs)
             if len(cached) == len(refs):
                 return cached  # 全都有 → 不报「正在读」
-            context.progress(f"正在读取 {len(refs)} 张照片的拍摄时间，用于日历…")
+            context.progress(t_plural("window.calendar.reading", len(refs)))
             return library.photo_facets(
                 refs,
                 should_cancel=context.is_cancelled,
@@ -272,7 +273,7 @@ class CalendarFlowMixin:
             return
         self._finish_job("_calendar_job")
         self._clear_progress_notice()
-        self._show_banner(f"日历未能读取拍摄时间：{message}")
+        self._show_banner(t("window.calendar.read_failed", detail=message))
 
 
 __all__ = ["CalendarFlowMixin"]

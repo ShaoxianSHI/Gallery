@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from gallery.core.events.store import EventStore, Orphan
+from gallery.core.i18n import t
 
 #: 扫描期间每处理这么多条就问一次要不要停。开库时用户随时可能切走或关窗。
 CANCEL_EVERY: int = 200
@@ -77,7 +78,7 @@ class OrphanScan:
             source = self.chosen(include_vanished=include_vanished)
         seen: dict[str, None] = {}
         for orphan in source:
-            seen.setdefault(orphan.event_title or "未命名", None)
+            seen.setdefault(orphan.event_title or t("event.orphan.unnamed"), None)
         return tuple(seen)
 
 

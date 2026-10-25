@@ -12,6 +12,7 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QWheelEvent
 from PySide6.QtWidgets import QWidget
 
+from gallery.core.i18n import t
 from gallery.core.library.calendar import (
     DayBuckets,
     HourBuckets,
@@ -220,12 +221,12 @@ class LevelView(QWidget):
 
 def day_label(day: datetime.date) -> str:
     """一格（一天）在标题里怎么写 —— 展开成网格时那一层的名字。"""
-    return f"{day.month}月{day.day}日"
+    return t("calendar.day_label", month=day.month, day=day.day)
 
 
 def hour_label(day: datetime.date, hour: int) -> str:
     """一格（一个钟点）在标题里怎么写。"""
-    return f"{day.month}月{day.day}日 {hour:02d}:00"
+    return t("calendar.hour_label", month=day.month, day=day.day, hour=hour)
 
 
 __all__ = ["GEOMETRY_DEBOUNCE_MS", "LevelView", "day_label", "hour_label"]

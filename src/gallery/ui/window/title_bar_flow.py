@@ -12,6 +12,7 @@ from typing import Final
 
 from PySide6.QtCore import QPointF
 
+from gallery.core.i18n import t, t_plural
 from gallery.ui.window.widgets.external_button import BUTTON_GAP, BUTTON_WIDTH, button_rect
 from gallery.ui.window.widgets.play_button import PLAY_BUTTON_WIDTH
 from gallery.ui.window.widgets.search_field import HEIGHT as SEARCH_FIELD_HEIGHT
@@ -132,7 +133,11 @@ class TitleBarFlowMixin:
             edit_name = photo.name
         elif self._drill_photos is not None:
             # 从日历某一格展开的那一层：标题要说得清在看哪一格，否则与「全部照片」长得一模一样。
-            name = f"{self._drill_label} · {len(self._drill_photos)} 张"
+            name = t_plural(
+                "window.title.drill",
+                len(self._drill_photos),
+                label=self._drill_label,
+            )
         else:
             name = self._library_title
         if self._owns_title_bar:
@@ -231,7 +236,8 @@ class TitleBarFlowMixin:
         ⌃⌘F 都不经过那条路。**判据是「铺满」而不是「真全屏」** —— 菜单上这一条说的就是铺满，
         与绿按钮悬停菜单里的「进入全屏幕」不是同一件事。
         """
-        self._fill_action.setText("还原窗口" if self.isMaximized() else "铺满窗口")
+        key = "window.restore_window" if self.isMaximized() else "window.fill_window"
+        self._fill_action.setText(t(key))
 
 
 __all__ = ["DRAG_THRESHOLD", "TitleBarFlowMixin"]

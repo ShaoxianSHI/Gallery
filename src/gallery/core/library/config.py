@@ -23,6 +23,7 @@ from gallery.core.constants import (
     DEFAULT_THUMBNAIL_MAX_EDGE,
 )
 from gallery.core.errors import ConfigError
+from gallery.core.i18n import t
 from gallery.core.library.calendar import LEVELS as CALENDAR_LEVELS
 from gallery.core.metadata.facets import FACET_MODIFIED, group_facet, sort_facet
 
@@ -334,14 +335,18 @@ class LibraryConfig:
         edge = _read_int(data, "thumbnail_max_edge", defaults.thumbnail_max_edge, source=source)
         if not MIN_THUMBNAIL_MAX_EDGE <= edge <= MAX_THUMBNAIL_MAX_EDGE:
             raise ConfigError(
-                f"配置项 thumbnail_max_edge 必须在 {MIN_THUMBNAIL_MAX_EDGE} 到 "
-                f"{MAX_THUMBNAIL_MAX_EDGE} 之间，当前是 {edge}。",
+                t(
+                    "library.config.edge_range",
+                    minimum=MIN_THUMBNAIL_MAX_EDGE,
+                    maximum=MAX_THUMBNAIL_MAX_EDGE,
+                    value=edge,
+                ),
                 path=source,
             )
         max_bytes = _read_int(data, "max_cache_bytes", defaults.max_cache_bytes, source=source)
         if max_bytes < 0:
             raise ConfigError(
-                f"配置项 max_cache_bytes 不能是负数，当前是 {max_bytes}（0 表示不限制）。",
+                t("library.config.negative_cache", value=max_bytes),
                 path=source,
             )
         return cls(
@@ -374,7 +379,7 @@ def load_config(root: Path) -> LibraryConfig:
         data = tomllib.loads(raw)
     except tomllib.TOMLDecodeError as exc:
         raise ConfigError(
-            f"配置文件语法有误，无法解析：{file}。请修正后重试（或直接删除该文件以恢复默认值）。",
+            t("library.config.parse_failed", path=file),
             path=file,
             detail=str(exc),
         ) from exc
@@ -388,7 +393,7 @@ def save_config(root: Path, config: LibraryConfig) -> None:
         write_text_atomic(file, config.to_toml())
     except OSError as exc:
         raise ConfigError(
-            f"无法写入配置文件：{file}（{exc.strerror}）。请检查该文件夹的写入权限。",
+            t("library.config.write_failed", path=file, reason=exc.strerror),
             path=file,
             detail=str(exc),
         ) from exc
@@ -475,25 +480,29 @@ def _read_album_covers(data: Mapping[str, object], *, source: Path | None) -> di
     raw = data.get(ALBUM_COVERS_KEY, {})
     if not isinstance(raw, Mapping):
         raise ConfigError(
-            f"配置项 {ALBUM_COVERS_KEY} 必须是一张表（形如 [{ALBUM_COVERS_KEY}]），"
-            f"当前是 {raw!r}。",
+            t("library.config.covers_not_table", key=ALBUM_COVERS_KEY, value=raw),
             path=source,
         )
     covers: dict[str, str] = {}
     for album, photo in raw.items():
-        label = f"{ALBUM_COVERS_KEY} 里的相册「{album}」"
+        label = t("library.config.cover.album_label", key=ALBUM_COVERS_KEY, album=album)
         key = _read_relative(label, str(album), source=source)
+        cover_label = t("library.config.cover.photo_label", label=label)
         if not isinstance(photo, str):
             raise ConfigError(
-                f"{label} 的封面必须写成照片的相对路径（字符串），当前是 {photo!r}。",
+                t("library.config.cover.not_string", label=label, value=photo),
                 path=source,
             )
-        cover = _read_relative(f"{label} 的封面", photo, source=source)
+        cover = _read_relative(cover_label, photo, source=source)
         if not cover.startswith(f"{key}/"):
             # 子相册里的照片算数，兄弟相册里的不算 —— 那不是这个相册的封面。
             raise ConfigError(
-                f"{label} 的封面「{photo}」不在这个相册里；"
-                f"封面要写成这个相册里的照片，例如「{key}/照片.jpg」。",
+                t(
+                    "library.config.cover.outside_album",
+                    label=label,
+                    photo=photo,
+                    key=key,
+                ),
                 path=source,
             )
         covers[key] = cover
@@ -508,10 +517,10 @@ def _read_relative(label: str, value: str, *, source: Path | None) -> str:
     """
     path = PurePosixPath(value)
     if not value or not path.parts:
-        raise ConfigError(f"{label} 不能是空路径。", path=source)
+        raise ConfigError(t("library.config.relative.empty", label=label), path=source)
     if path.is_absolute() or ".." in path.parts:
         raise ConfigError(
-            f"{label}「{value}」必须是相对库根目录的路径：不能以 / 开头，也不能带 ..。",
+            t("library.config.relative.absolute", label=label, value=value),
             path=source,
         )
     return path.as_posix()
@@ -521,7 +530,7 @@ def _read_bool(data: Mapping[str, object], key: str, default: bool, *, source: P
     value = data.get(key, default)
     if not isinstance(value, bool):
         raise ConfigError(
-            f"配置项 {key} 必须是 true 或 false，当前是 {value!r}。",
+            t("library.config.not_bool", key=key, value=value),
             path=source,
         )
     return value
@@ -532,7 +541,7 @@ def _read_int(data: Mapping[str, object], key: str, default: int, *, source: Pat
     # bool 是 int 的子类，必须显式排除，否则 `recursive = true` 会被当成整数 1。
     if isinstance(value, bool) or not isinstance(value, int):
         raise ConfigError(
-            f"配置项 {key} 必须是整数，当前是 {value!r}。",
+            t("library.config.not_int", key=key, value=value),
             path=source,
         )
     return value
@@ -547,22 +556,31 @@ def normalize_movie_site(value: object, *, source: Path | None = None) -> str:
     """
     if not isinstance(value, str) or not value.strip():
         raise ConfigError(
-            f"配置项 movie_site 必须是影片网站的前缀，例如 "
-            f'"{DEFAULT_MOVIE_SITE}"，当前是 {value!r}。',
+            t(
+                "library.config.movie_site.required",
+                default=DEFAULT_MOVIE_SITE,
+                value=value,
+            ),
             path=source,
         )
     text = value.strip()
     if not text.startswith(("http://", "https://")):
         raise ConfigError(
-            f"配置项 movie_site 要以 http:// 或 https:// 开头，当前是 {value!r}。"
-            f'例如 "{DEFAULT_MOVIE_SITE}"。',
+            t(
+                "library.config.movie_site.scheme",
+                default=DEFAULT_MOVIE_SITE,
+                value=value,
+            ),
             path=source,
         )
     # ``https://`` 本身也以 http(s) 开头，却拼不出任何地址。
     if not text.split("://", 1)[1]:
         raise ConfigError(
-            f"配置项 movie_site 只有协议头、没有站点，当前是 {value!r}。"
-            f'例如 "{DEFAULT_MOVIE_SITE}"。',
+            t(
+                "library.config.movie_site.host",
+                default=DEFAULT_MOVIE_SITE,
+                value=value,
+            ),
             path=source,
         )
     return text

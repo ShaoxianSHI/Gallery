@@ -17,6 +17,7 @@ from gallery.core.errors import MovieImportError
 from gallery.core.events.kinds import SOURCE_MANGO, minutes_of_seconds
 from gallery.core.events.models import MovieInfo
 from gallery.core.events.transport import HttpTransport, Transport
+from gallery.core.i18n import t
 
 #: 影片页的域名（``page_url`` 与 ``Referer`` 用它）。
 SITE: Final = "https://www.mgtv.com"
@@ -35,7 +36,7 @@ _HOST_RE: Final = re.compile(r"(?:^|\.)mgtv\.com$", re.I)
 
 #: 接口自己的错误码 → 一句中文。
 _PROBLEMS: Final[dict[int, str]] = {
-    10008: "芒果 TV 未收录该视频",
+    10008: "event.mango.problem.not_found",
 }
 
 #: 「编号」里那两段之间的分隔符。**与网址里那一小段同序**：先说合集，再说单集。
@@ -85,12 +86,15 @@ def video_id_of(code: str) -> str:
 def problem_of(payload: Mapping[str, object], code: str) -> MovieImportError:
     """接口报错时给用户的那一句。**HTTP 也是 200，错在 JSON 的 ``code`` 里**。"""
     status = _int(payload.get("code"))
-    known = _PROBLEMS.get(status) if status is not None else None
+    known = t(_PROBLEMS[status]) if status is not None and status in _PROBLEMS else None
     if known is not None:
-        return MovieImportError(f"{known}：{code}。")
+        return MovieImportError(t("event.mango.problem_known", reason=known, code=code))
     message = _text(payload.get("msg")) or _text(payload.get("err_msg"))
-    tail = f"，{message}" if message else ""
-    return MovieImportError(f"芒果 TV 未提供该视频的信息：错误码 {status}{tail}。")
+    if message:
+        return MovieImportError(
+            t("event.mango.problem_unknown_message", status=status, message=message)
+        )
+    return MovieImportError(t("event.mango.problem_unknown", status=status))
 
 
 def view_of(payload: Mapping[str, object], code: str) -> MovieInfo:
@@ -103,10 +107,10 @@ def view_of(payload: Mapping[str, object], code: str) -> MovieInfo:
     data = payload.get("data")
     info = data.get("info") if isinstance(data, Mapping) else None
     if not isinstance(info, Mapping):
-        raise MovieImportError(f"芒果 TV 未提供该视频的信息：{code}。")
+        raise MovieImportError(t("event.mango.no_info", code=code))
     title = _text(info.get("videoName")) or _text(info.get("title"))
     if not title:
-        raise MovieImportError(f"芒果 TV 未提供该视频的信息：{code}。")
+        raise MovieImportError(t("event.mango.no_info", code=code))
     clip = _text(info.get("clipId"))
     video = video_id_of(code)
     full = page_code(clip, video) if clip.isdigit() and clip != "0" else video
@@ -194,7 +198,7 @@ def fetch(code: str, *, client: Transport) -> MovieInfo:
     """
     video = video_id_of(code)
     if not _VID_RE.fullmatch(video):
-        raise MovieImportError(f"不是有效的芒果 TV vid：{code}。")
+        raise MovieImportError(t("event.mango.invalid_code", code=code))
     return view_of(_json(client.get_text(_info_url(video))), code)
 
 
@@ -206,9 +210,9 @@ def _json(raw: str) -> Mapping[str, object]:
     try:
         payload = json.loads(raw)
     except ValueError as exc:
-        raise MovieImportError("芒果 TV 返回的信息无法解析。") from exc
+        raise MovieImportError(t("event.mango.unparsable")) from exc
     if not isinstance(payload, Mapping):
-        raise MovieImportError("芒果 TV 返回的信息不是有效的视频信息。")
+        raise MovieImportError(t("event.mango.invalid_payload"))
     return payload
 
 

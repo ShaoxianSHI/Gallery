@@ -19,6 +19,7 @@ from typing import Final, Protocol
 from gallery.core import paths
 from gallery.core.cancellation import never_cancel
 from gallery.core.errors import MetadataError
+from gallery.core.i18n import t
 from gallery.core.library.photos import is_video
 from gallery.core.metadata.exif import (
     EXIFTOOL_CHARSET_ARGS,
@@ -121,7 +122,7 @@ class ExifToolBatchSource:
             )
         except OSError as exc:
             raise MetadataError(
-                f"无法运行 exiftool：{exc.strerror or exc}。",
+                t("metadata.exif.cannot_run", reason=exc.strerror or exc),
                 detail=str(exc),
             ) from exc
 
@@ -139,8 +140,8 @@ class ExifToolBatchSource:
                 if time.monotonic() > deadline:
                     _terminate(process)
                     raise MetadataError(
-                        f"读取元数据超时，超过 {self._timeout:g} 秒：这一批照片。",
-                        detail=f"命令：{' '.join(argv[:3])} …",
+                        t("metadata.batch.timeout", seconds=self._timeout),
+                        detail=t("metadata.batch.command", command=" ".join(argv[:3])),
                     )
         finally:
             if process.poll() is None:  # pragma: no cover - 回退分支，正常路径走不到
@@ -148,8 +149,8 @@ class ExifToolBatchSource:
 
         if process.returncode not in (0, None) and not stdout:
             raise MetadataError(
-                "exiftool 没有返回可用信息。",
-                detail=f"退出码 {process.returncode}",
+                t("metadata.batch.no_payload"),
+                detail=t("metadata.batch.exit_code", code=process.returncode),
             )
         return stdout.decode("utf-8", "replace") if stdout else None
 

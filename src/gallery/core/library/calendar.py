@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Final
 
 from gallery.core.collation import collation_key
+from gallery.core.i18n import t
 from gallery.core.library.photos import PhotoRef
 from gallery.core.metadata.facets import PhotoFacets
 
@@ -23,8 +24,16 @@ EMPTY_FACETS = PhotoFacets()
 #: **没有日视图**：一周七列铺开后一天就是一个小时格子，点一下那一小时就到了。
 LEVELS: Final[tuple[str, ...]] = ("year", "month", "week")
 
+
 #: 各层的名称（标题栏的分段选择器与无障碍名称用它）。
-LEVEL_NAMES: Final[Mapping[str, str]] = {"year": "年", "month": "月", "week": "周"}
+def level_names() -> Mapping[str, str]:
+    """年 / 月 / 周三层的名字（当前语言）。"""
+    return {
+        "year": t("library.calendar.level.year"),
+        "month": t("library.calendar.level.month"),
+        "week": t("library.calendar.level.week"),
+    }
+
 
 #: 每个月的天数（平年）。闰年二月多一天，见 :func:`days_in_month`。
 _DAYS_IN_MONTH: Final[tuple[int, ...]] = (31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
@@ -35,14 +44,31 @@ _FIRST_WEEKDAY: Final = 6
 #: 中文短星期名，**索引是「周日打头」那一套**（0 = 日 … 6 = 六），与表头那七列、与
 #: :func:`week_index` 一致 —— **不是** ``date.weekday()``（那一套周一在前）。
 #: 要按 ``date.weekday()`` 问「是不是周末」，问 :data:`WEEKEND_WEEKDAYS`。
-WEEKDAY_NAMES: Final[tuple[str, ...]] = ("日", "一", "二", "三", "四", "五", "六")
+_WEEKDAY_KEYS: Final[tuple[str, ...]] = (
+    "library.calendar.weekday.sunday",
+    "library.calendar.weekday.monday",
+    "library.calendar.weekday.tuesday",
+    "library.calendar.weekday.wednesday",
+    "library.calendar.weekday.thursday",
+    "library.calendar.weekday.friday",
+    "library.calendar.weekday.saturday",
+)
+
+
+def weekday_names() -> tuple[str, ...]:
+    """周日 0 … 周六 6 的短名（当前语言）。**不要在导入时算好**：语言在启动时才定。"""
+    return tuple(t(key) for key in _WEEKDAY_KEYS)
+
 
 #: 周末是哪两天 —— **``date.weekday()`` 的口径**：周六 5、周日 6。
 #: 早先写成 ``{6, 0}``（那是「周日打头」那套数出来的），周视图于是把周一涂成周末、周六没有底色。
 WEEKEND_WEEKDAYS: Final[frozenset[int]] = frozenset({5, 6})
 
-#: 月视图表头写「星期一」而不是「一」：一列里只有「一」是认不出来的。
-WEEKDAY_HEADERS: Final[tuple[str, ...]] = tuple(f"星期{name}" for name in WEEKDAY_NAMES)
+
+def weekday_headers() -> tuple[str, ...]:
+    """月视图表头（「星期一」而不是「一」）：一列里只有「一」是认不出来的。"""
+    return tuple(t("library.calendar.weekday.header", name=name) for name in weekday_names())
+
 
 #: 一格按天分的桶。
 DayBuckets = Mapping[datetime.date, Sequence[PhotoRef]]
@@ -160,13 +186,20 @@ def _clamped(year: int, month: int, day: int) -> datetime.date:
 def title(level: str, anchor: datetime.date) -> str:
     """这一层的标题：``2021年`` / ``2021年9月`` / ``2021年9月6日 – 9月12日 · 第 36 周``。"""
     if level == "year":
-        return f"{anchor.year}年"
+        return t("library.calendar.title.year", year=anchor.year)
     if level == "month":
-        return f"{anchor.year}年{anchor.month}月"
+        return t("library.calendar.title.month", year=anchor.year, month=anchor.month)
     start = week_start(anchor)
     end = start + datetime.timedelta(days=6)
-    span = f"{start.year}年{start.month}月{start.day}日 – {end.month}月{end.day}日"
-    return f"{span} · 第 {week_number(start)} 周"
+    span = t(
+        "library.calendar.title.week_span",
+        start_year=start.year,
+        start_month=start.month,
+        start_day=start.day,
+        end_month=end.month,
+        end_day=end.day,
+    )
+    return t("library.calendar.title.week", span=span, number=week_number(start))
 
 
 def week_number(day: datetime.date) -> int:
@@ -268,9 +301,6 @@ def count_hours(buckets: HourBuckets, days: Iterable[datetime.date]) -> int:
 
 __all__ = [
     "LEVELS",
-    "LEVEL_NAMES",
-    "WEEKDAY_HEADERS",
-    "WEEKDAY_NAMES",
     "WEEKEND_WEEKDAYS",
     "DayBuckets",
     "HourBuckets",
@@ -285,6 +315,7 @@ __all__ = [
     "group_by_hour",
     "in_month",
     "is_level",
+    "level_names",
     "month_days",
     "month_matrix",
     "shift",
@@ -292,4 +323,6 @@ __all__ = [
     "week_index",
     "week_number",
     "week_start",
+    "weekday_headers",
+    "weekday_names",
 ]

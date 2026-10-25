@@ -20,7 +20,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gallery.core.library.calendar import LEVEL_NAMES, LEVELS, title
+from gallery.core.i18n import t
+from gallery.core.library.calendar import LEVELS, level_names, title
 from gallery.ui.calendar.colors import CalendarColors
 from gallery.ui.chips import DISMISS_MARK, build_chip
 from gallery.ui.layout import clear_layout
@@ -62,7 +63,7 @@ class CalendarBar(QWidget):
             button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             button.clicked.connect(lambda _checked=False, s=step: self.step_requested.emit(s))
             layout.addWidget(button)
-        today = QPushButton("今天")
+        today = QPushButton(t("calendar.today"))
         today.setObjectName("today")
         today.setFixedHeight(38)
         today.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -92,7 +93,7 @@ class CalendarBar(QWidget):
 
         self._group = QButtonGroup(self)
         for level in LEVELS:
-            button = QPushButton(LEVEL_NAMES[level])
+            button = QPushButton(level_names()[level])
             button.setCheckable(True)
             button.setFixedSize(50, 36)
             button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -103,7 +104,7 @@ class CalendarBar(QWidget):
 
     def set_level(self, level: str) -> None:
         for button in self._group.buttons():
-            button.setChecked(button.text() == LEVEL_NAMES[level])
+            button.setChecked(button.text() == level_names()[level])
 
     def set_conditions(self, conditions: Sequence[str], *, editing: int | None = None) -> None:
         """摆出生效中的条件（``conditions`` 空 = 整块收起来）。

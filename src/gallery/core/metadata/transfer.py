@@ -20,6 +20,7 @@ from gallery.core import paths
 from gallery.core.cancellation import never_cancel
 from gallery.core.errors import TransferError
 from gallery.core.events.store import EventStore, follow_moves
+from gallery.core.i18n import t
 from gallery.core.metadata.failures import (
     SOURCE_GONE,
     Failure,
@@ -104,7 +105,7 @@ def move_into(
     """
     destination = Path(target)
     if not destination.is_dir():
-        raise TransferError(f"「{destination.name}」不是一个相册。")
+        raise TransferError(t("metadata.transfer.not_album", name=destination.name))
     _guard(root, destination)
 
     cancelled = should_cancel or never_cancel
@@ -121,10 +122,10 @@ def move_into(
     for raw_source in sources:
         source = Path(raw_source)
         if not source.exists():
-            failures.append(Failure.at(source, message=SOURCE_GONE))
+            failures.append(Failure.at(source, message=t(SOURCE_GONE)))
             continue
         if source.is_dir() and paths.is_within(source, destination):
-            failures.append(Failure.at(source, message="不能把相册移入它自身或其子相册。"))
+            failures.append(Failure.at(source, message=t("metadata.transfer.album_into_self")))
             continue
         if cancelled():
             break
@@ -140,7 +141,7 @@ def move_into(
             continue
         created = free_target(destination, source.name, taken)
         if created is None:
-            failures.append(Failure.at(source, message="名称过长，加上编号后仍超出限制。"))
+            failures.append(Failure.at(source, message=t("metadata.transfer.name_too_long")))
             continue
         # **移动之前**问一次：移完之后源路径已经不存在，那时再问恒为假，于是移相册的日志里
         # ``is_dir`` 会记成照片。绑定跟过去同样要用它（相册要按前缀搬整棵子树）。
@@ -148,7 +149,7 @@ def move_into(
         try:
             _move(source, created)
         except OSError as error:
-            message = os_reason(error, action="移动")
+            message = os_reason(error, action_key="move")
             journaled &= append_record(
                 root,
                 WriteRecord(
@@ -207,7 +208,11 @@ def undo_move_records(
     for record in records:
         current, original = record.target, record.source
         if not current.exists():
-            message = f"「{current.name}」已不在「{current.parent.name}」中，可能已被移动。"
+            message = t(
+                "metadata.transfer.undo.gone_from",
+                current=current.name,
+                folder=current.parent.name,
+            )
             journaled &= append_record(
                 root,
                 WriteRecord(
@@ -223,7 +228,7 @@ def undo_move_records(
             failures.append(Failure.at(current, message=message))
             continue
         if original.exists():
-            message = f"「{original.name}」所在位置已有其他文件。"
+            message = t("metadata.transfer.undo.occupied", name=original.name)
             journaled &= append_record(
                 root,
                 WriteRecord(
@@ -241,7 +246,7 @@ def undo_move_records(
         try:
             _move(current, original)
         except OSError as error:
-            message = os_reason(error, action="移动")
+            message = os_reason(error, action_key="move")
             journaled &= append_record(
                 root,
                 WriteRecord(
@@ -303,15 +308,15 @@ def _guard(root: Path, destination: Path) -> None:
 #: 留着是为了这张表是**全的**：``GuardReason`` 加成员时它当场炸，而不是让某天改了
 #: ``allow_root`` 的人得到一句含糊的通用话。
 _GUARD_MESSAGES: Final = {
-    paths.GuardReason.OUTSIDE_ROOT: "只能移到库里的相册：{path}。",
-    paths.GuardReason.IS_ROOT: "不能把照片移到库本身，请选一个相册。",
-    paths.GuardReason.IS_CONFIG_DIR: "这是 Gallery 自己的配置目录，不能移东西进去。",
+    paths.GuardReason.OUTSIDE_ROOT: "metadata.transfer.guard.outside_root",
+    paths.GuardReason.IS_ROOT: "metadata.transfer.guard.is_root",
+    paths.GuardReason.IS_CONFIG_DIR: "metadata.transfer.guard.is_config_dir",
 }
 
 
 def _transfer_reason(path: Path, error: paths.GuardError) -> str:
     """按拒绝的**原因**给一句中文 —— 理由见 :func:`rename._rename_reason`。"""
-    return _GUARD_MESSAGES[error.reason].format(path=path)
+    return t(_GUARD_MESSAGES[error.reason], path=path)
 
 
 __all__ = [

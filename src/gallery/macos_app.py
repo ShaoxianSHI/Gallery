@@ -20,6 +20,7 @@ from typing import Final
 from gallery import __version__
 from gallery.core.constants import APP_NAME, BUNDLE_IDENTIFIER
 from gallery.core.errors import GalleryError
+from gallery.core.i18n import t
 from gallery.core.paths import app_icon_master
 
 #: 打包产物的默认落点（相对仓库根），与 ``.gitignore`` 里的 ``dist/`` 对应。
@@ -92,9 +93,7 @@ def find_project_root(start: Path | None = None) -> Path:
     for candidate in (origin, *origin.parents):
         if (candidate / "pyproject.toml").is_file() and (candidate / "src" / "gallery").is_dir():
             return candidate
-    raise BundleError(
-        "未找到 Gallery 源码目录。请在项目目录中运行，或使用 uv run python -m gallery.macos_app。"
-    )
+    raise BundleError(t("app.macos.no_source"))
 
 
 def default_destination(project_root: Path) -> Path:
@@ -111,7 +110,7 @@ def _run_tool(command: Sequence[str], *, missing: str) -> None:
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout).strip()
         raise BundleError(
-            f"生成图标失败：{command[0]} 退出码 {completed.returncode}", detail=detail
+            t("app.macos.icon_failed", tool=command[0], code=completed.returncode), detail=detail
         )
 
 
@@ -122,7 +121,7 @@ def make_icns(source_png: Path, destination: Path) -> Path:
     没必要自己拼，也省掉一份二进制进仓库。
     """
     if not source_png.is_file():
-        raise BundleError("未找到应用图标源文件。", path=source_png)
+        raise BundleError(t("app.macos.no_icon_source"), path=source_png)
 
     iconset = destination.parent / f".{destination.stem}.iconset"
     if iconset.exists():
@@ -143,11 +142,11 @@ def make_icns(source_png: Path, destination: Path) -> Path:
                     "--out",
                     str(iconset / name),
                 ],
-                missing="未找到 macOS 自带的 sips，无法生成 .icns。",
+                missing=t("app.macos.missing_sips"),
             )
         _run_tool(
             ["iconutil", "-c", "icns", str(iconset), "--output", str(destination)],
-            missing="未找到 macOS 自带的 iconutil，无法生成 .icns。",
+            missing=t("app.macos.missing_iconutil"),
         )
     finally:
         shutil.rmtree(iconset, ignore_errors=True)
@@ -192,8 +191,7 @@ def prepare_destination(destination: Path) -> None:
         return
     if not (destination / "Contents" / "Info.plist").is_file():
         raise BundleError(
-            f"目标位置已经有东西，且不是 Gallery.app：{destination}。请更换位置，或先删除它。",
-            path=destination,
+            t("app.macos.destination_taken", destination=destination), path=destination
         )
     shutil.rmtree(destination)
 
@@ -228,10 +226,7 @@ def build_bundle(
     root = find_project_root() if project_root is None else Path(project_root)
     interpreter = Path(python) if python is not None else root / ".venv" / "bin" / "python"
     if not interpreter.is_file():
-        raise BundleError(
-            f"未找到虚拟环境中的解释器：{interpreter}。请先在项目目录执行 uv sync。",
-            path=interpreter,
-        )
+        raise BundleError(t("app.macos.no_interpreter", interpreter=interpreter), path=interpreter)
 
     prepare_destination(destination)
     contents = destination / "Contents"
@@ -244,7 +239,7 @@ def build_bundle(
     if icns is None:
         make_icns(app_icon_master(), target_icns)
     elif not Path(icns).is_file():
-        raise BundleError("未找到现成的 .icns 文件。", path=Path(icns))
+        raise BundleError(t("app.macos.no_icns"), path=Path(icns))
     else:
         shutil.copyfile(icns, target_icns)
 
@@ -261,13 +256,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     """命令行入口，返回进程退出码。"""
     parser = argparse.ArgumentParser(
         prog="gallery.macos_app",
-        description="把 Gallery 打包成 macOS 的 Gallery.app，让 Dock、访达、⌘Tab 用上应用图标。",
+        description=t("app.macos.description"),
     )
     parser.add_argument(
         "destination",
         nargs="?",
         type=Path,
-        help=f"生成位置（默认 <项目目录>/{BUILD_DIR_NAME}/{APP_NAME}.app）",
+        help=t("app.macos.destination_help", build_dir=BUILD_DIR_NAME, app=APP_NAME),
     )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
@@ -281,9 +276,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(exc.detail, file=sys.stderr)
         return 1
 
-    print(f"已生成 {bundle}")
-    print("双击即可启动，Dock、访达与 ⌘Tab 里都是 Gallery 的图标。")
-    print("这个包借用仓库的 .venv，不含依赖；仓库移动或 uv sync 重建后请重新生成。")
+    print(t("app.macos.generated", bundle=bundle))
+    print(t("app.macos.launch_hint"))
+    print(t("app.macos.venv_hint"))
     return 0
 
 

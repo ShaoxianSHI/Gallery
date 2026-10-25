@@ -15,6 +15,7 @@ from stat import S_ISDIR, S_ISREG
 from gallery.core.cancellation import never_cancel
 from gallery.core.collation import collation_key
 from gallery.core.errors import LibraryNotAccessibleError
+from gallery.core.i18n import t, t_plural
 from gallery.core.library.photos import (
     FolderRef,
     GridEntry,
@@ -43,12 +44,12 @@ class ScanReport:
         """一句话中文摘要，没有问题时返回空串。"""
         parts: list[str] = []
         if self.skipped_dirs:
-            parts.append(f"{len(self.skipped_dirs)} 个文件夹无法读取")
+            parts.append(t_plural("library.scanner.folders_unreadable", len(self.skipped_dirs)))
         if self.unreadable_files:
-            parts.append(f"{len(self.unreadable_files)} 个文件无法读取")
+            parts.append(t_plural("library.scanner.files_unreadable", len(self.unreadable_files)))
         if not parts:
             return ""
-        return "、".join(parts) + "；通常由权限问题或外接盘断开导致。"
+        return t("library.scanner.separator").join(parts) + t("library.scanner.issue_suffix")
 
 
 def iter_photos(
@@ -265,7 +266,7 @@ def _require_directory(path: Path) -> None:
     """不是目录（或压根不存在）就抛。全仓库这一句话只有这一处，别的调用点引用它。"""
     if not Path(path).is_dir():
         raise LibraryNotAccessibleError(
-            f"无法打开该文件夹：{path}。它可能已被移动、重命名或删除。",
+            t("library.scanner.folder_unavailable", path=path),
             path=Path(path),
         )
 

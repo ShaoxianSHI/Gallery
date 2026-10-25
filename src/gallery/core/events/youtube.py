@@ -21,6 +21,7 @@ from gallery.core.errors import MovieImportError, SourcePageError
 from gallery.core.events.kinds import SOURCE_YOUTUBE, minutes_of_seconds
 from gallery.core.events.models import MovieInfo
 from gallery.core.events.transport import HttpTransport, Transport
+from gallery.core.i18n import t
 
 logger = logging.getLogger(__name__)
 
@@ -189,12 +190,10 @@ def _oembed_problem(exc: SourcePageError, code: str) -> MovieImportError:
     混成一句「取不到」会把用户支到错的下一步（换一个视频 vs 换一个工具）。
     """
     if exc.status in (401, 403):
-        return MovieImportError(
-            f"YouTube 不给该视频的资料，不允许嵌入播放：{code}。请在浏览器中打开确认。"
-        )
+        return MovieImportError(t("event.youtube.embed_forbidden", code=code))
     if exc.status == 404:
-        return MovieImportError(f"YouTube 未收录该视频：{code}。它可能已被删除或设为不公开。")
-    return MovieImportError(f"YouTube 本次未提供信息：HTTP {exc.status}，{code}。")
+        return MovieImportError(t("event.youtube.not_found", code=code))
+    return MovieImportError(t("event.youtube.http", status=exc.status, code=code))
 
 
 def _oembed_url(code: str) -> str:
@@ -208,7 +207,7 @@ def fetch(code: str, *, client: Transport) -> MovieInfo:
     :raises MovieImportError: oEmbed 不给资料（视频没了 / 不允许嵌入 / 网络失败）。
     """
     if not is_video_id(code):
-        raise MovieImportError(f"不是有效的 YouTube videoId：{code}。")
+        raise MovieImportError(t("event.youtube.invalid_code", code=code))
     try:
         raw = client.get_text(_oembed_url(code))
     except SourcePageError as exc:
@@ -216,9 +215,9 @@ def fetch(code: str, *, client: Transport) -> MovieInfo:
     try:
         payload = json.loads(raw)
     except ValueError as exc:
-        raise MovieImportError(f"YouTube 返回的信息无法解析：{code}。") from exc
+        raise MovieImportError(t("event.youtube.unparsable", code=code)) from exc
     if not isinstance(payload, Mapping):
-        raise MovieImportError(f"YouTube 返回的信息不是有效的视频信息：{code}。")
+        raise MovieImportError(t("event.youtube.invalid_payload", code=code))
     return _with_page(code, oembed_of(payload, code), client)
 
 

@@ -16,6 +16,7 @@ from PySide6.QtCore import QPoint
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMenu
 
+from gallery.core.i18n import t, t_plural
 from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef, SectionRef
 from gallery.core.metadata.exif import read_metadata
 from gallery.core.metadata.facets import group_facet
@@ -176,8 +177,12 @@ class ContextMenuFlowMixin:
         # 全在主线程上）。上面那道 ``has_albums`` 找到一个就停，所以有相册时只花一次 scandir。
         copy_to_album = move_to_album = None
         if self._library is not None and self._library.has_albums():
-            copy_to_album = self._album_picker("复制到相册", self._album_targets)
-            move_to_album = self._album_picker("移动到相册", self._album_targets)
+            copy_to_album = self._album_picker(
+                t("flow.context_menu.copy_to_album"), self._album_targets
+            )
+            move_to_album = self._album_picker(
+                t("flow.context_menu.move_to_album"), self._album_targets
+            )
             copy_to_album.triggered.connect(self._on_album_chosen_for_copy)
             move_to_album.triggered.connect(self._on_album_chosen_for_move)
         return MenuActions(
@@ -255,7 +260,7 @@ class ContextMenuFlowMixin:
         entries = self._selected_entries()
         paths = self._selected_paths()
         if not paths:
-            self._show_banner(NOTHING_SELECTED)
+            self._show_banner(t(NOTHING_SELECTED))
             return
         if entries and all(isinstance(entry, FolderRef) for entry in entries):
             self._show_banner(desktop.open_folder_in_finder(paths), auto_hide=True)
@@ -268,8 +273,7 @@ class ContextMenuFlowMixin:
         if not paths:
             return
         desktop.copy_to_clipboard(desktop.format_paths(paths))
-        head = "已拷贝 1 个路径。" if len(paths) == 1 else f"已拷贝 {len(paths)} 个路径。"
-        self._show_banner(head, auto_hide=True)
+        self._show_banner(t_plural("flow.context_menu.copy_paths", len(paths)), auto_hide=True)
 
     def copy_selected_files(self) -> None:
         """「拷贝」⌘C：把选中的**文件**放进剪贴板，访达里 ⌘V 得到一份拷贝（ADR 0017）。
@@ -333,11 +337,11 @@ class ContextMenuFlowMixin:
     def _on_metadata_copy_failed(self, message: str) -> None:
         self._finish_job("_metadata_copy_job")
         logger.info("复制用的元数据读取失败：%s", message)
-        self._show_banner(f"无法读取元数据：{message.rstrip('。')}")
+        self._show_banner(t("flow.context_menu.metadata_read_failed", reason=message.rstrip("。")))
 
     def _put_metadata_on_clipboard(self, report: MetadataReport, ref: PhotoRef) -> None:
         desktop.copy_to_clipboard(report.as_text())
-        self._show_banner(f"已复制「{ref.name}」的元数据。", auto_hide=True)
+        self._show_banner(t("flow.context_menu.metadata_copied", name=ref.name), auto_hide=True)
 
     def copy_current_group(self) -> None:
         """「复制分组条件」：把这个组是怎么分出来的抄走。
@@ -352,8 +356,15 @@ class ContextMenuFlowMixin:
             return
         facet = group_facet(group.facet)
         field = facet.label if facet is not None else group.facet
-        desktop.copy_to_clipboard(f"按「{field}」分组：{group.label} · {group.count} 张")
-        self._show_banner(f"已复制分组条件：按「{field}」分组。", auto_hide=True)
+        desktop.copy_to_clipboard(
+            t_plural(
+                "flow.context_menu.group_condition",
+                group.count,
+                field=field,
+                label=group.label,
+            )
+        )
+        self._show_banner(t("flow.context_menu.group_copied", field=field), auto_hide=True)
 
     def _section_menu_actions(self, section: SectionRef) -> MenuActions:
         """分区标题那一份动作：三条组级命令都绑在**这一条标题**代表的组上。"""

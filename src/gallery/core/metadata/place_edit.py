@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
 from gallery.core.errors import MetadataWriteError
+from gallery.core.i18n import t
 from gallery.core.metadata.exif import COORDINATE_AXES, PLACE_FIELDS
 from gallery.core.metadata.writeback import COORDINATE_TAGS, STALE_GPS_TAGS, Assignment
 from gallery.core.places.countries import place_label
@@ -158,16 +159,16 @@ def _coordinates(state: PlaceState, edit: PlaceEdit) -> tuple[float, float] | No
     if edit.latitude is None and edit.longitude is None:
         return None
     if edit.latitude is None or edit.longitude is None:
-        raise MetadataWriteError("经度与纬度需同时填写：只填一项无法确定位置。")
+        raise MetadataWriteError(t("metadata.place_edit.pair_required"))
     latitude, longitude = float(edit.latitude), float(edit.longitude)
     if not -90.0 <= latitude <= 90.0:
-        raise MetadataWriteError(f"纬度要在 -90 到 90 之间，写的是 {latitude}。")
+        raise MetadataWriteError(t("metadata.place_edit.latitude_range", value=latitude))
     if not -180.0 <= longitude <= 180.0:
-        raise MetadataWriteError(f"经度要在 -180 到 180 之间，写的是 {longitude}。")
+        raise MetadataWriteError(t("metadata.place_edit.longitude_range", value=longitude))
     if not is_real_coordinate(latitude, longitude):
         # 0,0 是几内亚湾里一个不存在的点（见 is_real_coordinate），十有八九是「我没定到 GPS，
         # 程序给我填了 0」的原样搬运。
-        raise MetadataWriteError("经纬度均为 0：该坐标位于几内亚湾，通常表示没有位置信息。")
+        raise MetadataWriteError(t("metadata.place_edit.null_island"))
     current = state.coordinates()
     if current is not None and all(
         abs(a - b) <= _COORDINATE_EPSILON

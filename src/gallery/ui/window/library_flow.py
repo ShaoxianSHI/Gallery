@@ -22,6 +22,7 @@ from PySide6.QtWidgets import QFileDialog, QMenu, QWidget
 from gallery.core.errors import GalleryError
 from gallery.core.events.orphans import OrphanScan
 from gallery.core.external import recent_documents
+from gallery.core.i18n import t, t_plural
 from gallery.core.library.config import BROWSE_MODE_ALBUMS, BROWSE_MODE_CALENDAR, LibraryUIState
 from gallery.core.library.facade import Library, PlacePass
 from gallery.core.library.groups import SortOrder, sort_photos
@@ -306,7 +307,9 @@ class LibraryFlowMixin:
         start = str(self._library.root) if self._library is not None else str(Path.home())
         # ``cast`` ：``self`` 静态上是这个 mixin，而运行时是 ``MainWindow``（一个
         # ``QMainWindow``）。ADR 0057 记了为什么这里只能 cast 而不能声明。
-        chosen = QFileDialog.getExistingDirectory(cast("QWidget", self), "选择照片文件夹", start)
+        chosen = QFileDialog.getExistingDirectory(
+            cast("QWidget", self), t("flow.library_flow.choose_folder"), start
+        )
         if chosen:
             self.open_library(Path(chosen))
 
@@ -329,8 +332,10 @@ class LibraryFlowMixin:
         if not library.config_dir_ready:
             # 摆在 ``_activate_library`` **之后**：它开头就把横幅收干净了。
             self._show_banner(
-                f"无法写入「{library.display_name}」：Gallery 不能在其中创建配置目录。"
-                "浏览、分组与搜索仍可用，但索引本次不会落盘，下次打开需要重新读取。"
+                t(
+                    "flow.library_flow.config_dir_failed",
+                    name=library.display_name,
+                )
             )
         return True
 
@@ -690,7 +695,7 @@ class LibraryFlowMixin:
         report = payload if isinstance(payload, ScanReport) else ScanReport()
         if report.has_issues:
             self._banner_text.note_scan_issue()
-            self._show_banner(f"部分内容未能读取：{report.summary}")
+            self._show_banner(t("flow.library_flow.scan_issues", summary=report.summary))
         # 「这一层空不空」**不在这里判断**：要重排时条目还暂存着没显示到界面（见 _staged），
         # 照模型判断会把相册 / 组卡片误报成「空」。
         if self._pending_watch.has_pending():
@@ -708,7 +713,7 @@ class LibraryFlowMixin:
             return
         self._finish_job("_scan_job")
         self._banner_text.note_scan_issue()
-        self._show_banner(f"扫描失败：{message}")
+        self._show_banner(t("flow.library_flow.scan_failed", reason=message))
         # 已经累积到的条目照常摆出来：扫到一半失败时给一屏能看的东西，比一屏空白有用。
         self._order_now()
 
@@ -760,13 +765,13 @@ class LibraryFlowMixin:
             self._show_place_notice(payload)  # 「正在加载城市库…」这类说明
             return
         if isinstance(payload, int) and payload > 0:
-            self._show_place_notice(f"正在解析照片的地点…已处理 {payload} 张")
+            self._show_place_notice(t("flow.library_flow.place_progress_processed", count=payload))
 
     def _on_place_pass_work(self, count: object) -> None:
         """真的找到活干了才亮横幅：空跑的库不该让用户看见「正在解析…」。"""
         if not self._banner_text.may_show_progress or not isinstance(count, int):
             return
-        self._show_place_notice(f"正在解析 {count} 张照片的地点…")
+        self._show_place_notice(t_plural("flow.library_flow.place_progress", count))
 
     def _on_place_pass_done(self, payload: object) -> None:
         self._finish_job("_place_job")
@@ -837,7 +842,7 @@ class LibraryFlowMixin:
         recent_documents.publish(self._session.recent_roots)
         roots = [root for root in self._session.recent_roots if root.is_dir()]
         if not roots:
-            empty = QAction("（暂无最近打开的库）", cast("QWidget", self))
+            empty = QAction(t("flow.library_flow.recent_empty"), cast("QWidget", self))
             empty.setEnabled(False)
             self._recent_menu.addAction(empty)
             return
@@ -846,7 +851,7 @@ class LibraryFlowMixin:
             action.triggered.connect(lambda _checked=False, path=root: self.open_library(path))
             self._recent_menu.addAction(action)
         self._recent_menu.addSeparator()
-        clear = QAction("清除最近打开", cast("QWidget", self))
+        clear = QAction(t("flow.library_flow.clear_recent"), cast("QWidget", self))
         clear.triggered.connect(self._forget_all_recent_roots)
         self._recent_menu.addAction(clear)
 

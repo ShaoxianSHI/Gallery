@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from gallery.core.i18n import t
 from gallery.core.metadata.failures import (
     SOURCE_GONE,
     Failure,
@@ -78,7 +79,7 @@ def test_the_prefix_only_goes_on_the_vague_branch() -> None:
 def test_the_two_call_sites_of_the_gone_wording_agree() -> None:
     """``SOURCE_GONE`` 有两处用：``os_reason`` 的 ``ENOENT`` 分支，和 ``transfer`` 在
     动手前发现源压根不存在时（那时没有 ``OSError`` 可译）。**不许各写一份。**"""
-    assert os_reason(OSError(errno.ENOENT, "")) == SOURCE_GONE
+    assert os_reason(OSError(errno.ENOENT, "")) == t(SOURCE_GONE)
 
 
 def test_same_file_is_named_before_anything_else() -> None:

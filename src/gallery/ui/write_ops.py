@@ -19,7 +19,7 @@ from PySide6.QtWidgets import QDialog, QMenu, QMessageBox
 
 from gallery.core import paths
 from gallery.core.errors import GalleryError
-from gallery.core.i18n import t
+from gallery.core.i18n import t, t_plural
 from gallery.core.library.config import BROWSE_MODE_ALBUMS, BROWSE_MODE_FLAT
 from gallery.core.library.facade import MovieImportOutcome, MovieImportPlan
 from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef, SectionRef
@@ -48,13 +48,12 @@ logger = logging.getLogger(__name__)
 
 #: 选中分组卡片而要改的却是**卡片本身**时的那句解释（ADR 0020）。
 #: 摊平之后只有「改名」还会走到这里 —— 卡片不是磁盘上的东西，改不了名也删不掉。
-GROUP_NOT_FILE_ACTION = (
-    "分组不是磁盘上的文件，无法重命名或删除。请双击进入分组，选中其中的照片后再操作。"
-)
+#: 值是文案键，调用点交给 :func:`gallery.core.i18n.t`。
+GROUP_NOT_FILE_ACTION = "flow.write_ops.group_not_file"
 
 
 #: 摊平之后一个路径都没剩下（正常情况下不会：组卡片必带至少一张照片）。
-NOTHING_SELECTED = "没有可处理的东西。"
+NOTHING_SELECTED = "flow.write_ops.nothing_selected"
 
 
 def shared_parent(photos: Sequence[PhotoRef]) -> Path | None:
@@ -171,7 +170,7 @@ class WriteOpsMixin:
         """
         target = self._paste_target()
         if target is None:
-            self._show_banner("没有可粘贴到的文件夹。")
+            self._show_banner(t("flow.write_ops.no_paste_target"))
             return
         self._paste_into(target)
 
@@ -186,18 +185,18 @@ class WriteOpsMixin:
             return
         sources = desktop.read_files_from_clipboard()
         if not sources:
-            self._show_banner("剪贴板中没有可粘贴的文件。")
+            self._show_banner(t("flow.write_ops.clipboard_empty"))
             return
         if self._write_job is not None:
             # 两次写入同时跑会争同一个名字（各自先看「一张 2.jpg」在不在），后到的那个会把
             # 先到的盖掉 —— 粘贴、复制到相册、移动到相册同时只允许一个。
-            self._show_banner("上一次操作尚未结束。")
+            self._show_banner(t("flow.write_ops.busy"))
             return
 
         def work(context: TaskContext) -> object:
             return library.copy_into(target, sources, should_cancel=context.is_cancelled)
 
-        self._show_banner(f"正在把 {len(sources)} 项粘贴到「{target.name}」…")
+        self._show_banner(t_plural("flow.write_ops.pasting", len(sources), target=target.name))
         self._start_job(
             "_write_job",
             work,
@@ -218,7 +217,7 @@ class WriteOpsMixin:
     def _on_paste_failed(self, message: str) -> None:
         self._finish_job("_write_job")
         logger.info("粘贴失败：%s", message)
-        self._show_banner(f"未能粘贴：{message.rstrip('。')}")
+        self._show_banner(t("flow.write_ops.paste_failed", reason=message.rstrip("。")))
 
     def duplicate_selected(self) -> None:
         """「复制」⌘D：把选中的每一项**在原位置**造一份副本（ADR 0044）。
@@ -232,17 +231,17 @@ class WriteOpsMixin:
             return
         sources = self._selected_paths()
         if not sources:
-            self._show_banner(NOTHING_SELECTED)
+            self._show_banner(t(NOTHING_SELECTED))
             return
         if self._write_job is not None:
             # 与粘贴 / 复制到相册 / 移动到相册同时只允许一个（ADR 0019 决策 6）。
-            self._show_banner("上一次操作尚未结束。")
+            self._show_banner(t("flow.write_ops.busy"))
             return
 
         def work(context: TaskContext) -> object:
             return library.duplicate(sources, should_cancel=context.is_cancelled)
 
-        self._show_banner(f"正在复制 {len(sources)} 份副本…")
+        self._show_banner(t_plural("flow.write_ops.duplicating", len(sources)))
         self._start_job(
             "_write_job",
             work,
@@ -262,7 +261,7 @@ class WriteOpsMixin:
     def _on_duplicate_failed(self, message: str) -> None:
         self._finish_job("_write_job")
         logger.info("复制副本失败：%s", message)
-        self._show_banner(f"未能复制：{message.rstrip('。')}")
+        self._show_banner(t("flow.write_ops.duplicate_failed", reason=message.rstrip("。")))
 
     def create_album(self) -> None:
         """「新建相册」⇧⌘N：在当前这一层建一个空相册，**建完立刻进行内重命名**。
@@ -273,7 +272,7 @@ class WriteOpsMixin:
         library = self._library
         target = self._level_directory()
         if library is None or target is None:
-            self._show_banner("没有可新建相册的文件夹。")
+            self._show_banner(t("flow.write_ops.no_album_target"))
             return
         if self._grid.is_renaming():
             # 键盘正在另一个行内输入框里：新建会让两个输入框同时活着，先做完手上这个。
@@ -297,7 +296,7 @@ class WriteOpsMixin:
             # 插不进去（理论上不会：这一层里还没有同一个路径）。宁可重扫一次，
             # 也不能让磁盘上多了一个文件夹而界面上看不见。
             self._reload_level()
-            self._show_banner(f"已新建相册「{created.name}」。", auto_hide=True)
+            self._show_banner(t("flow.write_ops.album_created", name=created.name), auto_hide=True)
             return
         self._grid.select_row(row)
         # 空文件夹里建了相册之后，「这一层是空的」那句提示就该收起来了（判据是网格上有没有
@@ -306,7 +305,7 @@ class WriteOpsMixin:
         self._refresh_thumbnail_window()
         if not created.journaled:
             # 文件夹已经在手上了，缺的只是一条历史。如实说，别让用户以为「随时可查」。
-            self._show_banner("未能记录操作日志。")
+            self._show_banner(t("flow.write_ops.log_failed"))
         self._grid.begin_rename(self._model.index(row, 0))
 
     # ---- 相册封面（ADR 0028）-------------------------------------------------
@@ -354,7 +353,7 @@ class WriteOpsMixin:
         library = self._library
         photo = self.cover_candidate()
         if library is None or photo is None:
-            self._show_banner("没有可设为相册封面的照片。")
+            self._show_banner(t("flow.write_ops.no_cover_photo"))
             return
         album = photo.path.parent
         try:
@@ -415,7 +414,7 @@ class WriteOpsMixin:
         """
         ref = self.metadata_edit_candidate()
         if ref is None:
-            self._show_banner("没有可编辑元数据的照片。")
+            self._show_banner(t("flow.write_ops.no_editable_photo"))
             return
         cached = self._cached_metadata(ref)
         if cached is not None:
@@ -428,7 +427,7 @@ class WriteOpsMixin:
                 return None
             return read_metadata(ref.path)
 
-        self._show_banner(f"正在读取 {ref.name} 的元数据…")
+        self._show_banner(t("flow.write_ops.reading_metadata", name=ref.name))
         self._start_job(
             "_metadata_copy_job",
             work,
@@ -442,7 +441,7 @@ class WriteOpsMixin:
             return  # 已经换库或换照片了：这份元数据不该再跑到界面上
         self._cache_metadata(ref, payload)
         if self.metadata_edit_candidate() != ref:
-            self._show_banner("当前照片已更换，请重新执行「编辑元数据」。")
+            self._show_banner(t("flow.write_ops.metadata_target_changed"))
             return
         self._open_metadata_editor(ref, payload)
 
@@ -450,7 +449,7 @@ class WriteOpsMixin:
         self._finish_job("_metadata_copy_job")
         logger.info("编辑元数据前的元数据读取失败：%s", message)
         if generation == self._generation:
-            self._show_banner(f"无法读取「{ref.name}」的元数据，不能编辑。")
+            self._show_banner(t("flow.write_ops.metadata_unreadable", name=ref.name))
 
     def _open_metadata_editor(self, ref: PhotoRef, report: MetadataReport) -> None:
         """摆出编辑器。**对话框只产出「用户填的那一份」，写盘在下面那一步**；拍摄时间与位置
@@ -556,12 +555,11 @@ class WriteOpsMixin:
             return
         sources = self._selected_paths()
         if not sources:
-            self._show_banner(NOTHING_SELECTED)
+            self._show_banner(t(NOTHING_SELECTED))
             return
         if self._write_job is not None:
-            self._show_banner("上一次操作尚未结束。")
+            self._show_banner(t("flow.write_ops.busy"))
             return
-        verb = "移动" if move else "复制"
         op: banners.AlbumOp = "move" if move else "copy"
 
         def work(context: TaskContext) -> object:
@@ -569,12 +567,14 @@ class WriteOpsMixin:
                 return library.move_into(target, sources, should_cancel=context.is_cancelled)
             return library.copy_into(target, sources, should_cancel=context.is_cancelled)
 
-        self._show_banner(f"正在把 {len(sources)} 项{verb}到「{target.name}」…")
+        self._show_banner(
+            t_plural(f"flow.write_ops.transferring.{op}", len(sources), target=target.name)
+        )
         self._start_job(
             "_write_job",
             work,
             on_result=partial(self._on_transfer_done, target, op),
-            on_error=partial(self._on_transfer_failed, verb),
+            on_error=partial(self._on_transfer_failed, op),
         )
 
     def _on_transfer_done(self, target: Path, op: banners.AlbumOp, payload: object) -> None:
@@ -591,8 +591,9 @@ class WriteOpsMixin:
 
     def _on_transfer_failed(self, verb: str, message: str) -> None:
         self._finish_job("_write_job")
-        logger.info("%s到相册失败：%s", verb, message)
-        self._show_banner(f"未能{verb}：{message.rstrip('。')}")
+        op: banners.AlbumOp = "move" if verb in ("move", "移动") else "copy"
+        logger.info("%s到相册失败：%s", "移动" if op == "move" else "复制", message)
+        self._show_banner(t(f"flow.write_ops.transfer_failed.{op}", reason=message.rstrip("。")))
 
     def _selected_entries(self, rows: Sequence[int] | None = None) -> list[GridEntry]:
         """「此刻这些命令作用于谁」—— 网格页是整个选区，大图页是正在看的那一张。
@@ -644,14 +645,14 @@ class WriteOpsMixin:
         if not index.isValid():
             return
         if self._model.group_at(index.row()) is not None:
-            self._show_banner(GROUP_NOT_FILE_ACTION)
+            self._show_banner(t(GROUP_NOT_FILE_ACTION))
             return
         self._grid.begin_rename(index)
 
     def _on_rename_requested(self, index: QModelIndex) -> None:
         """再次点击已选中的格子：进入行内重命名。"""
         if self._model.group_at(index.row()) is not None:
-            self._show_banner(GROUP_NOT_FILE_ACTION)
+            self._show_banner(t(GROUP_NOT_FILE_ACTION))
             return
         self._grid.begin_rename(index)
 
@@ -783,7 +784,7 @@ class WriteOpsMixin:
             self._refresh_undo_label()
             return
         if result is None:
-            self._show_banner("没有可撤销的操作。")
+            self._show_banner(t("flow.write_ops.nothing_to_undo"))
             return
         # **这一次撤销之后，「跳回刚删掉的那张」就不作数了**：那一摞栈已经矮了一格，无论撤的
         # 是哪一种（下面三支）都只对紧接着的那一次有效。
@@ -901,14 +902,14 @@ class WriteOpsMixin:
         """
         library = self._library
         if library is None or not library.events_available:
-            self._show_banner("当前库无法使用事件功能，不能导入影片。")
+            self._show_banner(t("flow.write_ops.events_unavailable.movies"))
             return
         if self._movie_import_job is not None:
-            self._show_banner("上一次导入尚未结束。")
+            self._show_banner(t("flow.write_ops.import_busy"))
             return
         target = self._current_folder()
         if target is None:
-            self._show_banner("请先打开一个库。")
+            self._show_banner(t("flow.write_ops.no_library"))
             return
         dialog = MovieImportDialog(self, target=target, source=source)
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -933,7 +934,7 @@ class WriteOpsMixin:
                 entries, source=source, should_cancel=context.is_cancelled
             )
 
-        self._show_banner(f"正在抓取 {len(entries)} 项影片的资料…")
+        self._show_banner(t_plural("flow.write_ops.planning_movies", len(entries)))
         self._start_job(
             "_movie_import_job",
             work,
@@ -973,7 +974,7 @@ class WriteOpsMixin:
                 should_cancel=context.is_cancelled,
             )
 
-        self._show_banner(f"正在下载并写入 {plan.total} 部影片的封面…")
+        self._show_banner(t_plural("flow.write_ops.writing_movies", plan.total))
         self._start_job(
             "_movie_import_job",
             work,
@@ -995,20 +996,23 @@ class WriteOpsMixin:
     def _on_movie_import_failed(self, message: str) -> None:
         self._finish_job("_movie_import_job")
         logger.info("导入影片失败：%s", message)
-        self._show_banner(f"导入影片失败：{message.rstrip('。')}")
+        self._show_banner(t("flow.write_ops.movie_import_failed", reason=message.rstrip("。")))
 
     def _ask_about_duplicate_movies(self, plan: MovieImportPlan) -> bool | None:
         """发现库里已有同一部时问一句：跳过返回 ``True``，全部导入返回 ``False``，取消 ``None``。"""
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Question)
-        box.setWindowTitle("导入影片")
+        box.setWindowTitle(t("flow.write_ops.movie_import_title"))
         box.setText(
-            f"获取到 {plan.total} 部影片，其中 {plan.duplicates} 部已存在于库中"
-            "（来源与编号相同）。\n\n要跳过这些，还是全部重新导入？"
+            t_plural(
+                "flow.write_ops.movie_import_duplicates",
+                plan.total,
+                duplicates=plan.duplicates,
+            )
         )
-        skip = box.addButton("跳过重复", QMessageBox.ButtonRole.AcceptRole)
-        box.addButton("全部导入", QMessageBox.ButtonRole.DestructiveRole)
-        cancel = box.addButton("取消", QMessageBox.ButtonRole.RejectRole)
+        skip = box.addButton(t("flow.common.skip_duplicates"), QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(t("flow.common.import_all"), QMessageBox.ButtonRole.DestructiveRole)
+        cancel = box.addButton(t("flow.common.cancel"), QMessageBox.ButtonRole.RejectRole)
         box.setDefaultButton(skip)
         box.exec()
         clicked = box.clickedButton()

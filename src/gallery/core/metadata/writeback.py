@@ -19,6 +19,7 @@ from typing import Final, Protocol
 
 from gallery.core import paths
 from gallery.core.errors import MetadataWriteError
+from gallery.core.i18n import t
 from gallery.core.library.photos import PhotoRef, is_supported_photo
 from gallery.core.metadata.exif import (
     COORDINATE_AXES,
@@ -104,9 +105,6 @@ _UNSUPPORTED_MARKERS: Final = (
     "invalid file type",
     "unsupported",
 )
-
-#: 没装 exiftool 时给用户的那一句。
-INSTALL_HINT: Final = "安装后即可使用：brew install exiftool"
 
 #: exiftool 用这几个词表示「这个字段是空的」。**直接用读取侧那一份**而不是各写一套：
 #: 写回后回读校验与读取走的是同一个 exiftool，两边的「空」判错一次就等于刚写进去的东西
@@ -205,16 +203,16 @@ class ExifToolWriter:
         path = Path(path)
         payload = self._run(
             [self._executable, "-j", "-G", "-sort", *EXIFTOOL_CHARSET_ARGS, str(path)],
-            action="读取",
+            action_key="read",
             path=path,
         )
         try:
             parsed = json.loads(payload)
         except json.JSONDecodeError as exc:
             raise MetadataWriteError(
-                f"无法读取「{Path(path).name}」现在的元数据，无法确认写入结果。",
+                t("metadata.writeback.read_failed", name=Path(path).name),
                 path=Path(path),
-                detail=f"{exc}；输出前 200 字：{payload[:200]}",
+                detail=t("metadata.writeback.detail_output", error=exc, output=payload[:200]),
             ) from exc
         if not isinstance(parsed, list) or not parsed or not isinstance(parsed[0], dict):
             return {}
@@ -239,15 +237,15 @@ class ExifToolWriter:
         try:
             self._run(
                 [*base, "-overwrite_original_in_place", *fields, str(path)],
-                action="写入",
+                action_key="write",
                 path=path,
                 timeout=timeout,
             )
         except MetadataWriteError:
-            self._run([*base, *fields, str(path)], action="写入", path=path, timeout=timeout)
+            self._run([*base, *fields, str(path)], action_key="write", path=path, timeout=timeout)
 
     def _run(
-        self, argv: Sequence[str], *, action: str, path: Path, timeout: float | None = None
+        self, argv: Sequence[str], *, action_key: str, path: Path, timeout: float | None = None
     ) -> str:
         try:
             completed = subprocess.run(  # noqa: S603 - argv 是自己拼的，没有 shell
@@ -258,20 +256,24 @@ class ExifToolWriter:
             )
         except subprocess.TimeoutExpired as exc:
             raise MetadataWriteError(
-                f"{action}元数据超时，超过 {self._timeout:g} 秒：{path.name}。请稍后重试。",
+                t(
+                    f"metadata.writeback.timeout.{action_key}",
+                    seconds=self._timeout,
+                    name=path.name,
+                ),
                 path=path,
                 detail=str(exc),
             ) from exc
         except OSError as exc:
             raise MetadataWriteError(
-                f"无法运行 exiftool：{exc.strerror or exc}。",
+                t("metadata.writeback.cannot_run", reason=exc.strerror or exc),
                 path=path,
                 detail=str(exc),
             ) from exc
         stderr = completed.stderr.decode("utf-8", "replace").strip()
         if completed.returncode != 0 or _looks_like_failure(stderr):
             raise MetadataWriteError(
-                _explain(stderr, path=path, action=action), path=path, detail=stderr
+                _explain(stderr, path=path, action_key=action_key), path=path, detail=stderr
             )
         return completed.stdout.decode("utf-8", "replace")
 
@@ -335,10 +337,10 @@ def undo_metadata(
     root = Path(root)
     path = Path(record.target)
     if not record.changes:
-        raise MetadataWriteError("这条记录里没有可撤销的字段。", path=path)
+        raise MetadataWriteError(t("metadata.writeback.no_fields"), path=path)
     if not path.is_file():
         raise MetadataWriteError(
-            f"无法撤销：未找到「{path.name}」，它可能已被移动或删除。",
+            t("metadata.writeback.undo.missing", name=path.name),
             path=path,
         )
     tool = _tool(writer)
@@ -348,7 +350,7 @@ def undo_metadata(
     conflicts = tuple(
         Failure(
             name=change.tag,
-            message="该项在 Gallery 之外被修改过；写回原值会覆盖它，因此未做改动。",
+            message=t("metadata.writeback.conflict"),
             source=path,
         )
         for change in record.changes
@@ -386,7 +388,9 @@ def _tool(writer: MetadataWriter | None) -> MetadataWriter:
     """取写回工具。**缺席就当场说清楚**，而不是让调用方去猜为什么写不进去。"""
     tool: MetadataWriter = writer if writer is not None else ExifToolWriter()
     if not tool.available():
-        raise MetadataWriteError(f"未找到 exiftool，无法修改照片元数据。{INSTALL_HINT}")
+        raise MetadataWriteError(
+            t("metadata.writeback.not_installed", hint=t("metadata.writeback.install_hint"))
+        )
     return tool
 
 
@@ -401,10 +405,11 @@ def _nothing_to_write(assignments: Sequence[Assignment], path: Path) -> str:
     """
     dropped = sorted({item.tag for item in assignments} & unstorable_tags(path))
     if not dropped:
-        return "没有需要写入的改动。"
-    return (
-        f"「{Path(path).name}」存不下要写的字段：{'、'.join(dropped)}。"
-        f"这种格式放不了它们，一个字都没写进去。"
+        return t("metadata.writeback.nothing")
+    return t(
+        "metadata.writeback.unstorable",
+        name=Path(path).name,
+        fields=t("metadata.text.list_separator").join(dropped),
     )
 
 
@@ -449,10 +454,17 @@ def _apply(path: Path, changes: Sequence[FieldChange], tool: MetadataWriter) -> 
         )
     except MetadataWriteError as exc:
         raise MetadataWriteError(
-            f"写入未生效，且未能恢复原值：{'、'.join(mismatched)}。"
-            f"请检查这张照片：{exc.message.rstrip('。')}。",
+            t(
+                "metadata.writeback.rollback_failed",
+                fields=t("metadata.text.list_separator").join(mismatched),
+                reason=exc.message.rstrip("。"),
+            ),
             path=path,
-            detail=f"{detail}；回滚也失败了：{exc.detail}",
+            detail=t(
+                "metadata.writeback.rollback_failed_detail",
+                detail=detail,
+                error=exc.detail,
+            ),
         ) from exc
     # 回滚也回读一次 —— 「按原值写回去」是一次**请求**，不是一次保证。
     restored = tool.read(path)
@@ -461,13 +473,22 @@ def _apply(path: Path, changes: Sequence[FieldChange], tool: MetadataWriter) -> 
     ]
     if unrestored:
         raise MetadataWriteError(
-            f"写入未生效，且原值未能恢复。"
-            f"请打开这张照片核对以下字段：{'、'.join(unrestored)}。本次写入未成功。",
+            t(
+                "metadata.writeback.restore_failed",
+                fields=t("metadata.text.list_separator").join(unrestored),
+            ),
             path=path,
-            detail=f"{detail}；回滚之后这些字段仍然不是原值：{unrestored}",
+            detail=t(
+                "metadata.writeback.restore_failed_detail",
+                detail=detail,
+                fields=unrestored,
+            ),
         )
     raise MetadataWriteError(
-        f"写入未生效，照片已恢复原样：{'、'.join(mismatched)}。",
+        t(
+            "metadata.writeback.restored",
+            fields=t("metadata.text.list_separator").join(mismatched),
+        ),
         path=path,
         detail=detail,
     )
@@ -489,7 +510,7 @@ def _checked(assignments: Sequence[Assignment], path: Path) -> tuple[Assignment,
     for item in assignments:
         if item.tag not in WRITABLE_TAGS:
             raise MetadataWriteError(
-                f"「{item.tag}」不是可修改的字段。Gallery 只修改拍摄时间与位置。",
+                t("metadata.writeback.not_writable", tag=item.tag),
                 detail=item.tag,
             )
         if item.tag in unstorable:
@@ -505,9 +526,7 @@ def _guard(root: Path, path: Path) -> None:
     三道判据的顺序照旧：先看它是不是照片，再过那道检查（库内 / 配置目录），最后看文件还在不在。
     """
     if not is_supported_photo(path):
-        raise MetadataWriteError(
-            f"「{path.name}」不是 Gallery 支持的照片格式，不能修改其元数据。", path=path
-        )
+        raise MetadataWriteError(t("metadata.writeback.not_photo", name=path.name), path=path)
     try:
         # ``allow_root=True``：要挡的是「跑到库外」，不是「落在库里」。库根本身也不必另行禁止 ——
         # 它不是照片，上面那一步就拦下了。
@@ -515,22 +534,22 @@ def _guard(root: Path, path: Path) -> None:
     except paths.GuardError as exc:
         raise MetadataWriteError(_writeback_reason(path, exc), path=path) from exc
     if not path.is_file():
-        raise MetadataWriteError(f"未找到该文件：{path.name}。", path=path)
+        raise MetadataWriteError(t("metadata.writeback.missing", name=path.name), path=path)
 
 
 #: 拒绝写回的那几种原因 → 给用户的那句话。见 :data:`rename._GUARD_MESSAGES`。
 #: 上面第一步就要求扩展名是照片，所以后两条今天都到不了（库根本身与配置目录都不是照片后缀）；
 #: 留着是为了这张表是**全的** —— ``GuardReason`` 加成员时它当场炸。
 _GUARD_MESSAGES: Final = {
-    paths.GuardReason.OUTSIDE_ROOT: "只能修改库中的照片：{path}。",
-    paths.GuardReason.IS_ROOT: "这是库本身，不是照片文件。",
-    paths.GuardReason.IS_CONFIG_DIR: "这是 Gallery 自己的配置目录。",
+    paths.GuardReason.OUTSIDE_ROOT: "metadata.writeback.guard.outside_root",
+    paths.GuardReason.IS_ROOT: "metadata.writeback.guard.is_root",
+    paths.GuardReason.IS_CONFIG_DIR: "metadata.writeback.guard.is_config_dir",
 }
 
 
 def _writeback_reason(path: Path, error: paths.GuardError) -> str:
     """按拒绝的**原因**给一句中文 —— 理由见 :func:`rename._rename_reason`。"""
-    return _GUARD_MESSAGES[error.reason].format(path=path)
+    return t(_GUARD_MESSAGES[error.reason], path=path)
 
 
 def _changes(before: Mapping[str, str], items: Sequence[Assignment]) -> tuple[FieldChange, ...]:
@@ -659,20 +678,28 @@ def _looks_like_failure(stderr: str) -> bool:
     return "error" in lowered or any(marker in lowered for marker in _UNSUPPORTED_MARKERS)
 
 
-def _explain(stderr: str, *, path: Path, action: str) -> str:
+def _explain(stderr: str, *, path: Path, action_key: str) -> str:
     """把 exiftool 的话翻译成一句用户看得懂、且**指向下一步**的话。"""
     lowered = stderr.lower()
     if "permission denied" in lowered or "read-only" in lowered or "can't create" in lowered:
-        return f"没有权限{action}「{path.name}」：它或它所在的磁盘可能被设成了只读。"
+        return t(f"metadata.writeback.permission.{action_key}", name=path.name)
     if "no space left" in lowered or "磁盘空间不足" in lowered:
-        return f"磁盘满了，写不进「{path.name}」：请释放空间后重试。"
+        return t("metadata.writeback.disk_full", name=path.name)
     if any(marker in lowered for marker in _UNSUPPORTED_MARKERS):
-        return f"此格式不支持修改「{path.name}」的元数据：{_first_line(stderr)}。"
+        return t(
+            "metadata.writeback.unsupported",
+            name=path.name,
+            detail=_first_line(stderr),
+        )
     if "not enough room" in lowered or "truncated" in lowered:
-        return f"「{path.name}」写入失败：文件结构中没有足够空间存放该字段。"
+        return t("metadata.writeback.no_room", name=path.name)
     if "error" in lowered:
-        return f"{action}「{path.name}」的元数据失败：{_first_line(stderr)}"
-    return f"{action}「{path.name}」的元数据失败。"
+        return t(
+            f"metadata.writeback.failed.{action_key}",
+            name=path.name,
+            detail=_first_line(stderr),
+        )
+    return t(f"metadata.writeback.failed_no_detail.{action_key}", name=path.name)
 
 
 def _first_line(stderr: str) -> str:
@@ -680,14 +707,13 @@ def _first_line(stderr: str) -> str:
         text = line.strip()
         if text:
             return text.removeprefix("Error: ")
-    return "exiftool 未提供原因"
+    return t("metadata.writeback.no_reason")
 
 
 __all__ = [
     "CAPTURE_TIME_TAGS",
     "COORDINATE_TAGS",
     "COORDINATE_TOLERANCE_DEGREES",
-    "INSTALL_HINT",
     "IPTC_PLACE_TAGS",
     "PLACE_TAGS",
     "STALE_GPS_TAGS",

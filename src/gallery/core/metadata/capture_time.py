@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from gallery.core.errors import MetadataWriteError
+from gallery.core.i18n import t
 from gallery.core.metadata.exif import normalize_capture_time, normalize_offset
 from gallery.core.metadata.writeback import CAPTURE_TIME_TAGS, Assignment
 
@@ -60,8 +61,7 @@ def _time(text: str | None) -> str | None:
     normalized = normalize_capture_time(text)
     if normalized is None:
         raise MetadataWriteError(
-            f"无法识别拍摄时间「{text.strip()}」。"
-            "请填成 2024-05-16 20:52:02 这样的写法，秒可以省。",
+            t("metadata.capture_time.unrecognized", text=text.strip()),
             detail=text,
         )
     return normalized
@@ -74,7 +74,7 @@ def _offset(text: str | None) -> str | None:
     normalized = normalize_offset(text)
     if normalized is None:
         raise MetadataWriteError(
-            f"无法识别时区「{text.strip()}」。请使用 +08:00 或 -05:00 格式。",
+            t("metadata.capture_time.bad_offset", text=text.strip()),
             detail=text,
         )
     return normalized

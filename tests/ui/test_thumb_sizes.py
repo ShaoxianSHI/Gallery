@@ -10,7 +10,7 @@ from gallery.ui.thumb_sizes import (
     DEFAULT_INDEX,
     MIN_PINCH_INTERVAL_MS,
     PINCH_THRESHOLD,
-    THUMBNAIL_LABELS,
+    THUMBNAIL_LABEL_KEYS,
     THUMBNAIL_SIZES,
     WHEEL_STEP_PIXELS,
     RateLimitedAccumulator,
@@ -47,7 +47,7 @@ def test_three_sizes_in_ascending_order() -> None:
     assert len(THUMBNAIL_SIZES) == 3
     assert list(THUMBNAIL_SIZES) == sorted(THUMBNAIL_SIZES)
     assert len(set(THUMBNAIL_SIZES)) == 3
-    assert len(THUMBNAIL_LABELS) == len(THUMBNAIL_SIZES)
+    assert len(THUMBNAIL_LABEL_KEYS) == len(THUMBNAIL_SIZES)
 
 
 def test_default_is_the_middle_size() -> None:

@@ -18,6 +18,7 @@ from PIL import ExifTags, Image, ImageOps, UnidentifiedImageError
 
 from gallery.core.cancellation import never_cancel
 from gallery.core.errors import ImageDecodeError
+from gallery.core.i18n import t
 from gallery.core.library.photos import is_video
 from gallery.core.media.video import first_frame
 
@@ -165,7 +166,7 @@ def _within_deadline(
     while not finished.wait(_READ_POLL_SECONDS):
         if cancelled():
             # 结果反正没人要（切库、关窗），立刻放手：继续等下去只会拖慢退出。
-            raise ImageDecodeError(f"已取消读取：{path.name}。", path=path)
+            raise ImageDecodeError(t("media.decode.cancelled", name=path.name), path=path)
         if time.monotonic() >= deadline:
             with _stuck_lock:
                 _stuck_reads += 1
@@ -199,9 +200,7 @@ def _decode_now(path: Path, *, max_edge: int | None, use_draft: bool) -> RasterI
         stream = path.open("rb")
     except FileNotFoundError as exc:
         raise ImageDecodeError(
-            f"无法解码 {path.name}：文件已不在原处。",
-            path=path,
-            detail=str(exc),
+            t("media.decode.gone", name=path.name), path=path, detail=str(exc)
         ) from exc
     except OSError as exc:
         # 打不开：无权限、云盘占位还没下完、把目录当成了文件……
@@ -226,9 +225,7 @@ def _decode_now(path: Path, *, max_edge: int | None, use_draft: bool) -> RasterI
     except (OSError, ValueError) as exc:
         # 打开了，但像素读不出来：损坏、截断、编码器不认。
         raise ImageDecodeError(
-            f"无法解码 {path.name}：文件可能已损坏或被截断。",
-            path=path,
-            detail=str(exc),
+            t("media.decode.corrupt", name=path.name), path=path, detail=str(exc)
         ) from exc
 
 
@@ -260,7 +257,7 @@ def _oriented(image: Image.Image) -> Image.Image:
 
 
 def _bomb_message(path: Path) -> str:
-    return f"这张图片的像素数大到不像照片，出于安全考虑没有打开：{path.name}。"
+    return t("media.decode.bomb", name=path.name)
 
 
 def _unreachable_message(path: Path) -> str:
@@ -269,16 +266,13 @@ def _unreachable_message(path: Path) -> str:
     这与「文件损坏」是**两回事**，措辞也不同：云盘同步中的照片等一会儿就好了，照着
     「已损坏」去抢救文件只会白忙一场。
     """
-    return (
-        f"无法读取 {path.name}：文件可能尚未下载完成，例如仍在云盘同步，"
-        f"也可能正被其他程序占用。请等待下载完成后再打开。"
-    )
+    return t("media.decode.unreachable", name=path.name)
 
 
 def _unidentified_message(path: Path) -> str:
     if path.suffix.lower() in {".heic", ".heif"} and not HEIF_SUPPORT:
-        return f"缺少 HEIC/HEIF 解码支持，无法打开 {path.name}。安装 pillow-heif 后即可。"
-    return f"这不是一张能识别的图片：{path.name}。文件内容可能与扩展名不符。"
+        return t("media.decode.heif_missing", name=path.name)
+    return t("media.decode.unidentified", name=path.name)
 
 
 __all__ = [

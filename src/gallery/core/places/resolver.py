@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from gallery.core.i18n import t
 from gallery.core.places.dataset import Place, PlaceIndex, is_real_coordinate
 
 logger = logging.getLogger(__name__)
@@ -159,7 +160,7 @@ class LazyPlaceResolver:
             return None
         self._load_attempted = True
         if status is not None:
-            status("正在加载城市库…")
+            status(t("library.places.loading"))
         self._index = PlaceIndex.load(self._path)
         return self._index
 

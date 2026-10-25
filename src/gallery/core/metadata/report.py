@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Final
 
 from gallery.core.formatting import format_bytes, format_timestamp
+from gallery.core.i18n import t
 from gallery.core.metadata.exif import (
     CAPTURE_TIME_FIELDS,
     OFFSET_TIME_FIELDS,
@@ -88,27 +89,30 @@ class MetadataReport:
         标签是「地点（推断）」而不是「地点」：文件里写的和软件推的不是一个可信级别，
         混在一起用户会以为那是照片自带的元数据。
         """
-        field = MetadataField(label="地点（推断）", value=place)
+        field = MetadataField(label=t("metadata.text.inferred_place"), value=place)
         groups: list[MetadataGroup] = []
         inserted = False
         for group in self.groups:
-            if group.title == "位置":
+            if group.title == t("metadata.group.location"):
                 groups.append(MetadataGroup(title=group.title, fields=(field, *group.fields)))
                 inserted = True
             else:
                 groups.append(group)
         if not inserted:
-            groups.append(MetadataGroup(title="位置", fields=(field,)))
+            groups.append(MetadataGroup(title=t("metadata.group.location"), fields=(field,)))
         return replace(self, groups=tuple(groups), place_resolved=True)
 
     def as_text(self) -> str:
         """纯文本形式，用于「复制全部」。"""
         lines: list[str] = []
         if self.notice:
-            lines.append(f"（{self.notice}）")
+            lines.append(t("metadata.text.notice", notice=self.notice))
         for group in self.groups:
-            lines.append(f"【{group.title}】")
-            lines.extend(f"{field.label}：{field.value}" for field in group.fields)
+            lines.append(t("metadata.text.group", title=group.title))
+            lines.extend(
+                t("metadata.text.field", label=field.label, value=field.value)
+                for field in group.fields
+            )
         return "\n".join(lines)
 
 
@@ -127,7 +131,7 @@ def build_report(
     if latitude is None or longitude is None:
         latitude, longitude = quicktime_coordinates(normalized)
     groups: list[MetadataGroup] = []
-    for title, specs in _CURATED_GROUPS:
+    for title, specs in _curated_groups():
         fields: list[MetadataField] = []
         for spec in specs:
             value = spec.read(normalized)
@@ -135,7 +139,9 @@ def build_report(
                 fields.append(MetadataField(label=spec.label, value=value))
         if fields:
             groups.append(MetadataGroup(title=title, fields=tuple(fields)))
-    groups.append(MetadataGroup(title="文件", fields=_file_fields(path, size, mtime_ns)))
+    groups.append(
+        MetadataGroup(title=t("metadata.group.file"), fields=_file_fields(path, size, mtime_ns))
+    )
     all_fields = tuple(
         MetadataField(label=key, value=value) for key, value in sorted(normalized.items())
     )
@@ -191,7 +197,7 @@ def _exposure_time(raw: Mapping[str, str]) -> str | None:
     value = positive_value(first_value(raw, "EXIF:ExposureTime", "EXIF:ShutterSpeedValue"))
     if value is None:
         return None
-    return f"{_fraction_text(value)} 秒"
+    return t("metadata.value.seconds", value=_fraction_text(value))
 
 
 def _aperture(raw: Mapping[str, str]) -> str | None:
@@ -336,7 +342,7 @@ def _coordinates(raw: Mapping[str, str]) -> str | None:
         parts.append(f"{abs(latitude):.5f}° {'N' if latitude >= 0 else 'S'}")
     if longitude is not None:
         parts.append(f"{abs(longitude):.5f}° {'E' if longitude >= 0 else 'W'}")
-    return "，".join(parts)
+    return t("metadata.text.coordinates_separator").join(parts)
 
 
 def _altitude(raw: Mapping[str, str]) -> str | None:
@@ -361,7 +367,7 @@ def _color_space(raw: Mapping[str, str]) -> str | None:
     value = first_value(raw, "EXIF:ColorSpace")
     if value is None:
         return None
-    return {"1": "sRGB", "65535": "未校准（Uncalibrated）"}.get(value, value)
+    return {"1": "sRGB", "65535": t("metadata.value.uncalibrated")}.get(value, value)
 
 
 def _keywords(raw: Mapping[str, str]) -> str | None:
@@ -391,79 +397,85 @@ def _pick(*keys: str) -> Callable[[Mapping[str, str]], str | None]:
     return read
 
 
-_CURATED_GROUPS: Final[tuple[tuple[str, tuple[_FieldSpec, ...]], ...]] = (
-    (
-        "拍摄信息",
+def _curated_groups() -> tuple[tuple[str, tuple[_FieldSpec, ...]], ...]:
+    return (
         (
-            _FieldSpec("相机", camera_name),
-            _FieldSpec("镜头", _pick("EXIF:LensModel", "EXIF:LensID", "EXIF:Lens")),
-            _FieldSpec("拍摄时间", _shooting_time),
-            _FieldSpec("曝光时间", _exposure_time),
-            _FieldSpec("光圈", _aperture),
-            _FieldSpec("ISO", _iso),
-            _FieldSpec("曝光补偿", _exposure_bias),
-            _FieldSpec("曝光程序", _pick("EXIF:ExposureProgram")),
-            _FieldSpec("测光模式", _pick("EXIF:MeteringMode")),
-            _FieldSpec("闪光灯", _pick("EXIF:Flash")),
-            _FieldSpec("焦距", _focal_length),
-            _FieldSpec("35mm 等效", _equivalent_focal_length),
-            _FieldSpec("白平衡", _pick("EXIF:WhiteBalance")),
-            _FieldSpec("方向", _pick("EXIF:Orientation")),
-        ),
-    ),
-    (
-        "位置",
-        (
-            # **三层地名写成一行**，用「 · 」连起来 —— 与推断出来的地点同一个说法。分三行摆着看着像
-            # 三件无关的事，而它们说的其实是同一个地方；子地点是另一个字段，仍单列一行。
-            _FieldSpec("地点", _place_from_file),
-            _FieldSpec("子地点", _sub_location),
-            _FieldSpec("坐标", _coordinates),
-            _FieldSpec("海拔", _altitude),
-            _FieldSpec("定位时间", _gps_time),
-        ),
-    ),
-    (
-        "图像",
-        (
-            _FieldSpec("像素尺寸", _pixel_size),
-            _FieldSpec("色彩空间", _color_space),
-            _FieldSpec("处理软件", _pick("EXIF:Software")),
-        ),
-    ),
-    (
-        "视频",
-        (
-            _FieldSpec("时长", _duration),
-            _FieldSpec("帧率", _frame_rate),
-            _FieldSpec("编码", _codec),
-            _FieldSpec("码率", _bitrate),
-        ),
-    ),
-    (
-        "内容",
-        (
-            _FieldSpec("评级", _pick("XMP:Rating", "EXIF:Rating")),
-            _FieldSpec("关键词", _keywords),
-            _FieldSpec("标题", _pick("XMP-dc:Title", "IPTC:ObjectName")),
-            _FieldSpec(
-                "说明",
-                _pick("XMP-dc:Description", "IPTC:Caption-Abstract", "EXIF:ImageDescription"),
+            t("metadata.group.shooting"),
+            (
+                _FieldSpec(t("metadata.label.camera"), camera_name),
+                _FieldSpec(
+                    t("metadata.label.lens"), _pick("EXIF:LensModel", "EXIF:LensID", "EXIF:Lens")
+                ),
+                _FieldSpec(t("metadata.label.captured"), _shooting_time),
+                _FieldSpec(t("metadata.label.exposure_time"), _exposure_time),
+                _FieldSpec(t("metadata.label.aperture"), _aperture),
+                _FieldSpec("ISO", _iso),
+                _FieldSpec(t("metadata.label.exposure_bias"), _exposure_bias),
+                _FieldSpec(t("metadata.label.exposure_program"), _pick("EXIF:ExposureProgram")),
+                _FieldSpec(t("metadata.label.metering"), _pick("EXIF:MeteringMode")),
+                _FieldSpec(t("metadata.label.flash"), _pick("EXIF:Flash")),
+                _FieldSpec(t("metadata.label.focal_length"), _focal_length),
+                _FieldSpec(t("metadata.label.focal_35mm"), _equivalent_focal_length),
+                _FieldSpec(t("metadata.label.white_balance"), _pick("EXIF:WhiteBalance")),
+                _FieldSpec(t("metadata.label.orientation"), _pick("EXIF:Orientation")),
             ),
-            _FieldSpec("创建者", _creator),
-            _FieldSpec("版权", _copyright),
         ),
-    ),
-)
+        (
+            t("metadata.group.location"),
+            (
+                # **三层地名写成一行**，用「 · 」连起来 —— 与推断出来的地点同一个说法。
+                # 分三行摆着看着像三件无关的事，而它们说的其实是同一个地方；子地点是另一个字段。
+                _FieldSpec(t("metadata.label.place"), _place_from_file),
+                _FieldSpec(t("metadata.label.sub_location"), _sub_location),
+                _FieldSpec(t("metadata.label.coordinates"), _coordinates),
+                _FieldSpec(t("metadata.label.altitude"), _altitude),
+                _FieldSpec(t("metadata.label.gps_time"), _gps_time),
+            ),
+        ),
+        (
+            t("metadata.group.image"),
+            (
+                _FieldSpec(t("metadata.label.pixel_size"), _pixel_size),
+                _FieldSpec(t("metadata.label.color_space"), _color_space),
+                _FieldSpec(t("metadata.label.software"), _pick("EXIF:Software")),
+            ),
+        ),
+        (
+            t("metadata.group.video"),
+            (
+                _FieldSpec(t("metadata.label.duration"), _duration),
+                _FieldSpec(t("metadata.label.frame_rate"), _frame_rate),
+                _FieldSpec(t("metadata.label.codec"), _codec),
+                _FieldSpec(t("metadata.label.bitrate"), _bitrate),
+            ),
+        ),
+        (
+            t("metadata.group.content"),
+            (
+                _FieldSpec(t("metadata.label.rating"), _pick("XMP:Rating", "EXIF:Rating")),
+                _FieldSpec(t("metadata.label.keyword"), _keywords),
+                _FieldSpec(t("metadata.label.title"), _pick("XMP-dc:Title", "IPTC:ObjectName")),
+                _FieldSpec(
+                    t("metadata.label.description"),
+                    _pick("XMP-dc:Description", "IPTC:Caption-Abstract", "EXIF:ImageDescription"),
+                ),
+                _FieldSpec(t("metadata.label.creator"), _creator),
+                _FieldSpec(t("metadata.label.copyright"), _copyright),
+            ),
+        ),
+    )
 
 
 def _file_fields(path: Path, size: int, mtime_ns: int) -> tuple[MetadataField, ...]:
     return (
-        MetadataField("文件名", path.name),
-        MetadataField("所在文件夹", str(path.parent)),
-        MetadataField("格式", path.suffix.lstrip(".").upper() or "未知"),
-        MetadataField("大小", format_bytes(size)),
-        MetadataField("修改时间", format_timestamp(mtime_ns)),
+        MetadataField(t("metadata.label.filename"), path.name),
+        MetadataField(t("metadata.label.folder"), str(path.parent)),
+        MetadataField(
+            t("metadata.label.format"),
+            path.suffix.lstrip(".").upper() or t("metadata.label.unknown"),
+        ),
+        MetadataField(t("metadata.label.size"), format_bytes(size)),
+        MetadataField(t("metadata.label.modified"), format_timestamp(mtime_ns)),
     )
 
 

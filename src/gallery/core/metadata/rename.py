@@ -15,6 +15,7 @@ from typing import Final
 from gallery.core import paths
 from gallery.core.errors import RenameError
 from gallery.core.events.store import EventStore, follow_moves
+from gallery.core.i18n import t
 from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef, SectionRef
 from gallery.core.metadata.failures import os_reason
 from gallery.core.metadata.journal import (
@@ -72,7 +73,7 @@ def rename_entry(
         # 它身上；真漏到这里要给一句说人话的错，而不是 AttributeError。
         cover = entry.group.cover
         raise RenameError(
-            f"「{entry.label}」是分区的标题，不是磁盘上的文件，无法重命名。请选中它下面的照片后再重命名。",
+            t("metadata.rename.section_title", name=entry.label),
             path=cover.path if cover is not None else None,
         )
     if isinstance(entry, GroupRef):
@@ -80,8 +81,7 @@ def rename_entry(
         # 漏了也必须是句说人话的错，而不是在别处炸出一个 AttributeError。
         cover = entry.cover
         raise RenameError(
-            f"「{entry.label}」是一个分组，不是磁盘上的文件，改不了名。"
-            "双击进入分组后选中里面的照片再改名。",
+            t("metadata.rename.group", name=entry.label),
             path=cover.path if cover is not None else None,
         )
     source = Path(entry.path)
@@ -92,7 +92,7 @@ def rename_entry(
     _guard(root, source, target)
     if target.exists():
         raise RenameError(
-            f"这里已经有一个叫「{target.name}」已存在，请更换名称。",
+            t("metadata.rename.target_exists", name=target.name),
             path=target,
         )
     is_dir = isinstance(entry, FolderRef)
@@ -112,7 +112,7 @@ def rename_entry(
             ),
         )
         raise RenameError(
-            f"改名失败：{os_reason(exc, is_dir=is_dir)}",
+            t("metadata.rename.failed", reason=os_reason(exc, is_dir=is_dir)),
             path=source,
             detail=repr(exc),
         ) from exc
@@ -154,12 +154,12 @@ def undo_rename_record(
     source, target = record.target, record.source  # 反过来改回去
     if not source.exists():
         raise RenameError(
-            f"无法撤销：未找到「{source.name}」，它可能已被移动或删除。",
+            t("metadata.rename.undo.missing", name=source.name),
             path=source,
         )
     if target.exists():
         raise RenameError(
-            f"无法撤销：「{target.name}」已被其他文件占用。",
+            t("metadata.rename.undo.occupied", name=target.name),
             path=target,
         )
     # 引用要在改名**之前**取：改完之后旧路径已经不存在了。
@@ -168,7 +168,7 @@ def undo_rename_record(
         source.rename(target)
     except OSError as exc:
         raise RenameError(
-            f"撤销失败：{os_reason(exc, is_dir=record.is_dir)}",
+            t("metadata.rename.undo.failed", reason=os_reason(exc, is_dir=record.is_dir)),
             path=source,
             detail=repr(exc),
         ) from exc
@@ -211,9 +211,9 @@ def _guard(root: Path, source: Path, target: Path) -> None:
 #: 拒绝改名的那几种原因 → 给用户的那句话。**三种都要在**：少一种是 ``KeyError``
 #: 而不是一句含糊的通用话 —— ``GuardReason`` 加了新成员时，这里会当场炸。
 _GUARD_MESSAGES: Final = {
-    paths.GuardReason.OUTSIDE_ROOT: "只能重命名库里的东西：{path}。",
-    paths.GuardReason.IS_ROOT: "这是库本身，改名会让 Gallery 找不到照片。",
-    paths.GuardReason.IS_CONFIG_DIR: "这是 Gallery 的配置目录，不能重命名。",
+    paths.GuardReason.OUTSIDE_ROOT: "metadata.rename.guard.outside_root",
+    paths.GuardReason.IS_ROOT: "metadata.rename.guard.is_root",
+    paths.GuardReason.IS_CONFIG_DIR: "metadata.rename.guard.is_config_dir",
 }
 
 
@@ -224,7 +224,7 @@ def _rename_reason(path: Path, error: paths.GuardError) -> str:
     这种**具体且可行动**的原因降级成括号里的补充。而按原因分支**不按消息文本**分支
     是这里的要害：消息是给用户看的文案，改一个字不该让某一支静默地失效。
     """
-    return _GUARD_MESSAGES[error.reason].format(path=path)
+    return t(_GUARD_MESSAGES[error.reason], path=path)
 
 
 def _keep_suffix(entry: PhotoRef, cleaned: str) -> str:
@@ -234,8 +234,7 @@ def _keep_suffix(entry: PhotoRef, cleaned: str) -> str:
         return cleaned + entry.suffix
     if suffix.lower() != entry.suffix:
         raise RenameError(
-            f"不能修改扩展名：从 {entry.suffix} 改为 {suffix} 后，"
-            "文件将不再属于 Gallery 支持的格式。",
+            t("metadata.rename.suffix_changed", old=entry.suffix, new=suffix),
             path=entry.path,
         )
     return cleaned

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Final
 
 from gallery.core.events.store import Event, EventStore
+from gallery.core.i18n import t
 from gallery.core.library.photos import GridEntry
 from gallery.core.metadata.failures import Failure
 from gallery.core.metadata.journal import (
@@ -59,16 +60,16 @@ _NEVER_UNDOABLE: Final = frozenset({ACTION_CREATE, ACTION_PASTE, ACTION_EVENT_CR
 #: 菜单里显示的文案。**认不出的动作名走「上一步」**：宁可说得笼统，也不能因为
 #: 没有对应条目就让 ⌘Z 在菜单上不出现。
 _LABELS: Final[dict[str, str]] = {
-    ACTION_RENAME: "重命名",
-    ACTION_TRASH: "移到废纸篓",
-    ACTION_MOVE: "移动到相册",
-    ACTION_METADATA: "编辑元数据",
-    ACTION_EVENT: "修改事件",
-    ACTION_EVENT_DELETE: "删除事件",
+    ACTION_RENAME: "metadata.undo.label.rename",
+    ACTION_TRASH: "metadata.undo.label.trash",
+    ACTION_MOVE: "metadata.undo.label.move",
+    ACTION_METADATA: "metadata.undo.label.metadata",
+    ACTION_EVENT: "metadata.undo.label.event",
+    ACTION_EVENT_DELETE: "metadata.undo.label.event_delete",
 }
 
 #: ``_LABELS`` 里没有的动作名用它。
-FALLBACK_LABEL: Final = "上一步"
+FALLBACK_LABEL: Final = "metadata.undo.label.fallback"
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,7 +135,10 @@ def pending_undo_runs(root: Path) -> list[list[WriteRecord]]:
 def next_undo_label(root: Path) -> str | None:
     """下一次 ⌘Z 会撤掉什么（「重命名」/「移到废纸篓」）。没什么可撤时返回 ``None``。"""
     runs = pending_undo_runs(root)
-    return _LABELS.get(runs[-1][0].action, FALLBACK_LABEL) if runs else None
+    if not runs:
+        return None
+    key = _LABELS.get(runs[-1][0].action)
+    return t(key) if key is not None else t(FALLBACK_LABEL)
 
 
 def undo_last_write(
@@ -193,7 +197,12 @@ def _undo_event(record: WriteRecord, events: EventStore | None) -> UndoResult:
         return UndoResult(
             action=record.action,
             entries=(),
-            failures=(Failure(name="事件", message="本次无法打开事件库，无法撤销。"),),
+            failures=(
+                Failure(
+                    name=t("metadata.undo.failure.event"),
+                    message=t("metadata.undo.failure.event_unavailable"),
+                ),
+            ),
             journaled=False,
         )
     outcome = events.undo_record(record)
@@ -201,7 +210,7 @@ def _undo_event(record: WriteRecord, events: EventStore | None) -> UndoResult:
         return UndoResult(
             action=record.action,
             entries=(),
-            failures=(Failure(name="事件", message=outcome.message),),
+            failures=(Failure(name=t("metadata.undo.failure.event"), message=outcome.message),),
             journaled=False,
         )
     return UndoResult(

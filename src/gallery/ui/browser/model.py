@@ -16,6 +16,7 @@ from PySide6.QtCore import QAbstractListModel, QModelIndex, QObject, QSize, Qt
 from PySide6.QtGui import QImage, QPixmap
 
 from gallery.core.collation import collation_key
+from gallery.core.i18n import t_plural
 from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef, SectionRef
 from gallery.ui.imaging import scale_pixmap
 from gallery.ui.thumb_sizes import DEFAULT_EDGE
@@ -481,7 +482,7 @@ class PhotoListModel(QAbstractListModel):
             return isinstance(entry, GroupRef)
         if role == GROUP_COUNT_ROLE:
             if isinstance(entry, (GroupRef, SectionRef)):
-                return f"{entry.count} 张"
+                return t_plural("browser.photo_count", entry.count)
             return None
         if role == int(Qt.ItemDataRole.TextAlignmentRole):
             return int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)

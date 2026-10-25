@@ -27,6 +27,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QMenu, QToolButton, QWidget
 
 from gallery.core.external import App, apps, icon_png
+from gallery.core.i18n import t
 from gallery.core.library.session import EXTERNAL_PAGE_VIDEO, Preferences
 from gallery.ui import theme
 from gallery.ui.rename_edit import field_background
@@ -58,7 +59,7 @@ CHEVRON_WIDTH = 1.2
 MENU_GAP = 2
 
 #: 提示气泡上写的那一句。
-TOOLTIP = "用外部应用打开当前这一页"
+TOOLTIP = t("widget.external_button.tooltip")
 
 #: 视频页固定排在最前的那一段，按内置次序 —— 存下的次序里缺哪个就补哪个（ADR 0093 / 0095）。
 VIDEO_LEADERS = (apps.QUICKTIME.id, apps.IINA.id)

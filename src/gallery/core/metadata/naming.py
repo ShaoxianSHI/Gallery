@@ -12,15 +12,13 @@ from pathlib import Path
 from typing import Final
 
 from gallery.core.errors import GalleryError
+from gallery.core.i18n import t
 
 #: 单个文件名的字节上限（APFS / HFS+ 都是 255 字节，与字符数无关）。
 MAX_NAME_BYTES: Final = 255
 
 #: 改名的编号从 2 起（与访达一致：原名是第一个，``名字 2`` 才是第二个）。
 FIRST_DUPLICATE_NUMBER: Final = 2
-
-#: 副本名的后缀（ADR 0044）：``一张.jpg`` → ``一张的副本.jpg``。
-DUPLICATE_SUFFIX: Final = "的副本"
 
 #: 名字里绝对不能出现的字符：路径分隔符，以及别的平台用的那一个。
 _FORBIDDEN_CHARS: Final = ("/", "\\")
@@ -35,19 +33,19 @@ def clean_name(name: str, *, error: type[GalleryError]) -> str:
     """
     cleaned = name.strip()
     if not cleaned:
-        raise error("新名字不能为空。")
+        raise error(t("metadata.naming.empty"))
     if cleaned in (".", ".."):
-        raise error(f"「{cleaned}」是保留名字，不能用。")
+        raise error(t("metadata.naming.reserved", name=cleaned))
     if cleaned.startswith("."):
-        raise error("名字不能以「.」开头：以点开头的文件不会出现在 Gallery 里。")
+        raise error(t("metadata.naming.leading_dot"))
     for char in _FORBIDDEN_CHARS:
         if char in cleaned:
-            raise error("名字里不能带「/」：改名只改名字，不会移动文件。")
+            raise error(t("metadata.naming.slash"))
     if any(ord(char) < 32 or ord(char) == 127 for char in cleaned):
-        raise error("名字里不能有回车、Tab 等控制字符。")
+        raise error(t("metadata.naming.control"))
     size = len(cleaned.encode("utf-8"))
     if size > MAX_NAME_BYTES:
-        raise error(f"名字太长了：{size} 字节，最多只能 {MAX_NAME_BYTES} 字节。")
+        raise error(t("metadata.naming.too_long", size=size, limit=MAX_NAME_BYTES))
     return cleaned
 
 
@@ -72,7 +70,7 @@ def duplicate_base(name: str, *, whole: bool = False) -> str:
     :param whole: 传给 :func:`split_suffix`（相册那种没有扩展名的，整体算名字）。
     """
     stem, suffix = split_suffix(name, whole=whole)
-    return f"{stem}{DUPLICATE_SUFFIX}{suffix}"
+    return f"{stem}{t('metadata.duplicate_suffix')}{suffix}"
 
 
 def occupied_names(directory: Path) -> set[str] | None:
@@ -140,7 +138,6 @@ def free_target(
 
 
 __all__ = [
-    "DUPLICATE_SUFFIX",
     "FIRST_DUPLICATE_NUMBER",
     "MAX_NAME_BYTES",
     "clean_name",

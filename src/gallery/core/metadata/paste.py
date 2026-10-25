@@ -18,6 +18,7 @@ from uuid import uuid4
 from gallery.core import paths
 from gallery.core.cancellation import never_cancel
 from gallery.core.errors import PasteError
+from gallery.core.i18n import t
 from gallery.core.metadata.failures import Failure, os_reason, same_directory
 from gallery.core.metadata.journal import (
     ACTION_PASTE,
@@ -87,7 +88,7 @@ def copy_into(
     """
     destination = Path(target)
     if not destination.is_dir():
-        raise PasteError(f"「{destination.name}」不是一个文件夹。")
+        raise PasteError(t("metadata.paste.not_folder", name=destination.name))
     _guard(root, destination)
 
     cancelled = should_cancel or never_cancel
@@ -102,10 +103,10 @@ def copy_into(
     for raw_source in sources:
         source = Path(raw_source)
         if not source.exists():
-            failures.append(Failure.at(source, message="源文件已不存在。"))
+            failures.append(Failure.at(source, message=t("metadata.paste.source_gone")))
             continue
         if source.is_dir() and paths.is_within(source, destination):
-            failures.append(Failure.at(source, message="不能把文件夹粘贴到它自身或其子目录中。"))
+            failures.append(Failure.at(source, message=t("metadata.paste.into_self")))
             continue
         if cancelled():
             break
@@ -180,7 +181,7 @@ def copy_one_into(
     is_dir = source.is_dir()
     created = free_target(destination, wanted_name(source, destination), taken, whole=is_dir)
     if created is None:
-        return CopyOutcome(failure=Failure.at(source, message="名称过长，加上编号后仍超出限制。"))
+        return CopyOutcome(failure=Failure.at(source, message=t("metadata.paste.name_too_long")))
     try:
         if is_dir:
             # copytree 目标已存在会直接报错（它不做覆盖），半途失败也会自己收尾。
@@ -192,7 +193,7 @@ def copy_one_into(
     except FileExistsError:
         # 目标已经存在，**而那不是我们写了一半的东西，是用户自己放进去的** —— 绝不能清理它：
         # 清理那句 ``rmtree`` 删掉的是用户的文件夹连同里面所有照片（删除只允许用户亲手触发）。
-        message = "该位置已有同名文件或文件夹，未覆盖。"
+        message = t("metadata.paste.exists")
         return CopyOutcome(
             failure=Failure.at(source, message=message),
             journaled=append_record(
@@ -210,7 +211,7 @@ def copy_one_into(
         )
     except OSError as error:
         _remove_partial(created, is_dir)
-        message = os_reason(error, action="复制")
+        message = os_reason(error, action_key="copy")
         return CopyOutcome(
             failure=Failure.at(source, message=message),
             journaled=append_record(
@@ -274,15 +275,15 @@ def _guard(root: Path, destination: Path) -> None:
 #: **「库本身」这一条今天到不了**（库根本身是合法的粘贴目标），理由同
 #: :data:`transfer._GUARD_MESSAGES`：留着是为了这张表是全的。
 _GUARD_MESSAGES: Final = {
-    paths.GuardReason.OUTSIDE_ROOT: "只能粘贴到库中的文件夹：{path}。",
-    paths.GuardReason.IS_ROOT: "不能粘贴到库本身，请选择文件夹。",
-    paths.GuardReason.IS_CONFIG_DIR: "这是 Gallery 的配置目录，不能粘贴照片。",
+    paths.GuardReason.OUTSIDE_ROOT: "metadata.paste.guard.outside_root",
+    paths.GuardReason.IS_ROOT: "metadata.paste.guard.is_root",
+    paths.GuardReason.IS_CONFIG_DIR: "metadata.paste.guard.is_config_dir",
 }
 
 
 def _paste_reason(path: Path, error: paths.GuardError) -> str:
     """按拒绝的**原因**给一句中文 —— 理由见 :func:`rename._rename_reason`。"""
-    return _GUARD_MESSAGES[error.reason].format(path=path)
+    return t(_GUARD_MESSAGES[error.reason], path=path)
 
 
 __all__ = [

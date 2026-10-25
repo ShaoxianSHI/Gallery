@@ -26,6 +26,7 @@ from gallery.core.events.kinds import (
     split_multi,
 )
 from gallery.core.events.store import EventRef
+from gallery.core.i18n import t
 from gallery.core.library.photos import PhotoRef
 
 if TYPE_CHECKING:
@@ -111,7 +112,7 @@ class Facet:
     """
 
     id: str
-    label: str
+    label_key: str
     kind: FacetKind
     #: 分组取值：``(组键, 显示名)`` 的列表。**可以多于一个** —— 一张有多个关键词的照片同时属于
     #: 多个组（标签的通常语义）。返回空列表表示没有值；``None`` 表示只能排序、不能分组。
@@ -124,8 +125,16 @@ class Facet:
     group_order: Callable[[str], SortValue | None] | None = None
     #: 只有装了 exiftool 才读得到（Pillow 降级路径拿不到 IPTC / XMP）。
     needs_exiftool: bool = False
-    #: 取不到值时那张组卡片的标题。
-    empty_label: str = "未知"
+    #: 取不到值时那张组卡片标题的键（动态标题也可能是已经译好的一句）。
+    empty_label_key: str = "metadata.empty.unknown"
+
+    @property
+    def label(self) -> str:
+        return _translated(self.label_key)
+
+    @property
+    def empty_label(self) -> str:
+        return _translated(self.empty_label_key)
 
 
 # ---- 元数据快照 ---------------------------------------------------------------------
@@ -425,27 +434,37 @@ def _relative_folder(item: FacetInput) -> str:
 
 def _folder_label(item: FacetInput) -> str:
     relative = _relative_folder(item)
-    return relative or "（根目录）"
+    return relative or t("metadata.empty.folder")
 
 
 def _group_by_year(item: FacetInput) -> Sequence[tuple[str, str]]:
     if item.facets.year is None:
         return ()
-    return ((f"{item.facets.year:04d}", f"{item.facets.year} 年"),)
+    return (
+        (
+            f"{item.facets.year:04d}",
+            t("metadata.facets.group.year", year=item.facets.year),
+        ),
+    )
 
 
 def _group_by_month(item: FacetInput) -> Sequence[tuple[str, str]]:
     year, month = item.facets.year, item.facets.month
     if year is None or month is None:
         return ()
-    return ((f"{year:04d}-{month:02d}", f"{year} 年 {month} 月"),)
+    return ((f"{year:04d}-{month:02d}", t("metadata.facets.group.month", year=year, month=month)),)
 
 
 def _group_by_day(item: FacetInput) -> Sequence[tuple[str, str]]:
     year, month, day = item.facets.year, item.facets.month, item.facets.day
     if year is None or month is None or day is None:
         return ()
-    return ((f"{year:04d}-{month:02d}-{day:02d}", f"{year} 年 {month} 月 {day} 日"),)
+    return (
+        (
+            f"{year:04d}-{month:02d}-{day:02d}",
+            t("metadata.facets.group.day", year=year, month=month, day=day),
+        ),
+    )
 
 
 def _text_group(attribute: str) -> Callable[[FacetInput], Sequence[tuple[str, str]]]:
@@ -539,26 +558,31 @@ def _format_sort(item: FacetInput) -> str:
 # ---- 字段表 -------------------------------------------------------------------------
 
 
+def _translated(value: str) -> str:
+    """目录键就查表；已经译好的一句（事件字段那种动态标题）原样返回。"""
+    return t(value) if value.startswith("metadata.") else value
+
+
 def _facet(
     id: str,
-    label: str,
+    label_key: str,
     kind: FacetKind,
     *,
     group: Callable[[FacetInput], Sequence[tuple[str, str]]] | None = None,
     sort: Callable[[FacetInput], SortValue | None] | None = None,
     group_order: Callable[[str], SortValue | None] | None = None,
     needs_exiftool: bool = False,
-    empty_label: str = "未知",
+    empty_label_key: str = "metadata.empty.unknown",
 ) -> Facet:
     return Facet(
         id=id,
-        label=label,
+        label_key=label_key,
         kind=kind,
         group=group,
         sort=sort if sort is not None else (lambda _item: None),
         group_order=group_order if group_order is not None else _text_group_order,
         needs_exiftool=needs_exiftool,
-        empty_label=empty_label,
+        empty_label_key=empty_label_key,
     )
 
 
@@ -631,11 +655,11 @@ def event_field_facet(kind_id: str, field_id: str) -> Facet | None:
         return None
     return _facet(
         event_field_facet_id(kind.id, field.id),
-        f"{kind.label} · {field.label}",
+        t("metadata.facets.event_field_label", kind=kind.label, field=field.label),
         _event_field_kind(field),
         group=_event_field_group(kind, field),
         group_order=_event_field_order(field),
-        empty_label=f"未填{field.label}",
+        empty_label_key=t("metadata.facets.empty.event_field", label=field.label),
     )
 
 
@@ -691,117 +715,117 @@ def _event_field_order(field: EventField) -> Callable[[str], SortValue | None]:
 _FACETS: Final[tuple[Facet, ...]] = (
     _facet(
         FACET_CAPTURED,
-        "拍摄时间",
+        "metadata.label.captured",
         "captured",
         sort=lambda item: item.facets.captured_at,
     ),
     _facet(
         FACET_YEAR,
-        "拍摄年份",
+        "metadata.label.year",
         "captured",
         group=_group_by_year,
         group_order=_date_group_order,
-        empty_label="时间未知",
+        empty_label_key="metadata.empty.time",
     ),
     _facet(
         FACET_MONTH,
-        "拍摄月份",
+        "metadata.label.month",
         "captured",
         group=_group_by_month,
         group_order=_date_group_order,
-        empty_label="时间未知",
+        empty_label_key="metadata.empty.time",
     ),
     _facet(
         FACET_DAY,
-        "拍摄日期",
+        "metadata.label.day",
         "captured",
         group=_group_by_day,
         group_order=_date_group_order,
-        empty_label="时间未知",
+        empty_label_key="metadata.empty.time",
     ),
     _facet(
         FACET_CAMERA,
-        "相机",
+        "metadata.label.camera",
         "text",
         group=_camera_group,
         sort=_facet_text("camera"),
-        empty_label="相机未知",
+        empty_label_key="metadata.empty.camera",
     ),
     _facet(
         FACET_LENS,
-        "镜头",
+        "metadata.label.lens",
         "text",
         group=_lens_group,
         sort=_facet_text("lens"),
-        empty_label="镜头未知",
+        empty_label_key="metadata.empty.lens",
     ),
     _facet(
         FACET_EVENT,
-        "事件",
+        "metadata.label.event",
         "text",
         group=_event_group,
         group_order=_event_group_order,
-        empty_label="未归入事件",
+        empty_label_key="metadata.empty.event",
     ),
     _facet(
         FACET_COUNTRY,
-        "国家",
+        "metadata.label.country",
         "text",
         group=_text_group("country"),
         sort=_facet_text("country"),
         needs_exiftool=True,
-        empty_label="国家未知",
+        empty_label_key="metadata.empty.country",
     ),
     _facet(
         FACET_REGION,
-        "省 / 州",
+        "metadata.label.region",
         "text",
         group=_text_group("region"),
         sort=_facet_text("region"),
         needs_exiftool=True,
-        empty_label="省州未知",
+        empty_label_key="metadata.empty.region",
     ),
     _facet(
         FACET_CITY,
-        "城市",
+        "metadata.label.city",
         "text",
         group=_text_group("city"),
         sort=_facet_text("city"),
         needs_exiftool=True,
-        empty_label="城市未知",
+        empty_label_key="metadata.empty.city",
     ),
     _facet(
         FACET_KEYWORD,
-        "关键词",
+        "metadata.label.keyword",
         "text",
         group=_keyword_group,
         # 关键词只住在 IPTC / XMP 里（``WANTED_TAGS`` 的那三行），Pillow 读不出来。不标这一条，
         # 没装 exiftool 时菜单里那条「关键词」照常可点，点下去满屏都是「无关键词」（城市同理）。
         needs_exiftool=True,
-        empty_label="无关键词",
+        empty_label_key="metadata.empty.keyword",
     ),
     _facet(
         FACET_FOLDER,
-        "所在文件夹",
+        "metadata.label.folder",
         "path",
         group=_folder_group,
         sort=_folder_sort,
-        empty_label="（根目录）",
+        empty_label_key="metadata.empty.folder",
     ),
-    _facet(FACET_FORMAT, "文件格式", "text", group=_format_group, sort=_format_sort),
-    _facet(FACET_NAME, "文件名", "text", sort=_file_text("name")),
-    _facet(FACET_SIZE, "文件大小", "number", sort=_file_number("size")),
+    _facet(FACET_FORMAT, "metadata.label.format", "text", group=_format_group, sort=_format_sort),
+    _facet(FACET_NAME, "metadata.label.filename", "text", sort=_file_text("name")),
+    _facet(FACET_SIZE, "metadata.label.size", "number", sort=_file_number("size")),
     _facet(
         FACET_MODIFIED,
-        "修改时间",
+        "metadata.label.modified",
         "number",
         sort=_file_number("mtime_ns"),
     ),
-    _facet(FACET_APERTURE, "光圈", "number", sort=_facet_number("aperture")),
-    _facet(FACET_SHUTTER, "快门", "number", sort=_facet_number("shutter")),
+    _facet(FACET_APERTURE, "metadata.label.aperture", "number", sort=_facet_number("aperture")),
+    _facet(FACET_SHUTTER, "metadata.label.shutter", "number", sort=_facet_number("shutter")),
     _facet(FACET_ISO, "ISO", "number", sort=_facet_number("iso")),
-    _facet(FACET_FOCAL, "焦距", "number", sort=_facet_number("focal")),
-    _facet(FACET_PIXELS, "像素尺寸", "number", sort=_facet_number("pixels")),
+    _facet(FACET_FOCAL, "metadata.label.focal_length", "number", sort=_facet_number("focal")),
+    _facet(FACET_PIXELS, "metadata.label.pixels", "number", sort=_facet_number("pixels")),
 )
 
 FACETS_BY_ID: Final[dict[str, Facet]] = {facet.id: facet for facet in _FACETS}

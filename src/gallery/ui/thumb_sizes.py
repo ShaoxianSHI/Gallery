@@ -17,11 +17,19 @@ import time
 from collections.abc import Callable
 from typing import Final
 
+from gallery.core.i18n import t
+
 #: 三档缩略图长边（像素），从最小到最大。均不超过 512 的缓存长边。
 THUMBNAIL_SIZES: Final[tuple[int, ...]] = (112, 176, 288)
 
-#: 与 :data:`THUMBNAIL_SIZES` 一一对应的中文档位名。
-THUMBNAIL_LABELS: Final[tuple[str, ...]] = ("小", "中", "大")
+#: 与 :data:`THUMBNAIL_SIZES` 一一对应的档位名键。**这里只放键**：模块导入时调用 ``t()``
+#: 会把当时那份语言冻住（ADR 0106 决策 6），所以每次 :func:`label_for_index` 再查表。
+THUMBNAIL_LABEL_KEYS: Final[tuple[str, ...]] = (
+    "window.thumb.label.small",
+    "window.thumb.label.medium",
+    "window.thumb.label.large",
+)
+
 
 #: 默认档位：中间的「中」，也就是查看器一直以来的尺寸。
 DEFAULT_INDEX: Final = 1
@@ -83,8 +91,8 @@ def edge_for_index(index: int) -> int:
 
 
 def label_for_index(index: int) -> str:
-    """档位序号 → 中文档位名。"""
-    return THUMBNAIL_LABELS[clamp_index(index)]
+    """档位序号 → 当前语言的档位名。"""
+    return t(THUMBNAIL_LABEL_KEYS[clamp_index(index)])
 
 
 def shifted_index(index: int, step: int) -> int:
@@ -101,12 +109,16 @@ def nearest_index(edge: int | None) -> int:
 
 def describe(index: int) -> str:
     """刚切档时的提示：说出档位与目标长边。"""
-    return f"缩略图：{label_for_index(index)}，目标 {edge_for_index(index)} 像素"
+    return t(
+        "window.thumb.describe",
+        label=label_for_index(index),
+        edge=edge_for_index(index),
+    )
 
 
 def describe_actual(index: int, edge: int) -> str:
     """自适应排完之后的提示：目标只是目标，实际长边由窗口宽度决定。"""
-    return f"缩略图：{label_for_index(index)} · 实际 {edge} 像素"
+    return t("window.thumb.describe_actual", label=label_for_index(index), edge=edge)
 
 
 def wheel_delta(pixel: float, angle: float) -> float:
@@ -218,7 +230,7 @@ __all__ = [
     "MIN_EDGE",
     "MIN_PINCH_INTERVAL_MS",
     "PINCH_THRESHOLD",
-    "THUMBNAIL_LABELS",
+    "THUMBNAIL_LABEL_KEYS",
     "THUMBNAIL_SIZES",
     "WHEEL_STEP_PIXELS",
     "RateLimitedAccumulator",

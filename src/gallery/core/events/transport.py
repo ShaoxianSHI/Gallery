@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Final, Protocol
 
 from gallery.core.errors import MovieImportError, SourcePageError
+from gallery.core.i18n import t
 
 #: 浏览器 UA。源站都按它放行，空 UA 会被挡。
 UA: Final = (
@@ -137,7 +138,12 @@ class HttpTransport:
                 if attempt < self.retries:
                     time.sleep(min(2**attempt, 30))
                     continue
-        raise MovieImportError(f"连不上源站，稍后再试：{last or '未知原因'}。")
+        raise MovieImportError(
+            t(
+                "event.transport.unreachable",
+                reason=last or t("event.transport.unknown_reason"),
+            )
+        )
 
     def _throttle(self) -> None:
         if self.delay <= 0:
@@ -153,7 +159,7 @@ class HttpTransport:
     def get_bytes(self, url: str, *, referer: str | None = None) -> bytes:
         raw, _ = self._get(url, referer)
         if raw.lstrip()[:1] == b"<":
-            raise MovieImportError("封面下载回来的是一个网页，不是图片。")
+            raise MovieImportError(t("event.transport.webpage_not_image"))
         return raw
 
     def get_final_url(self, url: str, *, referer: str | None = None) -> str:

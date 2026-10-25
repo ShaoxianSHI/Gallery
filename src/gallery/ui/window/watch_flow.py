@@ -14,6 +14,7 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 from gallery.core.events.store import follow_moves
+from gallery.core.i18n import t
 from gallery.core.library.config import BROWSE_MODE_FLAT
 from gallery.core.library.facade import Library
 from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef
@@ -118,10 +119,7 @@ class WatchFlowMixin:
     def _on_watch_failed(self, message: str) -> None:
         """监听本身出问题不该挡住浏览，但界面从此不是最新的，得说出来。"""
         logger.info("文件监听出错：%s", message)
-        self._show_banner(
-            f"{message.rstrip('。')}。界面暂时不会自动更新；按 ⌘R 可重新扫描当前层级，"
-            "重新打开库可恢复自动更新。"
-        )
+        self._show_banner(t("window.watch.failed", detail=message.rstrip("。")))
 
     def _apply_watch_changes(self, library: Library, changes: Sequence[LibraryChange]) -> None:
         """按当前这一层的形状，把一批变化落到网格、内存缓存与索引上。"""

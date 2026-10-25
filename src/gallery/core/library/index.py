@@ -15,6 +15,7 @@ from typing import Any, Final, cast
 
 from gallery.core import paths
 from gallery.core.errors import IndexUnavailableError
+from gallery.core.i18n import t
 from gallery.core.library.photos import PhotoRef
 from gallery.core.library.search import (
     RESULT_LIMIT,
@@ -127,14 +128,10 @@ _COLUMNS: Final[str] = ", ".join(
 _KEYWORD_SEPARATOR = "\x1f"
 
 #: 索引没落盘时给用户的那一句（检索与筛选共用）。
-_UNAVAILABLE_HINT: Final = (
-    "当前库无法建立检索索引：通常是因为照片所在磁盘不允许写入缓存。分组与排序仍然可用。"
-)
+_UNAVAILABLE_HINT: Final = "library.index.unavailable"
 
 #: 按日期挑照片那句 —— 比上面多一个「挑不到」的后果，因为它只服务那一件事。
-_BY_DATE_UNAVAILABLE: Final = (
-    "当前库无法建立索引：通常是因为照片所在磁盘不允许写入缓存，因此无法按日期范围挑选照片。"
-)
+_BY_DATE_UNAVAILABLE: Final = "library.index.by_date_unavailable"
 
 #: 索引自己那两张表。**凡是要动其中一张的地方都必须两张一起动**：只清 facet 的话检索会
 #: 拿一份刚被丢掉的文件表继续查（「缩略图清了但搜索还在」），只清 photos 则给检索留一条
@@ -390,7 +387,8 @@ class FacetIndex:
             except sqlite3.Error:  # pragma: no cover - 磁盘坏了才会走到
                 return 0
 
-    def _require_connection(self, message: str = _UNAVAILABLE_HINT) -> sqlite3.Connection:
+    def _require_connection(self, message: str | None = None) -> sqlite3.Connection:
+        message = message or t(_UNAVAILABLE_HINT)
         """拿连接；索引没落盘就按 ``message`` 抛。
 
         **检索与筛选用同一句提示** —— 它们是同一件事的两面，各写一份迟早会说成两套话。
@@ -423,7 +421,9 @@ class FacetIndex:
                 total = int(connection.execute(count_sql, count_values).fetchone()[0])
             except sqlite3.Error as exc:
                 logger.info("检索失败：%s", exc)
-                raise IndexUnavailableError("检索未能完成，请重试。", detail=str(exc)) from exc
+                raise IndexUnavailableError(
+                    t("library.index.search_failed"), detail=str(exc)
+                ) from exc
         return SearchOutcome(refs=rows_to_refs(rows), total=total)
 
     def match_paths(
@@ -442,7 +442,9 @@ class FacetIndex:
                 rows = connection.execute(sql, values).fetchall()
             except sqlite3.Error as exc:
                 logger.info("筛选失败：%s", exc)
-                raise IndexUnavailableError("筛选未能完成，请重试。", detail=str(exc)) from exc
+                raise IndexUnavailableError(
+                    t("library.index.match_failed"), detail=str(exc)
+                ) from exc
         return {row[0] for row in rows if isinstance(row[0], str)}
 
     def photos_in_days(self, first_day: str, last_day: str) -> list[PhotoRef]:
@@ -452,7 +454,7 @@ class FacetIndex:
         （时区不换算，ADR 0032 / 0033）：走不了索引，但几万行是毫秒级，没时间的拼出来是全零。
         :raises IndexUnavailableError: 索引没落盘（只读卷）。
         """
-        connection = self._require_connection(_BY_DATE_UNAVAILABLE)
+        connection = self._require_connection(t(_BY_DATE_UNAVAILABLE))
         sql = (
             "SELECT p.path, p.size, p.mtime_ns FROM photos p"
             " JOIN facets f ON f.path = p.path"
@@ -465,7 +467,7 @@ class FacetIndex:
             except sqlite3.Error as exc:
                 logger.info("按日期范围挑选照片失败：%s", exc)
                 raise IndexUnavailableError(
-                    "按日期范围挑选照片未能完成，请重试。", detail=str(exc)
+                    t("library.index.by_date_failed"), detail=str(exc)
                 ) from exc
         return rows_to_refs(rows)
 

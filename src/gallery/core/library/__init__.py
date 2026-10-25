@@ -7,11 +7,11 @@
 """
 
 from gallery.core.library.calendar import (
-    LEVEL_NAMES,
     LEVELS,
     days_of,
     group_by_day,
     group_by_hour,
+    level_names,
     shift,
     title,
 )
@@ -42,7 +42,6 @@ __all__ = [
     "BROWSE_MODE_CALENDAR",
     "BROWSE_MODE_FLAT",
     "LEVELS",
-    "LEVEL_NAMES",
     "FolderRef",
     "GridEntry",
     "GroupRef",
@@ -59,6 +58,7 @@ __all__ = [
     "group_by_day",
     "group_by_hour",
     "is_supported_photo",
+    "level_names",
     "load_config",
     "prepare_library",
     "save_config",

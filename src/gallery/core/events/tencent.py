@@ -20,6 +20,7 @@ from gallery.core.errors import MovieImportError
 from gallery.core.events.kinds import SOURCE_TENCENT, minutes_of_seconds
 from gallery.core.events.models import MovieInfo
 from gallery.core.events.transport import HttpTransport, Transport
+from gallery.core.i18n import t
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +53,8 @@ _PATH_RES: Final = (
 
 #: 接口自己的错误码 → 一句中文。**HTTP 永远 200，错在 JSON 里**。
 _PROBLEMS: Final[dict[int, str]] = {
-    61: "腾讯视频未收录该视频，或它已下架",
-    62: "腾讯视频说该视频仍在审核中，请稍后重试",
+    61: "event.tencent.problem.not_found",
+    62: "event.tencent.problem.under_review",
 }
 
 #: 移动页里那些 ``itemprop`` 标签。
@@ -104,12 +105,15 @@ def problem_of(payload: Mapping[str, object], code: str) -> MovieImportError:
     ``em`` 是 0 之外的任何一个数都算错，``msg`` 是站方给的那句话（多半已经说清了原因）。
     """
     status = _int(payload.get("em"))
-    known = _PROBLEMS.get(status) if status is not None else None
+    known = t(_PROBLEMS[status]) if status is not None and status in _PROBLEMS else None
     if known is not None:
-        return MovieImportError(f"{known}：{code}。")
+        return MovieImportError(t("event.tencent.problem_known", reason=known, code=code))
     message = _text(payload.get("msg"))
-    tail = f"，{message}" if message else ""
-    return MovieImportError(f"腾讯视频未提供该视频的信息：错误码 {status}{tail}。")
+    if message:
+        return MovieImportError(
+            t("event.tencent.problem_unknown_message", status=status, message=message)
+        )
+    return MovieImportError(t("event.tencent.problem_unknown", status=status))
 
 
 def view_of(payload: Mapping[str, object], code: str) -> MovieInfo:
@@ -121,7 +125,7 @@ def view_of(payload: Mapping[str, object], code: str) -> MovieInfo:
         raise problem_of(payload, code)
     first = _first_video(payload)
     if first is None:
-        raise MovieImportError(f"腾讯视频未提供该视频的信息：{code}。")
+        raise MovieImportError(t("event.tencent.no_info", code=code))
     vid = _text(first.get("vid")) or code
     return MovieInfo(
         source=SOURCE_TENCENT,
@@ -212,9 +216,9 @@ def _json(raw: str) -> Mapping[str, object]:
     try:
         payload = json.loads(body)
     except ValueError as exc:
-        raise MovieImportError("腾讯视频返回的信息无法解析。") from exc
+        raise MovieImportError(t("event.tencent.unparsable")) from exc
     if not isinstance(payload, Mapping):
-        raise MovieImportError("腾讯视频返回的信息不是有效的视频信息。")
+        raise MovieImportError(t("event.tencent.invalid_payload"))
     return payload
 
 
@@ -224,7 +228,7 @@ def fetch(code: str, *, client: Transport) -> MovieInfo:
     :raises MovieImportError: 编号不合法、视频不可见、网络失败。
     """
     if not is_vid(code):
-        raise MovieImportError(f"不是有效的腾讯视频 vid：{code}。")
+        raise MovieImportError(t("event.tencent.invalid_code", code=code))
     movie = view_of(_json(client.get_text(_info_url(code))), code)
     return _with_page(code, movie, client)
 

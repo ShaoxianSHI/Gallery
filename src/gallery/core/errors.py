@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from gallery.core.i18n import t
+
 
 class GalleryError(Exception):
     """Gallery 领域错误的基类。"""
@@ -149,7 +151,7 @@ class SourcePageError(MovieImportError):
     """
 
     def __init__(self, status: int, url: str, message: str = "") -> None:
-        super().__init__(message or f"源站没有这个页面：{url}")
+        super().__init__(message or t("external.errors.source_page", url=url))
         self.status = status
         self.url = url
 

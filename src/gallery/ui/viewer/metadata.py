@@ -31,15 +31,18 @@ from PySide6.QtWidgets import (
 
 from gallery.core.events.kinds import COVER, EventField, fields_of, kind_by_id
 from gallery.core.events.models import Event, shorten_name
+from gallery.core.i18n import t
 from gallery.core.metadata.report import MetadataField, MetadataGroup, MetadataReport
 from gallery.ui import theme
 from gallery.ui.layout import clear_layout
 from gallery.ui.scrollbar_style import apply_scrollbar_style
 from gallery.ui.theme import AppTheme, rgba
 
-#: 「位置」那一组标题右边的按钮。只有这一组有 —— 坐标与地点是唯一一组人会想去改的元数据
-#: （ADR 0030）；其余各组是拍摄事实与文件事实，改了就是改写证据。
-PLACE_GROUP_TITLE = "位置"
+
+#: 「位置」那一组的标题（core 的报告按当前语言生成，所以比较时也得现查）。
+def _place_group_title() -> str:
+    return t("metadata.group.location")
+
 
 PANEL_WIDTH = 300
 LABEL_WIDTH = 84
@@ -66,7 +69,9 @@ def event_title(event: Event) -> str:
     """
     kind = kind_by_id(event.kind)
     name = shorten_name(event.display_name)
-    return f"{kind.label} · {name}" if kind is not None else name
+    if kind is None:
+        return name
+    return t("viewer.metadata.event_title", kind=kind.label, name=name)
 
 
 def event_fields(event: Event) -> tuple[MetadataField, ...]:
@@ -179,13 +184,13 @@ class MetadataPanel(QWidget):
         footer_layout = QHBoxLayout(self._footer)
         footer_layout.setContentsMargins(0, 0, _CONTENT_PAD_RIGHT, 0)
         footer_layout.setSpacing(8)
-        self._copy_button = QPushButton("复制全部")
+        self._copy_button = QPushButton(t("viewer.metadata.copy_all"))
         self._copy_button.setObjectName("metadataButton")
         self._copy_button.clicked.connect(self._copy_all)
-        self._edit_button = QPushButton("编辑元数据")
+        self._edit_button = QPushButton(t("viewer.metadata.edit"))
         self._edit_button.setObjectName("metadataButton")
         self._edit_button.clicked.connect(self.edit_metadata_requested)
-        self._show_all = QCheckBox("显示全部字段")
+        self._show_all = QCheckBox(t("viewer.metadata.show_all"))
         self._show_all.setObjectName("metadataToggle")
         self._show_all.toggled.connect(lambda _checked: self._render())
         footer_layout.addWidget(self._copy_button)
@@ -198,7 +203,9 @@ class MetadataPanel(QWidget):
 
         self._hint_timer = QTimer(self)
         self._hint_timer.setSingleShot(True)
-        self._hint_timer.timeout.connect(lambda: self._copy_button.setText("复制全部"))
+        self._hint_timer.timeout.connect(
+            lambda: self._copy_button.setText(t("viewer.metadata.copy_all"))
+        )
 
         self._install_step_shortcuts()
         self.clear()
@@ -234,11 +241,13 @@ class MetadataPanel(QWidget):
         self._report = None
         self._events = ()
         self._footer.hide()
-        self._fill((self._message("尚未打开照片", "metadataEmpty"),))
+        self._fill((self._message(t("viewer.metadata.empty"), "metadataEmpty"),))
 
     def show_loading(self, name: str = "") -> None:
         self._footer.hide()
-        text = f"正在读取元数据…\n{name}" if name else "正在读取元数据…"
+        text = (
+            t("viewer.metadata.loading.named", name=name) if name else t("viewer.metadata.loading")
+        )
         self._fill((self._message(text, "metadataEmpty"),))
 
     def show_error(self, message: str) -> None:
@@ -271,9 +280,7 @@ class MetadataPanel(QWidget):
         self._metadata_reason = reason
         self._metadata_notice = notice
         self._edit_button.setEnabled(editable)
-        self._edit_button.setToolTip(
-            reason if not editable else "修改拍摄时间或位置将写回照片（⌘Z 可撤销）"
-        )
+        self._edit_button.setToolTip(reason if not editable else t("viewer.metadata.edit_tooltip"))
         self._render()
 
     @property
@@ -293,7 +300,9 @@ class MetadataPanel(QWidget):
             widgets.append(self._message(report.notice, "metadataNotice"))
         groups = list(report.groups)
         if self._show_all.isChecked() and report.all_fields:
-            groups.append(MetadataGroup(title="全部字段", fields=report.all_fields))
+            groups.append(
+                MetadataGroup(title=t("viewer.metadata.all_fields"), fields=report.all_fields)
+            )
         for group in groups:
             widgets.append(self._group_widget(group))
         for event in self._events:
@@ -332,8 +341,8 @@ class MetadataPanel(QWidget):
         label.setObjectName("metadataGroupTitle")
         layout.addWidget(label)
         layout.addStretch(1)
-        if title == PLACE_GROUP_TITLE and not self._metadata_editable and self._metadata_notice:
-            hint = QLabel(self._metadata_reason or "此项不可编辑")
+        if title == _place_group_title() and not self._metadata_editable and self._metadata_notice:
+            hint = QLabel(self._metadata_reason or t("viewer.metadata.not_editable"))
             hint.setObjectName("metadataNotice")
             hint.setWordWrap(True)
             hint.setToolTip(self._metadata_reason)
@@ -382,14 +391,20 @@ class MetadataPanel(QWidget):
         lines = [report.as_text()]
         if self._show_all.isChecked() and report.all_fields:
             lines.append("")
-            lines.append("【全部字段】")
-            lines.extend(f"{field.label}：{field.value}" for field in report.all_fields)
+            lines.append(t("viewer.metadata.clipboard.all_fields"))
+            lines.extend(
+                t("viewer.metadata.clipboard.field", label=field.label, value=field.value)
+                for field in report.all_fields
+            )
         for event in self._events:
             lines.append("")
-            lines.append(f"【{event_title(event)}】")
-            lines.extend(f"{field.label}：{field.value}" for field in event_fields(event))
+            lines.append(t("viewer.metadata.clipboard.event", name=event_title(event)))
+            lines.extend(
+                t("viewer.metadata.clipboard.field", label=field.label, value=field.value)
+                for field in event_fields(event)
+            )
         QGuiApplication.clipboard().setText("\n".join(lines))
-        self._copy_button.setText("已复制")
+        self._copy_button.setText(t("viewer.metadata.copied"))
         self._hint_timer.start(COPIED_HINT_MS)
 
 

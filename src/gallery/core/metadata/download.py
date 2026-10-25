@@ -15,6 +15,7 @@ from typing import Final
 from gallery.core import paths
 from gallery.core.atomic import write_bytes_atomic
 from gallery.core.errors import MovieImportError
+from gallery.core.i18n import t
 from gallery.core.metadata.journal import (
     ACTION_DOWNLOAD,
     RESULT_OK,
@@ -72,19 +73,26 @@ def save_downloaded_file(
     try:
         paths.guard_within_root(root, destination)
     except paths.GuardError as exc:
-        raise MovieImportError(f"不能把封面写到这里：{exc}。", path=destination) from exc
+        raise MovieImportError(
+            t("metadata.download.guard", reason=str(exc)), path=destination
+        ) from exc
     if not destination.is_dir():
-        raise MovieImportError(f"「{destination.name}」不是一个文件夹。", path=destination)
+        raise MovieImportError(
+            t("metadata.download.not_folder", name=destination.name), path=destination
+        )
 
     created = free_target(destination, wanted_name, occupied_names(destination))
     if created is None:
-        raise MovieImportError(f"「{destination.name}」中没有可用的名称。", path=destination)
+        raise MovieImportError(
+            t("metadata.download.no_name", name=destination.name), path=destination
+        )
     try:
         # 原子写：半截文件不会留在用户的文件夹里（与粘贴对「半截文件」的处置同一取向）。
         write_bytes_atomic(created, data)
     except OSError as exc:
         raise MovieImportError(
-            f"未能把封面写进「{destination.name}」：{exc.strerror}。", path=destination
+            t("metadata.download.failed", name=destination.name, reason=exc.strerror),
+            path=destination,
         ) from exc
 
     journaled = append_record(

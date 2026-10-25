@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from gallery.core.i18n import t
 from gallery.core.library.search import SearchField as Field
 from gallery.core.library.search import (
     partial_field,
@@ -87,8 +88,8 @@ TOGGLE_GAP = 8
 #:
 #: **切换按钮已经不摆状态了**（ADR 0042 决策 1），于是这一行与菜单里那一项的勾就是标题条上
 #: 仅有的两处「此刻是哪一种」—— **它们必须一直是准的**，按钮那份信号不再有。
-PLACEHOLDER_SEARCH = "搜索照片…"
-PLACEHOLDER_FILTER = "筛选照片…"
+PLACEHOLDER_SEARCH = t("widget.search_field.placeholder_search")
+PLACEHOLDER_FILTER = t("widget.search_field.placeholder_filter")
 
 #: 胶囊比标题栏那一条的中线再往下挪多少（点）：挪 0 点齐、挪 2 点就比标题低 1.75 点，
 #: 取中间这一格。**别再往下加** —— 2 点已经实测过是过头的那一头。
@@ -355,9 +356,9 @@ class SearchField(QWidget):
         """
         self._edit.setPlaceholderText(PLACEHOLDER_FILTER if filtering else PLACEHOLDER_SEARCH)
         self.setToolTip(
-            "用这些条件筛选当前层级（「全部照片」下筛选整库，「日历」下筛选日历）"
+            t("widget.search_field.tooltip_filter")
             if filtering
-            else "在整个库中检索（切换到筛选可只筛当前层级）"
+            else t("widget.search_field.tooltip_search")
         )
 
     def focus_search(self) -> None:

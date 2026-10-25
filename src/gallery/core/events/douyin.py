@@ -19,6 +19,7 @@ from gallery.core.errors import MovieImportError, SourcePageError
 from gallery.core.events.kinds import SOURCE_DOUYIN, minutes_of_seconds
 from gallery.core.events.models import MovieInfo
 from gallery.core.events.transport import ANDROID_UA, HttpTransport, Transport
+from gallery.core.i18n import t
 
 logger = logging.getLogger(__name__)
 
@@ -112,19 +113,15 @@ def resolve_share_code(code: str, *, client: Transport) -> str:
     :raises MovieImportError: 短链打不开，或者跳转之后仍认不出编号。
     """
     if not _SHARE_RE.fullmatch(code):
-        raise MovieImportError(f"不是有效的抖音视频编号或分享短链：{code}。")
+        raise MovieImportError(t("event.douyin.invalid_code", code=code))
     try:
         final = client.get_final_url(f"{SHORT}/{urllib.parse.quote(code)}/")
     except MovieImportError as exc:
-        raise MovieImportError(
-            f"无法展开该抖音分享链接：{code}。请先在浏览器中打开，再粘贴完整地址。"
-        ) from exc
+        raise MovieImportError(t("event.douyin.share_expand_failed", code=code)) from exc
     found = id_from_url(final)
     if found is not None and is_video_id(found):
         return found
-    raise MovieImportError(
-        f"无法从该抖音分享链接解析出视频编号：{code}。请先在浏览器中打开，再粘贴完整地址。"
-    )
+    raise MovieImportError(t("event.douyin.share_resolve_failed", code=code))
 
 
 # --------------------------------------------------------------------------- #
@@ -259,9 +256,9 @@ def _json(raw: str, code: str) -> Mapping[str, object]:
     try:
         payload = json.loads(raw)
     except ValueError as exc:
-        raise MovieImportError(f"抖音返回的信息无法解析：{code}。") from exc
+        raise MovieImportError(t("event.douyin.unparsable", code=code)) from exc
     if not isinstance(payload, Mapping):
-        raise MovieImportError(f"抖音返回的信息不是有效的视频信息：{code}。")
+        raise MovieImportError(t("event.douyin.invalid_payload", code=code))
     return payload
 
 
@@ -290,13 +287,10 @@ def _item_from_page(code: str, client: Transport) -> Mapping[str, object]:
                 return item
     except SourcePageError as exc:
         if exc.status == 404:
-            raise MovieImportError(f"抖音未收录该视频：{code}。") from exc
+            raise MovieImportError(t("event.douyin.not_found", code=code)) from exc
         raise
     if not item:
-        raise MovieImportError(
-            f"抖音未提供该视频的信息：{code}。视频可能已删除或设为私密，"
-            "也可能是站点页面结构变更；请在浏览器中打开确认。"
-        )
+        raise MovieImportError(t("event.douyin.no_info", code=code))
     return item
 
 
@@ -308,12 +302,12 @@ def fetch(code: str, *, client: Transport) -> MovieInfo:
     normalized = normalize_code(code)
     if not is_video_id(normalized):
         if not _SHARE_RE.fullmatch(normalized):
-            raise MovieImportError(f"不是有效的抖音视频编号或分享短链：{code}。")
+            raise MovieImportError(t("event.douyin.invalid_code", code=code))
         normalized = resolve_share_code(normalized, client=client)
     item = _item_from_api(normalized, client) or _item_from_page(normalized, client)
     movie = movie_of(item, normalized)
     if not movie.title:
-        raise MovieImportError(f"抖音未提供该视频的标题：{normalized}。")
+        raise MovieImportError(t("event.douyin.no_title", code=normalized))
     return movie
 
 

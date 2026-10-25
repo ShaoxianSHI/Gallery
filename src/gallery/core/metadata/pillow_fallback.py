@@ -15,6 +15,7 @@ from typing import Final
 from PIL import ExifTags, Image
 
 from gallery.core.errors import MetadataError
+from gallery.core.i18n import t
 
 #: GPS IFD 里用数字标签，这里给出可读的名字。
 _GPS_LATITUDE_REF: Final = 1
@@ -35,37 +36,45 @@ _GPS_AXIS_KEYS: Final[tuple[tuple[int, int], ...]] = (
 #: Pillow 只能给出数字的枚举，降级时补一份可读映射（exiftool 本身给的是英文串）。
 _PILLOW_ENUMS: Final[dict[str, dict[int, str]]] = {
     "EXIF:Flash": {
-        0: "未闪光",
-        1: "闪光",
-        5: "闪光（未检测到回光）",
-        7: "闪光（检测到回光）",
-        9: "闪光（强制）",
-        16: "未闪光（强制）",
-        24: "未闪光（自动）",
-        25: "闪光（自动）",
+        0: "metadata.exif.flash.off",
+        1: "metadata.exif.flash.on",
+        5: "metadata.exif.flash.no_return",
+        7: "metadata.exif.flash.return",
+        9: "metadata.exif.flash.forced",
+        16: "metadata.exif.flash.off_forced",
+        24: "metadata.exif.flash.off_auto",
+        25: "metadata.exif.flash.auto",
     },
-    "EXIF:WhiteBalance": {0: "自动", 1: "手动"},
-    "EXIF:Orientation": {1: "正常", 3: "旋转 180°", 6: "顺时针 90°", 8: "逆时针 90°"},
-    "EXIF:ColorSpace": {1: "sRGB", 65535: "未校准（Uncalibrated）"},
+    "EXIF:WhiteBalance": {
+        0: "metadata.exif.white_balance.auto",
+        1: "metadata.exif.white_balance.manual",
+    },
+    "EXIF:Orientation": {
+        1: "metadata.exif.orientation.normal",
+        3: "metadata.exif.orientation.rotated_180",
+        6: "metadata.exif.orientation.clockwise_90",
+        8: "metadata.exif.orientation.counterclockwise_90",
+    },
+    "EXIF:ColorSpace": {1: "sRGB", 65535: "metadata.exif.color_space.uncalibrated"},
     "EXIF:ExposureProgram": {
-        0: "未定义",
-        1: "手动",
-        2: "程序自动",
-        3: "光圈优先",
-        4: "快门优先",
-        5: "创意",
-        6: "运动",
-        7: "人像",
-        8: "风景",
+        0: "metadata.exif.exposure_program.undefined",
+        1: "metadata.exif.exposure_program.manual",
+        2: "metadata.exif.exposure_program.program",
+        3: "metadata.exif.exposure_program.aperture_priority",
+        4: "metadata.exif.exposure_program.shutter_priority",
+        5: "metadata.exif.exposure_program.creative",
+        6: "metadata.exif.exposure_program.action",
+        7: "metadata.exif.exposure_program.portrait",
+        8: "metadata.exif.exposure_program.landscape",
     },
     "EXIF:MeteringMode": {
-        0: "未知",
-        1: "平均",
-        2: "中央重点",
-        3: "点测光",
-        4: "多点",
-        5: "评价",
-        6: "局部",
+        0: "metadata.exif.metering.unknown",
+        1: "metadata.exif.metering.average",
+        2: "metadata.exif.metering.center_weighted",
+        3: "metadata.exif.metering.spot",
+        4: "metadata.exif.metering.multi",
+        5: "metadata.exif.metering.evaluative",
+        6: "metadata.exif.metering.partial",
     },
 }
 
@@ -83,7 +92,7 @@ class PillowSource:
             return _read_with_pillow(Path(path))
         except (OSError, ValueError, SyntaxError) as exc:
             raise MetadataError(
-                f"无法读取这个文件的基本信息：{Path(path).name}，{exc}。",
+                t("metadata.exif.pillow_unreadable", name=Path(path).name, error=exc),
                 path=Path(path),
                 detail=str(exc),
             ) from exc
@@ -110,7 +119,8 @@ def _tag_name(tag_id: int) -> str:
 def _pillow_value(key: str, value: object) -> object:
     mapping = _PILLOW_ENUMS.get(key)
     if mapping is not None and isinstance(value, int) and not isinstance(value, bool):
-        return mapping.get(value, value)
+        label = mapping.get(value)
+        return t(label) if label is not None else value
     return value
 
 

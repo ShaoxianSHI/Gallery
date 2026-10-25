@@ -20,6 +20,7 @@ from gallery.core.errors import MovieImportError, SourcePageError
 from gallery.core.events.kinds import SOURCE_TIKTOK, minutes_of_seconds
 from gallery.core.events.models import MovieInfo
 from gallery.core.events.transport import HttpTransport, Transport
+from gallery.core.i18n import t
 
 logger = logging.getLogger(__name__)
 
@@ -227,12 +228,10 @@ def _oembed_url(video: str) -> str:
 def _oembed_problem(exc: SourcePageError, code: str) -> MovieImportError:
     """oEmbed 那几种状态各说各的。"""
     if exc.status in (400, 403):
-        return MovieImportError(
-            f"TikTok 未提供该视频的信息；它可能已被删除、设为私密或受地区限制：{code}。"
-        )
+        return MovieImportError(t("event.tiktok.no_info_region", code=code))
     if exc.status == 404:
-        return MovieImportError(f"TikTok 未收录该视频：{code}。")
-    return MovieImportError(f"TikTok 本次未提供信息：HTTP {exc.status}，{code}。")
+        return MovieImportError(t("event.tiktok.not_found", code=code))
+    return MovieImportError(t("event.tiktok.http", status=exc.status, code=code))
 
 
 def _oembed(code: str, client: Transport) -> tuple[Mapping[str, object], str]:
@@ -251,10 +250,10 @@ def _oembed(code: str, client: Transport) -> tuple[Mapping[str, object], str]:
         try:
             payload = json.loads(raw)
         except ValueError as exc:
-            raise MovieImportError(f"TikTok 返回的信息无法解析：{code}。") from exc
+            raise MovieImportError(t("event.tiktok.unparsable", code=code)) from exc
         if isinstance(payload, Mapping):
             return payload, candidate
-    raise problem or MovieImportError(f"TikTok 未提供该视频的信息：{code}。")
+    raise problem or MovieImportError(t("event.tiktok.no_info", code=code))
 
 
 def _page_url(payload: Mapping[str, object], code: str) -> str:
@@ -272,11 +271,11 @@ def fetch(code: str, *, client: Transport) -> MovieInfo:
     """
     normalized = normalize_code(code)
     if not is_video_id(normalized) and not _SHARE_RE.fullmatch(normalized):
-        raise MovieImportError(f"不是有效的 TikTok 视频 id 或分享链接：{code}。")
+        raise MovieImportError(t("event.tiktok.invalid_code", code=code))
     payload, requested = _oembed(normalized, client)
     resolved = _resolved_code(payload, requested, normalized)
     if not is_video_id(resolved):
-        raise MovieImportError(f"TikTok 未提供该视频的 id：{code}。")
+        raise MovieImportError(t("event.tiktok.no_id", code=code))
     movie = replace(oembed_of(payload, resolved), page_url=_page_url(payload, resolved))
     return _with_page(movie, client)
 

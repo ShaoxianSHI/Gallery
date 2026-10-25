@@ -15,6 +15,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QTimer
 
+from gallery.core.i18n import t
 from gallery.core.library.photos import PhotoRef
 from gallery.ui.window.state.slideshow import SlideshowState
 
@@ -60,7 +61,7 @@ class SlideshowFlowMixin:
             if isinstance(entry, PhotoRef) and not entry.is_video
         ]
         if not photos:
-            self._show_banner("当前层级中没有照片。")
+            self._show_banner(t("window.slideshow.empty"))
             return
         paths = tuple(photo.path for photo in photos)
         current = self._model.photo_at(self._current_row) if self._in_detail_page() else None

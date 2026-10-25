@@ -9,13 +9,42 @@ from collections.abc import Mapping
 from typing import Final
 
 from gallery.core.locales._catalog import DomainMessages, Message, merge
-from gallery.core.locales.zh_CN import banner, dialog, menu, settings
+from gallery.core.locales.zh_CN import (
+    app,
+    banner,
+    browser,
+    calendar,
+    dialog,
+    event,
+    external,
+    flow,
+    library,
+    media,
+    menu,
+    metadata,
+    settings,
+    viewer,
+    widget,
+    window,
+)
 
 DOMAINS: Final[Mapping[str, DomainMessages]] = {
     "banner": banner.MESSAGES,
     "dialog": dialog.MESSAGES,
     "menu": menu.MESSAGES,
     "settings": settings.MESSAGES,
+    "window": window.MESSAGES,
+    "viewer": viewer.MESSAGES,
+    "calendar": calendar.MESSAGES,
+    "browser": browser.MESSAGES,
+    "widget": widget.MESSAGES,
+    "metadata": metadata.MESSAGES,
+    "library": library.MESSAGES,
+    "event": event.MESSAGES,
+    "flow": flow.MESSAGES,
+    "external": external.MESSAGES,
+    "media": media.MESSAGES,
+    "app": app.MESSAGES,
 }
 MESSAGES: Final[Mapping[str, Message]] = merge(DOMAINS)
 

@@ -11,12 +11,14 @@ import datetime
 import re
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
 from typing import Final, Literal, NamedTuple
 
 from gallery.core import paths
 from gallery.core.events.kinds import EVENT_KINDS
 from gallery.core.events.store import BINDINGS_TABLE, EVENTS_TABLE, SCHEMA_NAME
+from gallery.core.i18n import t
 from gallery.core.library.photos import FolderRef, PhotoRef, format_suffixes
 from gallery.core.metadata.facets import (
     FACET_APERTURE,
@@ -141,7 +143,7 @@ def _event_fields() -> tuple[SearchField, ...]:
     common = (
         SearchField(
             id="event_kind",
-            label="事件类型",
+            label=t("library.search.field.event_kind"),
             kind="event",
             column="kind",
             table=EVENTS_TABLE,
@@ -149,11 +151,11 @@ def _event_fields() -> tuple[SearchField, ...]:
         ),
         SearchField(
             id="event",
-            label="事件",
+            label=t("library.search.field.event"),
             kind="event",
             column="title",
             table=EVENTS_TABLE,
-            hint="京都五日",
+            hint=t("library.search.hint.event"),
         ),
     )
     per_kind: list[SearchField] = []
@@ -162,7 +164,11 @@ def _event_fields() -> tuple[SearchField, ...]:
             per_kind.append(
                 SearchField(
                     id=f"event_{kind.id}_{field.id}",
-                    label=f"{kind.label}·{field.label}",
+                    label=t(
+                        "library.search.event_field_label",
+                        kind=kind.label,
+                        field=field.label,
+                    ),
                     kind="event",
                     column=field.column,
                     table=kind.table,
@@ -175,40 +181,104 @@ def _event_fields() -> tuple[SearchField, ...]:
 
 #: 照片本身的那些字段。事件那一族接在它后面，每类独有的字段各带类型前缀（见
 #: :func:`_event_fields`）。
-_PHOTO_FIELDS: Final[tuple[SearchField, ...]] = (
-    _field(FACET_NAME, "文件名", "name", "p.name"),
-    _field(FACET_FOLDER, "相册", "album", "p.folder", hint="含子相册"),
-    _field(FACET_FORMAT, "文件格式", "format", "p.suffix", hint="jpg 或 JPEG"),
-    _field(FACET_SIZE, "文件大小", "size", "p.size", hint="5MB 或 >10MB"),
-    _field(FACET_CAPTURED, "拍摄时间", "datetime", "f.captured", hint="2024 / 2024-05"),
-    _field(FACET_CAMERA, "相机", "text", "f.camera"),
-    _field(FACET_LENS, "镜头", "text", "f.lens"),
-    _field(FACET_COUNTRY, "国家", "text", "f.country"),
-    # **标签里不许有空格**：字段名是拿来敲的（「#省/州 浙江」），放回输入框时会按空格切开认不回来。
-    _field(FACET_REGION, "省/州", "text", "f.region"),
-    _field(FACET_CITY, "城市", "text", "f.city"),
-    _field(FACET_KEYWORD, "关键词", "text", "f.keywords"),
-    _field(FACET_APERTURE, "光圈", "number", "f.aperture", hint="1.8 或 < 2"),
-    _field(FACET_SHUTTER, "快门", "number", "f.shutter", hint="0.002 或 > 0.001"),
-    _field(FACET_ISO, "ISO", "number", "f.iso", hint="800 或 >1600"),
-    _field(FACET_FOCAL, "焦距", "number", "f.focal", hint="35 或 <= 70"),
-    _field(FACET_PIXELS, "像素尺寸", "number", "f.pixels", hint="12000000 或 >12MP"),
-    _field(FACET_MODIFIED, "修改时间", "datetime", "p.mtime_ns", hint="2024 / 2024-05"),
-)
+def _photo_fields() -> tuple[SearchField, ...]:
+    """照片本身的那些字段；每次现建，语言在调用时才定（ADR 0106）。"""
+    return (
+        _field(FACET_NAME, t("library.search.field.name"), "name", "p.name"),
+        _field(
+            FACET_FOLDER,
+            t("library.search.field.folder"),
+            "album",
+            "p.folder",
+            hint=t("library.search.hint.folder"),
+        ),
+        _field(
+            FACET_FORMAT,
+            t("library.search.field.format"),
+            "format",
+            "p.suffix",
+            hint=t("library.search.hint.format"),
+        ),
+        _field(
+            FACET_SIZE,
+            t("library.search.field.size"),
+            "size",
+            "p.size",
+            hint=t("library.search.hint.size"),
+        ),
+        _field(
+            FACET_CAPTURED,
+            t("library.search.field.captured"),
+            "datetime",
+            "f.captured",
+            hint=t("library.search.hint.date"),
+        ),
+        _field(FACET_CAMERA, t("library.search.field.camera"), "text", "f.camera"),
+        _field(FACET_LENS, t("library.search.field.lens"), "text", "f.lens"),
+        _field(FACET_COUNTRY, t("library.search.field.country"), "text", "f.country"),
+        # **标签里不许有空格**：字段名是拿来敲的（「#省/州 浙江」），
+        # 放回输入框时会按空格切开、认不回来。
+        _field(FACET_REGION, t("library.search.field.region"), "text", "f.region"),
+        _field(FACET_CITY, t("library.search.field.city"), "text", "f.city"),
+        _field(FACET_KEYWORD, t("library.search.field.keyword"), "text", "f.keywords"),
+        _field(
+            FACET_APERTURE,
+            t("library.search.field.aperture"),
+            "number",
+            "f.aperture",
+            hint=t("library.search.hint.aperture"),
+        ),
+        _field(
+            FACET_SHUTTER,
+            t("library.search.field.shutter"),
+            "number",
+            "f.shutter",
+            hint=t("library.search.hint.shutter"),
+        ),
+        _field(FACET_ISO, "ISO", "number", "f.iso", hint=t("library.search.hint.iso")),
+        _field(
+            FACET_FOCAL,
+            t("library.search.field.focal"),
+            "number",
+            "f.focal",
+            hint=t("library.search.hint.focal"),
+        ),
+        _field(
+            FACET_PIXELS,
+            t("library.search.field.pixels"),
+            "number",
+            "f.pixels",
+            hint=t("library.search.hint.pixels"),
+        ),
+        _field(
+            FACET_MODIFIED,
+            t("library.search.field.modified"),
+            "datetime",
+            "p.mtime_ns",
+            hint=t("library.search.hint.date"),
+        ),
+    )
+
 
 #: 候选列表的顺序即这里里面的顺序。**不打乱 GROUP_FACET_IDS / SORT_FACET_IDS 的既有顺序**
 #: （字段与分组排序看到的是同一套字段），只把「不读 EXIF、立刻出结果」的四个提到最前面。
 #: ``column`` 写的是 **SQL 里的列名**而不是 ``PhotoFacets`` 的属性名 —— 只有拍摄时间两者不同
 #: （属性 ``captured_at``，列 ``captured``），写错要到 SQLite 执行时才报出来。
-SEARCH_FIELDS: Final[tuple[SearchField, ...]] = (
-    *_PHOTO_FIELDS,
-    *_event_fields(),
-)
+@cache
+def search_fields() -> tuple[SearchField, ...]:
+    """按候选列表顺序排好的全部字段（当前语言）。"""
+    return (*_photo_fields(), *_event_fields())
 
-_FIELDS_BY_ID: Final[dict[str, SearchField]] = {field.id: field for field in SEARCH_FIELDS}
 
-#: 不带 ``#`` 时搜的那个字段（也是候选列表的第一项）。
-DEFAULT_FIELD: Final = _FIELDS_BY_ID[FACET_NAME]
+@cache
+def _fields_by_id() -> dict[str, SearchField]:
+    return {field.id: field for field in search_fields()}
+
+
+def default_field() -> SearchField:
+    """不带 ``#`` 时搜的那个字段（也是候选列表的第一项）。"""
+    return _fields_by_id()[FACET_NAME]
+
 
 _SELECT: Final = (
     "SELECT p.path, p.size, p.mtime_ns FROM photos p LEFT JOIN facets f ON f.path = p.path"
@@ -273,7 +343,7 @@ class SearchCondition:
         **要带上字段前缀**：只把值放回去的话，用户看到的是「旅行」，不知道这一条按哪个字段筛 ——
         而改条件多半正是要换字段，那是这个交互的主要用法。默认字段（文件名）不带前缀。
         """
-        if self.field.id == DEFAULT_FIELD.id:
+        if self.field.id == default_field().id:
             return self.text
         return f"#{self.field.label} {self.text}"
 
@@ -296,14 +366,14 @@ def parse_input(raw: str) -> ParsedInput | None:
     if not text:
         return None
     if not text.startswith("#"):
-        return ParsedInput(selecting=False, field=DEFAULT_FIELD, value=text)
+        return ParsedInput(selecting=False, field=default_field(), value=text)
     body = text[1:].strip()
     if not body:
         return ParsedInput(selecting=True, field=None, value="")
     head, separator, tail = body.partition(" ")
     field = match_field(head)
     if field is None:
-        return ParsedInput(selecting=False, field=DEFAULT_FIELD, value=body)
+        return ParsedInput(selecting=False, field=default_field(), value=body)
     value = tail.strip()
     # 没有空格（还在挑字段），或者挑完了但值还空着：都是「回车 = 补全」。
     return ParsedInput(selecting=not separator or not value, field=field, value=value)
@@ -316,7 +386,7 @@ def match_field(text: str) -> SearchField | None:
     needle = _compact(text)
     if not needle:
         return None
-    for field in SEARCH_FIELDS:
+    for field in search_fields():
         if needle in (_compact(field.id), _compact(field.label)):
             return field
     return None
@@ -330,10 +400,10 @@ def suggestions(query: str) -> list[SearchField]:
     """
     needle = _compact(query)
     if not needle:
-        return list(SEARCH_FIELDS)
+        return list(search_fields())
     return [
         field
-        for field in SEARCH_FIELDS
+        for field in search_fields()
         if needle in _compact(field.label) or needle in _compact(field.id)
     ]
 
@@ -371,13 +441,16 @@ def unusable_reason(field: SearchField, value: str) -> str:
         pieces = _split_range(value)
         if len(pieces) == 2 and _is_reversed(*pieces):
             left, right = (piece.strip() for piece in pieces)
-            return f"的区间写反了：「{left}」在「{right}」后面，起始要写在前面。"
-        return (
-            "要一个日期：2024、2024-05、2024-05-16；"
-            f"要一段区间就写成 2023{RANGE_SEPARATOR}2024，"
-            f"{RANGE_SEPARATOR} 前后可以有空格，{HALF_WIDTH_RANGE_SEPARATOR} 也认。"
+            return t("library.search.reason.reversed", left=left, right=right)
+        return t(
+            "library.search.reason.date",
+            range=RANGE_SEPARATOR,
+            half=HALF_WIDTH_RANGE_SEPARATOR,
         )
-    return f"这一栏要一个值，例如 {field.hint or '关键词'}。"
+    return t(
+        "library.search.reason.value",
+        hint=field.hint or t("library.search.field.keyword"),
+    )
 
 
 def _condition(field: SearchField, text: str) -> SearchCondition | None:
@@ -781,11 +854,9 @@ def relative_folder_path(root: Path, path: Path) -> str:
 
 
 __all__ = [
-    "DEFAULT_FIELD",
     "HALF_WIDTH_RANGE_SEPARATOR",
     "RANGE_SEPARATOR",
     "RESULT_LIMIT",
-    "SEARCH_FIELDS",
     "ParsedInput",
     "SearchCondition",
     "SearchField",
@@ -795,12 +866,14 @@ __all__ = [
     "build_count_query",
     "build_match_query",
     "build_query",
+    "default_field",
     "make_condition",
     "match_field",
     "parse_input",
     "partial_field",
     "relative_folder_path",
     "rows_to_refs",
+    "search_fields",
     "suggestions",
     "unusable_reason",
 ]

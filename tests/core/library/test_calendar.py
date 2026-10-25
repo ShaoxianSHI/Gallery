@@ -9,8 +9,6 @@ import pytest
 
 from gallery.core.library.calendar import (
     LEVELS,
-    WEEKDAY_HEADERS,
-    WEEKDAY_NAMES,
     WEEKEND_WEEKDAYS,
     capture_day,
     capture_hour,
@@ -30,6 +28,8 @@ from gallery.core.library.calendar import (
     week_index,
     week_number,
     week_start,
+    weekday_headers,
+    weekday_names,
 )
 from gallery.core.library.photos import PhotoRef
 from gallery.core.metadata.facets import PhotoFacets
@@ -118,9 +118,9 @@ def test_a_week_starts_on_sunday_and_ends_on_saturday() -> None:
 
 
 def test_the_weekday_constants_run_from_sunday() -> None:
-    assert WEEKDAY_NAMES[0] == "日"
-    assert WEEKDAY_NAMES[-1] == "六"
-    assert WEEKDAY_HEADERS[0] == "星期日"
+    assert weekday_names()[0] == "日"
+    assert weekday_names()[-1] == "六"
+    assert weekday_headers()[0] == "星期日"
     # 周末是**周六与周日**。``date.weekday()`` 是周一 0 … 周日 6，所以是 5 与 6；
     # 别拿日历那套「周日 0」的编号直接填进来，那会把周一涂成周末、周六反而没有底色。
     assert frozenset({5, 6}) == WEEKEND_WEEKDAYS
@@ -134,12 +134,12 @@ def test_week_index_counts_the_columns_from_sunday(anchor: datetime.date) -> Non
     """一周里的第几列 = 表头那一列该写哪个星期。
 
     **两套星期口径差一天**：``date.weekday()`` 周一 0 … 周日 6，而日历的列周日 0 … 周六 6。
-    拿前者去索引 :data:`WEEKDAY_NAMES` 会让七个名字整体差一天 —— 表头第一列（周日）
+    拿前者去索引 :func:`weekday_names` 会让七个名字整体差一天 —— 表头第一列（周日）
     写着「周六」。
     """
     days = days_of("week", anchor)
     assert [week_index(day) for day in days] == list(range(7))
-    assert [WEEKDAY_NAMES[week_index(day)] for day in days] == [
+    assert [weekday_names()[week_index(day)] for day in days] == [
         "日",
         "一",
         "二",

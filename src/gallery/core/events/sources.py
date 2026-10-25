@@ -39,6 +39,7 @@ from gallery.core.events.kinds import (
 )
 from gallery.core.events.models import MovieInfo, MovieRef
 from gallery.core.events.transport import Transport
+from gallery.core.i18n import t
 
 #: 像网址的东西。**带不带的 ``scheme`` 都算**（用户从地址栏复制时多半带着，手打时多半不带）。
 _URL_RE: Final = re.compile(r"^(?:[a-z][a-z0-9+.-]*://)?[\w-]+(?:\.[\w-]+)+(?:[/:?#]|$)", re.I)
@@ -89,7 +90,7 @@ def parse_ref(text: str, *, source: str | None = None) -> MovieRef:
     """
     cleaned = (text or "").strip()
     if not cleaned:
-        raise MovieImportError("编号或链接不能为空。")
+        raise MovieImportError(t("event.movie.empty_input"))
     if _URL_RE.match(cleaned):
         return _ref_from_url(cleaned)
     if source is not None:
@@ -115,10 +116,7 @@ def _ref_from_url(url: str) -> MovieRef:
         code = parser(url)
         if code:
             return MovieRef(source=source, code=code)
-    raise MovieImportError(
-        f"无法识别该地址：{url}。短链请先在浏览器中打开，再粘贴完整地址；"
-        "合集页请先打开某一集再复制。"
-    )
+    raise MovieImportError(t("event.movie.unrecognized_url", url=url))
 
 
 def movie_url(ref: MovieRef, *, jav_site: str) -> str | None:
@@ -209,13 +207,13 @@ class HttpSources:
         """这个来源的那条传输。**认不出的来源就是一句中文**（面板的下拉框理论上给不出别的）。"""
         transport = self.transports.get(source)
         if transport is None:
-            raise MovieImportError(f"认不出这个来源：{source}。")
+            raise MovieImportError(t("event.movie.unknown_source", source=source))
         return transport
 
     def fetch(self, ref: MovieRef) -> MovieInfo:
         fetcher = _FETCHERS.get(ref.source)
         if fetcher is None:
-            raise MovieImportError(f"认不出这个来源：{ref.source}。")
+            raise MovieImportError(t("event.movie.unknown_source", source=ref.source))
         return fetcher(ref.code, client=self.transport_of(ref.source))
 
     def cover_bytes(self, movie: MovieInfo) -> bytes:
@@ -239,7 +237,7 @@ def _cover(transport: Transport, movie: MovieInfo) -> bytes:
             return transport.get_bytes(url, referer=movie.page_url)
         except MovieImportError as exc:
             problem = exc
-    raise problem or MovieImportError(f"{movie.code} 没有封面图。")
+    raise problem or MovieImportError(t("event.movie.no_cover", code=movie.code))
 
 
 __all__ = [

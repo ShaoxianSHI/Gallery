@@ -19,6 +19,7 @@ from gallery.core.errors import MovieImportError
 from gallery.core.events.kinds import SOURCE_JAV
 from gallery.core.events.models import MovieInfo
 from gallery.core.events.transport import HttpTransport, Transport
+from gallery.core.i18n import t
 
 #: 抓取的源站。**抓取与「打开影片网站」是两件事**：后者由 ``config.movie_site`` 说了算。
 DEFAULT_SOURCE_BASE: Final = "https://javdb.com"
@@ -178,8 +179,8 @@ def locate(hits: Sequence[SearchHit], code: str) -> SearchHit:
     if len(hits) == 1:
         return hits[0]
     if not hits:
-        raise MovieImportError(f"源站未收录该编号：{code}。")
-    raise MovieImportError(f"编号 {code} 找到多条近似结果，无法确定是哪一部。")
+        raise MovieImportError(t("event.jav.not_found", code=code))
+    raise MovieImportError(t("event.jav.multiple", code=code))
 
 
 def no_search_results(html: str, code: str) -> MovieImportError:
@@ -189,8 +190,8 @@ def no_search_results(html: str, code: str) -> MovieImportError:
     等一会儿再试）—— 混成一句「查不到番号」会把人支到错的那条路上。
     """
     if _EMPTY_PAGE_RE.search(html):
-        return MovieImportError(f"源站未收录该编号：{code}。请核对写法，或更换编号后重试。")
-    return MovieImportError(f"源站未提供搜索结果：{code}。通常是限速或访问受限，请稍后重试。")
+        return MovieImportError(t("event.jav.no_results", code=code))
+    return MovieImportError(t("event.jav.search_blocked", code=code))
 
 
 def parse_detail(html: str, code: str, *, base: str, hit: SearchHit | None = None) -> MovieInfo:
@@ -257,7 +258,7 @@ def fetch(code: str, *, client: Transport, base: str = DEFAULT_SOURCE_BASE) -> M
     """
     norm = normalize_code(code)
     if not norm:
-        raise MovieImportError("编号不能为空。")
+        raise MovieImportError(t("event.jav.empty_code"))
     getter = client.get_text
     search_html = getter(urllib.parse.urljoin(base + "/", f"search?f=all&q={norm}"))
     hits = parse_search_items(search_html, base)
@@ -267,7 +268,7 @@ def fetch(code: str, *, client: Transport, base: str = DEFAULT_SOURCE_BASE) -> M
     detail_html = getter(hit.url, referer=urllib.parse.urljoin(base + "/", "search"))
     movie = parse_detail(detail_html, norm, base=base, hit=hit)
     if not movie.cover_urls:
-        raise MovieImportError(f"编号 {norm} 的页面里没找到封面图。")
+        raise MovieImportError(t("event.jav.no_cover", code=norm))
     return movie
 
 

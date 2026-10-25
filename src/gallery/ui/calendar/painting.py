@@ -9,6 +9,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QWidget
 
+from gallery.core.i18n import t_plural
 from gallery.ui.calendar.layout import CARD_RADIUS, fitted_size
 
 #: 三份缓存各自的上限（用到的取值只有个位数）；它只为挡住「拿算出来的数当键」那种用法。
@@ -188,7 +189,7 @@ def paint_cell_photo(
     draw_text(
         painter,
         badge,
-        f"{count} 张",
+        t_plural("calendar.photo_count", count),
         font_px(chip_font_px),
         text,
         Qt.AlignmentFlag.AlignCenter,

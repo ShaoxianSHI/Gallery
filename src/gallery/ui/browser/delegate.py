@@ -10,6 +10,7 @@ from PySide6.QtCore import QModelIndex, QPoint, QRect, QSize, Qt
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPalette, QPen, QPixmap
 from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem, QWidget
 
+from gallery.core.i18n import t
 from gallery.ui import theme
 from gallery.ui.browser.model import (
     ALBUM_ROLE,
@@ -251,7 +252,7 @@ class PhotoDelegate(QStyledItemDelegate):
 
     def _draw_album_badge(self, painter: QPainter, frame: QRect) -> None:
         """有封面的相册：左上角盖一个「相册」小标签。"""
-        self._draw_badge(painter, frame, "相册")
+        self._draw_badge(painter, frame, t("browser.album_badge"))
 
     def _draw_badge(self, painter: QPainter, frame: QRect, text: str) -> None:
         """在**取景框**左上角盖一个小标签。
