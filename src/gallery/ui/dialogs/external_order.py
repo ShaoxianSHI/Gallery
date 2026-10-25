@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
 )
 
 from gallery.ui import theme
+from gallery.ui.outline import opaque_over
 from gallery.ui.theme import AppTheme, rgba
 
 #: 列表里那一小张图标的边长（点）。与菜单那一档同一量级。
@@ -362,9 +363,11 @@ def dialog_style(app_theme: AppTheme, palette: QPalette) -> str:
     """对话框的外观：与元数据 / 事件那两个对话框同一份底色，列表那一圈用同一档边框。
 
     选中那一行取**调色板里的高亮与高亮文字**：深浅两套下只有这一对保证有对比度。
+    列表那一圈是**预先合成过的不透明色**：半透明的圆角边框会被 Qt 描成八段（ADR 0035）。
     """
-    fill = rgba(app_theme.text_at(0.06))
-    edge = rgba(app_theme.text_at(0.18))
+    surface = opaque_over(app_theme.text_at(0.06), app_theme.background)
+    fill = rgba(surface)
+    edge = opaque_over(app_theme.text_at(0.18), surface)
     highlight = palette.color(QPalette.ColorRole.Highlight)
     highlighted_text = palette.color(QPalette.ColorRole.HighlightedText)
     return f"""
@@ -374,7 +377,7 @@ def dialog_style(app_theme: AppTheme, palette: QPalette) -> str:
     QListWidget {{
         color: {rgba(app_theme.text_at(0.92))};
         background: {fill};
-        border: 1px solid {edge};
+        border: 1px solid {rgba(edge)};
         border-radius: 6px;
         padding: {ROW_PADDING}px;
         font-size: 12px;

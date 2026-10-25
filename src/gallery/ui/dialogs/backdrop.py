@@ -38,6 +38,7 @@ from gallery.core.backdrops import (
 from gallery.core.backdrops.generate import colorize, render_field
 from gallery.ui import imaging, theme
 from gallery.ui.dialogs.appearance import dialog_style
+from gallery.ui.outline import opaque_over
 from gallery.ui.theme import AppTheme, rgba
 
 #: 预览区的大小（点）：16:10，够看清晕染的走向，又不至于把对话框撑满屏。
@@ -517,9 +518,13 @@ def _item_id(item: QListWidgetItem) -> str | None:
 
 
 def _manage_style(app_theme: AppTheme, palette: QPalette) -> str:
-    """列表与行内输入框也是这一套底色：默认的列表在深色下像贴上去的一张白纸。"""
-    fill = rgba(app_theme.text_at(0.06))
-    edge = rgba(app_theme.text_at(0.18))
+    """列表与行内输入框也是这一套底色：默认的列表在深色下像贴上去的一张白纸。
+
+    列表那一圈是**预先合成过的不透明色**：半透明的圆角边框会被 Qt 描成八段（ADR 0035）。
+    """
+    surface = opaque_over(app_theme.text_at(0.06), app_theme.background)
+    fill = rgba(surface)
+    edge = opaque_over(app_theme.text_at(0.18), surface)
     highlight = palette.color(QPalette.ColorRole.Highlight)
     highlighted_text = palette.color(QPalette.ColorRole.HighlightedText)
     danger_tint = QColor(app_theme.error)
@@ -530,7 +535,7 @@ def _manage_style(app_theme: AppTheme, palette: QPalette) -> str:
     QListWidget#backdropList {{
         color: {rgba(app_theme.text_at(0.92))};
         background: {fill};
-        border: 1px solid {edge};
+        border: 1px solid {rgba(edge)};
         border-radius: 6px;
         padding: 4px;
         font-size: 12px;
@@ -560,22 +565,31 @@ def _chip_color(palette: Palette) -> str:
 
 
 def _chip_style(color: str) -> str:
-    """色板小方块：底就是那套配色的末端颜色，勾选时描一圈。"""
-    border = "2px solid rgba(0, 0, 0, 0.55)"
+    """色板小方块：底就是那套配色的末端颜色，勾选时描一圈。
+
+    **边框颜色预先与自己的底色合成成不透明的**：半透明的圆角边框会被 Qt 描成八段，
+    接缝处调两遍就叠成更深的点（ADR 0035）。
+    """
+    base = QColor(color)
+    edge = opaque_over(QColor(0, 0, 0, 30), base)
+    checked = opaque_over(QColor(0, 0, 0, 140), base)
     return (
-        f"QPushButton {{ background: {color}; border: 1px solid rgba(0,0,0,0.12);"
+        f"QPushButton {{ background: {color}; border: 1px solid {edge.name()};"
         f" border-radius: 5px; }}"
-        f"QPushButton:checked {{ border: {border}; }}"
+        f"QPushButton:checked {{ border: 2px solid {checked.name()}; }}"
     )
 
 
 def _add_chip_style(app_theme: AppTheme) -> str:
-    """「+」那一格：不填颜色，只描一圈 —— 与「已选中的配色」不是同一种东西。"""
-    edge = rgba(app_theme.text_at(0.35))
+    """「+」那一格：不填颜色，只描一圈 —— 与「已选中的配色」不是同一种东西。
+
+    底色是透明的，所以边框要按**对话框那层底色**合成成不透明的（ADR 0035）。
+    """
+    edge = opaque_over(app_theme.text_at(0.35), app_theme.background)
     ink = rgba(app_theme.text_at(0.72))
     hover = rgba(app_theme.text_at(0.08))
     return (
-        f"QPushButton {{ background: transparent; border: 1px solid {edge};"
+        f"QPushButton {{ background: transparent; border: 1px solid {edge.name()};"
         f" border-radius: 5px; color: {ink}; font-size: 15px; padding: 0; }}"
         f"QPushButton:hover {{ background: {hover}; }}"
     )
