@@ -60,3 +60,13 @@ def test_a_broken_language_preference_falls_back_to_the_system(tmp_path: Path) -
     )
 
     assert activate_language(tmp_path) in {"zh_CN", "en"}
+
+
+def test_system_preference_uses_the_macos_language_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``QLocale.system()`` 从终端启动时会报 ``C``；系统偏好要从 NSLocale 取。"""
+    save_session(SessionState(preferences=Preferences(language="system")), base=tmp_path)
+    monkeypatch.setattr("gallery.ui.app._system_language_name", lambda: "zh-Hans-CN")
+
+    assert activate_language(tmp_path) == "zh_CN"

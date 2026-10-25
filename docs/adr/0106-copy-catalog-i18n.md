@@ -81,6 +81,8 @@ t("banner.rename.not_journaled", name=entry.name)
 （与动画速度、外观同族），不进任何 `config.toml`。取值 `system` / `zh_CN` / `en`：
 
 - `system`：系统语言以 `zh` 开头 → `zh_CN`，其余 → `en`；
+  系统语言在 macOS 上问 `NSLocale.preferredLanguages()`，**不要用 `QLocale.system()`** ——
+  从终端启动时它会报 `C`，于是「跟随系统」被误判成英文；
 - 显式选择优先于系统。
 
 **第一阶段不做逐控件重新翻译**：改语言写进偏好，横幅说「重启 Gallery 后生效」。真正的运行时

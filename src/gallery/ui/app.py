@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -65,13 +66,38 @@ def create_application(argv: Sequence[str] | None = None) -> QApplication:
     return app
 
 
+def _system_language_name() -> str:
+    """系统偏好里的第一语言。
+
+    **不能只用 ``QLocale.system()``**：从终端启动时它会是 ``C``，于是「跟随系统」被误判成英文。
+    macOS 上问 ``NSLocale.preferredLanguages``；拿不到再退回 Qt / 环境变量。
+    """
+    if sys.platform == "darwin":
+        try:
+            from Foundation import NSLocale
+
+            preferred = NSLocale.preferredLanguages()
+            if preferred:
+                return str(preferred[0])
+        except (ImportError, AttributeError):  # pragma: no cover - macOS 上 pyobjc 是依赖
+            pass
+    name = QLocale.system().name()
+    if name and name != "C":
+        return name
+    for key in ("LC_ALL", "LC_MESSAGES", "LANG"):
+        value = os.environ.get(key, "")
+        if value:
+            return value
+    return name or "en"
+
+
 def activate_language(session_base: Path | None = None) -> str:
     """在导入界面模块之前定语言（ADR 0106 决策 6）。
 
     有些文案常量在模块导入时求值；语言必须在第一次 import 界面之前就位。
     """
     preferences = load_session(base=session_base).preferences
-    return set_language(resolve_language(preferences.language, QLocale.system().name()))
+    return set_language(resolve_language(preferences.language, _system_language_name()))
 
 
 def install_qt_translations(app: QApplication) -> None:
