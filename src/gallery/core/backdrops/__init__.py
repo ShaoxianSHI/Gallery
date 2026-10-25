@@ -4,7 +4,14 @@
 但清单不是 —— 名字是用户填的，重扫重建不出来；图的丢失靠配方与来源路径自愈。
 """
 
-from gallery.core.backdrops.recipe import PALETTES, PALETTES_BY_NAME, Palette, Recipe
+from gallery.core.backdrops.recipe import (
+    CUSTOM_PRESET,
+    PALETTES,
+    PALETTES_BY_NAME,
+    Palette,
+    Recipe,
+    palette_from_color,
+)
 from gallery.core.backdrops.store import (
     KIND_INK,
     KIND_PHOTO,
@@ -16,6 +23,7 @@ from gallery.core.backdrops.store import (
 )
 
 __all__ = [
+    "CUSTOM_PRESET",
     "KIND_INK",
     "KIND_PHOTO",
     "MAX_NAME_LENGTH",
@@ -27,4 +35,5 @@ __all__ = [
     "Palette",
     "Recipe",
     "name_suggestion",
+    "palette_from_color",
 ]

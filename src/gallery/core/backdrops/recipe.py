@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from typing import Any, Final
 
@@ -261,13 +262,57 @@ PALETTES: Final[tuple[Palette, ...]] = (
 
 PALETTES_BY_NAME: Final[dict[str, Palette]] = {palette.name: palette for palette in PALETTES}
 
+#: 用户自己挑颜色那一套的预设名。**它不在 ``PALETTES`` 里**：颜色整份写进了配方，
+#: 读回时不需要、也不该去预设表里找它。
+CUSTOM_PRESET: Final = "ink-custom"
+
+#: 自定义配色的停点：(位置, 这里用户选的颜色占多少)，其余部分与白色混合。
+#: 最深一档也只到 0.60 —— 再浓正文就压不住了（ADR 0098 的遮罩管亮度，不管「整张一个色」）。
+_CUSTOM_STOPS: Final = (
+    (0.00, 0.06),
+    (0.28, 0.14),
+    (0.50, 0.26),
+    (0.72, 0.40),
+    (0.88, 0.52),
+    (1.00, 0.60),
+)
+
+_HEX_COLOR: Final = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def palette_from_color(color: str) -> Palette:
+    """一个颜色 → 一套同色系、由浅到深的晕染配色。"""
+    red, green, blue = _hex_channels(color)
+    stops = tuple((position, _tint(red, green, blue, weight)) for position, weight in _CUSTOM_STOPS)
+    return Palette(
+        name=CUSTOM_PRESET,
+        title=f"自定义 · {color.lower()}",
+        colors=stops,
+        warp=1.20,
+        scale=2.8,
+        contrast=4.4,
+    )
+
+
+def _hex_channels(color: str) -> tuple[int, int, int]:
+    if not _HEX_COLOR.match(color):
+        raise ValueError(f"颜色要写成 #rrggbb，收到的是 {color!r}")
+    return (int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16))
+
+
+def _tint(red: int, green: int, blue: int, weight: float) -> str:
+    """把颜色按 ``weight`` 兑进白色；停点越靠后越浓。"""
+    channels = (round(255 - (255 - value) * weight) for value in (red, green, blue))
+    return "#" + "".join(f"{value:02x}" for value in channels)
+
 
 def palette_of(recipe: Recipe) -> Palette | None:
-    """这条配方出自哪一套配色；认不出来（老版本、手改过）就是 ``None``。"""
+    """这条配方出自哪一套配色；认不出来（自定义、老版本、手改过）就是 ``None``。"""
     return PALETTES_BY_NAME.get(recipe.preset)
 
 
 __all__ = [
+    "CUSTOM_PRESET",
     "FIELD",
     "MASTER",
     "PALETTES",
@@ -275,5 +320,6 @@ __all__ = [
     "VERSION",
     "Palette",
     "Recipe",
+    "palette_from_color",
     "palette_of",
 ]

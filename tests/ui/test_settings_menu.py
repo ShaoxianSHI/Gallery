@@ -380,17 +380,30 @@ def _background_submenu(window: MainWindow):
 
 
 def test_the_background_menu_lists_the_slots_before_how_to_fill_them(window: MainWindow) -> None:
-    """先答「这一档用哪张」，再答「纯色用哪一种」，最后才是造一张新的（ADR 0097 / 0098）。"""
+    """先答「这一档用哪张」，再答「纯色用哪一种」，最后才是造一张新的（ADR 0097 / 0098 / 0101）。
+
+    **下半那四项之间没有分隔线**：它们是同一件事的四种来源（纯色 / 生成 / 照片 / 管理已有的），
+    再切一刀只会让「管理」看起来像另一类东西。
+    """
     actions = _background_submenu(window).actions()
     labels = [action.text() for action in actions if not action.isSeparator()]
 
     assert labels == [
         "浅色背景",
         "深色背景",
-        "自定义背景色…",
-        "生成背景…",
-        "用照片做背景…",
+        "设置纯色背景…",
+        "生成水墨背景…",
+        "使用照片背景…",
         "管理背景…",
+    ]
+    assert [action.isSeparator() for action in actions] == [
+        False,
+        False,
+        True,
+        False,
+        False,
+        False,
+        False,
     ]
 
 

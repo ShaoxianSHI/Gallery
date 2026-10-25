@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QButtonGroup,
+    QColorDialog,
     QDialog,
     QHBoxLayout,
     QLabel,
@@ -26,7 +27,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gallery.core.backdrops import MAX_NAME_LENGTH, PALETTES, Palette, Recipe, name_suggestion
+from gallery.core.backdrops import (
+    MAX_NAME_LENGTH,
+    PALETTES,
+    Palette,
+    Recipe,
+    name_suggestion,
+    palette_from_color,
+)
 from gallery.core.backdrops.generate import colorize, render_field
 from gallery.ui import imaging, theme
 from gallery.ui.dialogs.appearance import dialog_style
@@ -65,9 +73,13 @@ class BackdropGenerateDialog(QDialog):
         self._recipe: Recipe = self._palette.recipe(seed)
         self._outcome = ""
         self._swatches: dict[str, QPushButton] = {}
+        #: 用户挑颜色建出来的那一套；没挑过是 ``None``。
+        self._custom_palette: Palette | None = None
+        self._custom_chip: QPushButton | None = None
+        self._add_chip: QPushButton | None = None
         self._watcher = theme.ensure_installed()
         self._watcher.changed.connect(self._apply_theme)
-        self.setWindowTitle("生成背景")
+        self.setWindowTitle("生成水墨背景")
         self.setModal(True)
         self.setMinimumWidth(MIN_WIDTH)
         self._build()
@@ -140,6 +152,16 @@ class BackdropGenerateDialog(QDialog):
             group.addButton(swatch)
             row.addWidget(swatch)
             self._swatches[palette.name] = swatch
+        self._palette_row = row
+        self._group = group
+        self._add_chip = QPushButton("+")
+        self._add_chip.setObjectName("backdropAdd")
+        self._add_chip.setFixedSize(CHIP_SIZE)
+        self._add_chip.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._add_chip.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._add_chip.setToolTip("选一个颜色，生成同色系的背景")
+        self._add_chip.clicked.connect(self._pick_custom_color)
+        row.addWidget(self._add_chip)
         row.addStretch(1)
         return row
 
@@ -174,6 +196,45 @@ class BackdropGenerateDialog(QDialog):
         self._recipe = palette.recipe(self._seed)
         self._refresh(palette_changed=True)
 
+    def _pick_custom_color(self) -> None:
+        """「+」那一格：挑一个颜色，按它生成一套同色系的配色。"""
+        start = (
+            QColor(self._custom_palette.colors[-1][1])
+            if self._custom_palette is not None
+            else QColor("#8ea8bf")
+        )
+        chosen = QColorDialog.getColor(start, self, "自定义背景颜色")
+        if not chosen.isValid():
+            return
+        palette = palette_from_color(chosen.name())
+        self._custom_palette = palette
+        chip = self._ensure_custom_chip()
+        chip.setToolTip(palette.title)
+        chip.setStyleSheet(_chip_style(chosen.name()))
+        chip.setChecked(True)
+        self._choose(palette)
+
+    def _ensure_custom_chip(self) -> QPushButton:
+        """自定义那一格只在第一次挑颜色时出现，之后一直留在「+」左边。"""
+        if self._custom_chip is not None:
+            return self._custom_chip
+        chip = QPushButton()
+        chip.setObjectName("backdropChip")
+        chip.setCheckable(True)
+        chip.setFixedSize(CHIP_SIZE)
+        chip.setCursor(Qt.CursorShape.PointingHandCursor)
+        chip.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+        def pick(_checked: bool = False) -> None:
+            if self._custom_palette is not None:
+                self._choose(self._custom_palette)
+
+        chip.clicked.connect(pick)
+        self._group.addButton(chip)
+        self._palette_row.insertWidget(self._palette_row.indexOf(self._add_chip), chip)
+        self._custom_chip = chip
+        return chip
+
     def _reroll(self) -> None:
         self._seed += 1
         self._recipe = self._palette.recipe(self._seed)
@@ -197,7 +258,7 @@ class BackdropGenerateDialog(QDialog):
             QApplication.restoreOverrideCursor()
         self._show_pixmap(QPixmap.fromImage(imaging.to_qimage(raster)))
         if palette_changed:
-            self._name_field.setText(name_suggestion(self._recipe))
+            self._name_field.setText(name_suggestion(self._recipe, fallback=self._palette.title))
 
     def _show_pixmap(self, pixmap: QPixmap) -> None:
         self._preview.setPixmap(
@@ -221,6 +282,8 @@ class BackdropGenerateDialog(QDialog):
             f"QLabel#backdropPreview {{ background: {theme.rgba(app_theme.text_at(0.05))};"
             f" border-radius: 6px; }}"
         )
+        if self._add_chip is not None:
+            self._add_chip.setStyleSheet(_add_chip_style(app_theme))
 
 
 class BackdropNameDialog(QDialog):
@@ -229,7 +292,7 @@ class BackdropNameDialog(QDialog):
     def __init__(self, parent: QWidget | None, *, default_name: str) -> None:
         super().__init__(parent)
         self._outcome = ""
-        self.setWindowTitle("用照片做背景")
+        self.setWindowTitle("使用照片背景")
         self.setModal(True)
         self.setMinimumWidth(420)
         layout = QVBoxLayout(self)
@@ -503,6 +566,18 @@ def _chip_style(color: str) -> str:
         f"QPushButton {{ background: {color}; border: 1px solid rgba(0,0,0,0.12);"
         f" border-radius: 5px; }}"
         f"QPushButton:checked {{ border: {border}; }}"
+    )
+
+
+def _add_chip_style(app_theme: AppTheme) -> str:
+    """「+」那一格：不填颜色，只描一圈 —— 与「已选中的配色」不是同一种东西。"""
+    edge = rgba(app_theme.text_at(0.35))
+    ink = rgba(app_theme.text_at(0.72))
+    hover = rgba(app_theme.text_at(0.08))
+    return (
+        f"QPushButton {{ background: transparent; border: 1px dashed {edge};"
+        f" border-radius: 5px; color: {ink}; font-size: 15px; padding: 0; }}"
+        f"QPushButton:hover {{ background: {hover}; }}"
     )
 
 

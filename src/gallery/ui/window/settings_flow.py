@@ -71,7 +71,7 @@ APPEARANCE_LABELS: dict[str, str] = {
 }
 SLIDESHOW_SECONDS: tuple[int, ...] = (3, 5, 8, 15)
 
-#: 「用照片做背景」那个文件选择框里认的扩展名。HEIC 靠 ``core.media.decode`` 注册的
+#: 「使用照片背景」那个文件选择框里认的扩展名。HEIC 靠 ``core.media.decode`` 注册的
 #: 那一条 opener 打开，与缩略图走同一个解码器。
 PHOTO_FILTER: Final = "图片 (*.jpg *.jpeg *.png *.heic *.heif *.tif *.tiff *.webp);;所有文件 (*)"
 
@@ -161,7 +161,7 @@ class SettingsFlowMixin:
 
     def _build_background_action(self) -> QAction:
         """「背景」里那一项：挑两档背景色（ADR 0097）。"""
-        action = QAction("自定义背景色…", cast("QWidget", self))
+        action = QAction("设置纯色背景…", cast("QWidget", self))
         action.triggered.connect(self._edit_backgrounds)
         self._settings_extras["background"] = action
         return action
@@ -175,10 +175,9 @@ class SettingsFlowMixin:
         self._rebuild_backdrop_menus()
         menu.addSeparator()
         menu.addAction(self._build_background_action())
-        menu.addSeparator()
         for key, label, slot in (
-            ("backdrop_generate", "生成背景…", self._generate_backdrop),
-            ("backdrop_photo", "用照片做背景…", self._pick_backdrop_photo),
+            ("backdrop_generate", "生成水墨背景…", self._generate_backdrop),
+            ("backdrop_photo", "使用照片背景…", self._pick_backdrop_photo),
             ("backdrop_manage", "管理背景…", self._manage_backdrops),
         ):
             action = QAction(label, cast("QWidget", self))

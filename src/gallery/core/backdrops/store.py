@@ -325,10 +325,13 @@ def _photo_bytes(source: Path) -> bytes:
         return buffer.getvalue()
 
 
-def name_suggestion(recipe: Recipe) -> str:
-    """生成图的默认名字：配色名。用户在对话框里可以改。"""
+def name_suggestion(recipe: Recipe, *, fallback: str = "背景") -> str:
+    """生成图的默认名字：配色名。用户在对话框里可以改。
+
+    自定义配色不在预设表里，名字取不到 —— 由调用方把它那套配色的标题当 ``fallback`` 递进来。
+    """
     palette = palette_of(recipe)
-    return palette.title if palette is not None else "背景"
+    return palette.title if palette is not None else fallback
 
 
 __all__ = [
