@@ -19,6 +19,7 @@ from PySide6.QtWidgets import QDialog, QMenu, QMessageBox
 
 from gallery.core import paths
 from gallery.core.errors import GalleryError
+from gallery.core.i18n import t
 from gallery.core.library.config import BROWSE_MODE_ALBUMS, BROWSE_MODE_FLAT
 from gallery.core.library.facade import MovieImportOutcome, MovieImportPlan
 from gallery.core.library.photos import FolderRef, GridEntry, GroupRef, PhotoRef, SectionRef
@@ -561,6 +562,7 @@ class WriteOpsMixin:
             self._show_banner("上一次操作尚未结束。")
             return
         verb = "移动" if move else "复制"
+        op: banners.AlbumOp = "move" if move else "copy"
 
         def work(context: TaskContext) -> object:
             if move:
@@ -571,17 +573,17 @@ class WriteOpsMixin:
         self._start_job(
             "_write_job",
             work,
-            on_result=partial(self._on_transfer_done, target, verb),
+            on_result=partial(self._on_transfer_done, target, op),
             on_error=partial(self._on_transfer_failed, verb),
         )
 
-    def _on_transfer_done(self, target: Path, verb: str, payload: object) -> None:
+    def _on_transfer_done(self, target: Path, op: banners.AlbumOp, payload: object) -> None:
         self._finish_job("_write_job")
         if not isinstance(payload, (MoveResult, PasteResult)):
             return
         # 与粘贴同一判据（ADR 0029 决策 3）：确认说过就走，出了岔子就留着。
         self._show_banner(
-            banners.transfer_banner(payload, target.name, verb),
+            banners.transfer_banner(payload, target.name, op),
             auto_hide=payload.journaled and not payload.failures,
         )
         if isinstance(payload, MoveResult):
@@ -791,7 +793,7 @@ class WriteOpsMixin:
             # 按事件分组的那些卡片重算一遍 —— 事件回来了/改回去了，组卡片就该跟着变。
             self._after_events_changed()
             self._show_banner(
-                banners.event_undo_banner(result, "事件"),
+                banners.event_undo_banner(result, t("banner.event.kind")),
                 auto_hide=result.journaled and not result.failures,
             )
             self._refresh_undo_label()

@@ -140,6 +140,10 @@ def test_ui_does_not_open_files(path: Path) -> None:
 #: 「命令」两件事粘在一起了。
 PRESENTATION_ONLY_UI = ("menus.py", "menu_style.py", "desktop.py")
 
+#: 文案目录是**纯查表**（ADR 0106）：不碰文件、不碰领域对象，于是这几个只负责摆控件与
+#: 递系统命令的模块可以读它 —— 它们仍然不许 import 其余的 core。
+COPY_LOOKUP_ONLY = "gallery.core.i18n"
+
 
 def test_config_dir_name_is_exact() -> None:
     """配置目录名一旦拼错（如 .galley），用户的配置会被劈成两份。"""
@@ -152,7 +156,10 @@ def test_menu_modules_do_not_reach_into_core() -> None:
         path.name
         for path in _iter_python_files(UI_ROOT)
         if path.name in PRESENTATION_ONLY_UI
-        and any(module.startswith("gallery.core") for module in _imported_modules(path, full=True))
+        and any(
+            module.startswith("gallery.core") and module != COPY_LOOKUP_ONLY
+            for module in _imported_modules(path, full=True)
+        )
     ]
     assert not offenders, f"{offenders} 直接依赖了 core；请让 MainWindow 把需要的东西递进来"
 

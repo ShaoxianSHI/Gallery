@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,7 @@ import pytest
 from gallery.core.events.models import shorten_name
 from gallery.core.events.store import Event, EventWriteOutcome
 from gallery.core.external.launch import WHERE_APP, WHERE_BROWSER, OpenOutcome
+from gallery.core.i18n import current_language, set_language
 from gallery.core.library.facade import MetadataWriteOutcome, MovieImportOutcome
 from gallery.core.library.photos import FolderRef, PhotoRef
 from gallery.core.metadata.failures import Failure
@@ -32,6 +34,33 @@ from gallery.ui.banners import metadata_edit_banner, undo_banner
 
 def _photo(path: Path) -> PhotoRef:
     return PhotoRef(path=path, size=10, mtime_ns=1)
+
+
+@pytest.fixture(autouse=True)
+def _restore_language() -> Iterator[None]:
+    """语言是模块级的：改过的用例要把语言放回去，否则同进程里后面的用例跟着变。"""
+    before = current_language()
+    yield
+    set_language(before)
+
+
+def test_the_banners_follow_the_selected_language(tmp_path: Path) -> None:
+    """英文目录里的那几档要真的被用到 —— 只有一种语言时这条路没人走过（ADR 0106）。"""
+    set_language("en")
+    renamed = RenameResult(
+        entry=_photo(tmp_path / "renamed.jpg"),
+        previous=_photo(tmp_path / "old.jpg"),
+        renamed=True,
+        journaled=True,
+    )
+    move = MoveResult(
+        moved=(MovedItem(source=tmp_path / "a.jpg", created=tmp_path / "Kyoto" / "a.jpg"),)
+    )
+
+    assert banners.rename_banner(renamed) == "Renamed to “renamed.jpg”."
+    assert banners.photos_bound_banner(1, "Kyoto") == "Recorded 1 photo in “Kyoto”."
+    assert banners.photos_bound_banner(3, "Kyoto") == "Recorded 3 photos in “Kyoto”."
+    assert "⌘Z can undo this" in banners.transfer_banner(move, "Kyoto", "move")
 
 
 def _album(path: Path) -> FolderRef:
@@ -189,7 +218,7 @@ def test_a_move_that_only_copied_does_not_offer_undo(tmp_path: Path) -> None:
         copied=(PastedFile(source=tmp_path / "a.jpg", created=tmp_path / "a的副本.jpg"),)
     )
 
-    text = banners.transfer_banner(result, "京都", "移动")
+    text = banners.transfer_banner(result, "京都", "move")
 
     assert "⌘Z" not in text
     assert "已复制一份" in text
@@ -202,7 +231,7 @@ def test_a_move_that_did_both_still_offers_undo(tmp_path: Path) -> None:
         copied=(PastedFile(source=tmp_path / "a.jpg", created=tmp_path / "a的副本.jpg"),),
     )
 
-    text = banners.transfer_banner(result, "京都", "移动")
+    text = banners.transfer_banner(result, "京都", "move")
 
     assert "⌘Z 可撤销" in text
     assert "已移动 1 项" in text
@@ -264,7 +293,7 @@ def test_a_transfer_that_only_partly_happened_says_so(tmp_path: Path) -> None:
         failures=(Failure.at(tmp_path / "b.jpg", "磁盘已满，请释放空间后重试。"),),
     )
 
-    text = banners.transfer_banner(result, "京都", verb="移动")
+    text = banners.transfer_banner(result, "京都", op="move")
 
     assert "京都" in text
     assert "b.jpg" in text
@@ -279,8 +308,8 @@ def test_moving_promises_that_it_can_be_undone(tmp_path: Path) -> None:
         pasted=(PastedFile(source=tmp_path / "a.jpg", created=tmp_path / "京都" / "a.jpg"),)
     )
 
-    assert "撤销" in banners.transfer_banner(result, "京都", verb="移动")
-    assert "撤销" not in banners.transfer_banner(paste, "京都", verb="复制")
+    assert "撤销" in banners.transfer_banner(result, "京都", op="move")
+    assert "撤销" not in banners.transfer_banner(paste, "京都", op="copy")
 
 
 def test_the_cover_banner_names_both_the_photo_and_its_album() -> None:

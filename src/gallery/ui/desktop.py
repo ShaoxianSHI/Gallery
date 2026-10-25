@@ -14,6 +14,8 @@ from pathlib import Path
 from PySide6.QtCore import QMimeData, QProcess, QUrl
 from PySide6.QtGui import QDesktopServices, QGuiApplication
 
+from gallery.core.i18n import t, t_plural
+
 #: 「在访达中显示」「打开文件夹」「在 QSpace 里打开」用的系统命令。找不到它就降级。
 REVEAL_PROGRAM = "open"
 
@@ -34,13 +36,13 @@ def copy_files_to_clipboard(paths: Sequence[Path]) -> str:
     """
     targets = [Path(path) for path in paths]
     if not targets:
-        return "没有可拷贝的文件。"
+        return t("banner.desktop.clipboard.empty")
     data = QMimeData()
     data.setUrls([QUrl.fromLocalFile(str(target)) for target in targets])
     QGuiApplication.clipboard().setMimeData(data)
     if len(targets) == 1:
-        return f"已拷贝「{targets[0].name}」到剪贴板。"
-    return f"已拷贝 {len(targets)} 项到剪贴板。"
+        return t("banner.desktop.clipboard.copied.single", name=targets[0].name)
+    return t_plural("banner.desktop.clipboard.copied.many", len(targets))
 
 
 def read_files_from_clipboard() -> list[Path]:
@@ -69,7 +71,7 @@ def open_with_default_app(path: Path) -> str | None:
     target = Path(path)
     if QDesktopServices.openUrl(QUrl.fromLocalFile(str(target))):
         return None
-    return f"未能用默认应用打开「{target.name}」，请确认文件是否仍在原处。"
+    return t("banner.desktop.open.default_failed", name=target.name)
 
 
 def open_with_app(paths: Sequence[Path], *, app: Path, name: str) -> str:
@@ -81,15 +83,15 @@ def open_with_app(paths: Sequence[Path], *, app: Path, name: str) -> str:
     """
     targets = [Path(path) for path in paths]
     if not targets:
-        return "没有可打开的文件。"
+        return t("banner.desktop.open.no_files")
     if not QProcess.startDetached(REVEAL_PROGRAM, ["-a", str(app), *map(str, targets)]):
         refusal = open_with_default_app(targets[0])
         if refusal is not None:
             return refusal
-        return f"未能交给 {name}，已改用默认应用打开「{targets[0].name}」。"
+        return t("banner.desktop.open.app_refused", name=name, file=targets[0].name)
     if len(targets) == 1:
-        return f"已在{name}中打开「{targets[0].name}」。"
-    return f"已在{name}中打开 {len(targets)} 项。"
+        return t("banner.desktop.open.app.single", name=name, file=targets[0].name)
+    return t_plural("banner.desktop.open.app.many", len(targets), name=name)
 
 
 def reveal_in_finder(paths: Sequence[Path]) -> str:
@@ -101,16 +103,16 @@ def reveal_in_finder(paths: Sequence[Path]) -> str:
     """
     targets = [Path(path) for path in paths]
     if not targets:
-        return "没有可显示的路径。"
+        return t("banner.desktop.reveal.no_paths")
     if not QProcess.startDetached(REVEAL_PROGRAM, [REVEAL_FLAG, *map(str, targets)]):
         directory = targets[0].parent
         opened = QDesktopServices.openUrl(QUrl.fromLocalFile(str(directory)))
         if opened:
-            return f"未能选中这些文件，已改为在访达里打开「{directory}」。"
-        return "访达未响应，请检查系统权限设置。"
+            return t("banner.desktop.reveal.fallback", folder=directory)
+        return t("banner.desktop.finder.no_response")
     if len(targets) == 1:
-        return f"已在访达中显示「{targets[0].name}」。"
-    return f"已在访达中显示 {len(targets)} 项。"
+        return t("banner.desktop.reveal.single", name=targets[0].name)
+    return t_plural("banner.desktop.reveal.many", len(targets))
 
 
 def open_folder_in_finder(paths: Sequence[Path]) -> str:
@@ -122,14 +124,14 @@ def open_folder_in_finder(paths: Sequence[Path]) -> str:
     """
     targets = [Path(path) for path in paths]
     if not targets:
-        return "没有可打开的文件夹。"
+        return t("banner.desktop.folder.no_folders")
     if not QProcess.startDetached(REVEAL_PROGRAM, [*map(str, targets)]):
-        opened = [QDesktopServices.openUrl(QUrl.fromLocalFile(str(t))) for t in targets]
+        opened = [QDesktopServices.openUrl(QUrl.fromLocalFile(str(target))) for target in targets]
         if not all(opened):
-            return "访达未响应，请检查系统权限设置。"
+            return t("banner.desktop.finder.no_response")
     if len(targets) == 1:
-        return f"已在访达中打开「{targets[0].name}」。"
-    return f"已在访达中打开 {len(targets)} 个文件夹。"
+        return t("banner.desktop.folder.single", name=targets[0].name)
+    return t_plural("banner.desktop.folder.many", len(targets))
 
 
 def open_folder_in_qspace(paths: Sequence[Path], *, app: Path) -> str:
@@ -142,18 +144,18 @@ def open_folder_in_qspace(paths: Sequence[Path], *, app: Path) -> str:
     """
     targets = [Path(path) for path in paths]
     if not targets:
-        return "没有可打开的文件夹。"
+        return t("banner.desktop.folder.no_folders")
     urls = [QUrl.fromLocalFile(str(target)).toString() for target in targets]
     if not QProcess.startDetached(REVEAL_PROGRAM, ["-a", str(app), *urls]):
-        opened = [QDesktopServices.openUrl(QUrl.fromLocalFile(str(t))) for t in targets]
+        opened = [QDesktopServices.openUrl(QUrl.fromLocalFile(str(target))) for target in targets]
         if not all(opened):
-            return "QSpace 未响应，访达也未能打开；请检查系统权限设置。"
+            return t("banner.desktop.qspace.no_response")
         if len(targets) == 1:
-            return f"未能交给 QSpace，已改用访达打开「{targets[0].name}」。"
-        return f"未能交给 QSpace，已改用访达打开 {len(targets)} 个文件夹。"
+            return t("banner.desktop.qspace.folder_fallback.single", name=targets[0].name)
+        return t_plural("banner.desktop.qspace.folder_fallback.many", len(targets))
     if len(targets) == 1:
-        return f"已在 QSpace 中打开「{targets[0].name}」。"
-    return f"已在 QSpace 中打开 {len(targets)} 个文件夹。"
+        return t("banner.desktop.qspace.folder.single", name=targets[0].name)
+    return t_plural("banner.desktop.qspace.folder.many", len(targets))
 
 
 def reveal_in_qspace(paths: Sequence[Path], *, app: Path) -> str:
@@ -165,15 +167,15 @@ def reveal_in_qspace(paths: Sequence[Path], *, app: Path) -> str:
     """
     targets = [Path(path) for path in paths]
     if not targets:
-        return "没有可显示的路径。"
+        return t("banner.desktop.reveal.no_paths")
     urls = [QUrl.fromLocalFile(str(target)).toString() for target in targets]
     if not QProcess.startDetached(REVEAL_PROGRAM, ["-a", str(app), *urls]):
         # 降级借 ``reveal_in_finder``：它自己还有第二级（选不中就打开所在文件夹），
         # 抄一份下来就成了两条各自演化的降级链。
-        return f"未能交给 QSpace，{reveal_in_finder(targets)}"
+        return t("banner.desktop.qspace.reveal_fallback", message=reveal_in_finder(targets))
     if len(targets) == 1:
-        return f"已在 QSpace 中显示「{targets[0].name}」。"
-    return f"已在 QSpace 中显示 {len(targets)} 项。"
+        return t("banner.desktop.qspace.reveal.single", name=targets[0].name)
+    return t_plural("banner.desktop.qspace.reveal.many", len(targets))
 
 
 __all__ = [
