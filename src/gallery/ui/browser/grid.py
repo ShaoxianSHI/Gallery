@@ -610,20 +610,23 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
         # 动画起点是「上一帧画出来」的那一档：上一次过渡可能还没跑完，从中间值接着走。
         drawn_edge = self._delegate.draw_edge
         # 三件都必须在**改几何之前**读：那次延迟重排会把滚动位置夹到已排版那一批的末尾。
-        scroll_from = self.verticalScrollBar().value()
+        start_scroll = self.verticalScrollBar().value()
         old_cell = self._cell
         old_columns = self._measured_columns(old_cell, viewport_width=self.viewport().width())
         old_layout = self._layout(columns=old_columns, cell=old_cell)
         anchor = self._anchor()
-        self._apply_geometry(cell, scroll_from)
+        self._apply_geometry(cell, start_scroll)
         new_columns = self._measured_columns(cell)
         new_layout = self._layout(columns=new_columns, cell=cell)
-        scroll_shift = 0
+        # 缩小档位会让内容变短，当前位置可能超出新的范围而被夹到末尾。**这一夹要补进
+        # 过渡的起点**，否则第 0 帧画的是另一屏（内容往上跳一大截），而它没有被锚点救回来。
+        scroll_from = min(start_scroll, self.verticalScrollBar().maximum())
+        scroll_shift = scroll_from - start_scroll
         if old_columns > 0 and new_columns > 0 and old_columns != new_columns:
             # **只在真的换行时居中**：Qt 会顺手把当前项设成第 0 行，无条件居中会拽回顶部。
             anchored = self._anchored_scroll_value(anchor, new_layout)
             if anchored is not None:
-                scroll_shift = anchored - scroll_from
+                scroll_shift = anchored - start_scroll
                 scroll_from = anchored
             self._center_on_row(self._focus_row(anchor.row), new_layout)
         self._transition = (

@@ -383,6 +383,47 @@ def test_the_scroll_anchor_is_a_photo_not_the_top_of_the_level(
     assert abs(rect.center().y() - grid.viewport().height() // 2) <= 2
 
 
+def test_a_clamped_start_still_shows_the_old_screen_in_the_first_frame(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """缩小一档后新范围比当前滚动位置短时，起点会被夹到末尾。
+
+    **视口正中落在分区最后一行没铺满的空处**时没有锚点可摆回去，这一夹就没人补 ——
+    第 0 帧画的是往上跳了一大截的另一屏。在末段看「这一组最后几张」正是这个样子。
+    """
+    grid, model = make_sectioned_grid(qt_app, tmp_path, counts=(8,) * 60)
+    layout = grid._layout()
+    headers = _header_rows(model)
+    last = headers[-2] - 1  # 倒数第二段的最后一张，它那一行只摆了两格
+    bar = grid.verticalScrollBar()
+    bar.setValue(
+        layout.rect(last).top() + layout.rect(last).height() // 2 - grid.viewport().height() // 2
+    )
+    settle_grid(qt_app, grid)
+    grid.select_row(last, ensure_visible=False)
+    settle_grid(qt_app, grid)
+
+    middle = QPoint(grid.viewport().width() // 2, grid.viewport().height() // 2)
+    assert not grid.indexAt(middle).isValid(), "前提：视口正中落在分区末尾那一行的空处"
+    start = bar.value()
+    before = {
+        row: grid.visualRect(model.index(row, 0)).top()
+        for row in range(model.rowCount())
+        if grid.visualRect(model.index(row, 0)).isValid()
+    }
+    before = {row: top for row, top in before.items() if 0 <= top < grid.viewport().height()}
+
+    grid.set_target_edge(THUMBNAIL_SIZES[0])
+    transition = grid._transition
+    assert transition is not None, "前提：这一档换了行，走的是过渡"
+    assert start > bar.maximum(), "前提：起点超出新范围，会被夹住"
+    assert transition.scroll_shift != 0, "这一夹没被补进过渡"
+
+    for row, was in before.items():
+        painted = grid.visualRect(model.index(row, 0)).top() + transition.offset(row, 0.0).y()
+        assert painted == was, f"第 {row} 行第 0 帧画在了 {painted}，原来在 {was}"
+
+
 def test_a_transition_without_sections_still_reads_the_old_fields() -> None:
     """``old_columns`` / ``new_cell`` 这些读法是派生属性 —— 既有测试与锚点算术都靠它们。"""
     transition = GridTransition(
