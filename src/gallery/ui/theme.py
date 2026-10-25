@@ -101,11 +101,17 @@ def _application(app: QApplication | None = None) -> QApplication:
 def current_theme(app: QApplication | None = None) -> AppTheme:
     """按应用当前的调色板算出一份主题。
 
+    深浅由**系统那一档**决定，底色再去看用户给这一档挑的颜色（ADR 0097）—— 两档各自被限制在
+    自己那一侧（见 ``normalize_background``），所以 ``is_dark`` 不会因为挑了颜色而翻。
     **不能**调用 ``QApplication.setPalette``：那会把这份颜色固定。
     """
-    palette = _application(app).palette()
+    instance = _application(app)
+    palette = instance.palette()
     background = QColor(palette.color(BACKGROUND_ROLE))
     dark = background.lightnessF() < 0.5
+    custom = _custom_background(instance, dark=dark)
+    if custom is not None:
+        background = custom
     return AppTheme(
         background=background,
         text=QColor(palette.color(QPalette.ColorRole.WindowText)),
@@ -114,6 +120,18 @@ def current_theme(app: QApplication | None = None) -> AppTheme:
         notice=QColor(255, 207, 112) if dark else QColor(138, 90, 0),
         error=QColor(255, 155, 138) if dark else QColor(163, 49, 42),
     )
+
+
+def _custom_background(app: QApplication, *, dark: bool) -> QColor | None:
+    """用户给这一档挑的底色；没挑过就是 ``None``（用系统那一档）。"""
+    watcher = app.findChild(ThemeWatcher)
+    if watcher is None:
+        return None
+    value = watcher.background(dark=dark)
+    if not value:
+        return None
+    color = QColor(value)
+    return color if color.isValid() else None
 
 
 def _push_one(widget: QWidget, palette: QPalette) -> None:
@@ -253,10 +271,26 @@ class ThemeWatcher(QObject):
         self._app = app
         self._applying = False
         self._pending = False
+        #: 两档自定义背景色（``#rrggbb``），空串 = 用系统那一档（ADR 0097）。
+        self._backgrounds: dict[bool, str] = {False: "", True: ""}
         app.paletteChanged.connect(self._on_system_theme_changed)
         # macOS 换外观时还会单独报一次 colorSchemeChanged。两个都接：谁先谁后各平台不同，
         # 少接一个就可能漏掉一整轮。
         app.styleHints().colorSchemeChanged.connect(self._on_system_theme_changed)
+
+    def background(self, *, dark: bool) -> str:
+        """用户给这一档挑的底色；空串表示跟随系统。"""
+        return self._backgrounds.get(dark, "")
+
+    def set_backgrounds(self, *, light: str | None, dark: str | None) -> None:
+        """换掉两档自定义背景色（``None`` = 跟随系统），并立刻按新的重下发一轮。"""
+        self._backgrounds = {False: light or "", True: dark or ""}
+        self.refresh()
+
+    def refresh(self) -> None:
+        """重下发一轮主题：调色板 + 自绘控件。**与系统换外观走的是同一条**。"""
+        apply_theme(self._app)
+        self.changed.emit()
 
     def _on_system_theme_changed(self, *_args: object) -> None:
         """收到「系统换外观了」，把真正那一次下发排到这一批事件走完之后：回调触发时应用调色板还是
@@ -271,10 +305,9 @@ class ThemeWatcher(QObject):
         self._pending = False
         self._applying = True
         try:
-            apply_theme(self._app)
+            self.refresh()
         finally:
             self._applying = False
-        self.changed.emit()
 
 
 def ensure_installed(app: QApplication | None = None) -> ThemeWatcher:

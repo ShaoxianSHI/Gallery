@@ -16,6 +16,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtGui import QColor  # noqa: E402
 from PySide6.QtWidgets import QApplication, QDialog, QInputDialog, QMessageBox  # noqa: E402
 from waiting import wait_for_idle  # noqa: E402
 
@@ -293,6 +294,118 @@ def test_about_reports_the_version(window: MainWindow, monkeypatch: pytest.Monke
     window._settings_extras["about"].trigger()
 
     assert shown and __version__ in shown[0]
+
+
+# ---- 外观：两档自定义背景色（ADR 0097）---------------------------------------
+
+
+def _fake_background_dialog(
+    monkeypatch: pytest.MonkeyPatch,
+    values: tuple[str | None, str | None],
+    *,
+    accepted: bool = True,
+) -> dict[str, object]:
+    """把对话框换成一个按剧本返回答案的桩，并记下窗口递给它的初始两档。"""
+    seen: dict[str, object] = {}
+
+    class Fake:
+        def __init__(
+            self,
+            parent: object,
+            *,
+            light: str | None = None,
+            dark: str | None = None,
+        ) -> None:
+            seen["initial"] = (light, dark)
+
+        def exec(self) -> QDialog.DialogCode:
+            return QDialog.DialogCode.Accepted if accepted else QDialog.DialogCode.Rejected
+
+        def values(self) -> tuple[str | None, str | None]:
+            return values
+
+    monkeypatch.setattr(settings_flow, "BackgroundColorDialog", Fake)
+    return seen
+
+
+def _appearance_submenu(window: MainWindow):
+    action = next(one for one in _settings_menu(window).actions() if one.text() == "外观")
+    return action.menu()
+
+
+def test_the_background_entry_sits_at_the_end_of_the_appearance_menu(window: MainWindow) -> None:
+    """它是**第 4 项、单独一段**：那三个单选决定「哪一档」，这一项只给这一档挑个底色。"""
+    actions = _appearance_submenu(window).actions()
+    labels = [action.text() for action in actions if not action.isSeparator()]
+
+    assert labels == ["跟随系统", "浅色", "深色", "自定义背景色…"]
+
+
+def test_custom_backgrounds_are_saved_and_take_effect(
+    window: MainWindow,
+    qt_app: QApplication,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen = _fake_background_dialog(monkeypatch, ("#f5f2ec", "#101018"))
+
+    window._settings_extras["background"].trigger()
+    qt_app.processEvents()
+
+    assert seen["initial"] == (None, None), "第一次打开时两档都还没挑过"
+    prefs = load_session(base=tmp_path / "会话").preferences
+    assert prefs.background_for(dark=False) == "#f5f2ec"
+    assert prefs.background_for(dark=True) == "#101018"
+    # 离屏平台是浅色那一档，窗口应当当场换成挑的那一块
+    assert theme.current_theme().background == QColor("#f5f2ec")
+    image = window.grab().toImage()
+    assert image.pixelColor(window.width() - 24, window.height() // 2) == QColor("#f5f2ec")
+
+
+def test_the_dialog_is_seeded_with_what_is_stored(
+    window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_background_dialog(monkeypatch, ("#f5f2ec", "#101018"))
+    window._settings_extras["background"].trigger()
+
+    seen = _fake_background_dialog(monkeypatch, ("#f5f2ec", "#101018"), accepted=False)
+    window._settings_extras["background"].trigger()
+
+    assert seen["initial"] == ("#f5f2ec", "#101018")
+
+
+def test_reset_brings_the_system_colour_back(
+    window: MainWindow,
+    qt_app: QApplication,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    system = theme.current_theme().background
+    _fake_background_dialog(monkeypatch, ("#f5f2ec", "#101018"))
+    window._settings_extras["background"].trigger()
+    qt_app.processEvents()
+    assert theme.current_theme().background == QColor("#f5f2ec")
+
+    _fake_background_dialog(monkeypatch, (None, None))
+    window._settings_extras["background"].trigger()
+    qt_app.processEvents()
+
+    assert theme.current_theme().background == system
+    prefs = load_session(base=tmp_path / "会话").preferences
+    assert prefs.background_for(dark=False) is None
+    assert prefs.background_for(dark=True) is None
+
+
+def test_cancelling_the_background_dialog_changes_nothing(
+    window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    before = theme.current_theme().background
+    _fake_background_dialog(monkeypatch, ("#f5f2ec", None), accepted=False)
+
+    window._settings_extras["background"].trigger()
+
+    assert theme.current_theme().background == before
+    assert load_session(base=tmp_path / "会话").preferences.background_for(dark=False) is None
 
 
 # ---- 外部应用顺序（ADR 0081）-----------------------------------------------

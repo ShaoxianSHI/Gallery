@@ -22,6 +22,7 @@ from gallery.core.library.session import (
     WindowGeometry,
     legacy_ui_state,
     load_session,
+    normalize_background,
     save_session,
 )
 
@@ -133,6 +134,8 @@ def test_the_written_file_holds_only_the_app_level_fields(tmp_path: Path) -> Non
     assert payload["preferences"] == {
         "animation_speed": "normal",
         "appearance": "system",
+        "light_background": "",
+        "dark_background": "",
         "slideshow_seconds": 3,
         "open_last_library": True,
         "show_file_extensions": True,
@@ -230,6 +233,44 @@ def test_only_the_four_known_pages_can_hold_an_order() -> None:
     """页面名写错要当场报错，不能静默存成一条永远不会被读到的记录。"""
     with pytest.raises(ValueError):
         Preferences().with_external_order("welcome", ("preview",))
+
+
+def test_the_two_backgrounds_round_trip_per_slot(tmp_path: Path) -> None:
+    """两档各存一份，写出去的是规范化之后的 ``#rrggbb``（ADR 0097）。"""
+    preferences = (
+        Preferences().with_background("#F5F2EC", dark=False).with_background("#101018", dark=True)
+    )
+
+    save_session(SessionState(preferences=preferences), base=tmp_path)
+    loaded = load_session(base=tmp_path).preferences
+
+    assert loaded.background_for(dark=False) == "#f5f2ec"
+    assert loaded.background_for(dark=True) == "#101018"
+
+
+def test_a_background_on_the_wrong_side_is_ignored() -> None:
+    """浅色那一档只收浅色：正文色不跟着底走，挑反了就是浅字压浅底，而且不会有任何地方报错。"""
+    assert Preferences().with_background("#101010", dark=False).background_for(dark=False) is None
+    assert Preferences().with_background("#f0f0f0", dark=True).background_for(dark=True) is None
+    # 手改过的文件同样只回「没设过」，不是报错
+    assert Preferences(light_background="#101010").background_for(dark=False) is None
+
+
+def test_the_lightness_split_is_the_one_the_dialog_checks_against() -> None:
+    """分界是 HSL 的 ``L``：``#808080`` 落在浅色那一侧、``#7f7f7f`` 落在深色那一侧。"""
+    assert normalize_background("#808080", dark=False) == "#808080"
+    assert normalize_background("#808080", dark=True) is None
+    assert normalize_background("#7f7f7f", dark=True) == "#7f7f7f"
+    assert normalize_background("#7f7f7f", dark=False) is None
+
+
+@pytest.mark.parametrize("value", ["", "#fff", "f5f2ec", "#gggggg", "#12345", None, 12])
+def test_background_values_that_are_not_colours_fall_back(value: object) -> None:
+    assert normalize_background(value, dark=False) is None
+
+
+def test_a_background_value_tolerates_surrounding_space() -> None:
+    assert normalize_background("  #F5F2EC  ", dark=False) == "#f5f2ec"
 
 
 def test_a_broken_order_is_dropped_per_page(tmp_path: Path) -> None:

@@ -5,6 +5,7 @@
 子包）：那是 ADR 0059 决策 4 的代价，`write_ops.py` 得留在顶层，别为了方向好看往上搬。
 """
 
+from gallery.ui.dialogs.appearance import BackgroundColorDialog
 from gallery.ui.dialogs.event_edit import DELETE_REQUESTED, EventEdit, EventEditDialog
 from gallery.ui.dialogs.external_order import ExternalOrderDialog, OrderItem, OrderPage
 from gallery.ui.dialogs.metadata_edit import MetadataEditDialog
@@ -12,6 +13,7 @@ from gallery.ui.dialogs.movie_import import MovieImportDialog
 
 __all__ = [
     "DELETE_REQUESTED",
+    "BackgroundColorDialog",
     "EventEdit",
     "EventEditDialog",
     "ExternalOrderDialog",

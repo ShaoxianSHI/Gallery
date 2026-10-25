@@ -27,7 +27,7 @@ from gallery.core.library.session import (
     Preferences,
 )
 from gallery.ui import theme
-from gallery.ui.dialogs import ExternalOrderDialog, OrderItem, OrderPage
+from gallery.ui.dialogs import BackgroundColorDialog, ExternalOrderDialog, OrderItem, OrderPage
 from gallery.ui.window.widgets.external_button import order_for_page
 
 #: 影片网站预设：**只收「前缀 + 番号」拼得出地址的站点**。JavDB 按内部 id 或搜索参数走，
@@ -80,7 +80,11 @@ class SettingsFlowMixin:
                 menu, "动画速度", self._set_animation_speed, SPEED_LABELS
             ),
             "appearance": self._add_choice_menu(
-                menu, "外观", self._set_appearance, APPEARANCE_LABELS
+                menu,
+                "外观",
+                self._set_appearance,
+                APPEARANCE_LABELS,
+                extra=self._build_background_action(),
             ),
         }
         order_action = QAction("外部应用顺序…", cast("QWidget", self))
@@ -128,6 +132,13 @@ class SettingsFlowMixin:
         menu.addAction(about)
         self._settings_extras["about"] = about
 
+    def _build_background_action(self) -> QAction:
+        """「外观」子菜单末尾那一项：挑两档背景色（ADR 0097）。"""
+        action = QAction("自定义背景色…", cast("QWidget", self))
+        action.triggered.connect(self._edit_backgrounds)
+        self._settings_extras["background"] = action
+        return action
+
     def _add_choice_menu(
         self,
         parent: QMenu,
@@ -136,6 +147,7 @@ class SettingsFlowMixin:
         labels: dict[object, str],
         *,
         custom: bool = False,
+        extra: QAction | None = None,
     ) -> dict[object, QAction]:
         """建一个单选子菜单，返回「值 → 动作」。**单选靠 ``QActionGroup``，勾选态只由同步写。**"""
         menu = QMenu(title, cast("QWidget", self))
@@ -157,6 +169,10 @@ class SettingsFlowMixin:
             group.addAction(custom_action)
             menu.addAction(custom_action)
             actions[_CUSTOM] = custom_action
+        if extra is not None:
+            # 与上面那三个单选是两种东西：它不改变「哪一档」，只是给这一档再挑个底色。
+            menu.addSeparator()
+            menu.addAction(extra)
         parent.addMenu(menu)
         return actions
 
@@ -208,6 +224,26 @@ class SettingsFlowMixin:
         prefs = replace(self._session.preferences, appearance=str(mode))
         self._store_preferences(prefs)
         theme.apply_appearance(str(mode))
+        self._sync_ui()
+
+    def _edit_backgrounds(self) -> None:
+        """挑两档背景色（ADR 0097）；存的是应用级偏好，换库不重置。"""
+        prefs = self._session.preferences  # type: ignore[attr-defined]
+        dialog = BackgroundColorDialog(
+            cast("QWidget", self),
+            light=prefs.background_for(dark=False),
+            dark=prefs.background_for(dark=True),
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        light, dark = dialog.values()
+        if (light, dark) == (prefs.background_for(dark=False), prefs.background_for(dark=True)):
+            return
+        # 两档各自写回（``with_background`` 一次只管一档，「清掉另一档」也要一并生效）。
+        self._store_preferences(
+            prefs.with_background(light, dark=False).with_background(dark, dark=True)
+        )
+        theme.ensure_installed().set_backgrounds(light=light, dark=dark)
         self._sync_ui()
 
     def _set_slideshow_seconds(self, seconds: object) -> None:

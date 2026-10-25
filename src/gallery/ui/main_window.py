@@ -257,7 +257,13 @@ class MainWindow(
         # 外观要在建控件之前定下来：那一轮 palette 是逐控件下发的。
         theme.apply_appearance(self._session.preferences.resolved_appearance())
         # 窗口自己画底色（ADR 0096），所以换外观时它也得重画一遍 —— 调色板下发不会替它重绘。
-        theme.ensure_installed().changed.connect(self.update)
+        watcher = theme.ensure_installed()
+        watcher.changed.connect(self.update)
+        # 用户给两档挑的底色要在第一轮下发里就位（ADR 0097），否则第一帧用的是系统那一档。
+        prefs = self._session.preferences
+        watcher.set_backgrounds(
+            light=prefs.background_for(dark=False), dark=prefs.background_for(dark=True)
+        )
         # 标题栏那一段交给窗口自己画（否则 macOS 会铺一层半透明材质，与底色差一档），**标题文字**
         # 也得自己画，否则系统那份会与 ``TitleBar`` 叠在一起（ADR 0025）。
         self._owns_title_bar = theme.unify_title_bar(self)

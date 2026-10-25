@@ -381,6 +381,47 @@ def test_calendar_page_follows_the_system_theme(
         window.close()
 
 
+def test_a_custom_background_applies_to_its_own_side_only(
+    appearance: Callable[..., None],
+) -> None:
+    """用户给两档各挑了一个底色（ADR 0097）：换到哪一档就用哪一档，没挑的仍跟随系统。"""
+    watcher = theme.ensure_installed()
+    try:
+        watcher.set_backgrounds(light="#f5f2ec", dark="#101018")
+
+        appearance(window=LIGHT_WINDOW, base=LIGHT_BASE)
+        light = theme.current_theme()
+        assert light.background == QColor("#f5f2ec")
+        assert not light.is_dark
+
+        appearance(window=DARK_WINDOW, base=DARK_BASE)
+        dark = theme.current_theme()
+        assert dark.background == QColor("#101018")
+        assert dark.is_dark
+    finally:
+        watcher.set_backgrounds(light=None, dark=None)
+
+    # 清掉之后回到系统那一档
+    assert theme.current_theme().background == DARK_BASE
+
+
+def test_one_custom_background_leaves_the_other_side_alone(
+    appearance: Callable[..., None],
+) -> None:
+    """只挑了深色那一档：浅色下仍然是系统那块白（ADR 0097）。"""
+    watcher = theme.ensure_installed()
+    try:
+        watcher.set_backgrounds(light=None, dark="#101018")
+
+        appearance(window=LIGHT_WINDOW, base=LIGHT_BASE)
+        assert theme.current_theme().background == LIGHT_BASE
+
+        appearance(window=DARK_WINDOW, base=DARK_BASE)
+        assert theme.current_theme().background == QColor("#101018")
+    finally:
+        watcher.set_backgrounds(light=None, dark=None)
+
+
 def test_dark_background_is_the_deeper_content_colour(appearance: Callable[..., None]) -> None:
     """深色下要的是内容区那种更深的黑，不是系统窗口那层灰：实测 macOS 深色 ``Window`` 是
     ``#323232``、``Base`` 是 ``#171717``，取 ``Window`` 会让整块界面浮着一层灰。

@@ -124,3 +124,4 @@
 | [0094](0094-external-order-splits-photos-and-videos.md) | 外部应用顺序分成图片与视频两份，合计四个位置 | 已接受 |
 | [0095](0095-quicktime-player-on-the-video-page.md) | 视频页第一项换成系统 QuickTime Player：预览打不开视频 | 已接受 |
 | [0096](0096-one-background-painter.md) | 整块窗口只在窗口上铺一次底，其余各层不铺 | 已接受 |
+| [0097](0097-custom-background-colours.md) | 「外观」里可以自己挑两档背景色，各收自己那一侧 | 已接受 |

@@ -45,6 +45,10 @@ DEFAULT_ANIMATION_SPEED: Final = "normal"
 APPEARANCES: Final = ("system", "light", "dark")
 DEFAULT_APPEARANCE: Final = "system"
 
+#: 背景色的分界（HSL 的 ``L``）：浅色那一档要亮于它、深色那一档要暗于它。
+#: 只换底不换字，所以两档各自被限制在自己那一侧 —— 否则正文压在背景上看不清（ADR 0097）。
+BACKGROUND_LIGHTNESS_SPLIT: Final = 0.5
+
 #: 放映自动前进的默认间隔（秒）。界面上的档位是 3 / 5 / 8 / 15。
 DEFAULT_SLIDESHOW_SECONDS: Final = 3
 MIN_SLIDESHOW_SECONDS: Final = 1
@@ -74,6 +78,9 @@ class Preferences:
 
     animation_speed: str = DEFAULT_ANIMATION_SPEED
     appearance: str = DEFAULT_APPEARANCE
+    #: 两档自定义背景色（``#rrggbb``），空串 = 用系统那一档（ADR 0097）。
+    light_background: str = ""
+    dark_background: str = ""
     slideshow_seconds: int = DEFAULT_SLIDESHOW_SECONDS
     open_last_library: bool = True
     #: 网格与大图页标题上写不写文件扩展名（视图菜单里那一项）。
@@ -102,6 +109,18 @@ class Preferences:
             return seconds
         return DEFAULT_SLIDESHOW_SECONDS
 
+    def background_for(self, *, dark: bool) -> str | None:
+        """这一档该用的背景色；没设过（或设得不合法）返回 ``None`` —— 用系统那一档。"""
+        value = self.dark_background if dark else self.light_background
+        return normalize_background(value, dark=dark)
+
+    def with_background(self, value: str | None, *, dark: bool) -> Preferences:
+        """设 / 清某一档；``None`` 或空串表示恢复系统那一档。"""
+        clean = "" if value is None else (normalize_background(value, dark=dark) or "")
+        if dark:
+            return replace(self, dark_background=clean)
+        return replace(self, light_background=clean)
+
     def order_for(self, page: str) -> tuple[str, ...]:
         """这一页的次序；没设过就是空元组 —— 空元组的意思是「照内置次序」。"""
         for name, ids in self.external_orders:
@@ -125,6 +144,8 @@ class Preferences:
         return {
             "animation_speed": self.resolved_animation_speed(),
             "appearance": self.resolved_appearance(),
+            "light_background": self.background_for(dark=False) or "",
+            "dark_background": self.background_for(dark=True) or "",
             "slideshow_seconds": self.resolved_slideshow_seconds(),
             "open_last_library": self.open_last_library,
             "show_file_extensions": self.show_file_extensions,
@@ -144,6 +165,8 @@ class Preferences:
         return cls(
             animation_speed=speed if isinstance(speed, str) else DEFAULT_ANIMATION_SPEED,
             appearance=appearance if isinstance(appearance, str) else DEFAULT_APPEARANCE,
+            light_background=normalize_background(value.get("light_background"), dark=False) or "",
+            dark_background=normalize_background(value.get("dark_background"), dark=True) or "",
             slideshow_seconds=seconds
             if isinstance(seconds, int) and not isinstance(seconds, bool)
             else DEFAULT_SLIDESHOW_SECONDS,
@@ -151,6 +174,27 @@ class Preferences:
             show_file_extensions=show_extensions if isinstance(show_extensions, bool) else True,
             external_orders=_parse_external_orders(value.get("external_orders")),
         )
+
+
+def normalize_background(value: object, *, dark: bool) -> str | None:
+    """把一个颜色收成 ``#rrggbb``；不认识、或者落在另一侧的一律当没设过。
+
+    **为什么要卡那一侧**：正文色取的是系统那一套（深色下浅字、浅色下深字），而这一档的颜色
+    只换底不换字 —— 挑反了就是浅字压浅底，而那种界面没有任何地方会报错。
+    """
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if len(text) != 7 or not text.startswith("#"):
+        return None
+    try:
+        red, green, blue = (int(text[index : index + 2], 16) for index in (1, 3, 5))
+    except ValueError:
+        return None
+    lightness = (max(red, green, blue) + min(red, green, blue)) / 2 / 255
+    if (lightness < BACKGROUND_LIGHTNESS_SPLIT) != dark:
+        return None
+    return f"#{red:02x}{green:02x}{blue:02x}"
 
 
 def _parse_external_orders(value: object) -> tuple[tuple[str, tuple[str, ...]], ...]:
@@ -327,6 +371,7 @@ def _parse_window(value: object) -> WindowGeometry | None:
 __all__ = [
     "ANIMATION_SPEEDS",
     "APPEARANCES",
+    "BACKGROUND_LIGHTNESS_SPLIT",
     "DEFAULT_ANIMATION_SPEED",
     "DEFAULT_APPEARANCE",
     "DEFAULT_SLIDESHOW_SECONDS",
@@ -340,5 +385,6 @@ __all__ = [
     "WindowGeometry",
     "legacy_ui_state",
     "load_session",
+    "normalize_background",
     "save_session",
 ]
