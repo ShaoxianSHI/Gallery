@@ -6,6 +6,7 @@
 
 - 标题独占一行、整行宽，照片从下一行开头继续，一段的末尾不会被下一段补满；
 - 量列数要量**一段够长的分区**，不能被「被标题截断的第一行」骗到；
+- 换形态之后、按新形态重排之前，**不许按旧版面量列数**；
 - 标题不可选中、不可激活、不可改名，右键按空白处理；
 - 切档过渡的第 0 帧仍是切档前那一屏（含标题），标题只平移、不换尺寸；
 - 换回卡片式之后排版方式跟着切回去。
@@ -147,6 +148,43 @@ def test_the_columns_are_measured_from_a_long_enough_section(
 
     assert grid._first_row_columns() == grid._laid_out_columns
     assert grid._laid_out_columns > 2
+
+
+def test_the_column_check_ignores_a_layout_built_for_the_other_shape(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """量列数只对「按当前形态排过版」的那一屏成立。
+
+    模型刚换成分区式、而按分区式的重排还没落地时，标题在卡片式的固定格子里只占一格：
+    第一段被它挤掉一列。按这个数修正，这一层就长期停在少一列上（修正按宽度记着，
+    只有宽度变过才清），而换一下档就会自己好。
+    """
+    grid = PhotoGrid(icon_edge=176)
+    model = PhotoListModel()
+    model.append(fake_photos(40, tmp_path))
+    grid.setModel(model)
+    grid.resize(1200, 800)
+    grid.show()
+    qt_app.processEvents()
+    settle_grid(qt_app, grid)
+    columns = grid._laid_out_columns
+    assert columns >= 3 and not grid._laid_out_sectioned, "前提没摆出来"
+
+    # 不转事件循环：要的就是「50ms 的核对抢在 0ms 的重排前面」那一瞬。
+    grid._examiner.stop()
+    model.reorder(_grouped_entries(tmp_path), sectioned=True)
+    assert grid._is_sectioned() and not grid._laid_out_sectioned, "前提没摆出来"
+    assert grid._first_row_columns() == columns - 1, "标题没占掉一格，测的不是这个场景"
+
+    grid._examine_columns()
+
+    assert grid._layout_fix == {}, "按上一种形态的版面修正了列数"
+    assert grid._laid_out_columns == columns
+
+    grid._sync_layout_mode()  # 那一次 0ms 重排
+    assert grid._laid_out_sectioned, "换形态之后没重排"
+    assert grid._laid_out_columns == columns
+    assert grid.visualRect(model.index(0, 0)).width() == grid._section_size.width()
 
 
 def test_visible_rows_include_the_header_and_every_photo_on_screen(

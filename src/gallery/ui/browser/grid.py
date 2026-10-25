@@ -528,6 +528,10 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
         intended = self._laid_out_columns
         if available != self._laid_out_width or intended <= 0:
             return
+        # 模型刚换过形态、而按新形态的重排还没落地时，这一屏还是上一种形态的版面：
+        # 分区式标题在卡片式的固定格子里只占一格，第一段会被它挤掉一列。
+        if self._is_sectioned() != self._laid_out_sectioned:
+            return
         measured = self._first_row_columns()
         if measured <= 0 or measured >= intended:
             return
