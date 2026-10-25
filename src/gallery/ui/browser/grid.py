@@ -601,34 +601,40 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
         return 0
 
     def _set_cell(self, cell: QSize, *, animate: bool = False) -> None:
-        """换一次格子尺寸：改几何、全量重排、位置留在原处，**换了行才重新定位**。
+        """换一次格子尺寸：改几何、全量重排，**用户看着的那一段留在原处**。
 
-        滚动位置在几何变化前后**一格都不动**（拖窗口、换档、核对列数都不该看见它自己走）。唯一会动的
-        是**列数真的变了**（:attr:`GridTransition.reflows`）—— 那时「第 31 行」已是另一批照片，于是
-        把用户正看着的那一格摆到正中。换行时过渡的**起点**也要换算法（:meth:`_anchored_scroll_value`）。
+        滚动位置是内容坐标：格子高矮或列数一变，同一个像素值指的是另一批照片。换档按
+        **相对位置**换算（否则末尾那一档会从中间跳到末尾），有真选区时再把当前项摆到正中；
+        没选中时不居中 —— 居中会把靠边的位置推向两端。第 0 帧靠 ``scroll_shift`` 补回那笔差。
         """
         # 动画起点是「上一帧画出来」的那一档：上一次过渡可能还没跑完，从中间值接着走。
         drawn_edge = self._delegate.draw_edge
-        # 三件都必须在**改几何之前**读：那次延迟重排会把滚动位置夹到已排版那一批的末尾。
+        # 必须在**改几何之前**读：那次延迟重排会把滚动位置夹到已排版那一批的末尾。
         start_scroll = self.verticalScrollBar().value()
+        old_maximum = self.verticalScrollBar().maximum()
         old_cell = self._cell
         old_columns = self._measured_columns(old_cell, viewport_width=self.viewport().width())
         old_layout = self._layout(columns=old_columns, cell=old_cell)
-        anchor = self._anchor()
         self._apply_geometry(cell, start_scroll)
         new_columns = self._measured_columns(cell)
         new_layout = self._layout(columns=new_columns, cell=cell)
-        # 缩小档位会让内容变短，当前位置可能超出新的范围而被夹到末尾。**这一夹要补进
-        # 过渡的起点**，否则第 0 帧画的是另一屏（内容往上跳一大截），而它没有被锚点救回来。
-        scroll_from = min(start_scroll, self.verticalScrollBar().maximum())
+        new_maximum = self.verticalScrollBar().maximum()
+        # 滚动条停在原来的相对位置：换档时照搬像素值会落到另一段内容上；只拖窗口时
+        # 照旧留在同一个值。起点那一夹也要补进 ``scroll_shift``，否则第 0 帧是另一屏。
+        scroll_from = (
+            round(start_scroll / old_maximum * new_maximum)
+            if animate and old_maximum > 0
+            else min(start_scroll, new_maximum)
+        )
         scroll_shift = scroll_from - start_scroll
-        if old_columns > 0 and new_columns > 0 and old_columns != new_columns:
-            # **只在真的换行时居中**：Qt 会顺手把当前项设成第 0 行，无条件居中会拽回顶部。
-            anchored = self._anchored_scroll_value(anchor, new_layout)
-            if anchored is not None:
-                scroll_shift = anchored - start_scroll
-                scroll_from = anchored
-            self._center_on_row(self._focus_row(anchor.row), new_layout)
+        self._centered_row = -1
+        if old_columns > 0 and new_columns > 0:
+            reflows = old_columns != new_columns
+            row = self._focus_row() if reflows else -1
+            if row >= 0:
+                self._center_on_row(row, new_layout)
+            elif reflows or animate:
+                self._keep_scroll(scroll_from)
         self._transition = (
             GridTransition(old_layout, new_layout, scroll_shift)
             if old_columns > 0 and new_columns > 0

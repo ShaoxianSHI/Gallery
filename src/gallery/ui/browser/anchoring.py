@@ -1,75 +1,41 @@
-"""滚动锚定：换几何前后「视口正中那一格」还停在原处。
+"""滚动位置：换几何前后「用户看着的这一段」还留在原处。
 
-列数一变，同一个像素值指的已经是另一批照片（见 :func:`_anchored_scroll_value`），所以
-换几何前先记下正中那一格的行号与屏幕位置，换完再把它摆回去。判据只在这一处，混进排版与
-过渡里就会各算一份、两边对不上。
+同一个像素值在换过格子高矮或列数之后指的是另一批照片，所以换档按**相对位置**换算
+（见 :meth:`PhotoGrid._set_cell`），换行时把选中的那一格摆回正中。判据只在这一处，
+混进排版与过渡里就会各算一份、两边对不上。
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
-from PySide6.QtCore import QPoint
-
 from gallery.ui.browser.layout import GridLayout
 
 
-@dataclass(frozen=True)
-class _ScrollAnchor:
-    """换几何**之前**，视口正中那一格：行号，以及它当时在屏幕上的纵向位置。
-
-    **两个都要**：行号用来算它换完之后落在第几行（列数一变行号就变了），屏幕位置
-    用来把它摆回原处 —— 只摆到视口正中会多挪最多半格，那也是一跳。
-    """
-
-    row: int
-    screen_y: int
-
-
 class AnchoringMixin:
-    """把「用户正看着的那一格」在几何变化前后保持在原处。"""
+    """把「用户看着的这一段」在几何变化前后保持在原处。"""
 
-    def _anchor(self) -> _ScrollAnchor:
-        """视口正中那一格：行号 + 它这一刻在屏幕上的纵向位置。
+    def _focus_row(self) -> int:
+        """换了行之后该把哪一格摆到正中；没有真选区时返回 ``-1``（不居中）。
 
-        **必须在改几何之前问**：改完之后「正中」已经指到另一格、格子高矮也变了。
-        """
-        middle = QPoint(self.viewport().width() // 2, self.viewport().height() // 2)
-        index = self.indexAt(middle)
-        if not index.isValid():
-            return _ScrollAnchor(-1, middle.y())
-        return _ScrollAnchor(index.row(), self.visualRect(index).center().y())
-
-    def _anchored_scroll_value(self, anchor: _ScrollAnchor, layout: GridLayout) -> int | None:
-        """把 ``anchor`` 那一格摆回它换几何之前所在的位置时，滚动条该在的值。
-
-        滚动位置是内容坐标，格子高矮与每行张数一变，同一个像素值指的是**另一批照片** ——
-        照搬旧值，末尾放大一档时滚动条会从 100% 跳到 46% 再一路滑回来。量不出那一格
-        （``row < 0``）时返回 ``None``，调用方退回像素值。
-        """
-        if anchor.row < 0:
-            return None
-        cell = layout.rect(anchor.row)
-        if cell.isEmpty():
-            return None
-        target = cell.top() + cell.height() // 2 - anchor.screen_y
-        bar = self.verticalScrollBar()
-        return max(bar.minimum(), min(bar.maximum(), target))
-
-    def _focus_row(self, anchor_row: int) -> int:
-        """换了行之后该把哪一格摆到正中。
-
-        有真选区时是当前项，否则是换行之前视口正中那一格。**不能退回 ``currentIndex()``**：
-        Qt 在模型重置与每一次重排之后都会把当前项顺手设成第 0 行，照它居中就等于
-        「在相册中间放大一档 → 整屏弹回相册顶部」。
+        没选中时用户看的是「这一片内容」，缩放前后它该待在原处；居中会把靠边的位置
+        推向两端（末尾那一屏尤其明显）。**不能退回 ``currentIndex()``**：Qt 在重排之后
+        会把当前项顺手设成第 0 行，照它居中就是整屏弹回相册顶部。
         """
         if self.genuinely_selected_rows():
-            row = self.current_row()
-            if row >= 0:
-                return row
-        if anchor_row >= 0:
-            return anchor_row
-        return self.current_row()
+            return self.current_row()
+        return -1
+
+    def _keep_scroll(self, value: int) -> None:
+        """把滚动条摆到 ``value`` 并把它当作这一趟的终点：不居中，也就不滑。
+
+        没选中时换一档要的是「同一段内容还在这里」，起点与终点因此是同一个值。
+        """
+        self._centered_row = -1
+        self._scroll_to = value
+        self._driving_scroll = True
+        try:
+            self.verticalScrollBar().setValue(value)
+        finally:
+            self._driving_scroll = False
 
     def _centered_scroll_value(self, row: int, layout: GridLayout) -> int:
         """把第 ``row`` 行摆到正中时滚动条该在的值（夹进范围）。

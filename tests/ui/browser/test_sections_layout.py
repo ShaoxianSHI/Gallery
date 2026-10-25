@@ -25,7 +25,7 @@ from grid_helpers import (  # noqa: E402
     step_transition,
     uniform_layout,
 )
-from PySide6.QtCore import QPoint, QRect, QSize, Qt  # noqa: E402
+from PySide6.QtCore import QItemSelectionModel, QPoint, QRect, QSize, Qt  # noqa: E402
 from PySide6.QtGui import QColor, QImage, QPainter, QPalette, QPixmap  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QStyleOptionViewItem  # noqa: E402
@@ -359,14 +359,18 @@ def test_switching_back_to_cards_restores_the_fixed_grid(
     assert grid._layout().spans[0].headed is False
 
 
-def test_the_scroll_anchor_is_a_photo_not_the_top_of_the_level(
+def test_the_transition_keeps_the_scroll_position_between_sections(
     qt_app: QApplication, tmp_path: Path
 ) -> None:
-    """在分区中间切档：视口正中那一格要留在原处，随后摆到正中（它才是用户在看的那一格）。"""
+    """在分区中间切档：滚动条留在原来的相对位置，第 0 帧仍是切档前那一屏。
+
+    没选中时不居中（居中的话靠边的位置会被推向两端），所以起点与终点是同一个值。
+    """
     grid, model = make_sectioned_grid(qt_app, tmp_path, counts=(40,) * 6)
     bar = grid.verticalScrollBar()
     bar.setValue(bar.maximum() // 2)
     qt_app.processEvents()
+    old_fraction = bar.value() / bar.maximum()
     middle = QPoint(grid.viewport().width() // 2, grid.viewport().height() // 2)
     anchor = grid.indexAt(middle)
     assert anchor.isValid()
@@ -374,13 +378,13 @@ def test_the_scroll_anchor_is_a_photo_not_the_top_of_the_level(
 
     grid.set_target_edge(THUMBNAIL_SIZES[2])
     assert grid._transition is not None, "前提：这一档换了行"
-    first = grid.visualRect(model.index(anchor.row(), 0))
+    first = grid._transition.frame_rect(grid.visualRect(anchor), anchor.row(), 0.0)
     assert abs(first.center().y() - anchor_y) <= 1, "第 0 帧里锚点挪位了"
 
     step_transition(grid, 1.0)
-    rect = grid.visualRect(model.index(anchor.row(), 0))
-    assert rect.isValid(), "锚点那一行被甩出了视口"
-    assert abs(rect.center().y() - grid.viewport().height() // 2) <= 2
+    assert abs(bar.value() / bar.maximum() - old_fraction) <= 0.01, (
+        f"滚动条从 {old_fraction:.3f} 挪到了 {bar.value() / bar.maximum():.3f}"
+    )
 
 
 def test_a_clamped_start_still_shows_the_old_screen_in_the_first_frame(
@@ -388,8 +392,8 @@ def test_a_clamped_start_still_shows_the_old_screen_in_the_first_frame(
 ) -> None:
     """缩小一档后新范围比当前滚动位置短时，起点会被夹到末尾。
 
-    **视口正中落在分区最后一行没铺满的空处**时没有锚点可摆回去，这一夹就没人补 ——
-    第 0 帧画的是往上跳了一大截的另一屏。在末段看「这一组最后几张」正是这个样子。
+    第 0 帧仍要画切档前那一屏：这一夹必须补进过渡的 ``scroll_shift``，否则整块内容
+    先往上跳一大截再滑回来。按相对位置换算也会撞上这一夹（1/2 处缩小就超出范围）。
     """
     grid, model = make_sectioned_grid(qt_app, tmp_path, counts=(8,) * 60)
     layout = grid._layout()
@@ -424,8 +428,75 @@ def test_a_clamped_start_still_shows_the_old_screen_in_the_first_frame(
         assert painted == was, f"第 {row} 行第 0 帧画在了 {painted}，原来在 {was}"
 
 
+def _scroll_partial_row_to_center(grid: PhotoGrid, model: PhotoListModel) -> int:
+    """把倒数第二段最后一行（没铺满）摆到视口正中，返回那一行的行号。
+
+    那一段的最后一行只有两张照片，正中横向多半落在右边的空处 —— 换档时要的
+    「这一片内容」在那里什么也点不中，正是滚动位置最容易跳走的场景。
+    """
+    last = _header_rows(model)[-2] - 1
+    layout = grid._layout()
+    bar = grid.verticalScrollBar()
+    bar.setValue(
+        layout.rect(last).top() + layout.rect(last).height() // 2 - grid.viewport().height() // 2
+    )
+    return last
+
+
+def test_a_zoom_starts_the_scrollbar_at_the_same_relative_position(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """选中照片后换档：滚动条的**起点**停在原来的相对位置，再滑向选中项。
+
+    起点照搬像素值的话，新范围一短它就从中间跳到末尾（再滑回来），那一下很显眼。
+    """
+    grid, model = make_sectioned_grid(qt_app, tmp_path, counts=(8,) * 60)
+    last = _scroll_partial_row_to_center(grid, model)
+    settle_grid(qt_app, grid)
+    grid.select_row(last, ensure_visible=False)
+    settle_grid(qt_app, grid)
+
+    bar = grid.verticalScrollBar()
+    old_fraction = bar.value() / bar.maximum()
+    grid.set_target_edge(THUMBNAIL_SIZES[0])
+    assert grid._transition is not None, "前提：这一档换了行，走的是过渡"
+    assert abs(grid._scroll_from / bar.maximum() - old_fraction) <= 0.01, (
+        f"滚动条起点从 {old_fraction:.3f} 跳到了 {grid._scroll_from / bar.maximum():.3f}"
+    )
+
+
+def test_without_a_selection_the_zoom_keeps_the_scroll_position(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """没有选中时换档不居中：滚动条留在原处，绝不退回 ``currentIndex``（重排后是第 0 行）。
+
+    「当前项还在、真选区是空的」是 Qt 自己造得出来的状态（``setCurrentIndex`` 带
+    ``NoUpdate``）。照它居中，在中段看照片时改一次档就整屏弹回相册顶部。
+    """
+    grid, model = make_sectioned_grid(qt_app, tmp_path, counts=(8,) * 60)
+    selection = grid.selectionModel()
+    assert selection is not None
+    selection.setCurrentIndex(model.index(0, 0), QItemSelectionModel.SelectionFlag.NoUpdate)
+    last = _header_rows(model)[-2] - 1
+    bar = grid.verticalScrollBar()
+    bar.setValue(grid._layout().rect(last).top() - grid.viewport().height() // 2)
+    settle_grid(qt_app, grid)
+    assert grid.genuinely_selected_rows() == [], "前提：真选区是空的"
+    assert grid.current_row() == 0, "前提：当前项就是那个不能信的 0"
+    old_fraction = bar.value() / bar.maximum()
+
+    grid.set_target_edge(THUMBNAIL_SIZES[0])
+    assert grid._transition is not None, "前提：这一档换了行，走的是过渡"
+    step_transition(grid, 1.0)
+
+    assert abs(bar.value() / bar.maximum() - old_fraction) <= 0.01, (
+        f"没选中时滚动条从 {old_fraction:.3f} 挪到了 {bar.value() / bar.maximum():.3f}"
+    )
+    assert bar.value() > 0, "没有选中却滚到了顶部"
+
+
 def test_a_transition_without_sections_still_reads_the_old_fields() -> None:
-    """``old_columns`` / ``new_cell`` 这些读法是派生属性 —— 既有测试与锚点算术都靠它们。"""
+    """``old_columns`` / ``new_cell`` 这些读法是派生属性 —— 过渡取行与既有测试都靠它们。"""
     transition = GridTransition(
         uniform_layout(3, QSize(200, 220), 10),
         uniform_layout(5, QSize(160, 180), 10),

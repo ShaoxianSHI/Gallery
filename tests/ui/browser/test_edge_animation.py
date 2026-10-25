@@ -724,8 +724,9 @@ def test_the_scroll_glides_from_where_it_was_to_where_the_selection_is(
     anchor_y = grid.visualRect(anchor).center().y()
 
     grid.set_target_edge(THUMBNAIL_SIZES[2])
+    assert grid._transition is not None, "前提：这一档换行，走的是过渡"
 
-    first_rect = grid.visualRect(anchor)
+    first_rect = grid._transition.frame_rect(grid.visualRect(anchor), anchor.row(), 0.0)
     assert abs(first_rect.center().y() - anchor_y) <= 1, (
         f"第 0 帧该还停在原处（y={anchor_y}），实际 y={first_rect.center().y()}"
     )
@@ -887,9 +888,10 @@ def test_new_photos_arriving_do_not_lose_the_scroll_position(
 def test_changing_the_thumbnail_size_keeps_the_cell_the_user_is_looking_at(
     qt_app: QApplication, tmp_path: Path
 ) -> None:
-    """换档时摆在正中的是**用户正看着的那一格**：以前取 ``currentIndex``，而 Qt 在重排之后会
-    顺手把当前项设成第 0 行，于是在相册中间放大一档整屏就弹回顶部。只比纵向 ——
-    列数一换，那一格从一行里的第 3 个挪到第 1 个，横向没有可比性。
+    """换档时滚动条留在原来的相对位置，用户正看着的那一格也还在屏上。
+
+    以前取 ``currentIndex``，而 Qt 在重排之后会顺手把当前项设成第 0 行，于是在相册
+    中间放大一档整屏就弹回顶部。只比纵向 —— 列数一换，那一格从一行里的第 3 个挪到第 1 个。
     """
     grid = make_grid(qt_app, tmp_path, 400)
     settle_grid(qt_app, grid)
@@ -902,6 +904,7 @@ def test_changing_the_thumbnail_size_keeps_the_cell_the_user_is_looking_at(
     anchor = grid.indexAt(middle).row()
     assert anchor > 0, f"没滚到相册中间（正中是第 {anchor} 格），测的不是这个场景"
     before_columns = grid._first_row_columns()
+    old_fraction = bar.value() / bar.maximum()
 
     grid.set_target_edge(THUMBNAIL_SIZES[2])
     step_transition(grid, 1.0)
@@ -910,9 +913,9 @@ def test_changing_the_thumbnail_size_keeps_the_cell_the_user_is_looking_at(
     assert after_columns != before_columns, "这一档没换行，测的不是这个场景"
     rect = grid.visualRect(grid.model().index(anchor, 0))
     assert rect.isValid(), f"第 {anchor} 格被甩出视口了"
-    middle_y = grid.viewport().height() // 2
-    assert abs(rect.center().y() - middle_y) <= 1, (
-        f"用户正看着的第 {anchor} 格停在了 y={rect.center().y()}，视口正中是 {middle_y}"
+    assert 0 <= rect.center().y() < grid.viewport().height(), "用户正看着的那一格跑出了屏幕"
+    assert abs(bar.value() / bar.maximum() - old_fraction) <= 0.01, (
+        f"滚动条从 {old_fraction:.3f} 挪到了 {bar.value() / bar.maximum():.3f}"
     )
 
 
@@ -974,17 +977,23 @@ def test_a_level_change_never_flashes_to_another_part_of_the_album(
             assert len(before) > 4, f"{where}：一张都看不见，测的不是这个场景"
 
             grid.set_target_edge(target)
-
-            first = set(grid.visible_rows())
-            # 取样密度跟着格子大小走（大格取样点少），所以按**少的那一边**算占比：
-            # 全都在，就是 100%。
-            kept = len(before & first) / min(len(before), len(first))
-            assert kept > 0.5, (
-                f"{where}、切到 {target} 像素：首帧只剩 {kept:.0%} 是原来那一片"
-                f"（{sorted(before)[:4]}… → {sorted(first)[:4]}…）"
+            transition = grid._transition
+            assert transition is not None, f"{where}：这一档没有过渡"
+            model = grid.model()
+            assert isinstance(model, PhotoListModel)
+            painted = {
+                row: transition.frame_rect(grid.visualRect(model.index(row, 0)), row, 0.0)
+                for row in before
+            }
+            on_screen = sum(
+                1
+                for rect in painted.values()
+                if rect.bottom() >= 0 and rect.top() < grid.viewport().height()
             )
-            rect = grid.visualRect(anchor)
-            assert rect.isValid() and 0 <= rect.center().y() < grid.viewport().height(), (
+            kept = on_screen / len(before)
+            assert kept > 0.9, f"{where}、切到 {target} 像素：首帧只剩 {kept:.0%} 是原来那一片"
+            rect = painted[anchor.row()]
+            assert 0 <= rect.center().y() < grid.viewport().height(), (
                 f"{where}、切到 {target} 像素：首帧里刚才正中的第 {anchor.row()} 张"
                 f"已经不在屏上了（{rect}）"
             )
