@@ -758,3 +758,33 @@ def test_the_separator_is_visible_on_both_appearances(
             )
     finally:
         window.close()
+
+
+def test_a_backdrop_never_paints_outside_the_rect_it_was_asked_for() -> None:
+    """**背景图只能画在给它的那块矩形里**（ADR 0098）。
+
+    调用点之一是条目委托，而 Qt 交给委托的 painter **不按格子裁剪** —— 这一条就是那么来的：
+    画一整块窗口大小的底，会把同一轮里先画过的格子全抹掉，屏幕上只剩最后几行。旧的
+    ``fillRect`` 天生被 ``rect`` 限住，换成整窗图片之后就没有这层保护了。
+    """
+    watcher = theme.ensure_installed()
+    image = QImage(40, 20, QImage.Format.Format_RGB32)
+    image.fill(QColor("#ff0000"))
+    try:
+        watcher.set_backdrops(
+            light=theme.BackdropImage(image=image, mean_lightness=1.0), dark=None
+        )
+        watcher.set_window_size(watcher.backdrop_size())
+        canvas = QImage(200, 120, QImage.Format.Format_RGB32)
+        canvas.fill(QColor("#0000ff"))
+        painter = QPainter(canvas)
+        try:
+            theme.paint_background(painter, QRect(20, 30, 40, 10))
+        finally:
+            painter.end()
+
+        assert canvas.pixelColor(30, 35) == QColor("#ff0000"), "给的那块没画上"
+        assert canvas.pixelColor(150, 100) == QColor("#0000ff"), "画到矩形外面去了"
+        assert canvas.pixelColor(20, 100) == QColor("#0000ff")
+    finally:
+        watcher.set_backdrops(light=None, dark=None)

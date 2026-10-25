@@ -72,12 +72,18 @@ def paint_background(painter: QPainter, rect: QRect, *, origin: QPoint | None = 
         painter.fillRect(rect, current_theme().background)
         return
     offset = origin if origin is not None else QPoint(0, 0)
-    size = watcher.backdrop_size()
-    target = QRect(QPoint(-offset.x(), -offset.y()), size)
-    painter.drawPixmap(target, pixmap)
-    scrim = watcher.backdrop_scrim()
-    if scrim.alpha() > 0:
-        painter.fillRect(rect, scrim)
+    # 委托的 painter **不按格子裁剪**：不自己裁的话，每画一个分区标题就会把同一轮里先画过的
+    # 格子整片抹掉。旧的 ``fillRect`` 天生被 ``rect`` 限住，换成整窗图片就没有这层保护了。
+    painter.save()
+    try:
+        painter.setClipRect(rect, Qt.ClipOperation.IntersectClip)
+        source = QRect(rect.x() + offset.x(), rect.y() + offset.y(), rect.width(), rect.height())
+        painter.drawPixmap(rect, pixmap, source)
+        scrim = watcher.backdrop_scrim()
+        if scrim.alpha() > 0:
+            painter.fillRect(rect, scrim)
+    finally:
+        painter.restore()
 
 
 def _watcher(app: QApplication | None = None) -> ThemeWatcher | None:
