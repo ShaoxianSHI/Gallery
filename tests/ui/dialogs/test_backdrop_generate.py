@@ -1,7 +1,8 @@
-"""「设置 › 背景 › 生成水墨背景…」那个对话框的色板（ADR 0103）。
+"""「设置 › 背景 › 生成水墨背景…」那个对话框的色板（ADR 0103 / 0104）。
 
-锁的是两件事各是一个入口：**双击一格 = 编辑这一套配色的颜色**（预设也能改，改完还在原位），
-**右边那个「+」= 新增一套配色**（不是给某一套加颜色）。生成本身在别的测试里锁。
+锁的是三件事各是一个入口：**双击一格 = 编辑这一套配色的颜色**（预设也能改，改完还在原位），
+**编辑对话框里的「删除这套配色」= 这一格消失**，**右边那个「+」= 新增一套配色**
+（不是给某一套加颜色）。生成本身在别的测试里锁。
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from gallery.ui import theme  # noqa: E402
 from gallery.ui.dialogs import backdrop as backdrop_module  # noqa: E402
 from gallery.ui.dialogs.backdrop import (  # noqa: E402
     MAX_ADDED_PALETTES,
+    MAX_PALETTES,
     BackdropGenerateDialog,
 )
 from gallery.ui.outline import opaque_over  # noqa: E402
@@ -45,26 +47,43 @@ def _chips(dialog: BackdropGenerateDialog) -> list[QPushButton]:
     ]
 
 
-def _fake_palette_dialog(
-    monkeypatch: pytest.MonkeyPatch, *answers: tuple[str, ...] | None
-) -> list[tuple[str, tuple[str, ...]]]:
-    """把「编辑颜色」对话框换成一个按剧本作答的桩；返回每次被问到的 (标题, 初始颜色)。
+DELETE = object()
 
-    ``None`` 表示用户按了取消。
+
+def _fake_palette_dialog(
+    monkeypatch: pytest.MonkeyPatch, *answers: tuple[str, ...] | None | object
+) -> list[tuple[str, tuple[str, ...], bool]]:
+    """把「编辑颜色」对话框换成一个按剧本作答的桩；返回每次被问到的 (标题, 初始颜色, 能否删除)。
+
+    ``None`` 表示用户按了取消，``DELETE`` 表示按了「删除这套配色」。
     """
-    seen: list[tuple[str, tuple[str, ...]]] = []
+    seen: list[tuple[str, tuple[str, ...], bool]] = []
     queue = list(answers)
 
     class Fake:
-        def __init__(self, parent: object, *, title: str, colours: tuple[str, ...]) -> None:
-            seen.append((title, tuple(colours)))
+        def __init__(
+            self,
+            parent: object,
+            *,
+            title: str,
+            colours: tuple[str, ...],
+            can_delete: bool = False,
+        ) -> None:
+            seen.append((title, tuple(colours), can_delete))
+            self.answer = queue.pop(0)
 
         def exec(self) -> QDialog.DialogCode:
-            return QDialog.DialogCode.Rejected if queue[0] is None else QDialog.DialogCode.Accepted
+            return (
+                QDialog.DialogCode.Rejected if self.answer is None else QDialog.DialogCode.Accepted
+            )
+
+        def deleted(self) -> bool:
+            return self.answer is DELETE
 
         def colours(self) -> tuple[str, ...]:
-            answer = queue.pop(0)
-            return tuple(answer) if answer is not None else ()
+            if isinstance(self.answer, (list, tuple)):
+                return tuple(self.answer)
+            return ()
 
     monkeypatch.setattr(backdrop_module, "BackdropPaletteDialog", Fake)
     return seen
@@ -183,8 +202,8 @@ def test_the_add_entry_stops_after_the_limit(
         dialog._add_chip.click()
 
     assert dialog._add_chip.isEnabled() is False
-    assert "最多新增" in dialog._add_chip.toolTip()
-    assert len(dialog._palettes) == len(PALETTES) + MAX_ADDED_PALETTES
+    assert f"最多 {MAX_PALETTES} 套" in dialog._add_chip.toolTip()
+    assert len(dialog._palettes) == MAX_PALETTES
     dialog.deleteLater()
 
 
@@ -251,4 +270,95 @@ def test_an_unchanged_colour_list_leaves_the_palette_alone(
 
     assert dialog._palettes[0] is PALETTES[0]
     assert dialog._palettes[0].name == PALETTES[0].name
+    dialog.deleteLater()
+
+
+def test_deleting_a_palette_drops_that_chip(
+    qt_app: QApplication,  # noqa: ARG001
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """编辑对话框里按「删除这套配色」：那一格消失，别的格留在原位。"""
+    dialog = _dialog()
+    _fake_palette_dialog(monkeypatch, DELETE)
+
+    dialog._buttons[2].double_clicked.emit()
+
+    assert len(dialog._palettes) == len(PALETTES) - 1
+    assert PALETTES[2] not in dialog._palettes
+    assert len(_chips(dialog)) == len(PALETTES) - 1
+    assert dialog._palette is PALETTES[0], "删的不是正在用的那一套，预览不该跳走"
+    dialog.deleteLater()
+
+
+def test_deleting_the_selected_palette_lands_on_the_one_after_it(
+    qt_app: QApplication,  # noqa: ARG001
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dialog = _dialog()
+    _fake_palette_dialog(monkeypatch, DELETE)
+
+    dialog._buttons[0].double_clicked.emit()
+
+    assert dialog._palette is PALETTES[1]
+    assert dialog.recipe().colors == PALETTES[1].colors
+    assert dialog._buttons[0].isChecked() is True
+    assert dialog._buttons[0].toolTip().startswith(PALETTES[1].title)
+    dialog.deleteLater()
+
+
+def test_the_chips_after_a_deleted_one_still_edit_their_own_palette(
+    qt_app: QApplication,  # noqa: ARG001
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """删掉一格之后它后面那些格的序号全都变了，双击必须还落在自己那一套上。"""
+    dialog = _dialog()
+    seen = _fake_palette_dialog(monkeypatch, DELETE, ("#336699", "#b06a3b"))
+
+    dialog._buttons[0].double_clicked.emit()
+    dialog._buttons[0].double_clicked.emit()
+
+    assert seen[1][0] == f"编辑颜色 · {PALETTES[1].title}"
+    assert dialog._palettes[0].colors == palette_from_colors(["#336699", "#b06a3b"]).colors
+    dialog.deleteLater()
+
+
+def test_deleting_frees_a_slot_for_a_new_palette(
+    qt_app: QApplication,  # noqa: ARG001
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dialog = _dialog()
+    _fake_palette_dialog(
+        monkeypatch,
+        *(["#336699", "#b06a3b"] for _ in range(MAX_ADDED_PALETTES)),
+        DELETE,
+    )
+    for _ in range(MAX_ADDED_PALETTES):
+        dialog._add_chip.click()
+    assert dialog._add_chip.isEnabled() is False
+
+    dialog._buttons[0].double_clicked.emit()
+
+    assert dialog._add_chip.isEnabled() is True
+    assert dialog._add_chip.toolTip() == "新增一套配色"
+    dialog.deleteLater()
+
+
+def test_the_last_palette_has_no_delete_exit(
+    qt_app: QApplication,  # noqa: ARG001
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """至少留一套：只剩一格时编辑对话框不再给出「删除这套配色」。"""
+    dialog = _dialog()
+    seen = _fake_palette_dialog(
+        monkeypatch,
+        *([DELETE] * (len(PALETTES) - 1)),
+        ("#336699", "#b06a3b"),
+    )
+
+    while len(dialog._palettes) > 1:
+        dialog._buttons[0].double_clicked.emit()
+    dialog._buttons[0].double_clicked.emit()
+
+    assert len(dialog._palettes) == 1
+    assert seen[-1][2] is False
     dialog.deleteLater()

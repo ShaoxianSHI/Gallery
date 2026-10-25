@@ -1,7 +1,7 @@
 """「编辑颜色」那个对话框：一套配色的颜色清单（ADR 0103）。
 
 锁的是「看到什么就是什么」：每一行一个颜色，点击换色、可以增删，至少两个、最多八个；
-它只交出颜色，怎么变成停点归调用方。
+它只交出颜色，怎么变成停点归调用方。编辑已有配色时还多一个出口：删掉整套（ADR 0104）。
 """
 
 from __future__ import annotations
@@ -15,7 +15,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtGui import QColor  # noqa: E402
-from PySide6.QtWidgets import QApplication, QColorDialog, QPushButton  # noqa: E402
+from PySide6.QtWidgets import (  # noqa: E402
+    QApplication,
+    QColorDialog,
+    QDialog,
+    QPushButton,
+)
 
 from gallery.ui.dialogs.backdrop import (  # noqa: E402
     MAX_PALETTE_COLOURS,
@@ -26,8 +31,12 @@ from gallery.ui.dialogs.backdrop import (  # noqa: E402
 COLOURS = ("#dae3ed", "#cad7e4", "#cfcccc", "#dfc3b1", "#d6b299", "#d0a689")
 
 
-def _dialog(colours: tuple[str, ...] = COLOURS) -> BackdropPaletteDialog:
-    return BackdropPaletteDialog(None, title="编辑颜色 · 雾蓝", colours=colours)
+def _dialog(
+    colours: tuple[str, ...] = COLOURS, *, can_delete: bool = False
+) -> BackdropPaletteDialog:
+    return BackdropPaletteDialog(
+        None, title="编辑颜色 · 雾蓝", colours=colours, can_delete=can_delete
+    )
 
 
 def _pick(monkeypatch: pytest.MonkeyPatch, color: str) -> None:
@@ -114,4 +123,32 @@ def test_cancelling_the_picker_changes_nothing(
     dialog._add_button.click()
 
     assert dialog.colours() == COLOURS
+    dialog.deleteLater()
+
+
+def test_a_brand_new_palette_has_no_delete_exit(qt_app: QApplication) -> None:  # noqa: ARG001
+    """新增配色时还没有「这一套」可删，那个按钮不该出现（ADR 0104）。"""
+    dialog = _dialog()
+
+    assert _buttons(dialog, "paletteDelete") == []
+    assert dialog.deleted() is False
+    dialog.deleteLater()
+
+
+def test_deleting_closes_as_accepted_and_reports_it(qt_app: QApplication) -> None:  # noqa: ARG001
+    dialog = _dialog(can_delete=True)
+
+    _buttons(dialog, "paletteDelete")[0].click()
+
+    assert dialog.deleted() is True
+    assert dialog.result() == QDialog.DialogCode.Accepted
+    dialog.deleteLater()
+
+
+def test_saving_does_not_report_a_deletion(qt_app: QApplication) -> None:  # noqa: ARG001
+    dialog = _dialog(can_delete=True)
+
+    dialog.accept()
+
+    assert dialog.deleted() is False
     dialog.deleteLater()
