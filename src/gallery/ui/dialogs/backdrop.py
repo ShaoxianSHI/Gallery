@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from PySide6.QtCore import QPoint, QSize, Qt
-from PySide6.QtGui import QColor, QPalette, QPixmap
+from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtGui import QColor, QMouseEvent, QPalette, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -22,7 +22,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QMenu,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -34,11 +33,13 @@ from gallery.core.backdrops import (
     Palette,
     Recipe,
     name_suggestion,
+    palette_from_color,
     palette_from_colors,
 )
 from gallery.core.backdrops.generate import colorize, render_field
 from gallery.ui import imaging, theme
 from gallery.ui.dialogs.appearance import dialog_style
+from gallery.ui.layout import clear_layout
 from gallery.ui.outline import opaque_over
 from gallery.ui.theme import AppTheme, rgba
 
@@ -54,9 +55,25 @@ MANAGE_LIST_HEIGHT = 200
 #: 色板按钮里那块小色块的尺寸。
 CHIP_SIZE = QSize(34, 22)
 
-#: 自定义配色最多几个颜色。再多就不是「一两个色相在墨里化开」，而是一块花布；
-#: 那颗 34×22 的色块也放不下。
-MAX_CUSTOM_COLORS = 3
+#: 「+」最多能新增几套配色（八套预设之外）。再多那一行就放不下，也没有必要 ——
+#: 编辑已有配色不受这个限制，它不占新位置。
+MAX_ADDED_PALETTES = 3
+
+#: 编辑颜色那个对话框的宽度、色块高度，以及一套配色允许的颜色个数。
+PALETTE_MIN_WIDTH = 340
+SWATCH_HEIGHT = 24
+MIN_PALETTE_COLOURS = 2
+MAX_PALETTE_COLOURS = 8
+
+
+class _PaletteChip(QPushButton):
+    """色板里的一格：单击选中，双击打开编辑颜色的对话框。"""
+
+    double_clicked = Signal()
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
+        self.double_clicked.emit()
+        event.accept()
 
 
 class BackdropGenerateDialog(QDialog):
@@ -78,12 +95,10 @@ class BackdropGenerateDialog(QDialog):
         self._palette = palette or PALETTES[0]
         self._recipe: Recipe = self._palette.recipe(seed)
         self._outcome = ""
-        self._swatches: dict[str, QPushButton] = {}
-        #: 用户挑颜色建出来的那一套；没挑过是 ``None``。
-        self._custom_palette: Palette | None = None
-        #: 已经挑了几个颜色（按挑选次序，最多 :data:`MAX_CUSTOM_COLORS` 个）。
-        self._custom_colors: list[str] = []
-        self._custom_chip: QPushButton | None = None
+        #: 这一轮能挑的配色：八套预设，加上「+」新增的（改过的预设也在这里，原地替换）。
+        self._palettes: list[Palette] = list(PALETTES)
+        self._buttons: list[_PaletteChip] = []
+        self._added_palettes = 0
         self._add_chip: QPushButton | None = None
         self._watcher = theme.ensure_installed()
         self._watcher.changed.connect(self._apply_theme)
@@ -118,7 +133,7 @@ class BackdropGenerateDialog(QDialog):
         self._preview.setFixedSize(PREVIEW_SIZE)
         layout.addWidget(self._preview, 0, Qt.AlignmentFlag.AlignHCenter)
 
-        hint = QLabel("选择配色；「换一张」更换随机种子，满意后保存。")
+        hint = QLabel("选择配色；双击色块可以编辑它的颜色。")
         hint.setObjectName("backdropHint")
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -145,33 +160,43 @@ class BackdropGenerateDialog(QDialog):
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(6)
-        group = QButtonGroup(self)
-        group.setExclusive(True)
-        for palette in PALETTES:
-            swatch = QPushButton()
-            swatch.setObjectName("backdropChip")
-            swatch.setCheckable(True)
-            swatch.setFixedSize(CHIP_SIZE)
-            swatch.setCursor(Qt.CursorShape.PointingHandCursor)
-            swatch.setToolTip(palette.title)
-            swatch.setStyleSheet(_chip_style([_chip_color(palette)]))
-            swatch.setChecked(palette.name == self._palette.name)
-            swatch.clicked.connect(lambda _checked=False, item=palette: self._choose(item))
-            group.addButton(swatch)
-            row.addWidget(swatch)
-            self._swatches[palette.name] = swatch
         self._palette_row = row
-        self._group = group
+        self._group = QButtonGroup(self)
+        self._group.setExclusive(True)
+        for index, palette in enumerate(self._palettes):
+            chip = self._new_chip(index, palette)
+            row.addWidget(chip)
         self._add_chip = QPushButton("+")
         self._add_chip.setObjectName("backdropAdd")
         self._add_chip.setFixedSize(CHIP_SIZE)
         self._add_chip.setCursor(Qt.CursorShape.PointingHandCursor)
         self._add_chip.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._add_chip.setToolTip("选一个颜色；已有颜色时追加为渐变色")
-        self._add_chip.clicked.connect(self._pick_custom_color)
+        self._add_chip.setToolTip("新增一套配色")
+        self._add_chip.clicked.connect(self._add_palette)
         row.addWidget(self._add_chip)
         row.addStretch(1)
         return row
+
+    def _new_chip(self, index: int, palette: Palette) -> _PaletteChip:
+        """造一格并接上两件事：单击选中，双击编辑它的颜色。"""
+        chip = _PaletteChip()
+        chip.setObjectName("backdropChip")
+        chip.setCheckable(True)
+        chip.setFixedSize(CHIP_SIZE)
+        chip.setCursor(Qt.CursorShape.PointingHandCursor)
+        chip.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        chip.clicked.connect(lambda _checked=False, item=index: self._choose(self._palettes[item]))
+        chip.double_clicked.connect(lambda item=index: self._edit_palette(item))
+        chip.setChecked(palette is self._palette)
+        self._sync_chip(index, chip)
+        self._group.addButton(chip)
+        self._buttons.append(chip)
+        return chip
+
+    def _sync_chip(self, index: int, chip: _PaletteChip) -> None:
+        palette = self._palettes[index]
+        chip.setToolTip(f"{palette.title}（双击可编辑颜色）")
+        chip.setStyleSheet(_chip_style([color for _, color in palette.colors]))
 
     def _build_buttons(self) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -203,89 +228,58 @@ class BackdropGenerateDialog(QDialog):
         self._palette = palette
         self._recipe = palette.recipe(self._seed)
         self._refresh(palette_changed=True)
+        for index, candidate in enumerate(self._palettes):
+            self._buttons[index].setChecked(candidate is palette)
 
-    def _pick_custom_color(self) -> None:
-        """「+」那一格：挑一个颜色，**追加**到自定义配色里（最多 :data:`MAX_CUSTOM_COLORS` 个）。
+    def _edit_palette(self, index: int) -> None:
+        """双击一格：编辑**这一套**配色的颜色（增删或换色），确定之后就替换掉它。
 
-        第一个颜色给出整条渐变的色相；再加的就是「另一头」的色相 —— 一条 1 维的调色板，
-        见 ADR 0102。
+        预设改完也留在这个位置上 —— 用户改的是他双击的那一格，不是「另存一份」。
         """
-        if len(self._custom_colors) >= MAX_CUSTOM_COLORS:
+        palette = self._palettes[index]
+        colours = [color for _, color in palette.colors]
+        dialog = BackdropPaletteDialog(self, title=f"编辑颜色 · {palette.title}", colours=colours)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        start = QColor(self._custom_colors[-1]) if self._custom_colors else QColor("#8ea8bf")
-        chosen = QColorDialog.getColor(start, self, "自定义背景颜色")
-        if not chosen.isValid():
+        edited = dialog.colours()
+        if edited == tuple(colours):
             return
-        self._custom_colors.append(chosen.name())
-        palette = palette_from_colors(self._custom_colors)
-        self._custom_palette = palette
-        chip = self._ensure_custom_chip()
-        chip.setToolTip(f"{palette.title}（右键可重新挑选）")
-        chip.setStyleSheet(_chip_style(self._custom_colors))
-        chip.setChecked(True)
+        was_selected = palette is self._palette
+        updated = palette_from_colors(edited, title=palette.title)
+        self._palettes[index] = updated
+        self._sync_chip(index, self._buttons[index])
+        if was_selected:
+            self._choose(updated)
+
+    def _add_palette(self) -> None:
+        """「+」：**新增一套配色**（不是给某一套加颜色 —— 那是双击色块）。"""
+        if self._added_palettes >= MAX_ADDED_PALETTES:
+            return
+        starter = palette_from_color("#8ea8bf")
+        dialog = BackdropPaletteDialog(
+            self,
+            title="新增配色",
+            colours=[color for _, color in starter.colors],
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        palette = palette_from_colors(dialog.colours(), title="自定义")
+        self._palettes.append(palette)
+        chip = self._new_chip(len(self._palettes) - 1, palette)
+        self._palette_row.insertWidget(self._palette_row.indexOf(self._add_chip), chip)
+        self._added_palettes += 1
         self._sync_add_chip()
         self._choose(palette)
 
     def _sync_add_chip(self) -> None:
-        """到了上限就按不动：「+」只有一个意思，不让它悄悄变成「替换」。"""
+        """到了上限就按不动：「+」只有一个意思（新增一套），不替用户换掉哪一套。"""
         if self._add_chip is None:
             return
-        at_limit = len(self._custom_colors) >= MAX_CUSTOM_COLORS
+        at_limit = self._added_palettes >= MAX_ADDED_PALETTES
         self._add_chip.setEnabled(not at_limit)
         self._add_chip.setToolTip(
-            "最多三个颜色（右键自定义色块可重新挑选）"
-            if at_limit
-            else "选一个颜色；已有颜色时追加为渐变色"
+            f"最多新增 {MAX_ADDED_PALETTES} 套配色" if at_limit else "新增一套配色"
         )
-
-    def _reset_custom_colors(self) -> None:
-        """清掉自定义那一套，回到预设里第一套。右键自定义色块走这里。"""
-        chip = self._custom_chip
-        if chip is not None:
-            self._group.removeButton(chip)
-            self._palette_row.removeWidget(chip)
-            chip.setParent(None)
-            chip.deleteLater()
-        self._custom_chip = None
-        self._custom_palette = None
-        self._custom_colors.clear()
-        self._sync_add_chip()
-        first = PALETTES[0]
-        self._swatches[first.name].setChecked(True)
-        self._choose(first)
-
-    def _show_custom_menu(self, point: QPoint) -> None:
-        """右键自定义色块：菜单里只放「重新挑选」，没有第二条命令。"""
-        chip = self._custom_chip
-        if chip is None:
-            return
-        menu = QMenu(self)
-        reset = menu.addAction("重新挑选颜色…")
-        reset.triggered.connect(self._reset_custom_colors)
-        menu.exec(chip.mapToGlobal(point))
-
-    def _ensure_custom_chip(self) -> QPushButton:
-        """自定义那一格只在第一次挑颜色时出现，之后一直留在「+」左边。"""
-        if self._custom_chip is not None:
-            return self._custom_chip
-        chip = QPushButton()
-        chip.setObjectName("backdropChip")
-        chip.setCheckable(True)
-        chip.setFixedSize(CHIP_SIZE)
-        chip.setCursor(Qt.CursorShape.PointingHandCursor)
-        chip.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        chip.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        chip.customContextMenuRequested.connect(self._show_custom_menu)
-
-        def pick(_checked: bool = False) -> None:
-            if self._custom_palette is not None:
-                self._choose(self._custom_palette)
-
-        chip.clicked.connect(pick)
-        self._group.addButton(chip)
-        self._palette_row.insertWidget(self._palette_row.indexOf(self._add_chip), chip)
-        self._custom_chip = chip
-        return chip
 
     def _reroll(self) -> None:
         self._seed += 1
@@ -336,6 +330,121 @@ class BackdropGenerateDialog(QDialog):
         )
         if self._add_chip is not None:
             self._add_chip.setStyleSheet(_add_chip_style(app_theme))
+
+
+class BackdropPaletteDialog(QDialog):
+    """一套配色的颜色清单：逐行一个色块，可以换色、增删（ADR 0103）。
+
+    **只交出颜色**：存哪儿、怎么变成停点归调用方（``BackdropGenerateDialog``）。
+    """
+
+    def __init__(self, parent: QWidget | None, *, title: str, colours: Sequence[str]) -> None:
+        super().__init__(parent)
+        self._colours = [color.lower() for color in colours]
+        self.setWindowTitle(title)
+        self.setModal(True)
+        self.setMinimumWidth(PALETTE_MIN_WIDTH)
+        self._watcher = theme.ensure_installed()
+        self._watcher.changed.connect(self._apply_theme)
+        self._build()
+        self._apply_theme()
+
+    def colours(self) -> tuple[str, ...]:
+        return tuple(self._colours)
+
+    # ---- 搭建 --------------------------------------------------------------
+
+    def _build(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 14, 16, 12)
+        layout.setSpacing(10)
+
+        hint = QLabel("从上到下就是从浅到深的次序；至少两个颜色，点色块可以换色。")
+        hint.setObjectName("paletteHint")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        self._rows_box = QVBoxLayout()
+        self._rows_box.setContentsMargins(0, 0, 0, 0)
+        self._rows_box.setSpacing(6)
+        layout.addLayout(self._rows_box)
+
+        self._add_button = QPushButton("添加颜色…")
+        self._add_button.setObjectName("paletteAdd")
+        self._add_button.clicked.connect(self._add_colour)
+        layout.addWidget(self._add_button, 0, Qt.AlignmentFlag.AlignLeft)
+
+        layout.addLayout(self._build_buttons())
+        self._rebuild_rows()
+
+    def _build_buttons(self) -> QHBoxLayout:
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 2, 0, 0)
+        row.addStretch(1)
+        cancel = QPushButton("取消")
+        cancel.setObjectName("cancelButton")
+        cancel.clicked.connect(self.reject)
+        row.addWidget(cancel)
+        save = QPushButton("保存")
+        save.setObjectName("saveButton")
+        save.setDefault(True)
+        save.clicked.connect(self.accept)
+        row.addWidget(save)
+        return row
+
+    def _rebuild_rows(self) -> None:
+        clear_layout(self._rows_box)
+        for index, colour in enumerate(self._colours):
+            holder = QWidget()
+            row = QHBoxLayout(holder)
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(8)
+            swatch = QPushButton()
+            swatch.setObjectName("paletteSwatch")
+            swatch.setFixedHeight(SWATCH_HEIGHT)
+            swatch.setCursor(Qt.CursorShape.PointingHandCursor)
+            swatch.setToolTip(f"{colour}（点击换色）")
+            swatch.setStyleSheet(_chip_style([colour]))
+            swatch.clicked.connect(lambda _checked=False, item=index: self._change_colour(item))
+            row.addWidget(swatch, 1)
+            remove = QPushButton("移除")
+            remove.setObjectName("paletteRemove")
+            remove.setEnabled(len(self._colours) > MIN_PALETTE_COLOURS)
+            remove.clicked.connect(lambda _checked=False, item=index: self._remove_colour(item))
+            row.addWidget(remove)
+            self._rows_box.addWidget(holder)
+        self._add_button.setEnabled(len(self._colours) < MAX_PALETTE_COLOURS)
+
+    # ---- 增删改 ------------------------------------------------------------
+
+    def _change_colour(self, index: int) -> None:
+        chosen = QColorDialog.getColor(QColor(self._colours[index]), self, "配色里的颜色")
+        if not chosen.isValid():
+            return
+        self._colours[index] = chosen.name()
+        self._rebuild_rows()
+
+    def _add_colour(self) -> None:
+        if len(self._colours) >= MAX_PALETTE_COLOURS:
+            return
+        chosen = QColorDialog.getColor(QColor(self._colours[-1]), self, "加一个颜色")
+        if not chosen.isValid():
+            return
+        self._colours.append(chosen.name())
+        self._rebuild_rows()
+
+    def _remove_colour(self, index: int) -> None:
+        if len(self._colours) <= MIN_PALETTE_COLOURS:
+            return
+        del self._colours[index]
+        self._rebuild_rows()
+
+    def _apply_theme(self) -> None:
+        app_theme = theme.current_theme()
+        self.setStyleSheet(
+            dialog_style(app_theme, self.palette())
+            + f"QLabel#paletteHint {{ color: {rgba(app_theme.text_at(0.62))}; }}"
+        )
 
 
 class BackdropNameDialog(QDialog):
@@ -669,9 +778,15 @@ def _add_chip_style(app_theme: AppTheme) -> str:
 __all__ = [
     "MANAGE_LIST_HEIGHT",
     "MANAGE_MIN_WIDTH",
+    "MAX_ADDED_PALETTES",
+    "MAX_PALETTE_COLOURS",
+    "MIN_PALETTE_COLOURS",
     "MIN_WIDTH",
+    "PALETTE_MIN_WIDTH",
     "PREVIEW_SIZE",
+    "SWATCH_HEIGHT",
     "BackdropGenerateDialog",
     "BackdropManageDialog",
     "BackdropNameDialog",
+    "BackdropPaletteDialog",
 ]

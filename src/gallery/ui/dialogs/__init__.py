@@ -10,6 +10,7 @@ from gallery.ui.dialogs.backdrop import (
     BackdropGenerateDialog,
     BackdropManageDialog,
     BackdropNameDialog,
+    BackdropPaletteDialog,
 )
 from gallery.ui.dialogs.event_edit import DELETE_REQUESTED, EventEdit, EventEditDialog
 from gallery.ui.dialogs.external_order import ExternalOrderDialog, OrderItem, OrderPage
@@ -21,6 +22,7 @@ __all__ = [
     "BackdropGenerateDialog",
     "BackdropManageDialog",
     "BackdropNameDialog",
+    "BackdropPaletteDialog",
     "BackgroundColorDialog",
     "EventEdit",
     "EventEditDialog",
