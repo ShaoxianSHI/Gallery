@@ -4,7 +4,8 @@
 - 日期：2026-10-25
 - 修改：[0080](0080-external-app-order.md) 决策 1 的「三个位置」—— 增至四个（大图页拆成
   图片 / 视频）；[0067](0067-detail-page-viewers.md) 决策 2 的白名单次序—— 内置次序改成
-  预览、Picview、ImageGlass、地图、Google 地图、访达、QSpace。
+  预览、Picview、ImageGlass、地图、Google 地图、访达、QSpace；[0095](0095-quicktime-player-on-the-video-page.md)
+  给视频页最前加了 QuickTime Player。
 - 相关 ADR：0034（用外部应用打开）、0067（图片应用白名单）、0080（外部应用次序）、
   0081（拖动排序对话框）、0093（IINA 固定在视频页第一位）
 - 相关代码：`src/gallery/core/library/session.py`、`src/gallery/core/external/apps.py`、
@@ -58,7 +59,8 @@ IINA 只属于 `video`；图片应用只属于 `detail`；地图、Google 地图
 
 - 老的自定义 `detail` 次序继续生效在图片页；里面若还留着 `iina`，认不出来就按「没提到」
   处理（ADR 0080 决策 3）。
-- 视频页的默认次序是 **IINA、地图、Google 地图、访达、QSpace**（装了哪几项就摆哪几项）。
+- 视频页的默认次序是 **QuickTime Player、IINA、地图、Google 地图、访达、QSpace**（装了哪几项
+  就摆哪几项，前两项见 ADR 0095）。
 - 用户多排一份次序；换来的是图片页第一项永远是一个图片应用，视频页也不必绕过三个打不开
   视频的条目。
 - 数据安全边界没变：这一层只写 `state.json`，用户的照片一个字节都不碰。

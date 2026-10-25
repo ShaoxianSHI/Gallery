@@ -252,10 +252,10 @@ def _menu_texts(window: MainWindow) -> list[str]:
     return [action.text() for action in window._external_button._menu.actions()]
 
 
-def test_iina_is_first_on_a_video_page_and_not_on_a_photo_page(
+def test_iina_is_first_when_it_is_the_only_player(
     window: MainWindow, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """IINA 只给视频，且固定第一 —— 用户存下来的旧次序里没有它（ADR 0093 / 0094）。"""
+    """只有 IINA 时视频页第一项是它，照片页上没有它 —— 用户存下来的旧次序里没有它（ADR 0093）。"""
     iina_app = Path("/Applications/IINA.app")
     monkeypatch.setattr(apps, "find_app", lambda app: iina_app if app.id == apps.IINA.id else None)
 
@@ -279,20 +279,69 @@ def test_iina_is_first_on_a_video_page_and_not_on_a_photo_page(
     assert "IINA" not in _menu_texts(window)
 
 
+def test_the_system_player_comes_first_on_a_video_page(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """QuickTime Player 与 IINA 都装了时，系统播放器在前（ADR 0095）。
+
+    交出去之前要先暂停应用里的播放器，否则两个播放器会同时出声（ADR 0093）。
+    """
+    quicktime = Path("/System/Applications/QuickTime Player.app")
+    installed = {apps.QUICKTIME.id: quicktime, apps.IINA.id: Path("/Applications/IINA.app")}
+    monkeypatch.setattr(apps, "find_app", lambda app: installed.get(app.id))
+
+    _open(window, "b.avi")
+    window._update_action_states()
+
+    assert _menu_texts(window)[:2] == ["QuickTime Player", "IINA"]
+    default = window._external_button.default_entry()
+    assert default is not None and default.id == apps.QUICKTIME.id
+
+    calls: list[tuple[list[Path], Path, str]] = []
+    monkeypatch.setattr(
+        "gallery.ui.desktop.open_with_app",
+        lambda paths, *, app, name: calls.append((list(paths), app, name)) or "已在其中打开。",
+    )
+    paused: list[bool] = []
+    monkeypatch.setattr(window._video, "pause", lambda: paused.append(True))
+    window._open_in_quicktime()
+
+    assert calls == [([window._library.root / "b.avi"], quicktime, "QuickTime Player")]  # type: ignore[union-attr]
+    assert paused == [True]
+
+    _open(window, "a.jpg")
+    window._update_action_states()
+    assert "QuickTime Player" not in _menu_texts(window)
+
+
 def test_the_video_page_keeps_its_own_order_apart_from_the_photo_page(
     window: MainWindow,
 ) -> None:
     """图片与视频各一份次序（ADR 0094）—— 排视频页不该顺带改掉照片页的默认。"""
-    prefs = window._session.preferences.with_external_order(EXTERNAL_PAGE_VIDEO, ("finder", "iina"))
+    prefs = window._session.preferences.with_external_order(
+        EXTERNAL_PAGE_VIDEO, ("quicktime", "iina", "finder")
+    )
     window._session = window._session.with_preferences(prefs)
 
     _open(window, "b.avi")
     window._update_action_states()
-    assert window._external_order_ids() == ("finder", "iina")
+    assert window._external_order_ids() == ("quicktime", "iina", "finder")
 
     _open(window, "a.jpg")
     window._update_action_states()
     assert window._external_order_ids() == ()
+
+
+def test_a_saved_video_order_without_the_system_player_gets_it_prepended(
+    window: MainWindow,
+) -> None:
+    """存下来的次序是 ADR 0093 之前写的、里面没有 QuickTime：补在最前，不排到最后（ADR 0095）。"""
+    prefs = window._session.preferences.with_external_order(EXTERNAL_PAGE_VIDEO, ("finder", "iina"))
+    window._session = window._session.with_preferences(prefs)
+
+    _open(window, "b.avi")
+
+    assert window._external_order_ids() == ("quicktime", "finder", "iina")
 
 
 def test_the_two_maps_are_offered_on_a_video_page(

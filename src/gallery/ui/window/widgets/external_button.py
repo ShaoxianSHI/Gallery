@@ -60,6 +60,9 @@ MENU_GAP = 2
 #: 提示气泡上写的那一句。
 TOOLTIP = "用外部应用打开当前这一页"
 
+#: 视频页固定排在最前的那一段，按内置次序 —— 存下的次序里缺哪个就补哪个（ADR 0093 / 0095）。
+VIDEO_LEADERS = (apps.QUICKTIME.id, apps.IINA.id)
+
 #: 自绘图标有哪几样。**只认形状，不认品牌**（见 :func:`drawn_icon`）。
 ICON_CALENDAR = "calendar"
 ICON_FOLDER = "folder"
@@ -323,12 +326,13 @@ class _Segment(QToolButton):
 
 
 def order_for_page(preferences: Preferences, page: str) -> tuple[str, ...]:
-    """这一页的次序。**IINA 固定在视频页最前**（ADR 0093 / 0094）：用户存下的旧次序里没有它，
-    不补在最前的话，新装的视频播放器会排到最后。用户自己排过之后以存下的为准。
+    """这一页的次序。**视频页最前那一段是播放器**（ADR 0093 / 0095）：用户存下的旧次序里没有
+    它们，不补在最前的话，新装的播放器会排到最后。用户自己排过之后以存下的为准。
     """
     ids = preferences.order_for(page)
-    if page == EXTERNAL_PAGE_VIDEO and apps.IINA.id not in ids:
-        return (apps.IINA.id, *ids)
+    if page == EXTERNAL_PAGE_VIDEO:
+        missing = tuple(app_id for app_id in VIDEO_LEADERS if app_id not in ids)
+        return (*missing, *ids)
     return ids
 
 

@@ -61,7 +61,15 @@ IMAGEGLASS = App(
 #: Picview：同样是图片浏览器。bundle id 取自它自己的 ``Info.plist``，**大小写照抄**。
 PICVIEW = App(id="picview", name="Picview", bundle_ids=("com.chitaner.Picview",))
 
-#: IINA：视频播放器。只在「正在看一个视频」的大图页上摆，且固定在第一位（ADR 0093）。
+#: 系统自带的 QuickTime Player：**系统里唯一能被叫起来、又真的会播视频的应用**（「预览」不
+#: 收视频，快速查看那个面板没有可用的启动入口，见 ADR 0095）。视频页第一项（ADR 0095）。
+QUICKTIME = App(
+    id="quicktime",
+    name="QuickTime Player",
+    bundle_ids=("com.apple.QuickTimePlayerX",),
+)
+
+#: IINA：视频播放器。只在「正在看一个视频」的大图页上摆，排在 QuickTime 之后（ADR 0093 / 0095）。
 #: bundle id 取自它自己的 Info.plist；显示名是拉丁字母，不译。
 IINA = App(id="iina", name="IINA", bundle_ids=("com.colliderli.iina",))
 
@@ -146,6 +154,7 @@ __all__ = [
     "PICVIEW",
     "PREVIEW",
     "QSPACE",
+    "QUICKTIME",
     "VIEWERS",
     "App",
     "find_app",

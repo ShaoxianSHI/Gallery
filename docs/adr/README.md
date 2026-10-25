@@ -120,5 +120,6 @@
 | [0090](0090-videos-in-the-library.md) | 库里的视频：扫描、第一帧缩略图、双击交给默认应用 | 已接受（决策 4 由 0091 取代） |
 | [0091](0091-video-detail-page.md) | 视频大图页：在应用里播放，而不是交给默认应用 | 已接受 |
 | [0092](0092-video-metadata-panel.md) | 视频的元数据面板：QuickTime 标签、UTC 换本机时区、GPS 进索引 | 已接受（决策 4 的只读提示由 0093 去掉） |
-| [0093](0093-iina-video-external-player.md) | 视频的外部播放器 IINA：固定在详情页第一位 | 已接受 |
+| [0093](0093-iina-video-external-player.md) | 视频的外部播放器 IINA：固定在详情页第一位 | 已接受（视频页第一位由 0095 换成 QuickTime Player） |
 | [0094](0094-external-order-splits-photos-and-videos.md) | 外部应用顺序分成图片与视频两份，合计四个位置 | 已接受 |
+| [0095](0095-quicktime-player-on-the-video-page.md) | 视频页第一项换成系统 QuickTime Player：预览打不开视频 | 已接受 |

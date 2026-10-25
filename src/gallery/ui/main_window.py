@@ -991,15 +991,23 @@ class MainWindow(
 
         每一项自己判自己此刻该不该出现（``ExternalEntry.enabled``），于是列表不用随页面变化
         重建，翻页时 ``refresh`` 问一遍就够。**图片页与视频页各有一份次序**（ADR 0094）：
-        照片页先图片应用、再地图与文件管理，视频页 IINA 在最前（ADR 0093）；日历页最前则是
-        系统「日历」（ADR 0079）。次序本身由用户的偏好覆盖（ADR 0080）。
+        照片页先图片应用、再地图与文件管理，视频页 QuickTime Player 与 IINA 在最前（ADR 0095）；
+        日历页最前则是系统「日历」（ADR 0079）。次序本身由用户的偏好覆盖（ADR 0080）。
         """
         return (
+            ExternalEntry(
+                id=apps.QUICKTIME.id,
+                name=apps.QUICKTIME.name,
+                icon=icon_for(apps.QUICKTIME),
+                enabled=partial(self._video_player_ready, apps.QUICKTIME),
+                pages=(EXTERNAL_PAGE_VIDEO,),
+                available=partial(self._installed, apps.QUICKTIME),
+            ),
             ExternalEntry(
                 id=apps.IINA.id,
                 name=apps.IINA.name,
                 icon=icon_for(apps.IINA),
-                enabled=self._iina_ready,
+                enabled=partial(self._video_player_ready, apps.IINA),
                 pages=(EXTERNAL_PAGE_VIDEO,),
                 available=partial(self._installed, apps.IINA),
             ),
@@ -1079,10 +1087,10 @@ class MainWindow(
         ref = self._detail_photo_ref()
         return ref is not None and not ref.is_video and self._installed(viewer)
 
-    def _iina_ready(self) -> bool:
-        """大图页上正看着一个**视频**，而且本机装着 IINA。"""
+    def _video_player_ready(self, player: App) -> bool:
+        """大图页上正看着一个**视频**，而且本机装着这个播放器（照片不归它）。"""
         ref = self._detail_photo_ref()
-        return ref is not None and ref.is_video and self._installed(apps.IINA)
+        return ref is not None and ref.is_video and self._installed(player)
 
     def _installed(self, app: App) -> bool:
         """这台机器上装着它没有 —— 与「此刻这一页有没有东西可开」是两件事。
@@ -1189,6 +1197,8 @@ class MainWindow(
             self._open_in_google_maps()
         elif entry.id == apps.IINA.id:
             self._open_in_iina()
+        elif entry.id == apps.QUICKTIME.id:
+            self._open_in_quicktime()
         else:
             viewer = next((one for one in apps.VIEWERS if one.id == entry.id), None)
             if viewer is not None:
@@ -1312,18 +1322,27 @@ class MainWindow(
         self._show_banner(message, auto_hide=True)
 
     def _open_in_iina(self) -> None:
-        """把正在看的视频交给 IINA。**先暂停应用里的播放器**：不暂停的话两边会同时出声。
+        """把正在看的视频交给 IINA。"""
+        self._open_video_in(apps.IINA)
 
-        与应用包那一套同源：路径由名册给，起不来就退回系统默认应用并如实说。
+    def _open_in_quicktime(self) -> None:
+        """把正在看的视频交给系统「QuickTime Player」。"""
+        self._open_video_in(apps.QUICKTIME)
+
+    def _open_video_in(self, player: App) -> None:
+        """把正在看的视频交给某个外部播放器。**先暂停应用里的播放器**：不暂停的话两边会同时出声。
+
+        暂停而不是 ``stop()``：交接失败（应用被移走、``open`` 起不来）时页面还在，用户点一下
+        就能接着看（ADR 0093）。应用包路径由名册给，中文显示名只进文案。
         """
-        app = apps.find_app(apps.IINA)
+        app = apps.find_app(player)
         ref = self._detail_photo_ref()
         if app is None or ref is None or not ref.is_video:
-            self._show_banner("没有找到 IINA，它可能已经被移走或卸载了。")
+            self._show_banner(f"没有找到{player.name}，它可能已经被移走或卸载了。")
             return
         self._video.pause()
         self._show_banner(
-            desktop.open_with_app([ref.path], app=app, name=apps.IINA.name), auto_hide=True
+            desktop.open_with_app([ref.path], app=app, name=player.name), auto_hide=True
         )
 
     def _open_in_viewer(self, viewer: App) -> None:
