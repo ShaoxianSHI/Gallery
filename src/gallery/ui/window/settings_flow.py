@@ -1,7 +1,7 @@
 """「设置」菜单：界面与播放的偏好，以及这个库自己的几项配置（ADR 0073）。
 
-三组东西放同一张菜单，但**存的地方不同**：动画速度、外观、外部应用顺序、放映间隔、启动行为
-属于这个应用，写进会话文件；影片网站与缓存上限属于**这个库**，经 ``Library`` 写进
+三组东西放同一张菜单，但**存的地方不同**：动画速度、主题、背景、外部应用顺序、放映间隔、
+启动行为属于这个应用，写进会话文件；影片网站与缓存上限属于**这个库**，经 ``Library`` 写进
 ``config.toml``。**本模块一个用户的照片文件都不碰**；两个库级入口都只调 ``Library`` 的公开方法。
 """
 
@@ -102,27 +102,23 @@ class SettingsFlowMixin:
     """拼「设置」菜单、处理它的动作，并把当前值映射回勾选态。"""
 
     def build_settings_menu(self) -> None:
-        """把「设置」挂到菜单栏末尾。应用级在上、库级居中、维护在最后。"""
+        """把「设置」挂到菜单栏末尾。三段：显示与播放、影片与缓存、维护。"""
         menu = cast("QMenu", self.menuBar().addMenu("设置"))
         self._settings_extras: dict[str, QAction] = {}
-        self._settings_actions = {
-            "animation": self._add_choice_menu(
-                menu, "动画速度", self._set_animation_speed, SPEED_LABELS
-            ),
-            "appearance": self._add_choice_menu(
-                menu,
-                "外观",
-                self._set_appearance,
-                APPEARANCE_LABELS,
-                extra=self._build_background_action(),
-                extras=self._build_backdrop_items(),
-            ),
-        }
-        order_action = QAction("外部应用顺序…", cast("QWidget", self))
-        order_action.triggered.connect(self._edit_external_order)
-        menu.addAction(order_action)
-        self._settings_extras["external_order"] = order_action
-        menu.addSeparator()
+        self._settings_actions: dict[str, dict[object, QAction]] = {}
+        self._settings_actions["appearance"] = self._add_choice_menu(
+            menu, "主题", self._set_appearance, APPEARANCE_LABELS
+        )
+        self._build_background_menu(menu)
+        self._settings_actions["animation"] = self._add_choice_menu(
+            menu, "动画速度", self._set_animation_speed, SPEED_LABELS
+        )
+        self._settings_actions["slideshow"] = self._add_choice_menu(
+            menu,
+            "放映间隔",
+            self._set_slideshow_seconds,
+            {seconds: f"{seconds} 秒" for seconds in SLIDESHOW_SECONDS},
+        )
         self._settings_actions["movie_site"] = self._add_choice_menu(
             menu,
             "影片网站",
@@ -130,29 +126,29 @@ class SettingsFlowMixin:
             {value: label for value, label in MOVIE_SITE_PRESETS},
             custom=True,
         )
-        self._settings_actions["cache"] = self._add_choice_menu(
-            menu,
-            "缓存上限",
-            self._set_cache_limit,
-            {value: label for value, label in CACHE_LIMIT_PRESETS},
-        )
-        self._library_setting_actions = [
-            *self._settings_actions["movie_site"].values(),
-            *self._settings_actions["cache"].values(),
-        ]
-        menu.addSeparator()
-        self._settings_actions["slideshow"] = self._add_choice_menu(
-            menu,
-            "放映间隔",
-            self._set_slideshow_seconds,
-            {seconds: f"{seconds} 秒" for seconds in SLIDESHOW_SECONDS},
-        )
+        order_action = QAction("外部应用顺序…", cast("QWidget", self))
+        order_action.triggered.connect(self._edit_external_order)
+        menu.addAction(order_action)
+        self._settings_extras["external_order"] = order_action
         open_last = QAction("启动时打开上次的库", cast("QWidget", self))
         open_last.setCheckable(True)
         # 用 ``triggered`` 而不是 ``toggled``：同步勾选态时 setChecked 不该再写一次会话。
         open_last.triggered.connect(self._set_open_last_library)
         menu.addAction(open_last)
         self._settings_extras["open_last_library"] = open_last
+        menu.addSeparator()
+        self._settings_actions["cache"] = self._add_choice_menu(
+            menu,
+            "缓存上限",
+            self._set_cache_limit,
+            {value: label for value, label in CACHE_LIMIT_PRESETS},
+        )
+        # 预算与清扫放在一起：它们管的是同一批文件。
+        menu.addAction(self._clear_cache_action)  # type: ignore[attr-defined]
+        self._library_setting_actions = [
+            *self._settings_actions["movie_site"].values(),
+            *self._settings_actions["cache"].values(),
+        ]
         menu.addSeparator()
         log_action = QAction("打开日志文件夹", cast("QWidget", self))
         log_action.triggered.connect(self.open_log_folder)
@@ -164,31 +160,32 @@ class SettingsFlowMixin:
         self._settings_extras["about"] = about
 
     def _build_background_action(self) -> QAction:
-        """「外观」子菜单末尾那一项：挑两档背景色（ADR 0097）。"""
+        """「背景」里那一项：挑两档背景色（ADR 0097）。"""
         action = QAction("自定义背景色…", cast("QWidget", self))
         action.triggered.connect(self._edit_backgrounds)
         self._settings_extras["background"] = action
         return action
 
-    def _build_backdrop_items(self) -> tuple[QAction | QMenu, ...]:
-        """「外观」子菜单末尾再挂的几项：生成、用照片、管理，以及两档各自的背景图清单。"""
-        separator = QAction(cast("QWidget", self))
-        separator.setSeparator(True)
-        generate = QAction("生成背景…", cast("QWidget", self))
-        generate.triggered.connect(self._generate_backdrop)
-        photo = QAction("用照片做背景…", cast("QWidget", self))
-        photo.triggered.connect(self._pick_backdrop_photo)
-        manage = QAction("管理背景…", cast("QWidget", self))
-        manage.triggered.connect(self._manage_backdrops)
-        self._settings_extras["backdrop_generate"] = generate
-        self._settings_extras["backdrop_photo"] = photo
-        self._settings_extras["backdrop_manage"] = manage
+    def _build_background_menu(self, parent: QMenu) -> QMenu:
+        """「背景」子菜单：两档各挑一张图，或者退回纯色（ADR 0097 / 0098）。"""
+        menu = parent.addMenu("背景")
         for dark, label in ((False, "浅色背景"), (True, "深色背景")):
             self._backdrops.menus[dark] = QMenu(label, cast("QWidget", self))
+            menu.addMenu(self._backdrops.menus[dark])
         self._rebuild_backdrop_menus()
-        divider = QAction(cast("QWidget", self))
-        divider.setSeparator(True)
-        return (separator, generate, photo, manage, divider, *self._backdrops.menus.values())
+        menu.addSeparator()
+        menu.addAction(self._build_background_action())
+        menu.addSeparator()
+        for key, label, slot in (
+            ("backdrop_generate", "生成背景…", self._generate_backdrop),
+            ("backdrop_photo", "用照片做背景…", self._pick_backdrop_photo),
+            ("backdrop_manage", "管理背景…", self._manage_backdrops),
+        ):
+            action = QAction(label, cast("QWidget", self))
+            action.triggered.connect(slot)
+            self._settings_extras[key] = action
+            menu.addAction(action)
+        return menu
 
     def _add_choice_menu(
         self,
@@ -198,8 +195,6 @@ class SettingsFlowMixin:
         labels: dict[object, str],
         *,
         custom: bool = False,
-        extra: QAction | None = None,
-        extras: Sequence[QAction | QMenu] = (),
     ) -> dict[object, QAction]:
         """建一个单选子菜单，返回「值 → 动作」。**单选靠 ``QActionGroup``，勾选态只由同步写。**"""
         menu = QMenu(title, cast("QWidget", self))
@@ -221,15 +216,6 @@ class SettingsFlowMixin:
             group.addAction(custom_action)
             menu.addAction(custom_action)
             actions[_CUSTOM] = custom_action
-        if extra is not None:
-            # 与上面那三个单选是两种东西：它不改变「哪一档」，只是给这一档再挑个底色。
-            menu.addSeparator()
-            menu.addAction(extra)
-        for tail in extras:
-            if isinstance(tail, QMenu):
-                menu.addMenu(tail)
-            else:
-                menu.addAction(tail)
         parent.addMenu(menu)
         return actions
 
@@ -389,7 +375,7 @@ class SettingsFlowMixin:
             return
         self._sync_ui()
         self._show_banner(  # type: ignore[attr-defined]
-            f"背景「{item.name}」已保存，在「外观 › 浅色 / 深色背景」里挑它。",  # type: ignore[attr-defined]
+            f"背景「{item.name}」已保存，在「背景 › 浅色 / 深色背景」里挑它。",  # type: ignore[attr-defined]
             auto_hide=True,
         )
 

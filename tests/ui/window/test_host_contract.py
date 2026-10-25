@@ -433,6 +433,8 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
         {
             # 背景图那一族（ADR 0098）：仓库、两组菜单、启动自愈的说明装在一个对象里。
             "_backdrops",
+            # 「缓存上限」下面那一项「清空缩略图缓存」：预算与清扫摆在一起（ADR 0099）。
+            "_clear_cache_action",
             "_detail",
             "_external_button",
             "_grid",

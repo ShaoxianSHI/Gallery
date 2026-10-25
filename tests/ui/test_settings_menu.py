@@ -90,7 +90,53 @@ def test_the_submenus_are_grouped_in_a_stable_order(window: MainWindow) -> None:
         action.text() for action in _settings_menu(window).actions() if action.menu() is not None
     ]
 
-    assert titles == ["动画速度", "外观", "影片网站", "缓存上限", "放映间隔"]
+    assert titles == ["主题", "背景", "动画速度", "放映间隔", "影片网站", "缓存上限"]
+
+
+def test_the_menu_reads_top_to_bottom_in_three_groups(window: MainWindow) -> None:
+    """**每一段都要能一句话念出来**：显示与播放 / 影片与缓存 / 维护。
+
+    分隔线只有三根，意义全在「同段里的东西互不相干却归同一类」这件事上 —— 所以这里连
+    分隔线的位置一起锁住，挪动一项就会红。
+    """
+    labels = [action.text() for action in _settings_menu(window).actions()]
+
+    assert labels == [
+        "主题",
+        "背景",
+        "动画速度",
+        "放映间隔",
+        "影片网站",
+        "外部应用顺序…",
+        "启动时打开上次的库",
+        "",
+        "缓存上限",
+        "清空缩略图缓存",
+        "",
+        "打开日志文件夹",
+        "关于 Gallery",
+    ]
+
+
+def test_clearing_the_cache_sits_next_to_its_limit(window: MainWindow) -> None:
+    """预算与清扫管的是同一批文件，**分居两张顶层菜单就谁也找不到谁**。"""
+    assert window._clear_cache_action in _settings_menu(window).actions()
+    file_menu = window.menuBar().actions()[0].menu()
+    assert window._clear_cache_action not in file_menu.actions()
+
+
+def test_the_backdrop_commands_live_under_background(window: MainWindow) -> None:
+    """主题与背景是两件事：背景那几项不该再挂在「主题」里面。"""
+    theme_menu = next(
+        action.menu() for action in _settings_menu(window).actions() if action.text() == "主题"
+    )
+    background_menu = next(
+        action.menu() for action in _settings_menu(window).actions() if action.text() == "背景"
+    )
+
+    assert [action.text() for action in theme_menu.actions()] == ["跟随系统", "浅色", "深色"]
+    assert "管理背景…" not in [action.text() for action in theme_menu.actions()]
+    assert "管理背景…" in [action.text() for action in background_menu.actions()]
 
 
 def test_medium_is_checked_by_default(window: MainWindow) -> None:
@@ -296,7 +342,7 @@ def test_about_reports_the_version(window: MainWindow, monkeypatch: pytest.Monke
     assert shown and __version__ in shown[0]
 
 
-# ---- 外观：两档自定义背景色（ADR 0097）---------------------------------------
+# ---- 背景：两档自定义背景色（ADR 0097）---------------------------------------
 
 
 def _fake_background_dialog(
@@ -328,26 +374,23 @@ def _fake_background_dialog(
     return seen
 
 
-def _appearance_submenu(window: MainWindow):
-    action = next(one for one in _settings_menu(window).actions() if one.text() == "外观")
+def _background_submenu(window: MainWindow):
+    action = next(one for one in _settings_menu(window).actions() if one.text() == "背景")
     return action.menu()
 
 
-def test_the_background_entry_sits_at_the_end_of_the_appearance_menu(window: MainWindow) -> None:
-    """三个单选决定「哪一档」，后面四行与两组子菜单只管这一档的底长什么样（ADR 0097 / 0098）。"""
-    actions = _appearance_submenu(window).actions()
+def test_the_background_menu_lists_the_slots_before_how_to_fill_them(window: MainWindow) -> None:
+    """先答「这一档用哪张」，再答「纯色用哪一种」，最后才是「从哪儿弄一张新的」（ADR 0097 / 0098）。"""
+    actions = _background_submenu(window).actions()
     labels = [action.text() for action in actions if not action.isSeparator()]
 
     assert labels == [
-        "跟随系统",
-        "浅色",
-        "深色",
+        "浅色背景",
+        "深色背景",
         "自定义背景色…",
         "生成背景…",
         "用照片做背景…",
         "管理背景…",
-        "浅色背景",
-        "深色背景",
     ]
 
 
@@ -453,10 +496,10 @@ def _fake_dialog(
     return seen
 
 
-def test_the_external_order_entry_sits_right_after_appearance(window: MainWindow) -> None:
+def test_the_external_order_entry_sits_at_the_end_of_the_play_group(window: MainWindow) -> None:
     texts = [action.text() for action in _settings_menu(window).actions()]
 
-    assert texts.index("外部应用顺序…") == texts.index("外观") + 1
+    assert texts.index("外部应用顺序…") == texts.index("影片网站") + 1
 
 
 def test_the_dialog_gets_four_pages_in_their_current_order(

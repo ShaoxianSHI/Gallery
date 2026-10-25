@@ -652,8 +652,6 @@ class MainWindow(
         file_menu.addAction(self._rename_action)
         file_menu.addAction(self._trash_action)
         file_menu.addSeparator()
-        file_menu.addAction(self._clear_cache_action)
-        file_menu.addSeparator()
         # 「关闭窗口」与「退出」挨着摆（macOS 上同一族）：一个收窗口，一个把应用带走（ADR 0037）。
         file_menu.addAction(self._close_action)
         file_menu.addAction(self._quit_action)
