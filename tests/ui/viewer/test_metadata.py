@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (  # noqa: E402
     QVBoxLayout,
     QWidget,
 )
+from rendering import render_over  # noqa: E402
 
 from gallery.core.events.models import Event, shorten_name  # noqa: E402
 from gallery.core.metadata.report import build_report  # noqa: E402
@@ -60,8 +61,13 @@ def contrast_ratio(first: QColor, second: QColor) -> float:
 
 
 def sample_colors(widget: QWidget) -> tuple[QColor, QColor]:
-    """返回 ``(底色, 与底色对比最强的颜色)``：前者是铺得最多的，后者当作正文色。"""
-    image = widget.grab().toImage().convertToFormat(QImage.Format.Format_RGBA8888)
+    """返回 ``(底色, 与底色对比最强的颜色)``：前者是铺得最多的，后者当作正文色。
+
+    面板自己不铺底（ADR 0096），所以要把它画在**窗口那块底色**上再量。
+    """
+    image = render_over(widget, theme.current_theme().background).convertToFormat(
+        QImage.Format.Format_RGBA8888
+    )
     counts: Counter[int] = Counter()
     for y in range(0, image.height(), 2):
         for x in range(0, image.width(), 2):
@@ -103,11 +109,12 @@ def test_panel_matches_the_window_background_with_readable_text(
     panel.deleteLater()
 
 
-def test_the_scroll_area_follows_a_theme_change(qt_app: QApplication, report: object) -> None:
-    """换外观时**滚动区那一整块也要跟着变**，不能只在四边露出新底色。
+def test_the_panel_paints_no_background_of_its_own(qt_app: QApplication, report: object) -> None:
+    """面板这一支**自己不铺底色**，换外观之后也还是（ADR 0096）。
 
-    深色下建出来、随后切到浅色：面板中间（滚动区与它里面那一层）曾经停在旧的深色上 ——
-    重设样式表会把这一支重新 polish 一遍，内容区的调色板在那一步被弹回上一轮的底色。
+    铺一层的话有两个症状：窗口将来换了背景它跟不上；换外观时那一层还会停在上一轮的底色上
+    ——「面板四边已经变白，中间却压着一整块旧色」就是这么来的。所以量的是**声明**：
+    属性、``AutoFillBackground`` 与那份透明调色板，三样都得在。
     """
     original = QPalette(qt_app.palette())
     dark = QPalette(original)
@@ -117,8 +124,6 @@ def test_the_scroll_area_follows_a_theme_change(qt_app: QApplication, report: ob
         QPalette.ColorRole.AlternateBase,
     ):
         dark.setColor(role, QColor("#171717"))
-    for role in (QPalette.ColorRole.WindowText, QPalette.ColorRole.Text):
-        dark.setColor(role, QColor("#ffffff"))
 
     panel: MetadataPanel | None = None
     try:
@@ -128,20 +133,24 @@ def test_the_scroll_area_follows_a_theme_change(qt_app: QApplication, report: ob
         panel.set_report(report)  # type: ignore[arg-type]
         panel.show()
         qt_app.processEvents()
-        assert sample_colors(panel)[0] == theme.current_theme().background, (
-            "深色下建出来的那一份就先不对了，后面那条切换也就没了意义"
-        )
 
+        # 换一轮外观：调色板会被整棵控件树重设一遍，正是「又铺回去」最容易发生的那一刻。
         qt_app.setPalette(original)
         qt_app.paletteChanged.emit(original)
         qt_app.processEvents()
 
+        for widget in (panel, panel._scroll, panel._scroll.viewport(), panel._body):
+            name = type(widget).__name__
+            assert widget.testAttribute(Qt.WidgetAttribute.WA_NoSystemBackground), (
+                f"{name} 会自己铺一层底色"
+            )
+            assert not widget.autoFillBackground(), f"{name} 会自己铺一层底色"
+            assert widget.palette().color(QPalette.ColorRole.Base).alpha() == 0, (
+                f"{name} 下发的那份调色板又变回不透明了"
+            )
+
         background, text = sample_colors(panel)
-        assert background == theme.current_theme().background, (
-            f"换到浅色后滚动区还是 {background.name()}，窗口是"
-            f" {theme.current_theme().background.name()}"
-            " —— 面板四边已经变白，中间却压着一整块旧色"
-        )
+        assert background == theme.current_theme().background
         assert contrast_ratio(background, text) >= MIN_CONTRAST
     finally:
         qt_app.setPalette(original)

@@ -23,6 +23,7 @@ import shiboken6  # noqa: E402
 from PySide6.QtCore import QPoint, QRect, Qt  # noqa: E402
 from PySide6.QtGui import QImage, QRegion  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
+from rendering import render_over  # noqa: E402
 
 from gallery.core.library.photos import PhotoRef  # noqa: E402
 from gallery.core.metadata.facets import PhotoFacets  # noqa: E402
@@ -374,7 +375,6 @@ def test_a_cell_waiting_for_its_thumbnail_is_not_a_grey_block(
     「满格灰块 → 小一圈的照片」这一对帧看起来就是闪一下、尺寸还在变（照片按比例缩在
     格子里摆，比整格小）。月视图同一个状态画的是圆点，所以它不闪 —— 周视图对齐过来。
     """
-    from PySide6.QtGui import QImage
 
     from gallery.ui.calendar.layout import cell_rect
 
@@ -398,8 +398,7 @@ def test_a_cell_waiting_for_its_thumbnail_is_not_a_grey_block(
     waiting = view.photos_in_hour(ANCHOR, 8)[0]
     assert view.photo(waiting) is None, "前提不成立：那一格的图已经到了"
 
-    shot = QImage(view._grid.size(), QImage.Format.Format_RGBA8888)
-    view._grid.render(shot)
+    shot = render_over(view._grid, view.background)
     x, y, width, height = cell_rect(view.column_width(), row_px)
     left = int(view.content_left() + x)
     # **渲染的是网格自己**：滚动只影响视口那一层，网格坐标始终是 `hour * row`
@@ -427,7 +426,6 @@ def test_the_now_line_stays_inside_todays_own_column(
     终点不能取整条时间轴的右沿：那看着像一条从今天往后延伸的进度线 —— 而右边那几天
     与它无关，那几天各有各的钟点。
     """
-    from PySide6.QtGui import QImage
 
     view = WeekView(ThumbStore())
     view.resize(900, 600)
@@ -444,8 +442,7 @@ def test_the_now_line_stays_inside_todays_own_column(
     left = view.content_left()
     background = view.background.name()
 
-    shot = QImage(view._grid.size(), QImage.Format.Format_RGBA8888)
-    view._grid.render(shot)
+    shot = render_over(view._grid, view.background)
     y = int(view.now_row() * view.row_height())
 
     # **一像素宽的线是带抗锯齿的**：落点常常被底色掺过一手，于是钉的是

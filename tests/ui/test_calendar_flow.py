@@ -22,6 +22,7 @@ from PySide6.QtCore import QEvent, QPoint, QPointF, Qt  # noqa: E402
 from PySide6.QtGui import QImage, QMouseEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
+from rendering import render_over  # noqa: E402
 from waiting import wait_for_idle, wait_until, window_is_idle  # noqa: E402
 
 from gallery.core.library.calendar import month_matrix  # noqa: E402
@@ -626,8 +627,7 @@ def test_a_picked_empty_cell_shows_only_the_selection_tint(
 
     from gallery.ui.calendar.layout import cell_rect
 
-    image = QImage(view._grid.size(), QImage.Format.Format_RGBA8888)
-    view._grid.render(image)
+    image = render_over(view._grid, view.background)
     column, row = view.column_width(), view.row_height()
     offset = (MARCH - view.days()[0]).days
     # 那一格**真正**落在哪儿（与画的时候同一个算法，别拍脑袋取点）

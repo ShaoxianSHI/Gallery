@@ -21,6 +21,8 @@ from PySide6.QtGui import (
     QImage,
     QKeySequence,
     QMouseEvent,
+    QPainter,
+    QPaintEvent,
     QResizeEvent,
     QShowEvent,
 )
@@ -254,7 +256,8 @@ class MainWindow(
 
         # 外观要在建控件之前定下来：那一轮 palette 是逐控件下发的。
         theme.apply_appearance(self._session.preferences.resolved_appearance())
-        theme.ensure_installed()
+        # 窗口自己画底色（ADR 0096），所以换外观时它也得重画一遍 —— 调色板下发不会替它重绘。
+        theme.ensure_installed().changed.connect(self.update)
         # 标题栏那一段交给窗口自己画（否则 macOS 会铺一层半透明材质，与底色差一档），**标题文字**
         # 也得自己画，否则系统那份会与 ``TitleBar`` 叠在一起（ADR 0025）。
         self._owns_title_bar = theme.unify_title_bar(self)
@@ -700,6 +703,8 @@ class MainWindow(
         self._rebuild_recent_menu()
         # 补发一次底色：这些 QMenu 是**此刻**才建出来的，而主题只在那一刻已存在的顶层控件上下发。
         theme.ensure_installed()
+        # 菜单栏那一条也不铺底色（ADR 0096）：它露出的必须是窗口画的那一块。
+        theme.mark_see_through(self.menuBar())
 
     # ---- 每一条命令此刻能不能按 ----------------------------------------------
 
@@ -872,6 +877,17 @@ class MainWindow(
         self._pop_condition_action.setEnabled(bool(self._conditions))
 
     # ---- 窗口 --------------------------------------------------------------
+
+    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
+        """整块窗口只在这里铺一次底色，上面每一层都不铺（ADR 0096）。
+
+        标题栏那一段、面包屑、网格与大图区露出的都是这一块 —— 各铺一次的话接缝处迟早差一档。
+        """
+        painter = QPainter(self)
+        try:
+            theme.paint_background(painter, event.rect())
+        finally:
+            painter.end()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         """按住标题栏那一段拖动窗口：内容铺到标题栏底下之后那一条已经是本窗口的客户区，

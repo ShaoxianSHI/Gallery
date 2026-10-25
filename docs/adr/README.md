@@ -123,3 +123,4 @@
 | [0093](0093-iina-video-external-player.md) | 视频的外部播放器 IINA：固定在详情页第一位 | 已接受（视频页第一位由 0095 换成 QuickTime Player） |
 | [0094](0094-external-order-splits-photos-and-videos.md) | 外部应用顺序分成图片与视频两份，合计四个位置 | 已接受 |
 | [0095](0095-quicktime-player-on-the-video-page.md) | 视频页第一项换成系统 QuickTime Player：预览打不开视频 | 已接受 |
+| [0096](0096-one-background-painter.md) | 整块窗口只在窗口上铺一次底，其余各层不铺 | 已接受 |

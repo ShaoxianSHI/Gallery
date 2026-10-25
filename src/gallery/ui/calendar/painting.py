@@ -23,15 +23,14 @@ _metrics: dict[QFont, QFontMetrics] = {}
 _pens: dict[int, tuple[QColor | str, QPen]] = {}
 
 
-def begin(widget: QWidget, background: QColor | str) -> QPainter:
-    """开一个新画笔：抗锯齿开、平滑缩放开、整块先铺上底色。
+def begin(widget: QWidget) -> QPainter:
+    """开一个新画笔：抗锯齿开、平滑缩放开。
 
-    日历包里有**两种**要画的东西 —— 四层视图与它们内部那些不是视图的部件，两者都这么开。
+    **不铺底色**：整块窗口只有一处铺底（ADR 0096），视图这一层是透明的，露出的就是那一块。
     """
     painter = QPainter(widget)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
-    painter.fillRect(widget.rect(), QColor(background))
     return painter
 
 

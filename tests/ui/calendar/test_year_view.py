@@ -22,6 +22,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import QEvent, QPointF, Qt  # noqa: E402
 from PySide6.QtGui import QMouseEvent, QPixmap  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
+from rendering import render_over  # noqa: E402
 
 from gallery.core.library.calendar import month_matrix  # noqa: E402
 from gallery.core.library.photos import PhotoRef  # noqa: E402
@@ -264,12 +265,10 @@ def test_a_picked_day_is_painted_as_selected(
     这一路上，用户选中过哪一天在年视图里根本看不出来。钉的是**画出来的那一屏**：空格子
     （没有照片）与有照片的格子都要看得出高亮，而**旁边那一天一个字都不许多**。
     """
-    from PySide6.QtGui import QImage
-
     view = page.current_view()
     page.show()
     qt_app.processEvents()
-    image = QImage(view.size(), QImage.Format.Format_RGBA8888)
+    image = render_over(view, view.background)
 
     empty = datetime.date(2021, 6, 15)  # fixture 只铺 1 月 1 日到 3 月 1 日
     with_photo = datetime.date(2021, 1, 5)
@@ -277,17 +276,16 @@ def test_a_picked_day_is_painted_as_selected(
     assert not view.photos_of(empty), "前提不成立：空的那一天上有照片"
     assert view.photos_of(with_photo), "前提不成立：那一天上没有照片"
 
-    view.render(image)
     before = {day: _sample(image, _cell_of(view, day)) for day in (empty, with_photo)}
     neighbour_before = _sample(image, _cell_of(view, neighbour))
 
     view.set_selected(empty)
-    view.render(image)
+    image = render_over(view, view.background)
     assert _sample(image, _cell_of(view, empty)) != before[empty], "空的那一天没有高亮"
     assert _sample(image, _cell_of(view, neighbour)) == neighbour_before, "邻居被涂了"
 
     view.set_selected(with_photo)
-    view.render(image)
+    image = render_over(view, view.background)
     assert _sample(image, _cell_of(view, with_photo)) != before[with_photo], (
         "有照片的那一天没有高亮"
     )
@@ -323,8 +321,6 @@ def test_a_picked_day_is_highlighted_in_one_mini_month_only(
     就是「刚刚点了一天，怎么亮了两天」，用户会以为点错了 —— 与照片、「今天」是同一处
     占位造成的重复（照片那次已修，次高亮是新加的）。
     """
-    from PySide6.QtGui import QImage
-
     day = datetime.date(2021, 10, 5)  # fixture 的那年；那一天上没有照片
     assert day in month_matrix(datetime.date(2021, 9, 1)), "前提不成立：9 月那张里没有它"
     assert day in month_matrix(datetime.date(2021, 10, 1)), "前提不成立：10 月那张里没有它"
@@ -334,14 +330,13 @@ def test_a_picked_day_is_highlighted_in_one_mini_month_only(
     view = two_months.current_view()
     assert not view.photos_of(day), "前提不成立：那一天上有照片（高亮会被照片盖住）"
 
-    image = QImage(view.size(), QImage.Format.Format_RGBA8888)
-    view.render(image)
+    image = render_over(view, view.background)
     october = _cell_of(view, day, month=10)
     filler = _cell_of(view, day, month=9)
     before = (_sample(image, october), _sample(image, filler))
 
     view.set_selected(day)
-    view.render(image)
+    image = render_over(view, view.background)
 
     assert _sample(image, october) != before[0], "它自己那张小月里没有高亮"
     assert _sample(image, filler) == before[1], "邻月那张小月里的补位格也被涂了"

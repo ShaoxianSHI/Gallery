@@ -1,5 +1,6 @@
-"""窗口底色的唯一来源：``Window`` / ``Base`` / ``AlternateBase`` 都指向一个颜色，再逐控件下发。
+"""窗口底色的唯一来源：:func:`paint_background` 在窗口上铺一次，其余各层不铺（ADR 0096）。
 
+``Window`` / ``Base`` / ``AlternateBase`` 仍指向同一个颜色 —— 那是给菜单、对话框与输入面用的；
 不碰应用调色板；浮层那几档颜色由 :data:`RESOLVED_ROLES` 固定（ADR 0035）。
 """
 
@@ -9,15 +10,16 @@ import sys
 from dataclasses import dataclass
 from typing import cast
 
-from PySide6.QtCore import QObject, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QPalette
+from PySide6.QtCore import QObject, QRect, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QPainter, QPalette
 from PySide6.QtWidgets import QApplication, QMenu, QWidget
 
 #: 统一底色取自调色板的哪个角色：``Base`` 是内容区色，浅色下白、深色下 ``#171717``。
 BACKGROUND_ROLE = QPalette.ColorRole.Base
 
-#: 所有「铺底色」的角色：窗口与菜单栏、列表与文本视口、表格隔行底色 —— 少改一个
-#: 就有一层仍按系统原来的颜色铺。
+#: 所有「铺底色」的角色：菜单与对话框、列表与文本视口、表格隔行底色 —— 少改一个就有一层仍按系统
+#: 原来的颜色铺。窗口自己**不靠它们**铺（见 :func:`paint_background`），但菜单与对话框是独立的
+#: 顶层窗口，露不出窗口画的那一块，仍然只认这一份。
 BACKGROUND_ROLES = (
     QPalette.ColorRole.Window,
     QPalette.ColorRole.Base,
@@ -45,11 +47,22 @@ COLOR_GROUPS = (
 #: （胶囊、横幅、日历）各有自己的 ``_apply_theme``，重设它们的样式表是白费力气。
 _PALETTE_KEYWORD = "palette("
 
+#: 「这一层不铺底色」的标记（动态属性），见 :func:`mark_see_through`。
+SEE_THROUGH_PROPERTY = "seeThroughSurface"
+
 
 def rgba(color: QColor) -> str:
     """样式表用的颜色写法（``rgba(r, g, b, a)``）：``QColor.name()`` 带透明度时会悄悄丢掉 alpha。"""
     alpha = round(color.alphaF(), 3)
     return f"rgba({color.red()}, {color.green()}, {color.blue()}, {alpha})"
+
+
+def paint_background(painter: QPainter, rect: QRect) -> None:
+    """整块窗口的底色**只在这里铺一次**，上面每一层都不铺（ADR 0096）。
+
+    各层各铺一次的话，接缝处迟早差一档；要换一种背景也只有这一处要改。
+    """
+    painter.fillRect(rect, current_theme().background)
 
 
 @dataclass(frozen=True)
@@ -111,13 +124,40 @@ def _push_one(widget: QWidget, palette: QPalette) -> None:
         widget.setStyleSheet(sheet)
 
 
+def _see_through(palette: QPalette) -> QPalette:
+    """同一份调色板，把三个铺底色的角色换成全透明：控件因而不铺，露出窗口画的那一层。"""
+    clear = QPalette(palette)
+    for role in BACKGROUND_ROLES:
+        for group in COLOR_GROUPS:
+            clear.setColor(group, role, QColor(0, 0, 0, 0))
+    return clear
+
+
+def _wants_see_through(widget: QWidget) -> bool:
+    return bool(widget.property(SEE_THROUGH_PROPERTY))
+
+
+def mark_see_through(widget: QWidget, *, app: QApplication | None = None) -> None:
+    """声明「这个控件不铺底色」，露出的就是窗口画的那一块。
+
+    **要声明，不能让控件自己在 ``changed`` 里补一遍**：:func:`apply_theme` 是遍历整棵树重设
+    调色板的，补的那一遍跑在谁后面就成了排序问题。三样一起设：属性管「以后每轮下发」，
+    ``WA_NoSystemBackground`` 管「Qt 自己别铺」—— 后者是控件属性，换样式表重新 polish 也还在。
+    """
+    widget.setProperty(SEE_THROUGH_PROPERTY, True)
+    widget.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+    widget.setAutoFillBackground(False)
+    _push_one(widget, _see_through(pushed_palette(_application(app))))
+
+
 def _push_palette(app: QApplication, palette: QPalette) -> None:
     """把调色板逐个送到窗口里的每个控件：带样式表的控件会被 ``QStyleSheetStyle`` 塞一份自己的。"""
+    clear = _see_through(palette)
     for top in app.topLevelWidgets():
         pending = [top]
         while pending:
             widget = pending.pop()
-            _push_one(widget, palette)
+            _push_one(widget, clear if _wants_see_through(widget) else palette)
             pending.extend(child for child in widget.children() if isinstance(child, QWidget))
 
 
@@ -179,10 +219,11 @@ def push_palette(widget: QWidget, *, app: QApplication | None = None) -> None:
     """把当前主题的调色板下发到一棵控件树上：主题下发之后才建的控件（搜索框的候选列表）靠它补。"""
     instance = _application(app) if app is None else app
     palette = pushed_palette(instance)
+    clear = _see_through(palette)
     pending = [widget]
     while pending:
         current = pending.pop()
-        _push_one(current, palette)
+        _push_one(current, clear if _wants_see_through(current) else palette)
         pending.extend(child for child in current.children() if isinstance(child, QWidget))
 
 
@@ -253,12 +294,15 @@ __all__ = [
     "BACKGROUND_ROLES",
     "COLOR_GROUPS",
     "RESOLVED_ROLES",
+    "SEE_THROUGH_PROPERTY",
     "AppTheme",
     "ThemeWatcher",
     "apply_appearance",
     "apply_theme",
     "current_theme",
     "ensure_installed",
+    "mark_see_through",
+    "paint_background",
     "push_palette",
     "pushed_palette",
     "rgba",

@@ -1,6 +1,7 @@
 # ADR 0005：整个窗口共用一块底色，跟随系统主题
 
-- 状态：已接受（第二轮修订：标题栏也交给我们画，底色改用内容区色）
+- 状态：已接受（第二轮修订：标题栏也交给我们画，底色改用内容区色；第三轮：铺它的人只剩窗口，见
+  [0096](0096-one-background-painter.md)）
 - 日期：2026-10-05
 - 相关代码：`src/gallery/ui/theme.py`、`src/gallery/ui/main_window.py`、
   `src/gallery/ui/viewer/detail.py`、`src/gallery/ui/viewer/metadata.py`、

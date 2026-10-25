@@ -19,8 +19,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from library_helpers import set_library_ui  # noqa: E402
-from PySide6.QtCore import QPoint, QPointF, Qt  # noqa: E402
-from PySide6.QtGui import QColor, QImage, QPalette  # noqa: E402
+from PySide6.QtCore import QPoint, QPointF, QRect, Qt  # noqa: E402
+from PySide6.QtGui import QColor, QImage, QPainter, QPalette  # noqa: E402
 from PySide6.QtWidgets import QApplication, QFrame, QLabel, QWidget  # noqa: E402
 from waiting import DEFAULT_TIMEOUT_SECONDS, wait_for_idle
 
@@ -250,7 +250,9 @@ def test_detail_view_keeps_the_same_background(qt_app: QApplication, window: Mai
     try:
         expected = theme.current_theme().background
         _open_detail(qt_app, window)
-        assert window._detail.backgroundBrush().color() == expected
+        # 大图区自己不铺底（ADR 0096）：照片四周露出的就是窗口画的那一块。
+        assert window._detail.backgroundBrush().style() == Qt.BrushStyle.NoBrush
+        assert window._detail._scene.backgroundBrush().style() == Qt.BrushStyle.NoBrush
         assert (
             _strip_color(
                 window.grab().toImage(),
@@ -285,12 +287,69 @@ def test_background_follows_the_system_both_ways(
             for name, color in _layer_colors(window.grab().toImage(), window).items():
                 assert color == expected, f"{tag}：{name}那一层是 {color.name()}，没跟上系统"
             _open_detail(qt_app, window)
-            assert window._detail.backgroundBrush().color() == expected
+            assert (
+                _strip_color(
+                    window.grab().toImage(),
+                    _row_y(window, window._detail),
+                    x_from=window.width() - SAMPLE_FROM_RIGHT,
+                )
+                == expected
+            ), f"{tag}：大图区露出的那一块没跟上系统"
             # 大图页会把路径条收起来，下一轮要采样的仍是网格页。
             window.show_grid()
             qt_app.processEvents()
     finally:
         window.close()
+
+
+def test_every_layer_shows_the_one_paint_of_the_window(
+    qt_app: QApplication, window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """整块窗口只铺一次底，上面每一层都不许自己铺（ADR 0096）。
+
+    做法是把窗口那一次铺底换成一种显眼的颜色：**它还露得出来，就说明那一层是透的**。哪一层
+    忘了去掉自己的底色，这里量到的就还是原来那个颜色 —— 接缝也正是这么来的。
+    """
+    sentinel = QColor(1, 2, 3)
+
+    def paint_sentinel(painter: QPainter, rect: QRect) -> None:
+        painter.fillRect(rect, sentinel)
+
+    monkeypatch.setattr(theme, "paint_background", paint_sentinel)
+    try:
+        _without_banner(qt_app, window)
+        for name, color in _layer_colors(window.grab().toImage(), window).items():
+            assert color == sentinel, f"{name}那一层自己铺了底色（{color.name()}）"
+
+        _open_detail(qt_app, window)
+        window.toggle_metadata(True)
+        qt_app.processEvents()
+        assert window._panel.isVisible(), "前提：元数据面板要摆出来"
+        _without_banner(qt_app, window)
+        image = window.grab().toImage()
+        assert _strip_color(image, _row_y(window, window._detail), x_from=window.width() - 40) == (
+            sentinel
+        ), "大图区自己铺了底色"
+        assert _strip_color(image, _row_y(window, window._panel), x_from=window.width() - 280) == (
+            sentinel
+        ), "元数据面板自己铺了底色"
+
+        window.show_grid()
+        window.set_browse_mode(BROWSE_MODE_CALENDAR)
+        qt_app.processEvents()
+        page = window._calendar_page
+        assert _page_strip(window.grab().toImage(), window, page) == sentinel, (
+            "日历那一页自己铺了底色"
+        )
+    finally:
+        monkeypatch.undo()
+        window.close()
+
+
+def _page_strip(image: QImage, window: QWidget, page: QWidget) -> QColor:
+    """在整窗截图里取日历那一页中间那一行 —— 页面自己不铺底，量它只能连窗口一起量。"""
+    origin = page.mapTo(window, QPoint(0, page.height() // 2))
+    return _strip_color(image, origin.y(), x_from=origin.x(), x_to=origin.x() + page.width())
 
 
 def test_calendar_page_follows_the_system_theme(
@@ -314,7 +373,7 @@ def test_calendar_page_follows_the_system_theme(
         ):
             appearance(window=window_colour, base=base_colour)
             expected = theme.current_theme().background
-            color = _strip_color(page.grab().toImage(), page.height() // 2)
+            color = _page_strip(window.grab().toImage(), window, page)
             assert color == expected, (
                 f"{tag}：日历那一页是 {color.name()}，没跟上系统（该是 {expected.name()}）"
             )
@@ -346,8 +405,9 @@ def test_theme_leaves_the_application_palette_to_the_platform(
         appearance(window=DARK_WINDOW, base=DARK_BASE)
         assert qt_app.palette().color(QPalette.ColorRole.Window) == DARK_WINDOW
         assert qt_app.palette().color(QPalette.ColorRole.Base) == DARK_BASE
-        # 而窗口里已经统一成内容区那一个颜色了
-        assert window._grid.viewport().palette().color(QPalette.ColorRole.Base) == DARK_BASE
+        # 而窗口里已经统一成内容区那一个颜色了 —— 铺它的是窗口，网格那层是透的（ADR 0096）
+        assert window.palette().color(QPalette.ColorRole.Window) == DARK_BASE
+        assert window._grid.viewport().palette().color(QPalette.ColorRole.Base).alpha() == 0
     finally:
         window.close()
 

@@ -10,6 +10,7 @@ from PySide6.QtCore import QModelIndex, QPoint, QRect, QSize, Qt
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPalette, QPen, QPixmap
 from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem, QWidget
 
+from gallery.ui import theme
 from gallery.ui.browser.model import (
     ALBUM_ROLE,
     GROUP_COUNT_ROLE,
@@ -303,7 +304,8 @@ class PhotoDelegate(QStyledItemDelegate):
         palette = option.palette
         painter.save()
         try:
-            painter.fillRect(rect, palette.color(QPalette.ColorRole.Base))
+            # 标题底一定要实心（见 docstring），但不能拿视口的调色板 —— 那一份是透明的（ADR 0096）。
+            theme.paint_background(painter, rect)
             text = palette.color(QPalette.ColorRole.WindowText)
             if index.row() > 0:
                 line = QColor(text)

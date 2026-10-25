@@ -12,9 +12,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from PySide6.QtCore import QAbstractAnimation, QEasingCurve, QPoint, QRect, QSize
-from PySide6.QtGui import QPainter, QPaintEvent, QPalette
+from PySide6.QtGui import QPainter, QPaintEvent
 from PySide6.QtWidgets import QStyle, QStyleOptionViewItem
 
+from gallery.ui import theme
 from gallery.ui.browser.layout import GridLayout
 
 #: 视口停止变化多久之后才真正通知界面重取缩略图（拖动窗口时的防抖）。
@@ -250,7 +251,8 @@ class TransitionMixin:
         selection = self.selectionModel()
         try:
             painter.setClipRect(event.rect())
-            painter.fillRect(event.rect(), self.viewport().palette().brush(QPalette.ColorRole.Base))
+            # 这一帧**必须自己铺满**：视口是透明的，不铺就留着上一帧的旧格子（ADR 0096）。
+            theme.paint_background(painter, event.rect())
             for row in self._rows_in_transition_frame(transition, t):
                 index = model.index(row, 0)
                 if not index.isValid():

@@ -18,6 +18,7 @@ from PySide6.QtCore import (
     Signal,
 )
 from PySide6.QtGui import (
+    QBrush,
     QContextMenuEvent,
     QImage,
     QKeyEvent,
@@ -135,6 +136,9 @@ class DetailView(QGraphicsView):
 
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # 视口不铺底色，照片四周露出的就是窗口画的那一块（ADR 0096）。
+        theme.mark_see_through(self)
+        theme.mark_see_through(self.viewport())
         self._theme_watcher = theme.ensure_installed()
         self._theme_watcher.changed.connect(self._apply_theme)
         self._apply_theme()
@@ -181,10 +185,12 @@ class DetailView(QGraphicsView):
         self._fade_in_animation.finished.connect(self._fade_in_finished)
 
     def _apply_theme(self) -> None:
-        """底色跟着主题走：硬编码深色会让浅色主题下点开照片突然变一块黑。"""
-        color = theme.current_theme().background
-        self.setBackgroundBrush(color)
-        self._scene.setBackgroundBrush(color)
+        """照片四周不铺底色（ADR 0096）：硬编码深色会让浅色主题下点开照片突然变一块黑。
+
+        场景那一层也得清掉 —— 它自己不铺，露出的才是窗口那一块。
+        """
+        self.setBackgroundBrush(QBrush())
+        self._scene.setBackgroundBrush(QBrush())
 
     @property
     def has_image(self) -> bool:

@@ -22,6 +22,7 @@ from gallery.core.library.calendar import (
     week_start,
 )
 from gallery.core.library.photos import PhotoRef
+from gallery.ui import theme
 from gallery.ui.calendar.base import LevelView, hour_label
 from gallery.ui.calendar.layout import (
     CARD_RADIUS,
@@ -69,10 +70,16 @@ class WeekView(LevelView):
         self._grid = _TimeGrid(self)
         area = QScrollArea()
         area.setWidget(self._grid)
+        # ``setWidget`` 会把内容区设成 AutoFillBackground；不点掉它，整条时间轴会拿调色板铺一层
+        # （ADR 0096：只有窗口铺底）。
+        theme.mark_see_through(self._grid)
         area.setWidgetResizable(True)
         area.setFrameShape(QFrame.Shape.NoFrame)
         area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         area.setStyleSheet("QScrollArea { background: transparent; }")
+        # 视口是 ``QScrollArea`` 自己的子控件，样式表那条管不到它；它不铺，露出的才是窗口那块
+        # （ADR 0096）。
+        theme.mark_see_through(area.viewport())
         # guard: allow-long-comment（横向滚轮必须传递到 WeekView，滚动区与滚动条都不接焦点）
         # **横向的滚轮事件正好落在这个滚动区上，却不会停在这儿**：``QScrollArea`` 对「横向为主」的
         # 事件直接 ignore，于是传递到 :class:`WeekView` 自己翻页 —— 别加横向滚动条把它截下来。
@@ -278,7 +285,6 @@ class _TimeHeader(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         colors = self._view.colors
-        painter.fillRect(self.rect(), self._view.background)
         days = self._view.days()
         column = self._view.column_width()
         for index, day in enumerate(days):
@@ -349,7 +355,7 @@ class _TimeGrid(QWidget):
         return max(0, first), min(HOURS_PER_DAY - 1, last)
 
     def paintEvent(self, event: object) -> None:  # noqa: N802 - 名字是 Qt 定的
-        painter = begin(self, self._view.background)
+        painter = begin(self)
         colors = self._view.colors
         days = self._view.days()
         column = self._view.column_width()

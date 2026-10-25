@@ -212,7 +212,7 @@ class LevelView(QWidget):
         self.update()
 
     def begin(self) -> QPainter:
-        return begin_painter(self, self._background)
+        return begin_painter(self)
 
     def photo(self, ref: PhotoRef):  # type: ignore[no-untyped-def]
         return self._thumbs.get(ref.path)

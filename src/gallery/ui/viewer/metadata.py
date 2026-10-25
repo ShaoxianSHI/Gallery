@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from functools import partial
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QGuiApplication, QKeySequence, QPainter, QPalette
+from PySide6.QtGui import QAction, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QApplication,
@@ -97,7 +97,7 @@ def _event_value(event: Event, field: EventField) -> str:
 
 
 def panel_style(app_theme: AppTheme) -> str:
-    """面板的文字与按钮样式。底色由 ``paintEvent`` 统一画，文字色全部从主题派生。"""
+    """面板的文字与按钮样式。**底色不在这一份里**：面板自己不铺，露出窗口那一块（ADR 0096）。"""
     return f"""
 #metadataPanel {{ background: transparent; }}
 #metadataGroupTitle {{
@@ -136,10 +136,8 @@ class MetadataPanel(QWidget):
         super().__init__(parent)
         self.setObjectName("metadataPanel")
         self.setFixedWidth(PANEL_WIDTH)
-        # 底色自己画（见 paintEvent）：普通 QWidget 的样式表背景要靠 WA_StyledBackground，
-        # 而 macOS 上连调色板都可能被原生样式覆盖。
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setAutoFillBackground(True)
+        # 面板**不铺底色**（ADR 0096）：整块窗口只有一处铺底，它露出的就是那一块。
+        theme.mark_see_through(self)
         self._theme_watcher = theme.ensure_installed()
         self._theme_watcher.changed.connect(self._apply_theme)
         # **首次下发挪到滚动区建好之后**：:meth:`_apply_theme` 要点名视口，那会儿它还不存在。
@@ -169,6 +167,10 @@ class MetadataPanel(QWidget):
         self._body_layout.setSpacing(10)
         self._body_layout.addStretch(1)
         self._scroll.setWidget(self._body)
+        # 滚动区、它的视口与内容区三处都得点名：``setWidget`` 会把内容区设成 AutoFillBackground，
+        # 而视口是 Qt 自己建的、样式表那条管不到它。三处都是同一句声明，换外观时不用再补。
+        for widget in (self._scroll, self._scroll.viewport(), self._body):
+            theme.mark_see_through(widget)
         apply_scrollbar_style(self._scroll.verticalScrollBar())
         layout.addWidget(self._scroll, 1)
         self._apply_theme()
@@ -223,33 +225,9 @@ class MetadataPanel(QWidget):
             self.addAction(action)
 
     def _apply_theme(self) -> None:
-        """按当前主题重画文字与按钮（底色在 ``paintEvent`` 里取，不用重建）。"""
+        """按当前主题重画文字与按钮（底色归窗口，面板不铺）。"""
         self.setStyleSheet(panel_style(theme.current_theme()))
-        self._see_through_scroll()
         self.update()
-
-    def _see_through_scroll(self) -> None:
-        """滚动区与它的内容区自己不铺底色，露出 :meth:`paintEvent` 画的那一层。
-
-        **每轮换外观都要重设一遍，排在 :meth:`setStyleSheet` 之后，而且两者都要点名**：
-        重设样式表会把这一支重新 polish 一遍，调色板在那一步被弹回上一轮的底色；而
-        ``setWidget`` 会把内容区设成 ``AutoFillBackground``，漏掉它就等于让它铺满整块。
-        """
-        for widget in (self._scroll.viewport(), self._body):
-            see_through = QPalette(widget.palette())
-            for role in (
-                QPalette.ColorRole.Base,
-                QPalette.ColorRole.Window,
-                QPalette.ColorRole.AlternateBase,
-            ):
-                see_through.setColor(role, QColor(0, 0, 0, 0))
-            widget.setAutoFillBackground(True)
-            widget.setPalette(see_through)
-
-    def paintEvent(self, event: object) -> None:  # noqa: N802 - Qt 命名
-        """自己画底色：样式表背景对普通 QWidget 不生效，macOS 上连调色板也可能被覆盖。"""
-        painter = QPainter(self)
-        painter.fillRect(self.rect(), theme.current_theme().background)
 
     def clear(self) -> None:
         """还没有选中照片。"""

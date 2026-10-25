@@ -42,6 +42,7 @@ from PySide6.QtWidgets import (
 )
 
 from gallery.core.library.photos import GridEntry
+from gallery.ui import theme
 from gallery.ui.browser.anchoring import AnchoringMixin
 from gallery.ui.browser.delegate import (
     GRID_PADDING_X,
@@ -194,6 +195,9 @@ class PhotoGrid(TransitionMixin, AnchoringMixin, QListView):
         self._range_anchor = -1
         # 去掉 QListView 默认的 StyledPanel 边框，让照片区铺满窗口（大图区本来就是 NoFrame）。
         self.setFrameShape(QFrame.Shape.NoFrame)
+        # 网格自己不铺底色：整块窗口只有一处铺底，照片之间的空隙露出那一块（ADR 0096）。
+        theme.mark_see_through(self)
+        theme.mark_see_through(self.viewport())
         self.setViewMode(QListView.ViewMode.IconMode)
         self.setResizeMode(QListView.ResizeMode.Adjust)
         self.setMovement(QListView.Movement.Static)

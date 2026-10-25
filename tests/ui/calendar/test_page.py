@@ -22,6 +22,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import QPoint, QPointF, Qt  # noqa: E402
 from PySide6.QtGui import QColor, QImage, QKeyEvent, QPixmap, QWheelEvent  # noqa: E402
 from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
+from rendering import render_over  # noqa: E402
 
 TODAY = datetime.date(2021, 9, 12)
 #: 那一周的周三。选中它，那一格的高亮就不会落在采样点上（周末那两列上）。
@@ -348,7 +349,7 @@ def test_no_column_is_tinted_for_the_weekend(
     view.select_day(WEDNESDAY)  # 选中落在第三行的周三，于是改看第四行
     # 第四行的七格：周日 → 周六（一个月视图的第一列就是周日）
     centers = [view._day_cell(index).center() for index in range(21, 28)]  # type: ignore[attr-defined]
-    _assert_all_background(_render(view), centers, view.background, "月视图")
+    _assert_all_background(_render(view, view.background), centers, view.background, "月视图")
 
     page.set_level("week")
     view = page.current_view()
@@ -363,16 +364,15 @@ def test_no_column_is_tinted_for_the_weekend(
         (view._grid, view.row_height() * 2.5, "周视图的时间轴"),  # type: ignore[attr-defined]
         (view._header, 53.0, "周视图的表头"),  # type: ignore[attr-defined]
     ):
-        image = _render(widget)
+        image = _render(widget, view.background)
         _assert_all_background(
             image, [QPointF(point.x(), y) for point in weekend], view.background, where
         )
 
 
-def _render(widget: QWidget) -> QImage:
-    image = QImage(widget.size(), QImage.Format.Format_RGBA8888)
-    widget.render(image)
-    return image
+def _render(widget: QWidget, background: QColor) -> QImage:
+    """画在窗口那块底色上：日历这一层自己不铺底了（ADR 0096）。"""
+    return render_over(widget, background)
 
 
 def _assert_all_background(
@@ -864,7 +864,7 @@ def test_the_week_view_does_not_paint_the_whole_column(
     same_column_other_hour = _week_cell_point(view, view.days()[3], 2)
     other_column = _week_cell_point(view, view.days()[0], 14)
 
-    image = _render(view._grid)
+    image = _render(view._grid, view.background)
     picked_color = image.pixelColor(int(picked.x()), int(picked.y()))
     assert picked_color != view.background, "点中的那一格没有涂上选中色"
     for name, point in (
