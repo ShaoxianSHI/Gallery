@@ -1,14 +1,24 @@
-"""背景库：生成的按配方重算、照片只读不写、清单丢了不牵连别的条。"""
+"""背景库：生成的按配方重算、照片只读不写、清单丢了不牵连别的条；配色那一行也在这里。"""
 
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 
 import pytest
 from PIL import Image
 
-from gallery.core.backdrops import PALETTES, BackdropStore
+from gallery.core.backdrops import (
+    CUSTOM_PRESET,
+    PALETTE_CUSTOM,
+    PALETTE_PRESET,
+    PALETTES,
+    BackdropStore,
+    PaletteEntry,
+    default_palette_row,
+    palette_from_colors,
+)
 from gallery.core.backdrops.generate import colorize, render_field
 from gallery.core.backdrops.scrim import scrim_alpha
 
@@ -195,3 +205,122 @@ def test_a_light_picture_needs_no_scrim_in_the_light_slot() -> None:
 
 def test_a_light_picture_gets_a_scrim_in_the_dark_slot() -> None:
     assert scrim_alpha(0.9, 0.1, dark=True) > 0.5
+
+
+# ---- 那一行配色（ADR 0105）---------------------------------------------------
+
+
+def _own_entry(colours: tuple[str, ...] = ("#336699", "#b06a3b")) -> PaletteEntry:
+    return PaletteEntry("palette-0123456789ab", PALETTE_CUSTOM, "自定义", colours)
+
+
+def _registry(tmp_path: Path) -> Path:
+    return tmp_path / "清单.json"
+
+
+def test_the_palette_row_is_kept_next_to_the_backdrops(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    item = store.add_generated(PALETTES[0].recipe(7), "雾蓝")
+    row = (*default_palette_row(), _own_entry())
+
+    store.save_palettes(row)
+
+    reopened = _store(tmp_path)
+    assert reopened.palettes() == row
+    assert [entry.id for entry in reopened.items()] == [item.id], "写配色不许动背景那几条"
+
+
+def test_the_same_registry_carries_both_kinds_of_data(tmp_path: Path) -> None:
+    """清单只有一份：背景与配色写进去之后，谁也不会把谁顶掉。"""
+    store = _store(tmp_path)
+    row = (*default_palette_row(), _own_entry())
+    store.save_palettes(row)
+    store.add_generated(PALETTES[1].recipe(7), "奶白")
+
+    data = json.loads(_registry(tmp_path).read_text(encoding="utf-8"))
+    assert data["version"] == 2
+    assert len(data["items"]) == 1
+    assert len(data["palettes"]) == len(row)
+    assert _store(tmp_path).palettes() == row
+
+
+def test_a_palette_row_equal_to_the_defaults_is_not_written(tmp_path: Path) -> None:
+    """用户没动过就不写 —— 以后版本新增的预设才出得来（ADR 0105）。"""
+    store = _store(tmp_path)
+
+    store.save_palettes(default_palette_row())
+
+    assert store.palettes() == ()
+    assert not _registry(tmp_path).exists()
+
+
+def test_resetting_the_row_takes_the_section_out(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.save_palettes((*default_palette_row(), _own_entry()))
+    assert "palettes" in json.loads(_registry(tmp_path).read_text(encoding="utf-8"))
+
+    store.save_palettes(default_palette_row())
+
+    assert _store(tmp_path).palettes() == ()
+    assert "palettes" not in json.loads(_registry(tmp_path).read_text(encoding="utf-8"))
+
+
+def test_a_pristine_preset_comes_back_as_the_constant() -> None:
+    """没改过的预设整份取常量：停点与形状参数都在，不是拿那串颜色重算一遍。"""
+    assert default_palette_row()[0].palette() is PALETTES[0]
+
+
+def test_an_edited_preset_is_rebuilt_from_its_colours() -> None:
+    entry = PaletteEntry(
+        PALETTES[0].name, PALETTE_PRESET, PALETTES[0].title, ("#336699", "#b06a3b")
+    )
+
+    palette = entry.palette()
+
+    assert palette.name == CUSTOM_PRESET
+    assert palette.title == PALETTES[0].title
+    assert palette.colors == palette_from_colors(["#336699", "#b06a3b"]).colors
+
+
+def test_a_version_one_registry_still_loads_its_backdrops(tmp_path: Path) -> None:
+    """升级不许把老清单读成空：v1 里没有配色，背景那几条照样要回来（ADR 0105）。"""
+    store = _store(tmp_path)
+    item = store.add_generated(PALETTES[0].recipe(3), "雾蓝")
+    path = _registry(tmp_path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["version"] = 1
+    data.pop("palettes", None)
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+    reopened = _store(tmp_path)
+
+    assert [entry.name for entry in reopened.items()] == [item.name]
+    assert reopened.palettes() == ()
+
+
+def test_an_unknown_registry_version_reads_as_empty(tmp_path: Path) -> None:
+    _registry(tmp_path).write_text('{"version": 99, "items": []}', encoding="utf-8")
+
+    assert _store(tmp_path).items() == ()
+    assert _store(tmp_path).palettes() == ()
+
+
+def test_one_broken_palette_entry_does_not_take_the_others_down(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    good = _own_entry()
+    store.save_palettes((*default_palette_row(), good))
+    path = _registry(tmp_path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["palettes"].insert(
+        1,
+        {"key": "ink-不存在", "kind": "preset", "title": "不认识", "colors": list(good.colours)},
+    )
+    data["palettes"].insert(
+        2, {"key": "palette-坏的", "kind": "custom", "title": "", "colors": list(good.colours)}
+    )
+    data["palettes"].insert(
+        3, {"key": "palette-坏色", "kind": "custom", "title": "坏色", "colors": ["#000"]}
+    )
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+    assert _store(tmp_path).palettes() == (*default_palette_row(), good)

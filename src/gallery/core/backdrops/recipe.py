@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Final
@@ -336,6 +337,11 @@ def palette_of(recipe: Recipe) -> Palette | None:
     return PALETTES_BY_NAME.get(recipe.preset)
 
 
+def palette_id() -> str:
+    """「+」新增的那一套的 id。**不能由颜色算** —— 改名、改色之后还得是同一套（ADR 0105）。"""
+    return "palette-" + uuid.uuid4().hex[:12]
+
+
 __all__ = [
     "CUSTOM_PRESET",
     "FIELD",
@@ -347,5 +353,6 @@ __all__ = [
     "Recipe",
     "palette_from_color",
     "palette_from_colors",
+    "palette_id",
     "palette_of",
 ]

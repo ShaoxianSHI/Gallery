@@ -18,7 +18,7 @@ from PySide6.QtWidgets import QDialog, QFileDialog, QInputDialog, QMenu, QMessag
 
 from gallery import __version__
 from gallery.core import paths
-from gallery.core.backdrops import BackdropError, BackdropStore
+from gallery.core.backdrops import BackdropError, BackdropStore, PaletteEntry
 from gallery.core.backdrops.scrim import mean_lightness
 from gallery.core.constants import APP_NAME
 from gallery.core.errors import GalleryError
@@ -337,17 +337,25 @@ class SettingsFlowMixin:
 
     def _generate_backdrop(self) -> None:
         seed = random.SystemRandom().randrange(1, 2**31)
-        dialog = BackdropGenerateDialog(cast("QWidget", self), seed=seed)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
+        store = self._backdrops.store  # type: ignore[attr-defined]
+        dialog = BackdropGenerateDialog(cast("QWidget", self), seed=seed, entries=store.palettes())
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        self._write_palette_row(dialog.palette_row())
+        if not accepted:
             return
         try:
-            item = self._backdrops.store.add_generated(  # type: ignore[attr-defined]
-                dialog.recipe(), dialog.name()
-            )
+            item = store.add_generated(dialog.recipe(), dialog.name())
         except BackdropError as exc:
             self._report_error(exc.message)  # type: ignore[attr-defined]
             return
         self._after_backdrop_saved(item, dialog.outcome())
+
+    def _write_palette_row(self, entries: tuple[PaletteEntry, ...]) -> None:
+        """配色是独立的一件事：**关掉生成对话框也算数**，调好的那一行下次还在（ADR 0105）。"""
+        try:
+            self._backdrops.store.save_palettes(entries)  # type: ignore[attr-defined]
+        except BackdropError as exc:
+            self._report_error(exc.message)  # type: ignore[attr-defined]
 
     def _pick_backdrop_photo(self) -> None:
         chosen, _ = QFileDialog.getOpenFileName(

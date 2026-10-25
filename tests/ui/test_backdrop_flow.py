@@ -19,7 +19,12 @@ from PIL import Image  # noqa: E402
 from PySide6.QtGui import QColor  # noqa: E402
 from PySide6.QtWidgets import QApplication, QDialog  # noqa: E402
 
-from gallery.core.backdrops import PALETTES  # noqa: E402
+from gallery.core.backdrops import (  # noqa: E402
+    PALETTE_CUSTOM,
+    PALETTES,
+    PaletteEntry,
+    default_palette_row,
+)
 from gallery.core.library.session import load_session  # noqa: E402
 from gallery.ui import theme  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
@@ -36,18 +41,26 @@ def window(qt_app: QApplication, tmp_path: Path) -> Iterator[MainWindow]:
 
 
 def _fake_generate_dialog(
-    monkeypatch: pytest.MonkeyPatch, *, name: str, outcome: str
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    name: str,
+    outcome: str,
+    row: tuple[PaletteEntry, ...] | None = None,
+    accepted: bool = True,
 ) -> list[dict[str, object]]:
-    """把生成对话框换成一个按剧本交出配方与名字的桩；返回值记下每次被问到的种子。"""
+    """把生成对话框换成一个按剧本交出配方、名字与那一行配色的桩。"""
     seen: list[dict[str, object]] = []
     recipe = PALETTES[0].recipe(5)
+    palette_row = row if row is not None else default_palette_row()
 
     class Fake:
-        def __init__(self, parent: object, *, seed: int) -> None:
-            seen.append({"seed": seed})
+        def __init__(
+            self, parent: object, *, seed: int, entries: tuple[PaletteEntry, ...] = ()
+        ) -> None:
+            seen.append({"seed": seed, "entries": entries})
 
         def exec(self) -> QDialog.DialogCode:
-            return QDialog.DialogCode.Accepted
+            return QDialog.DialogCode.Accepted if accepted else QDialog.DialogCode.Rejected
 
         def recipe(self) -> object:
             return recipe
@@ -57,6 +70,9 @@ def _fake_generate_dialog(
 
         def outcome(self) -> str:
             return outcome
+
+        def palette_row(self) -> tuple[PaletteEntry, ...]:
+            return palette_row
 
     monkeypatch.setattr(settings_flow, "BackdropGenerateDialog", Fake)
     return seen
@@ -178,6 +194,38 @@ def test_a_dark_photo_is_washed_out_in_the_light_tier(
     qt_app.processEvents()
 
     assert _corner(window).lightness() > 150
+
+
+def test_the_saved_palette_row_goes_back_into_the_dialog(
+    window: MainWindow, qt_app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """重开时把清单里那一行交给它 —— 调好的配色不用再调一次（ADR 0105）。"""
+    row = (*default_palette_row(), _own_palette())
+    window._backdrops.store.save_palettes(row)
+    seen = _fake_generate_dialog(monkeypatch, name="雾蓝", outcome="save", accepted=False)
+
+    window._settings_extras["backdrop_generate"].trigger()
+    qt_app.processEvents()
+
+    assert seen and seen[0]["entries"] == row
+
+
+def test_the_palette_row_is_kept_even_without_saving_a_backdrop(
+    window: MainWindow, qt_app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """配色不是这张图的附件：关掉对话框也算数。"""
+    row = (*default_palette_row(), _own_palette())
+    _fake_generate_dialog(monkeypatch, name="雾蓝", outcome="save", row=row, accepted=False)
+
+    window._settings_extras["backdrop_generate"].trigger()
+    qt_app.processEvents()
+
+    assert window._backdrops.store.palettes() == row
+    assert window._backdrops.store.items() == (), "关掉对话框不该存下背景图"
+
+
+def _own_palette() -> PaletteEntry:
+    return PaletteEntry("palette-0123456789ab", PALETTE_CUSTOM, "自定义", ("#336699", "#b06a3b"))
 
 
 def test_deleting_a_backdrop_drops_the_reference(

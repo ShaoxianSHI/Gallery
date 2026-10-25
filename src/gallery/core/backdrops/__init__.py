@@ -12,14 +12,19 @@ from gallery.core.backdrops.recipe import (
     Recipe,
     palette_from_color,
     palette_from_colors,
+    palette_id,
 )
 from gallery.core.backdrops.store import (
     KIND_INK,
     KIND_PHOTO,
     MAX_NAME_LENGTH,
+    PALETTE_CUSTOM,
+    PALETTE_PRESET,
     Backdrop,
     BackdropError,
     BackdropStore,
+    PaletteEntry,
+    default_palette_row,
     name_suggestion,
 )
 
@@ -30,12 +35,17 @@ __all__ = [
     "MAX_NAME_LENGTH",
     "PALETTES",
     "PALETTES_BY_NAME",
+    "PALETTE_CUSTOM",
+    "PALETTE_PRESET",
     "Backdrop",
     "BackdropError",
     "BackdropStore",
     "Palette",
+    "PaletteEntry",
     "Recipe",
+    "default_palette_row",
     "name_suggestion",
     "palette_from_color",
     "palette_from_colors",
+    "palette_id",
 ]

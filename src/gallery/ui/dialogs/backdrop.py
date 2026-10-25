@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QColor, QMouseEvent, QPalette, QPixmap
@@ -29,12 +30,17 @@ from PySide6.QtWidgets import (
 
 from gallery.core.backdrops import (
     MAX_NAME_LENGTH,
+    PALETTE_CUSTOM,
+    PALETTE_PRESET,
     PALETTES,
     Palette,
+    PaletteEntry,
     Recipe,
+    default_palette_row,
     name_suggestion,
     palette_from_color,
     palette_from_colors,
+    palette_id,
 )
 from gallery.core.backdrops.generate import colorize, render_field
 from gallery.ui import imaging, theme
@@ -55,11 +61,9 @@ MANAGE_LIST_HEIGHT = 200
 #: 色板按钮里那块小色块的尺寸。
 CHIP_SIZE = QSize(34, 22)
 
-#: 这一行最多比八套预设多出几个格子 —— 再多就放不下，也没有必要。
-#: 上限按**这一行摆了几套**算，所以删掉任何一格都会腾出位置（ADR 0104）。
+#: 「+」最多能新增几套配色（八套预设之外）。再多那一行就放不下，也没有必要 ——
+#: 编辑已有配色不受这个限制，它不占新位置。**删掉一套预设不腾出位置**：恢复预设时要放得回去。
 MAX_ADDED_PALETTES = 3
-
-MAX_PALETTES = len(PALETTES) + MAX_ADDED_PALETTES
 
 #: 编辑颜色那个对话框的宽度、色块高度，以及一套配色允许的颜色个数。
 PALETTE_MIN_WIDTH = 340
@@ -78,6 +82,27 @@ class _PaletteChip(QPushButton):
         event.accept()
 
 
+@dataclass(frozen=True, slots=True)
+class _Row:
+    """色板里的一格：**身份**（预设名或用户配色的 id）与它此刻的样子分开记。"""
+
+    key: str
+    kind: str
+    palette: Palette
+
+    def entry(self) -> PaletteEntry:
+        return PaletteEntry(
+            key=self.key,
+            kind=self.kind,
+            title=self.palette.title,
+            colours=tuple(color for _, color in self.palette.colors),
+        )
+
+
+def _row_of(entry: PaletteEntry) -> _Row:
+    return _Row(entry.key, entry.kind, entry.palette())
+
+
 class BackdropGenerateDialog(QDialog):
     """挑一套配色、随机生成一张，然后决定存不存、给哪一档用。
 
@@ -91,16 +116,18 @@ class BackdropGenerateDialog(QDialog):
         *,
         seed: int,
         palette: Palette | None = None,
+        entries: Sequence[PaletteEntry] = (),
     ) -> None:
         super().__init__(parent)
         self._seed = seed
-        self._palette = palette or PALETTES[0]
+        #: 这一行色板：身份与样子分开记（ADR 0105）。空 = 还没存过，用八套预设。
+        self._rows = [_row_of(entry) for entry in (tuple(entries) or default_palette_row())]
+        self._palette = palette or self._rows[0].palette
         self._recipe: Recipe = self._palette.recipe(seed)
         self._outcome = ""
-        #: 这一轮能挑的配色：八套预设，加上「+」新增的（改过的预设也在这里，原地替换）。
-        self._palettes: list[Palette] = list(PALETTES)
         self._buttons: list[_PaletteChip] = []
         self._add_chip: QPushButton | None = None
+        self._reset_chip: QPushButton | None = None
         self._watcher = theme.ensure_installed()
         self._watcher.changed.connect(self._apply_theme)
         self.setWindowTitle("生成水墨背景")
@@ -121,6 +148,15 @@ class BackdropGenerateDialog(QDialog):
     def name(self) -> str:
         return self._name_field.text().strip()
 
+    def palette_row(self) -> tuple[PaletteEntry, ...]:
+        """这一行现在的样子，交给调用方写进清单（ADR 0105）。"""
+        return tuple(row.entry() for row in self._rows)
+
+    @property
+    def _palettes(self) -> list[Palette]:
+        """这一行此刻的配色。身份在 ``_rows`` 里，这里只回答「长什么样」。"""
+        return [row.palette for row in self._rows]
+
     # ---- 搭建 --------------------------------------------------------------
 
     def _build(self) -> None:
@@ -134,17 +170,21 @@ class BackdropGenerateDialog(QDialog):
         self._preview.setFixedSize(PREVIEW_SIZE)
         layout.addWidget(self._preview, 0, Qt.AlignmentFlag.AlignHCenter)
 
-        hint = QLabel("选择配色；双击色块可以编辑它的颜色，也可以删掉这一套。")
+        hint = QLabel(
+            "选择配色；双击色块可以编辑它的颜色，也可以删掉这一套。"
+            "「+」新增的配色与改过的预设都会保存下来。"
+        )
         hint.setObjectName("backdropHint")
         hint.setWordWrap(True)
         layout.addWidget(hint)
         layout.addLayout(self._build_palettes())
+        layout.addLayout(self._build_palette_actions())
 
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(8)
         row.addWidget(QLabel("名称"))
-        self._name_field = QLineEdit(name_suggestion(self._recipe))
+        self._name_field = QLineEdit(name_suggestion(self._recipe, fallback=self._palette.title))
         self._name_field.setMaxLength(MAX_NAME_LENGTH)
         self._name_field.setObjectName("backdropName")
         row.addWidget(self._name_field, 1)
@@ -156,6 +196,8 @@ class BackdropGenerateDialog(QDialog):
         layout.addWidget(self._error)
 
         layout.addLayout(self._build_buttons())
+        self._sync_add_chip()
+        self._sync_reset_button()
 
     def _build_palettes(self) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -174,6 +216,20 @@ class BackdropGenerateDialog(QDialog):
         for index, palette in enumerate(self._palettes):
             row.addWidget(self._new_chip(index, palette))
         row.addWidget(self._add_chip)
+        row.addStretch(1)
+        return row
+
+    def _build_palette_actions(self) -> QHBoxLayout:
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        self._reset_chip = QPushButton("恢复预设配色")
+        self._reset_chip.setObjectName("backdropReset")
+        self._reset_chip.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._reset_chip.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._reset_chip.setToolTip("把八套预设恢复成原样；「+」新增的配色不受影响")
+        self._reset_chip.clicked.connect(self._restore_presets)
+        self._reset_chip.setEnabled(False)
+        row.addWidget(self._reset_chip, 0, Qt.AlignmentFlag.AlignLeft)
         row.addStretch(1)
         return row
 
@@ -250,13 +306,14 @@ class BackdropGenerateDialog(QDialog):
         预设改完也留在这个位置上 —— 用户改的是他双击的那一格，不是「另存一份」。
         编辑对话框里也能删掉这一套，那就少一格（ADR 0104）。
         """
-        palette = self._palettes[index]
+        row = self._rows[index]
+        palette = row.palette
         colours = [color for _, color in palette.colors]
         dialog = BackdropPaletteDialog(
             self,
             title=f"编辑颜色 · {palette.title}",
             colours=colours,
-            can_delete=len(self._palettes) > 1,
+            can_delete=len(self._rows) > 1,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
@@ -268,8 +325,9 @@ class BackdropGenerateDialog(QDialog):
             return
         was_selected = palette is self._palette
         updated = palette_from_colors(edited, title=palette.title)
-        self._palettes[index] = updated
+        self._rows[index] = _Row(row.key, row.kind, updated)
         self._sync_chip(index, self._buttons[index])
+        self._sync_reset_button()
         if was_selected:
             self._choose(updated)
 
@@ -278,18 +336,19 @@ class BackdropGenerateDialog(QDialog):
 
         删的若是正在用的那一套，就落到它原来位置上那一套（删的是末一格则落到前一格）。
         """
-        if len(self._palettes) <= 1:
+        if len(self._rows) <= 1:
             return
-        was_selected = self._palettes[index] is self._palette
-        del self._palettes[index]
+        was_selected = self._rows[index].palette is self._palette
+        del self._rows[index]
         self._rebuild_chips()
         self._sync_add_chip()
+        self._sync_reset_button()
         if was_selected:
             self._choose(self._palettes[min(index, len(self._palettes) - 1)])
 
     def _add_palette(self) -> None:
         """「+」：**新增一套配色**（不是给某一套加颜色 —— 那是双击色块）。"""
-        if len(self._palettes) >= MAX_PALETTES:
+        if self._custom_count() >= MAX_ADDED_PALETTES:
             return
         starter = palette_from_color("#8ea8bf")
         dialog = BackdropPaletteDialog(
@@ -299,22 +358,62 @@ class BackdropGenerateDialog(QDialog):
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        palette = palette_from_colors(dialog.colours(), title="自定义")
-        self._palettes.append(palette)
-        chip = self._new_chip(len(self._palettes) - 1, palette)
+        palette = palette_from_colors(dialog.colours(), title=self._free_title("自定义"))
+        self._rows.append(_Row(palette_id(), PALETTE_CUSTOM, palette))
+        chip = self._new_chip(len(self._rows) - 1, palette)
         self._palette_row.insertWidget(self._palette_row.indexOf(self._add_chip), chip)
         self._sync_add_chip()
         self._choose(palette)
+
+    def _restore_presets(self) -> None:
+        """八套预设回到代码里的样子（改过的颜色、删掉的格子都回来）：「+」新增的不动。"""
+        key = next((row.key for row in self._rows if row.palette is self._palette), "")
+        customs = [row for row in self._rows if row.kind == PALETTE_CUSTOM]
+        self._rows = [_Row(palette.name, PALETTE_PRESET, palette) for palette in PALETTES] + customs
+        self._rebuild_chips()
+        self._sync_add_chip()
+        self._sync_reset_button()
+        if not any(row.palette is self._palette for row in self._rows):
+            restored = next((row.palette for row in self._rows if row.key == key), None)
+            self._choose(restored or self._rows[0].palette)
+
+    def _custom_count(self) -> int:
+        return sum(1 for row in self._rows if row.kind == PALETTE_CUSTOM)
+
+    def _free_title(self, base: str) -> str:
+        """同名色的两格在那一行上分不出来 —— 第二个「自定义」叫「自定义 2」。"""
+        taken = {row.palette.title for row in self._rows}
+        if base not in taken:
+            return base
+        for index in range(2, 100):
+            candidate = f"{base} {index}"
+            if candidate not in taken:
+                return candidate
+        return base
+
+    def _presets_are_pristine(self) -> bool:
+        """预设那几格与代码里的八套逐项相同（颜色、名字、次序都算）。"""
+        rows = [row.entry() for row in self._rows if row.kind == PALETTE_PRESET]
+        return rows == list(default_palette_row())
 
     def _sync_add_chip(self) -> None:
         """到上限就按不动：「+」只有一个意思（新增一套），不替用户换掉哪一套。"""
         if self._add_chip is None:
             return
-        at_limit = len(self._palettes) >= MAX_PALETTES
+        at_limit = self._custom_count() >= MAX_ADDED_PALETTES
         self._add_chip.setEnabled(not at_limit)
         self._add_chip.setToolTip(
-            f"最多 {MAX_PALETTES} 套配色（删掉一格可以再添）" if at_limit else "新增一套配色"
+            f"最多新增 {MAX_ADDED_PALETTES} 套配色（删掉一套自己的可以再添）"
+            if at_limit
+            else "新增一套配色"
         )
+
+    def _sync_reset_button(self) -> None:
+        """预设都还是原样时按不动 —— 那一下什么也不会发生。"""
+        if self._reset_chip is None:
+            return
+        self._reset_chip.setEnabled(not self._presets_are_pristine())
+        self._reset_chip.setVisible(not self._presets_are_pristine())
 
     def _reroll(self) -> None:
         self._seed += 1
@@ -365,6 +464,8 @@ class BackdropGenerateDialog(QDialog):
         )
         if self._add_chip is not None:
             self._add_chip.setStyleSheet(_add_chip_style(app_theme))
+        if self._reset_chip is not None:
+            self._reset_chip.setStyleSheet(_reset_chip_style(app_theme))
 
 
 class BackdropPaletteDialog(QDialog):
@@ -432,6 +533,7 @@ class BackdropPaletteDialog(QDialog):
         if self._can_delete:
             remove = QPushButton("删除这套配色")
             remove.setObjectName("paletteDelete")
+            remove.setToolTip("删掉这一套配色；已经保存的背景图不受影响")
             remove.clicked.connect(self._delete_palette)
             row.addWidget(remove)
         row.addStretch(1)
@@ -839,11 +941,21 @@ def _add_chip_style(app_theme: AppTheme) -> str:
     )
 
 
+def _reset_chip_style(app_theme: AppTheme) -> str:
+    """「恢复预设配色」：一行小字，不做成按钮 —— 它不常用，也不该跟「+」抢那一格。"""
+    ink = rgba(app_theme.text_at(0.56))
+    hover = rgba(app_theme.text_at(0.92))
+    return (
+        f"QPushButton {{ background: transparent; border: 0; padding: 0 2px;"
+        f" color: {ink}; font-size: 12px; }}"
+        f"QPushButton:hover {{ color: {hover}; text-decoration: underline; }}"
+    )
+
+
 __all__ = [
     "MANAGE_LIST_HEIGHT",
     "MANAGE_MIN_WIDTH",
     "MAX_ADDED_PALETTES",
-    "MAX_PALETTES",
     "MAX_PALETTE_COLOURS",
     "MIN_PALETTE_COLOURS",
     "MIN_WIDTH",

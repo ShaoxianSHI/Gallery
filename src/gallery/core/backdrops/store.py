@@ -1,7 +1,8 @@
 """背景库：清单在应用状态目录，图片在应用缓存目录。
 
 **清单不进缓存** —— 名字是用户填的，重扫重建不出来。图片可以丢：生成图按配方重算，
-照片按记下的来源路径重新导入。这条自愈是「把图放缓存」能成立的前提。
+照片按记下的来源路径重新导入。这条自愈是「把图放缓存」能成立的前提。清单里还有
+**那一行配色**（ADR 0105）：颜色同样是用户填的，重扫重建不出来。
 """
 
 from __future__ import annotations
@@ -9,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from collections.abc import Sequence
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from io import BytesIO
@@ -20,17 +22,31 @@ from PIL import Image, ImageOps
 from gallery.core import paths
 from gallery.core.atomic import read_text_or_none, write_bytes_atomic, write_text_atomic
 from gallery.core.backdrops.generate import render
-from gallery.core.backdrops.recipe import Recipe, palette_of
+from gallery.core.backdrops.recipe import (
+    PALETTES,
+    PALETTES_BY_NAME,
+    Palette,
+    Recipe,
+    palette_from_colors,
+    palette_of,
+)
 from gallery.core.errors import GalleryError
 from gallery.core.media.decode import RasterImage
 
-#: 清单格式版本。读的时候认它，结构一变好让老文件按「读不懂就回空」处理。
-REGISTRY_VERSION: Final = 1
+#: 清单格式版本。v2 起多一份 ``palettes``（ADR 0105）；**v1 照样读** —— 只认当前版本会把
+#: 老文件整份读成空，那等于把用户存过的背景（名字与配方）连同清单一起丢掉。
+REGISTRY_VERSION: Final = 2
+READABLE_VERSIONS: Final = (1, REGISTRY_VERSION)
 
 #: 生成图与照片两种来源。
 KIND_INK: Final = "ink"
 KIND_PHOTO: Final = "photo"
 KINDS: Final = (KIND_INK, KIND_PHOTO)
+
+#: 配色格的两种来源：来自八套预设的那一格，与「+」新增的那一套。
+PALETTE_PRESET: Final = "preset"
+PALETTE_CUSTOM: Final = "custom"
+PALETTE_KINDS: Final = (PALETTE_PRESET, PALETTE_CUSTOM)
 
 #: 照片转存时长边缩到这么多、按 JPEG 存。原样存 PNG 的话一张就十几 MB。
 MAX_PHOTO_EDGE: Final = 2560
@@ -88,6 +104,62 @@ class Backdrop:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class PaletteEntry:
+    """清单里的一个配色格（ADR 0105）。``key`` 是预设名，或「+」新增那一套的 id。"""
+
+    key: str
+    kind: str
+    title: str
+    colours: tuple[str, ...]
+
+    def palette(self) -> Palette:
+        """这一格长什么样。**没改过的预设原样取常量** —— 停点与形状参数都还在。"""
+        preset = PALETTES_BY_NAME.get(self.key) if self.kind == PALETTE_PRESET else None
+        if preset is not None and tuple(color for _, color in preset.colors) == self.colours:
+            return preset
+        return palette_from_colors(self.colours, title=self.title)
+
+    def to_mapping(self) -> dict[str, Any]:
+        return {
+            "key": self.key,
+            "kind": self.kind,
+            "title": self.title,
+            "colors": list(self.colours),
+        }
+
+    @classmethod
+    def from_mapping(cls, data: Any) -> PaletteEntry:
+        """读一条。**任何一处不对都抛** —— 由调用方把这一条丢掉，不牵连其余。"""
+        kind = str(data["kind"])
+        if kind not in PALETTE_KINDS:
+            raise ValueError(f"不认识的配色类型：{kind}")
+        key = str(data["key"]).strip()
+        if not key:
+            raise ValueError("配色要记住自己是哪一格")
+        if kind == PALETTE_PRESET and key not in PALETTES_BY_NAME:
+            raise ValueError(f"不认识的预设：{key}")
+        title = str(data["title"]).strip()
+        if not title:
+            raise ValueError("配色要有名字")
+        colours = tuple(str(color).lower() for color in data["colors"])
+        palette_from_colors(colours, title=title)
+        return cls(key=key, kind=kind, title=title, colours=colours)
+
+
+def default_palette_row() -> tuple[PaletteEntry, ...]:
+    """八套预设原样排成的那一行。用户没动过时清单里**不写它** —— 以后新增的预设才出得来。"""
+    return tuple(
+        PaletteEntry(
+            key=palette.name,
+            kind=PALETTE_PRESET,
+            title=palette.title,
+            colours=tuple(color for _, color in palette.colors),
+        )
+        for palette in PALETTES
+    )
+
+
 class BackdropStore:
     """背景库的读写。**构造不碰磁盘**，第一次取值时再读清单。"""
 
@@ -95,14 +167,19 @@ class BackdropStore:
         self._cache_dir = cache_dir if cache_dir is not None else paths.app_backdrop_dir()
         self._registry_path = registry if registry is not None else paths.app_backdrop_registry()
         self._items: tuple[Backdrop, ...] | None = None
+        self._palettes: tuple[PaletteEntry, ...] | None = None
 
     # ---- 读 ----------------------------------------------------------------
 
     def items(self) -> tuple[Backdrop, ...]:
         """清单里的全部背景，按保存顺序。**读不懂就回空**（与 ``state.json`` 同一套待遇）。"""
-        if self._items is None:
-            self._items = self._load()
-        return self._items
+        self._read()
+        return self._items or ()
+
+    def palettes(self) -> tuple[PaletteEntry, ...]:
+        """清单里的那一行配色。**空 = 用户没动过**，界面直接用八套预设。"""
+        self._read()
+        return self._palettes or ()
 
     def get(self, backdrop_id: str) -> Backdrop | None:
         for item in self.items():
@@ -153,7 +230,7 @@ class BackdropStore:
             created=int(time.time()),
             recipe=recipe,
         )
-        self._commit((*self.items(), backdrop))
+        self._commit((*self.items(), backdrop), self.palettes())
         return backdrop
 
     def add_photo(self, source: Path, name: str) -> Backdrop:
@@ -186,7 +263,7 @@ class BackdropStore:
             created=int(time.time()),
             source=str(source),
         )
-        self._commit((*self.items(), backdrop))
+        self._commit((*self.items(), backdrop), self.palettes())
         return backdrop
 
     def rename(self, backdrop_id: str, name: str) -> Backdrop:
@@ -197,7 +274,7 @@ class BackdropStore:
                 continue
             others = [other.name for other in items if other.id != backdrop_id]
             items[index] = replace(item, name=_dedupe(clean, others))
-            self._commit(tuple(items))
+            self._commit(tuple(items), self.palettes())
             return items[index]
         raise BackdropError("这张背景已不存在，可能刚被删除。")
 
@@ -210,7 +287,16 @@ class BackdropStore:
             if item.id == backdrop_id:
                 with suppress(OSError):
                     self.path_of(item).unlink(missing_ok=True)
-        self._commit(kept)
+        self._commit(kept, self.palettes())
+
+    def save_palettes(self, entries: Sequence[PaletteEntry]) -> None:
+        """整行替换配色（ADR 0105）。与八套预设原样相同时**不写** —— 以后再新增的预设才出得来。"""
+        row = tuple(entries)
+        if row == default_palette_row():
+            row = ()
+        if row == self.palettes():
+            return
+        self._commit(self.items(), row)
 
     # ---- 自愈 --------------------------------------------------------------
 
@@ -244,37 +330,35 @@ class BackdropStore:
                 continue
             rebuilt.append(item)
         if changed:
-            self._commit(tuple(rebuilt))
+            self._commit(tuple(rebuilt), self.palettes())
         return done
 
     # ---- 内部 --------------------------------------------------------------
 
-    def _load(self) -> tuple[Backdrop, ...]:
+    def _read(self) -> None:
+        if self._items is not None:
+            return
+        self._items, self._palettes = self._load()
+
+    def _load(self) -> tuple[tuple[Backdrop, ...], tuple[PaletteEntry, ...]]:
         text = read_text_or_none(self._registry_path)
         if not text:
-            return ()
+            return (), ()
         try:
             data = json.loads(text)
         except ValueError:
-            return ()
-        if not isinstance(data, dict) or data.get("version") != REGISTRY_VERSION:
-            return ()
-        raw = data.get("items")
-        if not isinstance(raw, list):
-            return ()
-        items: list[Backdrop] = []
-        for entry in raw:
-            try:
-                items.append(Backdrop.from_mapping(entry))
-            except (KeyError, TypeError, ValueError):
-                continue
-        return tuple(items)
+            return (), ()
+        if not isinstance(data, dict) or data.get("version") not in READABLE_VERSIONS:
+            return (), ()
+        return _load_items(data.get("items")), _load_palettes(data.get("palettes"))
 
-    def _commit(self, items: tuple[Backdrop, ...]) -> None:
-        payload = {
+    def _commit(self, items: tuple[Backdrop, ...], palettes: tuple[PaletteEntry, ...]) -> None:
+        payload: dict[str, Any] = {
             "version": REGISTRY_VERSION,
             "items": [item.to_mapping() for item in items],
         }
+        if palettes:
+            payload["palettes"] = [entry.to_mapping() for entry in palettes]
         text = json.dumps(payload, sort_keys=True, indent=2, ensure_ascii=False)
         try:
             self._registry_path.parent.mkdir(parents=True, exist_ok=True)
@@ -286,6 +370,7 @@ class BackdropStore:
                 detail=str(exc),
             ) from exc
         self._items = items
+        self._palettes = palettes
 
     def _clean_name(self, name: str) -> str:
         clean = " ".join(name.split())[:MAX_NAME_LENGTH]
@@ -295,6 +380,31 @@ class BackdropStore:
 
     def _unique_name(self, name: str) -> str:
         return _dedupe(name, [item.name for item in self.items()])
+
+
+def _load_items(raw: Any) -> tuple[Backdrop, ...]:
+    """一条读不懂就丢那一条 —— 一份坏配方只该让它自己消失。"""
+    if not isinstance(raw, list):
+        return ()
+    items: list[Backdrop] = []
+    for entry in raw:
+        try:
+            items.append(Backdrop.from_mapping(entry))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return tuple(items)
+
+
+def _load_palettes(raw: Any) -> tuple[PaletteEntry, ...]:
+    if not isinstance(raw, list):
+        return ()
+    entries: list[PaletteEntry] = []
+    for entry in raw:
+        try:
+            entries.append(PaletteEntry.from_mapping(entry))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return tuple(entries)
 
 
 def _dedupe(name: str, taken: list[str]) -> str:
@@ -340,10 +450,16 @@ __all__ = [
     "KIND_PHOTO",
     "MAX_NAME_LENGTH",
     "MAX_PHOTO_EDGE",
+    "PALETTE_CUSTOM",
+    "PALETTE_KINDS",
+    "PALETTE_PRESET",
     "PHOTO_QUALITY",
+    "READABLE_VERSIONS",
     "REGISTRY_VERSION",
     "Backdrop",
     "BackdropError",
     "BackdropStore",
+    "PaletteEntry",
+    "default_palette_row",
     "name_suggestion",
 ]

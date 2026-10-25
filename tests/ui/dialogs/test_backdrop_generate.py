@@ -1,8 +1,9 @@
-"""「设置 › 背景 › 生成水墨背景…」那个对话框的色板（ADR 0103 / 0104）。
+"""「设置 › 背景 › 生成水墨背景…」那个对话框的色板（ADR 0103 / 0104 / 0105）。
 
-锁的是三件事各是一个入口：**双击一格 = 编辑这一套配色的颜色**（预设也能改，改完还在原位），
+锁的是四件事各是一个入口：**双击一格 = 编辑这一套配色的颜色**（预设也能改，改完还在原位），
 **编辑对话框里的「删除这套配色」= 这一格消失**，**右边那个「+」= 新增一套配色**
-（不是给某一套加颜色）。生成本身在别的测试里锁。
+（不是给某一套加颜色），**这一行整份进出清单**（改过的、删掉的、自己加的都记住）。
+生成本身在别的测试里锁。
 """
 
 from __future__ import annotations
@@ -21,7 +22,11 @@ from PySide6.QtWidgets import QApplication, QDialog, QPushButton  # noqa: E402
 
 from gallery.core.backdrops import (  # noqa: E402
     CUSTOM_PRESET,
+    PALETTE_CUSTOM,
+    PALETTE_PRESET,
     PALETTES,
+    PaletteEntry,
+    default_palette_row,
     palette_from_color,
     palette_from_colors,
 )
@@ -29,14 +34,29 @@ from gallery.ui import theme  # noqa: E402
 from gallery.ui.dialogs import backdrop as backdrop_module  # noqa: E402
 from gallery.ui.dialogs.backdrop import (  # noqa: E402
     MAX_ADDED_PALETTES,
-    MAX_PALETTES,
     BackdropGenerateDialog,
 )
 from gallery.ui.outline import opaque_over  # noqa: E402
 
 
-def _dialog() -> BackdropGenerateDialog:
-    return BackdropGenerateDialog(None, seed=5)
+def _dialog(*entries: PaletteEntry) -> BackdropGenerateDialog:
+    return BackdropGenerateDialog(None, seed=5, entries=entries)
+
+
+def _own_palette(
+    title: str = "自定义", colours: tuple[str, ...] = ("#336699", "#b06a3b")
+) -> PaletteEntry:
+    return PaletteEntry("palette-0123456789ab", PALETTE_CUSTOM, title, colours)
+
+
+def _edited_preset(index: int = 0) -> PaletteEntry:
+    preset = PALETTES[index]
+    return PaletteEntry(
+        preset.name,
+        PALETTE_PRESET,
+        preset.title,
+        ("#336699", "#b06a3b"),
+    )
 
 
 def _chips(dialog: BackdropGenerateDialog) -> list[QPushButton]:
@@ -202,8 +222,8 @@ def test_the_add_entry_stops_after_the_limit(
         dialog._add_chip.click()
 
     assert dialog._add_chip.isEnabled() is False
-    assert f"最多 {MAX_PALETTES} 套" in dialog._add_chip.toolTip()
-    assert len(dialog._palettes) == MAX_PALETTES
+    assert f"最多新增 {MAX_ADDED_PALETTES} 套" in dialog._add_chip.toolTip()
+    assert len(dialog._palettes) == len(PALETTES) + MAX_ADDED_PALETTES
     dialog.deleteLater()
 
 
@@ -322,10 +342,11 @@ def test_the_chips_after_a_deleted_one_still_edit_their_own_palette(
     dialog.deleteLater()
 
 
-def test_deleting_frees_a_slot_for_a_new_palette(
+def test_deleting_a_preset_does_not_free_a_slot_for_a_new_palette(
     qt_app: QApplication,  # noqa: ARG001
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """删预设不腾出「+」的位置：恢复预设时那一行还得放得回八套（ADR 0105）。"""
     dialog = _dialog()
     _fake_palette_dialog(
         monkeypatch,
@@ -337,6 +358,26 @@ def test_deleting_frees_a_slot_for_a_new_palette(
     assert dialog._add_chip.isEnabled() is False
 
     dialog._buttons[0].double_clicked.emit()
+
+    assert dialog._add_chip.isEnabled() is False
+    dialog.deleteLater()
+
+
+def test_deleting_an_own_palette_frees_a_slot_for_a_new_one(
+    qt_app: QApplication,  # noqa: ARG001
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    own = tuple(
+        PaletteEntry(
+            f"palette-00000000000{index}", PALETTE_CUSTOM, f"自定义 {index}", ("#336699", "#b06a3b")
+        )
+        for index in range(MAX_ADDED_PALETTES)
+    )
+    dialog = _dialog(*default_palette_row(), *own)
+    _fake_palette_dialog(monkeypatch, DELETE)
+    assert dialog._add_chip.isEnabled() is False
+
+    dialog._buttons[-1].double_clicked.emit()
 
     assert dialog._add_chip.isEnabled() is True
     assert dialog._add_chip.toolTip() == "新增一套配色"
@@ -361,4 +402,182 @@ def test_the_last_palette_has_no_delete_exit(
 
     assert len(dialog._palettes) == 1
     assert seen[-1][2] is False
+    dialog.deleteLater()
+
+
+# ---- 那一行进清单（ADR 0105）-------------------------------------------------
+
+
+def test_an_untouched_row_is_exactly_the_presets(qt_app: QApplication) -> None:  # noqa: ARG001
+    """没动过时交出去的必须是默认那一行 —— 它等于默认值，清单里就不写它。"""
+    dialog = _dialog()
+
+    assert dialog.palette_row() == default_palette_row()
+    dialog.deleteLater()
+
+
+def test_saved_palettes_come_back_as_chips(qt_app: QApplication) -> None:  # noqa: ARG001
+    dialog = _dialog(*default_palette_row(), _own_palette("自定义 2"))
+
+    assert len(_chips(dialog)) == len(PALETTES) + 1
+    assert dialog._palettes[-1].title == "自定义 2"
+    assert dialog.palette_row()[-1].key == "palette-0123456789ab"
+    dialog.deleteLater()
+
+
+def test_an_edited_preset_keeps_its_place_and_its_key(qt_app: QApplication) -> None:  # noqa: ARG001
+    """改过的预设回到原位：一格不少、次序不乱，`key` 还是那个预设名（ADR 0105）。"""
+    dialog = _dialog(*(_edited_preset(0), *default_palette_row()[1:]))
+
+    assert len(_chips(dialog)) == len(PALETTES)
+    assert dialog._buttons[0].isChecked() is True
+    assert dialog._palettes[0].title == PALETTES[0].title
+    assert dialog.name() == PALETTES[0].title, "改过的那一套不在预设表里，名字要按标题给"
+    first = dialog.palette_row()[0]
+    assert (first.key, first.kind) == (PALETTES[0].name, PALETTE_PRESET)
+    assert first.colours == ("#336699", "#b06a3b")
+    dialog.deleteLater()
+
+
+def test_editing_a_preset_writes_it_into_the_row(
+    qt_app: QApplication,  # noqa: ARG001
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dialog = _dialog()
+    _fake_palette_dialog(monkeypatch, ("#336699", "#b06a3b"))
+
+    dialog._buttons[0].double_clicked.emit()
+
+    row = dialog.palette_row()
+    assert (row[0].key, row[0].kind) == (PALETTES[0].name, PALETTE_PRESET)
+    assert row[0].colours == ("#336699", "#b06a3b")
+    assert row[1:] == default_palette_row()[1:]
+    dialog.deleteLater()
+
+
+def test_a_new_palette_gets_an_id_that_survives_a_restart(
+    qt_app: QApplication,  # noqa: ARG001
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """「+」新增的那一套要有自己的 id：重开时它就是同一格，不是又一套新的。"""
+    dialog = _dialog()
+    _fake_palette_dialog(monkeypatch, ("#336699", "#b06a3b"))
+    dialog._add_chip.click()
+    saved = dialog.palette_row()[-1]
+
+    reopened = _dialog(saved)
+
+    assert saved.kind == PALETTE_CUSTOM
+    assert saved.key.startswith("palette-")
+    assert reopened.palette_row() == (saved,)
+    dialog.deleteLater()
+    reopened.deleteLater()
+
+
+def test_editing_an_own_palette_keeps_its_id(
+    qt_app: QApplication,  # noqa: ARG001
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dialog = _dialog(_own_palette())
+    _fake_palette_dialog(monkeypatch, ("#7a9e7e", "#b06a3b"))
+
+    dialog._buttons[0].double_clicked.emit()
+
+    edited = dialog.palette_row()[0]
+    assert edited.key == "palette-0123456789ab"
+    assert edited.colours == ("#7a9e7e", "#b06a3b")
+    dialog.deleteLater()
+
+
+def test_deleting_a_palette_takes_it_out_of_the_row(
+    qt_app: QApplication,  # noqa: ARG001
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dialog = _dialog()
+    _fake_palette_dialog(monkeypatch, DELETE)
+
+    dialog._buttons[2].double_clicked.emit()
+
+    assert [entry.key for entry in dialog.palette_row()] == [
+        palette.name for index, palette in enumerate(PALETTES) if index != 2
+    ]
+    dialog.deleteLater()
+
+
+def test_each_new_palette_gets_its_own_title(
+    qt_app: QApplication,  # noqa: ARG001
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """两格同名在那一行上分不出来 —— 第二个「自定义」叫「自定义 2」。"""
+    dialog = _dialog()
+    _fake_palette_dialog(monkeypatch, ("#336699", "#b06a3b"), ("#7a9e7e", "#b06a3b"))
+
+    dialog._add_chip.click()
+    dialog._add_chip.click()
+
+    assert [entry.title for entry in dialog.palette_row()[-2:]] == ["自定义", "自定义 2"]
+    dialog.deleteLater()
+
+
+# ---- 恢复预设（ADR 0105）-----------------------------------------------------
+
+
+def test_the_reset_entry_is_hidden_while_the_presets_are_pristine(
+    qt_app: QApplication,  # noqa: ARG001
+) -> None:
+    dialog = _dialog()
+
+    assert dialog._reset_chip.isHidden() is True
+    dialog.deleteLater()
+
+
+def test_resetting_restores_edited_and_deleted_presets(
+    qt_app: QApplication,  # noqa: ARG001
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """改过的颜色回来、删掉的格子回来；「+」新增的那一套不动。"""
+    rows = [_edited_preset(0), *default_palette_row()[1:], _own_palette()]
+    dialog = _dialog(*rows)
+    assert dialog._reset_chip.isEnabled() is True
+    _fake_palette_dialog(monkeypatch, DELETE)
+    dialog._buttons[3].double_clicked.emit()  # 删掉 preset[3]
+    assert len(dialog._palettes) == len(rows) - 1
+
+    dialog._reset_chip.click()
+
+    assert dialog.palette_row() == (*default_palette_row(), _own_palette())
+    assert dialog._reset_chip.isEnabled() is False
+    dialog.deleteLater()
+
+
+def test_editing_a_preset_back_to_its_own_colours_hides_the_reset_entry(
+    qt_app: QApplication,  # noqa: ARG001
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """颜色改回原样就是原样：没有可恢复的东西，入口收起，清单里也不再写它。"""
+    dialog = _dialog()
+    _fake_palette_dialog(
+        monkeypatch, ("#336699", "#b06a3b"), tuple(color for _, color in PALETTES[0].colors)
+    )
+
+    dialog._buttons[0].double_clicked.emit()
+    assert dialog._reset_chip.isEnabled() is True
+    dialog._buttons[0].double_clicked.emit()
+
+    assert dialog._reset_chip.isEnabled() is False
+    assert dialog.palette_row() == default_palette_row()
+    dialog.deleteLater()
+
+
+def test_resetting_keeps_the_selected_palette_selected(
+    qt_app: QApplication,  # noqa: ARG001
+) -> None:
+    dialog = _dialog(*default_palette_row(), _own_palette())
+    dialog._buttons[-1].click()
+    assert dialog._palette is dialog._palettes[-1]
+
+    dialog._reset_chip.click()
+
+    assert dialog._palette is dialog._palettes[-1]
+    assert dialog._buttons[-1].isChecked() is True
     dialog.deleteLater()
