@@ -199,10 +199,11 @@ def test_unknown_preference_values_fall_back_one_by_one(tmp_path: Path) -> None:
 
 
 def test_the_external_order_is_stored_per_page(tmp_path: Path) -> None:
-    """三个位置各存一份；存进去的是应用 id，界面按它排（ADR 0080）。"""
+    """四个位置各存一份；存进去的是应用 id，界面按它排（ADR 0080 / 0094）。"""
     preferences = (
         Preferences()
         .with_external_order("detail", ("imageglass", "preview"))
+        .with_external_order("video", ("iina", "finder"))
         .with_external_order("calendar", ("google_calendar", "apple_calendar"))
     )
 
@@ -210,6 +211,7 @@ def test_the_external_order_is_stored_per_page(tmp_path: Path) -> None:
     loaded = load_session(base=tmp_path).preferences
 
     assert loaded.order_for("detail") == ("imageglass", "preview")
+    assert loaded.order_for("video") == ("iina", "finder")
     assert loaded.order_for("calendar") == ("google_calendar", "apple_calendar")
     assert loaded.order_for("grid") == ()
 
@@ -224,7 +226,7 @@ def test_an_empty_order_means_the_builtin_one() -> None:
     assert restored.external_orders == ()
 
 
-def test_only_the_three_known_pages_can_hold_an_order() -> None:
+def test_only_the_four_known_pages_can_hold_an_order() -> None:
     """页面名写错要当场报错，不能静默存成一条永远不会被读到的记录。"""
     with pytest.raises(ValueError):
         Preferences().with_external_order("welcome", ("preview",))

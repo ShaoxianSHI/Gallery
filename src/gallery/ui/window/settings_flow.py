@@ -23,6 +23,7 @@ from gallery.core.library.session import (
     EXTERNAL_PAGE_CALENDAR,
     EXTERNAL_PAGE_DETAIL,
     EXTERNAL_PAGE_GRID,
+    EXTERNAL_PAGE_VIDEO,
     Preferences,
 )
 from gallery.ui import theme
@@ -58,9 +59,10 @@ APPEARANCE_LABELS: dict[str, str] = {
 }
 SLIDESHOW_SECONDS: tuple[int, ...] = (3, 5, 8, 15)
 
-#: 「外部应用顺序」对话框里那三个标签页的名字 —— 与 ``PageRole`` 一一对应（ADR 0081）。
+#: 「外部应用顺序」对话框里那四个标签页的名字 —— 与 ``PageRole`` 一一对应（ADR 0081 / 0094）。
 EXTERNAL_ORDER_LABELS: dict[str, str] = {
     EXTERNAL_PAGE_DETAIL: "图片",
+    EXTERNAL_PAGE_VIDEO: "视频",
     EXTERNAL_PAGE_GRID: "网格",
     EXTERNAL_PAGE_CALENDAR: "日历",
 }
@@ -159,7 +161,7 @@ class SettingsFlowMixin:
         return actions
 
     def _edit_external_order(self) -> None:
-        """打开三页的排序对话框；保存时把三份次序一起写进会话（ADR 0081）。"""
+        """打开四页的排序对话框；保存时把四份次序一起写进会话（ADR 0081 / 0094）。"""
         pages = tuple(
             self._external_order_page(page, label) for page, label in EXTERNAL_ORDER_LABELS.items()
         )

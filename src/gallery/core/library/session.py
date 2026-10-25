@@ -50,13 +50,16 @@ DEFAULT_SLIDESHOW_SECONDS: Final = 3
 MIN_SLIDESHOW_SECONDS: Final = 1
 MAX_SLIDESHOW_SECONDS: Final = 60
 
-#: 「用外部应用打开」的三个位置（ADR 0080）。与 ``PageRole`` 同一套名字：
-#: 大图页 / 网格页 / 日历页。次序**只对这个应用有意义**，所以进会话偏好而不进库配置。
+#: 「用外部应用打开」的四个位置（ADR 0080 / 0094）。与 ``PageRole`` 同一套名字：
+#: 大图页的照片 / 大图页的视频 / 网格页 / 日历页。次序**只对这个应用有意义**，所以进会话偏好
+#: 而不进库配置。
 EXTERNAL_PAGE_DETAIL: Final = "detail"
+EXTERNAL_PAGE_VIDEO: Final = "video"
 EXTERNAL_PAGE_GRID: Final = "grid"
 EXTERNAL_PAGE_CALENDAR: Final = "calendar"
 EXTERNAL_PAGES: Final = (
     EXTERNAL_PAGE_DETAIL,
+    EXTERNAL_PAGE_VIDEO,
     EXTERNAL_PAGE_GRID,
     EXTERNAL_PAGE_CALENDAR,
 )
@@ -75,7 +78,7 @@ class Preferences:
     open_last_library: bool = True
     #: 网格与大图页标题上写不写文件扩展名（视图菜单里那一项）。
     show_file_extensions: bool = True
-    #: 三个位置各自的「用外部应用打开」次序（页面 → 应用 id）。空就是内置次序（ADR 0080）。
+    #: 四个位置各自的「用外部应用打开」次序（页面 → 应用 id）。空就是内置次序（ADR 0080）。
     external_orders: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
     def resolved_animation_speed(self) -> str:
@@ -109,7 +112,7 @@ class Preferences:
     def with_external_order(self, page: str, ids: Sequence[str]) -> Preferences:
         """换掉某一页的次序；``ids`` 为空表示恢复内置次序。
 
-        **只按 :data:`EXTERNAL_PAGES` 那三个位置存**，于是写出去的 JSON 每次都是同一个形状。
+        **只按 :data:`EXTERNAL_PAGES` 那四个位置存**，于是写出去的 JSON 每次都是同一个形状。
         """
         if page not in EXTERNAL_PAGES:
             raise ValueError(f"page 只能是 {EXTERNAL_PAGES} 之一，收到 {page!r}")
@@ -151,7 +154,7 @@ class Preferences:
 
 
 def _parse_external_orders(value: object) -> tuple[tuple[str, tuple[str, ...]], ...]:
-    """只认那三个位置与字符串 id —— 手改坏的、老版本的、多出来的键一律静默丢掉。"""
+    """只认那四个位置与字符串 id —— 手改坏的、老版本的、多出来的键一律静默丢掉。"""
     if not isinstance(value, dict):
         return ()
     kept: list[tuple[str, tuple[str, ...]]] = []

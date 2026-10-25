@@ -313,7 +313,7 @@ def _fake_dialog(
     *,
     accepted: bool = True,
 ) -> dict[str, object]:
-    """把对话框换成一个按剧本返回答案的桩，并记下窗口递给它的那三页。"""
+    """把对话框换成一个按剧本返回答案的桩，并记下窗口递给它的那四页。"""
     seen: dict[str, object] = {}
 
     class Fake:
@@ -336,7 +336,7 @@ def test_the_external_order_entry_sits_right_after_appearance(window: MainWindow
     assert texts.index("外部应用顺序…") == texts.index("外观") + 1
 
 
-def test_the_dialog_gets_three_pages_in_their_current_order(
+def test_the_dialog_gets_four_pages_in_their_current_order(
     window: MainWindow, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _only_calendar(monkeypatch)
@@ -345,10 +345,43 @@ def test_the_dialog_gets_three_pages_in_their_current_order(
     window._settings_extras["external_order"].trigger()
 
     pages = seen["pages"]
-    assert [page.label for page in pages] == ["图片", "网格", "日历"]  # type: ignore[attr-defined]
+    assert [page.label for page in pages] == ["图片", "视频", "网格", "日历"]  # type: ignore[attr-defined]
     calendar = next(page for page in pages if page.page == "calendar")  # type: ignore[attr-defined]
     assert [item.id for item in calendar.items] == ["apple_calendar", "google_calendar"]
     assert calendar.builtin == ("apple_calendar", "google_calendar")
+
+
+def test_the_image_page_lists_the_builtin_order_it_will_fall_back_to(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """图片页的内置次序：预览、Picview、ImageGlass、地图、Google 地图、访达、QSpace（ADR 0094）。"""
+    monkeypatch.setattr(
+        apps,
+        "find_app",
+        lambda app: (
+            Path(f"/Applications/{app.name}.app")
+            if app.id in {"preview", "picview", "imageglass", "maps", "qspace"}
+            else None
+        ),
+    )
+    seen = _fake_dialog(monkeypatch, {})
+
+    window._settings_extras["external_order"].trigger()
+
+    detail = next(
+        page
+        for page in seen["pages"]
+        if page.page == "detail"  # type: ignore[attr-defined]
+    )
+    assert [item.id for item in detail.items] == [
+        "preview",
+        "picview",
+        "imageglass",
+        "maps",
+        "google_maps",
+        "finder",
+        "qspace",
+    ]
 
 
 def test_the_dialog_only_gets_the_apps_installed_for_that_page(

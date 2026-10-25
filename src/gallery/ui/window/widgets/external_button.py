@@ -27,7 +27,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QMenu, QToolButton, QWidget
 
 from gallery.core.external import App, apps, icon_png
-from gallery.core.library.session import EXTERNAL_PAGE_DETAIL, Preferences
+from gallery.core.library.session import EXTERNAL_PAGE_VIDEO, Preferences
 from gallery.ui import theme
 from gallery.ui.rename_edit import field_background
 from gallery.ui.window import menu_style
@@ -73,7 +73,7 @@ class ExternalEntry:
     :param name: **全称**，下拉框里显示的就是它。
     :param icon: 图标；``None`` 就是画的那个中性图标。
     :param enabled: 此刻该不该出现在下拉框里（这一页有没有它要的东西）。
-    :param pages: 会出现在哪几页（detail / grid / calendar）；设置菜单按它分三份。
+    :param pages: 会出现在哪几页（detail / video / grid / calendar）；设置菜单按它分四份。
     :param available: 这台机器上装没装 —— 与「此刻这一页有没有东西可开」是两件事。
     """
 
@@ -323,11 +323,11 @@ class _Segment(QToolButton):
 
 
 def order_for_page(preferences: Preferences, page: str) -> tuple[str, ...]:
-    """这一页的次序。**IINA 固定在最前**（ADR 0093）：用户存下的旧次序里没有它，
+    """这一页的次序。**IINA 固定在视频页最前**（ADR 0093 / 0094）：用户存下的旧次序里没有它，
     不补在最前的话，新装的视频播放器会排到最后。用户自己排过之后以存下的为准。
     """
     ids = preferences.order_for(page)
-    if page == EXTERNAL_PAGE_DETAIL and apps.IINA.id not in ids:
+    if page == EXTERNAL_PAGE_VIDEO and apps.IINA.id not in ids:
         return (apps.IINA.id, *ids)
     return ids
 

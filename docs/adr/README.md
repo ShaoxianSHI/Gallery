@@ -108,7 +108,7 @@
 | [0078](0078-apple-also-converts-to-gcj.md) | 修正 0077：Apple 地图的落点同样要 GCJ-02 | 已接受 |
 | [0079](0079-apple-calendar-via-applescript.md) | 系统「日历」也能开：只能靠 AppleScript，年映射到月 | 已接受 |
 | [0080](0080-external-app-order.md) | 外部应用的次序由用户定：三个位置各一份，第一项就是左半那一下 | 已接受（决策 2 的交互由 0081 换成拖动对话框） |
-| [0081](0081-external-order-drag-dialog.md) | 外部应用顺序改成三页可拖动列表的对话框 | 已接受 |
+| [0081](0081-external-order-drag-dialog.md) | 外部应用顺序改成可拖动列表的对话框 | 已接受（页数由 0094 改成四个） |
 | [0082](0082-more-movie-sources.md) | 影片导入接上腾讯视频、爱奇艺、优酷、芒果 TV | 已接受 |
 | [0083](0083-pornhub-source.md) | 影片导入接上 Pornhub | 已接受 |
 | [0084](0084-movie-rating-in-five-buttons.md) | 影片评分改成与演出一致的 1–5 选择按钮 | 已接受 |
@@ -121,3 +121,4 @@
 | [0091](0091-video-detail-page.md) | 视频大图页：在应用里播放，而不是交给默认应用 | 已接受 |
 | [0092](0092-video-metadata-panel.md) | 视频的元数据面板：QuickTime 标签、UTC 换本机时区、GPS 进索引 | 已接受（决策 4 的只读提示由 0093 去掉） |
 | [0093](0093-iina-video-external-player.md) | 视频的外部播放器 IINA：固定在详情页第一位 | 已接受 |
+| [0094](0094-external-order-splits-photos-and-videos.md) | 外部应用顺序分成图片与视频两份，合计四个位置 | 已接受 |

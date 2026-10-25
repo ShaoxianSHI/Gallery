@@ -38,6 +38,7 @@ from gallery.core.library.session import (  # noqa: E402
     EXTERNAL_PAGE_CALENDAR,
     EXTERNAL_PAGE_DETAIL,
     EXTERNAL_PAGE_GRID,
+    EXTERNAL_PAGE_VIDEO,
 )
 from gallery.core.metadata.facets import PhotoFacets  # noqa: E402
 from gallery.core.metadata.report import MetadataReport  # noqa: E402
@@ -385,11 +386,12 @@ def test_the_system_calendar_stays_off_the_grid_page(
 
 
 def test_each_page_reads_its_own_order(window: MainWindow) -> None:
-    """三个位置各一份 —— 翻页时读的是那一页的那份（ADR 0080）。"""
+    """四个位置各一份 —— 翻页时读的是那一页的那份（ADR 0080 / 0094）。"""
     prefs = (
         window._session.preferences.with_external_order(
             EXTERNAL_PAGE_DETAIL, ("imageglass", "preview")
         )
+        .with_external_order(EXTERNAL_PAGE_VIDEO, ("iina", "finder"))
         .with_external_order(EXTERNAL_PAGE_GRID, ("qspace", "finder"))
         .with_external_order(EXTERNAL_PAGE_CALENDAR, ("google_calendar", "apple_calendar"))
     )
@@ -397,8 +399,7 @@ def test_each_page_reads_its_own_order(window: MainWindow) -> None:
 
     assert window._external_order_ids() == ("qspace", "finder")
     window._open_detail(window._model.index(0, 0))
-    # IINA 是详情页固定第一项（ADR 0093）：存下的旧次序里没有它，也要补在最前。
-    assert window._external_order_ids() == ("iina", "imageglass", "preview")
+    assert window._external_order_ids() == ("imageglass", "preview")
     window.set_browse_mode(BROWSE_MODE_CALENDAR)
     assert window._external_order_ids() == ("google_calendar", "apple_calendar")
 
@@ -643,7 +644,7 @@ def test_the_qspace_entry_stays_off_the_calendar_page(
 def test_every_installed_app_is_listed_in_a_fixed_order(
     window: MainWindow, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """装了哪几项就摆哪几项，**次序固定**：预览在最前，然后是访达、QSpace、ImageGlass、Picview。
+    """装了哪几项就摆哪几项，**次序固定**：图片页先预览、Picview、ImageGlass，再访达、QSpace。
 
     **左半那一下在大图页上因此是「预览」**（它开的是列表里第一个可用的）—— 大图页上最常用的
     就是「用图片软件看这一张」；网格页上图片应用不摆，左半仍是访达。
@@ -660,10 +661,10 @@ def test_every_installed_app_is_listed_in_a_fixed_order(
 
     assert _menu_texts(window._external_button) == [
         "预览",
+        "Picview",
+        "ImageGlass",
         "访达",
         "QSpace",
-        "ImageGlass",
-        "Picview",
     ]
     default = window._external_button.default_entry()
     assert default is not None and default.name == "预览"

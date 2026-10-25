@@ -22,7 +22,11 @@ from waiting import wait_for_idle, wait_until  # noqa: E402
 
 from gallery.core.external import apps  # noqa: E402
 from gallery.core.library.config import prepare_library  # noqa: E402
-from gallery.core.library.session import SessionState, save_session  # noqa: E402
+from gallery.core.library.session import (  # noqa: E402
+    EXTERNAL_PAGE_VIDEO,
+    SessionState,
+    save_session,
+)
 from gallery.core.metadata.report import (  # noqa: E402
     MetadataField,
     MetadataGroup,
@@ -251,7 +255,7 @@ def _menu_texts(window: MainWindow) -> list[str]:
 def test_iina_is_first_on_a_video_page_and_not_on_a_photo_page(
     window: MainWindow, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """IINA 只给视频，且固定第一 —— 用户存下来的旧次序里没有它（ADR 0093）。"""
+    """IINA 只给视频，且固定第一 —— 用户存下来的旧次序里没有它（ADR 0093 / 0094）。"""
     iina_app = Path("/Applications/IINA.app")
     monkeypatch.setattr(apps, "find_app", lambda app: iina_app if app.id == apps.IINA.id else None)
 
@@ -273,6 +277,22 @@ def test_iina_is_first_on_a_video_page_and_not_on_a_photo_page(
     _open(window, "a.jpg")
     window._update_action_states()
     assert "IINA" not in _menu_texts(window)
+
+
+def test_the_video_page_keeps_its_own_order_apart_from_the_photo_page(
+    window: MainWindow,
+) -> None:
+    """图片与视频各一份次序（ADR 0094）—— 排视频页不该顺带改掉照片页的默认。"""
+    prefs = window._session.preferences.with_external_order(EXTERNAL_PAGE_VIDEO, ("finder", "iina"))
+    window._session = window._session.with_preferences(prefs)
+
+    _open(window, "b.avi")
+    window._update_action_states()
+    assert window._external_order_ids() == ("finder", "iina")
+
+    _open(window, "a.jpg")
+    window._update_action_states()
+    assert window._external_order_ids() == ()
 
 
 def test_the_two_maps_are_offered_on_a_video_page(

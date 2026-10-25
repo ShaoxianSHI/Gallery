@@ -46,6 +46,7 @@ from gallery.core.library.session import (
     EXTERNAL_PAGE_CALENDAR,
     EXTERNAL_PAGE_DETAIL,
     EXTERNAL_PAGE_GRID,
+    EXTERNAL_PAGE_VIDEO,
 )
 from gallery.core.metadata.report import MetadataReport
 from gallery.core.places.dataset import is_real_coordinate
@@ -760,7 +761,7 @@ class MainWindow(
         # 行号，而网格的当前项还停着上一次点的那一格，拿它算可用性就会亮着一条指向别处的路。
         in_calendar = self._on_calendar_page()
         # 「用外部应用打开」**只在有东西可开的时候出现**（ADR 0034，判据 ``is_available()``）。
-        # 次序随页面走（设置里那三份，ADR 0080），左半那一下是排在最前的可用项。
+        # 次序随页面走（设置里那四份，ADR 0080 / 0094），左半那一下是排在最前的可用项。
         self._external_button.set_order(self._external_order_ids())
         self._external_button.refresh()
         self._external_button.setVisible(
@@ -986,12 +987,12 @@ class MainWindow(
         # ---- 用外部应用打开（ADR 0034）------------------------------------
 
     def _external_entries(self) -> tuple[ExternalEntry, ...]:
-        """下拉框里那几项，**次序就是摆出来的次序**（最前面那个可用的就是左半那一下）。
+        """下拉框里那几项，**这个元组的先后就是四页各自的内置次序**。
 
         每一项自己判自己此刻该不该出现（``ExternalEntry.enabled``），于是列表不用随页面变化
-        重建，翻页时 ``refresh`` 问一遍就够。**IINA 排在最前**（视频专用的播放器，ADR 0093），
-        然后才是预览：大图页上最常用的就是「用某个软件看这一张」（ADR 0067），地图排在它后面
-        才不会把有坐标那一张的左半换成地图；日历页最前则是系统「日历」（ADR 0079）。
+        重建，翻页时 ``refresh`` 问一遍就够。**图片页与视频页各有一份次序**（ADR 0094）：
+        照片页先图片应用、再地图与文件管理，视频页 IINA 在最前（ADR 0093）；日历页最前则是
+        系统「日历」（ADR 0079）。次序本身由用户的偏好覆盖（ADR 0080）。
         """
         return (
             ExternalEntry(
@@ -999,8 +1000,46 @@ class MainWindow(
                 name=apps.IINA.name,
                 icon=icon_for(apps.IINA),
                 enabled=self._iina_ready,
-                pages=(EXTERNAL_PAGE_DETAIL,),
+                pages=(EXTERNAL_PAGE_VIDEO,),
                 available=partial(self._installed, apps.IINA),
+            ),
+            self._viewer_entry(apps.PREVIEW),
+            self._viewer_entry(apps.PICVIEW),
+            self._viewer_entry(apps.IMAGEGLASS),
+            ExternalEntry(
+                id=apps.MAPS.id,
+                name=apps.MAPS.name,
+                icon=icon_for(apps.MAPS, fallback=ICON_MAP),
+                # 没装（或是别的平台）就不摆：与预览、QSpace 同一条判据。
+                enabled=lambda: self._installed(apps.MAPS) and self._map_point() is not None,
+                pages=(EXTERNAL_PAGE_DETAIL, EXTERNAL_PAGE_VIDEO),
+                available=partial(self._installed, apps.MAPS),
+            ),
+            ExternalEntry(
+                id="google_maps",
+                name="Google 地图",
+                icon=google_maps_icon(),
+                # 开在 PWA 还是浏览器都只要坐标，于是只问「这张照片有没有坐标」。
+                enabled=lambda: self._map_point() is not None,
+                pages=(EXTERNAL_PAGE_DETAIL, EXTERNAL_PAGE_VIDEO),
+            ),
+            ExternalEntry(
+                id="finder",
+                name="访达",
+                icon=folder_icon(),
+                # **与日历那一项互补**：日历页给日历，其余页给访达（每一页只有一样可开的）。
+                enabled=self._has_folder_to_open,
+                pages=(EXTERNAL_PAGE_DETAIL, EXTERNAL_PAGE_VIDEO, EXTERNAL_PAGE_GRID),
+            ),
+            ExternalEntry(
+                id=apps.QSPACE.id,
+                name=apps.QSPACE.name,
+                icon=icon_for(apps.QSPACE),
+                # **没装它就不摆这一项**（与「访达」同一条判据：摆一个点下去没反应的灰条目
+                # 只会让人以为软件坏了）。
+                enabled=lambda: self._has_folder_to_open() and self._installed(apps.QSPACE),
+                pages=(EXTERNAL_PAGE_DETAIL, EXTERNAL_PAGE_VIDEO, EXTERNAL_PAGE_GRID),
+                available=partial(self._installed, apps.QSPACE),
             ),
             ExternalEntry(
                 id="apple_calendar",
@@ -1018,44 +1057,6 @@ class MainWindow(
                 enabled=self._on_calendar_page,
                 pages=(EXTERNAL_PAGE_CALENDAR,),
             ),
-            self._viewer_entry(apps.PREVIEW),
-            ExternalEntry(
-                id=apps.MAPS.id,
-                name=apps.MAPS.name,
-                icon=icon_for(apps.MAPS, fallback=ICON_MAP),
-                # 没装（或是别的平台）就不摆：与预览、QSpace 同一条判据。
-                enabled=lambda: self._installed(apps.MAPS) and self._map_point() is not None,
-                pages=(EXTERNAL_PAGE_DETAIL,),
-                available=partial(self._installed, apps.MAPS),
-            ),
-            ExternalEntry(
-                id="google_maps",
-                name="Google 地图",
-                icon=google_maps_icon(),
-                # 开在 PWA 还是浏览器都只要坐标，于是只问「这张照片有没有坐标」。
-                enabled=lambda: self._map_point() is not None,
-                pages=(EXTERNAL_PAGE_DETAIL,),
-            ),
-            ExternalEntry(
-                id="finder",
-                name="访达",
-                icon=folder_icon(),
-                # **与日历那一项互补**：日历页给日历，其余页给访达（每一页只有一样可开的）。
-                enabled=self._has_folder_to_open,
-                pages=(EXTERNAL_PAGE_DETAIL, EXTERNAL_PAGE_GRID),
-            ),
-            ExternalEntry(
-                id=apps.QSPACE.id,
-                name=apps.QSPACE.name,
-                icon=icon_for(apps.QSPACE),
-                # **没装它就不摆这一项**（与「访达」同一条判据：摆一个点下去没反应的灰条目
-                # 只会让人以为软件坏了）。
-                enabled=lambda: self._has_folder_to_open() and self._installed(apps.QSPACE),
-                pages=(EXTERNAL_PAGE_DETAIL, EXTERNAL_PAGE_GRID),
-                available=partial(self._installed, apps.QSPACE),
-            ),
-            self._viewer_entry(apps.IMAGEGLASS),
-            self._viewer_entry(apps.PICVIEW),
         )
 
     def _viewer_entry(self, viewer: App) -> ExternalEntry:
@@ -1243,10 +1244,17 @@ class MainWindow(
         return self._page_role is PageRole.CALENDAR
 
     def _external_page_kind(self) -> str:
-        """「用外部应用打开」此刻按哪一页的次序排 —— 与 ``PageRole`` 同一套名字。"""
+        """「用外部应用打开」此刻按哪一份次序排 —— 与 ``PageRole`` 同一套名字。
+
+        **大图页按看的是照片还是视频分成两份**（ADR 0094）：图片应用与视频播放器不共用一份
+        次序，用户也就不用在一个列表里绕开另一类应用。
+        """
         if self._on_calendar_page():
             return EXTERNAL_PAGE_CALENDAR
         if self._in_detail_page():
+            ref = self._detail_photo_ref()
+            if ref is not None and ref.is_video:
+                return EXTERNAL_PAGE_VIDEO
             return EXTERNAL_PAGE_DETAIL
         return EXTERNAL_PAGE_GRID
 
