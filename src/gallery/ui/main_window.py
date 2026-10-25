@@ -1055,6 +1055,7 @@ class MainWindow(
                 available=partial(self._installed, apps.QSPACE),
             ),
             self._viewer_entry(apps.IMAGEGLASS),
+            self._viewer_entry(apps.PICVIEW),
         )
 
     def _viewer_entry(self, viewer: App) -> ExternalEntry:

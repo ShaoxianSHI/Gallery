@@ -73,6 +73,7 @@ FIELD = QRect(300, 7, 208, 22)
 #: （见 :func:`no_external_apps`），要摆出某一项的用例自己用 :func:`_only` 点名。
 QSPACE_APP = Path("/Applications/QSpace Pro.app")
 IMAGEGLASS_APP = Path("/Applications/ImageGlass.app")
+PICVIEW_APP = Path("/Applications/Picview.app")
 PREVIEW_APP = Path("/System/Applications/Preview.app")
 MAPS_APP = Path("/System/Applications/Maps.app")
 CALENDAR_APP = Path("/System/Applications/Calendar.app")
@@ -89,7 +90,8 @@ def no_external_apps(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _only(monkeypatch: pytest.MonkeyPatch, **installed: Path) -> None:
-    """把名册换成「只装了这几个」，键是那一项的 id（``qspace`` / ``preview`` / ``imageglass``）。
+    """把名册换成「只装了这几个」，键是那一项的 id（``qspace`` / ``preview`` / ``imageglass`` /
+    ``picview``）。
 
     整份名册一起换，「装了预览」这类用例才不会连带把真实机器上装着的那些也摆出来。
     """
@@ -641,16 +643,28 @@ def test_the_qspace_entry_stays_off_the_calendar_page(
 def test_every_installed_app_is_listed_in_a_fixed_order(
     window: MainWindow, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """装了哪几项就摆哪几项，**次序固定**：预览在最前，然后是访达、QSpace、ImageGlass。
+    """装了哪几项就摆哪几项，**次序固定**：预览在最前，然后是访达、QSpace、ImageGlass、Picview。
 
     **左半那一下在大图页上因此是「预览」**（它开的是列表里第一个可用的）—— 大图页上最常用的
     就是「用图片软件看这一张」；网格页上图片应用不摆，左半仍是访达。
     """
-    _only(monkeypatch, qspace=QSPACE_APP, preview=PREVIEW_APP, imageglass=IMAGEGLASS_APP)
+    _only(
+        monkeypatch,
+        qspace=QSPACE_APP,
+        preview=PREVIEW_APP,
+        imageglass=IMAGEGLASS_APP,
+        picview=PICVIEW_APP,
+    )
     window._open_detail(window._model.index(0, 0))
     window._external_button.refresh()
 
-    assert _menu_texts(window._external_button) == ["预览", "访达", "QSpace", "ImageGlass"]
+    assert _menu_texts(window._external_button) == [
+        "预览",
+        "访达",
+        "QSpace",
+        "ImageGlass",
+        "Picview",
+    ]
     default = window._external_button.default_entry()
     assert default is not None and default.name == "预览"
 
@@ -692,6 +706,24 @@ def test_the_viewer_entry_opens_the_photo_the_detail_page_is_showing(
     window._open_in_viewer(apps.IMAGEGLASS)
 
     assert calls == [([window._library.root / "一张.jpg"], IMAGEGLASS_APP, "ImageGlass")]
+
+
+def test_clicking_the_picview_entry_opens_the_photo_in_picview(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """新加一项图片应用时最容易漏的就是分派：菜单里摆着、点下去什么都不发生。"""
+    _only(monkeypatch, picview=PICVIEW_APP)
+    calls: list[tuple[list[Path], Path, str]] = []
+    monkeypatch.setattr(
+        desktop,
+        "open_with_app",
+        lambda paths, app, name: calls.append((list(paths), app, name)) or "已在 Picview 中打开。",
+    )
+    window._open_detail(window._model.index(0, 0))
+
+    window._on_external_entry(_entry("picview", "Picview", True))
+
+    assert calls == [([window._library.root / "一张.jpg"], PICVIEW_APP, "Picview")]
 
 
 def test_clicking_a_viewer_entry_reaches_the_same_action(

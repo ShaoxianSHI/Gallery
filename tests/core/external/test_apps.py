@@ -226,11 +226,12 @@ def test_the_viewer_list_is_the_one_we_mean() -> None:
     ``open -a`` 不认中文名，递给它的是名册上那个路径 —— 这一条与 :func:`apps.find_app` 无关，
     但没有别处适合锁定这份名单。
     """
-    assert apps.VIEWERS == (apps.PREVIEW, apps.IMAGEGLASS)
-    assert [viewer.id for viewer in apps.VIEWERS] == ["preview", "imageglass"]
+    assert apps.VIEWERS == (apps.PREVIEW, apps.IMAGEGLASS, apps.PICVIEW)
+    assert [viewer.id for viewer in apps.VIEWERS] == ["preview", "imageglass", "picview"]
     assert apps.PREVIEW.name == "预览"
     assert apps.PREVIEW.bundle_ids == ("com.apple.Preview",)
     assert apps.IMAGEGLASS.bundle_ids == ("com.duongdieuphap.imageglass",)
+    assert apps.PICVIEW.bundle_ids == ("com.chitaner.Picview",)
 
 
 # ---- 图标：跟系统要它画好的那一张 --------------------------------------

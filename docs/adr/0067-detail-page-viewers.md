@@ -21,11 +21,12 @@ Player** —— 后四个是噪声，得挡掉。
 
 1. **只在大图页出现。** 网格页没有「正在看的那一张」；用某个软件打开**选区**是右键菜单那一组
    回答的问题，两处的对象不是同一个。
-2. **一份手写的白名单，不问 Launch Services 要名单**：`预览` + `ImageGlass`
+2. **一份手写的白名单，不问 Launch Services 要名单**：`预览` + `ImageGlass` + `Picview`
    （`core.external.apps.VIEWERS`）。系统那份名单里的 ColorSync Utility / Chrome / Safari /
    QuickTime 也声明能开图，递一张照片过去得到的却是别的东西（浏览器里开一个标签、一帧画面、
    一个色彩工具），摆成按钮只会让人以为软件坏了。
-3. **装没装按 bundle id 认**（`com.apple.Preview` / `com.duongdieuphap.imageglass`），**没装就
+3. **装没装按 bundle id 认**（`com.apple.Preview` / `com.duongdieuphap.imageglass` /
+   `com.chitaner.Picview`），**没装就
    不摆这一项** —— 与 QSpace 同一条判据。这也意味着**显示名与判据是分开的**：
    名字换发行版、换系统语言都可能变。
 4. **递给 `open -a` 的永远是名册查到的应用包路径，显示名只进菜单与横幅。** `open -a` 不认中文
@@ -51,7 +52,7 @@ Player** —— 后四个是噪声，得挡掉。
 
 ## 后果
 
-- 下拉框里最多四项，次序固定：**预览、访达、QSpace、ImageGlass**（装了哪几项就摆哪几项）。
+- 下拉框里最多五项，次序固定：**预览、访达、QSpace、ImageGlass、Picview**（装了哪几项就摆哪几项）。
   **左半那一下在大图页是「预览」、在网格页是「访达」、在日历页是「Google 日历」。**
 - 装没装**只在启动时问一次并缓存**：会话中途去装了 ImageGlass，要重开 Gallery 才看得到。
 - 这一层**不碰用户的照片**：只让系统画一次图标、只起一个 `open` 进程。

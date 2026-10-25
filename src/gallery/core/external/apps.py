@@ -58,6 +58,9 @@ IMAGEGLASS = App(
     bundle_ids=("com.duongdieuphap.imageglass",),
 )
 
+#: Picview：同样是图片浏览器。bundle id 取自它自己的 ``Info.plist``，**大小写照抄**。
+PICVIEW = App(id="picview", name="Picview", bundle_ids=("com.chitaner.Picview",))
+
 #: IINA：视频播放器。只在「正在看一个视频」的大图页上摆，且固定在第一位（ADR 0093）。
 #: bundle id 取自它自己的 Info.plist；显示名是拉丁字母，不译。
 IINA = App(id="iina", name="IINA", bundle_ids=("com.colliderli.iina",))
@@ -66,7 +69,7 @@ IINA = App(id="iina", name="IINA", bundle_ids=("com.colliderli.iina",))
 #: 「打开方式」名单里还躺着 ColorSync Utility / Chrome / Safari / QuickTime，它们声明能开图，
 #: 递一张照片过去得到的却是别的东西（浏览器标签、一帧画面）。**次序不表示摆出来的次序**，
 #: 下拉框里那几项的先后由 :meth:`MainWindow._external_entries` 写定（ADR 0067）。
-VIEWERS: tuple[App, ...] = (PREVIEW, IMAGEGLASS)
+VIEWERS: tuple[App, ...] = (PREVIEW, IMAGEGLASS, PICVIEW)
 
 
 @cache
@@ -140,6 +143,7 @@ __all__ = [
     "IINA",
     "IMAGEGLASS",
     "MAPS",
+    "PICVIEW",
     "PREVIEW",
     "QSPACE",
     "VIEWERS",
