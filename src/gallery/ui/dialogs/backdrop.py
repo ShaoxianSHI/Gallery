@@ -10,13 +10,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QColor, QPalette, QPixmap
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QButtonGroup,
     QDialog,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -30,11 +30,16 @@ from gallery.core.backdrops import MAX_NAME_LENGTH, PALETTES, Palette, Recipe, n
 from gallery.core.backdrops.generate import colorize, render_field
 from gallery.ui import imaging, theme
 from gallery.ui.dialogs.appearance import dialog_style
+from gallery.ui.theme import AppTheme, rgba
 
 #: 预览区的大小（点）：16:10，够看清晕染的走向，又不至于把对话框撑满屏。
 PREVIEW_SIZE = QSize(720, 450)
 
 MIN_WIDTH = 640
+
+#: 「管理背景」的宽度与列表高度（点）：宽到一条中文名字不至于被挤成省略号，列表露出五行。
+MANAGE_MIN_WIDTH = 460
+MANAGE_LIST_HEIGHT = 200
 
 #: 色板按钮里那块小色块的尺寸。
 CHIP_SIZE = QSize(34, 22)
@@ -283,33 +288,14 @@ class BackdropManageDialog(QDialog):
         self._names: dict[str, str] = dict(items)
         self._original: dict[str, str] = dict(items)
         self._removed: list[str] = []
+        self._filling = False
         self.setWindowTitle("管理背景")
         self.setModal(True)
-        self.setMinimumWidth(420)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 14, 16, 12)
-        layout.setSpacing(10)
-
-        self._list = QListWidget()
-        self._list.setObjectName("backdropList")
-        self._fill()
-        layout.addWidget(self._list, 1)
-
-        buttons = QHBoxLayout()
-        rename = QPushButton("重命名…")
-        rename.clicked.connect(self._rename)
-        remove = QPushButton("删除")
-        remove.clicked.connect(self._delete)
-        buttons.addWidget(rename)
-        buttons.addWidget(remove)
-        buttons.addStretch(1)
-        done = QPushButton("完成")
-        done.setObjectName("saveButton")
-        done.setDefault(True)
-        done.clicked.connect(self.accept)
-        buttons.addWidget(done)
-        layout.addLayout(buttons)
-        self.setStyleSheet(dialog_style(theme.current_theme(), self.palette()))
+        self.setMinimumWidth(MANAGE_MIN_WIDTH)
+        self._watcher = theme.ensure_installed()
+        self._watcher.changed.connect(self._apply_theme)
+        self._build()
+        self._apply_theme()
 
     def renames(self) -> dict[str, str]:
         """``{id: 新名字}``，只含真的改过、也还在的那几条。"""
@@ -322,41 +308,187 @@ class BackdropManageDialog(QDialog):
     def removed(self) -> tuple[str, ...]:
         return tuple(self._removed)
 
+    # ---- 搭建 --------------------------------------------------------------
+
+    def _build(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 14, 16, 12)
+        layout.setSpacing(10)
+
+        hint = QLabel(
+            "改名与删除只作用于 Gallery 缓存里的那一份，原照片不动；"
+            "点「完成」才生效，取消则什么都不改。"
+        )
+        hint.setObjectName("backdropHint")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        # 按钮先建：列表一填就会问它们能不能按（`currentItemChanged`）。
+        buttons = self._build_buttons()
+        self._list = QListWidget()
+        self._list.setObjectName("backdropList")
+        self._list.setMinimumHeight(MANAGE_LIST_HEIGHT)
+        self._list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._list.itemChanged.connect(self._on_item_changed)
+        self._list.currentItemChanged.connect(lambda *_: self._sync_buttons())
+        self._fill()
+        layout.addWidget(self._list, 1)
+
+        layout.addLayout(buttons)
+
+    def _build_buttons(self) -> QHBoxLayout:
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 2, 0, 0)
+        row.setSpacing(8)
+        rename = QPushButton("重命名…")
+        rename.setObjectName("backdropRename")
+        rename.clicked.connect(self._rename)
+        remove = QPushButton("删除")
+        remove.setObjectName("backdropRemove")
+        remove.clicked.connect(self._delete)
+        row.addWidget(rename)
+        row.addWidget(remove)
+        row.addStretch(1)
+        done = QPushButton("完成")
+        done.setObjectName("saveButton")
+        done.setDefault(True)
+        done.clicked.connect(self.accept)
+        row.addWidget(done)
+        self._rename_button = rename
+        self._remove_button = remove
+        return row
+
+    # ---- 列表内容 ----------------------------------------------------------
+
     def _fill(self) -> None:
-        self._list.clear()
-        for item_id, name in self._names.items():
-            if item_id in self._removed:
-                continue
-            item = QListWidgetItem(name)
-            item.setData(Qt.ItemDataRole.UserRole, item_id)
-            self._list.addItem(item)
+        self._filling = True
+        try:
+            self._list.clear()
+            for item_id, name in self._names.items():
+                if item_id not in self._removed:
+                    self._list.addItem(_row(item_id, name))
+            self._list.setCurrentRow(0)
+        finally:
+            self._filling = False
+        self._ensure_empty_state()
+        self._sync_buttons()
+
+    def _ensure_empty_state(self) -> None:
+        """删光之后留一行说明，而不是一个空白的框。"""
+        if self._list.count():
+            return
+        placeholder = QListWidgetItem("还没有保存过背景图")
+        placeholder.setFlags(Qt.ItemFlag.NoItemFlags)
+        self._list.addItem(placeholder)
 
     def _selected(self) -> QListWidgetItem | None:
-        return self._list.currentItem() or (self._list.item(0) if self._list.count() else None)
+        current = self._list.currentItem()
+        if current is not None and _item_id(current) is not None:
+            return current
+        for row in range(self._list.count()):
+            item = self._list.item(row)
+            if _item_id(item) is not None:
+                return item
+        return None
+
+    def _sync_buttons(self) -> None:
+        has_row = self._selected() is not None
+        self._rename_button.setEnabled(has_row)
+        self._remove_button.setEnabled(has_row)
+
+    # ---- 改名与删除 --------------------------------------------------------
 
     def _rename(self) -> None:
+        """在那一行上就地改：再弹一个系统输入框，样式立刻又和这一个不是一套。"""
         item = self._selected()
         if item is None:
             return
-        item_id = str(item.data(Qt.ItemDataRole.UserRole))
-        current = self._names[item_id]
-        text, accepted = _ask_name(self, current)
-        if not accepted or not text:
+        self._list.setCurrentItem(item)
+        self._list.editItem(item)
+
+    def _on_item_changed(self, item: QListWidgetItem) -> None:
+        """空名字退回上一个，超长的按同一个上限截断。"""
+        if self._filling:
             return
-        self._names[item_id] = text[:MAX_NAME_LENGTH]
-        item.setText(self._names[item_id])
+        item_id = _item_id(item)
+        if item_id is None:
+            return
+        name = item.text().strip()[:MAX_NAME_LENGTH] or self._names.get(item_id, "")
+        if name != item.text():
+            self._list.blockSignals(True)
+            try:
+                item.setText(name)
+            finally:
+                self._list.blockSignals(False)
+        self._names[item_id] = name
 
     def _delete(self) -> None:
         item = self._selected()
         if item is None:
             return
-        self._removed.append(str(item.data(Qt.ItemDataRole.UserRole)))
+        item_id = _item_id(item)
+        if item_id is None:
+            return
+        self._removed.append(item_id)
         self._list.takeItem(self._list.row(item))
+        self._ensure_empty_state()
+        self._sync_buttons()
+
+    # ---- 外观 --------------------------------------------------------------
+
+    def _apply_theme(self) -> None:
+        self.setStyleSheet(_manage_style(theme.current_theme(), self.palette()))
 
 
-def _ask_name(parent: QWidget, current: str) -> tuple[str, bool]:
-    text, accepted = QInputDialog.getText(parent, "重命名背景", "名称", text=current)
-    return text.strip(), accepted
+def _row(item_id: str, name: str) -> QListWidgetItem:
+    item = QListWidgetItem(name)
+    item.setData(Qt.ItemDataRole.UserRole, item_id)
+    item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+    return item
+
+
+def _item_id(item: QListWidgetItem) -> str | None:
+    """列表行的 id；占位那一行没有 id（它不是一张背景）。"""
+    value = item.data(Qt.ItemDataRole.UserRole)
+    return str(value) if value else None
+
+
+def _manage_style(app_theme: AppTheme, palette: QPalette) -> str:
+    """列表与行内输入框也是这一套底色：默认的列表在深色下像贴上去的一张白纸。"""
+    fill = rgba(app_theme.text_at(0.06))
+    edge = rgba(app_theme.text_at(0.18))
+    highlight = palette.color(QPalette.ColorRole.Highlight)
+    highlighted_text = palette.color(QPalette.ColorRole.HighlightedText)
+    danger_tint = QColor(app_theme.error)
+    danger_tint.setAlphaF(0.16)
+    return (
+        dialog_style(app_theme, palette)
+        + f"""
+    QListWidget#backdropList {{
+        color: {rgba(app_theme.text_at(0.92))};
+        background: {fill};
+        border: 1px solid {edge};
+        border-radius: 6px;
+        padding: 4px;
+        font-size: 12px;
+    }}
+    QListWidget#backdropList::item {{ padding: 6px 8px; border-radius: 4px; }}
+    QListWidget#backdropList::item:selected {{
+        background: {rgba(highlight)};
+        color: {rgba(highlighted_text)};
+    }}
+    QLineEdit {{
+        color: {rgba(app_theme.text_at(0.92))};
+        background: {fill};
+        border: 1px solid {rgba(highlight)};
+        border-radius: 4px;
+        padding: 3px 6px;
+        font-size: 12px;
+    }}
+    QPushButton#backdropRemove {{ color: {rgba(app_theme.error)}; }}
+    QPushButton#backdropRemove:hover {{ background: {rgba(danger_tint)}; }}
+    """
+    )
 
 
 def _chip_color(palette: Palette) -> str:
@@ -375,6 +507,8 @@ def _chip_style(color: str) -> str:
 
 
 __all__ = [
+    "MANAGE_LIST_HEIGHT",
+    "MANAGE_MIN_WIDTH",
     "MIN_WIDTH",
     "PREVIEW_SIZE",
     "BackdropGenerateDialog",
