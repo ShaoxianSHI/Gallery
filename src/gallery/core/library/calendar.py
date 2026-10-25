@@ -65,6 +65,21 @@ def weekday_names() -> tuple[str, ...]:
 WEEKEND_WEEKDAYS: Final[frozenset[int]] = frozenset({5, 6})
 
 
+#: 十二个月的键：完整名与短名各一套。**键里只放数字**，名字跟着语言走。
+_MONTH_KEYS: Final[tuple[str, ...]] = tuple(
+    f"library.calendar.month.{index}" for index in range(1, 13)
+)
+_MONTH_SHORT_KEYS: Final[tuple[str, ...]] = tuple(
+    f"library.calendar.month_short.{index}" for index in range(1, 13)
+)
+
+
+def month_name(month: int, *, short: bool = False) -> str:
+    """1–12 → 当前语言的月份名；``short`` 取月视图 / 周范围那种三字母写法。"""
+    keys = _MONTH_SHORT_KEYS if short else _MONTH_KEYS
+    return t(keys[month - 1])
+
+
 def weekday_headers() -> tuple[str, ...]:
     """月视图表头（「星期一」而不是「一」）：一列里只有「一」是认不出来的。"""
     return tuple(t("library.calendar.weekday.header", name=name) for name in weekday_names())
@@ -188,15 +203,15 @@ def title(level: str, anchor: datetime.date) -> str:
     if level == "year":
         return t("library.calendar.title.year", year=anchor.year)
     if level == "month":
-        return t("library.calendar.title.month", year=anchor.year, month=anchor.month)
+        return t("library.calendar.title.month", year=anchor.year, name=month_name(anchor.month))
     start = week_start(anchor)
     end = start + datetime.timedelta(days=6)
     span = t(
         "library.calendar.title.week_span",
         start_year=start.year,
-        start_month=start.month,
+        start_name=month_name(start.month, short=True),
         start_day=start.day,
-        end_month=end.month,
+        end_name=month_name(end.month, short=True),
         end_day=end.day,
     )
     return t("library.calendar.title.week", span=span, number=week_number(start))
@@ -318,6 +333,7 @@ __all__ = [
     "level_names",
     "month_days",
     "month_matrix",
+    "month_name",
     "shift",
     "title",
     "week_index",

@@ -21,8 +21,10 @@ from gallery.core.library.calendar import (
     group_by_hour,
     in_month,
     is_level,
+    level_names,
     month_days,
     month_matrix,
+    month_name,
     shift,
     title,
     week_index,
@@ -95,6 +97,22 @@ def test_the_filler_days_of_the_matrix_are_exactly_the_ones_left_out() -> None:
     assert [day for day in matrix if in_month(day, anchor)] == own
     # 2021 年 9 月 1 号是周三：前面补 3 天（8 月 29–31），后面补 9 天（10 月 1–9）
     assert len(matrix) - len(own) == 12
+
+
+def test_english_calendar_uses_month_names_not_numbers() -> None:
+    """英文日历写 ``September 2026`` / ``Sep 12, 2021``，不是 ``Month 9`` / ``9/12``。"""
+    from gallery.core.i18n import current_language, set_language
+
+    before = current_language()
+    try:
+        set_language("en")
+        assert [level_names()[level] for level in LEVELS] == ["Y", "M", "W"]
+        assert month_name(9) == "September"
+        assert month_name(9, short=True) == "Sep"
+        assert title("month", datetime.date(2026, 9, 12)) == "September 2026"
+        assert title("week", datetime.date(2021, 9, 12)) == "Sep 12, 2021 – Sep 18 · Week 38"
+    finally:
+        set_language(before)
 
 
 def test_a_month_is_six_weeks_starting_on_a_sunday() -> None:

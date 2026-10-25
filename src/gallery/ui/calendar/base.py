@@ -18,6 +18,7 @@ from gallery.core.library.calendar import (
     HourBuckets,
     count_days,
     days_of,
+    month_name,
     title,
 )
 from gallery.core.library.photos import PhotoRef
@@ -221,12 +222,17 @@ class LevelView(QWidget):
 
 def day_label(day: datetime.date) -> str:
     """一格（一天）在标题里怎么写 —— 展开成网格时那一层的名字。"""
-    return t("calendar.day_label", month=day.month, day=day.day)
+    return t("calendar.day_label", name=month_name(day.month, short=True), day=day.day)
 
 
 def hour_label(day: datetime.date, hour: int) -> str:
     """一格（一个钟点）在标题里怎么写。"""
-    return t("calendar.hour_label", month=day.month, day=day.day, hour=hour)
+    return t(
+        "calendar.hour_label",
+        name=month_name(day.month, short=True),
+        day=day.day,
+        hour=hour,
+    )
 
 
 __all__ = ["GEOMETRY_DEBOUNCE_MS", "LevelView", "day_label", "hour_label"]

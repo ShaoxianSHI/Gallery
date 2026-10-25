@@ -19,6 +19,7 @@ from gallery.core.library.calendar import (
     in_month,
     month_days,
     month_matrix,
+    month_name,
     weekday_headers,
 )
 from gallery.core.library.photos import PhotoRef
@@ -107,7 +108,7 @@ class YearView(LevelView):
         draw_text(
             painter,
             title,
-            t("calendar.month_label", month=month),
+            t("calendar.month_label", name=month_name(month, short=True)),
             font_px(_TITLE_FONT_PX, QFont.Weight.DemiBold),
             colors.text,
         )
