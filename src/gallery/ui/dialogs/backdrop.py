@@ -575,7 +575,7 @@ def _add_chip_style(app_theme: AppTheme) -> str:
     ink = rgba(app_theme.text_at(0.72))
     hover = rgba(app_theme.text_at(0.08))
     return (
-        f"QPushButton {{ background: transparent; border: 1px dashed {edge};"
+        f"QPushButton {{ background: transparent; border: 1px solid {edge};"
         f" border-radius: 5px; color: {ink}; font-size: 15px; padding: 0; }}"
         f"QPushButton:hover {{ background: {hover}; }}"
     )

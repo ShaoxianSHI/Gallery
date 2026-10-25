@@ -49,7 +49,7 @@ def test_the_add_entry_is_an_empty_plus(qt_app: QApplication) -> None:  # noqa: 
     assert add.isCheckable() is False
     assert add.objectName() == "backdropAdd"
     assert "transparent" in add.styleSheet()
-    assert "dashed" in add.styleSheet()
+    assert "solid" in add.styleSheet()
     dialog.deleteLater()
 
 
