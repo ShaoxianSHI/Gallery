@@ -1,0 +1,61 @@
+"""Menu bar and menu items (ADR 0023 / 0014 / 0070)."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Final
+
+from gallery.core.locales._catalog import Message
+
+MESSAGES: Final[Mapping[str, Message]] = {
+    "menu.file": "File",
+    "menu.recent": "Open Recent",
+    "menu.edit": "Edit",
+    "menu.view": "View",
+    "menu.browse": "Browse",
+    "menu.thumbnail_size": "Thumbnail Size",
+    "menu.thumb_size_item": "{label} (about {edge} px)",
+    "menu.open_folder": "Open Folder…",
+    "menu.fit_window": "Fit to Window",
+    "menu.actual_size": "Actual Size",
+    "menu.fill_window": "Fill Window",
+    "menu.zoom_in": "Zoom In",
+    "menu.zoom_out": "Zoom Out",
+    "menu.thumb_zoom_in": "Larger Thumbnails",
+    "menu.thumb_zoom_out": "Smaller Thumbnails",
+    "menu.up": "Go Up",
+    "menu.deselect": "Deselect",
+    "menu.pop_condition": "Remove Last Filter",
+    "menu.albums": "Albums",
+    "menu.all_photos": "All Photos",
+    "menu.calendar": "Calendar",
+    "menu.metadata": "Show Metadata",
+    "menu.show_extensions": "Show File Extensions",
+    "menu.clear_cache": "Clear Thumbnail Cache",
+    "menu.refresh": "Refresh",
+    "menu.new_album": "New Album",
+    "menu.rename": "Rename…",
+    "menu.trash": "Move to Trash",
+    "menu.undo": "Undo",
+    "menu.undo.with_target": "Undo {target}",
+    "menu.open": "Open",
+    "menu.close": "Leave",
+    "menu.open_default": "Open in Default App",
+    "menu.reveal": "Reveal in Finder",
+    "menu.copy": "Copy",
+    "menu.copy_path": "Copy Path",
+    "menu.duplicate": "Duplicate",
+    "menu.paste": "Paste",
+    "menu.select_all": "Select All",
+    "menu.copy_metadata": "Copy Metadata",
+    "menu.edit_metadata": "Edit Metadata…",
+    "menu.copy_group": "Copy Group Criteria",
+    "menu.set_cover": "Set as Album Cover",
+    "menu.clear_cover": "Clear Album Cover",
+    "menu.close_window": "Close Window",
+    "menu.quit": "Quit Gallery",
+    "menu.search": "Search…",
+    "menu.filter": "Filter…",
+    "menu.clear_search": "Clear Search",
+    "menu.clear_filter": "Clear Filters",
+}

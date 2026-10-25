@@ -10,9 +10,13 @@ from collections.abc import Mapping
 from typing import Final
 
 from gallery.core.locales._catalog import DomainMessages, Message, merge
-from gallery.core.locales.en import banner
+from gallery.core.locales.en import banner, menu, settings
 
-DOMAINS: Final[Mapping[str, DomainMessages]] = {"banner": banner.MESSAGES}
+DOMAINS: Final[Mapping[str, DomainMessages]] = {
+    "banner": banner.MESSAGES,
+    "menu": menu.MESSAGES,
+    "settings": settings.MESSAGES,
+}
 MESSAGES: Final[Mapping[str, Message]] = merge(DOMAINS)
 
 __all__ = ["DOMAINS", "MESSAGES"]

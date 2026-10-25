@@ -1,0 +1,61 @@
+"""菜单栏与菜单条目（ADR 0023 / 0014 / 0070）。"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Final
+
+from gallery.core.locales._catalog import Message
+
+MESSAGES: Final[Mapping[str, Message]] = {
+    "menu.file": "文件",
+    "menu.recent": "最近打开",
+    "menu.edit": "编辑",
+    "menu.view": "显示",
+    "menu.browse": "浏览方式",
+    "menu.thumbnail_size": "缩略图大小",
+    "menu.thumb_size_item": "{label}（约 {edge} 像素）",
+    "menu.open_folder": "打开文件夹…",
+    "menu.fit_window": "适应窗口",
+    "menu.actual_size": "实际大小",
+    "menu.fill_window": "铺满窗口",
+    "menu.zoom_in": "放大",
+    "menu.zoom_out": "缩小",
+    "menu.thumb_zoom_in": "放大缩略图",
+    "menu.thumb_zoom_out": "缩小缩略图",
+    "menu.up": "上一级",
+    "menu.deselect": "取消选中",
+    "menu.pop_condition": "撤掉最后一条筛选条件",
+    "menu.albums": "相册",
+    "menu.all_photos": "全部照片",
+    "menu.calendar": "日历",
+    "menu.metadata": "显示元数据信息",
+    "menu.show_extensions": "显示文件扩展名",
+    "menu.clear_cache": "清空缩略图缓存",
+    "menu.refresh": "刷新",
+    "menu.new_album": "新建相册",
+    "menu.rename": "重命名…",
+    "menu.trash": "移到废纸篓",
+    "menu.undo": "撤销",
+    "menu.undo.with_target": "撤销 {target}",
+    "menu.open": "打开",
+    "menu.close": "退出",
+    "menu.open_default": "在默认应用中打开",
+    "menu.reveal": "在访达中显示",
+    "menu.copy": "拷贝",
+    "menu.copy_path": "拷贝路径",
+    "menu.duplicate": "复制",
+    "menu.paste": "粘贴",
+    "menu.select_all": "全选",
+    "menu.copy_metadata": "复制元数据",
+    "menu.edit_metadata": "编辑元数据…",
+    "menu.copy_group": "复制分组条件",
+    "menu.set_cover": "设为相册封面",
+    "menu.clear_cover": "取消相册封面",
+    "menu.close_window": "关闭窗口",
+    "menu.quit": "退出 Gallery",
+    "menu.search": "搜索…",
+    "menu.filter": "筛选…",
+    "menu.clear_search": "清除搜索条件",
+    "menu.clear_filter": "清除筛选条件",
+}

@@ -11,7 +11,7 @@ import random
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Final, cast
+from typing import cast
 
 from PySide6.QtGui import QAction, QActionGroup
 from PySide6.QtWidgets import QDialog, QFileDialog, QInputDialog, QMenu, QMessageBox, QWidget
@@ -23,6 +23,7 @@ from gallery.core.backdrops.scrim import mean_lightness
 from gallery.core.constants import APP_NAME
 from gallery.core.errors import GalleryError
 from gallery.core.external import launch
+from gallery.core.i18n import t
 from gallery.core.library.session import (
     EXTERNAL_PAGE_CALENDAR,
     EXTERNAL_PAGE_DETAIL,
@@ -49,38 +50,28 @@ MOVIE_SITE_PRESETS: tuple[tuple[str, str], ...] = (
     ("https://missav.com/en", "MissAV"),
 )
 
-#: 缓存上限的界面档位（字节, 文案）。0 表示不限制。
-CACHE_LIMIT_PRESETS: tuple[tuple[int, str], ...] = (
-    (1 * 1024**3, "1 GB"),
-    (2 * 1024**3, "2 GB"),
-    (5 * 1024**3, "5 GB"),
-    (10 * 1024**3, "10 GB"),
-    (0, "不限制"),
-)
+#: 缓存上限的界面档位（字节）。0 表示不限制；文案在 :func:`_cache_label` 里按当前语言取。
+CACHE_LIMIT_PRESETS: tuple[int, ...] = (1 * 1024**3, 2 * 1024**3, 5 * 1024**3, 10 * 1024**3, 0)
 
-SPEED_LABELS: dict[str, str] = {
-    "slow": "慢",
-    "normal": "中",
-    "fast": "快",
-    "off": "关",
+SPEED_LABEL_KEYS: dict[str, str] = {
+    "slow": "settings.speed.slow",
+    "normal": "settings.speed.normal",
+    "fast": "settings.speed.fast",
+    "off": "settings.speed.off",
 }
-APPEARANCE_LABELS: dict[str, str] = {
-    "system": "跟随系统",
-    "light": "浅色",
-    "dark": "深色",
+APPEARANCE_LABEL_KEYS: dict[str, str] = {
+    "system": "settings.appearance.system",
+    "light": "settings.appearance.light",
+    "dark": "settings.appearance.dark",
 }
 SLIDESHOW_SECONDS: tuple[int, ...] = (3, 5, 8, 15)
 
-#: 「使用照片背景」那个文件选择框里认的扩展名。HEIC 靠 ``core.media.decode`` 注册的
-#: 那一条 opener 打开，与缩略图走同一个解码器。
-PHOTO_FILTER: Final = "图片 (*.jpg *.jpeg *.png *.heic *.heif *.tif *.tiff *.webp);;所有文件 (*)"
-
-#: 「外部应用顺序」对话框里那四个标签页的名字 —— 与 ``PageRole`` 一一对应（ADR 0081 / 0094）。
-EXTERNAL_ORDER_LABELS: dict[str, str] = {
-    EXTERNAL_PAGE_DETAIL: "图片",
-    EXTERNAL_PAGE_VIDEO: "视频",
-    EXTERNAL_PAGE_GRID: "网格",
-    EXTERNAL_PAGE_CALENDAR: "日历",
+#: 「外部应用顺序」对话框里那四个标签页 —— 与 ``PageRole`` 一一对应（ADR 0081 / 0094）。
+EXTERNAL_PAGE_LABEL_KEYS: dict[str, str] = {
+    EXTERNAL_PAGE_DETAIL: "settings.page.detail",
+    EXTERNAL_PAGE_VIDEO: "settings.page.video",
+    EXTERNAL_PAGE_GRID: "settings.page.grid",
+    EXTERNAL_PAGE_CALENDAR: "settings.page.calendar",
 }
 
 
@@ -103,34 +94,40 @@ class SettingsFlowMixin:
 
     def build_settings_menu(self) -> None:
         """把「设置」挂到菜单栏末尾。三段：显示与播放、影片与缓存、维护。"""
-        menu = cast("QMenu", self.menuBar().addMenu("设置"))
+        menu = cast("QMenu", self.menuBar().addMenu(t("settings.title")))
         self._settings_extras: dict[str, QAction] = {}
         self._settings_actions: dict[str, dict[object, QAction]] = {}
         self._settings_actions["appearance"] = self._add_choice_menu(
-            menu, "主题", self._set_appearance, APPEARANCE_LABELS
+            menu,
+            t("settings.theme"),
+            self._set_appearance,
+            {value: t(key) for value, key in APPEARANCE_LABEL_KEYS.items()},
         )
         self._build_background_menu(menu)
         self._settings_actions["animation"] = self._add_choice_menu(
-            menu, "动画速度", self._set_animation_speed, SPEED_LABELS
+            menu,
+            t("settings.animation"),
+            self._set_animation_speed,
+            {value: t(key) for value, key in SPEED_LABEL_KEYS.items()},
         )
         self._settings_actions["slideshow"] = self._add_choice_menu(
             menu,
-            "放映间隔",
+            t("settings.slideshow"),
             self._set_slideshow_seconds,
-            {seconds: f"{seconds} 秒" for seconds in SLIDESHOW_SECONDS},
+            {seconds: t("settings.seconds", seconds=seconds) for seconds in SLIDESHOW_SECONDS},
         )
         self._settings_actions["movie_site"] = self._add_choice_menu(
             menu,
-            "影片网站",
+            t("settings.movie_site"),
             self._set_movie_site,
             {value: label for value, label in MOVIE_SITE_PRESETS},
             custom=True,
         )
-        order_action = QAction("外部应用顺序…", cast("QWidget", self))
+        order_action = QAction(t("settings.external_order"), cast("QWidget", self))
         order_action.triggered.connect(self._edit_external_order)
         menu.addAction(order_action)
         self._settings_extras["external_order"] = order_action
-        open_last = QAction("启动时打开上次的库", cast("QWidget", self))
+        open_last = QAction(t("settings.open_last"), cast("QWidget", self))
         open_last.setCheckable(True)
         # 用 ``triggered`` 而不是 ``toggled``：同步勾选态时 setChecked 不该再写一次会话。
         open_last.triggered.connect(self._set_open_last_library)
@@ -139,9 +136,9 @@ class SettingsFlowMixin:
         menu.addSeparator()
         self._settings_actions["cache"] = self._add_choice_menu(
             menu,
-            "缓存上限",
+            t("settings.cache_limit"),
             self._set_cache_limit,
-            {value: label for value, label in CACHE_LIMIT_PRESETS},
+            {value: _cache_label(value) for value in CACHE_LIMIT_PRESETS},
         )
         # 预算与清扫放在一起：它们管的是同一批文件。
         menu.addAction(self._clear_cache_action)  # type: ignore[attr-defined]
@@ -150,37 +147,39 @@ class SettingsFlowMixin:
             *self._settings_actions["cache"].values(),
         ]
         menu.addSeparator()
-        log_action = QAction("打开日志文件夹", cast("QWidget", self))
+        log_action = QAction(t("settings.log_folder"), cast("QWidget", self))
         log_action.triggered.connect(self.open_log_folder)
         menu.addAction(log_action)
         self._settings_extras["log_folder"] = log_action
-        about = QAction(f"关于 {APP_NAME}", cast("QWidget", self))
+        about = QAction(t("settings.about", name=APP_NAME), cast("QWidget", self))
         about.triggered.connect(self.show_about)
         menu.addAction(about)
         self._settings_extras["about"] = about
 
     def _build_background_action(self) -> QAction:
         """「背景」里那一项：挑两档背景色（ADR 0097）。"""
-        action = QAction("设置纯色背景…", cast("QWidget", self))
+        action = QAction(t("settings.background.solid"), cast("QWidget", self))
         action.triggered.connect(self._edit_backgrounds)
         self._settings_extras["background"] = action
         return action
 
     def _build_background_menu(self, parent: QMenu) -> QMenu:
         """「背景」子菜单：两档各挑一张图，或者退回纯色（ADR 0097 / 0098）。"""
-        menu = parent.addMenu("背景")
-        for dark, label in ((False, "浅色背景"), (True, "深色背景")):
-            self._backdrops.menus[dark] = QMenu(label, cast("QWidget", self))
+        menu = parent.addMenu(t("settings.background"))
+        for dark, key in ((False, "light"), (True, "dark")):
+            self._backdrops.menus[dark] = QMenu(
+                t(f"settings.background.{key}"), cast("QWidget", self)
+            )
             menu.addMenu(self._backdrops.menus[dark])
         self._rebuild_backdrop_menus()
         menu.addSeparator()
         menu.addAction(self._build_background_action())
         for key, label, slot in (
-            ("backdrop_generate", "生成水墨背景…", self._generate_backdrop),
-            ("backdrop_photo", "使用照片背景…", self._pick_backdrop_photo),
-            ("backdrop_manage", "管理背景…", self._manage_backdrops),
+            ("backdrop_generate", "settings.background.generate", self._generate_backdrop),
+            ("backdrop_photo", "settings.background.photo", self._pick_backdrop_photo),
+            ("backdrop_manage", "settings.background.manage", self._manage_backdrops),
         ):
-            action = QAction(label, cast("QWidget", self))
+            action = QAction(t(label), cast("QWidget", self))
             action.triggered.connect(slot)
             self._settings_extras[key] = action
             menu.addAction(action)
@@ -209,7 +208,7 @@ class SettingsFlowMixin:
             actions[value] = action
         if custom:
             # 它也是一个「当前值」：手改过的网址要有一个地方显示成选中。
-            custom_action = QAction("自定义…", cast("QWidget", self))
+            custom_action = QAction(t("settings.custom"), cast("QWidget", self))
             custom_action.setCheckable(True)
             custom_action.triggered.connect(self._ask_movie_site)
             group.addAction(custom_action)
@@ -221,7 +220,8 @@ class SettingsFlowMixin:
     def _edit_external_order(self) -> None:
         """打开四页的排序对话框；保存时把四份次序一起写进会话（ADR 0081 / 0094）。"""
         pages = tuple(
-            self._external_order_page(page, label) for page, label in EXTERNAL_ORDER_LABELS.items()
+            self._external_order_page(page, t(key))
+            for page, key in EXTERNAL_PAGE_LABEL_KEYS.items()
         )
         dialog = ExternalOrderDialog(cast("QWidget", self), pages)
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -329,11 +329,19 @@ class SettingsFlowMixin:
         self._apply_backdrops()
         self._sync_ui()
         item = self._backdrops.store.get(backdrop_id) if backdrop_id else None  # type: ignore[attr-defined]
-        slot = "深色" if dark else "浅色"
         if item is None:
-            self._show_banner(f"{slot}背景已改为纯色。", auto_hide=True)  # type: ignore[attr-defined]
+            self._show_banner(  # type: ignore[attr-defined]
+                t(f"settings.background.solid_banner.{'dark' if dark else 'light'}"),
+                auto_hide=True,
+            )
         else:
-            self._show_banner(f"{slot}背景已设为「{item.name}」。", auto_hide=True)  # type: ignore[attr-defined]
+            self._show_banner(  # type: ignore[attr-defined]
+                t(
+                    f"settings.background.set_banner.{'dark' if dark else 'light'}",
+                    name=item.name,
+                ),
+                auto_hide=True,
+            )
 
     def _generate_backdrop(self) -> None:
         seed = random.SystemRandom().randrange(1, 2**31)
@@ -359,7 +367,10 @@ class SettingsFlowMixin:
 
     def _pick_backdrop_photo(self) -> None:
         chosen, _ = QFileDialog.getOpenFileName(
-            cast("QWidget", self), "选择一张照片作为背景", str(Path.home()), PHOTO_FILTER
+            cast("QWidget", self),
+            t("settings.background.pick_title"),
+            str(Path.home()),
+            t("settings.photo_filter"),
         )
         if not chosen:
             return
@@ -382,14 +393,13 @@ class SettingsFlowMixin:
             return
         self._sync_ui()
         self._show_banner(  # type: ignore[attr-defined]
-            f"背景「{item.name}」已保存，可在「背景 › 浅色背景 / 深色背景」中选用。",
-            auto_hide=True,
+            t("settings.background.saved", name=item.name), auto_hide=True
         )
 
     def _manage_backdrops(self) -> None:
         items = tuple((entry.id, entry.name) for entry in self._backdrops.store.items())  # type: ignore[attr-defined]
         if not items:
-            self._show_banner("暂无已保存的背景图。", auto_hide=True)  # type: ignore[attr-defined]
+            self._show_banner(t("settings.background.empty_banner"), auto_hide=True)  # type: ignore[attr-defined]
             return
         dialog = BackdropManageDialog(cast("QWidget", self), items)
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -426,7 +436,7 @@ class SettingsFlowMixin:
             group = QActionGroup(submenu)
             group.setExclusive(True)
             actions: dict[str, QAction] = {}
-            for value, label in [("", "使用纯色"), *items]:
+            for value, label in [("", t("settings.background.use_solid")), *items]:
                 action = QAction(label, submenu)
                 action.setCheckable(True)
                 action.triggered.connect(
@@ -438,7 +448,7 @@ class SettingsFlowMixin:
                 submenu.addAction(action)
                 actions[str(value)] = action
             if not items:
-                empty = submenu.addAction("暂无已保存的背景图")
+                empty = submenu.addAction(t("settings.background.empty"))
                 empty.setEnabled(False)
             self._backdrops.actions[dark] = actions
             self._backdrops.groups[dark] = group
@@ -464,7 +474,7 @@ class SettingsFlowMixin:
     def _store_preferences(self, preferences: Preferences) -> None:
         self._session = self._session.with_preferences(preferences)  # type: ignore[attr-defined]
         if not self._save_session():  # type: ignore[attr-defined]
-            self._show_banner("设置未能保存；本次运行仍按新设置执行。")  # type: ignore[attr-defined]
+            self._show_banner(t("settings.save_failed"))  # type: ignore[attr-defined]
 
     # ---- 库级：经 Library 写进 config.toml ------------------------------------
 
@@ -486,8 +496,8 @@ class SettingsFlowMixin:
         current = library.config.movie_site  # type: ignore[attr-defined]
         value, accepted = QInputDialog.getText(
             cast("QWidget", self),
-            "影片网站",
-            "番号页的地址前缀（例如 https://jable.tv/videos）：",
+            t("settings.movie_site"),
+            t("settings.movie_site.prompt"),
             text=current,
         )
         if accepted and value.strip():
@@ -506,7 +516,9 @@ class SettingsFlowMixin:
             self._sync_ui()
             return
         self._sync_ui()
-        self._show_banner(f"缩略图缓存上限已设为 {_cache_label(int(max_bytes))}。", auto_hide=True)
+        self._show_banner(
+            t("settings.cache.set", label=_cache_label(int(max_bytes))), auto_hide=True
+        )
 
     # ---- 维护 ----------------------------------------------------------------
 
@@ -514,16 +526,16 @@ class SettingsFlowMixin:
         """在访达里打开日志目录：用户报问题时唯一能自己拿到的证据。"""
         folder = paths.app_log_file().parent
         if not launch.open_folder(folder):
-            self._show_banner(f"未能打开日志文件夹：{folder}")
+            self._show_banner(t("settings.log_folder.failed", folder=folder))
 
     def show_about(self) -> None:
         """版本与当前库。**只读窗口上已有的状态，不碰任何文件。**"""
         library = self._library
-        where = "尚未打开库" if library is None else str(library.root)  # type: ignore[attr-defined]
+        where = t("settings.no_library") if library is None else str(library.root)
         QMessageBox.information(
             cast("QWidget", self),
-            f"关于 {APP_NAME}",
-            f"{APP_NAME} {__version__}\n\n库位置：{where}",
+            t("settings.about", name=APP_NAME),
+            t("settings.about.body", name=APP_NAME, version=__version__, where=where),
         )
 
     # ---- 状态 → 勾选态 -------------------------------------------------------
@@ -571,10 +583,11 @@ _CUSTOM = "<custom>"
 
 
 def _cache_label(max_bytes: int) -> str:
-    for size, label in CACHE_LIMIT_PRESETS:
-        if size == max_bytes:
-            return label
-    return "自定义大小"
+    if max_bytes <= 0:
+        return t("settings.cache.unlimited")
+    if max_bytes in CACHE_LIMIT_PRESETS:
+        return f"{max_bytes // 1024**3} GB"
+    return t("settings.cache.custom")
 
 
 def _complete_order(ids: Sequence[str], builtin: Sequence[str]) -> tuple[str, ...]:
@@ -593,11 +606,11 @@ def _complete_order(ids: Sequence[str], builtin: Sequence[str]) -> tuple[str, ..
 
 
 __all__ = [
-    "APPEARANCE_LABELS",
+    "APPEARANCE_LABEL_KEYS",
     "CACHE_LIMIT_PRESETS",
-    "EXTERNAL_ORDER_LABELS",
+    "EXTERNAL_PAGE_LABEL_KEYS",
     "MOVIE_SITE_PRESETS",
     "SLIDESHOW_SECONDS",
-    "SPEED_LABELS",
+    "SPEED_LABEL_KEYS",
     "SettingsFlowMixin",
 ]

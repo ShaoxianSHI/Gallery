@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
 )
 
 from gallery.core.external import App, apps, launch
+from gallery.core.i18n import t
 from gallery.core.library.config import (
     BROWSE_MODE_ALBUMS,
     BROWSE_MODE_CALENDAR,
@@ -433,41 +434,41 @@ class MainWindow(
         # 刻意不建状态栏：扫描进度与缩放百分比换不来照片区少 20 来像素；出错信息有横幅（ADR 0029）。
 
     def _build_actions(self) -> None:
-        self._open_action = QAction("打开文件夹…", self)
+        self._open_action = QAction(t("menu.open_folder"), self)
         self._open_action.setShortcut(QKeySequence.StandardKey.Open)
         self._open_action.triggered.connect(self.choose_folder)
 
-        self._fit_action = QAction("适应窗口", self)
+        self._fit_action = QAction(t("menu.fit_window"), self)
         self._fit_action.setShortcut(QKeySequence("Ctrl+0"))
         self._fit_action.triggered.connect(self._detail.fit_to_window)
 
-        self._actual_action = QAction("实际大小", self)
+        self._actual_action = QAction(t("menu.actual_size"), self)
         self._actual_action.setShortcut(QKeySequence("Ctrl+1"))
         self._actual_action.triggered.connect(self._detail.actual_size)
 
         # ⌃⌘F：与 macOS 同一个键（缩放 / 铺满，ADR 0037），也是窗口被铺满之后唯一还按得到的。
         # **⌃ 在 Qt 里写作 ``Meta``**（⌘ 才写作 ``Ctrl``）；文案刷新只有 ``_sync_fill_action``。
-        self._fill_action = QAction("铺满窗口", self)
+        self._fill_action = QAction(t("menu.fill_window"), self)
         self._fill_action.setShortcut(QKeySequence("Ctrl+Meta+F"))
         self._fill_action.triggered.connect(self._toggle_filled)
 
-        self._zoom_in_action = QAction("放大", self)
+        self._zoom_in_action = QAction(t("menu.zoom_in"), self)
         self._zoom_in_action.setShortcut(QKeySequence.StandardKey.ZoomIn)
         self._zoom_in_action.triggered.connect(self._detail.zoom_in)
 
-        self._zoom_out_action = QAction("缩小", self)
+        self._zoom_out_action = QAction(t("menu.zoom_out"), self)
         self._zoom_out_action.setShortcut(QKeySequence.StandardKey.ZoomOut)
         self._zoom_out_action.triggered.connect(self._detail.zoom_out)
 
         # ⇧⌘↑ / ⇧⌘↓：缩略图换档；不挂 ⌘↑ / ⌘↓（被「上一级」占着），也不抢 ⌘+ / ⌘-（归大图缩放）。
-        self._thumb_zoom_in_action = QAction("放大缩略图", self)
+        self._thumb_zoom_in_action = QAction(t("menu.thumb_zoom_in"), self)
         self._thumb_zoom_in_action.setShortcut(QKeySequence("Ctrl+Shift+Up"))
         # ``triggered`` 递过来的是 checked（一个 bool），不是档数，所以要包一层。
         self._thumb_zoom_in_action.triggered.connect(
             lambda _checked=False: self.step_thumbnail_size(1)
         )
 
-        self._thumb_zoom_out_action = QAction("缩小缩略图", self)
+        self._thumb_zoom_out_action = QAction(t("menu.thumb_zoom_out"), self)
         self._thumb_zoom_out_action.setShortcut(QKeySequence("Ctrl+Shift+Down"))
         self._thumb_zoom_out_action.triggered.connect(
             lambda _checked=False: self.step_thumbnail_size(-1)
@@ -482,102 +483,102 @@ class MainWindow(
         # **Esc 只管位置，不管条件**（ADR 0040 决策 11）：判据里条件排在最前时，只要有条件就永远
         # 退不出那一层。撤条件挪到 ⇧Esc，两者彻底分开，绝不互相抢。**退不动时改去取消选中**
         # （ADR 0070）：在最外层它仍有对象可收，而不是按下去什么也不发生。
-        self._up_action = QAction("上一级", self)
+        self._up_action = QAction(t("menu.up"), self)
         self._up_action.setShortcut(QKeySequence("Esc"))
         self._up_action.triggered.connect(self._on_escape)
 
-        self._pop_condition_action = QAction("撤掉最后一条筛选条件", self)
+        self._pop_condition_action = QAction(t("menu.pop_condition"), self)
         self._pop_condition_action.setShortcut(QKeySequence("Shift+Esc"))
         self._pop_condition_action.triggered.connect(self.pop_last_condition)
 
-        self._albums_action = QAction("相册", self)
+        self._albums_action = QAction(t("menu.albums"), self)
         self._albums_action.setCheckable(True)
         self._albums_action.triggered.connect(lambda: self.set_browse_mode(BROWSE_MODE_ALBUMS))
 
-        self._flat_action = QAction("全部照片", self)
+        self._flat_action = QAction(t("menu.all_photos"), self)
         self._flat_action.setCheckable(True)
         self._flat_action.triggered.connect(lambda: self.set_browse_mode(BROWSE_MODE_FLAT))
 
-        self._calendar_action = QAction("日历", self)
+        self._calendar_action = QAction(t("menu.calendar"), self)
         self._calendar_action.setCheckable(True)
         self._calendar_action.triggered.connect(lambda: self.set_browse_mode(BROWSE_MODE_CALENDAR))
 
-        self._metadata_action = QAction("显示元数据信息", self)
+        self._metadata_action = QAction(t("menu.metadata"), self)
         self._metadata_action.setCheckable(True)
         self._metadata_action.setShortcut(QKeySequence("Ctrl+I"))
         self._metadata_action.toggled.connect(self.toggle_metadata)
 
-        self._show_extensions_action = QAction("显示文件扩展名", self)
+        self._show_extensions_action = QAction(t("menu.show_extensions"), self)
         self._show_extensions_action.setCheckable(True)
         self._show_extensions_action.setChecked(self._session.preferences.show_file_extensions)
         self._show_extensions_action.toggled.connect(self.set_show_file_extensions)
 
-        self._clear_cache_action = QAction("清空缩略图缓存", self)
+        self._clear_cache_action = QAction(t("menu.clear_cache"), self)
         self._clear_cache_action.triggered.connect(self.clear_thumbnail_cache)
 
         # **⌘R 的两个主人**：选中一格时归「重命名」，没选中时归「刷新」（ADR 0087）。
         # 两条同时可用会被 Qt 判成歧义快捷键、两条都不触发，所以可用性必须互斥。
-        self._refresh_action = QAction("刷新", self)
+        self._refresh_action = QAction(t("menu.refresh"), self)
         self._refresh_action.setShortcut(QKeySequence("Ctrl+R"))
         self._refresh_action.triggered.connect(self.refresh_current_level)
 
         # ⇧⌘N：与访达一致（ADR 0022）。建完立刻进行内重命名，因此**不进后台线程** —— 一次 mkdir。
-        self._new_album_action = QAction("新建相册", self)
+        self._new_album_action = QAction(t("menu.new_album"), self)
         self._new_album_action.setShortcut(QKeySequence("Ctrl+Shift+N"))
         self._new_album_action.triggered.connect(self.create_album)
         # **必须挂到窗口上**（理由见 ``_reveal_action``）；挂窗口不会让它冒泡到菜单栏。
         self.addAction(self._new_album_action)
 
-        self._rename_action = QAction("重命名…", self)
+        self._rename_action = QAction(t("menu.rename"), self)
         self._rename_action.setShortcut(QKeySequence("Ctrl+R"))
         self._rename_action.triggered.connect(self.rename_current_entry)
 
         # ⌘⌫：与访达一致，不弹确认框（ADR 0008）。``StandardKey.Delete`` 指的是前向删除键（⌘⌦）。
-        self._trash_action = QAction("移到废纸篓", self)
+        self._trash_action = QAction(t("menu.trash"), self)
         self._trash_action.setShortcut(QKeySequence("Ctrl+Backspace"))
         self._trash_action.triggered.connect(self.trash_selected)
 
         # ⌘Z 撤的是这一摞的栈顶（``core.metadata.undo``），文案跟着栈顶变；它住在「编辑」菜单里。
-        self._undo_action = QAction("撤销", self)
+        self._undo_action = QAction(t("menu.undo"), self)
         self._undo_action.setShortcut(QKeySequence.StandardKey.Undo)
         self._undo_action.triggered.connect(self.undo_last_write)
 
         # ---- 菜单栏与快捷键（见 ADR 0014）--------------------------------
         # 「打开」刻意不给**真**快捷键：回车归 ``PhotoGrid``；菜单里那枚「回车」只画不生效。
-        self._open_entry_action = QAction("打开", self)
+        self._open_entry_action = QAction(t("menu.open"), self)
         self._open_entry_action.triggered.connect(self.open_current_entry)
 
         # 「退出」只活在**大图页的右键菜单**里（ADR 0021），也不给真快捷键。
-        self._close_entry_action = QAction("退出", self)
+        self._close_entry_action = QAction(t("menu.close"), self)
         self._close_entry_action.triggered.connect(self.show_grid)
 
         # ⇧⏎ 归「在默认应用中打开」；它只活在右键菜单里（菜单栏上放没有选区可依的命令没有意义）。
-        self._open_default_action = QAction("在默认应用中打开", self)
+        self._open_default_action = QAction(t("menu.open_default"), self)
         self._open_default_action.setShortcut(QKeySequence("Shift+Return"))
         self._open_default_action.triggered.connect(self.open_current_in_default_app)
         # 同样**必须挂到窗口上**才按得出来（理由见 ``_reveal_action`` 那段）。
         self.addAction(self._open_default_action)
 
         # ⌘⏎：⏎ 归「打开」自己，加 ⌘ 正好空出来一条；这条**只作用在网格里**。
-        self._reveal_action = QAction("在访达中显示", self)
+        self._reveal_action = QAction(t("menu.reveal"), self)
         self._reveal_action.setShortcut(QKeySequence("Ctrl+Return"))
         self._reveal_action.triggered.connect(self.reveal_selection)
         # **必须挂到窗口上**（``QWidget.addAction``）才按得出来：快捷键只有被加进某个控件才注册。
         self.addAction(self._reveal_action)
 
         # ⌘C 与访达一致：剪贴板里放的是**文件本身**（ADR 0017）；是路径引用，不读像素、不写文件。
-        self._copy_action = QAction("拷贝", self)
+        self._copy_action = QAction(t("menu.copy"), self)
         self._copy_action.setShortcut(QKeySequence("Ctrl+C"))
         self._copy_action.triggered.connect(self.copy_selected_files)
 
         # ⇧⌘C 与访达一致。注意 Qt 在 macOS 上把 Command 写作 Ctrl，不要手动换键。
-        self._copy_path_action = QAction("拷贝路径", self)
+        self._copy_path_action = QAction(t("menu.copy_path"), self)
         self._copy_path_action.setShortcut(QKeySequence("Ctrl+Shift+C"))
         self._copy_path_action.triggered.connect(self.copy_selected_paths)
 
         # ⌘D：在**原位置**造一份副本（ADR 0044），与访达的「复制项目」同一个键。
         # **不进撤销栈**：撤销一次复制就是删文件，违反「绝不删除、移动用户照片」，横幅也不承诺 ⌘Z。
-        self._duplicate_action = QAction("复制", self)
+        self._duplicate_action = QAction(t("menu.duplicate"), self)
         self._duplicate_action.setShortcut(QKeySequence("Ctrl+D"))
         self._duplicate_action.triggered.connect(self.duplicate_selected)
         # **必须挂到窗口上**才按得出来（理由见 ``_reveal_action`` 那段）。
@@ -585,61 +586,61 @@ class MainWindow(
 
         # ⌘V 与访达一致：把剪贴板里的文件**复制**进当前这一层（ADR 0018），是这几个写操作里唯一
         # 不进撤销栈的（撤销粘贴即删文件，违反「绝不删除、移动用户照片」）；相册菜单里那条也是它。
-        self._paste_action = QAction("粘贴", self)
+        self._paste_action = QAction(t("menu.paste"), self)
         self._paste_action.setShortcut(QKeySequence("Ctrl+V"))
         self._paste_action.triggered.connect(self.paste_into_current_folder)
         # 剪贴板一变就重算 ⌘V（在访达里 ⌘C 之后切回来要能直接粘）；连接随窗口析构自动摘掉。
         self._clipboard = QGuiApplication.clipboard()
         self._clipboard.dataChanged.connect(self._on_clipboard_changed)
 
-        self._select_all_action = QAction("全选", self)
+        self._select_all_action = QAction(t("menu.select_all"), self)
         self._select_all_action.setShortcut(QKeySequence.StandardKey.SelectAll)
         self._select_all_action.triggered.connect(self.select_all_entries)
 
         # 只活在右键菜单里的两条：它们离不开「当前这一张」，放进菜单栏反而没处可用。
-        self._copy_metadata_action = QAction("复制元数据", self)
+        self._copy_metadata_action = QAction(t("menu.copy_metadata"), self)
         self._copy_metadata_action.triggered.connect(self.copy_current_metadata)
 
         # 「编辑元数据…」⇧⌘I（ADR 0030 / 0032）：本项目里第一个改动**照片内容**的命令，只对单张
         # 照片成立、只活在右键菜单里，但它要一个真快捷键 —— 访达的照片「简介」也是 ⌘I。
-        self._edit_metadata_action = QAction("编辑元数据…", self)
+        self._edit_metadata_action = QAction(t("menu.edit_metadata"), self)
         self._edit_metadata_action.setShortcut(QKeySequence("Ctrl+Shift+I"))
         self._edit_metadata_action.triggered.connect(self.edit_metadata_of_current)
         self.addAction(self._edit_metadata_action)
 
-        self._copy_group_action = QAction("复制分组条件", self)
+        self._copy_group_action = QAction(t("menu.copy_group"), self)
         self._copy_group_action.triggered.connect(self.copy_current_group)
 
         # 「设为相册封面」/「取消相册封面」（ADR 0028）：只活在右键菜单里，**刻意不给真快捷键**。
-        self._set_cover_action = QAction("设为相册封面", self)
+        self._set_cover_action = QAction(t("menu.set_cover"), self)
         self._set_cover_action.triggered.connect(self.set_selected_as_album_cover)
 
-        self._clear_cover_action = QAction("取消相册封面", self)
+        self._clear_cover_action = QAction(t("menu.clear_cover"), self)
         self._clear_cover_action.triggered.connect(self.clear_album_cover)
 
         # ⌘W 与 ⌘Q 是**两件事**（ADR 0037）：⌘W 关掉这一个窗口（应用还活着），⌘Q 才是退出。
         # **刻意不写 ``StandardKey.Close``**：Qt 在 macOS 上把它解析成 ⌘F4，而用户按的是 ⌘W。
-        self._close_action = QAction("关闭窗口", self)
+        self._close_action = QAction(t("menu.close_window"), self)
         self._close_action.setShortcut(QKeySequence("Ctrl+W"))
         self._close_action.triggered.connect(self.close)
 
         # ⌘Q：退出。**刻意不写 ``StandardKey.Quit``** —— Qt 把它解析成空序列（``count() == 0``）。
-        self._quit_action = QAction("退出 Gallery", self)
+        self._quit_action = QAction(t("menu.quit"), self)
         self._quit_action.setShortcut(QKeySequence("Ctrl+Q"))
         self._quit_action.triggered.connect(self.quit_app)
 
         # ⌘F 与访达一致：不是弹对话框，是**把光标放进标题栏那个胶囊**（检索那一套全在窗口顶上）。
-        self._search_action = QAction("搜索…", self)
+        self._search_action = QAction(t("menu.search"), self)
         self._search_action.setShortcut(QKeySequence("Ctrl+F"))
         self._search_action.triggered.connect(self.focus_search)
         self.addAction(self._search_action)
 
-        self._clear_search_action = QAction("清除搜索条件", self)
+        self._clear_search_action = QAction(t("menu.clear_search"), self)
         self._clear_search_action.triggered.connect(self.clear_search_conditions)
 
-        file_menu = self.menuBar().addMenu("文件")
+        file_menu = self.menuBar().addMenu(t("menu.file"))
         file_menu.addAction(self._open_action)
-        self._recent_menu = file_menu.addMenu("最近打开")
+        self._recent_menu = file_menu.addMenu(t("menu.recent"))
         # 导入在「最近打开」之后：都是把外面的东西拿进来（ADR 0072）。
         self.build_import_menus(file_menu)
         file_menu.addSeparator()
@@ -657,7 +658,7 @@ class MainWindow(
         file_menu.addAction(self._quit_action)
 
         # 「编辑」：全选、拷贝、拷贝路径、复制、粘贴、撤销（ADR 0014 决策 5）；⌘Z 从「文件」搬过来。
-        edit_menu = self.menuBar().addMenu("编辑")
+        edit_menu = self.menuBar().addMenu(t("menu.edit"))
         edit_menu.addAction(self._select_all_action)
         edit_menu.addAction(self._copy_action)
         edit_menu.addAction(self._copy_path_action)
@@ -672,7 +673,7 @@ class MainWindow(
         edit_menu.addSeparator()
         edit_menu.addAction(self._undo_action)
 
-        view_menu = self.menuBar().addMenu("显示")
+        view_menu = self.menuBar().addMenu(t("menu.view"))
         # 刷新单独一组摆最上面：它重新读的是磁盘，与下面「怎么摆」的命令不是一类。
         view_menu.addAction(self._refresh_action)
         view_menu.addSeparator()
@@ -681,7 +682,7 @@ class MainWindow(
         # 挨着「上一级」：两者是同一族的「往回退」，但一个退位置、一个退条件（ADR 0040 决策 11）。
         view_menu.addAction(self._pop_condition_action)
         view_menu.addSeparator()
-        browse_menu = view_menu.addMenu("浏览方式")
+        browse_menu = view_menu.addMenu(t("menu.browse"))
         browse_menu.addAction(self._flat_action)
         browse_menu.addAction(self._albums_action)
         browse_menu.addAction(self._calendar_action)
@@ -700,9 +701,16 @@ class MainWindow(
         view_menu.addAction(self._thumb_zoom_in_action)
         view_menu.addAction(self._thumb_zoom_out_action)
         self._size_actions: list[QAction] = []
-        size_menu = view_menu.addMenu("缩略图大小")
+        size_menu = view_menu.addMenu(t("menu.thumbnail_size"))
         for index in range(len(THUMBNAIL_SIZES)):
-            action = QAction(f"{label_for_index(index)}（约 {edge_for_index(index)} 像素）", self)
+            action = QAction(
+                t(
+                    "menu.thumb_size_item",
+                    label=label_for_index(index),
+                    edge=edge_for_index(index),
+                ),
+                self,
+            )
             action.setCheckable(True)
             action.triggered.connect(
                 lambda _checked=False, target=index: self.set_thumbnail_size(target)
@@ -766,8 +774,10 @@ class MainWindow(
         # 文案跟着作用域走（ADR 0040 决策 5）：清掉的是「筛选条件」还是「搜索条件」。
         filtering_now = self._search_scope == SEARCH_SCOPE_LEVEL
         self._clear_search_action.setVisible(bool(self._conditions))
-        self._clear_search_action.setText("清除筛选条件" if filtering_now else "清除搜索条件")
-        self._search_action.setText("筛选…" if filtering_now else "搜索…")
+        self._clear_search_action.setText(
+            t("menu.clear_filter") if filtering_now else t("menu.clear_search")
+        )
+        self._search_action.setText(t("menu.filter") if filtering_now else t("menu.search"))
         # 搜索框摆在标题栏那一行上（ADR 0026 决策 8），而**那一行只在 macOS 上存在**：别的平台置灰。
         self._search_action.setEnabled(self._owns_title_bar)
         # 切换按钮同理（它就摆在那一行上），并且要一直跟得上库级偏好。
@@ -849,7 +859,9 @@ class MainWindow(
     def _update_undo_action(self) -> None:
         """「撤销」的文案跟着这摞的栈顶变，栈空时禁用。"""
         self._undo_action.setText(
-            "撤销" if self._undo_label is None else f"撤销 {self._undo_label}"
+            t("menu.undo")
+            if self._undo_label is None
+            else t("menu.undo.with_target", target=self._undo_label)
         )
         self._undo_action.setEnabled(self._undo_label is not None)
 
@@ -884,7 +896,7 @@ class MainWindow(
         can_go_up = self._can_go_up()
         can_cancel = self._can_cancel_selection()
         self._up_action.setEnabled(idle and (can_go_up or can_cancel))
-        self._up_action.setText("上一级" if can_go_up or not can_cancel else "取消选中")
+        self._up_action.setText(t("menu.up") if can_go_up or not can_cancel else t("menu.deselect"))
         # **「撤掉最后一条」不限于网格页**：条件是跨页的，在日历那一页也还在，于是那条 ⇧Esc 在
         # 任何一页都要能用（ADR 0040 决策 11）。没条件时关掉，而不是按下去什么也不发生。
         self._pop_condition_action.setEnabled(bool(self._conditions))
