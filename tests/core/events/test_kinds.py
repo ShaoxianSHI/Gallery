@@ -256,7 +256,7 @@ def test_a_cost_nobody_can_read_says_so_in_chinese() -> None:
     problem = kinds.cost_problem("三千多")
 
     assert problem is not None
-    assert "不是一个数字" in problem
+    assert "不是有效数字" in problem
 
 
 def test_a_negative_cost_is_reported_and_an_empty_one_is_not() -> None:

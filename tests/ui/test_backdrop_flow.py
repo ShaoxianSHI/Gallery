@@ -113,7 +113,7 @@ def test_the_saved_name_shows_up_under_both_tiers(
 
     for dark in (False, True):
         labels = [action.text() for action in window._backdrops.menus[dark].actions()]
-        assert labels == ["用背景色", "雾蓝"]
+        assert labels == ["使用纯色", "雾蓝"]
 
 
 def test_assigning_from_the_submenu_takes_effect(
@@ -131,6 +131,8 @@ def test_assigning_from_the_submenu_takes_effect(
     assert prefs.backdrop_for(dark=True) == item.id
     assert prefs.backdrop_for(dark=False) == ""
     assert window._backdrops.actions[True][item.id].isChecked()
+    # 横幅要说是**哪一档**换成了什么 —— 「这一档」离开菜单就不知道指谁。
+    assert window._banner.text() == "深色背景已设为「雾蓝」。"
 
 
 def test_going_back_to_the_colour_clears_that_tier(
@@ -146,6 +148,7 @@ def test_going_back_to_the_colour_clears_that_tier(
 
     assert load_session(base=tmp_path / "会话").preferences.backdrop_for(dark=False) == ""
     assert theme.ensure_installed().backdrop_pixmap() is None
+    assert window._banner.text() == "浅色背景已改为纯色。"
 
 
 def test_a_light_photo_is_painted_as_is(
@@ -193,6 +196,6 @@ def test_deleting_a_backdrop_drops_the_reference(
     prefs = load_session(base=tmp_path / "会话").preferences
     assert prefs.backdrop_for(dark=False) == ""
     assert [action.text() for action in window._backdrops.menus[False].actions()] == [
-        "用背景色",
-        "还没有保存过背景图",
+        "使用纯色",
+        "暂无已保存的背景图",
     ]

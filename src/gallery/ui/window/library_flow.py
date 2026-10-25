@@ -329,8 +329,8 @@ class LibraryFlowMixin:
         if not library.config_dir_ready:
             # 摆在 ``_activate_library`` **之后**：它开头就把横幅收干净了。
             self._show_banner(
-                f"「{library.display_name}」这个文件夹写不进去，Gallery 没法在里面建配置目录。"
-                "浏览、分组、搜索都正常，只是索引这次不落盘，下次打开要重读一遍。"
+                f"无法写入「{library.display_name}」：Gallery 不能在其中创建配置目录。"
+                "浏览、分组与搜索仍可用，但索引本次不会落盘，下次打开需要重新读取。"
             )
         return True
 
@@ -690,7 +690,7 @@ class LibraryFlowMixin:
         report = payload if isinstance(payload, ScanReport) else ScanReport()
         if report.has_issues:
             self._banner_text.note_scan_issue()
-            self._show_banner(f"部分内容没能读取：{report.summary}")
+            self._show_banner(f"部分内容未能读取：{report.summary}")
         # 「这一层空不空」**不在这里判断**：要重排时条目还暂存着没显示到界面（见 _staged），
         # 照模型判断会把相册 / 组卡片误报成「空」。
         if self._pending_watch.has_pending():
@@ -837,7 +837,7 @@ class LibraryFlowMixin:
         recent_documents.publish(self._session.recent_roots)
         roots = [root for root in self._session.recent_roots if root.is_dir()]
         if not roots:
-            empty = QAction("（还没有）", cast("QWidget", self))
+            empty = QAction("（暂无最近打开的库）", cast("QWidget", self))
             empty.setEnabled(False)
             self._recent_menu.addAction(empty)
             return

@@ -54,7 +54,7 @@ class FakeBox:
 
     Icon = _Icon
     ButtonRole = _ButtonRole
-    choose: str = "先不清"
+    choose: str = "暂不清理"
     shown: list[FakeBox] = []
 
     def __init__(self, *_args: object, **_kwargs: object) -> None:
@@ -96,7 +96,7 @@ class FakeBox:
 @pytest.fixture
 def fake_box(monkeypatch: pytest.MonkeyPatch) -> type[FakeBox]:
     """把 ``event_flow`` 里的 ``QMessageBox`` 换成假的，并按 ``FakeBox.choose`` 作答。"""
-    FakeBox.choose = "先不清"
+    FakeBox.choose = "暂不清理"
     FakeBox.shown = []
     monkeypatch.setattr(event_flow, "QMessageBox", FakeBox)
     return FakeBox
@@ -177,8 +177,8 @@ def test_the_box_offers_both_buckets_and_defaults_to_the_cautious_one(
         window._confirm_orphan_cleanup(_two_bucket_scan(window, root))
 
         box = fake_box.shown[-1]
-        assert box.order == ["先不清", "清掉这些", "连相册不存在的也清掉"]
-        assert box.default == box.buttons["先不清"], "默认按钮不是保守的那一个"
+        assert box.order == ["暂不清理", "清理这些", "一并清理相册已不存在的"]
+        assert box.default == box.buttons["暂不清理"], "默认按钮不是保守的那一个"
         library = window._library
         assert library is not None
         assert library.events.photos_of_event(first) == (photo,)
@@ -199,7 +199,7 @@ def test_clearing_just_the_missing_bucket_keeps_the_vanished_one(
         first = bind(window, photo)
         second = bind(window, gone_album, title="奈良三日")
         photo.unlink()
-        fake_box.choose = "清掉这些"
+        fake_box.choose = "清理这些"
 
         window._confirm_orphan_cleanup(_two_bucket_scan(window, root))
 
@@ -223,7 +223,7 @@ def test_clearing_both_buckets_takes_the_vanished_one_too(
         first = bind(window, photo)
         second = bind(window, gone_album, title="奈良三日")
         photo.unlink()
-        fake_box.choose = "连相册不存在的也清掉"
+        fake_box.choose = "一并清理相册已不存在的"
 
         window._confirm_orphan_cleanup(_two_bucket_scan(window, root))
 
@@ -249,7 +249,7 @@ def test_the_window_offers_only_two_choices_when_nothing_is_sure(
         window._confirm_orphan_cleanup(_two_bucket_scan(window, root))
 
         box = fake_box.shown[-1]
-        assert box.order == ["先不清", "连这些一起清掉"]
+        assert box.order == ["暂不清理", "一并清理这些"]
         library = window._library
         assert library is not None
         # 根目录可读且「海边-01.jpg」还在，所以它不进 missing —— 两档里只剩 vanished。
@@ -333,7 +333,7 @@ def test_the_dialog_says_why_and_never_promises_undo() -> None:
     assert "⌘Z" not in text
     assert "撤销" not in text
     assert "京都五日" in text and "奈良三日" in text
-    assert banners.orphan_dialog_title(scan) == "1 条事件记录指向已经不存在的照片"
+    assert banners.orphan_dialog_title(scan) == "1 条事件记录指向已不存在的照片"
 
 
 def test_the_vanished_paragraph_says_it_is_kept_by_default() -> None:
@@ -345,7 +345,7 @@ def test_the_vanished_paragraph_says_it_is_kept_by_default() -> None:
     text = banners.orphan_dialog(scan)
 
     assert "默认保留" in text
-    assert "磁盘没挂上" in text
+    assert "磁盘未挂载" in text
 
 
 def test_many_events_are_summarized_rather_than_listed() -> None:

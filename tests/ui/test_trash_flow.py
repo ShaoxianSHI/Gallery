@@ -159,8 +159,8 @@ def test_trashing_one_photo_takes_it_off_the_grid_and_the_disk(
         assert (fake_trash / "删掉.jpg").exists(), "照片只是搬去了废纸篓"
         assert window._model.rowCount() == 1
         assert window._model.row_of_path(picture) == -1
-        assert "已把「删掉.jpg」移到废纸篓" in window._banner.text()
-        assert "⌘Z 可以撤销" in window._banner.text()
+        assert "已将「删掉.jpg」移到废纸篓" in window._banner.text()
+        assert "⌘Z 可撤销" in window._banner.text()
     finally:
         window.close()
 
@@ -178,7 +178,7 @@ def test_a_batch_is_one_undo(
 
         assert window._model.rowCount() == 0
         assert all(not photo.exists() for photo in photos)
-        assert "已把 3 项移到废纸篓" in window._banner.text()
+        assert "已将 3 项移到废纸篓" in window._banner.text()
 
         window.undo_last_write()
         qt_app_process(window)
@@ -234,7 +234,7 @@ def test_failed_items_stay_on_the_grid(
 
         assert not keep.exists()
         assert window._model.rowCount() == 1, "没移走的那一行必须留着"
-        assert "没移走" in window._banner.text()
+        assert "未能移走" in window._banner.text()
         assert "早就不在了.jpg" in window._banner.text()
     finally:
         window.close()
@@ -297,7 +297,7 @@ def _open_detail_of(window: MainWindow, photo: Path) -> int:
     select_rows(window, row)
     window.open_current_entry()
     qt_app_process(window)
-    assert window._stack.currentWidget() is window._detail_page, "没能进大图页"
+    assert window._stack.currentWidget() is window._detail_page, "未能进大图页"
     return row
 
 
@@ -377,8 +377,8 @@ def test_the_confirmation_survives_the_jump_to_the_next_photo(
 
         assert _showing(window) == "c.jpg", "删掉一张之后接着看下一张"
         assert window._banner.isVisible(), "跳到下一张不该把刚说的那句话一起带走"
-        assert "已把「b.jpg」移到废纸篓" in window._banner.text()
-        assert "⌘Z 可以撤销" in window._banner.text()
+        assert "已将「b.jpg」移到废纸篓" in window._banner.text()
+        assert "⌘Z 可撤销" in window._banner.text()
     finally:
         window.close()
 

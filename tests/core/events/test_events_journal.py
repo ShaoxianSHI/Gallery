@@ -243,7 +243,7 @@ def test_a_record_nobody_can_read_back_says_so(tmp_path: Path) -> None:
     outcome = store.undo_record(record)
 
     assert outcome.message is not None
-    assert "读不出来" in outcome.message
+    assert "无法读取" in outcome.message
 
 
 def test_an_event_record_never_falls_through_to_the_trash(

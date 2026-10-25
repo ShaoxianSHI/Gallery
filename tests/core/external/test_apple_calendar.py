@@ -68,10 +68,10 @@ def test_a_denied_automation_grant_says_where_to_fix_it() -> None:
 
 
 def test_a_timeout_and_a_missing_app_are_told_apart() -> None:
-    assert failure_detail(CommandResult(1, stderr="… (-1712)")) == "「日历」没有响应"
-    assert failure_detail(CommandResult(1, stderr="… (-10814)")) == "没找到系统「日历」"
+    assert failure_detail(CommandResult(1, stderr="… (-1712)")) == "「日历」未响应"
+    assert failure_detail(CommandResult(1, stderr="… (-10814)")) == "未找到系统「日历」"
 
 
 def test_an_unknown_error_is_not_dressed_up_as_a_permission_problem() -> None:
-    assert failure_detail(CommandResult(1, stderr="随便一段")) == "没能打开系统「日历」"
-    assert failure_detail(CommandResult(-1, stderr="超时")) == "「日历」没有响应"
+    assert failure_detail(CommandResult(1, stderr="随便一段")) == "未能打开系统「日历」"
+    assert failure_detail(CommandResult(-1, stderr="超时")) == "「日历」未响应"

@@ -236,14 +236,14 @@ class MetadataEditDialog(QDialog):
 
         self._names_to_coordinates_button = QPushButton("地点 → 经纬度")
         self._names_to_coordinates_button.setToolTip(
-            "按城市框里的名字，从城市库查出这座市的省、国家与坐标，填进其余几栏"
-            "（库里没有的那一层会清空）。"
+            "按城市框中的名称，从城市库查出该市的省、国家与坐标并填入其余字段"
+            "（城市库未收录的层级将被清空）。"
         )
         self._names_to_coordinates_button.clicked.connect(self._on_names_to_coordinates)
         self._coordinates_to_names_button = QPushButton("经纬度 → 地点")
         self._coordinates_to_names_button.setToolTip(
-            "按下面两个坐标框里的位置，从城市库查出最近的城市，填进上面三个地名框"
-            "（城市库里没有的那一层会清空，例如直辖市没有省）。"
+            "按下方两个坐标框中的位置，从城市库查出最近的城市并填入上方三个地名框"
+            "（城市库未收录的层级将被清空，例如直辖市没有省级行政区）。"
         )
         self._coordinates_to_names_button.clicked.connect(self._on_coordinates_to_names)
 
@@ -332,7 +332,7 @@ class MetadataEditDialog(QDialog):
         self._error.clear()
         city, region, country = self._names()
         if self._resolver is None or len(city) < MIN_LOOKUP_LENGTH:
-            self._error.setText("先把城市填上，城市库是按市名查的。")
+            self._error.setText("请先填写城市：城市库按市名查询。")
             return
         found = self._resolver.place_named(city, region=region or None, country=country or None)
         if not found and (region or country):
@@ -364,11 +364,11 @@ class MetadataEditDialog(QDialog):
         self._error.clear()
         latitude, longitude = self._coordinates()
         if self._resolver is None or latitude is None or longitude is None:
-            self._error.setText("先把经纬度填上，两个都要。")
+            self._error.setText("请先填写经纬度，两项均必填。")
             return
         place = self._resolver.place_for(latitude, longitude)
         if place is None:
-            self._error.setText("附近没有城市记录，原来的地名没有改动。")
+            self._error.setText("附近没有城市记录，地名未做改动。")
             return
         self._programmatic = True
         try:
@@ -467,7 +467,7 @@ class MetadataEditDialog(QDialog):
             place_only=place_only,
         )
         if not text:
-            self._error.setText("这张照片还没有可以复制的内容。")
+            self._error.setText("这张照片没有可复制的内容。")
             return
         self._error.clear()
         QGuiApplication.clipboard().setText(text)
@@ -495,7 +495,7 @@ class MetadataEditDialog(QDialog):
         """
         parsed = _parse_clipboard(QGuiApplication.clipboard().text())
         if parsed is None:
-            self._error.setText("剪贴板里没有可以用的内容。")
+            self._error.setText("剪贴板中没有可用的内容。")
             return
         if not self._apply_parsed(parsed, time_only=time_only, place_only=place_only):
             return
@@ -510,10 +510,10 @@ class MetadataEditDialog(QDialog):
         wants_time = not place_only
         wants_place = not time_only
         if wants_time and not wants_place and parsed.capture is None:
-            self._error.setText("剪贴板里没有可以用的拍摄时间。")
+            self._error.setText("剪贴板中没有可用的拍摄时间。")
             return False
         if wants_place and not wants_time and parsed.coordinates is None and not parsed.names:
-            self._error.setText("剪贴板里没有可以用的位置。")
+            self._error.setText("剪贴板中没有可用的位置。")
             return False
         self._programmatic = True
         try:
@@ -767,7 +767,7 @@ def _capture_time_problem(text: str) -> str | None:
     stripped = text.strip()
     if not stripped or normalize_capture_time(stripped) is not None:
         return None
-    return f"拍摄时间看不懂：「{stripped}」。可以填成 2024-05-16 20:52:02，秒可以省。"
+    return f"无法识别拍摄时间「{stripped}」。请使用 2024-05-16 20:52:02 格式，秒可省略。"
 
 
 def _offset_problem(text: str) -> str | None:
@@ -775,7 +775,7 @@ def _offset_problem(text: str) -> str | None:
     stripped = text.strip()
     if not stripped or normalize_offset(stripped) is not None:
         return None
-    return f"时区看不懂：「{stripped}」。可以填成 +08:00 或 -05:00；留空表示不记时区。"
+    return f"无法识别时区「{stripped}」。请使用 +08:00 或 -05:00 格式；留空表示不记录时区。"
 
 
 def _coordinate_problem(latitude: str, longitude: str) -> str | None:
@@ -785,11 +785,11 @@ def _coordinate_problem(latitude: str, longitude: str) -> str | None:
             continue
         value = _parse(text)
         if value is None:
-            return f"{label}不是一个数字：「{text.strip()}」。可以直接填十进制度，例如 30.27415。"
+            return f"{label}不是有效数字「{text.strip()}」。请填十进制度，例如 30.27415。"
         if abs(value) > limit:
-            return f"{label}超范围了（{limit}）：写的是 {value}。"
+            return f"{label}超出范围（{limit}）：填入 {value}。"
     if bool(latitude.strip()) != bool(longitude.strip()):
-        return "经度和纬度要一起填：只填一个，说不出一个位置。"
+        return "经度与纬度需同时填写：只填一项无法确定位置。"
     return None
 
 

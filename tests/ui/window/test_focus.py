@@ -84,7 +84,7 @@ def test_the_level_key_decides_whether_the_grid_is_showing_the_same_level() -> N
     「摆的是别的层」在「该继承上一趟的选中吗」这件事上是同一个答案。
     """
     state = FocusState()
-    assert state.is_same_level(_level("a")) is False, "还没 arm 就答「是」，会把上一层的选中搬过来"
+    assert state.is_same_level(_level("a")) is False, "尚未 arm 就答「是」，会把上一层的选中搬过来"
 
     state.arm(_level("a"), None, None)
     assert state.is_same_level(_level("a")) is True

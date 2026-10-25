@@ -388,7 +388,7 @@ def test_the_panel_fallback_does_not_write_a_half_row(
     """索引里还没有这一行时**不许**新写一行：半行会被当成「EXIF 已经读过了」，
     以后那次完整的读取就被挡住了。"""
     library = Library.open(tmp_path)
-    ref = PhotoRef.from_path(make_photo("还没读过的照片.jpg"))
+    ref = PhotoRef.from_path(make_photo("尚未读过的照片.jpg"))
 
     result = library.resolve_photo_place(ref, 34.215, 108.965, resolver=FakeResolver())
 

@@ -186,7 +186,7 @@ def test_a_search_page_with_no_results_at_all_says_which_kind_it_is() -> None:
     empty = jav.no_search_results('<div class="empty-message">暫無內容</div>', "ZZZZ-99999")
     blocked = jav.no_search_results("<html><body>请稍候…</body></html>", "PRED-375")
 
-    assert "没有这个编号" in empty.message
+    assert "未收录该编号" in empty.message
     assert "限速" in blocked.message
 
 

@@ -29,9 +29,9 @@ _DECIMALS = 6
 def _coordinate_text(latitude: float, longitude: float) -> tuple[str, str]:
     """校验并格式化坐标；出了地球就抛 :class:`ValueError`（调用方先挡过一遍）。"""
     if not -90.0 <= latitude <= 90.0:
-        raise ValueError(f"纬度要在 -90 到 90 之间，收到 {latitude!r}")
+        raise ValueError(f"纬度需在 -90 到 90 之间，收到 {latitude!r}")
     if not -180.0 <= longitude <= 180.0:
-        raise ValueError(f"经度要在 -180 到 180 之间，收到 {longitude!r}")
+        raise ValueError(f"经度需在 -180 到 180 之间，收到 {longitude!r}")
     return f"{latitude:.{_DECIMALS}f}", f"{longitude:.{_DECIMALS}f}"
 
 

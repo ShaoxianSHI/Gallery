@@ -331,7 +331,7 @@ def test_the_chips_stay_readable_in_both_appearances(
 
         # **4.5:1 是正文可读的下限**：胶囊上写的是条件（「相机：Canon」）而不是图标。
         assert ratio >= 4.5, (
-            f"{name}下胶囊读不出来：{ratio:.1f}:1（字 {ink.name()} 压在底 {background.name()} 上）"
+            f"{name}下胶囊无法读取：{ratio:.1f}:1（字 {ink.name()} 压在底 {background.name()} 上）"
         )
         page.deleteLater()
 

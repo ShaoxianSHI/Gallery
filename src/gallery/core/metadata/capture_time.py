@@ -60,7 +60,7 @@ def _time(text: str | None) -> str | None:
     normalized = normalize_capture_time(text)
     if normalized is None:
         raise MetadataWriteError(
-            f"拍摄时间看不懂：「{text.strip()}」。"
+            f"无法识别拍摄时间「{text.strip()}」。"
             "请填成 2024-05-16 20:52:02 这样的写法，秒可以省。",
             detail=text,
         )
@@ -74,7 +74,7 @@ def _offset(text: str | None) -> str | None:
     normalized = normalize_offset(text)
     if normalized is None:
         raise MetadataWriteError(
-            f"时区看不懂：「{text.strip()}」。请填成 +08:00 或 -05:00 这样的写法。",
+            f"无法识别时区「{text.strip()}」。请使用 +08:00 或 -05:00 格式。",
             detail=text,
         )
     return normalized

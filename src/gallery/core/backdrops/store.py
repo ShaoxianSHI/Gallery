@@ -124,7 +124,7 @@ class BackdropStore:
                 return RasterImage.from_pil(image.convert("RGBA"), has_alpha=False)
         except OSError as exc:
             raise BackdropError(
-                f"这张背景图读不出来：{path.name}", path=path, detail=str(exc)
+                f"无法读取这张背景图：{path.name}", path=path, detail=str(exc)
             ) from exc
 
     # ---- 写 ----------------------------------------------------------------
@@ -143,7 +143,7 @@ class BackdropStore:
             write_bytes_atomic(self._cache_dir / file_name, _png_bytes(raster), durable=False)
         except OSError as exc:
             raise BackdropError(
-                f"背景图没能写进缓存：{self._cache_dir}", path=self._cache_dir, detail=str(exc)
+                f"背景图未能写进缓存：{self._cache_dir}", path=self._cache_dir, detail=str(exc)
             ) from exc
         backdrop = Backdrop(
             id=backdrop_id,
@@ -164,7 +164,7 @@ class BackdropStore:
             payload = source.read_bytes()
         except OSError as exc:
             raise BackdropError(
-                f"这张照片读不出来：{source}", path=source, detail=str(exc)
+                f"无法读取这张照片：{source}", path=source, detail=str(exc)
             ) from exc
         backdrop_id = f"{KIND_PHOTO}-{hashlib.sha1(payload).hexdigest()[:12]}"
         existing = self.get(backdrop_id)
@@ -176,7 +176,7 @@ class BackdropStore:
             write_bytes_atomic(self._cache_dir / file_name, _photo_bytes(source), durable=False)
         except OSError as exc:
             raise BackdropError(
-                f"这张照片解不开，换一张试试：{source}", path=source, detail=str(exc)
+                f"无法解码这张照片，请更换后重试：{source}", path=source, detail=str(exc)
             ) from exc
         backdrop = Backdrop(
             id=backdrop_id,
@@ -199,7 +199,7 @@ class BackdropStore:
             items[index] = replace(item, name=_dedupe(clean, others))
             self._commit(tuple(items))
             return items[index]
-        raise BackdropError("这张背景已经不在了，可能刚被删掉。")
+        raise BackdropError("这张背景已不存在，可能刚被删除。")
 
     def remove(self, backdrop_id: str) -> None:
         """删一张。**只删缓存目录下的自有文件**，用户的照片一个字节都不碰。"""
@@ -281,7 +281,7 @@ class BackdropStore:
             write_text_atomic(self._registry_path, text)
         except OSError as exc:
             raise BackdropError(
-                f"背景清单写不进去：{self._registry_path}",
+                f"背景清单不可写入：{self._registry_path}",
                 path=self._registry_path,
                 detail=str(exc),
             ) from exc
@@ -290,7 +290,7 @@ class BackdropStore:
     def _clean_name(self, name: str) -> str:
         clean = " ".join(name.split())[:MAX_NAME_LENGTH]
         if not clean:
-            raise BackdropError("给这张背景起个名字吧。")
+            raise BackdropError("请为这张背景填写名称。")
         return clean
 
     def _unique_name(self, name: str) -> str:

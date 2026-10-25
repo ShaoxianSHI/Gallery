@@ -91,7 +91,7 @@ def problem_of(payload: Mapping[str, object], code: str) -> MovieImportError:
     status = _text(payload.get("code"))
     message = _text(payload.get("errMsg")) or _text(payload.get("data"))
     tail = f"，{message}" if message and message != status else ""
-    return MovieImportError(f"爱奇艺没给出这个视频的资料：{status}{tail}（{code}）。")
+    return MovieImportError(f"爱奇艺未提供该视频的信息：{status}{tail}（{code}）。")
 
 
 def view_of(payload: Mapping[str, object], code: str) -> MovieInfo:
@@ -103,7 +103,7 @@ def view_of(payload: Mapping[str, object], code: str) -> MovieInfo:
         raise problem_of(payload, code)
     data = payload.get("data")
     if not isinstance(data, Mapping):
-        raise MovieImportError(f"爱奇艺没给出这个视频的资料：{code}。")
+        raise MovieImportError(f"爱奇艺未提供该视频的信息：{code}。")
     title = _text(data.get("vn"))
     album = _text(data.get("an"))
     return MovieInfo(
@@ -172,17 +172,17 @@ def fetch(code: str, *, client: Transport) -> MovieInfo:
     :raises MovieImportError: 编号不合法、页面里没有 tvid、视频不存在、网络失败。
     """
     if not is_qipu(code):
-        raise MovieImportError(f"这不是一个爱奇艺的编号：{code}。")
+        raise MovieImportError(f"不是有效的爱奇艺编号：{code}。")
     try:
         html = client.get_text(f"{MOBILE}/v_{urllib.parse.quote(code)}.html")
     except SourcePageError as exc:
         if exc.status == 404:
-            raise MovieImportError(f"爱奇艺上没有这个视频：{code}。") from exc
+            raise MovieImportError(f"爱奇艺未收录该视频：{code}。") from exc
         raise
     tvid = tvid_of(html)
     if tvid is None:
         raise MovieImportError(
-            f"爱奇艺这一页没给出视频编号：{code}。它可能已经下架，或者那不是单集 / 单片的地址。"
+            f"爱奇艺这一页未提供视频编号：{code}。视频可能已下架，或该地址不是单集 / 单片。"
         )
     return view_of(_json(client.get_text(_video_url(tvid), referer=movie_url(code))), code)
 
@@ -195,9 +195,9 @@ def _json(raw: str) -> Mapping[str, object]:
     try:
         payload = json.loads(raw)
     except ValueError as exc:
-        raise MovieImportError("爱奇艺给出的资料读不懂。") from exc
+        raise MovieImportError("爱奇艺返回的信息无法解析。") from exc
     if not isinstance(payload, Mapping):
-        raise MovieImportError("爱奇艺给出的资料不是一份视频信息。")
+        raise MovieImportError("爱奇艺返回的信息不是有效的视频信息。")
     return payload
 
 

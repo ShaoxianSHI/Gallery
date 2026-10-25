@@ -95,11 +95,11 @@ def view_of(payload: Mapping[str, object], code: str) -> MovieInfo:
     extra = page.get("extra") if isinstance(page, Mapping) else None
     if not isinstance(extra, Mapping):
         raise MovieImportError(
-            f"优酷这一页没给出影片信息：{code}。站方可能改了页面结构，用浏览器打开看看吧。"
+            f"优酷这一页未提供影片信息：{code}。站点可能更改了页面结构，请在浏览器中打开确认。"
         )
     title = _text(extra.get("videoTitle"))
     if not title:
-        raise MovieImportError(f"优酷这一页没给出影片信息：{code}。")
+        raise MovieImportError(f"优酷这一页未提供影片信息：{code}。")
     category = _text(extra.get("videoCategory"))
     show = _text(extra.get("showName"))
     return MovieInfo(
@@ -164,17 +164,15 @@ def fetch(code: str, *, client: Transport) -> MovieInfo:
     :raises MovieImportError: 编号不合法、被风控挡住、页面结构变了、网络失败。
     """
     if not _ID_RE.fullmatch(code):
-        raise MovieImportError(f"这不是一个优酷的编号：{code}。")
+        raise MovieImportError(f"不是有效的优酷编号：{code}。")
     html = client.get_text(movie_url(code))
     if is_challenge(html):
         # 风控页也是 200、正文为空 —— 说成「没有这个视频」会让人去换编号。
-        raise MovieImportError(
-            f"优酷这次的风控没放行：{code}。过一会儿再试，或者先在浏览器里打开它。"
-        )
+        raise MovieImportError(f"优酷风控未放行：{code}。请稍后重试，或者先在浏览器里打开它。")
     payload = payload_of(html)
     if payload is None:
         raise MovieImportError(
-            f"优酷这一页没给出影片信息：{code}。站方可能改了页面结构，用浏览器打开看看吧。"
+            f"优酷这一页未提供影片信息：{code}。站点可能更改了页面结构，请在浏览器中打开确认。"
         )
     return view_of(payload, code)
 

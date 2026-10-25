@@ -193,7 +193,7 @@ def _undo_event(record: WriteRecord, events: EventStore | None) -> UndoResult:
         return UndoResult(
             action=record.action,
             entries=(),
-            failures=(Failure(name="事件", message="这次打不开事件库，撤不了。"),),
+            failures=(Failure(name="事件", message="本次无法打开事件库，无法撤销。"),),
             journaled=False,
         )
     outcome = events.undo_record(record)

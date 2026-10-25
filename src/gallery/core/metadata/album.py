@@ -56,7 +56,7 @@ def create_album(root: Path, parent: Path, name: str = DEFAULT_ALBUM_NAME) -> Cr
     wanted = clean_name(name, error=AlbumError)
     chosen = free_name_in(destination, wanted)
     if chosen is None:
-        raise AlbumError(f"「{wanted}」这个名字太长，再加编号也放不下了。", path=destination)
+        raise AlbumError(f"「{wanted}」名称过长，加上编号后仍超出限制。", path=destination)
     created = destination / chosen
     try:
         # 一次系统调用，不搬数据 —— 界面上不必为它开后台线程（粘贴一次几百 MB 才需要）。
@@ -64,13 +64,13 @@ def create_album(root: Path, parent: Path, name: str = DEFAULT_ALBUM_NAME) -> Cr
     except FileExistsError as error:
         # 有人刚好在同一刻建出了同名目录：如实说不行，不替用户决定谁该消失。
         raise AlbumError(
-            f"这里已经有一个叫「{chosen}」的东西了。",
+            f"「{chosen}」已存在。",
             path=created,
             detail=repr(error),
         ) from error
     except OSError as error:
         raise AlbumError(
-            f"没能新建相册：{os_reason(error, is_dir=True)}",
+            f"未能新建相册：{os_reason(error, is_dir=True)}",
             path=created,
             detail=repr(error),
         ) from error

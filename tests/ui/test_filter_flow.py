@@ -326,7 +326,7 @@ def test_clearing_conditions_in_the_search_field_clears_the_toolbar(
         window._search_field.dismiss()
         _settle(qt_app, window)
 
-    assert _chips(window) == [], "前提不成立：没能撤光条件"
+    assert _chips(window) == [], "前提不成立：未能撤光条件"
     assert _calendar_chips(window) == [], f"撤光后工具条上还留着 {_calendar_chips(window)}"
     window.close()
 
@@ -979,7 +979,7 @@ def test_escape_exits_the_search_after_walking_through_a_group(
     window.go_up()
     _settle(qt_app, window)
 
-    assert _chips(window) == [], f"Esc 没能退出搜索，条件还在：{_chips(window)}"
+    assert _chips(window) == [], f"Esc 未能退出搜索，条件还在：{_chips(window)}"
     # 退出搜索之后停在**相册视图的根**。断的是「回到了这一层」而不是「那一层恰好有哪些条目」
     # —— 根上既有相册卡片也有散在根下的照片，硬编码那份清单就等于把断言骑在测试库的目录结构上。
     assert window._level_stack.frames == (), (
@@ -1079,7 +1079,7 @@ def test_escape_leaves_the_folder_without_touching_the_conditions(
 
     # ``_current_dir`` 是栈的投影、**在库根时是 ``None``**；被各处真正用的是
     # :meth:`_current_folder`（口径 ``_current_dir or root``），所以断它。
-    assert window._current_folder() == root, "Esc 没能退出子相册"
+    assert window._current_folder() == root, "Esc 未能退出子相册"
     assert _chips(window) == ["相机：Canon", "城市：西安"], (
         f"Esc 顺手撤掉了条件：{_chips(window)} —— 它只该管位置"
     )
@@ -1106,7 +1106,7 @@ def test_escape_returns_to_the_calendar_without_touching_the_conditions(
     window.go_up()
     _settle(qt_app, window)
 
-    assert window._drill_photos is None, "Esc 没能退回日历"
+    assert window._drill_photos is None, "Esc 未能退回日历"
     assert _chips(window) == ["相机：Canon"], (
         f"Esc 顺手撤掉了条件：{_chips(window)} —— 它只该管位置"
     )
@@ -1158,7 +1158,7 @@ def test_shift_escape_is_the_key_that_pops_a_condition(
     QTest.keyClick(window._grid, Qt.Key.Key_Escape, Qt.KeyboardModifier.ShiftModifier)
     _settle(qt_app, window)
 
-    assert _chips(window) == ["相机：Canon"], f"⇧Esc 没能撤掉最后一条：{_chips(window)}"
+    assert _chips(window) == ["相机：Canon"], f"⇧Esc 未能撤掉最后一条：{_chips(window)}"
     window.close()
 
 
@@ -1691,7 +1691,7 @@ def test_filtering_before_the_index_is_built_still_finds_things(
 ) -> None:
     """用户看到空结果就再也不会筛选第二次了 —— 与整库检索同一道前置条件（ADR 0026 决策 5）。
 
-    文件表一行都没有时一条都命中不了，而用户看到的会是「当前这一层里没有符合这些条件的照片」
+    文件表一行都没有时一条都命中不了，而用户看到的会是「当前层级中没有符合筛选条件的照片」
     —— 那不是答案，是索引还没建。那一遍跑完要自己把这次筛选补上。
     """
     root = _library(tmp_path, make_photo)
@@ -1723,7 +1723,7 @@ def test_an_empty_filtered_level_says_which_layer_is_empty(
     _filter(qt_app, window, "#相机 Canon")
 
     assert _names(window) == []
-    assert "这一层" in window._banner.text(), window._banner.text()
+    assert "当前层级" in window._banner.text(), window._banner.text()
     window.close()
 
 

@@ -163,7 +163,7 @@ def test_closing_drops_the_tasks_that_have_not_started_yet() -> None:
 
         runner.abandon(timeout_ms=SHUTDOWN_TIMEOUT_MS)
 
-        assert done == [], "还没开始的任务在关窗时照样跑了 —— 关窗会被拖住"
+        assert done == [], "尚未开始的任务在关窗时照样跑了 —— 关窗会被拖住"
     finally:
         # 一定放行并**等它真的结束**：这个 TaskRunner 是个裸的局部变量，它被回收时会连带析构
         # 线程池，而池里那个任务还卡在 ``gate.wait()`` 上 —— 形状见 ``tests/ui/conftest.py``

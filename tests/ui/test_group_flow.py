@@ -562,12 +562,12 @@ def test_the_pass_does_not_steal_the_banner_from_someone_else(
     _settle(qt_app, window)
 
     # 任务进行中，横幅上已经有别人的话了
-    window._banner.setText("已把 3 项移到废纸篓")
+    window._banner.setText("已将 3 项移到废纸篓")
     window._banner.show()
     window._banner_text.place.clear()
     window._on_place_pass_work(3)
 
-    assert window._banner.text() == "已把 3 项移到废纸篓", "后台进度不该抢别人的话"
+    assert window._banner.text() == "已将 3 项移到废纸篓", "后台进度不该抢别人的话"
     window.close()
 
 

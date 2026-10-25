@@ -128,12 +128,12 @@ _KEYWORD_SEPARATOR = "\x1f"
 
 #: 索引没落盘时给用户的那一句（检索与筛选共用）。
 _UNAVAILABLE_HINT: Final = (
-    "这个库没法建立检索索引，多半是照片所在的磁盘不允许写入缓存。分组与排序仍然可用。"
+    "当前库无法建立检索索引：通常是因为照片所在磁盘不允许写入缓存。分组与排序仍然可用。"
 )
 
 #: 按日期挑照片那句 —— 比上面多一个「挑不到」的后果，因为它只服务那一件事。
 _BY_DATE_UNAVAILABLE: Final = (
-    "这个库没法建立索引，多半是照片所在的磁盘不允许写入缓存，所以没法按日期范围挑照片。"
+    "当前库无法建立索引：通常是因为照片所在磁盘不允许写入缓存，因此无法按日期范围挑选照片。"
 )
 
 #: 索引自己那两张表。**凡是要动其中一张的地方都必须两张一起动**：只清 facet 的话检索会
@@ -423,7 +423,7 @@ class FacetIndex:
                 total = int(connection.execute(count_sql, count_values).fetchone()[0])
             except sqlite3.Error as exc:
                 logger.info("检索失败：%s", exc)
-                raise IndexUnavailableError("检索没能完成，请再试一次。", detail=str(exc)) from exc
+                raise IndexUnavailableError("检索未能完成，请重试。", detail=str(exc)) from exc
         return SearchOutcome(refs=rows_to_refs(rows), total=total)
 
     def match_paths(
@@ -442,7 +442,7 @@ class FacetIndex:
                 rows = connection.execute(sql, values).fetchall()
             except sqlite3.Error as exc:
                 logger.info("筛选失败：%s", exc)
-                raise IndexUnavailableError("筛选没能完成，请再试一次。", detail=str(exc)) from exc
+                raise IndexUnavailableError("筛选未能完成，请重试。", detail=str(exc)) from exc
         return {row[0] for row in rows if isinstance(row[0], str)}
 
     def photos_in_days(self, first_day: str, last_day: str) -> list[PhotoRef]:
@@ -463,9 +463,9 @@ class FacetIndex:
             try:
                 rows = connection.execute(sql, (first_day, last_day)).fetchall()
             except sqlite3.Error as exc:
-                logger.info("按日期范围挑照片失败：%s", exc)
+                logger.info("按日期范围挑选照片失败：%s", exc)
                 raise IndexUnavailableError(
-                    "按日期范围挑照片没能完成，请再试一次。", detail=str(exc)
+                    "按日期范围挑选照片未能完成，请重试。", detail=str(exc)
                 ) from exc
         return rows_to_refs(rows)
 

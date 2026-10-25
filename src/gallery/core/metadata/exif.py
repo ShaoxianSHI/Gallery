@@ -167,7 +167,7 @@ def read_metadata(
 
     if not allow_fallback:
         raise MetadataError(
-            "没有找到 exiftool，无法读取完整元数据。安装后重试：brew install exiftool",
+            "未找到 exiftool，无法读取完整元数据。安装后重试：brew install exiftool",
             path=path,
         )
     return build_report(

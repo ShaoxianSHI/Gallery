@@ -272,7 +272,7 @@ class MetadataPanel(QWidget):
         self._metadata_notice = notice
         self._edit_button.setEnabled(editable)
         self._edit_button.setToolTip(
-            reason if not editable else "改拍摄时间或位置，会写回这张照片（⌘Z 可以撤销）"
+            reason if not editable else "修改拍摄时间或位置将写回照片（⌘Z 可撤销）"
         )
         self._render()
 
@@ -333,7 +333,7 @@ class MetadataPanel(QWidget):
         layout.addWidget(label)
         layout.addStretch(1)
         if title == PLACE_GROUP_TITLE and not self._metadata_editable and self._metadata_notice:
-            hint = QLabel(self._metadata_reason or "此处不能编辑")
+            hint = QLabel(self._metadata_reason or "此项不可编辑")
             hint.setObjectName("metadataNotice")
             hint.setWordWrap(True)
             hint.setToolTip(self._metadata_reason)

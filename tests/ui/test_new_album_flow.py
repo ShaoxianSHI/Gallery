@@ -240,7 +240,7 @@ def test_the_empty_level_notice_goes_away(
     监听器不会替我们做这件事 —— 自家写的那次已经被摘掉了（否则它会重复应用）。
     """
     _enter(qt_app, window, root / "奈良")
-    assert "既没有子文件夹" in window._banner.text()
+    assert "没有子文件夹" in window._banner.text()
 
     window.create_album()
     qt_app.processEvents()

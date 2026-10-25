@@ -1031,7 +1031,7 @@ def test_open_default_app_is_silent_when_it_works_and_speaks_when_it_fails(
     monkeypatch.setattr(
         desktop,
         "open_with_default_app",
-        lambda path: f"没能用默认应用打开「{Path(path).name}」，请检查它是否还在原处。",
+        lambda path: f"未能用默认应用打开「{Path(path).name}」，请确认文件是否仍在原处。",
     )
     window.open_current_in_default_app()
 

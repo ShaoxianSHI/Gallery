@@ -52,8 +52,8 @@ _PATH_RES: Final = (
 
 #: 接口自己的错误码 → 一句中文。**HTTP 永远 200，错在 JSON 里**。
 _PROBLEMS: Final[dict[int, str]] = {
-    61: "腾讯视频上没有这个视频，或者它已经下架",
-    62: "腾讯视频说这个视频还在审核中，过一会儿再试",
+    61: "腾讯视频未收录该视频，或它已下架",
+    62: "腾讯视频说该视频仍在审核中，请稍后重试",
 }
 
 #: 移动页里那些 ``itemprop`` 标签。
@@ -109,7 +109,7 @@ def problem_of(payload: Mapping[str, object], code: str) -> MovieImportError:
         return MovieImportError(f"{known}：{code}。")
     message = _text(payload.get("msg"))
     tail = f"，{message}" if message else ""
-    return MovieImportError(f"腾讯视频没给出这个视频的资料：错误码 {status}{tail}。")
+    return MovieImportError(f"腾讯视频未提供该视频的信息：错误码 {status}{tail}。")
 
 
 def view_of(payload: Mapping[str, object], code: str) -> MovieInfo:
@@ -121,7 +121,7 @@ def view_of(payload: Mapping[str, object], code: str) -> MovieInfo:
         raise problem_of(payload, code)
     first = _first_video(payload)
     if first is None:
-        raise MovieImportError(f"腾讯视频没给出这个视频的资料：{code}。")
+        raise MovieImportError(f"腾讯视频未提供该视频的信息：{code}。")
     vid = _text(first.get("vid")) or code
     return MovieInfo(
         source=SOURCE_TENCENT,
@@ -212,9 +212,9 @@ def _json(raw: str) -> Mapping[str, object]:
     try:
         payload = json.loads(body)
     except ValueError as exc:
-        raise MovieImportError("腾讯视频给出的资料读不懂。") from exc
+        raise MovieImportError("腾讯视频返回的信息无法解析。") from exc
     if not isinstance(payload, Mapping):
-        raise MovieImportError("腾讯视频给出的资料不是一份视频信息。")
+        raise MovieImportError("腾讯视频返回的信息不是有效的视频信息。")
     return payload
 
 
@@ -224,7 +224,7 @@ def fetch(code: str, *, client: Transport) -> MovieInfo:
     :raises MovieImportError: 编号不合法、视频不可见、网络失败。
     """
     if not is_vid(code):
-        raise MovieImportError(f"这不是一个腾讯视频的 vid：{code}。")
+        raise MovieImportError(f"不是有效的腾讯视频 vid：{code}。")
     movie = view_of(_json(client.get_text(_info_url(code))), code)
     return _with_page(code, movie, client)
 

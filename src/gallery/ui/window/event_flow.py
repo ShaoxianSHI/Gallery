@@ -51,8 +51,8 @@ logger = logging.getLogger(__name__)
 
 #: 没选中照片时那两条提示。两句都要说清「先选照片」—— 用户多半是先选中再去右键的，
 #: 而这一行压根不出现时他连问都问不到。
-NOTHING_TO_BIND = "先选中几张照片，再记为某次事件。"
-NOTHING_TO_UNBIND = "先选中要从这次事件移出来的照片。"
+NOTHING_TO_BIND = "请先选中照片，再记录到事件。"
+NOTHING_TO_UNBIND = "请先选中要从该事件移出的照片。"
 
 #: 点了菜单里的某一项要告诉窗口的事：**建一个新的**，还是**记到某一个已有名下**。
 #: 「新建」那一项的 ``data`` 是 ``None``，于是两种情形不需要两个回调。
@@ -130,7 +130,7 @@ class EventFlowMixin:
             clear_cover.setEnabled(self.covered_event() is not None)
 
     def _ensure_event_actions(self) -> None:
-        """建那三个**常驻窗口**的动作（事件分组卡片上的「编辑事件…」「从这次事件移出」
+        """建那三个**常驻窗口**的动作（事件分组卡片上的「编辑事件…」「从该事件移出」
         与「清除事件封面」）。
 
         它们常驻而不是每次现建：要挂到窗口上（否则快捷键不注册），也要能被
@@ -141,7 +141,7 @@ class EventFlowMixin:
         self._edit_event_action = QAction("编辑事件…", self)
         self._edit_event_action.triggered.connect(self._edit_event_of_group_card)
         self.addAction(self._edit_event_action)
-        self._leave_event_action = QAction("从这次事件移出", self)
+        self._leave_event_action = QAction("从该事件移出", self)
         self._leave_event_action.triggered.connect(self._leave_group_card)
         self.addAction(self._leave_event_action)
         self._clear_cover_event_action = QAction("清除事件封面", self)
@@ -162,7 +162,7 @@ class EventFlowMixin:
             return
         event = library.event(event_id)
         if event is None:
-            self._show_banner("这个事件已经不在了。")
+            self._show_banner("该事件已不存在。")
             return
         try:
             library.clear_event_cover(event.id)
@@ -199,7 +199,7 @@ class EventFlowMixin:
             return
         event = library.event(event_id)
         if event is None:
-            self._show_banner("这个事件已经不在了。")
+            self._show_banner("该事件已不存在。")
             return
         photos = [entry.path for entry in group.photos]
         if not photos:
@@ -312,15 +312,13 @@ class EventFlowMixin:
             return
         event = library.event(event_id)
         if event is None:
-            self._show_banner("这个事件已经不在了。")
+            self._show_banner("该事件已不存在。")
             return
         if event.kind != MOVIE.id:
             return
         url = library.movie_url(event)
         if url is None:
-            self._show_banner(
-                "这个影片没有能打开的网页：要么还没填编号，要么它在站上只有 App 里有页面。"
-            )
+            self._show_banner("这部影片没有可打开的网页：编号可能为空，或该站仅在 App 内提供页面。")
             return
         outcome = launch.open_in_browser(url)
         self._show_banner(
@@ -343,7 +341,7 @@ class EventFlowMixin:
     def record_as_menu(self) -> QMenu:
         """「记录为」那一个子菜单。**三层先全建出来**，内容等展开时再填。
 
-        **用 ``ShortcutColumnMenu``**：这一层「旅行 / 演出 / ……」与「从这次事件移出」都是
+        **用 ``ShortcutColumnMenu``**：这一层「旅行 / 演出 / ……」与「从该事件移出」都是
         子菜单行，得跟上一层的箭头一样是自绘的实心三角（理由见 ``owns_submenu_arrows``）。
         """
         menu = ShortcutColumnMenu("记录为")
@@ -351,7 +349,7 @@ class EventFlowMixin:
         for kind in EVENT_KINDS:
             menu.addMenu(self._event_picker(kind))
         leaving = self._leaving_events()
-        self._event_leave_menu = _lazy_menu(menu, "从这次事件移出", lambda: leaving)
+        self._event_leave_menu = _lazy_menu(menu, "从该事件移出", lambda: leaving)
         self._event_leave_menu.triggered.connect(self._on_event_left)
         # **立刻**知道自己该不该摆 —— 摆一个永远点不开的空框只会让人以为坏了。
         self._event_leave_menu.setDisabled(not leaving)
@@ -463,7 +461,7 @@ class EventFlowMixin:
         """
         library = self._library
         if library is None or not library.events_available:
-            self._show_banner("这个库这次用不了事件功能，没法导入演出。")
+            self._show_banner("当前库无法使用事件功能，不能导入演出。")
             return
         chosen, _ = QFileDialog.getOpenFileName(
             self, "选择「演迹」导出的表格", _import_start_dir(), _IMPORT_FILTER
@@ -504,8 +502,8 @@ class EventFlowMixin:
         box.setIcon(QMessageBox.Icon.Question)
         box.setWindowTitle("导入演出")
         box.setText(
-            f"表格里有 {plan.total} 场演出，其中 {plan.duplicates} 场的名称、日期与场馆"
-            "与库里已有的相同。\n\n要跳过这些，还是全部再建一遍？"
+            f"表格中有 {plan.total} 场演出，其中 {plan.duplicates} 场的名称、日期与场馆"
+            "与库中已有记录相同。\n\n要跳过这些，还是全部重新导入？"
         )
         skip = box.addButton("跳过重复", QMessageBox.ButtonRole.AcceptRole)
         box.addButton("全部导入", QMessageBox.ButtonRole.DestructiveRole)
@@ -566,7 +564,7 @@ class EventFlowMixin:
         return submenu
 
     def _leaving_events(self) -> list[tuple[str, int]]:
-        """当前选中的照片属于哪些事件（「从这次事件移出」那一层列的就是它）。
+        """当前选中的照片属于哪些事件（「从该事件移出」那一层列的就是它）。
 
         **按事件平铺，不再按类型分组** —— 要离开哪一次旅行，用户自己知道是哪一次。
         名字按界面上那一档截短 —— 这一层列的就是菜单里的字。
@@ -667,7 +665,7 @@ class EventFlowMixin:
         """当前选中的那张照片属于哪些事件（「设为事件封面 →」与「编辑事件 →」列的都是它）。
         **一次 SQL**。
 
-        顺序与「从这次事件移出」那一层一致（按 id 降序）：两处摆的是同一批事件，
+        顺序与「从该事件移出」那一层一致（按 id 降序）：两处摆的是同一批事件，
         而用户在这两处来回走，顺序不一样会以为它们是两批东西。
         """
         library = self._library
@@ -700,7 +698,7 @@ class EventFlowMixin:
             return
         event = library.event(event_id)
         if event is None:
-            self._show_banner("这个事件已经不在了。")
+            self._show_banner("该事件已不存在。")
             return
         try:
             library.set_event_cover(event.id, photo)
@@ -731,14 +729,14 @@ class EventFlowMixin:
         self.record_selected_as(kind_id, int(data))
 
     def _on_event_left(self, action: QAction) -> None:
-        """「从这次事件移出 → 京都五日」。"""
+        """「从该事件移出 → 京都五日」。"""
         library = self._library
         if library is None:
             return
         event = library.event(int(action.data()))
         photos = self._selected_paths()
         if event is None:
-            self._show_banner("这个事件已经不在了。")
+            self._show_banner("该事件已不存在。")
             return
         if not photos:
             self._show_banner(NOTHING_TO_UNBIND)
@@ -765,7 +763,7 @@ class EventFlowMixin:
             return
         event = library.event(event_id)
         if event is None:
-            self._show_banner("这个事件已经不在了。")
+            self._show_banner("该事件已不存在。")
             return
         kind = kind_by_id(event.kind)
         if kind is None:  # pragma: no cover - 认不出的类型压根不会进缓存
@@ -781,14 +779,14 @@ class EventFlowMixin:
             return
         event = library.event(event_id)
         if event is None:
-            self._show_banner("这个事件已经不在了。")
+            self._show_banner("该事件已不存在。")
             return
         photos = len(library.events.photos_of_event(event_id))
         extra = f"，连同 {photos} 张照片上的记录" if photos else ""
         answer = QMessageBox.question(
             self,
             "Gallery",
-            f"删除「{event.display_name}」{extra}？\n\n⌘Z 可以把它连同那些记录一起恢复回来。",
+            f"删除「{event.display_name}」{extra}？\n\n⌘Z 可将这些记录一并恢复。",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel,
         )
@@ -823,18 +821,18 @@ class EventFlowMixin:
         box.setIcon(QMessageBox.Icon.Question)
         box.setWindowTitle(banners.orphan_dialog_title(scan))
         box.setText(banners.orphan_dialog(scan))
-        clear_all = box.addButton("先不清", QMessageBox.ButtonRole.RejectRole)
+        clear_all = box.addButton("暂不清理", QMessageBox.ButtonRole.RejectRole)
         keep_vanished: QAbstractButton | None = None
         if scan.missing:
-            clear_missing = box.addButton("清掉这些", QMessageBox.ButtonRole.AcceptRole)
+            clear_missing = box.addButton("清理这些", QMessageBox.ButtonRole.AcceptRole)
             if scan.vanished:
                 keep_vanished = box.addButton(
-                    "连相册不存在的也清掉", QMessageBox.ButtonRole.DestructiveRole
+                    "一并清理相册已不存在的", QMessageBox.ButtonRole.DestructiveRole
                 )
         else:
             # 没有 ``missing`` 可清时，那一个按钮会变成一句空话 —— 只给两档里的两个选择。
             clear_missing = None
-            keep_vanished = box.addButton("连这些一起清掉", QMessageBox.ButtonRole.DestructiveRole)
+            keep_vanished = box.addButton("一并清理这些", QMessageBox.ButtonRole.DestructiveRole)
         box.setDefaultButton(clear_all)
         box.exec()
         if box.clickedButton() is clear_missing:
@@ -855,7 +853,7 @@ class EventFlowMixin:
         event = library.event(event_id)
         photos = self._selected_paths()
         if event is None:
-            self._show_banner("这个事件已经不在了。")
+            self._show_banner("该事件已不存在。")
             return
         if not photos:
             self._show_banner(NOTHING_TO_BIND)

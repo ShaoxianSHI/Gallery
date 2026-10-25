@@ -100,7 +100,7 @@ def test_deleting_the_last_row_leaves_a_placeholder(qt_app: QApplication) -> Non
 
     dialog._remove_button.click()
 
-    assert _texts(dialog) == ["还没有保存过背景图"]
+    assert _texts(dialog) == ["暂无已保存的背景图"]
     assert dialog._rename_button.isEnabled() is False
     assert dialog._remove_button.isEnabled() is False
     dialog.deleteLater()

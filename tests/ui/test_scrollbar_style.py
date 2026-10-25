@@ -432,7 +432,7 @@ def test_the_grid_scrollbar_keeps_only_a_slit_to_the_window_edge(
         assert wait_for(
             lambda: window._model.rowCount() >= 40 and bar.width() == SCROLLBAR_WIDTH,
             timeout=DEFAULT_TIMEOUT_SECONDS,
-        ), "照片没能在时限内扫出来、或者网格的布局还没跑过，这条量的就不是网格页"
+        ), "照片未能在时限内扫出来、或者网格的布局尚未跑过，这条量的就不是网格页"
 
         bar_right = bar.mapToGlobal(QPoint(bar.width(), 0)).x()
         window_right = window.mapToGlobal(QPoint(window.width(), 0)).x()
@@ -502,7 +502,7 @@ def test_the_panel_scrollbar_sits_where_the_grid_one_does(
         assert wait_for(
             lambda: window._model.rowCount() >= 40 and grid_bar.width() == SCROLLBAR_WIDTH,
             timeout=DEFAULT_TIMEOUT_SECONDS,
-        ), "照片没能在时限内扫出来、或者网格的布局还没跑过，这条量的就不是网格页"
+        ), "照片未能在时限内扫出来、或者网格的布局尚未跑过，这条量的就不是网格页"
 
         panel_bar = window._panel._scroll.verticalScrollBar()
         # **不走 ``toggle_metadata``**：它会把面板自己的读取任务放出去，而那条任务回来时会把
@@ -513,7 +513,7 @@ def test_the_panel_scrollbar_sits_where_the_grid_one_does(
         assert wait_for(
             lambda: panel_bar.width() == SCROLLBAR_WIDTH and panel_bar.isVisible(),
             timeout=DEFAULT_TIMEOUT_SECONDS,
-        ), "面板的布局还没跑过、或者报告不够高，这条量的不是大图页那条滚动条"
+        ), "面板的布局尚未跑过、或者报告不够高，这条量的不是大图页那条滚动条"
 
         grid_gap = _gap_to_window_right(window, grid_bar)
         panel_gap = _gap_to_window_right(window, panel_bar)

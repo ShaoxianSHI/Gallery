@@ -212,7 +212,7 @@ class ExifToolWriter:
             parsed = json.loads(payload)
         except json.JSONDecodeError as exc:
             raise MetadataWriteError(
-                f"读不出「{Path(path).name}」现在的元数据，没法确认写入结果。",
+                f"无法读取「{Path(path).name}」现在的元数据，无法确认写入结果。",
                 path=Path(path),
                 detail=f"{exc}；输出前 200 字：{payload[:200]}",
             ) from exc
@@ -258,7 +258,7 @@ class ExifToolWriter:
             )
         except subprocess.TimeoutExpired as exc:
             raise MetadataWriteError(
-                f"{action}元数据超时，超过 {self._timeout:g} 秒：{path.name}。稍后再试一次。",
+                f"{action}元数据超时，超过 {self._timeout:g} 秒：{path.name}。请稍后重试。",
                 path=path,
                 detail=str(exc),
             ) from exc
@@ -338,7 +338,7 @@ def undo_metadata(
         raise MetadataWriteError("这条记录里没有可撤销的字段。", path=path)
     if not path.is_file():
         raise MetadataWriteError(
-            f"撤销不了：找不到「{path.name}」，它可能已经被移动或删除了。",
+            f"无法撤销：未找到「{path.name}」，它可能已被移动或删除。",
             path=path,
         )
     tool = _tool(writer)
@@ -348,7 +348,7 @@ def undo_metadata(
     conflicts = tuple(
         Failure(
             name=change.tag,
-            message="这一项在 Gallery 之外被改过，写回原值会盖掉它，所以没有动它。",
+            message="该项在 Gallery 之外被修改过；写回原值会覆盖它，因此未做改动。",
             source=path,
         )
         for change in record.changes
@@ -386,7 +386,7 @@ def _tool(writer: MetadataWriter | None) -> MetadataWriter:
     """取写回工具。**缺席就当场说清楚**，而不是让调用方去猜为什么写不进去。"""
     tool: MetadataWriter = writer if writer is not None else ExifToolWriter()
     if not tool.available():
-        raise MetadataWriteError(f"没有找到 exiftool，改不了照片里的元数据。{INSTALL_HINT}")
+        raise MetadataWriteError(f"未找到 exiftool，无法修改照片元数据。{INSTALL_HINT}")
     return tool
 
 
@@ -401,7 +401,7 @@ def _nothing_to_write(assignments: Sequence[Assignment], path: Path) -> str:
     """
     dropped = sorted({item.tag for item in assignments} & unstorable_tags(path))
     if not dropped:
-        return "没有要写入的改动。"
+        return "没有需要写入的改动。"
     return (
         f"「{Path(path).name}」存不下要写的字段：{'、'.join(dropped)}。"
         f"这种格式放不了它们，一个字都没写进去。"
@@ -449,7 +449,7 @@ def _apply(path: Path, changes: Sequence[FieldChange], tool: MetadataWriter) -> 
         )
     except MetadataWriteError as exc:
         raise MetadataWriteError(
-            f"写入没有生效，而且没能恢复原值：{'、'.join(mismatched)}。"
+            f"写入未生效，且未能恢复原值：{'、'.join(mismatched)}。"
             f"请检查这张照片：{exc.message.rstrip('。')}。",
             path=path,
             detail=f"{detail}；回滚也失败了：{exc.detail}",
@@ -461,13 +461,13 @@ def _apply(path: Path, changes: Sequence[FieldChange], tool: MetadataWriter) -> 
     ]
     if unrestored:
         raise MetadataWriteError(
-            f"写入没有生效，而且这几个字段的原值没能恢复：{'、'.join(unrestored)}。"
-            f"请打开这张照片核对这几个值：{'、'.join(mismatched)} 本次没有写成功。",
+            f"写入未生效，且原值未能恢复。"
+            f"请打开这张照片核对以下字段：{'、'.join(unrestored)}。本次写入未成功。",
             path=path,
             detail=f"{detail}；回滚之后这些字段仍然不是原值：{unrestored}",
         )
     raise MetadataWriteError(
-        f"写入没有生效，照片已经恢复原样：{'、'.join(mismatched)}。",
+        f"写入未生效，照片已恢复原样：{'、'.join(mismatched)}。",
         path=path,
         detail=detail,
     )
@@ -489,7 +489,7 @@ def _checked(assignments: Sequence[Assignment], path: Path) -> tuple[Assignment,
     for item in assignments:
         if item.tag not in WRITABLE_TAGS:
             raise MetadataWriteError(
-                f"「{item.tag}」不在可以修改的字段里。Gallery 只改拍摄时间与位置。",
+                f"「{item.tag}」不是可修改的字段。Gallery 只修改拍摄时间与位置。",
                 detail=item.tag,
             )
         if item.tag in unstorable:
@@ -506,7 +506,7 @@ def _guard(root: Path, path: Path) -> None:
     """
     if not is_supported_photo(path):
         raise MetadataWriteError(
-            f"「{path.name}」不是 Gallery 支持的照片格式，不改它的元数据。", path=path
+            f"「{path.name}」不是 Gallery 支持的照片格式，不能修改其元数据。", path=path
         )
     try:
         # ``allow_root=True``：要挡的是「跑到库外」，不是「落在库里」。库根本身也不必另行禁止 ——
@@ -515,15 +515,15 @@ def _guard(root: Path, path: Path) -> None:
     except paths.GuardError as exc:
         raise MetadataWriteError(_writeback_reason(path, exc), path=path) from exc
     if not path.is_file():
-        raise MetadataWriteError(f"找不到这个文件了：{path.name}。", path=path)
+        raise MetadataWriteError(f"未找到该文件：{path.name}。", path=path)
 
 
 #: 拒绝写回的那几种原因 → 给用户的那句话。见 :data:`rename._GUARD_MESSAGES`。
 #: 上面第一步就要求扩展名是照片，所以后两条今天都到不了（库根本身与配置目录都不是照片后缀）；
 #: 留着是为了这张表是**全的** —— ``GuardReason`` 加成员时它当场炸。
 _GUARD_MESSAGES: Final = {
-    paths.GuardReason.OUTSIDE_ROOT: "只能修改库里的照片：{path}。",
-    paths.GuardReason.IS_ROOT: "这是库本身，不是一个照片文件。",
+    paths.GuardReason.OUTSIDE_ROOT: "只能修改库中的照片：{path}。",
+    paths.GuardReason.IS_ROOT: "这是库本身，不是照片文件。",
     paths.GuardReason.IS_CONFIG_DIR: "这是 Gallery 自己的配置目录。",
 }
 
@@ -665,11 +665,11 @@ def _explain(stderr: str, *, path: Path, action: str) -> str:
     if "permission denied" in lowered or "read-only" in lowered or "can't create" in lowered:
         return f"没有权限{action}「{path.name}」：它或它所在的磁盘可能被设成了只读。"
     if "no space left" in lowered or "磁盘空间不足" in lowered:
-        return f"磁盘满了，写不进「{path.name}」：腾出点空间再试。"
+        return f"磁盘满了，写不进「{path.name}」：请释放空间后重试。"
     if any(marker in lowered for marker in _UNSUPPORTED_MARKERS):
-        return f"这个格式改不了「{path.name}」的元数据：{_first_line(stderr)}。"
+        return f"此格式不支持修改「{path.name}」的元数据：{_first_line(stderr)}。"
     if "not enough room" in lowered or "truncated" in lowered:
-        return f"「{path.name}」写不下了：文件结构没有足够的空间放这个字段。"
+        return f"「{path.name}」写入失败：文件结构中没有足够空间存放该字段。"
     if "error" in lowered:
         return f"{action}「{path.name}」的元数据失败：{_first_line(stderr)}"
     return f"{action}「{path.name}」的元数据失败。"
@@ -680,7 +680,7 @@ def _first_line(stderr: str) -> str:
         text = line.strip()
         if text:
             return text.removeprefix("Error: ")
-    return "exiftool 没有给出原因"
+    return "exiftool 未提供原因"
 
 
 __all__ = [

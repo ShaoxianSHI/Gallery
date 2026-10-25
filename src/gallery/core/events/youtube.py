@@ -190,11 +190,11 @@ def _oembed_problem(exc: SourcePageError, code: str) -> MovieImportError:
     """
     if exc.status in (401, 403):
         return MovieImportError(
-            f"YouTube 不给这个视频的资料，不允许嵌入播放：{code}。用浏览器打开看看吧。"
+            f"YouTube 不给该视频的资料，不允许嵌入播放：{code}。请在浏览器中打开确认。"
         )
     if exc.status == 404:
-        return MovieImportError(f"YouTube 上没有这个视频：{code}。它可能被删掉了或设成了不公开。")
-    return MovieImportError(f"YouTube 这次没给出资料：HTTP {exc.status}，{code}。")
+        return MovieImportError(f"YouTube 未收录该视频：{code}。它可能已被删除或设为不公开。")
+    return MovieImportError(f"YouTube 本次未提供信息：HTTP {exc.status}，{code}。")
 
 
 def _oembed_url(code: str) -> str:
@@ -208,7 +208,7 @@ def fetch(code: str, *, client: Transport) -> MovieInfo:
     :raises MovieImportError: oEmbed 不给资料（视频没了 / 不允许嵌入 / 网络失败）。
     """
     if not is_video_id(code):
-        raise MovieImportError(f"这不是一个 YouTube 的 videoId：{code}。")
+        raise MovieImportError(f"不是有效的 YouTube videoId：{code}。")
     try:
         raw = client.get_text(_oembed_url(code))
     except SourcePageError as exc:
@@ -216,9 +216,9 @@ def fetch(code: str, *, client: Transport) -> MovieInfo:
     try:
         payload = json.loads(raw)
     except ValueError as exc:
-        raise MovieImportError(f"YouTube 给出的资料读不懂：{code}。") from exc
+        raise MovieImportError(f"YouTube 返回的信息无法解析：{code}。") from exc
     if not isinstance(payload, Mapping):
-        raise MovieImportError(f"YouTube 给出的资料不是一份视频信息：{code}。")
+        raise MovieImportError(f"YouTube 返回的信息不是有效的视频信息：{code}。")
     return _with_page(code, oembed_of(payload, code), client)
 
 

@@ -127,7 +127,7 @@ class AppTheme:
 def _application(app: QApplication | None = None) -> QApplication:
     instance = QApplication.instance() if app is None else app
     if instance is None:
-        raise RuntimeError("还没有 QApplication，界面主题无从取起")
+        raise RuntimeError("QApplication 尚未创建，无法获取界面主题")
     return cast(QApplication, instance)
 
 

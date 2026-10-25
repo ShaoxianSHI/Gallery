@@ -173,7 +173,7 @@ def test_a_level_without_photos_says_so(
     window.start_slideshow()
 
     assert window._banner.isVisible()
-    assert window._banner.text() == "当前层级没有照片。"
+    assert window._banner.text() == "当前层级中没有照片。"
     assert window._slideshow.active is False
     assert window._stack.currentWidget() is not window._detail_page
     window.close()
@@ -214,7 +214,7 @@ def test_a_step_fades_the_old_photo_out_before_the_new_one_appears(window: MainW
     detail._fade_animation.setCurrentTime(FADE_OUT_MS // 2)
     assert detail._fade_layer is not None
     assert detail._fade_layer.opacity() > 0.0
-    assert detail._item.opacity() == 0.0, "旧图还没消失，新图不该提前出现"
+    assert detail._item.opacity() == 0.0, "旧图尚未消失，新图不该提前出现"
 
     detail._fade_animation.setCurrentTime(FADE_OUT_MS)
     assert detail._fade_layer is None

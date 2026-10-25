@@ -297,12 +297,12 @@ def test_no_place_anywhere_nearby_keeps_the_written_name(library_state: PlaceSta
 @pytest.mark.parametrize(
     ("latitude", "longitude", "complaint"),
     [
-        (30.0, None, "经度和纬度要一起填"),
-        (None, 120.0, "经度和纬度要一起填"),
+        (30.0, None, "需同时填写"),
+        (None, 120.0, "需同时填写"),
         (91.0, 120.0, "纬度要在 -90 到 90 之间"),
         (-91.0, 120.0, "纬度要在 -90 到 90 之间"),
         (30.0, 181.0, "经度要在 -180 到 180 之间"),
-        (0.0, 0.0, "世上并不存在"),
+        (0.0, 0.0, "没有位置信息"),
     ],
 )
 def test_impossible_coordinates_are_refused_with_a_reason(

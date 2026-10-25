@@ -117,7 +117,7 @@ def _unreadable(monkeypatch: pytest.MonkeyPatch, *paths: Path) -> None:
 
     def guarded(self: Path, *args: object, **kwargs: object):  # type: ignore[no-untyped-def]
         if str(self) in blocked:
-            raise OSError("文件可能还没下载完")
+            raise OSError("文件可能尚未下载完")
         return real_open(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "open", guarded)
@@ -195,7 +195,7 @@ def test_an_album_whose_every_photo_fails_says_why(
 
     assert wait_for(lambda: bool(failed), timeout=DEFAULT_TIMEOUT_SECONDS)
     assert failed[0][0] == album
-    assert "读不出" in failed[0][1] or "下载" in failed[0][1]
+    assert "无法读取" in failed[0][1] or "下载" in failed[0][1]
     runner.wait_for_done(2000)
 
 

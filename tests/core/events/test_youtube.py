@@ -130,7 +130,7 @@ def test_fetch_reads_the_oembed_first_then_the_watch_page() -> None:
 
 @pytest.mark.parametrize(
     ("status", "expected"),
-    [(401, "不允许嵌入"), (403, "不允许嵌入"), (404, "没有这个视频")],
+    [(401, "不允许嵌入"), (403, "不允许嵌入"), (404, "未收录该视频")],
 )
 def test_the_oembed_status_is_told_apart(status: int, expected: str) -> None:
     """**401 / 403 与 404 是两回事**：一个该换工具，一个该换视频。"""

@@ -472,7 +472,7 @@ def test_a_video_only_greys_the_edit_button_without_a_reason(
     panel.set_metadata_editable(False, notice=False)
 
     texts = [label.text() for label in panel.findChildren(QLabel)]
-    assert "此处不能编辑" not in texts
+    assert "此项不可编辑" not in texts
     assert all("只读" not in text for text in texts)
     assert panel._edit_button.isEnabled() is False
 

@@ -112,7 +112,7 @@ def test_albums_mode_startup_keeps_normal_tile_size(
 
     assert wait_until(
         qt_app, lambda: window._model.rowCount() >= 2 and window._grid._laid_out_columns
-    ), f"两个相册没能在时限内排好（当前 {window._model.rowCount()} 行）"
+    ), f"两个相册未能在时限内排好（当前 {window._model.rowCount()} 行）"
     # 等条件而不是转满 0.5 秒：那个「核对列数」的定时器是 COLUMN_CHECK_MS = 50ms。
     settle_grid(qt_app, window._grid)
 

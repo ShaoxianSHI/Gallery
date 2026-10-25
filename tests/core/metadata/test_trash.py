@@ -143,7 +143,7 @@ def test_anything_outside_the_library_is_refused(tmp_path: Path, fake_trash: Pat
     with pytest.raises(DeleteError) as caught:
         trash_entries(tmp_path, [PhotoRef.from_path(outside)])
 
-    assert "只能移除库里的东西" in caught.value.message
+    assert "只能移除库中的项目" in caught.value.message
     assert outside.exists()
 
 
@@ -251,7 +251,7 @@ def test_restore_says_so_when_the_trash_copy_is_gone(tmp_path: Path, fake_trash:
     result = restore_entries(tmp_path, [record])
 
     assert result.ok is False
-    assert "废纸篓里已经找不到" in result.failures[0].message
+    assert "废纸篓中已找不到" in result.failures[0].message
 
 
 def test_restore_brings_back_the_whole_album(tmp_path: Path, fake_trash: Path) -> None:

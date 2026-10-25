@@ -117,7 +117,7 @@ def test_a_folder_that_cannot_be_written_still_opens(
     # 索引退成内存模式：能读能写，只是不落盘。
     assert window._library.facet_index.path is None
     assert window._banner.isVisible(), "降级了就该在横幅上说一声"
-    assert "写不进去" in window._banner.text()
+    assert "无法写入" in window._banner.text()
 
 
 def test_a_library_that_cannot_be_read_reports_it_without_hanging(
@@ -140,7 +140,7 @@ def test_a_library_that_cannot_be_read_reports_it_without_hanging(
         assert window.open_library(missing) is False
 
     assert window._library is None
-    assert reported and "打不开这个文件夹" in reported[0]
+    assert reported and "无法打开该文件夹" in reported[0]
 
 
 def test_restoring_the_last_library_at_startup_is_silent(

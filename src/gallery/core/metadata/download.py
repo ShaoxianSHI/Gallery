@@ -78,13 +78,13 @@ def save_downloaded_file(
 
     created = free_target(destination, wanted_name, occupied_names(destination))
     if created is None:
-        raise MovieImportError(f"「{destination.name}」里没有空着的名字可用了。", path=destination)
+        raise MovieImportError(f"「{destination.name}」中没有可用的名称。", path=destination)
     try:
         # 原子写：半截文件不会留在用户的文件夹里（与粘贴对「半截文件」的处置同一取向）。
         write_bytes_atomic(created, data)
     except OSError as exc:
         raise MovieImportError(
-            f"没能把封面写进「{destination.name}」：{exc.strerror}。", path=destination
+            f"未能把封面写进「{destination.name}」：{exc.strerror}。", path=destination
         ) from exc
 
     journaled = append_record(

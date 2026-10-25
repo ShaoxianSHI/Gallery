@@ -33,7 +33,7 @@ STARTER_COLORS = {False: "#f5f5f5", True: "#1c1c1e"}
 INK_ON_LIGHT = "#111111"
 INK_ON_DARK = "#f2f2f2"
 
-WRONG_SIDE = "浅色那一档要选浅色、深色那一档要选深色 —— 正文的颜色不跟着背景走，挑反了看不清。"
+WRONG_SIDE = "浅色背景请选浅色，深色背景请选深色：正文颜色不随背景改变，选反会导致看不清。"
 
 SLOT_LABELS = {False: "浅色模式", True: "深色模式"}
 
@@ -73,7 +73,7 @@ class BackgroundColorDialog(QDialog):
         layout.setContentsMargins(16, 14, 16, 12)
         layout.setSpacing(10)
 
-        hint = QLabel("两档各挑一个颜色；「默认」表示跟随系统的浅色 / 深色。")
+        hint = QLabel("两档各选一个颜色；「默认」表示使用系统浅色 / 深色模式。")
         hint.setObjectName("backgroundHint")
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -157,7 +157,7 @@ class BackgroundColorDialog(QDialog):
             value = self._values[dark]
             swatch.setText(value or "默认")
             swatch.setStyleSheet(_swatch_style(value, app_theme))
-            swatch.setToolTip("跟随系统的浅色 / 深色" if not value else f"{value}（点击换一个）")
+            swatch.setToolTip("跟随系统的浅色 / 深色" if not value else f"{value}（点击更换）")
 
     # ---- 外观 --------------------------------------------------------------
 

@@ -69,7 +69,7 @@ def open_with_default_app(path: Path) -> str | None:
     target = Path(path)
     if QDesktopServices.openUrl(QUrl.fromLocalFile(str(target))):
         return None
-    return f"没能用默认应用打开「{target.name}」，请检查它是否还在原处。"
+    return f"未能用默认应用打开「{target.name}」，请确认文件是否仍在原处。"
 
 
 def open_with_app(paths: Sequence[Path], *, app: Path, name: str) -> str:
@@ -86,7 +86,7 @@ def open_with_app(paths: Sequence[Path], *, app: Path, name: str) -> str:
         refusal = open_with_default_app(targets[0])
         if refusal is not None:
             return refusal
-        return f"没能交给{name}，已改用默认应用打开「{targets[0].name}」。"
+        return f"未能交给 {name}，已改用默认应用打开「{targets[0].name}」。"
     if len(targets) == 1:
         return f"已在{name}中打开「{targets[0].name}」。"
     return f"已在{name}中打开 {len(targets)} 项。"
@@ -106,8 +106,8 @@ def reveal_in_finder(paths: Sequence[Path]) -> str:
         directory = targets[0].parent
         opened = QDesktopServices.openUrl(QUrl.fromLocalFile(str(directory)))
         if opened:
-            return f"没能选中这些文件，已改为在访达里打开「{directory}」。"
-        return "访达没能响应，请检查系统的权限设置。"
+            return f"未能选中这些文件，已改为在访达里打开「{directory}」。"
+        return "访达未响应，请检查系统权限设置。"
     if len(targets) == 1:
         return f"已在访达中显示「{targets[0].name}」。"
     return f"已在访达中显示 {len(targets)} 项。"
@@ -126,7 +126,7 @@ def open_folder_in_finder(paths: Sequence[Path]) -> str:
     if not QProcess.startDetached(REVEAL_PROGRAM, [*map(str, targets)]):
         opened = [QDesktopServices.openUrl(QUrl.fromLocalFile(str(t))) for t in targets]
         if not all(opened):
-            return "访达没能响应，请检查系统的权限设置。"
+            return "访达未响应，请检查系统权限设置。"
     if len(targets) == 1:
         return f"已在访达中打开「{targets[0].name}」。"
     return f"已在访达中打开 {len(targets)} 个文件夹。"
@@ -147,10 +147,10 @@ def open_folder_in_qspace(paths: Sequence[Path], *, app: Path) -> str:
     if not QProcess.startDetached(REVEAL_PROGRAM, ["-a", str(app), *urls]):
         opened = [QDesktopServices.openUrl(QUrl.fromLocalFile(str(t))) for t in targets]
         if not all(opened):
-            return "QSpace 没能响应，访达也没能打开，请检查系统的权限设置。"
+            return "QSpace 未响应，访达也未能打开；请检查系统权限设置。"
         if len(targets) == 1:
-            return f"没能交给 QSpace，已改用访达打开「{targets[0].name}」。"
-        return f"没能交给 QSpace，已改用访达打开 {len(targets)} 个文件夹。"
+            return f"未能交给 QSpace，已改用访达打开「{targets[0].name}」。"
+        return f"未能交给 QSpace，已改用访达打开 {len(targets)} 个文件夹。"
     if len(targets) == 1:
         return f"已在 QSpace 中打开「{targets[0].name}」。"
     return f"已在 QSpace 中打开 {len(targets)} 个文件夹。"
@@ -170,7 +170,7 @@ def reveal_in_qspace(paths: Sequence[Path], *, app: Path) -> str:
     if not QProcess.startDetached(REVEAL_PROGRAM, ["-a", str(app), *urls]):
         # 降级借 ``reveal_in_finder``：它自己还有第二级（选不中就打开所在文件夹），
         # 抄一份下来就成了两条各自演化的降级链。
-        return f"没能交给 QSpace，{reveal_in_finder(targets)}"
+        return f"未能交给 QSpace，{reveal_in_finder(targets)}"
     if len(targets) == 1:
         return f"已在 QSpace 中显示「{targets[0].name}」。"
     return f"已在 QSpace 中显示 {len(targets)} 项。"

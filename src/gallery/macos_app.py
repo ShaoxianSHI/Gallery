@@ -93,7 +93,7 @@ def find_project_root(start: Path | None = None) -> Path:
         if (candidate / "pyproject.toml").is_file() and (candidate / "src" / "gallery").is_dir():
             return candidate
     raise BundleError(
-        "找不到 Gallery 的源码目录。请在项目目录里运行，或用 uv run python -m gallery.macos_app。"
+        "未找到 Gallery 源码目录。请在项目目录中运行，或使用 uv run python -m gallery.macos_app。"
     )
 
 
@@ -122,7 +122,7 @@ def make_icns(source_png: Path, destination: Path) -> Path:
     没必要自己拼，也省掉一份二进制进仓库。
     """
     if not source_png.is_file():
-        raise BundleError("找不到应用图标源文件。", path=source_png)
+        raise BundleError("未找到应用图标源文件。", path=source_png)
 
     iconset = destination.parent / f".{destination.stem}.iconset"
     if iconset.exists():
@@ -143,11 +143,11 @@ def make_icns(source_png: Path, destination: Path) -> Path:
                     "--out",
                     str(iconset / name),
                 ],
-                missing="找不到 macOS 自带的 sips，无法生成 .icns。",
+                missing="未找到 macOS 自带的 sips，无法生成 .icns。",
             )
         _run_tool(
             ["iconutil", "-c", "icns", str(iconset), "--output", str(destination)],
-            missing="找不到 macOS 自带的 iconutil，无法生成 .icns。",
+            missing="未找到 macOS 自带的 iconutil，无法生成 .icns。",
         )
     finally:
         shutil.rmtree(iconset, ignore_errors=True)
@@ -192,7 +192,7 @@ def prepare_destination(destination: Path) -> None:
         return
     if not (destination / "Contents" / "Info.plist").is_file():
         raise BundleError(
-            f"目标位置已经有东西，且不是 Gallery.app：{destination}。换个位置，或自己先清掉它。",
+            f"目标位置已经有东西，且不是 Gallery.app：{destination}。请更换位置，或先删除它。",
             path=destination,
         )
     shutil.rmtree(destination)
@@ -229,7 +229,7 @@ def build_bundle(
     interpreter = Path(python) if python is not None else root / ".venv" / "bin" / "python"
     if not interpreter.is_file():
         raise BundleError(
-            f"找不到虚拟环境里的解释器：{interpreter}。先在项目目录跑一次 uv sync。",
+            f"未找到虚拟环境中的解释器：{interpreter}。请先在项目目录执行 uv sync。",
             path=interpreter,
         )
 
@@ -244,7 +244,7 @@ def build_bundle(
     if icns is None:
         make_icns(app_icon_master(), target_icns)
     elif not Path(icns).is_file():
-        raise BundleError("找不到现成的 .icns 文件。", path=Path(icns))
+        raise BundleError("未找到现成的 .icns 文件。", path=Path(icns))
     else:
         shutil.copyfile(icns, target_icns)
 

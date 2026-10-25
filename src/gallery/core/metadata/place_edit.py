@@ -158,7 +158,7 @@ def _coordinates(state: PlaceState, edit: PlaceEdit) -> tuple[float, float] | No
     if edit.latitude is None and edit.longitude is None:
         return None
     if edit.latitude is None or edit.longitude is None:
-        raise MetadataWriteError("经度和纬度要一起填：只填一个，说不出一个位置。")
+        raise MetadataWriteError("经度与纬度需同时填写：只填一项无法确定位置。")
     latitude, longitude = float(edit.latitude), float(edit.longitude)
     if not -90.0 <= latitude <= 90.0:
         raise MetadataWriteError(f"纬度要在 -90 到 90 之间，写的是 {latitude}。")
@@ -167,7 +167,7 @@ def _coordinates(state: PlaceState, edit: PlaceEdit) -> tuple[float, float] | No
     if not is_real_coordinate(latitude, longitude):
         # 0,0 是几内亚湾里一个不存在的点（见 is_real_coordinate），十有八九是「我没定到 GPS，
         # 程序给我填了 0」的原样搬运。
-        raise MetadataWriteError("经纬度都是 0 —— 那是几内亚湾里的一个点，世上并不存在。")
+        raise MetadataWriteError("经纬度均为 0：该坐标位于几内亚湾，通常表示没有位置信息。")
     current = state.coordinates()
     if current is not None and all(
         abs(a - b) <= _COORDINATE_EPSILON

@@ -35,14 +35,14 @@ def test_open_missing_directory(tmp_path: Path) -> None:
     with pytest.raises(LibraryNotAccessibleError) as excinfo:
         Library.open(tmp_path / "不存在")
 
-    assert "打不开" in excinfo.value.message
+    assert "无法打开" in excinfo.value.message
 
 
 def test_open_file_instead_of_directory(tmp_path: Path, make_photo: Callable[..., Path]) -> None:
     with pytest.raises(LibraryNotAccessibleError) as excinfo:
         Library.open(make_photo("a.jpg"))
 
-    assert "不是一个文件夹" in excinfo.value.message
+    assert "不是文件夹" in excinfo.value.message
 
 
 class _Writer:
@@ -388,7 +388,7 @@ def test_setting_a_cover_needs_the_config_dir(tmp_path: Path) -> None:
     with pytest.raises(ConfigError) as excinfo:
         library.set_album_cover(album, photo)
 
-    assert "没有地方保存" in excinfo.value.message
+    assert "无处保存" in excinfo.value.message
 
 
 # ---- 设置菜单的库级两项（ADR 0073）-----------------------------------------
@@ -420,7 +420,7 @@ def test_setting_a_movie_site_needs_the_config_dir(tmp_path: Path) -> None:
     with pytest.raises(ConfigError) as excinfo:
         library.set_movie_site("https://missav.com/en")
 
-    assert "写不进去" in excinfo.value.message
+    assert "不可写入" in excinfo.value.message
 
 
 def test_set_cache_limit_reaches_both_the_config_and_the_cache(

@@ -149,7 +149,7 @@ def test_a_share_link_that_does_not_land_on_a_video_says_so() -> None:
     with pytest.raises(MovieImportError) as excinfo:
         douyin.resolve_share_code("iRNBho6u", client=transport)
 
-    assert "没能展开" in excinfo.value.message
+    assert "无法" in excinfo.value.message
 
 
 def test_fetch_asks_the_api_and_never_needs_the_page() -> None:
@@ -183,7 +183,7 @@ def test_a_missing_page_is_translated_into_chinese() -> None:
     with pytest.raises(MovieImportError) as excinfo:
         douyin.fetch(ID, client=transport)
 
-    assert "抖音上没有这个视频" in excinfo.value.message
+    assert "抖音未收录该视频" in excinfo.value.message
 
 
 def test_a_line_that_is_not_a_code_says_so_without_any_request() -> None:

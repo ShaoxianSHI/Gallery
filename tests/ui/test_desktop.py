@@ -197,7 +197,7 @@ def test_qspace_falls_back_to_the_finder_and_says_so(
     message = desktop.open_folder_in_qspace([Path("/照片/京都")], app=Path("/Applications/Q.app"))
 
     assert services.urls == ["/照片/京都"]
-    assert message == "没能交给 QSpace，已改用访达打开「京都」。"
+    assert message == "未能交给 QSpace，已改用访达打开「京都」。"
 
 
 def test_qspace_says_why_when_nothing_responds(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -248,7 +248,7 @@ def test_showing_a_photo_in_qspace_falls_back_to_the_finder_and_says_so(
     )
 
     assert services.urls == ["/照片/京都"]
-    assert message == "没能交给 QSpace，没能选中这些文件，已改为在访达里打开「/照片/京都」。"
+    assert message == "未能交给 QSpace，未能选中这些文件，已改为在访达里打开「/照片/京都」。"
 
 
 # ---- 大图页那一列图片应用（ADR 0067）-----------------------------------
@@ -291,7 +291,7 @@ def test_using_a_named_app_falls_back_to_the_default_one_and_says_so(
     )
 
     assert services.urls == ["/照片/京都/一张.jpg"]
-    assert message == "没能交给ImageGlass，已改用默认应用打开「一张.jpg」。"
+    assert message == "未能交给 ImageGlass，已改用默认应用打开「一张.jpg」。"
 
 
 def test_using_a_named_app_says_why_when_nothing_responds(

@@ -256,7 +256,7 @@ def test_the_banner_says_which_photo_became_which_albums_cover(
 
     window.set_selected_as_album_cover()
 
-    assert window._banner.text() == f"已把「{SECOND}」设为「{ALBUM}」的封面。"
+    assert window._banner.text() == f"已将「{SECOND}」设为「{ALBUM}」的封面。"
 
 
 def test_the_album_card_redraws_with_the_new_cover(
@@ -396,7 +396,7 @@ def test_the_clear_banner_says_what_it_fell_back_to(
 
     window.clear_album_cover()
 
-    assert window._banner.text() == f"「{ALBUM}」恢复用里面的第一张照片当封面。"
+    assert window._banner.text() == f"「{ALBUM}」已恢复为使用第一张照片作封面。"
 
 
 # ---- 设不了的时候 -----------------------------------------------------------
@@ -414,7 +414,7 @@ def test_a_failure_is_said_out_loud_in_the_core_wording(
     「绝不把配置目录偷偷建回来」那条硬性约束由 ``tests/core/library/test_facade.py``
     在真实文件系统上守着：那里删掉的是真的目录，不必与缩略图线程赛跑。
     """
-    message = "这个库里没有 .gallery 目录，封面设置没有地方保存。"
+    message = "当前库里没有 .gallery 目录，封面设置没有地方保存。"
     _enter_album(qt_app, window, root)
     _select(window, root / ALBUM / SECOND)
 

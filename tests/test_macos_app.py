@@ -159,7 +159,7 @@ def test_refuses_to_delete_foreign_directory(
     keep = destination / "IMG_0001.jpg"
     keep.write_bytes("用户的照片".encode())
 
-    with pytest.raises(BundleError, match="换个位置"):
+    with pytest.raises(BundleError, match="更换位置"):
         build_bundle(destination, project_root=project_root, icns=fake_icns)
 
     assert keep.read_bytes() == "用户的照片".encode()
@@ -179,7 +179,7 @@ def test_missing_icon_source(
     """图标源文件缺失要说清楚是哪一步没做，而不是让 sips 报一句天书。"""
     monkeypatch.setattr(macos_app, "app_icon_master", lambda: tmp_path / "没有这个.png")
 
-    with pytest.raises(BundleError, match="找不到应用图标源文件"):
+    with pytest.raises(BundleError, match="未找到应用图标源文件"):
         build_bundle(tmp_path / "Gallery.app", project_root=project_root)
 
 

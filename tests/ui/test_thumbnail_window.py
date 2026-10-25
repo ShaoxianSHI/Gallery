@@ -123,7 +123,7 @@ def test_a_grid_that_has_not_laid_out_yet_keeps_the_requests_already_queued(
     window._grid.visible_rows = lambda **kwargs: []  # type: ignore[method-assign]
     window_calls.clear()
     window._refresh_thumbnail_window()
-    assert window_calls == [], "视图还没重排就报了空窗口，把排好的请求清掉了"
+    assert window_calls == [], "视图尚未重排就报了空窗口，把排好的请求清掉了"
 
     # 真空了（空相册、换了空层）照旧要报 —— 那一批确实不需要了
     window._model.clear()

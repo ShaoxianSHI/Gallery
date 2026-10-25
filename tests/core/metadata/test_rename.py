@@ -62,7 +62,7 @@ def test_photo_cannot_change_its_extension(photo: PhotoRef) -> None:
     """改了扩展名，这个文件就不再是 Gallery 认得的照片了 —— 相当于删了它。"""
     with pytest.raises(RenameError) as caught:
         validate_name("海边.png", photo)
-    assert "不能改扩展名" in caught.value.message
+    assert "不能修改扩展名" in caught.value.message
 
 
 def test_missing_extension_is_kept_for_the_user(photo: PhotoRef) -> None:
@@ -152,7 +152,7 @@ def test_a_video_cannot_change_its_extension(tmp_path: Path) -> None:
     path.write_bytes(b"\x00" * 32)
     video = PhotoRef.from_path(path)
 
-    with pytest.raises(RenameError, match="不能改扩展名"):
+    with pytest.raises(RenameError, match="不能修改扩展名"):
         validate_name("clip.mov", video)
 
 
@@ -297,7 +297,7 @@ def test_undo_refuses_when_the_original_name_is_taken(tmp_path: Path, photo: Pho
     with pytest.raises(RenameError) as caught:
         undo_last_write(tmp_path)
 
-    assert "撤销不了" in caught.value.message
+    assert "无法撤销" in caught.value.message
     assert (tmp_path / "海边日落.jpg").exists()
 
 
@@ -308,7 +308,7 @@ def test_undo_refuses_when_the_file_is_gone(tmp_path: Path, photo: PhotoRef) -> 
     with pytest.raises(RenameError) as caught:
         undo_last_write(tmp_path)
 
-    assert "撤销不了" in caught.value.message
+    assert "无法撤销" in caught.value.message
 
 
 def test_failed_rename_is_not_undoable(tmp_path: Path, photo: PhotoRef) -> None:
@@ -393,4 +393,4 @@ def test_a_section_header_cannot_be_renamed(tmp_path: Path, photo: PhotoRef) -> 
     with pytest.raises(RenameError, match="分区的标题"):
         rename_entry(tmp_path, header, "新的名字")
 
-    assert photo.path.exists(), "什么都还没动，照片必须还在"
+    assert photo.path.exists(), "什么都尚未动，照片必须还在"

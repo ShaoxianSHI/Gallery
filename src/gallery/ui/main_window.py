@@ -1200,7 +1200,7 @@ class MainWindow(
         """有坐标就交出来；没有就说一句 —— 按钮本来只在有坐标时才摆。"""
         point = self._map_point()
         if point is None:
-            self._show_banner("这张照片没有拍摄位置，打不开地图。", auto_hide=True)
+            self._show_banner("这张照片没有拍摄位置，无法打开地图。", auto_hide=True)
         return point
 
     def _on_google_maps_opened(self, outcome: object) -> None:
@@ -1208,7 +1208,7 @@ class MainWindow(
             self._show_banner(banners.map_opened(outcome, "Google 地图"), auto_hide=True)
 
     def _on_google_maps_failed(self, message: str) -> None:
-        self._show_banner(f"没能打开 Google 地图：{message}")
+        self._show_banner(f"未能打开 Google 地图：{message}")
 
     def _on_external_entry(self, entry: object) -> None:
         """下拉框里点了哪一项。**按 id 分派**，不在按钮那一侧硬编码（理由见 ``ExternalEntry``）。"""
@@ -1252,7 +1252,7 @@ class MainWindow(
             self._show_banner(banners.calendar_opened(outcome, apps.CALENDAR.name), auto_hide=True)
 
     def _on_apple_calendar_failed(self, message: str) -> None:
-        self._show_banner(f"没能打开「日历」：{message}")
+        self._show_banner(f"未能打开「日历」：{message}")
 
     def _open_google_calendar(self) -> None:
         """把 Google 日历开到与当前这一页一致的那一层、那一天。
@@ -1340,7 +1340,7 @@ class MainWindow(
         """
         app = apps.find_app(apps.QSPACE)
         if app is None:
-            self._show_banner("没有找到 QSpace，它可能已经被移走或卸载了。")
+            self._show_banner("未找到 QSpace：它可能已被移动或卸载。")
             return
         paths, reveal = self._external_targets()
         if not paths:
@@ -1369,7 +1369,7 @@ class MainWindow(
         app = apps.find_app(player)
         ref = self._detail_photo_ref()
         if app is None or ref is None or not ref.is_video:
-            self._show_banner(f"没有找到{player.name}，它可能已经被移走或卸载了。")
+            self._show_banner(f"未找到 {player.name}：它可能已被移动或卸载。")
             return
         self._video.pause()
         self._show_banner(
@@ -1386,7 +1386,7 @@ class MainWindow(
         app = apps.find_app(viewer)
         photo = self._detail_photo_path()
         if app is None or photo is None:
-            self._show_banner(f"没有找到{viewer.name}，它可能已经被移走或卸载了。")
+            self._show_banner(f"未找到 {viewer.name}：它可能已被移动或卸载。")
             return
         self._show_banner(desktop.open_with_app([photo], app=app, name=viewer.name), auto_hide=True)
 
@@ -1401,13 +1401,13 @@ class MainWindow(
             return self._selected_paths(), True
         folder = self._current_folder()
         if folder is None:
-            self._show_banner("还没有打开相册库，没有可以打开的文件夹。")
+            self._show_banner("尚未打开库，没有可打开的文件夹。")
             return [], False
         return [folder], False
 
     def _on_external_failed(self, message: str) -> None:
         # 走到这里的是「起进程这一步整个炸了」；``core.external.launch`` 自己的降级路径不抛异常。
-        self._show_banner(f"没能打开 Google 日历：{message}")
+        self._show_banner(f"未能打开 Google 日历：{message}")
 
     # ---- 关闭 --------------------------------------------------------------
 

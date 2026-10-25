@@ -123,9 +123,9 @@ def test_a_photo_without_an_offset_is_not_given_one() -> None:
 @pytest.mark.parametrize(
     ("field", "text", "complaint"),
     [
-        ("taken_at", "昨天下午", "拍摄时间看不懂"),
-        ("taken_at", "2024-13-45 99:99:99", "拍摄时间看不懂"),
-        ("offset", "东八区", "时区看不懂"),
+        ("taken_at", "昨天下午", "无法识别拍摄时间"),
+        ("taken_at", "2024-13-45 99:99:99", "无法识别拍摄时间"),
+        ("offset", "东八区", "无法识别时区"),
     ],
 )
 def test_something_that_makes_no_sense_is_refused_with_a_reason(

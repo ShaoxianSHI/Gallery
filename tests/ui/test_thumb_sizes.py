@@ -198,7 +198,7 @@ class TestRateLimitedAccumulator:
         accumulator.feed(PINCH_THRESHOLD)
 
         clock.advance(MIN_PINCH_INTERVAL_MS - 1)
-        assert accumulator.feed(PINCH_THRESHOLD) == 0, "差一毫秒也不行：动画还没跑完"
+        assert accumulator.feed(PINCH_THRESHOLD) == 0, "差一毫秒也不行：动画尚未跑完"
 
     def test_a_dropped_step_does_not_accumulate(self) -> None:
         """丢掉的是这一下，不是「累积起来等下次」——否则限速只是把跳变推迟到了后面。"""

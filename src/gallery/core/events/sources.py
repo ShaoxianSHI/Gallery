@@ -116,8 +116,8 @@ def _ref_from_url(url: str) -> MovieRef:
         if code:
             return MovieRef(source=source, code=code)
     raise MovieImportError(
-        f"这个地址认不出来：{url}。短链请先在浏览器里打开，把完整地址粘进来；"
-        "整部剧的合集页也请先点开某一集再复制。"
+        f"无法识别该地址：{url}。短链请先在浏览器中打开，再粘贴完整地址；"
+        "合集页请先打开某一集再复制。"
     )
 
 

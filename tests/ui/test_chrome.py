@@ -65,7 +65,7 @@ def _albums_window(
 
     assert wait_until(
         qt_app, lambda: window._model.rowCount() >= 2 and window._breadcrumb.isVisible()
-    ), f"相册没能在时限内扫出来，或面包屑没显示（当前 {window._model.rowCount()} 行）"
+    ), f"相册未能在时限内扫出来，或面包屑没显示（当前 {window._model.rowCount()} 行）"
     return window
 
 
@@ -97,9 +97,9 @@ def _viewer_window(
     window.resize(1200, 800)
     window.show()
 
-    assert wait_until(qt_app, lambda: window._model.rowCount() >= 3), "照片没能在时限内扫出来"
+    assert wait_until(qt_app, lambda: window._model.rowCount() >= 3), "照片未能在时限内扫出来"
     window._open_detail(window._model.index(0, 0))
-    assert wait_until(qt_app, lambda: window._detail.has_image), "大图没能在时限内显示出来"
+    assert wait_until(qt_app, lambda: window._detail.has_image), "大图未能在时限内显示出来"
     assert window._stack.currentWidget() is window._detail_page
     wait_for_idle(qt_app, window, also=("_index_job",))
     return window
@@ -142,7 +142,7 @@ def test_the_banner_covers_the_grid_instead_of_pushing_it_down(
     window = _albums_window(qt_app, tmp_path, make_photo)
     try:
         grid_before = window._grid.geometry()
-        window._show_banner("已把 3 项移到废纸篓。⌘Z 可以撤销。")
+        window._show_banner("已将 3 项移到废纸篓。⌘Z 可撤销。")
         qt_app.processEvents()
 
         assert window._banner.isVisible(), "该看到这句话"
@@ -226,7 +226,7 @@ def test_the_banner_leaves_when_the_viewer_moves_on_to_another_photo(
     """
     window = _viewer_window(qt_app, tmp_path, make_photo)
     try:
-        window._show_banner("已把「一.jpg」移到废纸篓。⌘Z 可以撤销。")
+        window._show_banner("已将「一.jpg」移到废纸篓。⌘Z 可撤销。")
         qt_app.processEvents()
         assert window._banner.isVisible(), "这一条要有一句正在显示的话"
 
@@ -249,7 +249,7 @@ def test_the_banner_leaves_when_you_go_back_to_the_grid(
     """
     window = _viewer_window(qt_app, tmp_path, make_photo)
     try:
-        window._show_banner("读取元数据失败，按默认顺序显示：磁盘读不出来。")
+        window._show_banner("读取元数据失败，已按默认顺序显示：磁盘读不出来。")
         qt_app.processEvents()
         assert window._banner.isVisible() and not window._banner.auto_hide_pending
 
@@ -274,7 +274,7 @@ def test_a_banner_that_belongs_to_the_grid_is_not_taken_away_with_the_viewer(
     try:
         window.show_grid()
         window.show_grid()  # 本来就在网格页上：这是一次空操作
-        window._show_banner("这个分组里没有照片了。")
+        window._show_banner("该分组中没有照片。")
         qt_app.processEvents()
 
         window.show_grid()
@@ -295,11 +295,11 @@ def test_only_a_one_off_confirmation_leaves_by_itself(
     """
     window = _albums_window(qt_app, tmp_path, make_photo)
     try:
-        window._show_banner("已把 3 项移到废纸篓。⌘Z 可以撤销。", auto_hide=True)
+        window._show_banner("已将 3 项移到废纸篓。⌘Z 可撤销。", auto_hide=True)
         qt_app.processEvents()
         assert window._banner.auto_hide_pending, "确认类的那几句该自己收起来"
 
-        window._show_banner("读取元数据失败，按默认顺序显示：磁盘读不出来。")
+        window._show_banner("读取元数据失败，已按默认顺序显示：磁盘读不出来。")
         qt_app.processEvents()
         assert not window._banner.auto_hide_pending, "用户还得处理的那几句不该自己消失"
     finally:

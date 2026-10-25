@@ -44,12 +44,12 @@ def rename_banner(result: RenameResult) -> str:
     记账失败必须说出来：这时 ⌘Z 撤销不了，用户只能自己去访达里改回来 —— 让他以为「随时能
     撤销」比不告诉他更糟。
     """
-    note = "" if result.journaled else "，但没能记下操作日志，⌘Z 撤销不了"
+    note = "" if result.journaled else "；未能记录操作日志，⌘Z 不可撤销"
     return f"已重命名为「{result.entry.name}」{note}。"
 
 
 def undo_note(journaled: bool) -> str:
-    return "" if journaled else "，但没能记下操作日志"
+    return "" if journaled else "；未能记录操作日志"
 
 
 # ---- 事件（ADR 0043）----------------------------------------------------------
@@ -64,10 +64,10 @@ def event_updated_banner(outcome: EventWriteOutcome) -> str:
     """改了事件之后。**一句里说清成没成与能不能撤** —— 与元数据那一族同一套规矩。"""
     name = shorten_name(outcome.event.display_name)
     if not outcome.changed:
-        return f"「{name}」没有改动。"
+        return f"「{name}」未做改动。"
     if not outcome.journaled:
-        return f"已更新「{name}」。⌘Z 撤销不了：没能记下操作日志。"
-    return f"已更新「{name}」。⌘Z 可以撤销。"
+        return f"已更新「{name}」；未能记录操作日志，⌘Z 不可撤销。"
+    return f"已更新「{name}」；⌘Z 可撤销。"
 
 
 def event_deleted_banner(outcome: EventWriteOutcome) -> str:
@@ -77,8 +77,8 @@ def event_deleted_banner(outcome: EventWriteOutcome) -> str:
     吓人，而它其实撤得回来。
     """
     what = f"「{shorten_name(outcome.event.display_name)}」"
-    photos = f"，连带从 {len(outcome.unbound)} 张照片上移掉了它的记录" if outcome.unbound else ""
-    note = "。⌘Z 可以撤销" if outcome.journaled else "。⌘Z 撤销不了：没能记下操作日志"
+    photos = f"，并从 {len(outcome.unbound)} 张照片上移除了它的记录" if outcome.unbound else ""
+    note = "。⌘Z 可撤销" if outcome.journaled else "。未能记录操作日志，⌘Z 不可撤销"
     return f"已删除{what}{photos}{note}。"
 
 
@@ -89,17 +89,17 @@ def photos_bound_banner(count: int, event_name: str, *, by_range: bool = False) 
     """
     name = shorten_name(event_name)
     if count <= 0:
-        return f"这些照片已经在「{name}」里了，没有改动。"
-    how = "按日期范围把" if by_range else "已把"
-    return f"{how} {count} 张照片记进「{name}」。"
+        return f"这些照片已在「{name}」中，未做改动。"
+    how = "已按日期范围将" if by_range else "已将"
+    return f"{how} {count} 张照片记录到「{name}」。"
 
 
 def photos_unbound_banner(count: int, event_name: str) -> str:
     """把照片从一个事件里拿出来之后。"""
     name = shorten_name(event_name)
     if count <= 0:
-        return f"这些照片本来就不在「{name}」里，没有改动。"
-    return f"已把 {count} 张照片从「{name}」里拿出来。"
+        return f"这些照片原本不在「{name}」中，未做改动。"
+    return f"已将 {count} 张照片移出「{name}」。"
 
 
 def event_cover_set_banner(event_name: str, photo_name: str) -> str:
@@ -108,12 +108,12 @@ def event_cover_set_banner(event_name: str, photo_name: str) -> str:
     **说清是哪一张**：用户刚点的是网格里那一张，而横幅出现在内容上方 ——
     不点名的话，「已设置封面」在几十张缩略图之上等于没说。
     """
-    return f"已把「{photo_name}」设为「{shorten_name(event_name)}」的封面。⌘Z 可以撤销。"
+    return f"已将「{photo_name}」设为「{shorten_name(event_name)}」的封面。⌘Z 可撤销。"
 
 
 def event_cover_cleared_banner(event_name: str) -> str:
     """取消事件封面之后。**说清回到哪儿去** —— 用户要的可能是「换一张」而不是「不要封面」。"""
-    return f"已取消「{shorten_name(event_name)}」的封面，现在用的是第一张照片。⌘Z 可以撤销。"
+    return f"已取消「{shorten_name(event_name)}」的封面，改用第一张照片。⌘Z 可撤销。"
 
 
 def shows_imported_banner(created: int, duplicates: int, skipped: int) -> str:
@@ -124,7 +124,7 @@ def shows_imported_banner(created: int, duplicates: int, skipped: int) -> str:
     新建事件），承诺撤销是空话。
     """
     if created == 0 and duplicates == 0 and skipped == 0:
-        return "表格里没有读到能记下来的演出。"
+        return "表格中未读到可记录的演出。"
     head = f"已从「演迹」导入 {created} 场演出" if created > 0 else "没有新增演出"
     if duplicates > 0:
         head += f"，跳过 {duplicates} 场已存在的"
@@ -145,7 +145,7 @@ def movies_imported_banner(outcome: MovieImportOutcome) -> str:
     if outcome.duplicates:
         parts.append(f"跳过 {outcome.duplicates} 部已存在的")
     if not outcome.journaled:
-        parts.append("没能记下操作日志")
+        parts.append("未能记录操作日志")
     if outcome.failures:
         more = f"，共 {len(outcome.failures)} 部" if len(outcome.failures) > 1 else ""
         # 失败原因通常会带句号，这里去掉：拼接用的是分号，末尾还会再补一个句号。
@@ -158,21 +158,21 @@ def movies_imported_banner(outcome: MovieImportOutcome) -> str:
 def movie_site_opened_banner(code: str, outcome: OpenOutcome) -> str:
     """按住 ⌥ 点开一部影片的网站之后（ADR 0063）。"""
     if outcome.detail:
-        return f"没能打开「{code}」的影片网站：{outcome.detail}。"
+        return f"未能打开「{code}」的影片网站：{outcome.detail}。"
     return f"已在浏览器中打开「{code}」的影片网站。"
 
 
 def event_undo_banner(result: UndoResult, kind_label: str) -> str:
-    """⌘Z 撤掉一次事件改动之后。**两种改动说法不一样** —— 撤的是删除就说「回来了」。"""
+    """⌘Z 撤掉一次事件改动之后。**两种改动说法不一样** —— 撤的是删除就说「已恢复」。"""
     what = (
         f"{kind_label}「{shorten_name(result.event.display_name)}」"
         if result.event is not None
         else kind_label
     )
-    verb = "已恢复" if result.action == ACTION_EVENT_DELETE else "已把"
-    if not result.journaled:
-        return f"{verb}{what}改回去，但没能记下操作日志，下一次 ⌘Z 不一定接得上。"
-    return f"{verb}{what}改回去。"
+    note = "。" if result.journaled else "；未能记录操作日志，下一次 ⌘Z 可能无法继续。"
+    if result.action == ACTION_EVENT_DELETE:
+        return f"已恢复{what}{note}"
+    return f"已撤销对{what}的改动{note}"
 
 
 # ---- 孤儿绑定（ADR 0043 决策 9）------------------------------------------------
@@ -189,7 +189,7 @@ def orphan_dialog(scan: OrphanScan) -> str:
     """
     lines = [_orphan_headline(scan), "", _why_it_matters()]
     if scan.missing:
-        lines += ["", f"要清掉这 {len(scan.missing)} 条吗？"]
+        lines += ["", f"是否清理这 {len(scan.missing)} 条记录？"]
     if scan.vanished:
         lines += ["", _vanished_paragraph(scan)]
     return "\n".join(lines)
@@ -197,28 +197,28 @@ def orphan_dialog(scan: OrphanScan) -> str:
 
 def orphan_dialog_title(scan: OrphanScan) -> str:
     """确认框的标题。**只提「照片没了」那一档** —— 另一个标题会让用户以为两档一样性质。"""
-    return f"{len(scan.missing)} 条事件记录指向已经不存在的照片"
+    return f"{len(scan.missing)} 条事件记录指向已不存在的照片"
 
 
 def orphans_forgotten_banner(removed: int) -> str:
     """清完之后。**说清删的是记录、不是照片** —— 用户怕的是后者。"""
     if removed <= 0:
-        return "没有清掉任何记录。"
-    return f"已清掉 {removed} 条指向已不存在照片的记录，照片本身没有动过。"
+        return "未清理任何记录。"
+    return f"已清理 {removed} 条指向已不存在照片的记录；照片未被改动。"
 
 
 def _orphan_headline(scan: OrphanScan) -> str:
     names = scan.event_titles(include_vanished=False)
     if not names:
-        return "有一些事件记录指向已经不存在的照片。"
-    return f"{len(scan.missing)} 条事件记录指向已经不存在的照片，涉及{_list_names(names)}。"
+        return "部分事件记录指向已不存在的照片。"
+    return f"{len(scan.missing)} 条事件记录指向已不存在的照片，涉及{_list_names(names)}。"
 
 
 def _why_it_matters() -> str:
     """说清「为什么值得清」—— 不说的话用户只会想「不动它不就完了」。"""
     return (
-        "照片可能是在 Gallery 之外被删掉或移走的。留着没有坏处，\n"
-        "但同一个路径日后被另一张照片用上时，它会悄悄算进那个事件。"
+        "照片可能在 Gallery 之外被删除或移动。保留这些记录不会造成损坏，\n"
+        "但同一路径日后被其他照片占用时，该照片会被计入原事件。"
     )
 
 
@@ -227,8 +227,8 @@ def _vanished_paragraph(scan: OrphanScan) -> str:
     names = scan.event_titles(include_vanished=True, only=("vanished",))
     who = f"，涉及{_list_names(names)}" if names else ""
     return (
-        f"另有 {len(scan.vanished)} 条指向已经不存在的相册{who}。\n"
-        "那也可能是那个磁盘没挂上，所以默认保留 —— 要连它们一起清掉吗？"
+        f"另有 {len(scan.vanished)} 条指向已不存在的相册{who}。\n"
+        "也可能是磁盘未挂载，因此默认保留。是否一并清理？"
     )
 
 
@@ -252,7 +252,7 @@ def paste_banner(result: PasteResult, target_name: str) -> str:
             journaled=result.journaled,
             target_name=target_name,
             done_verb="粘贴",
-            fail_verb="粘",
+            fail_verb="粘贴",
         )
     )
 
@@ -268,12 +268,12 @@ def duplicate_banner(result: PasteResult) -> str:
     if result.pasted:
         head = f"已复制 {len(result.pasted)} 份副本"
         if len(result.pasted) == 1:
-            head += f"，新名字是「{result.pasted[0].created.name}」"
+            head += f"，新名称为「{result.pasted[0].created.name}」"
         parts.append(head)
     if result.failures:
         parts.append(_failure_clause(result.failures, fail_verb="复制"))
     if not result.journaled:
-        parts.append("没能记下操作日志")
+        parts.append("未能记录操作日志")
     return _banner_line(parts)
 
 
@@ -297,7 +297,7 @@ def transfer_banner(result: MoveResult | PasteResult, target_name: str, verb: st
     if copied:
         parts.append(_stayed_put_clause(copied, target_name))
     if isinstance(result, MoveResult) and result.moved and result.journaled:
-        parts.append("⌘Z 可以撤销")
+        parts.append("⌘Z 可撤销")
     return _banner_line(parts)
 
 
@@ -306,10 +306,10 @@ def _stayed_put_clause(copied: Sequence[PastedFile], target_name: str) -> str:
     if len(copied) == 1:
         item = copied[0]
         return (
-            f"{item.source.name} 本来就在「{target_name}」里，"
-            f"已复制一份，新名字是「{item.created.name}」"
+            f"{item.source.name} 原本就在「{target_name}」中，"
+            f"已复制一份，新名称为「{item.created.name}」"
         )
-    return f"另有 {len(copied)} 项本来就在「{target_name}」里，各复制了一份"
+    return f"另有 {len(copied)} 项原本就在「{target_name}」中，已各复制一份"
 
 
 def _failure_clause(failures: Sequence[Failure], *, fail_verb: str) -> str:
@@ -320,7 +320,7 @@ def _failure_clause(failures: Sequence[Failure], *, fail_verb: str) -> str:
     """
     first = failures[0]
     more = f"，共 {len(failures)} 项" if len(failures) > 1 else ""
-    return f"{first.name} 没{fail_verb}成{more}：{first.message.rstrip('。')}"
+    return f"{first.name} 未能{fail_verb}{more}：{first.message.rstrip('。')}"
 
 
 def _into_album_parts(
@@ -344,12 +344,12 @@ def _into_album_parts(
         if len(renamed) == 1:
             head += f"，「{renamed[0].source.name}」改名为「{renamed[0].created.name}」"
         elif renamed:
-            head += f"，其中 {len(renamed)} 项改了名，免得覆盖已有的"
+            head += f"，其中 {len(renamed)} 项因重名而改名"
         parts.append(head)
     if failures:
         parts.append(_failure_clause(failures, fail_verb=fail_verb))
     if not journaled:
-        parts.append("没能记下操作日志")
+        parts.append("未能记录操作日志")
     return parts
 
 
@@ -365,17 +365,17 @@ def trash_banner(result: TrashResult) -> str:
     """
     moved = result.moved
     if not moved:
-        return f"没有移走任何东西：{first_reason(result.failures)}{undo_note(result.journaled)}。"
+        return f"未移走任何项目：{first_reason(result.failures)}{undo_note(result.journaled)}。"
     if any(isinstance(entry, FolderRef) for entry in moved):
-        head = f"已把相册「{album_name(moved)}」和里面的内容移到废纸篓"
+        head = f"已将相册「{album_name(moved)}」及其内容移到废纸篓"
     elif len(moved) == 1:
-        head = f"已把「{moved[0].name}」移到废纸篓"
+        head = f"已将「{moved[0].name}」移到废纸篓"
     else:
-        head = f"已把 {len(moved)} 项移到废纸篓"
+        head = f"已将 {len(moved)} 项移到废纸篓"
     if result.failures:
-        head += f"，但 {len(result.failures)} 项没移走：{first_reason(result.failures)}"
-    # 不能一边说「⌘Z 可以撤销」一边说「撤销不了」，所以这两半是一起给的。
-    hint = "⌘Z 可以撤销。" if result.journaled else "⌘Z 撤销不了：没能记下操作日志。"
+        head += f"，另有 {len(result.failures)} 项未能移走：{first_reason(result.failures)}"
+    # 不能一边说「⌘Z 可撤销」一边说「不可撤销」，所以这两半是一起给的。
+    hint = "⌘Z 可撤销。" if result.journaled else "未能记录操作日志，⌘Z 不可撤销。"
     return f"{head}。{hint}"
 
 
@@ -387,26 +387,26 @@ def undo_banner(result: UndoResult) -> str:
         # 用户会以为照片已经整个回到刚才那样了。
         if result.failures:
             count = len(result.failures)
-            return f"只撤销了一部分：{count} 项在 Gallery 之外被改过，没有动它们{note}。"
+            return f"仅部分撤销：{count} 项在 Gallery 之外被修改，未做改动{note}。"
         name = result.entries[0].name if result.entries else "照片"
-        return f"已撤销，「{name}」的位置恢复原样{note}。"
+        return f"已撤销，「{name}」的位置已恢复{note}。"
     if result.action == ACTION_RENAME:
         return f"已撤销，恢复为「{result.entries[0].name}」{note}。"
     if result.action == ACTION_MOVE:
         # 撤销移动没有 entries：挪回来的东西**不一定在当前这一层**，界面不知道该往网格里插
         # 哪一行 —— 交给监听器（ADR 0013）去发现，横幅只说发生了什么。
         if result.failures:
-            return f"没能挪回去：{first_reason(result.failures)}{note}。"
-        return f"已撤销，照片已挪回原来的相册{note}。"
+            return f"未能移回：{first_reason(result.failures)}{note}。"
+        return f"已撤销，照片已移回原相册{note}。"
     restored = result.entries
     if not restored:
-        return f"没能取回来：{first_reason(result.failures)}{note}。"
+        return f"未能取回：{first_reason(result.failures)}{note}。"
     if len(restored) == 1:
         head = f"已从废纸篓取回「{restored[0].name}」"
     else:
         head = f"已从废纸篓取回 {len(restored)} 项"
     if result.failures:
-        head += f"，但 {len(result.failures)} 项没取回来：{first_reason(result.failures)}"
+        head += f"，另有 {len(result.failures)} 项未能取回：{first_reason(result.failures)}"
     return f"{head}{note}。"
 
 
@@ -417,12 +417,12 @@ def album_cover_banner(album_name: str, photo_name: str) -> str:
     用户得自己回去确认设的是不是刚才看的那个相册。不提撤销：这一条只写 Gallery 自己的配置
     文件，不在 ⌘Z 那一摞栈里（ADR 0028 决策 5），要改回去走「取消相册封面」。
     """
-    return f"已把「{photo_name}」设为「{album_name}」的封面。"
+    return f"已将「{photo_name}」设为「{album_name}」的封面。"
 
 
 def album_cover_cleared_banner(album_name: str) -> str:
     """取消相册封面之后的那行提示：说清它回到了什么行为上（ADR 0028）。"""
-    return f"「{album_name}」恢复用里面的第一张照片当封面。"
+    return f"「{album_name}」已恢复为使用第一张照片作封面。"
 
 
 def metadata_edit_banner(outcome: MetadataWriteOutcome, photo_name: str) -> str:
@@ -432,12 +432,12 @@ def metadata_edit_banner(outcome: MetadataWriteOutcome, photo_name: str) -> str:
     **能不能撤**。只改时间或只改位置时，**没改的那一部分一个字节都没动**。
     """
     if not outcome.written:
-        return f"「{photo_name}」的元数据没有改动。"
+        return f"「{photo_name}」的元数据未做改动。"
     what = _edited_what(outcome)
     if not outcome.journaled:
         # 这一句不是重复：它不是「发生了什么」，而是「你刚才按 ⌘Z 会发生什么」。
-        return f"已更新「{photo_name}」的{what}。⌘Z 撤销不了：没能记下操作日志。"
-    return f"已更新「{photo_name}」的{what}。⌘Z 可以撤销。"
+        return f"已更新「{photo_name}」的{what}；未能记录操作日志，⌘Z 不可撤销。"
+    return f"已更新「{photo_name}」的{what}；⌘Z 可撤销。"
 
 
 def _edited_what(outcome: MetadataWriteOutcome) -> str:
@@ -496,19 +496,19 @@ def external_app_opened(outcome: OpenOutcome, name: str) -> str:
     if outcome.detail:
         return f"{outcome.detail}。"
     if outcome.in_app:
-        return f"已在 {name}中打开当前这一页。"
+        return f"已在 {name}中打开当前页。"
     return f"已在浏览器中打开 {name}。"
 
 
 def calendar_opened(outcome: OpenOutcome, name: str) -> str:
     """「打开到这一页对应的日期」做完之后的那一句。
 
-    **与 :func:`external_app_opened` 分开**：那句说的是「当前这一页」，而这里打开的是那一天；
-    也**不在应用名前面留空格** —— 这一项的名字是汉字，「已在 日历中」读着断一口气。
+    **与 :func:`external_app_opened` 分开**：那句说的是「当前页」，而这里打开的是那一天；
+    也**不在应用名前面留空格** —— 这一项的名字是汉字，「已在 日历 中」读着断一口气。
     """
     if outcome.detail:
         return f"{outcome.detail}。"
-    return f"已在「{name}」中打开这一页对应的日期。"
+    return f"已在「{name}」中打开当前页对应的日期。"
 
 
 __all__ = [

@@ -91,11 +91,9 @@ COVER: Final = EventField("cover", "封面", "cover_path", control="cover")
 #: **公共列**：任何一类事件都问得出的那几个问题。它们住在 ``events`` 表里，于是「列出所有旅行」
 #: 「这张照片属于谁」都是一条 SQL，不必按类型 UNION。
 COMMON_FIELDS: Final[tuple[EventField, ...]] = (
-    EventField(
-        "title", "名称", "title", hint="不填的话按日期与几个关键字段自动生成", required=True
-    ),
+    EventField("title", "名称", "title", hint="留空时按日期与关键字段自动生成", required=True),
     EventField("started_on", "开始日期", "started_on", "DAY", hint="2026-05-16，只知道年月也可以"),
-    EventField("ended_on", "结束日期", "ended_on", "DAY", hint="当天来回就与开始日期同一天"),
+    EventField("ended_on", "结束日期", "ended_on", "DAY", hint="当天往返时与开始日期相同"),
     EventField("note", "备注", "note"),
     COVER,
 )
@@ -109,13 +107,13 @@ TRIP: Final = EventKind(
             "destination",
             "目的地",
             "destinations",
-            hint="一次去了几个地方就都写上，用逗号分开",
+            hint="多个地点用逗号分隔",
             multiple=True,
         ),
         EventField("companions", "同行者", "companions", hint="用逗号分开", multiple=True),
         EventField("transport", "交通方式", "transport"),
         EventField("lodging", "住宿", "lodging"),
-        EventField("cost", "花费", "cost", "REAL", hint="只填数字；不记这一项就留空"),
+        EventField("cost", "花费", "cost", "REAL", hint="只填数字；不记录时留空"),
         EventField("rating", "评分", "rating", "INTEGER", choices=RATING_CHOICES),
     ),
     title_parts=("destination",),
@@ -128,15 +126,15 @@ SHOW: Final = EventKind(
     label="演出",
     table="event_show",
     fields=(
-        EventField("artist", "艺人", "artist", hint="多个用逗号分开", multiple=True),
-        EventField("guests", "嘉宾", "guests", hint="多个用逗号分开", multiple=True),
+        EventField("artist", "艺人", "artist", hint="多个用逗号分隔", multiple=True),
+        EventField("guests", "嘉宾", "guests", hint="多个用逗号分隔", multiple=True),
         EventField("program", "剧目", "program", hint="话剧、音乐剧的剧目名"),
         EventField("show_type", "演出类型", "show_type", hint="演唱会、音乐剧、话剧……"),
         EventField("start_time", "开场时间", "start_time", hint="19:30"),
         EventField("city", "城市", "city"),
         EventField("venue", "场馆", "venue", hint="如 国家大剧院"),
-        EventField("ticket_price", "票价", "ticket_price", "REAL", hint="票面价，只填数字"),
-        EventField("paid", "实付", "paid", "REAL", hint="实际付款，只填数字"),
+        EventField("ticket_price", "票价", "ticket_price", "REAL", hint="票面价格，只填数字"),
+        EventField("paid", "实付", "paid", "REAL", hint="实际支付，只填数字"),
         EventField("seat", "座位", "seat", hint="如 A区 12排 5号"),
         EventField("channel", "购买渠道", "channel", hint="如 大麦、秀动"),
         EventField("rating", "评分", "rating", "INTEGER", choices=RATING_CHOICES),
@@ -194,8 +192,8 @@ MOVIE: Final = EventKind(
         EventField("label", "发行商", "label"),
         EventField("series", "系列", "series", hint="系列、合集"),
         EventField("director", "导演", "director"),
-        EventField("actors", "演员", "actors", hint="多个用逗号分开", multiple=True),
-        EventField("tags", "标签", "tags", hint="多个用逗号分开", multiple=True),
+        EventField("actors", "演员", "actors", hint="多个用逗号分隔", multiple=True),
+        EventField("tags", "标签", "tags", hint="多个用逗号分隔", multiple=True),
         EventField("rating", "评分", "rating", "INTEGER", choices=RATING_CHOICES),
     ),
     # 发行日期复用公共列 ``started_on``：菜单排序与「按事件分组」的组键都读它，
@@ -269,7 +267,7 @@ def started_on_problem(text: str) -> str | None:
     if not text.strip():
         return None
     if parse_calendar_day(text) is None:
-        return f"开始日期看不懂：「{text.strip()}」。可以填成 2026-05-16，也可以只填 2026-05。"
+        return f"无法识别开始日期「{text.strip()}」。请使用 2026-05-16，或只填 2026-05。"
     return None
 
 
@@ -279,10 +277,10 @@ def ended_on_problem(started_on: str, ended_on: str) -> str | None:
         return None
     end = parse_calendar_day(ended_on)
     if end is None:
-        return f"结束日期看不懂：「{ended_on.strip()}」。可以填成 2026-05-20，也可以只填 2026-05。"
+        return f"无法识别结束日期「{ended_on.strip()}」。请使用 2026-05-20，或只填 2026-05。"
     start = parse_calendar_day(started_on)
     if start is not None and end < start:
-        return f"结束日期（{ended_on.strip()}）比开始日期（{started_on.strip()}）还早。"
+        return f"结束日期（{ended_on.strip()}）早于开始日期（{started_on.strip()}）还早。"
     return None
 
 
@@ -293,9 +291,9 @@ def cost_problem(text: str, label: str = "花费") -> str | None:
         return None
     value = parse_cost(stripped)
     if value is None:
-        return f"{label}不是一个数字：「{stripped}」。只填数字就行，比如 3280 或 3280.50。"
+        return f"{label}不是有效数字「{stripped}」。请只填数字，例如 3280 或 3280.50。"
     if value < 0:
-        return f"{label}不会是负的。"
+        return f"{label}不能为负数。"
     return None
 
 

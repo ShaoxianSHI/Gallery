@@ -13,6 +13,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QLabel, QPushButton, QVBoxLayout, QWidget
 
+from gallery.core import paths
 from gallery.ui import theme
 from gallery.ui.layout import clear_layout
 from gallery.ui.theme import AppTheme, rgba
@@ -69,7 +70,7 @@ class WelcomeView(QWidget):
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
 
-        subtitle = QLabel("照片留在你自己的文件夹里，Gallery 只是它的一个视图。")
+        subtitle = QLabel("照片保存在你自己的文件夹中，Gallery 只提供浏览。")
         subtitle.setObjectName("welcomeSubtitle")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(subtitle)
@@ -83,8 +84,8 @@ class WelcomeView(QWidget):
 
         layout.addSpacing(6)
         hint = QLabel(
-            "不会移动或修改你的照片（改文件名、移入废纸篓，都只有你自己动手时才会发生）。"
-            "首次打开时会先询问缓存目录放在哪里。"
+            "Gallery 不会自行移动、修改或删除照片；重命名与移入废纸篓只在你亲自操作时执行。"
+            f"首次打开会在库内创建 {paths.CONFIG_DIR_NAME} 目录存放运行时数据。"
         )
         hint.setObjectName("welcomeHint")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)

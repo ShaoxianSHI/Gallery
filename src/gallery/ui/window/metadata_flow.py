@@ -74,7 +74,7 @@ class MetadataFlowMixin:
             return
         self._panel.set_metadata_editable(
             False,
-            reason="需要 exiftool 才能修改照片里的位置。安装后即可使用：brew install exiftool",
+            reason="修改照片位置需要使用 exiftool。安装命令：brew install exiftool",
         )
 
     def _cancel_metadata_job(self) -> None:
@@ -237,7 +237,7 @@ class MetadataFlowMixin:
     ) -> None:
         """``Library.resolve_photo_place`` 的结论：直接拿来显示。"""
         if not isinstance(payload, PhotoFacets):
-            self._show_place(ref, report, generation, "未能推断地点：没有读到坐标")
+            self._show_place(ref, report, generation, "无法推断地点：未读到坐标")
             return
         self._show_place(ref, report, generation, _place_text(payload))
 

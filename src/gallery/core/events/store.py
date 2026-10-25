@@ -409,7 +409,7 @@ class EventStore:
         # 先读一遍原值：撤销要的正是它。**在同一次写之前读**，所以拿到的一定是改之前的样子。
         previous = self.event(event_id)
         if previous is None:
-            raise EventNotFoundError("这个事件已经不在了。")
+            raise EventNotFoundError("该事件已不存在。")
         kind_id = self._kind_of(event_id)
         kind = kind_by_id(kind_id)
         if kind is None:
@@ -457,7 +457,7 @@ class EventStore:
         connection = self._require()
         previous = self.event(event_id)
         if previous is None:
-            raise EventNotFoundError("这个事件已经不在了。")
+            raise EventNotFoundError("该事件已不存在。")
         kind_id = self._kind_of(event_id)
         kind = kind_by_id(kind_id)
         if kind is None:
@@ -516,7 +516,7 @@ class EventStore:
         """把一条事件记录改回去。**改与删都能撤，新建那一条走不到这里**（它不入栈）。"""
         payload = _parse_payload(record.payload)
         if payload is None:
-            return EventUndoResult(record.action, None, False, "这条事件记录读不出来，没法撤销。")
+            return EventUndoResult(record.action, None, False, "该事件记录无法读取，无法撤销。")
         event_id, kind_id = payload["event_id"], payload["kind"]
         kind = kind_by_id(kind_id)
         if kind is None:
@@ -614,7 +614,7 @@ class EventStore:
             这个异常是界面那一层之外的回退。
         """
         if not self._is_bound(event_id, photo):
-            raise CoverNotBoundError("只能从属于这次事件的照片里挑封面。", path=photo)
+            raise CoverNotBoundError("只能从该事件的照片中选择封面。", path=photo)
         kind_id = self._kind_of(event_id)
         kind = kind_by_id(kind_id)
         if kind is None:
@@ -852,7 +852,7 @@ class EventStore:
     def _require(self) -> sqlite3.Connection:
         connection = self._live_connection()
         if connection is None:
-            raise EventsUnavailableError("事件库这次不可用：这个库的文件夹建不出配置目录。")
+            raise EventsUnavailableError("事件库当前不可用：当前库无法创建配置目录。")
         return connection
 
     def _live_connection(self) -> sqlite3.Connection | None:

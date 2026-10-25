@@ -330,7 +330,7 @@ class OrderingMixin:
         """
         if not facet.needs_exiftool or self._has_exiftool:
             return None
-        return "需要 exiftool 才能读取这个字段。安装后即可使用：brew install exiftool"
+        return "读取该字段需要使用 exiftool。安装命令：brew install exiftool"
 
     @property
     def _has_exiftool(self) -> bool:
@@ -580,17 +580,17 @@ class OrderingMixin:
         if self._is_filtering():
             # **说的是「这一层里没有」而不是「这些条件下没有」**（ADR 0040 决策 4）：整库检索
             # 的那句话在这个视图里是骗人的 —— 用户看到的正是这一层，而整库里明明有照片。
-            self._say_level_is_empty("当前这一层里没有符合这些条件的照片。")
+            self._say_level_is_empty("当前层级中没有符合筛选条件的照片。")
         elif self._is_library_search():
             # 检索没命中时**不要说那句格式清单**：它与此刻无关，用户会以为文件格式不对。
-            self._say_level_is_empty("这些筛选条件下没有照片。")
+            self._say_level_is_empty("当前筛选条件下没有照片。")
         elif self._group_view is not None:
-            self._say_level_is_empty("这个分组里没有照片了。")
+            self._say_level_is_empty("该分组中没有照片。")
         elif self._browse_mode == BROWSE_MODE_ALBUMS:
-            self._say_level_is_empty("这个文件夹里既没有子文件夹，也没有可显示的照片。")
+            self._say_level_is_empty("该文件夹中没有子文件夹，也没有可显示的照片。")
         else:
             self._say_level_is_empty(
-                "没有找到可显示的照片或视频。支持 JPEG、PNG、HEIC、TIFF、GIF、WebP、BMP 与 "
+                "未找到可显示的照片或视频。支持 JPEG、PNG、HEIC、TIFF、GIF、WebP、BMP 与 "
                 "MP4、MOV、M4V、AVI、3GP。"
             )
 
@@ -640,7 +640,7 @@ class OrderingMixin:
         if generation != self._generation:
             return
         self._finish_job("_facet_job")
-        self._show_banner(f"读取元数据失败，按默认顺序显示：{message}")
+        self._show_banner(f"读取元数据失败，已按默认顺序显示：{message}")
         self._order_now()
         self._maybe_start_place_pass()
         self._maybe_start_photo_index()

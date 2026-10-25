@@ -131,7 +131,7 @@ def test_the_intent_survives_when_the_write_itself_is_refused(
 
     class _Refusing(_RecordingWriter):
         def write(self, path: Path, assignments: Sequence[Assignment]) -> None:
-            raise MetadataWriteError("磁盘满了，腾出点空间再试。", path=path)
+            raise MetadataWriteError("磁盘已满，请释放空间后重试。", path=path)
 
     with pytest.raises(MetadataWriteError):
         write_metadata(

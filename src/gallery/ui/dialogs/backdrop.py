@@ -98,7 +98,7 @@ class BackdropGenerateDialog(QDialog):
         self._preview.setFixedSize(PREVIEW_SIZE)
         layout.addWidget(self._preview, 0, Qt.AlignmentFlag.AlignHCenter)
 
-        hint = QLabel("挑一套配色，换一张换一个种子；满意了再保存。")
+        hint = QLabel("选择配色；「换一张」更换随机种子，满意后保存。")
         hint.setObjectName("backdropHint")
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -181,7 +181,7 @@ class BackdropGenerateDialog(QDialog):
 
     def _finish(self, outcome: str) -> None:
         if not self.name():
-            self._error.setText("给这张背景起个名字吧。")
+            self._error.setText("请为这张背景填写名称。")
             self._error.show()
             self._name_field.setFocus()
             return
@@ -236,7 +236,7 @@ class BackdropNameDialog(QDialog):
         layout.setContentsMargins(16, 14, 16, 12)
         layout.setSpacing(10)
 
-        hint = QLabel("照片会被复制一份到 Gallery 的缓存里，原文件不动。")
+        hint = QLabel("照片将复制一份到 Gallery 缓存，原文件不变。")
         hint.setObjectName("backdropHint")
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -316,8 +316,8 @@ class BackdropManageDialog(QDialog):
         layout.setSpacing(10)
 
         hint = QLabel(
-            "改名与删除只作用于 Gallery 缓存里的那一份，原照片不动；"
-            "点「完成」才生效，取消则什么都不改。"
+            "改名与删除只作用于 Gallery 缓存中的副本，原照片不变；"
+            "点「完成」后生效，取消则不保存任何改动。"
         )
         hint.setObjectName("backdropHint")
         hint.setWordWrap(True)
@@ -377,7 +377,7 @@ class BackdropManageDialog(QDialog):
         """删光之后留一行说明，而不是一个空白的框。"""
         if self._list.count():
             return
-        placeholder = QListWidgetItem("还没有保存过背景图")
+        placeholder = QListWidgetItem("暂无已保存的背景图")
         placeholder.setFlags(Qt.ItemFlag.NoItemFlags)
         self._list.addItem(placeholder)
 

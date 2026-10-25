@@ -75,21 +75,21 @@ def test_a_slot_remembers_what_it_wrote_and_clears_only_that() -> None:
     """
     h = Harness()
     h.text.place.show("正在解析照片的地点…")
-    h.user_says("已把 3 项移到废纸篓")
+    h.user_says("已将 3 项移到废纸篓")
 
     h.text.place.clear()
 
-    assert h.banner.text == "已把 3 项移到废纸篓", "收尾把别人的话收走了"
+    assert h.banner.text == "已将 3 项移到废纸篓", "收尾把别人的话收走了"
 
 
 def test_a_slot_stays_quiet_while_someone_else_is_talking() -> None:
     """**上面有别人的话就让着** —— 后台进度不抢用户刚触发的那条。"""
     h = Harness()
-    h.user_says("已把 3 项移到废纸篓")
+    h.user_says("已将 3 项移到废纸篓")
 
     h.text.place.show("正在解析照片的地点…")
 
-    assert h.banner.text == "已把 3 项移到废纸篓", "后台进度抢了用户的话"
+    assert h.banner.text == "已将 3 项移到废纸篓", "后台进度抢了用户的话"
     assert h.text.place.is_ours is False, "让位的那一次不该记成「我占着」"
 
 
@@ -132,7 +132,7 @@ def test_even_the_metadata_family_waits_out_the_grace_period() -> None:
 def test_a_background_message_waits_out_the_users_grace_period() -> None:
     """用户刚做完一件事，后台消息**让位两秒**（横幅只有一个槽）。"""
     h = Harness()
-    h.user_says("已把 3 项移到废纸篓")
+    h.user_says("已将 3 项移到废纸篓")
 
     assert h.text.claim_sticky(background=True) is False, "让位期内后台消息抢上去了"
     h.advance(1.9)
@@ -144,7 +144,7 @@ def test_a_background_message_waits_out_the_users_grace_period() -> None:
 def test_a_background_message_does_not_extend_the_grace_period() -> None:
     """后台消息**不延长**让位期 —— 否则连续进度消息能让用户那句话永远上不了台。"""
     h = Harness()
-    h.user_says("已把 3 项移到废纸篓")
+    h.user_says("已将 3 项移到废纸篓")
     h.advance(1.0)
 
     assert h.text.claim_sticky(background=True) is False
@@ -183,7 +183,7 @@ def test_a_new_level_lets_the_scan_problem_flag_go() -> None:
 def test_clearing_the_screen_takes_the_grace_period_with_it() -> None:
     """``clear_all``：三个槽的账 + 让位期一起归零（翻照片、退层走这条）。"""
     h = Harness()
-    h.user_says("已把 3 项移到废纸篓")
+    h.user_says("已将 3 项移到废纸篓")
     h.text.place.show("正在解析照片的地点…")
 
     h.text.clear_all()
@@ -200,7 +200,7 @@ def test_changing_the_level_keeps_the_grace_period() -> None:
     这是它与 ``clear_all`` 唯一的差别，所以两条都要有用例。
     """
     h = Harness()
-    h.user_says("已把 3 项移到废纸篓")
+    h.user_says("已将 3 项移到废纸篓")
     h.text.place.show("正在解析照片的地点…")
 
     h.text.reset_level()
@@ -216,7 +216,7 @@ def test_the_empty_level_line_is_marked_as_ours_so_a_reset_can_take_it() -> None
     「这一层是空的」就再也说不出来了 —— 而那句话是用户唯一知道自己这一层出了什么的线索。
     """
     h = Harness()
-    h.text.say_level_is_empty("没有找到可显示的照片。")
+    h.text.say_level_is_empty("未找到可显示的照片。")
     assert h.text.level_notice is True
 
     h.text.reset_level()
@@ -229,7 +229,7 @@ def test_the_empty_level_line_gives_way_to_a_newer_one() -> None:
     h = Harness()
     h.text.note_scan_issue()
 
-    assert h.text.say_level_is_empty("没有找到可显示的照片。") is False
+    assert h.text.say_level_is_empty("未找到可显示的照片。") is False
     assert h.banner.text is None
 
 

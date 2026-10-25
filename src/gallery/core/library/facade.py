@@ -273,17 +273,17 @@ class Library:
         root = Path(root).expanduser().resolve()
         if not root.exists():
             raise LibraryNotAccessibleError(
-                f"打不开这个文件夹：{root}。它可能已被移动、重命名或删除。",
+                f"无法打开该文件夹：{root}。它可能已被移动、重命名或删除。",
                 path=root,
             )
         if not root.is_dir():
             raise LibraryNotAccessibleError(
-                f"这里不是一个文件夹：{root}。请选择一个包含照片的文件夹。",
+                f"该路径不是文件夹：{root}。请选择包含照片的文件夹。",
                 path=root,
             )
         if not os.access(root, os.R_OK | os.X_OK):
             raise LibraryNotAccessibleError(
-                f"没有读取这个文件夹的权限：{root}。"
+                f"没有读取该文件夹的权限：{root}。"
                 "请在「系统设置 → 隐私与安全性 → 文件与文件夹」中授权后重试。",
                 path=root,
             )
@@ -372,7 +372,7 @@ class Library:
         if self._config_dir_ready:
             return
         raise ConfigError(
-            f"这个库的配置目录写不进去，设置无法保存：{paths.config_dir(self._root)}。"
+            f"当前库的配置目录不可写入，设置无法保存：{paths.config_dir(self._root)}。"
             "只读卷或网络共享上的库只能浏览，改不了设置。"
         )
 
@@ -502,9 +502,11 @@ class Library:
         photo = Path(photo)
         photo_key = _relative_posix(self._root, photo)
         if photo_key is None:
-            raise ConfigError(f"「{photo.name}」不在这个库里，没法拿它当封面。", path=photo)
+            raise ConfigError(f"「{photo.name}」不在当前库里，无法用作封面。", path=photo)
         if not is_supported_media(photo):
-            raise ConfigError(f"「{photo.name}」不是 Gallery 支持的格式，换一张试试。", path=photo)
+            raise ConfigError(
+                f"「{photo.name}」不是 Gallery 支持的格式，请更换后重试。", path=photo
+            )
         if not photo_key.startswith(f"{album_key}/"):
             # 与 ``config.from_mapping`` 里那条校验同一个判据：写进去的与读得出来的必须是同一种键。
             raise ConfigError(
@@ -529,7 +531,7 @@ class Library:
         """相册在配置文件里的那把键：相对库根的 posix 路径。"""
         album = Path(album)
         if not album.is_dir():
-            raise ConfigError(f"「{album.name}」不是一个文件夹，没法给它设封面。", path=album)
+            raise ConfigError(f"「{album.name}」不是一个文件夹，无法设置封面。", path=album)
         key = _relative_posix(self._root, album)
         if key is None:
             if paths.resolved(album) == paths.resolved(self._root):
@@ -537,7 +539,7 @@ class Library:
                     "库根目录不是一个相册，它在网格上不是一张卡片，没有封面可设。",
                     path=album,
                 )
-            raise ConfigError(f"「{album.name}」不在这个库里，没法给它设封面。", path=album)
+            raise ConfigError(f"「{album.name}」不在当前库里，无法设置封面。", path=album)
         return key
 
     def _write_covers(self, covers: Mapping[str, str]) -> None:
@@ -547,8 +549,8 @@ class Library:
         if not self._config_dir_ready:
             # 只读卷上配置目录建不出来，封面设置没有地方存 —— 那台机器上本来也存不住，所以不硬写。
             raise ConfigError(
-                f"这个库建不了 {paths.config_dir(self._root).name} 目录，封面设置没有地方保存。"
-                "把这个文件夹移到可以写入的地方再试。",
+                f"当前库无法创建 {paths.config_dir(self._root).name} 目录，封面设置无处保存。"
+                "请将文件夹移动到可写入的位置后重试。",
                 path=self._root,
             )
         updated = replace(self._config, album_covers=dict(covers))
@@ -897,7 +899,7 @@ class Library:
             try:
                 self.set_event_cover(outcome.event.id, saved.created)
             except GalleryError as exc:
-                failures.append(f"{movie.code}：没能设成封面，{exc.message}")
+                failures.append(f"{movie.code}：未能设成封面，{exc.message}")
             created += 1
             files.append(saved.created)
             existing.add(movie.ref)

@@ -25,7 +25,7 @@ _ERROR_CODE = re.compile(r"\((-?\d+)\)\s*$")
 
 #: 被拒绝的自动化授权。**这是这三条里唯一要用户动手的**，所以给全路径。
 _NOT_AUTHORIZED = (
-    "没能控制「日历」：请在「系统设置 › 隐私与安全性 › 自动化」里允许 Gallery 控制「日历」"
+    "未能控制「日历」：请在「系统设置 › 隐私与安全性 › 自动化」里允许 Gallery 控制「日历」"
 )
 
 
@@ -58,15 +58,15 @@ def script(level: str, day: dt.date) -> str:
 def failure_detail(result: CommandResult) -> str:
     """``osascript`` 的报错 → 用户照着能做的一句话（不带句号，横幅会补）。"""
     if result.returncode == -1:
-        return "「日历」没有响应"
+        return "「日历」未响应"
     code = _code_of(result.stderr)
     if code == -1743:
         return _NOT_AUTHORIZED
     if code == -1712:
-        return "「日历」没有响应"
+        return "「日历」未响应"
     if code in (-1728, -10814):
-        return "没找到系统「日历」"
-    return "没能打开系统「日历」"
+        return "未找到系统「日历」"
+    return "未能打开系统「日历」"
 
 
 def _code_of(stderr: str) -> int | None:

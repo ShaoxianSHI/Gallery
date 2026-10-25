@@ -128,7 +128,7 @@ def test_move_refuses_to_put_an_album_inside_itself(library: Path) -> None:
     result = _move(library, library / "京都" / "子相册", library / "京都")
 
     assert result.moved == ()
-    assert result.failures[0].message == "不能把相册移进它自己或它自己的子相册。"
+    assert result.failures[0].message == "不能把相册移入它自身或其子相册。"
     assert (library / "京都").is_dir()
 
 
@@ -137,7 +137,7 @@ def test_move_reports_a_missing_source(library: Path) -> None:
     result = _move(library, library / "奈良", library / "京都" / "没有这张.jpg")
 
     assert result.moved == ()
-    assert result.failures[0].message == "它已经不在原来的位置了，可能刚刚被别的东西移走了。"
+    assert result.failures[0].message == "该文件已不在原位置，可能刚被其他程序移动。"
 
 
 def test_move_rejects_a_target_that_is_not_a_directory(library: Path) -> None:
@@ -206,7 +206,7 @@ def test_undo_refuses_when_the_original_place_is_taken(library: Path) -> None:
 
     assert result is not None
     assert result.failures
-    assert "这个位置已经有别的文件了" in result.failures[0].message
+    assert "所在位置已有其他文件" in result.failures[0].message
     assert (library / "奈良" / "一张.jpg").exists(), "撤不掉的就该留在原地"
     assert (library / "京都" / "一张.jpg").exists(), "用户在原位置放的东西不能被动"
 
@@ -221,7 +221,7 @@ def test_undo_records_a_failure_too(library: Path) -> None:
     failures = [r for r in read_records(library) if not r.succeeded]
     assert len(failures) == 1
     assert failures[0].result == RESULT_FAILED
-    assert "这个位置已经有别的文件了" in (failures[0].message or "")
+    assert "所在位置已有其他文件" in (failures[0].message or "")
 
 
 def test_undo_stack_is_shared_with_rename(library: Path) -> None:

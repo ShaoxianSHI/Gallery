@@ -351,15 +351,15 @@ class VideoView(QGraphicsView):
         ):
             self._ensure_size()
         elif status == QMediaPlayer.MediaStatus.InvalidMedia:
-            self.show_error(self._unplayable_text("这个视频放不了"))
+            self.show_error(self._unplayable_text("无法播放该视频"))
 
     def _on_error(self, error: QMediaPlayer.Error, message: str) -> None:
         if self._ref is None or error == QMediaPlayer.Error.NoError:
             return
-        self.show_error(self._unplayable_text(message or "这个视频放不了"))
+        self.show_error(self._unplayable_text(message or "无法播放该视频"))
 
     def _unplayable_text(self, reason: str) -> str:
-        return f"{reason}。⇧⏎ 可以用系统默认应用打开它。"
+        return f"{reason}。按 ⇧⏎ 使用系统默认应用打开。"
 
     def _update_time(self, position: int) -> None:
         self._time.setText(f"{_clock(position)} / {_clock(self._player.duration())}")

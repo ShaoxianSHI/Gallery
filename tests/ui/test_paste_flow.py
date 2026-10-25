@@ -645,7 +645,7 @@ def test_saying_so_when_the_clipboard_is_empty(qt_app: QApplication, window: Mai
 
     message = _paste_and_wait(qt_app, window)
 
-    assert message == "剪贴板里没有可粘贴的文件。"
+    assert message == "剪贴板中没有可粘贴的文件。"
 
 
 def test_a_second_paste_does_not_race_the_first(
@@ -673,7 +673,7 @@ def test_a_second_paste_does_not_race_the_first(
     assert started.wait(DEFAULT_TIMEOUT_SECONDS), "第一次粘贴没有开始"
     window.paste_into_current_folder()
 
-    assert window._banner.text() == "上一次操作还没结束。"
+    assert window._banner.text() == "上一次操作尚未结束。"
     release.set()
     assert wait_until(qt_app, lambda: window._write_job is None)
     assert sorted(p.name for p in (root / "奈良").iterdir()) == ["一张.jpg"]

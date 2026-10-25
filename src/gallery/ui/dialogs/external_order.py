@@ -263,7 +263,7 @@ class ExternalOrderDialog(QDialog):
         layout.setContentsMargins(16, 14, 16, 12)
         layout.setSpacing(10)
 
-        hint = QLabel("拖动调整先后；排在第一的那一项就是按钮左半显示的应用。")
+        hint = QLabel("拖动调整先后；排在第一项的应用显示在按钮左半。")
         hint.setObjectName("externalOrderHint")
         hint.setWordWrap(True)
         layout.addWidget(hint)

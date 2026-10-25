@@ -182,7 +182,7 @@ def test_refuses_to_paste_a_folder_into_itself(library: Path) -> None:
     result = _paste(library, library / "京都", library / "京都")
 
     assert result.pasted == ()
-    assert [f.message for f in result.failures] == ["不能把文件夹粘进它自己或它自己的子目录。"]
+    assert [f.message for f in result.failures] == ["不能把文件夹粘贴到它自身或其子目录中。"]
     assert sorted(p.name for p in (library / "京都").iterdir()) == ["一张.jpg", "另一张.jpg"]
 
 
@@ -192,7 +192,7 @@ def test_missing_source_is_reported_not_swallowed(library: Path) -> None:
 
     result = _paste(library, library / "奈良", gone)
 
-    assert [f.message for f in result.failures] == ["源文件已经不在了。"]
+    assert [f.message for f in result.failures] == ["源文件已不存在。"]
 
 
 def test_target_must_be_a_directory(library: Path) -> None:
@@ -234,7 +234,7 @@ def test_a_half_written_file_is_cleaned_up(library: Path, monkeypatch) -> None: 
     result = _paste(library, library / "奈良", source)
 
     assert result.pasted == ()
-    assert "磁盘满" in result.failures[0].message
+    assert "磁盘已满" in result.failures[0].message
     assert sorted(p.name for p in (library / "奈良").iterdir()) == []
     assert source.exists()
 
@@ -324,7 +324,7 @@ def test_a_paste_target_outside_the_library_is_refused(library: Path, tmp_path: 
     source = tmp_path / "从访达粘来的.jpg"
     Image.new("RGB", (8, 6), (30, 60, 90)).save(source)
 
-    with pytest.raises(PasteError, match="只能粘到库里的文件夹"):
+    with pytest.raises(PasteError, match="只能粘贴到库中的文件夹"):
         copy_into(library, outside, [source])
 
     assert not (outside / "从访达粘来的.jpg").exists()

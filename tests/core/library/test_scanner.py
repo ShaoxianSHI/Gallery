@@ -90,7 +90,7 @@ def test_missing_root_raises(tmp_path: Path) -> None:
     with pytest.raises(LibraryNotAccessibleError) as excinfo:
         list(iter_photos(tmp_path / "不存在"))
 
-    assert "打不开" in excinfo.value.message
+    assert "无法打开" in excinfo.value.message
 
 
 def test_file_as_root_raises(tmp_path: Path, make_photo: Callable[..., Path]) -> None:

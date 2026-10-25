@@ -102,7 +102,7 @@ def window(
     window.show()
 
     assert wait_for(lambda: window._model.rowCount() >= 6, timeout=DEFAULT_TIMEOUT_SECONDS), (
-        "照片没能在时限内扫出来，后面几条测的都不是这条路径"
+        "照片未能在时限内扫出来，后面几条测的都不是这条路径"
     )
     window._open_detail(window._model.index(0, 0))
     # 等首张真的解码显示，而不是干等 0.6 秒 —— 这条 fixture 每条测试都要跑一遍。
@@ -122,7 +122,7 @@ def ready(window: MainWindow, wait_for: Callable[..., bool]) -> Callable[[], Non
         assert wait_for(
             lambda: len(window._metadata_cache) >= PREFETCHED_ENTRIES,
             timeout=DEFAULT_TIMEOUT_SECONDS,
-        ), "元数据没能在时限内读完，预读窗口也没填满"
+        ), "元数据未能在时限内读完，预读窗口也没填满"
 
     return _ready
 
@@ -517,7 +517,7 @@ def test_opening_a_photo_does_not_show_the_previous_one(
     window.resize(1100, 800)
     window.show()
     assert wait_for(lambda: window._model.rowCount() == 2, timeout=DEFAULT_TIMEOUT_SECONDS), (
-        "两张照片没能在时限内扫出来"
+        "两张照片未能在时限内扫出来"
     )
 
     def centre_colour() -> object:

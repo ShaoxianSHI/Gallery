@@ -64,7 +64,7 @@ class FakeWatcher:
 
     def push(self, *changes: LibraryChange) -> None:
         """送一批变化进界面（等价于 watchdog 那边收到了这些事件）。"""
-        assert self.emit is not None, "监听还没开始"
+        assert self.emit is not None, "监听尚未开始"
         self.emit(changes)
 
 
@@ -130,7 +130,7 @@ def _album_names(window: MainWindow) -> list[str]:
 
 def _settle_level(qt_app: QApplication, window: MainWindow) -> None:
     """等这一层重排完（换方向是同步的，等的是后台那一遍列层）。"""
-    assert wait_until(qt_app, lambda: window._scan_job is None), "这一层还没列完"
+    assert wait_until(qt_app, lambda: window._scan_job is None), "这一层尚未列完"
     qt_app.processEvents()
 
 
@@ -849,7 +849,7 @@ def test_an_empty_level_says_so_again(
     try:
         deliver(qt_app, window, watcher, LibraryChange(ChangeKind.REMOVED, only))
 
-        assert "没有找到可显示的照片" in window._banner.text()
+        assert "未找到可显示的照片" in window._banner.text()
     finally:
         window.close()
 
@@ -974,7 +974,7 @@ def test_trashing_here_is_not_applied_twice(
         deliver(qt_app, window, watcher, LibraryChange(ChangeKind.REMOVED, picture))
 
         assert window._model.rowCount() == 0
-        assert "已把「删掉.jpg」移到废纸篓" in window._banner.text()
+        assert "已将「删掉.jpg」移到废纸篓" in window._banner.text()
     finally:
         window.close()
 

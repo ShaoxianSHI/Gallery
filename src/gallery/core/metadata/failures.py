@@ -36,7 +36,7 @@ class Failure:
 
 #: 「源已经不在原来的位置了」那一句。``os_reason`` 的 ``ENOENT`` 分支与 ``transfer`` 动手前
 #: 发现源不存在时引用同一句，而不是各抄一份（测试锁定两边一致）。
-SOURCE_GONE = "它已经不在原来的位置了，可能刚刚被别的东西移走了。"
+SOURCE_GONE = "该文件已不在原位置，可能刚被其他程序移动。"
 
 
 def os_reason(exc: OSError, *, is_dir: bool = False, action: str | None = None) -> str:
@@ -50,18 +50,18 @@ def os_reason(exc: OSError, *, is_dir: bool = False, action: str | None = None) 
     if isinstance(exc, shutil.SameFileError):
         return "源和目标是同一个东西。"
     if exc.errno == errno.ENOSPC or "No space left" in reason or "磁盘空间不足" in reason:
-        return "磁盘满了，腾出点空间再试。"
+        return "磁盘已满，请释放空间后重试。"
     if exc.errno == errno.ENOENT or "No such file" in reason:
         return SOURCE_GONE
     if isinstance(exc, PermissionError) or exc.errno in (errno.EACCES, errno.EPERM):
         hint = (
             "请检查「系统设置 → 隐私与安全性 → 文件与文件夹」里有没有授权。"
             if is_dir
-            else "请检查它是不是只读，或者正被别的程序打开着。"
+            else "请检查它是否为只读，或正被其他程序占用。"
         )
         return f"没有权限，系统返回 {reason}。{hint}"
     if exc.errno == errno.ENAMETOOLONG or "File name too long" in reason or "文件名太长" in reason:
-        return "名字太长，这个磁盘放不下。"
+        return "文件名过长，超出当前磁盘的限制。"
     prefix = f"{action}失败：" if action else ""
     return f"{prefix}{reason}。它可能正在被其他程序使用。"
 

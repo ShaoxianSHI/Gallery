@@ -380,7 +380,7 @@ def _background_submenu(window: MainWindow):
 
 
 def test_the_background_menu_lists_the_slots_before_how_to_fill_them(window: MainWindow) -> None:
-    """先答「这一档用哪张」，再答「纯色用哪一种」，最后才是「从哪儿弄一张新的」（ADR 0097 / 0098）。"""
+    """先答「这一档用哪张」，再答「纯色用哪一种」，最后才是造一张新的（ADR 0097 / 0098）。"""
     actions = _background_submenu(window).actions()
     labels = [action.text() for action in actions if not action.isSeparator()]
 
@@ -405,7 +405,7 @@ def test_custom_backgrounds_are_saved_and_take_effect(
     window._settings_extras["background"].trigger()
     qt_app.processEvents()
 
-    assert seen["initial"] == (None, None), "第一次打开时两档都还没挑过"
+    assert seen["initial"] == (None, None), "第一次打开时两档都尚未挑过"
     prefs = load_session(base=tmp_path / "会话").preferences
     assert prefs.background_for(dark=False) == "#f5f2ec"
     assert prefs.background_for(dark=True) == "#101018"

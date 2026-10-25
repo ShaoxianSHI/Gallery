@@ -206,7 +206,7 @@ class ThumbnailFlowMixin:
             return
         if self._cache_job is not None:
             # 两次清空是同一个意思，跑两遍只会让第二个的「已清除 N 个」覆盖第一个的。
-            self._show_banner("上一次清空还没结束。")
+            self._show_banner("上一次清空尚未结束。")
             return
 
         def work(context: TaskContext) -> object:
@@ -234,7 +234,7 @@ class ThumbnailFlowMixin:
         self._finish_job("_cache_job")
         logger.info("清空缩略图缓存失败：%s", message)
         # 这一句**不自动收起**：它是「要用户动手处理」的（换个地方、腾点空间再试）。
-        self._show_banner(f"没能清空缩略图缓存：{message.rstrip('。')}")
+        self._show_banner(f"未能清空缩略图缓存：{message.rstrip('。')}")
 
 
 __all__ = ["ThumbnailFlowMixin"]

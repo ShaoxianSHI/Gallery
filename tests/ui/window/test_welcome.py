@@ -28,6 +28,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtGui import QColor, QPalette  # noqa: E402
 from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
+from gallery.core import paths  # noqa: E402
 from gallery.ui import theme as theme_module  # noqa: E402
 from gallery.ui.window.widgets.welcome import (  # noqa: E402
     SECONDARY_ALPHA,
@@ -167,4 +168,17 @@ def test_welcome_view_builds_with_recent_libraries(qt_app: QApplication) -> None
 
     buttons = view.findChildren(QWidget)
     assert any(b.objectName() == "recentButton" for b in buttons)
+    view.deleteLater()
+
+
+def test_the_hint_does_not_promise_a_cache_location_prompt(qt_app: QApplication) -> None:
+    """开场**不再问**「缓存放哪里」（ADR 0038）：那句话留在这里会教用户等一个不会出现的框。"""
+    view = WelcomeView()
+    view.show()
+    qt_app.processEvents()
+
+    labels = [label.text() for label in view.findChildren(QWidget) if hasattr(label, "text")]
+    hint = next(text for text in labels if "不会自行移动" in text)
+    assert "缓存目录放在哪里" not in hint
+    assert paths.CONFIG_DIR_NAME in hint
     view.deleteLater()

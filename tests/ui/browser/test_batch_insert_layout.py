@@ -92,5 +92,5 @@ def test_the_relayout_anchor_is_taken_when_the_insert_happens(
 
     assert seen == [expected], (
         f"重排用的是 {seen}，插入那一刻的位置是 {expected}"
-        f" —— 基准取晚了（Qt 已把滚动条夹成 {bar.value()}）"
+        f" —— 基准取晚了（Qt 已将滚动条夹成 {bar.value()}）"
     )

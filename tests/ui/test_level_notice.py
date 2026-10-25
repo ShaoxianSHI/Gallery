@@ -146,7 +146,7 @@ def test_a_truly_empty_folder_still_says_so(
     window._on_entry_activated(window._model.index(_row_of(window, "真空的"), 0))
     _settle(qt_app, window)
 
-    assert _banner(window) == "这个文件夹里既没有子文件夹，也没有可显示的照片。"
+    assert _banner(window) == "该文件夹中没有子文件夹，也没有可显示的照片。"
     window.close()
 
 
@@ -197,7 +197,7 @@ def test_a_scan_problem_is_not_replaced_by_the_empty_notice(
     broken = ScanReport(unreadable_files=["/照片/坏文件.jpg（权限不足）"])
     window._on_scan_done(window._generation, broken)
 
-    assert "部分内容没能读取" in _banner(window)
+    assert "部分内容未能读取" in _banner(window)
     window.close()
 
 
@@ -224,6 +224,6 @@ def test_scan_problem_wins_over_the_empty_notice(
     broken = ScanReport(skipped_dirs=["/照片/没权限（权限不足）"])
     window._on_scan_done(window._generation, broken)
 
-    assert "部分内容没能读取" in _banner(window)
+    assert "部分内容未能读取" in _banner(window)
     assert "既没有子文件夹" not in _banner(window)
     window.close()

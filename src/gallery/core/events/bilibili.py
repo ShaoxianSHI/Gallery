@@ -33,13 +33,13 @@ SITE: Final = "https://www.bilibili.com"
 #: 接口自己的错误码 → 给用户的一句中文。**HTTP 是 200，错在 JSON 里**，
 #: 所以「删了」「私密」「还在审核」分得清楚 —— 混成一句「取不到」会把人支到错的下一步。
 _PROBLEMS: Final[dict[int, str]] = {
-    -400: "B 站说这个编号不合法",
-    -403: "B 站不让看这个稿件，权限不足",
-    -404: "B 站上没有这个稿件",
-    -352: "B 站这次的风控没放行，过一会儿再试，也可以先在浏览器里打开它",
-    62002: "这个稿件不可见，可能删掉了或设成了私密",
-    62004: "这个稿件还在审核中，过一会儿再试",
-    62012: "这个稿件只有 UP 主自己看得见",
+    -400: "B 站返回：编号不合法",
+    -403: "B 站不让看该稿件，权限不足",
+    -404: "B 站未收录该稿件",
+    -352: "B 站风控未放行，请稍后重试，或先在浏览器中打开",
+    62002: "该稿件不可见，可能已删除或设为私密",
+    62004: "该稿件仍在审核中，请稍后重试",
+    62012: "该稿件仅 UP 主可见",
 }
 
 #: BV 号的 base58 字母表（`av` ↔ BV 互转用）。**它不含 ``0 I O l``**，字母表的顺序是算法的一部分。
@@ -161,7 +161,7 @@ def problem_of(payload: Mapping[str, object], code: str) -> MovieImportError:
         return MovieImportError(f"{known}：{code}。")
     message = _text(payload.get("message"))
     tail = f"，{message}" if message else ""
-    return MovieImportError(f"B 站没给出这个稿件的资料：错误码 {status}{tail}。")
+    return MovieImportError(f"B 站未提供该稿件的信息：错误码 {status}{tail}。")
 
 
 def view_of(payload: Mapping[str, object], code: str) -> MovieInfo:
@@ -174,7 +174,7 @@ def view_of(payload: Mapping[str, object], code: str) -> MovieInfo:
         raise problem_of(payload, code)
     data = payload.get("data")
     if not isinstance(data, Mapping):
-        raise MovieImportError(f"B 站没给出这个稿件的资料：{code}。")
+        raise MovieImportError(f"B 站未提供该稿件的信息：{code}。")
     bvid = _text(data.get("bvid")) or code
     owner = data.get("owner")
     season = data.get("ugc_season")
@@ -249,9 +249,9 @@ def _json(raw: str, code: str) -> Mapping[str, object]:
     try:
         payload = json.loads(raw)
     except ValueError as exc:
-        raise MovieImportError(f"B 站给出的资料读不懂：{code}。") from exc
+        raise MovieImportError(f"B 站返回的信息无法解析：{code}。") from exc
     if not isinstance(payload, Mapping):
-        raise MovieImportError(f"B 站给出的资料不是一份稿件信息：{code}。")
+        raise MovieImportError(f"B 站返回的信息不是有效的稿件信息：{code}。")
     return payload
 
 
@@ -264,7 +264,7 @@ def fetch(code: str, *, client: Transport) -> MovieInfo:
     :raises MovieImportError: 稿件不存在 / 不可见 / 编号不合法 / 网络失败。
     """
     if not _BV_RE.fullmatch(code):
-        raise MovieImportError(f"这不是一个 BV 号：{code}。")
+        raise MovieImportError(f"不是有效的 BV 号：{code}。")
     movie = view_of(_json(client.get_text(_view_url(code)), code), code)
     tags = _tags(code, client)
     return replace(movie, tags=tags) if tags else movie

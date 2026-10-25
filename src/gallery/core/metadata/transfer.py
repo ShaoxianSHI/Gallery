@@ -124,7 +124,7 @@ def move_into(
             failures.append(Failure.at(source, message=SOURCE_GONE))
             continue
         if source.is_dir() and paths.is_within(source, destination):
-            failures.append(Failure.at(source, message="不能把相册移进它自己或它自己的子相册。"))
+            failures.append(Failure.at(source, message="不能把相册移入它自身或其子相册。"))
             continue
         if cancelled():
             break
@@ -140,7 +140,7 @@ def move_into(
             continue
         created = free_target(destination, source.name, taken)
         if created is None:
-            failures.append(Failure.at(source, message="这个名字太长，再加编号也放不下了。"))
+            failures.append(Failure.at(source, message="名称过长，加上编号后仍超出限制。"))
             continue
         # **移动之前**问一次：移完之后源路径已经不存在，那时再问恒为假，于是移相册的日志里
         # ``is_dir`` 会记成照片。绑定跟过去同样要用它（相册要按前缀搬整棵子树）。
@@ -207,7 +207,7 @@ def undo_move_records(
     for record in records:
         current, original = record.target, record.source
         if not current.exists():
-            message = f"「{current.name}」已经不在「{current.parent.name}」里了，可能已经被你移走。"
+            message = f"「{current.name}」已不在「{current.parent.name}」中，可能已被移动。"
             journaled &= append_record(
                 root,
                 WriteRecord(
@@ -223,7 +223,7 @@ def undo_move_records(
             failures.append(Failure.at(current, message=message))
             continue
         if original.exists():
-            message = f"「{original.name}」这个位置已经有别的文件了。"
+            message = f"「{original.name}」所在位置已有其他文件。"
             journaled &= append_record(
                 root,
                 WriteRecord(

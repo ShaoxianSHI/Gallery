@@ -29,10 +29,10 @@ def test_there_is_exactly_one_failure_type() -> None:
 
 def test_the_failure_record_always_has_a_name_and_sometimes_a_path() -> None:
     """``name`` 一定在（横幅上点名靠它）；``source`` 只在它真是磁盘上的东西时才有。"""
-    at = Failure.at(Path("/库/京都/一张.jpg"), "磁盘满了，腾出点空间再试。")
+    at = Failure.at(Path("/库/京都/一张.jpg"), "磁盘已满，请释放空间后重试。")
     assert at.name == "一张.jpg"
     assert at.source == Path("/库/京都/一张.jpg")
-    assert at.message == "磁盘满了，腾出点空间再试。"
+    assert at.message == "磁盘已满，请释放空间后重试。"
 
     # 分组卡片没有路径 —— 那是事实，不该为了凑字段编一个假的。
     group = Failure(name="2024 年 5 月", message="分组不是磁盘上的东西。")
@@ -43,10 +43,10 @@ def test_the_failure_record_always_has_a_name_and_sometimes_a_path() -> None:
 @pytest.mark.parametrize(
     ("errno_value", "fragment"),
     [
-        (errno.ENOSPC, "磁盘满"),
-        (errno.ENOENT, "不在原来的位置"),
+        (errno.ENOSPC, "磁盘已满"),
+        (errno.ENOENT, "不在原位置"),
         (errno.EACCES, "没有权限"),
-        (errno.ENAMETOOLONG, "名字太长"),
+        (errno.ENAMETOOLONG, "文件名过长"),
     ],
 )
 def test_the_common_failures_say_one_thing_each(errno_value: int, fragment: str) -> None:

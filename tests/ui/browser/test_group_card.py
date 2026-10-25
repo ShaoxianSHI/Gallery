@@ -127,7 +127,7 @@ def test_group_card_with_cover_paints_the_cover_and_the_badge(
 
 def test_group_card_without_cover_still_paints(tmp_path: Path, qt_app: QApplication) -> None:
     del qt_app
-    """封面还没到时画文件夹图形，不能留空白。"""
+    """封面尚未到时画文件夹图形，不能留空白。"""
     photo = PhotoRef(path=tmp_path / "封面.jpg", size=10, mtime_ns=1)
     model = _group_model(tmp_path, (photo,))
 

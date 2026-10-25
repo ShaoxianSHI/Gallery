@@ -88,7 +88,7 @@ def read_show_export(path: Path) -> ShowImport:
     header = _find_header(grid)
     if header is None:
         raise ShowImportError(
-            "这个表格里找不到「演出名称」那一列，看起来不是「演迹」导出的演出列表。",
+            "该表格中未找到「演出名称」列，可能不是「演迹」导出的演出列表。",
             path=path,
         )
     index, head = header
@@ -130,8 +130,8 @@ def _draft_of(row: dict[str, str]) -> EventDraft | None:
 def _skip_note(number: int, cells: dict[str, str], activity_letters: set[str]) -> str:
     """这一行为什么没被当成演出 —— 分「是活动」与「什么都没有」两种说法。"""
     if _has_activity(cells, activity_letters):
-        return f"第 {number} 行看起来是活动，不是演出，已经跳过。"
-    return f"第 {number} 行没有演出名称，已经跳过。"
+        return f"第 {number} 行是活动而非演出，已跳过。"
+    return f"第 {number} 行缺少演出名称，已跳过。"
 
 
 def _has_activity(cells: dict[str, str], activity_letters: set[str]) -> bool:
@@ -214,7 +214,7 @@ def _sheet_xml(archive: zipfile.ZipFile) -> bytes:
         if (match := _SHEET.fullmatch(name)) is not None
     )
     if not sheets:
-        raise KeyError("工作簿里没有工作表")
+        raise KeyError("工作簿中没有工作表")
     return archive.read(sheets[0][1])
 
 

@@ -184,7 +184,7 @@ class SearchFlowMixin:
         if generation != self._generation:
             return
         self._finish_job("_filter_job")
-        self._show_banner(f"筛选没能完成：{message}")
+        self._show_banner(f"筛选未能完成：{message}")
         # 照常把这一层排出来：一片空白比未筛选的内容更没用，而横幅已经说清发生了什么。
         self._apply_ordering()
 
@@ -239,7 +239,7 @@ class SearchFlowMixin:
         self._finish_job("_search_job")
         self._filters.set_total(0)
         self._sync_ui()
-        self._show_banner(f"检索没能完成：{message}")
+        self._show_banner(f"检索未能完成：{message}")
         self._apply_ordering()  # 把这一层按「没有结果」收尾，界面不至于卡在空白上
 
     def _on_search_submitted(self, raw: str) -> None:
@@ -262,9 +262,7 @@ class SearchFlowMixin:
         if self._library is None:
             # 没有库的时候记录这条条件是**悄悄的**：面包屑不显示它，换库时又被清掉 —— 不如说一句。
             self._show_banner(
-                "先打开一个照片文件夹，再筛选。"
-                if self._is_filtering()
-                else "先打开一个照片文件夹，再搜索。"
+                "请先打开一个库，再筛选。" if self._is_filtering() else "请先打开一个库，再搜索。"
             )
             return
         self._filters.submit(condition)
@@ -314,7 +312,7 @@ class SearchFlowMixin:
             return
         self._show_banner(
             f"「{parsed.field.label}」{unusable_reason(parsed.field, parsed.value)}"
-            "不支持的说法不会变成一条筛选条件。"
+            "无法识别的部分不会加入筛选条件。"
         )
 
     def _warn_metadata_without_exiftool(self, condition: SearchCondition) -> None:
@@ -326,8 +324,8 @@ class SearchFlowMixin:
         if not self._has_exiftool or not condition.field.needs_metadata:
             return
         self._show_banner(
-            f"没装 exiftool，「{condition.field.label}」这个字段读不出来。"
-            "文件名、相册、格式、大小不受影响。安装后即可使用：brew install exiftool"
+            f"未安装 exiftool，无法读取「{condition.field.label}」字段。"
+            "文件名、相册、格式与大小不受影响。安装命令：brew install exiftool"
         )
 
     def _on_search_dismissed(self) -> None:
@@ -473,9 +471,9 @@ class SearchFlowMixin:
             # **说清是哪一种条件**：两个功能坏在同一个原因上（那个卷不许写缓存），而用户看到的
             # 是他自己刚才做的那件事 —— 把话说成他正在用的那个功能，他才不会去别处找原因。
             self._show_banner(
-                "这个库没法建立检索索引，筛选暂时用不了。"
+                "当前库无法建立检索索引，筛选暂不可用。"
                 if self._is_filtering()
-                else "这个库没法建立检索索引，搜索暂时用不了。"
+                else "当前库无法建立检索索引，搜索暂不可用。"
             )
 
     def _forget_indexed_root(self) -> None:

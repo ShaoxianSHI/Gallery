@@ -55,7 +55,7 @@ def test_failed_listing_gives_no_windows() -> None:
 
 
 def test_garbled_listing_gives_no_windows() -> None:
-    assert list_windows(runner_returning(CommandResult(0, "看不懂"))) == []
+    assert list_windows(runner_returning(CommandResult(0, "无法识别"))) == []
 
 
 def test_chrome_is_up_asks_pgrep_not_applescript() -> None:

@@ -159,7 +159,7 @@ def test_a_missing_video_is_reported_in_chinese() -> None:
     with pytest.raises(MovieImportError) as excinfo:
         mango.view_of({"code": 10008, "msg": "视频信息获取失败"}, "999999999")
 
-    assert "芒果 TV 上没有这个视频" in excinfo.value.message
+    assert "芒果 TV 未收录该视频" in excinfo.value.message
 
 
 def test_fetch_only_asks_for_the_vid_but_keeps_the_pageable_code() -> None:

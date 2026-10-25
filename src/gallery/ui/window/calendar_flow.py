@@ -272,7 +272,7 @@ class CalendarFlowMixin:
             return
         self._finish_job("_calendar_job")
         self._clear_progress_notice()
-        self._show_banner(f"日历没能读到拍摄时间：{message}")
+        self._show_banner(f"日历未能读取拍摄时间：{message}")
 
 
 __all__ = ["CalendarFlowMixin"]

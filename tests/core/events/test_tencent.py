@@ -141,7 +141,7 @@ def test_fetch_asks_the_api_then_the_page() -> None:
 
 def test_a_broken_page_does_not_lose_the_title_and_the_cover() -> None:
     """那一刀是补的：站方改版只该让日期与标签空着（与 YouTube 那一支同一个取向）。"""
-    transport = FakeTransport(page=MovieImportError("这一页读不懂。"))
+    transport = FakeTransport(page=MovieImportError("这一页无法解析。"))
 
     movie = tencent.fetch("d4102jjf5cm", client=transport)
 

@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 #: 选中分组卡片而要改的却是**卡片本身**时的那句解释（ADR 0020）。
 #: 摊平之后只有「改名」还会走到这里 —— 卡片不是磁盘上的东西，改不了名也删不掉。
 GROUP_NOT_FILE_ACTION = (
-    "分组不是磁盘上的文件，改不了名也删不掉。双击进入分组后选中里面的照片再操作。"
+    "分组不是磁盘上的文件，无法重命名或删除。请双击进入分组，选中其中的照片后再操作。"
 )
 
 
@@ -170,7 +170,7 @@ class WriteOpsMixin:
         """
         target = self._paste_target()
         if target is None:
-            self._show_banner("这里没有可以粘贴进去的文件夹。")
+            self._show_banner("没有可粘贴到的文件夹。")
             return
         self._paste_into(target)
 
@@ -185,12 +185,12 @@ class WriteOpsMixin:
             return
         sources = desktop.read_files_from_clipboard()
         if not sources:
-            self._show_banner("剪贴板里没有可粘贴的文件。")
+            self._show_banner("剪贴板中没有可粘贴的文件。")
             return
         if self._write_job is not None:
             # 两次写入同时跑会争同一个名字（各自先看「一张 2.jpg」在不在），后到的那个会把
             # 先到的盖掉 —— 粘贴、复制到相册、移动到相册同时只允许一个。
-            self._show_banner("上一次操作还没结束。")
+            self._show_banner("上一次操作尚未结束。")
             return
 
         def work(context: TaskContext) -> object:
@@ -217,7 +217,7 @@ class WriteOpsMixin:
     def _on_paste_failed(self, message: str) -> None:
         self._finish_job("_write_job")
         logger.info("粘贴失败：%s", message)
-        self._show_banner(f"没能粘贴：{message.rstrip('。')}")
+        self._show_banner(f"未能粘贴：{message.rstrip('。')}")
 
     def duplicate_selected(self) -> None:
         """「复制」⌘D：把选中的每一项**在原位置**造一份副本（ADR 0044）。
@@ -235,7 +235,7 @@ class WriteOpsMixin:
             return
         if self._write_job is not None:
             # 与粘贴 / 复制到相册 / 移动到相册同时只允许一个（ADR 0019 决策 6）。
-            self._show_banner("上一次操作还没结束。")
+            self._show_banner("上一次操作尚未结束。")
             return
 
         def work(context: TaskContext) -> object:
@@ -261,7 +261,7 @@ class WriteOpsMixin:
     def _on_duplicate_failed(self, message: str) -> None:
         self._finish_job("_write_job")
         logger.info("复制副本失败：%s", message)
-        self._show_banner(f"没能复制：{message.rstrip('。')}")
+        self._show_banner(f"未能复制：{message.rstrip('。')}")
 
     def create_album(self) -> None:
         """「新建相册」⇧⌘N：在当前这一层建一个空相册，**建完立刻进行内重命名**。
@@ -272,7 +272,7 @@ class WriteOpsMixin:
         library = self._library
         target = self._level_directory()
         if library is None or target is None:
-            self._show_banner("这里没有可以新建相册的文件夹。")
+            self._show_banner("没有可新建相册的文件夹。")
             return
         if self._grid.is_renaming():
             # 键盘正在另一个行内输入框里：新建会让两个输入框同时活着，先做完手上这个。
@@ -305,7 +305,7 @@ class WriteOpsMixin:
         self._refresh_thumbnail_window()
         if not created.journaled:
             # 文件夹已经在手上了，缺的只是一条历史。如实说，别让用户以为「随时可查」。
-            self._show_banner("没能记下操作日志。")
+            self._show_banner("未能记录操作日志。")
         self._grid.begin_rename(self._model.index(row, 0))
 
     # ---- 相册封面（ADR 0028）-------------------------------------------------
@@ -353,7 +353,7 @@ class WriteOpsMixin:
         library = self._library
         photo = self.cover_candidate()
         if library is None or photo is None:
-            self._show_banner("这里没有可以设为相册封面的照片。")
+            self._show_banner("没有可设为相册封面的照片。")
             return
         album = photo.path.parent
         try:
@@ -414,7 +414,7 @@ class WriteOpsMixin:
         """
         ref = self.metadata_edit_candidate()
         if ref is None:
-            self._show_banner("这里没有可以编辑元数据的照片。")
+            self._show_banner("没有可编辑元数据的照片。")
             return
         cached = self._cached_metadata(ref)
         if cached is not None:
@@ -441,7 +441,7 @@ class WriteOpsMixin:
             return  # 已经换库或换照片了：这份元数据不该再跑到界面上
         self._cache_metadata(ref, payload)
         if self.metadata_edit_candidate() != ref:
-            self._show_banner("已经换了一张照片，请在它上面重新点一次「编辑元数据」。")
+            self._show_banner("当前照片已更换，请重新执行「编辑元数据」。")
             return
         self._open_metadata_editor(ref, payload)
 
@@ -449,7 +449,7 @@ class WriteOpsMixin:
         self._finish_job("_metadata_copy_job")
         logger.info("编辑元数据前的元数据读取失败：%s", message)
         if generation == self._generation:
-            self._show_banner(f"读不出「{ref.name}」的元数据，改不了它。")
+            self._show_banner(f"无法读取「{ref.name}」的元数据，不能编辑。")
 
     def _open_metadata_editor(self, ref: PhotoRef, report: MetadataReport) -> None:
         """摆出编辑器。**对话框只产出「用户填的那一份」，写盘在下面那一步**；拍摄时间与位置
@@ -558,7 +558,7 @@ class WriteOpsMixin:
             self._show_banner(NOTHING_SELECTED)
             return
         if self._write_job is not None:
-            self._show_banner("上一次操作还没结束。")
+            self._show_banner("上一次操作尚未结束。")
             return
         verb = "移动" if move else "复制"
 
@@ -590,7 +590,7 @@ class WriteOpsMixin:
     def _on_transfer_failed(self, verb: str, message: str) -> None:
         self._finish_job("_write_job")
         logger.info("%s到相册失败：%s", verb, message)
-        self._show_banner(f"没能{verb}：{message.rstrip('。')}")
+        self._show_banner(f"未能{verb}：{message.rstrip('。')}")
 
     def _selected_entries(self, rows: Sequence[int] | None = None) -> list[GridEntry]:
         """「此刻这些命令作用于谁」—— 网格页是整个选区，大图页是正在看的那一张。
@@ -899,14 +899,14 @@ class WriteOpsMixin:
         """
         library = self._library
         if library is None or not library.events_available:
-            self._show_banner("这个库这次用不了事件功能，没法导入影片。")
+            self._show_banner("当前库无法使用事件功能，不能导入影片。")
             return
         if self._movie_import_job is not None:
-            self._show_banner("上一次导入还没结束。")
+            self._show_banner("上一次导入尚未结束。")
             return
         target = self._current_folder()
         if target is None:
-            self._show_banner("先打开一个相册库，再导入影片。")
+            self._show_banner("请先打开一个库。")
             return
         dialog = MovieImportDialog(self, target=target, source=source)
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -1001,8 +1001,8 @@ class WriteOpsMixin:
         box.setIcon(QMessageBox.Icon.Question)
         box.setWindowTitle("导入影片")
         box.setText(
-            f"抓到 {plan.total} 部影片，其中 {plan.duplicates} 部库里已经有了"
-            "（来源与编号都一样）。\n\n要跳过这些，还是全部再建一遍？"
+            f"获取到 {plan.total} 部影片，其中 {plan.duplicates} 部已存在于库中"
+            "（来源与编号相同）。\n\n要跳过这些，还是全部重新导入？"
         )
         skip = box.addButton("跳过重复", QMessageBox.ButtonRole.AcceptRole)
         box.addButton("全部导入", QMessageBox.ButtonRole.DestructiveRole)

@@ -65,7 +65,7 @@ class FakeWriter:
 
     def write(self, path: Path, assignments: Sequence[Assignment]) -> None:
         if self.refuses:
-            raise MetadataWriteError("磁盘满了，腾出点空间再试。", path=path)
+            raise MetadataWriteError("磁盘已满，请释放空间后重试。", path=path)
         self.writes.append(tuple(item.tag for item in assignments))
         if self.silently_ignores:
             return
@@ -145,7 +145,7 @@ def test_writing_a_field_outside_the_whitelist_is_refused(
 ) -> None:
     writer = FakeWriter()
 
-    with pytest.raises(MetadataWriteError, match="不在可以修改的字段里"):
+    with pytest.raises(MetadataWriteError, match="不是可修改的字段"):
         write_metadata(library, photo, [Assignment(tag, "x")], writer=writer)
 
     assert writer.writes == []  # 连试都没试：它在守卫那一层就被挡下了
@@ -186,7 +186,7 @@ def test_a_file_outside_the_library_is_refused(
     stranger = PhotoRef.from_path(other / "一张.jpg")
     writer = FakeWriter()
 
-    with pytest.raises(MetadataWriteError, match="只能修改库里的照片"):
+    with pytest.raises(MetadataWriteError, match="只能修改库中的照片"):
         write_metadata(library, stranger, list(HANGZHOU), writer=writer)
 
     assert writer.writes == []
@@ -221,7 +221,7 @@ def test_without_exiftool_it_says_so_instead_of_failing_obscurely(
     writer = FakeWriter()
     writer.available_flag = False
 
-    with pytest.raises(MetadataWriteError, match="没有找到 exiftool"):
+    with pytest.raises(MetadataWriteError, match="未找到 exiftool"):
         write_metadata(library, photo, list(HANGZHOU), writer=writer)
 
 
@@ -346,7 +346,7 @@ def test_the_two_kinds_of_nothing_to_write_are_told_apart(library: Path) -> None
     writer = FakeWriter(fields={"XMP:City": "杭州"})
     ref = _photo_with_suffix(library, ".jpg")
 
-    with pytest.raises(MetadataWriteError, match="没有要写入的改动"):
+    with pytest.raises(MetadataWriteError, match="没有需要写入的改动"):
         write_metadata(library, ref, [], writer=writer)
 
     result = write_metadata(library, ref, [Assignment("XMP:City", "杭州")], writer=writer)
@@ -458,7 +458,7 @@ def test_a_silent_failure_is_caught_and_rolled_back(library: Path, photo: PhotoR
     writer = FakeWriter({"XMP:City": "波尔多"})
     writer.silently_ignores = True  # 第一次写没进去，回滚那次照样「没进去」，于是仍是原样
 
-    with pytest.raises(MetadataWriteError, match="写入没有生效"):
+    with pytest.raises(MetadataWriteError, match="写入未生效"):
         write_metadata(library, photo, [Assignment("XMP:City", "杭州")], writer=writer)
 
     assert writer.fields["XMP:City"] == "波尔多"
@@ -504,7 +504,7 @@ def test_how_far_off_a_coordinate_has_to_be_to_count_as_not_written(
 
     writer.write = write  # type: ignore[method-assign]
 
-    with pytest.raises(MetadataWriteError, match="写入没有生效"):
+    with pytest.raises(MetadataWriteError, match="写入未生效"):
         write_metadata(library, photo, list(HANGZHOU), writer=writer)
 
 
@@ -608,7 +608,7 @@ def test_undoing_a_gone_file_says_so(library: Path, photo: PhotoRef) -> None:
     record = _written_record(library, writer, photo)
     photo.path.unlink()
 
-    with pytest.raises(MetadataWriteError, match="撤销不了：找不到"):
+    with pytest.raises(MetadataWriteError, match="无法撤销：未找到"):
         undo_metadata(library, record, writer=writer)
 
 
@@ -698,7 +698,7 @@ def test_a_rollback_that_does_not_take_is_not_reported_as_a_success(
 
     message = str(raised.value)
     assert "EXIF:GPSLongitude" in message, message
-    assert "没能恢复" in message, message
+    assert "未能恢复" in message, message
     # **关键**：不许出现「已经恢复原样」那句 —— 它此刻是假的。
     assert "已经恢复原样" not in message, message
 
@@ -710,7 +710,7 @@ def test_a_rollback_that_really_restores_still_says_so(library: Path, photo: Pho
     writer = FakeWriter({"XMP:City": "波尔多"})
     writer.silently_ignores = True  # 两次写都没进去，于是文件一直是原样
 
-    with pytest.raises(MetadataWriteError, match="已经恢复原样"):
+    with pytest.raises(MetadataWriteError, match="已恢复原样"):
         write_metadata(library, photo, [Assignment("XMP:City", "杭州")], writer=writer)
 
 
@@ -768,7 +768,7 @@ def test_the_rollback_write_gets_a_shorter_timeout_than_the_first_one(
     writer = _TimeoutRecordingWriter({"XMP:City": "波尔多"})
     writer.silently_ignores = True  # 第一次写没进去，于是走回滚
 
-    with pytest.raises(MetadataWriteError, match="写入没有生效"):
+    with pytest.raises(MetadataWriteError, match="写入未生效"):
         write_metadata(library, photo, [Assignment("XMP:City", "杭州")], writer=writer)
 
     assert writer.timeouts, "回滚那次压根没写"
@@ -791,7 +791,7 @@ def test_a_plain_writer_is_not_poked_with_a_timeout_it_does_not_take(
     writer = FakeWriter({"XMP:City": "波尔多"})
     writer.silently_ignores = True
 
-    with pytest.raises(MetadataWriteError, match="写入没有生效"):
+    with pytest.raises(MetadataWriteError, match="写入未生效"):
         write_metadata(library, photo, [Assignment("XMP:City", "杭州")], writer=writer)
 
     assert writer.writes[-1] == ("XMP:City",), "回滚确实发生了（假实现没被 timeout 弄坏）"

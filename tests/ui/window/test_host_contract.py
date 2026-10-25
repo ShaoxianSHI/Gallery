@@ -864,7 +864,7 @@ def test_the_finished_modules_stay_type_clean() -> None:
             print(f"--- {name}\n" + result.stdout)
     assert not dirty, (
         f"这几间已经补完声明了，不该再报：{dirty}。"
-        "新出现的多半是**真问题**（类型变了、或者用了还没声明的宿主成员）—— 别用 ignore 盖掉。"
+        "新出现的通常是**真问题**（类型变了、或者用了尚未声明的宿主成员）—— 别用 ignore 盖掉。"
     )
 
 

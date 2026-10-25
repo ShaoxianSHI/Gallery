@@ -26,7 +26,7 @@ from gallery.ui.main_window import MainWindow  # noqa: E402
 
 #: 菜单末尾那一条动作，与空名单时那一句占位。
 CLEAR_TEXT = "清除最近打开"
-PLACEHOLDER_TEXT = "（还没有）"
+PLACEHOLDER_TEXT = "（暂无最近打开的库）"
 
 
 @pytest.fixture

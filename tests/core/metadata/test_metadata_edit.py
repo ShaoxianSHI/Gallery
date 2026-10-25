@@ -220,11 +220,11 @@ def test_the_two_halves_do_not_interfere_when_one_is_cleared(state: MetadataStat
     [
         (
             {"capture": CaptureTimeEdit(taken_at="昨天下午", offset="+08:00")},
-            "拍摄时间看不懂",
+            "无法识别拍摄时间",
         ),
         (
             {"place": PlaceEdit(city="南京", latitude=30.0)},
-            "要一起填",
+            "需同时填写",
         ),
     ],
 )
@@ -296,6 +296,6 @@ def test_an_empty_plan_is_not_handed_to_the_write_back(tmp_path: Path) -> None:
     plan = plan_metadata_edit(state, fill_edit(state))
 
     assert plan.is_empty
-    with pytest.raises(MetadataWriteError, match="没有要写入的改动"):
+    with pytest.raises(MetadataWriteError, match="没有需要写入的改动"):
         write_metadata(root, photo, plan.assignments, writer=FakeWriter())
     assert read_records(root) == []  # 一次假写回也不该记账

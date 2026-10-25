@@ -187,7 +187,7 @@ def view_of(html: str, code: str) -> MovieInfo:
     title = _title_of(html, meta)
     if not title:
         raise MovieImportError(
-            f"Pornhub 这一页没给出影片信息：{code}。站方可能改了页面结构，用浏览器打开看看吧。"
+            f"Pornhub 这一页未提供影片信息：{code}。站点可能更改了页面结构，请在浏览器中打开确认。"
         )
     duration = (
         _seconds(flash.get("video_duration"))
@@ -211,9 +211,9 @@ def view_of(html: str, code: str) -> MovieInfo:
 def _raise_if_unavailable(html: str, code: str) -> None:
     """页面自己说了「不在」的时候给一句中文，别让用户去查编号。"""
     if any(mark in html for mark in _GEO_MARKS):
-        raise MovieImportError(f"这个视频在当前的网络所在地看不到：{code}。")
+        raise MovieImportError(f"该视频在当前的网络所在地看不到：{code}。")
     if _MISSING_RE.search(html):
-        raise MovieImportError(f"Pornhub 上没有这个视频，或者它已被删除 / 设为私密：{code}。")
+        raise MovieImportError(f"Pornhub 未收录该视频，或它已被删除 / 设为私密：{code}。")
 
 
 def _title_of(html: str, meta: Mapping[str, str]) -> str:
@@ -321,12 +321,12 @@ def fetch(code: str, *, client: Transport) -> MovieInfo:
     """
     normalized = normalize_code(code)
     if not _ID_RE.fullmatch(normalized):
-        raise MovieImportError(f"这不是一个 Pornhub 的编号：{code}。")
+        raise MovieImportError(f"不是有效的 Pornhub 编号：{code}。")
     try:
         html = client.get_text(movie_url(normalized))
     except SourcePageError as exc:
         if exc.status == 404:
-            raise MovieImportError(f"Pornhub 上没有这个视频：{normalized}。") from exc
+            raise MovieImportError(f"Pornhub 未收录该视频：{normalized}。") from exc
         raise
     return view_of(html, normalized)
 

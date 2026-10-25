@@ -640,7 +640,7 @@ def test_a_picked_empty_cell_shows_only_the_selection_tint(
     }
     # 底色是半透明的，落到屏幕上要与窗口底色掺过 —— 所以只断言「**整格是同一个颜色**，
     # 且那个颜色不是底色」：多一个占位圆点就会有两种颜色。
-    assert len(painted) == 1, f"那一格里不止一种颜色（多半是那个占位圆点）：{sorted(painted)}"
+    assert len(painted) == 1, f"那一格里不止一种颜色（通常是那个占位圆点）：{sorted(painted)}"
     assert painted != {view.background.name()}, "点中的那一格没有铺选中底色"
 
 

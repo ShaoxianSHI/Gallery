@@ -72,7 +72,7 @@ def rename_entry(
         # 它身上；真漏到这里要给一句说人话的错，而不是 AttributeError。
         cover = entry.group.cover
         raise RenameError(
-            f"「{entry.label}」是分区的标题，不是磁盘上的文件，改不了名。选中它下面的照片再改名。",
+            f"「{entry.label}」是分区的标题，不是磁盘上的文件，无法重命名。请选中它下面的照片后再重命名。",
             path=cover.path if cover is not None else None,
         )
     if isinstance(entry, GroupRef):
@@ -92,7 +92,7 @@ def rename_entry(
     _guard(root, source, target)
     if target.exists():
         raise RenameError(
-            f"这里已经有一个叫「{target.name}」的东西了，换个名字。",
+            f"这里已经有一个叫「{target.name}」已存在，请更换名称。",
             path=target,
         )
     is_dir = isinstance(entry, FolderRef)
@@ -154,12 +154,12 @@ def undo_rename_record(
     source, target = record.target, record.source  # 反过来改回去
     if not source.exists():
         raise RenameError(
-            f"撤销不了：找不到「{source.name}」，它可能已经被移动或删除了。",
+            f"无法撤销：未找到「{source.name}」，它可能已被移动或删除。",
             path=source,
         )
     if target.exists():
         raise RenameError(
-            f"撤销不了：「{target.name}」已经被别的文件占用了。",
+            f"无法撤销：「{target.name}」已被其他文件占用。",
             path=target,
         )
     # 引用要在改名**之前**取：改完之后旧路径已经不存在了。
@@ -213,7 +213,7 @@ def _guard(root: Path, source: Path, target: Path) -> None:
 _GUARD_MESSAGES: Final = {
     paths.GuardReason.OUTSIDE_ROOT: "只能重命名库里的东西：{path}。",
     paths.GuardReason.IS_ROOT: "这是库本身，改名会让 Gallery 找不到照片。",
-    paths.GuardReason.IS_CONFIG_DIR: "这是 Gallery 自己的配置目录，不能改名。",
+    paths.GuardReason.IS_CONFIG_DIR: "这是 Gallery 的配置目录，不能重命名。",
 }
 
 
@@ -234,8 +234,8 @@ def _keep_suffix(entry: PhotoRef, cleaned: str) -> str:
         return cleaned + entry.suffix
     if suffix.lower() != entry.suffix:
         raise RenameError(
-            f"不能改扩展名：{entry.suffix} 换成 {suffix} 之后，"
-            "这个文件就不再是 Gallery 认得的格式了。",
+            f"不能修改扩展名：从 {entry.suffix} 改为 {suffix} 后，"
+            "文件将不再属于 Gallery 支持的格式。",
             path=entry.path,
         )
     return cleaned

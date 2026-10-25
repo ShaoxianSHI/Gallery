@@ -178,8 +178,8 @@ def locate(hits: Sequence[SearchHit], code: str) -> SearchHit:
     if len(hits) == 1:
         return hits[0]
     if not hits:
-        raise MovieImportError(f"源站没有这个编号：{code}。")
-    raise MovieImportError(f"编号 {code} 找到多条近似结果，没法确定是哪一部。")
+        raise MovieImportError(f"源站未收录该编号：{code}。")
+    raise MovieImportError(f"编号 {code} 找到多条近似结果，无法确定是哪一部。")
 
 
 def no_search_results(html: str, code: str) -> MovieImportError:
@@ -189,8 +189,8 @@ def no_search_results(html: str, code: str) -> MovieImportError:
     等一会儿再试）—— 混成一句「查不到番号」会把人支到错的那条路上。
     """
     if _EMPTY_PAGE_RE.search(html):
-        return MovieImportError(f"源站没有这个编号：{code}。换一个试试，或者确认它的写法。")
-    return MovieImportError(f"源站没给出搜索结果：{code}。多半是被限速或挡住了，等一会儿再试一次。")
+        return MovieImportError(f"源站未收录该编号：{code}。请核对写法，或更换编号后重试。")
+    return MovieImportError(f"源站未提供搜索结果：{code}。通常是限速或访问受限，请稍后重试。")
 
 
 def parse_detail(html: str, code: str, *, base: str, hit: SearchHit | None = None) -> MovieInfo:

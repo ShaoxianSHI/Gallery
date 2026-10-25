@@ -113,8 +113,8 @@ def test_a_long_message_wraps_instead_of_being_cut(qt_app: QApplication) -> None
     """长消息换行时变高，而不是被裁掉半行（高度是按宽度算出来的）。"""
     metrics = QFontMetrics(qt_app.font())
     text = (
-        "已把 3 项移到废纸篓，但其中一项没移走：「一张 2.jpg」早就不在了；"
-        "⌘Z 可以撤销上面那两项，完整列表在日志里。"
+        "已将 3 项移到废纸篓，但其中一项没移走：「一张 2.jpg」早就不在了；"
+        "⌘Z 可撤销上面那两项，完整列表在日志里。"
     )
     one_line = text_height(text, MAX_WIDTH * 4, metrics)
     wrapped = text_height(text, MAX_WIDTH, metrics)
@@ -272,7 +272,7 @@ def test_showing_a_message_does_not_touch_the_area_underneath(
     qt_app.processEvents()
     before = host.geometry()
 
-    banner.show_message("已把 3 项移到废纸篓。⌘Z 可以撤销。", auto_hide_seconds=0.05)
+    banner.show_message("已将 3 项移到废纸篓。⌘Z 可撤销。", auto_hide_seconds=0.05)
     qt_app.processEvents()
 
     assert banner.isVisible()
@@ -453,7 +453,7 @@ def test_a_message_that_needs_reading_stays(qt_app: QApplication, host: QWidget)
     """出错、这一层是空的、后台进度 —— 都不给 ``auto_hide_seconds``，就一直在。"""
     banner = BannerOverlay(host)
     banner.reposition(QRect(0, 0, 800, 600))
-    banner.show_message("读取元数据失败，按默认顺序显示：…")
+    banner.show_message("读取元数据失败，已按默认顺序显示：…")
     qt_app.processEvents()
 
     assert not banner.auto_hide_pending
@@ -466,10 +466,10 @@ def test_a_new_message_replaces_the_one_before_it(qt_app: QApplication, host: QW
     banner.show_message("已重命名为「一.jpg」。", auto_hide_seconds=0.05)
     qt_app.processEvents()
 
-    banner.show_message("没能粘贴：磁盘满了")
+    banner.show_message("未能粘贴：磁盘满了")
     qt_app.processEvents()
 
-    assert banner.text() == "没能粘贴：磁盘满了"
+    assert banner.text() == "未能粘贴：磁盘满了"
     assert not banner.auto_hide_pending, "先前的定时器不该把留着的那一句也收掉"
 
 

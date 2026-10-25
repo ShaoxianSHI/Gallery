@@ -152,7 +152,7 @@ def test_a_missing_page_is_told_apart_from_a_broken_one() -> None:
             "19rqxr146g",
             client=FakeTransport(page=SourcePageError(404, "https://m.iqiyi.com/v_x.html")),
         )
-    assert "没有这个视频" in excinfo.value.message
+    assert "未收录该视频" in excinfo.value.message
 
     with pytest.raises(SourcePageError):
         iqiyi.fetch(

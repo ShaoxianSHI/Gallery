@@ -357,7 +357,7 @@ class EventEditDialog(QDialog):
         **只取 ``name``，不 ``stat``**：这一行要在面板打开的那一刻就画出来，
         而那是主线程 —— 一次 ``stat`` 在云盘上可能几十毫秒，而文件名就够了。
         """
-        text = path.name if path is not None else "未设置（用第一张照片）"
+        text = path.name if path is not None else "未设置（使用第一张照片）"
         self._cover_label.setText(text)
         self._cover_label.setToolTip(str(path) if path is not None else "")
 
@@ -389,7 +389,7 @@ class EventEditDialog(QDialog):
         line = QLineEdit()
         line.setMinimumWidth(FIELD_MIN_WIDTH)
         if field.multiple:
-            line.setPlaceholderText("多个用逗号分开")
+            line.setPlaceholderText("多个用逗号分隔")
         if field.id in {"title", "started_on", *self._kind.title_parts}:
             # 名称自动长成「日期 · 关键字段」靠的就是这几栏互相看着（见 :meth:`_suggest_title`）。
             line.textChanged.connect(self._suggest_title)
@@ -404,7 +404,7 @@ class EventEditDialog(QDialog):
         column = QVBoxLayout()
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(4)
-        self._include_range = QCheckBox("把开始到结束之间的照片都记进来")
+        self._include_range = QCheckBox("把开始到结束之间的照片都记入")
         self._include_range.setChecked(self._event is None)
         column.addWidget(self._include_range)
         return column

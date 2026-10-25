@@ -101,7 +101,7 @@ def largest_delta_that_keeps_columns(
             return delta
     raise AssertionError(
         f"宽度 {limit - 1} 到 1 之间没有一个增量能保住 {columns} 列 —— "
-        f"这条守护没法表达「变化太小」这个前提"
+        f"这条守护无法表达「变化太小」这个前提"
     )
 
 

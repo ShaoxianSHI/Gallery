@@ -355,9 +355,9 @@ class SearchField(QWidget):
         """
         self._edit.setPlaceholderText(PLACEHOLDER_FILTER if filtering else PLACEHOLDER_SEARCH)
         self.setToolTip(
-            "在这些条件里筛选当前这一层（切到全部照片就筛整库，切到日历就筛日历）"
+            "用这些条件筛选当前层级（「全部照片」下筛选整库，「日历」下筛选日历）"
             if filtering
-            else "在整个库里检索（切到筛选按钮可以只筛当前这一层）"
+            else "在整个库中检索（切换到筛选可只筛当前层级）"
         )
 
     def focus_search(self) -> None:

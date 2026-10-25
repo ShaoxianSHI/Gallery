@@ -192,14 +192,14 @@ def _decode_now(path: Path, *, max_edge: int | None, use_draft: bool) -> RasterI
     """真正去解码：``open`` → ``draft`` → 摆正 → 缩放 → 取像素（时限见 :func:`_within_deadline`）。
 
     **文件由我们自己打开**而不是交给 ``Image.open(path)``，才分得清「打不开」（没权限 / 云盘占位
-    没下完 / 已被移走）与「打开了却读不出像素」（损坏、截断、编码器不认）；前者绝不能被说成
+    没下完 / 已被移走）与「打开了却无法读取像素」（损坏、截断、编码器不认）；前者绝不能被说成
     「已损坏」，否则用户可能去抢救一个根本没坏的文件。顺带：失败时句柄一定被关掉。
     """
     try:
         stream = path.open("rb")
     except FileNotFoundError as exc:
         raise ImageDecodeError(
-            f"无法解码 {path.name}：文件已经不在原处。",
+            f"无法解码 {path.name}：文件已不在原处。",
             path=path,
             detail=str(exc),
         ) from exc
@@ -252,7 +252,7 @@ def _oriented(image: Image.Image) -> Image.Image:
     try:
         orientation = image.getexif().get(ExifTags.Base.Orientation)
     except (OSError, ValueError, SyntaxError):
-        # 坏掉的 EXIF 不该让整张照片解不出来；归位「像素读不出」，交给调用方统一报。
+        # 坏掉的 EXIF 不该让整张照片解不出来；归位「像素读不出来」，交给调用方统一报。
         return image
     if orientation in _NO_ROTATION:
         return image
@@ -264,14 +264,14 @@ def _bomb_message(path: Path) -> str:
 
 
 def _unreachable_message(path: Path) -> str:
-    """读不出内容（多半是没下完）时说的话 —— 必须让用户知道该做什么。
+    """无法读取内容（多半是没下完）时说的话 —— 必须让用户知道该做什么。
 
     这与「文件损坏」是**两回事**，措辞也不同：云盘同步中的照片等一会儿就好了，照着
     「已损坏」去抢救文件只会白忙一场。
     """
     return (
-        f"读不出 {path.name}：文件可能还没下载完，比如云盘同步中的照片，"
-        f"也可能正被别的程序占用。等它下载完再打开即可。"
+        f"无法读取 {path.name}：文件可能尚未下载完成，例如仍在云盘同步，"
+        f"也可能正被其他程序占用。请等待下载完成后再打开。"
     )
 
 

@@ -360,7 +360,7 @@ def _open_a_v3_events_db(root: Path) -> Path:
         legacy.execute(old_schema.replace("rating INTEGER", "rating REAL"))
         legacy.executemany(
             "INSERT INTO events (kind, title, created_at, modified_at) VALUES ('movie', ?, 1, 1)",
-            [("一部影片",), ("还没人评",)],
+            [("一部影片",), ("尚未人评",)],
         )
         legacy.executemany(
             f"INSERT INTO {MOVIE.table} (event_id, code, rating) VALUES (?, ?, ?)",
@@ -394,7 +394,7 @@ def test_the_movie_rating_migration_rounds_old_values_into_the_five_buttons(
         assert store is not None
         by_title = {event.title: event for event in store.all_events()}
         assert by_title["一部影片"].text("rating") == "5"
-        assert by_title["还没人评"].text("rating") == ""
+        assert by_title["尚未人评"].text("rating") == ""
 
         # 旧列声明是 REAL，写进去的整数会被读成 4.0 —— 读回来仍要能与按钮上的「4」对上。
         updated = store.update(
@@ -863,7 +863,7 @@ def test_deleting_an_event_that_is_already_gone_is_a_chinese_error(events: Event
     with pytest.raises(EventNotFoundError) as excinfo:
         events.delete(trip.id)
 
-    assert "不在了" in excinfo.value.message
+    assert "已不存在" in excinfo.value.message
 
 
 def test_updating_an_event_that_is_already_gone_is_a_chinese_error(events: EventStore) -> None:
@@ -871,4 +871,4 @@ def test_updating_an_event_that_is_already_gone_is_a_chinese_error(events: Event
     with pytest.raises(EventNotFoundError) as excinfo:
         events.update(999, _draft())
 
-    assert "不在了" in excinfo.value.message
+    assert "已不存在" in excinfo.value.message

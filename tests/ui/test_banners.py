@@ -50,13 +50,13 @@ def test_a_failed_journal_says_so_because_undo_is_gone(tmp_path: Path) -> None:
     lost = RenameResult(entry=after, previous=before, renamed=True, journaled=False)
 
     assert banners.rename_banner(ok) == "已重命名为「改名后.jpg」。"
-    assert "⌘Z 撤销不了" in banners.rename_banner(lost)
+    assert "⌘Z 不可撤销" in banners.rename_banner(lost)
 
 
 def test_the_undo_note_is_empty_when_everything_worked() -> None:
     """正常时不啰嗦 —— 横幅只有一行容身之地。"""
     assert banners.undo_note(True) == ""
-    assert "没能记下操作日志" in banners.undo_note(False)
+    assert "未能记录操作日志" in banners.undo_note(False)
 
 
 def test_one_failure_names_it_and_several_do_not(tmp_path: Path) -> None:
@@ -65,10 +65,10 @@ def test_one_failure_names_it_and_several_do_not(tmp_path: Path) -> None:
     多项时横幅只有一行，说「其中一项：磁盘满了」比列三个文件名有用得多 ——
     完整列表在日志里。
     """
-    one = [Failure.at(tmp_path / "京都" / "一张.jpg", "磁盘满了，腾出点空间再试。")]
+    one = [Failure.at(tmp_path / "京都" / "一张.jpg", "磁盘已满，请释放空间后重试。")]
     many = one + [Failure.at(tmp_path / "奈良" / "两张.jpg", "没有权限（Permission denied）。")]
 
-    assert banners.first_reason(one) == "「一张.jpg」：磁盘满了，腾出点空间再试"
+    assert banners.first_reason(one) == "「一张.jpg」：磁盘已满，请释放空间后重试"
     assert banners.first_reason(many).startswith("其中一项：")
     assert banners.first_reason([]) == "原因不明"
 
@@ -121,7 +121,7 @@ def test_the_duplicate_banner_names_the_copy_it_made(tmp_path: Path) -> None:
 
     text = banners.duplicate_banner(result)
 
-    assert text == "已复制 1 份副本，新名字是「a的副本.jpg」。"
+    assert text == "已复制 1 份副本，新名称为「a的副本.jpg」。"
     assert "（" not in text, "横幅不放括号解释，名字也要写成一句话"
 
 
@@ -178,7 +178,7 @@ def test_the_duplicate_banner_says_about_the_journal_when_it_could_not_write_it(
         journaled=False,
     )
 
-    assert "没能记下操作日志" in banners.duplicate_banner(result)
+    assert "未能记录操作日志" in banners.duplicate_banner(result)
 
 
 def test_a_move_that_only_copied_does_not_offer_undo(tmp_path: Path) -> None:
@@ -204,7 +204,7 @@ def test_a_move_that_did_both_still_offers_undo(tmp_path: Path) -> None:
 
     text = banners.transfer_banner(result, "京都", "移动")
 
-    assert "⌘Z 可以撤销" in text
+    assert "⌘Z 可撤销" in text
     assert "已移动 1 项" in text
     assert "已复制一份" in text
 
@@ -219,18 +219,18 @@ def test_the_trash_banner_knows_when_an_album_went_as_a_whole(tmp_path: Path) ->
     )
     photo_text = banners.trash_banner(TrashResult(moved=(photo_only,)))
 
-    assert "相册「京都」和里面的内容" in album_text
+    assert "相册「京都」及其内容" in album_text
     assert "相册" not in photo_text
 
 
 def test_trashing_nothing_says_why_rather_than_pretending_it_worked(tmp_path: Path) -> None:
     """**什么都没移走时要说出原因**，而不是报一次「已移到废纸篓」。"""
-    result = TrashResult(failures=(Failure.at(tmp_path / "a.jpg", "磁盘满了，腾出点空间再试。"),))
+    result = TrashResult(failures=(Failure.at(tmp_path / "a.jpg", "磁盘已满，请释放空间后重试。"),))
 
     text = banners.trash_banner(result)
 
-    assert text.startswith("没有移走任何东西：")
-    assert "磁盘满" in text
+    assert text.startswith("未移走任何项目：")
+    assert "磁盘已满" in text
 
 
 def test_the_undo_banner_distinguishes_rename_from_move(tmp_path: Path) -> None:
@@ -245,7 +245,7 @@ def test_the_undo_banner_distinguishes_rename_from_move(tmp_path: Path) -> None:
     moved = banners.undo_banner(UndoResult(action=ACTION_MOVE, entries=()))
 
     assert "恢复为「原名.jpg」" in renamed
-    assert "挪回原来的相册" in moved
+    assert "移回原相册" in moved
 
 
 def test_album_name_is_empty_when_there_is_no_album(tmp_path: Path) -> None:
@@ -261,7 +261,7 @@ def test_a_transfer_that_only_partly_happened_says_so(tmp_path: Path) -> None:
     """**部分成功要如实说**：横幅只给一条，但要说清移了几项、哪一项没移成。"""
     result = MoveResult(
         moved=(MovedItem(source=tmp_path / "a.jpg", created=tmp_path / "京都" / "a.jpg"),),
-        failures=(Failure.at(tmp_path / "b.jpg", "磁盘满了，腾出点空间再试。"),),
+        failures=(Failure.at(tmp_path / "b.jpg", "磁盘已满，请释放空间后重试。"),),
     )
 
     text = banners.transfer_banner(result, "京都", verb="移动")
@@ -287,7 +287,7 @@ def test_the_cover_banner_names_both_the_photo_and_its_album() -> None:
     """用户是在**相册内部**按的右键：只说「已设为封面」他得自己回去确认设的是哪个相册。"""
     text = banners.album_cover_banner("京都", "一张.jpg")
 
-    assert text == "已把「一张.jpg」设为「京都」的封面。"
+    assert text == "已将「一张.jpg」设为「京都」的封面。"
 
 
 def test_the_cover_banner_never_promises_an_undo() -> None:
@@ -299,7 +299,7 @@ def test_the_cover_banner_never_promises_an_undo() -> None:
 
 def test_clearing_the_cover_says_what_it_fell_back_to() -> None:
     """取消之后得说清它回到了**什么行为**上 —— 「第一张照片」，而不是「已取消」。"""
-    assert banners.album_cover_cleared_banner("京都") == "「京都」恢复用里面的第一张照片当封面。"
+    assert banners.album_cover_cleared_banner("京都") == "「京都」已恢复为使用第一张照片作封面。"
 
 
 # ---- 编辑元数据（ADR 0030 / 0031 / 0032）------------------------------------------------
@@ -331,20 +331,20 @@ def test_the_metadata_edit_banner_is_one_line_and_nothing_else() -> None:
     前提下按的保存。横幅再说一遍是重复，而且重复的那一遍还在动作**之后**才到 ——
     那时候它已经不能改变任何决定了。
     """
-    assert metadata_edit_banner(_outcome(), "一张.jpg") == "已更新「一张.jpg」的位置。⌘Z 可以撤销。"
+    assert metadata_edit_banner(_outcome(), "一张.jpg") == "已更新「一张.jpg」的位置；⌘Z 可撤销。"
 
 
 def test_the_banner_says_when_it_cannot_be_undone() -> None:
     """这一句不是重复：它不是「发生了什么」，而是「你刚才按 ⌘Z 会发生什么」。"""
     text = metadata_edit_banner(_outcome(journaled=False), "一张.jpg")
 
-    assert text == "已更新「一张.jpg」的位置。⌘Z 撤销不了：没能记下操作日志。"
+    assert text == "已更新「一张.jpg」的位置；未能记录操作日志，⌘Z 不可撤销。"
 
 
 def test_the_banner_says_nothing_changed_when_nothing_did() -> None:
     assert (
         metadata_edit_banner(_outcome(written=False), "一张.jpg")
-        == "「一张.jpg」的元数据没有改动。"
+        == "「一张.jpg」的元数据未做改动。"
     )
 
 
@@ -368,7 +368,7 @@ def test_the_banner_says_which_part_actually_changed(
         _outcome(capture_changed=capture_changed, place_changed=place_changed), "一张.jpg"
     )
 
-    assert text.startswith(f"已更新「一张.jpg」的{what}。")
+    assert text.startswith(f"已更新「一张.jpg」的{what}；")
 
 
 def test_undo_banner_for_a_place_mentions_the_fields_it_refused_to_touch() -> None:
@@ -379,7 +379,7 @@ def test_undo_banner_for_a_place_mentions_the_fields_it_refused_to_touch() -> No
         failures=(Failure(name="XMP:City", message="这一项在 Gallery 之外被改过。"),),
     )
 
-    assert "只撤销了一部分" in undo_banner(result)
+    assert "仅部分撤销" in undo_banner(result)
     assert "1 项" in undo_banner(result)
 
 
@@ -388,14 +388,12 @@ def test_undo_banner_for_a_clean_place_undo_says_it_is_back() -> None:
         action=ACTION_METADATA, entries=(PhotoRef(path=Path("/库/一张.jpg"), size=1, mtime_ns=3),)
     )
 
-    assert undo_banner(result) == "已撤销，「一张.jpg」的位置恢复原样。"
+    assert undo_banner(result) == "已撤销，「一张.jpg」的位置已恢复。"
 
 
 def test_external_banner_says_it_opened_in_the_app() -> None:
     outcome = OpenOutcome(where=WHERE_APP)
-    assert (
-        banners.external_app_opened(outcome, "Google 日历") == "已在 Google 日历中打开当前这一页。"
-    )
+    assert banners.external_app_opened(outcome, "Google 日历") == "已在 Google 日历中打开当前页。"
 
 
 def test_external_banner_says_it_opened_in_the_browser() -> None:
@@ -419,17 +417,17 @@ def test_external_banner_keeps_the_reason_of_a_fallback() -> None:
 def test_calendar_banner_names_the_app_without_a_leading_space() -> None:
     """苹果那一项的名字是汉字：应用名前面不留空格，那份带空格的是给拉丁名字的。"""
     outcome = OpenOutcome(where=WHERE_APP)
-    assert banners.calendar_opened(outcome, "日历") == "已在「日历」中打开这一页对应的日期。"
+    assert banners.calendar_opened(outcome, "日历") == "已在「日历」中打开当前页对应的日期。"
 
 
 def test_calendar_banner_keeps_the_reason_it_could_not_open() -> None:
     """打不开时那句原因原样出来 —— 授权被拒的提示是用户唯一能照着做的东西。"""
     outcome = OpenOutcome(
         where=WHERE_APP,
-        detail="没能控制「日历」：请在「系统设置 › 隐私与安全性 › 自动化」里允许",
+        detail="未能控制「日历」：请在「系统设置 › 隐私与安全性 › 自动化」里允许",
     )
     assert banners.calendar_opened(outcome, "日历") == (
-        "没能控制「日历」：请在「系统设置 › 隐私与安全性 › 自动化」里允许。"
+        "未能控制「日历」：请在「系统设置 › 隐私与安全性 › 自动化」里允许。"
     )
 
 
@@ -460,14 +458,14 @@ def test_a_failed_journal_on_an_edit_says_undo_is_gone() -> None:
     """记账失败必须说出来 —— 与元数据那一族同一套规矩。"""
     outcome = EventWriteOutcome(event=_event(), journaled=False)
 
-    assert "⌘Z 撤销不了" in banners.event_updated_banner(outcome)
+    assert "⌘Z 不可撤销" in banners.event_updated_banner(outcome)
 
 
 def test_an_unchanged_edit_says_nothing_happened() -> None:
     """面板存了一份与库里逐字段一样的内容时，说「已更新」就是撒谎。"""
     outcome = EventWriteOutcome(event=_event(), journaled=True, changed=False)
 
-    assert "没有改动" in banners.event_updated_banner(outcome)
+    assert "未做改动" in banners.event_updated_banner(outcome)
 
 
 def test_deleting_an_event_says_how_many_photos_lost_the_record() -> None:
@@ -487,7 +485,7 @@ def test_deleting_an_event_says_how_many_photos_lost_the_record() -> None:
 def test_binding_says_how_many_were_new() -> None:
     """**新记进去几张**说清 —— 已经记着的那些不是这次的成果。"""
     assert "3 张" in banners.photos_bound_banner(3, "京都五日")
-    assert banners.photos_bound_banner(0, "京都五日").startswith("这些照片已经在")
+    assert banners.photos_bound_banner(0, "京都五日").startswith("这些照片已在")
 
 
 def test_a_long_event_name_is_elided_on_the_banner() -> None:
@@ -503,12 +501,12 @@ def test_a_long_event_name_is_elided_on_the_banner() -> None:
 
 def test_binding_by_a_date_range_says_why_there_are_so_many() -> None:
     """按日期范围是几百张的批量操作，用户该知道它为什么这么多。"""
-    assert banners.photos_bound_banner(312, "京都五日", by_range=True).startswith("按日期范围把")
+    assert banners.photos_bound_banner(312, "京都五日", by_range=True).startswith("已按日期范围将")
 
 
 def test_unbinding_reports_the_count() -> None:
     assert "2 张" in banners.photos_unbound_banner(2, "京都五日")
-    assert "本来就不在" in banners.photos_unbound_banner(0, "京都五日")
+    assert "原本不在" in banners.photos_unbound_banner(0, "京都五日")
 
 
 def test_undoing_a_delete_says_it_came_back() -> None:
@@ -519,7 +517,7 @@ def test_undoing_a_delete_says_it_came_back() -> None:
     changed = UndoResult(action=ACTION_EVENT, entries=(), event=_event(), journaled=True)
 
     assert "恢复" in banners.event_undo_banner(restored, "事件")
-    assert "改回去" in banners.event_undo_banner(changed, "事件")
+    assert "改动" in banners.event_undo_banner(changed, "事件")
     assert "京都五日" in banners.event_undo_banner(changed, "事件")
 
 
@@ -542,5 +540,5 @@ def test_forgetting_orphans_says_the_photos_were_not_touched() -> None:
     """「照片本身没有动过」要留着 —— 但写成一个分句，不放进括号里。"""
     text = banners.orphans_forgotten_banner(3)
 
-    assert text == "已清掉 3 条指向已不存在照片的记录，照片本身没有动过。"
+    assert text == "已清理 3 条指向已不存在照片的记录；照片未被改动。"
     assert "（" not in text

@@ -258,7 +258,7 @@ def test_all_three_levels_are_built_before_the_style_goes_out(
     menu = _context(window, row)
     record_as = _submenu(menu, "记录为")
     kinds = _submenu(record_as, "旅行")
-    leave = _submenu(record_as, "从这次事件移出")
+    leave = _submenu(record_as, "从该事件移出")
 
     # 三层**都**拿到了样式表。第三层若是在 ``apply_style`` 之后才建出来的（挂在某一次展开里），
     # 它会是一张系统默认的白底菜单 —— 而那个症状在离屏下几乎看不出来，所以这里断的是
@@ -285,7 +285,7 @@ def test_the_record_as_menu_draws_the_same_solid_arrows(
     record_as.popup(QPoint(60, 60))
     try:
         assert record_as.activeAction() is None, "有行被高亮了，数墨迹就数不出箭头"
-        for label in ("旅行", "从这次事件移出"):
+        for label in ("旅行", "从该事件移出"):
             action = next(a for a in record_as.actions() if a.text() == label)
             assert _arrow_ink(record_as, action) > 0, f"「{label}」那一行的箭头没画出来"
     finally:
@@ -407,7 +407,7 @@ def test_every_right_click_menu_elides_a_long_event_name(
     record_as = _submenu(_context(window, row), "记录为")
     trip = _submenu(record_as, "旅行")
     trip.aboutToShow.emit()
-    leave = _submenu(record_as, "从这次事件移出")
+    leave = _submenu(record_as, "从该事件移出")
     leave.aboutToShow.emit()
     edit = _submenu(_context(window, row), "编辑事件")
     cover = _submenu(_context(window, row), "设为事件封面")
@@ -429,7 +429,7 @@ def test_leaving_an_event(qt_app: QApplication, window: MainWindow) -> None:
     event = library.create_event("trip", EventDraft(values={"title": "京都五日"})).event
     library.bind_photos(_paths(window, "京都-01.jpg", "京都-02.jpg"), event.id)
     row = _select(window, "京都-01.jpg")
-    leave = _submenu(_submenu(_context(window, row), "记录为"), "从这次事件移出")
+    leave = _submenu(_submenu(_context(window, row), "记录为"), "从该事件移出")
     leave.aboutToShow.emit()
 
     assert leave.isEnabled()
@@ -647,7 +647,7 @@ def test_the_event_group_card_offers_editing_and_leaving(
     menu = _context(window, card_row)
 
     assert "编辑事件…" in _texts(menu)
-    assert "从这次事件移出" in _texts(menu)
+    assert "从该事件移出" in _texts(menu)
     assert "复制分组条件" in _texts(menu)
 
 
@@ -662,7 +662,7 @@ def test_an_ordinary_group_card_has_no_event_entries(
     menu = _context(window, card_row)
 
     assert "编辑事件…" not in _texts(menu)
-    assert "从这次事件移出" not in _texts(menu)
+    assert "从该事件移出" not in _texts(menu)
 
 
 def test_leaving_the_event_from_its_card(qt_app: QApplication, window: MainWindow) -> None:
@@ -1785,7 +1785,7 @@ def test_a_bad_date_keeps_the_dialog_open(qt_app: QApplication) -> None:
     dialog._on_accept()
 
     assert dialog.result() == 0
-    assert "开始日期看不懂" in dialog._error.text()
+    assert "无法识别开始日期" in dialog._error.text()
     assert dialog.edit().draft.text("destination") == ""
 
 
@@ -1850,7 +1850,7 @@ def test_deleting_an_event_that_is_already_gone_says_so(
 
     window.delete_event(trip.id)
 
-    assert window._banner.text() == "这个事件已经不在了。"
+    assert window._banner.text() == "该事件已不存在。"
 
 
 def test_an_unexpected_failure_while_deleting_says_where_the_log_is(
@@ -1896,11 +1896,11 @@ def test_a_section_header_offers_the_event_commands(
     menu = _context(window, header)
     texts = _texts(menu)
     assert "编辑事件…" in texts
-    assert "从这次事件移出" in texts
+    assert "从该事件移出" in texts
     assert "复制分组条件" in texts
     assert "在访达中显示" not in texts, "标题不在选区里，作用在选区上的命令不该出现"
 
-    next(action for action in menu.actions() if action.text() == "从这次事件移出").trigger()
+    next(action for action in menu.actions() if action.text() == "从该事件移出").trigger()
     wait_until(qt_app, lambda: library.events.photos_of_event(trip.id) == ())
 
     assert library.event(trip.id) is not None

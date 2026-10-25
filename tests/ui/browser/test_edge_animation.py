@@ -1127,7 +1127,7 @@ def test_the_column_check_does_not_flash_the_frame_to_the_final_size(
     monkeypatch.undo()
 
     assert grid._transition_anim.state() == QAbstractAnimation.State.Running, "前提：过渡还在跑"
-    assert expected != float(grid.icon_edge), "前提：这一帧本来还没长到终点"
+    assert expected != float(grid.icon_edge), "前提：这一帧本来尚未长到终点"
     assert grid._delegate.draw_edge == pytest.approx(expected), (
         f"核对之后绘制尺寸变成了 {grid._delegate.draw_edge}，本该还停在动画的那一帧（{expected}）"
     )

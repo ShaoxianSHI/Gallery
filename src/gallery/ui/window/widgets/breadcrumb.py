@@ -131,9 +131,9 @@ class BreadcrumbBar(QWidget):
         text = title if result_count is None else f"{title}（{result_count}）"
         widget = QLabel(text)
         widget.setToolTip(
-            "当前这一层里符合这些条件的照片；Esc 逐条撤销条件"
+            "当前层级中符合筛选条件的照片；按 Esc 逐条撤销条件"
             if filtering
-            else "整个库里检索出来的照片（不是只在某一个文件夹里）；Esc 逐条撤销条件"
+            else "整个库的检索结果（不限于某个文件夹）；按 Esc 逐条撤销条件"
         )
         widget.setStyleSheet("font-size: 12px; font-weight: 600; padding: 2px 6px;")
         return widget
@@ -170,7 +170,7 @@ class BreadcrumbBar(QWidget):
     def _group_label(self, group: str) -> QLabel:
         """分组名：和当前目录一样的重体，只是不可点（点它没有对应的目录可回）。"""
         widget = QLabel(group)
-        widget.setToolTip("当前分组（Esc 返回上一层）")
+        widget.setToolTip("当前分组（按 Esc 返回上一层级）")
         widget.setStyleSheet("font-size: 12px; font-weight: 600; padding: 2px 6px;")
         return widget
 

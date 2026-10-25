@@ -142,12 +142,12 @@ def test_the_tags_payload_yields_the_names() -> None:
 @pytest.mark.parametrize(
     ("status", "expected"),
     [
-        (-404, "没有这个稿件"),
+        (-404, "未收录该稿件"),
         (-403, "权限不足"),
         (-352, "风控"),
         (62002, "不可见"),
         (62004, "审核中"),
-        (62012, "只有 UP 主自己看得见"),
+        (62012, "仅 UP 主可见"),
     ],
 )
 def test_the_interface_error_code_becomes_a_sentence(status: int, expected: str) -> None:
@@ -174,7 +174,7 @@ def test_a_malformed_body_says_it_could_not_be_read() -> None:
     with pytest.raises(MovieImportError) as excinfo:
         bilibili.view_of({"code": 0, "data": "不是一份稿件信息"}, "BV1GJ411x7h7")
 
-    assert "没给出" in excinfo.value.message
+    assert "未提供" in excinfo.value.message
 
 
 def test_fetch_reads_the_view_and_then_the_tags() -> None:

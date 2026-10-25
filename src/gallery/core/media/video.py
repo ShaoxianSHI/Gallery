@@ -120,8 +120,8 @@ def first_frame(path: Path, *, max_edge: int | None) -> tuple[int, int, bytes]:
 def _unreadable_message(path: Path) -> str:
     """取不到帧时说的话。**不把「编码不支持」说死**：云盘上没下完也是同一个结果。"""
     return (
-        f"读不出 {path.name} 的第一帧：系统解不开它的编码格式，"
-        "或者文件还没下载完。等它下载完再打开即可。"
+        f"无法读取 {path.name} 的第一帧：系统不支持其编码格式，"
+        "或文件尚未下载完成。请等待下载完成后再打开。"
     )
 
 

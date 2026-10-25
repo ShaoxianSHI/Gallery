@@ -243,7 +243,7 @@ def test_an_unreadable_capture_time_keeps_the_dialog_open(qt_app: QApplication) 
     dialog._on_accept()
 
     assert dialog.result() == 0
-    assert "拍摄时间看不懂" in dialog._error.text()
+    assert "无法识别拍摄时间" in dialog._error.text()
 
 
 def test_a_day_that_does_not_exist_is_refused(qt_app: QApplication) -> None:
@@ -254,7 +254,7 @@ def test_a_day_that_does_not_exist_is_refused(qt_app: QApplication) -> None:
     dialog._on_accept()
 
     assert dialog.result() == 0
-    assert "拍摄时间看不懂" in dialog._error.text()
+    assert "无法识别拍摄时间" in dialog._error.text()
 
 
 def test_an_unreadable_offset_keeps_the_dialog_open(qt_app: QApplication) -> None:
@@ -264,7 +264,7 @@ def test_an_unreadable_offset_keeps_the_dialog_open(qt_app: QApplication) -> Non
     dialog._on_accept()
 
     assert dialog.result() == 0
-    assert "时区看不懂" in dialog._error.text()
+    assert "无法识别时区" in dialog._error.text()
 
 
 def test_the_clear_button_leaves_the_capture_time_alone(qt_app: QApplication) -> None:
@@ -316,7 +316,7 @@ def test_an_impossible_coordinate_keeps_the_dialog_open(qt_app: QApplication) ->
     dialog._on_accept()
 
     assert dialog.result() == 0  # 还没 Accepted
-    assert "纬度超范围了" in dialog._error.text()
+    assert "纬度超出范围" in dialog._error.text()
 
 
 def test_half_a_coordinate_is_refused_too(qt_app: QApplication) -> None:
@@ -326,7 +326,7 @@ def test_half_a_coordinate_is_refused_too(qt_app: QApplication) -> None:
     dialog._on_accept()
 
     assert dialog.result() == 0
-    assert "经度和纬度要一起填" in dialog._error.text()
+    assert "需同时填写" in dialog._error.text()
 
 
 def _write(
@@ -365,7 +365,7 @@ def test_writing_updates_the_file_the_row_and_the_banner(
     assert focused._model.photo_at(row) is not None
     assert focused._undo_action.text() == "撤销 编辑元数据"
     # 横幅只有一句：「接下来会发生什么」是对话框里那行小字的事，保存之前就说过了。
-    assert focused._banner.text() == "已更新「一张.jpg」的位置。⌘Z 可以撤销。"
+    assert focused._banner.text() == "已更新「一张.jpg」的位置；⌘Z 可撤销。"
 
 
 def test_the_journal_has_the_field_level_record(
@@ -438,7 +438,7 @@ def test_writing_the_capture_time_goes_through_the_whole_way(
     assert writer.fields["EXIF:DateTimeOriginal"] == "2003:07:19 09:12:00"
     assert writer.fields["EXIF:OffsetTimeOriginal"] == "+09:00"
     # 横幅说的是**改了哪一部分**，不是笼统的「已更新元数据」。
-    assert focused._banner.text() == "已更新「一张.jpg」的拍摄时间。⌘Z 可以撤销。"
+    assert focused._banner.text() == "已更新「一张.jpg」的拍摄时间；⌘Z 可撤销。"
     changes = {(change.tag, change.before) for change in read_records(root)[-1].changes}
     assert ("EXIF:DateTimeOriginal", "2024:05:16 20:52:02") in changes
 
@@ -483,7 +483,7 @@ def test_time_and_place_go_out_in_one_write(
     tags = {change.tag for change in records[-1].changes}
     assert {"EXIF:DateTimeOriginal", "XMP:City"}.issubset(tags)
     # 一句话里说清两样都改了
-    assert focused._banner.text() == "已更新「一张.jpg」的拍摄时间与位置。⌘Z 可以撤销。"
+    assert focused._banner.text() == "已更新「一张.jpg」的拍摄时间与位置；⌘Z 可撤销。"
 
     focused.undo_last_write()
 
@@ -1017,7 +1017,7 @@ def test_the_error_line_keeps_its_room_even_while_it_is_empty(qt_app: QApplicati
     QApplication.processEvents()
 
     before = dialog.height()
-    dialog._error.setText("纬度不是一个数字：「30.abc」。可以直接填十进制度，例如 30.27415。")
+    dialog._error.setText("纬度不是有效数字「30.abc」。请填十进制度，例如 30.27415。")
     QApplication.processEvents()
 
     assert dialog.height() == before
@@ -1150,7 +1150,7 @@ def test_pasting_the_time_only_when_it_is_not_there_says_so(qt_app: QApplication
 
     dialog._on_paste_time()
 
-    assert "没有可以用的拍摄时间" in dialog._error.text()
+    assert "没有可用的拍摄时间" in dialog._error.text()
     assert dialog._taken_at.text() == ""
     assert dialog._city.text() == ""
 
@@ -1184,7 +1184,7 @@ def test_pasting_nonsense_says_so_instead_of_guessing(qt_app: QApplication) -> N
     dialog._on_paste()
 
     # 「粘贴」搬的是时间与位置两段，一段都认不出时说「没有可以用的内容」
-    assert "没有可以用的内容" in dialog._error.text()
+    assert "没有可用的内容" in dialog._error.text()
     assert dialog._latitude.text() == ""
     assert dialog._taken_at.text() == ""
 

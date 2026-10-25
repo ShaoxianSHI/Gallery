@@ -171,7 +171,7 @@ def test_a_page_without_a_title_says_it_cannot_be_read() -> None:
     with pytest.raises(MovieImportError) as excinfo:
         pornhub.view_of("<html><body>确认是否满 18 岁</body></html>", CODE)
 
-    assert "没给出影片信息" in excinfo.value.message
+    assert "未提供影片信息" in excinfo.value.message
 
 
 def test_a_removed_video_says_so() -> None:
@@ -228,7 +228,7 @@ def test_a_missing_page_is_translated_into_chinese() -> None:
     with pytest.raises(MovieImportError) as excinfo:
         pornhub.fetch(CODE, client=transport)
 
-    assert "Pornhub 上没有这个视频" in excinfo.value.message
+    assert "Pornhub 未收录该视频" in excinfo.value.message
 
 
 def test_a_line_that_is_not_a_viewkey_says_so_without_any_request() -> None:

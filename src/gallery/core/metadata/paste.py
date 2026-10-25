@@ -102,10 +102,10 @@ def copy_into(
     for raw_source in sources:
         source = Path(raw_source)
         if not source.exists():
-            failures.append(Failure.at(source, message="源文件已经不在了。"))
+            failures.append(Failure.at(source, message="源文件已不存在。"))
             continue
         if source.is_dir() and paths.is_within(source, destination):
-            failures.append(Failure.at(source, message="不能把文件夹粘进它自己或它自己的子目录。"))
+            failures.append(Failure.at(source, message="不能把文件夹粘贴到它自身或其子目录中。"))
             continue
         if cancelled():
             break
@@ -180,7 +180,7 @@ def copy_one_into(
     is_dir = source.is_dir()
     created = free_target(destination, wanted_name(source, destination), taken, whole=is_dir)
     if created is None:
-        return CopyOutcome(failure=Failure.at(source, message="这个名字太长，再加编号也放不下了。"))
+        return CopyOutcome(failure=Failure.at(source, message="名称过长，加上编号后仍超出限制。"))
     try:
         if is_dir:
             # copytree 目标已存在会直接报错（它不做覆盖），半途失败也会自己收尾。
@@ -192,7 +192,7 @@ def copy_one_into(
     except FileExistsError:
         # 目标已经存在，**而那不是我们写了一半的东西，是用户自己放进去的** —— 绝不能清理它：
         # 清理那句 ``rmtree`` 删掉的是用户的文件夹连同里面所有照片（删除只允许用户亲手触发）。
-        message = "这个位置已经有同名的文件或文件夹了，没有覆盖它。"
+        message = "该位置已有同名文件或文件夹，未覆盖。"
         return CopyOutcome(
             failure=Failure.at(source, message=message),
             journaled=append_record(
@@ -274,9 +274,9 @@ def _guard(root: Path, destination: Path) -> None:
 #: **「库本身」这一条今天到不了**（库根本身是合法的粘贴目标），理由同
 #: :data:`transfer._GUARD_MESSAGES`：留着是为了这张表是全的。
 _GUARD_MESSAGES: Final = {
-    paths.GuardReason.OUTSIDE_ROOT: "只能粘到库里的文件夹：{path}。",
-    paths.GuardReason.IS_ROOT: "不能粘到库本身，请选一个文件夹。",
-    paths.GuardReason.IS_CONFIG_DIR: "这是 Gallery 自己的配置目录，照片不该粘进去。",
+    paths.GuardReason.OUTSIDE_ROOT: "只能粘贴到库中的文件夹：{path}。",
+    paths.GuardReason.IS_ROOT: "不能粘贴到库本身，请选择文件夹。",
+    paths.GuardReason.IS_CONFIG_DIR: "这是 Gallery 的配置目录，不能粘贴照片。",
 }
 
 

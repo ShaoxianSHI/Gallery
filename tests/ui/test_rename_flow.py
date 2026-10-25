@@ -316,7 +316,7 @@ def test_clicking_again_after_escape_offers_rename(
     interval = QApplication.doubleClickInterval() / 1000 + 0.05
 
     assert grid.genuinely_selected_rows() == [], "谁也没选中"
-    assert grid._armed_row == -1, "还没点过，这一格没被 arm 过"
+    assert grid._armed_row == -1, "尚未点过，这一格没被 arm 过"
 
     grid.begin_rename(grid.currentIndex())  # ⌘R
     settle(0.05)

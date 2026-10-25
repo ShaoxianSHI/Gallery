@@ -228,11 +228,11 @@ def _oembed_problem(exc: SourcePageError, code: str) -> MovieImportError:
     """oEmbed 那几种状态各说各的。"""
     if exc.status in (400, 403):
         return MovieImportError(
-            f"TikTok 不给这个视频的资料，它可能已被删除 / 设为私密 / 地区不可见：{code}。"
+            f"TikTok 未提供该视频的信息；它可能已被删除、设为私密或受地区限制：{code}。"
         )
     if exc.status == 404:
-        return MovieImportError(f"TikTok 上没有这个视频：{code}。")
-    return MovieImportError(f"TikTok 这次没给出资料：HTTP {exc.status}，{code}。")
+        return MovieImportError(f"TikTok 未收录该视频：{code}。")
+    return MovieImportError(f"TikTok 本次未提供信息：HTTP {exc.status}，{code}。")
 
 
 def _oembed(code: str, client: Transport) -> tuple[Mapping[str, object], str]:
@@ -251,10 +251,10 @@ def _oembed(code: str, client: Transport) -> tuple[Mapping[str, object], str]:
         try:
             payload = json.loads(raw)
         except ValueError as exc:
-            raise MovieImportError(f"TikTok 给出的资料读不懂：{code}。") from exc
+            raise MovieImportError(f"TikTok 返回的信息无法解析：{code}。") from exc
         if isinstance(payload, Mapping):
             return payload, candidate
-    raise problem or MovieImportError(f"TikTok 没给出这个视频的资料：{code}。")
+    raise problem or MovieImportError(f"TikTok 未提供该视频的信息：{code}。")
 
 
 def _page_url(payload: Mapping[str, object], code: str) -> str:
@@ -272,11 +272,11 @@ def fetch(code: str, *, client: Transport) -> MovieInfo:
     """
     normalized = normalize_code(code)
     if not is_video_id(normalized) and not _SHARE_RE.fullmatch(normalized):
-        raise MovieImportError(f"这不是一个 TikTok 的视频 id 或分享链接：{code}。")
+        raise MovieImportError(f"不是有效的 TikTok 视频 id 或分享链接：{code}。")
     payload, requested = _oembed(normalized, client)
     resolved = _resolved_code(payload, requested, normalized)
     if not is_video_id(resolved):
-        raise MovieImportError(f"TikTok 没给出这个视频的 id：{code}。")
+        raise MovieImportError(f"TikTok 未提供该视频的 id：{code}。")
     movie = replace(oembed_of(payload, resolved), page_url=_page_url(payload, resolved))
     return _with_page(movie, client)
 

@@ -83,7 +83,7 @@ class PillowSource:
             return _read_with_pillow(Path(path))
         except (OSError, ValueError, SyntaxError) as exc:
             raise MetadataError(
-                f"读不出这个文件的基本信息：{Path(path).name}，{exc}。",
+                f"无法读取这个文件的基本信息：{Path(path).name}，{exc}。",
                 path=Path(path),
                 detail=str(exc),
             ) from exc

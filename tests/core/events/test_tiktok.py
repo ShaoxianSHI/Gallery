@@ -177,7 +177,7 @@ def test_a_missing_video_is_translated_into_chinese() -> None:
     with pytest.raises(MovieImportError) as excinfo:
         tiktok.fetch(ID, client=transport)
 
-    assert "TikTok 上没有这个视频" in excinfo.value.message
+    assert "TikTok 未收录该视频" in excinfo.value.message
 
 
 def test_a_line_that_is_not_a_code_says_so_without_any_request() -> None:

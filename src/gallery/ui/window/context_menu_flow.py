@@ -333,7 +333,7 @@ class ContextMenuFlowMixin:
     def _on_metadata_copy_failed(self, message: str) -> None:
         self._finish_job("_metadata_copy_job")
         logger.info("复制用的元数据读取失败：%s", message)
-        self._show_banner(f"没能读出元数据：{message.rstrip('。')}")
+        self._show_banner(f"无法读取元数据：{message.rstrip('。')}")
 
     def _put_metadata_on_clipboard(self, report: MetadataReport, ref: PhotoRef) -> None:
         desktop.copy_to_clipboard(report.as_text())

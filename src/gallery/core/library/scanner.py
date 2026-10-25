@@ -48,7 +48,7 @@ class ScanReport:
             parts.append(f"{len(self.unreadable_files)} 个文件无法读取")
         if not parts:
             return ""
-        return "、".join(parts) + "，可能是权限问题或外接盘已断开。"
+        return "、".join(parts) + "；通常由权限问题或外接盘断开导致。"
 
 
 def iter_photos(
@@ -265,7 +265,7 @@ def _require_directory(path: Path) -> None:
     """不是目录（或压根不存在）就抛。全仓库这一句话只有这一处，别的调用点引用它。"""
     if not Path(path).is_dir():
         raise LibraryNotAccessibleError(
-            f"打不开这个文件夹：{path}。它可能已被移动、重命名或删除。",
+            f"无法打开该文件夹：{path}。它可能已被移动、重命名或删除。",
             path=Path(path),
         )
 

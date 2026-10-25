@@ -100,7 +100,7 @@ def test_the_risk_control_page_is_told_apart_from_a_missing_video() -> None:
         youku.fetch("XNjQ3MjkwNTUwNA", client=FakeTransport(CHALLENGE))
 
     assert "风控" in excinfo.value.message
-    assert "过一会儿再试" in excinfo.value.message
+    assert "请稍后重试" in excinfo.value.message
 
 
 def test_the_page_is_fetched_at_the_canonical_address() -> None:

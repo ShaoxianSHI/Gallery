@@ -330,11 +330,11 @@ class SettingsFlowMixin:
         self._apply_backdrops()
         self._sync_ui()
         item = self._backdrops.store.get(backdrop_id) if backdrop_id else None  # type: ignore[attr-defined]
+        slot = "深色" if dark else "浅色"
         if item is None:
-            self._show_banner("这一档回到背景色。", auto_hide=True)  # type: ignore[attr-defined]
+            self._show_banner(f"{slot}背景已改为纯色。", auto_hide=True)  # type: ignore[attr-defined]
         else:
-            slot = "深色" if dark else "浅色"
-            self._show_banner(f"{slot}背景换成了「{item.name}」。", auto_hide=True)  # type: ignore[attr-defined]
+            self._show_banner(f"{slot}背景已设为「{item.name}」。", auto_hide=True)  # type: ignore[attr-defined]
 
     def _generate_backdrop(self) -> None:
         seed = random.SystemRandom().randrange(1, 2**31)
@@ -375,14 +375,14 @@ class SettingsFlowMixin:
             return
         self._sync_ui()
         self._show_banner(  # type: ignore[attr-defined]
-            f"背景「{item.name}」已保存，在「背景 › 浅色 / 深色背景」里挑它。",  # type: ignore[attr-defined]
+            f"背景「{item.name}」已保存，可在「背景 › 浅色背景 / 深色背景」中选用。",
             auto_hide=True,
         )
 
     def _manage_backdrops(self) -> None:
         items = tuple((entry.id, entry.name) for entry in self._backdrops.store.items())  # type: ignore[attr-defined]
         if not items:
-            self._show_banner("还没有保存过背景图。", auto_hide=True)  # type: ignore[attr-defined]
+            self._show_banner("暂无已保存的背景图。", auto_hide=True)  # type: ignore[attr-defined]
             return
         dialog = BackdropManageDialog(cast("QWidget", self), items)
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -419,7 +419,7 @@ class SettingsFlowMixin:
             group = QActionGroup(submenu)
             group.setExclusive(True)
             actions: dict[str, QAction] = {}
-            for value, label in [("", "用背景色"), *items]:
+            for value, label in [("", "使用纯色"), *items]:
                 action = QAction(label, submenu)
                 action.setCheckable(True)
                 action.triggered.connect(
@@ -431,7 +431,7 @@ class SettingsFlowMixin:
                 submenu.addAction(action)
                 actions[str(value)] = action
             if not items:
-                empty = submenu.addAction("还没有保存过背景图")
+                empty = submenu.addAction("暂无已保存的背景图")
                 empty.setEnabled(False)
             self._backdrops.actions[dark] = actions
             self._backdrops.groups[dark] = group
@@ -457,7 +457,7 @@ class SettingsFlowMixin:
     def _store_preferences(self, preferences: Preferences) -> None:
         self._session = self._session.with_preferences(preferences)  # type: ignore[attr-defined]
         if not self._save_session():  # type: ignore[attr-defined]
-            self._show_banner("设置没能保存；这次运行仍然按新设置执行。")  # type: ignore[attr-defined]
+            self._show_banner("设置未能保存；本次运行仍按新设置执行。")  # type: ignore[attr-defined]
 
     # ---- 库级：经 Library 写进 config.toml ------------------------------------
 
@@ -499,7 +499,7 @@ class SettingsFlowMixin:
             self._sync_ui()
             return
         self._sync_ui()
-        self._show_banner(f"缩略图缓存上限已改为{_cache_label(int(max_bytes))}。", auto_hide=True)
+        self._show_banner(f"缩略图缓存上限已设为 {_cache_label(int(max_bytes))}。", auto_hide=True)
 
     # ---- 维护 ----------------------------------------------------------------
 
@@ -507,16 +507,16 @@ class SettingsFlowMixin:
         """在访达里打开日志目录：用户报问题时唯一能自己拿到的证据。"""
         folder = paths.app_log_file().parent
         if not launch.open_folder(folder):
-            self._show_banner(f"没能打开日志文件夹：{folder}")
+            self._show_banner(f"未能打开日志文件夹：{folder}")
 
     def show_about(self) -> None:
         """版本与当前库。**只读窗口上已有的状态，不碰任何文件。**"""
         library = self._library
-        where = "还没打开照片文件夹" if library is None else str(library.root)  # type: ignore[attr-defined]
+        where = "尚未打开库" if library is None else str(library.root)  # type: ignore[attr-defined]
         QMessageBox.information(
             cast("QWidget", self),
             f"关于 {APP_NAME}",
-            f"{APP_NAME} {__version__}\n\n照片文件夹：{where}",
+            f"{APP_NAME} {__version__}\n\n库位置：{where}",
         )
 
     # ---- 状态 → 勾选态 -------------------------------------------------------

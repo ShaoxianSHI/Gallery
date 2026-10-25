@@ -358,7 +358,7 @@ def test_the_banner_says_it_can_be_undone(qt_app: QApplication, window: MainWind
     window._transfer_selected(window._library.root / "奈良", move=True)
     assert wait_until(qt_app, lambda: window._write_job is None)
 
-    assert "⌘Z 可以撤销" in window._banner.text()
+    assert "⌘Z 可撤销" in window._banner.text()
 
 
 def test_a_move_can_actually_be_undone(qt_app: QApplication, window: MainWindow) -> None:
@@ -452,7 +452,7 @@ def test_moving_into_the_album_it_is_already_in_makes_a_copy(
     root = window._library.root
     assert (root / "京都" / "一张.jpg").exists(), "源必须还在原地"
     assert (root / "京都" / "一张的副本.jpg").exists()
-    assert "已复制一份，新名字是「一张的副本.jpg」" in window._banner.text()
+    assert "已复制一份，新名称为「一张的副本.jpg」" in window._banner.text()
     assert "⌘Z" not in window._banner.text(), "没有东西进过撤销栈，不许许这个诺"
 
 
@@ -503,7 +503,7 @@ def test_paste_and_copy_do_not_run_at_the_same_time(
         assert started.wait(DEFAULT_TIMEOUT_SECONDS), "第一次移动没有开始"
         window._transfer_selected(window._library.root / "奈良", move=False)
 
-        assert window._banner.text() == "上一次操作还没结束。"
+        assert window._banner.text() == "上一次操作尚未结束。"
     finally:
         Library.move_into = monkey  # type: ignore[method-assign]
         release.set()

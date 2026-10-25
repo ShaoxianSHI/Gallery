@@ -564,7 +564,7 @@ def test_a_theme_change_is_applied_after_the_events_settle(
         assert (
             widget.palette().color(QPalette.ColorRole.Base)
             == theme.current_theme(qt_app).background
-        ), "转完一轮事件循环之后还没下发，这一轮换外观就丢了"
+        ), "转完一轮事件循环之后尚未下发，这一轮换外观就丢了"
     finally:
         qt_app.setPalette(original)
         theme.apply_theme(qt_app)
@@ -738,7 +738,7 @@ def test_the_separator_is_visible_on_both_appearances(
                 for widget in window._breadcrumb.findChildren(QLabel, "separator")
                 if widget.isVisible() and widget.width() < 100
             ]
-            assert separators, "分隔符没摆出来（或者摆出来还没落位）—— 这条量的是它的字色"
+            assert separators, "分隔符没摆出来（或者摆出来尚未落位）—— 这条量的是它的字色"
             image = window.grab().toImage()
             separator = separators[0]
             top_left = separator.mapTo(window, QPoint(0, 0))
@@ -771,9 +771,7 @@ def test_a_backdrop_never_paints_outside_the_rect_it_was_asked_for() -> None:
     image = QImage(40, 20, QImage.Format.Format_RGB32)
     image.fill(QColor("#ff0000"))
     try:
-        watcher.set_backdrops(
-            light=theme.BackdropImage(image=image, mean_lightness=1.0), dark=None
-        )
+        watcher.set_backdrops(light=theme.BackdropImage(image=image, mean_lightness=1.0), dark=None)
         watcher.set_window_size(watcher.backdrop_size())
         canvas = QImage(200, 120, QImage.Format.Format_RGB32)
         canvas.fill(QColor("#0000ff"))

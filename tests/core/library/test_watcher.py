@@ -123,7 +123,7 @@ def _typed(event_type: str, path: str) -> FileModifiedEvent:
 
 def send(observer: FakeObserver, event: object) -> None:
     """把一个事件递给观察者上挂着的那个 handler。"""
-    assert observer.handler is not None, "监听器还没开始"
+    assert observer.handler is not None, "监听器尚未开始"
     observer.handler.on_any_event(event)  # type: ignore[attr-defined]
 
 

@@ -130,7 +130,7 @@ def test_browser_is_used_when_the_app_will_not_start(tmp_path: Path) -> None:
         "week", DAY, runner=runner, search_dirs=[apps], sleeper=lambda _: None
     )
     assert outcome.where == WHERE_BROWSER
-    assert outcome.detail == "没能启动那个应用，已改用浏览器打开"
+    assert outcome.detail == "未能启动该应用，已改用浏览器打开"
     # **降级必须真的去开浏览器**：只改一个 where 的话，横幅会说「已改用浏览器打开」
     # 而浏览器压根没被叫起来。
     assert ["open", f"https://{HOST}/calendar/u/0/r/week/2026/6/29"] in runner.calls
@@ -145,7 +145,7 @@ def test_browser_is_used_when_the_window_is_never_recognized(tmp_path: Path) -> 
         "week", DAY, runner=runner, search_dirs=[apps], sleeper=clock.sleep, now=clock.now
     )
     assert outcome.where == WHERE_BROWSER
-    assert outcome.detail == "没认出那个应用的窗口，已改用浏览器打开"
+    assert outcome.detail == "未识别该应用窗口，已改用浏览器打开"
 
 
 def test_browser_is_used_when_the_url_cannot_be_written(tmp_path: Path) -> None:
@@ -155,7 +155,7 @@ def test_browser_is_used_when_the_url_cannot_be_written(tmp_path: Path) -> None:
         "week", DAY, runner=runner, search_dirs=[apps], sleeper=lambda _: None
     )
     assert outcome.where == WHERE_BROWSER
-    assert outcome.detail == "没能改写那个窗口的地址，已改用浏览器打开"
+    assert outcome.detail == "未能改写该窗口的地址，已改用浏览器打开"
 
 
 def test_nothing_sleeps_when_everything_is_ready(tmp_path: Path) -> None:
@@ -217,7 +217,7 @@ def test_a_browser_that_never_starts_falls_back() -> None:
         now=clock.now,
     )
     assert outcome.where == WHERE_BROWSER
-    assert outcome.detail == "等不到浏览器启动，已改用浏览器打开"
+    assert outcome.detail == "浏览器未能启动，已改用浏览器打开"
 
 
 def test_maps_is_opened_with_one_open_call() -> None:
@@ -232,7 +232,7 @@ def test_maps_is_opened_with_one_open_call() -> None:
 def test_a_missing_maps_app_says_what_to_do() -> None:
     runner = FakeRunner(open_url_rc=1)
     outcome = open_in_maps(39.9, 116.4, runner=runner)
-    assert outcome.detail == "没能打开地图，请确认系统「地图」还在"
+    assert outcome.detail == "未能打开地图，请确认系统「地图」仍已安装"
 
 
 def make_installed_maps_pwa(tmp_path: Path) -> tuple[Path, Path]:
@@ -291,7 +291,7 @@ def test_a_google_window_on_another_path_is_not_maps(tmp_path: Path) -> None:
         now=clock.now,
     )
     assert outcome.where == WHERE_BROWSER
-    assert outcome.detail == "没认出那个应用的窗口，已改用浏览器打开"
+    assert outcome.detail == "未识别该应用窗口，已改用浏览器打开"
 
 
 def test_shortcut_key_is_the_one_detection_reads() -> None:

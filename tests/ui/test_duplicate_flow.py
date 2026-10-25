@@ -134,7 +134,7 @@ def test_one_photo_gets_one_copy(qt_app: QApplication, window: MainWindow) -> No
         "另一张.jpg",
     ]
     assert (window._library.root / "京都" / "一张.jpg").read_bytes() == before
-    assert message == "已复制 1 份副本，新名字是「一张的副本.jpg」。"
+    assert message == "已复制 1 份副本，新名称为「一张的副本.jpg」。"
 
 
 def test_several_photos_each_get_a_copy(qt_app: QApplication, window: MainWindow) -> None:
@@ -201,7 +201,7 @@ def test_the_key_really_makes_the_copy(qt_app: QApplication, window: MainWindow)
     _select_photo(window, "一张.jpg")
     # 置灰是**累积到这一轮事件循环结束**才重算的（``_schedule_action_states``）：不等它一下，
     # 按键落在还灰着的动作上，Qt 什么都不做 —— 那一红量的是时序，不是产品。
-    assert wait_until(qt_app, window._duplicate_action.isEnabled), "选区定了却还没亮"
+    assert wait_until(qt_app, window._duplicate_action.isEnabled), "选区定了却尚未亮"
 
     QTest.keyClick(window._grid, Qt.Key.Key_D, Qt.KeyboardModifier.ControlModifier)
 
@@ -311,7 +311,7 @@ def test_a_second_run_is_refused_while_one_is_in_flight(
     window.duplicate_selected()
 
     assert wait_until(qt_app, lambda: window._write_job is None)
-    assert "还没结束" in window._banner.text() or "已复制" in window._banner.text()
+    assert "尚未结束" in window._banner.text() or "已复制" in window._banner.text()
 
 
 def test_the_menu_row_is_the_same_action_as_the_shortcut(window: MainWindow) -> None:

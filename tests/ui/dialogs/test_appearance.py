@@ -49,14 +49,14 @@ def test_an_unset_slot_says_default(qt_app: QApplication) -> None:  # noqa: ARG0
 
 
 def test_a_colour_on_the_wrong_side_is_refused(qt_app: QApplication, picked) -> None:  # noqa: ARG001
-    """浅色那一档挑了深色：值不变，对话框里说清楚为什么。"""
+    """浅色背景挑了深色：值不变，对话框里说清楚为什么。"""
     dialog = BackgroundColorDialog(None, light="#f5f2ec")
     picked("#101010")
 
     dialog._swatches[False].click()
 
     assert dialog.values() == ("#f5f2ec", None)
-    assert "浅色那一档" in dialog._error.text()
+    assert "浅色背景" in dialog._error.text()
     assert dialog._error.isHidden() is False
     dialog.deleteLater()
 
