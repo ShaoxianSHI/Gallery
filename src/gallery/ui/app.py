@@ -14,10 +14,10 @@ from typing import TYPE_CHECKING, cast
 
 from PySide6.QtCore import QEvent, QLibraryInfo, QLocale, QObject, Qt, QTranslator
 from PySide6.QtGui import QFileOpenEvent, QIcon
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMainWindow
 
 from gallery.core.constants import APP_NAME
-from gallery.core.i18n import current_language, resolve_language, set_language
+from gallery.core.i18n import current_language, resolve_language, set_language, t
 from gallery.core.library.session import load_session
 from gallery.core.paths import app_icon_files, augment_external_tool_path
 
@@ -69,6 +69,110 @@ def install_qt_translations(app: QApplication) -> None:
     translator = QTranslator(app)
     if translator.load(f"qtbase_{current_language()}", path):
         app.installTranslator(translator)
+
+
+def _drop_autofill_and_below(menu: object) -> None:
+    """删掉 macOS 往「编辑」菜单末尾塞的 AutoFill 一整段（含它下面的系统项）。
+
+    系统项不是我们的 ``QAction``：标题 ``AutoFill``、action ``submenuAction:``。**从它开始往下
+    全删**，再把末尾多出来的分隔线收掉。标题被本地化时，退回「撤销之后第一个系统子菜单」。
+    """
+    items = list(menu.itemArray())  # type: ignore[attr-defined]
+    start = next((index for index, item in enumerate(items) if item.title() == "AutoFill"), None)
+    if start is None:
+        # AutoFill 被删掉之后系统仍可能继续往下加子项：撤销是本菜单的最后一条，后面全是系统项。
+        undo = t("menu.undo")
+        undo_index = next(
+            (index for index, item in enumerate(items) if item.title().startswith(undo)), None
+        )
+        if undo_index is None:
+            return
+        start = undo_index + 1
+    for item in items[start:]:
+        menu.removeItem_(item)  # type: ignore[attr-defined]
+    while menu.numberOfItems() > 0:  # type: ignore[attr-defined]
+        last = menu.itemArray()[-1]  # type: ignore[attr-defined]
+        if not last.isSeparatorItem():
+            break
+        menu.removeItem_(last)  # type: ignore[attr-defined]
+
+
+def _drop_full_screen(menu: object) -> None:
+    """删掉 macOS 往「显示」菜单里塞的 Enter Full Screen。
+
+    它带系统图标，和有勾选项的那一组并排时会把整组推到图标右侧；本应用的「铺满窗口」已经
+    负责同一件事。按 action 认，标题被本地化也删得掉。**系统只在菜单标题是 ``View`` 时塞它**
+    （中文界面的「显示」不会出现），但删的时候两种界面都问一遍。
+    """
+    removed = False
+    for item in list(menu.itemArray()):  # type: ignore[attr-defined]
+        if str(item.action()) == "toggleFullScreen:" or item.title() in {
+            "Enter Full Screen",
+            "Exit Full Screen",
+        }:
+            menu.removeItem_(item)  # type: ignore[attr-defined]
+            removed = True
+    if not removed:
+        return
+    while menu.numberOfItems() > 0:  # type: ignore[attr-defined]
+        last = menu.itemArray()[-1]  # type: ignore[attr-defined]
+        if not last.isSeparatorItem():
+            break
+        menu.removeItem_(last)  # type: ignore[attr-defined]
+
+
+def _observe_additions(menu: object, drop: object) -> object:
+    """系统往这个菜单里加东西时立刻删一遍；返回的 token 必须由调用方保活。"""
+    from Foundation import NSNotificationCenter
+
+    def _on_added(_note: object, *, target: object = menu, fn: object = drop) -> None:
+        fn(target)  # type: ignore[operator]
+
+    return NSNotificationCenter.defaultCenter().addObserverForName_object_queue_usingBlock_(
+        "NSMenuDidAddItemNotification", menu, None, _on_added
+    )
+
+
+def install_system_menu_cleanup(window: QMainWindow) -> None:
+    """去掉 macOS 自动塞进菜单栏的两段：编辑里的 AutoFill、显示里的 Full Screen。
+
+    **不能替换 NSMenu 的 delegate**：Qt 自己的 ``QCocoaNSMenuDelegate`` 就在那里，换掉它菜单
+    动作会失效。系统项是在菜单展开时加的，所以除了启动时删一次，还要盯着
+    ``NSMenuDidAddItemNotification`` —— 它一到就删。
+    """
+    if sys.platform != "darwin":
+        return
+    try:
+        from AppKit import NSApplication
+    except ImportError:  # pragma: no cover - macOS 上 pyobjc 是依赖
+        return
+
+    main_menu = NSApplication.sharedApplication().mainMenu()
+    if main_menu is None:
+        return
+    observers: list[object] = []
+    for title, drop in (
+        (t("menu.edit"), _drop_autofill_and_below),
+        (t("menu.view"), _drop_full_screen),
+    ):
+        menu = next(
+            (
+                action.menu()
+                for action in window.menuBar().actions()
+                if action.menu() is not None and action.text() == title
+            ),
+            None,
+        )
+        item = main_menu.itemWithTitle_(title)
+        if menu is None or item is None:
+            continue
+        native = item.submenu()
+        if native is None:
+            continue
+        drop(native)
+        menu.aboutToShow.connect(lambda target=native, fn=drop: fn(target))
+        observers.append(_observe_additions(native, drop))
+    window._system_menu_observers = observers  # type: ignore[attr-defined]
 
 
 def keep_running_without_windows(app: QApplication) -> None:
@@ -127,6 +231,7 @@ class WindowHost(QObject):
         )
         window.show()
         self._window = window
+        install_system_menu_cleanup(window)
         return window
 
     def open_library(self, root: Path) -> MainWindow:
@@ -200,6 +305,7 @@ __all__ = [
     "apply_app_branding",
     "create_application",
     "install_qt_translations",
+    "install_system_menu_cleanup",
     "keep_running_without_windows",
     "run",
 ]
