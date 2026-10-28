@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QPoint, QRectF, QSizeF, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
-    QColor,
+    QBrush,
     QContextMenuEvent,
     QHideEvent,
     QImage,
@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
 
 from gallery.core.i18n import t
 from gallery.core.library.photos import PhotoRef
+from gallery.ui import theme
 
 #: ``QGraphicsView.fitInView`` 会在视口四边各留 2 像素。海报要按同一个矩形缩放，
 #: 首帧换上时才不会缩一下。
@@ -117,8 +118,12 @@ class VideoView(QGraphicsView):
 
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setBackgroundBrush(QColor(0, 0, 0))
-        self._scene.setBackgroundBrush(QColor(0, 0, 0))
+        # 视口不铺底色，视频四周露出的就是窗口画的那一块（与照片页一致，ADR 0096）。
+        theme.mark_see_through(self)
+        theme.mark_see_through(self.viewport())
+        self._apply_theme()
+        self._theme_watcher = theme.ensure_installed()
+        self._theme_watcher.changed.connect(self._apply_theme)
         self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         self.setDragMode(QGraphicsView.DragMode.NoDrag)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -151,6 +156,14 @@ class VideoView(QGraphicsView):
         self._error.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self._error.hide()
 
+    def _apply_theme(self) -> None:
+        """视频四周不铺底色（ADR 0096）：硬编码深色会让浅色主题下点开视频突然变一块黑。
+
+        场景那一层也得清掉 —— 它自己不铺，露出的才是窗口那一块。
+        """
+        self.setBackgroundBrush(QBrush())
+        self._scene.setBackgroundBrush(QBrush())
+
     # ---- 对外 --------------------------------------------------------------
 
     @property
@@ -163,7 +176,7 @@ class VideoView(QGraphicsView):
         self._ref = ref
         self._error.hide()
         self._controls.show()
-        # 新源的第一帧到之前先不画旧的最后一帧：先上海报（没有海报就是黑底）。
+        # 新源的第一帧到之前先不画旧的最后一帧：先上海报（没有海报就露出窗口底色）。
         self._video_item.setVisible(False)
         if poster is not None and not poster.isNull():
             self._poster_pixmap = QPixmap.fromImage(poster)

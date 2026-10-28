@@ -22,7 +22,7 @@ from library_helpers import set_library_ui  # noqa: E402
 from PySide6.QtCore import QPoint, QPointF, QRect, Qt  # noqa: E402
 from PySide6.QtGui import QColor, QImage, QPainter, QPalette  # noqa: E402
 from PySide6.QtWidgets import QApplication, QFrame, QLabel, QWidget  # noqa: E402
-from waiting import DEFAULT_TIMEOUT_SECONDS, wait_for_idle
+from waiting import DEFAULT_TIMEOUT_SECONDS, wait_for_idle, wait_until
 
 from gallery.core.library.config import (
     BROWSE_MODE_ALBUMS,
@@ -261,6 +261,47 @@ def test_detail_view_keeps_the_same_background(qt_app: QApplication, window: Mai
             )
             == expected
         )
+    finally:
+        window.close()
+
+
+def test_video_view_keeps_the_same_background(
+    qt_app: QApplication,
+    tmp_path: Path,
+    make_video: Callable[..., Path],
+) -> None:
+    """视频四周也露出窗口底色 —— 硬编码黑色会让浅色主题下点开视频突然黑一块。"""
+    root = tmp_path / "库"
+    root.mkdir()
+    make_video("片段.avi", frames=3, directory=root)
+    set_library_ui(root)
+    session_base = tmp_path / "session"
+    save_session(SessionState(recent_roots=(root,)), base=session_base)
+    window = MainWindow(session_base=session_base, initial_library=root)
+    window.resize(1200, 800)
+    window.show()
+    try:
+        wait_for_idle(qt_app, window, what="扫描")
+        expected = theme.current_theme().background
+        row = window._model.row_of_path(root / "片段.avi")
+        assert row >= 0, "网格里没有那段视频"
+        window._on_entry_activated(window._model.index(row, 0))
+        assert wait_until(qt_app, lambda: window._video.isVisible(), timeout=10)
+        _without_banner(qt_app, window)
+
+        view = window._video
+        assert view.backgroundBrush().style() == Qt.BrushStyle.NoBrush
+        assert view._scene.backgroundBrush().style() == Qt.BrushStyle.NoBrush
+        image = window.grab().toImage()
+        area = view.viewport().geometry()
+        top_left = view.viewport().mapTo(window, area.topLeft())
+        y = top_left.y() + area.height() // 2
+        # 64×48 的视频装进 3:2 的窗口，左右各留一条边 —— 那一条必须和窗口同色。
+        for x in range(top_left.x() + 1, top_left.x() + 6):
+            assert image.pixelColor(x, y) == expected, (
+                f"视频页左缘 ({x}, {y}) 是 {image.pixelColor(x, y).name()}，"
+                f"窗口底色是 {expected.name()}"
+            )
     finally:
         window.close()
 
