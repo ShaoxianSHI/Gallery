@@ -7,6 +7,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
+from pathlib import Path
+
 from PySide6.QtCore import (
     QEasingCurve,
     QEvent,
@@ -42,6 +45,7 @@ from PySide6.QtWidgets import (
 
 from gallery.ui import theme
 from gallery.ui.motion import scaled_ms
+from gallery.ui.viewer.filmstrip import Filmstrip, strip_rect
 from gallery.ui.viewer.zoom import MAX_FIT_SCALE, MAX_SCALE, ZOOM_STEP, clamp_scale, fit_scale
 
 OVERLAY_FONT_SIZE = 13
@@ -121,8 +125,16 @@ class DetailView(QGraphicsView):
     context_requested = Signal(QPoint)
     #: 用户按住 ⌥ 点了照片：打开它所属影片事件的网站（ADR 0063）。
     movie_open_requested = Signal()
+    #: 用户在底部画廊条上点了一格：带的是这一层的行号。
+    photo_activated = Signal(int)
 
-    def __init__(self, parent: QWidget | None = None, *, animation_speed: str = "normal") -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        animation_speed: str = "normal",
+        filmstrip_thumbnails: Callable[[Path], QPixmap | None] | None = None,
+    ) -> None:
         super().__init__(parent)
         self._animation_speed = animation_speed
         self._scene = QGraphicsScene(self)
@@ -158,6 +170,13 @@ class DetailView(QGraphicsView):
         self._overlay.setWordWrap(True)
         self._overlay.setStyleSheet(_OVERLAY_STYLE)
         self._overlay.hide()
+
+        # 底部那一条缩略图导航（ADR 0107）。**不进任何布局**：浮在照片下缘，位置归
+        # ``_place_filmstrip``。
+        self._filmstrip = Filmstrip(self)
+        self._filmstrip.photo_activated.connect(self.photo_activated.emit)
+        if filmstrip_thumbnails is not None:
+            self._filmstrip.set_thumbnail_provider(filmstrip_thumbnails)
 
         self._animating = False
         self._anim_from_scale = 1.0
@@ -264,6 +283,37 @@ class DetailView(QGraphicsView):
         self._animation.setDuration(self._animation_ms(FIT_ANIMATION_MS))
         self._fade_animation.setDuration(self._animation_ms(FADE_OUT_MS))
         self._fade_in_animation.setDuration(self._animation_ms(FADE_IN_MS))
+
+    # ---- 底部画廊条（ADR 0107）-----------------------------------------------
+
+    def set_filmstrip(self, items: Sequence[tuple[int, Path]], current_row: int) -> None:
+        """换一批条目并选中 ``current_row``。条目顺序就是这一层的照片顺序。"""
+        self._filmstrip.set_items(items, current_row)
+        self._place_filmstrip()
+
+    def filmstrip_rows(self) -> tuple[int, ...]:
+        """画廊条里此刻摆着的那些行号。"""
+        return self._filmstrip.rows()
+
+    def filmstrip_visible_rows(self) -> tuple[int, ...]:
+        """画廊条视口里看得见的那几行（取缩略图时的优先级）。"""
+        return self._filmstrip.visible_rows()
+
+    @property
+    def filmstrip_current_row(self) -> int:
+        """画廊条上选中那一格的行号（``-1`` = 没有）。"""
+        return self._filmstrip.current_row
+
+    def refresh_filmstrip(self) -> None:
+        """有缩略图到货了，重画画廊条。"""
+        self._filmstrip.refresh()
+
+    def _place_filmstrip(self) -> None:
+        area = self.viewport().geometry()
+        if area.isEmpty():
+            return
+        self._filmstrip.setGeometry(strip_rect(area))
+        self._filmstrip.raise_()
 
     def _animation_ms(self, base_ms: int) -> int:
         return scaled_ms(base_ms, self._animation_speed)
@@ -532,6 +582,7 @@ class DetailView(QGraphicsView):
         if self._fade_layer is not None:
             self._fade_layer.setGeometry(self.viewport().rect())
         self._reposition_overlay()
+        self._place_filmstrip()
 
     def _reposition_overlay(self) -> None:
         """贴到视口右上角；文案过长时换行并限制宽度，不会横穿整张照片。"""

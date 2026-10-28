@@ -887,6 +887,9 @@ class WriteOpsMixin:
         # 大图页上标题栏那一行显示的就是这个名字 —— 改完不刷新的话，用户改完却看到旧名字
         # （⌘Z 撤回时同理，ADR 0025 决策 4；`_refresh_title` 在 `_sync_ui` 里）。
         self._sync_ui()
+        if self._in_detail_page():
+            # 改名换了路径，画廊条手里那一份还是旧路径（缩略图会空一格），按新行号重取。
+            self._sync_filmstrip(self._current_row)
         # 记上了才说过就走：没记上时那句话里有一句「⌘Z 撤销不了」，那是用户必须知道的
         # （ADR 0029 决策 3）。撤销回来时传进来的是撤销那句话，判据一样成立。
         self._show_banner(banner or banners.rename_banner(result), auto_hide=result.journaled)

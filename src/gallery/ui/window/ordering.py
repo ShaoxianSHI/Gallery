@@ -774,6 +774,9 @@ class OrderingMixin:
                 self._grid.select_row(row, ensure_visible=False)
         elif selected:
             self._grid.select_row(min(selected), ensure_visible=False)
+        if self._in_detail_page():
+            # 这一层的顺序变了，画廊条摆的还是旧顺序（条目按行号取，行号已经换过）。
+            self._sync_filmstrip(self._current_row)
         self._refresh_thumbnail_window()
 
 

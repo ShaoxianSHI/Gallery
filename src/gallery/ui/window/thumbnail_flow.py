@@ -65,6 +65,10 @@ class ThumbnailFlowMixin:
                 target_edge=self._calendar_page.thumbnail_edge(),
             )
             return
+        if self._in_detail_page() and not self._detail.isHidden():
+            if self._shows_filmstrip():
+                self._refresh_filmstrip_thumbnails()
+            return
         if not self._on_grid_page():
             return
         visible_rows = self._grid.visible_rows()
@@ -99,11 +103,37 @@ class ThumbnailFlowMixin:
                 entries.append(entry)
         return entries
 
+    def _shows_filmstrip(self) -> bool:
+        """大图页上正看着一张照片。视频页没有那条面板（ADR 0091 决策 3）。"""
+        ref = self._model.photo_at(self._current_row)
+        return ref is not None and not ref.is_video
+
+    def _refresh_filmstrip_thumbnails(self) -> None:
+        """画廊条要的那一批：视口里的先出图，两侧备用的排后面。
+
+        **档位跟网格那一份走**：模型只按路径存一张，换一个档位就等于把网格那份也作废，
+        切回网格要整屏重解码一遍。缩到 64 点由画廊条在绘制时做。
+        """
+        pipeline = self._pipeline
+        if pipeline is None:
+            return
+        visible_rows = set(self._detail.filmstrip_visible_rows())
+        visible: list[GridEntry] = []
+        prefetch: list[GridEntry] = []
+        for row in self._detail.filmstrip_rows():
+            entry = self._model.entry_at(row)
+            if entry is None or not self._model.needs_thumbnail(entry.path):
+                continue
+            (visible if row in visible_rows else prefetch).append(entry)
+        pipeline.set_window(visible, prefetch, target_edge=self._model.icon_size.width())
+
     def _on_thumbnail_ready(self, path: object, image: object, edge: int = 0) -> None:
         if isinstance(path, Path) and isinstance(image, QImage):
             self._model.set_thumbnail(path, image, edge)
             # 日历那一侧存的是另一份（小尺寸、按边长记账），两边各收各的。
             self._calendar_page.set_thumbnail(path, image, edge)
+            if self._in_detail_page() and not self._detail.isHidden():
+                self._detail.refresh_filmstrip()
 
     # ---- 缩略图尺寸 --------------------------------------------------------
 

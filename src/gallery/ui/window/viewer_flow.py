@@ -3,7 +3,7 @@
 取舍几乎全在**延迟**上：先命中缓存给一张缩略图顶着，再起后台解码预览图，再换全分辨率的那一张 ——
 每一步都让用户马上看到点什么，而**没有一步是在主线程上解码的**。``_preview_cache`` 与
 ``_metadata_cache`` 各记一份账，文件一改键就自然对不上；预读元数据**顺带把地点也推断好**，
-否则切到那张时面板要先显示一遍没有地点的版本再被替换。
+否则切到那张时面板要先显示一遍没有地点的版本再被替换。底部那条画廊条也由这里供数据。
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import logging
 from functools import partial
 from pathlib import Path
 
-from PySide6.QtGui import QImage
+from PySide6.QtGui import QImage, QPixmap
 
 from gallery.core.library.config import BROWSE_MODE_FLAT
 from gallery.core.library.photos import PhotoRef
@@ -38,6 +38,10 @@ PREVIEW_EDGE_FACTOR = 1.5
 #: 预览图长边的上下限（像素）。
 MIN_PREVIEW_EDGE = 512
 MAX_PREVIEW_EDGE = 4096
+
+#: 画廊条在当前那张左右各取几张。**与面板宽度无关**：面板最多 1180 点，一格 70 点，
+#: 两侧各 16 张足够把当前那张摆在正中（到这一层的头尾时自然贴边）。
+FILMSTRIP_RADIUS = 16
 
 
 class ViewerFlowMixin:
@@ -111,6 +115,42 @@ class ViewerFlowMixin:
             row += delta
         return None
 
+    # ---- 底部画廊条（ADR 0107）-----------------------------------------------
+
+    def _go_to_photo(self, row: int) -> None:
+        """画廊条点了一格：换到那一行，**与按 ← / → 走同一条路**（不另开页面栈）。"""
+        if row == self._current_row or self._model.photo_at(row) is None:
+            return
+        self._clear_banner()
+        self._focus_state.set_current(row)
+        self._load_detail(row)
+
+    def _sync_filmstrip(self, row: int) -> None:
+        """按当前这一层的照片顺序取当前那张左右各 :data:`FILMSTRIP_RADIUS` 张。"""
+        current = self._model.photo_at(row)
+        if current is None:
+            self._detail.set_filmstrip((), row)
+            return
+        left = self._photos_towards(row, -1)
+        right = self._photos_towards(row, 1)
+        items = [*reversed(left), (row, current.path), *right]
+        self._detail.set_filmstrip(items, row)
+
+    def _photos_towards(self, row: int, step: int) -> list[tuple[int, Path]]:
+        """从 ``row`` 往一边走，凑够 :data:`FILMSTRIP_RADIUS` 张照片（相册与标题跳过）。"""
+        found: list[tuple[int, Path]] = []
+        index = row + step
+        while 0 <= index < self._model.rowCount() and len(found) < FILMSTRIP_RADIUS:
+            ref = self._model.photo_at(index)
+            if ref is not None:
+                found.append((index, ref.path))
+            index += step
+        return found
+
+    def _filmstrip_pixmap(self, path: Path) -> QPixmap | None:
+        """画廊条要的那张图 —— 与网格共用同一份已缩放缩略图缓存（不再单独解码）。"""
+        return self._model.thumbnail_pixmap(path)
+
     def _load_detail(self, row: int, *, fade: bool = False) -> None:
         library = self._library
         ref = self._model.photo_at(row)
@@ -122,7 +162,10 @@ class ViewerFlowMixin:
         # 标题栏那一行从此是这张照片的文件名（ADR 0025 决策 4）：翻图、打开、
         # 删掉一张之后接着看，走的都是这一段。**换页也在 `_sync_ui` 里**，所以调用点
         # （每一个都先改了 ``_current_row``）不必自己换页。
+        self._sync_filmstrip(row)
         self._sync_ui()
+        # 第一次进大图页时换页那一句已经要过一轮；停在这一页上翻图则要自己再要一次。
+        self._refresh_thumbnail_window()
         generation = self._generation
 
         self._cancel_job("_detail_job")

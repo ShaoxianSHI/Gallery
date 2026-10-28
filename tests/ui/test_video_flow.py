@@ -90,6 +90,21 @@ def _open(window: MainWindow, name: str) -> None:
     window._on_entry_activated(window._model.index(_row(window, name), 0))
 
 
+def test_the_photo_filmstrip_is_hidden_on_the_video_page(
+    window: MainWindow, qt_app: QApplication
+) -> None:
+    """画廊条是照片页的（ADR 0091 决策 3）：视频页上它跟着照片视图一起收起来。"""
+    _open(window, "a.jpg")
+    strip = window._detail._filmstrip
+    assert strip.isVisible() is True
+
+    _open(window, "b.avi")
+    qt_app.processEvents()
+
+    assert window._detail.isHidden() is True
+    assert strip.isVisible() is False
+
+
 def _on_video_page(window: MainWindow) -> bool:
     return window._video.isVisible() and window._video.current_ref is not None
 

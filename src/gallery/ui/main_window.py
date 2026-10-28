@@ -336,11 +336,13 @@ class MainWindow(
         grid_layout.addWidget(self._grid, 1)
 
         self._detail = DetailView(
-            animation_speed=self._session.preferences.resolved_animation_speed()
+            animation_speed=self._session.preferences.resolved_animation_speed(),
+            filmstrip_thumbnails=self._filmstrip_pixmap,
         )
         self._detail.request_close.connect(self.show_grid)
         self._detail.request_step.connect(self.step_detail)
         self._detail.pause_requested.connect(self._on_space_pressed)
+        self._detail.photo_activated.connect(self._go_to_photo)
         # 大图页上的右键：视图只报位置，菜单在这一侧拼（与网格同一个流程，见 ADR 0021）。
         self._detail.context_requested.connect(self._show_detail_context_menu)
         # ⌥ 点一下大图页：打开正在看的那张所属影片的网站（ADR 0063）。
