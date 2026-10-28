@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, QRectF, QSizeF, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QPoint, QRectF, QSize, QSizeF, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
     QBrush,
     QContextMenuEvent,
@@ -99,6 +99,8 @@ class VideoView(QGraphicsView):
         super().__init__(parent)
         self._ref: PhotoRef | None = None
         self._poster_pixmap = QPixmap()
+        #: 播放器解出来的第一帧已经拿到了吗。**网格缩略图放大之后会糊**，播完要盖这一帧。
+        self._first_frame_taken = False
         self._at_end = False
         #: 这个源的原生尺寸已经落到 item 上了吗。**不能用 sceneRect 判**：清空之后它会
         #: 退成 itemsBoundingRect（被海报撑大过），重开时就会以为尺寸已经设好。
@@ -190,6 +192,7 @@ class VideoView(QGraphicsView):
         """停下来并放开文件（切页、换片、切库、关窗都走这里）。"""
         self._ref = None
         self._at_end = False
+        self._first_frame_taken = False
         self._size_applied = False
         self._player.stop()
         self._player.setSource(QUrl())
@@ -276,21 +279,23 @@ class VideoView(QGraphicsView):
         )
 
     def _update_poster(self) -> None:
-        """把海报按视口大小等比缩放并居中。"""
+        """把海报按视口大小等比缩放并居中（按屏幕像素缩放，高分辨率屏上才不糊）。"""
         if self._poster_pixmap.isNull() or self.viewport().width() <= 0:
             return
         area = self.viewport().rect().adjusted(_FIT_MARGIN, _FIT_MARGIN, -_FIT_MARGIN, -_FIT_MARGIN)
-        self._poster.setGeometry(self.viewport().rect())
-        self._poster.setPixmap(
-            self._poster_pixmap.scaled(
-                area.size(),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
+        ratio = self.devicePixelRatioF()
+        target = QSize(round(area.width() * ratio), round(area.height() * ratio))
+        scaled = self._poster_pixmap.scaled(
+            target,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
         )
+        scaled.setDevicePixelRatio(ratio)
+        self._poster.setGeometry(self.viewport().rect())
+        self._poster.setPixmap(scaled)
 
     def _restore_first_frame(self) -> None:
-        """播完后把第一帧盖回来：``QGraphicsVideoItem`` 在 ``EndOfMedia`` 之后不再保留画面。"""
+        """播完后把第一帧盖回来：``QGraphicsVideoItem`` 在 ``EndOfMedia`` 之前就不再保留画面。"""
         if self._poster_pixmap.isNull():
             return
         self._update_poster()
@@ -315,11 +320,17 @@ class VideoView(QGraphicsView):
     # ---- 播放器信号 --------------------------------------------------------
 
     def _on_frame(self, frame: QVideoFrame) -> None:
-        if self._ref is None or not frame.isValid():
+        if self._ref is None:
             return
-        if self._poster_pixmap.isNull():
+        if not frame.isValid():
+            # 播完时后端先送一帧无效画面把 sink 清空，``EndOfMedia`` 在它后面：
+            # 等那条信号再盖海报就会露一帧空白。
+            self._restore_first_frame()
+            return
+        if not self._first_frame_taken:
             image = frame.toImage()
             if not image.isNull():
+                self._first_frame_taken = True
                 self._poster_pixmap = QPixmap.fromImage(image)
         self._video_item.setVisible(True)
         if not self._at_end:

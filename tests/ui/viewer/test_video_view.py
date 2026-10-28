@@ -18,7 +18,7 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QEvent, Qt  # noqa: E402
 from PySide6.QtGui import QImage, QKeyEvent  # noqa: E402
-from PySide6.QtMultimedia import QMediaPlayer  # noqa: E402
+from PySide6.QtMultimedia import QMediaPlayer, QVideoFrame  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 from waiting import wait_until  # noqa: E402
 
@@ -71,6 +71,52 @@ def test_playing_replaces_the_poster_with_the_first_frame(
         view.close()
 
     assert view.current_ref is None
+
+
+def test_the_end_frame_uses_the_decoded_first_frame_not_the_thumbnail(
+    qt_app: QApplication, make_video: Callable[..., Path], tmp_path: Path
+) -> None:
+    """网格缩略图放大会糊：播完盖回去的必须是播放器解出来的那一帧。"""
+    path = make_video(frames=5, colors=[(200, 40, 40), *[(40, 200, 40)] * 4], directory=tmp_path)
+    poster = QImage(8, 6, QImage.Format.Format_RGB32)
+    poster.fill(Qt.GlobalColor.blue)
+    view = _view(qt_app)
+    try:
+        view.play(PhotoRef.from_path(path), poster)
+        assert wait_until(
+            qt_app,
+            lambda: view._player.mediaStatus() == QMediaPlayer.MediaStatus.EndOfMedia,
+            timeout=5,
+        )
+
+        pixmap = view._poster.pixmap()
+        color = pixmap.toImage().pixelColor(pixmap.width() // 2, pixmap.height() // 2)
+        assert color.red() > color.blue() and color.red() > color.green(), (
+            f"播完盖回去的还是那张缩略图：{color.name()}"
+        )
+    finally:
+        view.stop()
+        view.close()
+
+
+def test_a_cleared_sink_restores_the_first_frame_before_end_of_media(
+    qt_app: QApplication, make_video: Callable[..., Path], tmp_path: Path
+) -> None:
+    """后端清空画面发生在 ``EndOfMedia`` 之前；那一下就要盖回去，否则会闪一帧空白。"""
+    path = make_video(frames=100, directory=tmp_path)
+    view = _view(qt_app)
+    try:
+        view.play(PhotoRef.from_path(path), _poster())
+        assert wait_until(qt_app, lambda: view._player.position() >= 40, timeout=5)
+        assert view._player.mediaStatus() != QMediaPlayer.MediaStatus.EndOfMedia
+
+        view._on_frame(QVideoFrame())
+
+        assert view._poster.isVisible()
+        assert not view._poster.pixmap().isNull()
+    finally:
+        view.stop()
+        view.close()
 
 
 def test_the_first_frame_comes_back_when_playback_ends(
