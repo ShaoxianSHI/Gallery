@@ -27,12 +27,18 @@ from grid_helpers import (  # noqa: E402
     uniform_layout,
 )
 from PySide6.QtCore import QItemSelectionModel, QPoint, QRect, QSize, Qt  # noqa: E402
-from PySide6.QtGui import QColor, QImage, QPainter, QPalette, QPixmap  # noqa: E402
+from PySide6.QtGui import QColor, QImage, QPainter, QPalette, QPen, QPixmap  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
-from PySide6.QtWidgets import QApplication, QStyleOptionViewItem  # noqa: E402
+from PySide6.QtWidgets import (  # noqa: E402
+    QApplication,
+    QStyleOptionViewItem,
+    QVBoxLayout,
+    QWidget,
+)
 
 from gallery.core.library.groups import build_sections  # noqa: E402
 from gallery.core.library.photos import GridEntry, GroupRef  # noqa: E402
+from gallery.ui import theme  # noqa: E402
 from gallery.ui.browser.delegate import (  # noqa: E402
     SECTION_GAP,
     SECTION_HEIGHT,
@@ -40,7 +46,7 @@ from gallery.ui.browser.delegate import (  # noqa: E402
 )
 from gallery.ui.browser.grid import PhotoGrid  # noqa: E402
 from gallery.ui.browser.model import PhotoListModel  # noqa: E402
-from gallery.ui.browser.transition import GridTransition  # noqa: E402
+from gallery.ui.browser.transition import EDGE_ANIMATION_MS, GridTransition  # noqa: E402
 from gallery.ui.thumb_sizes import THUMBNAIL_SIZES  # noqa: E402
 
 #: 每个分区放几张照片。**故意不是列数的整数倍**：一段的末尾本来就该留空。
@@ -600,3 +606,103 @@ def test_a_short_section_still_centers_the_selection_when_zooming(
     assert abs(rect.center().y() - middle) <= 2, (
         f"选中项停在了 y={rect.center().y()}，视口正中是 {middle}"
     )
+
+
+def _high_frequency_image(size: QSize) -> QImage:
+    """深色底上画 13 点间距的白色斜线：平移十几个像素就会取到另一种颜色。"""
+    image = QImage(size, QImage.Format.Format_RGB32)
+    image.fill(QColor("#101820"))
+    painter = QPainter(image)
+    try:
+        painter.setPen(QPen(QColor("#f0f0f0"), 2))
+        for offset in range(-size.height(), size.width(), 13):
+            painter.drawLine(offset, 0, offset + size.height(), size.height())
+    finally:
+        painter.end()
+    return image
+
+
+def _composited(color: QColor, scrim: QColor) -> QColor:
+    """把 ``scrim`` 按 source-over 合成到不透明的 ``color`` 上（与 ``paint_background`` 一致）。"""
+    alpha = scrim.alphaF()
+    return QColor(
+        round(color.red() * (1 - alpha) + scrim.red() * alpha),
+        round(color.green() * (1 - alpha) + scrim.green() * alpha),
+        round(color.blue() * (1 - alpha) + scrim.blue() * alpha),
+    )
+
+
+def _close(actual: QColor, expected: QColor, *, tolerance: int = 2) -> bool:
+    return (
+        max(
+            abs(actual.red() - expected.red()),
+            abs(actual.green() - expected.green()),
+            abs(actual.blue() - expected.blue()),
+        )
+        <= tolerance
+    )
+
+
+def test_a_header_paints_the_backdrop_at_its_window_position_during_a_transition(
+    qt_app: QApplication, tmp_path: Path
+) -> None:
+    """过渡里标题带取的背景图要按**窗口**坐标，才与网格其余区域拼得上（ADR 0098）。
+
+    视口原点不在窗口原点时（标题条、边距），按视口坐标取样会让整条带子平移一个原点。
+    """
+    host = QWidget()
+    host.resize(920, 700)
+    column = QVBoxLayout(host)
+    column.setContentsMargins(12, 48, 12, 0)
+    grid = PhotoGrid(icon_edge=176)
+    model = PhotoListModel()
+    grid.setModel(model)
+    model.reorder(_grouped_entries(tmp_path), sectioned=True)
+    column.addWidget(grid)
+    host.show()
+    qt_app.processEvents()
+    grid._sync_layout_mode()
+    settle_grid(qt_app, grid)
+    assert grid._laid_out_sectioned, "前提没摆出来：这一层没有按分区式重排"
+
+    watcher = theme.ensure_installed(qt_app)
+    backdrop = theme.BackdropImage(image=_high_frequency_image(host.size()), mean_lightness=0.5)
+    try:
+        watcher.set_window_size(host.size())
+        watcher.set_backdrops(light=backdrop, dark=backdrop)
+        grid.set_target_edge(THUMBNAIL_SIZES[2])
+        transition = grid._transition
+        assert transition is not None, "这一档没有过渡，测的不是这个场景"
+        grid._transition_anim.pause()
+        grid._transition_anim.setCurrentTime(EDGE_ANIMATION_MS // 2)
+        qt_app.processEvents()
+        shot = host.grab().toImage()
+
+        t = grid._delegate.transition_t
+        viewport = grid.viewport()
+        origin = viewport.mapTo(viewport.window(), QPoint(0, 0))
+        pixmap = watcher.backdrop_pixmap()
+        assert pixmap is not None, "前提：背景图没装上"
+        background = pixmap.toImage()
+        scrim = watcher.backdrop_scrim()
+        checked = 0
+        for row in _header_rows(model):
+            final = grid.visualRect(model.index(row, 0))
+            rect = transition.frame_rect(final, row, t)
+            if not viewport.rect().contains(rect):
+                continue
+            for x in (rect.left() + 20, rect.center().x(), rect.right() - 20):
+                for y in range(rect.top() + 2, rect.top() + SECTION_GAP - 2):
+                    point = QPoint(x, y) + origin
+                    actual = shot.pixelColor(point)
+                    expected = _composited(background.pixelColor(point), scrim)
+                    assert _close(actual, expected), (
+                        f"标题带在视口坐标 ({x}, {y}) 处取错了背景："
+                        f"{actual.name()} != {expected.name()}"
+                    )
+                    checked += 1
+        assert checked >= 10, f"只检查到 {checked} 个采样点，量不出这个错位"
+    finally:
+        grid._transition_anim.stop()
+        grid._settle_transition()
+        watcher.set_backdrops(light=None, dark=None)

@@ -262,7 +262,9 @@ class TransitionMixin:
                 if not index.isValid():
                     continue
                 option = QStyleOptionViewItem()
-                option.initFrom(self.viewport())
+                option.initFrom(self)
+                # initFrom 不填 widget，而标题带要靠它算窗口坐标（ADR 0098）。
+                option.widget = self
                 option.rect = self._final_rect(row, transition)
                 if selection is not None and selection.isSelected(index):
                     option.state |= QStyle.StateFlag.State_Selected

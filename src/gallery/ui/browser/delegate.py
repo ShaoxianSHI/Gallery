@@ -8,7 +8,13 @@ from __future__ import annotations
 
 from PySide6.QtCore import QModelIndex, QPoint, QRect, QSize, Qt
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPalette, QPen, QPixmap
-from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem, QWidget
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
+    QWidget,
+)
 
 from gallery.core.i18n import t
 from gallery.ui import theme
@@ -306,7 +312,9 @@ class PhotoDelegate(QStyledItemDelegate):
         painter.save()
         try:
             # 标题底一定要实心（见 docstring），但不能拿视口的调色板 —— 那一份是透明的（ADR 0096）。
-            viewport = option.widget
+            # Qt 交来的是视图，过渡帧也可能什么也没给 —— 一律换成视口再算窗口坐标。
+            widget = option.widget
+            viewport = widget.viewport() if isinstance(widget, QAbstractItemView) else widget
             origin = viewport.mapTo(viewport.window(), QPoint(0, 0)) if viewport else None
             theme.paint_background(painter, rect, origin=origin)
             text = palette.color(QPalette.ColorRole.WindowText)
