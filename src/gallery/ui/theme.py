@@ -76,6 +76,8 @@ def paint_background(painter: QPainter, rect: QRect, *, origin: QPoint | None = 
     # 格子整片抹掉。旧的 ``fillRect`` 天生被 ``rect`` 限住，换成整窗图片就没有这层保护了。
     painter.save()
     try:
+        # 三处调用点的 painter 带着不同的光栅提示，不平滑才能逐点一致（ADR 0098）。
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
         painter.setClipRect(rect, Qt.ClipOperation.IntersectClip)
         source = QRect(rect.x() + offset.x(), rect.y() + offset.y(), rect.width(), rect.height())
         painter.drawPixmap(rect, pixmap, source)

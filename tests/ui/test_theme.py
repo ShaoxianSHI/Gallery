@@ -19,7 +19,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from library_helpers import set_library_ui  # noqa: E402
-from PySide6.QtCore import QPoint, QPointF, QRect, Qt  # noqa: E402
+from PySide6.QtCore import QPoint, QPointF, QRect, QSize, Qt  # noqa: E402
 from PySide6.QtGui import QColor, QImage, QPainter, QPalette  # noqa: E402
 from PySide6.QtWidgets import QApplication, QFrame, QLabel, QWidget  # noqa: E402
 from waiting import DEFAULT_TIMEOUT_SECONDS, wait_for_idle, wait_until
@@ -825,5 +825,38 @@ def test_a_backdrop_never_paints_outside_the_rect_it_was_asked_for() -> None:
         assert canvas.pixelColor(30, 35) == QColor("#ff0000"), "给的那块没画上"
         assert canvas.pixelColor(150, 100) == QColor("#0000ff"), "画到矩形外面去了"
         assert canvas.pixelColor(20, 100) == QColor("#0000ff")
+    finally:
+        watcher.set_backdrops(light=None, dark=None)
+
+
+def test_a_backdrop_looks_the_same_whatever_the_painter_was_smoothing() -> None:
+    """三处调用点的 painter 带着不同的光栅提示，铺出来的同一张背景图必须逐点一致（ADR 0098）。
+
+    dpr=2 时背景 pixmap 是逻辑尺寸，绘制要放大 2×；条目委托那条路径本来就开着平滑缩放。
+    """
+    watcher = theme.ensure_installed()
+    image = QImage(4, 4, QImage.Format.Format_RGB32)
+    for y in range(4):
+        for x in range(4):
+            image.setPixelColor(x, y, QColor(x * 60, y * 60, 40 + x * 10 + y * 5))
+    backdrop = theme.BackdropImage(image=image, mean_lightness=0.5)
+    try:
+        watcher.set_backdrops(light=backdrop, dark=backdrop)
+        watcher.set_window_size(QSize(4, 4))
+        canvases = []
+        for smooth in (True, False):
+            canvas = QImage(8, 8, QImage.Format.Format_RGB32)
+            canvas.setDevicePixelRatio(2.0)
+            painter = QPainter(canvas)
+            try:
+                painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, smooth)
+                theme.paint_background(painter, QRect(0, 0, 4, 4))
+            finally:
+                painter.end()
+            canvases.append(canvas)
+
+        assert bytes(canvases[0].constBits()) == bytes(canvases[1].constBits()), (
+            "同一张背景图在两种光栅提示下铺出来不一样"
+        )
     finally:
         watcher.set_backdrops(light=None, dark=None)
