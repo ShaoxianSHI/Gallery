@@ -73,6 +73,99 @@ def test_playing_replaces_the_poster_with_the_first_frame(
     assert view.current_ref is None
 
 
+def test_the_first_frame_comes_back_when_playback_ends(
+    qt_app: QApplication, make_video: Callable[..., Path], tmp_path: Path
+) -> None:
+    """播完不能留下空画面：Qt 在 ``EndOfMedia`` 之后不再保留视频帧。"""
+    path = make_video(frames=5, directory=tmp_path)
+    view = _view(qt_app)
+    try:
+        view.play(PhotoRef.from_path(path), _poster())
+        assert wait_until(
+            qt_app,
+            lambda: view._player.mediaStatus() == QMediaPlayer.MediaStatus.EndOfMedia,
+            timeout=5,
+        )
+
+        assert view._poster.isVisible()
+        assert not view._poster.pixmap().isNull()
+        assert view._slider.value() == view._slider.maximum()
+    finally:
+        view.stop()
+        view.close()
+
+
+def test_the_first_frame_is_kept_even_without_a_poster(
+    qt_app: QApplication, make_video: Callable[..., Path], tmp_path: Path
+) -> None:
+    """网格里没有缩略图时，播放器自己解出来的第一帧也要留住。"""
+    path = make_video(frames=5, colors=[(200, 40, 40), *[(40, 200, 40)] * 4], directory=tmp_path)
+    view = _view(qt_app)
+    try:
+        view.play(PhotoRef.from_path(path))
+        assert wait_until(
+            qt_app,
+            lambda: view._player.mediaStatus() == QMediaPlayer.MediaStatus.EndOfMedia,
+            timeout=5,
+        )
+
+        pixmap = view._poster.pixmap()
+        assert view._poster.isVisible()
+        assert not pixmap.isNull()
+        color = pixmap.toImage().pixelColor(pixmap.width() // 2, pixmap.height() // 2)
+        assert color.red() > color.green() and color.red() > color.blue(), (
+            f"播完显示的不是第一帧：{color.name()}"
+        )
+    finally:
+        view.stop()
+        view.close()
+
+
+def test_replaying_after_the_end_hides_the_first_frame(
+    qt_app: QApplication, make_video: Callable[..., Path], tmp_path: Path
+) -> None:
+    path = make_video(frames=5, directory=tmp_path)
+    view = _view(qt_app)
+    try:
+        view.play(PhotoRef.from_path(path), _poster())
+        assert wait_until(
+            qt_app,
+            lambda: view._player.mediaStatus() == QMediaPlayer.MediaStatus.EndOfMedia,
+            timeout=5,
+        )
+        assert view._poster.isVisible()
+
+        view.toggle_playback()
+
+        assert wait_until(qt_app, lambda: not view._poster.isVisible(), timeout=5)
+    finally:
+        view.stop()
+        view.close()
+
+
+def test_seeking_after_the_end_hides_the_first_frame(
+    qt_app: QApplication, make_video: Callable[..., Path], tmp_path: Path
+) -> None:
+    path = make_video(frames=5, directory=tmp_path)
+    view = _view(qt_app)
+    try:
+        view.play(PhotoRef.from_path(path), _poster())
+        assert wait_until(
+            qt_app,
+            lambda: view._player.mediaStatus() == QMediaPlayer.MediaStatus.EndOfMedia,
+            timeout=5,
+        )
+        assert view._poster.isVisible()
+
+        view._slider.setValue(max(0, view._slider.maximum() // 2))
+        view._on_slider_released()
+
+        assert not view._poster.isVisible()
+    finally:
+        view.stop()
+        view.close()
+
+
 def test_space_pauses_and_resumes(
     qt_app: QApplication, make_video: Callable[..., Path], tmp_path: Path
 ) -> None:

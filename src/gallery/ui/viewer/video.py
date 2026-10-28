@@ -171,7 +171,7 @@ class VideoView(QGraphicsView):
         return self._ref
 
     def play(self, ref: PhotoRef, poster: QImage | None = None) -> None:
-        """打开并播放 ``ref``。``poster`` 是它的第一帧缩略图，首帧到了就撤掉。"""
+        """打开并播放 ``ref``。``poster`` 是它的第一帧缩略图，首帧到达前与播完之后都盖着它。"""
         self.stop()
         self._ref = ref
         self._error.hide()
@@ -276,7 +276,7 @@ class VideoView(QGraphicsView):
         )
 
     def _update_poster(self) -> None:
-        """把海报按视口大小等比缩放并居中（只在首帧到达前可见）。"""
+        """把海报按视口大小等比缩放并居中。"""
         if self._poster_pixmap.isNull() or self.viewport().width() <= 0:
             return
         area = self.viewport().rect().adjusted(_FIT_MARGIN, _FIT_MARGIN, -_FIT_MARGIN, -_FIT_MARGIN)
@@ -288,6 +288,19 @@ class VideoView(QGraphicsView):
                 Qt.TransformationMode.SmoothTransformation,
             )
         )
+
+    def _restore_first_frame(self) -> None:
+        """播完后把第一帧盖回来：``QGraphicsVideoItem`` 在 ``EndOfMedia`` 之后不再保留画面。"""
+        if self._poster_pixmap.isNull():
+            return
+        self._update_poster()
+        self._poster.show()
+
+    def _hide_poster(self) -> None:
+        if not self._poster.isVisible():
+            return
+        self._poster.hide()
+        self._poster.clear()
 
     def _reposition_error(self) -> None:
         area = self.viewport().rect()
@@ -304,11 +317,13 @@ class VideoView(QGraphicsView):
     def _on_frame(self, frame: QVideoFrame) -> None:
         if self._ref is None or not frame.isValid():
             return
+        if self._poster_pixmap.isNull():
+            image = frame.toImage()
+            if not image.isNull():
+                self._poster_pixmap = QPixmap.fromImage(image)
         self._video_item.setVisible(True)
-        if self._poster.isVisible():
-            self._poster.hide()
-            self._poster_pixmap = QPixmap()
-            self._poster.clear()
+        if not self._at_end:
+            self._hide_poster()
         self._ensure_size()
 
     def _on_native_size(self, size: QSizeF) -> None:
@@ -359,6 +374,7 @@ class VideoView(QGraphicsView):
             self._at_end = True
             self._set_play_icon(playing=False)
             self._slider.setValue(self._slider.maximum())
+            self._restore_first_frame()
         elif status in (
             QMediaPlayer.MediaStatus.LoadedMedia,
             QMediaPlayer.MediaStatus.BufferedMedia,
@@ -383,6 +399,7 @@ class VideoView(QGraphicsView):
 
     def _on_slider_released(self) -> None:
         self._at_end = False
+        self._hide_poster()
         self._player.setPosition(self._slider.value())
 
     # ---- 视图 --------------------------------------------------------------
@@ -418,7 +435,8 @@ class VideoView(QGraphicsView):
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         super().resizeEvent(event)
         self._relayout()
-        self._update_poster()
+        if self._poster.isVisible():
+            self._update_poster()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         if event.button() == Qt.MouseButton.LeftButton and self._ref is not None:
