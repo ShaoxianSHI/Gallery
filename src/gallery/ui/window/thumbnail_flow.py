@@ -68,6 +68,9 @@ class ThumbnailFlowMixin:
         if self._in_detail_page() and not self._detail.isHidden():
             if self._shows_filmstrip():
                 self._refresh_filmstrip_thumbnails()
+            else:
+                # 没有画廊条就没有理由继续替它排队；回网格时由那一支重新声明窗口。
+                self._pipeline.set_window((), ())
             return
         if not self._on_grid_page():
             return
@@ -104,7 +107,9 @@ class ThumbnailFlowMixin:
         return entries
 
     def _shows_filmstrip(self) -> bool:
-        """大图页上正看着一张照片。视频页没有那条面板（ADR 0091 决策 3）。"""
+        """大图页上正看着一张照片，而且「显示画廊」开着。视频页没有那条面板。"""
+        if not self._session.preferences.show_filmstrip:  # type: ignore[attr-defined]
+            return False
         ref = self._model.photo_at(self._current_row)
         return ref is not None and not ref.is_video
 

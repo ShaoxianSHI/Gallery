@@ -18,10 +18,11 @@ pytest.importorskip("PySide6")
 from library_helpers import set_library_ui  # noqa: E402
 from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import QApplication, QMenu  # noqa: E402
 from waiting import wait_for_idle, wait_until  # noqa: E402
 
 from gallery.core.library.config import BROWSE_MODE_FLAT  # noqa: E402
+from gallery.core.library.session import load_session  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.viewer.filmstrip import BOTTOM_MARGIN, cell_rect, centered_offset  # noqa: E402
 from gallery.ui.window.viewer_flow import FILMSTRIP_RADIUS  # noqa: E402
@@ -51,6 +52,20 @@ def window(
 
 def _open(window: MainWindow, row: int) -> None:
     window._open_detail(window._model.index(row, 0))
+
+
+def _view_menu(window: MainWindow) -> QMenu:
+    for action in window.menuBar().actions():
+        if action.text() == "显示":
+            assert action.menu() is not None
+            return action.menu()
+    raise AssertionError("菜单栏里没有「显示」")
+
+
+def test_the_switch_sits_just_above_show_extensions(window: MainWindow) -> None:
+    labels = [action.text() for action in _view_menu(window).actions()]
+
+    assert labels.index("显示画廊") == labels.index("显示文件扩展名") - 1
 
 
 def test_the_strip_lists_the_photos_around_the_current_one(window: MainWindow) -> None:
@@ -95,6 +110,27 @@ def test_stepping_a_photo_moves_the_selection(window: MainWindow) -> None:
 
     assert window._current_row == 2
     assert window._detail.filmstrip_current_row == 2
+
+
+def test_the_switch_hides_the_strip_and_remembers_the_choice(
+    window: MainWindow, qt_app: QApplication
+) -> None:
+    _open(window, 20)
+    strip = window._detail._filmstrip
+    assert strip.isVisible() is True
+
+    window._filmstrip_action.setChecked(False)
+    qt_app.processEvents()
+
+    assert strip.isVisible() is False
+    assert window._session.preferences.show_filmstrip is False
+    assert load_session(base=window._session_base).preferences.show_filmstrip is False
+
+    window._filmstrip_action.setChecked(True)
+    qt_app.processEvents()
+
+    assert strip.isVisible() is True
+    assert window._session.preferences.show_filmstrip is True
 
 
 def test_clicking_a_thumbnail_opens_that_photo(window: MainWindow, qt_app: QApplication) -> None:

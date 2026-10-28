@@ -291,6 +291,10 @@ class DetailView(QGraphicsView):
         self._filmstrip.set_items(items, current_row)
         self._place_filmstrip()
 
+    def set_filmstrip_enabled(self, enabled: bool) -> None:
+        """视图菜单那个「显示画廊」：收起 / 放出这条面板。"""
+        self._filmstrip.set_enabled(enabled)
+
     def filmstrip_rows(self) -> tuple[int, ...]:
         """画廊条里此刻摆着的那些行号。"""
         return self._filmstrip.rows()

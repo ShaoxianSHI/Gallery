@@ -339,6 +339,7 @@ class MainWindow(
             animation_speed=self._session.preferences.resolved_animation_speed(),
             filmstrip_thumbnails=self._filmstrip_pixmap,
         )
+        self._detail.set_filmstrip_enabled(self._session.preferences.show_filmstrip)
         self._detail.request_close.connect(self.show_grid)
         self._detail.request_step.connect(self.step_detail)
         self._detail.pause_requested.connect(self._on_space_pressed)
@@ -509,6 +510,11 @@ class MainWindow(
         self._metadata_action.setCheckable(True)
         self._metadata_action.setShortcut(QKeySequence("Ctrl+I"))
         self._metadata_action.toggled.connect(self.toggle_metadata)
+
+        self._filmstrip_action = QAction(t("menu.show_filmstrip"), self)
+        self._filmstrip_action.setCheckable(True)
+        self._filmstrip_action.setChecked(self._session.preferences.show_filmstrip)
+        self._filmstrip_action.toggled.connect(self.set_show_filmstrip)
 
         self._show_extensions_action = QAction(t("menu.show_extensions"), self)
         self._show_extensions_action.setCheckable(True)
@@ -697,6 +703,7 @@ class MainWindow(
         view_menu.addAction(self._zoom_in_action)
         view_menu.addAction(self._zoom_out_action)
         view_menu.addSeparator()
+        view_menu.addAction(self._filmstrip_action)
         view_menu.addAction(self._show_extensions_action)
         view_menu.addAction(self._metadata_action)
         view_menu.addSeparator()

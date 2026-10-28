@@ -30,6 +30,7 @@ MESSAGES: Final[Mapping[str, Message]] = {
     "menu.all_photos": "All Photos",
     "menu.calendar": "Calendar",
     "menu.metadata": "Show Metadata",
+    "menu.show_filmstrip": "Show Filmstrip",
     "menu.show_extensions": "Show File Extensions",
     "menu.clear_cache": "Clear Thumbnail Cache",
     "menu.refresh": "Refresh",

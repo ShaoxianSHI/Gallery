@@ -94,6 +94,8 @@ class Preferences:
     open_last_library: bool = True
     #: 网格与大图页标题上写不写文件扩展名（视图菜单里那一项）。
     show_file_extensions: bool = True
+    #: 大图页底部摆不摆那一条缩略图导航（视图菜单里那一项，ADR 0107）。
+    show_filmstrip: bool = True
     #: 四个位置各自的「用外部应用打开」次序（页面 → 应用 id）。空就是内置次序（ADR 0080）。
     external_orders: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
@@ -179,6 +181,7 @@ class Preferences:
             "slideshow_seconds": self.resolved_slideshow_seconds(),
             "open_last_library": self.open_last_library,
             "show_file_extensions": self.show_file_extensions,
+            "show_filmstrip": self.show_filmstrip,
             "external_orders": {name: list(ids) for name, ids in self.external_orders},
         }
 
@@ -193,6 +196,7 @@ class Preferences:
         seconds = value.get("slideshow_seconds")
         open_last = value.get("open_last_library")
         show_extensions = value.get("show_file_extensions")
+        show_filmstrip = value.get("show_filmstrip")
         return cls(
             animation_speed=speed if isinstance(speed, str) else DEFAULT_ANIMATION_SPEED,
             appearance=appearance if isinstance(appearance, str) else DEFAULT_APPEARANCE,
@@ -206,6 +210,7 @@ class Preferences:
             else DEFAULT_SLIDESHOW_SECONDS,
             open_last_library=open_last if isinstance(open_last, bool) else True,
             show_file_extensions=show_extensions if isinstance(show_extensions, bool) else True,
+            show_filmstrip=show_filmstrip if isinstance(show_filmstrip, bool) else True,
             external_orders=_parse_external_orders(value.get("external_orders")),
         )
 

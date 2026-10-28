@@ -142,6 +142,7 @@ def test_the_written_file_holds_only_the_app_level_fields(tmp_path: Path) -> Non
         "slideshow_seconds": 3,
         "open_last_library": True,
         "show_file_extensions": True,
+        "show_filmstrip": True,
         "external_orders": {},
     }
 
@@ -153,6 +154,7 @@ def test_preferences_round_trip(tmp_path: Path) -> None:
         slideshow_seconds=8,
         open_last_library=False,
         show_file_extensions=False,
+        show_filmstrip=False,
     )
 
     save_session(SessionState(preferences=preferences), base=tmp_path)
@@ -197,6 +199,7 @@ def test_unknown_preference_values_fall_back_one_by_one(tmp_path: Path) -> None:
                     "slideshow_seconds": 0,
                     "open_last_library": "no",
                     "show_file_extensions": "yes",
+                    "show_filmstrip": "no",
                 },
             }
         ),
@@ -211,6 +214,7 @@ def test_unknown_preference_values_fall_back_one_by_one(tmp_path: Path) -> None:
     assert preferences.resolved_slideshow_seconds() == 3
     assert preferences.open_last_library is True
     assert preferences.show_file_extensions is True
+    assert preferences.show_filmstrip is True
 
 
 def test_the_external_order_is_stored_per_page(tmp_path: Path) -> None:

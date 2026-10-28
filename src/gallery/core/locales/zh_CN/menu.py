@@ -30,6 +30,7 @@ MESSAGES: Final[Mapping[str, Message]] = {
     "menu.all_photos": "全部照片",
     "menu.calendar": "日历",
     "menu.metadata": "显示元数据信息",
+    "menu.show_filmstrip": "显示画廊",
     "menu.show_extensions": "显示文件扩展名",
     "menu.clear_cache": "清空缩略图缓存",
     "menu.refresh": "刷新",

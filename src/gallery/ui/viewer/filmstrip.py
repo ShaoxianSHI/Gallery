@@ -107,6 +107,7 @@ class Filmstrip(QWidget):
         self._offset = 0
         self._hover = -1
         self._pressed = -1
+        self._enabled = True
         self._provider: Callable[[Path], QPixmap | None] | None = None
         # 面板自己铺一层半透明底色压在照片上；别让 Qt 再铺一块不透明底。
         theme.mark_see_through(self)
@@ -123,6 +124,13 @@ class Filmstrip(QWidget):
         """取一张原始缩略图；``None`` 表示还没有（画占位块）。"""
         self._provider = provider
 
+    def set_enabled(self, enabled: bool) -> None:
+        """视图菜单那个开关：收起 / 放出这条面板，**已经摆好的那一批不动**。"""
+        if enabled == self._enabled:
+            return
+        self._enabled = enabled
+        self._apply_visibility()
+
     def set_items(self, items: Sequence[tuple[int, Path]], current_row: int) -> None:
         """换一批条目并把 ``current_row`` 选中。**顺序就是这一层的照片顺序**。"""
         rows = tuple(row for row, _path in items)
@@ -134,10 +142,13 @@ class Filmstrip(QWidget):
         self._current = rows.index(current_row) if current_row in rows else -1
         self._hover = -1
         self._pressed = -1
-        # 一张照片时这条面板没有可导航的东西，白白压住画面。
-        self.setVisible(self._current >= 0 and len(rows) > 1)
+        self._apply_visibility()
         self._recenter()
         self.update()
+
+    def _apply_visibility(self) -> None:
+        # 一张照片时这条面板没有可导航的东西，白白压住画面；随手关掉时也一样收起来。
+        self.setVisible(self._enabled and self._current >= 0 and len(self._rows) > 1)
 
     def rows(self) -> tuple[int, ...]:
         """这一批条目在这一层里的行号，按显示顺序。"""

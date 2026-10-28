@@ -478,6 +478,14 @@ class SettingsFlowMixin:
         self._store_preferences(prefs)
         self._sync_ui()
 
+    def set_show_filmstrip(self, enabled: bool) -> None:
+        """视图菜单的「显示画廊」：应用级偏好，换库不重置（与文件扩展名同一类）。"""
+        prefs = replace(self._session.preferences, show_filmstrip=enabled)  # type: ignore[attr-defined]
+        self._store_preferences(prefs)
+        self._detail.set_filmstrip_enabled(enabled)  # type: ignore[attr-defined]
+        self._refresh_thumbnail_window()  # type: ignore[attr-defined]
+        self._sync_ui()
+
     def set_show_file_extensions(self, enabled: bool) -> None:
         """视图菜单的「显示文件扩展名」：应用级偏好，换库不重置（ADR 0073 的判据）。"""
         prefs = replace(self._session.preferences, show_file_extensions=enabled)
