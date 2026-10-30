@@ -22,6 +22,14 @@ MESSAGES: Final[Mapping[str, Message]] = {
     "banner.unexpected": (
         "Something unexpected happened. Details were written to the log file: {path}."
     ),
+    "banner.music.missing": (
+        "Could not play the background music “{name}”: the file is no longer there. "
+        "Choose a music file again; the slideshow continues."
+    ),
+    "banner.music.failed": (
+        "Could not play the background music “{name}”: this machine cannot decode the file. "
+        "Try an MP3, M4A, or FLAC file; the slideshow continues."
+    ),
     "banner.rename.journaled": "Renamed to “{name}”.",
     "banner.rename.not_journaled": (
         "Renamed to “{name}”; could not write the operation log, so ⌘Z cannot undo this."

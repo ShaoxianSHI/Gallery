@@ -39,6 +39,9 @@ MESSAGES: Final[Mapping[str, Message]] = {
     ),
     "library.config.not_bool": "配置项 {key} 必须是 true 或 false，当前是 {value!r}。",
     "library.config.not_int": "配置项 {key} 必须是整数，当前是 {value!r}。",
+    "library.config.music_not_string": (
+        "配置项 slideshow_music 必须是音乐文件的路径（字符串），当前是 {value!r}。"
+    ),
     "library.config.movie_site.required": (
         '配置项 movie_site 必须是影片网站的前缀，例如 "{default}"，当前是 {value!r}。'
     ),
@@ -71,6 +74,9 @@ MESSAGES: Final[Mapping[str, Message]] = {
     "library.facade.cover.album_outside": "「{name}」不在当前库里，无法设置封面。",
     "library.facade.cover.no_config_dir": (
         "当前库无法创建 {name} 目录，封面设置无处保存。请将文件夹移动到可写入的位置后重试。"
+    ),
+    "library.facade.music.missing": (
+        "「{name}」不在此处，无法设为放映背景音乐。请重新选择音乐文件。"
     ),
     "library.facade.movie.failure": "{code}：{reason}",
     "library.facade.movie.cover_failure": "{code}：未能设成封面，{reason}",

@@ -1503,6 +1503,7 @@ class MainWindow(
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - 名字是 Qt 定的
         self._save_session()
         self._teardown_library()
+        self._slideshow_music.dispose()
         # ``abandon`` 而不是「取消 + 等」：排队里还没开始的任务必须丢掉，否则每跑掉一个就再等一个
         # （几百张照片就是好几分钟）。已经跑起来的那几个靠令牌结束，连「云盘上没下完」也能立刻放手。
         if not self._runner.abandon():

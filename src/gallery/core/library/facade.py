@@ -51,6 +51,7 @@ from gallery.core.library.config import (
     normalize_movie_site,
     prepare_library,
     save_config,
+    slideshow_music_path,
 )
 from gallery.core.library.index import FacetIndex
 from gallery.core.library.photos import (
@@ -347,6 +348,42 @@ class Library:
             return
         self._require_writable_config()
         updated = replace(self._config, movie_site=site)
+        save_config(self._root, updated)
+        self._config = updated
+
+    @property
+    def slideshow_music(self) -> Path | None:
+        """这个库的放映背景音乐；没设过是 ``None``。
+
+        **不检查文件此刻在不在**：放映开始时才判，找不到只让这一次没有声音。
+        """
+        return slideshow_music_path(self._root, self._config.slideshow_music)
+
+    def set_slideshow_music(self, path: Path) -> None:
+        """把这首歌记成这个库的放映背景音乐（ADR 0109）。
+
+        **只写 Gallery 自己的配置文件**：音乐文件一个字节都不动，不复制进库、不记 journal。
+        库内文件存相对库根的路径，整份库搬走之后仍然指得对。
+
+        :raises ConfigError: 文件已经不在了，或这个库的配置目录写不进去。
+        """
+        chosen = Path(path).expanduser().absolute()
+        if not chosen.is_file():
+            raise ConfigError(t("library.facade.music.missing", name=chosen.name), path=chosen)
+        key = paths.library_key(self._root, chosen)
+        if key == self._config.slideshow_music:
+            return
+        self._require_writable_config()
+        updated = replace(self._config, slideshow_music=key)
+        save_config(self._root, updated)
+        self._config = updated
+
+    def clear_slideshow_music(self) -> None:
+        """不再放背景音乐；本来就没设过时什么都不写。"""
+        if not self._config.slideshow_music:
+            return
+        self._require_writable_config()
+        updated = replace(self._config, slideshow_music="")
         save_config(self._root, updated)
         self._config = updated
 

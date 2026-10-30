@@ -49,6 +49,10 @@ MESSAGES: Final[Mapping[str, Message]] = {
     "library.config.not_int": (
         "The {key} setting must be an integer; the current value is {value!r}."
     ),
+    "library.config.music_not_string": (
+        "The slideshow_music setting must be the path to a music file (a string); "
+        "the current value is {value!r}."
+    ),
     "library.config.movie_site.required": (
         'The movie_site setting must be the prefix of a movie website, for example "{default}"; '
         "the current value is {value!r}."
@@ -100,6 +104,9 @@ MESSAGES: Final[Mapping[str, Message]] = {
     "library.facade.cover.no_config_dir": (
         "The current library cannot create the {name} folder, so the cover setting has nowhere "
         "to be saved. Move the folder to a writable location and try again."
+    ),
+    "library.facade.music.missing": (
+        "“{name}” is not there, so it cannot be used as slideshow music. Choose the file again."
     ),
     "library.facade.movie.failure": "{code}: {reason}",
     "library.facade.movie.cover_failure": "{code}: could not set the cover, {reason}",

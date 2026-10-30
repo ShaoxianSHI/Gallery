@@ -58,6 +58,11 @@ DEFAULT_SLIDESHOW_SECONDS: Final = 3
 MIN_SLIDESHOW_SECONDS: Final = 1
 MAX_SLIDESHOW_SECONDS: Final = 60
 
+#: 放映背景音乐的音量档位（百分比）。0 是静音。**应用级** —— 与放映间隔同类，
+#: 换库不该把音量重置（ADR 0109）。
+MUSIC_VOLUMES: Final = (0, 30, 60, 100)
+DEFAULT_MUSIC_VOLUME: Final = 60
+
 #: 「用外部应用打开」的四个位置（ADR 0080 / 0094）。与 ``PageRole`` 同一套名字：
 #: 大图页的照片 / 大图页的视频 / 网格页 / 日历页。次序**只对这个应用有意义**，所以进会话偏好
 #: 而不进库配置。
@@ -91,6 +96,8 @@ class Preferences:
     light_backdrop: str = ""
     dark_backdrop: str = ""
     slideshow_seconds: int = DEFAULT_SLIDESHOW_SECONDS
+    #: 放映背景音乐的音量（0–100）。手改越界时收到边界，不跟着静音。
+    music_volume: int = DEFAULT_MUSIC_VOLUME
     open_last_library: bool = True
     #: 网格与大图页标题上写不写文件扩展名（视图菜单里那一项）。
     show_file_extensions: bool = True
@@ -125,6 +132,13 @@ class Preferences:
         if MIN_SLIDESHOW_SECONDS <= seconds <= MAX_SLIDESHOW_SECONDS:
             return seconds
         return DEFAULT_SLIDESHOW_SECONDS
+
+    def resolved_music_volume(self) -> int:
+        """背景音乐音量（0–100）；类型不对回默认，越界收到边界。"""
+        value = self.music_volume
+        if isinstance(value, bool) or not isinstance(value, int):
+            return DEFAULT_MUSIC_VOLUME
+        return min(max(value, 0), 100)
 
     def background_for(self, *, dark: bool) -> str | None:
         """这一档该用的背景色；没设过（或设得不合法）返回 ``None`` —— 用系统那一档。"""
@@ -179,6 +193,7 @@ class Preferences:
             "light_backdrop": self.backdrop_for(dark=False),
             "dark_backdrop": self.backdrop_for(dark=True),
             "slideshow_seconds": self.resolved_slideshow_seconds(),
+            "music_volume": self.resolved_music_volume(),
             "open_last_library": self.open_last_library,
             "show_file_extensions": self.show_file_extensions,
             "show_filmstrip": self.show_filmstrip,
@@ -194,6 +209,7 @@ class Preferences:
         appearance = value.get("appearance")
         language = value.get("language")
         seconds = value.get("slideshow_seconds")
+        volume = value.get("music_volume")
         open_last = value.get("open_last_library")
         show_extensions = value.get("show_file_extensions")
         show_filmstrip = value.get("show_filmstrip")
@@ -208,6 +224,9 @@ class Preferences:
             slideshow_seconds=seconds
             if isinstance(seconds, int) and not isinstance(seconds, bool)
             else DEFAULT_SLIDESHOW_SECONDS,
+            music_volume=volume
+            if isinstance(volume, int) and not isinstance(volume, bool)
+            else DEFAULT_MUSIC_VOLUME,
             open_last_library=open_last if isinstance(open_last, bool) else True,
             show_file_extensions=show_extensions if isinstance(show_extensions, bool) else True,
             show_filmstrip=show_filmstrip if isinstance(show_filmstrip, bool) else True,
@@ -419,12 +438,14 @@ __all__ = [
     "DEFAULT_ANIMATION_SPEED",
     "DEFAULT_APPEARANCE",
     "DEFAULT_LANGUAGE_PREFERENCE",
+    "DEFAULT_MUSIC_VOLUME",
     "DEFAULT_SLIDESHOW_SECONDS",
     "LANGUAGE_PREFERENCES",
     "LEGACY_UI_KEYS",
     "MAX_RECENT_ROOTS",
     "MAX_SLIDESHOW_SECONDS",
     "MIN_SLIDESHOW_SECONDS",
+    "MUSIC_VOLUMES",
     "SESSION_VERSION",
     "Preferences",
     "SessionState",

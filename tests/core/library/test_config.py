@@ -32,8 +32,10 @@ from gallery.core.library.config import (
     discard_legacy_thumb_cache,
     load_config,
     normalize_movie_site,
+    normalize_slideshow_music,
     prepare_library,
     save_config,
+    slideshow_music_path,
 )
 
 
@@ -149,6 +151,50 @@ def test_normalizing_a_movie_site_only_trims_the_whitespace() -> None:
     assert normalize_movie_site("https://missav.com/en") == "https://missav.com/en"
 
 
+# ---- 放映背景音乐（ADR 0109）-----------------------------------------------
+
+
+def test_slideshow_music_defaults_to_empty(tmp_path: Path) -> None:
+    """没配音乐 = 空串；默认库里不该凭空多一行路径。"""
+    assert load_config(tmp_path).slideshow_music == ""
+
+
+def test_slideshow_music_round_trips_through_the_file(tmp_path: Path) -> None:
+    save_config(tmp_path, LibraryConfig(slideshow_music="音乐/钢琴曲.mp3"))
+
+    assert load_config(tmp_path).slideshow_music == "音乐/钢琴曲.mp3"
+
+
+@pytest.mark.parametrize("body", ["slideshow_music = 3\n", "slideshow_music = true\n"])
+def test_a_bad_slideshow_music_is_rejected(tmp_path: Path, body: str) -> None:
+    """顶层键是公开接口：类型不对要给可行动的提示，而不是静默忽略。"""
+    file = paths.config_file(tmp_path)
+    file.parent.mkdir(parents=True)
+    file.write_text(body, encoding="utf-8")
+
+    with pytest.raises(ConfigError) as excinfo:
+        load_config(tmp_path)
+
+    assert "slideshow_music" in excinfo.value.message
+
+
+def test_normalizing_slideshow_music_only_trims_the_whitespace() -> None:
+    assert normalize_slideshow_music("  音乐/歌.mp3  ") == "音乐/歌.mp3"
+    assert normalize_slideshow_music("") == ""
+    assert normalize_slideshow_music(None) == ""
+
+
+def test_slideshow_music_path_resolves_against_the_library_root(tmp_path: Path) -> None:
+    """库内相对路径按库根还原；绝对路径原样；空的与纯空白是「不放」。"""
+    root = tmp_path / "库"
+
+    assert slideshow_music_path(root, "音乐/歌.mp3") == root / "音乐/歌.mp3"
+    assert slideshow_music_path(root, "/别的盘/歌.mp3") == Path("/别的盘/歌.mp3")
+    assert slideshow_music_path(root, "") is None
+    assert slideshow_music_path(root, "   ") is None
+    assert slideshow_music_path(root, "~/歌.mp3") == Path.home() / "歌.mp3"
+
+
 def test_prepare_library_creates_config(tmp_path: Path) -> None:
     root = tmp_path / "库"
 
@@ -184,6 +230,7 @@ def test_album_covers_round_trip_through_the_file(tmp_path: Path) -> None:
         "thumbnail_max_edge": 512,
         "max_cache_bytes": DEFAULT_MAX_CACHE_BYTES,
         "movie_site": DEFAULT_MOVIE_SITE,
+        "slideshow_music": "",
         "album_covers": {"2025-苏州": "2025-苏州/一张.jpg"},
     }
 

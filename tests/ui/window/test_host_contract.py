@@ -450,7 +450,10 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
             "_settings_actions",
             "_settings_extras",
             "_show_banner",
+            # 音量改完要当场生效；清掉背景音乐时正在放的那一首要立刻停（ADR 0109）。
+            "_slideshow_music",
             "_slideshow_timer",
+            "_stop_slideshow_music",
             "_sync_ui",
         }
     ),
@@ -472,6 +475,7 @@ HOST_SURFACE: dict[str, frozenset[str]] = {
             "_session",
             "_show_banner",
             "_slideshow",
+            "_slideshow_music",
             "_slideshow_timer",
             "step_detail",
         }

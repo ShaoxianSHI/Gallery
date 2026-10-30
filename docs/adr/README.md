@@ -136,3 +136,4 @@
 | [0106](0106-copy-catalog-i18n.md) | 文案收拢成查表：`core/locales/` 按领域与语言分文件，中文是源语言，先上英文 | 已接受 |
 | [0107](0107-filmstrip.md) | 大图页底部的画廊条：当前那张居中，点一下换过去 | 已接受 |
 | [0108](0108-terminal-on-the-grid-page.md) | 网格页多一项「终端」：在当前这一层文件夹里开一个终端窗口 | 已接受 |
+| [0109](0109-slideshow-background-music.md) | 放映背景音乐：库级配置，QtMultimedia 播放 | 已接受 |

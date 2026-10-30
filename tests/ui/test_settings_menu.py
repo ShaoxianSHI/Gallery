@@ -17,7 +17,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtGui import QColor  # noqa: E402
-from PySide6.QtWidgets import QApplication, QDialog, QInputDialog, QMessageBox  # noqa: E402
+from PySide6.QtWidgets import (  # noqa: E402
+    QApplication,
+    QDialog,
+    QFileDialog,
+    QInputDialog,
+    QMessageBox,
+)
 from waiting import wait_for_idle  # noqa: E402
 
 from gallery import __version__  # noqa: E402
@@ -35,6 +41,33 @@ from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.window import settings_flow  # noqa: E402
 
 GIB = 1024**3
+
+
+class _RecordingMusic:
+    """替掉真正的播放器：这一组用例只验「什么时候放 / 停 / 调音量」。"""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[object, ...]] = []
+        self.volume: int | None = None
+
+    def play(self, path: Path) -> None:
+        self.calls.append(("play", path))
+
+    def stop(self) -> None:
+        self.calls.append(("stop",))
+
+    def pause(self) -> None:
+        self.calls.append(("pause",))
+
+    def resume(self) -> None:
+        self.calls.append(("resume",))
+
+    def set_volume(self, percent: int) -> None:
+        self.volume = percent
+        self.calls.append(("volume", percent))
+
+    def dispose(self) -> None:
+        self.calls.append(("dispose",))
 
 
 def _new_window(tmp_path: Path) -> MainWindow:
@@ -90,7 +123,17 @@ def test_the_submenus_are_grouped_in_a_stable_order(window: MainWindow) -> None:
         action.text() for action in _settings_menu(window).actions() if action.menu() is not None
     ]
 
-    assert titles == ["主题", "语言", "背景", "动画速度", "放映间隔", "影片网站", "缓存上限"]
+    assert titles == [
+        "主题",
+        "语言",
+        "背景",
+        "动画速度",
+        "放映间隔",
+        "放映背景音乐",
+        "背景音乐音量",
+        "影片网站",
+        "缓存上限",
+    ]
 
 
 def test_the_menu_reads_top_to_bottom_in_three_groups(window: MainWindow) -> None:
@@ -107,6 +150,8 @@ def test_the_menu_reads_top_to_bottom_in_three_groups(window: MainWindow) -> Non
         "背景",
         "动画速度",
         "放映间隔",
+        "放映背景音乐",
+        "背景音乐音量",
         "影片网站",
         "外部应用顺序…",
         "启动时打开上次的库",
@@ -142,6 +187,7 @@ def test_the_backdrop_commands_live_under_background(window: MainWindow) -> None
 
 def test_medium_is_checked_by_default(window: MainWindow) -> None:
     assert window._settings_actions["animation"]["normal"].isChecked()
+    assert window._settings_actions["music_volume"][60].isChecked()
     assert window._settings_extras["open_last_library"].isChecked()
 
 
@@ -290,6 +336,65 @@ def test_the_slideshow_interval_is_saved_and_reaches_the_timer(
 
     assert window._slideshow_timer.interval() == 8000
     assert load_session(base=tmp_path / "会话").preferences.slideshow_seconds == 8
+
+
+def test_the_music_volume_is_saved_and_reaches_the_player(
+    window: MainWindow, tmp_path: Path
+) -> None:
+    music = _RecordingMusic()
+    window._slideshow_music = music  # type: ignore[assignment]
+
+    _trigger(window, "music_volume", 30)
+
+    assert load_session(base=tmp_path / "会话").preferences.music_volume == 30
+    assert music.volume == 30
+    assert window._settings_actions["music_volume"][30].isChecked()
+    assert window._settings_actions["music_volume"][60].isChecked() is False
+
+
+def test_choosing_a_song_writes_the_library_config(
+    window: MainWindow,
+    qt_app: QApplication,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """库内的歌存相对路径；选完菜单上要看得到当前是哪一首（ADR 0109）。"""
+    root = tmp_path / "照片"
+    _library(window, qt_app, root)
+    song = root / "音乐" / "歌.mp3"
+    song.parent.mkdir()
+    song.write_bytes(b"\x00")
+    monkeypatch.setattr(
+        QFileDialog, "getOpenFileName", staticmethod(lambda *args, **kwargs: (str(song), ""))
+    )
+
+    window._settings_extras["slideshow_music_choose"].trigger()
+
+    assert load_config(root).slideshow_music == "音乐/歌.mp3"
+    assert window._settings_extras["slideshow_music_clear"].isEnabled() is True
+    assert window._settings_extras["slideshow_music_current"].text() == "当前：歌.mp3"
+    assert window._banner.text() == "放映背景音乐已设为「歌.mp3」。"
+
+
+def test_clearing_the_song_stops_it_and_removes_the_config(
+    window: MainWindow, qt_app: QApplication, tmp_path: Path
+) -> None:
+    root = tmp_path / "照片"
+    _library(window, qt_app, root)
+    song = root / "歌.mp3"
+    song.write_bytes(b"\x00")
+    window._library.set_slideshow_music(song)
+    window._sync_ui()
+    music = _RecordingMusic()
+    window._slideshow_music = music  # type: ignore[assignment]
+
+    window._settings_extras["slideshow_music_clear"].trigger()
+
+    assert load_config(root).slideshow_music == ""
+    assert ("stop",) in music.calls
+    assert window._settings_extras["slideshow_music_clear"].isEnabled() is False
+    assert window._settings_extras["slideshow_music_current"].text() == "（未设置）"
+    assert window._banner.text() == "已关闭放映背景音乐。"
 
 
 def test_the_open_last_library_switch_is_saved(window: MainWindow, tmp_path: Path) -> None:

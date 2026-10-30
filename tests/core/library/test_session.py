@@ -140,6 +140,7 @@ def test_the_written_file_holds_only_the_app_level_fields(tmp_path: Path) -> Non
         "light_backdrop": "",
         "dark_backdrop": "",
         "slideshow_seconds": 3,
+        "music_volume": 60,
         "open_last_library": True,
         "show_file_extensions": True,
         "show_filmstrip": True,
@@ -160,6 +161,21 @@ def test_preferences_round_trip(tmp_path: Path) -> None:
     save_session(SessionState(preferences=preferences), base=tmp_path)
 
     assert load_session(base=tmp_path).preferences == preferences
+
+
+def test_the_music_volume_round_trips(tmp_path: Path) -> None:
+    """背景音乐音量是应用级偏好（ADR 0109），与放映间隔同类。"""
+    save_session(SessionState(preferences=Preferences(music_volume=30)), base=tmp_path)
+
+    assert load_session(base=tmp_path).preferences.resolved_music_volume() == 30
+
+
+def test_a_bad_music_volume_falls_back_or_clamps() -> None:
+    """手改过的值：类型不对回默认，越界收到 0–100。"""
+    assert Preferences(music_volume=140).resolved_music_volume() == 100
+    assert Preferences(music_volume=-3).resolved_music_volume() == 0
+    assert Preferences(music_volume="60").resolved_music_volume() == 60  # type: ignore[arg-type]
+    assert Preferences(music_volume=True).resolved_music_volume() == 60  # type: ignore[arg-type]
 
 
 def test_the_language_preference_round_trips(tmp_path: Path) -> None:

@@ -423,6 +423,73 @@ def test_setting_a_movie_site_needs_the_config_dir(tmp_path: Path) -> None:
     assert "不可写入" in excinfo.value.message
 
 
+def test_set_slideshow_music_stores_a_library_file_relative(
+    tmp_path: Path,
+) -> None:
+    """库内的歌存相对路径：整份库搬走或复制之后，那一行仍然指得对（ADR 0109）。"""
+    root = tmp_path / "库"
+    root.mkdir()
+    song = root / "音乐" / "歌.mp3"
+    song.parent.mkdir()
+    song.write_bytes(b"\x00")
+    library = Library.open(root)
+
+    library.set_slideshow_music(song)
+
+    assert library.config.slideshow_music == "音乐/歌.mp3"
+    assert load_config(root).slideshow_music == "音乐/歌.mp3"
+    assert library.slideshow_music == song
+
+
+def test_set_slideshow_music_keeps_an_outside_file_absolute(tmp_path: Path) -> None:
+    root = tmp_path / "库"
+    root.mkdir()
+    song = tmp_path / "歌.mp3"
+    song.write_bytes(b"\x00")
+    library = Library.open(root)
+
+    library.set_slideshow_music(song)
+
+    assert library.config.slideshow_music == str(song)
+    assert library.slideshow_music == song
+
+
+def test_clearing_slideshow_music_removes_it(tmp_path: Path) -> None:
+    song = tmp_path / "歌.mp3"
+    song.write_bytes(b"\x00")
+    library = Library.open(tmp_path)
+    library.set_slideshow_music(song)
+
+    library.clear_slideshow_music()
+
+    assert library.config.slideshow_music == ""
+    assert library.slideshow_music is None
+    assert load_config(tmp_path).slideshow_music == ""
+
+
+def test_a_missing_song_leaves_the_config_alone(tmp_path: Path) -> None:
+    library = Library.open(tmp_path)
+    before = paths.config_file(tmp_path).read_bytes()
+
+    with pytest.raises(ConfigError) as excinfo:
+        library.set_slideshow_music(tmp_path / "没有这首歌.mp3")
+
+    assert "不在此处" in excinfo.value.message
+    assert paths.config_file(tmp_path).read_bytes() == before
+
+
+def test_setting_slideshow_music_needs_the_config_dir(tmp_path: Path) -> None:
+    song = tmp_path / "歌.mp3"
+    song.write_bytes(b"\x00")
+    library = Library.open(tmp_path)
+    library._config_dir_ready = False
+
+    with pytest.raises(ConfigError) as excinfo:
+        library.set_slideshow_music(song)
+
+    assert "不可写入" in excinfo.value.message
+
+
 def test_set_cache_limit_reaches_both_the_config_and_the_cache(
     tmp_path: Path, make_photo: Callable[..., Path]
 ) -> None:

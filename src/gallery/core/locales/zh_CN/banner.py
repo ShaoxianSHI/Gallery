@@ -20,6 +20,13 @@ MESSAGES: Final[Mapping[str, Message]] = {
     "banner.log_failed.plain": "未能记录操作日志",
     "banner.undoable": "⌘Z 可撤销",
     "banner.unexpected": "出现了一个没料到的问题，详情写进了日志文件：{path}。",
+    "banner.music.missing": (
+        "未能播放背景音乐「{name}」：文件不在此处。请重新选择音乐文件；放映继续进行。"
+    ),
+    "banner.music.failed": (
+        "未能播放背景音乐「{name}」：这台机器无法解码该文件。"
+        "请换一个 MP3、M4A 或 FLAC 文件；放映继续进行。"
+    ),
     "banner.rename.journaled": "已重命名为「{name}」。",
     "banner.rename.not_journaled": "已重命名为「{name}」；未能记录操作日志，⌘Z 不可撤销。",
     "banner.event.kind": "事件",

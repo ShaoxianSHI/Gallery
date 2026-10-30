@@ -26,7 +26,9 @@ from gallery.core.library.config import (  # noqa: E402
     BROWSE_MODE_ALBUMS,
     BROWSE_MODE_CALENDAR,
     BROWSE_MODE_FLAT,
+    LibraryConfig,
     prepare_library,
+    save_config,
 )
 from gallery.ui.main_window import MainWindow  # noqa: E402
 from gallery.ui.viewer.detail import FADE_IN_MS, FADE_OUT_MS  # noqa: E402
@@ -71,6 +73,41 @@ def _current_name(window: MainWindow) -> str:
     ref = window._model.photo_at(window._current_row)
     assert ref is not None
     return ref.name
+
+
+class _RecordingMusic:
+    """替掉真正的播放器：只记录放映流程让它做了什么。"""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[object, ...]] = []
+
+    def play(self, path: Path) -> None:
+        self.calls.append(("play", path))
+
+    def stop(self) -> None:
+        self.calls.append(("stop",))
+
+    def pause(self) -> None:
+        self.calls.append(("pause",))
+
+    def resume(self) -> None:
+        self.calls.append(("resume",))
+
+    def dispose(self) -> None:
+        self.calls.append(("dispose",))
+
+
+def _recording_music(window: MainWindow) -> _RecordingMusic:
+    music = _RecordingMusic()
+    window._slideshow_music = music  # type: ignore[assignment]
+    return music
+
+
+def _song(window: MainWindow) -> Path:
+    song = window._library.root / "歌.mp3"
+    song.write_bytes(b"\x00")
+    window._library.set_slideshow_music(song)
+    return song
 
 
 # ---- 那颗按钮 ----------------------------------------------------------------
@@ -177,6 +214,84 @@ def test_a_level_without_photos_says_so(
     assert window._slideshow.active is False
     assert window._stack.currentWidget() is not window._detail_page
     window.close()
+
+
+# ---- 背景音乐（ADR 0109）-----------------------------------------------------
+
+
+def test_a_slideshow_plays_the_libraries_song(window: MainWindow) -> None:
+    song = _song(window)
+    music = _recording_music(window)
+
+    _start(window)
+
+    assert music.calls == [("play", song)]
+
+
+def test_without_a_song_nothing_is_played(window: MainWindow) -> None:
+    music = _recording_music(window)
+
+    _start(window)
+
+    assert not [call for call in music.calls if call[0] == "play"]
+
+
+def test_stopping_stops_the_song(window: MainWindow) -> None:
+    _song(window)
+    music = _recording_music(window)
+    _start(window)
+    music.calls.clear()
+
+    window.stop_slideshow()
+
+    assert music.calls == [("stop",)]
+
+
+def test_pause_and_resume_follow_the_slideshow(window: MainWindow) -> None:
+    _song(window)
+    music = _recording_music(window)
+    _start(window)
+    music.calls.clear()
+
+    window._play_button.click()
+    assert music.calls == [("pause",)]
+
+    window._play_button.click()
+    assert music.calls == [("pause",), ("resume",)]
+
+
+def test_a_new_slideshow_plays_the_song_again(window: MainWindow) -> None:
+    song = _song(window)
+    music = _recording_music(window)
+    _start(window)
+    window.stop_slideshow()
+
+    _start(window)
+
+    assert [call for call in music.calls if call[0] == "play"] == [("play", song), ("play", song)]
+
+
+def test_a_missing_song_is_reported_and_the_slideshow_goes_on(
+    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+) -> None:
+    """找不到文件只让这一次没有声音，**放映本身不能停**。"""
+    root = tmp_path / "照片"
+    root.mkdir()
+    for name in PHOTOS:
+        make_photo(name, directory=root)
+    set_library_ui(root, browse_mode=BROWSE_MODE_FLAT)
+    save_config(root, LibraryConfig(slideshow_music="没有这首歌.mp3"))
+    window = MainWindow(session_base=tmp_path / "状态", initial_library=root)
+    window.show()
+    wait_for_idle(qt_app, window, what="扫描")
+    try:
+        window.start_slideshow()
+
+        assert wait_until(qt_app, lambda: "未能播放背景音乐" in window._banner.text(), timeout=5)
+        assert window._slideshow.active is True
+        assert window._slideshow_timer.isActive() is True
+    finally:
+        window.close()
 
 
 # ---- 怎么前进 ----------------------------------------------------------------

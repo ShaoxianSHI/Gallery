@@ -29,6 +29,7 @@ from gallery.core.library.session import (
     EXTERNAL_PAGE_DETAIL,
     EXTERNAL_PAGE_GRID,
     EXTERNAL_PAGE_VIDEO,
+    MUSIC_VOLUMES,
     Preferences,
 )
 from gallery.core.locales import LANGUAGE_NAMES
@@ -123,6 +124,13 @@ class SettingsFlowMixin:
             self._set_slideshow_seconds,
             {seconds: t("settings.seconds", seconds=seconds) for seconds in SLIDESHOW_SECONDS},
         )
+        self._build_slideshow_music_menu(menu)
+        self._settings_actions["music_volume"] = self._add_choice_menu(
+            menu,
+            t("settings.music_volume"),
+            self._set_music_volume,
+            {value: _volume_label(value) for value in MUSIC_VOLUMES},
+        )
         self._settings_actions["movie_site"] = self._add_choice_menu(
             menu,
             t("settings.movie_site"),
@@ -152,6 +160,7 @@ class SettingsFlowMixin:
         self._library_setting_actions = [
             *self._settings_actions["movie_site"].values(),
             *self._settings_actions["cache"].values(),
+            self._settings_extras["slideshow_music_choose"],
         ]
         menu.addSeparator()
         log_action = QAction(t("settings.log_folder"), cast("QWidget", self))
@@ -191,6 +200,23 @@ class SettingsFlowMixin:
             self._settings_extras[key] = action
             menu.addAction(action)
         return menu
+
+    def _build_slideshow_music_menu(self, parent: QMenu) -> None:
+        """「放映背景音乐」：当前那一首、挑一首、不再放（ADR 0109）。"""
+        menu = parent.addMenu(t("settings.slideshow_music"))
+        current = QAction(t("settings.slideshow_music.none"), cast("QWidget", self))
+        current.setEnabled(False)
+        menu.addAction(current)
+        self._settings_extras["slideshow_music_current"] = current
+        menu.addSeparator()
+        choose = QAction(t("settings.slideshow_music.choose"), cast("QWidget", self))
+        choose.triggered.connect(self._pick_slideshow_music)
+        menu.addAction(choose)
+        self._settings_extras["slideshow_music_choose"] = choose
+        clear = QAction(t("settings.slideshow_music.clear"), cast("QWidget", self))
+        clear.triggered.connect(self._clear_slideshow_music)
+        menu.addAction(clear)
+        self._settings_extras["slideshow_music_clear"] = clear
 
     def _add_choice_menu(
         self,
@@ -466,6 +492,13 @@ class SettingsFlowMixin:
         self._slideshow_timer.setInterval(int(seconds) * 1000)  # type: ignore[attr-defined]
         self._sync_ui()
 
+    def _set_music_volume(self, percent: object) -> None:
+        """音量与应用其余播放偏好一样是应用级的，换库不重置（ADR 0109）。"""
+        prefs = replace(self._session.preferences, music_volume=int(percent))
+        self._store_preferences(prefs)
+        self._slideshow_music.set_volume(int(percent))  # type: ignore[attr-defined]
+        self._sync_ui()
+
     def _set_language_preference(self, value: object) -> None:
         """语言是应用级偏好，**改完要重启才生效**（ADR 0106 决策 6）。"""
         prefs = replace(self._session.preferences, language=str(value))
@@ -528,6 +561,46 @@ class SettingsFlowMixin:
             # 取消时 Qt 已经把「自定义」勾上了（它是单选组里的一员），得按真正的值改回来。
             self._sync_ui()
 
+    def _pick_slideshow_music(self) -> None:
+        """挑一首歌写进这个库的 ``config.toml``；**文件一个字节都不动**（ADR 0109）。"""
+        library = self._library
+        if library is None:
+            return
+        current = library.slideshow_music  # type: ignore[attr-defined]
+        start = str(current.parent) if current is not None else str(Path.home())
+        chosen, _ = QFileDialog.getOpenFileName(
+            cast("QWidget", self),
+            t("settings.slideshow_music.pick_title"),
+            start,
+            t("settings.music_filter"),
+        )
+        if not chosen:
+            return
+        path = Path(chosen)
+        try:
+            library.set_slideshow_music(path)  # type: ignore[attr-defined]
+        except GalleryError as exc:
+            self._report_error(exc.message)  # type: ignore[attr-defined]
+            self._sync_ui()
+            return
+        self._sync_ui()
+        self._show_banner(t("settings.slideshow_music.selected", name=path.name), auto_hide=True)
+
+    def _clear_slideshow_music(self) -> None:
+        """不再放背景音乐：**正在放的那一首立刻停**，下一次放映也不会再起。"""
+        library = self._library
+        if library is None:
+            return
+        try:
+            library.clear_slideshow_music()  # type: ignore[attr-defined]
+        except GalleryError as exc:
+            self._report_error(exc.message)  # type: ignore[attr-defined]
+            self._sync_ui()
+            return
+        self._stop_slideshow_music()  # type: ignore[attr-defined]
+        self._sync_ui()
+        self._show_banner(t("settings.slideshow_music.cleared"), auto_hide=True)
+
     def _set_cache_limit(self, max_bytes: object) -> None:
         if self._library is None:
             return
@@ -569,6 +642,7 @@ class SettingsFlowMixin:
         self._check("appearance", prefs.resolved_appearance())
         self._check("language", prefs.resolved_language())
         self._check("slideshow", prefs.resolved_slideshow_seconds())
+        self._check("music_volume", prefs.resolved_music_volume())
         self._settings_extras["open_last_library"].setChecked(prefs.open_last_library)
         library = self._library
         if library is None:
@@ -580,6 +654,18 @@ class SettingsFlowMixin:
             self._check("cache", library.config.max_cache_bytes)  # type: ignore[attr-defined]
         for action in self._library_setting_actions:
             action.setEnabled(library is not None)
+        # 「当前那一首」与「不再放」比「有没有库」更细一层：没配歌时后者不该亮着。
+        song = library.slideshow_music if library is not None else None  # type: ignore[attr-defined]
+        if song is None:
+            self._settings_extras["slideshow_music_current"].setText(
+                t("settings.slideshow_music.none")
+            )
+            self._settings_extras["slideshow_music_clear"].setEnabled(False)
+        else:
+            self._settings_extras["slideshow_music_current"].setText(
+                t("settings.slideshow_music.current", name=song.name)
+            )
+            self._settings_extras["slideshow_music_clear"].setEnabled(True)
         # 背景图那两组：认不出来的 id（背景库被清空过）按「用背景色」显示。
         for dark, actions in self._backdrops.actions.items():
             wanted = prefs.backdrop_for(dark=dark)
@@ -611,6 +697,12 @@ def _cache_label(max_bytes: int) -> str:
     if max_bytes in CACHE_LIMIT_PRESETS:
         return f"{max_bytes // 1024**3} GB"
     return t("settings.cache.custom")
+
+
+def _volume_label(percent: int) -> str:
+    if percent == 0:
+        return t("settings.music_volume.mute")
+    return t("settings.music_volume.percent", percent=percent)
 
 
 def _complete_order(ids: Sequence[str], builtin: Sequence[str]) -> tuple[str, ...]:

@@ -1,6 +1,7 @@
 """库级配置（``config.toml``）的读写：配置目录里唯一不是缓存的文件，用户手改是预期行为。
 缺字段用默认值、非法取值给可行动的中文提示（带上路径与合法取值）、写入走原子替换。
-相册封面与库级界面偏好 ``[ui]``（ADR 0038 决策 4）也在这里，存的路径都相对库根。
+相册封面、库级界面偏好 ``[ui]``（ADR 0038 决策 4）与放映背景音乐（ADR 0109）也在这里；
+**库内路径存相对库根**，库外路径（例如音乐资料库里的歌）存绝对路径。
 """
 
 from __future__ import annotations
@@ -283,6 +284,9 @@ class LibraryConfig:
     #: 「影片」事件里「打开影片网站」的地址前缀（ADR 0063），**只管 JavDB 来的影片**（ADR 0068）：
     #: 番号接在它后面，例如 ``https://jable.tv/videos/`` → ``https://jable.tv/videos/ipx-660/``。
     movie_site: str = DEFAULT_MOVIE_SITE
+    #: **放映背景音乐**（ADR 0109）：库内是相对库根的路径，库外是绝对路径；空串 = 不放音乐。
+    #: 与封面同一套存法，理由也一样 —— 整份库搬走或复制之后，库内那首歌仍然找得到。
+    slideshow_music: str = ""
     #: **相册封面**（ADR 0028）：相册相对库根的路径 → 封面照片相对库根的路径。空 = 一个都没指定，
     #: 于是每个相册都用「里面第一张照片」。存相对路径是必须的：绝对路径在库里挪个位置、换台
     #: 机器就全废了，而这份文件用户会手改、也会跟着库提交。
@@ -303,6 +307,8 @@ class LibraryConfig:
             + f"thumbnail_max_edge = {self.thumbnail_max_edge}\n"
             + f"max_cache_bytes = {self.max_cache_bytes}  # 0 表示不限制\n"
             + f"movie_site = {_toml_string(self.movie_site)}  # 「影片」打开影片网站的前缀\n"
+            + f"slideshow_music = {_toml_string(self.slideshow_music)}"
+            "  # 放映背景音乐：库内写相对路径，留空 = 不放\n"
             + self._album_covers_toml()
             + self.ui.to_toml()
         )
@@ -354,6 +360,9 @@ class LibraryConfig:
             thumbnail_max_edge=edge,
             max_cache_bytes=max_bytes,
             movie_site=_read_movie_site(data, defaults.movie_site, source=source),
+            slideshow_music=normalize_slideshow_music(
+                data.get("slideshow_music", defaults.slideshow_music), source=source
+            ),
             album_covers=_read_album_covers(data, source=source),
             ui=LibraryUIState.from_mapping(_read_ui(data, source=source)),
         )
@@ -547,6 +556,33 @@ def _read_int(data: Mapping[str, object], key: str, default: int, *, source: Pat
     return value
 
 
+def normalize_slideshow_music(value: object, *, source: Path | None = None) -> str:
+    """放映背景音乐那一行：字符串、可以为空、去掉首尾空白。
+
+    **不要求文件此刻存在**：音乐可能在一张没挂载的外接盘上，那不该让整个库打不开。
+    """
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise ConfigError(
+            t("library.config.music_not_string", value=value),
+            path=source,
+        )
+    return value.strip()
+
+
+def slideshow_music_path(root: Path, value: str) -> Path | None:
+    """把配置里的那一行还原成要播放的文件；空串是 ``None``。
+
+    库内键按库根还原，绝对键原样返回（与库文件里其它路径同一套判据）。手写的 ``~``
+    也认 —— 否则用户写 ``~/Music/a.mp3`` 会被当成库里一个叫 ``~`` 的文件夹。
+    """
+    text = value.strip()
+    if not text:
+        return None
+    return paths.path_of_library_key(root, str(Path(text).expanduser()))
+
+
 def normalize_movie_site(value: object, *, source: Path | None = None) -> str:
     """校验影片网站前缀。**非空、且是 http(s) 地址** —— 它会被拼进一个真去打开的 URL，一个
     手滑写进去的 ``jav`` 只会让「打开影片」点了没反应（ADR 0063）。
@@ -632,6 +668,8 @@ __all__ = [
     "discard_legacy_thumb_cache",
     "load_config",
     "normalize_movie_site",
+    "normalize_slideshow_music",
     "prepare_library",
     "save_config",
+    "slideshow_music_path",
 ]

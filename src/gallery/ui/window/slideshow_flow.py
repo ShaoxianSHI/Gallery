@@ -6,7 +6,8 @@
 （ADR 0041）。
 
 自动播放用 ``QTimer``，手动按 ← / → 会重新计时；空格暂停 / 继续。放映途中换层、切库、
-离开大图页都会收掉这一次放映。
+离开大图页都会收掉这一次放映。**背景音乐跟着这一次放映起停**（ADR 0109）：暂停一起暂停，
+重新放映从头再放，放完循环。
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from PySide6.QtCore import QTimer
 
 from gallery.core.i18n import t
 from gallery.core.library.photos import PhotoRef
+from gallery.ui.window.slideshow_music import SlideshowMusic
 from gallery.ui.window.state.slideshow import SlideshowState
 
 #: 自动播放的间隔（毫秒）。手动翻页后会重新计这一段时间。
@@ -28,15 +30,20 @@ class SlideshowFlowMixin:
 
     _slideshow: SlideshowState
     _slideshow_timer: QTimer
+    _slideshow_music: SlideshowMusic
 
     def _init_slideshow(self) -> None:
-        """建放映的状态与计时器；``MainWindow.__init__`` 里只留这一句。"""
+        """建放映的状态、计时器与背景音乐；``MainWindow.__init__`` 里只留这一句。"""
         self._slideshow = SlideshowState()
         self._slideshow_timer = QTimer(self)
         # 间隔是应用级偏好（ADR 0073）；常数只是它从没被改过时的默认值。
         seconds = self._session.preferences.resolved_slideshow_seconds()
         self._slideshow_timer.setInterval(seconds * 1000)
         self._slideshow_timer.timeout.connect(self._advance_slideshow)
+        self._slideshow_music = SlideshowMusic(
+            self, volume=self._session.preferences.resolved_music_volume()
+        )
+        self._slideshow_music.failed.connect(self._on_slideshow_music_failed)
 
     # ---- 入口 --------------------------------------------------------------
 
@@ -82,6 +89,7 @@ class SlideshowFlowMixin:
         self._slideshow.start(paths, index)
         self._restart_slideshow_timer()
         self._update_play_button()
+        self._start_slideshow_music()
 
     def stop_slideshow(self) -> None:
         """结束放映。**元信息面板按库级偏好放回来**，不改变用户原来的设置。"""
@@ -89,6 +97,7 @@ class SlideshowFlowMixin:
             return
         self._slideshow.stop()
         self._slideshow_timer.stop()
+        self._slideshow_music.stop()
         self._panel.setVisible(self._metadata_visible)
         self._update_play_button()
 
@@ -98,8 +107,40 @@ class SlideshowFlowMixin:
         if not self._slideshow.active:
             return
         self._slideshow.paused = not self._slideshow.paused
+        if self._slideshow.paused:
+            self._slideshow_music.pause()
+        else:
+            self._slideshow_music.resume()
         self._restart_slideshow_timer()
         self._update_play_button()
+
+    # ---- 背景音乐 ----------------------------------------------------------
+
+    def _start_slideshow_music(self) -> None:
+        """按这个库配的那首歌起音乐；没配就保持安静。"""
+        if self._library is None:
+            return
+        path = self._library.slideshow_music
+        if path is None:
+            self._slideshow_music.stop()
+            return
+        self._slideshow_music.play(path)
+
+    def _stop_slideshow_music(self) -> None:
+        """设置里清掉背景音乐时用：**正在放的那一首立刻停**。"""
+        self._slideshow_music.stop()
+
+    def _on_slideshow_music_failed(self) -> None:
+        """播放失败只让这一次没有声音，放映照常继续。"""
+        # 用户已经退出了放映：那条错误说的是上一轮，别再往网格上盖一句话。
+        if not self._slideshow.active:
+            return
+        path = self._slideshow_music.path
+        name = path.name if path is not None else ""
+        if path is not None and not path.is_file():
+            self._show_banner(t("banner.music.missing", name=name))
+        else:
+            self._show_banner(t("banner.music.failed", name=name))
 
     def _on_space_pressed(self) -> None:
         """空格：放映中暂停 / 继续，其余时候与右方向键一样翻下一张。"""
