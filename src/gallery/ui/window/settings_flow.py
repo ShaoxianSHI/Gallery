@@ -202,13 +202,13 @@ class SettingsFlowMixin:
         return menu
 
     def _build_slideshow_music_menu(self, parent: QMenu) -> None:
-        """「放映背景音乐」：挑一首、不再放（ADR 0109）。
-
-        **当前那一首写在子菜单标题上**：原生菜单栏没有「不可点又不置灰」的菜单项，
-        放进来的话要么一点就把菜单关掉，要么灰得看不清。
-        """
+        """「放映背景音乐」：当前那一首、挑一首、不再放（ADR 0109）。"""
         menu = parent.addMenu(t("settings.slideshow_music"))
-        self._settings_extras["slideshow_music_title"] = menu.menuAction()
+        current = QAction(t("settings.slideshow_music.none"), cast("QWidget", self))
+        current.setEnabled(False)
+        menu.addAction(current)
+        self._settings_extras["slideshow_music_current"] = current
+        menu.addSeparator()
         choose = QAction(t("settings.slideshow_music.choose"), cast("QWidget", self))
         choose.triggered.connect(self._pick_slideshow_music)
         menu.addAction(choose)
@@ -656,12 +656,15 @@ class SettingsFlowMixin:
             action.setEnabled(library is not None)
         # 「当前那一首」与「不再放」比「有没有库」更细一层：没配歌时后者不该亮着。
         song = library.slideshow_music if library is not None else None  # type: ignore[attr-defined]
-        title = self._settings_extras["slideshow_music_title"]
         if song is None:
-            title.setText(t("settings.slideshow_music"))
+            self._settings_extras["slideshow_music_current"].setText(
+                t("settings.slideshow_music.none")
+            )
             self._settings_extras["slideshow_music_clear"].setEnabled(False)
         else:
-            title.setText(t("settings.slideshow_music.with_name", name=_menu_text(song.name)))
+            self._settings_extras["slideshow_music_current"].setText(
+                t("settings.slideshow_music.current", name=song.name)
+            )
             self._settings_extras["slideshow_music_clear"].setEnabled(True)
         # 背景图那两组：认不出来的 id（背景库被清空过）按「用背景色」显示。
         for dark, actions in self._backdrops.actions.items():
@@ -700,11 +703,6 @@ def _volume_label(percent: int) -> str:
     if percent == 0:
         return t("settings.music_volume.mute")
     return t("settings.music_volume.percent", percent=percent)
-
-
-def _menu_text(text: str) -> str:
-    """把文件名原样放进菜单文字：``&`` 在 ``QAction`` 里是助记符，要写成两个。"""
-    return text.replace("&", "&&").replace("\t", " ")
 
 
 def _complete_order(ids: Sequence[str], builtin: Sequence[str]) -> tuple[str, ...]:
