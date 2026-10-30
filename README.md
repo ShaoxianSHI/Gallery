@@ -84,7 +84,7 @@ uv run --group build python scripts/build_app.py   # 产物 dist/Gallery.app
 
 - 标题条左侧的按钮：左半打开第一项，右半列出全部。
 - 大图页是看图软件；视频页是 QuickTime Player 与 IINA（装了才有）。
-- 有拍摄位置时多出「地图」「Google 地图」；网格页是当前文件夹。
+- 有拍摄位置时多出「地图」「Google 地图」；网格页是当前文件夹（访达、QSpace、终端）。
 - 日历页是系统「日历」与 Google 日历。
 - 顺序在「设置 → 外部应用顺序…」里调。
 

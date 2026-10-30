@@ -211,4 +211,15 @@ MESSAGES: Final[Mapping[str, Message]] = {
         "已在 QSpace 中显示 {count} 项。",
         "已在 QSpace 中显示 {count} 项。",
     ),
+    "banner.desktop.terminal.no_response": "终端未响应，访达也未能打开；请检查系统权限设置。",
+    "banner.desktop.terminal.folder_fallback.single": "未能交给终端，已改用访达打开「{name}」。",
+    "banner.desktop.terminal.folder_fallback.many": (
+        "未能交给终端，已改用访达打开 {count} 个文件夹。",
+        "未能交给终端，已改用访达打开 {count} 个文件夹。",
+    ),
+    "banner.desktop.terminal.folder.single": "已在终端中打开「{name}」。",
+    "banner.desktop.terminal.folder.many": (
+        "已在终端中打开 {count} 个文件夹。",
+        "已在终端中打开 {count} 个文件夹。",
+    ),
 }

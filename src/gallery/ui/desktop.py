@@ -158,6 +158,29 @@ def open_folder_in_qspace(paths: Sequence[Path], *, app: Path) -> str:
     return t_plural("banner.desktop.qspace.folder.many", len(targets))
 
 
+def open_folder_in_terminal(paths: Sequence[Path], *, app: Path) -> str:
+    """在终端里**打开这些文件夹**（新窗口的工作目录就是它），返回一句中文文案。
+
+    与 :func:`open_folder_in_finder` 是同一件事换了个软件：终端把目录参数当成新窗口的工作目录，
+    于是 ``open -a <终端> <文件夹>`` 就够，**不能拿 :func:`reveal_in_finder` 顶替** —— 用户要的
+    是进到这一层里面。``app`` 是 core 查到的应用包（这一层不许 import core，由 ``MainWindow``
+    递进来）；起不来就降级成访达并照实说。
+    """
+    targets = [Path(path) for path in paths]
+    if not targets:
+        return t("banner.desktop.folder.no_folders")
+    if not QProcess.startDetached(REVEAL_PROGRAM, ["-a", str(app), *map(str, targets)]):
+        opened = [QDesktopServices.openUrl(QUrl.fromLocalFile(str(target))) for target in targets]
+        if not all(opened):
+            return t("banner.desktop.terminal.no_response")
+        if len(targets) == 1:
+            return t("banner.desktop.terminal.folder_fallback.single", name=targets[0].name)
+        return t_plural("banner.desktop.terminal.folder_fallback.many", len(targets))
+    if len(targets) == 1:
+        return t("banner.desktop.terminal.folder.single", name=targets[0].name)
+    return t_plural("banner.desktop.terminal.folder.many", len(targets))
+
+
 def reveal_in_qspace(paths: Sequence[Path], *, app: Path) -> str:
     """在 QSpace 里**选中并露出这些文件**（打开它们所在的那一层），返回一句中文文案。
 
@@ -186,6 +209,7 @@ __all__ = [
     "format_paths",
     "open_folder_in_finder",
     "open_folder_in_qspace",
+    "open_folder_in_terminal",
     "open_with_app",
     "open_with_default_app",
     "read_files_from_clipboard",

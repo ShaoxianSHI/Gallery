@@ -14,6 +14,7 @@ MESSAGES: Final[Mapping[str, Message]] = {
     "app.qspace": "QSpace",
     "app.maps": "Maps",
     "app.calendar": "Calendar",
+    "app.terminal": "Terminal",
     "app.preview": "Preview",
     "app.imageglass": "ImageGlass",
     "app.picview": "Picview",

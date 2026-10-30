@@ -57,6 +57,10 @@ MAPS = App(id="maps", name="地图", bundle_ids=("com.apple.Maps",))
 #: （见 ``external.apple_calendar``）。
 CALENDAR = App(id="calendar", name="日历", bundle_ids=("com.apple.iCal",))
 
+#: 系统自带的「终端」：网格页上在**当前这一层文件夹**里开一个新窗口（ADR 0108）。
+#: 它把递给它的目录当成新窗口的工作目录，于是 ``open -a`` 就够，不必拼 AppleScript。
+TERMINAL = App(id="terminal", name="终端", bundle_ids=("com.apple.Terminal",))
+
 #: 大图页那一列「用哪个软件看这一张」。名字可能是中文，而它**只进菜单与横幅**。
 PREVIEW = App(id="preview", name="预览", bundle_ids=("com.apple.Preview",))
 IMAGEGLASS = App(
@@ -162,6 +166,7 @@ __all__ = [
     "PREVIEW",
     "QSPACE",
     "QUICKTIME",
+    "TERMINAL",
     "VIEWERS",
     "App",
     "find_app",

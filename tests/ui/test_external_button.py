@@ -78,6 +78,7 @@ PICVIEW_APP = Path("/Applications/Picview.app")
 PREVIEW_APP = Path("/System/Applications/Preview.app")
 MAPS_APP = Path("/System/Applications/Maps.app")
 CALENDAR_APP = Path("/System/Applications/Calendar.app")
+TERMINAL_APP = Path("/System/Applications/Utilities/Terminal.app")
 
 
 @pytest.fixture(autouse=True)
@@ -636,6 +637,72 @@ def test_the_qspace_entry_stays_off_the_calendar_page(
     window.set_browse_mode(BROWSE_MODE_CALENDAR)
 
     assert _menu_texts(window._external_button) == ["Google 日历"]
+
+
+# ---- 网格页那一列里的终端（ADR 0108）-----------------------------------
+
+
+def test_the_terminal_entry_sits_last_on_the_grid_page(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """装了它就摆在网格页**最后** —— 访达仍是左半那一下默认打开的那一项。"""
+    assert "终端" not in _menu_texts(window._external_button)
+
+    _only(monkeypatch, terminal=TERMINAL_APP)
+    window._external_button.refresh()
+
+    assert _menu_texts(window._external_button) == ["访达", "终端"]
+    default = window._external_button.default_entry()
+    assert default is not None and default.name == "访达"
+
+
+def test_the_terminal_entry_opens_that_folder(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """递出去的是**当前这一层那个文件夹**与 core 查到的那个应用包。"""
+    _only(monkeypatch, terminal=TERMINAL_APP)
+    opened: list[tuple[list[Path], Path]] = []
+    monkeypatch.setattr(
+        desktop,
+        "open_folder_in_terminal",
+        lambda paths, app: opened.append((list(paths), app)) or "已在终端中打开。",
+    )
+
+    window._open_terminal()
+
+    assert opened == [([window._library.root], TERMINAL_APP)]
+
+
+def test_the_terminal_entry_follows_the_folder_the_window_is_in(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """进到相册里之后按它，开的同样是**当前这一层**，不是永远开着库根。"""
+    _only(monkeypatch, terminal=TERMINAL_APP)
+    opened: list[list[Path]] = []
+    monkeypatch.setattr(
+        desktop,
+        "open_folder_in_terminal",
+        lambda paths, app: opened.append(list(paths)) or "已在终端中打开。",
+    )
+    album = window._library.root / "京都"
+    window._push_frame(AlbumFrame(album))
+
+    window._open_terminal()
+
+    assert opened == [[album]]
+
+
+def test_the_terminal_entry_stays_off_the_other_pages(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """大图页与日历页上都没有它：那两页没有「这一层文件夹」要给终端。"""
+    _only(monkeypatch, terminal=TERMINAL_APP)
+
+    window._open_detail(window._model.index(0, 0))
+    assert "终端" not in _menu_texts(window._external_button)
+
+    window.set_browse_mode(BROWSE_MODE_CALENDAR)
+    assert "终端" not in _menu_texts(window._external_button)
 
 
 # ---- 大图页那一列图片应用（ADR 0067）-----------------------------------

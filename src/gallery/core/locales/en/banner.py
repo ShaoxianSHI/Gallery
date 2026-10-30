@@ -260,4 +260,20 @@ MESSAGES: Final[Mapping[str, Message]] = {
         "Revealed {count} item in QSpace.",
         "Revealed {count} items in QSpace.",
     ),
+    "banner.desktop.terminal.no_response": (
+        "Terminal did not respond, and Finder could not open them either. Check the system privacy "
+        "settings."
+    ),
+    "banner.desktop.terminal.folder_fallback.single": (
+        "Could not hand off to Terminal; opened “{name}” in Finder instead."
+    ),
+    "banner.desktop.terminal.folder_fallback.many": (
+        "Could not hand off to Terminal; opened {count} folder in Finder instead.",
+        "Could not hand off to Terminal; opened {count} folders in Finder instead.",
+    ),
+    "banner.desktop.terminal.folder.single": "Opened “{name}” in Terminal.",
+    "banner.desktop.terminal.folder.many": (
+        "Opened {count} folder in Terminal.",
+        "Opened {count} folders in Terminal.",
+    ),
 }

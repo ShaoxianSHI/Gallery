@@ -68,7 +68,8 @@ VIDEO_LEADERS = (apps.QUICKTIME.id, apps.IINA.id)
 ICON_CALENDAR = "calendar"
 ICON_FOLDER = "folder"
 ICON_MAP = "map"
-ICON_KINDS = (ICON_CALENDAR, ICON_FOLDER, ICON_MAP)
+ICON_TERMINAL = "terminal"
+ICON_KINDS = (ICON_CALENDAR, ICON_FOLDER, ICON_MAP, ICON_TERMINAL)
 
 
 @dataclass(frozen=True)
@@ -123,6 +124,8 @@ def drawn_icon(kind: str, size: int = ICON_EDGE) -> QIcon:
         return _draw_folder(size, accent)
     if kind == ICON_MAP:
         return _draw_map(size, accent)
+    if kind == ICON_TERMINAL:
+        return _draw_terminal(size, accent)
     return _draw_calendar(size, accent)
 
 
@@ -250,6 +253,41 @@ def _draw_folder(size: int, accent: QColor) -> QIcon:
         painter.drawLine(int(tab.left()), int(tab.top()), int(tab.left()), int(body.top()))
         painter.drawLine(int(tab.left()), int(tab.top()), int(tab.right()), int(tab.top()))
         painter.drawLine(int(tab.right()), int(tab.top()), int(tab.right()), int(body.top()))
+    finally:
+        painter.end()
+    return QIcon(pixmap)
+
+
+def _draw_terminal(size: int, accent: QColor) -> QIcon:
+    """一个中性的终端窗口：圆角框里一条 ``>`` 与一条下划线。"""
+    ratio = 2
+    pixmap = QPixmap(size * ratio, size * ratio)
+    pixmap.setDevicePixelRatio(ratio)
+    pixmap.fill(Qt.GlobalColor.transparent)
+
+    painter = QPainter(pixmap)
+    try:
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(accent)
+        pen.setWidthF(max(1.0, size * 0.06))
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        margin = size * 0.15
+        body = QRectF(margin, margin * 1.2, size - 2 * margin, size - margin * 2.4)
+        painter.drawRoundedRect(body, size * 0.12, size * 0.12)
+
+        prompt_left = body.left() + body.width() * 0.22
+        prompt_middle = body.left() + body.width() * 0.42
+        prompt_top = body.top() + body.height() * 0.32
+        prompt_bottom = body.top() + body.height() * 0.52
+        prompt_mid_y = (prompt_top + prompt_bottom) / 2
+        painter.drawLine(QPointF(prompt_left, prompt_top), QPointF(prompt_middle, prompt_mid_y))
+        painter.drawLine(QPointF(prompt_middle, prompt_mid_y), QPointF(prompt_left, prompt_bottom))
+        painter.drawLine(
+            QPointF(body.left() + body.width() * 0.52, prompt_bottom),
+            QPointF(body.right() - body.width() * 0.22, prompt_bottom),
+        )
     finally:
         painter.end()
     return QIcon(pixmap)
@@ -552,6 +590,7 @@ __all__ = [
     "ICON_FOLDER",
     "ICON_KINDS",
     "ICON_MAP",
+    "ICON_TERMINAL",
     "MENU_EDGE",
     "TOOLTIP",
     "ExternalAppsButton",

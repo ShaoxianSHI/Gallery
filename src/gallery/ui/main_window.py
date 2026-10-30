@@ -97,6 +97,7 @@ from gallery.ui.window.widgets.breadcrumb import BreadcrumbBar
 from gallery.ui.window.widgets.external_button import (
     ICON_CALENDAR,
     ICON_MAP,
+    ICON_TERMINAL,
     ExternalAppsButton,
     ExternalEntry,
     calendar_icon,
@@ -1117,6 +1118,15 @@ class MainWindow(
                 enabled=self._on_calendar_page,
                 pages=(EXTERNAL_PAGE_CALENDAR,),
             ),
+            ExternalEntry(
+                id=apps.TERMINAL.id,
+                name=apps.TERMINAL.label,
+                icon=icon_for(apps.TERMINAL, fallback=ICON_TERMINAL),
+                # 网格页上才摆：那一页的「当前这一层文件夹」正是要在终端里进去的那个目录。
+                enabled=self._terminal_ready,
+                pages=(EXTERNAL_PAGE_GRID,),
+                available=partial(self._installed, apps.TERMINAL),
+            ),
         )
 
     def _viewer_entry(self, viewer: App) -> ExternalEntry:
@@ -1152,8 +1162,20 @@ class MainWindow(
         return apps.find_app(app) is not None
 
     def _has_folder_to_open(self) -> bool:
-        """此刻有没有「当前这一层文件夹」可开 —— 访达与 QSpace 共用的那半条判据。"""
+        """此刻有没有「当前这一层文件夹」可开 —— 访达、QSpace 与终端共用的那半条判据。"""
         return not self._on_calendar_page() and self._current_folder() is not None
+
+    def _terminal_ready(self) -> bool:
+        """终端那一项只在**网格页**上摆，而且本机装着它。
+
+        大图页要的是「这一张在哪儿」，终端进去却只会落在这个目录上，与用户看的那一张对不上
+        （ADR 0108）。
+        """
+        return (
+            self._external_page_kind() == EXTERNAL_PAGE_GRID
+            and self._has_folder_to_open()
+            and self._installed(apps.TERMINAL)
+        )
 
     def _detail_photo_ref(self) -> PhotoRef | None:
         """大图页上正在看的那一张；不在大图页（或那一格不是照片）就是 ``None``。
@@ -1249,6 +1271,8 @@ class MainWindow(
             self._open_finder()
         elif entry.id == apps.QSPACE.id:
             self._open_qspace()
+        elif entry.id == apps.TERMINAL.id:
+            self._open_terminal()
         elif entry.id == apps.MAPS.id:
             self._open_in_maps()
         elif entry.id == "google_maps":
@@ -1382,6 +1406,21 @@ class MainWindow(
         )
         self._show_banner(message, auto_hide=True)
 
+    def _open_terminal(self) -> None:
+        """在终端里打开**当前这一层文件夹**（网格页那一支）。
+
+        递过去的是这个目录本身，终端新窗口的工作目录就是它；应用包由名册给（中文显示名只进
+        文案）。判据与访达、QSpace 共用 ``_external_targets``，这一项只在网格页摆（ADR 0108）。
+        """
+        app = apps.find_app(apps.TERMINAL)
+        if app is None:
+            self._show_banner(t("window.external.app_not_found", name=apps.TERMINAL.label))
+            return
+        paths, _reveal = self._external_targets()
+        if not paths:
+            return
+        self._show_banner(desktop.open_folder_in_terminal(paths, app=app), auto_hide=True)
+
     def _open_in_iina(self) -> None:
         """把正在看的视频交给 IINA。"""
         self._open_video_in(apps.IINA)
@@ -1423,7 +1462,7 @@ class MainWindow(
         )
 
     def _external_targets(self) -> tuple[list[Path], bool]:
-        """访达与 QSpace 那两项要作用在什么上：路径，以及**要不要把它选出来**。
+        """访达、QSpace 与终端那几项要作用在什么上：路径，以及**要不要把它选出来**。
 
         网格页（全部照片 / 相册）给**当前这一层文件夹**，用户看的是它**里面**摆着什么；大图页
         给**正在看的那一张**（:meth:`_selected_paths` 在大图页上就是它，ADR 0021）。判据只此一处

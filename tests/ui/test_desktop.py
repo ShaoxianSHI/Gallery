@@ -251,6 +251,54 @@ def test_showing_a_photo_in_qspace_falls_back_to_the_finder_and_says_so(
     assert message == "未能交给 QSpace，未能选中这些文件，已改为在访达里打开「/照片/京都」。"
 
 
+def test_opening_a_folder_in_terminal_hands_it_the_app_and_the_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """交给终端的是**应用包 + 文件夹路径**：目录参数就是新窗口的工作目录（ADR 0108）。
+
+    路径用纯 ASCII 的，那一条命令于是可以逐字断言；而**不能让终端去打开这个文件夹** ——
+    要的是在里面开一个 shell，不是用访达那一类默认应用把它打开。
+    """
+    process = _Process(True)
+    monkeypatch.setattr(desktop, "QProcess", process)
+    app = Path("/System/Applications/Utilities/Terminal.app")
+
+    message = desktop.open_folder_in_terminal([Path("/photos/kyoto")], app=app)
+
+    assert process.calls == [
+        ("open", ["-a", "/System/Applications/Utilities/Terminal.app", "/photos/kyoto"])
+    ]
+    assert message == "已在终端中打开「kyoto」。"
+
+
+def test_terminal_falls_back_to_the_finder_and_says_so(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``open`` 起不来就改用访达打开，**并且说清换的是哪一个**（与 QSpace 同一条理由）。"""
+    services = _DesktopServices(True)
+    monkeypatch.setattr(desktop, "QProcess", _Process(False))
+    monkeypatch.setattr(desktop, "QDesktopServices", services)
+
+    message = desktop.open_folder_in_terminal(
+        [Path("/照片/京都")], app=Path("/System/Applications/Utilities/Terminal.app")
+    )
+
+    assert services.urls == ["/照片/京都"]
+    assert message == "未能交给终端，已改用访达打开「京都」。"
+
+
+def test_terminal_says_why_when_nothing_responds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """两条路都不通时同样必须说一句。"""
+    monkeypatch.setattr(desktop, "QProcess", _Process(False))
+    monkeypatch.setattr(desktop, "QDesktopServices", _DesktopServices(False))
+
+    message = desktop.open_folder_in_terminal(
+        [Path("/照片/京都")], app=Path("/System/Applications/Utilities/Terminal.app")
+    )
+
+    assert "终端" in message
+
+
 # ---- 大图页那一列图片应用（ADR 0067）-----------------------------------
 
 
