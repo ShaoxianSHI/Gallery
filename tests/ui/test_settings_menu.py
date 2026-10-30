@@ -372,7 +372,7 @@ def test_choosing_a_song_writes_the_library_config(
 
     assert load_config(root).slideshow_music == "音乐/歌.mp3"
     assert window._settings_extras["slideshow_music_clear"].isEnabled() is True
-    assert window._settings_extras["slideshow_music_current"].text() == "当前：歌.mp3"
+    assert window._settings_extras["slideshow_music_title"].text() == "放映背景音乐：歌.mp3"
     assert window._banner.text() == "放映背景音乐已设为「歌.mp3」。"
 
 
@@ -393,8 +393,13 @@ def test_clearing_the_song_stops_it_and_removes_the_config(
     assert load_config(root).slideshow_music == ""
     assert ("stop",) in music.calls
     assert window._settings_extras["slideshow_music_clear"].isEnabled() is False
-    assert window._settings_extras["slideshow_music_current"].text() == "（未设置）"
+    assert window._settings_extras["slideshow_music_title"].text() == "放映背景音乐"
     assert window._banner.text() == "已关闭放映背景音乐。"
+
+
+def test_a_song_name_with_an_ampersand_does_not_become_a_mnemonic() -> None:
+    """``&`` 在 ``QAction`` 文字里是助记符：文件名里的要写成两个才原样显示。"""
+    assert settings_flow._menu_text("A&B.mp3") == "A&&B.mp3"
 
 
 def test_the_open_last_library_switch_is_saved(window: MainWindow, tmp_path: Path) -> None:
