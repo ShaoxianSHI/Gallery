@@ -30,6 +30,7 @@ from gallery.core.metadata.journal import (
     ACTION_EVENT_DELETE,
     ACTION_METADATA,
     ACTION_RENAME,
+    ACTION_TRASH,
 )
 from gallery.core.metadata.metadata_edit import MetadataEdit, MetadataState
 from gallery.core.metadata.paste import PasteResult
@@ -826,6 +827,9 @@ class WriteOpsMixin:
                 banner=banners.undo_banner(result),
             )
         else:
+            # 一张都没取回来时不响：那一声在用户听来就是「撤销了」。
+            if result.action == ACTION_TRASH and result.entries:
+                desktop.play_undo_trash_sound()
             self._apply_restore(result)
             self._jump_back_to_restored(trashed_in_detail, result)
             self._show_banner(

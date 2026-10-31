@@ -215,6 +215,10 @@ def reveal_in_qspace(paths: Sequence[Path], *, app: Path) -> str:
 #: 编号不是公开常量，但 Apple 从 10.5 起一直用这个值；音效文件的名字与路径才是会变的那一头。
 TRASH_SOUND_ID = 16
 
+#: Finder 撤销那次删除时请求的是第 1 项（``SystemSounds/system/Volume Mount.aif``）。
+#: 名字与用途对不上，但 Finder 的撤销确实用这一声。
+UNDO_TRASH_SOUND_ID = 1
+
 _AUDIO_TOOLBOX = "/System/Library/Frameworks/AudioToolbox.framework/AudioToolbox"
 
 _player: Callable[[int], None] | None = None
@@ -226,8 +230,17 @@ def play_move_to_trash_sound() -> None:
 
     **开关与音量都归 macOS 管**：系统设置里关掉「播放用户界面声音效果」时不会出声。
     """
+    _play(TRASH_SOUND_ID)
+
+
+def play_undo_trash_sound() -> None:
+    """播放 Finder 撤销删除时的音效。失败与开关的处理跟删除音效完全一样。"""
+    _play(UNDO_TRASH_SOUND_ID)
+
+
+def _play(sound_id: int) -> None:
     try:
-        _play_system_sound(TRASH_SOUND_ID)
+        _play_system_sound(sound_id)
     except Exception:
         logger.debug("系统音效未能播放", exc_info=True)
 
@@ -261,6 +274,7 @@ __all__ = [
     "REVEAL_FLAG",
     "REVEAL_PROGRAM",
     "TRASH_SOUND_ID",
+    "UNDO_TRASH_SOUND_ID",
     "copy_files_to_clipboard",
     "copy_to_clipboard",
     "format_paths",
@@ -270,6 +284,7 @@ __all__ = [
     "open_with_app",
     "open_with_default_app",
     "play_move_to_trash_sound",
+    "play_undo_trash_sound",
     "read_files_from_clipboard",
     "reveal_in_finder",
     "reveal_in_qspace",

@@ -369,6 +369,16 @@ def test_move_to_trash_asks_the_system_for_the_finders_sound(
     assert system_sounds == [desktop.TRASH_SOUND_ID]
 
 
+def test_undo_trash_asks_the_system_for_the_finders_undo_sound(
+    system_sounds: list[int],
+) -> None:
+    """撤销是另一个系统音效，不是把删除那一声再放一遍。"""
+    desktop.play_undo_trash_sound()
+
+    assert system_sounds == [desktop.UNDO_TRASH_SOUND_ID]
+    assert desktop.UNDO_TRASH_SOUND_ID != desktop.TRASH_SOUND_ID
+
+
 def test_move_to_trash_stays_quiet_when_the_system_refuses(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

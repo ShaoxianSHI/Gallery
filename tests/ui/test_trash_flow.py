@@ -141,7 +141,10 @@ def test_undo_action_names_what_it_will_undo(
         assert window._undo_action.text() == "撤销", "撤完了就没有可撤的了"
         assert window._undo_action.isEnabled() is False
         assert picture.exists()
-        assert system_sounds == [desktop.TRASH_SOUND_ID], "取回来不是删除，不该再响一次"
+        assert system_sounds == [
+            desktop.TRASH_SOUND_ID,
+            desktop.UNDO_TRASH_SOUND_ID,
+        ], "取回来时响的是撤销音效"
     finally:
         window.close()
 
@@ -276,6 +279,33 @@ def test_no_sound_when_nothing_moved(
         window.close()
 
 
+def test_undo_that_restored_nothing_stays_quiet(
+    qt_app: QApplication,
+    tmp_path: Path,
+    fake_trash: Path,
+    make_photo: Callable[..., Path],
+    system_sounds: list[int],
+) -> None:
+    """取不回来时不该响撤销音效 —— 那一声在用户听来就是「撤销了」。"""
+    picture = make_photo("取不回来.jpg")
+    window = open_window(qt_app, tmp_path)
+    try:
+        select_rows(window, row_of(window, picture))
+        window.trash_selected()
+        qt_app_process(window)
+        assert system_sounds == [desktop.TRASH_SOUND_ID]
+
+        # 废纸篓里的那一份先没了：撤销只能失败。
+        (fake_trash / "取不回来.jpg").unlink()
+        window.undo_last_write()
+        qt_app_process(window)
+
+        assert system_sounds == [desktop.TRASH_SOUND_ID]
+        assert not picture.exists()
+    finally:
+        window.close()
+
+
 def test_trashing_an_album_takes_the_whole_album(
     qt_app: QApplication,
     tmp_path: Path,
@@ -302,6 +332,10 @@ def test_trashing_an_album_takes_the_whole_album(
 
         assert (tmp_path / "2025 苏州" / "第一张.jpg").exists()
         assert isinstance(window._model.entry_at(0), FolderRef)
+        assert system_sounds == [
+            desktop.TRASH_SOUND_ID,
+            desktop.UNDO_TRASH_SOUND_ID,
+        ], "相册取回来也响撤销音效"
     finally:
         window.close()
 
