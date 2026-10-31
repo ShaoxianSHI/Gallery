@@ -11,19 +11,21 @@
 用户在访达里把文件拖进废纸篓时会听到那一声「揉纸」，Gallery 里删除照片与相册却是安静的。
 两者做的是同一件事（移到系统废纸篓，可撤销），反馈却少了一半。用户希望补上。
 
-这一声属于 macOS 的系统音效：文件在
-`/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/finder/move to trash.aif`，
-系统音效表里的编号是 14；同类还有 13「清空废纸篓」、16「拖进废纸篓」。
+这一声属于 macOS 的系统音效：Finder 删除时请求的是系统音效表的第 16 项，对应
+`.../SystemSounds/dock/drag to trash.aif`；**不是**名字更像的
+`.../SystemSounds/finder/move to trash.aif`（第 14 项），那一项对应另一条动作。
+这一点是看 `systemsoundserverd` 的日志确认的：Finder 删除时 `actionID` 是 16，
+加载的正是 `dock/drag to trash.aif`。
 
 ## 决策
 
 ### 1. 调用系统音效表，不把声音文件带进仓库
 
-用 AudioToolbox 的 `AudioServicesPlaySystemSound(14)` 播放。**不复制、不内嵌**那个 `.aif`：
+用 AudioToolbox 的 `AudioServicesPlaySystemSound(16)` 播放。**不复制、不内嵌**那个 `.aif`：
 它是 Apple 的系统资产，进仓库既有授权问题，也让安装包平白多一份二进制；而系统自带的这一份
 本来就会跟着 macOS 更新。
 
-`14` 不是公开常量，但 Apple 从 10.5 起一直用这个值。它只是外观反馈，**认错了最多是没声音
+`16` 不是公开常量，但 Apple 从 10.5 起一直用这个值。它只是外观反馈，**认错了最多是没声音
 或响错一声**，不值得为它维护一份文件路径与解码器。
 
 ### 2. 开关和音量都交给 macOS
@@ -72,9 +74,9 @@
 
 | 方案 | 否决理由 |
 |---|---|
-| 把 `move to trash.aif` 打进安装包 | Apple 的系统资产，授权不明；也不跟系统的音效开关与音量走 |
+| 把 `drag to trash.aif` 打进安装包 | Apple 的系统资产，授权不明；也不跟系统的音效开关与音量走 |
 | `NSSound` 播放同一个文件 | 需要自己读「播放用户界面声音效果」与提示音音量，还得保住对象直到播完 |
 | `afplay` 子进程 | 每删一次起一个进程，有启动延迟，而且绕开了系统的音效开关 |
-| `QSoundEffect` / `QMediaPlayer` | 前者只吃 WAV，后者为两秒的音效建一套播放器；两者都不跟 macOS 的音效开关 |
+| `QSoundEffect` / `QMediaPlayer` | 前者只吃 WAV，后者为半秒的音效建一套播放器；两者都不跟 macOS 的音效开关 |
 | 在删除开始时响 | 操作可能失败，那时声音已经在说「删掉了」 |
 | 应用内再加一个开关 | 系统设置里已经有一个，两处开关会让「去哪儿关」变得不确定 |

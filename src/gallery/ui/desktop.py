@@ -209,10 +209,11 @@ def reveal_in_qspace(paths: Sequence[Path], *, app: Path) -> str:
 
 # ---- 系统音效 -------------------------------------------------------------------
 
-#: Finder 把文件移到废纸篓时的那一声，在 AudioToolbox 的系统音效表里是第 14 项
-#: （``SystemSounds/finder/move to trash.aif``）。**这不是公开常量**，但 Apple 从 10.5
-#: 起一直用这个值；音效文件的名字与路径才是会变的那一头。
-TRASH_SOUND_ID = 14
+#: Finder 把文件移到废纸篓时实际请求的是系统音效表的第 16 项
+#: （``SystemSounds/dock/drag to trash.aif``）。**不是同名的那份**
+#: ``finder/move to trash.aif``（第 14 项）—— 那一项对应另一条动作。
+#: 编号不是公开常量，但 Apple 从 10.5 起一直用这个值；音效文件的名字与路径才是会变的那一头。
+TRASH_SOUND_ID = 16
 
 _AUDIO_TOOLBOX = "/System/Library/Frameworks/AudioToolbox.framework/AudioToolbox"
 
