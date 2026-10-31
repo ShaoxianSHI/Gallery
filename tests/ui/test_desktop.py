@@ -355,3 +355,39 @@ def test_using_a_named_app_says_why_when_nothing_responds(
 
     assert message is not None
     assert "一张.jpg" in message
+
+
+# ---- 删除音效（ADR 0111）----------------------------------------------------
+
+
+def test_move_to_trash_asks_the_system_for_the_finders_sound(
+    system_sounds: list[int],
+) -> None:
+    """响的是系统音效表里 Finder 那一项：不自己解码、也不带任何参数。"""
+    desktop.play_move_to_trash_sound()
+
+    assert system_sounds == [desktop.TRASH_SOUND_ID]
+
+
+def test_move_to_trash_stays_quiet_when_the_system_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """播放失败只是一次安静的删除：音效不该把写操作拖下水。"""
+
+    def refuse(_sound_id: int) -> None:
+        raise OSError("这台机器没有音频设备")
+
+    monkeypatch.setattr(desktop, "_play_system_sound", refuse)
+
+    desktop.play_move_to_trash_sound()  # 不抛就是通过
+
+
+def test_the_system_sound_player_is_absent_off_macos(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """非 macOS 上连框架都不找：这是 macOS 的界面习惯，不是库的功能。"""
+    monkeypatch.setattr(desktop.sys, "platform", "linux")
+    monkeypatch.setattr(desktop, "_player", None)
+    monkeypatch.setattr(desktop, "_player_resolved", False)
+
+    assert desktop._system_sound_player() is None

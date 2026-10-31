@@ -109,6 +109,18 @@ def qt_teardown(qt_app: QApplication) -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def system_sounds(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """**测试里不许真的响**：并行跑一轮就是几十声，而且没有断言能看见它。
+
+    记下来的那份给用例断言「删掉时响了一下」；真要验播放器本身时自己覆盖
+    ``_play_system_sound``。
+    """
+    played: list[int] = []
+    monkeypatch.setattr("gallery.ui.desktop._play_system_sound", played.append)
+    return played
+
+
+@pytest.fixture(autouse=True)
 def no_modal_dialogs(monkeypatch: pytest.MonkeyPatch) -> None:
     """**模态对话框一律当场失败**，不许把用例挂死。
 

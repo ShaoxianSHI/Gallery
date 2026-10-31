@@ -8,13 +8,19 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import ctypes
+import logging
+import sys
+from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import cast
 
 from PySide6.QtCore import QMimeData, QProcess, QUrl
 from PySide6.QtGui import QDesktopServices, QGuiApplication
 
 from gallery.core.i18n import t, t_plural
+
+logger = logging.getLogger(__name__)
 
 #: 「在访达中显示」「打开文件夹」「在 QSpace 里打开」用的系统命令。找不到它就降级。
 REVEAL_PROGRAM = "open"
@@ -201,9 +207,59 @@ def reveal_in_qspace(paths: Sequence[Path], *, app: Path) -> str:
     return t_plural("banner.desktop.qspace.reveal.many", len(targets))
 
 
+# ---- 系统音效 -------------------------------------------------------------------
+
+#: Finder 把文件移到废纸篓时的那一声，在 AudioToolbox 的系统音效表里是第 14 项
+#: （``SystemSounds/finder/move to trash.aif``）。**这不是公开常量**，但 Apple 从 10.5
+#: 起一直用这个值；音效文件的名字与路径才是会变的那一头。
+TRASH_SOUND_ID = 14
+
+_AUDIO_TOOLBOX = "/System/Library/Frameworks/AudioToolbox.framework/AudioToolbox"
+
+_player: Callable[[int], None] | None = None
+_player_resolved = False
+
+
+def play_move_to_trash_sound() -> None:
+    """播放 Finder 的「移到废纸篓」音效。**失败就安静**：一段音效不该让删除报错。
+
+    **开关与音量都归 macOS 管**：系统设置里关掉「播放用户界面声音效果」时不会出声。
+    """
+    try:
+        _play_system_sound(TRASH_SOUND_ID)
+    except Exception:
+        logger.debug("系统音效未能播放", exc_info=True)
+
+
+def _play_system_sound(sound_id: int) -> None:
+    player = _system_sound_player()
+    if player is not None:
+        player(sound_id)
+
+
+def _system_sound_player() -> Callable[[int], None] | None:
+    """加载 AudioToolbox 里播放系统音效的那个函数；做不到就返回 ``None``（只试一次）。"""
+    global _player, _player_resolved
+    if _player_resolved:
+        return _player
+    _player_resolved = True
+    if sys.platform != "darwin":
+        return None
+    try:
+        library = ctypes.CDLL(_AUDIO_TOOLBOX)
+        function = library.AudioServicesPlaySystemSound
+        function.argtypes = [ctypes.c_uint32]
+        function.restype = None
+        _player = cast("Callable[[int], None]", function)
+    except (OSError, AttributeError):
+        logger.debug("系统音效不可用", exc_info=True)
+    return _player
+
+
 __all__ = [
     "REVEAL_FLAG",
     "REVEAL_PROGRAM",
+    "TRASH_SOUND_ID",
     "copy_files_to_clipboard",
     "copy_to_clipboard",
     "format_paths",
@@ -212,6 +268,7 @@ __all__ = [
     "open_folder_in_terminal",
     "open_with_app",
     "open_with_default_app",
+    "play_move_to_trash_sound",
     "read_files_from_clipboard",
     "reveal_in_finder",
     "reveal_in_qspace",

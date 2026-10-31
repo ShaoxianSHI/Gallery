@@ -32,6 +32,7 @@ from gallery.core.library.session import (
     SessionState,
     save_session,
 )  # noqa: E402
+from gallery.ui import desktop  # noqa: E402
 from gallery.ui.main_window import MainWindow  # noqa: E402
 
 #: 等待异步扫描 / 缩略图完成的时限。
@@ -118,7 +119,10 @@ def test_trash_is_disabled_without_a_selection(
 
 
 def test_undo_action_names_what_it_will_undo(
-    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+    qt_app: QApplication,
+    tmp_path: Path,
+    make_photo: Callable[..., Path],
+    system_sounds: list[int],
 ) -> None:
     """用户在按 ⌘Z 之前就知道会撤掉什么。"""
     picture = make_photo("IMG_0001.jpg", directory=tmp_path)
@@ -131,11 +135,13 @@ def test_undo_action_names_what_it_will_undo(
         window.trash_selected()
         assert window._undo_action.text() == "撤销 移到废纸篓"
         assert window._undo_action.isEnabled() is True
+        assert system_sounds == [desktop.TRASH_SOUND_ID]
 
         window.undo_last_write()
         assert window._undo_action.text() == "撤销", "撤完了就没有可撤的了"
         assert window._undo_action.isEnabled() is False
         assert picture.exists()
+        assert system_sounds == [desktop.TRASH_SOUND_ID], "取回来不是删除，不该再响一次"
     finally:
         window.close()
 
@@ -144,7 +150,11 @@ def test_undo_action_names_what_it_will_undo(
 
 
 def test_trashing_one_photo_takes_it_off_the_grid_and_the_disk(
-    qt_app: QApplication, tmp_path: Path, fake_trash: Path, make_photo: Callable[..., Path]
+    qt_app: QApplication,
+    tmp_path: Path,
+    fake_trash: Path,
+    make_photo: Callable[..., Path],
+    system_sounds: list[int],
 ) -> None:
     make_photo("保留.jpg", directory=tmp_path)
     picture = make_photo("删掉.jpg", directory=tmp_path)
@@ -159,6 +169,7 @@ def test_trashing_one_photo_takes_it_off_the_grid_and_the_disk(
         assert (fake_trash / "删掉.jpg").exists(), "照片只是搬去了废纸篓"
         assert window._model.rowCount() == 1
         assert window._model.row_of_path(picture) == -1
+        assert system_sounds == [desktop.TRASH_SOUND_ID], "照片移进废纸篓时响一声"
         assert "已将「删掉.jpg」移到废纸篓" in window._banner.text()
         assert "⌘Z 可撤销" in window._banner.text()
     finally:
@@ -240,8 +251,37 @@ def test_failed_items_stay_on_the_grid(
         window.close()
 
 
+def test_no_sound_when_nothing_moved(
+    qt_app: QApplication,
+    tmp_path: Path,
+    make_photo: Callable[..., Path],
+    system_sounds: list[int],
+) -> None:
+    """一张都没移走时不该响 —— 那一声在用户听来就是「删掉了」。"""
+    make_photo("留下.jpg")
+    window = open_window(qt_app, tmp_path)
+    try:
+        row = window._model.row_of_path(tmp_path / "留下.jpg")
+        window._model.replace_entry(
+            row, PhotoRef(path=tmp_path / "早就不在了.jpg", size=1, mtime_ns=1)
+        )
+        select_rows(window, row)
+
+        window.trash_selected()
+        qt_app_process(window)
+
+        assert system_sounds == []
+        assert window._model.rowCount() == 1, "动不了的那一行必须留着"
+    finally:
+        window.close()
+
+
 def test_trashing_an_album_takes_the_whole_album(
-    qt_app: QApplication, tmp_path: Path, fake_trash: Path, make_photo: Callable[..., Path]
+    qt_app: QApplication,
+    tmp_path: Path,
+    fake_trash: Path,
+    make_photo: Callable[..., Path],
+    system_sounds: list[int],
 ) -> None:
     make_photo("第一张.jpg", directory=tmp_path / "2025 苏州")
     window = open_window(qt_app, tmp_path, browse_mode=BROWSE_MODE_ALBUMS)
@@ -254,6 +294,7 @@ def test_trashing_an_album_takes_the_whole_album(
 
         assert not (tmp_path / "2025 苏州").exists()
         assert (fake_trash / "2025 苏州" / "第一张.jpg").exists()
+        assert system_sounds == [desktop.TRASH_SOUND_ID], "相册走的是同一条删除入口"
         assert "相册「2025 苏州」" in window._banner.text()
 
         window.undo_last_write()
@@ -438,7 +479,10 @@ def test_undo_from_the_grid_stays_on_the_grid(
 
 
 def test_delete_is_refused_while_renaming(
-    qt_app: QApplication, tmp_path: Path, make_photo: Callable[..., Path]
+    qt_app: QApplication,
+    tmp_path: Path,
+    make_photo: Callable[..., Path],
+    system_sounds: list[int],
 ) -> None:
     """改名的过程中键盘归输入框，⌘⌫ 不该把正在编辑的那一张删掉。"""
     picture = make_photo("IMG_0001.jpg")
@@ -451,5 +495,6 @@ def test_delete_is_refused_while_renaming(
         assert window._trash_action.isEnabled() is False
         window.trash_selected()  # 即使被别处触发也不动手
         assert picture.exists()
+        assert system_sounds == []
     finally:
         window.close()

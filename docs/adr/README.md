@@ -138,3 +138,4 @@
 | [0108](0108-terminal-on-the-grid-page.md) | 网格页多一项「终端」：在当前这一层文件夹里开一个终端窗口 | 已接受 |
 | [0109](0109-slideshow-background-music.md) | 放映背景音乐：库级配置，QtMultimedia 播放 | 已接受 |
 | [0110](0110-settings-menu-five-sections.md) | 「设置」菜单再切成五段：只加分隔线，不嵌套 | 已接受 |
+| [0111](0111-trash-sound.md) | 删除照片与相册时播放 Finder 的「移到废纸篓」音效 | 已接受 |

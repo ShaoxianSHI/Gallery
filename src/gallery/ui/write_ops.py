@@ -700,6 +700,9 @@ class WriteOpsMixin:
             logger.info("移到废纸篓失败：%s", exc.detail or exc.message)
             self._show_banner(exc.message)
             return
+        # 一张都没移走时不该响：那一声在用户听来就是「删掉了」。
+        if result.moved:
+            desktop.play_move_to_trash_sound()
         self._forget_trashed(result.moved)
         # 监听器随后会把「这些路径不见了」报回来；这里已经摘过行了，不必再摘一次。
         self._note_self_write(*(entry.path for entry in result.moved))
