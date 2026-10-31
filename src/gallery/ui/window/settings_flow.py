@@ -1,8 +1,8 @@
-"""「设置」菜单：界面与播放的偏好，以及这个库自己的几项配置（ADR 0073）。
+"""「设置」菜单：界面与播放的偏好，以及这个库自己的几项配置（ADR 0073 / 0099 / 0110）。
 
-三组东西放同一张菜单，但**存的地方不同**：动画速度、主题、背景、外部应用顺序、放映间隔、
-启动行为属于这个应用，写进会话文件；影片网站与缓存上限属于**这个库**，经 ``Library`` 写进
-``config.toml``。**本模块一个用户的照片文件都不碰**；两个库级入口都只调 ``Library`` 的公开方法。
+五项放同一张菜单，按话题分五段（界面 · 放映 · 外部应用与启动 · 缓存 · 维护），
+但**每一项存的地方各按各的**：应用级写会话文件，库级经 ``Library`` 写进 ``config.toml``。
+**本模块一个用户的照片文件都不碰**；两个库级入口都只调 ``Library`` 的公开方法。
 """
 
 from __future__ import annotations
@@ -95,7 +95,7 @@ class SettingsFlowMixin:
     """拼「设置」菜单、处理它的动作，并把当前值映射回勾选态。"""
 
     def build_settings_menu(self) -> None:
-        """把「设置」挂到菜单栏末尾。三段：显示与播放、影片与缓存、维护。"""
+        """把「设置」挂到菜单栏末尾。五段：界面 · 放映 · 外部应用与启动 · 缓存 · 维护。"""
         menu = cast("QMenu", self.menuBar().addMenu(t("settings.title")))
         self._settings_extras: dict[str, QAction] = {}
         self._settings_actions: dict[str, dict[object, QAction]] = {}
@@ -118,6 +118,7 @@ class SettingsFlowMixin:
             self._set_animation_speed,
             {value: t(key) for value, key in SPEED_LABEL_KEYS.items()},
         )
+        menu.addSeparator()
         self._settings_actions["slideshow"] = self._add_choice_menu(
             menu,
             t("settings.slideshow"),
@@ -131,6 +132,7 @@ class SettingsFlowMixin:
             self._set_music_volume,
             {value: _volume_label(value) for value in MUSIC_VOLUMES},
         )
+        menu.addSeparator()
         self._settings_actions["movie_site"] = self._add_choice_menu(
             menu,
             t("settings.movie_site"),

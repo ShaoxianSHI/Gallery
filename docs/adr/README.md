@@ -126,7 +126,7 @@
 | [0096](0096-one-background-painter.md) | 整块窗口只在窗口上铺一次底，其余各层不铺 | 已接受 |
 | [0097](0097-custom-background-colours.md) | 「外观」里可以自己挑两档背景色，各收自己那一侧 | 已接受 |
 | [0098](0098-backdrop-images.md) | 两档背景图（生成 / 照片）：图在缓存、清单在应用状态，遮罩保证可读性 | 已接受（决策 6 的入口位置由 0099 调整） |
-| [0099](0099-settings-menu-three-groups.md) | 「设置」菜单按话题分三段，主题与背景拆开 | 已接受 |
+| [0099](0099-settings-menu-three-groups.md) | 「设置」菜单按话题分三段，主题与背景拆开 | 已接受（分段由 0110 取代） |
 | [0100](0100-user-facing-copy.md) | 用户可见文案的口径：书面结果词、点名指代、术语与 README 一致 | 已接受 |
 | [0101](0101-custom-backdrop-palette.md) | 背景图可自选配色（「+」一格），背景那四项同时改名 | 已接受（多色由 0102 扩展） |
 | [0102](0102-custom-palette-colours.md) | 自定义配色可追加到三个颜色，各占一段浓度 | 已接受（交互由 0103 取代） |
@@ -137,3 +137,4 @@
 | [0107](0107-filmstrip.md) | 大图页底部的画廊条：当前那张居中，点一下换过去 | 已接受 |
 | [0108](0108-terminal-on-the-grid-page.md) | 网格页多一项「终端」：在当前这一层文件夹里开一个终端窗口 | 已接受 |
 | [0109](0109-slideshow-background-music.md) | 放映背景音乐：库级配置，QtMultimedia 播放 | 已接受 |
+| [0110](0110-settings-menu-five-sections.md) | 「设置」菜单再切成五段：只加分隔线，不嵌套 | 已接受 |

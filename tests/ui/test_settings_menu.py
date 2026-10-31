@@ -136,10 +136,10 @@ def test_the_submenus_are_grouped_in_a_stable_order(window: MainWindow) -> None:
     ]
 
 
-def test_the_menu_reads_top_to_bottom_in_three_groups(window: MainWindow) -> None:
-    """**每一段都要能一句话念出来**：显示与播放 / 影片与缓存 / 维护。
+def test_the_menu_reads_top_to_bottom_in_five_groups(window: MainWindow) -> None:
+    """**每一段都要能一句话念出来**：界面 / 放映 / 外部应用与启动 / 缓存 / 维护。
 
-    分隔线只有三根，意义全在「同段里的东西互不相干却归同一类」这件事上 —— 所以这里连
+    分隔线只有四根，意义全在「同段里的东西互不相干却归同一类」这件事上 —— 所以这里连
     分隔线的位置一起锁住，挪动一项就会红。
     """
     labels = [action.text() for action in _settings_menu(window).actions()]
@@ -149,9 +149,11 @@ def test_the_menu_reads_top_to_bottom_in_three_groups(window: MainWindow) -> Non
         "语言",
         "背景",
         "动画速度",
+        "",
         "放映间隔",
         "放映背景音乐",
         "背景音乐音量",
+        "",
         "影片网站",
         "外部应用顺序…",
         "启动时打开上次的库",
