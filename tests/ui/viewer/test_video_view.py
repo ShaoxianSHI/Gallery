@@ -318,6 +318,24 @@ def test_the_progress_bar_does_not_move_between_play_and_pause(
         view.close()
 
 
+def test_the_clock_sits_close_to_the_progress_bar(
+    qt_app: QApplication, make_video: Callable[..., Path], tmp_path: Path
+) -> None:
+    """时间那一格按文案定宽：留固定余量会让短视频的进度条右端与数字之间空出一截。"""
+    path = make_video(frames=100, directory=tmp_path)
+    view = _view(qt_app)
+    try:
+        view.play(PhotoRef.from_path(path))
+        assert wait_until(qt_app, lambda: view._player.duration() > 0, timeout=5)
+
+        text = view._time.text()
+        assert text
+        assert view._time.width() <= view._time.fontMetrics().horizontalAdvance(text) + 2
+    finally:
+        view.stop()
+        view.close()
+
+
 def test_reopening_the_same_video_fits_again(
     qt_app: QApplication, make_video: Callable[..., Path], tmp_path: Path
 ) -> None:

@@ -257,8 +257,8 @@ class VideoView(QGraphicsView):
         self._slider.sliderMoved.connect(self._on_slider_moved)
         self._time = QLabel("", self._controls)
         self._time.setObjectName("videoTime")
-        # 同理：时长从「0:00」变成「1:01:01」时，不定宽会把进度条右端推来推去。
-        self._time.setFixedWidth(120)
+        # 宽度跟着文案走：定死一个够放「1:01:01 / 1:01:01」的宽，短视频的进度条右端
+        # 与数字之间就会空出一大截。
         self._time.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(self._play_button)
         layout.addWidget(self._slider, 1)
