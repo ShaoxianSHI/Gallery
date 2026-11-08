@@ -42,6 +42,7 @@ from waiting import wait_for_idle, wait_until  # noqa: E402
 from gallery.core.events.kinds import (  # noqa: E402
     COVER,
     EVENT_KINDS,
+    GAME,
     MOVIE,
     MOVIE_SOURCES,
     SHOW,
@@ -1633,6 +1634,29 @@ def test_a_movie_rating_is_the_same_row_of_five_buttons_as_a_show(
 
     assert isinstance(rating, ChoiceButtons)
     assert list(rating._buttons) == ["1", "2", "3", "4", "5"]
+
+
+def test_the_game_status_shows_translated_buttons_but_keeps_its_stored_key(
+    qt_app: QApplication,
+) -> None:
+    """状态按钮上是中文，``value()`` 交出去的却是稳定键 —— 库里不该存当时的语言。"""
+    dialog = EventEditDialog(None, GAME)
+    dialog.show()
+    qt_app.processEvents()
+    status = dialog._fields["status"]
+
+    assert isinstance(status, ChoiceButtons)
+    assert [button.text() for button in status._buttons.values()] == [
+        "在玩",
+        "已通关",
+        "搁置",
+        "弃坑",
+    ]
+
+    status._buttons["completed"].click()
+    assert status.value() == "completed"
+    status._buttons["completed"].click()
+    assert status.value() == ""
 
 
 def test_the_pending_cover_is_grey(qt_app: QApplication) -> None:

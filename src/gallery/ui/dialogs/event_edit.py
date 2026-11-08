@@ -104,12 +104,13 @@ def _row_counts(total: int) -> tuple[int, ...]:
 class ChoiceButtons(QWidget):
     """有值域的字段摆成按钮：点一下选中，再点一下取消（都不选 = 不记这一项）。
 
-    不超过 :data:`MAX_CHOICES_PER_ROW` 项时只占一排；多了就按行铺开，**每一行都铺满整个字段列**
-    （十个来源分三行，最右那个按钮与输入框的右缘对齐）。**单选由这一层自己管**（``QButtonGroup``
-    设成非互斥）：互斥的组不给「再点一下把当前那个取消」，而评分是可不记的。
+    每项是 ``(值, 显示文字)``：**库里存的是值**，按钮上是显示文字，于是有值域的字段也能有
+    自己的文案（状态那一栏存 ``completed`` 而不是「已通关」）。不超过
+    :data:`MAX_CHOICES_PER_ROW` 项时只占一排；多了就按行铺开，每一行都铺满整个字段列。
+    **单选由这一层自己管**（``QButtonGroup`` 设成非互斥）：互斥的组不给「再点一下取消」。
     """
 
-    def __init__(self, choices: tuple[str, ...], parent: QWidget | None = None) -> None:
+    def __init__(self, choices: tuple[tuple[str, str], ...], parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._buttons: dict[str, QPushButton] = {}
         column = QVBoxLayout(self)
@@ -125,18 +126,18 @@ class ChoiceButtons(QWidget):
             row = QHBoxLayout()
             row.setContentsMargins(0, 0, 0, 0)
             row.setSpacing(4)
-            for choice in choices[index : index + count]:
-                button = QPushButton(choice)
+            for value, label in choices[index : index + count]:
+                button = QPushButton(label)
                 button.setObjectName("eventEditChoice")
                 button.setCheckable(True)
                 # 每个按钮都 Expanding：这一行的几个平分宽度，于是每行左右两端都对齐字段列。
                 button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
                 # 过一层 lambda：``clicked`` 那个 bool 穿不过 ``partial`` 的参数自省。
                 button.clicked.connect(
-                    lambda checked=False, chosen=choice: self._on_pressed(chosen, checked)
+                    lambda checked=False, chosen=value: self._on_pressed(chosen, checked)
                 )
                 row.addWidget(button)
-                self._buttons[choice] = button
+                self._buttons[value] = button
                 group.addButton(button)
             index += count
             column.addLayout(row)
@@ -390,7 +391,9 @@ class EventEditDialog(QDialog):
     def _build_field(self, field: EventField) -> FieldWidget:
         """一个字段摆成什么控件：有值域的一排按钮，其余输入框。"""
         if field.choices:
-            return ChoiceButtons(field.choices)
+            return ChoiceButtons(
+                tuple((value, field.choice_label(value)) for value in field.choices)
+            )
         line = QLineEdit()
         line.setMinimumWidth(FIELD_MIN_WIDTH)
         if field.multiple:

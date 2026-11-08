@@ -690,14 +690,18 @@ def _event_field_group(
             pieces = split_multi(text) if field.multiple else (text,)
             for piece in pieces:
                 if piece:
-                    found.setdefault(piece, piece)
+                    # 组键是稳定值（筛选要对得上），组标题才是用户看得懂的文案。
+                    found.setdefault(piece, field.display_value(piece))
         return tuple(found.items())
 
     return group
 
 
 def _event_field_order(field: EventField) -> Callable[[str], SortValue | None]:
-    """组键怎么比较：日期与数字当数值比，其余按名称。"""
+    """组键怎么比较：有值域的按声明顺序（面板上那个顺序），日期与数字按数值，其余按名称。"""
+    if field.choices:
+        positions = {value: float(index) for index, value in enumerate(field.choices)}
+        return lambda key: positions.get(key, float(len(positions)))
     if field.sql_type == "DAY":
         return _date_group_order
     if field.sql_type in ("INTEGER", "REAL"):

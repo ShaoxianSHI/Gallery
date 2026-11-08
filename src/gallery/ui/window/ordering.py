@@ -195,7 +195,7 @@ class OrderingMixin:
 
         放菜单而不是窗口上的控件：照片区那点高度不该拿来放两个下拉。**右键空白处那两份也走
         :meth:`build_group_menu` / :meth:`build_sort_menu`** —— 两处各写一遍的话，
-        「旅行 / 演出 / 影片」那三层迟早只长在一边。
+        各个事件类型那几层迟早只长在一边。
         """
         self._group_actions: dict[str | None, QAction] = {
             None: self._order_choice(t("flow.ordering.group.none"), None, self.set_group_facet)

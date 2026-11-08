@@ -95,8 +95,39 @@ def test_a_show_keeps_its_own_fields_in_its_own_table() -> None:
 
 
 def test_a_show_takes_its_place_next_to_the_trip() -> None:
-    """菜单顺序即 :data:`EVENT_KINDS` 的顺序：旅行在前、演出其后、影片在最后。"""
-    assert kinds.EVENT_KINDS == (kinds.TRIP, kinds.SHOW, kinds.MOVIE)
+    """菜单顺序即 :data:`EVENT_KINDS` 的顺序：旅行在前、演出其后、影片、游戏。"""
+    assert kinds.EVENT_KINDS == (kinds.TRIP, kinds.SHOW, kinds.MOVIE, kinds.GAME)
+
+
+def test_the_game_kind_lists_its_own_columns() -> None:
+    """「游戏」这一类独有的字段 —— 游戏名、平台、状态、时长、类型、开发商、价格、评分。"""
+    assert kinds.GAME.table == "event_game"
+    assert {
+        "game",
+        "platform",
+        "status",
+        "playtime",
+        "genres",
+        "developer",
+        "price",
+        "rating",
+    } == {field.column for field in kinds.GAME.fields}
+
+
+def test_the_game_status_stores_stable_keys_and_shows_translated_labels() -> None:
+    """状态画成一排按钮，但**库里存英文键**：存中文会把用户填的内容绑在当时的语言上。"""
+    status = next(field for field in kinds.GAME.fields if field.id == "status")
+
+    assert status.choices == kinds.GAME_STATUS_CHOICES
+    assert status.choice_label_keys == kinds.GAME_STATUS_LABELS
+    assert [status.choice_label(value) for value in status.choices] == [
+        "在玩",
+        "已通关",
+        "搁置",
+        "弃坑",
+    ]
+    assert status.display_value("completed") == "已通关"
+    assert status.display_value("从未来过") == "从未来过"
 
 
 def test_the_movie_kind_lists_its_own_columns() -> None:
@@ -144,6 +175,7 @@ def test_an_unknown_kind_is_none_rather_than_a_key_error() -> None:
     assert kinds.kind_by_id("trip") is kinds.TRIP
     assert kinds.kind_by_id("show") is kinds.SHOW
     assert kinds.kind_by_id("movie") is kinds.MOVIE
+    assert kinds.kind_by_id("game") is kinds.GAME
     assert kinds.kind_by_id("concert") is None
     assert kinds.kind_by_id(None) is None
 
@@ -265,7 +297,7 @@ def test_a_negative_cost_is_reported_and_an_empty_one_is_not() -> None:
     assert kinds.cost_problem("0") is None
 
 
-@pytest.mark.parametrize("kind", [kinds.TRIP, kinds.SHOW, kinds.MOVIE])
+@pytest.mark.parametrize("kind", [kinds.TRIP, kinds.SHOW, kinds.MOVIE, kinds.GAME])
 def test_the_rating_choices_run_from_one_to_five(kind: kinds.EventKind) -> None:
     """评分画成一排按钮，值域就是这一个闭区间 —— 不给 0 与半星；三类事件的评分是同一档。"""
     rating = next(field for field in kind.fields if field.id == "rating")

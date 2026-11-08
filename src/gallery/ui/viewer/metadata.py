@@ -94,11 +94,13 @@ def event_fields(event: Event) -> tuple[MetadataField, ...]:
 
 
 def _event_value(event: Event, field: EventField) -> str:
-    """一格值按文字给出。``REAL`` 去掉浮点尾巴（``3280.0`` → ``3280``）。"""
+    """一格值按文字给出。``REAL`` 去掉浮点尾巴（``3280.0`` → ``3280``）；
+    有文案键的值域译成显示文字（库里存的是稳定键）。"""
     value = event.values.get(field.id)
     if value is None:
         return ""
-    return f"{value:g}" if isinstance(value, float) else str(value)
+    text = f"{value:g}" if isinstance(value, float) else str(value)
+    return field.display_value(text)
 
 
 def panel_style(app_theme: AppTheme) -> str:

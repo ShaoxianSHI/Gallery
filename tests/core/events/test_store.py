@@ -116,6 +116,18 @@ _EXPECTED_SHOW = [
     ("thoughts", "TEXT", 0),
 ]
 
+_EXPECTED_GAME = [
+    ("event_id", "INTEGER", 0),
+    ("game", "TEXT", 0),
+    ("platform", "TEXT", 0),
+    ("status", "TEXT", 0),
+    ("playtime", "REAL", 0),
+    ("genres", "TEXT", 0),
+    ("developer", "TEXT", 0),
+    ("price", "REAL", 0),
+    ("rating", "INTEGER", 0),
+]
+
 
 def _table_info(connection: sqlite3.Connection, table: str) -> list[tuple[str, str, int]]:
     return [
@@ -133,7 +145,11 @@ def test_the_event_table_has_exactly_the_columns_we_agreed_on(
 
 @pytest.mark.parametrize(
     ("table", "expected"),
-    [("event_trip", _EXPECTED_TRIP), ("event_show", _EXPECTED_SHOW)],
+    [
+        ("event_trip", _EXPECTED_TRIP),
+        ("event_show", _EXPECTED_SHOW),
+        ("event_game", _EXPECTED_GAME),
+    ],
 )
 def test_a_kind_table_has_exactly_the_columns_its_fields_declare(
     connection: sqlite3.Connection,

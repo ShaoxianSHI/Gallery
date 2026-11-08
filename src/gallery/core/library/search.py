@@ -73,6 +73,8 @@ class SearchField:
     hint: str = ""
     table: str = ""
     sql_type: str = ""
+    #: 界面上那个值 → 库里存的值。有文案键的值域要这一层：用户敲「已通关」，库里存 ``completed``。
+    aliases: tuple[tuple[str, str], ...] = ()
 
     @property
     def is_event(self) -> bool:
@@ -161,6 +163,7 @@ def _event_fields() -> tuple[SearchField, ...]:
     per_kind: list[SearchField] = []
     for kind in EVENT_KINDS:
         for field in kind.fields:
+            aliases = tuple((field.choice_label(value), value) for value in field.choices)
             per_kind.append(
                 SearchField(
                     id=f"event_{kind.id}_{field.id}",
@@ -173,7 +176,13 @@ def _event_fields() -> tuple[SearchField, ...]:
                     column=field.column,
                     table=kind.table,
                     sql_type=field.sql_type,
-                    hint=field.hint,
+                    hint=field.hint
+                    or (
+                        " / ".join(label for label, _value in aliases)
+                        if field.choice_label_keys
+                        else ""
+                    ),
+                    aliases=aliases,
                 )
             )
     return (*common, *per_kind)
@@ -829,8 +838,13 @@ def _event_clause(
         )
     return (
         f"EXISTS ({head} t.{field.column} LIKE ? ESCAPE '{ESCAPE}')",
-        [prefix, f"%{like_pattern(value)}%"],
+        [prefix, f"%{like_pattern(_stored_value(field, value))}%"],
     )
+
+
+def _stored_value(field: SearchField, value: str) -> str:
+    """用户敲的那个值 → 库里存的那个值；没有别名就是它自己。"""
+    return next((stored for label, stored in field.aliases if label == value), value)
 
 
 def rows_to_refs(rows: Sequence[tuple[object, ...]]) -> list[PhotoRef]:

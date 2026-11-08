@@ -66,6 +66,26 @@ def _with_trips(library: Library) -> tuple[int, int]:
     return kyoto.id, osaka.id
 
 
+def _with_game(library: Library) -> int:
+    """一次通关：状态存稳定键、时长与价格是数字，绑一张照片。"""
+    game = library.create_event(
+        "game",
+        EventDraft(
+            values={
+                "title": "艾尔登法环 · 二周目",
+                "game": "艾尔登法环",
+                "platform": "Steam、PS5",
+                "status": "completed",
+                "playtime": "86.5",
+                "price": "298",
+            }
+        ),
+    ).event
+    library.bind_photos([library.root / "2026" / "京都-01.jpg"], game.id)
+    library.index_photos()
+    return game.id
+
+
 def _with_shows(library: Library) -> int:
     """一场演出：艺人、城市、票价、实付、评分，绑一张照片。"""
     show = library.create_event(
@@ -103,6 +123,8 @@ def test_the_candidate_list_offers_the_event_fields() -> None:
     assert "演出·艺人" in labels
     assert "演出·场馆" in labels
     assert "演出·评分" in labels
+    assert "游戏·状态" in labels
+    assert "游戏·游玩时长" in labels
 
 
 def test_a_bare_event_field_name_is_not_a_field_any_more() -> None:
@@ -226,6 +248,28 @@ def test_the_two_kinds_rates_are_two_conditions(library: Library) -> None:
 
     assert _names(library, "#旅行·评分 5") == []  # 三类事件里没有评分为 5 的旅行
     assert _names(library, "#演出·评分 5") == ["京都-01.jpg"]
+
+
+def test_filtering_by_the_game_kind_and_its_fields(library: Library) -> None:
+    """游戏走它自己那张表 —— 多值平台、数字时长与价格都要在真 schema 上跑得通。"""
+    _with_game(library)
+
+    assert _names(library, "#事件类型 游戏") == ["京都-01.jpg"]
+    assert _names(library, "#游戏·游戏名 艾尔登法环") == ["京都-01.jpg"]
+    assert _names(library, "#游戏·平台 PS5") == ["京都-01.jpg"]
+    assert _names(library, "#游戏·游玩时长 >80") == ["京都-01.jpg"]
+    assert _names(library, "#游戏·入手价格 <200") == []
+
+
+def test_a_game_status_can_be_typed_as_its_label_or_its_stored_key(
+    library: Library,
+) -> None:
+    """库里存 ``completed``，用户敲的是「已通关」—— 两种都得认，否则这一栏看着能用却筛不出。"""
+    _with_game(library)
+
+    assert _names(library, "#游戏·状态 已通关") == ["京都-01.jpg"]
+    assert _names(library, "#游戏·状态 completed") == ["京都-01.jpg"]
+    assert _names(library, "#游戏·状态 弃坑") == []
 
 
 def test_a_kind_nobody_has_is_simply_empty(library: Library) -> None:

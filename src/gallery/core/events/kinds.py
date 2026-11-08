@@ -24,7 +24,7 @@ _MULTI_SPLIT_CHARS: Final = ",，、"
 #: 把上面那几种分隔符统一成英文逗号，于是拆分只有一条路。
 _SEPARATOR_TABLE = str.maketrans({character: "," for character in _MULTI_SPLIT_CHARS})
 
-#: 评分的取值范围。旅行、演出、影片三类共用这一档。
+#: 评分的取值范围。有评分的那几类共用这一档。
 RATING_MIN: Final = 1
 RATING_MAX: Final = 5
 
@@ -62,9 +62,26 @@ class EventField:
     multiple: bool = False
     #: 非空时面板把它画成下拉而不是输入框，值域就是这几项。
     choices: tuple[str, ...] = ()
+    #: 与 :attr:`choices` 一一对应的文案键。**空表示 ``choices`` 本身就是显示文字**
+    #: （评分是数字、来源是专有名词）；非空时库里存稳定键，界面显示这里译出来的字。
+    choice_label_keys: tuple[str, ...] = ()
     #: 非空时面板**不画成输入框**，而是交给那一族专门的控件（现在是封面）。留着空串的是
     #: 「就是一格文字」，与 :attr:`choices` 同一个约定：控件由字段自己的声明说了算。
     control: str = ""
+
+    def choice_label(self, value: str) -> str:
+        """一个选项在界面上的样子。认不出的稳定键原样给出 —— 旧库与手改的值也要能看。"""
+        if not self.choice_label_keys:
+            return value
+        try:
+            index = self.choices.index(value)
+        except ValueError:
+            return value
+        return t(self.choice_label_keys[index])
+
+    def display_value(self, value: str) -> str:
+        """一格值在界面上的样子：有文案键的值域译成文案，其余原样给出。"""
+        return self.choice_label(value) if self.choice_label_keys else value
 
     @property
     def label(self) -> str:
@@ -316,8 +333,68 @@ MOVIE: Final = EventKind(
     empty_label_key="event.kind.movie.empty",
 )
 
+#: 游戏「状态」的稳定值。**库里存这几个英文键，面板显示译出来的字**（ADR 0106）：
+#: 把中文存进库，用户填的内容就绑在当时的语言上了。
+GAME_STATUS_CHOICES: Final = ("playing", "completed", "paused", "dropped")
+
+#: 与 :data:`GAME_STATUS_CHOICES` 一一对应的文案键。
+GAME_STATUS_LABELS: Final = (
+    "event.field.status.playing",
+    "event.field.status.completed",
+    "event.field.status.paused",
+    "event.field.status.dropped",
+)
+
+GAME: Final = EventKind(
+    id="game",
+    label_key="event.kind.game",
+    table="event_game",
+    fields=(
+        EventField("game", "event.field.game", "game", hint_key="event.field.game.hint"),
+        EventField(
+            "platform",
+            "event.field.platform",
+            "platform",
+            hint_key="event.field.platform.hint",
+            multiple=True,
+        ),
+        EventField(
+            "status",
+            "event.field.status",
+            "status",
+            choices=GAME_STATUS_CHOICES,
+            choice_label_keys=GAME_STATUS_LABELS,
+        ),
+        EventField(
+            "playtime",
+            "event.field.playtime",
+            "playtime",
+            "REAL",
+            hint_key="event.field.playtime.hint",
+        ),
+        EventField(
+            "genres",
+            "event.field.genres",
+            "genres",
+            hint_key="event.field.genres.hint",
+            multiple=True,
+        ),
+        EventField("developer", "event.field.developer", "developer"),
+        EventField(
+            "price",
+            "event.field.price",
+            "price",
+            "REAL",
+            hint_key="event.field.price.hint",
+        ),
+        EventField("rating", "event.field.rating", "rating", "INTEGER", choices=RATING_CHOICES),
+    ),
+    title_parts=("game",),
+    empty_label_key="event.kind.game.empty",
+)
+
 #: 已知的事件类型。**顺序即菜单顺序**。
-EVENT_KINDS: Final[tuple[EventKind, ...]] = (TRIP, SHOW, MOVIE)
+EVENT_KINDS: Final[tuple[EventKind, ...]] = (TRIP, SHOW, MOVIE, GAME)
 
 KINDS_BY_ID: Final[dict[str, EventKind]] = {kind.id: kind for kind in EVENT_KINDS}
 
@@ -481,6 +558,9 @@ __all__ = [
     "COMMON_FIELDS",
     "COVER",
     "EVENT_KINDS",
+    "GAME",
+    "GAME_STATUS_CHOICES",
+    "GAME_STATUS_LABELS",
     "KINDS_BY_ID",
     "MOVIE",
     "MOVIE_SOURCES",

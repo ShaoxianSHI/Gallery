@@ -594,6 +594,28 @@ def test_an_event_number_field_orders_as_a_number(tmp_path: Path) -> None:
     assert pricey > cheap
 
 
+def test_a_choice_event_field_groups_by_its_stable_key_but_shows_the_label(
+    tmp_path: Path,
+) -> None:
+    """组键要对得上筛选（库里存 ``completed``），组标题给用户看「已通关」。"""
+    facet = event_field_facet("game", "status")
+    assert facet is not None and facet.group is not None
+
+    groups = facet.group(_with_events(tmp_path, _event("game", 1, status="completed")))
+
+    assert list(groups) == [("completed", "已通关")]
+
+
+def test_a_choice_event_field_orders_groups_as_declared() -> None:
+    """「在玩 / 已通关 / 搁置 / 弃坑」是面板上的顺序，分组也照它排；认不出的值沉底。"""
+    facet = event_field_facet("game", "status")
+    assert facet is not None and facet.group_order is not None
+
+    order = [facet.group_order(value) for value in ("playing", "completed", "paused", "dropped")]
+    assert order == sorted(order)
+    assert facet.group_order("从未来过") > order[-1]
+
+
 def test_the_event_kinds_fields_lead_with_the_start_date() -> None:
     """子菜单里公共的「开始日期」排在最前，类型独有的字段跟在后面。"""
     fields = groupable_event_fields(TRIP)
