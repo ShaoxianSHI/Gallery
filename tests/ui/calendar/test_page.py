@@ -92,6 +92,20 @@ def test_the_week_steps_by_seven_days(page: CalendarPage) -> None:
     assert page.anchor() == datetime.date(2021, 9, 19)
 
 
+def test_p_and_n_walk_one_period_like_the_arrow_keys(page: CalendarPage) -> None:
+    """``P`` / ``N`` 与 ``←`` / ``→`` **同一件事**：同一个 ``step``，包括跨层翻页。"""
+    page.set_level("month")
+    press(page, Qt.Key.Key_N)
+    assert page.anchor() == datetime.date(2021, 10, 12)
+    press(page, Qt.Key.Key_P)
+    press(page, Qt.Key.Key_P)
+    assert page.anchor() == datetime.date(2021, 8, 12)
+
+    page.set_level("year")
+    press(page, Qt.Key.Key_N)
+    assert page.anchor() == datetime.date(2022, 8, 12)
+
+
 def scroll(
     view: QWidget,
     dx: int,

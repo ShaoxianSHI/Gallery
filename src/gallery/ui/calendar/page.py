@@ -3,6 +3,7 @@
 这一页只管**停在哪一层、停在哪一段日子、手上有哪些照片**。**``Y`` / ``M`` / ``W`` 收在这里，
 不做成窗口级 QAction**：``←`` / ``→`` 在网格里是「挪当前项」、在这里是「翻页」，会互相抢
 （ADR 0033 决策 6 —— 那条决策标题里的 ``D`` 已随日视图一起删掉，现在是三个键）。
+``P`` / ``N`` 与 ``←`` / ``→`` 同一件事，``T`` 回今天：三个键都与翻页、切层走同一批方法。
 """
 
 from __future__ import annotations
@@ -329,10 +330,10 @@ class CalendarPage(QWidget):
         if key in _KEY_LEVELS:
             self.set_level(_KEY_LEVELS[key])
             return
-        if key == Qt.Key.Key_Left:
+        if key in (Qt.Key.Key_Left, Qt.Key.Key_P):
             self.step(-1)
             return
-        if key == Qt.Key.Key_Right:
+        if key in (Qt.Key.Key_Right, Qt.Key.Key_N):
             self.step(1)
             return
         if key == Qt.Key.Key_T:
